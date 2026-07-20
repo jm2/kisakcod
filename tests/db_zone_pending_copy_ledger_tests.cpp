@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -15,14 +16,27 @@ namespace lifecycle = db::zone_load;
 using pending::PendingCopyAdmissionCompletion;
 using pending::PendingCopyAdmissionPhase;
 using pending::PendingCopyAdmissionReceipt;
+using pending::PendingCopyAuthenticationResult;
+using pending::PendingCopyDescriptorBinding;
 using pending::PendingCopyDrainCallback;
 using pending::PendingCopyDrainCallbackStatus;
 using pending::PendingCopyLedger;
+using pending::PendingCopyLedgerAuthenticationPhase;
 using pending::PendingCopyLedgerTestAccess;
 using pending::PendingCopyRecord;
 using pending::PendingCopyStatus;
 
 int g_failures = 0;
+volatile std::uint32_t g_alternateCompletionCalls = 0;
+
+template <typename T>
+std::array<std::uint8_t, sizeof(T)> ObjectBytes(
+    const T &object) noexcept
+{
+    std::array<std::uint8_t, sizeof(T)> bytes{};
+    std::memcpy(bytes.data(), &object, sizeof(object));
+    return bytes;
+}
 
 #define CHECK(expression)                                                       \
     do                                                                          \
@@ -59,6 +73,19 @@ struct GenerationFixture final
 };
 
 void CompleteNoop(void *) noexcept {}
+void CompleteAlternate(void *) noexcept
+{
+    // Keep this callback observably distinct under MSVC Release identical-
+    // COMDAT folding: the test intentionally authenticates function identity.
+    g_alternateCompletionCalls = 1;
+}
+
+lifecycle::ZoneLoadCleanupCallbackStatus CompleteLifecycleCleanup(
+    void *,
+    lifecycle::ZoneLoadCleanupOperation) noexcept
+{
+    return lifecycle::ZoneLoadCleanupCallbackStatus::Success;
+}
 
 void PrepareCommitAndFinalize(
     PendingCopyAdmissionReceipt *const receipt,
@@ -162,6 +189,49 @@ PendingCopyDrainCallbackStatus ConsumeUnknown(
     return static_cast<PendingCopyDrainCallbackStatus>(UINT8_C(0xFF));
 }
 
+struct AdmissionAuthenticationState final
+{
+    PendingCopyLedger *ledger = nullptr;
+    PendingCopyAdmissionReceipt *retainedReceipt = nullptr;
+    GenerationFixture *retainedGeneration = nullptr;
+    PendingCopyAdmissionReceipt *activeReceipt = nullptr;
+    GenerationFixture *activeGeneration = nullptr;
+    PendingCopyAuthenticationResult result =
+        PendingCopyAuthenticationResult::Mismatch;
+    bool receiptMatched = false;
+};
+
+void CompleteWithAuthentication(void *const opaque) noexcept
+{
+    auto &state = *static_cast<AdmissionAuthenticationState *>(opaque);
+    const PendingCopyAdmissionCompletion completion{
+        &state, CompleteWithAuthentication};
+    const std::array<PendingCopyDescriptorBinding, 2> bindings{{
+        {state.retainedReceipt,
+         &state.retainedGeneration->slot,
+         state.retainedGeneration->key,
+         PendingCopyAdmissionPhase::Admitted,
+         {}},
+        {state.activeReceipt,
+         &state.activeGeneration->slot,
+         state.activeGeneration->key,
+         PendingCopyAdmissionPhase::Admitting,
+         completion},
+    }};
+    state.receiptMatched = pending::AuthenticatePendingCopyAdmissionReceipt(
+        *state.activeReceipt,
+        state.ledger,
+        &state.activeGeneration->slot,
+        state.activeGeneration->key,
+        PendingCopyAdmissionPhase::Admitting,
+        completion);
+    state.result = pending::AuthenticatePendingCopyLedgerDescriptors(
+        *state.ledger,
+        PendingCopyLedgerAuthenticationPhase::Ready,
+        bindings.data(),
+        bindings.size());
+}
+
 void TestTypeAndApiContracts()
 {
     static_assert(pending::kPendingCopyRecordCapacity == 2048);
@@ -203,6 +273,377 @@ void TestTypeAndApiContracts()
         nullptr, std::declval<const lifecycle::ZoneLoadContextKey &>())));
     static_assert(noexcept(pending::AuthenticatePassivePendingCopyLedger(
         std::declval<const PendingCopyLedger &>())));
+    static_assert(noexcept(pending::AuthenticatePendingCopyAdmissionReceipt(
+        std::declval<const PendingCopyAdmissionReceipt &>(),
+        nullptr,
+        nullptr,
+        std::declval<const lifecycle::ZoneLoadContextKey &>(),
+        PendingCopyAdmissionPhase::Pristine,
+        std::declval<const PendingCopyAdmissionCompletion &>())));
+    static_assert(noexcept(pending::AuthenticatePendingCopyLedgerDescriptors(
+        std::declval<const PendingCopyLedger &>(),
+        PendingCopyLedgerAuthenticationPhase::Pristine,
+        nullptr,
+        0)));
+    static_assert(std::is_same_v<
+        decltype(PendingCopyDescriptorBinding::receipt),
+        const PendingCopyAdmissionReceipt *>);
+    static_assert(std::is_same_v<
+        decltype(PendingCopyDescriptorBinding::lifecycle),
+        const lifecycle::ZoneLoadContextSlot *>);
+}
+
+void TestReceiptCompositionAuthentication()
+{
+    {
+        PendingCopyAdmissionReceipt receipt;
+        PendingCopyLedger foreignLedger;
+        const lifecycle::ZoneLoadContextKey nullKey{};
+        CHECK(pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            nullptr,
+            nullptr,
+            nullKey,
+            PendingCopyAdmissionPhase::Pristine,
+            {}));
+        CHECK(!pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &foreignLedger,
+            nullptr,
+            nullKey,
+            PendingCopyAdmissionPhase::Pristine,
+            {}));
+        CHECK(!pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            nullptr,
+            nullptr,
+            nullKey,
+            PendingCopyAdmissionPhase::Pristine,
+            {&foreignLedger, CompleteNoop}));
+    }
+
+    {
+        PendingCopyLedger ledger;
+        PendingCopyLedger foreignLedger;
+        PendingCopyAdmissionReceipt receipt;
+        GenerationFixture generation(23);
+        GenerationFixture foreignGeneration(24);
+        CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger, &receipt, &generation.slot, generation.key)
+            == PendingCopyStatus::Success);
+        CHECK(pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &ledger,
+            &generation.slot,
+            generation.key,
+            PendingCopyAdmissionPhase::Collecting,
+            {}));
+        CHECK(!pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &ledger,
+            &generation.slot,
+            generation.key,
+            PendingCopyAdmissionPhase::Admitted,
+            {}));
+        CHECK(!pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &foreignLedger,
+            &generation.slot,
+            generation.key,
+            PendingCopyAdmissionPhase::Collecting,
+            {}));
+        CHECK(!pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &ledger,
+            &foreignGeneration.slot,
+            generation.key,
+            PendingCopyAdmissionPhase::Collecting,
+            {}));
+        CHECK(!pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &ledger,
+            &generation.slot,
+            foreignGeneration.key,
+            PendingCopyAdmissionPhase::Collecting,
+            {}));
+
+        std::uint32_t completionContext = 0;
+        const PendingCopyAdmissionCompletion completion{
+            &completionContext, CompleteNoop};
+        CHECK(pending::TryPreparePendingCopyAdmission(
+            &receipt, generation.key, completion)
+            == PendingCopyStatus::Success);
+        CHECK(pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &ledger,
+            &generation.slot,
+            generation.key,
+            PendingCopyAdmissionPhase::Prepared,
+            completion));
+        CHECK(!pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &ledger,
+            &generation.slot,
+            generation.key,
+            PendingCopyAdmissionPhase::Prepared,
+            {&ledger, CompleteNoop}));
+        CHECK(!pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &ledger,
+            &generation.slot,
+            generation.key,
+            PendingCopyAdmissionPhase::Prepared,
+            {&completionContext, CompleteAlternate}));
+        CHECK(pending::TryDiscardPendingCopyAdmission(
+            &receipt, generation.key) == PendingCopyStatus::Success);
+        CHECK(pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &ledger,
+            &generation.slot,
+            generation.key,
+            PendingCopyAdmissionPhase::Discarded,
+            {}));
+
+        // Terminal authentication must not consult the current ledger.
+        PendingCopyLedgerTestAccess::SetNextGenerationSerial(&ledger, 0);
+        CHECK(!ledger.canonical());
+        CHECK(pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &ledger,
+            &generation.slot,
+            generation.key,
+            PendingCopyAdmissionPhase::Discarded,
+            {}));
+    }
+
+    {
+        PendingCopyLedger ledger;
+        PendingCopyAdmissionReceipt receipt;
+        GenerationFixture generation(25);
+        CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger, &receipt, &generation.slot, generation.key)
+            == PendingCopyStatus::Success);
+        PrepareCommitAndFinalize(&receipt, &generation);
+        CHECK(receipt.phase() == PendingCopyAdmissionPhase::Drained);
+        PendingCopyLedgerTestAccess::SetNextGenerationSerial(&ledger, 0);
+        CHECK(pending::AuthenticatePendingCopyAdmissionReceipt(
+            receipt,
+            &ledger,
+            &generation.slot,
+            generation.key,
+            PendingCopyAdmissionPhase::Drained,
+            {}));
+    }
+}
+
+void TestLedgerDescriptorSetAuthentication()
+{
+    using Phase = PendingCopyLedgerAuthenticationPhase;
+    using Result = PendingCopyAuthenticationResult;
+
+    PendingCopyLedger ledger;
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Pristine, nullptr, 0)
+        == Result::Match);
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, nullptr, 0)
+        == Result::Mismatch);
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger,
+              static_cast<Phase>(UINT8_C(0xFF)),
+              nullptr,
+              0)
+        == Result::Mismatch);
+    CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+        == PendingCopyStatus::Success);
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, nullptr, 0)
+        == Result::Match);
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Pristine, nullptr, 0)
+        == Result::Mismatch);
+
+    PendingCopyAdmissionReceipt firstReceipt;
+    PendingCopyAdmissionReceipt secondReceipt;
+    PendingCopyAdmissionReceipt foreignReceipt;
+    PendingCopyLedger foreignLedger;
+    GenerationFixture first(26);
+    GenerationFixture second(27);
+    GenerationFixture foreign(28);
+    CHECK(pending::TryInitializePendingCopyLedger(&foreignLedger)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &foreignLedger, &foreignReceipt, &foreign.slot, foreign.key)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &ledger, &firstReceipt, &first.slot, first.key)
+        == PendingCopyStatus::Success);
+    PendingCopyDescriptorBinding firstBinding{
+        &firstReceipt,
+        &first.slot,
+        first.key,
+        PendingCopyAdmissionPhase::Collecting,
+        {}};
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, &firstBinding, 1)
+        == Result::Match);
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, nullptr, 0)
+        == Result::Mismatch);
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, nullptr, 1)
+        == Result::Mismatch);
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger,
+              Phase::Ready,
+              &firstBinding,
+              pending::kPendingCopyGenerationCapacity + 1u)
+        == Result::Mismatch);
+    std::array<PendingCopyDescriptorBinding, 2> extraBindings{
+        firstBinding, firstBinding};
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, extraBindings.data(), extraBindings.size())
+        == Result::Mismatch);
+    PendingCopyDescriptorBinding wrong = firstBinding;
+    wrong.key = second.key;
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, &wrong, 1)
+        == Result::Mismatch);
+    wrong = firstBinding;
+    wrong.lifecycle = &second.slot;
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, &wrong, 1)
+        == Result::Mismatch);
+    wrong = PendingCopyDescriptorBinding{
+        &foreignReceipt,
+        &foreign.slot,
+        foreign.key,
+        PendingCopyAdmissionPhase::Collecting,
+        {}};
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, &wrong, 1)
+        == Result::Mismatch);
+
+    CHECK(pending::TryAppendPendingCopyRecord(
+        &firstReceipt, first.key, 401) == PendingCopyStatus::Success);
+    std::uint32_t firstCompletionContext = 0;
+    const PendingCopyAdmissionCompletion firstCompletion{
+        &firstCompletionContext, CompleteNoop};
+    CHECK(pending::TryPreparePendingCopyAdmission(
+        &firstReceipt, first.key, firstCompletion)
+        == PendingCopyStatus::Success);
+    firstBinding.phase = PendingCopyAdmissionPhase::Prepared;
+    firstBinding.completion = firstCompletion;
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::AdmissionPrepared, &firstBinding, 1)
+        == Result::Match);
+    wrong = firstBinding;
+    wrong.completion.context = &ledger;
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::AdmissionPrepared, &wrong, 1)
+        == Result::Mismatch);
+    CHECK(lifecycle::TryCommitZoneLoadContext(&first.slot, first.key)
+        == lifecycle::ZoneLoadContextStatus::Success);
+    pending::FinalizePreparedPendingCopyAdmission(firstReceipt);
+    firstBinding.phase = PendingCopyAdmissionPhase::Admitted;
+    firstBinding.completion = {};
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, &firstBinding, 1)
+        == Result::Match);
+
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &ledger, &secondReceipt, &second.slot, second.key)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryAppendPendingCopyRecord(
+        &secondReceipt, second.key, 402) == PendingCopyStatus::Success);
+    PendingCopyDescriptorBinding secondBinding{
+        &secondReceipt,
+        &second.slot,
+        second.key,
+        PendingCopyAdmissionPhase::Collecting,
+        {}};
+    std::array<PendingCopyDescriptorBinding, 2> reversed{
+        secondBinding, firstBinding};
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, reversed.data(), reversed.size())
+        == Result::Match);
+
+    std::array<PendingCopyDescriptorBinding, 2> duplicate{
+        firstBinding, secondBinding};
+    duplicate[1].receipt = duplicate[0].receipt;
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, duplicate.data(), duplicate.size())
+        == Result::Mismatch);
+    duplicate = std::array<PendingCopyDescriptorBinding, 2>{
+        firstBinding, secondBinding};
+    duplicate[1].lifecycle = duplicate[0].lifecycle;
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, duplicate.data(), duplicate.size())
+        == Result::Mismatch);
+    duplicate = std::array<PendingCopyDescriptorBinding, 2>{
+        firstBinding, secondBinding};
+    duplicate[1].key = duplicate[0].key;
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, duplicate.data(), duplicate.size())
+        == Result::Mismatch);
+    duplicate = std::array<PendingCopyDescriptorBinding, 2>{
+        firstBinding, secondBinding};
+    duplicate[1] = PendingCopyDescriptorBinding{
+        &foreignReceipt,
+        &foreign.slot,
+        foreign.key,
+        PendingCopyAdmissionPhase::Collecting,
+        {}};
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, duplicate.data(), duplicate.size())
+        == Result::Mismatch);
+
+    AdmissionAuthenticationState authentication;
+    authentication.ledger = &ledger;
+    authentication.retainedReceipt = &firstReceipt;
+    authentication.retainedGeneration = &first;
+    authentication.activeReceipt = &secondReceipt;
+    authentication.activeGeneration = &second;
+    const PendingCopyAdmissionCompletion secondCompletion{
+        &authentication, CompleteWithAuthentication};
+    CHECK(pending::TryPreparePendingCopyAdmission(
+        &secondReceipt, second.key, secondCompletion)
+        == PendingCopyStatus::Success);
+    secondBinding.phase = PendingCopyAdmissionPhase::Prepared;
+    secondBinding.completion = secondCompletion;
+    const std::array<PendingCopyDescriptorBinding, 2> prepared{
+        firstBinding, secondBinding};
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger,
+              Phase::AdmissionPrepared,
+              prepared.data(),
+              prepared.size())
+        == Result::Match);
+    CHECK(lifecycle::TryCommitZoneLoadContext(&second.slot, second.key)
+        == lifecycle::ZoneLoadContextStatus::Success);
+    pending::FinalizePreparedPendingCopyAdmission(secondReceipt);
+    CHECK(authentication.receiptMatched);
+    CHECK(authentication.result == Result::CallbackActive);
+
+    secondBinding.phase = PendingCopyAdmissionPhase::Admitted;
+    secondBinding.completion = {};
+    const std::array<PendingCopyDescriptorBinding, 2> admitted{
+        firstBinding, secondBinding};
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, admitted.data(), admitted.size())
+        == Result::Match);
+    CHECK(pending::TryBeginPendingCopyDrain(&ledger)
+        == PendingCopyStatus::Success);
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Draining, admitted.data(), admitted.size())
+        == Result::Match);
+    CHECK(pending::AuthenticatePendingCopyLedgerDescriptors(
+              ledger, Phase::Ready, admitted.data(), admitted.size())
+        == Result::Mismatch);
 }
 
 void TestPassiveLedgerAuthentication()
@@ -332,6 +773,32 @@ void TestAppendReadPrepareAndDiscard()
     CHECK(pending::TryReadPendingCopyRecord(
         &receipt, generation.key, 2, &output)
         == PendingCopyStatus::InvalidRecord);
+    CHECK(output == sentinel);
+
+    static_assert(alignof(PendingCopyRecord) > 1);
+    alignas(PendingCopyRecord)
+        std::array<std::uint8_t, sizeof(PendingCopyRecord) + 1>
+            misalignedStorage{};
+    misalignedStorage.fill(UINT8_C(0xA5));
+    const auto misalignedBefore = misalignedStorage;
+    CHECK(pending::TryReadPendingCopyRecord(
+        &receipt,
+        generation.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(
+            misalignedStorage.data() + 1))
+        == PendingCopyStatus::InvalidArgument);
+    CHECK(misalignedStorage == misalignedBefore);
+
+    const std::uintptr_t nonRepresentableAddress =
+        (std::numeric_limits<std::uintptr_t>::max)()
+        & ~(static_cast<std::uintptr_t>(alignof(PendingCopyRecord)) - 1);
+    CHECK(pending::TryReadPendingCopyRecord(
+        &receipt,
+        generation.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(nonRepresentableAddress))
+        == PendingCopyStatus::InvalidArgument);
     CHECK(output == sentinel);
 
     CHECK(pending::TryReadPendingCopyRecord(
@@ -642,6 +1109,103 @@ void TestCorruptionAndSerialExhaustion()
             &secondReceipt, 2);
         CHECK(ledger.canonical());
     }
+}
+
+void TestCrossGenerationReadOutputSeparation()
+{
+    static_assert(
+        alignof(PendingCopyAdmissionReceipt)
+        >= alignof(PendingCopyRecord));
+    static_assert(
+        alignof(lifecycle::ZoneLoadContextSlot)
+        >= alignof(PendingCopyRecord));
+
+    PendingCopyLedger ledger;
+    PendingCopyAdmissionReceipt firstReceipt;
+    PendingCopyAdmissionReceipt secondReceipt;
+    GenerationFixture firstGeneration(29);
+    GenerationFixture secondGeneration(30);
+    CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &ledger,
+        &firstReceipt,
+        &firstGeneration.slot,
+        firstGeneration.key)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryAppendPendingCopyRecord(
+        &firstReceipt, firstGeneration.key, 211)
+        == PendingCopyStatus::Success);
+    PrepareCommitAndFinalize(&firstReceipt, &firstGeneration);
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &ledger,
+        &secondReceipt,
+        &secondGeneration.slot,
+        secondGeneration.key)
+        == PendingCopyStatus::Success);
+    CHECK(ledger.canonical());
+
+    const auto firstReceiptBefore = ObjectBytes(firstReceipt);
+    const auto firstLifecycleBefore = ObjectBytes(firstGeneration.slot);
+    const auto secondReceiptBefore = ObjectBytes(secondReceipt);
+    const auto secondLifecycleBefore = ObjectBytes(secondGeneration.slot);
+    const auto expectRetainedOwnersUnchanged = [&]()
+    {
+        CHECK(ObjectBytes(firstReceipt) == firstReceiptBefore);
+        CHECK(ObjectBytes(firstGeneration.slot) == firstLifecycleBefore);
+        CHECK(ObjectBytes(secondReceipt) == secondReceiptBefore);
+        CHECK(ObjectBytes(secondGeneration.slot) == secondLifecycleBefore);
+        CHECK(ledger.canonical());
+    };
+
+    CHECK(pending::TryReadPendingCopyRecord(
+        &firstReceipt,
+        firstGeneration.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(&secondReceipt))
+        == PendingCopyStatus::InvalidArgument);
+    expectRetainedOwnersUnchanged();
+    CHECK(pending::TryReadPendingCopyRecord(
+        &firstReceipt,
+        firstGeneration.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(&secondGeneration.slot))
+        == PendingCopyStatus::InvalidArgument);
+    expectRetainedOwnersUnchanged();
+
+    PendingCopyRecord output{};
+    CHECK(pending::TryReadPendingCopyRecord(
+        &firstReceipt, firstGeneration.key, 0, &output)
+        == PendingCopyStatus::Success);
+    CHECK((output == PendingCopyRecord{firstGeneration.key, 211, 0}));
+
+    lifecycle::ZoneLoadCleanupCallbacks cleanup{};
+    cleanup.context = &firstGeneration;
+    cleanup.perform = CompleteLifecycleCleanup;
+    CHECK(lifecycle::TryUnloadZoneLoadContext(
+        &firstGeneration.slot, firstGeneration.key, cleanup)
+        == lifecycle::ZoneLoadContextStatus::Success);
+    CHECK(firstReceipt.canonical());
+    CHECK(ledger.canonical());
+    const PendingCopyRecord staleSentinel{
+        firstGeneration.key, 777, 0};
+    output = staleSentinel;
+    CHECK(pending::TryReadPendingCopyRecord(
+        &firstReceipt, firstGeneration.key, 0, &output)
+        == PendingCopyStatus::StaleKey);
+    CHECK(output == staleSentinel);
+
+    lifecycle::ZoneLoadContextKey newerKey{};
+    CHECK(lifecycle::TryClaimZoneLoadContext(
+        &firstGeneration.slot, &newerKey)
+        == lifecycle::ZoneLoadContextStatus::Success);
+    CHECK(newerKey != firstGeneration.key);
+    CHECK(firstReceipt.canonical());
+    CHECK(ledger.canonical());
+    CHECK(pending::TryReadPendingCopyRecord(
+        &firstReceipt, firstGeneration.key, 0, &output)
+        == PendingCopyStatus::StaleKey);
+    CHECK(output == staleSentinel);
 }
 
 void TestFinalizationExactlyOnceAndZeroRecordTerminal()
@@ -966,9 +1530,12 @@ void TestUnknownDrainResultPoisonsLedger()
 int main()
 {
     TestTypeAndApiContracts();
+    TestReceiptCompositionAuthentication();
+    TestLedgerDescriptorSetAuthentication();
     TestPassiveLedgerAuthentication();
     TestInitializationAndArgumentRejection();
     TestAppendReadPrepareAndDiscard();
+    TestCrossGenerationReadOutputSeparation();
     TestCapacityAndFailureAtomicity();
     TestCorruptionAndSerialExhaustion();
     TestFinalizationExactlyOnceAndZeroRecordTerminal();

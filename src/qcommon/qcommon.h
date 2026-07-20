@@ -65,7 +65,7 @@ enum DemoType : __int32
     DEMO_TYPE_SERVER = 0x2,
 };
 
-static const char *WeaponStateNames[27] =
+[[maybe_unused]] static const char *WeaponStateNames[27] =
 {
   "WEAPON_READY",
   "WEAPON_RAISING",
@@ -157,7 +157,7 @@ extern const dvar_t *com_authPort;
 #endif
 
 
-enum $6ABDC6367E3229B6421BFD1B2626A094 : __int32 // (SP/MP same)
+enum conChannel_t : __int32 // (SP/MP same)
 {
     CON_CHANNEL_DONT_FILTER = 0x0,
     CON_CHANNEL_ERROR = 0x1,
@@ -825,7 +825,7 @@ inline DynEntityDrawType &operator++(DynEntityDrawType &e) {
     e = static_cast<DynEntityDrawType>(static_cast<int>(e) + 1);
     return e;
 }
-inline DynEntityDrawType& operator++(DynEntityDrawType &e, int i)
+inline DynEntityDrawType& operator++(DynEntityDrawType &e, int)
 {
     ++e;
     return e;

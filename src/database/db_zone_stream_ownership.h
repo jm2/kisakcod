@@ -47,6 +47,18 @@ enum class ActiveZoneStreamPhase : std::uint8_t
     UnsafeFailure,
 };
 
+// The receipt representation expected at one exact composition boundary.
+// Pristine is the never-enrolled all-zero receipt; NeverBound and Invalidated
+// retain an exact generation identity; Bound additionally requires that this
+// receipt own the shared stream binding and every hidden singleton field.
+enum class ZoneStreamCompositionMode : std::uint8_t
+{
+    Pristine,
+    NeverBound,
+    Bound,
+    Invalidated,
+};
+
 enum class ZoneStreamOwnershipStatus : std::uint8_t
 {
     Success,
@@ -71,6 +83,39 @@ class ActiveZoneStreamBinding;
 // grants no mutable stream or relocation capability.
 [[nodiscard]] bool AuthenticatePassiveZoneStreamSingleton(
     const ActiveZoneStreamBinding &binding) noexcept;
+
+// Authenticates one exact, externally serialized composition without
+// reporting, allocating, mutating, or exposing any retained authority.
+// Pristine requires a null lifecycle and null key. Every other mode binds the
+// receipt to the supplied lifecycle address and exact usable generation key.
+// Invalidated accepts the lifecycle's retained terminal Empty receipt; Bound
+// and NeverBound require that the lifecycle still owns the active key. A
+// non-Bound receipt may coexist with another exact Bound owner: the shared
+// binding is still authenticated completely, but is associated with the
+// supplied receipt only in Bound mode. Callers scanning a receipt table must
+// additionally require that a Bound shared binding has exactly one matching
+// Bound receipt in that table.
+[[nodiscard]] bool AuthenticateZoneStreamComposition(
+    const ActiveZoneStreamBinding &binding,
+    const ZoneStreamGenerationReceipt &receipt,
+    const zone_load::ZoneLoadContextSlot *expectedLifecycle,
+    const zone_load::ZoneLoadContextKey &expectedKey,
+    ZoneStreamCompositionMode mode) noexcept;
+
+// Authenticates an aligned, representable output span as disjoint from the
+// supplied canonical binding and the complete process-wide stream authority:
+// both relocation registries, the owner slot, every legacy stream global, and
+// a Bound binding's retained receipt, lifecycle, and XZoneMemory identity.
+// The supplied Bound binding must be the exact hidden owner and still own its
+// active lifecycle key; an Idle binding requires no hidden owner. Singleton
+// ranges are protected in either phase.
+// This report-free predicate is read-only, returns no retained authority, and
+// requires the caller to hold the external database/lifecycle serializer.
+[[nodiscard]] bool AuthenticateZoneStreamOutputSpan(
+    const ActiveZoneStreamBinding &binding,
+    const void *output,
+    std::size_t outputSize,
+    std::size_t outputAlignment) noexcept;
 
 class alignas(8) ZoneStreamGenerationReceipt final
 {
@@ -142,6 +187,8 @@ public:
     [[nodiscard]] const zone_load::ZoneLoadContextKey &key() const noexcept;
     [[nodiscard]] const ZoneStreamGenerationReceipt *receipt() const noexcept;
     [[nodiscard]] const XZoneMemory *zoneIdentity() const noexcept;
+    // Copies one retained descriptor only to an authenticated output span.
+    // The destination remains byte-for-byte unchanged on every false result.
     [[nodiscard]] bool block(
         std::size_t index,
         relocation::BlockView *outBlock) const noexcept;

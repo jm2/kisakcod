@@ -1,4 +1,5 @@
 #include <universal/physicalmemory.h>
+#include <universal/physicalmemory_checked.h>
 #include <universal/physicalmemory_runtime.h>
 
 #include <qcommon/com_error.h>
@@ -16,6 +17,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -24,6 +26,9 @@
 namespace
 {
 using StateAccess = PhysicalMemoryGlobalStateTestAccess;
+using physical_memory::AllocationReceipt;
+using pmem_runtime::AllocationReceiptPhase;
+using pmem_runtime::AllocationReceiptStatus;
 using pmem_runtime::AllocationResult;
 using pmem_runtime::AllocationStatus;
 using pmem_runtime::DiagnosticEntryKind;
@@ -445,6 +450,18 @@ void TestResultLayoutAndDefaults()
     static_assert(sizeof(InitializationPhase) == 1);
     static_assert(sizeof(InitializationStatus) == 1);
     static_assert(sizeof(ProcessInitAllocationStatus) == 1);
+    static_assert(sizeof(AllocationReceiptPhase) == 1);
+    static_assert(sizeof(AllocationReceiptStatus) == 1);
+    static_assert(noexcept(pmem_runtime::StorageIsOutsideManagedMemory(
+        nullptr, 0)));
+    static_assert(noexcept(pmem_runtime::TryBeginAllocationReceipt(
+        nullptr, 0, nullptr)));
+    static_assert(noexcept(pmem_runtime::TryEndAllocationReceipt(nullptr)));
+    static_assert(noexcept(pmem_runtime::TryFreeAllocationReceipt(nullptr)));
+    static_assert(noexcept(pmem_runtime::TryAuthenticateAllocationReceipt(
+        nullptr, 0, AllocationReceiptPhase::Pristine)));
+    static_assert(noexcept(pmem_runtime::TryAuthenticateAllocationRange(
+        nullptr, 0, nullptr, 0, AllocationReceiptPhase::Begun)));
     static_assert(noexcept(pmem_runtime::TryBeginProcessInitAllocation()));
     static_assert(noexcept(pmem_runtime::TryEndProcessInitAllocation()));
 #if UINTPTR_MAX == UINT32_MAX
@@ -1471,6 +1488,596 @@ void TestDumpReentryAndSnapshotContention()
     CHECK(g_enterCalls.load() == g_leaveCalls.load());
 }
 
+void CheckOwnedNameIsPristine(
+    const StateAccess::Snapshot &state,
+    const std::uint32_t allocType,
+    const std::uint32_t index)
+{
+    const auto &owned = state.ownedNames[allocType][index];
+    CHECK(owned.identity == 0);
+    CHECK(owned.identityWitness == 0);
+    for (const char value : owned.text)
+        CHECK(value == 0);
+}
+
+void TestReceiptBridgeReadinessStorageAndForeignAuthority()
+{
+    ResetRuntime();
+    AllocationReceipt notReadyReceipt;
+    const StateAccess::Snapshot pristine = StateAccess::Capture();
+    CHECK(!pmem_runtime::StorageIsOutsideManagedMemory(
+        &notReadyReceipt, sizeof(notReadyReceipt)));
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(
+        "not-ready", 0, &notReadyReceipt)
+        == AllocationReceiptStatus::NotReady);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&notReadyReceipt)
+        == AllocationReceiptStatus::NotReady);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&notReadyReceipt)
+        == AllocationReceiptStatus::NotReady);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &notReadyReceipt, 0, AllocationReceiptPhase::Pristine)
+        == AllocationReceiptStatus::NotReady);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &notReadyReceipt, 0, &notReadyReceipt, 1,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::NotReady);
+    CHECK(SameSnapshot(StateAccess::Capture(), pristine));
+
+    StateAccess::Snapshot corrupt{};
+    corrupt.memory.prim[0].pos = 1;
+    StateAccess::Install(corrupt);
+    const StateAccess::Snapshot corruptBefore = StateAccess::Capture();
+    CHECK(!pmem_runtime::StorageIsOutsideManagedMemory(
+        &notReadyReceipt, sizeof(notReadyReceipt)));
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(
+        "corrupt", 0, &notReadyReceipt)
+        == AllocationReceiptStatus::CorruptState);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &notReadyReceipt, 0, AllocationReceiptPhase::Pristine)
+        == AllocationReceiptStatus::CorruptState);
+    CHECK(SameSnapshot(StateAccess::Capture(), corruptBefore));
+
+    InitializeReady();
+    AllocationReceipt receipt;
+    CHECK(pmem_runtime::StorageIsOutsideManagedMemory(
+        &receipt, sizeof(receipt)));
+    CHECK(!pmem_runtime::StorageIsOutsideManagedMemory(nullptr, 1));
+    CHECK(!pmem_runtime::StorageIsOutsideManagedMemory(&receipt, 0));
+    CHECK(!pmem_runtime::StorageIsOutsideManagedMemory(
+        reinterpret_cast<const void *>(
+            std::numeric_limits<std::uintptr_t>::max() - 1u),
+        4));
+    CHECK(!pmem_runtime::StorageIsOutsideManagedMemory(ExpectedBase(), 1));
+    CHECK(!pmem_runtime::StorageIsOutsideManagedMemory(
+        ExpectedBase() + kRuntimeSize - 1u, 2));
+    CHECK(pmem_runtime::StorageIsOutsideManagedMemory(
+        ExpectedBase() + kRuntimeSize, 1));
+
+    auto *const embeddedReceipt = ::new (
+        static_cast<void *>(ExpectedBase() + 64u)) AllocationReceipt;
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(
+        "embedded", 0, embeddedReceipt)
+        == AllocationReceiptStatus::InvalidArgument);
+    embeddedReceipt->~AllocationReceipt();
+
+    const StateAccess::Snapshot ready = StateAccess::Capture();
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(nullptr, 0, &receipt)
+        == AllocationReceiptStatus::InvalidArgument);
+    CHECK(pmem_runtime::TryBeginAllocationReceipt("null", 0, nullptr)
+        == AllocationReceiptStatus::InvalidArgument);
+    CHECK(pmem_runtime::TryBeginAllocationReceipt("type", 2, &receipt)
+        == AllocationReceiptStatus::InvalidAllocationType);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(nullptr)
+        == AllocationReceiptStatus::InvalidArgument);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(nullptr)
+        == AllocationReceiptStatus::InvalidArgument);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        nullptr, 0, AllocationReceiptPhase::Pristine)
+        == AllocationReceiptStatus::InvalidArgument);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipt, 0, static_cast<AllocationReceiptPhase>(UINT8_MAX))
+        == AllocationReceiptStatus::InvalidArgument);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipt, 2, AllocationReceiptPhase::Pristine)
+        == AllocationReceiptStatus::InvalidAllocationType);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipt, 0, AllocationReceiptPhase::Pristine)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&receipt)
+        == AllocationReceiptStatus::WrongPhase);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&receipt)
+        == AllocationReceiptStatus::WrongPhase);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &receipt, 2, ExpectedBase(), 1,
+        AllocationReceiptPhase::Pristine)
+        == AllocationReceiptStatus::InvalidAllocationType);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &receipt, 0, ExpectedBase(), 1,
+        AllocationReceiptPhase::Pristine)
+        == AllocationReceiptStatus::WrongPhase);
+    CHECK(SameSnapshot(StateAccess::Capture(), ready));
+
+    AllocationReceipt active;
+    AllocationReceipt blocked;
+    char activeName[] = "active-receipt";
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(activeName, 0, &active)
+        == AllocationReceiptStatus::Success);
+    const StateAccess::Snapshot activeBefore = StateAccess::Capture();
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(
+        "blocked-receipt", 0, &blocked)
+        == AllocationReceiptStatus::Busy);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &blocked, 0, AllocationReceiptPhase::Pristine)
+        == AllocationReceiptStatus::Success);
+    CHECK(SameSnapshot(StateAccess::Capture(), activeBefore));
+    CHECK(pmem_runtime::TryAllocate(1, 1, 0, 0).status
+        == AllocationStatus::Success);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&active)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&active)
+        == AllocationReceiptStatus::Success);
+
+    AllocationReceipt bypassed;
+    char bypassedName[] = "legacy-bypass";
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(
+        bypassedName, 0, &bypassed)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAllocate(1, 1, 0, 0).status
+        == AllocationStatus::Success);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&bypassed)
+        == AllocationReceiptStatus::Success);
+    PMem_Free(bypassedName, 0);
+    CHECK(g_assertReports.load() == 0);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &bypassed, 0, AllocationReceiptPhase::Ended)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&bypassed)
+        == AllocationReceiptStatus::ReceiptMismatch);
+
+    InitializeReady();
+    alignas(16) std::array<std::uint8_t, 64> foreignBacking{};
+    PhysicalMemory foreignMemory{};
+    foreignMemory.buf = foreignBacking.data();
+    foreignMemory.prim[1].pos =
+        static_cast<std::uint32_t>(foreignBacking.size());
+    AllocationReceipt foreignReceipt;
+    static char foreignName[] = "foreign-owner";
+    CHECK(physical_memory::TryBegin(
+        &foreignMemory, 0, foreignName, &foreignReceipt)
+        == physical_memory::AllocationScopeStatus::Success);
+    const StateAccess::Snapshot beforeForeign = StateAccess::Capture();
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &foreignReceipt, 0, AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&foreignReceipt)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&foreignReceipt)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    CHECK(SameSnapshot(StateAccess::Capture(), beforeForeign));
+    CHECK(physical_memory::TryEnd(&foreignReceipt)
+        == physical_memory::AllocationScopeStatus::Success);
+    CHECK(physical_memory::TryFree(&foreignReceipt)
+        == physical_memory::AllocationScopeStatus::Success);
+    CHECK(g_assertReports.load() == 0);
+    CHECK(g_errorReports.load() == 0);
+    CHECK(g_oomReports.load() == 0);
+    CHECK(g_printReports.load() == 0);
+}
+
+void TestReceiptBridgeLifecycleAndExactRanges()
+{
+    InitializeReady();
+    AllocationReceipt lowReceipt;
+    char lowName[] = "receipt-owned-name";
+    char capturedName[sizeof(lowName)]{};
+    CopyText(capturedName, lowName);
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(lowName, 0, &lowReceipt)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &lowReceipt, 0, AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &lowReceipt, 1, AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &lowReceipt, 0, ExpectedBase(), 1,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::InvalidArgument);
+
+    StateAccess::Snapshot state = StateAccess::Capture();
+    CHECK(state.memory.prim[0].allocListCount == 1);
+    CHECK(state.memory.prim[0].allocName == lowName);
+    CHECK(state.memory.prim[0].allocList[0].name == lowName);
+    CHECK(state.allocNameBindings[0].type == 0);
+    CHECK(state.allocNameBindings[0].index == 0);
+    CHECK(state.allocationNameBindings[0][0].type == 0);
+    CHECK(state.allocationNameBindings[0][0].index == 0);
+    CHECK(state.ownedNames[0][0].identity
+        == reinterpret_cast<std::uintptr_t>(lowName));
+    CHECK(std::strcmp(state.ownedNames[0][0].text, capturedName) == 0);
+
+    const AllocationResult lowAllocation =
+        pmem_runtime::TryAllocate(16, 1, 0, 0);
+    CHECK(lowAllocation.status == AllocationStatus::Success);
+    CHECK(lowAllocation.address == ExpectedBase());
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &lowReceipt, 0, lowAllocation.address, 16,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &lowReceipt, 1, lowAllocation.address, 16,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &lowReceipt, 0, lowAllocation.address + 4, 8,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &lowReceipt, 0, lowAllocation.address + 15, 2,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::InvalidArgument);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &lowReceipt, 0, nullptr, 1, AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::InvalidArgument);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &lowReceipt, 0, lowAllocation.address, 0,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::InvalidArgument);
+    CHECK(!pmem_runtime::StorageIsOutsideManagedMemory(
+        lowAllocation.address, 16));
+
+    for (char &value : lowName)
+        value = 'x';
+    const DiagnosticSnapshot diagnostic =
+        pmem_runtime::TryCaptureDiagnosticSnapshot();
+    CHECK(diagnostic.status == DiagnosticSnapshotStatus::Success);
+    CHECK(std::strcmp(diagnostic.low[0].name, capturedName) == 0);
+    state = StateAccess::Capture();
+    CHECK(std::strcmp(state.ownedNames[0][0].text, capturedName) == 0);
+
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&lowReceipt)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&lowReceipt)
+        == AllocationReceiptStatus::AlreadyComplete);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &lowReceipt, 0, AllocationReceiptPhase::Ended)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &lowReceipt, 0, lowAllocation.address, 16,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::WrongPhase);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &lowReceipt, 0, lowAllocation.address, 16,
+        AllocationReceiptPhase::Ended)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&lowReceipt)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&lowReceipt)
+        == AllocationReceiptStatus::AlreadyComplete);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &lowReceipt, 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &lowReceipt, 0, AllocationReceiptPhase::Ended)
+        == AllocationReceiptStatus::WrongPhase);
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(
+        "receipt-reuse", 0, &lowReceipt)
+        == AllocationReceiptStatus::ReceiptInUse);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &lowReceipt, 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &lowReceipt, 0, lowAllocation.address, 1,
+        AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::WrongPhase);
+    state = StateAccess::Capture();
+    CHECK(state.memory.prim[0].allocListCount == 0);
+    CHECK(state.memory.prim[0].pos == 0);
+    CheckOwnedNameIsPristine(state, 0, 0);
+
+    AllocationReceipt highReceipt;
+    char highName[] = "high-range";
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(highName, 1, &highReceipt)
+        == AllocationReceiptStatus::Success);
+    const AllocationResult highAllocation =
+        pmem_runtime::TryAllocate(24, 1, 0, 1);
+    CHECK(highAllocation.status == AllocationStatus::Success);
+    CHECK(highAllocation.address == ExpectedBase() + kRuntimeSize - 24u);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &highReceipt, 1, highAllocation.address, 24,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &highReceipt, 0, highAllocation.address, 24,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &highReceipt, 1, highAllocation.address - 1, 1,
+        AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::InvalidArgument);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&highReceipt)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&highReceipt)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &highReceipt, 1, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+    CHECK(g_assertReports.load() == 0);
+    CHECK(g_errorReports.load() == 0);
+    CHECK(g_oomReports.load() == 0);
+    CHECK(g_printReports.load() == 0);
+}
+
+void TestReceiptBridgeHoleCollapseAndProcessInitCoexistence()
+{
+    InitializeReady();
+    std::array<AllocationReceipt, 3> receipts{};
+    std::array<std::array<char, 16>, 3> names{{
+        {{"receipt-first"}},
+        {{"receipt-middle"}},
+        {{"receipt-tail"}},
+    }};
+    for (std::uint32_t index = 0; index < receipts.size(); ++index)
+    {
+        CHECK(pmem_runtime::TryBeginAllocationReceipt(
+            names[index].data(), 0, &receipts[index])
+            == AllocationReceiptStatus::Success);
+        CHECK(pmem_runtime::TryAllocate(4, 1, 0, 0).status
+            == AllocationStatus::Success);
+        CHECK(pmem_runtime::TryEndAllocationReceipt(&receipts[index])
+            == AllocationReceiptStatus::Success);
+    }
+
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&receipts[1])
+        == AllocationReceiptStatus::Success);
+    StateAccess::Snapshot state = StateAccess::Capture();
+    CHECK(state.memory.prim[0].allocListCount == 3);
+    CHECK(state.memory.prim[0].allocList[1].name == nullptr);
+    CheckOwnedNameIsPristine(state, 0, 1);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[1], 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&receipts[2])
+        == AllocationReceiptStatus::Success);
+    state = StateAccess::Capture();
+    CHECK(state.memory.prim[0].allocListCount == 1);
+    CHECK(state.memory.prim[0].pos == 4);
+    CheckOwnedNameIsPristine(state, 0, 1);
+    CheckOwnedNameIsPristine(state, 0, 2);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[1], 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[2], 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&receipts[0])
+        == AllocationReceiptStatus::Success);
+    state = StateAccess::Capture();
+    CHECK(state.memory.prim[0].allocListCount == 0);
+    CHECK(state.memory.prim[0].pos == 0);
+    for (std::uint32_t index = 0; index < receipts.size(); ++index)
+    {
+        CheckOwnedNameIsPristine(state, 0, index);
+        CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+            &receipts[index], 0, AllocationReceiptPhase::Freed)
+            == AllocationReceiptStatus::Success);
+    }
+
+    AllocationReceipt replacement;
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(
+        "replacement", 0, &replacement)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[0], 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[1], 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[2], 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[0], 1, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &replacement, 0, AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &replacement, 1, AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    const StateAccess::Snapshot replacementBegun = StateAccess::Capture();
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&receipts[0])
+        == AllocationReceiptStatus::AlreadyComplete);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&receipts[0])
+        == AllocationReceiptStatus::AlreadyComplete);
+    CHECK(SameSnapshot(StateAccess::Capture(), replacementBegun));
+
+    AllocationReceipt crossType;
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(
+        "cross-type", 1, &crossType)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &crossType, 1, AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &crossType, 0, AllocationReceiptPhase::Begun)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[0], 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[0], 1, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::ReceiptMismatch);
+    CHECK(pmem_runtime::TryAllocate(1, 1, 0, 1).status
+        == AllocationStatus::Success);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&crossType)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&crossType)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &crossType, 1, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+
+    CHECK(pmem_runtime::TryAllocate(1, 1, 0, 0).status
+        == AllocationStatus::Success);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&replacement)
+        == AllocationReceiptStatus::Success);
+    const StateAccess::Snapshot replacementEnded = StateAccess::Capture();
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&receipts[0])
+        == AllocationReceiptStatus::AlreadyComplete);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&receipts[0])
+        == AllocationReceiptStatus::AlreadyComplete);
+    CHECK(SameSnapshot(StateAccess::Capture(), replacementEnded));
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&replacement)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[0], 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &replacement, 0, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+
+    InitializeReady();
+    CHECK(pmem_runtime::TryBeginProcessInitAllocation()
+        == ProcessInitAllocationStatus::Success);
+    CHECK(pmem_runtime::TryAllocate(32, 1, 0, 1).status
+        == AllocationStatus::Success);
+    CHECK(pmem_runtime::TryEndProcessInitAllocation()
+        == ProcessInitAllocationStatus::Success);
+    AllocationReceipt zoneReceipt;
+    char zoneName[] = "post-init-receipt";
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(
+        zoneName, 1, &zoneReceipt)
+        == AllocationReceiptStatus::Success);
+    const AllocationResult zoneAllocation =
+        pmem_runtime::TryAllocate(16, 1, 0, 1);
+    CHECK(zoneAllocation.status == AllocationStatus::Success);
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&zoneReceipt)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryAuthenticateAllocationRange(
+        &zoneReceipt, 1, zoneAllocation.address, 16,
+        AllocationReceiptPhase::Ended)
+        == AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&zoneReceipt)
+        == AllocationReceiptStatus::Success);
+    state = StateAccess::Capture();
+    CheckProcessInitState(
+        state, kProcessInitEnded, kProcessInitEndedWitness);
+    CHECK(state.memory.prim[1].allocListCount == 1);
+    CHECK(state.memory.prim[1].allocList[0].pos == kRuntimeSize);
+    CHECK(state.memory.prim[1].allocList[0].name
+        == reinterpret_cast<const char *>(
+            StateAccess::ProcessInitAllocationNameAddress()));
+    CHECK(std::strcmp(state.ownedNames[1][0].text, "$init") == 0);
+    CheckOwnedNameIsPristine(state, 1, 1);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &zoneReceipt, 1, AllocationReceiptPhase::Freed)
+        == AllocationReceiptStatus::Success);
+    CHECK(g_assertReports.load() == 0);
+    CHECK(g_errorReports.load() == 0);
+    CHECK(g_oomReports.load() == 0);
+    CHECK(g_printReports.load() == 0);
+}
+
+void TestReceiptBridgeCapacityFailureAtomicity()
+{
+    InitializeReady();
+    std::array<AllocationReceipt, MAX_PHYSICAL_ALLOCATIONS + 1u> receipts{};
+    char capacityName[] = "receipt-capacity";
+    for (std::uint32_t index = 0;
+         index < MAX_PHYSICAL_ALLOCATIONS;
+         ++index)
+    {
+        CHECK(pmem_runtime::TryBeginAllocationReceipt(
+            capacityName, 0, &receipts[index])
+            == AllocationReceiptStatus::Success);
+        CHECK(pmem_runtime::TryEndAllocationReceipt(&receipts[index])
+            == AllocationReceiptStatus::Success);
+    }
+    const StateAccess::Snapshot full = StateAccess::Capture();
+    CHECK(full.memory.prim[0].allocListCount
+        == MAX_PHYSICAL_ALLOCATIONS);
+    CHECK(pmem_runtime::TryBeginAllocationReceipt(
+        capacityName, 0, &receipts[MAX_PHYSICAL_ALLOCATIONS])
+        == AllocationReceiptStatus::CapacityExceeded);
+    CHECK(pmem_runtime::TryAuthenticateAllocationReceipt(
+        &receipts[MAX_PHYSICAL_ALLOCATIONS],
+        0, AllocationReceiptPhase::Pristine)
+        == AllocationReceiptStatus::Success);
+    CHECK(SameSnapshot(StateAccess::Capture(), full));
+
+    for (std::uint32_t remaining = MAX_PHYSICAL_ALLOCATIONS;
+         remaining != 0;
+         --remaining)
+    {
+        CHECK(pmem_runtime::TryFreeAllocationReceipt(
+            &receipts[remaining - 1])
+            == AllocationReceiptStatus::Success);
+    }
+    const StateAccess::Snapshot empty = StateAccess::Capture();
+    CHECK(empty.memory.prim[0].allocListCount == 0);
+    CHECK(empty.memory.prim[0].pos == 0);
+    for (std::uint32_t index = 0;
+         index < MAX_PHYSICAL_ALLOCATIONS;
+         ++index)
+    {
+        CheckOwnedNameIsPristine(empty, 0, index);
+    }
+    CHECK(g_assertReports.load() == 0);
+    CHECK(g_errorReports.load() == 0);
+    CHECK(g_oomReports.load() == 0);
+    CHECK(g_printReports.load() == 0);
+}
+
+void TestReceiptBridgeConcurrentLowHighSerialization()
+{
+    InitializeReady();
+    static char lowName[] = "concurrent-receipt-low";
+    static char highName[] = "concurrent-receipt-high";
+    std::array<AllocationReceiptStatus, 8> statuses{};
+    std::thread low([&statuses]() {
+        AllocationReceipt receipt;
+        statuses[0] = pmem_runtime::TryBeginAllocationReceipt(
+            lowName, 0, &receipt);
+        const AllocationResult allocation =
+            pmem_runtime::TryAllocate(64, 8, 0, 0);
+        statuses[1] = pmem_runtime::TryAuthenticateAllocationRange(
+            &receipt, 0, allocation.address, 64,
+            AllocationReceiptPhase::Begun);
+        statuses[2] = pmem_runtime::TryEndAllocationReceipt(&receipt);
+        statuses[3] = pmem_runtime::TryFreeAllocationReceipt(&receipt);
+    });
+    std::thread high([&statuses]() {
+        AllocationReceipt receipt;
+        statuses[4] = pmem_runtime::TryBeginAllocationReceipt(
+            highName, 1, &receipt);
+        const AllocationResult allocation =
+            pmem_runtime::TryAllocate(64, 8, 0, 1);
+        statuses[5] = pmem_runtime::TryAuthenticateAllocationRange(
+            &receipt, 1, allocation.address, 64,
+            AllocationReceiptPhase::Begun);
+        statuses[6] = pmem_runtime::TryEndAllocationReceipt(&receipt);
+        statuses[7] = pmem_runtime::TryFreeAllocationReceipt(&receipt);
+    });
+    low.join();
+    high.join();
+    for (const AllocationReceiptStatus status : statuses)
+        CHECK(status == AllocationReceiptStatus::Success);
+    const StateAccess::Snapshot state = StateAccess::Capture();
+    CHECK(state.memory.prim[0].allocListCount == 0);
+    CHECK(state.memory.prim[1].allocListCount == 0);
+    CHECK(state.memory.prim[0].pos == 0);
+    CHECK(state.memory.prim[1].pos == kRuntimeSize);
+    CHECK(g_assertReports.load() == 0);
+    CHECK(g_errorReports.load() == 0);
+    CHECK(g_oomReports.load() == 0);
+    CHECK(g_printReports.load() == 0);
+    CHECK(g_reentryViolations.load() == 0);
+    CHECK(g_enterCalls.load() == g_leaveCalls.load());
+}
+
 void TestProcessInitControllerLifecycleAndLegacyCoexistence()
 {
     ResetRuntime();
@@ -2100,6 +2707,11 @@ int main()
     TestDiagnosticAccountingAndDumpOrder();
     TestDiagnosticCapacityAndSidecarCorruption();
     TestDumpReentryAndSnapshotContention();
+    TestReceiptBridgeReadinessStorageAndForeignAuthority();
+    TestReceiptBridgeLifecycleAndExactRanges();
+    TestReceiptBridgeHoleCollapseAndProcessInitCoexistence();
+    TestReceiptBridgeCapacityFailureAtomicity();
+    TestReceiptBridgeConcurrentLowHighSerialization();
     TestProcessInitControllerLifecycleAndLegacyCoexistence();
     TestProcessInitControllerCorruptionAndAtomicity();
     TestProcessInitControllerConcurrencyAndDisjointness();

@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 19, 2026)
+## Implementation status (July 20, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -584,7 +584,7 @@ Completed foundation work:
   audit were clean, and zero threads remained before squash merge `534a9b1e`. Authoritative post-merge run
   **29716339199** passed all nine jobs. The merge adds no serializer, retained reservation extent, initialization phase,
   `$init` controller, checked authority, or production enrollment;
-- current unmerged `293a020c` appends the PMem serializer slot at MP `0x17` and SP `0x24` without renumbering any existing
+- merged PR #70 sequence `293a020c` appends the PMem serializer slot at MP `0x17` and SP `0x24` without renumbering any existing
   slot. Follow-up `716eacc1` uses it for a hidden retained extent plus witnessed initialization phase, failure-atomic
   reserve/commit/release publication, global Begin/End/Free/allocation/getter serialization, exact report-free allocation
   results, and a thread-local legacy shortfall. Commit `0a9128aa` completes that production-neutral boundary with hidden
@@ -598,8 +598,44 @@ Completed foundation work:
   permanent Ended authority, report-free serialized operations, legacy coexistence guards, and exact End-before-
   initializing-clear source seals. Commit `792ff1c7` authenticates the complete passive stream/relocation singleton and
   pending-copy-ledger topology without widening any per-entry receipt capability. The exact combined head passes native
-  **157/157**, focused **32/32**, and affected genuine GCC i386/AArch64 compile-link gates. Hosted CI is not yet claimed;
-  no checked authority or loader caller is enrolled, and exact-key composite adapters are next;
+  **157/157**, focused **32/32**, and affected genuine GCC i386/AArch64 compile-link gates. Exact final head
+  `ca2d1149ab7e67d6de56921a0574a662861783b5` is the head of run **29726370638**, whose all nine hosted jobs ultimately
+  passed; it squash-merged as `6a67a66e4afd62480bdb62493e666961da9ed837`. The merge command was issued after seven jobs completed; the
+  remaining no-Steam and Windows x86 Debug/Release jobs subsequently passed at that same head. Gemini was clean at
+  behavior head `c8230927`, the final two changes were MSVC fixture-only corrections, and no review threads remained.
+  No checked authority or loader caller is enrolled at the merged baseline;
+- the pending exact-key composite-controller milestone completes the production-neutral bridge from those passive
+  resources to one durable exact-generation controller. PMem now exposes report-free range/receipt authentication with
+  exact `Freed` terminal evidence that survives low/high slot reuse without ABA ambiguity. Native storage, stream
+  ownership, pending copies, and script-string ownership each provide exact composition predicates, while the table
+  drives strict callback binding, allocation, storage/stream placement, pending/script staging, admission, abandonment,
+  retry-safe Live unload, drain, terminal reset, reuse, and stale-key rejection. Inputs use a single captured descriptor
+  or callback image; storage/stream overlap and aligned table output aliases are rejected, as are managed-PMem aliases
+  while shared PMem is Ready or Draining, including the
+  legacy passive claim/get boundaries. Focused table CTest is **16/16** under GCC; GCC/Clang runtime-table builds and
+  Clang ASan+UBSan with `detect_leaks=0` are green. Genuine i386 and AArch64 compile/link gates produce the correct ELF
+  classes; direct i386 execution remains blocked by the established sandbox `SIGSYS`. End-to-end/adversarial coverage
+  and an independent exact-diff audit are green. At the pre-review checkpoint, the runtime/source/security selection was
+  **36/36**; all five macro-off production seals passed, the headless dependency gate was clean, and full native CTest
+  was **157/157**.
+  PR #71 initial run **29754589268** then found hosted-only headless link closure and MSVC identical-COMDAT fixture
+  failures. The pending repair adds the database-neutral storage implementation and an explicit fail-closed headless
+  bridge to the headless source set, seals that source-profile pair, and makes the alternate callback observably
+  distinct. Review hardening also
+  closes full retained-output aliases in the composite table and lower stream/pending readers, authenticates exact live
+  keys before Bound descriptor disclosure and the complete reset-authoritative FX-workspace topology, prevents mixed legacy and
+  composite enrollment, strengthens direct-call authority seals, and fixes warning roots instead of suppressing them.
+  Full native CTest is **157/157**, and the affected Clang and ASan+UBSan selections are **38/38** each. Exact repair
+  head `a65ff336` passed eight jobs in run **29760022151**, whose initial attempt and rerun both found one optimized
+  Win32 fixture automatic-output path sensitive to the new natural-alignment preflight. Head `059aebd0` moved that
+  output to stable heap storage and separated begin/allocation/bind diagnostics. Run **29763190487** passed all five
+  portable jobs, headless, and no-Steam before the measured builds rejected the resulting implicit C4324 fixture tail
+  padding. Exact implementation head `a1f99336` retains a full-width attempt witness, removing that padding without
+  suppressing the warning. Focused GCC/Clang/ASan+UBSan runtime tests, genuine i386/AArch64 compile-link, and an i386
+  tail-padding probe pass; the final documentation head must preserve the same code through the all-nine hosted and
+  exact-head review gates. No production caller is enrolled. The immediate sequence is the ABI-neutral journal
+  capacity/demand split, a production-neutral externally serialized runtime/registry facade, and then the atomic
+  seven-site loader cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -708,14 +744,13 @@ Remaining gates, in implementation order:
    as `225759e7d8fd1327210452f3debcd6360465ef2a`; authoritative run **29707497302** passed all nine jobs and the graph is
    verified. None of the seven raw production sites is enrolled. PR #67 merged the locally and hosted-sealed passive
    durable-receipt composition. PR #68 merged the bounded legacy PMem indexing/failure-atomic repair, and PR #69 merged
-   the hidden-state/macro-off-object seal as `534a9b1e`. Current `293a020c` reserves the exact MP/SP PMem lock slots and
+   the hidden-state/macro-off-object seal as `534a9b1e`. Merged PR #70 sequence: `293a020c` reserves the exact MP/SP PMem lock slots and
    `716eacc1` supplies the serialized retained-extent/init/allocation/lifecycle core, `0a9128aa` finishes stable owned
    names plus the bounded diagnostic snapshot/read-report split, `852e7db9` adds the unused permanent-Ended process-life
-   `$init` controller, and `792ff1c7` completes passive table-wide singleton authentication. No caller is enrolled.
-   Next add exact-key adapters. That
-   adapter batch must atomically replace the passive-only pristine tripwires with composite phase/key authentication for
-   all per-entry receipts and both table-wide singletons before exposing enrollment; merely removing or prematurely
-   gating those checks is forbidden. Only then atomically bind the loader across all seven sites. Keep static controller
+   `$init` controller, and `792ff1c7` completes passive table-wide singleton authentication. The pending branch completes
+   exact-key component composition plus the strict allocation/staging/admission/abandonment/unload/drain/reset table
+   controller, without enrolling a caller. After exact-head PR review/CI, atomically bind the loader across all seven
+   sites; partial enrollment remains forbidden. Keep static controller
    slots and callback metadata
    outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1695,17 +1730,19 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **80% by merged engineering effort**. PR #62 merged the production-neutral
+Overall porting progress is approximately **82% by current engineering effort**. PR #62 merged the production-neutral
 pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
 registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
 tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy-PMem
-indexing/failure-atomic prerequisite, and PR #69 merged global-state encapsulation plus the cross-toolchain macro-off
-seal. The ancestry checkpoint records reviewed history without importing code and therefore does not inflate the
-engineering estimate. The current serialized-runtime/process-controller/passive-authentication branch through
-`792ff1c7` remains outside the merged estimate until its PR lands.
+indexing/failure-atomic prerequisite, PR #69 merged global-state encapsulation plus the cross-toolchain macro-off seal,
+and PR #70 merged serialized runtime/process-controller/passive shared-resource authentication. The pending exact-key
+composite-controller milestone completes the production-neutral adapter layer, strict table orchestration, exact PMem
+terminal evidence, alias/overlap hardening, adversarial composition coverage, and the optimized-Win32 fixture repair; it
+is not yet a merge or production enrollment. The ancestry checkpoint records reviewed history without importing code
+and therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared
-foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
+foundations/security about **89%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
@@ -1990,9 +2027,10 @@ clean. Exact-head hosted run **29657884407** passed all nine jobs, exact-head ho
 squash-merged as `f39e0e4a`. No production caller consumes the batch; same-thread storage
 lifetime and callback-free use of only its four typed operations remain explicit preconditions.
 
-Generation enrollment, stream/PMem/arena/adapter binding, alias/completed-object unpublication, real admission/cleanup
-callbacks, and exact-key load/stage/commit routing remain; the terminal reset/Live-unload adapters are implemented but
-unenrolled. Two `SL_GetStringOfSize`, one `SL_AddUser`, two
+Production generation enrollment, alias/completed-object unpublication, production admission/cleanup callback wiring,
+and exact-key loader routing remain. The pending branch composes stream/PMem/arena/adapter and string/pending authority
+through strict admission/abandonment/Live-unload/drain/reset table operations, but remains unenrolled. Two
+`SL_GetStringOfSize`, one `SL_AddUser`, two
 `SL_GetString`, one `SL_TransferSystem`, and one `SL_ShutdownSystem` site are source-frozen outside the controller.
 These are exactly seven total sites; transfer/shutdown implement the global 4 -> 8 sweep and are not additional sites.
 The keyed mutable runtime adapters merged in PR #57 as `57e2b1a2`; exact-head and post-merge runs
@@ -2009,11 +2047,12 @@ jobs in run **29673379640**; Codex reviewed exact final head `0eec9b1e`, Gemini 
 both were clean with zero threads, and authoritative post-merge
 run **29673608169** passed all nine jobs at squash merge `74916b5b`. PR #68 subsequently merged the legacy native64
 `PMem_FreeIndex`/`PMem_EndAllocInPrim` repair as `2ee1e82c`; PR #69 then merged hidden mutable globals, whole-type
-test-helper containment, and actual macro-off ELF/COFF/AppleClang object seals as `534a9b1e`. Current `293a020c` reserves
+test-helper containment, and actual macro-off ELF/COFF/AppleClang object seals as `534a9b1e`. Merged PR #70 sequence: `293a020c` reserves
 the MP/SP PMem lock slots and `716eacc1` adds serialized global lifecycle/allocation/getter access, retained reservation
 authentication, and coherent initialization state; `0a9128aa` completes stable owned names and bounded dump snapshots;
 `852e7db9` adds the unused permanent-Ended process-life `$init` controller; and `792ff1c7` completes passive shared-
-resource authentication. Exact-key adapters and later atomic checked/loader enrollment still remain. Merged PR #61 adds
+resource authentication. The pending branch completes the exact-key adapter/controller layer; atomic checked/loader
+enrollment still remains. Merged PR #61 adds
 exact-key stream/alias
 bind and invalidation with a typed aligned
 zone identity, hardened production-neutrality seal, stale-terminal retry safety, complete relocation-capacity release,
@@ -2054,9 +2093,10 @@ resolved. PR #66 merged the exact tree-neutral ancestry checkpoint
 **29707497302** passed all nine jobs and the ancestry is verified. PR #67 merged passive durable-receipt composition as
 `76d0e065888aab298d430b4bf4e115c07369bc88`; exact-head and authoritative runs **29709263403** and **29709598049**
 passed all nine jobs. PR #68 merged the legacy PMem indexing repair, PR #69 merged the hidden-state/object seal, and no
-production site is enrolled. The current serialized PMem boundary, process-life controller, and passive shared-resource
-authentication are complete locally through `792ff1c7`. Add exact-key composite adapters next; only then enroll all
-seven sites atomically: five coordinator operations plus two exact-key
+production site is enrolled. PR #70 merged the serialized PMem boundary, process-life controller, and passive
+shared-resource authentication as `6a67a66e`; exact final head `ca2d1149` ultimately passed all nine jobs in run
+**29726370638**. The pending branch completes the exact-key composite adapters, but enrolls no caller. After final
+seals/review, enroll all seven sites atomically: five coordinator operations plus two exact-key
 root-journal stages. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
 short borrowed batches under transaction -> registry -> string -> memory-tree order. The bounded legacy compatibility

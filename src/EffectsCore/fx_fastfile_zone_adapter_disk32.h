@@ -123,6 +123,10 @@ enum class FxFastFileZoneAdapterDisk32Phase : std::uint8_t
 
 class alignas(8) FxFastFileZoneAdapterDisk32Workspace;
 
+#ifdef KISAK_FX_FASTFILE_ZONE_ADAPTER_TESTING
+struct FxFastFileZoneAdapterDisk32WorkspaceTestAccess;
+#endif
+
 [[nodiscard]] FxFastFileZoneAdapterDisk32Status TryBeginFxEffectDefZoneDisk32(
     FxFastFileZoneAdapterDisk32Workspace *workspace,
     FxFastFileNativeArena *arena,
@@ -262,6 +266,13 @@ public:
         return !operating_ && frameDepth_ == 0;
     }
 
+    // Exact read-only gate for an externally serialized composition check.
+    // A depth-zero workspace is reusable only after the complete recording
+    // topology has returned to ResetRecordingState's canonical boundary;
+    // stale counts or frame witnesses would otherwise become base indices for
+    // the next top-level transaction.
+    [[nodiscard]] bool readyForCompositionAuthentication() const noexcept;
+
     [[nodiscard]] FxFastFileNativeDisk32Status
     lastConverterStatus() const noexcept
     {
@@ -339,6 +350,9 @@ private:
     friend FxFastFileZoneAdapterDisk32Status
     AbortFxFastFileZoneAdapterDisk32(
         FxFastFileZoneAdapterDisk32Workspace *) noexcept;
+#ifdef KISAK_FX_FASTFILE_ZONE_ADAPTER_TESTING
+    friend struct FxFastFileZoneAdapterDisk32WorkspaceTestAccess;
+#endif
 
     enum class FrameKind : std::uint8_t
     {
@@ -470,4 +484,109 @@ static_assert(
 static_assert(
     std::is_nothrow_destructible_v<FxFastFileZoneAdapterDisk32Workspace>);
 RUNTIME_SIZE(FxFastFileZoneAdapterDisk32Workspace, 0xBD048, 0xC34C8);
+
+inline bool FxFastFileZoneAdapterDisk32Workspace::
+readyForCompositionAuthentication() const noexcept
+{
+    if (operating_ || frameDepth_ != 0 || arena_ != nullptr
+        || cursor_.context != nullptr || cursor_.validateWireSpan != nullptr
+        || referenceCount_ != 0 || spanCount_ != 0 || resolveHint_ != 0
+        || spanHint_ != 0
+        || effectConverter_.phase() != FxFastFileNativeDisk32Phase::Empty
+        || impactConverter_.phase() != FxFastFileNativeDisk32Phase::Empty)
+    {
+        return false;
+    }
+
+    for (const Frame &frame : frames_)
+    {
+        if (frame.kind != FrameKind::None
+            || frame.state != FxFastFileZoneAdapterDisk32Phase::Idle
+            || frame.stage != ElementStage::Velocity
+            || frame.effectHeader != nullptr || frame.impactHeader != nullptr
+            || frame.elements != nullptr || frame.entries != nullptr
+            || frame.elementCount != 0 || frame.elementIndex != 0
+            || frame.visualSlot != 0 || frame.effectRefSlot != 0
+            || frame.impactSlot != 0 || frame.referenceBase != 0
+            || frame.spanBase != 0
+            || frame.arenaTransaction
+                != FxFastFileNativeArenaTransaction{})
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+#ifdef KISAK_FX_FASTFILE_ZONE_ADAPTER_TESTING
+// Tests opt in before including this header. Production callers have no
+// mutation escape hatch around the checked adapter state machine.
+struct FxFastFileZoneAdapterDisk32WorkspaceTestAccess final
+{
+    static void SetArena(
+        FxFastFileZoneAdapterDisk32Workspace *const workspace,
+        FxFastFileNativeArena *const arena) noexcept
+    {
+        if (workspace)
+            workspace->arena_ = arena;
+    }
+
+    static void SetCursor(
+        FxFastFileZoneAdapterDisk32Workspace *const workspace,
+        const FxFastFileZoneAdapterCursor &cursor) noexcept
+    {
+        if (workspace)
+            workspace->cursor_ = cursor;
+    }
+
+    static void SetRecordingCounts(
+        FxFastFileZoneAdapterDisk32Workspace *const workspace,
+        const std::uint32_t referenceCount,
+        const std::uint32_t spanCount) noexcept
+    {
+        if (workspace)
+        {
+            workspace->referenceCount_ = referenceCount;
+            workspace->spanCount_ = spanCount;
+        }
+    }
+
+    static void SetHints(
+        FxFastFileZoneAdapterDisk32Workspace *const workspace,
+        const std::uint32_t resolveHint,
+        const std::uint32_t spanHint) noexcept
+    {
+        if (workspace)
+        {
+            workspace->resolveHint_ = resolveHint;
+            workspace->spanHint_ = spanHint;
+        }
+    }
+
+    static void CorruptDormantFrame(
+        FxFastFileZoneAdapterDisk32Workspace *const workspace) noexcept
+    {
+        if (workspace)
+            workspace->frames_[0].kind =
+                FxFastFileZoneAdapterDisk32Workspace::FrameKind::Effect;
+    }
+
+    static void SetOperating(
+        FxFastFileZoneAdapterDisk32Workspace *const workspace,
+        const bool operating) noexcept
+    {
+        if (workspace)
+            workspace->operating_ = operating;
+    }
+
+    static void RestoreStableState(
+        FxFastFileZoneAdapterDisk32Workspace *const workspace) noexcept
+    {
+        if (!workspace)
+            return;
+        workspace->operating_ = false;
+        FxFastFileZoneAdapterDisk32Workspace::ResetRecordingState(*workspace);
+    }
+};
+#endif
 } // namespace fx::fastfile

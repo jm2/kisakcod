@@ -137,6 +137,71 @@ function(remove_reviewed_runtime_table_pmem_constructs
     set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
 endfunction()
 
+function(remove_reviewed_serialized_pmem_bridge PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _candidate "${_candidate}")
+
+    if(PATH MATCHES "universal/physicalmemory_runtime\\.h$")
+        set(_reviewed_exact
+            "namespace physical_memory { class AllocationReceipt; } // namespace physical_memory")
+        string(FIND "${_candidate}" "${_reviewed_exact}" _exact_position)
+        if(_exact_position EQUAL -1)
+            message(FATAL_ERROR
+                "Checked-PMem serialized bridge lost its opaque declaration")
+        endif()
+        string(REPLACE "${_reviewed_exact}"
+            "KISAK_REVIEWED_OPAQUE_PMEM_RECEIPT"
+            _candidate "${_candidate}")
+        set(_slice_begin
+            "[[nodiscard]] AllocationReceiptStatus KISAK_CDECL TryBeginAllocationReceipt(")
+        set(_slice_end
+            "// These report-free operations own the one process-lifetime high-prim")
+    elseif(PATH MATCHES "universal/physicalmemory\\.cpp$")
+        set(_reviewed_include "#include \"physicalmemory_checked.h\"")
+        string(FIND "${_candidate}" "${_reviewed_include}" _include_position)
+        if(_include_position EQUAL -1)
+            message(FATAL_ERROR
+                "Checked-PMem serialized bridge lost its reviewed include")
+        endif()
+        string(REPLACE "${_reviewed_include}"
+            "KISAK_REVIEWED_SERIALIZED_PMEM_INCLUDE"
+            _candidate "${_candidate}")
+
+        set(_slice_begin "struct AuthenticatedReceiptLocation final")
+        set(_slice_end "void SetRuntimePhase(")
+        string(FIND "${_candidate}" "${_slice_begin}" _begin_position)
+        string(FIND "${_candidate}" "${_slice_end}" _end_position)
+        if(_begin_position EQUAL -1 OR _end_position LESS_EQUAL _begin_position)
+            message(FATAL_ERROR
+                "Checked-PMem serialized bridge private slice drifted")
+        endif()
+        string(SUBSTRING "${_candidate}" 0 ${_begin_position} _prefix)
+        string(SUBSTRING "${_candidate}" ${_end_position} -1 _suffix)
+        set(_candidate
+            "${_prefix} KISAK_REVIEWED_SERIALIZED_PMEM_PRIVATE ${_suffix}")
+
+        set(_slice_begin
+            "pmem_runtime::AllocationReceiptStatus KISAK_CDECL pmem_runtime::TryBeginAllocationReceipt(")
+        set(_slice_end
+            "pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL")
+    else()
+        message(FATAL_ERROR
+            "Checked-PMem serialized bridge received unexpected path: ${PATH}")
+    endif()
+
+    string(FIND "${_candidate}" "${_slice_begin}" _begin_position)
+    string(FIND "${_candidate}" "${_slice_end}" _end_position)
+    if(_begin_position EQUAL -1 OR _end_position LESS_EQUAL _begin_position)
+        message(FATAL_ERROR
+            "Checked-PMem serialized bridge public slice drifted in ${PATH}")
+    endif()
+    string(SUBSTRING "${_candidate}" 0 ${_begin_position} _prefix)
+    string(SUBSTRING "${_candidate}" ${_end_position} -1 _suffix)
+    set(_candidate
+        "${_prefix} KISAK_REVIEWED_SERIALIZED_PMEM_PUBLIC ${_suffix}")
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
 function(detect_checked_pmem_enrollment SOURCE_VAR OUT_VAR)
     set(_found FALSE)
     foreach(_token IN LISTS _checked_pmem_protected_tokens)
@@ -184,7 +249,8 @@ foreach(_relative IN ITEMS
     "src/universal/physicalmemory_checked.h"
     "src/universal/physicalmemory_checked.cpp"
     "tests/physicalmemory_checked_tests.cpp"
-    "tests/physicalmemory_checked_api_seal_tests.cpp")
+    "tests/physicalmemory_checked_api_seal_tests.cpp"
+    "tests/db_zone_runtime_table_source_test.cmake")
     if(NOT EXISTS "${SOURCE_ROOT}/${_relative}")
         message(FATAL_ERROR "Missing checked physical-memory file: ${_relative}")
     endif()
@@ -192,23 +258,52 @@ endforeach()
 
 file(READ "${SOURCE_ROOT}/src/universal/physicalmemory_checked.h" _header_raw)
 file(READ "${SOURCE_ROOT}/src/universal/physicalmemory_checked.cpp" _source_raw)
+file(READ "${SOURCE_ROOT}/src/universal/physicalmemory_runtime.h"
+    _runtime_header_raw)
+file(READ "${SOURCE_ROOT}/src/universal/physicalmemory.cpp"
+    _runtime_source_raw)
 file(READ "${SOURCE_ROOT}/tests/physicalmemory_checked_tests.cpp" _tests_raw)
 file(READ
     "${SOURCE_ROOT}/tests/physicalmemory_checked_api_seal_tests.cpp"
     _seal_raw)
 file(READ "${SOURCE_ROOT}/scripts/common_files.cmake" _common_raw)
 file(READ "${SOURCE_ROOT}/tests/CMakeLists.txt" _cmake_raw)
+file(READ "${SOURCE_ROOT}/tests/db_zone_runtime_table_source_test.cmake"
+    _runtime_table_seal_raw)
 file(READ "${SOURCE_ROOT}/.github/workflows/ci.yml" _ci_raw)
 file(READ "${SOURCE_ROOT}/src/database/db_registry.cpp" _registry_raw)
 
 normalize_physicalmemory_source("${_header_raw}" _header)
 normalize_physicalmemory_source("${_source_raw}" _source)
+normalize_physicalmemory_source("${_runtime_header_raw}" _runtime_header)
+normalize_physicalmemory_source("${_runtime_source_raw}" _runtime_source)
 normalize_physicalmemory_source("${_tests_raw}" _tests)
 normalize_physicalmemory_source("${_seal_raw}" _seal)
 normalize_physicalmemory_source("${_common_raw}" _common)
 normalize_physicalmemory_source("${_cmake_raw}" _cmake)
+normalize_physicalmemory_source(
+    "${_runtime_table_seal_raw}" _runtime_table_seal)
 normalize_physicalmemory_source("${_ci_raw}" _ci)
 normalize_physicalmemory_source("${_registry_raw}" _registry)
+
+# The runtime table is the sole active checked-allocation composition. Its
+# dedicated exact-controller seal must remain registered and must freeze every
+# serialized PMem operation before this component-wide scan delegates it.
+foreach(_marker IN ITEMS
+    "pmem_runtime::TryBeginAllocationReceipt|1"
+    "pmem_runtime::TryAllocate|1"
+    "pmem_runtime::TryAuthenticateAllocationReceipt|1"
+    "pmem_runtime::TryAuthenticateAllocationRange|2"
+    "pmem_runtime::TryEndAllocationReceipt|2"
+    "pmem_runtime::TryFreeAllocationReceipt|1"
+    "pmem_runtime::StorageIsOutsideManagedMemory|6")
+    require_physicalmemory_contains(
+        _runtime_table_seal "${_marker}"
+        "dedicated runtime-table checked-PMem enrollment seal")
+endforeach()
+require_physicalmemory_contains(
+    _cmake "NAME database-zone-runtime-table-source-invariants"
+    "dedicated runtime-table seal registration")
 
 foreach(_marker IN ITEMS
     "enum class AllocationScopeStatus : std::uint8_t"
@@ -217,12 +312,18 @@ foreach(_marker IN ITEMS
     "AllocationReceipt(AllocationReceipt &&) = delete;"
     "~AllocationReceipt() noexcept;"
     "std::uint8_t phaseWitness_;"
+    "[[nodiscard]] bool hasCanonicalTerminalState() const noexcept;"
+    "void setCanonicalTerminalState() noexcept;"
     "[[nodiscard]] bool isCanonical() const noexcept;"
     "[[nodiscard]] AllocationScopeStatus TryBegin( PhysicalMemory *memory, std::uint32_t allocType, const char *stableName, AllocationReceipt *receipt) noexcept;"
     "[[nodiscard]] AllocationScopeStatus TryEnd( AllocationReceipt *receipt) noexcept;"
     "[[nodiscard]] AllocationScopeStatus TryFree( AllocationReceipt *receipt) noexcept;"
+    "[[nodiscard]] bool AuthenticateAllocationReceiptNoLock( const physical_memory::AllocationReceipt &receipt, const PhysicalMemory &owner, std::uint32_t allocType, std::uint32_t index, const char *stableName, AllocationReceiptPhase expectedPhase) noexcept;"
+    "[[nodiscard]] bool AuthenticateAllocationRangeNoLock( const physical_memory::AllocationReceipt &receipt, const PhysicalMemory &owner, std::uint32_t allocType, std::uint32_t index, const char *stableName, const void *storage, std::size_t size, AllocationReceiptPhase expectedPhase) noexcept;"
+    "friend bool pmem_runtime::detail::AuthenticateAllocationReceiptNoLock("
     "externally serialize every access to both prims"
     "lifecycle/init helpers or directly replace"
+    "It remains authenticatable after its former allocation-list index is reused."
     "only after authenticating that exact generation's Freed terminal"
     "PhysicalMemory control storage and AllocationReceipt storage must be"
     "mutually disjoint. Both objects must remain wholly outside the entire"
@@ -238,6 +339,60 @@ foreach(_marker IN ITEMS
 endforeach()
 
 foreach(_marker IN ITEMS
+    "class AllocationReceipt;"
+    "enum class AllocationReceiptPhase : std::uint8_t"
+    "enum class AllocationReceiptStatus : std::uint8_t"
+    "TryBeginAllocationReceipt( const char *name, std::uint32_t allocType, physical_memory::AllocationReceipt *receipt) noexcept;"
+    "TryEndAllocationReceipt( physical_memory::AllocationReceipt *receipt) noexcept;"
+    "TryFreeAllocationReceipt( physical_memory::AllocationReceipt *receipt) noexcept;"
+    "TryAuthenticateAllocationReceipt( const physical_memory::AllocationReceipt *receipt, std::uint32_t expectedAllocationType, AllocationReceiptPhase expectedPhase) noexcept;"
+    "TryAuthenticateAllocationRange( const physical_memory::AllocationReceipt *receipt, std::uint32_t expectedAllocationType, const void *storage, std::size_t size, AllocationReceiptPhase expectedPhase) noexcept;"
+    "StorageIsOutsideManagedMemory( const void *storage, std::size_t size) noexcept;")
+    require_physicalmemory_contains(
+        _runtime_header "${_marker}" "serialized opaque receipt bridge API")
+endforeach()
+
+foreach(_marker IN ITEMS
+    "#include \"physicalmemory_checked.h\""
+    "StorageIsOutsideManagedMemoryReadyNoLock("
+    "AuthenticateReceiptLocationNoLock("
+    "physical_memory::TryBegin( &g_mem, allocType, owned.text, receipt);"
+    "physical_memory::TryEnd(receipt);"
+    "physical_memory::TryFree(receipt);"
+    "g_runtime.ownedNames.names[location.allocType][location.index] = {};"
+    "AuthenticateAllocationRangeNoLock("
+    "pmem_runtime::TryAuthenticateAllocationRange(")
+    require_physicalmemory_contains(
+        _runtime_source "${_marker}" "serialized hidden-owner integration")
+endforeach()
+
+string(FIND "${_runtime_source}"
+    "AuthenticatedReceiptLocation AuthenticateReceiptLocationNoLock("
+    _receipt_location_start)
+string(FIND "${_runtime_source}"
+    "pmem_runtime::AllocationReceiptStatus MapAllocationScopeStatus("
+    _receipt_location_end)
+if(_receipt_location_start EQUAL -1
+   OR _receipt_location_end LESS_EQUAL _receipt_location_start)
+    message(FATAL_ERROR
+        "Could not isolate serialized PMem receipt-location authenticator")
+endif()
+math(EXPR _receipt_location_length
+    "${_receipt_location_end} - ${_receipt_location_start}")
+string(SUBSTRING "${_runtime_source}"
+    ${_receipt_location_start} ${_receipt_location_length}
+    _receipt_location)
+require_physicalmemory_ordered(
+    _receipt_location
+    "AllocationReceiptPhase::Freed))"
+    "if (live)"
+    "Freed authentication must run before any reused-slot live gate")
+forbid_physicalmemory_contains(
+    _receipt_location
+    "OwnedNameIsPristine(owned)"
+    "Freed authentication cannot depend on a cleared name sidecar")
+
+foreach(_marker IN ITEMS
     "for (std::uint32_t index = prim.allocListCount; index < kPhysicalAllocationCapacity; ++index)"
     "if (prim.allocList[index].name != nullptr)"
     "prim.allocList[prim.allocListCount - 1].name == nullptr"
@@ -251,6 +406,12 @@ foreach(_marker IN ITEMS
     "ValidatePrimTopology(memory->prim[1], 1)"
     "if (!receipt->isCanonical())"
     "receipt->phaseWitness_ = static_cast<std::uint8_t>(receipt->phase_) ^ kPhaseWitnessMask;"
+    "receipt->setCanonicalTerminalState();"
+    "phase_ == Phase::Freed"
+    "hasCanonicalTerminalState()"
+    "startPos_ == 0"
+    "reserved_[0] == kTerminalTagFirst"
+    "reserved_[1] == kTerminalTagSecond"
     "PhysicalMemoryAllocation &entry = prim.allocList[index];"
     "PhysicalMemoryAllocation &entry = prim.allocList[receipt->index_];"
     "while (remaining != 0 && prim.allocList[remaining - 1].name == nullptr)"
@@ -258,6 +419,31 @@ foreach(_marker IN ITEMS
     require_physicalmemory_contains(
         _source "${_marker}" "full typed topology and receipt validation")
 endforeach()
+
+foreach(_marker IN ITEMS
+    "bool pmem_runtime::detail::AuthenticateAllocationReceiptNoLock("
+    "receipt.owner_ != &owner"
+    "receipt.prim_ != &owner.prim[allocType]"
+    "receipt.allocType_ != allocType || receipt.index_ != index"
+    "receipt.name_ != stableName"
+    "receipt.startPos_ != prim.allocList[index].pos"
+    "privatePhase == Receipt::Phase::Freed"
+    "if (privatePhase == Receipt::Phase::Freed) return true;"
+    "index + 1 == prim.allocListCount"
+    "prim.allocName == stableName"
+    "return prim.allocName != stableName;"
+    "bool pmem_runtime::detail::AuthenticateAllocationRangeNoLock("
+    "storageBegin > maximum - size"
+    "storageBegin >= allocationBegin && storageEnd <= allocationEnd")
+    require_physicalmemory_contains(
+        _source "${_marker}" "const-only exact receipt predicate")
+endforeach()
+
+require_physicalmemory_ordered(
+    _source
+    "if (privatePhase == Receipt::Phase::Freed) return true;"
+    "const PhysicalMemoryPrim &prim = owner.prim[allocType];"
+    "Freed authentication must not consult a reused allocation-list slot")
 
 set(_canonical_remaining "${_source}")
 set(_canonical_check_count 0)
@@ -316,9 +502,9 @@ foreach(_forbidden IN ITEMS
         _source "${_forbidden}" "no legacy/reporting/allocation/string path")
 endforeach()
 
-# This foundation remains production-neutral. Existing registry callers stay
-# on the legacy route until the generation-keyed resource coordinator owns the
-# exact receipt and can enforce its no-bypass precondition.
+# Direct registry callers remain on the legacy route until the generation-
+# keyed coordinator owns the exact receipt. The reviewed hidden-owner bridge
+# above is the only production raw-checked enrollment permitted meanwhile.
 foreach(_legacy_call IN ITEMS
     "PMem_BeginAlloc(zone->name, g_zoneAllocType);"
     "PMem_EndAlloc(zone->name, g_zoneAllocType);"
@@ -462,10 +648,16 @@ foreach(_production_path IN LISTS _production_sources)
             _production_text _runtime_namespace_declaration)
         if(_runtime_namespace_declaration)
             message(FATAL_ERROR
-                "Passive runtime-table composition reopened the checked-PMem "
+                "Runtime-table composition reopened the checked-PMem "
                 "namespace in ${_production_path}")
         endif()
-        remove_reviewed_runtime_table_pmem_constructs(
+        # Composite enrollment is owned by the runtime table's stricter
+        # exact-controller source seal. That seal freezes the complete friend
+        # surface, ABI, and each reviewed serialized PMem bridge operation.
+        continue()
+    elseif(_production_path MATCHES
+        "universal/physicalmemory(_runtime\\.h|\\.cpp)$")
+        remove_reviewed_serialized_pmem_bridge(
             "${_production_path}" _production_text _production_text)
     endif()
     detect_checked_pmem_enrollment(_production_text _enrolled)
@@ -520,7 +712,11 @@ foreach(_marker IN ITEMS
     "!CanReachPhase<Receipt>"
     "!CanReachPhaseWitness<Receipt>"
     "!CanReachReserved<Receipt>"
-    "!CanReset<Receipt>")
+    "!CanReset<Receipt>"
+    "!CanCheckCanonicalTerminalState<Receipt>"
+    "!CanSetCanonicalTerminalState<Receipt>"
+    "AuthenticateAllocationReceiptNoLock("
+    "AuthenticateAllocationRangeNoLock(")
     require_physicalmemory_contains(
         _seal "${_marker}" "positive production receipt authority seal")
 endforeach()
@@ -553,6 +749,7 @@ foreach(_marker IN ITEMS
     "TestMiddleHolesAndLowTailCollapse();"
     "TestMiddleHolesAndHighTailCollapse();"
     "TestReceiptPhaseWitnessAndTerminalCanonicality();"
+    "TestFreedReceiptSurvivesSameIndexReuse();"
     "TestBothPrimsRevalidatedBeforeEndAndFree();"
     "AllocationScopeStatus::CapacityExceeded"
     "AllocationScopeStatus::ReceiptMismatch"

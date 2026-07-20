@@ -3,12 +3,44 @@
 #include "platform_compat.h"
 #include "physicalmemory.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace physical_memory
 {
 class AllocationReceipt;
 } // namespace physical_memory
+
+namespace pmem_runtime
+{
+enum class AllocationReceiptPhase : std::uint8_t;
+
+namespace detail
+{
+// Const-only exact-key predicate for the serialized hidden-owner bridge. The
+// caller must hold the physical-memory lock and supply the authoritative
+// owner, allocation slot, owned stable-name address, and expected phase.
+[[nodiscard]] bool AuthenticateAllocationReceiptNoLock(
+    const physical_memory::AllocationReceipt &receipt,
+    const PhysicalMemory &owner,
+    std::uint32_t allocType,
+    std::uint32_t index,
+    const char *stableName,
+    AllocationReceiptPhase expectedPhase) noexcept;
+
+// Exact receipt authentication plus a bounds-only query over that live
+// allocation's own byte interval. No owner or interval pointer is returned.
+[[nodiscard]] bool AuthenticateAllocationRangeNoLock(
+    const physical_memory::AllocationReceipt &receipt,
+    const PhysicalMemory &owner,
+    std::uint32_t allocType,
+    std::uint32_t index,
+    const char *stableName,
+    const void *storage,
+    std::size_t size,
+    AllocationReceiptPhase expectedPhase) noexcept;
+} // namespace detail
+} // namespace pmem_runtime
 
 namespace db::zone_runtime::detail
 {
@@ -34,8 +66,10 @@ namespace physical_memory
 // normal allocator to advance the selected prim's position, and may create
 // other checked scopes after this one has ended, but must not call legacy
 // lifecycle/init helpers or directly replace, remove, or reinitialize checked
-// entries. Without adding an incarnation nonce to the legacy PhysicalMemory
-// ABI, bypass/reinitialization could recreate the same structural tuple.
+// entries. A Freed receipt uses an exact receipt-local canonical encoding.
+// It remains authenticatable after its former allocation-list index is reused.
+// Without adding an incarnation nonce to the legacy PhysicalMemory ABI,
+// bypass/reinitialization could still recreate the same structural tuple.
 // A durable generation slot may destroy and reconstruct this single-use
 // receipt only after authenticating that exact generation's Freed terminal
 // state; it must never reset or recycle receipt bytes while ownership is live.
@@ -102,10 +136,19 @@ private:
     // Exact const-only friendship for passive runtime-table authentication.
     friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(
         const AllocationReceipt &receipt) noexcept;
+    friend bool pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+        const AllocationReceipt &receipt,
+        const PhysicalMemory &owner,
+        std::uint32_t allocType,
+        std::uint32_t index,
+        const char *stableName,
+        pmem_runtime::AllocationReceiptPhase expectedPhase) noexcept;
 
     [[nodiscard]] bool reservedIsZero() const noexcept;
     [[nodiscard]] bool hasValidPhase() const noexcept;
     [[nodiscard]] bool hasValidPhaseWitness() const noexcept;
+    [[nodiscard]] bool hasCanonicalTerminalState() const noexcept;
+    void setCanonicalTerminalState() noexcept;
     [[nodiscard]] bool isPristine() const noexcept;
     [[nodiscard]] bool isBound() const noexcept;
     [[nodiscard]] bool isCanonical() const noexcept;

@@ -1,5 +1,6 @@
 #include <database/db_stream.h>
 #include <database/db_zone_stream_ownership.h>
+#include <database/db_zone_stream_ownership_internal.h>
 #include <qcommon/com_error.h>
 
 #include <algorithm>
@@ -196,6 +197,19 @@ void ReleaseLoadingGeneration(
             slot, key, callbacks)
             == lifecycle::ZoneLoadContextStatus::Success,
         "finish lifecycle abandonment");
+}
+
+void ReleaseLiveGeneration(
+    lifecycle::ZoneLoadContextSlot *const slot,
+    const lifecycle::ZoneLoadContextKey &key)
+{
+    lifecycle::ZoneLoadCleanupCallbacks callbacks{};
+    callbacks.context = slot;
+    callbacks.perform = CompleteCleanup;
+    Expect(
+        lifecycle::TryUnloadZoneLoadContext(slot, key, callbacks)
+            == lifecycle::ZoneLoadContextStatus::Success,
+        "finish lifecycle unload");
 }
 
 void ExpectAllStreamsScrubbed()
@@ -474,6 +488,363 @@ void TestPassiveSingletonAuthentication()
     Expect(
         ownership::AuthenticatePassiveZoneStreamSingleton(expected),
         "legacy scrub restores complete passive authentication");
+}
+
+void TestCompositionAuthentication()
+{
+    using Mode = ownership::ZoneStreamCompositionMode;
+
+    ZoneFixture fixture;
+    ownership::ZoneStreamGenerationReceipt receipt;
+    ownership::ActiveZoneStreamBinding active;
+    const lifecycle::ZoneLoadContextKey nullKey{};
+    static_assert(noexcept(ownership::AuthenticateZoneStreamComposition(
+        active, receipt, nullptr, nullKey, Mode::Pristine)));
+    Expect(
+        ownership::AuthenticateZoneStreamComposition(
+            active, receipt, nullptr, nullKey, Mode::Pristine),
+        "exact pristine stream composition authenticates");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, nullptr, nullKey, Mode::NeverBound),
+        "pristine receipt is distinct from enrolled NeverBound");
+
+    lifecycle::ZoneLoadContextSlot lifecycleSlot;
+    const lifecycle::ZoneLoadContextKey key = Claim(&lifecycleSlot, 5);
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::Pristine),
+        "pristine mode rejects an enrolled lifecycle and key");
+    ExpectStatus(
+        ownership::TryBeginZoneStreamGeneration(
+            &receipt, &lifecycleSlot, key),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "composition receipt begins");
+    Expect(
+        ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::NeverBound),
+        "exact NeverBound stream composition authenticates");
+
+    ownership::ZoneStreamGenerationReceipt wrongReceipt;
+    lifecycle::ZoneLoadContextSlot wrongLifecycle;
+    lifecycle::ZoneLoadContextKey staleKey = key;
+    ++staleKey.generation;
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, wrongReceipt, &lifecycleSlot, key, Mode::NeverBound),
+        "NeverBound authentication rejects another receipt");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &wrongLifecycle, key, Mode::NeverBound),
+        "NeverBound authentication rejects another lifecycle address");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, staleKey, Mode::NeverBound),
+        "NeverBound authentication rejects a stale key");
+    g_streamPos = fixture.storage[0].data();
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::NeverBound),
+        "NeverBound authentication requires the fully scrubbed singleton");
+    g_streamPos = nullptr;
+
+    ExpectStatus(
+        ownership::TryBindZoneStreams(
+            &active,
+            &receipt,
+            key,
+            &fixture.zone,
+            fixture.blocks,
+            relocation::kBlockCount),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "composition stream singleton binds");
+    const auto authenticatesBound = [&]() noexcept
+    {
+        return ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::Bound);
+    };
+    const auto expectBoundRejected = [&](const char *const message)
+    {
+        Expect(!authenticatesBound(), message);
+    };
+    Expect(authenticatesBound(), "exact Bound stream composition authenticates");
+    Expect(
+        ownership::AuthenticateZoneStreamComposition(
+            active, wrongReceipt, nullptr, nullKey, Mode::Pristine),
+        "pristine receipt coexists with another exact Bound owner");
+
+    lifecycle::ZoneLoadContextSlot queuedLifecycle;
+    const lifecycle::ZoneLoadContextKey queuedKey =
+        Claim(&queuedLifecycle, 6);
+    ownership::ZoneStreamGenerationReceipt queuedReceipt;
+    ownership::ActiveZoneStreamBinding queuedBinding;
+    ExpectStatus(
+        ownership::TryBeginZoneStreamGeneration(
+            &queuedReceipt, &queuedLifecycle, queuedKey),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "queued composition receipt begins while another generation owns streams");
+    Expect(
+        ownership::AuthenticateZoneStreamComposition(
+            active,
+            queuedReceipt,
+            &queuedLifecycle,
+            queuedKey,
+            Mode::NeverBound),
+        "NeverBound receipt coexists with another exact Bound owner");
+    ExpectStatus(
+        ownership::TryInvalidateZoneStreams(
+            &queuedBinding, &queuedReceipt, queuedKey),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "queued NeverBound receipt invalidates without disturbing its peer");
+    ReleaseLoadingGeneration(&queuedLifecycle, queuedKey);
+    Expect(
+        ownership::AuthenticateZoneStreamComposition(
+            active,
+            queuedReceipt,
+            &queuedLifecycle,
+            queuedKey,
+            Mode::Invalidated),
+        "prior terminal Invalidated receipt coexists with a Bound owner");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::NeverBound),
+        "Bound composition rejects NeverBound mode");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::Invalidated),
+        "Bound composition rejects Invalidated mode");
+    ownership::ActiveZoneStreamBinding wrongBinding;
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            wrongBinding, receipt, &lifecycleSlot, key, Mode::Bound),
+        "Bound authentication rejects another singleton binding");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, wrongReceipt, &lifecycleSlot, key, Mode::Bound),
+        "Bound authentication rejects another exact receipt");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &wrongLifecycle, key, Mode::Bound),
+        "Bound authentication rejects another lifecycle address");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, staleKey, Mode::Bound),
+        "Bound authentication rejects a stale key");
+
+    g_streamPosIndex = relocation::kBlockCount;
+    expectBoundRejected("out-of-range active stream index is rejected");
+    g_streamPosIndex = 0;
+    g_streamPosStackIndex = 65;
+    expectBoundRejected("overflowed stream stack depth is rejected");
+    g_streamPosStackIndex = 0;
+    g_streamDelayIndex = 4097;
+    expectBoundRejected("overflowed delayed-stream count is rejected");
+    g_streamDelayIndex = 0;
+
+    XZoneMemory wrongZone{};
+    g_streamZoneMem = &wrongZone;
+    expectBoundRejected("foreign legacy zone identity is rejected");
+    g_streamZoneMem = &fixture.zone;
+    std::uint8_t outsideByte = 0;
+    g_streamPos = &outsideByte;
+    expectBoundRejected("active cursor outside all retained blocks is rejected");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, wrongReceipt, nullptr, nullKey, Mode::Pristine),
+        "non-Bound receipt scan still authenticates the shared Bound topology");
+    g_streamPos = fixture.storage[0].data();
+    g_streamPosArray[3] = fixture.storage[4].data() + 1;
+    expectBoundRejected("block cursor with wrong-block provenance is rejected");
+    g_streamPosArray[3] = fixture.storage[3].data();
+
+    g_streamPosStackIndex = 1;
+    g_streamPosStack[0].pos = fixture.storage[2].data();
+    g_streamPosStack[0].index = relocation::kBlockCount;
+    expectBoundRejected("used stack entry with invalid index is rejected");
+    g_streamPosStack[0].index = 0;
+    g_streamPosStack[0].pos = &outsideByte;
+    expectBoundRejected("used stack cursor outside retained blocks is rejected");
+    g_streamPosStackIndex = 0;
+    g_streamPosStack[0] = {};
+    g_streamPosStack[63].pos = &outsideByte;
+    g_streamPosStack[63].index = UINT32_MAX;
+    Expect(
+        authenticatesBound(),
+        "unused stack tail does not claim live cursor provenance");
+    g_streamPosStack[63] = {};
+
+    g_streamPosIndex = 2;
+    g_streamPos = fixture.storage[2].data();
+    g_streamPosStackIndex = 1;
+    g_streamPosStack[0].pos = fixture.storage[8].data();
+    g_streamPosStack[0].index = 0;
+    Expect(
+        authenticatesBound(),
+        "cross-block saved cursor is valid when pop does not consume it");
+    g_streamPosStackIndex = 2;
+    g_streamPosStack[1].pos = fixture.storage[7].data();
+    g_streamPosStack[1].index = 0;
+    g_streamPosStack[0].pos = fixture.storage[8].data();
+    g_streamPosStack[0].index = 3;
+    expectBoundRejected(
+        "effective block-zero pop rejects a foreign saved cursor");
+    g_streamPosStack[0].pos = fixture.storage[0].data();
+    Expect(
+        authenticatesBound(),
+        "effective block-zero pop accepts a block-zero saved cursor");
+    g_streamPosIndex = 0;
+    g_streamPos = fixture.storage[0].data();
+    g_streamPosStackIndex = 0;
+    g_streamPosStack[0] = {};
+    g_streamPosStack[1] = {};
+
+    g_streamDelayIndex = 1;
+    expectBoundRejected("used empty delayed-stream entry is rejected");
+    g_streamDelayArray[0].ptr = fixture.storage[2].data();
+    g_streamDelayArray[0].size = 0;
+    expectBoundRejected("delayed-stream pointer without size is rejected");
+    g_streamDelayArray[0].size = -1;
+    expectBoundRejected("negative delayed-stream span is rejected");
+    g_streamDelayArray[0].size = 1;
+    g_streamDelayArray[0].ptr = &outsideByte;
+    expectBoundRejected("delayed-stream span outside retained blocks is rejected");
+    g_streamDelayArray[0].ptr = fixture.storage[2].data() + 63;
+    g_streamDelayArray[0].size = 2;
+    expectBoundRejected("delayed-stream span crossing a block end is rejected");
+    g_streamDelayIndex = 0;
+    g_streamDelayArray[0] = {};
+    g_streamDelayArray[7].ptr = &outsideByte;
+    g_streamDelayArray[7].size = 1;
+    expectBoundRejected("malformed retained delayed-stream entry is rejected");
+    g_streamDelayArray[7] = {};
+
+    g_streamPosIndex = 4;
+    g_streamPos = fixture.storage[4].data() + fixture.storage[4].size();
+    for (std::size_t i = 0; i < relocation::kBlockCount; ++i)
+        g_streamPosArray[i] = fixture.storage[i].data() + i;
+    g_streamPosStackIndex = 2;
+    g_streamPosStack[0].pos = fixture.storage[8].data()
+        + fixture.storage[8].size();
+    g_streamPosStack[0].index = 1;
+    g_streamPosStack[1].pos = fixture.storage[0].data() + 1;
+    g_streamPosStack[1].index = 8;
+    g_streamDelayIndex = 2;
+    g_streamDelayArray[0].ptr = fixture.storage[2].data() + 4;
+    g_streamDelayArray[0].size = 8;
+    g_streamDelayArray[1].ptr = fixture.storage[8].data() + 63;
+    g_streamDelayArray[1].size = 1;
+    g_streamDelayArray[7].ptr = fixture.storage[3].data() + 16;
+    g_streamDelayArray[7].size = 4;
+    Expect(
+        authenticatesBound(),
+        "bounded cursors, used stack, and retained delayed spans authenticate");
+
+    ExpectStatus(
+        ownership::TryInvalidateZoneStreams(&active, &receipt, key),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "composition stream singleton invalidates");
+    Expect(
+        ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::Invalidated),
+        "exact Invalidated stream composition authenticates");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::NeverBound),
+        "Invalidated composition rejects NeverBound mode");
+    g_streamPosStack[7].index = 1;
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::Invalidated),
+        "Invalidated authentication requires every idle field scrubbed");
+    g_streamPosStack[7].index = 0;
+
+    ReleaseLoadingGeneration(&lifecycleSlot, key);
+    Expect(
+        ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::Invalidated),
+        "Invalidated authentication accepts the exact terminal Empty receipt");
+    lifecycle::ZoneLoadContextKey newerKey{};
+    Expect(
+        lifecycle::TryClaimZoneLoadContext(&lifecycleSlot, &newerKey)
+            == lifecycle::ZoneLoadContextStatus::Success,
+        "composition test advances the same lifecycle slot");
+    Expect(
+        !ownership::AuthenticateZoneStreamComposition(
+            active, receipt, &lifecycleSlot, key, Mode::Invalidated),
+        "old Invalidated receipt rejects same-slot generation reuse");
+    ReleaseLoadingGeneration(&lifecycleSlot, newerKey);
+}
+
+void TestLiveTerminalCompositionCoexistence()
+{
+    using Mode = ownership::ZoneStreamCompositionMode;
+
+    ZoneFixture priorFixture;
+    lifecycle::ZoneLoadContextSlot priorLifecycle;
+    const lifecycle::ZoneLoadContextKey priorKey =
+        Claim(&priorLifecycle, 7);
+    ownership::ZoneStreamGenerationReceipt priorReceipt;
+    ownership::ActiveZoneStreamBinding sharedBinding;
+    ExpectStatus(
+        ownership::TryBeginZoneStreamGeneration(
+            &priorReceipt, &priorLifecycle, priorKey),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "prior Live stream generation begins");
+    ExpectStatus(
+        ownership::TryBindZoneStreams(
+            &sharedBinding,
+            &priorReceipt,
+            priorKey,
+            &priorFixture.zone,
+            priorFixture.blocks,
+            relocation::kBlockCount),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "prior Live stream generation binds");
+    Expect(
+        lifecycle::TryCommitZoneLoadContext(&priorLifecycle, priorKey)
+            == lifecycle::ZoneLoadContextStatus::Success,
+        "prior stream generation publishes Live");
+    ExpectStatus(
+        ownership::TryInvalidateZoneStreams(
+            &sharedBinding, &priorReceipt, priorKey),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "prior Live stream generation invalidates");
+    ReleaseLiveGeneration(&priorLifecycle, priorKey);
+
+    ZoneFixture currentFixture;
+    lifecycle::ZoneLoadContextSlot currentLifecycle;
+    const lifecycle::ZoneLoadContextKey currentKey =
+        Claim(&currentLifecycle, 8);
+    ownership::ZoneStreamGenerationReceipt currentReceipt;
+    ExpectStatus(
+        ownership::TryBeginZoneStreamGeneration(
+            &currentReceipt, &currentLifecycle, currentKey),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "current stream generation begins");
+    ExpectStatus(
+        ownership::TryBindZoneStreams(
+            &sharedBinding,
+            &currentReceipt,
+            currentKey,
+            &currentFixture.zone,
+            currentFixture.blocks,
+            relocation::kBlockCount),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "current stream generation owns the shared singleton");
+    Expect(
+        ownership::AuthenticateZoneStreamComposition(
+            sharedBinding,
+            priorReceipt,
+            &priorLifecycle,
+            priorKey,
+            Mode::Invalidated),
+        "prior Live terminal receipt coexists with a different Bound owner");
+    ExpectStatus(
+        ownership::TryInvalidateZoneStreams(
+            &sharedBinding, &currentReceipt, currentKey),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "current coexistence generation invalidates");
+    ReleaseLoadingGeneration(&currentLifecycle, currentKey);
 }
 
 void TestBindValidationAndFailureAtomicity()
@@ -942,6 +1313,320 @@ void TestNativeWidthBlockAddresses()
         "native-width high block addresses invalidate");
     ReleaseLoadingGeneration(&lifecycleSlot, key);
 }
+
+void TestBlockOutputHardening()
+{
+    using OutputSpanAuthenticator = bool (*)(
+        const ownership::ActiveZoneStreamBinding &,
+        const void *,
+        std::size_t,
+        std::size_t) noexcept;
+    static_assert(std::is_same_v<
+        decltype(&ownership::AuthenticateZoneStreamOutputSpan),
+        OutputSpanAuthenticator>);
+    static_assert(
+        alignof(ownership::ActiveZoneStreamBinding)
+        >= alignof(relocation::BlockView));
+    static_assert(
+        alignof(ownership::ZoneStreamGenerationReceipt)
+        >= alignof(relocation::BlockView));
+    static_assert(
+        alignof(lifecycle::ZoneLoadContextSlot)
+        >= alignof(relocation::BlockView));
+    static_assert(
+        alignof(XZoneMemory) >= alignof(relocation::BlockView));
+
+    ZoneFixture fixture;
+    lifecycle::ZoneLoadContextSlot lifecycleSlot;
+    const lifecycle::ZoneLoadContextKey key = Claim(&lifecycleSlot, 31);
+    ownership::ZoneStreamGenerationReceipt receipt;
+    ownership::ActiveZoneStreamBinding active;
+    relocation::BlockView output{UINT32_C(0x12345678), UINT32_C(0x87654321)};
+    Expect(
+        ownership::AuthenticateZoneStreamOutputSpan(
+            active,
+            &output,
+            sizeof(output),
+            alignof(decltype(output))),
+        "ordinary output authenticates against an idle stream binding");
+    Expect(
+        !ownership::AuthenticateZoneStreamOutputSpan(
+            active,
+            &g_streamPos,
+            sizeof(g_streamPos),
+            alignof(decltype(g_streamPos))),
+        "idle binding still protects legacy singleton output ranges");
+
+    lifecycle::ZoneLoadContextSlot foreignLifecycle;
+    const lifecycle::ZoneLoadContextKey foreignKey =
+        Claim(&foreignLifecycle, 30);
+    ownership::ZoneStreamGenerationReceipt foreignReceipt;
+    ownership::ActiveZoneStreamBinding foreignActive;
+    ExpectStatus(
+        ownership::TryBeginZoneStreamGeneration(
+            &foreignReceipt, &foreignLifecycle, foreignKey),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "begin foreign owner for idle output hardening");
+    ExpectStatus(
+        ownership::TryBindZoneStreams(
+            &foreignActive,
+            &foreignReceipt,
+            foreignKey,
+            &fixture.zone,
+            fixture.blocks,
+            relocation::kBlockCount),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "bind foreign owner for idle output hardening");
+    const auto idleOutputBefore = ObjectBytes(output);
+    Expect(
+        !ownership::AuthenticateZoneStreamOutputSpan(
+            active,
+            &output,
+            sizeof(output),
+            alignof(decltype(output))),
+        "idle binding rejects a different hidden owner");
+    Expect(
+        ObjectBytes(output) == idleOutputBefore,
+        "foreign-owner rejection preserves output bytes");
+    ExpectStatus(
+        ownership::TryInvalidateZoneStreams(
+            &foreignActive, &foreignReceipt, foreignKey),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "invalidate foreign output-hardening owner");
+    ReleaseLoadingGeneration(&foreignLifecycle, foreignKey);
+
+    ExpectStatus(
+        ownership::TryBeginZoneStreamGeneration(
+            &receipt, &lifecycleSlot, key),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "begin stream generation for block output hardening");
+    ExpectStatus(
+        ownership::TryBindZoneStreams(
+            &active,
+            &receipt,
+            key,
+            &fixture.zone,
+            fixture.blocks,
+            relocation::kBlockCount),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "bind stream generation for block output hardening");
+
+    const auto outputBefore = ObjectBytes(output);
+    Expect(
+        !active.block(relocation::kBlockCount, &output),
+        "invalid block index is rejected");
+    Expect(
+        ObjectBytes(output) == outputBefore,
+        "invalid block index preserves output bytes");
+
+    alignas(relocation::BlockView)
+        std::array<std::uint8_t, sizeof(relocation::BlockView) + 1>
+            misalignedStorage{};
+    misalignedStorage.fill(UINT8_C(0xA5));
+    const auto misalignedBefore = misalignedStorage;
+    Expect(
+        !active.block(
+            0,
+            reinterpret_cast<relocation::BlockView *>(
+                misalignedStorage.data() + 1)),
+        "misaligned block output is rejected before dereference");
+    Expect(
+        misalignedStorage == misalignedBefore,
+        "misaligned block output storage remains unchanged");
+
+    const std::uintptr_t nonRepresentableAddress =
+        (std::numeric_limits<std::uintptr_t>::max)()
+        & ~(static_cast<std::uintptr_t>(
+                alignof(relocation::BlockView))
+            - 1);
+    Expect(
+        !active.block(
+            0,
+            reinterpret_cast<relocation::BlockView *>(
+                nonRepresentableAddress)),
+        "non-representable block output span is rejected");
+
+    const auto activeBefore = ObjectBytes(active);
+    const auto receiptBefore = ObjectBytes(receipt);
+    const auto lifecycleBefore = ObjectBytes(lifecycleSlot);
+    const auto zoneBefore = ObjectBytes(fixture.zone);
+    const StreamSnapshot streamsBefore = SnapshotStreams();
+    const auto aliasRegistryBefore = ObjectBytes(
+        ownership::detail::AliasRegistryForLegacyStream());
+    const auto directResolverBefore = ObjectBytes(
+        ownership::detail::DirectResolverForLegacyStream());
+    const auto expectControlsUnchanged = [&]()
+    {
+        Expect(
+            ObjectBytes(active) == activeBefore,
+            "rejected output preserves active binding bytes");
+        Expect(
+            ObjectBytes(receipt) == receiptBefore,
+            "rejected output preserves retained receipt bytes");
+        Expect(
+            ObjectBytes(lifecycleSlot) == lifecycleBefore,
+            "rejected output preserves retained lifecycle bytes");
+        Expect(
+            ObjectBytes(fixture.zone) == zoneBefore,
+            "rejected output preserves retained zone identity bytes");
+        Expect(
+            StreamsEqual(SnapshotStreams(), streamsBefore),
+            "rejected output preserves every legacy stream global");
+        Expect(
+            ObjectBytes(ownership::detail::AliasRegistryForLegacyStream())
+                == aliasRegistryBefore,
+            "rejected output preserves alias registry bytes");
+        Expect(
+            ObjectBytes(ownership::detail::DirectResolverForLegacyStream())
+                == directResolverBefore,
+            "rejected output preserves direct resolver bytes");
+    };
+
+    Expect(
+        !active.block(
+            0,
+            reinterpret_cast<relocation::BlockView *>(&active)),
+        "block output overlapping active binding is rejected");
+    expectControlsUnchanged();
+    Expect(
+        !active.block(
+            0,
+            reinterpret_cast<relocation::BlockView *>(&receipt)),
+        "block output overlapping retained receipt is rejected");
+    expectControlsUnchanged();
+    Expect(
+        !active.block(
+            0,
+            reinterpret_cast<relocation::BlockView *>(&lifecycleSlot)),
+        "block output overlapping retained lifecycle is rejected");
+    expectControlsUnchanged();
+    Expect(
+        !active.block(
+            0,
+            reinterpret_cast<relocation::BlockView *>(&fixture.zone)),
+        "block output overlapping retained zone identity is rejected");
+    expectControlsUnchanged();
+
+    struct SingletonProbe final
+    {
+        const void *object;
+        std::size_t size;
+        std::size_t alignment;
+        const char *message;
+    };
+    const SingletonProbe singletonProbes[] = {
+        {&g_streamDelayIndex,
+         sizeof(g_streamDelayIndex),
+         alignof(decltype(g_streamDelayIndex)),
+         "delay index output overlap is rejected"},
+        {&g_streamPosArray,
+         sizeof(g_streamPosArray),
+         alignof(decltype(g_streamPosArray)),
+         "cursor array output overlap is rejected"},
+        {&g_streamDelayArray,
+         sizeof(g_streamDelayArray),
+         alignof(decltype(g_streamDelayArray)),
+         "delay array output overlap is rejected"},
+        {&g_streamPosIndex,
+         sizeof(g_streamPosIndex),
+         alignof(decltype(g_streamPosIndex)),
+         "stream index output overlap is rejected"},
+        {&g_streamPosStack,
+         sizeof(g_streamPosStack),
+         alignof(decltype(g_streamPosStack)),
+         "cursor stack output overlap is rejected"},
+        {&g_streamZoneMem,
+         sizeof(g_streamZoneMem),
+         alignof(decltype(g_streamZoneMem)),
+         "zone pointer output overlap is rejected"},
+        {&g_streamPos,
+         sizeof(g_streamPos),
+         alignof(decltype(g_streamPos)),
+         "active cursor output overlap is rejected"},
+        {&g_streamPosStackIndex,
+         sizeof(g_streamPosStackIndex),
+         alignof(decltype(g_streamPosStackIndex)),
+         "stack index output overlap is rejected"},
+        {&ownership::detail::AliasRegistryForLegacyStream(),
+         sizeof(relocation::AliasRegistry),
+         alignof(relocation::AliasRegistry),
+         "alias registry output overlap is rejected"},
+        {&ownership::detail::DirectResolverForLegacyStream(),
+         sizeof(relocation::DirectResolver),
+         alignof(relocation::DirectResolver),
+         "direct resolver output overlap is rejected"},
+    };
+    for (const SingletonProbe &probe : singletonProbes)
+    {
+        Expect(
+            !ownership::AuthenticateZoneStreamOutputSpan(
+                active,
+                probe.object,
+                probe.size,
+                probe.alignment),
+            probe.message);
+        expectControlsUnchanged();
+    }
+    Expect(
+        !active.block(
+            0,
+            reinterpret_cast<relocation::BlockView *>(&g_streamPos)),
+        "block output overlapping active cursor global is rejected");
+    expectControlsUnchanged();
+
+    output = {UINT32_C(0x12345678), UINT32_C(0x87654321)};
+    const auto staleOutputBefore = ObjectBytes(output);
+    Expect(
+        lifecycle::TryBeginZoneLoadContextAbandonment(
+            &lifecycleSlot, key)
+            == lifecycle::ZoneLoadContextStatus::Success,
+        "begin lifecycle abandonment for stale block output");
+    lifecycle::ZoneLoadCleanupCallbacks cleanup{};
+    cleanup.context = &lifecycleSlot;
+    cleanup.perform = CompleteCleanup;
+    Expect(
+        lifecycle::TryFinishZoneLoadContextAbandonment(
+            &lifecycleSlot, key, cleanup)
+            == lifecycle::ZoneLoadContextStatus::Success,
+        "finish lifecycle abandonment for stale block output");
+    Expect(active.canonical(), "terminal lifecycle leaves binding structural");
+    Expect(
+        !active.block(0, &output),
+        "terminal lifecycle blocks retained descriptor output");
+    Expect(
+        ObjectBytes(output) == staleOutputBefore,
+        "terminal lifecycle rejection preserves output bytes");
+
+    lifecycle::ZoneLoadContextKey newerKey{};
+    Expect(
+        lifecycle::TryClaimZoneLoadContext(&lifecycleSlot, &newerKey)
+            == lifecycle::ZoneLoadContextStatus::Success,
+        "reclaim lifecycle for stale block output");
+    Expect(newerKey != key, "reclaimed lifecycle advances exact key");
+    Expect(
+        !active.block(0, &output),
+        "reused lifecycle generation blocks retained descriptor output");
+    Expect(
+        ObjectBytes(output) == staleOutputBefore,
+        "reused lifecycle rejection preserves output bytes");
+
+    RawCopy(
+        &lifecycleSlot,
+        lifecycleBefore.data(),
+        lifecycleBefore.size());
+    Expect(
+        lifecycle::ZoneLoadContextKeyMatches(&lifecycleSlot, key),
+        "test restores exact lifecycle authority before invalidation");
+    Expect(
+        active.block(0, &output),
+        "restored exact lifecycle permits retained descriptor output");
+
+    ExpectStatus(
+        ownership::TryInvalidateZoneStreams(&active, &receipt, key),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "output-hardened stream generation invalidates");
+    ReleaseLoadingGeneration(&lifecycleSlot, key);
+}
 } // namespace
 
 void __cdecl Com_Error(errorParm_t, const char *, ...)
@@ -956,6 +1641,9 @@ int main()
     TestFullInvalidationAndStaleRetry();
     TestAliasEpochExhaustion();
     TestNativeWidthBlockAddresses();
+    TestBlockOutputHardening();
     TestPassiveSingletonAuthentication();
+    TestCompositionAuthentication();
+    TestLiveTerminalCompositionCoexistence();
     return failures == 0 ? 0 : 1;
 }

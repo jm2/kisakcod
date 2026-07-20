@@ -34,6 +34,11 @@ function(kisakcod_get_dedi_sources OUT_VAR)
     if (KISAK_DEDI_HEADLESS)
         list(APPEND _sources
             "${SRC_DIR}/cgame_mp/dedicated_cgame.cpp"
+            # The exact-key table authenticates this component even before
+            # production enrollment.  Headless excludes EffectsCore, so link
+            # its database-neutral implementation to the fail-closed bridge.
+            "${SRC_DIR}/database/db_zone_runtime_storage.cpp"
+            "${SRC_DIR}/database/db_zone_runtime_storage_fx_bridge_headless.cpp"
         )
     else()
         list(APPEND _sources

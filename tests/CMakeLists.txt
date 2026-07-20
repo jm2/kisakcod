@@ -584,6 +584,7 @@ add_executable(kisakcod-db-zone-runtime-table-tests
     ${SRC_DIR}/database/db_relocation.cpp
     ${SRC_DIR}/database/db_stream.cpp
     ${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp
+    ${SRC_DIR}/universal/physicalmemory.cpp
     ${SRC_DIR}/universal/physicalmemory_checked.cpp
     ${SRC_DIR}/qcommon/sys_sync.cpp
     $<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>
@@ -1476,6 +1477,7 @@ set_tests_properties(pool-native-pointer-freelist PROPERTIES TIMEOUT 10)
 add_executable(kisakcod-physicalmemory-legacy-tests
     physicalmemory_legacy_tests.cpp
     ${SRC_DIR}/universal/physicalmemory.cpp
+    ${SRC_DIR}/universal/physicalmemory_checked.cpp
 )
 target_include_directories(
     kisakcod-physicalmemory-legacy-tests SYSTEM PRIVATE ${SRC_DIR})
@@ -1486,24 +1488,6 @@ target_compile_definitions(
     KISAK_MP
     KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)
 kisakcod_test_warnings(kisakcod-physicalmemory-legacy-tests)
-if(NOT MSVC)
-    # physicalmemory.cpp still includes broad legacy engine headers whose
-    # pre-existing inline stubs intentionally omit parameter names.
-    target_compile_options(
-        kisakcod-physicalmemory-legacy-tests PRIVATE -Wno-unused-parameter)
-endif()
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    # q_shared.h retains legacy LODWORD type punning that GCC diagnoses when
-    # the production translation unit includes it directly.
-    target_compile_options(
-        kisakcod-physicalmemory-legacy-tests PRIVATE -Wno-strict-aliasing)
-endif()
-if(CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|AppleClang)$")
-    # qcommon.h retains one IDA-generated enum tag with a '$' spelling.
-    target_compile_options(
-        kisakcod-physicalmemory-legacy-tests PRIVATE
-        -Wno-dollar-in-identifier-extension)
-endif()
 set_target_properties(kisakcod-physicalmemory-legacy-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
@@ -1517,6 +1501,7 @@ set_tests_properties(
 add_executable(kisakcod-physicalmemory-runtime-tests
     physicalmemory_runtime_tests.cpp
     ${SRC_DIR}/universal/physicalmemory.cpp
+    ${SRC_DIR}/universal/physicalmemory_checked.cpp
 )
 target_include_directories(
     kisakcod-physicalmemory-runtime-tests SYSTEM PRIVATE ${SRC_DIR})
@@ -1529,19 +1514,6 @@ target_compile_definitions(
 target_link_libraries(
     kisakcod-physicalmemory-runtime-tests PRIVATE Threads::Threads)
 kisakcod_test_warnings(kisakcod-physicalmemory-runtime-tests)
-if(NOT MSVC)
-    target_compile_options(
-        kisakcod-physicalmemory-runtime-tests PRIVATE -Wno-unused-parameter)
-endif()
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(
-        kisakcod-physicalmemory-runtime-tests PRIVATE -Wno-strict-aliasing)
-endif()
-if(CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|AppleClang)$")
-    target_compile_options(
-        kisakcod-physicalmemory-runtime-tests PRIVATE
-        -Wno-dollar-in-identifier-extension)
-endif()
 set_target_properties(kisakcod-physicalmemory-runtime-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
@@ -1567,21 +1539,6 @@ target_compile_definitions(
     kisakcod-physicalmemory-runtime-production-object PRIVATE KISAK_MP)
 kisakcod_test_warnings(
     kisakcod-physicalmemory-runtime-production-object)
-if(NOT MSVC)
-    target_compile_options(
-        kisakcod-physicalmemory-runtime-production-object PRIVATE
-        -Wno-unused-parameter)
-endif()
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(
-        kisakcod-physicalmemory-runtime-production-object PRIVATE
-        -Wno-strict-aliasing)
-endif()
-if(CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|AppleClang)$")
-    target_compile_options(
-        kisakcod-physicalmemory-runtime-production-object PRIVATE
-        -Wno-dollar-in-identifier-extension)
-endif()
 
 # This normal macro-off target proves production callers cannot name the
 # hidden global PMem testing seam. Its CTest wrapper also inspects the actual

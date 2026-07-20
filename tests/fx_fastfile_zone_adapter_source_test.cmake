@@ -146,6 +146,34 @@ require_contains(_adapter_header
     "kFxFastFileDisk32MaxResolvedReferences + kFxFastFileImpactDisk32JournalCount;"
     "recording capacity covers one impact plus one nested effect")
 
+# A depth-zero workspace is composable only at ResetRecordingState's complete
+# stable boundary. In particular, stale journal counts cannot become base
+# indices for the next top-level transaction, and dormant frames cannot retain
+# an arena token or source topology while phase() reports Idle.
+foreach(_marker IN ITEMS
+    "readyForCompositionAuthentication() const noexcept"
+    "operating_ || frameDepth_ != 0 || arena_ != nullptr"
+    "cursor_.context != nullptr || cursor_.validateWireSpan != nullptr"
+    "referenceCount_ != 0 || spanCount_ != 0 || resolveHint_ != 0"
+    "spanHint_ != 0"
+    "effectConverter_.phase() != FxFastFileNativeDisk32Phase::Empty"
+    "impactConverter_.phase() != FxFastFileNativeDisk32Phase::Empty"
+    "for (const Frame &frame : frames_)"
+    "frame.kind != FrameKind::None"
+    "frame.state != FxFastFileZoneAdapterDisk32Phase::Idle"
+    "frame.stage != ElementStage::Velocity"
+    "frame.effectHeader != nullptr || frame.impactHeader != nullptr"
+    "frame.elements != nullptr || frame.entries != nullptr"
+    "frame.elementCount != 0 || frame.elementIndex != 0"
+    "frame.visualSlot != 0 || frame.effectRefSlot != 0"
+    "frame.impactSlot != 0 || frame.referenceBase != 0"
+    "frame.spanBase != 0"
+    "frame.arenaTransaction != FxFastFileNativeArenaTransaction{}")
+    require_contains(
+        _adapter_header "${_marker}"
+        "exact stable workspace composition authentication")
+endforeach()
+
 # Publication ordering: materialize, commit the arena reservation, then (and
 # only then) invoke the publication sink, for both asset families.
 require_ordered(_adapter_impl

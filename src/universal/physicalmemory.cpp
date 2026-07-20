@@ -1,4 +1,5 @@
 #include "physicalmemory.h"
+#include "physicalmemory_checked.h"
 #include "physicalmemory_runtime.h"
 
 #include "assertive.h"
@@ -536,6 +537,359 @@ RuntimeReadiness GetRuntimeReadiness() noexcept
     return ReadyStateIsCoherent()
         ? RuntimeReadiness::Ready
         : RuntimeReadiness::Corrupt;
+}
+
+struct AuthenticatedReceiptLocation final
+{
+    pmem_runtime::AllocationReceiptPhase phase =
+        pmem_runtime::AllocationReceiptPhase::Pristine;
+    std::uint32_t allocType = ARRAY_COUNT(g_mem.prim);
+    std::uint32_t index = MAX_PHYSICAL_ALLOCATIONS;
+    bool matched = false;
+};
+
+bool AllocationReceiptPhaseIsValid(
+    const pmem_runtime::AllocationReceiptPhase phase) noexcept
+{
+    switch (phase)
+    {
+    case pmem_runtime::AllocationReceiptPhase::Pristine:
+    case pmem_runtime::AllocationReceiptPhase::Begun:
+    case pmem_runtime::AllocationReceiptPhase::Ended:
+    case pmem_runtime::AllocationReceiptPhase::Freed:
+        return true;
+    }
+    return false;
+}
+
+bool StorageIsOutsideManagedMemoryReadyNoLock(
+    const void *const storage,
+    const std::size_t size) noexcept
+{
+    if (!AddressRangeIsValid(storage, size))
+        return false;
+    return !AddressRangesOverlap(
+               storage, size, &g_mem, sizeof(g_mem))
+        && !AddressRangesOverlap(
+               storage, size, &g_runtime, sizeof(g_runtime))
+        && !AddressRangesOverlap(
+               storage, size,
+               g_runtime.extent.base, g_runtime.extent.size);
+}
+
+bool AllocationReceiptStorageIsDisjoint(
+    const physical_memory::AllocationReceipt *const receipt) noexcept
+{
+    return StorageIsOutsideManagedMemoryReadyNoLock(
+        receipt, sizeof(*receipt));
+}
+
+AuthenticatedReceiptLocation AuthenticateReceiptLocationNoLock(
+    const physical_memory::AllocationReceipt &receipt) noexcept
+{
+    using pmem_runtime::AllocationReceiptPhase;
+    if (pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            receipt, g_mem, 0, 0, nullptr,
+            AllocationReceiptPhase::Pristine))
+    {
+        return {AllocationReceiptPhase::Pristine, 0, 0, true};
+    }
+
+    for (std::uint32_t allocType = 0;
+         allocType < ARRAY_COUNT(g_mem.prim);
+         ++allocType)
+    {
+        const PhysicalMemoryPrim &prim = g_mem.prim[allocType];
+        for (std::uint32_t index = 0;
+             index < MAX_PHYSICAL_ALLOCATIONS;
+             ++index)
+        {
+            const OwnedAllocationName &owned =
+                g_runtime.ownedNames.names[allocType][index];
+            const bool live = index < prim.allocListCount
+                && prim.allocList[index].name != nullptr;
+
+            // Freed authority is receipt-local and must survive reuse of this
+            // structural allocation-list index by a later live receipt.
+            if (pmem_runtime::detail::
+                    AuthenticateAllocationReceiptNoLock(
+                        receipt, g_mem, allocType, index, owned.text,
+                        AllocationReceiptPhase::Freed))
+            {
+                return {
+                    AllocationReceiptPhase::Freed,
+                    allocType,
+                    index,
+                    true};
+            }
+
+            if (live)
+            {
+                if (pmem_runtime::detail::
+                        AuthenticateAllocationReceiptNoLock(
+                            receipt, g_mem, allocType, index, owned.text,
+                            AllocationReceiptPhase::Begun))
+                {
+                    return {
+                        AllocationReceiptPhase::Begun,
+                        allocType,
+                        index,
+                        true};
+                }
+                if (pmem_runtime::detail::
+                        AuthenticateAllocationReceiptNoLock(
+                            receipt, g_mem, allocType, index, owned.text,
+                            AllocationReceiptPhase::Ended))
+                {
+                    return {
+                        AllocationReceiptPhase::Ended,
+                        allocType,
+                        index,
+                        true};
+                }
+            }
+        }
+    }
+    return {};
+}
+
+pmem_runtime::AllocationReceiptStatus MapAllocationScopeStatus(
+    const physical_memory::AllocationScopeStatus status) noexcept
+{
+    using physical_memory::AllocationScopeStatus;
+    using pmem_runtime::AllocationReceiptStatus;
+    switch (status)
+    {
+    case AllocationScopeStatus::Success:
+        return AllocationReceiptStatus::Success;
+    case AllocationScopeStatus::InvalidArgument:
+        return AllocationReceiptStatus::InvalidArgument;
+    case AllocationScopeStatus::InvalidAllocationType:
+        return AllocationReceiptStatus::InvalidAllocationType;
+    case AllocationScopeStatus::MalformedState:
+        return AllocationReceiptStatus::CorruptState;
+    case AllocationScopeStatus::Busy:
+        return AllocationReceiptStatus::Busy;
+    case AllocationScopeStatus::CapacityExceeded:
+        return AllocationReceiptStatus::CapacityExceeded;
+    case AllocationScopeStatus::ReceiptInUse:
+        return AllocationReceiptStatus::ReceiptInUse;
+    case AllocationScopeStatus::ReceiptMismatch:
+        return AllocationReceiptStatus::ReceiptMismatch;
+    case AllocationScopeStatus::WrongPhase:
+        return AllocationReceiptStatus::WrongPhase;
+    case AllocationScopeStatus::AlreadyComplete:
+        return AllocationReceiptStatus::AlreadyComplete;
+    }
+    return AllocationReceiptStatus::CorruptState;
+}
+
+pmem_runtime::AllocationReceiptStatus
+TryBeginAllocationReceiptReadyNoLock(
+    const char *const name,
+    const std::uint32_t allocType,
+    physical_memory::AllocationReceipt *const receipt) noexcept
+{
+    using pmem_runtime::AllocationReceiptPhase;
+    using pmem_runtime::AllocationReceiptStatus;
+    if (name == nullptr || receipt == nullptr)
+        return AllocationReceiptStatus::InvalidArgument;
+    if (allocType >= ARRAY_COUNT(g_mem.prim))
+        return AllocationReceiptStatus::InvalidAllocationType;
+    if (!AllocationReceiptStorageIsDisjoint(receipt))
+        return AllocationReceiptStatus::InvalidArgument;
+
+    PhysicalMemoryPrim &prim = g_mem.prim[allocType];
+    const std::uint32_t index = prim.allocListCount;
+    if (index >= MAX_PHYSICAL_ALLOCATIONS)
+        return AllocationReceiptStatus::CapacityExceeded;
+    OwnedAllocationName &owned =
+        g_runtime.ownedNames.names[allocType][index];
+    if (!OwnedNameIsPristine(owned))
+        return AllocationReceiptStatus::CorruptState;
+
+    owned = CaptureOwnedName(name, allocType, index);
+    const physical_memory::AllocationScopeStatus rawStatus =
+        physical_memory::TryBegin(
+            &g_mem, allocType, owned.text, receipt);
+    if (rawStatus != physical_memory::AllocationScopeStatus::Success)
+    {
+        owned = {};
+        return MapAllocationScopeStatus(rawStatus);
+    }
+    if (!pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            *receipt, g_mem, allocType, index, owned.text,
+            AllocationReceiptPhase::Begun))
+    {
+        return AllocationReceiptStatus::CorruptState;
+    }
+    return AllocationReceiptStatus::Success;
+}
+
+pmem_runtime::AllocationReceiptStatus
+TryEndAllocationReceiptReadyNoLock(
+    physical_memory::AllocationReceipt *const receipt) noexcept
+{
+    using pmem_runtime::AllocationReceiptPhase;
+    using pmem_runtime::AllocationReceiptStatus;
+    if (receipt == nullptr)
+        return AllocationReceiptStatus::InvalidArgument;
+    if (!AllocationReceiptStorageIsDisjoint(receipt))
+        return AllocationReceiptStatus::InvalidArgument;
+
+    const AuthenticatedReceiptLocation location =
+        AuthenticateReceiptLocationNoLock(*receipt);
+    if (!location.matched)
+        return AllocationReceiptStatus::ReceiptMismatch;
+    switch (location.phase)
+    {
+    case AllocationReceiptPhase::Pristine:
+        return AllocationReceiptStatus::WrongPhase;
+    case AllocationReceiptPhase::Ended:
+    case AllocationReceiptPhase::Freed:
+        return AllocationReceiptStatus::AlreadyComplete;
+    case AllocationReceiptPhase::Begun:
+        break;
+    }
+
+    const physical_memory::AllocationScopeStatus rawStatus =
+        physical_memory::TryEnd(receipt);
+    if (rawStatus != physical_memory::AllocationScopeStatus::Success)
+        return MapAllocationScopeStatus(rawStatus);
+    const OwnedAllocationName &owned =
+        g_runtime.ownedNames.names[location.allocType][location.index];
+    if (!pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            *receipt, g_mem, location.allocType, location.index,
+            owned.text, AllocationReceiptPhase::Ended))
+    {
+        return AllocationReceiptStatus::CorruptState;
+    }
+    return AllocationReceiptStatus::Success;
+}
+
+pmem_runtime::AllocationReceiptStatus
+TryFreeAllocationReceiptReadyNoLock(
+    physical_memory::AllocationReceipt *const receipt) noexcept
+{
+    using pmem_runtime::AllocationReceiptPhase;
+    using pmem_runtime::AllocationReceiptStatus;
+    if (receipt == nullptr)
+        return AllocationReceiptStatus::InvalidArgument;
+    if (!AllocationReceiptStorageIsDisjoint(receipt))
+        return AllocationReceiptStatus::InvalidArgument;
+
+    const AuthenticatedReceiptLocation location =
+        AuthenticateReceiptLocationNoLock(*receipt);
+    if (!location.matched)
+        return AllocationReceiptStatus::ReceiptMismatch;
+    switch (location.phase)
+    {
+    case AllocationReceiptPhase::Pristine:
+    case AllocationReceiptPhase::Begun:
+        return AllocationReceiptStatus::WrongPhase;
+    case AllocationReceiptPhase::Freed:
+        return AllocationReceiptStatus::AlreadyComplete;
+    case AllocationReceiptPhase::Ended:
+        break;
+    }
+
+    PhysicalMemoryPrim &prim = g_mem.prim[location.allocType];
+    const std::uint32_t previousCount = prim.allocListCount;
+    const physical_memory::AllocationScopeStatus rawStatus =
+        physical_memory::TryFree(receipt);
+    if (rawStatus != physical_memory::AllocationScopeStatus::Success)
+        return MapAllocationScopeStatus(rawStatus);
+
+    g_runtime.ownedNames.names[location.allocType][location.index] = {};
+    for (std::uint32_t index = prim.allocListCount;
+         index < previousCount;
+         ++index)
+    {
+        g_runtime.ownedNames.names[location.allocType][index] = {};
+    }
+    const OwnedAllocationName &owned =
+        g_runtime.ownedNames.names[location.allocType][location.index];
+    if (!pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            *receipt, g_mem, location.allocType, location.index,
+            owned.text, AllocationReceiptPhase::Freed))
+    {
+        return AllocationReceiptStatus::CorruptState;
+    }
+    return AllocationReceiptStatus::Success;
+}
+
+pmem_runtime::AllocationReceiptStatus
+TryAuthenticateAllocationReceiptReadyNoLock(
+    const physical_memory::AllocationReceipt *const receipt,
+    const std::uint32_t expectedAllocationType,
+    const pmem_runtime::AllocationReceiptPhase expectedPhase) noexcept
+{
+    using pmem_runtime::AllocationReceiptStatus;
+    if (receipt == nullptr || !AllocationReceiptPhaseIsValid(expectedPhase))
+        return AllocationReceiptStatus::InvalidArgument;
+    if (expectedAllocationType >= ARRAY_COUNT(g_mem.prim))
+        return AllocationReceiptStatus::InvalidAllocationType;
+    if (!AllocationReceiptStorageIsDisjoint(receipt))
+        return AllocationReceiptStatus::InvalidArgument;
+
+    const AuthenticatedReceiptLocation location =
+        AuthenticateReceiptLocationNoLock(*receipt);
+    if (!location.matched)
+        return AllocationReceiptStatus::ReceiptMismatch;
+    // A pristine receipt has not selected a prim yet. Every bound phase must
+    // authenticate the caller's exact retained allocation-type witness.
+    if (location.phase
+            != pmem_runtime::AllocationReceiptPhase::Pristine
+        && location.allocType != expectedAllocationType)
+    {
+        return AllocationReceiptStatus::ReceiptMismatch;
+    }
+    return location.phase == expectedPhase
+        ? AllocationReceiptStatus::Success
+        : AllocationReceiptStatus::WrongPhase;
+}
+
+pmem_runtime::AllocationReceiptStatus
+TryAuthenticateAllocationRangeReadyNoLock(
+    const physical_memory::AllocationReceipt *const receipt,
+    const std::uint32_t expectedAllocationType,
+    const void *const storage,
+    const std::size_t size,
+    const pmem_runtime::AllocationReceiptPhase expectedPhase) noexcept
+{
+    using pmem_runtime::AllocationReceiptPhase;
+    using pmem_runtime::AllocationReceiptStatus;
+    if (receipt == nullptr || !AddressRangeIsValid(storage, size)
+        || !AllocationReceiptPhaseIsValid(expectedPhase))
+    {
+        return AllocationReceiptStatus::InvalidArgument;
+    }
+    if (expectedAllocationType >= ARRAY_COUNT(g_mem.prim))
+        return AllocationReceiptStatus::InvalidAllocationType;
+    if (!AllocationReceiptStorageIsDisjoint(receipt))
+        return AllocationReceiptStatus::InvalidArgument;
+    if (expectedPhase == AllocationReceiptPhase::Pristine
+        || expectedPhase == AllocationReceiptPhase::Freed)
+    {
+        return AllocationReceiptStatus::WrongPhase;
+    }
+
+    const AuthenticatedReceiptLocation location =
+        AuthenticateReceiptLocationNoLock(*receipt);
+    if (!location.matched)
+        return AllocationReceiptStatus::ReceiptMismatch;
+    if (location.allocType != expectedAllocationType)
+        return AllocationReceiptStatus::ReceiptMismatch;
+    if (location.phase != expectedPhase)
+        return AllocationReceiptStatus::WrongPhase;
+
+    const OwnedAllocationName &owned =
+        g_runtime.ownedNames.names[location.allocType][location.index];
+    return pmem_runtime::detail::AuthenticateAllocationRangeNoLock(
+               *receipt, g_mem, location.allocType, location.index,
+               owned.text, storage, size, expectedPhase)
+        ? AllocationReceiptStatus::Success
+        : AllocationReceiptStatus::InvalidArgument;
 }
 
 void SetRuntimePhase(
@@ -1528,6 +1882,148 @@ pmem_runtime::TryCaptureDiagnosticSnapshot() noexcept
         TryCaptureDiagnosticSnapshotNoLock();
     Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
     return snapshot;
+}
+
+bool KISAK_CDECL pmem_runtime::StorageIsOutsideManagedMemory(
+    const void *const storage,
+    const std::size_t size) noexcept
+{
+    bool outside = false;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    if (GetRuntimeReadiness() == RuntimeReadiness::Ready)
+    {
+        outside = StorageIsOutsideManagedMemoryReadyNoLock(storage, size);
+        if (!ReadyStateIsCoherent())
+            outside = false;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return outside;
+}
+
+pmem_runtime::AllocationReceiptStatus KISAK_CDECL
+pmem_runtime::TryBeginAllocationReceipt(
+    const char *const name,
+    const std::uint32_t allocType,
+    physical_memory::AllocationReceipt *const receipt) noexcept
+{
+    AllocationReceiptStatus status = AllocationReceiptStatus::CorruptState;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    switch (GetRuntimeReadiness())
+    {
+    case RuntimeReadiness::NotReady:
+        status = AllocationReceiptStatus::NotReady;
+        break;
+    case RuntimeReadiness::Corrupt:
+        break;
+    case RuntimeReadiness::Ready:
+        status = TryBeginAllocationReceiptReadyNoLock(
+            name, allocType, receipt);
+        if (!ReadyStateIsCoherent())
+            status = AllocationReceiptStatus::CorruptState;
+        break;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return status;
+}
+
+pmem_runtime::AllocationReceiptStatus KISAK_CDECL
+pmem_runtime::TryEndAllocationReceipt(
+    physical_memory::AllocationReceipt *const receipt) noexcept
+{
+    AllocationReceiptStatus status = AllocationReceiptStatus::CorruptState;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    switch (GetRuntimeReadiness())
+    {
+    case RuntimeReadiness::NotReady:
+        status = AllocationReceiptStatus::NotReady;
+        break;
+    case RuntimeReadiness::Corrupt:
+        break;
+    case RuntimeReadiness::Ready:
+        status = TryEndAllocationReceiptReadyNoLock(receipt);
+        if (!ReadyStateIsCoherent())
+            status = AllocationReceiptStatus::CorruptState;
+        break;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return status;
+}
+
+pmem_runtime::AllocationReceiptStatus KISAK_CDECL
+pmem_runtime::TryFreeAllocationReceipt(
+    physical_memory::AllocationReceipt *const receipt) noexcept
+{
+    AllocationReceiptStatus status = AllocationReceiptStatus::CorruptState;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    switch (GetRuntimeReadiness())
+    {
+    case RuntimeReadiness::NotReady:
+        status = AllocationReceiptStatus::NotReady;
+        break;
+    case RuntimeReadiness::Corrupt:
+        break;
+    case RuntimeReadiness::Ready:
+        status = TryFreeAllocationReceiptReadyNoLock(receipt);
+        if (!ReadyStateIsCoherent())
+            status = AllocationReceiptStatus::CorruptState;
+        break;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return status;
+}
+
+pmem_runtime::AllocationReceiptStatus KISAK_CDECL
+pmem_runtime::TryAuthenticateAllocationReceipt(
+    const physical_memory::AllocationReceipt *const receipt,
+    const std::uint32_t expectedAllocationType,
+    const AllocationReceiptPhase expectedPhase) noexcept
+{
+    AllocationReceiptStatus status = AllocationReceiptStatus::CorruptState;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    switch (GetRuntimeReadiness())
+    {
+    case RuntimeReadiness::NotReady:
+        status = AllocationReceiptStatus::NotReady;
+        break;
+    case RuntimeReadiness::Corrupt:
+        break;
+    case RuntimeReadiness::Ready:
+        status = TryAuthenticateAllocationReceiptReadyNoLock(
+            receipt, expectedAllocationType, expectedPhase);
+        if (!ReadyStateIsCoherent())
+            status = AllocationReceiptStatus::CorruptState;
+        break;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return status;
+}
+
+pmem_runtime::AllocationReceiptStatus KISAK_CDECL
+pmem_runtime::TryAuthenticateAllocationRange(
+    const physical_memory::AllocationReceipt *const receipt,
+    const std::uint32_t expectedAllocationType,
+    const void *const storage,
+    const std::size_t size,
+    const AllocationReceiptPhase expectedPhase) noexcept
+{
+    AllocationReceiptStatus status = AllocationReceiptStatus::CorruptState;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    switch (GetRuntimeReadiness())
+    {
+    case RuntimeReadiness::NotReady:
+        status = AllocationReceiptStatus::NotReady;
+        break;
+    case RuntimeReadiness::Corrupt:
+        break;
+    case RuntimeReadiness::Ready:
+        status = TryAuthenticateAllocationRangeReadyNoLock(
+            receipt, expectedAllocationType, storage, size, expectedPhase);
+        if (!ReadyStateIsCoherent())
+            status = AllocationReceiptStatus::CorruptState;
+        break;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return status;
 }
 
 pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL

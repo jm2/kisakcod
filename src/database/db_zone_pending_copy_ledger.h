@@ -57,6 +57,24 @@ enum class PendingCopyAdmissionPhase : std::uint8_t
     UnsafeFailure,
 };
 
+// Public phase vocabulary for const table-owned descriptor authentication.
+// It deliberately omits UnsafeFailure: poisoned ledgers cannot compose into
+// the outer exact-key runtime owner.
+enum class PendingCopyLedgerAuthenticationPhase : std::uint8_t
+{
+    Pristine,
+    Ready,
+    AdmissionPrepared,
+    Draining,
+};
+
+enum class PendingCopyAuthenticationResult : std::uint8_t
+{
+    Match,
+    CallbackActive,
+    Mismatch,
+};
+
 enum class PendingCopyDrainCallbackStatus : std::uint8_t
 {
     Success,
@@ -89,6 +107,18 @@ struct PendingCopyAdmissionCompletion final
     void (*complete)(void *context) noexcept = nullptr;
 };
 
+// One const table-owned expectation for a retained generation. The complete
+// descriptor set is authenticated as a bounded, order-independent set; no
+// ledger pointer, receipt pointer, or lifecycle pointer is returned.
+struct PendingCopyDescriptorBinding final
+{
+    const PendingCopyAdmissionReceipt *receipt = nullptr;
+    const zone_load::ZoneLoadContextSlot *lifecycle = nullptr;
+    zone_load::ZoneLoadContextKey key{};
+    PendingCopyAdmissionPhase phase = PendingCopyAdmissionPhase::Pristine;
+    PendingCopyAdmissionCompletion completion{};
+};
+
 struct PendingCopyDrainCallback final
 {
     void *context = nullptr;
@@ -103,6 +133,29 @@ struct PendingCopyDrainCallback final
 };
 
 class PendingCopyLedger;
+
+// Authenticates one receipt against the exact identity retained by its outer
+// owner. Terminal authentication compares stored pointer identities but never
+// dereferences the ledger or lifecycle, so a Drained/Discarded receipt remains
+// independently authenticatable after the corresponding owner has moved on.
+[[nodiscard]] bool AuthenticatePendingCopyAdmissionReceipt(
+    const PendingCopyAdmissionReceipt &receipt,
+    const PendingCopyLedger *expectedLedger,
+    const zone_load::ZoneLoadContextSlot *expectedLifecycle,
+    const zone_load::ZoneLoadContextKey &expectedKey,
+    PendingCopyAdmissionPhase expectedPhase,
+    const PendingCopyAdmissionCompletion &expectedCompletion) noexcept;
+
+// Authenticates the entire bounded descriptor set owned by an outer runtime
+// table. Missing, extra, duplicate, and foreign bindings are rejected. A
+// callback-active result still proves the exact set, but tells the caller that
+// it must not treat the ledger as quiescent.
+[[nodiscard]] PendingCopyAuthenticationResult
+AuthenticatePendingCopyLedgerDescriptors(
+    const PendingCopyLedger &ledger,
+    PendingCopyLedgerAuthenticationPhase expectedPhase,
+    const PendingCopyDescriptorBinding *expectedBindings,
+    std::size_t expectedBindingCount) noexcept;
 
 // Authenticates the exact unused topology of the process-wide ledger. Every
 // record and generation descriptor, all counts/cursors/callback state, and the
@@ -143,6 +196,13 @@ public:
 
 private:
     friend class PendingCopyLedger;
+    friend bool AuthenticatePendingCopyAdmissionReceipt(
+        const PendingCopyAdmissionReceipt &,
+        const PendingCopyLedger *,
+        const zone_load::ZoneLoadContextSlot *,
+        const zone_load::ZoneLoadContextKey &,
+        PendingCopyAdmissionPhase,
+        const PendingCopyAdmissionCompletion &) noexcept;
     friend PendingCopyStatus TryInitializePendingCopyLedger(
         PendingCopyLedger *) noexcept;
     friend PendingCopyStatus TryBeginPendingCopyAdmission(
@@ -291,6 +351,12 @@ private:
     // Exact const-only friendship for passive table-wide authentication.
     friend bool AuthenticatePassivePendingCopyLedger(
         const PendingCopyLedger &ledger) noexcept;
+    friend PendingCopyAuthenticationResult
+    AuthenticatePendingCopyLedgerDescriptors(
+        const PendingCopyLedger &,
+        PendingCopyLedgerAuthenticationPhase,
+        const PendingCopyDescriptorBinding *,
+        std::size_t) noexcept;
 #ifdef KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING
     friend struct PendingCopyLedgerTestAccess;
 #endif

@@ -1,4 +1,5 @@
 #include <universal/physicalmemory_checked.h>
+#include <universal/physicalmemory_runtime.h>
 
 #include <array>
 #include <cstddef>
@@ -14,6 +15,7 @@ using physical_memory::AllocationScopeStatus;
 using physical_memory::TryBegin;
 using physical_memory::TryEnd;
 using physical_memory::TryFree;
+using pmem_runtime::AllocationReceiptPhase;
 
 int g_failures;
 
@@ -491,34 +493,44 @@ void TestReceiptPhaseWitnessAndTerminalCanonicality()
     CHECK(TryFree(&receipt) == AllocationScopeStatus::Success);
     const auto freed = Snapshot(receipt);
 
-    std::array<std::size_t, 2> phaseBytes{};
+    std::array<std::size_t, sizeof(AllocationReceipt)> phaseBytes{};
     std::size_t phaseByteCount = 0;
     for (std::size_t index = 0; index < ended.size(); ++index)
     {
         if (ended[index] != freed[index])
         {
-            CHECK(phaseByteCount < phaseBytes.size());
-            if (phaseByteCount < phaseBytes.size())
-                phaseBytes[phaseByteCount] = index;
+            phaseBytes[phaseByteCount] = index;
             ++phaseByteCount;
         }
     }
-    CHECK(phaseByteCount == phaseBytes.size());
+    // Phase, phase witness, and both private terminal-tag bytes change at the
+    // successful Ended-to-Freed transition.
+    CHECK(phaseByteCount == 4);
 
-    if (phaseByteCount == phaseBytes.size())
+    if (phaseByteCount == 4)
     {
-        for (const std::size_t changedIndex : phaseBytes)
+        for (std::size_t changed = 0; changed < phaseByteCount; ++changed)
         {
+            const std::size_t changedIndex = phaseBytes[changed];
             auto corruptWitness = ended;
             corruptWitness[changedIndex] = freed[changedIndex];
             RestoreAdversarialBytes(receipt, corruptWitness);
             CHECK(TryEnd(&receipt) == AllocationScopeStatus::ReceiptMismatch);
             CHECK(TryFree(&receipt) == AllocationScopeStatus::ReceiptMismatch);
+
+            auto corruptFreed = freed;
+            corruptFreed[changedIndex] ^= std::byte{1};
+            RestoreAdversarialBytes(receipt, corruptFreed);
+            CHECK(TryEnd(&receipt) == AllocationScopeStatus::ReceiptMismatch);
+            CHECK(TryFree(&receipt) == AllocationScopeStatus::ReceiptMismatch);
         }
 
         auto terminalPristine = pristine;
-        for (const std::size_t changedIndex : phaseBytes)
-            terminalPristine[changedIndex] = freed[changedIndex];
+        for (std::size_t changed = 0; changed < phaseByteCount; ++changed)
+        {
+            terminalPristine[phaseBytes[changed]] =
+                freed[phaseBytes[changed]];
+        }
         RestoreAdversarialBytes(receipt, terminalPristine);
         CHECK(TryEnd(&receipt) == AllocationScopeStatus::ReceiptMismatch);
         CHECK(TryFree(&receipt) == AllocationScopeStatus::ReceiptMismatch);
@@ -528,6 +540,150 @@ void TestReceiptPhaseWitnessAndTerminalCanonicality()
     const auto emptyOwner = Snapshot(fixture.memory);
     CHECK(TryEnd(&receipt) == AllocationScopeStatus::ReceiptMismatch);
     CHECK(MatchesSnapshot(fixture.memory, emptyOwner));
+}
+
+void TestFreedReceiptSurvivesSameIndexReuse()
+{
+    static char names[4];
+    Fixture fixture;
+    AllocationReceipt oldLow;
+    AllocationReceipt replacementLow;
+    AllocationReceipt oldHigh;
+    AllocationReceipt replacementHigh;
+
+    const auto exercise = [&fixture](
+                              const std::uint32_t allocType,
+                              char *const oldName,
+                              char *const replacementName,
+                              AllocationReceipt &oldReceipt,
+                              AllocationReceipt &replacementReceipt) {
+        PhysicalMemoryPrim &prim = fixture.memory.prim[allocType];
+        const std::uint32_t initialPosition = prim.pos;
+        const std::uint32_t movedPosition = allocType == 0
+            ? initialPosition + 64u
+            : initialPosition - 64u;
+
+        CHECK(TryBegin(
+            &fixture.memory, allocType, oldName, &oldReceipt)
+            == AllocationScopeStatus::Success);
+        CHECK(prim.allocListCount == 1);
+        CHECK(prim.allocList[0].name == oldName);
+        prim.pos = movedPosition;
+        CHECK(TryEnd(&oldReceipt) == AllocationScopeStatus::Success);
+        CHECK(TryFree(&oldReceipt) == AllocationScopeStatus::Success);
+        CHECK(prim.allocListCount == 0);
+        CHECK(prim.pos == initialPosition);
+        CHECK(pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            oldReceipt,
+            fixture.memory,
+            allocType,
+            0,
+            oldName,
+            AllocationReceiptPhase::Freed));
+        CHECK(!pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            oldReceipt,
+            fixture.memory,
+            1u - allocType,
+            0,
+            oldName,
+            AllocationReceiptPhase::Freed));
+
+        // A count-zero high prim may validly have a lower retained top (for
+        // example after a persistent high allocation outside this scope).
+        // This makes high index-zero reuse start at a different position.
+        const std::uint32_t replacementStart = allocType == 0
+            ? initialPosition
+            : initialPosition - 32u;
+        prim.pos = replacementStart;
+        CHECK(pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            oldReceipt,
+            fixture.memory,
+            allocType,
+            0,
+            oldName,
+            AllocationReceiptPhase::Freed));
+
+        CHECK(TryBegin(
+            &fixture.memory,
+            allocType,
+            replacementName,
+            &replacementReceipt)
+            == AllocationScopeStatus::Success);
+        CHECK(prim.allocListCount == 1);
+        CHECK(prim.allocList[0].name == replacementName);
+        CHECK(prim.allocList[0].pos == replacementStart);
+        CHECK(pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            oldReceipt,
+            fixture.memory,
+            allocType,
+            0,
+            oldName,
+            AllocationReceiptPhase::Freed));
+        CHECK(pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            replacementReceipt,
+            fixture.memory,
+            allocType,
+            0,
+            replacementName,
+            AllocationReceiptPhase::Begun));
+        CHECK(!pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            oldReceipt,
+            fixture.memory,
+            allocType,
+            0,
+            replacementName,
+            AllocationReceiptPhase::Freed));
+        const auto replacementBegun = Snapshot(fixture.memory);
+        CHECK(TryEnd(&oldReceipt) == AllocationScopeStatus::AlreadyComplete);
+        CHECK(TryFree(&oldReceipt) == AllocationScopeStatus::AlreadyComplete);
+        CHECK(MatchesSnapshot(fixture.memory, replacementBegun));
+
+        prim.pos = allocType == 0
+            ? replacementStart + 64u
+            : replacementStart - 64u;
+        CHECK(TryEnd(&replacementReceipt) == AllocationScopeStatus::Success);
+        CHECK(pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            oldReceipt,
+            fixture.memory,
+            allocType,
+            0,
+            oldName,
+            AllocationReceiptPhase::Freed));
+        CHECK(pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            replacementReceipt,
+            fixture.memory,
+            allocType,
+            0,
+            replacementName,
+            AllocationReceiptPhase::Ended));
+        const auto replacementEnded = Snapshot(fixture.memory);
+        CHECK(TryEnd(&oldReceipt) == AllocationScopeStatus::AlreadyComplete);
+        CHECK(TryFree(&oldReceipt) == AllocationScopeStatus::AlreadyComplete);
+        CHECK(MatchesSnapshot(fixture.memory, replacementEnded));
+        CHECK(TryFree(&replacementReceipt) == AllocationScopeStatus::Success);
+        CHECK(pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            oldReceipt,
+            fixture.memory,
+            allocType,
+            0,
+            oldName,
+            AllocationReceiptPhase::Freed));
+        CHECK(pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+            replacementReceipt,
+            fixture.memory,
+            allocType,
+            0,
+            replacementName,
+            AllocationReceiptPhase::Freed));
+        CHECK(TryEnd(&oldReceipt) == AllocationScopeStatus::AlreadyComplete);
+        CHECK(TryFree(&oldReceipt) == AllocationScopeStatus::AlreadyComplete);
+        CHECK(prim.allocListCount == 0);
+        CHECK(prim.pos == replacementStart);
+        prim.pos = initialPosition;
+    };
+
+    exercise(0, &names[0], &names[1], oldLow, replacementLow);
+    exercise(1, &names[2], &names[3], oldHigh, replacementHigh);
 }
 
 void TestBothPrimsRevalidatedBeforeEndAndFree()
@@ -567,6 +723,7 @@ int main()
     TestCapacityFailureAtomicity();
     TestReceiptAuthenticationAndIdentity();
     TestReceiptPhaseWitnessAndTerminalCanonicality();
+    TestFreedReceiptSurvivesSameIndexReuse();
     TestBothPrimsRevalidatedBeforeEndAndFree();
 
     if (g_failures != 0)

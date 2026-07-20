@@ -575,8 +575,14 @@ union DvarLimits
 	}
 	DvarLimits(uint64 val)
 	{
-		integer.max = HIDWORD(val);
-		integer.min = LODWORD(val);
+		const uint32 low = static_cast<uint32>(val);
+		const uint32 high = static_cast<uint32>(val >> 32);
+		int32 signedLow = 0;
+		int32 signedHigh = 0;
+		memcpy(&signedLow, &low, sizeof(low));
+		memcpy(&signedHigh, &high, sizeof(high));
+		integer.min = signedLow;
+		integer.max = signedHigh;
 	}
 	DvarLimits(int min, int max)
 	{
@@ -787,7 +793,10 @@ int __cdecl Com_RealTime(qtime_s *qtime);
 //void __cdecl Com_Memcpy(char *dest, char *src, int count);
 //void __cdecl Com_Memset(uint32_t *dest, int val, int count);
 
-inline bool __cdecl Com_BitCheckAssert(const uint32_t *array, int bitNum, int size)
+inline bool __cdecl Com_BitCheckAssert(
+    const uint32_t *array,
+    int bitNum,
+    [[maybe_unused]] int size)
 {
 	iassert(array);
 	iassert(bitNum < (8 * size));
@@ -795,7 +804,10 @@ inline bool __cdecl Com_BitCheckAssert(const uint32_t *array, int bitNum, int si
 	return (array[bitNum / 32] & (1 << (bitNum & 31))) != 0;
 }
 
-inline void __cdecl Com_BitClearAssert(uint32_t *array, int bitNum, int size)
+inline void __cdecl Com_BitClearAssert(
+    uint32_t *array,
+    int bitNum,
+    [[maybe_unused]] int size)
 {
 	iassert(array);
 	iassert(bitNum < (8 * size));
@@ -803,7 +815,10 @@ inline void __cdecl Com_BitClearAssert(uint32_t *array, int bitNum, int size)
 	array[bitNum / 32] &= ~(1 << (bitNum & 31));
 }
 
-inline void __cdecl Com_BitSetAssert(uint32_t *array, int bitNum, int size)
+inline void __cdecl Com_BitSetAssert(
+    uint32_t *array,
+    int bitNum,
+    [[maybe_unused]] int size)
 {
 	iassert(array);
 	iassert(bitNum < (8 * size));

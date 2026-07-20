@@ -75,6 +75,7 @@ file(READ "${_xanim_path}" _xanim)
 # Preserve the original line structure for preprocessing-directive checks.
 # The normalized copies below are used for exact C++ declaration matching.
 set(_runtime_receipt_header_raw "${_header}")
+set(_runtime_source_raw "${_source}")
 set(_physical_receipt_header_raw "${_physical_receipt_header}")
 set(_stream_receipt_header_raw "${_stream_receipt_header}")
 set(_pending_receipt_header_raw "${_pending_receipt_header}")
@@ -311,14 +312,24 @@ endfunction()
 # satisfy the production authority seal.
 foreach(_marker IN ITEMS
     "struct ZoneRuntimeTableTestAccess"
+    "sizeof(ZoneRuntimeGenerationCallbacks) == (sizeof(void *) == 4 ? 0x14u : 0x28u)"
+    "sizeof(ZoneRuntimeGenerationBinding) == (sizeof(void *) == 4 ? 0x50u : 0x78u)"
+    "sizeof(ZoneRuntimeReceiptCapsule) == (sizeof(void *) == 4 ? 0xD0u : 0x120u)"
+    "sizeof(ZoneRuntimeEntry) == (sizeof(void *) == 4 ? 0x190u : 0x228u)"
+    "sizeof(ZoneRuntimeTable) == (sizeof(void *) == 4 ? 0xF568u : 0x109A0u)"
     "CanReachEntries"
-    "CanMutateReserved"
+    "CanMutateState"
+    "CanMutateSharedState"
     "CanReachMutableLifecycle"
     "CanReachMutableOwnership"
     "CanMutateKey"
     "CanReachReceiptCapsule"
+    "CanReachGenerationBinding"
     "CanReachActiveStreamBinding"
     "CanReachPendingCopyLedger"
+    "CanReachPendingDrainCallback"
+    "CanReachGenerationCallbacks"
+    "CanMutateGenerationStage"
     "CanReachAllocationReceipt"
     "CanReachStreamGenerationReceipt"
     "CanReachPendingAdmissionReceipt"
@@ -326,23 +337,33 @@ foreach(_marker IN ITEMS
     "&table->entries_;"
     "&table->activeZoneStreamBinding_;"
     "&table->pendingCopyLedger_;"
-    "table->reserved_ = 1u;"
+    "table->state_ = 1u;"
+    "table->sharedState_ = 1u;"
     "&entry->lifecycle_;"
     "&entry->scriptStringOwnership_;"
     "&entry->receiptCapsule_;"
+    "&entry->generationBinding_;"
     "entry->key_ = zone_load::ZoneLoadContextKey{};"
     "&capsule->allocationReceipt_;"
     "&capsule->streamGenerationReceipt_;"
     "&capsule->pendingCopyAdmissionReceipt_;"
     "&capsule->storageBinding_;"
+    "&table->pendingDrainCallback_;"
+    "&binding->callbacks_;"
+    "binding->setupStage_ = ZoneRuntimeSetupStage::CallbacksBound;"
     "!ZoneRuntimeTableTestAccess::CanReachEntries<ZoneRuntimeTable>"
-    "!ZoneRuntimeTableTestAccess::CanMutateReserved<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanMutateState<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanMutateSharedState<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanReachMutableLifecycle<ZoneRuntimeEntry>"
     "!ZoneRuntimeTableTestAccess::CanReachMutableOwnership<ZoneRuntimeEntry>"
     "!ZoneRuntimeTableTestAccess::CanMutateKey<ZoneRuntimeEntry>"
     "!ZoneRuntimeTableTestAccess::CanReachReceiptCapsule<ZoneRuntimeEntry>"
+    "!ZoneRuntimeTableTestAccess::CanReachGenerationBinding<ZoneRuntimeEntry>"
     "!ZoneRuntimeTableTestAccess::CanReachActiveStreamBinding<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanReachPendingCopyLedger<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanReachPendingDrainCallback<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanReachGenerationCallbacks< ZoneRuntimeGenerationBinding>"
+    "!ZoneRuntimeTableTestAccess::CanMutateGenerationStage< ZoneRuntimeGenerationBinding>"
     "!ZoneRuntimeTableTestAccess::CanReachAllocationReceipt< ZoneRuntimeReceiptCapsule>"
     "!ZoneRuntimeTableTestAccess::CanReachStreamGenerationReceipt< ZoneRuntimeReceiptCapsule>"
     "!ZoneRuntimeTableTestAccess::CanReachPendingAdmissionReceipt< ZoneRuntimeReceiptCapsule>"
@@ -380,7 +401,7 @@ foreach(_forbidden IN ITEMS
         "production authority seal cannot accept a vacuous failure")
 endforeach()
 
-# All three owning classes independently gate their friendship, and the helper's
+# All four owning classes independently gate their friendship, and the helper's
 # forward declaration and implementation remain absent from production TUs.
 foreach(_marker IN ITEMS
     "#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING struct ZoneRuntimeTableTestAccess; #endif"
@@ -389,11 +410,17 @@ foreach(_marker IN ITEMS
     require_contains(_header "${_marker}" "macro-gated test authority")
 endforeach()
 
-# The fixed table owns only durable metadata.  It remains external to XZone and
-# cannot allocate, report, touch PMem, publish assets, or mutate script strings.
+# The fixed table owns durable metadata and coordinates only the report-free,
+# serialized PMem bridge through its opaque receipt. It remains external to
+# XZone and cannot report, publish assets, call raw legacy PMem, or mutate
+# script strings outside the exact ownership controller.
 foreach(_var IN ITEMS _header _source)
     foreach(_forbidden IN ITEMS
         "#include <xanim/"
+        "#include <EffectsCore/"
+        "#include \"EffectsCore/"
+        "fx_fastfile_native_arena.h"
+        "fx_fastfile_zone_adapter_disk32.h"
         "#include <vector>"
         "#include <string>"
         "std::function"
@@ -415,6 +442,9 @@ foreach(_var IN ITEMS _header _source)
             ${_var} "${_forbidden}" "metadata-only report-free table")
     endforeach()
 endforeach()
+require_substring_count(
+    _source "#include <database/db_zone_runtime_storage_fx_bridge.h>" 1
+    "single headless-neutral private storage bridge include")
 require_not_contains(
     _xanim "ZoneRuntimeTable" "runtime ownership cannot enter XZone")
 
@@ -434,12 +464,13 @@ foreach(_marker IN ITEMS
     "ZoneScriptStringOwnershipController scriptStringOwnership_{};"
     "zone_load::ZoneLoadContextKey key_{};"
     "ZoneRuntimeReceiptCapsule receiptCapsule_{};"
+    "ZoneRuntimeGenerationBinding generationBinding_{};"
     "const ZoneRuntimeEntry *entry = nullptr;"
-    "RUNTIME_SIZE(ZoneRuntimeEntry, 0x130, 0x198);"
+    "RUNTIME_SIZE(ZoneRuntimeEntry, 0x190, 0x228);"
     "std::array<ZoneRuntimeEntry, zone_slots::kPhysicalZoneSlotCount> entries_{};"
     "ActiveZoneStreamBinding activeZoneStreamBinding_{};"
     "zone_pending_copy::PendingCopyLedger pendingCopyLedger_{};"
-    "RUNTIME_SIZE(ZoneRuntimeTable, 0xE900, 0xF700);"
+    "RUNTIME_SIZE(ZoneRuntimeTable, 0xF568, 0x109A0);"
     "RUNTIME_SIZE(ZoneRuntimeGenerationView, 0x18, 0x18);"
     "ZoneRuntimeEntry(const ZoneRuntimeEntry &) = delete;"
     "ZoneRuntimeReceiptCapsule(const ZoneRuntimeReceiptCapsule &) = delete;"
@@ -504,7 +535,8 @@ set(_physical_allocation_receipt_friends
     "friend AllocationScopeStatus TryBegin( PhysicalMemory *memory, std::uint32_t allocType, const char *stableName, AllocationReceipt *receipt) noexcept"
     "friend AllocationScopeStatus TryEnd( AllocationReceipt *receipt) noexcept"
     "friend AllocationScopeStatus TryFree( AllocationReceipt *receipt) noexcept"
-    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const AllocationReceipt &receipt) noexcept")
+    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const AllocationReceipt &receipt) noexcept"
+    "friend bool pmem_runtime::detail::AuthenticateAllocationReceiptNoLock( const AllocationReceipt &receipt, const PhysicalMemory &owner, std::uint32_t allocType, std::uint32_t index, const char *stableName, pmem_runtime::AllocationReceiptPhase expectedPhase) noexcept")
 require_exact_friend_surface(
     _physical_allocation_receipt_class
     _physical_allocation_receipt_friends
@@ -517,6 +549,8 @@ extract_slice(
     _runtime_storage_binding_class
     "runtime-storage binding class")
 set(_runtime_storage_binding_friends
+    "friend bool AuthenticateZoneRuntimeStorageBinding( const ZoneRuntimeStorageBinding &, ZoneRuntimeStorageBindingPhase) noexcept"
+    "friend bool AuthenticateZoneRuntimeStorageComposition( const ZoneRuntimeStorageBinding &, const ZoneRuntimeStorageCompositionExpectation &, ZoneRuntimeStorageCompositionMode) noexcept"
     "friend ZoneRuntimeStorageStatus TryBindZoneRuntimeStorage( void *, std::size_t, const ZoneRuntimeStoragePlan *, ZoneRuntimeStorageBinding *) noexcept"
     "friend ZoneRuntimeStorageStatus TryDestroyZoneRuntimeStorage( ZoneRuntimeStorageBinding *) noexcept"
     "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const ZoneRuntimeStorageBinding &binding) noexcept")
@@ -565,6 +599,7 @@ extract_slice(
     "pending-copy admission receipt class")
 set(_pending_admission_receipt_friends
     "friend class PendingCopyLedger"
+    "friend bool AuthenticatePendingCopyAdmissionReceipt( const PendingCopyAdmissionReceipt &, const PendingCopyLedger *, const zone_load::ZoneLoadContextSlot *, const zone_load::ZoneLoadContextKey &, PendingCopyAdmissionPhase, const PendingCopyAdmissionCompletion &) noexcept"
     "friend PendingCopyStatus TryInitializePendingCopyLedger( PendingCopyLedger *) noexcept"
     "friend PendingCopyStatus TryBeginPendingCopyAdmission( PendingCopyLedger *, PendingCopyAdmissionReceipt *, zone_load::ZoneLoadContextSlot *, const zone_load::ZoneLoadContextKey &) noexcept"
     "friend PendingCopyStatus TryAppendPendingCopyRecord( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &, std::uint32_t) noexcept"
@@ -601,11 +636,26 @@ set(_pending_copy_ledger_friends
     "friend PendingCopyStatus TryFinishPendingCopyDrain( PendingCopyLedger *) noexcept"
     "friend PendingCopyStatus TryResetPendingCopyAdmissionReceipt( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
     "friend bool AuthenticatePassivePendingCopyLedger( const PendingCopyLedger &ledger) noexcept"
+    "friend PendingCopyAuthenticationResult AuthenticatePendingCopyLedgerDescriptors( const PendingCopyLedger &, PendingCopyLedgerAuthenticationPhase, const PendingCopyDescriptorBinding *, std::size_t) noexcept"
     "friend struct PendingCopyLedgerTestAccess")
 require_exact_friend_surface(
     _pending_copy_ledger_class
     _pending_copy_ledger_friends
     "PendingCopyLedger")
+
+extract_slice(
+    _header
+    "class alignas(8) ZoneRuntimeGenerationBinding final"
+    "RUNTIME_SIZE(ZoneRuntimeGenerationBinding, 0x50, 0x78);"
+    _generation_binding_class
+    "generation binding class")
+set(_generation_binding_friends
+    "friend class ZoneRuntimeTable"
+    "friend struct ZoneRuntimeTableTestAccess")
+require_exact_friend_surface(
+    _generation_binding_class
+    _generation_binding_friends
+    "ZoneRuntimeGenerationBinding")
 
 extract_slice(
     _header
@@ -615,6 +665,7 @@ extract_slice(
     "receipt capsule class")
 set(_receipt_capsule_friends
     "friend class ZoneRuntimeEntry"
+    "friend class ZoneRuntimeTable"
     "friend bool detail::IsPristineRuntimeReceipt( const ZoneRuntimeReceiptCapsule &capsule) noexcept"
     "friend struct ZoneRuntimeTableTestAccess")
 require_exact_friend_surface(
@@ -625,7 +676,7 @@ require_exact_friend_surface(
 extract_slice(
     _header
     "class alignas(8) ZoneRuntimeEntry final"
-    "RUNTIME_SIZE(ZoneRuntimeEntry, 0x130, 0x198);"
+    "RUNTIME_SIZE(ZoneRuntimeEntry, 0x190, 0x228);"
     _zone_runtime_entry_class
     "zone runtime entry class")
 set(_zone_runtime_entry_friends
@@ -635,6 +686,21 @@ set(_zone_runtime_entry_friends
     "friend ZoneRuntimeTableStatus TryGetZoneRuntimeEntry( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const ZoneRuntimeEntry **outEntry) noexcept"
     "friend ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, zone_load::ZoneLoadContextKey *inOutKey) noexcept"
     "friend ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, ZoneRuntimeGenerationView *outView) noexcept"
+    "friend ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, const ZoneRuntimeGenerationCallbacks &) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimePhysicalAllocation( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, const char *, std::uint32_t) noexcept"
+    "friend ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, std::uint32_t, std::uint32_t, std::uint32_t, pmem_runtime::AllocationResult *) noexcept"
+    "friend ZoneRuntimeTableStatus TryBindZoneRuntimeStorage( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, void *, std::size_t, const zone_runtime_storage::ZoneRuntimeStoragePlan *) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimeStreamGeneration( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryBindZoneRuntimeStreams( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, const XZoneMemory *, const relocation::BlockView *, std::size_t) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, std::uint32_t) noexcept"
+    "friend ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryCommitZoneRuntimeGeneration( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimeGenerationAbandonment( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryContinueZoneRuntimeGenerationAbandonment( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
     "friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept"
     "friend ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
     "friend struct ZoneRuntimeTableTestAccess")
@@ -646,7 +712,7 @@ require_exact_friend_surface(
 extract_slice(
     _header
     "class alignas(8) ZoneRuntimeTable final"
-    "RUNTIME_SIZE(ZoneRuntimeTable, 0xE900, 0xF700);"
+    "RUNTIME_SIZE(ZoneRuntimeTable, 0xF568, 0x109A0);"
     _zone_runtime_table_class
     "zone runtime table class")
 set(_zone_runtime_table_friends
@@ -654,6 +720,24 @@ set(_zone_runtime_table_friends
     "friend ZoneRuntimeTableStatus TryGetZoneRuntimeEntry( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const ZoneRuntimeEntry **outEntry) noexcept"
     "friend ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, zone_load::ZoneLoadContextKey *inOutKey) noexcept"
     "friend ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, ZoneRuntimeGenerationView *outView) noexcept"
+    "friend ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, const ZoneRuntimeGenerationCallbacks &) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimePhysicalAllocation( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, const char *, std::uint32_t) noexcept"
+    "friend ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, std::uint32_t, std::uint32_t, std::uint32_t, pmem_runtime::AllocationResult *) noexcept"
+    "friend ZoneRuntimeTableStatus TryBindZoneRuntimeStorage( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, void *, std::size_t, const zone_runtime_storage::ZoneRuntimeStoragePlan *) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimeStreamGeneration( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryBindZoneRuntimeStreams( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, const XZoneMemory *, const relocation::BlockView *, std::size_t) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, std::uint32_t) noexcept"
+    "friend ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryCommitZoneRuntimeGeneration( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimeGenerationAbandonment( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryContinueZoneRuntimeGenerationAbandonment( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopyDrain( ZoneRuntimeTable *, const zone_pending_copy::PendingCopyDrainCallback &) noexcept"
+    "friend ZoneRuntimeTableStatus TryDrainNextZoneRuntimePendingCopy( ZoneRuntimeTable *) noexcept"
+    "friend ZoneRuntimeTableStatus TryFinishZoneRuntimePendingCopyDrain( ZoneRuntimeTable *) noexcept"
     "friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept"
     "friend ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
     "friend ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, script_string_journal::ScriptStringJournal *journal, script_string_journal::ScriptStringJournalEntry *storage, std::uint32_t storageCapacity, std::uint32_t expectedCount) noexcept"
@@ -677,31 +761,34 @@ require_exact_friend_surface(
 # whose definition arrives through an included header or build definition and
 # expands only after this raw-source pass.
 require_exact_class_digest(_physical_allocation_receipt_class
-    1d3baf285dc70596ca05b6714228e89d7d4d16c9d811f0fb709f3b1e076b15bc
+    75f83533a5d4b9988e78803421caa663b9e3e8050012560251fe5e870190bc0b
     "AllocationReceipt")
 require_exact_class_digest(_runtime_storage_binding_class
-    1ccfbc989d584306202886e188c756de577f8b65188047e4c0f117254a3b7b05
+    184ee7af0a6025fca4c614f7e40deb77f230afeb03f6df49bac9aca3b01c2651
     "ZoneRuntimeStorageBinding")
 require_exact_class_digest(_stream_generation_receipt_class
     0e94ce08089afadd3198fa52a914d8de83380717869753d91fb64cd39247638b
     "ZoneStreamGenerationReceipt")
 require_exact_class_digest(_active_stream_binding_class
-    50db7b75d5c2aab13723e9246264eced1e5db8992e3314ae0b47b6ba888e3b69
+    43068d2cdd450876889c053f7df29cf0011558ff85a9dd7a54a5282560f4719f
     "ActiveZoneStreamBinding")
 require_exact_class_digest(_pending_admission_receipt_class
-    1a01a9876cb706c14d6bb8411daa2f05f33c115059cc3166d451f0d8b1621b64
+    b1aacac21746323366412a95be63f642927984e027a39f930d326173fe4a6a3a
     "PendingCopyAdmissionReceipt")
 require_exact_class_digest(_pending_copy_ledger_class
-    fc90d9910f1cc6968c4fd3f044c7cc5ae573d0803913a21afa3be16ccb709e6f
+    501f278a5fede51712aa454d786f5f225247fe4f79427df9c09c050ca2739065
     "PendingCopyLedger")
+require_exact_class_digest(_generation_binding_class
+    798a41a619b37929a34f2ca6fa3074637be2dc29f0e11a536f3ed42ecd552755
+    "ZoneRuntimeGenerationBinding")
 require_exact_class_digest(_receipt_capsule_class
-    2eb407cda4acfe1b933c81b8fea804bb94eb1cc0b231cc1afeb3b94ebed5e9fd
+    bf472ac7720169338debff211f4986e00e50233386054eccd0d2a96cd0b287f1
     "ZoneRuntimeReceiptCapsule")
 require_exact_class_digest(_zone_runtime_entry_class
-    7f76648f407e253fbb9e87b2e9d45935e53224f0a34d865cf576f44b34899a5a
+    4f2c0c8a116a52a6a291a8715254951e2ad25093196fcb34f706044641f87bd9
     "ZoneRuntimeEntry")
 require_exact_class_digest(_zone_runtime_table_class
-    1d8e49c331db3a0b02e7852cb025307bb1ce331b522143d477167443b8751f8a
+    57b5b9f4ce57efb16af1e4f57383ea1052535227a37dc4ce04d4b3b93d8e7bd6
     "ZoneRuntimeTable")
 
 set(_external_macro_friend_invocation_fixture "${_receipt_capsule_class}")
@@ -711,7 +798,7 @@ string(REGEX REPLACE
     "${_external_macro_friend_invocation_fixture}")
 class_digest_matches_exact(
     _external_macro_friend_invocation_fixture
-    2eb407cda4acfe1b933c81b8fea804bb94eb1cc0b231cc1afeb3b94ebed5e9fd
+    bf472ac7720169338debff211f4986e00e50233386054eccd0d2a96cd0b287f1
     _external_macro_friend_invocation_accepted)
 if(_external_macro_friend_invocation_accepted)
     message(FATAL_ERROR
@@ -731,6 +818,9 @@ foreach(_authority_header_raw IN ITEMS
         ${_authority_header_raw}
         "${_authority_header_raw}")
 endforeach()
+require_no_define_directive(
+    _runtime_source_raw
+    "runtime-table exact-controller implementation")
 
 set(_runtime_friend_namespace_alias_bypass
     "${_receipt_capsule_class} namespace runtime_alias = db::zone_runtime::detail; friend bool runtime_alias::MutateReceipt(ZoneRuntimeReceiptCapsule &) noexcept;")
@@ -824,9 +914,7 @@ foreach(_marker IN ITEMS
     "AuthenticatePassiveZoneStreamSingleton(binding)"
     "AuthenticatePassivePendingCopyLedger(ledger)"
     "bool ZoneRuntimeReceiptCapsule::isPristine() const noexcept"
-    "detail::EntryReceiptsArePristine(entry)"
-    "detail::IsPristineRuntimeReceipt(activeZoneStreamBinding_)"
-    "detail::IsPristineRuntimeReceipt(pendingCopyLedger_)")
+    "detail::EntryReceiptsArePristine(entry)")
     require_contains(_source "${_marker}" "passive pristine authentication")
 endforeach()
 
@@ -901,53 +989,472 @@ if(NOT _capsule_pristine_predicate STREQUAL
         "Receipt capsule predicate must contain exactly four pristine checks")
 endif()
 
-# Shared singleton storage is passive in this batch. Freeze every source use to
-# the reviewed const pristine predicate so a direct canonical/phase/operation
-# member call cannot hide behind an otherwise allowed field name.
+# The component-global seals delegate only this translation unit to the exact
+# controller seal. Freeze every enrolled qualified authority identifier and
+# direct call independently so an extra call, import, pointer extraction,
+# alias, or raw checked-PMem bypass cannot hide behind that delegation.
+set(_reviewed_composite_calls
+    "zone_stream_ownership::TryBeginZoneStreamGeneration|1"
+    "zone_stream_ownership::TryBindZoneStreams|1"
+    "zone_stream_ownership::TryInvalidateZoneStreams|2"
+    "zone_stream_ownership::AuthenticateZoneStreamComposition|1"
+    "zone_stream_ownership::AuthenticateZoneStreamOutputSpan|1"
+    "zone_pending_copy::TryInitializePendingCopyLedger|1"
+    "zone_pending_copy::TryBeginPendingCopyAdmission|1"
+    "zone_pending_copy::TryAppendPendingCopyRecord|1"
+    "zone_pending_copy::TryPreparePendingCopyAdmission|1"
+    "zone_pending_copy::FinalizePreparedPendingCopyAdmission|1"
+    "zone_pending_copy::TryDiscardPendingCopyAdmission|2"
+    "zone_pending_copy::TryBeginPendingCopyDrain|1"
+    "zone_pending_copy::TryDrainNextPendingCopy|1"
+    "zone_pending_copy::TryFinishPendingCopyDrain|1"
+    "zone_pending_copy::TryResetPendingCopyAdmissionReceipt|1"
+    "zone_pending_copy::AuthenticatePendingCopyAdmissionReceipt|1"
+    "zone_pending_copy::AuthenticatePendingCopyLedgerDescriptors|2"
+    "zone_runtime_storage::TryBindZoneRuntimeStorage|1"
+    "zone_runtime_storage::detail::TryBindFxRuntimeStorage|1"
+    "zone_runtime_storage::TryDestroyZoneRuntimeStorage|2"
+    "zone_runtime_storage::AuthenticateZoneRuntimeStorageComposition|1"
+    "pmem_runtime::TryBeginAllocationReceipt|1"
+    "pmem_runtime::TryAllocate|1"
+    "pmem_runtime::TryAuthenticateAllocationReceipt|1"
+    "pmem_runtime::TryAuthenticateAllocationRange|2"
+    "pmem_runtime::TryEndAllocationReceipt|2"
+    "pmem_runtime::TryFreeAllocationReceipt|1"
+    "pmem_runtime::StorageIsOutsideManagedMemory|6")
+foreach(_reviewed_call IN LISTS _reviewed_composite_calls)
+    string(REPLACE "|" ";" _reviewed_call_fields "${_reviewed_call}")
+    list(GET _reviewed_call_fields 0 _reviewed_call_name)
+    list(GET _reviewed_call_fields 1 _reviewed_call_count)
+    require_substring_count(
+        _source "${_reviewed_call_name}" ${_reviewed_call_count}
+        "exact composite authority identifier enrollment")
+    require_substring_count(
+        _source "${_reviewed_call_name}(" ${_reviewed_call_count}
+        "exact direct composite authority call enrollment")
+endforeach()
+set(_authority_import_detector_fixture
+    "zone_pending_copy::TryAppendPendingCopyRecord(...); "
+    "using zone_pending_copy::TryAppendPendingCopyRecord; "
+    "TryAppendPendingCopyRecord(...);")
 require_substring_count(
-    _source "activeZoneStreamBinding_" 3
-    "all active-stream singleton references are reviewed")
-require_substring_count(
-    _source
-    "detail::IsPristineRuntimeReceipt(activeZoneStreamBinding_)"
-    1
-    "member header authentication uses the const predicate")
-require_substring_count(
-    _source
-    "detail::IsPristineRuntimeReceipt( table->activeZoneStreamBinding_)"
+    _authority_import_detector_fixture
+    "zone_pending_copy::TryAppendPendingCopyRecord"
     2
-    "initialization and test observation use the const predicate")
-require_regex_count(
-    _source "activeZoneStreamBinding_[ ]*(\\.|->)" 0
-    "no direct active-stream singleton member call")
+    "qualified identifier counting catches imports and extraction")
 require_substring_count(
-    _source "pendingCopyLedger_" 3
-    "all pending-copy singleton references are reviewed")
-require_substring_count(
-    _source
-    "detail::IsPristineRuntimeReceipt(pendingCopyLedger_)"
+    _authority_import_detector_fixture
+    "zone_pending_copy::TryAppendPendingCopyRecord("
     1
-    "member pending-ledger authentication uses the const predicate")
+    "qualified direct-call counting distinguishes imported calls")
+set(_authority_extraction_detector_fixture
+    "auto operation = &zone_pending_copy::TryAppendPendingCopyRecord; "
+    "operation(...);")
 require_substring_count(
-    _source
-    "detail::IsPristineRuntimeReceipt(table->pendingCopyLedger_)"
-    2
-    "initialization and test observation use the const predicate")
-require_regex_count(
-    _source "pendingCopyLedger_[ ]*(\\.|->)" 0
-    "no direct pending-copy singleton member call")
+    _authority_extraction_detector_fixture
+    "zone_pending_copy::TryAppendPendingCopyRecord"
+    1
+    "qualified identifier counting observes authority extraction")
+require_substring_count(
+    _authority_extraction_detector_fixture
+    "zone_pending_copy::TryAppendPendingCopyRecord("
+    0
+    "direct-call counting rejects authority extraction substitution")
 
+set(_namespace_alias_pattern
+    "namespace[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=")
+if(_source MATCHES "${_namespace_alias_pattern}")
+    message(FATAL_ERROR
+        "Runtime-table controller cannot use namespace aliases around its authority seal")
+endif()
+set(_namespace_alias_detector_fixture
+    "namespace arbitrary = zone_pending_copy;")
+if(NOT _namespace_alias_detector_fixture MATCHES
+    "${_namespace_alias_pattern}")
+    message(FATAL_ERROR
+        "Runtime-table authority seal lost generic namespace-alias detection")
+endif()
 foreach(_forbidden_operation IN ITEMS
     "physical_memory::TryBegin("
-    "zone_stream_ownership::TryBeginZoneStreamGeneration("
-    "zone_stream_ownership::TryBindZoneStreams("
-    "zone_pending_copy::TryInitializePendingCopyLedger("
-    "zone_pending_copy::TryBeginPendingCopyAdmission("
-    "zone_runtime_storage::TryBindZoneRuntimeStorage(")
+    "physical_memory::TryEnd("
+    "physical_memory::TryFree("
+    "using namespace physical_memory"
+    "using namespace zone_stream_ownership"
+    "using namespace zone_pending_copy"
+    "using namespace zone_runtime_storage"
+    )
     require_not_contains(
         _source "${_forbidden_operation}"
-        "composition must not operate passive authorities")
+        "no raw operation or alias bypass in exact controller")
 endforeach()
+
+# The storage adapter crosses into EffectsCore only through the private
+# database bridge. Freeze the complete status mapping and require rollback of
+# the just-placed binding before a recoverable bind failure is returned.
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryBindZoneRuntimeStorage("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeStreamGeneration("
+    _storage_bind_adapter
+    "exact private FX storage-bind adapter")
+foreach(_marker IN ITEMS
+    "zone_runtime_storage::detail::TryBindFxRuntimeStorage("
+    "zone_runtime_storage::detail::FxRuntimeStorageBindStatus"
+    "case FxBindStatus::Busy:"
+    "case FxBindStatus::InvalidArgument:"
+    "case FxBindStatus::MisalignedStorage:"
+    "case FxBindStatus::SizeOverflow:"
+    "case FxBindStatus::InsufficientCapacity:"
+    "case FxBindStatus::InvalidPhase:"
+    "case FxBindStatus::TransactionLimit:"
+    "case FxBindStatus::InvalidTransaction:"
+    "zone_runtime_storage::TryDestroyZoneRuntimeStorage(&storage)"
+    "ZoneRuntimeStorageBindingPhase::Destroyed"
+    "storage.~ZoneRuntimeStorageBinding();"
+    "new (&storage) zone_runtime_storage::ZoneRuntimeStorageBinding{};")
+    require_contains(
+        _storage_bind_adapter "${_marker}"
+        "complete private FX bind status and rollback mapping")
+endforeach()
+require_ordered(
+    _storage_bind_adapter
+    "zone_runtime_storage::TryBindZoneRuntimeStorage("
+    "zone_runtime_storage::detail::TryBindFxRuntimeStorage("
+    "placement precedes native-arena bind")
+require_ordered(
+    _storage_bind_adapter
+    "zone_runtime_storage::detail::TryBindFxRuntimeStorage("
+    "ZoneRuntimeSetupStage::StorageBound"
+    "native-arena bind precedes storage-stage publication")
+require_not_contains(
+    _storage_bind_adapter "->TryBind("
+    "runtime table cannot call the complete EffectsCore arena directly")
+
+# Writable outputs, retained callback descriptors, and stream descriptors are
+# attacker-controlled aliases at this API boundary. Freeze the shared overflow-
+# safe range primitive and every preflight/snapshot before table authentication
+# or authority mutation, then require publication only after post-authentication.
+extract_slice(
+    _source
+    "bool AddressRangesAreDisjoint("
+    "} // namespace"
+    _separation_helpers
+    "control-state separation helpers")
+foreach(_marker IN ITEMS
+    "if (!leftStorage || leftSize == 0 || !rightStorage || rightSize == 0)"
+    "leftSize > maximum - left || rightSize > maximum - right"
+    "return leftEnd <= right || rightEnd <= left;"
+    "bool WritableOutputIsSeparated("
+    "reinterpret_cast<std::uintptr_t>(output) % outputAlignment != 0"
+    "!AddressRangesAreDisjoint( table, sizeof(*table), output, outputSize)"
+    "AddressRangesAreDisjoint( inputKey, sizeof(*inputKey), output, outputSize)"
+    "bool WritableOutputIsSeparatedFromRetainedRuntime("
+    "zone_stream_ownership::AuthenticateZoneStreamOutputSpan( binding, output, outputSize, outputAlignment)"
+    "if (sharedState == SharedState::Pristine) return true;"
+    "sharedState != SharedState::Ready && sharedState != SharedState::Draining"
+    "pmem_runtime::StorageIsOutsideManagedMemory( output, outputSize)")
+    require_contains(
+        _separation_helpers "${_marker}"
+        "overflow-safe exact control-state separation")
+endforeach()
+require_substring_count(
+    _source "WritableOutputIsSeparated(" 6
+    "one helper plus five reviewed writable-output preflights")
+require_substring_count(
+    _source "WritableOutputIsSeparatedFromRetainedRuntime(" 6
+    "one retained-runtime helper plus five reviewed output gates")
+require_substring_count(
+    _source "zone_stream_ownership::AuthenticateZoneStreamOutputSpan" 1
+    "single exact stream-authority output authenticator")
+require_substring_count(
+    _source "const_cast<ZoneRuntimeEntry *>(&entry)" 1
+    "single read-only callback-context identity reconstruction")
+require_contains(
+    _source
+    "descriptor.completion.context = const_cast<ZoneRuntimeEntry *>(&entry);"
+    "const cast only reconstructs the retained completion context identity")
+
+function(require_retained_output_gate
+    SOURCE_VAR AUTHENTICATION OUTPUT MUTATION DESCRIPTION)
+    require_ordered(
+        ${SOURCE_VAR}
+        "${AUTHENTICATION}"
+        "WritableOutputIsSeparatedFromRetainedRuntime("
+        "${DESCRIPTION} authenticates retained state before output gating")
+    require_contains(
+        ${SOURCE_VAR}
+        "static_cast<SharedState>(table->sharedState_), ${OUTPUT}, sizeof(*${OUTPUT}), alignof("
+        "${DESCRIPTION} passes exact shared state, output span, and alignment")
+    require_ordered(
+        ${SOURCE_VAR}
+        "WritableOutputIsSeparatedFromRetainedRuntime("
+        "${MUTATION}"
+        "${DESCRIPTION} rejects retained aliases before authority mutation")
+endfunction()
+
+function(require_output_preflight
+    START END OUTPUT MUTATION POST DESCRIPTION)
+    extract_slice(_source "${START}" "${END}" _output_adapter
+        "${DESCRIPTION}")
+    require_ordered(
+        _output_adapter
+        "WritableOutputIsSeparated("
+        "authenticateExactMutableEntry("
+        "${DESCRIPTION} separates output before keyed authentication")
+    require_retained_output_gate(
+        _output_adapter
+        "authenticateExactMutableEntry("
+        "${OUTPUT}"
+        "${MUTATION}"
+        "${DESCRIPTION}")
+    require_ordered(
+        _output_adapter
+        "${POST}"
+        "*${OUTPUT} ="
+        "${DESCRIPTION} publishes only after post-authentication")
+endfunction()
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryGetZoneRuntimeEntry("
+    "ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration("
+    _entry_lookup_output
+    "entry lookup output preflight")
+require_ordered(
+    _entry_lookup_output "WritableOutputIsSeparated(" "validateInitializedHeader()"
+    "entry lookup separates output before table authentication")
+require_retained_output_gate(
+    _entry_lookup_output
+    "validateEntryBinding(physicalSlot)"
+    "outEntry"
+    "*outEntry = &entry;"
+    "entry lookup output")
+require_ordered(
+    _entry_lookup_output "validateEntryBinding(physicalSlot)" "*outEntry = &entry;"
+    "entry lookup publishes only after binding authentication")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration("
+    "ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration("
+    _claim_output
+    "claim output preflight")
+require_ordered(
+    _claim_output "WritableOutputIsSeparated(" "validateInitializedHeader()"
+    "claim separates in/out key before table authentication")
+require_retained_output_gate(
+    _claim_output
+    "validateEntryBinding(physicalSlot)"
+    "inOutKey"
+    "zone_load::TryClaimZoneLoadContext("
+    "generation claim output")
+require_ordered(
+    _claim_output "table->authenticateExactEntry(physicalSlot, candidate)" "*inOutKey = candidate;"
+    "claim publishes only after exact post-authentication")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration("
+    "ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks("
+    _generation_lookup_output
+    "generation lookup output")
+require_ordered(
+    _generation_lookup_output
+    "WritableOutputIsSeparated("
+    "validateEntryBinding(physicalSlot)"
+    "generation lookup separates output before entry authentication")
+require_retained_output_gate(
+    _generation_lookup_output
+    "validateEntryBinding(physicalSlot)"
+    "outView"
+    "ZoneLoadContextKeyMatches("
+    "generation lookup output")
+require_ordered(
+    _generation_lookup_output
+    "ZoneLoadContextKeyMatches("
+    "*outView = candidate;"
+    "generation lookup publishes only after exact key authentication")
+require_output_preflight(
+    "ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory("
+    "ZoneRuntimeTableStatus TryBindZoneRuntimeStorage("
+    outResult
+    "pmem_runtime::TryAllocate("
+    "completeCompositeOperation("
+    "PMem allocation output")
+require_output_preflight(
+    "ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString("
+    "ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings("
+    outStringId
+    "TryStageZoneScriptString("
+    "completeMutableOperation("
+    "script-string stage output")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimePhysicalAllocation("
+    _generation_callback_binding
+    "generation callback binding")
+foreach(_marker IN ITEMS
+    "AddressRangesAreDisjoint( table, sizeof(*table), &callbacks, sizeof(callbacks))"
+    "ZoneRuntimeGenerationCallbacks callbackSnapshot = callbacks;"
+    "CallbacksAreComplete(callbackSnapshot)"
+    "StorageIsOutsideManagedMemory( callbackSnapshot.context, 1)"
+    "AddressRangesAreDisjoint( table, sizeof(*table), callbackSnapshot.context, 1)"
+    "generationCallbacksMatch( entry, callbackSnapshot)"
+    "entry->scriptStringOwnership_.isEmptyCanonical()"
+    "ZoneRuntimeTable::bindGeneration( table, entry, key, callbackSnapshot)")
+    require_contains(
+        _generation_callback_binding "${_marker}"
+        "snapshotted separated generation callback identity")
+endforeach()
+require_ordered(
+    _generation_callback_binding
+    "ZoneRuntimeGenerationCallbacks callbackSnapshot = callbacks;"
+    "authenticateExactMutableEntry("
+    "generation callbacks snapshot before table authentication")
+require_ordered(
+    _generation_callback_binding
+    "entry->scriptStringOwnership_.isEmptyCanonical()"
+    "zone_pending_copy::TryInitializePendingCopyLedger("
+    "legacy ownership rejection precedes shared-state mutation")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryBindZoneRuntimeStreams("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies("
+    _stream_binding
+    "snapshotted stream binding")
+foreach(_marker IN ITEMS
+    "AddressRangesAreDisjoint( table, sizeof(*table), blocks, sizeof(*blocks) * relocation::kBlockCount)"
+    "relocation::BlockView blockSnapshot[relocation::kBlockCount]{};"
+    "blockSnapshot[index] = blocks[index];"
+    "TryAuthenticateAllocationRange("
+    "AddressRangesAreDisjoint( storageSlab, storageCapacity, reinterpret_cast<const void *>(blockSnapshot[index].base), blockSnapshot[index].size)"
+    "blockSnapshot, blockCount)")
+    require_contains(
+        _stream_binding "${_marker}"
+        "snapshotted separated stream descriptors")
+endforeach()
+require_ordered(
+    _stream_binding
+    "blockSnapshot[index] = blocks[index];"
+    "authenticateExactMutableEntry("
+    "stream descriptors snapshot before table authentication")
+require_ordered(
+    _stream_binding
+    "AddressRangesAreDisjoint( storageSlab, storageCapacity"
+    "TryBindZoneStreams("
+    "cross-component overlap rejection before singleton publication")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopyDrain("
+    "ZoneRuntimeTableStatus TryDrainNextZoneRuntimePendingCopy("
+    _pending_drain_begin
+    "pending drain callback binding")
+foreach(_marker IN ITEMS
+    "AddressRangesAreDisjoint( table, sizeof(*table), &callback, sizeof(callback))"
+    "PendingCopyDrainCallback callbackSnapshot = callback;"
+    "StorageIsOutsideManagedMemory( callbackSnapshot.context, 1)"
+    "AddressRangesAreDisjoint( table, sizeof(*table), callbackSnapshot.context, 1)"
+    "pendingDrainCallback_ = callbackSnapshot;")
+    require_contains(
+        _pending_drain_begin "${_marker}"
+        "snapshotted separated pending-drain callback identity")
+endforeach()
+require_ordered(
+    _pending_drain_begin
+    "PendingCopyDrainCallback callbackSnapshot = callback;"
+    "validateInitializedHeader()"
+    "pending-drain callback snapshot before table authentication")
+
+# Passive compatibility adapters cannot smuggle table/control aliases into
+# journal storage or into callbacks, even though enrolled generations reject
+# those adapters later at their phase gate.
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership("
+    "ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString("
+    _ownership_begin
+    "script-string storage preflight")
+foreach(_marker IN ITEMS
+    "reinterpret_cast<std::uintptr_t>(journal) % alignof(script_string_journal::ScriptStringJournal)"
+    "AddressRangesAreDisjoint( table, sizeof(*table), journal, sizeof(*journal))"
+    "expectedCount) > (std::numeric_limits<std::size_t>::max)() / sizeof(*storage)"
+    "AddressRangesAreDisjoint( table, sizeof(*table), storage, storageBytes)")
+    require_contains(
+        _ownership_begin "${_marker}"
+        "bounded separated passive ownership storage")
+endforeach()
+require_ordered(
+    _ownership_begin
+    "AddressRangesAreDisjoint( table, sizeof(*table), storage, storageBytes)"
+    "authenticateExactMutableEntry("
+    "ownership storage preflight before keyed authentication")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback("
+    _legacy_admission_callback
+    "legacy admission callback guard")
+foreach(_marker IN ITEMS
+    "AddressRangesAreDisjoint( table, sizeof(*table), &admission, sizeof(admission))"
+    "ZoneScriptStringAdmissionCallback admissionSnapshot = admission;"
+    "AddressRangesAreDisjoint( table, sizeof(*table), admissionSnapshot.context, 1)"
+    "TryCommitZoneScriptStringsAndAdmit( ZoneRuntimeTable::mutableScriptStringOwnership(entry), admissionSnapshot)")
+    require_contains(
+        _legacy_admission_callback "${_marker}"
+        "snapshotted separated legacy admission callback")
+endforeach()
+require_ordered(
+    _legacy_admission_callback
+    "admissionSnapshot = admission;"
+    "authenticateExactMutableEntry("
+    "legacy admission callback snapshot before authentication")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback("
+    "ZoneRuntimeTableStatus TryRollbackNextZoneRuntimeScriptString("
+    _legacy_rollback_callback
+    "legacy rollback callback guard")
+foreach(_marker IN ITEMS
+    "AddressRangesAreDisjoint( table, sizeof(*table), &callbacks, sizeof(callbacks))"
+    "ZoneScriptStringRollbackCallbacks callbackSnapshot = callbacks;"
+    "AddressRangesAreDisjoint( table, sizeof(*table), callbackSnapshot.context, 1)"
+    "TryBeginZoneScriptStringRollback( ZoneRuntimeTable::mutableScriptStringOwnership(entry), callbackSnapshot)")
+    require_contains(
+        _legacy_rollback_callback "${_marker}"
+        "snapshotted separated legacy rollback callback")
+endforeach()
+require_ordered(
+    _legacy_rollback_callback
+    "callbackSnapshot = callbacks;"
+    "authenticateExactMutableEntry("
+    "legacy rollback callback snapshot before authentication")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration( ZoneRuntimeTable *const table, const std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept"
+    "ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt("
+    _legacy_unload_callback
+    "legacy unload callback guard")
+foreach(_marker IN ITEMS
+    "AddressRangesAreDisjoint( table, sizeof(*table), &callbacks, sizeof(callbacks))"
+    "ZoneLoadCleanupCallbacks callbackSnapshot = callbacks;"
+    "AddressRangesAreDisjoint( table, sizeof(*table), callbackSnapshot.context, 1)"
+    "TryUnloadLiveZoneScriptStringOwnership( &entry.scriptStringOwnership_, &entry.lifecycle_, key, callbackSnapshot)")
+    require_contains(
+        _legacy_unload_callback "${_marker}"
+        "snapshotted separated legacy unload callback")
+endforeach()
+require_ordered(
+    _legacy_unload_callback
+    "callbackSnapshot = callbacks;"
+    "TryUnloadLiveZoneScriptStringOwnership("
+    "legacy unload callback snapshot before invocation")
 
 foreach(_marker IN ITEMS
     "zone_slots::kDefaultZoneSlot"
@@ -960,7 +1467,7 @@ foreach(_marker IN ITEMS
     "ZoneLoadContextKeyMatches("
     "lifecycle.canonical()"
     "ownership.isEmptyCanonical()"
-    "ValidateEntryBinding("
+    "validateEntryBinding("
     "IsPristineLifecycle(lifecycle, true, physicalSlot)"
     "lifecycle.cleanupActive()"
     "lifecycle.cleanupPoisoned()"
@@ -993,7 +1500,7 @@ endforeach()
 extract_slice(
     _source
     "ZoneRuntimeTableStatus MapLiveUnloadOwnershipStatus("
-    "ZoneRuntimeTableStatus AuthenticateExactEntry("
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactEntry("
     _live_unload_status_map
     "Live-unload status allowlist")
 foreach(_marker IN ITEMS
@@ -1246,7 +1753,7 @@ foreach(_marker IN ITEMS
     "if (!static_cast<bool>(key))"
     "ValidateUsableSlot(physicalSlot)"
     "if (key.slot != physicalSlot)"
-    "AuthenticateExactEntry(entry, physicalSlot, key)"
+    "authenticateExactEntry(physicalSlot, key)"
     "MapOwnershipStatus(ownershipStatus)"
     "const ZoneRuntimeTableStatus postAuthentication ="
     "authenticateExactMutableEntry(physicalSlot, key, &postEntry)"
@@ -1273,12 +1780,12 @@ require_ordered(
 # advances the generation and publishes a new key.
 extract_slice(
     _source
-    "ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration("
+    "ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration( ZoneRuntimeTable *const table, const std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept"
     "ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt("
     _unload
     "keyed live unload")
 foreach(_marker IN ITEMS
-    "AuthenticateExactEntry(entry, physicalSlot, key)"
+    "table->authenticateExactEntry(physicalSlot, key)"
     "TryUnloadLiveZoneScriptStringOwnership("
     "MapLiveUnloadOwnershipStatus(ownershipStatus)"
     "OwnershipPhase::Unloaded"
@@ -1288,7 +1795,7 @@ foreach(_marker IN ITEMS
 endforeach()
 require_ordered(
     _unload
-    "AuthenticateExactEntry(entry, physicalSlot, key)"
+    "table->authenticateExactEntry(physicalSlot, key)"
     "TryUnloadLiveZoneScriptStringOwnership("
     "exact key authentication before unload mutation")
 require_ordered(
@@ -1304,7 +1811,7 @@ extract_slice(
     _terminal_reset
     "keyed terminal reset")
 foreach(_marker IN ITEMS
-    "AuthenticateExactEntry(entry, physicalSlot, key)"
+    "table->authenticateExactEntry(physicalSlot, key)"
     "entry.lifecycle_.phase() != zone_load::ZoneLoadContextPhase::Empty"
     "entry.lifecycle_.terminalKind()"
     "OwnershipPhase::Abandoned"
@@ -1318,7 +1825,7 @@ foreach(_marker IN ITEMS
 endforeach()
 require_ordered(
     _terminal_reset
-    "AuthenticateExactEntry(entry, physicalSlot, key)"
+    "table->authenticateExactEntry(physicalSlot, key)"
     "TryResetTerminalZoneScriptStringOwnership("
     "exact key and receipt authentication before reset")
 require_not_contains(
@@ -1387,6 +1894,7 @@ endforeach()
 foreach(_marker IN ITEMS
     "void TestLayoutNoexceptAndDefaultState()"
     "void TestAllPhysicalSlotsAndStableAddresses()"
+    "void TestLookupAndClaimOutputAliasPreflight()"
     "void TestClaimAuthenticationAndAdjacentIsolation()"
     "void TestGenerationAdvanceRejectsAba()"
     "void TestPartialInitializationAndCorruptionFailClosed()"
@@ -1398,6 +1906,12 @@ foreach(_marker IN ITEMS
     "void TestLiveUnloadRetryResetReuseAndAba()"
     "void TestAbandonedReceiptResetAndGenerationExhaustion()"
     "void TestTerminalAdapterPhaseSerializerAndCorruptionGates()"
+    "void TestCompositeRuntimeLiveUnloadResetAndReuse()"
+    "void TestCompositePartialStageAbandonmentAndReuse()"
+    "void TestCompositeRecoverablePlacementAndRangeRejection()"
+    "void TestCompositeStageOutputAliasPreflight()"
+    "void TestCompositeCallbackContextAliasPreflightAndDrain()"
+    "void TestCompositeAbandonmentRetryAndReentryPreservation()"
     "void TestUnsafeLiveUnloadBoundary("
     "void ObserveAdmittingController(void *const context) noexcept"
     "current - previous == sizeof(ZoneRuntimeEntry)"
@@ -1453,6 +1967,46 @@ foreach(_marker IN ITEMS
     require_contains(_fixture "${_marker}" "focused runtime coverage")
 endforeach()
 
+extract_slice(
+    _fixture
+    "void TestCompositeStageOutputAliasPreflight()"
+    "void TestCompositeCallbackContextAliasPreflightAndDrain()"
+    _retained_output_fixture
+    "retained output alias regression coverage")
+require_substring_count(
+    _fixture
+    "alignas(ZoneRuntimeGenerationView) XZoneMemory zone{};"
+    1
+    "composite bound-zone output target has cross-ABI alignment")
+foreach(_marker IN ITEMS
+    "kManagedOutputBytes = 64"
+    "managedClaimSlot = 32"
+    "kIdleStreamOutputBytes = 64"
+    "kIdleStreamOutputAlignment"
+    "kIdleStreamOutputAlignment >= alignof(ZoneLoadContextKey)"
+    "kIdleStreamOutputAlignment >= alignof(const ZoneRuntimeEntry *)"
+    "std::align("
+    "static_cast<void *>(g_streamPosStack)"
+    "reinterpret_cast<const ZoneRuntimeEntry **>(&fixture.zone)"
+    "reinterpret_cast<ZoneRuntimeGenerationView *>(&fixture.zone)"
+    "reinterpret_cast<ZoneLoadContextKey *>(&fixture.zone)"
+    "reinterpret_cast<pmem_runtime::AllocationResult *>( &fixture.zone)"
+    "reinterpret_cast<std::uint32_t *>(&fixture.zone)"
+    "&g_streamPosIndex"
+    "TryGetZoneRuntimeEntry("
+    "TryClaimZoneRuntimeGeneration("
+    "TryGetZoneRuntimeGeneration("
+    "TryAllocateZoneRuntimeMemory("
+    "TryStageZoneRuntimeScriptString("
+    "ZoneRuntimeTableStatus::InvalidArgument"
+    "managedClaimLifecycle->phase() == ZoneLoadContextPhase::Empty"
+    "allocationAfter.freeBytes == allocationBefore.freeBytes"
+    "runtime_table_backend::backend.acquireCalls == 0")
+    require_contains(
+        _retained_output_fixture "${_marker}"
+        "managed, idle-stream, and bound-zone outputs remain fail-closed")
+endforeach()
+
 # Compile the source in production targets, execute it on all portable hosts,
 # and retain explicit measured Windows x86 Debug/Release coverage.
 foreach(_marker IN ITEMS
@@ -1499,6 +2053,15 @@ foreach(_marker IN ITEMS
     "mutation-unsafe-(backend|postcondition)"
     "mutation-invalid-(missing-value|extra-value|kind)")
     require_contains(_ci "${_marker}" "measured Windows x86 CI integration")
+endforeach()
+foreach(_forbidden_warning_suppression IN ITEMS
+    "-Wno-unused-parameter"
+    "-Wno-unused-variable"
+    "-Wno-strict-aliasing"
+    "-Wno-dollar-in-identifier-extension")
+    require_not_contains(
+        _tests "${_forbidden_warning_suppression}"
+        "runtime fixtures must fix warning causes instead of hiding them")
 endforeach()
 
 message(STATUS "Zone runtime table source invariants passed")

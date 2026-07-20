@@ -144,6 +144,15 @@ foreach(marker IN ITEMS
     "NotReady,"
     "ScopeInactive,"
     "Exhausted,"
+    "enum class AllocationReceiptPhase : std::uint8_t"
+    "Pristine,"
+    "Begun,"
+    "Ended,"
+    "Freed,"
+    "enum class AllocationReceiptStatus : std::uint8_t"
+    "ReceiptInUse,"
+    "ReceiptMismatch,"
+    "CapacityExceeded,"
     "std::uint64_t additionalBytes = 0;"
     "std::uint8_t *address = nullptr;"
     "std::uint8_t reserved[3]{};"
@@ -166,7 +175,13 @@ foreach(marker IN ITEMS
     "TryInitialize() noexcept;"
     "TryAllocate("
     "std::uint32_t allocType) noexcept;"
-    "TryCaptureDiagnosticSnapshot() noexcept;")
+    "TryCaptureDiagnosticSnapshot() noexcept;"
+    "StorageIsOutsideManagedMemory("
+    "TryBeginAllocationReceipt("
+    "TryEndAllocationReceipt("
+    "TryFreeAllocationReceipt("
+    "TryAuthenticateAllocationReceipt("
+    "TryAuthenticateAllocationRange(")
     require_text("${runtime_header}" "${marker}" "narrow runtime API marker")
 endforeach()
 foreach(marker IN ITEMS
@@ -178,10 +193,24 @@ endforeach()
 foreach(forbidden IN ITEMS
     "class ProcessInitController"
     "struct ProcessInitControl"
-    "ProcessInitializationController"
-    "AllocationReceipt")
+    "ProcessInitializationController")
     reject_text("${runtime_header}" "${forbidden}"
         "public mutable process-init controller authority")
+endforeach()
+require_count("${runtime_header}" "class AllocationReceipt;" 1
+    "single opaque allocation-receipt declaration")
+require_count("${runtime_header}"
+    "physical_memory::AllocationReceipt *receipt" 5
+    "pointer-only opaque receipt parameters")
+foreach(forbidden IN ITEMS
+    "AllocationReceipt &"
+    "AllocationReceipt receipt"
+    "AllocationReceipt allocationReceipt"
+    "AllocationReceipt{}"
+    "PhysicalMemory *"
+    "PhysicalMemory &")
+    reject_text("${runtime_header}" "${forbidden}"
+        "public mutable physical-memory authority")
 endforeach()
 extract_slice("${runtime_header}"
     "struct DiagnosticEntry final"
@@ -697,6 +726,98 @@ require_order("${public_diagnostic_capture}"
     "Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);"
     "diagnostic capture core before unlock")
 
+# The opaque receipt bridge is the sole reviewed enrollment of the raw checked
+# lifecycle against hidden g_mem. Private helpers are lock-free/report-free;
+# each public operation owns exactly one serializer and revalidates Ready just
+# before releasing it. No hidden owner or retained-extent pointer is returned.
+extract_slice("${source}"
+    "struct AuthenticatedReceiptLocation final"
+    "void SetRuntimePhase("
+    receipt_bridge_core)
+foreach(marker IN ITEMS
+    "AllocationReceiptStorageIsDisjoint("
+    "StorageIsOutsideManagedMemoryReadyNoLock("
+    "AuthenticateReceiptLocationNoLock("
+    "AuthenticateAllocationReceiptNoLock("
+    "AuthenticateAllocationRangeNoLock("
+    "owned = CaptureOwnedName(name, allocType, index);"
+    "physical_memory::TryBegin("
+    "physical_memory::TryEnd(receipt);"
+    "physical_memory::TryFree(receipt);"
+    "g_runtime.ownedNames.names[location.allocType][location.index] = {};"
+    "index < previousCount;"
+    "AllocationReceiptStatus::CorruptState")
+    require_text("${receipt_bridge_core}" "${marker}"
+        "serialized receipt bridge core marker")
+endforeach()
+require_order("${receipt_bridge_core}"
+    "owned = CaptureOwnedName(name, allocType, index);"
+    "physical_memory::TryBegin("
+    "owned name capture before raw checked Begin")
+require_order("${receipt_bridge_core}"
+    "physical_memory::TryFree(receipt);"
+    "g_runtime.ownedNames.names[location.allocType][location.index] = {};"
+    "raw checked Free before sidecar clearing")
+foreach(forbidden IN ITEMS
+    "Sys_EnterCriticalSection"
+    "Sys_LeaveCriticalSection"
+    "MyAssertHandler("
+    "Com_Printf("
+    "Com_Error("
+    "Sys_OutOfMemErrorInternal("
+    "PMem_BeginAlloc("
+    "PMem_EndAlloc("
+    "PMem_Free("
+    "new "
+    "malloc(")
+    reject_text("${receipt_bridge_core}" "${forbidden}"
+        "lock, report, legacy lifecycle, or allocation in receipt core")
+endforeach()
+
+extract_slice("${source}"
+    "bool KISAK_CDECL pmem_runtime::StorageIsOutsideManagedMemory("
+    "pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL"
+    public_receipt_bridge)
+foreach(marker IN ITEMS
+    "StorageIsOutsideManagedMemory("
+    "TryBeginAllocationReceipt("
+    "TryEndAllocationReceipt("
+    "TryFreeAllocationReceipt("
+    "TryAuthenticateAllocationReceipt("
+    "TryAuthenticateAllocationRange("
+    "GetRuntimeReadiness()"
+    "ReadyStateIsCoherent()"
+    "AllocationReceiptStatus::NotReady"
+    "AllocationReceiptStatus::CorruptState")
+    require_text("${public_receipt_bridge}" "${marker}"
+        "public serialized receipt bridge marker")
+endforeach()
+require_count("${public_receipt_bridge}"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);" 6
+    "receipt/storage serializer acquisitions")
+require_count("${public_receipt_bridge}"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);" 6
+    "receipt/storage serializer releases")
+require_count("${public_receipt_bridge}"
+    "GetRuntimeReadiness()" 6
+    "receipt/storage readiness admissions")
+require_count("${public_receipt_bridge}"
+    "ReadyStateIsCoherent()" 6
+    "receipt/storage Ready reauthentication checks")
+foreach(forbidden IN ITEMS
+    "MyAssertHandler("
+    "Com_Printf("
+    "Com_Error("
+    "Sys_OutOfMemErrorInternal("
+    "PMem_BeginAlloc("
+    "PMem_EndAlloc("
+    "PMem_Free("
+    "return &g_mem"
+    "return g_runtime.extent")
+    reject_text("${public_receipt_bridge}" "${forbidden}"
+        "report, legacy call, or hidden pointer exposure in receipt API")
+endforeach()
+
 # The process-lifetime `$init` controller is hidden inside the same serialized
 # runtime. Its report-free, no-argument API can neither expose nor duplicate
 # the owned-name/index-zero authority. Dormant remains compatible with the
@@ -995,6 +1116,11 @@ foreach(marker IN ITEMS
     "TestDiagnosticAccountingAndDumpOrder();"
     "TestDiagnosticCapacityAndSidecarCorruption();"
     "TestDumpReentryAndSnapshotContention();"
+    "TestReceiptBridgeReadinessStorageAndForeignAuthority();"
+    "TestReceiptBridgeLifecycleAndExactRanges();"
+    "TestReceiptBridgeHoleCollapseAndProcessInitCoexistence();"
+    "TestReceiptBridgeCapacityFailureAtomicity();"
+    "TestReceiptBridgeConcurrentLowHighSerialization();"
     "TestProcessInitControllerLifecycleAndLegacyCoexistence();"
     "TestProcessInitControllerCorruptionAndAtomicity();"
     "TestProcessInitControllerConcurrencyAndDisjointness();"
@@ -1014,12 +1140,27 @@ foreach(marker IN ITEMS
     "std::is_standard_layout_v<pmem_runtime::DiagnosticSnapshot>"
     "sizeof(pmem_runtime::DiagnosticSnapshot) == 0x610"
     "noexcept(pmem_runtime::TryCaptureDiagnosticSnapshot())"
+    "sizeof(pmem_runtime::AllocationReceiptPhase) == 1"
+    "sizeof(pmem_runtime::AllocationReceiptStatus) == 1"
+    "noexcept(pmem_runtime::StorageIsOutsideManagedMemory("
+    "noexcept(pmem_runtime::TryBeginAllocationReceipt("
+    "noexcept(pmem_runtime::TryAuthenticateAllocationRange("
     "sizeof(pmem_runtime::ProcessInitAllocationStatus) == 1"
     "noexcept(pmem_runtime::TryBeginProcessInitAllocation())"
     "noexcept(pmem_runtime::TryEndProcessInitAllocation())"
     "class PhysicalMemoryGlobalStateTestAccess final")
     require_text("${production_seal_fixture}" "${marker}"
         "macro-off compile seal marker")
+endforeach()
+foreach(marker IN ITEMS
+    "StorageIsOutsideManagedMemory"
+    "TryBeginAllocationReceipt"
+    "TryEndAllocationReceipt"
+    "TryFreeAllocationReceipt"
+    "TryAuthenticateAllocationReceipt"
+    "TryAuthenticateAllocationRange")
+    require_text("${production_symbol_seal}" "${marker}"
+        "macro-off serialized receipt symbol seal")
 endforeach()
 foreach(marker IN ITEMS
     "g_mem"

@@ -195,6 +195,20 @@ else()
     endif()
 endif()
 
+foreach(required_runtime_api IN ITEMS
+    StorageIsOutsideManagedMemory
+    TryBeginAllocationReceipt
+    TryEndAllocationReceipt
+    TryFreeAllocationReceipt
+    TryAuthenticateAllocationReceipt
+    TryAuthenticateAllocationRange)
+    if(NOT all_symbols MATCHES "${required_runtime_api}")
+        message(FATAL_ERROR
+            "Macro-off PMem object omitted serialized receipt API "
+            "${required_runtime_api}:\n${all_symbols}")
+    endif()
+endforeach()
+
 if(all_symbols MATCHES "PhysicalMemoryGlobalStateTestAccess")
     message(FATAL_ERROR
         "Macro-off PMem object emitted test-access symbols:\n${all_symbols}")

@@ -111,6 +111,14 @@ constexpr std::uint8_t kLedgerPhaseWitnessMask = UINT8_C(0x5D);
             firstBegin, firstEnd, secondBegin, secondEnd);
 }
 
+[[nodiscard]] bool ObjectIsAligned(
+    const void *const object,
+    const std::size_t alignment) noexcept
+{
+    return object && alignment != 0
+        && reinterpret_cast<std::uintptr_t>(object) % alignment == 0;
+}
+
 [[nodiscard]] constexpr bool IsDefaultRecord(
     const PendingCopyRecord &record) noexcept
 {
@@ -315,6 +323,183 @@ bool AuthenticatePassivePendingCopyLedger(
     const PendingCopyLedger &ledger) noexcept
 {
     return ledger.isPristine();
+}
+
+bool AuthenticatePendingCopyAdmissionReceipt(
+    const PendingCopyAdmissionReceipt &receipt,
+    const PendingCopyLedger *const expectedLedger,
+    const zone_load::ZoneLoadContextSlot *const expectedLifecycle,
+    const zone_load::ZoneLoadContextKey &expectedKey,
+    const PendingCopyAdmissionPhase expectedPhase,
+    const PendingCopyAdmissionCompletion &expectedCompletion) noexcept
+{
+    if (!receipt.isCanonical() || receipt.ledger_ != expectedLedger
+        || receipt.lifecycle_ != expectedLifecycle
+        || receipt.key_ != expectedKey || receipt.phase_ != expectedPhase)
+    {
+        return false;
+    }
+
+    switch (expectedPhase)
+    {
+    case PendingCopyAdmissionPhase::Pristine:
+        return expectedLedger == nullptr && expectedLifecycle == nullptr
+            && IsNullKey(expectedKey)
+            && expectedCompletion.context == nullptr
+            && expectedCompletion.complete == nullptr
+            && receipt.isPristine();
+    case PendingCopyAdmissionPhase::Prepared:
+    case PendingCopyAdmissionPhase::Admitting:
+        return expectedCompletion.complete != nullptr
+            && receipt.completionContext_ == expectedCompletion.context
+            && receipt.completion_ == expectedCompletion.complete;
+    case PendingCopyAdmissionPhase::Collecting:
+    case PendingCopyAdmissionPhase::Admitted:
+    case PendingCopyAdmissionPhase::Drained:
+    case PendingCopyAdmissionPhase::Discarded:
+        return expectedCompletion.context == nullptr
+            && expectedCompletion.complete == nullptr
+            && receipt.completionContext_ == nullptr
+            && receipt.completion_ == nullptr;
+    case PendingCopyAdmissionPhase::UnsafeFailure:
+    default:
+        return false;
+    }
+}
+
+PendingCopyAuthenticationResult AuthenticatePendingCopyLedgerDescriptors(
+    const PendingCopyLedger &ledger,
+    const PendingCopyLedgerAuthenticationPhase expectedPhase,
+    const PendingCopyDescriptorBinding *const expectedBindings,
+    const std::size_t expectedBindingCount) noexcept
+{
+    using AuthenticationPhase = PendingCopyLedgerAuthenticationPhase;
+    using AuthenticationResult = PendingCopyAuthenticationResult;
+    using LedgerPhase = PendingCopyLedger::Phase;
+    using GenerationPhase = PendingCopyLedger::GenerationPhase;
+
+    if (expectedBindingCount > kPendingCopyGenerationCapacity
+        || (expectedBindingCount != 0 && expectedBindings == nullptr))
+    {
+        return AuthenticationResult::Mismatch;
+    }
+    if (expectedPhase == AuthenticationPhase::Pristine)
+    {
+        return expectedBindingCount == 0 && ledger.isPristine()
+            ? AuthenticationResult::Match
+            : AuthenticationResult::Mismatch;
+    }
+    if (!ledger.isCanonical()
+        || expectedBindingCount != ledger.generationCount_)
+    {
+        return AuthenticationResult::Mismatch;
+    }
+
+    LedgerPhase ledgerPhase = LedgerPhase::UnsafeFailure;
+    switch (expectedPhase)
+    {
+    case AuthenticationPhase::Ready:
+        ledgerPhase = LedgerPhase::Ready;
+        break;
+    case AuthenticationPhase::AdmissionPrepared:
+        ledgerPhase = LedgerPhase::AdmissionPrepared;
+        break;
+    case AuthenticationPhase::Draining:
+        ledgerPhase = LedgerPhase::Draining;
+        break;
+    case AuthenticationPhase::Pristine:
+    default:
+        return AuthenticationResult::Mismatch;
+    }
+    if (ledger.phase_ != ledgerPhase)
+        return AuthenticationResult::Mismatch;
+
+    for (std::size_t index = 0; index < expectedBindingCount; ++index)
+    {
+        const PendingCopyDescriptorBinding &binding =
+            expectedBindings[index];
+        if (!binding.receipt || !binding.lifecycle)
+            return AuthenticationResult::Mismatch;
+        switch (binding.phase)
+        {
+        case PendingCopyAdmissionPhase::Collecting:
+        case PendingCopyAdmissionPhase::Prepared:
+        case PendingCopyAdmissionPhase::Admitting:
+        case PendingCopyAdmissionPhase::Admitted:
+            break;
+        default:
+            return AuthenticationResult::Mismatch;
+        }
+        for (std::size_t prior = 0; prior < index; ++prior)
+        {
+            const PendingCopyDescriptorBinding &earlier =
+                expectedBindings[prior];
+            if (binding.receipt == earlier.receipt
+                || binding.lifecycle == earlier.lifecycle
+                || binding.key == earlier.key)
+            {
+                return AuthenticationResult::Mismatch;
+            }
+        }
+    }
+
+    for (std::uint32_t descriptorIndex = 0;
+         descriptorIndex < ledger.generationCount_;
+         ++descriptorIndex)
+    {
+        const PendingCopyLedger::GenerationDescriptor &descriptor =
+            ledger.generations_[descriptorIndex];
+        const PendingCopyDescriptorBinding *binding = nullptr;
+        for (std::size_t expectedIndex = 0;
+             expectedIndex < expectedBindingCount;
+             ++expectedIndex)
+        {
+            if (expectedBindings[expectedIndex].receipt
+                == descriptor.receipt)
+            {
+                binding = &expectedBindings[expectedIndex];
+                break;
+            }
+        }
+        if (!binding || binding->key != descriptor.key)
+            return AuthenticationResult::Mismatch;
+
+        PendingCopyAdmissionPhase receiptPhase =
+            PendingCopyAdmissionPhase::UnsafeFailure;
+        switch (descriptor.phase)
+        {
+        case GenerationPhase::Collecting:
+            receiptPhase = PendingCopyAdmissionPhase::Collecting;
+            break;
+        case GenerationPhase::Prepared:
+            receiptPhase = PendingCopyAdmissionPhase::Prepared;
+            break;
+        case GenerationPhase::Admitted:
+            receiptPhase = descriptor.receipt->phase()
+                    == PendingCopyAdmissionPhase::Admitting
+                ? PendingCopyAdmissionPhase::Admitting
+                : PendingCopyAdmissionPhase::Admitted;
+            break;
+        case GenerationPhase::Empty:
+        default:
+            return AuthenticationResult::Mismatch;
+        }
+        if (binding->phase != receiptPhase
+            || !AuthenticatePendingCopyAdmissionReceipt(
+                *binding->receipt,
+                &ledger,
+                binding->lifecycle,
+                binding->key,
+                binding->phase,
+                binding->completion))
+        {
+            return AuthenticationResult::Mismatch;
+        }
+    }
+
+    return ledger.callbackActive_ != 0
+        ? AuthenticationResult::CallbackActive
+        : AuthenticationResult::Match;
 }
 
 bool PendingCopyLedger::hasCanonicalHeader() const noexcept
@@ -699,7 +884,8 @@ PendingCopyStatus TryReadPendingCopyRecord(
     PendingCopyRecord *const outRecord) noexcept
 {
     const zone_load::ZoneLoadContextKey key = keyArgument;
-    if (!receipt || !outRecord)
+    if (!receipt
+        || !ObjectIsAligned(outRecord, alignof(PendingCopyRecord)))
         return PendingCopyStatus::InvalidArgument;
     if (!receipt->isCanonical())
         return PendingCopyStatus::UnsafeFailure;
@@ -735,6 +921,37 @@ PendingCopyStatus TryReadPendingCopyRecord(
         return PendingCopyStatus::UnsafeFailure;
     if (ledger->callbackActive_ != 0)
         return PendingCopyStatus::Busy;
+    if (!zone_load::ZoneLoadContextKeyMatches(receipt->lifecycle_, key))
+        return PendingCopyStatus::StaleKey;
+    for (std::uint32_t retainedIndex = 0;
+         retainedIndex < ledger->generationCount_;
+         ++retainedIndex)
+    {
+        const PendingCopyLedger::GenerationDescriptor &retainedDescriptor =
+            ledger->generations_[retainedIndex];
+        const PendingCopyAdmissionReceipt *const retainedReceipt =
+            retainedDescriptor.receipt;
+        if (!retainedReceipt
+            || !ObjectsDisjoint(
+                retainedReceipt,
+                sizeof(*retainedReceipt),
+                outRecord,
+                sizeof(*outRecord)))
+        {
+            return PendingCopyStatus::InvalidArgument;
+        }
+        const zone_load::ZoneLoadContextSlot *const retainedLifecycle =
+            retainedReceipt->lifecycle_;
+        if (!retainedLifecycle
+            || !ObjectsDisjoint(
+                retainedLifecycle,
+                sizeof(*retainedLifecycle),
+                outRecord,
+                sizeof(*outRecord)))
+        {
+            return PendingCopyStatus::InvalidArgument;
+        }
+    }
     if (receipt->generationIndex_ >= ledger->generationCount_)
     {
         return PendingCopyStatus::UnsafeFailure;
