@@ -699,10 +699,12 @@ void TestInitPhysicalMemoryFailureAtomicity()
     memory.prim[1].pos = 19;
     const PhysicalMemory before = memory;
 
-    PMem_InitPhysicalMemory(nullptr, bytes.data(), bytes.size());
+    PMem_InitPhysicalMemory(
+        nullptr, bytes.data(), static_cast<std::uint32_t>(bytes.size()));
     CHECK(g_assertReports.load() == 1);
     CHECK(SameMemory(memory, before));
-    PMem_InitPhysicalMemory(&memory, nullptr, bytes.size());
+    PMem_InitPhysicalMemory(
+        &memory, nullptr, static_cast<std::uint32_t>(bytes.size()));
     CHECK(g_assertReports.load() == 2);
     CHECK(SameMemory(memory, before));
     PMem_InitPhysicalMemory(&memory, bytes.data(), 0);
