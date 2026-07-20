@@ -80,7 +80,7 @@ else()
         if(NOT matching_lines MATCHES
                "\\(anonymous namespace\\)::${local_name}([^A-Za-z0-9_]|$)"
            AND NOT matching_lines MATCHES
-               "_+ZN12_GLOBAL__N_1L${local_name_length}${local_name}E([^A-Za-z0-9_]|$)")
+               "_+ZN12_GLOBAL__N_1L?${local_name_length}${local_name}E([^A-Za-z0-9_]|$)")
             message(FATAL_ERROR
                 "Macro-off PMem object omitted anonymous local ${local_name}:\n"
                 "${all_symbols}")
