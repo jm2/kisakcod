@@ -17,6 +17,9 @@ file(READ
     "${SOURCE_ROOT}/tests/physicalmemory_runtime_production_seal_tests.cpp"
     physicalmemory_production_seal)
 file(READ
+    "${SOURCE_ROOT}/tests/physicalmemory_runtime_production_seal_test.cmake"
+    physicalmemory_production_symbol_seal)
+file(READ
     "${SOURCE_ROOT}/tests/CMakeLists.txt"
     test_manifest)
 file(READ
@@ -28,6 +31,29 @@ file(READ
 file(READ
     "${SOURCE_ROOT}/.github/workflows/ci.yml"
     ci_workflow)
+
+file(GLOB_RECURSE production_build_manifests
+    LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/scripts/*"
+    "${SOURCE_ROOT}/milesEq/*.bat")
+file(GLOB root_build_manifests
+    LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/*.bat"
+    "${SOURCE_ROOT}/*.cmd"
+    "${SOURCE_ROOT}/*.ps1"
+    "${SOURCE_ROOT}/*.sh")
+list(APPEND production_build_manifests
+    "${SOURCE_ROOT}/CMakeLists.txt"
+    ${root_build_manifests})
+
+file(GLOB_RECURSE hosted_workflows
+    LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/.github/workflows/*.yml"
+    "${SOURCE_ROOT}/.github/workflows/*.yaml")
+
+file(GLOB_RECURSE production_source_files
+    LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/src/*")
 
 function(require_text content needle description)
     string(FIND "${content}" "${needle}" position)
@@ -228,6 +254,86 @@ reject_text(
     "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
     "global PMem test access in hosted workflow definitions")
 
+# The test macro may be selected only on the dedicated fixture target. Scan
+# every production build manifest, rather than a sample, so a new MP, SP,
+# dedicated, or platform-specific definition cannot expose the copy-in seam.
+foreach(manifest_path IN LISTS production_build_manifests)
+    file(READ "${manifest_path}" production_build_manifest)
+    reject_text(
+        "${production_build_manifest}"
+        "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+        "global PMem test access in production manifest ${manifest_path}")
+endforeach()
+foreach(workflow_path IN LISTS hosted_workflows)
+    file(READ "${workflow_path}" hosted_workflow)
+    reject_text(
+        "${hosted_workflow}"
+        "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+        "global PMem test access in hosted workflow ${workflow_path}")
+endforeach()
+
+# Likewise, only the declaration and implementation gates may mention the
+# macro anywhere in production source. This rejects in-source definitions and
+# aliases that would emit Capture/Install symbols in a shipped object.
+foreach(source_path IN LISTS production_source_files)
+    file(STRINGS
+        "${source_path}"
+        production_macro_lines
+        REGEX "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+        LIMIT_COUNT 1)
+    if(NOT "${production_macro_lines}" STREQUAL ""
+       AND NOT source_path STREQUAL
+           "${SOURCE_ROOT}/src/universal/physicalmemory.h"
+       AND NOT source_path STREQUAL
+           "${SOURCE_ROOT}/src/universal/physicalmemory.cpp")
+        message(FATAL_ERROR
+            "Found global PMem test access outside its two gates: ${source_path}")
+    endif()
+endforeach()
+require_literal_count(
+    "${physicalmemory_header}"
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+    1
+    "global PMem declaration test gate")
+require_literal_count(
+    "${physicalmemory_source}"
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+    1
+    "global PMem implementation test gate")
+require_text(
+    "${physicalmemory_source}"
+    "#if defined(KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)"
+    "target-only global-state implementation gate")
+
+# The helper's name must occur only within the one declaration gate. A plain
+# forward declaration before that gate would otherwise remain compatible with
+# the macro-off fixture's later class definition and silently re-expose the
+# production API name.
+set(test_access_gate
+    "#if defined(KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)")
+set(test_access_gate_end
+    "#endif\n\nvoid KISAK_CDECL PMem_Init();")
+string(FIND "${physicalmemory_header}" "${test_access_gate}"
+    test_access_gate_begin)
+string(FIND "${physicalmemory_header}" "${test_access_gate_end}"
+    test_access_gate_end_position)
+if(test_access_gate_begin EQUAL -1
+   OR test_access_gate_end_position LESS_EQUAL test_access_gate_begin)
+    message(FATAL_ERROR "Malformed global PMem test-access declaration gate")
+endif()
+string(SUBSTRING "${physicalmemory_header}" 0 ${test_access_gate_begin}
+    header_before_test_access_gate)
+string(SUBSTRING "${physicalmemory_header}" ${test_access_gate_end_position}
+    -1 header_after_test_access_gate)
+reject_text(
+    "${header_before_test_access_gate}"
+    "PhysicalMemoryGlobalStateTestAccess"
+    "global PMem test-access name before its target-only gate")
+reject_text(
+    "${header_after_test_access_gate}"
+    "PhysicalMemoryGlobalStateTestAccess"
+    "global PMem test-access name after its target-only gate")
+
 # Each public alloc-type wrapper must report exactly once and return before it
 # can use the rejected type as a g_mem.prim index.
 foreach(wrapper IN ITEMS begin_wrapper end_wrapper free_wrapper)
@@ -422,8 +528,12 @@ foreach(marker IN ITEMS
     "add_executable(kisakcod-physicalmemory-legacy-tests"
     "physicalmemory_legacy_tests.cpp"
     "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+    "add_library(kisakcod-physicalmemory-runtime-production-object OBJECT"
+    "TARGET_OBJECTS:kisakcod-physicalmemory-runtime-production-object"
+    "add_dependencies("
     "add_executable(kisakcod-physicalmemory-runtime-production-seal-tests"
     "physicalmemory_runtime_production_seal_tests.cpp"
+    "physicalmemory_runtime_production_seal_test.cmake"
     "NAME universal-physicalmemory-runtime-production-test-access-sealed"
     "NAME universal-physicalmemory-legacy-layout-and-indexing"
     "NAME universal-physicalmemory-legacy-source-invariants"
@@ -440,13 +550,25 @@ require_literal_count(
     "target-local global PMem testing definition")
 
 foreach(marker IN ITEMS
-    "!std::is_constructible_v<TestAccess>"
-    "!CanNameSnapshot<TestAccess>"
-    "!CanCaptureGlobalState<TestAccess>"
-    "!CanInstallCapturedGlobalState<TestAccess>")
+    "class PhysicalMemoryGlobalStateTestAccess final"
+    "std::is_empty_v<PhysicalMemoryGlobalStateTestAccess>"
+    "std::is_trivially_copyable_v<")
     require_text(
         "${physicalmemory_production_seal}" "${marker}"
         "positive macro-off global-state access seal")
+endforeach()
+
+foreach(marker IN ITEMS
+    "COMMAND \"\${SEAL_EXECUTABLE}\""
+    "COMMAND \"\${LINKER_TOOL}\" /dump /symbols"
+    "COMMAND \"\${NM_TOOL}\" -a -C"
+    "COMMAND \"\${NM_TOOL}\" -g -C"
+    "g_mem"
+    "g_overAllocatedSize"
+    "PhysicalMemoryGlobalStateTestAccess")
+    require_text(
+        "${physicalmemory_production_symbol_seal}" "${marker}"
+        "macro-off production-object symbol seal")
 endforeach()
 
 foreach(marker IN ITEMS

@@ -40,17 +40,17 @@ RUNTIME_SIZE(PhysicalMemory, 0x21C, 0x428);
 RUNTIME_OFFSET(PhysicalMemory, buf, 0x0, 0x0);
 RUNTIME_OFFSET(PhysicalMemory, prim, 0x4, 0x8);
 
+#if defined(KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)
 // The production global PhysicalMemory object is deliberately hidden in its
 // implementation translation unit. Tests that compile that translation unit
 // with the dedicated target-only definition may install and capture complete
 // state by value, but can never retain a mutable pointer or reference to it.
-// A normal production include leaves both operations private and undefined.
+// A normal production include cannot name this type or either operation.
 class PhysicalMemoryGlobalStateTestAccess final
 {
 public:
     PhysicalMemoryGlobalStateTestAccess() = delete;
 
-#if defined(KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)
     struct Snapshot final
     {
         PhysicalMemory memory{};
@@ -59,14 +59,8 @@ public:
 
     [[nodiscard]] static Snapshot Capture() noexcept;
     static void Install(const Snapshot &snapshot) noexcept;
-#else
-private:
-    struct Snapshot;
-
-    [[nodiscard]] static Snapshot Capture() noexcept;
-    static void Install(const Snapshot &snapshot) noexcept;
-#endif
 };
+#endif
 
 void KISAK_CDECL PMem_Init();
 void KISAK_CDECL PMem_DumpMemStats();

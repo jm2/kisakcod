@@ -2,33 +2,16 @@
 
 #include <type_traits>
 
-namespace
+// A production include leaves the complete helper declaration absent. Defining
+// the same global name is a positive compile seal: exposing even an opaque
+// declaration from physicalmemory.h makes this fixture ill-formed.
+class PhysicalMemoryGlobalStateTestAccess final
 {
-using TestAccess = PhysicalMemoryGlobalStateTestAccess;
-
-template <typename Access>
-concept CanNameSnapshot = requires
-{
-    typename Access::Snapshot;
 };
 
-template <typename Access>
-concept CanCaptureGlobalState = requires
-{
-    Access::Capture();
-};
-
-template <typename Access>
-concept CanInstallCapturedGlobalState = requires
-{
-    Access::Install(Access::Capture());
-};
-
-static_assert(!std::is_constructible_v<TestAccess>);
-static_assert(!CanNameSnapshot<TestAccess>);
-static_assert(!CanCaptureGlobalState<TestAccess>);
-static_assert(!CanInstallCapturedGlobalState<TestAccess>);
-} // namespace
+static_assert(std::is_empty_v<PhysicalMemoryGlobalStateTestAccess>);
+static_assert(std::is_trivially_copyable_v<
+    PhysicalMemoryGlobalStateTestAccess>);
 
 int main()
 {

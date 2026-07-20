@@ -1,0 +1,99 @@
+foreach(required_variable IN ITEMS
+    SEAL_EXECUTABLE
+    PRODUCTION_OBJECTS
+    CXX_COMPILER_ID)
+    if(NOT DEFINED ${required_variable}
+       OR "${${required_variable}}" STREQUAL "")
+        message(FATAL_ERROR
+            "Missing physical-memory production-seal input: ${required_variable}")
+    endif()
+endforeach()
+string(REPLACE "|" ";" production_objects "${PRODUCTION_OBJECTS}")
+if("${production_objects}" STREQUAL "")
+    message(FATAL_ERROR "Physical-memory production object list is empty")
+endif()
+
+execute_process(
+    COMMAND "${SEAL_EXECUTABLE}"
+    RESULT_VARIABLE seal_result
+    OUTPUT_VARIABLE seal_output
+    ERROR_VARIABLE seal_error)
+if(NOT seal_result EQUAL 0)
+    message(FATAL_ERROR
+        "Physical-memory macro-off compile seal failed (${seal_result}):\n"
+        "${seal_output}${seal_error}")
+endif()
+
+if(CXX_COMPILER_ID STREQUAL "MSVC")
+    if(NOT DEFINED LINKER_TOOL OR "${LINKER_TOOL}" STREQUAL "")
+        message(FATAL_ERROR "MSVC production seal requires CMAKE_LINKER")
+    endif()
+    execute_process(
+        COMMAND "${LINKER_TOOL}" /dump /symbols ${production_objects}
+        RESULT_VARIABLE symbol_result
+        OUTPUT_VARIABLE all_symbols
+        ERROR_VARIABLE symbol_error)
+    if(NOT symbol_result EQUAL 0)
+        message(FATAL_ERROR
+            "MSVC physical-memory symbol inspection failed (${symbol_result}):\n"
+            "${all_symbols}${symbol_error}")
+    endif()
+
+    foreach(local_name IN ITEMS g_mem g_overAllocatedSize)
+        string(REGEX MATCHALL "[^\n]*${local_name}[^\n]*" matching_lines
+            "${all_symbols}")
+        if("${matching_lines}" STREQUAL "")
+            message(FATAL_ERROR
+                "Macro-off PMem object omitted local state symbol ${local_name}")
+        endif()
+        foreach(symbol_line IN LISTS matching_lines)
+            if(symbol_line MATCHES "External")
+                message(FATAL_ERROR
+                    "Macro-off PMem state escaped external linkage: ${symbol_line}")
+            endif()
+        endforeach()
+    endforeach()
+else()
+    if(NOT DEFINED NM_TOOL OR "${NM_TOOL}" STREQUAL "")
+        message(FATAL_ERROR "Production seal requires CMAKE_NM")
+    endif()
+    execute_process(
+        COMMAND "${NM_TOOL}" -a -C ${production_objects}
+        RESULT_VARIABLE symbol_result
+        OUTPUT_VARIABLE all_symbols
+        ERROR_VARIABLE symbol_error)
+    if(NOT symbol_result EQUAL 0)
+        message(FATAL_ERROR
+            "Physical-memory symbol inspection failed (${symbol_result}):\n"
+            "${all_symbols}${symbol_error}")
+    endif()
+    foreach(local_name IN ITEMS g_mem g_overAllocatedSize)
+        if(NOT all_symbols MATCHES
+           "\\(anonymous namespace\\)::${local_name}([\n\r]|$)")
+            message(FATAL_ERROR
+                "Macro-off PMem object omitted anonymous local ${local_name}")
+        endif()
+    endforeach()
+
+    execute_process(
+        COMMAND "${NM_TOOL}" -g -C ${production_objects}
+        RESULT_VARIABLE global_result
+        OUTPUT_VARIABLE global_symbols
+        ERROR_VARIABLE global_error)
+    if(NOT global_result EQUAL 0)
+        message(FATAL_ERROR
+            "Physical-memory global-symbol inspection failed (${global_result}):\n"
+            "${global_symbols}${global_error}")
+    endif()
+    if(global_symbols MATCHES "(^|[^A-Za-z0-9_])g_mem([^A-Za-z0-9_]|$)"
+       OR global_symbols MATCHES
+          "(^|[^A-Za-z0-9_])g_overAllocatedSize([^A-Za-z0-9_]|$)")
+        message(FATAL_ERROR
+            "Macro-off PMem mutable state retains external linkage:\n${global_symbols}")
+    endif()
+endif()
+
+if(all_symbols MATCHES "PhysicalMemoryGlobalStateTestAccess")
+    message(FATAL_ERROR
+        "Macro-off PMem object emitted test-access symbols:\n${all_symbols}")
+endif()
