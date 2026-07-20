@@ -51,13 +51,49 @@ class PhysicalMemoryGlobalStateTestAccess final
 public:
     PhysicalMemoryGlobalStateTestAccess() = delete;
 
+    static constexpr std::size_t OWNED_NAME_CAPACITY = 64u;
+
+    struct OwnedNameSnapshot final
+    {
+        std::uintptr_t identity = 0;
+        std::uintptr_t identityWitness = 0;
+        char text[OWNED_NAME_CAPACITY]{};
+    };
+
+    // A by-value token for an exact hidden sidecar binding. The token lets
+    // tests round-trip cross-slot pointer corruption without retaining a
+    // pointer into the implementation's mutable control state.
+    struct OwnedNameBindingSnapshot final
+    {
+        std::uint8_t type = UINT8_MAX;
+        std::uint8_t index = UINT8_MAX;
+    };
+
     struct Snapshot final
     {
         PhysicalMemory memory{};
+        OwnedNameSnapshot ownedNames[2][MAX_PHYSICAL_ALLOCATIONS]{};
+        OwnedNameBindingSnapshot allocNameBindings[2]{};
+        OwnedNameBindingSnapshot
+            allocationNameBindings[2][MAX_PHYSICAL_ALLOCATIONS]{};
         int overAllocatedSize = 0;
+        std::uint8_t *retainedBase = nullptr;
+        std::uint32_t retainedSize = 0;
+        std::uint8_t initializationPhase = 0;
+        std::uint8_t runtimeReserved[3]{};
+        std::uint32_t initializationWitness = 0;
+        std::uint8_t processInitPhase = 0;
+        std::uint8_t processInitReserved[3]{};
+        std::uint32_t processInitWitness = 0;
     };
 
     [[nodiscard]] static Snapshot Capture() noexcept;
+    [[nodiscard]] static Snapshot MakeCanonicalReady(
+        const PhysicalMemory &memory,
+        std::uint32_t retainedSize,
+        int overAllocatedSize = 0) noexcept;
+    [[nodiscard]] static std::uintptr_t
+    ProcessInitAllocationNameAddress() noexcept;
     static void Install(const Snapshot &snapshot) noexcept;
 };
 #endif

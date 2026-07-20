@@ -75,6 +75,11 @@ static_assert(noexcept(TryBeginPendingCopyDrain(nullptr)));
 static_assert(noexcept(TryFinishPendingCopyDrain(nullptr)));
 static_assert(noexcept(FinalizePreparedPendingCopyAdmission(
     std::declval<PendingCopyAdmissionReceipt &>())));
+using PassiveLedgerAuthenticator = bool (*)(
+    const PendingCopyLedger &) noexcept;
+static_assert(std::is_same_v<
+    decltype(&AuthenticatePassivePendingCopyLedger),
+    PassiveLedgerAuthenticator>);
 } // namespace db::zone_pending_copy
 
 int main()

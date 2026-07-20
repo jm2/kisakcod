@@ -1483,6 +1483,7 @@ target_compile_features(
     kisakcod-physicalmemory-legacy-tests PRIVATE cxx_std_20)
 target_compile_definitions(
     kisakcod-physicalmemory-legacy-tests PRIVATE
+    KISAK_MP
     KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)
 kisakcod_test_warnings(kisakcod-physicalmemory-legacy-tests)
 if(NOT MSVC)
@@ -1513,6 +1514,44 @@ add_test(
 set_tests_properties(
     universal-physicalmemory-legacy-layout-and-indexing PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-physicalmemory-runtime-tests
+    physicalmemory_runtime_tests.cpp
+    ${SRC_DIR}/universal/physicalmemory.cpp
+)
+target_include_directories(
+    kisakcod-physicalmemory-runtime-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-physicalmemory-runtime-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-physicalmemory-runtime-tests PRIVATE
+    KISAK_MP
+    KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)
+target_link_libraries(
+    kisakcod-physicalmemory-runtime-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-physicalmemory-runtime-tests)
+if(NOT MSVC)
+    target_compile_options(
+        kisakcod-physicalmemory-runtime-tests PRIVATE -Wno-unused-parameter)
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(
+        kisakcod-physicalmemory-runtime-tests PRIVATE -Wno-strict-aliasing)
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|AppleClang)$")
+    target_compile_options(
+        kisakcod-physicalmemory-runtime-tests PRIVATE
+        -Wno-dollar-in-identifier-extension)
+endif()
+set_target_properties(kisakcod-physicalmemory-runtime-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME universal-physicalmemory-runtime-control
+    COMMAND kisakcod-physicalmemory-runtime-tests
+)
+set_tests_properties(
+    universal-physicalmemory-runtime-control PROPERTIES TIMEOUT 60)
+
 # Compile the real implementation without the testing macro and retain its
 # object for the runtime seal's symbol-surface inspection. This is deliberately
 # an object library: the implementation's engine service references need not be
@@ -1524,6 +1563,8 @@ target_include_directories(
     kisakcod-physicalmemory-runtime-production-object SYSTEM PRIVATE ${SRC_DIR})
 target_compile_features(
     kisakcod-physicalmemory-runtime-production-object PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-physicalmemory-runtime-production-object PRIVATE KISAK_MP)
 kisakcod_test_warnings(
     kisakcod-physicalmemory-runtime-production-object)
 if(NOT MSVC)
@@ -1568,6 +1609,7 @@ add_test(
         "-DPRODUCTION_OBJECTS=$<JOIN:$<TARGET_OBJECTS:kisakcod-physicalmemory-runtime-production-object>,|>"
         "-DCXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
         "-DNM_TOOL=${CMAKE_NM}"
+        "-DREADELF_TOOL=${CMAKE_READELF}"
         "-DLINKER_TOOL=${CMAKE_LINKER}"
         -P ${CMAKE_CURRENT_SOURCE_DIR}/physicalmemory_runtime_production_seal_test.cmake
 )

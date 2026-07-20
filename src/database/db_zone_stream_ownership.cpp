@@ -451,6 +451,14 @@ bool ActiveZoneStreamBinding::canonical() const noexcept
         && ZoneMatchesLayout(zoneIdentity_, blocks_);
 }
 
+bool AuthenticatePassiveZoneStreamSingleton(
+    const ActiveZoneStreamBinding &binding) noexcept
+{
+    return binding.isPristine()
+        && g_activeOwner == nullptr
+        && SingletonIsIdle();
+}
+
 ZoneStreamOwnershipStatus TryBeginZoneStreamGeneration(
     ZoneStreamGenerationReceipt *const receipt,
     zone_load::ZoneLoadContextSlot *const lifecycle,

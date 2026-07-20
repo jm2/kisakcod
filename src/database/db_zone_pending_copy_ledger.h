@@ -17,8 +17,6 @@ namespace db::zone_runtime::detail
 {
 [[nodiscard]] bool IsPristineRuntimeReceipt(
     const zone_pending_copy::PendingCopyAdmissionReceipt &receipt) noexcept;
-[[nodiscard]] bool IsPristineRuntimeReceipt(
-    const zone_pending_copy::PendingCopyLedger &ledger) noexcept;
 } // namespace db::zone_runtime::detail
 
 namespace db::zone_pending_copy
@@ -105,6 +103,13 @@ struct PendingCopyDrainCallback final
 };
 
 class PendingCopyLedger;
+
+// Authenticates the exact unused topology of the process-wide ledger. Every
+// record and generation descriptor, all counts/cursors/callback state, and the
+// phase witness must remain pristine; Ready is intentionally rejected until
+// the later exact-key adapter batch enrolls the ledger atomically.
+[[nodiscard]] bool AuthenticatePassivePendingCopyLedger(
+    const PendingCopyLedger &ledger) noexcept;
 
 #ifdef KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING
 struct PendingCopyLedgerTestAccess;
@@ -283,8 +288,8 @@ private:
     friend PendingCopyStatus TryResetPendingCopyAdmissionReceipt(
         PendingCopyAdmissionReceipt *,
         const zone_load::ZoneLoadContextKey &) noexcept;
-    // Exact const-only friendship for passive runtime-table authentication.
-    friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(
+    // Exact const-only friendship for passive table-wide authentication.
+    friend bool AuthenticatePassivePendingCopyLedger(
         const PendingCopyLedger &ledger) noexcept;
 #ifdef KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING
     friend struct PendingCopyLedgerTestAccess;

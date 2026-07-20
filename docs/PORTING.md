@@ -211,8 +211,9 @@ Completed foundation work:
   Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before squash merge
   `74916b5b`.
   Authoritative post-merge run **29673608169** passed
-  all nine jobs at that exact merge commit. It is build-enrolled but has no production caller. Legacy native64-invalid
-  `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and the `$init` lifecycle remain production blockers;
+  all nine jobs at that exact merge commit. It is build-enrolled but has no production caller. PR #68 later removed the
+  legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling; the serialized global PMem boundary and
+  `$init` lifecycle remain production blockers;
 - merged PR #61 adds an exact lifecycle-key receipt and one reusable controller for process-wide stream and relocation
   singleton state. `b2737088` prevalidates the exact nine
   typed `XZoneMemory` spans, layout/cursor parity, disjointness, stable control storage, Loading lifecycle, and idle
@@ -569,15 +570,36 @@ Completed foundation work:
   top-level pointer qualification as MSVC-only `LNK2019` on portable Windows amd64/ARM64. Exact final head
   `cabbeb38d1c6bec5fa4c0d861ee8c4b0f61d44e1` and squash merge
   `2ee1e82c4c1a918da8b8222feb2f56d73f2a5def` passed all nine jobs in runs **29712699908** and **29712915522**;
-- current unmerged commits `3b826224` and review hardening `34869793` move both mutable PMem globals to internal linkage
+- merged PR #69 core `3b826224` and review hardening move both mutable PMem globals to internal linkage
   and replace the fixture's mutable `extern` with a by-value copy-in/copy-out seam whose whole helper type exists only
   under the one target-local test macro. Containment scans every official production manifest and workflow plus every
   regular file below `src`; a real macro-off `physicalmemory.cpp` object is compiled and inspected with MSVC
   `link /dump /symbols` or
   `CMAKE_NM`, requiring local state and rejecting exported state or helper symbols. Native GCC Debug passes **156/156**;
   focused GCC, Clang, and ASan+UBSan pass **6/6**, and genuine i386/AArch64 compile-link and object inspection pass.
-  There is no hosted CI/review result for this branch yet and it adds no serializer, retained reservation extent,
-  initialization phase, `$init` controller, checked authority, or production enrollment;
+  Review fixed padding-sensitive fixture snapshots and CRLF-sensitive source matching. Hosted macOS then exposed
+  AppleClang Release's local lowercase-`b` `__MergedGlobals` coalescing; final head `eeefdf40` recognizes that form only
+  when both individual names are absent and separately rejects exported state, merged state, and helper symbols while
+  retaining exact ELF/COFF checks. Final run **29715782804** passed all nine jobs, exact-head Codex and the independent
+  audit were clean, and zero threads remained before squash merge `534a9b1e`. Authoritative post-merge run
+  **29716339199** passed all nine jobs. The merge adds no serializer, retained reservation extent, initialization phase,
+  `$init` controller, checked authority, or production enrollment;
+- current unmerged `293a020c` appends the PMem serializer slot at MP `0x17` and SP `0x24` without renumbering any existing
+  slot. Follow-up `716eacc1` uses it for a hidden retained extent plus witnessed initialization phase, failure-atomic
+  reserve/commit/release publication, global Begin/End/Free/allocation/getter serialization, exact report-free allocation
+  results, and a thread-local legacy shortfall. Commit `0a9128aa` completes that production-neutral boundary with hidden
+  fixed-capacity owned-name sidecars that retain caller pointer identity separately, witnessed indexed bindings, a frozen
+  pointer-free `0x610` diagnostic snapshot, and `PMem_DumpMemStats` capture-under-lock/report-after-unlock. It preserves
+  unbounded synchronous names for the caller-owned legacy helpers while owning global hole reports across unlock and
+  sidecar reuse. Focused GCC/Clang and Clang ASan+UBSan runtime/legacy/object/source gates, strict i386/AArch64 MP/SP
+  compile-link, ABI/security/source, recursion/contention, production-object, and independent audits pass; i386 execution
+  remains blocked only by the established sandbox `SIGSYS`, and LSan is disabled under ptrace. Commit `852e7db9` adds a
+  hidden unused witnessed Dormant/Begun/Ended process-life `$init` controller with exact high-prim index-zero binding,
+  permanent Ended authority, report-free serialized operations, legacy coexistence guards, and exact End-before-
+  initializing-clear source seals. Commit `792ff1c7` authenticates the complete passive stream/relocation singleton and
+  pending-copy-ledger topology without widening any per-entry receipt capability. The exact combined head passes native
+  **157/157**, focused **32/32**, and affected genuine GCC i386/AArch64 compile-link gates. Hosted CI is not yet claimed;
+  no checked authority or loader caller is enrolled, and exact-key composite adapters are next;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -685,13 +707,12 @@ Remaining gates, in implementation order:
    were resolved. PR #66 merge-committed exact tree-neutral checkpoint `12309db16d6514ac0df23293cd6074d7bbd15142`
    as `225759e7d8fd1327210452f3debcd6360465ef2a`; authoritative run **29707497302** passed all nine jobs and the graph is
    verified. None of the seven raw production sites is enrolled. PR #67 merged the locally and hosted-sealed passive
-   durable-receipt composition. PR #68 merged the bounded legacy PMem indexing/failure-atomic repair. First publish the
-   current hidden-state/macro-off-object seal through `34869793`, then land a production-neutral serialized global PMem
-   boundary with
-   retained reservation extent, coherent initialization state, report-free results/snapshots, and an
-   unused process-lifetime `$init` controller. Do not enroll `$init` separately: its later checked cutover must atomically
-   replace the two `$init` and three zone PMem lifecycle calls. Then finish narrow-resource authentication and add
-   exact-key adapters. That
+   durable-receipt composition. PR #68 merged the bounded legacy PMem indexing/failure-atomic repair, and PR #69 merged
+   the hidden-state/macro-off-object seal as `534a9b1e`. Current `293a020c` reserves the exact MP/SP PMem lock slots and
+   `716eacc1` supplies the serialized retained-extent/init/allocation/lifecycle core, `0a9128aa` finishes stable owned
+   names plus the bounded diagnostic snapshot/read-report split, `852e7db9` adds the unused permanent-Ended process-life
+   `$init` controller, and `792ff1c7` completes passive table-wide singleton authentication. No caller is enrolled.
+   Next add exact-key adapters. That
    adapter batch must atomically replace the passive-only pristine tripwires with composite phase/key authentication for
    all per-entry receipts and both table-wide singletons before exposing enrollment; merely removing or prematurely
    gating those checks is forbidden. Only then atomically bind the loader across all seven sites. Keep static controller
@@ -1677,10 +1698,12 @@ production restore to it; only the save-side guard and writer remain.
 Overall porting progress is approximately **80% by merged engineering effort**. PR #62 merged the production-neutral
 pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
 registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
-tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, and PR #68 merged the legacy-PMem
-indexing/failure-atomic prerequisite. The ancestry checkpoint records reviewed history without importing code and
-therefore does not inflate the engineering estimate. The current global-state encapsulation and seal hardening remain
-outside the merged estimate until their PR lands. Windows x86 is about
+tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy-PMem
+indexing/failure-atomic prerequisite, and PR #69 merged global-state encapsulation plus the cross-toolchain macro-off
+seal. The ancestry checkpoint records reviewed history without importing code and therefore does not inflate the
+engineering estimate. The current serialized-runtime/process-controller/passive-authentication branch through
+`792ff1c7` remains outside the merged estimate until its PR lands.
+Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
@@ -1985,10 +2008,13 @@ single-use phase-witness authority, and external-storage/no-bypass contracts. Ex
 jobs in run **29673379640**; Codex reviewed exact final head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`,
 both were clean with zero threads, and authoritative post-merge
 run **29673608169** passed all nine jobs at squash merge `74916b5b`. PR #68 subsequently merged the legacy native64
-`PMem_FreeIndex`/`PMem_EndAllocInPrim` repair as `2ee1e82c`; current unmerged `3b826224` plus `34869793` hides the
-mutable globals, macro-gates the whole by-value test helper, contains that macro across production manifests/workflows/
-sources, and compiles plus inspects the actual macro-off object. Serialization, retained reservation authentication,
-coherent initialization state, and `$init` integration still must be completed before production enrollment. Merged PR #61 adds exact-key stream/alias
+`PMem_FreeIndex`/`PMem_EndAllocInPrim` repair as `2ee1e82c`; PR #69 then merged hidden mutable globals, whole-type
+test-helper containment, and actual macro-off ELF/COFF/AppleClang object seals as `534a9b1e`. Current `293a020c` reserves
+the MP/SP PMem lock slots and `716eacc1` adds serialized global lifecycle/allocation/getter access, retained reservation
+authentication, and coherent initialization state; `0a9128aa` completes stable owned names and bounded dump snapshots;
+`852e7db9` adds the unused permanent-Ended process-life `$init` controller; and `792ff1c7` completes passive shared-
+resource authentication. Exact-key adapters and later atomic checked/loader enrollment still remain. Merged PR #61 adds
+exact-key stream/alias
 bind and invalidation with a typed aligned
 zone identity, hardened production-neutrality seal, stale-terminal retry safety, complete relocation-capacity release,
 and full singleton scrub. Its compiler-validated source seal covers phase-2 line splicing and phase-3 comment-separated
@@ -2027,9 +2053,9 @@ resolved. PR #66 merged the exact tree-neutral ancestry checkpoint
 `12309db16d6514ac0df23293cd6074d7bbd15142` as `225759e7d8fd1327210452f3debcd6360465ef2a`; run
 **29707497302** passed all nine jobs and the ancestry is verified. PR #67 merged passive durable-receipt composition as
 `76d0e065888aab298d430b4bf4e115c07369bc88`; exact-head and authoritative runs **29709263403** and **29709598049**
-passed all nine jobs. PR #68 merged the legacy PMem indexing repair, and no production site is enrolled. The current
-unmerged hidden-state/object-seal batch must publish first; then finish the serialized PMem extent/init/result/snapshot
-boundary, process-life controller, and narrow prerequisites and add exact-key adapters; only then enroll all
+passed all nine jobs. PR #68 merged the legacy PMem indexing repair, PR #69 merged the hidden-state/object seal, and no
+production site is enrolled. The current serialized PMem boundary, process-life controller, and passive shared-resource
+authentication are complete locally through `792ff1c7`. Add exact-key composite adapters next; only then enroll all
 seven sites atomically: five coordinator operations plus two exact-key
 root-journal stages. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses

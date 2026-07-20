@@ -97,14 +97,22 @@ name identity, and no legacy bypass, entry replacement, or reinitialization whil
 and AArch64, source, API-seal, security, and diff evidence all pass. It has no production caller and leaves retail
 bytes unchanged. PR #68 subsequently corrected legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim`
 handling and merged as `2ee1e82c`; exact-head and post-merge runs **29712699908** and **29712915522** passed all nine
-jobs. Current unmerged `3b826224` plus review-hardening commit `34869793` gives both mutable globals internal linkage,
+jobs. Merged PR #69 core `3b826224` plus review hardening gives both mutable globals internal linkage,
 removes the fixture's mutable `extern`, and macro-gates the entire by-value test helper. Its containment seal scans every
 official production manifest and workflow plus every regular file below `src`, while a separately compiled real
 macro-off object is inspected
 with MSVC `link /dump /symbols` or `CMAKE_NM` to require local state and reject exported state or helper methods. Native
 GCC Debug passes **156/156**; focused GCC/Clang/ASan+UBSan pass **6/6**, and genuine i386/AArch64 compile-link and object
-inspection pass. The branch has no hosted CI or hosted review result yet. Serialized access, retained reservation
-authentication, coherent initialization state, and the `$init` lifecycle remain blockers before production enrollment.
+inspection pass. Review fixed padding-sensitive snapshots and CRLF matching; hosted macOS then exposed AppleClang's
+local `__MergedGlobals` coalescing, which final seal head `eeefdf40` handles without weakening ELF/COFF or global-symbol
+rejection. Final run **29715782804** passed all nine jobs with clean exact-head Codex and independent audits and zero
+threads before squash merge `534a9b1e`; authoritative post-merge run **29716339199** passed all nine jobs. Current
+unmerged work through `792ff1c7` reserves exact MP/SP PMem serializer slots, serializes global lifecycle/allocation/getter
+access, authenticates retained initialization state, owns stable diagnostic names, captures bounded pointer-free dump
+snapshots, adds the unused permanent-Ended process-life `$init` controller, and authenticates both passive table-wide
+resource topologies. Exact combined native CTest passes **157/157**, focused integration passes **32/32**, and affected
+genuine i386/AArch64 compile-link gates pass. Exact-key composite adapters remain the blocker before checked/loader
+enrollment.
 Exact-head run **29673379640** passed all nine jobs;
 Codex reviewed exact final
 head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
@@ -198,12 +206,13 @@ runtime entry owns exactly one allocation/stream-generation/pending-copy/native-
 active-stream binding and pending ledger once. Exact-head and authoritative runs **29709263403** and **29709598049**
 passed all nine jobs; it has no production enrollment. PR #68 merged the raw x86-only indexing replacement,
 failure-atomic invalid-lifecycle handling, allocation-name format-string repair, and exact x86/native64 ABI contracts;
-exact-head and authoritative runs passed all nine jobs. The current unmerged hidden-state batch then internalizes the
-mutable globals and seals its whole macro-gated by-value helper through official manifest/source/workflow containment and
-actual macro-off object-symbol inspection. It adds no serializer, extent, initialization phase, controller, or caller.
-The subsequent sequence is a serialized global PMem boundary with retained extent/coherent init/results/snapshots, an
-unused process-life `$init` controller, narrow-resource authentication, exact-key adapters, and finally
-one atomic seven-site cutover. Until those adapters exist, the table's pristine checks are intentional passive-mode
+exact-head and authoritative runs passed all nine jobs. PR #69 then merged internal mutable globals and whole
+macro-gated by-value-helper containment plus actual macro-off object-symbol inspection as `534a9b1e`; exact final head
+`eeefdf40` passed all nine jobs in run **29715782804**. It adds no serializer, extent, initialization phase, controller,
+or caller. Current work through `792ff1c7` supplies the serialized retained extent/init/result/lifecycle core, stable
+name ownership, bounded dump snapshots, the unused permanent-Ended process-life `$init` controller, and complete passive
+table-wide resource authentication. The subsequent sequence adds exact-key adapters and finally one atomic seven-site
+cutover. Until those adapters exist, the table's pristine checks are intentional passive-mode
 corruption tripwires; the adapter batch must replace them atomically with composite phase/key authentication before any
 authority is enrolled.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate

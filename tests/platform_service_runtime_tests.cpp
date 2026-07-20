@@ -1230,10 +1230,15 @@ bool TestCriticalSections()
     Sys_LeaveCriticalSection(CRITSECT_CONSOLE);
     Sys_LeaveCriticalSection(CRITSECT_CONSOLE);
 
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+
     return TestContendedExclusion(
-        "recursive critical section",
-        []() { Sys_EnterCriticalSection(CRITSECT_CONSOLE); },
-        []() { Sys_LeaveCriticalSection(CRITSECT_CONSOLE); });
+        "physical-memory critical section",
+        []() { Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY); },
+        []() { Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY); });
 }
 
 bool TestFastCriticalSection()

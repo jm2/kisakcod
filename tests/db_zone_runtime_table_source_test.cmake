@@ -154,6 +154,19 @@ function(require_exact_pristine_overload START END OBJECT DESCRIPTION)
     endif()
 endfunction()
 
+function(require_exact_shared_authentication_overload
+    START END OBJECT AUTHENTICATOR DESCRIPTION)
+    extract_slice(_source "${START}" "${END}" _slice "${DESCRIPTION}")
+    string(STRIP "${_slice}" _slice)
+    set(_expected
+        "${START} { return ${AUTHENTICATOR}(${OBJECT}); }")
+    if(NOT _slice STREQUAL _expected)
+        message(FATAL_ERROR
+            "Shared authenticator body is not exact (${DESCRIPTION}): "
+            "'${_slice}'")
+    endif()
+endfunction()
+
 function(require_substring_count SOURCE_VAR NEEDLE EXPECTED DESCRIPTION)
     set(_remaining "${${SOURCE_VAR}}")
     set(_count 0)
@@ -538,7 +551,7 @@ extract_slice(
 set(_active_stream_binding_friends
     "friend ZoneStreamOwnershipStatus TryBindZoneStreams( ActiveZoneStreamBinding *, ZoneStreamGenerationReceipt *, const zone_load::ZoneLoadContextKey &, const XZoneMemory *, const relocation::BlockView *, std::size_t) noexcept"
     "friend ZoneStreamOwnershipStatus TryInvalidateZoneStreams( ActiveZoneStreamBinding *, ZoneStreamGenerationReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
-    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const ActiveZoneStreamBinding &binding) noexcept")
+    "friend bool AuthenticatePassiveZoneStreamSingleton( const ActiveZoneStreamBinding &binding) noexcept")
 require_exact_friend_surface(
     _active_stream_binding_class
     _active_stream_binding_friends
@@ -587,7 +600,7 @@ set(_pending_copy_ledger_friends
     "friend PendingCopyStatus TryDrainNextPendingCopy( PendingCopyLedger *, const PendingCopyDrainCallback &) noexcept"
     "friend PendingCopyStatus TryFinishPendingCopyDrain( PendingCopyLedger *) noexcept"
     "friend PendingCopyStatus TryResetPendingCopyAdmissionReceipt( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
-    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const PendingCopyLedger &ledger) noexcept"
+    "friend bool AuthenticatePassivePendingCopyLedger( const PendingCopyLedger &ledger) noexcept"
     "friend struct PendingCopyLedgerTestAccess")
 require_exact_friend_surface(
     _pending_copy_ledger_class
@@ -673,13 +686,13 @@ require_exact_class_digest(_stream_generation_receipt_class
     0e94ce08089afadd3198fa52a914d8de83380717869753d91fb64cd39247638b
     "ZoneStreamGenerationReceipt")
 require_exact_class_digest(_active_stream_binding_class
-    4103d1c5614616cceb11ee072a5dfd78ed95bd116b857a3766096ecabbebca4a
+    50db7b75d5c2aab13723e9246264eced1e5db8992e3314ae0b47b6ba888e3b69
     "ActiveZoneStreamBinding")
 require_exact_class_digest(_pending_admission_receipt_class
     1a01a9876cb706c14d6bb8411daa2f05f33c115059cc3166d451f0d8b1621b64
     "PendingCopyAdmissionReceipt")
 require_exact_class_digest(_pending_copy_ledger_class
-    109b7d1aded99dbead4c48e91e1c12bee6ab6b693d8490fbdce958cf78404254
+    fc90d9910f1cc6968c4fd3f044c7cc5ae573d0803913a21afa3be16ccb709e6f
     "PendingCopyLedger")
 require_exact_class_digest(_receipt_capsule_class
     2eb407cda4acfe1b933c81b8fea804bb94eb1cc0b231cc1afeb3b94ebed5e9fd
@@ -808,6 +821,8 @@ foreach(_marker IN ITEMS
     "bool IsPristineRuntimeReceipt( const zone_runtime_storage::ZoneRuntimeStorageBinding &binding) noexcept"
     "bool IsPristineRuntimeReceipt( const zone_stream_ownership::ActiveZoneStreamBinding &binding) noexcept"
     "bool IsPristineRuntimeReceipt( const zone_pending_copy::PendingCopyLedger &ledger) noexcept"
+    "AuthenticatePassiveZoneStreamSingleton(binding)"
+    "AuthenticatePassivePendingCopyLedger(ledger)"
     "bool ZoneRuntimeReceiptCapsule::isPristine() const noexcept"
     "detail::EntryReceiptsArePristine(entry)"
     "detail::IsPristineRuntimeReceipt(activeZoneStreamBinding_)"
@@ -838,15 +853,17 @@ require_exact_pristine_overload(
     "bool IsPristineRuntimeReceipt( const zone_stream_ownership::ActiveZoneStreamBinding &binding) noexcept"
     binding
     "runtime-storage binding predicate")
-require_exact_pristine_overload(
+require_exact_shared_authentication_overload(
     "bool IsPristineRuntimeReceipt( const zone_stream_ownership::ActiveZoneStreamBinding &binding) noexcept"
     "bool IsPristineRuntimeReceipt( const zone_pending_copy::PendingCopyLedger &ledger) noexcept"
     binding
+    "zone_stream_ownership::AuthenticatePassiveZoneStreamSingleton"
     "active-stream binding predicate")
-require_exact_pristine_overload(
+require_exact_shared_authentication_overload(
     "bool IsPristineRuntimeReceipt( const zone_pending_copy::PendingCopyLedger &ledger) noexcept"
     "bool IsPristineRuntimeReceipt( const ZoneRuntimeReceiptCapsule &capsule) noexcept"
     ledger
+    "zone_pending_copy::AuthenticatePassivePendingCopyLedger"
     "pending-copy ledger predicate")
 require_exact_pristine_overload(
     "bool IsPristineRuntimeReceipt( const ZoneRuntimeReceiptCapsule &capsule) noexcept"

@@ -154,6 +154,7 @@ set(_zone_stream_protected_tokens
     TryBeginZoneStreamGeneration
     TryBindZoneStreams
     TryInvalidateZoneStreams
+    AuthenticatePassiveZoneStreamSingleton
     AliasRegistryForLegacyStream
     DirectResolverForLegacyStream
     OwnershipBindingActive)
@@ -227,6 +228,10 @@ function(remove_reviewed_runtime_table_stream_tokens
             _candidate
             "bool IsPristineRuntimeReceipt( const zone_stream_ownership::ActiveZoneStreamBinding &binding) noexcept"
             _candidate "active binding pristine predicate")
+        remove_one_reviewed_stream_construct(
+            _candidate
+            "return zone_stream_ownership::AuthenticatePassiveZoneStreamSingleton(binding);"
+            _candidate "passive singleton authentication call")
     else()
         message(FATAL_ERROR
             "Zone-stream passive allowlist used for unexpected path: ${PATH}")
@@ -341,12 +346,21 @@ foreach(_marker IN ITEMS
     "TryBeginZoneStreamGeneration("
     "TryBindZoneStreams("
     "TryInvalidateZoneStreams("
+    "AuthenticatePassiveZoneStreamSingleton("
     "const zone_load::ZoneLoadContextSlot *lifecycle()"
     "const XZoneMemory *zoneIdentity() const noexcept;"
     "const XZoneMemory *zoneIdentity,"
     "bool canonical() const noexcept;")
     require_contains(_header "${_marker}" "sealed stable receipt/controller API")
 endforeach()
+require_contains(
+    _header
+    "friend bool AuthenticatePassiveZoneStreamSingleton( const ActiveZoneStreamBinding &binding) noexcept;"
+    "exact const-only table-wide stream authenticator friendship")
+require_not_contains(
+    _header
+    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const ActiveZoneStreamBinding &binding) noexcept;"
+    "table-wide stream state cannot remain directly friended to the table")
 require_not_contains(
     _header "const void *zoneIdentity"
     "zone identity must remain a typed XZoneMemory boundary")
@@ -375,6 +389,44 @@ foreach(_var IN ITEMS _header _source)
         message(FATAL_ERROR
             "Forbidden runtime assert in report-free zone-stream primitive")
     endif()
+endforeach()
+
+# The table-wide passive predicate authenticates both the embedded binding and
+# the actual hidden singleton. Its exact const-only body cannot acquire, scrub,
+# or expose mutable stream/relocation authority.
+extract_slice(
+    _source
+    "bool AuthenticatePassiveZoneStreamSingleton("
+    "ZoneStreamOwnershipStatus TryBeginZoneStreamGeneration("
+    _passive_authenticator
+    "passive stream singleton authenticator")
+string(STRIP "${_passive_authenticator}" _passive_authenticator)
+set(_expected_passive_authenticator
+    "bool AuthenticatePassiveZoneStreamSingleton( const ActiveZoneStreamBinding &binding) noexcept { return binding.isPristine() && g_activeOwner == nullptr && SingletonIsIdle(); }")
+if(NOT _passive_authenticator STREQUAL _expected_passive_authenticator)
+    message(FATAL_ERROR
+        "Passive stream singleton authenticator gained authority or lost topology checks")
+endif()
+extract_slice(
+    _source
+    "[[nodiscard]] bool SingletonIsIdle() noexcept"
+    "[[nodiscard]] ZoneStreamOwnershipStatus ValidateRequestedKey("
+    _passive_singleton_state
+    "complete passive stream singleton state")
+foreach(_marker IN ITEMS
+    "g_aliasRegistry.contextValid()"
+    "g_directResolver.contextValid()"
+    "g_streamDelayIndex != 0"
+    "g_streamPosIndex != 0"
+    "g_streamPosStackIndex != 0"
+    "g_streamZoneMem != nullptr"
+    "g_streamPos != nullptr"
+    "for (const std::uint8_t *const position : g_streamPosArray)"
+    "for (const StreamDelayInfo &delay : g_streamDelayArray)"
+    "for (const StreamPosInfo &saved : g_streamPosStack)")
+    require_contains(
+        _passive_singleton_state "${_marker}"
+        "complete passive stream singleton authentication")
 endforeach()
 foreach(_marker IN ITEMS
     "ZoneStreamGenerationReceipt streamGenerationReceipt_{};"
@@ -612,6 +664,12 @@ set(_runtime_table_stream_pointer_bypass
     "auto bind = &db::zone_stream_ownership::TryBindZoneStreams;")
 require_runtime_table_stream_detector_fixture(
     _runtime_table_stream_pointer_bypass "a qualified function pointer")
+set(_runtime_table_stream_authenticator_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "auto authenticate = &db::zone_stream_ownership::AuthenticatePassiveZoneStreamSingleton;")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_authenticator_bypass
+    "an extra passive authenticator reference")
 set(_runtime_table_stream_using_bypass
     "${_runtime_table_passive_stream_fixture}\n"
     "using db/**/::/**/zone_stream_ownership/**/::/**/TryInvalidateZoneStreams;")
@@ -1070,11 +1128,16 @@ foreach(_marker IN ITEMS
     "TestFullInvalidationAndStaleRetry();"
     "TestAliasEpochExhaustion();"
     "TestNativeWidthBlockAddresses();"
+    "TestPassiveSingletonAuthentication();"
     "terminal retry returns before active inspection"
     "all nine block cursors scrubbed"
     "rejected bind preserves singleton stream state"
     "stale alias handle cannot publish after invalidation"
-    "different active key cannot replace singleton owner")
+    "different active key cannot replace singleton owner"
+    "pristine binding rejects a hidden singleton owned by another object"
+    "legacy relocation contexts reject passive authentication without an owner"
+    "retained delay pointer rejects passive authentication"
+    "retained stack index rejects passive authentication")
     require_contains(_fixture "${_marker}" "exhaustive runtime regression")
 endforeach()
 foreach(_marker IN ITEMS
@@ -1089,6 +1152,8 @@ foreach(_marker IN ITEMS
     "CanReplaceReceipt"
     "CanMutatePhase"
     "using ZoneIdentityAccessor ="
+    "using PassiveSingletonAuthenticator ="
+    "decltype(&AuthenticatePassiveZoneStreamSingleton)"
     "decltype(&TryBindZoneStreams), BindFunction"
     "SplicedBindPointer"
     "CommentQualifiedBindPointer"

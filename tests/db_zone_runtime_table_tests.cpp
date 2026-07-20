@@ -1,4 +1,5 @@
 #include <database/db_zone_runtime_table.h>
+#include <database/db_stream_state.h>
 #include <database/db_zone_memory.h>
 
 #include <qcommon/com_error.h>
@@ -2364,6 +2365,159 @@ void TestPassiveReceiptPristineAuthentication()
     }
 }
 
+void TestPassiveTableWideSingletonAuthentication()
+{
+    alignas(16) std::array<std::array<std::uint8_t, 64>,
+        db::relocation::kBlockCount> blockStorage{};
+    XZoneMemory zone{};
+    std::array<db::relocation::BlockView,
+        db::relocation::kBlockCount> blocks{};
+    for (std::size_t index = 0; index < blocks.size(); ++index)
+    {
+        zone.blocks[index].data = blockStorage[index].data();
+        zone.blocks[index].size = static_cast<std::uint32_t>(
+            blockStorage[index].size());
+        blocks[index].base = reinterpret_cast<std::uintptr_t>(
+            blockStorage[index].data());
+        blocks[index].size = zone.blocks[index].size;
+    }
+
+    const auto expectDirtyStreamRejected = []()
+    {
+        auto table = std::make_unique<ZoneRuntimeTable>();
+        CHECK(!ZoneRuntimeTableTestAccess::SharedResourcesPristine(
+            table.get()));
+        CHECK(TryInitializeZoneRuntimeTable(table.get())
+            == ZoneRuntimeTableStatus::UnsafeFailure);
+        CHECK(!table->initialized());
+    };
+
+    // Every independently mutable legacy stream field participates in the
+    // passive table header. A pristine embedded binding cannot authenticate
+    // stale process-wide state merely because its own bytes remain zero.
+    g_streamDelayIndex = 1;
+    expectDirtyStreamRejected();
+    g_streamDelayIndex = 0;
+    g_streamPosIndex = 1;
+    expectDirtyStreamRejected();
+    g_streamPosIndex = 0;
+    g_streamPosStackIndex = 1;
+    expectDirtyStreamRejected();
+    g_streamPosStackIndex = 0;
+    g_streamZoneMem = &zone;
+    expectDirtyStreamRejected();
+    g_streamZoneMem = nullptr;
+    g_streamPos = blockStorage[0].data();
+    expectDirtyStreamRejected();
+    g_streamPos = nullptr;
+    g_streamPosArray[4] = blockStorage[4].data();
+    expectDirtyStreamRejected();
+    g_streamPosArray[4] = nullptr;
+    g_streamDelayArray[11].ptr = blockStorage[2].data();
+    expectDirtyStreamRejected();
+    g_streamDelayArray[11].ptr = nullptr;
+    g_streamDelayArray[11].size = 8;
+    expectDirtyStreamRejected();
+    g_streamDelayArray[11].size = 0;
+    g_streamPosStack[9].pos = blockStorage[3].data();
+    expectDirtyStreamRejected();
+    g_streamPosStack[9].pos = nullptr;
+    g_streamPosStack[9].index = 3;
+    expectDirtyStreamRejected();
+    g_streamPosStack[9].index = 0;
+
+    // Header reauthentication also detects contamination after successful
+    // table initialization and leaves the caller's output unpublished.
+    {
+        auto table = std::make_unique<ZoneRuntimeTable>();
+        CHECK(TryInitializeZoneRuntimeTable(table.get())
+            == ZoneRuntimeTableStatus::Success);
+        const ZoneRuntimeEntry *entry = nullptr;
+        g_streamPos = blockStorage[0].data();
+        CHECK(TryGetZoneRuntimeEntry(table.get(), 1, &entry)
+            == ZoneRuntimeTableStatus::UnsafeFailure);
+        CHECK(entry == nullptr);
+        CHECK(!table->initialized());
+        g_streamPos = nullptr;
+    }
+
+    // A different pristine-looking controller can acquire the one hidden
+    // process singleton. The table must authenticate the hidden owner rather
+    // than accepting only its own still-pristine binding bytes.
+    {
+        auto table = std::make_unique<ZoneRuntimeTable>();
+        CHECK(TryInitializeZoneRuntimeTable(table.get())
+            == ZoneRuntimeTableStatus::Success);
+
+        zone_load::ZoneLoadContextSlot foreignLifecycle{};
+        CHECK(TryInitializeZoneLoadContextSlot(&foreignLifecycle, 31)
+            == ZoneLoadContextStatus::Success);
+        ZoneLoadContextKey foreignKey{};
+        CHECK(zone_load::TryClaimZoneLoadContext(
+            &foreignLifecycle, &foreignKey)
+            == ZoneLoadContextStatus::Success);
+        zone_stream_ownership::ZoneStreamGenerationReceipt foreignReceipt{};
+        zone_stream_ownership::ActiveZoneStreamBinding foreignActive{};
+        CHECK(zone_stream_ownership::TryBeginZoneStreamGeneration(
+            &foreignReceipt, &foreignLifecycle, foreignKey)
+            == zone_stream_ownership::ZoneStreamOwnershipStatus::Success);
+        CHECK(zone_stream_ownership::TryBindZoneStreams(
+            &foreignActive,
+            &foreignReceipt,
+            foreignKey,
+            &zone,
+            blocks.data(),
+            blocks.size())
+            == zone_stream_ownership::ZoneStreamOwnershipStatus::Success);
+
+        auto *const tableActive =
+            ZoneRuntimeTableTestAccess::ActiveStreamBinding(table.get());
+        CHECK(tableActive != nullptr);
+        CHECK(tableActive->canonical());
+        CHECK(tableActive->phase()
+            == zone_stream_ownership::ActiveZoneStreamPhase::Idle);
+        CHECK(!ZoneRuntimeTableTestAccess::SharedResourcesPristine(
+            table.get()));
+        ExpectReceiptCorruptionFailsClosed(table.get(), 1);
+
+        CHECK(zone_stream_ownership::TryInvalidateZoneStreams(
+            &foreignActive, &foreignReceipt, foreignKey)
+            == zone_stream_ownership::ZoneStreamOwnershipStatus::Success);
+        std::uint32_t cleanupCount = 0;
+        CHECK(TryBeginZoneLoadContextAbandonment(
+            &foreignLifecycle, foreignKey)
+            == ZoneLoadContextStatus::Success);
+        CHECK(TryFinishZoneLoadContextAbandonment(
+            &foreignLifecycle,
+            foreignKey,
+            MakeCleanupCallbacks(&cleanupCount))
+            == ZoneLoadContextStatus::Success);
+        CHECK(cleanupCount == 9);
+    }
+
+    // Ready-empty is canonical ledger state, but it remains forbidden by the
+    // passive tripwire until exact-key enrollment replaces this predicate.
+    {
+        auto table = std::make_unique<ZoneRuntimeTable>();
+        CHECK(TryInitializeZoneRuntimeTable(table.get())
+            == ZoneRuntimeTableStatus::Success);
+        auto *const ledger =
+            ZoneRuntimeTableTestAccess::PendingCopyLedger(table.get());
+        CHECK(ledger != nullptr);
+        CHECK(zone_pending_copy::TryInitializePendingCopyLedger(ledger)
+            == zone_pending_copy::PendingCopyStatus::Success);
+        CHECK(ledger->canonical());
+        CHECK(!ZoneRuntimeTableTestAccess::SharedResourcesPristine(
+            table.get()));
+        ExpectReceiptCorruptionFailsClosed(table.get(), 1);
+    }
+
+    auto clean = std::make_unique<ZoneRuntimeTable>();
+    CHECK(ZoneRuntimeTableTestAccess::SharedResourcesPristine(clean.get()));
+    CHECK(TryInitializeZoneRuntimeTable(clean.get())
+        == ZoneRuntimeTableStatus::Success);
+}
+
 void TestUnsafeLiveUnloadBoundary(
     const std::size_t boundary,
     const bool unknownStatus)
@@ -2500,6 +2654,7 @@ int main(const int argc, char **const argv)
     TestLiveUnloadRetryResetReuseAndAba();
     TestAbandonedReceiptResetAndGenerationExhaustion();
     TestTerminalAdapterPhaseSerializerAndCorruptionGates();
+    TestPassiveTableWideSingletonAuthentication();
     TestPassiveReceiptPristineAuthentication();
 
     if (failures != 0)

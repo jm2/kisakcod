@@ -1,6 +1,7 @@
 #include <universal/physicalmemory.h>
 
 #include <qcommon/com_error.h>
+#include <qcommon/sys_sync.h>
 
 #include <array>
 #include <cstdarg>
@@ -21,6 +22,7 @@ int g_vaCalls;
 int g_unexpectedServiceCalls;
 int g_lastAssertLine;
 int g_lastAssertType;
+thread_local int g_legacyLockDepth;
 char g_lastAssertFile[96];
 char g_lastAssertFormat[256];
 
@@ -73,23 +75,71 @@ PhysicalMemoryPrim CapturePrimState(const PhysicalMemoryPrim &prim)
     return prim;
 }
 
-struct GlobalStateImage final
+using GlobalStateImage = PhysicalMemoryStateAccess::Snapshot;
+
+bool SameOwnedNames(
+    const GlobalStateImage &left,
+    const GlobalStateImage &right)
 {
-    PhysicalMemory memory{};
-    int overAllocatedSize = 0;
-};
+    for (std::uint32_t type = 0; type < 2; ++type)
+    {
+        if (left.allocNameBindings[type].type
+                != right.allocNameBindings[type].type
+            || left.allocNameBindings[type].index
+                != right.allocNameBindings[type].index)
+        {
+            return false;
+        }
+        for (std::uint32_t index = 0;
+             index < MAX_PHYSICAL_ALLOCATIONS;
+             ++index)
+        {
+            const auto &leftName = left.ownedNames[type][index];
+            const auto &rightName = right.ownedNames[type][index];
+            const auto &leftBinding =
+                left.allocationNameBindings[type][index];
+            const auto &rightBinding =
+                right.allocationNameBindings[type][index];
+            if (leftName.identity != rightName.identity
+                || leftName.identityWitness != rightName.identityWitness
+                || leftBinding.type != rightBinding.type
+                || leftBinding.index != rightBinding.index)
+                return false;
+            for (std::size_t byte = 0;
+                 byte < PhysicalMemoryStateAccess::OWNED_NAME_CAPACITY;
+                 ++byte)
+            {
+                if (leftName.text[byte] != rightName.text[byte])
+                    return false;
+            }
+        }
+    }
+    return true;
+}
 
 GlobalStateImage CaptureGlobalState()
 {
-    const auto state = PhysicalMemoryStateAccess::Capture();
-    return {state.memory, state.overAllocatedSize};
+    return PhysicalMemoryStateAccess::Capture();
 }
 
 bool MatchesGlobalState(const GlobalStateImage &expected)
 {
     const auto current = CaptureGlobalState();
     return SamePhysicalMemoryState(current.memory, expected.memory)
-        && current.overAllocatedSize == expected.overAllocatedSize;
+        && SameOwnedNames(current, expected)
+        && current.overAllocatedSize == expected.overAllocatedSize
+        && current.retainedBase == expected.retainedBase
+        && current.retainedSize == expected.retainedSize
+        && current.initializationPhase == expected.initializationPhase
+        && current.runtimeReserved[0] == expected.runtimeReserved[0]
+        && current.runtimeReserved[1] == expected.runtimeReserved[1]
+        && current.runtimeReserved[2] == expected.runtimeReserved[2]
+        && current.initializationWitness == expected.initializationWitness
+        && current.processInitPhase == expected.processInitPhase
+        && current.processInitReserved[0] == expected.processInitReserved[0]
+        && current.processInitReserved[1] == expected.processInitReserved[1]
+        && current.processInitReserved[2] == expected.processInitReserved[2]
+        && current.processInitWitness == expected.processInitWitness;
 }
 
 void ResetReports()
@@ -198,6 +248,10 @@ void TestGlobalStateAccessCopiesByValue()
     installed.memory.prim[0].pos = 7;
     installed.memory.prim[1].pos = 61;
     installed.overAllocatedSize = 23;
+    installed = PhysicalMemoryStateAccess::MakeCanonicalReady(
+        installed.memory,
+        static_cast<std::uint32_t>(backing.size()),
+        installed.overAllocatedSize);
     PhysicalMemoryStateAccess::Install(installed);
 
     auto detached = PhysicalMemoryStateAccess::Capture();
@@ -205,6 +259,8 @@ void TestGlobalStateAccessCopiesByValue()
     CHECK(detached.memory.prim[0].pos == 7);
     CHECK(detached.memory.prim[1].pos == 61);
     CHECK(detached.overAllocatedSize == 23);
+    CHECK(detached.retainedBase == backing.data());
+    CHECK(detached.retainedSize == backing.size());
     detached.memory = {};
     detached.overAllocatedSize = -1;
 
@@ -213,6 +269,8 @@ void TestGlobalStateAccessCopiesByValue()
     CHECK(retained.memory.prim[0].pos == 7);
     CHECK(retained.memory.prim[1].pos == 61);
     CHECK(retained.overAllocatedSize == 23);
+    CHECK(retained.retainedBase == backing.data());
+    CHECK(retained.retainedSize == backing.size());
     PhysicalMemoryStateAccess::Install(original);
 }
 
@@ -225,9 +283,14 @@ void TestWrapperAllocationTypeFailureAtomicity()
     const auto original = PhysicalMemoryStateAccess::Capture();
     PhysicalMemoryStateAccess::Snapshot installed{};
     installed.memory.buf = backing.data();
-    installed.memory.prim[0].pos = 17;
-    installed.memory.prim[1].pos = 111;
+    installed.memory.prim[0].pos = 0;
+    installed.memory.prim[1].pos =
+        static_cast<std::uint32_t>(backing.size());
     installed.overAllocatedSize = 37;
+    installed = PhysicalMemoryStateAccess::MakeCanonicalReady(
+        installed.memory,
+        static_cast<std::uint32_t>(backing.size()),
+        installed.overAllocatedSize);
     PhysicalMemoryStateAccess::Install(installed);
     const auto before = CaptureGlobalState();
 
@@ -267,6 +330,9 @@ void TestWrapperAllocationTypeFailureAtomicity()
         CHECK(begun.memory.prim[allocType].allocName == validName);
         CHECK(begun.memory.prim[allocType].allocListCount == 1);
         CHECK(begun.memory.prim[allocType].allocList[0].name == validName);
+        CHECK(begun.ownedNames[allocType][0].identity
+            == reinterpret_cast<std::uintptr_t>(validName));
+        CHECK(std::strcmp(begun.ownedNames[allocType][0].text, validName) == 0);
         CHECK(begun.memory.prim[allocType].allocList[0].pos == initialPosition);
         CHECK(begun.overAllocatedSize == 37);
 
@@ -458,6 +524,19 @@ void TestFreeIndexFailureAtomicity()
     ResetReports();
     PMem_FreeIndex(&nullEntry, 0);
     CheckRejectedUnchanged(nullEntry, nullEntryBefore, 400);
+
+    PhysicalMemoryPrim identityOnlyTail{};
+    identityOnlyTail.allocListCount = 1;
+    identityOnlyTail.pos = 23;
+    identityOnlyTail.allocList[0] = {
+        reinterpret_cast<const char *>(static_cast<std::uintptr_t>(1)),
+        11,
+    };
+    ResetReports();
+    PMem_FreeIndex(&identityOnlyTail, 0);
+    CHECK(g_assertReports == 0);
+    CHECK(identityOnlyTail.allocListCount == 0);
+    CHECK(identityOnlyTail.pos == 11);
 }
 
 void TestFreeInPrimFailureAtomicity()
@@ -559,6 +638,23 @@ void TestLowPrimTailHoleCollapse()
     CHECK(g_vaCalls == 0);
     CHECK(prim.allocListCount == 0);
     CHECK(prim.pos == 0);
+
+    std::array<char, 96> longName{};
+    longName.fill('q');
+    longName.back() = '\0';
+    char longTail[] = "long-tail";
+    PhysicalMemoryPrim longPrim{};
+    BeginAndEnd(longPrim, longName.data(), 1);
+    BeginAndEnd(longPrim, longTail, 2);
+    char expectedLongReport[160]{};
+    std::snprintf(
+        expectedLongReport,
+        sizeof(expectedLongReport),
+        "freeing '%s' caused a memory hole\n",
+        longName.data());
+    ResetReports();
+    PMem_FreeIndex(&longPrim, 0);
+    CheckHoleReport(expectedLongReport);
 }
 
 void TestHighPrimRetainsInitialAllocation()
@@ -606,6 +702,7 @@ void MyAssertHandler(
     const char *format,
     ...)
 {
+    CHECK(g_legacyLockDepth == 0);
     ++g_assertReports;
     g_lastAssertLine = line;
     g_lastAssertType = type;
@@ -646,41 +743,62 @@ char *KISAK_CDECL va(const char *const format, ...)
 
 void KISAK_CDECL Com_Printf(const int, const char *, ...)
 {
+    CHECK(g_legacyLockDepth == 0);
     ++g_unexpectedServiceCalls;
 }
 
 void KISAK_CDECL Com_Error(const errorParm_t, const char *, ...)
 {
+    CHECK(g_legacyLockDepth == 0);
     ++g_unexpectedServiceCalls;
 }
 
 double KISAK_CDECL ConvertToMB(const int bytes)
 {
+    CHECK(g_legacyLockDepth == 0);
     ++g_unexpectedServiceCalls;
     return static_cast<double>(bytes) / (1024.0 * 1024.0);
 }
 
 void *KISAK_CDECL Sys_VirtualMemoryReserve(const std::size_t)
 {
+    CHECK(g_legacyLockDepth == 0);
     ++g_unexpectedServiceCalls;
     return nullptr;
 }
 
 bool KISAK_CDECL Sys_VirtualMemoryCommit(void *, const std::size_t)
 {
+    CHECK(g_legacyLockDepth == 0);
     ++g_unexpectedServiceCalls;
     return false;
 }
 
 bool KISAK_CDECL Sys_VirtualMemoryRelease(void *)
 {
+    CHECK(g_legacyLockDepth == 0);
     ++g_unexpectedServiceCalls;
     return false;
 }
 
 void KISAK_CDECL Sys_OutOfMemErrorInternal(const char *, const int)
 {
+    CHECK(g_legacyLockDepth == 0);
     ++g_unexpectedServiceCalls;
+}
+
+void KISAK_CDECL Sys_EnterCriticalSection(const int criticalSection)
+{
+    CHECK(criticalSection == CRITSECT_PHYSICAL_MEMORY);
+    ++g_legacyLockDepth;
+    CHECK(g_legacyLockDepth == 1);
+}
+
+void KISAK_CDECL Sys_LeaveCriticalSection(const int criticalSection)
+{
+    CHECK(criticalSection == CRITSECT_PHYSICAL_MEMORY);
+    CHECK(g_legacyLockDepth == 1);
+    --g_legacyLockDepth;
 }
 
 int main()
@@ -694,6 +812,7 @@ int main()
     TestFreeInPrimFailureAtomicity();
     TestLowPrimTailHoleCollapse();
     TestHighPrimRetainsInitialAllocation();
+    CHECK(g_legacyLockDepth == 0);
     CHECK(g_unexpectedServiceCalls == 0);
 
     if (g_failures != 0)

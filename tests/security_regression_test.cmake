@@ -3044,6 +3044,37 @@ require_source_contains(
     "database/db_zone_stream_ownership.cpp"
     "ObjectIsAligned(zoneIdentity, alignof(XZoneMemory))"
     "zone identity alignment must be checked before descriptor access")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "bool AuthenticatePassiveZoneStreamSingleton(
+    const ActiveZoneStreamBinding &binding) noexcept
+{
+    return binding.isPristine()
+        && g_activeOwner == nullptr
+        && SingletonIsIdle();
+}"
+    "passive stream authentication must cover the exact hidden singleton")
+foreach(_passive_stream_context_marker IN ITEMS
+    "g_aliasRegistry.contextValid()"
+    "g_directResolver.contextValid()")
+    require_source_contains(
+        "database/db_zone_stream_ownership.cpp"
+        "${_passive_stream_context_marker}"
+        "passive stream authentication must cover each relocation context")
+endforeach()
+require_source_contains(
+    "database/db_zone_stream_ownership.h"
+    "bool AuthenticatePassiveZoneStreamSingleton(
+    const ActiveZoneStreamBinding &binding) noexcept;"
+    "passive stream authentication exposes only a const report-free query")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_tests.cpp"
+    "TestPassiveSingletonAuthentication"
+    "passive stream authentication must retain adversarial runtime coverage")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_production_seal_tests.cpp"
+    "using PassiveSingletonAuthenticator = bool (*)"
+    "passive stream authentication must retain its const-only production seal")
 require_repository_contains(
     "tests/db_zone_stream_ownership_source_test.cmake"
     "string(CONCAT _qualified_using_bypass"
@@ -10144,7 +10175,7 @@ extract_security_slice(
 set(_security_active_stream_binding_friends
     "friend ZoneStreamOwnershipStatus TryBindZoneStreams( ActiveZoneStreamBinding *, ZoneStreamGenerationReceipt *, const zone_load::ZoneLoadContextKey &, const XZoneMemory *, const relocation::BlockView *, std::size_t) noexcept"
     "friend ZoneStreamOwnershipStatus TryInvalidateZoneStreams( ActiveZoneStreamBinding *, ZoneStreamGenerationReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
-    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const ActiveZoneStreamBinding &binding) noexcept")
+    "friend bool AuthenticatePassiveZoneStreamSingleton( const ActiveZoneStreamBinding &binding) noexcept")
 require_security_exact_friend_surface(
     _security_active_stream_binding_class
     _security_active_stream_binding_friends
@@ -10193,7 +10224,7 @@ set(_security_pending_copy_ledger_friends
     "friend PendingCopyStatus TryDrainNextPendingCopy( PendingCopyLedger *, const PendingCopyDrainCallback &) noexcept"
     "friend PendingCopyStatus TryFinishPendingCopyDrain( PendingCopyLedger *) noexcept"
     "friend PendingCopyStatus TryResetPendingCopyAdmissionReceipt( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
-    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const PendingCopyLedger &ledger) noexcept"
+    "friend bool AuthenticatePassivePendingCopyLedger( const PendingCopyLedger &ledger) noexcept"
     "friend struct PendingCopyLedgerTestAccess")
 require_security_exact_friend_surface(
     _security_pending_copy_ledger_class
@@ -10279,7 +10310,7 @@ require_security_exact_class_digest(
     "ZoneStreamGenerationReceipt")
 require_security_exact_class_digest(
     _security_active_stream_binding_class
-    4103d1c5614616cceb11ee072a5dfd78ed95bd116b857a3766096ecabbebca4a
+    50db7b75d5c2aab13723e9246264eced1e5db8992e3314ae0b47b6ba888e3b69
     "ActiveZoneStreamBinding")
 require_security_exact_class_digest(
     _security_pending_admission_receipt_class
@@ -10287,7 +10318,7 @@ require_security_exact_class_digest(
     "PendingCopyAdmissionReceipt")
 require_security_exact_class_digest(
     _security_pending_copy_ledger_class
-    109b7d1aded99dbead4c48e91e1c12bee6ab6b693d8490fbdce958cf78404254
+    fc90d9910f1cc6968c4fd3f044c7cc5ae573d0803913a21afa3be16ccb709e6f
     "PendingCopyLedger")
 require_security_exact_class_digest(
     _zone_runtime_receipt_capsule_slice
@@ -10409,6 +10440,14 @@ foreach(_zone_runtime_composition_marker IN ITEMS
         "${_zone_runtime_composition_marker}"
         "fixed passive runtime receipt composition")
 endforeach()
+foreach(_zone_runtime_shared_authentication_call IN ITEMS
+    "zone_stream_ownership::AuthenticatePassiveZoneStreamSingleton(binding)"
+    "zone_pending_copy::AuthenticatePassivePendingCopyLedger(ledger)")
+    require_source_contains(
+        "database/db_zone_runtime_table.cpp"
+        "${_zone_runtime_shared_authentication_call}"
+        "runtime-table initialization must authenticate shared passive topology")
+endforeach()
 foreach(_zone_runtime_operation_forbidden IN ITEMS
     TryBegin
     TryEnd
@@ -10466,6 +10505,8 @@ endforeach()
 foreach(_zone_runtime_detector_marker IN ITEMS
     "remove_reviewed_runtime_table_pending_tokens"
     "require_runtime_table_pending_detector_fixture"
+    "AuthenticatePassivePendingCopyLedger"
+    "_runtime_table_authenticator_bypass"
     "_runtime_table_alias_api_bypass"
     "_runtime_table_paste_api_bypass")
     require_repository_contains(
@@ -10488,6 +10529,8 @@ endforeach()
 foreach(_zone_runtime_detector_marker IN ITEMS
     "remove_reviewed_runtime_table_stream_tokens"
     "require_runtime_table_stream_detector_fixture"
+    "AuthenticatePassiveZoneStreamSingleton"
+    "_runtime_table_stream_authenticator_bypass"
     "_runtime_table_stream_internal_header_bypass"
     "_runtime_table_stream_private_capability_bypass")
     require_repository_contains(
@@ -10497,6 +10540,9 @@ foreach(_zone_runtime_detector_marker IN ITEMS
 endforeach()
 foreach(_zone_runtime_detector_marker IN ITEMS
     "require_exact_pristine_overload"
+    "require_exact_shared_authentication_overload"
+    "AuthenticatePassiveZoneStreamSingleton(binding)"
+    "AuthenticatePassivePendingCopyLedger(ledger)"
     "Pristine friend body is not exact"
     "Receipt capsule predicate must contain exactly four pristine checks"
     "friend_surface_matches_exact"
@@ -10577,6 +10623,291 @@ require_security_slice_contains(
     _zone_runtime_production_seal_measured_ci
     "production-test-access-sealed"
     "measured Windows x86 CI must select the runtime-table production seal")
+
+# The global physical-memory runtime retains its exact reservation behind one
+# witnessed phase machine and one dedicated serializer. Initialization and
+# allocation cores are report-free; legacy reporters run only after explicit
+# release so Com_Error/longjmp cannot strand CRITSECT_PHYSICAL_MEMORY.
+foreach(_pmem_runtime_header_marker IN ITEMS
+    "enum class InitializationPhase : std::uint8_t"
+    "enum class InitializationStatus : std::uint8_t"
+    "enum class AllocationStatus : std::uint8_t"
+    "enum class ProcessInitAllocationStatus : std::uint8_t"
+    "std::uint64_t additionalBytes = 0;"
+    "RUNTIME_SIZE(AllocationResult, 0x10, 0x18);"
+    "enum class DiagnosticEntryKind : std::uint8_t"
+    "enum class DiagnosticSnapshotStatus : std::uint8_t"
+    "char name[DIAGNOSTIC_NAME_CAPACITY]{};"
+    "RUNTIME_SIZE(DiagnosticEntry, 0x18, 0x18);"
+    "RUNTIME_SIZE(DiagnosticSnapshot, 0x610, 0x610);"
+    "RUNTIME_OFFSET(DiagnosticSnapshot, status, 0x60C, 0x60C);"
+    "TryInitialize() noexcept;"
+    "std::uint32_t allocType) noexcept;"
+    "TryCaptureDiagnosticSnapshot() noexcept;")
+    require_source_contains(
+        "universal/physicalmemory_runtime.h"
+        "${_pmem_runtime_header_marker}"
+        "narrow report-free PMem runtime boundary")
+endforeach()
+foreach(_pmem_process_init_api IN ITEMS
+    "TryBeginProcessInitAllocation() noexcept;"
+    "TryEndProcessInitAllocation() noexcept;")
+    require_source_contains(
+        "universal/physicalmemory_runtime.h"
+        "${_pmem_process_init_api}"
+        "hidden-controller process-init PMem API")
+endforeach()
+foreach(_pmem_process_init_public_authority IN ITEMS
+    "class ProcessInitController"
+    "struct ProcessInitControl"
+    "ProcessInitializationController"
+    "AllocationReceipt")
+    require_source_not_contains(
+        "universal/physicalmemory_runtime.h"
+        "${_pmem_process_init_public_authority}"
+        "process-init controller state and receipt authority must stay hidden")
+endforeach()
+foreach(_pmem_runtime_source_marker IN ITEMS
+    "thread_local int g_overAllocatedSize{};"
+    "RuntimeControl g_runtime{};"
+    "OwnedNameState ownedNames{};"
+    "enum class ProcessInitPhase : std::uint8_t"
+    "struct ProcessInitControl final"
+    "ProcessInitControl processInit{};"
+    "constexpr char kProcessInitAllocationName[] = \"$init\";"
+    "ProcessInitControlIsCanonical("
+    "ProcessInitControlIsDormant("
+    "ProcessInitBindingIsCoherent("
+    "SetProcessInitPhase("
+    "OwnedNameIdentityWitness("
+    "OwnedNamesArePristine("
+    "OwnedNamesMatchMemory("
+    "hole.borrowedName = name;"
+    "CopyBoundedName(result.ownedName, result.borrowedName);"
+    "result.ownsName = true;"
+    "LogicalizeTestNamePointer("
+    "snapshot.allocationNameBindings[type][index]"
+    "snapshot.ownedNames[binding.type][binding.index]"
+    "RetainedExtentIsDisjointFromControl("
+    "InitializingStateIsCoherent("
+    "PoisonedStateIsCoherent("
+    "g_runtime.extent.size == kPhysicalMemorySize"
+    "SetRuntimePhase(&g_runtime, InitializationPhase::Initializing);"
+    "PublishPoisonedExtent(base, kPhysicalMemorySize);"
+    "g_mem = initialized;"
+    "g_runtime.extent = candidateExtent;"
+    "SetRuntimePhase(&g_runtime, InitializationPhase::Ready);"
+    "TryAllocateAndPublishLegacyShortfall("
+    "TryCaptureDiagnosticSnapshotNoLock() noexcept"
+    "snapshot.freeBytes = high.pos - low.pos;"
+    "TryBeginGlobalAllocNoReport(allocType, name);"
+    "TryEndGlobalAllocNoReport(allocType, name);"
+    "TryFreeGlobalAllocNoReport(allocType, name);"
+    "const std::uint64_t firstAligned = lowPosition + lowPadding;"
+    "result.additionalBytes = requiredEnd - highPosition;")
+    require_source_contains(
+        "universal/physicalmemory.cpp"
+        "${_pmem_runtime_source_marker}"
+        "serialized coherent PMem runtime")
+endforeach()
+file(READ "${SOURCE_ROOT}/src/universal/physicalmemory.cpp"
+    _pmem_runtime_security_source)
+extract_security_slice(
+    _pmem_runtime_security_source
+    "pmem_runtime::InitializationStatus KISAK_CDECL"
+    "pmem_runtime::AllocationResult KISAK_CDECL pmem_runtime::TryAllocate("
+    _pmem_initialize_security_slice
+    "report-free PMem initialization")
+extract_security_slice(
+    _pmem_runtime_security_source
+    "pmem_runtime::AllocationResult TryAllocateNoLock("
+    "pmem_runtime::AllocationResult TryAllocateAndPublishLegacyShortfall("
+    _pmem_allocate_security_slice
+    "report-free PMem allocation core")
+extract_security_slice(
+    _pmem_runtime_security_source
+    "TryCaptureDiagnosticSnapshotNoLock() noexcept"
+    "void ReportLegacyDiagnostic("
+    _pmem_diagnostic_security_slice
+    "report-free PMem diagnostic capture core")
+extract_security_slice(
+    _pmem_runtime_security_source
+    "pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL"
+    "void KISAK_CDECL PMem_Init()"
+    _pmem_process_init_security_slice
+    "serialized report-free process-init controller operations")
+extract_security_slice(
+    _pmem_runtime_security_source
+    "void KISAK_CDECL PMem_DumpMemStats()"
+    "void KISAK_CDECL PMem_InitPhysicalMemory("
+    _pmem_dump_security_slice
+    "snapshot-only PMem dump")
+foreach(_pmem_runtime_forbidden_reporter IN ITEMS
+    "MyAssertHandler("
+    "Com_Printf("
+    "Com_Error("
+    "Sys_OutOfMemErrorInternal(")
+    forbid_security_slice_contains(
+        _pmem_initialize_security_slice
+        "${_pmem_runtime_forbidden_reporter}"
+        "PMem initialization cannot report under its phase protocol")
+    forbid_security_slice_contains(
+        _pmem_allocate_security_slice
+        "${_pmem_runtime_forbidden_reporter}"
+        "PMem allocation core cannot report under lock")
+    forbid_security_slice_contains(
+        _pmem_diagnostic_security_slice
+        "${_pmem_runtime_forbidden_reporter}"
+        "PMem diagnostic core cannot report under lock")
+    forbid_security_slice_contains(
+        _pmem_process_init_security_slice
+        "${_pmem_runtime_forbidden_reporter}"
+        "PMem process-init controller cannot report under lock")
+endforeach()
+foreach(_pmem_process_init_forbidden IN ITEMS
+    "PMem_BeginAlloc("
+    "PMem_EndAlloc("
+    "PMem_Free("
+    "physical_memory::"
+    "AllocationReceipt")
+    forbid_security_slice_contains(
+        _pmem_process_init_security_slice
+        "${_pmem_process_init_forbidden}"
+        "PMem process-init controller cannot delegate or duplicate authority")
+endforeach()
+foreach(_pmem_process_init_marker IN ITEMS
+    "TryBeginProcessInitAllocation() noexcept"
+    "TryEndProcessInitAllocation() noexcept"
+    "ProcessInitAllocationStatus::NotReady"
+    "ProcessInitAllocationStatus::Busy"
+    "ProcessInitAllocationStatus::WrongPhase"
+    "ProcessInitAllocationStatus::AlreadyComplete"
+    "TryBeginGlobalAllocNoReport("
+    "TryEndAllocInPrimNoReport(&high, high.allocName)"
+    "SetProcessInitPhase("
+    "ReadyStateIsCoherent()")
+    require_security_slice_contains(
+        _pmem_process_init_security_slice
+        "${_pmem_process_init_marker}"
+        "authenticated process-init transition")
+endforeach()
+foreach(_pmem_diagnostic_forbidden IN ITEMS
+    "Sys_EnterCriticalSection"
+    "Sys_LeaveCriticalSection"
+    "ConvertToMB("
+    "Sys_VirtualMemory"
+    "new "
+    "malloc(")
+    forbid_security_slice_contains(
+        _pmem_diagnostic_security_slice
+        "${_pmem_diagnostic_forbidden}"
+        "PMem diagnostic core must remain callback/allocation free")
+endforeach()
+foreach(_pmem_dump_forbidden IN ITEMS
+    "g_mem"
+    "g_runtime"
+    "ownedNames"
+    "allocList"
+    "PMem_GetFreeAmount("
+    "Sys_EnterCriticalSection"
+    "Sys_LeaveCriticalSection")
+    forbid_security_slice_contains(
+        _pmem_dump_security_slice
+        "${_pmem_dump_forbidden}"
+        "PMem dump must consume only its bounded snapshot")
+endforeach()
+foreach(_pmem_runtime_forbidden_raii IN ITEMS
+    "std::lock_guard"
+    "std::unique_lock")
+    require_source_not_contains(
+        "universal/physicalmemory.cpp"
+        "${_pmem_runtime_forbidden_raii}"
+        "PMem must explicitly leave before nonlocal reporters")
+endforeach()
+require_repository_contains(
+    "tests/physicalmemory_runtime_tests.cpp"
+    "TestInitCorruptionOwnershipExits();"
+    "PMem reservation ownership exits require adversarial runtime coverage")
+foreach(_pmem_diagnostic_test IN ITEMS
+    "TestDiagnosticStatusAndStableNames();"
+    "TestDiagnosticAccountingAndDumpOrder();"
+    "TestDiagnosticCapacityAndSidecarCorruption();"
+    "TestDumpReentryAndSnapshotContention();")
+    require_repository_contains(
+        "tests/physicalmemory_runtime_tests.cpp"
+        "${_pmem_diagnostic_test}"
+        "PMem owned-name/diagnostic boundary requires focused coverage")
+endforeach()
+foreach(_pmem_process_init_test IN ITEMS
+    "TestProcessInitControllerLifecycleAndLegacyCoexistence();"
+    "TestProcessInitControllerCorruptionAndAtomicity();"
+    "TestProcessInitControllerConcurrencyAndDisjointness();")
+    require_repository_contains(
+        "tests/physicalmemory_runtime_tests.cpp"
+        "${_pmem_process_init_test}"
+        "process-init controller requires focused adversarial coverage")
+endforeach()
+foreach(_pmem_process_init_protection IN ITEMS
+    "g_runtime.processInit.phase != ProcessInitPhase::Dormant"
+    "g_runtime.processInit.phase == ProcessInitPhase::Begun"
+    "allocType == 1 && allocIndex == 0"
+    "LegacyDiagnostic::ProcessInitProtected"
+    "kProcessInitAllocationName,"
+    "sizeof(kProcessInitAllocationName)")
+    require_source_contains(
+        "universal/physicalmemory.cpp"
+        "${_pmem_process_init_protection}"
+        "persistent process-init high-index-zero authority")
+endforeach()
+require_source_match_count(
+    "universal/physicalmemory.cpp"
+    "TryBeginProcessInitAllocation\\(\\)"
+    1
+    "process-init Begin definition without production caller")
+require_source_match_count(
+    "universal/physicalmemory.cpp"
+    "TryEndProcessInitAllocation\\(\\)"
+    1
+    "process-init End definition without production caller")
+foreach(_pmem_process_init_caller_path IN ITEMS
+    "qcommon/common.cpp"
+    "database/db_registry.cpp")
+    foreach(_pmem_process_init_operation IN ITEMS
+        TryBeginProcessInitAllocation
+        TryEndProcessInitAllocation)
+        require_source_not_contains(
+            "${_pmem_process_init_caller_path}"
+            "${_pmem_process_init_operation}"
+            "partial process-init enrollment before atomic loader cutover")
+    endforeach()
+endforeach()
+require_source_ordered(
+    "qcommon/common.cpp"
+    "PMem_EndAlloc(comInitAllocName, 1u);"
+    "DB_SetInitializing(0);"
+    "process-init End must precede flag clear")
+foreach(_pmem_process_init_source_seal_marker IN ITEMS
+    "production process-init Begin definition without caller"
+    "production process-init End definition without caller"
+    "legacy process-init Begin site before atomic cutover"
+    "legacy process-init End site before atomic cutover"
+    "legacy zone Begin site before atomic cutover"
+    "legacy zone End site before atomic cutover"
+    "legacy zone Free site before atomic cutover"
+    "process-init operation enrollment outside atomic cutover")
+    require_repository_contains(
+        "tests/physicalmemory_legacy_source_test.cmake"
+        "${_pmem_process_init_source_seal_marker}"
+        "duplicated process-init enrollment source seal")
+endforeach()
+require_repository_contains(
+    "tests/physicalmemory_runtime_production_seal_test.cmake"
+    "TLS[ \\t]+LOCAL[ \\t]+DEFAULT"
+    "PMem TLS shortfall requires real macro-off ELF proof")
+require_repository_contains(
+    "tests/physicalmemory_runtime_production_seal_test.cmake"
+    "kProcessInitAllocationName"
+    "PMem stable process-init name must retain local object proof")
 
 # Checked physical-memory scopes form a report-free authority boundary, but
 # remain deliberately unenrolled until the exact-key resource coordinator owns
@@ -10753,6 +11084,27 @@ foreach(_pending_copy_marker IN ITEMS
         "${_pending_copy_marker}"
         "bounded fail-closed pending-copy authority")
 endforeach()
+require_source_contains(
+    "database/db_zone_pending_copy_ledger.cpp"
+    "bool AuthenticatePassivePendingCopyLedger(
+    const PendingCopyLedger &ledger) noexcept
+{
+    return ledger.isPristine();
+}"
+    "passive pending-copy authentication must cover the entire pristine topology")
+require_source_contains(
+    "database/db_zone_pending_copy_ledger.h"
+    "bool AuthenticatePassivePendingCopyLedger(
+    const PendingCopyLedger &ledger) noexcept;"
+    "passive pending-copy authentication exposes only a const report-free query")
+require_repository_contains(
+    "tests/db_zone_pending_copy_ledger_tests.cpp"
+    "TestPassiveLedgerAuthentication"
+    "passive pending-copy authentication must retain adversarial runtime coverage")
+require_repository_contains(
+    "tests/db_zone_pending_copy_ledger_production_seal_tests.cpp"
+    "using PassiveLedgerAuthenticator = bool (*)"
+    "passive pending-copy authentication must retain its const-only production seal")
 foreach(_pending_copy_forbidden IN ITEMS
     "database/database.h"
     "g_copyInfo"
