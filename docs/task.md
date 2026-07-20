@@ -90,7 +90,7 @@ work item changes. Do not create session-specific handoff files.
   was issued after seven jobs had completed; the remaining no-Steam and Windows x86 Debug/Release jobs subsequently
   passed at that exact head. Gemini was clean at behavior head `c8230927`; the final two changes were MSVC fixture-only
   corrections and no review threads remained. No checked authority or loader caller is enrolled at the merged baseline.
-- Pending exact-key composite-controller milestone: the current unmerged branch completes the report-free PMem
+- Merged PR #71 exact-key composite-controller milestone: the merged controller completes the report-free PMem
   range/receipt bridge, including exact `Freed` terminal evidence that remains ABA-safe when a low- or high-prim slot is
   reused, and adds exact-key composition authenticators for native storage, stream ownership, pending copies, and
   script-string ownership. The durable runtime-table controller now drives strict callback binding, PMem allocation,
@@ -109,7 +109,7 @@ work item changes. Do not create session-specific handoff files.
   the headless dependency gate was clean, and full native CTest was **157/157**. PR #71 initial exact-head run
   **29754589268** exposed two hosted-only
   integration defects: the headless profile omitted the storage/FX-bridge definitions now referenced by the table, and
-  MSVC Release folded two intentionally distinct empty fixture callbacks. The current repair links the database-neutral
+  MSVC Release folded two intentionally distinct empty fixture callbacks. The final repair links the database-neutral
   storage implementation to an explicitly headless-only fail-closed bridge, seals that source-profile pair, and gives
   the alternate fixture callback an observable side effect. The review cleanup additionally authenticates the complete
   reset-authoritative FX-workspace topology, rejects all five table outputs against the complete stream
@@ -126,11 +126,13 @@ work item changes. Do not create session-specific handoff files.
   Win32 jobs rejected implicit C4324 tail padding introduced around the fixture's existing aligned zone member. Exact
   implementation head `a1f99336` retains a full-width allocation-attempt witness, eliminating that implicit padding
   without a warning suppression while improving partial-loop diagnostics. Focused GCC, Clang, and ASan+UBSan runtime
-  tests pass, genuine i386/AArch64 compile-link passes, and an i386 padding probe reports no fixture tail padding. The
-  final documentation head must carry this identical code through the all-nine hosted and exact-head review gates.
-  This completes the production-neutral exact-key adapter queue item on the pending branch. Journal-capacity separation,
-  a production-neutral externally serialized facade, and then one atomic seven-site loader cutover are next; strict
-  requested-target delivery remains **0/5**.
+  tests pass, genuine i386/AArch64 compile-link passes, and an i386 padding probe reports no fixture tail padding. Final
+  exact head `3f39881cb4f8d5145e01904d95f34c09512b070d` passed all nine hosted jobs in run **29764928195**; exact-head Codex
+  and Gemini reviews were clean and zero review threads remained. PR #71 squash-merged as
+  `49184106a106d1b115097b96f541ac03551e90e5`; authoritative post-merge run **29765949587** is in progress at that exact
+  master commit. This completes the production-neutral exact-key adapter queue item. The active branch now separates
+  journal capacity from actual acquisition demand without production enrollment; an externally serialized facade and
+  then one atomic seven-site loader cutover follow. Strict requested-target delivery remains **0/5**.
 - Merged script-string ownership foundation: PR #48 adds a dedicated recursive outer DB transaction
   serializer, a private report-free journal adapter, bounded report-free ordinary/database-user ownership operations,
   and failure-atomic memory-tree allocate/query/free APIs. Runtime IDs remain explicitly limited to
@@ -408,8 +410,8 @@ work item changes. Do not create session-specific handoff files.
   API-seal, security, and diff evidence all pass. The API is build-enrolled but has no production caller and does not
   change retail bytes. PR #68 later removed the legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim`
   handling; the serialized global PMem boundary and unused permanent-Ended `$init` controller now exist locally through
-  `852e7db9`. The pending branch now completes exact-key composite adapters; repair-head CI/review/merge and the atomic
-  production enrollment remain.
+  `852e7db9`. PR #71 now supplies the merged exact-key composite adapters; the capacity/demand prerequisite, serialized
+  facade, and atomic production enrollment remain.
   Exact-head run **29673379640** passed all nine jobs; Codex reviewed exact
   final head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
   squash merge `74916b5b`. Authoritative
@@ -1903,20 +1905,15 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-Merged in PR #70 through `792ff1c7`: the production-neutral global runtime, unused permanent-Ended `$init` controller,
-complete passive stream/relocation singleton authenticator, and complete passive pending-ledger authenticator are present.
-Exact combined native CTest is **157/157**, the focused integration is **32/32**, and affected genuine i386/AArch64
-compile-link gates pass. Exact final head `ca2d1149` ultimately passed all nine hosted jobs in run **29726370638**;
-no checked authority or loader caller is enrolled at the merged baseline. The pending branch completes the exact-key
-composite adapters and strict table controller with focused runtime-table CTest **16/16**, green GCC/Clang and Clang
-ASan+UBSan (`detect_leaks=0`), correct-class i386/AArch64 compile-link evidence, and a clean independent audit. Repair-head
-review hardening expands the affected Clang and ASan+UBSan runtime/source/security selection to **38/38** in each tree;
-all five macro-off production seals pass, the headless dependency gate is clean, and full native CTest is **157/157**.
-Exact implementation head `a1f99336` additionally stabilizes the Win32 fixture allocation output and preserves the
-fixture's explicit aligned extent after runs **29760022151** and **29763190487** exposed the two optimized-x86 test-only
-alignment seams. Production enrollment is still zero.
+PR #71 merged the production-neutral exact-key component adapters and strict table controller as
+`49184106a106d1b115097b96f541ac03551e90e5`. Exact final head `3f39881cb4f8d5145e01904d95f34c09512b070d`
+passed all nine jobs in run **29764928195** with clean exact-head Codex and Gemini reviews and zero unresolved threads;
+authoritative post-merge run **29765949587** is in progress. Production enrollment remains zero. The active branch is
+the ABI-neutral capacity/demand prerequisite: the plan's 52-byte layout and planner signature stay fixed, its first field
+becomes constructed script-string capacity, and the exact non-null acquisition demand is published only after a
+successful ownership begin.
 
-1. Separate `ZoneRuntimeStoragePlan` script-string capacity from the actual expected non-null acquisition count without
+1. **Active:** separate `ZoneRuntimeStoragePlan` script-string capacity from the actual expected non-null acquisition count without
    changing its 52-byte layout or planner signature. Capacity remains the token/header-driven constructed-entry extent;
    publish the exact expected count only after token preflight and successful ownership begin. Cover capacity greater
    than expected, zero expected with nonzero capacity, over-capacity failure atomicity, retry, teardown, and source seals.
