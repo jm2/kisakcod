@@ -11484,7 +11484,7 @@ foreach(_runtime_facade_seal_marker IN ITEMS
     "all six dual-mode script adapters require composite authority"
     "active registry authority precedes output-alias validation"
     "view.entry != &table.entries_[physicalSlot]"
-    "this boundary is not a sandbox for arbitrary engine globals"
+    "This boundary is not a sandbox for arbitrary engine globals"
     "Runtime facade gained a production caller before atomic cutover")
     require_repository_contains(
         "tests/db_zone_runtime_facade_source_test.cmake"

@@ -665,6 +665,24 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBindStreams(
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
+    if (zoneIdentity && blocks
+        && blockCount == relocation::kBlockCount)
+    {
+        // The table independently proves allocation-receipt containment. The
+        // facade also separates each retained write target from its complete
+        // authority set before the child can publish the stream binding.
+        for (std::size_t index = 0; index < blockCount; ++index)
+        {
+            if (blocks[index].base != 0 && blocks[index].size != 0
+                && !authoritySpanIsSeparated(
+                    reinterpret_cast<const void *>(blocks[index].base),
+                    blocks[index].size,
+                    1))
+            {
+                return ZoneRuntimeTableStatus::InvalidArgument;
+            }
+        }
+    }
     return completeTableOperation(TryBindZoneRuntimeStreams(
         &ProductionZoneRuntimeTable(),
         physicalSlot,

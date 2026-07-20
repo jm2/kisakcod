@@ -92,9 +92,9 @@ normalize_space("${_header}" _header_normalized)
 normalize_space("${_source}" _source_normalized)
 
 foreach(_contract_marker IN ITEMS
-    "Writable outputs and retained descriptors are rejected"
+    "Writable outputs, retained descriptors, and non-empty stream payloads are rejected"
     "Caller buffers read after child mutation begins"
-    "this boundary is not a sandbox for arbitrary engine globals"
+    "This boundary is not a sandbox for arbitrary engine globals"
     "callback contexts are identity-byte checked")
     require_contains(
         _header_normalized "${_contract_marker}"
@@ -664,6 +664,50 @@ foreach(_composite_forward IN ITEMS
         "authenticateCompositeTableOperationAccess(physicalSlot, key)"
         "dual-mode script adapter cannot enter legacy compatibility")
 endforeach()
+
+# The exact nine stream payload ranges become retained writable targets after
+# binding. Keep their protected-authority preflight after the descriptor-array
+# guard and before the raw table adapter. Invalid null/count/layout inputs still
+# forward so the lower adapter retains its established status precedence.
+extract_runtime_facade_method_slice(
+    _source "TryBindStreams" _stream_bind_slice)
+normalize_space("${_stream_bind_slice}" _stream_bind_slice_normalized)
+set(_stream_payload_gate
+    "zoneIdentity && blocks && blockCount == relocation::kBlockCount")
+set(_stream_payload_span
+    "authoritySpanIsSeparated( reinterpret_cast<const void *>(blocks[index].base), blocks[index].size, 1)")
+require_substring_count(
+    _stream_bind_slice_normalized "${_stream_payload_gate}" 1
+    "exact readable stream-payload gate")
+require_substring_count(
+    _stream_bind_slice_normalized "${_stream_payload_span}" 1
+    "each retained stream payload is authority-separated")
+require_substring_count(
+    _stream_bind_slice_normalized "authoritySpanIsSeparated(" 3
+    "zone, descriptor-array, and payload authority guards")
+string(FIND
+    "${_stream_bind_slice_normalized}"
+    "authoritySpanIsSeparated( blocks, blockCount * sizeof(*blocks), alignof(relocation::BlockView))"
+    _stream_descriptor_guard)
+string(FIND
+    "${_stream_bind_slice_normalized}"
+    "${_stream_payload_gate}" _stream_payload_gate_position)
+string(FIND
+    "${_stream_bind_slice_normalized}"
+    "${_stream_payload_span}" _stream_payload_span_position)
+string(FIND
+    "${_stream_bind_slice_normalized}"
+    "TryBindZoneRuntimeStreams(" _stream_forward)
+if(_stream_descriptor_guard EQUAL -1
+    OR _stream_payload_gate_position EQUAL -1
+    OR _stream_payload_span_position EQUAL -1
+    OR _stream_forward EQUAL -1
+    OR NOT _stream_descriptor_guard LESS _stream_payload_gate_position
+    OR NOT _stream_payload_gate_position LESS _stream_payload_span_position
+    OR NOT _stream_payload_span_position LESS _stream_forward)
+    message(FATAL_ERROR
+        "Runtime facade stream-payload authority ordering drifted")
+endif()
 
 foreach(_registry_output_method IN ITEMS
     TryAddDatabaseUsers4

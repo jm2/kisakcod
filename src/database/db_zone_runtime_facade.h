@@ -11,13 +11,15 @@ namespace db::zone_runtime
 // Process-wide, nonblocking serialization for the durable production runtime
 // table and its child registry/string ownership scopes. The facade owns no
 // reclaimable zone storage and exposes neither the table nor child authority.
-// Writable outputs and retained descriptors are rejected when they overlap
-// facade session state, the whole production table, the private coordinator,
-// or the retained hash lock. Caller buffers read after child mutation begins
-// receive the same protected-authority separation. Lower adapters own their
-// managed/object-span checks; this boundary is not a sandbox for arbitrary engine globals.
-// Opaque callback contexts are identity-byte checked and must not derive or mutate
-// any of those protected authority ranges.
+// Writable outputs, retained descriptors, and non-empty stream payloads are rejected
+// when they overlap facade session state, the whole production table,
+// the private coordinator, or the retained hash lock.
+// Caller buffers read after child mutation begins receive the same
+// protected-authority separation.
+// Lower adapters own their managed/object-span checks.
+// This boundary is not a sandbox for arbitrary engine globals.
+// Opaque callback contexts are identity-byte checked and must not derive or
+// mutate any of those protected authority ranges.
 enum class ZoneRuntimeFacadeStatus : std::uint8_t
 {
     Success,

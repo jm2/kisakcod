@@ -36,6 +36,8 @@ of checked boxes.
     checkpoint `65f4bbab`.
   - [x] Replace the MSVC 19.51-incompatible private-member address probes found
     by PR #73's first Windows amd64 build with portable typed call probes.
+  - [x] Add facade-level separation for all nine retained stream payload ranges
+    after PR review, in addition to the table's allocation-receipt containment.
   - [ ] Publish the PR, resolve review, merge, and verify post-merge CI.
 - [ ] Atomically cut all seven loader sites over to the serialized facade; partial
   enrollment is forbidden.
@@ -2080,7 +2082,10 @@ macro-off GCC/Clang, source/security, and genuine i386/AArch64 compile-link gate
 **29777873502** exposed one MSVC 19.51-only production-seal fixture issue: dependent address-of expressions reported
 private static methods as present and inverted seven access assertions. The branch now uses the already portable typed
 call-probe pattern; focused GCC/Clang compile/runtime plus facade and repository source seals pass locally. Amended hosted
-CI, review, merge, and authoritative post-merge CI remain for this prerequisite.
+review also identified one useful defense-in-depth addition: the facade now independently separates every non-empty
+retained stream payload from its complete authority set before the table's existing exact PMem-receipt authentication.
+Focused GCC/Clang facade **3/3** and source/security seals pass after that change. Amended hosted CI, final thread
+resolution, merge, and authoritative post-merge CI remain for this prerequisite.
 
 - [ ] **Priority 1 — Facade publication:** land the locally implemented
    production-neutral process-lifetime facade with

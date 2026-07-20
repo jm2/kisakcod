@@ -1094,6 +1094,12 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
             zone.blocks[index].size,
         };
     }
+    auto authorityAliasBlocks = blocks;
+    authorityAliasBlocks[0] = {
+        reinterpret_cast<std::uintptr_t>(
+            &db::zone_runtime::ProductionZoneRuntimeTable()),
+        static_cast<std::uint32_t>(sizeof(std::uint32_t)),
+    };
     db::script_string_journal::ScriptStringJournal journal{};
     db::script_string_journal::ScriptStringJournalEntry journalStorage[2]{};
     const db::script_string_adapter::ScriptStringSourceView source{
@@ -1132,6 +1138,16 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
         || !Check(ZoneRuntimeFacade::TryBeginStreamGeneration(8, key)
             == ZoneRuntimeTableStatus::Success,
             "stream-generation wrapper failed")
+        || !Check(ZoneRuntimeFacade::TryBindStreams(
+                8,
+                key,
+                &zone,
+                authorityAliasBlocks.data(),
+                authorityAliasBlocks.size())
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "stream payload accepted protected table authority")
+        || !Check(g_compositeCalls == 5,
+            "rejected stream payload reached the table adapter")
         || !Check(ZoneRuntimeFacade::TryBindStreams(
                 8, key, &zone, blocks.data(), blocks.size())
             == ZoneRuntimeTableStatus::Success,
