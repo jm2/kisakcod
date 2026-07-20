@@ -19,7 +19,7 @@ the *original* inventory, not a live count of open items.
 
 ---
 
-## Remediation status (July 19, 2026)
+## Remediation status (July 20, 2026)
 
 Fixed in the initial porting implementation:
 
@@ -113,8 +113,17 @@ snapshots, adds the unused permanent-Ended process-life `$init` controller, and 
 resource topologies. Exact combined native CTest passes **157/157**, focused integration passes **32/32**, and affected
 genuine i386/AArch64 compile-link gates pass. Exact final head `ca2d1149ab7e67d6de56921a0574a662861783b5`
 is the head of run **29726370638**, whose all nine hosted jobs ultimately passed; it squash-merged as
-`6a67a66e4afd62480bdb62493e666961da9ed837`. Exact-key composite adapters remain the blocker before checked/loader
-enrollment.
+`6a67a66e4afd62480bdb62493e666961da9ed837`. The pending branch completes the exact-key composite
+adapter/controller layer without checked loader enrollment. It adds a report-free PMem range/receipt bridge with exact
+ABA-safe `Freed` evidence, exact storage/stream/pending/script composition authenticators, and strict durable table
+operations from setup through admission or abandonment and from retry-safe Live unload through drain/reset. Descriptor
+and callback inputs are captured once; storage/stream overlap and aligned table/managed-PMem output aliases are rejected,
+including the legacy passive claim/get boundaries. End-to-end/adversarial tests and an independent exact-diff audit are
+green. Focused table CTest is **16/16** under GCC; Clang and Clang ASan+UBSan (`detect_leaks=0`) runtime-table gates pass,
+and genuine i386/AArch64 compile-link outputs have the correct ELF classes. Direct i386 execution remains blocked by the
+established sandbox `SIGSYS`. The affected runtime/source/security selection is **36/36**, all five macro-off production
+seals pass, the headless dependency gate is clean, and full native CTest is **157/157**. Exact-head PR review/CI remain;
+the next production step is one atomic seven-site loader cutover.
 Exact-head run **29673379640** passed all nine jobs;
 Codex reviewed exact final
 head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
@@ -190,8 +199,9 @@ dry-level reconciliation as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`. Final re
 **29704069129**. Exact-head Codex review was clean; all six Gemini threads were resolved, including five fixed or
 duplicate findings and one non-corrective `nullptr` style suggestion. Local evidence remains full GCC Debug
 **153/153**, focused **8/8**, strict GCC/Clang, genuine i386/AArch64 compile-link, U1 focused **7/7** plus a clean
-independent audit, and U2 **146/146** plus its ten-mutation and dependency/symbol contracts. Rounded merged porting
-progress is approximately **81%** after merged PR #70; strict requested-target delivery remains **0/5**.
+independent audit, and U2 **146/146** plus its ten-mutation and dependency/symbol contracts. Rounded current porting
+progress is approximately **82%**, including the pending production-neutral exact-key composite milestone; shared
+foundations/security are approximately **89%** and strict requested-target delivery remains **0/5**.
 
 Every commit in pinned range `312a9d2e..2164cd1a` remains classified in
 `docs/UPSTREAM_2164CD1A_LEDGER.md`. PR #66 merged dedicated tree-neutral checkpoint
@@ -214,10 +224,18 @@ macro-gated by-value-helper containment plus actual macro-off object-symbol insp
 or caller. Merged PR #70 work through `792ff1c7` supplies the serialized retained extent/init/result/lifecycle core, stable
 name ownership, bounded dump snapshots, the unused permanent-Ended process-life `$init` controller, and complete passive
 table-wide resource authentication; exact final head `ca2d1149` passed all nine jobs in run **29726370638** and
-squash-merged as `6a67a66e`. The subsequent sequence adds exact-key adapters and finally one atomic seven-site
-cutover. Until those adapters exist, the table's pristine checks are intentional passive-mode
-corruption tripwires; the adapter batch must replace them atomically with composite phase/key authentication before any
-authority is enrolled.
+squash-merged as `6a67a66e`. The pending branch now adds the production-neutral exact-key adapters and strict composite
+controller, replacing the passive-only pristine boundary with exact phase/key authentication while retaining zero
+production enrollment. After exact-head PR review/CI, the next step is one atomic seven-site cutover.
+
+Non-blocking hardening backlog from the exact-key audit:
+
+- PMem needs a readiness-aware overlap query before legacy retained callback contexts can enforce an outside-PMem
+  lifetime without treating the pre-initialization state as an overlap-query failure.
+- Lower-level `ActiveZoneStreamBinding::block` and `TryReadPendingCopyRecord` outputs could receive the same alignment and
+  table-storage alias checks now enforced at the composite table. The table exposes neither lower-level authority, so
+  this is defense in depth rather than a cutover blocker.
+
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
