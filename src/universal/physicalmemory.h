@@ -1,6 +1,6 @@
 #pragma once
 
-#include "platform_compat.h"
+#include <universal/kisak_abi.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -23,31 +23,19 @@ struct PhysicalMemory // x86 sizeof=0x21C, native64 sizeof=0x428
     PhysicalMemoryPrim prim[2];         // ...
 };
 
-static_assert(offsetof(PhysicalMemoryAllocation, name) == 0);
-static_assert(offsetof(PhysicalMemoryPrim, allocName) == 0);
-static_assert(offsetof(PhysicalMemory, buf) == 0);
+RUNTIME_SIZE(PhysicalMemoryAllocation, 0x8, 0x10);
+RUNTIME_OFFSET(PhysicalMemoryAllocation, name, 0x0, 0x0);
+RUNTIME_OFFSET(PhysicalMemoryAllocation, pos, 0x4, 0x8);
 
-#if UINTPTR_MAX == UINT32_MAX
-static_assert(sizeof(PhysicalMemoryAllocation) == 0x8);
-static_assert(offsetof(PhysicalMemoryAllocation, pos) == 0x4);
-static_assert(sizeof(PhysicalMemoryPrim) == 0x10C);
-static_assert(offsetof(PhysicalMemoryPrim, allocListCount) == 0x4);
-static_assert(offsetof(PhysicalMemoryPrim, pos) == 0x8);
-static_assert(offsetof(PhysicalMemoryPrim, allocList) == 0xC);
-static_assert(sizeof(PhysicalMemory) == 0x21C);
-static_assert(offsetof(PhysicalMemory, prim) == 0x4);
-#elif UINTPTR_MAX == UINT64_MAX
-static_assert(sizeof(PhysicalMemoryAllocation) == 0x10);
-static_assert(offsetof(PhysicalMemoryAllocation, pos) == 0x8);
-static_assert(sizeof(PhysicalMemoryPrim) == 0x210);
-static_assert(offsetof(PhysicalMemoryPrim, allocListCount) == 0x8);
-static_assert(offsetof(PhysicalMemoryPrim, pos) == 0xC);
-static_assert(offsetof(PhysicalMemoryPrim, allocList) == 0x10);
-static_assert(sizeof(PhysicalMemory) == 0x428);
-static_assert(offsetof(PhysicalMemory, prim) == 0x8);
-#else
-#error Unsupported native pointer width for PhysicalMemory
-#endif
+RUNTIME_SIZE(PhysicalMemoryPrim, 0x10C, 0x210);
+RUNTIME_OFFSET(PhysicalMemoryPrim, allocName, 0x0, 0x0);
+RUNTIME_OFFSET(PhysicalMemoryPrim, allocListCount, 0x4, 0x8);
+RUNTIME_OFFSET(PhysicalMemoryPrim, pos, 0x8, 0xC);
+RUNTIME_OFFSET(PhysicalMemoryPrim, allocList, 0xC, 0x10);
+
+RUNTIME_SIZE(PhysicalMemory, 0x21C, 0x428);
+RUNTIME_OFFSET(PhysicalMemory, buf, 0x0, 0x0);
+RUNTIME_OFFSET(PhysicalMemory, prim, 0x4, 0x8);
 
 void KISAK_CDECL PMem_Init();
 void KISAK_CDECL PMem_DumpMemStats();

@@ -120,8 +120,8 @@ extract_function(
 
 require_text(
     "${physicalmemory_header}"
-    "#include \"platform_compat.h\""
-    "standalone calling-convention compatibility include")
+    "#include <universal/kisak_abi.h>"
+    "portable ABI contract include")
 require_text(
     "${physicalmemory_header}"
     "#include <cstddef>"
@@ -132,20 +132,16 @@ require_text(
     "portable public calling convention")
 require_text(
     "${physicalmemory_header}"
-    "#if UINTPTR_MAX == UINT32_MAX"
-    "x86 layout branch")
+    "RUNTIME_SIZE(PhysicalMemoryAllocation, 0x8, 0x10);"
+    "allocation layout freeze")
 require_text(
     "${physicalmemory_header}"
-    "static_assert(sizeof(PhysicalMemoryPrim) == 0x10C);"
-    "x86 prim layout freeze")
+    "RUNTIME_SIZE(PhysicalMemoryPrim, 0x10C, 0x210);"
+    "prim layout freeze")
 require_text(
     "${physicalmemory_header}"
-    "#elif UINTPTR_MAX == UINT64_MAX"
-    "native64 layout branch")
-require_text(
-    "${physicalmemory_header}"
-    "static_assert(sizeof(PhysicalMemoryPrim) == 0x210);"
-    "native64 prim layout freeze")
+    "RUNTIME_SIZE(PhysicalMemory, 0x21C, 0x428);"
+    "global layout freeze")
 
 # Each public alloc-type wrapper must report exactly once and return before it
 # can use the rejected type as a g_mem.prim index.
