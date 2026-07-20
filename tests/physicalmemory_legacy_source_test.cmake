@@ -32,6 +32,29 @@ file(READ
     "${SOURCE_ROOT}/.github/workflows/ci.yml"
     ci_workflow)
 
+function(normalize_line_endings content output_name)
+    string(REPLACE "\r" "" normalized "${content}")
+    set(${output_name} "${normalized}" PARENT_SCOPE)
+endfunction()
+
+normalize_line_endings("alpha\r\nbeta\r\n" normalization_probe)
+if(NOT normalization_probe STREQUAL "alpha\nbeta\n")
+    message(FATAL_ERROR "Physical-memory source newline normalization failed")
+endif()
+
+foreach(content_name IN ITEMS
+    physicalmemory_header
+    physicalmemory_source
+    physicalmemory_fixture
+    physicalmemory_production_seal
+    physicalmemory_production_symbol_seal
+    test_manifest
+    production_manifest
+    common_manifest
+    ci_workflow)
+    normalize_line_endings("${${content_name}}" ${content_name})
+endforeach()
+
 file(GLOB_RECURSE production_build_manifests
     LIST_DIRECTORIES false
     "${SOURCE_ROOT}/scripts/*"
@@ -237,6 +260,24 @@ reject_text(
     "${physicalmemory_fixture}"
     "extern PhysicalMemory g_mem"
     "test-only mutable global PMem escape")
+reject_text(
+    "${physicalmemory_fixture}"
+    "std::array<std::byte"
+    "padding-sensitive PMem object-representation comparison")
+reject_text(
+    "${physicalmemory_fixture}"
+    "std::memcpy"
+    "padding-sensitive PMem byte snapshot")
+foreach(marker IN ITEMS
+    "bool SameAllocationState("
+    "bool SamePrimState("
+    "bool SamePhysicalMemoryState("
+    "PhysicalMemoryPrim CapturePrimState("
+    "return SamePhysicalMemoryState(current.memory, expected.memory)")
+    require_text(
+        "${physicalmemory_fixture}" "${marker}"
+        "member-wise PMem failure-atomic snapshot")
+endforeach()
 reject_text(
     "${physicalmemory_fixture}"
     "&PhysicalMemoryStateAccess::Capture()"

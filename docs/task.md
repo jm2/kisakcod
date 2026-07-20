@@ -885,8 +885,11 @@ work item changes. Do not create session-specific handoff files.
   Genuine i386 and AArch64 compile/link plus object-symbol inspection pass; native macro-off inspection shows only local
   state and no helper methods. i386 execution is blocked only by the established sandbox `SIGSYS` policy. Source,
   containment, ABI, and `git diff --check` gates pass, and independent local audits found no remaining implementation,
-  MSVC-symbol, Apple-`nm`, generator-expression, or object-path defect. This branch has no hosted CI or hosted review
-  result yet.
+  MSVC-symbol, Apple-`nm`, generator-expression, or object-path defect. Exact-head Codex review was clean. Gemini then
+  identified two real fixture portability defects: padding-sensitive whole-object byte comparisons and LF-only
+  multiline source checks. The review follow-up replaces every PMem state comparison with canonical member-wise checks,
+  rejects byte snapshots in the source contract, and normalizes plus self-tests CRLF input before all multiline checks.
+  Hosted replacement CI and exact-head rereview remain required before merge.
 - Merged registry-coordinator foundation: PR #64 is production-neutral and leaves all seven legacy sites frozen.
   Preflight found that the initial per-operation `db_hashCritSect` acquisition would self-deadlock
   at the hash-held production sites, public low-level batch functions could bypass coordinator authority, fallible finish

@@ -34,30 +34,61 @@ void Check(const bool condition, const char *const expression, const int line)
 
 #define CHECK(expression) Check(static_cast<bool>(expression), #expression, __LINE__)
 
-template <typename T>
-std::array<std::byte, sizeof(T)> Snapshot(const T &value)
+bool SameAllocationState(
+    const PhysicalMemoryAllocation &lhs,
+    const PhysicalMemoryAllocation &rhs)
 {
-    std::array<std::byte, sizeof(T)> bytes{};
-    std::memcpy(bytes.data(), &value, sizeof(value));
-    return bytes;
+    return lhs.name == rhs.name && lhs.pos == rhs.pos;
+}
+
+bool SamePrimState(
+    const PhysicalMemoryPrim &lhs,
+    const PhysicalMemoryPrim &rhs)
+{
+    if (lhs.allocName != rhs.allocName
+        || lhs.allocListCount != rhs.allocListCount
+        || lhs.pos != rhs.pos)
+    {
+        return false;
+    }
+    for (std::uint32_t index = 0; index < MAX_PHYSICAL_ALLOCATIONS; ++index)
+    {
+        if (!SameAllocationState(lhs.allocList[index], rhs.allocList[index]))
+            return false;
+    }
+    return true;
+}
+
+bool SamePhysicalMemoryState(
+    const PhysicalMemory &lhs,
+    const PhysicalMemory &rhs)
+{
+    return lhs.buf == rhs.buf
+        && SamePrimState(lhs.prim[0], rhs.prim[0])
+        && SamePrimState(lhs.prim[1], rhs.prim[1]);
+}
+
+PhysicalMemoryPrim CapturePrimState(const PhysicalMemoryPrim &prim)
+{
+    return prim;
 }
 
 struct GlobalStateImage final
 {
-    std::array<std::byte, sizeof(PhysicalMemory)> memory{};
+    PhysicalMemory memory{};
     int overAllocatedSize = 0;
 };
 
 GlobalStateImage CaptureGlobalState()
 {
     const auto state = PhysicalMemoryStateAccess::Capture();
-    return {Snapshot(state.memory), state.overAllocatedSize};
+    return {state.memory, state.overAllocatedSize};
 }
 
 bool MatchesGlobalState(const GlobalStateImage &expected)
 {
     const auto current = CaptureGlobalState();
-    return current.memory == expected.memory
+    return SamePhysicalMemoryState(current.memory, expected.memory)
         && current.overAllocatedSize == expected.overAllocatedSize;
 }
 
@@ -96,11 +127,11 @@ void CheckRejected(const int expectedLine)
 
 void CheckRejectedUnchanged(
     const PhysicalMemoryPrim &prim,
-    const std::array<std::byte, sizeof(PhysicalMemoryPrim)> &before,
+    const PhysicalMemoryPrim &before,
     const int expectedLine)
 {
     CheckRejected(expectedLine);
-    CHECK(Snapshot(prim) == before);
+    CHECK(SamePrimState(prim, before));
 }
 
 void CheckGlobalRejectedUnchanged(
@@ -269,7 +300,7 @@ void TestBeginFailureAtomicity()
 
     PhysicalMemoryPrim nullName{};
     nullName.pos = 9;
-    const auto nullNameBefore = Snapshot(nullName);
+    const auto nullNameBefore = CapturePrimState(nullName);
     ResetReports();
     PMem_BeginAllocInPrim(&nullName, nullptr);
     CheckRejectedUnchanged(nullName, nullNameBefore, 331);
@@ -279,7 +310,7 @@ void TestBeginFailureAtomicity()
     busy.allocListCount = 1;
     busy.pos = 32;
     busy.allocList[0] = {active, 0};
-    const auto busyBefore = Snapshot(busy);
+    const auto busyBefore = CapturePrimState(busy);
     ResetReports();
     PMem_BeginAllocInPrim(&busy, name);
     CheckRejectedUnchanged(busy, busyBefore, 332);
@@ -287,7 +318,7 @@ void TestBeginFailureAtomicity()
     PhysicalMemoryPrim full{};
     full.allocListCount = 32;
     full.pos = 64;
-    const auto fullBefore = Snapshot(full);
+    const auto fullBefore = CapturePrimState(full);
     ResetReports();
     PMem_BeginAllocInPrim(&full, name);
     CheckRejectedUnchanged(full, fullBefore, 333);
@@ -295,7 +326,7 @@ void TestBeginFailureAtomicity()
     PhysicalMemoryPrim overCapacity{};
     overCapacity.allocListCount = 33;
     overCapacity.pos = 64;
-    const auto overCapacityBefore = Snapshot(overCapacity);
+    const auto overCapacityBefore = CapturePrimState(overCapacity);
     ResetReports();
     PMem_BeginAllocInPrim(&overCapacity, name);
     CheckRejectedUnchanged(overCapacity, overCapacityBefore, 333);
@@ -303,7 +334,7 @@ void TestBeginFailureAtomicity()
     PhysicalMemoryPrim maximumCount{};
     maximumCount.allocListCount = UINT32_MAX;
     maximumCount.pos = 64;
-    const auto maximumCountBefore = Snapshot(maximumCount);
+    const auto maximumCountBefore = CapturePrimState(maximumCount);
     ResetReports();
     PMem_BeginAllocInPrim(&maximumCount, name);
     CheckRejectedUnchanged(maximumCount, maximumCountBefore, 333);
@@ -334,7 +365,7 @@ void TestEndFailureAtomicity()
     nullName.allocName = expected;
     nullName.allocListCount = 1;
     nullName.allocList[0] = {expected, 0};
-    const auto nullNameBefore = Snapshot(nullName);
+    const auto nullNameBefore = CapturePrimState(nullName);
     ResetReports();
     PMem_EndAllocInPrim(&nullName, nullptr);
     CheckRejectedUnchanged(nullName, nullNameBefore, 362);
@@ -344,14 +375,14 @@ void TestEndFailureAtomicity()
     wrongActive.allocListCount = 1;
     wrongActive.pos = 64;
     wrongActive.allocList[0] = {expected, 0};
-    const auto wrongActiveBefore = Snapshot(wrongActive);
+    const auto wrongActiveBefore = CapturePrimState(wrongActive);
     ResetReports();
     PMem_EndAllocInPrim(&wrongActive, other);
     CheckRejectedUnchanged(wrongActive, wrongActiveBefore, 364);
 
     PhysicalMemoryPrim empty{};
     empty.allocName = expected;
-    const auto emptyBefore = Snapshot(empty);
+    const auto emptyBefore = CapturePrimState(empty);
     ResetReports();
     PMem_EndAllocInPrim(&empty, expected);
     CheckRejectedUnchanged(empty, emptyBefore, 368);
@@ -359,7 +390,7 @@ void TestEndFailureAtomicity()
     PhysicalMemoryPrim overCapacity{};
     overCapacity.allocName = expected;
     overCapacity.allocListCount = 33;
-    const auto overCapacityBefore = Snapshot(overCapacity);
+    const auto overCapacityBefore = CapturePrimState(overCapacity);
     ResetReports();
     PMem_EndAllocInPrim(&overCapacity, expected);
     CheckRejectedUnchanged(overCapacity, overCapacityBefore, 369);
@@ -370,7 +401,7 @@ void TestEndFailureAtomicity()
     wrongTail.pos = 64;
     wrongTail.allocList[0] = {expected, 0};
     wrongTail.allocList[1] = {other, 32};
-    const auto wrongTailBefore = Snapshot(wrongTail);
+    const auto wrongTailBefore = CapturePrimState(wrongTail);
     ResetReports();
     PMem_EndAllocInPrim(&wrongTail, expected);
     CheckRejectedUnchanged(wrongTail, wrongTailBefore, 370);
@@ -389,13 +420,13 @@ void TestFreeIndexFailureAtomicity()
     busy.allocName = active;
     busy.allocListCount = 1;
     busy.allocList[0] = {name, 0};
-    const auto busyBefore = Snapshot(busy);
+    const auto busyBefore = CapturePrimState(busy);
     ResetReports();
     PMem_FreeIndex(&busy, 0);
     CheckRejectedUnchanged(busy, busyBefore, 394);
 
     PhysicalMemoryPrim empty{};
-    const auto emptyBefore = Snapshot(empty);
+    const auto emptyBefore = CapturePrimState(empty);
     ResetReports();
     PMem_FreeIndex(&empty, 0);
     CheckRejectedUnchanged(empty, emptyBefore, 424);
@@ -403,7 +434,7 @@ void TestFreeIndexFailureAtomicity()
     PhysicalMemoryPrim overCapacity{};
     overCapacity.allocListCount = 33;
     overCapacity.allocList[0] = {name, 0};
-    const auto overCapacityBefore = Snapshot(overCapacity);
+    const auto overCapacityBefore = CapturePrimState(overCapacity);
     ResetReports();
     PMem_FreeIndex(&overCapacity, 0);
     CheckRejectedUnchanged(overCapacity, overCapacityBefore, 395);
@@ -411,7 +442,7 @@ void TestFreeIndexFailureAtomicity()
     PhysicalMemoryPrim invalidIndex{};
     invalidIndex.allocListCount = 1;
     invalidIndex.allocList[0] = {name, 0};
-    const auto invalidIndexBefore = Snapshot(invalidIndex);
+    const auto invalidIndexBefore = CapturePrimState(invalidIndex);
     ResetReports();
     PMem_FreeIndex(&invalidIndex, 1);
     CheckRejectedUnchanged(invalidIndex, invalidIndexBefore, 408);
@@ -423,7 +454,7 @@ void TestFreeIndexFailureAtomicity()
     PhysicalMemoryPrim nullEntry{};
     nullEntry.allocListCount = 1;
     nullEntry.allocList[0] = {nullptr, 17};
-    const auto nullEntryBefore = Snapshot(nullEntry);
+    const auto nullEntryBefore = CapturePrimState(nullEntry);
     ResetReports();
     PMem_FreeIndex(&nullEntry, 0);
     CheckRejectedUnchanged(nullEntry, nullEntryBefore, 400);
@@ -442,7 +473,7 @@ void TestFreeInPrimFailureAtomicity()
     nullName.allocListCount = 1;
     nullName.pos = 32;
     nullName.allocList[0] = {name, 0};
-    const auto nullNameBefore = Snapshot(nullName);
+    const auto nullNameBefore = CapturePrimState(nullName);
     ResetReports();
     PMem_FreeInPrim(&nullName, nullptr);
     CheckRejectedUnchanged(nullName, nullNameBefore, 438);
@@ -450,7 +481,7 @@ void TestFreeInPrimFailureAtomicity()
     PhysicalMemoryPrim overCapacity{};
     overCapacity.allocListCount = 33;
     overCapacity.allocList[0] = {name, 0};
-    const auto overCapacityBefore = Snapshot(overCapacity);
+    const auto overCapacityBefore = CapturePrimState(overCapacity);
     ResetReports();
     PMem_FreeInPrim(&overCapacity, name);
     CheckRejectedUnchanged(overCapacity, overCapacityBefore, 439);
@@ -458,7 +489,7 @@ void TestFreeInPrimFailureAtomicity()
     PhysicalMemoryPrim maximumCount{};
     maximumCount.allocListCount = UINT32_MAX;
     maximumCount.allocList[0] = {name, 0};
-    const auto maximumCountBefore = Snapshot(maximumCount);
+    const auto maximumCountBefore = CapturePrimState(maximumCount);
     ResetReports();
     PMem_FreeInPrim(&maximumCount, name);
     CheckRejectedUnchanged(maximumCount, maximumCountBefore, 439);
@@ -467,12 +498,12 @@ void TestFreeInPrimFailureAtomicity()
     full.allocListCount = 32;
     for (std::uint32_t index = 0; index < full.allocListCount; ++index)
         full.allocList[index] = {name, index};
-    const auto fullBefore = Snapshot(full);
+    const auto fullBefore = CapturePrimState(full);
     ResetReports();
     PMem_FreeInPrim(&full, missing);
     CHECK(g_assertReports == 0);
     CHECK(g_vaCalls == 0);
-    CHECK(Snapshot(full) == fullBefore);
+    CHECK(SamePrimState(full, fullBefore));
 
     PhysicalMemoryPrim valid{};
     valid.pos = 96;
@@ -501,9 +532,9 @@ void TestLowPrimTailHoleCollapse()
     CHECK(g_assertReports == 0);
     CHECK(g_vaCalls == 0);
 
-    const auto beforeMissing = Snapshot(prim);
+    const auto beforeMissing = CapturePrimState(prim);
     PMem_FreeInPrim(&prim, missing);
-    CHECK(Snapshot(prim) == beforeMissing);
+    CHECK(SamePrimState(prim, beforeMissing));
     CHECK(g_assertReports == 0);
 
     ResetReports();
