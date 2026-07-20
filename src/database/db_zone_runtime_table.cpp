@@ -9,9 +9,10 @@ enum class TableState : std::uint32_t
     Poisoned,
 };
 
-// Each component grants friendship to exactly one const-reference predicate.
-// This narrow surface can authenticate pristine storage but cannot begin,
-// bind, reset, or otherwise operate any authority.
+// Each per-entry component grants friendship to exactly one const-reference
+// predicate. The table-wide resources instead own narrow report-free
+// authenticators that include their complete passive singleton/topology state.
+// Neither surface can begin, bind, reset, or otherwise operate any authority.
 namespace detail
 {
 bool IsPristineRuntimeReceipt(
@@ -42,13 +43,13 @@ bool IsPristineRuntimeReceipt(
 bool IsPristineRuntimeReceipt(
     const zone_stream_ownership::ActiveZoneStreamBinding &binding) noexcept
 {
-    return binding.isPristine();
+    return zone_stream_ownership::AuthenticatePassiveZoneStreamSingleton(binding);
 }
 
 bool IsPristineRuntimeReceipt(
     const zone_pending_copy::PendingCopyLedger &ledger) noexcept
 {
-    return ledger.isPristine();
+    return zone_pending_copy::AuthenticatePassivePendingCopyLedger(ledger);
 }
 
 bool IsPristineRuntimeReceipt(

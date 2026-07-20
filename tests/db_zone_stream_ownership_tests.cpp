@@ -248,6 +248,11 @@ void TestConstructionAndKeyValidation()
     Expect(
         active.phase() == ownership::ActiveZoneStreamPhase::Idle,
         "default active controller is idle");
+    static_assert(noexcept(
+        ownership::AuthenticatePassiveZoneStreamSingleton(active)));
+    Expect(
+        ownership::AuthenticatePassiveZoneStreamSingleton(active),
+        "default active controller authenticates the passive singleton");
 
     lifecycle::ZoneLoadContextSlot lifecycleSlot;
     const lifecycle::ZoneLoadContextKey key = Claim(&lifecycleSlot, 1);
@@ -373,6 +378,102 @@ void TestConstructionAndKeyValidation()
         ownership::ZoneStreamOwnershipStatus::Success,
         "highest NeverBound generation abandons safely");
     ReleaseLoadingGeneration(&highLifecycle, highKey);
+}
+
+void TestPassiveSingletonAuthentication()
+{
+    ownership::ActiveZoneStreamBinding expected;
+    ZoneFixture fixture;
+    const auto expectRejected = [&](const char *const message)
+    {
+        Expect(
+            !ownership::AuthenticatePassiveZoneStreamSingleton(expected),
+            message);
+    };
+
+    Expect(
+        ownership::AuthenticatePassiveZoneStreamSingleton(expected),
+        "scrubbed process singleton authenticates as passive");
+
+    g_streamDelayIndex = 1;
+    expectRejected("nonzero delay count rejects passive authentication");
+    g_streamDelayIndex = 0;
+    g_streamPosIndex = 1;
+    expectRejected("nonzero stream index rejects passive authentication");
+    g_streamPosIndex = 0;
+    g_streamPosStackIndex = 1;
+    expectRejected("nonzero stack depth rejects passive authentication");
+    g_streamPosStackIndex = 0;
+    g_streamZoneMem = &fixture.zone;
+    expectRejected("foreign zone identity rejects passive authentication");
+    g_streamZoneMem = nullptr;
+    g_streamPos = fixture.storage[0].data();
+    expectRejected("foreign active cursor rejects passive authentication");
+    g_streamPos = nullptr;
+    g_streamPosArray[3] = fixture.storage[3].data();
+    expectRejected("foreign block cursor rejects passive authentication");
+    g_streamPosArray[3] = nullptr;
+    g_streamDelayArray[7].ptr = fixture.storage[7].data();
+    expectRejected("retained delay pointer rejects passive authentication");
+    g_streamDelayArray[7].ptr = nullptr;
+    g_streamDelayArray[7].size = 4;
+    expectRejected("retained delay size rejects passive authentication");
+    g_streamDelayArray[7].size = 0;
+    g_streamPosStack[5].pos = fixture.storage[5].data();
+    expectRejected("retained stack pointer rejects passive authentication");
+    g_streamPosStack[5].pos = nullptr;
+    g_streamPosStack[5].index = 5;
+    expectRejected("retained stack index rejects passive authentication");
+    g_streamPosStack[5].index = 0;
+
+    lifecycle::ZoneLoadContextSlot lifecycleSlot;
+    const lifecycle::ZoneLoadContextKey key = Claim(&lifecycleSlot, 4);
+    ownership::ZoneStreamGenerationReceipt receipt;
+    ownership::ActiveZoneStreamBinding foreignOwner;
+    ExpectStatus(
+        ownership::TryBeginZoneStreamGeneration(
+            &receipt, &lifecycleSlot, key),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "foreign-owner receipt begins");
+    ExpectStatus(
+        ownership::TryBindZoneStreams(
+            &foreignOwner,
+            &receipt,
+            key,
+            &fixture.zone,
+            fixture.blocks,
+            relocation::kBlockCount),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "foreign active binding acquires the hidden singleton");
+    Expect(expected.canonical(), "expected passive binding remains pristine");
+    expectRejected(
+        "pristine binding rejects a hidden singleton owned by another object");
+    Expect(
+        !ownership::AuthenticatePassiveZoneStreamSingleton(foreignOwner),
+        "bound owner is not accepted by the passive authenticator");
+    ExpectStatus(
+        ownership::TryInvalidateZoneStreams(&foreignOwner, &receipt, key),
+        ownership::ZoneStreamOwnershipStatus::Success,
+        "foreign owner invalidates exactly");
+    Expect(
+        ownership::AuthenticatePassiveZoneStreamSingleton(expected),
+        "exact invalidation restores passive authentication");
+    ReleaseLoadingGeneration(&lifecycleSlot, key);
+
+    // The legacy wrapper can populate relocation contexts without publishing
+    // a receipt owner. The passive authenticator must still reject that actual
+    // process state, then accept it only after the legacy scrub completes.
+    DB_InitStreams(&fixture.zone);
+    expectRejected(
+        "legacy relocation contexts reject passive authentication without an owner");
+    const int reportsBeforeScrub = reportCount;
+    DB_InitStreams(nullptr);
+    Expect(
+        reportCount == reportsBeforeScrub + 1,
+        "legacy null-zone scrub reports after clearing state");
+    Expect(
+        ownership::AuthenticatePassiveZoneStreamSingleton(expected),
+        "legacy scrub restores complete passive authentication");
 }
 
 void TestBindValidationAndFailureAtomicity()
@@ -855,5 +956,6 @@ int main()
     TestFullInvalidationAndStaleRetry();
     TestAliasEpochExhaustion();
     TestNativeWidthBlockAddresses();
+    TestPassiveSingletonAuthentication();
     return failures == 0 ? 0 : 1;
 }

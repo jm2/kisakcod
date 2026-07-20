@@ -3044,6 +3044,37 @@ require_source_contains(
     "database/db_zone_stream_ownership.cpp"
     "ObjectIsAligned(zoneIdentity, alignof(XZoneMemory))"
     "zone identity alignment must be checked before descriptor access")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "bool AuthenticatePassiveZoneStreamSingleton(
+    const ActiveZoneStreamBinding &binding) noexcept
+{
+    return binding.isPristine()
+        && g_activeOwner == nullptr
+        && SingletonIsIdle();
+}"
+    "passive stream authentication must cover the exact hidden singleton")
+foreach(_passive_stream_context_marker IN ITEMS
+    "g_aliasRegistry.contextValid()"
+    "g_directResolver.contextValid()")
+    require_source_contains(
+        "database/db_zone_stream_ownership.cpp"
+        "${_passive_stream_context_marker}"
+        "passive stream authentication must cover each relocation context")
+endforeach()
+require_source_contains(
+    "database/db_zone_stream_ownership.h"
+    "bool AuthenticatePassiveZoneStreamSingleton(
+    const ActiveZoneStreamBinding &binding) noexcept;"
+    "passive stream authentication exposes only a const report-free query")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_tests.cpp"
+    "TestPassiveSingletonAuthentication"
+    "passive stream authentication must retain adversarial runtime coverage")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_production_seal_tests.cpp"
+    "using PassiveSingletonAuthenticator = bool (*)"
+    "passive stream authentication must retain its const-only production seal")
 require_repository_contains(
     "tests/db_zone_stream_ownership_source_test.cmake"
     "string(CONCAT _qualified_using_bypass"
@@ -10144,7 +10175,7 @@ extract_security_slice(
 set(_security_active_stream_binding_friends
     "friend ZoneStreamOwnershipStatus TryBindZoneStreams( ActiveZoneStreamBinding *, ZoneStreamGenerationReceipt *, const zone_load::ZoneLoadContextKey &, const XZoneMemory *, const relocation::BlockView *, std::size_t) noexcept"
     "friend ZoneStreamOwnershipStatus TryInvalidateZoneStreams( ActiveZoneStreamBinding *, ZoneStreamGenerationReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
-    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const ActiveZoneStreamBinding &binding) noexcept")
+    "friend bool AuthenticatePassiveZoneStreamSingleton( const ActiveZoneStreamBinding &binding) noexcept")
 require_security_exact_friend_surface(
     _security_active_stream_binding_class
     _security_active_stream_binding_friends
@@ -10193,7 +10224,7 @@ set(_security_pending_copy_ledger_friends
     "friend PendingCopyStatus TryDrainNextPendingCopy( PendingCopyLedger *, const PendingCopyDrainCallback &) noexcept"
     "friend PendingCopyStatus TryFinishPendingCopyDrain( PendingCopyLedger *) noexcept"
     "friend PendingCopyStatus TryResetPendingCopyAdmissionReceipt( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
-    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const PendingCopyLedger &ledger) noexcept"
+    "friend bool AuthenticatePassivePendingCopyLedger( const PendingCopyLedger &ledger) noexcept"
     "friend struct PendingCopyLedgerTestAccess")
 require_security_exact_friend_surface(
     _security_pending_copy_ledger_class
@@ -10279,7 +10310,7 @@ require_security_exact_class_digest(
     "ZoneStreamGenerationReceipt")
 require_security_exact_class_digest(
     _security_active_stream_binding_class
-    4103d1c5614616cceb11ee072a5dfd78ed95bd116b857a3766096ecabbebca4a
+    50db7b75d5c2aab13723e9246264eced1e5db8992e3314ae0b47b6ba888e3b69
     "ActiveZoneStreamBinding")
 require_security_exact_class_digest(
     _security_pending_admission_receipt_class
@@ -10287,7 +10318,7 @@ require_security_exact_class_digest(
     "PendingCopyAdmissionReceipt")
 require_security_exact_class_digest(
     _security_pending_copy_ledger_class
-    109b7d1aded99dbead4c48e91e1c12bee6ab6b693d8490fbdce958cf78404254
+    fc90d9910f1cc6968c4fd3f044c7cc5ae573d0803913a21afa3be16ccb709e6f
     "PendingCopyLedger")
 require_security_exact_class_digest(
     _zone_runtime_receipt_capsule_slice
@@ -10409,6 +10440,14 @@ foreach(_zone_runtime_composition_marker IN ITEMS
         "${_zone_runtime_composition_marker}"
         "fixed passive runtime receipt composition")
 endforeach()
+foreach(_zone_runtime_shared_authentication_call IN ITEMS
+    "zone_stream_ownership::AuthenticatePassiveZoneStreamSingleton(binding)"
+    "zone_pending_copy::AuthenticatePassivePendingCopyLedger(ledger)")
+    require_source_contains(
+        "database/db_zone_runtime_table.cpp"
+        "${_zone_runtime_shared_authentication_call}"
+        "runtime-table initialization must authenticate shared passive topology")
+endforeach()
 foreach(_zone_runtime_operation_forbidden IN ITEMS
     TryBegin
     TryEnd
@@ -10466,6 +10505,8 @@ endforeach()
 foreach(_zone_runtime_detector_marker IN ITEMS
     "remove_reviewed_runtime_table_pending_tokens"
     "require_runtime_table_pending_detector_fixture"
+    "AuthenticatePassivePendingCopyLedger"
+    "_runtime_table_authenticator_bypass"
     "_runtime_table_alias_api_bypass"
     "_runtime_table_paste_api_bypass")
     require_repository_contains(
@@ -10488,6 +10529,8 @@ endforeach()
 foreach(_zone_runtime_detector_marker IN ITEMS
     "remove_reviewed_runtime_table_stream_tokens"
     "require_runtime_table_stream_detector_fixture"
+    "AuthenticatePassiveZoneStreamSingleton"
+    "_runtime_table_stream_authenticator_bypass"
     "_runtime_table_stream_internal_header_bypass"
     "_runtime_table_stream_private_capability_bypass")
     require_repository_contains(
@@ -10497,6 +10540,9 @@ foreach(_zone_runtime_detector_marker IN ITEMS
 endforeach()
 foreach(_zone_runtime_detector_marker IN ITEMS
     "require_exact_pristine_overload"
+    "require_exact_shared_authentication_overload"
+    "AuthenticatePassiveZoneStreamSingleton(binding)"
+    "AuthenticatePassivePendingCopyLedger(ledger)"
     "Pristine friend body is not exact"
     "Receipt capsule predicate must contain exactly four pristine checks"
     "friend_surface_matches_exact"
@@ -11038,6 +11084,27 @@ foreach(_pending_copy_marker IN ITEMS
         "${_pending_copy_marker}"
         "bounded fail-closed pending-copy authority")
 endforeach()
+require_source_contains(
+    "database/db_zone_pending_copy_ledger.cpp"
+    "bool AuthenticatePassivePendingCopyLedger(
+    const PendingCopyLedger &ledger) noexcept
+{
+    return ledger.isPristine();
+}"
+    "passive pending-copy authentication must cover the entire pristine topology")
+require_source_contains(
+    "database/db_zone_pending_copy_ledger.h"
+    "bool AuthenticatePassivePendingCopyLedger(
+    const PendingCopyLedger &ledger) noexcept;"
+    "passive pending-copy authentication exposes only a const report-free query")
+require_repository_contains(
+    "tests/db_zone_pending_copy_ledger_tests.cpp"
+    "TestPassiveLedgerAuthentication"
+    "passive pending-copy authentication must retain adversarial runtime coverage")
+require_repository_contains(
+    "tests/db_zone_pending_copy_ledger_production_seal_tests.cpp"
+    "using PassiveLedgerAuthenticator = bool (*)"
+    "passive pending-copy authentication must retain its const-only production seal")
 foreach(_pending_copy_forbidden IN ITEMS
     "database/database.h"
     "g_copyInfo"

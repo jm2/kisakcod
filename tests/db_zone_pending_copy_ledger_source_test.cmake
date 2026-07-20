@@ -146,6 +146,7 @@ set(_enrollment_tokens
     TryDrainNextPendingCopy
     TryFinishPendingCopyDrain
     TryResetPendingCopyAdmissionReceipt
+    AuthenticatePassivePendingCopyLedger
     kPendingCopyRecordCapacity
     kPendingCopyGenerationCapacity
     KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING)
@@ -322,6 +323,10 @@ function(remove_reviewed_runtime_table_pending_tokens
             _candidate
             "bool IsPristineRuntimeReceipt( const zone_pending_copy::PendingCopyLedger &ledger) noexcept"
             _candidate "ledger pristine predicate")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "return zone_pending_copy::AuthenticatePassivePendingCopyLedger(ledger);"
+            _candidate "passive ledger authentication call")
     else()
         message(FATAL_ERROR
             "Pending-copy passive allowlist used for unexpected path: ${PATH}")
@@ -475,6 +480,12 @@ set(_runtime_table_spaced_api_bypass
     "auto begin = &db::zone_pending_copy::TryBeginPendingCopyAdmission;")
 require_runtime_table_pending_detector_fixture(
     _runtime_table_spaced_api_bypass "a qualified function pointer")
+set(_runtime_table_authenticator_bypass
+    "${_runtime_table_passive_fixture}\n"
+    "auto authenticate = &db::zone_pending_copy::AuthenticatePassivePendingCopyLedger;")
+require_runtime_table_pending_detector_fixture(
+    _runtime_table_authenticator_bypass
+    "an extra passive authenticator reference")
 set(_runtime_table_using_api_bypass
     "${_runtime_table_passive_fixture}\n"
     "using db/**/::/**/zone_pending_copy/**/::/**/TryDrainNextPendingCopy;")
@@ -616,6 +627,7 @@ foreach(_marker IN ITEMS
     "There is no internal cross-thread locking."
     "PendingCopyLedger(const PendingCopyLedger &) = delete;"
     "const PendingCopyAdmissionReceipt &) = delete;"
+    "AuthenticatePassivePendingCopyLedger("
     "#ifdef KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING"
     "friend struct PendingCopyLedgerTestAccess;")
     require_contains(_header "${_marker}" "stable bounded authority")
@@ -623,6 +635,33 @@ endforeach()
 require_not_contains(
     _source "#define KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING"
     "production source cannot enable mutation access")
+require_contains(
+    _header
+    "friend bool AuthenticatePassivePendingCopyLedger("
+    "exact const-only table-wide ledger authenticator friendship")
+require_not_contains(
+    _header
+    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(\n        const PendingCopyLedger &ledger) noexcept;"
+    "table-wide ledger state cannot remain directly friended to the table")
+
+# The table-wide passive predicate authenticates the entire exact unused
+# topology. Its one const reference cannot initialize Ready state or expose
+# mutable ledger authority.
+extract_slice(
+    _source
+    "bool AuthenticatePassivePendingCopyLedger("
+    "bool PendingCopyLedger::hasCanonicalHeader() const noexcept"
+    _passive_authenticator
+    "passive pending-copy ledger authenticator")
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _passive_authenticator "${_passive_authenticator}")
+string(STRIP "${_passive_authenticator}" _passive_authenticator)
+set(_expected_passive_authenticator
+    "bool AuthenticatePassivePendingCopyLedger( const PendingCopyLedger &ledger) noexcept { return ledger.isPristine(); }")
+if(NOT _passive_authenticator STREQUAL _expected_passive_authenticator)
+    message(FATAL_ERROR
+        "Passive pending-copy ledger authenticator gained authority or lost topology checks")
+endif()
 
 # Receipt authentication, canonical unused spans, exact serial exhaustion,
 # full preflight-before-publication, and terminal-first retry logic prevent ABA
@@ -810,6 +849,11 @@ require_contains(
 # poison boundaries, while the macro-off compile test proves the friend cannot
 # be recreated by name in production.
 foreach(_marker IN ITEMS
+    "TestPassiveLedgerAuthentication"
+    "AuthenticatePassivePendingCopyLedger(ledger)"
+    "SetNextGenerationSerial(&ledger, 1)"
+    "SetRecord(&ledger, 0, retained)"
+    "SetDescriptorReserved(&ledger, 0, 1)"
     "TestFinalizationExactlyOnceAndZeroRecordTerminal"
     "TestGenerationCapacityOrderedDrainAndRetry"
     "TestStableCompactionAndStaleTerminalAuthority"
@@ -843,6 +887,8 @@ foreach(_marker IN ITEMS
     "CanReachLedger"
     "CanMutateGeneration"
     "CanReset"
+    "using PassiveLedgerAuthenticator ="
+    "decltype(&AuthenticatePassivePendingCopyLedger)"
     "!PendingCopyLedgerTestAccess::")
     require_contains(
         _production_seal "${_marker}" "macro-off private access seal")

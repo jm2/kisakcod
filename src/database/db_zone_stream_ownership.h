@@ -20,8 +20,6 @@ namespace db::zone_runtime::detail
 [[nodiscard]] bool IsPristineRuntimeReceipt(
     const zone_stream_ownership::ZoneStreamGenerationReceipt &receipt)
     noexcept;
-[[nodiscard]] bool IsPristineRuntimeReceipt(
-    const zone_stream_ownership::ActiveZoneStreamBinding &binding) noexcept;
 } // namespace db::zone_runtime::detail
 
 namespace db::zone_stream_ownership
@@ -65,6 +63,14 @@ enum class ZoneStreamOwnershipStatus : std::uint8_t
 };
 
 class ActiveZoneStreamBinding;
+
+// Authenticates the complete passive process-wide stream topology: the exact
+// binding object must be pristine, no other binding may own the hidden
+// singleton, both relocation contexts must be inactive, and every legacy
+// stream cursor/delay/stack field must be scrubbed. This report-free predicate
+// grants no mutable stream or relocation capability.
+[[nodiscard]] bool AuthenticatePassiveZoneStreamSingleton(
+    const ActiveZoneStreamBinding &binding) noexcept;
 
 class alignas(8) ZoneStreamGenerationReceipt final
 {
@@ -153,7 +159,7 @@ private:
         ActiveZoneStreamBinding *,
         ZoneStreamGenerationReceipt *,
         const zone_load::ZoneLoadContextKey &) noexcept;
-    friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(
+    friend bool AuthenticatePassiveZoneStreamSingleton(
         const ActiveZoneStreamBinding &binding) noexcept;
 
     [[nodiscard]] bool isPristine() const noexcept;

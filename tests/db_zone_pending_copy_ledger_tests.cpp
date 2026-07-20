@@ -201,6 +201,37 @@ void TestTypeAndApiContracts()
     static_assert(noexcept(pending::TryFinishPendingCopyDrain(nullptr)));
     static_assert(noexcept(pending::TryResetPendingCopyAdmissionReceipt(
         nullptr, std::declval<const lifecycle::ZoneLoadContextKey &>())));
+    static_assert(noexcept(pending::AuthenticatePassivePendingCopyLedger(
+        std::declval<const PendingCopyLedger &>())));
+}
+
+void TestPassiveLedgerAuthentication()
+{
+    {
+        PendingCopyLedger ledger;
+        CHECK(pending::AuthenticatePassivePendingCopyLedger(ledger));
+        PendingCopyLedgerTestAccess::SetNextGenerationSerial(&ledger, 1);
+        CHECK(!pending::AuthenticatePassivePendingCopyLedger(ledger));
+    }
+    {
+        PendingCopyLedger ledger;
+        PendingCopyRecord retained{};
+        retained.assetEntryIndex = pending::kFirstAssetEntryIndex;
+        PendingCopyLedgerTestAccess::SetRecord(&ledger, 0, retained);
+        CHECK(!pending::AuthenticatePassivePendingCopyLedger(ledger));
+    }
+    {
+        PendingCopyLedger ledger;
+        PendingCopyLedgerTestAccess::SetDescriptorReserved(&ledger, 0, 1);
+        CHECK(!pending::AuthenticatePassivePendingCopyLedger(ledger));
+    }
+    {
+        PendingCopyLedger ledger;
+        CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+            == PendingCopyStatus::Success);
+        CHECK(ledger.canonical());
+        CHECK(!pending::AuthenticatePassivePendingCopyLedger(ledger));
+    }
 }
 
 void TestInitializationAndArgumentRejection()
@@ -935,6 +966,7 @@ void TestUnknownDrainResultPoisonsLedger()
 int main()
 {
     TestTypeAndApiContracts();
+    TestPassiveLedgerAuthentication();
     TestInitializationAndArgumentRejection();
     TestAppendReadPrepareAndDiscard();
     TestCapacityAndFailureAtomicity();

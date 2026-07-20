@@ -311,6 +311,12 @@ bool PendingCopyLedger::isPristine() const noexcept
     return true;
 }
 
+bool AuthenticatePassivePendingCopyLedger(
+    const PendingCopyLedger &ledger) noexcept
+{
+    return ledger.isPristine();
+}
+
 bool PendingCopyLedger::hasCanonicalHeader() const noexcept
 {
     if (self_ != this || nextGenerationSerial_ == 0

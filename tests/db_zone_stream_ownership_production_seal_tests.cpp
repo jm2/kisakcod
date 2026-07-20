@@ -78,9 +78,14 @@ using BindFunction = ZoneStreamOwnershipStatus (*)(
     const XZoneMemory *,
     const relocation::BlockView *,
     std::size_t) noexcept;
+using PassiveSingletonAuthenticator = bool (*)(
+    const ActiveZoneStreamBinding &) noexcept;
 static_assert(std::is_same_v<
     decltype(&ActiveZoneStreamBinding::zoneIdentity), ZoneIdentityAccessor>);
 static_assert(std::is_same_v<decltype(&TryBindZoneStreams), BindFunction>);
+static_assert(std::is_same_v<
+    decltype(&AuthenticatePassiveZoneStreamSingleton),
+    PassiveSingletonAuthenticator>);
 } // namespace db::zone_stream_ownership
 
 int main()
