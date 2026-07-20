@@ -1917,7 +1917,7 @@ void MyAssertHandler(
     const char *,
     const int,
     const int,
-    const char *const format,
+    const char *format,
     ...)
 {
     CheckUnlockedService();
@@ -1960,7 +1960,7 @@ char *KISAK_CDECL va(const char *, ...)
 
 void KISAK_CDECL Com_Printf(
     const int channel,
-    const char *const format,
+    const char *format,
     ...)
 {
     CheckUnlockedService();
@@ -2034,7 +2034,7 @@ void *KISAK_CDECL Sys_VirtualMemoryReserve(const std::size_t size)
 }
 
 bool KISAK_CDECL Sys_VirtualMemoryCommit(
-    void *const memory,
+    void *memory,
     const std::size_t size)
 {
     CheckUnlockedService();
@@ -2045,7 +2045,7 @@ bool KISAK_CDECL Sys_VirtualMemoryCommit(
     return g_commitSucceeds.load(std::memory_order_relaxed);
 }
 
-bool KISAK_CDECL Sys_VirtualMemoryRelease(void *const memory)
+bool KISAK_CDECL Sys_VirtualMemoryRelease(void *memory)
 {
     CheckUnlockedService();
     CHECK(memory == ExpectedReservation());
