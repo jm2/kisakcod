@@ -45,7 +45,7 @@ struct ZoneRuntimeStorageExtent final
 
 struct ZoneRuntimeStoragePlan final
 {
-    std::uint32_t expectedStringCount = 0;
+    std::uint32_t scriptStringCapacity = 0;
     std::uint32_t arenaBudget = 0;
     ZoneRuntimeStorageExtent scriptStringJournal{};
     ZoneRuntimeStorageExtent scriptStringEntries{};
@@ -86,11 +86,11 @@ enum class ZoneRuntimeStorageBindingPhase : std::uint8_t
 };
 
 // Stable, externally owned expectations for one exact-key storage
-// composition.  The journal/entry addresses and count survive terminal
-// teardown in the outer script-string controller; this value grants no
-// mutation authority over either object.  Pristine and Destroyed require a
-// null key and arena identity because their component objects cannot be
-// associated with a live generation.
+// composition. The placement capacity and separately established expected
+// acquisition count survive terminal teardown in the outer script-string
+// controller; this value grants no mutation authority over either object.
+// Pristine and Destroyed require a null key and arena identity because their
+// component objects cannot be associated with a live generation.
 struct alignas(8) ZoneRuntimeStorageCompositionExpectation final
 {
     zone_load::ZoneLoadContextKey key{};
@@ -122,9 +122,11 @@ enum class ZoneRuntimeStorageCompositionMode : std::uint8_t
 // binds it to fxArenaBacking() with the already-authoritative zone identity.
 // Before journal use, that controller must call
 // TryInitializeScriptStringJournal with exactly scriptStringEntries(),
-// plan()->expectedStringCount for both capacity and expected count, and its
-// authoritative key. The zero-count case must use null storage and zero
-// capacity/count. This layer never mints or substitutes that key.
+// plan()->scriptStringCapacity and the outer controller's separately counted
+// expected acquisition demand, and its authoritative key. A zero-capacity
+// plan uses null storage and requires zero expected demand; a nonzero capacity
+// may validly serve zero expected demand. This layer never mints or substitutes
+// that key.
 // Destruction accepts either that arena or the pristine unbound arena, and
 // unbinds it only after the journal and adapter are safe to tear down.
 class ZoneRuntimeStorageBinding final
@@ -215,24 +217,26 @@ RUNTIME_SIZE(ZoneRuntimeStorageBinding, 0x58, 0x80);
 
 // Authenticates one externally serialized, stable operation boundary without
 // allocating, mutating, reporting, or returning a component pointer. Placed
-// requires an exact pristine journal; Active requires an exact, nonterminal,
-// non-callback journal; Detached requires its exact terminal detached state.
-// All three require the planned native arena to be bound to the exact key's
-// generation as its supplied nonzero identity, with an Idle adapter and no
-// open arena transaction.
-// Destroyed compares the retained placement and journal/entry identities but
-// never dereferences an object whose lifetime has ended.
+// requires an exact pristine journal and zero expected demand. Active requires
+// an exact, nonterminal, non-callback journal with the planned capacity and
+// supplied expected demand; Detached requires its exact terminal state with
+// that demand. All three require the planned native arena to be bound to the
+// exact key's generation as its supplied nonzero identity, with an Idle
+// adapter and no open arena transaction. Destroyed compares the retained
+// placement and journal/entry identities plus exact capacity, accepts only a
+// bounded expected demand, and never dereferences an object whose lifetime has
+// ended.
 [[nodiscard]] bool AuthenticateZoneRuntimeStorageComposition(
     const ZoneRuntimeStorageBinding &binding,
     const ZoneRuntimeStorageCompositionExpectation &expectation,
     ZoneRuntimeStorageCompositionMode mode) noexcept;
 
-// Produces the exact canonical layout. expectedStringCount may be 0 through
+// Produces the exact canonical layout. scriptStringCapacity may be 0 through
 // kMaxScriptStringJournalEntries. arenaBudget must be nonzero and has no cap
 // other than fitting, together with the fixed objects, in 32-bit offsets and
 // totalBytes. Failure never writes outPlan.
 [[nodiscard]] ZoneRuntimeStorageStatus TryPlanZoneRuntimeStorage(
-    std::uint32_t expectedStringCount,
+    std::uint32_t scriptStringCapacity,
     std::uint64_t arenaBudget,
     ZoneRuntimeStoragePlan *outPlan) noexcept;
 

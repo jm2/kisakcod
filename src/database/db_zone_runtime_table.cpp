@@ -202,8 +202,10 @@ bool ZoneRuntimeGenerationBinding::canonicalFor(
         }
     }
     else if (!placementJournal_
-        || placementCapacity_ != placementExpectedCount_
-        || (placementExpectedCount_ == 0) != (placementEntries_ == nullptr))
+        || placementExpectedCount_ > placementCapacity_
+        || (placementCapacity_ == 0) != (placementEntries_ == nullptr)
+        || (setupStage_ < ZoneRuntimeSetupStage::ScriptStringsBegun
+            && placementExpectedCount_ != 0))
     {
         return false;
     }
@@ -1049,7 +1051,8 @@ bool ZoneRuntimeTable::generationPlacementMatches(
     return binding.placementJournal_ == journal
         && binding.placementEntries_ == storage
         && binding.placementCapacity_ == capacity
-        && binding.placementExpectedCount_ == expectedCount;
+        && binding.placementExpectedCount_ == 0
+        && expectedCount <= capacity;
 }
 
 void ZoneRuntimeTable::bindGeneration(
@@ -2786,8 +2789,8 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStorage(
         entry,
         storage.scriptStringJournal(),
         storage.scriptStringEntries(),
-        retainedPlan->expectedStringCount,
-        retainedPlan->expectedStringCount);
+        retainedPlan->scriptStringCapacity,
+        0);
     ZoneRuntimeTable::setGenerationSetupStage(
         entry, ZoneRuntimeSetupStage::StorageBound);
     return table->completeCompositeOperation(
@@ -3560,21 +3563,24 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership(
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
-    if (expectedCount != 0)
+    if (expectedCount > storageCapacity)
+        return ZoneRuntimeTableStatus::CapacityExceeded;
+    if ((storageCapacity == 0) != (storage == nullptr))
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    if (storageCapacity != 0)
     {
-        if (!storage
-            || reinterpret_cast<std::uintptr_t>(storage)
-                    % alignof(
-                        script_string_journal::ScriptStringJournalEntry)
-                != 0
-            || static_cast<std::size_t>(expectedCount)
+        if (reinterpret_cast<std::uintptr_t>(storage)
+                % alignof(
+                    script_string_journal::ScriptStringJournalEntry)
+            != 0
+            || static_cast<std::size_t>(storageCapacity)
                 > (std::numeric_limits<std::size_t>::max)()
                     / sizeof(*storage))
         {
             return ZoneRuntimeTableStatus::InvalidArgument;
         }
         const std::size_t storageBytes =
-            static_cast<std::size_t>(expectedCount) * sizeof(*storage);
+            static_cast<std::size_t>(storageCapacity) * sizeof(*storage);
         if (!AddressRangesAreDisjoint(
                 table, sizeof(*table), storage, storageBytes))
         {
@@ -3621,6 +3627,12 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership(
             == zone_script_string_ownership::
                 ZoneScriptStringOwnershipStatus::Success)
     {
+        ZoneRuntimeTable::retainGenerationPlacement(
+            entry,
+            journal,
+            storage,
+            storageCapacity,
+            expectedCount);
         ZoneRuntimeTable::setGenerationSetupStage(
             entry, ZoneRuntimeSetupStage::ScriptStringsBegun);
     }

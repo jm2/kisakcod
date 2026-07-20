@@ -116,7 +116,7 @@ snapshots, adds the unused permanent-Ended process-life `$init` controller, and 
 resource topologies. Exact combined native CTest passes **157/157**, focused integration passes **32/32**, and affected
 genuine i386/AArch64 compile-link gates pass. Exact final head `ca2d1149ab7e67d6de56921a0574a662861783b5`
 is the head of run **29726370638**, whose all nine hosted jobs ultimately passed; it squash-merged as
-`6a67a66e4afd62480bdb62493e666961da9ed837`. The pending branch completes the exact-key composite
+`6a67a66e4afd62480bdb62493e666961da9ed837`. Merged PR #71 completes the exact-key composite
 adapter/controller layer without checked loader enrollment. It adds a report-free PMem range/receipt bridge with exact
 ABA-safe `Freed` evidence, exact storage/stream/pending/script composition authenticators, and strict durable table
 operations from setup through admission or abandonment and from retry-safe Live unload through drain/reset. Descriptor
@@ -128,7 +128,7 @@ and genuine i386/AArch64 compile-link outputs have the correct ELF classes. Dire
 established sandbox `SIGSYS`. At the pre-review checkpoint, the runtime/source/security selection was **36/36**; all
 five macro-off production seals passed, the headless dependency gate was clean, and full native CTest was **157/157**.
 PR #71 initial run **29754589268** exposed a missing headless storage/bridge link closure and an MSVC identical-COMDAT
-fixture false negative. The pending repair adds a sealed, fail-closed headless bridge plus an observably distinct
+fixture false negative. The final repair adds a sealed, fail-closed headless bridge plus an observably distinct
 alternate callback. Review hardening also closes retained-output aliases across every table/stream/pending authority,
 requires exact active lifecycle keys before Bound descriptor disclosure, authenticates the complete
 reset-authoritative FX-workspace topology, rejects mixed legacy/composite enrollment before mutation, strengthens
@@ -139,9 +139,18 @@ reproduced one optimized-Win32 failure at the alignment-sensitive automatic-outp
 head `059aebd0` then passed the five portable, headless, and no-Steam jobs in run **29763190487** before both measured
 builds rejected newly implicit C4324 fixture tail padding. Exact implementation head `a1f99336` retains a full-width
 attempt witness to remove that padding without suppression and passes focused GCC/Clang/sanitizer, genuine i386/AArch64
-compile-link, and i386 padding checks. The final documentation head must preserve identical code through hosted/review
-gates. The next sequence is the ABI-neutral journal capacity/demand split, an externally serialized production-neutral
-facade, and one atomic seven-site loader cutover.
+compile-link, and i386 padding checks. Exact final head `3f39881cb4f8d5145e01904d95f34c09512b070d` passed all nine
+jobs in run **29764928195** with clean exact-head Codex/Gemini reviews and zero unresolved threads. It squash-merged as
+`49184106a106d1b115097b96f541ac03551e90e5`; authoritative post-merge run **29765949587** passed all nine jobs.
+Implementation head `a927c2e712d5c7b56ff2a696d11f6c304bc5cc57` then separates the plan's constructed script-string
+capacity from exact acquisition demand without changing its 52-byte layout or planner signature. Capacity now drives
+entry extent, pointer parity, construction, alias preflight, and destruction; demand stays zero until successful
+ownership begin. Capacity 3/demand 1, capacity 3/demand 0, oversized rejection/retry, and terminal teardown/reset are
+covered. Gemini review found one missing symmetric storage-pointer/capacity preflight; follow-up head
+`d8f70aef68a8bb3c986a3ae75be58cd785661a19` rejects both mismatched forms before keyed authentication and seals them in
+runtime/source tests. Full native **157/157**, focused follow-up GCC/Clang/sanitizer **3/3**, genuine i386/AArch64
+compile-link, and two independent audits pass. The next sequence is an externally serialized production-neutral facade and one atomic
+seven-site loader cutover.
 
 Merged PR #61's production-neutral zone-stream ownership stack adds one
 durable exact-key NeverBound/Bound/Invalidated receipt per generation and one reusable controller over the process-wide
@@ -237,9 +246,10 @@ macro-gated by-value-helper containment plus actual macro-off object-symbol insp
 or caller. Merged PR #70 work through `792ff1c7` supplies the serialized retained extent/init/result/lifecycle core, stable
 name ownership, bounded dump snapshots, the unused permanent-Ended process-life `$init` controller, and complete passive
 table-wide resource authentication; exact final head `ca2d1149` passed all nine jobs in run **29726370638** and
-squash-merged as `6a67a66e`. The pending branch now adds the production-neutral exact-key adapters and strict composite
+squash-merged as `6a67a66e`. PR #71 now supplies the production-neutral exact-key adapters and strict composite
 controller, replacing the passive-only pristine boundary with exact phase/key authentication while retaining zero
-production enrollment. After exact-head PR review/CI, the next step is one atomic seven-site cutover.
+production enrollment. The capacity/demand prerequisite is implemented locally; after its exact-head publication gate,
+the externally serialized facade and atomic seven-site cutover follow.
 
 Exact-key audit follow-up status:
 
