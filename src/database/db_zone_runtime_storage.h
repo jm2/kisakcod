@@ -93,7 +93,7 @@ public:
     ZoneRuntimeStorageBinding() noexcept = default;
     // User-provided so byte-copying/replaying an owning handle is not a
     // supported trivially-copyable operation. Cleanup remains explicit.
-    ~ZoneRuntimeStorageBinding() noexcept;
+    ~ZoneRuntimeStorageBinding() noexcept {}
 
     ZoneRuntimeStorageBinding(const ZoneRuntimeStorageBinding &) = delete;
     ZoneRuntimeStorageBinding &operator=(
@@ -135,7 +135,14 @@ private:
         Destroyed,
     };
 
-    [[nodiscard]] bool isPristine() const noexcept;
+    [[nodiscard]] bool isPristine() const noexcept
+    {
+        return self_ == nullptr && slab_ == nullptr && slabCapacity_ == 0
+            && plan_ == ZoneRuntimeStoragePlan{} && journal_ == nullptr
+            && entries_ == nullptr && arena_ == nullptr
+            && workspace_ == nullptr && arenaBacking_ == nullptr
+            && state_ == State::Pristine;
+    }
     [[nodiscard]] bool isSelfAuthenticating(State state) const noexcept;
     [[nodiscard]] bool hasCanonicalBoundMetadata() const noexcept;
 

@@ -559,7 +559,11 @@ Completed foundation work:
   run **29708555173** found MSVC x86 padding the private pending-copy generation descriptor to 0x30 rather than the
   intended 0x28; ordering its eight-byte serial before its pointer restores one portable 0x28/0x30 descriptor contract
   and the 0xE900 ILP32 table without changing serialized data or native64 size. The post-fix full **153/153**, six-script,
-  and strict `-m32` gates pass locally;
+  and strict `-m32` gates pass locally; the review fix also uses CMake's `LINKER:` abstraction for the enlarged Windows
+  fixture stack and adds the direct standard header required by `std::size`. Follow-up run **29708858372** reached
+  headless link and exposed that the FX-owned runtime-storage implementation is intentionally absent there. The binding's
+  empty user-provided destructor and pristine predicate are now neutral inline definitions, preserving the excluded
+  media/effects closure while satisfying passive-table linkage;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with

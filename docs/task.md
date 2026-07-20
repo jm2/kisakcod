@@ -839,9 +839,14 @@ work item changes. Do not create session-specific handoff files.
   PR #67 run **29708555173** exposed an MSVC x86-only 0x40 table inflation: the private pending-copy generation
   descriptor placed a pointer before an eight-byte serial, so MSVC padded each of eight descriptors to 0x30 while GCC
   i386 used the intended 0x28. The review fix orders the serial first and seals the descriptor at 0x28/0x30 without
-  changing serialized data or native64 size; it also adds Gemini's correct direct `<iterator>` include. Post-fix local
-  full CTest remains **153/153**, all six source/security scripts pass, and strict `-m32` production-seal compilation
-  confirms the intended 0xE900 table layout.
+  changing serialized data or native64 size; it also adds Gemini's correct direct `<iterator>` include and expresses the
+  enlarged Windows fixture stack through CMake's portable `LINKER:` driver abstraction. Post-fix local full CTest remains
+  **153/153**, all six source/security scripts pass, and strict `-m32` production-seal compilation confirms the intended
+  0xE900 table layout. Follow-up run **29708858372** confirmed the layout repair and reached headless link, where it
+  exposed that the explicit headless profile intentionally excludes the FX-owned runtime-storage implementation. The
+  passive table needs only the binding's empty user-provided destructor and pristine predicate, so those two neutral
+  definitions now live inline in the sealed header; the full FX implementation remains excluded rather than widening the
+  headless media/effects closure.
 - Merged registry-coordinator foundation: PR #64 is production-neutral and leaves all seven legacy sites frozen.
   Preflight found that the initial per-operation `db_hashCritSect` acquisition would self-deadlock
   at the hash-held production sites, public low-level batch functions could bypass coordinator authority, fallible finish

@@ -667,7 +667,7 @@ require_exact_class_digest(_physical_allocation_receipt_class
     1d3baf285dc70596ca05b6714228e89d7d4d16c9d811f0fb709f3b1e076b15bc
     "AllocationReceipt")
 require_exact_class_digest(_runtime_storage_binding_class
-    d148957a554ed0aac72bd20058182dc542fa10a13f4d33f96f32a93090ac18a7
+    1ccfbc989d584306202886e188c756de577f8b65188047e4c0f117254a3b7b05
     "ZoneRuntimeStorageBinding")
 require_exact_class_digest(_stream_generation_receipt_class
     0e94ce08089afadd3198fa52a914d8de83380717869753d91fb64cd39247638b
@@ -1470,7 +1470,7 @@ foreach(_marker IN ITEMS
     "database-zone-runtime-table-mutation-invalid-extra-value"
     "database-zone-runtime-table-mutation-invalid-kind"
     "PROPERTIES TIMEOUT 30 WILL_FAIL TRUE"
-    "target_link_options( kisakcod-db-zone-runtime-table-tests PRIVATE /STACK:8388608)"
+    "target_link_options( kisakcod-db-zone-runtime-table-tests PRIVATE \"LINKER:/STACK:8388608\")"
     "NAME database-zone-runtime-table-source-invariants"
     "db_zone_runtime_table_source_test.cmake")
     require_contains(_tests "${_marker}" "portable CMake test integration")

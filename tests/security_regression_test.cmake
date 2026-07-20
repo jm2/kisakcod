@@ -10271,7 +10271,7 @@ require_security_exact_class_digest(
     "AllocationReceipt")
 require_security_exact_class_digest(
     _security_runtime_storage_binding_class
-    d148957a554ed0aac72bd20058182dc542fa10a13f4d33f96f32a93090ac18a7
+    1ccfbc989d584306202886e188c756de577f8b65188047e4c0f117254a3b7b05
     "ZoneRuntimeStorageBinding")
 require_security_exact_class_digest(
     _security_stream_generation_receipt_class

@@ -614,7 +614,8 @@ if (MSVC)
     # table to almost 64 KiB on Win32, so keep the fixture away from the
     # platform's small default test-process stack.
     target_link_options(
-        kisakcod-db-zone-runtime-table-tests PRIVATE /STACK:8388608)
+        kisakcod-db-zone-runtime-table-tests PRIVATE
+        "LINKER:/STACK:8388608")
 endif()
 kisakcod_test_warnings(kisakcod-db-zone-runtime-table-tests)
 set_target_properties(
