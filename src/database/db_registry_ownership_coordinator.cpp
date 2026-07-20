@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <new>
 
 extern FastCriticalSection db_hashCritSect;
 

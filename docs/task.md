@@ -2103,8 +2103,9 @@ retained stream payload from its complete authority set before the table's exist
 All nine initial Gemini threads are resolved, exact-head independent audits find no remaining PR-level blocker, and the
 suggested poison-path unlocks were rejected because they would weaken the deliberate nonblocking fail-stop boundary.
 A later exact-head review correctly found two global-mirror comparisons paired with the primary TLS values; the branch
-now pairs mirror-to-mirror explicitly and source-seals both mappings. Final amended exact-head hosted CI/review, merge,
-and authoritative post-merge CI remain for this prerequisite.
+now pairs mirror-to-mirror explicitly and source-seals both mappings. The final portability pass also made the
+`std::launder` `<new>` dependency explicit and routed the release-safety scan through the read-only ownership accessor.
+Final amended exact-head hosted CI/review, merge, and authoritative post-merge CI remain for this prerequisite.
 
 - [ ] **Priority 1 — Facade publication:** land the locally implemented
    production-neutral process-lifetime facade with

@@ -2216,7 +2216,7 @@ ZoneRuntimeTableStatus ZoneRuntimeTable::validateReleaseSafety() noexcept
         return tableStatus;
     for (const ZoneRuntimeEntry &entry : entries_)
     {
-        if (entry.scriptStringOwnership_.serializerRetained())
+        if (entry.scriptStringOwnership().serializerRetained())
             return ZoneRuntimeTableStatus::Busy;
     }
     return ZoneRuntimeTableStatus::Success;
