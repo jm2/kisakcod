@@ -10426,7 +10426,7 @@ require_security_exact_class_digest(
     "PendingCopyLedger")
 require_security_exact_class_digest(
     _security_generation_binding_class
-    7053d2aa0b5a1904620e7044a0b9c35ac56fbca2ca88c22d61f9dab3428a5ec7
+    26357c09d3a2538b997af5a3638185ecae217de7608356e3bff6f3b05982732e
     "ZoneRuntimeGenerationBinding")
 require_security_exact_class_digest(
     _zone_runtime_receipt_capsule_slice
@@ -10438,7 +10438,7 @@ require_security_exact_class_digest(
     "ZoneRuntimeEntry")
 require_security_exact_class_digest(
     _security_zone_runtime_table_class
-    102515199b6c8031906d7bd715623bf44877d8105af2cf7adde166b665a02428
+    9924e6d291302afdd2521cfd14e9585e3eeb12ac5236a89696c5d333a6b30763
     "ZoneRuntimeTable")
 
 set(_security_external_macro_friend_invocation_fixture

@@ -787,10 +787,21 @@ foreach(_marker IN ITEMS
     "zero retained callback-window witness authenticated"
     "foreign callback-window witness authenticated"
     "operation survived a same-purpose callback-window rollover"
-    "finish survived a same-purpose callback-window rollover")
+    "finish survived a same-purpose callback-window rollover"
+    "TestCallbackReceiptFieldIsolation()"
+    "high mode bits bled into callback receipt fields"
+    "high callback-purpose bits bled into the witness field")
     require_contains(
         _fixture "${_marker}"
         "callback-origin coordinator runtime coverage")
+endforeach()
+foreach(_marker IN ITEMS
+    "static_cast<std::uint16_t>(mode)\n               & kCoordinatorReceiptModeMask"
+    "static_cast<std::uint16_t>(purpose)\n               << kCoordinatorReceiptPurposeShift)\n            & kCoordinatorReceiptPurposeMask"
+    "static_cast<std::uint16_t>(windowWitness)\n               << kCoordinatorReceiptWitnessShift)\n            & kCoordinatorReceiptWitnessMask")
+    require_contains(
+        _source "${_marker}"
+        "packed callback receipt field isolation")
 endforeach()
 
 extract_slice(

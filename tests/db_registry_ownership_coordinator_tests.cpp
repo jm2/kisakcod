@@ -954,6 +954,71 @@ void RecoverPoisonedCoordinator(
     return true;
 }
 
+[[nodiscard]] bool TestCallbackReceiptFieldIsolation() noexcept
+{
+    using CallbackAccess =
+        db::registry_ownership::RegistryOwnershipCoordinatorTestAccess;
+    using OwnershipPhase = db::zone_script_string_ownership::
+        ZoneScriptStringOwnershipPhase;
+
+    ResetHarness();
+    db::zone_script_string_ownership::
+        ZoneScriptStringOwnershipController controller;
+    RegistryOwnershipCoordinator coordinator;
+    g_borrowController = &controller;
+    g_controllerPhase = OwnershipPhase::Cleaning;
+    g_controllerCallbackWindowWitness = 42;
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Success,
+            "callback receipt field-isolation setup failed"))
+    {
+        return false;
+    }
+
+    CallbackAccess::SetRepresentationMirrors(
+        &coordinator,
+        coordinator.serial(),
+        reinterpret_cast<std::uintptr_t>(&controller),
+        g_controllerTransactionSerial,
+        0,
+        g_controllerKey,
+        static_cast<std::uint8_t>(
+            RegistryOwnershipCoordinatorPhase::Ready),
+        UINT8_C(0xFF),
+        true);
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 38)
+                == RegistryOwnershipStatus::Success,
+            "high mode bits bled into callback receipt fields"))
+    {
+        return false;
+    }
+
+    CallbackAccess::SetCallbackReceipt(
+        &coordinator, UINT8_C(0xFA), UINT8_C(0xFA), 42, 42);
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 39)
+                == RegistryOwnershipStatus::Success,
+            "high callback-purpose bits bled into the witness field")
+        || !Check(
+            db::registry_ownership::FinishRegistryOwnershipCoordinator(
+                &coordinator)
+                == RegistryOwnershipStatus::Success,
+            "field-isolation callback borrow did not close")
+        || !Check(coordinator.isEmptyCanonical() && !g_hashLocked,
+            "field-isolation callback borrow retained state"))
+    {
+        return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool TestUnsafeCloseAndUnknownContainment() noexcept
 {
     ResetHarness();
@@ -1712,6 +1777,7 @@ int main()
         || !TestBorrowedAndMirrorAuthentication()
         || !TestActiveRuntimeCallbackBorrow()
         || !TestCallbackWindowWitnessAuthentication()
+        || !TestCallbackReceiptFieldIsolation()
         || !TestUnsafeCloseAndUnknownContainment()
         || !TestAuthPrecedenceAndSerialMirrors()
         || !TestDestructorAbandonment()

@@ -117,11 +117,14 @@ constexpr std::uint16_t kCoordinatorReceiptKnownMask = UINT16_C(0x1FFF);
     const std::uint8_t purpose,
     const std::uint8_t windowWitness) noexcept
 {
-    return static_cast<std::uint16_t>(mode)
-        | static_cast<std::uint16_t>(purpose)
-            << kCoordinatorReceiptPurposeShift
-        | static_cast<std::uint16_t>(windowWitness)
-            << kCoordinatorReceiptWitnessShift;
+    return (static_cast<std::uint16_t>(mode)
+               & kCoordinatorReceiptModeMask)
+        | ((static_cast<std::uint16_t>(purpose)
+               << kCoordinatorReceiptPurposeShift)
+            & kCoordinatorReceiptPurposeMask)
+        | ((static_cast<std::uint16_t>(windowWitness)
+               << kCoordinatorReceiptWitnessShift)
+            & kCoordinatorReceiptWitnessMask);
 }
 
 [[nodiscard]] constexpr RegistryOwnershipCoordinatorMode ReceiptMode(

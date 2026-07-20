@@ -292,6 +292,12 @@ struct CompositeRuntimeDriver final
         ZoneRuntimeTableStatus::InvalidState;
     ZoneRuntimeTableStatus ensureRegistryReauthentication =
         ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus ensureRegistryRestore =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus ensureRegistryRetryAuthentication =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus ensureRegistryRetryReauthentication =
+        ZoneRuntimeTableStatus::InvalidState;
     std::array<ZoneRuntimeTableStatus, 4>
         ensureRegistryAuthentications = []() noexcept {
             std::array<ZoneRuntimeTableStatus, 4> result{};
@@ -426,6 +432,17 @@ EnsureCompositeRuntimeUnreachable(void *const context) noexcept
     }
     if (driver->retryEnsure && !driver->retriedEnsure)
     {
+        driver->ensureRegistryRestore = ZoneRuntimeTableTestAccess::
+            RestoreExactRegistryLifecycleCallback(
+                driver->table, driver->key.slot, driver->key);
+        driver->ensureRegistryRetryAuthentication =
+            ZoneRuntimeTableTestAccess::
+                AuthenticateExactRegistryLifecycleCallback(
+                    driver->table, driver->key.slot, driver->key);
+        driver->ensureRegistryRetryReauthentication =
+            ZoneRuntimeTableTestAccess::
+                AuthenticateExactRegistryLifecycleCallback(
+                    driver->table, driver->key.slot, driver->key);
         driver->retriedEnsure = true;
         return zone_ownership::
             ZoneScriptStringUnpublishStatus::Retry;
@@ -5218,6 +5235,12 @@ void TestCompositeAbandonmentRetryAndReentryPreservation()
     CHECK(fixture.driver.ensureRejectedRegistryAuthentication
         == ZoneRuntimeTableStatus::StaleKey);
     CHECK(fixture.driver.ensureRegistryReauthentications[0]
+        == ZoneRuntimeTableStatus::Busy);
+    CHECK(fixture.driver.ensureRegistryRestore
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(fixture.driver.ensureRegistryRetryAuthentication
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(fixture.driver.ensureRegistryRetryReauthentication
         == ZoneRuntimeTableStatus::Busy);
     CHECK(fixture.driver.ensureOwnershipPhases[0]
         == ZoneScriptStringOwnershipPhase::UnpublishingCallback);

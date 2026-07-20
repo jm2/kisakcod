@@ -379,10 +379,10 @@ require_substring_count(
     _source "thread_local" 7
     "scalar destructor-free TLS mirrors")
 require_substring_count(
-    _source "completeTableOperation(" 30
+    _source "completeTableOperation(" 31
     "all table forwards use the shared post-authentication boundary")
 require_substring_count(
-    _source "authenticateTableOperationAccess()" 25
+    _source "authenticateTableOperationAccess()" 26
     "ordinary table forwards and shared boundaries authenticate")
 require_substring_count(
     _source "authenticateCompositeTableOperationAccess(" 7
@@ -567,6 +567,9 @@ endforeach()
 foreach(_marker IN ITEMS
     "tableStatus == ZoneRuntimeTableStatus::Busy"
     "table.authenticateExactRegistryLifecycleCallback( physicalSlot, key)"
+    "callbackBorrow != RegistryOwnershipStatus::Busy"
+    "authenticateTableOperationAccess() != ZoneRuntimeTableStatus::Success"
+    "table.restoreExactRegistryLifecycleCallback( physicalSlot, key)"
     "static_cast<bool>(key)"
     "key.slot != physicalSlot"
     "table.entries_[physicalSlot] .scriptStringOwnership()")
@@ -597,18 +600,30 @@ string(FIND
     _borrow_callback_forward)
 string(FIND
     "${_borrow_slice_canonical}"
+    "authenticateTableOperationAccess() != ZoneRuntimeTableStatus::Success"
+    _borrow_restore_access)
+string(FIND
+    "${_borrow_slice_canonical}"
+    "table.restoreExactRegistryLifecycleCallback( physicalSlot, key)"
+    _borrow_callback_restore)
+string(FIND
+    "${_borrow_slice_canonical}"
     "RegistryOwnershipCoordinatorFacade::TryBorrow(" _borrow_ordinary_forward)
 if(_borrow_lookup EQUAL -1
     OR _borrow_busy EQUAL -1
     OR _borrow_callback_auth EQUAL -1
     OR _borrow_slot_gate EQUAL -1
     OR _borrow_callback_forward EQUAL -1
+    OR _borrow_restore_access EQUAL -1
+    OR _borrow_callback_restore EQUAL -1
     OR _borrow_ordinary_forward EQUAL -1
     OR NOT _borrow_lookup LESS _borrow_busy
     OR NOT _borrow_busy LESS _borrow_callback_auth
     OR NOT _borrow_callback_auth LESS _borrow_slot_gate
     OR NOT _borrow_slot_gate LESS _borrow_callback_forward
-    OR NOT _borrow_callback_forward LESS _borrow_ordinary_forward)
+    OR NOT _borrow_callback_forward LESS _borrow_restore_access
+    OR NOT _borrow_restore_access LESS _borrow_callback_restore
+    OR NOT _borrow_callback_restore LESS _borrow_ordinary_forward)
     message(FATAL_ERROR
         "Runtime facade callback borrow ordering or exclusivity drifted")
 endif()
@@ -707,6 +722,7 @@ foreach(_marker IN ITEMS
     "IsKnownRegistryStatus"
     "table.authenticateExactEntry(physicalSlot, key)"
     "table.authenticateExactRegistryLifecycleCallback( physicalSlot, key)"
+    "table.restoreExactRegistryLifecycleCallback( physicalSlot, key)"
     "table.entries_[physicalSlot].generationBindingPristine()"
     "completeTableOperation"
     "RegistryOwnershipCoordinatorFacade::ValidateInactive()"

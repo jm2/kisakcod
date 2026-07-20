@@ -332,6 +332,7 @@ foreach(_marker IN ITEMS
     "CanMutateGenerationStage"
     "CanReachCallbackMarker"
     "CanAuthenticateRegistryLifecycleCallback"
+    "CanRestoreRegistryLifecycleCallback"
     "CanReachAllocationReceipt"
     "CanReachStreamGenerationReceipt"
     "CanReachPendingAdmissionReceipt"
@@ -355,6 +356,7 @@ foreach(_marker IN ITEMS
     "binding->setupStage_ = ZoneRuntimeSetupStage::CallbacksBound;"
     "&binding->callbackMarker_;"
     "table->authenticateExactRegistryLifecycleCallback(1u, key);"
+    "table->restoreExactRegistryLifecycleCallback(1u, key);"
     "!ZoneRuntimeTableTestAccess::CanReachEntries<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanMutateState<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanMutateSharedState<ZoneRuntimeTable>"
@@ -370,6 +372,7 @@ foreach(_marker IN ITEMS
     "!ZoneRuntimeTableTestAccess::CanMutateGenerationStage< ZoneRuntimeGenerationBinding>"
     "!ZoneRuntimeTableTestAccess::CanReachCallbackMarker< ZoneRuntimeGenerationBinding>"
     "!ZoneRuntimeTableTestAccess::CanAuthenticateRegistryLifecycleCallback< ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanRestoreRegistryLifecycleCallback< ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanReachAllocationReceipt< ZoneRuntimeReceiptCapsule>"
     "!ZoneRuntimeTableTestAccess::CanReachStreamGenerationReceipt< ZoneRuntimeReceiptCapsule>"
     "!ZoneRuntimeTableTestAccess::CanReachPendingAdmissionReceipt< ZoneRuntimeReceiptCapsule>"
@@ -487,6 +490,8 @@ foreach(_marker IN ITEMS
     "friend class ZoneRuntimeTable;"
     "authenticateExactMutableEntry("
     "authenticateExactRegistryLifecycleCallback("
+    "restoreExactRegistryLifecycleCallback("
+    "transitionExactRegistryLifecycleCallback("
     "exactRegistryLifecycleCallbackPhaseMatches("
     "completeMutableOperation("
     "mutableScriptStringOwnership("
@@ -795,7 +800,7 @@ require_exact_class_digest(_pending_copy_ledger_class
     501f278a5fede51712aa454d786f5f225247fe4f79427df9c09c050ca2739065
     "PendingCopyLedger")
 require_exact_class_digest(_generation_binding_class
-    7053d2aa0b5a1904620e7044a0b9c35ac56fbca2ca88c22d61f9dab3428a5ec7
+    26357c09d3a2538b997af5a3638185ecae217de7608356e3bff6f3b05982732e
     "ZoneRuntimeGenerationBinding")
 require_exact_class_digest(_receipt_capsule_class
     bf472ac7720169338debff211f4986e00e50233386054eccd0d2a96cd0b287f1
@@ -804,7 +809,7 @@ require_exact_class_digest(_zone_runtime_entry_class
     4f2c0c8a116a52a6a291a8715254951e2ad25093196fcb34f706044641f87bd9
     "ZoneRuntimeEntry")
 require_exact_class_digest(_zone_runtime_table_class
-    102515199b6c8031906d7bd715623bf44877d8105af2cf7adde166b665a02428
+    9924e6d291302afdd2521cfd14e9585e3eeb12ac5236a89696c5d333a6b30763
     "ZoneRuntimeTable")
 
 set(_external_macro_friend_invocation_fixture "${_receipt_capsule_class}")
@@ -1238,6 +1243,12 @@ extract_slice(
     _registry_callback_authentication
     "exact registry lifecycle callback authentication")
 foreach(_marker IN ITEMS
+    "Marker::ActiveRegistryBorrow, Marker::ActiveNoRegistry"
+    "Marker::ActiveNoRegistry, Marker::ActiveRegistryBorrow"
+    "ZoneRuntimeTable::transitionExactRegistryLifecycleCallback("
+    "expectedMarker == Marker::Idle"
+    "replacementMarker == Marker::Idle"
+    "expectedMarker == replacementMarker"
     "HasKnownState(state_)"
     "HasKnownSharedState(sharedState_)"
     "ValidateUsableSlot(physicalSlot)"
@@ -1252,15 +1263,15 @@ foreach(_marker IN ITEMS
     "activeMarkerEntry = &candidate;"
     "if (activeMarkerEntry && activeMarkerEntry != &entry)"
     "binding.callbackMarker_ == Marker::Idle"
-    "binding.callbackMarker_ == Marker::ActiveNoRegistry"
+    "binding.callbackMarker_ != expectedMarker"
     "return ZoneRuntimeTableStatus::Busy;"
-    "binding.callbackMarker_ != Marker::ActiveRegistryBorrow"
     "activeMarkerCount != 1"
     "tableStatus != ZoneRuntimeTableStatus::Busy"
     "entry.scriptStringOwnership_.canonicalForBinding( &entry.lifecycle_, key)"
     "exactRegistryLifecycleCallbackPhaseMatches(entry)"
-    "This one-shot gate // is defense in depth, not arbitrary longjmp containment: production // enrollment still requires the checked no-report callback adapters."
-    "binding.callbackMarker_ = Marker::ActiveNoRegistry;"
+    "Its sole reverse use follows a coordinator hash-lock Busy while // the same facade serializer and synchronous callback remain active."
+    "This one-shot gate is defense in depth, not arbitrary // longjmp containment: production enrollment still requires checked // no-report callback adapters."
+    "binding.callbackMarker_ = replacementMarker;"
     "return ZoneRuntimeTableStatus::Success;")
     require_contains(
         _registry_callback_authentication "${_marker}"
@@ -1273,19 +1284,19 @@ require_ordered(
     "whole-table validation precedes sole callback-marker census")
 require_ordered(
     _registry_callback_authentication
-    "binding.callbackMarker_ == Marker::ActiveNoRegistry"
+    "binding.callbackMarker_ != expectedMarker"
     "exactRegistryLifecycleCallbackPhaseMatches(entry)"
-    "non-authorized callbacks classify Busy before authority phase checks")
+    "mismatched callback transitions classify Busy before phase checks")
 require_ordered(
     _registry_callback_authentication
     "exactRegistryLifecycleCallbackPhaseMatches(entry)"
-    "binding.callbackMarker_ = Marker::ActiveNoRegistry;"
-    "exact phase authentication precedes one-shot authority consumption")
+    "binding.callbackMarker_ = replacementMarker;"
+    "exact phase authentication precedes callback marker transition")
 require_ordered(
     _registry_callback_authentication
-    "binding.callbackMarker_ = Marker::ActiveNoRegistry;"
+    "binding.callbackMarker_ = replacementMarker;"
     "return ZoneRuntimeTableStatus::Success;"
-    "one-shot callback admission is consumed before Success publication")
+    "callback marker transition precedes Success publication")
 
 extract_slice(
     _source
@@ -1481,7 +1492,7 @@ foreach(_marker IN ITEMS
         "pending admission callback failure blocks the live side effect")
 endforeach()
 require_substring_count(
-    _source "Marker::ActiveRegistryBorrow" 9
+    _source "Marker::ActiveRegistryBorrow" 12
     "closed callback registry marker reference surface")
 require_substring_count(
     _source "tryBeginRegistryCallbackWindow(" 2
@@ -2415,6 +2426,9 @@ foreach(_marker IN ITEMS
     "ensureRegistryAuthentications[0] == ZoneRuntimeTableStatus::Success"
     "ensureRejectedRegistryAuthentication == ZoneRuntimeTableStatus::StaleKey"
     "ensureRegistryReauthentications[0] == ZoneRuntimeTableStatus::Busy"
+    "ensureRegistryRestore == ZoneRuntimeTableStatus::Success"
+    "ensureRegistryRetryAuthentication == ZoneRuntimeTableStatus::Success"
+    "ensureRegistryRetryReauthentication == ZoneRuntimeTableStatus::Busy"
     "ensureOwnershipPhases[0] == ZoneScriptStringOwnershipPhase::UnpublishingCallback"
     "observedCleaningEnsure"
     "externalRegistryAuthentication[index] == ZoneRuntimeTableStatus::Success"

@@ -183,10 +183,12 @@ private:
     // callback work.  Any non-Idle marker keeps ordinary table operations
     // callback-busy; only ZoneRuntimeTable's exact-key authenticator may
     // interpret ActiveRegistryBorrow as authority, and successful admission
-    // consumes it to ActiveNoRegistry before returning. This one-shot rule
-    // prevents replay after authentication; it does not contain arbitrary
-    // nonlocal exits. Enrolled callbacks must not longjmp, and production
-    // enrollment still requires checked no-report adapters.
+    // consumes it to ActiveNoRegistry before returning. A recoverable
+    // coordinator-lock collision restores that exact consumed marker before
+    // returning Busy so the same synchronous callback may retry; every other
+    // result remains one-shot. This rule does not contain arbitrary nonlocal
+    // exits. Enrolled callbacks must not longjmp, and production enrollment
+    // still requires checked no-report adapters.
     enum class CallbackMarker : std::uint8_t
     {
         Idle,
@@ -604,6 +606,17 @@ private:
     authenticateExactRegistryLifecycleCallback(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus
+    restoreExactRegistryLifecycleCallback(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus
+    transitionExactRegistryLifecycleCallback(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        ZoneRuntimeGenerationBinding::CallbackMarker expectedMarker,
+        ZoneRuntimeGenerationBinding::CallbackMarker replacementMarker)
+        noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus completeMutableOperation(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
@@ -805,6 +818,18 @@ struct ZoneRuntimeTableTestAccess final
     {
         return table
             ? table->authenticateExactRegistryLifecycleCallback(
+                physicalSlot, key)
+            : ZoneRuntimeTableStatus::InvalidArgument;
+    }
+
+    [[nodiscard]] static ZoneRuntimeTableStatus
+    RestoreExactRegistryLifecycleCallback(
+        ZoneRuntimeTable *const table,
+        const std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept
+    {
+        return table
+            ? table->restoreExactRegistryLifecycleCallback(
                 physicalSlot, key)
             : ZoneRuntimeTableStatus::InvalidArgument;
     }

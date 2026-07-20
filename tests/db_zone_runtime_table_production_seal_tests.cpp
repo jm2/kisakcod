@@ -126,6 +126,14 @@ struct ZoneRuntimeTableTestAccess
         table->authenticateExactRegistryLifecycleCallback(1u, key);
     };
 
+    template <typename Table>
+    static constexpr bool CanRestoreRegistryLifecycleCallback = requires(
+        Table *const table,
+        const zone_load::ZoneLoadContextKey &key)
+    {
+        table->restoreExactRegistryLifecycleCallback(1u, key);
+    };
+
     template <typename Capsule>
     static constexpr bool CanReachAllocationReceipt = requires(
         Capsule *const capsule)
@@ -204,6 +212,10 @@ static_assert(
     !ZoneRuntimeTableTestAccess::CanAuthenticateRegistryLifecycleCallback<
         ZoneRuntimeTable>,
     "production must not bypass the private runtime facade callback gate");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanRestoreRegistryLifecycleCallback<
+        ZoneRuntimeTable>,
+    "production must not restore consumed callback registry authority");
 static_assert(
     !ZoneRuntimeTableTestAccess::CanReachAllocationReceipt<
         ZoneRuntimeReceiptCapsule>);

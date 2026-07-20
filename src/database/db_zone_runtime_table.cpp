@@ -974,6 +974,44 @@ ZoneRuntimeTable::authenticateExactRegistryLifecycleCallback(
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
     using Marker = ZoneRuntimeGenerationBinding::CallbackMarker;
+    return transitionExactRegistryLifecycleCallback(
+        physicalSlot,
+        key,
+        Marker::ActiveRegistryBorrow,
+        Marker::ActiveNoRegistry);
+}
+
+ZoneRuntimeTableStatus
+ZoneRuntimeTable::restoreExactRegistryLifecycleCallback(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept
+{
+    using Marker = ZoneRuntimeGenerationBinding::CallbackMarker;
+    return transitionExactRegistryLifecycleCallback(
+        physicalSlot,
+        key,
+        Marker::ActiveNoRegistry,
+        Marker::ActiveRegistryBorrow);
+}
+
+ZoneRuntimeTableStatus
+ZoneRuntimeTable::transitionExactRegistryLifecycleCallback(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const ZoneRuntimeGenerationBinding::CallbackMarker expectedMarker,
+    const ZoneRuntimeGenerationBinding::CallbackMarker replacementMarker)
+    noexcept
+{
+    using Marker = ZoneRuntimeGenerationBinding::CallbackMarker;
+    if (expectedMarker == Marker::Idle
+        || expectedMarker > Marker::ActiveRegistryBorrow
+        || replacementMarker == Marker::Idle
+        || replacementMarker > Marker::ActiveRegistryBorrow
+        || expectedMarker == replacementMarker)
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
     if (!HasKnownState(state_) || !HasKnownSharedState(sharedState_))
     {
         poison();
@@ -1054,15 +1092,15 @@ ZoneRuntimeTable::authenticateExactRegistryLifecycleCallback(
         return ZoneRuntimeTableStatus::Busy;
 
     if (binding.callbackMarker_ == Marker::Idle
-        || binding.callbackMarker_ == Marker::ActiveNoRegistry)
+        || binding.callbackMarker_ != expectedMarker)
     {
-        // Idle includes an ordinary exact generation; ActiveNoRegistry is an
-        // internal lifecycle callback or an external callback without a
-        // borrowable controller transaction.  Neither publishes authority.
+        // Idle includes an ordinary exact generation. A different known
+        // marker is either non-borrowable callback work or the opposite side
+        // of the private consume/restore transition. Neither publishes the
+        // requested authority.
         return ZoneRuntimeTableStatus::Busy;
     }
-    if (binding.callbackMarker_ != Marker::ActiveRegistryBorrow
-        || activeMarkerCount != 1
+    if (activeMarkerCount != 1
         || tableStatus != ZoneRuntimeTableStatus::Busy
         || !entry.scriptStringOwnership_.canonicalForBinding(
             &entry.lifecycle_, key)
@@ -1071,12 +1109,14 @@ ZoneRuntimeTable::authenticateExactRegistryLifecycleCallback(
         poison();
         return ZoneRuntimeTableStatus::UnsafeFailure;
     }
-    // Consume the table admission before publishing Success so it cannot be
-    // replayed after the first borrow attempt. The admitted coordinator owns
-    // and reauthenticates the resulting scope until Finish. This one-shot gate
-    // is defense in depth, not arbitrary longjmp containment: production
-    // enrollment still requires the checked no-report callback adapters.
-    binding.callbackMarker_ = Marker::ActiveNoRegistry;
+    // The forward transition consumes the table admission before publishing
+    // Success. Its sole reverse use follows a coordinator hash-lock Busy while
+    // the same facade serializer and synchronous callback remain active. The
+    // admitted coordinator otherwise owns and reauthenticates the resulting
+    // scope until Finish. This one-shot gate is defense in depth, not arbitrary
+    // longjmp containment: production enrollment still requires checked
+    // no-report callback adapters.
+    binding.callbackMarker_ = replacementMarker;
     return ZoneRuntimeTableStatus::Success;
 }
 
