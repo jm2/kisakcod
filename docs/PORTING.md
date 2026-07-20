@@ -584,7 +584,7 @@ Completed foundation work:
   audit were clean, and zero threads remained before squash merge `534a9b1e`. Authoritative post-merge run
   **29716339199** passed all nine jobs. The merge adds no serializer, retained reservation extent, initialization phase,
   `$init` controller, checked authority, or production enrollment;
-- current unmerged `293a020c` appends the PMem serializer slot at MP `0x17` and SP `0x24` without renumbering any existing
+- merged PR #70 sequence `293a020c` appends the PMem serializer slot at MP `0x17` and SP `0x24` without renumbering any existing
   slot. Follow-up `716eacc1` uses it for a hidden retained extent plus witnessed initialization phase, failure-atomic
   reserve/commit/release publication, global Begin/End/Free/allocation/getter serialization, exact report-free allocation
   results, and a thread-local legacy shortfall. Commit `0a9128aa` completes that production-neutral boundary with hidden
@@ -598,8 +598,12 @@ Completed foundation work:
   permanent Ended authority, report-free serialized operations, legacy coexistence guards, and exact End-before-
   initializing-clear source seals. Commit `792ff1c7` authenticates the complete passive stream/relocation singleton and
   pending-copy-ledger topology without widening any per-entry receipt capability. The exact combined head passes native
-  **157/157**, focused **32/32**, and affected genuine GCC i386/AArch64 compile-link gates. Hosted CI is not yet claimed;
-  no checked authority or loader caller is enrolled, and exact-key composite adapters are next;
+  **157/157**, focused **32/32**, and affected genuine GCC i386/AArch64 compile-link gates. Exact final head
+  `ca2d1149ab7e67d6de56921a0574a662861783b5` is the head of run **29726370638**, whose all nine hosted jobs ultimately
+  passed; it squash-merged as `6a67a66e4afd62480bdb62493e666961da9ed837`. The merge command was issued after seven jobs completed; the
+  remaining no-Steam and Windows x86 Debug/Release jobs subsequently passed at that same head. Gemini was clean at
+  behavior head `c8230927`, the final two changes were MSVC fixture-only corrections, and no review threads remained.
+  No checked authority or loader caller is enrolled, and exact-key composite adapters are next;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -1695,17 +1699,16 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **80% by merged engineering effort**. PR #62 merged the production-neutral
+Overall porting progress is approximately **81% by merged engineering effort**. PR #62 merged the production-neutral
 pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
 registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
 tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy-PMem
-indexing/failure-atomic prerequisite, and PR #69 merged global-state encapsulation plus the cross-toolchain macro-off
-seal. The ancestry checkpoint records reviewed history without importing code and therefore does not inflate the
-engineering estimate. The current serialized-runtime/process-controller/passive-authentication branch through
-`792ff1c7` remains outside the merged estimate until its PR lands.
+indexing/failure-atomic prerequisite, PR #69 merged global-state encapsulation plus the cross-toolchain macro-off seal,
+and PR #70 merged serialized runtime/process-controller/passive shared-resource authentication. The ancestry checkpoint
+records reviewed history without importing code and therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared
-foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
+foundations/security about **87%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
@@ -2054,8 +2057,9 @@ resolved. PR #66 merged the exact tree-neutral ancestry checkpoint
 **29707497302** passed all nine jobs and the ancestry is verified. PR #67 merged passive durable-receipt composition as
 `76d0e065888aab298d430b4bf4e115c07369bc88`; exact-head and authoritative runs **29709263403** and **29709598049**
 passed all nine jobs. PR #68 merged the legacy PMem indexing repair, PR #69 merged the hidden-state/object seal, and no
-production site is enrolled. The current serialized PMem boundary, process-life controller, and passive shared-resource
-authentication are complete locally through `792ff1c7`. Add exact-key composite adapters next; only then enroll all
+production site is enrolled. PR #70 merged the serialized PMem boundary, process-life controller, and passive
+shared-resource authentication as `6a67a66e`; exact final head `ca2d1149` ultimately passed all nine jobs in run
+**29726370638**. Add exact-key composite adapters next; only then enroll all
 seven sites atomically: five coordinator operations plus two exact-key
 root-journal stages. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses

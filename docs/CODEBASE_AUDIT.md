@@ -107,11 +107,13 @@ inspection pass. Review fixed padding-sensitive snapshots and CRLF matching; hos
 local `__MergedGlobals` coalescing, which final seal head `eeefdf40` handles without weakening ELF/COFF or global-symbol
 rejection. Final run **29715782804** passed all nine jobs with clean exact-head Codex and independent audits and zero
 threads before squash merge `534a9b1e`; authoritative post-merge run **29716339199** passed all nine jobs. Current
-unmerged work through `792ff1c7` reserves exact MP/SP PMem serializer slots, serializes global lifecycle/allocation/getter
+Merged PR #70 work through `792ff1c7` reserves exact MP/SP PMem serializer slots, serializes global lifecycle/allocation/getter
 access, authenticates retained initialization state, owns stable diagnostic names, captures bounded pointer-free dump
 snapshots, adds the unused permanent-Ended process-life `$init` controller, and authenticates both passive table-wide
 resource topologies. Exact combined native CTest passes **157/157**, focused integration passes **32/32**, and affected
-genuine i386/AArch64 compile-link gates pass. Exact-key composite adapters remain the blocker before checked/loader
+genuine i386/AArch64 compile-link gates pass. Exact final head `ca2d1149ab7e67d6de56921a0574a662861783b5`
+is the head of run **29726370638**, whose all nine hosted jobs ultimately passed; it squash-merged as
+`6a67a66e4afd62480bdb62493e666961da9ed837`. Exact-key composite adapters remain the blocker before checked/loader
 enrollment.
 Exact-head run **29673379640** passed all nine jobs;
 Codex reviewed exact final
@@ -189,7 +191,7 @@ dry-level reconciliation as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`. Final re
 duplicate findings and one non-corrective `nullptr` style suggestion. Local evidence remains full GCC Debug
 **153/153**, focused **8/8**, strict GCC/Clang, genuine i386/AArch64 compile-link, U1 focused **7/7** plus a clean
 independent audit, and U2 **146/146** plus its ten-mutation and dependency/symbol contracts. Rounded merged porting
-progress is approximately **80%** after merged PR #68; strict requested-target delivery remains **0/5**.
+progress is approximately **81%** after merged PR #70; strict requested-target delivery remains **0/5**.
 
 Every commit in pinned range `312a9d2e..2164cd1a` remains classified in
 `docs/UPSTREAM_2164CD1A_LEDGER.md`. PR #66 merged dedicated tree-neutral checkpoint
@@ -209,9 +211,10 @@ failure-atomic invalid-lifecycle handling, allocation-name format-string repair,
 exact-head and authoritative runs passed all nine jobs. PR #69 then merged internal mutable globals and whole
 macro-gated by-value-helper containment plus actual macro-off object-symbol inspection as `534a9b1e`; exact final head
 `eeefdf40` passed all nine jobs in run **29715782804**. It adds no serializer, extent, initialization phase, controller,
-or caller. Current work through `792ff1c7` supplies the serialized retained extent/init/result/lifecycle core, stable
+or caller. Merged PR #70 work through `792ff1c7` supplies the serialized retained extent/init/result/lifecycle core, stable
 name ownership, bounded dump snapshots, the unused permanent-Ended process-life `$init` controller, and complete passive
-table-wide resource authentication. The subsequent sequence adds exact-key adapters and finally one atomic seven-site
+table-wide resource authentication; exact final head `ca2d1149` passed all nine jobs in run **29726370638** and
+squash-merged as `6a67a66e`. The subsequent sequence adds exact-key adapters and finally one atomic seven-site
 cutover. Until those adapters exist, the table's pristine checks are intentional passive-mode
 corruption tripwires; the adapter batch must replace them atomically with composite phase/key authentication before any
 authority is enrolled.
