@@ -251,7 +251,8 @@ bool ZoneScriptStringOwnershipController::isEmptyCanonical() const noexcept
         && expectedCount_ == 0 && transactionSerial_ == 0
         && transaction_.canonicalInactive()
         && resumePhase_ == ZoneScriptStringOwnershipPhase::Empty
-        && reserved_[0] == 0 && reserved_[1] == 0;
+        && callbackWindowWitness_ == 0
+        && callbackWindowWitnessMirror_ == 0;
 }
 
 bool AuthenticateZoneScriptStringOwnershipStorage(
@@ -366,6 +367,126 @@ bool ZoneScriptStringOwnershipController::authenticatesRegistryTransaction(
         && serial == expectedSerial;
 }
 
+bool ZoneScriptStringOwnershipController::tryBeginRegistryCallbackWindow(
+    const ZoneScriptStringOwnershipPhase expectedCallbackPhase) noexcept
+{
+    // Authenticate the retained outer serializer before reading or mutating
+    // callback state. A foreign thread must never race the owning callback.
+    if (!transaction::OwnsScriptStringTransaction(transaction_))
+        return false;
+
+    if (!IsCallbackPhase(expectedCallbackPhase)
+        || phase_ != expectedCallbackPhase
+        || callbackWindowWitness_
+            != callbackWindowWitnessMirror_
+        || callbackWindowWitness_ == UINT8_MAX
+        || !bindingMatchesCurrentPhase())
+    {
+        poison();
+        return false;
+    }
+
+    const std::uint8_t nextWitness = static_cast<std::uint8_t>(
+        callbackWindowWitness_ + 1);
+    if (nextWitness == 0)
+    {
+        poison();
+        return false;
+    }
+    callbackWindowWitness_ = nextWitness;
+    callbackWindowWitnessMirror_ = nextWitness;
+    return true;
+}
+
+bool ZoneScriptStringOwnershipController::trySnapshotRegistryCallbackTransaction(
+        const lifecycle::ZoneLoadContextKey &expectedKey,
+        std::uint32_t *const outSerial,
+        RegistryCallbackPurpose *const outPurpose,
+        std::uint8_t *const outWindowWitness) const noexcept
+{
+    if (!outSerial || !outPurpose || !outWindowWitness
+        || !static_cast<bool>(expectedKey))
+        return false;
+
+    // Authenticate the private token before reading any controller binding.
+    // As in the ordinary validator, a foreign thread remains behind the outer
+    // serializer until the owner publishes terminal state, then returns here
+    // without racing mutable callback state.
+    if (!transaction::OwnsScriptStringTransaction(transaction_))
+        return false;
+
+    if (key_ != expectedKey)
+    {
+        return false;
+    }
+
+    RegistryCallbackPurpose purpose = RegistryCallbackPurpose::None;
+    switch (phase_)
+    {
+    case ZoneScriptStringOwnershipPhase::UnpublishingCallback:
+        purpose = RegistryCallbackPurpose::Unpublishing;
+        break;
+    case ZoneScriptStringOwnershipPhase::Cleaning:
+        purpose = RegistryCallbackPurpose::Cleaning;
+        break;
+    case ZoneScriptStringOwnershipPhase::Admitting:
+        purpose = RegistryCallbackPurpose::Admitting;
+        break;
+    case ZoneScriptStringOwnershipPhase::UnloadingCallback:
+        purpose = RegistryCallbackPurpose::Unloading;
+        break;
+    default:
+        return false;
+    }
+
+    if (!bindingMatchesCurrentPhase() || transactionSerial_ == 0
+        || transaction_.serial() != transactionSerial_)
+    {
+        return false;
+    }
+    if (callbackWindowWitness_ == 0
+        || callbackWindowWitness_
+            != callbackWindowWitnessMirror_)
+    {
+        return false;
+    }
+
+    // Publish all staged values only after every phase, binding, serial, and
+    // current-thread ownership check has succeeded.  Callers may therefore
+    // retain their previous output values on every rejection.
+    const std::uint32_t serial = transactionSerial_;
+    const std::uint8_t windowWitness = callbackWindowWitness_;
+    *outSerial = serial;
+    *outPurpose = purpose;
+    *outWindowWitness = windowWitness;
+    return true;
+}
+
+bool ZoneScriptStringOwnershipController::authenticatesRegistryCallbackTransaction(
+        const lifecycle::ZoneLoadContextKey &expectedKey,
+        const std::uint32_t expectedSerial,
+        const RegistryCallbackPurpose expectedPurpose,
+        const std::uint8_t expectedWindowWitness) const noexcept
+{
+    if (expectedSerial == 0
+        || expectedPurpose == RegistryCallbackPurpose::None
+        || expectedWindowWitness == 0)
+    {
+        return false;
+    }
+
+    std::uint32_t serial = 0;
+    RegistryCallbackPurpose purpose = RegistryCallbackPurpose::None;
+    std::uint8_t windowWitness = 0;
+    return trySnapshotRegistryCallbackTransaction(
+               expectedKey,
+               &serial,
+               &purpose,
+               &windowWitness)
+        && serial == expectedSerial && purpose == expectedPurpose
+        && windowWitness == expectedWindowWitness;
+}
+
 lifecycle::ZoneLoadCleanupCallbackStatus
 ZoneScriptStringOwnershipController::PerformBoundCleanup(
     void *const context,
@@ -382,7 +503,29 @@ ZoneScriptStringOwnershipController::PerformBoundCleanup(
     {
         if (!controller->ensureUnreachable_)
             return lifecycle::ZoneLoadCleanupCallbackStatus::UnsafeFailure;
-        switch (controller->ensureUnreachable_(controller->rollbackContext_))
+        if (!controller->tryBeginRegistryCallbackWindow(
+                ZoneScriptStringOwnershipPhase::Cleaning))
+        {
+            return lifecycle::ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+        }
+        const lifecycle::ZoneLoadContextKey callbackKey =
+            controller->key_;
+        const std::uint32_t callbackTransactionSerial =
+            controller->transactionSerial_;
+        const std::uint8_t windowWitness =
+            controller->callbackWindowWitness_;
+        const ZoneScriptStringUnpublishStatus callbackStatus =
+            controller->ensureUnreachable_(controller->rollbackContext_);
+        if (!controller->authenticatesRegistryCallbackTransaction(
+                callbackKey,
+                callbackTransactionSerial,
+                RegistryCallbackPurpose::Cleaning,
+                windowWitness))
+        {
+            controller->poison();
+            return lifecycle::ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+        }
+        switch (callbackStatus)
         {
         case ZoneScriptStringUnpublishStatus::Success:
             return lifecycle::ZoneLoadCleanupCallbackStatus::Success;
@@ -396,8 +539,29 @@ ZoneScriptStringOwnershipController::PerformBoundCleanup(
 
     if (!controller->performCleanup_)
         return lifecycle::ZoneLoadCleanupCallbackStatus::UnsafeFailure;
-    return controller->performCleanup_(
-        controller->rollbackContext_, operation);
+    if (!controller->tryBeginRegistryCallbackWindow(
+            ZoneScriptStringOwnershipPhase::Cleaning))
+    {
+        return lifecycle::ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+    }
+    const lifecycle::ZoneLoadContextKey callbackKey = controller->key_;
+    const std::uint32_t callbackTransactionSerial =
+        controller->transactionSerial_;
+    const std::uint8_t windowWitness =
+        controller->callbackWindowWitness_;
+    const lifecycle::ZoneLoadCleanupCallbackStatus callbackStatus =
+        controller->performCleanup_(
+            controller->rollbackContext_, operation);
+    if (!controller->authenticatesRegistryCallbackTransaction(
+            callbackKey,
+            callbackTransactionSerial,
+            RegistryCallbackPurpose::Cleaning,
+            windowWitness))
+    {
+        controller->poison();
+        return lifecycle::ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+    }
+    return callbackStatus;
 }
 
 lifecycle::ZoneLoadCleanupCallbackStatus
@@ -414,8 +578,29 @@ ZoneScriptStringOwnershipController::PerformBoundLiveUnload(
     {
         return lifecycle::ZoneLoadCleanupCallbackStatus::UnsafeFailure;
     }
-    return controller->performCleanup_(
-        controller->rollbackContext_, operation);
+    if (!controller->tryBeginRegistryCallbackWindow(
+            ZoneScriptStringOwnershipPhase::UnloadingCallback))
+    {
+        return lifecycle::ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+    }
+    const lifecycle::ZoneLoadContextKey callbackKey = controller->key_;
+    const std::uint32_t callbackTransactionSerial =
+        controller->transactionSerial_;
+    const std::uint8_t windowWitness =
+        controller->callbackWindowWitness_;
+    const lifecycle::ZoneLoadCleanupCallbackStatus callbackStatus =
+        controller->performCleanup_(
+            controller->rollbackContext_, operation);
+    if (!controller->authenticatesRegistryCallbackTransaction(
+            callbackKey,
+            callbackTransactionSerial,
+            RegistryCallbackPurpose::Unloading,
+            windowWitness))
+    {
+        controller->poison();
+        return lifecycle::ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+    }
+    return callbackStatus;
 }
 
 bool ZoneScriptStringOwnershipController::placementIdentityIsEmpty()
@@ -455,7 +640,9 @@ bool ZoneScriptStringOwnershipController::placementAttachmentMatchesPhase()
 
 bool ZoneScriptStringOwnershipController::bindingMatchesCurrentPhase() const noexcept
 {
-    if (!IsKnownPhase(phase_) || reserved_[0] != 0 || reserved_[1] != 0
+    if (!IsKnownPhase(phase_)
+        || callbackWindowWitness_
+            != callbackWindowWitnessMirror_
         || !static_cast<bool>(key_) || !lifecycle_
         || !placementIdentityIsCanonical()
         || !placementAttachmentMatchesPhase())
@@ -640,7 +827,8 @@ ZoneScriptStringOwnershipController::validateLiveBinding(
         || expectedCount_ != 0 || transactionSerial_ != 0
         || !transaction_.canonicalInactive()
         || resumePhase_ != ZoneScriptStringOwnershipPhase::Empty
-        || reserved_[0] != 0 || reserved_[1] != 0)
+        || callbackWindowWitness_ != 0
+        || callbackWindowWitnessMirror_ != 0)
     {
         return ZoneScriptStringOwnershipStatus::InvalidState;
     }
@@ -708,7 +896,8 @@ ZoneScriptStringOwnershipController::validateTerminalReceipt(
         || expectedCount_ != 0 || transactionSerial_ != 0
         || !transaction_.canonicalInactive()
         || resumePhase_ != ZoneScriptStringOwnershipPhase::Empty
-        || reserved_[0] != 0 || reserved_[1] != 0)
+        || callbackWindowWitness_ != 0
+        || callbackWindowWitnessMirror_ != 0)
     {
         return ZoneScriptStringOwnershipStatus::InvalidState;
     }
@@ -763,8 +952,8 @@ void ZoneScriptStringOwnershipController::reset() noexcept
     transactionSerial_ = 0;
     phase_ = ZoneScriptStringOwnershipPhase::Empty;
     resumePhase_ = ZoneScriptStringOwnershipPhase::Empty;
-    reserved_[0] = 0;
-    reserved_[1] = 0;
+    callbackWindowWitness_ = 0;
+    callbackWindowWitnessMirror_ = 0;
 }
 
 ZoneScriptStringOwnershipStatus TryBeginZoneScriptStringOwnership(
@@ -1003,14 +1192,43 @@ ZoneScriptStringOwnershipStatus TryCommitZoneScriptStringsAndAdmit(
     journal::FinalizeScriptStringJournalCommit(*controller->journal_);
     controller->detachJournalBacking();
     controller->phase_ = ZoneScriptStringOwnershipPhase::Admitting;
+    if (!controller->tryBeginRegistryCallbackWindow(
+            ZoneScriptStringOwnershipPhase::Admitting))
+    {
+        return ZoneScriptStringOwnershipStatus::UnsafeFailure;
+    }
+    const lifecycle::ZoneLoadContextKey callbackKey = controller->key_;
+    const std::uint32_t callbackTransactionSerial =
+        controller->transactionSerial_;
     admission.admitLive(admission.context);
 
-    const std::uint32_t retainedSerial = controller->transactionSerial_;
+    std::uint32_t observedTransactionSerial = 0;
+    ZoneScriptStringOwnershipController::RegistryCallbackPurpose
+        callbackPurpose = ZoneScriptStringOwnershipController::
+            RegistryCallbackPurpose::None;
+    std::uint8_t callbackWindowWitness = 0;
+    if (!controller->trySnapshotRegistryCallbackTransaction(
+            callbackKey,
+            &observedTransactionSerial,
+            &callbackPurpose,
+            &callbackWindowWitness)
+        || observedTransactionSerial != callbackTransactionSerial
+        || callbackPurpose != ZoneScriptStringOwnershipController::
+            RegistryCallbackPurpose::Admitting
+        || callbackWindowWitness == 0)
+    {
+        controller->poison();
+        return ZoneScriptStringOwnershipStatus::UnsafeFailure;
+    }
+
+    const std::uint32_t retainedSerial = callbackTransactionSerial;
     controller->rollbackContext_ = nullptr;
     controller->ensureUnreachable_ = nullptr;
     controller->performCleanup_ = nullptr;
     controller->resumePhase_ = ZoneScriptStringOwnershipPhase::Empty;
     controller->transactionSerial_ = 0;
+    controller->callbackWindowWitness_ = 0;
+    controller->callbackWindowWitnessMirror_ = 0;
     controller->phase_ = ZoneScriptStringOwnershipPhase::Live;
     const transaction::ScriptStringTransactionStatus finishStatus =
         transaction::FinishScriptStringTransaction(
@@ -1079,7 +1297,29 @@ ZoneScriptStringOwnershipStatus TryBeginZoneScriptStringRollback(
 
     controller->phase_ =
         ZoneScriptStringOwnershipPhase::UnpublishingCallback;
-    switch (controller->ensureUnreachable_(controller->rollbackContext_))
+    if (!controller->tryBeginRegistryCallbackWindow(
+            ZoneScriptStringOwnershipPhase::UnpublishingCallback))
+    {
+        return ZoneScriptStringOwnershipStatus::UnsafeFailure;
+    }
+    const lifecycle::ZoneLoadContextKey callbackKey = controller->key_;
+    const std::uint32_t callbackTransactionSerial =
+        controller->transactionSerial_;
+    const std::uint8_t windowWitness =
+        controller->callbackWindowWitness_;
+    const ZoneScriptStringUnpublishStatus callbackStatus =
+        controller->ensureUnreachable_(controller->rollbackContext_);
+    if (!controller->authenticatesRegistryCallbackTransaction(
+            callbackKey,
+            callbackTransactionSerial,
+            ZoneScriptStringOwnershipController::
+                RegistryCallbackPurpose::Unpublishing,
+            windowWitness))
+    {
+        controller->poison();
+        return ZoneScriptStringOwnershipStatus::UnsafeFailure;
+    }
+    switch (callbackStatus)
     {
     case ZoneScriptStringUnpublishStatus::Retry:
         controller->phase_ = ZoneScriptStringOwnershipPhase::Unpublishing;
@@ -1222,6 +1462,8 @@ ZoneScriptStringOwnershipStatus TryFinishZoneScriptStringAbandonment(
     controller->performCleanup_ = nullptr;
     controller->resumePhase_ = ZoneScriptStringOwnershipPhase::Empty;
     controller->transactionSerial_ = 0;
+    controller->callbackWindowWitness_ = 0;
+    controller->callbackWindowWitnessMirror_ = 0;
     controller->phase_ = ZoneScriptStringOwnershipPhase::Abandoned;
     const transaction::ScriptStringTransactionStatus finishStatus =
         transaction::FinishScriptStringTransaction(
@@ -1362,6 +1604,8 @@ ZoneScriptStringOwnershipStatus TryUnloadLiveZoneScriptStringOwnership(
     controller->performCleanup_ = nullptr;
     controller->resumePhase_ = ZoneScriptStringOwnershipPhase::Empty;
     controller->transactionSerial_ = 0;
+    controller->callbackWindowWitness_ = 0;
+    controller->callbackWindowWitnessMirror_ = 0;
     controller->phase_ = ZoneScriptStringOwnershipPhase::Unloaded;
     const transaction::ScriptStringTransactionStatus finishStatus =
         transaction::FinishScriptStringTransaction(
