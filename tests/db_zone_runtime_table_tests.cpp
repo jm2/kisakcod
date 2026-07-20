@@ -2210,12 +2210,12 @@ void TestPassiveReceiptPristineAuthentication()
         memory.buf = backing.data();
         memory.prim[0].pos = 0;
         memory.prim[1].pos = static_cast<std::uint32_t>(backing.size());
-        static char allocationName;
+        static const char allocationName[] = "test_allocation";
         auto *const receipt =
             ZoneRuntimeTableTestAccess::AllocationReceipt(table.get(), 1);
         CHECK(receipt != nullptr);
         CHECK(physical_memory::TryBegin(
-            &memory, 0, &allocationName, receipt)
+            &memory, 0, allocationName, receipt)
             == physical_memory::AllocationScopeStatus::Success);
         ExpectReceiptCorruptionFailsClosed(table.get(), 1);
         CHECK(physical_memory::TryEnd(receipt)
