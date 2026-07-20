@@ -9,9 +9,18 @@
 #include <cstdint>
 #include <type_traits>
 
+namespace db::zone_runtime
+{
+class ZoneRuntimeFacade;
+}
+
 namespace db::registry_ownership
 {
 class RegistryOwnershipCoordinator;
+enum class RegistryOwnershipStatus : std::uint8_t;
+struct RegistryOwnershipName;
+struct RegistryOwnershipBulkResult;
+
 class RegistryOwnershipCoordinatorFacade final
 {
 public:
@@ -25,11 +34,49 @@ public:
         RegistryOwnershipCoordinatorFacade &&) = delete;
     RegistryOwnershipCoordinatorFacade &operator=(
         RegistryOwnershipCoordinatorFacade &&) = delete;
+
+private:
+    friend class db::zone_runtime::ZoneRuntimeFacade;
+
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryBeginStandalone() noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus TryBorrow(
+        const zone_script_string_ownership::
+            ZoneScriptStringOwnershipController &controller,
+        const zone_load::ZoneLoadContextKey &expectedKey) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus Finish() noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus ValidateInactive() noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    authenticateConstructedStorage(
+        RegistryOwnershipCoordinator *coordinator) noexcept;
+
+    [[nodiscard]] static RegistryOwnershipStatus TryAddDatabaseUser4(
+        std::uint32_t stringId) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus TryAddDatabaseUsers4(
+        const std::uint32_t *stringIds,
+        std::uint32_t count,
+        RegistryOwnershipBulkResult *outResult) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus TryInternBoundedName(
+        const char *bytes,
+        std::uint32_t byteCount,
+        RegistryOwnershipName *outName) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryReAddRetainedDefaultName(
+        const char *retainedCanonicalName) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryReAddRetainedDefaultNames(
+        const char *const *retainedCanonicalNames,
+        std::uint32_t count,
+        RegistryOwnershipBulkResult *outResult) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryTransferDatabaseUsers4To8() noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryShutdownDatabaseUser8() noexcept;
 };
 
-// Production-neutral lock-order boundary for the five legacy registry string
-// operations that still use raw user-4/user-8 APIs. There are deliberately no
-// production callers yet.
+// Production lock-order boundary for the five legacy registry string
+// operations that still use raw user-4/user-8 APIs. Only the private runtime
+// facade is enrolled; legacy registry/load callers remain uncut over.
 //
 // A coordinator either owns a standalone script-string transaction or borrows
 // the exact active transaction of one ZoneScriptStringOwnershipController. It
@@ -164,6 +211,7 @@ public:
     [[nodiscard]] bool isEmptyCanonical() const noexcept;
 
 private:
+    friend class RegistryOwnershipCoordinatorFacade;
     friend RegistryOwnershipStatus
     TryBeginStandaloneRegistryOwnershipCoordinator(
         const RegistryOwnershipCoordinatorAdmission &,

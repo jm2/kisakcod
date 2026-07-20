@@ -8,6 +8,10 @@ set(_header_path
     "${SOURCE_ROOT}/src/database/db_registry_ownership_coordinator.h")
 set(_source_path
     "${SOURCE_ROOT}/src/database/db_registry_ownership_coordinator.cpp")
+set(_runtime_facade_header_path
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.h")
+set(_runtime_facade_source_path
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_registry_ownership_coordinator_tests.cpp")
 set(_integration_fixture_path
@@ -35,6 +39,8 @@ set(_ui_parser_token_literal_path
 foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
+    "${_runtime_facade_header_path}"
+    "${_runtime_facade_source_path}"
     "${_fixture_path}"
     "${_integration_fixture_path}"
     "${_production_seal_path}"
@@ -619,8 +625,9 @@ if(_false_positive)
 endif()
 
 # All files—not merely known C++ extensions—must remain covered. The only
-# approved enrollment sites are the public coordinator declaration and its
-# implementation. This foundation therefore proves zero production callers.
+# approved enrollment sites are the coordinator bridge and the one private
+# runtime facade that may invoke it. This still proves zero legacy loader
+# callers before the atomic call-site cutover.
 file(GLOB_RECURSE _production_sources
     LIST_DIRECTORIES FALSE "${SOURCE_ROOT}/src/*")
 foreach(_non_extension_sentinel IN ITEMS
@@ -637,7 +644,9 @@ endforeach()
 
 set(_registry_coordinator_approved_sources
     "${_header_path}"
-    "${_source_path}")
+    "${_source_path}"
+    "${_runtime_facade_header_path}"
+    "${_runtime_facade_source_path}")
 set(_registry_admission_approved_sources
     "${_header_path}"
     "${_source_path}"
@@ -776,9 +785,9 @@ require_not_contains(
 extract_slice(
     _header
     "class RegistryOwnershipCoordinatorFacade final"
-    "// Production-neutral lock-order boundary"
+    "// Production lock-order boundary"
     _coordinator_facade_declaration
-    "complete non-minting coordinator facade")
+    "complete private coordinator facade bridge")
 set(_expected_coordinator_facade_declaration [=[
 class RegistryOwnershipCoordinatorFacade final
 {
@@ -793,23 +802,61 @@ public:
         RegistryOwnershipCoordinatorFacade &&) = delete;
     RegistryOwnershipCoordinatorFacade &operator=(
         RegistryOwnershipCoordinatorFacade &&) = delete;
+
+private:
+    friend class db::zone_runtime::ZoneRuntimeFacade;
+
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryBeginStandalone() noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus TryBorrow(
+        const zone_script_string_ownership::
+            ZoneScriptStringOwnershipController &controller,
+        const zone_load::ZoneLoadContextKey &expectedKey) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus Finish() noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus ValidateInactive() noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    authenticateConstructedStorage(
+        RegistryOwnershipCoordinator *coordinator) noexcept;
+
+    [[nodiscard]] static RegistryOwnershipStatus TryAddDatabaseUser4(
+        std::uint32_t stringId) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus TryAddDatabaseUsers4(
+        const std::uint32_t *stringIds,
+        std::uint32_t count,
+        RegistryOwnershipBulkResult *outResult) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus TryInternBoundedName(
+        const char *bytes,
+        std::uint32_t byteCount,
+        RegistryOwnershipName *outName) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryReAddRetainedDefaultName(
+        const char *retainedCanonicalName) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryReAddRetainedDefaultNames(
+        const char *const *retainedCanonicalNames,
+        std::uint32_t count,
+        RegistryOwnershipBulkResult *outResult) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryTransferDatabaseUsers4To8() noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryShutdownDatabaseUser8() noexcept;
 };
 ]=])
 require_normalized_equals(
     _coordinator_facade_declaration
     _expected_coordinator_facade_declaration
-    "complete non-minting facade declaration")
+    "complete private facade declaration")
 require_literal_count(
-    _header "RegistryOwnershipCoordinatorFacade" 12
-    "one complete deleted facade plus its exact Admission friendship")
+    _header "RegistryOwnershipCoordinatorFacade" 13
+    "one complete private facade plus exact Admission/coordinator friendship")
 require_regex_count(
     _coordinator_facade_declaration
     "(^|[^A-Za-z0-9_])static([^A-Za-z0-9_]|$)"
-    0
-    "comment-separated static facade authority")
+    12
+    "exact private static coordinator facade authority")
 require_not_contains(
     _coordinator_facade_declaration "RegistryOwnershipCoordinatorAdmission"
-    "neutral facade cannot expose the admission type before cutover")
+    "private facade mints but never exposes the admission type")
 
 extract_slice(
     _header
@@ -1260,6 +1307,19 @@ foreach(_marker IN ITEMS
     "CanMutateSealMirror"
     "using CoordinatorAdmission = RegistryOwnershipCoordinatorAdmission;"
     "using CoordinatorFacade = RegistryOwnershipCoordinatorFacade;"
+    "RegistryOwnershipCoordinatorFacadeProductionProbe"
+    "CanTryBeginStandalone"
+    "CanTryBorrow"
+    "CanFinish"
+    "CanValidateInactive"
+    "CanAuthenticateConstructedStorage"
+    "CanTryAddDatabaseUser4"
+    "CanTryAddDatabaseUsers4"
+    "CanTryInternBoundedName"
+    "CanTryReAddRetainedDefaultName"
+    "CanTryReAddRetainedDefaultNames"
+    "CanTryTransferDatabaseUsers4To8"
+    "CanTryShutdownDatabaseUser8"
     "std::is_empty_v<CoordinatorFacade>"
     "std::is_final_v<CoordinatorFacade>"
     "std::is_constructible_v<"
