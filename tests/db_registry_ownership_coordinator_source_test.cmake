@@ -1488,8 +1488,9 @@ extract_slice(
 require_literal_count(
     _coordinator_runtime_test_registration
     "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1"
-    1
-    "the coordinator unit fixture receives test authority once")
+    2
+    "the coordinator unit fixture and the facade->table->controller->"
+    "coordinator->registry chain fixture both receive test authority once")
 extract_slice(
     _tests
     "add_executable(kisakcod-script-string-ownership-tests"
@@ -1513,8 +1514,10 @@ endforeach()
 require_literal_count(
     _tests
     "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING"
-    2
-    "only the two reviewed runtime fixtures receive coordinator test authority")
+    3
+    "only the reviewed runtime fixtures (unit, integration, and the literal "
+    "facade->table->controller->coordinator->registry chain) receive "
+    "coordinator test authority")
 
 file(GLOB_RECURSE _registry_coordinator_build_definition_paths
     LIST_DIRECTORIES FALSE

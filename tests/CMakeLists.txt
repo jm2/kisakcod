@@ -542,6 +542,82 @@ add_test(
 set_tests_properties(
     database-registry-ownership-coordinator PROPERTIES TIMEOUT 30)
 
+# Composite fixture binding facade->table->controller->coordinator->registry
+# through production objects. Drives one end-to-end borrow + add + finish
+# operation with a fake script_string backend seam, then verifies the
+# post-enrollment refusal path before any controller begins. This is the
+# pre-enrollment gate that lets subsequent beads replace the remaining raw
+# legacy sites with confidence that the five-layer chain has been exercised
+# together at least once.
+add_executable(kisakcod-db-facade-table-controller-coordinator-registry-tests
+    db_facade_table_controller_coordinator_registry_callback_retry_tests.cpp
+    ${SRC_DIR}/database/db_zone_runtime_facade.cpp
+    ${SRC_DIR}/database/db_zone_runtime_table.cpp
+    ${SRC_DIR}/database/db_zone_runtime_storage.cpp
+    ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+    ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
+    ${SRC_DIR}/database/db_zone_script_string_ownership.cpp
+    ${SRC_DIR}/database/db_script_string_adapter.cpp
+    ${SRC_DIR}/database/db_script_string_journal.cpp
+    ${SRC_DIR}/database/db_script_string_transaction.cpp
+    ${SRC_DIR}/database/db_zone_load_context.cpp
+    ${SRC_DIR}/database/db_relocation.cpp
+    ${SRC_DIR}/database/db_stream.cpp
+    ${SRC_DIR}/database/db_registry_ownership_coordinator.cpp
+    ${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp
+    ${SRC_DIR}/universal/physicalmemory.cpp
+    ${SRC_DIR}/universal/physicalmemory_checked.cpp
+    ${SRC_DIR}/qcommon/sys_sync.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>
+    ${KISAK_PLATFORM_SERVICE_SOURCES}
+)
+target_include_directories(
+    kisakcod-db-facade-table-controller-coordinator-registry-tests
+    PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-facade-table-controller-coordinator-registry-tests
+    PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-facade-table-controller-coordinator-registry-tests
+    PRIVATE
+    KISAK_MP
+    KISAK_DB_ZONE_RUNTIME_TABLE_TESTING=1
+    KISAK_DB_ZONE_LOAD_CONTEXT_TESTING=1
+    KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1
+    KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1)
+target_link_libraries(
+    kisakcod-db-facade-table-controller-coordinator-registry-tests
+    PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(
+        kisakcod-db-facade-table-controller-coordinator-registry-tests
+        PRIVATE winmm)
+endif()
+if (MSVC)
+    # Multiple durable tables coexist in the chain fixture; keep the worker
+    # away from the small default Win32 test-process stack.
+    target_link_options(
+        kisakcod-db-facade-table-controller-coordinator-registry-tests
+        PRIVATE
+        "LINKER:/STACK:8388608")
+endif()
+kisakcod_test_warnings(
+    kisakcod-db-facade-table-controller-coordinator-registry-tests)
+set_target_properties(
+    kisakcod-db-facade-table-controller-coordinator-registry-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-facade-table-controller-coordinator-registry-chain
+    COMMAND kisakcod-db-facade-table-controller-coordinator-registry-tests
+)
+set_tests_properties(
+    database-facade-table-controller-coordinator-registry-chain
+    PROPERTIES TIMEOUT 30)
+
 add_executable(
     kisakcod-db-registry-ownership-coordinator-production-seal-tests
     db_registry_ownership_coordinator_production_seal_tests.cpp

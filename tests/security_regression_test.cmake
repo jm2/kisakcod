@@ -11452,7 +11452,9 @@ foreach(_registry_coordinator_source_seal_marker IN ITEMS
     "one nonblocking hash-write admission"
     "pre-held hash reader was not rejected"
     "_registry_coordinator_build_definition_paths"
-    "only the two reviewed runtime fixtures receive coordinator test authority"
+    "only the reviewed runtime fixtures (unit, integration, and the literal "
+    "facade->table->controller->coordinator->registry chain) receive "
+    "coordinator test authority"
     "positive macro-off production-seal target"
     "db_registry_ownership_coordinator_source_test.cmake")
     require_repository_contains(
