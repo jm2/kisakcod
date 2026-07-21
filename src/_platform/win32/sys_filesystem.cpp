@@ -634,3 +634,246 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
     return Sys_FileSystemListDirectoryFiltered(
         utf8Path, maximumEntries, nullptr, nullptr, entries);
 }
+
+namespace
+{
+thread_local const char *gRemoveTreeLastStage = "";
+
+void SetRemoveTreeStage(const char *const stage)
+{
+    gRemoveTreeLastStage = stage ? stage : "";
+}
+
+// Recursively removes one real directory opened on heldDirectory. Symbolic
+// links (Win32 reparse points) are removed, but never traversed. Real
+// regular files are deleted, and real subdirectories are recursed into and
+// removed after their contents are gone. depthRemaining bounds the
+// recursion so a pathological tree cannot exhaust the stack.
+bool RemoveHeldTree(
+    const HANDLE heldDirectory,
+    const std::size_t depthRemaining)
+{
+    if (depthRemaining == 0)
+    {
+        SetRemoveTreeStage("depth-exceeded");
+        return false;
+    }
+    WIN32_FIND_DATAW findData{};
+    std::wstring search;
+    const DWORD nameLength = GetFinalPathNameByHandleW(
+        heldDirectory, nullptr, 0, FILE_NAME_NORMALIZED);
+    if (nameLength == 0)
+    {
+        SetRemoveTreeStage("resolve-handle");
+        return false;
+    }
+    search.assign(nameLength, L'\0');
+    const DWORD written = GetFinalPathNameByHandleW(
+        heldDirectory, search.data(), nameLength, FILE_NAME_NORMALIZED);
+    if (written == 0 || written >= nameLength)
+    {
+        SetRemoveTreeStage("resolve-handle");
+        return false;
+    }
+    search.resize(written);
+    if (search.rfind(L"\\\\?\\", 0) != 0)
+    {
+        if (search.rfind(L"\\\\", 0) == 0)
+            search = L"\\\\?\\UNC\\" + search.substr(2);
+        else
+            search = L"\\\\?\\" + search;
+    }
+    if (!search.empty() && search.back() != L'\\' && search.back() != L'/')
+        search.push_back(L'\\');
+    search.push_back(L'*');
+
+    HANDLE findHandle = FindFirstFileExW(
+        search.c_str(),
+        FindExInfoBasic,
+        &findData,
+        FindExSearchNameMatch,
+        nullptr,
+        0);
+    if (findHandle == INVALID_HANDLE_VALUE)
+    {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND)
+            return true;
+        SetRemoveTreeStage("enumerate");
+        return false;
+    }
+
+    std::vector<std::wstring> subdirectories;
+    std::vector<std::wstring> files;
+    std::vector<std::wstring> reparseNames;
+    bool failed = false;
+    for (;;)
+    {
+        const wchar_t *const wideName = findData.cFileName;
+        const bool dot = wideName[0] == L'.' && wideName[1] == L'\0';
+        const bool dotDot = wideName[0] == L'.'
+            && wideName[1] == L'.'
+            && wideName[2] == L'\0';
+        const DWORD attributes = findData.dwFileAttributes;
+        if (!dot && !dotDot)
+        {
+            // Reparse points are not traversed. File symbolic links and
+            // directory junctions are removed as themselves via DeleteFileW /
+            // RemoveDirectoryW without ever opening their target.
+            if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+            {
+                try
+                {
+                    reparseNames.emplace_back(wideName);
+                }
+                catch (const std::bad_alloc &)
+                {
+                    failed = true;
+                    break;
+                }
+            }
+            else if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+            {
+                try
+                {
+                    subdirectories.emplace_back(wideName);
+                }
+                catch (const std::bad_alloc &)
+                {
+                    failed = true;
+                    break;
+                }
+            }
+            else
+            {
+                try
+                {
+                    files.emplace_back(wideName);
+                }
+                catch (const std::bad_alloc &)
+                {
+                    failed = true;
+                    break;
+                }
+            }
+        }
+
+        if (!FindNextFileW(findHandle, &findData))
+        {
+            if (GetLastError() != ERROR_NO_MORE_FILES)
+            {
+                SetRemoveTreeStage("enumerate-next");
+                failed = true;
+            }
+            break;
+        }
+    }
+    if (!FindClose(findHandle))
+    {
+        SetRemoveTreeStage("close-find");
+        failed = true;
+    }
+    if (failed)
+        return false;
+
+    const std::wstring directoryPath = search.substr(0, search.size() - 1);
+
+    for (const std::wstring &file : files)
+    {
+        const std::wstring filePath = directoryPath + file;
+        if (!DeleteFileW(filePath.c_str()))
+        {
+            SetRemoveTreeStage("delete-file");
+            return false;
+        }
+    }
+
+    for (const std::wstring &subdirectory : subdirectories)
+    {
+        const std::wstring subdirectoryPath = directoryPath + subdirectory;
+        const HANDLE childDirectory = OpenHeldDirectory(subdirectoryPath);
+        if (childDirectory == INVALID_HANDLE_VALUE)
+        {
+            SetRemoveTreeStage("open-subdirectory");
+            return false;
+        }
+        const bool recursed =
+            RemoveHeldTree(childDirectory, depthRemaining - 1);
+        CloseHandle(childDirectory);
+        if (!recursed)
+            return false;
+        if (!RemoveDirectoryW(subdirectoryPath.c_str()))
+        {
+            SetRemoveTreeStage("remove-directory");
+            return false;
+        }
+    }
+
+    for (const std::wstring &reparseName : reparseNames)
+    {
+        const std::wstring reparsePath = directoryPath + reparseName;
+        // Symbolic-link files delete via DeleteFileW regardless of target.
+        // Junctions and directory symlinks delete via RemoveDirectoryW with
+        // FILE_FLAG_OPEN_REPARSE_POINT semantics implied; RemoveDirectoryW
+        // works for both. If we cannot tell the reparse kind, prefer the
+        // file deletion first and fall back to the directory delete.
+        if (!DeleteFileW(reparsePath.c_str())
+            && (!RemoveDirectoryW(reparsePath.c_str())))
+        {
+            SetRemoveTreeStage("delete-reparse");
+            return false;
+        }
+    }
+    return true;
+}
+}
+
+bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
+{
+    SetRemoveTreeStage("");
+    std::wstring path;
+    if (!Utf8ToWide(utf8Path, &path) || HasUnsafeRawComponent(path))
+    {
+        SetRemoveTreeStage("invalid-arguments");
+        return false;
+    }
+    std::wstring absolutePath;
+    if (!GetAbsolutePath(path, &absolutePath))
+    {
+        SetRemoveTreeStage("resolve-absolute");
+        return false;
+    }
+    std::wstring extendedPath = AddExtendedPrefix(absolutePath);
+    while (extendedPath.size() > 0
+        && (extendedPath.back() == L'\\' || extendedPath.back() == L'/'))
+    {
+        extendedPath.pop_back();
+    }
+
+    // Open the leaf as a handle-relative directory, refusing reparse points
+    // and symbolic links. The held handle is owned by us and stays alive
+    // through the recursion so a racing rename cannot redirect the tree.
+    const HANDLE held = OpenHeldDirectory(extendedPath);
+    if (held == INVALID_HANDLE_VALUE)
+    {
+        SetRemoveTreeStage("open-leaf");
+        return false;
+    }
+
+    const bool removed = RemoveHeldTree(held, kSysFileSystemMaximumRecursionDepth);
+    CloseHandle(held);
+    if (!removed)
+        return false;
+    if (!RemoveDirectoryW(extendedPath.c_str()))
+    {
+        SetRemoveTreeStage("remove-directory");
+        return false;
+    }
+    SetRemoveTreeStage("");
+    return true;
+}
+
+const char *Sys_FileSystemRemoveTreeLastStage()
+{
+    return gRemoveTreeLastStage;
+}

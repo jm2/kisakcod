@@ -13,6 +13,32 @@
 // invalid encodings, and symbolic-link/reparse targets are rejected.
 bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *utf8Path);
 
+// Recursively deletes one real directory tree without following POSIX
+// symbolic links or Win32 reparse points. The leaf and every descent use
+// handle-relative operations so a racing rename cannot escape the boundary.
+// A leaf itself that is a symbolic link or reparse point is rejected.
+// During descent any symbolic link or reparse point encountered is left in
+// place and not traversed. Real regular files and real directories are
+// removed; special files (FIFOs, sockets, device nodes) are rejected.
+// Descent is bounded by kSysFileSystemMaximumRecursionDepth so a
+// pathological tree cannot exhaust the stack. Returns false on the first
+// error and stops; partial state may remain.
+bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *utf8Path);
+
+// Hard upper bound on directory levels the deletion service will descend
+// into from a single leaf. Defends against pathologically deep trees whose
+// recursion would otherwise overflow the call stack.
+constexpr std::size_t kSysFileSystemMaximumRecursionDepth = 256;
+
+// Returns the human-readable stage at which the most recent call to
+// Sys_FileSystemRemoveTree failed. Stages identify the suboperation that
+// returned the underlying error: "open-parent", "open-leaf",
+// "enumerate", "stat-child", "unlink-file", "remove-directory",
+// "unlink-symlink", "validate-handle", "depth-exceeded", or
+// "invalid-arguments". Returns an empty string when no failure has been
+// recorded (or after a successful call).
+const char *Sys_FileSystemRemoveTreeLastStage();
+
 // These queries return absolute UTF-8 paths without truncation. On failure,
 // including insufficient capacity, output is reset to an empty string when
 // possible. Callers may retry with a larger buffer.
