@@ -458,6 +458,7 @@ struct tagInfo_s // sizeof=0x70  (SP/MP same)
     float axis[4][3];
     float parentInvAxis[4][3];
 };
+RUNTIME_SIZE(tagInfo_s, 0x70, 0x78);
 
 struct trigger_ent_t // sizeof=0x14
 {                                       // ...

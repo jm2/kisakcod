@@ -70,6 +70,7 @@ struct animscripted_s
     float fEndRoll;
     float fOrientLerp;
 };
+RUNTIME_SIZE(animscripted_s, 0x60, 0x60);
 
 struct entityHandler_t
 {

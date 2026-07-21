@@ -268,7 +268,10 @@ void CL_ConfigstringModified()
         clients[0].configstrings[index] = 0;
         SL_RemoveRefToString(oldString);
 
-        const uint32_t newString = SL_GetString_(newValue, 0, 19);
+        const uint32_t newString = SL_GetString_(
+            newValue,
+            0,
+            MT_TYPE_CONFIG_STRING);
         if (!newString || static_cast<uint16_t>(newString) != newString)
         {
             if (newString)
@@ -286,18 +289,20 @@ void CL_ConfigstringModified()
 
 void __cdecl CL_Restart()
 {
-    unsigned __int16 *configstrings; // r31
-
     SND_ResetPauseSettingsToDefaults();
     //CG_StopAllRumbles(0); // KISAKTODO: cg_rumble
     R_Cinematic_StopPlayback();
-    configstrings = clients[0].configstrings;
-    do
+    for (uint32_t index = 0;
+         index < CLIENT_CONFIGSTRING_COUNT;
+         ++index)
     {
-        if (*configstrings)
+        if (clients[0].configstrings[index])
             MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\client\\cl_cgame.cpp", 279, 0, "%s", "!cl->configstrings[i]");
-        *configstrings++ = SL_GetString_("", 0, 19);
-    } while ((uintptr_t)configstrings < (uintptr_t)clients[0].mapname);
+        clients[0].configstrings[index] = SL_GetString_(
+            "",
+            0,
+            MT_TYPE_CONFIG_STRING);
+    }
     Con_ClearNotify(0);
     Con_ClearErrors(0);
     Con_InitMessageBuffer();

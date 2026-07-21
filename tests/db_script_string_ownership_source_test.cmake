@@ -2047,7 +2047,7 @@ foreach(_marker IN ITEMS
 endforeach()
 require_contains(
     _string_source
-    "uint32_t SL_GetLowercaseString(const char* str, uint32_t user) { return SL_GetLowercaseString_(str, user, 6); }"
+    "uint32_t SL_GetLowercaseString(const char* str, uint32_t user) { return SL_GetLowercaseString_(str, user, MT_TYPE_EXTERNAL); }"
     "lowercase wrapper delegates to the gated implementation")
 foreach(_marker IN ITEMS
     "void SL_Init() { Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"

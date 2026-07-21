@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <type_traits>
 
+#include <script/scr_memorytree.h>
 #include <universal/kisak_abi.h>
 
 #define HASH_STAT_FREE      0

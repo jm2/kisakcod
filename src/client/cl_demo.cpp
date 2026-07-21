@@ -857,7 +857,7 @@ void __cdecl CL_FinishLoadingDemo()
                     v6);
             }
             ++v0;
-        } while (v0 < 2815);
+        } while (v0 < CLIENT_CONFIGSTRING_COUNT);
         SV_SendGameState();
     }
 }

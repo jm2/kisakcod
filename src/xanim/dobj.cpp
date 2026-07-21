@@ -86,7 +86,11 @@ void __cdecl DObjInit()
     int duplicatePartBits[5]; // [esp+0h] [ebp-14h] BYREF
 
     memset(duplicatePartBits, 0, sizeof(duplicatePartBits));
-    g_empty = SL_GetStringOfSize((char *)duplicatePartBits, 0, 0x11u, 12);
+    g_empty = SL_GetStringOfSize(
+        (char *)duplicatePartBits,
+        0,
+        0x11u,
+        MT_TYPE_DUPLICATE_PARTS);
 }
 
 void __cdecl DObjShutdown()
@@ -480,7 +484,7 @@ void DObjPrepareCreateInternal(
             reinterpret_cast<char *>(duplicatePartBits),
             0,
             duplicateStringSize,
-            12);
+            MT_TYPE_DUPLICATE_PARTS);
         if (!duplicateString)
         {
             Com_Error(ERR_DROP, "could not intern a DObj duplicate-bone map");
@@ -503,7 +507,7 @@ void DObjPrepareCreateInternal(
         ? reusableModels
         : static_cast<XModel **>(MT_Alloc(
             DObjGetModelAllocationSize(numModels),
-            13));
+            MT_TYPE_MODEL_LIST));
     iassert(allocatedModels);
     iassert(
         reinterpret_cast<uintptr_t>(allocatedModels) % alignof(XModel *) == 0);
@@ -1813,7 +1817,7 @@ void DObjPrepareClone(const DObj_s *from, DObjCreatePlan *plan)
             reinterpret_cast<char *>(duplicateData),
             0,
             duplicatePartsSize,
-            12);
+            MT_TYPE_DUPLICATE_PARTS);
         if (!preparedDuplicateParts)
         {
             Com_Error(ERR_DROP, "could not intern a cloned DObj duplicate map");
@@ -1835,7 +1839,7 @@ void DObjPrepareClone(const DObj_s *from, DObjCreatePlan *plan)
 
     XModel **const models = static_cast<XModel **>(MT_Alloc(
         DObjGetModelAllocationSize(numModels),
-        13));
+        MT_TYPE_MODEL_LIST));
     iassert(models);
     iassert(reinterpret_cast<uintptr_t>(models) % alignof(XModel *) == 0);
     memcpy(models, modelData, modelDataSize);
