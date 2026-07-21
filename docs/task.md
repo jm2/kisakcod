@@ -70,22 +70,22 @@ of checked boxes.
       zero unresolved threads at `79413a18` in run **29787341109**, squash-merge
       PR #74 as `f996e16b`, and pass all nine authoritative post-merge jobs in
       run **29788146050**.
-  - [ ] Before production enrollment, add a literal facade -> table ->
-    controller -> coordinator -> registry callback-retry fixture; current
+  - [x] Before production enrollment, add a literal facade -> table ->
+    controller -> coordinator -> registry callback-retry fixture (ac-dii); current
     coverage proves that chain compositionally.
-  - [ ] Add an exact-key, by-value pending-copy read/visitor so delayed-image
+  - [x] Add an exact-key, by-value pending-copy read/visitor (ac-a46) so delayed-image
     completion and abandonment never retain `g_copyInfo` pointers.
-  - [ ] Add stable process-lifetime contexts for all 33 physical zone slots,
+  - [x] Add stable process-lifetime contexts for all 33 physical zone slots (ac-pfe),
     outside `XZone` and PMem, retaining exact generation identity through terminal
     reset.
-  - [ ] Convert the required registry/hash-lock helpers to checked, no-report
+  - [x] Convert the required registry/hash-lock helpers (ac-01c) to checked, no-report
     operations that cannot unlock coordinator-owned state or cross retained
     authority through `Com_Error`/`longjmp`.
-  - [ ] Enroll a single narrow production bridge and replace all seven frozen raw
+  - [x] Enroll a single narrow production bridge (ac-ds4) and replace all seven frozen raw
     loader/registry operations in one reviewed change.
-- [ ] Enroll the guarded native FX/impact path and complete its rollback,
+- [x] Enroll the guarded native FX/impact path (ac-gw6) and complete its rollback,
   high-address, alias, unload, and slot-reuse coverage.
-- [ ] Replace the remaining XAnim/XModel raw fast-file reads with bounded,
+- [x] Replace the remaining XAnim/XModel raw fast-file reads (ac-vxc) with bounded,
   transactional cursors.
 - [ ] Complete the remaining runtime ABI widening, production-path fuzzing, and
   loader/writer/save-side work that gates the first native 64-bit engine.
@@ -125,8 +125,8 @@ of checked boxes.
   - [x] Provide tested Win32/POSIX time, synchronization, event/thread, virtual
     memory, UTF-8 filesystem/path, directory enumeration, worker-gate, and
     standard-stream console boundaries.
-  - [ ] Finish sockets, process launch/control, handle-relative recursive deletion,
-    POSIX/Mach crash freezing, and native Win32 headless character-console input.
+  - [x] Finish sockets, process launch/control (ac-6f6), handle-relative recursive deletion (ac-3iv),
+    POSIX/Mach crash freezing (ac-6f6), and native Win32 headless character-console input (ac-j6q).
   - [ ] Populate and link the Linux/macOS production engine source sets.
 - [ ] **M4 — Native 64-bit runtime ABI.**
   - [x] Widen the completed XAnim, DObj, EffectsCore, ODE user-data, physics-pool,
