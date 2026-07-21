@@ -162,6 +162,7 @@ using zone_load::ZoneLoadContextSlotTestAccess;
 using zone_ownership::ZoneScriptStringOwnershipControllerTestAccess;
 using zone_ownership::ZoneScriptStringOwnershipPhase;
 using zone_ownership::ZoneScriptStringOwnershipStatus;
+using zone_pending_copy::PendingCopyLedgerTestAccess;
 using zone_runtime::ProductionZoneRuntimeTable;
 using zone_runtime::TryAllocateZoneRuntimeMemory;
 using zone_runtime::TryAppendZoneRuntimePendingCopy;
@@ -184,12 +185,14 @@ using zone_runtime::TryDrainNextZoneRuntimePendingCopy;
 using zone_runtime::TryEndZoneRuntimePhysicalAllocation;
 using zone_runtime::TryFinishZoneRuntimeScriptStringAbandonment;
 using zone_runtime::TryFinishZoneRuntimePendingCopyDrain;
+using zone_runtime::TryGetZoneRuntimePendingCopyView;
 using zone_runtime::TryGetZoneRuntimeEntry;
 using zone_runtime::TryGetZoneRuntimeGeneration;
 using zone_runtime::TryInitializeZoneRuntimeTable;
 using zone_runtime::TryInvalidateZoneRuntimeStreams;
 using zone_runtime::TryPrepareZoneRuntimeAdmission;
 using zone_runtime::TryPrepareZoneRuntimeScriptStringCommit;
+using zone_runtime::TryReadZoneRuntimePendingCopy;
 using zone_runtime::TryResetZoneRuntimeTerminalReceipt;
 using zone_runtime::TryRollbackNextZoneRuntimeScriptString;
 using zone_runtime::TrySealZoneRuntimeScriptStrings;
@@ -198,6 +201,7 @@ using zone_runtime::TryTransferNextZoneRuntimeScriptString;
 using zone_runtime::TryUnloadZoneRuntimeGeneration;
 using zone_runtime::ZoneRuntimeEntry;
 using zone_runtime::ZoneRuntimeGenerationView;
+using zone_runtime::ZoneRuntimePendingCopyView;
 using zone_runtime::ZoneRuntimeReceiptCapsule;
 using zone_runtime::ZoneRuntimeGenerationCallbacks;
 using zone_runtime::ZoneRuntimeExecutionMode;
@@ -358,7 +362,51 @@ struct CompositeRuntimeDriver final
         ZoneRuntimeTableStatus::Success;
     ZoneRuntimeTableStatus pendingCompletionReentry =
         ZoneRuntimeTableStatus::Success;
+    bool inspectPendingCopies = false;
+    std::uint32_t pendingInspectionExpectedCount = 1;
+    struct PendingInspection final
+    {
+        ZoneRuntimeTableStatus firstView =
+            ZoneRuntimeTableStatus::InvalidState;
+        ZoneRuntimeTableStatus firstRead =
+            ZoneRuntimeTableStatus::InvalidState;
+        ZoneRuntimeTableStatus secondView =
+            ZoneRuntimeTableStatus::InvalidState;
+        ZoneRuntimeTableStatus secondRead =
+            ZoneRuntimeTableStatus::InvalidState;
+        ZoneRuntimePendingCopyView view{};
+        zone_pending_copy::PendingCopyRecord record{};
+    } ensureBorrowedPending{}, ensureConsumedPending{},
+        completingPending{}, admitBorrowedPending{};
 };
+
+void InspectCompositePendingCopies(
+    CompositeRuntimeDriver *const driver,
+    CompositeRuntimeDriver::PendingInspection *const probe) noexcept
+{
+    if (!driver || !probe)
+        return;
+    probe->view = {driver->key, 777, 0};
+    probe->record = {driver->key, 123, 0};
+    probe->firstView = TryGetZoneRuntimePendingCopyView(
+        driver->table, driver->key.slot, driver->key, &probe->view);
+    probe->firstRead = TryReadZoneRuntimePendingCopy(
+        driver->table,
+        driver->key.slot,
+        driver->key,
+        driver->pendingInspectionExpectedCount,
+        0,
+        &probe->record);
+    probe->secondView = TryGetZoneRuntimePendingCopyView(
+        driver->table, driver->key.slot, driver->key, &probe->view);
+    probe->secondRead = TryReadZoneRuntimePendingCopy(
+        driver->table,
+        driver->key.slot,
+        driver->key,
+        driver->pendingInspectionExpectedCount,
+        0,
+        &probe->record);
+}
 
 std::uint8_t SnapshotRegistryCallbackWindow(
     ZoneRuntimeTable *const table,
@@ -393,6 +441,11 @@ EnsureCompositeRuntimeUnreachable(void *const context) noexcept
             ZoneScriptStringUnpublishStatus::UnsafeFailure;
     }
     const std::size_t call = driver->ensureCalls++;
+    if (driver->inspectPendingCopies && call == 0)
+    {
+        InspectCompositePendingCopies(
+            driver, &driver->ensureBorrowedPending);
+    }
     ZoneLoadContextKey staleKey = driver->key;
     ++staleKey.generation;
     driver->ensureRejectedRegistryAuthentication =
@@ -402,6 +455,11 @@ EnsureCompositeRuntimeUnreachable(void *const context) noexcept
     driver->ensureRegistryAuthentication = ZoneRuntimeTableTestAccess::
         AuthenticateExactRegistryLifecycleCallback(
             driver->table, driver->key.slot, driver->key);
+    if (driver->inspectPendingCopies && call == 0)
+    {
+        InspectCompositePendingCopies(
+            driver, &driver->ensureConsumedPending);
+    }
     driver->ensureRegistryReauthentication = ZoneRuntimeTableTestAccess::
         AuthenticateExactRegistryLifecycleCallback(
             driver->table, driver->key.slot, driver->key);
@@ -503,6 +561,11 @@ void CompleteCompositePendingAdmission(void *const context) noexcept
     if (driver)
     {
         ++driver->pendingCompletionCalls;
+        if (driver->inspectPendingCopies)
+        {
+            InspectCompositePendingCopies(
+                driver, &driver->completingPending);
+        }
         driver->pendingRegistryAuthentication = ZoneRuntimeTableTestAccess::
             AuthenticateExactRegistryLifecycleCallback(
                 driver->table, driver->key.slot, driver->key);
@@ -527,6 +590,11 @@ void AdmitCompositeRuntimeLive(void *const context) noexcept
     if (driver)
     {
         ++driver->admitCalls;
+        if (driver->inspectPendingCopies)
+        {
+            InspectCompositePendingCopies(
+                driver, &driver->admitBorrowedPending);
+        }
         driver->admitRegistryAuthentication = ZoneRuntimeTableTestAccess::
             AuthenticateExactRegistryLifecycleCallback(
                 driver->table, driver->key.slot, driver->key);
@@ -1200,6 +1268,10 @@ void TestLayoutNoexceptAndDefaultState()
     static_assert(!std::is_copy_constructible_v<ZoneRuntimeTable>);
     static_assert(!std::is_move_constructible_v<ZoneRuntimeTable>);
     static_assert(sizeof(ZoneRuntimeGenerationView) == 0x18);
+    static_assert(sizeof(ZoneRuntimePendingCopyView) == 0x18);
+    static_assert(std::is_trivially_copyable_v<ZoneRuntimePendingCopyView>);
+    static_assert(!std::is_pointer_v<decltype(
+        ZoneRuntimePendingCopyView::key)>);
     static_assert(sizeof(ZoneLoadCleanupCallbacks) == 2 * sizeof(void *));
     static_assert(sizeof(ZoneRuntimeTableStatus) == 1);
     static_assert(static_cast<unsigned>(ZoneRuntimeTableStatus::Retry) == 10);
@@ -1243,6 +1315,34 @@ void TestLayoutNoexceptAndDefaultState()
         static_cast<ZoneRuntimeTable *>(nullptr),
         1,
         ZoneLoadContextKey{})));
+    static_assert(noexcept(TryGetZoneRuntimePendingCopyView(
+        static_cast<ZoneRuntimeTable *>(nullptr),
+        1,
+        ZoneLoadContextKey{},
+        static_cast<ZoneRuntimePendingCopyView *>(nullptr))));
+    static_assert(noexcept(TryReadZoneRuntimePendingCopy(
+        static_cast<ZoneRuntimeTable *>(nullptr),
+        1,
+        ZoneLoadContextKey{},
+        1,
+        0,
+        static_cast<zone_pending_copy::PendingCopyRecord *>(nullptr))));
+
+    ZoneRuntimePendingCopyView canonicalPendingView{
+        {1, 1, 0},
+        zone_pending_copy::kPendingCopyRecordCapacity,
+        0,
+    };
+    CHECK(static_cast<bool>(canonicalPendingView));
+    canonicalPendingView.reserved = 1;
+    CHECK(!canonicalPendingView);
+    canonicalPendingView.reserved = 0;
+    canonicalPendingView.recordCount =
+        zone_pending_copy::kPendingCopyRecordCapacity + 1;
+    CHECK(!canonicalPendingView);
+    canonicalPendingView.recordCount = 0;
+    canonicalPendingView.key = {};
+    CHECK(!canonicalPendingView);
 
     ZoneRuntimeTable table{};
     CHECK(!table.initialized());
@@ -1273,6 +1373,25 @@ void TestLayoutNoexceptAndDefaultState()
         == ZoneRuntimeTableStatus::InvalidArgument);
     CHECK(
         TryGetZoneRuntimeGeneration(&table, 1, key, nullptr)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    ZoneRuntimePendingCopyView pendingView{{9, 9, 0}, 9, 0};
+    const ZoneRuntimePendingCopyView pendingViewSentinel = pendingView;
+    CHECK(TryGetZoneRuntimePendingCopyView(&table, 1, key, &pendingView)
+        == ZoneRuntimeTableStatus::InvalidState);
+    CHECK(pendingView.key == pendingViewSentinel.key);
+    CHECK(pendingView.recordCount == pendingViewSentinel.recordCount);
+    zone_pending_copy::PendingCopyRecord pendingRecord{
+        {9, 9, 0}, 9, 0};
+    const auto pendingRecordSentinel = pendingRecord;
+    CHECK(TryReadZoneRuntimePendingCopy(
+        &table, 1, key, 1, 0, &pendingRecord)
+        == ZoneRuntimeTableStatus::InvalidState);
+    CHECK(pendingRecord == pendingRecordSentinel);
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        &table, 1, key, nullptr)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        &table, 1, key, 0, 0, &pendingRecord)
         == ZoneRuntimeTableStatus::InvalidArgument);
     CHECK(
         TryUnloadZoneRuntimeGeneration(nullptr, 1, key, {})
@@ -5115,6 +5234,445 @@ void TestCompositeCallbacksRejectLegacyOwnershipBeforeMutation()
     CHECK(cleanupCount == 8);
 }
 
+void TestExactPendingCopyInspectionAndSnapshotStability()
+{
+    const pmem_runtime::InitializationStatus initialization =
+        pmem_runtime::TryInitialize();
+    CHECK(initialization == pmem_runtime::InitializationStatus::Success
+        || initialization
+            == pmem_runtime::InitializationStatus::AlreadyInitialized);
+    if (initialization != pmem_runtime::InitializationStatus::Success
+        && initialization
+            != pmem_runtime::InitializationStatus::AlreadyInitialized)
+    {
+        return;
+    }
+
+    CompositeRuntimeFixture fixture{};
+    CHECK(fixture.enroll(28));
+    CHECK(fixture.beginAllocation());
+    CHECK(fixture.setupStorage());
+    CHECK(fixture.setupStreams());
+
+    ZoneRuntimePendingCopyView view{{77, 7, 0}, 77, 0};
+    const ZoneRuntimePendingCopyView initialView = view;
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, &view)
+        == ZoneRuntimeTableStatus::InvalidPhase);
+    CHECK(view.key == initialView.key);
+    CHECK(view.recordCount == initialView.recordCount);
+    CHECK(view.reserved == initialView.reserved);
+
+    CHECK(fixture.beginPendingCopies(true));
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, &view)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(view.key == fixture.key);
+    CHECK(view.recordCount == 1);
+    CHECK(view.reserved == 0);
+    CHECK(static_cast<bool>(view));
+
+    const ZoneRuntimePendingCopyView oneRecordSnapshot = view;
+    CHECK(TryAppendZoneRuntimePendingCopy(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, 11)
+        == ZoneRuntimeTableStatus::Success);
+    zone_pending_copy::PendingCopyRecord record{
+        {99, 9, 0}, 99, 0};
+    const auto initialRecord = record;
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        oneRecordSnapshot.key,
+        oneRecordSnapshot.recordCount,
+        0,
+        &record) == ZoneRuntimeTableStatus::CountMismatch);
+    CHECK(record == initialRecord);
+
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, &view)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(view.key == fixture.key);
+    CHECK(view.recordCount == 2);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        view.key,
+        view.recordCount,
+        0,
+        &record) == ZoneRuntimeTableStatus::Success);
+    CHECK(record.key == fixture.key);
+    CHECK(record.assetEntryIndex == 7);
+    CHECK(record.reserved == 0);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        view.key,
+        view.recordCount,
+        1,
+        &record) == ZoneRuntimeTableStatus::Success);
+    CHECK(record.key == fixture.key);
+    CHECK(record.assetEntryIndex == 11);
+    CHECK(record.reserved == 0);
+
+    record = initialRecord;
+    CHECK(TryReadZoneRuntimePendingCopy(
+        nullptr,
+        0,
+        {},
+        zone_pending_copy::kPendingCopyRecordCapacity + 1,
+        0,
+        nullptr) == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        2,
+        2,
+        &record) == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(record == initialRecord);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        3,
+        0,
+        &record) == ZoneRuntimeTableStatus::CountMismatch);
+    CHECK(record == initialRecord);
+
+    ZoneRuntimePendingCopyView viewSentinel{{88, 8, 0}, 88, 0};
+    ZoneRuntimePendingCopyView failedView = viewSentinel;
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, {}, &failedView)
+        == ZoneRuntimeTableStatus::InvalidKey);
+    CHECK(failedView.key == viewSentinel.key);
+    CHECK(failedView.recordCount == viewSentinel.recordCount);
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), 0, fixture.key, &failedView)
+        == ZoneRuntimeTableStatus::InvalidSlot);
+    CHECK(failedView.key == viewSentinel.key);
+    ZoneLoadContextKey staleKey = fixture.key;
+    ++staleKey.generation;
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, staleKey, &failedView)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(failedView.key == viewSentinel.key);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        staleKey,
+        2,
+        0,
+        &record) == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(record == initialRecord);
+
+    ZoneLoadContextKey crossSlotKey = fixture.key;
+    crossSlotKey.slot = 26;
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        crossSlotKey,
+        &failedView) == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(failedView.key == viewSentinel.key);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        crossSlotKey,
+        2,
+        0,
+        &record) == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(record == initialRecord);
+
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        reinterpret_cast<ZoneRuntimePendingCopyView *>(
+            fixture.table.get()))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    auto *const pendingReceipt =
+        ZoneRuntimeTableTestAccess::PendingCopyAdmissionReceipt(
+            fixture.table.get(), fixture.physicalSlot);
+    CHECK(pendingReceipt != nullptr);
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        reinterpret_cast<ZoneRuntimePendingCopyView *>(pendingReceipt))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+
+    ZoneRuntimePendingCopyView keyAliasedView{fixture.key, 55, 0};
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        keyAliasedView.key,
+        &keyAliasedView) == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(keyAliasedView.key == fixture.key);
+    CHECK(keyAliasedView.recordCount == 55);
+    zone_pending_copy::PendingCopyRecord keyAliasedRecord{
+        fixture.key, 55, 0};
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        keyAliasedRecord.key,
+        2,
+        0,
+        &keyAliasedRecord) == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(keyAliasedRecord.key == fixture.key);
+    CHECK(keyAliasedRecord.assetEntryIndex == 55);
+
+    std::array<std::uint8_t,
+        sizeof(ZoneRuntimePendingCopyView) + 1> misalignedView{};
+    misalignedView.fill(UINT8_C(0xA5));
+    const auto misalignedViewBefore = misalignedView;
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        reinterpret_cast<ZoneRuntimePendingCopyView *>(
+            misalignedView.data() + 1))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(misalignedView == misalignedViewBefore);
+    std::array<std::uint8_t,
+        sizeof(zone_pending_copy::PendingCopyRecord) + 1>
+        misalignedRecord{};
+    misalignedRecord.fill(UINT8_C(0x5A));
+    const auto misalignedRecordBefore = misalignedRecord;
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        2,
+        0,
+        reinterpret_cast<zone_pending_copy::PendingCopyRecord *>(
+            misalignedRecord.data() + 1))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(misalignedRecord == misalignedRecordBefore);
+
+    CHECK(fixture.slabAllocation.address != nullptr);
+    if (!fixture.slabAllocation.address)
+        return;
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        reinterpret_cast<ZoneRuntimePendingCopyView *>(
+            fixture.slabAllocation.address))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        2,
+        0,
+        reinterpret_cast<zone_pending_copy::PendingCopyRecord *>(
+            fixture.slabAllocation.address))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(fixture.table->initialized());
+
+    std::array<std::uint8_t, sizeof(XZoneMemory)> zoneBefore{};
+    std::memcpy(zoneBefore.data(), &fixture.zone, zoneBefore.size());
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        reinterpret_cast<ZoneRuntimePendingCopyView *>(&fixture.zone))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(std::memcmp(
+        zoneBefore.data(), &fixture.zone, zoneBefore.size()) == 0);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        2,
+        0,
+        reinterpret_cast<zone_pending_copy::PendingCopyRecord *>(
+            &fixture.zone))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(std::memcmp(
+        zoneBefore.data(), &fixture.zone, zoneBefore.size()) == 0);
+    CHECK(fixture.table->initialized());
+
+    ZoneLoadContextKey otherKey{};
+    CHECK(TryClaimZoneRuntimeGeneration(
+        fixture.table.get(), 26, &otherKey)
+        == ZoneRuntimeTableStatus::Success);
+    CompositeRuntimeDriver otherDriver{};
+    otherDriver.table = fixture.table.get();
+    otherDriver.key = otherKey;
+    CHECK(TryBindZoneRuntimeGenerationCallbacks(
+        fixture.table.get(),
+        26,
+        otherKey,
+        MakeCompositeRuntimeCallbacks(&otherDriver))
+        == ZoneRuntimeTableStatus::Success);
+    ZoneRuntimeTableTestAccess::SetCallbackMarker(
+        fixture.table.get(), 26, 2);
+    failedView = viewSentinel;
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, &failedView)
+        == ZoneRuntimeTableStatus::Busy);
+    CHECK(failedView.key == viewSentinel.key);
+    CHECK(failedView.recordCount == viewSentinel.recordCount);
+    CHECK(fixture.table->initialized());
+    ZoneRuntimeTableTestAccess::SetCallbackMarker(
+        fixture.table.get(), 26, 0);
+
+    CHECK(fixture.beginExactScriptStrings());
+    CHECK(TrySealZoneRuntimeScriptStrings(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryBeginZoneRuntimeScriptStringTransfer(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryTransferNextZoneRuntimeScriptString(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryPrepareZoneRuntimeScriptStringCommit(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryPrepareZoneRuntimeAdmission(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, &view)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(view.recordCount == 2);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, 2, 1,
+        &record) == ZoneRuntimeTableStatus::Success);
+    CHECK(record.assetEntryIndex == 11);
+
+    fixture.driver.inspectPendingCopies = true;
+    fixture.driver.pendingInspectionExpectedCount = 2;
+    CHECK(TryInvalidateZoneRuntimeStreams(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryEndZoneRuntimePhysicalAllocation(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryCommitZoneRuntimeGeneration(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+
+    const auto &completing = fixture.driver.completingPending;
+    CHECK(completing.firstView == ZoneRuntimeTableStatus::Busy);
+    CHECK(completing.firstRead == ZoneRuntimeTableStatus::Busy);
+    CHECK(completing.secondView == ZoneRuntimeTableStatus::Busy);
+    CHECK(completing.secondRead == ZoneRuntimeTableStatus::Busy);
+    CHECK(completing.view.key == fixture.key);
+    CHECK(completing.view.recordCount == 777);
+    CHECK(completing.record.key == fixture.key);
+    CHECK(completing.record.assetEntryIndex == 123);
+
+    const auto &admitted = fixture.driver.admitBorrowedPending;
+    CHECK(admitted.firstView == ZoneRuntimeTableStatus::Success);
+    CHECK(admitted.firstRead == ZoneRuntimeTableStatus::Success);
+    CHECK(admitted.secondView == ZoneRuntimeTableStatus::Success);
+    CHECK(admitted.secondRead == ZoneRuntimeTableStatus::Success);
+    CHECK(admitted.view.key == fixture.key);
+    CHECK(admitted.view.recordCount == 2);
+    CHECK(admitted.record.key == fixture.key);
+    CHECK(admitted.record.assetEntryIndex == 7);
+    CHECK(fixture.driver.admitRegistryAuthentication
+        == ZoneRuntimeTableStatus::Success);
+
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, &view)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(view.recordCount == 2);
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, 2, 0,
+        &record) == ZoneRuntimeTableStatus::Success);
+    CHECK(record.assetEntryIndex == 7);
+
+    PendingCopyDrainProbe drain{};
+    CHECK(TryBeginZoneRuntimePendingCopyDrain(
+        fixture.table.get(), {&drain, ConsumePendingCopy})
+        == ZoneRuntimeTableStatus::Success);
+    failedView = viewSentinel;
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, &failedView)
+        == ZoneRuntimeTableStatus::Busy);
+    CHECK(failedView.key == viewSentinel.key);
+    CHECK(failedView.recordCount == viewSentinel.recordCount);
+    CHECK(TryDrainNextZoneRuntimePendingCopy(fixture.table.get())
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryDrainNextZoneRuntimePendingCopy(fixture.table.get())
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(drain.calls == 2);
+    CHECK(TryFinishZoneRuntimePendingCopyDrain(fixture.table.get())
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, &view)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(view.key == fixture.key);
+    CHECK(view.recordCount == 0);
+    CHECK(static_cast<bool>(view));
+    record = initialRecord;
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(), fixture.physicalSlot, fixture.key, 2, 0,
+        &record) == ZoneRuntimeTableStatus::CountMismatch);
+    CHECK(record == initialRecord);
+
+    const ZoneLoadContextKey oldKey = fixture.key;
+    CHECK(TryUnloadZoneRuntimeGeneration(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryResetZoneRuntimeTerminalReceipt(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    ZoneLoadContextKey replacement{};
+    CHECK(TryClaimZoneRuntimeGeneration(
+        fixture.table.get(), fixture.physicalSlot, &replacement)
+        == ZoneRuntimeTableStatus::Success);
+    failedView = viewSentinel;
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, oldKey, &failedView)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(failedView.key == viewSentinel.key);
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        fixture.table.get(), fixture.physicalSlot, replacement, &failedView)
+        == ZoneRuntimeTableStatus::InvalidPhase);
+    CHECK(failedView.key == viewSentinel.key);
+
+    CompositeRuntimeFixture discarded{};
+    CHECK(discarded.enroll(27));
+    CHECK(discarded.beginAllocation());
+    CHECK(discarded.setupStorage());
+    CHECK(discarded.setupStreams());
+    CHECK(discarded.beginPendingCopies(true));
+    CHECK(discarded.beginExactScriptStrings());
+    discarded.driver.inspectPendingCopies = true;
+    CHECK(DriveCompositeAbandonmentToTerminal(discarded));
+    const auto &borrowed = discarded.driver.ensureBorrowedPending;
+    CHECK(borrowed.firstView == ZoneRuntimeTableStatus::Success);
+    CHECK(borrowed.firstRead == ZoneRuntimeTableStatus::Success);
+    CHECK(borrowed.secondView == ZoneRuntimeTableStatus::Success);
+    CHECK(borrowed.secondRead == ZoneRuntimeTableStatus::Success);
+    CHECK(borrowed.view.key == discarded.key);
+    CHECK(borrowed.view.recordCount == 1);
+    CHECK(borrowed.record.assetEntryIndex == 7);
+    const auto &consumed = discarded.driver.ensureConsumedPending;
+    CHECK(consumed.firstView == ZoneRuntimeTableStatus::Busy);
+    CHECK(consumed.firstRead == ZoneRuntimeTableStatus::Busy);
+    CHECK(consumed.secondView == ZoneRuntimeTableStatus::Busy);
+    CHECK(consumed.secondRead == ZoneRuntimeTableStatus::Busy);
+    CHECK(consumed.view.key == discarded.key);
+    CHECK(consumed.view.recordCount == 777);
+    CHECK(consumed.record.assetEntryIndex == 123);
+    CHECK(discarded.driver.ensureRegistryAuthentication
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryGetZoneRuntimePendingCopyView(
+        discarded.table.get(),
+        discarded.physicalSlot,
+        discarded.key,
+        &view) == ZoneRuntimeTableStatus::Success);
+    CHECK(view.key == discarded.key);
+    CHECK(view.recordCount == 0);
+    CHECK(static_cast<bool>(view));
+    CHECK(ResetCompositeTerminalReceipt(discarded));
+}
+
 void TestExactRegistryLifecycleCallbackMarkerClassification()
 {
     CompositeRuntimeFixture ordinary{};
@@ -5455,6 +6013,238 @@ void TestUnsafeMutableBoundary(const bool corruptPostcondition)
     CHECK(output == UINT32_C(0x1234ABCD));
 }
 
+bool SetupUnsafePendingCopyFixture(
+    CompositeRuntimeFixture &fixture) noexcept
+{
+    const pmem_runtime::InitializationStatus initialization =
+        pmem_runtime::TryInitialize();
+    return (initialization
+                == pmem_runtime::InitializationStatus::Success
+            || initialization
+                == pmem_runtime::InitializationStatus::AlreadyInitialized)
+        && fixture.enroll(24)
+        && fixture.beginAllocation()
+        && fixture.setupStorage()
+        && fixture.setupStreams()
+        && fixture.beginPendingCopies(true);
+}
+
+void CorruptPendingCopyRecordForRead(
+    void *,
+    ZoneRuntimeTable *const table,
+    const std::uint32_t,
+    const ZoneLoadContextKey &key) noexcept
+{
+    auto *const ledger =
+        ZoneRuntimeTableTestAccess::PendingCopyLedger(table);
+    PendingCopyLedgerTestAccess::SetRecord(
+        ledger, 0, {key, 0, 0});
+}
+
+void CorruptPendingCopyPostReadKey(
+    void *,
+    ZoneRuntimeTable *const table,
+    const std::uint32_t physicalSlot,
+    const ZoneLoadContextKey &key) noexcept
+{
+    ZoneLoadContextKey corrupt = key;
+    ++corrupt.generation;
+    ZoneRuntimeTableTestAccess::SetKey(
+        table, physicalSlot, corrupt);
+}
+
+void AppendPendingCopyDuringPostRead(
+    void *,
+    ZoneRuntimeTable *const table,
+    const std::uint32_t,
+    const ZoneLoadContextKey &key) noexcept
+{
+    auto *const ledger =
+        ZoneRuntimeTableTestAccess::PendingCopyLedger(table);
+    PendingCopyLedgerTestAccess::SetRecord(
+        ledger, 1, {key, 12, 0});
+    PendingCopyLedgerTestAccess::SetRecordCount(ledger, 2);
+    PendingCopyLedgerTestAccess::SetDescriptorRecordCount(
+        ledger, 0, 2);
+}
+
+void TestUnsafePendingCopyInspectionBoundary(
+    const std::string_view kind)
+{
+    CompositeRuntimeFixture fixture{};
+    CHECK(SetupUnsafePendingCopyFixture(fixture));
+    if (!fixture.table->initialized())
+        return;
+
+    if (kind == "malformed-record")
+    {
+        ZoneRuntimeTableTestAccess::SetPendingCopyReadHook(
+            ZoneRuntimeTableTestAccess::PendingCopyReadHookStage::
+                BeforeLowerRead,
+            nullptr,
+            CorruptPendingCopyRecordForRead);
+    }
+    else if (kind == "postauth-drift")
+    {
+        ZoneRuntimeTableTestAccess::SetPendingCopyReadHook(
+            ZoneRuntimeTableTestAccess::PendingCopyReadHookStage::
+                AfterLowerRead,
+            nullptr,
+            CorruptPendingCopyPostReadKey);
+    }
+    else if (kind == "count-drift")
+    {
+        ZoneRuntimeTableTestAccess::SetPendingCopyReadHook(
+            ZoneRuntimeTableTestAccess::PendingCopyReadHookStage::
+                AfterLowerRead,
+            nullptr,
+            AppendPendingCopyDuringPostRead);
+    }
+    else if (kind == "duplicate-marker")
+    {
+        ZoneLoadContextKey otherKey{};
+        CHECK(TryClaimZoneRuntimeGeneration(
+            fixture.table.get(), 25, &otherKey)
+            == ZoneRuntimeTableStatus::Success);
+        CompositeRuntimeDriver otherDriver{};
+        otherDriver.table = fixture.table.get();
+        otherDriver.key = otherKey;
+        CHECK(TryBindZoneRuntimeGenerationCallbacks(
+            fixture.table.get(),
+            25,
+            otherKey,
+            MakeCompositeRuntimeCallbacks(&otherDriver))
+            == ZoneRuntimeTableStatus::Success);
+        ZoneRuntimeTableTestAccess::SetCallbackMarker(
+            fixture.table.get(), fixture.physicalSlot, 2);
+        ZoneRuntimeTableTestAccess::SetCallbackMarker(
+            fixture.table.get(), 25, 2);
+        ZoneRuntimePendingCopyView view{{91, 9, 0}, 91, 0};
+        const ZoneRuntimePendingCopyView sentinel = view;
+        CHECK(TryGetZoneRuntimePendingCopyView(
+            fixture.table.get(),
+            fixture.physicalSlot,
+            fixture.key,
+            &view) == ZoneRuntimeTableStatus::UnsafeFailure);
+        CHECK(view.key == sentinel.key);
+        CHECK(view.recordCount == sentinel.recordCount);
+        CHECK(!fixture.table->initialized());
+        return;
+    }
+    else if (kind == "duplicate-unrelated-markers")
+    {
+        ZoneLoadContextKey firstOtherKey{};
+        ZoneLoadContextKey secondOtherKey{};
+        CHECK(TryClaimZoneRuntimeGeneration(
+            fixture.table.get(), 25, &firstOtherKey)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(TryClaimZoneRuntimeGeneration(
+            fixture.table.get(), 26, &secondOtherKey)
+            == ZoneRuntimeTableStatus::Success);
+        CompositeRuntimeDriver firstOtherDriver{};
+        CompositeRuntimeDriver secondOtherDriver{};
+        firstOtherDriver.table = fixture.table.get();
+        firstOtherDriver.key = firstOtherKey;
+        secondOtherDriver.table = fixture.table.get();
+        secondOtherDriver.key = secondOtherKey;
+        CHECK(TryBindZoneRuntimeGenerationCallbacks(
+            fixture.table.get(),
+            25,
+            firstOtherKey,
+            MakeCompositeRuntimeCallbacks(&firstOtherDriver))
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(TryBindZoneRuntimeGenerationCallbacks(
+            fixture.table.get(),
+            26,
+            secondOtherKey,
+            MakeCompositeRuntimeCallbacks(&secondOtherDriver))
+            == ZoneRuntimeTableStatus::Success);
+        ZoneRuntimeTableTestAccess::SetCallbackMarker(
+            fixture.table.get(), 25, 2);
+        ZoneRuntimeTableTestAccess::SetCallbackMarker(
+            fixture.table.get(), 26, 1);
+        ZoneRuntimePendingCopyView view{{95, 9, 0}, 95, 0};
+        const ZoneRuntimePendingCopyView sentinel = view;
+        CHECK(TryGetZoneRuntimePendingCopyView(
+            fixture.table.get(),
+            fixture.physicalSlot,
+            fixture.key,
+            &view) == ZoneRuntimeTableStatus::UnsafeFailure);
+        CHECK(view.key == sentinel.key);
+        CHECK(view.recordCount == sentinel.recordCount);
+        CHECK(!fixture.table->initialized());
+        return;
+    }
+    else if (kind == "unknown-marker")
+    {
+        ZoneRuntimeTableTestAccess::SetCallbackMarker(
+            fixture.table.get(), fixture.physicalSlot, 3);
+        ZoneRuntimePendingCopyView view{{92, 9, 0}, 92, 0};
+        const ZoneRuntimePendingCopyView sentinel = view;
+        CHECK(TryGetZoneRuntimePendingCopyView(
+            fixture.table.get(),
+            fixture.physicalSlot,
+            fixture.key,
+            &view) == ZoneRuntimeTableStatus::UnsafeFailure);
+        CHECK(view.key == sentinel.key);
+        CHECK(view.recordCount == sentinel.recordCount);
+        CHECK(!fixture.table->initialized());
+        return;
+    }
+    else if (kind == "lifecycle-drift"
+        || kind == "callback-lifecycle-drift")
+    {
+        auto *const lifecycle = ZoneRuntimeTableTestAccess::Lifecycle(
+            fixture.table.get(), fixture.physicalSlot);
+        CHECK(lifecycle != nullptr);
+        ZoneLoadContextSlotTestAccess::SetGeneration(
+            lifecycle, fixture.key.generation + 1);
+        if (kind == "callback-lifecycle-drift")
+        {
+            ZoneRuntimeTableTestAccess::SetCallbackMarker(
+                fixture.table.get(), fixture.physicalSlot, 2);
+            CHECK(ZoneRuntimeTableTestAccess::
+                    AuthenticateExactRegistryLifecycleCallback(
+                        fixture.table.get(),
+                        fixture.physicalSlot,
+                        fixture.key)
+                == ZoneRuntimeTableStatus::UnsafeFailure);
+        }
+        else
+        {
+            ZoneRuntimePendingCopyView view{{94, 9, 0}, 94, 0};
+            const ZoneRuntimePendingCopyView sentinel = view;
+            CHECK(TryGetZoneRuntimePendingCopyView(
+                fixture.table.get(),
+                fixture.physicalSlot,
+                fixture.key,
+                &view) == ZoneRuntimeTableStatus::UnsafeFailure);
+            CHECK(view.key == sentinel.key);
+            CHECK(view.recordCount == sentinel.recordCount);
+        }
+        CHECK(!fixture.table->initialized());
+        return;
+    }
+    else
+    {
+        CHECK(false);
+        return;
+    }
+
+    zone_pending_copy::PendingCopyRecord output{
+        {93, 9, 0}, 93, 0};
+    const auto sentinel = output;
+    CHECK(TryReadZoneRuntimePendingCopy(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        1,
+        0,
+        &output) == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(output == sentinel);
+    CHECK(!fixture.table->initialized());
+}
+
 void TestFacadeReleaseSafetyClassification()
 {
     ZoneRuntimeTable pristine{};
@@ -5519,6 +6309,24 @@ int main(const int argc, char **const argv)
                 return 2;
             return failures == 0 ? 0 : 1;
         }
+        if (argc == 3
+            && std::string_view(argv[1]) == "--unsafe-pending-copy")
+        {
+            const std::string_view kind(argv[2]);
+            if (kind != "malformed-record"
+                && kind != "postauth-drift"
+                && kind != "count-drift"
+                && kind != "duplicate-marker"
+                && kind != "duplicate-unrelated-markers"
+                && kind != "unknown-marker"
+                && kind != "lifecycle-drift"
+                && kind != "callback-lifecycle-drift")
+            {
+                return 2;
+            }
+            TestUnsafePendingCopyInspectionBoundary(kind);
+            return failures == 0 ? 0 : 1;
+        }
         if (argc != 3
             || std::string_view(argv[1]) != "--unsafe-live-unload")
         {
@@ -5565,6 +6373,7 @@ int main(const int argc, char **const argv)
     TestCompositeStageOutputAliasPreflight();
     TestCompositeCallbackContextAliasPreflightAndDrain();
     TestCompositeCallbacksRejectLegacyOwnershipBeforeMutation();
+    TestExactPendingCopyInspectionAndSnapshotStability();
     TestExactRegistryLifecycleCallbackMarkerClassification();
     TestCompositeAbandonmentRetryAndReentryPreservation();
     TestFacadeReleaseSafetyClassification();

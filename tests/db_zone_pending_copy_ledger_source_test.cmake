@@ -86,6 +86,7 @@ foreach(_marker IN ITEMS
     "zone_pending_copy::TryInitializePendingCopyLedger|1"
     "zone_pending_copy::TryBeginPendingCopyAdmission|1"
     "zone_pending_copy::TryAppendPendingCopyRecord|1"
+    "zone_pending_copy::TryReadPendingCopyRecord|1"
     "zone_pending_copy::TryPreparePendingCopyAdmission|1"
     "zone_pending_copy::TryDiscardPendingCopyAdmission|2"
     "zone_pending_copy::TryBeginPendingCopyDrain|1"
@@ -107,6 +108,8 @@ require_contains(
 foreach(_marker IN ITEMS
     "TryBeginPendingCopies|TryBeginZoneRuntimePendingCopies"
     "TryAppendPendingCopy|TryAppendZoneRuntimePendingCopy"
+    "TryGetPendingCopyView|TryGetZoneRuntimePendingCopyView"
+    "TryReadPendingCopy|TryReadZoneRuntimePendingCopy"
     "TryBeginPendingCopyDrain|TryBeginZoneRuntimePendingCopyDrain"
     "TryDrainNextPendingCopy|TryDrainNextZoneRuntimePendingCopy"
     "TryFinishPendingCopyDrain|TryFinishZoneRuntimePendingCopyDrain")
@@ -201,6 +204,8 @@ set(_enrollment_tokens
     AuthenticatePendingCopyLedgerDescriptors
     kPendingCopyRecordCapacity
     kPendingCopyGenerationCapacity
+    kFirstAssetEntryIndex
+    kLastAssetEntryIndex
     KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING)
 
 function(normalize_pending_copy_phase2 SOURCE_VAR OUT_VAR)
@@ -398,6 +403,10 @@ function(remove_reviewed_runtime_facade_pending_tokens
     if(PATH MATCHES "database/db_zone_runtime_facade\\.h$")
         remove_one_reviewed_pending_construct(
             _candidate
+            "[[nodiscard]] static ZoneRuntimeTableStatus TryReadPendingCopy( std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, std::uint32_t expectedRecordCount, std::uint32_t ordinal, zone_pending_copy::PendingCopyRecord *outRecord) noexcept;"
+            _candidate "facade by-value record-read declaration")
+        remove_one_reviewed_pending_construct(
+            _candidate
             "[[nodiscard]] static ZoneRuntimeTableStatus TryBeginPendingCopyDrain( const zone_pending_copy::PendingCopyDrainCallback &callback) noexcept;"
             _candidate "facade callback declaration")
         remove_one_reviewed_pending_construct(
@@ -409,6 +418,34 @@ function(remove_reviewed_runtime_facade_pending_tokens
             "[[nodiscard]] static ZoneRuntimeTableStatus TryFinishPendingCopyDrain() noexcept;"
             _candidate "facade drain-finish declaration")
     elseif(PATH MATCHES "database/db_zone_runtime_facade\\.cpp$")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryReadPendingCopy( const std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, const std::uint32_t expectedRecordCount, const std::uint32_t ordinal, zone_pending_copy::PendingCopyRecord *const outRecord) noexcept {"
+            _candidate "facade by-value record-read definition")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "expectedRecordCount > zone_pending_copy::kPendingCopyRecordCapacity"
+            _candidate "facade record-count capacity preflight")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "authoritySpanIsSeparated( outRecord, sizeof(*outRecord), alignof(zone_pending_copy::PendingCopyRecord))"
+            _candidate "facade record-output authority separation")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "authenticatePendingCopyInspectionOutput( physicalSlot, key, outRecord, sizeof(*outRecord), alignof(zone_pending_copy::PendingCopyRecord))"
+            _candidate "facade record-output stream authentication")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "zone_pending_copy::PendingCopyRecord candidate{};"
+            _candidate "facade local record candidate")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "candidate.assetEntryIndex < zone_pending_copy::kFirstAssetEntryIndex"
+            _candidate "facade record lower-bound validation")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "candidate.assetEntryIndex > zone_pending_copy::kLastAssetEntryIndex"
+            _candidate "facade record upper-bound validation")
         remove_one_reviewed_pending_construct(
             _candidate
             "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBeginPendingCopyDrain( const zone_pending_copy::PendingCopyDrainCallback &callback) noexcept {"
@@ -637,6 +674,21 @@ require_runtime_table_pending_detector_fixture(
     _runtime_table_namespace_macro_bypass "a namespace macro")
 
 string(CONCAT _runtime_facade_pending_fixture
+    "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryReadPendingCopy( "
+    "const std::uint32_t physicalSlot, "
+    "const zone_load::ZoneLoadContextKey &key, "
+    "const std::uint32_t expectedRecordCount, "
+    "const std::uint32_t ordinal, "
+    "zone_pending_copy::PendingCopyRecord *const outRecord) noexcept {\n"
+    "expectedRecordCount > zone_pending_copy::kPendingCopyRecordCapacity\n"
+    "authoritySpanIsSeparated( outRecord, sizeof(*outRecord), "
+    "alignof(zone_pending_copy::PendingCopyRecord))\n"
+    "authenticatePendingCopyInspectionOutput( physicalSlot, key, "
+    "outRecord, sizeof(*outRecord), "
+    "alignof(zone_pending_copy::PendingCopyRecord))\n"
+    "zone_pending_copy::PendingCopyRecord candidate{};\n"
+    "candidate.assetEntryIndex < zone_pending_copy::kFirstAssetEntryIndex\n"
+    "candidate.assetEntryIndex > zone_pending_copy::kLastAssetEntryIndex\n"
     "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBeginPendingCopyDrain( "
     "const zone_pending_copy::PendingCopyDrainCallback &callback) noexcept {\n"
     "!authoritySpanIsSeparated( &callback, sizeof(callback), "
@@ -653,6 +705,29 @@ detect_production_enrollment(
 if(_runtime_facade_pending_enrolled)
     message(FATAL_ERROR
         "Pending-copy seal rejected reviewed facade callback constructs")
+endif()
+string(CONCAT _runtime_facade_pending_header_fixture
+    "[[nodiscard]] static ZoneRuntimeTableStatus TryReadPendingCopy( "
+    "std::uint32_t physicalSlot, "
+    "const zone_load::ZoneLoadContextKey &key, "
+    "std::uint32_t expectedRecordCount, std::uint32_t ordinal, "
+    "zone_pending_copy::PendingCopyRecord *outRecord) noexcept;\n"
+    "[[nodiscard]] static ZoneRuntimeTableStatus TryBeginPendingCopyDrain( "
+    "const zone_pending_copy::PendingCopyDrainCallback &callback) noexcept;\n"
+    "[[nodiscard]] static ZoneRuntimeTableStatus "
+    "TryDrainNextPendingCopy() noexcept;\n"
+    "[[nodiscard]] static ZoneRuntimeTableStatus "
+    "TryFinishPendingCopyDrain() noexcept;")
+remove_reviewed_runtime_facade_pending_tokens(
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.h"
+    _runtime_facade_pending_header_fixture
+    _runtime_facade_pending_header_reviewed)
+detect_production_enrollment(
+    _runtime_facade_pending_header_reviewed
+    _runtime_facade_pending_header_enrolled)
+if(_runtime_facade_pending_header_enrolled)
+    message(FATAL_ERROR
+        "Pending-copy seal rejected reviewed facade inspection declaration")
 endif()
 string(CONCAT _runtime_facade_pending_mutation_bypass
     "${_runtime_facade_pending_fixture}\n"

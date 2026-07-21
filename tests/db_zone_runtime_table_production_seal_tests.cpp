@@ -1,6 +1,8 @@
 #include <database/db_zone_runtime_table.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <type_traits>
 
 // Production includes intentionally do not opt in to
 // KISAK_DB_ZONE_RUNTIME_TABLE_TESTING. Recreating the test helper's public
@@ -12,6 +14,18 @@ namespace db::zone_runtime
 {
 static_assert(sizeof(ZoneRuntimeGenerationCallbacks)
     == (sizeof(void *) == 4 ? 0x14u : 0x28u));
+static_assert(sizeof(ZoneRuntimePendingCopyView) == 0x18u);
+static_assert(std::is_standard_layout_v<ZoneRuntimePendingCopyView>);
+static_assert(std::is_trivially_copyable_v<ZoneRuntimePendingCopyView>);
+static_assert(std::is_same_v<
+    decltype(ZoneRuntimePendingCopyView::key),
+    zone_load::ZoneLoadContextKey>);
+static_assert(std::is_same_v<
+    decltype(ZoneRuntimePendingCopyView::recordCount),
+    std::uint32_t>);
+static_assert(std::is_same_v<
+    decltype(ZoneRuntimePendingCopyView::reserved),
+    std::uint32_t>);
 static_assert(sizeof(ZoneRuntimeGenerationBinding)
     == (sizeof(void *) == 4 ? 0x50u : 0x78u));
 static_assert(sizeof(ZoneRuntimeReceiptCapsule)
@@ -21,8 +35,34 @@ static_assert(sizeof(ZoneRuntimeEntry)
 static_assert(sizeof(ZoneRuntimeTable)
     == (sizeof(void *) == 4 ? 0xF568u : 0x109A0u));
 
+using PendingCopyViewOperation = ZoneRuntimeTableStatus (*)(
+    ZoneRuntimeTable *,
+    std::uint32_t,
+    const zone_load::ZoneLoadContextKey &,
+    ZoneRuntimePendingCopyView *) noexcept;
+using PendingCopyReadOperation = ZoneRuntimeTableStatus (*)(
+    ZoneRuntimeTable *,
+    std::uint32_t,
+    const zone_load::ZoneLoadContextKey &,
+    std::uint32_t,
+    std::uint32_t,
+    zone_pending_copy::PendingCopyRecord *) noexcept;
+
+static_assert(std::is_same_v<
+    decltype(&TryGetZoneRuntimePendingCopyView),
+    PendingCopyViewOperation>);
+static_assert(std::is_same_v<
+    decltype(&TryReadZoneRuntimePendingCopy),
+    PendingCopyReadOperation>);
+
 struct ZoneRuntimeTableTestAccess
 {
+    template <typename Access>
+    static constexpr bool CanSetPendingCopyReadHook = requires
+    {
+        &Access::SetPendingCopyReadHook;
+    };
+
     template <typename Table>
     static constexpr bool CanReachEntries = requires(Table *const table)
     {
@@ -134,6 +174,41 @@ struct ZoneRuntimeTableTestAccess
         table->restoreExactRegistryLifecycleCallback(1u, key);
     };
 
+    template <typename Table, typename Binding>
+    static constexpr bool CanAuthenticateLifecycleCallbackMarker = requires(
+        Table *const table,
+        const zone_load::ZoneLoadContextKey &key,
+        typename Binding::CallbackMarker marker)
+    {
+        table->authenticateExactLifecycleCallbackMarker(1u, key, marker);
+    };
+
+    template <typename Table, typename Entry>
+    static constexpr bool CanAuthenticatePendingCopyRead = requires(
+        Table *const table,
+        const zone_load::ZoneLoadContextKey &key,
+        const Entry **outEntry)
+    {
+        table->authenticateExactPendingCopyRead(1u, key, outEntry);
+    };
+
+    template <typename Table>
+    static constexpr bool CanAuthenticatePendingCopyOutput = requires(
+        Table *const table,
+        const zone_load::ZoneLoadContextKey &key,
+        const void *const output)
+    {
+        table->authenticateExactPendingCopyOutput(
+            1u, key, output, sizeof(std::uint32_t), alignof(std::uint32_t));
+    };
+
+    template <typename Table, typename Entry>
+    static constexpr bool CanReachPendingCopyAdmissionReceipt = requires(
+        const Entry *const entry)
+    {
+        Table::pendingCopyAdmissionReceipt(entry);
+    };
+
     template <typename Capsule>
     static constexpr bool CanReachAllocationReceipt = requires(
         Capsule *const capsule)
@@ -163,6 +238,10 @@ struct ZoneRuntimeTableTestAccess
     };
 };
 
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanSetPendingCopyReadHook<
+        ZoneRuntimeTableTestAccess>,
+    "production must not expose the staged pending-copy read test seam");
 static_assert(
     !ZoneRuntimeTableTestAccess::CanReachEntries<ZoneRuntimeTable>,
     "production must not grant same-name access to the private entry table");
@@ -216,6 +295,25 @@ static_assert(
     !ZoneRuntimeTableTestAccess::CanRestoreRegistryLifecycleCallback<
         ZoneRuntimeTable>,
     "production must not restore consumed callback registry authority");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanAuthenticateLifecycleCallbackMarker<
+        ZoneRuntimeTable,
+        ZoneRuntimeGenerationBinding>,
+    "production must not authenticate a callback marker without consuming it");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanAuthenticatePendingCopyRead<
+        ZoneRuntimeTable,
+        ZoneRuntimeEntry>,
+    "production must not bypass exact pending-copy read authentication");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanAuthenticatePendingCopyOutput<
+        ZoneRuntimeTable>,
+    "production must not bypass exact pending-copy output authentication");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachPendingCopyAdmissionReceipt<
+        ZoneRuntimeTable,
+        ZoneRuntimeEntry>,
+    "production must not recover the retained pending-copy receipt pointer");
 static_assert(
     !ZoneRuntimeTableTestAccess::CanReachAllocationReceipt<
         ZoneRuntimeReceiptCapsule>);

@@ -6,6 +6,28 @@
 
 namespace db::zone_runtime
 {
+static_assert(sizeof(ZoneRuntimePendingCopyView) == 0x18u);
+static_assert(std::is_standard_layout_v<ZoneRuntimePendingCopyView>);
+static_assert(std::is_trivially_copyable_v<ZoneRuntimePendingCopyView>);
+
+using FacadePendingCopyViewOperation = ZoneRuntimeTableStatus (*)(
+    std::uint32_t,
+    const zone_load::ZoneLoadContextKey &,
+    ZoneRuntimePendingCopyView *) noexcept;
+using FacadePendingCopyReadOperation = ZoneRuntimeTableStatus (*)(
+    std::uint32_t,
+    const zone_load::ZoneLoadContextKey &,
+    std::uint32_t,
+    std::uint32_t,
+    zone_pending_copy::PendingCopyRecord *) noexcept;
+
+static_assert(std::is_same_v<
+    decltype(&ZoneRuntimeFacade::TryGetPendingCopyView),
+    FacadePendingCopyViewOperation>);
+static_assert(std::is_same_v<
+    decltype(&ZoneRuntimeFacade::TryReadPendingCopy),
+    FacadePendingCopyReadOperation>);
+
 struct ZoneRuntimeFacadeTestAccess final
 {
     template <typename Facade>
@@ -25,6 +47,18 @@ struct ZoneRuntimeFacadeTestAccess final
     {
         Facade::authenticateCompositeTableOperationAccess(
             std::uint32_t{0}, zone_load::ZoneLoadContextKey{});
+    };
+
+    template <typename Facade>
+    static constexpr bool CanAuthenticatePendingCopyInspectionOutput =
+        requires
+    {
+        Facade::authenticatePendingCopyInspectionOutput(
+            std::uint32_t{0},
+            zone_load::ZoneLoadContextKey{},
+            nullptr,
+            std::size_t{0},
+            std::size_t{0});
     };
 
     template <typename Facade>
@@ -70,6 +104,9 @@ static_assert(
 static_assert(
     !ZoneRuntimeFacadeTestAccess::CanAuthenticateCompositeTableOperation<
         ZoneRuntimeFacade>);
+static_assert(
+    !ZoneRuntimeFacadeTestAccess::
+        CanAuthenticatePendingCopyInspectionOutput<ZoneRuntimeFacade>);
 static_assert(
     !ZoneRuntimeFacadeTestAccess::CanAuthenticateRegistryOutput<
         ZoneRuntimeFacade>);

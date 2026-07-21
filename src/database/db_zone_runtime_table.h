@@ -86,6 +86,27 @@ struct ZoneRuntimeGenerationView final
 
 RUNTIME_SIZE(ZoneRuntimeGenerationView, 0x18, 0x18);
 
+// A pointer-free snapshot of one exact generation's retained pending-copy
+// extent.  The record count is copied with the key so a later slot reuse or
+// append cannot turn an earlier observation into authority for a different
+// set.  Callers present both fields again when reading an ordinal.
+struct ZoneRuntimePendingCopyView final
+{
+    zone_load::ZoneLoadContextKey key{};
+    std::uint32_t recordCount = 0;
+    std::uint32_t reserved = 0;
+
+    [[nodiscard]] constexpr explicit operator bool() const noexcept
+    {
+        return static_cast<bool>(key)
+            && recordCount
+                <= zone_pending_copy::kPendingCopyRecordCapacity
+            && reserved == 0;
+    }
+};
+
+RUNTIME_SIZE(ZoneRuntimePendingCopyView, 0x18, 0x18);
+
 // The composite adapter follows one strict, monotonic construction order.
 // The stage is a private ownership witness, not permission to skip the exact
 // component authenticators.  Cleanup retains the highest completed stage so
@@ -182,8 +203,9 @@ private:
     // callback windows that may borrow registry ownership from all internal
     // callback work.  Any non-Idle marker keeps ordinary table operations
     // callback-busy; only ZoneRuntimeTable's exact-key authenticator may
-    // interpret ActiveRegistryBorrow as authority, and successful admission
-    // consumes it to ActiveNoRegistry before returning. A recoverable
+    // interpret ActiveRegistryBorrow as authority. Mutable registry admission
+    // consumes it to ActiveNoRegistry before returning; exact pending-copy
+    // inspection authenticates it without mutation. A recoverable
     // coordinator-lock collision restores that exact consumed marker before
     // returning Busy so the same synchronous callback may retry; every other
     // result remains one-shot. This rule does not contain arbitrary nonlocal
@@ -480,6 +502,18 @@ private:
         std::uint32_t,
         const zone_load::ZoneLoadContextKey &,
         std::uint32_t) noexcept;
+    friend ZoneRuntimeTableStatus TryGetZoneRuntimePendingCopyView(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        ZoneRuntimePendingCopyView *) noexcept;
+    friend ZoneRuntimeTableStatus TryReadZoneRuntimePendingCopy(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        std::uint32_t,
+        std::uint32_t,
+        zone_pending_copy::PendingCopyRecord *) noexcept;
     friend ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission(
         ZoneRuntimeTable *,
         std::uint32_t,
@@ -611,12 +645,21 @@ private:
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus
-    transitionExactRegistryLifecycleCallback(
+    authenticateExactLifecycleCallbackMarker(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
-        ZoneRuntimeGenerationBinding::CallbackMarker expectedMarker,
-        ZoneRuntimeGenerationBinding::CallbackMarker replacementMarker)
+        ZoneRuntimeGenerationBinding::CallbackMarker expectedMarker)
         noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus authenticateExactPendingCopyRead(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        const ZoneRuntimeEntry **outEntry) noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus authenticateExactPendingCopyOutput(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        const void *output,
+        std::size_t outputSize,
+        std::size_t outputAlignment) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus completeMutableOperation(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
@@ -643,6 +686,9 @@ private:
     [[nodiscard]] static zone_pending_copy::
         PendingCopyAdmissionReceipt *mutablePendingCopyAdmissionReceipt(
             ZoneRuntimeEntry *entry) noexcept;
+    [[nodiscard]] static const zone_pending_copy::
+        PendingCopyAdmissionReceipt *pendingCopyAdmissionReceipt(
+            const ZoneRuntimeEntry *entry) noexcept;
     [[nodiscard]] static zone_runtime_storage::ZoneRuntimeStorageBinding *
     mutableStorageBinding(ZoneRuntimeEntry *entry) noexcept;
     [[nodiscard]] static std::uint32_t generationAllocationType(
@@ -713,6 +759,18 @@ RUNTIME_SIZE(ZoneRuntimeTable, 0xF568, 0x109A0);
 // unkeyed mutable entry state.
 struct ZoneRuntimeTableTestAccess final
 {
+    enum class PendingCopyReadHookStage : std::uint8_t
+    {
+        BeforeLowerRead,
+        AfterLowerRead,
+    };
+
+    using PendingCopyReadHook = void (*)(
+        void *context,
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
+
     static zone_load::ZoneLoadContextSlot *Lifecycle(
         ZoneRuntimeTable *const table,
         const std::uint32_t physicalSlot) noexcept
@@ -856,6 +914,14 @@ struct ZoneRuntimeTableTestAccess final
             table->entries_[physicalSlot].key_ = key;
     }
 
+    // One-shot mutation seam for the runtime-table executable fixture. It is
+    // absent from macro-off production and is cleared before invocation so a
+    // reentrant read cannot inherit test authority.
+    static void SetPendingCopyReadHook(
+        PendingCopyReadHookStage stage,
+        void *context,
+        PendingCopyReadHook hook) noexcept;
+
     static void SetReserved(
         ZoneRuntimeTable *const table,
         const std::uint32_t reserved) noexcept
@@ -974,6 +1040,33 @@ TryBeginZoneRuntimeStreamGeneration(
     std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key,
     std::uint32_t assetEntryIndex) noexcept;
+
+// Copies the exact generation key and current record count without exposing a
+// receipt, lifecycle, ledger, or record-storage pointer. Collecting, Prepared,
+// and Admitted generations are readable; terminal Drained/Discarded receipts
+// return a canonical zero-count view after the global drain has finished.
+// Every inspection while the shared ledger is Draining is Busy, as are
+// Admitting and callback work without registry-borrow authority. The output
+// must be aligned and outside the table, key, every retained authority, and
+// managed PMem. It is unchanged on every non-Success result.
+[[nodiscard]] ZoneRuntimeTableStatus TryGetZoneRuntimePendingCopyView(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    ZoneRuntimePendingCopyView *outView) noexcept;
+
+// Reads one record by value against the exact key/count snapshot above.
+// expectedRecordCount and ordinal are preflighted before table state; a live
+// count change returns CountMismatch. The candidate and complete table state
+// are reauthenticated before publication, and the output remains unchanged on
+// every failure.
+[[nodiscard]] ZoneRuntimeTableStatus TryReadZoneRuntimePendingCopy(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    std::uint32_t expectedRecordCount,
+    std::uint32_t ordinal,
+    zone_pending_copy::PendingCopyRecord *outRecord) noexcept;
 
 // Requires script strings to be CommitReady. It freezes the pending-copy
 // completion identity, then the next two calls invalidate stream authority

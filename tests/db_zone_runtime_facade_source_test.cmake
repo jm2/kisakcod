@@ -23,6 +23,7 @@ endforeach()
 
 file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
+file(READ "${_table_header_path}" _table_header)
 
 function(normalize_space INPUT OUTPUT)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${INPUT}")
@@ -90,6 +91,38 @@ endfunction()
 
 normalize_space("${_header}" _header_normalized)
 normalize_space("${_source}" _source_normalized)
+normalize_space("${_table_header}" _table_header_normalized)
+
+extract_slice(
+    _table_header
+    "struct ZoneRuntimePendingCopyView final"
+    "RUNTIME_SIZE(ZoneRuntimePendingCopyView, 0x18, 0x18);"
+    _pending_copy_view_declaration
+    "pointer-free pending-copy view declaration")
+set(_expected_pending_copy_view_declaration [=[
+struct ZoneRuntimePendingCopyView final
+{
+    zone_load::ZoneLoadContextKey key{};
+    std::uint32_t recordCount = 0;
+    std::uint32_t reserved = 0;
+
+    [[nodiscard]] constexpr explicit operator bool() const noexcept
+    {
+        return static_cast<bool>(key)
+            && recordCount
+                <= zone_pending_copy::kPendingCopyRecordCapacity
+            && reserved == 0;
+    }
+};
+]=])
+require_normalized_equals(
+    _pending_copy_view_declaration
+    _expected_pending_copy_view_declaration
+    "pointer-free 0x18 pending-copy view")
+require_contains(
+    _table_header_normalized
+    "RUNTIME_SIZE(ZoneRuntimePendingCopyView, 0x18, 0x18);"
+    "fixed-width pending-copy view ABI")
 
 foreach(_contract_marker IN ITEMS
     "Writable outputs, retained descriptors, and non-empty stream payloads are rejected"
@@ -187,6 +220,16 @@ public:
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
         std::uint32_t assetEntryIndex) noexcept;
+    [[nodiscard]] static ZoneRuntimeTableStatus TryGetPendingCopyView(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        ZoneRuntimePendingCopyView *outView) noexcept;
+    [[nodiscard]] static ZoneRuntimeTableStatus TryReadPendingCopy(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        std::uint32_t expectedRecordCount,
+        std::uint32_t ordinal,
+        zone_pending_copy::PendingCopyRecord *outRecord) noexcept;
     [[nodiscard]] static ZoneRuntimeTableStatus
     TryBeginScriptStringOwnership(
         std::uint32_t physicalSlot,
@@ -321,6 +364,13 @@ private:
     authenticateCompositeTableOperationAccess(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept;
+    [[nodiscard]] static ZoneRuntimeTableStatus
+    authenticatePendingCopyInspectionOutput(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        const void *output,
+        std::size_t outputSize,
+        std::size_t outputAlignment) noexcept;
     [[nodiscard]] static registry_ownership::RegistryOwnershipStatus
     authenticateRegistryOutputAccess() noexcept;
     [[nodiscard]] static ZoneRuntimeTableStatus completeTableOperation(
@@ -345,6 +395,7 @@ foreach(_raw_authority IN ITEMS
     "ZoneRuntimeTableTestAccess"
     "RegistryOwnershipCoordinatorAdmission"
     "ZoneScriptStringAdmissionCallback"
+    "PendingCopyLedger"
     "PendingCopyAdmissionReceipt"
     "ZoneLoadCleanupCallbacks"
     "TryGetEntry"
@@ -379,10 +430,10 @@ require_substring_count(
     _source "thread_local" 7
     "scalar destructor-free TLS mirrors")
 require_substring_count(
-    _source "completeTableOperation(" 31
+    _source "completeTableOperation(" 34
     "all table forwards use the shared post-authentication boundary")
 require_substring_count(
-    _source "authenticateTableOperationAccess()" 26
+    _source "authenticateTableOperationAccess()" 28
     "ordinary table forwards and shared boundaries authenticate")
 require_substring_count(
     _source "authenticateCompositeTableOperationAccess(" 7
@@ -475,6 +526,8 @@ set(_table_method_adapter_pairs
     "TryBindStreams|TryBindZoneRuntimeStreams"
     "TryBeginPendingCopies|TryBeginZoneRuntimePendingCopies"
     "TryAppendPendingCopy|TryAppendZoneRuntimePendingCopy"
+    "TryGetPendingCopyView|TryGetZoneRuntimePendingCopyView"
+    "TryReadPendingCopy|TryReadZoneRuntimePendingCopy"
     "TryBeginScriptStringOwnership|TryBeginZoneRuntimeScriptStringOwnership"
     "TryStageScriptString|TryStageZoneRuntimeScriptString"
     "TrySealScriptStrings|TrySealZoneRuntimeScriptStrings"
@@ -506,9 +559,9 @@ set(_registry_method_adapter_pairs
 
 list(LENGTH _table_method_adapter_pairs _table_pair_count)
 list(LENGTH _registry_method_adapter_pairs _registry_pair_count)
-if(NOT _table_pair_count EQUAL 28 OR NOT _registry_pair_count EQUAL 9)
+if(NOT _table_pair_count EQUAL 30 OR NOT _registry_pair_count EQUAL 9)
     message(FATAL_ERROR
-        "Runtime facade method/adapter maps must remain closed at 28 table "
+        "Runtime facade method/adapter maps must remain closed at 30 table "
         "and 9 ordinary registry wrappers")
 endif()
 
@@ -532,7 +585,7 @@ list(REMOVE_DUPLICATES _table_adapter_tokens)
 list(REMOVE_DUPLICATES _registry_adapter_tokens)
 list(LENGTH _table_adapter_tokens _table_adapter_count)
 list(LENGTH _registry_adapter_tokens _registry_adapter_count)
-if(NOT _table_adapter_count EQUAL 28 OR NOT _registry_adapter_count EQUAL 11)
+if(NOT _table_adapter_count EQUAL 30 OR NOT _registry_adapter_count EQUAL 11)
     message(FATAL_ERROR "Runtime facade raw adapter map contains duplicates")
 endif()
 
@@ -541,6 +594,333 @@ foreach(_adapter IN LISTS _table_adapter_tokens _registry_adapter_tokens)
     require_substring_count(
         _source_forwarding_canonical "${_adapter}" 1
         "one global use of each reviewed raw adapter")
+endforeach()
+
+# The caller span must be authenticated against the active stream authority,
+# not merely against the facade's coarse authority spans. Stream ownership and
+# retained table internals remain encapsulated by the table's reviewed private
+# composition helper; the facade can only classify its completed status.
+extract_slice(
+    _source
+    "ZoneRuntimeFacade::authenticatePendingCopyInspectionOutput("
+    "RegistryOwnershipStatus\nZoneRuntimeFacade::authenticateRegistryOutputAccess("
+    _pending_copy_output_authentication
+    "pending-copy output authentication")
+canonicalize_runtime_facade_forwarding(
+    _pending_copy_output_authentication
+    _pending_copy_output_authentication_canonical)
+foreach(_marker IN ITEMS
+    "ZoneRuntimeTable &table = ProductionZoneRuntimeTable();"
+    "return completeTableOperation( table.authenticateExactPendingCopyOutput( physicalSlot, key, output, outputSize, outputAlignment));")
+    require_substring_count(
+        _pending_copy_output_authentication_canonical "${_marker}" 1
+        "table-mediated exact pending-copy caller stream authentication")
+endforeach()
+require_substring_count(
+    _source "authenticateExactPendingCopyOutput(" 1
+    "single table-mediated pending-copy output authority use")
+foreach(_forbidden_component IN ITEMS
+    "authenticateExactPendingCopyRead("
+    "entries_["
+    "activeZoneStreamBinding_"
+    "AuthenticateZoneStreamOutputSpan("
+    "zone_stream_ownership")
+    require_not_contains(
+        _pending_copy_output_authentication "${_forbidden_component}"
+        "facade cannot bypass table-owned pending-copy output authentication")
+endforeach()
+foreach(_forbidden_stream_authority IN ITEMS
+    "activeZoneStreamBinding_"
+    "AuthenticateZoneStreamOutputSpan("
+    "zone_stream_ownership")
+    require_not_contains(
+        _source "${_forbidden_stream_authority}"
+        "facade cannot acquire protected zone-stream authority")
+endforeach()
+
+# Pending-copy inspection is a read-only, failure-atomic facade boundary. The
+# caller output is rejected before forwarding when it aliases managed PMem or
+# protected authority. The actual output is then authenticated against the
+# active stream binding. The table writes only a local candidate; facade post-
+# authentication and canonical-value checks precede the sole caller write.
+require_substring_count(
+    _source "pmem_runtime::StorageIsOutsideManagedMemory(" 2
+    "both pending-copy caller outputs remain outside managed PMem")
+
+extract_runtime_facade_method_slice(
+    _source "TryGetPendingCopyView" _pending_view_slice)
+canonicalize_runtime_facade_forwarding(
+    _pending_view_slice _pending_view_slice_canonical)
+foreach(_marker IN ITEMS
+    "authenticateTableOperationAccess()"
+    "pmem_runtime::StorageIsOutsideManagedMemory( outView, sizeof(*outView))"
+    "authoritySpanIsSeparated( outView, sizeof(*outView), alignof(ZoneRuntimePendingCopyView))"
+    "AddressRangesAreDisjoint( &key, sizeof(key), outView, sizeof(*outView))"
+    "authenticatePendingCopyInspectionOutput( physicalSlot, key, outView, sizeof(*outView), alignof(ZoneRuntimePendingCopyView))"
+    "if (outputAuthentication != ZoneRuntimeTableStatus::Success) return outputAuthentication;"
+    "ZoneRuntimePendingCopyView candidate{};"
+    "completeTableOperation( TryGetZoneRuntimePendingCopyView( &ProductionZoneRuntimeTable(), physicalSlot, key, &candidate))"
+    "if (status != ZoneRuntimeTableStatus::Success)"
+    "if (!candidate || candidate.key != key)"
+    "poisonAccess();"
+    "*outView = candidate;")
+    require_substring_count(
+        _pending_view_slice_canonical "${_marker}" 1
+        "failure-atomic pending-copy view publication")
+endforeach()
+string(FIND "${_pending_view_slice_canonical}"
+    "pmem_runtime::StorageIsOutsideManagedMemory(" _pending_view_pmem)
+string(FIND "${_pending_view_slice_canonical}"
+    "authoritySpanIsSeparated(" _pending_view_authority)
+string(FIND "${_pending_view_slice_canonical}"
+    "AddressRangesAreDisjoint( &key, sizeof(key), outView, sizeof(*outView))"
+    _pending_view_key_separation)
+string(FIND "${_pending_view_slice_canonical}"
+    "authenticatePendingCopyInspectionOutput(" _pending_view_stream_auth)
+string(FIND "${_pending_view_slice_canonical}"
+    "ZoneRuntimePendingCopyView candidate{};" _pending_view_candidate)
+string(FIND "${_pending_view_slice_canonical}"
+    "TryGetZoneRuntimePendingCopyView(" _pending_view_forward)
+string(FIND "${_pending_view_slice_canonical}"
+    "if (status != ZoneRuntimeTableStatus::Success)" _pending_view_status)
+string(FIND "${_pending_view_slice_canonical}"
+    "if (!candidate || candidate.key != key)" _pending_view_validation)
+string(FIND "${_pending_view_slice_canonical}"
+    "*outView = candidate;" _pending_view_publication)
+if(_pending_view_pmem EQUAL -1 OR _pending_view_authority EQUAL -1
+    OR _pending_view_key_separation EQUAL -1
+    OR _pending_view_stream_auth EQUAL -1
+    OR _pending_view_candidate EQUAL -1 OR _pending_view_forward EQUAL -1
+    OR _pending_view_status EQUAL -1 OR _pending_view_validation EQUAL -1
+    OR _pending_view_publication EQUAL -1
+    OR NOT _pending_view_pmem LESS _pending_view_authority
+    OR NOT _pending_view_authority LESS _pending_view_key_separation
+    OR NOT _pending_view_key_separation LESS _pending_view_stream_auth
+    OR NOT _pending_view_stream_auth LESS _pending_view_candidate
+    OR NOT _pending_view_candidate LESS _pending_view_forward
+    OR NOT _pending_view_forward LESS _pending_view_status
+    OR NOT _pending_view_status LESS _pending_view_validation
+    OR NOT _pending_view_validation LESS _pending_view_publication)
+    message(FATAL_ERROR
+        "Runtime facade pending-copy view publication ordering drifted")
+endif()
+
+extract_runtime_facade_method_slice(
+    _source "TryReadPendingCopy" _pending_read_slice)
+canonicalize_runtime_facade_forwarding(
+    _pending_read_slice _pending_read_slice_canonical)
+foreach(_marker IN ITEMS
+    "authenticateTableOperationAccess()"
+    "pmem_runtime::StorageIsOutsideManagedMemory( outRecord, sizeof(*outRecord))"
+    "authoritySpanIsSeparated( outRecord, sizeof(*outRecord), alignof(zone_pending_copy::PendingCopyRecord))"
+    "AddressRangesAreDisjoint( &key, sizeof(key), outRecord, sizeof(*outRecord))"
+    "authenticatePendingCopyInspectionOutput( physicalSlot, key, outRecord, sizeof(*outRecord), alignof(zone_pending_copy::PendingCopyRecord))"
+    "if (outputAuthentication != ZoneRuntimeTableStatus::Success) return outputAuthentication;"
+    "zone_pending_copy::PendingCopyRecord candidate{};"
+    "completeTableOperation( TryReadZoneRuntimePendingCopy( &ProductionZoneRuntimeTable(), physicalSlot, key, expectedRecordCount, ordinal, &candidate))"
+    "if (status != ZoneRuntimeTableStatus::Success)"
+    "candidate.key != key"
+    "candidate.assetEntryIndex < zone_pending_copy::kFirstAssetEntryIndex"
+    "candidate.assetEntryIndex > zone_pending_copy::kLastAssetEntryIndex"
+    "candidate.reserved != 0"
+    "poisonAccess();"
+    "*outRecord = candidate;")
+    require_substring_count(
+        _pending_read_slice_canonical "${_marker}" 1
+        "failure-atomic pending-copy record publication")
+endforeach()
+string(FIND "${_pending_read_slice_canonical}"
+    "pmem_runtime::StorageIsOutsideManagedMemory(" _pending_read_pmem)
+string(FIND "${_pending_read_slice_canonical}"
+    "authoritySpanIsSeparated(" _pending_read_authority)
+string(FIND "${_pending_read_slice_canonical}"
+    "AddressRangesAreDisjoint( &key, sizeof(key), outRecord, sizeof(*outRecord))"
+    _pending_read_key_separation)
+string(FIND "${_pending_read_slice_canonical}"
+    "authenticatePendingCopyInspectionOutput(" _pending_read_stream_auth)
+string(FIND "${_pending_read_slice_canonical}"
+    "zone_pending_copy::PendingCopyRecord candidate{};" _pending_read_candidate)
+string(FIND "${_pending_read_slice_canonical}"
+    "TryReadZoneRuntimePendingCopy(" _pending_read_forward)
+string(FIND "${_pending_read_slice_canonical}"
+    "if (status != ZoneRuntimeTableStatus::Success)" _pending_read_status)
+string(FIND "${_pending_read_slice_canonical}"
+    "candidate.key != key" _pending_read_validation)
+string(FIND "${_pending_read_slice_canonical}"
+    "*outRecord = candidate;" _pending_read_publication)
+if(_pending_read_pmem EQUAL -1 OR _pending_read_authority EQUAL -1
+    OR _pending_read_key_separation EQUAL -1
+    OR _pending_read_stream_auth EQUAL -1
+    OR _pending_read_candidate EQUAL -1 OR _pending_read_forward EQUAL -1
+    OR _pending_read_status EQUAL -1 OR _pending_read_validation EQUAL -1
+    OR _pending_read_publication EQUAL -1
+    OR NOT _pending_read_pmem LESS _pending_read_authority
+    OR NOT _pending_read_authority LESS _pending_read_key_separation
+    OR NOT _pending_read_key_separation LESS _pending_read_stream_auth
+    OR NOT _pending_read_stream_auth LESS _pending_read_candidate
+    OR NOT _pending_read_candidate LESS _pending_read_forward
+    OR NOT _pending_read_forward LESS _pending_read_status
+    OR NOT _pending_read_status LESS _pending_read_validation
+    OR NOT _pending_read_validation LESS _pending_read_publication)
+    message(FATAL_ERROR
+        "Runtime facade pending-copy record publication ordering drifted")
+endif()
+
+# Keep the input-key alias and exact stream-output checks independently
+# mutation-tested. A local table candidate cannot recover either caller
+# relationship after the forward.
+function(runtime_facade_pending_output_guard_is_exact
+    SLICE_VARIABLE OUTPUT_NAME ALIGNMENT_MARKER FORWARD_MARKER OUTPUT)
+    canonicalize_runtime_facade_forwarding(
+        ${SLICE_VARIABLE} _candidate)
+    set(_valid TRUE)
+    set(_pmem
+        "pmem_runtime::StorageIsOutsideManagedMemory( ${OUTPUT_NAME}, sizeof(*${OUTPUT_NAME}))")
+    set(_authority
+        "authoritySpanIsSeparated( ${OUTPUT_NAME}, sizeof(*${OUTPUT_NAME}), ${ALIGNMENT_MARKER})")
+    set(_key
+        "AddressRangesAreDisjoint( &key, sizeof(key), ${OUTPUT_NAME}, sizeof(*${OUTPUT_NAME}))")
+    set(_stream_auth
+        "authenticatePendingCopyInspectionOutput( physicalSlot, key, ${OUTPUT_NAME}, sizeof(*${OUTPUT_NAME}), ${ALIGNMENT_MARKER})")
+    foreach(_marker IN ITEMS
+        "${_pmem}" "${_authority}" "${_key}" "${_stream_auth}")
+        substring_count(_candidate "${_marker}" _count)
+        if(NOT _count EQUAL 1)
+            set(_valid FALSE)
+        endif()
+    endforeach()
+    string(FIND "${_candidate}" "${_pmem}" _pmem_position)
+    string(FIND "${_candidate}" "${_authority}" _authority_position)
+    string(FIND "${_candidate}" "${_key}" _key_position)
+    string(FIND "${_candidate}" "${_stream_auth}" _stream_auth_position)
+    string(FIND "${_candidate}" "${FORWARD_MARKER}" _forward_position)
+    if(_pmem_position EQUAL -1 OR _authority_position EQUAL -1
+        OR _key_position EQUAL -1 OR _stream_auth_position EQUAL -1
+        OR _forward_position EQUAL -1
+        OR NOT _pmem_position LESS _authority_position
+        OR NOT _authority_position LESS _key_position
+        OR NOT _key_position LESS _stream_auth_position
+        OR NOT _stream_auth_position LESS _forward_position)
+        set(_valid FALSE)
+    endif()
+    set(${OUTPUT} ${_valid} PARENT_SCOPE)
+endfunction()
+
+runtime_facade_pending_output_guard_is_exact(
+    _pending_view_slice
+    outView
+    "alignof(ZoneRuntimePendingCopyView)"
+    "TryGetZoneRuntimePendingCopyView("
+    _pending_view_guard_is_exact)
+if(NOT _pending_view_guard_is_exact)
+    message(FATAL_ERROR
+        "Runtime facade pending-copy view caller/key guard drifted")
+endif()
+runtime_facade_pending_output_guard_is_exact(
+    _pending_read_slice
+    outRecord
+    "alignof(zone_pending_copy::PendingCopyRecord)"
+    "TryReadZoneRuntimePendingCopy("
+    _pending_read_guard_is_exact)
+if(NOT _pending_read_guard_is_exact)
+    message(FATAL_ERROR
+        "Runtime facade pending-copy record caller/key guard drifted")
+endif()
+
+set(_pending_view_missing_key_guard_fixture [=[
+pmem_runtime::StorageIsOutsideManagedMemory(outView, sizeof(*outView));
+authoritySpanIsSeparated(
+    outView, sizeof(*outView), alignof(ZoneRuntimePendingCopyView));
+authenticatePendingCopyInspectionOutput(
+    physicalSlot, key, outView, sizeof(*outView),
+    alignof(ZoneRuntimePendingCopyView));
+TryGetZoneRuntimePendingCopyView(table, slot, key, &candidate);
+]=])
+runtime_facade_pending_output_guard_is_exact(
+    _pending_view_missing_key_guard_fixture
+    outView
+    "alignof(ZoneRuntimePendingCopyView)"
+    "TryGetZoneRuntimePendingCopyView("
+    _malformed_pending_guard_was_accepted)
+if(_malformed_pending_guard_was_accepted)
+    message(FATAL_ERROR
+        "Runtime facade pending-copy seal accepted a missing key/output separation")
+endif()
+
+set(_pending_read_late_key_guard_fixture [=[
+pmem_runtime::StorageIsOutsideManagedMemory(outRecord, sizeof(*outRecord));
+authoritySpanIsSeparated(
+    outRecord, sizeof(*outRecord),
+    alignof(zone_pending_copy::PendingCopyRecord));
+TryReadZoneRuntimePendingCopy(table, slot, key, count, ordinal, &candidate);
+AddressRangesAreDisjoint(
+    &key, sizeof(key), outRecord, sizeof(*outRecord));
+authenticatePendingCopyInspectionOutput(
+    physicalSlot, key, outRecord, sizeof(*outRecord),
+    alignof(zone_pending_copy::PendingCopyRecord));
+]=])
+runtime_facade_pending_output_guard_is_exact(
+    _pending_read_late_key_guard_fixture
+    outRecord
+    "alignof(zone_pending_copy::PendingCopyRecord)"
+    "TryReadZoneRuntimePendingCopy("
+    _malformed_pending_guard_was_accepted)
+if(_malformed_pending_guard_was_accepted)
+    message(FATAL_ERROR
+        "Runtime facade pending-copy seal accepted a post-forward key guard")
+endif()
+
+set(_pending_view_missing_stream_auth_fixture [=[
+pmem_runtime::StorageIsOutsideManagedMemory(outView, sizeof(*outView));
+authoritySpanIsSeparated(
+    outView, sizeof(*outView), alignof(ZoneRuntimePendingCopyView));
+AddressRangesAreDisjoint(
+    &key, sizeof(key), outView, sizeof(*outView));
+TryGetZoneRuntimePendingCopyView(table, slot, key, &candidate);
+]=])
+runtime_facade_pending_output_guard_is_exact(
+    _pending_view_missing_stream_auth_fixture
+    outView
+    "alignof(ZoneRuntimePendingCopyView)"
+    "TryGetZoneRuntimePendingCopyView("
+    _malformed_pending_guard_was_accepted)
+if(_malformed_pending_guard_was_accepted)
+    message(FATAL_ERROR
+        "Runtime facade pending-copy seal accepted missing stream authentication")
+endif()
+
+set(_pending_read_late_stream_auth_fixture [=[
+pmem_runtime::StorageIsOutsideManagedMemory(outRecord, sizeof(*outRecord));
+authoritySpanIsSeparated(
+    outRecord, sizeof(*outRecord),
+    alignof(zone_pending_copy::PendingCopyRecord));
+AddressRangesAreDisjoint(
+    &key, sizeof(key), outRecord, sizeof(*outRecord));
+TryReadZoneRuntimePendingCopy(table, slot, key, count, ordinal, &candidate);
+authenticatePendingCopyInspectionOutput(
+    physicalSlot, key, outRecord, sizeof(*outRecord),
+    alignof(zone_pending_copy::PendingCopyRecord));
+]=])
+runtime_facade_pending_output_guard_is_exact(
+    _pending_read_late_stream_auth_fixture
+    outRecord
+    "alignof(zone_pending_copy::PendingCopyRecord)"
+    "TryReadZoneRuntimePendingCopy("
+    _malformed_pending_guard_was_accepted)
+if(_malformed_pending_guard_was_accepted)
+    message(FATAL_ERROR
+        "Runtime facade pending-copy seal accepted post-forward stream authentication")
+endif()
+
+foreach(_forbidden_pending_authority IN ITEMS
+    "zone_pending_copy::TryReadPendingCopyRecord("
+    "zone_pending_copy::AuthenticatePendingCopyAdmissionReceipt("
+    "zone_pending_copy::AuthenticatePendingCopyLedgerDescriptors("
+    "PendingCopyAdmissionReceipt"
+    "PendingCopyLedger")
+    require_not_contains(
+        _source "${_forbidden_pending_authority}"
+        "facade pending-copy inspection cannot acquire ledger or receipt authority")
 endforeach()
 
 # A table callback reports Busy to every ordinary lookup. Only that result may

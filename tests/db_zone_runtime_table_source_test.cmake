@@ -313,10 +313,15 @@ endfunction()
 foreach(_marker IN ITEMS
     "struct ZoneRuntimeTableTestAccess"
     "sizeof(ZoneRuntimeGenerationCallbacks) == (sizeof(void *) == 4 ? 0x14u : 0x28u)"
+    "sizeof(ZoneRuntimePendingCopyView) == 0x18u"
     "sizeof(ZoneRuntimeGenerationBinding) == (sizeof(void *) == 4 ? 0x50u : 0x78u)"
     "sizeof(ZoneRuntimeReceiptCapsule) == (sizeof(void *) == 4 ? 0xD0u : 0x120u)"
     "sizeof(ZoneRuntimeEntry) == (sizeof(void *) == 4 ? 0x190u : 0x228u)"
     "sizeof(ZoneRuntimeTable) == (sizeof(void *) == 4 ? 0xF568u : 0x109A0u)"
+    "using PendingCopyViewOperation ="
+    "using PendingCopyReadOperation ="
+    "decltype(&TryGetZoneRuntimePendingCopyView)"
+    "decltype(&TryReadZoneRuntimePendingCopy)"
     "CanReachEntries"
     "CanMutateState"
     "CanMutateSharedState"
@@ -333,6 +338,11 @@ foreach(_marker IN ITEMS
     "CanReachCallbackMarker"
     "CanAuthenticateRegistryLifecycleCallback"
     "CanRestoreRegistryLifecycleCallback"
+    "CanSetPendingCopyReadHook"
+    "CanAuthenticateLifecycleCallbackMarker"
+    "CanAuthenticatePendingCopyRead"
+    "CanAuthenticatePendingCopyOutput"
+    "CanReachPendingCopyAdmissionReceipt"
     "CanReachAllocationReceipt"
     "CanReachStreamGenerationReceipt"
     "CanReachPendingAdmissionReceipt"
@@ -357,7 +367,12 @@ foreach(_marker IN ITEMS
     "&binding->callbackMarker_;"
     "table->authenticateExactRegistryLifecycleCallback(1u, key);"
     "table->restoreExactRegistryLifecycleCallback(1u, key);"
+    "table->authenticateExactLifecycleCallbackMarker(1u, key, marker);"
+    "table->authenticateExactPendingCopyRead(1u, key, outEntry);"
+    "table->authenticateExactPendingCopyOutput( 1u, key, output, sizeof(std::uint32_t), alignof(std::uint32_t));"
+    "Table::pendingCopyAdmissionReceipt(entry);"
     "!ZoneRuntimeTableTestAccess::CanReachEntries<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanSetPendingCopyReadHook< ZoneRuntimeTableTestAccess>"
     "!ZoneRuntimeTableTestAccess::CanMutateState<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanMutateSharedState<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanReachMutableLifecycle<ZoneRuntimeEntry>"
@@ -373,6 +388,10 @@ foreach(_marker IN ITEMS
     "!ZoneRuntimeTableTestAccess::CanReachCallbackMarker< ZoneRuntimeGenerationBinding>"
     "!ZoneRuntimeTableTestAccess::CanAuthenticateRegistryLifecycleCallback< ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanRestoreRegistryLifecycleCallback< ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanAuthenticateLifecycleCallbackMarker< ZoneRuntimeTable, ZoneRuntimeGenerationBinding>"
+    "!ZoneRuntimeTableTestAccess::CanAuthenticatePendingCopyRead< ZoneRuntimeTable, ZoneRuntimeEntry>"
+    "!ZoneRuntimeTableTestAccess::CanAuthenticatePendingCopyOutput< ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanReachPendingCopyAdmissionReceipt< ZoneRuntimeTable, ZoneRuntimeEntry>"
     "!ZoneRuntimeTableTestAccess::CanReachAllocationReceipt< ZoneRuntimeReceiptCapsule>"
     "!ZoneRuntimeTableTestAccess::CanReachStreamGenerationReceipt< ZoneRuntimeReceiptCapsule>"
     "!ZoneRuntimeTableTestAccess::CanReachPendingAdmissionReceipt< ZoneRuntimeReceiptCapsule>"
@@ -384,6 +403,40 @@ require_not_contains(
     _production_seal
     "#define KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
     "production authority seal cannot opt into test access")
+
+# The staged mutation hooks exist only in the private runtime-table fixture.
+# Production compiles the same source with all hook storage/calls removed, and
+# the one-shot test hook clears before invoking adversarial mutation.
+require_substring_count(
+    _runtime_source_raw
+    "#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING" 4
+    "four exact source-local runtime-table test-hook gates")
+foreach(_marker IN ITEMS
+    "struct PendingCopyReadTestHook final"
+    "PendingCopyReadTestHook g_pendingCopyReadTestHook{};"
+    "void InvokePendingCopyReadTestHook("
+    "const PendingCopyReadTestHook hook = g_pendingCopyReadTestHook;"
+    "g_pendingCopyReadTestHook = {};"
+    "void ZoneRuntimeTableTestAccess::SetPendingCopyReadHook("
+    "PendingCopyReadHookStage::BeforeLowerRead"
+    "PendingCopyReadHookStage::AfterLowerRead")
+    require_contains(
+        _source "${_marker}"
+        "test-gated one-shot pending-copy mutation seam")
+endforeach()
+require_substring_count(
+    _source "InvokePendingCopyReadTestHook(" 3
+    "one hook helper plus exact pre/post lower-read calls")
+require_ordered(
+    _source
+    "const PendingCopyReadTestHook hook = g_pendingCopyReadTestHook;"
+    "g_pendingCopyReadTestHook = {};"
+    "test hook snapshots before one-shot revocation")
+require_ordered(
+    _source
+    "g_pendingCopyReadTestHook = {};"
+    "hook.callback(hook.context, table, physicalSlot, key);"
+    "test hook revokes before adversarial callback")
 
 extract_slice(
     _tests
@@ -451,6 +504,29 @@ foreach(_var IN ITEMS _header _source)
             ${_var} "${_forbidden}" "metadata-only report-free table")
     endforeach()
 endforeach()
+
+extract_slice(
+    _header
+    "struct ZoneRuntimePendingCopyView final"
+    "RUNTIME_SIZE(ZoneRuntimePendingCopyView, 0x18, 0x18);"
+    _pending_copy_view_declaration
+    "pointer-free pending-copy view declaration")
+string(STRIP "${_pending_copy_view_declaration}"
+    _pending_copy_view_declaration)
+set(_expected_pending_copy_view_declaration
+    "struct ZoneRuntimePendingCopyView final { zone_load::ZoneLoadContextKey key{}; std::uint32_t recordCount = 0; std::uint32_t reserved = 0; [[nodiscard]] constexpr explicit operator bool() const noexcept { return static_cast<bool>(key) && recordCount <= zone_pending_copy::kPendingCopyRecordCapacity && reserved == 0; } };")
+if(NOT _pending_copy_view_declaration STREQUAL
+    _expected_pending_copy_view_declaration)
+    message(FATAL_ERROR
+        "Pending-copy view must remain an exact pointer-free 0x18 value")
+endif()
+foreach(_pending_copy_api IN ITEMS
+    "[[nodiscard]] ZoneRuntimeTableStatus TryGetZoneRuntimePendingCopyView( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, ZoneRuntimePendingCopyView *outView) noexcept;"
+    "[[nodiscard]] ZoneRuntimeTableStatus TryReadZoneRuntimePendingCopy( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, std::uint32_t expectedRecordCount, std::uint32_t ordinal, zone_pending_copy::PendingCopyRecord *outRecord) noexcept;")
+    require_substring_count(
+        _header "${_pending_copy_api}" 1
+        "single exact public pending-copy inspection declaration")
+endforeach()
 require_substring_count(
     _source "#include <database/db_zone_runtime_storage_fx_bridge.h>" 1
     "single headless-neutral private storage bridge include")
@@ -483,6 +559,10 @@ foreach(_marker IN ITEMS
     "zone_pending_copy::PendingCopyLedger pendingCopyLedger_{};"
     "RUNTIME_SIZE(ZoneRuntimeTable, 0xF568, 0x109A0);"
     "RUNTIME_SIZE(ZoneRuntimeGenerationView, 0x18, 0x18);"
+    "struct ZoneRuntimePendingCopyView final"
+    "std::uint32_t recordCount = 0;"
+    "std::uint32_t reserved = 0;"
+    "RUNTIME_SIZE(ZoneRuntimePendingCopyView, 0x18, 0x18);"
     "ZoneRuntimeEntry(const ZoneRuntimeEntry &) = delete;"
     "ZoneRuntimeReceiptCapsule(const ZoneRuntimeReceiptCapsule &) = delete;"
     "ZoneRuntimeTable(const ZoneRuntimeTable &) = delete;"
@@ -491,7 +571,10 @@ foreach(_marker IN ITEMS
     "authenticateExactMutableEntry("
     "authenticateExactRegistryLifecycleCallback("
     "restoreExactRegistryLifecycleCallback("
-    "transitionExactRegistryLifecycleCallback("
+    "authenticateExactLifecycleCallbackMarker("
+    "authenticateExactPendingCopyRead("
+    "authenticateExactPendingCopyOutput("
+    "pendingCopyAdmissionReceipt("
     "exactRegistryLifecycleCallbackPhaseMatches("
     "completeMutableOperation("
     "mutableScriptStringOwnership("
@@ -505,6 +588,8 @@ foreach(_marker IN ITEMS
     "TryBeginZoneRuntimeScriptStringRollback("
     "TryRollbackNextZoneRuntimeScriptString("
     "TryFinishZoneRuntimeScriptStringAbandonment("
+    "TryGetZoneRuntimePendingCopyView("
+    "TryReadZoneRuntimePendingCopy("
     "TryUnloadZoneRuntimeGeneration("
     "TryResetZoneRuntimeTerminalReceipt("
     "Rejected,"
@@ -749,6 +834,8 @@ set(_zone_runtime_table_friends
     "friend ZoneRuntimeTableStatus TryBindZoneRuntimeStreams( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, const XZoneMemory *, const relocation::BlockView *, std::size_t) noexcept"
     "friend ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
     "friend ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, std::uint32_t) noexcept"
+    "friend ZoneRuntimeTableStatus TryGetZoneRuntimePendingCopyView( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, ZoneRuntimePendingCopyView *) noexcept"
+    "friend ZoneRuntimeTableStatus TryReadZoneRuntimePendingCopy( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, std::uint32_t, std::uint32_t, zone_pending_copy::PendingCopyRecord *) noexcept"
     "friend ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
     "friend ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
     "friend ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
@@ -800,7 +887,7 @@ require_exact_class_digest(_pending_copy_ledger_class
     501f278a5fede51712aa454d786f5f225247fe4f79427df9c09c050ca2739065
     "PendingCopyLedger")
 require_exact_class_digest(_generation_binding_class
-    26357c09d3a2538b997af5a3638185ecae217de7608356e3bff6f3b05982732e
+    80071a79d85862bab72efee7fc388bbe82cb91bac07616ca9aa348cfd911784d
     "ZoneRuntimeGenerationBinding")
 require_exact_class_digest(_receipt_capsule_class
     bf472ac7720169338debff211f4986e00e50233386054eccd0d2a96cd0b287f1
@@ -809,7 +896,7 @@ require_exact_class_digest(_zone_runtime_entry_class
     4f2c0c8a116a52a6a291a8715254951e2ad25093196fcb34f706044641f87bd9
     "ZoneRuntimeEntry")
 require_exact_class_digest(_zone_runtime_table_class
-    9924e6d291302afdd2521cfd14e9585e3eeb12ac5236a89696c5d333a6b30763
+    b3337c16218f4f8d55ebea7ef617b4e4fc183ca318cbe9ce4256910d9c7f06be
     "ZoneRuntimeTable")
 
 set(_external_macro_friend_invocation_fixture "${_receipt_capsule_class}")
@@ -1023,6 +1110,7 @@ set(_reviewed_composite_calls
     "zone_pending_copy::TryInitializePendingCopyLedger|1"
     "zone_pending_copy::TryBeginPendingCopyAdmission|1"
     "zone_pending_copy::TryAppendPendingCopyRecord|1"
+    "zone_pending_copy::TryReadPendingCopyRecord|1"
     "zone_pending_copy::TryPreparePendingCopyAdmission|1"
     "zone_pending_copy::FinalizePreparedPendingCopyAdmission|1"
     "zone_pending_copy::TryDiscardPendingCopyAdmission|2"
@@ -1239,21 +1327,60 @@ require_regex_count(
 extract_slice(
     _source
     "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactRegistryLifecycleCallback("
-    "zone_load::ZoneLoadContextSlot *ZoneRuntimeTable::mutableLifecycle("
-    _registry_callback_authentication
-    "exact registry lifecycle callback authentication")
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::restoreExactRegistryLifecycleCallback("
+    _registry_callback_consumption
+    "exact registry lifecycle callback consumption")
 foreach(_marker IN ITEMS
-    "Marker::ActiveRegistryBorrow, Marker::ActiveNoRegistry"
-    "Marker::ActiveNoRegistry, Marker::ActiveRegistryBorrow"
-    "ZoneRuntimeTable::transitionExactRegistryLifecycleCallback("
+    "authenticateExactLifecycleCallbackMarker( physicalSlot, key, Marker::ActiveRegistryBorrow)"
+    "if (status == ZoneRuntimeTableStatus::Success)"
+    "entries_[physicalSlot].generationBinding_.callbackMarker_ = Marker::ActiveNoRegistry;"
+    "return status;")
+    require_contains(
+        _registry_callback_consumption "${_marker}"
+        "success-only callback registry authority consumption")
+endforeach()
+require_ordered(
+    _registry_callback_consumption
+    "authenticateExactLifecycleCallbackMarker("
+    "callbackMarker_ = Marker::ActiveNoRegistry;"
+    "callback marker authenticates before consumption")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::restoreExactRegistryLifecycleCallback("
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactLifecycleCallbackMarker("
+    _registry_callback_restoration
+    "exact registry lifecycle callback restoration")
+foreach(_marker IN ITEMS
+    "authenticateExactLifecycleCallbackMarker( physicalSlot, key, Marker::ActiveNoRegistry)"
+    "if (status == ZoneRuntimeTableStatus::Success)"
+    "entries_[physicalSlot].generationBinding_.callbackMarker_ = Marker::ActiveRegistryBorrow;"
+    "return status;")
+    require_contains(
+        _registry_callback_restoration "${_marker}"
+        "success-only callback registry authority restoration")
+endforeach()
+require_ordered(
+    _registry_callback_restoration
+    "authenticateExactLifecycleCallbackMarker("
+    "callbackMarker_ = Marker::ActiveRegistryBorrow;"
+    "callback marker authenticates before restoration")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactLifecycleCallbackMarker("
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactPendingCopyRead("
+    _registry_callback_authentication
+    "non-consuming exact registry lifecycle callback authentication")
+foreach(_marker IN ITEMS
     "expectedMarker == Marker::Idle"
-    "replacementMarker == Marker::Idle"
-    "expectedMarker == replacementMarker"
+    "expectedMarker > Marker::ActiveRegistryBorrow"
     "HasKnownState(state_)"
     "HasKnownSharedState(sharedState_)"
     "ValidateUsableSlot(physicalSlot)"
     "if (key.slot != physicalSlot)"
-    "entry.lifecycle_.generation() != key.generation"
+    "if (entry.key_ != key) return ZoneRuntimeTableStatus::StaleKey;"
+    "if (entry.lifecycle_.slotIndex() != physicalSlot || entry.lifecycle_.generation() != key.generation) { poison(); return ZoneRuntimeTableStatus::UnsafeFailure; }"
     "validateSharedComposition()"
     "binding.canonicalFor(this, &entry.lifecycle_, key)"
     "std::size_t activeMarkerCount = 0;"
@@ -1269,14 +1396,23 @@ foreach(_marker IN ITEMS
     "tableStatus != ZoneRuntimeTableStatus::Busy"
     "entry.scriptStringOwnership_.canonicalForBinding( &entry.lifecycle_, key)"
     "exactRegistryLifecycleCallbackPhaseMatches(entry)"
-    "Its sole reverse use follows a coordinator hash-lock Busy while // the same facade serializer and synchronous callback remain active."
-    "This one-shot gate is defense in depth, not arbitrary // longjmp containment: production enrollment still requires checked // no-report callback adapters."
-    "binding.callbackMarker_ = replacementMarker;"
+    "This helper only authenticates the marker. Mutable registry admission"
+    "pending-copy inspection deliberately leaves the borrow intact."
     "return ZoneRuntimeTableStatus::Success;")
     require_contains(
         _registry_callback_authentication "${_marker}"
         "whole-table sole-binding callback authentication")
 endforeach()
+require_ordered(
+    _registry_callback_authentication
+    "if (entry.key_ != key)"
+    "if (entry.lifecycle_.slotIndex() != physicalSlot"
+    "requested callback key mismatch precedes internal lifecycle corruption")
+require_ordered(
+    _registry_callback_authentication
+    "if (entry.lifecycle_.slotIndex() != physicalSlot"
+    "validateSharedComposition()"
+    "callback lifecycle contradiction poisons before shared traversal")
 require_ordered(
     _registry_callback_authentication
     "validateSharedComposition()"
@@ -1287,16 +1423,110 @@ require_ordered(
     "binding.callbackMarker_ != expectedMarker"
     "exactRegistryLifecycleCallbackPhaseMatches(entry)"
     "mismatched callback transitions classify Busy before phase checks")
-require_ordered(
+require_not_contains(
     _registry_callback_authentication
-    "exactRegistryLifecycleCallbackPhaseMatches(entry)"
-    "binding.callbackMarker_ = replacementMarker;"
-    "exact phase authentication precedes callback marker transition")
+    "callbackMarker_ = Marker::"
+    "callback marker authentication must remain non-consuming")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactPendingCopyRead("
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactPendingCopyOutput("
+    _pending_copy_read_authentication
+    "exact pending-copy read authentication")
+foreach(_marker IN ITEMS
+    "if (!outEntry)"
+    "HasKnownState(state_)"
+    "HasKnownSharedState(sharedState_)"
+    "ValidateUsableSlot(physicalSlot)"
+    "if (key.slot != physicalSlot)"
+    "if (entry.key_ != key) return ZoneRuntimeTableStatus::StaleKey;"
+    "if (entry.lifecycle_.slotIndex() != physicalSlot || entry.lifecycle_.generation() != key.generation) { poison(); return ZoneRuntimeTableStatus::UnsafeFailure; }"
+    "candidateMarker > Marker::ActiveRegistryBorrow"
+    "if (marker != Marker::Idle)"
+    "authenticateExactLifecycleCallbackMarker( physicalSlot, key, Marker::ActiveRegistryBorrow)"
+    "The authentication above is non-mutating."
+    "validateInitializedHeader()"
+    "authenticateExactEntry(physicalSlot, key)"
+    "static_cast<SharedState>(sharedState_) == SharedState::Draining"
+    "entry.setupStage() < ZoneRuntimeSetupStage::PendingCopyBegun"
+    "const auto *const receipt = pendingCopyAdmissionReceipt(&entry)"
+    "case PendingPhase::Collecting:"
+    "case PendingPhase::Prepared:"
+    "case PendingPhase::Admitted:"
+    "case PendingPhase::Drained:"
+    "case PendingPhase::Discarded:"
+    "*outEntry = &entry;"
+    "case PendingPhase::Admitting:"
+    "case PendingPhase::Pristine:"
+    "case PendingPhase::UnsafeFailure:"
+    "poison();")
+    require_contains(
+        _pending_copy_read_authentication "${_marker}"
+        "quiescent-or-exact-callback pending-copy read gate")
+endforeach()
 require_ordered(
-    _registry_callback_authentication
-    "binding.callbackMarker_ = replacementMarker;"
-    "return ZoneRuntimeTableStatus::Success;"
-    "callback marker transition precedes Success publication")
+    _pending_copy_read_authentication
+    "if (entry.key_ != key)"
+    "if (entry.lifecycle_.slotIndex() != physicalSlot"
+    "requested read key mismatch precedes internal lifecycle corruption")
+require_ordered(
+    _pending_copy_read_authentication
+    "if (entry.lifecycle_.slotIndex() != physicalSlot"
+    "const Marker marker ="
+    "pending-read lifecycle contradiction poisons before marker traversal")
+require_ordered(
+    _pending_copy_read_authentication
+    "if (marker != Marker::Idle)"
+    "authenticateExactLifecycleCallbackMarker("
+    "non-idle pending-copy reads require callback authentication")
+require_ordered(
+    _pending_copy_read_authentication
+    "case PendingPhase::Discarded:"
+    "*outEntry = &entry;"
+    "entry pointer publishes only for the closed readable phase set")
+require_not_contains(
+    _pending_copy_read_authentication
+    "callbackMarker_ = Marker::"
+    "pending-copy inspection cannot consume callback registry authority")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactPendingCopyOutput("
+    "zone_load::ZoneLoadContextSlot *ZoneRuntimeTable::mutableLifecycle("
+    _pending_copy_output_authentication
+    "exact pending-copy output authentication")
+foreach(_marker IN ITEMS
+    "const ZoneRuntimeEntry *entry = nullptr;"
+    "authenticateExactPendingCopyRead(physicalSlot, key, &entry)"
+    "if (authentication != ZoneRuntimeTableStatus::Success) return authentication;"
+    "if (!entry || !zone_slots::IsUsableZoneSlot(physicalSlot) || entry != &entries_[physicalSlot])"
+    "poison();"
+    "return ZoneRuntimeTableStatus::UnsafeFailure;"
+    "WritableOutputIsSeparatedFromRetainedRuntime( activeZoneStreamBinding_, static_cast<SharedState>(sharedState_), output, outputSize, outputAlignment)"
+    "? ZoneRuntimeTableStatus::Success : ZoneRuntimeTableStatus::InvalidArgument;")
+    require_contains(
+        _pending_copy_output_authentication "${_marker}"
+        "table-owned exact pending-copy caller-output authentication")
+endforeach()
+require_ordered(
+    _pending_copy_output_authentication
+    "authenticateExactPendingCopyRead("
+    "if (authentication != ZoneRuntimeTableStatus::Success)"
+    "pending-copy output exact-key authentication precedes status handling")
+require_ordered(
+    _pending_copy_output_authentication
+    "if (authentication != ZoneRuntimeTableStatus::Success)"
+    "entry != &entries_[physicalSlot]"
+    "pending-copy output status handling precedes canonical-entry validation")
+require_ordered(
+    _pending_copy_output_authentication
+    "entry != &entries_[physicalSlot]"
+    "WritableOutputIsSeparatedFromRetainedRuntime("
+    "pending-copy output canonical entry validation precedes retained-span authentication")
+require_substring_count(
+    _source "authenticateExactPendingCopyOutput(" 3
+    "one private definition and two reviewed pending-copy output gates")
 
 extract_slice(
     _source
@@ -1492,7 +1722,7 @@ foreach(_marker IN ITEMS
         "pending admission callback failure blocks the live side effect")
 endforeach()
 require_substring_count(
-    _source "Marker::ActiveRegistryBorrow" 12
+    _source "Marker::ActiveRegistryBorrow" 13
     "closed callback registry marker reference surface")
 require_substring_count(
     _source "tryBeginRegistryCallbackWindow(" 2
@@ -1526,11 +1756,11 @@ foreach(_marker IN ITEMS
         "overflow-safe exact control-state separation")
 endforeach()
 require_substring_count(
-    _source "WritableOutputIsSeparated(" 6
-    "one helper plus five reviewed writable-output preflights")
+    _source "WritableOutputIsSeparated(" 8
+    "one helper plus seven reviewed writable-output preflights")
 require_substring_count(
-    _source "WritableOutputIsSeparatedFromRetainedRuntime(" 6
-    "one retained-runtime helper plus five reviewed output gates")
+    _source "WritableOutputIsSeparatedFromRetainedRuntime(" 7
+    "one retained-runtime helper plus six reviewed output gates")
 require_substring_count(
     _source "zone_stream_ownership::AuthenticateZoneStreamOutputSpan" 1
     "single exact stream-authority output authenticator")
@@ -1642,6 +1872,147 @@ require_ordered(
     "ZoneLoadContextKeyMatches("
     "*outView = candidate;"
     "generation lookup publishes only after exact key authentication")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryGetZoneRuntimePendingCopyView("
+    "ZoneRuntimeTableStatus TryReadZoneRuntimePendingCopy("
+    _pending_copy_view_adapter
+    "exact pending-copy view adapter")
+foreach(_marker IN ITEMS
+    "const zone_load::ZoneLoadContextKey key = keyArgument;"
+    "WritableOutputIsSeparated( table, outView, sizeof(*outView), alignof(ZoneRuntimePendingCopyView), &keyArgument)"
+    "table->authenticateExactPendingCopyOutput( physicalSlot, key, outView, sizeof(*outView), alignof(ZoneRuntimePendingCopyView))"
+    "if (authentication != ZoneRuntimeTableStatus::Success) return authentication;"
+    "const ZoneRuntimeEntry *const entry = &table->entries_[physicalSlot];"
+    "ZoneRuntimeTable::pendingCopyAdmissionReceipt(entry)"
+    "const auto phase = receipt->phase();"
+    "const std::uint32_t recordCount = receipt->recordCount();"
+    "const ZoneRuntimePendingCopyView candidate{key, recordCount, 0};"
+    "if (!candidate)"
+    "table->authenticateExactPendingCopyRead( physicalSlot, key, &postEntry)"
+    "postEntry != entry"
+    "postReceipt != receipt"
+    "postReceipt->phase() != phase"
+    "postReceipt->recordCount() != recordCount"
+    "table->poison();"
+    "*outView = candidate;")
+    require_contains(
+        _pending_copy_view_adapter "${_marker}"
+        "failure-atomic exact pending-copy view")
+endforeach()
+require_substring_count(
+    _pending_copy_view_adapter
+    "authenticateExactPendingCopyRead(" 1
+    "pending-copy view exact post-authentication")
+require_substring_count(
+    _pending_copy_view_adapter
+    "authenticateExactPendingCopyOutput(" 1
+    "pending-copy view exact output authentication")
+require_substring_count(
+    _pending_copy_view_adapter "*outView = candidate;" 1
+    "sole pending-copy view publication")
+require_not_contains(
+    _pending_copy_view_adapter
+    "TryReadPendingCopyRecord("
+    "count-only view cannot read or expose ledger records")
+require_ordered(
+    _pending_copy_view_adapter
+    "const zone_load::ZoneLoadContextKey key = keyArgument;"
+    "WritableOutputIsSeparated("
+    "input key snapshots before caller-output separation")
+require_ordered(
+    _pending_copy_view_adapter
+    "WritableOutputIsSeparated("
+    "authenticateExactPendingCopyOutput("
+    "view output preflights before table authentication")
+require_ordered(
+    _pending_copy_view_adapter
+    "authenticateExactPendingCopyOutput("
+    "const auto *const receipt ="
+    "exact output topology authenticates before receipt inspection")
+require_ordered(
+    _pending_copy_view_adapter
+    "const ZoneRuntimeTableStatus postAuthentication ="
+    "*outView = candidate;"
+    "view post-authenticates before sole caller write")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryReadZoneRuntimePendingCopy("
+    "ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission("
+    _pending_copy_record_adapter
+    "exact pending-copy record adapter")
+foreach(_marker IN ITEMS
+    "expectedRecordCount > zone_pending_copy::kPendingCopyRecordCapacity"
+    "ordinal >= expectedRecordCount"
+    "const zone_load::ZoneLoadContextKey key = keyArgument;"
+    "WritableOutputIsSeparated( table, outRecord, sizeof(*outRecord), alignof(zone_pending_copy::PendingCopyRecord), &keyArgument)"
+    "table->authenticateExactPendingCopyOutput( physicalSlot, key, outRecord, sizeof(*outRecord), alignof(zone_pending_copy::PendingCopyRecord))"
+    "if (authentication != ZoneRuntimeTableStatus::Success) return authentication;"
+    "const ZoneRuntimeEntry *const entry = &table->entries_[physicalSlot];"
+    "ZoneRuntimeTable::pendingCopyAdmissionReceipt(entry)"
+    "const auto phase = receipt->phase();"
+    "receipt->recordCount() != expectedRecordCount"
+    "return ZoneRuntimeTableStatus::CountMismatch;"
+    "zone_pending_copy::PendingCopyRecord candidate{};"
+    "zone_pending_copy::TryReadPendingCopyRecord( receipt, key, ordinal, &candidate)"
+    "pendingStatus != zone_pending_copy::PendingCopyStatus::Success"
+    "candidate.key != key"
+    "candidate.assetEntryIndex < zone_pending_copy::kFirstAssetEntryIndex"
+    "candidate.assetEntryIndex > zone_pending_copy::kLastAssetEntryIndex"
+    "candidate.reserved != 0"
+    "table->authenticateExactPendingCopyRead( physicalSlot, key, &postEntry)"
+    "postEntry != entry"
+    "postReceipt != receipt"
+    "postReceipt->phase() != phase"
+    "postReceipt->recordCount() != expectedRecordCount"
+    "table->poison();"
+    "*outRecord = candidate;")
+    require_contains(
+        _pending_copy_record_adapter "${_marker}"
+        "failure-atomic exact pending-copy record read")
+endforeach()
+require_substring_count(
+    _pending_copy_record_adapter
+    "authenticateExactPendingCopyRead(" 1
+    "pending-copy record exact post-authentication")
+require_substring_count(
+    _pending_copy_record_adapter
+    "authenticateExactPendingCopyOutput(" 1
+    "pending-copy record exact output authentication")
+require_substring_count(
+    _pending_copy_record_adapter
+    "zone_pending_copy::TryReadPendingCopyRecord(" 1
+    "one reviewed lower by-value record read")
+require_substring_count(
+    _pending_copy_record_adapter "*outRecord = candidate;" 1
+    "sole pending-copy record publication")
+require_ordered(
+    _pending_copy_record_adapter
+    "expectedRecordCount > zone_pending_copy::kPendingCopyRecordCapacity"
+    "const zone_load::ZoneLoadContextKey key = keyArgument;"
+    "count and ordinal preflight before table or caller-buffer inspection")
+require_ordered(
+    _pending_copy_record_adapter
+    "WritableOutputIsSeparated("
+    "authenticateExactPendingCopyOutput("
+    "record output preflights before table authentication")
+require_ordered(
+    _pending_copy_record_adapter
+    "receipt->recordCount() != expectedRecordCount"
+    "zone_pending_copy::TryReadPendingCopyRecord("
+    "snapshot count mismatch precedes lower record access")
+require_ordered(
+    _pending_copy_record_adapter
+    "zone_pending_copy::TryReadPendingCopyRecord("
+    "const ZoneRuntimeTableStatus postAuthentication ="
+    "lower by-value read precedes exact post-authentication")
+require_ordered(
+    _pending_copy_record_adapter
+    "const ZoneRuntimeTableStatus postAuthentication ="
+    "*outRecord = candidate;"
+    "record post-authenticates before sole caller write")
 require_output_preflight(
     "ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory("
     "ZoneRuntimeTableStatus TryBindZoneRuntimeStorage("
@@ -2145,15 +2516,29 @@ require_not_contains(
 extract_slice(
     _source
     "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactMutableEntry("
-    "const zone_load::ZoneLoadContextKey &ZoneRuntimeEntry::key()"
-    _mutable_access
-    "private mutable table member boundary")
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactRegistryLifecycleCallback("
+    _mutable_entry_authentication
+    "private mutable entry authentication")
 foreach(_marker IN ITEMS
     "validateInitializedHeader()"
     "if (!static_cast<bool>(key))"
     "ValidateUsableSlot(physicalSlot)"
     "if (key.slot != physicalSlot)"
     "authenticateExactEntry(physicalSlot, key)"
+    "if (authentication == ZoneRuntimeTableStatus::UnsafeFailure)"
+    "*outEntry = &entry;")
+    require_contains(
+        _mutable_entry_authentication "${_marker}"
+        "exact mutable entry authentication")
+endforeach()
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::completeMutableOperation("
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::completeCompositeOperation("
+    _mutable_access
+    "private mutable operation completion")
+foreach(_marker IN ITEMS
     "MapOwnershipStatus(ownershipStatus)"
     "const ZoneRuntimeTableStatus postAuthentication ="
     "authenticateExactMutableEntry(physicalSlot, key, &postEntry)"
@@ -2273,6 +2658,15 @@ foreach(_var IN ITEMS _registry _file_load _load _stream _stringtable)
         ${_var}
         "TryResetZoneRuntimeTerminalReceipt("
         "legacy loader cannot reset runtime receipts")
+    foreach(_inspection_api IN ITEMS
+        "TryGetZoneRuntimePendingCopyView("
+        "TryReadZoneRuntimePendingCopy("
+        "TryGetPendingCopyView("
+        "TryReadPendingCopy(")
+        require_not_contains(
+            ${_var} "${_inspection_api}"
+            "legacy loader cannot enroll pending-copy inspection")
+    endforeach()
     foreach(_mutable_api IN ITEMS
         "TryBeginZoneRuntimeScriptStringOwnership("
         "TryStageZoneRuntimeScriptString("
@@ -2313,6 +2707,12 @@ foreach(_marker IN ITEMS
     "void TestCompositeStageOutputAliasPreflight()"
     "void TestCompositeCallbackContextAliasPreflightAndDrain()"
     "void TestExactRegistryLifecycleCallbackMarkerClassification()"
+    "void TestExactPendingCopyInspectionAndSnapshotStability()"
+    "void TestUnsafePendingCopyInspectionBoundary("
+    "kind == \"lifecycle-drift\""
+    "kind == \"callback-lifecycle-drift\""
+    "ZoneLoadContextSlotTestAccess::SetGeneration("
+    "--unsafe-pending-copy"
     "void TestCompositeAbandonmentRetryAndReentryPreservation()"
     "void TestUnsafeLiveUnloadBoundary("
     "void ObserveAdmittingController(void *const context) noexcept"
@@ -2370,6 +2770,33 @@ foreach(_marker IN ITEMS
     "Zone runtime table tests passed")
     require_contains(_fixture "${_marker}" "focused runtime coverage")
 endforeach()
+
+extract_slice(
+    _fixture
+    "void TestExactPendingCopyInspectionAndSnapshotStability()"
+    "void TestExactRegistryLifecycleCallbackMarkerClassification()"
+    _exact_pending_copy_fixture
+    "exact pending-copy runtime coverage")
+foreach(_marker IN ITEMS
+    "std::array<std::uint8_t, sizeof(XZoneMemory)> zoneBefore{};"
+    "std::memcpy(zoneBefore.data(), &fixture.zone, zoneBefore.size());"
+    "reinterpret_cast<ZoneRuntimePendingCopyView *>(&fixture.zone)"
+    "reinterpret_cast<zone_pending_copy::PendingCopyRecord *>( &fixture.zone)"
+    "zoneBefore.data(), &fixture.zone, zoneBefore.size()) == 0"
+    "CHECK(fixture.table->initialized());")
+    require_contains(
+        _exact_pending_copy_fixture "${_marker}"
+        "retained pending-copy caller outputs remain fail-closed")
+endforeach()
+require_substring_count(
+    _exact_pending_copy_fixture
+    "zoneBefore.data(), &fixture.zone, zoneBefore.size()) == 0" 2
+    "both retained pending-copy caller outputs remain failure-atomic")
+require_ordered(
+    _exact_pending_copy_fixture
+    "reinterpret_cast<ZoneRuntimePendingCopyView *>(&fixture.zone)"
+    "reinterpret_cast<zone_pending_copy::PendingCopyRecord *>( &fixture.zone)"
+    "pending-copy view and record both authenticate retained stream aliases")
 
 extract_slice(
     _fixture
@@ -2548,6 +2975,7 @@ foreach(_marker IN ITEMS
     "\${SRC_DIR}/universal/physicalmemory_checked.cpp"
     "$<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>"
     "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING=1"
+    "KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING=1"
     "KISAK_DB_ZONE_LOAD_CONTEXT_TESTING=1"
     "KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1"
     "NAME database-zone-runtime-table-ownership"
@@ -2562,6 +2990,12 @@ foreach(_marker IN ITEMS
     "database-zone-runtime-table-mutation-invalid-missing-value"
     "database-zone-runtime-table-mutation-invalid-extra-value"
     "database-zone-runtime-table-mutation-invalid-kind"
+    "database-zone-runtime-table-pending-copy-unsafe-${_zone_runtime_pending_copy_unsafe_kind}"
+    "foreach(_zone_runtime_pending_copy_unsafe_kind IN ITEMS malformed-record postauth-drift count-drift duplicate-marker duplicate-unrelated-markers unknown-marker lifecycle-drift callback-lifecycle-drift)"
+    "--unsafe-pending-copy ${_zone_runtime_pending_copy_unsafe_kind}"
+    "database-zone-runtime-table-pending-copy-invalid-missing-value"
+    "database-zone-runtime-table-pending-copy-invalid-extra-value"
+    "database-zone-runtime-table-pending-copy-invalid-kind"
     "PROPERTIES TIMEOUT 30 WILL_FAIL TRUE"
     "target_link_options( kisakcod-db-zone-runtime-table-tests PRIVATE \"LINKER:/STACK:8388608\")"
     "NAME database-zone-runtime-table-source-invariants"

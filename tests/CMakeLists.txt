@@ -658,6 +658,7 @@ target_compile_definitions(
     kisakcod-db-zone-runtime-table-tests PRIVATE
     KISAK_MP
     KISAK_DB_ZONE_LOAD_CONTEXT_TESTING=1
+    KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING=1
     KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1
     KISAK_DB_ZONE_RUNTIME_TABLE_TESTING=1)
 target_link_libraries(
@@ -706,6 +707,24 @@ foreach(_zone_runtime_mutation_unsafe_kind IN ITEMS backend postcondition)
         database-zone-runtime-table-mutation-unsafe-${_zone_runtime_mutation_unsafe_kind}
         PROPERTIES TIMEOUT 30)
 endforeach()
+foreach(_zone_runtime_pending_copy_unsafe_kind IN ITEMS
+        malformed-record
+        postauth-drift
+        count-drift
+        duplicate-marker
+        duplicate-unrelated-markers
+        unknown-marker
+        lifecycle-drift
+        callback-lifecycle-drift)
+    add_test(
+        NAME database-zone-runtime-table-pending-copy-unsafe-${_zone_runtime_pending_copy_unsafe_kind}
+        COMMAND kisakcod-db-zone-runtime-table-tests
+            --unsafe-pending-copy ${_zone_runtime_pending_copy_unsafe_kind}
+    )
+    set_tests_properties(
+        database-zone-runtime-table-pending-copy-unsafe-${_zone_runtime_pending_copy_unsafe_kind}
+        PROPERTIES TIMEOUT 30)
+endforeach()
 add_test(
     NAME database-zone-runtime-table-unload-invalid-missing-value
     COMMAND kisakcod-db-zone-runtime-table-tests --unsafe-live-unload)
@@ -727,6 +746,17 @@ add_test(
     NAME database-zone-runtime-table-mutation-invalid-kind
     COMMAND kisakcod-db-zone-runtime-table-tests
         --unsafe-mutable unknown)
+add_test(
+    NAME database-zone-runtime-table-pending-copy-invalid-missing-value
+    COMMAND kisakcod-db-zone-runtime-table-tests --unsafe-pending-copy)
+add_test(
+    NAME database-zone-runtime-table-pending-copy-invalid-extra-value
+    COMMAND kisakcod-db-zone-runtime-table-tests
+        --unsafe-pending-copy malformed-record extra)
+add_test(
+    NAME database-zone-runtime-table-pending-copy-invalid-kind
+    COMMAND kisakcod-db-zone-runtime-table-tests
+        --unsafe-pending-copy unknown)
 set_tests_properties(
     database-zone-runtime-table-unload-invalid-missing-value
     database-zone-runtime-table-unload-invalid-extra-value
@@ -734,6 +764,9 @@ set_tests_properties(
     database-zone-runtime-table-mutation-invalid-missing-value
     database-zone-runtime-table-mutation-invalid-extra-value
     database-zone-runtime-table-mutation-invalid-kind
+    database-zone-runtime-table-pending-copy-invalid-missing-value
+    database-zone-runtime-table-pending-copy-invalid-extra-value
+    database-zone-runtime-table-pending-copy-invalid-kind
     PROPERTIES TIMEOUT 30 WILL_FAIL TRUE)
 
 # Compile production's runtime-table header without its test-access opt-in.
