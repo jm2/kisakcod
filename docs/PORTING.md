@@ -561,8 +561,9 @@ Completed foundation work:
   rejection of stream-delay overflow, bounded configstring lookup, and the
   Disk32 material-vertex-declaration byte contract supersede weaker upstream
   hunks. The outer `4ad0a2e2` object is an ancestry merge, not a fourth content
-  batch; this branch will record it with a tree-neutral checkpoint after the
-  curated content and source contracts are committed;
+  batch. Exact dispositions are in `docs/UPSTREAM_4AD0A2E2_LEDGER.md`;
+  tree-neutral checkpoint `1b1ab3d0` records the exact tip with identical
+  first-parent/checkpoint tree `14c6575b`;
 - PR #67 merged passive durable-receipt composition as `76d0e065888aab298d430b4bf4e115c07369bc88`:
   one stable allocation, stream-generation, pending-copy, and native-storage receipt capsule belongs to each of the 33
   runtime entries, while the active-stream binding and pending-copy ledger exist once at table scope. It remains
