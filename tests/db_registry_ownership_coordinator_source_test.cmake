@@ -796,6 +796,17 @@ foreach(_marker IN ITEMS
         "callback-origin coordinator runtime coverage")
 endforeach()
 foreach(_marker IN ITEMS
+    "TestCheckedNoReportCannotUnlockCoordinatorOwnedState()"
+    "out-of-scope helper did not report a checked, no-report status"
+    "checked helpers released or tore coordinator-owned state"
+    "UnsafeFailure path unlocked coordinator-owned state"
+    "checked helper did not surface upstream UnsafeFailure"
+    "out-of-scope helper mutated coordinator-owned global state")
+    require_contains(
+        _fixture "${_marker}"
+        "checked, no-report, no-unlock facade helper coverage")
+endforeach()
+foreach(_marker IN ITEMS
     "static_cast<std::uint16_t>(mode)\n               & kCoordinatorReceiptModeMask"
     "static_cast<std::uint16_t>(purpose)\n               << kCoordinatorReceiptPurposeShift)\n            & kCoordinatorReceiptPurposeMask"
     "static_cast<std::uint16_t>(windowWitness)\n               << kCoordinatorReceiptWitnessShift)\n            & kCoordinatorReceiptWitnessMask")
@@ -902,26 +913,55 @@ private:
     authenticateConstructedStorage(
         RegistryOwnershipCoordinator *coordinator) noexcept;
 
+    // Checked, no-report registry helper. Returns InvalidArgument,
+    // InvalidState, InvalidKey, OwnershipMismatch, RefCountExhausted, Busy, or
+    // Success without invoking any reporter or releasing any coordinator-owned
+    // lock. The single user-4 reference is added only when the coordinator is
+    // active in the Ready phase and the hash lock is writer-retained.
     [[nodiscard]] static RegistryOwnershipStatus TryAddDatabaseUser4(
         std::uint32_t stringId) noexcept;
+    // Checked, no-report bulk registry helper. Out-of-range pointers, empty or
+    // oversized spans, or out-of-phase coordinator storage fail closed without
+    // any report. The supplied outResult is published only when the operation
+    // finishes Success or NoChange; otherwise it is left untouched and the
+    // coordinator-owned state is unchanged.
     [[nodiscard]] static RegistryOwnershipStatus TryAddDatabaseUsers4(
         const std::uint32_t *stringIds,
         std::uint32_t count,
         RegistryOwnershipBulkResult *outResult) noexcept;
+    // Checked, no-report bounded-name intern. The supplied outName is
+    // published only when the operation finishes Success; misaligned or
+    // aliasing outputs are rejected without any report and without unlocking
+    // the coordinator-owned hash lock.
     [[nodiscard]] static RegistryOwnershipStatus TryInternBoundedName(
         const char *bytes,
         std::uint32_t byteCount,
         RegistryOwnershipName *outName) noexcept;
+    // Checked, no-report scalar retained-default re-add. The retained pointer
+    // is validated without dereferencing authority it does not carry; failure
+    // returns the precise status without any report and does not disturb the
+    // coordinator-owned hash lock or the script-string transaction.
     [[nodiscard]] static RegistryOwnershipStatus
     TryReAddRetainedDefaultName(
         const char *retainedCanonicalName) noexcept;
+    // Checked, no-report bulk retained-default re-add. The bulk result is
+    // published only when the operation finishes Success or NoChange; failure
+    // paths leave outResult untouched, never report, and never release any
+    // coordinator-owned acquisition.
     [[nodiscard]] static RegistryOwnershipStatus
     TryReAddRetainedDefaultNames(
         const char *const *retainedCanonicalNames,
         std::uint32_t count,
         RegistryOwnershipBulkResult *outResult) noexcept;
+    // Checked, no-report sweep from user-4 to user-8 authority. Returns
+    // NoChange when there is nothing to transfer; Success on the bounded
+    // promotion; otherwise a precise failure status. Never reports, never
+    // releases the hash lock, never tears down the script-string transaction.
     [[nodiscard]] static RegistryOwnershipStatus
     TryTransferDatabaseUsers4To8() noexcept;
+    // Checked, no-report user-8 release. Returns Success when the user-8
+    // authority can be released in-bounds; otherwise a precise failure status
+    // without any report or coordinator-owned unlock.
     [[nodiscard]] static RegistryOwnershipStatus
     TryShutdownDatabaseUser8() noexcept;
 };
@@ -941,6 +981,18 @@ require_regex_count(
 require_not_contains(
     _coordinator_facade_declaration "RegistryOwnershipCoordinatorAdmission"
     "private facade mints but never exposes the admission type")
+foreach(_marker IN ITEMS
+    "Checked, no-report registry helper."
+    "Checked, no-report bulk registry helper."
+    "Checked, no-report bounded-name intern."
+    "Checked, no-report scalar retained-default re-add."
+    "Checked, no-report bulk retained-default re-add."
+    "Checked, no-report sweep from user-4 to user-8 authority."
+    "Checked, no-report user-8 release.")
+    require_contains(
+        _coordinator_facade_declaration "${_marker}"
+        "explicit checked, no-report contract annotation on every facade helper")
+endforeach()
 
 extract_slice(
     _header
