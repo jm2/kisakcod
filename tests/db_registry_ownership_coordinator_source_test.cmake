@@ -774,6 +774,111 @@ require_ordered(
     "Sys_TryLockWrite(&db_hashCritSect)"
     "coordinator->publishHashLockRetained(true);"
     "nonblocking hash acquisition precedes retained-receipt publication")
+
+# Structural checks make failures legible; the digest closes every remaining
+# statement/call injection path. Normalize only checkout line endings so the
+# same reviewed adapter body is portable across host Git configurations.
+function(require_closed_registry_adapter
+    START END BACKEND EXPECTED_FINISH_COUNT EXPECTED_SHA256 DESCRIPTION)
+    extract_slice(
+        _source "${START}" "${END}" _adapter_source "${DESCRIPTION}")
+    string(REPLACE "\r\n" "\n" _adapter_digest_source "${_adapter_source}")
+    string(REPLACE "\r" "\n" _adapter_digest_source
+        "${_adapter_digest_source}")
+    string(SHA256 _adapter_sha256 "${_adapter_digest_source}")
+    if(NOT _adapter_sha256 STREQUAL EXPECTED_SHA256)
+        message(FATAL_ERROR
+            "Unreviewed complete call-surface change in ${DESCRIPTION}: "
+            "expected SHA-256 ${EXPECTED_SHA256}, found ${_adapter_sha256}")
+    endif()
+    require_literal_count(
+        _adapter_source
+        "RegistryOwnershipCoordinator::beginOperation(coordinator)"
+        1
+        "${DESCRIPTION} has one checked batch admission")
+    require_literal_count(
+        _adapter_source
+        "RegistryOwnershipCoordinator::finishOperation("
+        ${EXPECTED_FINISH_COUNT}
+        "${DESCRIPTION} has only reviewed batch completions")
+    require_literal_count(
+        _adapter_source "${BACKEND}(" 1
+        "${DESCRIPTION} has one fixed backend call")
+    require_ordered(
+        _adapter_source
+        "RegistryOwnershipCoordinator::beginOperation(coordinator)"
+        "${BACKEND}("
+        "${DESCRIPTION} admits its batch before the backend")
+
+    foreach(_forbidden IN ITEMS
+        "Sys_TryLockWrite("
+        "Sys_LockWrite("
+        "Sys_UnlockWrite("
+        "TryBeginScriptStringTransaction("
+        "FinishScriptStringTransaction(")
+        require_not_contains(
+            _adapter_source "${_forbidden}"
+            "${DESCRIPTION} cannot manipulate retained outer authority")
+    endforeach()
+    find_registry_coordinator_forbidden_production_token(
+        _adapter_source _forbidden_production_token)
+    if(NOT _forbidden_production_token STREQUAL "")
+        message(FATAL_ERROR
+            "Forbidden report/allocation token in ${DESCRIPTION}: "
+            "${_forbidden_production_token}")
+    endif()
+endfunction()
+
+require_closed_registry_adapter(
+    "RegistryOwnershipStatus TryRegistryAddDatabaseUser4("
+    "RegistryOwnershipStatus TryRegistryAddDatabaseUsers4("
+    "script_string::TryAddDatabaseUser4Reference"
+    1
+    "17d93e12daf26ad8575f8fd64a2d7f2ae5a036c08bb8e4e71527ac8b8db7b99c"
+    "scalar user-4 adapter")
+require_closed_registry_adapter(
+    "RegistryOwnershipStatus TryRegistryAddDatabaseUsers4("
+    "RegistryOwnershipStatus TryRegistryInternBoundedName("
+    "script_string::TryAddDatabaseUser4References"
+    2
+    "8b6f611cee22a344df6307f441f14b7a7aba1f176b775be3ffc47e1a769de718"
+    "bulk user-4 adapter")
+require_closed_registry_adapter(
+    "RegistryOwnershipStatus TryRegistryInternBoundedName("
+    "RegistryOwnershipStatus TryRegistryReAddRetainedDefaultName("
+    "script_string::TryInternDatabaseUser4Name"
+    2
+    "5c2199eca7e5cdb5f99e36590deadbdefc1223c2460b46a056455c4c61398fc1"
+    "bounded-name intern adapter")
+require_closed_registry_adapter(
+    "RegistryOwnershipStatus TryRegistryReAddRetainedDefaultName("
+    "RegistryOwnershipStatus TryRegistryReAddRetainedDefaultNames("
+    "script_string::TryReAddRetainedDatabaseName"
+    1
+    "056a981ee82be8cdf353b804b6db70ad0458d49dd63fcd23764edd147aa77af4"
+    "scalar retained-name adapter")
+require_closed_registry_adapter(
+    "RegistryOwnershipStatus TryRegistryReAddRetainedDefaultNames("
+    "RegistryOwnershipStatus TryRegistryTransferDatabaseUsers4To8("
+    "script_string::TryReAddRetainedDatabaseNames"
+    2
+    "01c5d7aef0e7d95cf0dd9255ae7b370c7870c7b8a0806f13548e59bc5fd83aa0"
+    "bulk retained-name adapter")
+require_closed_registry_adapter(
+    "RegistryOwnershipStatus TryRegistryTransferDatabaseUsers4To8("
+    "RegistryOwnershipStatus TryRegistryShutdownDatabaseUser8("
+    "script_string::TryTransferDatabaseUsers4To8"
+    1
+    "b59f22c7f687126df5a7664767e694d08cddd1cd8a9f4ff03927a6181a110f73"
+    "user-4 to user-8 transfer adapter")
+require_closed_registry_adapter(
+    "RegistryOwnershipStatus TryRegistryShutdownDatabaseUser8("
+    "#if defined(KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING)"
+    "script_string::TryShutdownDatabaseUser8"
+    1
+    "79fc9a59c71a27d88a738b10b3137a88dfc0e3e6418e1e3e32711af92c1f7369"
+    "user-8 shutdown adapter")
+
 require_contains(
     _fixture "pre-held hash reader was not rejected"
     "runtime rejection of an existing read-held hash boundary")
@@ -798,6 +903,49 @@ foreach(_marker IN ITEMS
     require_contains(
         _fixture "${_marker}"
         "callback-origin coordinator runtime coverage")
+endforeach()
+foreach(_marker IN ITEMS
+    "TestCheckedNoReportCannotUnlockCoordinatorOwnedState()"
+    "out-of-scope helper did not report a checked, no-report status"
+    "checked helpers released or tore coordinator-owned state"
+    "readyBoundaryRestored"
+    "checked bulk invalid input did not close its private batch"
+    "checked intern invalid input did not close its private batch"
+    "checked bulk re-add invalid input did not close its private batch"
+    "checked Busy operations reached a backend or outer boundary"
+    "checked successful helpers did not use one batch each"
+    "checked successful helpers changed retained outer authority"
+    "TestUnsafeAdapterPoisonsAndRetains("
+    "did not surface backend UnsafeFailure"
+    "published output after backend UnsafeFailure"
+    "did not surface batch-close UnsafeFailure"
+    "published output after batch-close UnsafeFailure"
+    "did not poison and retain outer authority"
+    "test recovery did not clear poisoned authority"
+    "out-of-scope helper mutated coordinator-owned global state")
+    require_contains(
+        _fixture "${_marker}"
+        "checked, no-report, no-unlock facade helper coverage")
+endforeach()
+require_literal_count(
+    _fixture "TestUnsafeAdapterPoisonsAndRetains(" 11
+    "one unsafe helper plus seven backend and three close-failure invocations")
+foreach(_adapter IN ITEMS
+    AddUser4
+    ReAddName
+    TransferUsers
+    ShutdownUser8)
+    require_literal_count(
+        _fixture "CheckedRegistryAdapter::${_adapter}" 2
+        "one unsafe switch arm and one isolated invocation for ${_adapter}")
+endforeach()
+foreach(_adapter IN ITEMS
+    BulkAddUser4
+    InternName
+    BulkReAddName)
+    require_literal_count(
+        _fixture "CheckedRegistryAdapter::${_adapter}" 3
+        "one unsafe switch arm plus backend and close-failure invocations for ${_adapter}")
 endforeach()
 foreach(_marker IN ITEMS
     "static_cast<std::uint16_t>(mode)\n               & kCoordinatorReceiptModeMask"
@@ -906,6 +1054,16 @@ private:
     authenticateConstructedStorage(
         RegistryOwnershipCoordinator *coordinator) noexcept;
 
+    // The five fixed registry-operation families below are checked and
+    // report-free. They require the already-authenticated Ready coordinator;
+    // the coordinator layer invokes no callback, reporter, or general-purpose
+    // allocator. Each admitted call uses only its private OwnershipBatch and
+    // never acquires or releases the retained outer transaction or hash-write
+    // lock. A recoverable result closes that batch and restores the same Ready
+    // coordinator identity and acquisitions. UnsafeFailure poisons the boundary
+    // and intentionally retains those outer acquisitions fail closed.
+    // The runtime facade owns caller input/output span separation before
+    // forwarding here.
     [[nodiscard]] static RegistryOwnershipStatus TryAddDatabaseUser4(
         std::uint32_t stringId) noexcept;
     [[nodiscard]] static RegistryOwnershipStatus TryAddDatabaseUsers4(
@@ -945,6 +1103,20 @@ require_regex_count(
 require_not_contains(
     _coordinator_facade_declaration "RegistryOwnershipCoordinatorAdmission"
     "private facade mints but never exposes the admission type")
+foreach(_marker IN ITEMS
+    "The five fixed registry-operation families below are checked and"
+    "Each admitted call uses only its private OwnershipBatch"
+    "A recoverable result closes that batch and restores the same Ready"
+    "never acquires or releases the retained outer transaction or hash-write"
+    "UnsafeFailure poisons the boundary"
+    "and intentionally retains those outer acquisitions fail closed."
+    "The runtime facade owns"
+    "caller input/output span separation before"
+    "forwarding here.")
+    require_contains(
+        _coordinator_facade_declaration "${_marker}"
+        "shared checked, no-report facade helper contract")
+endforeach()
 
 extract_slice(
     _header

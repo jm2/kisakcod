@@ -18,6 +18,7 @@ using db::registry_ownership::RegistryOwnershipCoordinator;
 using db::registry_ownership::RegistryOwnershipCoordinatorAdmission;
 using db::registry_ownership::RegistryOwnershipCoordinatorPhase;
 using db::registry_ownership::RegistryOwnershipCoordinatorMode;
+using db::registry_ownership::RegistryOwnershipName;
 using db::registry_ownership::RegistryOwnershipStatus;
 
 enum class Event : std::uint8_t
@@ -1341,6 +1342,555 @@ void RecoverPoisonedCoordinator(
                     RegistryOwnershipCoordinatorPhase::Empty),
             "foreign getter did not observe synchronized terminal state");
 }
+
+enum class CheckedRegistryAdapter : std::uint8_t
+{
+    AddUser4,
+    BulkAddUser4,
+    InternName,
+    ReAddName,
+    BulkReAddName,
+    TransferUsers,
+    ShutdownUser8,
+};
+
+[[nodiscard]] bool CheckUnsafeAdapterCondition(
+    const bool condition,
+    const char *const adapterName,
+    const char *const failure) noexcept
+{
+    if (!condition)
+    {
+        std::fprintf(stderr,
+            "registry coordinator test failed: %s %s\n",
+            adapterName,
+            failure);
+    }
+    return condition;
+}
+
+[[nodiscard]] bool TestUnsafeAdapterPoisonsAndRetains(
+    const CheckedRegistryAdapter adapter,
+    const Event backendEvent,
+    const char *const adapterName,
+    const bool failOnBatchFinish) noexcept
+{
+    ResetHarness();
+    const auto admission = RegistryOwnershipCoordinatorAdmission::ForTesting();
+    RegistryOwnershipCoordinator coordinator;
+    const RegistryOwnershipStatus begin = db::registry_ownership::
+        TryBeginStandaloneRegistryOwnershipCoordinator(
+            admission, &coordinator);
+    if (!CheckUnsafeAdapterCondition(
+            begin == RegistryOwnershipStatus::Success,
+            adapterName,
+            "unsafe-case admission failed"))
+    {
+        RecoverPoisonedCoordinator(&coordinator);
+        return false;
+    }
+
+    ClearEvents();
+    g_batchFinishStatus = failOnBatchFinish
+        ? script_string::OwnershipBatchStatus::UnsafeFailure
+        : script_string::OwnershipBatchStatus::Success;
+    RegistryOwnershipStatus status = RegistryOwnershipStatus::InvalidState;
+    bool outputUntouched = true;
+    switch (adapter)
+    {
+    case CheckedRegistryAdapter::AddUser4:
+        g_addStatus = failOnBatchFinish
+            ? script_string::DatabaseUserAddStatus::Added
+            : script_string::DatabaseUserAddStatus::UnsafeFailure;
+        status = db::registry_ownership::TryRegistryAddDatabaseUser4(
+            &coordinator, 99);
+        g_addStatus = script_string::DatabaseUserAddStatus::Added;
+        break;
+    case CheckedRegistryAdapter::BulkAddUser4:
+    {
+        const std::array<std::uint32_t, 2> ids{11, 12};
+        RegistryOwnershipBulkResult output{99, 88};
+        g_bulkAddResult.status = failOnBatchFinish
+            ? script_string::DatabaseUserAddBulkStatus::Success
+            : script_string::DatabaseUserAddBulkStatus::UnsafeFailure;
+        status = db::registry_ownership::TryRegistryAddDatabaseUsers4(
+            &coordinator,
+            ids.data(),
+            static_cast<std::uint32_t>(ids.size()),
+            &output);
+        g_bulkAddResult.status =
+            script_string::DatabaseUserAddBulkStatus::Success;
+        outputUntouched = output.addedCount == 99
+            && output.unchangedCount == 88;
+        break;
+    }
+    case CheckedRegistryAdapter::InternName:
+    {
+        const char *const outputSentinel = "sentinel";
+        RegistryOwnershipName output{33, outputSentinel};
+        g_nameResult.status = failOnBatchFinish
+            ? script_string::DatabaseNameStatus::Success
+            : script_string::DatabaseNameStatus::UnsafeFailure;
+        status = db::registry_ownership::TryRegistryInternBoundedName(
+            &coordinator, "name", 5, &output);
+        g_nameResult.status = script_string::DatabaseNameStatus::Success;
+        outputUntouched = output.stringId == 33
+            && output.canonicalName == outputSentinel;
+        break;
+    }
+    case CheckedRegistryAdapter::ReAddName:
+        g_reAddStatus = failOnBatchFinish
+            ? script_string::DatabaseNameStatus::Success
+            : script_string::DatabaseNameStatus::UnsafeFailure;
+        status =
+            db::registry_ownership::TryRegistryReAddRetainedDefaultName(
+                &coordinator, "retained");
+        g_reAddStatus = script_string::DatabaseNameStatus::Success;
+        break;
+    case CheckedRegistryAdapter::BulkReAddName:
+    {
+        const char *const names[]{"a", "b"};
+        RegistryOwnershipBulkResult output{77, 66};
+        g_bulkReAddResult.status = failOnBatchFinish
+            ? script_string::DatabaseUserAddBulkStatus::Success
+            : script_string::DatabaseUserAddBulkStatus::UnsafeFailure;
+        status =
+            db::registry_ownership::TryRegistryReAddRetainedDefaultNames(
+                &coordinator, names, 2, &output);
+        g_bulkReAddResult.status =
+            script_string::DatabaseUserAddBulkStatus::Success;
+        outputUntouched = output.addedCount == 77
+            && output.unchangedCount == 66;
+        break;
+    }
+    case CheckedRegistryAdapter::TransferUsers:
+        g_transferStatus = failOnBatchFinish
+            ? script_string::DatabaseSweepStatus::Success
+            : script_string::DatabaseSweepStatus::UnsafeFailure;
+        status =
+            db::registry_ownership::TryRegistryTransferDatabaseUsers4To8(
+                &coordinator);
+        g_transferStatus = script_string::DatabaseSweepStatus::Success;
+        break;
+    case CheckedRegistryAdapter::ShutdownUser8:
+        g_shutdownStatus = failOnBatchFinish
+            ? script_string::DatabaseSweepStatus::Success
+            : script_string::DatabaseSweepStatus::UnsafeFailure;
+        status = db::registry_ownership::TryRegistryShutdownDatabaseUser8(
+            &coordinator);
+        g_shutdownStatus = script_string::DatabaseSweepStatus::Success;
+        break;
+    }
+
+    const bool surfaced = CheckUnsafeAdapterCondition(
+        status == RegistryOwnershipStatus::UnsafeFailure,
+        adapterName,
+        failOnBatchFinish
+            ? "did not surface batch-close UnsafeFailure"
+            : "did not surface backend UnsafeFailure");
+    const bool exactEvents = CheckUnsafeAdapterCondition(
+        g_eventCount == 3
+            && g_events[0] == Event::BatchBegin
+            && g_events[1] == backendEvent
+            && g_events[2] == Event::BatchFinish,
+        adapterName,
+        "did not use exactly one private batch around its backend");
+    const bool preservedOutput = CheckUnsafeAdapterCondition(
+        outputUntouched,
+        adapterName,
+        failOnBatchFinish
+            ? "published output after batch-close UnsafeFailure"
+            : "published output after backend UnsafeFailure");
+    const bool retained = CheckUnsafeAdapterCondition(
+        coordinator.poisoned()
+            && coordinator.hashLockRetained() && g_hashLocked
+            && g_activeTransaction != nullptr
+            && g_transactionLockDepth == 1 && g_activeBatch == nullptr
+            && g_batchCanonical,
+        adapterName,
+        "did not poison and retain outer authority");
+
+    RecoverPoisonedCoordinator(&coordinator);
+    const bool recovered = CheckUnsafeAdapterCondition(
+        coordinator.phase() == RegistryOwnershipCoordinatorPhase::Empty
+            && !g_hashLocked && g_activeTransaction == nullptr
+            && g_transactionLockDepth == 0,
+        adapterName,
+        "test recovery did not clear poisoned authority");
+    return surfaced && exactEvents && preservedOutput && retained && recovered;
+}
+
+[[nodiscard]] bool TestCheckedNoReportCannotUnlockCoordinatorOwnedState() noexcept
+{
+    ResetHarness();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(nullptr, 1)
+                == RegistryOwnershipStatus::InvalidArgument
+                && db::registry_ownership::TryRegistryAddDatabaseUsers4(
+                    nullptr, nullptr, 0, nullptr)
+                == RegistryOwnershipStatus::InvalidArgument
+                && db::registry_ownership::TryRegistryInternBoundedName(
+                    nullptr, nullptr, 0, nullptr)
+                == RegistryOwnershipStatus::InvalidArgument
+                && db::registry_ownership::TryRegistryReAddRetainedDefaultName(
+                    nullptr, nullptr)
+                == RegistryOwnershipStatus::InvalidArgument
+                && db::registry_ownership::TryRegistryReAddRetainedDefaultNames(
+                    nullptr, nullptr, 0, nullptr)
+                == RegistryOwnershipStatus::InvalidArgument
+                && db::registry_ownership::TryRegistryTransferDatabaseUsers4To8(
+                    nullptr)
+                == RegistryOwnershipStatus::InvalidArgument
+                && db::registry_ownership::TryRegistryShutdownDatabaseUser8(
+                    nullptr)
+                == RegistryOwnershipStatus::InvalidArgument,
+            "out-of-scope helper did not report a checked, no-report status")
+        || !Check(g_eventCount == 0 && g_hashLocked == false
+                && g_activeTransaction == nullptr
+                && g_transactionLockDepth == 0,
+            "out-of-scope helper mutated coordinator-owned global state"))
+    {
+        return false;
+    }
+
+    const auto admission = RegistryOwnershipCoordinatorAdmission::ForTesting();
+    RegistryOwnershipCoordinator coordinator;
+    if (!Check(
+            db::registry_ownership::
+                TryBeginStandaloneRegistryOwnershipCoordinator(
+                    admission, &coordinator)
+                == RegistryOwnershipStatus::Success,
+            "active-scope setup failed")
+        || !Check(
+            coordinator.phase() == RegistryOwnershipCoordinatorPhase::Ready
+                && coordinator.mode()
+                    == RegistryOwnershipCoordinatorMode::Standalone
+                && coordinator.hashLockRetained() && g_hashLocked
+                && g_activeTransaction != nullptr
+                && g_transactionLockDepth == 1,
+            "active-scope setup did not retain coordinator-owned state"))
+    {
+        return false;
+    }
+
+    const std::uint64_t retainedSerial = coordinator.serial();
+    const auto *const retainedTransaction = g_activeTransaction;
+    const std::uint32_t retainedTransactionSerial =
+        g_activeTransactionSerial;
+    std::array<std::uint32_t, 12> ids{};
+    RegistryOwnershipBulkResult bulkOutput{99, 88};
+    RegistryOwnershipName nameOutput{33, "sentinel"};
+    const std::array<const char *, 5> names{"a", "b", "c", "d", "e"};
+    RegistryOwnershipBulkResult bulkReAddOutput{77, 66};
+    const auto readyBoundaryRestored = [&]() noexcept {
+        return coordinator.phase()
+                == RegistryOwnershipCoordinatorPhase::Ready
+            && coordinator.mode()
+                == RegistryOwnershipCoordinatorMode::Standalone
+            && coordinator.serial() == retainedSerial
+            && coordinator.hashLockRetained() && g_hashLocked
+            && g_activeTransaction == retainedTransaction
+            && g_activeTransactionSerial == retainedTransactionSerial
+            && g_transactionLockDepth == 1 && g_activeBatch == nullptr
+            && g_batchCanonical;
+    };
+
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUsers4(
+                &coordinator, nullptr, 1, &bulkOutput)
+                == RegistryOwnershipStatus::InvalidArgument,
+            "checked bulk invalid input was not recoverable")
+        || !CheckEvents(
+            std::array{Event::BatchBegin, Event::BatchFinish},
+            "checked bulk invalid input did not close its private batch")
+        || !Check(bulkOutput.addedCount == 99
+                && bulkOutput.unchangedCount == 88,
+            "checked bulk invalid input published output")
+        || !Check(readyBoundaryRestored(),
+            "checked bulk invalid input changed the Ready boundary"))
+    {
+        return false;
+    }
+
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryInternBoundedName(
+                &coordinator, "name", 5, nullptr)
+                == RegistryOwnershipStatus::InvalidArgument,
+            "checked intern invalid input was not recoverable")
+        || !CheckEvents(
+            std::array{Event::BatchBegin, Event::BatchFinish},
+            "checked intern invalid input did not close its private batch")
+        || !Check(readyBoundaryRestored(),
+            "checked intern invalid input changed the Ready boundary"))
+    {
+        return false;
+    }
+
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryReAddRetainedDefaultNames(
+                &coordinator, nullptr, 1, &bulkReAddOutput)
+                == RegistryOwnershipStatus::InvalidArgument,
+            "checked bulk re-add invalid input was not recoverable")
+        || !CheckEvents(
+            std::array{Event::BatchBegin, Event::BatchFinish},
+            "checked bulk re-add invalid input did not close its private batch")
+        || !Check(bulkReAddOutput.addedCount == 77
+                && bulkReAddOutput.unchangedCount == 66,
+            "checked bulk re-add invalid input published output")
+        || !Check(readyBoundaryRestored(),
+            "checked bulk re-add invalid input changed the Ready boundary"))
+    {
+        return false;
+    }
+
+    ClearEvents();
+
+    g_batchBeginStatus = script_string::OwnershipBatchStatus::Busy;
+
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 17)
+                == RegistryOwnershipStatus::Busy,
+            "checked helper did not return Busy on batch-begin failure")
+        || !Check(
+            db::registry_ownership::TryRegistryAddDatabaseUsers4(
+                &coordinator,
+                ids.data(),
+                static_cast<std::uint32_t>(ids.size()),
+                &bulkOutput)
+                == RegistryOwnershipStatus::Busy,
+            "checked bulk helper did not return Busy on batch-begin failure")
+        || !Check(bulkOutput.addedCount == 99
+                && bulkOutput.unchangedCount == 88,
+            "checked bulk helper published output on Busy failure")
+        || !Check(
+            db::registry_ownership::TryRegistryInternBoundedName(
+                &coordinator, "name", 5, &nameOutput)
+                == RegistryOwnershipStatus::Busy,
+            "checked intern helper did not return Busy on batch-begin failure")
+        || !Check(nameOutput.stringId == 33
+                && nameOutput.canonicalName != nullptr
+                && nameOutput.canonicalName[0] == 's',
+            "checked intern helper published output on Busy failure")
+        || !Check(
+            db::registry_ownership::TryRegistryReAddRetainedDefaultName(
+                &coordinator, "retained")
+                == RegistryOwnershipStatus::Busy,
+            "checked scalar re-add did not return Busy on batch-begin failure")
+        || !Check(
+            db::registry_ownership::TryRegistryReAddRetainedDefaultNames(
+                &coordinator,
+                names.data(),
+                static_cast<std::uint32_t>(names.size()),
+                &bulkReAddOutput)
+                == RegistryOwnershipStatus::Busy,
+            "checked bulk re-add did not return Busy on batch-begin failure")
+        || !Check(bulkReAddOutput.addedCount == 77
+                && bulkReAddOutput.unchangedCount == 66,
+            "checked bulk re-add published output on Busy failure")
+        || !Check(
+            db::registry_ownership::TryRegistryTransferDatabaseUsers4To8(
+                &coordinator)
+                == RegistryOwnershipStatus::Busy,
+            "checked transfer did not return Busy on batch-begin failure")
+        || !Check(
+            db::registry_ownership::TryRegistryShutdownDatabaseUser8(
+                &coordinator)
+                == RegistryOwnershipStatus::Busy,
+            "checked shutdown did not return Busy on batch-begin failure")
+        || !CheckEvents(
+            std::array{
+                Event::BatchBegin,
+                Event::BatchBegin,
+                Event::BatchBegin,
+                Event::BatchBegin,
+                Event::BatchBegin,
+                Event::BatchBegin,
+                Event::BatchBegin},
+            "checked Busy operations reached a backend or outer boundary"))
+    {
+        return false;
+    }
+
+    g_batchBeginStatus = script_string::OwnershipBatchStatus::Success;
+    if (!Check(
+            coordinator.phase() == RegistryOwnershipCoordinatorPhase::Ready
+                && coordinator.serial() == retainedSerial
+                && coordinator.hashLockRetained() && g_hashLocked
+                && g_activeTransaction != nullptr
+                && g_transactionLockDepth == 1,
+            "checked helpers released or tore coordinator-owned state on "
+            "failure"))
+    {
+        return false;
+    }
+
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 17)
+                == RegistryOwnershipStatus::Success,
+            "checked scalar add did not succeed")
+        || !Check(
+            db::registry_ownership::TryRegistryAddDatabaseUsers4(
+                &coordinator,
+                ids.data(),
+                static_cast<std::uint32_t>(ids.size()),
+                &bulkOutput)
+                == RegistryOwnershipStatus::Success,
+            "checked bulk add did not succeed")
+        || !Check(bulkOutput.addedCount == 8
+                && bulkOutput.unchangedCount == 4,
+            "checked bulk add did not publish its successful output")
+        || !Check(
+            db::registry_ownership::TryRegistryInternBoundedName(
+                &coordinator, "name", 5, &nameOutput)
+                == RegistryOwnershipStatus::Success,
+            "checked name intern did not succeed")
+        || !Check(nameOutput.stringId == 77
+                && nameOutput.canonicalName != nullptr
+                && nameOutput.canonicalName[0] == 'c',
+            "checked name intern did not publish its successful output")
+        || !Check(
+            db::registry_ownership::TryRegistryReAddRetainedDefaultName(
+                &coordinator, "retained")
+                == RegistryOwnershipStatus::Success,
+            "checked scalar re-add did not succeed")
+        || !Check(
+            db::registry_ownership::TryRegistryReAddRetainedDefaultNames(
+                &coordinator,
+                names.data(),
+                static_cast<std::uint32_t>(names.size()),
+                &bulkReAddOutput)
+                == RegistryOwnershipStatus::Success,
+            "checked bulk re-add did not succeed")
+        || !Check(bulkReAddOutput.addedCount == 3
+                && bulkReAddOutput.unchangedCount == 2,
+            "checked bulk re-add did not publish its successful output")
+        || !Check(
+            db::registry_ownership::TryRegistryTransferDatabaseUsers4To8(
+                &coordinator)
+                == RegistryOwnershipStatus::Success,
+            "checked transfer did not succeed")
+        || !Check(
+            db::registry_ownership::TryRegistryShutdownDatabaseUser8(
+                &coordinator)
+                == RegistryOwnershipStatus::Success,
+            "checked shutdown did not succeed")
+        || !CheckEvents(
+            std::array{
+                Event::BatchBegin,
+                Event::AddUser4,
+                Event::BatchFinish,
+                Event::BatchBegin,
+                Event::BulkAddUser4,
+                Event::BatchFinish,
+                Event::BatchBegin,
+                Event::InternName,
+                Event::BatchFinish,
+                Event::BatchBegin,
+                Event::ReAddName,
+                Event::BatchFinish,
+                Event::BatchBegin,
+                Event::BulkReAddName,
+                Event::BatchFinish,
+                Event::BatchBegin,
+                Event::TransferUsers,
+                Event::BatchFinish,
+                Event::BatchBegin,
+                Event::ShutdownUser8,
+                Event::BatchFinish},
+            "checked successful helpers did not use one batch each")
+        || !Check(
+            coordinator.phase() == RegistryOwnershipCoordinatorPhase::Ready
+                && coordinator.serial() == retainedSerial
+                && coordinator.hashLockRetained() && g_hashLocked
+                && g_activeTransaction != nullptr
+                && g_transactionLockDepth == 1,
+            "checked successful helpers changed retained outer authority"))
+    {
+        return false;
+    }
+
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::FinishRegistryOwnershipCoordinator(
+                &coordinator)
+                == RegistryOwnershipStatus::Success,
+            "checked-helper retained admission did not finish")
+        || !CheckEvents(
+            std::array{Event::HashUnlock, Event::TransactionFinish},
+            "checked-helper retained admission did not release in order"))
+    {
+        return false;
+    }
+
+    bool unsafeCoverage = true;
+    unsafeCoverage = TestUnsafeAdapterPoisonsAndRetains(
+                         CheckedRegistryAdapter::AddUser4,
+                         Event::AddUser4,
+                         "scalar user-4 adapter",
+                         false)
+        && unsafeCoverage;
+    unsafeCoverage = TestUnsafeAdapterPoisonsAndRetains(
+                         CheckedRegistryAdapter::BulkAddUser4,
+                         Event::BulkAddUser4,
+                         "bulk user-4 adapter",
+                         false)
+        && unsafeCoverage;
+    unsafeCoverage = TestUnsafeAdapterPoisonsAndRetains(
+                         CheckedRegistryAdapter::InternName,
+                         Event::InternName,
+                         "bounded-name intern adapter",
+                         false)
+        && unsafeCoverage;
+    unsafeCoverage = TestUnsafeAdapterPoisonsAndRetains(
+                         CheckedRegistryAdapter::ReAddName,
+                         Event::ReAddName,
+                         "scalar retained-name adapter",
+                         false)
+        && unsafeCoverage;
+    unsafeCoverage = TestUnsafeAdapterPoisonsAndRetains(
+                         CheckedRegistryAdapter::BulkReAddName,
+                         Event::BulkReAddName,
+                         "bulk retained-name adapter",
+                         false)
+        && unsafeCoverage;
+    unsafeCoverage = TestUnsafeAdapterPoisonsAndRetains(
+                         CheckedRegistryAdapter::TransferUsers,
+                         Event::TransferUsers,
+                         "user-4 to user-8 transfer adapter",
+                         false)
+        && unsafeCoverage;
+    unsafeCoverage = TestUnsafeAdapterPoisonsAndRetains(
+                         CheckedRegistryAdapter::ShutdownUser8,
+                         Event::ShutdownUser8,
+                         "user-8 shutdown adapter",
+                         false)
+        && unsafeCoverage;
+    unsafeCoverage = TestUnsafeAdapterPoisonsAndRetains(
+                         CheckedRegistryAdapter::BulkAddUser4,
+                         Event::BulkAddUser4,
+                         "bulk user-4 adapter close",
+                         true)
+        && unsafeCoverage;
+    unsafeCoverage = TestUnsafeAdapterPoisonsAndRetains(
+                         CheckedRegistryAdapter::InternName,
+                         Event::InternName,
+                         "bounded-name intern adapter close",
+                         true)
+        && unsafeCoverage;
+    unsafeCoverage = TestUnsafeAdapterPoisonsAndRetains(
+                         CheckedRegistryAdapter::BulkReAddName,
+                         Event::BulkReAddName,
+                         "bulk retained-name adapter close",
+                         true)
+        && unsafeCoverage;
+    return unsafeCoverage;
+}
 } // namespace
 
 FastCriticalSection db_hashCritSect{};
@@ -1781,7 +2331,8 @@ int main()
         || !TestUnsafeCloseAndUnknownContainment()
         || !TestAuthPrecedenceAndSerialMirrors()
         || !TestDestructorAbandonment()
-        || !TestForeignThreadSerialization())
+        || !TestForeignThreadSerialization()
+        || !TestCheckedNoReportCannotUnlockCoordinatorOwnedState())
     {
         return 1;
     }

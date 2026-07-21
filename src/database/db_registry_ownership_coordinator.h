@@ -61,6 +61,16 @@ private:
     authenticateConstructedStorage(
         RegistryOwnershipCoordinator *coordinator) noexcept;
 
+    // The five fixed registry-operation families below are checked and
+    // report-free. They require the already-authenticated Ready coordinator;
+    // the coordinator layer invokes no callback, reporter, or general-purpose
+    // allocator. Each admitted call uses only its private OwnershipBatch and
+    // never acquires or releases the retained outer transaction or hash-write
+    // lock. A recoverable result closes that batch and restores the same Ready
+    // coordinator identity and acquisitions. UnsafeFailure poisons the boundary
+    // and intentionally retains those outer acquisitions fail closed.
+    // The runtime facade owns caller input/output span separation before
+    // forwarding here.
     [[nodiscard]] static RegistryOwnershipStatus TryAddDatabaseUser4(
         std::uint32_t stringId) noexcept;
     [[nodiscard]] static RegistryOwnershipStatus TryAddDatabaseUsers4(

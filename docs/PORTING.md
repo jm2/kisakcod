@@ -725,8 +725,13 @@ Completed foundation work:
   journal placement across the full capacity. Storage bind keeps its intentional pre-placement slab-snapshot contract.
   Standards-clean journal/output/capacity and acquisition/composite-admission callback-mutation regressions plus
   source/security seals pass. The full incremental Debug build, native GCC **184/184** CTest tree, focused runtime
-  coverage, and diff gate pass locally; hosted exact-head validation remains pending.
-  Checked no-report helpers and the single production bridge/cutover remain after PR #82 merges;
+  coverage, and diff gate pass locally. Exact head `b05a5ccc` passed all nine hosted jobs in run **29942321576**,
+  received a clean Codex review with zero threads, and squash-merged PR #82 as `0632a764`; all nine authoritative
+  post-merge jobs passed in run **29943945374**. The active batch now freezes and completes success/failure coverage for
+  the seven existing private no-report/no-unlock registry adapters across all five real-stack operation families
+  without a production caller. GCC **184/184**, focused Clang and ASan+UBSan **4/4** each, strict i386/AArch64
+  compile-link, source/security, and diff gates pass on the combined local tree. Exact-head hosted publication remains;
+  the single production bridge/cutover follows that gate;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -1895,9 +1900,12 @@ subsequent audit found and repaired missing standalone-admission authentication 
 `ActiveNoRegistry` windows. It also closed caller-key TOCTOU and retained-placement aliases across every keyed
 script-string/composite mutator, legacy unload, and terminal reset using pre-mutation snapshots plus full-capacity
 controller/generation placement gates; the full Debug build, native GCC **184/184**, direct runtime callback-mutation,
-source/security, and diff gates pass. Both superseded CI runs were canceled; replacement hosted validation remains
-pending. No production loader
-caller is enrolled. The ancestry checkpoint records reviewed history
+source/security, and diff gates pass. Both superseded CI runs were canceled; exact head `b05a5ccc` subsequently passed
+all nine jobs in run **29942321576**, received a clean Codex review with zero threads, and squash-merged PR #82 as
+`0632a764`; all nine authoritative post-merge jobs passed in run **29943945374**. The next production-neutral batch
+closes the seven-adapter checked no-report/no-unlock contract and real-stack coverage gate; its combined local GCC
+**184/184**, focused Clang and ASan+UBSan **4/4** each, strict i386/AArch64 compile-link, source/security, and diff gates
+pass. No production loader caller is enrolled. The ancestry checkpoint records reviewed history
 without importing code and therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared

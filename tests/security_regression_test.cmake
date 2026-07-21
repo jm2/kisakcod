@@ -11756,6 +11756,147 @@ require_repository_contains(
     "src/groupvoice/speex/Makefile.in"
     "registry coordinator seal must pin generated-input traversal")
 
+# The real string/coordinator production-stack fixture must exercise all five
+# fixed registry-operation families under one retained admission.  Keep the
+# scalar/bulk variants, exact canonical-name lifetime checks, reporter/lock
+# boundary probes, and terminal cleanup in the same function so a narrower
+# fake or a split admission cannot satisfy this security evidence.
+file(READ "${SOURCE_ROOT}/tests/script_string_ownership_tests.cpp"
+    _registry_production_stack_tests)
+extract_security_slice(
+    _registry_production_stack_tests
+    "[[nodiscard]] bool TestRegistryCoordinatorProductionStack() noexcept"
+    "[[nodiscard]] bool TestRegistryOwnershipBatchOperations() noexcept"
+    _registry_production_stack_slice
+    "complete registry coordinator production-stack fixture")
+foreach(_registry_production_stack_marker IN ITEMS
+    "complete five-family checked/no-report sequence under one"
+    "const auto boundaryRetained = [&coordinator]() noexcept"
+    "coordinator.hashLockRetained()"
+    "Sys_AtomicLoad(&db_hashCritSect.writeCount) == 1"
+    "g_scriptStringTransactionLockDepth == 1"
+    "ReportersUnused()"
+    "retainedBulk.addedCount == 2"
+    "retainedBulk.unchangedCount == 1"
+    "script_string::kDatabaseUserMask"
+    "transfer changed canonical addresses"
+    "scalar re-add changed canonical address"
+    "bulk re-add changed canonical addresses"
+    "shutdown changed retained addresses"
+    "CheckFreed(database.stringId)"
+    "script_string::TryRemoveDatabaseUserReference("
+    "FinishRegistryOwnershipCoordinator(&coordinator)")
+    require_security_slice_contains(
+        _registry_production_stack_slice
+        "${_registry_production_stack_marker}"
+        "registry production-stack five-family/canonical cleanup evidence")
+endforeach()
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "TryBeginStandaloneRegistryOwnershipCoordinator\\("
+    2
+    "one pre-held-reader probe plus one retained coordinator admission")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "FinishRegistryOwnershipCoordinator\\(&coordinator\\)"
+    1
+    "sole retained coordinator finish")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "boundaryRetained\\(\\)"
+    8
+    "retained-boundary check after every reviewed operation group")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "ReportersUnused\\(\\)"
+    2
+    "operation-boundary and terminal reporter checks")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "script_string::TryRemoveOrdinaryReference\\("
+    2
+    "exact ordinary-reference cleanup")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "script_string::TryRemoveDatabaseUserReference\\("
+    3
+    "exact retained database-user cleanup")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "CheckFreed\\("
+    6
+    "unselected plus complete selected/ordinary terminal freedom checks")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "TryRegistryAddDatabaseUser4\\(&coordinator"
+    1
+    "single scalar user4 family operation")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "TryRegistryAddDatabaseUsers4\\("
+    1
+    "single bulk user4 family operation")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "TryRegistryInternBoundedName\\("
+    4
+    "bounded-name family and retained-name setup")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "TryRegistryReAddRetainedDefaultName\\("
+    1
+    "single scalar retained-name family operation")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "TryRegistryReAddRetainedDefaultNames\\("
+    1
+    "single bulk retained-name family operation")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "TryRegistryTransferDatabaseUsers4To8\\("
+    1
+    "single user4-to-user8 family operation")
+require_security_slice_match_count(
+    _registry_production_stack_slice
+    "TryRegistryShutdownDatabaseUser8\\("
+    1
+    "single user8 shutdown family operation")
+require_security_slice_ordered(
+    _registry_production_stack_slice
+    "TryRegistryAddDatabaseUser4(&coordinator"
+    "TryRegistryAddDatabaseUsers4("
+    "scalar user4 add before bulk user4 add")
+require_security_slice_ordered(
+    _registry_production_stack_slice
+    "TryRegistryAddDatabaseUsers4("
+    "TryRegistryInternBoundedName("
+    "user4 add family before bounded-name intern")
+require_security_slice_ordered(
+    _registry_production_stack_slice
+    "TryRegistryInternBoundedName("
+    "TryRegistryTransferDatabaseUsers4To8("
+    "bounded-name intern before user4-to-user8 transfer")
+require_security_slice_ordered(
+    _registry_production_stack_slice
+    "TryRegistryTransferDatabaseUsers4To8("
+    "TryRegistryReAddRetainedDefaultName("
+    "transfer before scalar retained-name re-add")
+require_security_slice_ordered(
+    _registry_production_stack_slice
+    "TryRegistryReAddRetainedDefaultName("
+    "TryRegistryReAddRetainedDefaultNames("
+    "scalar retained-name re-add before bulk re-add")
+require_security_slice_ordered(
+    _registry_production_stack_slice
+    "TryRegistryReAddRetainedDefaultNames("
+    "TryRegistryShutdownDatabaseUser8("
+    "retained-name restoration before user8 shutdown")
+require_security_slice_ordered(
+    _registry_production_stack_slice
+    "TryRegistryShutdownDatabaseUser8("
+    "FinishRegistryOwnershipCoordinator(&coordinator)"
+    "user8 shutdown before sole coordinator finish")
+
 foreach(_registry_coordinator_production_seal_marker IN ITEMS
     "SplicedFinishPointer"
     "CommentQualifiedFinishPointer"

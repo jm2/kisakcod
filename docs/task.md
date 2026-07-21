@@ -127,7 +127,7 @@ of checked boxes.
       at exact head `120ce858` in run **29894539007** with clean exact-head
       Codex review and zero review threads; squash-merge as `33ec8378` and pass
       all nine authoritative jobs there in run **29895420496**.
-  - [ ] Add stable process-lifetime contexts for all 33 physical zone slots,
+  - [x] Add stable process-lifetime contexts for all 33 physical zone slots,
     outside `XZone` and PMem, retaining exact generation identity through terminal
     reset.
     - [x] Add one hidden, fixed-address 33-record typed context bank separate
@@ -181,7 +181,7 @@ of checked boxes.
         focused Clang **16/16**, ASan+UBSan **16/16**, strict i386 and AArch64
         compile/link, eight source/security seals, `git diff --check`, and two
         clean independent final audits.
-      - [ ] Publish and merge PR #82 with all nine hosted jobs and exact-head
+      - [x] Publish and merge PR #82 with all nine hosted jobs and exact-head
         review clean, then confirm the authoritative post-merge run.
         - [x] Diagnose initial run **29937368617**: Windows ARM64 alone promoted
           legacy `scr_stringlist.cpp` C4702 post-fatal-return warnings to C2220
@@ -211,11 +211,29 @@ of checked boxes.
           mutation, and composite-abandonment regressions; source/security seals
           freeze the complete keyed-mutation snapshot surface and the one
           storage-bind exception.
-        - [ ] Pass the replacement exact-head run, resolve any real review
-          finding, merge, and record post-merge evidence.
+        - [x] Pass all nine replacement exact-head jobs in run **29942321576**,
+          receive a clean Codex review of exact head `b05a5ccc` with zero
+          threads, and squash-merge PR #82 as `0632a764`.
+        - [x] Pass all nine authoritative post-merge jobs in run
+          **29943945374** at exact merge commit `0632a764`.
   - [ ] Convert the required registry/hash-lock helpers to checked, no-report
     operations that cannot unlock coordinator-owned state or cross retained
     authority through `Com_Error`/`longjmp`.
+    - [x] Retain the existing seven private adapters across the five operation
+      families under one coordinator-owned transaction/hash boundary, with no
+      production caller and no arbitrary user-mask exposure.
+    - [x] Freeze one accurate shared no-report/no-unlock contract and exercise
+      all seven adapters through success, contention, null, and unsafe failure
+      paths without releasing retained authority or publishing failed outputs.
+    - [x] Cover all five operation families against the real script-string
+      stack, including scalar and bulk retained-name re-add with stable
+      canonical identities and deterministic cleanup.
+    - [x] Seal every adapter against reporters, allocation, callbacks, and
+      transaction/hash acquire/release; pass GCC **184/184**, focused Clang and
+      ASan+UBSan **4/4** each, strict i386/AArch64 compile-link, source/security,
+      and diff gates on the local combined tree.
+    - [ ] Publish, pass exact-head review and all nine hosted jobs, merge, and
+      record authoritative post-merge evidence.
   - [ ] Enroll a single narrow production bridge and replace all seven frozen raw
     loader/registry operations in one reviewed change.
 - [ ] Enroll the guarded native FX/impact path and complete its rollback,
@@ -2283,6 +2301,12 @@ instead of continually rewriting the deliberately compact evidence snapshot.
 | M5 disk32 widening loader | FX restore, conversion, zone primitives, generic asset envelopes, script-string walking/journaling, and zone lifecycle control in progress | `disk32::PointerToken`, strong FX archive-key/address types, exact archive effect/system/buffer/body mirrors, exhaustive handle remapping, checked native pool reconstruction/linking, definition-provenance resolution, semantic `Ready`, Ready-only physics enumeration, and transactional raw/zlib restore staging are merged with x86 whole-image evidence. PR #32 merged exact pointer-bearing fast-file effect/visual/trail/impact schemas, canonical native runtime definitions, and bounded two-pass effect/impact converters with frozen resolver transactions, retained-extent overlap checks, callback-free materialization, retail semantic validation, and bounded runtime visibility interpolation. Production restore uses the exact-lease-bound reader/candidate path; the restore-side native64 guard/raw parser are gone. PR #33 merged the zone-owned aligned native arena and guarded stateful zone adapter with exact workspace contracts, nested impact/effect transactions, canonical post-registration identities, and publish-after-materialize ordering. PR #34 merged the fixed 0x4/0x8/0x8/0x10 top-level Disk32 envelopes and bounded, failure-atomic eight-byte asset iterator with portable build admission. PR #35 merged the pure bounded four-byte Disk32 script-string walker with checked extent/parity, full preflight, raw-token preservation, explicit shared-inline rejection, unaligned reads, mutation revalidation, and failure-atomic outputs. PR #36 merged generation-keyed external slot ownership, stale/ABA rejection, distinct load-abandon and live-unload recipes, exact Retry cursors, fail-closed poisoning, and terminal idempotency as `15469b3d`; post-merge master run **29531440687** passed all nine jobs. PR #37 merged the full-u32 per-acquisition journal, exact key binding, reversible claimed-vs-duplicate transfers, reverse outcome-specific rollback, reversible `CommitReady`, unconditional post-`Live` finalization, fixed caller storage, O(1) controller validation, and linear phase-boundary scans as `7a9bce34`; post-merge run **29542960583** passed all nine jobs. PR #38 merged the referenced-fast-file 0..31 range correction, canonical 33-physical/32-usable slot constants, failure-atomic native/IWD formatting, exact SYSTEMINFO serialization, remote metadata validation, exact bounded server-download authorization, and native-width server-file comparison as `a7c485fd`; post-merge run **29551990840** passed all nine jobs. PR #48 merged the report-free ownership boundary, failure-atomic allocator surface, private journal adapter, dedicated serializer, fixed-width allocator mirrors, bounded legacy topology/interval validation, and linear global ownership-sweep preflight as `7d78222d`; final PR-branch run **29625522997** passed all nine jobs. PR #49 merged the constructed production-neutral one-generation controller and exact token/journal/key binding through Live finalization or authenticated abandonment as `dcd91cf0`; authoritative post-merge run **29626811250** passed all nine jobs. PR #50 merged failure-atomic full/debug-only script-string initialization as `eeca68ba`; authoritative post-merge run **29627591759** passed all nine jobs. PR #51 merged the fixed durable 33-entry generation-keyed table, slot-zero reservation, by-value stale/ABA-safe views, `DB_Init` wiring, and canonical/phase/serializer validation without production claims as `beb2925d`; PR #52 repaired its test-only Windows Debug fixture and authoritative master run **29628940419** passed all nine jobs at `e792c160`. PR #53 merged the retained memory-tree validation lease with full boundary validation, authenticated bounded operations, overflow-safe accounting, by-value registry/local-token authority, terminal destructor abandonment, and serialized bounded legacy/debug reads as `445d436f`; exact run **29649484692** passed all nine jobs. PR #54 merged exact-key terminal reset and retry-safe Live-unload adapters as `8e7fd162`; authoritative post-merge run **29651211711** passed all nine jobs. PR #55 merged the pointer-free, TLS-authenticated script-string OwnershipBatch with terminal abandonment, per-ID debug validation, exact operation capabilities, sealed private authority, legacy input hardening, and no production enrollment as `f39e0e4a`; exact-head run **29657884407** passed all nine jobs and exact-head Codex review was clean. PR #56 merged the macro-off physics-sidecar authority seal as `6159275e`; exact-head and authoritative post-merge runs **29658932268** and **29659347033** passed all nine jobs, and exact-head Codex review was clean. PR #57 merged the exact-key mutable table adapters, post-mutation authentication, terminal-status allowlist, and production capability seal as `57e2b1a2`; exact-head and post-merge runs **29659895814** and **29660281653** passed all nine jobs, and exact-head Codex review was clean. PR #59 merged the audited canonical one-slab journal/arena/adapter/backing layout with exact teardown as `ff61504e`; exact head `8cec770d` passed all nine jobs in run **29671392540** with clean Codex, Gemini, and independent audits, and authoritative post-merge run **29671849514** passed all nine jobs. PR #60 merged the checked-PMem scope receipt as `74916b5b`; exact final head `0eec9b1e` passed all nine jobs in run **29673379640**; Codex reviewed that exact final head, Gemini reviewed identical code head `f04c63e0`, both were clean with zero threads, and authoritative post-merge run **29673608169** passed all nine jobs. PR #61 merged the exact-key zone-stream ownership stack as `32e6de4efc86823020d1a2eef2c473e013f893ba`; final exact head `f9dfaaeb43eaaa32cd44c645e3a0e347c9bebdfc` and authoritative runs **29691282387** and **29691725277** passed all nine jobs, all four Gemini threads were resolved, and exact-head Codex review was clean. Merged PR #62 supplies the production-neutral pending-copy ledger from core `08014141`, protocol `8d6b04f3`, runtime hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head `a3c21e9db369d02f29b18f4e1208169517353513`; local evidence includes full native **140/140** at exact `a3c21e9d` plus strict GCC/Clang, sanitizer, i386, AArch64, source/security, and diff gates. It has no production caller; independent audit reports PASS on exact `a3c21e9d`. Final exact head `6a79677f` passed all nine jobs in run **29694906394**; exact-head Codex and Gemini reviews were clean with zero threads, and PR #62 squash-merged as `888d12e6beedd587602f18cf6763ae04cc067470`. Authoritative post-merge run **29695353022** passed all nine jobs at that exact master commit. PR #63 merged the curated upstream typed-sort checkpoint as `f79b0bf422bb926dd302a888bdc258e7e8409aa2`; exact reviewed-head and authoritative runs **29695891172** and **29696199493** passed all nine jobs. PR #64 merged the complete production-neutral coordinator sequence—`9f327514`, `74b56b65`, `90e8fba7`, `2a836a0e`, `56c97f09`, and `774487d1`—as `7f030c03269235b3ad703c13404e0975f798bd18`. It retains one hash scope, exact admission tokens, authenticated inverse certificates, one linear topology/debug-total preflight, exact retained second-pass reauthentication, and production-stack composition while enrolling none of the seven production sites. Final exact head `a73916a8467eb5d4a6cad7d33b5d3ecf1f684c37` passed all nine jobs in run **29701509815**, with clean exact-head Codex/Gemini/thread review. PR #65 merged the approved brush, angle, aim, command, HUD, and Miles dry-level selection as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`. Final reviewed head `3a9f0f01da82f0abbff59afb02093bddffd447d1` and authoritative master passed all nine jobs in runs **29703827041** and **29704069129**; exact-head Codex was clean and all six Gemini threads were resolved. PR #66 then merge-committed the exact tree-neutral checkpoint as `225759e7d8fd1327210452f3debcd6360465ef2a`; authoritative run **29707497302** passed all nine jobs, and graph verification confirms exact upstream `2164cd1a` is now an ancestor without source import. Combined GCC Debug **153/153** and focused **8/8** pass; the individual strict compiler, sanitizer, genuine i386/AArch64, source-contract, and independent-audit evidence remains green. PR #67 merged the four durable receipts per entry and two table-wide singleton resources with zero production enrollment as `76d0e065`; final and authoritative nine-job runs are green. PR #68 merged the bounded legacy PMem indexing/failure-atomic prerequisite as `2ee1e82c`; exact-head and authoritative runs passed all nine jobs. PR #69 merged hidden global PMem state, whole-type fixture containment, and the real macro-off ELF/COFF/AppleClang object seal as `534a9b1e`; exact head `eeefdf40` passed all nine jobs. PR #70 merged the production-neutral serialized global runtime, retained initialization state, stable diagnostic names, bounded dump snapshot, unused permanent-Ended process-life `$init` controller, and passive table-wide resource authentication as `6a67a66e`; exact final head `ca2d1149` ultimately passed all nine jobs in run **29726370638**. PR #71 merged exact-key component composition and the durable strict table controller with exact PMem terminal evidence and alias/overlap hardening. PR #72 merged the capacity/demand prerequisite, PR #73 merged the serialized facade, PR #74 merged private callback-scoped registry borrowing, and PR #75 reconciled upstream through `4ad0a2e2`. Code checkpoint `ef74688b` implements the production-neutral exact-key by-value pending-copy inspection prerequisite; local GCC **171/171**, focused cross-toolchain/architecture/seal gates, and independent audit are clean. No production caller is enrolled. PR #76 final documentation head `9c11d7a8` passed all nine jobs in run **29795268032**, merged as `1e681792`; PR #77 merged its documentation checkpoint as `8e157543`, where all nine authoritative jobs passed in run **29890463505**. Code checkpoint `0a87007e` completes the report-free readiness-aware PMem classifier and the retained admission/rollback/unload callback-identity gates with zero production enrollment. Stable typed 33-slot contexts, the full-chain fixture, checked no-report helpers, and atomic seven-site loader cutover follow. Broader completed-object relocation, the writer, and the save-side guard remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
+The cumulative M5 row's trailing forward-looking sentence is superseded by
+the active critical path above: PR #80 merged the stable 33-slot context bank,
+PR #82 merged its full-chain integration and passed authoritative run
+**29943945374**, and the checked no-report helper contract is now the final
+production-neutral gate before the atomic seven-site cutover.
+
 ## Detailed target evidence
 
 The requested-target checkboxes at the top remain authoritative; utility-only
@@ -2390,9 +2414,15 @@ runtime regressions cover live journal/output/capacity aliases plus acquisition
 and composite-admission callback mutation without poisoning or stranded
 authority. The full incremental Debug build, native GCC **184/184** CTest tree,
 focused table/facade/integration/forgotten-Finish coverage, all affected
-source/security seals, and `git diff --check` pass locally; the new exact-head
-hosted run remains pending. After PR #82 is cleanly merged,
-the next atomic batch is the checked no-report registry/hash helper gate.
+source/security seals, and `git diff --check` pass locally. Exact head
+`b05a5ccc` passed all nine hosted jobs in run **29942321576**, received a clean
+Codex review with zero threads, and squash-merged PR #82 as `0632a764`.
+All nine authoritative post-merge jobs passed in run **29943945374** at exact
+merge commit `0632a764`. The active atomic batch now closes the checked
+no-report/no-unlock registry/hash helper contract and coverage gate without
+enrolling a production caller. Its combined local tree passes GCC **184/184**,
+focused Clang and ASan+UBSan **4/4** each, strict i386/AArch64 compile-link,
+source/security, and diff gates; exact-head hosted publication remains.
 
 - [x] **Priority 1 — Facade publication:** PR #73 landed the
    production-neutral process-lifetime facade with one nonblocking outer
@@ -2492,11 +2522,14 @@ the next atomic batch is the checked no-report registry/hash helper gate.
        Rebased checkpoints `ac652ec1`, `553786de`, `0a375c7c`, and `5cc0931a`
        pass the complete local compiler, sanitizer, architecture, source,
        security, and independent-audit matrix.
-     - [ ] Merge PR #82 after the target-scoped Windows ARM64 C4702 repair and
-       explicit callbacks-bound standalone-admission gate, all nine hosted jobs,
-       exact-head review, and post-merge validation pass.
-   - [ ] Introduce checked no-report registry helpers and move hash-lock ownership
-     wholly under the coordinator before replacing any raw site.
+     - [x] Record all nine authoritative post-merge jobs in run
+       **29943945374** after PR #82 merged as `0632a764`; exact head `b05a5ccc`
+       passed all nine jobs in run **29942321576** with a clean Codex review
+       and zero threads.
+   - [ ] Close and seal the existing seven checked no-report registry adapters
+     under wholly coordinator-owned hash-lock authority before replacing any
+     raw site; success/contention/unsafe paths and all five real-stack operation
+     families must be covered without production enrollment.
    - [ ] Add the sole production legacy bridge, its sequencing/fault-injection
      fixture, source allowlist/seals, and then replace all seven sites atomically.
 - [ ] **Priority 3 — Native FX/impact enrollment:** wire the guarded adapter into the production route behind the
