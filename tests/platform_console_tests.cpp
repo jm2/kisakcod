@@ -325,6 +325,61 @@ private:
     bool active_ = false;
 };
 
+class ConsoleInput
+{
+public:
+    ConsoleInput() : saved_(GetStdHandle(STD_INPUT_HANDLE))
+    {
+        // Tests launch with or without an inherited console. If one is not
+        // already attached, allocate one so the backend sees FILE_TYPE_CHAR.
+        // AllocConsole fails harmlessly when a console is already present;
+        // either way, the resulting STD_INPUT_HANDLE is the console input.
+        const bool allocated = AllocConsole() != FALSE;
+        owned_ = allocated;
+        const HANDLE current = GetStdHandle(STD_INPUT_HANDLE);
+        if (current == nullptr || current == INVALID_HANDLE_VALUE)
+            return;
+        if (GetFileType(current) != FILE_TYPE_CHAR)
+            return;
+        active_ = SetStdHandle(STD_INPUT_HANDLE, current) != FALSE
+            && FlushConsoleInputBuffer(current) != FALSE;
+        if (!active_)
+            return;
+        input_ = current;
+    }
+
+    ConsoleInput(const ConsoleInput &) = delete;
+    ConsoleInput &operator=(const ConsoleInput &) = delete;
+
+    ~ConsoleInput()
+    {
+        if (active_)
+            (void)SetStdHandle(STD_INPUT_HANDLE, saved_);
+        if (owned_)
+            FreeConsole();
+    }
+
+    [[nodiscard]] bool IsReady() const
+    {
+        return active_ && input_ != nullptr && input_ != INVALID_HANDLE_VALUE;
+    }
+
+    bool WriteEvents(const INPUT_RECORD *events, const DWORD count)
+    {
+        if (!IsReady() || events == nullptr || count == 0)
+            return false;
+        DWORD written = 0;
+        return WriteConsoleInput(input_, events, count, &written) != FALSE
+            && written == count;
+    }
+
+private:
+    HANDLE saved_ = nullptr;
+    HANDLE input_ = nullptr;
+    bool owned_ = false;
+    bool active_ = false;
+};
+
 bool TestValidFlush()
 {
     std::array<WCHAR, MAX_PATH + 1> directory{};
@@ -442,6 +497,106 @@ bool TestMessageModePipe()
     CloseHandle(writer);
     CloseHandle(server);
     return passed;
+}
+
+bool TestConsoleInput()
+{
+    ConsoleInput input;
+    if (!Check(input.IsReady(), "create console input"))
+        return false;
+
+    // An empty console input queue is nonblocking, like the pipe/disk paths.
+    if (!ExpectRead("empty console is nonblocking", SysConsoleReadStatus::NoData))
+        return false;
+
+    auto KeyEvent = [](const bool keyDown, const char ascii) {
+        INPUT_RECORD record{};
+        record.EventType = KEY_EVENT;
+        record.Event.KeyEvent.bKeyDown = keyDown;
+        record.Event.KeyEvent.uChar.AsciiChar = ascii;
+        return record;
+    };
+
+    auto ResizeEvent = []() {
+        INPUT_RECORD record{};
+        record.EventType = WINDOW_BUFFER_SIZE_EVENT;
+        record.Event.WindowBufferSizeEvent.dwSize = {1, 1};
+        return record;
+    };
+
+    auto CtrlCEvent = []() {
+        INPUT_RECORD record{};
+        record.EventType = CTRL_C_EVENT;
+        return record;
+    };
+
+    // Single printable byte, with KEY_UP drained first and a non-key event
+    // interleaved to prove the drain order.
+    {
+        const INPUT_RECORD events[] = {
+            ResizeEvent(),
+            KeyEvent(false, 'a'),
+            KeyEvent(true, 'h'),
+            CtrlCEvent(),
+            KeyEvent(true, 'i'),
+        };
+        if (!Check(
+                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
+                "write printable console events")
+            || !ExpectRead(
+                "console KEY_UP and non-key records drain first",
+                SysConsoleReadStatus::LineReady,
+                "hi"))
+        {
+            return false;
+        }
+    }
+
+    // CRLF line; the cooked console will not insert the LF if ENABLE_PROCESSED_INPUT
+    // does not have ENABLE_LINE_INPUT, but our boundary is bytewise so the caller
+    // writes both bytes itself.
+    {
+        const INPUT_RECORD events[] = {
+            KeyEvent(true, 'o'),
+            KeyEvent(true, 'k'),
+            KeyEvent(true, '\r'),
+            KeyEvent(true, '\n'),
+        };
+        if (!Check(
+                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
+                "write complete console line")
+            || !ExpectRead(
+                "console CRLF line",
+                SysConsoleReadStatus::LineReady,
+                "ok"))
+        {
+            return false;
+        }
+    }
+
+    // Zero-AsciiChar keys (arrow keys, function keys in cooked mode) must be
+    // drained without producing a byte.
+    {
+        const INPUT_RECORD events[] = {
+            KeyEvent(true, 0),
+            KeyEvent(true, 'x'),
+            KeyEvent(true, 0),
+            KeyEvent(true, 'y'),
+            KeyEvent(true, '\n'),
+        };
+        if (!Check(
+                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
+                "write zero-ascii console events")
+            || !ExpectRead(
+                "zero-ascii console keys are drained",
+                SysConsoleReadStatus::LineReady,
+                "xy"))
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 #else
 int OutputDescriptor(const SysConsoleOutputStream stream)
@@ -993,6 +1148,7 @@ int main(const int argc, char **const argv)
 #if defined(_WIN32)
         || !TestBrokenOutputWrite()
         || !TestMessageModePipe()
+        || !TestConsoleInput()
 #endif
         || !TestReadBudget()
         || !TestInput())

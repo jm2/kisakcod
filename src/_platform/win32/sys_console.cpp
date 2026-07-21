@@ -36,6 +36,68 @@ SysConsoleIoStatus OutputErrorStatus(const DWORD error) noexcept
         ? SysConsoleIoStatus::Unavailable
         : SysConsoleIoStatus::IoError;
 }
+
+// Translate one pending console input event into a raw console byte or a
+// "keep draining" decision. The portable boundary exposes only single-byte
+// reads, so KEY_UP, function/arrow keys, mouse, focus, window-buffer-size,
+// and menu events are drained without producing output. KEY_DOWN records
+// with a zero ASCII char (e.g. arrow keys, function keys in cooked mode)
+// are also drained so the next key can be evaluated. KEY_DOWN records with
+// a non-zero ASCII char produce one Data byte. ENABLE_PROCESSED_INPUT
+// translates Ctrl+C into a CTRL_C_EVENT record; the record is drained so
+// the line parser cannot misinterpret it as data. The console control
+// handler dispatch path runs independently of ReadConsoleInput, so the
+// engine's signal policy is unchanged.
+SysConsoleRawReadResult TranslateConsoleEvent(
+    const INPUT_RECORD &event) noexcept
+{
+    if (event.EventType != KEY_EVENT)
+        return {SysConsoleRawReadStatus::NoData, 0};
+    const KEY_EVENT_RECORD &key = event.Event.KeyEvent;
+    if (!key.bKeyDown)
+        return {SysConsoleRawReadStatus::NoData, 0};
+    if (key.uChar.AsciiChar == 0)
+        return {SysConsoleRawReadStatus::NoData, 0};
+    return {SysConsoleRawReadStatus::Data,
+        static_cast<unsigned char>(key.uChar.AsciiChar)};
+}
+
+// Drain pending console input events until one yields a Data byte or the
+// input queue is empty. Returns the first Data byte seen, EndOfFile when
+// the input handle reports EOF, IoError on a real console failure, or
+// NoData when the queue is empty.
+SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
+{
+    for (;;)
+    {
+        DWORD pending = 0;
+        if (!GetNumberOfConsoleInputEvents(input, &pending))
+        {
+            const DWORD error = GetLastError();
+            if (IsEndOfPipeError(error))
+                return {SysConsoleRawReadStatus::EndOfFile, 0};
+            return {SysConsoleRawReadStatus::IoError, 0};
+        }
+        if (pending == 0)
+            return {SysConsoleRawReadStatus::NoData, 0};
+
+        INPUT_RECORD event{};
+        DWORD readCount = 0;
+        if (!ReadConsoleInput(input, &event, 1, &readCount)
+            || readCount == 0)
+        {
+            const DWORD error = GetLastError();
+            if (IsEndOfPipeError(error))
+                return {SysConsoleRawReadStatus::EndOfFile, 0};
+            return {SysConsoleRawReadStatus::IoError, 0};
+        }
+
+        const SysConsoleRawReadResult translated =
+            TranslateConsoleEvent(event);
+        if (translated.status == SysConsoleRawReadStatus::Data)
+            return translated;
+    }
+}
 } // namespace
 
 SysConsoleIoStatus Sys_ConsoleBackendWrite(
@@ -104,9 +166,13 @@ SysConsoleRawReadResult Sys_ConsoleBackendTryReadByte() noexcept
     const DWORD type = GetFileType(input);
     if (type == FILE_TYPE_CHAR)
     {
-        // The established Win32 GUI console owns interactive line editing.
-        // This portable boundary consumes redirected standard input only.
-        return {SysConsoleRawReadStatus::NoData, 0};
+        // Native character-console input. The windowed GUI console owns
+        // interactive line editing through its edit control and never
+        // reaches this path; Sys_ConsoleInput returns its edit-control
+        // buffer directly under !KISAK_DEDI_HEADLESS. Headless profile
+        // owns this stdin handle and drains console events one byte at
+        // a time without disturbing the windowed edit-control owner.
+        return TryReadConsoleByte(input);
     }
     if (type == FILE_TYPE_PIPE)
     {
