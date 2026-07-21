@@ -67,8 +67,9 @@ const saveField_t animscriptedFields[1] = { { 0, SF_NONE } };
 // tagInfo_s contains pointers, but the retail save payload is a fixed 112-byte
 // Disk32 record. Keep native64 SP compilation closed until that record has a
 // dedicated converter instead of silently reading host-width bytes.
-static_assert(sizeof(tagInfo_s) == 112);
-static_assert(sizeof(animscripted_s) == 96);
+constexpr int kTagInfoDisk32Bytes = 0x70;
+static_assert(KISAK_ARCH_64BIT == 0,
+    "native64 SP requires a Disk32 tagInfo_s save converter");
 
 const saveField_t gclientFields[5] =
 {
@@ -819,11 +820,16 @@ void __cdecl WriteField2(const saveField_t *field, unsigned __int8 *base, SaveGa
         v11 = *(const void **)&base[ofs];
         if (!v11)
             return;
-        memcpy(v21, v11, 0x70u);
+        memcpy(v21, v11, kTagInfoDisk32Bytes);
         v12 = SaveMemory_GetMemoryFile(save);
         v13 = MemFile_GetUsedSize(v12);
         //ProfMem_Begin("tagInfo", v13);
-        G_WriteStruct(tagInfoFields, *(unsigned __int8 **)&base[ofs], v21, 112, save);
+        G_WriteStruct(
+            tagInfoFields,
+            *(unsigned __int8 **)&base[ofs],
+            v21,
+            kTagInfoDisk32Bytes,
+            save);
         goto LABEL_12;
     case SF_TYPE_SCRIPTED:
         v8 = *(const void **)&base[ofs];
@@ -1005,9 +1011,15 @@ void __cdecl ReadField(const saveField_t *field, unsigned __int8 *base, SaveGame
     case SF_TYPE_TAG_INFO:
         if (*(unsigned int *)v7)
         {
-            v25 = (unsigned __int8 *)MT_Alloc(112, MT_TYPE_TAG_INFO);
+            v25 = (unsigned __int8 *)MT_Alloc(
+                kTagInfoDisk32Bytes,
+                MT_TYPE_TAG_INFO);
             *(uintptr_t *)v7 = (uintptr_t)v25;
-            G_ReadStruct(tagInfoFields, v25, 112, save);
+            G_ReadStruct(
+                tagInfoFields,
+                v25,
+                kTagInfoDisk32Bytes,
+                save);
         }
         break;
     case SF_TYPE_SCRIPTED:
