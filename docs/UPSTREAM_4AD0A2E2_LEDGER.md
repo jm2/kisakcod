@@ -17,5 +17,9 @@ its second parent is exact upstream `4ad0a2e2b9d1f40e0e1f79365ff5ad048fdce19c`,
 and both the checkpoint and first parent have tree
 `14c6575badd6a375d1140782d47bcd6262de7791`. Therefore the checkpoint diff is
 empty. The curated source contract passes, including mutation checks, and
-`git diff --check` is clean. Hosted exact-head review/CI and merge evidence are
-recorded in `docs/task.md` when available.
+`git diff --check` is clean. PR #75 final head
+`7842d83c5e0554461f4cf63df3c885b3972d5c88` passed all nine jobs in run
+**29790667287** with clean exact-head Codex/Gemini review and zero unresolved
+threads. GitHub merge-committed it as
+`ce1d2b185828d465edf1b3a342b4d27c023f2616`; authoritative master run
+**29790700257** passed all nine jobs.

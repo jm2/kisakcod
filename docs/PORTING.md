@@ -551,8 +551,8 @@ Completed foundation work:
   verification confirms both the checkpoint and exact `2164cd1a` are ancestors of `origin/master`. Dynent
   save/load `ba3c79f3` and unsafe raw SP/save/screenshot, gameplay, and matrix hunks remain explicitly deferred/rejected;
   icon changes remain provenance/optional-packaging work;
-- current upstream tip `4ad0a2e2` adds three source commits after the integrated
-  `2164cd1a` baseline. The reconciliation in progress adapts `1c30dda2` by
+- PR #75 reconciles upstream tip `4ad0a2e2`, which adds three source commits
+  after the integrated `2164cd1a` baseline. It adapts `1c30dda2` by
   naming the established memory-tree accounting values while retaining the
   public `int` signatures and existing report-free/hardened control flow;
   adapts `e3dd4ccb` by deriving DObj archive loops from the canonical client and
@@ -563,7 +563,10 @@ Completed foundation work:
   hunks. The outer `4ad0a2e2` object is an ancestry merge, not a fourth content
   batch. Exact dispositions are in `docs/UPSTREAM_4AD0A2E2_LEDGER.md`;
   tree-neutral checkpoint `1b1ab3d0` records the exact tip with identical
-  first-parent/checkpoint tree `14c6575b`;
+  first-parent/checkpoint tree `14c6575b`. Final head `7842d83c` passed all nine
+  jobs in run **29790667287** with clean exact-head Codex/Gemini review and zero
+  unresolved threads; merge commit `ce1d2b18` passed authoritative run
+  **29790700257** with all nine jobs;
 - PR #67 merged passive durable-receipt composition as `76d0e065888aab298d430b4bf4e115c07369bc88`:
   one stable allocation, stream-generation, pending-copy, and native-storage receipt capsule belongs to each of the 33
   runtime entries, while the active-stream binding and pending-copy ledger exist once at table scope. It remains

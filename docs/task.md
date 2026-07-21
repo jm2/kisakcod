@@ -191,7 +191,10 @@ of checked boxes.
 - [x] Curate the three source commits through upstream tip `4ad0a2e2`, preserve
   superseding portability/security fixes, record every disposition in
   `docs/UPSTREAM_4AD0A2E2_LEDGER.md`, and add tree-neutral ancestry checkpoint
-  `1b1ab3d0`.
+  `1b1ab3d0`. PR #75 final head `7842d83c` passed all nine jobs in run
+  **29790667287** with clean exact-head Codex/Gemini review and zero unresolved
+  threads; merge commit `ce1d2b18` passed all nine authoritative jobs in run
+  **29790700257**.
 - [ ] Re-audit and selectively integrate upstream whenever its tip advances.
 - [x] Keep the legacy Windows x86 CI gates green.
 - [x] Provide portable utility CI on all five requested OS/architecture pairs.
@@ -2178,8 +2181,10 @@ pre-enrollment gate.
    through upstream tip `4ad0a2e2`, preserve stronger existing portability and
    security boundaries, document every rejected/deferred hunk, validate the
    curated tree, and record the exact upstream tip through a tree-neutral
-   ancestry checkpoint `1b1ab3d0`. Local source/mutation and diff checks pass;
-   hosted PR review/CI remains the delivery gate.
+   ancestry checkpoint `1b1ab3d0`. PR #75 final head `7842d83c` passed all nine
+   jobs in run **29790667287** with clean exact-head Codex/Gemini review and
+   zero unresolved threads; merge commit `ce1d2b18` passed all nine
+   authoritative jobs in run **29790700257**.
 - [ ] **Priority 2 — Atomic loader cutover:** claim exact generations, stage
    both root-string outputs through an
    aligned local `std::uint32_t` before copying into stream-backed fields, transfer non-null root strings, and publish
