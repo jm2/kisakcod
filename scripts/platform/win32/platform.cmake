@@ -17,6 +17,7 @@ set(PLATFORM_WIN32_SERVICES
     "${SRC_DIR}/_platform/win32/sys_event.cpp"
     "${SRC_DIR}/_platform/win32/sys_filesystem.cpp"
     "${SRC_DIR}/_platform/win32/sys_memory.cpp"
+    "${SRC_DIR}/_platform/win32/sys_process.cpp"
     "${SRC_DIR}/_platform/win32/sys_sync.cpp"
     "${SRC_DIR}/_platform/win32/sys_thread.cpp"
     "${SRC_DIR}/_platform/win32/sys_time.cpp"

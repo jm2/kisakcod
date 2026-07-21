@@ -2059,6 +2059,35 @@ add_test(
 )
 set_tests_properties(platform-filesystem-path-contracts PROPERTIES TIMEOUT 20)
 
+set(_platform_process_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _platform_process_sources INCLUDE REGEX "[/\\\\]sys_process\\.cpp$")
+list(LENGTH _platform_process_sources _platform_process_source_count)
+if (NOT _platform_process_source_count EQUAL 1)
+    message(FATAL_ERROR
+        "Expected exactly one selected platform sys_process.cpp, found "
+        "${_platform_process_source_count}")
+endif()
+
+add_executable(kisakcod-platform-process-tests
+    platform_process_tests.cpp
+    ${_platform_process_sources}
+)
+target_include_directories(kisakcod-platform-process-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-process-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-platform-process-tests PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(kisakcod-platform-process-tests PRIVATE winmm)
+endif()
+kisakcod_test_warnings(kisakcod-platform-process-tests)
+set_target_properties(kisakcod-platform-process-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-process-launch-contracts
+    COMMAND kisakcod-platform-process-tests
+)
+set_tests_properties(platform-process-launch-contracts PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-net-wire-contract-tests
     net_wire_contract_tests.cpp
 )
