@@ -64,6 +64,12 @@ const saveField_t tagInfoFields[4] =
 
 const saveField_t animscriptedFields[1] = { { 0, SF_NONE } };
 
+// tagInfo_s contains pointers, but the retail save payload is a fixed 112-byte
+// Disk32 record. Keep native64 SP compilation closed until that record has a
+// dedicated converter instead of silently reading host-width bytes.
+static_assert(sizeof(tagInfo_s) == 112);
+static_assert(sizeof(animscripted_s) == 96);
+
 const saveField_t gclientFields[5] =
 {
   { offsetof(gclient_s, pHitHitEnt),    SF_ENTITY },
@@ -789,7 +795,7 @@ void __cdecl WriteField2(const saveField_t *field, unsigned __int8 *base, SaveGa
     MemoryFile *v17; // r3
     MemoryFile *v18; // r3
     unsigned int v19; // r3
-    unsigned __int8 v20[96]; // [sp+50h] [-F0h] BYREF
+    unsigned __int8 v20[sizeof(animscripted_s)]; // [sp+50h] [-F0h] BYREF
     unsigned __int8 v21[144]; // [sp+B0h] [-90h] BYREF
 
     if (!save)
@@ -827,7 +833,12 @@ void __cdecl WriteField2(const saveField_t *field, unsigned __int8 *base, SaveGa
             v9 = SaveMemory_GetMemoryFile(save);
             v10 = MemFile_GetUsedSize(v9);
             //ProfMem_Begin("animscripted", v10);
-            G_WriteStruct(animscriptedFields, *(unsigned __int8 **)&base[ofs], v20, 96, save);
+            G_WriteStruct(
+                animscriptedFields,
+                *(unsigned __int8 **)&base[ofs],
+                v20,
+                sizeof(animscripted_s),
+                save);
         LABEL_12:
             v18 = SaveMemory_GetMemoryFile(save);
             v19 = MemFile_GetUsedSize(v18);
@@ -1002,9 +1013,15 @@ void __cdecl ReadField(const saveField_t *field, unsigned __int8 *base, SaveGame
     case SF_TYPE_SCRIPTED:
         if (*(unsigned int *)v7)
         {
-            v26 = (unsigned __int8 *)MT_Alloc(96, MT_TYPE_ANIMSCRIPTED);
+            v26 = (unsigned __int8 *)MT_Alloc(
+                sizeof(animscripted_s),
+                MT_TYPE_ANIMSCRIPTED);
             *(uintptr_t *)v7 = (uintptr_t)v26;
-            G_ReadStruct(animscriptedFields, v26, 96, save);
+            G_ReadStruct(
+                animscriptedFields,
+                v26,
+                sizeof(animscripted_s),
+                save);
         }
         break;
     case SF_MODELUSHORT:

@@ -205,7 +205,7 @@ foreach(_required IN ITEMS
     "const uint16_t oldString = clients[0].configstrings[index];"
     "clients[0].configstrings[index] = 0;"
     "SL_RemoveRefToString(oldString);"
-    "const uint32_t newString = SL_GetString_(newValue, 0, 19);"
+    "const uint32_t newString = SL_GetString_( newValue, 0, MT_TYPE_CONFIG_STRING);"
     "clients[0].configstrings[index] = static_cast<uint16_t>(newString);")
     require_contains(
         _cl_config_modified "${_required}"
@@ -224,11 +224,11 @@ require_ordered(
 require_ordered(
     _cl_config_modified
     "SL_RemoveRefToString(oldString);"
-    "const uint32_t newString = SL_GetString_(newValue, 0, 19);"
+    "const uint32_t newString = SL_GetString_( newValue, 0, MT_TYPE_CONFIG_STRING);"
     "the old slot is reusable before replacement interning")
 require_ordered(
     _cl_config_modified
-    "const uint32_t newString = SL_GetString_(newValue, 0, 19);"
+    "const uint32_t newString = SL_GetString_( newValue, 0, MT_TYPE_CONFIG_STRING);"
     "clients[0].configstrings[index] = static_cast<uint16_t>(newString);"
     "only a validated replacement is published")
 foreach(_forbidden IN ITEMS "atol(" "atoi(" "sscanf(")

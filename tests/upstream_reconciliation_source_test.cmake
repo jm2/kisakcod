@@ -301,8 +301,11 @@ require_contains(
     _g_save "MT_Alloc(112, MT_TYPE_TAG_INFO)"
     "tag-info save restoration uses its named debug-accounting category")
 require_contains(
-    _g_save "MT_Alloc(96, MT_TYPE_ANIMSCRIPTED)"
+    _g_save "sizeof(animscripted_s),\n                MT_TYPE_ANIMSCRIPTED)"
     "scripted save restoration uses the distinct animscripted category")
+require_contains(
+    _g_save "static_assert(sizeof(tagInfo_s) == 112);"
+    "native64 SP remains closed until tag-info saves have a Disk32 converter")
 
 require_count(
     _db_load "localClientNum < STATIC_MAX_LOCAL_CLIENTS" 2

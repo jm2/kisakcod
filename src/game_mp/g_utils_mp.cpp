@@ -531,7 +531,7 @@ int __cdecl G_EntLinkTo(gentity_s *ent, gentity_s *parent, uint32_t tagName)
 int __cdecl G_EntLinkToInternal(gentity_s *ent, gentity_s *parent, uint32_t tagName)
 {
     int pm_type; // [esp+0h] [ebp-10h]
-    char *tagInfo; // [esp+4h] [ebp-Ch]
+    tagInfo_s *tagInfo; // [esp+4h] [ebp-Ch]
     gentity_s *checkEnt; // [esp+8h] [ebp-8h]
     int index; // [esp+Ch] [ebp-4h]
 
@@ -563,19 +563,21 @@ int __cdecl G_EntLinkToInternal(gentity_s *ent, gentity_s *parent, uint32_t tagN
         if (!checkEnt->tagInfo)
             break;
     }
-    tagInfo = (char*)MT_Alloc(112, MT_TYPE_TAG_INFO);
-    *(uint32_t *)tagInfo = (uint32_t)parent;
-    *((_WORD *)tagInfo + 4) = 0;
+    tagInfo = (tagInfo_s *)MT_Alloc(
+        sizeof(tagInfo_s),
+        MT_TYPE_TAG_INFO);
+    tagInfo->parent = parent;
+    tagInfo->name = 0;
 
     iassert(!tagName || SL_IsLowercaseString(tagName));
     
-    Scr_SetString((uint16_t *)tagInfo + 4, tagName);
-    *((uint32_t *)tagInfo + 1) = (uint32_t)parent->tagChildren;
-    *((uint32_t *)tagInfo + 3) = index;
-    memset((uint8_t *)tagInfo + 16, 0, 0x30u);
+    Scr_SetString(&tagInfo->name, tagName);
+    tagInfo->next = parent->tagChildren;
+    tagInfo->index = index;
+    memset(tagInfo->axis, 0, sizeof(tagInfo->axis));
     parent->tagChildren = ent;
-    ent->tagInfo = (tagInfo_s *)tagInfo;
-    memset((uint8_t *)tagInfo + 64, 0, 0x30u);
+    ent->tagInfo = tagInfo;
+    memset(tagInfo->parentInvAxis, 0, sizeof(tagInfo->parentInvAxis));
     if (ent->client)
     {
         pm_type = ent->client->ps.pm_type;
