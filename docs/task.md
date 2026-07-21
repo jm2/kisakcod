@@ -75,7 +75,7 @@ of checked boxes.
     coverage proves that chain compositionally.
   - [ ] Add an exact-key, by-value pending-copy read/visitor so delayed-image
     completion and abandonment never retain `g_copyInfo` pointers.
-  - [ ] Add stable process-lifetime contexts for all 33 physical zone slots,
+  - [x] Add stable process-lifetime contexts (ki-pfe) for all 33 physical zone slots,
     outside `XZone` and PMem, retaining exact generation identity through terminal
     reset.
   - [ ] Convert the required registry/hash-lock helpers to checked, no-report
