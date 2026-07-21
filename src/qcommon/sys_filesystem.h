@@ -13,6 +13,16 @@
 // invalid encodings, and symbolic-link/reparse targets are rejected.
 bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *utf8Path);
 
+// Recursively deletes one real directory tree without following POSIX
+// symbolic links or Win32 reparse points. The leaf and every descent use
+// handle-relative operations so a racing rename cannot escape the boundary.
+// A leaf itself that is a symbolic link or reparse point is rejected.
+// During descent any symbolic link or reparse point encountered is left in
+// place and not traversed. Real regular files and real directories are
+// removed; special files (FIFOs, sockets, device nodes) are rejected.
+// Returns false on the first error and stops; partial state may remain.
+bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *utf8Path);
+
 // These queries return absolute UTF-8 paths without truncation. On failure,
 // including insufficient capacity, output is reset to an empty string when
 // possible. Callers may retry with a larger buffer.

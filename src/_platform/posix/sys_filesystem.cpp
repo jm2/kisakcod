@@ -457,3 +457,200 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
     return Sys_FileSystemListDirectoryFiltered(
         utf8Path, maximumEntries, nullptr, nullptr, entries);
 }
+
+namespace
+{
+// Walks one real directory opened on directoryFd without following symbolic
+// links, removes every real regular file, removes (but does not follow)
+// symbolic-link entries, recurses into every real subdirectory (also
+// without following links), and finally removes the leaf subdirectory
+// itself. Returned once directoryFd is empty.
+bool RemoveTreeAt(const int directoryFd)
+{
+    // Take a private fd for fdopendir (which would otherwise consume
+    // directoryFd). The dup'd handle is owned by the DIR* wrapper.
+    const int ownedFd = dup(directoryFd);
+    if (ownedFd < 0)
+        return false;
+    DIR *const directory = fdopendir(ownedFd);
+    if (!directory)
+    {
+        close(ownedFd);
+        return false;
+    }
+
+    std::vector<std::string> subdirectories;
+    std::vector<std::string> files;
+    std::vector<std::string> symlinks;
+    bool failed = false;
+    errno = 0;
+    while (const dirent *const entry = readdir(directory))
+    {
+        const char *const name = entry->d_name;
+        if ((name[0] == '.' && name[1] == '\0')
+            || (name[0] == '.' && name[1] == '.' && name[2] == '\0'))
+        {
+            errno = 0;
+            continue;
+        }
+        if (!IsValidUtf8(name))
+        {
+            failed = true;
+            break;
+        }
+        if (std::strchr(name, '\\') || std::strchr(name, ':'))
+        {
+            errno = 0;
+            continue;
+        }
+
+        struct stat status{};
+        if (fstatat(directoryFd, name, &status, AT_SYMLINK_NOFOLLOW) != 0)
+        {
+            failed = true;
+            break;
+        }
+        // Symbolic links are never traversed. They are removed only when
+        // the path the test follows leads through the deletion service
+        // itself; otherwise deletion of their target would depend on
+        // contents outside the engine's filesystem tree.
+        if (S_ISLNK(status.st_mode))
+        {
+            try
+            {
+                symlinks.emplace_back(name);
+            }
+            catch (const std::bad_alloc &)
+            {
+                failed = true;
+                break;
+            }
+        }
+        else if (S_ISREG(status.st_mode))
+        {
+            try
+            {
+                files.emplace_back(name);
+            }
+            catch (const std::bad_alloc &)
+            {
+                failed = true;
+                break;
+            }
+        }
+        else if (S_ISDIR(status.st_mode))
+        {
+            try
+            {
+                subdirectories.emplace_back(name);
+            }
+            catch (const std::bad_alloc &)
+            {
+                failed = true;
+                break;
+            }
+        }
+        else
+        {
+            // FIFOs, sockets, device nodes, and other specials refuse to be
+            // removed through the deletion service — they were not part of
+            // the engine's intended layout and a top-level caller should not
+            // erase them silently.
+            failed = true;
+            break;
+        }
+        errno = 0;
+    }
+    if (errno != 0)
+        failed = true;
+    if (closedir(directory) != 0)
+        failed = true;
+    if (failed)
+        return false;
+
+    for (const std::string &file : files)
+    {
+        if (unlinkat(directoryFd, file.c_str(), 0) != 0)
+            return false;
+    }
+
+    constexpr int subdirectoryFlags =
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
+    for (const std::string &subdirectory : subdirectories)
+    {
+        const int childFd = openat(
+            directoryFd, subdirectory.c_str(), subdirectoryFlags);
+        if (childFd < 0)
+            return false;
+        if (!RemoveTreeAt(childFd))
+        {
+            close(childFd);
+            return false;
+        }
+        close(childFd);
+        if (unlinkat(directoryFd, subdirectory.c_str(), AT_REMOVEDIR) != 0)
+            return false;
+    }
+
+    // Strip out symbolic-link entries that survived the descent. unlinkat
+    // with no flag removes a symlink itself, not its target.
+    for (const std::string &symlink : symlinks)
+    {
+        if (unlinkat(directoryFd, symlink.c_str(), 0) != 0)
+            return false;
+    }
+    return true;
+}
+}
+
+bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
+{
+    std::vector<std::string> components;
+    if (!utf8Path || utf8Path[0] == '\0' || !IsValidUtf8(utf8Path)
+        || !SplitSafePath(utf8Path, &components)
+        || components.empty())
+    {
+        return false;
+    }
+
+    // Open the parent of the leaf handle-relative, refusing any symbolic
+    // link or "."-only traversal. Then open the leaf as its own descriptor
+    // while keeping the parent open so we can call unlinkat(...,leaf, AT_REMOVEDIR).
+    constexpr int parentFlags =
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
+    int parentFd = open(
+        IsEnginePathSeparator(utf8Path[0]) ? "/" : ".", parentFlags);
+    if (parentFd < 0)
+        return false;
+
+    for (std::size_t index = 0; index + 1 < components.size(); ++index)
+    {
+        const int nextFd = openat(
+            parentFd, components[index].c_str(), DirectoryOpenFlags());
+        const bool parentClosed = close(parentFd) == 0;
+        if (nextFd < 0 || !parentClosed)
+        {
+            if (nextFd >= 0)
+                close(nextFd);
+            return false;
+        }
+        parentFd = nextFd;
+    }
+
+    const std::string &leaf = components.back();
+    const int leafFd = openat(parentFd, leaf.c_str(), parentFlags);
+    if (leafFd < 0)
+    {
+        close(parentFd);
+        return false;
+    }
+    bool removed = RemoveTreeAt(leafFd);
+    if (removed
+        && unlinkat(parentFd, leaf.c_str(), AT_REMOVEDIR) != 0)
+    {
+        removed = false;
+    }
+    close(leafFd);
+    close(parentFd);
+    return removed;
+}

@@ -706,6 +706,162 @@ bool TestFilteredCollectionAndPathHelpers(
         removed = RemoveFileNative(file) && removed;
     return Check(removed) && Check(RemoveDirectoryNative(root));
 }
+
+bool TestRemoveTreeContract(const std::string &workingDirectory)
+{
+    SetCheckStage("remove-tree/setup");
+    const std::string root = MakeUniquePath(workingDirectory) + "-remove";
+    const std::string nestedDirectory = Join(root, "nested");
+    const std::string deeperDirectory = Join(nestedDirectory, "deeper");
+    const std::string file = Join(root, "keep-file.dat");
+    const std::string nestedFile = Join(deeperDirectory, "inside.bin");
+    const std::string siblingFile = Join(root, "sibling.txt");
+    const std::string internalLink = Join(root, "internal-symlink");
+    const std::string externalTarget = MakeUniquePath(workingDirectory)
+        + "-external-target";
+    const std::string externalLink = Join(root, "external-symlink");
+
+    if (!Check(Sys_FileSystemCreateDirectory(root.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(nestedDirectory.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(deeperDirectory.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(externalTarget.c_str()))
+        || !Check(WriteFile(file))
+        || !Check(WriteFile(nestedFile))
+        || !Check(WriteFile(siblingFile))
+        || !Check(WriteFile(Join(externalTarget, "outside.bin"))))
+    {
+        return false;
+    }
+
+#if defined(_WIN32)
+    constexpr DWORD directoryLink = 0x1;
+    constexpr DWORD allowUnprivilegedCreate = 0x2;
+    const std::wstring wideInternal = ExtendedPath(internalLink);
+    const std::wstring wideExternal = ExtendedPath(externalLink);
+    const std::wstring wideExternalTarget = ExtendedPath(externalTarget);
+    if (!Check(!wideInternal.empty())
+        || !Check(!wideExternal.empty())
+        || !Check(!wideExternalTarget.empty()))
+    {
+        return false;
+    }
+    const bool internalCreated = CreateSymbolicLinkW(
+        wideInternal.c_str(),
+        ExtendedPath(Join(root, "nested")).c_str(),
+        directoryLink | allowUnprivilegedCreate) != 0;
+    const bool externalCreated = CreateSymbolicLinkW(
+        wideExternal.c_str(),
+        wideExternalTarget.c_str(),
+        directoryLink | allowUnprivilegedCreate) != 0;
+#else
+    const bool internalCreated =
+        symlink("nested", internalLink.c_str()) == 0;
+    const bool externalCreated =
+        symlink(externalTarget.c_str(), externalLink.c_str()) == 0;
+#endif
+    if (!Check(internalCreated) || !Check(externalCreated))
+        return false;
+
+    SetCheckStage("remove-tree/refuse-link-leaf");
+    {
+        const std::string linkLeaf = MakeUniquePath(workingDirectory)
+            + "-remove-link";
+#if defined(_WIN32)
+        const std::wstring wideLinkLeaf = ExtendedPath(linkLeaf);
+        const bool created = CreateSymbolicLinkW(
+            wideLinkLeaf.c_str(),
+            ExtendedPath(root).c_str(),
+            directoryLink | allowUnprivilegedCreate) != 0;
+#else
+        const bool created =
+            symlink(root.c_str(), linkLeaf.c_str()) == 0;
+#endif
+        if (!Check(created))
+            return false;
+        if (!Check(!Sys_FileSystemRemoveTree(linkLeaf.c_str())))
+            return false;
+#if defined(_WIN32)
+        const std::wstring wideCleanupLeaf = ExtendedPath(linkLeaf);
+        (void)RemoveDirectoryW(wideCleanupLeaf.c_str());
+#else
+        (void)unlink(linkLeaf.c_str());
+#endif
+    }
+
+    SetCheckStage("remove-tree/invalid-arguments");
+    if (!Check(!Sys_FileSystemRemoveTree(nullptr))
+        || !Check(!Sys_FileSystemRemoveTree(""))
+        || !Check(!Sys_FileSystemRemoveTree("\xff"))
+        || !Check(!Sys_FileSystemRemoveTree("../escape"))
+        || !Check(!Sys_FileSystemRemoveTree(Join(root, "missing").c_str())))
+    {
+        return false;
+    }
+
+    SetCheckStage("remove-tree/executes");
+    if (!Check(Sys_FileSystemRemoveTree(root.c_str())))
+        return false;
+#if defined(_WIN32)
+    const std::wstring wideRoot = ExtendedPath(root);
+    const std::wstring wideExternalTargetCheck = ExtendedPath(externalTarget);
+    const std::wstring wideOutsideCheck =
+        ExtendedPath(Join(externalTarget, "outside.bin"));
+    if (!Check(GetFileAttributesW(wideRoot.c_str()) == INVALID_FILE_ATTRIBUTES)
+        || !Check(GetFileAttributesW(wideExternalTargetCheck.c_str())
+            != INVALID_FILE_ATTRIBUTES)
+        || !Check(GetFileAttributesW(wideOutsideCheck.c_str())
+            != INVALID_FILE_ATTRIBUTES))
+    {
+        return false;
+    }
+    if (!Check(RemoveFileW(wideOutsideCheck.c_str())))
+        return false;
+    SetCheckStage("remove-tree/external-cleanup");
+    std::vector<std::wstring> leftover;
+    WIN32_FIND_DATAW findData{};
+    std::wstring searchExt = wideExternalTargetCheck + L"\\*";
+    HANDLE findHandle = FindFirstFileExW(
+        searchExt.c_str(),
+        FindExInfoBasic,
+        &findData,
+        FindExSearchNameMatch,
+        nullptr,
+        0);
+    if (findHandle != INVALID_HANDLE_VALUE)
+    {
+        for (;;)
+        {
+            const wchar_t *const name = findData.cFileName;
+            const bool dot = name[0] == L'.' && name[1] == L'\0';
+            const bool dotDot = name[0] == L'.'
+                && name[1] == L'.'
+                && name[2] == L'\0';
+            if (!dot && !dotDot)
+                leftover.emplace_back(name);
+            if (!FindNextFileW(findHandle, &findData))
+                break;
+        }
+        FindClose(findHandle);
+    }
+    if (!leftover.empty())
+        return false;
+    if (!Check(RemoveDirectoryW(wideExternalTargetCheck.c_str())))
+        return false;
+#else
+    struct stat rootStatus{};
+    if (!Check(stat(root.c_str(), &rootStatus) != 0)
+        || !Check(lstat(externalTarget.c_str(), &rootStatus) == 0))
+    {
+        return false;
+    }
+    SetCheckStage("remove-tree/external-cleanup");
+    if (!Check(RemoveFileNative(Join(externalTarget, "outside.bin"))))
+        return false;
+    if (!Check(rmdir(externalTarget.c_str()) == 0))
+        return false;
+#endif
+    return true;
+}
 }
 
 int main()
@@ -729,6 +885,9 @@ int main()
     if (!TestBoundedDirectoryEnumeration(workingDirectory))
         return 1;
     if (!TestFilteredCollectionAndPathHelpers(workingDirectory))
+        return 1;
+    SetCheckStage("handle-relative-recursive-deletion");
+    if (!TestRemoveTreeContract(workingDirectory))
         return 1;
     return 0;
 }
