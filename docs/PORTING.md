@@ -672,8 +672,13 @@ Completed foundation work:
   outcomes remain one-shot. Full GCC CTest **160/160**, focused Clang/ASan+UBSan, source/security, genuine
   i386/AArch64, and two independent audits pass on that repair tree. Final head `79413a18` passed all nine jobs in run
   **29787341109** with clean exact-head Codex/Gemini review and zero unresolved threads; PR #74 squash-merged as
-  `f996e16b`, and authoritative post-merge run **29788146050** passed all nine jobs. A literal full-chain fixture remains
-  a pre-enrollment gate. The remaining loader prerequisites precede the atomic
+  `f996e16b`, and authoritative post-merge run **29788146050** passed all nine jobs. Code checkpoint `ef74688b` then
+  implements the exact-key pending-copy inspection prerequisite through table and facade with a pointer-free 0x18 view,
+  by-value ordinal reads, exact key/count reauthentication, retained-authority and managed-PMem separation, and
+  failure-atomic publication. Complete local GCC **171/171**, focused Clang/sanitizer, genuine i386/AArch64,
+  production/source/security, diff, and independent-audit gates pass. It enrolls no caller. A literal full-chain fixture
+  remains a pre-enrollment gate, as do stable 33-slot contexts and checked no-report helpers. The remaining loader
+  prerequisites precede the atomic
   seven-site cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
@@ -791,8 +796,13 @@ Remaining gates, in implementation order:
    without enrolling a caller. PR #72 merged the capacity/demand prerequisite and PR #73 merged the serialized facade.
    PR #74 published the private callback-borrow prerequisite without enrolling a caller. Final head `79413a18` passed
    all nine hosted jobs in run **29787341109** with clean Codex/Gemini review and zero unresolved threads; it
-   squash-merged as `f996e16b`, and authoritative post-merge run **29788146050** passed all nine jobs. After the
-   remaining pending-copy/context/no-report prerequisites, atomically bind the loader
+   squash-merged as `f996e16b`, and authoritative post-merge run **29788146050** passed all nine jobs. Code checkpoint
+   `ef74688b` adds the pointer-free 0x18 key/count snapshot and ordered by-value pending-copy record reads through the
+   table and serialized facade. It authenticates the actual output span through table-owned stream authority, preserves
+   exact key/count identity and failure-atomic publication, exposes no receipt or ledger capability, and keeps all seven
+   raw sites frozen. Full local GCC **171/171**, focused cross-toolchain/architecture/seal gates, and independent audit
+   pass; hosted delivery remains pending. After the remaining full-chain/context/no-report prerequisites, atomically bind
+   the loader
    across all seven sites; partial enrollment remains forbidden. Keep static controller
    slots and callback metadata
    outside PMem with
@@ -1792,8 +1802,12 @@ hardening, adversarial composition coverage, and the optimized-Win32 fixture rep
 prerequisite and PR #73 merged the production-neutral serialized facade. PR #74 published the private callback-borrow
 prerequisite without enrolling a loader caller; final head `79413a18` passed all nine jobs in run **29787341109** with
 clean Codex/Gemini review and zero unresolved threads, squash-merged as `f996e16b`, and passed all nine authoritative
-post-merge jobs in run **29788146050**. The ancestry checkpoint records reviewed
-history without importing code and therefore does not inflate the engineering estimate.
+post-merge jobs in run **29788146050**. PR #75 reconciled upstream through `4ad0a2e2`. Code checkpoint `ef74688b` now
+implements and locally verifies the production-neutral exact-key, by-value pending-copy inspection prerequisite: GCC
+CTest is **171/171**, the affected Clang, sanitizer, genuine i386/AArch64, production/source/security, and diff gates
+pass, and an independent final audit is clean. Hosted review, CI, and merge remain pending; no production caller is
+enrolled. The ancestry checkpoint records reviewed history without importing code and therefore does not inflate the
+engineering estimate.
 Windows x86 is about
 **93%**, shared
 foundations/security about **89%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
