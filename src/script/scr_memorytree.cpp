@@ -264,6 +264,7 @@ namespace
 {
 constexpr int kMemoryTreeTypeCount =
     static_cast<int>(sizeof(mt_type_names) / sizeof(mt_type_names[0]));
+static_assert(kMemoryTreeTypeCount == MT_TYPE_COUNT);
 
 struct MT_DumpSnapshot final
 {

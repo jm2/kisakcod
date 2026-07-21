@@ -245,7 +245,7 @@ void __cdecl G_Animscripted(
     scripted = ent->scripted;
     if (!scripted)
     {
-        scripted = (animscripted_s *)MT_Alloc(sizeof(animscripted_s), 18);
+        scripted = (animscripted_s *)MT_Alloc(sizeof(animscripted_s), MT_TYPE_ANIMSCRIPTED);
         ent->scripted = scripted;
     }
     scripted->anim = anim;
@@ -577,4 +577,3 @@ void __cdecl GScr_GetCycleOriginOffset()
     MatrixTransformVector(v6, (const mat3x3&)v9, v8);
     Scr_AddVector(v8);
 }
-

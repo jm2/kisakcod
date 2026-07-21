@@ -1821,7 +1821,7 @@ uint32_t SL_GetStringForVector(const float* v)
 	char tempString[132];
 
 	snprintf(tempString, sizeof(tempString), "(%g, %g, %g)", *v, v[1], v[2]);
-	return SL_GetString_(tempString, 0, 15);
+	return SL_GetString_(tempString, 0, MT_TYPE_SCRIPT_STRING);
 }
 
 uint32_t SL_GetStringForInt(int i)
@@ -1831,7 +1831,7 @@ uint32_t SL_GetStringForInt(int i)
 	char tempString[132]; // [esp+0h] [ebp-88h] BYREF
 
 	snprintf(tempString, sizeof(tempString), "%i", i);
-	return SL_GetString_(tempString, 0, 15);
+	return SL_GetString_(tempString, 0, MT_TYPE_SCRIPT_STRING);
 }
 
 uint32_t SL_GetStringForFloat(float f)
@@ -1841,14 +1841,14 @@ uint32_t SL_GetStringForFloat(float f)
 	char tempString[132]; // [esp+8h] [ebp-88h] BYREF
 
 	snprintf(tempString, sizeof(tempString), "%g", f);
-	return SL_GetString_(tempString, 0, 15);
+	return SL_GetString_(tempString, 0, MT_TYPE_SCRIPT_STRING);
 }
 
 uint32_t SL_GetString(const char* str, uint32_t user)
 {
 	if (SL_IsOwnershipBatchActiveNoReport())
 		return 0;
-	return SL_GetString_(str, user, 6);
+	return SL_GetString_(str, user, MT_TYPE_EXTERNAL);
 }
 
 //char *mt_buffer;  //     scrMemTreePub.mt_buffer = (char*)&scrMemTreeGlob.nodes;
@@ -1926,7 +1926,7 @@ uint32_t SL_GetLowercaseString_(const char* str, uint32_t user, int type)
 }
 uint32_t SL_GetLowercaseString(const char* str, uint32_t user)
 {
-	return SL_GetLowercaseString_(str, user, 6);
+	return SL_GetLowercaseString_(str, user, MT_TYPE_EXTERNAL);
 }
 
 void SL_RemoveRefToString(uint32_t stringValue)
@@ -6172,7 +6172,7 @@ uint32_t __cdecl Scr_CreateCanonicalFilename(const char *filename)
 	char newFilename[1028]; // [esp+0h] [ebp-408h] BYREF
 
 	CreateCanonicalFilename(newFilename, filename, 1024);
-	return SL_GetString_(newFilename, 0, 7);
+	return SL_GetString_(newFilename, 0, MT_TYPE_TEMP);
 }
 
 void Scr_SetStringFromCharString(uint16_t *to, const char *from)
@@ -6188,7 +6188,7 @@ void Scr_SetStringFromCharString(uint16_t *to, const char *from)
 	v5 = from;
 	while (*(uint8_t *)v5++)
 		;
-	*to = SL_GetStringOfSize(from, 0, v5 - from, 6);
+	*to = SL_GetStringOfSize(from, 0, v5 - from, MT_TYPE_EXTERNAL);
 }
 
 uint32_t SL_GetUser(uint32_t stringValue)
