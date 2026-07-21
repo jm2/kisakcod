@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <limits>
 #include <thread>
+#include <type_traits>
 
 namespace
 {
@@ -30,11 +31,31 @@ enum class LookupPublication : std::uint8_t
     WrongEntry,
 };
 
+enum class PendingViewPublication : std::uint8_t
+{
+    Canonical,
+    Empty,
+    WrongKey,
+    OversizedCount,
+    Reserved,
+};
+
+enum class PendingRecordPublication : std::uint8_t
+{
+    Canonical,
+    Empty,
+    WrongKey,
+    InvalidAssetIndex,
+    Reserved,
+};
+
 std::atomic<bool> g_runtimeLocked{false};
 ZoneRuntimeTableStatus g_releaseStatus = ZoneRuntimeTableStatus::Success;
 ZoneRuntimeTableStatus g_tableOperationStatus =
     ZoneRuntimeTableStatus::Success;
 ZoneRuntimeTableStatus g_tableAuthenticationStatus =
+    ZoneRuntimeTableStatus::Success;
+ZoneRuntimeTableStatus g_pendingInspectionAuthenticationStatus =
     ZoneRuntimeTableStatus::Success;
 ZoneRuntimeTableStatus g_callbackAuthenticationStatus =
     ZoneRuntimeTableStatus::Busy;
@@ -48,6 +69,10 @@ bool g_registryBusyRetainsAuthority = false;
 std::uint32_t g_initializeCalls = 0;
 std::uint32_t g_claimCalls = 0;
 std::uint32_t g_lookupCalls = 0;
+std::uint32_t g_pendingViewCalls = 0;
+std::uint32_t g_pendingReadCalls = 0;
+std::uint32_t g_pendingInspectionAuthenticationCalls = 0;
+std::uint32_t g_storageSeparationCalls = 0;
 std::uint32_t g_callbackAuthenticationCalls = 0;
 std::uint32_t g_callbackRestoreCalls = 0;
 std::uint32_t g_compositeCalls = 0;
@@ -66,6 +91,11 @@ std::uint32_t g_borrowSlot = 0;
 ZoneLoadContextKey g_borrowKey{};
 std::uint32_t g_lastStringId = 0;
 LookupPublication g_lookupPublication = LookupPublication::Canonical;
+PendingViewPublication g_pendingViewPublication =
+    PendingViewPublication::Canonical;
+PendingRecordPublication g_pendingRecordPublication =
+    PendingRecordPublication::Canonical;
+bool g_storageOutsideManagedMemory = true;
 bool g_corruptRuntimeAfterTableOperation = false;
 bool g_generationBindingPristine = false;
 std::uint32_t g_expectedCompositeSlot = 0;
@@ -79,6 +109,13 @@ db::zone_pending_copy::PendingCopyDrainCallback g_expectedDrain{};
 bool g_callbackArgumentsMatched = false;
 bool g_streamArgumentsMatched = false;
 bool g_drainArgumentsMatched = false;
+std::uint32_t g_pendingInspectionSlot = 0;
+ZoneLoadContextKey g_pendingInspectionKey{};
+std::uint32_t g_pendingExpectedRecordCount = 0;
+std::uint32_t g_pendingOrdinal = 0;
+const void *g_streamOutputStorage = nullptr;
+std::size_t g_streamOutputSize = 0;
+std::size_t g_streamOutputAlignment = 0;
 
 db::zone_script_string_ownership::ZoneScriptStringUnpublishStatus
 EnsureForwardingUnreachable(void *const context) noexcept
@@ -134,6 +171,8 @@ void ResetHarness() noexcept
     g_releaseStatus = ZoneRuntimeTableStatus::Success;
     g_tableOperationStatus = ZoneRuntimeTableStatus::Success;
     g_tableAuthenticationStatus = ZoneRuntimeTableStatus::Success;
+    g_pendingInspectionAuthenticationStatus =
+        ZoneRuntimeTableStatus::Success;
     g_callbackAuthenticationStatus = ZoneRuntimeTableStatus::Busy;
     g_callbackRestoreStatus = ZoneRuntimeTableStatus::Success;
     g_registryOperationStatus = RegistryOwnershipStatus::Success;
@@ -143,6 +182,10 @@ void ResetHarness() noexcept
     g_initializeCalls = 0;
     g_claimCalls = 0;
     g_lookupCalls = 0;
+    g_pendingViewCalls = 0;
+    g_pendingReadCalls = 0;
+    g_pendingInspectionAuthenticationCalls = 0;
+    g_storageSeparationCalls = 0;
     g_callbackAuthenticationCalls = 0;
     g_callbackRestoreCalls = 0;
     g_compositeCalls = 0;
@@ -161,6 +204,9 @@ void ResetHarness() noexcept
     g_borrowKey = {};
     g_lastStringId = 0;
     g_lookupPublication = LookupPublication::Canonical;
+    g_pendingViewPublication = PendingViewPublication::Canonical;
+    g_pendingRecordPublication = PendingRecordPublication::Canonical;
+    g_storageOutsideManagedMemory = true;
     g_corruptRuntimeAfterTableOperation = false;
     g_generationBindingPristine = false;
     g_expectedCompositeSlot = 0;
@@ -173,6 +219,13 @@ void ResetHarness() noexcept
     g_callbackArgumentsMatched = false;
     g_streamArgumentsMatched = false;
     g_drainArgumentsMatched = false;
+    g_pendingInspectionSlot = 0;
+    g_pendingInspectionKey = {};
+    g_pendingExpectedRecordCount = 0;
+    g_pendingOrdinal = 0;
+    g_streamOutputStorage = nullptr;
+    g_streamOutputSize = 0;
+    g_streamOutputAlignment = 0;
 }
 
 void CorruptRuntimeAfterTableOperationIfRequested() noexcept
@@ -1311,6 +1364,443 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
     return true;
 }
 
+[[nodiscard]] bool TestPendingCopyInspectionAdmissionAndForwarding() noexcept
+{
+    using ViewFunction = ZoneRuntimeTableStatus (*)(
+        std::uint32_t,
+        const ZoneLoadContextKey &,
+        db::zone_runtime::ZoneRuntimePendingCopyView *) noexcept;
+    using ReadFunction = ZoneRuntimeTableStatus (*)(
+        std::uint32_t,
+        const ZoneLoadContextKey &,
+        std::uint32_t,
+        std::uint32_t,
+        db::zone_pending_copy::PendingCopyRecord *) noexcept;
+    static_assert(std::is_same_v<
+        decltype(&ZoneRuntimeFacade::TryGetPendingCopyView),
+        ViewFunction>);
+    static_assert(std::is_same_v<
+        decltype(&ZoneRuntimeFacade::TryReadPendingCopy),
+        ReadFunction>);
+
+    ResetHarness();
+    const ZoneLoadContextKey key{UINT64_C(82), 8, 0};
+    const db::zone_runtime::ZoneRuntimePendingCopyView viewSentinel{
+        ZoneLoadContextKey{UINT64_C(91), 9, 0}, 17, 0};
+    const db::zone_pending_copy::PendingCopyRecord recordSentinel{
+        ZoneLoadContextKey{UINT64_C(92), 10, 0}, 33, 0};
+    auto view = viewSentinel;
+    auto record = recordSentinel;
+    if (!Check(ZoneRuntimeFacade::TryGetPendingCopyView(8, key, &view)
+            == ZoneRuntimeTableStatus::InvalidState,
+            "pending view exposed output admission without access")
+        || !Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, &record)
+            == ZoneRuntimeTableStatus::InvalidState,
+            "pending read exposed output admission without access")
+        || !Check(view.key == viewSentinel.key
+                && view.recordCount == viewSentinel.recordCount
+                && view.reserved == viewSentinel.reserved
+                && record == recordSentinel,
+            "no-access pending inspection changed caller outputs")
+        || !Check(g_pendingViewCalls == 0 && g_pendingReadCalls == 0
+                && g_storageSeparationCalls == 0,
+            "no-access pending inspection reached a lower boundary"))
+    {
+        return false;
+    }
+
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "pending-inspection owner begin failed")
+        || !Check(ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership()
+            == RegistryOwnershipStatus::Success,
+            "pending-inspection registry scope begin failed")
+        || !Check(ZoneRuntimeFacade::TryGetPendingCopyView(8, key, &view)
+            == ZoneRuntimeTableStatus::InvalidState,
+            "pending view crossed an active coordinator")
+        || !Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, &record)
+            == ZoneRuntimeTableStatus::InvalidState,
+            "pending read crossed an active coordinator")
+        || !Check(g_pendingViewCalls == 0 && g_pendingReadCalls == 0
+                && g_storageSeparationCalls == 0,
+            "coordinator-active inspection reached output or table checks")
+        || !Check(ZoneRuntimeFacade::FinishRegistryOwnership()
+            == RegistryOwnershipStatus::Success,
+            "pending-inspection registry scope finish failed"))
+    {
+        return false;
+    }
+
+    if (!Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8,
+                key,
+                db::zone_pending_copy::kPendingCopyRecordCapacity + 1,
+                0,
+                &record)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending read accepted an oversized snapshot count")
+        || !Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 4, &record)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending read accepted an out-of-range ordinal")
+        || !Check(record == recordSentinel,
+            "pending scalar preflight changed caller output")
+        || !Check(g_storageSeparationCalls == 0
+                && g_pendingInspectionAuthenticationCalls == 0
+                && g_pendingReadCalls == 0,
+            "pending scalar preflight reached output or table authority"))
+    {
+        return false;
+    }
+
+    g_storageOutsideManagedMemory = false;
+    if (!Check(ZoneRuntimeFacade::TryGetPendingCopyView(8, key, &view)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending view accepted managed-PMem output")
+        || !Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, &record)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending read accepted managed-PMem output")
+        || !Check(g_pendingViewCalls == 0 && g_pendingReadCalls == 0,
+            "managed-PMem output reached the table backend")
+        || !Check(view.key == viewSentinel.key
+                && view.recordCount == viewSentinel.recordCount
+                && view.reserved == viewSentinel.reserved
+                && record == recordSentinel,
+            "managed-PMem rejection changed caller outputs"))
+    {
+        return false;
+    }
+    g_storageOutsideManagedMemory = true;
+
+    alignas(db::zone_runtime::ZoneRuntimePendingCopyView)
+        unsigned char viewStorage[
+            sizeof(db::zone_runtime::ZoneRuntimePendingCopyView) + 1]{};
+    alignas(db::zone_pending_copy::PendingCopyRecord)
+        unsigned char recordStorage[
+            sizeof(db::zone_pending_copy::PendingCopyRecord) + 1]{};
+    auto *const misalignedView = reinterpret_cast<
+        db::zone_runtime::ZoneRuntimePendingCopyView *>(viewStorage + 1);
+    auto *const misalignedRecord = reinterpret_cast<
+        db::zone_pending_copy::PendingCopyRecord *>(recordStorage + 1);
+    auto *const tableViewAlias = reinterpret_cast<
+        db::zone_runtime::ZoneRuntimePendingCopyView *>(
+        &db::zone_runtime::ProductionZoneRuntimeTable());
+    auto *const tableRecordAlias = reinterpret_cast<
+        db::zone_pending_copy::PendingCopyRecord *>(
+        &db::zone_runtime::ProductionZoneRuntimeTable());
+    auto *const keyViewAlias = reinterpret_cast<
+        db::zone_runtime::ZoneRuntimePendingCopyView *>(
+        const_cast<ZoneLoadContextKey *>(&key));
+    auto *const keyRecordAlias = reinterpret_cast<
+        db::zone_pending_copy::PendingCopyRecord *>(
+        const_cast<ZoneLoadContextKey *>(&key));
+    if (!Check(ZoneRuntimeFacade::TryGetPendingCopyView(8, key, nullptr)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending view accepted null output")
+        || !Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, nullptr)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending read accepted null output")
+        || !Check(ZoneRuntimeFacade::TryGetPendingCopyView(
+                8, key, misalignedView)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending view accepted misaligned output")
+        || !Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, misalignedRecord)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending read accepted misaligned output")
+        || !Check(ZoneRuntimeFacade::TryGetPendingCopyView(
+                8, key, tableViewAlias)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending view accepted table authority alias")
+        || !Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, tableRecordAlias)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending read accepted table authority alias")
+        || !Check(ZoneRuntimeFacade::TryGetPendingCopyView(
+                8, key, keyViewAlias)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending view accepted exact-key input alias")
+        || !Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, keyRecordAlias)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending read accepted exact-key input alias")
+        || !Check(key
+                == ZoneLoadContextKey{UINT64_C(82), 8, 0},
+            "rejected pending output alias changed the input key")
+        || !Check(g_pendingInspectionAuthenticationCalls == 0
+                && g_pendingViewCalls == 0 && g_pendingReadCalls == 0,
+            "invalid pending output reached retained or lower authority"))
+    {
+        return false;
+    }
+
+    if (!Check(ZoneRuntimeFacade::TryGetPendingCopyView(8, key, &view)
+            == ZoneRuntimeTableStatus::Success,
+            "pending view wrapper failed")
+        || !Check(view.key == key && view.recordCount == 4
+                && view.reserved == 0,
+            "pending view wrapper changed backend publication")
+        || !Check(g_pendingInspectionAuthenticationCalls == 1
+                && g_streamOutputStorage == &view
+                && g_streamOutputSize == sizeof(view)
+                && g_streamOutputAlignment == alignof(decltype(view)),
+            "pending view did not authenticate the actual caller span")
+        || !Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, &record)
+            == ZoneRuntimeTableStatus::Success,
+            "pending record wrapper failed")
+        || !Check(record
+                == db::zone_pending_copy::PendingCopyRecord{key, 27, 0},
+            "pending record wrapper changed backend publication")
+        || !Check(g_pendingInspectionAuthenticationCalls == 2
+                && g_streamOutputStorage == &record
+                && g_streamOutputSize == sizeof(record)
+                && g_streamOutputAlignment == alignof(decltype(record)),
+            "pending read did not authenticate the actual caller span")
+        || !Check(g_pendingViewCalls == 1 && g_pendingReadCalls == 1,
+            "pending inspection did not forward exactly once")
+        || !Check(g_pendingInspectionSlot == 8
+                && g_pendingInspectionKey == key
+                && g_pendingExpectedRecordCount == 4
+                && g_pendingOrdinal == 2,
+            "pending inspection changed exact scalar/key arguments")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "pending-inspection owner finish failed"))
+    {
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool
+TestPendingCopyInspectionRetainedOutputAuthentication() noexcept
+{
+    const ZoneLoadContextKey key{UINT64_C(83), 8, 0};
+    const db::zone_runtime::ZoneRuntimePendingCopyView viewSentinel{
+        ZoneLoadContextKey{UINT64_C(93), 9, 0}, 18, 0};
+    const db::zone_pending_copy::PendingCopyRecord recordSentinel{
+        ZoneLoadContextKey{UINT64_C(94), 10, 0}, 38, 0};
+
+    ResetHarness();
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "stream-alias pending owner begin failed"))
+    {
+        return false;
+    }
+    g_pendingInspectionAuthenticationStatus =
+        ZoneRuntimeTableStatus::InvalidArgument;
+    auto view = viewSentinel;
+    if (!Check(ZoneRuntimeFacade::TryGetPendingCopyView(8, key, &view)
+            == ZoneRuntimeTableStatus::InvalidArgument,
+            "pending view accepted retained stream authority alias")
+        || !Check(view.key == viewSentinel.key
+                && view.recordCount == viewSentinel.recordCount
+                && view.reserved == viewSentinel.reserved,
+            "stream-alias rejection changed pending view output")
+        || !Check(g_pendingInspectionAuthenticationCalls == 1
+                && g_streamOutputStorage == &view
+                && g_pendingViewCalls == 0,
+            "stream-alias rejection did not stop before lower forwarding")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "stream-alias rejection poisoned valid facade authority"))
+    {
+        return false;
+    }
+
+    ResetHarness();
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "unsafe pending-auth owner begin failed"))
+    {
+        return false;
+    }
+    g_pendingInspectionAuthenticationStatus =
+        ZoneRuntimeTableStatus::UnsafeFailure;
+    auto record = recordSentinel;
+    if (!Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, &record)
+            == ZoneRuntimeTableStatus::UnsafeFailure,
+            "unsafe pending structural authentication escaped facade")
+        || !Check(record == recordSentinel,
+            "unsafe pending authentication changed caller output")
+        || !Check(g_pendingInspectionAuthenticationCalls == 1
+                && g_pendingReadCalls == 0,
+            "unsafe pending authentication reached later authority")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::UnsafeFailure,
+            "unsafe pending authentication did not poison facade"))
+    {
+        return false;
+    }
+
+    ResetHarness();
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "unknown pending-auth owner begin failed"))
+    {
+        return false;
+    }
+    g_pendingInspectionAuthenticationStatus =
+        static_cast<ZoneRuntimeTableStatus>(0xFF);
+    view = viewSentinel;
+    if (!Check(ZoneRuntimeFacade::TryGetPendingCopyView(8, key, &view)
+            == ZoneRuntimeTableStatus::UnsafeFailure,
+            "unknown pending structural status escaped facade")
+        || !Check(view.key == viewSentinel.key
+                && view.recordCount == viewSentinel.recordCount
+                && view.reserved == viewSentinel.reserved,
+            "unknown pending authentication changed caller output")
+        || !Check(g_pendingInspectionAuthenticationCalls == 1
+                && g_pendingViewCalls == 0,
+            "unknown pending authentication reached later authority")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::UnsafeFailure,
+            "unknown pending authentication did not poison facade"))
+    {
+        return false;
+    }
+    return Check(g_runtimeLocked.load(std::memory_order_relaxed),
+        "unknown pending authentication released facade serializer");
+}
+
+[[nodiscard]] bool TestPendingCopyInspectionFailureAtomicity() noexcept
+{
+    const ZoneLoadContextKey key{UINT64_C(84), 8, 0};
+    const db::zone_runtime::ZoneRuntimePendingCopyView viewSentinel{
+        ZoneLoadContextKey{UINT64_C(94), 9, 0}, 19, 0};
+    const db::zone_pending_copy::PendingCopyRecord recordSentinel{
+        ZoneLoadContextKey{UINT64_C(95), 10, 0}, 39, 0};
+
+    ResetHarness();
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "pending recoverable-failure owner begin failed"))
+    {
+        return false;
+    }
+    g_tableOperationStatus = ZoneRuntimeTableStatus::CountMismatch;
+    auto view = viewSentinel;
+    auto record = recordSentinel;
+    if (!Check(ZoneRuntimeFacade::TryGetPendingCopyView(8, key, &view)
+            == ZoneRuntimeTableStatus::CountMismatch,
+            "pending view did not preserve recoverable table status")
+        || !Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, &record)
+            == ZoneRuntimeTableStatus::CountMismatch,
+            "pending read did not preserve recoverable table status")
+        || !Check(view.key == viewSentinel.key
+                && view.recordCount == viewSentinel.recordCount
+                && view.reserved == viewSentinel.reserved
+                && record == recordSentinel,
+            "recoverable pending failure changed caller outputs")
+        || !Check(g_pendingViewCalls == 1 && g_pendingReadCalls == 1,
+            "recoverable pending failure changed exact forwarding")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "recoverable pending failure retained owner access"))
+    {
+        return false;
+    }
+
+    ResetHarness();
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "unknown pending-status owner begin failed"))
+    {
+        return false;
+    }
+    g_tableOperationStatus = static_cast<ZoneRuntimeTableStatus>(0xFF);
+    record = recordSentinel;
+    if (!Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, &record)
+            == ZoneRuntimeTableStatus::UnsafeFailure,
+            "unknown pending table status escaped facade")
+        || !Check(record == recordSentinel,
+            "unknown pending table status changed caller output")
+        || !Check(g_pendingReadCalls == 1,
+            "unknown pending table status changed exact forwarding")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::UnsafeFailure,
+            "unknown pending table status did not poison owner access"))
+    {
+        return false;
+    }
+
+    ResetHarness();
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "pending post-auth owner begin failed"))
+    {
+        return false;
+    }
+    g_corruptRuntimeAfterTableOperation = true;
+    view = viewSentinel;
+    if (!Check(ZoneRuntimeFacade::TryGetPendingCopyView(8, key, &view)
+            == ZoneRuntimeTableStatus::UnsafeFailure,
+            "pending view masked post-operation boundary corruption")
+        || !Check(view.key == viewSentinel.key
+                && view.recordCount == viewSentinel.recordCount
+                && view.reserved == viewSentinel.reserved,
+            "post-auth pending failure published scratch output")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::UnsafeFailure,
+            "post-auth pending failure did not poison owner access"))
+    {
+        return false;
+    }
+
+    ResetHarness();
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "malformed pending-view owner begin failed"))
+    {
+        return false;
+    }
+    g_pendingViewPublication = PendingViewPublication::WrongKey;
+    view = viewSentinel;
+    if (!Check(ZoneRuntimeFacade::TryGetPendingCopyView(8, key, &view)
+            == ZoneRuntimeTableStatus::UnsafeFailure,
+            "malformed successful pending view escaped facade")
+        || !Check(view.key == viewSentinel.key
+                && view.recordCount == viewSentinel.recordCount
+                && view.reserved == viewSentinel.reserved,
+            "malformed pending view changed caller output")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::UnsafeFailure,
+            "malformed pending view did not poison owner access"))
+    {
+        return false;
+    }
+
+    ResetHarness();
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "malformed pending-record owner begin failed"))
+    {
+        return false;
+    }
+    g_pendingRecordPublication = PendingRecordPublication::Reserved;
+    record = recordSentinel;
+    return Check(ZoneRuntimeFacade::TryReadPendingCopy(
+                8, key, 4, 2, &record)
+            == ZoneRuntimeTableStatus::UnsafeFailure,
+            "malformed successful pending record escaped facade")
+        && Check(record == recordSentinel,
+            "malformed pending record changed caller output")
+        && Check(ZoneRuntimeFacade::FinishAccess()
+                == ZoneRuntimeFacadeStatus::UnsafeFailure,
+            "malformed pending record did not poison owner access")
+        && Check(g_runtimeLocked.load(std::memory_order_relaxed),
+            "malformed pending record released serializer");
+}
+
 [[nodiscard]] bool TestCompositeWrapperForwarding() noexcept
 {
     ResetHarness();
@@ -1581,6 +2071,21 @@ AllocationReceipt::AllocationReceipt() noexcept = default;
 AllocationReceipt::~AllocationReceipt() noexcept = default;
 } // namespace physical_memory
 
+namespace pmem_runtime
+{
+bool KISAK_CDECL StorageIsOutsideManagedMemory(
+    const void *const storage,
+    const std::size_t size) noexcept
+{
+    ++g_storageSeparationCalls;
+    if (!g_storageOutsideManagedMemory || !storage || size == 0)
+        return false;
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(storage);
+    return size <= (std::numeric_limits<std::uintptr_t>::max)() - address;
+}
+} // namespace pmem_runtime
+
 namespace db::zone_pending_copy
 {
 PendingCopyAdmissionReceipt::PendingCopyAdmissionReceipt() noexcept = default;
@@ -1619,6 +2124,22 @@ ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactEntry(
     const zone_load::ZoneLoadContextKey &) noexcept
 {
     return g_tableAuthenticationStatus;
+}
+
+ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactPendingCopyOutput(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const void *const output,
+    const std::size_t outputSize,
+    const std::size_t outputAlignment) noexcept
+{
+    ++g_pendingInspectionAuthenticationCalls;
+    g_pendingInspectionSlot = physicalSlot;
+    g_pendingInspectionKey = key;
+    g_streamOutputStorage = output;
+    g_streamOutputSize = outputSize;
+    g_streamOutputAlignment = outputAlignment;
+    return g_pendingInspectionAuthenticationStatus;
 }
 
 ZoneRuntimeTableStatus
@@ -1821,6 +2342,88 @@ ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy(
     std::uint32_t) noexcept
 {
     return CompleteCompositeStub();
+}
+
+ZoneRuntimeTableStatus TryGetZoneRuntimePendingCopyView(
+    ZoneRuntimeTable *,
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    ZoneRuntimePendingCopyView *const outView) noexcept
+{
+    ++g_pendingViewCalls;
+    g_pendingInspectionSlot = physicalSlot;
+    g_pendingInspectionKey = key;
+    if (outView)
+    {
+        switch (g_pendingViewPublication)
+        {
+        case PendingViewPublication::Canonical:
+            *outView = ZoneRuntimePendingCopyView{key, 4, 0};
+            break;
+        case PendingViewPublication::Empty:
+            *outView = {};
+            break;
+        case PendingViewPublication::WrongKey:
+        {
+            zone_load::ZoneLoadContextKey wrongKey = key;
+            ++wrongKey.generation;
+            *outView = ZoneRuntimePendingCopyView{wrongKey, 4, 0};
+            break;
+        }
+        case PendingViewPublication::OversizedCount:
+            *outView = ZoneRuntimePendingCopyView{
+                key, zone_pending_copy::kPendingCopyRecordCapacity + 1, 0};
+            break;
+        case PendingViewPublication::Reserved:
+            *outView = ZoneRuntimePendingCopyView{key, 4, 1};
+            break;
+        }
+    }
+    CorruptRuntimeAfterTableOperationIfRequested();
+    return g_tableOperationStatus;
+}
+
+ZoneRuntimeTableStatus TryReadZoneRuntimePendingCopy(
+    ZoneRuntimeTable *,
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const std::uint32_t expectedRecordCount,
+    const std::uint32_t ordinal,
+    zone_pending_copy::PendingCopyRecord *const outRecord) noexcept
+{
+    ++g_pendingReadCalls;
+    g_pendingInspectionSlot = physicalSlot;
+    g_pendingInspectionKey = key;
+    g_pendingExpectedRecordCount = expectedRecordCount;
+    g_pendingOrdinal = ordinal;
+    if (outRecord)
+    {
+        switch (g_pendingRecordPublication)
+        {
+        case PendingRecordPublication::Canonical:
+            *outRecord = zone_pending_copy::PendingCopyRecord{key, 27, 0};
+            break;
+        case PendingRecordPublication::Empty:
+            *outRecord = {};
+            break;
+        case PendingRecordPublication::WrongKey:
+        {
+            zone_load::ZoneLoadContextKey wrongKey = key;
+            ++wrongKey.generation;
+            *outRecord = zone_pending_copy::PendingCopyRecord{
+                wrongKey, 27, 0};
+            break;
+        }
+        case PendingRecordPublication::InvalidAssetIndex:
+            *outRecord = zone_pending_copy::PendingCopyRecord{key, 0, 0};
+            break;
+        case PendingRecordPublication::Reserved:
+            *outRecord = zone_pending_copy::PendingCopyRecord{key, 27, 1};
+            break;
+        }
+    }
+    CorruptRuntimeAfterTableOperationIfRequested();
+    return g_tableOperationStatus;
 }
 
 ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership(
@@ -2162,6 +2765,9 @@ int main()
         && TestRegistryInputAuthorityAliasesRejected()
         && TestRegistryUnreadInvalidInputsStillForward()
         && TestLegacyScriptStringPathRejected()
+        && TestPendingCopyInspectionAdmissionAndForwarding()
+        && TestPendingCopyInspectionRetainedOutputAuthentication()
+        && TestPendingCopyInspectionFailureAtomicity()
         && TestCompositeWrapperForwarding()
         && TestTornAndExhaustedBoundaries()
         && TestThreadExitDoesNotUnlock();

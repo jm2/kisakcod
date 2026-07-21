@@ -88,6 +88,16 @@ public:
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
         std::uint32_t assetEntryIndex) noexcept;
+    [[nodiscard]] static ZoneRuntimeTableStatus TryGetPendingCopyView(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        ZoneRuntimePendingCopyView *outView) noexcept;
+    [[nodiscard]] static ZoneRuntimeTableStatus TryReadPendingCopy(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        std::uint32_t expectedRecordCount,
+        std::uint32_t ordinal,
+        zone_pending_copy::PendingCopyRecord *outRecord) noexcept;
     [[nodiscard]] static ZoneRuntimeTableStatus
     TryBeginScriptStringOwnership(
         std::uint32_t physicalSlot,
@@ -193,6 +203,13 @@ private:
     authenticateCompositeTableOperationAccess(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept;
+    [[nodiscard]] static ZoneRuntimeTableStatus
+    authenticatePendingCopyInspectionOutput(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        const void *output,
+        std::size_t outputSize,
+        std::size_t outputAlignment) noexcept;
     [[nodiscard]] static registry_ownership::RegistryOwnershipStatus
     authenticateRegistryOutputAccess() noexcept;
     [[nodiscard]] static ZoneRuntimeTableStatus completeTableOperation(

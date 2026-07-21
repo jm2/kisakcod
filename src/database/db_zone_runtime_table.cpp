@@ -916,6 +916,36 @@ namespace
     }
 }
 
+#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
+struct PendingCopyReadTestHook final
+{
+    ZoneRuntimeTableTestAccess::PendingCopyReadHookStage stage =
+        ZoneRuntimeTableTestAccess::PendingCopyReadHookStage::BeforeLowerRead;
+    void *context = nullptr;
+    ZoneRuntimeTableTestAccess::PendingCopyReadHook callback = nullptr;
+    bool armed = false;
+};
+
+PendingCopyReadTestHook g_pendingCopyReadTestHook{};
+
+void InvokePendingCopyReadTestHook(
+    ZoneRuntimeTableTestAccess::PendingCopyReadHookStage stage,
+    ZoneRuntimeTable *const table,
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept
+{
+    if (!g_pendingCopyReadTestHook.armed
+        || g_pendingCopyReadTestHook.stage != stage)
+    {
+        return;
+    }
+    const PendingCopyReadTestHook hook = g_pendingCopyReadTestHook;
+    g_pendingCopyReadTestHook = {};
+    if (hook.callback)
+        hook.callback(hook.context, table, physicalSlot, key);
+}
+#endif
+
 ZoneRuntimeTable g_productionZoneRuntimeTable{};
 } // namespace
 
@@ -974,11 +1004,15 @@ ZoneRuntimeTable::authenticateExactRegistryLifecycleCallback(
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
     using Marker = ZoneRuntimeGenerationBinding::CallbackMarker;
-    return transitionExactRegistryLifecycleCallback(
-        physicalSlot,
-        key,
-        Marker::ActiveRegistryBorrow,
-        Marker::ActiveNoRegistry);
+    const ZoneRuntimeTableStatus status =
+        authenticateExactLifecycleCallbackMarker(
+            physicalSlot, key, Marker::ActiveRegistryBorrow);
+    if (status == ZoneRuntimeTableStatus::Success)
+    {
+        entries_[physicalSlot].generationBinding_.callbackMarker_ =
+            Marker::ActiveNoRegistry;
+    }
+    return status;
 }
 
 ZoneRuntimeTableStatus
@@ -987,27 +1021,27 @@ ZoneRuntimeTable::restoreExactRegistryLifecycleCallback(
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
     using Marker = ZoneRuntimeGenerationBinding::CallbackMarker;
-    return transitionExactRegistryLifecycleCallback(
-        physicalSlot,
-        key,
-        Marker::ActiveNoRegistry,
-        Marker::ActiveRegistryBorrow);
+    const ZoneRuntimeTableStatus status =
+        authenticateExactLifecycleCallbackMarker(
+            physicalSlot, key, Marker::ActiveNoRegistry);
+    if (status == ZoneRuntimeTableStatus::Success)
+    {
+        entries_[physicalSlot].generationBinding_.callbackMarker_ =
+            Marker::ActiveRegistryBorrow;
+    }
+    return status;
 }
 
 ZoneRuntimeTableStatus
-ZoneRuntimeTable::transitionExactRegistryLifecycleCallback(
+ZoneRuntimeTable::authenticateExactLifecycleCallbackMarker(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key,
-    const ZoneRuntimeGenerationBinding::CallbackMarker expectedMarker,
-    const ZoneRuntimeGenerationBinding::CallbackMarker replacementMarker)
+    const ZoneRuntimeGenerationBinding::CallbackMarker expectedMarker)
     noexcept
 {
     using Marker = ZoneRuntimeGenerationBinding::CallbackMarker;
     if (expectedMarker == Marker::Idle
-        || expectedMarker > Marker::ActiveRegistryBorrow
-        || replacementMarker == Marker::Idle
-        || replacementMarker > Marker::ActiveRegistryBorrow
-        || expectedMarker == replacementMarker)
+        || expectedMarker > Marker::ActiveRegistryBorrow)
     {
         poison();
         return ZoneRuntimeTableStatus::UnsafeFailure;
@@ -1032,11 +1066,13 @@ ZoneRuntimeTable::transitionExactRegistryLifecycleCallback(
         return ZoneRuntimeTableStatus::StaleKey;
 
     ZoneRuntimeEntry &entry = entries_[physicalSlot];
-    if (entry.key_ != key
-        || entry.lifecycle_.slotIndex() != physicalSlot
+    if (entry.key_ != key)
+        return ZoneRuntimeTableStatus::StaleKey;
+    if (entry.lifecycle_.slotIndex() != physicalSlot
         || entry.lifecycle_.generation() != key.generation)
     {
-        return ZoneRuntimeTableStatus::StaleKey;
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
     }
 
     // Whole-table authentication is expected to classify the synchronous
@@ -1109,15 +1145,164 @@ ZoneRuntimeTable::transitionExactRegistryLifecycleCallback(
         poison();
         return ZoneRuntimeTableStatus::UnsafeFailure;
     }
-    // The forward transition consumes the table admission before publishing
-    // Success. Its sole reverse use follows a coordinator hash-lock Busy while
-    // the same facade serializer and synchronous callback remain active. The
-    // admitted coordinator otherwise owns and reauthenticates the resulting
-    // scope until Finish. This one-shot gate is defense in depth, not arbitrary
-    // longjmp containment: production enrollment still requires checked
-    // no-report callback adapters.
-    binding.callbackMarker_ = replacementMarker;
+    // This helper only authenticates the marker. Mutable registry admission
+    // and its exact Busy rollback perform their one-shot transition after it
+    // returns; pending-copy inspection deliberately leaves the borrow intact.
     return ZoneRuntimeTableStatus::Success;
+}
+
+ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactPendingCopyRead(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const ZoneRuntimeEntry **const outEntry) noexcept
+{
+    using Marker = ZoneRuntimeGenerationBinding::CallbackMarker;
+    using PendingPhase = zone_pending_copy::PendingCopyAdmissionPhase;
+
+    if (!outEntry)
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    if (!HasKnownState(state_) || !HasKnownSharedState(sharedState_))
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    const TableState state = static_cast<TableState>(state_);
+    if (state == TableState::Poisoned)
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    if (state != TableState::Initialized)
+        return ZoneRuntimeTableStatus::InvalidState;
+    if (!static_cast<bool>(key))
+        return ZoneRuntimeTableStatus::InvalidKey;
+    const ZoneRuntimeTableStatus slotStatus =
+        ValidateUsableSlot(physicalSlot);
+    if (slotStatus != ZoneRuntimeTableStatus::Success)
+        return slotStatus;
+    if (key.slot != physicalSlot)
+        return ZoneRuntimeTableStatus::StaleKey;
+
+    ZoneRuntimeEntry &entry = entries_[physicalSlot];
+    if (entry.key_ != key)
+        return ZoneRuntimeTableStatus::StaleKey;
+    if (entry.lifecycle_.slotIndex() != physicalSlot
+        || entry.lifecycle_.generation() != key.generation)
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+
+    const Marker marker = entry.generationBinding_.callbackMarker_;
+    std::size_t activeMarkerCount = 0;
+    const ZoneRuntimeEntry *activeMarkerEntry = nullptr;
+    for (const ZoneRuntimeEntry &candidate : entries_)
+    {
+        const Marker candidateMarker =
+            candidate.generationBinding_.callbackMarker_;
+        if (candidateMarker > Marker::ActiveRegistryBorrow)
+        {
+            poison();
+            return ZoneRuntimeTableStatus::UnsafeFailure;
+        }
+        if (candidateMarker == Marker::Idle)
+            continue;
+        ++activeMarkerCount;
+        if (activeMarkerCount != 1)
+        {
+            poison();
+            return ZoneRuntimeTableStatus::UnsafeFailure;
+        }
+        activeMarkerEntry = &candidate;
+    }
+    if (marker != Marker::Idle)
+    {
+        const ZoneRuntimeTableStatus callbackStatus =
+            authenticateExactLifecycleCallbackMarker(
+                physicalSlot, key, Marker::ActiveRegistryBorrow);
+        if (callbackStatus != ZoneRuntimeTableStatus::Success)
+            return callbackStatus;
+        // ActiveRegistryBorrow is the sole callback window that may inspect
+        // this exact generation. The authentication above is non-mutating.
+    }
+    else
+    {
+        const ZoneRuntimeTableStatus tableStatus =
+            validateInitializedHeader();
+        if (activeMarkerEntry)
+        {
+            if (tableStatus != ZoneRuntimeTableStatus::Busy
+                || activeMarkerEntry == &entry)
+            {
+                poison();
+                return ZoneRuntimeTableStatus::UnsafeFailure;
+            }
+            return ZoneRuntimeTableStatus::Busy;
+        }
+        if (tableStatus != ZoneRuntimeTableStatus::Success)
+            return tableStatus;
+        const ZoneRuntimeTableStatus entryStatus =
+            authenticateExactEntry(physicalSlot, key);
+        if (entryStatus == ZoneRuntimeTableStatus::UnsafeFailure)
+            poison();
+        if (entryStatus != ZoneRuntimeTableStatus::Success)
+            return entryStatus;
+    }
+
+    if (static_cast<SharedState>(sharedState_) == SharedState::Draining)
+        return ZoneRuntimeTableStatus::Busy;
+    if (entry.setupStage() < ZoneRuntimeSetupStage::PendingCopyBegun)
+        return ZoneRuntimeTableStatus::InvalidPhase;
+
+    const auto *const receipt = pendingCopyAdmissionReceipt(&entry);
+    if (!receipt)
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    switch (receipt->phase())
+    {
+    case PendingPhase::Collecting:
+    case PendingPhase::Prepared:
+    case PendingPhase::Admitted:
+    case PendingPhase::Drained:
+    case PendingPhase::Discarded:
+        *outEntry = &entry;
+        return ZoneRuntimeTableStatus::Success;
+    case PendingPhase::Admitting:
+        return ZoneRuntimeTableStatus::Busy;
+    case PendingPhase::Pristine:
+        return ZoneRuntimeTableStatus::InvalidPhase;
+    case PendingPhase::UnsafeFailure:
+    default:
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+}
+
+ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactPendingCopyOutput(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const void *const output,
+    const std::size_t outputSize,
+    const std::size_t outputAlignment) noexcept
+{
+    const ZoneRuntimeEntry *entry = nullptr;
+    const ZoneRuntimeTableStatus authentication =
+        authenticateExactPendingCopyRead(physicalSlot, key, &entry);
+    if (authentication != ZoneRuntimeTableStatus::Success)
+        return authentication;
+    if (!entry || !zone_slots::IsUsableZoneSlot(physicalSlot)
+        || entry != &entries_[physicalSlot])
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    return WritableOutputIsSeparatedFromRetainedRuntime(
+               activeZoneStreamBinding_,
+               static_cast<SharedState>(sharedState_),
+               output,
+               outputSize,
+               outputAlignment)
+        ? ZoneRuntimeTableStatus::Success
+        : ZoneRuntimeTableStatus::InvalidArgument;
 }
 
 zone_load::ZoneLoadContextSlot *ZoneRuntimeTable::mutableLifecycle(
@@ -1163,6 +1348,15 @@ ZoneRuntimeTable::mutableStreamGenerationReceipt(
 zone_pending_copy::PendingCopyAdmissionReceipt *
 ZoneRuntimeTable::mutablePendingCopyAdmissionReceipt(
     ZoneRuntimeEntry *const entry) noexcept
+{
+    return entry
+        ? &entry->receiptCapsule_.pendingCopyAdmissionReceipt_
+        : nullptr;
+}
+
+const zone_pending_copy::PendingCopyAdmissionReceipt *
+ZoneRuntimeTable::pendingCopyAdmissionReceipt(
+    const ZoneRuntimeEntry *const entry) noexcept
 {
     return entry
         ? &entry->receiptCapsule_.pendingCopyAdmissionReceipt_
@@ -2761,6 +2955,21 @@ bool ZoneRuntimeTableTestAccess::SharedResourcesPristine(
         && detail::IsPristineRuntimeReceipt(table->pendingCopyLedger_)
         && PendingDrainCallbackIsEmpty(table->pendingDrainCallback_);
 }
+
+void ZoneRuntimeTableTestAccess::SetPendingCopyReadHook(
+    const PendingCopyReadHookStage stage,
+    void *const context,
+    const PendingCopyReadHook hook) noexcept
+{
+    if (!hook
+        || (stage != PendingCopyReadHookStage::BeforeLowerRead
+            && stage != PendingCopyReadHookStage::AfterLowerRead))
+    {
+        g_pendingCopyReadTestHook = {};
+        return;
+    }
+    g_pendingCopyReadTestHook = {stage, context, hook, true};
+}
 #endif
 
 ZoneRuntimeTableStatus TryGetZoneRuntimeEntry(
@@ -3467,6 +3676,164 @@ ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy(
             assetEntryIndex);
     return table->completeCompositeOperation(
         physicalSlot, key, MapPendingStatus(pendingStatus));
+}
+
+ZoneRuntimeTableStatus TryGetZoneRuntimePendingCopyView(
+    ZoneRuntimeTable *const table,
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &keyArgument,
+    ZoneRuntimePendingCopyView *const outView) noexcept
+{
+    const zone_load::ZoneLoadContextKey key = keyArgument;
+    if (!WritableOutputIsSeparated(
+            table,
+            outView,
+            sizeof(*outView),
+            alignof(ZoneRuntimePendingCopyView),
+            &keyArgument))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
+
+    const ZoneRuntimeTableStatus authentication =
+        table->authenticateExactPendingCopyOutput(
+            physicalSlot,
+            key,
+            outView,
+            sizeof(*outView),
+            alignof(ZoneRuntimePendingCopyView));
+    if (authentication != ZoneRuntimeTableStatus::Success)
+        return authentication;
+    const ZoneRuntimeEntry *const entry = &table->entries_[physicalSlot];
+
+    const auto *const receipt =
+        ZoneRuntimeTable::pendingCopyAdmissionReceipt(entry);
+    if (!receipt)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    const auto phase = receipt->phase();
+    const std::uint32_t recordCount = receipt->recordCount();
+    const ZoneRuntimePendingCopyView candidate{key, recordCount, 0};
+    if (!candidate)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+
+    const ZoneRuntimeEntry *postEntry = nullptr;
+    const ZoneRuntimeTableStatus postAuthentication =
+        table->authenticateExactPendingCopyRead(
+            physicalSlot, key, &postEntry);
+    const auto *const postReceipt =
+        ZoneRuntimeTable::pendingCopyAdmissionReceipt(postEntry);
+    if (postAuthentication != ZoneRuntimeTableStatus::Success
+        || postEntry != entry || postReceipt != receipt
+        || postReceipt->phase() != phase
+        || postReceipt->recordCount() != recordCount)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+
+    *outView = candidate;
+    return ZoneRuntimeTableStatus::Success;
+}
+
+ZoneRuntimeTableStatus TryReadZoneRuntimePendingCopy(
+    ZoneRuntimeTable *const table,
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &keyArgument,
+    const std::uint32_t expectedRecordCount,
+    const std::uint32_t ordinal,
+    zone_pending_copy::PendingCopyRecord *const outRecord) noexcept
+{
+    if (expectedRecordCount
+            > zone_pending_copy::kPendingCopyRecordCapacity
+        || ordinal >= expectedRecordCount)
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
+    const zone_load::ZoneLoadContextKey key = keyArgument;
+    if (!WritableOutputIsSeparated(
+            table,
+            outRecord,
+            sizeof(*outRecord),
+            alignof(zone_pending_copy::PendingCopyRecord),
+            &keyArgument))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
+
+    const ZoneRuntimeTableStatus authentication =
+        table->authenticateExactPendingCopyOutput(
+            physicalSlot,
+            key,
+            outRecord,
+            sizeof(*outRecord),
+            alignof(zone_pending_copy::PendingCopyRecord));
+    if (authentication != ZoneRuntimeTableStatus::Success)
+        return authentication;
+    const ZoneRuntimeEntry *const entry = &table->entries_[physicalSlot];
+
+    const auto *const receipt =
+        ZoneRuntimeTable::pendingCopyAdmissionReceipt(entry);
+    if (!receipt)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    const auto phase = receipt->phase();
+    if (receipt->recordCount() != expectedRecordCount)
+        return ZoneRuntimeTableStatus::CountMismatch;
+
+    zone_pending_copy::PendingCopyRecord candidate{};
+#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
+    InvokePendingCopyReadTestHook(
+        ZoneRuntimeTableTestAccess::PendingCopyReadHookStage::BeforeLowerRead,
+        table,
+        physicalSlot,
+        key);
+#endif
+    const auto pendingStatus = zone_pending_copy::TryReadPendingCopyRecord(
+        receipt, key, ordinal, &candidate);
+    if (pendingStatus != zone_pending_copy::PendingCopyStatus::Success
+        || candidate.key != key
+        || candidate.assetEntryIndex
+            < zone_pending_copy::kFirstAssetEntryIndex
+        || candidate.assetEntryIndex
+            > zone_pending_copy::kLastAssetEntryIndex
+        || candidate.reserved != 0)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+
+#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
+    InvokePendingCopyReadTestHook(
+        ZoneRuntimeTableTestAccess::PendingCopyReadHookStage::AfterLowerRead,
+        table,
+        physicalSlot,
+        key);
+#endif
+    const ZoneRuntimeEntry *postEntry = nullptr;
+    const ZoneRuntimeTableStatus postAuthentication =
+        table->authenticateExactPendingCopyRead(
+            physicalSlot, key, &postEntry);
+    const auto *const postReceipt =
+        ZoneRuntimeTable::pendingCopyAdmissionReceipt(postEntry);
+    if (postAuthentication != ZoneRuntimeTableStatus::Success
+        || postEntry != entry || postReceipt != receipt
+        || postReceipt->phase() != phase
+        || postReceipt->recordCount() != expectedRecordCount)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+
+    *outRecord = candidate;
+    return ZoneRuntimeTableStatus::Success;
 }
 
 ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission(

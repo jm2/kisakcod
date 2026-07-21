@@ -10027,10 +10027,16 @@ require_security_slice_contains(
     "the production runtime-table seal must recreate the helper's public name")
 foreach(_zone_runtime_probe_marker IN ITEMS
     "sizeof(ZoneRuntimeGenerationCallbacks)"
+    "sizeof(ZoneRuntimePendingCopyView)"
     "sizeof(ZoneRuntimeGenerationBinding)"
     "sizeof(ZoneRuntimeReceiptCapsule)"
     "sizeof(ZoneRuntimeEntry)"
     "sizeof(ZoneRuntimeTable)"
+    "using PendingCopyViewOperation ="
+    "using PendingCopyReadOperation ="
+    "decltype(&TryGetZoneRuntimePendingCopyView)"
+    "decltype(&TryReadZoneRuntimePendingCopy)"
+    "CanSetPendingCopyReadHook"
     "&table->entries_;"
     "&table->activeZoneStreamBinding_;"
     "&table->pendingCopyLedger_;"
@@ -10044,6 +10050,10 @@ foreach(_zone_runtime_probe_marker IN ITEMS
     "entry->key_ = zone_load::ZoneLoadContextKey{};"
     "&binding->callbacks_;"
     "binding->setupStage_ = ZoneRuntimeSetupStage::CallbacksBound;"
+    "table->authenticateExactLifecycleCallbackMarker(1u, key, marker);"
+    "table->authenticateExactPendingCopyRead(1u, key, outEntry);"
+    "table->authenticateExactPendingCopyOutput("
+    "Table::pendingCopyAdmissionReceipt(entry);"
     "&capsule->allocationReceipt_;"
     "&capsule->streamGenerationReceipt_;"
     "&capsule->pendingCopyAdmissionReceipt_;"
@@ -10054,6 +10064,7 @@ foreach(_zone_runtime_probe_marker IN ITEMS
         "the runtime-table seal must probe each private mutable capability")
 endforeach()
 foreach(_zone_runtime_seal_marker IN ITEMS
+    "!ZoneRuntimeTableTestAccess::CanSetPendingCopyReadHook<"
     "!ZoneRuntimeTableTestAccess::CanReachEntries<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanMutateState<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanMutateSharedState<ZoneRuntimeTable>"
@@ -10067,6 +10078,10 @@ foreach(_zone_runtime_seal_marker IN ITEMS
     "!ZoneRuntimeTableTestAccess::CanReachPendingDrainCallback<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanReachGenerationCallbacks<"
     "!ZoneRuntimeTableTestAccess::CanMutateGenerationStage<"
+    "!ZoneRuntimeTableTestAccess::CanAuthenticateLifecycleCallbackMarker<"
+    "!ZoneRuntimeTableTestAccess::CanAuthenticatePendingCopyRead<"
+    "!ZoneRuntimeTableTestAccess::CanAuthenticatePendingCopyOutput<"
+    "!ZoneRuntimeTableTestAccess::CanReachPendingCopyAdmissionReceipt<"
     "!ZoneRuntimeTableTestAccess::CanReachAllocationReceipt<"
     "!ZoneRuntimeTableTestAccess::CanReachStreamGenerationReceipt<"
     "!ZoneRuntimeTableTestAccess::CanReachPendingAdmissionReceipt<"
@@ -10372,6 +10387,8 @@ set(_security_zone_runtime_table_friends
     "friend ZoneRuntimeTableStatus TryBindZoneRuntimeStreams( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, const XZoneMemory *, const relocation::BlockView *, std::size_t) noexcept"
     "friend ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
     "friend ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, std::uint32_t) noexcept"
+    "friend ZoneRuntimeTableStatus TryGetZoneRuntimePendingCopyView( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, ZoneRuntimePendingCopyView *) noexcept"
+    "friend ZoneRuntimeTableStatus TryReadZoneRuntimePendingCopy( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &, std::uint32_t, std::uint32_t, zone_pending_copy::PendingCopyRecord *) noexcept"
     "friend ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
     "friend ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
     "friend ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation( ZoneRuntimeTable *, std::uint32_t, const zone_load::ZoneLoadContextKey &) noexcept"
@@ -10426,7 +10443,7 @@ require_security_exact_class_digest(
     "PendingCopyLedger")
 require_security_exact_class_digest(
     _security_generation_binding_class
-    26357c09d3a2538b997af5a3638185ecae217de7608356e3bff6f3b05982732e
+    80071a79d85862bab72efee7fc388bbe82cb91bac07616ca9aa348cfd911784d
     "ZoneRuntimeGenerationBinding")
 require_security_exact_class_digest(
     _zone_runtime_receipt_capsule_slice
@@ -10438,7 +10455,7 @@ require_security_exact_class_digest(
     "ZoneRuntimeEntry")
 require_security_exact_class_digest(
     _security_zone_runtime_table_class
-    9924e6d291302afdd2521cfd14e9585e3eeb12ac5236a89696c5d333a6b30763
+    b3337c16218f4f8d55ebea7ef617b4e4fc183ca318cbe9ce4256910d9c7f06be
     "ZoneRuntimeTable")
 
 set(_security_external_macro_friend_invocation_fixture
@@ -10535,6 +10552,8 @@ if(NOT _security_comment_separated_friend_macro_detected)
         "Security mirror missed a comment-separated macro definition")
 endif()
 foreach(_zone_runtime_composition_marker IN ITEMS
+    "struct ZoneRuntimePendingCopyView final"
+    "RUNTIME_SIZE(ZoneRuntimePendingCopyView, 0x18, 0x18);"
     "class alignas(8) ZoneRuntimeGenerationBinding final"
     "RUNTIME_SIZE(ZoneRuntimeGenerationBinding, 0x50, 0x78);"
     "class alignas(8) ZoneRuntimeReceiptCapsule final"
@@ -10613,6 +10632,7 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "zone_stream_ownership::TryInvalidateZoneStreams|2"
     "zone_pending_copy::TryInitializePendingCopyLedger|1"
     "zone_pending_copy::TryBeginPendingCopyAdmission|1"
+    "zone_pending_copy::TryReadPendingCopyRecord|1"
     "zone_pending_copy::TryBeginPendingCopyDrain|1"
     "zone_runtime_storage::TryBindZoneRuntimeStorage|1"
     "zone_runtime_storage::detail::TryBindFxRuntimeStorage|1"
@@ -10630,8 +10650,29 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "no raw operation or alias bypass in exact controller"
     "runtime-table exact-controller implementation"
     "overflow-safe exact control-state separation"
-    "one helper plus five reviewed writable-output preflights"
-    "one retained-runtime helper plus five reviewed output gates"
+    "one helper plus seven reviewed writable-output preflights"
+    "one retained-runtime helper plus six reviewed output gates"
+    "pointer-free pending-copy view declaration"
+    "success-only callback registry authority consumption"
+    "non-consuming exact registry lifecycle callback authentication"
+    "requested callback key mismatch precedes internal lifecycle corruption"
+    "callback lifecycle contradiction poisons before shared traversal"
+    "exact pending-copy read authentication"
+    "exact pending-copy output authentication"
+    "table-owned exact pending-copy caller-output authentication"
+    "requested read key mismatch precedes internal lifecycle corruption"
+    "pending-read lifecycle contradiction poisons before marker traversal"
+    "retained pending-copy caller outputs remain fail-closed"
+    "both retained pending-copy caller outputs remain failure-atomic"
+    "failure-atomic exact pending-copy view"
+    "one reviewed lower by-value record read"
+    "snapshot count mismatch precedes lower record access"
+    "legacy loader cannot enroll pending-copy inspection"
+    "four exact source-local runtime-table test-hook gates"
+    "test-gated one-shot pending-copy mutation seam"
+    "test hook revokes before adversarial callback"
+    "foreach(_zone_runtime_pending_copy_unsafe_kind IN ITEMS malformed-record postauth-drift count-drift duplicate-marker duplicate-unrelated-markers unknown-marker lifecycle-drift callback-lifecycle-drift)"
+    "database-zone-runtime-table-pending-copy-invalid-kind"
     "single exact stream-authority output authenticator"
     "generation callbacks snapshot before table authentication"
     "stream descriptors snapshot before table authentication"
@@ -10669,6 +10710,10 @@ endforeach()
 foreach(_zone_runtime_detector_marker IN ITEMS
     "remove_reviewed_runtime_table_pending_tokens"
     "require_runtime_table_pending_detector_fixture"
+    "remove_reviewed_runtime_facade_pending_tokens"
+    "facade by-value record-read declaration"
+    "facade local record candidate"
+    "_runtime_facade_pending_header_fixture"
     "AuthenticatePassivePendingCopyLedger"
     "_runtime_table_authenticator_bypass"
     "_runtime_table_alias_api_bypass"
@@ -11326,6 +11371,28 @@ require_source_contains(
     "XAssetEntry *g_copyInfo[0x800];"
     "legacy pending-copy storage remains before atomic cutover")
 
+# By-value inspection is deliberately production-neutral. The facade and
+# table expose the reviewed API for future callback cutover, but no legacy
+# loader/raw-copy site may enroll either layer in this batch.
+foreach(_pending_copy_legacy_path IN ITEMS
+    "database/database.h"
+    "database/db_registry.cpp"
+    "database/db_file_load.cpp"
+    "database/db_load.cpp"
+    "database/db_stream_load.cpp"
+    "database/db_stringtable_load.cpp")
+    foreach(_pending_copy_inspection_api IN ITEMS
+        "TryGetZoneRuntimePendingCopyView("
+        "TryReadZoneRuntimePendingCopy("
+        "TryGetPendingCopyView("
+        "TryReadPendingCopy(")
+        require_source_not_contains(
+            "${_pending_copy_legacy_path}"
+            "${_pending_copy_inspection_api}"
+            "pending-copy inspection must retain zero legacy enrollment")
+    endforeach()
+endforeach()
+
 # The registry string-ownership coordinator is shipped as a production-neutral
 # authority foundation. Its public API and test capability are sealed, while a
 # phase-aware all-file source gate proves that no legacy registry/load caller
@@ -11483,6 +11550,23 @@ foreach(_runtime_facade_seal_marker IN ITEMS
     "test-access macro is a build-system capability"
     "all six dual-mode script adapters require composite authority"
     "active registry authority precedes output-alias validation"
+    "pointer-free 0x18 pending-copy view"
+    "TryGetPendingCopyView|TryGetZoneRuntimePendingCopyView"
+    "TryReadPendingCopy|TryReadZoneRuntimePendingCopy"
+    "both pending-copy caller outputs remain outside managed PMem"
+    "AddressRangesAreDisjoint( &key, sizeof(key), outView, sizeof(*outView))"
+    "AddressRangesAreDisjoint( &key, sizeof(key), outRecord, sizeof(*outRecord))"
+    "failure-atomic pending-copy view publication"
+    "failure-atomic pending-copy record publication"
+    "table-mediated exact pending-copy caller stream authentication"
+    "single table-mediated pending-copy output authority use"
+    "facade cannot bypass table-owned pending-copy output authentication"
+    "facade cannot acquire protected zone-stream authority"
+    "_pending_view_missing_key_guard_fixture"
+    "_pending_read_late_key_guard_fixture"
+    "_pending_view_missing_stream_auth_fixture"
+    "_pending_read_late_stream_auth_fixture"
+    "facade pending-copy inspection cannot acquire ledger or receipt authority"
     "view.entry != &table.entries_[physicalSlot]"
     "This boundary is not a sandbox for arbitrary engine globals"
     "Runtime facade gained a production caller before atomic cutover")
@@ -11490,6 +11574,27 @@ foreach(_runtime_facade_seal_marker IN ITEMS
         "tests/db_zone_runtime_facade_source_test.cmake"
         "${_runtime_facade_seal_marker}"
         "runtime facade fail-closed source seal")
+endforeach()
+
+set(_runtime_facade_production_seal_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_facade_production_seal_tests.cpp")
+if(NOT EXISTS "${_runtime_facade_production_seal_path}")
+    message(FATAL_ERROR
+        "Missing runtime facade production authority-seal test")
+endif()
+file(READ "${_runtime_facade_production_seal_path}"
+    _runtime_facade_production_seal)
+foreach(_runtime_facade_inspection_seal_marker IN ITEMS
+    "sizeof(ZoneRuntimePendingCopyView) == 0x18u"
+    "using FacadePendingCopyViewOperation ="
+    "using FacadePendingCopyReadOperation ="
+    "decltype(&ZoneRuntimeFacade::TryGetPendingCopyView)"
+    "decltype(&ZoneRuntimeFacade::TryReadPendingCopy)"
+    "CanAuthenticatePendingCopyInspectionOutput")
+    require_security_slice_contains(
+        _runtime_facade_production_seal
+        "${_runtime_facade_inspection_seal_marker}"
+        "runtime facade exact pending-copy API/ABI production seal")
 endforeach()
 require_repository_contains(
     "tests/CMakeLists.txt"
