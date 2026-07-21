@@ -362,6 +362,24 @@ ZoneRuntimeFacade::authenticateCompositeTableOperationAccess(
         : ZoneRuntimeTableStatus::Success;
 }
 
+ZoneRuntimeTableStatus
+ZoneRuntimeFacade::authenticatePendingCopyInspectionOutput(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const void *const output,
+    const std::size_t outputSize,
+    const std::size_t outputAlignment) noexcept
+{
+    ZoneRuntimeTable &table = ProductionZoneRuntimeTable();
+    return completeTableOperation(
+        table.authenticateExactPendingCopyOutput(
+            physicalSlot,
+            key,
+            output,
+            outputSize,
+            outputAlignment));
+}
+
 RegistryOwnershipStatus
 ZoneRuntimeFacade::authenticateRegistryOutputAccess() noexcept
 {
@@ -716,6 +734,113 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryAppendPendingCopy(
         physicalSlot,
         key,
         assetEntryIndex));
+}
+
+ZoneRuntimeTableStatus ZoneRuntimeFacade::TryGetPendingCopyView(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    ZoneRuntimePendingCopyView *const outView) noexcept
+{
+    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    if (access != ZoneRuntimeTableStatus::Success)
+        return access;
+    if (!pmem_runtime::StorageIsOutsideManagedMemory(
+            outView, sizeof(*outView))
+        || !authoritySpanIsSeparated(
+            outView,
+            sizeof(*outView),
+            alignof(ZoneRuntimePendingCopyView))
+        || !AddressRangesAreDisjoint(
+            &key, sizeof(key), outView, sizeof(*outView)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
+    const ZoneRuntimeTableStatus outputAuthentication =
+        authenticatePendingCopyInspectionOutput(
+            physicalSlot,
+            key,
+            outView,
+            sizeof(*outView),
+            alignof(ZoneRuntimePendingCopyView));
+    if (outputAuthentication != ZoneRuntimeTableStatus::Success)
+        return outputAuthentication;
+    ZoneRuntimePendingCopyView candidate{};
+    const ZoneRuntimeTableStatus status = completeTableOperation(
+        TryGetZoneRuntimePendingCopyView(
+            &ProductionZoneRuntimeTable(),
+            physicalSlot,
+            key,
+            &candidate));
+    if (status != ZoneRuntimeTableStatus::Success)
+        return status;
+    if (!candidate || candidate.key != key)
+    {
+        poisonAccess();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    *outView = candidate;
+    return ZoneRuntimeTableStatus::Success;
+}
+
+ZoneRuntimeTableStatus ZoneRuntimeFacade::TryReadPendingCopy(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const std::uint32_t expectedRecordCount,
+    const std::uint32_t ordinal,
+    zone_pending_copy::PendingCopyRecord *const outRecord) noexcept
+{
+    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    if (access != ZoneRuntimeTableStatus::Success)
+        return access;
+    if (expectedRecordCount
+            > zone_pending_copy::kPendingCopyRecordCapacity
+        || ordinal >= expectedRecordCount)
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
+    if (!pmem_runtime::StorageIsOutsideManagedMemory(
+            outRecord, sizeof(*outRecord))
+        || !authoritySpanIsSeparated(
+            outRecord,
+            sizeof(*outRecord),
+            alignof(zone_pending_copy::PendingCopyRecord))
+        || !AddressRangesAreDisjoint(
+            &key, sizeof(key), outRecord, sizeof(*outRecord)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
+    const ZoneRuntimeTableStatus outputAuthentication =
+        authenticatePendingCopyInspectionOutput(
+            physicalSlot,
+            key,
+            outRecord,
+            sizeof(*outRecord),
+            alignof(zone_pending_copy::PendingCopyRecord));
+    if (outputAuthentication != ZoneRuntimeTableStatus::Success)
+        return outputAuthentication;
+    zone_pending_copy::PendingCopyRecord candidate{};
+    const ZoneRuntimeTableStatus status = completeTableOperation(
+        TryReadZoneRuntimePendingCopy(
+            &ProductionZoneRuntimeTable(),
+            physicalSlot,
+            key,
+            expectedRecordCount,
+            ordinal,
+            &candidate));
+    if (status != ZoneRuntimeTableStatus::Success)
+        return status;
+    if (candidate.key != key
+        || candidate.assetEntryIndex
+            < zone_pending_copy::kFirstAssetEntryIndex
+        || candidate.assetEntryIndex
+            > zone_pending_copy::kLastAssetEntryIndex
+        || candidate.reserved != 0)
+    {
+        poisonAccess();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    *outRecord = candidate;
+    return ZoneRuntimeTableStatus::Success;
 }
 
 ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBeginScriptStringOwnership(
