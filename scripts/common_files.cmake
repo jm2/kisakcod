@@ -176,6 +176,8 @@ set(DATABASE
     "${SRC_DIR}/database/db_zone_runtime_facade.h"
     "${SRC_DIR}/database/db_xasset_disk32.cpp"
     "${SRC_DIR}/database/db_xasset_disk32.h"
+    "${SRC_DIR}/database/db_load_legacy_bridge.cpp"
+    "${SRC_DIR}/database/db_load_legacy_bridge.h"
     "${SRC_DIR}/database/db_zone_load_context.cpp"
     "${SRC_DIR}/database/db_zone_load_context.h"
     "${SRC_DIR}/database/db_zone_stream_ownership.cpp"

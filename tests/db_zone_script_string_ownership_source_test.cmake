@@ -686,19 +686,21 @@ require_ordered(
     "*outStringId = callbackContext.acquiredStringId;"
     "success check before output publication")
 
-# Keep this batch production-neutral: these are the seven known legacy raw
-# mutation sites. Their exact count is frozen until a later, separately
-# reviewed enrollment replaces each one with the controller/adapter path.
+# Keep this batch production-neutral: the seven legacy raw mutation sites
+# were replaced by db_load_legacy_bridge atomic cutover. Every load-path
+# caller now reaches the registry ownership coordinator through the
+# production bridge, so the legacy literals must no longer appear in any
+# of the four files tracked by this test.
 require_literal_count(
-    _stream "SL_GetStringOfSize(" 2 "two temporary-string claims")
+    _stream "SL_GetStringOfSize(" 0 "zero temporary-string claims")
 require_literal_count(
-    _stringtable "SL_AddUser(" 1 "one direct database-user claim")
+    _stringtable "SL_AddUser(" 0 "zero direct database-user claims")
 require_literal_count(
-    _registry "SL_GetString(" 2 "two dynamic default-name claims")
+    _registry "SL_GetString(" 0 "zero dynamic default-name claims")
 require_literal_count(
-    _registry "SL_TransferSystem(" 1 "one global ownership transfer")
+    _registry "SL_TransferSystem(" 0 "zero global ownership transfers")
 require_literal_count(
-    _registry "SL_ShutdownSystem(" 1 "one global ownership sweep")
+    _registry "SL_ShutdownSystem(" 0 "zero global ownership sweeps")
 foreach(_var IN ITEMS _stream _stringtable _registry _file_load _load)
     require_not_contains(
         ${_var}

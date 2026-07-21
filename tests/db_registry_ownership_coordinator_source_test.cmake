@@ -12,6 +12,10 @@ set(_runtime_facade_header_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.h")
 set(_runtime_facade_source_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.cpp")
+set(_load_legacy_bridge_header_path
+    "${SOURCE_ROOT}/src/database/db_load_legacy_bridge.h")
+set(_load_legacy_bridge_source_path
+    "${SOURCE_ROOT}/src/database/db_load_legacy_bridge.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_registry_ownership_coordinator_tests.cpp")
 set(_integration_fixture_path
@@ -663,7 +667,9 @@ set(_registry_coordinator_approved_sources
     "${_header_path}"
     "${_source_path}"
     "${_runtime_facade_header_path}"
-    "${_runtime_facade_source_path}")
+    "${_runtime_facade_source_path}"
+    "${_load_legacy_bridge_header_path}"
+    "${_load_legacy_bridge_source_path}")
 set(_registry_admission_approved_sources
     "${_header_path}"
     "${_source_path}"

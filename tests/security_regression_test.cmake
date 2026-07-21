@@ -1905,7 +1905,7 @@ require_source_contains(
     "inline fast-file strings must register exact start and extent provenance")
 require_source_contains(
     "database/db_stream_load.cpp"
-    "SL_GetStringOfSize"
+    "TryInternUser4StringOfSize"
     "direct temporary strings must be interned with their validated extent")
 require_source_contains(
     "database/db_validation.h"

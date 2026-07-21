@@ -11,11 +11,17 @@ set(_coordinator_header_path
     "${SOURCE_ROOT}/src/database/db_registry_ownership_coordinator.h")
 set(_table_header_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h")
+set(_load_legacy_bridge_header_path
+    "${SOURCE_ROOT}/src/database/db_load_legacy_bridge.h")
+set(_load_legacy_bridge_source_path
+    "${SOURCE_ROOT}/src/database/db_load_legacy_bridge.cpp")
 foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
     "${_coordinator_header_path}"
-    "${_table_header_path}")
+    "${_table_header_path}"
+    "${_load_legacy_bridge_header_path}"
+    "${_load_legacy_bridge_source_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing runtime facade source: ${_path}")
     endif()
@@ -1051,7 +1057,9 @@ endforeach()
 
 set(_runtime_facade_whole_file_sources
     "${_header_path}"
-    "${_source_path}")
+    "${_source_path}"
+    "${_load_legacy_bridge_header_path}"
+    "${_load_legacy_bridge_source_path}")
 foreach(_approved_path IN ITEMS
     ${_runtime_facade_whole_file_sources}
     "${_coordinator_header_path}"

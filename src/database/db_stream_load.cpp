@@ -1,4 +1,5 @@
 #include "database.h"
+#include "db_load_legacy_bridge.h"
 #include "db_validation.h"
 #include <qcommon/qcommon.h>
 
@@ -239,11 +240,17 @@ void __cdecl DB_ConvertOffsetToTempString(
         return;
     }
 
-    const uint32_t stringValue = SL_GetStringOfSize(
-        reinterpret_cast<const char *>(pointer),
-        4,
-        byteCount,
-        6);
+    db::load_legacy_bridge::LegacyBridgeStringId internedName{};
+    if (db::load_legacy_bridge::DbLoadLegacyBridge::TryInternUser4StringOfSize(
+            reinterpret_cast<const char *>(pointer),
+            byteCount,
+            &internedName)
+        != db::load_legacy_bridge::LegacyBridgeStatus::Success)
+    {
+        Com_Error(ERR_DROP, "Database user-4 stream intern failed");
+        return;
+    }
+    const uint32_t stringValue = internedName.stringId;
     if (stringValue > UINT16_MAX)
     {
         Com_Error(ERR_DROP, "Fast-file temporary string exceeds the 16-bit runtime");
@@ -303,7 +310,17 @@ void __cdecl Load_TempStringCustom(char **str)
         return;
     }
     if (*str)
-        stringValue = SL_GetStringOfSize(*str, 4u, byteCount, 6);
+    {
+        db::load_legacy_bridge::LegacyBridgeStringId internedName{};
+        if (db::load_legacy_bridge::DbLoadLegacyBridge::TryInternUser4StringOfSize(
+                *str, byteCount, &internedName)
+            != db::load_legacy_bridge::LegacyBridgeStatus::Success)
+        {
+            Com_Error(ERR_DROP, "Database user-4 stream intern failed");
+            return;
+        }
+        stringValue = internedName.stringId;
+    }
     if (stringValue > UINT16_MAX)
     {
         Com_Error(ERR_DROP, "Fast-file temporary string exceeds the 16-bit runtime");

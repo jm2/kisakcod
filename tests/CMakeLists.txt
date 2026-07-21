@@ -627,6 +627,50 @@ set_tests_properties(
     database-zone-runtime-facade-production-test-access-sealed
     PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-db-load-legacy-bridge-tests
+    db_load_legacy_bridge_tests.cpp
+    ${SRC_DIR}/database/db_load_legacy_bridge.cpp
+)
+target_include_directories(
+    kisakcod-db-load-legacy-bridge-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-load-legacy-bridge-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-load-legacy-bridge-tests PRIVATE
+    KISAK_MP
+    KISAK_DB_LOAD_LEGACY_BRIDGE_FAULT_INJECTION=1)
+target_link_libraries(
+    kisakcod-db-load-legacy-bridge-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-db-load-legacy-bridge-tests)
+set_target_properties(
+    kisakcod-db-load-legacy-bridge-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-load-legacy-bridge
+    COMMAND kisakcod-db-load-legacy-bridge-tests)
+set_tests_properties(database-load-legacy-bridge PROPERTIES TIMEOUT 20)
+
+add_executable(kisakcod-db-load-legacy-bridge-production-seal-tests
+    db_load_legacy_bridge_production_seal_tests.cpp)
+target_include_directories(
+    kisakcod-db-load-legacy-bridge-production-seal-tests
+    SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-load-legacy-bridge-production-seal-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-load-legacy-bridge-production-seal-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(
+    kisakcod-db-load-legacy-bridge-production-seal-tests)
+set_target_properties(
+    kisakcod-db-load-legacy-bridge-production-seal-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-load-legacy-bridge-production-test-access-sealed
+    COMMAND kisakcod-db-load-legacy-bridge-production-seal-tests)
+set_tests_properties(
+    database-load-legacy-bridge-production-test-access-sealed
+    PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-db-zone-runtime-table-tests
     db_zone_runtime_table_tests.cpp
     ${SRC_DIR}/database/db_zone_runtime_table.cpp
