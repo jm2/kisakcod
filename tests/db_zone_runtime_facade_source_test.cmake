@@ -1513,6 +1513,7 @@ file(GLOB_RECURSE _runtime_facade_build_controls
     "${SOURCE_ROOT}/.github/workflows/*.yml"
     "${SOURCE_ROOT}/.github/workflows/*.yaml")
 list(REMOVE_DUPLICATES _runtime_facade_build_controls)
+list(FILTER _runtime_facade_build_controls EXCLUDE REGEX "/\\.(codex-worktrees|git)/")
 get_filename_component(
     _runtime_facade_source_seal_path "${CMAKE_CURRENT_LIST_FILE}" ABSOLUTE)
 foreach(_sentinel IN ITEMS
