@@ -10050,7 +10050,8 @@ foreach(_zone_runtime_probe_marker IN ITEMS
     "entry->key_ = zone_load::ZoneLoadContextKey{};"
     "&binding->callbacks_;"
     "binding->setupStage_ = ZoneRuntimeSetupStage::CallbacksBound;"
-    "table->authenticateExactLifecycleCallbackMarker(1u, key, marker);"
+    "table->authenticateExactLifecycleCallbackMarker("
+    "static_cast<const ZoneRuntimeCallbackContext *>(nullptr),"
     "table->authenticateExactPendingCopyRead(1u, key, outEntry);"
     "table->authenticateExactPendingCopyOutput("
     "Table::pendingCopyAdmissionReceipt(entry);"
@@ -10455,7 +10456,7 @@ require_security_exact_class_digest(
     "ZoneRuntimeEntry")
 require_security_exact_class_digest(
     _security_zone_runtime_table_class
-    b3337c16218f4f8d55ebea7ef617b4e4fc183ca318cbe9ce4256910d9c7f06be
+    e1d7f9dd988e3ebd02619f0e89023e6bb2f1af7eff0599389b283c79daa63072
     "ZoneRuntimeTable")
 
 set(_security_external_macro_friend_invocation_fixture
@@ -10642,7 +10643,7 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "pmem_runtime::TryEndAllocationReceipt|2"
     "pmem_runtime::TryFreeAllocationReceipt|1"
     "pmem_runtime::TryClassifyStorageIsolation|1"
-    "pmem_runtime::StorageIsOutsideManagedMemory|6"
+    "pmem_runtime::StorageIsOutsideManagedMemory|5"
     "require_substring_count("
     "exact composite authority identifier enrollment"
     "exact direct composite authority call enrollment"
@@ -10669,7 +10670,7 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "one reviewed lower by-value record read"
     "snapshot count mismatch precedes lower record access"
     "legacy loader cannot enroll pending-copy inspection"
-    "four exact source-local runtime-table test-hook gates"
+    "eight exact source-local runtime-table test/owner gates"
     "test-gated one-shot pending-copy mutation seam"
     "test hook revokes before adversarial callback"
     "foreach(_zone_runtime_pending_copy_unsafe_kind IN ITEMS malformed-record postauth-drift count-drift duplicate-marker duplicate-unrelated-markers unknown-marker lifecycle-drift callback-lifecycle-drift)"
