@@ -727,11 +727,13 @@ Completed foundation work:
   source/security seals pass. The full incremental Debug build, native GCC **184/184** CTest tree, focused runtime
   coverage, and diff gate pass locally. Exact head `b05a5ccc` passed all nine hosted jobs in run **29942321576**,
   received a clean Codex review with zero threads, and squash-merged PR #82 as `0632a764`; all nine authoritative
-  post-merge jobs passed in run **29943945374**. The active batch now freezes and completes success/failure coverage for
-  the seven existing private no-report/no-unlock registry adapters across all five real-stack operation families
-  without a production caller. GCC **184/184**, focused Clang and ASan+UBSan **4/4** each, strict i386/AArch64
-  compile-link, source/security, and diff gates pass on the combined local tree. Exact-head hosted publication remains;
-  the single production bridge/cutover follows that gate;
+  post-merge jobs passed in run **29943945374**. PR #83 then completed success/failure coverage for the seven existing
+  private no-report/no-unlock registry adapters across all five real-stack operation families without a production
+  caller. Review hardening covers Ready-coordinator invalid inputs and successful output-bearing backends followed by
+  unsafe private-batch closure. Exact head `6973a222` passed all nine hosted jobs in run **29948350036**, received a
+  clean Codex review with both actionable threads resolved, and squash-merged as `beda5d39`; all nine authoritative
+  post-merge jobs passed at that exact commit in run **29949463909**. Production enrollment remains zero, and the
+  single production bridge/atomic seven-site cutover follows;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -869,8 +871,8 @@ Remaining gates, in implementation order:
    merged the green documentation checkpoint as `29895769`; authoritative run **29928854270** passed all nine jobs.
    Rebased checkpoints `ac652ec1`, `553786de`, `0a375c7c`, and `5cc0931a` complete one-shot facade/table callback
    coupling, pre-access whole-bank separation, and the literal real-registry Busy -> Retry/forgotten-Finish fixture.
-   Checked no-report coordinator-owned registry helpers still precede the atomic seven-site loader cutover; partial
-   enrollment remains forbidden. Keep static
+   PR #83 completed the checked no-report coordinator-owned registry-helper gate. The atomic seven-site loader cutover
+   is next, and partial enrollment remains forbidden. Keep static
    controller
    slots and callback metadata
    outside PMem with
@@ -1902,11 +1904,12 @@ script-string/composite mutator, legacy unload, and terminal reset using pre-mut
 controller/generation placement gates; the full Debug build, native GCC **184/184**, direct runtime callback-mutation,
 source/security, and diff gates pass. Both superseded CI runs were canceled; exact head `b05a5ccc` subsequently passed
 all nine jobs in run **29942321576**, received a clean Codex review with zero threads, and squash-merged PR #82 as
-`0632a764`; all nine authoritative post-merge jobs passed in run **29943945374**. The next production-neutral batch
-closes the seven-adapter checked no-report/no-unlock contract and real-stack coverage gate; its combined local GCC
-**184/184**, focused Clang and ASan+UBSan **4/4** each, strict i386/AArch64 compile-link, source/security, and diff gates
-pass. No production loader caller is enrolled. The ancestry checkpoint records reviewed history
-without importing code and therefore does not inflate the engineering estimate.
+`0632a764`; all nine authoritative post-merge jobs passed in run **29943945374**. PR #83 completed the seven-adapter
+checked no-report/no-unlock contract and real-stack coverage gate. Exact head `6973a222` passed all nine hosted jobs in
+run **29948350036**, received a clean Codex review with both actionable threads resolved, and squash-merged as
+`beda5d39`; all nine authoritative post-merge jobs passed at that exact commit in run **29949463909**. No production
+loader caller is enrolled; the sole narrow bridge and atomic seven-site cutover are next. The ancestry checkpoint
+records reviewed history without importing code and therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared
 foundations/security about **91%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
