@@ -4238,6 +4238,12 @@ void MakeRegistryCollisionName(
     constexpr char firstName[] = "registry-stack-first";
     constexpr char secondName[] = "registry-stack-second";
     constexpr char databaseName[] = "registry-stack-database";
+    constexpr char scalarRetainedName[] =
+        "registry-stack-scalar-retained";
+    constexpr char bulkRetainedFirstName[] =
+        "registry-stack-bulk-retained-first";
+    constexpr char bulkRetainedSecondName[] =
+        "registry-stack-bulk-retained-second";
     const auto first = script_string::TryAcquireOrdinaryStringOfSize(
         firstName, sizeof(firstName), 15);
     const auto second = script_string::TryAcquireOrdinaryStringOfSize(
@@ -4252,6 +4258,30 @@ void MakeRegistryCollisionName(
     using namespace db::registry_ownership;
     const auto admission = RegistryOwnershipCoordinatorAdmission::ForTesting();
     RegistryOwnershipCoordinator coordinator;
+    const auto boundaryRetained = [&coordinator]() noexcept {
+        return Check(
+                   coordinator.phase()
+                           == RegistryOwnershipCoordinatorPhase::Ready
+                       && coordinator.mode()
+                           == RegistryOwnershipCoordinatorMode::Standalone
+                       && coordinator.serial() != 0
+                       && coordinator.hashLockRetained()
+                       && !coordinator.poisoned(),
+                   "registry production-stack operation changed coordinator authority")
+            && Check(
+                Sys_IsWriteLocked(&db_hashCritSect)
+                    && Sys_AtomicLoad(&db_hashCritSect.readCount) == 0
+                    && Sys_AtomicLoad(&db_hashCritSect.writeCount) == 1,
+                "registry production-stack operation crossed the retained hash boundary")
+            && Check(
+                g_scriptStringLockDepth == 0
+                    && g_memoryTreeLockDepth == 0
+                    && g_scriptStringTransactionLockDepth == 1,
+                "registry production-stack operation changed retained lock order")
+            && Check(
+                ReportersUnused(),
+                "registry production-stack operation invoked a reporter");
+    };
     Sys_LockRead(&db_hashCritSect);
     const RegistryOwnershipStatus preheldReader =
         TryBeginStandaloneRegistryOwnershipCoordinator(
@@ -4291,6 +4321,20 @@ void MakeRegistryCollisionName(
         return false;
     }
 
+    // Exercise the complete five-family checked/no-report sequence under one
+    // coordinator admission: scalar+bulk add, bounded intern, 4-to-8
+    // transfer, scalar+bulk retained-name re-add, and user-8 shutdown.  Every
+    // family must return with the coordinator-owned hash/transaction boundary
+    // still retained and without invoking a reporter.
+    if (!Check(
+            TryRegistryAddDatabaseUser4(&coordinator, first.stringId)
+                == RegistryOwnershipStatus::Success,
+            "registry production-stack scalar add failed")
+        || !boundaryRetained())
+    {
+        return false;
+    }
+
     const std::array<std::uint32_t, 2> ids{
         first.stringId, second.stringId};
     RegistryOwnershipBulkResult bulk{99, 88};
@@ -4301,14 +4345,18 @@ void MakeRegistryCollisionName(
                 static_cast<std::uint32_t>(ids.size()),
                 &bulk) == RegistryOwnershipStatus::Success,
             "registry production-stack bulk add failed")
-        || !Check(bulk.addedCount == ids.size()
-                && bulk.unchangedCount == 0,
-            "registry production-stack bulk accounting changed"))
+        || !Check(bulk.addedCount == 1
+                && bulk.unchangedCount == 1,
+            "registry production-stack bulk accounting changed")
+        || !boundaryRetained())
     {
         return false;
     }
 
     RegistryOwnershipName database{};
+    RegistryOwnershipName scalarRetained{};
+    RegistryOwnershipName bulkRetainedFirst{};
+    RegistryOwnershipName bulkRetainedSecond{};
     if (!Check(
             TryRegistryInternBoundedName(
                 &coordinator,
@@ -4320,28 +4368,143 @@ void MakeRegistryCollisionName(
                 && database.canonicalName
                     == GetRefString(database.stringId)->str,
             "registry production-stack intern did not publish canonical data")
+        || !boundaryRetained()
+        || !Check(
+            TryRegistryInternBoundedName(
+                &coordinator,
+                scalarRetainedName,
+                sizeof(scalarRetainedName),
+                &scalarRetained) == RegistryOwnershipStatus::Success,
+            "registry production-stack scalar-retained intern failed")
+        || !Check(
+            TryRegistryInternBoundedName(
+                &coordinator,
+                bulkRetainedFirstName,
+                sizeof(bulkRetainedFirstName),
+                &bulkRetainedFirst) == RegistryOwnershipStatus::Success,
+            "registry production-stack first bulk-retained intern failed")
+        || !Check(
+            TryRegistryInternBoundedName(
+                &coordinator,
+                bulkRetainedSecondName,
+                sizeof(bulkRetainedSecondName),
+                &bulkRetainedSecond) == RegistryOwnershipStatus::Success,
+            "registry production-stack second bulk-retained intern failed")
+        || !Check(
+            scalarRetained.canonicalName
+                    == GetRefString(scalarRetained.stringId)->str
+                && bulkRetainedFirst.canonicalName
+                    == GetRefString(bulkRetainedFirst.stringId)->str
+                && bulkRetainedSecond.canonicalName
+                    == GetRefString(bulkRetainedSecond.stringId)->str,
+            "registry production-stack retained interns were not canonical")
+        || !boundaryRetained()
         || !Check(
             TryRegistryTransferDatabaseUsers4To8(&coordinator)
                 == RegistryOwnershipStatus::Success,
             "registry production-stack user transfer failed")
         || !Check(
+            scalarRetained.canonicalName
+                    == GetRefString(scalarRetained.stringId)->str
+                && bulkRetainedFirst.canonicalName
+                    == GetRefString(bulkRetainedFirst.stringId)->str
+                && bulkRetainedSecond.canonicalName
+                    == GetRefString(bulkRetainedSecond.stringId)->str,
+            "registry production-stack transfer changed canonical addresses")
+        || !boundaryRetained())
+    {
+        return false;
+    }
+
+    if (!Check(
+            TryRegistryReAddRetainedDefaultName(
+                &coordinator, scalarRetained.canonicalName)
+                == RegistryOwnershipStatus::Success,
+            "registry production-stack scalar retained-name re-add failed")
+        || !Check(
+            scalarRetained.canonicalName
+                == GetRefString(scalarRetained.stringId)->str,
+            "registry production-stack scalar re-add changed canonical address")
+        || !boundaryRetained())
+    {
+        return false;
+    }
+
+    const std::array<const char *, 3> retainedNames{
+        bulkRetainedFirst.canonicalName,
+        bulkRetainedSecond.canonicalName,
+        bulkRetainedFirst.canonicalName};
+    RegistryOwnershipBulkResult retainedBulk{99, 88};
+    if (!Check(
+            TryRegistryReAddRetainedDefaultNames(
+                &coordinator,
+                retainedNames.data(),
+                static_cast<std::uint32_t>(retainedNames.size()),
+                &retainedBulk) == RegistryOwnershipStatus::Success,
+            "registry production-stack bulk retained-name re-add failed")
+        || !Check(
+            retainedBulk.addedCount == 2
+                && retainedBulk.unchangedCount == 1,
+            "registry production-stack retained bulk accounting changed")
+        || !Check(
+            bulkRetainedFirst.canonicalName
+                    == GetRefString(bulkRetainedFirst.stringId)->str
+                && bulkRetainedSecond.canonicalName
+                    == GetRefString(bulkRetainedSecond.stringId)->str,
+            "registry production-stack bulk re-add changed canonical addresses")
+        || !boundaryRetained())
+    {
+        return false;
+    }
+
+    if (!Check(
             TryRegistryShutdownDatabaseUser8(&coordinator)
                 == RegistryOwnershipStatus::Success,
             "registry production-stack user shutdown failed")
+        || !boundaryRetained()
         || !CheckOwnership(
             first.stringId,
             1,
             0,
             sizeof(firstName),
-            2,
+            5,
             "registry production-stack changed first ordinary owner")
         || !CheckOwnership(
             second.stringId,
             1,
             0,
             sizeof(secondName),
-            2,
-            "registry production-stack changed second ordinary owner"))
+            5,
+            "registry production-stack changed second ordinary owner")
+        || !CheckOwnership(
+            scalarRetained.stringId,
+            1,
+            static_cast<std::uint8_t>(script_string::kDatabaseUserMask),
+            sizeof(scalarRetainedName),
+            5,
+            "registry production-stack lost scalar-retained user4")
+        || !CheckOwnership(
+            bulkRetainedFirst.stringId,
+            1,
+            static_cast<std::uint8_t>(script_string::kDatabaseUserMask),
+            sizeof(bulkRetainedFirstName),
+            5,
+            "registry production-stack lost first bulk-retained user4")
+        || !CheckOwnership(
+            bulkRetainedSecond.stringId,
+            1,
+            static_cast<std::uint8_t>(script_string::kDatabaseUserMask),
+            sizeof(bulkRetainedSecondName),
+            5,
+            "registry production-stack lost second bulk-retained user4")
+        || !Check(
+            scalarRetained.canonicalName
+                    == GetRefString(scalarRetained.stringId)->str
+                && bulkRetainedFirst.canonicalName
+                    == GetRefString(bulkRetainedFirst.stringId)->str
+                && bulkRetainedSecond.canonicalName
+                    == GetRefString(bulkRetainedSecond.stringId)->str,
+            "registry production-stack shutdown changed retained addresses"))
     {
         return false;
     }
@@ -4358,12 +4521,14 @@ void MakeRegistryCollisionName(
             "registry production-stack retained the hash lock")
         || !Check(g_scriptStringTransactionLockDepth == 0,
             "registry production-stack retained the transaction lock")
-        || !CheckFreed(database.stringId))
+        || !CheckFreed(database.stringId)
+        || !Check(ReportersUnused(),
+            "registry production-stack finish invoked a reporter"))
     {
         return false;
     }
 
-    return Check(
+    const bool cleaned = Check(
             script_string::TryRemoveOrdinaryReference(first.stringId)
                 == script_string::ReleaseStatus::Success,
             "registry production-stack first cleanup failed")
@@ -4371,6 +4536,27 @@ void MakeRegistryCollisionName(
             script_string::TryRemoveOrdinaryReference(second.stringId)
                 == script_string::ReleaseStatus::Success,
             "registry production-stack second cleanup failed")
+        && Check(
+            script_string::TryRemoveDatabaseUserReference(
+                scalarRetained.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry production-stack scalar-retained cleanup failed")
+        && Check(
+            script_string::TryRemoveDatabaseUserReference(
+                bulkRetainedFirst.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry production-stack first bulk-retained cleanup failed")
+        && Check(
+            script_string::TryRemoveDatabaseUserReference(
+                bulkRetainedSecond.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry production-stack second bulk-retained cleanup failed")
+        && CheckFreed(first.stringId)
+        && CheckFreed(second.stringId)
+        && CheckFreed(scalarRetained.stringId)
+        && CheckFreed(bulkRetainedFirst.stringId)
+        && CheckFreed(bulkRetainedSecond.stringId);
+    return cleaned
         && EndTest();
 }
 
