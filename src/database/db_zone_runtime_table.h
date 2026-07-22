@@ -759,6 +759,11 @@ private:
         const script_string_journal::ScriptStringJournalEntry *storage,
         std::uint32_t capacity,
         std::uint32_t expectedCount) noexcept;
+    [[nodiscard]] static bool scriptStringPlacementSpanIsSeparated(
+        const ZoneRuntimeEntry *entry,
+        const void *storage,
+        std::size_t storageSize,
+        std::size_t storageAlignment) noexcept;
     [[nodiscard]] static bool
     exactRegistryLifecycleCallbackPhaseMatches(
         const ZoneRuntimeEntry &entry) noexcept;

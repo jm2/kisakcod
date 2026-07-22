@@ -713,7 +713,19 @@ Completed foundation work:
   and ASan+UBSan **16/16** each, strict i386/AArch64 compile-link, source/security/diff gates, and two independent audits
   pass with zero raw loader enrollment. PR #82 initial run **29937368617** found one Windows ARM64-only `/WX` failure:
   two legacy post-fatal `scr_stringlist.cpp` returns become provably unreachable behind the fixture's aborting reporter.
-  The in-flight repair keeps `/WX` and scopes `/wd4702` to this direct-include test target, with the exception sealed.
+  The repair keeps `/WX` and scopes `/wd4702` to this direct-include test target, with the exception sealed. Runs
+  **29937368617** and **29937847031** were canceled as later fixes superseded them. The final audit also found that
+  standalone registry admission skipped explicit initialized-table callback authentication: a callbacks-bound
+  `ActiveNoRegistry` callback could begin and finish standalone coordinator authority without consuming its marker.
+  The current gate fully authenticates initialized state and returns `Busy` before coordinator enrollment, preserves
+  canonical pre-initialization standalone use through release-safety validation, and adds facade-unit plus literal
+  macro-off callbacks-bound regressions. The same audit closed a caller-key TOCTOU and retained-placement alias class:
+  every keyed script-string/composite mutation boundary now snapshots after whole-bank separation, never rereads the
+  caller across lower mutation/callback work, and rejects key/output overlap with both controller and generation
+  journal placement across the full capacity. Storage bind keeps its intentional pre-placement slab-snapshot contract.
+  Standards-clean journal/output/capacity and acquisition/composite-admission callback-mutation regressions plus
+  source/security seals pass. The full incremental Debug build, native GCC **184/184** CTest tree, focused runtime
+  coverage, and diff gate pass locally; hosted exact-head validation remains pending.
   Checked no-report helpers and the single production bridge/cutover remain after PR #82 merges;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
@@ -1877,9 +1889,15 @@ and passed all nine authoritative post-merge jobs in run **29928854270**. Rebase
 and `0a375c7c` complete failure-atomic stable-context/table/facade coupling and every pre-access whole-bank alias gate;
 `5cc0931a` adds the literal macro-off real-registry callback retry and forgotten-Finish fixtures. Native GCC **184/184**,
 focused Clang and ASan+UBSan **16/16** each, strict i386/AArch64 compile-link, source/security/diff gates, and two
-independent audits pass. PR #82 initial run **29937368617** exposed only the Windows ARM64 direct-include C4702 `/WX`
-case; the repair retains `/WX`, scopes `/wd4702` to the fixture target, and source/security seals that exception. No
-production loader caller is enrolled. The ancestry checkpoint records reviewed history
+independent audits pass. PR #82 initial run **29937368617** exposed the Windows ARM64 direct-include C4702 `/WX`
+case; the repair retains `/WX`, scopes `/wd4702` to the fixture target, and source/security seals that exception. The
+subsequent audit found and repaired missing standalone-admission authentication for callbacks-bound
+`ActiveNoRegistry` windows. It also closed caller-key TOCTOU and retained-placement aliases across every keyed
+script-string/composite mutator, legacy unload, and terminal reset using pre-mutation snapshots plus full-capacity
+controller/generation placement gates; the full Debug build, native GCC **184/184**, direct runtime callback-mutation,
+source/security, and diff gates pass. Both superseded CI runs were canceled; replacement hosted validation remains
+pending. No production loader
+caller is enrolled. The ancestry checkpoint records reviewed history
 without importing code and therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared

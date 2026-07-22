@@ -42,6 +42,7 @@ using db::zone_script_string_ownership::ZoneScriptStringUnpublishStatus;
 
 constexpr std::uint32_t kPhysicalSlot = 4;
 constexpr std::uint32_t kAliasProbeSlot = 5;
+constexpr std::uint32_t kNoRegistryCallbackSlot = 6;
 constexpr std::uint32_t kStorageCapacity = 1;
 constexpr std::uint32_t kStreamBlockBytes = 64;
 constexpr std::uint32_t kPhysicalMemoryBytes = UINT32_C(0x08000000);
@@ -63,6 +64,10 @@ struct CallbackProbe final
         RegistryOwnershipStatus::InvalidState;
     RegistryOwnershipStatus omittedFinishBorrow =
         RegistryOwnershipStatus::InvalidState;
+    RegistryOwnershipStatus ordinaryCallbackBorrow =
+        RegistryOwnershipStatus::InvalidState;
+    RegistryOwnershipStatus standaloneCallbackBegin =
+        RegistryOwnershipStatus::InvalidState;
     RegistryOwnershipStatus callbackBankRegistryAlias =
         RegistryOwnershipStatus::Success;
     ZoneRuntimeTableStatus callbackBankFacadeAlias =
@@ -81,6 +86,19 @@ struct CallbackProbe final
 };
 
 CallbackProbe g_callbackProbe{};
+
+struct NoRegistryCallbackProbe final
+{
+    RegistryOwnershipStatus ordinaryBorrow =
+        RegistryOwnershipStatus::InvalidState;
+    RegistryOwnershipStatus standaloneBegin =
+        RegistryOwnershipStatus::InvalidState;
+    RegistryOwnershipStatus unexpectedStandaloneFinish =
+        RegistryOwnershipStatus::InvalidState;
+    std::uint32_t ensureCalls = 0;
+};
+
+NoRegistryCallbackProbe g_noRegistryCallbackProbe{};
 
 [[nodiscard]] bool Check(
     const bool condition,
@@ -166,6 +184,18 @@ ZoneScriptStringUnpublishStatus EnsureGenerationUnreachable(
 
     if (g_callbackProbe.ensureCalls == 2)
     {
+        g_callbackProbe.ordinaryCallbackBorrow =
+            ZoneRuntimeFacade::TryBorrowRegistryOwnership(key.slot, key);
+        g_callbackProbe.standaloneCallbackBegin =
+            ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership();
+        if (g_callbackProbe.ordinaryCallbackBorrow
+                != RegistryOwnershipStatus::Busy
+            || g_callbackProbe.standaloneCallbackBegin
+                != RegistryOwnershipStatus::Busy)
+        {
+            return ZoneScriptStringUnpublishStatus::UnsafeFailure;
+        }
+
         g_callbackProbe.retryBorrow =
             ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
                 context, key);
@@ -218,6 +248,63 @@ ZoneLoadCleanupCallbackStatus PerformExternalCleanup(
         : ZoneLoadCleanupCallbackStatus::UnsafeFailure;
 }
 
+ZoneScriptStringUnpublishStatus EnsureNoRegistryCallbackUnreachable(
+    const ZoneRuntimeCallbackContext *const context,
+    const ZoneLoadContextKey key) noexcept
+{
+    ++g_noRegistryCallbackProbe.ensureCalls;
+    if (!context || !static_cast<bool>(key)
+        || key.slot != kNoRegistryCallbackSlot)
+    {
+        return ZoneScriptStringUnpublishStatus::UnsafeFailure;
+    }
+
+    g_noRegistryCallbackProbe.ordinaryBorrow =
+        ZoneRuntimeFacade::TryBorrowRegistryOwnership(key.slot, key);
+    g_noRegistryCallbackProbe.standaloneBegin =
+        ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership();
+    if (g_noRegistryCallbackProbe.standaloneBegin
+        == RegistryOwnershipStatus::Success)
+    {
+        g_noRegistryCallbackProbe.unexpectedStandaloneFinish =
+            ZoneRuntimeFacade::FinishRegistryOwnership();
+    }
+
+    return g_noRegistryCallbackProbe.ordinaryBorrow
+                == RegistryOwnershipStatus::Busy
+            && (g_noRegistryCallbackProbe.standaloneBegin
+                    == RegistryOwnershipStatus::Busy
+                || (g_noRegistryCallbackProbe.standaloneBegin
+                        == RegistryOwnershipStatus::Success
+                    && g_noRegistryCallbackProbe.unexpectedStandaloneFinish
+                        == RegistryOwnershipStatus::Success))
+        ? ZoneScriptStringUnpublishStatus::Success
+        : ZoneScriptStringUnpublishStatus::UnsafeFailure;
+}
+
+ZoneLoadCleanupCallbackStatus PerformNoRegistryCleanup(
+    const ZoneRuntimeCallbackContext *const context,
+    const ZoneLoadContextKey key,
+    const ZoneLoadCleanupOperation) noexcept
+{
+    return context && static_cast<bool>(key)
+            && key.slot == kNoRegistryCallbackSlot
+        ? ZoneLoadCleanupCallbackStatus::Success
+        : ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+}
+
+void CompleteNoRegistryAdmission(
+    const ZoneRuntimeCallbackContext *,
+    const ZoneLoadContextKey) noexcept
+{
+}
+
+void AdmitNoRegistryLive(
+    const ZoneRuntimeCallbackContext *,
+    const ZoneLoadContextKey) noexcept
+{
+}
+
 void CompletePendingAdmission(
     const ZoneRuntimeCallbackContext *const context,
     const ZoneLoadContextKey key) noexcept
@@ -230,6 +317,18 @@ void AdmitLive(
     const ZoneLoadContextKey key) noexcept
 {
     ObserveCallbackArguments(context, key);
+}
+
+[[nodiscard]] ZoneRuntimeGenerationCallbacks
+MakeNoRegistryCallbacks() noexcept
+{
+    return {
+        nullptr,
+        EnsureNoRegistryCallbackUnreachable,
+        PerformNoRegistryCleanup,
+        CompleteNoRegistryAdmission,
+        AdmitNoRegistryLive,
+    };
 }
 
 [[nodiscard]] ZoneRuntimeGenerationCallbacks MakeCallbacks() noexcept
@@ -256,9 +355,11 @@ struct RuntimeFixture final
         pmem_runtime::AllocationResult,
         db::relocation::kBlockCount> blockAllocations{};
 
-    [[nodiscard]] bool enroll() noexcept
+    [[nodiscard]] bool enroll(
+        const bool initializeTable = true) noexcept
     {
-        if (ZoneRuntimeFacade::TryInitializeRuntimeTable()
+        if (initializeTable
+            && ZoneRuntimeFacade::TryInitializeRuntimeTable()
                 != ZoneRuntimeTableStatus::Success)
         {
             return false;
@@ -409,6 +510,66 @@ struct RuntimeFixture final
     return false;
 }
 
+[[nodiscard]] bool TestNoRegistryCallbackAdmissionGate() noexcept
+{
+    g_noRegistryCallbackProbe = {};
+    ZoneLoadContextKey key{};
+    const ZoneRuntimeGenerationCallbacks callbacks =
+        MakeNoRegistryCallbacks();
+    if (!Check(
+            ZoneRuntimeFacade::TryInitializeRuntimeTable()
+                == ZoneRuntimeTableStatus::Success,
+            "no-registry callback table initialization failed")
+        || !Check(
+            ZoneRuntimeFacade::TryClaimGeneration(
+                kNoRegistryCallbackSlot, &key)
+                == ZoneRuntimeTableStatus::Success,
+            "no-registry callback generation claim failed")
+        || !Check(
+            ZoneRuntimeFacade::TryBindGenerationCallbacks(
+                kNoRegistryCallbackSlot, key, callbacks)
+                == ZoneRuntimeTableStatus::Success,
+            "no-registry callback binding failed"))
+    {
+        return false;
+    }
+
+    const ZoneRuntimeTableStatus begin =
+        ZoneRuntimeFacade::TryBeginGenerationAbandonment(
+            kNoRegistryCallbackSlot, key);
+    if (!Check(
+            begin == ZoneRuntimeTableStatus::Success
+                || begin == ZoneRuntimeTableStatus::Retry,
+            "callbacks-bound abandonment did not start")
+        || !Check(DriveAbandonmentToTerminal(key),
+            "callbacks-bound abandonment did not reach terminal"))
+    {
+        return false;
+    }
+
+    const bool gateHeld = Check(
+            g_noRegistryCallbackProbe.ensureCalls != 0,
+            "no-registry callback was not exercised")
+        && Check(
+            g_noRegistryCallbackProbe.ordinaryBorrow
+                == RegistryOwnershipStatus::Busy,
+            "ordinary registry borrow crossed a no-registry callback")
+        && Check(
+            g_noRegistryCallbackProbe.standaloneBegin
+                == RegistryOwnershipStatus::Busy,
+            "standalone registry admission crossed a no-registry callback")
+        && Check(
+            g_noRegistryCallbackProbe.unexpectedStandaloneFinish
+                == RegistryOwnershipStatus::InvalidState,
+            "no-registry callback unexpectedly enrolled the coordinator");
+    const bool reset = Check(
+        ZoneRuntimeFacade::TryResetTerminalReceipt(
+            kNoRegistryCallbackSlot, key)
+            == ZoneRuntimeTableStatus::Success,
+        "no-registry callback terminal receipt did not reset");
+    return gateHeld && reset;
+}
+
 [[nodiscard]] bool TestStableCallbackRetryChain() noexcept
 {
     if (!Check(
@@ -439,8 +600,12 @@ struct RuntimeFixture final
     }
     g_callbackProbe.expectedStringId = acquired.stringId;
 
+    if (!TestNoRegistryCallbackAdmissionGate())
+        return false;
+
     RuntimeFixture fixture{};
-    if (!Check(fixture.enroll(), "runtime generation enrollment failed")
+    if (!Check(fixture.enroll(false),
+            "runtime generation enrollment failed")
         || !Check(fixture.setUpStorage(), "runtime storage setup failed")
         || !Check(fixture.setUpStreams(), "runtime stream setup failed")
         || !Check(fixture.beginOwnership(),
@@ -474,6 +639,12 @@ struct RuntimeFixture final
             fixture.key.slot, fixture.key);
     if (!Check(retry == ZoneRuntimeTableStatus::Success,
             "uncontended callback retry did not succeed")
+        || !Check(g_callbackProbe.ordinaryCallbackBorrow
+                == RegistryOwnershipStatus::Busy,
+            "ordinary registry borrow crossed the callback window")
+        || !Check(g_callbackProbe.standaloneCallbackBegin
+                == RegistryOwnershipStatus::Busy,
+            "standalone registry admission crossed the callback window")
         || !Check(g_callbackProbe.retryBorrow
                 == RegistryOwnershipStatus::Success,
             "typed callback borrow did not enroll the coordinator")

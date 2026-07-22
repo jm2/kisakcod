@@ -66,9 +66,13 @@ db::zone_runtime::ZoneRuntimeCallbackContextStatus
         db::zone_runtime::ZoneRuntimeCallbackContextStatus::Success;
 RegistryOwnershipStatus g_registryOperationStatus =
     RegistryOwnershipStatus::Success;
+bool g_tableInitialized = false;
 bool g_registryActive = false;
 bool g_registryUnsafe = false;
 bool g_registryBusyRetainsAuthority = false;
+std::uint32_t g_tableInitializedChecks = 0;
+std::uint32_t g_tableHeaderValidationCalls = 0;
+std::uint32_t g_tableReleaseSafetyCalls = 0;
 std::uint32_t g_initializeCalls = 0;
 std::uint32_t g_claimCalls = 0;
 std::uint32_t g_lookupCalls = 0;
@@ -183,9 +187,13 @@ void ResetHarness() noexcept
     g_callbackContextAuthenticationStatus =
         db::zone_runtime::ZoneRuntimeCallbackContextStatus::Success;
     g_registryOperationStatus = RegistryOwnershipStatus::Success;
+    g_tableInitialized = false;
     g_registryActive = false;
     g_registryUnsafe = false;
     g_registryBusyRetainsAuthority = false;
+    g_tableInitializedChecks = 0;
+    g_tableHeaderValidationCalls = 0;
+    g_tableReleaseSafetyCalls = 0;
     g_initializeCalls = 0;
     g_claimCalls = 0;
     g_lookupCalls = 0;
@@ -395,6 +403,74 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
         || !Check(ZoneRuntimeFacade::FinishAccess()
             == ZoneRuntimeFacadeStatus::Success,
             "runtime finish failed after registry close"))
+    {
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool TestStandaloneTableAdmissionGate() noexcept
+{
+    ResetHarness();
+    g_tableInitialized = true;
+    g_tableAuthenticationStatus = ZoneRuntimeTableStatus::Busy;
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "callback-busy standalone owner begin failed")
+        || !Check(ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership()
+            == RegistryOwnershipStatus::Busy,
+            "standalone registry admission crossed an active callback")
+        || !Check(g_tableInitializedChecks == 1
+                && g_tableHeaderValidationCalls == 1
+                && g_tableReleaseSafetyCalls == 0
+                && g_registryBeginCalls == 0 && !g_registryActive,
+            "callback-busy standalone admission reached its backend")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "callback-busy standalone owner did not retire"))
+    {
+        return false;
+    }
+
+    ResetHarness();
+    g_tableAuthenticationStatus = ZoneRuntimeTableStatus::InvalidState;
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "pristine standalone owner begin failed")
+        || !Check(ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership()
+            == RegistryOwnershipStatus::Success,
+            "pristine uninitialized table blocked standalone admission")
+        || !Check(g_tableInitializedChecks == 1
+                && g_tableHeaderValidationCalls == 0
+                && g_tableReleaseSafetyCalls == 1
+                && g_registryBeginCalls == 1 && g_registryActive,
+            "pristine standalone admission selected the wrong table gate")
+        || !Check(ZoneRuntimeFacade::FinishRegistryOwnership()
+            == RegistryOwnershipStatus::Success,
+            "pristine standalone registry scope did not finish")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "pristine standalone owner did not retire"))
+    {
+        return false;
+    }
+
+    ResetHarness();
+    g_releaseStatus = ZoneRuntimeTableStatus::UnsafeFailure;
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "corrupt-pristine standalone owner begin failed")
+        || !Check(ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership()
+            == RegistryOwnershipStatus::UnsafeFailure,
+            "corrupt uninitialized table admitted standalone authority")
+        || !Check(g_tableInitializedChecks == 1
+                && g_tableHeaderValidationCalls == 0
+                && g_tableReleaseSafetyCalls == 1
+                && g_registryBeginCalls == 0 && !g_registryActive,
+            "corrupt-pristine standalone admission reached its backend")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::UnsafeFailure,
+            "corrupt-pristine standalone failure did not poison access"))
     {
         return false;
     }
@@ -2172,14 +2248,22 @@ ZoneRuntimeCallbackContextOwner::TryAuthenticate(
     return g_callbackContextAuthenticationStatus;
 }
 
+bool ZoneRuntimeTable::initialized() const noexcept
+{
+    ++g_tableInitializedChecks;
+    return g_tableInitialized;
+}
+
 ZoneRuntimeTableStatus ZoneRuntimeTable::validateReleaseSafety() noexcept
 {
+    ++g_tableReleaseSafetyCalls;
     return g_releaseStatus;
 }
 
 ZoneRuntimeTableStatus ZoneRuntimeTable::validateInitializedHeader(
     const ValidationDepth) noexcept
 {
+    ++g_tableHeaderValidationCalls;
     return g_tableAuthenticationStatus;
 }
 
@@ -2822,6 +2906,7 @@ int main()
     const bool ok = TestBasicAccessAndTableForwarding()
         && TestForeignContention()
         && TestRegistryScopeAndForwarding()
+        && TestStandaloneTableAdmissionGate()
         && TestBorrowAndStatusMapping()
         && TestCallbackBorrowFallback()
         && TestReleaseSafetyAndUnsafePoison()

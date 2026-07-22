@@ -1171,6 +1171,19 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryResetTerminalReceipt(
 RegistryOwnershipStatus
 ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership() noexcept
 {
+    const ZoneRuntimeTableStatus tableAccess =
+        authenticateTableOperationAccess();
+    if (tableAccess != ZoneRuntimeTableStatus::Success)
+        return MapTableStatusToRegistryStatus(tableAccess);
+
+    ZoneRuntimeTable &table = ProductionZoneRuntimeTable();
+    const ZoneRuntimeTableStatus tableStatus = completeTableOperation(
+        table.initialized()
+            ? table.validateInitializedHeader()
+            : table.validateReleaseSafety());
+    if (tableStatus != ZoneRuntimeTableStatus::Success)
+        return MapTableStatusToRegistryStatus(tableStatus);
+
     return RunRegistryOperation([]() noexcept {
         return registry_ownership::RegistryOwnershipCoordinatorFacade::
             TryBeginStandalone();

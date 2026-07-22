@@ -10456,7 +10456,7 @@ require_security_exact_class_digest(
     "ZoneRuntimeEntry")
 require_security_exact_class_digest(
     _security_zone_runtime_table_class
-    e1d7f9dd988e3ebd02619f0e89023e6bb2f1af7eff0599389b283c79daa63072
+    ff73ea8e1fa3c0b53181b3f0a6c040914a143627e0cf0567dfe21fdd410f66cb
     "ZoneRuntimeTable")
 
 set(_security_external_macro_friend_invocation_fixture
@@ -10700,6 +10700,29 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "oversized demand leaves exact placed state retryable"
     "valid exact demand can retry after oversized demand"
     "capacity-span and zero-demand runtime coverage"
+    "retained script-string placement separation"
+    "journal and full-capacity placement isolation"
+    "controller and generation placement use one checked predicate"
+    "stage isolates caller key and output from retained placement"
+    "retained output rejection before acquisition and journal mutation"
+    "every keyed composite mutator snapshots caller state"
+    "every keyed composite mutator authenticates its snapshot"
+    "every post-placement composite mutator rejects retained aliases"
+    "keyed composite mutator cannot authenticate caller storage directly"
+    "keyed composite mutator cannot post-authenticate caller storage"
+    "composite generation commit"
+    "composite abandonment begin"
+    "composite abandonment continuation"
+    "composite generation unload"
+    "live retained placement and caller mutation coverage"
+    "full-capacity rejection occurs before any backend acquisition"
+    "caller mutation hook arms before successful snapshotted stage"
+    "saved key restores only for exact cleanup"
+    "admission callback caller-key mutation arms before commit"
+    "commit succeeds against snapshot before caller key restoration"
+    "composite admission caller-key mutation callback"
+    "admission callback mutates only the external caller key"
+    "callback authenticates its retained key before external mutation"
     "snapshotted separated legacy admission callback"
     "snapshotted separated legacy rollback callback"
     "snapshotted separated legacy unload callback"
@@ -10749,6 +10772,11 @@ foreach(_stable_context_integration_seal_marker IN ITEMS
     "macro-off stable integration fixture cannot self-grant test authority"
     "literal macro-off facade/table/controller/coordinator/registry chain"
     "full-chain fixture cannot substitute a fake registry authority"
+    "callbacks-bound no-registry admission gate"
+    "callbacks-bound no-registry runtime coverage"
+    "callbacks-bound fixture must not create controller authority"
+    "callbacks bind before no-registry abandonment"
+    "callbacks-bound gate must precede already-initialized full-chain enrollment"
     "stable callback Busy-to-Retry-to-Success chain"
     "Busy callback precedes the successful retry borrow"
     "real registry mutation precedes coordinator finish"
@@ -11684,6 +11712,8 @@ foreach(_runtime_facade_seal_marker IN ITEMS
     "_pending_view_missing_stream_auth_fixture"
     "_pending_read_late_stream_auth_fixture"
     "facade pending-copy inspection cannot acquire ledger or receipt authority"
+    "standalone registry table/callback admission gate"
+    "Standalone registry admission must authenticate facade, table, then coordinator"
     "view.entry != &table.entries_[physicalSlot]"
     "This boundary is not a sandbox for arbitrary engine globals"
     "Runtime facade gained a production caller before atomic cutover")

@@ -456,10 +456,10 @@ require_substring_count(
     _source "thread_local" 7
     "scalar destructor-free TLS mirrors")
 require_substring_count(
-    _source "completeTableOperation(" 34
+    _source "completeTableOperation(" 35
     "all table forwards use the shared post-authentication boundary")
 require_substring_count(
-    _source "authenticateTableOperationAccess()" 11
+    _source "authenticateTableOperationAccess()" 12
     "unkeyed and registry boundaries authenticate")
 require_substring_count(
     _source "authenticateKeyedTableOperationAccess(" 20
@@ -951,6 +951,56 @@ foreach(_forbidden_pending_authority IN ITEMS
         _source "${_forbidden_pending_authority}"
         "facade pending-copy inspection cannot acquire ledger or receipt authority")
 endforeach()
+
+# Standalone registry admission remains available before a canonical table is
+# initialized, but it must not skip an initialized table's active callback
+# marker. The facade serializer makes the diagnostic branch stable; both paths
+# perform state-appropriate table authentication and complete the common
+# postcondition before the coordinator can publish authority.
+extract_runtime_facade_method_slice(
+    _source "TryBeginStandaloneRegistryOwnership" _standalone_slice)
+canonicalize_runtime_facade_forwarding(
+    _standalone_slice _standalone_slice_canonical)
+foreach(_marker IN ITEMS
+    "authenticateTableOperationAccess()"
+    "ZoneRuntimeTable &table = ProductionZoneRuntimeTable()"
+    "table.initialized() ? table.validateInitializedHeader() : table.validateReleaseSafety()"
+    "tableStatus != ZoneRuntimeTableStatus::Success"
+    "MapTableStatusToRegistryStatus(tableStatus)"
+    "return RunRegistryOperation("
+    "RegistryOwnershipCoordinatorFacade::TryBeginStandalone()")
+    require_substring_count(
+        _standalone_slice_canonical "${_marker}" 1
+        "standalone registry table/callback admission gate")
+endforeach()
+string(FIND
+    "${_standalone_slice_canonical}"
+    "authenticateTableOperationAccess()" _standalone_facade_auth)
+string(FIND
+    "${_standalone_slice_canonical}"
+    "table.initialized()" _standalone_table_classification)
+string(FIND
+    "${_standalone_slice_canonical}"
+    "completeTableOperation(" _standalone_table_completion)
+string(FIND
+    "${_standalone_slice_canonical}"
+    "tableStatus != ZoneRuntimeTableStatus::Success"
+    _standalone_table_status_gate)
+string(FIND
+    "${_standalone_slice_canonical}"
+    "return RunRegistryOperation(" _standalone_coordinator_admission)
+if(_standalone_facade_auth EQUAL -1
+    OR _standalone_table_classification EQUAL -1
+    OR _standalone_table_completion EQUAL -1
+    OR _standalone_table_status_gate EQUAL -1
+    OR _standalone_coordinator_admission EQUAL -1
+    OR NOT _standalone_facade_auth LESS _standalone_table_completion
+    OR NOT _standalone_table_completion LESS _standalone_table_classification
+    OR NOT _standalone_table_classification LESS _standalone_table_status_gate
+    OR NOT _standalone_table_status_gate LESS _standalone_coordinator_admission)
+    message(FATAL_ERROR
+        "Standalone registry admission must authenticate facade, table, then coordinator")
+endif()
 
 # Ordinary registry borrowing is deliberately incapable of falling back to a
 # callback capability on Busy. It accepts only a successful exact table view
@@ -1564,6 +1614,12 @@ require_not_contains(
     "stable integration owns deterministic platform seams")
 
 foreach(_marker IN ITEMS
+    "TestNoRegistryCallbackAdmissionGate()"
+    "g_noRegistryCallbackProbe.ordinaryBorrow = ZoneRuntimeFacade::TryBorrowRegistryOwnership(key.slot, key)"
+    "g_noRegistryCallbackProbe.standaloneBegin = ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership()"
+    "g_noRegistryCallbackProbe.standaloneBegin == RegistryOwnershipStatus::Busy"
+    "g_callbackProbe.ordinaryCallbackBorrow = ZoneRuntimeFacade::TryBorrowRegistryOwnership(key.slot, key)"
+    "g_callbackProbe.standaloneCallbackBegin = ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership()"
     "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( context, key)"
     "RegistryOwnershipStatus::Busy ? ZoneScriptStringUnpublishStatus::Retry"
     "ZoneRuntimeFacade::FinishRegistryOwnership()"
@@ -1574,6 +1630,14 @@ foreach(_marker IN ITEMS
         _integration_fixture_normalized "${_marker}"
         "real stable facade callback-borrow coverage")
 endforeach()
+require_substring_count(
+    _integration_fixture_normalized
+    "ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership()" 2
+    "closed callback-window standalone admission probes")
+require_substring_count(
+    _integration_fixture_normalized
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnership(key.slot, key)" 2
+    "closed callback-window ordinary admission probes")
 require_substring_count(
     _integration_fixture_normalized
     "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback" 5

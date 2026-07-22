@@ -1609,6 +1609,58 @@ bool ZoneRuntimeTable::generationPlacementMatches(
         && expectedCount <= capacity;
 }
 
+bool ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+    const ZoneRuntimeEntry *const entry,
+    const void *const storage,
+    const std::size_t storageSize,
+    const std::size_t storageAlignment) noexcept
+{
+    if (!entry || !storage || storageSize == 0 || storageAlignment == 0
+        || reinterpret_cast<std::uintptr_t>(storage) % storageAlignment != 0)
+    {
+        return false;
+    }
+
+    const auto placementIsSeparated = [storage, storageSize](
+                                           const auto *const journal,
+                                           const auto *const entries,
+                                           const std::uint32_t capacity)
+        noexcept {
+        if (!journal)
+            return entries == nullptr && capacity == 0;
+        if (!AddressRangesAreDisjoint(
+                storage, storageSize, journal, sizeof(*journal)))
+        {
+            return false;
+        }
+        if (capacity == 0)
+            return entries == nullptr;
+        if (!entries
+            || static_cast<std::size_t>(capacity)
+                > (std::numeric_limits<std::size_t>::max)()
+                    / sizeof(*entries))
+        {
+            return false;
+        }
+        return AddressRangesAreDisjoint(
+            storage,
+            storageSize,
+            entries,
+            static_cast<std::size_t>(capacity) * sizeof(*entries));
+    };
+
+    const auto &ownership = entry->scriptStringOwnership_;
+    const auto &binding = entry->generationBinding_;
+    return placementIsSeparated(
+               ownership.placementJournal_,
+               ownership.placementStorage_,
+               ownership.placementCapacity_)
+        && placementIsSeparated(
+               binding.placementJournal_,
+               binding.placementEntries_,
+               binding.placementCapacity_);
+}
+
 bool ZoneRuntimeTable::exactRegistryLifecycleCallbackPhaseMatches(
     const ZoneRuntimeEntry &entry) noexcept
 {
@@ -3884,6 +3936,7 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks(
         || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
             &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     const bool stableContexts =
         ZoneRuntimeTable::ownsStableCallbackBank(table);
 #ifndef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
@@ -3919,15 +3972,25 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks(
 
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     ZoneRuntimeCallbackContextBindResult contextResolution{};
     if (stableContexts)
     {
         contextResolution =
-            ZoneRuntimeTable::tryResolveCallbackContext(physicalSlot, key);
+            ZoneRuntimeTable::tryResolveCallbackContext(
+                physicalSlot, keySnapshot);
         if (contextResolution.status
             == ZoneRuntimeCallbackContextStatus::Busy)
         {
@@ -3941,7 +4004,7 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks(
         const ZoneRuntimeCallbackContextStatus contextAuthentication =
             ZoneRuntimeTable::tryAuthenticateCallbackContext(
                 contextResolution.context,
-                key,
+                keySnapshot,
                 ZoneRuntimeCallbackContextPhase::Bound);
         if (contextAuthentication == ZoneRuntimeCallbackContextStatus::Busy)
             return ZoneRuntimeTableStatus::Busy;
@@ -3991,7 +4054,7 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks(
             != zone_pending_copy::PendingCopyStatus::Success)
         {
             return table->completeCompositeOperation(
-                physicalSlot, key, status);
+                physicalSlot, keySnapshot, status);
         }
         table->sharedState_ =
             static_cast<std::uint32_t>(SharedState::Ready);
@@ -4003,9 +4066,11 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks(
     }
 
     ZoneRuntimeTable::bindGeneration(
-        table, entry, key, callbackSnapshot);
+        table, entry, keySnapshot, callbackSnapshot);
     return table->completeCompositeOperation(
-        physicalSlot, key, ZoneRuntimeTableStatus::Success);
+        physicalSlot,
+        keySnapshot,
+        ZoneRuntimeTableStatus::Success);
 }
 
 ZoneRuntimeTableStatus TryBeginZoneRuntimePhysicalAllocation(
@@ -4016,15 +4081,27 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimePhysicalAllocation(
     const std::uint32_t allocationType) noexcept
 {
     if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))
         || (name
             && !ZoneRuntimeTable::callbackContextSpanIsSeparated(
                 name, kPhysicalAllocationNamePotentialReadBytes, 1)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     ZoneRuntimeGenerationBinding &binding = entry->generationBinding_;
     if (binding.isPristine())
@@ -4048,7 +4125,8 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimePhysicalAllocation(
     {
         ZoneRuntimeTable::setGenerationAllocation(entry, allocationType);
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory(
@@ -4060,7 +4138,9 @@ ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory(
     const std::uint32_t type,
     pmem_runtime::AllocationResult *const outResult) noexcept
 {
-    if (!WritableOutputIsSeparated(
+    if (!ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))
+        || !WritableOutputIsSeparated(
             table,
             outResult,
             sizeof(*outResult),
@@ -4073,13 +4153,20 @@ ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory(
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
 
-    if (!WritableOutputIsSeparatedFromRetainedRuntime(
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey))
+        || !WritableOutputIsSeparatedFromRetainedRuntime(
             table->activeZoneStreamBinding_,
             static_cast<SharedState>(table->sharedState_),
             outResult,
@@ -4106,7 +4193,7 @@ ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory(
         MapAllocationStatus(candidate.status);
     const ZoneRuntimeTableStatus status =
         table->completeCompositeOperation(
-            physicalSlot, key, operationStatus);
+            physicalSlot, keySnapshot, operationStatus);
     if (status == ZoneRuntimeTableStatus::Success
         || status == ZoneRuntimeTableStatus::CapacityExceeded)
     {
@@ -4259,13 +4346,25 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeStreamGeneration(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
         || (entry->setupStage() != ZoneRuntimeSetupStage::StorageBound
@@ -4278,7 +4377,7 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeStreamGeneration(
         zone_stream_ownership::TryBeginZoneStreamGeneration(
             ZoneRuntimeTable::mutableStreamGenerationReceipt(entry),
             &entry->lifecycle_,
-            key);
+            keySnapshot);
     const ZoneRuntimeTableStatus status = MapStreamStatus(streamStatus);
     if (streamStatus
         == zone_stream_ownership::ZoneStreamOwnershipStatus::Success)
@@ -4287,7 +4386,8 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeStreamGeneration(
             entry,
             ZoneRuntimeSetupStage::StreamGenerationBegun);
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
@@ -4307,6 +4407,8 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
     if (!ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
             zoneIdentity, sizeof(*zoneIdentity), alignof(XZoneMemory))
         || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
             blocks,
@@ -4324,6 +4426,7 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     relocation::BlockView blockSnapshot[relocation::kBlockCount]{};
     for (std::size_t index = 0;
          index < relocation::kBlockCount;
@@ -4334,9 +4437,18 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
 
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
         || (entry->setupStage()
@@ -4356,7 +4468,7 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
     {
         return table->completeCompositeOperation(
             physicalSlot,
-            key,
+            keySnapshot,
             ZoneRuntimeTableStatus::UnsafeFailure);
     }
     for (std::size_t index = 0; index < blockCount; ++index)
@@ -4384,7 +4496,7 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
         {
             return mappedRange == ZoneRuntimeTableStatus::UnsafeFailure
                 ? table->completeCompositeOperation(
-                    physicalSlot, key, mappedRange)
+                    physicalSlot, keySnapshot, mappedRange)
                 : mappedRange;
         }
         if (!AddressRangesAreDisjoint(
@@ -4400,7 +4512,7 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
     const auto streamStatus = zone_stream_ownership::TryBindZoneStreams(
         &table->activeZoneStreamBinding_,
         ZoneRuntimeTable::mutableStreamGenerationReceipt(entry),
-        key,
+        keySnapshot,
         zoneIdentity,
         blockSnapshot,
         blockCount);
@@ -4411,7 +4523,8 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
         ZoneRuntimeTable::setGenerationSetupStage(
             entry, ZoneRuntimeSetupStage::StreamsBound);
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies(
@@ -4419,13 +4532,25 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
         || (entry->setupStage() != ZoneRuntimeSetupStage::StreamsBound
@@ -4445,14 +4570,15 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies(
             &table->pendingCopyLedger_,
             ZoneRuntimeTable::mutablePendingCopyAdmissionReceipt(entry),
             &entry->lifecycle_,
-            key);
+            keySnapshot);
     const ZoneRuntimeTableStatus status = MapPendingStatus(pendingStatus);
     if (pendingStatus == zone_pending_copy::PendingCopyStatus::Success)
     {
         ZoneRuntimeTable::setGenerationSetupStage(
             entry, ZoneRuntimeSetupStage::PendingCopyBegun);
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy(
@@ -4461,13 +4587,25 @@ ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy(
     const zone_load::ZoneLoadContextKey &key,
     const std::uint32_t assetEntryIndex) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
         || (entry->setupStage()
@@ -4480,10 +4618,12 @@ ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy(
     const auto pendingStatus =
         zone_pending_copy::TryAppendPendingCopyRecord(
             ZoneRuntimeTable::mutablePendingCopyAdmissionReceipt(entry),
-            key,
+            keySnapshot,
             assetEntryIndex);
     return table->completeCompositeOperation(
-        physicalSlot, key, MapPendingStatus(pendingStatus));
+        physicalSlot,
+        keySnapshot,
+        MapPendingStatus(pendingStatus));
 }
 
 ZoneRuntimeTableStatus TryGetZoneRuntimePendingCopyView(
@@ -4668,13 +4808,25 @@ ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
         || (entry->setupStage()
@@ -4695,7 +4847,7 @@ ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission(
     const auto pendingStatus =
         zone_pending_copy::TryPreparePendingCopyAdmission(
             ZoneRuntimeTable::mutablePendingCopyAdmissionReceipt(entry),
-            key,
+            keySnapshot,
             completion);
     const ZoneRuntimeTableStatus status = MapPendingStatus(pendingStatus);
     if (pendingStatus == zone_pending_copy::PendingCopyStatus::Success)
@@ -4703,7 +4855,8 @@ ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission(
         ZoneRuntimeTable::setGenerationSetupStage(
             entry, ZoneRuntimeSetupStage::AdmissionPrepared);
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams(
@@ -4711,13 +4864,25 @@ ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
         || (entry->setupStage()
@@ -4730,7 +4895,7 @@ ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams(
     const auto streamStatus = zone_stream_ownership::TryInvalidateZoneStreams(
         &table->activeZoneStreamBinding_,
         ZoneRuntimeTable::mutableStreamGenerationReceipt(entry),
-        key);
+        keySnapshot);
     const ZoneRuntimeTableStatus status = MapStreamStatus(streamStatus);
     if (streamStatus
             == zone_stream_ownership::ZoneStreamOwnershipStatus::Success
@@ -4741,7 +4906,8 @@ ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams(
         ZoneRuntimeTable::setGenerationSetupStage(
             entry, ZoneRuntimeSetupStage::StreamsInvalidated);
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation(
@@ -4749,13 +4915,25 @@ ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
         || (entry->setupStage()
@@ -4776,7 +4954,8 @@ ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation(
         ZoneRuntimeTable::setGenerationSetupStage(
             entry, ZoneRuntimeSetupStage::AllocationEnded);
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryCommitZoneRuntimeGeneration(
@@ -4784,13 +4963,25 @@ ZoneRuntimeTableStatus TryCommitZoneRuntimeGeneration(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->executionMode() == ZoneRuntimeExecutionMode::Live)
         return ZoneRuntimeTableStatus::Success;
@@ -4824,7 +5015,8 @@ ZoneRuntimeTableStatus TryCommitZoneRuntimeGeneration(
         ZoneRuntimeTable::setGenerationExecutionMode(
             entry, ZoneRuntimeExecutionMode::Live);
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryBeginZoneRuntimeGenerationAbandonment(
@@ -4832,13 +5024,25 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeGenerationAbandonment(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->generationBindingPristine()
         || (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
@@ -4868,9 +5072,10 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeGenerationAbandonment(
     {
         status = MapLifecycleStatus(
             zone_load::TryBeginZoneLoadContextAbandonment(
-                &entry->lifecycle_, key));
+                &entry->lifecycle_, keySnapshot));
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryContinueZoneRuntimeGenerationAbandonment(
@@ -4878,13 +5083,25 @@ ZoneRuntimeTableStatus TryContinueZoneRuntimeGenerationAbandonment(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->executionMode() == ZoneRuntimeExecutionMode::Terminal)
     {
@@ -4958,7 +5175,7 @@ ZoneRuntimeTableStatus TryContinueZoneRuntimeGenerationAbandonment(
         {
             status = MapLifecycleStatus(
                 zone_load::TryBeginZoneLoadContextAbandonment(
-                    &entry->lifecycle_, key));
+                    &entry->lifecycle_, keySnapshot));
         }
         else
         {
@@ -4974,7 +5191,7 @@ ZoneRuntimeTableStatus TryContinueZoneRuntimeGenerationAbandonment(
             };
             status = MapLifecycleStatus(
                 zone_load::TryFinishZoneLoadContextAbandonment(
-                    &entry->lifecycle_, key, callbacks));
+                    &entry->lifecycle_, keySnapshot, callbacks));
         }
         if (status == ZoneRuntimeTableStatus::Success
             && entry->lifecycle_.phase()
@@ -4984,7 +5201,8 @@ ZoneRuntimeTableStatus TryContinueZoneRuntimeGenerationAbandonment(
                 entry, ZoneRuntimeExecutionMode::Terminal);
         }
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
@@ -4992,13 +5210,25 @@ ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     if (entry->executionMode() == ZoneRuntimeExecutionMode::Terminal)
     {
@@ -5032,7 +5262,7 @@ ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
         TryUnloadLiveZoneScriptStringOwnership(
             &entry->scriptStringOwnership_,
             &entry->lifecycle_,
-            key,
+            keySnapshot,
             callbacks);
     const ZoneRuntimeTableStatus status =
         MapLiveUnloadOwnershipStatus(ownershipStatus);
@@ -5043,7 +5273,8 @@ ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
         ZoneRuntimeTable::setGenerationExecutionMode(
             entry, ZoneRuntimeExecutionMode::Terminal);
     }
-    return table->completeCompositeOperation(physicalSlot, key, status);
+    return table->completeCompositeOperation(
+        physicalSlot, keySnapshot, status);
 }
 
 ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopyDrain(
@@ -5210,6 +5441,8 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership(
     const std::uint32_t expectedCount) noexcept
 {
     if (!table || !journal
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))
         || reinterpret_cast<std::uintptr_t>(journal)
                 % alignof(script_string_journal::ScriptStringJournal)
             != 0
@@ -5251,11 +5484,21 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership(
             return ZoneRuntimeTableStatus::InvalidArgument;
         }
     }
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     const bool composite = !entry->generationBindingPristine();
     if (composite)
@@ -5281,7 +5524,7 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership(
         TryBeginZoneScriptStringOwnership(
             ZoneRuntimeTable::mutableScriptStringOwnership(entry),
             ZoneRuntimeTable::mutableLifecycle(entry),
-            key,
+            keySnapshot,
             journal,
             storage,
             storageCapacity,
@@ -5301,7 +5544,7 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership(
             entry, ZoneRuntimeSetupStage::ScriptStringsBegun);
     }
     return table->completeMutableOperation(
-        physicalSlot, key, ownershipStatus);
+        physicalSlot, keySnapshot, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
@@ -5312,6 +5555,10 @@ ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
     std::uint32_t *const outStringId) noexcept
 {
     if (!ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey))
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
             &source,
             sizeof(source),
             alignof(script_string_adapter::ScriptStringSourceView))
@@ -5328,6 +5575,10 @@ ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
+    // Snapshot before a lower callback can mutate caller-owned input. The
+    // authenticated placement-span gate below separately rejects aliases into
+    // the already-live journal and its full retained entry capacity.
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     const script_string_adapter::ScriptStringSourceView sourceSnapshot =
         source;
     if (sourceSnapshot.bytes && sourceSnapshot.byteCount != 0
@@ -5338,10 +5589,21 @@ ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
     }
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
-    if (!WritableOutputIsSeparatedFromRetainedRuntime(
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey))
+        || !ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            outStringId,
+            sizeof(*outStringId),
+            alignof(std::uint32_t))
+        || !WritableOutputIsSeparatedFromRetainedRuntime(
             table->activeZoneStreamBinding_,
             static_cast<SharedState>(table->sharedState_),
             outStringId,
@@ -5367,7 +5629,7 @@ ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
             &candidate);
     const ZoneRuntimeTableStatus status =
         table->completeMutableOperation(
-            physicalSlot, key, ownershipStatus);
+            physicalSlot, keySnapshot, ownershipStatus);
     if (status == ZoneRuntimeTableStatus::Success)
         *outStringId = candidate;
     return status;
@@ -5378,13 +5640,25 @@ ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
     if (!entry->generationBindingPristine()
         && (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
             || entry->setupStage()
@@ -5396,7 +5670,7 @@ ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings(
         TrySealZoneScriptStrings(
             ZoneRuntimeTable::mutableScriptStringOwnership(entry));
     return table->completeMutableOperation(
-        physicalSlot, key, ownershipStatus);
+        physicalSlot, keySnapshot, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringTransfer(
@@ -5404,13 +5678,25 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringTransfer(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
     if (!entry->generationBindingPristine()
         && (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
             || entry->setupStage()
@@ -5422,7 +5708,7 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringTransfer(
         TryBeginZoneScriptStringTransfer(
             ZoneRuntimeTable::mutableScriptStringOwnership(entry));
     return table->completeMutableOperation(
-        physicalSlot, key, ownershipStatus);
+        physicalSlot, keySnapshot, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryTransferNextZoneRuntimeScriptString(
@@ -5430,13 +5716,25 @@ ZoneRuntimeTableStatus TryTransferNextZoneRuntimeScriptString(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
     if (!entry->generationBindingPristine()
         && (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
             || entry->setupStage()
@@ -5448,7 +5746,7 @@ ZoneRuntimeTableStatus TryTransferNextZoneRuntimeScriptString(
         TryTransferNextZoneScriptString(
             ZoneRuntimeTable::mutableScriptStringOwnership(entry));
     return table->completeMutableOperation(
-        physicalSlot, key, ownershipStatus);
+        physicalSlot, keySnapshot, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryPrepareZoneRuntimeScriptStringCommit(
@@ -5456,13 +5754,25 @@ ZoneRuntimeTableStatus TryPrepareZoneRuntimeScriptStringCommit(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
     if (!entry->generationBindingPristine()
         && (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
             || entry->setupStage()
@@ -5474,7 +5784,7 @@ ZoneRuntimeTableStatus TryPrepareZoneRuntimeScriptStringCommit(
         TryPrepareZoneScriptStringCommit(
             ZoneRuntimeTable::mutableScriptStringOwnership(entry));
     return table->completeMutableOperation(
-        physicalSlot, key, ownershipStatus);
+        physicalSlot, keySnapshot, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit(
@@ -5484,7 +5794,9 @@ ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit(
     const zone_script_string_ownership::
         ZoneScriptStringAdmissionCallback &admission) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
 #ifndef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
     static_cast<void>(physicalSlot);
@@ -5494,6 +5806,7 @@ ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit(
 #else
     if (ZoneRuntimeTable::ownsStableCallbackBank(table))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     if (!AddressRangesAreDisjoint(
             table, sizeof(*table), &admission, sizeof(admission))
         || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
@@ -5517,9 +5830,18 @@ ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit(
         return callbackContextStatus;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
     if (!entry->generationBindingPristine())
         return ZoneRuntimeTableStatus::InvalidPhase;
     const auto ownershipStatus = zone_script_string_ownership::
@@ -5527,7 +5849,7 @@ ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit(
             ZoneRuntimeTable::mutableScriptStringOwnership(entry),
             admissionSnapshot);
     return table->completeMutableOperation(
-        physicalSlot, key, ownershipStatus);
+        physicalSlot, keySnapshot, ownershipStatus);
 #endif
 }
 
@@ -5538,7 +5860,9 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback(
     const zone_script_string_ownership::
         ZoneScriptStringRollbackCallbacks &callbacks) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
 #ifndef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
     static_cast<void>(physicalSlot);
@@ -5548,6 +5872,7 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback(
 #else
     if (ZoneRuntimeTable::ownsStableCallbackBank(table))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     if (!AddressRangesAreDisjoint(
             table, sizeof(*table), &callbacks, sizeof(callbacks))
         || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
@@ -5571,9 +5896,18 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback(
         return callbackContextStatus;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
     if (!entry->generationBindingPristine())
         return ZoneRuntimeTableStatus::InvalidPhase;
     const auto ownershipStatus = zone_script_string_ownership::
@@ -5581,7 +5915,7 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback(
             ZoneRuntimeTable::mutableScriptStringOwnership(entry),
             callbackSnapshot);
     return table->completeMutableOperation(
-        physicalSlot, key, ownershipStatus);
+        physicalSlot, keySnapshot, ownershipStatus);
 #endif
 }
 
@@ -5590,20 +5924,32 @@ ZoneRuntimeTableStatus TryRollbackNextZoneRuntimeScriptString(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
     if (!entry->generationBindingPristine())
         return ZoneRuntimeTableStatus::InvalidPhase;
     const auto ownershipStatus = zone_script_string_ownership::
         TryRollbackNextZoneScriptString(
             ZoneRuntimeTable::mutableScriptStringOwnership(entry));
     return table->completeMutableOperation(
-        physicalSlot, key, ownershipStatus);
+        physicalSlot, keySnapshot, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryFinishZoneRuntimeScriptStringAbandonment(
@@ -5611,20 +5957,32 @@ ZoneRuntimeTableStatus TryFinishZoneRuntimeScriptStringAbandonment(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    if (!table)
+    if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
         return ZoneRuntimeTableStatus::InvalidArgument;
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(
+            physicalSlot, keySnapshot, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
     if (!entry->generationBindingPristine())
         return ZoneRuntimeTableStatus::InvalidPhase;
     const auto ownershipStatus = zone_script_string_ownership::
         TryFinishZoneScriptStringAbandonment(
             ZoneRuntimeTable::mutableScriptStringOwnership(entry));
     return table->completeMutableOperation(
-        physicalSlot, key, ownershipStatus);
+        physicalSlot, keySnapshot, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
@@ -5652,27 +6010,36 @@ ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     const auto tableStatus = table
         ? table->validateInitializedHeader()
         : ZoneRuntimeTableStatus::InvalidArgument;
     if (tableStatus != ZoneRuntimeTableStatus::Success)
         return tableStatus;
-    if (!static_cast<bool>(key))
+    if (!static_cast<bool>(keySnapshot))
         return ZoneRuntimeTableStatus::InvalidKey;
     const auto slotStatus = ValidateUsableSlot(physicalSlot);
     if (slotStatus != ZoneRuntimeTableStatus::Success)
         return slotStatus;
-    if (key.slot != physicalSlot)
+    if (keySnapshot.slot != physicalSlot)
         return ZoneRuntimeTableStatus::StaleKey;
 
     ZoneRuntimeEntry &entry = table->entries_[physicalSlot];
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactEntry(physicalSlot, key);
+        table->authenticateExactEntry(physicalSlot, keySnapshot);
     if (authentication != ZoneRuntimeTableStatus::Success)
     {
         if (authentication == ZoneRuntimeTableStatus::UnsafeFailure)
             table->poison();
         return authentication;
+    }
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            &entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
     }
     if (!entry.generationBinding_.isPristine())
         return ZoneRuntimeTableStatus::InvalidPhase;
@@ -5719,7 +6086,7 @@ ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
             TryUnloadLiveZoneScriptStringOwnership(
                 &entry.scriptStringOwnership_,
                 &entry.lifecycle_,
-                key,
+                keySnapshot,
                 callbackSnapshot);
     const ZoneRuntimeTableStatus status =
         MapLiveUnloadOwnershipStatus(ownershipStatus);
@@ -5730,7 +6097,7 @@ ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
     }
 
     const ZoneRuntimeTableStatus postAuthentication =
-        table->authenticateExactEntry(physicalSlot, key);
+        table->authenticateExactEntry(physicalSlot, keySnapshot);
     if (postAuthentication != ZoneRuntimeTableStatus::Success)
     {
         table->poison();
@@ -5762,6 +6129,7 @@ ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
+    const zone_load::ZoneLoadContextKey keySnapshot = key;
     const bool stableContexts =
         ZoneRuntimeTable::ownsStableCallbackBank(table);
 #ifndef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
@@ -5773,22 +6141,30 @@ ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
         : ZoneRuntimeTableStatus::InvalidArgument;
     if (tableStatus != ZoneRuntimeTableStatus::Success)
         return tableStatus;
-    if (!static_cast<bool>(key))
+    if (!static_cast<bool>(keySnapshot))
         return ZoneRuntimeTableStatus::InvalidKey;
     const auto slotStatus = ValidateUsableSlot(physicalSlot);
     if (slotStatus != ZoneRuntimeTableStatus::Success)
         return slotStatus;
-    if (key.slot != physicalSlot)
+    if (keySnapshot.slot != physicalSlot)
         return ZoneRuntimeTableStatus::StaleKey;
 
     ZoneRuntimeEntry &entry = table->entries_[physicalSlot];
     const ZoneRuntimeTableStatus authentication =
-        table->authenticateExactEntry(physicalSlot, key);
+        table->authenticateExactEntry(physicalSlot, keySnapshot);
     if (authentication != ZoneRuntimeTableStatus::Success)
     {
         if (authentication == ZoneRuntimeTableStatus::UnsafeFailure)
             table->poison();
         return authentication;
+    }
+    if (!ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated(
+            &entry,
+            &key,
+            sizeof(key),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
     }
     if (entry.lifecycle_.phase() != zone_load::ZoneLoadContextPhase::Empty)
         return ZoneRuntimeTableStatus::InvalidPhase;
@@ -5826,7 +6202,8 @@ ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
     if (stableContexts)
     {
         const ZoneRuntimeCallbackContextBindResult contextResolution =
-            ZoneRuntimeTable::tryResolveCallbackContext(physicalSlot, key);
+            ZoneRuntimeTable::tryResolveCallbackContext(
+                physicalSlot, keySnapshot);
         if (contextResolution.status
             == ZoneRuntimeCallbackContextStatus::Busy)
         {
@@ -5840,7 +6217,7 @@ ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
         ZoneRuntimeCallbackContextStatus contextStatus =
             ZoneRuntimeTable::tryAuthenticateCallbackContext(
                 contextResolution.context,
-                key,
+                keySnapshot,
                 ZoneRuntimeCallbackContextPhase::Bound);
         if (contextStatus == ZoneRuntimeCallbackContextStatus::Busy)
             return ZoneRuntimeTableStatus::Busy;
@@ -5849,7 +6226,7 @@ ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
             contextStatus =
                 ZoneRuntimeTable::tryAuthenticateCallbackContext(
                     contextResolution.context,
-                    key,
+                    keySnapshot,
                     ZoneRuntimeCallbackContextPhase::Terminal);
             if (contextStatus == ZoneRuntimeCallbackContextStatus::Busy)
                 return ZoneRuntimeTableStatus::Busy;
@@ -5881,7 +6258,8 @@ ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
                 ? pending->phase()
                 : zone_pending_copy::PendingCopyAdmissionPhase::
                     UnsafeFailure;
-            if (!pending || !pending->canonical() || pending->key() != key
+            if (!pending || !pending->canonical()
+                || pending->key() != keySnapshot
                 || pending->lifecycle() != &entry.lifecycle_
                 || (pendingPhase
                         != zone_pending_copy::
@@ -5901,7 +6279,7 @@ ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
         // any divergence is an invariant failure and poisons the table.
         contextStatus = ZoneRuntimeTable::tryAdvanceCallbackContext(
             contextResolution.context,
-            key,
+            keySnapshot,
             ZoneRuntimeCallbackContextPhase::Terminal);
         if (contextStatus == ZoneRuntimeCallbackContextStatus::Busy)
             return ZoneRuntimeTableStatus::Busy;
@@ -5917,7 +6295,7 @@ ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
             TryResetTerminalZoneScriptStringOwnership(
                 &entry.scriptStringOwnership_,
                 &entry.lifecycle_,
-                key,
+                keySnapshot,
                 terminalKind);
     if (ownershipStatus
         != zone_script_string_ownership::
@@ -5934,7 +6312,7 @@ ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
             zone_pending_copy::TryResetPendingCopyAdmissionReceipt(
                 ZoneRuntimeTable::mutablePendingCopyAdmissionReceipt(
                     &entry),
-                key);
+                keySnapshot);
         if (pendingStatus != zone_pending_copy::PendingCopyStatus::Success
             && pendingStatus
                 != zone_pending_copy::PendingCopyStatus::AlreadyComplete)
@@ -5956,8 +6334,9 @@ ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
             != zone_load::ZoneLoadContextPhase::Empty
         || entry.lifecycle_.terminalKind() != terminalKind
         || entry.lifecycle_.slotIndex() != physicalSlot
-        || entry.lifecycle_.generation() != key.generation
-        || entry.lifecycle_.cleanupActive() || entry.key_ != key)
+        || entry.lifecycle_.generation() != keySnapshot.generation
+        || entry.lifecycle_.cleanupActive()
+        || entry.key_ != keySnapshot)
     {
         table->poison();
         return ZoneRuntimeTableStatus::UnsafeFailure;

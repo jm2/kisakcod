@@ -75,6 +75,8 @@ struct FakeBackend final
     db::zone_load::ZoneLoadContextKey corruptKey{};
     std::uint32_t corruptSlot = 0;
     bool corruptDurableKeyOnAcquire = false;
+    db::zone_load::ZoneLoadContextKey *mutateCallerKeyOnAcquire = nullptr;
+    db::zone_load::ZoneLoadContextKey callerKeyMutation{};
 };
 
 FakeBackend backend{};
@@ -96,6 +98,8 @@ AcquireResult TryAcquireOrdinaryStringOfSize(
             backend.corruptSlot,
             backend.corruptKey);
     }
+    if (backend.mutateCallerKeyOnAcquire)
+        *backend.mutateCallerKeyOnAcquire = backend.callerKeyMutation;
     return call < backend.acquireCount
         ? backend.acquire[call]
         : AcquireResult{AcquireStatus::UnsafeFailure, 0};
@@ -354,6 +358,8 @@ struct CompositeRuntimeDriver final
         ZoneScriptStringOwnershipPhase::Empty;
     ZoneScriptStringOwnershipPhase admitOwnershipPhase =
         ZoneScriptStringOwnershipPhase::Empty;
+    ZoneLoadContextKey *callerKeyToMutateDuringAdmission = nullptr;
+    ZoneLoadContextKey callerKeyMutation{};
     bool retryEnsure = false;
     bool retriedEnsure = false;
     bool attemptEnsureReentry = false;
@@ -637,6 +643,11 @@ void AdmitCompositeRuntimeLive(
             driver->admitOwnershipPhase = ownership->phase();
         driver->admitWindowWitness = SnapshotRegistryCallbackWindow(
             driver->table, driver->key);
+        if (driver->callerKeyToMutateDuringAdmission)
+        {
+            *driver->callerKeyToMutateDuringAdmission =
+                driver->callerKeyMutation;
+        }
     }
 }
 
@@ -2530,6 +2541,87 @@ void TestPassiveCallbackAliasPreflight()
     }
 }
 
+void TestMutableKeySnapshotAndPlacementIsolation()
+{
+    ResetBackend();
+    MutableRuntimeFixture fixture{};
+    CHECK(fixture.claim(18));
+    CHECK(fixture.begin(2, 1) == ZoneRuntimeTableStatus::Success);
+    const ZoneLoadContextKey savedKey = fixture.key;
+    CHECK(fixture.journal.key() == savedKey);
+    CHECK(fixture.journal.entryCount() == 0);
+
+    std::uint32_t output = UINT32_C(0xA55AA55A);
+    CHECK(TryStageZoneRuntimeScriptString(
+        &fixture.table,
+        fixture.physicalSlot,
+        fixture.journal.key(),
+        {"journal-key\0", 12, 1},
+        &output) == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(output == UINT32_C(0xA55AA55A));
+
+    auto *const journalKeyOutput = const_cast<std::uint32_t *>(
+        &fixture.journal.key().slot);
+    CHECK(TryStageZoneRuntimeScriptString(
+        &fixture.table,
+        fixture.physicalSlot,
+        fixture.key,
+        {"journal-output\0", 15, 1},
+        journalKeyOutput) == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(fixture.journal.key() == savedKey);
+
+    CHECK(fixture.storage[1].stringId == 0);
+    CHECK(TryStageZoneRuntimeScriptString(
+        &fixture.table,
+        fixture.physicalSlot,
+        fixture.key,
+        {"capacity-output\0", 16, 1},
+        &fixture.storage[1].stringId)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(fixture.storage[1].stringId == 0);
+    CHECK(runtime_table_backend::backend.acquireCalls == 0);
+    CHECK(fixture.journal.entryCount() == 0);
+    CHECK(fixture.table.initialized());
+
+    runtime_table_backend::backend.mutateCallerKeyOnAcquire = &fixture.key;
+    runtime_table_backend::backend.callerKeyMutation = savedKey;
+    ++runtime_table_backend::backend.callerKeyMutation.generation;
+    PushAcquire(script_string::AcquireStatus::Acquired, 31337);
+    output = 0;
+    CHECK(TryStageZoneRuntimeScriptString(
+        &fixture.table,
+        fixture.physicalSlot,
+        fixture.key,
+        {"snapshot\0", 9, 1},
+        &output) == ZoneRuntimeTableStatus::Success);
+    CHECK(output == 31337);
+    CHECK(fixture.key
+        == runtime_table_backend::backend.callerKeyMutation);
+    CHECK(fixture.journal.key() == savedKey);
+    CHECK(fixture.journal.entryCount() == 1);
+    CHECK(fixture.table.initialized());
+
+    fixture.key = savedKey;
+    runtime_table_backend::backend.mutateCallerKeyOnAcquire = nullptr;
+    MutableRollbackDriver driver{&fixture.table, savedKey};
+    CHECK(TryBeginZoneRuntimeScriptStringRollback(
+        &fixture.table,
+        fixture.physicalSlot,
+        savedKey,
+        MakeMutableRollbackCallbacks(&driver))
+        == ZoneRuntimeTableStatus::Success);
+    PushOrdinary(script_string::ReleaseStatus::Success);
+    CHECK(TryRollbackNextZoneRuntimeScriptString(
+        &fixture.table, fixture.physicalSlot, savedKey)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryFinishZoneRuntimeScriptStringAbandonment(
+        &fixture.table, fixture.physicalSlot, savedKey)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryResetZoneRuntimeTerminalReceipt(
+        &fixture.table, fixture.physicalSlot, savedKey)
+        == ZoneRuntimeTableStatus::Success);
+}
+
 void TestKeyedMutableCommitAndAuthentication()
 {
     ResetBackend();
@@ -3887,9 +3979,17 @@ void TestCompositeRuntimeLiveUnloadResetAndReuse()
     CHECK(TryEndZoneRuntimePhysicalAllocation(
         table.get(), physicalSlot, key)
         == ZoneRuntimeTableStatus::Success);
+    const ZoneLoadContextKey commitKey = key;
+    driver.callerKeyToMutateDuringAdmission = &key;
+    driver.callerKeyMutation = commitKey;
+    ++driver.callerKeyMutation.generation;
     CHECK(TryCommitZoneRuntimeGeneration(
         table.get(), physicalSlot, key)
         == ZoneRuntimeTableStatus::Success);
+    CHECK(key == driver.callerKeyMutation);
+    CHECK(table->initialized());
+    key = commitKey;
+    driver.callerKeyToMutateDuringAdmission = nullptr;
     CHECK(driver.pendingCompletionCalls == 1);
     CHECK(driver.admitCalls == 1);
     CHECK(driver.ensureCalls == 0);
@@ -5062,6 +5162,14 @@ void TestCompositeStageOutputAliasPreflight()
     auto *const journal = storage ? storage->scriptStringJournal() : nullptr;
     CHECK(journal != nullptr);
     CHECK(journal && journal->entryCount() == 0);
+    CHECK(journal
+        && TryBeginZoneRuntimeGenerationAbandonment(
+            fixture.table.get(),
+            fixture.physicalSlot,
+            journal->key()) == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(fixture.entry()
+        && fixture.entry()->executionMode()
+            == ZoneRuntimeExecutionMode::Loading);
 
     std::array<std::byte, sizeof(XZoneMemory)> zoneBefore{};
     std::memcpy(zoneBefore.data(), &fixture.zone, zoneBefore.size());
@@ -7026,6 +7134,7 @@ int main(const int argc, char **const argv)
     TestControllerPhaseAndSerializerMatrix();
     TestPassiveOwnershipPlacementAliasPreflight();
     TestPassiveCallbackAliasPreflight();
+    TestMutableKeySnapshotAndPlacementIsolation();
     TestKeyedMutableCommitAndAuthentication();
     TestKeyedMutableRecoverableAbandonment();
     TestLiveUnloadRetryResetReuseAndAba();

@@ -189,6 +189,28 @@ of checked boxes.
         - [x] Keep `/WX` enabled and suppress only C4702 on the direct-include
           integration target under MSVC; source/security seals pin the single
           target-scoped exception.
+        - [x] Close the independently found standalone-admission gap for
+          `ActiveNoRegistry` callbacks: an initialized table now authenticates
+          its complete callback state and returns `Busy` before the coordinator
+          can publish authority, while a canonical uninitialized table retains
+          the established standalone path through release-safety validation.
+        - [x] Add facade-unit branch/poison tests plus a macro-off callbacks-bound
+          production-chain regression with no controller transaction; prove
+          ordinary and standalone admission are both `Busy`, coordinator begin
+          is never reached, and the later exact callback borrow still succeeds.
+        - [x] Close the final caller-key TOCTOU/retained-placement class: all ten
+          script-string adapters, all fifteen keyed composite mutators, legacy
+          unload, and terminal reset now authenticate a by-value key snapshot
+          after whole-bank separation and never reread caller storage across a
+          lower mutation or external callback. Storage bind retains its reviewed
+          plan-in-slab exception by snapshotting before placement construction.
+        - [x] Reject caller keys and stage outputs that overlap either the
+          controller or generation binding's live journal and full retained
+          entry capacity. Add standards-clean journal-key, journal-output,
+          unused-capacity, acquisition-callback mutation, composite-admission
+          mutation, and composite-abandonment regressions; source/security seals
+          freeze the complete keyed-mutation snapshot surface and the one
+          storage-bind exception.
         - [ ] Pass the replacement exact-head run, resolve any real review
           finding, merge, and record post-merge evidence.
   - [ ] Convert the required registry/hash-lock helpers to checked, no-report
@@ -2350,8 +2372,26 @@ clean. PR #82 initial run **29937368617** exposed one Windows ARM64-only build
 issue: the fixture's aborting `Com_Error` seam makes two legacy
 `scr_stringlist.cpp` post-fatal returns provably unreachable, and `/WX`
 promoted C4702 to C2220. The repair keeps `/WX` and applies `/wd4702` only to
-this direct-include target, with the exception source/security sealed. The
-replacement exact-head run remains in flight. After PR #82 is cleanly merged,
+this direct-include target, with the exception source/security sealed. Runs
+**29937368617** and **29937847031** were canceled after their respective
+superseding fixes. Final audit then found that standalone registry admission
+did not explicitly authenticate an initialized table's callback marker. The
+current repair preserves pristine pre-initialization standalone use, rejects
+both `ActiveNoRegistry` and retained-transaction callback windows as `Busy`
+before coordinator enrollment, and adds facade-unit plus literal callbacks-bound
+macro-off regressions. The same audit round found a caller-key TOCTOU and
+retained-placement alias class: mutable adapters could authenticate a reference,
+mutate or destroy retained state (or cross an external callback), then reread
+that reference during post-authentication. The repair snapshots every keyed
+script-string/composite mutation boundary, gates original key/output spans
+against both controller and generation placement across full capacity, and
+preserves only storage bind's intentional pre-placement slab snapshot. Clean
+runtime regressions cover live journal/output/capacity aliases plus acquisition
+and composite-admission callback mutation without poisoning or stranded
+authority. The full incremental Debug build, native GCC **184/184** CTest tree,
+focused table/facade/integration/forgotten-Finish coverage, all affected
+source/security seals, and `git diff --check` pass locally; the new exact-head
+hosted run remains pending. After PR #82 is cleanly merged,
 the next atomic batch is the checked no-report registry/hash helper gate.
 
 - [x] **Priority 1 — Facade publication:** PR #73 landed the
@@ -2452,8 +2492,9 @@ the next atomic batch is the checked no-report registry/hash helper gate.
        Rebased checkpoints `ac652ec1`, `553786de`, `0a375c7c`, and `5cc0931a`
        pass the complete local compiler, sanitizer, architecture, source,
        security, and independent-audit matrix.
-     - [ ] Merge PR #82 after the target-scoped Windows ARM64 C4702 repair,
-       all nine hosted jobs, exact-head review, and post-merge validation pass.
+     - [ ] Merge PR #82 after the target-scoped Windows ARM64 C4702 repair and
+       explicit callbacks-bound standalone-admission gate, all nine hosted jobs,
+       exact-head review, and post-merge validation pass.
    - [ ] Introduce checked no-report registry helpers and move hash-lock ownership
      wholly under the coordinator before replacing any raw site.
    - [ ] Add the sole production legacy bridge, its sequencing/fault-injection

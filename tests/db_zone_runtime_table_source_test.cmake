@@ -584,6 +584,7 @@ foreach(_marker IN ITEMS
     "authenticateExactPendingCopyOutput("
     "pendingCopyAdmissionReceipt("
     "exactRegistryLifecycleCallbackPhaseMatches("
+    "scriptStringPlacementSpanIsSeparated("
     "completeMutableOperation("
     "mutableScriptStringOwnership("
     "TryBeginZoneRuntimeScriptStringOwnership("
@@ -904,7 +905,7 @@ require_exact_class_digest(_zone_runtime_entry_class
     4f2c0c8a116a52a6a291a8715254951e2ad25093196fcb34f706044641f87bd9
     "ZoneRuntimeEntry")
 require_exact_class_digest(_zone_runtime_table_class
-    e1d7f9dd988e3ebd02619f0e89023e6bb2f1af7eff0599389b283c79daa63072
+    ff73ea8e1fa3c0b53181b3f0a6c040914a143627e0cf0567dfe21fdd410f66cb
     "ZoneRuntimeTable")
 
 set(_external_macro_friend_invocation_fixture "${_receipt_capsule_class}")
@@ -2105,7 +2106,7 @@ require_substring_count(
 # before its first access. Exact counts make later ingress additions fail
 # closed until their bank policy is reviewed.
 require_substring_count(
-    _source "callbackContextSpanIsSeparated(" 39
+    _source "callbackContextSpanIsSeparated(" 62
     "closed whole-bank direct-table ingress/egress surface")
 foreach(_marker IN ITEMS
     "kPhysicalAllocationNamePotentialReadBytes = 63u"
@@ -2462,12 +2463,12 @@ foreach(_marker IN ITEMS
     "stableContexts && callbackSnapshot.context != nullptr"
     "CallbacksAreComplete(callbackSnapshot)"
     "StorageIsOutsideManagedMemory( table, sizeof(*table))"
-    "ZoneRuntimeTable::tryResolveCallbackContext(physicalSlot, key)"
-    "tryAuthenticateCallbackContext( contextResolution.context, key, ZoneRuntimeCallbackContextPhase::Bound)"
+    "ZoneRuntimeTable::tryResolveCallbackContext( physicalSlot, keySnapshot)"
+    "tryAuthenticateCallbackContext( contextResolution.context, keySnapshot, ZoneRuntimeCallbackContextPhase::Bound)"
     "callbackSnapshot.context = contextResolution.context;"
     "generationCallbacksMatch( entry, callbackSnapshot)"
     "entry->scriptStringOwnership_.isEmptyCanonical()"
-    "ZoneRuntimeTable::bindGeneration( table, entry, key, callbackSnapshot)")
+    "ZoneRuntimeTable::bindGeneration( table, entry, keySnapshot, callbackSnapshot)")
     require_contains(
         _generation_callback_binding "${_marker}"
         "snapshotted separated generation callback identity")
@@ -2618,7 +2619,7 @@ extract_slice(
     _legacy_admission_callback
     "legacy admission callback guard")
 foreach(_marker IN ITEMS
-    "if (!table) return ZoneRuntimeTableStatus::InvalidArgument;"
+    "if (!table || !ZoneRuntimeTable::callbackContextSpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))) return ZoneRuntimeTableStatus::InvalidArgument;"
     "if (ZoneRuntimeTable::ownsStableCallbackBank(table)) return ZoneRuntimeTableStatus::InvalidArgument;"
     "#ifndef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING static_cast<void>(physicalSlot); static_cast<void>(key); static_cast<void>(admission); return ZoneRuntimeTableStatus::InvalidArgument; #else")
     require_contains(
@@ -2668,7 +2669,7 @@ extract_slice(
     _legacy_rollback_callback
     "legacy rollback callback guard")
 foreach(_marker IN ITEMS
-    "if (!table) return ZoneRuntimeTableStatus::InvalidArgument;"
+    "if (!table || !ZoneRuntimeTable::callbackContextSpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))) return ZoneRuntimeTableStatus::InvalidArgument;"
     "if (ZoneRuntimeTable::ownsStableCallbackBank(table)) return ZoneRuntimeTableStatus::InvalidArgument;"
     "#ifndef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING static_cast<void>(physicalSlot); static_cast<void>(key); static_cast<void>(callbacks); return ZoneRuntimeTableStatus::InvalidArgument; #else")
     require_contains(
@@ -2732,14 +2733,32 @@ require_ordered(
     "stable-table rejection precedes legacy unload descriptor access")
 foreach(_marker IN ITEMS
     "AddressRangesAreDisjoint( table, sizeof(*table), &callbacks, sizeof(callbacks))"
+    "const zone_load::ZoneLoadContextKey keySnapshot = key;"
+    "table->authenticateExactEntry(physicalSlot, keySnapshot)"
+    "scriptStringPlacementSpanIsSeparated( &entry, &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
     "ZoneLoadCleanupCallbacks callbackSnapshot = callbacks;"
     "AuthenticateRetainedLegacyCallbackContext( table, callbackSnapshot.context)"
     "if (callbackContextStatus != ZoneRuntimeTableStatus::Success) return callbackContextStatus;"
-    "TryUnloadLiveZoneScriptStringOwnership( &entry.scriptStringOwnership_, &entry.lifecycle_, key, callbackSnapshot)")
+    "TryUnloadLiveZoneScriptStringOwnership( &entry.scriptStringOwnership_, &entry.lifecycle_, keySnapshot, callbackSnapshot)")
     require_contains(
         _legacy_unload_callback "${_marker}"
         "snapshotted separated legacy unload callback")
 endforeach()
+require_ordered(
+    _legacy_unload_callback
+    "callbackContextSpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+    "const zone_load::ZoneLoadContextKey keySnapshot = key;"
+    "legacy unload key bank guard before snapshot")
+require_ordered(
+    _legacy_unload_callback
+    "table->authenticateExactEntry(physicalSlot, keySnapshot)"
+    "scriptStringPlacementSpanIsSeparated("
+    "legacy unload exact authentication before placement inspection")
+require_ordered(
+    _legacy_unload_callback
+    "scriptStringPlacementSpanIsSeparated("
+    "TryUnloadLiveZoneScriptStringOwnership("
+    "legacy unload placement guard before lower mutation")
 require_ordered(
     _legacy_unload_callback
     "if (phase != OwnershipPhase::Live"
@@ -2924,6 +2943,39 @@ require_ordered(
 # remains local until successful post-authentication.
 extract_slice(
     _source
+    "bool ZoneRuntimeTable::scriptStringPlacementSpanIsSeparated("
+    "bool ZoneRuntimeTable::exactRegistryLifecycleCallbackPhaseMatches("
+    _script_string_placement_separation
+    "retained script-string placement separation")
+foreach(_marker IN ITEMS
+    "storageSize == 0 || storageAlignment == 0"
+    "reinterpret_cast<std::uintptr_t>(storage) % storageAlignment != 0"
+    "const auto &ownership = entry->scriptStringOwnership_;"
+    "ownership.placementJournal_"
+    "ownership.placementStorage_"
+    "ownership.placementCapacity_"
+    "const auto &binding = entry->generationBinding_;"
+    "binding.placementJournal_"
+    "binding.placementEntries_"
+    "binding.placementCapacity_"
+    "(std::numeric_limits<std::size_t>::max)() / sizeof(*entries)"
+    "static_cast<std::size_t>(capacity) * sizeof(*entries)")
+    require_contains(
+        _script_string_placement_separation "${_marker}"
+        "journal and full-capacity placement isolation")
+endforeach()
+require_substring_count(
+    _script_string_placement_separation
+    "placementIsSeparated(" 2
+    "controller and generation placement use one checked predicate")
+require_ordered(
+    _script_string_placement_separation
+    "ownership.placementCapacity_)"
+    "binding.placementJournal_"
+    "controller and generation placement must both be isolated")
+
+extract_slice(
+    _source
     "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership("
     "ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration("
     _mutable_adapters
@@ -2964,6 +3016,41 @@ function(require_mutable_adapter START END MUTATION DESCRIPTION)
         "authenticateExactMutableEntry("
         "${MUTATION}"
         "${DESCRIPTION} pre-authentication")
+    require_contains(
+        _adapter
+        "callbackContextSpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+        "${DESCRIPTION} caller key bank separation")
+    require_substring_count(
+        _adapter
+        "const zone_load::ZoneLoadContextKey keySnapshot = key;" 1
+        "${DESCRIPTION} single caller key snapshot")
+    require_contains(
+        _adapter
+        "authenticateExactMutableEntry( physicalSlot, keySnapshot, &entry)"
+        "${DESCRIPTION} snapshot authentication")
+    require_contains(
+        _adapter
+        "scriptStringPlacementSpanIsSeparated( entry, &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+        "${DESCRIPTION} retained placement separation")
+    require_contains(
+        _adapter
+        "completeMutableOperation( physicalSlot, keySnapshot, ownershipStatus)"
+        "${DESCRIPTION} snapshot post-authentication")
+    require_ordered(
+        _adapter
+        "callbackContextSpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+        "const zone_load::ZoneLoadContextKey keySnapshot = key;"
+        "${DESCRIPTION} bank guard before caller key snapshot")
+    require_ordered(
+        _adapter
+        "const zone_load::ZoneLoadContextKey keySnapshot = key;"
+        "authenticateExactMutableEntry("
+        "${DESCRIPTION} snapshot before table authentication")
+    require_ordered(
+        _adapter
+        "scriptStringPlacementSpanIsSeparated("
+        "${MUTATION}"
+        "${DESCRIPTION} retained placement guard before mutation")
     require_ordered(
         _adapter
         "${MUTATION}"
@@ -3024,10 +3111,170 @@ require_mutable_adapter(
 
 extract_slice(
     _source
+    "ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopyDrain("
+    _keyed_composite_mutation_surface
+    "keyed composite mutation surface")
+require_substring_count(
+    _keyed_composite_mutation_surface
+    "const zone_load::ZoneLoadContextKey keySnapshot = key;" 15
+    "every keyed composite mutator snapshots caller state")
+require_substring_count(
+    _keyed_composite_mutation_surface
+    "physicalSlot, keySnapshot, &entry);" 15
+    "every keyed composite mutator authenticates its snapshot")
+require_substring_count(
+    _keyed_composite_mutation_surface
+    "scriptStringPlacementSpanIsSeparated(" 14
+    "every post-placement composite mutator rejects retained aliases")
+require_not_contains(
+    _keyed_composite_mutation_surface
+    "physicalSlot, key, &entry);"
+    "keyed composite mutator cannot authenticate caller storage directly")
+require_not_contains(
+    _keyed_composite_mutation_surface
+    "completeCompositeOperation( physicalSlot, key,"
+    "keyed composite mutator cannot post-authenticate caller storage")
+require_not_contains(
+    _keyed_composite_mutation_surface
+    "completeCompositeOperation(physicalSlot, key,"
+    "single-line composite post-authentication cannot use caller storage")
+
+function(require_keyed_composite_snapshot START END MUTATION DESCRIPTION)
+    extract_slice(
+        _source "${START}" "${END}" _adapter
+        "${DESCRIPTION} adapter")
+    require_contains(
+        _adapter
+        "callbackContextSpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+        "${DESCRIPTION} caller key bank separation")
+    require_substring_count(
+        _adapter
+        "const zone_load::ZoneLoadContextKey keySnapshot = key;" 1
+        "${DESCRIPTION} single caller key snapshot")
+    require_contains(
+        _adapter
+        "authenticateExactMutableEntry( physicalSlot, keySnapshot, &entry)"
+        "${DESCRIPTION} snapshot authentication")
+    require_contains(
+        _adapter
+        "scriptStringPlacementSpanIsSeparated( entry, &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+        "${DESCRIPTION} retained placement separation")
+    require_contains(
+        _adapter
+        "completeCompositeOperation("
+        "${DESCRIPTION} post-authentication")
+    require_ordered(
+        _adapter
+        "callbackContextSpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+        "const zone_load::ZoneLoadContextKey keySnapshot = key;"
+        "${DESCRIPTION} bank guard before snapshot")
+    require_ordered(
+        _adapter
+        "scriptStringPlacementSpanIsSeparated("
+        "${MUTATION}"
+        "${DESCRIPTION} placement guard before mutation")
+endfunction()
+
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimePhysicalAllocation("
+    "ZoneRuntimeTable::bindGeneration("
+    "generation callback binding")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimePhysicalAllocation("
+    "ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory("
+    "pmem_runtime::TryBeginAllocationReceipt("
+    "physical allocation begin")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory("
+    "ZoneRuntimeTableStatus TryBindZoneRuntimeStorage("
+    "pmem_runtime::TryAllocate("
+    "physical memory allocation")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeStreamGeneration("
+    "ZoneRuntimeTableStatus TryBindZoneRuntimeStreams("
+    "TryBeginZoneStreamGeneration("
+    "stream generation begin")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryBindZoneRuntimeStreams("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies("
+    "TryBindZoneStreams("
+    "stream generation bind")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies("
+    "ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy("
+    "TryBeginPendingCopyAdmission("
+    "pending-copy admission begin")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy("
+    "ZoneRuntimeTableStatus TryGetZoneRuntimePendingCopyView("
+    "TryAppendPendingCopyRecord("
+    "pending-copy record append")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission("
+    "ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams("
+    "TryPreparePendingCopyAdmission("
+    "pending-copy admission prepare")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams("
+    "ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation("
+    "TryInvalidateZoneStreams("
+    "stream invalidation")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation("
+    "ZoneRuntimeTableStatus TryCommitZoneRuntimeGeneration("
+    "pmem_runtime::TryEndAllocationReceipt("
+    "physical allocation end")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryCommitZoneRuntimeGeneration("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeGenerationAbandonment("
+    "TryCommitZoneScriptStringsAndAdmit("
+    "composite generation commit")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeGenerationAbandonment("
+    "ZoneRuntimeTableStatus TryContinueZoneRuntimeGenerationAbandonment("
+    "ZoneRuntimeTable::setGenerationExecutionMode( entry, ZoneRuntimeExecutionMode::Abandoning)"
+    "composite abandonment begin")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryContinueZoneRuntimeGenerationAbandonment("
+    "ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration("
+    "ZoneRuntimeTableStatus status = ZoneRuntimeTableStatus::InvalidPhase;"
+    "composite abandonment continuation")
+require_keyed_composite_snapshot(
+    "ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopyDrain("
+    "TryUnloadLiveZoneScriptStringOwnership("
+    "composite generation unload")
+
+extract_slice(
+    _source
     "ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString("
     "ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings("
     _stage_adapter
     "failure-atomic keyed stage adapter")
+require_substring_count(
+    _stage_adapter
+    "scriptStringPlacementSpanIsSeparated(" 2
+    "stage isolates caller key and output from retained placement")
+foreach(_marker IN ITEMS
+    "scriptStringPlacementSpanIsSeparated( entry, &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+    "scriptStringPlacementSpanIsSeparated( entry, outStringId, sizeof(*outStringId), alignof(std::uint32_t))"
+    "WritableOutputIsSeparatedFromRetainedRuntime(")
+    require_contains(
+        _stage_adapter "${_marker}"
+        "stage retained key and output isolation")
+endforeach()
+require_ordered(
+    _stage_adapter
+    "authenticateExactMutableEntry("
+    "scriptStringPlacementSpanIsSeparated("
+    "exact entry authentication before placement inspection")
+require_ordered(
+    _stage_adapter
+    "scriptStringPlacementSpanIsSeparated( entry, outStringId"
+    "TryStageZoneScriptString("
+    "retained output rejection before acquisition and journal mutation")
 require_ordered(
     _stage_adapter
     "std::uint32_t candidate = 0;"
@@ -3109,7 +3356,9 @@ extract_slice(
     _unload
     "keyed live unload")
 foreach(_marker IN ITEMS
-    "table->authenticateExactEntry(physicalSlot, key)"
+    "const zone_load::ZoneLoadContextKey keySnapshot = key;"
+    "table->authenticateExactEntry(physicalSlot, keySnapshot)"
+    "scriptStringPlacementSpanIsSeparated( &entry, &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
     "TryUnloadLiveZoneScriptStringOwnership("
     "MapLiveUnloadOwnershipStatus(ownershipStatus)"
     "OwnershipPhase::Unloaded"
@@ -3119,9 +3368,14 @@ foreach(_marker IN ITEMS
 endforeach()
 require_ordered(
     _unload
-    "table->authenticateExactEntry(physicalSlot, key)"
+    "table->authenticateExactEntry(physicalSlot, keySnapshot)"
+    "scriptStringPlacementSpanIsSeparated("
+    "exact key authentication before retained placement inspection")
+require_ordered(
+    _unload
+    "scriptStringPlacementSpanIsSeparated("
     "TryUnloadLiveZoneScriptStringOwnership("
-    "exact key authentication before unload mutation")
+    "retained placement rejection before unload mutation")
 require_ordered(
     _unload
     "TryUnloadLiveZoneScriptStringOwnership("
@@ -3135,7 +3389,9 @@ extract_slice(
     _terminal_reset
     "keyed terminal reset")
 foreach(_marker IN ITEMS
-    "table->authenticateExactEntry(physicalSlot, key)"
+    "const zone_load::ZoneLoadContextKey keySnapshot = key;"
+    "table->authenticateExactEntry(physicalSlot, keySnapshot)"
+    "scriptStringPlacementSpanIsSeparated( &entry, &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
     "entry.lifecycle_.phase() != zone_load::ZoneLoadContextPhase::Empty"
     "entry.lifecycle_.terminalKind()"
     "OwnershipPhase::Abandoned"
@@ -3143,19 +3399,63 @@ foreach(_marker IN ITEMS
     "TryResetTerminalZoneScriptStringOwnership("
     "entry.scriptStringOwnership_.isEmptyCanonical()"
     "entry.lifecycle_.terminalKind() != terminalKind"
-    "entry.key_ != key")
+    "entry.key_ != keySnapshot")
     require_contains(
         _terminal_reset "${_marker}" "exact receipt-preserving reset")
 endforeach()
 require_ordered(
     _terminal_reset
-    "table->authenticateExactEntry(physicalSlot, key)"
+    "table->authenticateExactEntry(physicalSlot, keySnapshot)"
+    "scriptStringPlacementSpanIsSeparated("
+    "terminal reset authenticates exact key before placement inspection")
+require_ordered(
+    _terminal_reset
+    "scriptStringPlacementSpanIsSeparated("
     "TryResetTerminalZoneScriptStringOwnership("
-    "exact key and receipt authentication before reset")
+    "retained placement rejection before terminal reset")
 require_not_contains(
     _terminal_reset
     "entry.key_ = {}"
     "terminal reset cannot erase ABA evidence")
+
+extract_slice(
+    _fixture
+    "void TestMutableKeySnapshotAndPlacementIsolation()"
+    "void TestKeyedMutableCommitAndAuthentication()"
+    _mutable_key_isolation_fixture
+    "mutable key snapshot and placement isolation regression")
+foreach(_marker IN ITEMS
+    "fixture.journal.key(), {\"journal-key\\0\", 12, 1}, &output) == ZoneRuntimeTableStatus::InvalidArgument"
+    "&fixture.journal.key().slot"
+    "&fixture.storage[1].stringId"
+    "runtime_table_backend::backend.acquireCalls == 0"
+    "runtime_table_backend::backend.mutateCallerKeyOnAcquire = &fixture.key;"
+    "runtime_table_backend::backend.callerKeyMutation = savedKey;"
+    "TryStageZoneRuntimeScriptString( &fixture.table, fixture.physicalSlot, fixture.key, {\"snapshot\\0\", 9, 1}, &output) == ZoneRuntimeTableStatus::Success"
+    "fixture.journal.key() == savedKey"
+    "fixture.journal.entryCount() == 1"
+    "fixture.table.initialized()"
+    "fixture.key = savedKey;"
+    "TryResetZoneRuntimeTerminalReceipt(")
+    require_contains(
+        _mutable_key_isolation_fixture "${_marker}"
+        "live retained placement and caller mutation coverage")
+endforeach()
+require_ordered(
+    _mutable_key_isolation_fixture
+    "&fixture.storage[1].stringId"
+    "runtime_table_backend::backend.acquireCalls == 0"
+    "full-capacity rejection occurs before any backend acquisition")
+require_ordered(
+    _mutable_key_isolation_fixture
+    "mutateCallerKeyOnAcquire = &fixture.key;"
+    "{\"snapshot\\0\", 9, 1}, &output) == ZoneRuntimeTableStatus::Success"
+    "caller mutation hook arms before successful snapshotted stage")
+require_ordered(
+    _mutable_key_isolation_fixture
+    "fixture.key = savedKey;"
+    "TryBeginZoneRuntimeScriptStringRollback("
+    "saved key restores only for exact cleanup")
 
 # DB_Init initializes the table before mutating the legacy asset pools and uses
 # the established fatal initialization boundary.  The load, stream, and asset
@@ -3233,6 +3533,7 @@ foreach(_marker IN ITEMS
     "void TestPartialInitializationAndCorruptionFailClosed()"
     "void TestHiddenCorruptionAndCleanupReentryFailClosed()"
     "void TestControllerPhaseAndSerializerMatrix()"
+    "void TestMutableKeySnapshotAndPlacementIsolation()"
     "void TestKeyedMutableCommitAndAuthentication()"
     "void TestKeyedMutableRecoverableAbandonment()"
     "void TestUnsafeMutableBoundary(const bool corruptPostcondition)"
@@ -3364,6 +3665,13 @@ extract_slice(
     _registry_admission_unload_fixture
     "admission and unload callback registry authorization fixture")
 foreach(_marker IN ITEMS
+    "const ZoneLoadContextKey commitKey = key;"
+    "driver.callerKeyToMutateDuringAdmission = &key;"
+    "driver.callerKeyMutation = commitKey;"
+    "CHECK(key == driver.callerKeyMutation);"
+    "CHECK(table->initialized());"
+    "key = commitKey;"
+    "driver.callerKeyToMutateDuringAdmission = nullptr;"
     "pendingRegistryAuthentication == ZoneRuntimeTableStatus::Success"
     "pendingRegistryReauthentication == ZoneRuntimeTableStatus::Busy"
     "pendingOwnershipPhase == ZoneScriptStringOwnershipPhase::Admitting"
@@ -3377,6 +3685,35 @@ foreach(_marker IN ITEMS
         _registry_admission_unload_fixture "${_marker}"
         "real admission and unload callback phase authorization")
 endforeach()
+require_ordered(
+    _registry_admission_unload_fixture
+    "driver.callerKeyToMutateDuringAdmission = &key;"
+    "TryCommitZoneRuntimeGeneration("
+    "admission callback caller-key mutation arms before commit")
+require_ordered(
+    _registry_admission_unload_fixture
+    "CHECK(key == driver.callerKeyMutation);"
+    "key = commitKey;"
+    "commit succeeds against snapshot before caller key restoration")
+
+extract_slice(
+    _fixture
+    "void AdmitCompositeRuntimeLive("
+    "ZoneRuntimeGenerationCallbacks MakeCompositeRuntimeCallbacks("
+    _composite_admission_caller_mutation
+    "composite admission caller-key mutation callback")
+foreach(_marker IN ITEMS
+    "if (driver->callerKeyToMutateDuringAdmission)"
+    "*driver->callerKeyToMutateDuringAdmission = driver->callerKeyMutation;")
+    require_contains(
+        _composite_admission_caller_mutation "${_marker}"
+        "admission callback mutates only the external caller key")
+endforeach()
+require_ordered(
+    _composite_admission_caller_mutation
+    "driver->admitWindowWitness = SnapshotRegistryCallbackWindow("
+    "*driver->callerKeyToMutateDuringAdmission ="
+    "callback authenticates its retained key before external mutation")
 
 extract_slice(
     _fixture
@@ -3637,6 +3974,70 @@ foreach(_forbidden_fake_registry IN ITEMS
         "full-chain fixture cannot substitute a fake registry authority")
 endforeach()
 
+# A callbacks-bound generation has no script-string controller transaction.
+# Its exact external callback is therefore ActiveNoRegistry and must still
+# reject both ordinary and standalone registry admission at the table/facade
+# boundary. The conditional Finish keeps a pre-fix fixture process recoverable
+# while the post-callback assertion proves that branch was never reached.
+extract_slice(
+    _stable_integration_fixture
+    "ZoneScriptStringUnpublishStatus EnsureNoRegistryCallbackUnreachable("
+    "ZoneLoadCleanupCallbackStatus PerformNoRegistryCleanup("
+    _stable_integration_no_registry_callback
+    "callbacks-bound no-registry admission callback")
+foreach(_marker IN ITEMS
+    "g_noRegistryCallbackProbe.ordinaryBorrow = ZoneRuntimeFacade::TryBorrowRegistryOwnership(key.slot, key);"
+    "g_noRegistryCallbackProbe.standaloneBegin = ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership();"
+    "g_noRegistryCallbackProbe.standaloneBegin == RegistryOwnershipStatus::Success"
+    "g_noRegistryCallbackProbe.unexpectedStandaloneFinish = ZoneRuntimeFacade::FinishRegistryOwnership();"
+    "g_noRegistryCallbackProbe.ordinaryBorrow == RegistryOwnershipStatus::Busy"
+    "g_noRegistryCallbackProbe.standaloneBegin == RegistryOwnershipStatus::Busy")
+    require_contains(
+        _stable_integration_no_registry_callback "${_marker}"
+        "callbacks-bound no-registry admission gate")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "TryBorrowRegistryOwnershipFromCallback("
+    "TryAddDatabaseUser4("
+    "TryAddDatabaseUsers4(")
+    require_not_contains(
+        _stable_integration_no_registry_callback "${_forbidden}"
+        "no-registry callback cannot acquire callback-specific authority")
+endforeach()
+
+extract_slice(
+    _stable_integration_fixture
+    "[[nodiscard]] bool TestNoRegistryCallbackAdmissionGate() noexcept"
+    "[[nodiscard]] bool TestStableCallbackRetryChain() noexcept"
+    _stable_integration_no_registry_test
+    "callbacks-bound no-registry admission test")
+foreach(_marker IN ITEMS
+    "ZoneRuntimeFacade::TryClaimGeneration( kNoRegistryCallbackSlot, &key)"
+    "ZoneRuntimeFacade::TryBindGenerationCallbacks( kNoRegistryCallbackSlot, key, callbacks)"
+    "ZoneRuntimeFacade::TryBeginGenerationAbandonment( kNoRegistryCallbackSlot, key)"
+    "DriveAbandonmentToTerminal(key)"
+    "g_noRegistryCallbackProbe.standaloneBegin == RegistryOwnershipStatus::Busy"
+    "g_noRegistryCallbackProbe.unexpectedStandaloneFinish == RegistryOwnershipStatus::InvalidState"
+    "ZoneRuntimeFacade::TryResetTerminalReceipt( kNoRegistryCallbackSlot, key)")
+    require_contains(
+        _stable_integration_no_registry_test "${_marker}"
+        "callbacks-bound no-registry runtime coverage")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "TryBeginScriptStringOwnership("
+    "TryBeginPendingCopies("
+    "TryBindStorage("
+    "TryBindStreams(")
+    require_not_contains(
+        _stable_integration_no_registry_test "${_forbidden}"
+        "callbacks-bound fixture must not create controller authority")
+endforeach()
+require_ordered(
+    _stable_integration_no_registry_test
+    "ZoneRuntimeFacade::TryBindGenerationCallbacks("
+    "ZoneRuntimeFacade::TryBeginGenerationAbandonment("
+    "callbacks bind before no-registry abandonment")
+
 extract_slice(
     _stable_integration_fixture
     "ZoneScriptStringUnpublishStatus EnsureGenerationUnreachable("
@@ -3646,6 +4047,10 @@ extract_slice(
 foreach(_marker IN ITEMS
     "g_callbackProbe.firstBorrow = ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( context, key);"
     "g_callbackProbe.firstBorrow == RegistryOwnershipStatus::Busy ? ZoneScriptStringUnpublishStatus::Retry"
+    "g_callbackProbe.ordinaryCallbackBorrow = ZoneRuntimeFacade::TryBorrowRegistryOwnership(key.slot, key);"
+    "g_callbackProbe.standaloneCallbackBegin = ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership();"
+    "g_callbackProbe.ordinaryCallbackBorrow != RegistryOwnershipStatus::Busy"
+    "g_callbackProbe.standaloneCallbackBegin != RegistryOwnershipStatus::Busy"
     "g_callbackProbe.retryBorrow = ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( context, key);"
     "g_callbackProbe.retryBorrow != RegistryOwnershipStatus::Success"
     "g_callbackProbe.callbackBankRegistryAlias = ZoneRuntimeFacade::TryAddDatabaseUsers4( callbackBankIds, 1, &aliasOutput);"
@@ -3696,9 +4101,13 @@ extract_slice(
 foreach(_marker IN ITEMS
     "Sys_LockWrite(&db_hashCritSect);"
     "Sys_UnlockWrite(&db_hashCritSect);"
+    "TestNoRegistryCallbackAdmissionGate()"
+    "fixture.enroll(false)"
     "firstAbandonment == ZoneRuntimeTableStatus::Retry"
     "g_callbackProbe.firstBorrow == RegistryOwnershipStatus::Busy"
     "retry == ZoneRuntimeTableStatus::Success"
+    "g_callbackProbe.ordinaryCallbackBorrow == RegistryOwnershipStatus::Busy"
+    "g_callbackProbe.standaloneCallbackBegin == RegistryOwnershipStatus::Busy"
     "g_callbackProbe.retryBorrow == RegistryOwnershipStatus::Success"
     "g_callbackProbe.callbackBankFacadeAlias == ZoneRuntimeTableStatus::InvalidArgument"
     "g_callbackProbe.callbackBankTableAlias == ZoneRuntimeTableStatus::InvalidArgument"
@@ -3711,6 +4120,11 @@ foreach(_marker IN ITEMS
         _stable_integration_retry_test "${_marker}"
         "stable integration retry, alias, terminal, and stale-key coverage")
 endforeach()
+require_ordered(
+    _stable_integration_retry_test
+    "TestNoRegistryCallbackAdmissionGate()"
+    "fixture.enroll(false)"
+    "callbacks-bound gate must precede already-initialized full-chain enrollment")
 require_ordered(
     _stable_integration_retry_test
     "Sys_LockWrite(&db_hashCritSect);"
