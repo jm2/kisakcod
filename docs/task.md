@@ -111,9 +111,27 @@ of checked boxes.
     - [x] Record that the size-less legacy ABI authenticates a one-byte identity
       anchor only; full-object-span authentication remains part of the typed
       stable-context prerequisite.
+    - [x] Pass all nine hosted jobs at exact head `60ea924a` in run
+      **29892464335**, receive a clean exact-head Codex review with zero review
+      threads, squash-merge PR #78 as `305d9026`, and pass all nine
+      authoritative post-merge jobs in run **29893501180**. Gemini's retired
+      consumer reviewer emitted sunset notices only.
   - [ ] Add stable process-lifetime contexts for all 33 physical zone slots,
     outside `XZone` and PMem, retaining exact generation identity through terminal
     reset.
+    - [ ] Add one hidden, fixed-address 33-record typed context bank separate
+      from the frozen runtime table/entry/binding layouts; keep slot zero
+      permanently reserved and expose no mutable context accessor.
+    - [ ] Couple facade claim, callback binding, and terminal reset
+      failure-atomically; retain the exact terminal key through reset and
+      advance it only with the next authenticated successful claim.
+    - [ ] Authenticate the complete typed context span, exact array member,
+      full key, slot, self/witness, table binding, and one-shot callback window
+      before and after external callback work; reject saved-descriptor replay
+      outside its exact window and reject reentry without mutation.
+    - [ ] Preserve all seven frozen raw sites and zero loader enrollment while
+      passing focused corruption/alias/retry/ABA, source/security, macro-off,
+      sanitizer, i386, and AArch64 gates.
   - [ ] Convert the required registry/hash-lock helpers to checked, no-report
     operations that cannot unlock coordinator-owned state or cross retained
     authority through `Com_Error`/`longjmp`.
@@ -1689,10 +1707,12 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   `ef74688b` implements and locally verifies the exact-key by-value pending-copy inspection prerequisite with no loader
   caller. PR #76 code/documentation head `9b0e4c5f` passed all nine jobs in run **29794474261**, final documentation head
   `9c11d7a8` passed run **29795268032**, and PR #76 merged as `1e681792`. PR #77 merged the documentation checkpoint
-  as `8e157543`, and all nine authoritative jobs passed there in run **29890463505**. Code checkpoint `0a87007e`
-  completes the readiness-aware PMem identity gate at the three retained legacy callback paths with no production
-  loader enrollment. The ancestry checkpoint records reviewed history without importing code and therefore does not
-  inflate the engineering estimate.
+  as `8e157543`, and all nine authoritative jobs passed there in run **29890463505**. PR #78 exact head `60ea924a`
+  completed the readiness-aware PMem identity gate at the three retained legacy callback paths with no production
+  loader enrollment, passed all nine jobs in run **29892464335**, received clean exact-head Codex review with zero
+  threads, squash-merged as `305d9026`, and passed all nine authoritative post-merge jobs in run **29893501180**.
+  Gemini's retired consumer reviewer emitted sunset notices only. The ancestry checkpoint records reviewed history
+  without importing code and therefore does not inflate the engineering estimate.
   Windows x86 is about
   **93%**, shared
   foundations/security about **89%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
@@ -2221,10 +2241,12 @@ Codex review was unavailable because its repository usage limit was reached.
 No production caller is enrolled. Final documentation-only head `9c11d7a8`
 passed all nine jobs in run **29795268032**; PR #76 merged as `1e681792`.
 PR #77 merged the documentation checkpoint as `8e157543`, and all nine
-authoritative jobs passed there in run **29890463505**. Code checkpoint
-`0a87007e` now completes the report-free readiness-aware PMem classifier and
-the three retained legacy callback-identity gates; the stable typed 33-slot
-contexts remain next.
+authoritative jobs passed there in run **29890463505**. PR #78 exact head
+`60ea924a` completed the report-free readiness-aware PMem classifier and the
+three retained legacy callback-identity gates, passed all nine hosted jobs in
+run **29892464335** with clean exact-head Codex review and zero threads,
+squash-merged as `305d9026`, and passed all nine authoritative post-merge jobs
+in run **29893501180**. The stable typed 33-slot contexts remain next.
 
 - [x] **Priority 1 — Facade publication:** PR #73 landed the
    production-neutral process-lifetime facade with one nonblocking outer
@@ -2299,6 +2321,9 @@ contexts remain next.
      - [x] Pass GCC **171/171**, focused Clang and ASan+UBSan, genuine
        i386/AArch64 compile-link, production/source/security, diff, and two
        independent audits at `0a87007e`.
+     - [x] Pass all nine hosted jobs at exact head `60ea924a` in run
+       **29892464335**, merge PR #78 as `305d9026`, and pass all nine
+       authoritative post-merge jobs in run **29893501180**.
    - [ ] Add stable process-lifetime contexts for all 33 physical slots outside
      PMem, retaining exact generation identity through terminal reset and
      eliminating slot-reuse/ABA ambiguity.

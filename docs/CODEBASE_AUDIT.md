@@ -19,7 +19,7 @@ the *original* inventory, not a live count of open items.
 
 ---
 
-## Remediation status (July 20, 2026)
+## Remediation status (July 22, 2026)
 
 Fixed in the initial porting implementation:
 
@@ -250,15 +250,21 @@ macro-gated by-value-helper containment plus actual macro-off object-symbol insp
 or caller. Merged PR #70 work through `792ff1c7` supplies the serialized retained extent/init/result/lifecycle core, stable
 name ownership, bounded dump snapshots, the unused permanent-Ended process-life `$init` controller, and complete passive
 table-wide resource authentication; exact final head `ca2d1149` passed all nine jobs in run **29726370638** and
-squash-merged as `6a67a66e`. PR #71 now supplies the production-neutral exact-key adapters and strict composite
-controller, replacing the passive-only pristine boundary with exact phase/key authentication while retaining zero
-production enrollment. PR #72 merged the capacity/demand prerequisite, and the current branch completes the serialized
-facade locally. Facade publication and the atomic seven-site cutover follow.
+squash-merged as `6a67a66e`. PR #71 merged the production-neutral exact-key adapters and strict composite controller,
+replacing the passive-only pristine boundary with exact phase/key authentication while retaining zero production
+enrollment. PR #72 merged the capacity/demand prerequisite, PR #73 merged the serialized facade, PR #74 merged the
+private callback-scoped registry borrow, and PRs #76/#77 merged pointer-free pending-copy inspection plus its
+documentation checkpoint. PR #78 then merged the readiness-aware PMem classifier and retained legacy callback-identity
+gates as `305d9026`; exact-head run **29892464335** and authoritative post-merge run **29893501180** passed all nine
+jobs. Stable typed contexts, the literal full-chain fixture, checked no-report helpers, and the atomic seven-site
+cutover follow.
 
 Exact-key audit follow-up status:
 
-- Open: PMem needs a readiness-aware overlap query before legacy retained callback contexts can enforce an outside-PMem
-  lifetime without treating the pre-initialization state as an overlap-query failure.
+- Resolved by PR #78 (`305d9026`): `TryClassifyStorageIsolation` distinguishes coherent pre-initialization, initializing,
+  Ready, Poisoned, invalid/protected overlap, and corrupt states under one PMem lock. Retained legacy admission,
+  rollback, and unload authenticate their size-less ABI's one-byte context identity anchor before lower mutation. Full
+  typed-object-span authentication remains assigned to the stable 33-slot context prerequisite.
 
 Resolved on the PR #71 repair head: `ActiveZoneStreamBinding::block` and
 `TryReadPendingCopyRecord` now reject misaligned, non-representable, stale-key, singleton/control, and complete
