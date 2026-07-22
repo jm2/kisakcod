@@ -11,7 +11,7 @@ criteria are complete, not merely that substantial supporting work exists.
 Percentages are engineering-effort estimates and are not derived from the number
 of checked boxes.
 
-- [ ] Complete the full five-target porting plan — approximately **82%** of the
+- [ ] Complete the full five-target porting plan — approximately **83%** of the
   currently scoped engineering effort is complete, but strict production-target
   delivery is still **0/5**.
   - [x] Preserve the Windows x86 client and dedicated-server baseline in Debug
@@ -116,12 +116,31 @@ of checked boxes.
       threads, squash-merge PR #78 as `305d9026`, and pass all nine
       authoritative post-merge jobs in run **29893501180**. Gemini's retired
       consumer reviewer emitted sunset notices only.
+    - [x] Merge the PR #79 documentation checkpoint after all nine jobs passed
+      at exact head `120ce858` in run **29894539007** with clean exact-head
+      Codex review and zero review threads; squash-merge as `33ec8378` and pass
+      all nine authoritative jobs there in run **29895420496**.
   - [ ] Add stable process-lifetime contexts for all 33 physical zone slots,
     outside `XZone` and PMem, retaining exact generation identity through terminal
     reset.
-    - [ ] Add one hidden, fixed-address 33-record typed context bank separate
+    - [x] Add one hidden, fixed-address 33-record typed context bank separate
       from the frozen runtime table/entry/binding layouts; keep slot zero
       permanently reserved and expose no mutable context accessor.
+      - [x] Implement the owner-private fixed `0x28` context, exact-member and
+        full-span PMem authentication, copied-key Bind/Resolve/Advance/
+        Authenticate/Capture operations, terminal exact-key retention with
+        checked `generation + 1` reuse, and an overflow-safe whole-bank span
+        separation gate at rebased checkpoint `447ff3b5`.
+      - [x] Reject fabricated, interior, one-past, cross-slot, stale, malformed,
+        torn, overlapping, managed, poisoned, and unknown-status inputs without
+        pointer/key disclosure or partial mutation; keep all owner operations
+        private to the facade/table and all test authority out of production
+        objects.
+      - [x] Preserve zero production enrollment and the frozen table/binding/
+        entry sizes while passing full GCC **175/175**, focused GCC/Clang
+        **4/4**, ASan+UBSan **3/3**, strict i386 and AArch64 compile-link,
+        source/security/object-symbol/CI seals, `git diff --check`, and two
+        staged independent blocker reviews followed by a clean final audit.
     - [ ] Couple facade claim, callback binding, and terminal reset
       failure-atomically; retain the exact terminal key through reset and
       advance it only with the next authenticated successful claim.
@@ -254,7 +273,7 @@ of checked boxes.
   checksum work.
 
 The Windows x86 baseline is approximately **93%**, and shared foundations and
-security are approximately **89%**. Windows x86 is retained as the compatibility
+security are approximately **90%**. Windows x86 is retained as the compatibility
 and reference target; it is not one of the five requested strict-delivery boxes.
 
 ## Detailed state and validation evidence
@@ -1694,7 +1713,7 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **82% complete by current engineering effort**. PR #62 merged the production-neutral
+- Progress estimate: approximately **83% complete by current engineering effort**. PR #62 merged the production-neutral
   pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
   registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
   tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy PMem
@@ -1711,11 +1730,16 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   completed the readiness-aware PMem identity gate at the three retained legacy callback paths with no production
   loader enrollment, passed all nine jobs in run **29892464335**, received clean exact-head Codex review with zero
   threads, squash-merged as `305d9026`, and passed all nine authoritative post-merge jobs in run **29893501180**.
-  Gemini's retired consumer reviewer emitted sunset notices only. The ancestry checkpoint records reviewed history
-  without importing code and therefore does not inflate the engineering estimate.
+  Gemini's retired consumer reviewer emitted sunset notices only. PR #79 exact head `120ce858` then passed all nine
+  jobs in run **29894539007** with clean Codex review and zero threads, squash-merged as `33ec8378`, and passed all nine
+  authoritative jobs in run **29895420496**. Rebased checkpoint `447ff3b5` now supplies the hidden stable 33-record
+  callback-context bank, exact copied-key identity through Terminal and successor reuse, whole-bank alias separation,
+  private macro-off authority, and zero production enrollment; full GCC **175/175** plus focused compiler, sanitizer,
+  i386/AArch64, source/security/object-symbol, diff, and independent-audit gates pass. The ancestry checkpoint records
+  reviewed history without importing code and therefore does not inflate the engineering estimate.
   Windows x86 is about
   **93%**, shared
-  foundations/security about **89%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
+  foundations/security about **90%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
   **40%**, and macOS arm64 about **31%**. None of the five requested 64-bit/non-Windows engine targets builds end to end
   yet, so strict target delivery remains **0/5**.
 - Initial upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
@@ -2246,7 +2270,14 @@ authoritative jobs passed there in run **29890463505**. PR #78 exact head
 three retained legacy callback-identity gates, passed all nine hosted jobs in
 run **29892464335** with clean exact-head Codex review and zero threads,
 squash-merged as `305d9026`, and passed all nine authoritative post-merge jobs
-in run **29893501180**. The stable typed 33-slot contexts remain next.
+in run **29893501180**. PR #79 exact head `120ce858` then passed all nine jobs
+in run **29894539007** with clean Codex review and zero threads, squash-merged
+as `33ec8378`, and passed all nine authoritative jobs in run **29895420496**.
+Rebased checkpoint `447ff3b5` now implements the hidden stable 33-slot context
+bank, exact copied-key retention through Terminal/successor reuse, whole-bank
+span separation, macro-off private authority, and zero production enrollment.
+The next atomic batch couples it to facade/table claim, typed one-shot callback
+windows, terminal reset, and the literal full-chain Busy -> Retry fixture.
 
 - [x] **Priority 1 — Facade publication:** PR #73 landed the
    production-neutral process-lifetime facade with one nonblocking outer
@@ -2327,6 +2358,14 @@ in run **29893501180**. The stable typed 33-slot contexts remain next.
    - [ ] Add stable process-lifetime contexts for all 33 physical slots outside
      PMem, retaining exact generation identity through terminal reset and
      eliminating slot-reuse/ABA ambiguity.
+     - [x] Land the hidden fixed-address 33-record core, exact copied-key
+       Bind/Resolve/Advance/Authenticate/Capture operations, whole-bank span
+       separation, macro-off/object/source seals, and zero-enrollment gates at
+       rebased checkpoint `447ff3b5`.
+     - [ ] Couple claim/bind/reset failure-atomically, authenticate the stable
+       context and exact key before/after each one-shot callback window, and add
+       the literal facade -> table -> controller -> coordinator -> registry
+       Busy -> Retry -> success fixture without touching a raw loader site.
    - [ ] Introduce checked no-report registry helpers and move hash-lock ownership
      wholly under the coordinator before replacing any raw site.
    - [ ] Add the sole production legacy bridge, its sequencing/fault-injection
@@ -2368,8 +2407,9 @@ Exact-key audit follow-up status:
   coherent pre-initialization from Ready, Busy, Poisoned, invalid, protected
   overlap, and corruption states under one PMem lock. The three retained legacy
   callback paths now authenticate their one-byte identity anchors before lower
-  mutation; the ABI provides no span, so full-object validation remains assigned
-  to the stable typed 33-slot contexts.
+  mutation; the ABI provides no span. Rebased checkpoint `447ff3b5` now supplies
+  full-object/exact-member validation in the stable typed 33-slot core; coupling
+  that identity to the table's one-shot callback window remains open.
 - Open before production enrollment: callback helpers must remain checked and
   no-report because arbitrary `longjmp`/nonlocal exits are not contained. The
   255-window witness budget is intentionally non-wrapping and fail-stop; its
