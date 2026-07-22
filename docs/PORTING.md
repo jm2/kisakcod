@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 20, 2026)
+## Implementation status (July 22, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -679,11 +679,17 @@ Completed foundation work:
   production/source/security, diff, and independent-audit gates pass. PR #76 code/documentation head `9b0e4c5f` passed
   all nine hosted jobs in run **29794474261**; Gemini's two null findings were resolved as non-actionable short-circuit
   false positives, while Codex review was unavailable at its repository usage limit. Final documentation head
-  `9c11d7a8` passed all nine jobs in run **29795268032**, PR #76 merged as `1e681792`, and current master `0b0ba10a`
-  passed all nine authoritative jobs in run **29857848875**. It enrolls no caller. A literal full-chain fixture remains
-  a pre-enrollment gate, as do stable 33-slot contexts and checked no-report helpers. The remaining loader
-  prerequisites precede the atomic
-  seven-site cutover;
+  `9c11d7a8` passed all nine jobs in run **29795268032**, PR #76 merged as `1e681792`, and PR #77 merged the
+  documentation checkpoint as `8e157543`; all nine authoritative jobs passed there in run **29890463505**.
+  Code checkpoint `0a87007e` adds the report-free seven-state `TryClassifyStorageIsolation` query. One serialized
+  observation authenticates complete PMem phase coherence, fixed hidden controls, and the Ready/Poisoned retained
+  extent; the legacy boolean delegates and remains true only for coherent Ready, disjoint storage. Retained legacy
+  admission, rollback, and unload now classify their one-byte context identity anchors before lower mutation, reject
+  managed/control/poisoned/corrupt identities failure-atomically, and preserve null, stack, and coherent
+  pre-initialization compatibility. Local GCC **171/171**, focused Clang/ASan+UBSan, i386/AArch64 compile-link,
+  production/source/security, diff, and two independent audits pass. It enrolls no production loader caller. A literal
+  full-chain fixture remains a pre-enrollment gate, as do stable typed 33-slot full-span contexts and checked no-report
+  helpers. The remaining loader prerequisites precede the atomic seven-site cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -805,11 +811,12 @@ Remaining gates, in implementation order:
    table and serialized facade. It authenticates the actual output span through table-owned stream authority, preserves
    exact key/count identity and failure-atomic publication, exposes no receipt or ledger capability, and keeps all seven
    raw sites frozen. Full local GCC **171/171**, focused cross-toolchain/architecture/seal gates, and independent audit
-   pass. PR #76 final documentation head `9c11d7a8` passed all nine jobs in run **29795268032**, merged as `1e681792`,
-   and current master `0b0ba10a` passed all nine authoritative jobs in run **29857848875**. After the remaining
-   full-chain/context/no-report prerequisites, atomically bind
-   the loader
-   across all seven sites; partial enrollment remains forbidden. Keep static controller
+   pass. PR #76 final documentation head `9c11d7a8` passed all nine jobs in run **29795268032**, merged as `1e681792`;
+   PR #77 merged its documentation checkpoint as `8e157543`, where all nine authoritative jobs passed in run
+   **29890463505**. The readiness-aware one-byte legacy identity gate is complete at `0a87007e`. A literal full-chain
+   fixture, typed stable 33-slot full-span/exact-generation contexts, and checked no-report coordinator-owned registry
+   helpers still precede the atomic seven-site loader cutover; partial enrollment remains forbidden. Keep static
+   controller
    slots and callback metadata
    outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1812,9 +1819,12 @@ post-merge jobs in run **29788146050**. PR #75 reconciled upstream through `4ad0
 implements and locally verifies the production-neutral exact-key, by-value pending-copy inspection prerequisite: GCC
 CTest is **171/171**, the affected Clang, sanitizer, genuine i386/AArch64, production/source/security, and diff gates
 pass, and an independent final audit is clean. PR #76 final documentation head `9c11d7a8` passed all nine jobs in run
-**29795268032**, merged as `1e681792`, and current master `0b0ba10a` passed all nine authoritative jobs in run
-**29857848875**. No production caller is enrolled. The ancestry checkpoint records reviewed history without importing
-code and therefore does not inflate the
+**29795268032**, merged as `1e681792`; PR #77 merged its documentation checkpoint as `8e157543`, and all nine
+authoritative jobs passed there in run **29890463505**. Code checkpoint `0a87007e` completes the report-free
+readiness-aware PMem classifier and its retained admission/rollback/unload callback-identity enrollment; local GCC
+**171/171**, focused compiler/sanitizer/architecture/source/security gates, and two independent audits pass. No
+production loader caller is enrolled. The ancestry checkpoint records reviewed history without importing code and
+therefore does not inflate the
 engineering estimate.
 Windows x86 is about
 **93%**, shared
