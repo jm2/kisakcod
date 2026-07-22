@@ -13,10 +13,12 @@ endforeach()
 set(PLATFORM_MACOS "")
 set(PLATFORM_MACOS_DEDI_HEADLESS "")
 set(PLATFORM_MACOS_SERVICES
+    "${SRC_DIR}/_platform/macos/sys_mach_crash.cpp"
     "${SRC_DIR}/_platform/posix/sys_console.cpp"
     "${SRC_DIR}/_platform/posix/sys_event.cpp"
     "${SRC_DIR}/_platform/posix/sys_filesystem.cpp"
     "${SRC_DIR}/_platform/posix/sys_memory.cpp"
+    "${SRC_DIR}/_platform/posix/sys_process.cpp"
     "${SRC_DIR}/_platform/posix/sys_sync.cpp"
     "${SRC_DIR}/_platform/posix/sys_thread.cpp"
     "${SRC_DIR}/_platform/posix/sys_time.cpp"

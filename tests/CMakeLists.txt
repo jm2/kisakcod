@@ -2059,6 +2059,105 @@ add_test(
 )
 set_tests_properties(platform-filesystem-path-contracts PROPERTIES TIMEOUT 20)
 
+set(_platform_process_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _platform_process_sources INCLUDE REGEX "[/\\\\]sys_process\\.cpp$")
+list(LENGTH _platform_process_sources _platform_process_source_count)
+if (NOT _platform_process_source_count EQUAL 1)
+    message(FATAL_ERROR
+        "Expected exactly one selected platform sys_process.cpp, found "
+        "${_platform_process_source_count}")
+endif()
+
+add_executable(kisakcod-platform-process-tests
+    platform_process_tests.cpp
+    ${_platform_process_sources}
+)
+target_include_directories(kisakcod-platform-process-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-process-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-platform-process-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-platform-process-tests)
+set_target_properties(kisakcod-platform-process-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-process-runtime-contracts
+    COMMAND kisakcod-platform-process-tests
+)
+add_test(
+    NAME platform-process-refused-launch-contracts
+    COMMAND kisakcod-platform-process-tests --refused-launch
+)
+add_test(
+    NAME platform-process-null-arguments-contracts
+    COMMAND kisakcod-platform-process-tests --null-arguments
+)
+add_test(
+    NAME platform-process-launch-exit-zero-contracts
+    COMMAND kisakcod-platform-process-tests --launch-exit-zero
+)
+add_test(
+    NAME platform-process-launch-wait-timeout-contracts
+    COMMAND kisakcod-platform-process-tests --launch-wait-timeout
+)
+add_test(
+    NAME platform-process-terminate-signaled-contracts
+    COMMAND kisakcod-platform-process-tests --terminate-signaled
+)
+add_test(
+    NAME platform-process-release-null-safe-contracts
+    COMMAND kisakcod-platform-process-tests --release-null-safe
+)
+add_test(
+    NAME platform-process-signal-park-lifecycle-contracts
+    COMMAND kisakcod-platform-process-tests --signal-park-lifecycle
+)
+set(_platform_process_runtime_tests
+    platform-process-runtime-contracts
+    platform-process-refused-launch-contracts
+    platform-process-null-arguments-contracts
+    platform-process-launch-exit-zero-contracts
+    platform-process-launch-wait-timeout-contracts
+    platform-process-terminate-signaled-contracts
+    platform-process-release-null-safe-contracts
+    platform-process-signal-park-lifecycle-contracts
+)
+set_tests_properties(${_platform_process_runtime_tests} PROPERTIES TIMEOUT 30)
+
+add_executable(kisakcod-platform-crash-tests
+    platform_crash_tests.cpp
+    ${_platform_process_sources}
+)
+target_include_directories(kisakcod-platform-crash-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-crash-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-platform-crash-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-platform-crash-tests)
+set_target_properties(kisakcod-platform-crash-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-crash-runtime-contracts
+    COMMAND kisakcod-platform-crash-tests
+)
+add_test(
+    NAME platform-crash-null-handle-contracts
+    COMMAND kisakcod-platform-crash-tests --null-handle
+)
+add_test(
+    NAME platform-crash-platform-supported-contracts
+    COMMAND kisakcod-platform-crash-tests --platform-supported
+)
+add_test(
+    NAME platform-crash-signal-park-isolation-contracts
+    COMMAND kisakcod-platform-crash-tests --signal-park-isolation
+)
+set(_platform_crash_runtime_tests
+    platform-crash-runtime-contracts
+    platform-crash-null-handle-contracts
+    platform-crash-platform-supported-contracts
+    platform-crash-signal-park-isolation-contracts
+)
+set_tests_properties(${_platform_crash_runtime_tests} PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-net-wire-contract-tests
     net_wire_contract_tests.cpp
 )
@@ -2191,6 +2290,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_console_source_test.cmake
+)
+
+add_test(
+    NAME platform-process-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_process_source_test.cmake
 )
 
 add_test(
