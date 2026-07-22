@@ -132,10 +132,10 @@ of checked boxes.
         checked `generation + 1` reuse, and an overflow-safe whole-bank span
         separation gate at rebased checkpoint `447ff3b5`.
       - [x] Reject fabricated, interior, one-past, cross-slot, stale, malformed,
-        torn, overlapping, managed, poisoned, and unknown-status inputs without
-        pointer/key disclosure or partial mutation; keep all owner operations
-        private to the facade/table and all test authority out of production
-        objects.
+        torn, managed, poisoned, and unknown-status context-object addresses and
+        records covered by the production-neutral core gates without pointer/key
+        disclosure or partial mutation; keep all owner operations private to the
+        facade/table and all test authority out of production objects.
       - [x] Preserve zero production enrollment and the frozen table/binding/
         entry sizes while passing full GCC **175/175**, focused GCC/Clang
         **4/4**, ASan+UBSan **3/3**, strict i386 and AArch64 compile-link,
@@ -145,11 +145,20 @@ of checked boxes.
         implementation/documentation head `2c7c225d` in run **29921410961**;
         receive a clean exact-head Codex review with zero review threads.
         Gemini's retired consumer reviewer emitted its sunset notice only.
-      - [ ] Pass the final documentation-only head, merge PR #80, and record
-        the authoritative post-merge `master` run.
+      - [x] Pass all nine jobs at final documentation-only head `d599b126` in
+        run **29923078292**, retain clean exact-head Codex review with zero
+        threads, squash-merge PR #80 as `5818a991`, and pass all nine
+        authoritative post-merge jobs in run **29923399366**.
     - [ ] Couple facade claim, callback binding, and terminal reset
       failure-atomically; retain the exact terminal key through reset and
       advance it only with the next authenticated successful claim.
+      - [ ] Before enrollment, reject every by-reference key and every direct
+        Production-table input, output, or retained span that overlaps the
+        whole stable-context bank before its first read, copy, or write; add a
+        terminal-successor stale key-alias regression.
+      - [ ] Use exact-key/phase structural-only owner authentication solely for
+        deterministic internal postchecks that follow a full ingress check and
+        cannot cross an external callback.
     - [ ] Authenticate the complete typed context span, exact array member,
       full key, slot, self/witness, table binding, and one-shot callback window
       before and after external callback work; reject saved-descriptor replay
@@ -1743,8 +1752,10 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   private macro-off authority, and zero production enrollment; full GCC **175/175** plus focused compiler, sanitizer,
   i386/AArch64, source/security/object-symbol, diff, and independent-audit gates pass. PR #80 exact
   implementation/documentation head `2c7c225d` passed all nine hosted jobs in run **29921410961** with clean Codex
-  review and zero threads; Gemini emitted only its retired-service notice. The ancestry checkpoint records reviewed
-  history without importing code and therefore does not inflate the engineering estimate.
+  review and zero threads; Gemini emitted only its retired-service notice. Final documentation-only head `d599b126`
+  passed all nine jobs in run **29923078292** with clean exact-head Codex review and zero threads; PR #80
+  squash-merged as `5818a991`, and all nine authoritative post-merge jobs passed in run **29923399366**. The ancestry
+  checkpoint records reviewed history without importing code and therefore does not inflate the engineering estimate.
   Windows x86 is about
   **93%**, shared
   foundations/security about **90%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
@@ -2286,9 +2297,13 @@ bank, exact copied-key retention through Terminal/successor reuse, whole-bank
 span separation, macro-off private authority, and zero production enrollment.
 PR #80 exact implementation/documentation head `2c7c225d` passed all nine
 hosted jobs in run **29921410961** with clean Codex review and zero threads;
-Gemini emitted only its retired-service notice.
+Gemini emitted only its retired-service notice. Final documentation-only head
+`d599b126` passed all nine jobs in run **29923078292** with clean exact-head
+Codex review and zero threads; PR #80 squash-merged as `5818a991`, and all nine
+authoritative post-merge jobs passed in run **29923399366**.
 The next atomic batch couples it to facade/table claim, typed one-shot callback
-windows, terminal reset, and the literal full-chain Busy -> Retry fixture.
+windows, terminal reset, whole-bank separation for every direct Production
+input/output/retained span, and the literal full-chain Busy -> Retry fixture.
 
 - [x] **Priority 1 — Facade publication:** PR #73 landed the
    production-neutral process-lifetime facade with one nonblocking outer
@@ -2374,11 +2389,16 @@ windows, terminal reset, and the literal full-chain Busy -> Retry fixture.
        separation, macro-off/object/source seals, and zero-enrollment gates at
        rebased checkpoint `447ff3b5`; exact PR #80 head `2c7c225d` passed all
        nine hosted jobs in run **29921410961** with clean Codex review and zero
-       threads.
+       threads; final head `d599b126` passed all nine jobs in run
+       **29923078292**, squash-merged as `5818a991`, and passed all nine
+       authoritative post-merge jobs in run **29923399366**.
      - [ ] Couple claim/bind/reset failure-atomically, authenticate the stable
        context and exact key before/after each one-shot callback window, and add
        the literal facade -> table -> controller -> coordinator -> registry
        Busy -> Retry -> success fixture without touching a raw loader site.
+       Reject by-reference keys and every other direct Production input,
+       output, and retained span that aliases any byte of the context bank
+       before first access, including a terminal-successor stale-alias case.
    - [ ] Introduce checked no-report registry helpers and move hash-lock ownership
      wholly under the coordinator before replacing any raw site.
    - [ ] Add the sole production legacy bridge, its sequencing/fault-injection
