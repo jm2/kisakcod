@@ -699,8 +699,10 @@ Completed foundation work:
   full-object/exact-member PMem authentication, Terminal identity retention with checked successor reuse, and
   whole-bank alias separation. Full GCC **175/175**, focused GCC/Clang **4/4**, ASan+UBSan **3/3**, strict
   i386/AArch64 compile-link, production/object/source/CI seals, and diff pass; two staged independent blocker reviews
-  were closed and the final independent audit is clean with zero production enrollment. Facade/table claim-bind-reset
-  coupling, typed one-shot callback windows, the literal
+  were closed and the final independent audit is clean with zero production enrollment. PR #80 exact
+  implementation/documentation head `2c7c225d` passed all nine hosted jobs in run **29921410961** with clean Codex
+  review and zero threads; Gemini emitted only its retired-service notice. Facade/table claim-bind-reset coupling,
+  typed one-shot callback windows, the literal
   full-chain Busy -> Retry fixture, and checked no-report helpers remain before the atomic seven-site cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
@@ -832,7 +834,9 @@ Remaining gates, in implementation order:
    **29895420496**. Rebased checkpoint `447ff3b5` completes the production-neutral hidden 33-slot stable-context core,
    exact copied-key/Terminal identity, whole-bank alias gate, and macro-off private authority with full GCC **175/175**
    plus focused cross-toolchain, sanitizer, i386/AArch64, source/security/object, diff, and independent-audit evidence.
-   A literal full-chain fixture, facade/table one-shot callback coupling, and checked no-report coordinator-owned
+   PR #80 exact implementation/documentation head `2c7c225d` passed all nine hosted jobs in run **29921410961** with
+   clean Codex review and zero threads; Gemini emitted only its retired-service notice. A literal full-chain fixture,
+   facade/table one-shot callback coupling, and checked no-report coordinator-owned
    registry helpers still precede the atomic seven-site loader cutover; partial enrollment remains forbidden. Keep static
    controller
    slots and callback metadata
@@ -1848,9 +1852,10 @@ passed all nine authoritative jobs in run **29895420496**. Rebased checkpoint `4
 callback-context core, exact copied-key resolution and Terminal/successor identity, whole-bank span separation, and
 macro-off private authority. Full GCC **175/175**, focused GCC/Clang and sanitizer, strict i386/AArch64 compile-link,
 source/security/object/CI seals, and diff pass; the two staged independent blocker reviews were closed and the final
-independent audit is clean. No production loader caller is enrolled. The
-ancestry checkpoint records reviewed history without importing code and therefore does not inflate the engineering
-estimate.
+independent audit is clean. PR #80 exact implementation/documentation head `2c7c225d` passed all nine hosted jobs in
+run **29921410961** with clean Codex review and zero threads; Gemini emitted only its retired-service notice. No
+production loader caller is enrolled. The ancestry checkpoint records reviewed history without importing code and
+therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared
 foundations/security about **90%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about

@@ -141,6 +141,12 @@ of checked boxes.
         **4/4**, ASan+UBSan **3/3**, strict i386 and AArch64 compile-link,
         source/security/object-symbol/CI seals, `git diff --check`, and two
         staged independent blocker reviews followed by a clean final audit.
+      - [x] Publish PR #80 and pass all nine hosted jobs at exact
+        implementation/documentation head `2c7c225d` in run **29921410961**;
+        receive a clean exact-head Codex review with zero review threads.
+        Gemini's retired consumer reviewer emitted its sunset notice only.
+      - [ ] Pass the final documentation-only head, merge PR #80, and record
+        the authoritative post-merge `master` run.
     - [ ] Couple facade claim, callback binding, and terminal reset
       failure-atomically; retain the exact terminal key through reset and
       advance it only with the next authenticated successful claim.
@@ -1735,8 +1741,10 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   authoritative jobs in run **29895420496**. Rebased checkpoint `447ff3b5` now supplies the hidden stable 33-record
   callback-context bank, exact copied-key identity through Terminal and successor reuse, whole-bank alias separation,
   private macro-off authority, and zero production enrollment; full GCC **175/175** plus focused compiler, sanitizer,
-  i386/AArch64, source/security/object-symbol, diff, and independent-audit gates pass. The ancestry checkpoint records
-  reviewed history without importing code and therefore does not inflate the engineering estimate.
+  i386/AArch64, source/security/object-symbol, diff, and independent-audit gates pass. PR #80 exact
+  implementation/documentation head `2c7c225d` passed all nine hosted jobs in run **29921410961** with clean Codex
+  review and zero threads; Gemini emitted only its retired-service notice. The ancestry checkpoint records reviewed
+  history without importing code and therefore does not inflate the engineering estimate.
   Windows x86 is about
   **93%**, shared
   foundations/security about **90%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
@@ -2276,6 +2284,9 @@ as `33ec8378`, and passed all nine authoritative jobs in run **29895420496**.
 Rebased checkpoint `447ff3b5` now implements the hidden stable 33-slot context
 bank, exact copied-key retention through Terminal/successor reuse, whole-bank
 span separation, macro-off private authority, and zero production enrollment.
+PR #80 exact implementation/documentation head `2c7c225d` passed all nine
+hosted jobs in run **29921410961** with clean Codex review and zero threads;
+Gemini emitted only its retired-service notice.
 The next atomic batch couples it to facade/table claim, typed one-shot callback
 windows, terminal reset, and the literal full-chain Busy -> Retry fixture.
 
@@ -2361,7 +2372,9 @@ windows, terminal reset, and the literal full-chain Busy -> Retry fixture.
      - [x] Land the hidden fixed-address 33-record core, exact copied-key
        Bind/Resolve/Advance/Authenticate/Capture operations, whole-bank span
        separation, macro-off/object/source seals, and zero-enrollment gates at
-       rebased checkpoint `447ff3b5`.
+       rebased checkpoint `447ff3b5`; exact PR #80 head `2c7c225d` passed all
+       nine hosted jobs in run **29921410961** with clean Codex review and zero
+       threads.
      - [ ] Couple claim/bind/reset failure-atomically, authenticate the stable
        context and exact key before/after each one-shot callback window, and add
        the literal facade -> table -> controller -> coordinator -> registry
