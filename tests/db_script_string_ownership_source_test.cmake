@@ -2686,6 +2686,7 @@ foreach(_marker IN ITEMS
     "PRIVATE cxx_std_20"
     "PRIVATE KISAK_MP"
     "PRIVATE Threads::Threads"
+    "PRIVATE /wd4702)"
     "PRIVATE \"LINKER:/STACK:8388608\""
     "NAME database-zone-runtime-stable-context-integration"
     "NAME database-zone-runtime-stable-context-forgotten-finish"

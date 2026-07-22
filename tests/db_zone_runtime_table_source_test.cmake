@@ -3573,6 +3573,7 @@ foreach(_marker IN ITEMS
     "target_compile_features( kisakcod-db-zone-runtime-stable-context-integration-tests PRIVATE cxx_std_20)"
     "target_compile_definitions( kisakcod-db-zone-runtime-stable-context-integration-tests PRIVATE KISAK_MP)"
     "target_link_libraries( kisakcod-db-zone-runtime-stable-context-integration-tests PRIVATE Threads::Threads)"
+    "target_compile_options( kisakcod-db-zone-runtime-stable-context-integration-tests PRIVATE /wd4702)"
     "target_link_options( kisakcod-db-zone-runtime-stable-context-integration-tests PRIVATE \"LINKER:/STACK:8388608\")"
     "NAME database-zone-runtime-stable-context-integration"
     "NAME database-zone-runtime-stable-context-forgotten-finish"
@@ -3587,6 +3588,11 @@ require_substring_count(
     "target_compile_definitions("
     1
     "stable integration has exactly one compile-definition grant")
+require_substring_count(
+    _stable_integration_registration
+    "/wd"
+    1
+    "one target-scoped MSVC C4702 suppression")
 foreach(_testing_grant IN ITEMS
     "_TESTING"
     "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"

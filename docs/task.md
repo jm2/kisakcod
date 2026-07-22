@@ -127,7 +127,7 @@ of checked boxes.
       at exact head `120ce858` in run **29894539007** with clean exact-head
       Codex review and zero review threads; squash-merge as `33ec8378` and pass
       all nine authoritative jobs there in run **29895420496**.
-  - [x] Add stable process-lifetime contexts for all 33 physical zone slots,
+  - [ ] Add stable process-lifetime contexts for all 33 physical zone slots,
     outside `XZone` and PMem, retaining exact generation identity through terminal
     reset.
     - [x] Add one hidden, fixed-address 33-record typed context bank separate
@@ -181,6 +181,16 @@ of checked boxes.
         focused Clang **16/16**, ASan+UBSan **16/16**, strict i386 and AArch64
         compile/link, eight source/security seals, `git diff --check`, and two
         clean independent final audits.
+      - [ ] Publish and merge PR #82 with all nine hosted jobs and exact-head
+        review clean, then confirm the authoritative post-merge run.
+        - [x] Diagnose initial run **29937368617**: Windows ARM64 alone promoted
+          legacy `scr_stringlist.cpp` C4702 post-fatal-return warnings to C2220
+          under `/WX`; all fixture code compiled and headless Windows x86 passed.
+        - [x] Keep `/WX` enabled and suppress only C4702 on the direct-include
+          integration target under MSVC; source/security seals pin the single
+          target-scoped exception.
+        - [ ] Pass the replacement exact-head run, resolve any real review
+          finding, merge, and record post-merge evidence.
   - [ ] Convert the required registry/hash-lock helpers to checked, no-report
     operations that cannot unlock coordinator-owned state or cross retained
     authority through `Com_Error`/`longjmp`.
@@ -2336,7 +2346,13 @@ adds the literal macro-off production-chain fixture, including real hash-lock
 Busy -> Retry -> success and forgotten-Finish fail-closed modes. Native GCC is
 **184/184**; focused Clang and ASan+UBSan are **16/16** each; strict i386 and
 AArch64 compile/link, source/security/diff gates, and two independent audits are
-clean. The next atomic batch is the checked no-report registry/hash helper gate.
+clean. PR #82 initial run **29937368617** exposed one Windows ARM64-only build
+issue: the fixture's aborting `Com_Error` seam makes two legacy
+`scr_stringlist.cpp` post-fatal returns provably unreachable, and `/WX`
+promoted C4702 to C2220. The repair keeps `/WX` and applies `/wd4702` only to
+this direct-include target, with the exception source/security sealed. The
+replacement exact-head run remains in flight. After PR #82 is cleanly merged,
+the next atomic batch is the checked no-report registry/hash helper gate.
 
 - [x] **Priority 1 — Facade publication:** PR #73 landed the
    production-neutral process-lifetime facade with one nonblocking outer
@@ -2415,7 +2431,7 @@ clean. The next atomic batch is the checked no-report registry/hash helper gate.
      - [x] Pass all nine hosted jobs at exact head `60ea924a` in run
        **29892464335**, merge PR #78 as `305d9026`, and pass all nine
        authoritative post-merge jobs in run **29893501180**.
-   - [x] Add stable process-lifetime contexts for all 33 physical slots outside
+   - [ ] Add stable process-lifetime contexts for all 33 physical slots outside
      PMem, retaining exact generation identity through terminal reset and
      eliminating slot-reuse/ABA ambiguity.
      - [x] Land the hidden fixed-address 33-record core, exact copied-key
@@ -2436,6 +2452,8 @@ clean. The next atomic batch is the checked no-report registry/hash helper gate.
        Rebased checkpoints `ac652ec1`, `553786de`, `0a375c7c`, and `5cc0931a`
        pass the complete local compiler, sanitizer, architecture, source,
        security, and independent-audit matrix.
+     - [ ] Merge PR #82 after the target-scoped Windows ARM64 C4702 repair,
+       all nine hosted jobs, exact-head review, and post-merge validation pass.
    - [ ] Introduce checked no-report registry helpers and move hash-lock ownership
      wholly under the coordinator before replacing any raw site.
    - [ ] Add the sole production legacy bridge, its sequencing/fault-injection

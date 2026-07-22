@@ -10744,6 +10744,7 @@ foreach(_stable_context_integration_seal_marker IN ITEMS
     "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>"
     "$<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>"
     "stable integration has exactly one compile-definition grant"
+    "one target-scoped MSVC C4702 suppression"
     "macro-off stable integration cannot receive test authority"
     "macro-off stable integration fixture cannot self-grant test authority"
     "literal macro-off facade/table/controller/coordinator/registry chain"

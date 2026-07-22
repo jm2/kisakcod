@@ -711,7 +711,10 @@ Completed foundation work:
   Checkpoint `5cc0931a` adds the literal macro-off facade -> table -> controller -> coordinator -> real-registry
   fixture with Busy -> Retry -> success and forgotten-Finish fail-closed modes. Native GCC **184/184**, focused Clang
   and ASan+UBSan **16/16** each, strict i386/AArch64 compile-link, source/security/diff gates, and two independent audits
-  pass with zero raw loader enrollment. Checked no-report helpers and the single production bridge/cutover remain;
+  pass with zero raw loader enrollment. PR #82 initial run **29937368617** found one Windows ARM64-only `/WX` failure:
+  two legacy post-fatal `scr_stringlist.cpp` returns become provably unreachable behind the fixture's aborting reporter.
+  The in-flight repair keeps `/WX` and scopes `/wd4702` to this direct-include test target, with the exception sealed.
+  Checked no-report helpers and the single production bridge/cutover remain after PR #82 merges;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -1874,7 +1877,9 @@ and passed all nine authoritative post-merge jobs in run **29928854270**. Rebase
 and `0a375c7c` complete failure-atomic stable-context/table/facade coupling and every pre-access whole-bank alias gate;
 `5cc0931a` adds the literal macro-off real-registry callback retry and forgotten-Finish fixtures. Native GCC **184/184**,
 focused Clang and ASan+UBSan **16/16** each, strict i386/AArch64 compile-link, source/security/diff gates, and two
-independent audits pass. No production loader caller is enrolled. The ancestry checkpoint records reviewed history
+independent audits pass. PR #82 initial run **29937368617** exposed only the Windows ARM64 direct-include C4702 `/WX`
+case; the repair retains `/WX`, scopes `/wd4702` to the fixture target, and source/security seals that exception. No
+production loader caller is enrolled. The ancestry checkpoint records reviewed history
 without importing code and therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared
