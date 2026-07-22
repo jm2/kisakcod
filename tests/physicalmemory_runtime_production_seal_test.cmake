@@ -196,6 +196,7 @@ else()
 endif()
 
 foreach(required_runtime_api IN ITEMS
+    TryClassifyStorageIsolation
     StorageIsOutsideManagedMemory
     TryBeginAllocationReceipt
     TryEndAllocationReceipt

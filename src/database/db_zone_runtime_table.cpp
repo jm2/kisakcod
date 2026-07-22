@@ -131,6 +131,37 @@ inline constexpr std::uint8_t kGenerationBindingWitnessMask = 0xA7u;
     return pmem_runtime::StorageIsOutsideManagedMemory(
         output, outputSize);
 }
+
+[[nodiscard]] ZoneRuntimeTableStatus
+AuthenticateRetainedLegacyCallbackContext(
+    const ZoneRuntimeTable *const table,
+    const void *const context) noexcept
+{
+    if (!context)
+        return ZoneRuntimeTableStatus::Success;
+    if (!table
+        || !AddressRangesAreDisjoint(
+            table, sizeof(*table), context, 1))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
+
+    switch (pmem_runtime::TryClassifyStorageIsolation(context, 1))
+    {
+    case pmem_runtime::StorageIsolationStatus::Success:
+    case pmem_runtime::StorageIsolationStatus::Uninitialized:
+        return ZoneRuntimeTableStatus::Success;
+    case pmem_runtime::StorageIsolationStatus::Busy:
+        return ZoneRuntimeTableStatus::Busy;
+    case pmem_runtime::StorageIsolationStatus::InvalidArgument:
+    case pmem_runtime::StorageIsolationStatus::ProtectedStorageOverlap:
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    case pmem_runtime::StorageIsolationStatus::Poisoned:
+    case pmem_runtime::StorageIsolationStatus::CorruptState:
+    default:
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+}
 } // namespace
 
 ZoneRuntimeSetupStage ZoneRuntimeGenerationBinding::setupStage()
@@ -4630,12 +4661,11 @@ ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit(
         return ZoneRuntimeTableStatus::InvalidArgument;
     const zone_script_string_ownership::ZoneScriptStringAdmissionCallback
         admissionSnapshot = admission;
-    if (admissionSnapshot.context
-        && !AddressRangesAreDisjoint(
-            table, sizeof(*table), admissionSnapshot.context, 1))
-    {
-        return ZoneRuntimeTableStatus::InvalidArgument;
-    }
+    const ZoneRuntimeTableStatus callbackContextStatus =
+        AuthenticateRetainedLegacyCallbackContext(
+            table, admissionSnapshot.context);
+    if (callbackContextStatus != ZoneRuntimeTableStatus::Success)
+        return callbackContextStatus;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
         table->authenticateExactMutableEntry(physicalSlot, key, &entry);
@@ -4664,12 +4694,11 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback(
         return ZoneRuntimeTableStatus::InvalidArgument;
     const zone_script_string_ownership::ZoneScriptStringRollbackCallbacks
         callbackSnapshot = callbacks;
-    if (callbackSnapshot.context
-        && !AddressRangesAreDisjoint(
-            table, sizeof(*table), callbackSnapshot.context, 1))
-    {
-        return ZoneRuntimeTableStatus::InvalidArgument;
-    }
+    const ZoneRuntimeTableStatus callbackContextStatus =
+        AuthenticateRetainedLegacyCallbackContext(
+            table, callbackSnapshot.context);
+    if (callbackContextStatus != ZoneRuntimeTableStatus::Success)
+        return callbackContextStatus;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
         table->authenticateExactMutableEntry(physicalSlot, key, &entry);
@@ -4783,12 +4812,11 @@ ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
     const zone_load::ZoneLoadCleanupCallbacks callbackSnapshot = callbacks;
-    if (callbackSnapshot.context
-        && !AddressRangesAreDisjoint(
-            table, sizeof(*table), callbackSnapshot.context, 1))
-    {
-        return ZoneRuntimeTableStatus::InvalidArgument;
-    }
+    const ZoneRuntimeTableStatus callbackContextStatus =
+        AuthenticateRetainedLegacyCallbackContext(
+            table, callbackSnapshot.context);
+    if (callbackContextStatus != ZoneRuntimeTableStatus::Success)
+        return callbackContextStatus;
 
     const auto ownershipStatus =
         zone_script_string_ownership::

@@ -24,6 +24,11 @@ static_assert(std::is_trivially_copyable_v<pmem_runtime::DiagnosticSnapshot>);
 static_assert(sizeof(pmem_runtime::AllocationStatus) == 1);
 static_assert(sizeof(pmem_runtime::InitializationPhase) == 1);
 static_assert(sizeof(pmem_runtime::InitializationStatus) == 1);
+static_assert(sizeof(pmem_runtime::StorageIsolationStatus) == 1);
+static_assert(std::is_enum_v<pmem_runtime::StorageIsolationStatus>);
+static_assert(std::is_same_v<
+    std::underlying_type_t<pmem_runtime::StorageIsolationStatus>,
+    std::uint8_t>);
 static_assert(sizeof(pmem_runtime::ProcessInitAllocationStatus) == 1);
 static_assert(sizeof(pmem_runtime::AllocationReceiptPhase) == 1);
 static_assert(sizeof(pmem_runtime::AllocationReceiptStatus) == 1);
@@ -44,6 +49,11 @@ static_assert(offsetof(pmem_runtime::DiagnosticSnapshot, reserved) == 0x60D);
 static_assert(noexcept(pmem_runtime::TryInitialize()));
 static_assert(noexcept(pmem_runtime::TryAllocate(1, 1, 0, 0)));
 static_assert(noexcept(pmem_runtime::TryCaptureDiagnosticSnapshot()));
+static_assert(noexcept(pmem_runtime::TryClassifyStorageIsolation(
+    nullptr, 0)));
+static_assert(std::is_same_v<
+    decltype(pmem_runtime::TryClassifyStorageIsolation(nullptr, 0)),
+    pmem_runtime::StorageIsolationStatus>);
 static_assert(noexcept(pmem_runtime::StorageIsOutsideManagedMemory(
     nullptr, 0)));
 static_assert(std::is_same_v<

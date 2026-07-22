@@ -139,6 +139,8 @@ foreach(marker IN ITEMS
     "CommitFailed,"
     "ReleaseFailed,"
     "CorruptState,"
+    "enum class StorageIsolationStatus : std::uint8_t"
+    "ProtectedStorageOverlap,"
     "enum class AllocationStatus : std::uint8_t"
     "InvalidRequest,"
     "NotReady,"
@@ -176,6 +178,7 @@ foreach(marker IN ITEMS
     "TryAllocate("
     "std::uint32_t allocType) noexcept;"
     "TryCaptureDiagnosticSnapshot() noexcept;"
+    "TryClassifyStorageIsolation("
     "StorageIsOutsideManagedMemory("
     "TryBeginAllocationReceipt("
     "TryEndAllocationReceipt("
@@ -285,6 +288,7 @@ foreach(marker IN ITEMS
     "InitializingStateIsCoherent("
     "PoisonedStateIsCoherent("
     "GetRuntimeReadiness("
+    "StorageIsDisjointFromFixedControlsNoLock("
     "g_runtime.extent.size == kPhysicalMemorySize"
     "&g_mem, sizeof(g_mem)"
     "&g_runtime, sizeof(g_runtime)")
@@ -775,10 +779,11 @@ foreach(forbidden IN ITEMS
 endforeach()
 
 extract_slice("${source}"
-    "bool KISAK_CDECL pmem_runtime::StorageIsOutsideManagedMemory("
+    "pmem_runtime::StorageIsolationStatus KISAK_CDECL"
     "pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL"
     public_receipt_bridge)
 foreach(marker IN ITEMS
+    "TryClassifyStorageIsolation("
     "StorageIsOutsideManagedMemory("
     "TryBeginAllocationReceipt("
     "TryEndAllocationReceipt("
@@ -787,6 +792,12 @@ foreach(marker IN ITEMS
     "TryAuthenticateAllocationRange("
     "GetRuntimeReadiness()"
     "ReadyStateIsCoherent()"
+    "StorageIsolationStatus::Uninitialized"
+    "StorageIsolationStatus::Busy"
+    "StorageIsolationStatus::Poisoned"
+    "StorageIsolationStatus::InvalidArgument"
+    "StorageIsolationStatus::ProtectedStorageOverlap"
+    "StorageIsolationStatus::CorruptState"
     "AllocationReceiptStatus::NotReady"
     "AllocationReceiptStatus::CorruptState")
     require_text("${public_receipt_bridge}" "${marker}"
@@ -1105,6 +1116,7 @@ endforeach()
 foreach(marker IN ITEMS
     "TestInitFailuresRetryAndDoubleInit();"
     "TestConcurrentAndReentrantInit();"
+    "TestStorageIsolationClassification();"
     "TestInitCorruptionOwnershipExits();"
     "TestInitPhysicalMemoryFailureAtomicity();"
     "TestAllocationStatusesAndAtomicity();"
@@ -1142,6 +1154,8 @@ foreach(marker IN ITEMS
     "noexcept(pmem_runtime::TryCaptureDiagnosticSnapshot())"
     "sizeof(pmem_runtime::AllocationReceiptPhase) == 1"
     "sizeof(pmem_runtime::AllocationReceiptStatus) == 1"
+    "sizeof(pmem_runtime::StorageIsolationStatus) == 1"
+    "noexcept(pmem_runtime::TryClassifyStorageIsolation("
     "noexcept(pmem_runtime::StorageIsOutsideManagedMemory("
     "noexcept(pmem_runtime::TryBeginAllocationReceipt("
     "noexcept(pmem_runtime::TryAuthenticateAllocationRange("
@@ -1153,6 +1167,7 @@ foreach(marker IN ITEMS
         "macro-off compile seal marker")
 endforeach()
 foreach(marker IN ITEMS
+    "TryClassifyStorageIsolation"
     "StorageIsOutsideManagedMemory"
     "TryBeginAllocationReceipt"
     "TryEndAllocationReceipt"

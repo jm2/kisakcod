@@ -32,6 +32,21 @@ enum class InitializationStatus : std::uint8_t
     CorruptState,
 };
 
+// Report-free classification of caller-owned storage relative to the hidden
+// physical-memory runtime. This preserves the distinction between coherent
+// lifecycle states so callers never treat an unpublished or poisoned extent
+// as proof that storage is safe to retain.
+enum class StorageIsolationStatus : std::uint8_t
+{
+    Success,
+    Uninitialized,
+    Busy,
+    Poisoned,
+    InvalidArgument,
+    ProtectedStorageOverlap,
+    CorruptState,
+};
+
 enum class AllocationStatus : std::uint8_t
 {
     Success,
@@ -154,6 +169,16 @@ RUNTIME_OFFSET(DiagnosticSnapshot, reserved, 0x60D, 0x60D);
 
 [[nodiscard]] DiagnosticSnapshot KISAK_CDECL
 TryCaptureDiagnosticSnapshot() noexcept;
+
+// Authenticates the complete current runtime phase, then classifies one
+// nonempty caller-supplied range. Success means the coherent Ready runtime's
+// retained extent and every fixed hidden control object are disjoint from the
+// range. Initializing cannot authenticate the unpublished candidate extent;
+// Poisoned authenticates its retained extent but is never usable as Success.
+[[nodiscard]] StorageIsolationStatus KISAK_CDECL
+TryClassifyStorageIsolation(
+    const void *storage,
+    std::size_t size) noexcept;
 
 // Returns true only while the runtime is coherently Ready and the complete
 // caller-supplied range is disjoint from retained managed memory and hidden
