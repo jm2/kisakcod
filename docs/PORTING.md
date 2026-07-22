@@ -689,7 +689,10 @@ Completed foundation work:
   pre-initialization compatibility. Local GCC **171/171**, focused Clang/ASan+UBSan, i386/AArch64 compile-link,
   production/source/security, diff, and two independent audits pass. It enrolls no production loader caller. A literal
   full-chain fixture remains a pre-enrollment gate, as do stable typed 33-slot full-span contexts and checked no-report
-  helpers. The remaining loader prerequisites precede the atomic seven-site cutover;
+  helpers. Exact head `60ea924a` passed all nine hosted jobs in run **29892464335**, received clean exact-head Codex
+  review with zero threads, and squash-merged as PR #78 at `305d9026`; all nine authoritative post-merge jobs passed in
+  run **29893501180**. Gemini's retired consumer reviewer emitted sunset notices only. The remaining loader
+  prerequisites precede the atomic seven-site cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -813,9 +816,11 @@ Remaining gates, in implementation order:
    raw sites frozen. Full local GCC **171/171**, focused cross-toolchain/architecture/seal gates, and independent audit
    pass. PR #76 final documentation head `9c11d7a8` passed all nine jobs in run **29795268032**, merged as `1e681792`;
    PR #77 merged its documentation checkpoint as `8e157543`, where all nine authoritative jobs passed in run
-   **29890463505**. The readiness-aware one-byte legacy identity gate is complete at `0a87007e`. A literal full-chain
-   fixture, typed stable 33-slot full-span/exact-generation contexts, and checked no-report coordinator-owned registry
-   helpers still precede the atomic seven-site loader cutover; partial enrollment remains forbidden. Keep static
+   **29890463505**. PR #78 exact head `60ea924a` completed the readiness-aware one-byte legacy identity gate, passed all
+   nine hosted jobs in run **29892464335**, squash-merged as `305d9026`, and passed all nine authoritative post-merge
+   jobs in run **29893501180**. A literal full-chain fixture, typed stable 33-slot full-span/exact-generation contexts,
+   and checked no-report coordinator-owned registry helpers still precede the atomic seven-site loader cutover; partial
+   enrollment remains forbidden. Keep static
    controller
    slots and callback metadata
    outside PMem with
@@ -1820,11 +1825,12 @@ implements and locally verifies the production-neutral exact-key, by-value pendi
 CTest is **171/171**, the affected Clang, sanitizer, genuine i386/AArch64, production/source/security, and diff gates
 pass, and an independent final audit is clean. PR #76 final documentation head `9c11d7a8` passed all nine jobs in run
 **29795268032**, merged as `1e681792`; PR #77 merged its documentation checkpoint as `8e157543`, and all nine
-authoritative jobs passed there in run **29890463505**. Code checkpoint `0a87007e` completes the report-free
+authoritative jobs passed there in run **29890463505**. PR #78 exact head `60ea924a` completes the report-free
 readiness-aware PMem classifier and its retained admission/rollback/unload callback-identity enrollment; local GCC
-**171/171**, focused compiler/sanitizer/architecture/source/security gates, and two independent audits pass. No
-production loader caller is enrolled. The ancestry checkpoint records reviewed history without importing code and
-therefore does not inflate the
+**171/171**, focused compiler/sanitizer/architecture/source/security gates, and two independent audits pass. The exact
+head passed all nine hosted jobs in run **29892464335** with clean Codex review and zero threads, squash-merged as
+`305d9026`, and passed all nine authoritative post-merge jobs in run **29893501180**. No production loader caller is
+enrolled. The ancestry checkpoint records reviewed history without importing code and therefore does not inflate the
 engineering estimate.
 Windows x86 is about
 **93%**, shared
