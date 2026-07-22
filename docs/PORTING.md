@@ -704,9 +704,14 @@ Completed foundation work:
   review and zero threads; Gemini emitted only its retired-service notice. Final documentation-only head `d599b126`
   passed all nine jobs in run **29923078292** with clean exact-head Codex review and zero threads; PR #80
   squash-merged as `5818a991`, and all nine authoritative post-merge jobs passed in run **29923399366**.
-  Facade/table claim-bind-reset coupling, typed one-shot callback windows, pre-access whole-bank separation for every
-  direct Production input/output/retained span, the literal full-chain Busy -> Retry fixture, and checked no-report
-  helpers remain before the atomic seven-site cutover;
+  PR #81 exact head `e9eaf3a8` passed all nine jobs in run **29925025974**, squash-merged the documentation checkpoint
+  as `29895769`, and passed all nine authoritative post-merge jobs in run **29928854270**. Rebased checkpoints
+  `ac652ec1`, `553786de`, and `0a375c7c` complete facade/table claim-bind-reset coupling, typed one-shot callback
+  authentication, and pre-access whole-bank separation for every direct Production input/output/retained span.
+  Checkpoint `5cc0931a` adds the literal macro-off facade -> table -> controller -> coordinator -> real-registry
+  fixture with Busy -> Retry -> success and forgotten-Finish fail-closed modes. Native GCC **184/184**, focused Clang
+  and ASan+UBSan **16/16** each, strict i386/AArch64 compile-link, source/security/diff gates, and two independent audits
+  pass with zero raw loader enrollment. Checked no-report helpers and the single production bridge/cutover remain;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -840,10 +845,12 @@ Remaining gates, in implementation order:
    PR #80 exact implementation/documentation head `2c7c225d` passed all nine hosted jobs in run **29921410961** with
    clean Codex review and zero threads; Gemini emitted only its retired-service notice. Final documentation-only head
    `d599b126` passed all nine jobs in run **29923078292** with clean exact-head Codex review and zero threads; PR #80
-   squash-merged as `5818a991`, and all nine authoritative post-merge jobs passed in run **29923399366**. A literal
-   full-chain fixture, facade/table one-shot callback coupling, pre-access whole-bank separation for every direct
-   Production input/output/retained span, and checked no-report coordinator-owned
-   registry helpers still precede the atomic seven-site loader cutover; partial enrollment remains forbidden. Keep static
+   squash-merged as `5818a991`, and all nine authoritative post-merge jobs passed in run **29923399366**. PR #81
+   merged the green documentation checkpoint as `29895769`; authoritative run **29928854270** passed all nine jobs.
+   Rebased checkpoints `ac652ec1`, `553786de`, `0a375c7c`, and `5cc0931a` complete one-shot facade/table callback
+   coupling, pre-access whole-bank separation, and the literal real-registry Busy -> Retry/forgotten-Finish fixture.
+   Checked no-report coordinator-owned registry helpers still precede the atomic seven-site loader cutover; partial
+   enrollment remains forbidden. Keep static
    controller
    slots and callback metadata
    outside PMem with
@@ -1832,7 +1839,7 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **83% by current engineering effort**. PR #62 merged the production-neutral
+Overall porting progress is approximately **84% by current engineering effort**. PR #62 merged the production-neutral
 pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
 registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
 tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy-PMem
@@ -1862,13 +1869,16 @@ independent audit is clean. PR #80 exact implementation/documentation head `2c7c
 run **29921410961** with clean Codex review and zero threads; Gemini emitted only its retired-service notice. Final
 documentation-only head `d599b126` passed all nine jobs in run **29923078292** with clean exact-head Codex review and
 zero threads; PR #80 squash-merged as `5818a991`, and all nine authoritative post-merge jobs passed in run
-**29923399366**. No production loader caller is enrolled. Before enrollment, facade/table integration must reject
-by-reference keys and every other direct Production input/output/retained span that overlaps the context bank before
-first access, including terminal-successor stale-alias coverage. The ancestry checkpoint records reviewed history
+**29923399366**. PR #81 exact head `e9eaf3a8` passed all nine jobs in run **29925025974**, squash-merged as `29895769`,
+and passed all nine authoritative post-merge jobs in run **29928854270**. Rebased checkpoints `ac652ec1`, `553786de`,
+and `0a375c7c` complete failure-atomic stable-context/table/facade coupling and every pre-access whole-bank alias gate;
+`5cc0931a` adds the literal macro-off real-registry callback retry and forgotten-Finish fixtures. Native GCC **184/184**,
+focused Clang and ASan+UBSan **16/16** each, strict i386/AArch64 compile-link, source/security/diff gates, and two
+independent audits pass. No production loader caller is enrolled. The ancestry checkpoint records reviewed history
 without importing code and therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared
-foundations/security about **90%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
+foundations/security about **91%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
