@@ -11,11 +11,14 @@ set(_coordinator_header_path
     "${SOURCE_ROOT}/src/database/db_registry_ownership_coordinator.h")
 set(_table_header_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h")
+set(_callback_context_header_path
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_callback_context.h")
 foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
     "${_coordinator_header_path}"
-    "${_table_header_path}")
+    "${_table_header_path}"
+    "${_callback_context_header_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing runtime facade source: ${_path}")
     endif()
@@ -1597,6 +1600,9 @@ function(remove_reviewed_runtime_facade_friend_tokens PATH VARIABLE OUTPUT)
     elseif(PATH STREQUAL _table_header_path)
         set(_forward "class ZoneRuntimeFacade;")
         set(_friend "friend class ZoneRuntimeFacade;")
+    elseif(PATH STREQUAL _callback_context_header_path)
+        set(_forward "class ZoneRuntimeFacade;")
+        set(_friend "friend class ZoneRuntimeFacade;")
     else()
         message(FATAL_ERROR
             "Runtime facade friend scrub used for unexpected path: ${PATH}")
@@ -1670,7 +1676,8 @@ foreach(_path IN LISTS _production_sources)
     file(READ "${_path}" _candidate)
     normalize_runtime_facade_phase2(_candidate _candidate_phase2)
     if(_path STREQUAL _coordinator_header_path
-        OR _path STREQUAL _table_header_path)
+        OR _path STREQUAL _table_header_path
+        OR _path STREQUAL _callback_context_header_path)
         remove_reviewed_runtime_facade_friend_tokens(
             "${_path}" _candidate_phase2 _candidate_phase2)
     endif()
