@@ -678,9 +678,10 @@ Completed foundation work:
   failure-atomic publication. Complete local GCC **171/171**, focused Clang/sanitizer, genuine i386/AArch64,
   production/source/security, diff, and independent-audit gates pass. PR #76 code/documentation head `9b0e4c5f` passed
   all nine hosted jobs in run **29794474261**; Gemini's two null findings were resolved as non-actionable short-circuit
-  false positives, while Codex review was unavailable at its repository usage limit. It enrolls no caller. Final
-  documentation-only CI and merge remain, and a literal full-chain fixture remains a pre-enrollment gate, as do stable
-  33-slot contexts and checked no-report helpers. The remaining loader
+  false positives, while Codex review was unavailable at its repository usage limit. Final documentation head
+  `9c11d7a8` passed all nine jobs in run **29795268032**, PR #76 merged as `1e681792`, and current master `0b0ba10a`
+  passed all nine authoritative jobs in run **29857848875**. It enrolls no caller. A literal full-chain fixture remains
+  a pre-enrollment gate, as do stable 33-slot contexts and checked no-report helpers. The remaining loader
   prerequisites precede the atomic
   seven-site cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
@@ -804,8 +805,9 @@ Remaining gates, in implementation order:
    table and serialized facade. It authenticates the actual output span through table-owned stream authority, preserves
    exact key/count identity and failure-atomic publication, exposes no receipt or ledger capability, and keeps all seven
    raw sites frozen. Full local GCC **171/171**, focused cross-toolchain/architecture/seal gates, and independent audit
-   pass. PR #76 code/documentation head `9b0e4c5f` passed all nine jobs in run **29794474261**; final documentation-only
-   CI and merge remain pending. After the remaining full-chain/context/no-report prerequisites, atomically bind
+   pass. PR #76 final documentation head `9c11d7a8` passed all nine jobs in run **29795268032**, merged as `1e681792`,
+   and current master `0b0ba10a` passed all nine authoritative jobs in run **29857848875**. After the remaining
+   full-chain/context/no-report prerequisites, atomically bind
    the loader
    across all seven sites; partial enrollment remains forbidden. Keep static controller
    slots and callback metadata
@@ -1809,9 +1811,10 @@ clean Codex/Gemini review and zero unresolved threads, squash-merged as `f996e16
 post-merge jobs in run **29788146050**. PR #75 reconciled upstream through `4ad0a2e2`. Code checkpoint `ef74688b` now
 implements and locally verifies the production-neutral exact-key, by-value pending-copy inspection prerequisite: GCC
 CTest is **171/171**, the affected Clang, sanitizer, genuine i386/AArch64, production/source/security, and diff gates
-pass, and an independent final audit is clean. PR #76 code/documentation head `9b0e4c5f` passed all nine jobs in run
-**29794474261**; final documentation-only CI and merge remain pending. No production caller is enrolled. The ancestry
-checkpoint records reviewed history without importing code and therefore does not inflate the
+pass, and an independent final audit is clean. PR #76 final documentation head `9c11d7a8` passed all nine jobs in run
+**29795268032**, merged as `1e681792`, and current master `0b0ba10a` passed all nine authoritative jobs in run
+**29857848875**. No production caller is enrolled. The ancestry checkpoint records reviewed history without importing
+code and therefore does not inflate the
 engineering estimate.
 Windows x86 is about
 **93%**, shared
