@@ -627,6 +627,84 @@ set_tests_properties(
     database-zone-runtime-facade-production-test-access-sealed
     PROPERTIES TIMEOUT 20)
 
+# Compile the callback-context implementation with its production surface on
+# every portable host.  OBJECT makes unresolved PMem service linkage harmless
+# while preserving warning and macro-off coverage in the default build.
+add_library(kisakcod-db-zone-runtime-callback-context-macro-off OBJECT
+    ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp)
+target_include_directories(
+    kisakcod-db-zone-runtime-callback-context-macro-off SYSTEM PRIVATE
+    ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-callback-context-macro-off PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-callback-context-macro-off PRIVATE KISAK_MP)
+kisakcod_test_warnings(
+    kisakcod-db-zone-runtime-callback-context-macro-off)
+
+add_executable(kisakcod-db-zone-runtime-callback-context-tests
+    db_zone_runtime_callback_context_tests.cpp
+    ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp)
+target_include_directories(
+    kisakcod-db-zone-runtime-callback-context-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-callback-context-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-callback-context-tests PRIVATE
+    KISAK_MP
+    KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING=1)
+kisakcod_test_warnings(kisakcod-db-zone-runtime-callback-context-tests)
+set_target_properties(
+    kisakcod-db-zone-runtime-callback-context-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-zone-runtime-callback-context
+    COMMAND kisakcod-db-zone-runtime-callback-context-tests)
+set_tests_properties(
+    database-zone-runtime-callback-context PROPERTIES TIMEOUT 20)
+
+add_executable(
+    kisakcod-db-zone-runtime-callback-context-production-seal-tests
+    db_zone_runtime_callback_context_production_seal_tests.cpp)
+target_include_directories(
+    kisakcod-db-zone-runtime-callback-context-production-seal-tests
+    PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-callback-context-production-seal-tests
+    PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-callback-context-production-seal-tests
+    PRIVATE KISAK_MP)
+kisakcod_test_warnings(
+    kisakcod-db-zone-runtime-callback-context-production-seal-tests)
+set_target_properties(
+    kisakcod-db-zone-runtime-callback-context-production-seal-tests
+    PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_dependencies(
+    kisakcod-db-zone-runtime-callback-context-production-seal-tests
+    kisakcod-db-zone-runtime-callback-context-macro-off)
+add_test(
+    NAME database-zone-runtime-callback-context-production-test-access-sealed
+    COMMAND
+        kisakcod-db-zone-runtime-callback-context-production-seal-tests)
+set_tests_properties(
+    database-zone-runtime-callback-context-production-test-access-sealed
+    PROPERTIES TIMEOUT 20)
+add_test(
+    NAME database-zone-runtime-callback-context-macro-off-object-symbol-sealed
+    COMMAND ${CMAKE_COMMAND}
+        "-DSEAL_EXECUTABLE=$<TARGET_FILE:kisakcod-db-zone-runtime-callback-context-production-seal-tests>"
+        "-DPRODUCTION_OBJECTS=$<JOIN:$<TARGET_OBJECTS:kisakcod-db-zone-runtime-callback-context-macro-off>,|>"
+        "-DCXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
+        "-DNM_TOOL=${CMAKE_NM}"
+        "-DREADELF_TOOL=${CMAKE_READELF}"
+        "-DLINKER_TOOL=${CMAKE_LINKER}"
+        -P
+        ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_callback_context_production_object_seal_test.cmake)
+set_tests_properties(
+    database-zone-runtime-callback-context-macro-off-object-symbol-sealed
+    PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-db-zone-runtime-table-tests
     db_zone_runtime_table_tests.cpp
     ${SRC_DIR}/database/db_zone_runtime_table.cpp
@@ -2461,6 +2539,14 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_table_source_test.cmake
+)
+
+add_test(
+    NAME database-zone-runtime-callback-context-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P
+        ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_callback_context_source_test.cmake
 )
 
 add_test(

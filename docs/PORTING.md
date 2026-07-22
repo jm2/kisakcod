@@ -687,12 +687,23 @@ Completed foundation work:
   admission, rollback, and unload now classify their one-byte context identity anchors before lower mutation, reject
   managed/control/poisoned/corrupt identities failure-atomically, and preserve null, stack, and coherent
   pre-initialization compatibility. Local GCC **171/171**, focused Clang/ASan+UBSan, i386/AArch64 compile-link,
-  production/source/security, diff, and two independent audits pass. It enrolls no production loader caller. A literal
-  full-chain fixture remains a pre-enrollment gate, as do stable typed 33-slot full-span contexts and checked no-report
-  helpers. Exact head `60ea924a` passed all nine hosted jobs in run **29892464335**, received clean exact-head Codex
+  production/source/security, diff, and two independent audits pass. It enrolls no production loader caller. At that
+  checkpoint, a literal full-chain fixture, stable typed 33-slot full-span contexts, and checked no-report helpers all
+  remained pre-enrollment gates. Exact head `60ea924a` passed all nine hosted jobs in run **29892464335**, received
+  clean exact-head Codex
   review with zero threads, and squash-merged as PR #78 at `305d9026`; all nine authoritative post-merge jobs passed in
-  run **29893501180**. Gemini's retired consumer reviewer emitted sunset notices only. The remaining loader
-  prerequisites precede the atomic seven-site cutover;
+  run **29893501180**. Gemini's retired consumer reviewer emitted sunset notices only. PR #79 exact head `120ce858`
+  then passed all nine jobs in run **29894539007** with clean Codex review and zero threads, squash-merged as
+  `33ec8378`, and passed all nine authoritative jobs in run **29895420496**. Rebased checkpoint `447ff3b5` now adds the
+  hidden fixed `0x28` x 33 callback-context bank, exact copied-key Bind/Resolve/Advance/Authenticate/Capture authority,
+  full-object/exact-member PMem authentication, Terminal identity retention with checked successor reuse, and
+  whole-bank alias separation. Full GCC **175/175**, focused GCC/Clang **4/4**, ASan+UBSan **3/3**, strict
+  i386/AArch64 compile-link, production/object/source/CI seals, and diff pass; two staged independent blocker reviews
+  were closed and the final independent audit is clean with zero production enrollment. PR #80 exact
+  implementation/documentation head `2c7c225d` passed all nine hosted jobs in run **29921410961** with clean Codex
+  review and zero threads; Gemini emitted only its retired-service notice. Facade/table claim-bind-reset coupling,
+  typed one-shot callback windows, the literal
+  full-chain Busy -> Retry fixture, and checked no-report helpers remain before the atomic seven-site cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -818,9 +829,15 @@ Remaining gates, in implementation order:
    PR #77 merged its documentation checkpoint as `8e157543`, where all nine authoritative jobs passed in run
    **29890463505**. PR #78 exact head `60ea924a` completed the readiness-aware one-byte legacy identity gate, passed all
    nine hosted jobs in run **29892464335**, squash-merged as `305d9026`, and passed all nine authoritative post-merge
-   jobs in run **29893501180**. A literal full-chain fixture, typed stable 33-slot full-span/exact-generation contexts,
-   and checked no-report coordinator-owned registry helpers still precede the atomic seven-site loader cutover; partial
-   enrollment remains forbidden. Keep static
+   jobs in run **29893501180**. PR #79 exact head `120ce858` passed all nine jobs in run **29894539007** with clean
+   Codex review and zero threads, squash-merged as `33ec8378`, and passed all nine authoritative jobs in run
+   **29895420496**. Rebased checkpoint `447ff3b5` completes the production-neutral hidden 33-slot stable-context core,
+   exact copied-key/Terminal identity, whole-bank alias gate, and macro-off private authority with full GCC **175/175**
+   plus focused cross-toolchain, sanitizer, i386/AArch64, source/security/object, diff, and independent-audit evidence.
+   PR #80 exact implementation/documentation head `2c7c225d` passed all nine hosted jobs in run **29921410961** with
+   clean Codex review and zero threads; Gemini emitted only its retired-service notice. A literal full-chain fixture,
+   facade/table one-shot callback coupling, and checked no-report coordinator-owned
+   registry helpers still precede the atomic seven-site loader cutover; partial enrollment remains forbidden. Keep static
    controller
    slots and callback metadata
    outside PMem with
@@ -1809,7 +1826,7 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **82% by current engineering effort**. PR #62 merged the production-neutral
+Overall porting progress is approximately **83% by current engineering effort**. PR #62 merged the production-neutral
 pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
 registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
 tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy-PMem
@@ -1829,12 +1846,19 @@ authoritative jobs passed there in run **29890463505**. PR #78 exact head `60ea9
 readiness-aware PMem classifier and its retained admission/rollback/unload callback-identity enrollment; local GCC
 **171/171**, focused compiler/sanitizer/architecture/source/security gates, and two independent audits pass. The exact
 head passed all nine hosted jobs in run **29892464335** with clean Codex review and zero threads, squash-merged as
-`305d9026`, and passed all nine authoritative post-merge jobs in run **29893501180**. No production loader caller is
-enrolled. The ancestry checkpoint records reviewed history without importing code and therefore does not inflate the
-engineering estimate.
+`305d9026`, and passed all nine authoritative post-merge jobs in run **29893501180**. PR #79 exact head `120ce858`
+passed all nine jobs in run **29894539007** with clean Codex review and zero threads, squash-merged as `33ec8378`, and
+passed all nine authoritative jobs in run **29895420496**. Rebased checkpoint `447ff3b5` adds the hidden stable 33-slot
+callback-context core, exact copied-key resolution and Terminal/successor identity, whole-bank span separation, and
+macro-off private authority. Full GCC **175/175**, focused GCC/Clang and sanitizer, strict i386/AArch64 compile-link,
+source/security/object/CI seals, and diff pass; the two staged independent blocker reviews were closed and the final
+independent audit is clean. PR #80 exact implementation/documentation head `2c7c225d` passed all nine hosted jobs in
+run **29921410961** with clean Codex review and zero threads; Gemini emitted only its retired-service notice. No
+production loader caller is enrolled. The ancestry checkpoint records reviewed history without importing code and
+therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared
-foundations/security about **89%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
+foundations/security about **90%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped

@@ -172,6 +172,8 @@ set(DATABASE
     "${SRC_DIR}/database/db_zone_script_string_ownership.h"
     "${SRC_DIR}/database/db_zone_runtime_table.cpp"
     "${SRC_DIR}/database/db_zone_runtime_table.h"
+    "${SRC_DIR}/database/db_zone_runtime_callback_context.cpp"
+    "${SRC_DIR}/database/db_zone_runtime_callback_context.h"
     "${SRC_DIR}/database/db_zone_runtime_facade.cpp"
     "${SRC_DIR}/database/db_zone_runtime_facade.h"
     "${SRC_DIR}/database/db_xasset_disk32.cpp"
