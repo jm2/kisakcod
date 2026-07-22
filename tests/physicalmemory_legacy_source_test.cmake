@@ -85,6 +85,9 @@ read_normalized("src/database/db_registry.cpp" registry_source)
 read_normalized("tests/physicalmemory_legacy_tests.cpp" legacy_fixture)
 read_normalized("tests/physicalmemory_runtime_tests.cpp" runtime_fixture)
 read_normalized(
+    "tests/db_zone_runtime_stable_context_integration_tests.cpp"
+    stable_integration_fixture)
+read_normalized(
     "tests/physicalmemory_runtime_production_seal_tests.cpp"
     production_seal_fixture)
 read_normalized(
@@ -1109,6 +1112,92 @@ require_count(
     "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING=1"
     1
     "target-local runtime-table PMem fault seam")
+
+# The stable callback integration test composes the real physical-memory
+# implementation with the complete production facade/table/registry chain.
+# It must stay macro-off: deterministic platform seams live in the fixture,
+# but PMem state and behavior come from physicalmemory.cpp itself.
+extract_slice(
+    "${test_manifest}"
+    "add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "add_executable(kisakcod-fx-archive-disk32-tests"
+    stable_integration_registration)
+foreach(marker IN ITEMS
+    "db_zone_runtime_stable_context_integration_tests.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_facade.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_callback_context.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_table.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_storage.cpp"
+    "\${SRC_DIR}/database/db_zone_stream_ownership.cpp"
+    "\${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp"
+    "\${SRC_DIR}/database/db_zone_script_string_ownership.cpp"
+    "\${SRC_DIR}/database/db_script_string_adapter.cpp"
+    "\${SRC_DIR}/database/db_script_string_journal.cpp"
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp"
+    "\${SRC_DIR}/database/db_zone_load_context.cpp"
+    "\${SRC_DIR}/database/db_relocation.cpp"
+    "\${SRC_DIR}/database/db_stream.cpp"
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp"
+    "\${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp"
+    "\${SRC_DIR}/universal/physicalmemory.cpp"
+    "\${SRC_DIR}/universal/physicalmemory_checked.cpp"
+    "\${SRC_DIR}/qcommon/sys_sync.cpp"
+    "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>"
+    "SYSTEM PRIVATE \${SRC_DIR}"
+    "PRIVATE cxx_std_20"
+    "PRIVATE KISAK_MP)"
+    "PRIVATE Threads::Threads)"
+    "PRIVATE \"LINKER:/STACK:8388608\""
+    "NAME database-zone-runtime-stable-context-integration"
+    "NAME database-zone-runtime-stable-context-forgotten-finish"
+    "--omit-finish")
+    require_text("${stable_integration_registration}" "${marker}"
+        "macro-off stable integration PMem source closure")
+endforeach()
+require_count("${stable_integration_registration}" "\${SRC_DIR}/" 19
+    "exact stable integration production source closure")
+require_count("${stable_integration_registration}" "$<TARGET_OBJECTS:" 4
+    "exact stable integration object-source closure")
+require_count("${stable_integration_registration}" ".cpp" 20
+    "one fixture plus nineteen exact production translation units")
+require_count(
+    "${stable_integration_registration}" "target_compile_definitions(" 1
+    "one stable integration compile-definition block")
+require_text(
+    "${stable_integration_registration}"
+    "database-zone-runtime-stable-context-integration\n    database-zone-runtime-stable-context-forgotten-finish\n    PROPERTIES TIMEOUT 30"
+    "both bounded stable integration CTest modes")
+reject_text("${stable_integration_registration}" "_TESTING"
+    "private TestAccess capability on stable integration target")
+reject_text("${stable_integration_registration}" "winmm"
+    "nondeterministic platform library on stable integration target")
+
+foreach(marker IN ITEMS
+    "pmem_runtime::TryInitialize()"
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback("
+    "RegistryOwnershipStatus::Busy"
+    "ZoneScriptStringUnpublishStatus::Retry"
+    "--omit-finish")
+    require_text("${stable_integration_fixture}" "${marker}"
+        "real PMem-backed stable callback integration coverage")
+endforeach()
+foreach(forbidden IN ITEMS
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+    "PhysicalMemoryGlobalStateTestAccess"
+    "namespace pmem_runtime")
+    reject_text("${stable_integration_fixture}" "${forbidden}"
+        "fake or privileged PMem integration fixture path")
+endforeach()
+foreach(marker IN ITEMS
+    "kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "database-zone-runtime-stable-context-(integration|forgotten-finish)")
+    require_text("${workflow}" "${marker}"
+        "Windows x86 PMem-backed stable integration gate")
+endforeach()
 
 # Runtime coverage, macro-off object proof, and hosted selection travel with
 # the implementation.

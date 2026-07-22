@@ -20,6 +20,8 @@ set(_facade_source_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_zone_runtime_callback_context_tests.cpp")
+set(_integration_fixture_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_stable_context_integration_tests.cpp")
 set(_seal_path
     "${SOURCE_ROOT}/tests/db_zone_runtime_callback_context_production_seal_tests.cpp")
 set(_object_seal_path
@@ -39,6 +41,7 @@ foreach(_path IN ITEMS
     "${_facade_header_path}"
     "${_facade_source_path}"
     "${_fixture_path}"
+    "${_integration_fixture_path}"
     "${_seal_path}"
     "${_object_seal_path}"
     "${_facade_seal_path}"
@@ -55,6 +58,7 @@ file(READ "${_source_path}" _source_raw)
 file(READ "${_table_source_path}" _table_source_raw)
 file(READ "${_facade_source_path}" _facade_source_raw)
 file(READ "${_fixture_path}" _fixture_raw)
+file(READ "${_integration_fixture_path}" _integration_fixture_raw)
 file(READ "${_seal_path}" _seal_raw)
 file(READ "${_object_seal_path}" _object_seal_raw)
 file(READ "${_facade_seal_path}" _facade_seal_raw)
@@ -68,6 +72,7 @@ foreach(_var IN ITEMS
     _table_source
     _facade_source
     _fixture
+    _integration_fixture
     _seal
     _object_seal
     _facade_seal
@@ -534,6 +539,96 @@ foreach(_marker IN ITEMS
     "db_zone_runtime_callback_context_production_object_seal_test.cmake"
     "database-zone-runtime-callback-context-source-invariants")
     require_contains(_tests "${_marker}" "portable test/seal wiring")
+endforeach()
+
+# The literal facade-to-registry integration target is a production-macro
+# composition gate, not another private TestAccess fixture. Freeze its complete
+# source closure so the callback context cannot silently be replaced by a fake
+# implementation or compiled with a broader capability grant.
+extract_slice(
+    _tests
+    "add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "add_executable(kisakcod-fx-archive-disk32-tests"
+    _stable_integration_registration
+    "stable callback-context integration registration")
+foreach(_marker IN ITEMS
+    "db_zone_runtime_stable_context_integration_tests.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_facade.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_callback_context.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_table.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_storage.cpp"
+    "\${SRC_DIR}/database/db_zone_stream_ownership.cpp"
+    "\${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp"
+    "\${SRC_DIR}/database/db_zone_script_string_ownership.cpp"
+    "\${SRC_DIR}/database/db_script_string_adapter.cpp"
+    "\${SRC_DIR}/database/db_script_string_journal.cpp"
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp"
+    "\${SRC_DIR}/database/db_zone_load_context.cpp"
+    "\${SRC_DIR}/database/db_relocation.cpp"
+    "\${SRC_DIR}/database/db_stream.cpp"
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp"
+    "\${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp"
+    "\${SRC_DIR}/universal/physicalmemory.cpp"
+    "\${SRC_DIR}/universal/physicalmemory_checked.cpp"
+    "\${SRC_DIR}/qcommon/sys_sync.cpp"
+    "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>"
+    "SYSTEM PRIVATE \${SRC_DIR}"
+    "PRIVATE cxx_std_20"
+    "PRIVATE KISAK_MP)"
+    "PRIVATE Threads::Threads)"
+    "PRIVATE \"LINKER:/STACK:8388608\""
+    "NAME database-zone-runtime-stable-context-integration"
+    "NAME database-zone-runtime-stable-context-forgotten-finish"
+    "--omit-finish"
+    "database-zone-runtime-stable-context-integration database-zone-runtime-stable-context-forgotten-finish PROPERTIES TIMEOUT 30")
+    require_contains(
+        _stable_integration_registration "${_marker}"
+        "macro-off stable callback-context source closure")
+endforeach()
+require_substring_count(
+    _stable_integration_registration "\${SRC_DIR}/" 19
+    "exact stable integration production source closure")
+require_substring_count(
+    _stable_integration_registration "$<TARGET_OBJECTS:" 4
+    "exact stable integration object-source closure")
+require_substring_count(
+    _stable_integration_registration ".cpp" 20
+    "one fixture plus nineteen exact production translation units")
+require_substring_count(
+    _stable_integration_registration "target_compile_definitions(" 1
+    "one stable integration compile-definition block")
+require_not_contains(
+    _stable_integration_registration "_TESTING"
+    "stable integration cannot enable any TestAccess capability")
+require_not_contains(
+    _stable_integration_registration "winmm"
+    "stable integration keeps deterministic platform seams")
+
+foreach(_marker IN ITEMS
+    "const ZoneRuntimeCallbackContext *const context"
+    "const ZoneLoadContextKey key"
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( context, key)"
+    "RegistryOwnershipStatus::Busy ? ZoneScriptStringUnpublishStatus::Retry"
+    "ZoneRuntimeFacade::FinishRegistryOwnership()"
+    "--omit-finish")
+    require_contains(
+        _integration_fixture "${_marker}"
+        "real stable callback borrow and forgotten-finish coverage")
+endforeach()
+require_substring_count(
+    _integration_fixture
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback" 5
+    "closed callback-only registry borrow coverage")
+
+foreach(_marker IN ITEMS
+    "kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "database-zone-runtime-stable-context-(integration|forgotten-finish)")
+    require_contains(_ci "${_marker}"
+        "Windows x86 stable callback-context integration gate")
 endforeach()
 
 get_filename_component(

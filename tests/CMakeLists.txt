@@ -890,6 +890,69 @@ add_test(
     COMMAND kisakcod-db-zone-runtime-table-production-seal-tests
 )
 
+# Literal macro-off production chain: facade -> table -> typed stable callback
+# context -> ownership controller -> registry coordinator -> real script-string
+# registry. The fixture supplies only deterministic platform/reporting seams.
+add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests
+    db_zone_runtime_stable_context_integration_tests.cpp
+    ${SRC_DIR}/database/db_zone_runtime_facade.cpp
+    ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
+    ${SRC_DIR}/database/db_zone_runtime_table.cpp
+    ${SRC_DIR}/database/db_zone_runtime_storage.cpp
+    ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+    ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
+    ${SRC_DIR}/database/db_zone_script_string_ownership.cpp
+    ${SRC_DIR}/database/db_script_string_adapter.cpp
+    ${SRC_DIR}/database/db_script_string_journal.cpp
+    ${SRC_DIR}/database/db_script_string_transaction.cpp
+    ${SRC_DIR}/database/db_zone_load_context.cpp
+    ${SRC_DIR}/database/db_relocation.cpp
+    ${SRC_DIR}/database/db_stream.cpp
+    ${SRC_DIR}/database/db_registry_ownership_coordinator.cpp
+    ${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp
+    ${SRC_DIR}/universal/physicalmemory.cpp
+    ${SRC_DIR}/universal/physicalmemory_checked.cpp
+    ${SRC_DIR}/qcommon/sys_sync.cpp
+    ${SRC_DIR}/script/scr_memorytree.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>
+)
+target_include_directories(
+    kisakcod-db-zone-runtime-stable-context-integration-tests
+    SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-stable-context-integration-tests
+    PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-stable-context-integration-tests
+    PRIVATE KISAK_MP)
+target_link_libraries(
+    kisakcod-db-zone-runtime-stable-context-integration-tests
+    PRIVATE Threads::Threads)
+if (MSVC)
+    target_link_options(
+        kisakcod-db-zone-runtime-stable-context-integration-tests
+        PRIVATE "LINKER:/STACK:8388608")
+endif()
+kisakcod_test_warnings(
+    kisakcod-db-zone-runtime-stable-context-integration-tests)
+set_target_properties(
+    kisakcod-db-zone-runtime-stable-context-integration-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-zone-runtime-stable-context-integration
+    COMMAND kisakcod-db-zone-runtime-stable-context-integration-tests)
+add_test(
+    NAME database-zone-runtime-stable-context-forgotten-finish
+    COMMAND kisakcod-db-zone-runtime-stable-context-integration-tests
+            --omit-finish)
+set_tests_properties(
+    database-zone-runtime-stable-context-integration
+    database-zone-runtime-stable-context-forgotten-finish
+    PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp
     ${SRC_DIR}/EffectsCore/fx_archive_disk32.cpp

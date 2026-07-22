@@ -10711,6 +10711,63 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
         "exact-controller component enrollment freeze")
 endforeach()
 
+# Keep the macro-off stable-callback integration seal itself fail-closed. The
+# table source test owns the exact target closure and the behavioral evidence;
+# this security mirror pins the meaningful enforcement points so that seal
+# weakening cannot disappear as an unrelated source-test cleanup.
+foreach(_stable_context_integration_seal_marker IN ITEMS
+    "_stable_integration_fixture_path"
+    "db_zone_runtime_stable_context_integration_tests.cpp"
+    "_expected_stable_integration_source_registration"
+    "Stable integration target source closure drifted"
+    "\${SRC_DIR}/database/db_zone_runtime_facade.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_callback_context.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_table.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_storage.cpp"
+    "\${SRC_DIR}/database/db_zone_stream_ownership.cpp"
+    "\${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp"
+    "\${SRC_DIR}/database/db_zone_script_string_ownership.cpp"
+    "\${SRC_DIR}/database/db_script_string_adapter.cpp"
+    "\${SRC_DIR}/database/db_script_string_journal.cpp"
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp"
+    "\${SRC_DIR}/database/db_zone_load_context.cpp"
+    "\${SRC_DIR}/database/db_relocation.cpp"
+    "\${SRC_DIR}/database/db_stream.cpp"
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp"
+    "\${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp"
+    "\${SRC_DIR}/universal/physicalmemory.cpp"
+    "\${SRC_DIR}/universal/physicalmemory_checked.cpp"
+    "\${SRC_DIR}/qcommon/sys_sync.cpp"
+    "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>"
+    "stable integration has exactly one compile-definition grant"
+    "macro-off stable integration cannot receive test authority"
+    "macro-off stable integration fixture cannot self-grant test authority"
+    "literal macro-off facade/table/controller/coordinator/registry chain"
+    "full-chain fixture cannot substitute a fake registry authority"
+    "stable callback Busy-to-Retry-to-Success chain"
+    "Busy callback precedes the successful retry borrow"
+    "real registry mutation precedes coordinator finish"
+    "forgotten-finish branch must actually omit coordinator finish"
+    "stable integration retry, alias, terminal, and stale-key coverage"
+    "terminal reset must precede stale-key rejection"
+    "omitted callback finish leaves table/facade fail-closed"
+    "forgotten-finish coverage remains process isolated"
+    "LINKER:/STACK:8388608"
+    "database-zone-runtime-stable-context-integration"
+    "database-zone-runtime-stable-context-forgotten-finish"
+    "--omit-finish"
+    "stable-context-(legacy-descriptors|unused-busy|managed-key|bank-key|terminal-phase|claimed-neighbor|unused-neighbor)"
+    "database-zone-runtime-stable-context-(integration|forgotten-finish)")
+    require_repository_contains(
+        "tests/db_zone_runtime_table_source_test.cmake"
+        "${_stable_context_integration_seal_marker}"
+        "macro-off stable callback integration source/meta seal")
+endforeach()
+
 foreach(_zone_runtime_detector_marker IN ITEMS
     "remove_reviewed_runtime_table_pending_tokens"
     "require_runtime_table_pending_detector_fixture"

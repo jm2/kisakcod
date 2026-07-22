@@ -10,6 +10,8 @@ set(_source_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_zone_runtime_table_tests.cpp")
+set(_stable_integration_fixture_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_stable_context_integration_tests.cpp")
 set(_production_seal_path
     "${SOURCE_ROOT}/tests/db_zone_runtime_table_production_seal_tests.cpp")
 set(_physical_receipt_header_path
@@ -35,6 +37,7 @@ foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
     "${_fixture_path}"
+    "${_stable_integration_fixture_path}"
     "${_production_seal_path}"
     "${_physical_receipt_header_path}"
     "${_stream_receipt_header_path}"
@@ -57,6 +60,8 @@ endforeach()
 file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
 file(READ "${_fixture_path}" _fixture)
+file(READ "${_stable_integration_fixture_path}"
+    _stable_integration_fixture)
 file(READ "${_production_seal_path}" _production_seal)
 file(READ "${_physical_receipt_header_path}" _physical_receipt_header)
 file(READ "${_stream_receipt_header_path}" _stream_receipt_header)
@@ -85,6 +90,7 @@ foreach(_var IN ITEMS
     _header
     _source
     _fixture
+    _stable_integration_fixture
     _production_seal
     _physical_receipt_header
     _stream_receipt_header
@@ -3509,6 +3515,243 @@ foreach(_marker IN ITEMS
         "managed, idle-stream, and bound-zone outputs remain fail-closed")
 endforeach()
 
+# The portable full-chain fixture must stay a literal macro-off composition of
+# the production facade, table, stable callback bank, ownership controller,
+# registry coordinator, and real script-string registry. Freeze the complete
+# source closure so an authority-bearing test double or omitted production
+# layer cannot silently replace part of that chain.
+extract_slice(
+    _tests
+    "add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "target_include_directories("
+    _stable_integration_source_registration
+    "macro-off stable integration target source closure")
+string(STRIP "${_stable_integration_source_registration}"
+    _stable_integration_source_registration)
+string(CONCAT _expected_stable_integration_source_registration
+    "add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests "
+    "db_zone_runtime_stable_context_integration_tests.cpp "
+    "\${SRC_DIR}/database/db_zone_runtime_facade.cpp "
+    "\${SRC_DIR}/database/db_zone_runtime_callback_context.cpp "
+    "\${SRC_DIR}/database/db_zone_runtime_table.cpp "
+    "\${SRC_DIR}/database/db_zone_runtime_storage.cpp "
+    "\${SRC_DIR}/database/db_zone_stream_ownership.cpp "
+    "\${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp "
+    "\${SRC_DIR}/database/db_zone_script_string_ownership.cpp "
+    "\${SRC_DIR}/database/db_script_string_adapter.cpp "
+    "\${SRC_DIR}/database/db_script_string_journal.cpp "
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp "
+    "\${SRC_DIR}/database/db_zone_load_context.cpp "
+    "\${SRC_DIR}/database/db_relocation.cpp "
+    "\${SRC_DIR}/database/db_stream.cpp "
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp "
+    "\${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp "
+    "\${SRC_DIR}/universal/physicalmemory.cpp "
+    "\${SRC_DIR}/universal/physicalmemory_checked.cpp "
+    "\${SRC_DIR}/qcommon/sys_sync.cpp "
+    "\${SRC_DIR}/script/scr_memorytree.cpp "
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject> "
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject> "
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject> "
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject> "
+    ")")
+if(NOT _stable_integration_source_registration STREQUAL
+    _expected_stable_integration_source_registration)
+    message(FATAL_ERROR
+        "Stable integration target source closure drifted: expected "
+        "'${_expected_stable_integration_source_registration}', found "
+        "'${_stable_integration_source_registration}'")
+endif()
+
+extract_slice(
+    _tests
+    "add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "add_executable(kisakcod-fx-archive-disk32-tests"
+    _stable_integration_registration
+    "macro-off stable integration registration")
+foreach(_marker IN ITEMS
+    "target_compile_features( kisakcod-db-zone-runtime-stable-context-integration-tests PRIVATE cxx_std_20)"
+    "target_compile_definitions( kisakcod-db-zone-runtime-stable-context-integration-tests PRIVATE KISAK_MP)"
+    "target_link_libraries( kisakcod-db-zone-runtime-stable-context-integration-tests PRIVATE Threads::Threads)"
+    "target_link_options( kisakcod-db-zone-runtime-stable-context-integration-tests PRIVATE \"LINKER:/STACK:8388608\")"
+    "NAME database-zone-runtime-stable-context-integration"
+    "NAME database-zone-runtime-stable-context-forgotten-finish"
+    "COMMAND kisakcod-db-zone-runtime-stable-context-integration-tests --omit-finish"
+    "database-zone-runtime-stable-context-integration database-zone-runtime-stable-context-forgotten-finish PROPERTIES TIMEOUT 30")
+    require_contains(
+        _stable_integration_registration "${_marker}"
+        "portable macro-off stable integration registration")
+endforeach()
+require_substring_count(
+    _stable_integration_registration
+    "target_compile_definitions("
+    1
+    "stable integration has exactly one compile-definition grant")
+foreach(_testing_grant IN ITEMS
+    "_TESTING"
+    "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
+    "KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING"
+    "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING"
+    "KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING"
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING")
+    require_not_contains(
+        _stable_integration_registration "${_testing_grant}"
+        "macro-off stable integration cannot receive test authority")
+    require_not_contains(
+        _stable_integration_fixture "${_testing_grant}"
+        "macro-off stable integration fixture cannot self-grant test authority")
+endforeach()
+
+# Pin the literal real chain and its adversarial callback behavior. The first
+# callback runs while the real hash serializer is held and maps Busy to Retry;
+# the next callback borrows the coordinator, mutates the real registry, and
+# finishes successfully. Terminal reset then revokes the exact context/key.
+foreach(_marker IN ITEMS
+    "#include <script/scr_stringlist.cpp>"
+    "FastCriticalSection db_hashCritSect{};"
+    "ZoneRuntimeFacade::TryInitializeRuntimeTable()"
+    "ZoneRuntimeFacade::TryBindGenerationCallbacks("
+    "ZoneRuntimeFacade::TryBeginScriptStringOwnership("
+    "script_string::TryAcquireOrdinaryStringOfSize("
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback("
+    "ZoneRuntimeFacade::TryAddDatabaseUser4("
+    "ZoneRuntimeFacade::FinishRegistryOwnership()"
+    "db::zone_runtime::TryGetZoneRuntimeGeneration( &ProductionZoneRuntimeTable()")
+    require_contains(
+        _stable_integration_fixture "${_marker}"
+        "literal macro-off facade/table/controller/coordinator/registry chain")
+endforeach()
+foreach(_forbidden_fake_registry IN ITEMS
+    "struct RegistryOwnershipAdmission"
+    "class RegistryOwnershipAdmission"
+    "struct RegistryOwnershipCoordinator"
+    "class RegistryOwnershipCoordinator")
+    require_not_contains(
+        _stable_integration_fixture "${_forbidden_fake_registry}"
+        "full-chain fixture cannot substitute a fake registry authority")
+endforeach()
+
+extract_slice(
+    _stable_integration_fixture
+    "ZoneScriptStringUnpublishStatus EnsureGenerationUnreachable("
+    "ZoneLoadCleanupCallbackStatus PerformExternalCleanup("
+    _stable_integration_callback
+    "stable integration callback chain")
+foreach(_marker IN ITEMS
+    "g_callbackProbe.firstBorrow = ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( context, key);"
+    "g_callbackProbe.firstBorrow == RegistryOwnershipStatus::Busy ? ZoneScriptStringUnpublishStatus::Retry"
+    "g_callbackProbe.retryBorrow = ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( context, key);"
+    "g_callbackProbe.retryBorrow != RegistryOwnershipStatus::Success"
+    "g_callbackProbe.callbackBankRegistryAlias = ZoneRuntimeFacade::TryAddDatabaseUsers4( callbackBankIds, 1, &aliasOutput);"
+    "g_callbackProbe.callbackBankRegistryAlias != RegistryOwnershipStatus::InvalidArgument"
+    "g_callbackProbe.addStatus = ZoneRuntimeFacade::TryAddDatabaseUser4( g_callbackProbe.expectedStringId);"
+    "g_callbackProbe.finishStatus = ZoneRuntimeFacade::FinishRegistryOwnership();")
+    require_contains(
+        _stable_integration_callback "${_marker}"
+        "stable callback Busy-to-Retry-to-Success chain")
+endforeach()
+require_ordered(
+    _stable_integration_callback
+    "g_callbackProbe.firstBorrow == RegistryOwnershipStatus::Busy"
+    "g_callbackProbe.retryBorrow ="
+    "Busy callback precedes the successful retry borrow")
+require_ordered(
+    _stable_integration_callback
+    "g_callbackProbe.retryBorrow != RegistryOwnershipStatus::Success"
+    "g_callbackProbe.addStatus ="
+    "successful retry borrow precedes real registry mutation")
+require_ordered(
+    _stable_integration_callback
+    "g_callbackProbe.addStatus ="
+    "g_callbackProbe.finishStatus ="
+    "real registry mutation precedes coordinator finish")
+
+extract_slice(
+    _stable_integration_callback
+    "if (g_callbackProbe.omitFinish)"
+    "if (g_callbackProbe.ensureCalls == 1)"
+    _stable_integration_omit_finish_callback
+    "forgotten-finish callback branch")
+require_contains(
+    _stable_integration_omit_finish_callback
+    "g_callbackProbe.omittedFinishBorrow = ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( context, key);"
+    "forgotten-finish branch must retain real callback authority")
+require_not_contains(
+    _stable_integration_omit_finish_callback
+    "FinishRegistryOwnership("
+    "forgotten-finish branch must actually omit coordinator finish")
+
+extract_slice(
+    _stable_integration_fixture
+    "[[nodiscard]] bool TestStableCallbackRetryChain() noexcept"
+    "[[nodiscard]] bool TestOmittedCallbackFinishFailsClosed() noexcept"
+    _stable_integration_retry_test
+    "stable integration retry test")
+foreach(_marker IN ITEMS
+    "Sys_LockWrite(&db_hashCritSect);"
+    "Sys_UnlockWrite(&db_hashCritSect);"
+    "firstAbandonment == ZoneRuntimeTableStatus::Retry"
+    "g_callbackProbe.firstBorrow == RegistryOwnershipStatus::Busy"
+    "retry == ZoneRuntimeTableStatus::Success"
+    "g_callbackProbe.retryBorrow == RegistryOwnershipStatus::Success"
+    "g_callbackProbe.callbackBankFacadeAlias == ZoneRuntimeTableStatus::InvalidArgument"
+    "g_callbackProbe.callbackBankTableAlias == ZoneRuntimeTableStatus::InvalidArgument"
+    "g_callbackProbe.callbackBankRegistryAlias == RegistryOwnershipStatus::InvalidArgument"
+    "ZoneRuntimeFacade::TryResetTerminalReceipt( fixture.key.slot, fixture.key) == ZoneRuntimeTableStatus::Success"
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( g_callbackProbe.context, fixture.key) == RegistryOwnershipStatus::InvalidState"
+    "++staleKey.generation;"
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( g_callbackProbe.context, staleKey) == RegistryOwnershipStatus::InvalidKey")
+    require_contains(
+        _stable_integration_retry_test "${_marker}"
+        "stable integration retry, alias, terminal, and stale-key coverage")
+endforeach()
+require_ordered(
+    _stable_integration_retry_test
+    "Sys_LockWrite(&db_hashCritSect);"
+    "firstAbandonment == ZoneRuntimeTableStatus::Retry"
+    "real hash contention must precede table Retry")
+require_ordered(
+    _stable_integration_retry_test
+    "firstAbandonment == ZoneRuntimeTableStatus::Retry"
+    "retry == ZoneRuntimeTableStatus::Success"
+    "Busy-to-Retry observation must precede successful retry")
+require_ordered(
+    _stable_integration_retry_test
+    "retry == ZoneRuntimeTableStatus::Success"
+    "ZoneRuntimeFacade::TryResetTerminalReceipt("
+    "successful retry must precede terminal reset")
+require_ordered(
+    _stable_integration_retry_test
+    "ZoneRuntimeFacade::TryResetTerminalReceipt("
+    "++staleKey.generation;"
+    "terminal reset must precede stale-key rejection")
+
+extract_slice(
+    _stable_integration_fixture
+    "[[nodiscard]] bool TestOmittedCallbackFinishFailsClosed() noexcept"
+    "} // namespace"
+    _stable_integration_omit_finish_test
+    "forgotten-finish fail-closed test")
+foreach(_marker IN ITEMS
+    "g_callbackProbe.omitFinish = true;"
+    "g_callbackProbe.omittedFinishBorrow == RegistryOwnershipStatus::Success"
+    "abandonment == ZoneRuntimeTableStatus::UnsafeFailure"
+    "entry->executionMode() != ZoneRuntimeExecutionMode::Terminal"
+    "!entry->generationBindingPristine()"
+    "ZoneRuntimeFacade::FinishAccess() == ZoneRuntimeFacadeStatus::UnsafeFailure"
+    "ZoneRuntimeFacade::TryBeginAccess() == ZoneRuntimeFacadeStatus::UnsafeFailure")
+    require_contains(
+        _stable_integration_omit_finish_test "${_marker}"
+        "omitted callback finish leaves table/facade fail-closed")
+endforeach()
+foreach(_marker IN ITEMS
+    "argc == 2 && std::strcmp(argv[1], \"--omit-finish\") == 0"
+    "std::_Exit(result);")
+    require_contains(
+        _stable_integration_fixture "${_marker}"
+        "forgotten-finish coverage remains process isolated")
+endforeach()
+
 # Compile the source in production targets, execute it on all portable hosts,
 # and retain explicit measured Windows x86 Debug/Release coverage.
 foreach(_marker IN ITEMS
@@ -3563,7 +3806,10 @@ endforeach()
 foreach(_marker IN ITEMS
     "kisakcod-db-zone-runtime-table-tests"
     "kisakcod-db-zone-runtime-table-production-seal-tests"
+    "kisakcod-db-zone-runtime-stable-context-integration-tests"
     "production-test-access-sealed"
+    "stable-context-(legacy-descriptors|unused-busy|managed-key|bank-key|terminal-phase|claimed-neighbor|unused-neighbor)"
+    "database-zone-runtime-stable-context-(integration|forgotten-finish)"
     "mutation-unsafe-(backend|postcondition)"
     "mutation-invalid-(missing-value|extra-value|kind)")
     require_contains(_ci "${_marker}" "measured Windows x86 CI integration")

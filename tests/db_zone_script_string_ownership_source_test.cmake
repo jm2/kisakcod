@@ -14,6 +14,8 @@ set(_adapter_source_path
     "${SOURCE_ROOT}/src/database/db_script_string_adapter.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_zone_script_string_ownership_tests.cpp")
+set(_stable_integration_fixture_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_stable_context_integration_tests.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
 set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
@@ -30,6 +32,7 @@ foreach(_path IN ITEMS
     "${_adapter_header_path}"
     "${_adapter_source_path}"
     "${_fixture_path}"
+    "${_stable_integration_fixture_path}"
     "${_manifest_path}"
     "${_tests_path}"
     "${_ci_path}"
@@ -49,6 +52,7 @@ file(READ "${_source_path}" _source)
 file(READ "${_adapter_header_path}" _adapter_header)
 file(READ "${_adapter_source_path}" _adapter_source)
 file(READ "${_fixture_path}" _fixture)
+file(READ "${_stable_integration_fixture_path}" _stable_integration_fixture)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
 file(READ "${_ci_path}" _ci)
@@ -64,6 +68,7 @@ foreach(_var IN ITEMS
     _adapter_header
     _adapter_source
     _fixture
+    _stable_integration_fixture
     _manifest
     _tests
     _ci
@@ -716,6 +721,209 @@ foreach(_var IN ITEMS _stream _stringtable _registry _file_load _load)
         ${_var}
         "TryResetTerminalZoneScriptStringOwnership("
         "legacy production site cannot reset terminal ownership")
+endforeach()
+
+# Exercise this controller through the literal macro-off facade/table callback
+# chain, with the real coordinator and file-local script-string registry. The
+# first callback borrow is blocked by the real DB hash lock, then the same
+# stable context retries, mutates the registry, and explicitly retires the
+# coordinator. A separate process mode deliberately omits that retirement and
+# proves that the enclosing controller/table/facade chain fails closed.
+extract_slice(
+    _stable_integration_fixture
+    "ZoneScriptStringUnpublishStatus EnsureGenerationUnreachable("
+    "ZoneLoadCleanupCallbackStatus PerformExternalCleanup("
+    _stable_ownership_callback
+    "stable production ownership callback")
+foreach(_marker IN ITEMS
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback("
+    "g_callbackProbe.firstBorrow"
+    "RegistryOwnershipStatus::Busy"
+    "ZoneScriptStringUnpublishStatus::Retry"
+    "g_callbackProbe.retryBorrow"
+    "RegistryOwnershipStatus::Success"
+    "ZoneRuntimeFacade::TryAddDatabaseUser4("
+    "ZoneRuntimeFacade::FinishRegistryOwnership();")
+    require_contains(
+        _stable_ownership_callback "${_marker}"
+        "stable controller/coordinator callback flow")
+endforeach()
+require_ordered(
+    _stable_ownership_callback
+    "g_callbackProbe.firstBorrow"
+    "g_callbackProbe.retryBorrow"
+    "busy ownership callback before the successful retry")
+require_ordered(
+    _stable_ownership_callback
+    "g_callbackProbe.retryBorrow"
+    "ZoneRuntimeFacade::TryAddDatabaseUser4("
+    "authenticated callback retry before real registry mutation")
+require_ordered(
+    _stable_ownership_callback
+    "ZoneRuntimeFacade::TryAddDatabaseUser4("
+    "ZoneRuntimeFacade::FinishRegistryOwnership();"
+    "registry mutation before coordinator retirement")
+
+extract_slice(
+    _stable_integration_fixture
+    "[[nodiscard]] bool TestStableCallbackRetryChain() noexcept"
+    "[[nodiscard]] bool TestOmittedCallbackFinishFailsClosed() noexcept"
+    _stable_ownership_retry_run
+    "stable controller contention/retry run")
+foreach(_marker IN ITEMS
+    "#include <script/scr_stringlist.cpp>"
+    "FastCriticalSection db_hashCritSect{};"
+    "ZoneRuntimeFacade::TryBeginScriptStringOwnership("
+    "script_string::TryAcquireOrdinaryStringOfSize("
+    "Sys_LockWrite(&db_hashCritSect);"
+    "ZoneRuntimeFacade::TryBeginGenerationAbandonment("
+    "Sys_UnlockWrite(&db_hashCritSect);"
+    "firstAbandonment == ZoneRuntimeTableStatus::Retry"
+    "g_callbackProbe.firstBorrow"
+    "RegistryOwnershipStatus::Busy"
+    "ZoneRuntimeFacade::TryContinueGenerationAbandonment("
+    "g_callbackProbe.retryBorrow"
+    "g_callbackProbe.addStatus"
+    "g_callbackProbe.finishStatus"
+    "ZoneRuntimeFacade::TryResetTerminalReceipt("
+    "terminal callback context remained live"
+    "terminal callback context accepted a stale key")
+    require_contains(
+        _stable_integration_fixture "${_marker}"
+        "literal stable controller/registry integration fixture")
+endforeach()
+require_ordered(
+    _stable_ownership_retry_run
+    "Sys_LockWrite(&db_hashCritSect);"
+    "ZoneRuntimeFacade::TryBeginGenerationAbandonment("
+    "real hash contention established before callback entry")
+require_ordered(
+    _stable_ownership_retry_run
+    "ZoneRuntimeFacade::TryBeginGenerationAbandonment("
+    "Sys_UnlockWrite(&db_hashCritSect);"
+    "busy callback returns before hash-lock release")
+require_ordered(
+    _stable_ownership_retry_run
+    "Sys_UnlockWrite(&db_hashCritSect);"
+    "ZoneRuntimeFacade::TryContinueGenerationAbandonment("
+    "uncontended ownership retry follows hash-lock release")
+
+extract_slice(
+    _stable_integration_fixture
+    "[[nodiscard]] bool TestOmittedCallbackFinishFailsClosed() noexcept"
+    "} // namespace"
+    _stable_ownership_omit_finish_run
+    "forgotten callback coordinator finish run")
+foreach(_marker IN ITEMS
+    "g_callbackProbe.omitFinish = true;"
+    "g_callbackProbe.omittedFinishBorrow"
+    "RegistryOwnershipStatus::Success"
+    "abandonment == ZoneRuntimeTableStatus::UnsafeFailure"
+    "entry->executionMode()"
+    "!= ZoneRuntimeExecutionMode::Terminal"
+    "!entry->generationBindingPristine()"
+    "ZoneRuntimeFacade::FinishAccess()"
+    "== ZoneRuntimeFacadeStatus::UnsafeFailure"
+    "ZoneRuntimeFacade::TryBeginAccess()"
+    "facade boundary reopened")
+    require_contains(
+        _stable_ownership_omit_finish_run "${_marker}"
+        "forgotten finish leaves the ownership chain non-retirable")
+endforeach()
+require_contains(
+    _stable_integration_fixture
+    "std::strcmp(argv[1], \"--omit-finish\") == 0"
+    "forgotten finish is isolated in its own process mode")
+
+foreach(_forbidden IN ITEMS
+    "class RegistryOwnershipCoordinator"
+    "struct RegistryOwnershipCoordinator"
+    "RegistryOwnershipCoordinator::RegistryOwnershipCoordinator("
+    "class RegistryOwnershipAdmission"
+    "struct RegistryOwnershipAdmission"
+    "RegistryOwnershipAdmission::"
+    "class OwnershipBatch"
+    "struct OwnershipBatch"
+    "OwnershipBatch::"
+    "void SL_Init("
+    "void SL_Shutdown("
+    "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING"
+    "KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING"
+    "KISAK_MEMORY_TREE_VALIDATION_TESTING"
+    "KISAK_SCRIPT_STRING_PERF_TESTING")
+    require_not_contains(
+        _stable_integration_fixture "${_forbidden}"
+        "stable fixture cannot replace or test-enable ownership code")
+endforeach()
+
+extract_slice(
+    _tests
+    "add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "add_executable(kisakcod-fx-archive-disk32-tests"
+    _stable_ownership_integration_registration
+    "stable production ownership integration registration")
+foreach(_marker IN ITEMS
+    "db_zone_runtime_stable_context_integration_tests.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_facade.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_callback_context.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_table.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_storage.cpp"
+    "\${SRC_DIR}/database/db_zone_stream_ownership.cpp"
+    "\${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp"
+    "\${SRC_DIR}/database/db_zone_script_string_ownership.cpp"
+    "\${SRC_DIR}/database/db_script_string_adapter.cpp"
+    "\${SRC_DIR}/database/db_script_string_journal.cpp"
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp"
+    "\${SRC_DIR}/database/db_zone_load_context.cpp"
+    "\${SRC_DIR}/database/db_relocation.cpp"
+    "\${SRC_DIR}/database/db_stream.cpp"
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp"
+    "\${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp"
+    "\${SRC_DIR}/universal/physicalmemory.cpp"
+    "\${SRC_DIR}/universal/physicalmemory_checked.cpp"
+    "\${SRC_DIR}/qcommon/sys_sync.cpp"
+    "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "kisakcod-fx-fastfile-zone-adapter-disk32-subject"
+    "kisakcod-fx-fastfile-native-arena-subject"
+    "kisakcod-fx-fastfile-native-disk32-subject"
+    "kisakcod-fx-fastfile-impact-native-disk32-subject"
+    "PRIVATE cxx_std_20"
+    "PRIVATE KISAK_MP"
+    "PRIVATE Threads::Threads"
+    "PRIVATE \"LINKER:/STACK:8388608\""
+    "NAME database-zone-runtime-stable-context-integration"
+    "NAME database-zone-runtime-stable-context-forgotten-finish"
+    "--omit-finish"
+    "PROPERTIES TIMEOUT 30")
+    require_contains(
+        _stable_ownership_integration_registration "${_marker}"
+        "complete macro-off ownership dependency/CTest enrollment")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "TESTING"
+    "KISAK_PLATFORM_SERVICE_SOURCES"
+    "winmm"
+    "WILL_FAIL"
+    "EXCLUDE_FROM_ALL")
+    require_not_contains(
+        _stable_ownership_integration_registration "${_forbidden}"
+        "stable ownership integration target remains macro-off and positive")
+endforeach()
+foreach(_marker IN ITEMS
+    "kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "database-zone-runtime-stable-context-(integration|forgotten-finish)")
+    require_contains(
+        _ci "${_marker}"
+        "explicit Windows x86 stable ownership enrollment")
+endforeach()
+foreach(_macro IN ITEMS
+    "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1"
+    "KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1"
+    "KISAK_MEMORY_TREE_VALIDATION_TESTING=1"
+    "KISAK_SCRIPT_STRING_PERF_TESTING=1")
+    require_literal_count(
+        _tests "${_macro}" 2
+        "existing production-test authority grant count")
 endforeach()
 
 # The production manifest, portable test graph, x86 test selection, and the

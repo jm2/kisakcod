@@ -13,12 +13,19 @@ set(_table_header_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h")
 set(_callback_context_header_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_callback_context.h")
+set(_integration_fixture_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_stable_context_integration_tests.cpp")
+set(_tests_cmake_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
+set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
 foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
     "${_coordinator_header_path}"
     "${_table_header_path}"
-    "${_callback_context_header_path}")
+    "${_callback_context_header_path}"
+    "${_integration_fixture_path}"
+    "${_tests_cmake_path}"
+    "${_ci_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing runtime facade source: ${_path}")
     endif()
@@ -27,6 +34,9 @@ endforeach()
 file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
 file(READ "${_table_header_path}" _table_header)
+file(READ "${_integration_fixture_path}" _integration_fixture)
+file(READ "${_tests_cmake_path}" _tests_cmake)
+file(READ "${_ci_path}" _ci)
 
 function(normalize_space INPUT OUTPUT)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${INPUT}")
@@ -1482,6 +1492,99 @@ foreach(_marker IN ITEMS
 endforeach()
 require_not_contains(_source "CRITSECT_" "no fixed critical-section enum enrollment")
 
+# Freeze the literal facade-to-registry integration target as a macro-off
+# composition of the real production translation units. This prevents a test
+# double, omitted boundary, or private TestAccess grant from satisfying the
+# callback-borrow integration gate.
+normalize_space("${_tests_cmake}" _tests_cmake_normalized)
+normalize_space("${_integration_fixture}" _integration_fixture_normalized)
+normalize_space("${_ci}" _ci_normalized)
+extract_slice(
+    _tests_cmake_normalized
+    "add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "add_executable(kisakcod-fx-archive-disk32-tests"
+    _stable_integration_registration
+    "stable-context integration registration")
+foreach(_marker IN ITEMS
+    "db_zone_runtime_stable_context_integration_tests.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_facade.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_callback_context.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_table.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_storage.cpp"
+    "\${SRC_DIR}/database/db_zone_stream_ownership.cpp"
+    "\${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp"
+    "\${SRC_DIR}/database/db_zone_script_string_ownership.cpp"
+    "\${SRC_DIR}/database/db_script_string_adapter.cpp"
+    "\${SRC_DIR}/database/db_script_string_journal.cpp"
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp"
+    "\${SRC_DIR}/database/db_zone_load_context.cpp"
+    "\${SRC_DIR}/database/db_relocation.cpp"
+    "\${SRC_DIR}/database/db_stream.cpp"
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp"
+    "\${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp"
+    "\${SRC_DIR}/universal/physicalmemory.cpp"
+    "\${SRC_DIR}/universal/physicalmemory_checked.cpp"
+    "\${SRC_DIR}/qcommon/sys_sync.cpp"
+    "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>"
+    "SYSTEM PRIVATE \${SRC_DIR}"
+    "PRIVATE cxx_std_20"
+    "PRIVATE KISAK_MP)"
+    "PRIVATE Threads::Threads)"
+    "PRIVATE \"LINKER:/STACK:8388608\""
+    "NAME database-zone-runtime-stable-context-integration"
+    "NAME database-zone-runtime-stable-context-forgotten-finish"
+    "--omit-finish"
+    "database-zone-runtime-stable-context-integration database-zone-runtime-stable-context-forgotten-finish PROPERTIES TIMEOUT 30")
+    require_contains(
+        _stable_integration_registration "${_marker}"
+        "macro-off stable facade source closure")
+endforeach()
+require_substring_count(
+    _stable_integration_registration "\${SRC_DIR}/" 19
+    "exact stable integration production source closure")
+require_substring_count(
+    _stable_integration_registration "$<TARGET_OBJECTS:" 4
+    "exact stable integration object-source closure")
+require_substring_count(
+    _stable_integration_registration ".cpp" 20
+    "one fixture plus nineteen exact production translation units")
+require_substring_count(
+    _stable_integration_registration "target_compile_definitions(" 1
+    "one stable integration compile-definition block")
+require_not_contains(
+    _stable_integration_registration "_TESTING"
+    "stable integration cannot enable a private TestAccess capability")
+require_not_contains(
+    _stable_integration_registration "winmm"
+    "stable integration owns deterministic platform seams")
+
+foreach(_marker IN ITEMS
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( context, key)"
+    "RegistryOwnershipStatus::Busy ? ZoneScriptStringUnpublishStatus::Retry"
+    "ZoneRuntimeFacade::FinishRegistryOwnership()"
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( g_callbackProbe.context, fixture.key)"
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback( g_callbackProbe.context, staleKey)"
+    "--omit-finish")
+    require_contains(
+        _integration_fixture_normalized "${_marker}"
+        "real stable facade callback-borrow coverage")
+endforeach()
+require_substring_count(
+    _integration_fixture_normalized
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback" 5
+    "closed callback-only facade borrow coverage")
+foreach(_marker IN ITEMS
+    "kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "database-zone-runtime-stable-context-(integration|forgotten-finish)")
+    require_contains(
+        _ci_normalized "${_marker}"
+        "Windows x86 stable facade integration gate")
+endforeach()
+
 # The prerequisite remains production-neutral. Traverse every file below src,
 # including generated inputs and files without a C/C++ extension. Only the
 # facade implementation and the two exact private friend declarations may name
@@ -1534,7 +1637,6 @@ endfunction()
 # build-control format rather than one production source manifest. The only
 # permitted grant is the exact private definition on the facade unit-test
 # executable; portable macro-off and production targets must remain sealed.
-set(_tests_cmake_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 set(_expected_runtime_facade_test_definition
     "target_compile_definitions( kisakcod-db-zone-runtime-facade-tests PRIVATE KISAK_MP KISAK_DB_ZONE_RUNTIME_FACADE_TESTING=1)")
 function(runtime_facade_build_control_is_sealed PATH VARIABLE OUTPUT)
