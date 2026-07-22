@@ -299,6 +299,15 @@ public:
     TryBorrowRegistryOwnership(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept;
+    // This one-shot capability is valid only during the synchronous typed
+    // callback that received both arguments. The callback must pass the exact
+    // copied key, finish any successful registry borrow before returning, and
+    // neither retain nor reuse the context pointer for a later callback or a
+    // successor generation.
+    [[nodiscard]] static registry_ownership::RegistryOwnershipStatus
+    TryBorrowRegistryOwnershipFromCallback(
+        const ZoneRuntimeCallbackContext *context,
+        zone_load::ZoneLoadContextKey key) noexcept;
     [[nodiscard]] static registry_ownership::RegistryOwnershipStatus
     FinishRegistryOwnership() noexcept;
     [[nodiscard]] static registry_ownership::RegistryOwnershipStatus
@@ -364,6 +373,9 @@ private:
     [[nodiscard]] static ZoneRuntimeTableStatus
     authenticateTableOperationAccess() noexcept;
     [[nodiscard]] static ZoneRuntimeTableStatus
+    authenticateKeyedTableOperationAccess(
+        const zone_load::ZoneLoadContextKey &key) noexcept;
+    [[nodiscard]] static ZoneRuntimeTableStatus
     authenticateCompositeTableOperationAccess(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept;
@@ -416,6 +428,7 @@ foreach(_marker IN ITEMS
     "static ZoneRuntimeTableStatus TryInitializeRuntimeTable() noexcept"
     "static registry_ownership::RegistryOwnershipStatus TryBeginStandaloneRegistryOwnership() noexcept"
     "static registry_ownership::RegistryOwnershipStatus TryBorrowRegistryOwnership( std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
+    "static registry_ownership::RegistryOwnershipStatus TryBorrowRegistryOwnershipFromCallback( const ZoneRuntimeCallbackContext *context, zone_load::ZoneLoadContextKey key) noexcept"
     "static registry_ownership::RegistryOwnershipStatus FinishRegistryOwnership() noexcept")
     require_contains(_header_normalized "${_marker}" "closed public facade surface")
 endforeach()
@@ -436,8 +449,11 @@ require_substring_count(
     _source "completeTableOperation(" 34
     "all table forwards use the shared post-authentication boundary")
 require_substring_count(
-    _source "authenticateTableOperationAccess()" 28
-    "ordinary table forwards and shared boundaries authenticate")
+    _source "authenticateTableOperationAccess()" 11
+    "unkeyed and registry boundaries authenticate")
+require_substring_count(
+    _source "authenticateKeyedTableOperationAccess(" 20
+    "all keyed table boundaries use the whole-bank key guard")
 require_substring_count(
     _source "authenticateCompositeTableOperationAccess(" 7
     "all six dual-mode script adapters require composite authority")
@@ -655,7 +671,7 @@ extract_runtime_facade_method_slice(
 canonicalize_runtime_facade_forwarding(
     _pending_view_slice _pending_view_slice_canonical)
 foreach(_marker IN ITEMS
-    "authenticateTableOperationAccess()"
+    "authenticateKeyedTableOperationAccess(key)"
     "pmem_runtime::StorageIsOutsideManagedMemory( outView, sizeof(*outView))"
     "authoritySpanIsSeparated( outView, sizeof(*outView), alignof(ZoneRuntimePendingCopyView))"
     "AddressRangesAreDisjoint( &key, sizeof(key), outView, sizeof(*outView))"
@@ -713,7 +729,7 @@ extract_runtime_facade_method_slice(
 canonicalize_runtime_facade_forwarding(
     _pending_read_slice _pending_read_slice_canonical)
 foreach(_marker IN ITEMS
-    "authenticateTableOperationAccess()"
+    "authenticateKeyedTableOperationAccess(key)"
     "pmem_runtime::StorageIsOutsideManagedMemory( outRecord, sizeof(*outRecord))"
     "authoritySpanIsSeparated( outRecord, sizeof(*outRecord), alignof(zone_pending_copy::PendingCopyRecord))"
     "AddressRangesAreDisjoint( &key, sizeof(key), outRecord, sizeof(*outRecord))"
@@ -926,87 +942,116 @@ foreach(_forbidden_pending_authority IN ITEMS
         "facade pending-copy inspection cannot acquire ledger or receipt authority")
 endforeach()
 
-# A table callback reports Busy to every ordinary lookup. Only that result may
-# enter the exact-key callback authenticator, and only its success may index the
-# stable table entry and call the narrower callback coordinator borrow. The
-# normal successful lookup must retain the ordinary coordinator path.
+# Ordinary registry borrowing is deliberately incapable of falling back to a
+# callback capability on Busy. It accepts only a successful exact table view
+# and then uses the ordinary coordinator adapter.
 extract_runtime_facade_method_slice(
     _source "TryBorrowRegistryOwnership" _borrow_slice)
 canonicalize_runtime_facade_forwarding(
     _borrow_slice _borrow_slice_canonical)
 foreach(_adapter IN LISTS _registry_adapter_tokens)
     if(_adapter STREQUAL
-        "RegistryOwnershipCoordinatorFacade::TryBorrow("
-        OR _adapter STREQUAL
-        "RegistryOwnershipCoordinatorFacade::TryBorrowActiveRuntimeCallback(")
+        "RegistryOwnershipCoordinatorFacade::TryBorrow(")
         set(_expected_count 1)
     else()
         set(_expected_count 0)
     endif()
     require_substring_count(
         _borrow_slice_canonical "${_adapter}" ${_expected_count}
+        "ordinary borrow's closed coordinator adapter set")
+endforeach()
+foreach(_marker IN ITEMS
+    "authenticateTableOperationAccess()"
+    "authoritySpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+    "TryGetZoneRuntimeGeneration( &table, physicalSlot, key, &view)"
+    "tableStatus != ZoneRuntimeTableStatus::Success"
+    "zone_slots::IsUsableZoneSlot(physicalSlot)"
+    "view.entry != &table.entries_[physicalSlot]"
+    "RegistryOwnershipCoordinatorFacade::TryBorrow(view.entry->scriptStringOwnership(), key)")
+    require_substring_count(
+        _borrow_slice_canonical "${_marker}" 1
+        "ordinary borrow exact-key and bounds gate")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "tableStatus == ZoneRuntimeTableStatus::Busy"
+    "authenticateExactRegistryLifecycleCallback("
+    "restoreExactRegistryLifecycleCallback("
+    "TryBorrowActiveRuntimeCallback(")
+    require_not_contains(
+        _borrow_slice_canonical "${_forbidden}"
+        "ordinary Busy cannot acquire callback authority")
+endforeach()
+
+# Callback borrowing is a separate one-shot surface. Full context
+# authentication and exact marker consumption precede the narrower coordinator
+# adapter. Only a recoverable coordinator Busy may reauthenticate the facade
+# and structurally restore that same marker for the same synchronous callback.
+extract_runtime_facade_method_slice(
+    _source "TryBorrowRegistryOwnershipFromCallback" _callback_borrow_slice)
+canonicalize_runtime_facade_forwarding(
+    _callback_borrow_slice _callback_borrow_slice_canonical)
+foreach(_adapter IN LISTS _registry_adapter_tokens)
+    if(_adapter STREQUAL
+        "RegistryOwnershipCoordinatorFacade::TryBorrowActiveRuntimeCallback(")
+        set(_expected_count 1)
+    else()
+        set(_expected_count 0)
+    endif()
+    require_substring_count(
+        _callback_borrow_slice_canonical "${_adapter}" ${_expected_count}
         "callback borrow's closed coordinator adapter set")
 endforeach()
 foreach(_marker IN ITEMS
-    "tableStatus == ZoneRuntimeTableStatus::Busy"
-    "table.authenticateExactRegistryLifecycleCallback( physicalSlot, key)"
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticate( context, key, ZoneRuntimeCallbackContextPhase::Bound)"
+    "zone_slots::IsUsableZoneSlot(key.slot)"
+    "table.authenticateExactRegistryLifecycleCallback( context, key.slot, key)"
+    "RegistryOwnershipCoordinatorFacade::TryBorrowActiveRuntimeCallback( table.entries_[key.slot].scriptStringOwnership(), key)"
     "callbackBorrow != RegistryOwnershipStatus::Busy"
     "authenticateTableOperationAccess() != ZoneRuntimeTableStatus::Success"
-    "table.restoreExactRegistryLifecycleCallback( physicalSlot, key)"
-    "static_cast<bool>(key)"
-    "key.slot != physicalSlot"
-    "table.entries_[physicalSlot] .scriptStringOwnership()")
+    "table.restoreExactRegistryLifecycleCallback( context, key.slot, key, ZoneRuntimeTable::ValidationDepth::StructuralOnly)")
     require_substring_count(
-        _borrow_slice_canonical "${_marker}" 1
-        "callback borrow exact-key and bounds gate")
+        _callback_borrow_slice_canonical "${_marker}" 1
+        "callback borrow exact capability and Busy restoration")
 endforeach()
 require_substring_count(
-    _borrow_slice_canonical
-    "zone_slots::IsUsableZoneSlot(physicalSlot)" 2
-    "callback and ordinary borrow slot gates")
-string(FIND
-    "${_borrow_slice_canonical}"
-    "TryGetZoneRuntimeGeneration(" _borrow_lookup)
-string(FIND
-    "${_borrow_slice_canonical}"
-    "tableStatus == ZoneRuntimeTableStatus::Busy" _borrow_busy)
-string(FIND
-    "${_borrow_slice_canonical}"
-    "table.authenticateExactRegistryLifecycleCallback( physicalSlot, key)"
-    _borrow_callback_auth)
-string(FIND
-    "${_borrow_slice_canonical}"
-    "zone_slots::IsUsableZoneSlot(physicalSlot)" _borrow_slot_gate)
-string(FIND
-    "${_borrow_slice_canonical}"
+    _callback_borrow_slice_canonical "return callbackBorrow;" 2
+    "callback result exits only before or after exact Busy restoration")
+foreach(_forbidden IN ITEMS
+    "TryGetZoneRuntimeGeneration("
+    "RegistryOwnershipCoordinatorFacade::TryBorrow("
+    "physicalSlot")
+    require_not_contains(
+        _callback_borrow_slice_canonical "${_forbidden}"
+        "callback borrow cannot use ordinary lookup authority")
+endforeach()
+
+string(FIND "${_callback_borrow_slice_canonical}"
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticate(" _callback_context_auth)
+string(FIND "${_callback_borrow_slice_canonical}"
+    "zone_slots::IsUsableZoneSlot(key.slot)" _callback_slot_gate)
+string(FIND "${_callback_borrow_slice_canonical}"
+    "table.authenticateExactRegistryLifecycleCallback(" _callback_marker_consume)
+string(FIND "${_callback_borrow_slice_canonical}"
     "RegistryOwnershipCoordinatorFacade::TryBorrowActiveRuntimeCallback("
-    _borrow_callback_forward)
-string(FIND
-    "${_borrow_slice_canonical}"
+    _callback_coordinator_borrow)
+string(FIND "${_callback_borrow_slice_canonical}"
+    "callbackBorrow != RegistryOwnershipStatus::Busy" _callback_busy_gate)
+string(FIND "${_callback_borrow_slice_canonical}"
     "authenticateTableOperationAccess() != ZoneRuntimeTableStatus::Success"
-    _borrow_restore_access)
-string(FIND
-    "${_borrow_slice_canonical}"
-    "table.restoreExactRegistryLifecycleCallback( physicalSlot, key)"
-    _borrow_callback_restore)
-string(FIND
-    "${_borrow_slice_canonical}"
-    "RegistryOwnershipCoordinatorFacade::TryBorrow(" _borrow_ordinary_forward)
-if(_borrow_lookup EQUAL -1
-    OR _borrow_busy EQUAL -1
-    OR _borrow_callback_auth EQUAL -1
-    OR _borrow_slot_gate EQUAL -1
-    OR _borrow_callback_forward EQUAL -1
-    OR _borrow_restore_access EQUAL -1
-    OR _borrow_callback_restore EQUAL -1
-    OR _borrow_ordinary_forward EQUAL -1
-    OR NOT _borrow_lookup LESS _borrow_busy
-    OR NOT _borrow_busy LESS _borrow_callback_auth
-    OR NOT _borrow_callback_auth LESS _borrow_slot_gate
-    OR NOT _borrow_slot_gate LESS _borrow_callback_forward
-    OR NOT _borrow_callback_forward LESS _borrow_restore_access
-    OR NOT _borrow_restore_access LESS _borrow_callback_restore
-    OR NOT _borrow_callback_restore LESS _borrow_ordinary_forward)
+    _callback_restore_auth)
+string(FIND "${_callback_borrow_slice_canonical}"
+    "table.restoreExactRegistryLifecycleCallback(" _callback_restore)
+if(_callback_context_auth EQUAL -1 OR _callback_slot_gate EQUAL -1
+    OR _callback_marker_consume EQUAL -1
+    OR _callback_coordinator_borrow EQUAL -1
+    OR _callback_busy_gate EQUAL -1 OR _callback_restore_auth EQUAL -1
+    OR _callback_restore EQUAL -1
+    OR NOT _callback_context_auth LESS _callback_slot_gate
+    OR NOT _callback_slot_gate LESS _callback_marker_consume
+    OR NOT _callback_marker_consume LESS _callback_coordinator_borrow
+    OR NOT _callback_coordinator_borrow LESS _callback_busy_gate
+    OR NOT _callback_busy_gate LESS _callback_restore_auth
+    OR NOT _callback_restore_auth LESS _callback_restore)
     message(FATAL_ERROR
         "Runtime facade callback borrow ordering or exclusivity drifted")
 endif()
@@ -1101,11 +1146,12 @@ foreach(_marker IN ITEMS
     "s_retainedSerialMirror"
     "WritableOutputIsSeparateFromBoundary"
     "RegistryOwnershipCoordinatorFacade:: WritableOutputIsSeparated"
+    "ZoneRuntimeCallbackContextOwner::SpanIsSeparated"
     "IsKnownTableStatus"
     "IsKnownRegistryStatus"
     "table.authenticateExactEntry(physicalSlot, key)"
-    "table.authenticateExactRegistryLifecycleCallback( physicalSlot, key)"
-    "table.restoreExactRegistryLifecycleCallback( physicalSlot, key)"
+    "table.authenticateExactRegistryLifecycleCallback( context, key.slot, key)"
+    "table.restoreExactRegistryLifecycleCallback( context, key.slot, key, ZoneRuntimeTable::ValidationDepth::StructuralOnly)"
     "table.entries_[physicalSlot].generationBindingPristine()"
     "completeTableOperation"
     "RegistryOwnershipCoordinatorFacade::ValidateInactive()"
@@ -1330,9 +1376,30 @@ require_not_contains(
     "canonical retained pointees remain lower-adapter identity authority")
 extract_runtime_facade_method_slice(
     _source "TryReAddRetainedDefaultName" _registry_scalar_readd_slice)
-require_not_contains(
-    _registry_scalar_readd_slice "authoritySpanIsSeparated("
-    "scalar retained identity remains lower-adapter authority")
+normalize_space(
+    "${_registry_scalar_readd_slice}"
+    _registry_scalar_readd_slice_normalized)
+foreach(_marker IN ITEMS
+    "authenticateRegistryOutputAccess()"
+    "if (name && !authoritySpanIsSeparated(name, 1, 1))"
+    "RegistryOwnershipCoordinatorFacade:: TryReAddRetainedDefaultName(name)")
+    require_substring_count(
+        _registry_scalar_readd_slice_normalized "${_marker}" 1
+        "scalar retained identity separates its readable byte")
+endforeach()
+string(FIND "${_registry_scalar_readd_slice_normalized}"
+    "authenticateRegistryOutputAccess()" _scalar_registry_auth)
+string(FIND "${_registry_scalar_readd_slice_normalized}"
+    "authoritySpanIsSeparated(name, 1, 1)" _scalar_registry_span)
+string(FIND "${_registry_scalar_readd_slice_normalized}"
+    "TryReAddRetainedDefaultName(name)" _scalar_registry_forward)
+if(_scalar_registry_auth EQUAL -1 OR _scalar_registry_span EQUAL -1
+    OR _scalar_registry_forward EQUAL -1
+    OR NOT _scalar_registry_auth LESS _scalar_registry_span
+    OR NOT _scalar_registry_span LESS _scalar_registry_forward)
+    message(FATAL_ERROR
+        "Runtime facade scalar retained-name authority ordering drifted")
+endif()
 
 # These malformed synthetic bodies must not satisfy the shared predicate. One
 # drops the capacity gate (which would permit i386 multiplication wrap and mask

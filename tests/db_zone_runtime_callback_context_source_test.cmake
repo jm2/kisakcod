@@ -8,6 +8,16 @@ set(_header_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_callback_context.h")
 set(_source_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_callback_context.cpp")
+set(_table_header_path
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h")
+set(_table_source_path
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_table.cpp")
+set(_table_seal_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_table_source_test.cmake")
+set(_facade_header_path
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.h")
+set(_facade_source_path
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_zone_runtime_callback_context_tests.cpp")
 set(_seal_path
@@ -23,6 +33,11 @@ set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
 foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
+    "${_table_header_path}"
+    "${_table_source_path}"
+    "${_table_seal_path}"
+    "${_facade_header_path}"
+    "${_facade_source_path}"
     "${_fixture_path}"
     "${_seal_path}"
     "${_object_seal_path}"
@@ -37,6 +52,8 @@ endforeach()
 
 file(READ "${_header_path}" _header_raw)
 file(READ "${_source_path}" _source_raw)
+file(READ "${_table_source_path}" _table_source_raw)
+file(READ "${_facade_source_path}" _facade_source_raw)
 file(READ "${_fixture_path}" _fixture_raw)
 file(READ "${_seal_path}" _seal_raw)
 file(READ "${_object_seal_path}" _object_seal_raw)
@@ -48,6 +65,8 @@ file(READ "${_ci_path}" _ci_raw)
 foreach(_var IN ITEMS
     _header
     _source
+    _table_source
+    _facade_source
     _fixture
     _seal
     _object_seal
@@ -65,6 +84,26 @@ function(require_contains SOURCE_VAR NEEDLE DESCRIPTION)
     if(_position EQUAL -1)
         message(FATAL_ERROR
             "Missing callback-context invariant (${DESCRIPTION}): '${NEEDLE}'")
+    endif()
+endfunction()
+
+function(require_substring_count SOURCE_VAR NEEDLE EXPECTED DESCRIPTION)
+    set(_remaining "${${SOURCE_VAR}}")
+    set(_count 0)
+    while(TRUE)
+        string(FIND "${_remaining}" "${NEEDLE}" _position)
+        if(_position EQUAL -1)
+            break()
+        endif()
+        math(EXPR _count "${_count} + 1")
+        string(LENGTH "${NEEDLE}" _needle_length)
+        math(EXPR _next "${_position} + ${_needle_length}")
+        string(SUBSTRING "${_remaining}" ${_next} -1 _remaining)
+    endwhile()
+    if(NOT _count EQUAL EXPECTED)
+        message(FATAL_ERROR
+            "Unexpected callback-context count (${DESCRIPTION}): expected "
+            "${EXPECTED}, found ${_count} for '${NEEDLE}'")
     endif()
 endfunction()
 
@@ -119,7 +158,7 @@ foreach(_marker IN ITEMS
 endforeach()
 
 # The owner exposes no public operation. Only deleted construction precedes
-# private:, and the seven capabilities occur after that boundary.
+# private:, and the ten capabilities occur after that boundary.
 extract_slice(
     _header
     "class ZoneRuntimeCallbackContextOwner final"
@@ -138,9 +177,12 @@ foreach(_operation IN ITEMS
     "TryAdvance("
     "TryAuthenticate("
     "TryCapture("
-    "SpanIsSeparated(")
+    "SpanIsSeparated("
+    "TryAuthenticateStructural("
+    "TryAuthenticateUnused("
+    "TryAuthenticateStore(")
     require_contains(
-        _owner_declaration "${_operation}" "seven private owner operations")
+        _owner_declaration "${_operation}" "ten private owner operations")
 endforeach()
 foreach(_forbidden_free IN ITEMS
     "TryClassifyZoneRuntimeCallbackContextStorage"
@@ -265,7 +307,7 @@ endforeach()
 extract_slice(
     _source
     "bool ZoneRuntimeCallbackContextOwner::SpanIsSeparated("
-    "#ifdef KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING"
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticateStructural("
     _span_separation_body
     "whole-bank span-separation body")
 foreach(_marker IN ITEMS
@@ -279,6 +321,101 @@ foreach(_marker IN ITEMS
     "return end <= bankBegin || bankEnd <= start;")
     require_contains(
         _span_separation_body "${_marker}" "pure half-open bank separation")
+endforeach()
+
+extract_slice(
+    _source
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticateStructural("
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticateUnused("
+    _structural_authentication_body
+    "exact structural authentication body")
+foreach(_marker IN ITEMS
+    "!SpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+    "!static_cast<bool>(key)"
+    "!IsRetainedPhase(expectedPhase)"
+    "const std::size_t exactIndex = ExactStoreIndex(context);"
+    "key.slot != exactIndex"
+    "!exact->canonical(exactIndex)"
+    "exact->key_ != key"
+    "exact->phase_ == expectedPhase")
+    require_contains(
+        _structural_authentication_body "${_marker}"
+        "structural authentication exact key/phase proof")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "pmem_runtime"
+    "TryClassify"
+    "bind("
+    "setPhase("
+    "refreshWitness("
+    "const_cast")
+    require_not_contains(
+        _structural_authentication_body "${_forbidden}"
+        "structural authentication cannot classify or mutate")
+endforeach()
+
+extract_slice(
+    _source
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticateUnused("
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticateStore()"
+    _unused_authentication_body
+    "exact unused-member authentication body")
+foreach(_marker IN ITEMS
+    "!zone_slots::IsUsableZoneSlot(physicalSlot)"
+    "const ZoneRuntimeCallbackContext *const exact = &ContextStore()[physicalSlot];"
+    "MapExactStorageStatus(TryClassifyStorage(exact))"
+    "if (storageStatus != ZoneRuntimeCallbackContextStatus::Success) return storageStatus;"
+    "!exact->canonical(physicalSlot)"
+    "return exact->phase_ == ZoneRuntimeCallbackContextPhase::Unbound && exact->key_ == zone_load::ZoneLoadContextKey{} ? ZoneRuntimeCallbackContextStatus::Success : ZoneRuntimeCallbackContextStatus::InvalidPhase;")
+    require_contains(
+        _unused_authentication_body "${_marker}"
+        "unused member requires exact Unbound zero-key proof")
+endforeach()
+require_ordered(
+    _unused_authentication_body
+    "!zone_slots::IsUsableZoneSlot(physicalSlot)"
+    "MapExactStorageStatus(TryClassifyStorage(exact))"
+    "slot validity precedes PMem classification")
+require_ordered(
+    _unused_authentication_body
+    "MapExactStorageStatus(TryClassifyStorage(exact))"
+    "if (storageStatus != ZoneRuntimeCallbackContextStatus::Success) return storageStatus;"
+    "failed classification returns before representation access")
+require_ordered(
+    _unused_authentication_body
+    "if (storageStatus != ZoneRuntimeCallbackContextStatus::Success) return storageStatus;"
+    "!exact->canonical(physicalSlot)"
+    "PMem classification precedes representation access")
+require_ordered(
+    _unused_authentication_body
+    "!exact->canonical(physicalSlot)"
+    "return exact->phase_ == ZoneRuntimeCallbackContextPhase::Unbound && exact->key_ == zone_load::ZoneLoadContextKey{}"
+    "canonical representation precedes unused-state proof")
+foreach(_forbidden IN ITEMS
+    "bind("
+    "setPhase("
+    "refreshWitness("
+    "const_cast")
+    require_not_contains(
+        _unused_authentication_body "${_forbidden}"
+        "unused-member authentication cannot mutate")
+endforeach()
+
+extract_slice(
+    _source
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticateStore()"
+    "#ifdef KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING"
+    _store_authentication_body
+    "all-member store authentication body")
+foreach(_marker IN ITEMS
+    "MapExactStorageStatus(TryClassifyStorage(&store[0]))"
+    "pmem_runtime::TryClassifyStorageIsolation( store.data(), sizeof(store))"
+    "for (std::size_t index = 0; index < store.size(); ++index)"
+    "!store[index].canonical(index)"
+    "return ZoneRuntimeCallbackContextStatus::Success;")
+    require_contains(
+        _store_authentication_body "${_marker}"
+        "all 33 contexts receive full classification and canonical proof")
 endforeach()
 foreach(_forbidden IN ITEMS
     "pmem_runtime"
@@ -342,11 +479,37 @@ string(REGEX MATCHALL
     _test_macro_occurrences
     "${_tests_raw}")
 list(LENGTH _test_macro_occurrences _test_macro_count)
-if(NOT _test_macro_count EQUAL 1)
+if(NOT _test_macro_count EQUAL 2)
     message(FATAL_ERROR
-        "Callback TestAccess macro must have one exact private fixture grant; "
+        "Callback TestAccess macro must have two exact private fixture grants; "
         "found ${_test_macro_count}")
 endif()
+extract_slice(
+    _tests
+    "add_executable(kisakcod-db-zone-runtime-callback-context-tests"
+    "add_executable( kisakcod-db-zone-runtime-callback-context-production-seal-tests"
+    _callback_context_fixture_registration
+    "callback-context private fixture registration")
+require_substring_count(
+    _callback_context_fixture_registration
+    "KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING=1"
+    1
+    "one callback-context TestAccess grant in its private fixture")
+extract_slice(
+    _tests
+    "add_executable(kisakcod-db-zone-runtime-table-tests"
+    "target_link_libraries( kisakcod-db-zone-runtime-table-tests"
+    _runtime_table_fixture_registration
+    "runtime-table private fixture registration")
+require_substring_count(
+    _runtime_table_fixture_registration
+    "KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING=1"
+    1
+    "one callback-context TestAccess grant in the runtime-table fixture")
+require_contains(
+    _runtime_table_fixture_registration
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING=1"
+    "runtime-table callback-context fault tests use the target-local PMem seam")
 foreach(_marker IN ITEMS
     "kisakcod-db-zone-runtime-callback-context-macro-off"
     "kisakcod-db-zone-runtime-callback-context-tests"
@@ -371,7 +534,8 @@ file(GLOB_RECURSE _build_controls
 foreach(_path IN LISTS _build_controls)
     get_filename_component(_absolute_path "${_path}" ABSOLUTE)
     if(_absolute_path STREQUAL _this_source_seal
-       OR _absolute_path STREQUAL _tests_path)
+       OR _absolute_path STREQUAL _tests_path
+       OR _absolute_path STREQUAL _table_seal_path)
         continue()
     endif()
     file(READ "${_absolute_path}" _build_control)
@@ -397,9 +561,9 @@ foreach(_marker IN ITEMS
     "NM_TOOL"
     "READELF_TOOL"
     "OBJECT[ \\t]+LOCAL[ \\t]+DEFAULT"
-    "foreach(_owner_operation IN ITEMS"
-    "TryResolve"
-    "ZoneRuntimeCallbackContextOwner.*")
+    "foreach(_owner_operation IN ITEMS TryClassifyStorage TryBind TryResolve TryAdvance TryAuthenticate TryCapture SpanIsSeparated TryAuthenticateStructural TryAuthenticateUnused TryAuthenticateStore)"
+    "ZoneRuntimeCallbackContextOwner.*"
+    "([^A-Za-z0-9_]|$)")
     require_contains(_object_seal "${_marker}" "production object-symbol seal")
 endforeach()
 require_contains(
@@ -412,6 +576,41 @@ foreach(_marker IN ITEMS
     "OR _path STREQUAL _callback_context_header_path")
     require_contains(
         _facade_seal "${_marker}" "reviewed facade friendship exception")
+endforeach()
+
+# The two reviewed friend implementations are the only production capability
+# consumers. Exact qualified-call counts prevent either friend from growing a
+# second, unreviewed owner path while the broader zero-enrollment scan excludes
+# these files by design.
+require_substring_count(
+    _table_source "ZoneRuntimeCallbackContextOwner::" 8
+    "table owner capability surface")
+foreach(_operation IN ITEMS
+    "SpanIsSeparated("
+    "TryBind("
+    "TryResolve("
+    "TryAdvance("
+    "TryAuthenticate("
+    "TryAuthenticateStructural("
+    "TryAuthenticateUnused("
+    "TryAuthenticateStore(")
+    require_substring_count(
+        _table_source
+        "ZoneRuntimeCallbackContextOwner::${_operation}"
+        1
+        "single reviewed table owner delegation")
+endforeach()
+require_substring_count(
+    _facade_source "ZoneRuntimeCallbackContextOwner::" 2
+    "facade owner capability surface")
+foreach(_operation IN ITEMS
+    "SpanIsSeparated("
+    "TryAuthenticate(")
+    require_substring_count(
+        _facade_source
+        "ZoneRuntimeCallbackContextOwner::${_operation}"
+        1
+        "single reviewed facade owner delegation")
 endforeach()
 
 # Hosted Windows x86 explicitly builds all compiled gates and selects runtime,
@@ -465,6 +664,9 @@ foreach(_marker IN ITEMS
     "CanResolve"
     "CanAdvance"
     "CanAuthenticate"
+    "CanAuthenticateStructural"
+    "CanAuthenticateUnused"
+    "CanAuthenticateStore"
     "CanCapture"
     "CanSeparateSpan")
     require_contains(_seal "${_marker}" "macro-off private authority seal")
@@ -490,12 +692,20 @@ set(_protected_tokens
     "ZoneRuntimeCallbackContextOwner::TryAdvance"
     "ZoneRuntimeCallbackContextOwner::TryAuthenticate"
     "ZoneRuntimeCallbackContextOwner::TryCapture"
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticateStructural"
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticateUnused"
+    "ZoneRuntimeCallbackContextOwner::TryAuthenticateStore"
     "KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING")
 file(GLOB_RECURSE _production_files
     "${SOURCE_ROOT}/src/*.cpp"
     "${SOURCE_ROOT}/src/*.h")
 foreach(_path IN LISTS _production_files)
-    if(_path STREQUAL _header_path OR _path STREQUAL _source_path)
+    if(_path STREQUAL _header_path
+       OR _path STREQUAL _source_path
+       OR _path STREQUAL _table_header_path
+       OR _path STREQUAL _table_source_path
+       OR _path STREQUAL _facade_header_path
+       OR _path STREQUAL _facade_source_path)
         continue()
     endif()
     file(READ "${_path}" _candidate)

@@ -4,6 +4,7 @@
 
 #include <qcommon/com_error.h>
 #include <script/scr_string_transaction.h>
+#include <universal/physicalmemory.h>
 
 #include <array>
 #include <charconv>
@@ -15,6 +16,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <new>
 #include <string_view>
 #include <system_error>
 #include <type_traits>
@@ -199,6 +201,10 @@ using zone_runtime::TrySealZoneRuntimeScriptStrings;
 using zone_runtime::TryStageZoneRuntimeScriptString;
 using zone_runtime::TryTransferNextZoneRuntimeScriptString;
 using zone_runtime::TryUnloadZoneRuntimeGeneration;
+using zone_runtime::ZoneRuntimeCallbackContext;
+using zone_runtime::ZoneRuntimeCallbackContextPhase;
+using zone_runtime::ZoneRuntimeCallbackContextStatus;
+using zone_runtime::ZoneRuntimeCallbackContextTestAccess;
 using zone_runtime::ZoneRuntimeEntry;
 using zone_runtime::ZoneRuntimeGenerationView;
 using zone_runtime::ZoneRuntimePendingCopyView;
@@ -432,10 +438,13 @@ std::uint8_t SnapshotRegistryCallbackWindow(
 }
 
 zone_ownership::ZoneScriptStringUnpublishStatus
-EnsureCompositeRuntimeUnreachable(void *const context) noexcept
+EnsureCompositeRuntimeUnreachable(
+    const ZoneRuntimeCallbackContext *const context,
+    const ZoneLoadContextKey callbackKey) noexcept
 {
-    auto *const driver = static_cast<CompositeRuntimeDriver *>(context);
-    if (!driver)
+    auto *const driver = reinterpret_cast<CompositeRuntimeDriver *>(
+        const_cast<ZoneRuntimeCallbackContext *>(context));
+    if (!driver || callbackKey != driver->key)
     {
         return zone_ownership::
             ZoneScriptStringUnpublishStatus::UnsafeFailure;
@@ -501,6 +510,13 @@ EnsureCompositeRuntimeUnreachable(void *const context) noexcept
             ZoneRuntimeTableTestAccess::
                 AuthenticateExactRegistryLifecycleCallback(
                     driver->table, driver->key.slot, driver->key);
+        if (ZoneRuntimeTableTestAccess::RestoreExactRegistryLifecycleCallback(
+                driver->table, driver->key.slot, driver->key)
+            != ZoneRuntimeTableStatus::Success)
+        {
+            return zone_ownership::
+                ZoneScriptStringUnpublishStatus::UnsafeFailure;
+        }
         driver->retriedEnsure = true;
         return zone_ownership::
             ZoneScriptStringUnpublishStatus::Retry;
@@ -509,11 +525,13 @@ EnsureCompositeRuntimeUnreachable(void *const context) noexcept
 }
 
 ZoneLoadCleanupCallbackStatus PerformCompositeRuntimeCleanup(
-    void *const context,
+    const ZoneRuntimeCallbackContext *const context,
+    const ZoneLoadContextKey callbackKey,
     const ZoneLoadCleanupOperation operation) noexcept
 {
-    auto *const driver = static_cast<CompositeRuntimeDriver *>(context);
-    if (!driver
+    auto *const driver = reinterpret_cast<CompositeRuntimeDriver *>(
+        const_cast<ZoneRuntimeCallbackContext *>(context));
+    if (!driver || callbackKey != driver->key
         || driver->externalOperationCount
             >= driver->externalOperations.size())
     {
@@ -549,16 +567,25 @@ ZoneLoadCleanupCallbackStatus PerformCompositeRuntimeCleanup(
         && !driver->retriedReleaseGeometry
         && operation == ZoneLoadCleanupOperation::ReleaseGeometry)
     {
+        if (ZoneRuntimeTableTestAccess::RestoreExactRegistryLifecycleCallback(
+                driver->table, driver->key.slot, driver->key)
+            != ZoneRuntimeTableStatus::Success)
+        {
+            return ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+        }
         driver->retriedReleaseGeometry = true;
         return ZoneLoadCleanupCallbackStatus::Retry;
     }
     return ZoneLoadCleanupCallbackStatus::Success;
 }
 
-void CompleteCompositePendingAdmission(void *const context) noexcept
+void CompleteCompositePendingAdmission(
+    const ZoneRuntimeCallbackContext *const context,
+    const ZoneLoadContextKey callbackKey) noexcept
 {
-    auto *const driver = static_cast<CompositeRuntimeDriver *>(context);
-    if (driver)
+    auto *const driver = reinterpret_cast<CompositeRuntimeDriver *>(
+        const_cast<ZoneRuntimeCallbackContext *>(context));
+    if (driver && callbackKey == driver->key)
     {
         ++driver->pendingCompletionCalls;
         if (driver->inspectPendingCopies)
@@ -584,10 +611,13 @@ void CompleteCompositePendingAdmission(void *const context) noexcept
     }
 }
 
-void AdmitCompositeRuntimeLive(void *const context) noexcept
+void AdmitCompositeRuntimeLive(
+    const ZoneRuntimeCallbackContext *const context,
+    const ZoneLoadContextKey callbackKey) noexcept
 {
-    auto *const driver = static_cast<CompositeRuntimeDriver *>(context);
-    if (driver)
+    auto *const driver = reinterpret_cast<CompositeRuntimeDriver *>(
+        const_cast<ZoneRuntimeCallbackContext *>(context));
+    if (driver && callbackKey == driver->key)
     {
         ++driver->admitCalls;
         if (driver->inspectPendingCopies)
@@ -614,7 +644,7 @@ ZoneRuntimeGenerationCallbacks MakeCompositeRuntimeCallbacks(
     CompositeRuntimeDriver *const driver) noexcept
 {
     return {
-        driver,
+        reinterpret_cast<const ZoneRuntimeCallbackContext *>(driver),
         EnsureCompositeRuntimeUnreachable,
         PerformCompositeRuntimeCleanup,
         CompleteCompositePendingAdmission,
@@ -5273,7 +5303,8 @@ void TestCompositeCallbackContextAliasPreflightAndDrain()
 
     ZoneRuntimeGenerationCallbacks tableAliasedCallbacks =
         MakeCompositeRuntimeCallbacks(&fixture.driver);
-    tableAliasedCallbacks.context = fixture.table.get();
+    tableAliasedCallbacks.context = reinterpret_cast<
+        const ZoneRuntimeCallbackContext *>(fixture.table.get());
     CHECK(TryBindZoneRuntimeGenerationCallbacks(
         fixture.table.get(),
         fixture.physicalSlot,
@@ -6497,12 +6528,375 @@ void TestFacadeReleaseSafetyClassification()
     CHECK(!corrupt.initialized());
 }
 
+struct StableCallbackProbe final
+{
+    const ZoneRuntimeCallbackContext *context = nullptr;
+    ZoneLoadContextKey key{};
+    std::uint32_t ensureCalls = 0;
+    std::uint32_t cleanupCalls = 0;
+    std::uint32_t pendingCompletionCalls = 0;
+    std::uint32_t admitCalls = 0;
+    std::uint32_t contextSlotToInvalidate = UINT32_MAX;
+    bool invalidatedContext = false;
+};
+
+StableCallbackProbe g_stableCallbackProbe{};
+
+void ResetStableCallbackProbe() noexcept
+{
+    g_stableCallbackProbe = {};
+}
+
+void InvalidateStableContextIfRequested() noexcept
+{
+    if (g_stableCallbackProbe.invalidatedContext
+        || g_stableCallbackProbe.contextSlotToInvalidate == UINT32_MAX)
+    {
+        return;
+    }
+    const ZoneRuntimeCallbackContext *const target =
+        ZoneRuntimeCallbackContextTestAccess::ContextForPhysicalSlot(
+            g_stableCallbackProbe.contextSlotToInvalidate);
+    ZoneRuntimeCallbackContextTestAccess::CorruptWitness(target);
+    g_stableCallbackProbe.invalidatedContext = true;
+}
+
+zone_ownership::ZoneScriptStringUnpublishStatus
+EnsureStableRuntimeUnreachable(
+    const ZoneRuntimeCallbackContext *const context,
+    const ZoneLoadContextKey key) noexcept
+{
+    ++g_stableCallbackProbe.ensureCalls;
+    g_stableCallbackProbe.context = context;
+    g_stableCallbackProbe.key = key;
+    InvalidateStableContextIfRequested();
+    return context && static_cast<bool>(key)
+        ? zone_ownership::ZoneScriptStringUnpublishStatus::Success
+        : zone_ownership::ZoneScriptStringUnpublishStatus::UnsafeFailure;
+}
+
+ZoneLoadCleanupCallbackStatus PerformStableRuntimeCleanup(
+    const ZoneRuntimeCallbackContext *const context,
+    const ZoneLoadContextKey key,
+    const ZoneLoadCleanupOperation) noexcept
+{
+    ++g_stableCallbackProbe.cleanupCalls;
+    g_stableCallbackProbe.context = context;
+    g_stableCallbackProbe.key = key;
+    InvalidateStableContextIfRequested();
+    return context && static_cast<bool>(key)
+        ? ZoneLoadCleanupCallbackStatus::Success
+        : ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+}
+
+void CompleteStablePendingAdmission(
+    const ZoneRuntimeCallbackContext *const context,
+    const ZoneLoadContextKey key) noexcept
+{
+    ++g_stableCallbackProbe.pendingCompletionCalls;
+    g_stableCallbackProbe.context = context;
+    g_stableCallbackProbe.key = key;
+    InvalidateStableContextIfRequested();
+}
+
+void AdmitStableRuntimeLive(
+    const ZoneRuntimeCallbackContext *const context,
+    const ZoneLoadContextKey key) noexcept
+{
+    ++g_stableCallbackProbe.admitCalls;
+    g_stableCallbackProbe.context = context;
+    g_stableCallbackProbe.key = key;
+    InvalidateStableContextIfRequested();
+}
+
+ZoneRuntimeGenerationCallbacks StableRuntimeCallbacks() noexcept
+{
+    return {
+        nullptr,
+        EnsureStableRuntimeUnreachable,
+        PerformStableRuntimeCleanup,
+        CompleteStablePendingAdmission,
+        AdmitStableRuntimeLive,
+    };
+}
+
+bool InitializeStableRuntimeGeneration(
+    const std::uint32_t physicalSlot,
+    ZoneLoadContextKey *const outKey) noexcept
+{
+    if (!outKey)
+        return false;
+    const pmem_runtime::InitializationStatus memoryInitialization =
+        pmem_runtime::TryInitialize();
+    CHECK(memoryInitialization == pmem_runtime::InitializationStatus::Success
+        || memoryInitialization
+            == pmem_runtime::InitializationStatus::AlreadyInitialized);
+    if (memoryInitialization != pmem_runtime::InitializationStatus::Success
+        && memoryInitialization
+            != pmem_runtime::InitializationStatus::AlreadyInitialized)
+    {
+        return false;
+    }
+    ZoneRuntimeTable &table = ProductionZoneRuntimeTable();
+    const ZoneRuntimeTableStatus initialization =
+        TryInitializeZoneRuntimeTable(&table);
+    CHECK(initialization == ZoneRuntimeTableStatus::Success);
+    if (initialization != ZoneRuntimeTableStatus::Success)
+        return false;
+    CHECK(TryClaimZoneRuntimeGeneration(&table, physicalSlot, outKey)
+        == ZoneRuntimeTableStatus::Success);
+    if (!static_cast<bool>(*outKey))
+        return false;
+    const ZoneRuntimeGenerationCallbacks callbacks = StableRuntimeCallbacks();
+    CHECK(TryBindZoneRuntimeGenerationCallbacks(
+        &table, physicalSlot, *outKey, callbacks)
+        == ZoneRuntimeTableStatus::Success);
+    return table.initialized();
+}
+
+bool DriveStableAbandonmentToTerminal(
+    ZoneRuntimeTable *const table,
+    const std::uint32_t physicalSlot,
+    const ZoneLoadContextKey &key) noexcept
+{
+    const ZoneRuntimeTableStatus begin =
+        TryBeginZoneRuntimeGenerationAbandonment(
+            table, physicalSlot, key);
+    CHECK(begin == ZoneRuntimeTableStatus::Success
+        || begin == ZoneRuntimeTableStatus::Retry);
+    if (begin != ZoneRuntimeTableStatus::Success
+        && begin != ZoneRuntimeTableStatus::Retry)
+    {
+        return false;
+    }
+    for (std::size_t attempt = 0; attempt < 32; ++attempt)
+    {
+        const ZoneRuntimeEntry *entry = nullptr;
+        const ZoneRuntimeTableStatus entryStatus =
+            TryGetZoneRuntimeEntry(table, physicalSlot, &entry);
+        CHECK(entryStatus == ZoneRuntimeTableStatus::Success);
+        CHECK(entry != nullptr);
+        if (entryStatus != ZoneRuntimeTableStatus::Success || !entry)
+            return false;
+        if (entry->executionMode() == ZoneRuntimeExecutionMode::Terminal)
+            return true;
+        const ZoneRuntimeTableStatus status =
+            TryContinueZoneRuntimeGenerationAbandonment(
+                table, physicalSlot, key);
+        CHECK(status == ZoneRuntimeTableStatus::Success
+            || status == ZoneRuntimeTableStatus::Retry);
+        if (status != ZoneRuntimeTableStatus::Success
+            && status != ZoneRuntimeTableStatus::Retry)
+        {
+            return false;
+        }
+    }
+    CHECK(false);
+    return false;
+}
+
+void TestStableLegacyCallbackDescriptorsRejected()
+{
+    ResetStableCallbackProbe();
+    ZoneRuntimeTable &table = ProductionZoneRuntimeTable();
+    CHECK(TryInitializeZoneRuntimeTable(&table)
+        == ZoneRuntimeTableStatus::Success);
+    const ZoneLoadContextKey key{UINT64_C(1), 1, 0};
+    const zone_ownership::ZoneScriptStringAdmissionCallback admission{};
+    const zone_ownership::ZoneScriptStringRollbackCallbacks rollback{};
+    const ZoneLoadCleanupCallbacks cleanup{};
+    CHECK(TryCommitZoneRuntimeScriptStringsAndAdmit(
+        &table, 1, key, admission)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(TryBeginZoneRuntimeScriptStringRollback(
+        &table, 1, key, rollback)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(TryUnloadZoneRuntimeGeneration(&table, 1, key, cleanup)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(table.initialized());
+    CHECK(g_stableCallbackProbe.ensureCalls == 0);
+    CHECK(g_stableCallbackProbe.cleanupCalls == 0);
+}
+
+void TestStableUnusedContextBusyPreflight()
+{
+    ResetStableCallbackProbe();
+    ZoneLoadContextKey key{};
+    CHECK(InitializeStableRuntimeGeneration(1, &key));
+    if (!static_cast<bool>(key))
+        return;
+
+    using PmemTestAccess = PhysicalMemoryGlobalStateTestAccess;
+    const PmemTestAccess::Snapshot saved = PmemTestAccess::Capture();
+    PmemTestAccess::Snapshot initializing{};
+    initializing.initializationPhase = static_cast<std::uint8_t>(
+        pmem_runtime::InitializationPhase::Initializing);
+    initializing.initializationWitness = UINT32_C(0x494E4954);
+    PmemTestAccess::Install(initializing);
+    const ZoneRuntimeTableStatus begin =
+        TryBeginZoneRuntimeGenerationAbandonment(
+            &ProductionZoneRuntimeTable(), key.slot, key);
+    PmemTestAccess::Install(saved);
+
+    CHECK(begin == ZoneRuntimeTableStatus::Busy);
+    CHECK(g_stableCallbackProbe.ensureCalls == 0);
+    CHECK(ProductionZoneRuntimeTable().initialized());
+    const ZoneRuntimeEntry *entry = nullptr;
+    CHECK(TryGetZoneRuntimeEntry(
+        &ProductionZoneRuntimeTable(), key.slot, &entry)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(entry != nullptr);
+    if (!entry)
+        return;
+    CHECK(entry->executionMode() == ZoneRuntimeExecutionMode::Loading);
+    CHECK(entry->setupStage() == ZoneRuntimeSetupStage::CallbacksBound);
+}
+
+void TestStableStorageBindSnapshotsManagedKey()
+{
+    ResetStableCallbackProbe();
+    const pmem_runtime::InitializationStatus initialization =
+        pmem_runtime::TryInitialize();
+    CHECK(initialization == pmem_runtime::InitializationStatus::Success
+        || initialization
+            == pmem_runtime::InitializationStatus::AlreadyInitialized);
+    if (initialization != pmem_runtime::InitializationStatus::Success
+        && initialization
+            != pmem_runtime::InitializationStatus::AlreadyInitialized)
+    {
+        return;
+    }
+
+    ZoneLoadContextKey key{};
+    CHECK(InitializeStableRuntimeGeneration(1, &key));
+    ZoneRuntimeTable &table = ProductionZoneRuntimeTable();
+    CHECK(TryBeginZoneRuntimePhysicalAllocation(
+        &table, key.slot, key, "stable_key_snapshot", 0)
+        == ZoneRuntimeTableStatus::Success);
+    zone_runtime_storage::ZoneRuntimeStoragePlan plan{};
+    CHECK(zone_runtime_storage::TryPlanZoneRuntimeStorage(0, 4096, &plan)
+        == zone_runtime_storage::ZoneRuntimeStorageStatus::Success);
+    pmem_runtime::AllocationResult allocation{};
+    CHECK(TryAllocateZoneRuntimeMemory(
+        &table,
+        key.slot,
+        key,
+        plan.totalBytes,
+        16,
+        0,
+        &allocation) == ZoneRuntimeTableStatus::Success);
+    CHECK(allocation.status == pmem_runtime::AllocationStatus::Success);
+    CHECK(allocation.address != nullptr);
+    if (!allocation.address)
+        return;
+    auto *const slabKey =
+        ::new (allocation.address) ZoneLoadContextKey(key);
+    CHECK(TryBindZoneRuntimeStorage(
+        &table,
+        key.slot,
+        *slabKey,
+        allocation.address,
+        plan.totalBytes,
+        &plan) == ZoneRuntimeTableStatus::Success);
+    const ZoneRuntimeEntry *entry = nullptr;
+    CHECK(TryGetZoneRuntimeEntry(&table, key.slot, &entry)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(entry != nullptr);
+    if (!entry)
+        return;
+    CHECK(entry->setupStage() == ZoneRuntimeSetupStage::StorageBound);
+}
+
+void TestStableTerminalPhaseMismatchFailsClosed()
+{
+    ResetStableCallbackProbe();
+    ZoneLoadContextKey key{};
+    CHECK(InitializeStableRuntimeGeneration(1, &key));
+    ZoneRuntimeTable &table = ProductionZoneRuntimeTable();
+    const ZoneRuntimeCallbackContext *const context =
+        ZoneRuntimeCallbackContextTestAccess::ContextForPhysicalSlot(
+            key.slot);
+    CHECK(context != nullptr);
+    CHECK(DriveStableAbandonmentToTerminal(&table, key.slot, key));
+    CHECK(TryContinueZoneRuntimeGenerationAbandonment(
+        &table, key.slot, key) == ZoneRuntimeTableStatus::Success);
+    CHECK(TryResetZoneRuntimeTerminalReceipt(&table, key.slot, key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(ZoneRuntimeCallbackContextTestAccess::TryAuthenticate(
+        context, key, ZoneRuntimeCallbackContextPhase::Terminal)
+        == ZoneRuntimeCallbackContextStatus::Success);
+
+    ZoneRuntimeCallbackContextTestAccess::Restore(
+        context, key.slot, key, ZoneRuntimeCallbackContextPhase::Bound);
+    ZoneRuntimeGenerationView view{};
+    CHECK(TryGetZoneRuntimeGeneration(
+        &table, key.slot, key, &view)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(!table.initialized());
+    ZoneRuntimeCallbackContextTestAccess::Restore(
+        context, key.slot, key, ZoneRuntimeCallbackContextPhase::Terminal);
+}
+
+void TestStablePostCallbackContextMismatch(
+    const bool claimedNeighbor)
+{
+    ResetStableCallbackProbe();
+    ZoneLoadContextKey key{};
+    CHECK(InitializeStableRuntimeGeneration(1, &key));
+    ZoneRuntimeTable &table = ProductionZoneRuntimeTable();
+    ZoneLoadContextKey neighborKey{};
+    if (claimedNeighbor)
+    {
+        CHECK(TryClaimZoneRuntimeGeneration(&table, 2, &neighborKey)
+            == ZoneRuntimeTableStatus::Success);
+    }
+    g_stableCallbackProbe.contextSlotToInvalidate = 2;
+    CHECK(TryBeginZoneRuntimeGenerationAbandonment(
+        &table, key.slot, key) == ZoneRuntimeTableStatus::Success);
+    CHECK(TryContinueZoneRuntimeGenerationAbandonment(
+        &table, key.slot, key) == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(g_stableCallbackProbe.ensureCalls == 0);
+    CHECK(g_stableCallbackProbe.cleanupCalls == 1);
+    CHECK(g_stableCallbackProbe.invalidatedContext);
+    CHECK(!table.initialized());
+
+    const ZoneRuntimeCallbackContext *const neighbor =
+        ZoneRuntimeCallbackContextTestAccess::ContextForPhysicalSlot(2);
+    ZoneRuntimeCallbackContextTestAccess::Restore(
+        neighbor,
+        2,
+        neighborKey,
+        claimedNeighbor
+            ? ZoneRuntimeCallbackContextPhase::Bound
+            : ZoneRuntimeCallbackContextPhase::Unbound);
+}
+
 } // namespace
 
 int main(const int argc, char **const argv)
 {
     if (argc != 1)
     {
+        if (argc == 3
+            && std::string_view(argv[1]) == "--stable-context")
+        {
+            const std::string_view kind(argv[2]);
+            if (kind == "legacy-descriptors")
+                TestStableLegacyCallbackDescriptorsRejected();
+            else if (kind == "unused-busy")
+                TestStableUnusedContextBusyPreflight();
+            else if (kind == "managed-key")
+                TestStableStorageBindSnapshotsManagedKey();
+            else if (kind == "terminal-phase")
+                TestStableTerminalPhaseMismatchFailsClosed();
+            else if (kind == "claimed-neighbor")
+                TestStablePostCallbackContextMismatch(true);
+            else if (kind == "unused-neighbor")
+                TestStablePostCallbackContextMismatch(false);
+            else
+                return 2;
+            return failures == 0 ? 0 : 1;
+        }
         if (argc == 3
             && std::string_view(argv[1]) == "--unsafe-mutable")
         {

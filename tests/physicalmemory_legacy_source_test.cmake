@@ -1059,8 +1059,9 @@ require_count("${source}"
     "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING" 1
     "global PMem implementation gate")
 
-# Only the two dedicated fixtures may define the test seam. Production source,
-# build manifests, and workflows may never select it.
+# Only the two dedicated PMem fixtures and the runtime-table fault fixture may
+# define the test seam. Production source, build manifests, and workflows may
+# never select it.
 file(GLOB_RECURSE production_build_manifests LIST_DIRECTORIES false
     "${SOURCE_ROOT}/scripts/*"
     "${SOURCE_ROOT}/milesEq/*.bat")
@@ -1096,8 +1097,18 @@ foreach(path IN LISTS hosted_workflows)
         "PMem test seam in hosted workflow ${path}")
 endforeach()
 require_count("${test_manifest}"
-    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING" 2
-    "dedicated PMem fixture definitions")
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING" 3
+    "private PMem fixture definitions")
+extract_slice(
+    "${test_manifest}"
+    "add_executable(kisakcod-db-zone-runtime-table-tests"
+    "target_link_libraries(\n    kisakcod-db-zone-runtime-table-tests"
+    runtime_table_fault_fixture)
+require_count(
+    "${runtime_table_fault_fixture}"
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING=1"
+    1
+    "target-local runtime-table PMem fault seam")
 
 # Runtime coverage, macro-off object proof, and hosted selection travel with
 # the implementation.

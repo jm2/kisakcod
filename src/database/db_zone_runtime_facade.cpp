@@ -12,6 +12,8 @@ using registry_ownership::RegistryOwnershipStatus;
 
 namespace
 {
+inline constexpr std::size_t kPhysicalAllocationNamePotentialReadBytes = 63u;
+
 enum class RuntimeBoundaryState : std::uint8_t
 {
     Idle,
@@ -205,6 +207,30 @@ void PoisonAccessInternal() noexcept
     }
 }
 
+[[nodiscard]] RegistryOwnershipStatus MapCallbackContextStatusToRegistryStatus(
+    const ZoneRuntimeCallbackContextStatus status) noexcept
+{
+    switch (status)
+    {
+    case ZoneRuntimeCallbackContextStatus::Success:
+        return RegistryOwnershipStatus::Success;
+    case ZoneRuntimeCallbackContextStatus::Busy:
+        return RegistryOwnershipStatus::Busy;
+    case ZoneRuntimeCallbackContextStatus::InvalidArgument:
+    case ZoneRuntimeCallbackContextStatus::InvalidSlot:
+        return RegistryOwnershipStatus::InvalidArgument;
+    case ZoneRuntimeCallbackContextStatus::InvalidKey:
+    case ZoneRuntimeCallbackContextStatus::StaleKey:
+        return RegistryOwnershipStatus::InvalidKey;
+    case ZoneRuntimeCallbackContextStatus::InvalidPhase:
+    case ZoneRuntimeCallbackContextStatus::GenerationExhausted:
+        return RegistryOwnershipStatus::InvalidState;
+    case ZoneRuntimeCallbackContextStatus::UnsafeFailure:
+    default:
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+}
+
 [[nodiscard]] constexpr bool IsKnownTableStatus(
     const ZoneRuntimeTableStatus status) noexcept
 {
@@ -322,12 +348,25 @@ ZoneRuntimeFacade::authenticateTableOperationAccess() noexcept
 }
 
 ZoneRuntimeTableStatus
+ZoneRuntimeFacade::authenticateKeyedTableOperationAccess(
+    const zone_load::ZoneLoadContextKey &key) noexcept
+{
+    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    if (access != ZoneRuntimeTableStatus::Success)
+        return access;
+    return authoritySpanIsSeparated(
+               &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))
+        ? ZoneRuntimeTableStatus::Success
+        : ZoneRuntimeTableStatus::InvalidArgument;
+}
+
+ZoneRuntimeTableStatus
 ZoneRuntimeFacade::authenticateCompositeTableOperationAccess(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
     const ZoneRuntimeTableStatus access =
-        authenticateTableOperationAccess();
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
 
@@ -425,6 +464,8 @@ bool ZoneRuntimeFacade::authoritySpanIsSeparated(
                storage, storageSize, storageAlignment)
         && AddressRangesAreDisjoint(
             storage, storageSize, &table, sizeof(table))
+        && ZoneRuntimeCallbackContextOwner::SpanIsSeparated(
+            storage, storageSize, storageAlignment)
         && registry_ownership::RegistryOwnershipCoordinatorFacade::
             WritableOutputIsSeparated(
                 storage, storageSize, storageAlignment);
@@ -558,15 +599,17 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBindGenerationCallbacks(
     const zone_load::ZoneLoadContextKey &key,
     const ZoneRuntimeGenerationCallbacks &callbacks) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     if (!authoritySpanIsSeparated(
             &callbacks,
             sizeof(callbacks),
             alignof(ZoneRuntimeGenerationCallbacks))
-        || (callbacks.context
-            && !authoritySpanIsSeparated(callbacks.context, 1, 1)))
+        || !authoritySpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))
+        || callbacks.context != nullptr)
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
@@ -580,9 +623,16 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBeginPhysicalAllocation(
     const char *const name,
     const std::uint32_t allocationType) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
+    if (name
+        && !authoritySpanIsSeparated(
+            name, kPhysicalAllocationNamePotentialReadBytes, 1))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
     return completeTableOperation(TryBeginZoneRuntimePhysicalAllocation(
         &ProductionZoneRuntimeTable(),
         physicalSlot,
@@ -599,7 +649,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryAllocateMemory(
     const std::uint32_t type,
     pmem_runtime::AllocationResult *const outResult) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     if (outResult
@@ -627,7 +678,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBindStorage(
     const std::size_t slabCapacity,
     const zone_runtime_storage::ZoneRuntimeStoragePlan *const plan) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     if ((slab && slabCapacity != 0
@@ -653,7 +705,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBeginStreamGeneration(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(TryBeginZoneRuntimeStreamGeneration(
@@ -667,7 +720,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBindStreams(
     const relocation::BlockView *const blocks,
     const std::size_t blockCount) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     if (blockCount > (std::numeric_limits<std::size_t>::max)()
@@ -714,7 +768,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBeginPendingCopies(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(TryBeginZoneRuntimePendingCopies(
@@ -726,7 +781,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryAppendPendingCopy(
     const zone_load::ZoneLoadContextKey &key,
     const std::uint32_t assetEntryIndex) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(TryAppendZoneRuntimePendingCopy(
@@ -741,7 +797,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryGetPendingCopyView(
     const zone_load::ZoneLoadContextKey &key,
     ZoneRuntimePendingCopyView *const outView) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     if (!pmem_runtime::StorageIsOutsideManagedMemory(
@@ -789,7 +846,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryReadPendingCopy(
     const std::uint32_t ordinal,
     zone_pending_copy::PendingCopyRecord *const outRecord) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     if (expectedRecordCount
@@ -903,12 +961,17 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryStageScriptString(
             &source,
             sizeof(source),
             alignof(script_string_adapter::ScriptStringSourceView))
-        || (source.bytes && source.byteCount != 0
-            && !authoritySpanIsSeparated(
-                source.bytes, source.byteCount, 1))
         || (outStringId
             && !authoritySpanIsSeparated(
                 outStringId, sizeof(*outStringId), alignof(std::uint32_t))))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
+    const script_string_adapter::ScriptStringSourceView sourceSnapshot =
+        source;
+    if (sourceSnapshot.bytes && sourceSnapshot.byteCount != 0
+        && !authoritySpanIsSeparated(
+            sourceSnapshot.bytes, sourceSnapshot.byteCount, 1))
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
@@ -916,7 +979,7 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryStageScriptString(
         &ProductionZoneRuntimeTable(),
         physicalSlot,
         key,
-        source,
+        sourceSnapshot,
         outStringId));
 }
 
@@ -972,7 +1035,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryPrepareAdmission(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(TryPrepareZoneRuntimeAdmission(
@@ -983,7 +1047,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryInvalidateStreams(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(TryInvalidateZoneRuntimeStreams(
@@ -994,7 +1059,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryEndPhysicalAllocation(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(TryEndZoneRuntimePhysicalAllocation(
@@ -1005,7 +1071,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryCommitGeneration(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(TryCommitZoneRuntimeGeneration(
@@ -1016,7 +1083,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBeginGenerationAbandonment(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(
@@ -1028,7 +1096,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryContinueGenerationAbandonment(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(
@@ -1040,7 +1109,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryUnloadGeneration(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(TryUnloadZoneRuntimeGeneration(
@@ -1090,7 +1160,8 @@ ZoneRuntimeTableStatus ZoneRuntimeFacade::TryResetTerminalReceipt(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
-    const ZoneRuntimeTableStatus access = authenticateTableOperationAccess();
+    const ZoneRuntimeTableStatus access =
+        authenticateKeyedTableOperationAccess(key);
     if (access != ZoneRuntimeTableStatus::Success)
         return access;
     return completeTableOperation(TryResetZoneRuntimeTerminalReceipt(
@@ -1114,62 +1185,17 @@ RegistryOwnershipStatus ZoneRuntimeFacade::TryBorrowRegistryOwnership(
         authenticateTableOperationAccess();
     if (tableAccess != ZoneRuntimeTableStatus::Success)
         return MapTableStatusToRegistryStatus(tableAccess);
+    if (!authoritySpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return RegistryOwnershipStatus::InvalidArgument;
+    }
 
     ZoneRuntimeTable &table = ProductionZoneRuntimeTable();
     ZoneRuntimeGenerationView view{};
     const ZoneRuntimeTableStatus tableStatus = completeTableOperation(
         TryGetZoneRuntimeGeneration(
             &table, physicalSlot, key, &view));
-    if (tableStatus == ZoneRuntimeTableStatus::Busy)
-    {
-        const ZoneRuntimeTableStatus callbackStatus =
-            completeTableOperation(
-                table.authenticateExactRegistryLifecycleCallback(
-                    physicalSlot, key));
-        if (callbackStatus != ZoneRuntimeTableStatus::Success)
-            return MapTableStatusToRegistryStatus(callbackStatus);
-        if (!zone_slots::IsUsableZoneSlot(physicalSlot)
-            || !static_cast<bool>(key) || key.slot != physicalSlot)
-        {
-            poisonAccess();
-            return RegistryOwnershipStatus::UnsafeFailure;
-        }
-        const RegistryOwnershipStatus callbackBorrow =
-            RunRegistryOperation(
-                [&table, physicalSlot, &key]() noexcept {
-                    return registry_ownership::
-                        RegistryOwnershipCoordinatorFacade::
-                            TryBorrowActiveRuntimeCallback(
-                                table.entries_[physicalSlot]
-                                    .scriptStringOwnership(),
-                                key);
-                });
-        if (callbackBorrow != RegistryOwnershipStatus::Busy)
-            return callbackBorrow;
-
-        // Recoverable coordinator admission contention establishes no
-        // retained coordinator authority. After reauthenticating that the
-        // coordinator is inactive, restore the exact one-shot marker while
-        // this same synchronous callback and facade serializer remain active
-        // so its caller may retry. Every other coordinator result keeps the
-        // admission consumed.
-        if (authenticateTableOperationAccess()
-            != ZoneRuntimeTableStatus::Success)
-        {
-            poisonAccess();
-            return RegistryOwnershipStatus::UnsafeFailure;
-        }
-        const ZoneRuntimeTableStatus restoreStatus =
-            completeTableOperation(
-                table.restoreExactRegistryLifecycleCallback(
-                    physicalSlot, key));
-        if (restoreStatus != ZoneRuntimeTableStatus::Success)
-        {
-            poisonAccess();
-            return RegistryOwnershipStatus::UnsafeFailure;
-        }
-        return callbackBorrow;
-    }
     if (tableStatus != ZoneRuntimeTableStatus::Success)
     {
         if (tableStatus == ZoneRuntimeTableStatus::UnsafeFailure)
@@ -1187,6 +1213,72 @@ RegistryOwnershipStatus ZoneRuntimeFacade::TryBorrowRegistryOwnership(
         return registry_ownership::RegistryOwnershipCoordinatorFacade::
             TryBorrow(view.entry->scriptStringOwnership(), key);
     });
+}
+
+RegistryOwnershipStatus
+ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
+    const ZoneRuntimeCallbackContext *const context,
+    const zone_load::ZoneLoadContextKey key) noexcept
+{
+    const ZoneRuntimeTableStatus tableAccess =
+        authenticateTableOperationAccess();
+    if (tableAccess != ZoneRuntimeTableStatus::Success)
+        return MapTableStatusToRegistryStatus(tableAccess);
+
+    const ZoneRuntimeCallbackContextStatus contextStatus =
+        ZoneRuntimeCallbackContextOwner::TryAuthenticate(
+            context, key, ZoneRuntimeCallbackContextPhase::Bound);
+    if (contextStatus != ZoneRuntimeCallbackContextStatus::Success)
+    {
+        const RegistryOwnershipStatus mapped =
+            MapCallbackContextStatusToRegistryStatus(contextStatus);
+        if (mapped == RegistryOwnershipStatus::UnsafeFailure)
+            poisonAccess();
+        return mapped;
+    }
+    if (!zone_slots::IsUsableZoneSlot(key.slot))
+    {
+        poisonAccess();
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+
+    ZoneRuntimeTable &table = ProductionZoneRuntimeTable();
+    const ZoneRuntimeTableStatus callbackStatus = completeTableOperation(
+        table.authenticateExactRegistryLifecycleCallback(
+            context, key.slot, key));
+    if (callbackStatus != ZoneRuntimeTableStatus::Success)
+        return MapTableStatusToRegistryStatus(callbackStatus);
+
+    const RegistryOwnershipStatus callbackBorrow = RunRegistryOperation(
+        [&table, &key]() noexcept {
+            return registry_ownership::RegistryOwnershipCoordinatorFacade::
+                TryBorrowActiveRuntimeCallback(
+                    table.entries_[key.slot].scriptStringOwnership(), key);
+        });
+    if (callbackBorrow != RegistryOwnershipStatus::Busy)
+        return callbackBorrow;
+
+    // Only a coordinator Busy that retained no authority may restore the
+    // exact consumed marker. The same callback window can then return Retry
+    // and invoke this one-shot admission again.
+    if (authenticateTableOperationAccess()
+        != ZoneRuntimeTableStatus::Success)
+    {
+        poisonAccess();
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+    const ZoneRuntimeTableStatus restoreStatus = completeTableOperation(
+        table.restoreExactRegistryLifecycleCallback(
+            context,
+            key.slot,
+            key,
+            ZoneRuntimeTable::ValidationDepth::StructuralOnly));
+    if (restoreStatus != ZoneRuntimeTableStatus::Success)
+    {
+        poisonAccess();
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+    return callbackBorrow;
 }
 
 RegistryOwnershipStatus ZoneRuntimeFacade::FinishRegistryOwnership() noexcept
@@ -1271,6 +1363,12 @@ RegistryOwnershipStatus ZoneRuntimeFacade::TryInternBoundedName(
 RegistryOwnershipStatus ZoneRuntimeFacade::TryReAddRetainedDefaultName(
     const char *const name) noexcept
 {
+    const RegistryOwnershipStatus access =
+        authenticateRegistryOutputAccess();
+    if (access != RegistryOwnershipStatus::Success)
+        return access;
+    if (name && !authoritySpanIsSeparated(name, 1, 1))
+        return RegistryOwnershipStatus::InvalidArgument;
     return RunRegistryOperation([name]() noexcept {
         return registry_ownership::RegistryOwnershipCoordinatorFacade::
             TryReAddRetainedDefaultName(name);

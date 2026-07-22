@@ -227,6 +227,11 @@ ZoneRuntimeCallbackContextOwner::TryBind(
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
     ZoneRuntimeCallbackContextBindResult result{};
+    if (!SpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return result;
+    }
     const zone_load::ZoneLoadContextKey inputKey = key;
     if (!zone_slots::IsUsableZoneSlot(physicalSlot))
     {
@@ -314,6 +319,13 @@ ZoneRuntimeCallbackContextOwner::TryResolve(
     const zone_load::ZoneLoadContextKey &expectedKey) noexcept
 {
     ZoneRuntimeCallbackContextBindResult result{};
+    if (!SpanIsSeparated(
+            &expectedKey,
+            sizeof(expectedKey),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return result;
+    }
     const zone_load::ZoneLoadContextKey inputKey = expectedKey;
     if (!zone_slots::IsUsableZoneSlot(physicalSlot))
     {
@@ -367,6 +379,11 @@ ZoneRuntimeCallbackContextOwner::TryAdvance(
     const zone_load::ZoneLoadContextKey &key,
     const ZoneRuntimeCallbackContextPhase nextPhase) noexcept
 {
+    if (!SpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeCallbackContextStatus::InvalidArgument;
+    }
     const zone_load::ZoneLoadContextKey inputKey = key;
     if (!static_cast<bool>(inputKey))
         return ZoneRuntimeCallbackContextStatus::InvalidKey;
@@ -408,6 +425,11 @@ ZoneRuntimeCallbackContextOwner::TryAuthenticate(
     const zone_load::ZoneLoadContextKey &key,
     const ZoneRuntimeCallbackContextPhase expectedPhase) noexcept
 {
+    if (!SpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeCallbackContextStatus::InvalidArgument;
+    }
     const zone_load::ZoneLoadContextKey inputKey = key;
     if (!static_cast<bool>(inputKey))
         return ZoneRuntimeCallbackContextStatus::InvalidKey;
@@ -443,6 +465,13 @@ ZoneRuntimeCallbackContextOwner::TryCapture(
     const zone_load::ZoneLoadContextKey &expectedKey) noexcept
 {
     ZoneRuntimeCallbackContextSnapshot snapshot{};
+    if (!SpanIsSeparated(
+            &expectedKey,
+            sizeof(expectedKey),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return snapshot;
+    }
     const zone_load::ZoneLoadContextKey inputKey = expectedKey;
     if (!static_cast<bool>(inputKey))
     {
@@ -516,6 +545,79 @@ bool ZoneRuntimeCallbackContextOwner::SpanIsSeparated(
         return false;
     const std::uintptr_t bankEnd = bankBegin + bankSize;
     return end <= bankBegin || bankEnd <= start;
+}
+
+ZoneRuntimeCallbackContextStatus
+ZoneRuntimeCallbackContextOwner::TryAuthenticateStructural(
+    const ZoneRuntimeCallbackContext *const context,
+    const zone_load::ZoneLoadContextKey &key,
+    const ZoneRuntimeCallbackContextPhase expectedPhase) noexcept
+{
+    if (!SpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeCallbackContextStatus::InvalidArgument;
+    }
+    if (!static_cast<bool>(key))
+        return ZoneRuntimeCallbackContextStatus::InvalidKey;
+    if (!IsRetainedPhase(expectedPhase))
+        return ZoneRuntimeCallbackContextStatus::InvalidPhase;
+    const std::size_t exactIndex = ExactStoreIndex(context);
+    if (exactIndex == kInvalidStoreIndex)
+        return ZoneRuntimeCallbackContextStatus::InvalidArgument;
+    if (key.slot != exactIndex)
+        return ZoneRuntimeCallbackContextStatus::StaleKey;
+    const ZoneRuntimeCallbackContext *const exact =
+        &ContextStore()[exactIndex];
+    if (!exact->canonical(exactIndex))
+        return ZoneRuntimeCallbackContextStatus::UnsafeFailure;
+    if (exact->key_ != key)
+        return ZoneRuntimeCallbackContextStatus::StaleKey;
+    return exact->phase_ == expectedPhase
+        ? ZoneRuntimeCallbackContextStatus::Success
+        : ZoneRuntimeCallbackContextStatus::InvalidPhase;
+}
+
+ZoneRuntimeCallbackContextStatus
+ZoneRuntimeCallbackContextOwner::TryAuthenticateUnused(
+    const std::uint32_t physicalSlot) noexcept
+{
+    if (!zone_slots::IsUsableZoneSlot(physicalSlot))
+        return ZoneRuntimeCallbackContextStatus::InvalidSlot;
+
+    const ZoneRuntimeCallbackContext *const exact =
+        &ContextStore()[physicalSlot];
+    const ZoneRuntimeCallbackContextStatus storageStatus =
+        MapExactStorageStatus(TryClassifyStorage(exact));
+    if (storageStatus != ZoneRuntimeCallbackContextStatus::Success)
+        return storageStatus;
+    if (!exact->canonical(physicalSlot))
+        return ZoneRuntimeCallbackContextStatus::UnsafeFailure;
+    return exact->phase_ == ZoneRuntimeCallbackContextPhase::Unbound
+            && exact->key_ == zone_load::ZoneLoadContextKey{}
+        ? ZoneRuntimeCallbackContextStatus::Success
+        : ZoneRuntimeCallbackContextStatus::InvalidPhase;
+}
+
+ZoneRuntimeCallbackContextStatus
+ZoneRuntimeCallbackContextOwner::TryAuthenticateStore() noexcept
+{
+    const auto &store = ContextStore();
+    const ZoneRuntimeCallbackContextStatus firstStatus =
+        MapExactStorageStatus(TryClassifyStorage(&store[0]));
+    if (firstStatus != ZoneRuntimeCallbackContextStatus::Success)
+        return firstStatus;
+    const ZoneRuntimeCallbackContextStatus storageStatus =
+        MapExactStorageStatus(pmem_runtime::TryClassifyStorageIsolation(
+            store.data(), sizeof(store)));
+    if (storageStatus != ZoneRuntimeCallbackContextStatus::Success)
+        return storageStatus;
+    for (std::size_t index = 0; index < store.size(); ++index)
+    {
+        if (!store[index].canonical(index))
+            return ZoneRuntimeCallbackContextStatus::UnsafeFailure;
+    }
+    return ZoneRuntimeCallbackContextStatus::Success;
 }
 
 #ifdef KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING

@@ -164,9 +164,12 @@ foreach(_owner_operation IN ITEMS
     TryAdvance
     TryAuthenticate
     TryCapture
-    SpanIsSeparated)
+    SpanIsSeparated
+    TryAuthenticateStructural
+    TryAuthenticateUnused
+    TryAuthenticateStore)
     if(NOT _all_symbols MATCHES
-        "ZoneRuntimeCallbackContextOwner.*${_owner_operation}")
+        "ZoneRuntimeCallbackContextOwner.*${_owner_operation}([^A-Za-z0-9_]|$)")
         message(FATAL_ERROR
             "Macro-off object omitted private owner operation "
             "${_owner_operation}:\n${_all_symbols}")

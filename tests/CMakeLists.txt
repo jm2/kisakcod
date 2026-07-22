@@ -707,6 +707,7 @@ set_tests_properties(
 
 add_executable(kisakcod-db-zone-runtime-table-tests
     db_zone_runtime_table_tests.cpp
+    ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
     ${SRC_DIR}/database/db_zone_runtime_table.cpp
     ${SRC_DIR}/database/db_zone_runtime_storage.cpp
     ${SRC_DIR}/database/db_zone_stream_ownership.cpp
@@ -735,6 +736,8 @@ target_compile_features(
 target_compile_definitions(
     kisakcod-db-zone-runtime-table-tests PRIVATE
     KISAK_MP
+    KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING=1
+    KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING=1
     KISAK_DB_ZONE_LOAD_CONTEXT_TESTING=1
     KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING=1
     KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1
@@ -765,6 +768,21 @@ add_test(
 )
 set_tests_properties(
     database-zone-runtime-table-ownership PROPERTIES TIMEOUT 30)
+foreach(_zone_runtime_stable_context_kind IN ITEMS
+        legacy-descriptors
+        unused-busy
+        managed-key
+        terminal-phase
+        claimed-neighbor
+        unused-neighbor)
+    add_test(
+        NAME database-zone-runtime-table-stable-context-${_zone_runtime_stable_context_kind}
+        COMMAND kisakcod-db-zone-runtime-table-tests
+            --stable-context ${_zone_runtime_stable_context_kind})
+    set_tests_properties(
+        database-zone-runtime-table-stable-context-${_zone_runtime_stable_context_kind}
+        PROPERTIES TIMEOUT 30)
+endforeach()
 foreach(_zone_runtime_unsafe_boundary RANGE 0 6)
     add_test(
         NAME database-zone-runtime-table-unload-unsafe-${_zone_runtime_unsafe_boundary}

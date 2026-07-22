@@ -58,6 +58,12 @@ static_assert(std::is_same_v<
 struct ZoneRuntimeTableTestAccess
 {
     template <typename Access>
+    static constexpr bool CanRegisterStableCallbackBankOwner =
+        requires(ZoneRuntimeTable *const table)
+    {
+        Access::RegisterStableCallbackBankOwner(table);
+    };
+    template <typename Access>
     static constexpr bool CanSetPendingCopyReadHook = requires
     {
         &Access::SetPendingCopyReadHook;
@@ -163,7 +169,10 @@ struct ZoneRuntimeTableTestAccess
             Table *const table,
             const zone_load::ZoneLoadContextKey &key)
     {
-        table->authenticateExactRegistryLifecycleCallback(1u, key);
+        table->authenticateExactRegistryLifecycleCallback(
+            static_cast<const ZoneRuntimeCallbackContext *>(nullptr),
+            1u,
+            key);
     };
 
     template <typename Table>
@@ -171,7 +180,10 @@ struct ZoneRuntimeTableTestAccess
         Table *const table,
         const zone_load::ZoneLoadContextKey &key)
     {
-        table->restoreExactRegistryLifecycleCallback(1u, key);
+        table->restoreExactRegistryLifecycleCallback(
+            static_cast<const ZoneRuntimeCallbackContext *>(nullptr),
+            1u,
+            key);
     };
 
     template <typename Table, typename Binding>
@@ -180,7 +192,11 @@ struct ZoneRuntimeTableTestAccess
         const zone_load::ZoneLoadContextKey &key,
         typename Binding::CallbackMarker marker)
     {
-        table->authenticateExactLifecycleCallbackMarker(1u, key, marker);
+        table->authenticateExactLifecycleCallbackMarker(
+            static_cast<const ZoneRuntimeCallbackContext *>(nullptr),
+            1u,
+            key,
+            marker);
     };
 
     template <typename Table, typename Entry>
@@ -237,6 +253,10 @@ struct ZoneRuntimeTableTestAccess
         &capsule->storageBinding_;
     };
 };
+
+static_assert(!ZoneRuntimeTableTestAccess::CanRegisterStableCallbackBankOwner<
+                  ZoneRuntimeTableTestAccess>,
+              "production must not expose stable-bank test-owner registration");
 
 static_assert(
     !ZoneRuntimeTableTestAccess::CanSetPendingCopyReadHook<

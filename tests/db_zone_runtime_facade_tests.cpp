@@ -61,6 +61,9 @@ ZoneRuntimeTableStatus g_callbackAuthenticationStatus =
     ZoneRuntimeTableStatus::Busy;
 ZoneRuntimeTableStatus g_callbackRestoreStatus =
     ZoneRuntimeTableStatus::Success;
+db::zone_runtime::ZoneRuntimeCallbackContextStatus
+    g_callbackContextAuthenticationStatus =
+        db::zone_runtime::ZoneRuntimeCallbackContextStatus::Success;
 RegistryOwnershipStatus g_registryOperationStatus =
     RegistryOwnershipStatus::Success;
 bool g_registryActive = false;
@@ -75,6 +78,7 @@ std::uint32_t g_pendingInspectionAuthenticationCalls = 0;
 std::uint32_t g_storageSeparationCalls = 0;
 std::uint32_t g_callbackAuthenticationCalls = 0;
 std::uint32_t g_callbackRestoreCalls = 0;
+std::uint32_t g_callbackContextAuthenticationCalls = 0;
 std::uint32_t g_compositeCalls = 0;
 std::uint32_t g_registryBeginCalls = 0;
 std::uint32_t g_registryBorrowCalls = 0;
@@ -118,29 +122,30 @@ std::size_t g_streamOutputSize = 0;
 std::size_t g_streamOutputAlignment = 0;
 
 db::zone_script_string_ownership::ZoneScriptStringUnpublishStatus
-EnsureForwardingUnreachable(void *const context) noexcept
+EnsureForwardingUnreachable(
+    const db::zone_runtime::ZoneRuntimeCallbackContext *,
+    const ZoneLoadContextKey) noexcept
 {
-    return context
-        ? db::zone_script_string_ownership::
-            ZoneScriptStringUnpublishStatus::Success
-        : db::zone_script_string_ownership::
-            ZoneScriptStringUnpublishStatus::UnsafeFailure;
+    return db::zone_script_string_ownership::
+        ZoneScriptStringUnpublishStatus::Success;
 }
 
 db::zone_load::ZoneLoadCleanupCallbackStatus PerformForwardingCleanup(
-    void *const context,
+    const db::zone_runtime::ZoneRuntimeCallbackContext *,
+    const ZoneLoadContextKey,
     const db::zone_load::ZoneLoadCleanupOperation) noexcept
 {
-    return context
-        ? db::zone_load::ZoneLoadCleanupCallbackStatus::Success
-        : db::zone_load::ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+    return db::zone_load::ZoneLoadCleanupCallbackStatus::Success;
 }
 
-void CompleteForwardingAdmission(void *) noexcept
+void CompleteForwardingAdmission(
+    const db::zone_runtime::ZoneRuntimeCallbackContext *,
+    const ZoneLoadContextKey) noexcept
 {
 }
 
-void AdmitForwardingLive(void *) noexcept
+void AdmitForwardingLive(const db::zone_runtime::ZoneRuntimeCallbackContext *,
+                         const ZoneLoadContextKey) noexcept
 {
 }
 
@@ -175,6 +180,8 @@ void ResetHarness() noexcept
         ZoneRuntimeTableStatus::Success;
     g_callbackAuthenticationStatus = ZoneRuntimeTableStatus::Busy;
     g_callbackRestoreStatus = ZoneRuntimeTableStatus::Success;
+    g_callbackContextAuthenticationStatus =
+        db::zone_runtime::ZoneRuntimeCallbackContextStatus::Success;
     g_registryOperationStatus = RegistryOwnershipStatus::Success;
     g_registryActive = false;
     g_registryUnsafe = false;
@@ -188,6 +195,7 @@ void ResetHarness() noexcept
     g_storageSeparationCalls = 0;
     g_callbackAuthenticationCalls = 0;
     g_callbackRestoreCalls = 0;
+    g_callbackContextAuthenticationCalls = 0;
     g_compositeCalls = 0;
     g_registryBeginCalls = 0;
     g_registryBorrowCalls = 0;
@@ -430,6 +438,8 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
 [[nodiscard]] bool TestCallbackBorrowFallback() noexcept
 {
     const ZoneLoadContextKey key{UINT64_C(13), 4, 0};
+    const auto *const callbackContext = reinterpret_cast<
+        const db::zone_runtime::ZoneRuntimeCallbackContext *>(&key);
 
     ResetHarness();
     if (!Check(ZoneRuntimeFacade::TryBeginAccess()
@@ -455,13 +465,34 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
 
     ResetHarness();
     g_tableOperationStatus = ZoneRuntimeTableStatus::Busy;
+    if (!Check(ZoneRuntimeFacade::TryBeginAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "busy ordinary borrow owner begin failed")
+        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnership(4, key)
+            == RegistryOwnershipStatus::Busy,
+            "busy ordinary borrow changed status")
+        || !Check(g_callbackContextAuthenticationCalls == 0
+                && g_callbackAuthenticationCalls == 0
+                && g_registryBorrowCalls == 0
+                && g_registryCallbackBorrowCalls == 0,
+            "busy ordinary borrow reached callback authority")
+        || !Check(ZoneRuntimeFacade::FinishAccess()
+            == ZoneRuntimeFacadeStatus::Success,
+            "busy ordinary borrow owner finish failed"))
+    {
+        return false;
+    }
+
+    ResetHarness();
+    g_tableOperationStatus = ZoneRuntimeTableStatus::Busy;
     g_callbackAuthenticationStatus = ZoneRuntimeTableStatus::Success;
     g_registryOperationStatus = RegistryOwnershipStatus::Busy;
     g_registryBusyRetainsAuthority = true;
     if (!Check(ZoneRuntimeFacade::TryBeginAccess()
             == ZoneRuntimeFacadeStatus::Success,
             "partial-busy callback owner begin failed")
-        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnership(4, key)
+        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
+                callbackContext, key)
             == RegistryOwnershipStatus::UnsafeFailure,
             "partial coordinator Busy restored callback authority")
         || !Check(g_callbackAuthenticationCalls == 1
@@ -486,7 +517,8 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
     if (!Check(ZoneRuntimeFacade::TryBeginAccess()
             == ZoneRuntimeFacadeStatus::Success,
             "unsafe callback-restore owner begin failed")
-        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnership(4, key)
+        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
+                callbackContext, key)
             == RegistryOwnershipStatus::UnsafeFailure,
             "unsafe callback restore escaped facade")
         || !Check(g_callbackAuthenticationCalls == 1
@@ -509,7 +541,8 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
     if (!Check(ZoneRuntimeFacade::TryBeginAccess()
             == ZoneRuntimeFacadeStatus::Success,
             "contended callback owner begin failed")
-        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnership(4, key)
+        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
+                callbackContext, key)
             == RegistryOwnershipStatus::Busy,
             "contended callback borrow changed status")
         || !Check(g_callbackAuthenticationCalls == 1
@@ -521,7 +554,8 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
         return false;
     }
     g_registryOperationStatus = RegistryOwnershipStatus::Success;
-    if (!Check(ZoneRuntimeFacade::TryBorrowRegistryOwnership(4, key)
+    if (!Check(ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
+            callbackContext, key)
             == RegistryOwnershipStatus::Success,
             "same callback could not retry restored admission")
         || !Check(g_callbackAuthenticationCalls == 2
@@ -545,10 +579,11 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
     if (!Check(ZoneRuntimeFacade::TryBeginAccess()
             == ZoneRuntimeFacadeStatus::Success,
             "callback borrow owner begin failed")
-        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnership(4, key)
+        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
+                callbackContext, key)
             == RegistryOwnershipStatus::Success,
             "authenticated callback borrow failed")
-        || !Check(g_lookupCalls == 1
+        || !Check(g_lookupCalls == 0
                 && g_callbackAuthenticationCalls == 1
                 && g_registryBorrowCalls == 0
                 && g_registryCallbackBorrowCalls == 1,
@@ -570,7 +605,8 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
     if (!Check(ZoneRuntimeFacade::TryBeginAccess()
             == ZoneRuntimeFacadeStatus::Success,
             "busy callback owner begin failed")
-        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnership(4, key)
+        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
+                callbackContext, key)
             == RegistryOwnershipStatus::Busy,
             "unauthenticated callback did not remain busy")
         || !Check(g_callbackAuthenticationCalls == 1
@@ -610,7 +646,8 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
     if (!Check(ZoneRuntimeFacade::TryBeginAccess()
             == ZoneRuntimeFacadeStatus::Success,
             "unsafe callback-auth owner begin failed")
-        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnership(4, key)
+        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
+                callbackContext, key)
             == RegistryOwnershipStatus::UnsafeFailure,
             "unsafe callback authentication escaped facade")
         || !Check(g_registryCallbackBorrowCalls == 0,
@@ -631,11 +668,12 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
     if (!Check(ZoneRuntimeFacade::TryBeginAccess()
             == ZoneRuntimeFacadeStatus::Success,
             "impossible callback-auth owner begin failed")
-        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnership(
-                (std::numeric_limits<std::uint32_t>::max)(), invalidKey)
+        || !Check(ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
+                callbackContext, invalidKey)
             == RegistryOwnershipStatus::UnsafeFailure,
             "impossible callback authentication did not fail closed")
-        || !Check(g_callbackAuthenticationCalls == 1
+        || !Check(g_callbackContextAuthenticationCalls == 1
+                && g_callbackAuthenticationCalls == 0
                 && g_registryCallbackBorrowCalls == 0,
             "impossible callback authentication indexed the table")
         || !Check(ZoneRuntimeFacade::FinishAccess()
@@ -653,7 +691,8 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
     return Check(ZoneRuntimeFacade::TryBeginAccess()
             == ZoneRuntimeFacadeStatus::Success,
             "unknown callback-coordinator owner begin failed")
-        && Check(ZoneRuntimeFacade::TryBorrowRegistryOwnership(4, key)
+        && Check(ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback(
+                callbackContext, key)
             == RegistryOwnershipStatus::UnsafeFailure,
             "unknown callback coordinator status escaped facade")
         && Check(g_callbackAuthenticationCalls == 1
@@ -1205,15 +1244,15 @@ void CorruptRuntimeAfterTableOperationIfRequested() noexcept
 
     const char *const externalNames[]{bytesAlias};
     if (!Check(ZoneRuntimeFacade::TryReAddRetainedDefaultName(bytesAlias)
-            == RegistryOwnershipStatus::Success,
-            "scalar retained identity was widened into a facade span check")
+            == RegistryOwnershipStatus::InvalidArgument,
+            "scalar retained identity accepted table authority alias")
         || !Check(ZoneRuntimeFacade::TryReAddRetainedDefaultNames(
                 externalNames, 1, &bulk)
             == RegistryOwnershipStatus::Success,
             "retained scalar pointee was widened into a facade span check")
-        || !Check(g_registryScalarReAddCalls == 1
+        || !Check(g_registryScalarReAddCalls == 0
                 && g_registryBulkReAddCalls == 1,
-            "lower-owned retained identities did not forward exactly once")
+            "retained identity facade gates forwarded unexpectedly")
         || !Check(ZoneRuntimeFacade::FinishRegistryOwnership()
             == RegistryOwnershipStatus::Success,
             "input-alias registry scope finish failed")
@@ -1812,9 +1851,8 @@ TestPendingCopyInspectionRetainedOutputAuthentication() noexcept
     }
 
     const ZoneLoadContextKey key{UINT64_C(45), 8, 0};
-    std::uint32_t callbackContext = UINT32_C(0xC011BAC);
     const db::zone_runtime::ZoneRuntimeGenerationCallbacks callbacks{
-        &callbackContext,
+        nullptr,
         EnsureForwardingUnreachable,
         PerformForwardingCleanup,
         CompleteForwardingAdmission,
@@ -2109,19 +2147,46 @@ ZoneRuntimeTable &ProductionZoneRuntimeTable() noexcept
     return g_testTable;
 }
 
+bool ZoneRuntimeCallbackContextOwner::SpanIsSeparated(
+    const void *const storage,
+    const std::size_t size,
+    const std::size_t alignment) noexcept
+{
+    if (!storage || size == 0 || alignment == 0
+        || reinterpret_cast<std::uintptr_t>(storage) % alignment != 0)
+    {
+        return false;
+    }
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(storage);
+    return size <= (std::numeric_limits<std::uintptr_t>::max)() - address;
+}
+
+ZoneRuntimeCallbackContextStatus
+ZoneRuntimeCallbackContextOwner::TryAuthenticate(
+    const ZoneRuntimeCallbackContext *,
+    const zone_load::ZoneLoadContextKey &,
+    const ZoneRuntimeCallbackContextPhase) noexcept
+{
+    ++g_callbackContextAuthenticationCalls;
+    return g_callbackContextAuthenticationStatus;
+}
+
 ZoneRuntimeTableStatus ZoneRuntimeTable::validateReleaseSafety() noexcept
 {
     return g_releaseStatus;
 }
 
-ZoneRuntimeTableStatus ZoneRuntimeTable::validateInitializedHeader() noexcept
+ZoneRuntimeTableStatus ZoneRuntimeTable::validateInitializedHeader(
+    const ValidationDepth) noexcept
 {
     return g_tableAuthenticationStatus;
 }
 
 ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactEntry(
     std::uint32_t,
-    const zone_load::ZoneLoadContextKey &) noexcept
+    const zone_load::ZoneLoadContextKey &,
+    const ValidationDepth) noexcept
 {
     return g_tableAuthenticationStatus;
 }
@@ -2144,6 +2209,7 @@ ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactPendingCopyOutput(
 
 ZoneRuntimeTableStatus
 ZoneRuntimeTable::authenticateExactRegistryLifecycleCallback(
+    const ZoneRuntimeCallbackContext *,
     std::uint32_t,
     const zone_load::ZoneLoadContextKey &) noexcept
 {
@@ -2153,8 +2219,10 @@ ZoneRuntimeTable::authenticateExactRegistryLifecycleCallback(
 
 ZoneRuntimeTableStatus
 ZoneRuntimeTable::restoreExactRegistryLifecycleCallback(
+    const ZoneRuntimeCallbackContext *,
     std::uint32_t,
-    const zone_load::ZoneLoadContextKey &) noexcept
+    const zone_load::ZoneLoadContextKey &,
+    const ValidationDepth) noexcept
 {
     ++g_callbackRestoreCalls;
     return g_callbackRestoreStatus;
@@ -2605,9 +2673,11 @@ RegistryOwnershipStatus RegistryOwnershipCoordinatorFacade::TryBorrow(
 RegistryOwnershipStatus
 RegistryOwnershipCoordinatorFacade::TryBorrowActiveRuntimeCallback(
     const zone_script_string_ownership::ZoneScriptStringOwnershipController &,
-    const zone_load::ZoneLoadContextKey &) noexcept
+    const zone_load::ZoneLoadContextKey &key) noexcept
 {
     ++g_registryCallbackBorrowCalls;
+    g_borrowSlot = key.slot;
+    g_borrowKey = key;
     if (g_registryOperationStatus == RegistryOwnershipStatus::Success)
         g_registryActive = true;
     else if (g_registryOperationStatus == RegistryOwnershipStatus::Busy
