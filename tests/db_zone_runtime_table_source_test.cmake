@@ -1210,6 +1210,7 @@ extract_slice(
     _storage_bind_adapter
     "exact private FX storage-bind adapter")
 foreach(_marker IN ITEMS
+    "!ZoneRuntimeTable::callbackContextSpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
     "const zone_load::ZoneLoadContextKey keySnapshot = key;"
     "authenticateExactMutableEntry( physicalSlot, keySnapshot, &entry)"
     "zone_runtime_storage::detail::TryBindFxRuntimeStorage("
@@ -1231,6 +1232,11 @@ foreach(_marker IN ITEMS
         _storage_bind_adapter "${_marker}"
         "complete private FX bind status and rollback mapping")
 endforeach()
+require_ordered(
+    _storage_bind_adapter
+    "!ZoneRuntimeTable::callbackContextSpanIsSeparated( &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))"
+    "const zone_load::ZoneLoadContextKey keySnapshot = key;"
+    "callback-bank separation precedes caller-key snapshot")
 require_substring_count(
     _storage_bind_adapter "keySnapshot" 7
     "one pre-placement key snapshot and six exclusive downstream uses")
@@ -2093,7 +2099,7 @@ require_substring_count(
 # before its first access. Exact counts make later ingress additions fail
 # closed until their bank policy is reviewed.
 require_substring_count(
-    _source "callbackContextSpanIsSeparated(" 38
+    _source "callbackContextSpanIsSeparated(" 39
     "closed whole-bank direct-table ingress/egress surface")
 foreach(_marker IN ITEMS
     "kPhysicalAllocationNamePotentialReadBytes = 63u"
@@ -3236,17 +3242,20 @@ foreach(_marker IN ITEMS
     "void TestStableLegacyCallbackDescriptorsRejected()"
     "void TestStableUnusedContextBusyPreflight()"
     "void TestStableStorageBindSnapshotsManagedKey()"
+    "void TestStableStorageBindRejectsCallbackBankKey()"
     "void TestStableTerminalPhaseMismatchFailsClosed()"
     "void TestStablePostCallbackContextMismatch("
     "#include <universal/physicalmemory.h>"
     "PhysicalMemoryGlobalStateTestAccess"
     "pmem_runtime::InitializationPhase::Initializing"
     "::new (allocation.address) ZoneLoadContextKey(key)"
+    "ZoneRuntimeCallbackContextTestAccess::RetainedKey(context)"
     "ZoneRuntimeCallbackContextTestAccess::Restore("
     "ZoneRuntimeCallbackContextPhase::Terminal"
     "kind == \"legacy-descriptors\""
     "kind == \"unused-busy\""
     "kind == \"managed-key\""
+    "kind == \"bank-key\""
     "kind == \"terminal-phase\""
     "kind == \"claimed-neighbor\""
     "kind == \"unused-neighbor\""
@@ -3525,7 +3534,7 @@ foreach(_marker IN ITEMS
     "KISAK_DB_ZONE_LOAD_CONTEXT_TESTING=1"
     "KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1"
     "NAME database-zone-runtime-table-ownership"
-    "foreach(_zone_runtime_stable_context_kind IN ITEMS legacy-descriptors unused-busy managed-key terminal-phase claimed-neighbor unused-neighbor)"
+    "foreach(_zone_runtime_stable_context_kind IN ITEMS legacy-descriptors unused-busy managed-key bank-key terminal-phase claimed-neighbor unused-neighbor)"
     "database-zone-runtime-table-stable-context-\${_zone_runtime_stable_context_kind}"
     "--stable-context \${_zone_runtime_stable_context_kind}"
     "NAME database-zone-runtime-table-production-test-access-sealed"

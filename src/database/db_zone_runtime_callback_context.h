@@ -262,6 +262,8 @@ struct ZoneRuntimeCallbackContextTestAccess final
 
     [[nodiscard]] static const ZoneRuntimeCallbackContext *
     ContextForPhysicalSlot(std::uint32_t physicalSlot) noexcept;
+    [[nodiscard]] static const zone_load::ZoneLoadContextKey *
+    RetainedKey(const ZoneRuntimeCallbackContext *context) noexcept;
     static void CorruptSelf(
         const ZoneRuntimeCallbackContext *context) noexcept;
     static void CorruptWitness(

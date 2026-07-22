@@ -772,6 +772,7 @@ foreach(_zone_runtime_stable_context_kind IN ITEMS
         legacy-descriptors
         unused-busy
         managed-key
+        bank-key
         terminal-phase
         claimed-neighbor
         unused-neighbor)

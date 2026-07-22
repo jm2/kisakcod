@@ -6807,6 +6807,71 @@ void TestStableStorageBindSnapshotsManagedKey()
     CHECK(entry->setupStage() == ZoneRuntimeSetupStage::StorageBound);
 }
 
+void TestStableStorageBindRejectsCallbackBankKey()
+{
+    ResetStableCallbackProbe();
+    ZoneLoadContextKey key{};
+    CHECK(InitializeStableRuntimeGeneration(1, &key));
+    ZoneRuntimeTable &table = ProductionZoneRuntimeTable();
+    CHECK(TryBeginZoneRuntimePhysicalAllocation(
+        &table, key.slot, key, "stable_bank_key", 0)
+        == ZoneRuntimeTableStatus::Success);
+    zone_runtime_storage::ZoneRuntimeStoragePlan plan{};
+    CHECK(zone_runtime_storage::TryPlanZoneRuntimeStorage(0, 4096, &plan)
+        == zone_runtime_storage::ZoneRuntimeStorageStatus::Success);
+    pmem_runtime::AllocationResult allocation{};
+    CHECK(TryAllocateZoneRuntimeMemory(
+        &table,
+        key.slot,
+        key,
+        plan.totalBytes,
+        16,
+        0,
+        &allocation) == ZoneRuntimeTableStatus::Success);
+    CHECK(allocation.status == pmem_runtime::AllocationStatus::Success);
+    CHECK(allocation.address != nullptr);
+    if (!allocation.address)
+        return;
+
+    const ZoneRuntimeCallbackContext *const context =
+        ZoneRuntimeCallbackContextTestAccess::ContextForPhysicalSlot(
+            key.slot);
+    const ZoneLoadContextKey *const retainedKey =
+        ZoneRuntimeCallbackContextTestAccess::RetainedKey(context);
+    CHECK(retainedKey != nullptr);
+    CHECK(retainedKey && *retainedKey == key);
+    if (!retainedKey)
+        return;
+    CHECK(TryBindZoneRuntimeStorage(
+        &table,
+        key.slot,
+        *retainedKey,
+        allocation.address,
+        plan.totalBytes,
+        &plan) == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(table.initialized());
+    const ZoneRuntimeEntry *entry = nullptr;
+    CHECK(TryGetZoneRuntimeEntry(&table, key.slot, &entry)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(entry != nullptr);
+    CHECK(entry
+        && entry->setupStage() == ZoneRuntimeSetupStage::AllocationBegun);
+
+    CHECK(TryBindZoneRuntimeStorage(
+        &table,
+        key.slot,
+        key,
+        allocation.address,
+        plan.totalBytes,
+        &plan) == ZoneRuntimeTableStatus::Success);
+    entry = nullptr;
+    CHECK(TryGetZoneRuntimeEntry(&table, key.slot, &entry)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(entry != nullptr);
+    CHECK(entry
+        && entry->setupStage() == ZoneRuntimeSetupStage::StorageBound);
+}
+
 void TestStableTerminalPhaseMismatchFailsClosed()
 {
     ResetStableCallbackProbe();
@@ -6887,6 +6952,8 @@ int main(const int argc, char **const argv)
                 TestStableUnusedContextBusyPreflight();
             else if (kind == "managed-key")
                 TestStableStorageBindSnapshotsManagedKey();
+            else if (kind == "bank-key")
+                TestStableStorageBindRejectsCallbackBankKey();
             else if (kind == "terminal-phase")
                 TestStableTerminalPhaseMismatchFailsClosed();
             else if (kind == "claimed-neighbor")

@@ -4124,6 +4124,8 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStorage(
     const zone_runtime_storage::ZoneRuntimeStoragePlan *const plan) noexcept
 {
     if (!table
+        || !ZoneRuntimeTable::callbackContextSpanIsSeparated(
+            &key, sizeof(key), alignof(zone_load::ZoneLoadContextKey))
         || (slab && slabCapacity != 0
             && !ZoneRuntimeTable::callbackContextSpanIsSeparated(
                 slab, slabCapacity, 1))

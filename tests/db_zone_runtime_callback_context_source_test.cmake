@@ -428,6 +428,20 @@ foreach(_forbidden IN ITEMS
         _span_separation_body "${_forbidden}" "span check cannot read state/PMem")
 endforeach()
 
+foreach(_marker IN ITEMS
+    "RetainedKey(const ZoneRuntimeCallbackContext *context) noexcept;"
+    "ZoneRuntimeCallbackContextTestAccess::RetainedKey("
+    "? &ContextStore()[index].key_ : nullptr;")
+    if(_marker STREQUAL
+       "RetainedKey(const ZoneRuntimeCallbackContext *context) noexcept;")
+        require_contains(
+            _header "${_marker}" "private-fixture retained-key alias seam")
+    else()
+        require_contains(
+            _source "${_marker}" "private-fixture retained-key alias seam")
+    endif()
+endforeach()
+
 foreach(_var IN ITEMS _header _source)
     foreach(_forbidden IN ITEMS
         "#include <database/db_zone_runtime_table.h>"

@@ -633,6 +633,16 @@ ZoneRuntimeCallbackContextTestAccess::ContextForPhysicalSlot(
     return context;
 }
 
+const zone_load::ZoneLoadContextKey *
+ZoneRuntimeCallbackContextTestAccess::RetainedKey(
+    const ZoneRuntimeCallbackContext *const context) noexcept
+{
+    const std::size_t index = ExactStoreIndex(context);
+    return index != kInvalidStoreIndex
+        ? &ContextStore()[index].key_
+        : nullptr;
+}
+
 void ZoneRuntimeCallbackContextTestAccess::CorruptSelf(
     const ZoneRuntimeCallbackContext *const context) noexcept
 {
