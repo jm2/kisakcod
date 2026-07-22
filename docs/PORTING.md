@@ -701,9 +701,12 @@ Completed foundation work:
   i386/AArch64 compile-link, production/object/source/CI seals, and diff pass; two staged independent blocker reviews
   were closed and the final independent audit is clean with zero production enrollment. PR #80 exact
   implementation/documentation head `2c7c225d` passed all nine hosted jobs in run **29921410961** with clean Codex
-  review and zero threads; Gemini emitted only its retired-service notice. Facade/table claim-bind-reset coupling,
-  typed one-shot callback windows, the literal
-  full-chain Busy -> Retry fixture, and checked no-report helpers remain before the atomic seven-site cutover;
+  review and zero threads; Gemini emitted only its retired-service notice. Final documentation-only head `d599b126`
+  passed all nine jobs in run **29923078292** with clean exact-head Codex review and zero threads; PR #80
+  squash-merged as `5818a991`, and all nine authoritative post-merge jobs passed in run **29923399366**.
+  Facade/table claim-bind-reset coupling, typed one-shot callback windows, pre-access whole-bank separation for every
+  direct Production input/output/retained span, the literal full-chain Busy -> Retry fixture, and checked no-report
+  helpers remain before the atomic seven-site cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -835,8 +838,11 @@ Remaining gates, in implementation order:
    exact copied-key/Terminal identity, whole-bank alias gate, and macro-off private authority with full GCC **175/175**
    plus focused cross-toolchain, sanitizer, i386/AArch64, source/security/object, diff, and independent-audit evidence.
    PR #80 exact implementation/documentation head `2c7c225d` passed all nine hosted jobs in run **29921410961** with
-   clean Codex review and zero threads; Gemini emitted only its retired-service notice. A literal full-chain fixture,
-   facade/table one-shot callback coupling, and checked no-report coordinator-owned
+   clean Codex review and zero threads; Gemini emitted only its retired-service notice. Final documentation-only head
+   `d599b126` passed all nine jobs in run **29923078292** with clean exact-head Codex review and zero threads; PR #80
+   squash-merged as `5818a991`, and all nine authoritative post-merge jobs passed in run **29923399366**. A literal
+   full-chain fixture, facade/table one-shot callback coupling, pre-access whole-bank separation for every direct
+   Production input/output/retained span, and checked no-report coordinator-owned
    registry helpers still precede the atomic seven-site loader cutover; partial enrollment remains forbidden. Keep static
    controller
    slots and callback metadata
@@ -1853,9 +1859,13 @@ callback-context core, exact copied-key resolution and Terminal/successor identi
 macro-off private authority. Full GCC **175/175**, focused GCC/Clang and sanitizer, strict i386/AArch64 compile-link,
 source/security/object/CI seals, and diff pass; the two staged independent blocker reviews were closed and the final
 independent audit is clean. PR #80 exact implementation/documentation head `2c7c225d` passed all nine hosted jobs in
-run **29921410961** with clean Codex review and zero threads; Gemini emitted only its retired-service notice. No
-production loader caller is enrolled. The ancestry checkpoint records reviewed history without importing code and
-therefore does not inflate the engineering estimate.
+run **29921410961** with clean Codex review and zero threads; Gemini emitted only its retired-service notice. Final
+documentation-only head `d599b126` passed all nine jobs in run **29923078292** with clean exact-head Codex review and
+zero threads; PR #80 squash-merged as `5818a991`, and all nine authoritative post-merge jobs passed in run
+**29923399366**. No production loader caller is enrolled. Before enrollment, facade/table integration must reject
+by-reference keys and every other direct Production input/output/retained span that overlaps the context bank before
+first access, including terminal-successor stale-alias coverage. The ancestry checkpoint records reviewed history
+without importing code and therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared
 foundations/security about **90%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
