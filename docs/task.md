@@ -127,8 +127,8 @@ of checked boxes.
       advance it only with the next authenticated successful claim.
     - [ ] Authenticate the complete typed context span, exact array member,
       full key, slot, self/witness, table binding, and one-shot callback window
-      before and after external callback work; reject stale saved-descriptor
-      replay and reentry without mutation.
+      before and after external callback work; reject saved-descriptor replay
+      outside its exact window and reject reentry without mutation.
     - [ ] Preserve all seven frozen raw sites and zero loader enrollment while
       passing focused corruption/alias/retry/ABA, source/security, macro-off,
       sanitizer, i386, and AArch64 gates.
