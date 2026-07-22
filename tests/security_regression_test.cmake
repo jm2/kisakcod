@@ -10641,6 +10641,7 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "pmem_runtime::TryAuthenticateAllocationRange|2"
     "pmem_runtime::TryEndAllocationReceipt|2"
     "pmem_runtime::TryFreeAllocationReceipt|1"
+    "pmem_runtime::TryClassifyStorageIsolation|1"
     "pmem_runtime::StorageIsOutsideManagedMemory|6"
     "require_substring_count("
     "exact composite authority identifier enrollment"
@@ -10700,7 +10701,9 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "capacity-span and zero-demand runtime coverage"
     "snapshotted separated legacy admission callback"
     "snapshotted separated legacy rollback callback"
-    "snapshotted separated legacy unload callback")
+    "snapshotted separated legacy unload callback"
+    "exact retained legacy callback context helper call enrollment"
+    "retained legacy callback context authenticator")
     require_repository_contains(
         "tests/db_zone_runtime_table_source_test.cmake"
         "${_zone_runtime_exact_enrollment_marker}"
@@ -10844,6 +10847,7 @@ require_security_slice_contains(
 foreach(_pmem_runtime_header_marker IN ITEMS
     "enum class InitializationPhase : std::uint8_t"
     "enum class InitializationStatus : std::uint8_t"
+    "enum class StorageIsolationStatus : std::uint8_t"
     "enum class AllocationStatus : std::uint8_t"
     "enum class ProcessInitAllocationStatus : std::uint8_t"
     "enum class AllocationReceiptPhase : std::uint8_t"
@@ -10858,6 +10862,7 @@ foreach(_pmem_runtime_header_marker IN ITEMS
     "RUNTIME_OFFSET(DiagnosticSnapshot, status, 0x60C, 0x60C);"
     "TryInitialize() noexcept;"
     "std::uint32_t allocType) noexcept;"
+    "TryClassifyStorageIsolation("
     "StorageIsOutsideManagedMemory("
     "TryBeginAllocationReceipt("
     "TryEndAllocationReceipt("
@@ -10914,6 +10919,8 @@ foreach(_pmem_runtime_source_marker IN ITEMS
     "snapshot.allocationNameBindings[type][index]"
     "snapshot.ownedNames[binding.type][binding.index]"
     "RetainedExtentIsDisjointFromControl("
+    "StorageIsDisjointFromFixedControlsNoLock("
+    "TryClassifyStorageIsolation("
     "InitializingStateIsCoherent("
     "PoisonedStateIsCoherent("
     "g_runtime.extent.size == kPhysicalMemorySize"
@@ -10957,6 +10964,12 @@ extract_security_slice(
     "report-free PMem diagnostic capture core")
 extract_security_slice(
     _pmem_runtime_security_source
+    "pmem_runtime::StorageIsolationStatus KISAK_CDECL"
+    "pmem_runtime::AllocationReceiptStatus KISAK_CDECL"
+    _pmem_storage_isolation_security_slice
+    "serialized PMem storage-isolation classifier")
+extract_security_slice(
+    _pmem_runtime_security_source
     "pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL"
     "void KISAK_CDECL PMem_Init()"
     _pmem_process_init_security_slice
@@ -10988,6 +11001,47 @@ foreach(_pmem_runtime_forbidden_reporter IN ITEMS
         _pmem_process_init_security_slice
         "${_pmem_runtime_forbidden_reporter}"
         "PMem process-init controller cannot report under lock")
+endforeach()
+foreach(_pmem_storage_isolation_marker IN ITEMS
+    "TryClassifyStorageIsolation("
+    "GetRuntimeReadiness()"
+    "StorageIsDisjointFromFixedControlsNoLock("
+    "StorageIsolationStatus::Uninitialized"
+    "StorageIsolationStatus::Busy"
+    "StorageIsolationStatus::Poisoned"
+    "StorageIsolationStatus::InvalidArgument"
+    "StorageIsolationStatus::ProtectedStorageOverlap"
+    "StorageIsolationStatus::CorruptState"
+    "StorageIsOutsideManagedMemory("
+    "== StorageIsolationStatus::Success")
+    require_security_slice_contains(
+        _pmem_storage_isolation_security_slice
+        "${_pmem_storage_isolation_marker}"
+        "readiness-aware PMem storage-isolation contract")
+endforeach()
+require_security_slice_match_count(
+    _pmem_storage_isolation_security_slice
+    "Sys_EnterCriticalSection\\(CRITSECT_PHYSICAL_MEMORY\\);"
+    1
+    "storage-isolation classifier owns one PMem lock")
+require_security_slice_match_count(
+    _pmem_storage_isolation_security_slice
+    "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICAL_MEMORY\\);"
+    1
+    "storage-isolation classifier releases one PMem lock")
+foreach(_pmem_storage_isolation_forbidden IN ITEMS
+    "MyAssertHandler("
+    "Com_Printf("
+    "Com_Error("
+    "Sys_OutOfMemErrorInternal("
+    "Sys_VirtualMemory"
+    "PMem_BeginAlloc("
+    "PMem_EndAlloc("
+    "PMem_Free(")
+    forbid_security_slice_contains(
+        _pmem_storage_isolation_security_slice
+        "${_pmem_storage_isolation_forbidden}"
+        "storage-isolation classifier must be report-free and read-only")
 endforeach()
 foreach(_pmem_process_init_forbidden IN ITEMS
     "PMem_BeginAlloc("
@@ -11053,6 +11107,10 @@ require_repository_contains(
     "tests/physicalmemory_runtime_tests.cpp"
     "TestInitCorruptionOwnershipExits();"
     "PMem reservation ownership exits require adversarial runtime coverage")
+require_repository_contains(
+    "tests/physicalmemory_runtime_tests.cpp"
+    "TestStorageIsolationClassification();"
+    "readiness-aware PMem storage isolation requires adversarial runtime coverage")
 foreach(_pmem_diagnostic_test IN ITEMS
     "TestDiagnosticStatusAndStableNames();"
     "TestDiagnosticAccountingAndDumpOrder();"

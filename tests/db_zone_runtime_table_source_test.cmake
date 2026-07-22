@@ -1130,6 +1130,7 @@ set(_reviewed_composite_calls
     "pmem_runtime::TryAuthenticateAllocationRange|2"
     "pmem_runtime::TryEndAllocationReceipt|2"
     "pmem_runtime::TryFreeAllocationReceipt|1"
+    "pmem_runtime::TryClassifyStorageIsolation|1"
     "pmem_runtime::StorageIsOutsideManagedMemory|6")
 foreach(_reviewed_call IN LISTS _reviewed_composite_calls)
     string(REPLACE "|" ";" _reviewed_call_fields "${_reviewed_call}")
@@ -2166,6 +2167,28 @@ require_ordered(
 
 extract_slice(
     _source
+    "[[nodiscard]] ZoneRuntimeTableStatus AuthenticateRetainedLegacyCallbackContext("
+    "} // namespace"
+    _legacy_callback_context_authenticator
+    "retained legacy callback context authenticator")
+string(STRIP
+    "${_legacy_callback_context_authenticator}"
+    _legacy_callback_context_authenticator)
+set(_expected_legacy_callback_context_authenticator
+    "[[nodiscard]] ZoneRuntimeTableStatus AuthenticateRetainedLegacyCallbackContext( const ZoneRuntimeTable *const table, const void *const context) noexcept { if (!context) return ZoneRuntimeTableStatus::Success; if (!table || !AddressRangesAreDisjoint( table, sizeof(*table), context, 1)) { return ZoneRuntimeTableStatus::InvalidArgument; } switch (pmem_runtime::TryClassifyStorageIsolation(context, 1)) { case pmem_runtime::StorageIsolationStatus::Success: case pmem_runtime::StorageIsolationStatus::Uninitialized: return ZoneRuntimeTableStatus::Success; case pmem_runtime::StorageIsolationStatus::Busy: return ZoneRuntimeTableStatus::Busy; case pmem_runtime::StorageIsolationStatus::InvalidArgument: case pmem_runtime::StorageIsolationStatus::ProtectedStorageOverlap: return ZoneRuntimeTableStatus::InvalidArgument; case pmem_runtime::StorageIsolationStatus::Poisoned: case pmem_runtime::StorageIsolationStatus::CorruptState: default: return ZoneRuntimeTableStatus::UnsafeFailure; } }")
+if(NOT _legacy_callback_context_authenticator STREQUAL
+        _expected_legacy_callback_context_authenticator)
+    message(FATAL_ERROR
+        "Retained legacy callback context authentication is not exact")
+endif()
+require_substring_count(
+    _source
+    "AuthenticateRetainedLegacyCallbackContext( table,"
+    3
+    "exact retained legacy callback context helper call enrollment")
+
+extract_slice(
+    _source
     "ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit("
     "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback("
     _legacy_admission_callback
@@ -2173,7 +2196,8 @@ extract_slice(
 foreach(_marker IN ITEMS
     "AddressRangesAreDisjoint( table, sizeof(*table), &admission, sizeof(admission))"
     "ZoneScriptStringAdmissionCallback admissionSnapshot = admission;"
-    "AddressRangesAreDisjoint( table, sizeof(*table), admissionSnapshot.context, 1)"
+    "AuthenticateRetainedLegacyCallbackContext( table, admissionSnapshot.context)"
+    "if (callbackContextStatus != ZoneRuntimeTableStatus::Success) return callbackContextStatus;"
     "TryCommitZoneScriptStringsAndAdmit( ZoneRuntimeTable::mutableScriptStringOwnership(entry), admissionSnapshot)")
     require_contains(
         _legacy_admission_callback "${_marker}"
@@ -2181,9 +2205,24 @@ foreach(_marker IN ITEMS
 endforeach()
 require_ordered(
     _legacy_admission_callback
+    "AddressRangesAreDisjoint( table, sizeof(*table), &admission, sizeof(admission))"
     "admissionSnapshot = admission;"
+    "legacy admission descriptor guard before callback snapshot")
+require_ordered(
+    _legacy_admission_callback
+    "admissionSnapshot = admission;"
+    "AuthenticateRetainedLegacyCallbackContext("
+    "legacy admission callback snapshot before context authentication")
+require_ordered(
+    _legacy_admission_callback
+    "AuthenticateRetainedLegacyCallbackContext("
     "authenticateExactMutableEntry("
-    "legacy admission callback snapshot before authentication")
+    "legacy admission context authentication before table authentication")
+require_ordered(
+    _legacy_admission_callback
+    "authenticateExactMutableEntry("
+    "TryCommitZoneScriptStringsAndAdmit("
+    "legacy admission table authentication before lower mutation")
 
 extract_slice(
     _source
@@ -2194,7 +2233,8 @@ extract_slice(
 foreach(_marker IN ITEMS
     "AddressRangesAreDisjoint( table, sizeof(*table), &callbacks, sizeof(callbacks))"
     "ZoneScriptStringRollbackCallbacks callbackSnapshot = callbacks;"
-    "AddressRangesAreDisjoint( table, sizeof(*table), callbackSnapshot.context, 1)"
+    "AuthenticateRetainedLegacyCallbackContext( table, callbackSnapshot.context)"
+    "if (callbackContextStatus != ZoneRuntimeTableStatus::Success) return callbackContextStatus;"
     "TryBeginZoneScriptStringRollback( ZoneRuntimeTable::mutableScriptStringOwnership(entry), callbackSnapshot)")
     require_contains(
         _legacy_rollback_callback "${_marker}"
@@ -2202,9 +2242,24 @@ foreach(_marker IN ITEMS
 endforeach()
 require_ordered(
     _legacy_rollback_callback
+    "AddressRangesAreDisjoint( table, sizeof(*table), &callbacks, sizeof(callbacks))"
     "callbackSnapshot = callbacks;"
+    "legacy rollback descriptor guard before callback snapshot")
+require_ordered(
+    _legacy_rollback_callback
+    "callbackSnapshot = callbacks;"
+    "AuthenticateRetainedLegacyCallbackContext("
+    "legacy rollback callback snapshot before context authentication")
+require_ordered(
+    _legacy_rollback_callback
+    "AuthenticateRetainedLegacyCallbackContext("
     "authenticateExactMutableEntry("
-    "legacy rollback callback snapshot before authentication")
+    "legacy rollback context authentication before table authentication")
+require_ordered(
+    _legacy_rollback_callback
+    "authenticateExactMutableEntry("
+    "TryBeginZoneScriptStringRollback("
+    "legacy rollback table authentication before lower mutation")
 
 extract_slice(
     _source
@@ -2215,7 +2270,8 @@ extract_slice(
 foreach(_marker IN ITEMS
     "AddressRangesAreDisjoint( table, sizeof(*table), &callbacks, sizeof(callbacks))"
     "ZoneLoadCleanupCallbacks callbackSnapshot = callbacks;"
-    "AddressRangesAreDisjoint( table, sizeof(*table), callbackSnapshot.context, 1)"
+    "AuthenticateRetainedLegacyCallbackContext( table, callbackSnapshot.context)"
+    "if (callbackContextStatus != ZoneRuntimeTableStatus::Success) return callbackContextStatus;"
     "TryUnloadLiveZoneScriptStringOwnership( &entry.scriptStringOwnership_, &entry.lifecycle_, key, callbackSnapshot)")
     require_contains(
         _legacy_unload_callback "${_marker}"
@@ -2223,9 +2279,24 @@ foreach(_marker IN ITEMS
 endforeach()
 require_ordered(
     _legacy_unload_callback
+    "if (phase != OwnershipPhase::Live"
+    "AddressRangesAreDisjoint( table, sizeof(*table), &callbacks, sizeof(callbacks))"
+    "legacy unload phase guard before callback descriptor guard")
+require_ordered(
+    _legacy_unload_callback
+    "AddressRangesAreDisjoint( table, sizeof(*table), &callbacks, sizeof(callbacks))"
     "callbackSnapshot = callbacks;"
+    "legacy unload descriptor guard before callback snapshot")
+require_ordered(
+    _legacy_unload_callback
+    "callbackSnapshot = callbacks;"
+    "AuthenticateRetainedLegacyCallbackContext("
+    "legacy unload callback snapshot before context authentication")
+require_ordered(
+    _legacy_unload_callback
+    "AuthenticateRetainedLegacyCallbackContext("
     "TryUnloadLiveZoneScriptStringOwnership("
-    "legacy unload callback snapshot before invocation")
+    "legacy unload context authentication before lower mutation")
 
 foreach(_marker IN ITEMS
     "zone_slots::kDefaultZoneSlot"

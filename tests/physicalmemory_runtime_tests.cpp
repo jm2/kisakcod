@@ -37,6 +37,7 @@ using pmem_runtime::DiagnosticSnapshotStatus;
 using pmem_runtime::InitializationPhase;
 using pmem_runtime::InitializationStatus;
 using pmem_runtime::ProcessInitAllocationStatus;
+using pmem_runtime::StorageIsolationStatus;
 
 constexpr std::uint32_t kRuntimeSize = UINT32_C(0x08000000);
 constexpr std::uint8_t kProcessInitDormant = 0;
@@ -435,6 +436,219 @@ void InitializeReady(const std::uint32_t offset = 0)
     CHECK(state.runtimeReserved[2] == 0);
 }
 
+const void *TestAddress(const std::uintptr_t address)
+{
+    return reinterpret_cast<const void *>(address);
+}
+
+std::array<int, 6> CaptureReportCounts()
+{
+    return {
+        g_assertReports.load(std::memory_order_relaxed),
+        g_errorReports.load(std::memory_order_relaxed),
+        g_oomReports.load(std::memory_order_relaxed),
+        g_printReports.load(std::memory_order_relaxed),
+        g_reportLockViolations.load(std::memory_order_relaxed),
+        g_reportReentries.load(std::memory_order_relaxed),
+    };
+}
+
+void CheckStorageIsolation(
+    const void *const storage,
+    const std::size_t size,
+    const StorageIsolationStatus expected)
+{
+    const StateAccess::Snapshot before = StateAccess::Capture();
+    const std::array<int, 6> reportsBefore = CaptureReportCounts();
+    const int reentryBefore =
+        g_reentryViolations.load(std::memory_order_relaxed);
+
+    int enterBefore = g_enterCalls.load(std::memory_order_relaxed);
+    int leaveBefore = g_leaveCalls.load(std::memory_order_relaxed);
+    CHECK(pmem_runtime::TryClassifyStorageIsolation(storage, size)
+        == expected);
+    CHECK(g_enterCalls.load(std::memory_order_relaxed) == enterBefore + 1);
+    CHECK(g_leaveCalls.load(std::memory_order_relaxed) == leaveBefore + 1);
+    CHECK(g_lockDepth == 0);
+    CHECK(g_reentryViolations.load(std::memory_order_relaxed)
+        == reentryBefore);
+    CHECK(SameSnapshot(StateAccess::Capture(), before));
+
+    enterBefore = g_enterCalls.load(std::memory_order_relaxed);
+    leaveBefore = g_leaveCalls.load(std::memory_order_relaxed);
+    CHECK(pmem_runtime::StorageIsOutsideManagedMemory(storage, size)
+        == (expected == StorageIsolationStatus::Success));
+    CHECK(g_enterCalls.load(std::memory_order_relaxed) == enterBefore + 1);
+    CHECK(g_leaveCalls.load(std::memory_order_relaxed) == leaveBefore + 1);
+    CHECK(g_lockDepth == 0);
+    CHECK(g_reentryViolations.load(std::memory_order_relaxed)
+        == reentryBefore);
+    CHECK(SameSnapshot(StateAccess::Capture(), before));
+    CHECK(CaptureReportCounts() == reportsBefore);
+}
+
+void TestStorageIsolationClassification()
+{
+    std::uint32_t callerStorage = 0;
+    const std::uintptr_t memoryControl =
+        StateAccess::PhysicalMemoryAddress();
+    const std::uintptr_t runtimeControl =
+        StateAccess::RuntimeControlAddress();
+    const std::size_t runtimeControlSize =
+        StateAccess::RuntimeControlSize();
+    const std::uintptr_t processInitName =
+        StateAccess::ProcessInitAllocationNameAddress();
+
+    ResetRuntime();
+    CheckStorageIsolation(
+        &callerStorage, sizeof(callerStorage),
+        StorageIsolationStatus::Uninitialized);
+    CheckStorageIsolation(nullptr, 1, StorageIsolationStatus::InvalidArgument);
+    CheckStorageIsolation(
+        &callerStorage, 0, StorageIsolationStatus::InvalidArgument);
+    CheckStorageIsolation(
+        TestAddress(std::numeric_limits<std::uintptr_t>::max() - 1u),
+        2,
+        StorageIsolationStatus::InvalidArgument);
+    CheckStorageIsolation(
+        TestAddress(memoryControl), 1,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+
+    ResetRuntime();
+    {
+        std::lock_guard<std::mutex> lock(g_blockMutex);
+        g_blockReserve = true;
+    }
+    std::atomic<InitializationStatus> background{
+        InitializationStatus::CorruptState};
+    std::thread initializer([&background]() {
+        background.store(
+            pmem_runtime::TryInitialize(), std::memory_order_relaxed);
+    });
+    {
+        std::unique_lock<std::mutex> lock(g_blockMutex);
+        g_blockCondition.wait(lock, []() { return g_reserveEntered; });
+    }
+    CheckStorageIsolation(
+        &callerStorage, sizeof(callerStorage),
+        StorageIsolationStatus::Busy);
+    // The reservation exists in the initializing thread but is deliberately
+    // unpublished, so even its eventual address classifies only as Busy.
+    CheckStorageIsolation(
+        ExpectedBase(), 1, StorageIsolationStatus::Busy);
+    CheckStorageIsolation(nullptr, 1, StorageIsolationStatus::InvalidArgument);
+    CheckStorageIsolation(
+        TestAddress(runtimeControl), 1,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    StateAccess::Snapshot corrupt = StateAccess::Capture();
+    corrupt.runtimeReserved[0] = 1;
+    StateAccess::Install(corrupt);
+    CheckStorageIsolation(nullptr, 0, StorageIsolationStatus::CorruptState);
+    {
+        std::lock_guard<std::mutex> lock(g_blockMutex);
+        g_releaseReserve = true;
+    }
+    g_blockCondition.notify_all();
+    initializer.join();
+    CHECK(background.load(std::memory_order_relaxed)
+        == InitializationStatus::CorruptState);
+
+    InitializeReady();
+    CheckStorageIsolation(
+        &callerStorage, sizeof(callerStorage),
+        StorageIsolationStatus::Success);
+    CheckStorageIsolation(nullptr, 1, StorageIsolationStatus::InvalidArgument);
+    CheckStorageIsolation(
+        &callerStorage, 0, StorageIsolationStatus::InvalidArgument);
+    CheckStorageIsolation(
+        TestAddress(std::numeric_limits<std::uintptr_t>::max()),
+        1,
+        StorageIsolationStatus::InvalidArgument);
+
+    const std::uintptr_t extent =
+        reinterpret_cast<std::uintptr_t>(ExpectedBase());
+    CheckStorageIsolation(
+        TestAddress(extent - 1u), 1, StorageIsolationStatus::Success);
+    CheckStorageIsolation(
+        TestAddress(extent - 1u), 2,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(extent), 1,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(extent + kRuntimeSize - 1u), 1,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(extent + kRuntimeSize - 1u), 2,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(extent + kRuntimeSize), 1,
+        StorageIsolationStatus::Success);
+
+    CheckStorageIsolation(
+        TestAddress(memoryControl), sizeof(PhysicalMemory),
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(memoryControl + sizeof(PhysicalMemory) - 1u), 1,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(runtimeControl), runtimeControlSize,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(runtimeControl + runtimeControlSize - 1u), 1,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(processInitName), sizeof("$init"),
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(processInitName + sizeof("$init") - 1u), 1,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(processInitName + sizeof("$init")), 1,
+        StorageIsolationStatus::Success);
+
+    ResetRuntime();
+    g_commitSucceeds.store(false, std::memory_order_relaxed);
+    g_releaseSucceeds.store(false, std::memory_order_relaxed);
+    CHECK(pmem_runtime::TryInitialize()
+        == InitializationStatus::ReleaseFailed);
+    CheckStorageIsolation(
+        &callerStorage, sizeof(callerStorage),
+        StorageIsolationStatus::Poisoned);
+    CheckStorageIsolation(nullptr, 1, StorageIsolationStatus::InvalidArgument);
+    CheckStorageIsolation(
+        ExpectedBase(), 1,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(extent + kRuntimeSize - 1u), 1,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckStorageIsolation(
+        TestAddress(extent + kRuntimeSize), 1,
+        StorageIsolationStatus::Poisoned);
+    corrupt = StateAccess::Capture();
+    corrupt.memory.prim[0].pos = 1;
+    StateAccess::Install(corrupt);
+    CheckStorageIsolation(nullptr, 0, StorageIsolationStatus::CorruptState);
+
+    ResetRuntime();
+    corrupt = StateAccess::Capture();
+    corrupt.memory.prim[0].pos = 1;
+    StateAccess::Install(corrupt);
+    CheckStorageIsolation(
+        &callerStorage, sizeof(callerStorage),
+        StorageIsolationStatus::CorruptState);
+    CheckStorageIsolation(nullptr, 0, StorageIsolationStatus::CorruptState);
+    CheckStorageIsolation(
+        TestAddress(memoryControl), 1,
+        StorageIsolationStatus::CorruptState);
+
+    InitializeReady();
+    corrupt = StateAccess::Capture();
+    corrupt.runtimeReserved[0] = 1;
+    StateAccess::Install(corrupt);
+    CheckStorageIsolation(nullptr, 0, StorageIsolationStatus::CorruptState);
+}
+
 void BeginBothScopes(const char *const lowName, const char *const highName)
 {
     PMem_BeginAlloc(lowName, 0);
@@ -449,11 +663,20 @@ void TestResultLayoutAndDefaults()
     static_assert(sizeof(AllocationStatus) == 1);
     static_assert(sizeof(InitializationPhase) == 1);
     static_assert(sizeof(InitializationStatus) == 1);
+    static_assert(sizeof(StorageIsolationStatus) == 1);
+    static_assert(std::is_enum_v<StorageIsolationStatus>);
+    static_assert(std::is_same_v<
+        std::underlying_type_t<StorageIsolationStatus>, std::uint8_t>);
     static_assert(sizeof(ProcessInitAllocationStatus) == 1);
     static_assert(sizeof(AllocationReceiptPhase) == 1);
     static_assert(sizeof(AllocationReceiptStatus) == 1);
     static_assert(noexcept(pmem_runtime::StorageIsOutsideManagedMemory(
         nullptr, 0)));
+    static_assert(noexcept(pmem_runtime::TryClassifyStorageIsolation(
+        nullptr, 0)));
+    static_assert(std::is_same_v<
+        decltype(pmem_runtime::TryClassifyStorageIsolation(nullptr, 0)),
+        StorageIsolationStatus>);
     static_assert(noexcept(pmem_runtime::TryBeginAllocationReceipt(
         nullptr, 0, nullptr)));
     static_assert(noexcept(pmem_runtime::TryEndAllocationReceipt(nullptr)));
@@ -2696,6 +2919,7 @@ int main()
     TestResultLayoutAndDefaults();
     TestInitFailuresRetryAndDoubleInit();
     TestConcurrentAndReentrantInit();
+    TestStorageIsolationClassification();
     TestInitCorruptionOwnershipExits();
     TestInitPhysicalMemoryFailureAtomicity();
     TestAllocationStatusesAndAtomicity();

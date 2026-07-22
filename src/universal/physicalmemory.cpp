@@ -562,7 +562,7 @@ bool AllocationReceiptPhaseIsValid(
     return false;
 }
 
-bool StorageIsOutsideManagedMemoryReadyNoLock(
+bool StorageIsDisjointFromFixedControlsNoLock(
     const void *const storage,
     const std::size_t size) noexcept
 {
@@ -572,6 +572,17 @@ bool StorageIsOutsideManagedMemoryReadyNoLock(
                storage, size, &g_mem, sizeof(g_mem))
         && !AddressRangesOverlap(
                storage, size, &g_runtime, sizeof(g_runtime))
+        && !AddressRangesOverlap(
+               storage, size,
+               kProcessInitAllocationName,
+               sizeof(kProcessInitAllocationName));
+}
+
+bool StorageIsOutsideManagedMemoryReadyNoLock(
+    const void *const storage,
+    const std::size_t size) noexcept
+{
+    return StorageIsDisjointFromFixedControlsNoLock(storage, size)
         && !AddressRangesOverlap(
                storage, size,
                g_runtime.extent.base, g_runtime.extent.size);
@@ -1638,6 +1649,24 @@ PhysicalMemoryGlobalStateTestAccess::MakeCanonicalReady(
 }
 
 std::uintptr_t
+PhysicalMemoryGlobalStateTestAccess::PhysicalMemoryAddress() noexcept
+{
+    return reinterpret_cast<std::uintptr_t>(&g_mem);
+}
+
+std::uintptr_t
+PhysicalMemoryGlobalStateTestAccess::RuntimeControlAddress() noexcept
+{
+    return reinterpret_cast<std::uintptr_t>(&g_runtime);
+}
+
+std::size_t
+PhysicalMemoryGlobalStateTestAccess::RuntimeControlSize() noexcept
+{
+    return sizeof(g_runtime);
+}
+
+std::uintptr_t
 PhysicalMemoryGlobalStateTestAccess::ProcessInitAllocationNameAddress()
     noexcept
 {
@@ -1884,20 +1913,75 @@ pmem_runtime::TryCaptureDiagnosticSnapshot() noexcept
     return snapshot;
 }
 
+pmem_runtime::StorageIsolationStatus KISAK_CDECL
+pmem_runtime::TryClassifyStorageIsolation(
+    const void *const storage,
+    const std::size_t size) noexcept
+{
+    StorageIsolationStatus status = StorageIsolationStatus::CorruptState;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+
+    const RuntimeReadiness readiness = GetRuntimeReadiness();
+    const InitializationPhase phase = g_runtime.phase;
+    if (readiness != RuntimeReadiness::Corrupt)
+    {
+        if (!AddressRangeIsValid(storage, size))
+        {
+            status = StorageIsolationStatus::InvalidArgument;
+        }
+        else if (!StorageIsDisjointFromFixedControlsNoLock(storage, size))
+        {
+            status = StorageIsolationStatus::ProtectedStorageOverlap;
+        }
+        else
+        {
+            switch (phase)
+            {
+            case InitializationPhase::Uninitialized:
+                status = StorageIsolationStatus::Uninitialized;
+                break;
+            case InitializationPhase::Initializing:
+                // The reservation candidate belongs to the initializing
+                // thread until it is atomically published in g_runtime.
+                status = StorageIsolationStatus::Busy;
+                break;
+            case InitializationPhase::Ready:
+                status = StorageIsOutsideManagedMemoryReadyNoLock(
+                             storage, size)
+                    ? StorageIsolationStatus::Success
+                    : StorageIsolationStatus::ProtectedStorageOverlap;
+                break;
+            case InitializationPhase::Poisoned:
+                status = AddressRangesOverlap(
+                             storage, size,
+                             g_runtime.extent.base,
+                             g_runtime.extent.size)
+                    ? StorageIsolationStatus::ProtectedStorageOverlap
+                    : StorageIsolationStatus::Poisoned;
+                break;
+            }
+        }
+
+        // Ready classification is an authenticated observation, not merely a
+        // range calculation. Preserve the existing end-of-operation witness
+        // check even though this operation performs no mutation under lock.
+        if (phase == InitializationPhase::Ready
+            && !ReadyStateIsCoherent())
+        {
+            status = StorageIsolationStatus::CorruptState;
+        }
+    }
+
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return status;
+}
+
 bool KISAK_CDECL pmem_runtime::StorageIsOutsideManagedMemory(
     const void *const storage,
     const std::size_t size) noexcept
 {
-    bool outside = false;
-    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
-    if (GetRuntimeReadiness() == RuntimeReadiness::Ready)
-    {
-        outside = StorageIsOutsideManagedMemoryReadyNoLock(storage, size);
-        if (!ReadyStateIsCoherent())
-            outside = false;
-    }
-    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
-    return outside;
+    return TryClassifyStorageIsolation(storage, size)
+        == StorageIsolationStatus::Success;
 }
 
 pmem_runtime::AllocationReceiptStatus KISAK_CDECL

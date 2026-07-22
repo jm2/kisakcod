@@ -93,6 +93,11 @@ public:
         std::uint32_t retainedSize,
         int overAllocatedSize = 0) noexcept;
     [[nodiscard]] static std::uintptr_t
+    PhysicalMemoryAddress() noexcept;
+    [[nodiscard]] static std::uintptr_t
+    RuntimeControlAddress() noexcept;
+    [[nodiscard]] static std::size_t RuntimeControlSize() noexcept;
+    [[nodiscard]] static std::uintptr_t
     ProcessInitAllocationNameAddress() noexcept;
     static void Install(const Snapshot &snapshot) noexcept;
 };

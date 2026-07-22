@@ -296,6 +296,7 @@ foreach(_marker IN ITEMS
     "pmem_runtime::TryAuthenticateAllocationRange|2"
     "pmem_runtime::TryEndAllocationReceipt|2"
     "pmem_runtime::TryFreeAllocationReceipt|1"
+    "pmem_runtime::TryClassifyStorageIsolation|1"
     "pmem_runtime::StorageIsOutsideManagedMemory|6")
     require_physicalmemory_contains(
         _runtime_table_seal "${_marker}"
@@ -340,6 +341,7 @@ endforeach()
 
 foreach(_marker IN ITEMS
     "class AllocationReceipt;"
+    "enum class StorageIsolationStatus : std::uint8_t"
     "enum class AllocationReceiptPhase : std::uint8_t"
     "enum class AllocationReceiptStatus : std::uint8_t"
     "TryBeginAllocationReceipt( const char *name, std::uint32_t allocType, physical_memory::AllocationReceipt *receipt) noexcept;"
@@ -347,6 +349,7 @@ foreach(_marker IN ITEMS
     "TryFreeAllocationReceipt( physical_memory::AllocationReceipt *receipt) noexcept;"
     "TryAuthenticateAllocationReceipt( const physical_memory::AllocationReceipt *receipt, std::uint32_t expectedAllocationType, AllocationReceiptPhase expectedPhase) noexcept;"
     "TryAuthenticateAllocationRange( const physical_memory::AllocationReceipt *receipt, std::uint32_t expectedAllocationType, const void *storage, std::size_t size, AllocationReceiptPhase expectedPhase) noexcept;"
+    "TryClassifyStorageIsolation( const void *storage, std::size_t size) noexcept;"
     "StorageIsOutsideManagedMemory( const void *storage, std::size_t size) noexcept;")
     require_physicalmemory_contains(
         _runtime_header "${_marker}" "serialized opaque receipt bridge API")
@@ -354,7 +357,9 @@ endforeach()
 
 foreach(_marker IN ITEMS
     "#include \"physicalmemory_checked.h\""
+    "StorageIsDisjointFromFixedControlsNoLock("
     "StorageIsOutsideManagedMemoryReadyNoLock("
+    "pmem_runtime::TryClassifyStorageIsolation("
     "AuthenticateReceiptLocationNoLock("
     "physical_memory::TryBegin( &g_mem, allocType, owned.text, receipt);"
     "physical_memory::TryEnd(receipt);"

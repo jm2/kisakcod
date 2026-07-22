@@ -936,6 +936,29 @@ void AdmitNoop(void *) noexcept
 {
 }
 
+void CountManagedAdmission(void *const context) noexcept
+{
+    if (context)
+        ++*static_cast<std::uint8_t *>(context);
+}
+
+zone_ownership::ZoneScriptStringUnpublishStatus
+CountManagedEnsureUnreachable(void *const context) noexcept
+{
+    if (context)
+        ++*static_cast<std::uint8_t *>(context);
+    return zone_ownership::ZoneScriptStringUnpublishStatus::Success;
+}
+
+ZoneLoadCleanupCallbackStatus CountManagedCleanup(
+    void *const context,
+    ZoneLoadCleanupOperation) noexcept
+{
+    if (context)
+        ++*static_cast<std::uint8_t *>(context);
+    return ZoneLoadCleanupCallbackStatus::Success;
+}
+
 struct MutableRuntimeFixture final
 {
     ZoneRuntimeTable table{};
@@ -3931,6 +3954,189 @@ void TestCompositeRuntimeLiveUnloadResetAndReuse()
         == ZoneRuntimeTableStatus::StaleKey);
 }
 
+void TestReadyPmemRejectsLegacyManagedCallbackContexts()
+{
+    const pmem_runtime::InitializationStatus initialization =
+        pmem_runtime::TryInitialize();
+    CHECK(initialization == pmem_runtime::InitializationStatus::Success
+        || initialization
+            == pmem_runtime::InitializationStatus::AlreadyInitialized);
+    if (initialization != pmem_runtime::InitializationStatus::Success
+        && initialization
+            != pmem_runtime::InitializationStatus::AlreadyInitialized)
+    {
+        return;
+    }
+
+    physical_memory::AllocationReceipt receipt{};
+    const pmem_runtime::AllocationReceiptStatus beginStatus =
+        pmem_runtime::TryBeginAllocationReceipt(
+            "legacy_callback_context", 0, &receipt);
+    CHECK(beginStatus == pmem_runtime::AllocationReceiptStatus::Success);
+    if (beginStatus != pmem_runtime::AllocationReceiptStatus::Success)
+        return;
+    const pmem_runtime::AllocationResult allocation =
+        pmem_runtime::TryAllocate(1, 1, 0, 0);
+    CHECK(allocation.status == pmem_runtime::AllocationStatus::Success);
+    CHECK(allocation.address != nullptr);
+    if (allocation.status != pmem_runtime::AllocationStatus::Success
+        || !allocation.address)
+    {
+        CHECK(pmem_runtime::TryEndAllocationReceipt(&receipt)
+            == pmem_runtime::AllocationReceiptStatus::Success);
+        CHECK(pmem_runtime::TryFreeAllocationReceipt(&receipt)
+            == pmem_runtime::AllocationReceiptStatus::Success);
+        return;
+    }
+    *allocation.address = 0;
+
+    // Admission and unload retain callback identity across lower lifecycle
+    // transitions. A managed context must be rejected before either lower
+    // controller can mutate, while null and stack contexts remain valid.
+    {
+        MutableRuntimeFixture fixture{};
+        CHECK(fixture.claim(28));
+        CHECK(TryBeginZoneRuntimeScriptStringOwnership(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            &fixture.journal,
+            nullptr,
+            0,
+            0) == ZoneRuntimeTableStatus::Success);
+        CHECK(TrySealZoneRuntimeScriptStrings(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(TryBeginZoneRuntimeScriptStringTransfer(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(TryTransferNextZoneRuntimeScriptString(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(TryPrepareZoneRuntimeScriptStringCommit(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+            == ZoneRuntimeTableStatus::Success);
+
+        auto *const lifecycle = ZoneRuntimeTableTestAccess::Lifecycle(
+            &fixture.table, fixture.physicalSlot);
+        auto *const ownership = ZoneRuntimeTableTestAccess::Ownership(
+            &fixture.table, fixture.physicalSlot);
+        CHECK(lifecycle != nullptr);
+        CHECK(ownership != nullptr);
+        CHECK(TryCommitZoneRuntimeScriptStringsAndAdmit(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {allocation.address, CountManagedAdmission})
+            == ZoneRuntimeTableStatus::InvalidArgument);
+        CHECK(*allocation.address == 0);
+        CHECK(fixture.table.initialized());
+        CHECK(lifecycle
+            && lifecycle->phase() == ZoneLoadContextPhase::Loading);
+        CHECK(ownership
+            && ownership->phase()
+                == ZoneScriptStringOwnershipPhase::CommitReady);
+
+        CHECK(TryCommitZoneRuntimeScriptStringsAndAdmit(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {nullptr, AdmitNoop}) == ZoneRuntimeTableStatus::Success);
+        CHECK(lifecycle
+            && lifecycle->phase() == ZoneLoadContextPhase::Live);
+        CHECK(ownership
+            && ownership->phase()
+                == ZoneScriptStringOwnershipPhase::Live);
+
+        CHECK(TryUnloadZoneRuntimeGeneration(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {allocation.address, CountManagedCleanup})
+            == ZoneRuntimeTableStatus::InvalidArgument);
+        CHECK(*allocation.address == 0);
+        CHECK(fixture.table.initialized());
+        CHECK(lifecycle
+            && lifecycle->phase() == ZoneLoadContextPhase::Live);
+        CHECK(ownership
+            && ownership->phase()
+                == ZoneScriptStringOwnershipPhase::Live);
+
+        std::uint32_t cleanupCount = 0;
+        CHECK(TryUnloadZoneRuntimeGeneration(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            MakeCleanupCallbacks(&cleanupCount))
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(cleanupCount == kLiveUnloadOperations.size());
+        CHECK(TryResetZoneRuntimeTerminalReceipt(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+            == ZoneRuntimeTableStatus::Success);
+    }
+
+    // Rollback has the same retained identity requirement. Rejection leaves
+    // Staging/Loading retryable, after which a stack driver completes the
+    // normal abandonment path.
+    {
+        MutableRuntimeFixture fixture{};
+        CHECK(fixture.claim(29));
+        CHECK(TryBeginZoneRuntimeScriptStringOwnership(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            &fixture.journal,
+            nullptr,
+            0,
+            0) == ZoneRuntimeTableStatus::Success);
+        auto *const lifecycle = ZoneRuntimeTableTestAccess::Lifecycle(
+            &fixture.table, fixture.physicalSlot);
+        auto *const ownership = ZoneRuntimeTableTestAccess::Ownership(
+            &fixture.table, fixture.physicalSlot);
+        CHECK(lifecycle != nullptr);
+        CHECK(ownership != nullptr);
+        CHECK(TryBeginZoneRuntimeScriptStringRollback(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {allocation.address,
+                CountManagedEnsureUnreachable,
+                CountManagedCleanup})
+            == ZoneRuntimeTableStatus::InvalidArgument);
+        CHECK(*allocation.address == 0);
+        CHECK(fixture.table.initialized());
+        CHECK(lifecycle
+            && lifecycle->phase() == ZoneLoadContextPhase::Loading);
+        CHECK(ownership
+            && ownership->phase()
+                == ZoneScriptStringOwnershipPhase::Staging);
+
+        MutableRollbackDriver driver{};
+        driver.table = &fixture.table;
+        driver.key = fixture.key;
+        CHECK(TryBeginZoneRuntimeScriptStringRollback(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            MakeMutableRollbackCallbacks(&driver))
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(TryRollbackNextZoneRuntimeScriptString(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(TryFinishZoneRuntimeScriptStringAbandonment(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(TryResetZoneRuntimeTerminalReceipt(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+            == ZoneRuntimeTableStatus::Success);
+    }
+
+    CHECK(pmem_runtime::TryEndAllocationReceipt(&receipt)
+        == pmem_runtime::AllocationReceiptStatus::Success);
+    CHECK(pmem_runtime::TryFreeAllocationReceipt(&receipt)
+        == pmem_runtime::AllocationReceiptStatus::Success);
+}
+
 void TestCompositeAdmissionStopsAfterPendingCallbackFailure()
 {
     const pmem_runtime::InitializationStatus initialization =
@@ -6367,6 +6573,7 @@ int main(const int argc, char **const argv)
     TestPassiveTableWideSingletonAuthentication();
     TestPassiveReceiptPristineAuthentication();
     TestCompositeRuntimeLiveUnloadResetAndReuse();
+    TestReadyPmemRejectsLegacyManagedCallbackContexts();
     TestCompositePartialStageAbandonmentAndReuse();
     TestCompositeScriptStringCapacityAndDemand();
     TestCompositeRecoverablePlacementAndRangeRejection();
