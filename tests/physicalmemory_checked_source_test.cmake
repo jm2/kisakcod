@@ -297,7 +297,7 @@ foreach(_marker IN ITEMS
     "pmem_runtime::TryEndAllocationReceipt|2"
     "pmem_runtime::TryFreeAllocationReceipt|1"
     "pmem_runtime::TryClassifyStorageIsolation|1"
-    "pmem_runtime::StorageIsOutsideManagedMemory|6")
+    "pmem_runtime::StorageIsOutsideManagedMemory|5")
     require_physicalmemory_contains(
         _runtime_table_seal "${_marker}"
         "dedicated runtime-table checked-PMem enrollment seal")

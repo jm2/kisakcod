@@ -137,10 +137,10 @@ RUNTIME_SIZE(ZoneRuntimeCallbackContextSnapshot, 0x18, 0x18);
 
 // The complete capability surface is private. Only the real process facade
 // and durable table may bind, resolve, advance, authenticate, classify,
-// capture, or compare an arbitrary span with the complete store. The raw classifier
-// preserves PMem's precise status; the other lifecycle operations convert an
-// impossible overlap/invalid classification for an exact private member into
-// UnsafeFailure.
+// capture, or compare an arbitrary span with the complete store. The raw
+// classifier preserves PMem's precise status; the other lifecycle operations
+// convert an impossible overlap/invalid classification for an exact private
+// member into UnsafeFailure.
 //
 // Except for the address-only SpanIsSeparated predicate, these operations
 // are intentionally unsynchronized. Future production enrollment must call
@@ -187,6 +187,15 @@ private:
         const void *storage,
         std::size_t size,
         std::size_t alignment) noexcept;
+    [[nodiscard]] static ZoneRuntimeCallbackContextStatus
+    TryAuthenticateStructural(
+        const ZoneRuntimeCallbackContext *context,
+        const zone_load::ZoneLoadContextKey &key,
+        ZoneRuntimeCallbackContextPhase expectedPhase) noexcept;
+    [[nodiscard]] static ZoneRuntimeCallbackContextStatus
+    TryAuthenticateUnused(std::uint32_t physicalSlot) noexcept;
+    [[nodiscard]] static ZoneRuntimeCallbackContextStatus
+    TryAuthenticateStore() noexcept;
 };
 
 #ifdef KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING
@@ -253,6 +262,8 @@ struct ZoneRuntimeCallbackContextTestAccess final
 
     [[nodiscard]] static const ZoneRuntimeCallbackContext *
     ContextForPhysicalSlot(std::uint32_t physicalSlot) noexcept;
+    [[nodiscard]] static const zone_load::ZoneLoadContextKey *
+    RetainedKey(const ZoneRuntimeCallbackContext *context) noexcept;
     static void CorruptSelf(
         const ZoneRuntimeCallbackContext *context) noexcept;
     static void CorruptWitness(

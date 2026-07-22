@@ -16,6 +16,8 @@ set(_fixture_path
     "${SOURCE_ROOT}/tests/db_registry_ownership_coordinator_tests.cpp")
 set(_integration_fixture_path
     "${SOURCE_ROOT}/tests/script_string_ownership_tests.cpp")
+set(_stable_integration_fixture_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_stable_context_integration_tests.cpp")
 set(_production_seal_path
     "${SOURCE_ROOT}/tests/db_registry_ownership_coordinator_production_seal_tests.cpp")
 set(_security_path "${SOURCE_ROOT}/tests/security_regression_test.cmake")
@@ -45,6 +47,7 @@ foreach(_path IN ITEMS
     "${_runtime_facade_source_path}"
     "${_fixture_path}"
     "${_integration_fixture_path}"
+    "${_stable_integration_fixture_path}"
     "${_production_seal_path}"
     "${_security_path}"
     "${_manifest_path}"
@@ -68,6 +71,7 @@ file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_integration_fixture_path}" _integration_fixture)
+file(READ "${_stable_integration_fixture_path}" _stable_integration_fixture)
 file(READ "${_production_seal_path}" _production_seal)
 file(READ "${_security_path}" _security)
 file(READ "${_manifest_path}" _manifest)
@@ -1474,6 +1478,200 @@ endforeach()
 require_not_contains(
     _production_seal "#define KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING"
     "production seal cannot enable test access")
+
+# A literal macro-off fixture must exercise the complete production path from
+# the facade's stable callback bank through this coordinator and the real
+# script-string registry. Keep the contention retry, successful mutation and
+# explicit finish in one process, while the deliberately forgotten finish is
+# isolated in a second process that proves the boundary remains non-retirable.
+extract_slice(
+    _stable_integration_fixture
+    "ZoneScriptStringUnpublishStatus EnsureGenerationUnreachable("
+    "ZoneLoadCleanupCallbackStatus PerformExternalCleanup("
+    _stable_registry_callback
+    "stable production registry callback")
+foreach(_marker IN ITEMS
+    "ZoneRuntimeFacade::TryBorrowRegistryOwnershipFromCallback("
+    "g_callbackProbe.firstBorrow"
+    "RegistryOwnershipStatus::Busy"
+    "ZoneScriptStringUnpublishStatus::Retry"
+    "g_callbackProbe.retryBorrow"
+    "RegistryOwnershipStatus::Success"
+    "ZoneRuntimeFacade::TryAddDatabaseUser4("
+    "ZoneRuntimeFacade::FinishRegistryOwnership();")
+    require_contains(
+        _stable_registry_callback "${_marker}"
+        "stable callback coordinator flow")
+endforeach()
+require_ordered(
+    _stable_registry_callback
+    "g_callbackProbe.firstBorrow"
+    "g_callbackProbe.retryBorrow"
+    "busy callback borrow before the successful retry")
+require_ordered(
+    _stable_registry_callback
+    "g_callbackProbe.retryBorrow"
+    "ZoneRuntimeFacade::TryAddDatabaseUser4("
+    "successful callback borrow before real registry mutation")
+require_ordered(
+    _stable_registry_callback
+    "ZoneRuntimeFacade::TryAddDatabaseUser4("
+    "ZoneRuntimeFacade::FinishRegistryOwnership();"
+    "registry mutation before explicit coordinator finish")
+
+extract_slice(
+    _stable_integration_fixture
+    "[[nodiscard]] bool TestStableCallbackRetryChain() noexcept"
+    "[[nodiscard]] bool TestOmittedCallbackFinishFailsClosed() noexcept"
+    _stable_registry_retry_run
+    "stable registry contention/retry run")
+foreach(_marker IN ITEMS
+    "#include <script/scr_stringlist.cpp>"
+    "FastCriticalSection db_hashCritSect{};"
+    "script_string::TryAcquireOrdinaryStringOfSize("
+    "Sys_LockWrite(&db_hashCritSect);"
+    "ZoneRuntimeFacade::TryBeginGenerationAbandonment("
+    "Sys_UnlockWrite(&db_hashCritSect);"
+    "firstAbandonment == ZoneRuntimeTableStatus::Retry"
+    "g_callbackProbe.firstBorrow"
+    "RegistryOwnershipStatus::Busy"
+    "ZoneRuntimeFacade::TryContinueGenerationAbandonment("
+    "g_callbackProbe.retryBorrow"
+    "g_callbackProbe.addStatus"
+    "g_callbackProbe.finishStatus")
+    require_contains(
+        _stable_integration_fixture "${_marker}"
+        "literal real-registry stable integration fixture")
+endforeach()
+require_ordered(
+    _stable_registry_retry_run
+    "Sys_LockWrite(&db_hashCritSect);"
+    "ZoneRuntimeFacade::TryBeginGenerationAbandonment("
+    "real hash lock held before the first callback attempt")
+require_ordered(
+    _stable_registry_retry_run
+    "ZoneRuntimeFacade::TryBeginGenerationAbandonment("
+    "Sys_UnlockWrite(&db_hashCritSect);"
+    "first callback attempt completes before hash-lock release")
+require_ordered(
+    _stable_registry_retry_run
+    "Sys_UnlockWrite(&db_hashCritSect);"
+    "ZoneRuntimeFacade::TryContinueGenerationAbandonment("
+    "hash-lock release before successful callback retry")
+
+extract_slice(
+    _stable_integration_fixture
+    "[[nodiscard]] bool TestOmittedCallbackFinishFailsClosed() noexcept"
+    "} // namespace"
+    _stable_registry_omit_finish_run
+    "forgotten coordinator finish run")
+foreach(_marker IN ITEMS
+    "g_callbackProbe.omitFinish = true;"
+    "g_callbackProbe.omittedFinishBorrow"
+    "RegistryOwnershipStatus::Success"
+    "abandonment == ZoneRuntimeTableStatus::UnsafeFailure"
+    "entry->executionMode()"
+    "!= ZoneRuntimeExecutionMode::Terminal"
+    "!entry->generationBindingPristine()"
+    "ZoneRuntimeFacade::FinishAccess()"
+    "== ZoneRuntimeFacadeStatus::UnsafeFailure"
+    "ZoneRuntimeFacade::TryBeginAccess()"
+    "facade boundary reopened")
+    require_contains(
+        _stable_registry_omit_finish_run "${_marker}"
+        "forgotten finish fails closed")
+endforeach()
+require_contains(
+    _stable_integration_fixture
+    "std::strcmp(argv[1], \"--omit-finish\") == 0"
+    "forgotten finish uses a process-isolated mode")
+
+# The integration translation unit includes the real file-local string
+# registry and links all other production components. It must never grow a
+# fixture-local coordinator, admission, batch, registry implementation, or a
+# testing-authority grant.
+foreach(_forbidden IN ITEMS
+    "class RegistryOwnershipCoordinator"
+    "struct RegistryOwnershipCoordinator"
+    "RegistryOwnershipCoordinator::RegistryOwnershipCoordinator("
+    "class RegistryOwnershipAdmission"
+    "struct RegistryOwnershipAdmission"
+    "RegistryOwnershipAdmission::"
+    "class OwnershipBatch"
+    "struct OwnershipBatch"
+    "OwnershipBatch::"
+    "void SL_Init("
+    "void SL_Shutdown("
+    "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING"
+    "KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING"
+    "KISAK_MEMORY_TREE_VALIDATION_TESTING"
+    "KISAK_SCRIPT_STRING_PERF_TESTING")
+    require_not_contains(
+        _stable_integration_fixture "${_forbidden}"
+        "macro-off fixture cannot replace production ownership code")
+endforeach()
+
+extract_slice(
+    _tests
+    "add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "add_executable(kisakcod-fx-archive-disk32-tests"
+    _stable_registry_integration_registration
+    "stable production registry integration registration")
+foreach(_marker IN ITEMS
+    "db_zone_runtime_stable_context_integration_tests.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_facade.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_callback_context.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_table.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_storage.cpp"
+    "\${SRC_DIR}/database/db_zone_stream_ownership.cpp"
+    "\${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp"
+    "\${SRC_DIR}/database/db_zone_script_string_ownership.cpp"
+    "\${SRC_DIR}/database/db_script_string_adapter.cpp"
+    "\${SRC_DIR}/database/db_script_string_journal.cpp"
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp"
+    "\${SRC_DIR}/database/db_zone_load_context.cpp"
+    "\${SRC_DIR}/database/db_relocation.cpp"
+    "\${SRC_DIR}/database/db_stream.cpp"
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp"
+    "\${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp"
+    "\${SRC_DIR}/universal/physicalmemory.cpp"
+    "\${SRC_DIR}/universal/physicalmemory_checked.cpp"
+    "\${SRC_DIR}/qcommon/sys_sync.cpp"
+    "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "kisakcod-fx-fastfile-zone-adapter-disk32-subject"
+    "kisakcod-fx-fastfile-native-arena-subject"
+    "kisakcod-fx-fastfile-native-disk32-subject"
+    "kisakcod-fx-fastfile-impact-native-disk32-subject"
+    "PRIVATE cxx_std_20"
+    "PRIVATE KISAK_MP"
+    "PRIVATE Threads::Threads"
+    "PRIVATE /wd4702)"
+    "PRIVATE \"LINKER:/STACK:8388608\""
+    "NAME database-zone-runtime-stable-context-integration"
+    "NAME database-zone-runtime-stable-context-forgotten-finish"
+    "--omit-finish"
+    "PROPERTIES TIMEOUT 30")
+    require_contains(
+        _stable_registry_integration_registration "${_marker}"
+        "complete macro-off production dependency/CTest enrollment")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "TESTING"
+    "KISAK_PLATFORM_SERVICE_SOURCES"
+    "winmm"
+    "WILL_FAIL"
+    "EXCLUDE_FROM_ALL")
+    require_not_contains(
+        _stable_registry_integration_registration "${_forbidden}"
+        "stable production integration target remains macro-off and positive")
+endforeach()
+foreach(_marker IN ITEMS
+    "kisakcod-db-zone-runtime-stable-context-integration-tests"
+    "database-zone-runtime-stable-context-(integration|forgotten-finish)")
+    require_contains(
+        _ci "${_marker}"
+        "explicit Windows x86 stable integration enrollment")
+endforeach()
 
 # No production target, toolchain, profile, or workflow may inject the testing
 # macro. Its only build-definition occurrences belong to the dedicated unit

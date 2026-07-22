@@ -10050,7 +10050,8 @@ foreach(_zone_runtime_probe_marker IN ITEMS
     "entry->key_ = zone_load::ZoneLoadContextKey{};"
     "&binding->callbacks_;"
     "binding->setupStage_ = ZoneRuntimeSetupStage::CallbacksBound;"
-    "table->authenticateExactLifecycleCallbackMarker(1u, key, marker);"
+    "table->authenticateExactLifecycleCallbackMarker("
+    "static_cast<const ZoneRuntimeCallbackContext *>(nullptr),"
     "table->authenticateExactPendingCopyRead(1u, key, outEntry);"
     "table->authenticateExactPendingCopyOutput("
     "Table::pendingCopyAdmissionReceipt(entry);"
@@ -10455,7 +10456,7 @@ require_security_exact_class_digest(
     "ZoneRuntimeEntry")
 require_security_exact_class_digest(
     _security_zone_runtime_table_class
-    b3337c16218f4f8d55ebea7ef617b4e4fc183ca318cbe9ce4256910d9c7f06be
+    ff73ea8e1fa3c0b53181b3f0a6c040914a143627e0cf0567dfe21fdd410f66cb
     "ZoneRuntimeTable")
 
 set(_security_external_macro_friend_invocation_fixture
@@ -10642,7 +10643,7 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "pmem_runtime::TryEndAllocationReceipt|2"
     "pmem_runtime::TryFreeAllocationReceipt|1"
     "pmem_runtime::TryClassifyStorageIsolation|1"
-    "pmem_runtime::StorageIsOutsideManagedMemory|6"
+    "pmem_runtime::StorageIsOutsideManagedMemory|5"
     "require_substring_count("
     "exact composite authority identifier enrollment"
     "exact direct composite authority call enrollment"
@@ -10669,7 +10670,7 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "one reviewed lower by-value record read"
     "snapshot count mismatch precedes lower record access"
     "legacy loader cannot enroll pending-copy inspection"
-    "four exact source-local runtime-table test-hook gates"
+    "eight exact source-local runtime-table test/owner gates"
     "test-gated one-shot pending-copy mutation seam"
     "test hook revokes before adversarial callback"
     "foreach(_zone_runtime_pending_copy_unsafe_kind IN ITEMS malformed-record postauth-drift count-drift duplicate-marker duplicate-unrelated-markers unknown-marker lifecycle-drift callback-lifecycle-drift)"
@@ -10699,6 +10700,29 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "oversized demand leaves exact placed state retryable"
     "valid exact demand can retry after oversized demand"
     "capacity-span and zero-demand runtime coverage"
+    "retained script-string placement separation"
+    "journal and full-capacity placement isolation"
+    "controller and generation placement use one checked predicate"
+    "stage isolates caller key and output from retained placement"
+    "retained output rejection before acquisition and journal mutation"
+    "every keyed composite mutator snapshots caller state"
+    "every keyed composite mutator authenticates its snapshot"
+    "every post-placement composite mutator rejects retained aliases"
+    "keyed composite mutator cannot authenticate caller storage directly"
+    "keyed composite mutator cannot post-authenticate caller storage"
+    "composite generation commit"
+    "composite abandonment begin"
+    "composite abandonment continuation"
+    "composite generation unload"
+    "live retained placement and caller mutation coverage"
+    "full-capacity rejection occurs before any backend acquisition"
+    "caller mutation hook arms before successful snapshotted stage"
+    "saved key restores only for exact cleanup"
+    "admission callback caller-key mutation arms before commit"
+    "commit succeeds against snapshot before caller key restoration"
+    "composite admission caller-key mutation callback"
+    "admission callback mutates only the external caller key"
+    "callback authenticates its retained key before external mutation"
     "snapshotted separated legacy admission callback"
     "snapshotted separated legacy rollback callback"
     "snapshotted separated legacy unload callback"
@@ -10708,6 +10732,69 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
         "tests/db_zone_runtime_table_source_test.cmake"
         "${_zone_runtime_exact_enrollment_marker}"
         "exact-controller component enrollment freeze")
+endforeach()
+
+# Keep the macro-off stable-callback integration seal itself fail-closed. The
+# table source test owns the exact target closure and the behavioral evidence;
+# this security mirror pins the meaningful enforcement points so that seal
+# weakening cannot disappear as an unrelated source-test cleanup.
+foreach(_stable_context_integration_seal_marker IN ITEMS
+    "_stable_integration_fixture_path"
+    "db_zone_runtime_stable_context_integration_tests.cpp"
+    "_expected_stable_integration_source_registration"
+    "Stable integration target source closure drifted"
+    "\${SRC_DIR}/database/db_zone_runtime_facade.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_callback_context.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_table.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_storage.cpp"
+    "\${SRC_DIR}/database/db_zone_stream_ownership.cpp"
+    "\${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp"
+    "\${SRC_DIR}/database/db_zone_script_string_ownership.cpp"
+    "\${SRC_DIR}/database/db_script_string_adapter.cpp"
+    "\${SRC_DIR}/database/db_script_string_journal.cpp"
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp"
+    "\${SRC_DIR}/database/db_zone_load_context.cpp"
+    "\${SRC_DIR}/database/db_relocation.cpp"
+    "\${SRC_DIR}/database/db_stream.cpp"
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp"
+    "\${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp"
+    "\${SRC_DIR}/universal/physicalmemory.cpp"
+    "\${SRC_DIR}/universal/physicalmemory_checked.cpp"
+    "\${SRC_DIR}/qcommon/sys_sync.cpp"
+    "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>"
+    "$<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>"
+    "stable integration has exactly one compile-definition grant"
+    "one target-scoped MSVC C4702 suppression"
+    "macro-off stable integration cannot receive test authority"
+    "macro-off stable integration fixture cannot self-grant test authority"
+    "literal macro-off facade/table/controller/coordinator/registry chain"
+    "full-chain fixture cannot substitute a fake registry authority"
+    "callbacks-bound no-registry admission gate"
+    "callbacks-bound no-registry runtime coverage"
+    "callbacks-bound fixture must not create controller authority"
+    "callbacks bind before no-registry abandonment"
+    "callbacks-bound gate must precede already-initialized full-chain enrollment"
+    "stable callback Busy-to-Retry-to-Success chain"
+    "Busy callback precedes the successful retry borrow"
+    "real registry mutation precedes coordinator finish"
+    "forgotten-finish branch must actually omit coordinator finish"
+    "stable integration retry, alias, terminal, and stale-key coverage"
+    "terminal reset must precede stale-key rejection"
+    "omitted callback finish leaves table/facade fail-closed"
+    "forgotten-finish coverage remains process isolated"
+    "LINKER:/STACK:8388608"
+    "database-zone-runtime-stable-context-integration"
+    "database-zone-runtime-stable-context-forgotten-finish"
+    "--omit-finish"
+    "stable-context-(legacy-descriptors|unused-busy|managed-key|bank-key|terminal-phase|claimed-neighbor|unused-neighbor)"
+    "database-zone-runtime-stable-context-(integration|forgotten-finish)")
+    require_repository_contains(
+        "tests/db_zone_runtime_table_source_test.cmake"
+        "${_stable_context_integration_seal_marker}"
+        "macro-off stable callback integration source/meta seal")
 endforeach()
 
 foreach(_zone_runtime_detector_marker IN ITEMS
@@ -11625,6 +11712,8 @@ foreach(_runtime_facade_seal_marker IN ITEMS
     "_pending_view_missing_stream_auth_fixture"
     "_pending_read_late_stream_auth_fixture"
     "facade pending-copy inspection cannot acquire ledger or receipt authority"
+    "standalone registry table/callback admission gate"
+    "Standalone registry admission must authenticate facade, table, then coordinator"
     "view.entry != &table.entries_[physicalSlot]"
     "This boundary is not a sandbox for arbitrary engine globals"
     "Runtime facade gained a production caller before atomic cutover")

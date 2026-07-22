@@ -707,6 +707,7 @@ set_tests_properties(
 
 add_executable(kisakcod-db-zone-runtime-table-tests
     db_zone_runtime_table_tests.cpp
+    ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
     ${SRC_DIR}/database/db_zone_runtime_table.cpp
     ${SRC_DIR}/database/db_zone_runtime_storage.cpp
     ${SRC_DIR}/database/db_zone_stream_ownership.cpp
@@ -735,6 +736,8 @@ target_compile_features(
 target_compile_definitions(
     kisakcod-db-zone-runtime-table-tests PRIVATE
     KISAK_MP
+    KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING=1
+    KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING=1
     KISAK_DB_ZONE_LOAD_CONTEXT_TESTING=1
     KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING=1
     KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1
@@ -765,6 +768,22 @@ add_test(
 )
 set_tests_properties(
     database-zone-runtime-table-ownership PROPERTIES TIMEOUT 30)
+foreach(_zone_runtime_stable_context_kind IN ITEMS
+        legacy-descriptors
+        unused-busy
+        managed-key
+        bank-key
+        terminal-phase
+        claimed-neighbor
+        unused-neighbor)
+    add_test(
+        NAME database-zone-runtime-table-stable-context-${_zone_runtime_stable_context_kind}
+        COMMAND kisakcod-db-zone-runtime-table-tests
+            --stable-context ${_zone_runtime_stable_context_kind})
+    set_tests_properties(
+        database-zone-runtime-table-stable-context-${_zone_runtime_stable_context_kind}
+        PROPERTIES TIMEOUT 30)
+endforeach()
 foreach(_zone_runtime_unsafe_boundary RANGE 0 6)
     add_test(
         NAME database-zone-runtime-table-unload-unsafe-${_zone_runtime_unsafe_boundary}
@@ -870,6 +889,75 @@ add_test(
     NAME database-zone-runtime-table-production-test-access-sealed
     COMMAND kisakcod-db-zone-runtime-table-production-seal-tests
 )
+
+# Literal macro-off production chain: facade -> table -> typed stable callback
+# context -> ownership controller -> registry coordinator -> real script-string
+# registry. The fixture supplies only deterministic platform/reporting seams.
+add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests
+    db_zone_runtime_stable_context_integration_tests.cpp
+    ${SRC_DIR}/database/db_zone_runtime_facade.cpp
+    ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
+    ${SRC_DIR}/database/db_zone_runtime_table.cpp
+    ${SRC_DIR}/database/db_zone_runtime_storage.cpp
+    ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+    ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
+    ${SRC_DIR}/database/db_zone_script_string_ownership.cpp
+    ${SRC_DIR}/database/db_script_string_adapter.cpp
+    ${SRC_DIR}/database/db_script_string_journal.cpp
+    ${SRC_DIR}/database/db_script_string_transaction.cpp
+    ${SRC_DIR}/database/db_zone_load_context.cpp
+    ${SRC_DIR}/database/db_relocation.cpp
+    ${SRC_DIR}/database/db_stream.cpp
+    ${SRC_DIR}/database/db_registry_ownership_coordinator.cpp
+    ${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp
+    ${SRC_DIR}/universal/physicalmemory.cpp
+    ${SRC_DIR}/universal/physicalmemory_checked.cpp
+    ${SRC_DIR}/qcommon/sys_sync.cpp
+    ${SRC_DIR}/script/scr_memorytree.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>
+)
+target_include_directories(
+    kisakcod-db-zone-runtime-stable-context-integration-tests
+    SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-stable-context-integration-tests
+    PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-stable-context-integration-tests
+    PRIVATE KISAK_MP)
+target_link_libraries(
+    kisakcod-db-zone-runtime-stable-context-integration-tests
+    PRIVATE Threads::Threads)
+if (MSVC)
+    # The fixture's aborting Com_Error seam makes two legacy post-fatal
+    # scr_stringlist returns provably unreachable on MSVC ARM64. Keep the
+    # resulting C4702 suppression local to this direct-include test target.
+    target_compile_options(
+        kisakcod-db-zone-runtime-stable-context-integration-tests
+        PRIVATE /wd4702)
+    target_link_options(
+        kisakcod-db-zone-runtime-stable-context-integration-tests
+        PRIVATE "LINKER:/STACK:8388608")
+endif()
+kisakcod_test_warnings(
+    kisakcod-db-zone-runtime-stable-context-integration-tests)
+set_target_properties(
+    kisakcod-db-zone-runtime-stable-context-integration-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-zone-runtime-stable-context-integration
+    COMMAND kisakcod-db-zone-runtime-stable-context-integration-tests)
+add_test(
+    NAME database-zone-runtime-stable-context-forgotten-finish
+    COMMAND kisakcod-db-zone-runtime-stable-context-integration-tests
+            --omit-finish)
+set_tests_properties(
+    database-zone-runtime-stable-context-integration
+    database-zone-runtime-stable-context-forgotten-finish
+    PROPERTIES TIMEOUT 30)
 
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp

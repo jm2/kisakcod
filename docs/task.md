@@ -11,7 +11,7 @@ criteria are complete, not merely that substantial supporting work exists.
 Percentages are engineering-effort estimates and are not derived from the number
 of checked boxes.
 
-- [ ] Complete the full five-target porting plan — approximately **83%** of the
+- [ ] Complete the full five-target porting plan — approximately **84%** of the
   currently scoped engineering effort is complete, but strict production-target
   delivery is still **0/5**.
   - [x] Preserve the Windows x86 client and dedicated-server baseline in Debug
@@ -70,9 +70,16 @@ of checked boxes.
       zero unresolved threads at `79413a18` in run **29787341109**, squash-merge
       PR #74 as `f996e16b`, and pass all nine authoritative post-merge jobs in
       run **29788146050**.
-  - [ ] Before production enrollment, add a literal facade -> table ->
-    controller -> coordinator -> registry callback-retry fixture; current
-    coverage proves that chain compositionally.
+  - [x] Before production enrollment, add a literal facade -> table ->
+    controller -> coordinator -> real registry callback-retry fixture.
+    - [x] Keep the target macro-off with the complete production source closure,
+      real `db_hashCritSect` contention, and no fake registry or TestAccess
+      authority.
+    - [x] Prove Busy -> Retry -> successful exact callback borrow, real
+      `TryAddDatabaseUser4`, coordinator Finish, terminal reset, stale-key and
+      callback-bank alias rejection.
+    - [x] Prove an omitted callback Finish fails closed in a process-isolated
+      mode, leaving the table non-pristine and the facade non-retirable.
   - [x] Publish and merge the exact-key, by-value pending-copy inspection
     prerequisite so delayed-image completion and abandonment never retain
     `g_copyInfo` pointers.
@@ -149,23 +156,63 @@ of checked boxes.
         run **29923078292**, retain clean exact-head Codex review with zero
         threads, squash-merge PR #80 as `5818a991`, and pass all nine
         authoritative post-merge jobs in run **29923399366**.
-    - [ ] Couple facade claim, callback binding, and terminal reset
+    - [x] Couple facade claim, callback binding, and terminal reset
       failure-atomically; retain the exact terminal key through reset and
       advance it only with the next authenticated successful claim.
-      - [ ] Before enrollment, reject every by-reference key and every direct
+      - [x] Before enrollment, reject every by-reference key and every direct
         Production-table input, output, or retained span that overlaps the
         whole stable-context bank before its first read, copy, or write; add a
         terminal-successor stale key-alias regression.
-      - [ ] Use exact-key/phase structural-only owner authentication solely for
+      - [x] Use exact-key/phase structural-only owner authentication solely for
         deterministic internal postchecks that follow a full ingress check and
         cannot cross an external callback.
-    - [ ] Authenticate the complete typed context span, exact array member,
+    - [x] Authenticate the complete typed context span, exact array member,
       full key, slot, self/witness, table binding, and one-shot callback window
       before and after external callback work; reject saved-descriptor replay
       outside its exact window and reject reentry without mutation.
-    - [ ] Preserve all seven frozen raw sites and zero loader enrollment while
+    - [x] Preserve all seven frozen raw sites and zero loader enrollment while
       passing focused corruption/alias/retry/ABA, source/security, macro-off,
       sanitizer, i386, and AArch64 gates.
+      - [x] Rebased implementation checkpoints `ac652ec1`, `553786de`, and
+        `0a375c7c` couple the stable bank to the production table/facade and
+        close the pre-copy callback-bank key-alias gap without enrolling a raw
+        loader site.
+      - [x] Full-chain checkpoint `5cc0931a` passes native GCC **184/184**,
+        focused Clang **16/16**, ASan+UBSan **16/16**, strict i386 and AArch64
+        compile/link, eight source/security seals, `git diff --check`, and two
+        clean independent final audits.
+      - [ ] Publish and merge PR #82 with all nine hosted jobs and exact-head
+        review clean, then confirm the authoritative post-merge run.
+        - [x] Diagnose initial run **29937368617**: Windows ARM64 alone promoted
+          legacy `scr_stringlist.cpp` C4702 post-fatal-return warnings to C2220
+          under `/WX`; all fixture code compiled and headless Windows x86 passed.
+        - [x] Keep `/WX` enabled and suppress only C4702 on the direct-include
+          integration target under MSVC; source/security seals pin the single
+          target-scoped exception.
+        - [x] Close the independently found standalone-admission gap for
+          `ActiveNoRegistry` callbacks: an initialized table now authenticates
+          its complete callback state and returns `Busy` before the coordinator
+          can publish authority, while a canonical uninitialized table retains
+          the established standalone path through release-safety validation.
+        - [x] Add facade-unit branch/poison tests plus a macro-off callbacks-bound
+          production-chain regression with no controller transaction; prove
+          ordinary and standalone admission are both `Busy`, coordinator begin
+          is never reached, and the later exact callback borrow still succeeds.
+        - [x] Close the final caller-key TOCTOU/retained-placement class: all ten
+          script-string adapters, all fifteen keyed composite mutators, legacy
+          unload, and terminal reset now authenticate a by-value key snapshot
+          after whole-bank separation and never reread caller storage across a
+          lower mutation or external callback. Storage bind retains its reviewed
+          plan-in-slab exception by snapshotting before placement construction.
+        - [x] Reject caller keys and stage outputs that overlap either the
+          controller or generation binding's live journal and full retained
+          entry capacity. Add standards-clean journal-key, journal-output,
+          unused-capacity, acquisition-callback mutation, composite-admission
+          mutation, and composite-abandonment regressions; source/security seals
+          freeze the complete keyed-mutation snapshot surface and the one
+          storage-bind exception.
+        - [ ] Pass the replacement exact-head run, resolve any real review
+          finding, merge, and record post-merge evidence.
   - [ ] Convert the required registry/hash-lock helpers to checked, no-report
     operations that cannot unlock coordinator-owned state or cross retained
     authority through `Com_Error`/`longjmp`.
@@ -281,6 +328,8 @@ of checked boxes.
   threads; merge commit `ce1d2b18` passed all nine authoritative jobs in run
   **29790700257**.
 - [ ] Re-audit and selectively integrate upstream whenever its tip advances.
+  Current `upstream/master` has one unique commit, `af866142`; review it in a
+  separate PR after the stable-context integration PR is cleanly merged.
 - [x] Keep the legacy Windows x86 CI gates green.
 - [x] Provide portable utility CI on all five requested OS/architecture pairs.
 - [ ] Add required production CI jobs for all five requested targets.
@@ -288,7 +337,7 @@ of checked boxes.
   checksum work.
 
 The Windows x86 baseline is approximately **93%**, and shared foundations and
-security are approximately **90%**. Windows x86 is retained as the compatibility
+security are approximately **91%**. Windows x86 is retained as the compatibility
 and reference target; it is not one of the five requested strict-delivery boxes.
 
 ## Detailed state and validation evidence
@@ -440,8 +489,8 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   other results remain one-shot. Full GCC CTest **160/160**, focused Clang and ASan+UBSan, source/security, genuine
   i386/AArch64, and two independent audits pass on that repair tree. Final head `79413a18` passed all nine hosted jobs
   in run **29787341109** with clean exact-head Codex/Gemini review and zero unresolved threads. PR #74 squash-merged as
-  `f996e16b`; authoritative post-merge run **29788146050** passed all nine jobs. The literal full-chain fixture remains
-  a pre-enrollment gate. Strict requested-target delivery remains **0/5**.
+  `f996e16b`; authoritative post-merge run **29788146050** passed all nine jobs. The literal full-chain gate that was
+  still open at that checkpoint is now complete at `5cc0931a`. Strict requested-target delivery remains **0/5**.
 - Merged script-string ownership foundation: PR #48 adds a dedicated recursive outer DB transaction
   serializer, a private report-free journal adapter, bounded report-free ordinary/database-user ownership operations,
   and failure-atomic memory-tree allocate/query/free APIs. Runtime IDs remain explicitly limited to
@@ -1728,7 +1777,7 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **83% complete by current engineering effort**. PR #62 merged the production-neutral
+- Progress estimate: approximately **84% complete by current engineering effort**. PR #62 merged the production-neutral
   pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
   registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
   tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy PMem
@@ -1754,11 +1803,18 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   implementation/documentation head `2c7c225d` passed all nine hosted jobs in run **29921410961** with clean Codex
   review and zero threads; Gemini emitted only its retired-service notice. Final documentation-only head `d599b126`
   passed all nine jobs in run **29923078292** with clean exact-head Codex review and zero threads; PR #80
-  squash-merged as `5818a991`, and all nine authoritative post-merge jobs passed in run **29923399366**. The ancestry
+  squash-merged as `5818a991`, and all nine authoritative post-merge jobs passed in run **29923399366**. PR #81 exact
+  head `e9eaf3a8` passed all nine hosted jobs in run **29925025974**, squash-merged the documentation checkpoint as
+  `29895769`, and passed all nine authoritative post-merge jobs in run **29928854270**. Rebased checkpoints
+  `ac652ec1`, `553786de`, and `0a375c7c` now complete failure-atomic claim/bind/reset coupling, exact stable callback
+  windows, whole-bank separation before every direct access, and post-callback bank/table/key authentication. Literal
+  full-chain checkpoint `5cc0931a` passes native GCC **184/184**, focused Clang and ASan+UBSan **16/16** each, strict
+  i386/AArch64 compile-link, source/security/diff gates, and two clean independent audits with all seven raw loader
+  sites still frozen. The ancestry
   checkpoint records reviewed history without importing code and therefore does not inflate the engineering estimate.
   Windows x86 is about
   **93%**, shared
-  foundations/security about **90%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
+  foundations/security about **91%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
   **40%**, and macOS arm64 about **31%**. None of the five requested 64-bit/non-Windows engine targets builds end to end
   yet, so strict target delivery remains **0/5**.
 - Initial upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
@@ -2267,9 +2323,10 @@ repair tree. Final head `79413a1820e33f1bd05a464141ac9536b7511391`
 passed all nine hosted jobs in run **29787341109** with clean exact-head
 Codex/Gemini review and zero unresolved threads. PR #74 squash-merged as
 `f996e16b304b3704f5aded25ea5cd0a085ea40cb`; authoritative post-merge run
-**29788146050** passed all nine jobs. The literal full-chain fixture remains a
-pre-enrollment gate. Code checkpoint `ef74688b` now implements the next
-production-neutral prerequisite: a pointer-free 0x18 exact-key/count view and
+**29788146050** passed all nine jobs. The literal full-chain fixture that was a
+pre-enrollment gate at that checkpoint is now complete at `5cc0931a`. Code
+checkpoint `ef74688b` implements the next production-neutral prerequisite: a
+pointer-free 0x18 exact-key/count view and
 ordered by-value pending-copy record reads through the table and serialized
 facade. Reads preserve exact generation/count identity, authenticate the actual
 caller span through table-owned stream authority, reject retained authority and
@@ -2301,9 +2358,41 @@ Gemini emitted only its retired-service notice. Final documentation-only head
 `d599b126` passed all nine jobs in run **29923078292** with clean exact-head
 Codex review and zero threads; PR #80 squash-merged as `5818a991`, and all nine
 authoritative post-merge jobs passed in run **29923399366**.
-The next atomic batch couples it to facade/table claim, typed one-shot callback
-windows, terminal reset, whole-bank separation for every direct Production
-input/output/retained span, and the literal full-chain Busy -> Retry fixture.
+PR #81 exact head `e9eaf3a8` passed all nine hosted jobs in run **29925025974**,
+squash-merged the documentation checkpoint as `29895769`, and passed all nine
+authoritative post-merge jobs in run **29928854270**. Rebased checkpoints
+`ac652ec1`, `553786de`, and `0a375c7c` now couple facade/table claim, callback
+binding, typed one-shot windows, terminal reset, and whole-bank separation
+failure-atomically without enrolling a raw loader site. Checkpoint `5cc0931a`
+adds the literal macro-off production-chain fixture, including real hash-lock
+Busy -> Retry -> success and forgotten-Finish fail-closed modes. Native GCC is
+**184/184**; focused Clang and ASan+UBSan are **16/16** each; strict i386 and
+AArch64 compile/link, source/security/diff gates, and two independent audits are
+clean. PR #82 initial run **29937368617** exposed one Windows ARM64-only build
+issue: the fixture's aborting `Com_Error` seam makes two legacy
+`scr_stringlist.cpp` post-fatal returns provably unreachable, and `/WX`
+promoted C4702 to C2220. The repair keeps `/WX` and applies `/wd4702` only to
+this direct-include target, with the exception source/security sealed. Runs
+**29937368617** and **29937847031** were canceled after their respective
+superseding fixes. Final audit then found that standalone registry admission
+did not explicitly authenticate an initialized table's callback marker. The
+current repair preserves pristine pre-initialization standalone use, rejects
+both `ActiveNoRegistry` and retained-transaction callback windows as `Busy`
+before coordinator enrollment, and adds facade-unit plus literal callbacks-bound
+macro-off regressions. The same audit round found a caller-key TOCTOU and
+retained-placement alias class: mutable adapters could authenticate a reference,
+mutate or destroy retained state (or cross an external callback), then reread
+that reference during post-authentication. The repair snapshots every keyed
+script-string/composite mutation boundary, gates original key/output spans
+against both controller and generation placement across full capacity, and
+preserves only storage bind's intentional pre-placement slab snapshot. Clean
+runtime regressions cover live journal/output/capacity aliases plus acquisition
+and composite-admission callback mutation without poisoning or stranded
+authority. The full incremental Debug build, native GCC **184/184** CTest tree,
+focused table/facade/integration/forgotten-Finish coverage, all affected
+source/security seals, and `git diff --check` pass locally; the new exact-head
+hosted run remains pending. After PR #82 is cleanly merged,
+the next atomic batch is the checked no-report registry/hash helper gate.
 
 - [x] **Priority 1 — Facade publication:** PR #73 landed the
    production-neutral process-lifetime facade with one nonblocking outer
@@ -2348,9 +2437,10 @@ input/output/retained span, and the literal full-chain Busy -> Retry fixture.
        unresolved threads, pass all nine jobs at `79413a18` in run
        **29787341109**, squash-merge as `f996e16b`, and pass all nine
        authoritative post-merge jobs in run **29788146050**.
-   - [ ] Before production enrollment, factor reusable full-chain test subjects
-     and add a real facade -> table -> controller -> coordinator -> registry
-     operation fixture; current coverage proves the chain compositionally.
+   - [x] Before production enrollment, add a literal macro-off facade -> table
+     -> controller -> coordinator -> real registry operation fixture with
+     Busy -> Retry -> success, terminal revocation, alias rejection, and an
+     isolated forgotten-Finish fail-closed mode at `5cc0931a`.
    - [x] Publish and merge exact-key pending-copy inspection, eliminating
      retained legacy queue pointers.
      - [x] Implement the pointer-free key/count snapshot and by-value ordinal
@@ -2392,13 +2482,19 @@ input/output/retained span, and the literal full-chain Busy -> Retry fixture.
        threads; final head `d599b126` passed all nine jobs in run
        **29923078292**, squash-merged as `5818a991`, and passed all nine
        authoritative post-merge jobs in run **29923399366**.
-     - [ ] Couple claim/bind/reset failure-atomically, authenticate the stable
+     - [x] Couple claim/bind/reset failure-atomically, authenticate the stable
        context and exact key before/after each one-shot callback window, and add
        the literal facade -> table -> controller -> coordinator -> registry
        Busy -> Retry -> success fixture without touching a raw loader site.
        Reject by-reference keys and every other direct Production input,
        output, and retained span that aliases any byte of the context bank
        before first access, including a terminal-successor stale-alias case.
+       Rebased checkpoints `ac652ec1`, `553786de`, `0a375c7c`, and `5cc0931a`
+       pass the complete local compiler, sanitizer, architecture, source,
+       security, and independent-audit matrix.
+     - [ ] Merge PR #82 after the target-scoped Windows ARM64 C4702 repair and
+       explicit callbacks-bound standalone-admission gate, all nine hosted jobs,
+       exact-head review, and post-merge validation pass.
    - [ ] Introduce checked no-report registry helpers and move hash-lock ownership
      wholly under the coordinator before replacing any raw site.
    - [ ] Add the sole production legacy bridge, its sequencing/fault-injection
@@ -2440,9 +2536,11 @@ Exact-key audit follow-up status:
   coherent pre-initialization from Ready, Busy, Poisoned, invalid, protected
   overlap, and corruption states under one PMem lock. The three retained legacy
   callback paths now authenticate their one-byte identity anchors before lower
-  mutation; the ABI provides no span. Rebased checkpoint `447ff3b5` now supplies
-  full-object/exact-member validation in the stable typed 33-slot core; coupling
-  that identity to the table's one-shot callback window remains open.
+  mutation; the ABI provides no span. Rebased checkpoint `447ff3b5` supplies
+  full-object/exact-member validation in the stable typed 33-slot core, while
+  `ac652ec1`, `553786de`, and `0a375c7c` couple that identity to exact one-shot
+  table callbacks and reject whole-bank aliases before access. Checkpoint
+  `5cc0931a` proves the real callback retry/Finish boundary end to end.
 - Open before production enrollment: callback helpers must remain checked and
   no-report because arbitrary `longjmp`/nonlocal exits are not contained. The
   255-window witness budget is intentionally non-wrapping and fail-stop; its

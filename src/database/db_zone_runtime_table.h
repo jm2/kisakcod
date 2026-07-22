@@ -2,6 +2,7 @@
 
 #include <database/db_zone_pending_copy_ledger.h>
 #include <database/db_zone_load_context.h>
+#include <database/db_zone_runtime_callback_context.h>
 #include <database/db_zone_runtime_storage.h>
 #include <database/db_zone_script_string_ownership.h>
 #include <database/db_zone_slots.h>
@@ -145,14 +146,21 @@ enum class ZoneRuntimeExecutionMode : std::uint8_t
 // invoked only for the remaining engine-specific recipe steps.
 struct ZoneRuntimeGenerationCallbacks final
 {
-    void *context = nullptr;
+    const ZoneRuntimeCallbackContext *context = nullptr;
     zone_script_string_ownership::ZoneScriptStringUnpublishStatus
-        (*ensureUnreachable)(void *context) noexcept = nullptr;
+        (*ensureUnreachable)(
+            const ZoneRuntimeCallbackContext *context,
+            zone_load::ZoneLoadContextKey key) noexcept = nullptr;
     zone_load::ZoneLoadCleanupCallbackStatus (*performExternalCleanup)(
-        void *context,
+        const ZoneRuntimeCallbackContext *context,
+        zone_load::ZoneLoadContextKey key,
         zone_load::ZoneLoadCleanupOperation operation) noexcept = nullptr;
-    void (*completePendingAdmission)(void *context) noexcept = nullptr;
-    void (*admitLive)(void *context) noexcept = nullptr;
+    void (*completePendingAdmission)(
+        const ZoneRuntimeCallbackContext *context,
+        zone_load::ZoneLoadContextKey key) noexcept = nullptr;
+    void (*admitLive)(
+        const ZoneRuntimeCallbackContext *context,
+        zone_load::ZoneLoadContextKey key) noexcept = nullptr;
 };
 
 RUNTIME_SIZE(ZoneRuntimeGenerationCallbacks, 0x14, 0x28);
@@ -622,33 +630,48 @@ private:
     friend struct ZoneRuntimeTableTestAccess;
 #endif
 
+    enum class ValidationDepth : std::uint8_t
+    {
+        Full,
+        StructuralOnly,
+    };
+
     [[nodiscard]] ZoneRuntimeTableStatus
-    validateInitializedHeader() noexcept;
+    validateInitializedHeader(
+        ValidationDepth depth = ValidationDepth::Full) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus validateReleaseSafety() noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus validateEntryBinding(
-        std::uint32_t physicalSlot) noexcept;
+        std::uint32_t physicalSlot,
+        ValidationDepth depth = ValidationDepth::Full) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus
-    validateSharedComposition() noexcept;
+    validateSharedComposition(
+        ValidationDepth depth = ValidationDepth::Full) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus authenticateExactEntry(
         std::uint32_t physicalSlot,
-        const zone_load::ZoneLoadContextKey &key) noexcept;
+        const zone_load::ZoneLoadContextKey &key,
+        ValidationDepth depth = ValidationDepth::Full) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus authenticateExactMutableEntry(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
         ZoneRuntimeEntry **outEntry) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus
     authenticateExactRegistryLifecycleCallback(
+        const ZoneRuntimeCallbackContext *context,
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus
     restoreExactRegistryLifecycleCallback(
-        std::uint32_t physicalSlot,
-        const zone_load::ZoneLoadContextKey &key) noexcept;
-    [[nodiscard]] ZoneRuntimeTableStatus
-    authenticateExactLifecycleCallbackMarker(
+        const ZoneRuntimeCallbackContext *context,
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
-        ZoneRuntimeGenerationBinding::CallbackMarker expectedMarker)
+        ValidationDepth depth = ValidationDepth::Full) noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus
+    authenticateExactLifecycleCallbackMarker(
+        const ZoneRuntimeCallbackContext *context,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        ZoneRuntimeGenerationBinding::CallbackMarker expectedMarker,
+        ValidationDepth depth = ValidationDepth::Full)
         noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus authenticateExactPendingCopyRead(
         std::uint32_t physicalSlot,
@@ -696,12 +719,51 @@ private:
     [[nodiscard]] static bool generationCallbacksMatch(
         const ZoneRuntimeEntry *entry,
         const ZoneRuntimeGenerationCallbacks &callbacks) noexcept;
+    [[nodiscard]] static bool callbackContextSpanIsSeparated(
+        const void *storage,
+        std::size_t storageSize,
+        std::size_t storageAlignment) noexcept;
+    [[nodiscard]] static bool ownsStableCallbackBank(
+        const ZoneRuntimeTable *table) noexcept;
+    [[nodiscard]] static ZoneRuntimeCallbackContextStatus
+    tryAuthenticateCallbackContextStructural(
+        const ZoneRuntimeCallbackContext *context,
+        const zone_load::ZoneLoadContextKey &key,
+        ZoneRuntimeCallbackContextPhase phase) noexcept;
+    [[nodiscard]] static ZoneRuntimeCallbackContextStatus
+    tryAuthenticateCallbackContextStore() noexcept;
+    [[nodiscard]] static ZoneRuntimeCallbackContextStatus
+    tryAuthenticateUnusedCallbackContext(
+        std::uint32_t physicalSlot) noexcept;
+    [[nodiscard]] static ZoneRuntimeCallbackContextBindResult
+    tryBindCallbackContext(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
+    [[nodiscard]] static ZoneRuntimeCallbackContextBindResult
+    tryResolveCallbackContext(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
+    [[nodiscard]] static ZoneRuntimeCallbackContextStatus
+    tryAuthenticateCallbackContext(
+        const ZoneRuntimeCallbackContext *context,
+        const zone_load::ZoneLoadContextKey &key,
+        ZoneRuntimeCallbackContextPhase phase) noexcept;
+    [[nodiscard]] static ZoneRuntimeCallbackContextStatus
+    tryAdvanceCallbackContext(
+        const ZoneRuntimeCallbackContext *context,
+        const zone_load::ZoneLoadContextKey &key,
+        ZoneRuntimeCallbackContextPhase phase) noexcept;
     [[nodiscard]] static bool generationPlacementMatches(
         const ZoneRuntimeEntry *entry,
         const script_string_journal::ScriptStringJournal *journal,
         const script_string_journal::ScriptStringJournalEntry *storage,
         std::uint32_t capacity,
         std::uint32_t expectedCount) noexcept;
+    [[nodiscard]] static bool scriptStringPlacementSpanIsSeparated(
+        const ZoneRuntimeEntry *entry,
+        const void *storage,
+        std::size_t storageSize,
+        std::size_t storageAlignment) noexcept;
     [[nodiscard]] static bool
     exactRegistryLifecycleCallbackPhaseMatches(
         const ZoneRuntimeEntry &entry) noexcept;
@@ -727,6 +789,31 @@ private:
         std::uint32_t expectedCount) noexcept;
     static void resetCompositeReceiptsAndBinding(
         ZoneRuntimeEntry *entry) noexcept;
+    struct BoundExternalCallbackWindow final
+    {
+        ZoneRuntimeTable *table = nullptr;
+        std::uint32_t transactionSerial = 0;
+        std::uint8_t purpose = 0;
+        std::uint8_t windowWitness = 0;
+        ZoneRuntimeGenerationBinding::CallbackMarker initialMarker =
+            ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
+        bool controllerWindow = false;
+    };
+    [[nodiscard]] static ZoneRuntimeTableStatus
+    captureBoundExternalCallbackWindow(
+        ZoneRuntimeEntry *entry,
+        const zone_load::ZoneLoadContextKey &key,
+        const ZoneRuntimeGenerationCallbacks &callbacks,
+        BoundExternalCallbackWindow *outWindow,
+        ValidationDepth depth = ValidationDepth::Full) noexcept;
+    [[nodiscard]] static bool authenticateBoundExternalCallbackWindow(
+        ZoneRuntimeEntry *entry,
+        const zone_load::ZoneLoadContextKey &key,
+        const ZoneRuntimeGenerationCallbacks &callbacks,
+        const BoundExternalCallbackWindow &window,
+        bool allowConsumedRegistryBorrow) noexcept;
+    [[nodiscard]] static bool authenticateStableCallbackBankFull(
+        ZoneRuntimeTable *table) noexcept;
     static zone_script_string_ownership::ZoneScriptStringUnpublishStatus
     EnsureBoundGenerationUnreachable(void *context) noexcept;
     static zone_load::ZoneLoadCleanupCallbackStatus
@@ -770,6 +857,9 @@ struct ZoneRuntimeTableTestAccess final
         ZoneRuntimeTable *table,
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept;
+
+    [[nodiscard]] static bool RegisterStableCallbackBankOwner(
+        ZoneRuntimeTable *table) noexcept;
 
     static zone_load::ZoneLoadContextSlot *Lifecycle(
         ZoneRuntimeTable *const table,
@@ -871,12 +961,42 @@ struct ZoneRuntimeTableTestAccess final
     [[nodiscard]] static ZoneRuntimeTableStatus
     AuthenticateExactRegistryLifecycleCallback(
         ZoneRuntimeTable *const table,
+        const ZoneRuntimeCallbackContext *const context,
         const std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept
     {
         return table
             ? table->authenticateExactRegistryLifecycleCallback(
-                physicalSlot, key)
+                context, physicalSlot, key)
+            : ZoneRuntimeTableStatus::InvalidArgument;
+    }
+
+    [[nodiscard]] static ZoneRuntimeTableStatus
+    AuthenticateExactRegistryLifecycleCallback(
+        ZoneRuntimeTable *const table,
+        const std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept
+    {
+        const ZoneRuntimeCallbackContext *context = nullptr;
+        if (table && physicalSlot < table->entries_.size())
+        {
+            context = table->entries_[physicalSlot]
+                .generationBinding_.callbacks_.context;
+        }
+        return AuthenticateExactRegistryLifecycleCallback(
+            table, context, physicalSlot, key);
+    }
+
+    [[nodiscard]] static ZoneRuntimeTableStatus
+    RestoreExactRegistryLifecycleCallback(
+        ZoneRuntimeTable *const table,
+        const ZoneRuntimeCallbackContext *const context,
+        const std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept
+    {
+        return table
+            ? table->restoreExactRegistryLifecycleCallback(
+                context, physicalSlot, key)
             : ZoneRuntimeTableStatus::InvalidArgument;
     }
 
@@ -886,10 +1006,14 @@ struct ZoneRuntimeTableTestAccess final
         const std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept
     {
-        return table
-            ? table->restoreExactRegistryLifecycleCallback(
-                physicalSlot, key)
-            : ZoneRuntimeTableStatus::InvalidArgument;
+        const ZoneRuntimeCallbackContext *context = nullptr;
+        if (table && physicalSlot < table->entries_.size())
+        {
+            context = table->entries_[physicalSlot]
+                .generationBinding_.callbacks_.context;
+        }
+        return RestoreExactRegistryLifecycleCallback(
+            table, context, physicalSlot, key);
     }
 
     static void SetCallbackMarker(

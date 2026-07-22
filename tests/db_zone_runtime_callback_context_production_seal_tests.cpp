@@ -231,6 +231,23 @@ struct ZoneRuntimeCallbackContextTestAccess
     };
 
     template <typename Owner>
+    static constexpr bool CanAuthenticateStructural =
+        requires(const ZoneRuntimeCallbackContext *const context,
+                 const zone_load::ZoneLoadContextKey &key)
+    {
+        Owner::TryAuthenticateStructural(
+            context, key, ZoneRuntimeCallbackContextPhase::Bound);
+    };
+
+    template <typename Owner>
+    static constexpr bool CanAuthenticateUnused =
+        requires { Owner::TryAuthenticateUnused(1u); };
+
+    template <typename Owner>
+    static constexpr bool CanAuthenticateStore =
+        requires { Owner::TryAuthenticateStore(); };
+
+    template <typename Owner>
     static constexpr bool CanCapture = requires(
         const ZoneRuntimeCallbackContext *const context,
         const zone_load::ZoneLoadContextKey &key)
@@ -278,6 +295,12 @@ static_assert(!ZoneRuntimeCallbackContextTestAccess::CanResolve<
 static_assert(!ZoneRuntimeCallbackContextTestAccess::CanAdvance<
     ZoneRuntimeCallbackContextOwner>);
 static_assert(!ZoneRuntimeCallbackContextTestAccess::CanAuthenticate<
+    ZoneRuntimeCallbackContextOwner>);
+static_assert(!ZoneRuntimeCallbackContextTestAccess::CanAuthenticateStructural<
+    ZoneRuntimeCallbackContextOwner>);
+static_assert(!ZoneRuntimeCallbackContextTestAccess::CanAuthenticateUnused<
+    ZoneRuntimeCallbackContextOwner>);
+static_assert(!ZoneRuntimeCallbackContextTestAccess::CanAuthenticateStore<
     ZoneRuntimeCallbackContextOwner>);
 static_assert(!ZoneRuntimeCallbackContextTestAccess::CanCapture<
     ZoneRuntimeCallbackContextOwner>);

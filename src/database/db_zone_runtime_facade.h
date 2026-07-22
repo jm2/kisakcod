@@ -12,8 +12,9 @@ namespace db::zone_runtime
 // table and its child registry/string ownership scopes. The facade owns no
 // reclaimable zone storage and exposes neither the table nor child authority.
 // Writable outputs, retained descriptors, and non-empty stream payloads are rejected
-// when they overlap facade session state, the whole production table,
-// the private coordinator, or the retained hash lock.
+// when they overlap facade session state, the whole production table, the
+// stable callback-context bank, the private coordinator, or the retained hash
+// lock.
 // Caller buffers read after child mutation begins receive the same
 // protected-authority separation.
 // Lower adapters own their managed/object-span checks.
@@ -164,6 +165,15 @@ public:
     TryBorrowRegistryOwnership(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept;
+    // This one-shot capability is valid only during the synchronous typed
+    // callback that received both arguments. The callback must pass the exact
+    // copied key, finish any successful registry borrow before returning, and
+    // neither retain nor reuse the context pointer for a later callback or a
+    // successor generation.
+    [[nodiscard]] static registry_ownership::RegistryOwnershipStatus
+    TryBorrowRegistryOwnershipFromCallback(
+        const ZoneRuntimeCallbackContext *context,
+        zone_load::ZoneLoadContextKey key) noexcept;
     [[nodiscard]] static registry_ownership::RegistryOwnershipStatus
     FinishRegistryOwnership() noexcept;
     [[nodiscard]] static registry_ownership::RegistryOwnershipStatus
@@ -199,6 +209,9 @@ private:
     authenticateAccess() noexcept;
     [[nodiscard]] static ZoneRuntimeTableStatus
     authenticateTableOperationAccess() noexcept;
+    [[nodiscard]] static ZoneRuntimeTableStatus
+    authenticateKeyedTableOperationAccess(
+        const zone_load::ZoneLoadContextKey &key) noexcept;
     [[nodiscard]] static ZoneRuntimeTableStatus
     authenticateCompositeTableOperationAccess(
         std::uint32_t physicalSlot,
