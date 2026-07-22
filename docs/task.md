@@ -216,7 +216,7 @@ of checked boxes.
           threads, and squash-merge PR #82 as `0632a764`.
         - [x] Pass all nine authoritative post-merge jobs in run
           **29943945374** at exact merge commit `0632a764`.
-  - [ ] Convert the required registry/hash-lock helpers to checked, no-report
+  - [x] Convert the required registry/hash-lock helpers to checked, no-report
     operations that cannot unlock coordinator-owned state or cross retained
     authority through `Com_Error`/`longjmp`.
     - [x] Retain the existing seven private adapters across the five operation
@@ -232,8 +232,11 @@ of checked boxes.
       transaction/hash acquire/release; pass GCC **184/184**, focused Clang and
       ASan+UBSan **4/4** each, strict i386/AArch64 compile-link, source/security,
       and diff gates on the local combined tree.
-    - [ ] Publish, pass exact-head review and all nine hosted jobs, merge, and
-      record authoritative post-merge evidence.
+    - [x] Pass all nine hosted jobs at exact head `6973a222` in run
+      **29948350036**, receive a clean exact-head Codex review, and resolve both
+      actionable review threads.
+    - [x] Squash-merge PR #83 as `beda5d39` and pass all nine authoritative
+      post-merge jobs at that exact commit in run **29949463909**.
   - [ ] Enroll a single narrow production bridge and replace all seven frozen raw
     loader/registry operations in one reviewed change.
 - [ ] Enroll the guarded native FX/impact path and complete its rollback,
@@ -2304,8 +2307,9 @@ instead of continually rewriting the deliberately compact evidence snapshot.
 The cumulative M5 row's trailing forward-looking sentence is superseded by
 the active critical path above: PR #80 merged the stable 33-slot context bank,
 PR #82 merged its full-chain integration and passed authoritative run
-**29943945374**, and the checked no-report helper contract is now the final
-production-neutral gate before the atomic seven-site cutover.
+**29943945374**, and PR #83 merged the checked no-report helper gate as
+`beda5d39`. The sole production bridge and atomic seven-site cutover are now
+the active M5 task; partial enrollment remains forbidden.
 
 ## Detailed target evidence
 
@@ -2418,11 +2422,15 @@ source/security seals, and `git diff --check` pass locally. Exact head
 `b05a5ccc` passed all nine hosted jobs in run **29942321576**, received a clean
 Codex review with zero threads, and squash-merged PR #82 as `0632a764`.
 All nine authoritative post-merge jobs passed in run **29943945374** at exact
-merge commit `0632a764`. The active atomic batch now closes the checked
-no-report/no-unlock registry/hash helper contract and coverage gate without
-enrolling a production caller. Its combined local tree passes GCC **184/184**,
-focused Clang and ASan+UBSan **4/4** each, strict i386/AArch64 compile-link,
-source/security, and diff gates; exact-head hosted publication remains.
+merge commit `0632a764`. PR #83 then completed the checked no-report/no-unlock
+registry/hash helper gate without enrolling a production caller. Final review
+hardening covers recoverable invalid input after private-batch admission and
+successful output-bearing backends followed by unsafe batch closure. Exact
+head `6973a222` passed all nine hosted jobs in run **29948350036**, received a
+clean Codex review with both actionable threads resolved, and squash-merged as
+`beda5d39`; all nine authoritative post-merge jobs passed at that exact commit
+in run **29949463909**. Production enrollment remains zero; the sole narrow
+bridge and atomic seven-site cutover are next.
 
 - [x] **Priority 1 — Facade publication:** PR #73 landed the
    production-neutral process-lifetime facade with one nonblocking outer
@@ -2501,7 +2509,7 @@ source/security, and diff gates; exact-head hosted publication remains.
      - [x] Pass all nine hosted jobs at exact head `60ea924a` in run
        **29892464335**, merge PR #78 as `305d9026`, and pass all nine
        authoritative post-merge jobs in run **29893501180**.
-   - [ ] Add stable process-lifetime contexts for all 33 physical slots outside
+   - [x] Add stable process-lifetime contexts for all 33 physical slots outside
      PMem, retaining exact generation identity through terminal reset and
      eliminating slot-reuse/ABA ambiguity.
      - [x] Land the hidden fixed-address 33-record core, exact copied-key
@@ -2526,10 +2534,13 @@ source/security, and diff gates; exact-head hosted publication remains.
        **29943945374** after PR #82 merged as `0632a764`; exact head `b05a5ccc`
        passed all nine jobs in run **29942321576** with a clean Codex review
        and zero threads.
-   - [ ] Close and seal the existing seven checked no-report registry adapters
+   - [x] Close and seal the existing seven checked no-report registry adapters
      under wholly coordinator-owned hash-lock authority before replacing any
      raw site; success/contention/unsafe paths and all five real-stack operation
-     families must be covered without production enrollment.
+     families are covered without production enrollment. PR #83 exact head
+     `6973a222` passed all nine jobs in run **29948350036** with clean Codex
+     review and zero unresolved threads, squash-merged as `beda5d39`, and
+     passed all nine authoritative jobs in run **29949463909**.
    - [ ] Add the sole production legacy bridge, its sequencing/fault-injection
      fixture, source allowlist/seals, and then replace all seven sites atomically.
 - [ ] **Priority 3 — Native FX/impact enrollment:** wire the guarded adapter into the production route behind the
