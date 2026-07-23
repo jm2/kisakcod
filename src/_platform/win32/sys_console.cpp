@@ -37,17 +37,45 @@ SysConsoleIoStatus OutputErrorStatus(const DWORD error) noexcept
         : SysConsoleIoStatus::IoError;
 }
 
+// Translate a Win32 console-input failure into the bytewise boundary's
+// vocabulary. The line parser only distinguishes NoData, EndOfFile, and
+// IoError; InvalidData / Truncated are line-level classifications that
+// do not apply to a single byte. A real console reporting
+// ERROR_INVALID_HANDLE (parent console detached, redirected by another
+// process) or ERROR_ACCESS_DENIED (handle revoked) collapses to IoError
+// so the parser surfaces the failure without misinterpreting the void
+// as a NUL byte.
+bool MapConsoleInputError(
+    const DWORD error,
+    SysConsoleRawReadResult &result) noexcept
+{
+    if (IsEndOfPipeError(error))
+    {
+        result = {SysConsoleRawReadStatus::EndOfFile, 0};
+        return true;
+    }
+    if (error == ERROR_INVALID_HANDLE || error == ERROR_ACCESS_DENIED)
+    {
+        result = {SysConsoleRawReadStatus::IoError, 0};
+        return true;
+    }
+    return false;
+}
+
 // Translate one pending console input event into a raw console byte or a
 // "keep draining" decision. The portable boundary exposes only single-byte
 // reads, so KEY_UP, function/arrow keys, mouse, focus, window-buffer-size,
 // and menu events are drained without producing output. KEY_DOWN records
-// with a zero ASCII char (e.g. arrow keys, function keys in cooked mode)
-// are also drained so the next key can be evaluated. KEY_DOWN records with
-// a non-zero ASCII char produce one Data byte. ENABLE_PROCESSED_INPUT
-// translates Ctrl+C into a CTRL_C_EVENT record; the record is drained so
-// the line parser cannot misinterpret it as data. The console control
-// handler dispatch path runs independently of ReadConsoleInput, so the
-// engine's signal policy is unchanged.
+// with a zero ASCII char (e.g. arrow keys, function keys in cooked mode,
+// or non-ASCII code points) are also drained so the next key can be
+// evaluated; the portable boundary is byte-oriented and cannot faithfully
+// encode codepoints above 0x7F without breaking the line parser's
+// bytewise contract. KEY_DOWN records with a non-zero ASCII char produce
+// one Data byte. ENABLE_PROCESSED_INPUT translates Ctrl+C into a
+// CTRL_C_EVENT record; the record is drained so the line parser cannot
+// misinterpret it as data. The console control handler dispatch path runs
+// independently of ReadConsoleInput, so the engine's signal policy is
+// unchanged.
 SysConsoleRawReadResult TranslateConsoleEvent(
     const INPUT_RECORD &event) noexcept
 {
@@ -62,20 +90,37 @@ SysConsoleRawReadResult TranslateConsoleEvent(
         static_cast<unsigned char>(key.uChar.AsciiChar)};
 }
 
-// Drain pending console input events until one yields a Data byte or the
-// input queue is empty. Returns the first Data byte seen, EndOfFile when
-// the input handle reports EOF, IoError on a real console failure, or
+// Drain pending console input events until one yields a Data byte, the
+// input queue is empty, or a fatal error is reported. The function is
+// single-consumer by contract (the line parser drives it from one
+// thread); pending repeat bytes are tracked in file-scope state so
+// KEY_EVENT records with wRepeatCount > 1 produce one byte per call
+// across consecutive calls instead of collapsing to a single byte.
+//
+// Returns the first Data byte seen, EndOfFile when the input handle
+// reports a pipe-class EOF, IoError on any other console failure, or
 // NoData when the queue is empty.
 SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
 {
+    static unsigned char pendingRepeatByte = 0;
+    static WORD pendingRepeatRemaining = 0;
+
+    if (pendingRepeatRemaining != 0)
+    {
+        const unsigned char byte = pendingRepeatByte;
+        --pendingRepeatRemaining;
+        return {SysConsoleRawReadStatus::Data, byte};
+    }
+
     for (;;)
     {
         DWORD pending = 0;
         if (!GetNumberOfConsoleInputEvents(input, &pending))
         {
+            SysConsoleRawReadResult mapped{};
             const DWORD error = GetLastError();
-            if (IsEndOfPipeError(error))
-                return {SysConsoleRawReadStatus::EndOfFile, 0};
+            if (MapConsoleInputError(error, mapped))
+                return mapped;
             return {SysConsoleRawReadStatus::IoError, 0};
         }
         if (pending == 0)
@@ -86,16 +131,24 @@ SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
         if (!ReadConsoleInput(input, &event, 1, &readCount)
             || readCount == 0)
         {
+            SysConsoleRawReadResult mapped{};
             const DWORD error = GetLastError();
-            if (IsEndOfPipeError(error))
-                return {SysConsoleRawReadStatus::EndOfFile, 0};
+            if (MapConsoleInputError(error, mapped))
+                return mapped;
             return {SysConsoleRawReadStatus::IoError, 0};
         }
 
         const SysConsoleRawReadResult translated =
             TranslateConsoleEvent(event);
-        if (translated.status == SysConsoleRawReadStatus::Data)
-            return translated;
+        if (translated.status != SysConsoleRawReadStatus::Data)
+            continue;
+        if (event.Event.KeyEvent.wRepeatCount > 1)
+        {
+            pendingRepeatByte = translated.byte;
+            pendingRepeatRemaining =
+                static_cast<WORD>(event.Event.KeyEvent.wRepeatCount - 1);
+        }
+        return translated;
     }
 }
 } // namespace
