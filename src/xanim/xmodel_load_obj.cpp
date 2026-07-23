@@ -456,7 +456,8 @@ void __cdecl XSurfaceTransfer(
 
 static void ReadBlend(XSurface *surface, int *partBits, XBlendLoadInfo *blend, unsigned char **pos)
 {
-    short boner = Buf_Read<short>(pos);
+    short boner = (short)buf_cursor::ReadBone();
+    *pos = (unsigned char *)buf_cursor::Current()->current;
     partBits[boner >> 5] |= 0x80000000 >> (boner & 0x1F);
 
     blend->boneOffset = (boner << 6);
@@ -530,7 +531,8 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
         if (!rigidVertList->vertCount)
             break;
 
-        localBoneIndex = Buf_Read<unsigned short>(pos);
+        localBoneIndex = buf_cursor::ReadBone();
+        *pos = (unsigned char *)buf_cursor::Current()->current;
         rigidVertList->boneOffset = localBoneIndex << 6;
         rigidVertCount += rigidVertList->vertCount;
         ++vertListCount;
@@ -610,7 +612,8 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
 
             ++weightCount[numWeights];
 
-            blendBoneIndex = Buf_Read<unsigned short>(pos);
+            blendBoneIndex = buf_cursor::ReadBone();
+            *pos = (unsigned char *)buf_cursor::Current()->current;
 
             surface->partBits[blendBoneIndex >> 5] |= 0x80000000 >> (blendBoneIndex & 0x1F);
             blendBoneOffset = blendBoneIndex << 6;
@@ -643,7 +646,9 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
 
     for (vertIndex = 0; vertIndex < 3 * surface->triCount; ++vertIndex)
     {
-        surface->triIndices[vertIndex] = Buf_Read<unsigned short>(pos);
+        buf_cursor::SetTriLimit(surface->vertCount);
+        surface->triIndices[vertIndex] = buf_cursor::ReadTri(surface->vertCount);
+        *pos = (unsigned char *)buf_cursor::Current()->current;
 
         iassert(surface->triIndices[vertIndex] < surface->vertCount);
     }
@@ -944,6 +949,10 @@ XModelSurfs *__cdecl R_XModelSurfsLoadFile(
     iassert(buf);
 
     pos = buf;
+    buf_cursor::Activate(buf, fileSize);
+    buf_cursor::SetTriLimit(0xFFFFu);
+    buf_cursor::SetStringLimit(64);
+
     short version = Buf_Read<short>(&pos);
 
     if (version == 25)
@@ -960,11 +969,19 @@ XModelSurfs *__cdecl R_XModelSurfsLoadFile(
             FS_FreeFile((char*)buf);
 
             iassert(modelSurfs);
+            if (buf_cursor::Failed())
+            {
+                buf_cursor::Deactivate();
+                Com_PrintError(19, "ERROR: xmodelsurfs '%s' exhausted cursor bounds\n", name);
+                return 0;
+            }
+            buf_cursor::Deactivate();
             return modelSurfs;
         }
         else
         {
             FS_FreeFile((char*)buf);
+            buf_cursor::Deactivate();
             Com_PrintError(
                 19,
                 "ERROR: File conflict (between non-iwd and iwd file) on xmodelsurfs '%s' for xmodel '%s'.\n"
@@ -977,6 +994,7 @@ XModelSurfs *__cdecl R_XModelSurfsLoadFile(
     else
     {
         FS_FreeFile((char*)buf);
+        buf_cursor::Deactivate();
         Com_PrintError(19, "ERROR: xmodelsurfs '%s' out of date (version %d, expecting %d).\n", name, version, 25);
         return 0;
     }
@@ -1125,30 +1143,21 @@ char __cdecl XModelLoadConfigFile(const char *name, unsigned __int8 **pos, XMode
     config->maxs[1] = Buf_Read<float>(pos);
     config->maxs[2] = Buf_Read<float>(pos);
 
-    char *str = (char *)*pos;
-    char *out = config->physicsPresetFilename;
-
-    char c;
-    do
+    if (!buf_cursor::ReadString(config->physicsPresetFilename, sizeof(config->physicsPresetFilename)))
     {
-        c = *str;
-        *out++ = *str++;
-    } while (c);
-    *pos += strlen((const char *)*pos) + 1;
+        return 0;
+    }
+    *pos = (unsigned __int8 *)buf_cursor::Current()->current;
 
     for (int i = 0; i < 4; i++)
     {
         config->entries[i].dist = Buf_Read<float>(pos);
 
-        char *name = (char*)*pos;
-        char *entryfilename = config->entries[i].filename;
-
-        do
+        if (!buf_cursor::ReadString(config->entries[i].filename, sizeof(config->entries[i].filename)))
         {
-            c = *name;
-            *entryfilename++ = *name++;
-        } while (c);
-        *pos += strlen((const char *)*pos) + 1;
+            return 0;
+        }
+        *pos = (unsigned __int8 *)buf_cursor::Current()->current;
     }
 
     config->collLod = Buf_Read<int>(pos);
@@ -1285,6 +1294,10 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
     }
 
     pos = (unsigned __int8 *)buf;
+    buf_cursor::Activate(buf, filelen);
+    buf_cursor::SetBoneLimit(0xFFFFu);
+    buf_cursor::SetTriLimit(0xFFFFu);
+    buf_cursor::SetStringLimit(64);
     if (!XModelLoadConfigFile(name, &pos, &config))
         goto LABEL_28;
 
@@ -1308,6 +1321,16 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
             numsurfs += modelLodInfo->numsurfs;
             for (j = 0; j < modelLodInfo->numsurfs; ++j)
             {
+                const buf_cursor::BufCursor *cursorSnap = buf_cursor::Current();
+                if (cursorSnap != nullptr)
+                {
+                    size_t nameLen = strlen(reinterpret_cast<const char *>(cursorSnap->current));
+                    if (cursorSnap->current + nameLen >= cursorSnap->end)
+                    {
+                        buf_cursor::Fail();
+                        break;
+                    }
+                }
                 v40 = (const char *)pos;
                 pos += strlen((const char *)pos) + 1;
             }
@@ -1415,12 +1438,20 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
         }
         PhysicsCollMap = XModel_LoadPhysicsCollMap(name, Alloc);
         model->physGeoms = PhysicsCollMap;
+        if (buf_cursor::Failed())
+        {
+            buf_cursor::Deactivate();
+            Com_PrintError(19, "ERROR: xmodel '%s' exhausted cursor bounds\n", name);
+            return 0;
+        }
+        buf_cursor::Deactivate();
         return model;
     }
     else
     {
     LABEL_28:
         FS_FreeFile((char *)buf);
+        buf_cursor::Deactivate();
         return 0;
     }
 #endif
@@ -1533,12 +1564,16 @@ XModelPartsLoad *__cdecl XModelPartsLoadFile(XModel *model, const char *name, vo
 
     iassert(buf);
     pos = buf;
+    buf_cursor::Activate(buf, fileSize);
+    buf_cursor::SetBoneLimit(127);
+    buf_cursor::SetStringLimit(64);
 
     version = Buf_Read<unsigned short>(&pos);
 
     if (version != 25)
     {
         FS_FreeFile((char *)buf);
+        buf_cursor::Deactivate();
         Com_PrintError(19, "ERROR: xmodelparts '%s' out of date (version %d, expecting %d).\n", name, version, 25);
         return 0;
     }
@@ -1593,6 +1628,7 @@ XModelPartsLoad *__cdecl XModelPartsLoadFile(XModel *model, const char *name, vo
         while (i < numBones)
         {
             index = *pos++;
+            buf_cursor::Advance(1);
             iassert(index < i);
             *parentList = i - index;
 
@@ -1608,23 +1644,44 @@ XModelPartsLoad *__cdecl XModelPartsLoadFile(XModel *model, const char *name, vo
         }
         for (i = 0; i < numBones; ++i)
         {
+            const buf_cursor::BufCursor *cursorSnap = buf_cursor::Current();
+            if (cursorSnap != nullptr)
+            {
+                size_t nameLen = strlen(reinterpret_cast<const char *>(cursorSnap->current));
+                if (cursorSnap->current + nameLen >= cursorSnap->end)
+                {
+                    buf_cursor::Fail();
+                    break;
+                }
+            }
             len = strlen((const char *)pos) + 1;
             prev = SL_GetStringOfSize((char *)pos, 0, len, MT_TYPE_MODEL_PART);
             boneNames[i] = prev;
             pos += len;
         }
+        buf_cursor::Advance(numBones);
+        pos = (unsigned __int8 *)buf_cursor::Current()->current;
         memcpy(modelParts->partClassification, (unsigned __int8 *)pos, numBones);
-        pos += numBones;
-        useBones = *pos++ != 0;
+        buf_cursor::Advance(1);
+        pos = (unsigned __int8 *)buf_cursor::Current()->current;
+        useBones = *pos != 0;
         FS_FreeFile((char *)buf);
         XModelCalcBasePose(modelParts);
         if (!useBones)
             memset((unsigned __int8 *)modelParts->trans, 0, 16 * numChildBones);
+        if (buf_cursor::Failed())
+        {
+            buf_cursor::Deactivate();
+            Com_PrintError(19, "ERROR: xmodelparts '%s' exhausted cursor bounds\n", name);
+            return 0;
+        }
+        buf_cursor::Deactivate();
         return modelParts;
     }
     else
     {
         FS_FreeFile((char *)buf);
+        buf_cursor::Deactivate();
         Com_PrintError(19, "ERROR: xmodel '%s' has more than %d bones\n", name, 127);
         return 0;
     }

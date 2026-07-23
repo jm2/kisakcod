@@ -261,6 +261,9 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
     iassert(buf);
 
     pos = buf;
+    buf_cursor::Activate(buf, fileSize);
+    buf_cursor::SetStringLimit(64);
+
     version = Buf_Read<unsigned short>(&pos);
 
     if (version == 1)
@@ -272,29 +275,27 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
         for (pieceIndex = 0; pieceIndex < xmodelPieces->numpieces; ++pieceIndex)
         {
             piece = &xmodelPieces->pieces[pieceIndex];
-            len = strlen((const char *)pos) + 1;
-            if (len > 64)
+            if (buf_cursor::Failed())
             {
-                Com_PrintError(19, "ERROR: piecename '%s' too long\n", (const char *)pos);
                 FS_FreeFile((char *)buf);
+                buf_cursor::Deactivate();
                 return 0;
             }
-
-            char *v5 = (char *)pos;
-            char *v4 = piecename;
-            char v3;
-            do
+            if (!buf_cursor::ReadString(piecename, sizeof(piecename)))
             {
-                v3 = *v5;
-                *v4++ = *v5++;
-            } while (v3);
-            pos = &pos[len];
+                Com_PrintError(19, "ERROR: piecename '%s' too long or buffer overrun\n", (const char *)pos);
+                FS_FreeFile((char *)buf);
+                buf_cursor::Deactivate();
+                return 0;
+            }
+            pos = (unsigned __int8 *)buf_cursor::Current()->current;
 
             piece->model = XAnim_RegisterModelPiece(piecename);
             if (!piece->model)
             {
                 Com_PrintError(1, "ERROR: xmodel piece '%s' missing from pieces model 's%'\n", piecename, filename);
                 FS_FreeFile((char *)buf);
+                buf_cursor::Deactivate();
                 return 0;
             }
             piece->offset[0] = Buf_Read<float>(&pos);
@@ -302,11 +303,13 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
             piece->offset[2] = Buf_Read<float>(&pos);
         }
         FS_FreeFile((char *)buf);
+        buf_cursor::Deactivate();
         return xmodelPieces;
     }
     else
     {
         FS_FreeFile((char *)buf);
+        buf_cursor::Deactivate();
         Com_PrintError(19, "ERROR: xmodelpieces '%s' out of date (version %d, expecting %d).\n", name, version, 1);
         return 0;
     }
@@ -370,7 +373,9 @@ unsigned __int8 *__cdecl LoadTrans(
     trans->u.frames.frames._1 = (unsigned __int8 (*)[3])Alloc(size);
 
     memcpy(trans->u.frames.frames._1, pos, size);
-    return &pos[size];
+    buf_cursor::Advance(size);
+    pos = (unsigned __int8 *)buf_cursor::Current()->current;
+    return pos;
 }
 
 void __cdecl ConsumeQuat(unsigned __int8 **pos, __int16 *out)
@@ -886,6 +891,18 @@ void __cdecl ReadNoteTracks(const char *name, unsigned char **pos, XAnimParts *p
     parts->notify = notify;
     for (i = 0; i < numNoteTracks; ++i)
     {
+        const buf_cursor::BufCursor *cursorSnap = buf_cursor::Current();
+        if (cursorSnap != nullptr)
+        {
+            size_t nameLen = strlen(reinterpret_cast<const char *>(cursorSnap->current));
+            if (cursorSnap->current + nameLen >= cursorSnap->end)
+            {
+                buf_cursor::Fail();
+                notify->name = SL_GetString_("end", 0, MT_TYPE_NOTETRACK);
+                notify->time = 1.0;
+                return;
+            }
+        }
         notify->name = SL_GetString_((const char*)*pos, 0, MT_TYPE_NOTETRACK);
         *pos += strlen((const char *)*pos) + 1;
 
@@ -1024,12 +1041,16 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     iassert(buf);
 
     pos = buf;
+    buf_cursor::Activate(buf, fileSize);
+    buf_cursor::SetBoneLimit(DOBJ_MAX_PARTS);
+    buf_cursor::SetStringLimit(64);
 
     version = Buf_Read<short>(&pos);
 
     if (version != 17)
     {
         FS_FreeFile((char *)buf);
+        buf_cursor::Deactivate();
         Com_PrintError(19, (char *)"ERROR: xanim '%s' out of date (version %d, expecting %d)\n", name, version, 17);
         return 0;
     }
@@ -1071,15 +1092,19 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     {
         parts->deltaPart = (XAnimDeltaPart *)Alloc(8);
         pos = GetDeltaQuaternions(parts->deltaPart, Alloc, pos, numLoopFrames, useSmallIndices);
+        pos = (unsigned __int8 *)buf_cursor::Current()->current;
         pos = GetDeltaTranslations(parts->deltaPart, Alloc, pos, numLoopFrames, useSmallIndices);
+        pos = (unsigned __int8 *)buf_cursor::Current()->current;
     }
     if (numBones)
     {
         count = ((uint32_t)(numBones - 1) >> 3) + 1;
         v63 = pos;
-        pos += count;
+        buf_cursor::Advance(count);
+        pos = (unsigned __int8 *)buf_cursor::Current()->current;
         memcpy(dst, pos, count);
-        pos += count;
+        buf_cursor::Advance(count);
+        pos = (unsigned __int8 *)buf_cursor::Current()->current;
         memset((unsigned __int8 *)part, 0, 8 * numBones);
         memset((unsigned __int8 *)v73, 0, 8 * numBones);
         for (i = 0; i < numBones; ++i)
@@ -1094,6 +1119,16 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     }
     for (i = 0; i < numBones; ++i)
     {
+        const buf_cursor::BufCursor *cursorSnap = buf_cursor::Current();
+        if (cursorSnap != nullptr)
+        {
+            size_t nameLen = strlen(reinterpret_cast<const char *>(cursorSnap->current));
+            if (cursorSnap->current + nameLen >= cursorSnap->end)
+            {
+                buf_cursor::Fail();
+                break;
+            }
+        }
         count = strlen((const char *)pos) + 1;
         prev = SL_GetStringOfSize((char *)pos, 0, count, MT_TYPE_ANIM_PART);
         v68[i] = prev;
@@ -1114,13 +1149,21 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
             ((1 << (i & 7)) & (char)dst[i >> 3]) != 0,
             numLoopFrames,
             useSmallIndices);
+        pos = (unsigned __int8 *)buf_cursor::Current()->current;
         pos = GetTranslations(&v73[i], Quaternions, numLoopFrames, useSmallIndices);
+        pos = (unsigned __int8 *)buf_cursor::Current()->current;
     }
     ReadNoteTracks(name, &pos, parts, Alloc);
 
     iassert(buf + fileSize == pos);
 
     FS_FreeFile((char *)buf);
+    if (buf_cursor::Failed())
+    {
+        buf_cursor::Deactivate();
+        Com_PrintError(19, (char *)"ERROR: xanim '%s' exhausted cursor before EOF\n", name);
+        return 0;
+    }
     if (numBones)
     {
         for (i = 0; i < numBones; ++i)
@@ -1611,5 +1654,12 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     iassert(g_animUser);
     Hunk_UserDestroy(g_animUser);
     g_animUser = 0;
+    bool cursorFailed = buf_cursor::Failed();
+    buf_cursor::Deactivate();
+    if (cursorFailed)
+    {
+        Com_PrintError(19, (char *)"ERROR: xanim '%s' failed transactional cursor bounds\n", name);
+        return 0;
+    }
     return parts;
 }

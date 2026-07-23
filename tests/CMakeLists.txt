@@ -2553,3 +2553,53 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/security_regression_test.cmake
 )
+
+# xanim_load / xmodel_load: bounded asset reads.
+# The cursor-backed Buf_Read<T> enforces count / bone / weight / triangle
+# / string bounds; these tests exercise every contract of buf_cursor.h
+# (including a 1024-trial randomized fuzz per test).
+add_executable(kisakcod-xanim-load-tests
+    xanim_load_test.cpp
+    ${SRC_DIR}/xanim/buf_cursor.cpp
+)
+target_include_directories(
+    kisakcod-xanim-load-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-xanim-load-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-xanim-load-tests)
+set_target_properties(
+    kisakcod-xanim-load-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME xanim-load-bounded-cursor-contracts
+    COMMAND kisakcod-xanim-load-tests
+)
+# Alias matching the bead's CMake target name.
+add_custom_target(xanim_load_test ALL
+    COMMAND kisakcod-xanim-load-tests
+    DEPENDS kisakcod-xanim-load-tests
+    USES_TERMINAL
+)
+
+add_executable(kisakcod-xmodel-load-tests
+    xmodel_load_test.cpp
+    ${SRC_DIR}/xanim/buf_cursor.cpp
+)
+target_include_directories(
+    kisakcod-xmodel-load-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-xmodel-load-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-xmodel-load-tests)
+set_target_properties(
+    kisakcod-xmodel-load-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME xmodel-load-bounded-cursor-contracts
+    COMMAND kisakcod-xmodel-load-tests
+)
+# Alias matching the bead's CMake target name.
+add_custom_target(xmodel_load_test ALL
+    COMMAND kisakcod-xmodel-load-tests
+    DEPENDS kisakcod-xmodel-load-tests
+    USES_TERMINAL
+)

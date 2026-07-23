@@ -1554,13 +1554,12 @@ inline bool IsPowerOf2(int num)
     return (num & (num - 1)) == 0;
 }
 
-template <typename T>
-inline T Buf_Read(unsigned char **pos)
-{
-    T value = *(reinterpret_cast<const T *>(*pos));
-    *pos += sizeof(T);
-    return value;
-}
+// Buf_Read<T> now lives in <xanim/buf_cursor.h>. The cursor-backed
+// replacement preserves the original Buf_Read<T>(unsigned char **pos)
+// signature so existing call sites compile unchanged; the implementation
+// routes through a thread-local BufCursor when one is active and falls
+// back to the original unbounded read otherwise.
+#include <xanim/buf_cursor.h>
 
 // x86 (32- and 64-bit) always has SSE2; ARM does not have <xmmintrin.h> at all,
 // and <intrin.h> is MSVC-only. Guarding these is what lets shared headers such as
