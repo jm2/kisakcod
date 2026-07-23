@@ -667,7 +667,9 @@ set(_registry_coordinator_approved_sources
     "${_header_path}"
     "${_source_path}"
     "${_runtime_facade_header_path}"
-    "${_runtime_facade_source_path}")
+    "${_runtime_facade_source_path}"
+    "${SOURCE_ROOT}/src/database/db_load_legacy_bridge.h"
+    "${SOURCE_ROOT}/src/database/db_load_legacy_bridge.cpp")
 set(_registry_admission_approved_sources
     "${_header_path}"
     "${_source_path}"

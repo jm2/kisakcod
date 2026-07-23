@@ -691,19 +691,30 @@ require_ordered(
     "*outStringId = callbackContext.acquiredStringId;"
     "success check before output publication")
 
-# Keep this batch production-neutral: these are the seven known legacy raw
-# mutation sites. Their exact count is frozen until a later, separately
-# reviewed enrollment replaces each one with the controller/adapter path.
+# Keep this batch production-neutral: the seven known legacy raw mutation
+# sites are atomic-replaced through the production legacy bridge.  The
+# exact bridge site counts are frozen until a later, separately reviewed
+# enrollment replaces the bridge surface with the controller/adapter path.
 require_literal_count(
-    _stream "SL_GetStringOfSize(" 2 "two temporary-string claims")
+    _stream "TryInternUser4StringOfSize(" 2 "two temporary-string bridge claims")
 require_literal_count(
-    _stringtable "SL_AddUser(" 1 "one direct database-user claim")
+    _stringtable "TryAddUser4(" 1 "one direct database-user bridge claim")
 require_literal_count(
-    _registry "SL_GetString(" 2 "two dynamic default-name claims")
+    _registry "TryInternUser4String(" 2 "two dynamic default-name bridge claims")
 require_literal_count(
-    _registry "SL_TransferSystem(" 1 "one global ownership transfer")
+    _registry "TryTransferUsers4To8(" 1 "one global ownership transfer bridge claim")
 require_literal_count(
-    _registry "SL_ShutdownSystem(" 1 "one global ownership sweep")
+    _registry "TryShutdownUser8(" 1 "one global ownership sweep bridge claim")
+require_literal_count(
+    _stream "SL_GetStringOfSize(" 0 "no remaining raw temporary-string sites")
+require_literal_count(
+    _stringtable "SL_AddUser(" 0 "no remaining raw database-user sites")
+require_literal_count(
+    _registry "SL_GetString(" 0 "no remaining raw default-name sites")
+require_literal_count(
+    _registry "SL_TransferSystem(" 0 "no remaining raw ownership-transfer sites")
+require_literal_count(
+    _registry "SL_ShutdownSystem(" 0 "no remaining raw ownership-sweep sites")
 foreach(_var IN ITEMS _stream _stringtable _registry _file_load _load)
     require_not_contains(
         ${_var}

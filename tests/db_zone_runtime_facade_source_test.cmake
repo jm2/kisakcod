@@ -1669,7 +1669,9 @@ endforeach()
 
 set(_runtime_facade_whole_file_sources
     "${_header_path}"
-    "${_source_path}")
+    "${_source_path}"
+    "${SOURCE_ROOT}/src/database/db_load_legacy_bridge.h"
+    "${SOURCE_ROOT}/src/database/db_load_legacy_bridge.cpp")
 foreach(_approved_path IN ITEMS
     ${_runtime_facade_whole_file_sources}
     "${_coordinator_header_path}"

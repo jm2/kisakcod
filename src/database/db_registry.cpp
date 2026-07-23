@@ -1,5 +1,6 @@
 #include "database.h"
 #include "db_load_atomic.h"
+#include "db_load_legacy_bridge.h"
 #include "db_referenced_fastfile.h"
 #include "db_validation.h"
 #include "db_zone_runtime_table.h"
@@ -1853,7 +1854,14 @@ XAssetEntry *__cdecl DB_CreateDefaultEntry(XAssetType type, char *name)
     }
     newEntry->nextHash = db_hashTable[DB_HashForName(name, type)];
     db_hashTable[DB_HashForName(name, type)] = ((char *)newEntry - (char *)g_assetEntryPool) >> 4;
-    DB_SetXAssetName(&newEntry->asset, SL_ConvertToString(SL_GetString(name, 4)));
+    db::load_legacy_bridge::LegacyBridgeStringId internedName{};
+    if (db::load_legacy_bridge::DbLoadLegacyBridge::TryInternUser4String(
+            name, &internedName)
+        != db::load_legacy_bridge::LegacyBridgeStatus::Success)
+    {
+        Com_Error(ERR_DROP, "Default asset user-4 intern failed for '%s'", name);
+    }
+    DB_SetXAssetName(&newEntry->asset, internedName.canonicalName);
     newEntry->inuse = 1;
     return newEntry;
 }
@@ -3510,11 +3518,14 @@ void DB_FreeUnusedResources()
     uint32_t hasha; // [esp+0h] [ebp-18h]
     uint16_t *pAssetEntryIndex; // [esp+4h] [ebp-14h]
     uint32_t assetEntryIndex; // [esp+8h] [ebp-10h]
-    const char *newName; // [esp+Ch] [ebp-Ch]
     char *name; // [esp+10h] [ebp-8h]
     XAssetEntryPoolEntry *assetEntry; // [esp+14h] [ebp-4h]
 
-    SL_TransferSystem(4u, 8u);
+    if (db::load_legacy_bridge::DbLoadLegacyBridge::TryTransferUsers4To8()
+        != db::load_legacy_bridge::LegacyBridgeStatus::Success)
+    {
+        Com_Error(ERR_DROP, "Database user-4 -> user-8 transfer failed");
+    }
     for (hash = 0; hash < 0x8000; ++hash)
     {
         for (assetEntryIndex = db_hashTable[hash];
@@ -3542,14 +3553,23 @@ void DB_FreeUnusedResources()
             else if (assetEntry->entry.inuse)
             {
                 name = (char *)DB_GetXAssetName(&assetEntry->entry.asset);
-                newName = SL_ConvertToString(SL_GetString(name, 4));
-                DB_SetXAssetName(&assetEntry->entry.asset, newName);
+                db::load_legacy_bridge::LegacyBridgeStringId internedName{};
+                if (db::load_legacy_bridge::DbLoadLegacyBridge::
+                        TryInternUser4String(name, &internedName)
+                    != db::load_legacy_bridge::LegacyBridgeStatus::Success)
+                {
+                    Com_Error(
+                        ERR_DROP,
+                        "Database user-4 re-intern failed for '%s'",
+                        name);
+                }
+                DB_SetXAssetName(&assetEntry->entry.asset, internedName.canonicalName);
                 pAssetEntryIndex = &assetEntry->entry.nextHash;
             }
             else
             {
                 if (assetEntry->entry.nextOverride)
-                    MyAssertHandler(".\\database\\db_registry.cpp", 4200, 0, "%s", "!assetEntry->nextOverride");
+                    MyAssertHandler(".\\database\\db_registry.cpp", 4200, 0, "%s", "!assetEntry->entry.nextOverride");
                 *pAssetEntryIndex = assetEntry->entry.nextHash;
                 if (!g_defaultAssetCount)
                     MyAssertHandler(".\\database\\db_registry.cpp", 4202, 0, "%s", "g_defaultAssetCount");
@@ -3558,7 +3578,11 @@ void DB_FreeUnusedResources()
             }
         }
     }
-    SL_ShutdownSystem(8);
+    if (db::load_legacy_bridge::DbLoadLegacyBridge::TryShutdownUser8()
+        != db::load_legacy_bridge::LegacyBridgeStatus::Success)
+    {
+        Com_Error(ERR_DROP, "Database user-8 shutdown failed");
+    }
 }
 
 void DB_ExternalInitAssets()

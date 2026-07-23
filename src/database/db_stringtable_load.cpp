@@ -1,4 +1,5 @@
 #include "database.h"
+#include "db_load_legacy_bridge.h"
 
 void __cdecl Load_ScriptStringCustom(uint16_t *var)
 {
@@ -22,6 +23,10 @@ void __cdecl Load_ScriptStringCustom(uint16_t *var)
 
 void __cdecl Mark_ScriptStringCustom(uint16_t *var)
 {
-    if (*var)
-        SL_AddUser(*var, 4u);
+    if (*var
+        && db::load_legacy_bridge::DbLoadLegacyBridge::TryAddUser4(*var)
+            != db::load_legacy_bridge::LegacyBridgeStatus::Success)
+    {
+        Com_Error(ERR_DROP, "Database user-4 script-string reference failed");
+    }
 }

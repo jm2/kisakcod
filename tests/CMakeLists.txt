@@ -975,6 +975,81 @@ add_test(
 )
 set_tests_properties(effectscore-archive-disk32-codec PROPERTIES TIMEOUT 10)
 
+# Compile-only seal of the production legacy bridge: its public surface must
+# stay small, the methods must remain noexcept, and no test seam must
+# accidentally leak into the production translation unit.
+add_executable(kisakcod-db-load-legacy-bridge-production-seal-tests
+    db_load_legacy_bridge_production_seal_tests.cpp)
+target_include_directories(
+    kisakcod-db-load-legacy-bridge-production-seal-tests
+    SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-load-legacy-bridge-production-seal-tests
+    PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-load-legacy-bridge-production-seal-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(
+    kisakcod-db-load-legacy-bridge-production-seal-tests)
+set_target_properties(
+    kisakcod-db-load-legacy-bridge-production-seal-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-load-legacy-bridge-production-test-access-sealed
+    COMMAND kisakcod-db-load-legacy-bridge-production-seal-tests)
+set_tests_properties(
+    database-load-legacy-bridge-production-test-access-sealed
+    PROPERTIES TIMEOUT 20)
+
+# End-to-end runtime bridge: drive the bridge against the real
+# registry/facade/coord chain.  The fixture supplies deterministic
+# platform/reporting seams so the test does not require the full game binary.
+add_executable(kisakcod-db-load-legacy-bridge-tests
+    db_load_legacy_bridge_tests.cpp
+    ${SRC_DIR}/database/db_load_legacy_bridge.cpp
+    ${SRC_DIR}/database/db_zone_runtime_facade.cpp
+    ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
+    ${SRC_DIR}/database/db_zone_runtime_table.cpp
+    ${SRC_DIR}/database/db_zone_runtime_storage.cpp
+    ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+    ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
+    ${SRC_DIR}/database/db_zone_script_string_ownership.cpp
+    ${SRC_DIR}/database/db_script_string_adapter.cpp
+    ${SRC_DIR}/database/db_script_string_journal.cpp
+    ${SRC_DIR}/database/db_script_string_transaction.cpp
+    ${SRC_DIR}/database/db_zone_load_context.cpp
+    ${SRC_DIR}/database/db_relocation.cpp
+    ${SRC_DIR}/database/db_stream.cpp
+    ${SRC_DIR}/database/db_registry_ownership_coordinator.cpp
+    ${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp
+    ${SRC_DIR}/universal/physicalmemory.cpp
+    ${SRC_DIR}/universal/physicalmemory_checked.cpp
+    ${SRC_DIR}/qcommon/sys_sync.cpp
+    ${SRC_DIR}/script/scr_memorytree.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>
+)
+target_include_directories(
+    kisakcod-db-load-legacy-bridge-tests
+    SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-load-legacy-bridge-tests
+    PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-load-legacy-bridge-tests
+    PRIVATE KISAK_MP)
+target_link_libraries(
+    kisakcod-db-load-legacy-bridge-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-db-load-legacy-bridge-tests)
+set_target_properties(
+    kisakcod-db-load-legacy-bridge-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-load-legacy-bridge
+    COMMAND kisakcod-db-load-legacy-bridge-tests)
+set_tests_properties(database-load-legacy-bridge PROPERTIES TIMEOUT 30)
+
 add_library(kisakcod-fx-archive-body-state-disk32-subject OBJECT
     ${SRC_DIR}/EffectsCore/fx_archive_body_state_disk32.cpp
 )
