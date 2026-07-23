@@ -2333,6 +2333,73 @@ add_test(
 )
 set_tests_properties(platform-filesystem-path-contracts PROPERTIES TIMEOUT 20)
 
+set(_platform_process_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _platform_process_sources INCLUDE REGEX "[/\\\\]sys_process\\.cpp$")
+if (KISAK_PLATFORM STREQUAL "macos")
+    list(FILTER _platform_process_sources INCLUDE REGEX "posix/sys_process\\.cpp$")
+endif()
+list(LENGTH _platform_process_sources _platform_process_source_count)
+if (NOT _platform_process_source_count EQUAL 1)
+    message(FATAL_ERROR
+        "Expected exactly one selected platform sys_process.cpp, found "
+        "${_platform_process_source_count}")
+endif()
+
+add_executable(kisakcod-platform-process-tests
+    platform_process_tests.cpp
+    ${_platform_process_sources}
+)
+target_include_directories(kisakcod-platform-process-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-process-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-platform-process-tests PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(kisakcod-platform-process-tests PRIVATE winmm)
+endif()
+kisakcod_test_warnings(kisakcod-platform-process-tests)
+set_target_properties(kisakcod-platform-process-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-process-launch-contracts
+    COMMAND kisakcod-platform-process-tests
+)
+set_tests_properties(platform-process-launch-contracts PROPERTIES TIMEOUT 30)
+add_test(
+    NAME platform-process-signal-park-contracts
+    COMMAND kisakcod-platform-process-tests signal-park-lifecycle
+)
+set_tests_properties(platform-process-signal-park-contracts PROPERTIES TIMEOUT 20)
+add_test(
+    NAME platform-process-freeze-contracts
+    COMMAND kisakcod-platform-process-tests freeze-unsupported
+)
+set_tests_properties(platform-process-freeze-contracts PROPERTIES TIMEOUT 20)
+
+add_executable(kisakcod-platform-crash-tests
+    platform_crash_tests.cpp
+    ${_platform_process_sources}
+)
+target_include_directories(kisakcod-platform-crash-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-crash-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-platform-crash-tests PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(kisakcod-platform-crash-tests PRIVATE winmm)
+endif()
+kisakcod_test_warnings(kisakcod-platform-crash-tests)
+set_target_properties(kisakcod-platform-crash-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-crash-freeze-contracts
+    COMMAND kisakcod-platform-crash-tests
+)
+set_tests_properties(platform-crash-freeze-contracts PROPERTIES TIMEOUT 15)
+add_test(
+    NAME platform-crash-signal-park-contracts
+    COMMAND kisakcod-platform-crash-tests signal-park-disjoint-stacking
+)
+set_tests_properties(platform-crash-signal-park-contracts PROPERTIES TIMEOUT 15)
+
 add_executable(kisakcod-net-wire-contract-tests
     net_wire_contract_tests.cpp
 )
@@ -2465,6 +2532,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_console_source_test.cmake
+)
+
+add_test(
+    NAME platform-process-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_process_source_test.cmake
 )
 
 add_test(
