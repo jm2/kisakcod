@@ -65,6 +65,7 @@ set(_expected_win32_service_sources
     "${SRC_DIR}/_platform/win32/sys_event.cpp"
     "${SRC_DIR}/_platform/win32/sys_filesystem.cpp"
     "${SRC_DIR}/_platform/win32/sys_memory.cpp"
+    "${SRC_DIR}/_platform/win32/sys_process.cpp"
     "${SRC_DIR}/_platform/win32/sys_sync.cpp"
     "${SRC_DIR}/_platform/win32/sys_thread.cpp"
     "${SRC_DIR}/_platform/win32/sys_time.cpp"
@@ -74,6 +75,18 @@ set(_expected_posix_service_sources
     "${SRC_DIR}/_platform/posix/sys_event.cpp"
     "${SRC_DIR}/_platform/posix/sys_filesystem.cpp"
     "${SRC_DIR}/_platform/posix/sys_memory.cpp"
+    "${SRC_DIR}/_platform/posix/sys_process.cpp"
+    "${SRC_DIR}/_platform/posix/sys_sync.cpp"
+    "${SRC_DIR}/_platform/posix/sys_thread.cpp"
+    "${SRC_DIR}/_platform/posix/sys_time.cpp"
+)
+set(_expected_macos_service_sources
+    "${SRC_DIR}/_platform/macos/sys_mach_crash.cpp"
+    "${SRC_DIR}/_platform/posix/sys_console.cpp"
+    "${SRC_DIR}/_platform/posix/sys_event.cpp"
+    "${SRC_DIR}/_platform/posix/sys_filesystem.cpp"
+    "${SRC_DIR}/_platform/posix/sys_memory.cpp"
+    "${SRC_DIR}/_platform/posix/sys_process.cpp"
     "${SRC_DIR}/_platform/posix/sys_sync.cpp"
     "${SRC_DIR}/_platform/posix/sys_thread.cpp"
     "${SRC_DIR}/_platform/posix/sys_time.cpp"
@@ -134,6 +147,7 @@ foreach(_contract_source
     "${SRC_DIR}/qcommon/threads.cpp"
     "${SRC_DIR}/qcommon/threads.h"
     "${SRC_DIR}/qcommon/sys_event.h"
+    "${SRC_DIR}/qcommon/sys_process.h"
     "${SRC_DIR}/qcommon/sys_sync.cpp"
     "${SRC_DIR}/qcommon/sys_sync.h"
     "${SRC_DIR}/qcommon/sys_thread.h"
@@ -182,8 +196,33 @@ function(kisakcod_assert_incomplete_platform_source_sets PLATFORM_NAME)
     )
 endfunction()
 
+function(kisakcod_assert_macos_platform_source_sets)
+    set(KISAK_PLATFORM "macos")
+    include("${SCRIPTS_DIR}/platform/macos/platform.cmake")
+    kisakcod_require_platform_source_sets()
+
+    if (KISAK_PLATFORM_SOURCE_SETS_COMPLETE)
+        message(FATAL_ERROR
+            "macos platform source sets must remain marked incomplete")
+    endif()
+    foreach(_source_set
+        KISAK_PLATFORM_SOURCES
+        KISAK_PLATFORM_DEDI_HEADLESS_SOURCES
+    )
+        if (NOT "${${_source_set}}" STREQUAL "")
+            message(FATAL_ERROR
+                "macos ${_source_set} must remain explicitly empty until its backend lands")
+        endif()
+    endforeach()
+    kisakcod_assert_source_lists_equal(
+        KISAK_PLATFORM_SERVICE_SOURCES
+        _expected_macos_service_sources
+        "macos platform service source composition"
+    )
+endfunction()
+
 kisakcod_assert_incomplete_platform_source_sets(linux)
-kisakcod_assert_incomplete_platform_source_sets(macos)
+kisakcod_assert_macos_platform_source_sets()
 
 file(READ "${SOURCE_ROOT}/CMakeLists.txt" _root_cmake_source)
 string(FIND "${_root_cmake_source}"
