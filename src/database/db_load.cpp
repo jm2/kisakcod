@@ -21,11 +21,15 @@
 #include <gfx_d3d/r_primarylights.h>
 #include <game/g_bsp.h>
 
+#include "db_fx_zone_adapter_wiring.h"
+
 #include <cstdlib>
 #include <cstring>
 
 namespace
 {
+constexpr std::uint64_t kFxImpactTableDisk32Bytes = 8;
+constexpr std::uint64_t kFxEffectDefDisk32Bytes = 32;
 constexpr db::relocation::BlockMask kDirectBlock1 = db::relocation::BlockBit(1);
 constexpr db::relocation::BlockMask kDirectBlock4 = db::relocation::BlockBit(4);
 constexpr db::relocation::BlockMask kDirectBlock7 = db::relocation::BlockBit(7);
@@ -7118,6 +7122,16 @@ void __cdecl Load_FxElemDefArray(bool atStreamStart, int32_t count)
 void __cdecl Load_FxEffectDef(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varFxEffectDef, 32);
+    if (FxEffectDef *const wiredFxEffectDef =
+            db::fx_zone_adapter_wiring::TryWireEffectDefThroughActiveFxZoneAdapter(
+                atStreamStart,
+                varFxEffectDef,
+                kFxEffectDefDisk32Bytes))
+    {
+        varFxEffectDef = wiredFxEffectDef;
+        DB_PopStreamPos();
+        return;
+    }
     DB_PushStreamPos(4);
     varXString = &varFxEffectDef->name;
     Load_XString(0);
@@ -8910,6 +8924,16 @@ void __cdecl Load_FxImpactEntryArray(bool atStreamStart, int32_t count)
 void __cdecl Load_FxImpactTable(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varFxImpactTable, 8);
+    if (FxImpactTable *const wiredFxImpactTable =
+            db::fx_zone_adapter_wiring::TryWireImpactTableThroughActiveFxZoneAdapter(
+                atStreamStart,
+                varFxImpactTable,
+                kFxImpactTableDisk32Bytes))
+    {
+        varFxImpactTable = wiredFxImpactTable;
+        DB_PopStreamPos();
+        return;
+    }
     DB_PushStreamPos(4);
     varXString = &varFxImpactTable->name;
     Load_XString(0);
