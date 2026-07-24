@@ -37,8 +37,6 @@ struct tagInfoDisk32_s
     float parentInvAxis[4][3];
 };
 
-static_assert(sizeof(tagInfoDisk32_s) == 0x70,
-    "tagInfo Disk32 record must be 112 bytes (retail wire image)");
 static_assert(alignof(tagInfoDisk32_s) == 4,
     "tagInfo Disk32 record must be 4-byte aligned");
 static_assert(std::is_standard_layout_v<tagInfoDisk32_s>,
@@ -75,8 +73,7 @@ struct tagInfoHostView
     float parentInvAxis[4][3];
 };
 
-static_assert(sizeof(tagInfoHostView) == 0x70,
-    "tagInfoHostView must match the 32-bit host layout (0x70 bytes)");
+ONDISK_SIZE(tagInfoHostView, 0x70);
 
 // Reinterpret a host pointer field as the 4-byte entity index the SF_ENTITY
 // pre-processor / post-processor works with. On x64 only the lower 4 bytes
