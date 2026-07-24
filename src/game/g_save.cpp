@@ -64,12 +64,49 @@ const saveField_t tagInfoFields[4] =
 
 const saveField_t animscriptedFields[1] = { { 0, SF_NONE } };
 
-// tagInfo_s contains pointers, but the retail save payload is a fixed 112-byte
-// Disk32 record. Keep native64 SP compilation closed until that record has a
-// dedicated converter instead of silently reading host-width bytes.
-constexpr int kTagInfoDisk32Bytes = 0x70;
-static_assert(KISAK_ARCH_64BIT == 0,
-    "native64 SP requires a Disk32 tagInfo_s save converter");
+struct tagInfoDisk32_s
+{
+  uint32_t parent;
+  uint32_t next;
+  uint16_t name;
+  uint16_t padding;
+  int32_t index;
+  float axis[4][3];
+  float parentInvAxis[4][3];
+};
+
+static_assert(sizeof(tagInfoDisk32_s) == 0x70, "tagInfo Disk32 size");
+static_assert(offsetof(tagInfoDisk32_s, parent) == 0x00, "tagInfo Disk32 parent offset");
+static_assert(offsetof(tagInfoDisk32_s, next) == 0x04, "tagInfo Disk32 next offset");
+static_assert(offsetof(tagInfoDisk32_s, name) == 0x08, "tagInfo Disk32 name offset");
+static_assert(offsetof(tagInfoDisk32_s, index) == 0x0C, "tagInfo Disk32 index offset");
+static_assert(offsetof(tagInfoDisk32_s, axis) == 0x10, "tagInfo Disk32 axis offset");
+static_assert(offsetof(tagInfoDisk32_s, parentInvAxis) == 0x40, "tagInfo Disk32 parentInvAxis offset");
+
+constexpr int kTagInfoDisk32Bytes = sizeof(tagInfoDisk32_s);
+
+static tagInfoDisk32_s TagInfoToDisk32(const tagInfo_s &source)
+{
+  tagInfoDisk32_s disk{};
+  disk.parent = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(source.parent));
+  disk.next = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(source.next));
+  disk.name = source.name;
+  disk.index = source.index;
+  memcpy(disk.axis, source.axis, sizeof(disk.axis));
+  memcpy(disk.parentInvAxis, source.parentInvAxis, sizeof(disk.parentInvAxis));
+  return disk;
+}
+
+static void TagInfoFromDisk32(const tagInfoDisk32_s &disk, tagInfo_s &dest)
+{
+  dest = {};
+  dest.parent = reinterpret_cast<gentity_s *>(static_cast<uintptr_t>(disk.parent));
+  dest.next = reinterpret_cast<gentity_s *>(static_cast<uintptr_t>(disk.next));
+  dest.name = disk.name;
+  dest.index = disk.index;
+  memcpy(dest.axis, disk.axis, sizeof(dest.axis));
+  memcpy(dest.parentInvAxis, disk.parentInvAxis, sizeof(dest.parentInvAxis));
+}
 
 const saveField_t gclientFields[5] =
 {
@@ -820,16 +857,15 @@ void __cdecl WriteField2(const saveField_t *field, unsigned __int8 *base, SaveGa
         v11 = *(const void **)&base[ofs];
         if (!v11)
             return;
-        memcpy(v21, v11, kTagInfoDisk32Bytes);
-        v12 = SaveMemory_GetMemoryFile(save);
-        v13 = MemFile_GetUsedSize(v12);
-        //ProfMem_Begin("tagInfo", v13);
-        G_WriteStruct(
-            tagInfoFields,
-            *(unsigned __int8 **)&base[ofs],
-            v21,
-            kTagInfoDisk32Bytes,
-            save);
+        {
+            tagInfoDisk32_s disk = TagInfoToDisk32(*static_cast<const tagInfo_s *>(v11));
+            G_WriteStruct(
+                tagInfoFields,
+                reinterpret_cast<unsigned __int8 *>(const_cast<tagInfo_s *>(static_cast<const tagInfo_s *>(v11))),
+                reinterpret_cast<const unsigned __int8 *>(&disk),
+                kTagInfoDisk32Bytes,
+                save);
+        }
         goto LABEL_12;
     case SF_TYPE_SCRIPTED:
         v8 = *(const void **)&base[ofs];
@@ -1012,14 +1048,16 @@ void __cdecl ReadField(const saveField_t *field, unsigned __int8 *base, SaveGame
         if (*(unsigned int *)v7)
         {
             v25 = (unsigned __int8 *)MT_Alloc(
-                kTagInfoDisk32Bytes,
+                sizeof(tagInfo_s),
                 MT_TYPE_TAG_INFO);
             *(uintptr_t *)v7 = (uintptr_t)v25;
+            tagInfoDisk32_s disk{};
             G_ReadStruct(
                 tagInfoFields,
-                v25,
+                reinterpret_cast<unsigned __int8 *>(&disk),
                 kTagInfoDisk32Bytes,
                 save);
+            TagInfoFromDisk32(disk, *reinterpret_cast<tagInfo_s *>(v25));
         }
         break;
     case SF_TYPE_SCRIPTED:
