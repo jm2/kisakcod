@@ -2945,3 +2945,40 @@ set_target_properties(
 add_test(
     NAME xmodel-load-bounded-cursor
     COMMAND kisakcod-xmodel-load-tests)
+
+# fuzz_fastfile: production-path fast-file fuzz harness. Exercises the
+# bounded BufCursor read path that backs every retail fast-file loader
+# (xasset families: xmodel, xanim, fx archive body state). The harness
+# links only against the bounded read primitives (no FS_ReadFile, no
+# Hunk, no Com_PrintError) so it stays available on every build target
+# and feeds attacker-controlled bytes into the bounded read contract.
+# CTest entries match 'fuzz|fastfile' so the named-regex filter in the
+# bead's build/test commands resolves correctly.
+add_executable(fuzz_fastfile
+    fuzz_fastfile.cpp
+    ${SRC_DIR}/xanim/buf_cursor.cpp)
+target_include_directories(fuzz_fastfile PRIVATE ${SRC_DIR})
+target_compile_features(fuzz_fastfile PRIVATE cxx_std_20)
+kisakcod_test_warnings(fuzz_fastfile)
+set_target_properties(
+    fuzz_fastfile PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME fuzz-fastfile-cursor
+    COMMAND fuzz_fastfile seeds)
+# Seed the corpus into the build dir at build time so the corpus test
+# is hermetic and doesn't depend on a hand-maintained source tree.
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds/xmodel_pieces_valid.bin
+    COMMAND fuzz_fastfile genseeds
+        ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds
+    DEPENDS fuzz_fastfile
+    COMMENT "fuzz_fastfile: generating bounded seed corpus")
+add_custom_target(fuzz_fastfile_corpus_seeds DEPENDS
+    ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds/xmodel_pieces_valid.bin)
+add_dependencies(fuzz_fastfile_corpus_seeds fuzz_fastfile)
+add_test(
+    NAME fuzz-fastfile-corpus
+    COMMAND fuzz_fastfile corpus ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds)
+set_tests_properties(fuzz-fastfile-corpus PROPERTIES
+    FIXTURES_REQUIRED fuzz_fastfile_corpus_seeds)
