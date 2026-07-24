@@ -53,8 +53,11 @@ bool TryGetActiveBinding(
         return false;
     if (!binding.workspace->readyForCompositionAuthentication())
         return false;
-    if (!binding.arena->bound())
+    if (!binding.arena->bound()
+        || !binding.arena->readyForCompositionAuthentication())
+    {
         return false;
+    }
     if (outWorkspace)
         *outWorkspace = binding.workspace;
     if (outArena)
@@ -116,6 +119,49 @@ void ResetActiveFxZoneAdapterBindingProbe() noexcept
     binding.workspace = nullptr;
     binding.arena = nullptr;
     binding.probeActive = false;
+}
+
+bool TryEnrollActiveFxZoneAdapterBinding(
+    fx::fastfile::FxFastFileZoneAdapterDisk32Workspace *const workspace,
+    fx::fastfile::FxFastFileNativeArena *const arena) noexcept
+{
+    if (!workspace || !arena
+        || !workspace->readyForCompositionAuthentication()
+        || !arena->bound()
+        || !arena->readyForCompositionAuthentication())
+    {
+        return false;
+    }
+
+    ActiveBinding &binding = MutableActiveBinding();
+    if (binding.probeActive)
+    {
+        return binding.workspace == workspace && binding.arena == arena;
+    }
+    if (binding.workspace || binding.arena)
+        return false;
+
+    binding.workspace = workspace;
+    binding.arena = arena;
+    binding.probeActive = true;
+    return true;
+}
+
+bool TryClearActiveFxZoneAdapterBinding(
+    const fx::fastfile::FxFastFileZoneAdapterDisk32Workspace *const workspace,
+    const fx::fastfile::FxFastFileNativeArena *const arena) noexcept
+{
+    ActiveBinding &binding = MutableActiveBinding();
+    if (!binding.probeActive || binding.workspace != workspace
+        || binding.arena != arena)
+    {
+        return false;
+    }
+
+    binding.workspace = nullptr;
+    binding.arena = nullptr;
+    binding.probeActive = false;
+    return true;
 }
 
 FxImpactTable *

@@ -1,4 +1,5 @@
 #include <database/db_zone_runtime_table.h>
+#include <database/db_fx_zone_adapter_wiring.h>
 #include <database/db_zone_memory.h>
 #include <database/db_zone_runtime_storage_fx_bridge.h>
 
@@ -2327,9 +2328,29 @@ ZoneRuntimeTable::PerformBoundGenerationCleanup(
                 ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Success;
         }
-        return mapInternal(MapStorageStatus(
-            zone_runtime_storage::TryDestroyZoneRuntimeStorage(
-                &entry->receiptCapsule_.storageBinding_)));
+        auto &storage = entry->receiptCapsule_.storageBinding_;
+        auto *const workspace = storage.fxZoneAdapterWorkspace();
+        auto *const arena = storage.fxNativeArena();
+        if (!workspace || !arena
+            || !fx_zone_adapter_wiring::TryClearActiveFxZoneAdapterBinding(
+                workspace, arena))
+        {
+            return failClosed();
+        }
+
+        const auto storageStatus =
+            zone_runtime_storage::TryDestroyZoneRuntimeStorage(&storage);
+        if (storageStatus == zone_runtime_storage::ZoneRuntimeStorageStatus::Busy
+            || storageStatus
+                == zone_runtime_storage::ZoneRuntimeStorageStatus::InvalidPhase)
+        {
+            if (!fx_zone_adapter_wiring::TryEnrollActiveFxZoneAdapterBinding(
+                    workspace, arena))
+            {
+                return failClosed();
+            }
+        }
+        return mapInternal(MapStorageStatus(storageStatus));
     }
     case zone_load::ZoneLoadCleanupOperation::
         EndPhysicalMemoryAllocation:
@@ -4267,8 +4288,9 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStorage(
     }
 
     auto *const arena = storage.fxNativeArena();
+    auto *const workspace = storage.fxZoneAdapterWorkspace();
     const auto *const retainedPlan = storage.plan();
-    if (!arena || !retainedPlan)
+    if (!arena || !workspace || !retainedPlan)
     {
         table->poison();
         return ZoneRuntimeTableStatus::UnsafeFailure;
@@ -4325,6 +4347,19 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeStorage(
         new (&storage) zone_runtime_storage::ZoneRuntimeStorageBinding{};
         return table->completeCompositeOperation(
             physicalSlot, keySnapshot, status);
+    }
+
+    if (!zone_runtime_storage::detail::AuthenticateStableFxRuntimeStorage(
+            arena,
+            workspace,
+            storage.fxArenaBacking(),
+            retainedPlan->arenaBudget,
+            keySnapshot.generation)
+        || !fx_zone_adapter_wiring::TryEnrollActiveFxZoneAdapterBinding(
+            workspace, arena))
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
     }
 
     ZoneRuntimeTable::retainGenerationPlacement(

@@ -23,6 +23,14 @@ TryGetActiveFxZoneAdapterArena() noexcept;
 
 void ResetActiveFxZoneAdapterBindingProbe() noexcept;
 
+[[nodiscard]] bool TryEnrollActiveFxZoneAdapterBinding(
+    fx::fastfile::FxFastFileZoneAdapterDisk32Workspace *workspace,
+    fx::fastfile::FxFastFileNativeArena *arena) noexcept;
+
+[[nodiscard]] bool TryClearActiveFxZoneAdapterBinding(
+    const fx::fastfile::FxFastFileZoneAdapterDisk32Workspace *workspace,
+    const fx::fastfile::FxFastFileNativeArena *arena) noexcept;
+
 [[nodiscard]] FxImpactTable *
 TryWireImpactTableThroughActiveFxZoneAdapter(
     bool atStreamStart,

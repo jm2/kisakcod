@@ -709,6 +709,7 @@ add_executable(kisakcod-db-zone-runtime-table-tests
     db_zone_runtime_table_tests.cpp
     ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
     ${SRC_DIR}/database/db_zone_runtime_table.cpp
+    ${SRC_DIR}/database/db_fx_zone_adapter_wiring.cpp
     ${SRC_DIR}/database/db_zone_runtime_storage.cpp
     ${SRC_DIR}/database/db_zone_stream_ownership.cpp
     ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
@@ -898,6 +899,7 @@ add_executable(kisakcod-db-zone-runtime-stable-context-integration-tests
     ${SRC_DIR}/database/db_zone_runtime_facade.cpp
     ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
     ${SRC_DIR}/database/db_zone_runtime_table.cpp
+    ${SRC_DIR}/database/db_fx_zone_adapter_wiring.cpp
     ${SRC_DIR}/database/db_zone_runtime_storage.cpp
     ${SRC_DIR}/database/db_zone_stream_ownership.cpp
     ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
@@ -1009,6 +1011,7 @@ add_executable(kisakcod-db-load-legacy-bridge-tests
     ${SRC_DIR}/database/db_zone_runtime_facade.cpp
     ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
     ${SRC_DIR}/database/db_zone_runtime_table.cpp
+    ${SRC_DIR}/database/db_fx_zone_adapter_wiring.cpp
     ${SRC_DIR}/database/db_zone_runtime_storage.cpp
     ${SRC_DIR}/database/db_zone_stream_ownership.cpp
     ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp

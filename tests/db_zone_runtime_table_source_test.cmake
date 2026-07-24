@@ -1245,8 +1245,8 @@ require_ordered(
     "const zone_load::ZoneLoadContextKey keySnapshot = key;"
     "callback-bank separation precedes caller-key snapshot")
 require_substring_count(
-    _storage_bind_adapter "keySnapshot" 7
-    "one pre-placement key snapshot and six exclusive downstream uses")
+    _storage_bind_adapter "keySnapshot" 8
+    "one pre-placement key snapshot and seven exclusive downstream uses")
 extract_slice(
     _source
     "const zone_load::ZoneLoadContextKey keySnapshot = key;"
@@ -3871,6 +3871,7 @@ string(CONCAT _expected_stable_integration_source_registration
     "\${SRC_DIR}/database/db_zone_runtime_facade.cpp "
     "\${SRC_DIR}/database/db_zone_runtime_callback_context.cpp "
     "\${SRC_DIR}/database/db_zone_runtime_table.cpp "
+    "\${SRC_DIR}/database/db_fx_zone_adapter_wiring.cpp "
     "\${SRC_DIR}/database/db_zone_runtime_storage.cpp "
     "\${SRC_DIR}/database/db_zone_stream_ownership.cpp "
     "\${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp "

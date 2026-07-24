@@ -1595,14 +1595,14 @@ foreach(_marker IN ITEMS
         "macro-off stable facade source closure")
 endforeach()
 require_substring_count(
-    _stable_integration_registration "\${SRC_DIR}/" 19
+    _stable_integration_registration "\${SRC_DIR}/" 20
     "exact stable integration production source closure")
 require_substring_count(
     _stable_integration_registration "$<TARGET_OBJECTS:" 4
     "exact stable integration object-source closure")
 require_substring_count(
-    _stable_integration_registration ".cpp" 20
-    "one fixture plus nineteen exact production translation units")
+    _stable_integration_registration ".cpp" 21
+    "one fixture plus twenty exact production translation units")
 require_substring_count(
     _stable_integration_registration "target_compile_definitions(" 1
     "one stable integration compile-definition block")
