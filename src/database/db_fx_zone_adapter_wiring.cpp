@@ -171,7 +171,10 @@ TryWireImpactTableThroughActiveFxZoneAdapter(
         fx::fastfile::TryPublishFxImpactTableZoneDisk32(
             workspace, publication, &published);
     if (publishStatus != Status::Success)
+    {
+        (void)fx::fastfile::AbortFxFastFileZoneAdapterDisk32(workspace);
         return nullptr;
+    }
     return published;
 }
 
@@ -228,7 +231,10 @@ TryWireEffectDefThroughActiveFxZoneAdapter(
         fx::fastfile::TryPublishFxEffectDefZoneDisk32(
             workspace, publication, &published);
     if (publishStatus != Status::Success)
+    {
+        (void)fx::fastfile::AbortFxFastFileZoneAdapterDisk32(workspace);
         return nullptr;
+    }
     return published;
 }
 
