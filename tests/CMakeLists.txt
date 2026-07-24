@@ -3068,3 +3068,22 @@ add_test(
     COMMAND fuzz_fastfile corpus ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds)
 set_tests_properties(fuzz-fastfile-corpus PROPERTIES
     FIXTURES_REQUIRED fuzz_fastfile_corpus_seeds)
+
+# tagInfo_s <-> tagInfoDisk32_s save-record converter. The header is header
+# only so the test compiles standalone against the production wire image;
+# g_save.cpp pulls in the heavier game dependency tree and is built for the
+# SP target only.
+add_executable(save_taginfo_test
+    save_taginfo_tests.cpp
+)
+target_include_directories(save_taginfo_test PRIVATE ${SRC_DIR})
+target_compile_features(save_taginfo_test PRIVATE cxx_std_20)
+kisakcod_test_warnings(save_taginfo_test)
+set_target_properties(save_taginfo_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME save-taginfo-disk32-converter
+    COMMAND save_taginfo_test
+)
+set_tests_properties(save-taginfo-disk32-converter PROPERTIES TIMEOUT 10)

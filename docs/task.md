@@ -245,7 +245,7 @@ of checked boxes.
   transactional cursors.
 - [ ] Complete the remaining runtime ABI widening, production-path fuzzing, and
   loader/writer/save-side work that gates the first native 64-bit engine.
-  - [ ] Add a Disk32/native converter for the pointer-bearing 112-byte
+  - [x] Add a Disk32/native converter for the pointer-bearing 112-byte
     `tagInfo_s` save record before enabling native64 SP; `g_save.cpp` now fails
     compilation rather than treating the host layout as the retail wire image.
 ### Milestone exit criteria
