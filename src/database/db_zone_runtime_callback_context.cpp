@@ -61,6 +61,29 @@ constinit std::array<
         && next == ZoneRuntimeCallbackContextPhase::Terminal;
 }
 
+[[nodiscard]] pmem_runtime::StorageIsolationStatus
+ClassifyStorageIsolationFromOverlap(
+    const void *const storage,
+    const std::size_t size) noexcept
+{
+    const pmem_runtime::StorageIsolationStatus overlap =
+        pmem_runtime::TryClassifyProtectedStorageOverlap(storage, size);
+    switch (overlap)
+    {
+    case pmem_runtime::StorageIsolationStatus::ProtectedStorageOverlap:
+        return pmem_runtime::StorageIsolationStatus::Success;
+    case pmem_runtime::StorageIsolationStatus::Success:
+        return pmem_runtime::StorageIsolationStatus::ProtectedStorageOverlap;
+    case pmem_runtime::StorageIsolationStatus::Uninitialized:
+    case pmem_runtime::StorageIsolationStatus::Busy:
+    case pmem_runtime::StorageIsolationStatus::Poisoned:
+    case pmem_runtime::StorageIsolationStatus::InvalidArgument:
+    case pmem_runtime::StorageIsolationStatus::CorruptState:
+    default:
+        return overlap;
+    }
+}
+
 [[nodiscard]] ZoneRuntimeCallbackContextStatus MapExactStorageStatus(
     const pmem_runtime::StorageIsolationStatus status) noexcept
 {
@@ -217,8 +240,7 @@ ZoneRuntimeCallbackContextOwner::TryClassifyStorage(
         return pmem_runtime::StorageIsolationStatus::InvalidArgument;
     const ZoneRuntimeCallbackContext *const exact =
         &ContextStore()[exactIndex];
-    return pmem_runtime::TryClassifyStorageIsolation(
-        exact, sizeof(*exact));
+    return ClassifyStorageIsolationFromOverlap(exact, sizeof(*exact));
 }
 
 ZoneRuntimeCallbackContextBindResult
@@ -608,7 +630,7 @@ ZoneRuntimeCallbackContextOwner::TryAuthenticateStore() noexcept
     if (firstStatus != ZoneRuntimeCallbackContextStatus::Success)
         return firstStatus;
     const ZoneRuntimeCallbackContextStatus storageStatus =
-        MapExactStorageStatus(pmem_runtime::TryClassifyStorageIsolation(
+        MapExactStorageStatus(ClassifyStorageIsolationFromOverlap(
             store.data(), sizeof(store)));
     if (storageStatus != ZoneRuntimeCallbackContextStatus::Success)
         return storageStatus;

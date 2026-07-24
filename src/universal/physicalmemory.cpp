@@ -1914,6 +1914,66 @@ pmem_runtime::TryCaptureDiagnosticSnapshot() noexcept
 }
 
 pmem_runtime::StorageIsolationStatus KISAK_CDECL
+pmem_runtime::TryClassifyProtectedStorageOverlap(
+    const void *const storage,
+    const std::size_t size) noexcept
+{
+    StorageIsolationStatus status = StorageIsolationStatus::CorruptState;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+
+    const RuntimeReadiness readiness = GetRuntimeReadiness();
+    const InitializationPhase phase = g_runtime.phase;
+    if (readiness != RuntimeReadiness::Corrupt)
+    {
+        if (!AddressRangeIsValid(storage, size))
+        {
+            status = StorageIsolationStatus::InvalidArgument;
+        }
+        else if (!StorageIsDisjointFromFixedControlsNoLock(storage, size))
+        {
+            status = phase == InitializationPhase::Ready
+                ? StorageIsolationStatus::Success
+                : StorageIsolationStatus::ProtectedStorageOverlap;
+        }
+        else
+        {
+            switch (phase)
+            {
+            case InitializationPhase::Uninitialized:
+                status = StorageIsolationStatus::Uninitialized;
+                break;
+            case InitializationPhase::Initializing:
+                status = StorageIsolationStatus::Busy;
+                break;
+            case InitializationPhase::Ready:
+                status = StorageIsOutsideManagedMemoryReadyNoLock(
+                             storage, size)
+                    ? StorageIsolationStatus::ProtectedStorageOverlap
+                    : StorageIsolationStatus::Success;
+                break;
+            case InitializationPhase::Poisoned:
+                status = AddressRangesOverlap(
+                             storage, size,
+                             g_runtime.extent.base,
+                             g_runtime.extent.size)
+                    ? StorageIsolationStatus::ProtectedStorageOverlap
+                    : StorageIsolationStatus::Poisoned;
+                break;
+            }
+        }
+
+        if (phase == InitializationPhase::Ready
+            && !ReadyStateIsCoherent())
+        {
+            status = StorageIsolationStatus::CorruptState;
+        }
+    }
+
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return status;
+}
+
+pmem_runtime::StorageIsolationStatus KISAK_CDECL
 pmem_runtime::TryClassifyStorageIsolation(
     const void *const storage,
     const std::size_t size) noexcept

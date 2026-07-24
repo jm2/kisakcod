@@ -209,7 +209,7 @@ foreach(_marker IN ITEMS
     "physicalSlot_ != exactStoreIndex"
     "exactStoreIndex == zone_slots::kDefaultZoneSlot"
     "pointerAlignmentPadding_[0] != 0"
-    "return pmem_runtime::TryClassifyStorageIsolation( exact, sizeof(*exact));"
+    "return ClassifyStorageIsolationFromOverlap(exact, sizeof(*exact));"
     "case pmem_runtime::StorageIsolationStatus::InvalidArgument: case pmem_runtime::StorageIsolationStatus::ProtectedStorageOverlap:"
     "return ZoneRuntimeCallbackContextStatus::UnsafeFailure;"
     "ZoneRuntimeCallbackContextOwner::TryResolve("
@@ -222,7 +222,7 @@ endforeach()
 require_ordered(
     _source
     "store[slot].initialize(slot);"
-    "return pmem_runtime::TryClassifyStorageIsolation( exact, sizeof(*exact));"
+    "return ClassifyStorageIsolationFromOverlap(exact, sizeof(*exact));"
     "all 33 contexts initialize before PMem classification")
 require_ordered(
     _source
@@ -414,7 +414,7 @@ extract_slice(
     "all-member store authentication body")
 foreach(_marker IN ITEMS
     "MapExactStorageStatus(TryClassifyStorage(&store[0]))"
-    "pmem_runtime::TryClassifyStorageIsolation( store.data(), sizeof(store))"
+    "ClassifyStorageIsolationFromOverlap( store.data(), sizeof(store))"
     "for (std::size_t index = 0; index < store.size(); ++index)"
     "!store[index].canonical(index)"
     "return ZoneRuntimeCallbackContextStatus::Success;")

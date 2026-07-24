@@ -170,6 +170,16 @@ RUNTIME_OFFSET(DiagnosticSnapshot, reserved, 0x60D, 0x60D);
 [[nodiscard]] DiagnosticSnapshot KISAK_CDECL
 TryCaptureDiagnosticSnapshot() noexcept;
 
+// Authenticates the complete current runtime phase, then classifies whether one
+// nonempty caller-supplied range overlaps protected PMem storage. Success means
+// the runtime is coherently Ready and the range overlaps either its retained
+// extent or fixed hidden control storage. Uninitialized and Busy preserve the
+// distinction between no published extent and an unpublished candidate.
+[[nodiscard]] StorageIsolationStatus KISAK_CDECL
+TryClassifyProtectedStorageOverlap(
+    const void *storage,
+    std::size_t size) noexcept;
+
 // Authenticates the complete current runtime phase, then classifies one
 // nonempty caller-supplied range. Success means the coherent Ready runtime's
 // retained extent and every fixed hidden control object are disjoint from the

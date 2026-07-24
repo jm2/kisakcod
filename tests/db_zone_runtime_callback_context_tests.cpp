@@ -643,14 +643,27 @@ void TestPrivateRepresentationAndStoreIndexFailClosed()
 
 namespace pmem_runtime
 {
-StorageIsolationStatus KISAK_CDECL TryClassifyStorageIsolation(
+StorageIsolationStatus KISAK_CDECL TryClassifyProtectedStorageOverlap(
     const void *const storage,
     const std::size_t size) noexcept
 {
     g_lastIsolationStorage = storage;
     g_lastIsolationSize = size;
     ++g_isolationCalls;
-    return g_isolationStatus;
+    switch (g_isolationStatus)
+    {
+    case StorageIsolationStatus::Success:
+        return StorageIsolationStatus::ProtectedStorageOverlap;
+    case StorageIsolationStatus::ProtectedStorageOverlap:
+        return StorageIsolationStatus::Success;
+    case StorageIsolationStatus::Uninitialized:
+    case StorageIsolationStatus::Busy:
+    case StorageIsolationStatus::Poisoned:
+    case StorageIsolationStatus::InvalidArgument:
+    case StorageIsolationStatus::CorruptState:
+    default:
+        return g_isolationStatus;
+    }
 }
 } // namespace pmem_runtime
 

@@ -487,6 +487,61 @@ void CheckStorageIsolation(
     CHECK(CaptureReportCounts() == reportsBefore);
 }
 
+void CheckProtectedStorageOverlap(
+    const void *const storage,
+    const std::size_t size,
+    const StorageIsolationStatus expected)
+{
+    const StateAccess::Snapshot before = StateAccess::Capture();
+    const std::array<int, 6> reportsBefore = CaptureReportCounts();
+    const int reentryBefore =
+        g_reentryViolations.load(std::memory_order_relaxed);
+    const int enterBefore = g_enterCalls.load(std::memory_order_relaxed);
+    const int leaveBefore = g_leaveCalls.load(std::memory_order_relaxed);
+    CHECK(pmem_runtime::TryClassifyProtectedStorageOverlap(storage, size)
+        == expected);
+    CHECK(g_enterCalls.load(std::memory_order_relaxed) == enterBefore + 1);
+    CHECK(g_leaveCalls.load(std::memory_order_relaxed) == leaveBefore + 1);
+    CHECK(g_lockDepth == 0);
+    CHECK(g_reentryViolations.load(std::memory_order_relaxed)
+        == reentryBefore);
+    CHECK(SameSnapshot(StateAccess::Capture(), before));
+    CHECK(CaptureReportCounts() == reportsBefore);
+}
+
+void TestProtectedStorageOverlapClassification()
+{
+    std::uint32_t callerStorage = 0;
+    ResetRuntime();
+    CheckProtectedStorageOverlap(
+        &callerStorage, sizeof(callerStorage),
+        StorageIsolationStatus::Uninitialized);
+    CheckProtectedStorageOverlap(
+        nullptr, 1, StorageIsolationStatus::InvalidArgument);
+
+    InitializeReady();
+    CheckProtectedStorageOverlap(
+        &callerStorage, sizeof(callerStorage),
+        StorageIsolationStatus::ProtectedStorageOverlap);
+    CheckProtectedStorageOverlap(
+        ExpectedBase(), 1, StorageIsolationStatus::Success);
+    CheckProtectedStorageOverlap(
+        TestAddress(StateAccess::PhysicalMemoryAddress()), 1,
+        StorageIsolationStatus::Success);
+
+    ResetRuntime();
+    g_commitSucceeds.store(false, std::memory_order_relaxed);
+    g_releaseSucceeds.store(false, std::memory_order_relaxed);
+    CHECK(pmem_runtime::TryInitialize()
+        == InitializationStatus::ReleaseFailed);
+    CheckProtectedStorageOverlap(
+        &callerStorage, sizeof(callerStorage),
+        StorageIsolationStatus::Poisoned);
+    CheckProtectedStorageOverlap(
+        ExpectedBase(), 1,
+        StorageIsolationStatus::ProtectedStorageOverlap);
+}
+
 void TestStorageIsolationClassification()
 {
     std::uint32_t callerStorage = 0;
@@ -2919,6 +2974,7 @@ int main()
     TestResultLayoutAndDefaults();
     TestInitFailuresRetryAndDoubleInit();
     TestConcurrentAndReentrantInit();
+    TestProtectedStorageOverlapClassification();
     TestStorageIsolationClassification();
     TestInitCorruptionOwnershipExits();
     TestInitPhysicalMemoryFailureAtomicity();
