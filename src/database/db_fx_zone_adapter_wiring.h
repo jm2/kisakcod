@@ -36,4 +36,20 @@ TryWireEffectDefThroughActiveFxZoneAdapter(
     std::uint64_t wireFxEffectDefDisk32Bytes) noexcept;
 
 [[nodiscard]] bool TryAbortActiveFxZoneAdapterTransaction() noexcept;
+
+#ifdef KISAK_DB_FX_ZONE_ADAPTER_WIRING_TESTING
+// Test-only injection seam. Production callers have no path through this
+// boundary; the wiring module's active binding is normally populated by the
+// zone runtime-table controller after a successful bound-storage receipt. The
+// test hook mirrors that receipt without crossing the runtime-table thread
+// safety contract.
+struct FxZoneAdapterWiringTestAccess final
+{
+    static void SetActiveBindingForTesting(
+        fx::fastfile::FxFastFileZoneAdapterDisk32Workspace *workspace,
+        fx::fastfile::FxFastFileNativeArena *arena) noexcept;
+
+    static void ClearActiveBindingForTesting() noexcept;
+};
+#endif
 }
