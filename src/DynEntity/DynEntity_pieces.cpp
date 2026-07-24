@@ -2,6 +2,7 @@
 #include <win32/win_local.h>
 #include <gfx_d3d/r_dpvs.h>
 #include <universal/profile.h>
+#include <universal/phys_obj_id.h>
 
 #include <cmath>
 #include <cstdlib>
@@ -135,15 +136,21 @@ void __cdecl DynEntPieces_AddDrawSurfs()
     {
         if (g_breakablePieces[i].active)
         {
-            Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-            Phys_ObjGetInterpolatedState(
-                PHYS_WORLD_FX,
-                (dxBody *)g_breakablePieces[i].physObjId,
-                placement.base.origin,
-                placement.base.quat);
-            placement.scale = 1.0;
-            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-            R_FilterXModelIntoScene(g_breakablePieces[i].model, &placement, 0, &g_breakablePieces[i].lightingHandle);
+            dxBody *const physObjIdBody = phys_obj_id::ReadResolve<dxBody>(
+                g_breakablePieceBodySidecar,
+                g_breakablePieces[i].physObjId);
+            if (physObjIdBody)
+            {
+                Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                Phys_ObjGetInterpolatedState(
+                    PHYS_WORLD_FX,
+                    physObjIdBody,
+                    placement.base.origin,
+                    placement.base.quat);
+                placement.scale = 1.0;
+                Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                R_FilterXModelIntoScene(g_breakablePieces[i].model, &placement, 0, &g_breakablePieces[i].lightingHandle);
+            }
         }
     }
 }
@@ -311,7 +318,21 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
         physObjId = spawnResult.body;
         if (spawnResult.status == PhysBodyModelCreateStatus::Success)
         {
-            g_breakablePieces[numPieces].physObjId = (int32_t)(uintptr_t)physObjId;
+            const phys_obj_id::OwnerIndex owner = static_cast<phys_obj_id::OwnerIndex>(numPieces);
+            const phys_obj_id::TokenResult bind = phys_obj_id::BodySidecar<kBreakablePieceBodySidecarCapacity>::Bind(
+                g_breakablePieceBodySidecar,
+                owner,
+                physObjId);
+            if (bind.status != phys_obj_id::Status::Success)
+            {
+                // The slot is guaranteed vacant: the array is walked
+                // strictly forward and numPieces is the bound on the
+                // highest index. A failed bind is a programming error;
+                // leave the slot inactive and let the engine drain the
+                // body on shutdown.
+                return false;
+            }
+            g_breakablePieces[numPieces].physObjId = bind.token;
             g_breakablePieces[numPieces].model = model;
             result = 1;
             g_breakablePieces[numPieces].lightingHandle = 0;

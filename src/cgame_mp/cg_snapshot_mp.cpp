@@ -15,6 +15,7 @@
 #include <aim_assist/aim_assist.h>
 #include <universal/profile.h>
 #include <cgame/cg_pose_atomic.h>
+#include <cgame/cg_phys_obj_id.h>
 
 void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
 {
@@ -34,17 +35,16 @@ void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
         cent->currentState.pos.trType = TR_STATIONARY;
         cent->currentState.apos.trType = TR_STATIONARY;
     }
-    if (cent->pose.physObjId && cent->pose.physObjId != -1 || cent->currentState.pos.trType == TR_PHYSICS)
+    if (CG_CPosePhysObjId_GetBody(cent) || cent->currentState.pos.trType == TR_PHYSICS)
     {
-        if (cent->pose.physObjId != -1 && cent->pose.physObjId)
+        if (dxBody *const physObjIdBody = CG_CPosePhysObjId_TakeBody(cent))
         {
             if (CG_IsEntityLinked(localClientNum, cent->nextState.number))
                 CG_UnlinkEntity(localClientNum, cent->nextState.number);
-            Phys_ObjDestroy(PHYS_WORLD_FX, (dxBody *)cent->pose.physObjId);
+            Phys_ObjDestroy(PHYS_WORLD_FX, physObjIdBody);
         }
         cent->currentState.pos.trType = TR_STATIONARY;
         cent->currentState.apos.trType = TR_STATIONARY;
-        cent->pose.physObjId = 0;
     }
 }
 
