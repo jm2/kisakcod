@@ -191,6 +191,40 @@ void TestUnboundArenaLeavesProbeInactive()
     FxZoneAdapterWiringTestAccess::ClearActiveBindingForTesting();
 }
 
+void TestProductionEnrollmentAndExactClear()
+{
+    using namespace db::fx_zone_adapter_wiring;
+
+    ArenaBinding firstArenaBinding;
+    ArenaBinding secondArenaBinding;
+    WorkspaceBinding firstWorkspaceBinding;
+    WorkspaceBinding secondWorkspaceBinding;
+    firstArenaBinding.Bind();
+    secondArenaBinding.Bind();
+
+    CHECK(TryEnrollActiveFxZoneAdapterBinding(
+        &firstWorkspaceBinding.workspace, &firstArenaBinding.arena));
+    CHECK(IsFxZoneAdapterBindingActive());
+    CHECK(TryGetActiveFxZoneAdapterWorkspace()
+          == &firstWorkspaceBinding.workspace);
+    CHECK(TryGetActiveFxZoneAdapterArena() == &firstArenaBinding.arena);
+    CHECK(TryEnrollActiveFxZoneAdapterBinding(
+        &firstWorkspaceBinding.workspace, &firstArenaBinding.arena));
+    CHECK(!TryEnrollActiveFxZoneAdapterBinding(
+        &secondWorkspaceBinding.workspace, &secondArenaBinding.arena));
+    CHECK(!TryClearActiveFxZoneAdapterBinding(
+        &secondWorkspaceBinding.workspace, &firstArenaBinding.arena));
+    CHECK(IsFxZoneAdapterBindingActive());
+    CHECK(TryClearActiveFxZoneAdapterBinding(
+        &firstWorkspaceBinding.workspace, &firstArenaBinding.arena));
+    CHECK(!IsFxZoneAdapterBindingActive());
+    CHECK(!TryClearActiveFxZoneAdapterBinding(
+        &firstWorkspaceBinding.workspace, &firstArenaBinding.arena));
+
+    firstArenaBinding.Unbind();
+    secondArenaBinding.Unbind();
+}
+
 void TestResetClearsProbe()
 {
     using namespace db::fx_zone_adapter_wiring;
@@ -220,6 +254,7 @@ int main()
     TestShortBytesReturnsNull();
     TestInvalidHeaderTokensFailClosed();
     TestUnboundArenaLeavesProbeInactive();
+    TestProductionEnrollmentAndExactClear();
     TestResetClearsProbe();
 
     if (failures != 0)
