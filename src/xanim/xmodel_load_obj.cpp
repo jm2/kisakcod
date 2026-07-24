@@ -10,6 +10,7 @@
 #endif
 #include "xanim.h"
 #include <physics/phys_local.h>
+#include <xanim/buf_cursor.h>
 
 XModelDefault g_default;
 Material *g_materials[1];
@@ -944,6 +945,8 @@ XModelSurfs *__cdecl R_XModelSurfsLoadFile(
     iassert(buf);
 
     pos = buf;
+    buf_cursor::Activate(buf, fileSize);
+    buf_cursor::AnchorPos(&pos);
     short version = Buf_Read<short>(&pos);
 
     if (version == 25)
@@ -957,6 +960,7 @@ XModelSurfs *__cdecl R_XModelSurfsLoadFile(
             model->memUsage += size;
             modelSurfs->surfs = (XSurface*)&modelSurfs[1];
             XModelReadSurfaces(model, name, modelSurfs, modelSurfs->partBits, modelNumsurfs, &pos, Alloc);
+            buf_cursor::Deactivate();
             FS_FreeFile((char*)buf);
 
             iassert(modelSurfs);
@@ -964,6 +968,7 @@ XModelSurfs *__cdecl R_XModelSurfsLoadFile(
         }
         else
         {
+            buf_cursor::Deactivate();
             FS_FreeFile((char*)buf);
             Com_PrintError(
                 19,
@@ -976,10 +981,12 @@ XModelSurfs *__cdecl R_XModelSurfsLoadFile(
     }
     else
     {
-        FS_FreeFile((char*)buf);
+        buf_cursor::Deactivate();
+        FS_FreeFile((char *)buf);
         Com_PrintError(19, "ERROR: xmodelsurfs '%s' out of date (version %d, expecting %d).\n", name, version, 25);
         return 0;
     }
+}
 }
 
 void __cdecl XModelSurfsSetData(const char *name, XModelSurfs *modelSurfs, void *(__cdecl *Alloc)(int))
@@ -1125,30 +1132,21 @@ char __cdecl XModelLoadConfigFile(const char *name, unsigned __int8 **pos, XMode
     config->maxs[1] = Buf_Read<float>(pos);
     config->maxs[2] = Buf_Read<float>(pos);
 
-    char *str = (char *)*pos;
-    char *out = config->physicsPresetFilename;
-
-    char c;
-    do
+    if (!buf_cursor::ReadString(config->physicsPresetFilename, sizeof(config->physicsPresetFilename)))
     {
-        c = *str;
-        *out++ = *str++;
-    } while (c);
-    *pos += strlen((const char *)*pos) + 1;
+        Com_PrintError(19, "ERROR: xmodel '%s' has malformed physics preset filename\n", name);
+        return 0;
+    }
 
     for (int i = 0; i < 4; i++)
     {
         config->entries[i].dist = Buf_Read<float>(pos);
 
-        char *name = (char*)*pos;
-        char *entryfilename = config->entries[i].filename;
-
-        do
+        if (!buf_cursor::ReadString(config->entries[i].filename, sizeof(config->entries[i].filename)))
         {
-            c = *name;
-            *entryfilename++ = *name++;
-        } while (c);
-        *pos += strlen((const char *)*pos) + 1;
+            Com_PrintError(19, "ERROR: xmodel '%s' has malformed lod entry filename\n", name);
+            return 0;
+        }
     }
 
     config->collLod = Buf_Read<int>(pos);
@@ -1285,6 +1283,8 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
     }
 
     pos = (unsigned __int8 *)buf;
+    buf_cursor::Activate(buf, filelen);
+    buf_cursor::AnchorPos(&pos);
     if (!XModelLoadConfigFile(name, &pos, &config))
         goto LABEL_28;
 
@@ -1308,8 +1308,15 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
             numsurfs += modelLodInfo->numsurfs;
             for (j = 0; j < modelLodInfo->numsurfs; ++j)
             {
-                v40 = (const char *)pos;
-                pos += strlen((const char *)pos) + 1;
+                char surfName[128];
+                if (!buf_cursor::ReadString(surfName, sizeof(surfName)))
+                {
+                    buf_cursor::Deactivate();
+                    FS_FreeFile((char *)buf);
+                    Com_PrintError(19, "ERROR: xmodel '%s' has malformed surface name\n", name);
+                    return 0;
+                }
+                v40 = surfName;
             }
         }
         modelLodInfo->dist = (config.entries[i].dist == 0.0f) ? 1000000.0f : config.entries[i].dist;
@@ -1357,7 +1364,7 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
                 modelLodInfo = &model->lodInfo[i];
                 if (config.entries[i].filename[0])
                 {
-                    pos += 2;
+                    buf_cursor::Advance(2);
                     if (!XModelSurfsPrecache(model, config.entries[i].filename, Alloc, modelLodInfo->numsurfs, name, &outModelSurfs))
                         goto LABEL_28;
                     partBits = modelLodInfo->partBits;
@@ -1372,8 +1379,15 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
 
                     for (j = 0; j < modelLodInfo->numsurfs; ++j)
                     {
-                        v40 = (const char *)pos;
-                        pos += strlen((const char *)pos) + 1;
+                        char materialSurfName[128];
+                        if (!buf_cursor::ReadString(materialSurfName, sizeof(materialSurfName)))
+                        {
+                            buf_cursor::Deactivate();
+                            FS_FreeFile((char *)buf);
+                            Com_PrintError(19, "ERROR: xmodel '%s' has malformed surface name\n", name);
+                            return 0;
+                        }
+                        v40 = materialSurfName;
                         if (!strcmp(v40, "$default"))
                             v40 = "$default3d";
                         v29 = "mc/";
@@ -1402,6 +1416,7 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
             R_GetXModelBounds(model, (const float (*)[3]) & diff[3], model->mins, model->maxs);
         }
 
+        buf_cursor::Deactivate();
         FS_FreeFile((char *)buf);
         iassert(config.maxs[0] >= 0.0f);
         model->radius = config.maxs[0];
@@ -1420,6 +1435,7 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
     else
     {
     LABEL_28:
+        buf_cursor::Deactivate();
         FS_FreeFile((char *)buf);
         return 0;
     }
@@ -1533,11 +1549,14 @@ XModelPartsLoad *__cdecl XModelPartsLoadFile(XModel *model, const char *name, vo
 
     iassert(buf);
     pos = buf;
+    buf_cursor::Activate(buf, fileSize);
+    buf_cursor::AnchorPos(&pos);
 
     version = Buf_Read<unsigned short>(&pos);
 
     if (version != 25)
     {
+        buf_cursor::Deactivate();
         FS_FreeFile((char *)buf);
         Com_PrintError(19, "ERROR: xmodelparts '%s' out of date (version %d, expecting %d).\n", name, version, 25);
         return 0;
@@ -1592,7 +1611,8 @@ XModelPartsLoad *__cdecl XModelPartsLoadFile(XModel *model, const char *name, vo
         i = numRootBones;
         while (i < numBones)
         {
-            index = *pos++;
+            index = buf_cursor::ReadWeight();
+            buf_cursor::AnchorPos(&pos);
             iassert(index < i);
             *parentList = i - index;
 
@@ -1608,14 +1628,31 @@ XModelPartsLoad *__cdecl XModelPartsLoadFile(XModel *model, const char *name, vo
         }
         for (i = 0; i < numBones; ++i)
         {
-            len = strlen((const char *)pos) + 1;
-            prev = SL_GetStringOfSize((char *)pos, 0, len, MT_TYPE_MODEL_PART);
+            char nameBuf[128];
+            if (!buf_cursor::ReadString(nameBuf, sizeof(nameBuf)))
+            {
+                buf_cursor::Deactivate();
+                FS_FreeFile((char *)buf);
+                Com_PrintError(19, "ERROR: xmodelparts '%s' has malformed bone name\n", name);
+                return 0;
+            }
+            prev = SL_GetStringOfSize(nameBuf, 0, (int)strlen(nameBuf) + 1, MT_TYPE_MODEL_PART);
             boneNames[i] = prev;
-            pos += len;
         }
-        memcpy(modelParts->partClassification, (unsigned __int8 *)pos, numBones);
-        pos += numBones;
-        useBones = *pos++ != 0;
+        if (const buf_cursor::BufCursor *cursor = buf_cursor::Current())
+        {
+            if (static_cast<size_t>(cursor->end - cursor->current) < static_cast<size_t>(numBones + 1))
+            {
+                buf_cursor::Deactivate();
+                FS_FreeFile((char *)buf);
+                Com_PrintError(19, "ERROR: xmodelparts '%s' classification reads past end\n", name);
+                return 0;
+            }
+        }
+        memcpy(modelParts->partClassification, pos, numBones);
+        buf_cursor::Advance(numBones);
+        useBones = (buf_cursor::ReadWeight() != 0);
+        buf_cursor::Deactivate();
         FS_FreeFile((char *)buf);
         XModelCalcBasePose(modelParts);
         if (!useBones)
@@ -1624,6 +1661,7 @@ XModelPartsLoad *__cdecl XModelPartsLoadFile(XModel *model, const char *name, vo
     }
     else
     {
+        buf_cursor::Deactivate();
         FS_FreeFile((char *)buf);
         Com_PrintError(19, "ERROR: xmodel '%s' has more than %d bones\n", name, 127);
         return 0;

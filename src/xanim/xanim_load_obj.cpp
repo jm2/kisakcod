@@ -6,6 +6,7 @@
 #include <universal/com_files.h>
 #include <universal/com_memory.h>
 #include <qcommon/qcommon.h>
+#include <xanim/buf_cursor.h>
 
 enum $69AF8E44C9D6025F282D494F15F1F016 : __int32
 {
@@ -261,6 +262,8 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
     iassert(buf);
 
     pos = buf;
+    buf_cursor::Activate(buf, fileSize);
+    buf_cursor::AnchorPos(&pos);
     version = Buf_Read<unsigned short>(&pos);
 
     if (version == 1)
@@ -276,6 +279,7 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
             if (len > 64)
             {
                 Com_PrintError(19, "ERROR: piecename '%s' too long\n", (const char *)pos);
+                buf_cursor::Deactivate();
                 FS_FreeFile((char *)buf);
                 return 0;
             }
@@ -294,6 +298,7 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
             if (!piece->model)
             {
                 Com_PrintError(1, "ERROR: xmodel piece '%s' missing from pieces model 's%'\n", piecename, filename);
+                buf_cursor::Deactivate();
                 FS_FreeFile((char *)buf);
                 return 0;
             }
@@ -301,11 +306,13 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
             piece->offset[1] = Buf_Read<float>(&pos);
             piece->offset[2] = Buf_Read<float>(&pos);
         }
+        buf_cursor::Deactivate();
         FS_FreeFile((char *)buf);
         return xmodelPieces;
     }
     else
     {
+        buf_cursor::Deactivate();
         FS_FreeFile((char *)buf);
         Com_PrintError(19, "ERROR: xmodelpieces '%s' out of date (version %d, expecting %d).\n", name, version, 1);
         return 0;
@@ -514,6 +521,7 @@ unsigned __int8 *__cdecl GetDeltaQuaternions(
                 {
                     size = numQuatIndices;
                     memcpy(deltaPart->quat->u.frames.indices._1, pos, numQuatIndices);
+                    buf_cursor::Advance(numQuatIndices);
                     pos += numQuatIndices;
                 }
             }
@@ -529,6 +537,7 @@ unsigned __int8 *__cdecl GetDeltaQuaternions(
                 {
                     size = 2 * numQuatIndices;
                     memcpy(deltaPart->quat->u.frames.indices._1, pos, size);
+                    buf_cursor::Advance(size);
                     pos += size;
                 }
             }
@@ -604,6 +613,7 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
                 else
                 {
                     memcpy(deltaPart->trans->u.frames.indices._1, pos, numTransIndices);
+                    buf_cursor::Advance(numTransIndices);
                     pos += numTransIndices;
                 }
             }
@@ -618,6 +628,7 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
                 else
                 {
                     memcpy(deltaPart->trans->u.frames.indices._1, pos, 2 * numTransIndices);
+                    buf_cursor::Advance(2 * numTransIndices);
                     pos += 2 * numTransIndices;
                 }
             }
@@ -706,6 +717,7 @@ unsigned __int8 *__cdecl GetQuaternions(
                 {
                     size = numQuatIndices;
                     memcpy(part->quat->u.frames.indices._1, pos, numQuatIndices);
+                    buf_cursor::Advance(numQuatIndices);
                     pos += numQuatIndices;
                 }
             }
@@ -721,6 +733,7 @@ unsigned __int8 *__cdecl GetQuaternions(
                 {
                     size = 2 * numQuatIndices;
                     memcpy(part->quat->u.frames.indices._1, pos, size);
+                    buf_cursor::Advance(size);
                     pos += size;
                 }
             }
@@ -841,6 +854,7 @@ unsigned __int8 *__cdecl GetTranslations(
                 else
                 {
                     memcpy(part->trans->u.frames.indices._1, pos, numTransIndices);
+                    buf_cursor::Advance(numTransIndices);
                     pos += numTransIndices;
                 }
             }
@@ -855,6 +869,7 @@ unsigned __int8 *__cdecl GetTranslations(
                 else
                 {
                     memcpy(part->trans->u.frames.indices._1, pos, 2 * numTransIndices);
+                    buf_cursor::Advance(2 * numTransIndices);
                     pos += 2 * numTransIndices;
                 }
             }
@@ -886,8 +901,15 @@ void __cdecl ReadNoteTracks(const char *name, unsigned char **pos, XAnimParts *p
     parts->notify = notify;
     for (i = 0; i < numNoteTracks; ++i)
     {
-        notify->name = SL_GetString_((const char*)*pos, 0, MT_TYPE_NOTETRACK);
-        *pos += strlen((const char *)*pos) + 1;
+        char notifyName[128];
+        if (!buf_cursor::ReadString(notifyName, sizeof(notifyName)))
+        {
+            notify->name = SL_GetString_("", 0, MT_TYPE_NOTETRACK);
+            notify->time = 0.0;
+            ++notify;
+            continue;
+        }
+        notify->name = SL_GetString_(notifyName, 0, MT_TYPE_NOTETRACK);
 
         v6 = Buf_Read<unsigned short>(pos);
 
@@ -1024,11 +1046,14 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     iassert(buf);
 
     pos = buf;
+    buf_cursor::Activate(buf, fileSize);
+    buf_cursor::AnchorPos(&pos);
 
     version = Buf_Read<short>(&pos);
 
     if (version != 17)
     {
+        buf_cursor::Deactivate();
         FS_FreeFile((char *)buf);
         Com_PrintError(19, (char *)"ERROR: xanim '%s' out of date (version %d, expecting %d)\n", name, version, 17);
         return 0;
@@ -1077,9 +1102,9 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     {
         count = ((uint32_t)(numBones - 1) >> 3) + 1;
         v63 = pos;
-        pos += count;
+        buf_cursor::Advance(count);
         memcpy(dst, pos, count);
-        pos += count;
+        buf_cursor::Advance(count);
         memset((unsigned __int8 *)part, 0, 8 * numBones);
         memset((unsigned __int8 *)v73, 0, 8 * numBones);
         for (i = 0; i < numBones; ++i)
@@ -1094,12 +1119,19 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     }
     for (i = 0; i < numBones; ++i)
     {
-        count = strlen((const char *)pos) + 1;
-        prev = SL_GetStringOfSize((char *)pos, 0, count, MT_TYPE_ANIM_PART);
+        char partNameBuf[128];
+        if (!buf_cursor::ReadString(partNameBuf, sizeof(partNameBuf)))
+        {
+            buf_cursor::Deactivate();
+            FS_FreeFile((char *)buf);
+            Com_PrintError(19, "ERROR: xanim '%s' has malformed part name\n", name);
+            return 0;
+        }
+        count = (int)strlen(partNameBuf) + 1;
+        prev = SL_GetStringOfSize(partNameBuf, 0, count, MT_TYPE_ANIM_PART);
         v68[i] = prev;
-        v27 = v69 || XAnimIsHighPrecisionPart((const char *)pos);
+        v27 = v69 || XAnimIsHighPrecisionPart(partNameBuf);
         g_highPrecisionPart[i] = v27;
-        pos += count;
     }
 
     iassert(!g_animUser);
@@ -1120,6 +1152,7 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
 
     iassert(buf + fileSize == pos);
 
+    buf_cursor::Deactivate();
     FS_FreeFile((char *)buf);
     if (numBones)
     {
@@ -1611,5 +1644,6 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     iassert(g_animUser);
     Hunk_UserDestroy(g_animUser);
     g_animUser = 0;
+    buf_cursor::Deactivate();
     return parts;
 }

@@ -2909,3 +2909,39 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/security_regression_test.cmake
 )
+
+# xanim_load_test: BufCursor transactional current/end cursor contracts.
+# Exercises the four documented safety fixes from the prior polecat
+# attempt (ki-vxc / recovery branch): UBSan misaligned float load,
+# cursor/raw-pointer desynchronization, unbounded strlen-before-check,
+# and XModelParts classification / useBones advances.
+add_executable(kisakcod-xanim-load-tests
+    xanim_load_test.cpp
+    ${SRC_DIR}/xanim/buf_cursor.cpp)
+target_include_directories(
+    kisakcod-xanim-load-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-xanim-load-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-xanim-load-tests)
+set_target_properties(
+    kisakcod-xanim-load-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME xanim-load-bounded-cursor
+    COMMAND kisakcod-xanim-load-tests)
+
+# xmodel_load_test: same cursor, scoped to xmodel patterns.
+add_executable(kisakcod-xmodel-load-tests
+    xmodel_load_test.cpp
+    ${SRC_DIR}/xanim/buf_cursor.cpp)
+target_include_directories(
+    kisakcod-xmodel-load-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-xmodel-load-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-xmodel-load-tests)
+set_target_properties(
+    kisakcod-xmodel-load-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME xmodel-load-bounded-cursor
+    COMMAND kisakcod-xmodel-load-tests)
