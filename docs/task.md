@@ -2564,6 +2564,19 @@ bridge and atomic seven-site cutover are next.
    saved bytes;
    remove the SP `int`-temporary truncations, continue M1/M5 ABI cleanup, and add production fast-file fixtures/fuzzing
    before enabling any native64 engine target.
+   - [x] Production-path fast-file fuzz fixtures are now in place as the
+     `fuzz_fastfile` target and its `fuzz-fastfile-cursor` / `fuzz-fastfile-corpus`
+     ctest entries. The harness links only against the bounded read primitives in
+     `src/xanim/buf_cursor.cpp` (the only path the retail fast-file loader funnels
+     through) and exercises attacker-controlled bytes across the XModel pieces,
+     XAnim parts, FX archive body state, and generic domain/typed reads with
+     seeded, mutated, and corpus-driven modes. The harness is deterministic and
+     CI-friendly: no random engine state, no FS_ReadFile, no Hunk, no thread
+     pool. 1M-iteration sweeps on xmodel/xanim/fx seeds run cleanly under the
+     local GCC build; bounded seeds with no crashes/aborts on the affected
+     families. Loader/writer/save-side guard work (the second half of the
+     Priority 7 contract) still requires the remaining UTF-8 path / save-record
+     converters — those land on separate beads.
 - [ ] **Priority 8 — Five-target delivery workflows:** before declaring
    requested-target delivery complete, audit `.github/workflows/ci.yml` and
    `release.yml` against the
