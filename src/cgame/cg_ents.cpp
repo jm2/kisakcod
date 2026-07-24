@@ -1615,14 +1615,20 @@ void __cdecl CG_CreatePhysicsObject(int localClientNum, centity_s *cent)
             Phys_ReportBodyModelCreateFailure(status, resourceFailure);
             Name = DObjGetName(ClientDObj);
             Com_PrintWarning(1, "Failed to create physics object for '%s'.\n", Name);
-            cent->pose.physObjId = -1;
+            // cpose_t::physObjId is uintptr_t in SP; the legacy -1 literal
+            // was implicitly narrowed when the field widened. Use the
+            // explicit uintptr_t sentinel so the live-pointer slot gets
+            // the bit-identical -1 sentinel instead of truncating 0xFFFFFFFF.
+            cent->pose.physObjId = (uintptr_t)-1;
             return;
         }
         cent->pose.physObjId = (uintptr_t)v7;
     }
     else
     {
-        cent->pose.physObjId = -1;
+        // cpose_t::physObjId is uintptr_t in SP; use the explicit sentinel
+        // for the same reason as the failure path above.
+        cent->pose.physObjId = (uintptr_t)-1;
         v6 = DObjGetName(ClientDObj);
         Com_PrintWarning(1, "Failed to create physics object for '%s'.  No physics preset.\n", v6);
     }
@@ -1630,11 +1636,15 @@ void __cdecl CG_CreatePhysicsObject(int localClientNum, centity_s *cent)
 
 void __cdecl CG_UpdatePhysicsPose(centity_s *cent)
 {
-    int physObjId; // r11
+    // SP cpose_t::physObjId is uintptr_t; the previous `int physObjId`
+    // local silently narrowed the native dxBody* pointer on 64-bit.
+    // Hold the field value as uintptr_t so the sentinel comparisons
+    // and the cast to dxBody* are both lossless.
+    uintptr_t physObjId; // r11
     float v3[4]; // [sp+50h] [-20h] BYREF
 
     physObjId = cent->pose.physObjId;
-    if (!physObjId || physObjId == -1)
+    if (!physObjId || physObjId == (uintptr_t)-1)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_ents.cpp",
             1195,
@@ -1642,7 +1652,7 @@ void __cdecl CG_UpdatePhysicsPose(centity_s *cent)
             "%s",
             "cent->pose.physObjId != PHYS_OBJ_ID_NULL && cent->pose.physObjId != PHYS_OBJ_ID_DEAD");
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-    Phys_ObjGetInterpolatedState(PHYS_WORLD_FX, (dxBody*)cent->pose.physObjId, cent->pose.origin, v3);
+    Phys_ObjGetInterpolatedState(PHYS_WORLD_FX, (dxBody*)physObjId, cent->pose.origin, v3);
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     UnitQuatToAngles(v3, cent->pose.angles);
 }
@@ -1662,7 +1672,8 @@ int __cdecl CG_ExpiredLaunch(int localClientNum, centity_s *cent)
     if (cent->pose.physObjId || cgArray[0].time <= cent->currentState.pos.trTime + 1000)
         return 0;
     result = 1;
-    cent->pose.physObjId = -1;
+    // cpose_t::physObjId is uintptr_t in SP; use the explicit sentinel.
+    cent->pose.physObjId = (uintptr_t)-1;
     return result;
 }
 
@@ -1682,7 +1693,10 @@ void __cdecl CG_CalcEntityPhysicsPositions(int localClientNum, centity_s *cent)
     {
         if (!cent->pose.physObjId)
             CG_CreatePhysicsObject(localClientNum, cent);
-        if (cent->pose.physObjId == -1)
+        // cpose_t::physObjId is uintptr_t in SP; compare against the
+        // explicit sentinel so the dead-body branch fires only when the
+        // slot carries 0xFFFF...F, not when it carries a small native int.
+        if (cent->pose.physObjId == (uintptr_t)-1)
         {
             cent->pose.origin[0] = cent->currentState.pos.trBase[0];
             cent->pose.origin[1] = cent->currentState.pos.trBase[1];
@@ -1701,7 +1715,11 @@ void __cdecl CG_CalcEntityPhysicsPositions(int localClientNum, centity_s *cent)
 void __cdecl CG_SaveEntityPhysics(centity_s *cent, SaveGame *save)
 {
     const DObj_s *obj; // r28
-    int physObjId; // r11
+    // SP cpose_t::physObjId is uintptr_t; the legacy `int physObjId`
+    // local silently narrowed the native dxBody* pointer on 64-bit.
+    // Hold the field value as uintptr_t so the sentinel comparisons
+    // and the cast to dxBody* are both lossless.
+    uintptr_t physObjId; // r11
     char v6; // r11
     bool v7; // zf
     const char *modelName; // r29
@@ -1711,13 +1729,13 @@ void __cdecl CG_SaveEntityPhysics(centity_s *cent, SaveGame *save)
     iassert(save);
 
     obj = Com_GetClientDObj(cent->nextState.number, 0);
-    if (!obj || (physObjId = cent->pose.physObjId) == 0 || (v7 = physObjId != -1, v6 = 1, !v7))
+    if (!obj || (physObjId = cent->pose.physObjId) == 0 || (v7 = physObjId != (uintptr_t)-1, v6 = 1, !v7))
         v6 = 0;
     v11 = v6;
     SaveMemory_SaveWrite(&v11, 1, save);
     if (v11)
     {
-        Phys_ObjSave((dxBody*)cent->pose.physObjId, SaveMemory_GetMemoryFile(save));
+        Phys_ObjSave((dxBody*)physObjId, SaveMemory_GetMemoryFile(save));
         iassert(obj);
         modelName = DObjGetName(obj);
         iassert(modelName);

@@ -26,7 +26,12 @@ void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
     FxEffect *effect; // r4
     trajectory_t *p_pos; // r29
     int ragdollHandle; // r3
-    int physObjId; // r4
+    // SP cpose_t::physObjId is uintptr_t; the legacy `int physObjId`
+    // local silently narrowed the native dxBody* pointer on 64-bit.
+    // Hold the field value as uintptr_t and compare against the same
+    // -1/0 sentinels the field uses so the bit-identical 0x0 / 0xF..F
+    // sentinel contract is preserved without truncating the live pointer.
+    uintptr_t physObjId; // r4
 
     oldEType = cent->oldEType;
     if (oldEType == 8 || oldEType == 7)
@@ -51,11 +56,11 @@ void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
         cent->currentState.apos.trType = TR_STATIONARY;
     }
     physObjId = cent->pose.physObjId;
-    if (physObjId && physObjId != -1)
+    if (physObjId && physObjId != (uintptr_t)-1)
         goto LABEL_14;
     if (p_pos->trType != TR_PHYSICS)
         return;
-    if (physObjId != -1)
+    if (physObjId != (uintptr_t)-1)
     {
     LABEL_14:
         if (physObjId)

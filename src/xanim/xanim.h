@@ -2,6 +2,13 @@
 
 #include <type_traits>
 
+// XAnimParts and its disk-mirror companions are declared in xanim_native.h
+// when the runtime/widening split infrastructure is in scope. The
+// KISAK_XANIM_*_DECLARED guards below prevent redefinition when both
+// headers are included in the same TU. Portable test binaries include
+// xanim_native.h with the test shim header instead of xanim.h so the
+// guards below trigger the declarations from xanim_native.h.
+
 #include <database/db_zone_memory.h>
 
 // LWSS: This file has way too many structs. KISAKTODO: move out later.
@@ -38,6 +45,7 @@ union XAnimIndices // sizeof=0x4
     uint16_t *_2;
     void *data;
 };
+#define KISAK_XANIM_INDICES_DECLARED 1
 static_assert(sizeof(XAnimIndices) == 4);
 struct XAnimNotifyInfo // sizeof=0x8
 {
@@ -46,6 +54,7 @@ struct XAnimNotifyInfo // sizeof=0x8
     // padding byte
     float time;
 };
+#define KISAK_XANIM_NOTIFY_INFO_DECLARED 1
 union XAnimDynamicIndices // sizeof=0x2
 {                                       // ...
     unsigned __int8 _1[1];
@@ -145,6 +154,7 @@ struct XAnimDeltaPart // sizeof=0x8
     XAnimPartTrans *trans;
     XAnimDeltaPartQuat *quat;
 };
+#define KISAK_XANIM_DELTA_PART_DECLARED 1
 struct XAnimTime // sizeof=0xC
 {                                       // ...
     float time;
@@ -182,6 +192,7 @@ struct XAnimParts // sizeof=0x58
     XAnimNotifyInfo *notify;
     XAnimDeltaPart *deltaPart;
 };
+#define KISAK_XANIM_PARTS_DECLARED 1
 static_assert(sizeof(XAnimParts) == 88);
 
 struct XModelNameMap // sizeof=0x4

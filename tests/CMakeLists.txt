@@ -3008,6 +3008,30 @@ add_test(
     NAME xmodel-load-bounded-cursor
     COMMAND kisakcod-xmodel-load-tests)
 
+# xanim_parts_split_test: contract tests for the XAnimParts disk mirror
+# vs native runtime split (M4 + Priority 7). The retail x86 layout is
+# frozen at exactly 88 bytes per XAnimParts instance via ONDISK_SIZE; the
+# native runtime view widens to 0x88 on 64-bit via RUNTIME_SIZE. The
+# tests exercise the Disk <-> Native conversion round-trip, the size
+# contracts, and the property that XAnimClone's runtime allocation would
+# never under-allocate the runtime view on 64-bit. CTest entries match
+# the 'xanim' regex so the bead's build/test command resolves to this
+# target.
+add_executable(kisakcod-xanim-parts-split-tests
+    xanim_parts_split_test.cpp
+    xanim_parts_split_test_shim.h)
+target_include_directories(
+    kisakcod-xanim-parts-split-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-xanim-parts-split-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-xanim-parts-split-tests)
+set_target_properties(
+    kisakcod-xanim-parts-split-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME xanim-parts-split-contracts
+    COMMAND kisakcod-xanim-parts-split-tests)
+
 # fuzz_fastfile: production-path fast-file fuzz harness. Exercises the
 # bounded BufCursor read path that backs every retail fast-file loader
 # (xasset families: xmodel, xanim, fx archive body state). The harness
