@@ -2180,6 +2180,23 @@ add_test(
 )
 set_tests_properties(cgame-pose-atomic-protocols PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-phys-obj-id-tests
+    phys_obj_id_tests.cpp
+    ${SRC_DIR}/bgame/bg_phys_obj_id_tables.cpp
+)
+target_include_directories(kisakcod-phys-obj-id-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-phys-obj-id-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-phys-obj-id-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-phys-obj-id-tests)
+set_target_properties(kisakcod-phys-obj-id-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME phys-obj-id-sidecar-contracts
+    COMMAND kisakcod-phys-obj-id-tests
+)
+set_tests_properties(phys-obj-id-sidecar-contracts PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-renderer-reservation-atomic-tests
     renderer_reservation_atomic_tests.cpp
 )

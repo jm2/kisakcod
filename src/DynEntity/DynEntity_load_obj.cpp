@@ -4,6 +4,7 @@
 #include <EffectsCore/fx_system.h>
 #include <universal/q_parse.h>
 #include <qcommon/com_bsp.h>
+#include <universal/phys_obj_id.h>
 
 const char *dynEntClassNames[2] =
 {
@@ -627,10 +628,33 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
         {
             uint8_t hasPhys = 0;
             MemFile_ReadData(memFile, 1, &hasPhys);
+            DynEntityClient *const dynEntClient = &cm.dynEntClientList[drawType][dynEntId];
             if (hasPhys)
-                cm.dynEntClientList[drawType][dynEntId].physObjId = (uintptr_t)Phys_ObjLoad(PHYS_WORLD_DYNENT, memFile);
+            {
+                dxBody *const physObjIdBody = Phys_ObjLoad(PHYS_WORLD_DYNENT, memFile);
+                if (physObjIdBody)
+                {
+                    const phys_obj_id::OwnerIndex owner = static_cast<phys_obj_id::OwnerIndex>(
+                        static_cast<uint32_t>(drawType) * 4096u + dynEntId);
+                    const phys_obj_id::TokenResult bind = phys_obj_id::WriteBind(
+                        g_dynEntClientBodySidecar,
+                        &dynEntClient->physObjId,
+                        owner,
+                        physObjIdBody);
+                    if (bind.status != phys_obj_id::Status::Success)
+                    {
+                        // A failed bind means the slot is already occupied.
+                        // The legacy saved-image rebuild never re-occupies
+                        // an active slot, so this is a programming error;
+                        // leak the body to keep the load path linear.
+                        dynEntClient->physObjId = 0;
+                    }
+                }
+            }
             else
-                cm.dynEntClientList[drawType][dynEntId].physObjId = 0;
+            {
+                dynEntClient->physObjId = 0;
+            }
         }
     }
 }
@@ -784,11 +808,15 @@ void DynEnt_SaveEntities(MemoryFile *memFile)
                 v5 = 0;
                 do
                 {
+                    DynEntityClient *const dynEntClient = &(*dynEntClientList)[v5];
+                    dxBody *const physObjIdBody = phys_obj_id::ReadResolve<dxBody>(
+                        g_dynEntClientBodySidecar,
+                        dynEntClient->physObjId);
                     //v6 = (_cntlzw((*dynEntClientList)[v5].physObjId) & 0x20) == 0;
-                    v6 = (*dynEntClientList)[v5].physObjId != 0;
+                    v6 = (physObjIdBody != nullptr);
                     MemFile_WriteData(memFile, 1, &v6);
                     if (v6)
-                        Phys_ObjSave((dxBody*)(*dynEntClientList)[v5].physObjId, memFile);
+                        Phys_ObjSave(physObjIdBody, memFile);
                     v5 = (uint16_t)(v5 + 1);
                 } while (v5 < *dynEntCount);
             }
