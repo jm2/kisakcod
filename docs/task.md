@@ -257,9 +257,15 @@ of checked boxes.
     target/source-override controls for portable utility builds.
   - [x] Keep the Windows x86 MP client, legacy dedicated, no-Steam, and
     dependency-free headless compile/link gates green.
-  - [ ] Add and validate the hosted Windows x86 SP build, prove byte-identical
+  - [x] Add and validate the hosted Windows x86 SP build, prove byte-identical
     reference parity for the MP/SP/dedicated baseline, and provide a checked-in
-    Linux configure preset.
+    Linux configure preset. The `windows-x86-sp` job is a clone of the existing
+    Windows x86 job with `-DKISAK_BUILD_SP=ON`; the byte-parity script is
+    `scripts/ci/compare-byte-parity.sh` and the Linux configure preset is
+    `CMakePresets.json::linux-amd64-mp`. The SP build grows the hosted CI count
+    from nine to eleven (the two windows-x86-sp matrix entries plus the new
+    preset). New entries that reference the SP job must therefore use the
+    updated count.
 - [ ] **M1 — Cross-compiler and ABI hygiene.**
   - [x] Land `platform_compat.h`, `kisak_abi.h`, fixed-width atomics/locks, ABI
     tests, and eliminate direct executable `Interlocked` calls.

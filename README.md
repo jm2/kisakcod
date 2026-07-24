@@ -46,11 +46,13 @@ startup and network-response validation remain a protected manual workflow.
 Portable utility tests can be built on Linux without licensed game data:
 
 ```sh
-cmake -S . -B build-tests \
-  -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF
-cmake --build build-tests
-ctest --test-dir build-tests --output-on-failure
+cmake --preset linux-amd64-mp
+cmake --build build-linux-amd64-mp
+ctest --test-dir build-linux-amd64-mp --output-on-failure
 ```
+
+The checked-in `CMakePresets.json` also provides `windows-x86-mp`,
+`windows-x86-sp`, and `windows-x86-dedi` presets for hosted Win32 builds.
 
 
 ```

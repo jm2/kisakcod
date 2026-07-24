@@ -1,0 +1,50 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "windows-x86-mp",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-windows-x86-mp",
+      "cacheVariables": {
+        "KISAK_BUILD_MP": "ON",
+        "KISAK_BUILD_DEDICATED": "ON",
+        "KISAK_BUILD_SP": "OFF"
+      }
+    },
+    {
+      "name": "windows-x86-sp",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-windows-x86-sp",
+      "cacheVariables": {
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "OFF",
+        "KISAK_BUILD_SP": "ON"
+      }
+    },
+    {
+      "name": "windows-x86-dedi",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-windows-x86-dedi",
+      "cacheVariables": {
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "ON",
+        "KISAK_BUILD_SP": "OFF"
+      }
+    },
+    {
+      "name": "linux-amd64-mp",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-linux-amd64-mp",
+      "cacheVariables": {
+        "KISAK_PLATFORM": "linux",
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "OFF",
+        "KISAK_BUILD_SP": "OFF",
+        "BUILD_TESTING": "ON"
+      }
+    }
+  ]
+}

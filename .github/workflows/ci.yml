@@ -172,6 +172,48 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows-x86-sp:
+    name: Windows x86 SP / ${{ matrix.config }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\\.nuget\\packages
+      DXSDK_VERSION: 9.29.952.8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore DirectX SDK
+        shell: pwsh
+        run: |
+          dotnet new classlib -o dxsdk-temp
+          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
+          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\\$env:DXSDK_VERSION\\build\\native"
+          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake --preset windows-x86-sp `
+            -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build-windows-x86-sp --config "${{ matrix.config }}" --target KisakCOD-sp --parallel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KisakCOD-windows-x86-sp-${{ matrix.config }}
+          path: bin/${{ matrix.config }}/KisakCOD-sp.exe
+          if-no-files-found: error
+          retention-days: 14
+
   windows-x86-nosteam:
     # Compile-checks the KISAK_ENABLE_STEAM=OFF fallback path (cl_guid identity,
     # sv_requireSteam, empty win_steam.cpp TU). Windows x86 is the only target that can
@@ -215,6 +257,7 @@ jobs:
           --config Release
           --target KisakCOD-mp KisakCOD-dedi
           --parallel
+
 
   windows-x86-headless:
     # This is the first real compile/link gate for the portable dedicated-server
