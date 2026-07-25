@@ -34,8 +34,16 @@ namespace
 {
 bool IsValidSignal(const int sig) noexcept
 {
-    if (sig <= 0 || sig >= SIGRTMIN)
+    if (sig <= 0)
         return false;
+#if defined(__linux__)
+    // SIGRTMIN..SIGRTMAX are glibc realtime-signal extensions and do not
+    // exist on Darwin (where sigset_t is a plain unsigned int and the
+    // standard POSIX signal numbers stay below 32). Gate the realtime
+    // rejection on glibc so the same TU compiles on both backends.
+    if (sig >= SIGRTMIN)
+        return false;
+#endif
     return sig != SIGKILL && sig != SIGSTOP;
 }
 
@@ -55,8 +63,10 @@ std::vector<sigset_t> &ParkedSets() noexcept
 bool BuildSet(const int *signals, std::size_t count, sigset_t *out) noexcept
 {
     *out = sigset_t{};
-    for (auto &word : out->__val)
-        word = 0;
+    // sigemptyset below zeroes the set on every POSIX backend. Do NOT poke
+    // the glibc-only `__val` array here: on Darwin sigset_t is a plain
+    // unsigned int with no such member. Keeping the explicit zero loop
+    // would silently keep the Linux build working while breaking macOS.
     sigemptyset(out);
     for (std::size_t i = 0; i < count; ++i)
     {
