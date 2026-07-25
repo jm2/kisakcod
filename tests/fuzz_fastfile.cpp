@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -58,20 +59,20 @@ int Fail(const char *const message)
 #define CHECK(expr) do {                                                  \
     ++g_runs;                                                             \
     if (!(expr)) {                                                        \
-        char buf[256];                                                    \
-        std::snprintf(buf, sizeof(buf), "%s:%d: %s",                      \
+        char kisakCheckMsg_[256];                                         \
+        std::snprintf(kisakCheckMsg_, sizeof(kisakCheckMsg_), "%s:%d: %s",\
             __FILE__, __LINE__, #expr);                                   \
-        return Fail(buf);                                                 \
+        return Fail(kisakCheckMsg_);                                      \
     }                                                                     \
 } while (0)
 
 #define CHECK_RC(expr) do {                                               \
     ++g_runs;                                                             \
     if (!(expr)) {                                                        \
-        char buf[256];                                                    \
-        std::snprintf(buf, sizeof(buf), "%s:%d: %s",                      \
+        char kisakCheckMsg_[256];                                         \
+        std::snprintf(kisakCheckMsg_, sizeof(kisakCheckMsg_), "%s:%d: %s",\
             __FILE__, __LINE__, #expr);                                   \
-        return Fail(buf);                                                 \
+        return Fail(kisakCheckMsg_);                                      \
     }                                                                     \
 } while (0)
 
@@ -634,24 +635,28 @@ int RunCorpus(const char *corpusDir)
 
     std::vector<std::string> files;
     {
-        std::string cmd = std::string("ls -1 \"") + corpusDir + "\" 2>/dev/null";
-        FILE *p = ::popen(cmd.c_str(), "r");
-        if (p == nullptr)
+        std::error_code ec;
+        std::filesystem::directory_iterator it(
+            std::filesystem::path(corpusDir), ec);
+        if (ec)
         {
             // Fall back: synthesize a tiny inline corpus.
             std::fprintf(stderr, "fuzz_fastfile: could not list corpus dir %s; running inline seeds\n", corpusDir);
             return RunSeeds();
         }
-        char buf[512];
-        while (std::fgets(buf, sizeof(buf), p) != nullptr)
+        const std::filesystem::directory_iterator end;
+        for (; it != end; it.increment(ec))
         {
-            std::string s = buf;
-            while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
-                s.pop_back();
-            if (!s.empty())
-                files.push_back(s);
+            if (ec)
+                break;
+            const std::filesystem::directory_entry &entry = *it;
+            if (!entry.is_regular_file(ec))
+                continue;
+            const std::filesystem::path &p = entry.path();
+            const std::string name = p.filename().string();
+            if (!name.empty())
+                files.push_back(name);
         }
-        ::pclose(p);
     }
 
     if (files.empty())
