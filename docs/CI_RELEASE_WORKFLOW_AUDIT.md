@@ -21,12 +21,14 @@ the gap table is verified against the cited workflow file.
 
 ## Current-state summary
 
-`ci.yml` has three top-level jobs (`portable-tests`, `windows-x86`, `windows-x86-nosteam`,
-`windows-x86-headless`) that together exercise Windows x86 (Debug + Release),
-the Windows x86 Steam OFF compile fallback, the Windows x86 headless dedicated
-configuration, and `portable-tests` only for the other four target OS/arch
-pairs. None of those four pairs has a production engine build, smoke gate,
-package step, or release artifact. No `production-complete` aggregator exists.
+`ci.yml` has five top-level jobs (`portable-tests`, `windows-x86`,
+`windows-x86-sp`, `windows-x86-nosteam`, `windows-x86-headless`) that together
+exercise Windows x86 MP + dedicated (Debug + Release), Windows x86 SP (Debug +
+Release), the Windows x86 Steam OFF compile fallback, the Windows x86 headless
+dedicated configuration, and `portable-tests` only for the other four target
+OS/arch pairs. None of those four pairs has a production engine build, smoke
+gate, package step, or release artifact. No `production-complete` aggregator
+exists.
 
 `release.yml` has a single `windows-x86` job that runs on tag push or
 `workflow_dispatch`, builds MP + dedicated via Visual Studio 17 2022, packs
@@ -211,8 +213,8 @@ license/notarization handling, no required aggregator.
   full commit SHA (e.g.
   `actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6`,
   `actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7`).
-- KisakCOD `.github/workflows/ci.yml:32,60,164,182,245`,
-  `.github/workflows/release.yml:22,52,59` use floating tags
+- KisakCOD `.github/workflows/ci.yml:32,60,62,168,186,188,210,228,230,269,292`,
+  `.github/workflows/release.yml:22,24,52,59` use floating tags
   (`actions/checkout@v4`, `actions/setup-dotnet@v4`,
   `actions/upload-artifact@v4`, `softprops/action-gh-release@v2`). A supply
   chain incident on any of these tags would silently change what runs.
@@ -242,20 +244,23 @@ license/notarization handling, no required aggregator.
 - Files: `.github/workflows/ci.yml`, `.github/workflows/release.yml`,
   `scripts/ci/`.
 
-### 12. No `windows-x86-nosteam` / `windows-x86-headless` parity in release
+### 12. No `windows-x86-sp` / `windows-x86-nosteam` / `windows-x86-headless` parity in release
 
 - Maintained pattern: every build matrix entry has parity gates and shared
   configuration between CI and release.
-- KisakCOD `.github/workflows/ci.yml:171-250` adds two extra jobs
-  (`windows-x86-nosteam`, `windows-x86-headless`) that exercise the Steam OFF
-  fallback and the headless dedicated configuration. Neither is mirrored in
-  `release.yml`. A release that switches the Steam ON path does not gate
-  against the Steam OFF path, and a headless-server regression would only
-  surface in CI.
-- Concrete fix: add `windows-x86-nosteam-release` and
+- KisakCOD `.github/workflows/ci.yml:175-215,217-259,262-297` adds three
+  specialized jobs (`windows-x86-sp`, `windows-x86-nosteam`,
+  `windows-x86-headless`) that exercise SP in Debug + Release, the Steam OFF
+  fallback, and the headless dedicated configuration. None is mirrored in
+  `release.yml`. The release explicitly builds with `KISAK_BUILD_SP=OFF`, so an
+  SP regression is never release-gated; a release that switches the Steam ON
+  path does not gate against the Steam OFF path; and a headless-server
+  regression would only surface in CI.
+- Concrete fix: add `windows-x86-sp-release`, `windows-x86-nosteam-release`, and
   `windows-x86-headless-release` jobs to `release.yml` whose
-  `KISAK_ENABLE_STEAM=OFF` / `KISAK_DEDI_HEADLESS=ON` flags match their CI
-  counterparts. These should be required prerequisites of the publish job.
+  `KISAK_BUILD_SP=ON`, `KISAK_ENABLE_STEAM=OFF`, and `KISAK_DEDI_HEADLESS=ON`
+  flags match their respective CI counterparts. These should be required
+  prerequisites of the publish job.
 - Files: `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
 
 ### 13. `softprops/action-gh-release` invoked from the build job
@@ -299,12 +304,13 @@ license/notarization handling, no required aggregator.
   explicit `retention-days` and `if-no-files-found: error`, plus
   `compression-level: 0` for archive bundles (compression is a separate
   publisher concern).
-- KisakCOD `.github/workflows/ci.yml:168-169,248-249`: retention is set to 14
-  days for `windows-x86` and `windows-x86-headless`. No retention is set on
-  `portable-tests`. `release.yml` does not declare any artifact retention
-  policy — the GitHub release itself is the long-term store, but the
-  one-line `SHA256SUMS.txt` and the zip are uploaded as workflow artifacts
-  with the default 90-day retention.
+- KisakCOD `.github/workflows/ci.yml:168-173,210-215,292-297`: retention is
+  set to 14 days for `windows-x86`, `windows-x86-sp`, and
+  `windows-x86-headless`. No retention is set on `portable-tests`, which does
+  not upload an artifact, or on the compile-only `windows-x86-nosteam` job.
+  `release.yml:52-56` uploads the zip and one-line `SHA256SUMS.txt` as a
+  workflow artifact without an explicit retention policy, so they receive the
+  default 90-day retention; the GitHub release itself is the long-term store.
 - Concrete fix: pin `retention-days` consistently across every upload
   (`if-no-files-found: error` already enforced) and document the policy in a
   top-of-file comment.
