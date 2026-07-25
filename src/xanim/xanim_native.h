@@ -11,7 +11,7 @@
 //  widened runtime payload BEFORE any 64-bit XAnim translation unit is
 //  buildable.
 //
-//  This header provides the split infrastructure:
+//  This header provides portable-test-only split infrastructure:
 //
 //    - XAnimParts (the on-disk / wire-mirror view in xanim.h or the test
 //                  shim) : every pointer field is a 32-bit disk offset,
@@ -34,8 +34,9 @@
 //  XAnimClone never under-allocates the runtime view on 64-bit and the
 //  copy is byte-identical on 32-bit.
 //
-//  The conversion functions below transfer field values between the two
-//  shapes with explicit ordering. On 32-bit they are bit-identical
+//  The engine XAnimParts still stores raw host pointers. Until that type
+//  migrates to a 32-bit disk mirror, engine translation units must not include
+//  this portable-test-only header. The conversion functions below transfer
 //  (uint32_t == pointer == 4 bytes); on 64-bit they widen pointer fields
 //  to native-width. The remaining migration of every XAnimParts consumer
 //  to XAnimPartsNative is a follow-up; this header only provides the

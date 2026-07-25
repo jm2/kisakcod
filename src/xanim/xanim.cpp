@@ -1,6 +1,5 @@
 #include "xanim.h"
 #include "xanim_calc.h"
-#include "xanim_native.h"
 
 #include "dobj.h"
 
@@ -150,23 +149,8 @@ XAnimParts *__cdecl XAnimClone(XAnimParts *fromParts, void *(__cdecl *Alloc)(int
     __int16 notifyInfoIndex; // [esp+18h] [ebp-8h]
     uint16_t *boneNames; // [esp+1Ch] [ebp-4h]
 
-    // The retail x86 contract was Alloc(88) + qmemcpy(sizeof(XAnimParts));
-    // sizeof(XAnimParts) is frozen at 88 by the layout assert. On a 64-bit
-    // XAnimParts runtime the wider 0x88 layout would silently under-copy
-    // (and on 32-bit it is still 88, so this stays bit-identical). Allocate
-    // the widened runtime view (88 on 32-bit, 0x88 on 64-bit) and copy the
-    // frozen 88-byte disk fields into the head of the buffer; zero the
-    // trailing bytes that a widened native view would expose so a future
-    // consumer that dereferences them sees a known state instead of stale
-    // hunk memory.
-    const size_t nativeBytes = sizeof(xanim::XAnimPartsNative);
-    const size_t diskBytes = sizeof(XAnimParts);
-    XAnimParts *const toStorage = (XAnimParts *)Alloc(static_cast<int>(nativeBytes));
-    iassert(toStorage);
-    memcpy(toStorage, fromParts, diskBytes);
-    if (nativeBytes > diskBytes)
-        memset(reinterpret_cast<unsigned char *>(toStorage) + diskBytes, 0, nativeBytes - diskBytes);
-    toParts = toStorage;
+    toParts = (XAnimParts *)Alloc(88);
+    qmemcpy(toParts, fromParts, sizeof(XAnimParts));
     boneNames = toParts->names;
     size = toParts->boneCount[9];
     for (i = 0; i < size; ++i)
