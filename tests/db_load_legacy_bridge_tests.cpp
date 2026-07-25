@@ -26,7 +26,6 @@ using db::load_legacy_bridge::LegacyBridgeStringId;
 using db::registry_ownership::RegistryOwnershipStatus;
 
 constexpr std::uint32_t kDatabaseUserMask = 4;
-constexpr std::uint32_t kShutdownUserMask = 8;
 
 std::array<std::recursive_mutex, CRITSECT_COUNT> g_criticalSections{};
 thread_local std::array<std::uint32_t, CRITSECT_COUNT>
