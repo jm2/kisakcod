@@ -987,7 +987,6 @@ XModelSurfs *__cdecl R_XModelSurfsLoadFile(
         return 0;
     }
 }
-}
 
 void __cdecl XModelSurfsSetData(const char *name, XModelSurfs *modelSurfs, void *(__cdecl *Alloc)(int))
 {
@@ -1283,7 +1282,7 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
     }
 
     pos = (unsigned __int8 *)buf;
-    buf_cursor::Activate(buf, filelen);
+    buf_cursor::Activate((const unsigned char *)buf, filelen);
     buf_cursor::AnchorPos(&pos);
     if (!XModelLoadConfigFile(name, &pos, &config))
         goto LABEL_28;
