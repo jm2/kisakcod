@@ -251,6 +251,7 @@ foreach(_required
     "${SRC_DIR}/database/db_file_load.cpp"
     "${SRC_DIR}/database/db_zone_runtime_storage.cpp"
     "${SRC_DIR}/database/db_zone_runtime_storage_fx_bridge_headless.cpp"
+    "${SRC_DIR}/database/db_fx_zone_adapter_wiring.cpp"
     "${SRC_DIR}/script/scr_debugger.cpp"
 )
     if (NOT _required IN_LIST _dedi_sources)
