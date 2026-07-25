@@ -59,10 +59,10 @@ int Fail(const char *const message)
 #define CHECK(expr) do {                                                  \
     ++g_runs;                                                             \
     if (!(expr)) {                                                        \
-        char buf[256];                                                    \
-        std::snprintf(buf, sizeof(buf), "%s:%d: %s",                      \
+        char kisakCheckMsg_[256];                                         \
+        std::snprintf(kisakCheckMsg_, sizeof(kisakCheckMsg_), "%s:%d: %s",\
             __FILE__, __LINE__, #expr);                                   \
-        (void)Fail(buf);                                                  \
+        (void)Fail(kisakCheckMsg_);                                       \
         return 1;                                                         \
     }                                                                     \
 } while (0)
@@ -70,10 +70,10 @@ int Fail(const char *const message)
 #define CHECK_RC(expr) do {                                               \
     ++g_runs;                                                             \
     if (!(expr)) {                                                        \
-        char buf[256];                                                    \
-        std::snprintf(buf, sizeof(buf), "%s:%d: %s",                      \
+        char kisakCheckMsg_[256];                                         \
+        std::snprintf(kisakCheckMsg_, sizeof(kisakCheckMsg_), "%s:%d: %s",\
             __FILE__, __LINE__, #expr);                                   \
-        (void)Fail(buf);                                                  \
+        (void)Fail(kisakCheckMsg_);                                       \
         return 1;                                                         \
     }                                                                     \
 } while (0)
