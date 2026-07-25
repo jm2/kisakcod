@@ -59,11 +59,10 @@ int Fail(const char *const message)
 #define CHECK(expr) do {                                                  \
     ++g_runs;                                                             \
     if (!(expr)) {                                                        \
-        char fuzzFastfileFailureMessage[256];                             \
-        std::snprintf(fuzzFastfileFailureMessage,                         \
-            sizeof(fuzzFastfileFailureMessage), "%s:%d: %s",             \
+        char kisakCheckMsg_[256];                                         \
+        std::snprintf(kisakCheckMsg_, sizeof(kisakCheckMsg_), "%s:%d: %s",\
             __FILE__, __LINE__, #expr);                                   \
-        (void)Fail(fuzzFastfileFailureMessage);                           \
+        (void)Fail(kisakCheckMsg_);                                       \
         return 1;                                                         \
     }                                                                     \
 } while (0)
@@ -71,11 +70,10 @@ int Fail(const char *const message)
 #define CHECK_RC(expr) do {                                               \
     ++g_runs;                                                             \
     if (!(expr)) {                                                        \
-        char fuzzFastfileFailureMessage[256];                             \
-        std::snprintf(fuzzFastfileFailureMessage,                         \
-            sizeof(fuzzFastfileFailureMessage), "%s:%d: %s",             \
+        char kisakCheckMsg_[256];                                         \
+        std::snprintf(kisakCheckMsg_, sizeof(kisakCheckMsg_), "%s:%d: %s",\
             __FILE__, __LINE__, #expr);                                   \
-        (void)Fail(fuzzFastfileFailureMessage);                           \
+        (void)Fail(kisakCheckMsg_);                                       \
         return 1;                                                         \
     }                                                                     \
 } while (0)
