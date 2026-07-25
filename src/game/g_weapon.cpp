@@ -10,6 +10,7 @@
 #elif KISAK_SP
 #include "g_main.h"
 #include "g_local.h"
+#include <xanim/xanim.h>
 #endif
 
 // Melee trace corner offsets. Mirrors the definition in the client-only

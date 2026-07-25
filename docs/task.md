@@ -257,7 +257,7 @@ of checked boxes.
     target/source-override controls for portable utility builds.
   - [x] Keep the Windows x86 MP client, legacy dedicated, no-Steam, and
     dependency-free headless compile/link gates green.
-  - [x] Add and validate the hosted Windows x86 SP build, prove byte-identical
+  - [ ] Add and validate the hosted Windows x86 SP build, prove byte-identical
     reference parity for the MP/SP/dedicated baseline, and provide a checked-in
     Linux configure preset. The `windows-x86-sp` job is a clone of the existing
     Windows x86 job with `-DKISAK_BUILD_SP=ON`; the byte-parity script is
@@ -265,7 +265,13 @@ of checked boxes.
     `CMakePresets.json::linux-amd64-mp`. The SP build grows the hosted CI count
     from nine to eleven (the two windows-x86-sp matrix entries plus the new
     preset). New entries that reference the SP job must therefore use the
-    updated count.
+    updated count. Note (ki-tgh, 2026-07-25): this line was incorrectly marked
+    `[x]` after 375f97d8 landed the preset and CI jobs, but the SP build does
+    not actually compile — `src/game/g_weapon.cpp` is missing an include under
+    KISAK_SP and `src/EffectsCore/fx_archive.cpp` carries MP-only
+    static_asserts that do not hold for SP. The job is kept in the matrix with
+    `continue-on-error: true` so the debt stays visible. Do not re-check this
+    item until the SP jobs are actually green.
 - [ ] **M1 — Cross-compiler and ABI hygiene.**
   - [x] Land `platform_compat.h`, `kisak_abi.h`, fixed-width atomics/locks, ABI
     tests, and eliminate direct executable `Interlocked` calls.
