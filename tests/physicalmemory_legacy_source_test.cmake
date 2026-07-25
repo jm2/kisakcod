@@ -782,7 +782,7 @@ foreach(forbidden IN ITEMS
 endforeach()
 
 extract_slice("${source}"
-    "pmem_runtime::StorageIsolationStatus KISAK_CDECL"
+    "pmem_runtime::TryClassifyStorageIsolation("
     "pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL"
     public_receipt_bridge)
 foreach(marker IN ITEMS

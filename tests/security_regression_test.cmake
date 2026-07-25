@@ -11051,7 +11051,7 @@ extract_security_slice(
     "report-free PMem diagnostic capture core")
 extract_security_slice(
     _pmem_runtime_security_source
-    "pmem_runtime::StorageIsolationStatus KISAK_CDECL"
+    "pmem_runtime::TryClassifyStorageIsolation("
     "pmem_runtime::AllocationReceiptStatus KISAK_CDECL"
     _pmem_storage_isolation_security_slice
     "serialized PMem storage-isolation classifier")
