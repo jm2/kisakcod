@@ -52,6 +52,7 @@ bool TestProcessFreezeUnsupportedContract()
 
 bool TestSignalParkRejectsInvalidSignals()
 {
+#if !defined(_WIN32)
     const int sigkill = SIGKILL;
     if (Sys_SignalPark(&sigkill, 1) != SysSignalParkStatus::InvalidArgument)
     {
@@ -64,6 +65,7 @@ bool TestSignalParkRejectsInvalidSignals()
         std::fputs("signal-park accepted SIGSTOP\n", stderr);
         return false;
     }
+#endif
     const int bad = -1;
     if (Sys_SignalPark(&bad, 1) != SysSignalParkStatus::InvalidArgument)
     {

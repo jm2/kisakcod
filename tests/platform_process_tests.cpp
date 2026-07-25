@@ -7,6 +7,7 @@
 #include <qcommon/sys_process.h>
 
 #include <array>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>

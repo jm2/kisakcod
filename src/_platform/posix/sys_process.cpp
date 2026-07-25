@@ -34,7 +34,7 @@ namespace
 {
 bool IsValidSignal(const int sig) noexcept
 {
-    if (sig <= 0 || sig >= SIGRTMIN)
+    if (sig <= 0 || sig >= NSIG)
         return false;
     return sig != SIGKILL && sig != SIGSTOP;
 }
@@ -54,9 +54,6 @@ std::vector<sigset_t> &ParkedSets() noexcept
 
 bool BuildSet(const int *signals, std::size_t count, sigset_t *out) noexcept
 {
-    *out = sigset_t{};
-    for (auto &word : out->__val)
-        word = 0;
     sigemptyset(out);
     for (std::size_t i = 0; i < count; ++i)
     {
