@@ -14,6 +14,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#if !defined(_WIN32)
+#include <signal.h>
+#endif
+
 namespace
 {
 const char *checkStage = "startup";
@@ -52,6 +56,11 @@ bool TestProcessFreezeUnsupportedContract()
 
 bool TestSignalParkRejectsInvalidSignals()
 {
+#if !defined(_WIN32)
+    // SIGKILL/SIGSTOP are POSIX-only; the MSVC CRT does not declare
+    // them. On Win32 the signal-park backend returns Unsupported,
+    // so the invalid-argument contract cannot be observed. Treat
+    // this case as a no-op pass.
     const int sigkill = SIGKILL;
     if (Sys_SignalPark(&sigkill, 1) != SysSignalParkStatus::InvalidArgument)
     {
@@ -70,6 +79,9 @@ bool TestSignalParkRejectsInvalidSignals()
         std::fputs("signal-park accepted negative signal\n", stderr);
         return false;
     }
+#else
+    (void)Sys_SignalPark(nullptr, 0);
+#endif
     return true;
 }
 

@@ -18,6 +18,7 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#include <signal.h>
 #else
 #include <signal.h>
 #include <sys/wait.h>
