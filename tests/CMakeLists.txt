@@ -3056,6 +3056,14 @@ add_executable(fuzz_fastfile
     ${SRC_DIR}/xanim/buf_cursor.cpp)
 target_include_directories(fuzz_fastfile PRIVATE ${SRC_DIR})
 target_compile_features(fuzz_fastfile PRIVATE cxx_std_20)
+if (MSVC)
+    # The CHECK / CHECK_RC macros funnel every failure path through the
+    # same return-statement shape, which MSVC's flow analyzer flags as
+    # C4702 unreachable code on the first post-macro statement. Keep
+    # the suppression local to this harness so the rest of the test
+    # targets still see /W4 /WX.
+    target_compile_options(fuzz_fastfile PRIVATE /wd4702)
+endif()
 kisakcod_test_warnings(fuzz_fastfile)
 set_target_properties(
     fuzz_fastfile PROPERTIES

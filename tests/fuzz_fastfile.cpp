@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -61,7 +62,8 @@ int Fail(const char *const message)
         char buf[256];                                                    \
         std::snprintf(buf, sizeof(buf), "%s:%d: %s",                      \
             __FILE__, __LINE__, #expr);                                   \
-        return Fail(buf);                                                 \
+        (void)Fail(buf);                                                  \
+        return 1;                                                         \
     }                                                                     \
 } while (0)
 
@@ -71,7 +73,8 @@ int Fail(const char *const message)
         char buf[256];                                                    \
         std::snprintf(buf, sizeof(buf), "%s:%d: %s",                      \
             __FILE__, __LINE__, #expr);                                   \
-        return Fail(buf);                                                 \
+        (void)Fail(buf);                                                  \
+        return 1;                                                         \
     }                                                                     \
 } while (0)
 
@@ -634,24 +637,21 @@ int RunCorpus(const char *corpusDir)
 
     std::vector<std::string> files;
     {
-        std::string cmd = std::string("ls -1 \"") + corpusDir + "\" 2>/dev/null";
-        FILE *p = ::popen(cmd.c_str(), "r");
-        if (p == nullptr)
+        std::error_code ec;
+        const std::filesystem::directory_iterator it(
+            std::filesystem::path(corpusDir), ec);
+        if (ec)
         {
             // Fall back: synthesize a tiny inline corpus.
             std::fprintf(stderr, "fuzz_fastfile: could not list corpus dir %s; running inline seeds\n", corpusDir);
             return RunSeeds();
         }
-        char buf[512];
-        while (std::fgets(buf, sizeof(buf), p) != nullptr)
+        for (const std::filesystem::directory_entry &entry : it)
         {
-            std::string s = buf;
-            while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
-                s.pop_back();
-            if (!s.empty())
-                files.push_back(s);
+            if (!entry.is_regular_file(ec))
+                continue;
+            files.push_back(entry.path().filename().string());
         }
-        ::pclose(p);
     }
 
     if (files.empty())
@@ -738,8 +738,9 @@ int RunGenSeeds(const char *outDir)
     auto fx = BuildFxArchiveBodyStateSeed();
 
     // Ensure the directory exists.
-    const std::string cmd = std::string("mkdir -p \"") + outDir + "\"";
-    if (::system(cmd.c_str()) != 0)
+    std::error_code mkdirEc;
+    std::filesystem::create_directories(std::filesystem::path(outDir), mkdirEc);
+    if (mkdirEc)
     {
         std::fprintf(stderr, "fuzz_fastfile: could not create %s\n", outDir);
         return 1;
