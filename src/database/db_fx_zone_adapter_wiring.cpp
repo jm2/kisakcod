@@ -1,5 +1,19 @@
 #include "db_fx_zone_adapter_wiring.h"
 
+// The EffectsCore-dependent adapter wiring below must never compile into a
+// KISAK_DEDI_HEADLESS target: EffectsCore is excluded from the headless
+// dedicated source profile, and db_fx_zone_adapter_wiring_headless.cpp
+// supplies the fail-closed stub boundary there instead
+// (scripts/dedi/dedi_sources.cmake). Keeping this TU empty under
+// KISAK_DEDI_HEADLESS turns an accidental admission of this TU to a headless
+// source list into a benign empty TU whose symbols keep resolving against
+// the stub boundary, rather than unresolved EffectsCore externals at link
+// time. The pairing is configuration-consistent: the stub TU #errors when
+// KISAK_DEDI_HEADLESS is absent, this TU compiles to nothing when it is
+// present, and the headless profile test asserts the stub -- not this TU --
+// is on the headless list.
+#if !defined(KISAK_DEDI_HEADLESS)
+
 #include <EffectsCore/fx_fastfile_disk32.h>
 #include <EffectsCore/fx_fastfile_impact_native_disk32.h>
 #include <EffectsCore/fx_fastfile_native_arena.h>
@@ -322,3 +336,5 @@ void FxZoneAdapterWiringTestAccess::ClearActiveBindingForTesting() noexcept
 }
 #endif
 }
+
+#endif
