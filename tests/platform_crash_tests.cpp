@@ -38,11 +38,17 @@ bool TestProcessFreezeUnsupportedContract()
     // without crashing the caller. On non-macOS hosts the status is
     // Unsupported; on macOS the function freezes the calling thread
     // and never returns, so this test does not exercise that path.
-    const SysProcessFreezeStatus status = Sys_ProcessFreezeForCrash();
+    // The call must live inside the non-__APPLE__ arm: dispatching to
+    // Sys_MachProcessFreezeForCrash from a hosted ctest invocation
+    // installs an exception handler, suspends the calling thread, and
+    // blocks on sigsuspend until the test runner times out the case
+    // and kills the process. That would prevent the default
+    // platform-crash-freeze-contracts ctest target from completing on
+    // macOS arm64 even though the link fix for ki-ttr is correct.
 #if defined(__APPLE__)
-    (void)status;
     return true;
 #else
+    const SysProcessFreezeStatus status = Sys_ProcessFreezeForCrash();
     if (status != SysProcessFreezeStatus::Unsupported)
     {
         std::fprintf(stderr,
