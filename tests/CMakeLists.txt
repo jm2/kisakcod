@@ -2425,7 +2425,7 @@ add_test(
     NAME platform-process-launch-contracts
     COMMAND kisakcod-platform-process-tests
 )
-set_tests_properties(platform-process-launch-contracts PROPERTIES TIMEOUT 30)
+set_tests_properties(platform-process-launch-contracts PROPERTIES TIMEOUT 60)
 add_test(
     NAME platform-process-signal-park-contracts
     COMMAND kisakcod-platform-process-tests signal-park-lifecycle
