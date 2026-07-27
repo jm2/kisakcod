@@ -1044,6 +1044,17 @@ target_compile_definitions(
     PRIVATE KISAK_MP)
 target_link_libraries(
     kisakcod-db-load-legacy-bridge-tests PRIVATE Threads::Threads)
+if (MSVC)
+    # The fixture's aborting Com_Error seam makes two legacy post-fatal
+    # scr_stringlist returns provably unreachable on MSVC ARM64. Keep the
+    # resulting C4702 suppression local to this direct-include test target.
+    target_compile_options(
+        kisakcod-db-load-legacy-bridge-tests
+        PRIVATE /wd4702)
+    target_link_options(
+        kisakcod-db-load-legacy-bridge-tests
+        PRIVATE "LINKER:/STACK:8388608")
+endif()
 kisakcod_test_warnings(kisakcod-db-load-legacy-bridge-tests)
 set_target_properties(
     kisakcod-db-load-legacy-bridge-tests PROPERTIES
