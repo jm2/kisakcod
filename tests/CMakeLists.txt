@@ -2418,9 +2418,28 @@ if (NOT _platform_process_source_count EQUAL 1)
         "${_platform_process_source_count}")
 endif()
 
+# macOS process/crash tests also need the dedicated Mach crash TU.
+# posix/sys_process.cpp calls Sys_MachProcessFreezeForCrash() behind
+# __APPLE__; the only definition of that symbol lives in
+# src/_platform/macos/sys_mach_crash.cpp. The production build links
+# it via scripts/platform/macos/platform.cmake, but the EQUAL 1
+# assertion above narrows _platform_process_sources to a single
+# sys_process.cpp and so omits the Mach TU - both targets then fail
+# to link on macOS arm64 with an undefined-symbol error against
+# Sys_MachProcessFreezeForCrash(). Track it as a separate variable so
+# the single-source assertion stays load-bearing as a multi-backend
+# leak detector.
+set(_platform_process_mach_sources "")
+if (KISAK_PLATFORM STREQUAL "macos")
+    set(_platform_process_mach_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
+    list(FILTER _platform_process_mach_sources INCLUDE REGEX
+        "[/\\\\]sys_mach_crash\\.cpp$")
+endif()
+
 add_executable(kisakcod-platform-process-tests
     platform_process_tests.cpp
     ${_platform_process_sources}
+    ${_platform_process_mach_sources}
 )
 target_include_directories(kisakcod-platform-process-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-platform-process-tests PRIVATE cxx_std_20)
@@ -2451,6 +2470,7 @@ set_tests_properties(platform-process-freeze-contracts PROPERTIES TIMEOUT 20)
 add_executable(kisakcod-platform-crash-tests
     platform_crash_tests.cpp
     ${_platform_process_sources}
+    ${_platform_process_mach_sources}
 )
 target_include_directories(kisakcod-platform-crash-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-platform-crash-tests PRIVATE cxx_std_20)
