@@ -158,6 +158,23 @@ elseif(DEFINED CONTRACT_MUTATION
 elseif(DEFINED CONTRACT_MUTATION
     AND CONTRACT_MUTATION STREQUAL "future_header_alias")
     set(_inject_future_header_alias TRUE)
+elseif(DEFINED CONTRACT_MUTATION
+    AND CONTRACT_MUTATION STREQUAL "commented_helper_alias")
+    set(_inject_commented_helper_alias TRUE)
+elseif(DEFINED CONTRACT_MUTATION
+    AND CONTRACT_MUTATION STREQUAL "db_loader_relocated_alias")
+    string(REPLACE
+        "    varXModelPtr = varWeaponDef->gunXModel;\n    Load_XModelPtrArray(0, 16);"
+        "    Load_XModelPtrArray(0, 16);"
+        _db_load "${_db_load}")
+    string(APPEND _db_load
+        "\nvarXModelPtr = varWeaponDef->gunXModel;\n")
+elseif(DEFINED CONTRACT_MUTATION
+    AND CONTRACT_MUTATION STREQUAL "db_loader_wrong_count")
+    string(REPLACE
+        "Load_XModelPtrArray(0, 16);"
+        "Load_XModelPtrArray(0, 17);"
+        _db_load "${_db_load}")
 elseif(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
     message(FATAL_ERROR
         "Unknown weapon-model contract mutation: ${CONTRACT_MUTATION}")
@@ -304,6 +321,34 @@ foreach(_production_source IN ITEMS
         ${_production_source} "${_production_source}")
 endforeach()
 
+extract_slice(
+    _db_load
+    "void __cdecl Load_WeaponDef(bool atStreamStart)"
+    "void __cdecl Load_WeaponDefPtr(bool atStreamStart)"
+    _load_weapon_def
+    "Load_WeaponDef")
+extract_slice(
+    _db_load
+    "void __cdecl Mark_WeaponDef()"
+    "void __cdecl Mark_WeaponDefPtr()"
+    _mark_weapon_def
+    "Mark_WeaponDef")
+string(REGEX REPLACE
+    "[ \t\r\n]+" " " _load_weapon_def_normalized "${_load_weapon_def}")
+string(REGEX REPLACE
+    "[ \t\r\n]+" " " _mark_weapon_def_normalized "${_mark_weapon_def}")
+require_contains(
+    _load_weapon_def_normalized
+    "varXModelPtr = varWeaponDef->gunXModel; Load_XModelPtrArray(0, 16);"
+    "the load alias is consumed immediately by the fixed 16-model walk")
+require_contains(
+    _mark_weapon_def_normalized
+    "varXModelPtr = varWeaponDef->gunXModel; Mark_XModelPtrArray(16);"
+    "the mark alias is consumed immediately by the fixed 16-model walk")
+require_count(
+    _db_load "varXModelPtr = varWeaponDef->gunXModel;" 2
+    "only the two exact fixed-count asset walks decay the model array")
+
 # Seal future production call sites as well as the curated set above. Literal
 # slot-zero reads, exact checked-helper arguments, the frozen declaration, and
 # the two fixed-count database-loader walks are the only reviewed occurrences.
@@ -325,6 +370,30 @@ get_filename_component(_source_root_absolute "${SOURCE_ROOT}" ABSOLUTE)
 set(_unreviewed_gun_model_references "")
 foreach(_production_cxx IN LISTS _production_cxx_files)
     file(READ "${_production_cxx}" _production_cxx_source)
+    file(RELATIVE_PATH _production_relative
+        "${_source_root_absolute}/src" "${_production_cxx}")
+    if(_inject_commented_helper_alias
+        AND _production_relative STREQUAL
+            "bgame/bg_weapon_input_safety.h")
+        string(APPEND _production_cxx_source
+            "\nauto *unchecked =\n"
+            "    // bg::weapon_model::CheckedLookup(\n"
+            "    weaponDef->gunXModel, *copy = unchecked;\n")
+    endif()
+
+    # Whitespace normalization must never join an allowlisted helper prefix
+    # from a line comment to a real pointer-decay expression on the next line.
+    foreach(_helper_name IN ITEMS CheckedLookup ResolveIndex)
+        string(REGEX MATCH
+            "//[^\r\n]*bg::weapon_model::${_helper_name}[ \t]*\\("
+            _commented_helper_prefix "${_production_cxx_source}")
+        if(NOT _commented_helper_prefix STREQUAL "")
+            message(FATAL_ERROR
+                "Commented weapon-model helper prefix in "
+                "${_production_relative}")
+        endif()
+    endforeach()
+
     string(REGEX REPLACE
         "[ \t\r\n]+" " " _production_cxx_residual
         "${_production_cxx_source}")
@@ -346,8 +415,6 @@ foreach(_production_cxx IN LISTS _production_cxx_files)
             _production_cxx_residual "${_production_cxx_residual}")
     endforeach()
 
-    file(RELATIVE_PATH _production_relative
-        "${_source_root_absolute}/src" "${_production_cxx}")
     if(_production_relative STREQUAL "xanim/xanim.h")
         string(REPLACE
             "XModel* gunXModel[16];"
@@ -412,7 +479,10 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         give_sink_direct_index
         cgame_second_lookup
         can_player_array_decay
-        future_header_alias)
+        future_header_alias
+        commented_helper_alias
+        db_loader_relocated_alias
+        db_loader_wrong_count)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"
