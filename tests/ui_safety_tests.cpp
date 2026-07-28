@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 namespace
 {
@@ -159,33 +160,80 @@ void TestSavegameSlotResolution()
 void TestInvalidCmdHintBlinkAlpha()
 {
     CheckNear(
-        ui_safety::InvalidCmdHintBlinkAlpha(125, 0),
+        ui_safety::InvalidCmdHintBlinkAlpha(125, 0, 0),
         0.0f,
         "a zero blink interval must fail closed before modulo");
     CheckNear(
-        ui_safety::InvalidCmdHintBlinkAlpha(125, -1),
+        ui_safety::InvalidCmdHintBlinkAlpha(125, 0, -1),
         0.0f,
         "a negative blink interval must fail closed before modulo");
     CheckNear(
-        ui_safety::InvalidCmdHintBlinkAlpha(0, 500),
+        ui_safety::InvalidCmdHintBlinkAlpha(0, 0, 500),
         0.0f,
         "a blink cycle must begin transparent");
     CheckNear(
-        ui_safety::InvalidCmdHintBlinkAlpha(125, 500),
+        ui_safety::InvalidCmdHintBlinkAlpha(125, 0, 500),
         0.25f,
         "blink alpha must retain fractional division");
     CheckNear(
-        ui_safety::InvalidCmdHintBlinkAlpha(499, 500),
+        ui_safety::InvalidCmdHintBlinkAlpha(499, 0, 500),
         0.998f,
         "the end of a blink cycle must approach full alpha");
     CheckNear(
-        ui_safety::InvalidCmdHintBlinkAlpha(500, 500),
+        ui_safety::InvalidCmdHintBlinkAlpha(500, 0, 500),
         0.0f,
         "an exact interval must start a new blink cycle");
     CheckNear(
-        ui_safety::InvalidCmdHintBlinkAlpha(750, 500),
+        ui_safety::InvalidCmdHintBlinkAlpha(750, 0, 500),
         0.5f,
         "later blink cycles must preserve their fractional phase");
+
+    constexpr int kMaximumTime = (std::numeric_limits<int>::max)();
+    constexpr int kMinimumTime = (std::numeric_limits<int>::min)();
+    Check(
+        ui_safety::MonotonicElapsedMilliseconds(
+            kMinimumTime + 50, kMaximumTime - 49)
+            == 100u,
+        "elapsed time must remain monotonic across signed timer wrap");
+    Check(
+        ui_safety::MonotonicElapsedMilliseconds(900, 1000) == 0u,
+        "a rewound timer must clamp elapsed time to zero");
+    Check(
+        ui_safety::MonotonicElapsedMilliseconds(
+            kMinimumTime, kMaximumTime)
+            == 1u,
+        "the exact signed timer boundary must advance by one millisecond");
+    Check(
+        ui_safety::MonotonicElapsedMilliseconds(
+            kMaximumTime, kMinimumTime)
+            == 0u,
+        "an extreme reverse boundary must fail closed");
+    CheckNear(
+        ui_safety::InvalidCmdHintBlinkAlpha(
+            kMinimumTime + 50, kMaximumTime - 49, 400),
+        0.25f,
+        "blink phase must survive signed timer wrap");
+    CheckNear(
+        ui_safety::InvalidCmdHintBlinkAlpha(900, 1000, 500),
+        0.0f,
+        "a rewound timer must not produce a negative blink alpha");
+
+    Check(
+        !ui_safety::InvalidCmdHintExpired(1100, 1000, 100),
+        "a hint remains live through its exact duration");
+    Check(
+        ui_safety::InvalidCmdHintExpired(1101, 1000, 100),
+        "a hint expires after its duration");
+    Check(
+        !ui_safety::InvalidCmdHintExpired(
+            kMinimumTime + 50, kMaximumTime - 49, 100),
+        "wrapped elapsed time preserves exact-duration behavior");
+    Check(
+        !ui_safety::InvalidCmdHintExpired(900, 1000, 100),
+        "a rewound timer must not spuriously expire a hint");
+    Check(
+        ui_safety::InvalidCmdHintExpired(1000, 1000, -1),
+        "a negative duration must fail closed");
 }
 }
 

@@ -1598,8 +1598,13 @@ void __cdecl CG_DrawInvalidCmdHint(
 
     cgameGlob = CG_GetLocalClientGlobals(localClientNum);
 
-    if (cg_invalidCmdHintDuration->current.integer + cgameGlob->invalidCmdHintTime < cgameGlob->time)
+    if (ui_safety::InvalidCmdHintExpired(
+            cgameGlob->time,
+            cgameGlob->invalidCmdHintTime,
+            cg_invalidCmdHintDuration->current.integer))
+    {
         cgameGlob->invalidCmdHintType = INVALID_CMD_NONE;
+    }
 
     switch (cgameGlob->invalidCmdHintType)
     {
@@ -1636,7 +1641,8 @@ void __cdecl CG_DrawInvalidCmdHint(
         else
         {
             color[3] = ui_safety::InvalidCmdHintBlinkAlpha(
-                cgameGlob->time - cgameGlob->invalidCmdHintTime,
+                cgameGlob->time,
+                cgameGlob->invalidCmdHintTime,
                 blinkInterval);
         }
         x = rect->x - SnapFloat(UI_TextWidth(string, 0, font, fontscale) * 0.5f);

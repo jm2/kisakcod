@@ -114,6 +114,7 @@ load_text("src/cgame_mp/cg_draw_mp.cpp" _cg_draw_mp)
 load_text("src/game/g_weapon.cpp" _g_weapon)
 load_text("src/game/g_client_script_cmd.cpp" _g_client_sp)
 load_text("src/game_mp/g_client_script_cmd_mp.cpp" _g_client_mp)
+load_text("src/database/db_load.cpp" _db_load)
 load_text("scripts/common_files.cmake" _common_files)
 load_text("tests/CMakeLists.txt" _tests_cmake)
 load_text(".github/workflows/ci.yml" _ci)
@@ -154,6 +155,9 @@ elseif(DEFINED CONTRACT_MUTATION
         "gunXModel[0] != nullptr"
         "gunXModel != 0"
         _bg_weapons "${_bg_weapons}")
+elseif(DEFINED CONTRACT_MUTATION
+    AND CONTRACT_MUTATION STREQUAL "future_header_alias")
+    set(_inject_future_header_alias TRUE)
 elseif(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
     message(FATAL_ERROR
         "Unknown weapon-model contract mutation: ${CONTRACT_MUTATION}")
@@ -301,13 +305,43 @@ foreach(_production_source IN ITEMS
 endforeach()
 
 # Seal future production call sites as well as the curated set above. Literal
-# slot-zero reads remain allowed; all data-dependent reads must use the helper.
-file(GLOB_RECURSE _production_cpp_files "${SOURCE_ROOT}/src/*.cpp")
-foreach(_production_cpp IN LISTS _production_cpp_files)
-    file(READ "${_production_cpp}" _production_cpp_source)
+# slot-zero reads and the frozen array declaration remain allowed; all
+# data-dependent reads must use the helper. Header and inline sources are
+# included so moving a lookup out of a .cpp file cannot bypass this gate.
+file(GLOB_RECURSE _production_cxx_files
+    "${SOURCE_ROOT}/src/*.c"
+    "${SOURCE_ROOT}/src/*.cc"
+    "${SOURCE_ROOT}/src/*.cpp"
+    "${SOURCE_ROOT}/src/*.cxx"
+    "${SOURCE_ROOT}/src/*.h"
+    "${SOURCE_ROOT}/src/*.hh"
+    "${SOURCE_ROOT}/src/*.hpp"
+    "${SOURCE_ROOT}/src/*.hxx"
+    "${SOURCE_ROOT}/src/*.inc"
+    "${SOURCE_ROOT}/src/*.inl")
+set(_all_production_cxx "")
+foreach(_production_cxx IN LISTS _production_cxx_files)
+    file(READ "${_production_cxx}" _production_cxx_source)
+    string(APPEND _all_production_cxx "\n${_production_cxx_source}")
+
+    set(_production_cxx_scan "${_production_cxx_source}")
+    string(REPLACE
+        "XModel* gunXModel[16];"
+        "XModel* gunXModel_declaration;"
+        _production_cxx_scan "${_production_cxx_scan}")
     forbid_dynamic_gun_model_access(
-        _production_cpp_source "${_production_cpp}")
+        _production_cxx_scan "${_production_cxx}")
 endforeach()
+if(_inject_future_header_alias)
+    string(APPEND _all_production_cxx
+        "\nauto *unchecked = weaponDef->gunXModel;\n")
+endif()
+require_count(
+    _all_production_cxx "gunXModel" 12
+    "all production references are explicitly reviewed, including aliases")
+require_count(
+    _db_load "varWeaponDef->gunXModel" 2
+    "the only intentional pointer-decay uses are fixed-count asset loading")
 
 require_count(
     _common_files
@@ -341,7 +375,8 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         sp_direct_script_index
         give_sink_direct_index
         cgame_second_lookup
-        can_player_array_decay)
+        can_player_array_decay
+        future_header_alias)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"

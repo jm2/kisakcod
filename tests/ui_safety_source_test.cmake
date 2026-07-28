@@ -30,6 +30,15 @@ function(forbid_contains SOURCE_VARIABLE NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+function(require_ordered SOURCE_VARIABLE FIRST SECOND DESCRIPTION)
+    string(FIND "${${SOURCE_VARIABLE}}" "${FIRST}" _first)
+    string(FIND "${${SOURCE_VARIABLE}}" "${SECOND}" _second)
+    if(_first EQUAL -1 OR _second EQUAL -1 OR _first GREATER_EQUAL _second)
+        message(FATAL_ERROR
+            "Missing or unordered UI-safety invariant (${DESCRIPTION})")
+    endif()
+endfunction()
+
 function(require_count SOURCE_VARIABLE NEEDLE EXPECTED DESCRIPTION)
     set(_remaining "${${SOURCE_VARIABLE}}")
     set(_count 0)
@@ -78,6 +87,33 @@ read_normalized(
     "${SOURCE_ROOT}/.github/workflows/ci.yml"
     _ci "measured Windows x86 workflow")
 
+if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
+    if(CONTRACT_MUTATION STREQUAL "slot_read_before_guard")
+        string(REPLACE
+            "*slotIndex = -1;"
+            "*slotIndex = -1; const int candidate = displaySavegames[displayIndex];"
+            _helper "${_helper}")
+    elseif(CONTRACT_MUTATION STREQUAL "elapsed_rewind_unclamped")
+        string(REPLACE
+            "? elapsed : 0u;"
+            "? elapsed : elapsed;"
+            _helper "${_helper}")
+    elseif(CONTRACT_MUTATION STREQUAL "sp_raw_expiry_addition")
+        string(REPLACE
+            "if (ui_safety::InvalidCmdHintExpired( cgameGlob->time, cgameGlob->invalidCmdHintTime, cg_invalidCmdHintDuration->current.integer))"
+            "if (cg_invalidCmdHintDuration->current.integer + cgameGlob->invalidCmdHintTime < cgameGlob->time)"
+            _cg_sp "${_cg_sp}")
+    elseif(CONTRACT_MUTATION STREQUAL "mp_raw_elapsed_subtraction")
+        string(REPLACE
+            "ui_safety::InvalidCmdHintBlinkAlpha( cgameGlob->time, cgameGlob->invalidCmdHintTime, blinkInterval)"
+            "ui_safety::InvalidCmdHintBlinkAlpha( cgameGlob->time - cgameGlob->invalidCmdHintTime, blinkInterval)"
+            _cg_mp "${_cg_mp}")
+    else()
+        message(FATAL_ERROR
+            "Unknown UI-safety contract mutation: ${CONTRACT_MUTATION}")
+    endif()
+endif()
+
 foreach(_required IN ITEMS
     "inline constexpr std::size_t kSavegameCapacity = 256u;"
     "inline constexpr std::size_t kSavegameStorageLayoutCapacity = 512u;"
@@ -95,11 +131,20 @@ foreach(_required IN ITEMS
         _helper "${_required}"
         "the helper enforces the single fail-closed savegame capacity")
 endforeach()
+require_ordered(
+    _helper
+    "|| displayIndex >= savegameCount) { return false; }"
+    "const int candidate = displaySavegames[displayIndex];"
+    "all display-map bounds guards precede the first indexed read")
 
 foreach(_required IN ITEMS
+    "constexpr std::uint32_t MonotonicElapsedMilliseconds("
+    "(std::numeric_limits<int>::max)()) ? elapsed : 0u;"
+    "constexpr bool InvalidCmdHintExpired("
+    "return MonotonicElapsedMilliseconds(currentTime, startTime) > static_cast<std::uint32_t>(duration);"
     "constexpr float InvalidCmdHintBlinkAlpha("
     "if (blinkInterval <= 0) return 0.0f;"
-    "const int phase = elapsedTime % blinkInterval;"
+    "MonotonicElapsedMilliseconds(currentTime, startTime) % static_cast<std::uint32_t>(blinkInterval);"
     "return static_cast<float>(phase) / static_cast<float>(blinkInterval);")
     require_contains(
         _helper "${_required}"
@@ -137,16 +182,22 @@ endforeach()
 foreach(_cg_source IN ITEMS _cg_sp _cg_mp)
     foreach(_required IN ITEMS
         "#include <ui/ui_safety.h>"
+        "if (ui_safety::InvalidCmdHintExpired( cgameGlob->time, cgameGlob->invalidCmdHintTime, cg_invalidCmdHintDuration->current.integer))"
         "if (blinkInterval <= 0) {"
         "color[3] = 0.0f;"
-        "color[3] = ui_safety::InvalidCmdHintBlinkAlpha( cgameGlob->time - cgameGlob->invalidCmdHintTime, blinkInterval);")
+        "color[3] = ui_safety::InvalidCmdHintBlinkAlpha( cgameGlob->time, cgameGlob->invalidCmdHintTime, blinkInterval);")
         require_contains(
             ${_cg_source} "${_required}"
             "SP and MP use the guarded fractional blink contract")
     endforeach()
-    forbid_contains(
-        ${_cg_source} "% blinkInterval"
-        "SP and MP cannot perform an unguarded local modulo")
+    foreach(_forbidden IN ITEMS
+        "% blinkInterval"
+        "cgameGlob->time - cgameGlob->invalidCmdHintTime"
+        "cg_invalidCmdHintDuration->current.integer + cgameGlob->invalidCmdHintTime")
+        forbid_contains(
+            ${_cg_source} "${_forbidden}"
+            "SP and MP cannot perform raw signed timer arithmetic")
+    endforeach()
 endforeach()
 
 require_contains(
@@ -187,12 +238,16 @@ foreach(_required IN ITEMS
         "runtime coverage rejects invalid savegame mappings")
 endforeach()
 foreach(_required IN ITEMS
-    "InvalidCmdHintBlinkAlpha(125, 0)"
-    "InvalidCmdHintBlinkAlpha(125, -1)"
-    "InvalidCmdHintBlinkAlpha(125, 500)"
-    "InvalidCmdHintBlinkAlpha(499, 500)"
-    "InvalidCmdHintBlinkAlpha(500, 500)"
-    "InvalidCmdHintBlinkAlpha(750, 500)")
+    "InvalidCmdHintBlinkAlpha(125, 0, 0)"
+    "InvalidCmdHintBlinkAlpha(125, 0, -1)"
+    "InvalidCmdHintBlinkAlpha(125, 0, 500)"
+    "InvalidCmdHintBlinkAlpha(499, 0, 500)"
+    "InvalidCmdHintBlinkAlpha(500, 0, 500)"
+    "InvalidCmdHintBlinkAlpha(750, 0, 500)"
+    "MonotonicElapsedMilliseconds(900, 1000)"
+    "InvalidCmdHintBlinkAlpha(900, 1000, 500)"
+    "InvalidCmdHintExpired(1101, 1000, 100)"
+    "InvalidCmdHintExpired(1000, 1000, -1)")
     require_contains(
         _runtime "${_required}"
         "runtime coverage measures guarded fractional blink phases")
@@ -216,3 +271,26 @@ require_contains(
 require_contains(
     _ci "ui-safety-(runtime-contracts|source-invariants)"
     "Windows x86 explicitly runs both UI-safety gates")
+
+if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
+    foreach(_mutation IN ITEMS
+        slot_read_before_guard
+        elapsed_rewind_unclamped
+        sp_raw_expiry_addition
+        mp_raw_elapsed_subtraction)
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}"
+                "-DSOURCE_ROOT=${SOURCE_ROOT}"
+                "-DCONTRACT_MUTATION=${_mutation}"
+                -P "${CMAKE_CURRENT_LIST_FILE}"
+            RESULT_VARIABLE _mutation_result
+            OUTPUT_QUIET
+            ERROR_QUIET)
+        if(_mutation_result EQUAL 0)
+            message(FATAL_ERROR
+                "UI-safety contract accepted mutation: ${_mutation}")
+        endif()
+    endforeach()
+endif()
+
+message(STATUS "UI-safety source contract passed")
