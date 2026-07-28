@@ -22,7 +22,7 @@ of checked boxes.
 
 ### Active critical path
 
-- [ ] Restore the authoritative expanded hosted-CI baseline before additional
+- [x] Restore the authoritative expanded hosted-CI baseline before additional
   backlog implementation merges.
   - [x] Triage failed `master` run **30285663436** at `d4c77e13` to three
     independent regressions: an MSVC `/WX` fuzz-harness shadow warning, omitted
@@ -43,11 +43,22 @@ of checked boxes.
     Independent review found the fixes architecture-correct; the focused GCC
     regression set is **9/9**, affected GCC/Clang targets build, and the complete
     local Linux portable suite is **200/200** at code checkpoint `c8553a73`.
-  - [ ] Pass every required exact-head hosted job, merge the stabilization PR,
-    and confirm the authoritative post-merge `master` run is green.
-- [ ] Selectively reconcile the 13 upstream commits through `820b0a03` only
-  after the CI baseline is green; record every disposition and preserve
-  superseding portability, security, ABI, and headless work.
+  - [x] Pass all 11 required jobs at exact PR #101 head `ac141fb9` in run
+    **30367496573**, squash-merge the stabilization as `fc66c03a`, and pass all
+    11 authoritative post-merge `master` jobs in run **30369149465**.
+- [ ] Selectively reconcile the 13 upstream commits through `820b0a03`;
+  preserve superseding portability, security, ABI, and headless work.
+  - [x] Audit every commit from `af866142` through `820b0a03` and record its
+    exact disposition in `docs/UPSTREAM_820B0A03_LEDGER.md`.
+  - [x] Implement the curated portable selections and pass the complete local
+    CTest suite (**208/208**) plus affected strict Clang, i386, AArch64,
+    source-contract, and independent-review gates.
+  - [x] Record exact upstream ancestry with tree-neutral checkpoint
+    `6e0e6107`; its second parent is exact `820b0a03`, its diff from the first
+    parent is empty, and both trees are `02d3a86b`.
+  - [ ] Publish the dedicated reconciliation PR, pass exact-head hosted CI and
+    automated review with zero actionable threads, merge it with a GitHub
+    merge commit, and confirm authoritative post-merge `master` CI.
 - [x] Merge the exact-key composite zone-runtime controller (PR #71).
 - [x] Merge the ABI-neutral runtime capacity/demand prerequisite (PR #72).
 - [x] Publish the production-neutral serialized runtime facade (PR #73).
@@ -387,19 +398,23 @@ of checked boxes.
   threads; merge commit `ce1d2b18` passed all nine authoritative jobs in run
   **29790700257**.
 - [ ] Re-audit and selectively integrate upstream whenever its tip advances.
-  Current `upstream/master` has 13 unique commits, `af866142` through
-  `820b0a03`, relative to the recorded `4ad0a2e2` checkpoint. Review them in a
-  dedicated reconciliation PR after the CI stabilization PR and use the
-  established disposition-ledger plus tree-neutral ancestry-checkpoint method;
-  do not direct-merge the divergent trees.
-- [ ] Restore and then keep the legacy Windows x86 CI gates green. The normal
-  x86 builds remain healthy, but run **30285663436** exposed the missing
-  headless FX adapter link boundary; candidate `548bfe39` supplies and tests
-  the fail-closed headless implementation.
+  The 13 unique commits from `af866142` through `820b0a03`, relative to the
+  recorded `4ad0a2e2` checkpoint, are fully dispositioned in
+  `docs/UPSTREAM_820B0A03_LEDGER.md`. The curated source and exact tree-neutral
+  ancestry checkpoint `6e0e6107` are locally complete; hosted PR validation,
+  merge-commit retention, and authoritative post-merge CI remain.
+- [x] Restore the legacy Windows x86 CI gates to green. PR #101
+  exact-head run **30367496573** and authoritative post-merge run
+  **30369149465** passed every expanded job, including Windows x86 Debug,
+  Release, no-Steam, and headless.
 - [x] Provide portable utility CI on all five requested OS/architecture pairs.
-- [ ] Keep all five portable utility jobs green. Candidate `548bfe39` addresses
-  the Windows amd64/ARM64 fuzz build failures and macOS arm64 build/runtime
-  failures exposed by run **30285663436** and follow-up PR diagnostics.
+- [x] Restore all five portable utility jobs to green. PR #101 repaired the
+  Windows amd64/ARM64 fuzz-runtime fixtures, macOS arm64 Mach linkage/runtime
+  assumptions, and headless FX adapter boundary without weakening warnings or
+  source composition; exact-head and post-merge expanded runs are fully green.
+- [ ] Keep the expanded 11-job CI matrix required and green before merging
+  future backlog implementation; investigate regressions against exact heads
+  rather than accepting stale or partially superseded runs.
 - [ ] Add required production CI jobs for all five requested targets.
 - [ ] Complete the M14 workflow/release parity, provenance, packaging, and
   checksum work.
@@ -410,6 +425,22 @@ and reference target; it is not one of the five requested strict-delivery boxes.
 
 ## Detailed state and validation evidence
 
+- CI-stabilized merged baseline: PR #101 repaired the MSVC `/WX` fuzz shadow,
+  Mach crash/test portability, complete headless FX adapter, heap-only FX
+  fixtures, directly terminable Win32 child, and backend-specific
+  signal-parking expectations. All 11 jobs passed at exact head
+  `ac141fb9c9b4965c6cfdc963721ab13bd1563d7d` in run **30367496573**. The PR
+  squash-merged as `fc66c03a9874bdc72df396686d6a91599aba9529`,
+  and all 11 authoritative `master` jobs passed in run **30369149465**.
+- Active upstream reconciliation candidate: all 13 commits after `4ad0a2e2`
+  through exact `820b0a030a5a797306f65c3b8fe93767e136a900` have dispositions
+  in `docs/UPSTREAM_820B0A03_LEDGER.md`. Curated portability and correctness
+  changes pass complete local CTest **208/208** plus affected focused gates.
+  Tree-neutral checkpoint `6e0e61076d66a43a388c0a0141f903cd65cffafa`
+  has exact upstream as its second parent, an empty first-parent diff, and
+  matching tree `02d3a86b0d76bf20bc6d5bfe154f2500eedc0d3e`.
+  Publishing, exact-head hosted CI/review, merge-commit retention, and
+  authoritative post-merge CI remain.
 - Current merged baseline: PRs #39--#70 completed earlier audited upstream/gameplay reconciliation checkpoints, the
   report-free script-string ownership foundation, the constructed zone ownership controller, script-string
   initialization hardening, the generation-keyed runtime table plus its Windows Debug fixture repair, and the
@@ -1880,6 +1911,12 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   i386/AArch64 compile-link, source/security/diff gates, and two clean independent audits with all seven raw loader
   sites still frozen. The ancestry
   checkpoint records reviewed history without importing code and therefore does not inflate the engineering estimate.
+  PR #101 subsequently restored the expanded 11-job baseline at exact head
+  `ac141fb9` and authoritative merge `fc66c03a`; runs **30367496573** and
+  **30369149465** are fully green. The current 13-commit upstream reconciliation
+  through `820b0a03` is locally complete at tree-neutral checkpoint
+  `6e0e6107`, with full CTest **208/208**, but does not count as delivered until
+  its hosted PR/review, merge-commit retention, and post-merge CI complete.
   Windows x86 is about
   **93%**, shared
   foundations/security about **91%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
@@ -2487,7 +2524,8 @@ bridge and atomic seven-site cutover are next.
    child authority remains, reviewed alias guards, no public admission/table/
    coordinator authority, no new fixed critical-section enum slot, exactly
    seven frozen raw sites, and zero loader callers.
-- [x] **Priority 0 — Current upstream reconciliation:** selectively adapt the
+- [x] **Previous Priority 0 — Upstream reconciliation through `4ad0a2e2`:**
+   selectively adapt the
    useful behavior from source commits `1c30dda2`, `601ddcc4`, and `e3dd4ccb`
    through upstream tip `4ad0a2e2`, preserve stronger existing portability and
    security boundaries, document every rejected/deferred hunk, validate the
@@ -2496,6 +2534,19 @@ bridge and atomic seven-site cutover are next.
    jobs in run **29790667287** with clean exact-head Codex/Gemini review and
    zero unresolved threads; merge commit `ce1d2b18` passed all nine
    authoritative jobs in run **29790700257**.
+- [ ] **Priority 0 — Current upstream reconciliation through `820b0a03`:**
+   selectively adapt only reviewed behavior from the 13 commits beginning at
+   `af866142`, preserve stronger portable/security/ABI/headless boundaries, and
+   retain exact upstream ancestry without importing the divergent tree.
+   - [x] Record every commit disposition in
+     `docs/UPSTREAM_820B0A03_LEDGER.md`.
+   - [x] Pass complete local CTest **208/208** and the affected strict Clang,
+     i386, AArch64, source-contract, and independent-review gates.
+   - [x] Create tree-neutral checkpoint `6e0e6107` with exact upstream
+     `820b0a03` as its second parent, empty first-parent diff, and matching tree
+     `02d3a86b`.
+   - [ ] Pass exact-head hosted CI/review, resolve every actionable thread,
+     merge with a GitHub merge commit, and pass authoritative post-merge CI.
 - [ ] **Priority 2 — Atomic loader cutover:** claim exact generations, stage
    both root-string outputs through an
    aligned local `std::uint32_t` before copying into stream-backed fields, transfer non-null root strings, and publish
