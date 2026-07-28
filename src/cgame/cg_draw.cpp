@@ -3,6 +3,7 @@
 #endif
 
 #include "cg_draw.h"
+#include <bgame/bg_weapon_model_safety.h>
 #include <qcommon/sys_time.h>
 #include <stringed/stringed_hooks.h>
 #include "cg_main.h"
@@ -1095,7 +1096,10 @@ void DrawViewmodelInfo(int localClientNum)
     {
         weapInfo = CG_GetLocalClientWeaponInfo(localClientNum, ViewmodelWeaponIndex);
         weapDef = BG_GetWeaponDef(ViewmodelWeaponIndex);
-        weaponMdl = weapDef->gunXModel[cgArray[0].predictedPlayerState.weaponmodels[ViewmodelWeaponIndex]];
+        weaponMdl = bg::weapon_model::CheckedLookup(
+            weapDef->gunXModel,
+            cgArray[0].predictedPlayerState.weaponmodels[
+                ViewmodelWeaponIndex]);
         if (weaponMdl)
             name = weaponMdl->name;
         else

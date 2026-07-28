@@ -2628,6 +2628,23 @@ add_test(
     NAME upstream-reconciliation-command-dispatch-contracts
     COMMAND kisakcod-upstream-command-dispatch-tests
 )
+
+add_executable(kisakcod-weapon-model-safety-tests
+    weapon_model_safety_tests.cpp
+)
+target_include_directories(
+    kisakcod-weapon-model-safety-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-weapon-model-safety-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-weapon-model-safety-tests)
+set_target_properties(kisakcod-weapon-model-safety-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME weapon-model-safety-contracts
+    COMMAND kisakcod-weapon-model-safety-tests
+)
+
 foreach(_hudelem_variant IN ITEMS MP SP)
     string(TOLOWER "${_hudelem_variant}" _hudelem_variant_lower)
     set(_hudelem_sort_target
@@ -3010,6 +3027,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_reconciliation_source_test.cmake
+)
+
+add_test(
+    NAME weapon-model-safety-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/weapon_model_safety_source_test.cmake
 )
 
 add_test(

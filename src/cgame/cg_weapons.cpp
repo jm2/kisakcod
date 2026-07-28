@@ -3,7 +3,7 @@
 #include "cg_local.h"
 #include "cg_public.h"
 
-
+#include <bgame/bg_weapon_model_safety.h>
 #include <xanim/dobj.h>
 #include <DynEntity/DynEntity_client.h>
 #include <stringed/stringed_hooks.h>
@@ -307,6 +307,7 @@ void __cdecl ChangeViewmodelDobj(
     uint32_t dobjHandle; // [esp+Ch] [ebp-30h]
     int32_t mdlIdx; // [esp+10h] [ebp-2Ch]
     WeaponDef *weapDef; // [esp+14h] [ebp-28h]
+    XModel *gunModel;
     XAnimTree_s *pAnimTree; // [esp+18h] [ebp-24h]
     DObjModel_s dobjModels[4]; // [esp+1Ch] [ebp-20h] BYREF
 
@@ -317,7 +318,9 @@ void __cdecl ChangeViewmodelDobj(
         iassert(localClientNum == 0);
         weapInfo = &cg_weaponsArray[0][weaponNum]; // KISAKTODO: refactor to CG_GetLocalClientWeaponInfo()
         weapDef = BG_GetWeaponDef(weaponNum);
-        if (weapDef->gunXModel[weaponModel])
+        gunModel = bg::weapon_model::CheckedLookup(
+            weapDef->gunXModel, weaponModel);
+        if (gunModel)
         {
             weapInfo->handModel = newHands;
             weapInfo->gogglesModel = newGoggles;
@@ -343,7 +346,7 @@ void __cdecl ChangeViewmodelDobj(
 
             dobjModels[1].boneName = scr_const.tag_weapon;
             dobjModels[1].ignoreCollision = 0;
-            dobjModels[1].model = weapDef->gunXModel[weaponModel];
+            dobjModels[1].model = gunModel;
             mdlIdx = 2;
             if (weapInfo->gogglesModel)
             {
@@ -4252,4 +4255,3 @@ void CG_ArchiveWeaponInfo(MemoryFile *memFile)
 }
 
 #endif // KISAK_SP
-

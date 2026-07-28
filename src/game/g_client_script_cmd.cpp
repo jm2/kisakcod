@@ -4,6 +4,7 @@
 
 #include "g_local.h"
 
+#include <bgame/bg_weapon_model_safety.h>
 #include <xanim/xanim.h>
 #include <script/scr_vm.h>
 #include "g_main.h"
@@ -123,8 +124,7 @@ void __cdecl PlayerCmd_giveWeapon(scr_entref_t entref)
     int weaponIndex; // r30
     playerState_s *ps;
     int hadWeapon; // r28
-    WeaponDef *WeaponDef; // r31
-    unsigned int weaponModel; // r3
+    uint8_t weaponModel = 0;
 
     if (entref.classnum)
     {
@@ -149,12 +149,12 @@ void __cdecl PlayerCmd_giveWeapon(scr_entref_t entref)
     iassert(ps);
     hadWeapon = Com_BitCheckAssert(ps->weapons, weaponIndex, 16);
 
-    if (Scr_GetNumParam() != 2
-        || (WeaponDef = BG_GetWeaponDef(weaponIndex), weaponModel = Scr_GetInt(1), weaponModel > 0xFF)
-        || !WeaponDef->gunXModel[weaponModel])
+    if (Scr_GetNumParam() == 2)
     {
-        //LOBYTE(Int) = 0;
-        weaponModel = 0;
+        WeaponDef *weaponDef = BG_GetWeaponDef(weaponIndex);
+        const int32_t requestedWeaponModel = Scr_GetInt(1);
+        weaponModel = bg::weapon_model::ResolveIndex(
+            weaponDef->gunXModel, requestedWeaponModel);
     }
 
     G_GivePlayerWeapon(&pSelf->client->ps, weaponIndex, weaponModel);
@@ -4285,4 +4285,3 @@ void __cdecl G_AddCommandNotify(volatile unsigned __int16 notify)
     //__lwsync();
     s_cmdNotify.write += v3 + 2;
 }
-

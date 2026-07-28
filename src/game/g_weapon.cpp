@@ -1,4 +1,5 @@
 #include "game_public.h"
+#include <bgame/bg_weapon_model_safety.h>
 #include <server/sv_world.h>
 #include <script/scr_const.h>
 #include <server/sv_game.h>
@@ -661,7 +662,8 @@ int __cdecl G_GivePlayerWeapon(playerState_s *pPS, int iWeaponIndex, uint8_t alt
         return 0;
     if (weapDef->weapClass == WEAPCLASS_NON_PLAYER)
         return 0;
-    if (!weapDef->gunXModel[altModelIndex])
+    if (!bg::weapon_model::CheckedLookup(
+            weapDef->gunXModel, altModelIndex))
         return 0;
     if (level.clientIsSpawning)
         MyAssertHandler(

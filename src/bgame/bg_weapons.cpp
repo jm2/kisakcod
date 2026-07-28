@@ -504,7 +504,7 @@ int32_t __cdecl BG_IsAimDownSightWeapon(uint32_t weaponIndex)
 
 bool __cdecl BG_CanPlayerHaveWeapon(uint32_t weaponIndex)
 {
-    return BG_GetWeaponDef(weaponIndex)->gunXModel != 0;
+    return BG_GetWeaponDef(weaponIndex)->gunXModel[0] != nullptr;
 }
 
 bool __cdecl BG_ValidateWeaponNumber(uint32_t weaponIndex)
