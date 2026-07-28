@@ -6,7 +6,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Porting checklist
 
-Last reconciled: **July 22, 2026**. A checked parent means that milestone's exit
+Last reconciled: **July 28, 2026**. A checked parent means that milestone's exit
 criteria are complete, not merely that substantial supporting work exists.
 Percentages are engineering-effort estimates and are not derived from the number
 of checked boxes.
@@ -22,6 +22,22 @@ of checked boxes.
 
 ### Active critical path
 
+- [ ] Restore the authoritative expanded hosted-CI baseline before additional
+  backlog implementation merges.
+  - [x] Triage failed `master` run **30285663436** at `d4c77e13` to three
+    independent regressions: an MSVC `/WX` fuzz-harness shadow warning, omitted
+    Mach crash linkage plus a non-portable `/bin/true` test path, and an omitted
+    headless FX adapter boundary.
+  - [x] Fix all three without weakening warnings or linking EffectsCore into the
+    headless profile. Add a complete fail-closed headless adapter stub, runtime
+    contract coverage, and source-composition seals.
+  - [x] Pass the complete local Linux portable build and **200/200** CTest suite
+    at candidate code checkpoint `548bfe39`.
+  - [ ] Pass every required exact-head hosted job, merge the stabilization PR,
+    and confirm the authoritative post-merge `master` run is green.
+- [ ] Selectively reconcile the 13 upstream commits through `820b0a03` only
+  after the CI baseline is green; record every disposition and preserve
+  superseding portability, security, ABI, and headless work.
 - [x] Merge the exact-key composite zone-runtime controller (PR #71).
 - [x] Merge the ABI-neutral runtime capacity/demand prerequisite (PR #72).
 - [x] Publish the production-neutral serialized runtime facade (PR #73).
@@ -361,10 +377,19 @@ of checked boxes.
   threads; merge commit `ce1d2b18` passed all nine authoritative jobs in run
   **29790700257**.
 - [ ] Re-audit and selectively integrate upstream whenever its tip advances.
-  Current `upstream/master` has one unique commit, `af866142`; review it in a
-  separate PR after the stable-context integration PR is cleanly merged.
-- [x] Keep the legacy Windows x86 CI gates green.
+  Current `upstream/master` has 13 unique commits, `af866142` through
+  `820b0a03`, relative to the recorded `4ad0a2e2` checkpoint. Review them in a
+  dedicated reconciliation PR after the CI stabilization PR and use the
+  established disposition-ledger plus tree-neutral ancestry-checkpoint method;
+  do not direct-merge the divergent trees.
+- [ ] Restore and then keep the legacy Windows x86 CI gates green. The normal
+  x86 builds remain healthy, but run **30285663436** exposed the missing
+  headless FX adapter link boundary; candidate `548bfe39` supplies and tests
+  the fail-closed headless implementation.
 - [x] Provide portable utility CI on all five requested OS/architecture pairs.
+- [ ] Keep all five portable utility jobs green. Candidate `548bfe39` addresses
+  the Windows amd64/ARM64 fuzz build failures and macOS arm64 build/runtime
+  failures exposed by run **30285663436** and follow-up PR diagnostics.
 - [ ] Add required production CI jobs for all five requested targets.
 - [ ] Complete the M14 workflow/release parity, provenance, packaging, and
   checksum work.

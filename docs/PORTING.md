@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 22, 2026)
+## Implementation status (July 28, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -16,6 +16,15 @@ licensed gameplay smoke tests.
 **Committed scope is the MP client + the (headless) dedicated server. Single-player
 is deferred** — SP-only serialization surfaces (save-games) and SP subsystems are
 documented for completeness but are off the current critical path.
+
+The immediate delivery gate is CI stabilization. Expanded `master` run
+**30285663436** exposed three independent integration regressions in portable
+Windows, portable macOS, and Windows x86 headless builds. Candidate `548bfe39`
+repairs those boundaries and passes the complete local Linux portable build plus
+**200/200** CTest cases; exact-head hosted validation and a green authoritative
+post-merge run remain required before backlog implementation resumes. After that
+baseline is restored, the next isolated integration batch is the 13-commit
+upstream range `af866142..820b0a03`.
 
 Completed foundation work:
 
@@ -567,6 +576,11 @@ Completed foundation work:
   jobs in run **29790667287** with clean exact-head Codex/Gemini review and zero
   unresolved threads; merge commit `ce1d2b18` passed authoritative run
   **29790700257** with all nine jobs;
+- upstream has since advanced by 13 unique commits through `820b0a03`. That
+  range must be dispositioned commit by commit against the stronger current
+  portability, ABI, security, headless, and platform-service work before a
+  tree-neutral ancestry checkpoint records the reviewed tip. A direct merge of
+  the divergent trees is not an approved integration path;
 - PR #67 merged passive durable-receipt composition as `76d0e065888aab298d430b4bf4e115c07369bc88`:
   one stable allocation, stream-generation, pending-copy, and native-storage receipt capsule belongs to each of the 33
   runtime entries, while the active-stream binding and pending-copy ledger exist once at table scope. It remains
