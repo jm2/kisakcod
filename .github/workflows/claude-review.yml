@@ -36,6 +36,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
+          # Review every GitHub Bot/App actor, including GasTown automation
+          # classified as non-User; ordinary non-write Users remain blocked.
+          allowed_bots: "*"
+
           # Creates a tracking comment with progress checkboxes and updates it
           # as the review proceeds.
           track_progress: true
