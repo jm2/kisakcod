@@ -71,27 +71,19 @@ bool __cdecl Phys_ContactBetter(const LocalContactData *ca, const LocalContactDa
     return cb->depth < ca->depth;
 }
 
-int Phys_CancelSimilarContacts()
+void Phys_CancelSimilarContacts()
 {
-    int result; // eax
-    int j; // [esp+0h] [ebp-Ch]
-    int i; // [esp+4h] [ebp-8h]
-    int numContacts; // [esp+8h] [ebp-4h]
-
-    result = numLocalContacts;
-    numContacts = numLocalContacts;
-    for (i = 0; i < numContacts - 1; ++i)
+    const int numContacts = numLocalContacts;
+    for (int i = 0; i < numContacts - 1; ++i)
     {
-        result = i + 1;
-        for (j = i + 1; j < numContacts; ++j)
+        for (int j = i + 1; j < numContacts; ++j)
         {
-            LOBYTE(result) = Phys_SimilarContacts(&localContacts[i], &localContacts[j]);
-            if (result)
+            if (Phys_SimilarContacts(
+                    &localContacts[i], &localContacts[j]))
             {
-                LOBYTE(result) = Phys_ContactBetter(&localContacts[i], &localContacts[j]);
-                if (result)
+                if (Phys_ContactBetter(
+                        &localContacts[i], &localContacts[j]))
                 {
-                    result = 36 * j;
                     localContacts[j].inUse = 0;
                 }
                 else
@@ -101,7 +93,6 @@ int Phys_CancelSimilarContacts()
             }
         }
     }
-    return result;
 }
 
 void __cdecl Phys_CapsuleOptimizeLocalResults(Results *results)

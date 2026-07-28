@@ -2548,6 +2548,22 @@ add_test(
     COMMAND kisakcod-vehicle-material-time-tests
 )
 
+add_executable(kisakcod-renderer-value-encoding-tests
+    renderer_value_encoding_tests.cpp
+)
+target_include_directories(
+    kisakcod-renderer-value-encoding-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-renderer-value-encoding-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-renderer-value-encoding-tests)
+set_target_properties(kisakcod-renderer-value-encoding-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME renderer-value-encoding-contracts
+    COMMAND kisakcod-renderer-value-encoding-tests
+)
+
 add_executable(kisakcod-upstream-sort-tests
     native_sort_contract_tests.cpp
 )
@@ -2639,6 +2655,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/vehicle_material_time_source_test.cmake
+)
+
+add_test(
+    NAME upstream-820b0a03-core-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_820b0a03_core_source_test.cmake
 )
 
 add_test(
