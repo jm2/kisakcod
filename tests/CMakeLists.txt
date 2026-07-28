@@ -2668,6 +2668,22 @@ add_test(
     COMMAND kisakcod-weapon-model-safety-tests
 )
 
+add_executable(kisakcod-weapon-input-safety-tests
+    weapon_input_safety_tests.cpp
+)
+target_include_directories(
+    kisakcod-weapon-input-safety-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-weapon-input-safety-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-weapon-input-safety-tests)
+set_target_properties(kisakcod-weapon-input-safety-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME weapon-input-safety-contracts
+    COMMAND kisakcod-weapon-input-safety-tests
+)
+
 foreach(_hudelem_variant IN ITEMS MP SP)
     string(TOLOWER "${_hudelem_variant}" _hudelem_variant_lower)
     set(_hudelem_sort_target

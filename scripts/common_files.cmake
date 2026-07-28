@@ -108,6 +108,7 @@ set(BGAME
     "${SRC_DIR}/bgame/bg_vehicles_mp.cpp"
     "${SRC_DIR}/bgame/bg_weapons.cpp"
     "${SRC_DIR}/bgame/bg_weapons.h"
+    "${SRC_DIR}/bgame/bg_weapon_input_safety.h"
     "${SRC_DIR}/bgame/bg_weapon_model_safety.h"
     "${SRC_DIR}/bgame/bg_weapons_load_obj.cpp"
 )

@@ -64,6 +64,11 @@ read_normalized("src/gfx_d3d/r_material_load_obj.cpp" _material)
 read_normalized("src/physics/phys_coll_capsulebrush.cpp" _capsule)
 read_normalized("src/script/scr_animtree.cpp" _animtree)
 read_normalized("src/sound/snd.cpp" _sound)
+read_normalized("src/bgame/bg_weapon_input_safety.h" _weapon_input)
+read_normalized("src/bgame/bg_weapons.cpp" _bg_weapons)
+read_normalized("tests/weapon_input_safety_tests.cpp" _weapon_input_test)
+read_normalized("tests/CMakeLists.txt" _tests_cmake)
+read_normalized("scripts/common_files.cmake" _common_manifest)
 read_normalized(".github/workflows/ci.yml" _ci)
 
 if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
@@ -107,6 +112,21 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "\"g_snd.chaninfo[ia].alias0\""
             "\"g_snd.chaninfo[i].alias0\""
             _sound "${_sound}")
+    elseif(CONTRACT_MUTATION STREQUAL "weapon_input_missing_disable")
+        string(REPLACE
+            "kFriendlyFireSuppressed | kWeaponsDisabled"
+            "kFriendlyFireSuppressed"
+            _weapon_input "${_weapon_input}")
+    elseif(CONTRACT_MUTATION STREQUAL "weapon_input_calls_bypass")
+        string(REPLACE
+            "bg::weapon_input::IsAttackSuppressed(ps->weapFlags)"
+            "false"
+            _bg_weapons "${_bg_weapons}")
+    elseif(CONTRACT_MUTATION STREQUAL "ci_omits_weapon_input")
+        string(REPLACE
+            "|weapon-input-safety-contracts"
+            ""
+            _ci "${_ci}")
     elseif(CONTRACT_MUTATION STREQUAL "ci_omits_contract")
         string(REPLACE
             "|upstream-820b0a03-core-source-invariants"
@@ -300,6 +320,83 @@ foreach(_required IN ITEMS
         "loop-update diagnostics name the checked channel")
 endforeach()
 
+foreach(_required IN ITEMS
+    "inline constexpr std::int32_t kFriendlyFireSuppressed = 0x08;"
+    "inline constexpr std::int32_t kWeaponsDisabled = 0x80;"
+    "kFriendlyFireSuppressed | kWeaponsDisabled;"
+    "constexpr bool IsAttackSuppressed(const std::int32_t weaponFlags) noexcept"
+    "return (weaponFlags & kAttackSuppressionMask) != 0;")
+    require_contains(
+        _weapon_input "${_required}"
+        "SP attack suppression uses named, complete weapon-flag values")
+endforeach()
+
+extract_slice(
+    _bg_weapons
+    "int32_t __cdecl PM_Weapon_ShouldBeFiring("
+    "void __cdecl PM_Weapon_FireWeapon("
+    _weapon_firing_slice
+    "PM_Weapon_ShouldBeFiring")
+extract_slice(
+    _bg_weapons
+    "void __cdecl PM_Weapon_CheckForMelee("
+    "void __cdecl PM_Weapon_MeleeInit("
+    _weapon_melee_slice
+    "PM_Weapon_CheckForMelee")
+foreach(_weapon_slice IN ITEMS _weapon_firing_slice _weapon_melee_slice)
+    require_contains(
+        ${_weapon_slice}
+        "bg::weapon_input::IsAttackSuppressed(ps->weapFlags)"
+        "friendly-fire and disableWeapons flags suppress SP attacks")
+    require_ordered(
+        ${_weapon_slice}
+        "#ifdef KISAK_SP"
+        "bg::weapon_input::IsAttackSuppressed(ps->weapFlags)"
+        "attack suppression remains SP-profile-specific")
+    foreach(_forbidden IN ITEMS
+        "weapFlags & 8"
+        "weapFlags & 0x08"
+        "weapFlags & 0x80")
+        forbid_contains(
+            ${_weapon_slice} "${_forbidden}"
+            "SP attack suppression cannot drift back to partial raw masks")
+    endforeach()
+endforeach()
+require_contains(
+    _weapon_firing_slice
+    "#ifdef KISAK_SP if (bg::weapon_input::IsAttackSuppressed(ps->weapFlags)) return 0; #endif"
+    "firing suppression is enclosed entirely by the SP profile guard")
+require_contains(
+    _weapon_melee_slice
+    "#ifdef KISAK_SP if (bg::weapon_input::IsAttackSuppressed(ps->weapFlags)) return; #endif"
+    "melee suppression is enclosed entirely by the SP profile guard")
+
+foreach(_required IN ITEMS
+    "IsAttackSuppressed(0)"
+    "IsAttackSuppressed(0x01)"
+    "IsAttackSuppressed(kFriendlyFireSuppressed)"
+    "IsAttackSuppressed(kWeaponsDisabled)"
+    "kFriendlyFireSuppressed | kWeaponsDisabled")
+    require_contains(
+        _weapon_input_test "${_required}"
+        "runtime coverage distinguishes both attack-suppression flags")
+endforeach()
+require_contains(
+    _common_manifest "\"\${SRC_DIR}/bgame/bg_weapon_input_safety.h\""
+    "the common source manifest owns the weapon-input helper")
+require_contains(
+    _tests_cmake "add_executable(kisakcod-weapon-input-safety-tests"
+    "portable CMake builds the weapon-input contract")
+require_contains(
+    _tests_cmake "NAME weapon-input-safety-contracts"
+    "portable CMake registers the weapon-input contract")
+require_contains(
+    _ci "kisakcod-weapon-input-safety-tests"
+    "measured Windows x86 builds the weapon-input contract")
+require_contains(
+    _ci "|weapon-input-safety-contracts"
+    "measured Windows x86 runs the weapon-input contract")
+
 require_contains(
     _ci "|upstream-820b0a03-core-source-invariants"
     "measured Windows x86 tests select the upstream core contract")
@@ -314,6 +411,9 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         capsule_result_return
         animtree_stale_flags
         sound_stale_diagnostic_index
+        weapon_input_missing_disable
+        weapon_input_calls_bypass
+        ci_omits_weapon_input
         ci_omits_contract)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
