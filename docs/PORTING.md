@@ -32,8 +32,13 @@ portable source passes complete local CTest **208/208** plus the affected
 strict Clang, i386, AArch64, source-contract, and independent-review gates.
 Tree-neutral checkpoint `6e0e6107` records exact upstream
 `820b0a03` as its second parent with an empty first-parent diff and identical
-tree `02d3a86b`. Hosted exact-head CI/review, merge-commit retention, and
-authoritative post-merge CI remain before the batch is complete.
+tree `02d3a86b`. Exact repair head `5f9321f3` passed all 11 hosted jobs in run
+**30383465761**; exact-head Claude review found no new correctness, security, or
+performance issue, CodeRabbit completed successfully, and all 13 earlier
+threads were answered and resolved. The valid remaining review suggestions
+harden only the source-contract harness and pass their four focused local
+scripts. Final exact-head CI/review, merge-commit retention, and authoritative
+post-merge CI remain before the batch is complete.
 
 Completed foundation work:
 

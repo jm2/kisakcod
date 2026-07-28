@@ -53,5 +53,13 @@ Checkpoint `6e0e61076d66a43a388c0a0141f903cd65cffafa` has:
   its first parent's tree.
 
 The checkpoint's complete content diff from its first parent is empty. Hosted
-exact-head CI, automated review, merge-commit retention, and authoritative
-post-merge CI remain required before this reconciliation is complete.
+repair head `5f9321f3a464b467f220a7395037da36e0ba7b1a` passed all 11
+jobs in run **30383465761**. Exact-head Claude review found no new correctness,
+security, or performance issue; CodeRabbit completed successfully; and all 13
+earlier review threads were answered and resolved. The subsequent valid
+test-harness findings reject empty count needles, pin call-shaped savegame
+boundaries, reduce formatting-sensitive CI-name checks, document slice anchors,
+and seal the decimal `128` raw-mask spelling; all four affected local source
+contracts pass. Final exact-head CI/review, merge-commit retention, and
+authoritative post-merge CI remain required before this reconciliation is
+complete.

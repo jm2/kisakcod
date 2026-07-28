@@ -210,6 +210,7 @@ foreach(_weapon_slice IN ITEMS _weapon_firing _melee)
     foreach(_raw_mask IN ITEMS
         "weapFlags & 8"
         "weapFlags & 0x08"
+        "weapFlags & 128"
         "weapFlags & 0x80")
         forbid_contains(
             ${_weapon_slice} "${_raw_mask}"

@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
+# extract_slice uses the following function signature as an end anchor. A
+# signature rename or reorder can therefore require an anchor update even when
+# the protected invariant itself is unchanged.
+
 if(NOT DEFINED SOURCE_ROOT OR SOURCE_ROOT STREQUAL "")
     message(FATAL_ERROR "SOURCE_ROOT must identify the KisakCOD source tree")
 endif()
@@ -407,11 +411,11 @@ require_contains(
     _ci "kisakcod-weapon-input-safety-tests"
     "measured Windows x86 builds the weapon-input contract")
 require_contains(
-    _ci "|weapon-input-safety-contracts"
+    _ci "weapon-input-safety-contracts"
     "measured Windows x86 runs the weapon-input contract")
 
 require_contains(
-    _ci "|upstream-820b0a03-core-source-invariants"
+    _ci "upstream-820b0a03-core-source-invariants"
     "measured Windows x86 tests select the upstream core contract")
 
 if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")

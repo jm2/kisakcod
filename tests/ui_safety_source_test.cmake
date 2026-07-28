@@ -42,13 +42,17 @@ endfunction()
 function(require_count SOURCE_VARIABLE NEEDLE EXPECTED DESCRIPTION)
     set(_remaining "${${SOURCE_VARIABLE}}")
     set(_count 0)
+    string(LENGTH "${NEEDLE}" _length)
+    if(_length EQUAL 0)
+        message(FATAL_ERROR
+            "Empty UI-safety invariant count needle (${DESCRIPTION})")
+    endif()
     while(TRUE)
         string(FIND "${_remaining}" "${NEEDLE}" _position)
         if(_position EQUAL -1)
             break()
         endif()
         math(EXPR _count "${_count} + 1")
-        string(LENGTH "${NEEDLE}" _length)
         math(EXPR _next "${_position} + ${_length}")
         string(SUBSTRING "${_remaining}" ${_next} -1 _remaining)
     endwhile()
@@ -229,10 +233,13 @@ foreach(_forbidden IN ITEMS
         "legacy unbounded savegame indexing is sealed out")
 endforeach()
 
-foreach(_boundary IN ITEMS "0" "255" "256" "257" "511" "512" "513")
+foreach(_boundary IN ITEMS 0 255 256 257 511 512 513)
     require_contains(
-        _runtime "${_boundary}"
-        "runtime coverage includes the requested savegame-count boundary")
+        _runtime "IsSavegameCountValid(${_boundary})"
+        "runtime coverage validates the requested savegame-count boundary")
+    require_contains(
+        _runtime "GetFailClosedSavegameCount(${_boundary})"
+        "runtime coverage fail-closes the requested savegame-count boundary")
 endforeach()
 foreach(_required IN ITEMS
     "displaySavegames[4] = -1;"

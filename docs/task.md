@@ -64,6 +64,15 @@ of checked boxes.
     its per-node assignment, strengthen the stale/wide mutation contracts, and
     address the actionable automated-review clarity and boundary findings. The
     complete repaired local CTest suite remains **208/208**.
+  - [x] Pass all 11 hosted jobs at exact repair head `5f9321f3` in run
+    **30383465761**. Exact-head Claude review found no new correctness,
+    security, or performance issue, CodeRabbit completed successfully, and all
+    13 earlier review threads were answered and resolved.
+  - [x] Apply the remaining valid CodeRabbit test-harness hardening: reject
+    empty count needles, require call-shaped savegame boundaries, loosen only
+    formatting-sensitive CI-name checks, document slice anchors, and forbid the
+    decimal `128` disable-weapons mask regression. All four affected
+    mutation-sensitive source contracts pass locally.
   - [ ] Pass replacement exact-head hosted CI and automated review with zero
     actionable threads, merge with a GitHub merge commit, and confirm
     authoritative post-merge `master` CI.
@@ -2559,6 +2568,11 @@ bridge and atomic seven-site cutover are next.
    - [x] Repair the MSVC declaration lifetime while preserving fixed-width
      per-node assignment, add stale/wide mutation coverage, address the
      actionable review findings, and retain complete local CTest **208/208**.
+   - [x] Pass all 11 jobs at exact repair head `5f9321f3` in run
+     **30383465761**, complete clean exact-head Claude review, complete
+     successful CodeRabbit review, and resolve all 13 earlier threads.
+   - [x] Harden the valid remaining test-contract findings locally; all four
+     affected mutation-sensitive source scripts pass.
    - [ ] Pass replacement exact-head hosted CI/review, resolve every actionable
      thread, merge with a GitHub merge commit, and pass authoritative
      post-merge CI.

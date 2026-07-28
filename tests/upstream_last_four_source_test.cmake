@@ -401,8 +401,8 @@ forbid_contains(
 require_count(
     _tests_cmake "NAME upstream-last-four-source-invariants" 1
     "CTest registers this focused reconciliation contract")
-require_count(
-    _ci "upstream-last-four-source-invariants" 1
+require_contains(
+    _ci "upstream-last-four-source-invariants"
     "measured Windows x86 runs this focused reconciliation contract")
 
 if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
