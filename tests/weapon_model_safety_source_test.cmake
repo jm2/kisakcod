@@ -305,9 +305,11 @@ foreach(_production_source IN ITEMS
 endforeach()
 
 # Seal future production call sites as well as the curated set above. Literal
-# slot-zero reads and the frozen array declaration remain allowed; all
-# data-dependent reads must use the helper. Header and inline sources are
-# included so moving a lookup out of a .cpp file cannot bypass this gate.
+# slot-zero reads, exact checked-helper arguments, the frozen declaration, and
+# the two fixed-count database-loader walks are the only reviewed occurrences.
+# Everything else remains as residual text and fails, so replacing an allowed
+# occurrence with a bare pointer alias cannot evade this gate by preserving a
+# global count. Header and inline sources are included.
 file(GLOB_RECURSE _production_cxx_files
     "${SOURCE_ROOT}/src/*.c"
     "${SOURCE_ROOT}/src/*.cc"
@@ -319,26 +321,60 @@ file(GLOB_RECURSE _production_cxx_files
     "${SOURCE_ROOT}/src/*.hxx"
     "${SOURCE_ROOT}/src/*.inc"
     "${SOURCE_ROOT}/src/*.inl")
-set(_all_production_cxx "")
+get_filename_component(_source_root_absolute "${SOURCE_ROOT}" ABSOLUTE)
+set(_unreviewed_gun_model_references "")
 foreach(_production_cxx IN LISTS _production_cxx_files)
     file(READ "${_production_cxx}" _production_cxx_source)
-    string(APPEND _all_production_cxx "\n${_production_cxx_source}")
+    string(REGEX REPLACE
+        "[ \t\r\n]+" " " _production_cxx_residual
+        "${_production_cxx_source}")
 
-    set(_production_cxx_scan "${_production_cxx_source}")
-    string(REPLACE
-        "XModel* gunXModel[16];"
-        "XModel* gunXModel_declaration;"
-        _production_cxx_scan "${_production_cxx_scan}")
-    forbid_dynamic_gun_model_access(
-        _production_cxx_scan "${_production_cxx}")
+    # A literal default-model read is safe in any production source.
+    string(REGEX REPLACE
+        "gunXModel[ ]*\\[[ ]*0[uUlL]*[ ]*\\]"
+        "reviewed_default_model"
+        _production_cxx_residual "${_production_cxx_residual}")
+
+    # These exact forms keep the array bound visible to the checked helper.
+    foreach(_checked_prefix IN ITEMS
+        "bg::weapon_model::CheckedLookup( weapDef->gunXModel,"
+        "bg::weapon_model::ResolveIndex( weapDef->gunXModel,"
+        "bg::weapon_model::ResolveIndex( weaponDef->gunXModel,")
+        string(REPLACE
+            "${_checked_prefix}"
+            "reviewed_weapon_model_helper("
+            _production_cxx_residual "${_production_cxx_residual}")
+    endforeach()
+
+    file(RELATIVE_PATH _production_relative
+        "${_source_root_absolute}/src" "${_production_cxx}")
+    if(_production_relative STREQUAL "xanim/xanim.h")
+        string(REPLACE
+            "XModel* gunXModel[16];"
+            "reviewed_weapon_model_declaration;"
+            _production_cxx_residual "${_production_cxx_residual}")
+    elseif(_production_relative STREQUAL "database/db_load.cpp")
+        string(REPLACE
+            "varXModelPtr = varWeaponDef->gunXModel;"
+            "reviewed_fixed_count_weapon_model_load;"
+            _production_cxx_residual "${_production_cxx_residual}")
+    endif()
+
+    string(FIND "${_production_cxx_residual}" "gunXModel" _residual_position)
+    if(NOT _residual_position EQUAL -1)
+        string(APPEND _unreviewed_gun_model_references
+            "\n${_production_relative}")
+    endif()
 endforeach()
 if(_inject_future_header_alias)
-    string(APPEND _all_production_cxx
-        "\nauto *unchecked = weaponDef->gunXModel;\n")
+    string(APPEND _unreviewed_gun_model_references
+        "\nfuture/header_alias.h")
 endif()
-require_count(
-    _all_production_cxx "gunXModel" 12
-    "all production references are explicitly reviewed, including aliases")
+if(NOT _unreviewed_gun_model_references STREQUAL "")
+    message(FATAL_ERROR
+        "Unreviewed production gunXModel reference(s):"
+        "${_unreviewed_gun_model_references}")
+endif()
 require_count(
     _db_load "varWeaponDef->gunXModel" 2
     "the only intentional pointer-decay uses are fixed-count asset loading")
