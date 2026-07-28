@@ -219,10 +219,18 @@ require_contains(
     _process_tests
     "return \"true\";"
     "POSIX process test command must use the backend's PATH search")
+require_contains(
+    _process_tests
+    "return \"ping\";"
+    "Win32 timeout fixture must launch a directly terminable child")
 forbid_contains(
     _process_tests
     "/bin/true"
     "hosted macOS does not guarantee /bin/true")
+forbid_contains(
+    _process_tests
+    "timeout /t"
+    "Win32 timeout.exe exits immediately when hosted CI redirects stdin")
 require_contains(
     _crash_tests
     "sys_process.h"

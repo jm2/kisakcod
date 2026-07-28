@@ -42,7 +42,7 @@ bool Check(const bool condition, const char *const stage)
 const char *SleepExecutable()
 {
 #if defined(_WIN32)
-    return "cmd";
+    return "ping";
 #else
     return "/bin/sh";
 #endif
@@ -51,7 +51,10 @@ const char *SleepExecutable()
 const char *SleepArguments()
 {
 #if defined(_WIN32)
-    return "/c timeout /t 30 /nobreak >NUL";
+    // timeout.exe exits immediately when hosted CI redirects stdin.
+    // A direct loopback ping is a deterministic long-running child without
+    // that console dependency or a shell-owned descendant process.
+    return "-n 31 127.0.0.1";
 #else
     return "-c \"sleep 30\"";
 #endif
@@ -259,7 +262,20 @@ bool TestSignalParkLifecycle()
 
 bool TestSignalParkNullCount()
 {
-    if (Sys_SignalPark(nullptr, 0) != SysSignalParkStatus::Parked)
+    const SysSignalParkStatus parkStatus = Sys_SignalPark(nullptr, 0);
+#if defined(_WIN32)
+    if (parkStatus != SysSignalParkStatus::Unsupported)
+    {
+        std::fputs("null/zero park did not report Unsupported\n", stderr);
+        return false;
+    }
+    if (Sys_SignalUnPark(nullptr, 0) != SysSignalParkStatus::Unparked)
+    {
+        std::fputs("null/zero un-park did not report Unparked\n", stderr);
+        return false;
+    }
+#else
+    if (parkStatus != SysSignalParkStatus::Parked)
     {
         std::fputs("null/zero park did not report Parked\n", stderr);
         return false;
@@ -269,6 +285,7 @@ bool TestSignalParkNullCount()
         std::fputs("null/zero un-park did not report Unparked\n", stderr);
         return false;
     }
+#endif
     return true;
 }
 

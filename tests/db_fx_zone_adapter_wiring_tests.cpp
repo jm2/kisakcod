@@ -52,11 +52,12 @@ struct ArenaBinding final
 
 struct WorkspaceBinding final
 {
-    fastfile::FxFastFileZoneAdapterDisk32Workspace workspace{};
+    std::unique_ptr<fastfile::FxFastFileZoneAdapterDisk32Workspace> workspace =
+        std::make_unique<fastfile::FxFastFileZoneAdapterDisk32Workspace>();
 
     bool CompositionReady() const
     {
-        return workspace.readyForCompositionAuthentication();
+        return workspace->readyForCompositionAuthentication();
     }
 };
 
@@ -91,7 +92,7 @@ void TestNullBytesReturnsNull()
     arenaBinding.Bind();
     CHECK(workspaceBinding.CompositionReady());
     FxZoneAdapterWiringTestAccess::SetActiveBindingForTesting(
-        &workspaceBinding.workspace, &arenaBinding.arena);
+        workspaceBinding.workspace.get(), &arenaBinding.arena);
     CHECK(IsFxZoneAdapterBindingActive());
 
     CHECK(TryWireImpactTableThroughActiveFxZoneAdapter(
@@ -120,7 +121,7 @@ void TestShortBytesReturnsNull()
     arenaBinding.Bind();
     CHECK(workspaceBinding.CompositionReady());
     FxZoneAdapterWiringTestAccess::SetActiveBindingForTesting(
-        &workspaceBinding.workspace, &arenaBinding.arena);
+        workspaceBinding.workspace.get(), &arenaBinding.arena);
     CHECK(IsFxZoneAdapterBindingActive());
 
     const std::uint8_t scratch[4]{};
@@ -144,7 +145,7 @@ void TestInvalidHeaderTokensFailClosed()
     arenaBinding.Bind();
     CHECK(workspaceBinding.CompositionReady());
     FxZoneAdapterWiringTestAccess::SetActiveBindingForTesting(
-        &workspaceBinding.workspace, &arenaBinding.arena);
+        workspaceBinding.workspace.get(), &arenaBinding.arena);
     CHECK(IsFxZoneAdapterBindingActive());
 
     alignas(4) std::uint8_t impactScratch[16]{};
@@ -177,7 +178,7 @@ void TestUnboundArenaLeavesProbeInactive()
     WorkspaceBinding workspaceBinding;
     CHECK(workspaceBinding.CompositionReady());
     FxZoneAdapterWiringTestAccess::SetActiveBindingForTesting(
-        &workspaceBinding.workspace, &arenaBinding.arena);
+        workspaceBinding.workspace.get(), &arenaBinding.arena);
     CHECK(!IsFxZoneAdapterBindingActive());
 
     const std::uint8_t scratch[16]{};
@@ -203,23 +204,23 @@ void TestProductionEnrollmentAndExactClear()
     secondArenaBinding.Bind();
 
     CHECK(TryEnrollActiveFxZoneAdapterBinding(
-        &firstWorkspaceBinding.workspace, &firstArenaBinding.arena));
+        firstWorkspaceBinding.workspace.get(), &firstArenaBinding.arena));
     CHECK(IsFxZoneAdapterBindingActive());
     CHECK(TryGetActiveFxZoneAdapterWorkspace()
-          == &firstWorkspaceBinding.workspace);
+          == firstWorkspaceBinding.workspace.get());
     CHECK(TryGetActiveFxZoneAdapterArena() == &firstArenaBinding.arena);
     CHECK(TryEnrollActiveFxZoneAdapterBinding(
-        &firstWorkspaceBinding.workspace, &firstArenaBinding.arena));
+        firstWorkspaceBinding.workspace.get(), &firstArenaBinding.arena));
     CHECK(!TryEnrollActiveFxZoneAdapterBinding(
-        &secondWorkspaceBinding.workspace, &secondArenaBinding.arena));
+        secondWorkspaceBinding.workspace.get(), &secondArenaBinding.arena));
     CHECK(!TryClearActiveFxZoneAdapterBinding(
-        &secondWorkspaceBinding.workspace, &firstArenaBinding.arena));
+        secondWorkspaceBinding.workspace.get(), &firstArenaBinding.arena));
     CHECK(IsFxZoneAdapterBindingActive());
     CHECK(TryClearActiveFxZoneAdapterBinding(
-        &firstWorkspaceBinding.workspace, &firstArenaBinding.arena));
+        firstWorkspaceBinding.workspace.get(), &firstArenaBinding.arena));
     CHECK(!IsFxZoneAdapterBindingActive());
     CHECK(!TryClearActiveFxZoneAdapterBinding(
-        &firstWorkspaceBinding.workspace, &firstArenaBinding.arena));
+        firstWorkspaceBinding.workspace.get(), &firstArenaBinding.arena));
 
     firstArenaBinding.Unbind();
     secondArenaBinding.Unbind();
@@ -234,7 +235,7 @@ void TestResetClearsProbe()
     arenaBinding.Bind();
     CHECK(workspaceBinding.CompositionReady());
     FxZoneAdapterWiringTestAccess::SetActiveBindingForTesting(
-        &workspaceBinding.workspace, &arenaBinding.arena);
+        workspaceBinding.workspace.get(), &arenaBinding.arena);
     CHECK(IsFxZoneAdapterBindingActive());
 
     ResetActiveFxZoneAdapterBindingProbe();
