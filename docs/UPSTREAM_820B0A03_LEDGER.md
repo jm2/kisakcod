@@ -60,6 +60,12 @@ earlier review threads were answered and resolved. The subsequent valid
 test-harness findings reject empty count needles, pin call-shaped savegame
 boundaries, reduce formatting-sensitive CI-name checks, document slice anchors,
 and seal the decimal `128` raw-mask spelling; all four affected local source
-contracts pass. Final exact-head CI/review, merge-commit retention, and
-authoritative post-merge CI remain required before this reconciliation is
-complete.
+contracts pass. Review checkpoint
+`f4d84e995684466bcf15aa7f2f3c71a0a3b40a4c` passed all 11 jobs in run
+**30384973798**. Exact-head Claude found no correctness, security, or
+performance issue, CodeRabbit reported no actionable comments, and the
+unresolved-thread count remained zero. A final audit then made the two UI CI
+test names explicit in both the workflow selector and its source contract; the
+focused local contract passes. Final exact-head validation, merge-commit
+retention, and authoritative post-merge CI remain required before this
+reconciliation is complete.

@@ -73,8 +73,14 @@ of checked boxes.
     formatting-sensitive CI-name checks, document slice anchors, and forbid the
     decimal `128` disable-weapons mask regression. All four affected
     mutation-sensitive source contracts pass locally.
-  - [ ] Pass replacement exact-head hosted CI and automated review with zero
-    actionable threads, merge with a GitHub merge commit, and confirm
+  - [x] Pass all 11 jobs at review checkpoint `f4d84e99` in run
+    **30384973798**. Exact-head Claude review found no correctness, security, or
+    performance issue, CodeRabbit reported no actionable comments, and the
+    unresolved-thread count remained zero.
+  - [x] Make the two UI CI test names explicit in both the workflow selector and
+    its source contract; the focused local contract passes.
+  - [ ] Pass final exact-head validation, merge with a GitHub merge commit,
+    verify exact checkpoint/upstream ancestry retention, and confirm
     authoritative post-merge `master` CI.
 - [x] Merge the exact-key composite zone-runtime controller (PR #71).
 - [x] Merge the ABI-neutral runtime capacity/demand prerequisite (PR #72).
@@ -2573,9 +2579,13 @@ bridge and atomic seven-site cutover are next.
      successful CodeRabbit review, and resolve all 13 earlier threads.
    - [x] Harden the valid remaining test-contract findings locally; all four
      affected mutation-sensitive source scripts pass.
-   - [ ] Pass replacement exact-head hosted CI/review, resolve every actionable
-     thread, merge with a GitHub merge commit, and pass authoritative
-     post-merge CI.
+   - [x] Pass all 11 jobs at review checkpoint `f4d84e99` in run
+     **30384973798**, complete clean exact-head Claude/CodeRabbit review, and
+     retain zero unresolved threads.
+   - [x] Make the two UI CI test names explicit in the workflow selector and its
+     source contract; the focused local contract passes.
+   - [ ] Pass final exact-head validation, merge with a GitHub merge commit,
+     verify exact ancestry retention, and pass authoritative post-merge CI.
 - [ ] **Priority 2 — Atomic loader cutover:** claim exact generations, stage
    both root-string outputs through an
    aligned local `std::uint32_t` before copying into stream-backed fields, transfer non-null root strings, and publish

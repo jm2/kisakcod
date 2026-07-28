@@ -284,9 +284,13 @@ require_count(
 require_contains(
     _ci "kisakcod-ui-safety-tests"
     "Windows x86 explicitly builds the UI-safety runtime test")
-require_contains(
-    _ci "ui-safety-(runtime-contracts|source-invariants)"
-    "Windows x86 explicitly runs both UI-safety gates")
+foreach(_ui_ci_test IN ITEMS
+    "ui-safety-runtime-contracts"
+    "ui-safety-source-invariants")
+    require_contains(
+        _ci "${_ui_ci_test}"
+        "Windows x86 explicitly runs ${_ui_ci_test}")
+endforeach()
 
 if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
     foreach(_mutation IN ITEMS
