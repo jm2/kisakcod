@@ -25,7 +25,7 @@ passed at exact head `ac141fb9` in run **30367496573**. The PR squash-merged as
 `fc66c03a`, and all 11 authoritative post-merge `master` jobs passed in run
 **30369149465**.
 
-The current isolated integration batch is the 13 upstream commits from
+Completed PR #102 reconciles the 13 upstream commits from
 `af866142` through `820b0a03`. Every commit now has an exact disposition in
 [`docs/UPSTREAM_820B0A03_LEDGER.md`](UPSTREAM_820B0A03_LEDGER.md); the curated
 portable source passes complete local CTest **208/208** plus the affected
@@ -42,8 +42,12 @@ scripts. Review checkpoint `f4d84e99` passed all 11 jobs in run
 performance issue, CodeRabbit reported no actionable comments, and the
 unresolved-thread count remained zero. A final audit then made the two UI CI
 test names explicit in both the workflow selector and its source contract; the
-focused local contract passes. Final exact-head validation, merge-commit
-retention, and authoritative post-merge CI remain before the batch is complete.
+focused local contract passes. Final exact head `8275dd20` passed all 11 jobs in
+run **30387093520**, with successful exact-head Claude and CodeRabbit checks and
+zero unresolved threads. PR #102 merged with GitHub merge commit `62160c67`;
+graph verification confirms tree-neutral checkpoint `6e0e6107` and exact
+upstream `820b0a03` are retained as ancestors. All 11 authoritative post-merge
+`master` jobs passed in run **30388420989**.
 
 Completed foundation work:
 
@@ -602,8 +606,11 @@ Completed foundation work:
   platform-service work while adapting only reviewed behavior. Complete local
   CTest passes **208/208**. Tree-neutral checkpoint `6e0e6107` has exact
   `820b0a03` as its second parent, no content diff from its first parent, and
-  matching tree `02d3a86b`; hosted PR validation and merge-commit retention
-  remain. The divergent trees were not direct-merged;
+  matching tree `02d3a86b`. Final head `8275dd20` passed all 11 jobs in run
+  **30387093520** with clean Claude/CodeRabbit checks and zero unresolved
+  threads; PR #102 merge commit `62160c67` retains the checkpoint and exact
+  upstream ancestry, and all 11 post-merge jobs passed in run **30388420989**.
+  The divergent trees were not direct-merged;
 - PR #67 merged passive durable-receipt composition as `76d0e065888aab298d430b4bf4e115c07369bc88`:
   one stable allocation, stream-generation, pending-copy, and native-storage receipt capsule belongs to each of the 33
   runtime entries, while the active-stream binding and pending-copy ledger exist once at table scope. It remains
@@ -1950,9 +1957,10 @@ records reviewed history without importing code and therefore does not inflate t
 PR #101 subsequently restored the expanded 11-job baseline at exact head
 `ac141fb9` and authoritative merge `fc66c03a`; runs **30367496573** and
 **30369149465** are fully green. The current 13-commit reconciliation through
-`820b0a03` is locally complete at tree-neutral checkpoint `6e0e6107`, with full
-CTest **208/208**, but remains pending hosted PR/review, merge-commit retention,
-and post-merge CI.
+`820b0a03` completed in PR #102 with full local CTest **208/208**. Final head
+`8275dd20` and merge commit `62160c67` retained the tree-neutral checkpoint and
+exact upstream ancestry; all 11 exact-head and post-merge jobs passed in runs
+**30387093520** and **30388420989**, respectively.
 Windows x86 is about
 **93%**, shared
 foundations/security about **91%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
