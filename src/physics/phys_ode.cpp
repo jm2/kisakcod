@@ -5693,7 +5693,9 @@ void __cdecl Phys_RunToTime(int localClientNum, PhysWorld worldIndex, int timeNo
     }
     else
     {
-        data->timeNowLerpFrac = (timeNow - data->timeLastSnapshot) / (data->timeLastUpdate - data->timeLastSnapshot);
+        data->timeNowLerpFrac = static_cast<float>(
+            static_cast<double>(timeNow - data->timeLastSnapshot)
+            / static_cast<double>(data->timeLastUpdate - data->timeLastSnapshot));
         if (data->timeNowLerpFrac < 0.0 || data->timeNowLerpFrac > 1.0)
             MyAssertHandler(
                 ".\\physics\\phys_ode.cpp",
@@ -6144,7 +6146,7 @@ void __cdecl Phys_ObjTraceNewPos(dxBody *body)
                 && newPos[2] == userData->savedPos[2];
             if (!v5 || userData->state <= (uint32_t)PHYS_OBJ_STATE_STUCK)
             {
-                CM_BoxTrace(&trace, userData->savedPos, newPos, mins, maxs, 0, 0x2806C91);
+                CM_BoxTrace(&trace, userData->savedPos, newPos, mins, maxs, 0, PHYS_WORLD_CLIPMASK);
                 userData->state = trace.startsolid ? PHYS_OBJ_STATE_STUCK : PHYS_OBJ_STATE_FREE;
                 if (trace.fraction < 1.0 && !trace.startsolid)
                 {

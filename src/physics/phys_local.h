@@ -15,6 +15,12 @@
 #include <cstddef>
 #include <cstdint>
 
+#if defined(KISAK_SP)
+inline constexpr int PHYS_WORLD_CLIPMASK = 0x280E491;
+#elif defined(KISAK_MP)
+inline constexpr int PHYS_WORLD_CLIPMASK = 0x2806C91;
+#endif
+
 enum $B7C75F5EC8C61F46B3FEFC285D8D85F1 : __int32
 {
     GEOM_CLASS_BRUSHMODEL = 0xB,
