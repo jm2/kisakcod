@@ -59,6 +59,7 @@ endfunction()
 
 read_normalized("src/gfx_d3d/r_add_staticmodel.cpp" _pretess)
 read_normalized("src/gfx_d3d/r_image_load_common.cpp" _image)
+read_normalized("src/gfx_d3d/r_image_dimensions.h" _image_dimensions)
 read_normalized("src/gfx_d3d/r_material_load_obj.cpp" _material)
 read_normalized("src/physics/phys_coll_capsulebrush.cpp" _capsule)
 read_normalized("src/script/scr_animtree.cpp" _animtree)
@@ -81,6 +82,11 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "if (!width || !height)"
             "if (false)"
             _image "${_image}")
+    elseif(CONTRACT_MUTATION STREQUAL "image_windows_max_macro")
+        string(REPLACE
+            "(std::numeric_limits<std::uint16_t>::max)()"
+            "std::numeric_limits<std::uint16_t>::max()"
+            _image_dimensions "${_image_dimensions}")
     elseif(CONTRACT_MUTATION STREQUAL "material_partial_state")
         string(REPLACE
             "mtl->stateFlags = 0;"
@@ -178,6 +184,14 @@ require_ordered(
     "if (!width || !height)"
     "Image_GetCardMemoryAmount("
     "invalid dimensions fail before card-memory calculation")
+require_contains(
+    _image_dimensions
+    "(std::numeric_limits<std::uint16_t>::max)()"
+    "dimension limits remain safe when Windows defines max as a macro")
+forbid_contains(
+    _image_dimensions
+    "std::numeric_limits<std::uint16_t>::max()"
+    "unparenthesized max collides with Windows headers")
 
 extract_slice(
     _material
@@ -295,6 +309,7 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         pretess_partial_pack
         image_lowbyte_clamp
         image_missing_failure_gate
+        image_windows_max_macro
         material_partial_state
         capsule_result_return
         animtree_stale_flags

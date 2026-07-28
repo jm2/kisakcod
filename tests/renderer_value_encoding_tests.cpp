@@ -26,7 +26,7 @@ bool TestPreTessPacking()
         return false;
     }
     if (!TryPackSurface(255, 255, 0xFFFFu, &packed)
-        || packed != std::numeric_limits<std::uint32_t>::max())
+        || packed != (std::numeric_limits<std::uint32_t>::max)())
     {
         return false;
     }
@@ -82,7 +82,7 @@ bool TestMipmapResolution()
         && !TryGetMipmapResolution(1, 1, -1, &unchanged)
         && !TryGetMipmapResolution(1, 1, 32, &unchanged)
         && !TryGetMipmapResolution(
-            1, 1, std::numeric_limits<int>::max(), &unchanged)
+            1, 1, (std::numeric_limits<int>::max)(), &unchanged)
         && !TryGetMipmapResolution(1, 1, 0, nullptr)
         && unchanged.width == 123u
         && unchanged.height == 456u;

@@ -18,7 +18,7 @@ inline constexpr bool TryGetMipmapResolution(
     MipmapResolution *const out) noexcept
 {
     constexpr int kMaximumDimension =
-        static_cast<int>(std::numeric_limits<std::uint16_t>::max());
+        static_cast<int>((std::numeric_limits<std::uint16_t>::max)());
 
     if (!out
         || baseWidth < 1
