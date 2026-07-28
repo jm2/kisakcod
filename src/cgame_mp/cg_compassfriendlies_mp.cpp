@@ -322,7 +322,7 @@ bool __cdecl CanLocalPlayerHearActorFootsteps(int32_t localClientNum, const floa
 
     cgameGlob = CG_GetLocalClientGlobals(localClientNum);
     ps = &cgameGlob->predictedPlayerState;
-    if (cgameGlob->predictedPlayerState.pm_type)
+    if (cgameGlob->predictedPlayerState.pm_type != PM_NORMAL)
         return 0;
     if ((cgameGlob->bgs.clientinfo[actorClientIndex].perks & 0x100) != 0)
         return 0;

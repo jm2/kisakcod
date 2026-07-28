@@ -965,7 +965,7 @@ void __cdecl CG_CalcLinkedViewValues(int localClientNum)
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
-    if (cgArray[0].predictedPlayerState.pm_type == 1
+    if (cgArray[0].predictedPlayerState.pm_type == PM_NORMAL_LINKED
         && (cgArray[0].predictedPlayerState.eFlags & 0x20300) == 0
         && (cgArray[0].predictedPlayerState.pm_flags & 0x1000000) == 0)
     {
@@ -1511,7 +1511,7 @@ void __cdecl CG_CalcViewValues(int localClientNum)
     CG_PerturbCamera(cgArray);
     CG_CalcFov(localClientNum);
 
-    if (cgameGlob->predictedPlayerState.pm_type == 4)
+    if (cgameGlob->predictedPlayerState.pm_type == PM_MPVIEWER)
         CG_ModelPreviewerUpdateView(
             cgameGlob->refdef.vieworg,
             cgameGlob->refdef.viewaxis,
@@ -1781,4 +1781,3 @@ int __cdecl CG_DrawActiveFrame(
     //Profile_EndInternal(0);
     return 1;
 }
-

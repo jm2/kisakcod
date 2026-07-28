@@ -4549,7 +4549,7 @@ void __cdecl PM_MeleeChargeUpdate(pmove_t *pm, pml_t *pml)
 
     chargeValid = (ps->pm_flags & PMF_MELEE_CHARGE) != 0;
 
-    v5 = chargeValid && !ps->pm_type;
+    v5 = chargeValid && ps->pm_type == PM_NORMAL;
     chargeValid = v5;
     v4 = v5 && (ps->eFlags & 0x300) == 0;
     chargeValid = v4;

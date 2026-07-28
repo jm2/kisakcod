@@ -290,7 +290,7 @@ void __cdecl CG_PredictPlayerState_Internal(int32_t localClientNum)
             if (cg_pmove[localClientNum].viewChange == 0.0
                 || cg_pmove[localClientNum].viewChangeTime == cgameGlob->stepViewStart
                 || cgameGlob->playerTeleported
-                || ps->pm_type && ps->pm_type != PM_NOCLIP && ps->pm_type != PM_UFO)
+                || (ps->pm_type != PM_NORMAL && ps->pm_type != PM_NOCLIP && ps->pm_type != PM_UFO))
             {
                 if (cg_viewZSmoothingTime->current.value * 1000.0 < (double)(cgameGlob->time - cgameGlob->stepViewStart))
                     cgameGlob->stepViewChange = 0.0;

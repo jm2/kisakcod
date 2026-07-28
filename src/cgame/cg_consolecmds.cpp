@@ -318,7 +318,7 @@ void __cdecl CG_SetViewPos_f()
                 "cmd_args.nesting doesn't index CMD_MAX_NESTING\n\t%i not in [0, %i)",
                 cmd_args.nesting,
                 8);
-        if (!cgArray[0].predictedPlayerState.pm_type)
+        if (cgArray[0].predictedPlayerState.pm_type == PM_NORMAL)
             Com_Printf(
                 0,
                 "\"cg_setviewpos\" isn't very useful when server controlled.  Use cg_ufo/cg_noclip or use \"setviewpos\"\n");
@@ -583,4 +583,3 @@ void __cdecl CG_InitConsoleCommands()
     Cmd_AddCommandInternal("VisionSetNaked", 0, &VisionSetNaked_VAR);
     Cmd_AddCommandInternal("VisionSetNight", 0, &VisionSetNight_VAR);
 }
-

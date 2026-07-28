@@ -22,7 +22,7 @@ char __cdecl CG_ShouldInterpolatePlayerStateViewClamp(int localClientNum, const 
     //const vehicle_info_t *vehInfo; // [esp+8h] [ebp-8h]
     centity_s *cent; // [esp+Ch] [ebp-4h]
 
-    if (prevSnap->ps.pm_type == 1)
+    if (prevSnap->ps.pm_type == PM_NORMAL_LINKED)
         return 1;
     if ((prevSnap->ps.eFlags & 0x300) != 0)
         return 1;
@@ -271,7 +271,7 @@ void __cdecl CG_InterpolatePlayerState(int localClientNum, int grabAngles, int g
                 + prevSnap->ps.velocity[i];
 
             // (4) linkAngles — LerpAngle when prev is linked, else just copy next
-            if (prevSnap->ps.pm_type == 1)
+            if (prevSnap->ps.pm_type == PM_NORMAL_LINKED)
             {
                 float v5 = prevSnap->ps.linkAngles[i];
                 float dv = AngleNormalize180(nextSnap->ps.linkAngles[i] - v5);
@@ -283,7 +283,7 @@ void __cdecl CG_InterpolatePlayerState(int localClientNum, int grabAngles, int g
             }
 
             // (5) delta_angles — only LerpAngle when next is linked and not in vehicle
-            if (nextSnap->ps.pm_type == 1 && (nextSnap->ps.eFlags & 0x20000) == 0)
+            if (nextSnap->ps.pm_type == PM_NORMAL_LINKED && (nextSnap->ps.eFlags & 0x20000) == 0)
             {
                 float v5 = prevSnap->ps.delta_angles[i];
                 float dv = AngleNormalize180(nextSnap->ps.delta_angles[i] - v5);
@@ -323,7 +323,7 @@ void __cdecl CG_RestorePlayerOrientation(cg_s *cgameGlob)
 void __cdecl CG_UpdateFreeMove(cg_s *cgameGlob)
 {
     const dvar_s *v2; // r11
-    int v3; // r10
+    pmtype_t pmType;
     snapshot_s *snap; // r11
     snapshot_s *nextSnap; // r10
     double frameInterpolation; // fp3
@@ -342,10 +342,10 @@ void __cdecl CG_UpdateFreeMove(cg_s *cgameGlob)
             "cl_freemove->current.integer != FREEMOVE_NONE");
         v2 = cl_freemove;
     }
-    v3 = 3;
+    pmType = PM_UFO;
     if (v2->current.integer == 1)
-        v3 = 2;
-    cgameGlob->predictedPlayerState.pm_type = (pmtype_t)v3;
+        pmType = PM_NOCLIP;
+    cgameGlob->predictedPlayerState.pm_type = pmType;
     cgameGlob->predictedPlayerState.eFlags = 0;
     cgameGlob->predictedPlayerState.pm_flags = 0;
     cgameGlob->predictedPlayerState.aimSpreadScale = 0.0;
@@ -473,7 +473,7 @@ void __cdecl CG_PredictPlayerState_Internal(int localClientNum) // KISAKTODO: us
     }
     cg_pmove.handler = 0;
     cg_pmove.ps = &cgArray[0].predictedPlayerState;
-    if (cgArray[0].predictedPlayerState.pm_type < 5)
+    if (cgArray[0].predictedPlayerState.pm_type < PM_DEAD)
         v3 = 42057745;
     else
         v3 = 8454161;
@@ -499,7 +499,8 @@ void __cdecl CG_PredictPlayerState_Internal(int localClientNum) // KISAKTODO: us
     CurrentCmdNumber = CL_GetCurrentCmdNumber(localClientNum);
     if (CL_GetUserCmd(localClientNum, CurrentCmdNumber, &v38))
     {
-        if ((cgArray[0].predictedPlayerState.pm_type == 1 || cgArray[0].predictedPlayerState.pm_type == 6)
+        if ((cgArray[0].predictedPlayerState.pm_type == PM_NORMAL_LINKED
+                || cgArray[0].predictedPlayerState.pm_type == PM_DEAD_LINKED)
             && cg_paused->current.integer != 2)
         {
             CG_InterpolatePlayerState(localClientNum, 0, 0);
@@ -598,9 +599,9 @@ void __cdecl CG_PredictPlayerState_Internal(int localClientNum) // KISAKTODO: us
         bool skipSmoothing = cg_pmove.viewChange == 0.0
             || cg_pmove.viewChangeTime == cgArray[0].stepViewStart
             || cgArray[0].playerTeleported
-            || (cgArray[0].predictedPlayerState.pm_type
-                && cgArray[0].predictedPlayerState.pm_type != 2
-                && cgArray[0].predictedPlayerState.pm_type != 3);
+            || (cgArray[0].predictedPlayerState.pm_type != PM_NORMAL
+                && cgArray[0].predictedPlayerState.pm_type != PM_NOCLIP
+                && cgArray[0].predictedPlayerState.pm_type != PM_UFO);
 
         float duration = cg_viewZSmoothingTime->current.value * 1000.0f;
 
@@ -655,4 +656,3 @@ void __cdecl CG_PredictPlayerState(int localClientNum)
     cgameGlob->predictedPlayerEntity.oldEType = cgameGlob->predictedPlayerEntity.nextState.eType;
     CG_CalcEntityLerpPositions(localClientNum, &cgameGlob->predictedPlayerEntity);
 }
-

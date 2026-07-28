@@ -1695,7 +1695,7 @@ float __cdecl CG_FadeHudMenu(int localClientNum, const dvar_s *fadeDvar, int dis
     int LocalClientTime; // r3
     float *v11; // r3
 
-    if (CG_GetPredictedPlayerState(localClientNum)->pm_type == 4)
+    if (CG_GetPredictedPlayerState(localClientNum)->pm_type == PM_MPVIEWER)
         goto LABEL_2;
     if (!cg_paused->current.integer || (v9 = 1, cg_drawpaused->current.enabled))
         v9 = 0;

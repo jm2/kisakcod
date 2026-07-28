@@ -16,6 +16,7 @@
 #include "bg_weapons.h"
 
 #include <cstdint>
+#include <type_traits>
 
 #include <game/teams.h>
 
@@ -671,6 +672,16 @@ enum pmtype_t : __int32
     PM_DEAD = 0x7,
     PM_DEAD_LINKED = 0x8,
 };
+static_assert(std::is_same_v<std::underlying_type_t<pmtype_t>, __int32>);
+static_assert(PM_NORMAL == 0);
+static_assert(PM_NORMAL_LINKED == 1);
+static_assert(PM_NOCLIP == 2);
+static_assert(PM_UFO == 3);
+static_assert(PM_SPECTATOR == 4);
+static_assert(PM_INTERMISSION == 5);
+static_assert(PM_LASTSTAND == 6);
+static_assert(PM_DEAD == 7);
+static_assert(PM_DEAD_LINKED == 8);
 
 struct playerState_s // sizeof=0x2F64
 {                                       // XREF: gclient_s/r
@@ -805,18 +816,19 @@ enum pmtype_t : __int32
     PM_NORMAL_LINKED = 0x1,
     PM_NOCLIP = 0x2,
     PM_UFO = 0x3,
-    PM_DEAD = 0x4,
-    PM_DEAD_LINKED = 0x5,
+    PM_MPVIEWER = 0x4,
+    PM_DEAD = 0x5,
+    PM_DEAD_LINKED = 0x6,
 };
-inline pmtype_t &operator--(pmtype_t &e) {
-    e = static_cast<pmtype_t>(static_cast<int>(e) - 1);
-    return e;
-}
-inline pmtype_t &operator--(pmtype_t &e, int i)
-{
-    --e;
-    return e;
-}
+static_assert(std::is_same_v<std::underlying_type_t<pmtype_t>, __int32>);
+static_assert(PM_NORMAL == 0);
+static_assert(PM_NORMAL_LINKED == 1);
+static_assert(PM_NOCLIP == 2);
+static_assert(PM_UFO == 3);
+static_assert(PM_MPVIEWER == 4);
+static_assert(PM_DEAD == 5);
+static_assert(PM_DEAD_LINKED == 6);
+
 struct playerState_s
 {
     int commandTime;
