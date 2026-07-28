@@ -1572,6 +1572,31 @@ add_test(
 set_tests_properties(
     database-fx-zone-adapter-wiring-production-call-site PROPERTIES TIMEOUT 30)
 
+add_executable(kisakcod-db-fx-zone-adapter-wiring-headless-tests
+    db_fx_zone_adapter_wiring_headless_tests.cpp
+    ${SRC_DIR}/database/db_fx_zone_adapter_wiring_headless.cpp
+)
+target_include_directories(
+    kisakcod-db-fx-zone-adapter-wiring-headless-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-fx-zone-adapter-wiring-headless-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-fx-zone-adapter-wiring-headless-tests PRIVATE
+        KISAK_MP
+        KISAK_DEDI_HEADLESS)
+kisakcod_test_warnings(
+    kisakcod-db-fx-zone-adapter-wiring-headless-tests)
+set_target_properties(
+    kisakcod-db-fx-zone-adapter-wiring-headless-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-fx-zone-adapter-wiring-headless
+    COMMAND kisakcod-db-fx-zone-adapter-wiring-headless-tests
+)
+set_tests_properties(
+    database-fx-zone-adapter-wiring-headless PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-db-relocation-tests
     db_relocation_tests.cpp
     ${SRC_DIR}/database/db_relocation.cpp
@@ -2418,9 +2443,24 @@ if (NOT _platform_process_source_count EQUAL 1)
         "${_platform_process_source_count}")
 endif()
 
+set(_platform_process_mach_sources "")
+if (KISAK_PLATFORM STREQUAL "macos")
+    set(_platform_process_mach_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
+    list(FILTER _platform_process_mach_sources INCLUDE REGEX
+        "[/\\\\]sys_mach_crash\\.cpp$")
+    list(LENGTH _platform_process_mach_sources
+        _platform_process_mach_source_count)
+    if (NOT _platform_process_mach_source_count EQUAL 1)
+        message(FATAL_ERROR
+            "Expected exactly one selected macOS sys_mach_crash.cpp, found "
+            "${_platform_process_mach_source_count}")
+    endif()
+endif()
+
 add_executable(kisakcod-platform-process-tests
     platform_process_tests.cpp
     ${_platform_process_sources}
+    ${_platform_process_mach_sources}
 )
 target_include_directories(kisakcod-platform-process-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-platform-process-tests PRIVATE cxx_std_20)
@@ -2451,6 +2491,7 @@ set_tests_properties(platform-process-freeze-contracts PROPERTIES TIMEOUT 20)
 add_executable(kisakcod-platform-crash-tests
     platform_crash_tests.cpp
     ${_platform_process_sources}
+    ${_platform_process_mach_sources}
 )
 target_include_directories(kisakcod-platform-crash-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-platform-crash-tests PRIVATE cxx_std_20)

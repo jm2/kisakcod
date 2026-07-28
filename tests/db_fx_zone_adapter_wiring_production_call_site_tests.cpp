@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 
 namespace
 {
@@ -50,11 +51,12 @@ struct ArenaBinding final
 
 struct WorkspaceBinding final
 {
-    fastfile::FxFastFileZoneAdapterDisk32Workspace workspace{};
+    std::unique_ptr<fastfile::FxFastFileZoneAdapterDisk32Workspace> workspace =
+        std::make_unique<fastfile::FxFastFileZoneAdapterDisk32Workspace>();
 
     bool CompositionReady() const
     {
-        return workspace.readyForCompositionAuthentication();
+        return workspace->readyForCompositionAuthentication();
     }
 };
 
@@ -143,7 +145,7 @@ void TestProductionCallSiteWithBindingFailsClosedOnInvalidHeader()
     arenaBinding.Bind();
     CHECK(workspaceBinding.CompositionReady());
     FxZoneAdapterWiringTestAccess::SetActiveBindingForTesting(
-        &workspaceBinding.workspace, &arenaBinding.arena);
+        workspaceBinding.workspace.get(), &arenaBinding.arena);
     CHECK(IsFxZoneAdapterBindingActive());
 
     ProductionCallShape harness;
@@ -173,7 +175,7 @@ void TestProductionCallSiteUnboundArenaStillFallsThrough()
     CHECK(workspaceBinding.CompositionReady());
     // Note: arenaBinding.Bind() intentionally NOT called.
     FxZoneAdapterWiringTestAccess::SetActiveBindingForTesting(
-        &workspaceBinding.workspace, &arenaBinding.arena);
+        workspaceBinding.workspace.get(), &arenaBinding.arena);
     CHECK(!IsFxZoneAdapterBindingActive());
 
     ProductionCallShape harness;

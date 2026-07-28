@@ -38,11 +38,13 @@ bool TestProcessFreezeUnsupportedContract()
     // without crashing the caller. On non-macOS hosts the status is
     // Unsupported; on macOS the function freezes the calling thread
     // and never returns, so this test does not exercise that path.
-    const SysProcessFreezeStatus status = Sys_ProcessFreezeForCrash();
 #if defined(__APPLE__)
-    (void)status;
+    // The Mach implementation freezes the calling thread and intentionally
+    // does not return. Linking that production implementation is covered by
+    // this target, but invoking it from a hosted CTest would hang the runner.
     return true;
 #else
+    const SysProcessFreezeStatus status = Sys_ProcessFreezeForCrash();
     if (status != SysProcessFreezeStatus::Unsupported)
     {
         std::fprintf(stderr,
@@ -87,24 +89,23 @@ bool TestSignalParkRejectsInvalidSignals()
 
 bool TestSignalParkDisjointStacking()
 {
-    if (Sys_SignalPark(nullptr, 0) != SysSignalParkStatus::Parked)
+    const SysSignalParkStatus baselinePark = Sys_SignalPark(nullptr, 0);
+#if defined(_WIN32)
+    if (baselinePark != SysSignalParkStatus::Unsupported)
+    {
+        std::fputs("signal-park on Win32 did not report Unsupported\n",
+            stderr);
+        return false;
+    }
+    return true;
+#else
+    if (baselinePark != SysSignalParkStatus::Parked)
     {
         std::fputs("baseline park did not report Parked\n", stderr);
         return false;
     }
     const int sigint = SIGINT;
     const SysSignalParkStatus firstPark = Sys_SignalPark(&sigint, 1);
-#if defined(_WIN32)
-    if (firstPark != SysSignalParkStatus::Unsupported)
-    {
-        std::fputs("signal-park on Win32 did not report Unsupported\n",
-            stderr);
-        (void)Sys_SignalUnPark(nullptr, 0);
-        return false;
-    }
-    (void)Sys_SignalUnPark(nullptr, 0);
-    return true;
-#else
     if (firstPark != SysSignalParkStatus::Parked)
     {
         std::fputs("disjoint park did not report Parked\n", stderr);
