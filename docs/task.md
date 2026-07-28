@@ -33,6 +33,16 @@ of checked boxes.
     contract coverage, and source-composition seals.
   - [x] Pass the complete local Linux portable build and **200/200** CTest suite
     at candidate code checkpoint `548bfe39`.
+  - [x] Use PR #101's first hosted run **30366020113** to expose the remaining
+    Windows ARM64 runtime-contract defects after every affected target compiled:
+    heap-only FX workspaces allocated on the test stack, `timeout.exe` exiting
+    under redirected CI input, and POSIX signal-park expectations applied to the
+    deliberately unsupported Win32 backend.
+  - [x] Heap-allocate the FX fixtures, launch a directly terminable loopback
+    `ping` child on Win32, and branch the signal expectations by backend.
+    Independent review found the fixes architecture-correct; the focused GCC
+    regression set is **9/9**, affected GCC/Clang targets build, and the complete
+    local Linux portable suite is **200/200** at code checkpoint `c8553a73`.
   - [ ] Pass every required exact-head hosted job, merge the stabilization PR,
     and confirm the authoritative post-merge `master` run is green.
 - [ ] Selectively reconcile the 13 upstream commits through `820b0a03` only

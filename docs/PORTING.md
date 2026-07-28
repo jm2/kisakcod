@@ -21,10 +21,17 @@ The immediate delivery gate is CI stabilization. Expanded `master` run
 **30285663436** exposed three independent integration regressions in portable
 Windows, portable macOS, and Windows x86 headless builds. Candidate `548bfe39`
 repairs those boundaries and passes the complete local Linux portable build plus
-**200/200** CTest cases; exact-head hosted validation and a green authoritative
-post-merge run remain required before backlog implementation resumes. After that
-baseline is restored, the next isolated integration batch is the 13-commit
-upstream range `af866142..820b0a03`.
+**200/200** CTest cases. PR #101's first hosted run **30366020113** then compiled
+the affected Windows ARM64 targets and exposed three latent test-runtime
+assumptions: an explicitly heap-only FX workspace was stack allocated,
+`timeout.exe` depended on interactive standard input, and POSIX signal-parking
+results were expected from the unsupported Win32 backend. Candidate `c8553a73`
+repairs those assumptions and again passes the complete local Linux portable
+suite (**200/200**) plus the affected GCC and Clang builds. Exact-head hosted
+validation and a green authoritative post-merge run remain required before
+backlog implementation resumes. After that baseline is restored, the next
+isolated integration batch is the 13-commit upstream range
+`af866142..820b0a03`.
 
 Completed foundation work:
 
