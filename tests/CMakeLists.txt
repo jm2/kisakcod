@@ -3060,6 +3060,13 @@ add_test(
 )
 
 add_test(
+    NAME upstream-last-four-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_last_four_source_test.cmake
+)
+
+add_test(
     NAME sound-dry-send-source-invariants
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
