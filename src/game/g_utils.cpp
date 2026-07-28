@@ -3195,7 +3195,7 @@ int __cdecl G_EntLinkToInternal(gentity_s *ent, gentity_s *parent, unsigned int 
             if (client)
             {
                 pm_type = client->ps.pm_type;
-                if (pm_type)
+                if (pm_type != PM_NORMAL)
                 {
                     if (pm_type == PM_DEAD)
                     {

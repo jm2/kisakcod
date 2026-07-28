@@ -1,4 +1,5 @@
 #include "r_image.h"
+#include "r_image_dimensions.h"
 #include <universal/q_shared.h>
 #include "rb_logfile.h"
 #include <universal/profile.h>
@@ -45,13 +46,13 @@ void __cdecl Image_PicmipForSemantic(uint8_t semantic, Picmip *picmip)
         if (picmipUsed >= 0)
         {
             if (picmipUsed > 3)
-                LOBYTE(picmipUsed) = 3;
+                picmipUsed = 3;
         }
         else
         {
-            LOBYTE(picmipUsed) = 0;
+            picmipUsed = 0;
         }
-        picmip->platform[0] = picmipUsed;
+        picmip->platform[0] = static_cast<uint8_t>(picmipUsed);
         break;
     default:
         if (!alwaysfails)
@@ -413,29 +414,26 @@ void __cdecl Image_GetMipmapResolution(
     uint16_t *mipWidth,
     uint16_t *mipHeight)
 {
-    uint32_t v5; // [esp+0h] [ebp-10h]
-    uint32_t v6; // [esp+4h] [ebp-Ch]
+    if (!mipWidth || !mipHeight)
+    {
+        if (mipWidth)
+            *mipWidth = 0;
+        if (mipHeight)
+            *mipHeight = 0;
+        return;
+    }
 
-    iassert(baseWidth > 0);
-    iassert(baseHeight > 0);
-    iassert(mipmap >= 0);
-    iassert(mipWidth);
-    iassert(mipHeight);
+    gfx::image_dimensions::MipmapResolution resolution{};
+    if (!gfx::image_dimensions::TryGetMipmapResolution(
+            baseWidth, baseHeight, mipmap, &resolution))
+    {
+        *mipWidth = 0;
+        *mipHeight = 0;
+        return;
+    }
 
-    if ((int)((uint32_t)baseWidth >> mipmap) > 1)
-        v6 = (uint32_t)baseWidth >> mipmap;
-    else
-        LOWORD(v6) = 1;
-
-    *mipWidth = v6;
-    if ((int)((uint32_t)baseHeight >> mipmap) > 1)
-        v5 = (uint32_t)baseHeight >> mipmap;
-    else
-        LOWORD(v5) = 1;
-    *mipHeight = v5;
-
-    iassert(*mipWidth > 0);
-    iassert(*mipHeight > 0);
+    *mipWidth = resolution.width;
+    *mipHeight = resolution.height;
 }
 
 void __cdecl Image_TrackFullscreenTexture(
@@ -457,6 +455,11 @@ void __cdecl Image_TrackFullscreenTexture(
         platformWidth = Image_GetPlatformScreenWidth(platform, fullscreenWidth);
         platformHeight = Image_GetPlatformScreenHeight(platform, fullscreenHeight);
         Image_GetMipmapResolution(platformWidth, platformHeight, picmip, &width, &height);
+        if (!width || !height)
+        {
+            image->cardMemory.platform[platform] = 0;
+            continue;
+        }
         memory = Image_GetCardMemoryAmount(3, format, width, height, 1u);
         if (!IsFastFileLoad())
             Image_TrackTotalMemory(image, platform, memory);

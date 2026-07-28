@@ -1,5 +1,6 @@
 #include "bg_public.h"
 #include "bg_local.h"
+#include "bg_weapon_input_safety.h"
 #include <database/database.h>
 #include <qcommon/mem_track.h>
 #include <universal/surfaceflags.h>
@@ -504,7 +505,7 @@ int32_t __cdecl BG_IsAimDownSightWeapon(uint32_t weaponIndex)
 
 bool __cdecl BG_CanPlayerHaveWeapon(uint32_t weaponIndex)
 {
-    return BG_GetWeaponDef(weaponIndex)->gunXModel != 0;
+    return BG_GetWeaponDef(weaponIndex)->gunXModel[0] != nullptr;
 }
 
 bool __cdecl BG_ValidateWeaponNumber(uint32_t weaponIndex)
@@ -1284,7 +1285,7 @@ void __cdecl PM_Weapon_Idle(playerState_s *ps)
     ps->weapFlags = v1;
     ps->pm_flags = v3;
     ps->weaponstate = WEAPON_READY;
-    if (pm_type < 5)
+    if (pm_type < PM_DEAD)
         ps->weapAnim = ~(uint16_t)ps->weapAnim & 0x200;
 #endif
 }
@@ -2613,8 +2614,8 @@ int32_t __cdecl PM_Weapon_ShouldBeFiring(pmove_t *pm, int32_t delayedAction)
     weapDef = BG_GetWeaponDef(ps->weapon);
 
 #ifdef KISAK_SP
-	if ((ps->weapFlags & 8) != 0)// g_friendlyfireDist
-		return 0;
+    if (bg::weapon_input::IsAttackSuppressed(ps->weapFlags))
+        return 0;
 #endif
 
     shouldStartFiring = (pm->cmd.buttons & PM_GetWeaponFireButton(ps->weapon)) != 0;
@@ -2890,7 +2891,7 @@ void __cdecl PM_Weapon_CheckForMelee(pmove_t *pm, int32_t delayedAction)
     weapDef = BG_GetWeaponDef(ps->weapon);
 
 #ifdef KISAK_SP
-    if ((ps->weapFlags & 8) != 0) /* g_friendlyFireDist */
+    if (bg::weapon_input::IsAttackSuppressed(ps->weapFlags))
         return;
 #endif
 

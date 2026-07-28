@@ -120,13 +120,13 @@ require_count(
 if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
     if(CONTRACT_MUTATION STREQUAL "melee_mp_leak")
         string(REPLACE
-            "#ifdef KISAK_SP\n    if ((ps->weapFlags & 8) != 0) /* g_friendlyFireDist */"
-            "#if 1\n    if ((ps->weapFlags & 8) != 0) /* g_friendlyFireDist */"
+            "#ifdef KISAK_SP\n    if (bg::weapon_input::IsAttackSuppressed(ps->weapFlags))"
+            "#if 1\n    if (bg::weapon_input::IsAttackSuppressed(ps->weapFlags))"
             _bg_weapons "${_bg_weapons}")
     elseif(CONTRACT_MUTATION STREQUAL "melee_wrong_flag")
         string(REPLACE
-            "if ((ps->weapFlags & 8) != 0) /* g_friendlyFireDist */"
-            "if ((ps->weapFlags & 4) != 0) /* g_friendlyFireDist */"
+            "bg::weapon_input::IsAttackSuppressed(ps->weapFlags)"
+            "(ps->weapFlags & 4) != 0"
             _bg_weapons "${_bg_weapons}")
     elseif(CONTRACT_MUTATION STREQUAL "snapshot_missing_unlink")
         string(REPLACE
@@ -168,8 +168,9 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
     endif()
 endif()
 
-# Melee suppression must match the established friendly-fire weapon flag, be
-# confined to KISAK_SP, and return before any melee state can be initiated.
+# Firing and melee suppression must share the reviewed friendly-fire plus
+# disableWeapons helper, remain confined to KISAK_SP, and return before an
+# attack state can be initiated.
 extract_slice(
     _bg_weapons
     "int32_t __cdecl PM_Weapon_ShouldBeFiring("
@@ -178,8 +179,8 @@ extract_slice(
     "PM_Weapon_ShouldBeFiring")
 require_contains(
     _weapon_firing
-    [=[#ifdef KISAK_SP if ((ps->weapFlags & 8) != 0)// g_friendlyfireDist return 0; #endif]=]
-    "the established SP friendly-fire firing guard remains authoritative")
+    [=[#ifdef KISAK_SP if (bg::weapon_input::IsAttackSuppressed(ps->weapFlags)) return 0; #endif]=]
+    "the strengthened SP firing guard suppresses both reviewed flags")
 
 extract_slice(
     _bg_weapons
@@ -189,11 +190,11 @@ extract_slice(
     "PM_Weapon_CheckForMelee")
 require_contains(
     _melee
-    [=[#ifdef KISAK_SP if ((ps->weapFlags & 8) != 0) /* g_friendlyFireDist */ return; #endif]=]
-    "SP friendly-fire suppression is one complete preprocessor guard")
+    [=[#ifdef KISAK_SP if (bg::weapon_input::IsAttackSuppressed(ps->weapFlags)) return; #endif]=]
+    "SP attack suppression is one complete preprocessor guard")
 require_count(
-    _melee "weapFlags & 8" 1
-    "the melee path checks the friendly-fire flag exactly once")
+    _melee "bg::weapon_input::IsAttackSuppressed(ps->weapFlags)" 1
+    "the melee path checks the shared suppression helper exactly once")
 require_count(
     _melee "#ifdef KISAK_SP" 1
     "the melee suppression has one SP-only boundary")
@@ -205,6 +206,17 @@ require_ordered(
     "the SP early return precedes all melee initiation checks")
 forbid_contains(
     _melee "#if 1" "friendly-fire suppression must not leak into MP")
+foreach(_weapon_slice IN ITEMS _weapon_firing _melee)
+    foreach(_raw_mask IN ITEMS
+        "weapFlags & 8"
+        "weapFlags & 0x08"
+        "weapFlags & 128"
+        "weapFlags & 0x80")
+        forbid_contains(
+            ${_weapon_slice} "${_raw_mask}"
+            "the reviewed helper cannot regress to a partial raw mask")
+    endforeach()
+endforeach()
 
 # Removed snapshot entities must leave the collision world before marks and
 # render objects are detached/freed. Pin the unique call and its exact order.

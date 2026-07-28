@@ -48,6 +48,29 @@ add_test(
     COMMAND kisakcod-actor-grenade-safety-tests
 )
 
+add_executable(kisakcod-ui-safety-tests
+    ui_safety_tests.cpp
+)
+target_include_directories(
+    kisakcod-ui-safety-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-ui-safety-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-ui-safety-tests)
+set_target_properties(
+    kisakcod-ui-safety-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME ui-safety-runtime-contracts
+    COMMAND kisakcod-ui-safety-tests
+)
+add_test(
+    NAME ui-safety-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/ui_safety_source_test.cmake
+)
+
 add_executable(kisakcod-target-table-tests
     target_table_tests.cpp
 )
@@ -2548,6 +2571,22 @@ add_test(
     COMMAND kisakcod-vehicle-material-time-tests
 )
 
+add_executable(kisakcod-renderer-value-encoding-tests
+    renderer_value_encoding_tests.cpp
+)
+target_include_directories(
+    kisakcod-renderer-value-encoding-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-renderer-value-encoding-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-renderer-value-encoding-tests)
+set_target_properties(kisakcod-renderer-value-encoding-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME renderer-value-encoding-contracts
+    COMMAND kisakcod-renderer-value-encoding-tests
+)
+
 add_executable(kisakcod-upstream-sort-tests
     native_sort_contract_tests.cpp
 )
@@ -2612,6 +2651,39 @@ add_test(
     NAME upstream-reconciliation-command-dispatch-contracts
     COMMAND kisakcod-upstream-command-dispatch-tests
 )
+
+add_executable(kisakcod-weapon-model-safety-tests
+    weapon_model_safety_tests.cpp
+)
+target_include_directories(
+    kisakcod-weapon-model-safety-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-weapon-model-safety-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-weapon-model-safety-tests)
+set_target_properties(kisakcod-weapon-model-safety-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME weapon-model-safety-contracts
+    COMMAND kisakcod-weapon-model-safety-tests
+)
+
+add_executable(kisakcod-weapon-input-safety-tests
+    weapon_input_safety_tests.cpp
+)
+target_include_directories(
+    kisakcod-weapon-input-safety-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-weapon-input-safety-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-weapon-input-safety-tests)
+set_target_properties(kisakcod-weapon-input-safety-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME weapon-input-safety-contracts
+    COMMAND kisakcod-weapon-input-safety-tests
+)
+
 foreach(_hudelem_variant IN ITEMS MP SP)
     string(TOLOWER "${_hudelem_variant}" _hudelem_variant_lower)
     set(_hudelem_sort_target
@@ -2639,6 +2711,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/vehicle_material_time_source_test.cmake
+)
+
+add_test(
+    NAME upstream-820b0a03-core-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_820b0a03_core_source_test.cmake
 )
 
 add_test(
@@ -2987,6 +3066,20 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_reconciliation_source_test.cmake
+)
+
+add_test(
+    NAME weapon-model-safety-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/weapon_model_safety_source_test.cmake
+)
+
+add_test(
+    NAME upstream-last-four-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_last_four_source_test.cmake
 )
 
 add_test(

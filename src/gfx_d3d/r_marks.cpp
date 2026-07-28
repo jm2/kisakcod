@@ -14,6 +14,13 @@
 #include <cgame/cg_ents.h>
 #endif
 
+namespace
+{
+int __cdecl AllowAllStaticModels(int)
+{
+    return 1;
+}
+}
 
 void  R_BoxSurfaces(
     const float *mins,
@@ -990,7 +997,7 @@ void __cdecl R_MarkFragments_Begin(
         markInfo->smodelCollidedCount = R_BoxStaticModels(
             markInfo->mins,
             markInfo->maxs,
-            (int(__cdecl *)(int))CL_GetLocalClientActiveCount,
+            AllowAllStaticModels,
             markInfo->smodelsCollided,
             32);
         markInfo->sceneDObjCollidedCount = 0;

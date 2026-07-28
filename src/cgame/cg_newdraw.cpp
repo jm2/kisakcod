@@ -7,6 +7,7 @@
 
 #include <xanim/xanim.h>
 #include <ui/ui.h>
+#include <ui/ui_safety.h>
 #include <stringed/stringed_hooks.h>
 #include "cg_public.h"
 #include "cg_vehicle_hud.h"
@@ -1597,8 +1598,13 @@ void __cdecl CG_DrawInvalidCmdHint(
 
     cgameGlob = CG_GetLocalClientGlobals(localClientNum);
 
-    if (cg_invalidCmdHintDuration->current.integer + cgameGlob->invalidCmdHintTime < cgameGlob->time)
+    if (ui_safety::InvalidCmdHintExpired(
+            cgameGlob->time,
+            cgameGlob->invalidCmdHintTime,
+            cg_invalidCmdHintDuration->current.integer))
+    {
         cgameGlob->invalidCmdHintType = INVALID_CMD_NONE;
+    }
 
     switch (cgameGlob->invalidCmdHintType)
     {
@@ -1628,8 +1634,17 @@ void __cdecl CG_DrawInvalidCmdHint(
     LABEL_21:
         blinkInterval = cg_invalidCmdHintBlinkInterval->current.integer;
         if (blinkInterval <= 0)
+        {
             MyAssertHandler(".\\cgame_mp\\cg_newDraw_mp.cpp", 1667, 0, "%s", "blinkInterval > 0");
-        color[3] = ((cgameGlob->time - cgameGlob->invalidCmdHintTime) % blinkInterval) / blinkInterval;
+            color[3] = 0.0f;
+        }
+        else
+        {
+            color[3] = ui_safety::InvalidCmdHintBlinkAlpha(
+                cgameGlob->time,
+                cgameGlob->invalidCmdHintTime,
+                blinkInterval);
+        }
         x = rect->x - SnapFloat(UI_TextWidth(string, 0, font, fontscale) * 0.5f);
         UI_DrawText(
             &scrPlaceView[localClientNum],
@@ -1686,7 +1701,7 @@ float __cdecl CG_FadeHudMenu(int localClientNum, const dvar_s *fadeDvar, int dis
     int LocalClientTime; // r3
     float *v11; // r3
 
-    if (CG_GetPredictedPlayerState(localClientNum)->pm_type == 4)
+    if (CG_GetPredictedPlayerState(localClientNum)->pm_type == PM_MPVIEWER)
         goto LABEL_2;
     if (!cg_paused->current.integer || (v9 = 1, cg_drawpaused->current.enabled))
         v9 = 0;
@@ -3389,4 +3404,3 @@ void __cdecl CG_OwnerDraw(
         return;
     }
 }
-

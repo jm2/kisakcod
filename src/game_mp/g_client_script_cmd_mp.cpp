@@ -4,6 +4,7 @@
 
 #include "g_public_mp.h"
 
+#include <bgame/bg_weapon_model_safety.h>
 #include <script/scr_vm.h>
 #include <server/sv_game.h>
 #include <server/sv_world.h>
@@ -13,13 +14,12 @@
 void __cdecl PlayerCmd_giveWeapon(scr_entref_t entref)
 {
     int32_t wasGivenWeapon; // eax
-    int32_t weaponModel; // [esp+0h] [ebp-60h]
+    uint8_t weaponModel = 0;
     gentity_s *pSelf; // [esp+4h] [ebp-5Ch]
     const char *weaponName; // [esp+8h] [ebp-58h]
     bool hadWeapon; // [esp+Ch] [ebp-54h]
     char svcmd[64]; // [esp+10h] [ebp-50h] BYREF
     int32_t weaponIndex; // [esp+54h] [ebp-Ch]
-    WeaponDef *weapDef; // [esp+58h] [ebp-8h]
     playerState_s *ps; // [esp+5Ch] [ebp-4h]
 
     if (entref.classnum)
@@ -46,23 +46,12 @@ void __cdecl PlayerCmd_giveWeapon(scr_entref_t entref)
     hadWeapon = Com_BitCheckAssert(ps->weapons, weaponIndex, 16);
     if (Scr_GetNumParam() == 2)
     {
-        weapDef = BG_GetWeaponDef(weaponIndex);
-        weaponModel = Scr_GetInt(1);
-        if ((uint32_t)weaponModel >= 0x100)
-        {
-            LOBYTE(weaponModel) = 0;
-            wasGivenWeapon = G_GivePlayerWeapon(&pSelf->client->ps, weaponIndex, 0);
-            goto LABEL_20;
-        }
-        if (!weapDef->gunXModel[weaponModel])
-            LOBYTE(weaponModel) = 0;
-    }
-    else
-    {
-        LOBYTE(weaponModel) = 0;
+        WeaponDef *weapDef = BG_GetWeaponDef(weaponIndex);
+        const int32_t requestedWeaponModel = Scr_GetInt(1);
+        weaponModel = bg::weapon_model::ResolveIndex(
+            weapDef->gunXModel, requestedWeaponModel);
     }
     wasGivenWeapon = G_GivePlayerWeapon(&pSelf->client->ps, weaponIndex, weaponModel);
-LABEL_20:
     if (wasGivenWeapon)
     {
         _snprintf(svcmd, 0x40u, "%c \"%i\"", 74, 1);
@@ -3594,4 +3583,3 @@ void(__cdecl *__cdecl Player_GetMethod(const char **pName))(scr_entref_t)
     }
     return 0;
 }
-

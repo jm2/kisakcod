@@ -581,7 +581,7 @@ int __cdecl G_EntLinkToInternal(gentity_s *ent, gentity_s *parent, uint32_t tagN
     if (ent->client)
     {
         pm_type = ent->client->ps.pm_type;
-        if (pm_type)
+        if (pm_type != PM_NORMAL)
         {
             if (pm_type == PM_DEAD)
                 ent->client->ps.pm_type = PM_DEAD_LINKED;

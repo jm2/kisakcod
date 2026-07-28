@@ -17,21 +17,33 @@ licensed gameplay smoke tests.
 is deferred** — SP-only serialization surfaces (save-games) and SP subsystems are
 documented for completeness but are off the current critical path.
 
-The immediate delivery gate is CI stabilization. Expanded `master` run
-**30285663436** exposed three independent integration regressions in portable
-Windows, portable macOS, and Windows x86 headless builds. Candidate `548bfe39`
-repairs those boundaries and passes the complete local Linux portable build plus
-**200/200** CTest cases. PR #101's first hosted run **30366020113** then compiled
-the affected Windows ARM64 targets and exposed three latent test-runtime
-assumptions: an explicitly heap-only FX workspace was stack allocated,
-`timeout.exe` depended on interactive standard input, and POSIX signal-parking
-results were expected from the unsupported Win32 backend. Candidate `c8553a73`
-repairs those assumptions and again passes the complete local Linux portable
-suite (**200/200**) plus the affected GCC and Clang builds. Exact-head hosted
-validation and a green authoritative post-merge run remain required before
-backlog implementation resumes. After that baseline is restored, the next
-isolated integration batch is the 13-commit upstream range
-`af866142..820b0a03`.
+The expanded hosted-CI baseline is green and stable. PR #101 repaired the
+MSVC `/WX` fuzz warning, macOS Mach crash/test assumptions, complete headless FX
+adapter boundary, heap-only Windows ARM64 fixtures, directly terminable Win32
+child process, and backend-specific signal-parking expectations. All 11 jobs
+passed at exact head `ac141fb9` in run **30367496573**. The PR squash-merged as
+`fc66c03a`, and all 11 authoritative post-merge `master` jobs passed in run
+**30369149465**.
+
+The current isolated integration batch is the 13 upstream commits from
+`af866142` through `820b0a03`. Every commit now has an exact disposition in
+[`docs/UPSTREAM_820B0A03_LEDGER.md`](UPSTREAM_820B0A03_LEDGER.md); the curated
+portable source passes complete local CTest **208/208** plus the affected
+strict Clang, i386, AArch64, source-contract, and independent-review gates.
+Tree-neutral checkpoint `6e0e6107` records exact upstream
+`820b0a03` as its second parent with an empty first-parent diff and identical
+tree `02d3a86b`. Exact repair head `5f9321f3` passed all 11 hosted jobs in run
+**30383465761**; exact-head Claude review found no new correctness, security, or
+performance issue, CodeRabbit completed successfully, and all 13 earlier
+threads were answered and resolved. The valid remaining review suggestions
+harden only the source-contract harness and pass their four focused local
+scripts. Review checkpoint `f4d84e99` passed all 11 jobs in run
+**30384973798**; exact-head Claude found no correctness, security, or
+performance issue, CodeRabbit reported no actionable comments, and the
+unresolved-thread count remained zero. A final audit then made the two UI CI
+test names explicit in both the workflow selector and its source contract; the
+focused local contract passes. Final exact-head validation, merge-commit
+retention, and authoritative post-merge CI remain before the batch is complete.
 
 Completed foundation work:
 
@@ -583,11 +595,15 @@ Completed foundation work:
   jobs in run **29790667287** with clean exact-head Codex/Gemini review and zero
   unresolved threads; merge commit `ce1d2b18` passed authoritative run
   **29790700257** with all nine jobs;
-- upstream has since advanced by 13 unique commits through `820b0a03`. That
-  range must be dispositioned commit by commit against the stronger current
-  portability, ABI, security, headless, and platform-service work before a
-  tree-neutral ancestry checkpoint records the reviewed tip. A direct merge of
-  the divergent trees is not an approved integration path;
+- the 13 unique upstream commits after `4ad0a2e2` through exact `820b0a03` are
+  dispositioned commit by commit in
+  [`docs/UPSTREAM_820B0A03_LEDGER.md`](UPSTREAM_820B0A03_LEDGER.md). The curated
+  implementation preserves stronger portability, ABI, security, headless, and
+  platform-service work while adapting only reviewed behavior. Complete local
+  CTest passes **208/208**. Tree-neutral checkpoint `6e0e6107` has exact
+  `820b0a03` as its second parent, no content diff from its first parent, and
+  matching tree `02d3a86b`; hosted PR validation and merge-commit retention
+  remain. The divergent trees were not direct-merged;
 - PR #67 merged passive durable-receipt composition as `76d0e065888aab298d430b4bf4e115c07369bc88`:
   one stable allocation, stream-generation, pending-copy, and native-storage receipt capsule belongs to each of the 33
   runtime entries, while the active-stream binding and pending-copy ledger exist once at table scope. It remains
@@ -1931,6 +1947,12 @@ run **29948350036**, received a clean Codex review with both actionable threads 
 `beda5d39`; all nine authoritative post-merge jobs passed at that exact commit in run **29949463909**. No production
 loader caller is enrolled; the sole narrow bridge and atomic seven-site cutover are next. The ancestry checkpoint
 records reviewed history without importing code and therefore does not inflate the engineering estimate.
+PR #101 subsequently restored the expanded 11-job baseline at exact head
+`ac141fb9` and authoritative merge `fc66c03a`; runs **30367496573** and
+**30369149465** are fully green. The current 13-commit reconciliation through
+`820b0a03` is locally complete at tree-neutral checkpoint `6e0e6107`, with full
+CTest **208/208**, but remains pending hosted PR/review, merge-commit retention,
+and post-merge CI.
 Windows x86 is about
 **93%**, shared
 foundations/security about **91%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about

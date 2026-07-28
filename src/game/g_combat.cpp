@@ -236,7 +236,7 @@ void __cdecl player_die(
     float v32[24]; // [sp+60h] [-60h] BYREF
 
     client = self->client;
-    if (client->ps.pm_type < 5)
+    if (client->ps.pm_type < PM_DEAD)
     {
         if (client->ps.grenadeTimeLeft)
         {
@@ -266,7 +266,9 @@ void __cdecl player_die(
         Scr_AddConstString(*modNames[meansOfDeath]);
         Scr_AddEntity(attacker);
         Scr_Notify(self, scr_const.death, 3u);
-        self->client->ps.pm_type = (pmtype_t)((self->client->ps.pm_type == 1) + 5);
+        self->client->ps.pm_type = self->client->ps.pm_type == PM_NORMAL_LINKED
+            ? PM_DEAD_LINKED
+            : PM_DEAD;
         if (!attacker || (number = attacker->s.number) != 0)
             number = ENTITYNUM_WORLD;
         self->sentient->lastAttacker = attacker;
@@ -274,7 +276,7 @@ void __cdecl player_die(
         self->takedamage = 1;
         self->r.contents = 0x4000000;
         self->s.weapon = 0;
-        if (v22->ps.pm_type != 6)
+        if (v22->ps.pm_type != PM_DEAD_LINKED)
         {
             self->r.currentAngles[0] = 0.0;
             self->r.currentAngles[2] = 0.0;
@@ -1523,4 +1525,3 @@ int __cdecl G_RadiusDamage(
     }
     return v44;
 }
-

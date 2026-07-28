@@ -57,7 +57,8 @@ char __cdecl Ragdoll_ValidateBodyObj(RagdollBody *body)
         if (!DObjGetBoneIndex(obj, boneDef->animBoneNames[0], &boneIdx) || boneIdx == 255)
             return 0;
         boneIdx = 0;
-        if (boneDef->animBoneNames[1] && !DObjGetBoneIndex(obj, boneDef->animBoneNames[1], &boneIdx) || boneIdx == 255)
+        if (boneDef->animBoneNames[1]
+            && (!DObjGetBoneIndex(obj, boneDef->animBoneNames[1], &boneIdx) || boneIdx == 255))
             return 0;
         ++i;
         ++boneDef;
@@ -411,7 +412,8 @@ char __cdecl Ragdoll_CreatePhysObj(RagdollBody *body, BoneDef *boneDef, Bone *bo
         return 0;
     if (boneDef->animBoneNames[1])
     {
-        if (!DObjGetBoneIndex(obj, boneDef->animBoneNames[1], &bone->animBones[1]) || bone->animBones[0] == 255)
+        if (!DObjGetBoneIndex(obj, boneDef->animBoneNames[1], &bone->animBones[1])
+            || bone->animBones[1] == 255)
             return 0;
     }
     else
@@ -1072,7 +1074,9 @@ void __cdecl Ragdoll_SnapshotBaseLerpBones(RagdollBody *body, BoneOrientation *s
                 }
                 else
                 {
-                    lerp = body->stateMsec / goalMsec;
+                    lerp = static_cast<float>(
+                        static_cast<double>(body->stateMsec)
+                        / static_cast<double>(goalMsec));
                     v5 = lerp - 1.0;
                     if (v5 < 0.0)
                         v16 = lerp;
@@ -1456,16 +1460,16 @@ int __cdecl Ragdoll_FindBoneChildren(RagdollBody *body, int boneIdx, int *childI
 
 char __cdecl Ragdoll_BoneTrace(trace_t *trace, trace_t *revTrace, float *start, float *end)
 {
-    CM_BoxTrace(trace, start, end, vec3_origin, vec3_origin, 0, 0x2806C91);
+    CM_BoxTrace(trace, start, end, vec3_origin, vec3_origin, 0, PHYS_WORLD_CLIPMASK);
     if (trace->startsolid)
     {
-        CM_BoxTrace(revTrace, end, start, vec3_origin, vec3_origin, 0, 0x2806C91);
+        CM_BoxTrace(revTrace, end, start, vec3_origin, vec3_origin, 0, PHYS_WORLD_CLIPMASK);
         if (revTrace->startsolid)
             return 0;
     }
     else if (trace->fraction != 1.0)
     {
-        CM_BoxTrace(revTrace, end, start, vec3_origin, vec3_origin, 0, 0x2806C91);
+        CM_BoxTrace(revTrace, end, start, vec3_origin, vec3_origin, 0, PHYS_WORLD_CLIPMASK);
         if (revTrace->fraction != 1.0)
             return 0;
     }
@@ -1630,13 +1634,17 @@ bool __cdecl Ragdoll_ExitDObjWait(RagdollBody *body, BodyState_t prevState, Body
         bone->animBones[0] = 0;
         if (!DObjGetBoneIndex(obj, boneDef->animBoneNames[0], bone->animBones) || bone->animBones[0] == 255)
             return 0;
-        if (boneDef->animBoneNames[1] == -1)
+        if (boneDef->animBoneNames[1])
+        {
+            if (!DObjGetBoneIndex(obj, boneDef->animBoneNames[1], &bone->animBones[1])
+                || bone->animBones[1] == 255)
+            {
+                return 0;
+            }
+        }
+        else
         {
             bone->animBones[1] = 0;
-        }
-        else if (!DObjGetBoneIndex(obj, boneDef->animBoneNames[1], &bone->animBones[1]) || bone->animBones[0] == 255)
-        {
-            return 0;
         }
         ++bone;
         ++boneDef;
@@ -1950,4 +1958,3 @@ void __cdecl Ragdoll_Update(int msec)
         }
     }
 }
-

@@ -4,6 +4,7 @@
 
 #include "cg_local_mp.h"
 #include "cg_public_mp.h"
+#include <bgame/bg_weapon_model_safety.h>
 #include <qcommon/mem_track.h>
 #include <client/client.h>
 #include <xanim/xmodel.h>
@@ -1357,7 +1358,9 @@ void __cdecl DrawViewmodelInfo(int32_t localClientNum)
                 localClientNum);
         weapInfo = &cg_weaponsArray[0][weaponIndex];
         weapDef = BG_GetWeaponDef(weaponIndex);
-        weaponMdl = weapDef->gunXModel[cgameGlob->predictedPlayerState.weaponmodels[weaponIndex]];
+        weaponMdl = bg::weapon_model::CheckedLookup(
+            weapDef->gunXModel,
+            cgameGlob->predictedPlayerState.weaponmodels[weaponIndex]);
         if (weaponMdl)
             name = weaponMdl->name;
         else
@@ -1456,4 +1459,3 @@ void __cdecl CG_GetViewAxisProjections(const refdef_s *refdef, const float *worl
         projections[i] = Vec3Dot(eyeDelta, refdef->viewaxis[i]);
     }
 }
-

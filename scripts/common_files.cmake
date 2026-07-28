@@ -108,6 +108,8 @@ set(BGAME
     "${SRC_DIR}/bgame/bg_vehicles_mp.cpp"
     "${SRC_DIR}/bgame/bg_weapons.cpp"
     "${SRC_DIR}/bgame/bg_weapons.h"
+    "${SRC_DIR}/bgame/bg_weapon_input_safety.h"
+    "${SRC_DIR}/bgame/bg_weapon_model_safety.h"
     "${SRC_DIR}/bgame/bg_weapons_load_obj.cpp"
 )
 
@@ -282,6 +284,7 @@ set(GFX_D3D
     "${SRC_DIR}/gfx_d3d/r_add_cmdbuf.cpp"
     "${SRC_DIR}/gfx_d3d/r_add_staticmodel.cpp"
     "${SRC_DIR}/gfx_d3d/r_add_staticmodel.h"
+    "${SRC_DIR}/gfx_d3d/r_pretess_encoding.h"
     "${SRC_DIR}/gfx_d3d/r_bsp.cpp"
     "${SRC_DIR}/gfx_d3d/r_bsp.h"
     "${SRC_DIR}/gfx_d3d/r_bsp_load_obj.cpp"
@@ -336,6 +339,7 @@ set(GFX_D3D
     "${SRC_DIR}/gfx_d3d/r_image.h"
     "${SRC_DIR}/gfx_d3d/r_imagedecode.cpp"
     "${SRC_DIR}/gfx_d3d/r_image_load_common.cpp"
+    "${SRC_DIR}/gfx_d3d/r_image_dimensions.h"
     "${SRC_DIR}/gfx_d3d/r_image_load_db.h"
     "${SRC_DIR}/gfx_d3d/r_image_load_obj.cpp"
     "${SRC_DIR}/gfx_d3d/r_image_utils.cpp"
@@ -621,6 +625,7 @@ set(STRINGED
 set(UI
     "${SRC_DIR}/ui/keycodes.h"
     "${SRC_DIR}/ui/ui.h"
+    "${SRC_DIR}/ui/ui_safety.h"
     "${SRC_DIR}/ui/ui_shared.h"
     "${SRC_DIR}/ui/ui_atoms.cpp"
     "${SRC_DIR}/ui/ui_component.cpp"

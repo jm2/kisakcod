@@ -1654,8 +1654,7 @@ void __cdecl G_ClientDoPerFrameNotifies(gentity_s *ent)
         Scr_Notify(ent, scr_const.weapon_change, 1u);
         client->lastWeapon = client->ps.weapon;
     }
-    if (client->ps.weaponstate != 5 || (v5 = 1, client->ps.pm_type >= 5))
-        v5 = 0;
+    v5 = client->ps.weaponstate == 5 && client->ps.pm_type < PM_DEAD;
     v6 = v5;
     if (v5 != client->previouslyFiring)
     {

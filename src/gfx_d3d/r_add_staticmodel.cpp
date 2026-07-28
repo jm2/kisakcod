@@ -1,4 +1,5 @@
 #include "r_add_staticmodel.h"
+#include "r_pretess_encoding.h"
 #include <qcommon/qcommon.h>
 #include "r_dvars.h"
 #include <universal/com_files.h>
@@ -41,7 +42,19 @@ char __cdecl R_PreTessStaticModelCachedList(
     const XSurface *xsurf; // [esp+50h] [ebp-8h]
     uint32_t surfIndexCount; // [esp+54h] [ebp-4h]
 
+    if (!model
+        || !list
+        || count == 0
+        || !gfx::pretess_encoding::TryPackSurface(
+            surfaceIndex, lod, *list, &preTessSurf))
+    {
+        return 0;
+    }
+
     xsurf = XModelGetSurface(model, lod, surfaceIndex);
+    if (!xsurf)
+        return 0;
+
     surfIndexCount = 3 * xsurf->triCount;
     preTessIndices = R_AllocPreTessIndices(surfIndexCount * count);
     if (!preTessIndices)
@@ -73,9 +86,6 @@ char __cdecl R_PreTessStaticModelCachedList(
     drawSurf.fields.surfType = SF_STATICMODEL_PRETESS;
     if (R_AllocDrawSurf(delayedCmdBuf, drawSurf, drawSurfList, 3u))
     {
-        BYTE1(preTessSurf) = lod;
-        LOBYTE(preTessSurf) = surfaceIndex;
-        HIWORD(preTessSurf) = *list;
         firstIndex = preTessIndices - gfxBuf.preTessIndexBuffer->indices;
         iassert(firstIndex < R_MAX_PRETESS_INDICES);
 
@@ -956,4 +966,3 @@ void __cdecl R_AddAllStaticModelSurfacesSpotShadow(uint32_t spotShadowIndex, uin
     KISAK_NULLSUB();
     R_SortDrawSurfs(scene.drawSurfs[v18], surfCount);
 }
-
