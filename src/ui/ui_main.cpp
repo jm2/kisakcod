@@ -2498,7 +2498,7 @@ int __cdecl UI_SetActiveMenu(int localClientNum, uiMenuCommand_t menu)
             Menus_OpenByName(&uiInfo.uiDC, "error_popmenu");
             CL_StopControllerRumbles();
         }
-        SND_FadeAllSounds(1.0, (int)String);
+        SND_FadeAllSounds(1.0, 1000);
         return 1;
     case UIMENU_INGAME:
         if (v4 == UIMENU_CONTROLLERREMOVED)

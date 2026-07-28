@@ -1,6 +1,7 @@
 #include <ui/ui_safety.h>
 
 #include <array>
+#include <cmath>
 #include <cstdio>
 
 namespace
@@ -14,6 +15,14 @@ void Check(const bool condition, const char *const description)
         std::fprintf(stderr, "FAIL: %s\n", description);
         ++failures;
     }
+}
+
+void CheckNear(
+    const float actual,
+    const float expected,
+    const char *const description)
+{
+    Check(std::fabs(actual - expected) <= 0.0001f, description);
 }
 
 std::array<int, ui_safety::kSavegameCapacity> IdentityDisplayMap()
@@ -146,11 +155,44 @@ void TestSavegameSlotResolution()
             displaySavegames.data(), 256, 0, nullptr),
         "a null result pointer must fail closed");
 }
+
+void TestInvalidCmdHintBlinkAlpha()
+{
+    CheckNear(
+        ui_safety::InvalidCmdHintBlinkAlpha(125, 0),
+        0.0f,
+        "a zero blink interval must fail closed before modulo");
+    CheckNear(
+        ui_safety::InvalidCmdHintBlinkAlpha(125, -1),
+        0.0f,
+        "a negative blink interval must fail closed before modulo");
+    CheckNear(
+        ui_safety::InvalidCmdHintBlinkAlpha(0, 500),
+        0.0f,
+        "a blink cycle must begin transparent");
+    CheckNear(
+        ui_safety::InvalidCmdHintBlinkAlpha(125, 500),
+        0.25f,
+        "blink alpha must retain fractional division");
+    CheckNear(
+        ui_safety::InvalidCmdHintBlinkAlpha(499, 500),
+        0.998f,
+        "the end of a blink cycle must approach full alpha");
+    CheckNear(
+        ui_safety::InvalidCmdHintBlinkAlpha(500, 500),
+        0.0f,
+        "an exact interval must start a new blink cycle");
+    CheckNear(
+        ui_safety::InvalidCmdHintBlinkAlpha(750, 500),
+        0.5f,
+        "later blink cycles must preserve their fractional phase");
+}
 }
 
 int main()
 {
     TestSavegameCountCapacity();
     TestSavegameSlotResolution();
+    TestInvalidCmdHintBlinkAlpha();
     return failures == 0 ? 0 : 1;
 }

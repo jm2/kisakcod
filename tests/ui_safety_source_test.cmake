@@ -60,6 +60,12 @@ read_normalized(
     "${SOURCE_ROOT}/src/ui/ui_main.cpp"
     _ui_main "single-player UI implementation")
 read_normalized(
+    "${SOURCE_ROOT}/src/cgame/cg_newdraw.cpp"
+    _cg_sp "single-player invalid-command hint")
+read_normalized(
+    "${SOURCE_ROOT}/src/cgame_mp/cg_newDraw_mp.cpp"
+    _cg_mp "multiplayer invalid-command hint")
+read_normalized(
     "${SOURCE_ROOT}/tests/ui_safety_tests.cpp"
     _runtime "portable UI-safety runtime test")
 read_normalized(
@@ -90,6 +96,16 @@ foreach(_required IN ITEMS
         "the helper enforces the single fail-closed savegame capacity")
 endforeach()
 
+foreach(_required IN ITEMS
+    "constexpr float InvalidCmdHintBlinkAlpha("
+    "if (blinkInterval <= 0) return 0.0f;"
+    "const int phase = elapsedTime % blinkInterval;"
+    "return static_cast<float>(phase) / static_cast<float>(blinkInterval);")
+    require_contains(
+        _helper "${_required}"
+        "the blink helper guards modulo and retains fractional alpha")
+endforeach()
+
 require_contains(
     _ui_header
     "int displaySavegames[ui_safety::kSavegameCapacity];"
@@ -117,6 +133,28 @@ foreach(_required IN ITEMS
         _ui_main "${_required}"
         "live savegame paths share the bounded count and resolver")
 endforeach()
+
+foreach(_cg_source IN ITEMS _cg_sp _cg_mp)
+    foreach(_required IN ITEMS
+        "#include <ui/ui_safety.h>"
+        "if (blinkInterval <= 0) {"
+        "color[3] = 0.0f;"
+        "color[3] = ui_safety::InvalidCmdHintBlinkAlpha( cgameGlob->time - cgameGlob->invalidCmdHintTime, blinkInterval);")
+        require_contains(
+            ${_cg_source} "${_required}"
+            "SP and MP use the guarded fractional blink contract")
+    endforeach()
+    forbid_contains(
+        ${_cg_source} "% blinkInterval"
+        "SP and MP cannot perform an unguarded local modulo")
+endforeach()
+
+require_contains(
+    _ui_main "SND_FadeAllSounds(1.0, 1000);"
+    "opening the main menu uses the intended one-second sound fade")
+forbid_contains(
+    _ui_main "SND_FadeAllSounds(1.0, (int)String);"
+    "the error-message pointer cannot become a fade duration")
 
 require_count(
     _ui_main "uiInfo.savegameStatus.displaySavegames[" 2
@@ -147,6 +185,17 @@ foreach(_required IN ITEMS
     require_contains(
         _runtime "${_required}"
         "runtime coverage rejects invalid savegame mappings")
+endforeach()
+foreach(_required IN ITEMS
+    "InvalidCmdHintBlinkAlpha(125, 0)"
+    "InvalidCmdHintBlinkAlpha(125, -1)"
+    "InvalidCmdHintBlinkAlpha(125, 500)"
+    "InvalidCmdHintBlinkAlpha(499, 500)"
+    "InvalidCmdHintBlinkAlpha(500, 500)"
+    "InvalidCmdHintBlinkAlpha(750, 500)")
+    require_contains(
+        _runtime "${_required}"
+        "runtime coverage measures guarded fractional blink phases")
 endforeach()
 
 foreach(_required IN ITEMS

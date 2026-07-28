@@ -58,4 +58,15 @@ constexpr bool TryResolveSavegameSlot(
     *slotIndex = candidate;
     return true;
 }
+
+constexpr float InvalidCmdHintBlinkAlpha(
+    const int elapsedTime,
+    const int blinkInterval) noexcept
+{
+    if (blinkInterval <= 0)
+        return 0.0f;
+
+    const int phase = elapsedTime % blinkInterval;
+    return static_cast<float>(phase) / static_cast<float>(blinkInterval);
+}
 }
