@@ -56,9 +56,17 @@ of checked boxes.
   - [x] Record exact upstream ancestry with tree-neutral checkpoint
     `6e0e6107`; its second parent is exact `820b0a03`, its diff from the first
     parent is empty, and both trees are `02d3a86b`.
-  - [ ] Publish the dedicated reconciliation PR, pass exact-head hosted CI and
-    automated review with zero actionable threads, merge it with a GitHub
-    merge commit, and confirm authoritative post-merge `master` CI.
+  - [x] Publish dedicated reconciliation PR #102 at initial head `923056e7`.
+    Initial run **30374512235** passed all five portable-platform jobs and
+    exposed one shared MSVC C2362 declaration/goto failure in all six Windows
+    x86 engine jobs.
+  - [x] Hoist the fixed-width animation-tree flags declaration without changing
+    its per-node assignment, strengthen the stale/wide mutation contracts, and
+    address the actionable automated-review clarity and boundary findings. The
+    complete repaired local CTest suite remains **208/208**.
+  - [ ] Pass replacement exact-head hosted CI and automated review with zero
+    actionable threads, merge with a GitHub merge commit, and confirm
+    authoritative post-merge `master` CI.
 - [x] Merge the exact-key composite zone-runtime controller (PR #71).
 - [x] Merge the ABI-neutral runtime capacity/demand prerequisite (PR #72).
 - [x] Publish the production-neutral serialized runtime facade (PR #73).
@@ -2545,8 +2553,15 @@ bridge and atomic seven-site cutover are next.
    - [x] Create tree-neutral checkpoint `6e0e6107` with exact upstream
      `820b0a03` as its second parent, empty first-parent diff, and matching tree
      `02d3a86b`.
-   - [ ] Pass exact-head hosted CI/review, resolve every actionable thread,
-     merge with a GitHub merge commit, and pass authoritative post-merge CI.
+   - [x] Publish PR #102 at initial head `923056e7`; run **30374512235**
+     passed all five portable-platform jobs and isolated one shared MSVC C2362
+     declaration/goto failure across all six Windows x86 engine jobs.
+   - [x] Repair the MSVC declaration lifetime while preserving fixed-width
+     per-node assignment, add stale/wide mutation coverage, address the
+     actionable review findings, and retain complete local CTest **208/208**.
+   - [ ] Pass replacement exact-head hosted CI/review, resolve every actionable
+     thread, merge with a GitHub merge commit, and pass authoritative
+     post-merge CI.
 - [ ] **Priority 2 — Atomic loader cutover:** claim exact generations, stage
    both root-string outputs through an
    aligned local `std::uint32_t` before copying into stream-backed fields, transfer non-null root strings, and publish

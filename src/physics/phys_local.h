@@ -15,6 +15,8 @@
 #include <cstddef>
 #include <cstdint>
 
+// Preserve the profile-specific retail content masks at the shared physics
+// boundary; SP includes content that MP intentionally omits.
 #if defined(KISAK_SP)
 inline constexpr int PHYS_WORLD_CLIPMASK = 0x280E491;
 #elif defined(KISAK_MP)

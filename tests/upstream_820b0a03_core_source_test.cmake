@@ -104,8 +104,13 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             _capsule "${_capsule}")
     elseif(CONTRACT_MUTATION STREQUAL "animtree_stale_flags")
         string(REPLACE
-            "const uint16_t varFlags = flagsId"
-            "int varFlags = flagsId"
+            ": uint16_t{0};"
+            ": varFlags;"
+            _animtree "${_animtree}")
+    elseif(CONTRACT_MUTATION STREQUAL "animtree_wide_flags")
+        string(REPLACE
+            "uint16_t varFlags;"
+            "int varFlags;"
             _animtree "${_animtree}")
     elseif(CONTRACT_MUTATION STREQUAL "sound_stale_diagnostic_index")
         string(REPLACE
@@ -284,8 +289,16 @@ extract_slice(
     "Scr_CreateAnimationTree")
 require_contains(
     _animtree_slice
-    "const uint16_t varFlags = flagsId ? static_cast<uint16_t>("
-    "each animation node initializes a fresh fixed-width flag value")
+    "uint16_t varFlags;"
+    "animation flags retain the exact fixed-width representation")
+require_contains(
+    _animtree_slice
+    "varFlags = flagsId ? static_cast<uint16_t>("
+    "each animation node assigns a fresh flag value")
+require_contains(
+    _animtree_slice
+    ": uint16_t{0};"
+    "missing animation flags clear the complete value")
 forbid_contains(
     _animtree_slice "LOWORD(varFlags)"
     "missing animation flags clear the complete value")
@@ -410,6 +423,7 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         material_partial_state
         capsule_result_return
         animtree_stale_flags
+        animtree_wide_flags
         sound_stale_diagnostic_index
         weapon_input_missing_disable
         weapon_input_calls_bypass

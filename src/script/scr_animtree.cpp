@@ -326,6 +326,7 @@ int __cdecl Scr_CreateAnimationTree(
     int treeIndex,
     uint16_t flags)
 {
+    uint16_t varFlags; // [esp+0h] [ebp-20h]
     uint32_t node; // [esp+4h] [ebp-1Ch]
     uint32_t nodeRef; // [esp+8h] [ebp-18h]
     uint32_t nodeRefa; // [esp+8h] [ebp-18h]
@@ -390,7 +391,7 @@ LABEL_13:
                 }
                 node = FindObject(nodeRefa);
                 flagsId = FindArrayVariable(node, 0);
-                const uint16_t varFlags = flagsId
+                varFlags = flagsId
                     ? static_cast<uint16_t>(
                           GetVariableValueAddress(flagsId)->u.intValue)
                     : uint16_t{0};

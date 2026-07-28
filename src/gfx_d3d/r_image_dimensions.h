@@ -11,6 +11,8 @@ struct MipmapResolution final
     std::uint16_t height;
 };
 
+// Retail image layouts store both dimensions as uint16 values. Validate the
+// native inputs and shift count before narrowing into that frozen boundary.
 inline constexpr bool TryGetMipmapResolution(
     const int baseWidth,
     const int baseHeight,

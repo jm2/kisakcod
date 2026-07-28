@@ -4,6 +4,8 @@
 
 namespace gfx::pretess_encoding
 {
+// The render command word assigns surface and LOD one byte each and the
+// static-model list the upper 16 bits. Keep validation aligned with that wire.
 inline constexpr std::uint32_t kPackedByteMaximum = 0xFFu;
 
 inline constexpr bool TryPackSurface(

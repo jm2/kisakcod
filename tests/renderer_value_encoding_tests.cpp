@@ -62,6 +62,7 @@ bool TestMipmapResolution()
     using gfx::image_dimensions::TryGetMipmapResolution;
 
     if (!ExpectResolution(1, 1, 0, 1, 1)
+        || !ExpectResolution(65535, 65535, 0, 65535, 65535)
         || !ExpectResolution(1920, 1080, 0, 1920, 1080)
         || !ExpectResolution(1920, 1080, 1, 960, 540)
         || !ExpectResolution(1920, 1080, 31, 1, 1)

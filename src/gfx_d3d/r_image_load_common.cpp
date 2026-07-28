@@ -427,10 +427,8 @@ void __cdecl Image_GetMipmapResolution(
     if (!gfx::image_dimensions::TryGetMipmapResolution(
             baseWidth, baseHeight, mipmap, &resolution))
     {
-        if (mipWidth)
-            *mipWidth = 0;
-        if (mipHeight)
-            *mipHeight = 0;
+        *mipWidth = 0;
+        *mipHeight = 0;
         return;
     }
 

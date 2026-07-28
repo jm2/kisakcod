@@ -37,6 +37,9 @@ std::array<int, ui_safety::kSavegameCapacity> IdentityDisplayMap()
 void TestSavegameCountCapacity()
 {
     Check(
+        ui_safety::IsSavegameCountValid(0),
+        "an empty savegame list must remain valid");
+    Check(
         ui_safety::IsSavegameCountValid(255),
         "255 savegames must fit the display map");
     Check(
@@ -48,10 +51,19 @@ void TestSavegameCountCapacity()
     Check(
         !ui_safety::IsSavegameCountValid(512),
         "the backing-list size must not become the live count limit");
+    Check(
+        !ui_safety::IsSavegameCountValid(511),
+        "a count inside the frozen backing-only range must fail closed");
+    Check(
+        !ui_safety::IsSavegameCountValid(513),
+        "a count beyond the backing layout must fail closed");
 
     Check(
         ui_safety::GetFailClosedSavegameCount(255) == 255,
         "a valid count must be preserved");
+    Check(
+        ui_safety::GetFailClosedSavegameCount(0) == 0,
+        "an empty valid count must remain empty");
     Check(
         ui_safety::GetFailClosedSavegameCount(256) == 256,
         "the exact display capacity must be preserved");
@@ -62,12 +74,21 @@ void TestSavegameCountCapacity()
         ui_safety::GetFailClosedSavegameCount(512) == 0,
         "the storage-layout count must expose no entries");
     Check(
+        ui_safety::GetFailClosedSavegameCount(511) == 0,
+        "a backing-only count must expose no entries");
+    Check(
+        ui_safety::GetFailClosedSavegameCount(513) == 0,
+        "an over-layout count must expose no entries");
+    Check(
         ui_safety::GetFailClosedSavegameCount(-1) == 0,
         "a negative count must expose no entries");
 
     Check(
         ui_safety::CanAppendSavegame(255),
         "the final display-map entry must remain appendable");
+    Check(
+        ui_safety::CanAppendSavegame(0),
+        "an empty list must accept its first entry");
     Check(
         !ui_safety::CanAppendSavegame(256),
         "the full display map must reject another append");
@@ -77,6 +98,12 @@ void TestSavegameCountCapacity()
     Check(
         !ui_safety::CanAppendSavegame(512),
         "the backing-list size must reject appends");
+    Check(
+        !ui_safety::CanAppendSavegame(511),
+        "a backing-only count must reject appends");
+    Check(
+        !ui_safety::CanAppendSavegame(513),
+        "an over-layout count must reject appends");
 }
 
 void TestSavegameSlotResolution()
@@ -95,6 +122,12 @@ void TestSavegameSlotResolution()
             && slotIndex == 255,
         "the final entry in a full display map must resolve");
 
+    slotIndex = 7;
+    Check(
+        !ui_safety::TryResolveSavegameSlot(
+            displaySavegames.data(), 0, 0, &slotIndex)
+            && slotIndex == -1,
+        "an empty list must reject every display index");
     slotIndex = 7;
     Check(
         !ui_safety::TryResolveSavegameSlot(
@@ -136,6 +169,14 @@ void TestSavegameSlotResolution()
             displaySavegames.data(), 256, 4, &slotIndex)
             && slotIndex == -1,
         "a mapped slot outside the live count must fail closed");
+
+    displaySavegames[4] = 511;
+    slotIndex = 7;
+    Check(
+        !ui_safety::TryResolveSavegameSlot(
+            displaySavegames.data(), 256, 4, &slotIndex)
+            && slotIndex == -1,
+        "a mapped slot in the backing-only range must fail closed");
 
     displaySavegames[4] = 255;
     slotIndex = 7;

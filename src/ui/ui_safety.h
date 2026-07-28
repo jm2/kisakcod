@@ -50,9 +50,7 @@ constexpr bool TryResolveSavegameSlot(
 
     const int candidate = displaySavegames[displayIndex];
     if (candidate < 0
-        || candidate >= savegameCount
-        || static_cast<std::size_t>(candidate)
-            >= kSavegameStorageLayoutCapacity)
+        || candidate >= savegameCount)
     {
         return false;
     }

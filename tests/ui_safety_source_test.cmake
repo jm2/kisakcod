@@ -125,8 +125,7 @@ foreach(_required IN ITEMS
     "|| displayIndex < 0"
     "|| displayIndex >= savegameCount"
     "const int candidate = displaySavegames[displayIndex];"
-    "|| candidate >= savegameCount"
-    ">= kSavegameStorageLayoutCapacity")
+    "|| candidate >= savegameCount")
     require_contains(
         _helper "${_required}"
         "the helper enforces the single fail-closed savegame capacity")
@@ -136,6 +135,10 @@ require_ordered(
     "|| displayIndex >= savegameCount) { return false; }"
     "const int candidate = displaySavegames[displayIndex];"
     "all display-map bounds guards precede the first indexed read")
+forbid_contains(
+    _helper
+    "static_cast<std::size_t>(candidate) >= kSavegameStorageLayoutCapacity"
+    "the live-count guard is the single load-bearing slot bound")
 
 foreach(_required IN ITEMS
     "constexpr std::uint32_t MonotonicElapsedMilliseconds("
@@ -201,7 +204,11 @@ foreach(_cg_source IN ITEMS _cg_sp _cg_mp)
 endforeach()
 
 require_contains(
-    _ui_main "SND_FadeAllSounds(1.0, 1000);"
+    _ui_main "constexpr int kMainMenuSoundFadeMilliseconds = 1000;"
+    "the upstream one-second main-menu fade has a named unit-bearing value")
+require_contains(
+    _ui_main
+    "SND_FadeAllSounds(1.0, kMainMenuSoundFadeMilliseconds);"
     "opening the main menu uses the intended one-second sound fade")
 forbid_contains(
     _ui_main "SND_FadeAllSounds(1.0, (int)String);"
@@ -222,7 +229,7 @@ foreach(_forbidden IN ITEMS
         "legacy unbounded savegame indexing is sealed out")
 endforeach()
 
-foreach(_boundary IN ITEMS "255" "256" "257" "512")
+foreach(_boundary IN ITEMS "0" "255" "256" "257" "511" "512" "513")
     require_contains(
         _runtime "${_boundary}"
         "runtime coverage includes the requested savegame-count boundary")
@@ -230,7 +237,9 @@ endforeach()
 foreach(_required IN ITEMS
     "displaySavegames[4] = -1;"
     "displaySavegames[4] = 256;"
+    "displaySavegames[4] = 511;"
     "displaySavegames[4] = 255;"
+    "displaySavegames.data(), 0, 0, &slotIndex"
     "nullptr, 256, 0, &slotIndex"
     "displaySavegames.data(), 256, 0, nullptr")
     require_contains(
