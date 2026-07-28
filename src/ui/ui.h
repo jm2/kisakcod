@@ -9,6 +9,7 @@
 #include <bgame/bg_local.h>
 
 #include <ui/ui_shared.h>
+#include <ui/ui_safety.h>
 
 #undef DrawText // Horrible OS
 
@@ -46,7 +47,7 @@ struct savegameStatus_s
 {
     int sortKey;
     int sortDir;
-    int displaySavegames[256];
+    int displaySavegames[ui_safety::kSavegameCapacity];
 };
 struct playerProfileStatus_s
 {
@@ -56,7 +57,7 @@ struct playerProfileStatus_s
 struct uiInfo_s
 {
     UiContext uiDC;
-    SavegameInfo savegameList[512];
+    SavegameInfo savegameList[ui_safety::kSavegameStorageLayoutCapacity];
     int savegameCount;
     savegameStatus_s savegameStatus;
 

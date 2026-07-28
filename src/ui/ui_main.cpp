@@ -59,6 +59,45 @@ SaveTimeGlob ui_saveTimeGlob;
 
 uiMenuCommand_t g_currentMenuType;
 
+namespace
+{
+int UI_GetFailClosedSavegameCount()
+{
+    return ui_safety::GetFailClosedSavegameCount(uiInfo.savegameCount);
+}
+
+bool UI_TryResolveSavegameSlotIndex(
+    const int displayIndex,
+    int *const slotIndex)
+{
+    return ui_safety::TryResolveSavegameSlot(
+        uiInfo.savegameStatus.displaySavegames,
+        uiInfo.savegameCount,
+        displayIndex,
+        slotIndex);
+}
+
+bool UI_AreSavegameMappingsValid(const int savegameCount)
+{
+    if (savegameCount <= 0
+        || savegameCount != UI_GetFailClosedSavegameCount())
+    {
+        return false;
+    }
+
+    for (int displayIndex = 0;
+         displayIndex < savegameCount;
+         ++displayIndex)
+    {
+        int slotIndex;
+        if (!UI_TryResolveSavegameSlotIndex(displayIndex, &slotIndex))
+            return false;
+    }
+
+    return true;
+}
+}
+
 
 UILocalVarContext *__cdecl UI_GetLocalVarsContext(int localClientNum)
 {
@@ -648,63 +687,79 @@ MenuList *__cdecl Load_ScriptMenu(const char *pszMenu, int imageTrack)
 
 int __cdecl UI_SavegameIndexFromFilename(const char *filename)
 {
-    int v2; // r29
-    int *i; // r31
-
     if (!filename)
-        MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\ui\\ui_main.cpp", 635, 0, "%s", "filename");
-    v2 = 0;
-    if (uiInfo.savegameCount <= 0)
-        return -1;
-    for (i = uiInfo.savegameStatus.displaySavegames; I_stricmp(filename, uiInfo.savegameList[*i].savegameFile); ++i)
     {
-        if (++v2 >= uiInfo.savegameCount)
-            return -1;
+        MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\ui\\ui_main.cpp", 635, 0, "%s", "filename");
+        return -1;
     }
-    return v2;
+
+    const int savegameCount = UI_GetFailClosedSavegameCount();
+    for (int displayIndex = 0;
+         displayIndex < savegameCount;
+         ++displayIndex)
+    {
+        int slotIndex;
+        if (!UI_TryResolveSavegameSlotIndex(displayIndex, &slotIndex))
+            return -1;
+
+        const char *const savegameFile =
+            uiInfo.savegameList[slotIndex].savegameFile;
+        if (savegameFile && !I_stricmp(filename, savegameFile))
+            return displayIndex;
+    }
+
+    return -1;
 }
 
 int __cdecl UI_SavegameIndexFromFilename2(const char *filename)
 {
-    int v1; // r3
-
-    v1 = UI_SavegameIndexFromFilename(filename);
-    if (v1 < 0)
+    const int displayIndex = UI_SavegameIndexFromFilename(filename);
+    int slotIndex;
+    if (!UI_TryResolveSavegameSlotIndex(displayIndex, &slotIndex))
         return -1;
-    else
-        return uiInfo.savegameStatus.displaySavegames[v1];
+    return slotIndex;
 }
 
 void __cdecl UI_DrawSaveGameShot(rectDef_s *rect, double scale, float *color)
 {
-    int v4; // r3
-    int v5; // r30
-    Material *sshotImage; // r3
-    int v11; // r30
-
-    v4 = UI_SavegameIndexFromFilename(uiInfo.savegameName);
-    if (v4 >= 0 && (v5 = uiInfo.savegameStatus.displaySavegames[v4], v5 >= 0))
+    const int displayIndex =
+        UI_SavegameIndexFromFilename(uiInfo.savegameName);
+    int slotIndex;
+    if (UI_TryResolveSavegameSlotIndex(displayIndex, &slotIndex))
     {
-        sshotImage = uiInfo.sshotImage;
-        if (uiInfo.sshotImage && uiInfo.savegameList[v5].imageName)
+        const char *const imageName =
+            uiInfo.savegameList[slotIndex].imageName;
+        if (uiInfo.sshotImage
+            && imageName
+            && !I_strnicmp(imageName, uiInfo.sshotImageName, 64))
         {
-            if (!I_strnicmp(uiInfo.savegameList[v5].imageName, uiInfo.sshotImageName, 64))
-                goto LABEL_14;
-            sshotImage = uiInfo.sshotImage;
+            goto LABEL_14;
         }
-        v11 = v5 << 6;
-        if (*(const char **)((char *)&uiInfo.savegameList[0].imageName + v11))
+
+        Material *sshotImage = nullptr;
+        if (imageName && *imageName)
         {
-            sshotImage = Material_RegisterRawImage(*(const char **)((char *)&uiInfo.savegameList[0].imageName + v11), 3);
-            uiInfo.sshotImage = sshotImage;
+            sshotImage = Material_RegisterRawImage(imageName, 3);
         }
-        if (!*(const char **)((char *)&uiInfo.savegameList[0].imageName + v11) || !sshotImage)
+
+        if (!sshotImage)
+        {
             uiInfo.sshotImage = Material_RegisterHandle("unknownsave", 3);
-        I_strncpyz(uiInfo.sshotImageName, *(const char **)((char *)&uiInfo.savegameList[0].imageName + v11), 64);
+            uiInfo.sshotImageName[0] = '\0';
+        }
+        else
+        {
+            uiInfo.sshotImage = sshotImage;
+            I_strncpyz(
+                uiInfo.sshotImageName,
+                imageName,
+                sizeof(uiInfo.sshotImageName));
+        }
     }
     else
     {
         uiInfo.sshotImage = Material_RegisterHandle("unknownsave", 3);
+        uiInfo.sshotImageName[0] = '\0';
     }
 LABEL_14:
     UI_DrawHandlePic(&scrPlaceFull, rect->x, rect->y, rect->w, rect->h, rect->horzAlign, rect->vertAlign, color, uiInfo.sshotImage);
@@ -784,6 +839,15 @@ int __cdecl UI_SavegamesQsortCompare(unsigned int *arg1, unsigned int *arg2)
     SavegameInfo *v3; // r10
     SavegameInfo *v4; // r9
 
+    const int savegameCount = UI_GetFailClosedSavegameCount();
+    if (!arg1
+        || !arg2
+        || savegameCount <= 0
+        || *arg1 >= static_cast<unsigned int>(savegameCount)
+        || *arg2 >= static_cast<unsigned int>(savegameCount))
+    {
+        return 0;
+    }
     if (*arg1 == *arg2)
         return 0;
     v3 = &uiInfo.savegameList[*arg1];
@@ -1006,7 +1070,7 @@ void __cdecl UI_OverrideCursorPos(int localClientNum, itemDef_s *item)
 int __cdecl UI_FeederCount(int localClientNum, float feederID)
 {
     if (feederID == 16.0f)
-        return uiInfo.savegameCount;
+        return UI_GetFailClosedSavegameCount();
     if (feederID == 24.0f)
         return uiInfo.playerProfileCount;
     return 0;
@@ -1024,10 +1088,8 @@ const char *__cdecl UI_FeederItemText(
 
     if (feederID == 16.0f)
     {
-        if (index < 0 || index >= uiInfo.savegameCount)
-            return "";
-        int slotIdx = uiInfo.savegameStatus.displaySavegames[index];
-        if (slotIdx < 0 || slotIdx >= uiInfo.savegameCount)
+        int slotIdx;
+        if (!UI_TryResolveSavegameSlotIndex(index, &slotIdx))
             return "";
         const SavegameInfo &slot = uiInfo.savegameList[slotIdx];
         switch (column)
@@ -1081,10 +1143,8 @@ void __cdecl UI_FeederSelection(int localClientNum, float feederID, int index)
 {
     if (feederID == 16.0f)
     {
-        if (index < 0 || index >= uiInfo.savegameCount)
-            return;
-        int slotIdx = uiInfo.savegameStatus.displaySavegames[index];
-        if (slotIdx < 0 || slotIdx >= uiInfo.savegameCount)
+        int slotIdx;
+        if (!UI_TryResolveSavegameSlotIndex(index, &slotIdx))
             return;
         const char *file = uiInfo.savegameList[slotIdx].savegameFile;
         if (!file)
@@ -1831,12 +1891,13 @@ void __cdecl UI_SavegameSort(int column, int force)
     if (force || uiInfo.savegameStatus.sortKey != column)
     {
         uiInfo.savegameStatus.sortKey = column;
-        if (uiInfo.savegameCount)
+        const int savegameCount = UI_GetFailClosedSavegameCount();
+        if (UI_AreSavegameMappingsValid(savegameCount))
         {
             qsort(
                 uiInfo.savegameStatus.displaySavegames,
-                uiInfo.savegameCount,
-                4u,
+                savegameCount,
+                sizeof(uiInfo.savegameStatus.displaySavegames[0]),
                 (int(__cdecl *)(const void *, const void *))UI_SavegamesQsortCompare);
             if (uiInfo.savegameName[0])
             {
@@ -1867,7 +1928,10 @@ void __cdecl UI_LoadSavegames(int /*unused*/)
     uiInfo.savegameCount = 0;
     if (saveFiles)
     {
-        for (int i = 0; i < saveCount && uiInfo.savegameCount < 512; ++i)
+        for (int i = 0;
+             i < saveCount
+                 && ui_safety::CanAppendSavegame(uiInfo.savegameCount);
+             ++i)
         {
             const char *fileName = saveFiles[i];
             if (!fileName || !*fileName)
@@ -1893,7 +1957,7 @@ void __cdecl UI_LoadSavegames(int /*unused*/)
         FS_FreeFileList(saveFiles);
     }
 
-    if (uiInfo.savegameCount)
+    if (UI_GetFailClosedSavegameCount() > 0)
     {
         uiInfo.savegameStatus.sortDir = 1;
         UI_SavegameSort(uiInfo.savegameStatus.sortKey, 1);
@@ -1908,14 +1972,12 @@ void __cdecl UI_LoadSavegames(int /*unused*/)
 
 void __cdecl UI_DelSavegame()
 {
-    if (uiInfo.savegameCount <= 0 || !uiInfo.savegameName[0])
+    if (!uiInfo.savegameName[0])
         return;
 
     int displayIdx = UI_SavegameIndexFromFilename(uiInfo.savegameName);
-    if (displayIdx < 0)
-        return;
-    int slotIdx = uiInfo.savegameStatus.displaySavegames[displayIdx];
-    if (slotIdx < 0 || slotIdx >= uiInfo.savegameCount)
+    int slotIdx;
+    if (!UI_TryResolveSavegameSlotIndex(displayIdx, &slotIdx))
         return;
 
     const char *file = uiInfo.savegameList[slotIdx].savegameFile;
@@ -2179,12 +2241,16 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
         if (uiInfo.savegameName[0])
         {
             int displayIdx = UI_SavegameIndexFromFilename(uiInfo.savegameName);
-            if (displayIdx >= 0)
+            int slotIdx;
+            if (UI_TryResolveSavegameSlotIndex(displayIdx, &slotIdx))
             {
-                int slotIdx = uiInfo.savegameStatus.displaySavegames[displayIdx];
-                if (slotIdx >= 0 && slotIdx < uiInfo.savegameCount)
+                const char *const savegameFile =
+                    uiInfo.savegameList[slotIdx].savegameFile;
+                if (savegameFile)
                 {
-                    Cbuf_AddText(0, va("loadgame %s\n", uiInfo.savegameList[slotIdx].savegameFile));
+                    Cbuf_AddText(
+                        0,
+                        va("loadgame %s\n", savegameFile));
                     Menus_CloseAll(&uiInfo.uiDC);
                 }
             }
