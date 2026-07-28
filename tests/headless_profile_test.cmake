@@ -251,12 +251,18 @@ foreach(_required
     "${SRC_DIR}/database/db_file_load.cpp"
     "${SRC_DIR}/database/db_zone_runtime_storage.cpp"
     "${SRC_DIR}/database/db_zone_runtime_storage_fx_bridge_headless.cpp"
+    "${SRC_DIR}/database/db_fx_zone_adapter_wiring_headless.cpp"
     "${SRC_DIR}/script/scr_debugger.cpp"
 )
     if (NOT _required IN_LIST _dedi_sources)
         message(FATAL_ERROR "Headless dedicated source profile is missing ${_required}")
     endif()
 endforeach()
+
+if ("${SRC_DIR}/database/db_fx_zone_adapter_wiring.cpp" IN_LIST _dedi_sources)
+    message(FATAL_ERROR
+        "Headless dedicated source profile must not link the EffectsCore FX zone-adapter implementation")
+endif()
 
 file(READ "${SRC_DIR}/script/scr_debugger.cpp" _debugger_source)
 string(FIND "${_debugger_source}" "#ifdef KISAK_DEDI_HEADLESS" _headless_branch)

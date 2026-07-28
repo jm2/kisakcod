@@ -62,7 +62,7 @@ const char *TrueCommand()
 #if defined(_WIN32)
     return "cmd";
 #else
-    return "/bin/true";
+    return "true";
 #endif
 }
 

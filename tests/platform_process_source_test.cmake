@@ -193,6 +193,10 @@ require_contains(
     _macos_platform
     "sys_mach_crash.cpp"
     "macos platform.cmake missing Mach crash TU")
+require_contains(
+    _tests_cmake
+    "sys_mach_crash"
+    "macos process/crash tests missing Mach crash TU selection")
 
 # Tests/CMakeLists.txt must build both targets and register their ctest
 # entries; tests themselves must include the sys_process public header.
@@ -211,6 +215,14 @@ require_contains(
     _process_tests
     "sys_process.h"
     "platform_process_tests.cpp missing public header include")
+require_contains(
+    _process_tests
+    "return \"true\";"
+    "POSIX process test command must use the backend's PATH search")
+forbid_contains(
+    _process_tests
+    "/bin/true"
+    "hosted macOS does not guarantee /bin/true")
 require_contains(
     _crash_tests
     "sys_process.h"

@@ -38,11 +38,13 @@ bool TestProcessFreezeUnsupportedContract()
     // without crashing the caller. On non-macOS hosts the status is
     // Unsupported; on macOS the function freezes the calling thread
     // and never returns, so this test does not exercise that path.
-    const SysProcessFreezeStatus status = Sys_ProcessFreezeForCrash();
 #if defined(__APPLE__)
-    (void)status;
+    // The Mach implementation freezes the calling thread and intentionally
+    // does not return. Linking that production implementation is covered by
+    // this target, but invoking it from a hosted CTest would hang the runner.
     return true;
 #else
+    const SysProcessFreezeStatus status = Sys_ProcessFreezeForCrash();
     if (status != SysProcessFreezeStatus::Unsupported)
     {
         std::fprintf(stderr,

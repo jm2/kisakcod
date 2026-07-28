@@ -39,6 +39,7 @@ function(kisakcod_get_dedi_sources OUT_VAR)
             # its database-neutral implementation to the fail-closed bridge.
             "${SRC_DIR}/database/db_zone_runtime_storage.cpp"
             "${SRC_DIR}/database/db_zone_runtime_storage_fx_bridge_headless.cpp"
+            "${SRC_DIR}/database/db_fx_zone_adapter_wiring_headless.cpp"
         )
     else()
         list(APPEND _sources
