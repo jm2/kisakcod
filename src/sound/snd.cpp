@@ -2082,9 +2082,9 @@ char __cdecl SND_ContinueLoopingSound(
         if (g_snd.chaninfo[ia].sndEnt.field.entIndex == sndEnt.field.entIndex && !SND_Is2DChannelFree(ia))
         {
             if (!g_snd.chaninfo[ia].alias0)
-                MyAssertHandler(".\\snd.cpp", 1477, 0, "%s", "g_snd.chaninfo[i].alias0");
+                MyAssertHandler(".\\snd.cpp", 1477, 0, "%s", "g_snd.chaninfo[ia].alias0");
             if (!g_snd.chaninfo[ia].alias1)
-                MyAssertHandler(".\\snd.cpp", 1478, 0, "%s", "g_snd.chaninfo[i].alias1");
+                MyAssertHandler(".\\snd.cpp", 1478, 0, "%s", "g_snd.chaninfo[ia].alias1");
             if ((g_snd.chaninfo[ia].alias0->flags & 1) != 0
                 && g_snd.chaninfo[ia].alias0->aliasName == alias0->aliasName
                 && g_snd.chaninfo[ia].alias1->aliasName == alias1->aliasName)
@@ -2099,9 +2099,9 @@ char __cdecl SND_ContinueLoopingSound(
         if (g_snd.chaninfo[ib].sndEnt.field.entIndex == sndEnt.field.entIndex && !SND_IsStreamChannelFree(ib))
         {
             if (!g_snd.chaninfo[ib].alias0)
-                MyAssertHandler(".\\snd.cpp", 1497, 0, "%s", "g_snd.chaninfo[i].alias0");
+                MyAssertHandler(".\\snd.cpp", 1497, 0, "%s", "g_snd.chaninfo[ib].alias0");
             if (!g_snd.chaninfo[ib].alias1)
-                MyAssertHandler(".\\snd.cpp", 1498, 0, "%s", "g_snd.chaninfo[i].alias1");
+                MyAssertHandler(".\\snd.cpp", 1498, 0, "%s", "g_snd.chaninfo[ib].alias1");
             if ((g_snd.chaninfo[ib].alias0->flags & 1) != 0
                 && g_snd.chaninfo[ib].alias0->aliasName == alias0->aliasName
                 && g_snd.chaninfo[ib].alias1->aliasName == alias1->aliasName)
@@ -2847,7 +2847,7 @@ void __cdecl SND_UpdateLoopingSounds()
             if (!SND_Is2DChannelFree(ia))
             {
                 if (!g_snd.chaninfo[ia].alias0)
-                    MyAssertHandler(".\\snd.cpp", 2545, 0, "%s", "g_snd.chaninfo[i].alias0");
+                    MyAssertHandler(".\\snd.cpp", 2545, 0, "%s", "g_snd.chaninfo[ia].alias0");
                 if ((g_snd.chaninfo[ia].alias0->flags & 1) != 0 && g_snd.chaninfo[ia].looptime != g_snd.looptime)
                     SND_Stop2DChannel(ia);
             }
@@ -2857,7 +2857,7 @@ void __cdecl SND_UpdateLoopingSounds()
             if (!SND_IsStreamChannelFree(ib))
             {
                 if (!g_snd.chaninfo[ib].alias0)
-                    MyAssertHandler(".\\snd.cpp", 2556, 0, "%s", "g_snd.chaninfo[i].alias0");
+                    MyAssertHandler(".\\snd.cpp", 2556, 0, "%s", "g_snd.chaninfo[ib].alias0");
                 if ((g_snd.chaninfo[ib].alias0->flags & 1) != 0 && g_snd.chaninfo[ib].looptime != g_snd.looptime)
                     SND_StopStreamChannel(ib);
                 }

@@ -62,6 +62,7 @@ read_normalized("src/gfx_d3d/r_image_load_common.cpp" _image)
 read_normalized("src/gfx_d3d/r_material_load_obj.cpp" _material)
 read_normalized("src/physics/phys_coll_capsulebrush.cpp" _capsule)
 read_normalized("src/script/scr_animtree.cpp" _animtree)
+read_normalized("src/sound/snd.cpp" _sound)
 read_normalized(".github/workflows/ci.yml" _ci)
 
 if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
@@ -95,6 +96,11 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "const uint16_t varFlags = flagsId"
             "int varFlags = flagsId"
             _animtree "${_animtree}")
+    elseif(CONTRACT_MUTATION STREQUAL "sound_stale_diagnostic_index")
+        string(REPLACE
+            "\"g_snd.chaninfo[ia].alias0\""
+            "\"g_snd.chaninfo[i].alias0\""
+            _sound "${_sound}")
     elseif(CONTRACT_MUTATION STREQUAL "ci_omits_contract")
         string(REPLACE
             "|upstream-820b0a03-core-source-invariants"
@@ -250,6 +256,36 @@ forbid_contains(
     _animtree_slice "LOWORD(varFlags)"
     "missing animation flags clear the complete value")
 
+extract_slice(
+    _sound
+    "char __cdecl SND_ContinueLoopingSound("
+    "void __cdecl SND_ContinueLoopingSound_Internal("
+    _continue_looping_slice
+    "SND_ContinueLoopingSound")
+foreach(_required IN ITEMS
+    "\"g_snd.chaninfo[ia].alias0\""
+    "\"g_snd.chaninfo[ia].alias1\""
+    "\"g_snd.chaninfo[ib].alias0\""
+    "\"g_snd.chaninfo[ib].alias1\"")
+    require_contains(
+        _continue_looping_slice "${_required}"
+        "looping-sound diagnostics name the checked channel")
+endforeach()
+
+extract_slice(
+    _sound
+    "void __cdecl SND_UpdateLoopingSounds()"
+    "char __cdecl SND_UpdateBackgroundVolume("
+    _update_looping_slice
+    "SND_UpdateLoopingSounds")
+foreach(_required IN ITEMS
+    "\"g_snd.chaninfo[ia].alias0\""
+    "\"g_snd.chaninfo[ib].alias0\"")
+    require_contains(
+        _update_looping_slice "${_required}"
+        "loop-update diagnostics name the checked channel")
+endforeach()
+
 require_contains(
     _ci "|upstream-820b0a03-core-source-invariants"
     "measured Windows x86 tests select the upstream core contract")
@@ -262,6 +298,7 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         material_partial_state
         capsule_result_return
         animtree_stale_flags
+        sound_stale_diagnostic_index
         ci_omits_contract)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
