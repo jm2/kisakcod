@@ -36,11 +36,11 @@ Disposition terms:
 
 ## Local validation and ancestry evidence
 
-The curated branch contains no raw merge of the divergent upstream tree. It
-passes the complete local GCC Release CTest suite (**208/208**), including
-runtime value/UI/weapon-input/weapon-model tests and mutation-sensitive source
-contracts. Focused strict Clang, genuine i386, and AArch64 compile/contract
-gates for the affected portable helpers also pass.
+The merged curated reconciliation contains no raw merge of the divergent
+upstream source tree. It passes the complete local GCC Release CTest suite
+(**208/208**), including runtime value/UI/weapon-input/weapon-model tests and
+mutation-sensitive source contracts. Focused strict Clang, genuine i386, and
+AArch64 compile/contract gates for the affected portable helpers also pass.
 `git diff --check` is clean.
 
 Checkpoint `6e0e61076d66a43a388c0a0141f903cd65cffafa` has:
@@ -66,6 +66,11 @@ contracts pass. Review checkpoint
 performance issue, CodeRabbit reported no actionable comments, and the
 unresolved-thread count remained zero. A final audit then made the two UI CI
 test names explicit in both the workflow selector and its source contract; the
-focused local contract passes. Final exact-head validation, merge-commit
-retention, and authoritative post-merge CI remain required before this
-reconciliation is complete.
+focused local contract passes. Final exact head
+`8275dd20b3998cf54084c6e0cd7c282a6e40a74b` passed all 11 jobs in run
+**30387093520**, with successful exact-head Claude and CodeRabbit checks and
+zero unresolved threads. PR #102 merged with GitHub merge commit
+`62160c67ed004883e4cb181cf1c814177ecf1262`; graph verification confirms
+tree-neutral checkpoint `6e0e6107` and exact upstream `820b0a03` are retained
+as ancestors. All 11 authoritative post-merge `master` jobs passed in run
+**30388420989**.

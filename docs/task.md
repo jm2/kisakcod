@@ -46,7 +46,7 @@ of checked boxes.
   - [x] Pass all 11 required jobs at exact PR #101 head `ac141fb9` in run
     **30367496573**, squash-merge the stabilization as `fc66c03a`, and pass all
     11 authoritative post-merge `master` jobs in run **30369149465**.
-- [ ] Selectively reconcile the 13 upstream commits through `820b0a03`;
+- [x] Selectively reconcile the 13 upstream commits through `820b0a03`;
   preserve superseding portability, security, ABI, and headless work.
   - [x] Audit every commit from `af866142` through `820b0a03` and record its
     exact disposition in `docs/UPSTREAM_820B0A03_LEDGER.md`.
@@ -79,9 +79,11 @@ of checked boxes.
     unresolved-thread count remained zero.
   - [x] Make the two UI CI test names explicit in both the workflow selector and
     its source contract; the focused local contract passes.
-  - [ ] Pass final exact-head validation, merge with a GitHub merge commit,
-    verify exact checkpoint/upstream ancestry retention, and confirm
-    authoritative post-merge `master` CI.
+  - [x] Pass all 11 final exact-head jobs at `8275dd20` in run
+    **30387093520**, complete successful Claude/CodeRabbit checks with zero
+    unresolved threads, merge PR #102 as `62160c67`, verify checkpoint/upstream
+    ancestry retention, and pass all 11 authoritative post-merge jobs in run
+    **30388420989**.
 - [x] Merge the exact-key composite zone-runtime controller (PR #71).
 - [x] Merge the ABI-neutral runtime capacity/demand prerequisite (PR #72).
 - [x] Publish the production-neutral serialized runtime facade (PR #73).
@@ -423,9 +425,10 @@ of checked boxes.
 - [ ] Re-audit and selectively integrate upstream whenever its tip advances.
   The 13 unique commits from `af866142` through `820b0a03`, relative to the
   recorded `4ad0a2e2` checkpoint, are fully dispositioned in
-  `docs/UPSTREAM_820B0A03_LEDGER.md`. The curated source and exact tree-neutral
-  ancestry checkpoint `6e0e6107` are locally complete; hosted PR validation,
-  merge-commit retention, and authoritative post-merge CI remain.
+  `docs/UPSTREAM_820B0A03_LEDGER.md`. PR #102 final head `8275dd20` passed all
+  11 jobs in run **30387093520**; merge commit `62160c67` retains checkpoint
+  `6e0e6107` and exact upstream `820b0a03` as ancestors, and all 11
+  authoritative jobs passed in run **30388420989**.
 - [x] Restore the legacy Windows x86 CI gates to green. PR #101
   exact-head run **30367496573** and authoritative post-merge run
   **30369149465** passed every expanded job, including Windows x86 Debug,
@@ -455,15 +458,17 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   `ac141fb9c9b4965c6cfdc963721ab13bd1563d7d` in run **30367496573**. The PR
   squash-merged as `fc66c03a9874bdc72df396686d6a91599aba9529`,
   and all 11 authoritative `master` jobs passed in run **30369149465**.
-- Active upstream reconciliation candidate: all 13 commits after `4ad0a2e2`
+- Completed upstream reconciliation: all 13 commits after `4ad0a2e2`
   through exact `820b0a030a5a797306f65c3b8fe93767e136a900` have dispositions
   in `docs/UPSTREAM_820B0A03_LEDGER.md`. Curated portability and correctness
   changes pass complete local CTest **208/208** plus affected focused gates.
   Tree-neutral checkpoint `6e0e61076d66a43a388c0a0141f903cd65cffafa`
   has exact upstream as its second parent, an empty first-parent diff, and
   matching tree `02d3a86b0d76bf20bc6d5bfe154f2500eedc0d3e`.
-  Publishing, exact-head hosted CI/review, merge-commit retention, and
-  authoritative post-merge CI remain.
+  Final head `8275dd20` passed all 11 jobs in run **30387093520** with
+  successful Claude/CodeRabbit checks and zero unresolved threads. PR #102
+  merge commit `62160c67` retains the checkpoint and exact upstream ancestry;
+  all 11 post-merge jobs passed in run **30388420989**.
 - Current merged baseline: PRs #39--#70 completed earlier audited upstream/gameplay reconciliation checkpoints, the
   report-free script-string ownership foundation, the constructed zone ownership controller, script-string
   initialization hardening, the generation-keyed runtime table plus its Windows Debug fixture repair, and the
@@ -1937,9 +1942,11 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   PR #101 subsequently restored the expanded 11-job baseline at exact head
   `ac141fb9` and authoritative merge `fc66c03a`; runs **30367496573** and
   **30369149465** are fully green. The current 13-commit upstream reconciliation
-  through `820b0a03` is locally complete at tree-neutral checkpoint
-  `6e0e6107`, with full CTest **208/208**, but does not count as delivered until
-  its hosted PR/review, merge-commit retention, and post-merge CI complete.
+  through `820b0a03` completed in PR #102 with full local CTest **208/208**.
+  Final head `8275dd20` and merge commit `62160c67` retain tree-neutral
+  checkpoint `6e0e6107` and exact upstream ancestry; all 11 exact-head and
+  post-merge jobs passed in runs **30387093520** and **30388420989**,
+  respectively.
   Windows x86 is about
   **93%**, shared
   foundations/security about **91%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
@@ -2557,7 +2564,7 @@ bridge and atomic seven-site cutover are next.
    jobs in run **29790667287** with clean exact-head Codex/Gemini review and
    zero unresolved threads; merge commit `ce1d2b18` passed all nine
    authoritative jobs in run **29790700257**.
-- [ ] **Priority 0 — Current upstream reconciliation through `820b0a03`:**
+- [x] **Priority 0 — Completed upstream reconciliation through `820b0a03`:**
    selectively adapt only reviewed behavior from the 13 commits beginning at
    `af866142`, preserve stronger portable/security/ABI/headless boundaries, and
    retain exact upstream ancestry without importing the divergent tree.
@@ -2584,8 +2591,11 @@ bridge and atomic seven-site cutover are next.
      retain zero unresolved threads.
    - [x] Make the two UI CI test names explicit in the workflow selector and its
      source contract; the focused local contract passes.
-   - [ ] Pass final exact-head validation, merge with a GitHub merge commit,
-     verify exact ancestry retention, and pass authoritative post-merge CI.
+   - [x] Pass all 11 final exact-head jobs at `8275dd20` in run
+     **30387093520**, complete successful Claude/CodeRabbit checks with zero
+     unresolved threads, merge PR #102 as `62160c67`, verify exact ancestry
+     retention, and pass all 11 authoritative post-merge jobs in run
+     **30388420989**.
 - [ ] **Priority 2 — Atomic loader cutover:** claim exact generations, stage
    both root-string outputs through an
    aligned local `std::uint32_t` before copying into stream-backed fields, transfer non-null root strings, and publish
