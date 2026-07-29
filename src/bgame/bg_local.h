@@ -1084,6 +1084,12 @@ RUNTIME_OFFSET(cpose_t, cullIn, 0x10, 0x18);
 RUNTIME_SIZE(cpose_t, 0x54, 0x60);
 #endif
 
+// Priority-7 native64 ABI seam: see the comment at the top of
+// universal/phys_obj_id.h for the sidecar/token contract that backs the
+// 32-bit physObjId field. The cpose_t accessor is only meaningful on MP;
+// SP keeps the field as uintptr_t and reads/writes it natively.
+#include <universal/phys_obj_id.h>
+
 struct centity_s // sizeof=0x1DC
 {                                       // ...
     cpose_t pose;
