@@ -3,6 +3,7 @@
 #endif
 
 #include "g_save.h"
+#include "taginfo_disk32.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -64,12 +65,39 @@ const saveField_t tagInfoFields[4] =
 
 const saveField_t animscriptedFields[1] = { { 0, SF_NONE } };
 
-// tagInfo_s contains pointers, but the retail save payload is a fixed 112-byte
-// Disk32 record. Keep native64 SP compilation closed until that record has a
-// dedicated converter instead of silently reading host-width bytes.
-constexpr int kTagInfoDisk32Bytes = 0x70;
-static_assert(KISAK_ARCH_64BIT == 0,
-    "native64 SP requires a Disk32 tagInfo_s save converter");
+// Bridge between the host tagInfo_s and the Disk32 wire image. The host
+// pointer fields are reinterpreted as 4-byte entity indices; on x64 only
+// the lower 4 bytes of the pointer-sized field are guaranteed to be set
+// because the SF_ENTITY pre-processor writes a 4-byte int. The float and
+// 16-bit fields are copied verbatim because both host and Disk32 layouts
+// agree on those.
+static taginfo_save::tagInfoHostView TagInfoHostFromSource(const tagInfo_s &source)
+{
+  taginfo_save::tagInfoHostView view{};
+  view.parent = taginfo_save::HostIndexFromPointer(source.parent);
+  view.next = taginfo_save::HostIndexFromPointer(source.next);
+  view.name = source.name;
+  view.index = source.index;
+  std::memcpy(view.axis, source.axis, sizeof(view.axis));
+  std::memcpy(view.parentInvAxis, source.parentInvAxis,
+      sizeof(view.parentInvAxis));
+  return view;
+}
+
+static tagInfo_s TagInfoHostToSource(const taginfo_save::tagInfoHostView &view)
+{
+  tagInfo_s dest{};
+  dest.parent = static_cast<gentity_s *>(
+      taginfo_save::HostPointerFromIndex(view.parent));
+  dest.next = static_cast<gentity_s *>(
+      taginfo_save::HostPointerFromIndex(view.next));
+  dest.name = view.name;
+  dest.index = view.index;
+  std::memcpy(dest.axis, view.axis, sizeof(dest.axis));
+  std::memcpy(dest.parentInvAxis, view.parentInvAxis,
+      sizeof(dest.parentInvAxis));
+  return dest;
+}
 
 const saveField_t gclientFields[5] =
 {
@@ -820,16 +848,33 @@ void __cdecl WriteField2(const saveField_t *field, unsigned __int8 *base, SaveGa
         v11 = *(const void **)&base[ofs];
         if (!v11)
             return;
-        memcpy(v21, v11, kTagInfoDisk32Bytes);
-        v12 = SaveMemory_GetMemoryFile(save);
-        v13 = MemFile_GetUsedSize(v12);
-        //ProfMem_Begin("tagInfo", v13);
-        G_WriteStruct(
-            tagInfoFields,
-            *(unsigned __int8 **)&base[ofs],
-            v21,
-            kTagInfoDisk32Bytes,
-            save);
+        {
+            // The host tagInfo_s is 0x78 bytes on x64 / 0x70 on x86, but the
+            // retail wire image is a fixed 0x70-byte Disk32 record. The field
+            // walker uses host offsets, so the pre-processor must run on the
+            // host copy (resolving entity pointers into 4-byte indices and
+            // marking the string handle), then we materialize the Disk32
+            // image, write it, and finally post-process references (the
+            // string) from the unmodified original host.
+            tagInfo_s hostCopy = *static_cast<const tagInfo_s *>(v11);
+            for (const saveField_t *tagInfoField = tagInfoFields; tagInfoField->type; ++tagInfoField)
+            {
+                WriteField1(
+                    tagInfoField,
+                    reinterpret_cast<unsigned __int8 *>(&hostCopy),
+                    reinterpret_cast<unsigned __int8 *>(const_cast<tagInfo_s *>(v11)));
+            }
+            taginfo_save::tagInfoHostView view = TagInfoHostFromSource(hostCopy);
+            taginfo_save::tagInfoDisk32_s disk = taginfo_save::TagInfoToDisk32(view);
+            SaveMemory_SaveWrite(&disk, taginfo_save::kTagInfoDisk32Bytes, save);
+            for (const saveField_t *tagInfoField = tagInfoFields; tagInfoField->type; ++tagInfoField)
+            {
+                WriteField2(
+                    tagInfoField,
+                    reinterpret_cast<unsigned __int8 *>(const_cast<tagInfo_s *>(v11)),
+                    save);
+            }
+        }
         goto LABEL_12;
     case SF_TYPE_SCRIPTED:
         v8 = *(const void **)&base[ofs];
@@ -1012,14 +1057,21 @@ void __cdecl ReadField(const saveField_t *field, unsigned __int8 *base, SaveGame
         if (*(unsigned int *)v7)
         {
             v25 = (unsigned __int8 *)MT_Alloc(
-                kTagInfoDisk32Bytes,
+                sizeof(tagInfo_s),
                 MT_TYPE_TAG_INFO);
             *(uintptr_t *)v7 = (uintptr_t)v25;
-            G_ReadStruct(
-                tagInfoFields,
-                v25,
-                kTagInfoDisk32Bytes,
-                save);
+            taginfo_save::tagInfoDisk32_s disk{};
+            SaveMemory_LoadRead(&disk, taginfo_save::kTagInfoDisk32Bytes, save);
+            taginfo_save::tagInfoHostView view = taginfo_save::TagInfoFromDisk32(disk);
+            *reinterpret_cast<tagInfo_s *>(v25) = TagInfoHostToSource(view);
+            // The field walker uses host offsets, so the post-processor must
+            // run on the host tagInfo_s (resolving the 4-byte entity indices
+            // back into host pointers and reading the string from disk), not
+            // on the Disk32 buffer.
+            for (const saveField_t *tagInfoField = tagInfoFields; tagInfoField->type; ++tagInfoField)
+            {
+                ReadField(tagInfoField, v25, save);
+            }
         }
         break;
     case SF_TYPE_SCRIPTED:

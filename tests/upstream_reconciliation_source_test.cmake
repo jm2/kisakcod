@@ -298,14 +298,17 @@ foreach(_mt_callsite IN ITEMS
     forbid_numeric_mt_type_arguments("${_mt_callsite}")
 endforeach()
 require_contains(
-    _g_save "kTagInfoDisk32Bytes,\n                MT_TYPE_TAG_INFO)"
+    _g_save "sizeof(tagInfo_s),\n                MT_TYPE_TAG_INFO)"
     "tag-info save restoration uses its named debug-accounting category")
 require_contains(
     _g_save "sizeof(animscripted_s),\n                MT_TYPE_ANIMSCRIPTED)"
     "scripted save restoration uses the distinct animscripted category")
 require_contains(
-    _g_save "static_assert(KISAK_ARCH_64BIT == 0,"
-    "native64 SP remains closed until tag-info saves have a Disk32 converter")
+    _g_save "taginfo_disk32.h"
+    "tag-info save uses the dedicated Disk32 converter (ki-f0w)")
+require_contains(
+    _g_save "taginfo_save::kTagInfoDisk32Bytes"
+    "tag-info save writes the fixed 0x70-byte Disk32 wire image")
 
 require_count(
     _db_load "localClientNum < STATIC_MAX_LOCAL_CLIENTS" 2
