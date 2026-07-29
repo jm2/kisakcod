@@ -1,5 +1,7 @@
 #include "db_fx_zone_adapter_wiring.h"
 
+#if !defined(KISAK_DEDI_HEADLESS)
+
 #include <EffectsCore/fx_fastfile_disk32.h>
 #include <EffectsCore/fx_fastfile_impact_native_disk32.h>
 #include <EffectsCore/fx_fastfile_native_arena.h>
@@ -322,3 +324,5 @@ void FxZoneAdapterWiringTestAccess::ClearActiveBindingForTesting() noexcept
 }
 #endif
 }
+
+#endif
