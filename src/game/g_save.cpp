@@ -857,12 +857,18 @@ void __cdecl WriteField2(const saveField_t *field, unsigned __int8 *base, SaveGa
             // image, write it, and finally post-process references (the
             // string) from the unmodified original host.
             tagInfo_s hostCopy = *static_cast<const tagInfo_s *>(v11);
+            // const_cast alone cannot change the pointee type, so routing a
+            // const void * straight to tagInfo_s * through it is ill-formed
+            // (MSVC C2440 on the x86 SP builds). Route through static_cast
+            // first; only the const is then cast away.
+            tagInfo_s *const hostOriginal = const_cast<tagInfo_s *>(
+                static_cast<const tagInfo_s *>(v11));
             for (const saveField_t *tagInfoField = tagInfoFields; tagInfoField->type; ++tagInfoField)
             {
                 WriteField1(
                     tagInfoField,
                     reinterpret_cast<unsigned __int8 *>(&hostCopy),
-                    reinterpret_cast<unsigned __int8 *>(const_cast<tagInfo_s *>(v11)));
+                    reinterpret_cast<unsigned __int8 *>(hostOriginal));
             }
             taginfo_save::tagInfoHostView view = TagInfoHostFromSource(hostCopy);
             taginfo_save::tagInfoDisk32_s disk = taginfo_save::TagInfoToDisk32(view);
@@ -871,7 +877,7 @@ void __cdecl WriteField2(const saveField_t *field, unsigned __int8 *base, SaveGa
             {
                 WriteField2(
                     tagInfoField,
-                    reinterpret_cast<unsigned __int8 *>(const_cast<tagInfo_s *>(v11)),
+                    reinterpret_cast<unsigned __int8 *>(hostOriginal),
                     save);
             }
         }
