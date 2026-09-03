@@ -7,10 +7,12 @@
 
 #include <qcommon/sys_socket.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 
 namespace
 {
@@ -69,24 +71,44 @@ int ReportFailure()
     return EXIT_FAILURE;
 }
 
+// UDP loopback delivery can lag the sender's return, so a nonblocking
+// receive may transiently report WouldBlock. Poll until a terminal status
+// (anything but WouldBlock) or the bounded deadline expires; a WouldBlock
+// return after expiry preserves the caller's failure handling.
+SysSocketRecvStatus RecvUntilDeadline(SysSocketHandle handle,
+    void *const buffer, const std::uint32_t capacity,
+    SysSocketAddress *const source, std::uint32_t *const outByteCount)
+{
+    for (int attempt = 0; attempt < 500; ++attempt)
+    {
+        const SysSocketRecvStatus status = Sys_SocketRecvFrom(handle,
+            buffer, capacity, source, outByteCount);
+        if (status != SysSocketRecvStatus::WouldBlock)
+            return status;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return SysSocketRecvStatus::WouldBlock;
+}
+
 // Argument validation: null out-pointers and pre-set handles are rejected
 // without touching system state.
 bool StageArgumentValidation(SocketFixture &)
 {
     SysSocketAddress address{};
-    Check(Sys_SocketOpenUdp(0, true, nullptr) ==
-            SysSocketOpenStatus::InvalidArgument,
-        "open null out pointer");
+    if (!Check(Sys_SocketOpenUdp(0, true, nullptr) ==
+               SysSocketOpenStatus::InvalidArgument,
+            "open null out pointer"))
+        return false;
     SysSocketHandle preset = reinterpret_cast<SysSocketHandle>(
         static_cast<std::uintptr_t>(1));
-    Check(Sys_SocketOpenUdp(0, true, &preset) ==
-            SysSocketOpenStatus::InvalidArgument,
-        "open preset handle");
-    Check(Sys_SocketGetLocalAddress(nullptr, &address) == false,
-        "local address null handle");
-    Check(Sys_SocketGetLocalAddress(nullptr, nullptr) == false,
-        "local address null out");
-    return true;
+    if (!Check(Sys_SocketOpenUdp(0, true, &preset) ==
+               SysSocketOpenStatus::InvalidArgument,
+            "open preset handle"))
+        return false;
+    return Check(Sys_SocketGetLocalAddress(nullptr, &address) == false,
+            "local address null handle")
+        && Check(Sys_SocketGetLocalAddress(nullptr, nullptr) == false,
+            "local address null out");
 }
 
 // Endpoint helper contract: loopback and wildcard endpoints agree with the
@@ -156,7 +178,8 @@ bool StageReceiveContract(SocketFixture &fixture)
 bool StageSendContract(SocketFixture &fixture)
 {
     SysSocketAddress any{};
-    Check(Sys_SocketMakeAnyAddress(1, &any), "make any endpoint");
+    if (!Check(Sys_SocketMakeAnyAddress(1, &any), "make any endpoint"))
+        return false;
     return Check(Sys_SocketSendTo(nullptr, fixture.payload, 1,
                      &fixture.loopback)
                 == SysSocketSendStatus::InvalidArgument,
@@ -189,10 +212,10 @@ bool StageLoopbackSend(SocketFixture &fixture)
         return false;
 
     std::memset(fixture.received, 0, sizeof(fixture.received));
-    return Check(Sys_SocketRecvFrom(fixture.second, fixture.received,
+    return Check(RecvUntilDeadline(fixture.second, fixture.received,
                      sizeof(fixture.received), &fixture.source,
                      &fixture.receivedBytes)
-                == SysSocketRecvStatus::Received,
+                 == SysSocketRecvStatus::Received,
         "recv on second")
         && Check(fixture.receivedBytes == sizeof(fixture.payload),
             "payload size round-trip")
@@ -216,10 +239,10 @@ bool StageLoopbackReply(SocketFixture &fixture)
         return false;
 
     std::memset(fixture.received, 0, sizeof(fixture.received));
-    return Check(Sys_SocketRecvFrom(fixture.first, fixture.received,
+    return Check(RecvUntilDeadline(fixture.first, fixture.received,
                      sizeof(fixture.received), nullptr,
                      &fixture.receivedBytes)
-                == SysSocketRecvStatus::Received,
+                 == SysSocketRecvStatus::Received,
         "recv on first")
         && Check(fixture.receivedBytes == sizeof(fixture.payload),
             "reply size round-trip")
@@ -265,9 +288,8 @@ bool StageExplicitBind(SocketFixture &)
         || !Check(boundAddress.port == requestedPort,
             "explicit bind port honored"))
         return false;
-    Check(Sys_SocketClose(&bound) == SysSocketCloseStatus::Closed,
+    return Check(Sys_SocketClose(&bound) == SysSocketCloseStatus::Closed,
         "explicit bind closed");
-    return true;
 }
 
 // Teardown: close is unconditional, nulls the caller's handle, and a

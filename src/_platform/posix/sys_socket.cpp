@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <new>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -105,9 +106,13 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     local.sin_port = htons(port);
     local.sin_addr.s_addr = htonl(INADDR_ANY);
 
+    // SO_REUSEADDR must be applied before bind to affect that bind attempt;
+    // it permits rebinding endpoints in TIME_WAIT, not live port sharing.
     const int reuse = 1;
-    if (bind(raw, reinterpret_cast<const sockaddr *>(&local), sizeof(local)) != 0
-        || setsockopt(raw, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0)
+    if (setsockopt(raw, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0
+        || bind(raw, reinterpret_cast<const sockaddr *>(&local),
+            sizeof(local))
+            != 0)
     {
         close(raw);
         return SysSocketOpenStatus::SystemFailure;
@@ -124,7 +129,14 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
         }
     }
 
-    SysSocket *socket = new SysSocket();
+    // Allocation is non-throwing so a failure cannot bypass the status
+    // contract and leak the already-open descriptor.
+    SysSocket *socket = new (std::nothrow) SysSocket();
+    if (!socket)
+    {
+        close(raw);
+        return SysSocketOpenStatus::SystemFailure;
+    }
     socket->handle = raw;
     *outHandle = socket;
     return SysSocketOpenStatus::Opened;
