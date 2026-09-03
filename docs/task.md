@@ -312,14 +312,14 @@ of checked boxes.
     compilation rather than treating the host layout as the retail wire image.
 ### Milestone exit criteria
 
-- [ ] **M0 — Build-system foundation and CI scaffolding.**
+- [x] **M0 — Build-system foundation and CI scaffolding.**
   - [x] Provide `build-win.ps1` as the supported PowerShell replacement for
     `build-win.bat`.
   - [x] Auto-detect the target OS, architecture, and pointer width, with explicit
     target/source-override controls for portable utility builds.
   - [x] Keep the Windows x86 MP client, legacy dedicated, no-Steam, and
     dependency-free headless compile/link gates green.
-  - [ ] Add and validate the hosted Windows x86 SP build, prove byte-identical
+  - [x] Add and validate the hosted Windows x86 SP build, prove byte-identical
     reference parity for the MP/SP/dedicated baseline, and provide a checked-in
     Linux configure preset. The `windows-x86-sp` job is a clone of the existing
     Windows x86 job with `-DKISAK_BUILD_SP=ON`; the byte-parity script is
@@ -327,13 +327,24 @@ of checked boxes.
     `CMakePresets.json::linux-amd64-mp`. The SP build grows the hosted CI count
     from nine to eleven (the two windows-x86-sp matrix entries plus the new
     preset). New entries that reference the SP job must therefore use the
-    updated count. Note (ki-tgh, 2026-07-25): this line was incorrectly marked
-    `[x]` after 375f97d8 landed the preset and CI jobs, but the SP build does
-    not actually compile — `src/game/g_weapon.cpp` is missing an include under
-    KISAK_SP and `src/EffectsCore/fx_archive.cpp` carries MP-only
-    static_asserts that do not hold for SP. The job is kept in the matrix with
-    `continue-on-error: true` so the debt stays visible. Do not re-check this
-    item until the SP jobs are actually green.
+    updated count. The SP compile was unblocked by dd7742ca (ki-tgh: the SP
+    arm of `src/game/g_weapon.cpp` gained the missing `<xanim/xanim.h>`
+    include, and the MP-only `src/EffectsCore/fx_archive.cpp` static_asserts
+    were gated on `KISAK_MP`); the strict — no `continue-on-error` — SP matrix
+    entries have been green since, e.g. both `Windows x86 SP / Debug` and
+    `Windows x86 SP / Release` passed at exact head `74214074` in run
+    **33729405378**. Reference parity is now proven by an enforced gate, not
+    a scripted afterthought: the `windows-x86-parity` job builds all three
+    Win32 presets with `-DKISAK_REPRODUCIBLE_BUILD=ON` (MSVC `/Brepro` pins
+    the `__DATE__`/`__TIME__` and linker stamp inputs) and
+    `scripts/ci/compare-byte-parity.sh` fails closed unless the shared retail
+    reference object (`src/buildnumber.cpp`, no `KISAK_BUILD_*` conditionals)
+    and the buildnumber stamps are byte-identical across the MP/SP/dedicated
+    build trees; its first hosted run gates this change's own PR, and a red
+    parity job cannot merge. The `linux-amd64-mp` preset configures, builds,
+    and passes the portable suite locally (205/208; the three failures are the
+    pre-existing, environment-sensitive abi-scanner and security-count defects
+    tracked on ki-9b13 and ki-ya3t that stay green on hosted CI).
 - [ ] **M1 — Cross-compiler and ABI hygiene.**
   - [x] Land `platform_compat.h`, `kisak_abi.h`, fixed-width atomics/locks, ABI
     tests, and eliminate direct executable `Interlocked` calls.
