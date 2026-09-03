@@ -32,7 +32,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
+#include <fstream>
 #include <string_view>
 #include <vector>
 
@@ -64,25 +64,24 @@ bool DetectZlibStream(const std::uint8_t *data, const std::size_t size)
     return (cmf & 0x0Fu) == 0x8u && ((cmf << 8) | flg) % 31u == 0u;
 }
 
+// File I/O goes through C++ file streams: RAII closes the descriptor on
+// every path, and no C stdio handle is held across the capture.
 bool ReadFileBytes(const char *path, std::vector<std::uint8_t> &out)
 {
-    std::FILE *file = std::fopen(path, "rb");
+    std::ifstream file(path, std::ios::binary);
     if (!file)
         return false;
 
     out.clear();
-    std::uint8_t chunk[64 * 1024];
+    char chunk[64 * 1024];
     for (;;)
     {
-        const std::size_t got = std::fread(chunk, 1, sizeof(chunk), file);
+        file.read(chunk, static_cast<std::streamsize>(sizeof(chunk)));
+        const std::streamsize got = file.gcount();
         if (got > 0)
             out.insert(out.end(), chunk, chunk + got);
-        if (got < sizeof(chunk))
-        {
-            const bool ok = std::ferror(file) == 0;
-            std::fclose(file);
-            return ok;
-        }
+        if (got < static_cast<std::streamsize>(sizeof(chunk)))
+            return !file.bad();
     }
 }
 
@@ -163,12 +162,14 @@ struct Lcg
 
 bool WriteFileBytes(const char *path, const std::uint8_t *data, const std::size_t size)
 {
-    std::FILE *file = std::fopen(path, "wb");
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file)
         return false;
-    const std::size_t written = std::fwrite(data, 1, size, file);
-    const bool ok = written == size;
-    return std::fclose(file) == 0 && ok;
+    file.write(reinterpret_cast<const char *>(data),
+        static_cast<std::streamsize>(size));
+    const bool ok = file.good();
+    file.close();
+    return ok;
 }
 
 void TestSelfTest(const char *fixturePath)
@@ -223,7 +224,7 @@ void TestSelfTest(const char *fixturePath)
     // Output formatting: exactly the contract lines, hex lowercase.
     char hex[db::graph_hash::kHexDigestBytes];
     db::graph_hash::FormatDigestHex(first, hex);
-    bool hexOk = std::strlen(hex) == 64;
+    bool hexOk = std::string_view(hex).size() == 64;
     for (const char *c = hex; hexOk && *c; ++c)
         hexOk = (*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'f');
     Expect(hexOk, "digest hex is 64 lowercase characters");

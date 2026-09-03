@@ -31,24 +31,25 @@ std::string_view Hex(const Digest &digest, char *buffer)
     return std::string_view(buffer);
 }
 
-bool ParseHex(const char *text, Digest &digest)
+int HexNibble(const char c)
 {
-    if (std::strlen(text) != db::graph_hash::kDigestBytes * 2)
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+bool ParseHex(const std::string_view text, Digest &digest)
+{
+    if (text.size() != db::graph_hash::kDigestBytes * 2)
         return false;
     for (std::size_t i = 0; i < db::graph_hash::kDigestBytes; ++i)
     {
-        auto nibble = [](const char c) -> int
-        {
-            if (c >= '0' && c <= '9')
-                return c - '0';
-            if (c >= 'a' && c <= 'f')
-                return c - 'a' + 10;
-            if (c >= 'A' && c <= 'F')
-                return c - 'A' + 10;
-            return -1;
-        };
-        const int high = nibble(text[i * 2]);
-        const int low = nibble(text[i * 2 + 1]);
+        const int high = HexNibble(text[i * 2]);
+        const int low = HexNibble(text[i * 2 + 1]);
         if (high < 0 || low < 0)
             return false;
         digest[i] = static_cast<std::uint8_t>((high << 4) | low);
@@ -116,73 +117,96 @@ struct WidenedLayoutNode // native64 widened layout
     std::uint64_t payload;
 };
 
+// Per-node nested records: each chain node opens a record, and the records
+// are popped once the chain end is reached. The traversal is spelled as an
+// explicit loop with a depth counter (static analysis forbids recursion,
+// MISRA 17.2); the emitted byte stream is identical to a recursive walk
+// that opens the next node's record inside the current one.
 void WalkReferenceNode(GraphHashBuilder &builder, const ReferenceLayoutNode *node)
 {
-    builder.BeginRecord(0x4E44u); // "ND"
-    builder.FieldU64(1, node->id);
-    builder.FieldU64(2, node->payload);
-    builder.FieldU64(3, node->next ? 1 : 0);
-    if (node->next)
-        WalkReferenceNode(builder, node->next);
-    builder.EndRecord();
+    std::size_t depth = 0;
+    for (const ReferenceLayoutNode *cursor = node; cursor != nullptr;
+        cursor = cursor->next)
+    {
+        builder.BeginRecord(0x4E44u); // "ND"
+        builder.FieldU64(1, cursor->id);
+        builder.FieldU64(2, cursor->payload);
+        builder.FieldU64(3, cursor->next ? 1 : 0);
+        ++depth;
+    }
+    while (depth > 0)
+    {
+        builder.EndRecord();
+        --depth;
+    }
 }
 
 void WalkWidenedNode(GraphHashBuilder &builder, const WidenedLayoutNode *node)
 {
-    builder.BeginRecord(0x4E44u); // "ND"
-    builder.FieldU64(1, node->id);
-    builder.FieldU64(2, node->payload);
-    builder.FieldU64(3, node->next ? 1 : 0);
-    if (node->next)
-        WalkWidenedNode(builder, node->next);
-    builder.EndRecord();
+    std::size_t depth = 0;
+    for (const WidenedLayoutNode *cursor = node; cursor != nullptr;
+        cursor = cursor->next)
+    {
+        builder.BeginRecord(0x4E44u); // "ND"
+        builder.FieldU64(1, cursor->id);
+        builder.FieldU64(2, cursor->payload);
+        builder.FieldU64(3, cursor->next ? 1 : 0);
+        ++depth;
+    }
+    while (depth > 0)
+    {
+        builder.EndRecord();
+        --depth;
+    }
+}
+
+// Two-node chain fixtures. Each factory OWNS both nodes (a holds a raw
+// pointer into its own chain). Two allocation rounds per leg so the graphs
+// land at different addresses with different padding shapes across runs.
+struct ReferenceGraph
+{
+    std::unique_ptr<ReferenceLayoutNode> a;
+    std::unique_ptr<ReferenceLayoutNode> b;
+};
+
+struct WidenedGraph
+{
+    std::unique_ptr<WidenedLayoutNode> a;
+    std::unique_ptr<WidenedLayoutNode> b;
+};
+
+ReferenceGraph MakeReferenceGraph()
+{
+    ReferenceGraph graph{std::make_unique<ReferenceLayoutNode>(),
+        std::make_unique<ReferenceLayoutNode>()};
+    graph.a->id = 7;
+    graph.a->payload = 0xDEADBEEFu;
+    graph.a->next = graph.b.get();
+    graph.b->id = 9;
+    graph.b->payload = 42;
+    graph.b->next = nullptr;
+    return graph;
+}
+
+WidenedGraph MakeWidenedGraph()
+{
+    WidenedGraph graph{std::make_unique<WidenedLayoutNode>(),
+        std::make_unique<WidenedLayoutNode>()};
+    graph.a->id = 7;
+    graph.a->payload = 0xDEADBEEFu;
+    graph.a->next = graph.b.get();
+    graph.b->id = 9;
+    graph.b->payload = 42;
+    graph.b->next = nullptr;
+    return graph;
 }
 
 void TestPointerAndLayoutIndependence()
 {
-    // Two-node chains; each factory OWNS both nodes (a holds a raw pointer
-    // into its own chain). Two allocation rounds per leg so the graphs land
-    // at different addresses with different padding shapes across runs.
-    struct ReferenceGraph
-    {
-        std::unique_ptr<ReferenceLayoutNode> a;
-        std::unique_ptr<ReferenceLayoutNode> b;
-    };
-    struct WidenedGraph
-    {
-        std::unique_ptr<WidenedLayoutNode> a;
-        std::unique_ptr<WidenedLayoutNode> b;
-    };
-
-    auto makeReference = []()
-    {
-        ReferenceGraph graph{std::make_unique<ReferenceLayoutNode>(),
-            std::make_unique<ReferenceLayoutNode>()};
-        graph.a->id = 7;
-        graph.a->payload = 0xDEADBEEFu;
-        graph.a->next = graph.b.get();
-        graph.b->id = 9;
-        graph.b->payload = 42;
-        graph.b->next = nullptr;
-        return graph;
-    };
-    auto makeWidened = []()
-    {
-        WidenedGraph graph{std::make_unique<WidenedLayoutNode>(),
-            std::make_unique<WidenedLayoutNode>()};
-        graph.a->id = 7;
-        graph.a->payload = 0xDEADBEEFu;
-        graph.a->next = graph.b.get();
-        graph.b->id = 9;
-        graph.b->payload = 42;
-        graph.b->next = nullptr;
-        return graph;
-    };
-
     for (int round = 0; round < 4; ++round)
     {
-        const auto referenceGraph = makeReference();
-        const auto widenedGraph = makeWidened();
+        const auto referenceGraph = MakeReferenceGraph();
+        const auto widenedGraph = MakeWidenedGraph();
 
         GraphHashBuilder referenceBuilder;
         WalkReferenceNode(referenceBuilder, referenceGraph.a.get());
@@ -246,8 +270,9 @@ void TestFieldSemantics()
     bytesA.FieldBytes(1, "zone", 4);
     const Digest bytesADigest = bytesA.Finish();
 
-    char padded[8];
-    std::memcpy(padded, "zone", 5);
+    // Storage with trailing NUL padding past the captured length (the
+    // zero-initializing array form keeps the copy provably bounded).
+    char padded[8] = "zone";
     GraphHashBuilder bytesB;
     bytesB.FieldBytes(1, padded, 4);
     const Digest bytesBDigest = bytesB.Finish();
@@ -335,10 +360,10 @@ void TestSensitivityAndDeterminism()
         "domain separation separates capture streams from raw hashes");
 }
 
-void TestRecordFraming()
+// Nested records with identical leaf fields must frame unambiguously:
+// (a(b,c)) differs from (a(b),c) and from ((a)b,c).
+void TestFramingNestingIsCanonical()
 {
-    // Nested records with identical leaf fields must frame unambiguously:
-    // (a(b,c)) differs from (a(b),c) and from ((a)b,c).
     const auto nested = []()
     {
         GraphHashBuilder builder;
@@ -365,11 +390,14 @@ void TestRecordFraming()
     };
     // flatPair builds the same stream as nested; both must agree.
     Expect(nested() == flatPair(), "balanced nesting is order-canonical");
+}
 
-    // Open records are legal mid-stream (the caller may still close them);
-    // Finish resolves a still-open record by invalidating, finalizing,
-    // and resetting to a fresh stream. Two identically-built streams that
-    // Finish with records still open finalize to the same digest.
+// Open records are legal mid-stream (the caller may still close them);
+// Finish resolves a still-open record by invalidating, finalizing,
+// and resetting to a fresh stream. Two identically-built streams that
+// Finish with records still open finalize to the same digest.
+void TestFramingFinishResolvesOpenRecords()
+{
     const auto misuseUnterminated = []()
     {
         GraphHashBuilder builder;
@@ -377,30 +405,32 @@ void TestRecordFraming()
         builder.FieldU64(1, 1);
         return builder;
     };
-    {
-        GraphHashBuilder probe = misuseUnterminated();
-        Expect(probe.Valid(), "open records are legal mid-stream");
-        probe.Finish();
-        GraphHashBuilder fresh;
-        Expect(probe.Finish() == fresh.Finish(),
-            "Finish resets the builder to the fresh stream");
-        GraphHashBuilder a = misuseUnterminated();
-        GraphHashBuilder b = misuseUnterminated();
-        Expect(a.Finish() == b.Finish(),
-            "identically-misused streams finalize deterministically");
-        Expect(a.Valid() && b.Valid(), "Finish restores a valid fresh stream");
-    }
+    GraphHashBuilder probe = misuseUnterminated();
+    Expect(probe.Valid(), "open records are legal mid-stream");
+    probe.Finish();
+    GraphHashBuilder fresh;
+    Expect(probe.Finish() == fresh.Finish(),
+        "Finish resets the builder to the fresh stream");
+    GraphHashBuilder a = misuseUnterminated();
+    GraphHashBuilder b = misuseUnterminated();
+    Expect(a.Finish() == b.Finish(),
+        "identically-misused streams finalize deterministically");
+    Expect(a.Valid() && b.Valid(), "Finish restores a valid fresh stream");
+}
 
-    // Extra EndRecord likewise invalidates.
-    {
-        GraphHashBuilder probe;
-        probe.BeginRecord(1);
-        probe.EndRecord();
-        probe.EndRecord();
-        Expect(!probe.Valid(), "extra EndRecord invalidates the stream");
-    }
+// Extra EndRecord likewise invalidates.
+void TestFramingExtraEndRecordInvalidates()
+{
+    GraphHashBuilder probe;
+    probe.BeginRecord(1);
+    probe.EndRecord();
+    probe.EndRecord();
+    Expect(!probe.Valid(), "extra EndRecord invalidates the stream");
+}
 
-    // Depth overflow invalidates without crashing.
+// Depth overflow invalidates without crashing and stays deterministic.
+void TestFramingDepthOverflowIsDeterministic()
+{
     const auto misuseDeep = []()
     {
         GraphHashBuilder builder;
@@ -408,15 +438,21 @@ void TestRecordFraming()
             builder.BeginRecord(1);
         return builder;
     };
-    {
-        GraphHashBuilder probe = misuseDeep();
-        Expect(!probe.Valid(), "record depth overflow invalidates the stream");
-        GraphHashBuilder a = misuseDeep();
-        GraphHashBuilder b = misuseDeep();
-        Expect(a.Finish() == b.Finish(),
-            "overflowed streams stay deterministic");
-        Expect(a.Valid(), "Finish resets the builder to a valid fresh stream");
-    }
+    GraphHashBuilder probe = misuseDeep();
+    Expect(!probe.Valid(), "record depth overflow invalidates the stream");
+    GraphHashBuilder a = misuseDeep();
+    GraphHashBuilder b = misuseDeep();
+    Expect(a.Finish() == b.Finish(),
+        "overflowed streams stay deterministic");
+    Expect(a.Valid(), "Finish resets the builder to a valid fresh stream");
+}
+
+void TestRecordFraming()
+{
+    TestFramingNestingIsCanonical();
+    TestFramingFinishResolvesOpenRecords();
+    TestFramingExtraEndRecordInvalidates();
+    TestFramingDepthOverflowIsDeterministic();
 }
 
 void TestResetAndReuse()
@@ -442,7 +478,7 @@ void TestHexFormatting()
         digest[i] = static_cast<std::uint8_t>(i * 17 + 3);
     char hex[db::graph_hash::kHexDigestBytes];
     db::graph_hash::FormatDigestHex(digest, hex);
-    Expect(std::strlen(hex) == 64, "hex digest is 64 characters");
+    Expect(std::string_view(hex).size() == 64, "hex digest is 64 characters");
 
     Digest parsed{};
     Expect(ParseHex(hex, parsed), "round-trip parse accepts our own hex");
