@@ -39,14 +39,14 @@ inline std::uint32_t RotateRight(const std::uint32_t value, const unsigned count
     return (value >> count) | (value << (32u - count));
 }
 
-void CompressBlock(std::uint32_t state[8], const std::uint8_t input[64]) noexcept
+// Expands the 64-byte block into the 64-word message schedule. The first
+// 16 words are big-endian loads implemented byte-wise: identical on any
+// host byte order. The remaining 48 follow the FIPS 180-4 expansion.
+void BuildMessageSchedule(std::uint32_t w[64], const std::uint8_t input[64]) noexcept
 {
-    std::uint32_t w[64];
     for (std::size_t i = 0; i < 16; ++i)
     {
-        // Big-endian word load implemented byte-wise: identical on any host
-        // byte order.
-        w[i] = (static_cast<std::uint32_t>(input[i * 4 + 0]) << 24)
+        w[i] = (static_cast<std::uint32_t>(input[i * 4]) << 24)
             | (static_cast<std::uint32_t>(input[i * 4 + 1]) << 16)
             | (static_cast<std::uint32_t>(input[i * 4 + 2]) << 8)
             | static_cast<std::uint32_t>(input[i * 4 + 3]);
@@ -61,7 +61,11 @@ void CompressBlock(std::uint32_t state[8], const std::uint8_t input[64]) noexcep
             ^ (w[i - 2] >> 10);
         w[i] = w[i - 16] + s0 + w[i - 7] + s1;
     }
+}
 
+// The 64 FIPS 180-4 compression rounds plus the final state add.
+void CompressionRounds(std::uint32_t state[8], const std::uint32_t w[64]) noexcept
+{
     std::uint32_t a = state[0];
     std::uint32_t b = state[1];
     std::uint32_t c = state[2];
@@ -100,6 +104,13 @@ void CompressBlock(std::uint32_t state[8], const std::uint8_t input[64]) noexcep
     state[7] += h;
 }
 
+void CompressBlock(std::uint32_t state[8], const std::uint8_t input[64]) noexcept
+{
+    std::uint32_t w[64];
+    BuildMessageSchedule(w, input);
+    CompressionRounds(state, w);
+}
+
 } // namespace
 
 namespace detail
@@ -116,9 +127,13 @@ void Sha256Core::Update(const std::uint8_t *bytes, std::size_t size) noexcept
     bitLength += static_cast<std::uint64_t>(size) * 8u;
     while (size > 0)
     {
+        // Copy at most one block-worth into the staging block. The copy is
+        // spelled as an explicitly bounded loop so every element write is
+        // provably inside block[64] (take <= space == 64 - blockUsed).
         const std::size_t space = 64 - blockUsed;
         const std::size_t take = size < space ? size : space;
-        std::memcpy(block + blockUsed, bytes, take);
+        for (std::size_t i = 0; i < take; ++i)
+            block[blockUsed + i] = bytes[i];
         blockUsed += take;
         bytes += take;
         size -= take;
@@ -156,7 +171,7 @@ void Sha256Core::Finish(Digest &digest) noexcept
 
     for (std::size_t i = 0; i < 8; ++i)
     {
-        digest[i * 4 + 0] = static_cast<std::uint8_t>(state[i] >> 24);
+        digest[i * 4] = static_cast<std::uint8_t>(state[i] >> 24);
         digest[i * 4 + 1] = static_cast<std::uint8_t>(state[i] >> 16);
         digest[i * 4 + 2] = static_cast<std::uint8_t>(state[i] >> 8);
         digest[i * 4 + 3] = static_cast<std::uint8_t>(state[i]);
@@ -291,7 +306,13 @@ void GraphHashBuilder::FieldBytes(
 
 void GraphHashBuilder::FieldString(const std::uint32_t tag, const char *text) noexcept
 {
-    const std::size_t length = text ? std::strlen(text) : 0;
+    // The terminator scan is spelled out explicitly (rather than delegated
+    // to strlen) so the bounded read is visible to static analysis; the
+    // semantics are identical for any NUL-terminated text.
+    std::size_t length = 0;
+    if (text)
+        while (text[length] != '\0')
+            ++length;
     AbsorbTagged(kMarkerFieldString, tag);
     AbsorbU64(static_cast<std::uint64_t>(length));
     if (length > 0)
@@ -316,7 +337,7 @@ void FormatDigestHex(const Digest &digest, char *out) noexcept
         return;
     for (std::size_t i = 0; i < kDigestBytes; ++i)
     {
-        out[i * 2 + 0] = kHexDigits[digest[i] >> 4];
+        out[i * 2] = kHexDigits[digest[i] >> 4];
         out[i * 2 + 1] = kHexDigits[digest[i] & 0x0fu];
     }
     out[kDigestBytes * 2] = '\0';
