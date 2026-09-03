@@ -72,7 +72,6 @@ static SysEventHandle renderCompletedEvent;
 static SysEventHandle noThreadOwnershipEvent;
 static SysEventHandle rendererRunningEvent;
 static SysEventHandle backendEvent[2];
-static SysEventHandle ackendEvent;
 static SysEventHandle updateSpotLightEffectEvent;
 static SysEventHandle updateEffectsEvent;
 

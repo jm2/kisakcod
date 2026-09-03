@@ -2403,6 +2403,29 @@ add_test(
 )
 set_tests_properties(platform-service-runtime-contracts PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-worker-thread-lifecycle-tests
+    worker_thread_lifecycle_tests.cpp
+    ${SRC_DIR}/qcommon/threads.cpp
+    ${SRC_DIR}/qcommon/sys_worker_gate.cpp
+    ${KISAK_PLATFORM_SERVICE_SOURCES}
+)
+target_include_directories(kisakcod-worker-thread-lifecycle-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-worker-thread-lifecycle-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-worker-thread-lifecycle-tests PRIVATE KISAK_MP KISAK_DEDI_HEADLESS)
+target_link_libraries(kisakcod-worker-thread-lifecycle-tests PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(kisakcod-worker-thread-lifecycle-tests PRIVATE winmm)
+endif()
+kisakcod_test_warnings(kisakcod-worker-thread-lifecycle-tests)
+set_target_properties(kisakcod-worker-thread-lifecycle-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME worker-thread-lifecycle-shutdown-reinit
+    COMMAND kisakcod-worker-thread-lifecycle-tests
+)
+set_tests_properties(worker-thread-lifecycle-shutdown-reinit PROPERTIES TIMEOUT 120)
+
 set(_platform_memory_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
 list(FILTER _platform_memory_sources INCLUDE REGEX "[/\\\\]sys_memory\\.cpp$")
 list(LENGTH _platform_memory_sources _platform_memory_source_count)
