@@ -246,6 +246,126 @@ void TestResetClearsProbe()
     arenaBinding.Unbind();
 }
 
+// Unload-order contract at the wiring layer.  The zone-runtime table tears
+// its native workspace down by first making external consumers unreachable,
+// then clearing the wiring binding, then destroying the bound storage; a
+// Busy/InvalidPhase destruction result re-enrolls the exact pair to restore
+// authority.  This pins both halves: once the arena's storage region is
+// released (unbound) the binding loses every piece of wiring authority even
+// though the record still names the pair, exact-pair cleanup still succeeds
+// so the table can always retire the record, and re-binding plus
+// re-enrollment restores full authority for the same pair.
+void TestUnloadOrderAuthorityDiesWithUnboundStorage()
+{
+    using namespace db::fx_zone_adapter_wiring;
+
+    ArenaBinding arenaBinding;
+    WorkspaceBinding workspaceBinding;
+    arenaBinding.Bind();
+    FxZoneAdapterWiringTestAccess::ClearActiveBindingForTesting();
+    CHECK(TryEnrollActiveFxZoneAdapterBinding(
+        workspaceBinding.workspace.get(), &arenaBinding.arena));
+    CHECK(IsFxZoneAdapterBindingActive());
+
+    // Teardown begins: the zone releases the storage region (the arena
+    // unbinds) while the binding record still names this exact pair.  No
+    // wiring authority may survive: the loader cannot materialize anything
+    // new into storage that is being torn down.
+    arenaBinding.Unbind();
+    CHECK(!IsFxZoneAdapterBindingActive());
+    CHECK(TryGetActiveFxZoneAdapterWorkspace() == nullptr);
+    CHECK(TryGetActiveFxZoneAdapterArena() == nullptr);
+    const std::uint8_t scratch[16]{};
+    CHECK(TryWireImpactTableThroughActiveFxZoneAdapter(
+              true, scratch, sizeof(scratch))
+          == nullptr);
+    CHECK(TryWireEffectDefThroughActiveFxZoneAdapter(
+              true, scratch, sizeof(scratch))
+          == nullptr);
+    CHECK(TryAbortActiveFxZoneAdapterTransaction() == false);
+
+    // Exact-pair cleanup still succeeds while storage is gone, so the table
+    // can retire the record; a second clear cannot.
+    CHECK(TryClearActiveFxZoneAdapterBinding(
+        workspaceBinding.workspace.get(), &arenaBinding.arena));
+    CHECK(!IsFxZoneAdapterBindingActive());
+    CHECK(!TryClearActiveFxZoneAdapterBinding(
+        workspaceBinding.workspace.get(), &arenaBinding.arena));
+
+    // Recovery path: storage destruction reported a recoverable result, the
+    // table re-binds the arena and re-enrolls the exact pair.  Authority
+    // must return intact for the same generation.
+    arenaBinding.Bind();
+    CHECK(TryEnrollActiveFxZoneAdapterBinding(
+        workspaceBinding.workspace.get(), &arenaBinding.arena));
+    CHECK(IsFxZoneAdapterBindingActive());
+    CHECK(TryGetActiveFxZoneAdapterWorkspace()
+          == workspaceBinding.workspace.get());
+    CHECK(TryGetActiveFxZoneAdapterArena() == &arenaBinding.arena);
+
+    FxZoneAdapterWiringTestAccess::ClearActiveBindingForTesting();
+    arenaBinding.Unbind();
+}
+
+// Slot-generation-reuse contract at the wiring layer.  When a zone slot is
+// reused after unload, the fresh generation's pair must own the binding
+// exclusively while every piece of stale generation-one authority stays
+// dead, and destroying the stale generation's objects must not disturb the
+// live binding (no cross-generation aliasing through recycled identities).
+void TestSlotGenerationReuseRejectsStaleAuthority()
+{
+    using namespace db::fx_zone_adapter_wiring;
+
+    ArenaBinding generationOneArena;
+    WorkspaceBinding generationOneWorkspace;
+    generationOneArena.Bind();
+    FxZoneAdapterWiringTestAccess::ClearActiveBindingForTesting();
+    CHECK(TryEnrollActiveFxZoneAdapterBinding(
+        generationOneWorkspace.workspace.get(), &generationOneArena.arena));
+    CHECK(IsFxZoneAdapterBindingActive());
+
+    // Generation-one unload: exact-pair clear retires the binding.
+    CHECK(TryClearActiveFxZoneAdapterBinding(
+        generationOneWorkspace.workspace.get(), &generationOneArena.arena));
+    CHECK(!IsFxZoneAdapterBindingActive());
+
+    // The slot is reused by a fresh generation with distinct workspace and
+    // storage identities.
+    ArenaBinding generationTwoArena;
+    WorkspaceBinding generationTwoWorkspace;
+    generationTwoArena.Bind();
+    CHECK(TryEnrollActiveFxZoneAdapterBinding(
+        generationTwoWorkspace.workspace.get(), &generationTwoArena.arena));
+    CHECK(IsFxZoneAdapterBindingActive());
+    CHECK(TryGetActiveFxZoneAdapterWorkspace()
+          == generationTwoWorkspace.workspace.get());
+    CHECK(TryGetActiveFxZoneAdapterArena() == &generationTwoArena.arena);
+
+    // Stale generation-one authority is dead: it can neither reclaim the
+    // slot nor clear the fresh generation's record, in any pairing.
+    CHECK(!TryEnrollActiveFxZoneAdapterBinding(
+        generationOneWorkspace.workspace.get(), &generationOneArena.arena));
+    CHECK(!TryClearActiveFxZoneAdapterBinding(
+        generationOneWorkspace.workspace.get(), &generationOneArena.arena));
+    CHECK(!TryClearActiveFxZoneAdapterBinding(
+        generationOneWorkspace.workspace.get(), &generationTwoArena.arena));
+    CHECK(!TryClearActiveFxZoneAdapterBinding(
+        generationTwoWorkspace.workspace.get(), &generationOneArena.arena));
+    CHECK(IsFxZoneAdapterBindingActive());
+
+    // Destroying the stale generation's objects cannot disturb the live
+    // binding: the record resolves only through the registered pair.
+    generationOneWorkspace.workspace.reset();
+    generationOneArena.Unbind();
+    CHECK(IsFxZoneAdapterBindingActive());
+    CHECK(TryGetActiveFxZoneAdapterWorkspace()
+          == generationTwoWorkspace.workspace.get());
+    CHECK(TryGetActiveFxZoneAdapterArena() == &generationTwoArena.arena);
+
+    FxZoneAdapterWiringTestAccess::ClearActiveBindingForTesting();
+    generationTwoArena.Unbind();
+}
+
 } // namespace
 
 int main()
@@ -257,6 +377,8 @@ int main()
     TestUnboundArenaLeavesProbeInactive();
     TestProductionEnrollmentAndExactClear();
     TestResetClearsProbe();
+    TestUnloadOrderAuthorityDiesWithUnboundStorage();
+    TestSlotGenerationReuseRejectsStaleAuthority();
 
     if (failures != 0)
     {

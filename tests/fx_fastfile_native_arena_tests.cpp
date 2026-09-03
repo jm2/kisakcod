@@ -5,6 +5,10 @@
 #include <cstring>
 #include <memory>
 
+#if KISAK_ARCH_64BIT && !defined(_WIN32)
+#include <sys/mman.h>
+#endif
+
 namespace
 {
 namespace fastfile = fx::fastfile;
@@ -396,6 +400,116 @@ void TestHighAlignmentUsesAbsoluteAddress()
     CHECK(reinterpret_cast<std::uintptr_t>(wide) % 64 == 0);
     CHECK(fixture.arena.TryAbandon(transaction) == Status::Success);
 }
+
+// The widened loader binds native storage the i386 image cannot address, so
+// every reservation address must be computed and published at full pointer
+// width.  This binds the arena to a real mapping above the 32-bit line and
+// exercises the commit/abandon lifecycle there.  POSIX 64-bit hosts run the
+// real mapping; other platforms compile the case out because the situation
+// is unreachable there, pinning the pointer-width floor statically.
+void TestHighAddressStorageLifecycle()
+{
+#if KISAK_ARCH_64BIT && !defined(_WIN32)
+    constexpr std::uintptr_t kBelowHighLine = 0x100000000ull;
+    constexpr std::size_t kHighBytes = 1u << 20;
+    constexpr std::uintptr_t kHints[]{
+        0x10000000000ull, // 1 TiB
+        0x4000000000ull,  // 256 GiB
+        0x1000000000ull,  // 64 GiB
+        0x200000000ull,   // 8 GiB
+    };
+    void *high = nullptr;
+    for (const std::uintptr_t hint : kHints)
+    {
+        void *candidate = ::mmap(
+            reinterpret_cast<void *>(hint),
+            kHighBytes,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            -1,
+            0);
+        if (candidate == MAP_FAILED)
+            continue;
+        if (reinterpret_cast<std::uintptr_t>(candidate) > kBelowHighLine)
+        {
+            high = candidate;
+            break;
+        }
+        ::munmap(candidate, kHighBytes);
+    }
+    if (high == nullptr)
+    {
+        // This environment refuses every high hint; the remaining suite
+        // still covers the identical code path at ordinary addresses.
+        std::puts("high-address mapping unavailable; case skipped");
+        return;
+    }
+
+    Arena arena;
+    CHECK(arena.TryBind(high, kHighBytes, 0x11) == Status::Success);
+    CHECK(arena.storage() == high);
+
+    Transaction transaction;
+    CHECK(arena.TryBeginTransaction(&transaction) == Status::Success);
+    void *reserved = nullptr;
+    CHECK(arena.TryReserve(transaction, 96, 32, &reserved) == Status::Success);
+    const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(high);
+    const std::uintptr_t absolute =
+        reinterpret_cast<std::uintptr_t>(reserved);
+    // The reservation must be a genuine full-width absolute address inside
+    // the bound region, not a truncated 32-bit offset.
+    CHECK(absolute > kBelowHighLine);
+    CHECK(absolute >= base);
+    CHECK(absolute % 32 == 0);
+    CHECK(absolute + 96 <= base + kHighBytes);
+    for (std::size_t index = 0; index < 96; ++index)
+        CHECK(static_cast<std::uint8_t *>(reserved)[index] == 0);
+    std::memset(reserved, 0x5A, 96);
+    CHECK(arena.TryCommit(transaction) == Status::Success);
+    CHECK(arena.committedBytes() == 96);
+    CHECK(arena.usedBytes() == 96);
+
+    // Committed high storage keeps its identity across later transactions,
+    // and abandoned post-watermark bytes are reclaimed and rezeroed without
+    // disturbing the committed extent.
+    Transaction later;
+    CHECK(arena.TryBeginTransaction(&later) == Status::Success);
+    void *after = nullptr;
+    CHECK(arena.TryReserve(later, 16, 8, &after) == Status::Success);
+    CHECK(after == static_cast<std::uint8_t *>(reserved) + 96);
+    CHECK(arena.TryAbandon(later) == Status::Success);
+    for (std::size_t index = 0; index < 96; ++index)
+        CHECK(static_cast<std::uint8_t *>(reserved)[index] == 0x5A);
+    for (std::size_t index = 96; index < 112; ++index)
+        CHECK(static_cast<std::uint8_t *>(reserved)[index] == 0);
+
+    // Near-capacity exhaustion still fails closed at high addresses: the
+    // exact remaining extent reserves, and one further byte cannot.
+    Transaction exhaust;
+    CHECK(arena.TryBeginTransaction(&exhaust) == Status::Success);
+    void *tail = nullptr;
+    CHECK(arena.TryReserve(exhaust, kHighBytes - 96, 1, &tail)
+          == Status::Success);
+    CHECK(reinterpret_cast<std::uintptr_t>(tail) + (kHighBytes - 96)
+          == base + kHighBytes);
+    void *overflow = nullptr;
+    CHECK(arena.TryReserve(exhaust, 1, 1, &overflow)
+          == Status::InsufficientCapacity);
+    CHECK(overflow == nullptr);
+    CHECK(arena.TryAbandon(exhaust) == Status::Success);
+    CHECK(arena.usedBytes() == 96);
+    CHECK(arena.committedBytes() == 96);
+
+    CHECK(arena.TryUnbind() == Status::Success);
+    ::munmap(high, kHighBytes);
+#else
+    // The >4GiB storage situation cannot arise on these targets; pin the
+    // width floor the arena's absolute-address arithmetic relies on.
+    static_assert(
+        sizeof(void *) >= sizeof(std::uint32_t),
+        "arena reservations must address at least the 32-bit space");
+#endif
+}
 } // namespace
 
 int main()
@@ -412,6 +526,7 @@ int main()
     TestCommittedStorageRequiresExplicitUnbind();
     TestSequentialTransactionsRatchet();
     TestHighAlignmentUsesAbsoluteAddress();
+    TestHighAddressStorageLifecycle();
 
     if (failures != 0)
     {
