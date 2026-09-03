@@ -68,10 +68,13 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           TAG="$RELEASE_TAG"
-          case "$TAG" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "::error::tag '$TAG' does not match vX.Y.Z" >&2; exit 1 ;;
-          esac
+          # Anchored regex, not a glob: `case` patterns like v[0-9]*.[0-9]*.[0-9]*
+          # accept v1abc.2def.3ghi ([0-9]* = one digit then anything), which
+          # violates the documented strict vX.Y.Z contract.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '$TAG' does not match vX.Y.Z" >&2
+            exit 1
+          fi
           COMMIT="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}" || true)"
           if [ -z "$COMMIT" ]; then
             echo "::error::tag '$TAG' does not resolve to a commit" >&2
@@ -208,9 +211,13 @@ jobs:
           ./scripts/ci/verify-artifact-arch.ps1 -Expected x86
           bin/Release/KisakCOD-mp.exe bin/Release/KisakCOD-dedi.exe
 
+      # Portable production composition legs use static `shell: bash` —
+      # expressions are not permitted in `shell:` (actionlint / GitHub
+      # context-availability), the commands are shell-agnostic, and Git Bash
+      # is preinstalled on the Windows runners.
       - name: Configure portable production composition
         if: matrix.target != 'windows-x86'
-        shell: ${{ matrix.os == 'windows' && 'pwsh' || 'bash' }}
+        shell: bash
         run: >
           cmake -S . -B build-release
           ${{ matrix.cmake-arch && format('-A {0}', matrix.cmake-arch) || '' }}
@@ -222,7 +229,7 @@ jobs:
 
       - name: Build portable production composition
         if: matrix.target != 'windows-x86'
-        shell: ${{ matrix.os == 'windows' && 'pwsh' || 'bash' }}
+        shell: bash
         run: cmake --build build-release --config Release --parallel
 
       - name: Verify binary architecture (ELF/Mach-O)
@@ -243,7 +250,7 @@ jobs:
 
       - name: Run portable smoke suite
         if: matrix.target != 'windows-x86'
-        shell: ${{ matrix.os == 'windows' && 'pwsh' || 'bash' }}
+        shell: bash
         run: ctest --test-dir build-release -C Release --output-on-failure
 
       - name: Package
@@ -251,7 +258,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          tar --sort=name --owner=0 --group=0 \
+          # Reproducible archives need GNU tar (--sort/--owner/--group).
+          # macOS 15 runners alias bsdtar to `tar` and GNU tar to `gtar`;
+          # Linux runners have GNU tar as `tar`.
+          TAR="$(command -v gtar || command -v tar)"
+          "$TAR" --sort=name --owner=0 --group=0 \
             -czf "dist/KisakCOD-${{ matrix.target }}-portable-Release.tar.gz" \
             -C build-release/tests .
           jq -n \
