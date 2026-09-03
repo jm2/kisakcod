@@ -19,6 +19,7 @@ set(PLATFORM_MACOS_SERVICES
     "${SRC_DIR}/_platform/posix/sys_filesystem.cpp"
     "${SRC_DIR}/_platform/posix/sys_memory.cpp"
     "${SRC_DIR}/_platform/posix/sys_process.cpp"
+    "${SRC_DIR}/_platform/posix/sys_socket.cpp"
     "${SRC_DIR}/_platform/posix/sys_sync.cpp"
     "${SRC_DIR}/_platform/posix/sys_thread.cpp"
     "${SRC_DIR}/_platform/posix/sys_time.cpp"
