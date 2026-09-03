@@ -218,6 +218,52 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows-x86-parity:
+    # M0 exit gate: proves the shared retail reference bytes are byte-identical
+    # across the Windows x86 MP/SP/dedicated baseline. Each preset is configured
+    # with KISAK_REPRODUCIBLE_BUILD=ON so /Brepro pins the __DATE__/__TIME__ and
+    # linker stamp inputs, and scripts/ci/compare-byte-parity.sh then hard-gates
+    # buildnumber agreement and reference-object equality across the three
+    # build trees. Without the reproducible flag the wall-clock-stamped
+    # reference object legitimately differs, so this job fails by design.
+    name: Windows x86 (byte parity)
+    runs-on: windows-2022
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
+      DXSDK_VERSION: 9.29.952.8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore DirectX SDK
+        shell: pwsh
+        run: |
+          dotnet new classlib -o dxsdk-temp
+          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
+          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
+          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
+
+      - name: Build MP / SP / dedicated baselines
+        shell: pwsh
+        run: |
+          foreach ($preset in @('windows-x86-mp', 'windows-x86-sp', 'windows-x86-dedi')) {
+            cmake --preset $preset -DKISAK_REPRODUCIBLE_BUILD=ON -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          cmake --build build-windows-x86-mp --config Release --target KisakCOD-mp --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-windows-x86-sp --config Release --target KisakCOD-sp --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-windows-x86-dedi --config Release --target KisakCOD-dedi --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compare byte parity
+        shell: bash
+        run: scripts/ci/compare-byte-parity.sh build-windows-x86-mp build-windows-x86-sp build-windows-x86-dedi
+
   windows-x86-nosteam:
     # Compile-checks the KISAK_ENABLE_STEAM=OFF fallback path (cl_guid identity,
     # sv_requireSteam, empty win_steam.cpp TU). Windows x86 is the only target that can
