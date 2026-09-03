@@ -25,6 +25,10 @@
 
 #include "objects.h"
 
+// KisakCOD port: __cdecl spelling from the dependency-free compatibility
+// leaf; this header is reachable before the qcommon composition.
+#include <universal/platform_compat.h>
+
 
 void dInternalHandleAutoDisabling (dxWorld *world, dReal stepsize);
 void dxStepBody (dxBody *b, dReal h);
