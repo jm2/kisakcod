@@ -206,7 +206,7 @@ extract_slice(
 extract_slice(
     _measured_x86
     "- name: Run portable transaction tests"
-    "- uses: actions/upload-artifact@v4"
+    "- uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4"
     _measured_x86_tests "measured Windows x86 test step")
 require_count(
     _measured_x86_build "kisakcod-actor-grenade-safety-tests" 1
