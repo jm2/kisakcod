@@ -502,9 +502,13 @@ jobs:
           } | ConvertTo-Json | Set-Content -Encoding utf8 dist/KisakCOD-windows-x86-provenance.json
 
       # ---- portable production composition (all other targets) ----
+      # Static `shell: bash` on every portable leg: expressions are not
+      # permitted in `shell:` (actionlint / GitHub context-availability), the
+      # commands are shell-agnostic, and Git Bash is preinstalled on the
+      # Windows runners.
       - name: Configure portable production composition
         if: matrix.target != 'windows-x86'
-        shell: ${{ matrix.os == 'windows' && 'pwsh' || 'bash' }}
+        shell: bash
         run: >
           cmake -S . -B build-release
           ${{ matrix.cmake-arch && format('-A {0}', matrix.cmake-arch) || '' }}
@@ -516,7 +520,7 @@ jobs:
 
       - name: Build portable production composition
         if: matrix.target != 'windows-x86'
-        shell: ${{ matrix.os == 'windows' && 'pwsh' || 'bash' }}
+        shell: bash
         run: cmake --build build-release --config Release --parallel
 
       - name: Verify binary architecture (ELF/Mach-O)
@@ -537,7 +541,7 @@ jobs:
 
       - name: Run portable smoke suite
         if: matrix.target != 'windows-x86'
-        shell: ${{ matrix.os == 'windows' && 'pwsh' || 'bash' }}
+        shell: bash
         run: ctest --test-dir build-release -C Release --output-on-failure
 
       - name: Package portable composition
@@ -545,7 +549,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          tar --sort=name --owner=0 --group=0 \
+          # Reproducible archives need GNU tar (--sort/--owner/--group).
+          # macOS 15 runners alias bsdtar to `tar` and GNU tar to `gtar`;
+          # Linux runners have GNU tar as `tar`.
+          TAR="$(command -v gtar || command -v tar)"
+          "$TAR" --sort=name --owner=0 --group=0 \
             -czf "dist/KisakCOD-${{ matrix.target }}-portable-Release.tar.gz" \
             -C build-release/tests .
           jq -n \

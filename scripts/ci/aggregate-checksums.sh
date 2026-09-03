@@ -5,7 +5,10 @@
 # ambiguous sum). Output is a sorted, flat "sha256  basename" file.
 #
 # Usage: aggregate-checksums.sh <artifact-root> <output-file>
-set -uo pipefail
+# Fail closed: -e aborts on a failing `sha256sum` (an empty hash field must
+# never be emitted), and the `cd` guard keeps the walk inside the artifact
+# root even when the directory is missing or unreadable.
+set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
   echo "usage: aggregate-checksums.sh <artifact-root> <output-file>" >&2
@@ -14,6 +17,14 @@ fi
 
 ROOT="$1"
 OUT="$2"
+
+# Resolve OUT against the caller's cwd BEFORE entering ROOT: a relative OUT
+# (the workflow passes "SHA256SUMS.txt") must land where the caller expects,
+# not inside the artifact root the script walks into below.
+case "$OUT" in
+  /*) ;;
+  *) OUT="$(pwd)/$OUT" ;;
+esac
 
 if [ ! -d "$ROOT" ]; then
   echo "aggregate-checksums: artifact root '$ROOT' does not exist" >&2
@@ -25,7 +36,7 @@ FAILLOG="$(mktemp)"
 trap 'rm -f "$TMP" "$FAILLOG"' EXIT
 
 status=0
-cd "$ROOT"
+cd "$ROOT" || exit 1
 # -print0 | sort -z: deterministic traversal independent of inode order.
 while IFS= read -r -d '' f; do
   base="$(basename "$f")"
