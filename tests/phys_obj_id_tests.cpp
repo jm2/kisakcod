@@ -59,7 +59,11 @@ namespace
 // headers (bgame/bg_local.h, DynEntity/DynEntity_client.h) confirm the
 // engine side stays in sync; this test guards the test side.
 
-constexpr int Fail(const char *const message)
+// Not constexpr: std::fprintf is not a constexpr call, so a constexpr Fail
+// can never produce a constant expression (MSVC C3615 under /W4+/WX; GCC
+// accepts it only as ill-formed-no-diagnostic-required). Matches the repo
+// test idiom used by the other test TUs.
+int Fail(const char *const message)
 {
     std::fprintf(stderr, "phys_obj_id test failed: %s\n", message);
     return 1;
@@ -277,17 +281,15 @@ bool TestGlobalDynEntClientSidecar()
 // to prove the static_asserts in the public headers stayed in place.
 bool TestFrozenLayouts()
 {
-    if (sizeof(DynEntityClientLayout) != 0xC)
-        return false;
-    if (sizeof(BreakablePieceLayout) != 0xC)
-        return false;
-    // The MP cpose_t struct lives in bgame/bg_local.h; the static_asserts
-    // there pin its layout at 0x64/0x68 and the physObjId offset at 0x14.
-    // The static_asserts are evaluated at compile time when this TU
-    // includes bgame/bg_local.h indirectly through the engine TU; the
-    // unit test focuses on the on-disk byte-stability contract that the
-    // helpers secure.
-    return true;
+    // Plain return expressions, NOT `if` conditionals: a compile-time
+    // constant controlling expression trips MSVC C4127, and the test build
+    // treats warnings as errors. The ONDISK_SIZE static_asserts above are
+    // the primary compile-time contract; these runtime checks are the
+    // belt-and-suspenders copy of it. The MP cpose_t struct lives in
+    // bgame/bg_local.h; the static_asserts there pin its layout at
+    // 0x64/0x68 and the physObjId offset at 0x14.
+    return sizeof(DynEntityClientLayout) == 0xC
+        && sizeof(BreakablePieceLayout) == 0xC;
 }
 } // namespace
 
