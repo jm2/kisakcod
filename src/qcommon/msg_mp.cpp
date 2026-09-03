@@ -558,6 +558,12 @@ void __cdecl MSG_ReadData(msg_t *msg, uint8_t *data, int len)
     int newcount; // [esp+0h] [ebp-8h]
     signed int cursize; // [esp+4h] [ebp-4h]
 
+    if (len < 0) // KISAK (ki-gu2, upstream 321218cb): a negative length would wrap the memcpy/memset sizes
+    {
+        msg->overflowed = 1;
+        return;
+    }
+
     newcount = len + msg->readcount;
     if (newcount > msg->cursize)
     {

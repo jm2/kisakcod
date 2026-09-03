@@ -445,7 +445,7 @@ void __cdecl CL_ClearState(int32_t localClientNum)
 {
     clientActive_t *dst; // [esp+0h] [ebp-4h]
 
-    if (localClientNum < 1)
+    if (localClientNum < STATIC_MAX_LOCAL_CLIENTS) // KISAK (ki-gu2, upstream 7bffda1a): named bound; equals the previous literal 1
     {
         dst = CL_GetLocalClientGlobals(localClientNum);
         memset((uint8_t *)dst, 0, sizeof(clientActive_t));
@@ -1140,6 +1140,14 @@ void __cdecl CL_CheckForResend(netsrc_t localClientNum)
                 MSG_Init(&buf, msgBuffer, 2048);
                 MSG_WriteString(&buf, "stats");
                 c = CL_HighestPriorityStatPacket(clc);
+                if (c < 0)
+                {
+                    // KISAK (ki-gu2, upstream 4c59a1ca): nothing eligible to send this frame.
+                    // Should be unreachable (the statResponse handler never leaves the mask at 0
+                    // in this state and the resend gate guarantees an older stamp), but index -1
+                    // read 1240 bytes before the stat buffer, so skip the frame instead.
+                    break;
+                }
                 if (c > 6)
                     MyAssertHandler(
                         ".\\client_mp\\cl_main_mp.cpp",
@@ -1652,7 +1660,10 @@ char __cdecl CL_DispatchConnectionlessPacket(netsrc_t localClientNum, netadr_t f
                     clca = CL_GetLocalClientConnection(localClientNum);
                     v7 = Cmd_Argv(1);
                     statPacketsNeeded = atoi(v7);
-                    if (statPacketsNeeded)
+                    // KISAK (ki-gu2, upstream 4c59a1ca): test the 7-bit mask, not the raw
+                    // value. A server reply such as 128 used to leave statPacketsToSend == 0
+                    // while still in CA_SENDINGSTATS, which drove the packet picker to -1.
+                    if (statPacketsNeeded & 0x7F)
                     {
                         clca->statPacketsToSend = statPacketsNeeded & 0x7F;
                     }
