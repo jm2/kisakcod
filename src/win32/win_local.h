@@ -11,7 +11,10 @@
 #pragma warning( pop )
 #endif
 
-#ifndef _XBOX
+// KisakCOD ABI port: DirectInput/WinSocket are Win32-only headers; this is
+// the Win32 system-layer header, so the OS includes are guarded for the
+// Windows target instead of being reachable from every composition.
+#if defined(_WIN32) && !defined(_XBOX)
 #define DIRECTINPUT_VERSION 0x0800  //[ 0x0300 | 0x0500 | 0x0700 | 0x0800 ]
 #include <dinput.h>
 //#include <dsound.h>

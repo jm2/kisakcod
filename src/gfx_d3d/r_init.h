@@ -12,8 +12,13 @@
 #include "r_image.h"
 #include "r_fog.h"
 
+// KisakCOD ABI port: Windows.h/d3d9.h are Win32-renderer headers; the only
+// dependent declaration is the GfxAssets query-pointer member below, which is
+// guarded with them so shared compositions can include this header.
+#if defined(_WIN32)
 #include <Windows.h>
 #include <d3d9.h>
+#endif
 
 enum GfxRenderer : __int32
 {                                       // ...
@@ -25,7 +30,9 @@ enum GfxRenderer : __int32
 
 struct GfxAssets // sizeof=0x4
 {                                       // ...
+#if defined(_WIN32)
     IDirect3DQuery9 *pixelCountQuery;   // ...
+#endif
 };
 
 #define MAX_TOTAL_ENT_COUNT 0x1000

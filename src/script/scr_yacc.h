@@ -1,7 +1,11 @@
 #pragma once
 #include "scr_stringlist.h"
 #include <cstdio> // FILE
+// KisakCOD ABI port: nothing in this header needs Win32; the include only
+// served scr_yacc.cpp's LOBYTE macro, which now carries its own fallback.
+#if defined(_WIN32)
 #include <Windows.h>
+#endif
 
 // LWSS: this enum name is kinda retarded
 enum Enum_t : __int32

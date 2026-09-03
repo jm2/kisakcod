@@ -2,7 +2,12 @@
 #include "huffman.h"
 #include "sys_time.h"
 
+// KisakCOD ABI port: the only Win32 dependency was the DWORD locals in
+// MSG_initHuffmanInternal, now spelled uint32_t (identical width/layout on
+// MSVC), so the include is guarded and the TU is target-neutral.
+#if defined(_WIN32)
 #include <Windows.h>
+#endif
 #include <bgame/bg_local.h>
 #include "sv_msg_write_mp.h"
 #include <server_mp/server_mp.h>
@@ -2066,8 +2071,8 @@ const int msg_hData[256] =
 
 void MSG_initHuffmanInternal()
 {
-    DWORD time2; // [esp+0h] [ebp-8h]
-    DWORD time; // [esp+4h] [ebp-4h]
+    uint32_t time2; // [esp+0h] [ebp-8h]
+    uint32_t time; // [esp+4h] [ebp-4h]
 
     Huff_Init(&msgHuff);
     time = Sys_Milliseconds();
