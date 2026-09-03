@@ -27,8 +27,8 @@ using SysSocketHandle = SysSocket *;
 // Sys_SocketMake* helpers rather than by hand-packing bytes.
 struct SysSocketAddress
 {
-    std::uint8_t address[4];
-    std::uint16_t port;
+    uint8_t address[4];
+    uint16_t port;
 };
 
 // Upper bound for one datagram payload. The UDP protocol allows at most

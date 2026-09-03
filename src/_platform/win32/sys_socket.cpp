@@ -20,30 +20,37 @@
 #include <atomic>
 #include <cstring>
 
+// The opaque handle's concrete shape; defined here so the anonymous-namespace
+// helpers below can validate and dereference handles.
+struct SysSocket
+{
+    SOCKET handle{INVALID_SOCKET};
+};
+
 namespace
 {
-std::atomic<int> &WinsockUsers() noexcept
-{
-    static std::atomic<int> users{0};
-    return users;
-}
+// Winsock is initialized once per process on the first open and stays
+// initialized for the process lifetime; this count tracks startup ownership
+// across the startup race. Held at namespace scope so no function-local
+// static initialization ordering applies.
+std::atomic<int> winsockUsers{0};
 
 bool EnsureWinsockStarted() noexcept
 {
-    int expected = WinsockUsers().load(std::memory_order_relaxed);
+    int expected = winsockUsers.load(std::memory_order_relaxed);
     while (expected == 0)
     {
         WSADATA data{};
         if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
             return false;
-        if (WinsockUsers().compare_exchange_strong(
+        if (winsockUsers.compare_exchange_strong(
                 expected, 1, std::memory_order_relaxed))
             return true;
         // Another thread won the startup race; release ours and retry.
         WSACleanup();
     }
     // Increment the user count for an already-initialized Winsock.
-    WinsockUsers().fetch_add(1, std::memory_order_relaxed);
+    winsockUsers.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -68,15 +75,48 @@ sockaddr_in ToSockaddrIn(const SysSocketAddress &source) noexcept
     sockaddr_in result{};
     result.sin_family = AF_INET;
     result.sin_port = htons(source.port);
-    std::memcpy(&result.sin_addr, source.address, 4);
+    result.sin_addr.s_addr = htonl(
+        (static_cast<unsigned long>(source.address[0]) << 24)
+        | (static_cast<unsigned long>(source.address[1]) << 16)
+        | (static_cast<unsigned long>(source.address[2]) << 8)
+        | static_cast<unsigned long>(source.address[3]));
     return result;
 }
-} // namespace
 
-struct SysSocket
+bool SendArgumentsValid(SysSocketHandle const handle,
+    const void *const data,
+    const SysSocketAddress *const destination,
+    const std::uint32_t byteCount) noexcept
 {
-    SOCKET handle{INVALID_SOCKET};
-};
+    return handle && handle->handle != INVALID_SOCKET && data && destination
+        && byteCount != 0;
+}
+
+bool RecvArgumentsValid(SysSocketHandle const handle,
+    const void *const buffer,
+    const std::uint32_t bufferCapacity,
+    const std::uint32_t *const outByteCount) noexcept
+{
+    return handle && handle->handle != INVALID_SOCKET && buffer
+        && bufferCapacity != 0 && outByteCount;
+}
+
+// WSAGetLastError is read by the caller and passed in so the WouldBlock
+// mapping stays in one place; helpers run only after a failed system call.
+SysSocketSendStatus ClassifySendError(const int error) noexcept
+{
+    if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS)
+        return SysSocketSendStatus::WouldBlock;
+    return SysSocketSendStatus::SystemFailure;
+}
+
+SysSocketRecvStatus ClassifyRecvError(const int error) noexcept
+{
+    if (error == WSAEWOULDBLOCK)
+        return SysSocketRecvStatus::WouldBlock;
+    return SysSocketRecvStatus::InvalidHandle;
+}
+} // namespace
 
 SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     const std::uint16_t port,
@@ -141,8 +181,7 @@ SysSocketSendStatus KISAK_CDECL Sys_SocketSendTo(
     const std::uint32_t byteCount,
     const SysSocketAddress *const destination)
 {
-    if (!handle || handle->handle == INVALID_SOCKET || !data || !destination
-        || byteCount == 0)
+    if (!SendArgumentsValid(handle, data, destination, byteCount))
         return SysSocketSendStatus::InvalidArgument;
     if (byteCount > SysSocketMaxDatagramBytes)
         return SysSocketSendStatus::MessageTooLarge;
@@ -155,12 +194,7 @@ SysSocketSendStatus KISAK_CDECL Sys_SocketSendTo(
         reinterpret_cast<const sockaddr *>(&to),
         sizeof(to));
     if (sent == SOCKET_ERROR)
-    {
-        const int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS)
-            return SysSocketSendStatus::WouldBlock;
-        return SysSocketSendStatus::SystemFailure;
-    }
+        return ClassifySendError(WSAGetLastError());
     if (sent != static_cast<int>(byteCount))
         return SysSocketSendStatus::SystemFailure;
     return SysSocketSendStatus::Sent;
@@ -175,8 +209,7 @@ SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
 {
     if (outByteCount)
         *outByteCount = 0;
-    if (!handle || handle->handle == INVALID_SOCKET || !buffer
-        || bufferCapacity == 0 || !outByteCount)
+    if (!RecvArgumentsValid(handle, buffer, bufferCapacity, outByteCount))
         return SysSocketRecvStatus::InvalidArgument;
 
     sockaddr_in from{};
@@ -188,12 +221,7 @@ SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
         reinterpret_cast<sockaddr *>(&from),
         &fromLength);
     if (received == SOCKET_ERROR)
-    {
-        const int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK)
-            return SysSocketRecvStatus::WouldBlock;
-        return SysSocketRecvStatus::InvalidHandle;
-    }
+        return ClassifyRecvError(WSAGetLastError());
     if (received < 0)
         return SysSocketRecvStatus::InvalidHandle;
 

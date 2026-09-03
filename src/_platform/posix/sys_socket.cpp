@@ -14,13 +14,28 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+// The opaque handle's concrete shape; defined here so the anonymous-namespace
+// helpers below can validate and dereference handles.
+struct SysSocket
+{
+    int handle{-1};
+};
+
 namespace
 {
 bool ToSocketAddress(const sockaddr_in &source, SysSocketAddress *out) noexcept
 {
     if (source.sin_family != AF_INET)
         return false;
-    std::memcpy(out->address, &source.sin_addr, 4);
+    // Extract the four address bytes from the network-order value without
+    // copying through object representations; each byte is derived from the
+    // host-order value so the portable byte order (index 0 = most
+    // significant) is preserved on any endianness.
+    const std::uint32_t host = ntohl(source.sin_addr.s_addr);
+    out->address[0] = static_cast<std::uint8_t>((host >> 24) & 0xFFU);
+    out->address[1] = static_cast<std::uint8_t>((host >> 16) & 0xFFU);
+    out->address[2] = static_cast<std::uint8_t>((host >> 8) & 0xFFU);
+    out->address[3] = static_cast<std::uint8_t>(host & 0xFFU);
     out->port = ntohs(source.sin_port);
     return true;
 }
@@ -30,15 +45,48 @@ sockaddr_in ToSockaddrIn(const SysSocketAddress &source) noexcept
     sockaddr_in result{};
     result.sin_family = AF_INET;
     result.sin_port = htons(source.port);
-    std::memcpy(&result.sin_addr, source.address, 4);
+    result.sin_addr.s_addr = htonl(
+        (static_cast<std::uint32_t>(source.address[0]) << 24)
+        | (static_cast<std::uint32_t>(source.address[1]) << 16)
+        | (static_cast<std::uint32_t>(source.address[2]) << 8)
+        | static_cast<std::uint32_t>(source.address[3]));
     return result;
 }
-} // namespace
 
-struct SysSocket
+bool SendArgumentsValid(SysSocketHandle const handle,
+    const void *const data,
+    const SysSocketAddress *const destination,
+    const std::uint32_t byteCount) noexcept
 {
-    int handle{-1};
-};
+    return handle && handle->handle >= 0 && data && destination
+        && byteCount != 0;
+}
+
+bool RecvArgumentsValid(SysSocketHandle const handle,
+    const void *const buffer,
+    const std::uint32_t bufferCapacity,
+    const std::uint32_t *const outByteCount) noexcept
+{
+    return handle && handle->handle >= 0 && buffer && bufferCapacity != 0
+        && outByteCount;
+}
+
+// errno is read inside the helpers so the WouldBlock mapping stays in one
+// place; callers invoke them only after a failed system call.
+SysSocketSendStatus ClassifySendError() noexcept
+{
+    if (errno == EAGAIN || errno == EWOULDBLOCK)
+        return SysSocketSendStatus::WouldBlock;
+    return SysSocketSendStatus::SystemFailure;
+}
+
+SysSocketRecvStatus ClassifyRecvError() noexcept
+{
+    if (errno == EAGAIN || errno == EWOULDBLOCK)
+        return SysSocketRecvStatus::WouldBlock;
+    return SysSocketRecvStatus::InvalidHandle;
+}
+} // namespace
 
 SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     const std::uint16_t port,
@@ -101,8 +149,7 @@ SysSocketSendStatus KISAK_CDECL Sys_SocketSendTo(
     const std::uint32_t byteCount,
     const SysSocketAddress *const destination)
 {
-    if (!handle || handle->handle < 0 || !data || !destination
-        || byteCount == 0)
+    if (!SendArgumentsValid(handle, data, destination, byteCount))
         return SysSocketSendStatus::InvalidArgument;
     if (byteCount > SysSocketMaxDatagramBytes)
         return SysSocketSendStatus::MessageTooLarge;
@@ -119,11 +166,7 @@ SysSocketSendStatus KISAK_CDECL Sys_SocketSendTo(
             sizeof(to));
     } while (sent < 0 && errno == EINTR);
     if (sent < 0)
-    {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return SysSocketSendStatus::WouldBlock;
-        return SysSocketSendStatus::SystemFailure;
-    }
+        return ClassifySendError();
     if (sent != static_cast<ssize_t>(byteCount))
         return SysSocketSendStatus::SystemFailure;
     return SysSocketSendStatus::Sent;
@@ -138,8 +181,7 @@ SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
 {
     if (outByteCount)
         *outByteCount = 0;
-    if (!handle || handle->handle < 0 || !buffer || bufferCapacity == 0
-        || !outByteCount)
+    if (!RecvArgumentsValid(handle, buffer, bufferCapacity, outByteCount))
         return SysSocketRecvStatus::InvalidArgument;
 
     sockaddr_in from{};
@@ -155,11 +197,7 @@ SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
             &fromLength);
     } while (received < 0 && errno == EINTR);
     if (received < 0)
-    {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return SysSocketRecvStatus::WouldBlock;
-        return SysSocketRecvStatus::InvalidHandle;
-    }
+        return ClassifyRecvError();
 
     if (outSource && !ToSocketAddress(from, outSource))
         return SysSocketRecvStatus::InvalidHandle;

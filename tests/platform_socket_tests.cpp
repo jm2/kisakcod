@@ -2,7 +2,8 @@
 //
 // platform_socket_tests.cpp -- exercises the portable Sys_Socket* API on
 // the host platform backend over real UDP loopback traffic. The binary
-// runs the full suite with no arguments; each check names its stage.
+// runs the full suite with no arguments; each stage names its checks and
+// a failing check reports the stage that owned it.
 
 #include <qcommon/sys_socket.h>
 
@@ -25,6 +26,29 @@ bool Check(const bool condition, const char *const stage)
     return true;
 }
 
+// Shared per-run state: two nonblocking sockets, their bound endpoints, and
+// scratch buffers for datagram round-trips.
+struct SocketFixture
+{
+    SysSocketHandle first = nullptr;
+    SysSocketHandle second = nullptr;
+    SysSocketAddress firstAddress{};
+    SysSocketAddress secondAddress{};
+    SysSocketAddress loopback{};
+    SysSocketAddress source{};
+    std::uint8_t payload[64] = {};
+    std::uint8_t received[64] = {};
+    std::uint32_t receivedBytes = 0;
+};
+
+using StageFn = bool (*)(SocketFixture &);
+
+void SeedPayload(std::uint8_t *payload, const std::size_t size)
+{
+    for (std::size_t index = 0; index < size; ++index)
+        payload[index] = static_cast<std::uint8_t>(index * 5 + 1);
+}
+
 bool OpenEphemeral(const bool nonBlocking,
     SysSocketHandle *handle,
     SysSocketAddress *bound,
@@ -38,221 +62,255 @@ bool OpenEphemeral(const bool nonBlocking,
         return false;
     return Check(bound->port != 0, "ephemeral port must be resolved");
 }
-} // namespace
 
-int main()
+int ReportFailure()
 {
-    // Argument validation: null out-pointers and pre-set handles are
-    // rejected without touching system state.
-    {
-        SysSocketAddress address{};
-        Check(Sys_SocketOpenUdp(0, true, nullptr) ==
-                SysSocketOpenStatus::InvalidArgument,
-            "open null out pointer");
-        SysSocketHandle preset = reinterpret_cast<SysSocketHandle>(
-            static_cast<std::uintptr_t>(1));
-        Check(Sys_SocketOpenUdp(0, true, &preset) ==
-                SysSocketOpenStatus::InvalidArgument,
-            "open preset handle");
-        Check(Sys_SocketGetLocalAddress(nullptr, &address) == false,
-            "local address null handle");
-        Check(Sys_SocketGetLocalAddress(nullptr, nullptr) == false,
-            "local address null out");
-    }
+    std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
+    return EXIT_FAILURE;
+}
 
-    // Loopback echo: two nonblocking sockets exchange a datagram both ways.
-    std::uint8_t payload[64];
-    std::uint8_t received[64];
-    for (std::size_t index = 0; index < sizeof(payload); ++index)
-        payload[index] = static_cast<std::uint8_t>(index * 5 + 1);
+// Argument validation: null out-pointers and pre-set handles are rejected
+// without touching system state.
+bool StageArgumentValidation(SocketFixture &)
+{
+    SysSocketAddress address{};
+    Check(Sys_SocketOpenUdp(0, true, nullptr) ==
+            SysSocketOpenStatus::InvalidArgument,
+        "open null out pointer");
+    SysSocketHandle preset = reinterpret_cast<SysSocketHandle>(
+        static_cast<std::uintptr_t>(1));
+    Check(Sys_SocketOpenUdp(0, true, &preset) ==
+            SysSocketOpenStatus::InvalidArgument,
+        "open preset handle");
+    Check(Sys_SocketGetLocalAddress(nullptr, &address) == false,
+        "local address null handle");
+    Check(Sys_SocketGetLocalAddress(nullptr, nullptr) == false,
+        "local address null out");
+    return true;
+}
 
-    SysSocketHandle first = nullptr;
-    SysSocketAddress firstAddress{};
-    SysSocketHandle second = nullptr;
-    SysSocketAddress secondAddress{};
-    if (!OpenEphemeral(true, &first, &firstAddress, "open first socket")
-        || !OpenEphemeral(true, &second, &secondAddress, "open second socket"))
-    {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
-    }
-
+// Endpoint helper contract: loopback and wildcard endpoints agree with the
+// bound sockets and compare by exact byte and port equality.
+bool StageEndpointContract(SocketFixture &fixture)
+{
     SysSocketAddress loopback{};
     SysSocketAddress anyProbe{};
-    if (!Check(Sys_SocketMakeLoopbackAddress(secondAddress.port, &loopback),
+    if (!Check(Sys_SocketMakeLoopbackAddress(
+                   fixture.secondAddress.port, &loopback),
             "make loopback endpoint")
-        || !Check(secondAddress.address[0] == 0 && secondAddress.address[1] == 0
-                && secondAddress.address[2] == 0
-                && secondAddress.address[3] == 0,
+        || !Check(fixture.secondAddress.address[0] == 0
+                && fixture.secondAddress.address[1] == 0
+                && fixture.secondAddress.address[2] == 0
+                && fixture.secondAddress.address[3] == 0,
             "wildcard bind exposes the any address")
-        || !Check(Sys_SocketMakeAnyAddress(secondAddress.port, &anyProbe)
-                && Sys_SocketAddressIsEqual(&anyProbe, &secondAddress),
+        || !Check(Sys_SocketMakeAnyAddress(fixture.secondAddress.port,
+                      &anyProbe)
+                && Sys_SocketAddressIsEqual(&anyProbe,
+                    &fixture.secondAddress),
             "any endpoint matches the wildcard bind")
-        || !Check(!Sys_SocketAddressIsEqual(&loopback, &secondAddress),
+        || !Check(!Sys_SocketAddressIsEqual(&loopback,
+                &fixture.secondAddress),
             "loopback differs from the wildcard endpoint")
         || !Check(Sys_SocketAddressIsEqual(&loopback, &loopback),
             "endpoint equality is reflexive"))
     {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
+        return false;
     }
+    fixture.loopback = loopback;
+    return true;
+}
 
-    // An idle nonblocking socket reports WouldBlock, never blocks.
-    std::uint32_t receivedBytes = 0;
-    if (!Check(Sys_SocketRecvFrom(second, received, sizeof(received), nullptr,
-                   &receivedBytes) == SysSocketRecvStatus::WouldBlock,
+// Receive contract: an idle nonblocking socket reports WouldBlock and
+// invalid receives are rejected before any system call.
+bool StageReceiveContract(SocketFixture &fixture)
+{
+    if (!Check(Sys_SocketRecvFrom(fixture.second, fixture.received,
+                   sizeof(fixture.received), nullptr,
+                   &fixture.receivedBytes)
+                == SysSocketRecvStatus::WouldBlock,
             "idle recv reports WouldBlock"))
-    {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
-    }
+        return false;
 
-    // Invalid receives are rejected before any system call.
-    if (!Check(Sys_SocketRecvFrom(nullptr, received, sizeof(received), nullptr,
-                   &receivedBytes) == SysSocketRecvStatus::InvalidArgument,
-            "recv null handle")
-        || !Check(Sys_SocketRecvFrom(second, nullptr, sizeof(received), nullptr,
-                       &receivedBytes) == SysSocketRecvStatus::InvalidArgument,
+    return Check(Sys_SocketRecvFrom(nullptr, fixture.received,
+                     sizeof(fixture.received), nullptr,
+                     &fixture.receivedBytes)
+                == SysSocketRecvStatus::InvalidArgument,
+        "recv null handle")
+        && Check(Sys_SocketRecvFrom(fixture.second, nullptr,
+                     sizeof(fixture.received), nullptr,
+                     &fixture.receivedBytes)
+                == SysSocketRecvStatus::InvalidArgument,
             "recv null buffer")
-        || !Check(Sys_SocketRecvFrom(second, received, 0, nullptr,
-                       &receivedBytes) == SysSocketRecvStatus::InvalidArgument,
+        && Check(Sys_SocketRecvFrom(fixture.second, fixture.received, 0,
+                     nullptr, &fixture.receivedBytes)
+                == SysSocketRecvStatus::InvalidArgument,
             "recv zero capacity")
-        || !Check(Sys_SocketRecvFrom(second, received, sizeof(received),
-                       nullptr, nullptr) == SysSocketRecvStatus::InvalidArgument,
-            "recv null byte count"))
-    {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
-    }
+        && Check(Sys_SocketRecvFrom(fixture.second, fixture.received,
+                     sizeof(fixture.received), nullptr, nullptr)
+                == SysSocketRecvStatus::InvalidArgument,
+            "recv null byte count");
+}
 
-    // Invalid sends are rejected before any system call.
+// Send contract: invalid sends are rejected before any system call and an
+// oversize datagram is reported rather than attempted.
+bool StageSendContract(SocketFixture &fixture)
+{
     SysSocketAddress any{};
     Check(Sys_SocketMakeAnyAddress(1, &any), "make any endpoint");
-    if (!Check(Sys_SocketSendTo(nullptr, payload, 1, &loopback) ==
-            SysSocketSendStatus::InvalidArgument,
-            "send null handle")
-        || !Check(Sys_SocketSendTo(first, nullptr, 1, &loopback) ==
-                SysSocketSendStatus::InvalidArgument,
+    return Check(Sys_SocketSendTo(nullptr, fixture.payload, 1,
+                     &fixture.loopback)
+                == SysSocketSendStatus::InvalidArgument,
+        "send null handle")
+        && Check(Sys_SocketSendTo(fixture.first, nullptr, 1,
+                     &fixture.loopback)
+                == SysSocketSendStatus::InvalidArgument,
             "send null buffer")
-        || !Check(Sys_SocketSendTo(first, payload, 0, &loopback) ==
-                SysSocketSendStatus::InvalidArgument,
+        && Check(Sys_SocketSendTo(fixture.first, fixture.payload, 0,
+                     &fixture.loopback)
+                == SysSocketSendStatus::InvalidArgument,
             "send zero length")
-        || !Check(Sys_SocketSendTo(first, payload,
-                       SysSocketMaxDatagramBytes + 1, &loopback) ==
-                SysSocketSendStatus::MessageTooLarge,
+        && Check(Sys_SocketSendTo(fixture.first, fixture.payload,
+                     SysSocketMaxDatagramBytes + 1, &fixture.loopback)
+                == SysSocketSendStatus::MessageTooLarge,
             "send oversize datagram")
-        || !Check(Sys_SocketSendTo(first, payload, 8, nullptr) ==
-                SysSocketSendStatus::InvalidArgument,
-            "send null destination"))
-    {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
-    }
+        && Check(Sys_SocketSendTo(fixture.first, fixture.payload, 8,
+                     nullptr)
+                == SysSocketSendStatus::InvalidArgument,
+            "send null destination");
+}
 
-    // first -> second datagram with sender endpoint recovery.
-    if (!Check(Sys_SocketSendTo(first, payload, sizeof(payload), &loopback) ==
-            SysSocketSendStatus::Sent,
+// first -> second datagram with sender endpoint recovery.
+bool StageLoopbackSend(SocketFixture &fixture)
+{
+    if (!Check(Sys_SocketSendTo(fixture.first, fixture.payload,
+                   sizeof(fixture.payload), &fixture.loopback)
+                == SysSocketSendStatus::Sent,
             "send first to second"))
-    {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
-    }
-    SysSocketAddress source{};
-    std::memset(received, 0, sizeof(received));
-    if (!Check(Sys_SocketRecvFrom(second, received, sizeof(received), &source,
-                   &receivedBytes) == SysSocketRecvStatus::Received,
-            "recv on second")
-        || !Check(receivedBytes == sizeof(payload), "payload size round-trip")
-        || !Check(std::memcmp(payload, received, sizeof(payload)) == 0,
+        return false;
+
+    std::memset(fixture.received, 0, sizeof(fixture.received));
+    return Check(Sys_SocketRecvFrom(fixture.second, fixture.received,
+                     sizeof(fixture.received), &fixture.source,
+                     &fixture.receivedBytes)
+                == SysSocketRecvStatus::Received,
+        "recv on second")
+        && Check(fixture.receivedBytes == sizeof(fixture.payload),
+            "payload size round-trip")
+        && Check(std::memcmp(fixture.payload, fixture.received,
+                 sizeof(fixture.payload))
+                == 0,
             "payload bytes round-trip")
-        || !Check(source.port == firstAddress.port, "source port round-trip"))
-    {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
-    }
+        && Check(fixture.source.port == fixture.firstAddress.port,
+            "source port round-trip");
+}
 
-    // second -> first reply using the recovered source endpoint verbatim.
-    for (std::size_t index = 0; index < sizeof(payload); ++index)
-        payload[index] = static_cast<std::uint8_t>(255 - index);
-    if (!Check(Sys_SocketSendTo(second, payload, sizeof(payload), &source) ==
-            SysSocketSendStatus::Sent,
+// second -> first reply using the recovered source endpoint verbatim.
+bool StageLoopbackReply(SocketFixture &fixture)
+{
+    for (std::size_t index = 0; index < sizeof(fixture.payload); ++index)
+        fixture.payload[index] = static_cast<std::uint8_t>(255 - index);
+    if (!Check(Sys_SocketSendTo(fixture.second, fixture.payload,
+                   sizeof(fixture.payload), &fixture.source)
+                == SysSocketSendStatus::Sent,
             "send second to first"))
-    {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
-    }
-    std::memset(received, 0, sizeof(received));
-    if (!Check(Sys_SocketRecvFrom(first, received, sizeof(received), nullptr,
-                   &receivedBytes) == SysSocketRecvStatus::Received,
-            "recv on first")
-        || !Check(receivedBytes == sizeof(payload), "reply size round-trip")
-        || !Check(std::memcmp(payload, received, sizeof(payload)) == 0,
-            "reply bytes round-trip"))
-    {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
-    }
+        return false;
 
-    // Broadcast option applies on both backends and rejects bad handles.
-    if (!Check(Sys_SocketEnableBroadcast(first) ==
-            SysSocketOptionStatus::Applied,
-            "enable broadcast")
-        || !Check(Sys_SocketEnableBroadcast(nullptr) ==
-                SysSocketOptionStatus::InvalidHandle,
-            "broadcast null handle"))
-    {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
-    }
+    std::memset(fixture.received, 0, sizeof(fixture.received));
+    return Check(Sys_SocketRecvFrom(fixture.first, fixture.received,
+                     sizeof(fixture.received), nullptr,
+                     &fixture.receivedBytes)
+                == SysSocketRecvStatus::Received,
+        "recv on first")
+        && Check(fixture.receivedBytes == sizeof(fixture.payload),
+            "reply size round-trip")
+        && Check(std::memcmp(fixture.payload, fixture.received,
+                 sizeof(fixture.payload))
+                == 0,
+            "reply bytes round-trip");
+}
 
-    // Explicit bind: the requested port is honored and recovered.
-    {
-        SysSocketHandle bound = nullptr;
-        SysSocketAddress boundAddress{};
-        // Choose an unlikely high port; failure to bind a specific busy port
-        // is reported as SystemFailure, which this suite treats as fatal.
-        const std::uint16_t requestedPort = 43191;
-        const SysSocketOpenStatus openStatus =
-            Sys_SocketOpenUdp(requestedPort, true, &bound);
-        if (openStatus == SysSocketOpenStatus::SystemFailure)
-        {
-            std::fprintf(stderr,
-                "platform-socket: explicit bind port %u busy; skipping\n",
-                static_cast<unsigned>(requestedPort));
-        }
-        else
-        {
-            if (!Check(openStatus == SysSocketOpenStatus::Opened,
-                    "explicit bind opened")
-                || !Check(Sys_SocketGetLocalAddress(bound, &boundAddress),
-                    "explicit bind recovered")
-                || !Check(boundAddress.port == requestedPort,
-                    "explicit bind port honored"))
-            {
-                std::fprintf(stderr, "platform-socket: %s failed\n",
-                    checkStage);
-                return EXIT_FAILURE;
-            }
-            Check(Sys_SocketClose(&bound) == SysSocketCloseStatus::Closed,
-                "explicit bind closed");
-        }
-    }
+// Broadcast option applies on both backends and rejects bad handles.
+bool StageBroadcastOption(SocketFixture &fixture)
+{
+    return Check(Sys_SocketEnableBroadcast(fixture.first) ==
+               SysSocketOptionStatus::Applied,
+        "enable broadcast")
+        && Check(Sys_SocketEnableBroadcast(nullptr) ==
+               SysSocketOptionStatus::InvalidHandle,
+            "broadcast null handle");
+}
 
-    // Teardown: close is unconditional, nulls the caller's handle, and a
-    // second close is a no-op.
-    if (!Check(Sys_SocketClose(&first) == SysSocketCloseStatus::Closed
+// Explicit bind: the requested port is honored and recovered.
+bool StageExplicitBind(SocketFixture &)
+{
+    SysSocketHandle bound = nullptr;
+    SysSocketAddress boundAddress{};
+    // Choose an unlikely high port; failure to bind a specific busy port
+    // is reported as SystemFailure, which this suite treats as skippable
+    // rather than fatal.
+    const std::uint16_t requestedPort = 43191;
+    const SysSocketOpenStatus openStatus =
+        Sys_SocketOpenUdp(requestedPort, true, &bound);
+    if (openStatus == SysSocketOpenStatus::SystemFailure)
+    {
+        std::fprintf(stderr, "platform-socket: explicit bind port %u busy;"
+                             " skipping\n",
+            static_cast<unsigned>(requestedPort));
+        return true;
+    }
+    if (!Check(openStatus == SysSocketOpenStatus::Opened,
+            "explicit bind opened")
+        || !Check(Sys_SocketGetLocalAddress(bound, &boundAddress),
+            "explicit bind recovered")
+        || !Check(boundAddress.port == requestedPort,
+            "explicit bind port honored"))
+        return false;
+    Check(Sys_SocketClose(&bound) == SysSocketCloseStatus::Closed,
+        "explicit bind closed");
+    return true;
+}
+
+// Teardown: close is unconditional, nulls the caller's handle, and a
+// second close is a no-op.
+bool StageTeardown(SocketFixture &fixture)
+{
+    SysSocketHandle &first = fixture.first;
+    SysSocketHandle &second = fixture.second;
+    return Check(Sys_SocketClose(&first) == SysSocketCloseStatus::Closed
             && first == nullptr,
-            "close first socket")
-        || !Check(Sys_SocketClose(&first) == SysSocketCloseStatus::Closed,
+        "close first socket")
+        && Check(Sys_SocketClose(&first) == SysSocketCloseStatus::Closed,
             "double close is a no-op")
-        || !Check(Sys_SocketClose(&second) == SysSocketCloseStatus::Closed
-                && second == nullptr,
+        && Check(Sys_SocketClose(&second) == SysSocketCloseStatus::Closed
+            && second == nullptr,
             "close second socket")
-        || !Check(Sys_SocketClose(nullptr) == SysSocketCloseStatus::InvalidHandle,
-            "close null pointer"))
+        && Check(Sys_SocketClose(nullptr) ==
+               SysSocketCloseStatus::InvalidHandle,
+            "close null pointer");
+}
+} // namespace
+
+int main()
+{
+    SocketFixture fixture{};
+    SeedPayload(fixture.payload, sizeof(fixture.payload));
+
+    if (!OpenEphemeral(true, &fixture.first, &fixture.firstAddress,
+            "open first socket")
+        || !OpenEphemeral(true, &fixture.second, &fixture.secondAddress,
+            "open second socket"))
+        return ReportFailure();
+
+    const StageFn stages[] = {&StageArgumentValidation,
+        &StageEndpointContract, &StageReceiveContract, &StageSendContract,
+        &StageLoopbackSend, &StageLoopbackReply, &StageBroadcastOption,
+        &StageExplicitBind, &StageTeardown};
+
+    for (std::size_t index = 0; index < sizeof(stages) / sizeof(stages[0]);
+         ++index)
     {
-        std::fprintf(stderr, "platform-socket: %s failed\n", checkStage);
-        return EXIT_FAILURE;
+        if (!stages[index](fixture))
+            return ReportFailure();
     }
 
     std::printf("platform-socket: all checks passed\n");
