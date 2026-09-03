@@ -201,8 +201,14 @@ foreach(_source IN LISTS _sources)
                 OR NOT _line MATCHES "^(static_assert|iassert)[ ]*\\(")
                 continue()
             endif()
-            string(REGEX MATCH "^(static_assert|iassert)[ ]*\\(.*$" _assertion "${_line}")
-            if (_assertion MATCHES "^static_assert")
+            # Capture the pre-verified line directly. string(REGEX MATCH)
+            # truncates its match at the first ";" when the input string
+            # contains one (CMake list semantics), which dropped the statement
+            # terminator and left the collector waiting for a ";" that never
+            # arrived. The guard above already anchored _line to the assertion
+            # keyword, so the full line is exactly the intended capture.
+            set(_assertion "${_line}")
+            if (_line MATCHES "^static_assert")
                 set(_assertion_kind "static_assert")
             else()
                 set(_assertion_kind "iassert")
