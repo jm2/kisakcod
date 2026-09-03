@@ -21,12 +21,10 @@
 
 #include <game/taginfo_disk32.h>
 
-#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <limits>
 #include <type_traits>
 
@@ -63,8 +61,7 @@ constexpr float kParentInvAxis[4][3] = {
     { -10.0f, -11.0f, -12.0f },
 };
 
-template <std::size_t SIZE>
-std::uint32_t LoadLittleEndianU32(const std::array<std::uint8_t, SIZE> &bytes,
+std::uint32_t LoadLittleEndianU32(const std::uint8_t *const bytes,
                                   const std::size_t offset)
 {
     return static_cast<std::uint32_t>(bytes[offset])
@@ -73,8 +70,7 @@ std::uint32_t LoadLittleEndianU32(const std::array<std::uint8_t, SIZE> &bytes,
         | (static_cast<std::uint32_t>(bytes[offset + 3u]) << 24);
 }
 
-template <std::size_t SIZE>
-std::uint16_t LoadLittleEndianU16(const std::array<std::uint8_t, SIZE> &bytes,
+std::uint16_t LoadLittleEndianU16(const std::uint8_t *const bytes,
                                   const std::size_t offset)
 {
     return static_cast<std::uint16_t>(
@@ -159,8 +155,11 @@ void TestWireImageBytes()
     taginfo::tagInfoHostView view = MakeView();
     taginfo::tagInfoDisk32_s disk = taginfo::TagInfoToDisk32(view);
 
-    std::array<std::uint8_t, 0x70u> bytes{};
-    std::memcpy(bytes.data(), &disk, bytes.size());
+    // Read the converter output through an unsigned-char object view instead
+    // of copying into a staging buffer: every access below names the exact
+    // pinned wire offset it verifies, and the image is checked byte-for-byte
+    // with no library copy call in the analysis path.
+    const auto *const bytes = reinterpret_cast<const std::uint8_t *>(&disk);
 
     CHECK(LoadLittleEndianU32(bytes, 0x00u) == kParentIndex);
     CHECK(LoadLittleEndianU32(bytes, 0x04u) == kNextIndex);
