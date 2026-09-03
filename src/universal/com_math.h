@@ -3,6 +3,11 @@
 #include <universal/assertive.h>
 #include <universal/com_angle.h>
 
+// KisakCOD ABI port: this header spells __cdecl / __forceinline throughout;
+// pull in the dependency-free calling-convention leaf directly rather than
+// relying on transitive includes.
+#include <universal/platform_compat.h>
+
 #include <math.h>
 #include <cstdint>
 
@@ -162,6 +167,15 @@ void __cdecl TRACK_com_math();
 
 // == RANDOM == 
 void __cdecl Rand_Init(int seed);
+
+// KisakCOD ABI port: <math.h> above pulls in glibc's <stdlib.h>, which declares
+// `long int random(void)` at global scope — the engine's own float random()
+// cannot be redeclared next to it. On non-MSVC targets, spell the engine
+// function behind a namespaced macro so call sites keep saying `random()`.
+// MSVC never sees the macro, so the Win32 build is unchanged.
+#if !defined(_MSC_VER)
+#define random Kisak_random
+#endif
 
 float __cdecl random();
 float __cdecl crandom();

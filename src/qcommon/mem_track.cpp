@@ -3,7 +3,12 @@
 #include <universal/assertive.h>
 #include <qcommon/qcommon.h>
 
+// KisakCOD ABI port: Windows.h feeds only the _RTL_CRITICAL_SECTION branch
+// below; the POSIX branch uses std::recursive_mutex and must not see the
+// Win32 header chain.
+#if defined(_WIN32)
 #include <Windows.h>
+#endif
 #include "threads.h"
 #include <xanim/xanim.h>
 #include <mutex>

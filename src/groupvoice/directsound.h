@@ -1,8 +1,13 @@
 #pragma once
 #include <cstdint>
 
+// KisakCOD ABI port: Windows.h/dsound.h only feed the DirectSound-typed
+// struct members and prototypes below; guard them together so the shared
+// constants and non-DSound declarations stay includable on every target.
+#if defined(_WIN32)
 #include <Windows.h>
 #include <dsound.h>
+#endif
 
 static const int32_t MIN_COMFORTABLE_BUFFER_AMOUNT = 0x140;
 static const int32_t COMFORTABLE_BUFFER_AMOUNT = 0x1770;
@@ -22,8 +27,10 @@ static const float maxScalingUpMultiplier = 0.0099999998f;
 
 struct dsound_sample_t // sizeof=0x48
 {                                       // ...
+#if defined(_WIN32)
     IDirectSoundCaptureBuffer *DSCB;
     IDirectSoundBuffer *DSB;
+#endif
     uint32_t dwBufferSize;
     uint32_t dwCaptureOffset;
     uint32_t currentOffset;
@@ -67,6 +74,7 @@ static_assert(sizeof(audioSample_t) == 0x20);
 
 
 // play_dsound
+#if defined(_WIN32)
 uint32_t __cdecl DSound_UpdateSample(dsound_sample_t *sample, char *data, int32_t data_len);
 int32_t __cdecl DSound_GetBytesLeft(dsound_sample_t *sample);
 void __cdecl DSound_AdjustSamplePlayback(dsound_sample_t *sample, int32_t bytesLeft);
@@ -89,6 +97,7 @@ HRESULT __cdecl DSOUNDRecord_Start(dsound_sample_t *pRecSample);
 HRESULT __cdecl DSOUNDRecord_Stop(dsound_sample_t *pRecSample);
 int32_t __cdecl DSOUNDRecord_Init(bool bCallDsoundInit);
 void __cdecl DSOUNDRecord_Shutdown();
+#endif
 
 void __cdecl Record_SetRecordingCallback(int32_t(__cdecl *new_audioCallback)(audioSample_t *));
 

@@ -26,4 +26,10 @@
 #ifndef __thiscall
 #define __thiscall
 #endif
+// MSVC's always-inline spelling has no GCC/Clang counterpart; plain `inline`
+// keeps the decompiled COERCE_* helpers compiling without over-constraining
+// the optimizer.
+#ifndef __forceinline
+#define __forceinline inline
+#endif
 #endif

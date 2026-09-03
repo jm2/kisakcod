@@ -1,6 +1,11 @@
 #pragma once
 #include <cstdint>
 
+// KisakCOD ABI port: the prototypes below spell __cdecl, which only MSVC
+// reserves as a keyword. Include the dependency-free calling-convention leaf
+// so the declarations parse on every supported compiler.
+#include <universal/platform_compat.h>
+
 struct adjacencyWinding_t // sizeof=0x34
 {                                       // ...
     int32_t numsides;                       // ...

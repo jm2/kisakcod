@@ -40,7 +40,23 @@
 // LWSS ADD 
 #include "collision_trimesh_KISAK.h"
 
+// KisakCOD ABI port: this vendored ODE TU only needs the BOOL/TRUE/FALSE
+// spellings for its file-local helpers; on non-Windows targets those come
+// from the fallback below (BOOL == int, matching MSVC's typedef) instead of
+// pulling the Windows.h chain into every POSIX composition.
+#if defined(_WIN32)
 #include <Windows.h>
+#else
+#ifndef BOOL
+typedef int BOOL;
+#endif
+#ifndef TRUE
+#define TRUE 1
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
+#endif
 #include <universal/com_math.h>
 #include <universal/q_shared.h>
 #include "collision_kernel.h"

@@ -2,7 +2,12 @@
 #include "mem_track.h"
 #include <xanim/xanim.h>
 
+// KisakCOD ABI port: nothing in this TU needs Win32 anymore — BoxOnPlaneSide
+// below returns int, matching the existing qcommon.h prototype — so the
+// Windows.h chain is guarded away.
+#if defined(_WIN32)
 #include <Windows.h>
+#endif
 
 
 uint8_t windingPool[12292];
@@ -592,7 +597,10 @@ char __cdecl CM_BrushInView(const cbrush_t *brush, cplane_s *frustumPlanes, int 
 
 int bops_initialized;
 int Ljmptab[8];
-BOOL __cdecl BoxOnPlaneSide(const float *emins, const float *emaxs, const cplane_s *p)
+// KisakCOD ABI port: return type spelled `int` to match the qcommon.h
+// prototype (MSVC's BOOL is `int`, so the Win32 ABI is unchanged) instead of
+// depending on the Windows.h BOOL typedef.
+int __cdecl BoxOnPlaneSide(const float *emins, const float *emaxs, const cplane_s *p)
 {
     // KISAKTODO: Needs ASM jump table and assembly bits (Probably critical function lmao)
     // 
