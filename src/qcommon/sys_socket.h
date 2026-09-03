@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #include <universal/platform_compat.h>
 
@@ -29,6 +30,16 @@ struct SysSocketAddress
 {
     uint8_t address[4];
     uint16_t port;
+
+    // Byte-exact equality shared by every backend: the address compares as
+    // network-order bytes (memcmp-safe) and the port as a host-order value.
+    // Defined inline here so the layout above and its comparison rule live
+    // in one place; the platform backends delegate to it.
+    bool Equals(const SysSocketAddress &other) const
+    {
+        return std::memcmp(address, other.address, sizeof(address)) == 0
+            && port == other.port;
+    }
 };
 
 // Upper bound for one datagram payload. The UDP protocol allows at most
