@@ -525,6 +525,18 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
     {
         iassert(vertListCount < ARRAY_COUNT(rigidVertListArray));
 
+        // The assert above is compiled out of production builds. A file
+        // that declares more vert lists than the fixed retail table can
+        // hold would walk past the 129-slot stack array before the
+        // terminating zero read ever arrives, so fail the cursor for
+        // real: every subsequent read degrades to zero and the loader
+        // aborts through the ordinary malformed-input paths.
+        if (vertListCount >= (int)ARRAY_COUNT(rigidVertListArray))
+        {
+            buf_cursor::Fail();
+            break;
+        }
+
         rigidVertList = &rigidVertListArray[vertListCount];
         rigidVertList->vertCount = Buf_Read<unsigned short>(pos);
 
@@ -565,12 +577,17 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
         verts->normal[1] = Buf_Read<float>(pos);
         verts->normal[2] = Buf_Read<float>(pos);
 
-        if (XModel_UseModelVertColor())
-            Byte4CopyBgraToVertexColor(*pos, verts->color);
+        // The 4 color bytes are consumed unconditionally. Copy them
+        // through the cursor: a raw `*pos += 4` here only advanced the
+        // caller's pointer, and the next Buf_Read wrote it back from
+        // the cursor's position — re-parsing the color bytes as the
+        // following texCoord and desynchronizing the whole surface.
+        unsigned char colorBgra[4];
+        const bool haveColor = buf_cursor::ReadBytes(colorBgra, sizeof(colorBgra), sizeof(colorBgra));
+        if (XModel_UseModelVertColor() && haveColor)
+            Byte4CopyBgraToVertexColor(colorBgra, verts->color);
         else
             *(_DWORD *)verts->color = -1;
-
-        *pos += 4;
 
         verts->texCoordX = Buf_Read<float>(pos);
         verts->texCoordY= Buf_Read<float>(pos);
@@ -1648,8 +1665,11 @@ XModelPartsLoad *__cdecl XModelPartsLoadFile(XModel *model, const char *name, vo
                 return 0;
             }
         }
-        memcpy(modelParts->partClassification, pos, numBones);
-        buf_cursor::Advance(numBones);
+        // The remaining check above guarantees room for numBones bytes
+        // plus the trailing useBones weight, so this bulk read can only
+        // fail if the cursor already failed — in which case the
+        // destination is zero-filled and the load unwinds below.
+        (void)buf_cursor::ReadBytes(modelParts->partClassification, numBones, numBones);
         useBones = (buf_cursor::ReadWeight() != 0);
         buf_cursor::Deactivate();
         FS_FreeFile((char *)buf);

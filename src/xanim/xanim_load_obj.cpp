@@ -234,7 +234,6 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
     unsigned __int8 *buf = NULL; // [esp+C8h] [ebp-14h] BYREF
     int version; // [esp+CCh] [ebp-10h]
     XModelPieces *xmodelPieces; // [esp+D0h] [ebp-Ch]
-    int len; // [esp+D4h] [ebp-8h]
     int fileSize; // [esp+D8h] [ebp-4h]
 
     if (Com_sprintf(filename, 0x40u, "xmodelpieces/%s", name) < 0)
@@ -275,24 +274,17 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
         for (pieceIndex = 0; pieceIndex < xmodelPieces->numpieces; ++pieceIndex)
         {
             piece = &xmodelPieces->pieces[pieceIndex];
-            len = strlen((const char *)pos) + 1;
-            if (len > 64)
+            // The piecename must be NUL-terminated inside the file
+            // buffer and fit the 64-byte stack slot. The bounded scan
+            // never runs past the end of the buffer, so an attacker
+            // cannot fault the process with an unterminated string.
+            if (!buf_cursor::ReadString(piecename, sizeof(piecename)))
             {
-                Com_PrintError(19, "ERROR: piecename '%s' too long\n", (const char *)pos);
+                Com_PrintError(19, "ERROR: xmodelpieces '%s' has a missing or over-long piecename\n", filename);
                 buf_cursor::Deactivate();
                 FS_FreeFile((char *)buf);
                 return 0;
             }
-
-            char *v5 = (char *)pos;
-            char *v4 = piecename;
-            char v3;
-            do
-            {
-                v3 = *v5;
-                *v4++ = *v5++;
-            } while (v3);
-            pos = &pos[len];
 
             piece->model = XAnim_RegisterModelPiece(piecename);
             if (!piece->model)
@@ -376,8 +368,10 @@ unsigned __int8 *__cdecl LoadTrans(
 
     trans->u.frames.frames._1 = (unsigned __int8 (*)[3])Alloc(size);
 
-    memcpy(trans->u.frames.frames._1, pos, size);
-    return &pos[size];
+    if (!buf_cursor::ReadBytes(trans->u.frames.frames._1, size, size))
+        return pos;
+    pos += size;
+    return pos;
 }
 
 void __cdecl ConsumeQuat(unsigned __int8 **pos, __int16 *out)
@@ -520,9 +514,8 @@ unsigned __int8 *__cdecl GetDeltaQuaternions(
                 else
                 {
                     size = numQuatIndices;
-                    memcpy(deltaPart->quat->u.frames.indices._1, pos, numQuatIndices);
-                    buf_cursor::Advance(numQuatIndices);
-                    pos += numQuatIndices;
+                    if (buf_cursor::ReadBytes(deltaPart->quat->u.frames.indices._1, size, size))
+                        pos += size;
                 }
             }
             else
@@ -536,9 +529,8 @@ unsigned __int8 *__cdecl GetDeltaQuaternions(
                 else
                 {
                     size = 2 * numQuatIndices;
-                    memcpy(deltaPart->quat->u.frames.indices._1, pos, size);
-                    buf_cursor::Advance(size);
-                    pos += size;
+                    if (buf_cursor::ReadBytes(deltaPart->quat->u.frames.indices._1, size, size))
+                        pos += size;
                 }
             }
             deltaPart->quat->size = numQuatIndices - 1;
@@ -612,9 +604,8 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
                 }
                 else
                 {
-                    memcpy(deltaPart->trans->u.frames.indices._1, pos, numTransIndices);
-                    buf_cursor::Advance(numTransIndices);
-                    pos += numTransIndices;
+                    if (buf_cursor::ReadBytes(deltaPart->trans->u.frames.indices._1, numTransIndices, numTransIndices))
+                        pos += numTransIndices;
                 }
             }
             else
@@ -627,9 +618,8 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
                 }
                 else
                 {
-                    memcpy(deltaPart->trans->u.frames.indices._1, pos, 2 * numTransIndices);
-                    buf_cursor::Advance(2 * numTransIndices);
-                    pos += 2 * numTransIndices;
+                    if (buf_cursor::ReadBytes(deltaPart->trans->u.frames.indices._1, 2 * numTransIndices, 2 * numTransIndices))
+                        pos += 2 * numTransIndices;
                 }
             }
             return LoadTrans(Alloc, pos, numTransIndices, deltaPart->trans);
@@ -716,9 +706,8 @@ unsigned __int8 *__cdecl GetQuaternions(
                 else
                 {
                     size = numQuatIndices;
-                    memcpy(part->quat->u.frames.indices._1, pos, numQuatIndices);
-                    buf_cursor::Advance(numQuatIndices);
-                    pos += numQuatIndices;
+                    if (buf_cursor::ReadBytes(part->quat->u.frames.indices._1, size, size))
+                        pos += size;
                 }
             }
             else
@@ -732,9 +721,8 @@ unsigned __int8 *__cdecl GetQuaternions(
                 else
                 {
                     size = 2 * numQuatIndices;
-                    memcpy(part->quat->u.frames.indices._1, pos, size);
-                    buf_cursor::Advance(size);
-                    pos += size;
+                    if (buf_cursor::ReadBytes(part->quat->u.frames.indices._1, size, size))
+                        pos += size;
                 }
             }
             if (bSimpleQuat)
@@ -853,9 +841,8 @@ unsigned __int8 *__cdecl GetTranslations(
                 }
                 else
                 {
-                    memcpy(part->trans->u.frames.indices._1, pos, numTransIndices);
-                    buf_cursor::Advance(numTransIndices);
-                    pos += numTransIndices;
+                    if (buf_cursor::ReadBytes(part->trans->u.frames.indices._1, numTransIndices, numTransIndices))
+                        pos += numTransIndices;
                 }
             }
             else
@@ -868,9 +855,8 @@ unsigned __int8 *__cdecl GetTranslations(
                 }
                 else
                 {
-                    memcpy(part->trans->u.frames.indices._1, pos, 2 * numTransIndices);
-                    buf_cursor::Advance(2 * numTransIndices);
-                    pos += 2 * numTransIndices;
+                    if (buf_cursor::ReadBytes(part->trans->u.frames.indices._1, 2 * numTransIndices, 2 * numTransIndices))
+                        pos += 2 * numTransIndices;
                 }
             }
             return LoadTrans((void*(*)(int))XAnimTempAlloc, pos, numTransIndices, part->trans);
@@ -969,6 +955,7 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     unsigned __int8 *pos; // [esp+DCh] [ebp-1408h] BYREF
     bool useSmallIndices; // [esp+E3h] [ebp-1401h]
     unsigned __int8 dst[16]; // [esp+E4h] [ebp-1400h] BYREF
+    unsigned __int8 simpleBits[16]; // bone-existence bitmap copy (bounded)
     uint32_t i; // [esp+F4h] [ebp-13F0h]
     uint32_t v43; // [esp+F8h] [ebp-13ECh]
     char dest[1092]; // [esp+FCh] [ebp-13E8h] BYREF
@@ -1068,6 +1055,18 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
 
     iassert(numBones <= DOBJ_MAX_PARTS);
 
+    // The assert above is compiled out of production builds, but every
+    // downstream per-bone structure (the 128-slot part tables and the
+    // 16-byte bone bitmaps) assumes this bound. Reject out-of-range
+    // counts for real in release builds instead of overflowing.
+    if (numBones < 0 || numBones > DOBJ_MAX_PARTS)
+    {
+        buf_cursor::Deactivate();
+        FS_FreeFile((char *)buf);
+        Com_PrintError(19, (char *)"ERROR: xanim '%s' has invalid bone count (%d)\n", name, numBones);
+        return 0;
+    }
+
     parts->boneCount[9] = numBones;
     partFlags = Buf_Read<unsigned char>(&pos);
     parts->bLoop = (partFlags & 1) != 0;
@@ -1101,10 +1100,22 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     if (numBones)
     {
         count = ((uint32_t)(numBones - 1) >> 3) + 1;
-        v63 = pos;
-        buf_cursor::Advance(count);
-        memcpy(dst, pos, count);
-        buf_cursor::Advance(count);
+        // Two per-bone bitmaps follow: [count bytes][count bytes]. The
+        // count derives from the file-controlled bone count, so both
+        // copies go through the bounded cursor. A count above the
+        // 16-byte stack slots (numBones > DOBJ_MAX_PARTS — previously
+        // only assert-guarded) fails closed here instead of smashing
+        // the stack with attacker bytes.
+        if (count > sizeof(dst)
+            || !buf_cursor::ReadBytes(simpleBits, sizeof(simpleBits), count)
+            || !buf_cursor::ReadBytes(dst, sizeof(dst), count))
+        {
+            buf_cursor::Deactivate();
+            FS_FreeFile((char *)buf);
+            Com_PrintError(19, (char *)"ERROR: xanim '%s' has malformed bone data\n", name);
+            return 0;
+        }
+        v63 = simpleBits;
         memset((unsigned __int8 *)part, 0, 8 * numBones);
         memset((unsigned __int8 *)v73, 0, 8 * numBones);
         for (i = 0; i < numBones; ++i)

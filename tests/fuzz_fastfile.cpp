@@ -322,6 +322,112 @@ int TestUnalignedReads(const std::vector<unsigned char> &bytes)
     return 0;
 }
 
+// Exercise: a bulk ReadBytes sequence mirroring the load-object index /
+// bitmap copies must never read past end, never write past outCapacity,
+// and never expose uninitialized destination bytes. Overruns must zero
+// the requested span, mark the cursor failed, and leave the position
+// pinned; subsequent reads (typed or bulk) must be no-ops.
+int TestBulkRead(const std::vector<unsigned char> &bytes)
+{
+    if (bytes.empty())
+        return 0;
+
+    const unsigned char *const buf = bytes.data();
+    const size_t size = bytes.size();
+
+    // Padded destination so the harness can prove nothing is written
+    // past the capacity handed to ReadBytes.
+    unsigned char out[192];
+    std::memset(out, 0xA7u, sizeof(out));
+
+    buf_cursor::Activate(buf, size);
+    unsigned char *pos = const_cast<unsigned char *>(buf);
+    buf_cursor::AnchorPos(&pos);
+
+    // Sweep byte counts around the buffer's edges: exact remainder,
+    // remainder +/- 1, and a couple of oversized counts.
+    const size_t counts[] = {
+        1u, 3u, 8u, size, size ? size - 1u : 0u, size + 1u, size + 16u, 64u};
+    size_t totalConsumed = 0;
+    for (const size_t count : counts)
+    {
+        if (buf_cursor::Failed())
+            break;
+        std::memset(out, 0xA7u, sizeof(out));
+        const bool ok = buf_cursor::ReadBytes(out, sizeof(out), count);
+        const buf_cursor::BufCursor *const c = buf_cursor::Current();
+        CHECK_RC(c != nullptr);
+        if (ok)
+        {
+            // A successful bulk read must advance exactly count bytes
+            // and keep the destination prefix identical to the source.
+            CHECK_RC(c->failed == false);
+            CHECK_RC(static_cast<size_t>(c->current - c->begin) == totalConsumed + count);
+            CHECK_RC(c->current <= c->end);
+            CHECK_RC(std::memcmp(out, c->begin + totalConsumed, count) == 0);
+            totalConsumed += count;
+        }
+        else
+        {
+            // A failed bulk read must zero the requested span, pin the
+            // cursor, and leave the sentinel past the zeroed region.
+            const size_t zeroed = count < sizeof(out) ? count : sizeof(out);
+            for (size_t i = 0; i < zeroed; ++i)
+                CHECK_RC(out[i] == 0u);
+            CHECK_RC(c->failed);
+            CHECK_RC(static_cast<size_t>(c->current - c->begin) == totalConsumed);
+            if (zeroed < sizeof(out))
+                CHECK_RC(out[zeroed] == 0xA7u);
+        }
+        CHECK_RC(reinterpret_cast<const unsigned char *>(pos) == c->current);
+        // Post-failure reads must be no-ops; a success after failure is
+        // a contract violation.
+        if (c->failed)
+        {
+            unsigned char post[8];
+            std::memset(post, 0x5Eu, sizeof(post));
+            CHECK_RC(!buf_cursor::ReadBytes(post, sizeof(post), sizeof(post)));
+            CHECK_RC(post[0] == 0u);
+            const unsigned int postTyped = Buf_Read<unsigned int>(&pos);
+            CHECK_RC(postTyped == 0u);
+            CHECK_RC(reinterpret_cast<const unsigned char *>(pos) == c->current);
+        }
+        if (totalConsumed > size)
+            return Fail("bulk read loop consumed past end");
+    }
+
+    const buf_cursor::BufCursor *const cEnd = buf_cursor::Current();
+    CHECK_RC(cEnd->current <= cEnd->end);
+    CHECK_RC(reinterpret_cast<const unsigned char *>(pos) <= cEnd->end);
+
+    // Capacity enforcement: a count above outCapacity must fail closed
+    // even when the buffer still has bytes left.
+    buf_cursor::Deactivate();
+    if (size >= 8u)
+    {
+        buf_cursor::Activate(buf, size);
+        unsigned char small[4];
+        std::memset(small, 0x11u, sizeof(small));
+        CHECK_RC(!buf_cursor::ReadBytes(small, sizeof(small), 8u));
+        for (const unsigned char b : small)
+            CHECK_RC(b == 0u);
+        const buf_cursor::BufCursor *const cCap = buf_cursor::Current();
+        CHECK_RC(cCap->failed);
+        CHECK_RC(cCap->current == cCap->begin);
+        buf_cursor::Deactivate();
+    }
+
+    // Inactive cursor: every bulk read fails closed and reports failure
+    // without touching the destination.
+    unsigned char inactive[8];
+    std::memset(inactive, 0x22u, sizeof(inactive));
+    CHECK_RC(!buf_cursor::ReadBytes(inactive, sizeof(inactive), sizeof(inactive)));
+    CHECK_RC(inactive[0] == 0x22u);
+
+    (void)bytes;
+    return 0;
+}
+
 // Exercise: a XModel-pieces-style header parse must bound every read.
 // The cursor must trip Failed() (or complete successfully) without
 // walking past end, regardless of the attacker-controlled bytes.
@@ -483,6 +589,11 @@ int ExerciseSeed(const std::vector<unsigned char> &bytes, const char *const labe
     if (TestUnalignedReads(bytes) != 0)
     {
         std::fprintf(stderr, "fuzz_fastfile: UnalignedReads failed on %s\n", label);
+        return 1;
+    }
+    if (TestBulkRead(bytes) != 0)
+    {
+        std::fprintf(stderr, "fuzz_fastfile: BulkRead failed on %s\n", label);
         return 1;
     }
     return 0;
