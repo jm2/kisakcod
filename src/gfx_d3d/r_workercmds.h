@@ -129,6 +129,7 @@ void __cdecl R_ProcessWorkerCmds();
 int __cdecl R_ProcessWorkerCmd(WorkerCmdType type);
 void __cdecl R_ProcessWorkerCmdInternal(WorkerCmdType type, void *data);
 void R_InitWorkerThreads();
+void R_ShutdownWorkerThreads();
 int R_InitWorkerCmds();
 void KISAK_CDECL R_WorkerThread(uint32_t threadContext);
 void __cdecl R_UpdateActiveWorkerThreads();

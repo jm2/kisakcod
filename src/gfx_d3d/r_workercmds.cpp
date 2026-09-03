@@ -508,6 +508,19 @@ void R_InitWorkerThreads()
     }
 }
 
+void R_ShutdownWorkerThreads()
+{
+    uint32_t workerThreadIndexa; // [esp+0h] [ebp-4h]
+
+    iassert( Sys_IsMainThread() );
+    // Join and release both worker slots regardless of the SMP dvars: a
+    // worker may exist while deactivated (spawned under sys_smp_allowed but
+    // never enabled through r_smp_worker_thread), and every call must leave
+    // the slots empty so a later R_InitWorkerThreads can respawn them.
+    for (workerThreadIndexa = 0; workerThreadIndexa < 2; ++workerThreadIndexa)
+        Sys_ShutdownWorkerThread(workerThreadIndexa);
+}
+
 int R_InitWorkerCmds()
 {
     Sys_AtomicStore(&g_waitTypeMainThread, -1);
@@ -555,7 +568,10 @@ void KISAK_CDECL R_WorkerThread(uint32_t threadContext)
         Com_ErrorAbort();
     Profile_Guard(1);
 
-    while (1)
+    // The loop condition honors the worker gate's shutdown latch so
+    // Sys_ShutdownWorkerThread can join this thread and the slot can be
+    // respawned for an in-process renderer restart.
+    while (!Sys_WorkerThreadShutdownRequested(context))
     {
         Sys_WorkerThreadPausePoint(context);
         {
