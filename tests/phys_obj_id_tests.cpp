@@ -275,22 +275,15 @@ bool TestGlobalDynEntClientSidecar()
     return true;
 }
 
-// Saved-bytes regression: the runtime/DynEntityClient struct sizes and
-// offsets must NOT drift. These are evaluated by the linker at compile
-// time when this file is built; the runtime checks are belt-and-suspenders
-// to prove the static_asserts in the public headers stayed in place.
-bool TestFrozenLayouts()
-{
-    // Plain return expressions, NOT `if` conditionals: a compile-time
-    // constant controlling expression trips MSVC C4127, and the test build
-    // treats warnings as errors. The ONDISK_SIZE static_asserts above are
-    // the primary compile-time contract; these runtime checks are the
-    // belt-and-suspenders copy of it. The MP cpose_t struct lives in
-    // bgame/bg_local.h; the static_asserts there pin its layout at
-    // 0x64/0x68 and the physObjId offset at 0x14.
-    return sizeof(DynEntityClientLayout) == 0xC
-        && sizeof(BreakablePieceLayout) == 0xC;
-}
+// Saved-bytes regression: the runtime DynEntityClient/BreakablePiece
+// struct sizes must NOT drift. These are enforced at compile time so a
+// layout drift fails the build before any test runs. The MP cpose_t
+// struct lives in bgame/bg_local.h; the static_asserts there pin its
+// layout at 0x64/0x68 and the physObjId offset at 0x14.
+static_assert(sizeof(DynEntityClientLayout) == 0xC,
+    "DynEntityClient save-image layout is frozen at 12 bytes");
+static_assert(sizeof(BreakablePieceLayout) == 0xC,
+    "BreakablePiece runtime layout is frozen at 12 bytes");
 } // namespace
 
 int main()
@@ -315,8 +308,8 @@ int main()
         return Fail("global breakable piece sidecar bind");
     if (!TestGlobalDynEntClientSidecar())
         return Fail("global dynent client sidecar bind");
-    if (!TestFrozenLayouts())
-        return Fail("frozen 12-byte/0x64 layouts");
+    // Frozen-layout contracts (DynEntityClient/BreakablePiece 12-byte
+    // images) are enforced by static_assert at compile time.
     std::printf("phys_obj_id tests: all pass\n");
     return 0;
 }
