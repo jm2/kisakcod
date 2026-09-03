@@ -209,10 +209,10 @@ bool ReadString(char *out, size_t outSize)
 
 bool ReadBytes(void *const out, const size_t outCapacity, const size_t byteCount)
 {
-    if (out == nullptr || outCapacity == 0)
+    if (out == nullptr || outCapacity == 0 || !g_activeValid)
         return false;
 
-    if (!g_activeValid || g_active.failed
+    if (g_active.failed
         || byteCount > outCapacity
         || g_active.current + byteCount > g_active.end)
     {
@@ -222,11 +222,8 @@ bool ReadBytes(void *const out, const size_t outCapacity, const size_t byteCount
         // unwinding.
         const size_t zeroBytes = byteCount < outCapacity ? byteCount : outCapacity;
         std::memset(out, 0, zeroBytes);
-        if (g_activeValid)
-        {
-            g_active.failed = true;
-            SyncAnchoredPos();
-        }
+        g_active.failed = true;
+        SyncAnchoredPos();
         return false;
     }
 
