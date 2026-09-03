@@ -459,9 +459,13 @@ bool ReadRegularFileHandle(
     std::size_t total = 0;
     while (total < fileSize)
     {
-        const DWORD chunkSize = static_cast<DWORD>((std::min))(
+        // Call std::min inside the cast: written as
+        // static_cast<DWORD>((std::min))(...) the arguments hang outside
+        // the cast and MSVC tries to convert the overloaded function
+        // itself to DWORD (error C2440/C2737).
+        const DWORD chunkSize = static_cast<DWORD>((std::min)(
             fileSize - total,
-            static_cast<std::size_t>((std::numeric_limits<DWORD>::max)()));
+            static_cast<std::size_t>((std::numeric_limits<DWORD>::max)())));
         DWORD bytesRead = 0;
         if (!ReadFile(file, bytes->data() + total, chunkSize, &bytesRead, nullptr)
             || bytesRead == 0)
