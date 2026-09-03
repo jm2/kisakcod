@@ -3267,3 +3267,43 @@ add_test(
     COMMAND fuzz_fastfile corpus ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds)
 set_tests_properties(fuzz-fastfile-corpus PROPERTIES
     FIXTURES_REQUIRED fuzz_fastfile_corpus_seeds)
+
+# M5 exit (ki-msb): canonical widened-runtime-graph capture. The parity
+# digest is a domain-separated SHA-256 over a framed, typed, little-endian
+# stream; pointer-bearing values never enter it, so a 32-bit reference walk
+# and a widened 64-bit walk of one logical graph produce one digest.
+add_executable(kisakcod-db-graph-hash-tests
+    db_graph_hash_tests.cpp
+    ${SRC_DIR}/database/db_graph_hash.cpp)
+target_include_directories(
+    kisakcod-db-graph-hash-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-graph-hash-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-graph-hash-tests)
+set_target_properties(kisakcod-db-graph-hash-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-graph-hash-canonical
+    COMMAND kisakcod-db-graph-hash-tests)
+set_tests_properties(database-graph-hash-canonical PROPERTIES TIMEOUT 20)
+
+# M5 exit (ki-msb): retail fast-file parity harness. Runs on the native64
+# host against an unmodified retail fast-file and emits the capture digest
+# consumed by scripts/ci/run-retail-fastfile-parity.sh; --self-test exercises
+# the full pipeline on synthesized fixtures so CI covers the instrument
+# without retail assets.
+add_executable(kisakcod-retail-fastfile-parity-harness
+    retail_fastfile_parity_harness.cpp
+    ${SRC_DIR}/database/db_graph_hash.cpp)
+target_include_directories(
+    kisakcod-retail-fastfile-parity-harness PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-retail-fastfile-parity-harness PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-retail-fastfile-parity-harness)
+set_target_properties(kisakcod-retail-fastfile-parity-harness PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME retail-fastfile-parity-harness-self-test
+    COMMAND kisakcod-retail-fastfile-parity-harness --self-test)
+set_tests_properties(retail-fastfile-parity-harness-self-test PROPERTIES
+    TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
