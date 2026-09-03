@@ -1,7 +1,10 @@
 #pragma once
+
+// KisakCOD port: __cdecl spellings come from the dependency-free
+// compatibility leaf; this header is reachable before q_shared.h.
+#include <universal/platform_compat.h>
 #include <cstdio>
 #include <cstdint>
-
 uint32_t __cdecl FS_FileRead(void *ptr, uint32_t len, FILE *stream);
 uint32_t __cdecl FS_FileWrite(const void *ptr, uint32_t len, FILE *stream);
 FILE *__cdecl FS_FileOpenReadBinary(const char *filename);
