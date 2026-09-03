@@ -31,15 +31,15 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 COMPILERS=()
-if command -v gcc >/dev/null 2>&1; then
-    COMPILERS+=("gcc")
+if command -v g++ >/dev/null 2>&1; then
+    COMPILERS+=("gcc:g++")
 else
-    echo "note: gcc not found; skipping gcc matrix cell"
+    echo "note: g++ not found; skipping gcc matrix cell"
 fi
-if command -v clang >/dev/null 2>&1; then
-    COMPILERS+=("clang")
+if command -v clang++ >/dev/null 2>&1; then
+    COMPILERS+=("clang:clang++")
 else
-    echo "note: clang not found; skipping clang matrix cell"
+    echo "note: clang++ not found; skipping clang matrix cell"
 fi
 if [ "${#COMPILERS[@]}" -eq 0 ]; then
     echo "FAIL: no supported compiler (gcc/clang) found" >&2
@@ -71,15 +71,39 @@ declare -A BUILD_TYPE=(
 )
 
 FAILED_CELLS=()
-for compiler in "${COMPILERS[@]}"; do
+SANITIZER_CELLS_RUN=0
+for entry in "${COMPILERS[@]}"; do
+    compiler="${entry%%:*}"
+    cxx_compiler="${entry##*:}"
     for cell in release asan-ubsan; do
         build_dir="build-arm64-determinism-${compiler}-${cell}"
+
+        # A compiler whose sanitizer runtime is not installed (common on
+        # dev containers with mixed toolchains) cannot configure an
+        # ASan+UBSan cell. Probe once and skip loudly instead of failing
+        # the whole gate; the gate still requires at least one sanitizer
+        # cell to actually run somewhere in the matrix.
+        if [ "$cell" = "asan-ubsan" ]; then
+            probe_src="$(mktemp /tmp/opencode/asan-probe-XXXXXX.cpp)"
+            probe_bin="$(mktemp /tmp/opencode/asan-probe-XXXXXX)"
+            printf 'int main() { return 0; }\n' > "$probe_src"
+            if ! "$cxx_compiler" -fsanitize=address,undefined "$probe_src" \
+                    -o "$probe_bin" >/dev/null 2>&1; then
+                echo ""
+                echo "=== matrix cell: ${compiler} / ${cell} — SKIPPED:"
+                echo "    $cxx_compiler has no working ASan/UBSan runtime on this host"
+                rm -f "$probe_src" "$probe_bin"
+                continue
+            fi
+            rm -f "$probe_src" "$probe_bin"
+            SANITIZER_CELLS_RUN=$((SANITIZER_CELLS_RUN + 1))
+        fi
 
         echo ""
         echo "=== matrix cell: ${compiler} / ${cell} (build dir: ${build_dir}) ==="
         if ! cmake -S "$REPO_ROOT" -B "$build_dir" \
                 -DCMAKE_C_COMPILER="$compiler" \
-                -DCMAKE_CXX_COMPILER="$compiler" \
+                -DCMAKE_CXX_COMPILER="$cxx_compiler" \
                 -DCMAKE_BUILD_TYPE="${BUILD_TYPE[$cell]}" \
                 -DCMAKE_CXX_FLAGS="${CXX_FLAGS[$cell]}" \
                 -DCMAKE_EXE_LINKER_FLAGS="${CXX_FLAGS[$cell]}" \
@@ -109,4 +133,11 @@ if [ "${#FAILED_CELLS[@]}" -gt 0 ]; then
     exit 1
 fi
 
-echo "OK: arm64 determinism matrix passed (${#COMPILERS[@]} compiler(s) x 2 configs)"
+if [ "$SANITIZER_CELLS_RUN" -eq 0 ]; then
+    echo "FAIL: every sanitizer cell was skipped — no ASan/UBSan coverage ran."
+    echo "Install a working ASan/UBSan runtime for at least one compiler."
+    exit 1
+fi
+
+echo "OK: arm64 determinism matrix passed (${#COMPILERS[@]} compiler(s) x 2 configs," \
+    "$SANITIZER_CELLS_RUN sanitizer cell(s) run)"
