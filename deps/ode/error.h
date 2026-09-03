@@ -27,7 +27,13 @@
 
 #include <ode/config.h>
 
+// KisakCOD ABI port: vadefs.h is an MSVC-only header; every other compiler
+// gets va_list from <stdarg.h>.
+#if defined(_MSC_VER)
 #include <vadefs.h>
+#else
+#include <stdarg.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {

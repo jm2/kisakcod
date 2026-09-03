@@ -265,11 +265,18 @@
               #endif
               
             #else
-              #ifdef linux
+              // KisakCOD ABI port: the legacy `linux`/`i386` macros are GNU
+              // extensions that strict -std=c++XX compilation does not define,
+              // so the header fell through with IS_LE/IS_BE unset and every
+              // DXDEC declaration failed ("'DXDEC' does not name a type").
+              // Detect via the standard predefined macros instead; the
+              // resulting IS_LINUX profile is the branch this header already
+              // ships for Linux.
+              #if defined(linux) || defined(__linux__) || defined(__linux)
                 #define IS_LINUX
                 #define IS_32
                 #define IS_LE
-                #ifdef i386
+                #if defined(__i386__)
                   #define IS_X86
                 #endif
               #endif
