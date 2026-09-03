@@ -115,12 +115,13 @@ bool ReadString(char *out, size_t outSize);
 // advance. The read is bounded twice — byteCount must fit in both the
 // cursor's remaining span and outCapacity — so a loader cannot copy an
 // attacker-controlled count past either the buffer or the destination.
-// The read is failure-atomic: on any failure (inactive or failed
-// cursor, overrun, or capacity) nothing is copied, the cursor does not
-// advance, and the first byteCount bytes of out are zero-filled so the
-// destination never exposes uninitialized memory; the function then
-// returns false and marks the cursor failed. On success the anchored
-// *pos pointer is re-synced exactly like a typed read.
+// The read is failure-atomic: on any failure while a cursor is active
+// (failed cursor, overrun, or capacity) nothing is copied, the cursor
+// does not advance, and the first byteCount bytes of out are zero-filled
+// so the destination never exposes uninitialized memory; the function
+// then returns false and marks the cursor failed. With no cursor active
+// the call is a strict no-op that only returns false. On success the
+// anchored *pos pointer is re-synced exactly like a typed read.
 bool ReadBytes(void *out, size_t outCapacity, size_t byteCount);
 
 // Typed helpers that read through the cursor and apply a domain bound.
