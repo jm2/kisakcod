@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <new>
 
 // The opaque handle's concrete shape; defined here so the anonymous-namespace
 // helpers below can validate and dereference handles.
@@ -137,10 +138,15 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     local.sin_port = htons(port);
     local.sin_addr.s_addr = INADDR_ANY;
 
+    // SO_REUSEADDR must be applied before bind to affect that bind attempt;
+    // it permits rebinding endpoints in TIME_WAIT, not live port sharing.
     const BOOL reuse = TRUE;
-    if (bind(raw, reinterpret_cast<const sockaddr *>(&local), sizeof(local)) != 0
-        || setsockopt(raw, SOL_SOCKET, SO_REUSEADDR,
-               reinterpret_cast<const char *>(&reuse), sizeof(reuse)) != 0)
+    if (setsockopt(raw, SOL_SOCKET, SO_REUSEADDR,
+            reinterpret_cast<const char *>(&reuse), sizeof(reuse))
+            != 0
+        || bind(raw, reinterpret_cast<const sockaddr *>(&local),
+            sizeof(local))
+            != 0)
     {
         closesocket(raw);
         return SysSocketOpenStatus::SystemFailure;
@@ -156,7 +162,14 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
         }
     }
 
-    SysSocket *socket = new SysSocket();
+    // Allocation is non-throwing so a failure cannot bypass the status
+    // contract and leak the already-open socket.
+    SysSocket *socket = new (std::nothrow) SysSocket();
+    if (!socket)
+    {
+        closesocket(raw);
+        return SysSocketOpenStatus::SystemFailure;
+    }
     socket->handle = raw;
     *outHandle = socket;
     return SysSocketOpenStatus::Opened;
