@@ -319,8 +319,8 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
         if (spawnResult.status == PhysBodyModelCreateStatus::Success)
         {
             const phys_obj_id::OwnerIndex owner = static_cast<phys_obj_id::OwnerIndex>(numPieces);
-            const phys_obj_id::TokenResult bind = phys_obj_id::BodySidecar<kBreakablePieceBodySidecarCapacity>::Bind(
-                g_breakablePieceBodySidecar,
+            // Bind is a non-static member: call it on the global sidecar.
+            const phys_obj_id::TokenResult bind = g_breakablePieceBodySidecar.Bind(
                 owner,
                 physObjId);
             if (bind.status != phys_obj_id::Status::Success)

@@ -636,9 +636,12 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
                 {
                     const phys_obj_id::OwnerIndex owner = static_cast<phys_obj_id::OwnerIndex>(
                         static_cast<uint32_t>(drawType) * 4096u + dynEntId);
+                    // The frozen field is int32_t; the sidecar token is the
+                    // corresponding unsigned type, so alias through it
+                    // explicitly (signed/unsigned pairs may alias).
                     const phys_obj_id::TokenResult bind = phys_obj_id::WriteBind(
                         g_dynEntClientBodySidecar,
-                        &dynEntClient->physObjId,
+                        reinterpret_cast<phys_obj_id::BodyToken *>(&dynEntClient->physObjId),
                         owner,
                         physObjIdBody);
                     if (bind.status != phys_obj_id::Status::Success)

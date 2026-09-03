@@ -39,9 +39,12 @@
     if (cent->pose.physObjId != phys_obj_id::INVALID_BODY_TOKEN)
         return false;
     const phys_obj_id::OwnerIndex owner = CG_CPosePhysObjId_OwnerIndex(cent);
+    // The frozen MP field is int32_t; the sidecar token is the
+    // corresponding unsigned type, so alias through it explicitly
+    // (signed/unsigned pairs may alias).
     const phys_obj_id::TokenResult bind = phys_obj_id::WriteBind(
         g_cposeBodySidecar,
-        &cent->pose.physObjId,
+        reinterpret_cast<phys_obj_id::BodyToken *>(&cent->pose.physObjId),
         owner,
         body);
     return bind.status == phys_obj_id::Status::Success;
