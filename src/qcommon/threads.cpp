@@ -539,6 +539,55 @@ void __cdecl Sys_WorkerThreadPausePoint(const ThreadContext_t threadContext)
     Sys_WorkerGatePausePoint(gate);
 }
 
+bool __cdecl Sys_ShutdownWorkerThread(const std::uint32_t workerIndex)
+{
+    if (!Sys_IsWorkerThreadIndexValid(workerIndex))
+        return false;
+
+    SysWorkerGateHandle &gate = s_workerThreadGate[workerIndex];
+    if (!gate)
+        return false;
+
+    const ThreadContext_t threadContext = static_cast<ThreadContext_t>(
+        THREAD_CONTEXT_WORKER0 + workerIndex);
+    const bool workerStarted = Sys_WorkerGateRequestShutdown(gate);
+    if (workerStarted)
+    {
+        // Release the worker from any unrelated command wait so it reaches
+        // its pause point, observes the latch, and returns from its entry.
+        Sys_SetWorkerCmdEvent();
+        Sys_ThreadJoin(threadHandle[threadContext]);
+    }
+    else
+    {
+        // A created-but-never-activated worker is suspended before its entry
+        // ran. sys_thread requires Created handles to be joined before
+        // destruction, and a never-started thread can never be joined, so run
+        // the entry once: the gate's latch makes the first pause point a no-op
+        // and lets a shutdown-aware entry exit immediately.
+        Sys_ThreadStart(threadHandle[threadContext]);
+        Sys_ThreadJoin(threadHandle[threadContext]);
+    }
+    // Both paths end with a joined handle that Destroy can release.
+    Sys_ThreadDestroy(&threadHandle[threadContext]);
+    Sys_WorkerGateDestroy(&gate);
+    s_threadStartRecord[threadContext] = {};
+    return true;
+}
+
+bool __cdecl Sys_WorkerThreadShutdownRequested(const ThreadContext_t threadContext)
+{
+    uint32_t workerIndex;
+    if (!Sys_GetWorkerThreadIndex(threadContext, &workerIndex))
+        return false;
+
+    SysWorkerGateHandle const gate = s_workerThreadGate[workerIndex];
+    if (!gate)
+        return false;
+
+    return Sys_WorkerGateIsShutdownRequested(gate);
+}
+
 static void KISAK_CDECL Sys_StartThread(const ThreadContext_t threadContext)
 {
     if (!Sys_IsThreadContextValid(threadContext))

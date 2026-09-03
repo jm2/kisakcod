@@ -31,6 +31,16 @@ void __cdecl Sys_SetWorkerThreadActive(
     std::uint32_t workerIndex,
     bool active);
 void __cdecl Sys_WorkerThreadPausePoint(ThreadContext_t threadContext);
+// Orderly worker teardown (M8 embed/restart lifecycle). Latches the worker's
+// shutdown request, wakes it, joins the native thread, releases the thread
+// and gate, and resets the slot so Sys_SpawnWorkerThread can run again for
+// the same index. Returns false for an invalid index or a slot that is not
+// currently spawned; repeated calls are a no-op.
+bool __cdecl Sys_ShutdownWorkerThread(std::uint32_t workerIndex);
+// Worker loop condition: true once a shutdown request has been latched for
+// this worker's gate. A worker entry function that observes it must return
+// promptly so the shutdown join can complete.
+bool __cdecl Sys_WorkerThreadShutdownRequested(ThreadContext_t threadContext);
 void *__cdecl Sys_RendererSleep();
 int __cdecl Sys_RendererReady();
 void __cdecl Sys_RenderCompleted();

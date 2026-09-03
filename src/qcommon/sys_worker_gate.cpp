@@ -26,6 +26,10 @@ enum class SysWorkerGateState : std::uint32_t
 struct SysWorkerGate
 {
     std::atomic<SysWorkerGateState> state;
+    // Latched shutdown intent. Kept outside the CAS state machine: every
+    // state transition stays exclusive to the existing controller contract,
+    // while the latch is observable by both sides and survives any state.
+    std::atomic<bool> shutdownRequested;
     SysEventHandle resumeEvent;
     SysEventHandle parkedEvent;
 };
@@ -47,6 +51,7 @@ void KISAK_CDECL Sys_WorkerGateCreate(SysWorkerGateHandle *const outGate)
 
     SysWorkerGate *const gate = new (std::nothrow) SysWorkerGate{
         SysWorkerGateState::Created,
+        false,
         nullptr,
         nullptr};
     if (!gate)
@@ -64,7 +69,11 @@ void KISAK_CDECL Sys_WorkerGateDestroy(SysWorkerGateHandle *const gateHandle)
 
     SysWorkerGate *const gate = Sys_GetWorkerGate(*gateHandle);
     const SysWorkerGateState state = gate->state.load(std::memory_order_seq_cst);
-    if (state != SysWorkerGateState::Created
+    const bool shutdownLatched =
+        gate->shutdownRequested.load(std::memory_order_seq_cst);
+    // A latched shutdown request supplies the external quiescence: the worker
+    // has been joined (or never started), so any state is releasable.
+    if (!shutdownLatched && state != SysWorkerGateState::Created
         && state != SysWorkerGateState::Running)
     {
         Sys_WorkerGateFailFast();
@@ -180,6 +189,37 @@ void KISAK_CDECL Sys_WorkerGateWaitPaused(
     }
 }
 
+bool KISAK_CDECL Sys_WorkerGateRequestShutdown(
+    const SysWorkerGateHandle gateHandle)
+{
+    SysWorkerGate *const gate = Sys_GetWorkerGate(gateHandle);
+
+    // Latch before reading the state. All gate transitions are
+    // controller-driven except the worker's own pause acknowledgements
+    // (which never reach Created), so under the one-controller contract a
+    // stable Created read means never started, and any other state means
+    // the worker must be released to observe the latch.
+    gate->shutdownRequested.store(true, std::memory_order_seq_cst);
+
+    const SysWorkerGateState state = gate->state.load(std::memory_order_seq_cst);
+    if (state == SysWorkerGateState::Created)
+        return false;
+
+    // Release a parked worker from its resume wait so it observes the latch
+    // now instead of at the next activation. Extra signals are harmless: the
+    // pause point rechecks the latch after every wake, and the gate is
+    // destroyed only after the worker has been joined.
+    Sys_SetEvent(&gate->resumeEvent);
+    return true;
+}
+
+bool KISAK_CDECL Sys_WorkerGateIsShutdownRequested(
+    const SysWorkerGateHandle gateHandle)
+{
+    const SysWorkerGate *const gate = Sys_GetWorkerGate(gateHandle);
+    return gate->shutdownRequested.load(std::memory_order_seq_cst);
+}
+
 void KISAK_CDECL Sys_WorkerGatePausePoint(
     const SysWorkerGateHandle gateHandle)
 {
@@ -187,6 +227,24 @@ void KISAK_CDECL Sys_WorkerGatePausePoint(
 
     for (;;)
     {
+        // Shutdown short-circuits every pause generation: an in-flight pause
+        // is acknowledged so a waiting controller is released, then the
+        // worker returns to its loop to observe the latch and exit.
+        if (gate->shutdownRequested.load(std::memory_order_seq_cst))
+        {
+            SysWorkerGateState state = gate->state.load(std::memory_order_seq_cst);
+            if (state == SysWorkerGateState::PauseRequested
+                && gate->state.compare_exchange_weak(
+                    state,
+                    SysWorkerGateState::Parked,
+                    std::memory_order_seq_cst,
+                    std::memory_order_seq_cst))
+            {
+                Sys_SetEvent(&gate->parkedEvent);
+            }
+            return;
+        }
+
         SysWorkerGateState state = gate->state.load(std::memory_order_seq_cst);
         switch (state)
         {
