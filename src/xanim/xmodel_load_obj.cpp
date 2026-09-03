@@ -457,10 +457,23 @@ void __cdecl XSurfaceTransfer(
 
 static void ReadBlend(XSurface *surface, int *partBits, XBlendLoadInfo *blend, unsigned char **pos)
 {
-    short boner = Buf_Read<short>(pos);
-    partBits[boner >> 5] |= 0x80000000 >> (boner & 0x1F);
+    // The blend bone index is a file-controlled 16-bit value that the
+    // retail reader consumed as a signed short and used directly as the
+    // partBits[4] subscript `partBits[boner >> 5]` — a negative or
+    // oversized index wrote outside the part bits in production builds
+    // (the guarding asserts compile out). Read through the cursor's
+    // bounded bone helper instead: an index at or beyond the active
+    // bone limit latches Failed() on the cursor (rejecting the file).
+    // The bounded helpers return the raw file value on a violation, so
+    // clamp to a benign in-range subscript before the write below —
+    // the loader rejects the file after the parse either way. Retail
+    // files only carry indices below the 128-bone model bound, so valid
+    // data parses identically.
+    const unsigned short boner = buf_cursor::ReadBone();
+    const unsigned short bone = buf_cursor::Failed() ? 0 : boner;
+    partBits[bone >> 5] |= 0x80000000 >> (bone & 0x1F);
 
-    blend->boneOffset = (boner << 6);
+    blend->boneOffset = (bone << 6);
     blend->boneWeight = Buf_Read<unsigned short>(pos);
 }
 
@@ -476,6 +489,7 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
     XVertexInfo2 *vert2Out; // [esp+B0h] [ebp-690h]
     int boneIndex; // [esp+B4h] [ebp-68Ch]
     int numblends; // [esp+B8h] [ebp-688h]
+    int blendsRemaining; // blend-arena budget in 4-byte records (bounded)
     XBlendLoadInfo *blendOut; // [esp+BCh] [ebp-684h]
     int allocCount; // [esp+C0h] [ebp-680h]
     int blendBoneOffset; // [esp+C4h] [ebp-67Ch]
@@ -543,7 +557,14 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
         if (!rigidVertList->vertCount)
             break;
 
-        localBoneIndex = Buf_Read<unsigned short>(pos);
+        // The rigid-list bone index later feeds the partBits[4]
+        // subscript `partBits[boneOffset >> 11]` below. Read it through
+        // the cursor's bounded bone helper; a violation latches Failed()
+        // (the file is rejected after the parse) and the clamp keeps the
+        // derived subscript in range meanwhile.
+        localBoneIndex = buf_cursor::ReadBone();
+        if (buf_cursor::Failed())
+            localBoneIndex = 0;
         rigidVertList->boneOffset = localBoneIndex << 6;
         rigidVertCount += rigidVertList->vertCount;
         ++vertListCount;
@@ -567,6 +588,11 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
     {
         numblends = Buf_Read<unsigned short>(pos);
     }
+
+    // The surfVerts arena below is sized for exactly numblends 4-byte
+    // blend records after the 64-byte vertex records. Per-vertex weight
+    // counts must sum to at most that budget; enforce it while reading.
+    blendsRemaining = numblends;
 
     size = (surface->vertCount << 6) + 4 * numblends;
     surfVerts = (XVertexBuffer*)Hunk_AllocateTempMemory(size, "XModelReadSurface");
@@ -621,14 +647,25 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
         }
         else
         {
-            numWeights = Buf_Read<unsigned char>(pos);
+            // The weight count indexes the 4-slot weightCount[]
+            // histogram (the retail `numWeights < 4` assert compiles
+            // out of production builds) and the blend bone index feeds
+            // the partBits[4] subscript below. Both read through the
+            // cursor's bounded helpers; a violation latches Failed()
+            // (the file is rejected after the parse) and the clamp
+            // keeps the derived subscripts in range meanwhile.
+            numWeights = buf_cursor::ReadWeight();
+            if (buf_cursor::Failed())
+                numWeights = 0;
             verts->numWeights = numWeights;
 
             iassert(numWeights < 4);
 
             ++weightCount[numWeights];
 
-            blendBoneIndex = Buf_Read<unsigned short>(pos);
+            blendBoneIndex = buf_cursor::ReadBone();
+            if (buf_cursor::Failed())
+                blendBoneIndex = 0;
 
             surface->partBits[blendBoneIndex >> 5] |= 0x80000000 >> (blendBoneIndex & 0x1F);
             blendBoneOffset = blendBoneIndex << 6;
@@ -644,6 +681,23 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
             if (numWeights)
             {
                 iassert(deformed);
+
+                // The blend arena carries exactly numblends blend
+                // records. A hostile file can declare per-vertex weight
+                // counts beyond the remaining budget and walk the blend
+                // writes past the allocation, so enforce the count
+                // bound: an overrun fails the cursor (rejecting the
+                // file) and skips the blends for this vertex, keeping
+                // every subsequent write inside the arena.
+                if (numWeights > blendsRemaining)
+                {
+                    buf_cursor::Fail();
+                    numWeights = 0;
+                }
+                else
+                {
+                    blendsRemaining -= numWeights;
+                }
 
                 for (i = 0; i < numWeights; ++i)
                 {
@@ -661,7 +715,12 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
 
     for (vertIndex = 0; vertIndex < 3 * surface->triCount; ++vertIndex)
     {
-        surface->triIndices[vertIndex] = Buf_Read<unsigned short>(pos);
+        // Triangle indices are consumed as vertex offsets by the
+        // renderer. Read through the cursor's triangle helper so an
+        // index at or beyond vertCount latches Failed() (rejecting the
+        // file) instead of publishing an out-of-range index — the
+        // assert below compiles out of production builds.
+        surface->triIndices[vertIndex] = buf_cursor::ReadTri(surface->vertCount);
 
         iassert(surface->triIndices[vertIndex] < surface->vertCount);
     }
@@ -964,6 +1023,14 @@ XModelSurfs *__cdecl R_XModelSurfsLoadFile(
     pos = buf;
     buf_cursor::Activate(buf, fileSize);
     buf_cursor::AnchorPos(&pos);
+    // Domain bounds for the surface reader below. XSurface::partBits is
+    // int[4], so every bone index the reader consumes must stay below
+    // 128 to keep `partBits[index >> 5]` inside the part bits (matching
+    // the model's 128-bone bound), and the per-vertex weight count
+    // indexes a 4-slot histogram, so it must stay below 4. The bounded
+    // bone/weight/triangle reads latch Failed() on the first violation.
+    buf_cursor::SetBoneLimit(128);
+    buf_cursor::SetWeightLimit(4);
     short version = Buf_Read<short>(&pos);
 
     if (version == 25)
@@ -977,8 +1044,17 @@ XModelSurfs *__cdecl R_XModelSurfsLoadFile(
             model->memUsage += size;
             modelSurfs->surfs = (XSurface*)&modelSurfs[1];
             XModelReadSurfaces(model, name, modelSurfs, modelSurfs->partBits, modelNumsurfs, &pos, Alloc);
+            // A tripped bounds/domain failure rejects the whole surface
+            // file through the ordinary malformed-input path instead of
+            // publishing zero-degraded, out-of-range surface data.
+            const bool malformed = buf_cursor::Failed();
             buf_cursor::Deactivate();
             FS_FreeFile((char*)buf);
+            if (malformed)
+            {
+                Com_PrintError(19, "ERROR: xmodelsurfs '%s' has malformed surface data\n", name);
+                return 0;
+            }
 
             iassert(modelSurfs);
             return modelSurfs;
@@ -1061,6 +1137,21 @@ void __cdecl XModelLoadCollData(
 
     model->numCollSurfs = Buf_Read<int>(pos);
 
+    // The surf count drives `AllocColl(44 * numCollSurfs)` below; an
+    // attacker-sized count used to overflow the 32-bit size math into
+    // an undersized allocation before the per-surf writes ran. Each
+    // surf consumes at least one byte of the file, so a count larger
+    // than the remaining cursor span cannot be satisfiable — fail the
+    // cursor and let the loader reject the file.
+    const buf_cursor::BufCursor *cursor = buf_cursor::Current();
+    if (cursor == nullptr
+        || model->numCollSurfs < 0
+        || static_cast<size_t>(model->numCollSurfs) > static_cast<size_t>(cursor->end - cursor->current))
+    {
+        buf_cursor::Fail();
+        return;
+    }
+
     if (model->numCollSurfs)
     {
         model->collSurfs = (XModelCollSurf_s *)AllocColl(44 * model->numCollSurfs);
@@ -1071,6 +1162,18 @@ void __cdecl XModelLoadCollData(
             int numCollTris = Buf_Read<int>(pos);
 
             iassert(numCollTris);
+
+            // The tri count drives `AllocColl(sizeof(XModelCollTri_s) *
+            // numCollTris)`; the same remaining-span bound keeps the
+            // size math inside int range for any realizable file.
+            cursor = buf_cursor::Current();
+            if (cursor == nullptr
+                || numCollTris < 0
+                || static_cast<size_t>(numCollTris) > static_cast<size_t>(cursor->end - cursor->current))
+            {
+                buf_cursor::Fail();
+                return;
+            }
 
             surf->numCollTris = numCollTris;
             surf->collTris = (XModelCollTri_s *)AllocColl(sizeof(XModelCollTri_s) * numCollTris);
@@ -1307,6 +1410,10 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
     model = (XModel *)Alloc(sizeof(XModel));
     model->memUsage = sizeof(XModel);
     XModelLoadCollData(&pos, model, AllocColl, name);
+    // A count-bounds failure in the collision reader rejects the whole
+    // model file instead of continuing with a truncated collision set.
+    if (buf_cursor::Failed())
+        goto LABEL_28;
 
     model->numLods = 0;
     v36 = pos;
@@ -1630,6 +1737,22 @@ XModelPartsLoad *__cdecl XModelPartsLoadFile(XModel *model, const char *name, vo
             index = buf_cursor::ReadWeight();
             buf_cursor::AnchorPos(&pos);
             iassert(index < i);
+
+            // The assert above compiles out of production builds. The
+            // parent index is a file-controlled byte stored as the
+            // distance `i - index`; an index at or past the current
+            // bone would store a corrupted distance and poison the
+            // skeleton walk that consumes it. Enforce the bound for
+            // real: reject the file through the ordinary
+            // malformed-input path.
+            if (index >= i)
+            {
+                buf_cursor::Deactivate();
+                FS_FreeFile((char *)buf);
+                Com_PrintError(19, "ERROR: xmodelparts '%s' has malformed bone parent index\n", name);
+                return 0;
+            }
+
             *parentList = i - index;
 
             trans[0] = Buf_Read<float>(&pos);
@@ -1671,6 +1794,17 @@ XModelPartsLoad *__cdecl XModelPartsLoadFile(XModel *model, const char *name, vo
         // destination is zero-filled and the load unwinds below.
         (void)buf_cursor::ReadBytes(modelParts->partClassification, numBones, numBones);
         useBones = (buf_cursor::ReadWeight() != 0);
+        // A cursor failure anywhere above (a truncated or malformed
+        // parts body) means every subsequent read latched zero-filled
+        // data. Reject the file instead of publishing a zero-degraded
+        // skeleton the retail path would treat as valid.
+        if (buf_cursor::Failed())
+        {
+            buf_cursor::Deactivate();
+            FS_FreeFile((char *)buf);
+            Com_PrintError(19, "ERROR: xmodelparts '%s' has malformed data\n", name);
+            return 0;
+        }
         buf_cursor::Deactivate();
         FS_FreeFile((char *)buf);
         XModelCalcBasePose(modelParts);
