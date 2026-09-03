@@ -2454,6 +2454,29 @@ add_test(
 )
 set_tests_properties(platform-filesystem-path-contracts PROPERTIES TIMEOUT 20)
 
+# fuzz_sys_filesystem: production-path fuzz fixture for the no-follow
+# file read service. Links the same selected platform sys_filesystem.cpp
+# as the contract tests above; named 'fuzz|filesystem' so the ctest
+# named-regex filters in CI pick it up with the other fuzz entries.
+add_executable(fuzz_sys_filesystem
+    fuzz_sys_filesystem.cpp
+    ${_platform_filesystem_sources}
+)
+target_include_directories(fuzz_sys_filesystem PRIVATE ${SRC_DIR})
+target_compile_features(fuzz_sys_filesystem PRIVATE cxx_std_20)
+kisakcod_test_warnings(fuzz_sys_filesystem)
+set_target_properties(fuzz_sys_filesystem PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME fuzz-sys-filesystem-seeds
+    COMMAND fuzz_sys_filesystem seeds)
+set_tests_properties(fuzz-sys-filesystem-seeds PROPERTIES TIMEOUT 120)
+add_test(
+    NAME fuzz-sys-filesystem-random
+    COMMAND fuzz_sys_filesystem random 20000)
+set_tests_properties(fuzz-sys-filesystem-random PROPERTIES TIMEOUT 120)
+
 set(_platform_process_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
 list(FILTER _platform_process_sources INCLUDE REGEX "[/\\\\]sys_process\\.cpp$")
 if (KISAK_PLATFORM STREQUAL "macos")
