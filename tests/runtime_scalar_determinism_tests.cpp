@@ -26,9 +26,10 @@
 // material-time producers; other subsystems adopt the layer as ARM64 runs
 // expose their scalar gaps.
 
-#include <runtime/scalar_determinism.h>
+#include <runtime/scalar_determinism.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <iterator>
@@ -164,43 +165,60 @@ void TestTotalOrderLess()
         "positive NaN sorts last");
 }
 
-void TestLittleEndianRoundTrip()
+// The packed-field checks split into focused helpers so each stays under
+// the project complexity budget while covering one contract per function.
+void TestLittleEndianWriteByteLayout()
 {
-    using runtime::determinism::ReadLe16;
-    using runtime::determinism::ReadLe32;
-    using runtime::determinism::ReadLe64;
     using runtime::determinism::WriteLe16;
     using runtime::determinism::WriteLe32;
     using runtime::determinism::WriteLe64;
+
+    // Byte-level layout is pinned: the buffer must look identical everywhere.
+    unsigned char bytes[8] = {};
+    WriteLe16(bytes, 0x1234);
+    const unsigned char kLe16Layout[] = { 0x34, 0x12 };
+    expect(std::equal(kLe16Layout, kLe16Layout + 2, bytes),
+        "WriteLe16 byte order");
+    WriteLe32(bytes, 0xDEADBEEFu);
+    const unsigned char kLe32Layout[] = { 0xEF, 0xBE, 0xAD, 0xDE };
+    expect(std::equal(kLe32Layout, kLe32Layout + 4, bytes),
+        "WriteLe32 byte order");
+    WriteLe64(bytes, 0x0102030405060707ull);
+    const unsigned char kLe64Layout[] = {
+        0x07, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01 };
+    expect(std::equal(kLe64Layout, kLe64Layout + 8, bytes),
+        "WriteLe64 byte order");
+}
+
+void TestLittleEndianBoundaryRoundTrip()
+{
+    using runtime::determinism::ReadLe16;
+    using runtime::determinism::ReadLe32;
+    using runtime::determinism::WriteLe32;
 
     constexpr unsigned char kLe16Bytes[] = { 0x34, 0x12 };
     constexpr unsigned char kLe32Bytes[] = { 0x01, 0x02, 0x03, 0x04 };
     static_assert(ReadLe16(kLe16Bytes) == 0x1234);
     static_assert(ReadLe32(kLe32Bytes) == 0x04030201u);
 
-    // Byte-level layout is pinned: the buffer must look identical everywhere.
-    unsigned char bytes[8] = {};
-    WriteLe16(bytes, 0x1234);
-    expect(bytes[0] == 0x34 && bytes[1] == 0x12, "WriteLe16 byte order");
-    WriteLe32(bytes, 0xDEADBEEFu);
-    expect(bytes[0] == 0xEF && bytes[1] == 0xBE && bytes[2] == 0xAD
-            && bytes[3] == 0xDE,
-        "WriteLe32 byte order");
-    WriteLe64(bytes, 0x0102030405060707ull);
-    expect(bytes[0] == 0x07 && bytes[1] == 0x07 && bytes[2] == 0x06
-            && bytes[3] == 0x05 && bytes[4] == 0x04 && bytes[5] == 0x03
-            && bytes[6] == 0x02 && bytes[7] == 0x01,
-        "WriteLe64 byte order");
-
     // Round-trip over boundary values.
     const std::uint32_t probes[] = { 0u, 1u, 0x7FFFu, 0x8000u, 0xFFFFFFFFu };
     for (const std::uint32_t probe : probes)
     {
+        unsigned char bytes[8] = {};
         WriteLe32(bytes, probe);
         expect(ReadLe32(bytes) == probe, "u32 round-trip");
         expect(ReadLe16(bytes) == static_cast<std::uint16_t>(probe & 0xFFFFu),
             "u32 low half readable as u16");
     }
+}
+
+void TestLittleEndianMisalignedAccess()
+{
+    using runtime::determinism::ReadLe32;
+    using runtime::determinism::ReadLe64;
+    using runtime::determinism::WriteLe32;
+    using runtime::determinism::WriteLe64;
 
     // Alignment independence: deliberately misaligned offsets round-trip too.
     unsigned char misaligned[9] = {};
@@ -248,7 +266,9 @@ int main()
     TestFloatToIntSaturatingOutOfRangeIsDefined();
     TestFloatToIntSaturatingNaNMapsToZero();
     TestTotalOrderLess();
-    TestLittleEndianRoundTrip();
+    TestLittleEndianWriteByteLayout();
+    TestLittleEndianBoundaryRoundTrip();
+    TestLittleEndianMisalignedAccess();
     TestSignExtensionAndTrailByteRoundTrip();
     return 0;
 }

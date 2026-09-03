@@ -25,7 +25,7 @@
 #include "bullet.h"
 #include <universal/surfaceflags.h>
 #include <bgame/bg_vehicle_material_time.h>
-#include <runtime/scalar_determinism.h>
+#include <runtime/scalar_determinism.hpp>
 
 //Line 51763:  0006 : 00006554       unsigned short **s_flashTags      827b6554     g_scr_vehicle.obj
 

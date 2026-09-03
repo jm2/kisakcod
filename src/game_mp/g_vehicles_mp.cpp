@@ -15,7 +15,7 @@
 #include <server/sv_game.h>
 #include <game/bullet.h>
 #include <bgame/bg_vehicle_material_time.h>
-#include <runtime/scalar_determinism.h>
+#include <runtime/scalar_determinism.hpp>
 
 
 

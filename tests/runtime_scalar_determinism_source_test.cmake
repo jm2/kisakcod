@@ -39,7 +39,7 @@ function(forbid_contains SOURCE_VARIABLE NEEDLE DESCRIPTION)
 endfunction()
 
 read_normalized(
-    "${SOURCE_ROOT}/src/runtime/scalar_determinism.h"
+    "${SOURCE_ROOT}/src/runtime/scalar_determinism.hpp"
     _layer "architecture-neutral determinism layer")
 read_normalized(
     "${SOURCE_ROOT}/src/game/g_scr_vehicle.cpp"
@@ -63,7 +63,7 @@ endforeach()
 
 # Both producers route through the layer and declare it.
 foreach(_producer IN ITEMS _sp_producer _mp_producer)
-    require_contains(${_producer} "#include <runtime/scalar_determinism.h>"
+    require_contains(${_producer} "#include <runtime/scalar_determinism.hpp>"
         "producer includes the determinism layer")
     require_contains(${_producer} "runtime::determinism::FloatToIntSaturating("
         "producer converts through the defined primitive")
