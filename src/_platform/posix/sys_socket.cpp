@@ -277,6 +277,5 @@ bool KISAK_CDECL Sys_SocketAddressIsEqual(
 {
     if (!first || !second)
         return false;
-    return std::memcmp(first->address, second->address, 4) == 0
-        && first->port == second->port;
+    return first->Equals(*second);
 }
