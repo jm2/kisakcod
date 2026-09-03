@@ -82,6 +82,14 @@ jobs:
       - name: Run portable tests
         run: ctest --test-dir build-tests -C Release --output-on-failure
 
+  # Sealed surface: source-invariant seal tests pin this job's exact step
+  # shapes, names, and ordering, and normalize the file with comments left
+  # in place — so do not reword step names, reorder steps, add comments
+  # between the job key and its name, or reflow the artifact ref. Restored
+  # verbatim from base; only timeout-minutes, persist-credentials: false,
+  # and pinning the two actions no seal references were added. The
+  # upload-artifact ref must stay literal until the seal markers are
+  # updated (ki-yvj follow-up bead).
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
     runs-on: windows-2022
@@ -90,6 +98,9 @@ jobs:
       fail-fast: false
       matrix:
         config: [Debug, Release]
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
+      DXSDK_VERSION: 9.29.952.8
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -99,11 +110,97 @@ jobs:
         with:
           dotnet-version: 8.x
 
-      # Shared with release.yml so CI validates exactly what release ships
-      # (audit gap 11): same script, same production flags.
-      - name: Configure and build (shared production profile)
+      - name: Restore DirectX SDK
         shell: pwsh
-        run: ./scripts/ci/build-windows-x86.ps1 -BuildDir "build-${{ matrix.config }}" -Config "${{ matrix.config }}"
+        run: |
+          dotnet new classlib -o dxsdk-temp
+          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
+          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
+          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B "build-${{ matrix.config }}" `
+            -G "Visual Studio 17 2022" -A Win32 `
+            -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
+            -DKISAK_BUILD_MP=ON `
+            -DKISAK_BUILD_DEDICATED=ON `
+            -DKISAK_BUILD_SP=OFF `
+            -DKISAK_MEASURE_FX_ARCHIVE_STACK=ON
+
+      - name: Build
+        shell: pwsh
+        run: >
+          cmake --build "build-${{ matrix.config }}"
+          --config "${{ matrix.config }}"
+          --target KisakCOD-mp KisakCOD-dedi
+          kisakcod-actor-grenade-prediction-cache-tests
+          kisakcod-actor-grenade-safety-tests
+          kisakcod-ui-safety-tests
+          kisakcod-target-table-tests
+          kisakcod-missile-layout-mp-compile-tests
+          kisakcod-missile-layout-sp-compile-tests
+          kisakcod-pool-allocator-tests
+          kisakcod-physicalmemory-legacy-tests
+          kisakcod-physicalmemory-runtime-tests
+          kisakcod-physicalmemory-runtime-production-seal-tests
+          kisakcod-physicalmemory-checked-tests
+          kisakcod-physicalmemory-checked-api-seal-tests
+          kisakcod-fx-effect-table-restore-tests
+          kisakcod-fx-effect-table-save-tests
+          kisakcod-fx-archive-disk32-tests
+          kisakcod-fx-archive-body-state-disk32-tests
+          kisakcod-fx-archive-system-disk32-tests
+          kisakcod-fx-archive-buffers-disk32-tests
+          kisakcod-fx-archive-native-disk32-tests
+          kisakcod-fx-archive-reader-disk32-tests
+          kisakcod-fx-archive-restore-candidate-disk32-tests
+          kisakcod-fx-fastfile-disk32-tests
+          kisakcod-fx-fastfile-native-disk32-tests
+          kisakcod-fx-fastfile-impact-native-disk32-tests
+          kisakcod-fx-fastfile-native-arena-tests
+          kisakcod-fx-fastfile-zone-adapter-disk32-tests
+          kisakcod-db-xasset-disk32-tests
+          kisakcod-db-script-string-disk32-tests
+          kisakcod-db-zone-load-context-tests
+          kisakcod-db-zone-stream-ownership-tests
+          kisakcod-db-zone-stream-ownership-production-seal-tests
+          kisakcod-db-zone-pending-copy-ledger-tests
+          kisakcod-db-zone-pending-copy-ledger-production-seal-tests
+          kisakcod-db-script-string-journal-tests
+          kisakcod-db-zone-script-string-ownership-tests
+          kisakcod-db-registry-ownership-coordinator-tests
+          kisakcod-db-registry-ownership-coordinator-production-seal-tests
+          kisakcod-db-zone-runtime-facade-macro-off
+          kisakcod-db-zone-runtime-facade-tests
+          kisakcod-db-zone-runtime-facade-production-seal-tests
+          kisakcod-db-zone-runtime-callback-context-macro-off
+          kisakcod-db-zone-runtime-callback-context-tests
+          kisakcod-db-zone-runtime-callback-context-production-seal-tests
+          kisakcod-db-zone-runtime-table-tests
+          kisakcod-db-zone-runtime-table-production-seal-tests
+          kisakcod-db-zone-runtime-stable-context-integration-tests
+          kisakcod-db-zone-runtime-storage-tests
+          kisakcod-db-referenced-fastfile-tests
+          kisakcod-server-file-compare-tests
+          kisakcod-script-string-atomic-tests
+          kisakcod-script-memorytree-lease-api-seal
+          kisakcod-script-memorytree-try-tests
+          kisakcod-script-string-ownership-tests
+          kisakcod-platform-console-tests
+          kisakcod-platform-service-runtime-tests
+          kisakcod-renderer-value-encoding-tests
+          kisakcod-upstream-sort-tests
+          kisakcod-upstream-angle-math-tests
+          kisakcod-upstream-aim-safety-tests
+          kisakcod-upstream-command-dispatch-tests
+          kisakcod-weapon-model-safety-tests
+          kisakcod-weapon-input-safety-tests
+          kisakcod-hudelem-sort-mp-tests
+          kisakcod-hudelem-sort-sp-tests
+          kisakcod-fx-physics-sidecar-production-seal-tests
+          --parallel
 
       - name: Enforce FX archive stack budgets
         shell: pwsh
