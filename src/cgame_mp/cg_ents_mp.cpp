@@ -1048,7 +1048,11 @@ void __cdecl CG_CalcEntityPhysicsPositions(int32_t localClientNum, centity_s *ce
             cgs->gameModels[cent->nextState.index.brushmodel])
             && !CG_ExpiredLaunch(localClientNum, cent))
         {
-            if (!CG_CPosePhysObjId_GetBody(cent))
+            // Legacy guard was `!cent->pose.physObjId`: retry only when the
+            // field was never attempted (0). GetBody() also resolves a DEAD
+            // token to null, which would retry failed creation every frame;
+            // test the raw field instead.
+            if (phys_obj_id::IsNull(cent->pose.physObjId))
                 CG_CreatePhysicsObject(localClientNum, cent);
             if (CG_CPosePhysObjId_IsDead(cent))
             {
@@ -1189,7 +1193,10 @@ char __cdecl CG_ExpiredLaunch(int32_t localClientNum, centity_s *cent)
 
     cg_s *cgameGlob = CG_GetLocalClientGlobals(localClientNum);
 
-    if (CG_CPosePhysObjId_GetBody(cent) || cgameGlob->time <= cent->nextState.lerp.pos.trTime + 1000)
+    // Legacy guard was `cent->pose.physObjId ||` — any attempted field
+    // (including DEAD, -1) counts as "not expired"; only a never-attempted
+    // (0) field older than a second expires.
+    if (!phys_obj_id::IsNull(cent->pose.physObjId) || cgameGlob->time <= cent->nextState.lerp.pos.trTime + 1000)
         return 0;
     cent->pose.physObjId = phys_obj_id::DEAD_BODY_TOKEN;
     return 1;

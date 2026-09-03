@@ -597,6 +597,17 @@ void __cdecl DynEnt_LoadEntities()
                     "cm.dynEntCount[DYNENT_COLL_CLIENT_MODEL] + cm.dynEntCount[DYNENT_COLL_CLIENT_BRUSH] == dynEntCount");
             for (drawTypea = 0; drawTypea < 2; ++drawTypea)
             {
+                // The sidecar owner key packs drawType * 4096 + dynEntId;
+                // a per-draw-type count past the packing stride would
+                // collide MODEL keys into the BRUSH key range.
+                if (cm.dynEntCount[drawTypea] > phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
+                    MyAssertHandler(
+                        ".\\DynEntity\\DynEntity_load_obj.cpp",
+                        597,
+                        0,
+                        "dynEntCount doesn't exceed the sidecar owner-key stride\n\t%i not in [0, %u)",
+                        cm.dynEntCount[drawTypea],
+                        phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType);
                 if (cm.dynEntCount[drawTypea])
                 {
                     cm.dynEntPoseList[drawTypea] = (DynEntityPose *)DynEnt_Alloc(cm.dynEntCount[drawTypea], 32);
@@ -617,6 +628,17 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
     {
         uint16_t count = 0;
         MemFile_ReadData(memFile, sizeof(count), (uint8_t *)&count);
+        // Same sidecar owner-key stride bound as the MP loader: the save
+        // image is untrusted data and a count past the stride would collide
+        // this draw type's keys into the next one's slot range.
+        if (count > phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
+            MyAssertHandler(
+                ".\\DynEntity\\DynEntity_load_obj.cpp",
+                620,
+                0,
+                "dynEntCount doesn't exceed the sidecar owner-key stride\n\t%hu not in [0, %u)",
+                count,
+                phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType);
         cm.dynEntCount[drawType] = count;
         if (count == 0)
             continue;
@@ -634,8 +656,12 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
                 dxBody *const physObjIdBody = Phys_ObjLoad(PHYS_WORLD_DYNENT, memFile);
                 if (physObjIdBody)
                 {
-                    const phys_obj_id::OwnerIndex owner = static_cast<phys_obj_id::OwnerIndex>(
-                        static_cast<uint32_t>(drawType) * 4096u + dynEntId);
+                    // Shared packing helper: must match the runtime bind
+                    // path in DynEntity_client.cpp exactly.
+                    const phys_obj_id::OwnerIndex owner =
+                        phys_obj_id::DynEntPhysObjId_MakeOwnerIndex(
+                            static_cast<std::uint32_t>(drawType),
+                            dynEntId);
                     // The frozen field is int32_t; the sidecar token is the
                     // corresponding unsigned type, so alias through it
                     // explicitly (signed/unsigned pairs may alias).

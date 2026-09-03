@@ -156,6 +156,19 @@ class BodySidecar
     // prevent silently evading a release path. The generation is rolled
     // forward so any stale token recorded in a saved byte stream cannot
     // accidentally resolve to a new body.
+    //
+    // GCC note: these member-template instantiations have identical bodies
+    // for different Capacity values, so GCC can merge their constprop
+    // clones and inline Resolve<8> into a Resolve<4> caller. It then warns
+    // -Warray-bounds because the merged clone's owner range [0, 8) exceeds
+    // the caller's smaller object, even though owner is bounds-checked
+    // against *this->Capacity above. This is a false positive; silence
+    // -Warray-bounds locally around the slot accesses (GCC only, not
+    // Clang, which does not clone-merge these).
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
     [[nodiscard]] TokenResult Bind(OwnerIndex owner, void *body) noexcept
     {
         if (owner >= Capacity || body == nullptr)
@@ -236,6 +249,9 @@ class BodySidecar
             return false;
         return slots_[owner].body != nullptr;
     }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
     // Test/debug helper: copy every slot into a contiguous buffer. Returns
     // the number of slots written so the caller can size the output.
@@ -347,6 +363,25 @@ template <class Body, std::size_t Capacity>
 constexpr std::size_t kCposeBodySidecarCapacity = 1024;
 constexpr std::size_t kBreakablePieceBodySidecarCapacity = 100;
 constexpr std::size_t kDynEntClientBodySidecarCapacity = 8192;
+
+// DynEntityClient owner-key packing: owner = drawType * perDrawType +
+// dynEntId. The runtime bind path (DynEntity_client.cpp) and the save-image
+// replay path (DynEntity_load_obj.cpp) must derive the key through this
+// helper so the two sites cannot drift. A draw type that ever loads
+// >= kDynEntPhysObjIdOwnerPerDrawType entities would collide its keys into
+// the next draw type's slot range; the load paths assert the bound.
+constexpr std::uint32_t kDynEntPhysObjIdOwnerPerDrawType = 4096u;
+static_assert(
+    2u * kDynEntPhysObjIdOwnerPerDrawType <= kDynEntClientBodySidecarCapacity,
+    "dynent sidecar capacity must cover both draw-type key ranges");
+
+[[nodiscard]] inline phys_obj_id::OwnerIndex DynEntPhysObjId_MakeOwnerIndex(
+    std::uint32_t drawType,
+    std::uint16_t dynEntId) noexcept
+{
+    return static_cast<phys_obj_id::OwnerIndex>(
+        drawType * kDynEntPhysObjIdOwnerPerDrawType + dynEntId);
+}
 
 extern phys_obj_id::BodySidecar<kCposeBodySidecarCapacity> g_cposeBodySidecar;
 extern phys_obj_id::BodySidecar<kBreakablePieceBodySidecarCapacity> g_breakablePieceBodySidecar;

@@ -136,12 +136,15 @@ void __cdecl DynEntPieces_AddDrawSurfs()
     {
         if (g_breakablePieces[i].active)
         {
+            // The sidecar contract requires Resolve to run under
+            // CRITSECT_PHYSICS: an unlocked ReadResolve can race a
+            // Bind/Release on this slot and publish a dangling body.
+            Sys_EnterCriticalSection(CRITSECT_PHYSICS);
             dxBody *const physObjIdBody = phys_obj_id::ReadResolve<dxBody>(
                 g_breakablePieceBodySidecar,
                 g_breakablePieces[i].physObjId);
             if (physObjIdBody)
             {
-                Sys_EnterCriticalSection(CRITSECT_PHYSICS);
                 Phys_ObjGetInterpolatedState(
                     PHYS_WORLD_FX,
                     physObjIdBody,
@@ -150,6 +153,10 @@ void __cdecl DynEntPieces_AddDrawSurfs()
                 placement.scale = 1.0;
                 Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
                 R_FilterXModelIntoScene(g_breakablePieces[i].model, &placement, 0, &g_breakablePieces[i].lightingHandle);
+            }
+            else
+            {
+                Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
             }
         }
     }
