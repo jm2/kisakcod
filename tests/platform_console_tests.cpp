@@ -499,6 +499,187 @@ bool TestMessageModePipe()
     return passed;
 }
 
+INPUT_RECORD ConsoleKeyEvent(
+    const bool keyDown, const char ascii, const WORD repeat = 1)
+{
+    INPUT_RECORD record{};
+    record.EventType = KEY_EVENT;
+    record.Event.KeyEvent.bKeyDown = keyDown;
+    record.Event.KeyEvent.wRepeatCount = repeat;
+    record.Event.KeyEvent.uChar.AsciiChar = ascii;
+    return record;
+}
+
+INPUT_RECORD ConsoleResizeEvent()
+{
+    INPUT_RECORD record{};
+    record.EventType = WINDOW_BUFFER_SIZE_EVENT;
+    record.Event.WindowBufferSizeEvent.dwSize = {1, 1};
+    return record;
+}
+
+INPUT_RECORD ConsoleCtrlCEvent()
+{
+    INPUT_RECORD record{};
+    record.EventType = CTRL_C_EVENT;
+    return record;
+}
+
+INPUT_RECORD ConsoleFocusEvent(const bool set)
+{
+    INPUT_RECORD record{};
+    record.EventType = FOCUS_EVENT;
+    record.Event.FocusEvent.bSetFocus = set;
+    return record;
+}
+
+// Write one event batch into the console input queue and expect a full
+// line to be ready with the given text.
+bool WriteAndExpectConsoleLine(
+    ConsoleInput &input,
+    const char *const writeStage,
+    const INPUT_RECORD *const events,
+    const std::size_t eventCount,
+    const char *const readStage,
+    const char *const expectedLine)
+{
+    if (!Check(input.WriteEvents(events, static_cast<DWORD>(eventCount)),
+            writeStage))
+    {
+        return false;
+    }
+    return ExpectRead(
+        readStage, SysConsoleReadStatus::LineReady, expectedLine);
+}
+
+// Single printable byte, with KEY_UP drained first and a non-key event
+// interleaved to prove the drain order.
+bool TestConsoleDrainsNonKeyRecords(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleResizeEvent(),
+        ConsoleKeyEvent(false, 'a'),
+        ConsoleKeyEvent(true, 'h'),
+        ConsoleCtrlCEvent(),
+        ConsoleKeyEvent(true, 'i'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write printable console events", events,
+        sizeof(events) / sizeof(events[0]),
+        "console KEY_UP and non-key records drain first", "hi");
+}
+
+// CRLF line; the cooked console will not insert the LF if ENABLE_PROCESSED_INPUT
+// does not have ENABLE_LINE_INPUT, but our boundary is bytewise so the caller
+// writes both bytes itself.
+bool TestConsoleCrlfLine(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleKeyEvent(true, 'o'),
+        ConsoleKeyEvent(true, 'k'),
+        ConsoleKeyEvent(true, '\r'),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write complete console line", events,
+        sizeof(events) / sizeof(events[0]),
+        "console CRLF line", "ok");
+}
+
+// Zero-AsciiChar keys (arrow keys, function keys in cooked mode) must be
+// drained without producing a byte.
+bool TestConsoleZeroAsciiKeysDrained(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleKeyEvent(true, 0),
+        ConsoleKeyEvent(true, 'x'),
+        ConsoleKeyEvent(true, 0),
+        ConsoleKeyEvent(true, 'y'),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write zero-ascii console events", events,
+        sizeof(events) / sizeof(events[0]),
+        "zero-ascii console keys are drained", "xy");
+}
+
+// Control-character bytes (Tab, Escape, Backspace, Ctrl+A) must pass
+// through the byte boundary verbatim and not be confused with the
+// line-terminator bytes the parser consumes (\r, \n). The line
+// parser accumulates these as ordinary bytes; the test terminates
+// each control sequence with '\n' to flush the line.
+bool TestConsoleControlCharactersPassThrough(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleKeyEvent(true, '\t'),
+        ConsoleKeyEvent(true, 0x01),
+        ConsoleKeyEvent(true, 27),
+        ConsoleKeyEvent(true, 8),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write control-character events", events,
+        sizeof(events) / sizeof(events[0]),
+        "console control characters pass through bytewise",
+        "\t\x01\x1b\x08");
+}
+
+// Auto-repeat (wRepeatCount > 1) must yield one byte per bytewise
+// call so the line parser sees all of the repeated bytes instead of
+// collapsing the event to a single byte. Pressing and holding 'a'
+// produces a queue with one KEY_EVENT for 'a' (wRepeatCount=4) and
+// one for '\n'; the parser must observe "aaaa" + newline, not "a\n".
+bool TestConsoleAutoRepeatYieldsAllBytes(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleKeyEvent(true, 'a', 4),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write repeat event", events,
+        sizeof(events) / sizeof(events[0]),
+        "console auto-repeat yields all repeat bytes", "aaaa");
+}
+
+// A focus event interleaved between KEY_UP and the printable byte
+// must be drained without producing output; the focus event is the
+// only event in this scenario that should be drained before the
+// printable byte.
+bool TestConsoleFocusEventDrained(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleFocusEvent(false),
+        ConsoleKeyEvent(true, 'z'),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write focus event", events,
+        sizeof(events) / sizeof(events[0]),
+        "console focus event is drained", "z");
+}
+
+// Unicode code points (AsciiChar == 0, UnicodeChar != 0) must be
+// drained because the byte boundary cannot faithfully encode them
+// without breaking the line parser's bytewise contract. The next
+// printable byte in the queue is what the line parser sees.
+bool TestConsoleUnicodeKeyDrained(ConsoleInput &input)
+{
+    INPUT_RECORD unicode{};
+    unicode.EventType = KEY_EVENT;
+    unicode.Event.KeyEvent.bKeyDown = TRUE;
+    unicode.Event.KeyEvent.wRepeatCount = 1;
+    unicode.Event.KeyEvent.uChar.UnicodeChar = static_cast<WCHAR>(0x00E9);
+    const INPUT_RECORD events[] = {
+        unicode,
+        ConsoleKeyEvent(true, 'a'),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write unicode key event", events,
+        sizeof(events) / sizeof(events[0]),
+        "console unicode key event is drained", "a");
+}
+
 bool TestConsoleInput()
 {
     ConsoleInput input;
@@ -509,204 +690,13 @@ bool TestConsoleInput()
     if (!ExpectRead("empty console is nonblocking", SysConsoleReadStatus::NoData))
         return false;
 
-    auto KeyEvent = [](const bool keyDown, const char ascii,
-                       const WORD repeat = 1) {
-        INPUT_RECORD record{};
-        record.EventType = KEY_EVENT;
-        record.Event.KeyEvent.bKeyDown = keyDown;
-        record.Event.KeyEvent.wRepeatCount = repeat;
-        record.Event.KeyEvent.uChar.AsciiChar = ascii;
-        return record;
-    };
-
-    auto ResizeEvent = []() {
-        INPUT_RECORD record{};
-        record.EventType = WINDOW_BUFFER_SIZE_EVENT;
-        record.Event.WindowBufferSizeEvent.dwSize = {1, 1};
-        return record;
-    };
-
-    auto CtrlCEvent = []() {
-        INPUT_RECORD record{};
-        record.EventType = CTRL_C_EVENT;
-        return record;
-    };
-
-    auto FocusEvent = [](const bool set) {
-        INPUT_RECORD record{};
-        record.EventType = FOCUS_EVENT;
-        record.Event.FocusEvent.bSetFocus = set;
-        return record;
-    };
-
-    // Single printable byte, with KEY_UP drained first and a non-key event
-    // interleaved to prove the drain order.
-    {
-        const INPUT_RECORD events[] = {
-            ResizeEvent(),
-            KeyEvent(false, 'a'),
-            KeyEvent(true, 'h'),
-            CtrlCEvent(),
-            KeyEvent(true, 'i'),
-        };
-        if (!Check(
-                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
-                "write printable console events")
-            || !ExpectRead(
-                "console KEY_UP and non-key records drain first",
-                SysConsoleReadStatus::LineReady,
-                "hi"))
-        {
-            return false;
-        }
-    }
-
-    // CRLF line; the cooked console will not insert the LF if ENABLE_PROCESSED_INPUT
-    // does not have ENABLE_LINE_INPUT, but our boundary is bytewise so the caller
-    // writes both bytes itself.
-    {
-        const INPUT_RECORD events[] = {
-            KeyEvent(true, 'o'),
-            KeyEvent(true, 'k'),
-            KeyEvent(true, '\r'),
-            KeyEvent(true, '\n'),
-        };
-        if (!Check(
-                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
-                "write complete console line")
-            || !ExpectRead(
-                "console CRLF line",
-                SysConsoleReadStatus::LineReady,
-                "ok"))
-        {
-            return false;
-        }
-    }
-
-    // Zero-AsciiChar keys (arrow keys, function keys in cooked mode) must be
-    // drained without producing a byte.
-    {
-        const INPUT_RECORD events[] = {
-            KeyEvent(true, 0),
-            KeyEvent(true, 'x'),
-            KeyEvent(true, 0),
-            KeyEvent(true, 'y'),
-            KeyEvent(true, '\n'),
-        };
-        if (!Check(
-                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
-                "write zero-ascii console events")
-            || !ExpectRead(
-                "zero-ascii console keys are drained",
-                SysConsoleReadStatus::LineReady,
-                "xy"))
-        {
-            return false;
-        }
-    }
-
-    // Control-character bytes (Tab, Escape, Backspace, Ctrl+A) must pass
-    // through the byte boundary verbatim and not be confused with the
-    // line-terminator bytes the parser consumes (\r, \n). The line
-    // parser accumulates these as ordinary bytes; the test terminates
-    // each control sequence with '\n' to flush the line.
-    {
-        const INPUT_RECORD events[] = {
-            KeyEvent(true, '\t'),
-            KeyEvent(true, 0x01),
-            KeyEvent(true, 27),
-            KeyEvent(true, 8),
-            KeyEvent(true, '\n'),
-        };
-        if (!Check(
-                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
-                "write control-character events")
-            || !ExpectRead(
-                "console control characters pass through bytewise",
-                SysConsoleReadStatus::LineReady,
-                "\t\x01\x1b\x08"))
-        {
-            return false;
-        }
-    }
-
-    // Auto-repeat (wRepeatCount > 1) must yield one byte per bytewise
-    // call so the line parser sees all of the repeated bytes instead of
-    // collapsing the event to a single byte. Pressing and holding 'a'
-    // produces a queue with one KEY_EVENT for 'a' (wRepeatCount=4) and
-    // one for '\n'; the parser must observe "aaaa" + newline, not "a\n".
-    {
-        INPUT_RECORD repeat{};
-        repeat.EventType = KEY_EVENT;
-        repeat.Event.KeyEvent.bKeyDown = TRUE;
-        repeat.Event.KeyEvent.wRepeatCount = 4;
-        repeat.Event.KeyEvent.uChar.AsciiChar = 'a';
-        const INPUT_RECORD events[] = {
-            repeat,
-            KeyEvent(true, '\n'),
-        };
-        if (!Check(
-                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
-                "write repeat event")
-            || !ExpectRead(
-                "console auto-repeat yields all repeat bytes",
-                SysConsoleReadStatus::LineReady,
-                "aaaa"))
-        {
-            return false;
-        }
-    }
-
-    // A focus event interleaved between KEY_UP and the printable byte
-    // must be drained without producing output; the focus event is the
-    // only event in this scenario that should be drained before the
-    // printable byte.
-    {
-        const INPUT_RECORD events[] = {
-            FocusEvent(false),
-            KeyEvent(true, 'z'),
-            KeyEvent(true, '\n'),
-        };
-        if (!Check(
-                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
-                "write focus event")
-            || !ExpectRead(
-                "console focus event is drained",
-                SysConsoleReadStatus::LineReady,
-                "z"))
-        {
-            return false;
-        }
-    }
-
-    // Unicode code points (AsciiChar == 0, UnicodeChar != 0) must be
-    // drained because the byte boundary cannot faithfully encode them
-    // without breaking the line parser's bytewise contract. The next
-    // printable byte in the queue is what the line parser sees.
-    {
-        INPUT_RECORD unicode{};
-        unicode.EventType = KEY_EVENT;
-        unicode.Event.KeyEvent.bKeyDown = TRUE;
-        unicode.Event.KeyEvent.wRepeatCount = 1;
-        unicode.Event.KeyEvent.uChar.UnicodeChar = static_cast<WCHAR>(0x00E9);
-        const INPUT_RECORD events[] = {
-            unicode,
-            KeyEvent(true, 'a'),
-            KeyEvent(true, '\n'),
-        };
-        if (!Check(
-                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
-                "write unicode key event")
-            || !ExpectRead(
-                "console unicode key event is drained",
-                SysConsoleReadStatus::LineReady,
-                "a"))
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return TestConsoleDrainsNonKeyRecords(input)
+        && TestConsoleCrlfLine(input)
+        && TestConsoleZeroAsciiKeysDrained(input)
+        && TestConsoleControlCharactersPassThrough(input)
+        && TestConsoleAutoRepeatYieldsAllBytes(input)
+        && TestConsoleFocusEventDrained(input)
+        && TestConsoleUnicodeKeyDrained(input);
 }
 #else
 int OutputDescriptor(const SysConsoleOutputStream stream)
