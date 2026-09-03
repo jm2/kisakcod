@@ -90,25 +90,41 @@ SysConsoleRawReadResult TranslateConsoleEvent(
         static_cast<unsigned char>(key.uChar.AsciiChar)};
 }
 
-// Drain pending console input events until one yields a Data byte, the
-// input queue is empty, or a fatal error is reported. The function is
+// Pending auto-repeat bytes for the raw console read path. The path is
 // single-consumer by contract (the line parser drives it from one
-// thread); pending repeat bytes are tracked in file-scope state so
+// thread), so the state rides in single-threaded file-scope storage:
 // KEY_EVENT records with wRepeatCount > 1 produce one byte per call
 // across consecutive calls instead of collapsing to a single byte.
+struct PendingRepeatState
+{
+    unsigned char byte = 0;
+    WORD remaining = 0;
+};
+
+PendingRepeatState pendingRepeat;
+
+// Map one console-input API failure into the bytewise boundary's
+// vocabulary via MapConsoleInputError; unmapped errors are I/O errors.
+SysConsoleRawReadResult MapInputFailure(const DWORD error) noexcept
+{
+    SysConsoleRawReadResult mapped{};
+    if (MapConsoleInputError(error, mapped))
+        return mapped;
+    return {SysConsoleRawReadStatus::IoError, 0};
+}
+
+// Drain pending console input events until one yields a Data byte, the
+// input queue is empty, or a fatal error is reported.
 //
 // Returns the first Data byte seen, EndOfFile when the input handle
 // reports a pipe-class EOF, IoError on any other console failure, or
 // NoData when the queue is empty.
 SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
 {
-    static unsigned char pendingRepeatByte = 0;
-    static WORD pendingRepeatRemaining = 0;
-
-    if (pendingRepeatRemaining != 0)
+    if (pendingRepeat.remaining != 0)
     {
-        const unsigned char byte = pendingRepeatByte;
-        --pendingRepeatRemaining;
+        const unsigned char byte = pendingRepeat.byte;
+        --pendingRepeat.remaining;
         return {SysConsoleRawReadStatus::Data, byte};
     }
 
@@ -116,13 +132,7 @@ SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
     {
         DWORD pending = 0;
         if (!GetNumberOfConsoleInputEvents(input, &pending))
-        {
-            SysConsoleRawReadResult mapped{};
-            const DWORD error = GetLastError();
-            if (MapConsoleInputError(error, mapped))
-                return mapped;
-            return {SysConsoleRawReadStatus::IoError, 0};
-        }
+            return MapInputFailure(GetLastError());
         if (pending == 0)
             return {SysConsoleRawReadStatus::NoData, 0};
 
@@ -130,13 +140,7 @@ SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
         DWORD readCount = 0;
         if (!ReadConsoleInput(input, &event, 1, &readCount)
             || readCount == 0)
-        {
-            SysConsoleRawReadResult mapped{};
-            const DWORD error = GetLastError();
-            if (MapConsoleInputError(error, mapped))
-                return mapped;
-            return {SysConsoleRawReadStatus::IoError, 0};
-        }
+            return MapInputFailure(GetLastError());
 
         const SysConsoleRawReadResult translated =
             TranslateConsoleEvent(event);
@@ -144,8 +148,8 @@ SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
             continue;
         if (event.Event.KeyEvent.wRepeatCount > 1)
         {
-            pendingRepeatByte = translated.byte;
-            pendingRepeatRemaining =
+            pendingRepeat.byte = translated.byte;
+            pendingRepeat.remaining =
                 static_cast<WORD>(event.Event.KeyEvent.wRepeatCount - 1);
         }
         return translated;
