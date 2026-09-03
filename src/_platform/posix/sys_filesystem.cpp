@@ -264,6 +264,126 @@ bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *const path)
     return created && parentClosed;
 }
 
+bool KISAK_CDECL Sys_FileSystemReadFile(
+    const char *const utf8Path,
+    const std::size_t maximumBytes,
+    std::vector<unsigned char> *const contents)
+{
+    if (contents)
+        contents->clear();
+    if (!contents || !utf8Path || utf8Path[0] == '\0')
+        return false;
+
+    std::vector<std::string> components;
+    if (!SplitSafePath(utf8Path, &components))
+        return false;
+    if (components.empty())
+        return false;
+
+    // Walk and validate every directory ancestor without following
+    // symbolic links, exactly like the directory services above.
+    int parentFd = open(
+        IsEnginePathSeparator(utf8Path[0]) ? "/" : ".",
+        DirectoryOpenFlags());
+    if (parentFd < 0)
+        return false;
+
+    const std::size_t ancestorCount = components.size() - 1;
+    for (std::size_t index = 0; index < ancestorCount; ++index)
+    {
+        const int nextFd = openat(
+            parentFd,
+            components[index].c_str(),
+            DirectoryOpenFlags());
+        const bool parentClosed = close(parentFd) == 0;
+        if (nextFd < 0 || !parentClosed)
+        {
+            if (nextFd >= 0)
+                close(nextFd);
+            return false;
+        }
+        parentFd = nextFd;
+    }
+
+    // O_NOFOLLOW on the leaf opens a symbolic link's error instead of
+    // its target, so link leaves fail closed here.
+    const int fileFd = openat(
+        parentFd,
+        components.back().c_str(),
+        O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    const bool parentClosed = close(parentFd) == 0;
+    if (fileFd < 0 || !parentClosed)
+    {
+        if (fileFd >= 0)
+            close(fileFd);
+        return false;
+    }
+
+    struct stat status{};
+    if (fstat(fileFd, &status) != 0 || !S_ISREG(status.st_mode))
+    {
+        close(fileFd);
+        return false;
+    }
+    if (status.st_size < 0
+        || static_cast<std::uintmax_t>(status.st_size)
+            > static_cast<std::uintmax_t>(maximumBytes))
+    {
+        close(fileFd);
+        return false;
+    }
+
+    std::vector<unsigned char> bytes;
+    try
+    {
+        bytes.resize(static_cast<std::size_t>(status.st_size));
+    }
+    catch (const std::bad_alloc &)
+    {
+        close(fileFd);
+        return false;
+    }
+
+    std::size_t total = 0;
+    bool failed = false;
+    while (total < bytes.size())
+    {
+        const ssize_t chunk = read(
+            fileFd,
+            bytes.data() + total,
+            bytes.size() - total);
+        if (chunk < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            failed = true;
+            break;
+        }
+        if (chunk == 0)
+        {
+            // The file shrank between fstat and read; the content would
+            // be a torn prefix, so reject it wholesale.
+            failed = true;
+            break;
+        }
+        total += static_cast<std::size_t>(chunk);
+    }
+
+    struct stat after{};
+    if (!failed)
+    {
+        failed = fstat(fileFd, &after) != 0
+            || after.st_size != status.st_size;
+    }
+    if (close(fileFd) != 0)
+        failed = true;
+    if (failed)
+        return false;
+
+    contents->swap(bytes);
+    return true;
+}
+
 bool KISAK_CDECL Sys_FileSystemGetCurrentDirectory(
     char *const output,
     const std::size_t outputCapacity)

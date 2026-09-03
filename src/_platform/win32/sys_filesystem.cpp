@@ -415,6 +415,65 @@ void InsertBoundedEntry(
             entries->begin(), entries->end(), DirectoryEntryLess);
     }
 }
+
+bool ReadRegularFileHandle(
+    const HANDLE file,
+    const std::size_t maximumBytes,
+    std::vector<unsigned char> *const bytes)
+{
+    // Opened with FILE_FLAG_OPEN_REPARSE_POINT, so a link or reparse
+    // point opened as itself and is detectable here instead of being
+    // silently followed.
+    FILE_ATTRIBUTE_TAG_INFO tagInfo{};
+    if (!GetFileInformationByHandleEx(
+            file,
+            FileAttributeTagInfo,
+            &tagInfo,
+            sizeof(tagInfo)))
+    {
+        return false;
+    }
+    if ((tagInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+        || (tagInfo.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+    {
+        return false;
+    }
+
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart < 0)
+        return false;
+    const std::uint64_t fileSize64 = static_cast<std::uint64_t>(size.QuadPart);
+    if (fileSize64 > static_cast<std::uint64_t>(maximumBytes))
+        return false;
+
+    const std::size_t fileSize = static_cast<std::size_t>(fileSize64);
+    try
+    {
+        bytes->assign(fileSize, 0);
+    }
+    catch (const std::bad_alloc &)
+    {
+        return false;
+    }
+
+    std::size_t total = 0;
+    while (total < fileSize)
+    {
+        const DWORD chunkSize = static_cast<DWORD>((std::min))(
+            fileSize - total,
+            static_cast<std::size_t>((std::numeric_limits<DWORD>::max)()));
+        DWORD bytesRead = 0;
+        if (!ReadFile(file, bytes->data() + total, chunkSize, &bytesRead, nullptr)
+            || bytesRead == 0)
+        {
+            // A short read means the file shrank or the handle broke;
+            // either way the content would be a torn prefix.
+            return false;
+        }
+        total += bytesRead;
+    }
+    return true;
+}
 }
 
 bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *const utf8Path)
@@ -460,6 +519,69 @@ bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *const utf8Path)
 
     CloseHeldDirectories(&heldDirectories);
     return created;
+}
+
+bool KISAK_CDECL Sys_FileSystemReadFile(
+    const char *const utf8Path,
+    const std::size_t maximumBytes,
+    std::vector<unsigned char> *const contents)
+{
+    if (contents)
+        contents->clear();
+    if (!contents || !utf8Path || utf8Path[0] == '\0')
+        return false;
+
+    std::wstring path;
+    if (!Utf8ToWide(utf8Path, &path) || HasUnsafeRawComponent(path))
+        return false;
+
+    std::wstring absolutePath;
+    if (!GetAbsolutePath(path, &absolutePath))
+        return false;
+    std::wstring extendedPath = AddExtendedPrefix(absolutePath);
+    if (ExtendedRootLength(extendedPath) == 0)
+        return false;
+    while (!extendedPath.empty()
+        && (extendedPath.back() == L'\\' || extendedPath.back() == L'/'))
+    {
+        extendedPath.pop_back();
+    }
+    if (extendedPath.empty())
+        return false;
+
+    // Validate every directory ancestor as a real directory, rejecting
+    // reparse points, before opening the leaf.
+    std::vector<HANDLE> heldDirectories;
+    std::size_t leafBegin = 0;
+    if (!HoldRealAncestors(extendedPath, &heldDirectories, &leafBegin))
+        return false;
+
+    bool ok = false;
+    std::vector<unsigned char> bytes;
+    if (leafBegin < extendedPath.size())
+    {
+        const HANDLE file = CreateFileW(
+            extendedPath.c_str(),
+            FILE_GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            nullptr);
+        if (file != INVALID_HANDLE_VALUE)
+        {
+            ok = ReadRegularFileHandle(file, maximumBytes, &bytes);
+            if (!CloseHandle(file))
+                ok = false;
+        }
+    }
+
+    CloseHeldDirectories(&heldDirectories);
+    if (!ok)
+        return false;
+
+    contents->swap(bytes);
+    return true;
 }
 
 bool KISAK_CDECL Sys_FileSystemGetCurrentDirectory(

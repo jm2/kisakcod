@@ -13,6 +13,19 @@
 // invalid encodings, and symbolic-link/reparse targets are rejected.
 bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *utf8Path);
 
+// Reads the complete contents of one regular file without traversing
+// symbolic-link or reparse-point components anywhere along the path. Every
+// directory ancestor is validated as a real directory, and the leaf must be
+// a real regular file: links, reparse points, directories, and special
+// files are rejected. The file size must not exceed maximumBytes. Relative
+// paths resolve from the process current directory; "." components are
+// collapsed and ".." components are rejected. Output is failure-atomic: on
+// any rejection or read failure *contents is cleared and false is returned.
+bool KISAK_CDECL Sys_FileSystemReadFile(
+    const char *utf8Path,
+    std::size_t maximumBytes,
+    std::vector<unsigned char> *contents);
+
 // These queries return absolute UTF-8 paths without truncation. On failure,
 // including insufficient capacity, output is reset to an empty string when
 // possible. Callers may retry with a larger buffer.
