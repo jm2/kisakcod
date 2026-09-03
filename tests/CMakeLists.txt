@@ -3223,6 +3223,29 @@ add_test(
     NAME xanim-parts-split-contracts
     COMMAND kisakcod-xanim-parts-split-tests)
 
+# script_value_split_test: contract tests for the script VM value-cell
+# save-image mirror vs native runtime split (M4). The retail 32-bit value
+# cell is frozen at 4-byte payload / 8-byte cell via ONDISK_SIZE in
+# scr_native.h; the native runtime views widen to 8/16 bytes on 64-bit via
+# RUNTIME_SIZE. The tests exercise the Disk <-> Native conversions, the
+# value-bearing vs runtime-reconstruction vartype classification, the
+# retail vartype encoding, float bit-preservation, and the no-fabricated-
+# pointer rule. CTest entries match the 'script-value-split' regex so the
+# bead's build/test command resolves to this target.
+add_executable(kisakcod-script-value-split-tests
+    script_value_split_test.cpp)
+target_include_directories(
+    kisakcod-script-value-split-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-script-value-split-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-script-value-split-tests)
+set_target_properties(
+    kisakcod-script-value-split-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME script-value-split-contracts
+    COMMAND kisakcod-script-value-split-tests)
+
 # fuzz_fastfile: production-path fast-file fuzz harness. Exercises the
 # bounded BufCursor read path that backs every retail fast-file loader
 # (xasset families: xmodel, xanim, fx archive body state). The harness
