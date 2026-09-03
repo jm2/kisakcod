@@ -706,6 +706,239 @@ bool TestFilteredCollectionAndPathHelpers(
         removed = RemoveFileNative(file) && removed;
     return Check(removed) && Check(RemoveDirectoryNative(root));
 }
+bool WriteBytesNative(const std::string &path, const std::vector<unsigned char> &bytes)
+{
+#if defined(_WIN32)
+    const std::wstring extended = ExtendedPath(path);
+    if (extended.empty())
+        return false;
+    const HANDLE file = CreateFileW(
+        extended.c_str(),
+        GENERIC_WRITE,
+        0,
+        nullptr,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return false;
+    bool written = true;
+    std::size_t total = 0;
+    while (total < bytes.size())
+    {
+        DWORD chunk = 0;
+        const DWORD request = static_cast<DWORD>(
+            (std::min)(bytes.size() - total, static_cast<std::size_t>(1u << 30)));
+        if (!::WriteFile(file, bytes.data() + total, request, &chunk, nullptr)
+            || chunk == 0)
+        {
+            written = false;
+            break;
+        }
+        total += chunk;
+    }
+    return CloseHandle(file) && written;
+#else
+    FILE *const file = std::fopen(path.c_str(), "wb");
+    if (!file)
+        return false;
+    const bool written = bytes.empty()
+        || std::fwrite(bytes.data(), 1, bytes.size(), file) == bytes.size();
+    return std::fclose(file) == 0 && written;
+#endif
+}
+
+bool TestReadFileNoFollow(const std::string &workingDirectory)
+{
+    const std::string root = MakeUniquePath(workingDirectory) + "-readfile";
+    const std::string nested = Join(root, "nested");
+    const std::string payloadPath = Join(nested, "payload.bin");
+    const std::string emptyPath = Join(nested, "empty.bin");
+    const std::string outside = MakeUniquePath(workingDirectory) + "-readfile-outside";
+    const std::string outsidePath = Join(outside, "secret.txt");
+
+    SetCheckStage("read-file/setup");
+    std::vector<unsigned char> payload(300u * 1024u);
+    for (std::size_t i = 0; i < payload.size(); ++i)
+        payload[i] = static_cast<unsigned char>(i * 7u + (i >> 8));
+    const std::vector<unsigned char> secret{'s', 'e', 'c', 'r', 'e', 't'};
+    if (!Check(Sys_FileSystemCreateDirectory(root.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(nested.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(outside.c_str()))
+        || !Check(WriteBytesNative(payloadPath, payload))
+        || !Check(WriteBytesNative(emptyPath, {}))
+        || !Check(WriteBytesNative(outsidePath, secret)))
+    {
+        return false;
+    }
+
+    // Round-trip: the complete regular file is readable through nested
+    // real directories and the output is byte-identical.
+    SetCheckStage("read-file/round-trip");
+    {
+        std::vector<unsigned char> contents{'x'};
+        if (!Check(Sys_FileSystemReadFile(
+                payloadPath.c_str(),
+                payload.size(),
+                &contents))
+            || !Check(contents.size() == payload.size())
+            || !Check(std::memcmp(
+                    contents.data(),
+                    payload.data(),
+                    payload.size()) == 0))
+        {
+            return false;
+        }
+    }
+
+    SetCheckStage("read-file/empty-file");
+    {
+        std::vector<unsigned char> contents{'x'};
+        if (!Check(Sys_FileSystemReadFile(emptyPath.c_str(), 0, &contents))
+            || !Check(contents.empty()))
+        {
+            return false;
+        }
+        if (!Check(Sys_FileSystemReadFile(emptyPath.c_str(), 16, &contents))
+            || !Check(contents.empty()))
+        {
+            return false;
+        }
+    }
+
+    // Size cap: a file above maximumBytes is rejected and the output
+    // stays empty (failure-atomic, not partial).
+    SetCheckStage("read-file/size-cap");
+    {
+        std::vector<unsigned char> contents{'x'};
+        if (!Check(!Sys_FileSystemReadFile(
+                payloadPath.c_str(),
+                payload.size() - 1,
+                &contents))
+            || !Check(contents.empty()))
+        {
+            return false;
+        }
+    }
+
+    // Rejections must clear any prior output (failure-atomic contract).
+    SetCheckStage("read-file/rejection-clears-output");
+    {
+        std::vector<unsigned char> contents{'x'};
+        const bool cleared = Sys_FileSystemReadFile(
+            payloadPath.c_str(),
+            payload.size() - 1,
+            &contents);
+        if (!Check(!cleared) || !Check(contents.empty()))
+            return false;
+    }
+
+    SetCheckStage("read-file/invalid-inputs");
+    {
+        std::vector<unsigned char> contents{'x'};
+        const std::string missingNested = Join(root, "no-such-file.bin");
+        const std::string traversal = Join(Join(root, ".."), "escaped.bin");
+        const std::string invalidUtf8 = Join(nested, "\xFF\xFE.bin");
+        const char *const invalidPaths[] = {
+            "",
+            "no-such-file-kisakcod.bin",
+            missingNested.c_str(),
+            traversal.c_str(),
+            invalidUtf8.c_str(),
+            root.c_str(),
+        };
+        bool rejected = true;
+        for (const char *const path : invalidPaths)
+            rejected = Sys_FileSystemReadFile(path, 1024, &contents) == false && rejected;
+        // A null output vector is a hard rejection, never a crash.
+        rejected = Sys_FileSystemReadFile(payloadPath.c_str(), 1024, nullptr) == false
+            && rejected;
+        if (!Check(rejected) || !Check(contents.empty()))
+            return false;
+    }
+
+#if !defined(_WIN32)
+    // Special files are not regular files and must be rejected.
+    SetCheckStage("read-file/special-file-rejection");
+    {
+        std::vector<unsigned char> contents{'x'};
+        if (!Check(!Sys_FileSystemReadFile("/dev/null", 1024, &contents))
+            || !Check(contents.empty()))
+        {
+            return false;
+        }
+    }
+#endif
+
+    // Link leaves and link ancestors must be rejected without reading
+    // the outside target. Windows skips when the host cannot create
+    // unprivileged symlinks.
+    SetCheckStage("read-file/link-rejection");
+    {
+#if defined(_WIN32)
+        const std::wstring wideLeafLink = ExtendedPath(Join(nested, "leaf-link.txt"));
+        const std::wstring wideOutsidePath = ExtendedPath(outsidePath);
+        const std::wstring wideDirLink = ExtendedPath(Join(nested, "dir-link"));
+        const std::wstring wideOutside = ExtendedPath(outside);
+        if (!Check(!wideLeafLink.empty()) || !Check(!wideOutsidePath.empty()))
+            return false;
+        if (!CreateSymbolicLinkW(
+                wideLeafLink.c_str(),
+                wideOutsidePath.c_str(),
+                0x2 /* SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE */)
+            || !CreateSymbolicLinkW(
+                wideDirLink.c_str(),
+                wideOutside.c_str(),
+                0x1 | 0x2))
+        {
+            std::fputs(
+                "SKIP: Windows host cannot create an unprivileged symlink\n",
+                stderr);
+            (void)RemoveFileNative(Join(nested, "leaf-link.txt"));
+            (void)RemoveDirectoryNative(Join(nested, "dir-link"));
+        }
+        else
+        {
+            std::vector<unsigned char> contents{'x'};
+            const std::string leafLink = Join(nested, "leaf-link.txt");
+            const std::string dirLinkFile = Join(Join(nested, "dir-link"), "secret.txt");
+            if (!Check(!Sys_FileSystemReadFile(leafLink.c_str(), 64, &contents))
+                || !Check(!Sys_FileSystemReadFile(dirLinkFile.c_str(), 64, &contents))
+                || !Check(contents.empty()))
+            {
+                return false;
+            }
+            (void)RemoveFileNative(leafLink);
+            (void)RemoveDirectoryNative(Join(nested, "dir-link"));
+        }
+#else
+        const std::string leafLink = Join(nested, "leaf-link.txt");
+        const std::string dirLink = Join(nested, "dir-link");
+        if (!Check(symlink(outsidePath.c_str(), leafLink.c_str()) == 0)
+            || !Check(symlink(outside.c_str(), dirLink.c_str()) == 0))
+        {
+            return false;
+        }
+        std::vector<unsigned char> contents{'x'};
+        const std::string dirLinkFile = Join(dirLink, "secret.txt");
+        if (!Check(!Sys_FileSystemReadFile(leafLink.c_str(), 64, &contents))
+            || !Check(!Sys_FileSystemReadFile(dirLinkFile.c_str(), 64, &contents))
+            || !Check(contents.empty()))
+        {
+            return false;
+        }
+        (void)unlink(leafLink.c_str());
+        (void)unlink(dirLink.c_str());
+#endif
+    }
+
+    SetCheckStage("read-file/cleanup");
+    bool removed = RemoveFileNative(payloadPath) && RemoveFileNative(emptyPath);
+    removed = RemoveDirectoryNative(nested) && removed;
+    removed = RemoveFileNative(outsidePath) && removed;
+    removed = RemoveDirectoryNative(outside) && removed;
+    return Check(removed) && Check(RemoveDirectoryNative(root));
+}
 }
 
 int main()
@@ -729,6 +962,9 @@ int main()
     if (!TestBoundedDirectoryEnumeration(workingDirectory))
         return 1;
     if (!TestFilteredCollectionAndPathHelpers(workingDirectory))
+        return 1;
+    SetCheckStage("read-file-no-follow");
+    if (!TestReadFileNoFollow(workingDirectory))
         return 1;
     return 0;
 }
