@@ -34,11 +34,16 @@ struct SysSocketAddress
     // Byte-exact equality shared by every backend: the address compares as
     // network-order bytes (memcmp-safe) and the port as a host-order value.
     // Defined inline here so the layout above and its comparison rule live
-    // in one place; the platform backends delegate to it.
+    // in one place; the platform backends delegate to it. Comparison
+    // results are named and parenthesized (MISRA 12.1) and the single exit
+    // sits at the end of the function (MISRA 15.5).
     bool Equals(const SysSocketAddress &other) const
     {
-        return std::memcmp(address, other.address, sizeof(address)) == 0
-            && port == other.port;
+        const bool sameAddress =
+            (std::memcmp(address, other.address, sizeof(address)) == 0);
+        const bool samePort = (port == other.port);
+
+        return sameAddress && samePort;
     }
 };
 
