@@ -115,7 +115,7 @@ SysSocketRecvStatus ClassifyRecvError(const int error) noexcept
 {
     if (error == WSAEWOULDBLOCK)
         return SysSocketRecvStatus::WouldBlock;
-    return SysSocketRecvStatus::InvalidHandle;
+    return SysSocketRecvStatus::SystemFailure;
 }
 } // namespace
 

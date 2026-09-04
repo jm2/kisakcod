@@ -34,16 +34,20 @@ struct SysSocketAddress
     // Byte-exact equality shared by every backend: the address compares as
     // network-order bytes (memcmp-safe) and the port as a host-order value.
     // Defined inline here so the layout above and its comparison rule live
-    // in one place; the platform backends delegate to it. Comparison
-    // results are named and parenthesized (MISRA 12.1) and the single exit
-    // sits at the end of the function (MISRA 15.5).
+    // in one place; the platform backends delegate to it. Comparisons are
+    // named and parenthesized (MISRA 12.1), the conjunction is explicit
+    // control flow rather than a short-circuit operator, and the single
+    // exit sits at the end of the function (MISRA 15.5).
     bool Equals(const SysSocketAddress &other) const
     {
         const bool sameAddress =
             (std::memcmp(address, other.address, sizeof(address)) == 0);
-        const bool samePort = (port == other.port);
-
-        return sameAddress && samePort;
+        bool equal = false;
+        if (sameAddress)
+        {
+            equal = (port == other.port);
+        }
+        return equal;
     }
 };
 
@@ -81,6 +85,7 @@ enum class SysSocketRecvStatus : std::uint8_t
     WouldBlock,
     InvalidArgument,
     InvalidHandle,
+    SystemFailure,
 };
 
 enum class SysSocketOptionStatus : std::uint8_t
@@ -121,7 +126,9 @@ SysSocketSendStatus KISAK_CDECL Sys_SocketSendTo(
 // buffer is truncated and the excess bytes are discarded, which callers
 // must treat as a malformed datagram) and *outSource holds the sender's
 // endpoint when the pointer is non-null. WouldBlock means no complete
-// datagram was available.
+// datagram was available. SystemFailure reports a non-would-block system
+// error (for example receiver buffer exhaustion); the handle stays valid
+// and the caller may retry or close.
 SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
     SysSocketHandle handle,
     void *buffer,

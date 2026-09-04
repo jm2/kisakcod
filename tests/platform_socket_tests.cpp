@@ -223,6 +223,11 @@ bool StageLoopbackSend(SocketFixture &fixture)
                  sizeof(fixture.payload))
                 == 0,
             "payload bytes round-trip")
+        && Check(fixture.source.address[0] == 127
+                && fixture.source.address[1] == 0
+                && fixture.source.address[2] == 0
+                && fixture.source.address[3] == 1,
+            "source address is loopback")
         && Check(fixture.source.port == fixture.firstAddress.port,
             "source port round-trip");
 }
@@ -263,33 +268,37 @@ bool StageBroadcastOption(SocketFixture &fixture)
             "broadcast null handle");
 }
 
-// Explicit bind: the requested port is honored and recovered.
+// Explicit bind: the requested port is honored and recovered. Widely
+// separated high ports are tried so one busy endpoint cannot hide a
+// regression; exhausting every candidate fails the stage instead of
+// skipping it, preserving detection of explicit-bind breakage.
 bool StageExplicitBind(SocketFixture &)
 {
-    SysSocketHandle bound = nullptr;
-    SysSocketAddress boundAddress{};
-    // Choose an unlikely high port; failure to bind a specific busy port
-    // is reported as SystemFailure, which this suite treats as skippable
-    // rather than fatal.
-    const std::uint16_t requestedPort = 43191;
-    const SysSocketOpenStatus openStatus =
-        Sys_SocketOpenUdp(requestedPort, true, &bound);
-    if (openStatus == SysSocketOpenStatus::SystemFailure)
+    const std::uint16_t candidatePorts[] = {43191, 47441, 51691, 55941};
+    for (std::size_t index = 0;
+         index < sizeof(candidatePorts) / sizeof(candidatePorts[0]);
+         ++index)
     {
-        std::fprintf(stderr, "platform-socket: explicit bind port %u busy;"
-                             " skipping\n",
-            static_cast<unsigned>(requestedPort));
-        return true;
+        const std::uint16_t requestedPort = candidatePorts[index];
+        SysSocketHandle bound = nullptr;
+        SysSocketAddress boundAddress{};
+        const SysSocketOpenStatus openStatus =
+            Sys_SocketOpenUdp(requestedPort, true, &bound);
+        if (openStatus == SysSocketOpenStatus::SystemFailure)
+            continue; // candidate port busy; try the next one
+        if (!Check(openStatus == SysSocketOpenStatus::Opened,
+                "explicit bind opened")
+            || !Check(Sys_SocketGetLocalAddress(bound, &boundAddress),
+                "explicit bind recovered")
+            || !Check(boundAddress.port == requestedPort,
+                "explicit bind port honored"))
+            return false;
+        return Check(Sys_SocketClose(&bound) ==
+                     SysSocketCloseStatus::Closed,
+            "explicit bind closed");
     }
-    if (!Check(openStatus == SysSocketOpenStatus::Opened,
-            "explicit bind opened")
-        || !Check(Sys_SocketGetLocalAddress(bound, &boundAddress),
-            "explicit bind recovered")
-        || !Check(boundAddress.port == requestedPort,
-            "explicit bind port honored"))
-        return false;
-    return Check(Sys_SocketClose(&bound) == SysSocketCloseStatus::Closed,
-        "explicit bind closed");
+    return Check(false,
+        "explicit bind opened (no candidate high port available)");
 }
 
 // Teardown: close is unconditional, nulls the caller's handle, and a

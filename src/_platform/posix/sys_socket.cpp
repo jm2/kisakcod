@@ -85,7 +85,7 @@ SysSocketRecvStatus ClassifyRecvError() noexcept
 {
     if (errno == EAGAIN || errno == EWOULDBLOCK)
         return SysSocketRecvStatus::WouldBlock;
-    return SysSocketRecvStatus::InvalidHandle;
+    return SysSocketRecvStatus::SystemFailure;
 }
 } // namespace
 
