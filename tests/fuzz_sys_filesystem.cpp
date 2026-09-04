@@ -211,6 +211,20 @@ bool SetupSandbox(Sandbox *const sandbox)
         std::filesystem::temp_directory_path(ec);
     if (ec)
         return false;
+    // The no-follow service rejects any path behind a symlinked
+    // ancestor by design, and on macOS temp_directory_path() returns a
+    // /var/... path where /var is a symlink to private/var — so a
+    // sandbox rooted there would fail even the canonical payload read.
+    // Build the sandbox on the fully resolved base so the fixture
+    // exercises the hostile-path contract without tripping over the
+    // host's own temp-dir symlinks.
+    {
+        std::error_code resolveEc;
+        const std::filesystem::path resolved =
+            std::filesystem::weakly_canonical(base, resolveEc);
+        if (!resolveEc && !resolved.empty())
+            base = resolved;
+    }
     const auto tick = std::chrono::steady_clock::now()
         .time_since_epoch().count();
     const std::string unique = "kisakcod-fuzz-fs-"

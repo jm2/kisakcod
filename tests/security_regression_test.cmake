@@ -7946,9 +7946,15 @@ foreach(_fx_pool_sidecar_use
         ${_fx_pool_sidecar_count}
         "every production ${_fx_pool_sidecar_name} reset/check/allocate/free must use its matching sidecar")
 endforeach()
+# CMake's regex engine mishandles a literal `;` in a pattern when the scanned
+# source contains semicolons: the trailing `[;]` silently stops being
+# enforced, so this count also caught the function's own definition and grew
+# by one past every real admission call site. Anchor on the newline plus
+# indentation of a call statement instead — that matches every admission
+# call site and excludes the definition.
 require_source_match_count(
     "EffectsCore/fx_system.cpp"
-    "FX_EnterArchiveAwarePoolCriticalSection[ \t\r\n]*\\([ \t\r\n]*\\)[ \t]*[;]"
+    "\n[ \t]+FX_EnterArchiveAwarePoolCriticalSection[ \t\r\n]*\\([ \t\r\n]*\\)"
     28
     "every pool/reference/admission mutation and graph or sidecar check must use archive-aware admission")
 require_source_match_count(
