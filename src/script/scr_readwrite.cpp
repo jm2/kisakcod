@@ -308,7 +308,7 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
     const char *buf; // r31
     unsigned int v7; // r3
     __int16 v8; // r30
-    VariableUnion *v9; // r4
+    VariableUnion v9; // r4
     _WORD v10[24]; // [sp+50h] [-30h] BYREF
 
     iassert(stackBuf);
@@ -326,10 +326,13 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
     {
         do
         {
+            // M4 (ki-n1et): the runtime record is one widened value-cell slot
+            // plus the type byte; the SERIALIZED bytes it converts to stay the
+            // packed retail records.
             v7 = (unsigned __int8)*buf;
             v8 = v5 - 1;
-            v9 = *(VariableUnion **)(buf + 1);
-            buf += 5;
+            v9 = *(VariableUnion *)(buf + 1);
+            buf += VARIABLE_STACK_RECORD_SIZE;
             DoSaveEntryInternal(v7, v9, memFile);
             v5 = v8;
         } while (v8);
@@ -338,53 +341,47 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
 
 VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
 {
-    __int16 v2; // r27
-    int v3; // r28
-    int v4; // r31
-    unsigned __int16 v5; // r29
-    _WORD *v6; // r31
-    char *v7; // r29
-    __int16 v8; // r11
-    __int16 v9; // r28
-    unsigned __int8 v11[8]; // [sp+50h] [-40h] BYREF
-    VariableValue v12; // [sp+58h] [-38h] BYREF
+    unsigned __int16 size; // r27
+    unsigned int bufLen; // r28
+    VariableStackBuffer *stack; // r31
+    char *buf; // r29
+    VariableValue value; // [sp+58h] BYREF
+    unsigned __int8 header[8]; // [sp+50h] [-40h] BYREF
 
-    MemFile_ReadData(memFile, 2, v11);
-    v2 = *(_WORD *)v11;
-    v3 = *(unsigned __int16 *)v11;
-    v4 = 5 * *(unsigned __int16 *)v11 + 11;
-    v5 = 5 * *(_WORD *)v11 + 11;
-    if (v4 != v5)
+    MemFile_ReadData(memFile, 2, header);
+    size = *(unsigned __int16 *)header;
+
+    // M4 (ki-n1et): rebuild the RUNTIME image with the widened record stride;
+    // the DISK records consumed below are unchanged retail bytes.
+    bufLen = VARIABLE_STACK_RECORD_SIZE * size + (sizeof(VariableStackBuffer) - 1);
+    if (bufLen != (unsigned __int16)bufLen)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp",
             268,
             0,
             "%s",
             "bufLen == (unsigned short)bufLen");
-    v6 = (uint16*)MT_Alloc(v4, MT_TYPE_THREAD);
+    stack = (VariableStackBuffer *)MT_Alloc(bufLen, MT_TYPE_THREAD);
     ++scrVarPub.numScriptThreads;
-    v6[2] = v2;
-    v6[3] = v5;
-    *(unsigned int *)v6 = (unsigned int)Scr_ReadCodepos(memFile);
-    MemFile_ReadData(memFile, 1, v11);
-    v6[4] = Scr_ReadId(memFile, v11[0]);
-    MemFile_ReadData(memFile, 1, v11);
-    v7 = (char *)v6 + 11;
-    *((_BYTE *)v6 + 10) = v11[0];
-    if (v3)
+    stack->size = size;
+    stack->bufLen = bufLen;
+    stack->pos = Scr_ReadCodepos(memFile);
+    MemFile_ReadData(memFile, 1, header);
+    stack->localId = Scr_ReadId(memFile, header[0]);
+    MemFile_ReadData(memFile, 1, header);
+    stack->time = header[0];
+    buf = stack->buf;
+    if (size)
     {
-        v8 = v3;
         do
         {
-            v9 = v8 - 1;
-            Scr_DoLoadEntryInternal(&v12, memFile);
-            v8 = v9;
-            *v7 = v12.type;
-            *(unsigned int *)(v7 + 1) = v12.u.intValue;
-            v7 += 5;
-        } while (v9);
+            Scr_DoLoadEntryInternal(&value, memFile);
+            *buf = value.type;
+            *(VariableUnion *)(buf + 1) = value.u;
+            buf += VARIABLE_STACK_RECORD_SIZE;
+        } while (--size);
     }
-    return (VariableStackBuffer *)v6;
+    return stack;
 }
 
 void __cdecl Scr_DoLoadEntryInternal(VariableValue *value, MemoryFile *memFile)
@@ -416,7 +413,10 @@ void __cdecl Scr_DoLoadEntryInternal(VariableValue *value, MemoryFile *memFile)
             value->u.intValue = (unsigned __int16)Scr_ReadString(memFile);
             break;
         case 4:
-            value->u.intValue = (int)Scr_ReadVec3(memFile);
+            // M4 (ki-n1et): the rebuilt cell holds a LIVE host pointer; store
+            // it through the pointer member (truncating through intValue is
+            // lossy on 64-bit).
+            value->u.vectorValue = Scr_ReadVec3(memFile);
             break;
         case 5:
             value->u.floatValue = MemFile_ReadFloat(memFile);
@@ -428,10 +428,10 @@ void __cdecl Scr_DoLoadEntryInternal(VariableValue *value, MemoryFile *memFile)
             break;
         case 7:
         case 9:
-            value->u.intValue = (int)Scr_ReadCodepos(memFile);
+            value->u.codePosValue = Scr_ReadCodepos(memFile);
             break;
         case 10:
-            value->u.intValue = (int)Scr_ReadStack(memFile);
+            value->u.stackValue = Scr_ReadStack(memFile);
             break;
         default:
             if (!alwaysfails)
@@ -1061,9 +1061,11 @@ static void CheckReferenceRange(unsigned int begin, unsigned int end)
             unsigned int count = sb->size;
             while (count)
             {
+                // M4 (ki-n1et): widened runtime record stride.
                 unsigned int entryType = *p;
-                unsigned int entryVal = *(unsigned int *)(p + 1);
-                p += 5;
+                VariableUnion entryCell = *(VariableUnion *)(p + 1);
+                unsigned int entryVal = (unsigned int)entryCell.intValue;
+                p += VARIABLE_STACK_RECORD_SIZE;
                 --count;
                 if (entryType == 1) // VAR_POINTER
                     ++scrVarDebugPub->refCount[entryVal];
@@ -1172,7 +1174,12 @@ void __cdecl Scr_LoadShutdown()
         MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 1115, 0, "%s", "CheckReferences()");
 }
 
-void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion *u, MemoryFile *memFile)
+// M4 (ki-n1et): the payload union travels BY VALUE. The old signature took
+// `VariableUnion *u` but every caller passed the CELL's pointer VALUE cast to
+// VariableUnion* (type-punning through (int) that truncates host pointers on
+// 64-bit). Reading the proper union member per vartype is width-correct on
+// both 32- and 64-bit, and the serialized bytes are unchanged.
+void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion u, MemoryFile *memFile)
 {
     unsigned int UsedSize; // r3
     unsigned int v7; // r3
@@ -1212,7 +1219,7 @@ void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion *u, MemoryFile
     {
         UsedSize = MemFile_GetUsedSize(memFile);
         //ProfMem_Begin("pointer", UsedSize);
-        WriteId((unsigned int)u, 1u, memFile);
+        WriteId((unsigned int)u.intValue, 1u, memFile);
         v7 = MemFile_GetUsedSize(memFile);
         //ProfMem_End(v7);
     }
@@ -1233,38 +1240,38 @@ void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion *u, MemoryFile
         case 3u:
             v19 = MemFile_GetUsedSize(memFile);
             //ProfMem_Begin("string", v19);
-            v20 = SL_ConvertToString((unsigned __int16)u);
+            v20 = SL_ConvertToString((unsigned __int16)u.intValue);
             MemFile_WriteCString(memFile, v20);
             v21 = MemFile_GetUsedSize(memFile);
             //ProfMem_End(v21);
             break;
         case 4u:
-            WriteVector(&u->floatValue, memFile);
+            WriteVector((float *)u.vectorValue, memFile);
             break;
         case 5u:
-            WriteFloat(*(float *)&u, memFile);
+            WriteFloat(u.floatValue, memFile);
             break;
         case 6u:
             v22 = MemFile_GetUsedSize(memFile);
             //ProfMem_Begin("int", v22);
-            v31[0] = (unsigned int)(uintptr_t)u;
+            v31[0] = (unsigned int)u.intValue;
             MemFile_WriteData(memFile, 4, v31);
             v23 = MemFile_GetUsedSize(memFile);
             //ProfMem_End(v23);
             break;
         case 7u:
         case 9u:
-            WriteCodepos((const char *)u, memFile);
+            WriteCodepos(u.codePosValue, memFile);
             break;
         case 0xAu:
             v24 = MemFile_GetUsedSize(memFile);
             //ProfMem_Begin("stack", v24);
-            WriteStack((const VariableStackBuffer *)u, memFile);
+            WriteStack(u.stackValue, memFile);
             v25 = MemFile_GetUsedSize(memFile);
             //ProfMem_End(v25);
             break;
         case 0xBu:
-            v31[0] = (unsigned int)(uintptr_t)u;
+            v31[0] = u.entityOffset;
             MemFile_WriteData(memFile, 4, v31);
             break;
         default:
@@ -1430,7 +1437,7 @@ void __cdecl AddSaveStackInternal(const VariableStackBuffer *stackBuf)
     const char *buf; // r31
     unsigned int v4; // r3
     unsigned __int16 v5; // r30
-    VariableUnion *v6; // r4
+    VariableUnion v6; // r4
 
     localId = stackBuf->localId;
     if (stackBuf->localId && !scrVarPub.saveIdMap[localId])
@@ -1444,29 +1451,31 @@ void __cdecl AddSaveStackInternal(const VariableStackBuffer *stackBuf)
     {
         do
         {
+            // M4 (ki-n1et): widened runtime record stride; the walk only
+            // classifies entries, the serialized stream is unchanged.
             v4 = (unsigned __int8)*buf;
             v5 = size - 1;
-            v6 = *(VariableUnion **)(buf + 1);
-            buf += 5;
-            AddSaveEntryInternal(v4, (const VariableStackBuffer*)v6);
+            v6 = *(VariableUnion *)(buf + 1);
+            buf += VARIABLE_STACK_RECORD_SIZE;
+            AddSaveEntryInternal(v4, v6);
             size = v5;
         } while (v5);
     }
 }
 
-void __cdecl AddSaveEntryInternal(unsigned int type, const VariableStackBuffer *u)
+void __cdecl AddSaveEntryInternal(unsigned int type, VariableUnion u)
 {
     if (type == 1)
     {
-        if (u && !scrVarPub.saveIdMap[(unsigned int)u])
+        if (u.intValue && !scrVarPub.saveIdMap[(unsigned int)u.intValue])
         {
-            scrVarPub.saveIdMap[(unsigned int)u] = ++scrVarPub.savecount;
-            *(unsigned __int16 *)((char *)scrVarPub.saveIdMapRev + __ROL4__(scrVarPub.savecount, 1)) = (unsigned __int16)u;
+            scrVarPub.saveIdMap[(unsigned int)u.intValue] = ++scrVarPub.savecount;
+            *(unsigned __int16 *)((char *)scrVarPub.saveIdMapRev + __ROL4__(scrVarPub.savecount, 1)) = (unsigned __int16)u.intValue;
         }
     }
     else if (type == 10)
     {
-        AddSaveStackInternal(u);
+        AddSaveStackInternal(u.stackValue);
     }
 }
 
@@ -1501,7 +1510,7 @@ void __cdecl DoSaveEntry(VariableValue *value, VariableValue *name, bool isArray
     //ProfMem_Begin("DoSaveEntry", UsedSize);
     v9 = MemFile_GetUsedSize(memFile);
     //ProfMem_Begin("DoSaveEntryInternal", v9);
-    DoSaveEntryInternal(value->type, (VariableUnion *)value->u.intValue, memFile);
+    DoSaveEntryInternal(value->type, value->u, memFile);
     v10 = MemFile_GetUsedSize(memFile);
     //ProfMem_End(v10);
     if (!isArray)
@@ -1821,7 +1830,7 @@ void __cdecl WriteGameEntry(MemoryFile *memFile)
 {
     DoSaveEntryInternal(
         scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].w.type & 0x1F,
-        (VariableUnion *)scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].u.u.intValue,
+        scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].u.u,
         memFile);
 }
 
@@ -1858,7 +1867,7 @@ void __cdecl Scr_SavePost(MemoryFile *memFile)
     //ProfMem_End(v5);
     DoSaveEntryInternal(
         scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].w.type & VAR_MASK,
-        (VariableUnion *)scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].u.u.intValue,
+        scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].u.u,
         memFile);
     WriteId(scrVarPub.levelId, 0, memFile);
     WriteId(scrVarPub.animId, 0, memFile);
@@ -1881,7 +1890,7 @@ void __cdecl AddSaveStack(const VariableStackBuffer *stackBuf)
     CONST char *buf; // r31
     int v4; // r10
     __int16 v5; // r29
-    const VariableStackBuffer *v6; // r3
+    VariableUnion v6; // r3
 
     AddSaveObject(stackBuf->localId);
     size = stackBuf->size;
@@ -1892,15 +1901,15 @@ void __cdecl AddSaveStack(const VariableStackBuffer *stackBuf)
         {
             v4 = (unsigned __int8)*buf;
             v5 = size - 1;
-            v6 = *(const VariableStackBuffer **)(buf + 1);
-            buf += 5;
+            v6 = *(VariableUnion *)(buf + 1);
+            buf += VARIABLE_STACK_RECORD_SIZE;
             if (v4 == 1)
             {
-                AddSaveObject((unsigned int)v6);
+                AddSaveObject((unsigned int)v6.intValue);
             }
             else if (v4 == 10)
             {
-                AddSaveStack(v6);
+                AddSaveStack(v6.stackValue);
             }
             //LOWORD(size) = v5;
             size = (size & 0xFFFF0000) | ((uint32_t)v5 & 0xFFFF);
@@ -1909,15 +1918,15 @@ void __cdecl AddSaveStack(const VariableStackBuffer *stackBuf)
     }
 }
 
-void __cdecl AddSaveEntry(unsigned int type, const VariableStackBuffer *u)
+void __cdecl AddSaveEntry(unsigned int type, VariableUnion u)
 {
     if (type == 1)
     {
-        AddSaveObject((unsigned int)u);
+        AddSaveObject((unsigned int)u.intValue);
     }
     else if (type == 10)
     {
-        AddSaveStack(u);
+        AddSaveStack(u.stackValue);
     }
 }
 

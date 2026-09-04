@@ -167,13 +167,17 @@ void CheckReconstructionKinds()
 
         // A LIVE reconstruction-kind pointer must refuse the payload-copy
         // conversion and leave the disk cell untouched -- serializing it
-        // requires the content-walking save path.
+        // requires the content-walking save path. Seed the destination with
+        // a vartype DIFFERENT from live.type so the memcmp detects any
+        // stray write by the refusing path (seeding the same type would
+        // hide a type-word mutation).
         script::VariableValueNative live{};
         live.type = type;
         alignas(script::VariableStackBufferNative) unsigned char storage[16];
         live.u.stackValue =
             reinterpret_cast<script::VariableStackBufferNative *>(storage);
-        script::VariableValueDisk untouched = MakeDiskCell(type, kSentinelInt);
+        script::VariableValueDisk untouched =
+            MakeDiskCell(script::VAR_INTEGER, kSentinelInt);
         script::VariableValueDisk out = untouched;
         CHECK(!script::ScriptValueNativeToDisk(live, out));
         CHECK(std::memcmp(&out, &untouched, sizeof(out)) == 0);

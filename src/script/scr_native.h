@@ -40,11 +40,13 @@
 //      as reconstruction-required and leaves the native pointer member null
 //      instead of fabricating a host pointer from save bytes.
 //
-//  The engine script VM translation units still use the legacy 4-byte
-//  VariableUnion. Until every consumer migrates to the native views, engine
-//  translation units must not include this portable-test-only header; the
-//  migration sweep (variable table, VM stacks, compiler/parser/debugger
-//  value plumbing) is the follow-up this split unblocks.
+//  The engine script VM translation units use the width-aware engine
+//  VariableUnion (RUNTIME_SIZE 4 -> 8) and have been migrated to store live
+//  host pointers through the pointer-width union members (M4 ki-n1et); the
+//  save/load boundary moves only type bytes and scalar payloads, so the
+//  serialized formats do not move with the widening. This header remains the
+//  portable-test-only mirror that pins the frozen save-image shape against
+//  the widened runtime views.
 //
 //  See docs/task.md M4 and src/xanim/xanim_native.h for the precedent.
 // ============================================================================
@@ -290,19 +292,27 @@ inline ScriptValueDiskToNativeResult ScriptValueDiskToNative(const VariableValue
 
 inline bool ScriptValueNativeToDisk(const VariableValueNative &native, VariableValueDisk &disk)
 {
-    disk.type = native.type;
+    // Contract: a value-bearing cell converts completely (returns true); a
+    // LIVE reconstruction-kind pointer refuses WITHOUT touching the disk
+    // cell; everything else stores a defined zero payload. The type word is
+    // only written on paths that fully define the destination, so a caller
+    // reusing a populated destination never observes a half-updated cell.
     if (IsValueBearingVartype(native.type))
     {
+        disk.type = native.type;
         disk.u.intValue = native.u.intValue;
         return true;
     }
-    if (native.u.stackValue == nullptr)
+    if (IsRuntimeReconstructionVartype(native.type) && native.u.stackValue != nullptr)
     {
-        // Cleared reconstruction-kind cell: a defined zero payload.
-        disk.u.intValue = 0;
+        // Live pointer: content-walking save path required; do not fabricate
+        // and do not modify the destination.
         return false;
     }
-    // Live pointer: content-walking save path required; do not fabricate.
+    // Cleared reconstruction-kind cell (or a pointer-free runtime kind): a
+    // defined zero payload.
+    disk.type = native.type;
+    disk.u.intValue = 0;
     return false;
 }
 

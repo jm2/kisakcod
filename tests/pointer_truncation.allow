@@ -21,7 +21,6 @@ qcommon/common.cpp|1
 qcommon/sv_msg_write_mp.cpp|1
 qcommon/sv_msg_write_mp.cpp|2
 script/scr_debugger.cpp|1
-script/scr_debugger.cpp|2
 script/scr_parser.cpp|1
 script/scr_parser.cpp|2
 universal/com_memory.cpp|1

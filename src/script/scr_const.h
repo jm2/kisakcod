@@ -1,5 +1,10 @@
 #pragma once
 #include <cstdint>
+// M4 (ki-n1et): this header uses RUNTIME_SIZE for the frozen-width handle
+// table; include the ABI macros directly so the header is self-sufficient
+// regardless of include order (the MSVC dedi build includes it without a
+// prior kisak_abi.h).
+#include <universal/kisak_abi.h>
 
 #ifdef KISAK_MP
 struct scr_const_t // sizeof=0x174

@@ -3239,6 +3239,11 @@ target_include_directories(
 target_compile_features(
     kisakcod-script-value-split-tests PRIVATE cxx_std_20)
 kisakcod_test_warnings(kisakcod-script-value-split-tests)
+if(MSVC)
+    # scrStringGlob_t's KISAK_ALIGNAS(128) padding is deliberate cache-line
+    # alignment; C4324 fires on the /W4 + /WX test targets only.
+    target_compile_options(kisakcod-script-value-split-tests PRIVATE /wd4324)
+endif()
 set_target_properties(
     kisakcod-script-value-split-tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
@@ -3260,6 +3265,10 @@ target_include_directories(
 target_compile_features(
     kisakcod-script-native64-layout-tests PRIVATE cxx_std_20)
 kisakcod_test_warnings(kisakcod-script-native64-layout-tests)
+if(MSVC)
+    # See the script-value-split target: deliberate alignas(128) padding.
+    target_compile_options(kisakcod-script-native64-layout-tests PRIVATE /wd4324)
+endif()
 set_target_properties(
     kisakcod-script-native64-layout-tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

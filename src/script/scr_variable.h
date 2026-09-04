@@ -133,6 +133,14 @@ union VariableUnion // sizeof=0x4
     VariableStackBuffer *stackValue;
     uint32_t entityOffset;
 };
+
+// M4 (ki-n1et): stride of one archived stack VALUE record in the runtime
+// VariableStackBuffer image -- a full widened value-cell slot plus the type
+// byte. The SERIALIZED stack image keeps the packed retail records (4-byte
+// payload + 1-byte type, written/read by DoSaveEntryInternal /
+// Scr_DoLoadEntryInternal); only the runtime buffer stride widens with
+// VariableUnion, so serialized formats do not move.
+inline constexpr size_t VARIABLE_STACK_RECORD_SIZE = sizeof(VariableUnion) + 1;
 // M4 (ki-n1et): the value cell. On ILP32 every member is 4 bytes so live
 // host pointers (vectorValue / codePosValue / stackValue) are lossless; on
 // 64-bit the union widens 0x4 -> 0x8 and pointer stores through the 32-bit
