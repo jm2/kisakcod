@@ -468,7 +468,7 @@ void __cdecl CG_DeployServerCommand(int32_t localClientNum)
     case 0x43:
         v25 = Cmd_Argv(1);
         weapIndex = atoi(v25);
-        if (!weapIndex || BG_GetWeaponDef(weapIndex)->offhandClass)
+        if (!weapIndex || (BG_ValidateWeaponNumber(weapIndex) && BG_GetWeaponDef(weapIndex)->offhandClass)) // KISAK (ki-gu2, upstream 4c59a1ca): server-supplied index; unpopulated slots are NULL
             CG_SetEquippedOffHand(localClientNum, weapIndex);
         break;
     case 0x44:
@@ -739,6 +739,8 @@ void __cdecl CG_ParseScores(int32_t localClientNum)
     {
         v5 = Cmd_Argv(7 * i + 5);
         cgameGlob->scores[i].client = atoi(v5);
+        if ((uint32_t)cgameGlob->scores[i].client >= MAX_CLIENTS) // KISAK (ki-gu2, upstream 4c59a1ca): unsigned compare, client is int32
+            cgameGlob->scores[i].client = 0;
         v6 = Cmd_Argv(7 * i + 6);
         cgameGlob->scores[i].score = atoi(v6);
         v7 = Cmd_Argv(7 * i + 7);
@@ -1244,6 +1246,11 @@ void __cdecl CG_SetChannelVolCmd(int32_t localClientNum)
         prio = atoi(v1);
         v2 = Cmd_Argv(2);
         shockIndex = atoi(v2);
+        if (shockIndex >= 16) // KISAK (ki-gu2, upstream 4c59a1ca): bg_shellshockParms[] has 16 slots
+        {
+            Com_PrintError(14, "CG_SetChannelVolCmd: bad shellshock index %u\n", shockIndex);
+            return;
+        }
         v3 = Cmd_Argv(3);
         fadetime = atof(v3);
         if (localClientNum)

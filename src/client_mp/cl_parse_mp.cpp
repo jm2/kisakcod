@@ -406,7 +406,14 @@ void __cdecl CL_ParseDownload(int localClientNum, msg_t *msg)
             return;
         }
         if (size > 0)
+        {
             MSG_ReadData(msg, (uint8_t *)parseDownloadData, size);
+            if (msg->overflowed) // KISAK (ki-gu2, upstream 321218cb): truncated block must not be trusted
+            {
+                Com_Error(ERR_DROP, "CL_ParseDownload: truncated download block");
+                return;
+            }
+        }
         if (cls.downloadBlock == block)
         {
             if (cls.download)
@@ -716,10 +723,17 @@ void __cdecl CL_ParsePacketEntities(
     while (!msg->overflowed)
     {
         newnum = MSG_ReadEntityIndex(msg, 0xAu);
-        vassert(newnum >= 0 && newnum < (1 << 10), "(newnum) = %i", newnum);
 
+        // KISAK (ki-gu2, upstream 7436f74e + c6be07a2): the vassert compiled out in
+        // Release, leaving entity numbers unvalidated on the network path. Negative
+        // numbers mean the message overflowed - stop quietly; anything at or above
+        // MAX_GENTITIES is a protocol violation and drops.
         if (newnum == ENTITYNUM_NONE)
             break;
+        if (newnum < 0)
+            break;
+        if (newnum >= MAX_GENTITIES)
+            Com_Error(ERR_DROP, "CL_ParsePacketEntities: bad entity number %i", newnum);
         if (msg->readcount > msg->cursize)
             Com_Error(ERR_DROP, "CL_ParsePacketEntities: end of message");
         while (oldnum < newnum && !msg->overflowed)
@@ -879,6 +893,14 @@ void __cdecl CL_ParsePacketClients(
     while (!msg->overflowed && MSG_ReadBit(msg))
     {
         newnum = MSG_ReadEntityIndex(msg, 6u);
+
+        // KISAK (ki-gu2, upstream 7436f74e + c6be07a2): bounds-check the client
+        // number before use; negative means the message overflowed.
+        if (newnum < 0)
+            break;
+        if (newnum >= MAX_CLIENTS) // LWSS ADD bounds check
+            Com_Error(ERR_DROP, "CL_ParsePacketClients: bad client number %i", newnum);
+
         if (msg->readcount > msg->cursize)
             Com_Error(ERR_DROP, "CL_ParsePacketClients: end of message");
         while (oldnum < newnum)

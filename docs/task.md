@@ -6,7 +6,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Porting checklist
 
-Last reconciled: **July 28, 2026**. A checked parent means that milestone's exit
+Last reconciled: **September 3, 2026**. A checked parent means that milestone's exit
 criteria are complete, not merely that substantial supporting work exists.
 Percentages are engineering-effort estimates and are not derived from the number
 of checked boxes.
@@ -84,6 +84,46 @@ of checked boxes.
     unresolved threads, merge PR #102 as `62160c67`, verify checkpoint/upstream
     ancestry retention, and pass all 11 authoritative post-merge jobs in run
     **30388420989**.
+- [x] Selectively reconcile the 30 upstream commits through `c6be07a2`
+  (upstream tip as of September 2, 2026); preserve superseding portability,
+  security, and headless work.
+  - [x] Audit every commit from `fb1b7d3e` through `c6be07a2` and record its
+    exact disposition in `docs/UPSTREAM_C6BE07A2_LEDGER.md`. The July 2026
+    nine-commit scope from this bead landed inside the PR #102 `820b0a03`
+    checkpoint.
+  - [x] Adapt the curated net-security series (321218cb, 7bffda1a, 7436f74e,
+    b0539c59, 4c59a1ca, c6be07a2):
+    hard network-path entity/client bounds, `MSG_ReadData` negative-length
+    rejection, reliable-acknowledge 64-bit delta, stat/download truncation
+    guards, the `CS_EFFECT_NAMES` 244→1598 shadow fix, temp-ban `banTime`
+    de-aliasing, the trailing-`'^'` name-terminator guard, shellshock/
+    weapon-index/score clamps, and demo chunk-size validation. Hunk-level
+    protections already present here in stronger form were documented, not
+    re-imported.
+  - [x] Defer with recorded reasons: the SP vehicle-refactor trilogy, the
+    fx_marks rewrite, the SP shutdown-crash sync fix (no local SP compiler),
+    the OpenAL restructuring epic, the build-number scheme (byte-parity
+    tooling dependency), and the post-build copy change (newer than the
+    supported CMake 3.16 command surface). Reject the radiant editor series,
+    the mechanical warning sweeps, and upstream README/build-policy churn.
+  - [x] Record exact upstream ancestry with tree-neutral checkpoint
+    `e22fd6b7`; its second parent is exact `c6be07a2`, its diff from the
+    first parent is empty, and both trees are `817ab039`.
+  - [x] Pass the complete local portable CTest suite with the baseline
+    failure set byte-identical (**205/208**; the three failures are the
+    pre-existing ki-9b13/ki-ya3t baseline at base `9d840c96`). Hosted
+    validation is the merge-queue gate for this reconciliation.
+- [x] Audit and record the next 16 upstream commits through `5c27f2af`
+  (upstream tip as of September 4, 2026).
+  - [x] Record exact per-commit dispositions for `14900b6b` through
+    `5c27f2af` in `docs/UPSTREAM_5C27F2AF_LEDGER.md`.
+  - [x] Defer the network/save/gameplay-visible enum migrations until their
+    numeric values, profile behavior, and serialized contracts have dedicated
+    tests; defer `355b68a0` separately because it also changes collision and
+    helicopter-water behavior.
+  - [x] Record exact upstream ancestry with tree-neutral checkpoint
+    `86459c53`; its second parent is exact `5c27f2af`, its first-parent diff
+    is empty, and its tree matches first parent `f2408924` at `898ed947`.
 - [x] Merge the exact-key composite zone-runtime controller (PR #71).
 - [x] Merge the ABI-neutral runtime capacity/demand prerequisite (PR #72).
 - [x] Publish the production-neutral serialized runtime facade (PR #73).

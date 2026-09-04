@@ -119,7 +119,7 @@ int __cdecl SV_IsTempBannedGuid(const char *cdkeyHash)
     for (banSlot = 0; banSlot < 0x10; ++banSlot)
     {
         if (!memcmp(&svs.tempBans[banSlot], cdkeyHash, 0x20u)
-            && sv_kickBanTime->current.value * 1000.0 >= (svs.time - LODWORD(svs.mapCenter[9 * banSlot - 136])))
+            && sv_kickBanTime->current.value * 1000.0 >= (svs.time - svs.tempBans[banSlot].banTime)) // KISAK (ki-gu2, upstream b0539c59): was a mapCenter float-array alias
         {
             return 1;
         }
@@ -361,6 +361,11 @@ void __cdecl SV_ReceiveStats(netadr_t from, msg_t *msg)
                 return;
             }
             MSG_ReadData(msg, &ClientByAddress->stats[start], v4);
+            if (msg->overflowed) // KISAK (ki-gu2, upstream 321218cb): a truncated packet must not be acknowledged as received
+            {
+                Com_PrintWarning(15, "Truncated stat packet %u from client\n", packetNum);
+                return;
+            }
             ClientByAddress->statPacketsReceived |= 1 << packetNum;
             ClientByAddress->lastPacketTime = svs.time;
             v3 = va("statResponse %i", ~ClientByAddress->statPacketsReceived & 0x7F);
@@ -467,7 +472,7 @@ void __cdecl SV_BanGuidBriefly(const char *cdkeyHash)
 
     banSlot = SV_FindFreeTempBanSlot();
     memcpy(&svs.tempBans[banSlot], cdkeyHash, 0x20u);
-    LODWORD(svs.mapCenter[9 * banSlot - 136]) = svs.time;
+    svs.tempBans[banSlot].banTime = svs.time; // KISAK (ki-gu2, upstream b0539c59): was a float-array alias into mapCenter
 }
 
 uint32_t __cdecl SV_FindFreeTempBanSlot()
@@ -480,7 +485,7 @@ uint32_t __cdecl SV_FindFreeTempBanSlot()
     {
         if (!svs.tempBans[banSlot].cdkeyHash[0])
             return banSlot;
-        if (SLODWORD(svs.mapCenter[9 * banSlot - 136]) < SLODWORD(svs.mapCenter[9 * oldestSlot - 136]))
+        if (svs.tempBans[banSlot].banTime < svs.tempBans[oldestSlot].banTime) // KISAK (ki-gu2, upstream b0539c59): was a mapCenter float-array alias
             oldestSlot = banSlot;
     }
     return oldestSlot;

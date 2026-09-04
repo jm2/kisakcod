@@ -1008,7 +1008,7 @@ void __cdecl CL_ReadDemoNetworkPacket(int32_t localClientNum)
         }
         else
         {
-            if (buf.cursize > buf.maxsize)
+            if (buf.cursize < 0 || buf.cursize > buf.maxsize) // KISAK (ki-gu2, upstream 4c59a1ca): demo length is file-controlled; negative would wrap FS_Read
                 Com_Error(ERR_DROP, "CL_ReadDemoMessage: demoMsglen > MAX_MSGLEN");
             v1 = FS_Read(buf.data, buf.cursize, clc->demofile);
             if (v1 == buf.cursize)

@@ -218,7 +218,8 @@ void __cdecl ClientCleanName(const char *in, char *out, int32_t outSize)
         {
             if (v3 == 94)
             {
-                ++in;
+                if (*in)// KISAK (ki-gu2, upstream b0539c59): a name ending in '^' must not skip past the terminator
+                    ++in;
             }
             else
             {

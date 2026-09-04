@@ -49,6 +49,39 @@ graph verification confirms tree-neutral checkpoint `6e0e6107` and exact
 upstream `820b0a03` are retained as ancestors. All 11 authoritative post-merge
 `master` jobs passed in run **30388420989**.
 
+The September 3, 2026 integration-hygiene pass (ki-gu2) re-audits the 30
+upstream commits through exact tip `c6be07a2` (September 2, 2026). Every
+commit now has an exact disposition in
+[`docs/UPSTREAM_C6BE07A2_LEDGER.md`](UPSTREAM_C6BE07A2_LEDGER.md). The curated
+selection adapts the upstream net-security series: hard entity/client bounds
+on the snapshot paths, `MSG_ReadData` negative-length rejection, a 64-bit
+reliable-acknowledge delta, stat/download truncation guards, the corrected
+`CS_EFFECT_NAMES` base (the stray SP-value define made every effect
+configstring index 1,354 slots past `cgs->fxs[]`), typed temp-ban timestamps,
+the trailing-`'^'` name-terminator guard, weapon/shellshock/score clamps, and
+demo chunk validation. Hunk-level
+protections already present here in stronger form were documented rather than
+re-imported. The SP vehicle-refactor trilogy, the `fx_marks` rewrite, the SP
+shutdown-crash sync fix, the OpenAL restructuring epic, and the upstream
+build-number and post-build copy schemes are deferred with recorded reasons;
+the radiant editor
+series and mechanical warning sweeps are rejected. Tree-neutral checkpoint
+`e22fd6b7` records exact upstream `c6be07a2` as its second parent with an
+empty first-parent diff and identical tree `817ab039`. The complete local
+portable CTest suite keeps its byte-identical pre-existing baseline
+(205/208; ki-9b13/ki-ya3t); hosted jobs gate the merge.
+
+The September 4 extension audits the remaining 16 upstream commits through
+exact tip `5c27f2af`. They are broad numeric-to-enum migrations across
+database flags, network-visible player and entity state, gameplay masks,
+collision surfaces, loader tables, vehicles, and weapon animation. Their
+individual dispositions are recorded in
+[`docs/UPSTREAM_5C27F2AF_LEDGER.md`](UPSTREAM_5C27F2AF_LEDGER.md); none is
+imported without the frozen-value, profile, and serialization tests required
+by this fork. Tree-neutral checkpoint `86459c53` retains exact upstream
+ancestry with an empty first-parent content diff. Once PR #105 is merge-
+committed, the fork is no longer behind upstream by ancestry.
+
 Completed foundation work:
 
 - the earlier audited upstream/gameplay reconciliation checkpoints, PR #48's report-free script-string ownership
