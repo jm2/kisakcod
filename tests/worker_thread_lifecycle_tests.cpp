@@ -94,6 +94,38 @@ bool WaitForWorkerProgress(std::atomic<std::uint32_t> &counter, std::uint32_t ta
     return counter.load(std::memory_order_acquire) >= target;
 }
 
+bool SpawnActivateAndDrainWorker(std::uint32_t processedTarget, const char *label)
+{
+    if (!Sys_SpawnWorkerThread(TestWorkerThreadEntry, 0))
+    {
+        std::fputs("worker slot 0 spawn failed\n", stderr);
+        return false;
+    }
+    Sys_SetWorkerThreadActive(0, true);
+    Sys_SetWorkerCmdEvent();
+    if (!WaitForWorkerProgress(g_workerProcessedCommands[0], processedTarget))
+    {
+        std::fprintf(stderr, "%s did not drain its command event\n", label);
+        return false;
+    }
+    return true;
+}
+
+bool ShutdownWorkerSlotAndVerifyLatch(const char *label)
+{
+    if (!Sys_ShutdownWorkerThread(0))
+    {
+        std::fprintf(stderr, "%s shutdown failed\n", label);
+        return false;
+    }
+    if (!g_workerObservedLatch[0].load(std::memory_order_acquire))
+    {
+        std::fprintf(stderr, "%s exited without observing its shutdown latch\n", label);
+        return false;
+    }
+    return true;
+}
+
 bool TestShutdownRejectsInvalidAndEmptySlots()
 {
     if (Sys_ShutdownWorkerThread(2)
@@ -125,29 +157,11 @@ bool TestActiveWorkerShutdownAndRespawn()
     // Spawn, activate, let it drain commands, then latch and join. The
     // shutdown join has no test-side bound: a worker that misses its latch
     // hangs the test and fails the ctest timeout instead.
-    if (!Sys_SpawnWorkerThread(TestWorkerThreadEntry, 0))
-    {
-        std::fputs("worker slot 0 spawn failed\n", stderr);
+    if (!SpawnActivateAndDrainWorker(1u, "activated worker"))
         return false;
-    }
-    Sys_SetWorkerThreadActive(0, true);
-    Sys_SetWorkerCmdEvent();
-    if (!WaitForWorkerProgress(g_workerProcessedCommands[0], 1u))
-    {
-        std::fputs("activated worker did not drain its command event\n", stderr);
-        return false;
-    }
 
-    if (!Sys_ShutdownWorkerThread(0))
-    {
-        std::fputs("active worker slot 0 shutdown failed\n", stderr);
+    if (!ShutdownWorkerSlotAndVerifyLatch("active worker slot 0"))
         return false;
-    }
-    if (!g_workerObservedLatch[0].load(std::memory_order_acquire))
-    {
-        std::fputs("worker exited without observing its shutdown latch\n", stderr);
-        return false;
-    }
     if (Sys_ShutdownWorkerThread(0))
     {
         std::fputs("shutdown of a released worker slot succeeded twice\n", stderr);
@@ -157,29 +171,9 @@ bool TestActiveWorkerShutdownAndRespawn()
     // Safe reinitialization: the emptied slot must accept a fresh spawn,
     // activate, and drain through the same lifecycle again.
     g_workerObservedLatch[0].store(false, std::memory_order_release);
-    if (!Sys_SpawnWorkerThread(TestWorkerThreadEntry, 0))
-    {
-        std::fputs("worker slot 0 respawn after shutdown failed\n", stderr);
+    if (!SpawnActivateAndDrainWorker(2u, "respawned worker"))
         return false;
-    }
-    Sys_SetWorkerThreadActive(0, true);
-    Sys_SetWorkerCmdEvent();
-    if (!WaitForWorkerProgress(g_workerProcessedCommands[0], 2u))
-    {
-        std::fputs("respawned worker did not drain its command event\n", stderr);
-        return false;
-    }
-    if (!Sys_ShutdownWorkerThread(0))
-    {
-        std::fputs("respawned worker slot 0 shutdown failed\n", stderr);
-        return false;
-    }
-    if (!g_workerObservedLatch[0].load(std::memory_order_acquire))
-    {
-        std::fputs("respawned worker exited without observing its latch\n", stderr);
-        return false;
-    }
-    return true;
+    return ShutdownWorkerSlotAndVerifyLatch("respawned worker slot 0");
 }
 
 bool TestParkedWorkerShutdown()

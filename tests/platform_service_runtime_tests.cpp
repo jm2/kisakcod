@@ -1231,6 +1231,45 @@ bool TestWorkerGateShutdownFromParked()
     return true;
 }
 
+// Latches shutdown over the fixture's in-flight blocked task and releases it,
+// while a concurrent WaitPaused call races the latch. Returns true only when
+// the pending pause is acknowledged (releasing WaitPaused) and the interrupted
+// task still completes exactly once.
+bool ShutdownInFlightTaskAndAwaitPauseAck(WorkerGateShutdownState &state)
+{
+    SysEventHandle pauseReturnedEvent = nullptr;
+    Sys_CreateEvent(true, false, &pauseReturnedEvent);
+    std::thread pauseWaiter([&]() {
+        Sys_WorkerGateWaitPaused(state.gate);
+        Sys_SetEvent(&pauseReturnedEvent);
+    });
+
+    const bool latched = Sys_WorkerGateRequestShutdown(state.gate);
+    Sys_SetEvent(&state.taskReleaseEvent);
+
+    const bool pauseAcknowledged =
+        Sys_WaitForSingleObjectTimeout(&pauseReturnedEvent, 5'000);
+    pauseWaiter.join();
+    Sys_DestroyEvent(&pauseReturnedEvent);
+    if (!latched)
+    {
+        std::fputs("pause-requested worker rejected its shutdown latch\n", stderr);
+        return false;
+    }
+    if (!pauseAcknowledged)
+    {
+        std::fputs("shutdown latch did not release a pending pause wait\n", stderr);
+        return false;
+    }
+    if (!Sys_WaitForSingleObjectTimeout(&state.taskCompletedEvent, 2'000)
+        || state.completedTasks.load(std::memory_order_acquire) != 1u)
+    {
+        std::fputs("worker task interrupted by shutdown did not complete\n", stderr);
+        return false;
+    }
+    return true;
+}
+
 bool TestWorkerGateShutdownAcknowledgesPendingPause()
 {
     WorkerGateShutdownState state;
@@ -1256,35 +1295,8 @@ bool TestWorkerGateShutdownAcknowledgesPendingPause()
         return false;
     }
 
-    SysEventHandle pauseReturnedEvent = nullptr;
-    Sys_CreateEvent(true, false, &pauseReturnedEvent);
-    std::thread pauseWaiter([&]() {
-        Sys_WorkerGateWaitPaused(state.gate);
-        Sys_SetEvent(&pauseReturnedEvent);
-    });
-
-    if (!Sys_WorkerGateRequestShutdown(state.gate))
-    {
-        std::fputs("pause-requested worker rejected its shutdown latch\n", stderr);
+    if (!ShutdownInFlightTaskAndAwaitPauseAck(state))
         return false;
-    }
-    Sys_SetEvent(&state.taskReleaseEvent);
-
-    const bool pauseAcknowledged =
-        Sys_WaitForSingleObjectTimeout(&pauseReturnedEvent, 5'000);
-    pauseWaiter.join();
-    Sys_DestroyEvent(&pauseReturnedEvent);
-    if (!pauseAcknowledged)
-    {
-        std::fputs("shutdown latch did not release a pending pause wait\n", stderr);
-        return false;
-    }
-    if (!Sys_WaitForSingleObjectTimeout(&state.taskCompletedEvent, 2'000)
-        || state.completedTasks.load(std::memory_order_acquire) != 1u)
-    {
-        std::fputs("worker task interrupted by shutdown did not complete\n", stderr);
-        return false;
-    }
 
     if (!StopWorkerGateShutdownThread(&state))
     {
