@@ -177,16 +177,19 @@ void TestLittleEndianWriteByteLayout()
     unsigned char bytes[8] = {};
     WriteLe16(bytes, 0x1234);
     const unsigned char kLe16Layout[] = { 0x34, 0x12 };
-    expect(std::equal(kLe16Layout, kLe16Layout + 2, bytes),
+    // std::equal's checked (four-iterator, C++14) overload: the second
+    // range is bounds-checked (CWE-126), and its length is part of the
+    // contract — compare exactly the bytes each Write writes.
+    expect(std::equal(kLe16Layout, kLe16Layout + 2, bytes, bytes + 2),
         "WriteLe16 byte order");
     WriteLe32(bytes, 0xDEADBEEFu);
     const unsigned char kLe32Layout[] = { 0xEF, 0xBE, 0xAD, 0xDE };
-    expect(std::equal(kLe32Layout, kLe32Layout + 4, bytes),
+    expect(std::equal(kLe32Layout, kLe32Layout + 4, bytes, bytes + 4),
         "WriteLe32 byte order");
     WriteLe64(bytes, 0x0102030405060707ull);
     const unsigned char kLe64Layout[] = {
         0x07, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01 };
-    expect(std::equal(kLe64Layout, kLe64Layout + 8, bytes),
+    expect(std::equal(kLe64Layout, kLe64Layout + 8, bytes, bytes + 8),
         "WriteLe64 byte order");
 }
 
