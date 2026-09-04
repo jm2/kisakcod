@@ -87,6 +87,20 @@ endif()
 # C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.44.35207\bin\Hostx86\x86
 set(USE_ASAN OFF)
 
+# Reproducible reference builds (M0 byte-parity gate). /Brepro pins the
+# embedded timestamp, PDB GUID, and __DATE__/__TIME__ inputs so the shared
+# retail reference translation units compile and link byte-identically across
+# the MP/SP/dedicated KISAK_BUILD_* variants. Off by default; the hosted
+# windows-x86-parity CI job opts in for the three baseline builds it compares.
+option(KISAK_REPRODUCIBLE_BUILD "Use MSVC /Brepro so reference builds are byte-deterministic across KISAK_BUILD_* variants" OFF)
+if (KISAK_REPRODUCIBLE_BUILD)
+    if (NOT MSVC)
+        message(FATAL_ERROR "KISAK_REPRODUCIBLE_BUILD currently requires the MSVC toolchain (/Brepro)")
+    endif()
+    string(APPEND CMAKE_CXX_FLAGS " /Brepro")
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " /BREPRO")
+endif()
+
 # Set the gloabl directory variables
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(DEPS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps)

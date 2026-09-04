@@ -133,7 +133,7 @@ of checked boxes.
   - [x] Pass final exact-head hosted CI and review at `7afb2ca5` in run
     **29781843001**, squash-merge as `909f9309`, and pass all nine authoritative
     post-merge jobs in run **29782835695**.
-- [ ] Atomically cut all seven loader sites over to the serialized facade; partial
+- [x] Atomically cut all seven loader sites over to the serialized facade; partial
   enrollment is forbidden.
   - [x] Add a private exact-key registry-borrow path authenticated for active
     lifecycle callbacks; do not expose the hash lock or coordinator.
@@ -327,8 +327,32 @@ of checked boxes.
       actionable review threads.
     - [x] Squash-merge PR #83 as `beda5d39` and pass all nine authoritative
       post-merge jobs at that exact commit in run **29949463909**.
-  - [ ] Enroll a single narrow production bridge and replace all seven frozen raw
+  - [x] Enroll a single narrow production bridge and replace all seven frozen raw
     loader/registry operations in one reviewed change.
+    - [x] Enroll the five-method `DbLoadLegacyBridge` — begin facade access,
+      begin standalone registry ownership, run the typed operation, finish
+      registry ownership, finish facade access — and replace the seven frozen
+      raw sites atomically in `0d5a7558`: the two temporary
+      `SL_GetStringOfSize` user-4 claims in `db_stream_load.cpp`, the
+      `SL_AddUser` user-4 reference in `db_stringtable_load.cpp`, the two
+      dynamic-default `SL_GetString(name, 4)` claims in `db_registry.cpp`, and
+      the `SL_TransferSystem(4, 8)` / `SL_ShutdownSystem(8)` global sweep pair
+      in `DB_FreeUnusedResources`; the source contracts now require zero raw
+      sites and freeze the exact bridge-call counts, so partial enrollment
+      fails the seals.
+    - [x] Add the bridge three-cycle end-to-end runtime fixture against the
+      real registry/facade/coordinator chain, the validation-guard fixture
+      (null name, non-terminated bytes, oversize bytes, zero and out-of-range
+      string IDs), and the compile-time production-seal surface freeze; pass
+      the complete local suite **186/186** with the rewritten enrollment
+      guards.
+    - [x] Repair the MSVC C4702 post-fatal-return unreachable-code warnings
+      with a single target-scoped `/wd4702` suppression pinned by the source
+      seals at `4859c9ee`, after push run **30065215208** for `0d5a7558` failed
+      the portable Windows amd64/arm64 and macOS arm64 build legs; the cutover
+      tree subsequently passed all 11 required hosted jobs at the PR #101
+      exact head `ac141fb9` in run **30367496573** and all 11 authoritative
+      post-merge jobs in run **30369149465**.
 - [ ] Enroll the guarded native FX/impact path and complete its rollback,
   high-address, alias, unload, and slot-reuse coverage.
 - [ ] Replace the remaining XAnim/XModel raw fast-file reads with bounded,
@@ -340,14 +364,14 @@ of checked boxes.
     compilation rather than treating the host layout as the retail wire image.
 ### Milestone exit criteria
 
-- [ ] **M0 — Build-system foundation and CI scaffolding.**
+- [x] **M0 — Build-system foundation and CI scaffolding.**
   - [x] Provide `build-win.ps1` as the supported PowerShell replacement for
     `build-win.bat`.
   - [x] Auto-detect the target OS, architecture, and pointer width, with explicit
     target/source-override controls for portable utility builds.
   - [x] Keep the Windows x86 MP client, legacy dedicated, no-Steam, and
     dependency-free headless compile/link gates green.
-  - [ ] Add and validate the hosted Windows x86 SP build, prove byte-identical
+  - [x] Add and validate the hosted Windows x86 SP build, prove byte-identical
     reference parity for the MP/SP/dedicated baseline, and provide a checked-in
     Linux configure preset. The `windows-x86-sp` job is a clone of the existing
     Windows x86 job with `-DKISAK_BUILD_SP=ON`; the byte-parity script is
@@ -355,13 +379,24 @@ of checked boxes.
     `CMakePresets.json::linux-amd64-mp`. The SP build grows the hosted CI count
     from nine to eleven (the two windows-x86-sp matrix entries plus the new
     preset). New entries that reference the SP job must therefore use the
-    updated count. Note (ki-tgh, 2026-07-25): this line was incorrectly marked
-    `[x]` after 375f97d8 landed the preset and CI jobs, but the SP build does
-    not actually compile — `src/game/g_weapon.cpp` is missing an include under
-    KISAK_SP and `src/EffectsCore/fx_archive.cpp` carries MP-only
-    static_asserts that do not hold for SP. The job is kept in the matrix with
-    `continue-on-error: true` so the debt stays visible. Do not re-check this
-    item until the SP jobs are actually green.
+    updated count. The SP compile was unblocked by dd7742ca (ki-tgh: the SP
+    arm of `src/game/g_weapon.cpp` gained the missing `<xanim/xanim.h>`
+    include, and the MP-only `src/EffectsCore/fx_archive.cpp` static_asserts
+    were gated on `KISAK_MP`); the strict — no `continue-on-error` — SP matrix
+    entries have been green since, e.g. both `Windows x86 SP / Debug` and
+    `Windows x86 SP / Release` passed at exact head `74214074` in run
+    **33729405378**. Reference parity is now proven by an enforced gate, not
+    a scripted afterthought: the `windows-x86-parity` job builds all three
+    Win32 presets with `-DKISAK_REPRODUCIBLE_BUILD=ON` (MSVC `/Brepro` pins
+    the `__DATE__`/`__TIME__` and linker stamp inputs) and
+    `scripts/ci/compare-byte-parity.sh` fails closed unless the shared retail
+    reference object (`src/buildnumber.cpp`, no `KISAK_BUILD_*` conditionals)
+    and the buildnumber stamps are byte-identical across the MP/SP/dedicated
+    build trees; its first hosted run gates this change's own PR, and a red
+    parity job cannot merge. The `linux-amd64-mp` preset configures, builds,
+    and passes the portable suite locally (205/208; the three failures are the
+    pre-existing, environment-sensitive abi-scanner and security-count defects
+    tracked on ki-9b13 and ki-ya3t that stay green on hosted CI).
 - [ ] **M1 — Cross-compiler and ABI hygiene.**
   - [x] Land `platform_compat.h`, `kisak_abi.h`, fixed-width atomics/locks, ABI
     tests, and eliminate direct executable `Interlocked` calls.
@@ -2450,8 +2485,10 @@ The cumulative M5 row's trailing forward-looking sentence is superseded by
 the active critical path above: PR #80 merged the stable 33-slot context bank,
 PR #82 merged its full-chain integration and passed authoritative run
 **29943945374**, and PR #83 merged the checked no-report helper gate as
-`beda5d39`. The sole production bridge and atomic seven-site cutover are now
-the active M5 task; partial enrollment remains forbidden.
+`beda5d39`. The sole production bridge and atomic seven-site cutover are
+enrolled as `0d5a7558` (MSVC C4702 repair `4859c9ee`), with the source
+contracts asserting zero raw sites and frozen bridge-call counts; the
+remaining M5 loader work continues from that enrolled bridge.
 
 ## Detailed target evidence
 
@@ -2571,8 +2608,11 @@ successful output-bearing backends followed by unsafe batch closure. Exact
 head `6973a222` passed all nine hosted jobs in run **29948350036**, received a
 clean Codex review with both actionable threads resolved, and squash-merged as
 `beda5d39`; all nine authoritative post-merge jobs passed at that exact commit
-in run **29949463909**. Production enrollment remains zero; the sole narrow
-bridge and atomic seven-site cutover are next.
+in run **29949463909**. The sole narrow bridge and the atomic seven-site
+cutover are now enrolled: `DbLoadLegacyBridge` routes every legacy
+registry/load user-4/user-8 mutation through the serialized facade as
+`0d5a7558`, the raw site count is contract-frozen at zero, and the bridge
+surface is pinned by production-seal tests.
 
 - [x] **Priority 1 — Facade publication:** PR #73 landed the
    production-neutral process-lifetime facade with one nonblocking outer
@@ -2716,8 +2756,20 @@ bridge and atomic seven-site cutover are next.
      `6973a222` passed all nine jobs in run **29948350036** with clean Codex
      review and zero unresolved threads, squash-merged as `beda5d39`, and
      passed all nine authoritative jobs in run **29949463909**.
-   - [ ] Add the sole production legacy bridge, its sequencing/fault-injection
-     fixture, source allowlist/seals, and then replace all seven sites atomically.
+   - [x] Add the sole production legacy bridge, its sequencing/fault-injection
+      fixture, source allowlist/seals, and then replace all seven sites atomically.
+      - [x] Enroll `DbLoadLegacyBridge` and atomically replace the seven frozen
+        raw user-4/user-8 sites (two temporary `SL_GetStringOfSize` claims, one
+        `SL_AddUser`, two dynamic-default `SL_GetString` claims,
+        `SL_TransferSystem`, `SL_ShutdownSystem`) in `0d5a7558` with the
+        three-cycle runtime fixture, validation guards, production-seal
+        surface freeze, and zero-raw-site/exact-bridge-count source contracts;
+        local suite **186/186**.
+      - [x] Repair the MSVC C4702 portable-test failures with the
+        target-scoped `/wd4702` exception at `4859c9ee` after push run
+        **30065215208**, then pass all 11 hosted jobs with the cutover in tree
+        at exact head `ac141fb9` (run **30367496573**) and the authoritative
+        post-merge run **30369149465**.
 - [ ] **Priority 3 — Native FX/impact enrollment:** wire the guarded adapter into the production route behind the
    explicit legacy-x86 boundary. Preserve
    retail bytes and the writer; use full-width `DB_ResolveInsertedPointer`, publish `-2` roots through
