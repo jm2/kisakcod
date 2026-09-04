@@ -868,6 +868,50 @@ struct KisakFileDirectoryInformation
     wchar_t FileName[1];
 };
 
+// Layout pins for the NT ABI mirrors above. Several members are never
+// dereferenced, but they must exist at their documented offsets so the
+// members that follow them land where the kernel expects; these
+// assertions turn any layout drift into a compile-time failure.
+static_assert(
+    offsetof(KisakIoStatusBlock, Status) == 0
+        && offsetof(KisakIoStatusBlock, Pointer) == 0,
+    "IO_STATUS_BLOCK union members must share offset 0");
+static_assert(
+    offsetof(KisakIoStatusBlock, Information) == sizeof(void *),
+    "IO_STATUS_BLOCK Information must follow the Status/Pointer union");
+static_assert(
+    offsetof(KisakObjectAttributes, SecurityQualityOfService)
+            - offsetof(KisakObjectAttributes, SecurityDescriptor)
+        == sizeof(void *),
+    "OBJECT_ATTRIBUTES security members must be pointer-sized apart");
+static_assert(
+    offsetof(KisakFileDirectoryInformation, CreationTime)
+            - offsetof(KisakFileDirectoryInformation, FileIndex)
+        == sizeof(KisakFileDirectoryInformation::NextEntryOffset),
+    "FILE_DIRECTORY_INFORMATION timestamps must follow FileIndex");
+static_assert(
+    offsetof(KisakFileDirectoryInformation, LastAccessTime)
+            - offsetof(KisakFileDirectoryInformation, CreationTime)
+        == sizeof(std::int64_t)
+        && offsetof(KisakFileDirectoryInformation, LastWriteTime)
+                - offsetof(KisakFileDirectoryInformation, LastAccessTime)
+            == sizeof(std::int64_t)
+        && offsetof(KisakFileDirectoryInformation, ChangeTime)
+                - offsetof(KisakFileDirectoryInformation, LastWriteTime)
+            == sizeof(std::int64_t)
+        && offsetof(KisakFileDirectoryInformation, EndOfFile)
+                - offsetof(KisakFileDirectoryInformation, ChangeTime)
+            == sizeof(std::int64_t)
+        && offsetof(KisakFileDirectoryInformation, AllocationSize)
+                - offsetof(KisakFileDirectoryInformation, EndOfFile)
+            == sizeof(std::int64_t),
+    "FILE_DIRECTORY_INFORMATION timestamp/size chain must be contiguous");
+static_assert(
+    offsetof(KisakFileDirectoryInformation, FileName)
+            - offsetof(KisakFileDirectoryInformation, FileAttributes)
+        == 2u * sizeof(std::uint32_t),
+    "FILE_DIRECTORY_INFORMATION FileName must follow the attribute fields");
+
 using KisakNtCreateFileFn = KisakNtStatus (__stdcall *)(
     HANDLE *fileHandle,
     std::uint32_t desiredAccess,

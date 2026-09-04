@@ -12,6 +12,7 @@
 #include <Windows.h>
 #include <winioctl.h>
 #else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -944,39 +945,64 @@ bool TestReadFileNoFollow(const std::string &workingDirectory)
 }
 
 
-bool TestRemoveTreeContract(const std::string &workingDirectory)
+// Path fixture for the recursive-deletion contract scenarios. Building the
+// names is separated from creating the layout so each scenario helper stays
+// within the complexity budget.
+struct RemoveTreeContractPaths
+{
+    std::string root;
+    std::string nestedDirectory;
+    std::string deeperDirectory;
+    std::string file;
+    std::string nestedFile;
+    std::string siblingFile;
+    std::string internalLink;
+    std::string externalTarget;
+    std::string externalLink;
+};
+
+RemoveTreeContractPaths MakeRemoveTreeContractPaths(
+    const std::string &workingDirectory)
+{
+    RemoveTreeContractPaths paths;
+    paths.root = MakeUniquePath(workingDirectory) + "-remove";
+    paths.nestedDirectory = Join(paths.root, "nested");
+    paths.deeperDirectory = Join(paths.nestedDirectory, "deeper");
+    paths.file = Join(paths.root, "keep-file.dat");
+    paths.nestedFile = Join(paths.deeperDirectory, "inside.bin");
+    paths.siblingFile = Join(paths.root, "sibling.txt");
+    paths.internalLink = Join(paths.root, "internal-symlink");
+    paths.externalTarget = MakeUniquePath(workingDirectory)
+        + "-external-target";
+    paths.externalLink = Join(paths.root, "external-symlink");
+    return paths;
+}
+
+bool CreateRemoveTreeFixture(const RemoveTreeContractPaths &paths)
 {
     SetCheckStage("remove-tree/setup");
-    const std::string root = MakeUniquePath(workingDirectory) + "-remove";
-    const std::string nestedDirectory = Join(root, "nested");
-    const std::string deeperDirectory = Join(nestedDirectory, "deeper");
-    const std::string file = Join(root, "keep-file.dat");
-    const std::string nestedFile = Join(deeperDirectory, "inside.bin");
-    const std::string siblingFile = Join(root, "sibling.txt");
-    const std::string internalLink = Join(root, "internal-symlink");
-    const std::string externalTarget = MakeUniquePath(workingDirectory)
-        + "-external-target";
-    const std::string externalLink = Join(root, "external-symlink");
-
-    if (!Check(Sys_FileSystemCreateDirectory(root.c_str()))
-        || !Check(Sys_FileSystemCreateDirectory(nestedDirectory.c_str()))
-        || !Check(Sys_FileSystemCreateDirectory(deeperDirectory.c_str()))
-        || !Check(Sys_FileSystemCreateDirectory(externalTarget.c_str()))
-        || !Check(WriteFile(file))
-        || !Check(WriteFile(nestedFile))
-        || !Check(WriteFile(siblingFile))
-        || !Check(WriteFile(Join(externalTarget, "outside.bin"))))
-
+    if (!Check(Sys_FileSystemCreateDirectory(paths.root.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(paths.nestedDirectory.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(paths.deeperDirectory.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(paths.externalTarget.c_str()))
+        || !Check(WriteFile(paths.file))
+        || !Check(WriteFile(paths.nestedFile))
+        || !Check(WriteFile(paths.siblingFile))
+        || !Check(WriteFile(Join(paths.externalTarget, "outside.bin"))))
     {
         return false;
     }
+    return true;
+}
 
+bool CreateRemoveTreeContractLinks(const RemoveTreeContractPaths &paths)
+{
 #if defined(_WIN32)
     constexpr DWORD directoryLink = 0x1;
     constexpr DWORD allowUnprivilegedCreate = 0x2;
-    const std::wstring wideInternal = ExtendedPath(internalLink);
-    const std::wstring wideExternal = ExtendedPath(externalLink);
-    const std::wstring wideExternalTarget = ExtendedPath(externalTarget);
+    const std::wstring wideInternal = ExtendedPath(paths.internalLink);
+    const std::wstring wideExternal = ExtendedPath(paths.externalLink);
+    const std::wstring wideExternalTarget = ExtendedPath(paths.externalTarget);
     if (!Check(!wideInternal.empty())
         || !Check(!wideExternal.empty())
         || !Check(!wideExternalTarget.empty()))
@@ -985,7 +1011,7 @@ bool TestRemoveTreeContract(const std::string &workingDirectory)
     }
     const bool internalCreated = CreateSymbolicLinkW(
         wideInternal.c_str(),
-        ExtendedPath(Join(root, "nested")).c_str(),
+        ExtendedPath(paths.nestedDirectory).c_str(),
         directoryLink | allowUnprivilegedCreate) != 0;
     const bool externalCreated = CreateSymbolicLinkW(
         wideExternal.c_str(),
@@ -993,39 +1019,51 @@ bool TestRemoveTreeContract(const std::string &workingDirectory)
         directoryLink | allowUnprivilegedCreate) != 0;
 #else
     const bool internalCreated =
-        symlink("nested", internalLink.c_str()) == 0;
+        symlink("nested", paths.internalLink.c_str()) == 0;
     const bool externalCreated =
-        symlink(externalTarget.c_str(), externalLink.c_str()) == 0;
+        symlink(paths.externalTarget.c_str(), paths.externalLink.c_str()) == 0;
 #endif
     if (!Check(internalCreated) || !Check(externalCreated))
         return false;
+    return true;
+}
 
+// A symlink pointing out of the tree must be refused as the requested root
+// without touching its target.
+bool TestRemoveTreeRefusesLinkLeaf(
+    const std::string &workingDirectory,
+    const std::string &root)
+{
     SetCheckStage("remove-tree/refuse-link-leaf");
-    {
-        const std::string linkLeaf = MakeUniquePath(workingDirectory)
-            + "-remove-link";
+    const std::string linkLeaf = MakeUniquePath(workingDirectory)
+        + "-remove-link";
 #if defined(_WIN32)
-        const std::wstring wideLinkLeaf = ExtendedPath(linkLeaf);
-        const bool created = CreateSymbolicLinkW(
-            wideLinkLeaf.c_str(),
-            ExtendedPath(root).c_str(),
-            directoryLink | allowUnprivilegedCreate) != 0;
+    constexpr DWORD directoryLink = 0x1;
+    constexpr DWORD allowUnprivilegedCreate = 0x2;
+    const std::wstring wideLinkLeaf = ExtendedPath(linkLeaf);
+    const bool created = CreateSymbolicLinkW(
+        wideLinkLeaf.c_str(),
+        ExtendedPath(root).c_str(),
+        directoryLink | allowUnprivilegedCreate) != 0;
 #else
-        const bool created =
-            symlink(root.c_str(), linkLeaf.c_str()) == 0;
+    const bool created =
+        symlink(root.c_str(), linkLeaf.c_str()) == 0;
 #endif
-        if (!Check(created))
-            return false;
-        if (!Check(!Sys_FileSystemRemoveTree(linkLeaf.c_str())))
-            return false;
+    if (!Check(created))
+        return false;
+    if (!Check(!Sys_FileSystemRemoveTree(linkLeaf.c_str())))
+        return false;
 #if defined(_WIN32)
-        const std::wstring wideCleanupLeaf = ExtendedPath(linkLeaf);
-        (void)RemoveDirectoryW(wideCleanupLeaf.c_str());
+    const std::wstring wideCleanupLeaf = ExtendedPath(linkLeaf);
+    (void)RemoveDirectoryW(wideCleanupLeaf.c_str());
 #else
-        (void)unlink(linkLeaf.c_str());
+    (void)unlink(linkLeaf.c_str());
 #endif
-    }
+    return true;
+}
 
+bool TestRemoveTreeRejectsInvalidArguments(const std::string &root)
+{
     SetCheckStage("remove-tree/invalid-arguments");
     if (!Check(!Sys_FileSystemRemoveTree(nullptr))
         || !Check(!Sys_FileSystemRemoveTree(""))
@@ -1035,11 +1073,14 @@ bool TestRemoveTreeContract(const std::string &workingDirectory)
     {
         return false;
     }
+    return true;
+}
 
-    SetCheckStage("remove-tree/executes");
-    if (!Check(Sys_FileSystemRemoveTree(root.c_str())))
-        return false;
 #if defined(_WIN32)
+bool VerifyRemoveTreeWin32Results(
+    const std::string &root,
+    const std::string &externalTarget)
+{
     const std::wstring wideRoot = ExtendedPath(root);
     const std::wstring wideExternalTargetCheck = ExtendedPath(externalTarget);
     const std::wstring wideOutsideCheck =
@@ -1083,28 +1124,138 @@ bool TestRemoveTreeContract(const std::string &workingDirectory)
     }
     if (!leftover.empty())
         return false;
-    if (!Check(RemoveDirectoryW(wideExternalTargetCheck.c_str())))
-        return false;
+    return Check(RemoveDirectoryW(wideExternalTargetCheck.c_str()));
+}
 #else
-    struct stat rootStatus{};
-    if (!Check(stat(root.c_str(), &rootStatus) != 0)
-        || !Check(lstat(externalTarget.c_str(), &rootStatus) == 0))
+bool VerifyRemoveTreePosixResults(
+    const std::string &root,
+    const std::string &externalTarget)
+{
+    // Existence checks only: the tree must be gone and the external
+    // symlink must have survived. faccessat keeps these checks free of
+    // stat's 32-bit time_t surface and needs no output buffer; the
+    // no-follow flag keeps the symlink itself the object being tested.
+    if (!Check(faccessat(AT_FDCWD, root.c_str(), F_OK, 0) != 0)
+        || !Check(faccessat(
+                AT_FDCWD,
+                externalTarget.c_str(),
+                F_OK,
+                AT_SYMLINK_NOFOLLOW)
+            == 0))
     {
         return false;
     }
     SetCheckStage("remove-tree/external-cleanup");
     if (!Check(RemoveFileNative(Join(externalTarget, "outside.bin"))))
         return false;
-    if (!Check(rmdir(externalTarget.c_str()) == 0))
-        return false;
+    return Check(rmdir(externalTarget.c_str()) == 0);
+}
 #endif
-    return true;
 
+bool TestRemoveTreeContract(const std::string &workingDirectory)
+{
+    const RemoveTreeContractPaths paths =
+        MakeRemoveTreeContractPaths(workingDirectory);
+    if (!CreateRemoveTreeFixture(paths))
+        return false;
+    if (!CreateRemoveTreeContractLinks(paths))
+        return false;
+    if (!TestRemoveTreeRefusesLinkLeaf(workingDirectory, paths.root))
+        return false;
+    if (!TestRemoveTreeRejectsInvalidArguments(paths.root))
+        return false;
+    SetCheckStage("remove-tree/executes");
+    if (!Check(Sys_FileSystemRemoveTree(paths.root.c_str())))
+        return false;
+#if defined(_WIN32)
+    return VerifyRemoveTreeWin32Results(paths.root, paths.externalTarget);
+#else
+    return VerifyRemoveTreePosixResults(paths.root, paths.externalTarget);
+#endif
 }
 
 #if defined(_WIN32)
 namespace
 {
+#pragma pack(push, 4)
+struct KisakTestMountPointBuffer
+{
+    std::uint32_t ReparseTag;
+    std::uint16_t ReparseDataLength;
+    std::uint16_t Reserved;
+    std::uint16_t SubstituteNameOffset;
+    std::uint16_t SubstituteNameLength;
+    std::uint16_t PrintNameOffset;
+    std::uint16_t PrintNameLength;
+    wchar_t PathBuffer[1];
+};
+#pragma pack(pop)
+
+// Resolves the substitute name — the absolute native target path prefixed
+// with the \??\ device namespace, without the \\?\ extended prefix — and
+// fills a mount-point reparse buffer sized to the real path. Returns false
+// if the target cannot be resolved or would not fit the 16-bit reparse
+// name-length fields.
+bool BuildMountPointReparseBuffer(
+    const std::string &targetPath,
+    std::vector<unsigned char> *buffer)
+{
+    std::wstring wideRaw;
+    if (!Utf8ToWide(targetPath, &wideRaw))
+        return false;
+    const DWORD required = GetFullPathNameW(
+        wideRaw.c_str(), 0, nullptr, nullptr);
+    if (required == 0)
+        return false;
+    std::vector<wchar_t> absolute(required, L'\0');
+    if (GetFullPathNameW(
+            wideRaw.c_str(),
+            required,
+            absolute.data(),
+            nullptr)
+        == 0)
+    {
+        return false;
+    }
+    const std::wstring wideTarget = L"\\??\\" + std::wstring(absolute.data());
+
+    const std::size_t substituteBytes = wideTarget.size() * sizeof(wchar_t);
+    if (substituteBytes == 0 || substituteBytes > 0xFFFFu)
+        return false;
+
+    const std::size_t pathBufferOffset =
+        offsetof(KisakTestMountPointBuffer, PathBuffer);
+    const std::size_t copyBytes = substituteBytes + sizeof(wchar_t);
+    buffer->assign(pathBufferOffset + copyBytes + 16u, 0u);
+    auto *const reparse =
+        reinterpret_cast<KisakTestMountPointBuffer *>(buffer->data());
+    reparse->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
+    reparse->Reserved = 0;
+    reparse->SubstituteNameOffset = 0;
+    reparse->SubstituteNameLength = static_cast<std::uint16_t>(substituteBytes);
+    reparse->PrintNameOffset =
+        static_cast<std::uint16_t>(substituteBytes + sizeof(wchar_t));
+    reparse->PrintNameLength = 0;
+    // ReparseDataLength counts the mount-point fields only: the four
+    // USHORT offsets/lengths plus the substitute name and its print-name
+    // terminator slot. The generic header (tag/length/reserved) is not
+    // part of it.
+    reparse->ReparseDataLength = static_cast<std::uint16_t>(
+        offsetof(KisakTestMountPointBuffer, PathBuffer)
+        - offsetof(KisakTestMountPointBuffer, SubstituteNameOffset)
+        + substituteBytes + sizeof(wchar_t));
+    // Copy through the heap allocation rather than the PathBuffer[1] tail
+    // anchor, with the bound spelled out: PathBuffer is the flexible-array
+    // idiom's anchor, not a real one-element array.
+    if (copyBytes > buffer->size() - pathBufferOffset)
+        return false;
+    std::memcpy(
+        buffer->data() + pathBufferOffset,
+        wideTarget.c_str(),
+        copyBytes);
+    return true;
+}
+
 // Creates a true NTFS junction (IO_REPARSE_TAG_MOUNT_POINT) at linkPath
 // pointing at targetPath. Junctions require no privilege, unlike symbolic
 // links, so this is the deterministic way to exercise reparse-point
@@ -1122,69 +1273,11 @@ bool CreateJunctionNative(
         return false;
     }
 
-    // The substitute name is the absolute native target path prefixed with
-    // the \??\ device namespace, without the \\?\ extended prefix.
-    std::wstring wideTarget = targetPath;
-    {
-        std::wstring wideRaw;
-        if (!Utf8ToWide(targetPath, &wideRaw))
-            return false;
-        const DWORD required = GetFullPathNameW(
-            wideRaw.c_str(), 0, nullptr, nullptr);
-        if (required == 0)
-            return false;
-        std::vector<wchar_t> absolute(required, L'\0');
-        if (GetFullPathNameW(
-                wideRaw.c_str(),
-                required,
-                absolute.data(),
-                nullptr)
-            == 0)
-        {
-            return false;
-        }
-        wideTarget = L"\\??\\" + std::wstring(absolute.data());
-    }
-    const std::uint16_t substituteBytes = static_cast<std::uint16_t>(
-        wideTarget.size() * sizeof(wchar_t));
-
-#pragma pack(push, 4)
-    struct KisakTestMountPointBuffer
-    {
-        std::uint32_t ReparseTag;
-        std::uint16_t ReparseDataLength;
-        std::uint16_t Reserved;
-        std::uint16_t SubstituteNameOffset;
-        std::uint16_t SubstituteNameLength;
-        std::uint16_t PrintNameOffset;
-        std::uint16_t PrintNameLength;
-        wchar_t PathBuffer[1];
-    };
-#pragma pack(pop)
-
-    std::vector<unsigned char> buffer(
-        offsetof(KisakTestMountPointBuffer, PathBuffer)
-        + substituteBytes + sizeof(wchar_t) + 16u);
-    auto *const reparse =
-        reinterpret_cast<KisakTestMountPointBuffer *>(buffer.data());
-    reparse->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
-    reparse->Reserved = 0;
-    reparse->SubstituteNameOffset = 0;
-    reparse->SubstituteNameLength = substituteBytes;
-    reparse->PrintNameOffset = substituteBytes + sizeof(wchar_t);
-    reparse->PrintNameLength = 0;
-    std::memcpy(
-        reparse->PathBuffer,
-        wideTarget.c_str(),
-        substituteBytes + sizeof(wchar_t));
-    // ReparseDataLength counts the mount-point fields only: the four
-    // USHORT offsets/lengths plus the substitute name and its print-name
-    // terminator slot. The generic header (tag/length/reserved) is not
-    // part of it.
-    reparse->ReparseDataLength = static_cast<std::uint16_t>(
-        offsetof(KisakTestMountPointBuffer, PathBuffer)
-        - offsetof(KisakTestMountPointBuffer, SubstituteNameOffset)
-        + substituteBytes + sizeof(wchar_t));
+    std::vector<unsigned char> buffer;
+    if (!BuildMountPointReparseBuffer(targetPath, &buffer))
+        return false;
+    const auto *const reparse =
+        reinterpret_cast<const KisakTestMountPointBuffer *>(buffer.data());
 
     const HANDLE handle = CreateFileW(
         wideLink.c_str(),
@@ -1200,7 +1293,7 @@ bool CreateJunctionNative(
     const bool set = DeviceIoControl(
         handle,
         FSCTL_SET_REPARSE_POINT,
-        reparse,
+        buffer.data(),
         static_cast<DWORD>(
             offsetof(KisakTestMountPointBuffer, PathBuffer)
             + reparse->ReparseDataLength),
@@ -1218,23 +1311,18 @@ bool CreateJunctionNative(
 // a junction leaf is refused without touching its target, and a junction
 // occupying a name inside the tree — the deterministic end state of a
 // rename/reparse substitution race — is removed as itself while the target
-// it references survives untouched.
-bool TestRemoveTreeJunctionContract(const std::string &workingDirectory)
+// it references survives untouched. POSIX junction equivalents (directory
+// symbolic links) are covered by TestRemoveTreeContract's internal/external
+// link cases, so the whole contract is compiled only where junctions exist.
+#if defined(_WIN32)
+namespace
 {
-#if !defined(_WIN32)
-    // POSIX junction equivalents (directory symbolic links) are covered by
-    // TestRemoveTreeContract's internal/external link cases.
-    (void)workingDirectory;
-    return true;
-#else
-    const std::string root = MakeUniquePath(workingDirectory) + "-junc";
-    const std::string nested = Join(root, "nested");
-    const std::string outside = MakeUniquePath(workingDirectory)
-        + "-junc-target";
-    const std::string victimPath = Join(outside, "victim.bin");
-    const std::string junctionLeaf = Join(root, "junction-leaf");
-    const std::string junctionInside = Join(nested, "junction-inside");
-
+bool CreateJunctionContractFixture(
+    const std::string &root,
+    const std::string &nested,
+    const std::string &outside,
+    const std::string &victimPath)
+{
     SetCheckStage("junction/setup");
     if (!Check(Sys_FileSystemCreateDirectory(root.c_str()))
         || !Check(Sys_FileSystemCreateDirectory(nested.c_str()))
@@ -1244,44 +1332,68 @@ bool TestRemoveTreeJunctionContract(const std::string &workingDirectory)
     {
         return false;
     }
+    return true;
+}
+
+// A junction as the requested tree must be refused: opening it follows
+// nothing, tag verification rejects it, and the target survives.
+bool VerifyJunctionLeafRefused(
+    const std::string &junctionLeaf,
+    const std::string &victimPath)
+{
+    SetCheckStage("junction/leaf-refused");
+    if (!Check(!Sys_FileSystemRemoveTree(junctionLeaf.c_str())))
+        return false;
+    return Check(GetFileAttributesW(ExtendedPath(junctionLeaf).c_str())
+            != INVALID_FILE_ATTRIBUTES)
+        && Check(GetFileAttributesW(ExtendedPath(victimPath).c_str())
+            != INVALID_FILE_ATTRIBUTES);
+}
+
+// A junction occupying a name inside the tree is deleted as itself, never
+// traversed. The victim file behind it proves the target was never followed.
+bool VerifyJunctionInTreeRemovedAsItself(
+    const std::string &root,
+    const std::string &victimPath)
+{
+    SetCheckStage("junction/in-tree-removed-as-itself");
+    if (!Check(Sys_FileSystemRemoveTree(root.c_str())))
+        return false;
+    return Check(GetFileAttributesW(ExtendedPath(root).c_str())
+            == INVALID_FILE_ATTRIBUTES)
+        && Check(GetFileAttributesW(ExtendedPath(victimPath).c_str())
+            != INVALID_FILE_ATTRIBUTES);
+}
+}
+
+bool TestRemoveTreeJunctionContract(const std::string &workingDirectory)
+{
+    const std::string root = MakeUniquePath(workingDirectory) + "-junc";
+    const std::string nested = Join(root, "nested");
+    const std::string outside = MakeUniquePath(workingDirectory)
+        + "-junc-target";
+    const std::string victimPath = Join(outside, "victim.bin");
+    const std::string junctionLeaf = Join(root, "junction-leaf");
+    const std::string junctionInside = Join(nested, "junction-inside");
+
+    if (!CreateJunctionContractFixture(root, nested, outside, victimPath))
+        return false;
     if (!Check(CreateJunctionNative(junctionLeaf, outside))
         || !Check(CreateJunctionNative(junctionInside, outside)))
     {
         return false;
     }
-
-    // A junction as the requested tree must be refused: opening it follows
-    // nothing, tag verification rejects it, and the target survives.
-    SetCheckStage("junction/leaf-refused");
-    if (!Check(!Sys_FileSystemRemoveTree(junctionLeaf.c_str())))
+    if (!VerifyJunctionLeafRefused(junctionLeaf, victimPath))
         return false;
-    if (!Check(GetFileAttributesW(ExtendedPath(junctionLeaf).c_str())
-            != INVALID_FILE_ATTRIBUTES)
-        || !Check(GetFileAttributesW(ExtendedPath(victimPath).c_str())
-            != INVALID_FILE_ATTRIBUTES))
-    {
+    if (!VerifyJunctionInTreeRemovedAsItself(root, victimPath))
         return false;
-    }
-
-    // A junction inside the tree is deleted as itself, never traversed.
-    // The victim file behind it proves the target was never followed.
-    SetCheckStage("junction/in-tree-removed-as-itself");
-    if (!Check(Sys_FileSystemRemoveTree(root.c_str())))
-        return false;
-    if (!Check(GetFileAttributesW(ExtendedPath(root).c_str())
-            == INVALID_FILE_ATTRIBUTES)
-        || !Check(GetFileAttributesW(ExtendedPath(victimPath).c_str())
-            != INVALID_FILE_ATTRIBUTES))
-    {
-        return false;
-    }
 
     SetCheckStage("junction/cleanup");
     if (!Check(RemoveFileNative(victimPath)))
         return false;
     return Check(RemoveDirectoryNative(outside));
-#endif
 }
+#endif // defined(_WIN32)
 
 // Deterministic race-interference contract: a file held open without
 // FILE_SHARE_DELETE must make the deletion service fail fast (the
@@ -1373,9 +1485,11 @@ int main()
     SetCheckStage("handle-relative-recursive-deletion");
     if (!TestRemoveTreeContract(workingDirectory))
         return 1;
+#if defined(_WIN32)
     SetCheckStage("junction-reparse-contracts");
     if (!TestRemoveTreeJunctionContract(workingDirectory))
         return 1;
+#endif
     SetCheckStage("deterministic-open-handle-race");
     if (!TestRemoveTreeOpenHandleRace(workingDirectory))
         return 1;

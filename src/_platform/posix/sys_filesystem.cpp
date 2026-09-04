@@ -580,6 +580,170 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
 
 namespace
 {
+// "." and ".." are never deletion candidates.
+bool IsRelativeDirectoryName(const char *const name)
+{
+    return (name[0] == '.' && name[1] == '\0')
+        || (name[0] == '.' && name[1] == '.' && name[2] == '\0');
+}
+
+// Classification of one directory entry for the deletion walk. kStop
+// covers both a failed classification probe and a special file: FIFOs,
+// sockets, device nodes, and other specials refuse to be removed through
+// the deletion service — they were not part of the engine's intended
+// layout and a top-level caller should not erase them silently.
+enum class RemoveEntryKind
+{
+    kFile,
+    kDirectory,
+    kSymlink,
+    kStop
+};
+
+RemoveEntryKind ClassifyEntryForRemoval(
+    const int directoryFd,
+    const char *const name)
+{
+    struct stat status{};
+    if (fstatat(directoryFd, name, &status, AT_SYMLINK_NOFOLLOW) != 0)
+        return RemoveEntryKind::kStop;
+    // Symbolic links are never traversed. They are removed only when
+    // the path the test follows leads through the deletion service
+    // itself; otherwise deletion of their target would depend on
+    // contents outside the engine's filesystem tree.
+    if (S_ISLNK(status.st_mode))
+        return RemoveEntryKind::kSymlink;
+    if (S_ISREG(status.st_mode))
+        return RemoveEntryKind::kFile;
+    if (S_ISDIR(status.st_mode))
+        return RemoveEntryKind::kDirectory;
+    return RemoveEntryKind::kStop;
+}
+
+bool AppendEntryName(
+    std::vector<std::string> *entries,
+    const char *const name)
+{
+    try
+    {
+        entries->emplace_back(name);
+    }
+    catch (const std::bad_alloc &)
+    {
+        return false;
+    }
+    return true;
+}
+
+bool AppendClassifiedEntry(
+    const RemoveEntryKind kind,
+    const char *const name,
+    std::vector<std::string> *files,
+    std::vector<std::string> *subdirectories,
+    std::vector<std::string> *symlinks)
+{
+    switch (kind)
+    {
+        case RemoveEntryKind::kFile:
+            return AppendEntryName(files, name);
+        case RemoveEntryKind::kDirectory:
+            return AppendEntryName(subdirectories, name);
+        case RemoveEntryKind::kSymlink:
+            return AppendEntryName(symlinks, name);
+        case RemoveEntryKind::kStop:
+        default:
+            return false;
+    }
+}
+
+// One readdir pass that classifies every entry surviving the name filters
+// into its removal bucket. Fails closed on unreadable directories, invalid
+// UTF-8 names, specials, and allocation failures.
+bool CollectDirectoryEntries(
+    const int directoryFd,
+    DIR *const directory,
+    std::vector<std::string> *files,
+    std::vector<std::string> *subdirectories,
+    std::vector<std::string> *symlinks)
+{
+    errno = 0;
+    for (;;)
+    {
+        const dirent *const entry = readdir(directory);
+        if (!entry)
+            break;
+        const char *const name = entry->d_name;
+        if (IsRelativeDirectoryName(name))
+        {
+            errno = 0;
+            continue;
+        }
+        if (!IsValidUtf8(name))
+            return false;
+        if (std::strchr(name, '\\') || std::strchr(name, ':'))
+        {
+            errno = 0;
+            continue;
+        }
+        if (!AppendClassifiedEntry(
+                ClassifyEntryForRemoval(directoryFd, name),
+                name,
+                files,
+                subdirectories,
+                symlinks))
+        {
+            return false;
+        }
+        errno = 0;
+    }
+    return errno == 0;
+}
+
+bool UnlinkEntriesAt(
+    const int directoryFd,
+    const std::vector<std::string> &names,
+    const int unlinkFlags)
+{
+    for (const std::string &name : names)
+    {
+        if (unlinkat(directoryFd, name.c_str(), unlinkFlags) != 0)
+            return false;
+    }
+    return true;
+}
+
+// Recursively empties one directory opened on directoryFd (declaration
+// precedes the descent helper that calls it).
+bool RemoveTreeAt(const int directoryFd);
+
+// Descends into each real subdirectory — opened relative to directoryFd
+// with O_NOFOLLOW so a substituted link cannot be followed — removes its
+// contents recursively, and only then removes the subdirectory name
+// itself.
+bool DescendIntoSubdirectories(
+    const int directoryFd,
+    const std::vector<std::string> &subdirectories)
+{
+    constexpr int subdirectoryFlags =
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
+    for (const std::string &subdirectory : subdirectories)
+    {
+        const int childFd = openat(
+            directoryFd, subdirectory.c_str(), subdirectoryFlags);
+        if (childFd < 0)
+            return false;
+        if (!RemoveTreeAt(childFd))
+        {
+            close(childFd);
+            return false;
+        }
+        close(childFd);
+        if (unlinkat(directoryFd, subdirectory.c_str(), AT_REMOVEDIR) != 0)
+            return false;
+    }
+    return true;
+}
+
 // Walks one real directory opened on directoryFd without following symbolic
 // links, removes every real regular file, removes (but does not follow)
 // symbolic-link entries, recurses into every real subdirectory (also
@@ -602,136 +766,69 @@ bool RemoveTreeAt(const int directoryFd)
     std::vector<std::string> subdirectories;
     std::vector<std::string> files;
     std::vector<std::string> symlinks;
-    bool failed = false;
-    errno = 0;
-    while (const dirent *const entry = readdir(directory))
+    if (!CollectDirectoryEntries(
+            directoryFd, directory, &files, &subdirectories, &symlinks))
     {
-        const char *const name = entry->d_name;
-        if ((name[0] == '.' && name[1] == '\0')
-            || (name[0] == '.' && name[1] == '.' && name[2] == '\0'))
-        {
-            errno = 0;
-            continue;
-        }
-        if (!IsValidUtf8(name))
-        {
-            failed = true;
-            break;
-        }
-        if (std::strchr(name, '\\') || std::strchr(name, ':'))
-        {
-            errno = 0;
-            continue;
-        }
-
-        struct stat status{};
-        if (fstatat(directoryFd, name, &status, AT_SYMLINK_NOFOLLOW) != 0)
-        {
-            failed = true;
-            break;
-        }
-        // Symbolic links are never traversed. They are removed only when
-        // the path the test follows leads through the deletion service
-        // itself; otherwise deletion of their target would depend on
-        // contents outside the engine's filesystem tree.
-        if (S_ISLNK(status.st_mode))
-        {
-            try
-            {
-                symlinks.emplace_back(name);
-            }
-            catch (const std::bad_alloc &)
-            {
-                failed = true;
-                break;
-            }
-        }
-        else if (S_ISREG(status.st_mode))
-        {
-            try
-            {
-                files.emplace_back(name);
-            }
-            catch (const std::bad_alloc &)
-            {
-                failed = true;
-                break;
-            }
-        }
-        else if (S_ISDIR(status.st_mode))
-        {
-            try
-            {
-                subdirectories.emplace_back(name);
-            }
-            catch (const std::bad_alloc &)
-            {
-                failed = true;
-                break;
-            }
-        }
-        else
-        {
-            // FIFOs, sockets, device nodes, and other specials refuse to be
-            // removed through the deletion service — they were not part of
-            // the engine's intended layout and a top-level caller should not
-            // erase them silently.
-            failed = true;
-            break;
-        }
-        errno = 0;
+        closedir(directory);
+        return false;
     }
-    if (errno != 0)
-        failed = true;
     if (closedir(directory) != 0)
-        failed = true;
-    if (failed)
         return false;
 
-    for (const std::string &file : files)
-    {
-        if (unlinkat(directoryFd, file.c_str(), 0) != 0)
-            return false;
-    }
-
-    constexpr int subdirectoryFlags =
-        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
-    for (const std::string &subdirectory : subdirectories)
-    {
-        const int childFd = openat(
-            directoryFd, subdirectory.c_str(), subdirectoryFlags);
-        if (childFd < 0)
-            return false;
-        if (!RemoveTreeAt(childFd))
-        {
-            close(childFd);
-            return false;
-        }
-        close(childFd);
-        if (unlinkat(directoryFd, subdirectory.c_str(), AT_REMOVEDIR) != 0)
-            return false;
-    }
+    if (!UnlinkEntriesAt(directoryFd, files, 0))
+        return false;
+    if (!DescendIntoSubdirectories(directoryFd, subdirectories))
+        return false;
 
     // Strip out symbolic-link entries that survived the descent. unlinkat
     // with no flag removes a symlink itself, not its target.
-    for (const std::string &symlink : symlinks)
+    return UnlinkEntriesAt(directoryFd, symlinks, 0);
+}
+}
+
+bool ParseRemoveTreePath(
+    const char *const utf8Path,
+    std::vector<std::string> *components)
+{
+    return utf8Path
+        && utf8Path[0] != '\0'
+        && IsValidUtf8(utf8Path)
+        && SplitSafePath(utf8Path, components)
+        && !components->empty();
+}
+
+// Opens every component except the leaf, each relative to the previously
+// held descriptor and releasing the parent as soon as its child name has
+// resolved — the ancestor chain never re-resolves a name from the process
+// root and never follows a symbolic link component. On failure the
+// caller's *parentFd has already been released by the walk, mirroring the
+// original close-as-you-descend contract, so the caller must not close it
+// again.
+bool OpenAncestorOfLeaf(
+    const std::vector<std::string> &components,
+    int *parentFd)
+{
+    for (std::size_t index = 0; index + 1 < components.size(); ++index)
     {
-        if (unlinkat(directoryFd, symlink.c_str(), 0) != 0)
+        const int nextFd = openat(
+            *parentFd, components[index].c_str(), DirectoryOpenFlags());
+        const bool parentClosed = close(*parentFd) == 0;
+        if (nextFd < 0 || !parentClosed)
+        {
+            if (nextFd >= 0)
+                close(nextFd);
             return false;
+        }
+        *parentFd = nextFd;
     }
     return true;
-}
 }
 
 bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
 {
     std::vector<std::string> components;
-    if (!utf8Path || utf8Path[0] == '\0' || !IsValidUtf8(utf8Path)
-        || !SplitSafePath(utf8Path, &components)
-        || components.empty())
-    {
+    if (!ParseRemoveTreePath(utf8Path, &components))
         return false;
-    }
 
     // Open the parent of the leaf handle-relative, refusing any symbolic
     // link or "."-only traversal. Then open the leaf as its own descriptor
@@ -742,20 +839,8 @@ bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
         IsEnginePathSeparator(utf8Path[0]) ? "/" : ".", parentFlags);
     if (parentFd < 0)
         return false;
-
-    for (std::size_t index = 0; index + 1 < components.size(); ++index)
-    {
-        const int nextFd = openat(
-            parentFd, components[index].c_str(), DirectoryOpenFlags());
-        const bool parentClosed = close(parentFd) == 0;
-        if (nextFd < 0 || !parentClosed)
-        {
-            if (nextFd >= 0)
-                close(nextFd);
-            return false;
-        }
-        parentFd = nextFd;
-    }
+    if (!OpenAncestorOfLeaf(components, &parentFd))
+        return false;
 
     const std::string &leaf = components.back();
     const int leafFd = openat(parentFd, leaf.c_str(), parentFlags);
