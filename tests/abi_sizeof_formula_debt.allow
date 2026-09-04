@@ -1,4 +1,14 @@
 # Formula-based sizeof ABI assertions awaiting on-disk/runtime classification.
+# _platform/win32/sys_filesystem.cpp entries pin NT struct mirrors
+# (IO_STATUS_BLOCK / OBJECT_ATTRIBUTES / FILE_DIRECTORY_INFORMATION) used by
+# the handle-recursive deletion path; the offsets are load-bearing for the
+# kernel ABI, so the assertions stay until the mirrors are replaced by shared
+# ONDISK_SIZE/RUNTIME_SIZE layout definitions.
+_platform/win32/sys_filesystem.cpp|offsetof(KisakFileDirectoryInformation,CreationTime)-offsetof(KisakFileDirectoryInformation,FileIndex)==sizeof(KisakFileDirectoryInformation::NextEntryOffset),|1
+_platform/win32/sys_filesystem.cpp|offsetof(KisakFileDirectoryInformation,FileName)-offsetof(KisakFileDirectoryInformation,FileAttributes)==2u*sizeof(std::uint32_t),|1
+_platform/win32/sys_filesystem.cpp|offsetof(KisakFileDirectoryInformation,LastAccessTime)-offsetof(KisakFileDirectoryInformation,CreationTime)==sizeof(std::int64_t)&&offsetof(KisakFileDirectoryInformation,LastWriteTime)-offsetof(KisakFileDirectoryInformation,LastAccessTime)==sizeof(std::int64_t)&&offsetof(KisakFileDirectoryInformation,ChangeTime)-offsetof(KisakFileDirectoryInformation,LastWriteTime)==sizeof(std::int64_t)&&offsetof(KisakFileDirectoryInformation,EndOfFile)-offsetof(KisakFileDirectoryInformation,ChangeTime)==sizeof(std::int64_t)&&offsetof(KisakFileDirectoryInformation,AllocationSize)-offsetof(KisakFileDirectoryInformation,EndOfFile)==sizeof(std::int64_t),|1
+_platform/win32/sys_filesystem.cpp|offsetof(KisakIoStatusBlock,Information)==sizeof(void*),|1
+_platform/win32/sys_filesystem.cpp|offsetof(KisakObjectAttributes,SecurityQualityOfService)-offsetof(KisakObjectAttributes,SecurityDescriptor)==sizeof(void*),|1
 bgame/bg_local.h|(sizeof(structloadAnim_t)*512)==36864|1
 game/actor_aim.cpp|sizeof(_QWORD[1030])==sizeof(char[8240])|1
 gfx_d3d/r_fog.cpp|sizeof(GfxFog)*FOG_COUNT==100|1
