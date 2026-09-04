@@ -499,104 +499,120 @@ bool TestMessageModePipe()
     return passed;
 }
 
-bool TestConsoleInput()
+INPUT_RECORD MakeKeyEvent(const bool keyDown, const char ascii)
+{
+    INPUT_RECORD record{};
+    record.EventType = KEY_EVENT;
+    record.Event.KeyEvent.bKeyDown = keyDown;
+    record.Event.KeyEvent.uChar.AsciiChar = ascii;
+    return record;
+}
+
+INPUT_RECORD MakeResizeEvent()
+{
+    INPUT_RECORD record{};
+    record.EventType = WINDOW_BUFFER_SIZE_EVENT;
+    record.Event.WindowBufferSizeEvent.dwSize = {1, 1};
+    return record;
+}
+
+INPUT_RECORD MakeCtrlCEvent()
+{
+    INPUT_RECORD record{};
+    record.EventType = CTRL_C_EVENT;
+    return record;
+}
+
+bool TestConsoleInputEmpty()
 {
     ConsoleInput input;
     if (!Check(input.IsReady(), "create console input"))
         return false;
 
     // An empty console input queue is nonblocking, like the pipe/disk paths.
-    if (!ExpectRead("empty console is nonblocking", SysConsoleReadStatus::NoData))
+    return ExpectRead(
+        "empty console is nonblocking",
+        SysConsoleReadStatus::NoData);
+}
+
+bool TestConsoleInputPrintable()
+{
+    ConsoleInput input;
+    if (!Check(input.IsReady(), "create console input"))
         return false;
-
-    auto KeyEvent = [](const bool keyDown, const char ascii) {
-        INPUT_RECORD record{};
-        record.EventType = KEY_EVENT;
-        record.Event.KeyEvent.bKeyDown = keyDown;
-        record.Event.KeyEvent.uChar.AsciiChar = ascii;
-        return record;
-    };
-
-    auto ResizeEvent = []() {
-        INPUT_RECORD record{};
-        record.EventType = WINDOW_BUFFER_SIZE_EVENT;
-        record.Event.WindowBufferSizeEvent.dwSize = {1, 1};
-        return record;
-    };
-
-    auto CtrlCEvent = []() {
-        INPUT_RECORD record{};
-        record.EventType = CTRL_C_EVENT;
-        return record;
-    };
 
     // Single printable byte, with KEY_UP drained first and a non-key event
     // interleaved to prove the drain order.
-    {
-        const INPUT_RECORD events[] = {
-            ResizeEvent(),
-            KeyEvent(false, 'a'),
-            KeyEvent(true, 'h'),
-            CtrlCEvent(),
-            KeyEvent(true, 'i'),
-        };
-        if (!Check(
-                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
-                "write printable console events")
-            || !ExpectRead(
-                "console KEY_UP and non-key records drain first",
-                SysConsoleReadStatus::LineReady,
-                "hi"))
-        {
-            return false;
-        }
-    }
+    const INPUT_RECORD events[] = {
+        MakeResizeEvent(),
+        MakeKeyEvent(false, 'a'),
+        MakeKeyEvent(true, 'h'),
+        MakeCtrlCEvent(),
+        MakeKeyEvent(true, 'i'),
+    };
+    return Check(
+               input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
+               "write printable console events")
+        && ExpectRead(
+            "console KEY_UP and non-key records drain first",
+            SysConsoleReadStatus::LineReady,
+            "hi");
+}
+
+bool TestConsoleInputCrlf()
+{
+    ConsoleInput input;
+    if (!Check(input.IsReady(), "create console input"))
+        return false;
 
     // CRLF line; the cooked console will not insert the LF if ENABLE_PROCESSED_INPUT
     // does not have ENABLE_LINE_INPUT, but our boundary is bytewise so the caller
     // writes both bytes itself.
-    {
-        const INPUT_RECORD events[] = {
-            KeyEvent(true, 'o'),
-            KeyEvent(true, 'k'),
-            KeyEvent(true, '\r'),
-            KeyEvent(true, '\n'),
-        };
-        if (!Check(
-                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
-                "write complete console line")
-            || !ExpectRead(
-                "console CRLF line",
-                SysConsoleReadStatus::LineReady,
-                "ok"))
-        {
-            return false;
-        }
-    }
+    const INPUT_RECORD events[] = {
+        MakeKeyEvent(true, 'o'),
+        MakeKeyEvent(true, 'k'),
+        MakeKeyEvent(true, '\r'),
+        MakeKeyEvent(true, '\n'),
+    };
+    return Check(
+               input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
+               "write complete console line")
+        && ExpectRead(
+            "console CRLF line",
+            SysConsoleReadStatus::LineReady,
+            "ok");
+}
+
+bool TestConsoleInputZeroAscii()
+{
+    ConsoleInput input;
+    if (!Check(input.IsReady(), "create console input"))
+        return false;
 
     // Zero-AsciiChar keys (arrow keys, function keys in cooked mode) must be
     // drained without producing a byte.
-    {
-        const INPUT_RECORD events[] = {
-            KeyEvent(true, 0),
-            KeyEvent(true, 'x'),
-            KeyEvent(true, 0),
-            KeyEvent(true, 'y'),
-            KeyEvent(true, '\n'),
-        };
-        if (!Check(
-                input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
-                "write zero-ascii console events")
-            || !ExpectRead(
-                "zero-ascii console keys are drained",
-                SysConsoleReadStatus::LineReady,
-                "xy"))
-        {
-            return false;
-        }
-    }
+    const INPUT_RECORD events[] = {
+        MakeKeyEvent(true, 0),
+        MakeKeyEvent(true, 'x'),
+        MakeKeyEvent(true, 0),
+        MakeKeyEvent(true, 'y'),
+        MakeKeyEvent(true, '\n'),
+    };
+    return Check(
+               input.WriteEvents(events, sizeof(events) / sizeof(events[0])),
+               "write zero-ascii console events")
+        && ExpectRead(
+            "zero-ascii console keys are drained",
+            SysConsoleReadStatus::LineReady,
+            "xy");
+}
 
-    return true;
+bool TestConsoleInput()
+{
+    return TestConsoleInputEmpty()
+        && TestConsoleInputPrintable()
+        && TestConsoleInputCrlf()
+        && TestConsoleInputZeroAscii();
 }
 #else
 int OutputDescriptor(const SysConsoleOutputStream stream)
