@@ -771,10 +771,16 @@ void __cdecl SV_PacketEvent(netadr_t from, msg_t *msg)
                 {
                     client->reliableAcknowledge = MSG_ReadLong(msg);
                     // KISAK (ki-gu2, upstream 321218cb): 128 is the reliable-command window.
-                    // Compute the delta in 64-bit so a wildly negative (attacker-supplied)
-                    // reliableAcknowledge cannot integer-overflow into a passing compare.
-                    int64_t reliableDelta = (int64_t)client->reliableSequence - (int64_t)client->reliableAcknowledge;
-                    if (reliableDelta >= 0 && reliableDelta < 128)
+                    // Reject a truncated/negative read before computing the delta, then
+                    // compute in 64-bit so attacker-controlled values cannot overflow into
+                    // a passing comparison.
+                    const int64_t reliableDelta =
+                        static_cast<int64_t>(client->reliableSequence)
+                        - static_cast<int64_t>(client->reliableAcknowledge);
+                    if (!msg->overflowed
+                        && client->reliableAcknowledge >= 0
+                        && reliableDelta >= 0
+                        && reliableDelta < 128)
                     {
                         SV_Netchan_Decode(client, &msg->data[msg->readcount], msg->cursize - msg->readcount);
                         if (client->header.state != 1)

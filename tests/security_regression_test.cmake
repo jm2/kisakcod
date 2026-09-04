@@ -75,6 +75,21 @@ function(require_source_match_count RELATIVE_PATH PATTERN EXPECTED_COUNT DESCRIP
     endif()
 endfunction()
 
+# The network message reader returns -1 and marks the message overflowed on a
+# truncated reliable-acknowledge read. Preserve both guards before any command
+# ring decode/indexing; a delta-only range check can otherwise accept -1 when
+# reliableSequence is zero.
+require_source_ordered(
+    "server_mp/sv_main_mp.cpp"
+    "client->reliableAcknowledge = MSG_ReadLong(msg);"
+    "&& client->reliableAcknowledge >= 0"
+    "nonnegative reliable acknowledge validation")
+require_source_ordered(
+    "server_mp/sv_main_mp.cpp"
+    "client->reliableAcknowledge = MSG_ReadLong(msg);"
+    "if (!msg->overflowed"
+    "truncated reliable acknowledge validation")
+
 function(require_security_slice_match_count
     SLICE_VAR PATTERN EXPECTED_COUNT DESCRIPTION)
     set(_remaining "${${SLICE_VAR}}")
