@@ -191,7 +191,10 @@ struct scr_const_t // sizeof=0x174
     uint16_t back_right;        // ...
     uint16_t tag_gunner_pov;    // ...
 };
-static_assert(sizeof(scr_const_t) == 0x174);
+// M4 (ki-n1et): canonical string-name handle table -- every field is a
+// uint16_t script string id, no host pointers, frozen at native width on
+// every target.
+RUNTIME_SIZE(scr_const_t, 0x174, 0x174);
 
 #elif KISAK_SP
 struct scr_const_t

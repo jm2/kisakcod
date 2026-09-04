@@ -17,14 +17,17 @@ struct debugger_sval_s // sizeof=0x4
 {
     debugger_sval_s *next;
 };
-static_assert(sizeof(debugger_sval_s) == 0x4);
+// M4 (ki-n1et): debugger value nodes hold host pointers (`next`); widen
+// 0x4 -> 0x8 on 64-bit like the value cell in scr_variable.h.
+RUNTIME_SIZE(debugger_sval_s, 0x4, 0x8);
 
 struct scr_localVar_t // sizeof=0x8
 {                                       // ...
     uint32_t name;                  // ...
     uint32_t sourcePos;             // ...
 };
-static_assert(sizeof(scr_localVar_t) == 0x8);
+// M4 (ki-n1et): scalar-pair locals entry -- frozen at native width.
+RUNTIME_SIZE(scr_localVar_t, 0x8, 0x8);
 
 #define LOCAL_VAR_STACK_SIZE 64
 #define MAX_SWITCH_CASES 1024
@@ -38,7 +41,8 @@ struct scr_block_s // sizeof=0x218
     uint8_t localVarsInitBits[8];
     scr_localVar_t localVars[LOCAL_VAR_STACK_SIZE];
 };
-static_assert(sizeof(scr_block_s) == 0x218);
+// M4 (ki-n1et): scalar handles/counts only -- frozen at native width.
+RUNTIME_SIZE(scr_block_s, 0x218, 0x218);
 
 union sval_u // sizeof=0x4
 {                                       // ...
@@ -73,7 +77,9 @@ union sval_u // sizeof=0x4
     const char *debugString;
     scr_block_s *block;
 };
-static_assert(sizeof(sval_u) == 0x4);
+// M4 (ki-n1et): parse-node union holds host pointers (node / codePosValue /
+// block); widens 0x4 -> 0x8 on 64-bit.
+RUNTIME_SIZE(sval_u, 0x4, 0x8);
 
 struct ScriptExpression_t // sizeof=0xC
 {                                       // ...
@@ -81,7 +87,9 @@ struct ScriptExpression_t // sizeof=0xC
     int breakonExpr;                    // ...
     debugger_sval_s *exprHead;          // ...
 };
-static_assert(sizeof(ScriptExpression_t) == 0xC);
+// M4 (ki-n1et): embeds the widened sval_u parse cell plus a host pointer;
+// widens 0xC -> 0x18 on 64-bit.
+RUNTIME_SIZE(ScriptExpression_t, 0xC, 0x18);
 
 struct Scr_SelectedLineInfo // sizeof=0xC
 {                                       // ...
@@ -92,7 +100,9 @@ struct Scr_SelectedLineInfo // sizeof=0xC
     // padding byte
     // padding byte
 };
-static_assert(sizeof(Scr_SelectedLineInfo) == 0xC);
+// M4 (ki-n1et): scalar selection state -- no host pointers, frozen at
+// native width on every target.
+RUNTIME_SIZE(Scr_SelectedLineInfo, 0xC, 0xC);
 
 struct Scr_Breakpoint // sizeof=0x1C
 {                                       // ...
@@ -104,7 +114,9 @@ struct Scr_Breakpoint // sizeof=0x1C
     Scr_Breakpoint *next;               // ...
     Scr_Breakpoint **prev;
 };
-static_assert(sizeof(Scr_Breakpoint) == 0x1C);
+// M4 (ki-n1et): breakpoint node holds four host pointers (codePos /
+// element / next / prev); widens 0x1C -> 0x30 on 64-bit.
+RUNTIME_SIZE(Scr_Breakpoint, 0x1C, 0x30);
 
 struct Scr_WatchElement_s // sizeof=0x64
 {
@@ -143,28 +155,33 @@ struct Scr_WatchElement_s // sizeof=0x64
     Scr_WatchElement_s *childHead;
     Scr_WatchElement_s *next;
 };
-static_assert(sizeof(Scr_WatchElement_s) == 0x64);
+// M4 (ki-n1et): watch element embeds ScriptExpression_t and VariableValue
+// (both widened) plus six host pointers; widens 0x64 -> 0xA0 on 64-bit.
+RUNTIME_SIZE(Scr_WatchElement_s, 0x64, 0xA0);
 
 struct Scr_OpcodeList_s // sizeof=0x8
 {
     char *codePos;
     Scr_OpcodeList_s *next;
 };
-static_assert(sizeof(Scr_OpcodeList_s) == 0x8);
+// M4 (ki-n1et): two host pointers; widens 0x8 -> 0x10 on 64-bit.
+RUNTIME_SIZE(Scr_OpcodeList_s, 0x8, 0x10);
 
 struct Scr_WatchElementNode_s // sizeof=0x8
 {
     Scr_WatchElement_s *element;
     Scr_WatchElementNode_s *next;
 };
-static_assert(sizeof(Scr_WatchElementNode_s) == 0x8);
+// M4 (ki-n1et): two host pointers; widens 0x8 -> 0x10 on 64-bit.
+RUNTIME_SIZE(Scr_WatchElementNode_s, 0x8, 0x10);
 
 struct Scr_WatchElementDoubleNode_t // sizeof=0x8
 {
     Scr_WatchElementNode_s *list;
     Scr_WatchElementNode_s *removedList;
 };
-static_assert(sizeof(Scr_WatchElementDoubleNode_t) == 0x8);
+// M4 (ki-n1et): two host pointers; widens 0x8 -> 0x10 on 64-bit.
+RUNTIME_SIZE(Scr_WatchElementDoubleNode_t, 0x8, 0x10);
 
 #ifndef KISAK_DEDI_HEADLESS
 struct scrDebuggerGlob_t // sizeof=0x2B8

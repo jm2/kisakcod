@@ -11,7 +11,8 @@ struct OpcodeLookup // sizeof=0x18
     int profileBuiltInTime;
     int profileUsage;
 };
-static_assert(sizeof(OpcodeLookup) == 0x18);
+// M4 (ki-n1et): holds `const char *codePos`; widens 0x18 -> 0x20 on 64-bit.
+RUNTIME_SIZE(OpcodeLookup, 0x18, 0x20);
 
 struct Scr_SourcePos_t // sizeof=0xC
 {                                       // ...
@@ -19,7 +20,9 @@ struct Scr_SourcePos_t // sizeof=0xC
     int lineNum;                        // ...
     uint32_t sourcePos;             // ...
 };
-static_assert(sizeof(Scr_SourcePos_t) == 0xC);
+// M4 (ki-n1et): scalar triple (bufferIndex/lineNum/sourcePos) -- no host
+// pointers, frozen at native width on every target.
+RUNTIME_SIZE(Scr_SourcePos_t, 0xC, 0xC);
 
 struct SourceBufferInfo // sizeof=0x2C
 {
@@ -38,21 +41,25 @@ struct SourceBufferInfo // sizeof=0x2C
     float totalTime;
     float totalBuiltIn;
 };
-static_assert(sizeof(SourceBufferInfo) == 44);
+// M4 (ki-n1et): three pointer members; widens 44 -> 56 on 64-bit.
+RUNTIME_SIZE(SourceBufferInfo, 44, 56);
 
 struct SourceLookup // sizeof=0x8
 {
     uint32_t sourcePos;
     int type;
 };
-static_assert(sizeof(SourceLookup) == 8);
+// M4 (ki-n1et): scalar pair (sourcePos/type) -- no host pointers, frozen
+// at native width on every target.
+RUNTIME_SIZE(SourceLookup, 8, 8);
 
 struct SaveSourceBufferInfo // sizeof=0x8
 {
     char *sourceBuf;
     int len;
 };
-static_assert(sizeof(SaveSourceBufferInfo) == 0x8);
+// M4 (ki-n1et): holds a `char *sourceBuf`; widens 0x8 -> 0x10 on 64-bit.
+RUNTIME_SIZE(SaveSourceBufferInfo, 0x8, 0x10);
 
 struct scrParserGlob_t // sizeof=0x34
 {                                       // ...
@@ -70,7 +77,8 @@ struct scrParserGlob_t // sizeof=0x34
     int delayedSourceIndex;             // ...
     int threadStartSourceIndex;         // ...
 };
-static_assert(sizeof(scrParserGlob_t) == 0x34);
+// M4 (ki-n1et): pointer-bearing parser globals; widen 0x34 -> 0x50 on 64-bit.
+RUNTIME_SIZE(scrParserGlob_t, 0x34, 0x50);
 
 struct scrParserPub_t // sizeof=0x10
 {                                       // ...
@@ -79,7 +87,8 @@ struct scrParserPub_t // sizeof=0x10
     const char *scriptfilename;         // ...
     const char *sourceBuf;              // ...
 };
-static_assert(sizeof(scrParserPub_t) == 0x10);
+// M4 (ki-n1et): pointer-bearing; widens 0x10 -> 0x20 on 64-bit.
+RUNTIME_SIZE(scrParserPub_t, 0x10, 0x20);
 
 void __cdecl TRACK_scr_parser();
 void __cdecl Scr_InitOpcodeLookup();

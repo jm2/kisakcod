@@ -18,21 +18,20 @@
 //   6. A live reconstruction-kind pointer refuses NativeToDisk instead of
 //      silently truncating (the exact failure the save path avoids by
 //      dereferencing contents).
-//   7. The legacy engine cell sizes that the save image freezes
-//      (VariableUnion == 4, VariableValue == 8) still hold in the engine
-//      header on this target, so the mirror and the engine cannot drift
-//      apart silently on 32-bit.
+//   7. The engine header's value-cell asserts hold on this target: on
+//      ILP32 the engine cell stays bit-identical to the disk mirror; on
+//      64-bit the migrated RUNTIME_SIZE asserts (M4 ki-n1et) pin the
+//      widened engine cell to the native views, so the mirror and the
+//      engine cannot drift apart silently on either width.
 
 #include <script/scr_native.h>
 
-// Engine header include is safe in this portable test TU: scr_variable.h
-// only asserts sizes (it does not pull in link-time dependencies), and
-// pinning it here is the guard that the disk mirror stays in lockstep with
-// the engine cell on ILP32 targets. Guarded to 32-bit because the engine
-// header's static_asserts are ILP32-frozen and would fail on 64-bit.
-#if !KISAK_ARCH_64BIT
+// Engine header include is safe in this portable test TU on both widths:
+// since the M4 migration (ki-n1et) scr_variable.h asserts sizes through
+// RUNTIME_SIZE, which pins the ILP32 sizes on 32-bit targets and the
+// natural widened sizes on 64-bit -- it never pulls in link-time
+// dependencies.
 #include <script/scr_variable.h>
-#endif
 
 #include <cstdint>
 #include <cstdio>
@@ -270,10 +269,15 @@ int main()
     // 7: float payloads move as bits.
     CheckFloatPayloadPreservation();
 
-    // 8: engine-cell / disk-mirror lockstep on ILP32 targets (compile-time
-    // via the engine header's own asserts in the include above; runtime
-    // re-check here).
-#if !KISAK_ARCH_64BIT
+    // 8: engine-cell / mirror lockstep on every target (compile-time via
+    // the engine header's own RUNTIME_SIZE asserts in the include above;
+    // runtime re-check here). On ILP32 the engine cell is bit-identical
+    // to the frozen disk mirror; on 64-bit it matches the widened native
+    // views.
+#if KISAK_ARCH_64BIT
+    CHECK(sizeof(VariableUnion) == sizeof(script::VariableUnionNative));
+    CHECK(sizeof(VariableValue) == sizeof(script::VariableValueNative));
+#else
     CHECK(sizeof(VariableUnion) == sizeof(script::VariableUnionDisk));
     CHECK(sizeof(VariableValue) == sizeof(script::VariableValueDisk));
 #endif

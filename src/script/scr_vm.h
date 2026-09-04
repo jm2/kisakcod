@@ -170,7 +170,8 @@ struct Scr_StringNode_s // sizeof=0x8
     const char *text;
     Scr_StringNode_s *next;
 };
-static_assert(sizeof(Scr_StringNode_s) == 0x8);
+// M4 (ki-n1et): two host pointers; widens 0x8 -> 0x10 on 64-bit.
+RUNTIME_SIZE(Scr_StringNode_s, 0x8, 0x10);
 
 struct function_stack_t // sizeof=0x14
 {                                       // ...
@@ -180,14 +181,18 @@ struct function_stack_t // sizeof=0x14
     VariableValue *top;                 // ...
     VariableValue *startTop;            // ...
 };
-static_assert(sizeof(function_stack_t) == 0x14);
+// M4 (ki-n1et): three host pointers (pos / top / startTop); widens
+// 0x14 -> 0x20 on 64-bit.
+RUNTIME_SIZE(function_stack_t, 0x14, 0x20);
 
 struct function_frame_t // sizeof=0x18
 {                                       // ...
     function_stack_t fs;                // ...
     Vartype_t topType;
 };
-static_assert(sizeof(function_frame_t) == 0x18);
+// M4 (ki-n1et): embeds the widened function_stack_t; widens 0x18 -> 0x28
+// on 64-bit (0x20 frame stack + 4-byte topType, padded to pointer align).
+RUNTIME_SIZE(function_frame_t, 0x18, 0x28);
 
 struct scrVmPub_t // sizeof=0x4328
 {                                       // ...
@@ -210,7 +215,13 @@ struct scrVmPub_t // sizeof=0x4328
     function_frame_t function_frame_start[32]; // ...
     VariableValue stack[2048];          // ...
 };
-static_assert(sizeof(scrVmPub_t) == 0x4328);
+// M4 (ki-n1et): VM runtime globals -- five host pointers plus widened
+// function_frame_t[32] and VariableValue stack[2048] arrays; widens
+// 0x4328 -> 0x8540 on 64-bit (0x40 scalars/pointers + 32*0x28 frames +
+// 2048*0x10 cells). Runtime-only execution state, never serialized (the
+// save path archives stack CONTENTS through VariableStackBuffer, not
+// this image).
+RUNTIME_SIZE(scrVmPub_t, 0x4328, 0x8540);
 
 struct FuncDebugData // sizeof=0x10
 {                                       // ...
@@ -219,7 +230,9 @@ struct FuncDebugData // sizeof=0x10
     int prof;                           // ...
     int usage;                          // ...
 };
-static_assert(sizeof(FuncDebugData) == 0x10);
+// M4 (ki-n1et): carries a `const char *name`; widens 0x10 -> 0x18 on
+// 64-bit.
+RUNTIME_SIZE(FuncDebugData, 0x10, 0x18);
 
 struct scrVmDebugPub_t // sizeof=0x24210
 {                                       // ...
@@ -231,7 +244,10 @@ struct scrVmDebugPub_t // sizeof=0x24210
     int jumpbackHistoryIndex;           // ...
     int dummy;
 };
-static_assert(sizeof(scrVmDebugPub_t) == 0x24210);
+// M4 (ki-n1et): widened FuncDebugData func_table plus a `const char*`
+// jumpbackHistory[128]; widens 0x24210 -> 0x26410 on 64-bit.
+// Runtime-only profiling/debug storage, never serialized.
+RUNTIME_SIZE(scrVmDebugPub_t, 0x24210, 0x26410);
 
 struct scrVmGlob_t // sizeof=0x2028
 {                                       // ...
@@ -247,7 +263,10 @@ struct scrVmGlob_t // sizeof=0x2028
     char *lastFileName;                 // ...
     int lastLine;                       // ...
 };
-static_assert(sizeof(scrVmGlob_t) == 0x2028);
+// M4 (ki-n1et): widened VariableValue eval_stack plus host pointers
+// (dialog_error_message / lastFileName); widens 0x2028 -> 0x2048 on
+// 64-bit. localVarsStack stays a scalar dword array.
+RUNTIME_SIZE(scrVmGlob_t, 0x2028, 0x2048);
 
 void Scr_Error(const char* error);
 void Scr_ErrorWithDialogMessage(const char *error, const char *dialog_error);
