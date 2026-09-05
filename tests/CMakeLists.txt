@@ -3267,3 +3267,55 @@ add_test(
     COMMAND fuzz_fastfile corpus ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds)
 set_tests_properties(fuzz-fastfile-corpus PROPERTIES
     FIXTURES_REQUIRED fuzz_fastfile_corpus_seeds)
+
+# tagInfo_s <-> tagInfoDisk32_s save-record converter. The header is header
+# only so the test compiles standalone against the production wire image;
+# g_save.cpp pulls in the heavier game dependency tree and is built for the
+# SP target only.
+add_executable(save_taginfo_test
+    save_taginfo_tests.cpp
+)
+target_include_directories(save_taginfo_test PRIVATE ${SRC_DIR})
+target_compile_features(save_taginfo_test PRIVATE cxx_std_20)
+kisakcod_test_warnings(save_taginfo_test)
+set_target_properties(save_taginfo_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME save-taginfo-disk32-converter
+    COMMAND save_taginfo_test
+)
+set_tests_properties(save-taginfo-disk32-converter PROPERTIES TIMEOUT 10)
+
+# Production-path coverage for the tagInfo save record: the real
+# game/taginfo_save.cpp record module (which g_save.cpp's SF_TYPE_TAG_INFO
+# branches delegate to) is compiled as a subject and driven through the real
+# memfile stream primitives with a fake entity arena and string table. This
+# is the coverage the header-only converter test cannot provide — entity
+# indices must come from the FULL native pointers, not 32-bit truncations.
+add_library(kisakcod-taginfo-save-subject OBJECT
+    ${SRC_DIR}/game/taginfo_save.cpp
+)
+target_include_directories(kisakcod-taginfo-save-subject PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-taginfo-save-subject PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-taginfo-save-subject PRIVATE KISAK_SP)
+kisakcod_test_warnings(kisakcod-taginfo-save-subject)
+
+add_executable(save_taginfo_production_test
+    save_taginfo_production_tests.cpp
+    $<TARGET_OBJECTS:kisakcod-taginfo-save-subject>
+)
+target_include_directories(save_taginfo_production_test PRIVATE ${SRC_DIR})
+target_compile_features(save_taginfo_production_test PRIVATE cxx_std_20)
+target_compile_definitions(save_taginfo_production_test PRIVATE KISAK_SP)
+kisakcod_test_warnings(save_taginfo_production_test)
+target_link_libraries(save_taginfo_production_test PRIVATE
+    kisakcod-memfile-test-subject)
+set_target_properties(save_taginfo_production_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME save-taginfo-production-path
+    COMMAND save_taginfo_production_test
+)
+set_tests_properties(save-taginfo-production-path PROPERTIES TIMEOUT 10)

@@ -1,0 +1,11 @@
+---
+# Codacy's C/C++ analysis treats .h headers as C because this repository
+# mixes C and C++ translation units, and the C parsers cannot handle the
+# C++-only tagInfo save-converter header (namespace, static_assert,
+# <cstdint>), which surfaces as a false "invalid C code" annotation on the
+# namespace opening. The header's ABI contracts are pinned at compile time
+# by static_asserts and exercised byte-for-byte by
+# tests/save_taginfo_tests.cpp, so excluding it from static analysis loses
+# no signal.
+exclude_paths:
+  - "src/game/taginfo_disk32.h"
