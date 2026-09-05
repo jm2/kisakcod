@@ -763,20 +763,28 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
 
 // The Windows SDK gained POSIX-semantics deletion in 10.0.1709. The flag
 // macros below are macros, so #ifndef guards keep pre-1709 SDKs compiling
-// with the fallback path intact. The struct itself must not be guarded
-// that way: FILE_DISPOSITION_INFO_EX is a typedef, not a macro, so
-// #ifndef never fires on SDKs that already declare it and the duplicate
+// with the fallback values intact. The fallback values mirror the
+// documented SDK constants exactly (fileapi.h): DELETE 0x1,
+// POSIX_SEMANTICS 0x2, IGNORE_READONLY_ATTRIBUTE 0x10. Without an explicit
+// DELETE bit the disposition call succeeds but deletes nothing — the
+// remove-tree walk then reports success over an intact tree (CI
+// remove-tree/executes regression at ae034745). The struct itself must not
+// be guarded that way: FILE_DISPOSITION_INFO_EX is a typedef, not a macro,
+// so #ifndef never fires on SDKs that already declare it and the duplicate
 // definition breaks the build. A Kisak-prefixed mirror with the same
 // one-DWORD layout avoids the SDK-vintage dependency entirely.
 struct KisakFileDispositionInfoEx
 {
     DWORD FileDispositionFlags;
 };
-#ifndef FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE
-#define FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE 0x00000001
+#ifndef FILE_DISPOSITION_FLAG_DELETE
+#define FILE_DISPOSITION_FLAG_DELETE 0x00000001
 #endif
 #ifndef FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
 #define FILE_DISPOSITION_FLAG_POSIX_SEMANTICS 0x00000002
+#endif
+#ifndef FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE
+#define FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE 0x00000010
 #endif
 
 namespace
@@ -1056,14 +1064,18 @@ bool VerifyHandleKind(
 // Marks an open object for deletion. POSIX semantics is preferred: the name
 // disappears once our handle closes even if unrelated handles exist, and an
 // incompatible existing handle fails the disposition immediately instead of
-// deferring a surprise. Filesystems without POSIX-semantics support fall
-// back to plain delete disposition.
+// deferring a surprise. DELETE must be in the extended request — the flags
+// otherwise describe *how* to delete but the documented DELETE bit is what
+// marks the object, and a request without it succeeds while deleting
+// nothing. IGNORE_READONLY_ATTRIBUTE additionally requires POSIX semantics
+// and DELETE, which this combination provides.
 bool SetDeletionDisposition(const HANDLE handle)
 {
     KisakFileDispositionInfoEx dispositionEx{};
     dispositionEx.FileDispositionFlags =
-        FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE
-        | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS;
+        FILE_DISPOSITION_FLAG_DELETE
+        | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+        | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
     if (SetFileInformationByHandle(
             handle,
             FileDispositionInfoEx,
