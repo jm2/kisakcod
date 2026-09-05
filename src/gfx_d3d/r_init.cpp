@@ -2856,6 +2856,10 @@ void __cdecl R_Shutdown(int destroyWindow)
     if (rg.registered)
     {
         R_SyncRenderThread();
+        // Explicit worker teardown before any command-buffer shutdown: the
+        // workers are synced and idle here, so latch their shutdown, join
+        // them, and empty the slots for a future in-process restart.
+        R_ShutdownWorkerThreads();
         rg.registered = 0;
         iassert(r_glob.haveThreadOwnership);
         r_glob.startedRenderThread = 0;

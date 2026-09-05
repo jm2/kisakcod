@@ -1068,6 +1068,324 @@ bool TestCooperativeWorkerGate()
     return true;
 }
 
+// Shutdown lifecycle harness. The entry mirrors the production worker-loop
+// shape (pause point, wake wait, pause point, optional work) and exits only
+// when the gate's shutdown latch is observed, so every fixture exercises the
+// ordering between the latch, pause acknowledgements, and thread exit.
+struct WorkerGateShutdownState
+{
+    SysWorkerGateHandle gate{nullptr};
+    SysThreadHandle thread{nullptr};
+    SysEventHandle wakeEvent{nullptr};
+    SysEventHandle enteredEvent{nullptr};
+    SysEventHandle taskStartedEvent{nullptr};
+    SysEventHandle taskReleaseEvent{nullptr};
+    SysEventHandle taskCompletedEvent{nullptr};
+    std::atomic<bool> taskPending{false};
+    std::atomic<bool> blockTask{false};
+    std::atomic<bool> sawShutdownLatch{false};
+    std::atomic<std::uint32_t> completedTasks{0};
+};
+
+void KISAK_CDECL WorkerGateShutdownEntry(void *const userData)
+{
+    auto *const state = static_cast<WorkerGateShutdownState *>(userData);
+    Sys_SetEvent(&state->enteredEvent);
+
+    for (;;)
+    {
+        Sys_WorkerGatePausePoint(state->gate);
+        if (Sys_WorkerGateIsShutdownRequested(state->gate))
+        {
+            state->sawShutdownLatch.store(true, std::memory_order_release);
+            return;
+        }
+
+        Sys_WaitForSingleObject(&state->wakeEvent);
+        Sys_WorkerGatePausePoint(state->gate);
+
+        if (Sys_WorkerGateIsShutdownRequested(state->gate))
+        {
+            state->sawShutdownLatch.store(true, std::memory_order_release);
+            return;
+        }
+        if (!state->taskPending.exchange(false, std::memory_order_acq_rel))
+            continue;
+
+        Sys_SetEvent(&state->taskStartedEvent);
+        if (state->blockTask.load(std::memory_order_acquire))
+            Sys_WaitForSingleObject(&state->taskReleaseEvent);
+
+        state->completedTasks.fetch_add(1, std::memory_order_release);
+        Sys_SetEvent(&state->taskCompletedEvent);
+    }
+}
+
+bool CreateWorkerGateShutdownThread(
+    WorkerGateShutdownState *const state,
+    const char *const name)
+{
+    Sys_WorkerGateCreate(&state->gate);
+    Sys_CreateEvent(false, false, &state->wakeEvent);
+    Sys_CreateEvent(true, false, &state->enteredEvent);
+    Sys_CreateEvent(false, false, &state->taskStartedEvent);
+    Sys_CreateEvent(false, false, &state->taskReleaseEvent);
+    Sys_CreateEvent(false, false, &state->taskCompletedEvent);
+    return Sys_ThreadCreateSuspended(
+        WorkerGateShutdownEntry,
+        state,
+        name,
+        &state->thread);
+}
+
+bool StartWorkerGateShutdownThread(WorkerGateShutdownState *const state)
+{
+    if (!Sys_WorkerGateActivate(state->gate))
+        return false;
+    Sys_ThreadStart(state->thread);
+    return Sys_WaitForSingleObjectTimeout(&state->enteredEvent, 2'000);
+}
+
+// Joins the worker after latching shutdown, mirroring the production
+// Sys_ShutdownWorkerThread sequence: wake from any command wait, bounded
+// join, then release the thread and gate while the latch covers Destroy's
+// quiescence requirement from any state.
+bool StopWorkerGateShutdownThread(WorkerGateShutdownState *const state)
+{
+    if (!Sys_WorkerGateRequestShutdown(state->gate))
+        return false;
+    Sys_SetEvent(&state->wakeEvent);
+    if (!Sys_ThreadJoinTimeout(state->thread, 5'000))
+        return false;
+    if (!state->sawShutdownLatch.load(std::memory_order_acquire))
+        return false;
+
+    Sys_ThreadDestroy(&state->thread);
+    Sys_WorkerGateDestroy(&state->gate);
+    Sys_DestroyEvent(&state->wakeEvent);
+    Sys_DestroyEvent(&state->enteredEvent);
+    Sys_DestroyEvent(&state->taskStartedEvent);
+    Sys_DestroyEvent(&state->taskReleaseEvent);
+    Sys_DestroyEvent(&state->taskCompletedEvent);
+    return !state->thread
+        && !state->gate
+        && !state->wakeEvent
+        && !state->enteredEvent
+        && !state->taskStartedEvent
+        && !state->taskReleaseEvent
+        && !state->taskCompletedEvent;
+}
+
+bool TestWorkerGateShutdownFromRunning()
+{
+    WorkerGateShutdownState state;
+    if (!CreateWorkerGateShutdownThread(&state, "platform-test-gate-shutdown-run")
+        || !StartWorkerGateShutdownThread(&state))
+    {
+        std::fputs("shutdown fixture thread did not start\n", stderr);
+        return false;
+    }
+    if (Sys_WorkerGateIsShutdownRequested(state.gate))
+    {
+        std::fputs("fresh worker gate reported a shutdown request\n", stderr);
+        return false;
+    }
+    if (!StopWorkerGateShutdownThread(&state))
+    {
+        std::fputs("running worker did not exit on its shutdown latch\n", stderr);
+        return false;
+    }
+    return true;
+}
+
+bool TestWorkerGateShutdownFromParked()
+{
+    WorkerGateShutdownState state;
+    if (!CreateWorkerGateShutdownThread(&state, "platform-test-gate-shutdown-park")
+        || !StartWorkerGateShutdownThread(&state))
+    {
+        std::fputs("shutdown fixture thread did not start\n", stderr);
+        return false;
+    }
+
+    // Park the worker at its pause point, then latch shutdown. The request
+    // must release the parked worker from its resume wait without any
+    // controller-side activation.
+    if (!Sys_WorkerGateRequestPause(state.gate))
+    {
+        std::fputs("active worker did not accept a pause request\n", stderr);
+        return false;
+    }
+    Sys_SetEvent(&state.wakeEvent);
+    Sys_WorkerGateWaitPaused(state.gate);
+    if (Sys_WorkerGateIsActive(state.gate))
+    {
+        std::fputs("worker did not park before shutdown\n", stderr);
+        return false;
+    }
+    if (!StopWorkerGateShutdownThread(&state))
+    {
+        std::fputs("parked worker did not exit on its shutdown latch\n", stderr);
+        return false;
+    }
+    return true;
+}
+
+// Latches shutdown over the fixture's in-flight blocked task and releases it,
+// while a concurrent WaitPaused call races the latch. Returns true only when
+// the pending pause is acknowledged (releasing WaitPaused) and the interrupted
+// task still completes exactly once.
+bool ShutdownInFlightTaskAndAwaitPauseAck(WorkerGateShutdownState &state)
+{
+    SysEventHandle pauseReturnedEvent = nullptr;
+    Sys_CreateEvent(true, false, &pauseReturnedEvent);
+    std::thread pauseWaiter([&]() {
+        Sys_WorkerGateWaitPaused(state.gate);
+        Sys_SetEvent(&pauseReturnedEvent);
+    });
+
+    const bool latched = Sys_WorkerGateRequestShutdown(state.gate);
+    Sys_SetEvent(&state.taskReleaseEvent);
+
+    const bool pauseAcknowledged =
+        Sys_WaitForSingleObjectTimeout(&pauseReturnedEvent, 5'000);
+    pauseWaiter.join();
+    Sys_DestroyEvent(&pauseReturnedEvent);
+    if (!latched)
+    {
+        std::fputs("pause-requested worker rejected its shutdown latch\n", stderr);
+        return false;
+    }
+    if (!pauseAcknowledged)
+    {
+        std::fputs("shutdown latch did not release a pending pause wait\n", stderr);
+        return false;
+    }
+    if (!Sys_WaitForSingleObjectTimeout(&state.taskCompletedEvent, 2'000)
+        || state.completedTasks.load(std::memory_order_acquire) != 1u)
+    {
+        std::fputs("worker task interrupted by shutdown did not complete\n", stderr);
+        return false;
+    }
+    return true;
+}
+
+bool TestWorkerGateShutdownAcknowledgesPendingPause()
+{
+    WorkerGateShutdownState state;
+    if (!CreateWorkerGateShutdownThread(&state, "platform-test-gate-shutdown-pause")
+        || !StartWorkerGateShutdownThread(&state))
+    {
+        std::fputs("shutdown fixture thread did not start\n", stderr);
+        return false;
+    }
+
+    // Put the worker in-flight inside a blocked task, request the pause the
+    // controller would wait on, then latch shutdown before the worker reaches
+    // a safe point. Releasing the task must let the worker's pause point
+    // acknowledge the pending pause (releasing WaitPaused) and then exit on
+    // the latch, in that order.
+    state.taskPending.store(true, std::memory_order_release);
+    state.blockTask.store(true, std::memory_order_release);
+    Sys_SetEvent(&state.wakeEvent);
+    if (!Sys_WaitForSingleObjectTimeout(&state.taskStartedEvent, 2'000)
+        || !Sys_WorkerGateRequestPause(state.gate))
+    {
+        std::fputs("in-flight shutdown fixture did not start pause protocol\n", stderr);
+        return false;
+    }
+
+    if (!ShutdownInFlightTaskAndAwaitPauseAck(state))
+        return false;
+
+    if (!StopWorkerGateShutdownThread(&state))
+    {
+        std::fputs("pause-acknowledging worker did not exit on its latch\n", stderr);
+        return false;
+    }
+    return true;
+}
+
+bool TestWorkerGateShutdownBeforeActivation()
+{
+    WorkerGateShutdownState state;
+    if (!CreateWorkerGateShutdownThread(&state, "platform-test-gate-shutdown-new"))
+    {
+        std::fputs("shutdown fixture thread creation failed\n", stderr);
+        return false;
+    }
+
+    // A never-activated gate latches shutdown without reporting a started
+    // worker, and the latched request still permits destroying the
+    // never-started composition.
+    if (Sys_WorkerGateRequestShutdown(state.gate))
+    {
+        std::fputs("never-activated gate reported a started worker\n", stderr);
+        return false;
+    }
+    if (!Sys_WorkerGateIsShutdownRequested(state.gate))
+    {
+        std::fputs("shutdown latch was not observable after the request\n", stderr);
+        return false;
+    }
+
+    // The suspended native thread mirrors Sys_ShutdownWorkerThread's
+    // never-activated path: sys_thread requires a Created handle to be joined
+    // before destruction and a never-started thread can never be joined, so
+    // the entry is started once (the latch makes it exit immediately) and
+    // then joined. The gate stays alive until the worker is quiescent.
+    Sys_ThreadStart(state.thread);
+    if (!Sys_ThreadJoinTimeout(state.thread, 5'000)
+        || !state.sawShutdownLatch.load(std::memory_order_acquire))
+    {
+        std::fputs("never-activated worker did not exit on its pre-latched gate\n", stderr);
+        return false;
+    }
+    Sys_ThreadDestroy(&state.thread);
+    Sys_WorkerGateDestroy(&state.gate);
+    Sys_DestroyEvent(&state.wakeEvent);
+    Sys_DestroyEvent(&state.enteredEvent);
+    Sys_DestroyEvent(&state.taskStartedEvent);
+    Sys_DestroyEvent(&state.taskReleaseEvent);
+    Sys_DestroyEvent(&state.taskCompletedEvent);
+    return !state.thread && !state.gate;
+}
+
+bool TestWorkerGateShutdownLatchIsTerminal()
+{
+    WorkerGateShutdownState state;
+    if (!CreateWorkerGateShutdownThread(&state, "platform-test-gate-shutdown-term")
+        || !StartWorkerGateShutdownThread(&state))
+    {
+        std::fputs("shutdown fixture thread did not start\n", stderr);
+        return false;
+    }
+
+    if (!Sys_WorkerGateRequestShutdown(state.gate)
+        || !Sys_WorkerGateRequestShutdown(state.gate))
+    {
+        std::fputs("repeated shutdown requests were not accepted\n", stderr);
+        return false;
+    }
+    if (!StopWorkerGateShutdownThread(&state))
+    {
+        std::fputs("worker did not exit after repeated shutdown requests\n", stderr);
+        return false;
+    }
+
+    // A freshly created composition must start with a clear latch so respawn
+    // after an in-process renderer restart begins from a known state.
+    SysWorkerGateHandle respawnedGate = nullptr;
+    Sys_WorkerGateCreate(&respawnedGate);
+    if (Sys_WorkerGateIsShutdownRequested(respawnedGate))
+    {
+        std::fputs("new worker gate inherited a shutdown latch\n", stderr);
+        return false;
+    }
+    Sys_WorkerGateDestroy(&respawnedGate);
+    return !respawnedGate;
+}
+
 bool TestConcurrentInitialization()
 {
     constexpr std::uint32_t threadCount = 8;
@@ -1464,6 +1782,16 @@ int main()
     if (!TestRepeatedThreadLifecycle())
         return 1;
     if (!TestCooperativeWorkerGate())
+        return 1;
+    if (!TestWorkerGateShutdownFromRunning())
+        return 1;
+    if (!TestWorkerGateShutdownFromParked())
+        return 1;
+    if (!TestWorkerGateShutdownAcknowledgesPendingPause())
+        return 1;
+    if (!TestWorkerGateShutdownBeforeActivation())
+        return 1;
+    if (!TestWorkerGateShutdownLatchIsTerminal())
         return 1;
     if (!TestConcurrentInitialization())
         return 1;
