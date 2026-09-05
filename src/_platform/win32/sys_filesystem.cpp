@@ -761,15 +761,17 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
         utf8Path, maximumEntries, nullptr, nullptr, entries);
 }
 
-// The Windows SDK gained POSIX-semantics deletion in 10.0.1709; the guards
-// keep alternative SDKs that predate it compiling with the fallback path
-// intact.
-#ifndef FILE_DISPOSITION_INFO_EX
-typedef struct _FILE_DISPOSITION_INFO_EX
+// The Windows SDK gained POSIX-semantics deletion in 10.0.1709. The flag
+// macros below are macros, so #ifndef guards keep pre-1709 SDKs compiling
+// with the fallback path intact. The struct itself must not be guarded
+// that way: FILE_DISPOSITION_INFO_EX is a typedef, not a macro, so
+// #ifndef never fires on SDKs that already declare it and the duplicate
+// definition breaks the build. A Kisak-prefixed mirror with the same
+// one-DWORD layout avoids the SDK-vintage dependency entirely.
+struct KisakFileDispositionInfoEx
 {
     DWORD FileDispositionFlags;
-} FILE_DISPOSITION_INFO_EX;
-#endif
+};
 #ifndef FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE
 #define FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE 0x00000001
 #endif
@@ -1058,7 +1060,7 @@ bool VerifyHandleKind(
 // back to plain delete disposition.
 bool SetDeletionDisposition(const HANDLE handle)
 {
-    FILE_DISPOSITION_INFO_EX dispositionEx{};
+    KisakFileDispositionInfoEx dispositionEx{};
     dispositionEx.FileDispositionFlags =
         FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE
         | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS;
@@ -1182,9 +1184,23 @@ bool RemoveHeldTree(const HANDLE heldDirectory)
                     break;
             }
 
-            offset = entry->NextEntryOffset;
-            if (offset == 0)
+            // NextEntryOffset is relative to the CURRENT entry, so the
+            // cursor must accumulate across the batch; assigning it here
+            // re-read early entries and misparsed every multi-entry batch
+            // (operator-audit defect). A zero step ends the batch. A step
+            // that cannot carry at least the fixed header, or that would
+            // leave the query buffer, is malformed kernel data and fails
+            // closed.
+            const std::uint32_t step = entry->NextEntryOffset;
+            if (step == 0)
                 break;
+            if (step < sizeof(KisakFileDirectoryInformation)
+                || step >= bufferBytes - offset)
+            {
+                failed = true;
+                break;
+            }
+            offset += step;
         }
         if (failed)
             break;
@@ -1295,11 +1311,15 @@ bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
         return false;
 
     // Open the filesystem root (drive or UNC share) by pathname exactly
-    // once. A volume root cannot be a reparse point, but the same
-    // open-reparse-then-verify discipline is applied so the entry sequence
-    // has no exceptions.
+    // once — the root PREFIX only. Opening the full tree path here would
+    // anchor the walk at the leaf and resolve the first component against
+    // the wrong directory (operator-audit defect); names below the root
+    // must resolve relative to a held handle. A volume root cannot be a
+    // reparse point, but the same open-reparse-then-verify discipline is
+    // applied so the entry sequence has no exceptions.
+    const std::wstring rootPrefix = extendedPath.substr(0, rootLength);
     HANDLE held = CreateFileW(
-        extendedPath.c_str(),
+        rootPrefix.c_str(),
         FILE_READ_ATTRIBUTES | SYNCHRONIZE,
         kKisakFileShareAll,
         nullptr,

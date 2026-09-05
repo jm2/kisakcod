@@ -133,6 +133,20 @@ bool RemoveFileNative(const std::string &path)
     return !extended.empty() && DeleteFileW(extended.c_str());
 }
 
+// True when the immediately preceding CreateSymbolicLinkW failed for one
+// of the recognized no-privilege host reasons. Unprivileged symlinks need
+// Developer Mode (1703+) or an elevated token; hosts without either report
+// exactly these errors. Symlink-dependent tests skip coverage only in that
+// case — any other failure is a defect and must fail the test instead of
+// silently shrinking coverage (operator-audit requirement).
+bool SymlinkFailedWithoutPrivilege()
+{
+    const DWORD error = GetLastError();
+    return error == ERROR_PRIVILEGE_NOT_HELD
+        || error == ERROR_INVALID_FUNCTION
+        || error == ERROR_NOT_SUPPORTED;
+}
+
 bool SetCurrentDirectoryNative(const std::string &path)
 {
     const std::wstring extended = ExtendedPath(path);
@@ -342,6 +356,15 @@ bool TestAncestorLinks(const std::string &workingDirectory)
             wideOutside.c_str(),
             directoryLink | allowUnprivilegedCreate))
     {
+        if (!SymlinkFailedWithoutPrivilege())
+        {
+            std::fputs(
+                "FAIL: Windows symlink creation failed unexpectedly\n",
+                stderr);
+            (void)RemoveDirectoryNative(root);
+            (void)RemoveDirectoryNative(outside);
+            return false;
+        }
         std::fputs(
             "SKIP: Windows host cannot create an unprivileged directory symlink\n",
             stderr);
@@ -461,12 +484,21 @@ bool TestBoundedDirectoryEnumeration(const std::string &workingDirectory)
     const std::wstring wideTarget = ExtendedPath(alphaDirectory);
     constexpr DWORD directoryLink = 0x1;
     constexpr DWORD allowUnprivilegedCreate = 0x2;
-    linkCreated = !wideLink.empty()
-        && !wideTarget.empty()
-        && CreateSymbolicLinkW(
-            wideLink.c_str(),
-            wideTarget.c_str(),
-            directoryLink | allowUnprivilegedCreate);
+    if (!Check(!wideLink.empty()) || !Check(!wideTarget.empty()))
+        return false;
+    linkCreated = CreateSymbolicLinkW(
+        wideLink.c_str(),
+        wideTarget.c_str(),
+        directoryLink | allowUnprivilegedCreate) != 0;
+    // Skip only the no-privilege host case; any other creation failure is
+    // a defect and must fail the test instead of dropping link coverage.
+    if (!linkCreated && !SymlinkFailedWithoutPrivilege())
+    {
+        std::fputs(
+            "FAIL: Windows symlink creation failed unexpectedly\n",
+            stderr);
+        return false;
+    }
 #else
     linkCreated = symlink(alphaDirectory.c_str(), link.c_str()) == 0;
     const std::string fifo = Join(root, "named-pipe");
@@ -886,14 +918,24 @@ bool TestReadFileNoFollow(const std::string &workingDirectory)
         const std::wstring wideOutside = ExtendedPath(outside);
         if (!Check(!wideLeafLink.empty()) || !Check(!wideOutsidePath.empty()))
             return false;
-        if (!CreateSymbolicLinkW(
+        const bool created = CreateSymbolicLinkW(
                 wideLeafLink.c_str(),
                 wideOutsidePath.c_str(),
                 0x2 /* SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE */)
-            || !CreateSymbolicLinkW(
+            && CreateSymbolicLinkW(
                 wideDirLink.c_str(),
                 wideOutside.c_str(),
-                0x1 | 0x2))
+                0x1 | 0x2);
+        if (!created && !SymlinkFailedWithoutPrivilege())
+        {
+            std::fputs(
+                "FAIL: Windows symlink creation failed unexpectedly\n",
+                stderr);
+            (void)RemoveFileNative(Join(nested, "leaf-link.txt"));
+            (void)RemoveDirectoryNative(Join(nested, "dir-link"));
+            return false;
+        }
+        if (!created)
         {
             std::fputs(
                 "SKIP: Windows host cannot create an unprivileged symlink\n",
@@ -993,6 +1035,20 @@ bool CreateRemoveTreeFixture(const RemoveTreeContractPaths &paths)
     {
         return false;
     }
+#if !defined(_WIN32)
+    // Operator-audit regression: ':' and '\' are ordinary bytes in a POSIX
+    // name. The deletion walk removes them through the held descriptor, so
+    // they must not be skipped; if they are, the files survive and the
+    // final AT_REMOVEDIR on the root fails, leaving a partially deleted
+    // tree. The contract's root-gone assertion below therefore proves they
+    // were removed. Windows cannot create these names, so the coverage is
+    // POSIX-only.
+    if (!Check(WriteFile(Join(paths.root, "literal:child")))
+        || !Check(WriteFile(Join(paths.root, "literal\\child"))))
+    {
+        return false;
+    }
+#endif
     return true;
 }
 
@@ -1018,6 +1074,22 @@ bool CreateRemoveTreeContractLinks(const RemoveTreeContractPaths &paths)
         wideExternal.c_str(),
         wideExternalTarget.c_str(),
         directoryLink | allowUnprivilegedCreate) != 0;
+    // Skip only the no-privilege host case — and only when neither link
+    // exists. Any other creation failure is a defect.
+    if (!internalCreated && !externalCreated)
+    {
+        if (!SymlinkFailedWithoutPrivilege())
+        {
+            std::fputs(
+                "FAIL: Windows symlink creation failed unexpectedly\n",
+                stderr);
+            return false;
+        }
+        std::fputs(
+            "SKIP: Windows host cannot create an unprivileged symlink\n",
+            stderr);
+        return true;
+    }
 #else
     const bool internalCreated =
         symlink("nested", paths.internalLink.c_str()) == 0;
@@ -1046,12 +1118,29 @@ bool TestRemoveTreeRefusesLinkLeaf(
         wideLinkLeaf.c_str(),
         ExtendedPath(root).c_str(),
         directoryLink | allowUnprivilegedCreate) != 0;
+    if (!created)
+    {
+        // Skip only the no-privilege host case; any other creation
+        // failure is a defect. The host fixture (root) is untouched, so
+        // the caller's contract continues without link-leaf coverage.
+        if (!SymlinkFailedWithoutPrivilege())
+        {
+            std::fputs(
+                "FAIL: Windows symlink creation failed unexpectedly\n",
+                stderr);
+            return false;
+        }
+        std::fputs(
+            "SKIP: Windows host cannot create an unprivileged symlink\n",
+            stderr);
+        return true;
+    }
 #else
     const bool created =
         symlink(root.c_str(), linkLeaf.c_str()) == 0;
-#endif
     if (!Check(created))
         return false;
+#endif
     if (!Check(!Sys_FileSystemRemoveTree(linkLeaf.c_str())))
         return false;
 #if defined(_WIN32)
@@ -1094,7 +1183,7 @@ bool VerifyRemoveTreeWin32Results(
     {
         return false;
     }
-    if (!Check(RemoveFileW(wideOutsideCheck.c_str())))
+    if (!Check(DeleteFileW(wideOutsideCheck.c_str())))
         return false;
     SetCheckStage("remove-tree/external-cleanup");
     std::vector<std::wstring> leftover;
