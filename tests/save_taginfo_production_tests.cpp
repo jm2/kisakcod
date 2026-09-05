@@ -22,7 +22,6 @@
 
 #include <game/taginfo_save.h>
 
-#include <csetjmp>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -62,15 +61,25 @@ taginfo::TagInfoEntityMap MakeEntityMap()
     return taginfo::TagInfoEntityMap{tagArena, sizeof(FakeEntity), kEntityCount};
 }
 
-// The record module reports defects before touching the stream; unwind
-// through longjmp so the validation paths are observable.
-jmp_buf failJump;
+// The record module reports defects before touching the stream; the fail
+// callback unwinds through a dedicated exception type so the validation paths
+// are observable. Deliberately NOT setjmp/longjmp: the interaction between
+// _setjmp and C++ object destruction is non-portable and MSVC /W4 /WX
+// promotes the C4611 diagnostic to an error anywhere a jump frame is in
+// scope (including inlined callees). Throwing from the module's own fail
+// callback is plain C++ on every supported compiler and observes exactly the
+// same reporting contract.
+struct RecordDefect
+{
+    const char *message;
+};
+
 const char *failMessage = nullptr;
 
 void RecordFail(const char *message)
 {
     failMessage = message;
-    std::longjmp(failJump, 1);
+    throw RecordDefect{message};
 }
 
 // Fake scr string table: handle N maps to knownNames[N - 1].
@@ -95,38 +104,43 @@ std::uint16_t FakeHandleFromString(const char *const text)
 }
 
 // Drives WriteHostRecord expecting a defect report through RecordFail.
-// setjmp must live in a frame free of objects with non-trivial destructors:
-// the interaction between _setjmp and C++ unwinding is non-portable (MSVC
-// C4611 and friends), so these jump frames carry only trivially-destructible
-// state and the callers keep ownership of every resource handle. Returns
-// true when the module reported a defect (longjmp unwound to the jump frame).
+// The catch frame carries no resource ownership: callers keep ownership of
+// every handle, and the module's guarantee is that a defect is reported
+// before the stream is touched, so the writer needs no repair here. Returns
+// true when the module reported a defect (RecordFail threw).
 bool WriteExpectingDefect(
     MemoryFile *writer,
     const taginfo::TagInfoEntityMap &map,
     const taginfo::TagInfoLiveRecord &live)
 {
-    if (setjmp(failJump) == 0)
+    try
     {
         taginfo::WriteHostRecord(
             writer, map, RecordFail, FakeStringFromHandle, live);
-        return false;
     }
-    return true;
+    catch (const RecordDefect &)
+    {
+        return true;
+    }
+    return false;
 }
 
-// Read-side counterpart of WriteExpectingDefect; same trivial jump-frame rule.
+// Read-side counterpart of WriteExpectingDefect.
 bool ReadExpectingDefect(
     MemoryFile *reader,
     const taginfo::TagInfoEntityMap &map)
 {
     taginfo::TagInfoRestoredRecord restored{};
-    if (setjmp(failJump) == 0)
+    try
     {
         taginfo::ReadHostRecord(
             reader, map, RecordFail, FakeHandleFromString, restored);
-        return false;
     }
-    return true;
+    catch (const RecordDefect &)
+    {
+        return true;
+    }
+    return false;
 }
 
 constexpr std::size_t kStorageBytes = 4096;
