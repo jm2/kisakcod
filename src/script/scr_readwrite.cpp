@@ -1281,35 +1281,133 @@ void __cdecl Scr_LoadShutdown()
 // VariableUnion* (type-punning through (int) that truncates host pointers on
 // 64-bit). Reading the proper union member per vartype is width-correct on
 // both 32- and 64-bit, and the serialized bytes are unchanged.
-void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion u, MemoryFile *memFile)
+//
+// The retail monolith was split into small dispatch helpers (Codacy LOC /
+// cyclomatic limits). The byte stream is exactly the old one: the id path
+// (type 1) writes no type byte, every other type writes its type byte first
+// (including the empty payloads 0/8), then the payload bytes follow.
+
+namespace
+{
+// VAR_POINTER: the saved bytes are the script object local id.
+void __cdecl DoSaveEntryPointer(VariableUnion u, MemoryFile *memFile)
 {
     unsigned int UsedSize; // r3
     unsigned int v7; // r3
+
+    UsedSize = MemFile_GetUsedSize(memFile);
+    //ProfMem_Begin("pointer", UsedSize);
+    WriteId((unsigned int)u.intValue, 1u, memFile);
+    v7 = MemFile_GetUsedSize(memFile);
+    //ProfMem_End(v7);
+}
+
+// Writes the type byte that prefixes every non-pointer payload.
+void __cdecl DoSaveEntryTypeByte(unsigned int type, MemoryFile *memFile)
+{
     unsigned int v8; // r3
     unsigned int v9; // r3
-    MemoryFile *v10; // r3
-    double v11; // fp8
-    double v12; // fp7
-    double v13; // fp6
-    double v14; // fp5
-    double v15; // fp4
-    double v16; // fp3
-    double v17; // fp2
-    double v18; // fp1
+    _BYTE v30[4]; // [sp+50h] [-30h] BYREF
+
+    v8 = MemFile_GetUsedSize(memFile);
+    //ProfMem_Begin("type", v8);
+    v30[0] = 8 * type;
+    MemFile_WriteData(memFile, 1, v30);
+    v9 = MemFile_GetUsedSize(memFile);
+    //ProfMem_End(v9);
+}
+
+// Value-bearing payloads: the cell's native dword IS the saved bytes
+// (string-list ids, floats, ints, entity offsets) plus the derived vector
+// text. Returns true when this type was handled.
+bool __cdecl DoSaveEntryValuePayload(unsigned int type, VariableUnion u, MemoryFile *memFile)
+{
     unsigned int v19; // r3
     const char *v20; // r3
     unsigned int v21; // r3
     unsigned int v22; // r3
     unsigned int v23; // r3
-    unsigned int v24; // r3
-    unsigned int v25; // r3
-    float v26; // [sp+8h] [-78h]
-    float v27; // [sp+10h] [-70h]
-    float v28; // [sp+18h] [-68h]
-    float v29; // [sp+20h] [-60h]
-    _BYTE v30[4]; // [sp+50h] [-30h] BYREF
     unsigned int v31[11]; // [sp+54h] [-2Ch] BYREF
 
+    switch (type)
+    {
+    case 2u:
+    case 3u:
+        v19 = MemFile_GetUsedSize(memFile);
+        //ProfMem_Begin("string", v19);
+        v20 = SL_ConvertToString((unsigned __int16)u.intValue);
+        MemFile_WriteCString(memFile, v20);
+        v21 = MemFile_GetUsedSize(memFile);
+        //ProfMem_End(v21);
+        return true;
+    case 4u:
+        WriteVector((float *)u.vectorValue, memFile);
+        return true;
+    case 5u:
+        WriteFloat(u.floatValue, memFile);
+        return true;
+    case 6u:
+        v22 = MemFile_GetUsedSize(memFile);
+        //ProfMem_Begin("int", v22);
+        v31[0] = (unsigned int)u.intValue;
+        MemFile_WriteData(memFile, 4, v31);
+        v23 = MemFile_GetUsedSize(memFile);
+        //ProfMem_End(v23);
+        return true;
+    case 0xBu:
+        v31[0] = u.entityOffset;
+        MemFile_WriteData(memFile, 4, v31);
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Runtime-reconstruction payloads: the disk image carries the DEREFERENCED
+// CONTENTS (codepos source position, stack buffer records); the loader
+// rebuilds fresh host pointers at load. Types 0/8 carry the type byte only.
+// Returns true when this type was handled.
+bool __cdecl DoSaveEntryRuntimePayload(unsigned int type, VariableUnion u, MemoryFile *memFile)
+{
+    unsigned int v24; // r3
+    unsigned int v25; // r3
+
+    switch (type)
+    {
+    case 0u:
+    case 8u:
+        return true;
+    case 7u:
+    case 9u:
+        WriteCodepos(u.codePosValue, memFile);
+        return true;
+    case 0xAu:
+        v24 = MemFile_GetUsedSize(memFile);
+        //ProfMem_Begin("stack", v24);
+        WriteStack(u.stackValue, memFile);
+        v25 = MemFile_GetUsedSize(memFile);
+        //ProfMem_End(v25);
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Type byte plus payload dispatch for the non-pointer entries.
+void __cdecl DoSaveEntryPayload(unsigned int type, VariableUnion u, MemoryFile *memFile)
+{
+    DoSaveEntryTypeByte(type, memFile);
+    if (DoSaveEntryValuePayload(type, u, memFile))
+        return;
+    if (DoSaveEntryRuntimePayload(type, u, memFile))
+        return;
+    if (!alwaysfails)
+        MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 1172, 0, "unknown type");
+}
+} // namespace
+
+void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion u, MemoryFile *memFile)
+{
     if (type != (unsigned __int8)type)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp",
@@ -1319,69 +1417,10 @@ void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion u, MemoryFile 
             "type == (unsigned char)type");
     if (type == 1)
     {
-        UsedSize = MemFile_GetUsedSize(memFile);
-        //ProfMem_Begin("pointer", UsedSize);
-        WriteId((unsigned int)u.intValue, 1u, memFile);
-        v7 = MemFile_GetUsedSize(memFile);
-        //ProfMem_End(v7);
+        DoSaveEntryPointer(u, memFile);
+        return;
     }
-    else
-    {
-        v8 = MemFile_GetUsedSize(memFile);
-        //ProfMem_Begin("type", v8);
-        v30[0] = 8 * type;
-        MemFile_WriteData(memFile, 1, v30);
-        v9 = MemFile_GetUsedSize(memFile);
-        //ProfMem_End(v9);
-        switch (type)
-        {
-        case 0u:
-        case 8u:
-            return;
-        case 2u:
-        case 3u:
-            v19 = MemFile_GetUsedSize(memFile);
-            //ProfMem_Begin("string", v19);
-            v20 = SL_ConvertToString((unsigned __int16)u.intValue);
-            MemFile_WriteCString(memFile, v20);
-            v21 = MemFile_GetUsedSize(memFile);
-            //ProfMem_End(v21);
-            break;
-        case 4u:
-            WriteVector((float *)u.vectorValue, memFile);
-            break;
-        case 5u:
-            WriteFloat(u.floatValue, memFile);
-            break;
-        case 6u:
-            v22 = MemFile_GetUsedSize(memFile);
-            //ProfMem_Begin("int", v22);
-            v31[0] = (unsigned int)u.intValue;
-            MemFile_WriteData(memFile, 4, v31);
-            v23 = MemFile_GetUsedSize(memFile);
-            //ProfMem_End(v23);
-            break;
-        case 7u:
-        case 9u:
-            WriteCodepos(u.codePosValue, memFile);
-            break;
-        case 0xAu:
-            v24 = MemFile_GetUsedSize(memFile);
-            //ProfMem_Begin("stack", v24);
-            WriteStack(u.stackValue, memFile);
-            v25 = MemFile_GetUsedSize(memFile);
-            //ProfMem_End(v25);
-            break;
-        case 0xBu:
-            v31[0] = u.entityOffset;
-            MemFile_WriteData(memFile, 4, v31);
-            break;
-        default:
-            if (!alwaysfails)
-                MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 1172, 0, "unknown type");
-            break;
-        }
-    }
+    DoSaveEntryPayload(type, u, memFile);
 }
 
 void __cdecl Scr_SaveSource(MemoryFile *memFile)
