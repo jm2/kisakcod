@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <new>
 #include <string>
@@ -712,48 +713,33 @@ bool UnlinkEntriesAt(
     return true;
 }
 
-// Recursively empties one directory opened on directoryFd (declaration
-// precedes the descent helper that calls it).
-bool RemoveTreeAt(const int directoryFd);
-
-// Descends into each real subdirectory — opened relative to directoryFd
-// with O_NOFOLLOW so a substituted link cannot be followed — removes its
-// contents recursively, and only then removes the subdirectory name
-// itself.
-bool DescendIntoSubdirectories(
-    const int directoryFd,
-    const std::vector<std::string> &subdirectories)
+// One pending directory in the explicit-stack removal walk. The mutual
+// recursion this replaces (RemoveTreeAt <-> DescendIntoSubdirectories)
+// carried the same state in call frames; MISRA 17.2 forbids recursion, so
+// the frames are now explicit. Field semantics mirror the recursive
+// version exactly: files are unlinked during the frame's first phase, each
+// subdirectory is opened and emptied before the frame removes its name,
+// and symlink entries are unlinked last.
+struct RemoveTreeFrame
 {
-    constexpr int subdirectoryFlags =
-        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
-    for (const std::string &subdirectory : subdirectories)
-    {
-        const int childFd = openat(
-            directoryFd, subdirectory.c_str(), subdirectoryFlags);
-        if (childFd < 0)
-            return false;
-        if (!RemoveTreeAt(childFd))
-        {
-            close(childFd);
-            return false;
-        }
-        close(childFd);
-        if (unlinkat(directoryFd, subdirectory.c_str(), AT_REMOVEDIR) != 0)
-            return false;
-    }
-    return true;
-}
+    int directoryFd = -1;                  // open descriptor for this directory
+    std::vector<std::string> files;
+    std::vector<std::string> subdirectories;
+    std::vector<std::string> symlinks;
+    std::string nameInParent;              // unlinkat(AT_REMOVEDIR) name in the parent
+    std::size_t nextSubdirectory = 0;      // cursor into subdirectories
+    bool enumerated = false;               // entries collected and files unlinked?
+    bool ownsFd = false;                   // root fd stays caller-owned
+};
 
-// Walks one real directory opened on directoryFd without following symbolic
-// links, removes every real regular file, removes (but does not follow)
-// symbolic-link entries, recurses into every real subdirectory (also
-// without following links), and finally removes the leaf subdirectory
-// itself. Returned once directoryFd is empty.
-bool RemoveTreeAt(const int directoryFd)
+// Collects the frame's entries and unlinks its regular files — the first
+// phase the recursive RemoveTreeAt performed on entry. The directory
+// descriptor itself is only duplicated for readdir (fdopendir would
+// consume it) and is never closed here: the frame, or the walk's caller,
+// owns it.
+bool EnumerateRemovalFrame(RemoveTreeFrame *const frame)
 {
-    // Take a private fd for fdopendir (which would otherwise consume
-    // directoryFd). The dup'd handle is owned by the DIR* wrapper.
-    const int ownedFd = dup(directoryFd);
+    const int ownedFd = dup(frame->directoryFd);
     if (ownedFd < 0)
         return false;
     DIR *const directory = fdopendir(ownedFd);
@@ -762,27 +748,124 @@ bool RemoveTreeAt(const int directoryFd)
         close(ownedFd);
         return false;
     }
-
-    std::vector<std::string> subdirectories;
-    std::vector<std::string> files;
-    std::vector<std::string> symlinks;
     if (!CollectDirectoryEntries(
-            directoryFd, directory, &files, &subdirectories, &symlinks))
+            frame->directoryFd,
+            directory,
+            &frame->files,
+            &frame->subdirectories,
+            &frame->symlinks))
     {
         closedir(directory);
         return false;
     }
     if (closedir(directory) != 0)
         return false;
+    return UnlinkEntriesAt(frame->directoryFd, frame->files, 0);
+}
 
-    if (!UnlinkEntriesAt(directoryFd, files, 0))
+// Opens the frame's next real subdirectory relative to its descriptor with
+// O_NOFOLLOW so a substituted link cannot be followed, and pushes an empty
+// frame that owns the child descriptor. The push happens before the open
+// so an allocation failure cannot strand a descriptor; the frame sets
+// ownsFd before the name copy so a throwing copy is still drained. The
+// parent removes the child's name only after the child frame completes.
+bool DescendToNextChild(
+    RemoveTreeFrame *const frame,
+    std::deque<RemoveTreeFrame> *const stack)
+{
+    constexpr int subdirectoryFlags =
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
+    stack->emplace_back();
+    RemoveTreeFrame &child = stack->back();
+    const std::string &name =
+        frame->subdirectories[frame->nextSubdirectory];
+    const int childFd = openat(
+        frame->directoryFd, name.c_str(), subdirectoryFlags);
+    if (childFd < 0)
+    {
+        stack->pop_back();
         return false;
-    if (!DescendIntoSubdirectories(directoryFd, subdirectories))
-        return false;
+    }
+    child.directoryFd = childFd;
+    child.ownsFd = true;
+    child.nameInParent = name;
+    ++frame->nextSubdirectory;
+    return true;
+}
 
-    // Strip out symbolic-link entries that survived the descent. unlinkat
-    // with no flag removes a symlink itself, not its target.
-    return UnlinkEntriesAt(directoryFd, symlinks, 0);
+// Pops a completed frame: its symlink entries are already gone (the final
+// phase), so closing a child descriptor is what lets the parent remove the
+// child's now-empty directory by name. The root frame's descriptor stays
+// open — the walk's caller owns it and removes the leaf name itself,
+// exactly as the recursive version did.
+bool CompleteRemovalFrame(std::deque<RemoveTreeFrame> *const stack)
+{
+    RemoveTreeFrame completed(std::move(stack->back()));
+    stack->pop_back();
+    if (!completed.ownsFd)
+        return true;
+    close(completed.directoryFd);
+    RemoveTreeFrame &parent = stack->back();
+    return unlinkat(
+        parent.directoryFd,
+        completed.nameInParent.c_str(),
+        AT_REMOVEDIR) == 0;
+}
+
+// Empties one real directory opened on directoryFd without following
+// symbolic links: removes every real regular file, then descends into
+// every real subdirectory (also without following links) so each child is
+// empty before its name is removed, then removes the surviving
+// symbolic-link entries. Once directoryFd is empty the walk returns with
+// the descriptor still open — the caller removes the leaf name itself.
+//
+// The descent is an explicit stack of RemoveTreeFrame entries instead of
+// the previous RemoveTreeAt <-> DescendIntoSubdirectories mutual
+// recursion (MISRA 17.2). Every operation, the order between them, and
+// every failure rule are unchanged: any failure stops the walk with the
+// remaining entries untouched, every descriptor the walk opened is closed
+// on the way out, and directoryFd itself is left open for the caller.
+bool RemoveTreeAt(const int directoryFd)
+{
+    std::deque<RemoveTreeFrame> stack;
+    bool ok = true;
+    try
+    {
+        stack.emplace_back();
+        stack.back().directoryFd = directoryFd;
+        while (ok && !stack.empty())
+        {
+            RemoveTreeFrame &frame = stack.back();
+            if (!frame.enumerated)
+            {
+                frame.enumerated = true;
+                ok = EnumerateRemovalFrame(&frame);
+            }
+            else if (frame.nextSubdirectory < frame.subdirectories.size())
+            {
+                ok = DescendToNextChild(&frame, &stack);
+            }
+            else if (
+                !UnlinkEntriesAt(frame.directoryFd, frame.symlinks, 0))
+            {
+                ok = false;
+            }
+            else
+            {
+                ok = CompleteRemovalFrame(&stack);
+            }
+        }
+    }
+    catch (const std::bad_alloc &)
+    {
+        ok = false;
+    }
+    for (RemoveTreeFrame &frame : stack)
+    {
+        if (frame.ownsFd)
+            close(frame.directoryFd);
+    }
+    return ok;
 }
 }
 
