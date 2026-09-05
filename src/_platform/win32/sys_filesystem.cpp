@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <deque>
 #include <limits>
 #include <new>
 #include <string>
@@ -759,4 +761,1093 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
 {
     return Sys_FileSystemListDirectoryFiltered(
         utf8Path, maximumEntries, nullptr, nullptr, entries);
+}
+
+// The Windows SDK gained POSIX-semantics deletion in 10.0.1709. The flag
+// macros below are macros, so #ifndef guards keep pre-1709 SDKs compiling
+// with the fallback values intact. The fallback values mirror the
+// documented SDK constants exactly (fileapi.h): DELETE 0x1,
+// POSIX_SEMANTICS 0x2, IGNORE_READONLY_ATTRIBUTE 0x10. Without an explicit
+// DELETE bit the disposition call succeeds but deletes nothing — the
+// remove-tree walk then reports success over an intact tree (CI
+// remove-tree/executes regression at ae034745). The struct itself must not
+// be guarded that way: FILE_DISPOSITION_INFO_EX is a typedef, not a macro,
+// so #ifndef never fires on SDKs that already declare it and the duplicate
+// definition breaks the build. A Kisak-prefixed mirror with the same
+// one-DWORD layout avoids the SDK-vintage dependency entirely.
+struct KisakFileDispositionInfoEx
+{
+    DWORD FileDispositionFlags;
+};
+#ifndef FILE_DISPOSITION_FLAG_DELETE
+#define FILE_DISPOSITION_FLAG_DELETE 0x00000001
+#endif
+#ifndef FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+#define FILE_DISPOSITION_FLAG_POSIX_SEMANTICS 0x00000002
+#endif
+#ifndef FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE
+#define FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE 0x00000010
+#endif
+
+namespace
+{
+// ---------------------------------------------------------------------------
+// NT runtime surface used for handle-relative recursive deletion.
+//
+// The removal service must keep parent-handle identity through every descent
+// and must never convert a held handle back into a pathname: a pathname is
+// resolved from the process root on every use, so a racing rename or reparse
+// substitution could redirect the deletion outside the intended tree. The NT
+// APIs accept a RootDirectory object-attribute that pins name resolution to
+// a held parent handle, and NtQueryDirectoryFile enumerates a handle
+// directly. They are resolved from ntdll at run time so this translation
+// unit stays free of winternl.h and of a hard ntdll link dependency.
+// ---------------------------------------------------------------------------
+
+using KisakNtStatus = std::int32_t;
+
+constexpr KisakNtStatus kKisakStatusSuccess = 0;
+constexpr KisakNtStatus kKisakStatusNoMoreFiles =
+    static_cast<KisakNtStatus>(0x80000006u);
+// The documented STATUS_NO_MORE_ENTRIES (ntstatus.h). The previous value
+// 0x8000001B is STATUS_FILEMARK_DETECTED — a typo one hex digit wide that
+// made every end-of-enumeration reported as STATUS_NO_MORE_ENTRIES fall
+// through to the fail-closed branch below (CI remove-tree/executes
+// regression on the ReFS Dev Drive portable legs: NTFS ends the walk's
+// enumeration with STATUS_NO_MORE_FILES, which matched and masked the
+// typo; ReFS reports STATUS_NO_MORE_ENTRIES).
+constexpr KisakNtStatus kKisakStatusNoMoreEntries =
+    static_cast<KisakNtStatus>(0x8000001Au);
+
+// ---------------------------------------------------------------------------
+// Removal-walk diagnosability. Raw NT calls never set the Win32 last error,
+// so a failed walk is otherwise indistinguishable from a stale-error report
+// (the CI remove-tree/executes failure printed a stale 'Win32 error 0'
+// across consecutive runs while the walk's true failure point was
+// invisible). Every walk step notes its stage here and every failure path
+// records the raw NTSTATUS or Win32 error that caused it. The platform
+// filesystem test reads the record through
+// Kisak_FileSystemLastRemoveTreeDiagnostic when a removal call returns
+// false; production callers never need it.
+// ---------------------------------------------------------------------------
+const char *gRemoveTreeStage = "idle";
+std::int32_t gRemoveTreeCode = 0;
+
+void NoteRemoveTreeStage(const char *const stage)
+{
+    gRemoveTreeStage = stage;
+    gRemoveTreeCode = 0;
+}
+
+void NoteRemoveTreeFailure(
+    const char *const stage,
+    const std::int32_t code)
+{
+    gRemoveTreeStage = stage;
+    gRemoveTreeCode = code;
+}
+
+// DesiredAccess values (the subset used here).
+constexpr std::uint32_t kKisakFileListDirectory = 0x00000001u;
+constexpr std::uint32_t kKisakFileReadAttributes = 0x00000080u;
+constexpr std::uint32_t kKisakDelete = 0x00010000u;
+constexpr std::uint32_t kKisakSynchronize = 0x00100000u;
+
+// ShareAccess: full sharing on every open. Sharing conflicts surface at
+// disposition time instead of blocking the open, which keeps failure
+// reporting in one deterministic place.
+constexpr std::uint32_t kKisakFileShareAll = 0x00000007u;
+
+// CreateDisposition.
+constexpr std::uint32_t kKisakFileOpen = 0x00000001u;
+
+// CreateOptions.
+constexpr std::uint32_t kKisakFileDirectoryFile = 0x00000001u;
+constexpr std::uint32_t kKisakFileSynchronousIoNonAlert = 0x00000020u;
+constexpr std::uint32_t kKisakFileNonDirectoryFile = 0x00000040u;
+constexpr std::uint32_t kKisakFileOpenReparsePoint = 0x00200000u;
+
+// OBJECT_ATTRIBUTES Attributes.
+constexpr std::uint32_t kKisakObjCaseInsensitive = 0x00000040u;
+
+// FileInformationClass.
+constexpr std::uint32_t kKisakFileDirectoryInformation = 1u;
+
+struct KisakUnicodeString
+{
+    std::uint16_t Length;
+    std::uint16_t MaximumLength;
+    wchar_t *Buffer;
+};
+
+struct KisakIoStatusBlock
+{
+    union
+    {
+        KisakNtStatus Status;
+        void *Pointer;
+    };
+    std::uintptr_t Information;
+};
+
+struct KisakObjectAttributes
+{
+    std::uint32_t Length;
+    void *RootDirectory;
+    KisakUnicodeString *ObjectName;
+    std::uint32_t Attributes;
+    void *SecurityDescriptor;
+    void *SecurityQualityOfService;
+};
+
+struct KisakFileDirectoryInformation
+{
+    std::uint32_t NextEntryOffset;
+    std::uint32_t FileIndex;
+    std::int64_t CreationTime;
+    std::int64_t LastAccessTime;
+    std::int64_t LastWriteTime;
+    std::int64_t ChangeTime;
+    std::int64_t EndOfFile;
+    std::int64_t AllocationSize;
+    std::uint32_t FileAttributes;
+    std::uint32_t FileNameLength;
+    wchar_t FileName[1];
+};
+
+// Layout pins for the NT ABI mirrors above. Several members are never
+// dereferenced, but they must exist at their documented offsets so the
+// members that follow them land where the kernel expects; these
+// assertions turn any layout drift into a compile-time failure.
+static_assert(
+    offsetof(KisakIoStatusBlock, Status) == 0
+        && offsetof(KisakIoStatusBlock, Pointer) == 0,
+    "IO_STATUS_BLOCK union members must share offset 0");
+static_assert(
+    offsetof(KisakIoStatusBlock, Information) == sizeof(void *),
+    "IO_STATUS_BLOCK Information must follow the Status/Pointer union");
+static_assert(
+    offsetof(KisakObjectAttributes, SecurityQualityOfService)
+            - offsetof(KisakObjectAttributes, SecurityDescriptor)
+        == sizeof(void *),
+    "OBJECT_ATTRIBUTES security members must be pointer-sized apart");
+static_assert(
+    offsetof(KisakFileDirectoryInformation, CreationTime)
+            - offsetof(KisakFileDirectoryInformation, FileIndex)
+        == sizeof(KisakFileDirectoryInformation::NextEntryOffset),
+    "FILE_DIRECTORY_INFORMATION timestamps must follow FileIndex");
+static_assert(
+    offsetof(KisakFileDirectoryInformation, LastAccessTime)
+            - offsetof(KisakFileDirectoryInformation, CreationTime)
+        == sizeof(std::int64_t)
+        && offsetof(KisakFileDirectoryInformation, LastWriteTime)
+                - offsetof(KisakFileDirectoryInformation, LastAccessTime)
+            == sizeof(std::int64_t)
+        && offsetof(KisakFileDirectoryInformation, ChangeTime)
+                - offsetof(KisakFileDirectoryInformation, LastWriteTime)
+            == sizeof(std::int64_t)
+        && offsetof(KisakFileDirectoryInformation, EndOfFile)
+                - offsetof(KisakFileDirectoryInformation, ChangeTime)
+            == sizeof(std::int64_t)
+        && offsetof(KisakFileDirectoryInformation, AllocationSize)
+                - offsetof(KisakFileDirectoryInformation, EndOfFile)
+            == sizeof(std::int64_t),
+    "FILE_DIRECTORY_INFORMATION timestamp/size chain must be contiguous");
+static_assert(
+    offsetof(KisakFileDirectoryInformation, FileName)
+            - offsetof(KisakFileDirectoryInformation, FileAttributes)
+        == 2u * sizeof(std::uint32_t),
+    "FILE_DIRECTORY_INFORMATION FileName must follow the attribute fields");
+
+using KisakNtCreateFileFn = KisakNtStatus (__stdcall *)(
+    HANDLE *fileHandle,
+    std::uint32_t desiredAccess,
+    KisakObjectAttributes *objectAttributes,
+    KisakIoStatusBlock *ioStatusBlock,
+    std::int64_t *allocationSize,
+    std::uint32_t fileAttributes,
+    std::uint32_t shareAccess,
+    std::uint32_t createDisposition,
+    std::uint32_t createOptions,
+    void *eaBuffer,
+    std::uint32_t eaLength);
+
+using KisakNtQueryDirectoryFileFn = KisakNtStatus (__stdcall *)(
+    HANDLE fileHandle,
+    HANDLE event,
+    void *apcRoutine,
+    void *apcContext,
+    KisakIoStatusBlock *ioStatusBlock,
+    void *fileInformation,
+    std::uint32_t length,
+    std::uint32_t fileInformationClass,
+    std::uint32_t returnSingleEntry,
+    KisakUnicodeString *fileName,
+    std::uint32_t restartScan);
+
+struct KisakNtProcedures
+{
+    KisakNtCreateFileFn createFile;
+    KisakNtQueryDirectoryFileFn queryDirectoryFile;
+};
+
+const KisakNtProcedures *NtProcedures()
+{
+    static const KisakNtProcedures procedures = [] {
+        KisakNtProcedures resolved{};
+        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        if (ntdll != nullptr)
+        {
+            resolved.createFile =
+                reinterpret_cast<KisakNtCreateFileFn>(reinterpret_cast<void *>(
+                    GetProcAddress(ntdll, "NtCreateFile")));
+            resolved.queryDirectoryFile =
+                reinterpret_cast<KisakNtQueryDirectoryFileFn>(
+                    reinterpret_cast<void *>(
+                        GetProcAddress(ntdll, "NtQueryDirectoryFile")));
+        }
+        return resolved;
+    }();
+    return &procedures;
+}
+
+// Builds the relative-name descriptor NtCreateFile resolves against the
+// parent handle in the object attributes.
+KisakUnicodeString RelativeUnicodeName(
+    const wchar_t *const name,
+    const std::size_t nameLength)
+{
+    KisakUnicodeString unicodeName{};
+    unicodeName.Length =
+        static_cast<std::uint16_t>(nameLength * sizeof(wchar_t));
+    unicodeName.MaximumLength = unicodeName.Length;
+    unicodeName.Buffer = const_cast<wchar_t *>(name);
+    return unicodeName;
+}
+
+// A child open counts as successful only when the raw status succeeded AND
+// the produced handle is real; anything else is treated as a failed open.
+bool ChildOpenSucceeded(const KisakNtStatus status, const HANDLE child)
+{
+    return status == kKisakStatusSuccess
+        && child != INVALID_HANDLE_VALUE
+        && child != nullptr;
+}
+
+// Closes a handle produced by a child open that failed its success checks,
+// so the failure path leaks neither real nor pseudo handles.
+void ClosePartialChildOpen(const HANDLE child)
+{
+    if (child != INVALID_HANDLE_VALUE && child != nullptr)
+        CloseHandle(child);
+}
+
+// Opens one child of a held parent by name. Name resolution happens against
+// the parent handle, so whatever object answers is inside the subtree the
+// parent anchors. FILE_OPEN_REPARSE_POINT keeps reparse points untraversed
+// for every classification: a junction or symbolic link opens as itself and
+// is later verified and deleted as itself.
+HANDLE OpenChildRelativeToParent(
+    const HANDLE parent,
+    const wchar_t *const name,
+    const std::size_t nameLength,
+    const std::uint32_t desiredAccess,
+    const std::uint32_t createOptions,
+    std::int32_t *const ntStatus = nullptr)
+{
+    const KisakNtProcedures *const nt = NtProcedures();
+    if (ntStatus != nullptr)
+        *ntStatus = kKisakStatusSuccess;
+    if (!nt->createFile)
+        return INVALID_HANDLE_VALUE;
+
+    // A single component this long cannot exist on NTFS; refuse up front.
+    if (nameLength == 0 || nameLength > 32767)
+        return INVALID_HANDLE_VALUE;
+
+    KisakUnicodeString unicodeName = RelativeUnicodeName(name, nameLength);
+
+    KisakObjectAttributes attributes{};
+    attributes.Length = sizeof(attributes);
+    attributes.RootDirectory = parent;
+    attributes.ObjectName = &unicodeName;
+    attributes.Attributes = kKisakObjCaseInsensitive;
+
+    HANDLE child = INVALID_HANDLE_VALUE;
+    KisakIoStatusBlock ioStatus{};
+    const KisakNtStatus status = nt->createFile(
+        &child,
+        desiredAccess,
+        &attributes,
+        &ioStatus,
+        nullptr,
+        FILE_ATTRIBUTE_NORMAL,
+        kKisakFileShareAll,
+        kKisakFileOpen,
+        createOptions,
+        nullptr,
+        0);
+    if (ntStatus != nullptr)
+        *ntStatus = status;
+    if (ChildOpenSucceeded(status, child))
+        return child;
+    ClosePartialChildOpen(child);
+    return INVALID_HANDLE_VALUE;
+}
+
+// Verifies an already-open handle is what the enumeration said it was. Every
+// open happens with FILE_OPEN_REPARSE_POINT, so reparse points answer with
+// their tag set and real objects answer with their own attributes. A
+// mismatch means the name changed hands between enumeration and open — the
+// deterministic signature of a rename/reparse substitution race — and the
+// operation fails instead of deleting the wrong object.
+bool VerifyHandleKind(
+    const HANDLE handle,
+    const bool expectedReparse,
+    const bool expectedDirectory)
+{
+    FILE_ATTRIBUTE_TAG_INFO info{};
+    if (!GetFileInformationByHandleEx(
+            handle,
+            FileAttributeTagInfo,
+            &info,
+            sizeof(info)))
+    {
+        return false;
+    }
+    const bool isReparse =
+        (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    if (isReparse != expectedReparse)
+        return false;
+    if (expectedReparse)
+        return true;
+    return ((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        == expectedDirectory;
+}
+
+// Marks an open object for deletion. POSIX semantics is preferred: the name
+// disappears once our handle closes even if unrelated handles exist, and an
+// incompatible existing handle fails the disposition immediately instead of
+// deferring a surprise. DELETE must be in the extended request — the flags
+// otherwise describe *how* to delete but the documented DELETE bit is what
+// marks the object, and a request without it succeeds while deleting
+// nothing. IGNORE_READONLY_ATTRIBUTE additionally requires POSIX semantics
+// and DELETE, which this combination provides. Diagnostics: *code receives
+// the Win32 error of the failed extended request (or of the failed legacy
+// fallback), and *usedLegacyFallback reports that the legacy disposition —
+// whose deferred delete-pending semantics differ from POSIX semantics —
+// actually marked the object.
+bool SetDeletionDisposition(
+    const HANDLE handle,
+    std::int32_t *const code,
+    bool *const usedLegacyFallback)
+{
+    *code = 0;
+    *usedLegacyFallback = false;
+    KisakFileDispositionInfoEx dispositionEx{};
+    dispositionEx.FileDispositionFlags =
+        FILE_DISPOSITION_FLAG_DELETE
+        | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+        | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
+    if (SetFileInformationByHandle(
+            handle,
+            FileDispositionInfoEx,
+            &dispositionEx,
+            sizeof(dispositionEx)))
+    {
+        return true;
+    }
+
+    const DWORD exError = GetLastError();
+    *code = static_cast<std::int32_t>(exError);
+    if (exError != ERROR_INVALID_PARAMETER
+        && exError != ERROR_CALL_NOT_IMPLEMENTED
+        && exError != ERROR_NOT_SUPPORTED)
+    {
+        return false;
+    }
+
+    *usedLegacyFallback = true;
+    FILE_DISPOSITION_INFO disposition{};
+    disposition.DeleteFile = TRUE;
+    const bool marked = SetFileInformationByHandle(
+        handle,
+        FileDispositionInfo,
+        &disposition,
+        sizeof(disposition)) != 0;
+    if (!marked)
+        *code = static_cast<std::int32_t>(GetLastError());
+    return marked;
+}
+
+// One pending directory in the explicit-stack removal walk. The recursion
+// this replaces (RemoveHeldTree calling itself on each real subdirectory)
+// carried the same state in call frames; MISRA 17.2 forbids recursion, so
+// the frames are now explicit. Field semantics mirror the recursive
+// version exactly: enumeration happens once per frame, files and reparse
+// children are deleted phase by phase, then each real subdirectory is
+// opened, verified, emptied by its own frame, marked, and closed before
+// the parent frame continues.
+enum class RemoveTreePhase
+{
+    kEnumerate,
+    kFiles,
+    kReparse,
+    kDirectories,
+    kFinish
+};
+
+struct RemoveTreeFrame
+{
+    HANDLE directory = INVALID_HANDLE_VALUE; // held open for this frame
+    std::vector<std::wstring> files;
+    std::vector<std::wstring> reparseChildren;
+    std::vector<std::wstring> directories;
+    std::size_t nextDirectory = 0;      // cursor into directories
+    RemoveTreePhase phase = RemoveTreePhase::kEnumerate;
+    bool ownsHandle = false;            // root anchor stays caller-owned
+};
+
+bool IsDotOrDotDot(
+    const wchar_t *const name,
+    const std::size_t nameCharacters)
+{
+    if (nameCharacters == 1)
+        return name[0] == L'.';
+    if (nameCharacters == 2)
+        return name[0] == L'.' && name[1] == L'.';
+    return false;
+}
+
+// Files the enumeration bucket. Classification comes from the enumeration
+// attributes; the re-open-plus-verify step below re-checks it against the
+// live object before anything is deleted. Allocation failure fails closed.
+bool ClassifyEnumerationEntry(
+    const KisakFileDirectoryInformation *const entry,
+    RemoveTreeFrame *const frame)
+{
+    const std::size_t nameCharacters =
+        entry->FileNameLength / sizeof(wchar_t);
+    try
+    {
+        if ((entry->FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        {
+            frame->reparseChildren.emplace_back(
+                entry->FileName,
+                nameCharacters);
+        }
+        else if ((entry->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        {
+            frame->directories.emplace_back(
+                entry->FileName,
+                nameCharacters);
+        }
+        else
+        {
+            frame->files.emplace_back(entry->FileName, nameCharacters);
+        }
+    }
+    catch (const std::bad_alloc &)
+    {
+        return false;
+    }
+    return true;
+}
+
+// Validates the step to the next directory entry. NextEntryOffset is
+// relative to the CURRENT entry, so the cursor must accumulate across the
+// batch; assigning it instead re-read early entries and misparsed every
+// multi-entry batch (operator-audit defect). A zero step ends the batch. A
+// step that cannot carry at least the fixed header, or that would leave
+// the query buffer, is malformed kernel data and fails closed.
+bool NextEnumerationOffset(
+    const KisakFileDirectoryInformation *const entry,
+    const std::uint32_t offset,
+    const std::uint32_t bufferBytes,
+    std::uint32_t *const next)
+{
+    const std::uint32_t step = entry->NextEntryOffset;
+    if (step == 0)
+    {
+        *next = 0;
+        return true;
+    }
+    if (step < sizeof(KisakFileDirectoryInformation)
+        || step >= bufferBytes - offset)
+    {
+        return false;
+    }
+    *next = offset + step;
+    return true;
+}
+
+// Parses one returned batch of directory entries into the frame's buckets.
+// The cursor accumulates relative NextEntryOffset values (see
+// NextEnumerationOffset); a zero step ends the batch. Dot entries are
+// skipped, everything else is classified exactly as the enumeration
+// reported it. A zero-length name is malformed kernel data (the dot
+// entries carry length 2) and fails closed with its own diagnostic stage
+// instead of harvesting an unopenable empty-string name.
+bool ParseEnumerationBatch(
+    void *const buffer,
+    const std::uint32_t bufferBytes,
+    RemoveTreeFrame *const frame)
+{
+    std::uint32_t offset = 0;
+    for (;;)
+    {
+        const auto *const entry =
+            reinterpret_cast<const KisakFileDirectoryInformation *>(
+                static_cast<const unsigned char *>(buffer) + offset);
+        if (entry->FileNameLength == 0)
+        {
+            NoteRemoveTreeFailure("enumerate/parse/zero-name", 0);
+            return false;
+        }
+        if (!IsDotOrDotDot(
+                entry->FileName,
+                entry->FileNameLength / sizeof(wchar_t))
+            && !ClassifyEnumerationEntry(entry, frame))
+        {
+            NoteRemoveTreeFailure("enumerate/classify", 0);
+            return false;
+        }
+        std::uint32_t next = 0;
+        if (!NextEnumerationOffset(entry, offset, bufferBytes, &next))
+        {
+            NoteRemoveTreeFailure(
+                "enumerate/parse",
+                static_cast<std::int32_t>(entry->NextEntryOffset));
+            return false;
+        }
+        if (next == 0)
+            break;
+        offset = next;
+    }
+    return true;
+}
+
+// Enumerates one real directory by handle. Names are collected with the
+// classification the enumeration reported; afterwards every name is
+// re-opened relative to the frame's anchor and every reopened object is
+// verified against that classification before any deletion happens.
+bool EnumerateHeldDirectory(
+    RemoveTreeFrame *const frame,
+    const KisakNtProcedures *const nt)
+{
+    // 64KiB dwarfs the largest legal NTFS directory entry.
+    std::vector<std::uint64_t> enumerationBuffer(8192u);
+    void *const buffer = enumerationBuffer.data();
+    const std::uint32_t bufferBytes = static_cast<std::uint32_t>(
+        enumerationBuffer.size() * sizeof(std::uint64_t));
+    bool restartScan = true;
+    for (;;)
+    {
+        NoteRemoveTreeStage("enumerate/query");
+        KisakIoStatusBlock ioStatus{};
+        const KisakNtStatus status = nt->queryDirectoryFile(
+            frame->directory,
+            nullptr,
+            nullptr,
+            nullptr,
+            &ioStatus,
+            buffer,
+            bufferBytes,
+            kKisakFileDirectoryInformation,
+            0u,
+            nullptr,
+            restartScan ? 1u : 0u);
+        restartScan = false;
+        if (status == kKisakStatusNoMoreFiles
+            || status == kKisakStatusNoMoreEntries)
+        {
+            break;
+        }
+        if (status != kKisakStatusSuccess)
+        {
+            NoteRemoveTreeFailure("enumerate/query", status);
+            return false;
+        }
+        if (!ParseEnumerationBatch(buffer, bufferBytes, frame))
+            return false;
+    }
+    return true;
+}
+
+// Deletes one bucket of enumerated names: each is re-opened relative to
+// the anchor, verified against the enumeration classification, marked for
+// deletion, and closed. The original walk used one identical loop per
+// bucket, differing only in create options and the expected reparse tag.
+// stagePrefix ("remove-files" / "remove-reparse") keys the diagnostic
+// record so a CI failure names the bucket and the exact step.
+bool RemoveNamedEntries(
+    const HANDLE heldDirectory,
+    const std::vector<std::wstring> &names,
+    const std::uint32_t createOptions,
+    const bool expectedReparse,
+    const char *const stagePrefix)
+{
+    constexpr std::uint32_t access =
+        kKisakDelete | kKisakFileReadAttributes | kKisakSynchronize;
+    for (const std::wstring &name : names)
+    {
+        NoteRemoveTreeStage(stagePrefix);
+        std::int32_t ntStatus = kKisakStatusSuccess;
+        const HANDLE child = OpenChildRelativeToParent(
+            heldDirectory,
+            name.c_str(),
+            name.size(),
+            access,
+            createOptions,
+            &ntStatus);
+        if (child == INVALID_HANDLE_VALUE)
+        {
+            NoteRemoveTreeFailure(stagePrefix, ntStatus);
+            return false;
+        }
+        std::int32_t dispositionCode = 0;
+        bool usedLegacyFallback = false;
+        const bool verified = VerifyHandleKind(child, expectedReparse, false);
+        const bool marked = verified
+            && SetDeletionDisposition(
+                child,
+                &dispositionCode,
+                &usedLegacyFallback);
+        CloseHandle(child);
+        if (!verified)
+        {
+            NoteRemoveTreeFailure(stagePrefix, 0);
+            return false;
+        }
+        if (!marked)
+        {
+            NoteRemoveTreeFailure(stagePrefix, dispositionCode);
+            return false;
+        }
+        if (usedLegacyFallback)
+            NoteRemoveTreeStage("mark-legacy-ok");
+    }
+    return true;
+}
+
+// Opens the frame's next real subdirectory relative to the anchor,
+// verifies it is still a real directory, and pushes an empty frame owning
+// the child handle. The push happens before the open so an allocation
+// failure cannot strand a handle. The child's own frames empty and mark
+// it; the parent never deletes the child by name.
+bool DescendToNextChild(
+    RemoveTreeFrame *const frame,
+    std::deque<RemoveTreeFrame> *const stack)
+{
+    constexpr std::uint32_t directoryAccess =
+        kKisakDelete
+        | kKisakFileListDirectory
+        | kKisakFileReadAttributes
+        | kKisakSynchronize;
+    constexpr std::uint32_t directoryOptions =
+        kKisakFileDirectoryFile
+        | kKisakFileOpenReparsePoint
+        | kKisakFileSynchronousIoNonAlert;
+    stack->emplace_back();
+    RemoveTreeFrame &child = stack->back();
+    const std::wstring &name = frame->directories[frame->nextDirectory];
+    NoteRemoveTreeStage("descend/open");
+    std::int32_t ntStatus = kKisakStatusSuccess;
+    const HANDLE childHandle = OpenChildRelativeToParent(
+        frame->directory,
+        name.c_str(),
+        name.size(),
+        directoryAccess,
+        directoryOptions,
+        &ntStatus);
+    if (childHandle == INVALID_HANDLE_VALUE)
+    {
+        NoteRemoveTreeFailure("descend/open", ntStatus);
+        stack->pop_back();
+        return false;
+    }
+    NoteRemoveTreeStage("descend/verify");
+    if (!VerifyHandleKind(childHandle, false, true))
+    {
+        NoteRemoveTreeFailure("descend/verify", 0);
+        CloseHandle(childHandle);
+        stack->pop_back();
+        return false;
+    }
+    child.directory = childHandle;
+    child.ownsHandle = true;
+    ++frame->nextDirectory;
+    return true;
+}
+
+// Pops a completed frame: its contents are gone, so marking the anchor and
+// closing a child handle executes the pending delete. The root anchor
+// stays open — its handle belongs to the caller, exactly as in the
+// recursive version.
+bool CompleteRemovalFrame(std::deque<RemoveTreeFrame> *const stack)
+{
+    RemoveTreeFrame completed(std::move(stack->back()));
+    stack->pop_back();
+    NoteRemoveTreeStage("complete/mark");
+    std::int32_t dispositionCode = 0;
+    bool usedLegacyFallback = false;
+    if (!SetDeletionDisposition(
+            completed.directory,
+            &dispositionCode,
+            &usedLegacyFallback))
+    {
+        NoteRemoveTreeFailure("complete/mark", dispositionCode);
+        return false;
+    }
+    if (usedLegacyFallback)
+        NoteRemoveTreeStage("mark-legacy-ok");
+    if (completed.ownsHandle)
+    {
+        NoteRemoveTreeStage("complete/close");
+        if (!CloseHandle(completed.directory))
+        {
+            NoteRemoveTreeFailure("complete/close", GetLastError());
+            return false;
+        }
+    }
+    return true;
+}
+
+// Runs the frame's next phase and returns false on any failure. Phase
+// order mirrors the recursive version: enumerate, delete real files,
+// delete reparse children as themselves, then descend into each real
+// subdirectory, and finally mark the now-empty anchor.
+bool StepRemovalFrame(
+    RemoveTreeFrame *const frame,
+    std::deque<RemoveTreeFrame> *const stack,
+    const KisakNtProcedures *const nt)
+{
+    switch (frame->phase)
+    {
+        case RemoveTreePhase::kEnumerate:
+            frame->phase = RemoveTreePhase::kFiles;
+            return EnumerateHeldDirectory(frame, nt);
+        case RemoveTreePhase::kFiles:
+            frame->phase = RemoveTreePhase::kReparse;
+            return RemoveNamedEntries(
+                frame->directory,
+                frame->files,
+                kKisakFileNonDirectoryFile
+                    | kKisakFileOpenReparsePoint
+                    | kKisakFileSynchronousIoNonAlert,
+                false,
+                "remove-files");
+        case RemoveTreePhase::kReparse:
+            frame->phase = RemoveTreePhase::kDirectories;
+            return RemoveNamedEntries(
+                frame->directory,
+                frame->reparseChildren,
+                kKisakFileOpenReparsePoint
+                    | kKisakFileSynchronousIoNonAlert,
+                true,
+                "remove-reparse");
+        case RemoveTreePhase::kDirectories:
+            if (frame->nextDirectory < frame->directories.size())
+                return DescendToNextChild(frame, stack);
+            frame->phase = RemoveTreePhase::kFinish;
+            return true;
+        case RemoveTreePhase::kFinish:
+        default:
+            return CompleteRemovalFrame(stack);
+    }
+}
+
+bool RemoveHeldTree(const HANDLE heldDirectory)
+{
+    const KisakNtProcedures *const nt = NtProcedures();
+    if (!nt->queryDirectoryFile)
+    {
+        NoteRemoveTreeFailure("walk/no-ntdll", 0);
+        return false;
+    }
+    NoteRemoveTreeStage("walk");
+    std::deque<RemoveTreeFrame> stack;
+    bool ok = true;
+    try
+    {
+        stack.emplace_back();
+        stack.back().directory = heldDirectory;
+        while (ok && !stack.empty())
+        {
+            ok = StepRemovalFrame(&stack.back(), &stack, nt);
+        }
+    }
+    catch (const std::bad_alloc &)
+    {
+        NoteRemoveTreeFailure("walk/alloc", 0);
+        ok = false;
+    }
+    for (RemoveTreeFrame &frame : stack)
+    {
+        if (frame.ownsHandle)
+            CloseHandle(frame.directory);
+    }
+    return ok;
+}
+
+// Drops any trailing separator the extended prefix carried. The root
+// length computation below assumes the leaf is a real component, not a
+// trailing slash.
+void TrimExtendedSeparators(std::wstring *const extendedPath)
+{
+    while (!extendedPath->empty()
+        && (extendedPath->back() == L'\\' || extendedPath->back() == L'/'))
+    {
+        extendedPath->pop_back();
+    }
+}
+
+// Opens the filesystem root (drive or UNC share) by pathname exactly once
+// — the root PREFIX only. Opening the full tree path here would anchor the
+// walk at the leaf and resolve the first component against the wrong
+// directory (operator-audit defect); names below the root must resolve
+// relative to a held handle. A volume root cannot be a reparse point, but
+// the same open-reparse-then-verify discipline is applied so the entry
+// sequence has no exceptions.
+bool OpenRemovalRoot(
+    const std::wstring &extendedPath,
+    const std::size_t rootLength,
+    HANDLE *const held)
+{
+    const std::wstring rootPrefix = extendedPath.substr(0, rootLength);
+    NoteRemoveTreeStage("root/open");
+    *held = CreateFileW(
+        rootPrefix.c_str(),
+        FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        kKisakFileShareAll,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr);
+    if (*held == INVALID_HANDLE_VALUE)
+    {
+        NoteRemoveTreeFailure("root/open", GetLastError());
+        return false;
+    }
+    NoteRemoveTreeStage("root/verify");
+    if (!VerifyHandleKind(*held, false, true))
+    {
+        NoteRemoveTreeFailure("root/verify", 0);
+        CloseHandle(*held);
+        *held = INVALID_HANDLE_VALUE;
+        return false;
+    }
+    return true;
+}
+
+// Advances past any separator run and spans the next path component.
+// Returns false once the path is exhausted.
+bool NextComponentSpan(
+    const std::wstring &path,
+    std::size_t *const cursor,
+    std::size_t *const begin)
+{
+    while (*cursor < path.size()
+        && (path[*cursor] == L'\\' || path[*cursor] == L'/'))
+    {
+        ++*cursor;
+    }
+    if (*cursor == path.size())
+        return false;
+    *begin = *cursor;
+    while (*cursor < path.size()
+        && path[*cursor] != L'\\'
+        && path[*cursor] != L'/')
+    {
+        ++*cursor;
+    }
+    return true;
+}
+
+// Opens one path component relative to the previously held handle and
+// releases the parent as soon as the child is verified. Parent-handle
+// identity is preserved the whole way down: nothing after the root open
+// resolves names from the process root, and FILE_OPEN_REPARSE_POINT plus
+// tag verification refuses any junction or symbolic-link ancestor or leaf
+// before descent.
+//
+// Access splits by depth. Ancestors request traversal-only rights: the
+// POSIX walk opens ancestors O_RDONLY|O_DIRECTORY and never writes to
+// them, and DELETE on an ancestor collides with any existing handle
+// opened without delete-sharing — including the current directory a
+// process holds on its own working directory — so every tree nested
+// under a caller's CWD would fail with STATUS_SHARING_VIOLATION before
+// the leaf is ever reached. Only the leaf anchor requests DELETE: it is
+// the sole object the walk marks for POSIX-semantics deletion, and
+// refusing a leaf whose delete access is blocked is the documented
+// fail-closed contract (an object held without delete-sharing cannot be
+// marked for deletion).
+bool OpenAnchorComponent(
+    HANDLE *const held,
+    const std::wstring &extendedPath,
+    const std::size_t begin,
+    const std::size_t end,
+    const bool isLeaf)
+{
+    constexpr std::uint32_t ancestorAccess =
+        kKisakFileListDirectory
+        | kKisakFileReadAttributes
+        | kKisakSynchronize;
+    constexpr std::uint32_t leafAccess = kKisakDelete | ancestorAccess;
+    constexpr std::uint32_t walkOptions =
+        kKisakFileDirectoryFile
+        | kKisakFileOpenReparsePoint
+        | kKisakFileSynchronousIoNonAlert;
+    // Ancestors traversal-only; the leaf carries the deletion right.
+    const std::uint32_t componentAccess = isLeaf ? leafAccess : ancestorAccess;
+    NoteRemoveTreeStage("anchor/open");
+    std::int32_t ntStatus = kKisakStatusSuccess;
+    const HANDLE child = OpenChildRelativeToParent(
+        *held,
+        extendedPath.c_str() + begin,
+        end - begin,
+        componentAccess,
+        walkOptions,
+        &ntStatus);
+    if (child == INVALID_HANDLE_VALUE)
+    {
+        NoteRemoveTreeFailure("anchor/open", ntStatus);
+        return false;
+    }
+    NoteRemoveTreeStage("anchor/verify");
+    if (!VerifyHandleKind(child, false, true))
+    {
+        NoteRemoveTreeFailure("anchor/verify", 0);
+        CloseHandle(child);
+        return false;
+    }
+    CloseHandle(*held);
+    *held = child;
+    return true;
+}
+
+// Walks every component — ancestors and leaf — down to the tree anchor.
+// The final component opens as the leaf (with DELETE access); every
+// earlier component opens traversal-only (see OpenAnchorComponent), so
+// the walk keeps one span of lookahead to know which component is last.
+bool WalkToTreeAnchor(
+    const std::wstring &extendedPath,
+    const std::size_t rootLength,
+    const KisakNtProcedures *const nt,
+    HANDLE *const held)
+{
+    if (nt->createFile == nullptr)
+    {
+        NoteRemoveTreeFailure("anchor/no-ntdll", 0);
+        return false;
+    }
+    std::size_t cursor = rootLength;
+    std::size_t begin = 0;
+    if (!NextComponentSpan(extendedPath, &cursor, &begin))
+    {
+        // BuildRemovalExtendedPath rejects paths at or below the volume
+        // root, so the first component always exists today; refuse closed
+        // if that invariant ever changes.
+        NoteRemoveTreeFailure("anchor/missing", 0);
+        return false;
+    }
+    std::size_t spanBegin = begin;
+    std::size_t spanEnd = cursor;
+    for (;;)
+    {
+        std::size_t nextCursor = cursor;
+        std::size_t nextBegin = 0;
+        const bool isLeaf = !NextComponentSpan(
+            extendedPath, &nextCursor, &nextBegin);
+        if (!OpenAnchorComponent(held, extendedPath, spanBegin, spanEnd, isLeaf))
+            return false;
+        if (isLeaf)
+            return true;
+        spanBegin = nextBegin;
+        spanEnd = nextCursor;
+        cursor = nextCursor;
+    }
+}
+}
+
+// Diagnosability hook for the remove-tree walk: reports the last stage the
+// walk attempted and, when the walk failed, the raw NTSTATUS or Win32 error
+// that caused the failure (raw NT failures never set the Win32 last error,
+// so callers could otherwise only observe a stale error). The platform
+// filesystem test prints this record when a removal call returns false.
+const char *Kisak_FileSystemLastRemoveTreeDiagnostic(
+    std::int32_t *failureCode)
+{
+    if (failureCode != nullptr)
+        *failureCode = gRemoveTreeCode;
+    return gRemoveTreeStage;
+}
+
+// Validates the raw removal path and resolves it to the extended absolute
+// form plus its volume-root length. Diagnostics record the exact
+// validation stage that rejected the path.
+bool BuildRemovalExtendedPath(
+    const char *const utf8Path,
+    std::wstring *extendedPath,
+    std::size_t *rootLength)
+{
+    NoteRemoveTreeStage("entry/utf8");
+    std::wstring path;
+    if (!Utf8ToWide(utf8Path, &path))
+    {
+        NoteRemoveTreeFailure("entry/utf8", GetLastError());
+        return false;
+    }
+    if (HasUnsafeRawComponent(path))
+    {
+        NoteRemoveTreeFailure("entry/unsafe", 0);
+        return false;
+    }
+    NoteRemoveTreeStage("entry/absolute");
+    std::wstring absolutePath;
+    if (!GetAbsolutePath(path, &absolutePath))
+    {
+        NoteRemoveTreeFailure("entry/absolute", GetLastError());
+        return false;
+    }
+    *extendedPath = AddExtendedPrefix(absolutePath);
+    TrimExtendedSeparators(extendedPath);
+    *rootLength = ExtendedRootLength(*extendedPath);
+    if (*rootLength == 0 || extendedPath->size() <= *rootLength)
+    {
+        NoteRemoveTreeFailure("entry/root-length", 0);
+        return false;
+    }
+    return true;
+}
+
+bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
+{
+    std::wstring extendedPath;
+    std::size_t rootLength = 0;
+    if (!BuildRemovalExtendedPath(utf8Path, &extendedPath, &rootLength))
+        return false;
+
+    HANDLE held = INVALID_HANDLE_VALUE;
+    if (!OpenRemovalRoot(extendedPath, rootLength, &held))
+        return false;
+    if (!WalkToTreeAnchor(extendedPath, rootLength, NtProcedures(), &held))
+    {
+        CloseHandle(held);
+        return false;
+    }
+
+    // The last held handle anchors the tree. Empty it; the anchor's own
+    // disposition inside RemoveHeldTree deletes the tree root itself, so
+    // no pathname removal ever happens.
+    const bool removed = RemoveHeldTree(held);
+    NoteRemoveTreeStage("final/close");
+    if (!CloseHandle(held))
+    {
+        NoteRemoveTreeFailure("final/close", GetLastError());
+        return false;
+    }
+    if (removed)
+        NoteRemoveTreeStage("complete");
+    return removed;
 }
