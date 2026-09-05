@@ -14,6 +14,7 @@
 #include <EffectsCore/fx_system.h>
 #include <aim_assist/aim_assist.h>
 #include <universal/profile.h>
+#include <qcommon/sys_sync.h>
 #include <cgame/cg_pose_atomic.h>
 #include <cgame/cg_phys_obj_id.h>
 
