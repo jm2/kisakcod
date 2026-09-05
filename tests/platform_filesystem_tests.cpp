@@ -18,6 +18,16 @@
 #include <unistd.h>
 #endif
 
+// Diagnosability hook exported by the win32 platform translation unit
+// (defined in src/_platform/win32/sys_filesystem.cpp, external linkage).
+// The remove-tree contracts print the walk's recorded stage and raw status
+// when a removal call returns false, because raw NT failures never set the
+// Win32 last error and a stale error code is undiagnosable in CI logs.
+#if defined(_WIN32)
+const char *Kisak_FileSystemLastRemoveTreeDiagnostic(
+    std::int32_t *failureCode);
+#endif
+
 namespace
 {
 #if defined(_WIN32)
@@ -1233,12 +1243,19 @@ bool VerifyRemoveTreeWin32Results(
     const std::wstring wideOutsideCheck =
         ExtendedPath(Join(externalTarget, "outside.bin"));
     // The tree must be gone; the external symlink's target and its payload
-    // must have survived.
+    // must have survived. Each post-condition carries its own stage label so
+    // a CI failure names the violated contract instead of a generic stage.
+    SetCheckStage("remove-tree/executes/root-gone");
     if (!Check(GetFileAttributesW(wideRoot.c_str()) == INVALID_FILE_ATTRIBUTES))
         return false;
+    SetCheckStage("remove-tree/executes/external-target-survived");
     if (!Check(GetFileAttributesW(wideExternalTargetCheck.c_str())
-            != INVALID_FILE_ATTRIBUTES)
-        || !Check(GetFileAttributesW(wideOutsideCheck.c_str())
+            != INVALID_FILE_ATTRIBUTES))
+    {
+        return false;
+    }
+    SetCheckStage("remove-tree/executes/external-payload-survived");
+    if (!Check(GetFileAttributesW(wideOutsideCheck.c_str())
             != INVALID_FILE_ATTRIBUTES))
     {
         return false;
@@ -1271,6 +1288,276 @@ bool VerifyRemoveTreePosixResults(
 }
 #endif
 
+// Prints the win32 removal walk's recorded stage and raw failure status.
+// Raw NT failures never set the Win32 last error, so without this record a
+// failed walk reports an arbitrary stale error (the CI portable-leg failure
+// printed a stale 'Win32 error 0' across several runs).
+#if defined(_WIN32)
+void PrintRemoveTreeWalkDiagnostic()
+{
+    std::int32_t walkCode = 0;
+    const char *const walkStage =
+        Kisak_FileSystemLastRemoveTreeDiagnostic(&walkCode);
+    std::fprintf(
+        stderr,
+        "remove-tree walk diagnostic: stage=%s status=0x%08lx\n",
+        walkStage,
+        static_cast<unsigned long>(walkCode));
+}
+#endif
+
+// Runs Sys_FileSystemRemoveTree over one tree and verifies the root
+// vanished. stage and rootGoneStage must be literals: SetCheckStage stores
+// the pointer. On Windows a failed walk prints the walk's diagnostic first.
+bool RemoveTreeVerified(
+    const char *const stage,
+    const char *const rootGoneStage,
+    const std::string &root)
+{
+    SetCheckStage(stage);
+    const bool removed = Sys_FileSystemRemoveTree(root.c_str());
+#if defined(_WIN32)
+    if (!removed)
+        PrintRemoveTreeWalkDiagnostic();
+#endif
+    if (!Check(removed))
+        return false;
+    SetCheckStage(rootGoneStage);
+#if defined(_WIN32)
+    return Check(GetFileAttributesW(ExtendedPath(root).c_str())
+        == INVALID_FILE_ATTRIBUTES);
+#else
+    return Check(faccessat(AT_FDCWD, root.c_str(), F_OK, 0) != 0);
+#endif
+}
+
+// True when the directory exists. Windows existence checks follow links;
+// every path probed here is a real directory, so follow semantics are
+// equivalent to the no-follow POSIX form.
+bool DirectoryExists(const std::string &path)
+{
+#if defined(_WIN32)
+    return GetFileAttributesW(ExtendedPath(path).c_str())
+        != INVALID_FILE_ATTRIBUTES;
+#else
+    return faccessat(AT_FDCWD, path.c_str(), F_OK, AT_SYMLINK_NOFOLLOW) == 0;
+#endif
+}
+
+// Creates one directory symbolic link at link pointing to target. Sets
+// *created and returns false only when creation failed for an unexpected
+// (non-privilege) reason; a privilege-less Windows host reports
+// *created == false and the caller runs the probe without link coverage.
+bool CreateDirectorySymlink(
+    const std::string &link,
+    const std::string &target,
+    bool *created)
+{
+#if defined(_WIN32)
+    constexpr DWORD directoryLink = 0x1;
+    constexpr DWORD allowUnprivilegedCreate = 0x2;
+    *created = CreateSymbolicLinkW(
+        ExtendedPath(link).c_str(),
+        ExtendedPath(target).c_str(),
+        directoryLink | allowUnprivilegedCreate) != 0;
+    if (!*created && !SymlinkFailedWithoutPrivilege())
+    {
+        std::fputs(
+            "FAIL: Windows symlink creation failed unexpectedly\n",
+            stderr);
+        return false;
+    }
+#else
+    *created = symlink(target.c_str(), link.c_str()) == 0;
+    if (!*created)
+        return false;
+#endif
+    return true;
+}
+
+// Removes one external probe target's payload and the target directory.
+bool RemoveExternalProbeTarget(
+    const char *const stage,
+    const std::string &target,
+    const char *const payloadName)
+{
+    SetCheckStage(stage);
+    return Check(RemoveFileNative(Join(target, payloadName)))
+        && Check(RemoveDirectoryNative(target.c_str()));
+}
+
+// Empty directory: the minimal walk — open anchor, empty enumeration,
+// mark, close.
+bool ProbeRemoveTreeEmpty(const std::string &workingDirectory)
+{
+    const std::string root =
+        MakeUniquePath(workingDirectory) + "-probe-empty";
+    SetCheckStage("remove-tree/probe-empty/setup");
+    if (!Check(Sys_FileSystemCreateDirectory(root.c_str())))
+        return false;
+    return RemoveTreeVerified(
+        "remove-tree/probe-empty/remove",
+        "remove-tree/probe-empty/root-gone",
+        root);
+}
+
+// Flat regular files: multi-entry enumeration batches and the file
+// deletion bucket.
+bool ProbeRemoveTreeFiles(const std::string &workingDirectory)
+{
+    const std::string root =
+        MakeUniquePath(workingDirectory) + "-probe-files";
+    SetCheckStage("remove-tree/probe-files/setup");
+    if (!Check(Sys_FileSystemCreateDirectory(root.c_str()))
+        || !Check(WriteFile(Join(root, "alpha.dat")))
+        || !Check(WriteFile(Join(root, "beta.log"))))
+    {
+        return false;
+    }
+    return RemoveTreeVerified(
+        "remove-tree/probe-files/remove",
+        "remove-tree/probe-files/root-gone",
+        root);
+}
+
+// Nested real directories with a payload at depth: descent and
+// child-frame completion.
+bool ProbeRemoveTreeNested(const std::string &workingDirectory)
+{
+    const std::string root =
+        MakeUniquePath(workingDirectory) + "-probe-nested";
+    const std::string sub = Join(root, "sub");
+    SetCheckStage("remove-tree/probe-nested/setup");
+    if (!Check(Sys_FileSystemCreateDirectory(root.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(sub.c_str()))
+        || !Check(WriteFile(Join(sub, "leaf.bin"))))
+    {
+        return false;
+    }
+    return RemoveTreeVerified(
+        "remove-tree/probe-nested/remove",
+        "remove-tree/probe-nested/root-gone",
+        root);
+}
+
+// Reparse child: a directory symlink inside the tree pointing at an
+// external target with a payload. The link must be deleted as itself and
+// the target preserved. Without symlink privilege the same assertions run
+// over the link-free tree and the probe reports SKIP.
+bool ProbeRemoveTreeReparse(const std::string &workingDirectory)
+{
+    const std::string root =
+        MakeUniquePath(workingDirectory) + "-probe-reparse";
+    const std::string target =
+        MakeUniquePath(workingDirectory) + "-probe-reparse-target";
+    SetCheckStage("remove-tree/probe-reparse/setup");
+    if (!Check(Sys_FileSystemCreateDirectory(root.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(target.c_str()))
+        || !Check(WriteFile(Join(target, "payload.bin"))))
+    {
+        return false;
+    }
+    bool linkCreated = false;
+    if (!CreateDirectorySymlink(
+            Join(root, "escape-link"),
+            target,
+            &linkCreated))
+    {
+        return false;
+    }
+    if (!linkCreated)
+    {
+        std::fputs(
+            "SKIP: Windows host cannot create an unprivileged symlink\n",
+            stderr);
+    }
+    if (!RemoveTreeVerified(
+            "remove-tree/probe-reparse/remove",
+            "remove-tree/probe-reparse/root-gone",
+            root))
+    {
+        return false;
+    }
+    SetCheckStage("remove-tree/probe-reparse/target-survived");
+    if (!Check(DirectoryExists(target)))
+        return false;
+    return RemoveExternalProbeTarget(
+        "remove-tree/probe-reparse/external-cleanup",
+        target,
+        "payload.bin");
+}
+
+// Builds the mixed-probe fixture: three directories and one payload file
+// in each of two levels plus the external target.
+bool SetupMixedProbeTree(
+    const std::string &root,
+    const std::string &sub,
+    const std::string &target)
+{
+    SetCheckStage("remove-tree/probe-mixed/setup");
+    return Check(Sys_FileSystemCreateDirectory(root.c_str()))
+        && Check(Sys_FileSystemCreateDirectory(sub.c_str()))
+        && Check(Sys_FileSystemCreateDirectory(target.c_str()))
+        && Check(WriteFile(Join(root, "top.dat")))
+        && Check(WriteFile(Join(sub, "deep.bin")))
+        && Check(WriteFile(Join(target, "decoy.bin")));
+}
+
+// Mixed tree: files, a nested directory with a payload, and (when the
+// host allows) a reparse child together — the full-contract feature set
+// at probe scale.
+bool ProbeRemoveTreeMixed(const std::string &workingDirectory)
+{
+    const std::string root =
+        MakeUniquePath(workingDirectory) + "-probe-mixed";
+    const std::string sub = Join(root, "sub");
+    const std::string target =
+        MakeUniquePath(workingDirectory) + "-probe-mixed-target";
+    if (!SetupMixedProbeTree(root, sub, target))
+        return false;
+    bool linkCreated = false;
+    if (!CreateDirectorySymlink(
+            Join(root, "outside-link"),
+            target,
+            &linkCreated))
+    {
+        return false;
+    }
+    if (!linkCreated)
+    {
+        std::fputs(
+            "SKIP: Windows host cannot create an unprivileged symlink\n",
+            stderr);
+    }
+    if (!RemoveTreeVerified(
+            "remove-tree/probe-mixed/remove",
+            "remove-tree/probe-mixed/root-gone",
+            root))
+    {
+        return false;
+    }
+    SetCheckStage("remove-tree/probe-mixed/target-survived");
+    if (!Check(DirectoryExists(target)))
+        return false;
+    return RemoveExternalProbeTarget(
+        "remove-tree/probe-mixed/external-cleanup",
+        target,
+        "decoy.bin");
+}
+
+// Feature-isolated removal probes: each builds one minimal tree, removes
+// it, and verifies the post-condition, so a full-contract failure on a
+// platform that cannot be reproduced locally (the CI Windows legs) still
+// identifies the failing feature class from the probe's stage label.
+bool TestRemoveTreeWalkProbes(const std::string &workingDirectory)
+{
+    return ProbeRemoveTreeEmpty(workingDirectory)
+        && ProbeRemoveTreeFiles(workingDirectory)
+        && ProbeRemoveTreeNested(workingDirectory)
+        && ProbeRemoveTreeReparse(workingDirectory)
+        && ProbeRemoveTreeMixed(workingDirectory);
+}
+
 bool TestRemoveTreeContract(const std::string &workingDirectory)
 {
     const RemoveTreeContractPaths paths =
@@ -1283,9 +1570,14 @@ bool TestRemoveTreeContract(const std::string &workingDirectory)
         return false;
     if (!TestRemoveTreeRejectsInvalidArguments(paths.root))
         return false;
-    SetCheckStage("remove-tree/executes");
+    SetCheckStage("remove-tree/executes/call");
     if (!Check(Sys_FileSystemRemoveTree(paths.root.c_str())))
+    {
+#if defined(_WIN32)
+        PrintRemoveTreeWalkDiagnostic();
+#endif
         return false;
+    }
 #if defined(_WIN32)
     return VerifyRemoveTreeWin32Results(paths.root, paths.externalTarget);
 #else
@@ -1614,6 +1906,9 @@ int main()
         return 1;
     SetCheckStage("read-file-no-follow");
     if (!TestReadFileNoFollow(workingDirectory))
+        return 1;
+    SetCheckStage("remove-tree-probes");
+    if (!TestRemoveTreeWalkProbes(workingDirectory))
         return 1;
     SetCheckStage("handle-relative-recursive-deletion");
     if (!TestRemoveTreeContract(workingDirectory))
