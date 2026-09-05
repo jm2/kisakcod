@@ -66,12 +66,15 @@ bool MapConsoleInputError(
 // "keep draining" decision. The portable boundary exposes only single-byte
 // reads, so KEY_UP, function/arrow keys, mouse, focus, window-buffer-size,
 // and menu events are drained without producing output. KEY_DOWN records
-// with a zero ASCII char (e.g. arrow keys, function keys in cooked mode,
-// or non-ASCII code points) are also drained so the next key can be
-// evaluated; the portable boundary is byte-oriented and cannot faithfully
-// encode codepoints above 0x7F without breaking the line parser's
-// bytewise contract. KEY_DOWN records with a non-zero ASCII char produce
-// one Data byte. ENABLE_PROCESSED_INPUT translates Ctrl+C into a
+// with a zero UnicodeChar (arrow keys, function keys in cooked mode) or a
+// UnicodeChar above 0x7F (non-ASCII code points) are also drained so the
+// next key can be evaluated; uChar is a union, so AsciiChar only aliases
+// the low byte of UnicodeChar and cannot distinguish a real zero char
+// from a codepoint whose low byte survived (U+00E9 arrives as 0xE9), and
+// the portable boundary is byte-oriented — it cannot faithfully encode
+// codepoints above 0x7F without breaking the line parser's bytewise
+// contract. Remaining KEY_DOWN records produce one Data byte carrying the
+// UnicodeChar low byte. ENABLE_PROCESSED_INPUT translates Ctrl+C into a
 // CTRL_C_EVENT record; the record is drained so the line parser cannot
 // misinterpret it as data. The console control handler dispatch path runs
 // independently of ReadConsoleInput, so the engine's signal policy is
@@ -84,10 +87,11 @@ SysConsoleRawReadResult TranslateConsoleEvent(
     const KEY_EVENT_RECORD &key = event.Event.KeyEvent;
     if (!key.bKeyDown)
         return {SysConsoleRawReadStatus::NoData, 0};
-    if (key.uChar.AsciiChar == 0)
+    const WCHAR codeUnit = key.uChar.UnicodeChar;
+    if (codeUnit == 0 || codeUnit > 0x7F)
         return {SysConsoleRawReadStatus::NoData, 0};
     return {SysConsoleRawReadStatus::Data,
-        static_cast<unsigned char>(key.uChar.AsciiChar)};
+        static_cast<unsigned char>(codeUnit)};
 }
 
 // Pending auto-repeat bytes for the raw console read path. The path is

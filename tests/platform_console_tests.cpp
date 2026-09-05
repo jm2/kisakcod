@@ -330,22 +330,38 @@ class ConsoleInput
 public:
     ConsoleInput() : saved_(GetStdHandle(STD_INPUT_HANDLE))
     {
-        // Tests launch with or without an inherited console. If one is not
-        // already attached, allocate one so the backend sees FILE_TYPE_CHAR.
-        // AllocConsole fails harmlessly when a console is already present;
-        // either way, the resulting STD_INPUT_HANDLE is the console input.
-        const bool allocated = AllocConsole() != FALSE;
-        owned_ = allocated;
-        const HANDLE current = GetStdHandle(STD_INPUT_HANDLE);
-        if (current == nullptr || current == INVALID_HANDLE_VALUE)
+        // CI harnesses (ctest) spawn this binary with a redirected or
+        // invalid stdin, and AllocConsole only initializes std handles
+        // that are NULL — it fails harmlessly when a console is already
+        // present, leaving a harness stdin (pipe, NUL, or an invalid
+        // handle) in place. Open the console input buffer directly via
+        // CONIN$ and publish it as STD_INPUT_HANDLE so the backend
+        // always sees a genuine FILE_TYPE_CHAR console handle no matter
+        // how this process was spawned.
+        owned_ = AllocConsole() != FALSE;
+        input_ = CreateFileW(
+            L"CONIN$",
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            0,
+            nullptr);
+        if (input_ == INVALID_HANDLE_VALUE)
+        {
+            input_ = nullptr;
             return;
-        if (GetFileType(current) != FILE_TYPE_CHAR)
+        }
+        if (FlushConsoleInputBuffer(input_) == FALSE)
+        {
+            (void)CloseHandle(input_);
+            input_ = nullptr;
             return;
-        active_ = SetStdHandle(STD_INPUT_HANDLE, current) != FALSE
-            && FlushConsoleInputBuffer(current) != FALSE;
-        if (!active_)
-            return;
-        input_ = current;
+        }
+        // Publish last: once active_ is false the destructor restores
+        // saved_, so the std handle must only be swapped after every
+        // other failure mode has been ruled out.
+        active_ = SetStdHandle(STD_INPUT_HANDLE, input_) != FALSE;
     }
 
     ConsoleInput(const ConsoleInput &) = delete;
@@ -355,6 +371,8 @@ public:
     {
         if (active_)
             (void)SetStdHandle(STD_INPUT_HANDLE, saved_);
+        if (input_ != nullptr)
+            (void)CloseHandle(input_);
         if (owned_)
             FreeConsole();
     }
@@ -658,7 +676,8 @@ bool TestConsoleFocusEventDrained(ConsoleInput &input)
         "console focus event is drained", "z");
 }
 
-// Unicode code points (AsciiChar == 0, UnicodeChar != 0) must be
+// Unicode code points (UnicodeChar above 0x7F; the backend decides on
+// the union value, so U+00E9 arrives as UnicodeChar 0x00E9) must be
 // drained because the byte boundary cannot faithfully encode them
 // without breaking the line parser's bytewise contract. The next
 // printable byte in the queue is what the line parser sees.
