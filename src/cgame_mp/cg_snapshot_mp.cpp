@@ -37,7 +37,14 @@ void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
     }
     if (CG_CPosePhysObjId_GetBody(cent) || cent->currentState.pos.trType == TR_PHYSICS)
     {
-        if (dxBody *const physObjIdBody = CG_CPosePhysObjId_TakeBody(cent))
+        // Sidecar Release runs under the physics lock per the sidecar
+        // contract; Phys_ObjDestroy manages its own locking and stays
+        // outside (same pattern as the DynEntity client teardown).
+        dxBody *physObjIdBody = nullptr;
+        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+        physObjIdBody = CG_CPosePhysObjId_TakeBody(cent);
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (physObjIdBody)
         {
             if (CG_IsEntityLinked(localClientNum, cent->nextState.number))
                 CG_UnlinkEntity(localClientNum, cent->nextState.number);
@@ -45,6 +52,16 @@ void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
         }
         cent->currentState.pos.trType = TR_STATIONARY;
         cent->currentState.apos.trType = TR_STATIONARY;
+        // Legacy contract (master 53652090): the field is unconditionally
+        // reset to the null token at the end of the (live || TR_PHYSICS)
+        // block. CG_CalcEntityPhysicsPositions only re-attempts body
+        // creation when the field IsNull, so a DEAD token must become
+        // retryable again here or a TR_PHYSICS entity whose creation once
+        // failed would never re-attempt on its next snapshot incarnation.
+        // (CG_CPosePhysObjId_TakeBody already stores INVALID_BODY_TOKEN;
+        // this store makes the legacy contract explicit and covers any
+        // path that does not go through TakeBody.)
+        cent->pose.physObjId = phys_obj_id::INVALID_BODY_TOKEN;
     }
 }
 

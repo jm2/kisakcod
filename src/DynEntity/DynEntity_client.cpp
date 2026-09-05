@@ -1132,10 +1132,14 @@ void __cdecl DynEntCl_EntityImpactEvent(
         // MP: the cpose field is a frozen 32-bit generation-checked token
         // backed by g_cposeBodySidecar (bound by cgame_mp). There is no MP
         // runtime caller today, but the TU compiles in both configs, so
-        // keep the token resolve for build parity.
-        dxBody *const centPhysObjIdBody = phys_obj_id::ReadResolve<dxBody>(
+        // keep the token resolve for build parity. The sidecar read runs
+        // under the physics lock per the sidecar contract.
+        dxBody *centPhysObjIdBody = nullptr;
+        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+        centPhysObjIdBody = phys_obj_id::ReadResolve<dxBody>(
             g_cposeBodySidecar,
             static_cast<phys_obj_id::BodyToken>(cent->pose.physObjId));
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 #endif
         if (centPhysObjIdBody)
         {
