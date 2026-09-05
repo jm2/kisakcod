@@ -49,10 +49,11 @@ enum class SysSocketOpenStatus : std::uint8_t
     SystemFailure,
 };
 
+// Close is unconditional and idempotent, so the operation has a single
+// outcome; every Sys_SocketClose call reports Closed.
 enum class SysSocketCloseStatus : std::uint8_t
 {
     Closed,
-    InvalidHandle,
 };
 
 enum class SysSocketSendStatus : std::uint8_t
@@ -88,19 +89,24 @@ enum class SysSocketOptionStatus : std::uint8_t
 };
 
 // Opens a UDP/IPv4 socket bound to `port` on all local interfaces
-// (port 0 selects an ephemeral port). When `nonBlocking` is true the
-// socket never blocks: Sys_SocketRecvFrom and Sys_SocketSendTo report
-// WouldBlock instead of stalling. On success *outHandle (which the caller
-// must pass in null) receives a non-null handle. The bound endpoint can be
-// recovered with Sys_SocketGetLocalAddress.
+// (port 0 selects an ephemeral port). The bind owns a nonzero port
+// exclusively: while that socket stays open, another open of the same
+// port reports SystemFailure instead of silently sharing the endpoint,
+// so datagrams cannot be diverted to a competing socket. When
+// `nonBlocking` is true the socket never blocks: Sys_SocketRecvFrom and
+// Sys_SocketSendTo report WouldBlock instead of stalling. On success
+// *outHandle (which the caller must pass in null) receives a non-null
+// handle. The bound endpoint can be recovered with
+// Sys_SocketGetLocalAddress.
 SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     std::uint16_t port,
     bool nonBlocking,
     SysSocketHandle *outHandle);
 
-// Closes *handle and resets the caller's pointer to null. Passing a null
-// pointer or a null handle is a no-op that reports Closed, so callers may
-// close unconditionally during teardown.
+// Closes *handle and resets the caller's pointer to null. Close is
+// unconditional: a null pointer, a null handle, and an already closed
+// handle are all no-ops that report Closed, so callers may close
+// unconditionally during teardown.
 SysSocketCloseStatus KISAK_CDECL Sys_SocketClose(SysSocketHandle *handle);
 
 // Sends one datagram of `byteCount` bytes from `data` to `destination`.

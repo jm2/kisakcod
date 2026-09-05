@@ -143,11 +143,10 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     local.sin_port = htons(port);
     local.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    // SO_REUSEADDR must be applied before bind to affect that bind attempt;
-    // it permits rebinding endpoints in TIME_WAIT, not live port sharing.
-    const int reuse = 1;
-    if (setsockopt(raw, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0
-        || bind(raw, reinterpret_cast<const sockaddr *>(&local),
+    // No port-sharing socket option is set: the bind takes exclusive
+    // ownership of a nonzero port, so a second open of the same endpoint
+    // fails here instead of silently competing for its datagrams.
+    if (bind(raw, reinterpret_cast<const sockaddr *>(&local),
             sizeof(local))
             != 0)
     {
@@ -181,8 +180,10 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
 
 SysSocketCloseStatus KISAK_CDECL Sys_SocketClose(SysSocketHandle *const handle)
 {
+    // Close is unconditional: a null pointer is as closed as a closed
+    // handle, so callers may tear down without inspecting state.
     if (!handle)
-        return SysSocketCloseStatus::InvalidHandle;
+        return SysSocketCloseStatus::Closed;
     SysSocket *const socket = *handle;
     if (!socket)
         return SysSocketCloseStatus::Closed;
