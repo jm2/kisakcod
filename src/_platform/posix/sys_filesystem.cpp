@@ -656,9 +656,14 @@ bool AppendClassifiedEntry(
     }
 }
 
-// One readdir pass that classifies every entry surviving the name filters
-// into its removal bucket. Fails closed on unreadable directories, invalid
-// UTF-8 names, specials, and allocation failures.
+// One readdir pass that classifies every entry into its removal bucket.
+// Fails closed on unreadable directories, invalid UTF-8 names, specials,
+// and allocation failures. Names containing ':' or '\' are ordinary POSIX
+// names and are removed like any other: every removal below acts on the
+// held directory descriptor (unlinkat/openat never re-resolve a name
+// through a path), so the engine's separator rules do not apply — skipping
+// such names here stranded them and left the tree partially deleted
+// (operator-audit defect).
 bool CollectDirectoryEntries(
     const int directoryFd,
     DIR *const directory,
@@ -680,11 +685,6 @@ bool CollectDirectoryEntries(
         }
         if (!IsValidUtf8(name))
             return false;
-        if (std::strchr(name, '\\') || std::strchr(name, ':'))
-        {
-            errno = 0;
-            continue;
-        }
         if (!AppendClassifiedEntry(
                 ClassifyEntryForRemoval(directoryFd, name),
                 name,
