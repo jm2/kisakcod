@@ -339,17 +339,42 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
     }
 }
 
-VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
+namespace
+{
+// Maximum nested VAR_STACK records the reader tracks on its explicit frame
+// list. Retail save images never nest a stack cell inside a stack buffer;
+// the bound exists so a corrupt or crafted image fails loudly instead of
+// recursing without limit.
+constexpr int SCR_READSTACK_MAX_NESTING = 16;
+
+// One suspended parent while a nested stack frame is being read.
+struct ScrReadStackFrame
+{
+    VariableStackBuffer *stack; // parent frame being filled
+    char *buf;                  // parent record awaiting the child pointer
+    unsigned __int16 remaining; // parent records left after that record
+};
+
+// Writes one finished record (type byte + widened payload cell) into the
+// packed runtime image.
+void Scr_WriteStackRecord(char *buf, const VariableValue &value)
+{
+    *buf = value.type;
+    VariableStackBuf_WriteCell(buf + 1, value.u);
+}
+
+// Reads the stack head (size, codepos, local id, saveStamp byte) and
+// allocates the runtime buffer with the widened record stride; the DISK
+// records consumed by the caller are unchanged retail bytes.
+VariableStackBuffer *__cdecl Scr_ReadStackHead(MemoryFile *memFile)
 {
     unsigned __int16 size; // r27
     unsigned int bufLen; // r28
     VariableStackBuffer *stack; // r31
-    char *buf; // r29
-    VariableValue value; // [sp+58h] BYREF
     unsigned __int8 header[8]; // [sp+50h] [-40h] BYREF
 
     MemFile_ReadData(memFile, 2, header);
-    size = *(unsigned __int16 *)header;
+    size = *reinterpret_cast<unsigned __int16 *>(header);
 
     // M4 (ki-n1et): rebuild the RUNTIME image with the widened record stride;
     // the DISK records consumed below are unchanged retail bytes.
@@ -361,7 +386,7 @@ VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
             0,
             "%s",
             "bufLen == (unsigned short)bufLen");
-    stack = (VariableStackBuffer *)MT_Alloc(bufLen, MT_TYPE_THREAD);
+    stack = reinterpret_cast<VariableStackBuffer *>(MT_Alloc(bufLen, MT_TYPE_THREAD));
     ++scrVarPub.numScriptThreads;
     stack->size = size;
     stack->bufLen = bufLen;
@@ -369,28 +394,70 @@ VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
     MemFile_ReadData(memFile, 1, header);
     stack->localId = Scr_ReadId(memFile, header[0]);
     MemFile_ReadData(memFile, 1, header);
-    stack->time = header[0];
-    buf = stack->buf;
-    if (size)
-    {
-        do
-        {
-            Scr_DoLoadEntryInternal(&value, memFile);
-            *buf = value.type;
-            VariableStackBuf_WriteCell(buf + 1, value.u);
-            buf += VARIABLE_STACK_RECORD_SIZE;
-        } while (--size);
-    }
+    stack->saveStamp = header[0];
     return stack;
 }
 
-void __cdecl Scr_DoLoadEntryInternal(VariableValue *value, MemoryFile *memFile)
+// Decodes one value-bearing cell payload: the saved bytes ARE the runtime
+// dword. Returns false for the kinds it does not handle.
+bool __cdecl Scr_LoadEntryValueCell(int type, VariableValue *value, MemoryFile *memFile)
+{
+    VariableUnion v8; // [sp+54h] [-1Ch] BYREF
+
+    switch (type)
+    {
+    case 0:
+    case 8:
+        return true;
+    case 2:
+    case 3:
+        value->u.intValue = static_cast<unsigned __int16>(Scr_ReadString(memFile));
+        return true;
+    case 4:
+        // M4 (ki-n1et): the rebuilt cell holds a LIVE host pointer; store
+        // it through the pointer member (truncating through intValue is
+        // lossy on 64-bit).
+        value->u.vectorValue = Scr_ReadVec3(memFile);
+        return true;
+    case 5:
+        value->u.floatValue = MemFile_ReadFloat(memFile);
+        return true;
+    case 6:
+    case 11:
+        MemFile_ReadData(memFile, 4, reinterpret_cast<unsigned char *>(&v8));
+        value->u = v8;
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Decodes the runtime-reconstruction cell payloads (the codepos family).
+// Returns false for the kinds it does not handle -- notably VAR_STACK,
+// whose nested record bytes the iterative reader consumes as a frame.
+bool __cdecl Scr_LoadEntryRuntimeCell(int type, VariableValue *value, MemoryFile *memFile)
+{
+    switch (type)
+    {
+    case 7:
+    case 9:
+        value->u.codePosValue = Scr_ReadCodepos(memFile);
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Reads one saved entry (id path or typed cell) into *value. Returns false
+// when the entry is a nested VAR_STACK record: the caller consumes the child
+// stack bytes as an explicit frame, so no decoder re-enters another and the
+// save/load call graph stays cycle-free.
+bool __cdecl Scr_LoadEntryCell(VariableValue *value, MemoryFile *memFile)
 {
     unsigned int v4; // r4
     int v5; // r4
     const char *v6; // r3
     _BYTE v7[4]; // [sp+50h] [-20h] BYREF
-    VariableUnion v8; // [sp+54h] [-1Ch] BYREF
 
     MemFile_ReadData(memFile, 1, v7);
     v4 = v7[0];
@@ -398,50 +465,85 @@ void __cdecl Scr_DoLoadEntryInternal(VariableValue *value, MemoryFile *memFile)
     {
         value->type = VAR_POINTER;
         value->u.intValue = Scr_ReadId(memFile, v4);
+        return true;
     }
-    else
+    v5 = v7[0] >> 3;
+    value->type = static_cast<Vartype_t>(v5);
+    if (Scr_LoadEntryValueCell(v5, value, memFile))
+        return true;
+    if (Scr_LoadEntryRuntimeCell(v5, value, memFile))
+        return true;
+    if (v5 == VAR_STACK)
+        return false;
+    if (!alwaysfails)
     {
-        v5 = v7[0] >> 3;
-        value->type = (Vartype_t)v5;
-        switch (v5)
-        {
-        case 0:
-        case 8:
-            return;
-        case 2:
-        case 3:
-            value->u.intValue = (unsigned __int16)Scr_ReadString(memFile);
-            break;
-        case 4:
-            // M4 (ki-n1et): the rebuilt cell holds a LIVE host pointer; store
-            // it through the pointer member (truncating through intValue is
-            // lossy on 64-bit).
-            value->u.vectorValue = Scr_ReadVec3(memFile);
-            break;
-        case 5:
-            value->u.floatValue = MemFile_ReadFloat(memFile);
-            break;
-        case 6:
-        case 11:
-            MemFile_ReadData(memFile, 4, (unsigned char*)&v8);
-            value->u = v8;
-            break;
-        case 7:
-        case 9:
-            value->u.codePosValue = Scr_ReadCodepos(memFile);
-            break;
-        case 10:
-            value->u.stackValue = Scr_ReadStack(memFile);
-            break;
-        default:
-            if (!alwaysfails)
-            {
-                v6 = va("unknown type %i", v5);
-                MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 501, 1, v6);
-            }
-            break;
-        }
+        v6 = va("unknown type %i", v5);
+        MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 501, 1, v6);
     }
+    return true;
+}
+} // namespace
+
+VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
+{
+    // M4 (ki-n1et): the retail reader recursed through nested VAR_STACK
+    // records (Scr_ReadStack -> Scr_DoLoadEntryInternal -> Scr_ReadStack), so
+    // a corrupt or crafted save image could recurse without bound and exhaust
+    // the host stack. The nesting is now an explicit frame list: identical
+    // bytes consumed in identical order and identical buffers built, but the
+    // nesting depth is bounded and anything deeper fails loudly.
+    ScrReadStackFrame frames[SCR_READSTACK_MAX_NESTING];
+    int depth = 0;
+    VariableValue value; // [sp+58h] BYREF
+
+    VariableStackBuffer *stack = Scr_ReadStackHead(memFile);
+    char *buf = stack->buf;
+    unsigned __int16 remaining = stack->size;
+    while (1)
+    {
+        while (remaining)
+        {
+            if (Scr_LoadEntryCell(&value, memFile))
+            {
+                Scr_WriteStackRecord(buf, value);
+                buf += VARIABLE_STACK_RECORD_SIZE;
+                --remaining;
+                continue;
+            }
+            // Nested VAR_STACK entry: suspend this frame and read the child.
+            if (depth == SCR_READSTACK_MAX_NESTING)
+                Com_Error(ERR_DROP, "Scr_ReadStack: nested stack save depth exceeds %i", depth);
+            frames[depth].stack = stack;
+            frames[depth].buf = buf;
+            frames[depth].remaining = remaining;
+            ++depth;
+            stack = Scr_ReadStackHead(memFile);
+            buf = stack->buf;
+            remaining = stack->size;
+        }
+        if (!depth)
+            return stack;
+        // Child complete: store its pointer into the parent's pending record
+        // (value.type was set to VAR_STACK by Scr_LoadEntryCell).
+        --depth;
+        value.u.stackValue = stack;
+        stack = frames[depth].stack;
+        buf = frames[depth].buf;
+        remaining = frames[depth].remaining;
+        Scr_WriteStackRecord(buf, value);
+        buf += VARIABLE_STACK_RECORD_SIZE;
+        --remaining;
+    }
+}
+
+void __cdecl Scr_DoLoadEntryInternal(VariableValue *value, MemoryFile *memFile)
+{
+    if (Scr_LoadEntryCell(value, memFile))
+        return;
+    // Top-level nested VAR_STACK entry: consume the child stack bytes here.
+    // Deeper nesting is handled inside Scr_ReadStack's own frame list, so
+    // this call never re-enters this function.
+    value->u.stackValue = Scr_ReadStack(memFile);
 }
 
 int __cdecl Scr_DoLoadEntry(VariableValue *value, bool isArray, MemoryFile *memFile)
