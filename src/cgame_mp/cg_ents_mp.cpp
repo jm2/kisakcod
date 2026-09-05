@@ -1153,12 +1153,23 @@ void __cdecl CG_CreatePhysicsObject(int32_t localClientNum, centity_s *cent)
         // snapshot transition and force-clears the field, so by the time
         // we get here the prior body (if any) has already been destroyed
         // and the field zeroed. If the assign ever reports failure it is
-        // a programming error, not a runtime condition, so we dead-token
-        // the entity and let the body's destructor reclaim the native
-        // pointer when the engine shuts down.
+        // a programming error, not a runtime condition — but the freshly
+        // created body must not leak: destroy it under the physics lock
+        // exactly like the bullet-impact rollback path above, then
+        // dead-token the entity.
         if (!CG_CPosePhysObjId_Assign(cent, physObjId))
         {
+            bool destroyFailed = false;
+            Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+            destroyFailed = Phys_TryDestroyBodyLockedNoReport(
+                                PHYS_WORLD_FX, physObjId)
+                != PhysBodyRollbackStatus::Success;
+            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
             cent->pose.physObjId = phys_obj_id::DEAD_BODY_TOKEN;
+            if (destroyFailed)
+            {
+                std::abort();
+            }
         }
     }
     else
@@ -1171,7 +1182,11 @@ void __cdecl CG_CreatePhysicsObject(int32_t localClientNum, centity_s *cent)
 
 void __cdecl CG_UpdatePhysicsPose(centity_s *cent)
 {
-    float quat[4]; // [esp+0h] [ebp-10h] BYREF
+    // Identity-initialized: if the token fails to resolve below (body
+    // already torn down between the guard and the resolve), the quat
+    // would otherwise reach UnitQuatToAngles uninitialized.
+    float quat[4] = {0.0f, 0.0f, 0.0f, 1.0f}; // [esp+0h] [ebp-10h] BYREF
+    bool haveBody = false;
 
     if (!CG_CPosePhysObjId_GetBody(cent) || CG_CPosePhysObjId_IsDead(cent))
         MyAssertHandler(
@@ -1182,9 +1197,13 @@ void __cdecl CG_UpdatePhysicsPose(centity_s *cent)
             "cent->pose.physObjId != PHYS_OBJ_ID_NULL && cent->pose.physObjId != PHYS_OBJ_ID_DEAD");
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     if (dxBody *const physObjIdBody = CG_CPosePhysObjId_GetBody(cent))
+    {
         Phys_ObjGetInterpolatedState(PHYS_WORLD_FX, physObjIdBody, cent->pose.origin, quat);
+        haveBody = true;
+    }
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-    UnitQuatToAngles(quat, cent->pose.angles);
+    if (haveBody)
+        UnitQuatToAngles(quat, cent->pose.angles);
 }
 
 char __cdecl CG_ExpiredLaunch(int32_t localClientNum, centity_s *cent)
