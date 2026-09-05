@@ -59,6 +59,7 @@ foreach(_marker IN ITEMS
     "SysSocketCloseStatus KISAK_CDECL Sys_SocketClose\\(SysSocketHandle \\*handle\\);"
     "SysSocketSendStatus KISAK_CDECL Sys_SocketSendTo\\("
     "SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom\\("
+    "Truncated,"
     "SysSocketOptionStatus KISAK_CDECL Sys_SocketEnableBroadcast\\("
     "bool KISAK_CDECL Sys_SocketGetLocalAddress\\("
     "bool KISAK_CDECL Sys_SocketMakeLoopbackAddress\\("
@@ -89,7 +90,8 @@ foreach(_marker IN ITEMS
     "SO_BROADCAST"
     "closesocket\\("
     "WSAStartup"
-    "WSAEWOULDBLOCK")
+    "WSAEWOULDBLOCK"
+    "WSAEMSGSIZE")
     require_contains("${_win32_source}" "${_marker}"
         "Win32 socket backend must use the canonical Winsock primitive: ${_marker}")
 endforeach()
@@ -103,9 +105,15 @@ foreach(_forbidden IN ITEMS
 endforeach()
 
 # The POSIX backend uses the canonical BSD socket primitives and never the
-# Winsock API.
+# Winsock API. Sockets are created close-on-exec and oversized datagrams
+# are detected through MSG_TRUNC so truncation is explicit on both
+# platforms.
 foreach(_marker IN ITEMS
     "socket\\(AF_INET, SOCK_DGRAM, IPPROTO_UDP\\)"
+    "SOCK_CLOEXEC"
+    "FD_CLOEXEC"
+    "recvmsg\\("
+    "MSG_TRUNC"
     "O_NONBLOCK"
     "SO_REUSEADDR"
     "SO_BROADCAST"
@@ -139,10 +147,12 @@ require_not_contains("${_linux_platform}" "_platform/win32/sys_socket\\.cpp"
 require_not_contains("${_macos_platform}" "_platform/win32/sys_socket\\.cpp"
     "the macOS service set must not register the Winsock backend")
 
-# The runtime suite proves the loopback datagram contract end to end.
+# The runtime suite proves the loopback datagram contract end to end,
+# including the explicit oversized-datagram truncation result.
 foreach(_marker IN ITEMS
     "Sys_SocketOpenUdp\\(0, true, "
     "SysSocketRecvStatus::WouldBlock"
+    "SysSocketRecvStatus::Truncated"
     "SysSocketMaxDatagramBytes \\+ 1"
     "MessageTooLarge"
     "Sys_SocketEnableBroadcast\\("

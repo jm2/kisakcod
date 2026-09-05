@@ -16,7 +16,9 @@
 // Every function is fail-closed: a null handle or a null out-pointer is
 // rejected with the status documented below, and no partial state is
 // published on a failure return. Datagrams are delivered whole or not at
-// all; the service never reports a partial datagram as Received.
+// all: the service never reports a partial datagram as Received, and a
+// receive buffer smaller than the arriving datagram is reported
+// explicitly as Truncated instead of truncating silently.
 
 struct SysSocket;
 using SysSocketHandle = SysSocket *;
@@ -82,6 +84,12 @@ enum class SysSocketSendStatus : std::uint8_t
 enum class SysSocketRecvStatus : std::uint8_t
 {
     Received,
+
+    // The arriving datagram exceeded the caller's buffer: the first
+    // bufferCapacity bytes were copied and the excess was discarded. The
+    // whole datagram is consumed either way; callers must treat a
+    // truncated payload as malformed rather than process it.
+    Truncated,
     WouldBlock,
     InvalidArgument,
     InvalidHandle,
@@ -122,13 +130,16 @@ SysSocketSendStatus KISAK_CDECL Sys_SocketSendTo(
     const SysSocketAddress *destination);
 
 // Receives one datagram into `buffer`. On Received, *outByteCount holds the
-// payload size (never above `bufferCapacity`; a datagram larger than the
-// buffer is truncated and the excess bytes are discarded, which callers
-// must treat as a malformed datagram) and *outSource holds the sender's
-// endpoint when the pointer is non-null. WouldBlock means no complete
-// datagram was available. SystemFailure reports a non-would-block system
-// error (for example receiver buffer exhaustion); the handle stays valid
-// and the caller may retry or close.
+// payload size (never above `bufferCapacity`) and *outSource holds the
+// sender's endpoint when the pointer is non-null. Truncated reports a
+// datagram larger than `bufferCapacity`: exactly bufferCapacity bytes were
+// copied into the buffer, the excess bytes were discarded, and *outByteCount
+// equals bufferCapacity; the datagram is consumed on both platforms, so
+// callers must treat a truncated payload as malformed and drop it rather
+// than process it. WouldBlock means no complete datagram was available.
+// SystemFailure reports a non-would-block system error (for example
+// receiver buffer exhaustion); the handle stays valid and the caller may
+// retry or close.
 SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
     SysSocketHandle handle,
     void *buffer,

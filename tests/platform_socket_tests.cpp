@@ -257,6 +257,45 @@ bool StageLoopbackReply(SocketFixture &fixture)
             "reply bytes round-trip");
 }
 
+// Truncation contract: a datagram larger than the receive buffer reports
+// Truncated (never Received), fills the buffer with the datagram's leading
+// bytes, and consumes the whole datagram on both platforms so no partial
+// state leaks into the next receive.
+bool StageTruncationContract(SocketFixture &fixture)
+{
+    std::uint8_t oversized[96] = {};
+    SeedPayload(oversized, sizeof(oversized));
+    if (!Check(Sys_SocketSendTo(fixture.first, oversized,
+                    sizeof(oversized), &fixture.loopback)
+                == SysSocketSendStatus::Sent,
+            "send oversized datagram"))
+        return false;
+
+    std::memset(fixture.received, 0, sizeof(fixture.received));
+    if (!Check(RecvUntilDeadline(fixture.second, fixture.received,
+                   sizeof(fixture.received), &fixture.source,
+                   &fixture.receivedBytes)
+               == SysSocketRecvStatus::Truncated,
+            "oversized datagram reports Truncated"))
+        return false;
+
+    if (!Check(fixture.receivedBytes == sizeof(fixture.received),
+            "truncated receive fills the buffer")
+        || !Check(std::memcmp(oversized, fixture.received,
+                  sizeof(fixture.received))
+                == 0,
+            "truncated receive keeps the leading bytes"))
+        return false;
+
+    // The excess bytes were discarded with the datagram, so the receiver
+    // is idle again and reports WouldBlock.
+    return Check(Sys_SocketRecvFrom(fixture.second, fixture.received,
+                     sizeof(fixture.received), nullptr,
+                     &fixture.receivedBytes)
+                 == SysSocketRecvStatus::WouldBlock,
+        "truncated datagram fully consumed");
+}
+
 // Broadcast option applies on both backends and rejects bad handles.
 bool StageBroadcastOption(SocketFixture &fixture)
 {
@@ -334,8 +373,8 @@ int main()
 
     const StageFn stages[] = {&StageArgumentValidation,
         &StageEndpointContract, &StageReceiveContract, &StageSendContract,
-        &StageLoopbackSend, &StageLoopbackReply, &StageBroadcastOption,
-        &StageExplicitBind, &StageTeardown};
+        &StageLoopbackSend, &StageLoopbackReply, &StageTruncationContract,
+        &StageBroadcastOption, &StageExplicitBind, &StageTeardown};
 
     for (std::size_t index = 0; index < sizeof(stages) / sizeof(stages[0]);
          ++index)
