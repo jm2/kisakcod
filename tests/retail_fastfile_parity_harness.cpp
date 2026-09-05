@@ -180,11 +180,11 @@ bool WriteFileBytes(const char *path, const std::uint8_t *data, const std::size_
     return ok;
 }
 
-void TestSelfTest(const char *fixturePath)
+// Synthesizes a fixture fast-file: zlib header + deterministic payload. The
+// payload spans well past the old v1 1 MiB probe window so the full-content
+// contract is exercised where v1 was blind.
+std::vector<std::uint8_t> SynthesizeZlibFixture()
 {
-    // Synthesize a fixture fast-file: zlib header + deterministic payload.
-    // The payload spans well past the old v1 1 MiB probe window so the
-    // full-content contract is exercised where v1 was blind.
     const std::size_t payloadSize = (1536u * 1024u) + 64u;
     std::vector<std::uint8_t> fixture(payloadSize);
     fixture[0] = 0x78; // CM=8 deflate, 32K window
@@ -192,6 +192,59 @@ void TestSelfTest(const char *fixturePath)
     Lcg lcg;
     for (std::size_t i = 2; i < payloadSize; ++i)
         fixture[i] = lcg.Next();
+    return fixture;
+}
+
+// Size and full-content sensitivity: one appended byte moves the digest, and
+// so does a change INSIDE the former probe window ... and BEYOND it (the v1
+// envelope was blind there; same-size assets could share a digest).
+void ExpectDigestSensitivity(
+    const std::vector<std::uint8_t> &fixture,
+    const db::graph_hash::Digest &base)
+{
+    std::vector<std::uint8_t> grown = fixture;
+    grown.push_back(0xAB);
+    Expect(base != CaptureEnvelope(grown.data(), grown.size()),
+        "appended bytes move the envelope digest");
+
+    std::vector<std::uint8_t> headFlipped = fixture;
+    headFlipped[4096] ^= 0xFF;
+    Expect(base != CaptureEnvelope(headFlipped.data(), headFlipped.size()),
+        "head changes move the digest");
+
+    std::vector<std::uint8_t> tailFlipped = fixture;
+    tailFlipped[fixture.size() - 32] ^= 0xFF;
+    Expect(base != CaptureEnvelope(tailFlipped.data(), tailFlipped.size()),
+        "changes beyond the v1 probe window move the digest");
+}
+
+// zlib detection: the synthesized fixture is a zlib stream; the same bytes
+// re-headed as an IWD-like archive header are not.
+void ExpectZlibDetection(const std::vector<std::uint8_t> &fixture)
+{
+    Expect(DetectZlibStream(fixture.data(), fixture.size()),
+        "synthesized fixture is detected as a zlib stream");
+    std::vector<std::uint8_t> notZlib = fixture;
+    notZlib[0] = 'I'; // e.g. an IWD archive header
+    notZlib[1] = 'W';
+    Expect(!DetectZlibStream(notZlib.data(), notZlib.size()),
+        "non-zlib headers are rejected");
+}
+
+// The contract output digest is exactly 64 lowercase hex characters.
+bool DigestHexIsCanonical(const char *hex)
+{
+    if (std::string_view(hex).size() != 64)
+        return false;
+    for (const char *c = hex; *c; ++c)
+        if ((*c < '0' || *c > '9') && (*c < 'a' || *c > 'f'))
+            return false;
+    return true;
+}
+
+void TestSelfTest(const char *fixturePath)
+{
+    const std::vector<std::uint8_t> fixture = SynthesizeZlibFixture();
 
     if (!WriteFileBytes(fixturePath, fixture.data(), fixture.size()))
     {
@@ -208,45 +261,13 @@ void TestSelfTest(const char *fixturePath)
     const db::graph_hash::Digest second = CaptureEnvelope(readBack.data(), readBack.size());
     Expect(first == second, "envelope capture is deterministic");
 
-    // Size sensitivity: one appended byte must move the digest.
-    std::vector<std::uint8_t> grown = fixture;
-    grown.push_back(0xAB);
-    const db::graph_hash::Digest grownDigest = CaptureEnvelope(grown.data(), grown.size());
-    Expect(first != grownDigest, "appended bytes move the envelope digest");
-
-    // Full-content sensitivity: a change inside the former probe window
-    // moves the digest...
-    std::vector<std::uint8_t> headFlipped = fixture;
-    headFlipped[4096] ^= 0xFF;
-    const db::graph_hash::Digest headFlippedDigest =
-        CaptureEnvelope(headFlipped.data(), headFlipped.size());
-    Expect(first != headFlippedDigest, "head changes move the digest");
-
-    // ...and so does a change BEYOND the old v1 1 MiB probe window (the v1
-    // envelope was blind there; same-size assets could share a digest).
-    std::vector<std::uint8_t> tailFlipped = fixture;
-    tailFlipped[payloadSize - 32] ^= 0xFF;
-    const db::graph_hash::Digest tailFlippedDigest =
-        CaptureEnvelope(tailFlipped.data(), tailFlipped.size());
-    Expect(first != tailFlippedDigest,
-        "changes beyond the v1 probe window move the digest");
-
-    // zlib detection.
-    Expect(DetectZlibStream(fixture.data(), fixture.size()),
-        "synthesized fixture is detected as a zlib stream");
-    std::vector<std::uint8_t> notZlib = fixture;
-    notZlib[0] = 'I'; // e.g. an IWD archive header
-    notZlib[1] = 'W';
-    Expect(!DetectZlibStream(notZlib.data(), notZlib.size()),
-        "non-zlib headers are rejected");
+    ExpectDigestSensitivity(fixture, first);
+    ExpectZlibDetection(fixture);
 
     // Output formatting: exactly the contract lines, hex lowercase.
     char hex[db::graph_hash::kHexDigestBytes];
     db::graph_hash::FormatDigestHex(first, hex);
-    bool hexOk = std::string_view(hex).size() == 64;
-    for (const char *c = hex; hexOk && *c; ++c)
-        hexOk = (*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'f');
-    Expect(hexOk, "digest hex is 64 lowercase characters");
+    Expect(DigestHexIsCanonical(hex), "digest hex is 64 lowercase characters");
     std::printf("self_test_graph_sha256=%s\n", hex);
 
     std::remove(fixturePath);
