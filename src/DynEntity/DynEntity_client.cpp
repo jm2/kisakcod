@@ -1113,9 +1113,30 @@ void __cdecl DynEntCl_EntityImpactEvent(
         cent = CG_GetEntity(localClientNum, trace->hitId);
         if (!cent)
             MyAssertHandler(".\\DynEntity\\DynEntity_client.cpp", 996, 0, "%s", "cent");
+#ifdef KISAK_SP
+        // SP: this function's only runtime caller is SP cgame
+        // (cgame/cg_weapons.cpp), where cpose_t::physObjId is native-width
+        // and holds a live dxBody* written natively by CG_CreatePhysicsObject
+        // / CG_UpdatePhysicsPose. g_cposeBodySidecar is bound only on MP, so
+        // a sidecar resolve here would narrow a real 64-bit pointer to a
+        // 32-bit token against a permanently-empty table and always yield
+        // nullptr, silently dropping bullet impact sound, impact effects,
+        // and the Phys_ObjBulletImpact impulse. Legacy semantics: 0 = no
+        // body, (uintptr_t)-1 = dead sentinel, anything else is a direct
+        // pointer (matches master 53652090).
+        dxBody *const centPhysObjIdBody =
+            (cent->pose.physObjId && cent->pose.physObjId != (uintptr_t)-1)
+                ? reinterpret_cast<dxBody *>(cent->pose.physObjId)
+                : nullptr;
+#else
+        // MP: the cpose field is a frozen 32-bit generation-checked token
+        // backed by g_cposeBodySidecar (bound by cgame_mp). There is no MP
+        // runtime caller today, but the TU compiles in both configs, so
+        // keep the token resolve for build parity.
         dxBody *const centPhysObjIdBody = phys_obj_id::ReadResolve<dxBody>(
             g_cposeBodySidecar,
-            cent->pose.physObjId);
+            static_cast<phys_obj_id::BodyToken>(cent->pose.physObjId));
+#endif
         if (centPhysObjIdBody)
         {
             Vec3Sub(hitPos, start, hitDir);
