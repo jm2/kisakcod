@@ -174,4 +174,21 @@ endforeach()
 require_contains("${_tests_cmake}" "ws2_32"
     "the Winsock backend must be linked on Win32 test targets")
 
+# Every test target that compiles the full platform service set links the
+# Winsock import library on Win32: the set now contains the socket backend,
+# so a full-set target without ws2_32 fails at the Windows linker. Filtered
+# per-service set(_platform_*_sources ...) assignments are stripped first so
+# only real full-set add_executable blocks are checked.
+string(REGEX REPLACE
+    "set\\(_platform_[a-z_]+_sources \\$\\{KISAK_PLATFORM_SERVICE_SOURCES\\}\\)\n"
+    "" _full_set_tests "${_tests_cmake}")
+string(REPLACE "add_executable(" ";add_executable(" _full_set_tests
+    "${_full_set_tests}")
+foreach(_chunk IN LISTS _full_set_tests)
+    if(_chunk MATCHES "^add_executable\\(" AND _chunk MATCHES "KISAK_PLATFORM_SERVICE_SOURCES")
+        require_contains("${_chunk}" "ws2_32"
+            "full-service-set test target must link the Winsock import library on Win32")
+    endif()
+endforeach()
+
 message(STATUS "platform-socket source invariants passed")

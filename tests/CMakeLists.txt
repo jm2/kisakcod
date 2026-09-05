@@ -2415,7 +2415,7 @@ target_compile_features(kisakcod-worker-thread-lifecycle-tests PRIVATE cxx_std_2
 target_compile_definitions(kisakcod-worker-thread-lifecycle-tests PRIVATE KISAK_MP KISAK_DEDI_HEADLESS)
 target_link_libraries(kisakcod-worker-thread-lifecycle-tests PRIVATE Threads::Threads)
 if (KISAK_PLATFORM STREQUAL "win32")
-    target_link_libraries(kisakcod-worker-thread-lifecycle-tests PRIVATE winmm)
+    target_link_libraries(kisakcod-worker-thread-lifecycle-tests PRIVATE winmm ws2_32)
 endif()
 kisakcod_test_warnings(kisakcod-worker-thread-lifecycle-tests)
 set_target_properties(kisakcod-worker-thread-lifecycle-tests PROPERTIES
