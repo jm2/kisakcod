@@ -2501,7 +2501,7 @@ void Scr_DumpScriptThreads(void)
 						--size;
 						type = *buf++;
 						// M4 (ki-n1et): full widened cell load and record stride.
-						u = *(VariableUnion *)buf;
+						u = VariableStackBuf_ReadCell(buf);
 						buf += sizeof(VariableUnion);
 						if (type == 7)
 							info.pos[info.posSize++] = u.codePosValue;
@@ -4541,7 +4541,7 @@ float  Scr_GetThreadUsage(const VariableStackBuffer* stackBuf, float* endonUsage
 	{
 		// M4 (ki-n1et): widened runtime record stride, full-cell load.
 		bufa = buf - sizeof(VariableUnion);
-		u = *(VariableUnion *)bufa;
+		u = VariableStackBuf_ReadCell(bufa);
 		buf = bufa - 1;
 		--size;
 		if (*buf == 7)

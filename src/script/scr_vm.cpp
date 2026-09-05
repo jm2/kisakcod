@@ -833,7 +833,7 @@ const char* __cdecl Scr_GetStackThreadPos(uint32_t endLocalId, VariableStackBuff
         // M4 (ki-n1et): widened runtime record stride; load the full cell so
         // the codepos pointer survives on 64-bit.
         bufa = buf - sizeof(VariableUnion);
-        u = *(VariableUnion *)bufa;
+        u = VariableStackBuf_ReadCell(bufa);
         buf = bufa - 1;
         --size;
         if (*buf == 7)
@@ -1039,7 +1039,7 @@ LABEL_30:
                             if (tempValue3.type == VAR_PRECODEPOS)
                                 break;
 
-                            tempValue3.u = *(VariableUnion *)buf;
+                            tempValue3.u = VariableStackBuf_ReadCell(buf);
                             buf += sizeof(VariableUnion);
 
                             AddRefToValue(tempValue3.type, tempValue3.u);
@@ -1138,7 +1138,7 @@ LABEL_30:
                             iassert((unsigned)currentValue->type < VAR_COUNT);
                             *buf++ = currentValue->type;
                             // M4 (ki-n1et): full widened value-cell slot.
-                            *(VariableUnion *)buf = currentValue->u;
+                            VariableStackBuf_WriteCell(buf, currentValue->u);
                             buf += sizeof(VariableUnion);
                             --newSize;
                         } while (newSize);
@@ -1275,7 +1275,7 @@ void __cdecl VM_TerminateStack(uint32_t endLocalId, uint32_t startLocalId, Varia
     while (size)
     {
         bufa = buf - sizeof(VariableUnion);
-        u = *(const char**)bufa;
+        u = VariableStackBuf_ReadCell(bufa).codePosValue;
         buf = (char*)bufa - 1;
         --size;
         if (*buf == 7)
@@ -1455,7 +1455,7 @@ void __cdecl VM_TrimStack(uint32_t startLocalId, VariableStackBuffer* stackValue
     while (size)
     {
         bufa = buf - sizeof(VariableUnion);
-        u = *(VariableUnion *)bufa;
+        u = VariableStackBuf_ReadCell(bufa);
         buf = bufa - 1;
         --size;
         if (*buf == 7)
@@ -1575,13 +1575,13 @@ VariableStackBuffer *__cdecl VM_ArchiveStack()
             --scrVmPub.function_count;
             --scrVmPub.function_frame;
             archived.codePosValue = scrVmPub.function_frame->fs.pos;
-            *(VariableUnion *)buf = archived;
+            VariableStackBuf_WriteCell(buf, archived);
             scrVmPub.localVars -= scrVmPub.function_frame->fs.localVarCount;
             localId = GetParentLocalId(localId);
         }
         else
         {
-            *(VariableUnion *)buf = top->u;
+            VariableStackBuf_WriteCell(buf, top->u);
         }
         --buf;
         if (top->type >= 0x100u)
@@ -1740,13 +1740,13 @@ VariableStackBuffer *VM_ArchiveStack2(int size, const char *codePos, VariableVal
             --scrVmPub.function_count;
             --scrVmPub.function_frame;
             archived.codePosValue = scrVmPub.function_frame->fs.pos;
-            *(VariableUnion *)pos = archived;
+            VariableStackBuf_WriteCell(pos, archived);
             scrVmPub.localVars -= scrVmPub.function_frame->fs.localVarCount;
             id = GetParentLocalId(id);
         }
         else
         {
-            *(VariableUnion *)pos = top->u;
+            VariableStackBuf_WriteCell(pos, top->u);
         }
 
         buf = pos - 1;
@@ -4734,13 +4734,13 @@ void __cdecl VM_UnarchiveStack(uint32_t startLocalId, VariableStackBuffer* stack
         {
             iassert(scrVmPub.function_count < 32 /*MAX_VM_STACK_DEPTH*/);
 
-            scrVmPub.function_frame->fs.pos = *(const char**)buf;
+            scrVmPub.function_frame->fs.pos = VariableStackBuf_ReadCell(buf).codePosValue;
             ++scrVmPub.function_count;
             ++scrVmPub.function_frame;
         }
         else
         {
-            top->u = *(VariableUnion *)buf;
+            top->u = VariableStackBuf_ReadCell(buf);
         }
 
         buf += sizeof(VariableUnion);
@@ -4813,13 +4813,13 @@ void VM_UnarchiveStack2(uint32_t startLocalId, function_stack_t *stack, Variable
         if (startTop->type == VAR_CODEPOS)
         {
             iassert(scrVmPub.function_count < 32/*MAX_VM_STACK_DEPTH*/);
-            scrVmPub.function_frame->fs.pos = *(const char **)pos;
+            scrVmPub.function_frame->fs.pos = VariableStackBuf_ReadCell(pos).codePosValue;
             ++scrVmPub.function_count;
             ++scrVmPub.function_frame;
         }
         else
         {
-            startTop->u = *(VariableUnion *)pos;
+            startTop->u = VariableStackBuf_ReadCell(pos);
         }
 
         buf = (pos + sizeof(VariableUnion));

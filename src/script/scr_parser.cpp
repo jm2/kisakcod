@@ -1537,7 +1537,7 @@ void __cdecl RuntimeErrorInternal(int channel, char *codePos, uint32_t index, co
             // frame is exactly 3 legacy 8-byte cells.
             Scr_PrintPrevCodePos(
                 0,
-                scrVmPub.function_frame_start[i].fs.pos,
+                (char *)scrVmPub.function_frame_start[i].fs.pos,
                 scrVmPub.function_frame_start[i].fs.localId == 0);
         }
         Com_PrintError(channel, "started from:\n");

@@ -331,7 +331,7 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
             // packed retail records.
             v7 = (unsigned __int8)*buf;
             v8 = v5 - 1;
-            v9 = *(VariableUnion *)(buf + 1);
+            v9 = VariableStackBuf_ReadCell(buf + 1);
             buf += VARIABLE_STACK_RECORD_SIZE;
             DoSaveEntryInternal(v7, v9, memFile);
             v5 = v8;
@@ -377,7 +377,7 @@ VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
         {
             Scr_DoLoadEntryInternal(&value, memFile);
             *buf = value.type;
-            *(VariableUnion *)(buf + 1) = value.u;
+            VariableStackBuf_WriteCell(buf + 1, value.u);
             buf += VARIABLE_STACK_RECORD_SIZE;
         } while (--size);
     }
@@ -1063,7 +1063,7 @@ static void CheckReferenceRange(unsigned int begin, unsigned int end)
             {
                 // M4 (ki-n1et): widened runtime record stride.
                 unsigned int entryType = *p;
-                VariableUnion entryCell = *(VariableUnion *)(p + 1);
+                VariableUnion entryCell = VariableStackBuf_ReadCell(p + 1);
                 unsigned int entryVal = (unsigned int)entryCell.intValue;
                 p += VARIABLE_STACK_RECORD_SIZE;
                 --count;
@@ -1455,7 +1455,7 @@ void __cdecl AddSaveStackInternal(const VariableStackBuffer *stackBuf)
             // classifies entries, the serialized stream is unchanged.
             v4 = (unsigned __int8)*buf;
             v5 = size - 1;
-            v6 = *(VariableUnion *)(buf + 1);
+            v6 = VariableStackBuf_ReadCell(buf + 1);
             buf += VARIABLE_STACK_RECORD_SIZE;
             AddSaveEntryInternal(v4, v6);
             size = v5;
@@ -1901,7 +1901,7 @@ void __cdecl AddSaveStack(const VariableStackBuffer *stackBuf)
         {
             v4 = (unsigned __int8)*buf;
             v5 = size - 1;
-            v6 = *(VariableUnion *)(buf + 1);
+            v6 = VariableStackBuf_ReadCell(buf + 1);
             buf += VARIABLE_STACK_RECORD_SIZE;
             if (v4 == 1)
             {

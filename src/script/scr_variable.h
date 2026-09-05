@@ -141,6 +141,28 @@ union VariableUnion // sizeof=0x4
 // Scr_DoLoadEntryInternal); only the runtime buffer stride widens with
 // VariableUnion, so serialized formats do not move.
 inline constexpr size_t VARIABLE_STACK_RECORD_SIZE = sizeof(VariableUnion) + 1;
+
+// M4 (ki-n1et): byte-safe accessors for one stack-record payload. The runtime
+// VariableStackBuffer image packs [type byte][VariableUnion] records at a
+// VARIABLE_STACK_RECORD_SIZE stride, so every payload after record 0 sits at a
+// non-pointer-aligned address; typed loads/stores through VariableUnion* or
+// const char** at those addresses are undefined behavior (and fault on
+// strict-alignment targets). memcpy moves the payload bytes without alignment
+// or strict-aliasing hazards and produces identical bytes to a plain member
+// access. `payload` always points at the first payload byte (one past the
+// record's type byte).
+static inline VariableUnion VariableStackBuf_ReadCell(const void *payload)
+{
+    VariableUnion cell;
+    memcpy(&cell, payload, sizeof(cell));
+    return cell;
+}
+
+static inline void VariableStackBuf_WriteCell(void *payload, const VariableUnion &cell)
+{
+    memcpy(payload, &cell, sizeof(cell));
+}
+
 // M4 (ki-n1et): the value cell. On ILP32 every member is 4 bytes so live
 // host pointers (vectorValue / codePosValue / stackValue) are lossless; on
 // 64-bit the union widens 0x4 -> 0x8 and pointer stores through the 32-bit
