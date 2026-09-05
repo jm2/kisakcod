@@ -1011,6 +1011,37 @@ const KisakNtProcedures *NtProcedures()
     return &procedures;
 }
 
+// Builds the relative-name descriptor NtCreateFile resolves against the
+// parent handle in the object attributes.
+KisakUnicodeString RelativeUnicodeName(
+    const wchar_t *const name,
+    const std::size_t nameLength)
+{
+    KisakUnicodeString unicodeName{};
+    unicodeName.Length =
+        static_cast<std::uint16_t>(nameLength * sizeof(wchar_t));
+    unicodeName.MaximumLength = unicodeName.Length;
+    unicodeName.Buffer = const_cast<wchar_t *>(name);
+    return unicodeName;
+}
+
+// A child open counts as successful only when the raw status succeeded AND
+// the produced handle is real; anything else is treated as a failed open.
+bool ChildOpenSucceeded(const KisakNtStatus status, const HANDLE child)
+{
+    return status == kKisakStatusSuccess
+        && child != INVALID_HANDLE_VALUE
+        && child != nullptr;
+}
+
+// Closes a handle produced by a child open that failed its success checks,
+// so the failure path leaks neither real nor pseudo handles.
+void ClosePartialChildOpen(const HANDLE child)
+{
+    if (child != INVALID_HANDLE_VALUE && child != nullptr)
+        CloseHandle(child);
+}
+
 // Opens one child of a held parent by name. Name resolution happens against
 // the parent handle, so whatever object answers is inside the subtree the
 // parent anchors. FILE_OPEN_REPARSE_POINT keeps reparse points untraversed
@@ -1034,11 +1065,7 @@ HANDLE OpenChildRelativeToParent(
     if (nameLength == 0 || nameLength > 32767)
         return INVALID_HANDLE_VALUE;
 
-    KisakUnicodeString unicodeName{};
-    unicodeName.Length =
-        static_cast<std::uint16_t>(nameLength * sizeof(wchar_t));
-    unicodeName.MaximumLength = unicodeName.Length;
-    unicodeName.Buffer = const_cast<wchar_t *>(name);
+    KisakUnicodeString unicodeName = RelativeUnicodeName(name, nameLength);
 
     KisakObjectAttributes attributes{};
     attributes.Length = sizeof(attributes);
@@ -1060,17 +1087,12 @@ HANDLE OpenChildRelativeToParent(
         createOptions,
         nullptr,
         0);
-    if (status != kKisakStatusSuccess
-        || child == INVALID_HANDLE_VALUE
-        || child == nullptr)
-    {
-        if (ntStatus != nullptr)
-            *ntStatus = status;
-        if (child != INVALID_HANDLE_VALUE && child != nullptr)
-            CloseHandle(child);
-        return INVALID_HANDLE_VALUE;
-    }
-    return child;
+    if (ntStatus != nullptr)
+        *ntStatus = status;
+    if (ChildOpenSucceeded(status, child))
+        return child;
+    ClosePartialChildOpen(child);
+    return INVALID_HANDLE_VALUE;
 }
 
 // Verifies an already-open handle is what the enumeration said it was. Every
@@ -1676,6 +1698,7 @@ bool OpenAnchorComponent(
         kKisakFileDirectoryFile
         | kKisakFileOpenReparsePoint
         | kKisakFileSynchronousIoNonAlert;
+    // Ancestors traversal-only; the leaf carries the deletion right.
     const std::uint32_t componentAccess = isLeaf ? leafAccess : ancestorAccess;
     NoteRemoveTreeStage("anchor/open");
     std::int32_t ntStatus = kKisakStatusSuccess;
