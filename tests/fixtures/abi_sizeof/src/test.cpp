@@ -15,3 +15,8 @@ static_assert(sizeof(Formula) * 2 == 24);
 /*
 static_assert(sizeof(CommentedOut) == 32);
 */
+
+// Same-line terminator as the final construct: the statement collector must
+// accept a ";" that arrives on the assertion's own line with no later
+// ";-bearing line to rescue it (the fx_random.cpp end-of-file shape).
+static_assert(sizeof(SingleLine) == 48, "same-line terminator");
