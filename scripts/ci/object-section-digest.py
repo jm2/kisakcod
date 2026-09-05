@@ -15,11 +15,15 @@ except the CodeView ``.debug$*`` sections and MSVC's ``.chks64`` per-section
 checksum table (which covers those debug sections). Each retained section contributes
 its name, characteristics, raw bytes, and relocations with symbol-table
 indices resolved to the target symbol's name and its link-semantic attributes
-(storage value and section number), so debug-only symbol entries cannot shift
-the result and two objects whose relocations point at a symbol placed at a
-different value or section cannot digest alike even when the section bytes and
-symbol names match. Non-COFF inputs fall back to a whole-file digest and are
-labelled as such, so mixing kinds can never masquerade as parity.
+(storage value and section number). The digest also folds in every
+linker-visible symbol *defined* in a retained section (name, storage value and
+class, type, and the content identity of its defining section), because a
+definition consumed by another translation unit can be placed at a different
+offset across variants while this object's own section bytes and relocations
+stay identical. Debug-only symbols and definitions in the excluded
+``.debug$*``/``.chks64`` sections cannot shift the result. Non-COFF inputs fall
+back to a whole-file digest and are labelled as such, so mixing kinds can never
+masquerade as parity.
 
 Usage:
   object-section-digest.py [--report] <object>...
@@ -86,6 +90,15 @@ class Section(object):
         return (self.name.startswith(DEBUG_SECTION_PREFIX)
                 or self.name in METADATA_SECTION_NAMES)
 
+    def content_key(self):
+        # Identity of the section for symbol-placement purposes: its name,
+        # characteristics, and raw bytes, independent of its relocations (so
+        # this can key a symbol's defining section without recursion) and of
+        # its position in the section table (so trailing debug sections cannot
+        # shift it).
+        return _sha256(b"seckey\0", self.name.encode("utf-8"), b"\0",
+                       struct.pack("<I", self.characteristics), self.content)
+
     def digest(self):
         parts = [
             b"section\0",
@@ -135,6 +148,7 @@ def parse_coff(data, label):
         return string_table[offset:end].decode("ascii", "replace")
 
     symbols = {}
+    symbol_records = []
     index = 0
     while index < symbol_count:
         at = symbol_offset + index * SYMBOL_SIZE
@@ -146,9 +160,12 @@ def parse_coff(data, label):
             name = string_at(name_offset)
         else:
             name = _cstring(raw[:8])
-        # COFF symbol record: Value at offset 8 (u32), SectionNumber at 12 (i16).
-        value, section_number = struct.unpack_from("<ih", raw, 8)
+        # COFF symbol record: Value at 8 (u32), SectionNumber at 12 (i16),
+        # Type at 14 (u16), StorageClass at 16 (u8).
+        value, section_number, sym_type = struct.unpack_from("<ihH", raw, 8)
+        storage_class = raw[16]
         symbols[index] = (name, value, section_number)
+        symbol_records.append((name, value, section_number, storage_class, sym_type))
         index += 1 + raw[17]
 
     sections = []
@@ -192,7 +209,7 @@ def parse_coff(data, label):
                 relocations.append(
                     (address, kind, target_name, target_value, target_section))
         sections.append(Section(name, characteristics, raw_size, content, relocations))
-    return machine, sections
+    return machine, sections, symbol_records
 
 
 class ObjectDigest(object):
@@ -201,9 +218,10 @@ class ObjectDigest(object):
         with open(path, "rb") as handle:
             data = handle.read()
         self.sections = []
+        self.definitions = []
         self.machine = None
         try:
-            self.machine, self.sections = parse_coff(data, path)
+            self.machine, self.sections, symbol_records = parse_coff(data, path)
             self.kind = "coff-retail-sections"
         except ObjectError as error:
             if data[:4] in (b"\x7fELF", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"!<ar"):
@@ -211,13 +229,44 @@ class ObjectDigest(object):
                 self.digest = _sha256(data)
                 return
             raise error
+        self.definitions = self._collect_definitions(symbol_records)
         parts = [b"coff\0", struct.pack("<H", self.machine)]
         for section in self.sections:
             if section.is_debug:
                 continue
             parts.append(section.digest().encode("ascii"))
             parts.append(b"\n")
+        parts.append(b"defs\0")
+        for name, value, storage_class, sym_type, section_key in self.definitions:
+            parts.append(name.encode("utf-8"))
+            parts.append(b"\0")
+            parts.append(struct.pack("<IHB", value & 0xffffffff, sym_type, storage_class))
+            parts.append(section_key.encode("ascii"))
+            parts.append(b"\n")
         self.digest = _sha256(*parts)
+
+    def _collect_definitions(self, symbol_records):
+        # A symbol DEFINED in a retained section is linker-visible: other
+        # translation units resolve to its (section, value) placement, so it
+        # must be part of the parity identity even when no relocation in this
+        # object targets it. Symbols that are undefined (SectionNumber 0),
+        # absolute/compiler-metadata (< 0), or defined inside an excluded
+        # .debug$*/.chks64 section are not retail placements and are skipped.
+        # The defining section is keyed by its content identity, not its raw
+        # table index, so trailing debug sections cannot shift the result.
+        section_count = len(self.sections)
+        definitions = []
+        for name, value, section_number, storage_class, sym_type in symbol_records:
+            if section_number < 1 or section_number > section_count:
+                continue
+            section = self.sections[section_number - 1]
+            if section.is_debug:
+                continue
+            definitions.append(
+                (name, value, storage_class, sym_type, section.content_key()))
+        # Sort so the digest is independent of symbol-table order.
+        definitions.sort()
+        return definitions
 
     def report_lines(self):
         for section in self.sections:
@@ -229,6 +278,18 @@ class ObjectDigest(object):
                 len(section.relocations),
                 section.digest(),
             )
+
+    def definitions_digest(self):
+        return _sha256(*[
+            (b"%s\0" % name.encode("utf-8"))
+            + struct.pack("<IHB", value & 0xffffffff, sym_type, storage_class)
+            + section_key.encode("ascii")
+            for name, value, storage_class, sym_type, section_key in self.definitions
+        ]) if self.definitions else "(none)"
+
+    def report_definition_line(self):
+        return "definitions\t%s\t%d\t%s" % (
+            self.path, len(self.definitions), self.definitions_digest())
 
     def digest_line(self):
         return "digest\t%s\t%s\t%s" % (self.kind, self.digest, self.path)
@@ -263,6 +324,18 @@ def compare(objects):
         else:
             status = "identical"
         print("compare\t%s\t%s" % (name, status))
+    def_digests = [item.definitions_digest() for item in objects]
+    if len(set(def_digests)) > 1:
+        # Surface the specific symbols whose placement/attributes diverge.
+        keyed = [{d[0]: d for d in item.definitions} for item in objects]
+        all_names = sorted(set().union(*[set(k) for k in keyed])) if keyed else []
+        diff_names = [n for n in all_names
+                      if len(set(k.get(n) for k in keyed)) > 1]
+        detail = (": " + ", ".join(diff_names[:8])) if diff_names else ""
+        print("compare\tdefinitions\tDIFFERS%s" % detail)
+        mismatch = True
+    else:
+        print("compare\tdefinitions\tidentical")
     kinds = set(item.kind for item in objects)
     retail = set(item.digest for item in objects)
     if len(kinds) > 1:
@@ -301,6 +374,8 @@ def main(argv):
         if report:
             for line in item.report_lines():
                 print(line)
+            if item.kind == "coff-retail-sections":
+                print(item.report_definition_line())
         print(item.digest_line())
     if mode_compare:
         return 0 if compare(objects) else 1
