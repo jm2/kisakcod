@@ -157,6 +157,23 @@ bool SymlinkFailedWithoutPrivilege()
         || error == ERROR_NOT_SUPPORTED;
 }
 
+// True when the immediately preceding junction creation failed for one of
+// the recognized host-capability reasons: no privilege, or a volume that
+// does not host reparse points at all. Junction-dependent contracts skip
+// coverage only in that case — any other failure is a defect and must fail
+// the test. ERROR_INVALID_REPARSE_DATA deliberately stays a defect: data
+// matching the mount-point required format is accepted on every filesystem
+// that hosts reparse points, so it reports a buffer-construction bug, not
+// an environmental limit (operator-audit requirement: never silently shrink
+// coverage on a suspicious failure).
+bool JunctionFailedWithoutPrivilege()
+{
+    const DWORD error = GetLastError();
+    return error == ERROR_PRIVILEGE_NOT_HELD
+        || error == ERROR_INVALID_FUNCTION
+        || error == ERROR_NOT_SUPPORTED;
+}
+
 bool SetCurrentDirectoryNative(const std::string &path)
 {
     const std::wstring extended = ExtendedPath(path);
@@ -1659,14 +1676,17 @@ bool BuildMountPointReparseBuffer(
     reparse->PrintNameOffset =
         static_cast<std::uint16_t>(substituteBytes + sizeof(wchar_t));
     reparse->PrintNameLength = 0;
-    // ReparseDataLength counts the mount-point fields only: the four
-    // USHORT offsets/lengths plus the substitute name and its print-name
-    // terminator slot. The generic header (tag/length/reserved) is not
-    // part of it.
+    // ReparseDataLength follows the IO_REPARSE_TAG_MOUNT_POINT required
+    // data format: the four USHORT offsets/lengths, the substitute name,
+    // its NUL terminator, and the print-name NUL terminator slot (the
+    // print name itself is empty). The generic header (tag/length/
+    // reserved) is not part of it. Omitting the print-name terminator
+    // leaves the data two bytes short of the required format, which the
+    // OS rejects with ERROR_INVALID_REPARSE_DATA (4392).
     reparse->ReparseDataLength = static_cast<std::uint16_t>(
         offsetof(KisakTestMountPointBuffer, PathBuffer)
         - offsetof(KisakTestMountPointBuffer, SubstituteNameOffset)
-        + substituteBytes + sizeof(wchar_t));
+        + substituteBytes + sizeof(wchar_t) + sizeof(wchar_t));
     // Copy through the heap allocation rather than the PathBuffer[1] tail
     // anchor, with the bound spelled out: PathBuffer is the flexible-array
     // idiom's anchor, not a real one-element array. std::copy_n over
@@ -1806,8 +1826,28 @@ bool TestRemoveTreeJunctionContract(const std::string &workingDirectory)
 
     if (!CreateJunctionContractFixture(root, nested, outside, victimPath))
         return false;
-    if (!Check(CreateJunctionNative(junctionLeaf, outside))
-        || !Check(CreateJunctionNative(junctionInside, outside)))
+    const bool leafCreated = CreateJunctionNative(junctionLeaf, outside);
+    const bool insideCreated = CreateJunctionNative(junctionInside, outside);
+    if (!leafCreated && !insideCreated && JunctionFailedWithoutPrivilege())
+    {
+        // Skip only the host-incapable case, matching the symlink skip
+        // behavior: no privilege, or a volume that cannot host reparse
+        // points at all. A partial creation is still a defect — one
+        // success proves the capability the other failure denies. A
+        // failed FSCTL can leave the plain directories
+        // CreateJunctionNative pre-created, so teardown covers them too.
+        std::fputs(
+            "SKIP: Windows host cannot create junction reparse points\n",
+            stderr);
+        SetCheckStage("junction/cleanup");
+        (void)RemoveFileNative(victimPath);
+        (void)RemoveDirectoryNative(junctionInside);
+        (void)RemoveDirectoryNative(junctionLeaf);
+        (void)RemoveDirectoryNative(root);
+        (void)RemoveDirectoryNative(outside);
+        return true;
+    }
+    if (!Check(leafCreated) || !Check(insideCreated))
     {
         return false;
     }
