@@ -23,9 +23,9 @@
 namespace taginfo_save
 {
 // Pointer-free on-disk layout. Every field is a fixed-width integer or
-// float; the host pointer fields become 4-byte entity indices on disk and
-// the pre-processor / post-processor pair is responsible for the host-side
-// resolution.
+// float; the host pointer fields become 4-byte 1-based entity indices on
+// disk and the taginfo_save record module is responsible for the host-side
+// resolution in both directions.
 struct tagInfoDisk32_s
 {
     std::uint32_t parent;
@@ -56,12 +56,13 @@ ONDISK_OFFSET(tagInfoDisk32_s, parentInvAxis, 0x40);
 
 constexpr std::size_t kTagInfoDisk32Bytes = sizeof(tagInfoDisk32_s);
 
-// POD-shaped view of the host tagInfo_s. Game code (g_save.cpp) translates
-// the live tagInfo_s into this view before and after the field walker, but
-// the layout is host-independent: parent/next are 4-byte entity indices
-// (matching the Disk32 wire image), and the name/index/axis fields match
-// the host offsets one-for-one. This lets the test exercise the converter
-// without touching the production tagInfo_s type.
+// POD-shaped view of the host tagInfo_s. taginfo_save.cpp translates the
+// live host record into this view (entity indices are derived from the FULL
+// native pointers there), but the layout is host-independent: parent/next
+// are 4-byte 1-based entity indices (matching the Disk32 wire image), and
+// the name/index/axis fields match the host offsets one-for-one. This lets
+// the test exercise the converter without touching the production tagInfo_s
+// type.
 struct tagInfoHostView
 {
     std::uint32_t parent;
@@ -75,28 +76,9 @@ struct tagInfoHostView
 
 ONDISK_SIZE(tagInfoHostView, 0x70);
 
-// Reinterpret a host pointer field as the 4-byte entity index the SF_ENTITY
-// pre-processor / post-processor works with. On x64 only the lower 4 bytes
-// of the pointer-sized field are guaranteed to be set; the re-interpret
-// therefore picks up exactly the intended index value on every host width.
-inline std::uint32_t HostIndexFromPointer(const void *const pointer)
-{
-    return static_cast<std::uint32_t>(
-        reinterpret_cast<std::uintptr_t>(pointer));
-}
-
-// Inverse of HostIndexFromPointer. The returned pointer is a 4-byte value
-// zero-extended on 64-bit hosts; the SF_ENTITY post-processor rebuilds the
-// real host pointer from the entity index.
-inline void *HostPointerFromIndex(const std::uint32_t index)
-{
-    return reinterpret_cast<void *>(
-        static_cast<std::uintptr_t>(index));
-}
-
 // Materialize the 0x70-byte Disk32 record from a flat host view. The caller
-// has already resolved entity pointers into 4-byte indices (the SF_ENTITY
-// pre-processor does this) so the field copies are exact on every host.
+// (taginfo_save.cpp) has already resolved the native entity pointers into
+// validated 4-byte indices, so the field copies are exact on every host.
 inline tagInfoDisk32_s TagInfoToDisk32(const tagInfoHostView &view)
 {
     tagInfoDisk32_s disk{};
@@ -111,8 +93,8 @@ inline tagInfoDisk32_s TagInfoToDisk32(const tagInfoHostView &view)
 }
 
 // Inverse of TagInfoToDisk32. Reads the 4-byte indices back into the flat
-// host view so the post-processor can rebuild host pointers using the
-// SF_ENTITY semantics.
+// host view so the taginfo_save record module can validate them and rebuild
+// the full native host pointers.
 inline tagInfoHostView TagInfoFromDisk32(const tagInfoDisk32_s &disk)
 {
     tagInfoHostView view{};

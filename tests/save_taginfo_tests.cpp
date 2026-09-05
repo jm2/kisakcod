@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0
 //
 // Tests for the tagInfo_s <-> tagInfoDisk32_s save-record converter. The
-// production owner is src/game/g_save.cpp::WriteField2 / ReadField for the
-// SF_TYPE_TAG_INFO branch; the converter is defined in taginfo_disk32.h so it
-// can be exercised without the g_save.cpp dependency tree.
+// production owner is src/game/taginfo_save.cpp (the record module
+// g_save.cpp's WriteField2 / ReadField SF_TYPE_TAG_INFO branches delegate
+// to); the converter is defined in taginfo_disk32.h so it can be exercised
+// without the g_save.cpp dependency tree. The record module itself carries
+// its own production-path test (save_taginfo_production_tests.cpp) driven
+// through the real memfile stream primitives.
 //
 // The retail wire image is fixed at 112 bytes (0x70) regardless of host
 // pointer width — on x86-64 the host tagInfo_s grows to 0x78 bytes because
@@ -11,12 +14,12 @@
 //
 //   1. Always emit the 0x70-byte image with the pinned offsets regardless of
 //      whether the host is ILP32 or LP64/LLP64.
-//   2. Read the 16-bit parent / next fields as 4-byte entity indices, not raw
-//      pointer-truncations, so the host string/entity resolver can rebuild the
-//      8-byte pointer on the way back.
+//   2. Carry the parent / next fields as 4-byte 1-based entity indices, not
+//      raw pointer truncations, so the record module can validate them and
+//      rebuild the full native pointer on the way back.
 //   3. Round-trip the float arrays and the 16-bit name handle verbatim.
 //
-// The test deliberately avoids the g_save.cpp field walker; it exercises the
+// The test deliberately avoids the game-side record module; it exercises the
 // converter in isolation and pins the wire image byte-for-byte.
 
 #include <game/taginfo_disk32.h>
@@ -194,7 +197,7 @@ void TestWireImageBytes()
 
 void TestZeroIndexView()
 {
-    // The pre-processor writes the 4-byte index 0 to mean "no entity"; the
+    // The record module writes the 4-byte index 0 to mean "no entity"; the
     // converter must round-trip that without leaking host garbage into the
     // higher pointer bits on x64.
     taginfo::tagInfoHostView view{};
@@ -235,25 +238,6 @@ void TestLargeIndexView()
     CHECK(round.parent == kLargeParent);
     CHECK(round.next == kLargeNext);
 }
-
-void TestHostIndexRoundTrip()
-{
-    // Round-trip a void* through the host index helpers. On x86 the pointer
-    // and index are the same value; on x64 the index is the lower 4 bytes
-    // and the pointer round-trip zero-extends them back.
-    void *const parent = reinterpret_cast<void *>(
-        static_cast<std::uintptr_t>(kParentIndex));
-    void *const next = reinterpret_cast<void *>(
-        static_cast<std::uintptr_t>(kNextIndex));
-
-    CHECK(taginfo::HostIndexFromPointer(parent) == kParentIndex);
-    CHECK(taginfo::HostIndexFromPointer(next) == kNextIndex);
-    CHECK(taginfo::HostIndexFromPointer(nullptr) == 0u);
-
-    CHECK(taginfo::HostPointerFromIndex(kParentIndex) == parent);
-    CHECK(taginfo::HostPointerFromIndex(kNextIndex) == next);
-    CHECK(taginfo::HostPointerFromIndex(0u) == nullptr);
-}
 } // namespace
 
 int main()
@@ -263,7 +247,6 @@ int main()
     TestWireImageBytes();
     TestZeroIndexView();
     TestLargeIndexView();
-    TestHostIndexRoundTrip();
 
     if (failures != 0)
     {

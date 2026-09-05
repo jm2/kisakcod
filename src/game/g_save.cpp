@@ -3,7 +3,7 @@
 #endif
 
 #include "g_save.h"
-#include "taginfo_disk32.h"
+#include "taginfo_save.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -55,48 +55,31 @@ const char *monthStr[12] =
   "DEC"
 };
 
-const saveField_t tagInfoFields[4] =
-{
-  { offsetof(tagInfo_s, parent), SF_ENTITY },
-  { offsetof(tagInfo_s, next),   SF_ENTITY },
-  { offsetof(tagInfo_s, name),   SF_STRING },
-  { 0, SF_NONE }
-};
-
 const saveField_t animscriptedFields[1] = { { 0, SF_NONE } };
 
-// Bridge between the host tagInfo_s and the Disk32 wire image. The host
-// pointer fields are reinterpreted as 4-byte entity indices; on x64 only
-// the lower 4 bytes of the pointer-sized field are guaranteed to be set
-// because the SF_ENTITY pre-processor writes a 4-byte int. The float and
-// 16-bit fields are copied verbatim because both host and Disk32 layouts
-// agree on those.
-static taginfo_save::tagInfoHostView TagInfoHostFromSource(const tagInfo_s &source)
+// Entity-address map the tagInfo record module uses to translate between
+// full native entity pointers and validated 1-based save-stream indices.
+// The stride must be the real host gentity_s stride — deriving indices from
+// the low 32 bits with a hard-coded 32-bit-era stride (the legacy
+// WriteField1 SF_ENTITY walker) corrupts the value on 64-bit hosts.
+static const taginfo_save::TagInfoEntityMap kTagInfoEntityMap = {
+    g_entities, sizeof(gentity_s), MAX_GENTITIES};
+
+// The tagInfo record module reports unrecoverable record defects here; the
+// callback must not return.
+static void G_TagInfoSaveFail(const char *message)
 {
-  taginfo_save::tagInfoHostView view{};
-  view.parent = taginfo_save::HostIndexFromPointer(source.parent);
-  view.next = taginfo_save::HostIndexFromPointer(source.next);
-  view.name = source.name;
-  view.index = source.index;
-  std::memcpy(view.axis, source.axis, sizeof(view.axis));
-  std::memcpy(view.parentInvAxis, source.parentInvAxis,
-      sizeof(view.parentInvAxis));
-  return view;
+    Com_Error(ERR_DROP, "%s", message);
 }
 
-static tagInfo_s TagInfoHostToSource(const taginfo_save::tagInfoHostView &view)
+static const char *G_TagInfoStringFromHandle(const std::uint16_t handle)
 {
-  tagInfo_s dest{};
-  dest.parent = static_cast<gentity_s *>(
-      taginfo_save::HostPointerFromIndex(view.parent));
-  dest.next = static_cast<gentity_s *>(
-      taginfo_save::HostPointerFromIndex(view.next));
-  dest.name = view.name;
-  dest.index = view.index;
-  std::memcpy(dest.axis, view.axis, sizeof(dest.axis));
-  std::memcpy(dest.parentInvAxis, view.parentInvAxis,
-      sizeof(dest.parentInvAxis));
-  return dest;
+    return SL_ConvertToString(handle);
+}
+
+static std::uint16_t G_TagInfoHandleFromString(const char *text)
+{
+    return static_cast<std::uint16_t>(SL_GetString(text, 0));
 }
 
 const saveField_t gclientFields[5] =
@@ -850,36 +833,35 @@ void __cdecl WriteField2(const saveField_t *field, unsigned __int8 *base, SaveGa
             return;
         {
             // The host tagInfo_s is 0x78 bytes on x64 / 0x70 on x86, but the
-            // retail wire image is a fixed 0x70-byte Disk32 record. The field
-            // walker uses host offsets, so the pre-processor must run on the
-            // host copy (resolving entity pointers into 4-byte indices and
-            // marking the string handle), then we materialize the Disk32
-            // image, write it, and finally post-process references (the
-            // string) from the unmodified original host.
-            tagInfo_s hostCopy = *static_cast<const tagInfo_s *>(v11);
+            // retail wire image is a fixed 0x70-byte Disk32 record. The
+            // record write is owned by the taginfo_save module: entity
+            // indices are derived there from the FULL native pointers with
+            // stride/range validation (the legacy WriteField1 SF_ENTITY
+            // walker classifies through the low 32 bits and overwrites only
+            // 4 bytes of each 64-bit pointer, so it must not see these
+            // fields), the name handle travels as the retail 0/1 mark with
+            // the CString appended after the image.
+            //
             // const_cast alone cannot change the pointee type, so routing a
             // const void * straight to tagInfo_s * through it is ill-formed
             // (MSVC C2440 on the x86 SP builds). Route through static_cast
             // first; only the const is then cast away.
             tagInfo_s *const hostOriginal = const_cast<tagInfo_s *>(
                 static_cast<const tagInfo_s *>(v11));
-            for (const saveField_t *tagInfoField = tagInfoFields; tagInfoField->type; ++tagInfoField)
-            {
-                WriteField1(
-                    tagInfoField,
-                    reinterpret_cast<unsigned __int8 *>(&hostCopy),
-                    reinterpret_cast<unsigned __int8 *>(hostOriginal));
-            }
-            taginfo_save::tagInfoHostView view = TagInfoHostFromSource(hostCopy);
-            taginfo_save::tagInfoDisk32_s disk = taginfo_save::TagInfoToDisk32(view);
-            SaveMemory_SaveWrite(&disk, taginfo_save::kTagInfoDisk32Bytes, save);
-            for (const saveField_t *tagInfoField = tagInfoFields; tagInfoField->type; ++tagInfoField)
-            {
-                WriteField2(
-                    tagInfoField,
-                    reinterpret_cast<unsigned __int8 *>(hostOriginal),
-                    save);
-            }
+            taginfo_save::TagInfoLiveRecord live{};
+            live.parent = hostOriginal->parent;
+            live.next = hostOriginal->next;
+            live.name = hostOriginal->name;
+            live.index = hostOriginal->index;
+            std::memcpy(live.axis, hostOriginal->axis, sizeof(live.axis));
+            std::memcpy(live.parentInvAxis, hostOriginal->parentInvAxis,
+                sizeof(live.parentInvAxis));
+            taginfo_save::WriteHostRecord(
+                SaveMemory_GetMemoryFile(save),
+                kTagInfoEntityMap,
+                G_TagInfoSaveFail,
+                G_TagInfoStringFromHandle,
+                live);
         }
         goto LABEL_12;
     case SF_TYPE_SCRIPTED:
@@ -1066,18 +1048,31 @@ void __cdecl ReadField(const saveField_t *field, unsigned __int8 *base, SaveGame
                 sizeof(tagInfo_s),
                 MT_TYPE_TAG_INFO);
             *(uintptr_t *)v7 = (uintptr_t)v25;
-            taginfo_save::tagInfoDisk32_s disk{};
-            SaveMemory_LoadRead(&disk, taginfo_save::kTagInfoDisk32Bytes, save);
-            taginfo_save::tagInfoHostView view = taginfo_save::TagInfoFromDisk32(disk);
-            *reinterpret_cast<tagInfo_s *>(v25) = TagInfoHostToSource(view);
-            // The field walker uses host offsets, so the post-processor must
-            // run on the host tagInfo_s (resolving the 4-byte entity indices
-            // back into host pointers and reading the string from disk), not
-            // on the Disk32 buffer.
-            for (const saveField_t *tagInfoField = tagInfoFields; tagInfoField->type; ++tagInfoField)
-            {
-                ReadField(tagInfoField, v25, save);
-            }
+            // The fixed 0x70-byte Disk32 record is read back through the
+            // taginfo_save module: entity indices are validated there and
+            // resolved into FULL native pointers (running the walker's
+            // SF_ENTITY post-processor over rebuilt host pointers would
+            // re-classify them through their low 32 bits and ERR_DROP on
+            // 64-bit hosts), and the trailing CString restores the live
+            // name handle.
+            taginfo_save::TagInfoRestoredRecord restored{};
+            taginfo_save::ReadHostRecord(
+                SaveMemory_GetMemoryFile(save),
+                kTagInfoEntityMap,
+                G_TagInfoSaveFail,
+                G_TagInfoHandleFromString,
+                restored);
+            tagInfo_s *const host = reinterpret_cast<tagInfo_s *>(v25);
+            std::memset(host, 0, sizeof(tagInfo_s));
+            host->parent = static_cast<gentity_s *>(
+                const_cast<void *>(restored.parent));
+            host->next = static_cast<gentity_s *>(
+                const_cast<void *>(restored.next));
+            host->name = restored.name;
+            host->index = restored.index;
+            std::memcpy(host->axis, restored.axis, sizeof(host->axis));
+            std::memcpy(host->parentInvAxis, restored.parentInvAxis,
+                sizeof(host->parentInvAxis));
         }
         break;
     case SF_TYPE_SCRIPTED:

@@ -103,6 +103,7 @@ load_text("src/script/scr_memorytree.h" _scr_memorytree_header)
 load_text("src/script/scr_memorytree.cpp" _scr_memorytree)
 load_text("src/script/scr_stringlist.h" _scr_stringlist_header)
 load_text("src/game/g_save.cpp" _g_save)
+load_text("src/game/taginfo_save.cpp" _taginfo_save)
 load_text("src/database/db_load.cpp" _db_load)
 load_text("src/database/db_stream_load.cpp" _db_stream_load)
 load_text("src/client/cl_cgame.cpp" _cl_cgame)
@@ -304,11 +305,26 @@ require_contains(
     _g_save "sizeof(animscripted_s),\n                MT_TYPE_ANIMSCRIPTED)"
     "scripted save restoration uses the distinct animscripted category")
 require_contains(
-    _g_save "taginfo_disk32.h"
-    "tag-info save uses the dedicated Disk32 converter (ki-f0w)")
+    _g_save "taginfo_save::WriteHostRecord"
+    "tag-info save delegates the Disk32 record write to the production module (ki-f0w)")
 require_contains(
-    _g_save "taginfo_save::kTagInfoDisk32Bytes"
-    "tag-info save writes the fixed 0x70-byte Disk32 wire image")
+    _g_save "taginfo_save::ReadHostRecord"
+    "tag-info load delegates the Disk32 record read to the production module (ki-f0w)")
+require_contains(
+    _taginfo_save "taginfo_disk32.h"
+    "tag-info record module uses the dedicated Disk32 converter (ki-f0w)")
+require_contains(
+    _taginfo_save "kTagInfoDisk32Bytes"
+    "tag-info record module writes the fixed 0x70-byte Disk32 wire image")
+require_contains(
+    _taginfo_save "EntityIndexFromPointer"
+    "tag-info record module derives entity indices from full native pointers (operator rework 2026-09-04)")
+require_contains(
+    _taginfo_save "EntityPointerFromIndex"
+    "tag-info record module validates and resolves save indices into full native pointers")
+require_contains(
+    _tests_cmake "save_taginfo_production_test"
+    "tagInfo save production-path coverage is pinned in the test tree")
 
 require_count(
     _db_load "localClientNum < STATIC_MAX_LOCAL_CLIENTS" 2
