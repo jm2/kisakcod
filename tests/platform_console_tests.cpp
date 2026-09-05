@@ -372,7 +372,16 @@ public:
         if (active_)
             (void)SetStdHandle(STD_INPUT_HANDLE, saved_);
         if (input_ != nullptr)
+        {
+            // Leave the queue pristine before releasing the handle: on
+            // the shared CI console any residue would leak into the
+            // next fixture, and on an owned console flushing first
+            // keeps the conhost teardown path small (32-bit desktop
+            // heap is tight; the 0xC0000142 startup cascade on the
+            // x86 legs follows console-fixture teardowns).
+            (void)FlushConsoleInputBuffer(input_);
             (void)CloseHandle(input_);
+        }
         if (owned_)
             FreeConsole();
     }
@@ -387,7 +396,13 @@ public:
         if (!IsReady() || events == nullptr || count == 0)
             return false;
         DWORD written = 0;
-        return WriteConsoleInput(input_, events, count, &written) != FALSE
+        // WriteConsoleInputW (not the A macro) so records reach the
+        // queue verbatim: the A variant converts through the console
+        // input code page, which on 32-bit clients happens twice
+        // (WOW64 thunk + conhost) and mangles non-ASCII code points
+        // into the default character before the backend ever reads
+        // them.
+        return WriteConsoleInputW(input_, events, count, &written) != FALSE
             && written == count;
     }
 
@@ -684,6 +699,82 @@ bool TestConsoleFocusEventDrained(ConsoleInput &input)
         "console focus event is drained", "z");
 }
 
+// Failure-path diagnostics for the unicode drain stage. Windows x86
+// (WOW64 console thunking) round-trips written INPUT_RECORD batches
+// differently from 64-bit legs — the same fixture that passes on
+// amd64/arm64 fails here — so when the stage fails, dump the console
+// code pages, input mode, the exact boundary result bytes, and any
+// events still queued. ctest --output-on-failure surfaces this with
+// the FAIL line, making the 32-bit-only mismatch visible in CI.
+void DumpUnicodeStageDiagnostics(
+    const SysConsoleReadResult &result,
+    const char *const output,
+    const std::size_t outputSize)
+{
+    std::fprintf(stderr,
+        "unicode-diag: status=%d length=%zu bytes=",
+        static_cast<int>(result.status),
+        result.length);
+    for (std::size_t i = 0; i < 16 && i < outputSize; ++i)
+    {
+        std::fprintf(
+            stderr, "%02x", static_cast<unsigned char>(output[i]));
+    }
+    std::fprintf(
+        stderr, " cp=%lu out-cp=%lu\n",
+        static_cast<unsigned long>(GetConsoleCP()),
+        static_cast<unsigned long>(GetConsoleOutputCP()));
+
+    const HANDLE probe = CreateFileW(
+        L"CONIN$",
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        0,
+        nullptr);
+    if (probe == INVALID_HANDLE_VALUE)
+    {
+        std::fprintf(stderr, "unicode-diag: probe open failed %lu\n",
+            GetLastError());
+        return;
+    }
+    DWORD mode = 0;
+    if (GetConsoleMode(probe, &mode))
+        std::fprintf(stderr, "unicode-diag: mode=0x%08lx\n", mode);
+    else
+        std::fprintf(
+            stderr, "unicode-diag: mode failed %lu\n", GetLastError());
+    DWORD pendingCount = 0;
+    if (GetNumberOfConsoleInputEvents(probe, &pendingCount))
+        std::fprintf(stderr, "unicode-diag: pending=%lu\n", pendingCount);
+    else
+        std::fprintf(stderr, "unicode-diag: count failed %lu\n",
+            GetLastError());
+    INPUT_RECORD queued[32]{};
+    DWORD peeked = 0;
+    if (PeekConsoleInputW(probe, queued, 32, &peeked))
+    {
+        for (DWORD i = 0; i < peeked && i < 32u; ++i)
+        {
+            std::fprintf(stderr,
+                "unicode-diag: rec[%lu] type=%u down=%d repeat=%u char=0x%04x\n",
+                i,
+                queued[i].EventType,
+                static_cast<int>(queued[i].Event.KeyEvent.bKeyDown),
+                queued[i].Event.KeyEvent.wRepeatCount,
+                static_cast<unsigned>(
+                    queued[i].Event.KeyEvent.uChar.UnicodeChar));
+        }
+    }
+    else
+    {
+        std::fprintf(
+            stderr, "unicode-diag: peek failed %lu\n", GetLastError());
+    }
+    (void)CloseHandle(probe);
+}
+
 // Unicode code points (UnicodeChar above 0x7F; the backend decides on
 // the union value, so U+00E9 arrives as UnicodeChar 0x00E9) must be
 // drained because the byte boundary cannot faithfully encode them
@@ -701,10 +792,23 @@ bool TestConsoleUnicodeKeyDrained(ConsoleInput &input)
         ConsoleKeyEvent(true, 'a'),
         ConsoleKeyEvent(true, '\n'),
     };
-    return WriteAndExpectConsoleLine(input,
-        "write unicode key event", events,
-        sizeof(events) / sizeof(events[0]),
-        "console unicode key event is drained", "a");
+    if (!Check(input.WriteEvents(events, static_cast<DWORD>(
+                    sizeof(events) / sizeof(events[0]))),
+            "write unicode key event"))
+    {
+        return false;
+    }
+    std::array<char, SYS_CONSOLE_MAX_LINE_LENGTH + 1> output{};
+    output.fill('x');
+    const SysConsoleReadResult result = Sys_ConsoleTryReadLine(
+        output.data(), output.size());
+    const bool pass = result.status == SysConsoleReadStatus::LineReady
+        && result.length == 1
+        && output[0] == 'a'
+        && output[1] == '\0';
+    if (!pass)
+        DumpUnicodeStageDiagnostics(result, output.data(), output.size());
+    return Check(pass, "console unicode key event is drained");
 }
 
 bool TestConsoleInput()
