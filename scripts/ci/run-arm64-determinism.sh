@@ -59,9 +59,12 @@ CONFIG_ARGS=(
     -DBUILD_TESTING=ON
 )
 
-# Sanitizer configuration rides CMAKE_CXX_FLAGS directly so the portable
-# targets get ASan+UBSan without inventing engine-target plumbing.
-declare -A CXX_FLAGS=(
+# Per-cell compiler/linker flags, applied to BOTH languages: the portable
+# targets are C++, but the memfile test subject also compiles the vendored
+# zlib C sources (tests/CMakeLists.txt), and sanitizer coverage must reach
+# those C translation units too — instrumenting only the C++ objects would
+# report coverage the gate does not actually have.
+declare -A CELL_FLAGS=(
     [release]=""
     [asan-ubsan]="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
 )
@@ -82,20 +85,26 @@ for entry in "${COMPILERS[@]}"; do
         # dev containers with mixed toolchains) cannot configure an
         # ASan+UBSan cell. Probe once and skip loudly instead of failing
         # the whole gate; the gate still requires at least one sanitizer
-        # cell to actually run somewhere in the matrix.
+        # cell to actually run somewhere in the matrix. Both language
+        # frontends are probed: the matrix configures C and C++ with the
+        # same flags, so a cell is only honest when BOTH runtimes work.
         if [ "$cell" = "asan-ubsan" ]; then
             # Trailing X-run templates only (portable across GNU and BSD
             # mktemp), rooted at ${TMPDIR:-/tmp} instead of a hardcoded
-            # per-session directory; -x c++ keeps the probe C++ without
-            # relying on a file-name suffix.
+            # per-session directory; -x c/-x c++ keep the probe language
+            # explicit without relying on a file-name suffix.
             probe_src="$(mktemp "${TMPDIR:-/tmp}/asan-probe-src-XXXXXX")"
             probe_bin="$(mktemp "${TMPDIR:-/tmp}/asan-probe-bin-XXXXXX")"
             printf 'int main() { return 0; }\n' > "$probe_src"
-            if ! "$cxx_compiler" -x c++ -fsanitize=address,undefined "$probe_src" \
-                    -o "$probe_bin" >/dev/null 2>&1; then
+            probe_ok=1
+            "$cxx_compiler" -x c++ -fsanitize=address,undefined "$probe_src" \
+                -o "$probe_bin" >/dev/null 2>&1 || probe_ok=0
+            "$compiler" -x c -fsanitize=address,undefined "$probe_src" \
+                -o "$probe_bin" >/dev/null 2>&1 || probe_ok=0
+            if [ "$probe_ok" -ne 1 ]; then
                 echo ""
                 echo "=== matrix cell: ${compiler} / ${cell} — SKIPPED:"
-                echo "    $cxx_compiler has no working ASan/UBSan runtime on this host"
+                echo "    ${compiler}/${cxx_compiler} have no working ASan/UBSan runtime on this host"
                 rm -f "$probe_src" "$probe_bin"
                 continue
             fi
@@ -109,8 +118,9 @@ for entry in "${COMPILERS[@]}"; do
                 -DCMAKE_C_COMPILER="$compiler" \
                 -DCMAKE_CXX_COMPILER="$cxx_compiler" \
                 -DCMAKE_BUILD_TYPE="${BUILD_TYPE[$cell]}" \
-                -DCMAKE_CXX_FLAGS="${CXX_FLAGS[$cell]}" \
-                -DCMAKE_EXE_LINKER_FLAGS="${CXX_FLAGS[$cell]}" \
+                -DCMAKE_C_FLAGS="${CELL_FLAGS[$cell]}" \
+                -DCMAKE_CXX_FLAGS="${CELL_FLAGS[$cell]}" \
+                -DCMAKE_EXE_LINKER_FLAGS="${CELL_FLAGS[$cell]}" \
                 "${CONFIG_ARGS[@]}"; then
             FAILED_CELLS+=("${compiler}/${cell} (configure)")
             continue
