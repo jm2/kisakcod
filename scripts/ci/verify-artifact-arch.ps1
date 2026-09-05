@@ -38,7 +38,9 @@ foreach ($path in $Binary) {
     if ($machine -ne $want) {
       throw ("machine 0x{0:X4} != expected 0x{1:X4}" -f $machine, $want)
     }
-    Write-Host "ok: $path reports $Expected"
+    # Write-Output, not Write-Host: Codacy ACTION_REQUIRED (PSAvoidUsingWriteHost);
+    # the success stream reaches the CI log identically for direct script invocation.
+    Write-Output "ok: $path reports $Expected"
   }
   catch {
     # Write-Error would throw under $ErrorActionPreference = "Stop"; record
