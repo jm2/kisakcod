@@ -8,6 +8,13 @@
 // 0x00000000 == no body, 0xFFFFFFFF == dead (creation failed).
 #pragma once
 
+// C++-only header: the helpers below use C++ casts, nullptr, and
+// phys_obj_id:: sidecar types. Every includer is a C++ translation
+// unit, so the __cplusplus guard keeps C-language tooling (C-mode
+// compiler passes, CppCheck-based analyzers) from parsing C++
+// constructs as C and reporting bogus syntax errors.
+#ifdef __cplusplus
+
 #include <cstdint>
 
 #include <bgame/bg_local.h>
@@ -68,3 +75,5 @@
     return cent != nullptr && phys_obj_id::IsDead(cent->pose.physObjId);
 }
 #endif
+
+#endif // __cplusplus

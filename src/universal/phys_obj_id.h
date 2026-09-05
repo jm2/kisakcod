@@ -34,6 +34,12 @@
 // 64-bit builds so saved bytes round-trip on every target.
 #pragma once
 
+// C++-only header: namespaces, templates, and C++ casts below. Every
+// includer is a C++ translation unit, so the __cplusplus guard keeps
+// C-language tooling (C-mode compiler passes, CppCheck-based analyzers)
+// from parsing C++ constructs as C and reporting bogus syntax errors.
+#ifdef __cplusplus
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -388,3 +394,5 @@ static_assert(
 extern phys_obj_id::BodySidecar<kCposeBodySidecarCapacity> g_cposeBodySidecar;
 extern phys_obj_id::BodySidecar<kBreakablePieceBodySidecarCapacity> g_breakablePieceBodySidecar;
 extern phys_obj_id::BodySidecar<kDynEntClientBodySidecarCapacity> g_dynEntClientBodySidecar;
+
+#endif // __cplusplus

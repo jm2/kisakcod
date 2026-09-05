@@ -286,28 +286,46 @@ static_assert(sizeof(BreakablePieceLayout) == 0xC,
     "BreakablePiece runtime layout is frozen at 12 bytes");
 } // namespace
 
-int main()
+// Runs the core token-contract cases in order. Returns nullptr when all
+// pass, otherwise the failed case's label.
+static const char *RunCoreTokenContractTests()
 {
     if (!TestTokenSentinels())
-        return Fail("sentinel contract");
+        return "sentinel contract";
     if (!TestBindResolveRelease())
-        return Fail("bind/resolve/release round-trip");
+        return "bind/resolve/release round-trip";
     if (!TestStaleTokenRejection())
-        return Fail("stale token rejection");
+        return "stale token rejection";
     if (!TestDoubleBindRejected())
-        return Fail("double-bind rejection");
+        return "double-bind rejection";
     if (!TestInvalidArguments())
-        return Fail("invalid argument rejection");
+        return "invalid argument rejection";
+    return nullptr;
+}
+
+// Runs the sidecar-integration cases in order. Returns nullptr when all
+// pass, otherwise the failed case's label.
+static const char *RunSidecarIntegrationTests()
+{
     if (!TestWriteBindHelper())
-        return Fail("WriteBind helper");
+        return "WriteBind helper";
     if (!TestConsumeReleaseHelper())
-        return Fail("ConsumeRelease helper");
+        return "ConsumeRelease helper";
     if (!TestGlobalSidecarReflexiveBind())
-        return Fail("global cpose sidecar bind");
+        return "global cpose sidecar bind";
     if (!TestGlobalBreakablePieceSidecar())
-        return Fail("global breakable piece sidecar bind");
+        return "global breakable piece sidecar bind";
     if (!TestGlobalDynEntClientSidecar())
-        return Fail("global dynent client sidecar bind");
+        return "global dynent client sidecar bind";
+    return nullptr;
+}
+
+int main()
+{
+    if (const char *const failed = RunCoreTokenContractTests())
+        return Fail(failed);
+    if (const char *const failed = RunSidecarIntegrationTests())
+        return Fail(failed);
     // Frozen-layout contracts (DynEntityClient/BreakablePiece 12-byte
     // images) are enforced by static_assert at compile time.
     std::printf("phys_obj_id tests: all pass\n");
