@@ -1383,7 +1383,7 @@ bool RemoveExternalProbeTarget(
 {
     SetCheckStage(stage);
     return Check(RemoveFileNative(Join(target, payloadName)))
-        && Check(RemoveDirectoryNative(target.c_str()));
+        && Check(RemoveDirectoryNative(target));
 }
 
 // Empty directory: the minimal walk — open anchor, empty enumeration,
