@@ -347,6 +347,22 @@ template <class Body, std::size_t Capacity>
     *outBody = static_cast<Body *>(r.body);
     return true;
 }
+
+// DynEntityClient owner-key packing: owner = drawType * perDrawType +
+// dynEntId. The runtime bind path (DynEntity_client.cpp) and the save-image
+// replay path (DynEntity_load_obj.cpp) must derive the key through this
+// helper so the two sites cannot drift. A draw type that ever loads
+// >= kDynEntPhysObjIdOwnerPerDrawType entities would collide its keys into
+// the next draw type's slot range; the load paths assert the bound.
+constexpr std::uint32_t kDynEntPhysObjIdOwnerPerDrawType = 4096u;
+
+[[nodiscard]] inline OwnerIndex DynEntPhysObjId_MakeOwnerIndex(
+    std::uint32_t drawType,
+    std::uint16_t dynEntId) noexcept
+{
+    return static_cast<OwnerIndex>(
+        drawType * kDynEntPhysObjIdOwnerPerDrawType + dynEntId);
+}
 } // namespace phys_obj_id
 
 // Priority-7 native64 ABI seam: MP cpose_t::physObjId, BreakablePiece::
@@ -364,24 +380,10 @@ constexpr std::size_t kCposeBodySidecarCapacity = 1024;
 constexpr std::size_t kBreakablePieceBodySidecarCapacity = 100;
 constexpr std::size_t kDynEntClientBodySidecarCapacity = 8192;
 
-// DynEntityClient owner-key packing: owner = drawType * perDrawType +
-// dynEntId. The runtime bind path (DynEntity_client.cpp) and the save-image
-// replay path (DynEntity_load_obj.cpp) must derive the key through this
-// helper so the two sites cannot drift. A draw type that ever loads
-// >= kDynEntPhysObjIdOwnerPerDrawType entities would collide its keys into
-// the next draw type's slot range; the load paths assert the bound.
-constexpr std::uint32_t kDynEntPhysObjIdOwnerPerDrawType = 4096u;
 static_assert(
-    2u * kDynEntPhysObjIdOwnerPerDrawType <= kDynEntClientBodySidecarCapacity,
+    2u * phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType
+        <= kDynEntClientBodySidecarCapacity,
     "dynent sidecar capacity must cover both draw-type key ranges");
-
-[[nodiscard]] inline phys_obj_id::OwnerIndex DynEntPhysObjId_MakeOwnerIndex(
-    std::uint32_t drawType,
-    std::uint16_t dynEntId) noexcept
-{
-    return static_cast<phys_obj_id::OwnerIndex>(
-        drawType * kDynEntPhysObjIdOwnerPerDrawType + dynEntId);
-}
 
 extern phys_obj_id::BodySidecar<kCposeBodySidecarCapacity> g_cposeBodySidecar;
 extern phys_obj_id::BodySidecar<kBreakablePieceBodySidecarCapacity> g_breakablePieceBodySidecar;

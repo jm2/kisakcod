@@ -1,4 +1,5 @@
 #include <qcommon/qcommon.h>
+#include <qcommon/sys_sync.h>
 
 #include "dynentity_client.h"
 #include <gfx_d3d/r_scene.h>
