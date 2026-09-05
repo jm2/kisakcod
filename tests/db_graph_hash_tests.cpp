@@ -392,10 +392,11 @@ void TestFramingNestingIsCanonical()
     Expect(nested() == flatPair(), "balanced nesting is order-canonical");
 }
 
-// Open records are legal mid-stream (the caller may still close them);
-// Finish resolves a still-open record by invalidating, finalizing,
-// and resetting to a fresh stream. Two identically-built streams that
-// Finish with records still open finalize to the same digest.
+// Open records are legal mid-stream (the caller may still close them), but
+// Finish over a still-open record is misuse: the digest finalizes
+// deterministically, and the verdict STAYS OBSERVABLE after Finish — the
+// implicit post-Finish re-initialization must not launder it. Only Reset()
+// restores the fresh-stream valid state.
 void TestFramingFinishResolvesOpenRecords()
 {
     const auto misuseUnterminated = []()
@@ -407,15 +408,28 @@ void TestFramingFinishResolvesOpenRecords()
     };
     GraphHashBuilder probe = misuseUnterminated();
     Expect(probe.Valid(), "open records are legal mid-stream");
-    probe.Finish();
+    const Digest truncatedDigest = probe.Finish();
+    Expect(!probe.Valid(),
+        "open records at Finish invalidate the stream observably");
     GraphHashBuilder fresh;
-    Expect(probe.Finish() == fresh.Finish(),
-        "Finish resets the builder to the fresh stream");
+    const Digest freshDigest = fresh.Finish();
+    Expect(truncatedDigest != freshDigest,
+        "a truncated walk does not collide with a fresh empty stream");
+    Expect(probe.Finish() == freshDigest,
+        "Finish re-initializes the builder to the fresh stream");
     GraphHashBuilder a = misuseUnterminated();
     GraphHashBuilder b = misuseUnterminated();
     Expect(a.Finish() == b.Finish(),
         "identically-misused streams finalize deterministically");
-    Expect(a.Valid() && b.Valid(), "Finish restores a valid fresh stream");
+    Expect(!a.Valid() && !b.Valid(),
+        "the misuse verdict survives Finish (no silent laundering)");
+    a.Reset();
+    Expect(a.Valid(), "Reset restores the fresh-stream valid state");
+    a.BeginRecord(7);
+    a.FieldU64(1, 5);
+    a.EndRecord();
+    a.Finish();
+    Expect(a.Valid(), "a well-formed stream after Reset finishes valid");
 }
 
 // Extra EndRecord likewise invalidates.
@@ -444,7 +458,10 @@ void TestFramingDepthOverflowIsDeterministic()
     GraphHashBuilder b = misuseDeep();
     Expect(a.Finish() == b.Finish(),
         "overflowed streams stay deterministic");
-    Expect(a.Valid(), "Finish resets the builder to a valid fresh stream");
+    Expect(!a.Valid(),
+        "the overflow verdict survives Finish (no silent laundering)");
+    a.Reset();
+    Expect(a.Valid(), "Reset restores the fresh-stream valid state");
 }
 
 void TestRecordFraming()

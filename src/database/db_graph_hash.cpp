@@ -189,11 +189,10 @@ GraphHashBuilder::GraphHashBuilder() noexcept
     Reset();
 }
 
-void GraphHashBuilder::Reset() noexcept
+void GraphHashBuilder::InitStream() noexcept
 {
     m_core.Init();
     m_recordDepth = 0;
-    m_valid = true;
 
     // Domain separation: length-prefixed domain string, then a framing
     // version marker so future stream revisions cannot alias v1 bytes.
@@ -202,6 +201,12 @@ void GraphHashBuilder::Reset() noexcept
     m_core.Update(reinterpret_cast<const std::uint8_t *>(kHashDomain), domainLength);
     const std::uint8_t framingVersion = 1;
     m_core.Update(&framingVersion, 1);
+}
+
+void GraphHashBuilder::Reset() noexcept
+{
+    m_valid = true;
+    InitStream();
 }
 
 void GraphHashBuilder::AbsorbTagged(const std::uint8_t marker, const std::uint32_t tag) noexcept
@@ -321,12 +326,21 @@ void GraphHashBuilder::FieldString(const std::uint32_t tag, const char *text) no
 
 Digest GraphHashBuilder::Finish() noexcept
 {
+    // Open records at Finish time are misuse (the walk was truncated: the
+    // caller never observed whole sub-structures). Flag it BEFORE the
+    // finalize so the verdict describes the stream being finished.
     if (m_recordDepth != 0)
         m_valid = false;
 
     Digest digest{};
     m_core.Finish(digest);
-    Reset();
+
+    // Re-initialize the STREAM so the builder is immediately reusable, but
+    // deliberately preserve m_valid: the misuse verdict of the just-finished
+    // stream must stay observable (callers check Valid() after Finish).
+    // Laundering it here previously made open-record misuse undetectable.
+    // Only an explicit Reset() restores the fresh-stream valid state.
+    InitStream();
     return digest;
 }
 
