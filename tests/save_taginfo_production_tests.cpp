@@ -68,10 +68,11 @@ taginfo::TagInfoEntityMap MakeEntityMap()
 // promotes the C4611 diagnostic to an error anywhere a jump frame is in
 // scope (including inlined callees). Throwing from the module's own fail
 // callback is plain C++ on every supported compiler and observes exactly the
-// same reporting contract.
+// same reporting contract. The type carries no members: the reported text is
+// delivered through the failMessage witness below, so there is nothing to
+// copy or drop on the unwind path.
 struct RecordDefect
 {
-    const char *message;
 };
 
 const char *failMessage = nullptr;
@@ -79,7 +80,7 @@ const char *failMessage = nullptr;
 void RecordFail(const char *message)
 {
     failMessage = message;
-    throw RecordDefect{message};
+    throw RecordDefect{};
 }
 
 // Fake scr string table: handle N maps to knownNames[N - 1].
@@ -171,15 +172,21 @@ std::vector<std::uint8_t> FinishWriter(
     return storage;
 }
 
-MemoryFile BeginReader(const std::vector<std::uint8_t> &payload)
+// The reader is handed back through a reference, never by value: MemFile
+// stream ownership is keyed on object identity (g_streamOwner holds the
+// address MemFile_InitForReading registered), so a copied or relocated
+// MemoryFile desyncs the owner check and every subsequent read is rejected
+// as decoder-invalid. A named-local return here compiled to an actual copy
+// on MSVC (GCC's NRVO hid it), which is exactly the Windows-only round-trip
+// failure the CI legs observed.
+void BeginReader(const std::vector<std::uint8_t> &payload, MemoryFile &reader)
 {
-    MemoryFile reader{};
+    reader = MemoryFile{};
     MemFile_InitForReading(
         &reader,
         static_cast<int>(payload.size()),
         const_cast<std::uint8_t *>(payload.data()),
         false);
-    return reader;
 }
 
 void CloseReader(MemoryFile &reader)
@@ -257,7 +264,8 @@ void TestNamedRecordRoundTrip()
         &writer, map, RecordFail, FakeStringFromHandle, live);
 
     const std::vector<std::uint8_t> payload = FinishWriter(writer, storage);
-    MemoryFile reader = BeginReader(payload);
+    MemoryFile reader{};
+    BeginReader(payload, reader);
 
     taginfo::TagInfoRestoredRecord restored{};
     taginfo::ReadHostRecord(
@@ -305,7 +313,8 @@ taginfo::TagInfoRestoredRecord DecodeRecordStream(
     const taginfo::TagInfoEntityMap &map)
 {
     taginfo::TagInfoRestoredRecord restored{};
-    MemoryFile reader = BeginReader(payload);
+    MemoryFile reader{};
+    BeginReader(payload, reader);
     taginfo::ReadHostRecord(
         &reader, map, RecordFail, FakeHandleFromString, restored);
     CloseReader(reader);
@@ -371,7 +380,8 @@ void TestUnnamedNullRecord()
     MemFile_WriteCString(&writer, "after");
 
     const std::vector<std::uint8_t> payload = FinishWriter(writer, storage);
-    MemoryFile reader = BeginReader(payload);
+    MemoryFile reader{};
+    BeginReader(payload, reader);
 
     taginfo::TagInfoRestoredRecord restored{};
     taginfo::ReadHostRecord(
@@ -498,7 +508,8 @@ void TestReadRejectsOutOfRangeIndex()
         &hostileDisk);
     const std::vector<std::uint8_t> payload = FinishWriter(writer, storage);
 
-    MemoryFile reader = BeginReader(payload);
+    MemoryFile reader{};
+    BeginReader(payload, reader);
 
     if (!ReadExpectingDefect(&reader, map))
     {
