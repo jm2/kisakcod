@@ -857,7 +857,7 @@ void __cdecl EmitCall(sval_u func_name, sval_u params, bool bStatement, scr_bloc
             type = Scr_GetUncacheType(value.type);
             // M4 (ki-n1et): builtin-function cache cells hold live function
             // pointers; store/load through the pointer-width member.
-            func = (void(*)())value.u.codePosValue;
+            func = reinterpret_cast<void(__cdecl *)()>(value.u.codePosValue);
         }
         else
         {
@@ -865,7 +865,7 @@ void __cdecl EmitCall(sval_u func_name, sval_u params, bool bStatement, scr_bloc
             func = Scr_GetFunction(&pName, &type);
             funcId = GetNewVariable(scrCompilePub.builtinFunc, name);
             value.type = Scr_GetCacheType(type);
-            value.u.codePosValue = (const char *)func;
+            value.u.codePosValue = reinterpret_cast<const char *>(func);
             SetVariableValue(funcId, &value);
         }
     }
