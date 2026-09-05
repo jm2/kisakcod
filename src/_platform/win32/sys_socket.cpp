@@ -314,5 +314,17 @@ bool KISAK_CDECL Sys_SocketAddressIsEqual(
 {
     if (!first || !second)
         return false;
-    return first->Equals(*second);
+    // Byte-exact equality: the address compares as network-order bytes
+    // (memcmp-safe) and the port as a host-order value. The rule lives here
+    // rather than in an inline header member, whose C++ body the repo's
+    // C-based MISRA analyzer cannot scope.
+    bool equal = false;
+    const bool sameAddress =
+        (std::memcmp(first->address, second->address,
+                     sizeof(first->address)) == 0);
+    if (sameAddress)
+    {
+        equal = (first->port == second->port);
+    }
+    return equal;
 }
