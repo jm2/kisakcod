@@ -74,9 +74,10 @@ bool MapConsoleInputError(
 // the portable boundary is byte-oriented — it cannot faithfully encode
 // codepoints above 0x7F without breaking the line parser's bytewise
 // contract. Remaining KEY_DOWN records produce one Data byte carrying the
-// UnicodeChar low byte. ENABLE_PROCESSED_INPUT translates Ctrl+C into a
-// CTRL_C_EVENT record; the record is drained so the line parser cannot
-// misinterpret it as data. The console control handler dispatch path runs
+// UnicodeChar low byte. Menu, mouse, focus, and window-buffer-size
+// records are non-key events that drain here; with ENABLE_PROCESSED_INPUT
+// Ctrl+C is dispatched to the control handler and never enters the input
+// queue at all. The console control handler dispatch path runs
 // independently of ReadConsoleInput, so the engine's signal policy is
 // unchanged.
 SysConsoleRawReadResult TranslateConsoleEvent(

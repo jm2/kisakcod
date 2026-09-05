@@ -536,10 +536,11 @@ INPUT_RECORD ConsoleResizeEvent()
     return record;
 }
 
-INPUT_RECORD ConsoleCtrlCEvent()
+INPUT_RECORD ConsoleMenuEvent(const DWORD commandId)
 {
     INPUT_RECORD record{};
-    record.EventType = CTRL_C_EVENT;
+    record.EventType = MENU_EVENT;
+    record.Event.MenuEvent.dwCommandId = commandId;
     return record;
 }
 
@@ -570,16 +571,23 @@ bool WriteAndExpectConsoleLine(
         readStage, SysConsoleReadStatus::LineReady, expectedLine);
 }
 
-// Single printable byte, with KEY_UP drained first and a non-key event
-// interleaved to prove the drain order.
+// Printable bytes, with KEY_UP and non-key records drained first to
+// prove the drain order. The batch mixes resize, key-up, menu, and
+// key-down records: menu events are real non-key console records, and
+// CTRL_C_EVENT (0) is a control-handler signal value, not an input
+// record type — injecting it makes WriteConsoleInput fail on Windows
+// builds that validate event types. The newline terminator is required
+// because the line parser keeps partial lines buffered and reports
+// NoData until a terminator arrives.
 bool TestConsoleDrainsNonKeyRecords(ConsoleInput &input)
 {
     const INPUT_RECORD events[] = {
         ConsoleResizeEvent(),
         ConsoleKeyEvent(false, 'a'),
         ConsoleKeyEvent(true, 'h'),
-        ConsoleCtrlCEvent(),
+        ConsoleMenuEvent(0),
         ConsoleKeyEvent(true, 'i'),
+        ConsoleKeyEvent(true, '\n'),
     };
     return WriteAndExpectConsoleLine(input,
         "write printable console events", events,
