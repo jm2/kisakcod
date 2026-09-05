@@ -762,7 +762,7 @@ require_contains(
 
 extract_slice(
     _workflow "- name: Run portable transaction tests"
-    "- uses: actions/upload-artifact@v4"
+    "- uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4"
     _measured_x86_tests "measured Windows x86 ctest selection")
 require_contains(
     _measured_x86_tests
