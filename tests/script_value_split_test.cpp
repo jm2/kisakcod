@@ -24,7 +24,7 @@
 //      widened engine cell to the native views, so the mirror and the
 //      engine cannot drift apart silently on either width.
 
-#include <script/scr_native.hpppp>
+#include <script/scr_native.hpp>
 
 // Engine header include is safe in this portable test TU on both widths:
 // since the M4 migration (ki-n1et) scr_variable.h asserts sizes through
