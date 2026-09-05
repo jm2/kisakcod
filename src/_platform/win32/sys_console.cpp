@@ -143,7 +143,17 @@ SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
 
         INPUT_RECORD event{};
         DWORD readCount = 0;
-        if (!ReadConsoleInput(input, &event, 1, &readCount)
+        // ReadConsoleInputW is required, not the A macro: the
+        // translator classifies on uChar.UnicodeChar (a WCHAR field),
+        // and only the W variant fills it without a code-page
+        // conversion. With ReadConsoleInputA conhost converts the
+        // stored W record through the console input code page, and on
+        // 32-bit clients the WOW64 thunk adds a second conversion —
+        // any unmappable code point then collapses to the default
+        // character '?' (0x3F), which sits inside the printable range
+        // and leaks into the line instead of draining. The W variant
+        // returns the queue's records verbatim on every architecture.
+        if (!ReadConsoleInputW(input, &event, 1, &readCount)
             || readCount == 0)
             return MapInputFailure(GetLastError());
 
