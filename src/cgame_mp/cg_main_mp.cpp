@@ -23,6 +23,7 @@
 #include <bgame/bg_public.h>
 #include <gfx_d3d/r_bsp.h>
 #include <gfx_d3d/r_primarylights.h>
+#include <cgame/cg_phys_obj_id.h>
 #include <gfx_d3d/r_model.h>
 #include <script/scr_vm.h>
 #include <game_mp/g_main_mp.h>
@@ -2149,13 +2150,9 @@ void __cdecl CG_Shutdown(int32_t localClientNum)
             Ragdoll_Remove(cent->pose.ragdollHandle);
             cent->pose.ragdollHandle = 0;
         }
-        if (cent->pose.physObjId)
+        if (dxBody *const physObjIdBody = CG_CPosePhysObjId_TakeBody(cent))
         {
-            if (cent->pose.physObjId != -1)
-            {
-                Phys_ObjDestroy(PHYS_WORLD_FX, (dxBody*)cent->pose.physObjId);
-                cent->pose.physObjId = 0;
-            }
+            Phys_ObjDestroy(PHYS_WORLD_FX, physObjIdBody);
         }
     }
     Ragdoll_Shutdown();

@@ -4,6 +4,7 @@
 #include <EffectsCore/fx_system.h>
 #include <universal/q_parse.h>
 #include <qcommon/com_bsp.h>
+#include <universal/phys_obj_id.h>
 
 const char *dynEntClassNames[2] =
 {
@@ -596,6 +597,17 @@ void __cdecl DynEnt_LoadEntities()
                     "cm.dynEntCount[DYNENT_COLL_CLIENT_MODEL] + cm.dynEntCount[DYNENT_COLL_CLIENT_BRUSH] == dynEntCount");
             for (drawTypea = 0; drawTypea < 2; ++drawTypea)
             {
+                // The sidecar owner key packs drawType * 4096 + dynEntId;
+                // a per-draw-type count past the packing stride would
+                // collide MODEL keys into the BRUSH key range.
+                if (cm.dynEntCount[drawTypea] > phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
+                    MyAssertHandler(
+                        ".\\DynEntity\\DynEntity_load_obj.cpp",
+                        597,
+                        0,
+                        "dynEntCount doesn't exceed the sidecar owner-key stride\n\t%i not in [0, %u)",
+                        cm.dynEntCount[drawTypea],
+                        phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType);
                 if (cm.dynEntCount[drawTypea])
                 {
                     cm.dynEntPoseList[drawTypea] = (DynEntityPose *)DynEnt_Alloc(cm.dynEntCount[drawTypea], 32);
@@ -616,6 +628,17 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
     {
         uint16_t count = 0;
         MemFile_ReadData(memFile, sizeof(count), (uint8_t *)&count);
+        // Same sidecar owner-key stride bound as the MP loader: the save
+        // image is untrusted data and a count past the stride would collide
+        // this draw type's keys into the next one's slot range.
+        if (count > phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
+            MyAssertHandler(
+                ".\\DynEntity\\DynEntity_load_obj.cpp",
+                620,
+                0,
+                "dynEntCount doesn't exceed the sidecar owner-key stride\n\t%hu not in [0, %u)",
+                count,
+                phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType);
         cm.dynEntCount[drawType] = count;
         if (count == 0)
             continue;
@@ -627,10 +650,40 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
         {
             uint8_t hasPhys = 0;
             MemFile_ReadData(memFile, 1, &hasPhys);
+            DynEntityClient *const dynEntClient = &cm.dynEntClientList[drawType][dynEntId];
             if (hasPhys)
-                cm.dynEntClientList[drawType][dynEntId].physObjId = (uintptr_t)Phys_ObjLoad(PHYS_WORLD_DYNENT, memFile);
+            {
+                dxBody *const physObjIdBody = Phys_ObjLoad(PHYS_WORLD_DYNENT, memFile);
+                if (physObjIdBody)
+                {
+                    // Shared packing helper: must match the runtime bind
+                    // path in DynEntity_client.cpp exactly.
+                    const phys_obj_id::OwnerIndex owner =
+                        phys_obj_id::DynEntPhysObjId_MakeOwnerIndex(
+                            static_cast<std::uint32_t>(drawType),
+                            dynEntId);
+                    // The frozen field is int32_t; the sidecar token is the
+                    // corresponding unsigned type, so alias through it
+                    // explicitly (signed/unsigned pairs may alias).
+                    const phys_obj_id::TokenResult bind = phys_obj_id::WriteBind(
+                        g_dynEntClientBodySidecar,
+                        reinterpret_cast<phys_obj_id::BodyToken *>(&dynEntClient->physObjId),
+                        owner,
+                        physObjIdBody);
+                    if (bind.status != phys_obj_id::Status::Success)
+                    {
+                        // A failed bind means the slot is already occupied.
+                        // The legacy saved-image rebuild never re-occupies
+                        // an active slot, so this is a programming error;
+                        // leak the body to keep the load path linear.
+                        dynEntClient->physObjId = 0;
+                    }
+                }
+            }
             else
-                cm.dynEntClientList[drawType][dynEntId].physObjId = 0;
+            {
+                dynEntClient->physObjId = 0;
+            }
         }
     }
 }
@@ -784,11 +837,15 @@ void DynEnt_SaveEntities(MemoryFile *memFile)
                 v5 = 0;
                 do
                 {
+                    DynEntityClient *const dynEntClient = &(*dynEntClientList)[v5];
+                    dxBody *const physObjIdBody = phys_obj_id::ReadResolve<dxBody>(
+                        g_dynEntClientBodySidecar,
+                        dynEntClient->physObjId);
                     //v6 = (_cntlzw((*dynEntClientList)[v5].physObjId) & 0x20) == 0;
-                    v6 = (*dynEntClientList)[v5].physObjId != 0;
+                    v6 = (physObjIdBody != nullptr);
                     MemFile_WriteData(memFile, 1, &v6);
                     if (v6)
-                        Phys_ObjSave((dxBody*)(*dynEntClientList)[v5].physObjId, memFile);
+                        Phys_ObjSave(physObjIdBody, memFile);
                     v5 = (uint16_t)(v5 + 1);
                 } while (v5 < *dynEntCount);
             }

@@ -27,6 +27,7 @@
 #include <game_mp/g_public_mp.h>
 #include <universal/profile.h>
 #include <cgame/cg_pose_atomic.h>
+#include <cgame/cg_phys_obj_id.h>
 
 #include <cstdlib>
 
@@ -649,7 +650,7 @@ void __cdecl CG_AddPacketEntity(int32_t localClientNum, int32_t entnum)
             }
         }
     }
-    if (cent->pose.physObjId == -1)
+    if (CG_CPosePhysObjId_IsDead(cent))
     {
         if (CG_IsEntityLinked(localClientNum, entnum))
             CG_UnlinkEntity(localClientNum, entnum);
@@ -1047,9 +1048,13 @@ void __cdecl CG_CalcEntityPhysicsPositions(int32_t localClientNum, centity_s *ce
             cgs->gameModels[cent->nextState.index.brushmodel])
             && !CG_ExpiredLaunch(localClientNum, cent))
         {
-            if (!cent->pose.physObjId)
+            // Legacy guard was `!cent->pose.physObjId`: retry only when the
+            // field was never attempted (0). GetBody() also resolves a DEAD
+            // token to null, which would retry failed creation every frame;
+            // test the raw field instead.
+            if (phys_obj_id::IsNull(cent->pose.physObjId))
                 CG_CreatePhysicsObject(localClientNum, cent);
-            if (cent->pose.physObjId == -1)
+            if (CG_CPosePhysObjId_IsDead(cent))
             {
                 cent->pose.origin[0] = cent->currentState.pos.trBase[0];
                 cent->pose.origin[1] = cent->currentState.pos.trBase[1];
@@ -1141,14 +1146,35 @@ void __cdecl CG_CreatePhysicsObject(int32_t localClientNum, centity_s *cent)
             Phys_ReportBodyModelCreateFailure(status, resourceFailure);
             Name = DObjGetName(obj);
             Com_PrintWarning(1, "Failed to create physics object for '%s'.\n", Name);
-            cent->pose.physObjId = -1;
+            cent->pose.physObjId = phys_obj_id::DEAD_BODY_TOKEN;
             return;
         }
-        cent->pose.physObjId = (int32_t)(uintptr_t)physObjId;
+        // The slot is guaranteed vacant: CG_ShutdownEntity runs on
+        // snapshot transition and force-clears the field, so by the time
+        // we get here the prior body (if any) has already been destroyed
+        // and the field zeroed. If the assign ever reports failure it is
+        // a programming error, not a runtime condition — but the freshly
+        // created body must not leak: destroy it under the physics lock
+        // exactly like the bullet-impact rollback path above, then
+        // dead-token the entity.
+        if (!CG_CPosePhysObjId_Assign(cent, physObjId))
+        {
+            bool destroyFailed = false;
+            Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+            destroyFailed = Phys_TryDestroyBodyLockedNoReport(
+                                PHYS_WORLD_FX, physObjId)
+                != PhysBodyRollbackStatus::Success;
+            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+            cent->pose.physObjId = phys_obj_id::DEAD_BODY_TOKEN;
+            if (destroyFailed)
+            {
+                std::abort();
+            }
+        }
     }
     else
     {
-        cent->pose.physObjId = -1;
+        cent->pose.physObjId = phys_obj_id::DEAD_BODY_TOKEN;
         v2 = DObjGetName(obj);
         Com_PrintWarning(1, "Failed to create physics object for '%s'.  No physics preset.\n", v2);
     }
@@ -1156,9 +1182,13 @@ void __cdecl CG_CreatePhysicsObject(int32_t localClientNum, centity_s *cent)
 
 void __cdecl CG_UpdatePhysicsPose(centity_s *cent)
 {
-    float quat[4]; // [esp+0h] [ebp-10h] BYREF
+    // Identity-initialized: if the token fails to resolve below (body
+    // already torn down between the guard and the resolve), the quat
+    // would otherwise reach UnitQuatToAngles uninitialized.
+    float quat[4] = {0.0f, 0.0f, 0.0f, 1.0f}; // [esp+0h] [ebp-10h] BYREF
+    bool haveBody = false;
 
-    if (!cent->pose.physObjId || cent->pose.physObjId == -1)
+    if (!CG_CPosePhysObjId_GetBody(cent) || CG_CPosePhysObjId_IsDead(cent))
         MyAssertHandler(
             ".\\cgame_mp\\cg_ents_mp.cpp",
             1281,
@@ -1166,9 +1196,14 @@ void __cdecl CG_UpdatePhysicsPose(centity_s *cent)
             "%s",
             "cent->pose.physObjId != PHYS_OBJ_ID_NULL && cent->pose.physObjId != PHYS_OBJ_ID_DEAD");
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-    Phys_ObjGetInterpolatedState(PHYS_WORLD_FX, (dxBody *)cent->pose.physObjId, cent->pose.origin, quat);
+    if (dxBody *const physObjIdBody = CG_CPosePhysObjId_GetBody(cent))
+    {
+        Phys_ObjGetInterpolatedState(PHYS_WORLD_FX, physObjIdBody, cent->pose.origin, quat);
+        haveBody = true;
+    }
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-    UnitQuatToAngles(quat, cent->pose.angles);
+    if (haveBody)
+        UnitQuatToAngles(quat, cent->pose.angles);
 }
 
 char __cdecl CG_ExpiredLaunch(int32_t localClientNum, centity_s *cent)
@@ -1177,9 +1212,12 @@ char __cdecl CG_ExpiredLaunch(int32_t localClientNum, centity_s *cent)
 
     cg_s *cgameGlob = CG_GetLocalClientGlobals(localClientNum);
 
-    if (cent->pose.physObjId || cgameGlob->time <= cent->nextState.lerp.pos.trTime + 1000)
+    // Legacy guard was `cent->pose.physObjId ||` — any attempted field
+    // (including DEAD, -1) counts as "not expired"; only a never-attempted
+    // (0) field older than a second expires.
+    if (!phys_obj_id::IsNull(cent->pose.physObjId) || cgameGlob->time <= cent->nextState.lerp.pos.trTime + 1000)
         return 0;
-    cent->pose.physObjId = -1;
+    cent->pose.physObjId = phys_obj_id::DEAD_BODY_TOKEN;
     return 1;
 }
 
@@ -1259,12 +1297,11 @@ DObj_s *__cdecl CG_PreProcess_GetDObj(int32_t localClientNum, int32_t entIndex, 
     cent = CG_GetEntity(localClientNum, entIndex);
     if (obj && (!model || !CG_CheckDObjInfoMatches(localClientNum, entIndex, entType, model)))
     {
-        if (cent->pose.physObjId != -1 && cent->pose.physObjId)
+        if (dxBody *const physObjIdBody = CG_CPosePhysObjId_TakeBody(cent))
         {
             if (CG_IsEntityLinked(localClientNum, cent->nextState.number))
                 CG_UnlinkEntity(localClientNum, cent->nextState.number);
-            Phys_ObjDestroy(PHYS_WORLD_FX, (dxBody *)cent->pose.physObjId);
-            cent->pose.physObjId = 0;
+            Phys_ObjDestroy(PHYS_WORLD_FX, physObjIdBody);
         }
         FX_MarkEntDetachAll(localClientNum, entIndex);
         CG_SafeDObjFree(localClientNum, entIndex);

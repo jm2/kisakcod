@@ -1,4 +1,5 @@
 #include <qcommon/qcommon.h>
+#include <qcommon/sys_sync.h>
 
 #include "dynentity_client.h"
 #include <gfx_d3d/r_scene.h>
@@ -6,6 +7,7 @@
 #include <EffectsCore/fx_system.h>
 #include <gfx_d3d/r_shadowcookie.h>
 #include <universal/profile.h>
+#include <universal/phys_obj_id.h>
 
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>
@@ -13,6 +15,102 @@
 #elif KISAK_SP
 #include <cgame/cg_main.h>
 #endif
+
+// Priority-7 native64 ABI seam: DynEntityClient::physObjId is a 32-bit
+// token (kept at its frozen width so the on-disk 12-byte save image and the
+// runtime struct layout never widen). The native dxBody* pointer lives in
+// g_dynEntClientBodySidecar, indexed by a packed owner key that combines
+// the drawType and the dynEntId. Helpers below keep the legacy compare-zero
+// pattern at every existing call site while routing the body pointer
+// through the sidecar under CRITSECT_PHYSICS.
+namespace
+{
+[[nodiscard]] phys_obj_id::OwnerIndex DynEntPhysObjId_OwnerIndex(
+    DynEntityDrawType drawType,
+    uint16_t dynEntId)
+{
+    // Shared packing lives in universal/phys_obj_id.h so the save-image
+    // replay path (DynEntity_load_obj.cpp) derives identical keys.
+    return phys_obj_id::DynEntPhysObjId_MakeOwnerIndex(
+        static_cast<std::uint32_t>(drawType),
+        dynEntId);
+}
+
+// Non-mutating reader. Returns the body pointer for the current token, or
+// nullptr if the field is null/dead/stale or the slot is unbound.
+[[nodiscard]] dxBody *DynEntPhysObjId_GetBody(
+    DynEntityDrawType drawType,
+    uint16_t dynEntId,
+    const DynEntityClient *dynEntClient)
+{
+    if (dynEntClient == nullptr)
+        return nullptr;
+    return phys_obj_id::ReadResolve<dxBody>(
+        g_dynEntClientBodySidecar,
+        dynEntClient->physObjId);
+}
+
+// True iff the field currently maps to a live body binding. Mirrors the
+// legacy `if (dynEntClient->physObjId)` predicate.
+[[nodiscard]] bool DynEntPhysObjId_HasBody(
+    DynEntityDrawType drawType,
+    uint16_t dynEntId,
+    const DynEntityClient *dynEntClient)
+{
+    return DynEntPhysObjId_GetBody(drawType, dynEntId, dynEntClient) != nullptr;
+}
+
+// Release the binding and clear the field. Returns the body pointer that
+// the caller now owns and must destroy (via Phys_ObjDestroy under the
+// caller-owned CRITSECT_PHYSICS). If the field is null/dead/stale, the
+// field is still cleared and the function returns nullptr.
+dxBody *DynEntPhysObjId_TakeBody(
+    DynEntityDrawType drawType,
+    uint16_t dynEntId,
+    DynEntityClient *dynEntClient)
+{
+    if (dynEntClient == nullptr)
+        return nullptr;
+    dxBody *body = nullptr;
+    const phys_obj_id::BodyResult r =
+        g_dynEntClientBodySidecar.Release(dynEntClient->physObjId);
+    if (r)
+        body = static_cast<dxBody *>(r.body);
+    dynEntClient->physObjId = phys_obj_id::INVALID_BODY_TOKEN;
+    return body;
+}
+
+// Bind a freshly-created body to the dynent. On success the field is
+// updated to a non-null token; on failure the field is left untouched and
+// the caller must destroy the body to avoid a leak.
+bool DynEntPhysObjId_Assign(
+    DynEntityDrawType drawType,
+    uint16_t dynEntId,
+    DynEntityClient *dynEntClient,
+    dxBody *body)
+{
+    if (dynEntClient == nullptr || body == nullptr)
+        return false;
+    if (dynEntClient->physObjId != phys_obj_id::INVALID_BODY_TOKEN)
+    {
+        // A duplicated assign is a contract violation: the caller must
+        // first release the existing binding. The legacy code path
+        // gated assignment on `if (!dynEntClient->physObjId)`, so this
+        // assertion enforces the same invariant.
+        return false;
+    }
+    const phys_obj_id::OwnerIndex owner = DynEntPhysObjId_OwnerIndex(drawType, dynEntId);
+    // The frozen field is int32_t; the sidecar token is the corresponding
+    // unsigned type, so alias through it explicitly (signed/unsigned pairs
+    // may alias).
+    const phys_obj_id::TokenResult bind = phys_obj_id::WriteBind(
+        g_dynEntClientBodySidecar,
+        reinterpret_cast<phys_obj_id::BodyToken *>(&dynEntClient->physObjId),
+        owner,
+        body);
+    return bind.status == phys_obj_id::Status::Success;
+}
+} // namespace
 
 #include <algorithm>
 
@@ -448,19 +546,30 @@ void __cdecl DynEntCl_ProcessEntities(int32_t localClientNum)
         for (dynEntId = 0; dynEntId < (int)dynEntCount; ++dynEntId)
         {
             dynEntClient = DynEnt_GetClientEntity(dynEntId, DYNENT_DRAW_MODEL);
-            if ((dynEntClient->flags & 1) != 0 && dynEntClient->physObjId)
+            // Sidecar Resolve/Release and the ODE body reads run under the
+            // physics lock per the sidecar contract; Phys_ObjDestroy
+            // manages its own locking and stays outside.
+            Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+            dxBody *const physObjIdBody =
+                DynEntPhysObjId_GetBody(DYNENT_DRAW_MODEL, dynEntId, dynEntClient);
+            bool physObjAsleep = false;
+            if ((dynEntClient->flags & 1) != 0 && physObjIdBody)
             {
                 dynEntPose = DynEnt_GetClientPose(dynEntId, DYNENT_DRAW_MODEL);
                 Phys_ObjGetInterpolatedState(
                     PHYS_WORLD_DYNENT,
-                    (dxBody *)dynEntClient->physObjId,
+                    physObjIdBody,
                     origin,
                     dynEntPose->pose.quat);
-                if (Phys_ObjIsAsleep((dxBody *)dynEntClient->physObjId))
-                {
-                    Phys_ObjDestroy(PHYS_WORLD_DYNENT, (dxBody *)dynEntClient->physObjId);
-                    dynEntClient->physObjId = 0;
-                }
+                physObjAsleep = Phys_ObjIsAsleep(physObjIdBody);
+                if (physObjAsleep)
+                    DynEntPhysObjId_TakeBody(DYNENT_DRAW_MODEL, dynEntId, dynEntClient);
+            }
+            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+            if (physObjIdBody && (dynEntClient->flags & 1) != 0)
+            {
+                if (physObjAsleep)
+                    Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
                 if (!VecNCompareCustomEpsilon(origin, dynEntPose->pose.origin, 0.0099999998f, 3))
                 {
                     dynEntPose->pose.origin[0] = origin[0];
@@ -474,19 +583,28 @@ void __cdecl DynEntCl_ProcessEntities(int32_t localClientNum)
         for (dynEntId = 0; dynEntId < (int)dynEntCount; ++dynEntId)
         {
             dynEntClient = DynEnt_GetClientEntity(dynEntId, DYNENT_DRAW_BRUSH);
-            if ((dynEntClient->flags & 1) != 0 && dynEntClient->physObjId)
+            // Same lock span as the MODEL loop above.
+            Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+            dxBody *const physObjIdBody =
+                DynEntPhysObjId_GetBody(DYNENT_DRAW_BRUSH, dynEntId, dynEntClient);
+            bool physObjAsleep = false;
+            if ((dynEntClient->flags & 1) != 0 && physObjIdBody)
             {
                 dynEntPosea = DynEnt_GetClientPose(dynEntId, DYNENT_DRAW_BRUSH);
                 Phys_ObjGetInterpolatedState(
                     PHYS_WORLD_DYNENT,
-                    (dxBody *)dynEntClient->physObjId,
+                    physObjIdBody,
                     origin,
                     dynEntPosea->pose.quat);
-                if (Phys_ObjIsAsleep((dxBody *)dynEntClient->physObjId))
-                {
-                    Phys_ObjDestroy(PHYS_WORLD_DYNENT, (dxBody *)dynEntClient->physObjId);
-                    dynEntClient->physObjId = 0;
-                }
+                physObjAsleep = Phys_ObjIsAsleep(physObjIdBody);
+                if (physObjAsleep)
+                    DynEntPhysObjId_TakeBody(DYNENT_DRAW_BRUSH, dynEntId, dynEntClient);
+            }
+            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+            if (physObjIdBody && (dynEntClient->flags & 1) != 0)
+            {
+                if (physObjAsleep)
+                    Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
                 if (!VecNCompareCustomEpsilon(origin, dynEntPosea->pose.origin, 0.0099999998f, 3))
                 {
                     dynEntPosea->pose.origin[0] = origin[0];
@@ -520,10 +638,15 @@ void __cdecl DynEntCl_Shutdown(int32_t localClientNum)
             dynEntClient = DynEnt_GetClientEntity(dynEntId, DYNENT_DRAW_MODEL);
             if ((dynEntClient->flags & 1) != 0)
             {
-                if (dynEntClient->physObjId)
+                // Sidecar Release under the physics lock; Phys_ObjDestroy
+                // takes the lock itself.
+                Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                dxBody *const physObjIdBody =
+                    DynEntPhysObjId_TakeBody(DYNENT_DRAW_MODEL, dynEntId, dynEntClient);
+                Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                if (physObjIdBody)
                 {
-                    Phys_ObjDestroy(PHYS_WORLD_DYNENT, (dxBody *)dynEntClient->physObjId);
-                    dynEntClient->physObjId = 0;
+                    Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
                     dynEntClient->flags &= ~1u;
                 }
             }
@@ -532,11 +655,18 @@ void __cdecl DynEntCl_Shutdown(int32_t localClientNum)
         for (dynEntIda = 0; dynEntIda < (int)dynEntCounta; ++dynEntIda)
         {
             dynEntClienta = DynEnt_GetClientEntity(dynEntIda, DYNENT_DRAW_BRUSH);
-            if ((dynEntClienta->flags & 1) != 0 && dynEntClienta->physObjId)
+            if ((dynEntClienta->flags & 1) != 0)
             {
-                Phys_ObjDestroy(PHYS_WORLD_DYNENT, (dxBody *)dynEntClienta->physObjId);
-                dynEntClienta->physObjId = 0;
-                dynEntClienta->flags &= ~1u;
+                // Same lock span as the MODEL shutdown loop above.
+                Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                dxBody *const physObjIdBody =
+                    DynEntPhysObjId_TakeBody(DYNENT_DRAW_BRUSH, dynEntIda, dynEntClienta);
+                Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                if (physObjIdBody)
+                {
+                    Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
+                    dynEntClienta->flags &= ~1u;
+                }
             }
         }
     }
@@ -984,7 +1114,35 @@ void __cdecl DynEntCl_EntityImpactEvent(
         cent = CG_GetEntity(localClientNum, trace->hitId);
         if (!cent)
             MyAssertHandler(".\\DynEntity\\DynEntity_client.cpp", 996, 0, "%s", "cent");
-        if (cent->pose.physObjId != -1 && cent->pose.physObjId)
+#ifdef KISAK_SP
+        // SP: this function's only runtime caller is SP cgame
+        // (cgame/cg_weapons.cpp), where cpose_t::physObjId is native-width
+        // and holds a live dxBody* written natively by CG_CreatePhysicsObject
+        // / CG_UpdatePhysicsPose. g_cposeBodySidecar is bound only on MP, so
+        // a sidecar resolve here would narrow a real 64-bit pointer to a
+        // 32-bit token against a permanently-empty table and always yield
+        // nullptr, silently dropping bullet impact sound, impact effects,
+        // and the Phys_ObjBulletImpact impulse. Legacy semantics: 0 = no
+        // body, (uintptr_t)-1 = dead sentinel, anything else is a direct
+        // pointer (matches master 53652090).
+        dxBody *const centPhysObjIdBody =
+            (cent->pose.physObjId && cent->pose.physObjId != (uintptr_t)-1)
+                ? reinterpret_cast<dxBody *>(cent->pose.physObjId)
+                : nullptr;
+#else
+        // MP: the cpose field is a frozen 32-bit generation-checked token
+        // backed by g_cposeBodySidecar (bound by cgame_mp). There is no MP
+        // runtime caller today, but the TU compiles in both configs, so
+        // keep the token resolve for build parity. The sidecar read runs
+        // under the physics lock per the sidecar contract.
+        dxBody *centPhysObjIdBody = nullptr;
+        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+        centPhysObjIdBody = phys_obj_id::ReadResolve<dxBody>(
+            g_cposeBodySidecar,
+            static_cast<phys_obj_id::BodyToken>(cent->pose.physObjId));
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+#endif
+        if (centPhysObjIdBody)
         {
             Vec3Sub(hitPos, start, hitDir);
             Vec3Normalize(hitDir);
@@ -1005,7 +1163,7 @@ void __cdecl DynEntCl_EntityImpactEvent(
                 MyAssertHandler(".\\DynEntity\\DynEntity_client.cpp", 1013, 0, "%s", "physPreset");
             Phys_ObjBulletImpact(
                 PHYS_WORLD_DYNENT,
-                (dxBody *)cent->pose.physObjId,
+                centPhysObjIdBody,
                 hitPos,
                 hitDir,
                 dynEnt_bulletForce->current.value,
@@ -1187,19 +1345,38 @@ char __cdecl DynEntCl_DynEntImpactEvent(
     if (DynEnt_GetEntityProps(dynEntDef->type)->usePhysics)
     {
         dynEntPose = DynEnt_GetClientPose(dynEntId, drawType);
-        if (!dynEntClient->physObjId)
+        // Sidecar ops run under CRITSECT_PHYSICS per the sidecar contract;
+        // DynEntCl_CreatePhysObj/Phys_ObjDestroy lock internally and stay
+        // outside the span. A failed Assign would leak the fresh body, so
+        // destroy it instead.
+        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+        const bool hasPhysObjBody = DynEntPhysObjId_HasBody(drawType, dynEntId, dynEntClient);
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (!hasPhysObjBody)
         {
             PhysObj = DynEntCl_CreatePhysObj(dynEntDef, &dynEntPose->pose);
-            dynEntClient->physObjId = (int)PhysObj;
+            if (PhysObj)
+            {
+                Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                const bool bound = DynEntPhysObjId_Assign(drawType, dynEntId, dynEntClient, PhysObj);
+                Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                if (!bound)
+                    Phys_ObjDestroy(PHYS_WORLD_DYNENT, PhysObj);
+            }
         }
-        if (dynEntClient->physObjId)
+        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+        if (dxBody *const physObjIdBody =
+                DynEntPhysObjId_GetBody(drawType, dynEntId, dynEntClient))
+        {
             Phys_ObjBulletImpact(
                 PHYS_WORLD_DYNENT,
-                (dxBody *)dynEntClient->physObjId,
+                physObjIdBody,
                 hitPos,
                 hitDir,
                 dynEnt_bulletForce->current.value,
                 dynEntDef->physPreset->bulletForceScale);
+        }
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     }
     if (DynEnt_GetEntityProps(dynEntDef->type)->destroyable)
     {
@@ -1292,10 +1469,15 @@ void __cdecl DynEntCl_Damage(
     if (dynEntClient->health <= 0)
     {
         dynEntClient->flags &= 0xFFFCu;
-        if (dynEntClient->physObjId)
+        // Sidecar Release under the physics lock; Phys_ObjDestroy takes
+        // the lock itself.
+        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+        dxBody *const physObjIdBody =
+            DynEntPhysObjId_TakeBody((DynEntityDrawType)drawType, dynEntId, dynEntClient);
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (physObjIdBody)
         {
-            Phys_ObjDestroy(PHYS_WORLD_DYNENT, (dxBody *)dynEntClient->physObjId);
-            dynEntClient->physObjId = 0;
+            Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
         }
         DynEntCl_UnlinkEntity(dynEntId, drawType);
         if (dynEntDef->destroyFx || dynEntDef->destroyPieces)
@@ -1488,22 +1670,39 @@ void __cdecl DynEntCl_ExplosionEvent(
                     Vec3Scale(diff, v30, result);
                     if (DynEnt_GetEntityProps(dynEntDef->type)->usePhysics)
                     {
-                        if (!dynEntClient->physObjId)
+                        // Sidecar ops under the physics lock; create/destroy
+                        // manage their own locking and stay outside.
+                        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                        const bool hasExplosionBody =
+                            DynEntPhysObjId_HasBody(drawType, hitEnts[i], dynEntClient);
+                        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                        if (!hasExplosionBody)
                         {
                             PhysObj = DynEntCl_CreatePhysObj(dynEntDef, &dynEntPose->pose);
-                            dynEntClient->physObjId = (int)PhysObj;
+                            if (PhysObj)
+                            {
+                                Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                                const bool bound =
+                                    DynEntPhysObjId_Assign(drawType, hitEnts[i], dynEntClient, PhysObj);
+                                Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                                if (!bound)
+                                    Phys_ObjDestroy(PHYS_WORLD_DYNENT, PhysObj);
+                            }
                         }
-                        if (dynEntClient->physObjId)
+                        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                        if (dxBody *const physObjIdBody =
+                                DynEntPhysObjId_GetBody(drawType, hitEnts[i], dynEntClient))
                         {
-                            Phys_ObjGetCenterOfMass((dxBody *)dynEntClient->physObjId, outPosition);
+                            Phys_ObjGetCenterOfMass(physObjIdBody, outPosition);
                             v10 = flrand(-1.0, 1.0);
                             outPosition[0] = v10 * dynEnt_explodeSpinScale->current.value + outPosition[0];
                             v11 = flrand(-1.0, 1.0);
                             outPosition[1] = v11 * dynEnt_explodeSpinScale->current.value + outPosition[1];
                             v12 = flrand(-1.0, 1.0);
                             outPosition[2] = v12 * dynEnt_explodeSpinScale->current.value + outPosition[2];
-                            Phys_ObjAddForce(PHYS_WORLD_DYNENT, (dxBody *)dynEntClient->physObjId, outPosition, result);
+                            Phys_ObjAddForce(PHYS_WORLD_DYNENT, physObjIdBody, outPosition, result);
                         }
+                        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
                     }
                     if (DynEnt_GetEntityProps(dynEntDef->type)->destroyable)
                     {
@@ -1651,11 +1850,31 @@ void __cdecl DynEntCl_JitterEvent(
                 ClientEntity = DynEnt_GetClientEntity(dynEntList[i], drawType);
                 if ((ClientEntity->flags & 1) == 0)
                     MyAssertHandler(".\\DynEntity\\DynEntity_client.cpp", 1421, 0, "%s", "dynEntClient->flags & DYNENT_CL_ACTIVE");
-                if (DynEnt_GetEntityProps(dynEntDef->type)->usePhysics && !ClientEntity->physObjId)
+                if (DynEnt_GetEntityProps(dynEntDef->type)->usePhysics)
                 {
-                    dynEntPosea = DynEnt_GetClientPose(dynEntList[i], drawType);
-                    PhysObj = DynEntCl_CreatePhysObj(dynEntDef, &dynEntPosea->pose);
-                    ClientEntity->physObjId = (int)PhysObj;
+                    // Sidecar ops under the physics lock; create/destroy
+                    // manage their own locking and stay outside.
+                    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                    const bool hasJitterBody =
+                        DynEntPhysObjId_HasBody(drawType, dynEntList[i], ClientEntity);
+                    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                    if (!hasJitterBody)
+                    {
+                        dynEntPosea = DynEnt_GetClientPose(dynEntList[i], drawType);
+                        PhysObj = DynEntCl_CreatePhysObj(dynEntDef, &dynEntPosea->pose);
+                        if (PhysObj)
+                        {
+                            Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                            const bool bound = DynEntPhysObjId_Assign(
+                                drawType,
+                                dynEntList[i],
+                                ClientEntity,
+                                PhysObj);
+                            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                            if (!bound)
+                                Phys_ObjDestroy(PHYS_WORLD_DYNENT, PhysObj);
+                        }
+                    }
                 }
             }
         }
@@ -1747,10 +1966,28 @@ void DynEntCl_WakeUpAroundPlayer(int localClientNum)
 
                 iassert(dynEntClient->flags & DYNENT_CL_ACTIVE);
 
-                if (DynEnt_GetEntityProps(EntityDef->type)->usePhysics && !dynEntClient->physObjId)
+                if (DynEnt_GetEntityProps(EntityDef->type)->usePhysics)
                 {
-                    ClientPose = DynEnt_GetClientPose(dynEntId, drawType);
-                    dynEntClient->physObjId = (int32_t)DynEntCl_CreatePhysObj(EntityDef, &ClientPose->pose);
+                    // Sidecar ops under the physics lock; create/destroy
+                    // manage their own locking and stay outside.
+                    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                    const bool hasWakeBody =
+                        DynEntPhysObjId_HasBody(drawType, dynEntId, dynEntClient);
+                    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                    if (!hasWakeBody)
+                    {
+                        ClientPose = DynEnt_GetClientPose(dynEntId, drawType);
+                        dxBody *const wakePhysObj = DynEntCl_CreatePhysObj(EntityDef, &ClientPose->pose);
+                        if (wakePhysObj)
+                        {
+                            Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                            const bool bound =
+                                DynEntPhysObjId_Assign(drawType, dynEntId, dynEntClient, wakePhysObj);
+                            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                            if (!bound)
+                                Phys_ObjDestroy(PHYS_WORLD_DYNENT, wakePhysObj);
+                        }
+                    }
                 }
             }
 
