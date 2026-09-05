@@ -180,7 +180,13 @@ foreach(_source IN LISTS _sources)
     set(_in_block_comment FALSE)
     foreach(_encoded_line IN LISTS _encoded_lines)
         string(REPLACE "${_escape_prefix}BS__" "\\" _line "${_encoded_line}")
-        string(REPLACE "${_escape_prefix}SEMI__" ";" _line "${_line}")
+        # Keep semicolons encoded through accumulation and matching: cmake 4.x
+        # string(REGEX) stops matching at `;` list boundaries in the scanned
+        # text, which used to drop the statement terminator from the captured
+        # assertion and left every assertion "unterminated". Decode stays
+        # limited to backslashes and brackets, which no longer guard a
+        # terminator check; the encoded SEMI__ token is matched and stripped
+        # explicitly below.
         string(REPLACE "${_escape_prefix}LBR__" "[" _line "${_line}")
         string(REPLACE "${_escape_prefix}RBR__" "]" _line "${_line}")
         if (NOT _in_block_comment
@@ -219,10 +225,10 @@ foreach(_source IN LISTS _sources)
 
         # Assertions may span physical lines. Wait for their statement terminator,
         # then inspect every direct comparison in the complete statement.
-        if (NOT _assertion MATCHES ";")
+        if (NOT _assertion MATCHES "${_escape_prefix}SEMI__")
             continue()
         endif()
-        string(REPLACE ";" "" _scan_statement "${_assertion}")
+        string(REPLACE "${_escape_prefix}SEMI__" "" _scan_statement "${_assertion}")
 
         string(REGEX MATCHALL "${_direct_regex}" _direct_matches "${_scan_statement}")
         foreach(_direct_match IN LISTS _direct_matches)
