@@ -1648,28 +1648,42 @@ bool NextComponentSpan(
 // resolves names from the process root, and FILE_OPEN_REPARSE_POINT plus
 // tag verification refuses any junction or symbolic-link ancestor or leaf
 // before descent.
+//
+// Access splits by depth. Ancestors request traversal-only rights: the
+// POSIX walk opens ancestors O_RDONLY|O_DIRECTORY and never writes to
+// them, and DELETE on an ancestor collides with any existing handle
+// opened without delete-sharing — including the current directory a
+// process holds on its own working directory — so every tree nested
+// under a caller's CWD would fail with STATUS_SHARING_VIOLATION before
+// the leaf is ever reached. Only the leaf anchor requests DELETE: it is
+// the sole object the walk marks for POSIX-semantics deletion, and
+// refusing a leaf whose delete access is blocked is the documented
+// fail-closed contract (an object held without delete-sharing cannot be
+// marked for deletion).
 bool OpenAnchorComponent(
     HANDLE *const held,
     const std::wstring &extendedPath,
     const std::size_t begin,
-    const std::size_t end)
+    const std::size_t end,
+    const bool isLeaf)
 {
-    constexpr std::uint32_t walkAccess =
-        kKisakDelete
-        | kKisakFileListDirectory
+    constexpr std::uint32_t ancestorAccess =
+        kKisakFileListDirectory
         | kKisakFileReadAttributes
         | kKisakSynchronize;
+    constexpr std::uint32_t leafAccess = kKisakDelete | ancestorAccess;
     constexpr std::uint32_t walkOptions =
         kKisakFileDirectoryFile
         | kKisakFileOpenReparsePoint
         | kKisakFileSynchronousIoNonAlert;
+    const std::uint32_t componentAccess = isLeaf ? leafAccess : ancestorAccess;
     NoteRemoveTreeStage("anchor/open");
     std::int32_t ntStatus = kKisakStatusSuccess;
     const HANDLE child = OpenChildRelativeToParent(
         *held,
         extendedPath.c_str() + begin,
         end - begin,
-        walkAccess,
+        componentAccess,
         walkOptions,
         &ntStatus);
     if (child == INVALID_HANDLE_VALUE)
@@ -1690,6 +1704,9 @@ bool OpenAnchorComponent(
 }
 
 // Walks every component — ancestors and leaf — down to the tree anchor.
+// The final component opens as the leaf (with DELETE access); every
+// earlier component opens traversal-only (see OpenAnchorComponent), so
+// the walk keeps one span of lookahead to know which component is last.
 bool WalkToTreeAnchor(
     const std::wstring &extendedPath,
     const std::size_t rootLength,
@@ -1703,12 +1720,30 @@ bool WalkToTreeAnchor(
     }
     std::size_t cursor = rootLength;
     std::size_t begin = 0;
-    while (NextComponentSpan(extendedPath, &cursor, &begin))
+    if (!NextComponentSpan(extendedPath, &cursor, &begin))
     {
-        if (!OpenAnchorComponent(held, extendedPath, begin, cursor))
-            return false;
+        // BuildRemovalExtendedPath rejects paths at or below the volume
+        // root, so the first component always exists today; refuse closed
+        // if that invariant ever changes.
+        NoteRemoveTreeFailure("anchor/missing", 0);
+        return false;
     }
-    return true;
+    std::size_t spanBegin = begin;
+    std::size_t spanEnd = cursor;
+    for (;;)
+    {
+        std::size_t nextCursor = cursor;
+        std::size_t nextBegin = 0;
+        const bool isLeaf = !NextComponentSpan(
+            extendedPath, &nextCursor, &nextBegin);
+        if (!OpenAnchorComponent(held, extendedPath, spanBegin, spanEnd, isLeaf))
+            return false;
+        if (isLeaf)
+            return true;
+        spanBegin = nextBegin;
+        spanEnd = nextCursor;
+        cursor = nextCursor;
+    }
 }
 }
 
