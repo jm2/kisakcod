@@ -1021,20 +1021,24 @@ RemoveTreeContractPaths MakeRemoveTreeContractPaths(
     return paths;
 }
 
-bool CreateRemoveTreeFixture(const RemoveTreeContractPaths &paths)
+bool CreateRemoveTreeDirectories(const RemoveTreeContractPaths &paths)
 {
-    SetCheckStage("remove-tree/setup");
-    if (!Check(Sys_FileSystemCreateDirectory(paths.root.c_str()))
-        || !Check(Sys_FileSystemCreateDirectory(paths.nestedDirectory.c_str()))
-        || !Check(Sys_FileSystemCreateDirectory(paths.deeperDirectory.c_str()))
-        || !Check(Sys_FileSystemCreateDirectory(paths.externalTarget.c_str()))
-        || !Check(WriteFile(paths.file))
-        || !Check(WriteFile(paths.nestedFile))
-        || !Check(WriteFile(paths.siblingFile))
-        || !Check(WriteFile(Join(paths.externalTarget, "outside.bin"))))
-    {
-        return false;
-    }
+    return Check(Sys_FileSystemCreateDirectory(paths.root.c_str()))
+        && Check(Sys_FileSystemCreateDirectory(paths.nestedDirectory.c_str()))
+        && Check(Sys_FileSystemCreateDirectory(paths.deeperDirectory.c_str()))
+        && Check(Sys_FileSystemCreateDirectory(paths.externalTarget.c_str()));
+}
+
+bool CreateRemoveTreeFiles(const RemoveTreeContractPaths &paths)
+{
+    return Check(WriteFile(paths.file))
+        && Check(WriteFile(paths.nestedFile))
+        && Check(WriteFile(paths.siblingFile))
+        && Check(WriteFile(Join(paths.externalTarget, "outside.bin")));
+}
+
+bool CreateRemoveTreePosixLiteralChildren(const RemoveTreeContractPaths &paths)
+{
 #if !defined(_WIN32)
     // Operator-audit regression: ':' and '\' are ordinary bytes in a POSIX
     // name. The deletion walk removes them through the held descriptor, so
@@ -1043,13 +1047,20 @@ bool CreateRemoveTreeFixture(const RemoveTreeContractPaths &paths)
     // tree. The contract's root-gone assertion below therefore proves they
     // were removed. Windows cannot create these names, so the coverage is
     // POSIX-only.
-    if (!Check(WriteFile(Join(paths.root, "literal:child")))
-        || !Check(WriteFile(Join(paths.root, "literal\\child"))))
-    {
-        return false;
-    }
-#endif
+    return Check(WriteFile(Join(paths.root, "literal:child")))
+        && Check(WriteFile(Join(paths.root, "literal\\child")));
+#else
+    (void)paths;
     return true;
+#endif
+}
+
+bool CreateRemoveTreeFixture(const RemoveTreeContractPaths &paths)
+{
+    SetCheckStage("remove-tree/setup");
+    return CreateRemoveTreeDirectories(paths)
+        && CreateRemoveTreeFiles(paths)
+        && CreateRemoveTreePosixLiteralChildren(paths);
 }
 
 bool CreateRemoveTreeContractLinks(const RemoveTreeContractPaths &paths)
@@ -1167,22 +1178,12 @@ bool TestRemoveTreeRejectsInvalidArguments(const std::string &root)
 }
 
 #if defined(_WIN32)
-bool VerifyRemoveTreeWin32Results(
-    const std::string &root,
-    const std::string &externalTarget)
+// Deletes the payload the external symlink pointed at and removes the
+// now-empty external target directory, reporting any residue found inside.
+bool RemoveExternalTarget(
+    const std::wstring &wideExternalTargetCheck,
+    const std::wstring &wideOutsideCheck)
 {
-    const std::wstring wideRoot = ExtendedPath(root);
-    const std::wstring wideExternalTargetCheck = ExtendedPath(externalTarget);
-    const std::wstring wideOutsideCheck =
-        ExtendedPath(Join(externalTarget, "outside.bin"));
-    if (!Check(GetFileAttributesW(wideRoot.c_str()) == INVALID_FILE_ATTRIBUTES)
-        || !Check(GetFileAttributesW(wideExternalTargetCheck.c_str())
-            != INVALID_FILE_ATTRIBUTES)
-        || !Check(GetFileAttributesW(wideOutsideCheck.c_str())
-            != INVALID_FILE_ATTRIBUTES))
-    {
-        return false;
-    }
     if (!Check(DeleteFileW(wideOutsideCheck.c_str())))
         return false;
     SetCheckStage("remove-tree/external-cleanup");
@@ -1215,6 +1216,28 @@ bool VerifyRemoveTreeWin32Results(
     if (!leftover.empty())
         return false;
     return Check(RemoveDirectoryW(wideExternalTargetCheck.c_str()));
+}
+
+bool VerifyRemoveTreeWin32Results(
+    const std::string &root,
+    const std::string &externalTarget)
+{
+    const std::wstring wideRoot = ExtendedPath(root);
+    const std::wstring wideExternalTargetCheck = ExtendedPath(externalTarget);
+    const std::wstring wideOutsideCheck =
+        ExtendedPath(Join(externalTarget, "outside.bin"));
+    // The tree must be gone; the external symlink's target and its payload
+    // must have survived.
+    if (!Check(GetFileAttributesW(wideRoot.c_str()) == INVALID_FILE_ATTRIBUTES))
+        return false;
+    if (!Check(GetFileAttributesW(wideExternalTargetCheck.c_str())
+            != INVALID_FILE_ATTRIBUTES)
+        || !Check(GetFileAttributesW(wideOutsideCheck.c_str())
+            != INVALID_FILE_ATTRIBUTES))
+    {
+        return false;
+    }
+    return RemoveExternalTarget(wideExternalTargetCheck, wideOutsideCheck);
 }
 #else
 bool VerifyRemoveTreePosixResults(
@@ -1286,6 +1309,29 @@ struct KisakTestMountPointBuffer
 // fills a mount-point reparse buffer sized to the real path. Returns false
 // if the target cannot be resolved or would not fit the 16-bit reparse
 // name-length fields.
+// Resolves a raw wide path to its absolute form via GetFullPathNameW's
+// two-call protocol (size query, then fill).
+bool ResolveAbsoluteWidePath(
+    const std::wstring &raw,
+    std::wstring *absolute)
+{
+    const DWORD required = GetFullPathNameW(raw.c_str(), 0, nullptr, nullptr);
+    if (required == 0)
+        return false;
+    std::vector<wchar_t> buffer(required, L'\0');
+    if (GetFullPathNameW(
+            raw.c_str(),
+            required,
+            buffer.data(),
+            nullptr)
+        == 0)
+    {
+        return false;
+    }
+    absolute->assign(buffer.data());
+    return true;
+}
+
 bool BuildMountPointReparseBuffer(
     const std::string &targetPath,
     std::vector<unsigned char> *buffer)
@@ -1293,21 +1339,10 @@ bool BuildMountPointReparseBuffer(
     std::wstring wideRaw;
     if (!Utf8ToWide(targetPath, &wideRaw))
         return false;
-    const DWORD required = GetFullPathNameW(
-        wideRaw.c_str(), 0, nullptr, nullptr);
-    if (required == 0)
+    std::wstring absolute;
+    if (!ResolveAbsoluteWidePath(wideRaw, &absolute))
         return false;
-    std::vector<wchar_t> absolute(required, L'\0');
-    if (GetFullPathNameW(
-            wideRaw.c_str(),
-            required,
-            absolute.data(),
-            nullptr)
-        == 0)
-    {
-        return false;
-    }
-    const std::wstring wideTarget = L"\\??\\" + std::wstring(absolute.data());
+    const std::wstring wideTarget = L"\\??\\" + absolute;
 
     const std::size_t substituteBytes = wideTarget.size() * sizeof(wchar_t);
     if (substituteBytes == 0 || substituteBytes > 0xFFFFu)
