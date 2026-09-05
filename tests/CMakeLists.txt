@@ -3226,7 +3226,7 @@ add_test(
 # script_value_split_test: contract tests for the script VM value-cell
 # save-image mirror vs native runtime split (M4). The retail 32-bit value
 # cell is frozen at 4-byte payload / 8-byte cell via ONDISK_SIZE in
-# scr_native.h; the native runtime views widen to 8/16 bytes on 64-bit via
+# scr_native.hpp; the native runtime views widen to 8/16 bytes on 64-bit via
 # RUNTIME_SIZE. The tests exercise the Disk <-> Native conversions, the
 # value-bearing vs runtime-reconstruction vartype classification, the
 # retail vartype encoding, float bit-preservation, and the no-fabricated-

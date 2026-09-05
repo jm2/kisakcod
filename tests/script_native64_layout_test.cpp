@@ -26,7 +26,7 @@
 //      scalar ids/handles. Widening must not -- and here does not --
 //      change any serialized format: the save path (scr_readwrite.cpp)
 //      writes type bytes and scalar payloads and rebuilds host pointers
-//      at load, and the frozen save-image mirrors live in scr_native.h.
+//      at load, and the frozen save-image mirrors live in scr_native.hpp.
 
 #include <universal/kisak_abi.h>
 

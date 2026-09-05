@@ -1,7 +1,7 @@
 // script_value_split_test: contract tests for the script VM value-cell
 // save-image mirror vs native runtime split (M4). The retail x86 value
 // cell is frozen at exactly 4-byte payload / 8-byte cell via the
-// ONDISK_SIZE asserts in scr_native.h. The native runtime views widen to
+// ONDISK_SIZE asserts in scr_native.hpp. The native runtime views widen to
 // 8-byte payload / 16-byte cell on 64-bit via RUNTIME_SIZE. This test
 // exercises:
 //
@@ -24,7 +24,7 @@
 //      widened engine cell to the native views, so the mirror and the
 //      engine cannot drift apart silently on either width.
 
-#include <script/scr_native.h>
+#include <script/scr_native.hpppp>
 
 // Engine header include is safe in this portable test TU on both widths:
 // since the M4 migration (ki-n1et) scr_variable.h asserts sizes through
@@ -244,7 +244,7 @@ void CheckFloatPayloadPreservation()
 
 int main()
 {
-    // 1+2: size contracts are compile-time asserts inside scr_native.h; the
+    // 1+2: size contracts are compile-time asserts inside scr_native.hpp; the
     // test TU compiles only when they hold. Runtime re-checks surface a
     // regression that drops the asserts as a ctest failure instead.
     CHECK(sizeof(script::VariableUnionDisk) == 4u);

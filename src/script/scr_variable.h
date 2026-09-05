@@ -97,7 +97,7 @@ struct VariableStackBuffer // sizeof=0xC
 };
 // M4 (ki-n1et): runtime struct holding a live `pos` host pointer; the save
 // path writes only the buffer CONTENTS, never this struct image. Widens
-// 0xC -> 0x10 on 64-bit; scr_native.h's VariableStackBufferNative mirrors
+// 0xC -> 0x10 on 64-bit; scr_native.hpp's VariableStackBufferNative mirrors
 // both widths.
 RUNTIME_SIZE(VariableStackBuffer, 0xC, 0x10);
 
@@ -166,7 +166,7 @@ static inline void VariableStackBuf_WriteCell(void *payload, const VariableUnion
 // M4 (ki-n1et): the value cell. On ILP32 every member is 4 bytes so live
 // host pointers (vectorValue / codePosValue / stackValue) are lossless; on
 // 64-bit the union widens 0x4 -> 0x8 and pointer stores through the 32-bit
-// image would truncate. scr_native.h carries the frozen save-image mirror
+// image would truncate. scr_native.hpp carries the frozen save-image mirror
 // (VariableUnionDisk, ONDISK_SIZE 4) and the widened runtime view
 // (VariableUnionNative, RUNTIME_SIZE 4->8); scr_readwrite's save/load
 // boundary moves only type bytes and scalar payloads, so the serialized

@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-//  scr_native.h -- native-width script VM value-cell runtime view + frozen
+//  scr_native.hpp -- native-width script VM value-cell runtime view + frozen
 //  save-image mirror split (M4).
 //
 //  The script VM is the largest remaining 32-bit-layout-bound runtime family
@@ -117,35 +117,29 @@ constexpr uint32_t kVarMask = 0x1F;
 //    Scr_ReadCodepos / Scr_ReadStack). No dword in the save image identifies
 //    the pointer, so a conversion must not pretend otherwise.
 // ----------------------------------------------------------------------------
+// The value-bearing kinds, as a table. Object-ish kinds (threads, entities,
+// arrays, lists) are saved through the VAR_POINTER id path: their cell
+// payload is a script object local id, so they are value-bearing too.
+inline constexpr uint32_t kValueBearingVartypes[] = {
+    VAR_UNDEFINED, VAR_POINTER,  VAR_STRING,     VAR_ISTRING,
+    VAR_FLOAT,     VAR_INTEGER,  VAR_ANIMATION,  VAR_THREAD,
+    VAR_NOTIFY_THREAD, VAR_TIME_THREAD, VAR_CHILD_THREAD, VAR_OBJECT,
+    VAR_DEAD_ENTITY, VAR_ENTITY, VAR_ARRAY,      VAR_DEAD_THREAD,
+    VAR_THREAD_LIST, VAR_ENDON_LIST,
+};
+
+// Table scan instead of a switch so the classification stays a flat,
+// complexity-bounded predicate (the 18-case switch blew past the analyzer's
+// cyclomatic limit of 10 with identical semantics).
 constexpr bool IsValueBearingVartype(uint32_t type)
 {
-    switch (type & kVarMask)
+    const uint32_t masked = type & kVarMask;
+    for (const uint32_t candidate : kValueBearingVartypes)
     {
-    case VAR_UNDEFINED:
-    case VAR_POINTER:
-    case VAR_STRING:
-    case VAR_ISTRING:
-    case VAR_FLOAT:
-    case VAR_INTEGER:
-    case VAR_ANIMATION:
-        // Object-ish kinds (threads, entities, arrays, lists) are saved
-        // through the VAR_POINTER id path: their cell payload is a script
-        // object local id, so they are value-bearing too.
-    case VAR_THREAD:
-    case VAR_NOTIFY_THREAD:
-    case VAR_TIME_THREAD:
-    case VAR_CHILD_THREAD:
-    case VAR_OBJECT:
-    case VAR_DEAD_ENTITY:
-    case VAR_ENTITY:
-    case VAR_ARRAY:
-    case VAR_DEAD_THREAD:
-    case VAR_THREAD_LIST:
-    case VAR_ENDON_LIST:
-        return true;
-    default:
-        return false;
+        if (candidate == masked)
+            return true;
     }
+    return false;
 }
 
 constexpr bool IsRuntimeReconstructionVartype(uint32_t type)
