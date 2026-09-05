@@ -401,11 +401,19 @@ of checked boxes.
     a scripted afterthought: the `windows-x86-parity` job builds all three
     Win32 presets with `-DKISAK_REPRODUCIBLE_BUILD=ON` (MSVC `/Brepro` pins
     the `__DATE__`/`__TIME__` and linker stamp inputs) and
-    `scripts/ci/compare-byte-parity.sh` fails closed unless the shared retail
-    reference object (`src/buildnumber.cpp`, no `KISAK_BUILD_*` conditionals)
-    and the buildnumber stamps are byte-identical across the MP/SP/dedicated
-    build trees; its first hosted run gates this change's own PR, and a red
-    parity job cannot merge. The `linux-amd64-mp` preset configures, builds,
+    `scripts/ci/compare-byte-parity.sh` fails closed unless the retail
+    sections of the shared reference object (`src/buildnumber.cpp`, no
+    `KISAK_BUILD_*` conditionals) and the buildnumber stamps are
+    byte-identical across the MP/SP/dedicated build trees; a red parity job
+    cannot merge. The gate's first weeks compared whole object files and
+    never went green: MSVC records each target's object path, command line
+    (with the variant's preprocessor definitions), and PDB path in the
+    CodeView `.debug$*` sections (and `.chks64` checksums over them), so the three objects differed
+    deterministically (identical hashes across hosted runs hours apart)
+    while their code and data were identical. The comparison now digests
+    only the retail sections via `scripts/ci/object-section-digest.py`,
+    reports the differing section on failure, and uploads the reference
+    objects for offline diffing (ki-2vjp). The `linux-amd64-mp` preset configures, builds,
     and passes the portable suite locally (205/208; the three failures are the
     pre-existing, environment-sensitive abi-scanner and security-count defects
     tracked on ki-9b13 and ki-ya3t that stay green on hosted CI).

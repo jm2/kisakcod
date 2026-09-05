@@ -8,8 +8,9 @@
 #      directory so the recorded flags and object outputs are reproducible.
 #   2. Records the buildnumber.cpp / buildnumber.h inputs that the increment
 #      build would have stamped at configure time.
-#   3. Hashes the linked executable's text/code/data sections via sha256sum
-#      and compares the shared retail bytes between variants.
+#   3. Digests the retail sections of every compiled reference object
+#      (scripts/ci/object-section-digest.py) and compares the shared retail
+#      bytes between variants.
 #   4. Re-records the cmake cache so the KISAK_BUILD_* flag deltas between
 #      variants are visible, and prints a side-by-side compare.
 #
@@ -18,15 +19,23 @@
 #     that increment_build.cmake uses, so the generated buildnumber.h is
 #     identical across configurations).
 #   - Same /Brepro MSVC flag combination (the stamp / timestamp / PDB GUID
-#     inputs to the linker are identical and the link is byte-deterministic).
+#     inputs to the linker are identical and the link is byte-deterministic;
+#     /Brepro also implies /d1nodatetime, which pins __DATE__/__TIME__).
 #     Build the variants with -DKISAK_REPRODUCIBLE_BUILD=ON; without it the
-#     reference object embeds __DATE__/__TIME__ wall-clock values and the
-#     gate below fails by design.
+#     reference object embeds wall-clock values and the gate below fails by
+#     design.
 #   - Same shared retail bytes: the reference retail translation unit
 #     (src/buildnumber.cpp, common_files.cmake entries) is compiled with the
-#     same flags and no KISAK_BUILD_*-conditional source, so its object must
-#     be byte-identical across variants. A mismatch (or a missing object)
-#     fails the gate — this is the hard byte-parity proof.
+#     same flags and no KISAK_BUILD_*-conditional source, so the retail
+#     sections of its object (.text/.rdata/.data/.bss/.drectve and their
+#     relocations) must be byte-identical across variants. The CodeView
+#     .debug$* sections and MSVC's .chks64 per-section checksum table are
+#     excluded on purpose: MSVC records the per-target object path, command
+#     line (including each variant's preprocessor definitions), and PDB path
+#     there, so a whole-file hash differs for every variant even when the
+#     generated code is identical. A mismatch
+#     (or a missing object) fails the gate — this is the hard byte-parity
+#     proof, and the failure report names the differing section.
 #
 # Usage:
 #   scripts/ci/compare-byte-parity.sh <build> [<build> ...]
@@ -35,6 +44,8 @@
 # buildnumber and compiler flags are equivalent. An exit status other than
 # zero means parity could not be established; the mismatched field is
 # printed at the end of the run.
+#
+# Requires a Python 3 interpreter (python3 or python) for the object digest.
 
 set -euo pipefail
 
@@ -44,6 +55,12 @@ if [ "$#" -lt 3 ]; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+DIGEST_TOOL="$REPO_ROOT/scripts/ci/object-section-digest.py"
+PYTHON_BIN="$(command -v python3 || command -v python || true)"
+if [ -z "$PYTHON_BIN" ]; then
+    echo "compare-byte-parity: python3/python is required for the object digest" >&2
+    exit 2
+fi
 PARITY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kisakcod-parity-XXXXXX")"
 trap 'rm -rf "$PARITY_DIR"' EXIT
 
@@ -53,11 +70,15 @@ GIT_COMMIT_COUNT="$(git -C "$REPO_ROOT" rev-list --count HEAD 2>/dev/null || ech
 echo "Git commit count = $GIT_COMMIT_COUNT (recorded for buildnumber parity)"
 
 candidates=()
+all_objects=()
 for build in "$@"; do
     if [ ! -d "$build" ]; then
         echo "compare-byte-parity: missing build directory '$build'" >&2
         exit 2
     fi
+    # Build directories are taken relative to the invocation directory, so
+    # the script works from the repository root (hosted CI) and from any
+    # other working directory alike.
     candidates+=("$build")
 done
 
@@ -68,12 +89,10 @@ build_record="$PARITY_DIR/buildnumbers.tsv"
 
 printf 'build\tKISAK_BUILD_MP\tKISAK_BUILD_SP\tKISAK_BUILD_DEDICATED\n' >"$flag_record"
 printf 'build\tbuildnumber.txt\tbuildnumber.h\n' >"$build_record"
-printf 'build\tobject_sha256\n' >"$object_record"
+printf 'build\tobject\tdigest_kind\tretail_sha256\n' >"$object_record"
 printf 'build\tinputs_sha256\n' >"$input_record"
 
 for build in "${candidates[@]}"; do
-    cd "$REPO_ROOT"
-
     # Read the recorded build number file if present, otherwise fall back to
     # the increment build script so the source of truth matches the build.
     number_file="$build/buildnumber.txt"
@@ -102,21 +121,32 @@ for build in "${candidates[@]}"; do
     # be byte-identical.
     bash "$REPO_ROOT/scripts/increment_build.sh" "$build" "$GIT_COMMIT_COUNT" >/dev/null
 
-    # Hash the compiled retail reference bytes. src/buildnumber.cpp is part
+    # Digest the compiled retail reference bytes. src/buildnumber.cpp is part
     # of the shared common_files.cmake source set, has no KISAK_BUILD_*
     # conditionals, and is compiled with identical flags in every variant,
-    # so with a deterministic toolchain (KISAK_REPRODUCIBLE_BUILD=ON) its
-    # object must hash identically across all of them.
-    object="$(find "$build" -name 'buildnumber.cpp.o' -o -name 'buildnumber.obj' 2>/dev/null | head -1 || true)"
-    if [ -n "$object" ] && [ -f "$object" ]; then
-        code_hash="$(sha256sum "$object" | awk '{print $1}')"
-    else
-        code_hash="(no buildnumber object found)"
+    # so with a deterministic toolchain (KISAK_REPRODUCIBLE_BUILD=ON) the
+    # retail sections of its object must digest identically across all of
+    # them. Every reference object in the tree is recorded (a preset that
+    # builds more than one engine target owns one object per target), so the
+    # gate cannot depend on directory enumeration order.
+    mapfile -t objects < <(find "$build" \( -name 'buildnumber.cpp.o' -o -name 'buildnumber.obj' \) -type f 2>/dev/null | LC_ALL=C sort)
+    if [ "${#objects[@]}" -eq 0 ]; then
+        printf '%s\t%s\t%s\t%s\n' "$build" "-" "-" "(no buildnumber object found)" >>"$object_record"
     fi
+    for object in "${objects[@]}"; do
+        all_objects+=("$object")
+        digest_line="$("$PYTHON_BIN" "$DIGEST_TOOL" "$object" | awk -F'\t' '$1 == "digest"')"
+        digest_kind="$(printf '%s\n' "$digest_line" | awk -F'\t' '{print $2}')"
+        code_hash="$(printf '%s\n' "$digest_line" | awk -F'\t' '{print $3}')"
+        if [ -z "$code_hash" ]; then
+            echo "compare-byte-parity: could not digest '$object'" >&2
+            exit 2
+        fi
+        printf '%s\t%s\t%s\t%s\n' "$build" "${object#"$build"/}" "$digest_kind" "$code_hash" >>"$object_record"
+    done
     # Hash only the file CONTENTS (awk strips the sha256sum path column) so
     # the digest is independent of the build-directory names being compared.
     data_hash="$(sha256sum "$number_file" "$header_file" 2>/dev/null | awk '{print $1}' | sha256sum | awk '{print $1}')"
-    printf '%s\t%s\n' "$build" "$code_hash" >>"$object_record"
     printf '%s\t%s\n' "$build" "$data_hash" >>"$input_record"
 done
 
@@ -132,7 +162,7 @@ echo "=== KISAK_BUILD_* flags ==="
 cat "$flag_record"
 
 echo "=== Hashes per build (buildnumber object + buildnumber inputs) ==="
-echo "--- reference object (src/buildnumber.cpp compiled) ---"
+echo "--- reference object retail digest (src/buildnumber.cpp compiled, .debug\$* excluded) ---"
 cat "$object_record"
 echo "--- buildnumber.txt/h inputs ---"
 cat "$input_record"
@@ -143,16 +173,20 @@ if grep -q "(no buildnumber object found)" "$object_record"; then
     echo "  Build every variant's engine target before running this script." >&2
     exit 1
 fi
-unique_code_hashes="$(awk -F'\t' 'NR>1 {print $2}' "$object_record" | sort -u | wc -l)"
-if [ "$unique_code_hashes" -gt 1 ]; then
-    echo "compare-byte-parity: FAIL reference object bytes differ across variants" >&2
-    echo "  The shared retail reference TU compiled to different bytes. Confirm every" >&2
-    echo "  variant was configured with -DKISAK_REPRODUCIBLE_BUILD=ON so /Brepro pins" >&2
-    echo "  the __DATE__/__TIME__ and linker stamp inputs, and that all variants use" >&2
-    echo "  the same build config and toolchain." >&2
+unique_digest_kinds="$(awk -F'\t' 'NR>1 {print $3}' "$object_record" | sort -u | wc -l)"
+unique_code_hashes="$(awk -F'\t' 'NR>1 {print $4}' "$object_record" | sort -u | wc -l)"
+if [ "$unique_digest_kinds" -gt 1 ] || [ "$unique_code_hashes" -gt 1 ]; then
+    echo "=== Section-level comparison of every reference object ==="
+    "$PYTHON_BIN" "$DIGEST_TOOL" --compare "${all_objects[@]}" || true
+    echo "compare-byte-parity: FAIL reference object retail bytes differ across variants" >&2
+    echo "  The shared retail reference TU compiled to different retail sections (see" >&2
+    echo "  the section-level comparison above for the differing section). Confirm" >&2
+    echo "  every variant was configured with -DKISAK_REPRODUCIBLE_BUILD=ON so /Brepro" >&2
+    echo "  pins the compiler/linker stamp inputs, and that all variants use the same" >&2
+    echo "  build config and toolchain." >&2
     exit 1
 fi
-echo "reference object: byte-identical across all ${#candidates[@]} variants"
+echo "reference object retail sections: byte-identical across all ${#candidates[@]} variants (${#all_objects[@]} objects)"
 
 unique_data_hashes="$(awk -F'\t' 'NR>1 {print $2}' "$input_record" | sort -u | wc -l)"
 echo "buildnumber inputs: $(if [ "$unique_data_hashes" -gt 1 ]; then echo 'DIFFER (see table above)'; else echo "byte-identical across all ${#candidates[@]} variants"; fi)"

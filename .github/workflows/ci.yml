@@ -223,9 +223,12 @@ jobs:
     # across the Windows x86 MP/SP/dedicated baseline. Each preset is configured
     # with KISAK_REPRODUCIBLE_BUILD=ON so /Brepro pins the __DATE__/__TIME__ and
     # linker stamp inputs, and scripts/ci/compare-byte-parity.sh then hard-gates
-    # buildnumber agreement and reference-object equality across the three
-    # build trees. Without the reproducible flag the wall-clock-stamped
-    # reference object legitimately differs, so this job fails by design.
+    # buildnumber agreement and reference-object retail-section equality across
+    # the three build trees (the CodeView .debug$* metadata that names each
+    # target's object path, command line, and PDB is excluded by design).
+    # Without the reproducible flag the wall-clock-stamped reference object
+    # legitimately differs, so this job fails by design. The reference objects
+    # are uploaded on every outcome so a mismatch can be diffed offline.
     name: Windows x86 (byte parity)
     runs-on: windows-2022
     env:
@@ -263,6 +266,17 @@ jobs:
       - name: Compare byte parity
         shell: bash
         run: scripts/ci/compare-byte-parity.sh build-windows-x86-mp build-windows-x86-sp build-windows-x86-dedi
+
+      - name: Upload reference objects for parity diagnosis
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: KisakCOD-windows-x86-parity-objects
+          path: |
+            build-windows-x86-mp/**/buildnumber.obj
+            build-windows-x86-sp/**/buildnumber.obj
+            build-windows-x86-dedi/**/buildnumber.obj
+          if-no-files-found: warn
 
   windows-x86-nosteam:
     # Compile-checks the KISAK_ENABLE_STEAM=OFF fallback path (cl_guid identity,
