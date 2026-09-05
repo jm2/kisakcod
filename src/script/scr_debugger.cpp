@@ -2527,9 +2527,13 @@ void __cdecl Scr_DebugKillThread(uint32_t threadId, const char *codePos)
 
 void __cdecl Scr_DebugTerminateThread(int topThread)
 {
+    // M4 (ki-n1et): the old `scrVmPub.stack[3 * topThread - 96]` negative-
+    // index poke only lines up with function_frame_start when a frame is
+    // exactly 3 legacy 8-byte cells; index the frame array directly so the
+    // mapping is layout-independent.
     Scr_DebugKillThread(
         scrVmPub.function_frame_start[topThread].fs.localId,
-        scrVmPub.stack[3 * topThread - 96].u.codePosValue);
+        scrVmPub.function_frame_start[topThread].fs.pos);
     if (topThread == scrVmPub.function_count)
     {
         if (!scrDebuggerGlob.kill_thread)
@@ -2546,7 +2550,9 @@ void __cdecl Scr_DebugTerminateThread(int topThread)
     }
     else
     {
-        scrVmPub.stack[3 * topThread - 96].u.intValue = (int)&g_EndPos;
+        // M4 (ki-n1et): see Scr_DebugTerminateThread header -- the frame's
+        // pos cell is reached through the frame array, not stack math.
+        scrVmPub.function_frame_start[topThread].fs.pos = &g_EndPos;
     }
 }
 

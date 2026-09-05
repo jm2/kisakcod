@@ -826,12 +826,14 @@ const char* __cdecl Scr_GetStackThreadPos(uint32_t endLocalId, VariableStackBuff
         MyAssertHandler(".\\script\\scr_vm.cpp", 3012, 0, "%s", "startLocalId");
     size = stackValue->size;
     localId = stackValue->localId;
-    buf = &stackValue->buf[5 * size];
+    buf = &stackValue->buf[VARIABLE_STACK_RECORD_SIZE * size];
     pos = stackValue->pos;
     while (size)
     {
-        bufa = buf - 4;
-        u.intValue = *(int*)bufa;
+        // M4 (ki-n1et): widened runtime record stride; load the full cell so
+        // the codepos pointer survives on 64-bit.
+        bufa = buf - sizeof(VariableUnion);
+        u = VariableStackBuf_ReadCell(bufa);
         buf = bufa - 1;
         --size;
         if (*buf == 7)
@@ -848,7 +850,7 @@ const char* __cdecl Scr_GetStackThreadPos(uint32_t endLocalId, VariableStackBuff
             localId = parentLocalId;
             if (!u.codePosValue)
                 MyAssertHandler(".\\script\\scr_vm.cpp", 3039, 0, "%s", "u.codePosValue");
-            pos = (const char*)u.intValue;
+            pos = u.codePosValue;
         }
     }
 #ifndef DEDICATED
@@ -869,8 +871,11 @@ const char* __cdecl Scr_GetRunningThreadPos(uint32_t localId)
     for (function_count = scrVmPub.function_count; function_count; --function_count)
     {
         if (scrVmPub.function_frame_start[function_count].fs.localId == localId)
-            return &g_EndPos != (char*)scrVmPub.stack[3 * function_count - 96].u.intValue
-            ? (const char*)scrVmPub.stack[3 * function_count - 96].u.intValue
+            // M4 (ki-n1et): the frame's pos cell is reached through the
+            // frame array; the old `stack[3 * function_count - 96]` poke
+            // only lines up when a frame is exactly 3 legacy 8-byte cells.
+            return &g_EndPos != scrVmPub.function_frame_start[function_count].fs.pos
+            ? scrVmPub.function_frame_start[function_count].fs.pos
             : 0;
     }
     if (!alwaysfails)
@@ -1014,7 +1019,8 @@ void __cdecl VM_Notify(uint32_t notifyListOwnerId, uint32_t stringValue, Variabl
                         size = *stackValue->pos;
                         iassert(size >= 0);
                         iassert(size <= stackValue->size);
-                        buf = &stackValue->buf[5 * (stackValue->size - size)];
+                        // M4 (ki-n1et): widened runtime record stride.
+                        buf = &stackValue->buf[VARIABLE_STACK_RECORD_SIZE * (stackValue->size - size)];
 
                         for (currentValue = top; size; --currentValue)
                         {
@@ -1033,8 +1039,8 @@ LABEL_30:
                             if (tempValue3.type == VAR_PRECODEPOS)
                                 break;
 
-                            tempValue3.u.codePosValue = *(const char**)buf;
-                            buf += 4;
+                            tempValue3.u = VariableStackBuf_ReadCell(buf);
+                            buf += sizeof(VariableUnion);
 
                             AddRefToValue(tempValue3.type, tempValue3.u);
                             type = currentValue->type;
@@ -1101,9 +1107,11 @@ LABEL_30:
 
                         iassert(newSize >= 0 && newSize < (1 << 16));
 
-                        len = 5 * size;
+                        // M4 (ki-n1et): widened runtime record stride for the
+                        // live-cells region and the reallocation sizing.
+                        len = VARIABLE_STACK_RECORD_SIZE * size;
                         //bufLen = 5 * newSize + 11;
-                        bufLen = 5 * newSize + (sizeof(VariableStackBuffer)-1);
+                        bufLen = VARIABLE_STACK_RECORD_SIZE * newSize + (sizeof(VariableStackBuffer)-1);
 
                         if (!MT_Realloc(stackValue->bufLen, bufLen))
                         {
@@ -1129,8 +1137,9 @@ LABEL_30:
                             AddRefToValue(currentValue->type, currentValue->u);
                             iassert((unsigned)currentValue->type < VAR_COUNT);
                             *buf++ = currentValue->type;
-                            *(const char**)buf = currentValue->u.codePosValue;
-                            buf += 4;
+                            // M4 (ki-n1et): full widened value-cell slot.
+                            VariableStackBuf_WriteCell(buf, currentValue->u);
+                            buf += sizeof(VariableUnion);
                             --newSize;
                         } while (newSize);
 
@@ -1262,11 +1271,11 @@ void __cdecl VM_TerminateStack(uint32_t endLocalId, uint32_t startLocalId, Varia
         MyAssertHandler(".\\script\\scr_vm.cpp", 2932, 0, "%s", "startLocalId");
     size = stackValue->size;
     localId = stackValue->localId;
-    buf = &stackValue->buf[5 * size];
+    buf = &stackValue->buf[VARIABLE_STACK_RECORD_SIZE * size];
     while (size)
     {
-        bufa = buf - 4;
-        u = *(const char**)bufa;
+        bufa = buf - sizeof(VariableUnion);
+        u = VariableStackBuf_ReadCell(bufa).codePosValue;
         buf = (char*)bufa - 1;
         --size;
         if (*buf == 7)
@@ -1442,11 +1451,11 @@ void __cdecl VM_TrimStack(uint32_t startLocalId, VariableStackBuffer* stackValue
 
     size = stackValue->size;
     localId = stackValue->localId;
-    buf = &stackValue->buf[5 * size];
+    buf = &stackValue->buf[VARIABLE_STACK_RECORD_SIZE * size];
     while (size)
     {
-        bufa = buf - 4;
-        u.intValue = *(int*)bufa;
+        bufa = buf - sizeof(VariableUnion);
+        u = VariableStackBuf_ReadCell(bufa);
         buf = bufa - 1;
         --size;
         if (*buf == 7)
@@ -1462,7 +1471,9 @@ void __cdecl VM_TrimStack(uint32_t startLocalId, VariableStackBuffer* stackValue
                     Scr_SetThreadNotifyName(startLocalId, 0);
                     stackValue->pos = 0;
                     tempValue.type = VAR_STACK;
-                    tempValue.u.intValue = (int)stackValue;
+                    // M4 (ki-n1et): live stack-buffer pointer goes through the
+                    // pointer member, not a truncating int store.
+                    tempValue.u.stackValue = stackValue;
                     NewVariable = GetNewVariable(startLocalId, 0x18001u);
                     SetNewVariableValue(NewVariable, &tempValue);
                 }
@@ -1539,7 +1550,10 @@ VariableStackBuffer *__cdecl VM_ArchiveStack()
     size = fs.top - fs.startTop;
     if (size != (uint16_t)size)
         MyAssertHandler(".\\script\\scr_vm.cpp", 2768, 0, "%s", "size == (unsigned short)size");
-    bufLen = 5 * size + 11;
+    // M4 (ki-n1et): the runtime archive image uses the widened value-cell
+    // record stride over the widened header; the SERIALIZED stack stream is
+    // written by WriteStack and keeps the retail packed records.
+    bufLen = VARIABLE_STACK_RECORD_SIZE * size + (sizeof(VariableStackBuffer) - 1);
     if (bufLen != (uint16_t)bufLen)
         MyAssertHandler(".\\script\\scr_vm.cpp", 2770, 0, "%s", "bufLen == (unsigned short)bufLen");
     stackValue = (VariableStackBuffer*) MT_Alloc(bufLen, MT_TYPE_THREAD);
@@ -1549,24 +1563,25 @@ VariableStackBuffer *__cdecl VM_ArchiveStack()
     stackValue->size = size;
     stackValue->bufLen = bufLen;
     stackValue->pos = fs.pos;
-    stackValue->time = scrVarPub.time;
+    stackValue->saveStamp = scrVarPub.time;
     scrVmPub.localVars -= fs.localVarCount;
-    buf = &stackValue->buf[5 * size];
+    buf = &stackValue->buf[VARIABLE_STACK_RECORD_SIZE * size];
     while (size)
     {
-        buf -= 4;
+        buf -= sizeof(VariableUnion);
         if (top->type == VAR_CODEPOS)
         {
+            VariableUnion archived;
             --scrVmPub.function_count;
             --scrVmPub.function_frame;
-            //*bufa = scrVmPub.function_frame->fs.pos;
-            *(uintptr_t *)buf = (uintptr_t)scrVmPub.function_frame->fs.pos;
+            archived.codePosValue = scrVmPub.function_frame->fs.pos;
+            VariableStackBuf_WriteCell(buf, archived);
             scrVmPub.localVars -= scrVmPub.function_frame->fs.localVarCount;
             localId = GetParentLocalId(localId);
         }
         else
         {
-            *(uintptr_t*)buf = top->u.pointerValue;
+            VariableStackBuf_WriteCell(buf, top->u);
         }
         --buf;
         if (top->type >= 0x100u)
@@ -1698,7 +1713,8 @@ VariableStackBuffer *VM_ArchiveStack2(int size, const char *codePos, VariableVal
     int bufLen;
 
     //bufLen = 5 * size + 11;
-    bufLen = 5 * size + sizeof(VariableStackBuffer);
+    // M4 (ki-n1et): widened runtime archive image (see VM_ArchiveStack).
+    bufLen = VARIABLE_STACK_RECORD_SIZE * size + (sizeof(VariableStackBuffer) - 1);
 
     iassert(size == (unsigned short)size);
     iassert(bufLen == (unsigned short)bufLen);
@@ -1710,25 +1726,27 @@ VariableStackBuffer *VM_ArchiveStack2(int size, const char *codePos, VariableVal
     stackBuf->size = size;
     stackBuf->bufLen = bufLen;
     stackBuf->pos = codePos;
-    stackBuf->time = scrVarPub.time;
+    stackBuf->saveStamp = scrVarPub.time;
     scrVmPub.localVars -= localVarCount;
-    buf = &stackBuf->buf[5 * size];
+    buf = &stackBuf->buf[VARIABLE_STACK_RECORD_SIZE * size];
 
     while (size)
     {
-        pos = buf - 4;
+        pos = buf - sizeof(VariableUnion);
 
         if (top->type == VAR_CODEPOS)
         {
+            VariableUnion archived;
             --scrVmPub.function_count;
             --scrVmPub.function_frame;
-            *(intptr_t *)pos = (intptr_t)scrVmPub.function_frame->fs.pos;
+            archived.codePosValue = scrVmPub.function_frame->fs.pos;
+            VariableStackBuf_WriteCell(pos, archived);
             scrVmPub.localVars -= scrVmPub.function_frame->fs.localVarCount;
             id = GetParentLocalId(id);
         }
         else
         {
-            *(intptr_t *)pos = (intptr_t)top->u.codePosValue;
+            VariableStackBuf_WriteCell(pos, top->u);
         }
 
         buf = pos - 1;
@@ -4364,7 +4382,8 @@ void __cdecl Scr_AddVector(const float* value)
 {
     IncInParam();
     scrVmPub.top->type = VAR_VECTOR;
-    scrVmPub.top->u.intValue = (int)Scr_AllocVector(value);
+    // M4 (ki-n1et): live vector-pool pointer through the pointer member.
+    scrVmPub.top->u.vectorValue = Scr_AllocVector(value);
 }
 
 void __cdecl Scr_MakeArray()
@@ -4710,20 +4729,21 @@ void __cdecl VM_UnarchiveStack(uint32_t startLocalId, VariableStackBuffer* stack
         top->type = (Vartype_t)*(unsigned char*)buf;
         buf += 1;
 
+        // M4 (ki-n1et): load the full widened cell.
         if (top->type == VAR_CODEPOS)
         {
             iassert(scrVmPub.function_count < 32 /*MAX_VM_STACK_DEPTH*/);
 
-            scrVmPub.function_frame->fs.pos = *(const char**)buf;
+            scrVmPub.function_frame->fs.pos = VariableStackBuf_ReadCell(buf).codePosValue;
             ++scrVmPub.function_count;
             ++scrVmPub.function_frame;
         }
         else
         {
-            top->u.codePosValue = *(const char**)buf;
+            top->u = VariableStackBuf_ReadCell(buf);
         }
 
-        buf += 4;
+        buf += sizeof(VariableUnion);
     }
     fs.pos = stackValue->pos;
     fs.top = top;
@@ -4753,7 +4773,7 @@ void __cdecl VM_UnarchiveStack(uint32_t startLocalId, VariableStackBuffer* stack
 
     fs.localVarCount = Scr_AddLocalVars(fs.localId);
 
-    if (stackValue->time != LOBYTE(scrVarPub.time))
+    if (stackValue->saveStamp != LOBYTE(scrVarPub.time))
         Scr_ResetTimeout();
 
     --scrVarPub.numScriptThreads;
@@ -4787,21 +4807,22 @@ void VM_UnarchiveStack2(uint32_t startLocalId, function_stack_t *stack, Variable
         ++startTop;
         --size;
         startTop->type = (Vartype_t)*(unsigned char *)buf;
+        // M4 (ki-n1et): full widened cell load and record stride.
         pos = buf + 1;
 
         if (startTop->type == VAR_CODEPOS)
         {
             iassert(scrVmPub.function_count < 32/*MAX_VM_STACK_DEPTH*/);
-            scrVmPub.function_frame->fs.pos = *(const char **)pos;
+            scrVmPub.function_frame->fs.pos = VariableStackBuf_ReadCell(pos).codePosValue;
             ++scrVmPub.function_count;
             ++scrVmPub.function_frame;
         }
         else
         {
-            startTop->u.intValue = *(int *)pos;
+            startTop->u = VariableStackBuf_ReadCell(pos);
         }
 
-        buf = (pos + 4);
+        buf = (pos + sizeof(VariableUnion));
     }
 
     stack->pos = stackValue->pos;
@@ -4829,7 +4850,7 @@ void VM_UnarchiveStack2(uint32_t startLocalId, function_stack_t *stack, Variable
 
     stack->localVarCount = Scr_AddLocalVars(stack->localId);
 
-    if (stackValue->time != LOBYTE(scrVarPub.time))
+    if (stackValue->saveStamp != LOBYTE(scrVarPub.time))
         Scr_ResetTimeout();
 
     --scrVarPub.numScriptThreads;

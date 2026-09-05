@@ -663,7 +663,8 @@ void __cdecl EmitFunction(sval_u func, sval_u sourcePos)
             pos.type);
     if (pos.type == 13)
         goto LABEL_26;
-    if (!pos.u.intValue)
+    // M4 (ki-n1et): codepos-family cells hold live host pointers.
+    if (!pos.u.codePosValue)
     {
     LABEL_39:
         if (!threadId)
@@ -684,7 +685,8 @@ void __cdecl EmitFunction(sval_u func, sval_u sourcePos)
             count.u.intValue = 0;
         }
         valueId = GetNewVariable(threadId, count.u.intValue + 2);
-        value.u.intValue = (int)scrCompileGlob.codePos;
+        // M4 (ki-n1et): live codepos pointer through the pointer member.
+        value.u.codePosValue = scrCompileGlob.codePos;
         if (scrCompilePub.developer_statement)
         {
             if (!scrVarPub.developer_script)
@@ -853,7 +855,9 @@ void __cdecl EmitCall(sval_u func_name, sval_u params, bool bStatement, scr_bloc
         {
             value = Scr_EvalVariable(funcId);
             type = Scr_GetUncacheType(value.type);
-            func = (void(*)())value.u.intValue;
+            // M4 (ki-n1et): builtin-function cache cells hold live function
+            // pointers; store/load through the pointer-width member.
+            func = reinterpret_cast<void(__cdecl *)()>(value.u.codePosValue);
         }
         else
         {
@@ -861,7 +865,7 @@ void __cdecl EmitCall(sval_u func_name, sval_u params, bool bStatement, scr_bloc
             func = Scr_GetFunction(&pName, &type);
             funcId = GetNewVariable(scrCompilePub.builtinFunc, name);
             value.type = Scr_GetCacheType(type);
-            value.u.intValue = (int)func;
+            value.u.codePosValue = reinterpret_cast<const char *>(func);
             SetVariableValue(funcId, &value);
         }
     }
@@ -982,7 +986,8 @@ void __cdecl EmitMethod(
         {
             value = Scr_EvalVariable(methId);
             type = Scr_GetUncacheType(value.type);
-            meth = (void(*)(scr_entref_t))value.u.intValue;
+            // M4 (ki-n1et): pointer-width builtin-method cache cell.
+            meth = (void(*)(scr_entref_t))value.u.codePosValue;
         }
         else
         {
@@ -990,7 +995,7 @@ void __cdecl EmitMethod(
             meth = Scr_GetMethod(&pName, &type);
             methId = GetNewVariable(scrCompilePub.builtinMeth, name);
             value.type = Scr_GetCacheType(type);
-            value.u.intValue = (int)meth;
+            value.u.codePosValue = (const char *)meth;
             SetVariableValue(methId, &value);
         }
     }
@@ -1310,7 +1315,8 @@ void __cdecl Scr_CreateVector(VariableCompileValue *constValue, VariableValue *v
         }
     }
     value->type = VAR_VECTOR;
-    value->u.intValue = (int)Scr_AllocVector(vec);
+    // M4 (ki-n1et): live vector-pool pointer through the pointer member.
+    value->u.vectorValue = Scr_AllocVector(vec);
 }
 
 void __cdecl Scr_PushValue(VariableCompileValue *constValue)
@@ -3535,7 +3541,8 @@ unsigned int __cdecl SpecifyThreadPosition(unsigned int threadId, unsigned int n
     pos = Scr_EvalVariable(posId);
     if (pos.type)
     {
-        if (pos.u.intValue)
+        // M4 (ki-n1et): codepos-family cell holds a live host pointer.
+        if (pos.u.codePosValue)
         {
             buf = scrParserPub.sourceBufferLookup[Scr_GetSourceBuffer(pos.u.codePosValue)].buf;
             v4 = SL_ConvertToString(name);
@@ -3551,7 +3558,7 @@ unsigned int __cdecl SpecifyThreadPosition(unsigned int threadId, unsigned int n
     else
     {
         pos.type = type;
-        pos.u.intValue = 0;
+        pos.u.codePosValue = 0;
         SetNewVariableValue(posId, &pos);
         return posId;
     }
@@ -4139,7 +4146,8 @@ void __cdecl SetThreadPosition(unsigned int threadId)
 
     v1 = TempMalloc(0);
     Variable = FindVariable(threadId, 1u);
-    GetVariableValueAddress(Variable)->u.intValue = (int)v1;
+    // M4 (ki-n1et): live pointer into the compiler temp buffer.
+    GetVariableValueAddress(Variable)->u.codePosValue = v1;
 }
 
 void __cdecl InitThread(int type)
@@ -4363,16 +4371,19 @@ void __cdecl LinkThread(unsigned int threadId, VariableValue *pos, bool allowFar
                     MyAssertHandler(".\\script\\scr_compiler.cpp", 2319, 0, "%s", "scrVarPub.developer_script");
                 if (type == 7)
                 {
-                    CompileError2((char*)value->u.intValue, "normal script cannot reference a function in a /# ... #/ comment");
+                    // M4 (ki-n1et): the cell holds a live host pointer into
+                    // the fixup stream; only the pointed-to DWORD slot stays
+                    // 32-bit (serialized fastfile format).
+                    CompileError2((char *)value->u.codePosValue, "normal script cannot reference a function in a /# ... #/ comment");
                     return;
                 }
             }
-            if (!pos->type || !allowFarCall && *(DWORD*)value->u.intValue == 1)
+            if (!pos->type || !allowFarCall && *(DWORD *)value->u.codePosValue == 1)
             {
-                CompileError2((char*)value->u.intValue, "unknown function");
+                CompileError2((char *)value->u.codePosValue, "unknown function");
                 return;
             }
-            *(DWORD*)value->u.intValue = pos->u.intValue;
+            *(DWORD *)value->u.codePosValue = pos->u.intValue;
             RemoveVariable(threadId, i + 2);
         }
         RemoveVariable(threadId, 0);

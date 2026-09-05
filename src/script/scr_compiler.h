@@ -37,7 +37,9 @@ struct CaseStatementInfo // sizeof=0x10
     uint32_t sourcePos;
     CaseStatementInfo *next;
 };
-static_assert(sizeof(CaseStatementInfo) == 0x10);
+// M4 (ki-n1et): carries `const char *codePos` and a self-typed next
+// pointer; widens 0x10 -> 0x20 on 64-bit.
+RUNTIME_SIZE(CaseStatementInfo, 0x10, 0x20);
 
 struct BreakStatementInfo // sizeof=0xC
 {
@@ -45,7 +47,8 @@ struct BreakStatementInfo // sizeof=0xC
     const char *nextCodePos;
     BreakStatementInfo *next;
 };
-static_assert(sizeof(BreakStatementInfo) == 0xC);
+// M4 (ki-n1et): three host pointers; widens 0xC -> 0x18 on 64-bit.
+RUNTIME_SIZE(BreakStatementInfo, 0xC, 0x18);
 
 struct ContinueStatementInfo // sizeof=0xC
 {
@@ -53,14 +56,17 @@ struct ContinueStatementInfo // sizeof=0xC
     const char *nextCodePos;
     ContinueStatementInfo *next;
 };
-static_assert(sizeof(ContinueStatementInfo) == 0xC);
+// M4 (ki-n1et): three host pointers; widens 0xC -> 0x18 on 64-bit.
+RUNTIME_SIZE(ContinueStatementInfo, 0xC, 0x18);
 
 struct VariableCompileValue // sizeof=0xC
 {                                       // ...
     VariableValue value;                // ...
     sval_u sourcePos;
 };
-static_assert(sizeof(VariableCompileValue) == 0xC);
+// M4 (ki-n1et): embeds the widened VariableValue cell and sval_u parse
+// cell; widens 0xC -> 0x18 on 64-bit.
+RUNTIME_SIZE(VariableCompileValue, 0xC, 0x18);
 
 #define VALUE_STACK_SIZE 32
 
@@ -104,7 +110,10 @@ struct scrCompileGlob_t // sizeof=0x1D8
     struct PrecacheEntry *precachescriptList;  // ...
     VariableCompileValue value_start[VALUE_STACK_SIZE]; // ...
 };
-static_assert(sizeof(scrCompileGlob_t) == 0x1D8);
+// M4 (ki-n1et): compiler globals -- twelve host pointers plus the widened
+// VariableCompileValue value_start[32] stack; widens 0x1D8 -> 0x390 on
+// 64-bit. Compile-time scratch state, never serialized.
+RUNTIME_SIZE(scrCompileGlob_t, 0x1D8, 0x390);
 
 #define SCR_FUNC_TABLE_SIZE 1024
 

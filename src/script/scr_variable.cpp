@@ -2130,13 +2130,20 @@ void  Scr_EvalPlus(VariableValue* value1, VariableValue* value2)
 		}
 		break;
 	case 4:
-		v11 = Scr_AllocVector();
-		*v11 = *(float*)value1->u.intValue + *(float*)value2->u.intValue;
-		v11[1] = *(float*)(value1->u.intValue + 4) + *(float*)(value2->u.intValue + 4);
-		v11[2] = *(float*)(value1->u.intValue + 8) + *(float*)(value2->u.intValue + 8);
-		RemoveRefToVector(value1->u.vectorValue);
-		RemoveRefToVector(value2->u.vectorValue);
-		value1->u.intValue = (int)v11;
+		{
+			// M4 (ki-n1et): read the live vector pointers through the
+			// pointer-width union member (truncates through intValue on
+			// 64-bit).
+			const float *va = value1->u.vectorValue;
+			const float *vb = value2->u.vectorValue;
+			v11 = Scr_AllocVector();
+			v11[0] = va[0] + vb[0];
+			v11[1] = va[1] + vb[1];
+			v11[2] = va[2] + vb[2];
+			RemoveRefToVector(value1->u.vectorValue);
+			RemoveRefToVector(value2->u.vectorValue);
+			value1->u.vectorValue = v11;
+		}
 		break;
 	case 5:
 		value1->u.floatValue = value1->u.floatValue + value2->u.floatValue;
@@ -2162,13 +2169,18 @@ void  Scr_EvalMinus(VariableValue* value1, VariableValue* value2)
 	switch (type)
 	{
 	case 4:
-		tempVector = Scr_AllocVector();
-		*tempVector = *(float*)value1->u.intValue - *(float*)value2->u.intValue;
-		tempVector[1] = *(float*)(value1->u.intValue + 4) - *(float*)(value2->u.intValue + 4);
-		tempVector[2] = *(float*)(value1->u.intValue + 8) - *(float*)(value2->u.intValue + 8);
-		RemoveRefToVector(value1->u.vectorValue);
-		RemoveRefToVector(value2->u.vectorValue);
-		value1->u.intValue = (int)tempVector;
+		{
+			// M4 (ki-n1et): pointer-width vector cell access.
+			const float *va = value1->u.vectorValue;
+			const float *vb = value2->u.vectorValue;
+			tempVector = Scr_AllocVector();
+			tempVector[0] = va[0] - vb[0];
+			tempVector[1] = va[1] - vb[1];
+			tempVector[2] = va[2] - vb[2];
+			RemoveRefToVector(value1->u.vectorValue);
+			RemoveRefToVector(value2->u.vectorValue);
+			value1->u.vectorValue = tempVector;
+		}
 		break;
 	case 5:
 		value1->u.floatValue = value1->u.floatValue - value2->u.floatValue;
@@ -2192,13 +2204,18 @@ void  Scr_EvalMultiply(VariableValue* value1, VariableValue* value2)
 	switch (type)
 	{
 	case 4:
-		tempVector = Scr_AllocVector();
-		*tempVector = *(float*)value1->u.intValue * *(float*)value2->u.intValue;
-		tempVector[1] = *(float*)(value1->u.intValue + 4) * *(float*)(value2->u.intValue + 4);
-		tempVector[2] = *(float*)(value1->u.intValue + 8) * *(float*)(value2->u.intValue + 8);
-		RemoveRefToVector(value1->u.vectorValue);
-		RemoveRefToVector(value2->u.vectorValue);
-		value1->u.intValue = (int)tempVector;
+		{
+			// M4 (ki-n1et): pointer-width vector cell access.
+			const float *va = value1->u.vectorValue;
+			const float *vb = value2->u.vectorValue;
+			tempVector = Scr_AllocVector();
+			tempVector[0] = va[0] * vb[0];
+			tempVector[1] = va[1] * vb[1];
+			tempVector[2] = va[2] * vb[2];
+			RemoveRefToVector(value1->u.vectorValue);
+			RemoveRefToVector(value2->u.vectorValue);
+			value1->u.vectorValue = tempVector;
+		}
 		break;
 	case 5:
 		value1->u.floatValue = value1->u.floatValue * value2->u.floatValue;
@@ -2224,27 +2241,32 @@ void  Scr_EvalDivide(VariableValue* value1, VariableValue* value2)
 	switch (type)
 	{
 	case 4:
-		tempVector = Scr_AllocVector();
-		if (*(float*)value2->u.intValue == 0.0
-			|| *(float*)(value2->u.intValue + 4) == 0.0
-			|| *(float*)(value2->u.intValue + 8) == 0.0)
 		{
-			*tempVector = 0.0;
-			tempVector[1] = 0.0;
-			tempVector[2] = 0.0;
-			RemoveRefToVector(value1->u.vectorValue);
-			RemoveRefToVector(value2->u.vectorValue);
-			value1->u.intValue = (int)tempVector;
-			Scr_Error("divide by 0");
-		}
-		else
-		{
-			*tempVector = *(float*)value1->u.intValue / *(float*)value2->u.intValue;
-			tempVector[1] = *(float*)(value1->u.intValue + 4) / *(float*)(value2->u.intValue + 4);
-			tempVector[2] = *(float*)(value1->u.intValue + 8) / *(float*)(value2->u.intValue + 8);
-			RemoveRefToVector(value1->u.vectorValue);
-			RemoveRefToVector(value2->u.vectorValue);
-			value1->u.intValue = (int)tempVector;
+			// M4 (ki-n1et): pointer-width vector cell access.
+			const float *va = value1->u.vectorValue;
+			const float *vb = value2->u.vectorValue;
+			tempVector = Scr_AllocVector();
+			if (vb[0] == 0.0
+				|| vb[1] == 0.0
+				|| vb[2] == 0.0)
+			{
+				tempVector[0] = 0.0;
+				tempVector[1] = 0.0;
+				tempVector[2] = 0.0;
+				RemoveRefToVector(value1->u.vectorValue);
+				RemoveRefToVector(value2->u.vectorValue);
+				value1->u.vectorValue = tempVector;
+				Scr_Error("divide by 0");
+			}
+			else
+			{
+				tempVector[0] = va[0] / vb[0];
+				tempVector[1] = va[1] / vb[1];
+				tempVector[2] = va[2] / vb[2];
+				RemoveRefToVector(value1->u.vectorValue);
+				RemoveRefToVector(value2->u.vectorValue);
+				value1->u.vectorValue = tempVector;
+			}
 		}
 		break;
 	case 5:
@@ -2478,8 +2500,9 @@ void Scr_DumpScriptThreads(void)
 					{
 						--size;
 						type = *buf++;
-						u.intValue = *(int*)buf;
-						buf += 4;
+						// M4 (ki-n1et): full widened cell load and record stride.
+						u = VariableStackBuf_ReadCell(buf);
+						buf += sizeof(VariableUnion);
 						if (type == 7)
 							info.pos[info.posSize++] = u.codePosValue;
 					}
@@ -4510,14 +4533,15 @@ float  Scr_GetThreadUsage(const VariableStackBuffer* stackBuf, float* endonUsage
 	VariableUnion u; // [esp+10h] [ebp-8h]
 
 	size = stackBuf->size;
-	buf = &stackBuf->buf[5 * size];
+	buf = &stackBuf->buf[VARIABLE_STACK_RECORD_SIZE * size];
 	usage = Scr_GetObjectUsage(stackBuf->localId);
 	*endonUsage = Scr_GetEndonUsage(stackBuf->localId);
 	localId = stackBuf->localId;
 	while (size)
 	{
-		bufa = buf - 4;
-		u.intValue = *(int*)bufa;
+		// M4 (ki-n1et): widened runtime record stride, full-cell load.
+		bufa = buf - sizeof(VariableUnion);
+		u = VariableStackBuf_ReadCell(bufa);
 		buf = bufa - 1;
 		--size;
 		if (*buf == 7)

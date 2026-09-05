@@ -10,7 +10,8 @@ struct ArchivedCanonicalStringInfo // sizeof=0x8
     // padding byte
     const char *value;
 };
-static_assert(sizeof(ArchivedCanonicalStringInfo) == 0x8);
+// M4 (ki-n1et): carries a `const char *value`; widens 0x8 -> 0x10 on 64-bit.
+RUNTIME_SIZE(ArchivedCanonicalStringInfo, 0x8, 0x10);
 
 struct scrEvaluateGlob_t // sizeof=0x10
 {                                       // ...
@@ -22,7 +23,8 @@ struct scrEvaluateGlob_t // sizeof=0x10
     bool objectChanged;                 // ...
     // padding byte
 };
-static_assert(sizeof(scrEvaluateGlob_t) == 0x10);
+// M4 (ki-n1et): three pointer members; widens 0x10 -> 0x20 on 64-bit.
+RUNTIME_SIZE(scrEvaluateGlob_t, 0x10, 0x20);
 
 void __cdecl TRACK_scr_evaluate();
 uint32_t __cdecl Scr_GetBuiltin(sval_u func_name);

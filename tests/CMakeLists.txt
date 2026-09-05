@@ -3223,6 +3223,65 @@ add_test(
     NAME xanim-parts-split-contracts
     COMMAND kisakcod-xanim-parts-split-tests)
 
+# script_value_split_test: contract tests for the script VM value-cell
+# save-image mirror vs native runtime split (M4). The retail 32-bit value
+# cell is frozen at 4-byte payload / 8-byte cell via ONDISK_SIZE in
+# scr_native.hpp; the native runtime views widen to 8/16 bytes on 64-bit via
+# RUNTIME_SIZE. The tests exercise the Disk <-> Native conversions, the
+# value-bearing vs runtime-reconstruction vartype classification, the
+# retail vartype encoding, float bit-preservation, and the no-fabricated-
+# pointer rule. CTest entries match the 'script-value-split' regex so the
+# bead's build/test command resolves to this target.
+add_executable(kisakcod-script-value-split-tests
+    script_value_split_test.cpp)
+target_include_directories(
+    kisakcod-script-value-split-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-script-value-split-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-script-value-split-tests)
+if(MSVC)
+    # scrStringGlob_t's KISAK_ALIGNAS(128) padding is deliberate cache-line
+    # alignment; C4324 fires on the /W4 + /WX test targets only.
+    target_compile_options(kisakcod-script-value-split-tests PRIVATE /wd4324)
+endif()
+set_target_properties(
+    kisakcod-script-value-split-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME script-value-split-contracts
+    COMMAND kisakcod-script-value-split-tests)
+
+# script_native64_layout_test: contract tests for the M4 (ki-n1et)
+# script VM header widening. The migrated headers assert ILP32 sizes on
+# 32-bit targets and natural widened sizes on 64-bit via RUNTIME_SIZE.
+# Headers with a portable include chain are included for real; the
+# Windows/production-bound ones are mirrored member-for-member and
+# pinned to the same constants, with the exact declarations enforced by
+# the script-native-layout-source-invariants test below.
+add_executable(kisakcod-script-native64-layout-tests
+    script_native64_layout_test.cpp)
+target_include_directories(
+    kisakcod-script-native64-layout-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-script-native64-layout-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-script-native64-layout-tests)
+if(MSVC)
+    # See the script-value-split target: deliberate alignas(128) padding.
+    target_compile_options(kisakcod-script-native64-layout-tests PRIVATE /wd4324)
+endif()
+set_target_properties(
+    kisakcod-script-native64-layout-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME script-native64-layout-contracts
+    COMMAND kisakcod-script-native64-layout-tests)
+
+add_test(
+    NAME script-native-layout-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/script_native_layout_source_test.cmake)
+
 # fuzz_fastfile: production-path fast-file fuzz harness. Exercises the
 # bounded BufCursor read path that backs every retail fast-file loader
 # (xasset families: xmodel, xanim, fx archive body state). The harness

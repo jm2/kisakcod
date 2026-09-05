@@ -308,7 +308,7 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
     const char *buf; // r31
     unsigned int v7; // r3
     __int16 v8; // r30
-    VariableUnion *v9; // r4
+    VariableUnion v9; // r4
     _WORD v10[24]; // [sp+50h] [-30h] BYREF
 
     iassert(stackBuf);
@@ -318,7 +318,7 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
     WriteCodepos(stackBuf->pos, memFile);
     WriteId(stackBuf->localId, 0, memFile);
 
-    v10[0] = (v10[0] & 0xFF00) | (uint8_t)stackBuf->time;
+    v10[0] = (v10[0] & 0xFF00) | (uint8_t)stackBuf->saveStamp;
     MemFile_WriteData(memFile, 1, v10);
     v5 = v4;
     buf = stackBuf->buf;
@@ -326,74 +326,138 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
     {
         do
         {
+            // M4 (ki-n1et): the runtime record is one widened value-cell slot
+            // plus the type byte; the SERIALIZED bytes it converts to stay the
+            // packed retail records.
             v7 = (unsigned __int8)*buf;
             v8 = v5 - 1;
-            v9 = *(VariableUnion **)(buf + 1);
-            buf += 5;
+            v9 = VariableStackBuf_ReadCell(buf + 1);
+            buf += VARIABLE_STACK_RECORD_SIZE;
             DoSaveEntryInternal(v7, v9, memFile);
             v5 = v8;
         } while (v8);
     }
 }
 
-VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
+namespace
 {
-    __int16 v2; // r27
-    int v3; // r28
-    int v4; // r31
-    unsigned __int16 v5; // r29
-    _WORD *v6; // r31
-    char *v7; // r29
-    __int16 v8; // r11
-    __int16 v9; // r28
-    unsigned __int8 v11[8]; // [sp+50h] [-40h] BYREF
-    VariableValue v12; // [sp+58h] [-38h] BYREF
+// Maximum nested VAR_STACK records the reader tracks on its explicit frame
+// list. Retail save images never nest a stack cell inside a stack buffer;
+// the bound exists so a corrupt or crafted image fails loudly instead of
+// recursing without limit.
+constexpr int SCR_READSTACK_MAX_NESTING = 16;
 
-    MemFile_ReadData(memFile, 2, v11);
-    v2 = *(_WORD *)v11;
-    v3 = *(unsigned __int16 *)v11;
-    v4 = 5 * *(unsigned __int16 *)v11 + 11;
-    v5 = 5 * *(_WORD *)v11 + 11;
-    if (v4 != v5)
+// One suspended parent while a nested stack frame is being read.
+struct ScrReadStackFrame
+{
+    VariableStackBuffer *stack; // parent frame being filled
+    char *buf;                  // parent record awaiting the child pointer
+    unsigned __int16 remaining; // parent records left after that record
+};
+
+// Writes one finished record (type byte + widened payload cell) into the
+// packed runtime image.
+void Scr_WriteStackRecord(char *buf, const VariableValue &value)
+{
+    *buf = value.type;
+    VariableStackBuf_WriteCell(buf + 1, value.u);
+}
+
+// Reads the stack head (size, codepos, local id, saveStamp byte) and
+// allocates the runtime buffer with the widened record stride; the DISK
+// records consumed by the caller are unchanged retail bytes.
+VariableStackBuffer *__cdecl Scr_ReadStackHead(MemoryFile *memFile)
+{
+    unsigned __int16 size; // r27
+    unsigned int bufLen; // r28
+    VariableStackBuffer *stack; // r31
+    unsigned __int8 header[8]; // [sp+50h] [-40h] BYREF
+
+    MemFile_ReadData(memFile, 2, header);
+    size = *reinterpret_cast<unsigned __int16 *>(header);
+
+    // M4 (ki-n1et): rebuild the RUNTIME image with the widened record stride;
+    // the DISK records consumed below are unchanged retail bytes.
+    bufLen = VARIABLE_STACK_RECORD_SIZE * size + (sizeof(VariableStackBuffer) - 1);
+    if (bufLen != (unsigned __int16)bufLen)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp",
             268,
             0,
             "%s",
             "bufLen == (unsigned short)bufLen");
-    v6 = (uint16*)MT_Alloc(v4, MT_TYPE_THREAD);
+    stack = reinterpret_cast<VariableStackBuffer *>(MT_Alloc(bufLen, MT_TYPE_THREAD));
     ++scrVarPub.numScriptThreads;
-    v6[2] = v2;
-    v6[3] = v5;
-    *(unsigned int *)v6 = (unsigned int)Scr_ReadCodepos(memFile);
-    MemFile_ReadData(memFile, 1, v11);
-    v6[4] = Scr_ReadId(memFile, v11[0]);
-    MemFile_ReadData(memFile, 1, v11);
-    v7 = (char *)v6 + 11;
-    *((_BYTE *)v6 + 10) = v11[0];
-    if (v3)
-    {
-        v8 = v3;
-        do
-        {
-            v9 = v8 - 1;
-            Scr_DoLoadEntryInternal(&v12, memFile);
-            v8 = v9;
-            *v7 = v12.type;
-            *(unsigned int *)(v7 + 1) = v12.u.intValue;
-            v7 += 5;
-        } while (v9);
-    }
-    return (VariableStackBuffer *)v6;
+    stack->size = size;
+    stack->bufLen = bufLen;
+    stack->pos = Scr_ReadCodepos(memFile);
+    MemFile_ReadData(memFile, 1, header);
+    stack->localId = Scr_ReadId(memFile, header[0]);
+    MemFile_ReadData(memFile, 1, header);
+    stack->saveStamp = header[0];
+    return stack;
 }
 
-void __cdecl Scr_DoLoadEntryInternal(VariableValue *value, MemoryFile *memFile)
+// Decodes one value-bearing cell payload: the saved bytes ARE the runtime
+// dword. Returns false for the kinds it does not handle.
+bool __cdecl Scr_LoadEntryValueCell(int type, VariableValue *value, MemoryFile *memFile)
+{
+    VariableUnion v8; // [sp+54h] [-1Ch] BYREF
+
+    switch (type)
+    {
+    case 0:
+    case 8:
+        return true;
+    case 2:
+    case 3:
+        value->u.intValue = static_cast<unsigned __int16>(Scr_ReadString(memFile));
+        return true;
+    case 4:
+        // M4 (ki-n1et): the rebuilt cell holds a LIVE host pointer; store
+        // it through the pointer member (truncating through intValue is
+        // lossy on 64-bit).
+        value->u.vectorValue = Scr_ReadVec3(memFile);
+        return true;
+    case 5:
+        value->u.floatValue = MemFile_ReadFloat(memFile);
+        return true;
+    case 6:
+    case 11:
+        MemFile_ReadData(memFile, 4, reinterpret_cast<unsigned char *>(&v8));
+        value->u = v8;
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Decodes the runtime-reconstruction cell payloads (the codepos family).
+// Returns false for the kinds it does not handle -- notably VAR_STACK,
+// whose nested record bytes the iterative reader consumes as a frame.
+bool __cdecl Scr_LoadEntryRuntimeCell(int type, VariableValue *value, MemoryFile *memFile)
+{
+    switch (type)
+    {
+    case 7:
+    case 9:
+        value->u.codePosValue = Scr_ReadCodepos(memFile);
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Reads one saved entry (id path or typed cell) into *value. Returns false
+// when the entry is a nested VAR_STACK record: the caller consumes the child
+// stack bytes as an explicit frame, so no decoder re-enters another and the
+// save/load call graph stays cycle-free.
+bool __cdecl Scr_LoadEntryCell(VariableValue *value, MemoryFile *memFile)
 {
     unsigned int v4; // r4
     int v5; // r4
     const char *v6; // r3
     _BYTE v7[4]; // [sp+50h] [-20h] BYREF
-    VariableUnion v8; // [sp+54h] [-1Ch] BYREF
 
     MemFile_ReadData(memFile, 1, v7);
     v4 = v7[0];
@@ -401,47 +465,85 @@ void __cdecl Scr_DoLoadEntryInternal(VariableValue *value, MemoryFile *memFile)
     {
         value->type = VAR_POINTER;
         value->u.intValue = Scr_ReadId(memFile, v4);
+        return true;
     }
-    else
+    v5 = v7[0] >> 3;
+    value->type = static_cast<Vartype_t>(v5);
+    if (Scr_LoadEntryValueCell(v5, value, memFile))
+        return true;
+    if (Scr_LoadEntryRuntimeCell(v5, value, memFile))
+        return true;
+    if (v5 == VAR_STACK)
+        return false;
+    if (!alwaysfails)
     {
-        v5 = v7[0] >> 3;
-        value->type = (Vartype_t)v5;
-        switch (v5)
-        {
-        case 0:
-        case 8:
-            return;
-        case 2:
-        case 3:
-            value->u.intValue = (unsigned __int16)Scr_ReadString(memFile);
-            break;
-        case 4:
-            value->u.intValue = (int)Scr_ReadVec3(memFile);
-            break;
-        case 5:
-            value->u.floatValue = MemFile_ReadFloat(memFile);
-            break;
-        case 6:
-        case 11:
-            MemFile_ReadData(memFile, 4, (unsigned char*)&v8);
-            value->u = v8;
-            break;
-        case 7:
-        case 9:
-            value->u.intValue = (int)Scr_ReadCodepos(memFile);
-            break;
-        case 10:
-            value->u.intValue = (int)Scr_ReadStack(memFile);
-            break;
-        default:
-            if (!alwaysfails)
-            {
-                v6 = va("unknown type %i", v5);
-                MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 501, 1, v6);
-            }
-            break;
-        }
+        v6 = va("unknown type %i", v5);
+        MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 501, 1, v6);
     }
+    return true;
+}
+} // namespace
+
+VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
+{
+    // M4 (ki-n1et): the retail reader recursed through nested VAR_STACK
+    // records (Scr_ReadStack -> Scr_DoLoadEntryInternal -> Scr_ReadStack), so
+    // a corrupt or crafted save image could recurse without bound and exhaust
+    // the host stack. The nesting is now an explicit frame list: identical
+    // bytes consumed in identical order and identical buffers built, but the
+    // nesting depth is bounded and anything deeper fails loudly.
+    ScrReadStackFrame frames[SCR_READSTACK_MAX_NESTING];
+    int depth = 0;
+    VariableValue value; // [sp+58h] BYREF
+
+    VariableStackBuffer *stack = Scr_ReadStackHead(memFile);
+    char *buf = stack->buf;
+    unsigned __int16 remaining = stack->size;
+    while (1)
+    {
+        while (remaining)
+        {
+            if (Scr_LoadEntryCell(&value, memFile))
+            {
+                Scr_WriteStackRecord(buf, value);
+                buf += VARIABLE_STACK_RECORD_SIZE;
+                --remaining;
+                continue;
+            }
+            // Nested VAR_STACK entry: suspend this frame and read the child.
+            if (depth == SCR_READSTACK_MAX_NESTING)
+                Com_Error(ERR_DROP, "Scr_ReadStack: nested stack save depth exceeds %i", depth);
+            frames[depth].stack = stack;
+            frames[depth].buf = buf;
+            frames[depth].remaining = remaining;
+            ++depth;
+            stack = Scr_ReadStackHead(memFile);
+            buf = stack->buf;
+            remaining = stack->size;
+        }
+        if (!depth)
+            return stack;
+        // Child complete: store its pointer into the parent's pending record
+        // (value.type was set to VAR_STACK by Scr_LoadEntryCell).
+        --depth;
+        value.u.stackValue = stack;
+        stack = frames[depth].stack;
+        buf = frames[depth].buf;
+        remaining = frames[depth].remaining;
+        Scr_WriteStackRecord(buf, value);
+        buf += VARIABLE_STACK_RECORD_SIZE;
+        --remaining;
+    }
+}
+
+void __cdecl Scr_DoLoadEntryInternal(VariableValue *value, MemoryFile *memFile)
+{
+    if (Scr_LoadEntryCell(value, memFile))
+        return;
+    // Top-level nested VAR_STACK entry: consume the child stack bytes here.
+    // Deeper nesting is handled inside Scr_ReadStack's own frame list, so
+    // this call never re-enters this function.
+    value->u.stackValue = Scr_ReadStack(memFile);
 }
 
 int __cdecl Scr_DoLoadEntry(VariableValue *value, bool isArray, MemoryFile *memFile)
@@ -1061,9 +1163,11 @@ static void CheckReferenceRange(unsigned int begin, unsigned int end)
             unsigned int count = sb->size;
             while (count)
             {
+                // M4 (ki-n1et): widened runtime record stride.
                 unsigned int entryType = *p;
-                unsigned int entryVal = *(unsigned int *)(p + 1);
-                p += 5;
+                VariableUnion entryCell = VariableStackBuf_ReadCell(p + 1);
+                unsigned int entryVal = (unsigned int)entryCell.intValue;
+                p += VARIABLE_STACK_RECORD_SIZE;
                 --count;
                 if (entryType == 1) // VAR_POINTER
                     ++scrVarDebugPub->refCount[entryVal];
@@ -1172,35 +1276,138 @@ void __cdecl Scr_LoadShutdown()
         MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 1115, 0, "%s", "CheckReferences()");
 }
 
-void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion *u, MemoryFile *memFile)
+// M4 (ki-n1et): the payload union travels BY VALUE. The old signature took
+// `VariableUnion *u` but every caller passed the CELL's pointer VALUE cast to
+// VariableUnion* (type-punning through (int) that truncates host pointers on
+// 64-bit). Reading the proper union member per vartype is width-correct on
+// both 32- and 64-bit, and the serialized bytes are unchanged.
+//
+// The retail monolith was split into small dispatch helpers (Codacy LOC /
+// cyclomatic limits). The byte stream is exactly the old one: the id path
+// (type 1) writes no type byte, every other type writes its type byte first
+// (including the empty payloads 0/8), then the payload bytes follow.
+
+namespace
+{
+// VAR_POINTER: the saved bytes are the script object local id.
+void __cdecl DoSaveEntryPointer(VariableUnion u, MemoryFile *memFile)
 {
     unsigned int UsedSize; // r3
     unsigned int v7; // r3
+
+    UsedSize = MemFile_GetUsedSize(memFile);
+    //ProfMem_Begin("pointer", UsedSize);
+    WriteId((unsigned int)u.intValue, 1u, memFile);
+    v7 = MemFile_GetUsedSize(memFile);
+    //ProfMem_End(v7);
+}
+
+// Writes the type byte that prefixes every non-pointer payload.
+void __cdecl DoSaveEntryTypeByte(unsigned int type, MemoryFile *memFile)
+{
     unsigned int v8; // r3
     unsigned int v9; // r3
-    MemoryFile *v10; // r3
-    double v11; // fp8
-    double v12; // fp7
-    double v13; // fp6
-    double v14; // fp5
-    double v15; // fp4
-    double v16; // fp3
-    double v17; // fp2
-    double v18; // fp1
+    _BYTE v30[4]; // [sp+50h] [-30h] BYREF
+
+    v8 = MemFile_GetUsedSize(memFile);
+    //ProfMem_Begin("type", v8);
+    v30[0] = 8 * type;
+    MemFile_WriteData(memFile, 1, v30);
+    v9 = MemFile_GetUsedSize(memFile);
+    //ProfMem_End(v9);
+}
+
+// Value-bearing payloads: the cell's native dword IS the saved bytes
+// (string-list ids, floats, ints, entity offsets) plus the derived vector
+// text. Returns true when this type was handled.
+bool __cdecl DoSaveEntryValuePayload(unsigned int type, VariableUnion u, MemoryFile *memFile)
+{
     unsigned int v19; // r3
     const char *v20; // r3
     unsigned int v21; // r3
     unsigned int v22; // r3
     unsigned int v23; // r3
-    unsigned int v24; // r3
-    unsigned int v25; // r3
-    float v26; // [sp+8h] [-78h]
-    float v27; // [sp+10h] [-70h]
-    float v28; // [sp+18h] [-68h]
-    float v29; // [sp+20h] [-60h]
-    _BYTE v30[4]; // [sp+50h] [-30h] BYREF
     unsigned int v31[11]; // [sp+54h] [-2Ch] BYREF
 
+    switch (type)
+    {
+    case 2u:
+    case 3u:
+        v19 = MemFile_GetUsedSize(memFile);
+        //ProfMem_Begin("string", v19);
+        v20 = SL_ConvertToString((unsigned __int16)u.intValue);
+        MemFile_WriteCString(memFile, v20);
+        v21 = MemFile_GetUsedSize(memFile);
+        //ProfMem_End(v21);
+        return true;
+    case 4u:
+        WriteVector((float *)u.vectorValue, memFile);
+        return true;
+    case 5u:
+        WriteFloat(u.floatValue, memFile);
+        return true;
+    case 6u:
+        v22 = MemFile_GetUsedSize(memFile);
+        //ProfMem_Begin("int", v22);
+        v31[0] = (unsigned int)u.intValue;
+        MemFile_WriteData(memFile, 4, v31);
+        v23 = MemFile_GetUsedSize(memFile);
+        //ProfMem_End(v23);
+        return true;
+    case 0xBu:
+        v31[0] = u.entityOffset;
+        MemFile_WriteData(memFile, 4, v31);
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Runtime-reconstruction payloads: the disk image carries the DEREFERENCED
+// CONTENTS (codepos source position, stack buffer records); the loader
+// rebuilds fresh host pointers at load. Types 0/8 carry the type byte only.
+// Returns true when this type was handled.
+bool __cdecl DoSaveEntryRuntimePayload(unsigned int type, VariableUnion u, MemoryFile *memFile)
+{
+    unsigned int v24; // r3
+    unsigned int v25; // r3
+
+    switch (type)
+    {
+    case 0u:
+    case 8u:
+        return true;
+    case 7u:
+    case 9u:
+        WriteCodepos(u.codePosValue, memFile);
+        return true;
+    case 0xAu:
+        v24 = MemFile_GetUsedSize(memFile);
+        //ProfMem_Begin("stack", v24);
+        WriteStack(u.stackValue, memFile);
+        v25 = MemFile_GetUsedSize(memFile);
+        //ProfMem_End(v25);
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Type byte plus payload dispatch for the non-pointer entries.
+void __cdecl DoSaveEntryPayload(unsigned int type, VariableUnion u, MemoryFile *memFile)
+{
+    DoSaveEntryTypeByte(type, memFile);
+    if (DoSaveEntryValuePayload(type, u, memFile))
+        return;
+    if (DoSaveEntryRuntimePayload(type, u, memFile))
+        return;
+    if (!alwaysfails)
+        MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 1172, 0, "unknown type");
+}
+} // namespace
+
+void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion u, MemoryFile *memFile)
+{
     if (type != (unsigned __int8)type)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp",
@@ -1210,69 +1417,10 @@ void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion *u, MemoryFile
             "type == (unsigned char)type");
     if (type == 1)
     {
-        UsedSize = MemFile_GetUsedSize(memFile);
-        //ProfMem_Begin("pointer", UsedSize);
-        WriteId((unsigned int)u, 1u, memFile);
-        v7 = MemFile_GetUsedSize(memFile);
-        //ProfMem_End(v7);
+        DoSaveEntryPointer(u, memFile);
+        return;
     }
-    else
-    {
-        v8 = MemFile_GetUsedSize(memFile);
-        //ProfMem_Begin("type", v8);
-        v30[0] = 8 * type;
-        MemFile_WriteData(memFile, 1, v30);
-        v9 = MemFile_GetUsedSize(memFile);
-        //ProfMem_End(v9);
-        switch (type)
-        {
-        case 0u:
-        case 8u:
-            return;
-        case 2u:
-        case 3u:
-            v19 = MemFile_GetUsedSize(memFile);
-            //ProfMem_Begin("string", v19);
-            v20 = SL_ConvertToString((unsigned __int16)u);
-            MemFile_WriteCString(memFile, v20);
-            v21 = MemFile_GetUsedSize(memFile);
-            //ProfMem_End(v21);
-            break;
-        case 4u:
-            WriteVector(&u->floatValue, memFile);
-            break;
-        case 5u:
-            WriteFloat(*(float *)&u, memFile);
-            break;
-        case 6u:
-            v22 = MemFile_GetUsedSize(memFile);
-            //ProfMem_Begin("int", v22);
-            v31[0] = (unsigned int)(uintptr_t)u;
-            MemFile_WriteData(memFile, 4, v31);
-            v23 = MemFile_GetUsedSize(memFile);
-            //ProfMem_End(v23);
-            break;
-        case 7u:
-        case 9u:
-            WriteCodepos((const char *)u, memFile);
-            break;
-        case 0xAu:
-            v24 = MemFile_GetUsedSize(memFile);
-            //ProfMem_Begin("stack", v24);
-            WriteStack((const VariableStackBuffer *)u, memFile);
-            v25 = MemFile_GetUsedSize(memFile);
-            //ProfMem_End(v25);
-            break;
-        case 0xBu:
-            v31[0] = (unsigned int)(uintptr_t)u;
-            MemFile_WriteData(memFile, 4, v31);
-            break;
-        default:
-            if (!alwaysfails)
-                MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 1172, 0, "unknown type");
-            break;
-        }
-    }
+    DoSaveEntryPayload(type, u, memFile);
 }
 
 void __cdecl Scr_SaveSource(MemoryFile *memFile)
@@ -1430,7 +1578,7 @@ void __cdecl AddSaveStackInternal(const VariableStackBuffer *stackBuf)
     const char *buf; // r31
     unsigned int v4; // r3
     unsigned __int16 v5; // r30
-    VariableUnion *v6; // r4
+    VariableUnion v6; // r4
 
     localId = stackBuf->localId;
     if (stackBuf->localId && !scrVarPub.saveIdMap[localId])
@@ -1444,29 +1592,31 @@ void __cdecl AddSaveStackInternal(const VariableStackBuffer *stackBuf)
     {
         do
         {
+            // M4 (ki-n1et): widened runtime record stride; the walk only
+            // classifies entries, the serialized stream is unchanged.
             v4 = (unsigned __int8)*buf;
             v5 = size - 1;
-            v6 = *(VariableUnion **)(buf + 1);
-            buf += 5;
-            AddSaveEntryInternal(v4, (const VariableStackBuffer*)v6);
+            v6 = VariableStackBuf_ReadCell(buf + 1);
+            buf += VARIABLE_STACK_RECORD_SIZE;
+            AddSaveEntryInternal(v4, v6);
             size = v5;
         } while (v5);
     }
 }
 
-void __cdecl AddSaveEntryInternal(unsigned int type, const VariableStackBuffer *u)
+void __cdecl AddSaveEntryInternal(unsigned int type, VariableUnion u)
 {
     if (type == 1)
     {
-        if (u && !scrVarPub.saveIdMap[(unsigned int)u])
+        if (u.intValue && !scrVarPub.saveIdMap[(unsigned int)u.intValue])
         {
-            scrVarPub.saveIdMap[(unsigned int)u] = ++scrVarPub.savecount;
-            *(unsigned __int16 *)((char *)scrVarPub.saveIdMapRev + __ROL4__(scrVarPub.savecount, 1)) = (unsigned __int16)u;
+            scrVarPub.saveIdMap[(unsigned int)u.intValue] = ++scrVarPub.savecount;
+            *(unsigned __int16 *)((char *)scrVarPub.saveIdMapRev + __ROL4__(scrVarPub.savecount, 1)) = (unsigned __int16)u.intValue;
         }
     }
     else if (type == 10)
     {
-        AddSaveStackInternal(u);
+        AddSaveStackInternal(u.stackValue);
     }
 }
 
@@ -1501,7 +1651,7 @@ void __cdecl DoSaveEntry(VariableValue *value, VariableValue *name, bool isArray
     //ProfMem_Begin("DoSaveEntry", UsedSize);
     v9 = MemFile_GetUsedSize(memFile);
     //ProfMem_Begin("DoSaveEntryInternal", v9);
-    DoSaveEntryInternal(value->type, (VariableUnion *)value->u.intValue, memFile);
+    DoSaveEntryInternal(value->type, value->u, memFile);
     v10 = MemFile_GetUsedSize(memFile);
     //ProfMem_End(v10);
     if (!isArray)
@@ -1821,7 +1971,7 @@ void __cdecl WriteGameEntry(MemoryFile *memFile)
 {
     DoSaveEntryInternal(
         scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].w.type & 0x1F,
-        (VariableUnion *)scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].u.u.intValue,
+        scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].u.u,
         memFile);
 }
 
@@ -1858,7 +2008,7 @@ void __cdecl Scr_SavePost(MemoryFile *memFile)
     //ProfMem_End(v5);
     DoSaveEntryInternal(
         scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].w.type & VAR_MASK,
-        (VariableUnion *)scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].u.u.intValue,
+        scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN].u.u,
         memFile);
     WriteId(scrVarPub.levelId, 0, memFile);
     WriteId(scrVarPub.animId, 0, memFile);
@@ -1881,7 +2031,7 @@ void __cdecl AddSaveStack(const VariableStackBuffer *stackBuf)
     CONST char *buf; // r31
     int v4; // r10
     __int16 v5; // r29
-    const VariableStackBuffer *v6; // r3
+    VariableUnion v6; // r3
 
     AddSaveObject(stackBuf->localId);
     size = stackBuf->size;
@@ -1892,15 +2042,15 @@ void __cdecl AddSaveStack(const VariableStackBuffer *stackBuf)
         {
             v4 = (unsigned __int8)*buf;
             v5 = size - 1;
-            v6 = *(const VariableStackBuffer **)(buf + 1);
-            buf += 5;
+            v6 = VariableStackBuf_ReadCell(buf + 1);
+            buf += VARIABLE_STACK_RECORD_SIZE;
             if (v4 == 1)
             {
-                AddSaveObject((unsigned int)v6);
+                AddSaveObject((unsigned int)v6.intValue);
             }
             else if (v4 == 10)
             {
-                AddSaveStack(v6);
+                AddSaveStack(v6.stackValue);
             }
             //LOWORD(size) = v5;
             size = (size & 0xFFFF0000) | ((uint32_t)v5 & 0xFFFF);
@@ -1909,15 +2059,15 @@ void __cdecl AddSaveStack(const VariableStackBuffer *stackBuf)
     }
 }
 
-void __cdecl AddSaveEntry(unsigned int type, const VariableStackBuffer *u)
+void __cdecl AddSaveEntry(unsigned int type, VariableUnion u)
 {
     if (type == 1)
     {
-        AddSaveObject((unsigned int)u);
+        AddSaveObject((unsigned int)u.intValue);
     }
     else if (type == 10)
     {
-        AddSaveStack(u);
+        AddSaveStack(u.stackValue);
     }
 }
 

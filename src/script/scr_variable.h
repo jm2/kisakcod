@@ -92,10 +92,17 @@ struct VariableStackBuffer // sizeof=0xC
     uint16_t size;
     uint16_t bufLen;
     uint16_t localId;
-    uint8_t time;
+    // Opaque one-byte value persisted byte-exactly in the save image (retail
+    // named this field 'time'; it is a plain uint8_t round-tripped by
+    // WriteStack / Scr_ReadStack, not a time_t, and has no other user).
+    uint8_t saveStamp;
     char buf[1];
 };
-static_assert(sizeof(VariableStackBuffer) == 0xC);
+// M4 (ki-n1et): runtime struct holding a live `pos` host pointer; the save
+// path writes only the buffer CONTENTS, never this struct image. Widens
+// 0xC -> 0x10 on 64-bit; scr_native.hpp's VariableStackBufferNative mirrors
+// both widths.
+RUNTIME_SIZE(VariableStackBuffer, 0xC, 0x10);
 
 union VariableUnion // sizeof=0x4
 {                                       // ...
@@ -129,7 +136,58 @@ union VariableUnion // sizeof=0x4
     VariableStackBuffer *stackValue;
     uint32_t entityOffset;
 };
-static_assert(sizeof(VariableUnion) == 0x4);
+
+// M4 (ki-n1et): stride of one archived stack VALUE record in the runtime
+// VariableStackBuffer image -- a full widened value-cell slot plus the type
+// byte. The SERIALIZED stack image keeps the packed retail records (4-byte
+// payload + 1-byte type, written/read by DoSaveEntryInternal /
+// Scr_DoLoadEntryInternal); only the runtime buffer stride widens with
+// VariableUnion, so serialized formats do not move.
+inline constexpr size_t VARIABLE_STACK_RECORD_SIZE = sizeof(VariableUnion) + 1;
+
+// M4 (ki-n1et): byte-safe accessors for one stack-record payload. The runtime
+// VariableStackBuffer image packs [type byte][VariableUnion] records at a
+// VARIABLE_STACK_RECORD_SIZE stride, so every payload after record 0 sits at a
+// non-pointer-aligned address; typed loads/stores through VariableUnion* or
+// const char** at those addresses are undefined behavior (and fault on
+// strict-alignment targets). The copy moves exactly sizeof(VariableUnion)
+// payload bytes with no alignment or strict-aliasing hazards and produces
+// identical bytes to a plain member access. `payload` always points at the
+// first payload byte (one past the record's type byte); the record stride
+// guarantees a full VariableUnion of payload room behind it.
+static inline void VariableStackBuf_CopyCell(void *dst, const void *src)
+{
+    // Byte-wise move instead of memcpy: both endpoints are byte pointers and
+    // the payload size is explicit in the loop bound, so the copy is
+    // verifiable without the memcpy size contract (CWE-120 cannot arise --
+    // source and destination span the same fixed, compile-time size).
+    unsigned char *d = static_cast<unsigned char *>(dst);
+    const unsigned char *s = static_cast<const unsigned char *>(src);
+    for (size_t i = 0; i < sizeof(VariableUnion); ++i)
+        d[i] = s[i];
+}
+
+static inline VariableUnion VariableStackBuf_ReadCell(const void *payload)
+{
+    VariableUnion cell;
+    VariableStackBuf_CopyCell(&cell, payload);
+    return cell;
+}
+
+static inline void VariableStackBuf_WriteCell(void *payload, const VariableUnion &cell)
+{
+    VariableStackBuf_CopyCell(payload, &cell);
+}
+
+// M4 (ki-n1et): the value cell. On ILP32 every member is 4 bytes so live
+// host pointers (vectorValue / codePosValue / stackValue) are lossless; on
+// 64-bit the union widens 0x4 -> 0x8 and pointer stores through the 32-bit
+// image would truncate. scr_native.hpp carries the frozen save-image mirror
+// (VariableUnionDisk, ONDISK_SIZE 4) and the widened runtime view
+// (VariableUnionNative, RUNTIME_SIZE 4->8); scr_readwrite's save/load
+// boundary moves only type bytes and scalar payloads, so the serialized
+// format does not change with this widening.
+RUNTIME_SIZE(VariableUnion, 0x4, 0x8);
 
 struct VariableValue // sizeof=0x8
 {   
@@ -137,7 +195,9 @@ struct VariableValue // sizeof=0x8
     VariableUnion u;                    // ...
     Vartype_t type;                           // ...
 };
-static_assert(sizeof(VariableValue) == 0x8);
+// M4 (ki-n1et): cell + type word; widens 0x8 -> 0x10 on 64-bit (union grows
+// to 8, type word stays 4). Save-image mirror: VariableValueDisk, frozen 8.
+RUNTIME_SIZE(VariableValue, 0x8, 0x10);
 
 union ObjectInfo_u // sizeof=0x2
 {                                       // ...
@@ -146,28 +206,30 @@ union ObjectInfo_u // sizeof=0x2
     uint16_t nextEntId;
     uint16_t self;
 };
-static_assert(sizeof(ObjectInfo_u) == 0x2);
+// M4 (ki-n1et): scalar id unions/structs -- no host pointers, frozen at
+// native width on every target.
+RUNTIME_SIZE(ObjectInfo_u, 0x2, 0x2);
 
 struct ObjectInfo // sizeof=0x4
 {                                       // ...
     uint16_t refCount;
     ObjectInfo_u u;
 };
-static_assert(sizeof(ObjectInfo) == 0x4);
+RUNTIME_SIZE(ObjectInfo, 0x4, 0x4);
 
 union Variable_u // sizeof=0x2
 {                                       // ...
     uint16_t prev;
     uint16_t prevSibling;
 };
-static_assert(sizeof(Variable_u) == 0x2);
+RUNTIME_SIZE(Variable_u, 0x2, 0x2);
 
 struct Variable // sizeof=0x4
 {                                       // ...
     uint16_t id;                // ...
     Variable_u u;                       // ...
 };
-static_assert(sizeof(Variable) == 0x4);
+RUNTIME_SIZE(Variable, 0x4, 0x4);
 
 union VariableValueInternal_u // sizeof=0x4
 {                                       // ...
@@ -188,7 +250,9 @@ union VariableValueInternal_u // sizeof=0x4
     VariableUnion u;
     ObjectInfo o;
 };
-static_assert(sizeof(VariableValueInternal_u) == 0x4);
+// M4 (ki-n1et): embeds VariableUnion, so it widens 0x4 -> 0x8 with the value
+// cell on 64-bit.
+RUNTIME_SIZE(VariableValueInternal_u, 0x4, 0x8);
 
 union VariableValueInternal_w // sizeof=0x4
 {                                       // ...
@@ -200,14 +264,15 @@ union VariableValueInternal_w // sizeof=0x4
     uint32_t waitTime;
     uint32_t parentLocalId;
 };
-static_assert(sizeof(VariableValueInternal_w) == 0x4);
+// M4 (ki-n1et): scalar status/type/name word -- frozen at native width.
+RUNTIME_SIZE(VariableValueInternal_w, 0x4, 0x4);
 
 union VariableValueInternal_v // sizeof=0x2
 {                                       // ...
     uint16_t next;
     uint16_t index;
 };
-static_assert(sizeof(VariableValueInternal_v) == 0x2);
+RUNTIME_SIZE(VariableValueInternal_v, 0x2, 0x2);
 
 struct VariableValueInternal // sizeof=0x10
 {                                       // ...
@@ -217,7 +282,11 @@ struct VariableValueInternal // sizeof=0x10
     VariableValueInternal_v v;          // ...
     uint16_t nextSibling;       // ...
 };
-static_assert(sizeof(VariableValueInternal) == 0x10);
+// M4 (ki-n1et): variable-table entry; widens 0x10 -> 0x18 on 64-bit via the
+// embedded VariableValueInternal_u. The variable table is runtime-only: the
+// save path walks entries and writes scalar ids/payloads, never this image,
+// so no serialized format moves.
+RUNTIME_SIZE(VariableValueInternal, 0x10, 0x18);
 
 struct scrVarDebugPub_t // sizeof=0xE0004
 {                                       // ...
@@ -230,13 +299,17 @@ struct scrVarDebugPub_t // sizeof=0xE0004
     // padding byte
     // padding byte
 };
-static_assert(sizeof(scrVarDebugPub_t) == 0xE0004);
+// M4 (ki-n1et): debug globals hold `const char*` tables; widen with the
+// pointer width. Runtime-only introspection storage, never serialized.
+RUNTIME_SIZE(scrVarDebugPub_t, 0xE0004, 0x140008);
 
 struct scrVarGlob_t // sizeof=0x180000
 {                                       // ...
     VariableValueInternal variableList[0x18000]; // ...
 };
-static_assert(sizeof(scrVarGlob_t) == 0x180000);
+// M4 (ki-n1et): the whole variable table; 0x180000 -> 0x240000 on 64-bit via
+// the widened VariableValueInternal entries.
+RUNTIME_SIZE(scrVarGlob_t, 0x180000, 0x240000);
 
 struct scr_entref_t // sizeof=0x4
 {                                       // ...
@@ -253,7 +326,8 @@ struct scr_entref_t // sizeof=0x4
     uint16_t entnum;            // ...
     uint16_t classnum;          // ...
 };
-static_assert(sizeof(scr_entref_t) == 0x4);
+// M4 (ki-n1et): scalar entity reference -- frozen at native width.
+RUNTIME_SIZE(scr_entref_t, 0x4, 0x4);
 
 struct scr_classStruct_t // sizeof=0xC
 {
@@ -272,7 +346,8 @@ struct scr_classStruct_t // sizeof=0xC
     // padding byte
     const char *name;
 };
-static_assert(sizeof(scr_classStruct_t) == 0xC);
+// M4 (ki-n1et): carries a `const char *name`; widens 0xC -> 0x10 on 64-bit.
+RUNTIME_SIZE(scr_classStruct_t, 0xC, 0x10);
 
 struct VariableDebugInfo // sizeof=0x10
 {
@@ -281,7 +356,8 @@ struct VariableDebugInfo // sizeof=0x10
     const char *functionName;
     int varUsage;
 };
-static_assert(sizeof(VariableDebugInfo) == 0x10);
+// M4 (ki-n1et): three `const char*` debug pointers; widens 0x10 -> 0x20.
+RUNTIME_SIZE(VariableDebugInfo, 0x10, 0x20);
 
 //void  TRACK_scr_variable(void);
 void __cdecl Scr_Cleanup();
@@ -437,7 +513,9 @@ struct ThreadDebugInfo // sizeof=0x8C
     float varUsage;                     // ...
     float endonUsage;                   // ...
 };
-static_assert(sizeof(ThreadDebugInfo) == 0x8C);
+// M4 (ki-n1et): 32 live `const char *pos` code positions; widens 0x8C ->
+// 0x110 on 64-bit. Runtime-only introspection storage, never serialized.
+RUNTIME_SIZE(ThreadDebugInfo, 0x8C, 0x110);
 
 void  Scr_DumpScriptThreads(void);
 void  Scr_ShutdownVariables(void);

@@ -4071,7 +4071,8 @@ script_function:
 			value = Scr_EvalVariable(funcId);
 			type = Scr_GetUncacheType(value.type);
 
-			func = (void (*)())value.u.pointerValue;
+			// M4 (ki-n1et): pointer-width builtin-function cache cell.
+			func = (void (*)())value.u.codePosValue;
 		}
 		else
 		{
@@ -4081,7 +4082,8 @@ script_function:
 			funcId = GetNewVariable(scrCompilePub.builtinFunc, name);
 
 			value.type = (Vartype_t)Scr_GetCacheType(type);
-			value.u.pointerValue = (intptr_t)func;
+			// M4 (ki-n1et): pointer-width builtin-function cache cell.
+			value.u.codePosValue = (const char *)func;
 
 			SetVariableValue(funcId, &value);
 		}

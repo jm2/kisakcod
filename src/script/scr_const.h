@@ -1,5 +1,10 @@
 #pragma once
 #include <cstdint>
+// M4 (ki-n1et): this header uses RUNTIME_SIZE for the frozen-width handle
+// table; include the ABI macros directly so the header is self-sufficient
+// regardless of include order (the MSVC dedi build includes it without a
+// prior kisak_abi.h).
+#include <universal/kisak_abi.h>
 
 #ifdef KISAK_MP
 struct scr_const_t // sizeof=0x174
@@ -191,7 +196,10 @@ struct scr_const_t // sizeof=0x174
     uint16_t back_right;        // ...
     uint16_t tag_gunner_pov;    // ...
 };
-static_assert(sizeof(scr_const_t) == 0x174);
+// M4 (ki-n1et): canonical string-name handle table -- every field is a
+// uint16_t script string id, no host pointers, frozen at native width on
+// every target.
+RUNTIME_SIZE(scr_const_t, 0x174, 0x174);
 
 #elif KISAK_SP
 struct scr_const_t

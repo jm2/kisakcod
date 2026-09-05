@@ -17,7 +17,11 @@ struct scrAnimPub_t // sizeof=0x41C
     // padding byte
     // padding byte
 };
-static_assert(sizeof(scrAnimPub_t) == 0x41C);
+// M4 (ki-n1et): xanim_lookup holds scr_animtree_t entries that carry a
+// live `XAnim_s *anims` host pointer (bg_local.h); the entry widens
+// 4 -> 8 on 64-bit, so the [2][128] table drives 0x41C -> 0x820. The
+// scalar handle fields around it do not move relative to each other.
+RUNTIME_SIZE(scrAnimPub_t, 0x41C, 0x820);
 
 struct scrAnimGlob_t // sizeof=0x20C
 {                                       // ...
@@ -26,7 +30,10 @@ struct scrAnimGlob_t // sizeof=0x20C
     uint16_t using_xanim_lookup[2][MAX_XANIMTREE_NUM]; // ...
     int bAnimCheck;                     // ...
 };
-static_assert(sizeof(scrAnimGlob_t) == 0x20C);
+// M4 (ki-n1et): two host pointers (start / pos) plus scalar tables;
+// widens 0x20C -> 0x218 on 64-bit (8+8+0x200+4, padded to pointer
+// alignment).
+RUNTIME_SIZE(scrAnimGlob_t, 0x20C, 0x218);
 
 void __cdecl TRACK_scr_animtree();
 void __cdecl SetAnimCheck(int bAnimCheck);
