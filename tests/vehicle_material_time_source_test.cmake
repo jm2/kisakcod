@@ -97,7 +97,7 @@ read_normalized(
 foreach(_required IN ITEMS
     "#include <bgame/bg_vehicle_material_time.h>"
     "ent->s.lerp.u.vehicle.materialTime = bg::vehicle_material_time::kDisabled;"
-    "ent->s.lerp.u.vehicle.materialTime = bg::vehicle_material_time::Advance( ent->s.lerp.u.vehicle.materialTime, (int)(deltaTime * 1000.0));")
+    "ent->s.lerp.u.vehicle.materialTime = bg::vehicle_material_time::Advance( ent->s.lerp.u.vehicle.materialTime, runtime::determinism::FloatToIntSaturating(deltaTime * 1000.0));")
     require_contains(_game_mp "${_required}" "multiplayer producer path")
 endforeach()
 forbid_contains(

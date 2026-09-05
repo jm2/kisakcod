@@ -15,6 +15,7 @@
 #include <server/sv_game.h>
 #include <game/bullet.h>
 #include <bgame/bg_vehicle_material_time.h>
+#include <runtime/scalar_determinism.hpp>
 
 
 
@@ -1536,7 +1537,7 @@ void __cdecl VEH_UpdateMaterialTime(gentity_s *ent, float frameTime)
         ent->s.lerp.u.vehicle.materialTime =
             bg::vehicle_material_time::Advance(
                 ent->s.lerp.u.vehicle.materialTime,
-                (int)(deltaTime * 1000.0));
+                runtime::determinism::FloatToIntSaturating(deltaTime * 1000.0));
     }
     else
     {
