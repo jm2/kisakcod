@@ -318,7 +318,7 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
     WriteCodepos(stackBuf->pos, memFile);
     WriteId(stackBuf->localId, 0, memFile);
 
-    v10[0] = (v10[0] & 0xFF00) | (uint8_t)stackBuf->time;
+    v10[0] = (v10[0] & 0xFF00) | (uint8_t)stackBuf->saveStamp;
     MemFile_WriteData(memFile, 1, v10);
     v5 = v4;
     buf = stackBuf->buf;

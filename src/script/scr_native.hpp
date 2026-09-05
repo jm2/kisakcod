@@ -207,7 +207,7 @@ struct VariableStackBufferNative
     uint16_t size;
     uint16_t bufLen;
     uint16_t localId;
-    uint8_t time;
+    uint8_t saveStamp; // mirrors scr_variable.h's VariableStackBuffer::saveStamp
     char buf[1];
 };
 RUNTIME_SIZE(VariableStackBufferNative, 0xC, 0x10);
