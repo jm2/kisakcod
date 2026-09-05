@@ -155,6 +155,8 @@ set(GAME
     "${SRC_DIR}/game/g_public.h"
     "${SRC_DIR}/game/g_save.cpp"
     "${SRC_DIR}/game/g_save.h"
+    "${SRC_DIR}/game/taginfo_save.cpp"
+    "${SRC_DIR}/game/taginfo_save.h"
     "${SRC_DIR}/game/g_scr_db.h"
     "${SRC_DIR}/game/g_scr_load_obj.cpp"
     "${SRC_DIR}/game/g_scr_load_obj.h"

@@ -94,6 +94,41 @@ std::uint16_t FakeHandleFromString(const char *const text)
     return 0;
 }
 
+// Drives WriteHostRecord expecting a defect report through RecordFail.
+// setjmp must live in a frame free of objects with non-trivial destructors:
+// the interaction between _setjmp and C++ unwinding is non-portable (MSVC
+// C4611 and friends), so these jump frames carry only trivially-destructible
+// state and the callers keep ownership of every resource handle. Returns
+// true when the module reported a defect (longjmp unwound to the jump frame).
+bool WriteExpectingDefect(
+    MemoryFile *writer,
+    const taginfo::TagInfoEntityMap &map,
+    const taginfo::TagInfoLiveRecord &live)
+{
+    if (setjmp(failJump) == 0)
+    {
+        taginfo::WriteHostRecord(
+            writer, map, RecordFail, FakeStringFromHandle, live);
+        return false;
+    }
+    return true;
+}
+
+// Read-side counterpart of WriteExpectingDefect; same trivial jump-frame rule.
+bool ReadExpectingDefect(
+    MemoryFile *reader,
+    const taginfo::TagInfoEntityMap &map)
+{
+    taginfo::TagInfoRestoredRecord restored{};
+    if (setjmp(failJump) == 0)
+    {
+        taginfo::ReadHostRecord(
+            reader, map, RecordFail, FakeHandleFromString, restored);
+        return false;
+    }
+    return true;
+}
+
 constexpr std::size_t kStorageBytes = 4096;
 
 void BeginWriter(MemoryFile &file, std::vector<std::uint8_t> &storage)
@@ -222,6 +257,47 @@ void TestNamedRecordRoundTrip()
     CloseReader(reader);
 }
 
+// Assemble the same logical record through the pinned Disk32 converter
+// contract and emit it as a raw record stream (fixed 0x70 image + name
+// CString), bypassing the record module.
+std::vector<std::uint8_t> WriteRawConverterStream(
+    const taginfo::TagInfoLiveRecord &live)
+{
+    taginfo::tagInfoHostView expectedView{};
+    expectedView.parent = kEntityCount; // &tagArena[kEntityCount - 1]
+    expectedView.next = 1;              // &tagArena[0]
+    expectedView.name = 1;              // retail mark, never the live handle
+    expectedView.index = live.index;
+    std::memcpy(expectedView.axis, live.axis, sizeof(expectedView.axis));
+    std::memcpy(expectedView.parentInvAxis, live.parentInvAxis,
+        sizeof(expectedView.parentInvAxis));
+    const taginfo::tagInfoDisk32_s expectedDisk =
+        taginfo::TagInfoToDisk32(expectedView);
+
+    MemoryFile rawWriter{};
+    std::vector<std::uint8_t> rawStorage;
+    BeginWriter(rawWriter, rawStorage);
+    MemFile_WriteData(
+        &rawWriter,
+        static_cast<int>(taginfo::kTagInfoDisk32Bytes),
+        &expectedDisk);
+    MemFile_WriteCString(&rawWriter, FakeStringFromHandle(live.name));
+    return FinishWriter(rawWriter, rawStorage);
+}
+
+// Run one written payload through the real load path.
+taginfo::TagInfoRestoredRecord DecodeRecordStream(
+    const std::vector<std::uint8_t> &payload,
+    const taginfo::TagInfoEntityMap &map)
+{
+    taginfo::TagInfoRestoredRecord restored{};
+    MemoryFile reader = BeginReader(payload);
+    taginfo::ReadHostRecord(
+        &reader, map, RecordFail, FakeHandleFromString, restored);
+    CloseReader(reader);
+    return restored;
+}
+
 void TestWireParityWithPinnedConverter()
 {
     // Whatever WriteHostRecord emits must decode to exactly the record the
@@ -238,41 +314,12 @@ void TestWireParityWithPinnedConverter()
         &moduleWriter, map, RecordFail, FakeStringFromHandle, live);
     const std::vector<std::uint8_t> modulePayload =
         FinishWriter(moduleWriter, moduleStorage);
+    const std::vector<std::uint8_t> rawPayload = WriteRawConverterStream(live);
 
-    // Same logical record, assembled through the pinned converter contract.
-    taginfo::tagInfoHostView expectedView{};
-    expectedView.parent = kEntityCount; // &tagArena[kEntityCount - 1]
-    expectedView.next = 1;              // &tagArena[0]
-    expectedView.name = 1;              // retail mark, never the live handle
-    expectedView.index = 42;
-    std::memcpy(expectedView.axis, live.axis, sizeof(expectedView.axis));
-    std::memcpy(expectedView.parentInvAxis, live.parentInvAxis,
-        sizeof(expectedView.parentInvAxis));
-    const taginfo::tagInfoDisk32_s expectedDisk =
-        taginfo::TagInfoToDisk32(expectedView);
-
-    MemoryFile rawWriter{};
-    std::vector<std::uint8_t> rawStorage;
-    BeginWriter(rawWriter, rawStorage);
-    MemFile_WriteData(
-        &rawWriter,
-        static_cast<int>(taginfo::kTagInfoDisk32Bytes),
-        &expectedDisk);
-    MemFile_WriteCString(&rawWriter, FakeStringFromHandle(live.name));
-    const std::vector<std::uint8_t> rawPayload =
-        FinishWriter(rawWriter, rawStorage);
-
-    taginfo::TagInfoRestoredRecord fromModule{};
-    MemoryFile moduleReader = BeginReader(modulePayload);
-    taginfo::ReadHostRecord(
-        &moduleReader, map, RecordFail, FakeHandleFromString, fromModule);
-    CloseReader(moduleReader);
-
-    taginfo::TagInfoRestoredRecord fromRaw{};
-    MemoryFile rawReader = BeginReader(rawPayload);
-    taginfo::ReadHostRecord(
-        &rawReader, map, RecordFail, FakeHandleFromString, fromRaw);
-    CloseReader(rawReader);
+    const taginfo::TagInfoRestoredRecord fromModule =
+        DecodeRecordStream(modulePayload, map);
+    const taginfo::TagInfoRestoredRecord fromRaw =
+        DecodeRecordStream(rawPayload, map);
 
     CHECK(fromRaw.parent == fromModule.parent);
     CHECK(fromRaw.next == fromModule.next);
@@ -343,10 +390,8 @@ void TestWriteRejectsMisalignedPointer()
     BeginWriter(writer, storage);
     const int usedBefore = MemFile_GetUsedSize(&writer);
 
-    if (setjmp(failJump) == 0)
+    if (!WriteExpectingDefect(&writer, map, live))
     {
-        taginfo::WriteHostRecord(
-            &writer, map, RecordFail, FakeStringFromHandle, live);
         Check(false, "misaligned parent pointer must be rejected", __LINE__);
     }
     else
@@ -372,10 +417,8 @@ void TestWriteRejectsOutOfRangePointer()
     BeginWriter(writer, storage);
     const int usedBefore = MemFile_GetUsedSize(&writer);
 
-    if (setjmp(failJump) == 0)
+    if (!WriteExpectingDefect(&writer, map, live))
     {
-        taginfo::WriteHostRecord(
-            &writer, map, RecordFail, FakeStringFromHandle, live);
         Check(false, "out-of-range next pointer must be rejected", __LINE__);
     }
     else
@@ -404,10 +447,8 @@ void TestWriteRejectsPointerBelowBase()
     BeginWriter(writer, storage);
     const int usedBefore = MemFile_GetUsedSize(&writer);
 
-    if (setjmp(failJump) == 0)
+    if (!WriteExpectingDefect(&writer, map, live))
     {
-        taginfo::WriteHostRecord(
-            &writer, map, RecordFail, FakeStringFromHandle, live);
         Check(false, "pointer below the entity base must be rejected", __LINE__);
     }
     else
@@ -445,11 +486,8 @@ void TestReadRejectsOutOfRangeIndex()
 
     MemoryFile reader = BeginReader(payload);
 
-    if (setjmp(failJump) == 0)
+    if (!ReadExpectingDefect(&reader, map))
     {
-        taginfo::TagInfoRestoredRecord restored{};
-        taginfo::ReadHostRecord(
-            &reader, map, RecordFail, FakeHandleFromString, restored);
         Check(false, "out-of-range record index must be rejected", __LINE__);
     }
     else
@@ -490,11 +528,18 @@ void QDECL Com_Error(const errorParm_t code, const char *format, ...)
     ++unexpectedReports;
 }
 
+namespace
+{
+// Backing store for the va() shim below. Namespace scope rather than a
+// function-local static: none of the tested record paths format through
+// va(), so the shim only has to hand back a valid empty C string.
+char g_vaStub[1] = {};
+} // namespace
+
 char *QDECL va(const char *format, ...)
 {
-    static char result[1]{};
     (void)format;
-    return result;
+    return g_vaStub;
 }
 
 bool __cdecl Sys_IsMainThread()

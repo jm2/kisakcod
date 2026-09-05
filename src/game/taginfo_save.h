@@ -1,5 +1,10 @@
 #pragma once
 
+// Everything in this header is C++ (namespace, references). Guarding the body
+// keeps C tooling — including static analysis that parses .h as C — from
+// choking on the syntax while leaving the C++ view unchanged.
+#ifdef __cplusplus
+
 #ifndef KISAK_SP
 #error This file is for SinglePlayer only
 #endif
@@ -95,3 +100,5 @@ void ReadHostRecord(
     TagInfoHandleFromStringFn handleFromString,
     TagInfoRestoredRecord &out);
 } // namespace taginfo_save
+
+#endif // __cplusplus
