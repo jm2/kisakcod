@@ -170,37 +170,20 @@ void TestTotalOrderLess()
 // double goes through a hardware conversion that can quieten signaling NaNs
 // and reposition/canonicalize payloads, so two distinct binary32 NaNs can
 // collapse onto one binary64 key (differently per architecture) and lose
-// their order. The NaNs here are built by bit_cast and only ever travel
-// through bit-reinterpretation and integer compares -- no floating-point
-// operation touches them, so the test stays constexpr and signal-free.
+// their order.
+//
+// Coverage split. The static portion asserts only properties that survive
+// constexpr sNaN canonicalization (MSVC's constexpr evaluator holds float
+// constants in binary64 and sets the quiet bit, so payload-bearing sNaN
+// literals never appear in a static_assert). The exact-payload probes run at
+// runtime, where the sNaN bit patterns stay opaque behind volatile-mediated
+// loads: no constexpr evaluator or constant folder can touch them, the
+// bit_cast executes for real on every compiler, and no coverage is gated on
+// compiler identity.
 void TestTotalOrderLessFloatKeysNativeBinary32Bits()
 {
     using runtime::determinism::TotalOrderKey;
     using runtime::determinism::TotalOrderLess;
-
-    // binary32 sNaNs with distinct payloads, plus the canonical qNaN.
-    constexpr float kSnanPayload1 = std::bit_cast<float>(std::uint32_t{0x7F800001u});
-    constexpr float kSnanPayload2 = std::bit_cast<float>(std::uint32_t{0x7F8055AAu});
-    constexpr float kQNaN = std::numeric_limits<float>::quiet_NaN(); // 0x7FC00000
-    constexpr float kNegSnanPayload1 = std::bit_cast<float>(std::uint32_t{0xFF800001u});
-
-    // Distinct payloads stay distinct and payload-ordered; the comparison is
-    // antisymmetric -- the exact property the widened double path could lose.
-    static_assert(TotalOrderLess(kSnanPayload1, kSnanPayload2));
-    static_assert(!TotalOrderLess(kSnanPayload2, kSnanPayload1));
-    static_assert(TotalOrderKey(kSnanPayload1) != TotalOrderKey(kSnanPayload2));
-
-    // The 32-bit key is the standard bijection applied to the binary32 bits:
-    // positive NaN keys sit in the high half ordered by payload, the qNaN
-    // (larger payload bits) above both sNaNs, and -NaN in the low half below
-    // every finite value.
-    static_assert(TotalOrderKey(kSnanPayload1) == std::uint32_t{0xFF800001u});
-    static_assert(TotalOrderKey(kSnanPayload2) == std::uint32_t{0xFF8055AAu});
-    static_assert(TotalOrderLess(kSnanPayload2, kQNaN));
-    static_assert(!TotalOrderLess(kQNaN, kSnanPayload2));
-    static_assert(TotalOrderLess(kNegSnanPayload1, kSnanPayload1));
-    static_assert(TotalOrderLess(kNegSnanPayload1,
-        -(std::numeric_limits<float>::lowest)()));
 
     // Signed zero and normal-value ordering hold in binary32 as in binary64.
     constexpr float kPosZero = 0.0f;
@@ -210,9 +193,49 @@ void TestTotalOrderLessFloatKeysNativeBinary32Bits()
     static_assert(TotalOrderLess(-1.5f, 1.5f));
     static_assert(!TotalOrderLess(2.0f, 1.0f));
 
+    // Runtime sNaN probes: the volatile bit loads keep the patterns opaque,
+    // so the bit_casts are exact even under evaluators that quieten
+    // signaling NaNs through a binary64 intermediate. The canonical qNaN is
+    // constexpr-safe (quiet bit already set, zero payload).
+    constexpr float kQNaN = std::numeric_limits<float>::quiet_NaN(); // 0x7FC00000
+    std::uint32_t volatile snan1Bits = 0x7F800001u;
+    std::uint32_t volatile snan2Bits = 0x7F8055AAu;
+    std::uint32_t volatile negSnan1Bits = 0xFF800001u;
+    const float snanPayload1 = std::bit_cast<float>(snan1Bits);
+    const float snanPayload2 = std::bit_cast<float>(snan2Bits);
+    const float negSnanPayload1 = std::bit_cast<float>(negSnan1Bits);
+
+    // The 32-bit key is the standard bijection applied to the binary32 bits:
+    // positive NaN keys sit in the payload-ordered high half, negative NaN
+    // keys mirror into the low half below every finite value.
+    expect(TotalOrderKey(snanPayload1) == std::uint32_t{0xFF800001u},
+        "sNaN payload 1 keys its own 32 bits");
+    expect(TotalOrderKey(snanPayload2) == std::uint32_t{0xFF8055AAu},
+        "sNaN payload 2 keys its own 32 bits");
+    expect(TotalOrderKey(negSnanPayload1) == std::uint32_t{0x007FFFFEu},
+        "negative sNaN mirrors into the low key half");
+
+    // Distinct payloads stay distinct and payload-ordered; the comparison is
+    // antisymmetric -- the exact property the widened double path could lose.
+    expect(TotalOrderLess(snanPayload1, snanPayload2),
+        "sNaN payload 1 orders below payload 2");
+    expect(!TotalOrderLess(snanPayload2, snanPayload1),
+        "sNaN ordering is antisymmetric");
+    expect(TotalOrderKey(snanPayload1) != TotalOrderKey(snanPayload2),
+        "distinct sNaN payloads keep distinct keys");
+    expect(TotalOrderLess(snanPayload2, kQNaN),
+        "sNaN payload 2 orders below the canonical qNaN");
+    expect(!TotalOrderLess(kQNaN, snanPayload2),
+        "canonical qNaN does not order below sNaN payload 2");
+    expect(TotalOrderLess(negSnanPayload1, snanPayload1),
+        "negative sNaN orders below positive sNaN");
+    expect(TotalOrderLess(negSnanPayload1,
+        -(std::numeric_limits<float>::lowest)()),
+        "negative sNaN orders below every finite value");
+
     // A sort over binary32 NaNs must produce one exact payload-ordered
     // permutation on every architecture.
-    float values[] = { kQNaN, kSnanPayload2, kPosZero, kSnanPayload1, kNegZero };
+    float values[] = { kQNaN, snanPayload2, kPosZero, snanPayload1, kNegZero };
     std::sort(std::begin(values), std::end(values),
         [](float a, float b) { return TotalOrderLess(a, b); });
     expect(std::signbit(values[0]) && values[0] == 0.0f, "float -0.0 sorts first");
