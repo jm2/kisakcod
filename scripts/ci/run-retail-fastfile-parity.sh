@@ -9,8 +9,8 @@
 #
 # Both legs run the SAME harness and emit the SAME output protocol:
 #
-#   capture_kind=envelope-v1
-#   hash_domain=kisakcod/m5-widened-graph-hash/v1
+#   capture_kind=envelope-v2
+#   hash_domain=kisakcod/m5-widened-graph-hash/v2
 #   fastfile_bytes=<n>
 #   fastfile_zlib_stream=<0|1>
 #   graph_sha256=<64 hex>
@@ -21,17 +21,20 @@
 #            --emit-reference reference.txt --fastfile <retail.ff>
 #      Run this inside the Windows x86 reference tree with its own build of
 #      the harness; the file records capture_kind, hash_domain, and digest.
+#      The default preset FOLLOWS --host (windows-x86 configures the
+#      windows-x86-mp preset; override with --preset).
 #   2. (host side, CI) compare:
 #        scripts/ci/run-retail-fastfile-parity.sh --host linux-amd64 \
 #            --ref windows-x86 --reference-hash reference.txt \
 #            --fastfile <retail.ff>
 #
-# capture_kind and hash_domain must match between legs; a mismatch fails the
-# gate before the digest compare so the contract cannot silently drift. The
-# envelope-v1 capture covers the fast-file envelope identity (size, zlib
-# stream header, bounded prefix probe); the widened runtime-graph walk
-# (graph-v1) enrolls through the same protocol as the native64 loader path
-# lands.
+# The gate is FAIL-CLOSED on protocol identity: capture_kind and hash_domain
+# must be PRESENT in both leg outputs and must match; a missing or mismatched
+# field aborts the gate before any digest compare, so the contract cannot
+# silently drift. The envelope-v2 capture covers the fast-file envelope
+# identity (size, zlib stream header) plus the FULL file content; the widened
+# runtime-graph walk (graph-v1) enrolls through the same protocol as the
+# native64 loader path lands.
 #
 # Exit codes:
 #   0  parity established
@@ -54,9 +57,19 @@ REF_TRIPLE="windows-x86"
 FASTFILE="${KISAK_RETAIL_FASTFILE:-}"
 REFERENCE_HASH_FILE=""
 EMIT_REFERENCE_FILE=""
-PRESET="linux-amd64-mp"
+# The default preset follows the HOST leg: the documented windows-x86 mint
+# workflow runs this script inside the Windows x86 reference tree, where the
+# Linux preset would configure a foreign toolchain. Override with --preset.
+PRESET=""
 BUILD_DIR=""
 SKIP_BUILD=0
+
+default_preset_for_host() {
+    case "$1" in
+        windows-x86) echo "windows-x86-mp" ;;
+        *) echo "linux-amd64-mp" ;;
+    esac
+}
 
 usage_exit() {
     echo "Usage: $0 --host <triple> --ref <triple> [--fastfile <path>]" >&2
@@ -82,6 +95,9 @@ done
 if [ -z "$HOST_TRIPLE" ] || [ -z "$REF_TRIPLE" ]; then
     echo "run-retail-fastfile-parity: --host and --ref are required" >&2
     usage_exit
+fi
+if [ -z "$PRESET" ]; then
+    PRESET="$(default_preset_for_host "$HOST_TRIPLE")"
 fi
 if [ -z "$FASTFILE" ]; then
     echo "run-retail-fastfile-parity: no retail fast-file given; pass --fastfile or set KISAK_RETAIL_FASTFILE" >&2
@@ -120,21 +136,25 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     cmake --build "$BUILD_DIR" --target "$HARNESS"
 fi
 
-HARNESS_BIN="$(find "$BUILD_DIR" -maxdepth 3 -type f -name "$HARNESS" | head -1)"
+# Windows trees emit the harness with a .exe suffix; probe both spellings.
+HARNESS_BIN="$(find "$BUILD_DIR" -maxdepth 3 -type f \( -name "$HARNESS" -o -name "$HARNESS.exe" \) | head -1)"
 if [ -z "$HARNESS_BIN" ]; then
     # Common cmake binary sub-layouts.
     for candidate in \
         "$BUILD_DIR/tests/$HARNESS" \
+        "$BUILD_DIR/tests/$HARNESS.exe" \
         "$BUILD_DIR/bin/$HARNESS" \
-        "$BUILD_DIR/$HARNESS"; do
-        if [ -x "$candidate" ]; then
+        "$BUILD_DIR/bin/$HARNESS.exe" \
+        "$BUILD_DIR/$HARNESS" \
+        "$BUILD_DIR/$HARNESS.exe"; do
+        if [ -e "$candidate" ]; then
             HARNESS_BIN="$candidate"
             break
         fi
     done
 fi
-if [ -z "$HARNESS_BIN" ] || [ ! -x "$HARNESS_BIN" ]; then
-    echo "run-retail-fastfile-parity: harness binary '$HARNESS' not found under '$BUILD_DIR'" >&2
+if [ -z "$HARNESS_BIN" ] || [ ! -e "$HARNESS_BIN" ]; then
+    echo "run-retail-fastfile-parity: harness binary '$HARNESS' (.exe) not found under '$BUILD_DIR'" >&2
     exit 2
 fi
 
@@ -150,8 +170,20 @@ HOST_KIND="$(parse_field "$HOST_OUTPUT" capture_kind)"
 HOST_DOMAIN="$(parse_field "$HOST_OUTPUT" hash_domain)"
 HOST_DIGEST="$(parse_field "$HOST_OUTPUT" graph_sha256)"
 
+# FAIL-CLOSED on protocol identity: every leg output must carry all three
+# contract fields; a truncated or foreign output aborts before any compare.
 if [ -z "$HOST_DIGEST" ] || [ "${#HOST_DIGEST}" -ne 64 ]; then
     echo "run-retail-fastfile-parity: host leg produced no 64-hex graph_sha256" >&2
+    printf '%s\n' "$HOST_OUTPUT" >&2
+    exit 2
+fi
+if [ -z "$HOST_KIND" ]; then
+    echo "run-retail-fastfile-parity: host leg produced no capture_kind (protocol violation)" >&2
+    printf '%s\n' "$HOST_OUTPUT" >&2
+    exit 2
+fi
+if [ -z "$HOST_DOMAIN" ]; then
+    echo "run-retail-fastfile-parity: host leg produced no hash_domain (protocol violation)" >&2
     printf '%s\n' "$HOST_OUTPUT" >&2
     exit 2
 fi
@@ -187,20 +219,33 @@ REF_KIND="$(parse_field "$(cat "$REFERENCE_HASH_FILE")" capture_kind)"
 REF_DOMAIN="$(parse_field "$(cat "$REFERENCE_HASH_FILE")" hash_domain)"
 REF_DIGEST="$(parse_field "$(cat "$REFERENCE_HASH_FILE")" graph_sha256)"
 
+# FAIL-CLOSED: the reference MUST declare its capture_kind and hash_domain.
+# Accepting a reference with missing identity fields would let a stale or
+# foreign capture slip through on the digest alone.
 if [ -z "$REF_DIGEST" ] || [ "${#REF_DIGEST}" -ne 64 ]; then
     echo "run-retail-fastfile-parity: reference file has no 64-hex graph_sha256: $REFERENCE_HASH_FILE" >&2
+    exit 2
+fi
+if [ -z "$REF_KIND" ]; then
+    echo "run-retail-fastfile-parity: FAIL reference file has no capture_kind: $REFERENCE_HASH_FILE" >&2
+    echo "  Re-mint it on the $REF_TRIPLE side with --emit-reference." >&2
+    exit 2
+fi
+if [ -z "$REF_DOMAIN" ]; then
+    echo "run-retail-fastfile-parity: FAIL reference file has no hash_domain: $REFERENCE_HASH_FILE" >&2
+    echo "  Re-mint it on the $REF_TRIPLE side with --emit-reference." >&2
     exit 2
 fi
 
 echo "=== Comparing legs ==="
 echo "  host ($HOST_TRIPLE): capture_kind=$HOST_KIND domain=$HOST_DOMAIN"
-echo "  ref  ($REF_TRIPLE): capture_kind=${REF_KIND:-?} domain=${REF_DOMAIN:-?}"
+echo "  ref  ($REF_TRIPLE): capture_kind=$REF_KIND domain=$REF_DOMAIN"
 
-if [ -n "$REF_KIND" ] && [ "$REF_KIND" != "$HOST_KIND" ]; then
+if [ "$REF_KIND" != "$HOST_KIND" ]; then
     echo "run-retail-fastfile-parity: FAIL capture_kind mismatch (host=$HOST_KIND ref=$REF_KIND)" >&2
     exit 1
 fi
-if [ -n "$REF_DOMAIN" ] && [ "$REF_DOMAIN" != "$HOST_DOMAIN" ]; then
+if [ "$REF_DOMAIN" != "$HOST_DOMAIN" ]; then
     echo "run-retail-fastfile-parity: FAIL hash_domain mismatch (host=$HOST_DOMAIN ref=$REF_DOMAIN)" >&2
     exit 1
 fi

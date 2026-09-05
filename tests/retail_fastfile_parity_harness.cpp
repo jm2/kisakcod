@@ -7,18 +7,22 @@
 // db::graph_hash stream.
 //
 // Output protocol (stable; consumed by scripts/ci/run-retail-fastfile-parity.sh):
-//   capture_kind=envelope-v1
-//   hash_domain=kisakcod/m5-widened-graph-hash/v1
+//   capture_kind=envelope-v2
+//   hash_domain=kisakcod/m5-widened-graph-hash/v2
 //   fastfile_bytes=<decimal size>
 //   fastfile_zlib_stream=<0|1>
 //   graph_sha256=<64 hex characters>
 //
-// capture_kind envelope-v1 covers the fast-file envelope identity: size,
-// zlib stream header bits, and a bounded prefix probe. The full widened
-// runtime-graph walk (capture_kind graph-v1) enrolls through this identical
-// harness contract and output protocol as the native64 loader path lands;
-// the parity driver refuses to compare different capture kinds, so the
-// contract cannot silently drift.
+// capture_kind envelope-v2 covers the fast-file envelope identity: size,
+// zlib stream header bits, and the FULL file content. (The v1 envelope
+// minted only a bounded 1 MiB prefix probe, which let same-size assets
+// whose tails differ collide on graph_sha256; v2 hashes every byte and
+// bumps both the capture kind and the hash domain so v1 references can
+// never silently match v2 captures.) The full widened runtime-graph walk
+// (capture_kind graph-v1) enrolls through this identical harness contract
+// and output protocol as the native64 loader path lands; the parity driver
+// refuses to compare different capture kinds, so the contract cannot
+// silently drift.
 //
 // Self-test mode synthesizes fixture fast-files in-process and verifies the
 // capture pipeline end-to-end (determinism, pointer-independence across
@@ -38,8 +42,7 @@
 
 namespace
 {
-constexpr std::uint32_t kEnvelopeRecordTag = 0x454E5631u; // "1VNE"
-constexpr std::uint64_t kEnvelopeProbeBytes = 1024u * 1024u;
+constexpr std::uint32_t kEnvelopeRecordTag = 0x454E5632u; // "2VNE"
 
 int g_failures;
 
@@ -85,9 +88,10 @@ bool ReadFileBytes(const char *path, std::vector<std::uint8_t> &out)
     }
 }
 
-// The envelope-v1 capture: canonical graph-hash stream over the fast-file
-// envelope. `probe` may be a re-allocated copy of `bytes`; the digest must
-// not change (pointer-independence of the capture contract).
+// The envelope-v2 capture: canonical graph-hash stream over the fast-file
+// envelope AND the full file content. `probe` may be a re-allocated copy of
+// `bytes`; the digest must not change (pointer-independence of the capture
+// contract).
 db::graph_hash::Digest CaptureEnvelope(
     const std::uint8_t *bytes,
     const std::size_t size)
@@ -96,12 +100,16 @@ db::graph_hash::Digest CaptureEnvelope(
     builder.BeginRecord(kEnvelopeRecordTag);
     builder.FieldU64(1, static_cast<std::uint64_t>(size));
     builder.FieldU64(2, DetectZlibStream(bytes, size) ? 1u : 0u);
-    const std::size_t probeSize =
-        size < static_cast<std::size_t>(kEnvelopeProbeBytes)
-            ? size
-            : static_cast<std::size_t>(kEnvelopeProbeBytes);
-    builder.FieldBytes(3, bytes, probeSize);
+    // Every byte of the asset participates in the digest: a bounded prefix
+    // probe would let same-size assets whose tails differ share a digest.
+    builder.FieldBytes(3, bytes, size);
     builder.EndRecord();
+    if (!builder.Valid())
+    {
+        std::fprintf(stderr,
+            "error: envelope capture stream misuse (internal contract bug)\n");
+        std::exit(2);
+    }
     return builder.Finish();
 }
 
@@ -112,7 +120,7 @@ void EmitCapture(
 {
     char hex[db::graph_hash::kHexDigestBytes];
     db::graph_hash::FormatDigestHex(digest, hex);
-    std::printf("capture_kind=envelope-v1\n");
+    std::printf("capture_kind=envelope-v2\n");
     std::printf("hash_domain=%s\n", db::graph_hash::kHashDomain);
     std::printf("fastfile_path=%s\n", path);
     std::printf("fastfile_bytes=%zu\n", bytes.size());
@@ -175,7 +183,9 @@ bool WriteFileBytes(const char *path, const std::uint8_t *data, const std::size_
 void TestSelfTest(const char *fixturePath)
 {
     // Synthesize a fixture fast-file: zlib header + deterministic payload.
-    const std::size_t payloadSize = 70000; // spans many hash blocks
+    // The payload spans well past the old v1 1 MiB probe window so the
+    // full-content contract is exercised where v1 was blind.
+    const std::size_t payloadSize = (1536u * 1024u) + 64u;
     std::vector<std::uint8_t> fixture(payloadSize);
     fixture[0] = 0x78; // CM=8 deflate, 32K window
     fixture[1] = 0x9C; // FLG making (0x789C % 31) == 0
@@ -204,13 +214,22 @@ void TestSelfTest(const char *fixturePath)
     const db::graph_hash::Digest grownDigest = CaptureEnvelope(grown.data(), grown.size());
     Expect(first != grownDigest, "appended bytes move the envelope digest");
 
-    // Bounded probe sensitivity: a change inside the probe window moves the
-    // digest; a change beyond it does not (documented envelope-v1 semantics).
+    // Full-content sensitivity: a change inside the former probe window
+    // moves the digest...
     std::vector<std::uint8_t> headFlipped = fixture;
     headFlipped[4096] ^= 0xFF;
     const db::graph_hash::Digest headFlippedDigest =
         CaptureEnvelope(headFlipped.data(), headFlipped.size());
-    Expect(first != headFlippedDigest, "probe-window changes move the digest");
+    Expect(first != headFlippedDigest, "head changes move the digest");
+
+    // ...and so does a change BEYOND the old v1 1 MiB probe window (the v1
+    // envelope was blind there; same-size assets could share a digest).
+    std::vector<std::uint8_t> tailFlipped = fixture;
+    tailFlipped[payloadSize - 32] ^= 0xFF;
+    const db::graph_hash::Digest tailFlippedDigest =
+        CaptureEnvelope(tailFlipped.data(), tailFlipped.size());
+    Expect(first != tailFlippedDigest,
+        "changes beyond the v1 probe window move the digest");
 
     // zlib detection.
     Expect(DetectZlibStream(fixture.data(), fixture.size()),

@@ -49,7 +49,12 @@ struct Sha256Core
 //
 // Version the domain tag whenever the framing or field semantics change; the
 // parity driver refuses to compare digests from different domains.
-inline constexpr char kHashDomain[] = "kisakcod/m5-widened-graph-hash/v1";
+// v2: envelope captures cover the FULL fast-file content (the v1 envelope
+// minted only a bounded 1 MiB prefix probe, which let same-size assets
+// collide on graph_sha256). v1 references cannot match v2 captures: the
+// domain tag differs and capture_kind moved from envelope-v1 to envelope-v2;
+// the byte-level framing itself is unchanged.
+inline constexpr char kHashDomain[] = "kisakcod/m5-widened-graph-hash/v2";
 
 // Maximum canonical record nesting depth. The loader graph walk nests per
 // asset/per sub-structure; 64 leaves ample headroom while bounding the
@@ -87,18 +92,27 @@ public:
     // canonicalized to the empty string.
     void FieldString(std::uint32_t tag, const char *text) noexcept;
 
-    // Finalizes and returns the digest, then resets the builder to a valid
-    // fresh stream (usable immediately, no explicit Reset required). A
-    // misused stream (Valid() == false before Finish) still finalizes
-    // deterministically; check Valid() before Finish to detect misuse.
+    // Finalizes and returns the digest, then re-initializes the stream so
+    // the builder is immediately reusable (no explicit Reset required). A
+    // misused stream still finalizes deterministically. The misuse verdict
+    // REMAINS OBSERVABLE after Finish: a stream that finished with records
+    // still open — or that saw any earlier misuse — keeps Valid() == false
+    // across Finish; only an explicit Reset() restores the fresh-stream
+    // valid state. Check Valid() after Finish to detect misuse.
     Digest Finish() noexcept;
 
-    // False when the current stream saw misuse: EndRecord without
-    // BeginRecord, record depth above kMaxRecordDepth, or records still open
-    // at Finish time. Reset/Finish restore true.
+    // False when the current or most recently finished stream saw misuse:
+    // EndRecord without BeginRecord, record depth above kMaxRecordDepth, or
+    // records still open at Finish time. Reset() restores true; Finish()
+    // preserves the verdict of the stream it finished so misuse can never
+    // be silently laundered by the implicit post-Finish re-initialization.
     bool Valid() const noexcept { return m_valid; }
 
 private:
+    // Re-initializes the hash core to the fresh stream state: empty record
+    // stack and the domain preamble absorbed. Does not touch m_valid.
+    void InitStream() noexcept;
+
     // Charges bytes to both the hash core and the innermost open record's
     // framing length.
     void Absorb(const std::uint8_t *bytes, std::size_t size) noexcept;
