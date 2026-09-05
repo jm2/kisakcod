@@ -699,14 +699,9 @@ bool TestConsoleFocusEventDrained(ConsoleInput &input)
         "console focus event is drained", "z");
 }
 
-// Failure-path diagnostics for the unicode drain stage. Windows x86
-// (WOW64 console thunking) round-trips written INPUT_RECORD batches
-// differently from 64-bit legs — the same fixture that passes on
-// amd64/arm64 fails here — so when the stage fails, dump the console
-// code pages, input mode, the exact boundary result bytes, and any
-// events still queued. ctest --output-on-failure surfaces this with
-// the FAIL line, making the 32-bit-only mismatch visible in CI.
-void DumpUnicodeStageDiagnostics(
+// Dumps the boundary result of the failed stage: status, length, the
+// first result bytes, and the console code pages at failure time.
+void DumpUnicodeStageResult(
     const SysConsoleReadResult &result,
     const char *const output,
     const std::size_t outputSize)
@@ -724,21 +719,12 @@ void DumpUnicodeStageDiagnostics(
         stderr, " cp=%lu out-cp=%lu\n",
         static_cast<unsigned long>(GetConsoleCP()),
         static_cast<unsigned long>(GetConsoleOutputCP()));
+}
 
-    const HANDLE probe = CreateFileW(
-        L"CONIN$",
-        GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        nullptr,
-        OPEN_EXISTING,
-        0,
-        nullptr);
-    if (probe == INVALID_HANDLE_VALUE)
-    {
-        std::fprintf(stderr, "unicode-diag: probe open failed %lu\n",
-            GetLastError());
-        return;
-    }
+// Dumps the input mode and pending-event count of the console input
+// probe handle.
+void DumpUnicodeStageProbeMode(const HANDLE probe)
+{
     DWORD mode = 0;
     if (GetConsoleMode(probe, &mode))
         std::fprintf(stderr, "unicode-diag: mode=0x%08lx\n", mode);
@@ -751,6 +737,11 @@ void DumpUnicodeStageDiagnostics(
     else
         std::fprintf(stderr, "unicode-diag: count failed %lu\n",
             GetLastError());
+}
+
+// Dumps every INPUT_RECORD still queued on the console input probe.
+void DumpUnicodeStageQueuedRecords(const HANDLE probe)
+{
     INPUT_RECORD queued[32]{};
     DWORD peeked = 0;
     if (PeekConsoleInputW(probe, queued, 32, &peeked))
@@ -772,6 +763,37 @@ void DumpUnicodeStageDiagnostics(
         std::fprintf(
             stderr, "unicode-diag: peek failed %lu\n", GetLastError());
     }
+}
+
+// Failure-path diagnostics for the unicode drain stage. Windows x86
+// (WOW64 console thunking) round-trips written INPUT_RECORD batches
+// differently from 64-bit legs — the same fixture that passes on
+// amd64/arm64 fails here — so when the stage fails, dump the console
+// code pages, input mode, the exact boundary result bytes, and any
+// events still queued. ctest --output-on-failure surfaces this with
+// the FAIL line, making the 32-bit-only mismatch visible in CI.
+void DumpUnicodeStageDiagnostics(
+    const SysConsoleReadResult &result,
+    const char *const output,
+    const std::size_t outputSize)
+{
+    DumpUnicodeStageResult(result, output, outputSize);
+    const HANDLE probe = CreateFileW(
+        L"CONIN$",
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        0,
+        nullptr);
+    if (probe == INVALID_HANDLE_VALUE)
+    {
+        std::fprintf(stderr, "unicode-diag: probe open failed %lu\n",
+            GetLastError());
+        return;
+    }
+    DumpUnicodeStageProbeMode(probe);
+    DumpUnicodeStageQueuedRecords(probe);
     (void)CloseHandle(probe);
 }
 
@@ -798,16 +820,16 @@ bool TestConsoleUnicodeKeyDrained(ConsoleInput &input)
     {
         return false;
     }
-    std::array<char, SYS_CONSOLE_MAX_LINE_LENGTH + 1> output{};
-    output.fill('x');
-    const SysConsoleReadResult result = Sys_ConsoleTryReadLine(
-        output.data(), output.size());
+    char output[SYS_CONSOLE_MAX_LINE_LENGTH + 1] = {};
+    std::memset(output, 'x', sizeof(output));
+    const SysConsoleReadResult result =
+        Sys_ConsoleTryReadLine(output, sizeof(output));
     const bool pass = result.status == SysConsoleReadStatus::LineReady
         && result.length == 1
         && output[0] == 'a'
         && output[1] == '\0';
     if (!pass)
-        DumpUnicodeStageDiagnostics(result, output.data(), output.size());
+        DumpUnicodeStageDiagnostics(result, output, sizeof(output));
     return Check(pass, "console unicode key event is drained");
 }
 
