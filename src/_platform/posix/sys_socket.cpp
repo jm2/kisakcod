@@ -3,6 +3,8 @@
 // Socket service implementation for POSIX hosts (Linux, macOS). Wraps BSD
 // UDP datagram sockets in the portable Sys_Socket* API. Nonblocking mode is
 // enforced with O_NONBLOCK; transient EINTR restarts the system call.
+// Descriptors are created close-on-exec so an exec'd child cannot inherit
+// the platform service's sockets.
 
 #include <qcommon/sys_socket.h>
 
@@ -13,6 +15,7 @@
 #include <netinet/in.h>
 #include <new>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 // The opaque handle's concrete shape; defined here so the anonymous-namespace
@@ -87,6 +90,40 @@ SysSocketRecvStatus ClassifyRecvError() noexcept
         return SysSocketRecvStatus::WouldBlock;
     return SysSocketRecvStatus::SystemFailure;
 }
+
+// A datagram that fit the buffer was Received; one the buffer could not
+// hold is Truncated. Split out so the receive path stays at the same
+// cyclomatic complexity as the rest of the service.
+SysSocketRecvStatus RecvOutcome(const bool truncated) noexcept
+{
+    if (truncated)
+        return SysSocketRecvStatus::Truncated;
+    return SysSocketRecvStatus::Received;
+}
+
+// Creates one UDP/IPv4 socket and marks it close-on-exec before it can be
+// observed by another part of the process. The atomic SOCK_CLOEXEC creation
+// flag is used where the platform provides it; otherwise the descriptor is
+// created plainly and FD_CLOEXEC is set on it immediately, which still
+// prevents inheritance but cannot rule out a concurrent exec in the gap.
+// Returns -1 when creation or the fallback marking fails.
+int OpenCloexecUdpDescriptor() noexcept
+{
+#if defined(SOCK_CLOEXEC)
+    const int raw = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP);
+    if (raw >= 0)
+        return raw;
+#endif
+    const int plain = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (plain < 0)
+        return -1;
+    if (fcntl(plain, F_SETFD, FD_CLOEXEC) != 0)
+    {
+        close(plain);
+        return -1;
+    }
+    return plain;
+}
 } // namespace
 
 SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
@@ -97,7 +134,7 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     if (!outHandle || *outHandle)
         return SysSocketOpenStatus::InvalidArgument;
 
-    const int raw = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    const int raw = OpenCloexecUdpDescriptor();
     if (raw < 0)
         return SysSocketOpenStatus::SystemFailure;
 
@@ -197,24 +234,33 @@ SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
         return SysSocketRecvStatus::InvalidArgument;
 
     sockaddr_in from{};
-    socklen_t fromLength = sizeof(from);
+    iovec region{};
+    region.iov_base = buffer;
+    region.iov_len = static_cast<size_t>(bufferCapacity);
+    msghdr message{};
+    message.msg_name = &from;
+    message.msg_namelen = sizeof(from);
+    message.msg_iov = &region;
+    message.msg_iovlen = 1;
+
     ssize_t received = 0;
     do
     {
-        received = recvfrom(handle->handle,
-            buffer,
-            static_cast<size_t>(bufferCapacity),
-            0,
-            reinterpret_cast<sockaddr *>(&from),
-            &fromLength);
+        received = recvmsg(handle->handle, &message, 0);
     } while (received < 0 && errno == EINTR);
     if (received < 0)
         return ClassifyRecvError();
 
+    // MSG_TRUNC in the returned flags marks a datagram larger than the
+    // buffer: the leading bytes were copied and the excess was discarded,
+    // so the whole-datagram contract reports Truncated instead of posing a
+    // partial datagram as Received.
+    const bool truncated = (message.msg_flags & MSG_TRUNC) != 0;
+
     if (outSource && !ToSocketAddress(from, outSource))
         return SysSocketRecvStatus::InvalidHandle;
     *outByteCount = static_cast<std::uint32_t>(received);
-    return SysSocketRecvStatus::Received;
+    return RecvOutcome(truncated);
 }
 
 SysSocketOptionStatus KISAK_CDECL Sys_SocketEnableBroadcast(

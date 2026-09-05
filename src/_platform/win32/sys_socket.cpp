@@ -234,9 +234,19 @@ SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
         reinterpret_cast<sockaddr *>(&from),
         &fromLength);
     if (received == SOCKET_ERROR)
-        return ClassifyRecvError(WSAGetLastError());
-    if (received < 0)
-        return SysSocketRecvStatus::InvalidHandle;
+    {
+        const int error = WSAGetLastError();
+        if (error == WSAEMSGSIZE)
+        {
+            // An oversized datagram fills the buffer with its leading
+            // bytes and Winsock reports the discarded excess as
+            // WSAEMSGSIZE; the whole-datagram contract maps that to
+            // Truncated instead of a system failure.
+            *outByteCount = static_cast<std::uint32_t>(bufferCapacity);
+            return SysSocketRecvStatus::Truncated;
+        }
+        return ClassifyRecvError(error);
+    }
 
     if (outSource && !ToSocketAddress(from, outSource))
         return SysSocketRecvStatus::InvalidHandle;
