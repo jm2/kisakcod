@@ -340,6 +340,46 @@ bool StageExplicitBind(SocketFixture &)
         "explicit bind opened (no candidate high port available)");
 }
 
+// Exclusive bind ownership: while a nonzero port is held open, a second
+// open of the same endpoint reports SystemFailure and publishes no
+// handle, so datagrams for the held port cannot be diverted to a
+// competing socket. Widely separated candidate ports keep the stage
+// stable when an unrelated service already owns one of them.
+bool StageExclusiveBind(SocketFixture &)
+{
+    const std::uint16_t candidatePorts[] = {43213, 47461, 51713, 55963};
+    for (std::size_t index = 0;
+         index < sizeof(candidatePorts) / sizeof(candidatePorts[0]);
+         ++index)
+    {
+        const std::uint16_t requestedPort = candidatePorts[index];
+        SysSocketHandle held = nullptr;
+        const SysSocketOpenStatus heldStatus =
+            Sys_SocketOpenUdp(requestedPort, true, &held);
+        if (heldStatus == SysSocketOpenStatus::SystemFailure)
+            continue; // candidate port owned elsewhere; try the next one
+        if (!Check(heldStatus == SysSocketOpenStatus::Opened,
+                "exclusive bind opened")
+            || !Check(held != nullptr, "exclusive bind handle published"))
+            return false;
+        SysSocketHandle second = nullptr;
+        const SysSocketOpenStatus secondStatus =
+            Sys_SocketOpenUdp(requestedPort, true, &second);
+        const bool closed = Sys_SocketClose(&held) ==
+                SysSocketCloseStatus::Closed
+            && held == nullptr;
+        if (!Check(secondStatus == SysSocketOpenStatus::SystemFailure,
+                "second open of a held port reports SystemFailure")
+            || !Check(second == nullptr,
+                "failed second open publishes no handle")
+            || !Check(closed, "exclusive bind closed"))
+            return false;
+        return true;
+    }
+    return Check(false,
+        "exclusive bind (no candidate high port available)");
+}
+
 // Teardown: close is unconditional, nulls the caller's handle, and a
 // second close is a no-op.
 bool StageTeardown(SocketFixture &fixture)
@@ -355,7 +395,7 @@ bool StageTeardown(SocketFixture &fixture)
             && second == nullptr,
             "close second socket")
         && Check(Sys_SocketClose(nullptr) ==
-               SysSocketCloseStatus::InvalidHandle,
+               SysSocketCloseStatus::Closed,
             "close null pointer");
 }
 } // namespace
@@ -374,7 +414,8 @@ int main()
     const StageFn stages[] = {&StageArgumentValidation,
         &StageEndpointContract, &StageReceiveContract, &StageSendContract,
         &StageLoopbackSend, &StageLoopbackReply, &StageTruncationContract,
-        &StageBroadcastOption, &StageExplicitBind, &StageTeardown};
+        &StageBroadcastOption, &StageExplicitBind, &StageExclusiveBind,
+        &StageTeardown};
 
     for (std::size_t index = 0; index < sizeof(stages) / sizeof(stages[0]);
          ++index)

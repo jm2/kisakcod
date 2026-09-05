@@ -86,7 +86,6 @@ foreach(_marker IN ITEMS
     "socket\\(AF_INET, SOCK_DGRAM, IPPROTO_UDP\\)"
     "ioctlsocket\\("
     "FIONBIO"
-    "SO_REUSEADDR"
     "SO_BROADCAST"
     "closesocket\\("
     "WSAStartup"
@@ -95,13 +94,17 @@ foreach(_marker IN ITEMS
     require_contains("${_win32_source}" "${_marker}"
         "Win32 socket backend must use the canonical Winsock primitive: ${_marker}")
 endforeach()
+# Exclusive bind ownership is contract: a port-sharing option would let a
+# second open of a held nonzero port succeed and silently compete for its
+# datagrams instead of reporting SystemFailure.
 foreach(_forbidden IN ITEMS
     "sys/socket\\.h"
     "<unistd\\.h>"
     "fcntl\\.h"
-    "recvfrom\\(.*MSG_")
+    "recvfrom\\(.*MSG_"
+    "SO_REUSEADDR")
     require_not_contains("${_win32_source}" "${_forbidden}"
-        "Win32 socket backend must not import the POSIX socket API: ${_forbidden}")
+        "Win32 socket backend must not import the POSIX socket API or share bound ports: ${_forbidden}")
 endforeach()
 
 # The POSIX backend uses the canonical BSD socket primitives and never the
@@ -115,7 +118,6 @@ foreach(_marker IN ITEMS
     "recvmsg\\("
     "MSG_TRUNC"
     "O_NONBLOCK"
-    "SO_REUSEADDR"
     "SO_BROADCAST"
     "EAGAIN \\|\\| errno == EWOULDBLOCK"
     "getsockname\\("
@@ -123,13 +125,18 @@ foreach(_marker IN ITEMS
     require_contains("${_posix_source}" "${_marker}"
         "POSIX socket backend must use the canonical BSD primitive: ${_marker}")
 endforeach()
+# Exclusive bind ownership is contract: a port-sharing option would let a
+# second open of a held nonzero port succeed and silently compete for its
+# datagrams instead of reporting SystemFailure.
 foreach(_forbidden IN ITEMS
     "Windows\\.h"
     "winsock"
     "ioctlsocket"
-    "WSAStartup")
+    "WSAStartup"
+    "SO_REUSEADDR"
+    "SO_REUSEPORT")
     require_not_contains("${_posix_source}" "${_forbidden}"
-        "POSIX socket backend must not import Winsock: ${_forbidden}")
+        "POSIX socket backend must not import Winsock or share bound ports: ${_forbidden}")
 endforeach()
 
 # Each platform source set registers exactly its own backend.
@@ -148,7 +155,8 @@ require_not_contains("${_macos_platform}" "_platform/win32/sys_socket\\.cpp"
     "the macOS service set must not register the Winsock backend")
 
 # The runtime suite proves the loopback datagram contract end to end,
-# including the explicit oversized-datagram truncation result.
+# including the explicit oversized-datagram truncation result and the
+# exclusive-ownership rejection of a second open of a held port.
 foreach(_marker IN ITEMS
     "Sys_SocketOpenUdp\\(0, true, "
     "SysSocketRecvStatus::WouldBlock"
@@ -156,6 +164,7 @@ foreach(_marker IN ITEMS
     "SysSocketMaxDatagramBytes \\+ 1"
     "MessageTooLarge"
     "Sys_SocketEnableBroadcast\\("
+    "second open of a held port reports SystemFailure"
     "Sys_SocketClose\\(&first\\) == SysSocketCloseStatus::Closed")
     require_contains("${_socket_tests}" "${_marker}"
         "socket runtime coverage: ${_marker}")
