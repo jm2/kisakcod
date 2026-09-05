@@ -29,6 +29,7 @@
 #include <runtime/scalar_determinism.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -165,6 +166,65 @@ void TestTotalOrderLess()
         "positive NaN sorts last");
 }
 
+// The float overload must key the value's OWN 32 bits. Widening through
+// double goes through a hardware conversion that can quieten signaling NaNs
+// and reposition/canonicalize payloads, so two distinct binary32 NaNs can
+// collapse onto one binary64 key (differently per architecture) and lose
+// their order. The NaNs here are built by bit_cast and only ever travel
+// through bit-reinterpretation and integer compares -- no floating-point
+// operation touches them, so the test stays constexpr and signal-free.
+void TestTotalOrderLessFloatKeysNativeBinary32Bits()
+{
+    using runtime::determinism::TotalOrderKey;
+    using runtime::determinism::TotalOrderLess;
+
+    // binary32 sNaNs with distinct payloads, plus the canonical qNaN.
+    constexpr float kSnanPayload1 = std::bit_cast<float>(std::uint32_t{0x7F800001u});
+    constexpr float kSnanPayload2 = std::bit_cast<float>(std::uint32_t{0x7F8055AAu});
+    constexpr float kQNaN = std::numeric_limits<float>::quiet_NaN(); // 0x7FC00000
+    constexpr float kNegSnanPayload1 = std::bit_cast<float>(std::uint32_t{0xFF800001u});
+
+    // Distinct payloads stay distinct and payload-ordered; the comparison is
+    // antisymmetric -- the exact property the widened double path could lose.
+    static_assert(TotalOrderLess(kSnanPayload1, kSnanPayload2));
+    static_assert(!TotalOrderLess(kSnanPayload2, kSnanPayload1));
+    static_assert(TotalOrderKey(kSnanPayload1) != TotalOrderKey(kSnanPayload2));
+
+    // The 32-bit key is the standard bijection applied to the binary32 bits:
+    // positive NaN keys sit in the high half ordered by payload, the qNaN
+    // (larger payload bits) above both sNaNs, and -NaN in the low half below
+    // every finite value.
+    static_assert(TotalOrderKey(kSnanPayload1) == std::uint32_t{0xFF800001u});
+    static_assert(TotalOrderKey(kSnanPayload2) == std::uint32_t{0xFF8055AAu});
+    static_assert(TotalOrderLess(kSnanPayload2, kQNaN));
+    static_assert(!TotalOrderLess(kQNaN, kSnanPayload2));
+    static_assert(TotalOrderLess(kNegSnanPayload1, kSnanPayload1));
+    static_assert(TotalOrderLess(kNegSnanPayload1,
+        -(std::numeric_limits<float>::lowest)()));
+
+    // Signed zero and normal-value ordering hold in binary32 as in binary64.
+    constexpr float kPosZero = 0.0f;
+    constexpr float kNegZero = -0.0f;
+    static_assert(TotalOrderLess(kNegZero, kPosZero));
+    static_assert(!TotalOrderLess(kPosZero, kNegZero));
+    static_assert(TotalOrderLess(-1.5f, 1.5f));
+    static_assert(!TotalOrderLess(2.0f, 1.0f));
+
+    // A sort over binary32 NaNs must produce one exact payload-ordered
+    // permutation on every architecture.
+    float values[] = { kQNaN, kSnanPayload2, kPosZero, kSnanPayload1, kNegZero };
+    std::sort(std::begin(values), std::end(values),
+        [](float a, float b) { return TotalOrderLess(a, b); });
+    expect(std::signbit(values[0]) && values[0] == 0.0f, "float -0.0 sorts first");
+    expect(!std::signbit(values[1]) && values[1] == 0.0f, "float +0.0 follows -0.0");
+    expect(std::bit_cast<std::uint32_t>(values[2]) == 0x7F800001u,
+        "sNaN payload 1 sorts below payload 2");
+    expect(std::bit_cast<std::uint32_t>(values[3]) == 0x7F8055AAu,
+        "sNaN payload 2 sorts below qNaN");
+    expect(std::bit_cast<std::uint32_t>(values[4]) == 0x7FC00000u,
+        "qNaN sorts last");
+}
+
 // The packed-field checks split into focused helpers so each stays under
 // the project complexity budget while covering one contract per function.
 void TestLittleEndianWriteByteLayout()
@@ -269,6 +329,7 @@ int main()
     TestFloatToIntSaturatingOutOfRangeIsDefined();
     TestFloatToIntSaturatingNaNMapsToZero();
     TestTotalOrderLess();
+    TestTotalOrderLessFloatKeysNativeBinary32Bits();
     TestLittleEndianWriteByteLayout();
     TestLittleEndianBoundaryRoundTrip();
     TestLittleEndianMisalignedAccess();

@@ -103,9 +103,25 @@ namespace runtime::determinism
     return TotalOrderKey(lhs) < TotalOrderKey(rhs);
 }
 
+// binary32 key built from the float's OWN bit pattern -- never a widened
+// double. Widening float->double is a hardware conversion that can quieten
+// signaling NaNs and reposition or canonicalize the payload, so distinct
+// binary32 NaN payloads can collapse onto one binary64 pattern (and the
+// collapse can differ between x86 and AArch64). Keying the native 32 bits
+// keeps the full binary32 totalOrder -- payload included -- on every
+// architecture.
+[[nodiscard]] constexpr std::uint32_t TotalOrderKey(const float value) noexcept
+{
+    const auto bits = std::bit_cast<std::uint32_t>(value);
+    constexpr std::uint32_t kSignMask = std::uint32_t{1} << 31;
+    if ((bits & kSignMask) != 0)
+        return ~bits; // negative values: reverse magnitude order into the low half
+    return bits | kSignMask; // non-negative values: ordered by payload in the high half
+}
+
 [[nodiscard]] constexpr bool TotalOrderLess(const float lhs, const float rhs) noexcept
 {
-    return TotalOrderLess(static_cast<double>(lhs), static_cast<double>(rhs));
+    return TotalOrderKey(lhs) < TotalOrderKey(rhs);
 }
 
 // Explicit little-endian packed-field access. These compose the field from

@@ -55,11 +55,22 @@ read_normalized(
 foreach(_required IN ITEMS
     "constexpr std::int32_t FloatToIntSaturating(const double value) noexcept"
     "constexpr bool TotalOrderLess(const double lhs, const double rhs) noexcept"
+    "constexpr std::uint32_t TotalOrderKey(const float value) noexcept"
+    "constexpr bool TotalOrderLess(const float lhs, const float rhs) noexcept"
     "constexpr std::uint16_t ReadLe16(const unsigned char *bytes) noexcept"
     "constexpr std::int32_t SignExtend8(const std::uint8_t value) noexcept")
     require_contains(_layer "${_required}"
         "the determinism layer publishes the primitive")
 endforeach()
+
+# The float total-order compare must key the value's native binary32 bits.
+# Widening float->double through hardware can quieten signaling NaNs and
+# reposition/canonicalize payloads, collapsing distinct binary32 NaNs onto one
+# binary64 key (differently per architecture) -- the operator-audited defect.
+forbid_contains(
+    _layer
+    "TotalOrderLess(static_cast<double>(lhs), static_cast<double>(rhs))"
+    "float total-order compare must key native binary32 bits, not widen through double")
 
 # Both producers route through the layer and declare it.
 foreach(_producer IN ITEMS _sp_producer _mp_producer)

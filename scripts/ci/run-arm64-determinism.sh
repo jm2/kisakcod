@@ -84,10 +84,14 @@ for entry in "${COMPILERS[@]}"; do
         # the whole gate; the gate still requires at least one sanitizer
         # cell to actually run somewhere in the matrix.
         if [ "$cell" = "asan-ubsan" ]; then
-            probe_src="$(mktemp /tmp/opencode/asan-probe-XXXXXX.cpp)"
-            probe_bin="$(mktemp /tmp/opencode/asan-probe-XXXXXX)"
+            # Trailing X-run templates only (portable across GNU and BSD
+            # mktemp), rooted at ${TMPDIR:-/tmp} instead of a hardcoded
+            # per-session directory; -x c++ keeps the probe C++ without
+            # relying on a file-name suffix.
+            probe_src="$(mktemp "${TMPDIR:-/tmp}/asan-probe-src-XXXXXX")"
+            probe_bin="$(mktemp "${TMPDIR:-/tmp}/asan-probe-bin-XXXXXX")"
             printf 'int main() { return 0; }\n' > "$probe_src"
-            if ! "$cxx_compiler" -fsanitize=address,undefined "$probe_src" \
+            if ! "$cxx_compiler" -x c++ -fsanitize=address,undefined "$probe_src" \
                     -o "$probe_bin" >/dev/null 2>&1; then
                 echo ""
                 echo "=== matrix cell: ${compiler} / ${cell} — SKIPPED:"
