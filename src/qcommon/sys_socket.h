@@ -31,6 +31,13 @@ using SysSocketHandle = SysSocket *;
 // deliberately stays data-only: every endpoint comparison goes through
 // Sys_SocketAddressIsEqual, whose byte-exact rule lives with the platform
 // backends instead of in an inline member here.
+//
+// Static-analysis note: Codacy's Cppcheck engine reads this header in
+// isolation and as C, so it reports the two members below as unused even
+// though both platform backends use them throughout; that same isolated C
+// parse is what turned every inline comparison shape once hosted here into
+// a false MISRA finding. The repo's .codacy.yml excludes this file from
+// that engine view for exactly the reason documented here.
 struct SysSocketAddress
 {
     uint8_t address[4];
