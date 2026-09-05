@@ -1037,8 +1037,11 @@ bool CreateRemoveTreeFiles(const RemoveTreeContractPaths &paths)
         && Check(WriteFile(Join(paths.externalTarget, "outside.bin")));
 }
 
-bool CreateRemoveTreePosixLiteralChildren(const RemoveTreeContractPaths &paths)
+bool CreateRemoveTreeFixture(const RemoveTreeContractPaths &paths)
 {
+    SetCheckStage("remove-tree/setup");
+    if (!CreateRemoveTreeDirectories(paths) || !CreateRemoveTreeFiles(paths))
+        return false;
 #if !defined(_WIN32)
     // Operator-audit regression: ':' and '\' are ordinary bytes in a POSIX
     // name. The deletion walk removes them through the held descriptor, so
@@ -1047,20 +1050,13 @@ bool CreateRemoveTreePosixLiteralChildren(const RemoveTreeContractPaths &paths)
     // tree. The contract's root-gone assertion below therefore proves they
     // were removed. Windows cannot create these names, so the coverage is
     // POSIX-only.
-    return Check(WriteFile(Join(paths.root, "literal:child")))
-        && Check(WriteFile(Join(paths.root, "literal\\child")));
-#else
-    (void)paths;
-    return true;
+    if (!Check(WriteFile(Join(paths.root, "literal:child")))
+        || !Check(WriteFile(Join(paths.root, "literal\\child"))))
+    {
+        return false;
+    }
 #endif
-}
-
-bool CreateRemoveTreeFixture(const RemoveTreeContractPaths &paths)
-{
-    SetCheckStage("remove-tree/setup");
-    return CreateRemoveTreeDirectories(paths)
-        && CreateRemoveTreeFiles(paths)
-        && CreateRemoveTreePosixLiteralChildren(paths);
+    return true;
 }
 
 bool CreateRemoveTreeContractLinks(const RemoveTreeContractPaths &paths)
@@ -1178,6 +1174,40 @@ bool TestRemoveTreeRejectsInvalidArguments(const std::string &root)
 }
 
 #if defined(_WIN32)
+// Lists the names a FindFirstFileExW search returns, skipping the dot
+// entries. An unopenable directory (INVALID_HANDLE_VALUE) counts as
+// empty: the caller has just deleted the directory's payload, so an
+// empty or already-vanished directory is the expected state and the
+// caller's RemoveDirectoryW provides the fail-closed verdict.
+std::vector<std::wstring> ListNonDotEntries(const std::wstring &searchExt)
+{
+    std::vector<std::wstring> names;
+    WIN32_FIND_DATAW findData{};
+    HANDLE findHandle = FindFirstFileExW(
+        searchExt.c_str(),
+        FindExInfoBasic,
+        &findData,
+        FindExSearchNameMatch,
+        nullptr,
+        0);
+    if (findHandle == INVALID_HANDLE_VALUE)
+        return names;
+    for (;;)
+    {
+        const wchar_t *const name = findData.cFileName;
+        const bool dot = name[0] == L'.' && name[1] == L'\0';
+        const bool dotDot = name[0] == L'.'
+            && name[1] == L'.'
+            && name[2] == L'\0';
+        if (!dot && !dotDot)
+            names.emplace_back(name);
+        if (!FindNextFileW(findHandle, &findData))
+            break;
+    }
+    FindClose(findHandle);
+    return names;
+}
+
 // Deletes the payload the external symlink pointed at and removes the
 // now-empty external target directory, reporting any residue found inside.
 bool RemoveExternalTarget(
@@ -1187,32 +1217,8 @@ bool RemoveExternalTarget(
     if (!Check(DeleteFileW(wideOutsideCheck.c_str())))
         return false;
     SetCheckStage("remove-tree/external-cleanup");
-    std::vector<std::wstring> leftover;
-    WIN32_FIND_DATAW findData{};
-    std::wstring searchExt = wideExternalTargetCheck + L"\\*";
-    HANDLE findHandle = FindFirstFileExW(
-        searchExt.c_str(),
-        FindExInfoBasic,
-        &findData,
-        FindExSearchNameMatch,
-        nullptr,
-        0);
-    if (findHandle != INVALID_HANDLE_VALUE)
-    {
-        for (;;)
-        {
-            const wchar_t *const name = findData.cFileName;
-            const bool dot = name[0] == L'.' && name[1] == L'\0';
-            const bool dotDot = name[0] == L'.'
-                && name[1] == L'.'
-                && name[2] == L'\0';
-            if (!dot && !dotDot)
-                leftover.emplace_back(name);
-            if (!FindNextFileW(findHandle, &findData))
-                break;
-        }
-        FindClose(findHandle);
-    }
+    const std::vector<std::wstring> leftover = ListNonDotEntries(
+        wideExternalTargetCheck + L"\\*");
     if (!leftover.empty())
         return false;
     return Check(RemoveDirectoryW(wideExternalTargetCheck.c_str()));

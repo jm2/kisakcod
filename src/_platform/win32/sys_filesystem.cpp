@@ -809,8 +809,15 @@ using KisakNtStatus = std::int32_t;
 constexpr KisakNtStatus kKisakStatusSuccess = 0;
 constexpr KisakNtStatus kKisakStatusNoMoreFiles =
     static_cast<KisakNtStatus>(0x80000006u);
+// The documented STATUS_NO_MORE_ENTRIES (ntstatus.h). The previous value
+// 0x8000001B is STATUS_FILEMARK_DETECTED — a typo one hex digit wide that
+// made every end-of-enumeration reported as STATUS_NO_MORE_ENTRIES fall
+// through to the fail-closed branch below (CI remove-tree/executes
+// regression on the ReFS Dev Drive portable legs: NTFS ends the walk's
+// enumeration with STATUS_NO_MORE_FILES, which matched and masked the
+// typo; ReFS reports STATUS_NO_MORE_ENTRIES).
 constexpr KisakNtStatus kKisakStatusNoMoreEntries =
-    static_cast<KisakNtStatus>(0x8000001Bu);
+    static_cast<KisakNtStatus>(0x8000001Au);
 
 // DesiredAccess values (the subset used here).
 constexpr std::uint32_t kKisakFileListDirectory = 0x00000001u;
@@ -1205,6 +1212,39 @@ bool NextEnumerationOffset(
     return true;
 }
 
+// Parses one returned batch of directory entries into the frame's buckets.
+// The cursor accumulates relative NextEntryOffset values (see
+// NextEnumerationOffset); a zero step ends the batch. Dot entries are
+// skipped, everything else is classified exactly as the enumeration
+// reported it.
+bool ParseEnumerationBatch(
+    void *const buffer,
+    const std::uint32_t bufferBytes,
+    RemoveTreeFrame *const frame)
+{
+    std::uint32_t offset = 0;
+    for (;;)
+    {
+        const auto *const entry =
+            reinterpret_cast<const KisakFileDirectoryInformation *>(
+                static_cast<const unsigned char *>(buffer) + offset);
+        if (!IsDotOrDotDot(
+                entry->FileName,
+                entry->FileNameLength / sizeof(wchar_t))
+            && !ClassifyEnumerationEntry(entry, frame))
+        {
+            return false;
+        }
+        std::uint32_t next = 0;
+        if (!NextEnumerationOffset(entry, offset, bufferBytes, &next))
+            return false;
+        if (next == 0)
+            break;
+        offset = next;
+    }
+    return true;
+}
+
 // Enumerates one real directory by handle. Names are collected with the
 // classification the enumeration reported; afterwards every name is
 // re-opened relative to the frame's anchor and every reopened object is
@@ -1240,30 +1280,10 @@ bool EnumerateHeldDirectory(
         {
             break;
         }
-        if (status != kKisakStatusSuccess)
+        if (status != kKisakStatusSuccess
+            || !ParseEnumerationBatch(buffer, bufferBytes, frame))
         {
             return false;
-        }
-
-        std::uint32_t offset = 0;
-        for (;;)
-        {
-            const auto *const entry =
-                reinterpret_cast<const KisakFileDirectoryInformation *>(
-                    static_cast<const unsigned char *>(buffer) + offset);
-            if (!IsDotOrDotDot(
-                    entry->FileName,
-                    entry->FileNameLength / sizeof(wchar_t))
-                && !ClassifyEnumerationEntry(entry, frame))
-            {
-                return false;
-            }
-            std::uint32_t next = 0;
-            if (!NextEnumerationOffset(entry, offset, bufferBytes, &next))
-                return false;
-            if (next == 0)
-                break;
-            offset = next;
         }
     }
     return true;
