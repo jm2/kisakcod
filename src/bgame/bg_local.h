@@ -340,7 +340,7 @@ struct shellshock_parms_t_movement // sizeof=0x1
 };
 static_assert(sizeof(shellshock_parms_t_movement) == 0x1);
 
-const struct shellshock_parms_t // sizeof=0x268
+struct shellshock_parms_t // sizeof=0x268
 {                                       // ...
     shellshock_parms_t_screenblend screenBlend;
     shellshock_parms_t_view view;
@@ -365,7 +365,7 @@ struct shellshock_t // sizeof=0x20
 };
 static_assert(sizeof(shellshock_t) == 0x20);
 
-struct __declspec(align(8)) animation_s // sizeof=0x68
+struct KISAK_ALIGNAS(8) animation_s // sizeof=0x68
 {                                       // ...
     char name[64];
     int32_t initialLerp;
@@ -439,7 +439,7 @@ struct scr_animtree_t // sizeof=0x4
 };
 static_assert(sizeof(scr_animtree_t) == 0x4);
 
-struct __declspec(align(8)) animScriptData_t // sizeof=0x9A9D0
+struct KISAK_ALIGNAS(8) animScriptData_t // sizeof=0x9A9D0
 {                                       // ...
     animation_s animations[512];
     uint32_t numAnimations;

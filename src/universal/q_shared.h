@@ -296,6 +296,11 @@ typedef unsigned long long ull;
 #define __int8  char
 #define MAKELL(num) num ## LL
 #define FMT_64 "ll"
+// KisakCOD port: the decompiled sources call the MSVC formatted-print
+// spellings directly. POSIX libc provides the standard names with the same
+// signatures; MSVC keeps using its own headers untouched.
+#define _vsnprintf vsnprintf
+#define _snprintf snprintf
 #elif defined(_MSC_VER)
 typedef          __int64 ll;
 typedef unsigned __int64 ull;

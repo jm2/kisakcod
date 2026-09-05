@@ -325,6 +325,94 @@ private:
     bool active_ = false;
 };
 
+class ConsoleInput
+{
+public:
+    ConsoleInput() : saved_(GetStdHandle(STD_INPUT_HANDLE))
+    {
+        // CI harnesses (ctest) spawn this binary with a redirected or
+        // invalid stdin, and AllocConsole only initializes std handles
+        // that are NULL — it fails harmlessly when a console is already
+        // present, leaving a harness stdin (pipe, NUL, or an invalid
+        // handle) in place. Open the console input buffer directly via
+        // CONIN$ and publish it as STD_INPUT_HANDLE so the backend
+        // always sees a genuine FILE_TYPE_CHAR console handle no matter
+        // how this process was spawned.
+        owned_ = AllocConsole() != FALSE;
+        input_ = CreateFileW(
+            L"CONIN$",
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            0,
+            nullptr);
+        if (input_ == INVALID_HANDLE_VALUE)
+        {
+            input_ = nullptr;
+            return;
+        }
+        if (FlushConsoleInputBuffer(input_) == FALSE)
+        {
+            (void)CloseHandle(input_);
+            input_ = nullptr;
+            return;
+        }
+        // Publish last: once active_ is false the destructor restores
+        // saved_, so the std handle must only be swapped after every
+        // other failure mode has been ruled out.
+        active_ = SetStdHandle(STD_INPUT_HANDLE, input_) != FALSE;
+    }
+
+    ConsoleInput(const ConsoleInput &) = delete;
+    ConsoleInput &operator=(const ConsoleInput &) = delete;
+
+    ~ConsoleInput()
+    {
+        if (active_)
+            (void)SetStdHandle(STD_INPUT_HANDLE, saved_);
+        if (input_ != nullptr)
+        {
+            // Leave the queue pristine before releasing the handle: on
+            // the shared CI console any residue would leak into the
+            // next fixture, and on an owned console flushing first
+            // keeps the conhost teardown path small (32-bit desktop
+            // heap is tight; the 0xC0000142 startup cascade on the
+            // x86 legs follows console-fixture teardowns).
+            (void)FlushConsoleInputBuffer(input_);
+            (void)CloseHandle(input_);
+        }
+        if (owned_)
+            FreeConsole();
+    }
+
+    [[nodiscard]] bool IsReady() const
+    {
+        return active_ && input_ != nullptr && input_ != INVALID_HANDLE_VALUE;
+    }
+
+    bool WriteEvents(const INPUT_RECORD *events, const DWORD count)
+    {
+        if (!IsReady() || events == nullptr || count == 0)
+            return false;
+        DWORD written = 0;
+        // WriteConsoleInputW (not the A macro) so records reach the
+        // queue verbatim: the A variant converts through the console
+        // input code page, which on 32-bit clients happens twice
+        // (WOW64 thunk + conhost) and mangles non-ASCII code points
+        // into the default character before the backend ever reads
+        // them.
+        return WriteConsoleInputW(input_, events, count, &written) != FALSE
+            && written == count;
+    }
+
+private:
+    HANDLE saved_ = nullptr;
+    HANDLE input_ = nullptr;
+    bool owned_ = false;
+    bool active_ = false;
+};
+
 bool TestValidFlush()
 {
     std::array<WCHAR, MAX_PATH + 1> directory{};
@@ -442,6 +530,326 @@ bool TestMessageModePipe()
     CloseHandle(writer);
     CloseHandle(server);
     return passed;
+}
+
+INPUT_RECORD ConsoleKeyEvent(
+    const bool keyDown, const char ascii, const WORD repeat = 1)
+{
+    INPUT_RECORD record{};
+    record.EventType = KEY_EVENT;
+    record.Event.KeyEvent.bKeyDown = keyDown;
+    record.Event.KeyEvent.wRepeatCount = repeat;
+    record.Event.KeyEvent.uChar.AsciiChar = ascii;
+    return record;
+}
+
+INPUT_RECORD ConsoleResizeEvent()
+{
+    INPUT_RECORD record{};
+    record.EventType = WINDOW_BUFFER_SIZE_EVENT;
+    record.Event.WindowBufferSizeEvent.dwSize = {1, 1};
+    return record;
+}
+
+INPUT_RECORD ConsoleMenuEvent(const DWORD commandId)
+{
+    INPUT_RECORD record{};
+    record.EventType = MENU_EVENT;
+    record.Event.MenuEvent.dwCommandId = commandId;
+    return record;
+}
+
+INPUT_RECORD ConsoleFocusEvent(const bool set)
+{
+    INPUT_RECORD record{};
+    record.EventType = FOCUS_EVENT;
+    record.Event.FocusEvent.bSetFocus = set;
+    return record;
+}
+
+// Write one event batch into the console input queue and expect a full
+// line to be ready with the given text.
+bool WriteAndExpectConsoleLine(
+    ConsoleInput &input,
+    const char *const writeStage,
+    const INPUT_RECORD *const events,
+    const std::size_t eventCount,
+    const char *const readStage,
+    const char *const expectedLine)
+{
+    if (!Check(input.WriteEvents(events, static_cast<DWORD>(eventCount)),
+            writeStage))
+    {
+        return false;
+    }
+    return ExpectRead(
+        readStage, SysConsoleReadStatus::LineReady, expectedLine);
+}
+
+// Printable bytes, with KEY_UP and non-key records drained first to
+// prove the drain order. The batch mixes resize, key-up, menu, and
+// key-down records: menu events are real non-key console records, and
+// CTRL_C_EVENT (0) is a control-handler signal value, not an input
+// record type — injecting it makes WriteConsoleInput fail on Windows
+// builds that validate event types. The newline terminator is required
+// because the line parser keeps partial lines buffered and reports
+// NoData until a terminator arrives.
+bool TestConsoleDrainsNonKeyRecords(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleResizeEvent(),
+        ConsoleKeyEvent(false, 'a'),
+        ConsoleKeyEvent(true, 'h'),
+        ConsoleMenuEvent(0),
+        ConsoleKeyEvent(true, 'i'),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write printable console events", events,
+        sizeof(events) / sizeof(events[0]),
+        "console KEY_UP and non-key records drain first", "hi");
+}
+
+// CRLF line; the cooked console will not insert the LF if ENABLE_PROCESSED_INPUT
+// does not have ENABLE_LINE_INPUT, but our boundary is bytewise so the caller
+// writes both bytes itself.
+bool TestConsoleCrlfLine(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleKeyEvent(true, 'o'),
+        ConsoleKeyEvent(true, 'k'),
+        ConsoleKeyEvent(true, '\r'),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write complete console line", events,
+        sizeof(events) / sizeof(events[0]),
+        "console CRLF line", "ok");
+}
+
+// Zero-AsciiChar keys (arrow keys, function keys in cooked mode) must be
+// drained without producing a byte.
+bool TestConsoleZeroAsciiKeysDrained(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleKeyEvent(true, 0),
+        ConsoleKeyEvent(true, 'x'),
+        ConsoleKeyEvent(true, 0),
+        ConsoleKeyEvent(true, 'y'),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write zero-ascii console events", events,
+        sizeof(events) / sizeof(events[0]),
+        "zero-ascii console keys are drained", "xy");
+}
+
+// Control-character bytes (Tab, Escape, Backspace, Ctrl+A) must pass
+// through the byte boundary verbatim and not be confused with the
+// line-terminator bytes the parser consumes (\r, \n). The line
+// parser accumulates these as ordinary bytes; the test terminates
+// each control sequence with '\n' to flush the line.
+bool TestConsoleControlCharactersPassThrough(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleKeyEvent(true, '\t'),
+        ConsoleKeyEvent(true, 0x01),
+        ConsoleKeyEvent(true, 27),
+        ConsoleKeyEvent(true, 8),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write control-character events", events,
+        sizeof(events) / sizeof(events[0]),
+        "console control characters pass through bytewise",
+        "\t\x01\x1b\x08");
+}
+
+// Auto-repeat (wRepeatCount > 1) must yield one byte per bytewise
+// call so the line parser sees all of the repeated bytes instead of
+// collapsing the event to a single byte. Pressing and holding 'a'
+// produces a queue with one KEY_EVENT for 'a' (wRepeatCount=4) and
+// one for '\n'; the parser must observe "aaaa" + newline, not "a\n".
+bool TestConsoleAutoRepeatYieldsAllBytes(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleKeyEvent(true, 'a', 4),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write repeat event", events,
+        sizeof(events) / sizeof(events[0]),
+        "console auto-repeat yields all repeat bytes", "aaaa");
+}
+
+// A focus event interleaved between KEY_UP and the printable byte
+// must be drained without producing output; the focus event is the
+// only event in this scenario that should be drained before the
+// printable byte.
+bool TestConsoleFocusEventDrained(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleFocusEvent(false),
+        ConsoleKeyEvent(true, 'z'),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    return WriteAndExpectConsoleLine(input,
+        "write focus event", events,
+        sizeof(events) / sizeof(events[0]),
+        "console focus event is drained", "z");
+}
+
+// Dumps the boundary result of the failed stage: status, length, the
+// first result bytes, and the console code pages at failure time.
+void DumpUnicodeStageResult(
+    const SysConsoleReadResult &result,
+    const char *const output,
+    const std::size_t outputSize)
+{
+    std::fprintf(stderr,
+        "unicode-diag: status=%d length=%zu bytes=",
+        static_cast<int>(result.status),
+        result.length);
+    for (std::size_t i = 0; i < 16 && i < outputSize; ++i)
+    {
+        std::fprintf(
+            stderr, "%02x", static_cast<unsigned char>(output[i]));
+    }
+    std::fprintf(
+        stderr, " cp=%lu out-cp=%lu\n",
+        static_cast<unsigned long>(GetConsoleCP()),
+        static_cast<unsigned long>(GetConsoleOutputCP()));
+}
+
+// Dumps the input mode and pending-event count of the console input
+// probe handle.
+void DumpUnicodeStageProbeMode(const HANDLE probe)
+{
+    DWORD mode = 0;
+    if (GetConsoleMode(probe, &mode))
+        std::fprintf(stderr, "unicode-diag: mode=0x%08lx\n", mode);
+    else
+        std::fprintf(
+            stderr, "unicode-diag: mode failed %lu\n", GetLastError());
+    DWORD pendingCount = 0;
+    if (GetNumberOfConsoleInputEvents(probe, &pendingCount))
+        std::fprintf(stderr, "unicode-diag: pending=%lu\n", pendingCount);
+    else
+        std::fprintf(stderr, "unicode-diag: count failed %lu\n",
+            GetLastError());
+}
+
+// Dumps every INPUT_RECORD still queued on the console input probe.
+void DumpUnicodeStageQueuedRecords(const HANDLE probe)
+{
+    INPUT_RECORD queued[32]{};
+    DWORD peeked = 0;
+    if (PeekConsoleInputW(probe, queued, 32, &peeked))
+    {
+        for (DWORD i = 0; i < peeked && i < 32u; ++i)
+        {
+            std::fprintf(stderr,
+                "unicode-diag: rec[%lu] type=%u down=%d repeat=%u char=0x%04x\n",
+                i,
+                queued[i].EventType,
+                static_cast<int>(queued[i].Event.KeyEvent.bKeyDown),
+                queued[i].Event.KeyEvent.wRepeatCount,
+                static_cast<unsigned>(
+                    queued[i].Event.KeyEvent.uChar.UnicodeChar));
+        }
+    }
+    else
+    {
+        std::fprintf(
+            stderr, "unicode-diag: peek failed %lu\n", GetLastError());
+    }
+}
+
+// Failure-path diagnostics for the unicode drain stage. Windows x86
+// (WOW64 console thunking) round-trips written INPUT_RECORD batches
+// differently from 64-bit legs — the same fixture that passes on
+// amd64/arm64 fails here — so when the stage fails, dump the console
+// code pages, input mode, the exact boundary result bytes, and any
+// events still queued. ctest --output-on-failure surfaces this with
+// the FAIL line, making the 32-bit-only mismatch visible in CI.
+void DumpUnicodeStageDiagnostics(
+    const SysConsoleReadResult &result,
+    const char *const output,
+    const std::size_t outputSize)
+{
+    DumpUnicodeStageResult(result, output, outputSize);
+    const HANDLE probe = CreateFileW(
+        L"CONIN$",
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        0,
+        nullptr);
+    if (probe == INVALID_HANDLE_VALUE)
+    {
+        std::fprintf(stderr, "unicode-diag: probe open failed %lu\n",
+            GetLastError());
+        return;
+    }
+    DumpUnicodeStageProbeMode(probe);
+    DumpUnicodeStageQueuedRecords(probe);
+    (void)CloseHandle(probe);
+}
+
+// Unicode code points (UnicodeChar above 0x7F; the backend decides on
+// the union value, so U+00E9 arrives as UnicodeChar 0x00E9) must be
+// drained because the byte boundary cannot faithfully encode them
+// without breaking the line parser's bytewise contract. The next
+// printable byte in the queue is what the line parser sees.
+bool TestConsoleUnicodeKeyDrained(ConsoleInput &input)
+{
+    INPUT_RECORD unicode{};
+    unicode.EventType = KEY_EVENT;
+    unicode.Event.KeyEvent.bKeyDown = TRUE;
+    unicode.Event.KeyEvent.wRepeatCount = 1;
+    unicode.Event.KeyEvent.uChar.UnicodeChar = static_cast<WCHAR>(0x00E9);
+    const INPUT_RECORD events[] = {
+        unicode,
+        ConsoleKeyEvent(true, 'a'),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    if (!Check(input.WriteEvents(events, static_cast<DWORD>(
+                    sizeof(events) / sizeof(events[0]))),
+            "write unicode key event"))
+    {
+        return false;
+    }
+    char output[SYS_CONSOLE_MAX_LINE_LENGTH + 1] = {};
+    std::memset(output, 'x', sizeof(output));
+    const SysConsoleReadResult result =
+        Sys_ConsoleTryReadLine(output, sizeof(output));
+    const bool pass = result.status == SysConsoleReadStatus::LineReady
+        && result.length == 1
+        && output[0] == 'a'
+        && output[1] == '\0';
+    if (!pass)
+        DumpUnicodeStageDiagnostics(result, output, sizeof(output));
+    return Check(pass, "console unicode key event is drained");
+}
+
+bool TestConsoleInput()
+{
+    ConsoleInput input;
+    if (!Check(input.IsReady(), "create console input"))
+        return false;
+
+    // An empty console input queue is nonblocking, like the pipe/disk paths.
+    if (!ExpectRead("empty console is nonblocking", SysConsoleReadStatus::NoData))
+        return false;
+
+    return TestConsoleDrainsNonKeyRecords(input)
+        && TestConsoleCrlfLine(input)
+        && TestConsoleZeroAsciiKeysDrained(input)
+        && TestConsoleControlCharactersPassThrough(input)
+        && TestConsoleAutoRepeatYieldsAllBytes(input)
+        && TestConsoleFocusEventDrained(input)
+        && TestConsoleUnicodeKeyDrained(input);
 }
 #else
 int OutputDescriptor(const SysConsoleOutputStream stream)
@@ -993,6 +1401,7 @@ int main(const int argc, char **const argv)
 #if defined(_WIN32)
         || !TestBrokenOutputWrite()
         || !TestMessageModePipe()
+        || !TestConsoleInput()
 #endif
         || !TestReadBudget()
         || !TestInput())

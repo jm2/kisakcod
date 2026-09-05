@@ -27,8 +27,13 @@
 #include <ode/mass.h>
 #include <ode/contact.h>
 
+// KisakCOD ABI port: this header is reachable before q_shared.h, so the
+// GNUC __int32 compatibility macro from <universal/q_shared.h> is not
+// guaranteed. Spell the enum base with the exact-width standard type.
+#include <stdint.h>
+
 // LWSS ADD: this enum has to not be "extern C"
-enum PhysWorld : __int32
+enum PhysWorld : int32_t
 {                                       // ...
 	PHYS_WORLD_DYNENT = 0x0,
 	PHYS_WORLD_FX = 0x1,
@@ -54,7 +59,10 @@ extern "C" {
 //dWorldID dWorldCreate();
 struct dxWorld *dWorldCreate(PhysWorld worldIndex); // KISAK
 struct dxSimpleSpace * dGetSimpleSpace(PhysWorld worldIndex); // KISAK
-struct dxJointGroup *__cdecl dGetContactJointGroup(PhysWorld worldIndex); // KISAK
+// KISAK: __cdecl dropped from this KISAK-added declaration - it is the
+// default convention in extern "C" on x86 Windows, and this vendored header
+// must also parse on strict POSIX builds without the qcommon composition.
+struct dxJointGroup *dGetContactJointGroup(PhysWorld worldIndex); // KISAK
 
 void dWorldDestroy (dWorldID);
 

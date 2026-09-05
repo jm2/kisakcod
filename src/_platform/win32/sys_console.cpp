@@ -36,6 +36,140 @@ SysConsoleIoStatus OutputErrorStatus(const DWORD error) noexcept
         ? SysConsoleIoStatus::Unavailable
         : SysConsoleIoStatus::IoError;
 }
+
+// Translate a Win32 console-input failure into the bytewise boundary's
+// vocabulary. The line parser only distinguishes NoData, EndOfFile, and
+// IoError; InvalidData / Truncated are line-level classifications that
+// do not apply to a single byte. A real console reporting
+// ERROR_INVALID_HANDLE (parent console detached, redirected by another
+// process) or ERROR_ACCESS_DENIED (handle revoked) collapses to IoError
+// so the parser surfaces the failure without misinterpreting the void
+// as a NUL byte.
+bool MapConsoleInputError(
+    const DWORD error,
+    SysConsoleRawReadResult &result) noexcept
+{
+    if (IsEndOfPipeError(error))
+    {
+        result = {SysConsoleRawReadStatus::EndOfFile, 0};
+        return true;
+    }
+    if (error == ERROR_INVALID_HANDLE || error == ERROR_ACCESS_DENIED)
+    {
+        result = {SysConsoleRawReadStatus::IoError, 0};
+        return true;
+    }
+    return false;
+}
+
+// Translate one pending console input event into a raw console byte or a
+// "keep draining" decision. The portable boundary exposes only single-byte
+// reads, so KEY_UP, function/arrow keys, mouse, focus, window-buffer-size,
+// and menu events are drained without producing output. KEY_DOWN records
+// with a zero UnicodeChar (arrow keys, function keys in cooked mode) or a
+// UnicodeChar above 0x7F (non-ASCII code points) are also drained so the
+// next key can be evaluated; uChar is a union, so AsciiChar only aliases
+// the low byte of UnicodeChar and cannot distinguish a real zero char
+// from a codepoint whose low byte survived (U+00E9 arrives as 0xE9), and
+// the portable boundary is byte-oriented — it cannot faithfully encode
+// codepoints above 0x7F without breaking the line parser's bytewise
+// contract. Remaining KEY_DOWN records produce one Data byte carrying the
+// UnicodeChar low byte. Menu, mouse, focus, and window-buffer-size
+// records are non-key events that drain here; with ENABLE_PROCESSED_INPUT
+// Ctrl+C is dispatched to the control handler and never enters the input
+// queue at all. The console control handler dispatch path runs
+// independently of ReadConsoleInput, so the engine's signal policy is
+// unchanged.
+SysConsoleRawReadResult TranslateConsoleEvent(
+    const INPUT_RECORD &event) noexcept
+{
+    if (event.EventType != KEY_EVENT)
+        return {SysConsoleRawReadStatus::NoData, 0};
+    const KEY_EVENT_RECORD &key = event.Event.KeyEvent;
+    if (!key.bKeyDown)
+        return {SysConsoleRawReadStatus::NoData, 0};
+    const WCHAR codeUnit = key.uChar.UnicodeChar;
+    if (codeUnit == 0 || codeUnit > 0x7F)
+        return {SysConsoleRawReadStatus::NoData, 0};
+    return {SysConsoleRawReadStatus::Data,
+        static_cast<unsigned char>(codeUnit)};
+}
+
+// Pending auto-repeat bytes for the raw console read path. The path is
+// single-consumer by contract (the line parser drives it from one
+// thread), so the state rides in single-threaded file-scope storage:
+// KEY_EVENT records with wRepeatCount > 1 produce one byte per call
+// across consecutive calls instead of collapsing to a single byte.
+struct PendingRepeatState
+{
+    unsigned char byte = 0;
+    WORD remaining = 0;
+};
+
+PendingRepeatState pendingRepeat;
+
+// Map one console-input API failure into the bytewise boundary's
+// vocabulary via MapConsoleInputError; unmapped errors are I/O errors.
+SysConsoleRawReadResult MapInputFailure(const DWORD error) noexcept
+{
+    SysConsoleRawReadResult mapped{};
+    if (MapConsoleInputError(error, mapped))
+        return mapped;
+    return {SysConsoleRawReadStatus::IoError, 0};
+}
+
+// Drain pending console input events until one yields a Data byte, the
+// input queue is empty, or a fatal error is reported.
+//
+// Returns the first Data byte seen, EndOfFile when the input handle
+// reports a pipe-class EOF, IoError on any other console failure, or
+// NoData when the queue is empty.
+SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
+{
+    if (pendingRepeat.remaining != 0)
+    {
+        const unsigned char byte = pendingRepeat.byte;
+        --pendingRepeat.remaining;
+        return {SysConsoleRawReadStatus::Data, byte};
+    }
+
+    for (;;)
+    {
+        DWORD pending = 0;
+        if (!GetNumberOfConsoleInputEvents(input, &pending))
+            return MapInputFailure(GetLastError());
+        if (pending == 0)
+            return {SysConsoleRawReadStatus::NoData, 0};
+
+        INPUT_RECORD event{};
+        DWORD readCount = 0;
+        // ReadConsoleInputW is required, not the A macro: the
+        // translator classifies on uChar.UnicodeChar (a WCHAR field),
+        // and only the W variant fills it without a code-page
+        // conversion. With ReadConsoleInputA conhost converts the
+        // stored W record through the console input code page, and on
+        // 32-bit clients the WOW64 thunk adds a second conversion —
+        // any unmappable code point then collapses to the default
+        // character '?' (0x3F), which sits inside the printable range
+        // and leaks into the line instead of draining. The W variant
+        // returns the queue's records verbatim on every architecture.
+        if (!ReadConsoleInputW(input, &event, 1, &readCount)
+            || readCount == 0)
+            return MapInputFailure(GetLastError());
+
+        const SysConsoleRawReadResult translated =
+            TranslateConsoleEvent(event);
+        if (translated.status != SysConsoleRawReadStatus::Data)
+            continue;
+        if (event.Event.KeyEvent.wRepeatCount > 1)
+        {
+            pendingRepeat.byte = translated.byte;
+            pendingRepeat.remaining =
+                static_cast<WORD>(event.Event.KeyEvent.wRepeatCount - 1);
+        }
+        return translated;
+    }
+}
 } // namespace
 
 SysConsoleIoStatus Sys_ConsoleBackendWrite(
@@ -104,9 +238,13 @@ SysConsoleRawReadResult Sys_ConsoleBackendTryReadByte() noexcept
     const DWORD type = GetFileType(input);
     if (type == FILE_TYPE_CHAR)
     {
-        // The established Win32 GUI console owns interactive line editing.
-        // This portable boundary consumes redirected standard input only.
-        return {SysConsoleRawReadStatus::NoData, 0};
+        // Native character-console input. The windowed GUI console owns
+        // interactive line editing through its edit control and never
+        // reaches this path; Sys_ConsoleInput returns its edit-control
+        // buffer directly under !KISAK_DEDI_HEADLESS. Headless profile
+        // owns this stdin handle and drains console events one byte at
+        // a time without disturbing the windowed edit-control owner.
+        return TryReadConsoleByte(input);
     }
     if (type == FILE_TYPE_PIPE)
     {
