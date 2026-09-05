@@ -1,27 +1,394 @@
+# Release gate for KisakCOD.
+#
+# Implements the multi-platform release contract from
+# docs/CI_RELEASE_WORKFLOW_AUDIT.md (bead ki-8px) and docs/task.md Priority 8:
+#   - one exact release tag/SHA is resolved and validated before anything
+#     builds; every build job checks out that verified ref
+#   - workflow-level permission is contents: read; only the final code-free
+#     publish job holds contents: write (build jobs never see it)
+#   - a reproducible source archive with provenance, target-labeled build
+#     artifacts, and an aggregate SHA256SUMS covering every packaged file
+#   - bounded timeouts, immutable action pins, no persisted checkout
+#     credentials, and no superseded-release cancellation races
+#     (cancel-in-progress: false so two pushes to one tag queue, not race)
+#
+# Platform honesty note: the engine targets are Win32-x86-only today
+# (CMakeLists.txt hard-fails any non-win32 engine build and that gate must not
+# be relaxed). The windows-x86 leg ships the real engine; the other five
+# supported pairs produce provenance-carrying portable-composition artifacts
+# until their platform backends land.
+#
+# Retention policy: workflow artifacts pin 90 days; the GitHub release itself
+# is the long-term store.
+
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to publish
+        description: Existing tag to publish (vX.Y.Z)
         required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  windows-x86:
+  verify-tag:
+    # Resolve and validate the ONE release ref everything else builds from.
+    # Fails closed unless the tag exists, matches vX.Y.Z, and (on tag push)
+    # points exactly at the pushed commit.
+    name: Verify release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.verify.outputs.tag }}
+      commit: ${{ steps.verify.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate tag resolves to the event commit
+        id: verify
+        shell: bash
+        # The requested tag reaches the script only through the exported env
+        # (never interpolated into the script text), and must pass the
+        # strict vX.Y.Z shape before anything else uses it.
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          TAG="$RELEASE_TAG"
+          # Anchored regex, not a glob: `case` patterns like v[0-9]*.[0-9]*.[0-9]*
+          # accept v1abc.2def.3ghi ([0-9]* = one digit then anything), which
+          # violates the documented strict vX.Y.Z contract.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '$TAG' does not match vX.Y.Z" >&2
+            exit 1
+          fi
+          COMMIT="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}" || true)"
+          if [ -z "$COMMIT" ]; then
+            echo "::error::tag '$TAG' does not resolve to a commit" >&2
+            exit 1
+          fi
+          if [ "$COMMIT" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::checked-out HEAD $(git rev-parse HEAD) != tag commit $COMMIT" >&2
+            exit 1
+          fi
+          if [ "${{ github.event_name }}" = "push" ] && [ "$COMMIT" != "${GITHUB_SHA}" ]; then
+            echo "::error::tag commit $COMMIT does not match pushed SHA ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+          echo "validated tag $TAG at commit $COMMIT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+
+  build-source:
+    # Reproducible source archive from the verified ref, plus its provenance
+    # manifest. Reproducibility is proven in-job by generating the archive
+    # twice and comparing bytes.
+    name: Source archive
+    needs: verify-tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ needs.verify-tag.outputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Assert checked-out commit is the verified one
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ needs.verify-tag.outputs.commit }}" \
+            || { echo "::error::HEAD is not the verified commit" >&2; exit 1; }
+
+      - name: Create reproducible source archive
+        shell: bash
+        run: |
+          TAG="${{ needs.verify-tag.outputs.tag }}"
+          mkdir -p dist
+          git archive --format=tar.gz -o "dist/KisakCOD-${TAG}-source.tar.gz" HEAD
+          # Reproducibility gate: a second archive of the same commit must be
+          # byte-identical (git archive pins paths, order, and mtimes).
+          git archive --format=tar.gz -o /tmp/repro-check.tar.gz HEAD
+          cmp "dist/KisakCOD-${TAG}-source.tar.gz" /tmp/repro-check.tar.gz \
+            || { echo "::error::source archive is not reproducible" >&2; exit 1; }
+          listing="$(tar -tzf "dist/KisakCOD-${TAG}-source.tar.gz")"
+          for required in CMakeLists.txt src scripts docs; do
+            grep -qE "^${required}(/|$)" <<<"$listing" \
+              || { echo "::error::source archive missing ${required}" >&2; exit 1; }
+          done
+
+      - name: Write provenance manifest
+        shell: bash
+        run: |
+          TAG="${{ needs.verify-tag.outputs.tag }}"
+          jq -n \
+            --arg tag "$TAG" \
+            --arg commit "${{ needs.verify-tag.outputs.commit }}" \
+            --arg config "source" \
+            --arg run "${GITHUB_RUN_ID}" \
+            --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{tag: $tag, commit: $commit, config: $config, workflow_run: $run, generated_at: $generated_at}' \
+            > "dist/KisakCOD-${TAG}-source-provenance.json"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: KisakCOD-${{ needs.verify-tag.outputs.tag }}-source
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  build-release:
+    # Production artifacts for every supported OS/architecture pair, built
+    # from the verified tag. Same shared script and packaging shape as
+    # ci.yml's windows-x86 production leg (CI validates what release ships).
+    name: Release / ${{ matrix.target }}
+    needs: verify-tag
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x86
+            runner: windows-2022
+            os: windows
+          - target: windows-amd64
+            runner: windows-2025
+            os: windows
+            cmake-arch: x64
+            pe-arch: x64
+          - target: windows-arm64
+            runner: windows-11-arm
+            os: windows
+            cmake-arch: ARM64
+            pe-arch: ARM64
+          - target: linux-amd64
+            runner: ubuntu-24.04
+            os: linux
+            file-arch: x86-64
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            os: linux
+            file-arch: aarch64
+          - target: macos-arm64
+            runner: macos-15
+            os: macos
+            file-arch: arm64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ needs.verify-tag.outputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        if: matrix.target == 'windows-x86'
+        with:
+          dotnet-version: 8.x
+
+      - name: Build engine production binaries (shared profile)
+        if: matrix.target == 'windows-x86'
+        shell: pwsh
+        run: ./scripts/ci/build-windows-x86.ps1 -BuildDir build-release -Config Release
+
+      - name: Verify binary architecture (PE machine type)
+        if: matrix.target == 'windows-x86'
+        shell: pwsh
+        run: >
+          ./scripts/ci/verify-artifact-arch.ps1 -Expected x86
+          bin/Release/KisakCOD-mp.exe bin/Release/KisakCOD-dedi.exe
+
+      # Portable production composition legs use static `shell: bash` —
+      # expressions are not permitted in `shell:` (actionlint / GitHub
+      # context-availability), the commands are shell-agnostic, and Git Bash
+      # is preinstalled on the Windows runners.
+      - name: Configure portable production composition
+        if: matrix.target != 'windows-x86'
+        shell: bash
+        run: >
+          cmake -S . -B build-release
+          ${{ matrix.cmake-arch && format('-A {0}', matrix.cmake-arch) || '' }}
+          -DKISAK_BUILD_MP=OFF
+          -DKISAK_BUILD_DEDICATED=OFF
+          -DKISAK_BUILD_SP=OFF
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=ON
+
+      - name: Build portable production composition
+        if: matrix.target != 'windows-x86'
+        shell: bash
+        run: cmake --build build-release --config Release --parallel
+
+      - name: Verify binary architecture (ELF/Mach-O)
+        if: matrix.os == 'linux' || matrix.os == 'macos'
+        shell: bash
+        run: >
+          scripts/ci/verify-artifact-arch.sh '${{ matrix.file-arch }}'
+          build-release/tests/kisakcod-pool-allocator-tests
+          build-release/tests/kisakcod-db-zone-runtime-table-tests
+
+      - name: Verify binary architecture (PE machine type)
+        if: matrix.os == 'windows' && matrix.target != 'windows-x86'
+        shell: pwsh
+        run: >
+          ./scripts/ci/verify-artifact-arch.ps1 -Expected '${{ matrix.pe-arch }}'
+          build-release/tests/Release/kisakcod-pool-allocator-tests.exe
+          build-release/tests/Release/kisakcod-db-zone-runtime-table-tests.exe
+
+      - name: Run portable smoke suite
+        if: matrix.target != 'windows-x86'
+        shell: bash
+        run: ctest --test-dir build-release -C Release --output-on-failure
+
+      - name: Package
+        if: matrix.os == 'linux' || matrix.os == 'macos'
+        shell: bash
+        run: |
+          mkdir -p dist
+          # Reproducible archives need GNU tar (--sort/--owner/--group).
+          # macOS 15 runners alias bsdtar to `tar` and GNU tar to `gtar`;
+          # Linux runners have GNU tar as `tar`.
+          TAR="$(command -v gtar || command -v tar)"
+          "$TAR" --sort=name --owner=0 --group=0 \
+            -czf "dist/KisakCOD-${{ matrix.target }}-portable-Release.tar.gz" \
+            -C build-release/tests .
+          jq -n \
+            --arg tag "${{ needs.verify-tag.outputs.tag }}" \
+            --arg commit "${{ needs.verify-tag.outputs.commit }}" \
+            --arg target "${{ matrix.target }}" \
+            --arg config "portable-production-composition" \
+            --arg run "${GITHUB_RUN_ID}" \
+            --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{tag: $tag, commit: $commit, target: $target, config: $config, workflow_run: $run, generated_at: $generated_at}' \
+            > "dist/KisakCOD-${{ matrix.target }}-portable-Release-provenance.json"
+
+      - name: Package
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          if ("${{ matrix.target }}" -eq "windows-x86") {
+            Compress-Archive -Path bin/Release/* -DestinationPath dist/KisakCOD-windows-x86.zip
+            $name = "KisakCOD-windows-x86"
+            $config = "production-mp-dedi"
+          } else {
+            Compress-Archive -Path build-release/tests/Release/*.exe -DestinationPath "dist/KisakCOD-${{ matrix.target }}-portable-Release.zip"
+            $name = "KisakCOD-${{ matrix.target }}-portable-Release"
+            $config = "portable-production-composition"
+          }
+          [ordered]@{
+            tag           = "${{ needs.verify-tag.outputs.tag }}"
+            commit        = "${{ needs.verify-tag.outputs.commit }}"
+            target        = "${{ matrix.target }}"
+            config        = $config
+            workflow_run  = $env:GITHUB_RUN_ID
+            generated_at  = (Get-Date).ToUniversalTime().ToString("o")
+          } | ConvertTo-Json | Set-Content -Encoding utf8 "dist/$name-provenance.json"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: KisakCOD-${{ matrix.target }}-Release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  windows-x86-sp-release:
+    # Release parity for the SP configuration (audit gap 12): an SP regression
+    # must gate publishing, not only CI. Release config ships; Debug stays a
+    # CI concern.
+    name: Release / windows-x86 SP
+    needs: verify-tag
     runs-on: windows-2022
+    timeout-minutes: 150
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\\.nuget\\packages
+      DXSDK_VERSION: 9.29.952.8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ needs.verify-tag.outputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore DirectX SDK
+        shell: pwsh
+        run: |
+          dotnet new classlib -o dxsdk-temp
+          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
+          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\\$env:DXSDK_VERSION\\build\\native"
+          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake --preset windows-x86-sp `
+            -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build-windows-x86-sp --config Release --target KisakCOD-sp --parallel
+
+      - name: Verify binary architecture (PE machine type)
+        shell: pwsh
+        run: >
+          ./scripts/ci/verify-artifact-arch.ps1 -Expected x86
+          bin/Release/KisakCOD-sp.exe
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path bin/Release/KisakCOD-sp.exe -DestinationPath dist/KisakCOD-windows-x86-sp.zip
+          [ordered]@{
+            tag           = "${{ needs.verify-tag.outputs.tag }}"
+            commit        = "${{ needs.verify-tag.outputs.commit }}"
+            target        = "windows-x86-sp"
+            config        = "production-sp"
+            workflow_run  = $env:GITHUB_RUN_ID
+            generated_at  = (Get-Date).ToUniversalTime().ToString("o")
+          } | ConvertTo-Json | Set-Content -Encoding utf8 dist/KisakCOD-windows-x86-sp-provenance.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: KisakCOD-windows-x86-sp-Release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  windows-x86-nosteam-release:
+    # Release parity for the KISAK_ENABLE_STEAM=OFF fallback (audit gap 12).
+    name: Release / windows-x86 (no Steam)
+    needs: verify-tag
+    runs-on: windows-2022
+    timeout-minutes: 150
     env:
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
       DXSDK_VERSION: 9.29.952.8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ needs.verify-tag.outputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: 8.x
 
@@ -33,33 +400,213 @@ jobs:
           $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
           "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
 
-      - name: Configure and build
+      - name: Configure
         shell: pwsh
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 `
+          cmake -S . -B build-nosteam `
+            -G "Visual Studio 17 2022" -A Win32 `
             -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
-            -DKISAK_BUILD_MP=ON -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF
-          cmake --build build --config Release --target KisakCOD-mp KisakCOD-dedi --parallel
+            -DKISAK_BUILD_MP=ON `
+            -DKISAK_BUILD_DEDICATED=ON `
+            -DKISAK_BUILD_SP=OFF `
+            -DKISAK_ENABLE_STEAM=OFF
+
+      - name: Build
+        shell: pwsh
+        run: >
+          cmake --build build-nosteam
+          --config Release
+          --target KisakCOD-mp KisakCOD-dedi
+          --parallel
+
+      - name: Verify binary architecture (PE machine type)
+        shell: pwsh
+        run: >
+          ./scripts/ci/verify-artifact-arch.ps1 -Expected x86
+          bin/Release/KisakCOD-mp.exe bin/Release/KisakCOD-dedi.exe
 
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path bin/Release/* -DestinationPath dist/KisakCOD-windows-x86.zip
-          $hash = (Get-FileHash dist/KisakCOD-windows-x86.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  KisakCOD-windows-x86.zip" | Set-Content -NoNewline dist/SHA256SUMS.txt
+          Compress-Archive -Path bin/Release/* -DestinationPath dist/KisakCOD-windows-x86-nosteam.zip
+          [ordered]@{
+            tag           = "${{ needs.verify-tag.outputs.tag }}"
+            commit        = "${{ needs.verify-tag.outputs.commit }}"
+            target        = "windows-x86-nosteam"
+            config        = "production-mp-dedi-nosteam"
+            workflow_run  = $env:GITHUB_RUN_ID
+            generated_at  = (Get-Date).ToUniversalTime().ToString("o")
+          } | ConvertTo-Json | Set-Content -Encoding utf8 dist/KisakCOD-windows-x86-nosteam-provenance.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-windows-x86
+          name: KisakCOD-windows-x86-nosteam-Release
           path: dist/
           if-no-files-found: error
+          retention-days: 90
+
+  windows-x86-headless-release:
+    # Release parity for the headless dedicated profile (audit gap 12).
+    name: Release / windows-x86 (headless dedicated)
+    needs: verify-tag
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ needs.verify-tag.outputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build-headless `
+            -G "Visual Studio 17 2022" -A Win32 `
+            -DKISAK_BUILD_MP=OFF `
+            -DKISAK_BUILD_DEDICATED=ON `
+            -DKISAK_BUILD_SP=OFF `
+            -DKISAK_DEDI_HEADLESS=ON `
+            -DKISAK_ENABLE_STEAM=OFF `
+            -DKISAK_ENABLE_X86_MMX_SKINNING=OFF `
+            -DBUILD_TESTING=OFF
+
+      - name: Build
+        shell: pwsh
+        run: >
+          cmake --build build-headless
+          --config Release
+          --target KisakCOD-dedi
+          --parallel
+
+      - name: Verify binary architecture (PE machine type)
+        shell: pwsh
+        run: >
+          ./scripts/ci/verify-artifact-arch.ps1 -Expected x86
+          bin/Release/KisakCOD-dedi.exe
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path bin/Release/KisakCOD-dedi.exe -DestinationPath dist/KisakCOD-windows-x86-headless.zip
+          [ordered]@{
+            tag           = "${{ needs.verify-tag.outputs.tag }}"
+            commit        = "${{ needs.verify-tag.outputs.commit }}"
+            target        = "windows-x86-headless"
+            config        = "production-dedi-headless"
+            workflow_run  = $env:GITHUB_RUN_ID
+            generated_at  = (Get-Date).ToUniversalTime().ToString("o")
+          } | ConvertTo-Json | Set-Content -Encoding utf8 dist/KisakCOD-windows-x86-headless-provenance.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: KisakCOD-windows-x86-headless-Release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  checksums:
+    # Aggregate SHA256SUMS across every packaged artifact (audit gap 8).
+    # Fails closed on duplicate names with differing content. Checks out the
+    # verified tag: this job downloads artifacts only, so the aggregation
+    # script itself must come from the checkout (release would otherwise
+    # fail on a missing scripts/ci/aggregate-checksums.sh).
+    name: Aggregate checksums
+    needs:
+      - verify-tag
+      - build-source
+      - build-release
+      - windows-x86-sp-release
+      - windows-x86-nosteam-release
+      - windows-x86-headless-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ needs.verify-tag.outputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+
+      - name: Build aggregate SHA256SUMS
+        shell: bash
+        run: scripts/ci/aggregate-checksums.sh artifacts SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SHA256SUMS
+          path: SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 90
+
+  production-complete:
+    # The only direct prerequisite of publish: every release build, the
+    # source archive, and the aggregate checksums must have succeeded.
+    name: Production complete
+    needs: checksums
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Enforce required job results
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "required results: $results"
+          fail=0
+          for r in $results; do
+            if [ "$r" != "success" ]; then
+              echo "required job result: $r" >&2
+              fail=1
+            fi
+          done
+          exit $fail
+
+  publish-release:
+    # Code-free publisher: the only job with contents: write. It downloads
+    # the fully gated artifact set, regenerates the flat SHA256SUMS over
+    # exactly what it will attach, and publishes the release.
+    name: Publish release
+    needs:
+      - verify-tag
+      - production-complete
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Regenerate flat SHA256SUMS over the publish set
+        shell: bash
+        run: |
+          # The checksums artifact contributes its aggregate; keep it as the
+          # expectation, then rebuild over exactly the flattened publish set
+          # and cross-check. A same-name/different-content collision during
+          # merge-multiple flattening would silently drop a file — the diff
+          # against the checksums job's aggregate catches it.
+          cp dist/SHA256SUMS.txt /tmp/expected-sums.txt
+          ( cd dist && find . -type f ! -name 'SHA256SUMS.txt' -print0 \
+              | sort -z \
+              | while IFS= read -r -d '' f; do
+                  sha256sum "${f#./}"
+                done ) | sort -k2 > dist/SHA256SUMS.txt
+          diff -u /tmp/expected-sums.txt dist/SHA256SUMS.txt \
+            || { echo "::error::publish set does not match the checksums job's aggregate" >&2; exit 1; }
+          echo "publish set verified: $(wc -l < dist/SHA256SUMS.txt) artifacts"
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ needs.verify-tag.outputs.tag }}
           generate_release_notes: true
-          files: |
-            dist/KisakCOD-windows-x86.zip
-            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          files: dist/**

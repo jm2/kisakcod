@@ -1,0 +1,3 @@
+# CI helper scripts must keep POSIX line endings or bash on Windows runners
+# fails with '\r: command not found'.
+scripts/ci/*.sh text eol=lf
