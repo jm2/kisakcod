@@ -27,30 +27,14 @@ using SysSocketHandle = SysSocket *;
 // (address[0] is the most significant byte of the 32-bit address) so the
 // value can be compared with memcmp and logged without conversion; `port`
 // is stored in host byte order. Callers construct endpoints through the
-// Sys_SocketMake* helpers rather than by hand-packing bytes.
+// Sys_SocketMake* helpers rather than by hand-packing bytes. The header
+// deliberately stays data-only: every endpoint comparison goes through
+// Sys_SocketAddressIsEqual, whose byte-exact rule lives with the platform
+// backends instead of in an inline member here.
 struct SysSocketAddress
 {
     uint8_t address[4];
     uint16_t port;
-
-    // Byte-exact equality shared by every backend: the address compares as
-    // network-order bytes (memcmp-safe) and the port as a host-order value.
-    // Defined inline here so the layout above and its comparison rule live
-    // in one place; the platform backends delegate to it. Comparisons are
-    // named and parenthesized (MISRA 12.1), the conjunction is explicit
-    // control flow rather than a short-circuit operator, and the single
-    // exit sits at the end of the function (MISRA 15.5).
-    bool Equals(const SysSocketAddress &other) const
-    {
-        const bool sameAddress =
-            (std::memcmp(address, other.address, sizeof(address)) == 0);
-        bool equal = false;
-        if (sameAddress)
-        {
-            equal = (port == other.port);
-        }
-        return equal;
-    }
 };
 
 // Upper bound for one datagram payload. The UDP protocol allows at most
