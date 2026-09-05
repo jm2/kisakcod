@@ -14,8 +14,11 @@ This tool digests only the retail content of a COFF object: every section
 except the CodeView ``.debug$*`` sections and MSVC's ``.chks64`` per-section
 checksum table (which covers those debug sections). Each retained section contributes
 its name, characteristics, raw bytes, and relocations with symbol-table
-indices resolved to symbol names, so debug-only symbol entries cannot shift
-the result either. Non-COFF inputs fall back to a whole-file digest and are
+indices resolved to the target symbol's name and its link-semantic attributes
+(storage value and section number), so debug-only symbol entries cannot shift
+the result and two objects whose relocations point at a symbol placed at a
+different value or section cannot digest alike even when the section bytes and
+symbol names match. Non-COFF inputs fall back to a whole-file digest and are
 labelled as such, so mixing kinds can never masquerade as parity.
 
 Usage:
@@ -92,10 +95,17 @@ class Section(object):
             self.content,
             b"\0relocs\0",
         ]
-        for address, kind, symbol in self.relocations:
+        for address, kind, symbol, value, section_number in self.relocations:
             parts.append(struct.pack("<IH", address, kind))
             parts.append(symbol.encode("utf-8"))
             parts.append(b"\0")
+            # The linker resolves each relocation using the target symbol's
+            # Value and SectionNumber, so two objects that share section bytes
+            # and symbol names but place a target symbol at a different value
+            # or section still link to different retail bytes. Fold those
+            # link-semantic attributes in, keyed by the resolved name rather
+            # than the raw (build-order-dependent) symbol index.
+            parts.append(struct.pack("<ih", value, section_number))
         return _sha256(*parts)
 
 
@@ -136,7 +146,9 @@ def parse_coff(data, label):
             name = string_at(name_offset)
         else:
             name = _cstring(raw[:8])
-        symbols[index] = name
+        # COFF symbol record: Value at offset 8 (u32), SectionNumber at 12 (i16).
+        value, section_number = struct.unpack_from("<ih", raw, 8)
+        symbols[index] = (name, value, section_number)
         index += 1 + raw[17]
 
     sections = []
@@ -174,7 +186,11 @@ def parse_coff(data, label):
                 if offset + RELOCATION_SIZE > len(data):
                     raise ObjectError("%s: truncated relocations in %s" % (label, name))
                 address, symbol_index, kind = struct.unpack_from("<IIH", data, offset)
-                relocations.append((address, kind, symbols.get(symbol_index, "#%d" % symbol_index)))
+                # Do not shadow the enclosing section's `name` here.
+                target_name, target_value, target_section = symbols.get(
+                    symbol_index, ("#%d" % symbol_index, 0, 0))
+                relocations.append(
+                    (address, kind, target_name, target_value, target_section))
         sections.append(Section(name, characteristics, raw_size, content, relocations))
     return machine, sections
 
