@@ -76,7 +76,8 @@ def _sha256(*parts):
 
 
 class Section(object):
-    __slots__ = ("name", "characteristics", "size", "content", "relocations")
+    __slots__ = ("name", "characteristics", "size", "content", "relocations",
+                 "comdat")
 
     def __init__(self, name, characteristics, size, content, relocations):
         self.name = name
@@ -84,6 +85,10 @@ class Section(object):
         self.size = size
         self.content = content
         self.relocations = relocations
+        # Normalized COMDAT auxiliary record of this section's definition
+        # symbol, set after parsing: (selection, checksum, length, numrelocs,
+        # associated_section_key). None when the section has no section symbol.
+        self.comdat = None
 
     @property
     def is_debug(self):
@@ -119,6 +124,16 @@ class Section(object):
             # link-semantic attributes in, keyed by the resolved name rather
             # than the raw (build-order-dependent) symbol index.
             parts.append(struct.pack("<ih", value, section_number))
+        if self.comdat is not None:
+            selection, checksum, length, numrelocs, assoc = self.comdat
+            # The COMDAT selection and associative target control how the
+            # linker resolves duplicate definitions, so they are part of the
+            # section's link identity. checksum/length/numrelocs are derived
+            # from the section content (stable across identical compiles); the
+            # associative target is keyed by content, not raw index.
+            parts.append(b"\0comdat\0")
+            parts.append(struct.pack("<BIIH", selection, checksum, length, numrelocs))
+            parts.append(assoc.encode("ascii"))
         return _sha256(*parts)
 
 
@@ -164,9 +179,14 @@ def parse_coff(data, label):
         # Type at 14 (u16), StorageClass at 16 (u8).
         value, section_number, sym_type = struct.unpack_from("<ihH", raw, 8)
         storage_class = raw[16]
+        aux_count = raw[17]
+        aux_raw = None
+        if aux_count:
+            aux_raw = data[at + SYMBOL_SIZE:at + SYMBOL_SIZE + SYMBOL_SIZE]
         symbols[index] = (name, value, section_number)
-        symbol_records.append((name, value, section_number, storage_class, sym_type))
-        index += 1 + raw[17]
+        symbol_records.append(
+            (name, value, section_number, storage_class, sym_type, aux_raw))
+        index += 1 + aux_count
 
     sections = []
     for number in range(section_count):
@@ -209,6 +229,32 @@ def parse_coff(data, label):
                 relocations.append(
                     (address, kind, target_name, target_value, target_section))
         sections.append(Section(name, characteristics, raw_size, content, relocations))
+
+    # Attach each section's COMDAT auxiliary record (from its section-definition
+    # symbol) so the digest reflects linker-semantic selection/association.
+    IMAGE_SYM_CLASS_STATIC = 3
+    IMAGE_COMDAT_SELECT_ASSOCIATIVE = 5
+    section_count = len(sections)
+    for name, value, section_number, storage_class, sym_type, aux_raw in symbol_records:
+        if (storage_class != IMAGE_SYM_CLASS_STATIC or aux_raw is None
+                or len(aux_raw) < 15 or section_number < 1
+                or section_number > section_count):
+            continue
+        section = sections[section_number - 1]
+        if section.name != name or section.comdat is not None:
+            continue
+        length, numrelocs = struct.unpack_from("<IH", aux_raw, 0)
+        (checksum,) = struct.unpack_from("<I", aux_raw, 8)
+        (assoc_number,) = struct.unpack_from("<H", aux_raw, 12)
+        selection = aux_raw[14]
+        assoc = ""
+        if selection == IMAGE_COMDAT_SELECT_ASSOCIATIVE:
+            if 1 <= assoc_number <= section_count:
+                target = sections[assoc_number - 1]
+                assoc = "EXCL" if target.is_debug else target.content_key()
+            else:
+                assoc = "?"
+        section.comdat = (selection, checksum, length, numrelocs, assoc)
     return machine, sections, symbol_records
 
 
@@ -256,14 +302,18 @@ class ObjectDigest(object):
         # table index, so trailing debug sections cannot shift the result.
         section_count = len(self.sections)
         definitions = []
-        for name, value, section_number, storage_class, sym_type in symbol_records:
+        for record in symbol_records:
+            name, value, section_number, storage_class, sym_type = record[:5]
             if section_number < 1 or section_number > section_count:
                 continue
             section = self.sections[section_number - 1]
             if section.is_debug:
                 continue
+            # Key the defining section by its full digest (name, characteristics,
+            # bytes, relocations, and COMDAT aux), so two same-named sections
+            # with identical bytes but different relocations are distinguished.
             definitions.append(
-                (name, value, storage_class, sym_type, section.content_key()))
+                (name, value, storage_class, sym_type, section.digest()))
         # Sort so the digest is independent of symbol-table order.
         definitions.sort()
         return definitions
