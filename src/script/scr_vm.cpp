@@ -1563,7 +1563,7 @@ VariableStackBuffer *__cdecl VM_ArchiveStack()
     stackValue->size = size;
     stackValue->bufLen = bufLen;
     stackValue->pos = fs.pos;
-    stackValue->time = scrVarPub.time;
+    stackValue->saveStamp = scrVarPub.time;
     scrVmPub.localVars -= fs.localVarCount;
     buf = &stackValue->buf[VARIABLE_STACK_RECORD_SIZE * size];
     while (size)
@@ -1726,7 +1726,7 @@ VariableStackBuffer *VM_ArchiveStack2(int size, const char *codePos, VariableVal
     stackBuf->size = size;
     stackBuf->bufLen = bufLen;
     stackBuf->pos = codePos;
-    stackBuf->time = scrVarPub.time;
+    stackBuf->saveStamp = scrVarPub.time;
     scrVmPub.localVars -= localVarCount;
     buf = &stackBuf->buf[VARIABLE_STACK_RECORD_SIZE * size];
 
@@ -4773,7 +4773,7 @@ void __cdecl VM_UnarchiveStack(uint32_t startLocalId, VariableStackBuffer* stack
 
     fs.localVarCount = Scr_AddLocalVars(fs.localId);
 
-    if (stackValue->time != LOBYTE(scrVarPub.time))
+    if (stackValue->saveStamp != LOBYTE(scrVarPub.time))
         Scr_ResetTimeout();
 
     --scrVarPub.numScriptThreads;
@@ -4850,7 +4850,7 @@ void VM_UnarchiveStack2(uint32_t startLocalId, function_stack_t *stack, Variable
 
     stack->localVarCount = Scr_AddLocalVars(stack->localId);
 
-    if (stackValue->time != LOBYTE(scrVarPub.time))
+    if (stackValue->saveStamp != LOBYTE(scrVarPub.time))
         Scr_ResetTimeout();
 
     --scrVarPub.numScriptThreads;

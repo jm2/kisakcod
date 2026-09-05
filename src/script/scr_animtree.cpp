@@ -437,7 +437,10 @@ void __cdecl Scr_CheckAnimsDefined(uint32_t names, uint32_t filename)
         {
             msg = va("animation '%s' not defined in anim tree '%s'", SL_ConvertToString(name), SL_ConvertToString(filename));
             if (Scr_IsInOpcodeMemory(value->u.codePosValue))
-                CompileError2(reinterpret_cast<char *>(value->u.codePosValue), "%s", msg);
+                // ki-n1et x86 fix: codePosValue is const; reinterpret_cast
+                // cannot strip const (MSVC C2440) — C-style cast matches the
+                // sibling CompileError2 call sites (scr_compiler.cpp 4377/4383).
+                CompileError2((char *)value->u.codePosValue, "%s", msg);
             else
                 Com_Error(ERR_DROP, "%s", msg);
         }
