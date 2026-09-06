@@ -1947,6 +1947,24 @@ void LogOsAcceptedJunctionBytes(const std::string &probeLinkNarrow)
     LogMountPointBufferEvidence("OS-accepted mklink /J buffer", osBytes);
 }
 
+// Creates the inheritable temp-file handle the mklink child's stdout and
+// stderr are redirected into (CI pipes carry no inheritable console, so a
+// bare child would have nowhere to write). INVALID_HANDLE_VALUE on failure.
+HANDLE CreateInheritableCaptureHandle(const std::wstring &outputFile)
+{
+    SECURITY_ATTRIBUTES inheritable = {};
+    inheritable.nLength = sizeof(inheritable);
+    inheritable.bInheritHandle = TRUE;
+    return CreateFileW(
+        outputFile.c_str(),
+        GENERIC_WRITE,
+        FILE_SHARE_READ,
+        &inheritable,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_TEMPORARY,
+        nullptr);
+}
+
 // Ground-truth probe: ask the OS to create the same kind of junction with
 // mklink /J on the same volume — OS-vendor mount-point data no review can
 // second-guess. The test process on CI runs with its standards attached to
@@ -1960,17 +1978,7 @@ bool RunMklinkGroundTruthProbe(
     const std::wstring &outputFile,
     DWORD *exitCode)
 {
-    SECURITY_ATTRIBUTES inheritable = {};
-    inheritable.nLength = sizeof(inheritable);
-    inheritable.bInheritHandle = TRUE;
-    const HANDLE outputHandle = CreateFileW(
-        outputFile.c_str(),
-        GENERIC_WRITE,
-        FILE_SHARE_READ,
-        &inheritable,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_TEMPORARY,
-        nullptr);
+    const HANDLE outputHandle = CreateInheritableCaptureHandle(outputFile);
     if (outputHandle == INVALID_HANDLE_VALUE)
         return false;
     std::wstring commandLine =
@@ -2175,6 +2183,29 @@ bool BuildPrintNameJunctionBuffer(
     return BuildMountPointReparseBuffer(targetPath, printName, buffer);
 }
 
+// Runs the OS mklink /J ground-truth child when the probe preconditions
+// hold (raw paths resolved, probe target directory present, capture file
+// name resolvable) — the same short-circuit chain the caller previously
+// spelled inline. Returns whether the child ran, with its exit code.
+bool RunMklinkProbeIfReady(
+    const bool pathsResolved,
+    const bool targetCreated,
+    const std::wstring &probeLinkRaw,
+    const std::wstring &probeTargetRaw,
+    const std::wstring &probeOutputFile,
+    DWORD *probeExit)
+{
+    const bool probeReady = pathsResolved && targetCreated
+        && !probeOutputFile.empty();
+    if (!probeReady)
+        return false;
+    return RunMklinkGroundTruthProbe(
+        probeLinkRaw,
+        probeTargetRaw,
+        probeOutputFile,
+        probeExit);
+}
+
 // Ground-truth evidence for the handback record: creates an OS-vendor
 // junction with cmd's mklink /J on the same volume, from raw
 // (non-extended) paths — mklink is the OS's own junction creator and needs
@@ -2202,13 +2233,13 @@ void RunJunctionGroundTruthEvidence(
         probeLinkNarrow + "-mklink-output.txt",
         &probeOutputFile);
     DWORD probeExit = 0;
-    const bool probeRan = probePathsResolved && probeTargetCreated
-        && !probeOutputFile.empty()
-        && RunMklinkGroundTruthProbe(
-            probeLinkRaw,
-            probeTargetRaw,
-            probeOutputFile,
-            &probeExit);
+    const bool probeRan = RunMklinkProbeIfReady(
+        probePathsResolved,
+        probeTargetCreated,
+        probeLinkRaw,
+        probeTargetRaw,
+        probeOutputFile,
+        &probeExit);
     if (probeRan)
         LogMklinkProbeOutput(probeOutputFile);
     LogGroundTruthProbeOutcome(
@@ -2226,6 +2257,23 @@ void RunJunctionGroundTruthEvidence(
             ExtendedPath(probeLinkNarrow).c_str());
         (void)RemoveDirectoryW(probeTargetExtended.c_str());
     }
+}
+
+// Refinery byte-capture directive: log both rejected buffers' parsed
+// fields and raw payload so the OS-accepted mklink capture is diffable
+// in the log itself.
+void LogRejectedJunctionBuffers(
+    const std::vector<unsigned char> &bufferA,
+    const std::vector<unsigned char> &bufferB)
+{
+    if (!bufferA.empty())
+        LogMountPointBufferEvidence(
+            "rejected empty-print-name buffer",
+            bufferA);
+    if (!bufferB.empty())
+        LogMountPointBufferEvidence(
+            "rejected fsutil-style print-name buffer",
+            bufferB);
 }
 
 // Creates a true NTFS junction (IO_REPARSE_TAG_MOUNT_POINT) at linkPath
@@ -2279,17 +2327,7 @@ bool CreateJunctionNative(
     LogJunctionLayoutRejected(
         "fsutil-style print-name mount-point data rejected too",
         errorB);
-    // Refinery byte-capture directive: log both rejected buffers' parsed
-    // fields and raw payload so the OS-accepted capture below is diffable
-    // in the log itself.
-    if (!bufferA.empty())
-        LogMountPointBufferEvidence(
-            "rejected empty-print-name buffer",
-            bufferA);
-    if (!bufferB.empty())
-        LogMountPointBufferEvidence(
-            "rejected fsutil-style print-name buffer",
-            bufferB);
+    LogRejectedJunctionBuffers(bufferA, bufferB);
     LogWorkspaceVolumeCapability(wideLink);
     RunJunctionGroundTruthEvidence(linkPath, targetPath);
     LogJunctionHandbackCondition();
