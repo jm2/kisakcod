@@ -1729,10 +1729,11 @@ bool CopyMountPointPathBuffer(
 }
 
 // printName: empty builds the previous layout (substitute name + NUL +
-// print-name NUL slot, PrintNameLength 0 — byte-identical to the twice-
-// rejected CI format); a non-empty print name builds the fsutil/mklink
-// layout (substitute name + NUL + print name + NUL, PrintNameLength set),
-// which is what the OS's own junction tools write.
+// print-name NUL slot, PrintNameLength 0); a non-empty print name builds
+// the fsutil/mklink layout (substitute name + NUL + print name + NUL,
+// PrintNameLength set), which is what the OS's own junction tools write.
+// Both layouts are format-valid — the twice-rejected CI legs failed over
+// the FSCTL envelope size, not this data (ApplyJunctionReparseData).
 bool BuildMountPointReparseBuffer(
     const std::string &targetPath,
     const std::wstring &printName,
@@ -1757,9 +1758,8 @@ bool BuildMountPointReparseBuffer(
     // ReparseDataLength follows the IO_REPARSE_TAG_MOUNT_POINT required
     // data format: the four USHORT offsets/lengths plus the PathBuffer
     // content above. The generic header (tag/length/reserved) is not part
-    // of it. Omitting the print-name terminator leaves the data two bytes
-    // short of the required format, which the OS rejects with
-    // ERROR_INVALID_REPARSE_DATA (4392).
+    // of it. (The twice-rejected CI legs were rejected over the FSCTL
+    // envelope size, not this layout: see ApplyJunctionReparseData.)
     reparse->ReparseDataLength = static_cast<std::uint16_t>(
         offsetof(KisakTestMountPointBuffer, PathBuffer)
         - offsetof(KisakTestMountPointBuffer, SubstituteNameOffset)
@@ -1772,10 +1772,24 @@ bool BuildMountPointReparseBuffer(
 // workspace — the discriminating fact for the Dev Drive/ReFS hypothesis.
 void LogWorkspaceVolumeCapability(const std::wstring &pathOnVolume)
 {
+    wchar_t volumeRoot[MAX_PATH + 1] = {};
+    // GetVolumeInformationW accepts only a volume root directory (any
+    // deeper path fails with ERROR_INVALID_NAME, 123 — observed on the
+    // CI legs), so resolve the volume mount root for the workspace path
+    // first.
+    if (!GetVolumePathNameW(pathOnVolume.c_str(), volumeRoot, MAX_PATH))
+    {
+        std::fprintf(
+            stderr,
+            "junction/setup probe: workspace volume root resolve failed "
+            "(Win32 error %lu)\n",
+            static_cast<unsigned long>(GetLastError()));
+        return;
+    }
     wchar_t fileSystemName[MAX_PATH + 1] = {};
     DWORD volumeFlags = 0;
     if (GetVolumeInformationW(
-            pathOnVolume.c_str(),
+            volumeRoot,
             nullptr,
             0,
             nullptr,
@@ -1786,8 +1800,9 @@ void LogWorkspaceVolumeCapability(const std::wstring &pathOnVolume)
     {
         std::fprintf(
             stderr,
-            "junction/setup probe: workspace volume fs=%ls "
+            "junction/setup probe: workspace volume root %ls fs=%ls "
             "FILE_SUPPORTS_REPARSE_POINTS=%ls (flags=0x%08lx)\n",
+            volumeRoot,
             fileSystemName,
             (volumeFlags & FILE_SUPPORTS_REPARSE_POINTS) ? L"yes" : L"NO",
             static_cast<unsigned long>(volumeFlags));
@@ -1796,46 +1811,233 @@ void LogWorkspaceVolumeCapability(const std::wstring &pathOnVolume)
     {
         std::fprintf(
             stderr,
-            "junction/setup probe: workspace volume query failed "
-            "(Win32 error %lu)\n",
+            "junction/setup probe: workspace volume query failed for "
+            "root %ls (Win32 error %lu)\n",
+            volumeRoot,
             static_cast<unsigned long>(GetLastError()));
     }
 }
 
+// Fallback for header sets that predate the documented reparse ceiling;
+// winioctl.h on current SDKs defines the same 16 KiB value.
+#ifndef MAXIMUM_REPARSE_DATA_BUFFER_SIZE
+#define MAXIMUM_REPARSE_DATA_BUFFER_SIZE 16384
+#endif
+
+// Reads the raw reparse-point bytes of an existing junction via
+// FSCTL_GET_REPARSE_POINT. Returns an empty vector when the read fails;
+// callers log the Win32 error separately.
+std::vector<unsigned char> QueryReparsePointBytes(const std::wstring &wideLink)
+{
+    const HANDLE handle = CreateFileW(
+        wideLink.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        return {};
+    std::vector<unsigned char> bytes(MAXIMUM_REPARSE_DATA_BUFFER_SIZE, 0u);
+    DWORD returned = 0;
+    const bool read = DeviceIoControl(
+        handle,
+        FSCTL_GET_REPARSE_POINT,
+        nullptr,
+        0,
+        bytes.data(),
+        static_cast<DWORD>(bytes.size()),
+        &returned,
+        nullptr);
+    CloseHandle(handle);
+    if (!read || returned < offsetof(KisakTestMountPointBuffer, PathBuffer))
+        return {};
+    bytes.resize(returned);
+    return bytes;
+}
+
+// Hex dump of a reparse payload region — raw bytes under the parsed
+// fields, the byte-identity evidence a hosted-leg diff needs. Junction
+// payloads are short (paths), so the cap is generous.
+void LogReparsePayloadHex(
+    const unsigned char *const payload,
+    const std::size_t byteCount)
+{
+    constexpr std::size_t kMaxDumpBytes = 512;
+    const std::size_t dumpBytes =
+        byteCount < kMaxDumpBytes ? byteCount : kMaxDumpBytes;
+    std::string hex;
+    hex.reserve(dumpBytes * 3);
+    for (std::size_t i = 0; i < dumpBytes; ++i)
+    {
+        char cell[8] = {};
+        std::snprintf(cell, sizeof(cell), "%02x ", payload[i]);
+        hex += cell;
+    }
+    std::fprintf(
+        stderr,
+        "junction/setup probe: reparse payload %zu bytes (dumping %zu): "
+        "%s\n",
+        byteCount,
+        dumpBytes,
+        hex.c_str());
+}
+
+// Byte-level evidence for one mount-point reparse buffer: the parsed
+// header fields, the exact FSCTL envelope size we send, and the raw
+// payload bytes. Refinery directive for the twice-rejected legs —
+// capture the bytes so a hosted-leg diff is a log read, not a guess.
+void LogMountPointBufferEvidence(
+    const char *const label,
+    const std::vector<unsigned char> &buffer)
+{
+    if (buffer.size() < offsetof(KisakTestMountPointBuffer, PathBuffer))
+    {
+        std::fprintf(
+            stderr,
+            "junction/setup probe: %s buffer evidence unavailable "
+            "(size %zu)\n",
+            label,
+            buffer.size());
+        return;
+    }
+    const auto *const reparse =
+        reinterpret_cast<const KisakTestMountPointBuffer *>(buffer.data());
+    std::fprintf(
+        stderr,
+        "junction/setup probe: %s: tag=0x%08lx dataLen=%u subOff=%u "
+        "subLen=%u printOff=%u printLen=%u totalBytes=%zu "
+        "fsctlInputSize=%u\n",
+        label,
+        static_cast<unsigned long>(reparse->ReparseTag),
+        static_cast<unsigned>(reparse->ReparseDataLength),
+        static_cast<unsigned>(reparse->SubstituteNameOffset),
+        static_cast<unsigned>(reparse->SubstituteNameLength),
+        static_cast<unsigned>(reparse->PrintNameOffset),
+        static_cast<unsigned>(reparse->PrintNameLength),
+        buffer.size(),
+        static_cast<unsigned>(
+            offsetof(KisakTestMountPointBuffer, SubstituteNameOffset)
+            + reparse->ReparseDataLength));
+    LogReparsePayloadHex(
+        buffer.data() + offsetof(KisakTestMountPointBuffer, PathBuffer),
+        buffer.size() - offsetof(KisakTestMountPointBuffer, PathBuffer));
+}
+
+// Reads the OS-vendor junction the mklink /J ground truth created and
+// logs its parsed fields plus raw payload bytes — the accepted layout on
+// this exact host and volume, for diffing against our buffers above.
+void LogOsAcceptedJunctionBytes(const std::string &probeLinkNarrow)
+{
+    const std::wstring wideProbeLink = ExtendedPath(probeLinkNarrow);
+    if (wideProbeLink.empty())
+        return;
+    const std::vector<unsigned char> osBytes =
+        QueryReparsePointBytes(wideProbeLink);
+    if (osBytes.empty())
+    {
+        std::fprintf(
+            stderr,
+            "junction/setup probe: OS-accepted junction byte capture "
+            "failed (Win32 error %lu)\n",
+            static_cast<unsigned long>(GetLastError()));
+        return;
+    }
+    LogMountPointBufferEvidence("OS-accepted mklink /J buffer", osBytes);
+}
+
 // Ground-truth probe: ask the OS to create the same kind of junction with
 // mklink /J on the same volume — OS-vendor mount-point data no review can
-// second-guess. The child inherits our console, so mklink's own diagnostic
-// text lands in the CI log verbatim above this probe's summary line.
+// second-guess. The test process on CI runs with its standards attached to
+// runner pipes, not a console, so a bare child inherits no writable
+// stdout; instead mklink's stdout and stderr are redirected into the
+// caller's temp file (inheritable handle + STARTF_USESTDHANDLES) for the
+// caller to read back and log verbatim.
 bool RunMklinkGroundTruthProbe(
     const std::wstring &probeLink,
     const std::wstring &probeTarget,
+    const std::wstring &outputFile,
     DWORD *exitCode)
 {
+    SECURITY_ATTRIBUTES inheritable = {};
+    inheritable.nLength = sizeof(inheritable);
+    inheritable.bInheritHandle = TRUE;
+    const HANDLE outputHandle = CreateFileW(
+        outputFile.c_str(),
+        GENERIC_WRITE,
+        FILE_SHARE_READ,
+        &inheritable,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_TEMPORARY,
+        nullptr);
+    if (outputHandle == INVALID_HANDLE_VALUE)
+        return false;
     std::wstring commandLine =
         L"cmd.exe /c mklink /J \"" + probeLink + L"\" \"" + probeTarget
         + L"\"";
     STARTUPINFOW startup = {};
     startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = nullptr;
+    startup.hStdOutput = outputHandle;
+    startup.hStdError = outputHandle;
     PROCESS_INFORMATION process = {};
-    if (!CreateProcessW(
-            nullptr,
-            commandLine.data(),
-            nullptr,
-            nullptr,
-            TRUE,
-            CREATE_NO_WINDOW,
-            nullptr,
-            nullptr,
-            &startup,
-            &process))
+    const bool created = CreateProcessW(
+        nullptr,
+        commandLine.data(),
+        nullptr,
+        nullptr,
+        TRUE,
+        CREATE_NO_WINDOW,
+        nullptr,
+        nullptr,
+        &startup,
+        &process);
+    if (!created)
     {
+        CloseHandle(outputHandle);
+        (void)DeleteFileW(outputFile.c_str());
         return false;
     }
     WaitForSingleObject(process.hProcess, INFINITE);
     GetExitCodeProcess(process.hProcess, exitCode);
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
+    CloseHandle(outputHandle);
     return true;
+}
+
+// Reads the mklink probe child's captured output and prints it verbatim
+// to stderr (the CI log), then deletes the capture file.
+void LogMklinkProbeOutput(const std::wstring &outputFile)
+{
+    const HANDLE output = CreateFileW(
+        outputFile.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (output == INVALID_HANDLE_VALUE)
+    {
+        std::fprintf(
+            stderr,
+            "junction/setup probe: mklink output capture unreadable "
+            "(Win32 error %lu)\n",
+            static_cast<unsigned long>(GetLastError()));
+        return;
+    }
+    char chunk[512];
+    DWORD byteCount = 0;
+    while (::ReadFile(output, chunk, sizeof(chunk), &byteCount, nullptr)
+        && byteCount > 0)
+    {
+        std::fwrite(chunk, 1, byteCount, stderr);
+    }
+    CloseHandle(output);
+    (void)DeleteFileW(outputFile.c_str());
 }
 
 // Opens the link directory with FILE_FLAG_OPEN_REPARSE_POINT and applies
@@ -1863,12 +2065,25 @@ bool ApplyJunctionReparseData(
     // so the const vector's data pointer needs an explicit cast away from
     // const before the implicit pointer-to-void conversion (MSVC C2664 on
     // const unsigned char* -> LPVOID broke both Windows CI legs).
+    //
+    // nInBufferSize is the generic REPARSE_DATA_BUFFER envelope: the
+    // 8-byte tag/ReparseDataLength/Reserved header plus ReparseDataLength,
+    // where ReparseDataLength covers the mount-point field block
+    // (SubstituteNameOffset..PrintNameLength) and the PathBuffer content —
+    // both starting at SubstituteNameOffset. Sizing the envelope as
+    // offsetof(PathBuffer) + ReparseDataLength instead double-counts that
+    // field block (+8): FSCTL_SET_REPARSE_POINT rejects an input length
+    // past header + ReparseDataLength with ERROR_INVALID_REPARSE_DATA
+    // (4392) even when the reparse data itself is byte-canonical. This
+    // exact overshoot is what both Portable Windows legs failed with
+    // while the OS's own mklink /J (exact envelope) was accepted on the
+    // same volume.
     const bool set = DeviceIoControl(
         handle,
         FSCTL_SET_REPARSE_POINT,
         const_cast<unsigned char *>(buffer.data()),
         static_cast<DWORD>(
-            offsetof(KisakTestMountPointBuffer, PathBuffer)
+            offsetof(KisakTestMountPointBuffer, SubstituteNameOffset)
             + reparse->ReparseDataLength),
         nullptr,
         0,
@@ -1963,10 +2178,11 @@ bool BuildPrintNameJunctionBuffer(
 // Ground-truth evidence for the handback record: creates an OS-vendor
 // junction with cmd's mklink /J on the same volume, from raw
 // (non-extended) paths — mklink is the OS's own junction creator and needs
-// no extended path prefix at test-workspace path lengths. The child
-// inherits our console, so mklink's own diagnostic text lands in the CI
-// log verbatim above this probe's summary line. Cleanup is best-effort and
-// removes only the probe names.
+// no extended path prefix at test-workspace path lengths. The child's
+// output is captured to a temp file and logged verbatim (CI pipes carry
+// no inheritable console), and on success the OS junction's raw reparse
+// bytes are captured for diffing against our rejected buffers. Cleanup is
+// best-effort and removes only the probe names.
 void RunJunctionGroundTruthEvidence(
     const std::string &linkPath,
     const std::string &targetPath)
@@ -1981,17 +2197,27 @@ void RunJunctionGroundTruthEvidence(
     const bool probeTargetCreated = !probeTargetExtended.empty()
         && (CreateDirectoryW(probeTargetExtended.c_str(), nullptr)
             || GetLastError() == ERROR_ALREADY_EXISTS);
+    std::wstring probeOutputFile;
+    (void)Utf8ToWide(
+        probeLinkNarrow + "-mklink-output.txt",
+        &probeOutputFile);
     DWORD probeExit = 0;
     const bool probeRan = probePathsResolved && probeTargetCreated
+        && !probeOutputFile.empty()
         && RunMklinkGroundTruthProbe(
             probeLinkRaw,
             probeTargetRaw,
+            probeOutputFile,
             &probeExit);
+    if (probeRan)
+        LogMklinkProbeOutput(probeOutputFile);
     LogGroundTruthProbeOutcome(
         probeRan,
         probePathsResolved,
         probeTargetCreated,
         probeExit);
+    if (probeRan && probeExit == 0)
+        LogOsAcceptedJunctionBytes(probeLinkNarrow);
     if (probeTargetCreated)
     {
         // Best-effort probe cleanup: RemoveDirectoryW on a junction path
@@ -2007,17 +2233,16 @@ void RunJunctionGroundTruthEvidence(
 // links, so this is the deterministic way to exercise reparse-point
 // handling on CI hosts.
 //
-// Discrimination record for the twice-rejected CI legs (ERROR_INVALID_
-// REPARSE_DATA at junction/setup despite format-valid data): when the
-// documented-format empty-print-name layout (variant A) is rejected, this
-// retries the fsutil/mklink-style layout with a non-empty print name
-// (variant B), and on a second rejection gathers the environment evidence
-// the refinery handback needs — both Win32 errors, the workspace volume's
-// filesystem type and reparse support, and an OS mklink /J ground-truth
-// creation on the same volume. B succeeding fixes the buffer (this host
-// requires the print name); everything failing with the ground truth is
-// the host rejecting mount-point creation outright, the documented
-// environment-defect escalation condition.
+// The twice-rejected CI legs (ERROR_INVALID_REPARSE_DATA at junction/
+// setup) were caused by the FSCTL_SET_REPARSE_POINT envelope being 8
+// bytes oversized (the mount-point field block was double-counted; see
+// ApplyJunctionReparseData) — the reparse data itself was byte-canonical.
+// The discrimination record is kept for the fail path: if any layout is
+// ever rejected again, both rejected buffers and the OS mklink /J ground
+// truth (output capture plus raw accepted bytes) are logged so the next
+// diff is a log read. B succeeding after an A rejection still means this
+// host requires the print name; both failing with a rejected ground truth
+// remains the documented environment-defect escalation condition.
 bool CreateJunctionNative(
     const std::string &linkPath,
     const std::string &targetPath)
@@ -2054,6 +2279,17 @@ bool CreateJunctionNative(
     LogJunctionLayoutRejected(
         "fsutil-style print-name mount-point data rejected too",
         errorB);
+    // Refinery byte-capture directive: log both rejected buffers' parsed
+    // fields and raw payload so the OS-accepted capture below is diffable
+    // in the log itself.
+    if (!bufferA.empty())
+        LogMountPointBufferEvidence(
+            "rejected empty-print-name buffer",
+            bufferA);
+    if (!bufferB.empty())
+        LogMountPointBufferEvidence(
+            "rejected fsutil-style print-name buffer",
+            bufferB);
     LogWorkspaceVolumeCapability(wideLink);
     RunJunctionGroundTruthEvidence(linkPath, targetPath);
     LogJunctionHandbackCondition();
