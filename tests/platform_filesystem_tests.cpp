@@ -1647,8 +1647,14 @@ bool ResolveAbsoluteWidePath(
     return true;
 }
 
+// printName: empty builds the previous layout (substitute name + NUL +
+// print-name NUL slot, PrintNameLength 0 — byte-identical to the twice-
+// rejected CI format); a non-empty print name builds the fsutil/mklink
+// layout (substitute name + NUL + print name + NUL, PrintNameLength set),
+// which is what the OS's own junction tools write.
 bool BuildMountPointReparseBuffer(
     const std::string &targetPath,
+    const std::wstring &printName,
     std::vector<unsigned char> *buffer)
 {
     std::wstring wideRaw;
@@ -1662,11 +1668,20 @@ bool BuildMountPointReparseBuffer(
     const std::size_t substituteBytes = wideTarget.size() * sizeof(wchar_t);
     if (substituteBytes == 0 || substituteBytes > 0xFFFFu)
         return false;
+    const std::size_t printBytes = printName.size() * sizeof(wchar_t);
+    // PathBuffer content in both layouts: substitute name, its NUL
+    // terminator, then the print name and its NUL terminator. The empty
+    // print name still occupies its terminator slot, so the data size
+    // formula is uniform; ReparseDataLength is a USHORT, so guard the
+    // combined size, not just the substitute name.
+    const std::size_t dataBytes = substituteBytes + sizeof(wchar_t)
+        + printBytes + sizeof(wchar_t);
+    if (dataBytes > 0xFFFFu)
+        return false;
 
     const std::size_t pathBufferOffset =
         offsetof(KisakTestMountPointBuffer, PathBuffer);
-    const std::size_t copyBytes = substituteBytes + sizeof(wchar_t);
-    buffer->assign(pathBufferOffset + copyBytes + 16u, 0u);
+    buffer->assign(pathBufferOffset + dataBytes + 16u, 0u);
     auto *const reparse =
         reinterpret_cast<KisakTestMountPointBuffer *>(buffer->data());
     reparse->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
@@ -1675,58 +1690,126 @@ bool BuildMountPointReparseBuffer(
     reparse->SubstituteNameLength = static_cast<std::uint16_t>(substituteBytes);
     reparse->PrintNameOffset =
         static_cast<std::uint16_t>(substituteBytes + sizeof(wchar_t));
-    reparse->PrintNameLength = 0;
+    reparse->PrintNameLength = static_cast<std::uint16_t>(printBytes);
     // ReparseDataLength follows the IO_REPARSE_TAG_MOUNT_POINT required
-    // data format: the four USHORT offsets/lengths, the substitute name,
-    // its NUL terminator, and the print-name NUL terminator slot (the
-    // print name itself is empty). The generic header (tag/length/
-    // reserved) is not part of it. Omitting the print-name terminator
-    // leaves the data two bytes short of the required format, which the
-    // OS rejects with ERROR_INVALID_REPARSE_DATA (4392).
+    // data format: the four USHORT offsets/lengths plus the PathBuffer
+    // content above. The generic header (tag/length/reserved) is not part
+    // of it. Omitting the print-name terminator leaves the data two bytes
+    // short of the required format, which the OS rejects with
+    // ERROR_INVALID_REPARSE_DATA (4392).
     reparse->ReparseDataLength = static_cast<std::uint16_t>(
         offsetof(KisakTestMountPointBuffer, PathBuffer)
         - offsetof(KisakTestMountPointBuffer, SubstituteNameOffset)
-        + substituteBytes + sizeof(wchar_t) + sizeof(wchar_t));
+        + dataBytes);
     // Copy through the heap allocation rather than the PathBuffer[1] tail
     // anchor, with the bound spelled out: PathBuffer is the flexible-array
     // idiom's anchor, not a real one-element array. std::copy_n over
     // unsigned char writes the identical bytes the memcpy did, but states
     // the bound in a form static analyzers accept, keeping the CWE-120
     // memcpy finding from firing on an unprovable raw destination.
-    if (copyBytes > buffer->size() - pathBufferOffset)
+    const std::size_t substituteCopyBytes = substituteBytes + sizeof(wchar_t);
+    if (substituteCopyBytes > buffer->size() - pathBufferOffset)
         return false;
     const auto *substituteSource =
         reinterpret_cast<const unsigned char *>(wideTarget.c_str());
     std::copy_n(
         substituteSource,
-        copyBytes,
+        substituteCopyBytes,
         buffer->data() + pathBufferOffset);
-    return true;
-}
-
-// Creates a true NTFS junction (IO_REPARSE_TAG_MOUNT_POINT) at linkPath
-// pointing at targetPath. Junctions require no privilege, unlike symbolic
-// links, so this is the deterministic way to exercise reparse-point
-// handling on CI hosts.
-bool CreateJunctionNative(
-    const std::string &linkPath,
-    const std::string &targetPath)
-{
-    const std::wstring wideLink = ExtendedPath(linkPath);
-    if (wideLink.empty())
-        return false;
-    if (!CreateDirectoryW(wideLink.c_str(), nullptr)
-        && GetLastError() != ERROR_ALREADY_EXISTS)
+    if (printBytes == 0)
+        return true;
+    if (printBytes + sizeof(wchar_t)
+        > buffer->size() - pathBufferOffset - substituteCopyBytes)
     {
         return false;
     }
+    const auto *printSource =
+        reinterpret_cast<const unsigned char *>(printName.c_str());
+    std::copy_n(
+        printSource,
+        printBytes + sizeof(wchar_t),
+        buffer->data() + pathBufferOffset + substituteCopyBytes);
+    return true;
+}
 
-    std::vector<unsigned char> buffer;
-    if (!BuildMountPointReparseBuffer(targetPath, &buffer))
+// Volume-identity evidence for the discrimination record: filesystem type
+// and reparse-point support of the volume actually hosting the test
+// workspace — the discriminating fact for the Dev Drive/ReFS hypothesis.
+void LogWorkspaceVolumeCapability(const std::wstring &pathOnVolume)
+{
+    wchar_t fileSystemName[MAX_PATH + 1] = {};
+    DWORD volumeFlags = 0;
+    if (GetVolumeInformationW(
+            pathOnVolume.c_str(),
+            nullptr,
+            0,
+            nullptr,
+            nullptr,
+            &volumeFlags,
+            fileSystemName,
+            MAX_PATH))
+    {
+        std::fprintf(
+            stderr,
+            "junction/setup probe: workspace volume fs=%ls "
+            "FILE_SUPPORTS_REPARSE_POINTS=%ls (flags=0x%08lx)\n",
+            fileSystemName,
+            (volumeFlags & FILE_SUPPORTS_REPARSE_POINTS) ? L"yes" : L"NO",
+            static_cast<unsigned long>(volumeFlags));
+    }
+    else
+    {
+        std::fprintf(
+            stderr,
+            "junction/setup probe: workspace volume query failed "
+            "(Win32 error %lu)\n",
+            static_cast<unsigned long>(GetLastError()));
+    }
+}
+
+// Ground-truth probe: ask the OS to create the same kind of junction with
+// mklink /J on the same volume — OS-vendor mount-point data no review can
+// second-guess. The child inherits our console, so mklink's own diagnostic
+// text lands in the CI log verbatim above this probe's summary line.
+bool RunMklinkGroundTruthProbe(
+    const std::wstring &probeLink,
+    const std::wstring &probeTarget,
+    DWORD *exitCode)
+{
+    std::wstring commandLine =
+        L"cmd.exe /c mklink /J \"" + probeLink + L"\" \"" + probeTarget
+        + L"\"";
+    STARTUPINFOW startup = {};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process = {};
+    if (!CreateProcessW(
+            nullptr,
+            commandLine.data(),
+            nullptr,
+            nullptr,
+            TRUE,
+            CREATE_NO_WINDOW,
+            nullptr,
+            nullptr,
+            &startup,
+            &process))
+    {
         return false;
-    const auto *const reparse =
-        reinterpret_cast<const KisakTestMountPointBuffer *>(buffer.data());
+    }
+    WaitForSingleObject(process.hProcess, INFINITE);
+    GetExitCodeProcess(process.hProcess, exitCode);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
+}
 
+// Opens the link directory with FILE_FLAG_OPEN_REPARSE_POINT and applies
+// prebuilt mount-point data. Returns false with the failing call's Win32
+// last error preserved for classification.
+bool ApplyJunctionReparseData(
+    const std::wstring &wideLink,
+    const std::vector<unsigned char> &buffer)
+{
     const HANDLE handle = CreateFileW(
         wideLink.c_str(),
         GENERIC_READ | GENERIC_WRITE,
@@ -1738,6 +1821,8 @@ bool CreateJunctionNative(
     if (handle == INVALID_HANDLE_VALUE)
         return false;
     DWORD returned = 0;
+    const auto *const reparse =
+        reinterpret_cast<const KisakTestMountPointBuffer *>(buffer.data());
     const bool set = DeviceIoControl(
         handle,
         FSCTL_SET_REPARSE_POINT,
@@ -1751,6 +1836,133 @@ bool CreateJunctionNative(
         nullptr);
     CloseHandle(handle);
     return set;
+}
+
+// Creates a true NTFS junction (IO_REPARSE_TAG_MOUNT_POINT) at linkPath
+// pointing at targetPath. Junctions require no privilege, unlike symbolic
+// links, so this is the deterministic way to exercise reparse-point
+// handling on CI hosts.
+//
+// Discrimination record for the twice-rejected CI legs (ERROR_INVALID_
+// REPARSE_DATA at junction/setup despite format-valid data): when the
+// documented-format empty-print-name layout (variant A) is rejected, this
+// retries the fsutil/mklink-style layout with a non-empty print name
+// (variant B), and on a second rejection gathers the environment evidence
+// the refinery handback needs — both Win32 errors, the workspace volume's
+// filesystem type and reparse support, and an OS mklink /J ground-truth
+// creation on the same volume. B succeeding fixes the buffer (this host
+// requires the print name); everything failing with the ground truth is
+// the host rejecting mount-point creation outright, the documented
+// environment-defect escalation condition.
+bool CreateJunctionNative(
+    const std::string &linkPath,
+    const std::string &targetPath)
+{
+    const std::wstring wideLink = ExtendedPath(linkPath);
+    if (wideLink.empty())
+        return false;
+    if (!CreateDirectoryW(wideLink.c_str(), nullptr)
+        && GetLastError() != ERROR_ALREADY_EXISTS)
+    {
+        return false;
+    }
+
+    std::vector<unsigned char> bufferA;
+    if (BuildMountPointReparseBuffer(targetPath, L"", &bufferA)
+        && ApplyJunctionReparseData(wideLink, bufferA))
+    {
+        return true;
+    }
+    const DWORD errorA = GetLastError();
+    std::fprintf(
+        stderr,
+        "junction/setup probe: empty-print-name mount-point data rejected "
+        "(Win32 error %lu)\n",
+        static_cast<unsigned long>(errorA));
+
+    std::wstring targetWideRaw;
+    std::wstring printName;
+    std::vector<unsigned char> bufferB;
+    const bool haveB = Utf8ToWide(targetPath, &targetWideRaw)
+        && ResolveAbsoluteWidePath(targetWideRaw, &printName)
+        && BuildMountPointReparseBuffer(targetPath, printName, &bufferB);
+    if (haveB && ApplyJunctionReparseData(wideLink, bufferB))
+    {
+        std::fprintf(
+            stderr,
+            "junction/setup probe: fsutil-style print-name mount-point "
+            "data ACCEPTED after empty-print-name rejection (Win32 error "
+            "%lu) — this host requires the print name; junction created "
+            "with the fsutil-style layout\n",
+            static_cast<unsigned long>(errorA));
+        return true;
+    }
+    const DWORD errorB =
+        haveB ? GetLastError() : static_cast<DWORD>(ERROR_INVALID_PARAMETER);
+    std::fprintf(
+        stderr,
+        "junction/setup probe: fsutil-style print-name mount-point data "
+        "rejected too (Win32 error %lu)\n",
+        static_cast<unsigned long>(errorB));
+    LogWorkspaceVolumeCapability(wideLink);
+
+    // Ground truth on the same volume, from raw (non-extended) paths:
+    // cmd's mklink is the OS's own junction creator and needs no extended
+    // path prefix at test-workspace path lengths.
+    const std::string probeLinkNarrow = linkPath + "-mklink-probe";
+    const std::string probeTargetNarrow = targetPath + "-mklink-probe";
+    std::wstring probeLinkRaw;
+    std::wstring probeTargetRaw;
+    const bool probePathsResolved = Utf8ToWide(probeLinkNarrow, &probeLinkRaw)
+        && Utf8ToWide(probeTargetNarrow, &probeTargetRaw);
+    const std::wstring probeTargetExtended = ExtendedPath(probeTargetNarrow);
+    const bool probeTargetCreated = !probeTargetExtended.empty()
+        && (CreateDirectoryW(probeTargetExtended.c_str(), nullptr)
+            || GetLastError() == ERROR_ALREADY_EXISTS);
+    DWORD probeExit = 0;
+    const bool probeRan = probePathsResolved && probeTargetCreated
+        && RunMklinkGroundTruthProbe(
+            probeLinkRaw,
+            probeTargetRaw,
+            &probeExit);
+    if (!probeRan)
+    {
+        std::fprintf(
+            stderr,
+            "junction/setup probe: external mklink /J ground-truth probe "
+            "could not run (paths-resolved=%d target-created=%d, Win32 "
+            "error %lu)\n",
+            probePathsResolved ? 1 : 0,
+            probeTargetCreated ? 1 : 0,
+            static_cast<unsigned long>(GetLastError()));
+    }
+    else
+    {
+        std::fprintf(
+            stderr,
+            "junction/setup probe: external mklink /J ground-truth probe "
+            "exit=%lu (0 = the host created an OS-vendor junction on this "
+            "volume; mklink's own output is above)\n",
+            static_cast<unsigned long>(probeExit));
+    }
+    if (probeTargetCreated)
+    {
+        // Best-effort probe cleanup: RemoveDirectoryW on a junction path
+        // deletes the junction itself, never its target.
+        (void)RemoveDirectoryW(
+            ExtendedPath(probeLinkNarrow).c_str());
+        (void)RemoveDirectoryW(probeTargetExtended.c_str());
+    }
+    std::fputs(
+        "junction/setup probe: both in-process mount-point layouts were "
+        "rejected; discrimination evidence above (variant errors, volume "
+        "capability, mklink /J exit) — a rejected OS ground truth is the "
+        "documented environment-defect handback condition\n",
+        stderr);
+    // Restore the discriminating error for JunctionFailedWithoutPrivilege
+    // classification: the probe machinery above clobbered last-error.
+    SetLastError(errorB);
+    return false;
 }
 }
 #endif // defined(_WIN32)
