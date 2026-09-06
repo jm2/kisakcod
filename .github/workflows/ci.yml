@@ -29,7 +29,7 @@ jobs:
           - platform: macOS arm64
             runner: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Configure
         run: >
@@ -57,9 +57,9 @@ jobs:
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
       DXSDK_VERSION: 9.29.952.8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 8.x
 
@@ -187,9 +187,9 @@ jobs:
       NUGET_PACKAGES: ${{ github.workspace }}\\.nuget\\packages
       DXSDK_VERSION: 9.29.952.8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 8.x
 
@@ -235,9 +235,9 @@ jobs:
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
       DXSDK_VERSION: 9.29.952.8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 8.x
 
@@ -289,9 +289,9 @@ jobs:
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
       DXSDK_VERSION: 9.29.952.8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 8.x
 
@@ -330,7 +330,7 @@ jobs:
     name: Windows x86 (headless dedicated)
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Configure
         shell: pwsh
