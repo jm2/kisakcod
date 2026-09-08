@@ -2573,7 +2573,11 @@ void RunRecordedRemoval(const std::string &root, RemovalOutcome *outcome)
 // deadline so a wedged walk fails the probe instead of hanging CI. The
 // millisecond poll latency is the timing budget the deletion-failure
 // probe below spends; it is orders of magnitude inside that probe's
-// window (thousands of remaining walk operations).
+// window (thousands of remaining walk operations). The 30s bound only
+// exhausts when the walk fails before deleting the signal file — the
+// failure path this probe must report — so the CTest TIMEOUT for
+// platform-filesystem-path-contracts (tests/CMakeLists.txt) has to stay
+// clear of it or the diagnostic is killed before it prints.
 bool WaitForPathGone(const std::string &path)
 {
     const auto deadline = std::chrono::steady_clock::now()
