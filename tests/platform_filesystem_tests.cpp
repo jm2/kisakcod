@@ -2448,6 +2448,36 @@ bool TestRemoveTreeJunctionContract(const std::string &workingDirectory)
 }
 #endif // defined(_WIN32)
 
+// Dispatches the path-query and classification contracts from main so the
+// entry point's branch count stays under the project complexity limit.
+// Stage notes and call order mirror the previous inline dispatch.
+int RunPathAndClassificationContracts(std::string *const workingDirectory)
+{
+    SetCheckStage("path-queries");
+    if (!ReadPaths(workingDirectory))
+        return 1;
+    SetCheckStage("root-parent-classification");
+    if (!TestRootParentClassification())
+        return 1;
+    SetCheckStage("mkdir-classification-and-depth");
+    if (!TestClassificationAndDepth(*workingDirectory))
+        return 1;
+    SetCheckStage("ancestor-link-rejection");
+    if (!TestAncestorLinks(*workingDirectory))
+        return 1;
+    SetCheckStage("long-current-directory");
+    if (!TestLongCurrentDirectory(*workingDirectory))
+        return 1;
+    if (!TestBoundedDirectoryEnumeration(*workingDirectory))
+        return 1;
+    if (!TestFilteredCollectionAndPathHelpers(*workingDirectory))
+        return 1;
+    SetCheckStage("read-file-no-follow");
+    if (!TestReadFileNoFollow(*workingDirectory))
+        return 1;
+    return 0;
+}
+
 // Dispatches the platform-neutral remove-tree contracts from main so the
 // entry point's branch count stays under the project complexity limit.
 // Stage notes and call order mirror the previous inline dispatch.
@@ -2870,27 +2900,7 @@ int RunWin32RemoveTreeContracts(const std::string &workingDirectory)
 int main()
 {
     std::string workingDirectory;
-    SetCheckStage("path-queries");
-    if (!ReadPaths(&workingDirectory))
-        return 1;
-    SetCheckStage("root-parent-classification");
-    if (!TestRootParentClassification())
-        return 1;
-    SetCheckStage("mkdir-classification-and-depth");
-    if (!TestClassificationAndDepth(workingDirectory))
-        return 1;
-    SetCheckStage("ancestor-link-rejection");
-    if (!TestAncestorLinks(workingDirectory))
-        return 1;
-    SetCheckStage("long-current-directory");
-    if (!TestLongCurrentDirectory(workingDirectory))
-        return 1;
-    if (!TestBoundedDirectoryEnumeration(workingDirectory))
-        return 1;
-    if (!TestFilteredCollectionAndPathHelpers(workingDirectory))
-        return 1;
-    SetCheckStage("read-file-no-follow");
-    if (!TestReadFileNoFollow(workingDirectory))
+    if (RunPathAndClassificationContracts(&workingDirectory) != 0)
         return 1;
     if (RunRemoveTreeCoreContracts(workingDirectory) != 0)
         return 1;
