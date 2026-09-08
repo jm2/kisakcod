@@ -9,3 +9,11 @@
 # no signal.
 exclude_paths:
   - "src/game/taginfo_disk32.h"
+
+# Keep the existing socket-header Cppcheck exception in this single config.
+# The address and port fields are exercised by both platform backends;
+# header-only analysis cannot see those uses.
+engines:
+  cppcheck:
+    exclude_paths:
+      - "src/qcommon/sys_socket.h"
