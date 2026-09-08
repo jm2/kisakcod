@@ -12,6 +12,7 @@
 #if defined(_WIN32)
 #include <Windows.h>
 #include <winioctl.h>
+#include <thread>
 #else
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -2503,6 +2504,302 @@ bool TestRemoveTreeOpenHandleRace(const std::string &workingDirectory)
     return Check(GetFileAttributesW(ExtendedPath(root).c_str())
         == INVALID_FILE_ATTRIBUTES);
 }
+
+// Outcome one removal thread reports back: the call result plus the stage
+// the calling thread's diagnostic recorded. The record is thread-local in
+// the production unit, so only the walking thread can read its own walk's
+// stage — concurrent walks on other threads cannot clobber or observe it.
+struct RemovalOutcome
+{
+    bool removed = true;
+    const char *stage = "";
+};
+
+// Runs one removal and records the calling thread's own diagnostic.
+void RunRecordedRemoval(const std::string &root, RemovalOutcome *outcome)
+{
+    outcome->removed = Sys_FileSystemRemoveTree(root.c_str());
+    outcome->stage = Kisak_FileSystemLastRemoveTreeDiagnostic(nullptr);
+}
+
+// Waits until path stops existing (the walk deleted it) with a bounded
+// deadline so a wedged walk fails the probe instead of hanging CI. The
+// millisecond poll latency is the timing budget the deletion-failure
+// probe below spends; it is orders of magnitude inside that probe's
+// window (thousands of remaining walk operations).
+bool WaitForPathGone(const std::string &path)
+{
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::seconds(30);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (GetFileAttributesW(ExtendedPath(path).c_str())
+            == INVALID_FILE_ATTRIBUTES)
+        {
+            return true;
+        }
+        Sleep(1);
+    }
+    return false;
+}
+
+// Filler-file count for the deletion-failure fixture. The walk deletes
+// these one by one after the signal file vanishes, giving the writer
+// thread a window of thousands of operations to add the late entry —
+// a millisecond of detection latency versus hundreds of milliseconds of
+// margin.
+constexpr std::size_t kDeletionFailureFillerCount = 4096;
+
+// Builds the deletion-failure fixture: sub holds one signal file plus the
+// filler set, and an empty gate directory the walk must descend into and
+// complete before sub's own completion runs. The signal file's name sorts
+// BEFORE the filler names — NTFS enumerates alphabetically and the walk
+// deletes the file bucket in enumeration order, so the signal fires with
+// the whole filler set still ahead of the walk.
+bool CreateDeletionFailureFixture(
+    const std::string &root,
+    const std::string &sub,
+    const std::string &gate,
+    const std::string &keepPath)
+{
+    if (!Check(Sys_FileSystemCreateDirectory(root.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(sub.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(gate.c_str()))
+        || !Check(WriteFile(keepPath)))
+    {
+        return false;
+    }
+    for (std::size_t index = 0; index < kDeletionFailureFillerCount; ++index)
+    {
+        if (!WriteFile(Join(sub, "f" + std::to_string(index) + ".dat")))
+            return false;
+    }
+    return true;
+}
+
+// Verifies one completed deletion-failure attempt: the walk failed at the
+// completion stage, no handle leaked past it, the late entry survived,
+// and a retry after its removal deletes the whole tree.
+bool VerifyDeletionFailureResult(
+    const std::string &root,
+    const std::string &latePath,
+    const RemovalOutcome &outcome,
+    const DWORD beforeWalk,
+    const DWORD afterWalk)
+{
+    SetCheckStage("deletion-failure-cleanup/failure-recorded");
+    if (!Check(std::strcmp(outcome.stage, "complete/mark") == 0))
+        return false;
+    SetCheckStage("deletion-failure-cleanup/no-handle-leak");
+    // Every handle the walk opens is closed on every path; the pre-fix
+    // completion helper leaked exactly one handle here — the failed child
+    // frame's directory, popped from the stack before its disposition
+    // failed and therefore invisible to the walk's stack cleanup.
+    if (!Check(afterWalk == beforeWalk))
+        return false;
+    SetCheckStage("deletion-failure-cleanup/late-entry-survived");
+    if (!Check(GetFileAttributesW(ExtendedPath(latePath).c_str())
+            != INVALID_FILE_ATTRIBUTES))
+    {
+        return false;
+    }
+    SetCheckStage("deletion-failure-cleanup/late-entry-removed");
+    if (!Check(DeleteFileW(ExtendedPath(latePath).c_str())))
+        return false;
+    SetCheckStage("deletion-failure-cleanup/retry-succeeds");
+    if (!Check(Sys_FileSystemRemoveTree(root.c_str())))
+        return false;
+    return Check(GetFileAttributesW(ExtendedPath(root).c_str())
+        == INVALID_FILE_ATTRIBUTES);
+}
+
+// One deletion-failure attempt: build the fixture, run the walk on its
+// own thread, add the late entry mid-walk, and verify the outcome.
+// Returns false on any contract failure. Sets *raceLost when the walk
+// outran the writer (the tree is gone; the caller retries with a fresh
+// fixture).
+bool RunDeletionFailureAttempt(
+    const std::string &workingDirectory,
+    bool *raceLost)
+{
+    *raceLost = false;
+    const std::string root = MakeUniquePath(workingDirectory) + "-rmfail";
+    const std::string sub = Join(root, "sub");
+    const std::string gate = Join(sub, "gate");
+    const std::string keepPath = Join(sub, "0keep.dat");
+    const std::string latePath = Join(sub, "late.dat");
+    SetCheckStage("deletion-failure-cleanup/setup");
+    if (!CreateDeletionFailureFixture(root, sub, gate, keepPath))
+        return false;
+    DWORD beforeWalk = 0;
+    DWORD afterWalk = 0;
+    if (!Check(GetProcessHandleCount(GetCurrentProcess(), &beforeWalk)))
+        return false;
+    RemovalOutcome outcome;
+    std::thread walkThread(RunRecordedRemoval, root, &outcome);
+    const bool signaled = WaitForPathGone(keepPath);
+    // late.dat lands while the walk is still inside sub's filler
+    // deletions: strictly after sub's enumeration (so it is not in any
+    // bucket), strictly before sub's completion.
+    const bool lateCreated = signaled && WriteFile(latePath);
+    walkThread.join();
+    if (!Check(GetProcessHandleCount(GetCurrentProcess(), &afterWalk)))
+        return false;
+    if (outcome.removed || !lateCreated)
+    {
+        if (!signaled && !outcome.removed)
+        {
+            // The walk never reached the signal file: retrying cannot
+            // fix a walk that fails before its first deletion. Report
+            // the walk's own thread-local stage and fail now.
+            std::fprintf(
+                stderr,
+                "FAIL: walk failed before the signal stage: stage=%s\n",
+                outcome.stage);
+            return false;
+        }
+        // Lost the race: the tree is gone either way.
+        *raceLost = true;
+        return true;
+    }
+    return VerifyDeletionFailureResult(
+        root,
+        latePath,
+        outcome,
+        beforeWalk,
+        afterWalk);
+}
+
+// End-to-end deletion-failure cleanup contract: a directory that becomes
+// non-empty between its enumeration and its completion must fail the walk
+// at the completion stage WITHOUT leaking the failed frame's directory
+// handle. The failure is produced deterministically: while the walk is
+// deleting sub's large filler set (long after sub was enumerated, long
+// before sub's completion), the writer adds sub\late.dat; sub's
+// completion then finds it non-empty and the POSIX disposition refuses.
+// Gated to _WIN32: the completion/disposition path and the thread-local
+// diagnostic are win32-walk features.
+bool TestRemoveTreeDeletionFailureCleanup(const std::string &workingDirectory)
+{
+    // Up to three attempts: a lost race needs a scheduling stall far
+    // longer than the filler-deletion margin, and such an attempt simply
+    // repeats with a fresh fixture instead of shipping a timing-flaky
+    // failure.
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        bool raceLost = false;
+        if (!RunDeletionFailureAttempt(workingDirectory, &raceLost))
+            return false;
+        if (!raceLost)
+            return true;
+        SetCheckStage("deletion-failure-cleanup/retry-attempt");
+    }
+    std::fputs(
+        "FAIL: deletion-failure probe lost its race on every attempt\n",
+        stderr);
+    return false;
+}
+
+// Creates the minimal tree for one concurrent-diagnostic probe thread.
+bool CreateConcurrentProbeTree(const std::string &root)
+{
+    return Check(Sys_FileSystemCreateDirectory(root.c_str()))
+        && Check(WriteFile(Join(root, "payload.dat")));
+}
+
+// Opens one no-share blocker handle for the concurrent probes: share
+// mode 0 conflicts with every DELETE-bearing open the walk attempts on
+// the same object.
+HANDLE OpenNoShareBlocker(const std::string &path, const DWORD flags)
+{
+    return CreateFileW(
+        ExtendedPath(path).c_str(),
+        GENERIC_READ,
+        0,
+        nullptr,
+        OPEN_EXISTING,
+        flags,
+        nullptr);
+}
+
+// Verifies the three isolation post-conditions of the concurrent probe.
+bool VerifyConcurrentIsolation(
+    const RemovalOutcome &anchorOutcome,
+    const RemovalOutcome &fileOutcome,
+    const char *const mainBaseline)
+{
+    bool ok = true;
+    SetCheckStage("concurrent-diagnostics/both-failed");
+    ok = Check(!anchorOutcome.removed) && Check(!fileOutcome.removed);
+    SetCheckStage("concurrent-diagnostics/anchor-stage-isolated");
+    ok = ok && Check(std::strcmp(anchorOutcome.stage, "anchor/open") == 0);
+    SetCheckStage("concurrent-diagnostics/file-stage-isolated");
+    ok = ok && Check(std::strcmp(fileOutcome.stage, "remove-files") == 0);
+    SetCheckStage("concurrent-diagnostics/main-record-untouched");
+    // Deterministic shared-state detector: the main thread ran no walk,
+    // so with shared diagnostic globals the threads' stages leaked into
+    // its record and this check fails; thread-local records keep it
+    // equal to the baseline.
+    return ok && Check(std::strcmp(
+        Kisak_FileSystemLastRemoveTreeDiagnostic(nullptr),
+        mainBaseline) == 0);
+}
+
+// Concurrent-call contract: two removals on two threads, each failing at
+// a distinct deterministic stage (a no-share handle on the tree root
+// blocks the DELETE-bearing leaf anchor open; a no-share handle on a
+// nested file blocks the file bucket). The diagnostic record is
+// thread-local, so each walking thread must observe its OWN stage and a
+// thread that ran no walk must observe its own untouched record.
+bool TestRemoveTreeConcurrentDiagnostics(const std::string &workingDirectory)
+{
+    const std::string anchorRoot = MakeUniquePath(workingDirectory) + "-cnc-a";
+    const std::string fileRoot = MakeUniquePath(workingDirectory) + "-cnc-b";
+    const std::string inner = Join(fileRoot, "inner");
+    const std::string blockerPath = Join(inner, "blocker.dat");
+    SetCheckStage("concurrent-diagnostics/setup");
+    if (!CreateConcurrentProbeTree(anchorRoot)
+        || !Check(Sys_FileSystemCreateDirectory(inner.c_str()))
+        || !Check(WriteFile(blockerPath)))
+    {
+        return false;
+    }
+    SetCheckStage("concurrent-diagnostics/blockers");
+    const HANDLE anchorBlocker =
+        OpenNoShareBlocker(anchorRoot, FILE_FLAG_BACKUP_SEMANTICS);
+    if (!Check(anchorBlocker != INVALID_HANDLE_VALUE))
+        return false;
+    const HANDLE fileBlocker =
+        OpenNoShareBlocker(blockerPath, FILE_ATTRIBUTE_NORMAL);
+    if (!Check(fileBlocker != INVALID_HANDLE_VALUE))
+    {
+        CloseHandle(anchorBlocker);
+        return false;
+    }
+    const char *const mainBaseline =
+        Kisak_FileSystemLastRemoveTreeDiagnostic(nullptr);
+    RemovalOutcome anchorOutcome;
+    RemovalOutcome fileOutcome;
+    std::thread anchorThread(RunRecordedRemoval, anchorRoot, &anchorOutcome);
+    std::thread fileThread(RunRecordedRemoval, fileRoot, &fileOutcome);
+    anchorThread.join();
+    fileThread.join();
+    if (!VerifyConcurrentIsolation(anchorOutcome, fileOutcome, mainBaseline))
+    {
+        CloseHandle(anchorBlocker);
+        CloseHandle(fileBlocker);
+        return false;
+    }
+    CloseHandle(anchorBlocker);
+    CloseHandle(fileBlocker);
+    // Both walks failed cleanly; releasing the blockers must make the
+    // same trees removable.
+    SetCheckStage("concurrent-diagnostics/retry-anchor-tree");
+    if (!Check(Sys_FileSystemRemoveTree(anchorRoot.c_str())))
+        return false;
+    SetCheckStage("concurrent-diagnostics/retry-file-tree");
+    return Check(Sys_FileSystemRemoveTree(fileRoot.c_str()));
+}
 #endif // defined(_WIN32)
 }
 
@@ -2546,6 +2843,12 @@ int main()
     // open handles), so the ungated call is provably always-false there.
     SetCheckStage("deterministic-open-handle-race");
     if (!TestRemoveTreeOpenHandleRace(workingDirectory))
+        return 1;
+    SetCheckStage("deletion-failure-cleanup");
+    if (!TestRemoveTreeDeletionFailureCleanup(workingDirectory))
+        return 1;
+    SetCheckStage("concurrent-call-diagnostics");
+    if (!TestRemoveTreeConcurrentDiagnostics(workingDirectory))
         return 1;
 #endif
     return 0;
