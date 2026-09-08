@@ -3431,3 +3431,19 @@ add_test(
     COMMAND kisakcod-retail-fastfile-parity-harness --self-test)
 set_tests_properties(retail-fastfile-parity-harness-self-test PROPERTIES
     TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+# ki-msb PR #113 review correction: the parity DRIVER's acceptance boundary
+# is negative-tested — envelope-only captures can never pass the --mode
+# m5-graph runtime-graph gate, success results are named by mode + capture
+# kind, and leg identity is enforced. Runs the real driver against the
+# harness built above plus a stub graph-v1 harness for the positive
+# runtime-graph path. POSIX-only: the driver is a bash instrument run on the
+# Linux host leg; Windows legs mint references and run the C++ self-test.
+if(UNIX)
+    add_test(
+        NAME retail-fastfile-parity-driver-gates
+        COMMAND "${CMAKE_SOURCE_DIR}/scripts/ci/test-run-retail-fastfile-parity.sh"
+            --build-dir "${CMAKE_BINARY_DIR}")
+    set_tests_properties(retail-fastfile-parity-driver-gates PROPERTIES
+        TIMEOUT 120 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+endif()

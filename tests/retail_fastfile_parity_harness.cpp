@@ -9,6 +9,8 @@
 // Output protocol (stable; consumed by scripts/ci/run-retail-fastfile-parity.sh):
 //   capture_kind=envelope-v2
 //   hash_domain=kisakcod/m5-widened-graph-hash/v2
+//   leg=<declared capture-leg identity, when --leg is given>
+//   fastfile_path=<path>
 //   fastfile_bytes=<decimal size>
 //   fastfile_zlib_stream=<0|1>
 //   graph_sha256=<64 hex characters>
@@ -18,11 +20,18 @@
 // minted only a bounded 1 MiB prefix probe, which let same-size assets
 // whose tails differ collide on graph_sha256; v2 hashes every byte and
 // bumps both the capture kind and the hash domain so v1 references can
-// never silently match v2 captures.) The full widened runtime-graph walk
-// (capture_kind graph-v1) enrolls through this identical harness contract
-// and output protocol as the native64 loader path lands; the parity driver
-// refuses to compare different capture kinds, so the contract cannot
-// silently drift.
+// never silently match v2 captures.) The envelope capture hashes fast-file
+// BYTES only — no runtime graph is loaded — so an envelope match is
+// envelope consistency, never runtime-graph parity; the parity driver
+// reports the result under the capture kind's own name. The full widened
+// runtime-graph walk (capture_kind graph-v1) enrolls through this identical
+// harness contract and output protocol as the native64 loader path lands;
+// the parity driver refuses to compare different capture kinds, so the
+// contract cannot silently drift. --leg stamps the invoking driver's leg
+// identity (the triple of the tree that ran this harness) into the output;
+// the driver verifies it against the requested --host/--ref triples before
+// trusting a compare, so a reference minted by a foreign tree cannot pose
+// as another leg's reference.
 //
 // Self-test mode synthesizes fixture fast-files in-process and verifies the
 // capture pipeline end-to-end (determinism, pointer-independence across
@@ -37,6 +46,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -113,22 +123,69 @@ db::graph_hash::Digest CaptureEnvelope(
     return builder.Finish();
 }
 
-void EmitCapture(
+// The leg identity becomes one line of the k=v output protocol, so it must
+// be a short printable token: no whitespace, control characters, or
+// non-ASCII bytes that could break the line-oriented contract.
+bool LegIdentityIsSafe(const std::string_view leg)
+{
+    if (leg.empty() || leg.size() > 64)
+        return false;
+    for (const char c : leg)
+        if (c <= ' ' || c >= '\x7F')
+            return false;
+    return true;
+}
+
+// Renders the stable output protocol into `out`. `leg` may be null/empty
+// (no --leg given); the parity driver stamps the emitted identity into
+// minted references and verifies it against the requested --host/--ref
+// triples before trusting a compare.
+void FormatCapture(
     const char *path,
     const std::vector<std::uint8_t> &bytes,
-    const db::graph_hash::Digest &digest)
+    const db::graph_hash::Digest &digest,
+    const std::string_view leg,
+    std::string &out)
 {
     char hex[db::graph_hash::kHexDigestBytes];
     db::graph_hash::FormatDigestHex(digest, hex);
-    std::printf("capture_kind=envelope-v2\n");
-    std::printf("hash_domain=%s\n", db::graph_hash::kHashDomain);
-    std::printf("fastfile_path=%s\n", path);
-    std::printf("fastfile_bytes=%zu\n", bytes.size());
-    std::printf("fastfile_zlib_stream=%d\n", DetectZlibStream(bytes.data(), bytes.size()) ? 1 : 0);
-    std::printf("graph_sha256=%s\n", hex);
+    out.clear();
+    out += "capture_kind=envelope-v2\n";
+    out += "hash_domain=";
+    out += db::graph_hash::kHashDomain;
+    out += '\n';
+    if (!leg.empty())
+    {
+        out += "leg=";
+        out += leg;
+        out += '\n';
+    }
+    out += "fastfile_path=";
+    out += path;
+    out += '\n';
+    out += "fastfile_bytes=";
+    out += std::to_string(bytes.size());
+    out += '\n';
+    out += "fastfile_zlib_stream=";
+    out += DetectZlibStream(bytes.data(), bytes.size()) ? '1' : '0';
+    out += '\n';
+    out += "graph_sha256=";
+    out += hex;
+    out += '\n';
 }
 
-int RunCapture(const char *path)
+void EmitCapture(
+    const char *path,
+    const std::vector<std::uint8_t> &bytes,
+    const db::graph_hash::Digest &digest,
+    const std::string_view leg)
+{
+    std::string out;
+    FormatCapture(path, bytes, digest, leg, out);
+    std::fputs(out.c_str(), stdout);
+}
+
+int RunCapture(const char *path, const std::string_view leg)
 {
     std::vector<std::uint8_t> bytes;
     if (!ReadFileBytes(path, bytes))
@@ -154,7 +211,7 @@ int RunCapture(const char *path)
         return 2;
     }
 
-    EmitCapture(path, bytes, digest);
+    EmitCapture(path, bytes, digest, leg);
     return 0;
 }
 
@@ -270,6 +327,27 @@ void TestSelfTest(const char *fixturePath)
     Expect(DigestHexIsCanonical(hex), "digest hex is 64 lowercase characters");
     std::printf("self_test_graph_sha256=%s\n", hex);
 
+    // Protocol contract: the envelope kind is NAMED as envelope (the parity
+    // driver must never report an envelope match as runtime-graph parity),
+    // and the leg identity line appears exactly when --leg declares one.
+    std::string protocol;
+    FormatCapture("fixture.ff", fixture, first, "linux-amd64", protocol);
+    Expect(protocol.find("capture_kind=envelope-v2\n") != std::string::npos,
+        "protocol names the envelope capture kind explicitly");
+    Expect(protocol.find("\nleg=linux-amd64\n") != std::string::npos,
+        "protocol carries the declared leg identity");
+    Expect(protocol.find("graph_sha256=" + std::string(hex)) != std::string::npos,
+        "protocol carries the capture digest");
+    std::string noLeg;
+    FormatCapture("fixture.ff", fixture, first, {}, noLeg);
+    Expect(noLeg.find("leg=") == std::string::npos,
+        "protocol omits the leg line when no leg is declared");
+    Expect(LegIdentityIsSafe("linux-amd64"), "triple-shaped leg identities are accepted");
+    Expect(!LegIdentityIsSafe(""), "empty leg identities are rejected");
+    Expect(!LegIdentityIsSafe("linux amd64"), "leg identities with whitespace are rejected");
+    Expect(!LegIdentityIsSafe("leg\ninjected"), "leg identities with newlines are rejected");
+    Expect(!LegIdentityIsSafe(std::string(65, 'x')), "overlong leg identities are rejected");
+
     std::remove(fixturePath);
 }
 
@@ -277,8 +355,11 @@ void PrintUsage()
 {
     std::fprintf(stderr,
         "Usage:\n"
-        "  retail_fastfile_parity_harness --fastfile <path>\n"
-        "  retail_fastfile_parity_harness --self-test [fixture-path]\n");
+        "  retail_fastfile_parity_harness [--leg <identity>] --fastfile <path>\n"
+        "  retail_fastfile_parity_harness --self-test [fixture-path]\n"
+        "--leg stamps the capture-leg identity (e.g. the host triple of the\n"
+        "tree running this harness) into the output protocol; the parity\n"
+        "driver verifies it against the requested legs before comparing.\n");
 }
 
 } // namespace
@@ -286,6 +367,7 @@ void PrintUsage()
 int main(int argc, char **argv)
 {
     const char *fastfilePath = nullptr;
+    std::string leg;
     bool selfTest = false;
     const char *selfTestPath = "kisakcod-parity-selftest.tmp";
 
@@ -295,6 +377,18 @@ int main(int argc, char **argv)
         if (arg == "--fastfile" && i + 1 < argc)
         {
             fastfilePath = argv[++i];
+        }
+        else if (arg == "--leg" && i + 1 < argc)
+        {
+            leg = argv[++i];
+            if (!LegIdentityIsSafe(leg))
+            {
+                std::fprintf(stderr,
+                    "error: --leg must be 1-64 printable, non-whitespace characters"
+                    " (got %zu bytes)\n",
+                    leg.size());
+                return 2;
+            }
         }
         else if (arg == "--self-test")
         {
@@ -329,5 +423,5 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    return RunCapture(fastfilePath);
+    return RunCapture(fastfilePath, leg);
 }
