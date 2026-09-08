@@ -3319,3 +3319,28 @@ add_test(
     COMMAND save_taginfo_production_test
 )
 set_tests_properties(save-taginfo-production-path PROPERTIES TIMEOUT 10)
+
+# M10 architecture-neutral scalar determinism: pins the exact semantics the
+# x86_64 and AArch64 legs must share for float-to-int producers, total-order
+# FP comparisons, packed little-endian reference fields, and sign-carrying
+# compressed/trail-byte decoding.
+add_executable(kisakcod-runtime-scalar-determinism-tests
+    runtime_scalar_determinism_tests.cpp
+)
+target_include_directories(kisakcod-runtime-scalar-determinism-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-runtime-scalar-determinism-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-runtime-scalar-determinism-tests)
+set_target_properties(kisakcod-runtime-scalar-determinism-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME runtime-scalar-determinism-contracts
+    COMMAND kisakcod-runtime-scalar-determinism-tests
+)
+
+add_test(
+    NAME runtime-scalar-determinism-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_scalar_determinism_source_test.cmake
+)
