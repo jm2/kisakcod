@@ -829,22 +829,27 @@ constexpr KisakNtStatus kKisakStatusNoMoreEntries =
 // filesystem test reads the record through
 // Kisak_FileSystemLastRemoveTreeDiagnostic when a removal call returns
 // false; production callers never need it.
+//
+// The record is thread-local: each removal invocation writes its own
+// thread's stage, so concurrent callers can neither clobber nor observe
+// each other's diagnostics (the walk is synchronous, so a thread's record
+// always describes that thread's own last walk).
 // ---------------------------------------------------------------------------
-const char *gRemoveTreeStage = "idle";
-std::int32_t gRemoveTreeCode = 0;
+thread_local const char *tRemoveTreeStage = "idle";
+thread_local std::int32_t tRemoveTreeCode = 0;
 
 void NoteRemoveTreeStage(const char *const stage)
 {
-    gRemoveTreeStage = stage;
-    gRemoveTreeCode = 0;
+    tRemoveTreeStage = stage;
+    tRemoveTreeCode = 0;
 }
 
 void NoteRemoveTreeFailure(
     const char *const stage,
     const std::int32_t code)
 {
-    gRemoveTreeStage = stage;
-    gRemoveTreeCode = code;
+    tRemoveTreeStage = stage;
+    tRemoveTreeCode = code;
 }
 
 // DesiredAccess values (the subset used here).
@@ -1258,12 +1263,14 @@ bool ClassifyEnumerationEntry(
 // relative to the CURRENT entry, so the cursor must accumulate across the
 // batch; assigning it instead re-read early entries and misparsed every
 // multi-entry batch (operator-audit defect). A zero step ends the batch. A
-// step that cannot carry at least the fixed header, or that would leave
-// the query buffer, is malformed kernel data and fails closed.
+// step that cannot carry at least one full minimal entry, or that would
+// leave the byte count the kernel actually returned, is malformed kernel
+// data and fails closed — the cursor never advances into capacity the
+// kernel did not fill.
 bool NextEnumerationOffset(
     const KisakFileDirectoryInformation *const entry,
     const std::uint32_t offset,
-    const std::uint32_t bufferBytes,
+    const std::uint32_t returnedBytes,
     std::uint32_t *const next)
 {
     const std::uint32_t step = entry->NextEntryOffset;
@@ -1273,7 +1280,7 @@ bool NextEnumerationOffset(
         return true;
     }
     if (step < sizeof(KisakFileDirectoryInformation)
-        || step >= bufferBytes - offset)
+        || step >= returnedBytes - offset)
     {
         return false;
     }
@@ -1281,29 +1288,71 @@ bool NextEnumerationOffset(
     return true;
 }
 
+// Fixed byte extent of a directory entry's non-name header: everything
+// through FileNameLength. Every entry offset must carry at least this
+// many bytes of returned data before any header field — including the
+// name length that the extent check itself depends on — may be read.
+constexpr std::uint32_t kKisakDirEntryHeaderBytes =
+    static_cast<std::uint32_t>(
+        offsetof(KisakFileDirectoryInformation, FileName));
+
+// Validates one directory entry against the byte count the kernel
+// actually returned (IO_STATUS_BLOCK Information) before anything is
+// dereferenced beyond that data: the fixed header must fit at the cursor,
+// the name must be non-empty, and the name extent must stay inside the
+// returned bytes. Parsing previously trusted the query buffer's CAPACITY
+// instead, so a short batch or a truncated final entry would have been
+// read out of uninitialized buffer memory.
+bool ParseEntryBounds(
+    const void *const buffer,
+    const std::uint32_t offset,
+    const std::uint32_t returnedBytes,
+    const KisakFileDirectoryInformation **const entry)
+{
+    if (returnedBytes - offset < kKisakDirEntryHeaderBytes)
+    {
+        NoteRemoveTreeFailure("enumerate/parse/header", 0);
+        return false;
+    }
+    *entry =
+        reinterpret_cast<const KisakFileDirectoryInformation *>(
+            static_cast<const unsigned char *>(buffer) + offset);
+    if ((*entry)->FileNameLength == 0)
+    {
+        // Malformed kernel data (the dot entries carry length 2); refuse
+        // instead of harvesting an unopenable empty-string name.
+        NoteRemoveTreeFailure("enumerate/parse/zero-name", 0);
+        return false;
+    }
+    if ((*entry)->FileNameLength
+        > returnedBytes - offset - kKisakDirEntryHeaderBytes)
+    {
+        NoteRemoveTreeFailure("enumerate/parse/name-extent", 0);
+        return false;
+    }
+    return true;
+}
+
 // Parses one returned batch of directory entries into the frame's buckets.
-// The cursor accumulates relative NextEntryOffset values (see
-// NextEnumerationOffset); a zero step ends the batch. Dot entries are
-// skipped, everything else is classified exactly as the enumeration
-// reported it. A zero-length name is malformed kernel data (the dot
-// entries carry length 2) and fails closed with its own diagnostic stage
-// instead of harvesting an unopenable empty-string name.
+// returnedBytes is the byte count the kernel reported in
+// IO_STATUS_BLOCK.Information — the only region this function reads; the
+// query buffer's capacity is never trusted. The cursor accumulates
+// relative NextEntryOffset values (see NextEnumerationOffset); a zero
+// step ends the batch. Dot entries are skipped, everything else is
+// classified exactly as the enumeration reported it. Malformed kernel
+// data (short header, empty name, name past the returned bytes,
+// impossible step) fails closed with its own diagnostic stage.
 bool ParseEnumerationBatch(
     void *const buffer,
-    const std::uint32_t bufferBytes,
+    const std::uint32_t returnedBytes,
     RemoveTreeFrame *const frame)
 {
     std::uint32_t offset = 0;
     for (;;)
     {
-        const auto *const entry =
-            reinterpret_cast<const KisakFileDirectoryInformation *>(
-                static_cast<const unsigned char *>(buffer) + offset);
-        if (entry->FileNameLength == 0)
-        {
-            NoteRemoveTreeFailure("enumerate/parse/zero-name", 0);
+        const KisakFileDirectoryInformation *entry = nullptr;
+        if (!ParseEntryBounds(buffer, offset, returnedBytes, &entry))
             return false;
-        }
         if (!IsDotOrDotDot(
                 entry->FileName,
                 entry->FileNameLength / sizeof(wchar_t))
@@ -1313,7 +1362,7 @@ bool ParseEnumerationBatch(
             return false;
         }
         std::uint32_t next = 0;
-        if (!NextEnumerationOffset(entry, offset, bufferBytes, &next))
+        if (!NextEnumerationOffset(entry, offset, returnedBytes, &next))
         {
             NoteRemoveTreeFailure(
                 "enumerate/parse",
@@ -1368,7 +1417,25 @@ bool EnumerateHeldDirectory(
             NoteRemoveTreeFailure("enumerate/query", status);
             return false;
         }
-        if (!ParseEnumerationBatch(buffer, bufferBytes, frame))
+        // The batch's readable extent is the byte count the kernel
+        // returned in Information, never the buffer's capacity: a count
+        // larger than the buffer is impossible kernel behavior, and an
+        // empty success carries nothing to parse — both fail closed
+        // rather than hand the parser uninitialized or out-of-range
+        // memory.
+        if (ioStatus.Information > bufferBytes)
+        {
+            NoteRemoveTreeFailure("enumerate/query/length", 0);
+            return false;
+        }
+        const auto returnedBytes =
+            static_cast<std::uint32_t>(ioStatus.Information);
+        if (returnedBytes == 0)
+        {
+            NoteRemoveTreeFailure("enumerate/parse/empty", 0);
+            return false;
+        }
+        if (!ParseEnumerationBatch(buffer, returnedBytes, frame))
             return false;
     }
     return true;
@@ -1497,6 +1564,18 @@ bool CompleteRemovalFrame(std::deque<RemoveTreeFrame> *const stack)
             &usedLegacyFallback))
     {
         NoteRemoveTreeFailure("complete/mark", dispositionCode);
+        if (completed.ownsHandle)
+        {
+            // The frame has already been popped, so the walk's failure
+            // cleanup (which only closes frames still on the stack) can
+            // never see this handle: close it here or every failed
+            // completion leaks one directory handle. A close failure
+            // would shadow the disposition failure that caused the walk
+            // to fail, so it is not recorded; the walk fails closed
+            // either way. (Same unchecked-cleanup-close discipline as
+            // RemoveHeldTree's failure path.)
+            CloseHandle(completed.directory);
+        }
         return false;
     }
     if (usedLegacyFallback)
@@ -1771,16 +1850,19 @@ bool WalkToTreeAnchor(
 }
 
 // Diagnosability hook for the remove-tree walk: reports the last stage the
-// walk attempted and, when the walk failed, the raw NTSTATUS or Win32 error
-// that caused the failure (raw NT failures never set the Win32 last error,
-// so callers could otherwise only observe a stale error). The platform
-// filesystem test prints this record when a removal call returns false.
+// calling thread's walk attempted and, when that walk failed, the raw
+// NTSTATUS or Win32 error that caused the failure (raw NT failures never
+// set the Win32 last error, so callers could otherwise only observe a
+// stale error). The record is thread-local, so a caller that races other
+// removal invocations on different threads still reads its own walk's
+// record. The platform filesystem test prints this record when a removal
+// call returns false.
 const char *Kisak_FileSystemLastRemoveTreeDiagnostic(
     std::int32_t *failureCode)
 {
     if (failureCode != nullptr)
-        *failureCode = gRemoveTreeCode;
-    return gRemoveTreeStage;
+        *failureCode = tRemoveTreeCode;
+    return tRemoveTreeStage;
 }
 
 // Validates the raw removal path and resolves it to the extended absolute
