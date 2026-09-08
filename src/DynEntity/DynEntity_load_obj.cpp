@@ -599,15 +599,19 @@ void __cdecl DynEnt_LoadEntities()
             {
                 // The sidecar owner key packs drawType * 4096 + dynEntId;
                 // a per-draw-type count past the packing stride would
-                // collide MODEL keys into the BRUSH key range.
+                // collide MODEL keys into the BRUSH key range (e.g. MODEL
+                // id 4096 and BRUSH id 0 both derive owner 4096). This is
+                // untrusted map data, so it is rejected with ERR_DROP —
+                // an assert is compiled out of non-USE_ASSERTS release
+                // builds and would let colliding binds through — before
+                // the pose/client/coll lists are allocated or published.
                 if (cm.dynEntCount[drawTypea] > phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
-                    MyAssertHandler(
-                        ".\\DynEntity\\DynEntity_load_obj.cpp",
-                        597,
-                        0,
-                        "dynEntCount doesn't exceed the sidecar owner-key stride\n\t%i not in [0, %u)",
+                    Com_Error(
+                        ERR_DROP,
+                        "Found [%i] Dyn Entities of type [%i], Max is [%u]\n",
                         cm.dynEntCount[drawTypea],
-                        phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType);
+                        drawTypea,
+                        phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType - 1u);
                 if (cm.dynEntCount[drawTypea])
                 {
                     cm.dynEntPoseList[drawTypea] = (DynEntityPose *)DynEnt_Alloc(cm.dynEntCount[drawTypea], 32);
@@ -630,15 +634,16 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
         MemFile_ReadData(memFile, sizeof(count), (uint8_t *)&count);
         // Same sidecar owner-key stride bound as the MP loader: the save
         // image is untrusted data and a count past the stride would collide
-        // this draw type's keys into the next one's slot range.
+        // this draw type's keys into the next one's slot range. Rejected
+        // with ERR_DROP — an assert is compiled out of non-USE_ASSERTS
+        // release builds — before any save data is read or published.
         if (count > phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
-            MyAssertHandler(
-                ".\\DynEntity\\DynEntity_load_obj.cpp",
-                620,
-                0,
-                "dynEntCount doesn't exceed the sidecar owner-key stride\n\t%hu not in [0, %u)",
+            Com_Error(
+                ERR_DROP,
+                "Save image declares [%hu] Dyn Entities of type [%i], Max is [%u]\n",
                 count,
-                phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType);
+                drawType,
+                phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType - 1u);
         cm.dynEntCount[drawType] = count;
         if (count == 0)
             continue;
@@ -674,8 +679,12 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
                     {
                         // A failed bind means the slot is already occupied.
                         // The legacy saved-image rebuild never re-occupies
-                        // an active slot, so this is a programming error;
-                        // leak the body to keep the load path linear.
+                        // an active slot, so this is a programming error —
+                        // but the freshly created body must not leak:
+                        // destroy it through the production adapter
+                        // (Phys_ObjDestroy manages its own locking) and
+                        // clear the field so the state stays consistent.
+                        Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
                         dynEntClient->physObjId = 0;
                     }
                 }

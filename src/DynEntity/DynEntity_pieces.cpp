@@ -310,6 +310,32 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
                 spawnResult.body = nullptr;
             }
         }
+        // Sidecar Bind runs inside the physics lock span per the sidecar
+        // contract (same span as creation and the bullet-impact rollback).
+        // The slot is guaranteed vacant: the array is walked strictly
+        // forward and numPieces is the bound on the highest index, so a
+        // failed bind is a programming error — but the freshly created
+        // body must not leak: destroy it under this same lock exactly
+        // like the bullet-impact rollback above, then surface the failure.
+        phys_obj_id::TokenResult pieceBind{};
+        bool bindFailed = false;
+        if (spawnResult.status == PhysBodyModelCreateStatus::Success)
+        {
+            const phys_obj_id::OwnerIndex owner =
+                static_cast<phys_obj_id::OwnerIndex>(numPieces);
+            // Bind is a non-static member: call it on the global sidecar.
+            pieceBind = g_breakablePieceBodySidecar.Bind(owner, spawnResult.body);
+            if (!pieceBind)
+            {
+                bindFailed = true;
+                spawnResult.cleanupFailed =
+                    Phys_TryDestroyBodyLockedNoReport(
+                        PHYS_WORLD_FX,
+                        spawnResult.body)
+                    != PhysBodyRollbackStatus::Success;
+                spawnResult.body = nullptr;
+            }
+        }
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 
         if (spawnResult.cleanupFailed)
@@ -325,21 +351,9 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
         physObjId = spawnResult.body;
         if (spawnResult.status == PhysBodyModelCreateStatus::Success)
         {
-            const phys_obj_id::OwnerIndex owner = static_cast<phys_obj_id::OwnerIndex>(numPieces);
-            // Bind is a non-static member: call it on the global sidecar.
-            const phys_obj_id::TokenResult bind = g_breakablePieceBodySidecar.Bind(
-                owner,
-                physObjId);
-            if (bind.status != phys_obj_id::Status::Success)
-            {
-                // The slot is guaranteed vacant: the array is walked
-                // strictly forward and numPieces is the bound on the
-                // highest index. A failed bind is a programming error;
-                // leave the slot inactive and let the engine drain the
-                // body on shutdown.
+            if (bindFailed)
                 return false;
-            }
-            g_breakablePieces[numPieces].physObjId = bind.token;
+            g_breakablePieces[numPieces].physObjId = pieceBind.token;
             g_breakablePieces[numPieces].model = model;
             result = 1;
             g_breakablePieces[numPieces].lightingHandle = 0;

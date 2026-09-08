@@ -275,6 +275,114 @@ bool TestGlobalDynEntClientSidecar()
     return true;
 }
 
+// Failure/reuse contract for the engine bind-rollback recipes: every
+// production failed-bind path (DynEntity save loader, breakable-piece
+// spawn, cpose creation) must (a) leave the winning binding untouched,
+// (b) destroy/release its fresh body, and (c) leave the slot cleanly
+// reusable with a bumped generation so stale tokens stay rejected.
+bool TestFailedBindReleaseReuseContract()
+{
+    int bodyA = 0;
+    int bodyB = 0;
+    phys_obj_id::BodySidecar<4> sidecar;
+    const phys_obj_id::OwnerIndex owner = 3; // in-capacity slot
+    phys_obj_id::BodyToken fieldA = phys_obj_id::INVALID_BODY_TOKEN;
+
+    // 1. First bind wins.
+    const phys_obj_id::TokenResult bindA =
+        phys_obj_id::WriteBind(sidecar, &fieldA, owner, &bodyA);
+    if (!bindA)
+        return false;
+
+    // 2. A colliding bind (the loader collision this bead's bound
+    //    enforcement prevents) fails with AlreadyBound and leaves the
+    //    winning field/binding exactly intact.
+    phys_obj_id::BodyToken fieldB = phys_obj_id::INVALID_BODY_TOKEN;
+    const phys_obj_id::TokenResult bindB =
+        phys_obj_id::WriteBind(sidecar, &fieldB, owner, &bodyB);
+    if (bindB.status != phys_obj_id::Status::AlreadyBound)
+        return false;
+    if (fieldB != phys_obj_id::INVALID_BODY_TOKEN)
+        return false;
+    if (phys_obj_id::ReadResolve<void>(sidecar, fieldA) != &bodyA)
+        return false;
+
+    // 3. A failed bind leaves no phantom state: the loser's field was
+    //    never written, so consuming it finds nothing (the engine
+    //    rollback paths destroy their fresh BODY here; the sidecar slot
+    //    still belongs to the winner).
+    void *phantom = nullptr;
+    if (phys_obj_id::ConsumeRelease<void>(sidecar, &fieldB, &phantom))
+        return false;
+
+    // 4. Releasing the winning binding (shutdown/reuse teardown) hands
+    //    back exactly its body and clears the field.
+    void *released = nullptr;
+    if (!phys_obj_id::ConsumeRelease<void>(sidecar, &fieldA, &released))
+        return false;
+    if (released != &bodyA)
+        return false;
+
+    // 5. The slot is reusable: a new bind succeeds with a bumped
+    //    generation, and the old token is stale (resolves to null).
+    const phys_obj_id::TokenResult rebind =
+        phys_obj_id::WriteBind(sidecar, &fieldB, owner, &bodyB);
+    if (!rebind)
+        return false;
+    if (phys_obj_id::OwnerOf(rebind.token) != phys_obj_id::OwnerOf(bindA.token))
+        return false;
+    if (phys_obj_id::GenerationOf(rebind.token)
+        == phys_obj_id::GenerationOf(bindA.token))
+        return false;
+    if (phys_obj_id::ReadResolve<void>(sidecar, fieldA) != nullptr)
+        return false;
+    if (phys_obj_id::ReadResolve<void>(sidecar, fieldB) != &bodyB)
+        return false;
+    return true;
+}
+
+// Owner-packing stride contract for the DynEntityClient sidecar keys:
+// owner = drawType * kDynEntPhysObjIdOwnerPerDrawType + dynEntId. The
+// first id past the stride aliases the next draw type's slot 0 — the
+// exact collision the load paths must reject with a release-effective
+// error (Com_Error) before publishing the entity lists. Legal counts
+// stay collision-free and within the sidecar capacity.
+constexpr bool DynEntOwnerIndexStrideContractHolds()
+{
+    // MODEL id 4096 and BRUSH id 0 collide (the assessed probe case).
+    if (phys_obj_id::DynEntPhysObjId_MakeOwnerIndex(0u, 4096u)
+        != phys_obj_id::DynEntPhysObjId_MakeOwnerIndex(1u, 0u))
+        return false;
+    // The highest legal keys stay distinct and inside capacity.
+    if (phys_obj_id::DynEntPhysObjId_MakeOwnerIndex(0u, 4095u) != 4095u)
+        return false;
+    if (phys_obj_id::DynEntPhysObjId_MakeOwnerIndex(1u, 4095u) != 8191u)
+        return false;
+    return 8191u < kDynEntClientBodySidecarCapacity;
+}
+static_assert(DynEntOwnerIndexStrideContractHolds(),
+    "dynent owner-key stride contract: oversized ids collide, legal ids "
+    "stay distinct and within sidecar capacity");
+
+bool TestDynEntOwnerIndexStrideContract()
+{
+    // Runtime mirror of the constexpr contract above: the packing is
+    // monotonic within each draw type for every legal id, and the two
+    // draw-type ranges never overlap below the stride.
+    for (std::uint32_t id = 0; id < 4096u; ++id)
+    {
+        const auto modelOwner =
+            phys_obj_id::DynEntPhysObjId_MakeOwnerIndex(0u, static_cast<std::uint16_t>(id));
+        const auto brushOwner =
+            phys_obj_id::DynEntPhysObjId_MakeOwnerIndex(1u, static_cast<std::uint16_t>(id));
+        if (modelOwner != id)
+            return false;
+        if (brushOwner != static_cast<phys_obj_id::OwnerIndex>(4096u + id))
+            return false;
+    }
+    return true;
+}
+
 // Saved-bytes regression: the runtime DynEntityClient/BreakablePiece
 // struct sizes must NOT drift. These are enforced at compile time so a
 // layout drift fails the build before any test runs. The MP cpose_t
@@ -317,6 +425,10 @@ static const char *RunSidecarIntegrationTests()
         return "global breakable piece sidecar bind";
     if (!TestGlobalDynEntClientSidecar())
         return "global dynent client sidecar bind";
+    if (!TestFailedBindReleaseReuseContract())
+        return "failed-bind release/reuse contract";
+    if (!TestDynEntOwnerIndexStrideContract())
+        return "dynent owner-index stride contract";
     return nullptr;
 }
 

@@ -1102,6 +1102,7 @@ void __cdecl CG_CreatePhysicsObject(int32_t localClientNum, centity_s *cent)
         PhysBodyCreateResourceFailure resourceFailure =
             PhysBodyCreateResourceFailure::None;
         bool cleanupFailed = false;
+        bool assignFailed = false;
         physObjId = nullptr;
         Sys_EnterCriticalSection(CRITSECT_PHYSICS);
         status = Phys_TryCreateBodyFromPresetAndXModelLockedNoReport(
@@ -1134,6 +1135,27 @@ void __cdecl CG_CreatePhysicsObject(int32_t localClientNum, centity_s *cent)
                 physObjId = nullptr;
             }
         }
+        // The sidecar Assign runs inside this same physics lock span per
+        // the sidecar contract (creation, bullet-impact rollback, and
+        // publication are one transaction). The slot is guaranteed vacant:
+        // CG_ShutdownEntity runs on snapshot transition and force-clears
+        // the field, so the prior body (if any) has already been destroyed
+        // and the field zeroed. If the assign ever reports failure it is
+        // a programming error, not a runtime condition — but the freshly
+        // created body must not leak: destroy it under this same lock
+        // exactly like the bullet-impact rollback above, then dead-token
+        // the entity.
+        if (status == PhysBodyModelCreateStatus::Success)
+        {
+            if (!CG_CPosePhysObjId_Assign(cent, physObjId))
+            {
+                assignFailed = true;
+                cleanupFailed = Phys_TryDestroyBodyLockedNoReport(
+                    PHYS_WORLD_FX, physObjId)
+                    != PhysBodyRollbackStatus::Success;
+                physObjId = nullptr;
+            }
+        }
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 
         if (cleanupFailed
@@ -1149,27 +1171,10 @@ void __cdecl CG_CreatePhysicsObject(int32_t localClientNum, centity_s *cent)
             cent->pose.physObjId = phys_obj_id::DEAD_BODY_TOKEN;
             return;
         }
-        // The slot is guaranteed vacant: CG_ShutdownEntity runs on
-        // snapshot transition and force-clears the field, so by the time
-        // we get here the prior body (if any) has already been destroyed
-        // and the field zeroed. If the assign ever reports failure it is
-        // a programming error, not a runtime condition — but the freshly
-        // created body must not leak: destroy it under the physics lock
-        // exactly like the bullet-impact rollback path above, then
-        // dead-token the entity.
-        if (!CG_CPosePhysObjId_Assign(cent, physObjId))
+        if (assignFailed)
         {
-            bool destroyFailed = false;
-            Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-            destroyFailed = Phys_TryDestroyBodyLockedNoReport(
-                                PHYS_WORLD_FX, physObjId)
-                != PhysBodyRollbackStatus::Success;
-            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
             cent->pose.physObjId = phys_obj_id::DEAD_BODY_TOKEN;
-            if (destroyFailed)
-            {
-                std::abort();
-            }
+            return;
         }
     }
     else

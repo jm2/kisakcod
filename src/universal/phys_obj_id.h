@@ -359,10 +359,11 @@ template <class Body, std::size_t Capacity>
 // replay path (DynEntity_load_obj.cpp) must derive the key through this
 // helper so the two sites cannot drift. A draw type that ever loads
 // >= kDynEntPhysObjIdOwnerPerDrawType entities would collide its keys into
-// the next draw type's slot range; the load paths assert the bound.
+// the next draw type's slot range; the load paths reject oversize counts
+// with a release-effective Com_Error before the entity lists are published.
 constexpr std::uint32_t kDynEntPhysObjIdOwnerPerDrawType = 4096u;
 
-[[nodiscard]] inline OwnerIndex DynEntPhysObjId_MakeOwnerIndex(
+[[nodiscard]] constexpr OwnerIndex DynEntPhysObjId_MakeOwnerIndex(
     std::uint32_t drawType,
     std::uint16_t dynEntId) noexcept
 {

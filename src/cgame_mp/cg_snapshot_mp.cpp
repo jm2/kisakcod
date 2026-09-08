@@ -53,12 +53,16 @@ void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
         }
         cent->currentState.pos.trType = TR_STATIONARY;
         cent->currentState.apos.trType = TR_STATIONARY;
-        // Legacy contract (master 53652090): the field is unconditionally
-        // reset to the null token at the end of the (live || TR_PHYSICS)
-        // block. CG_CalcEntityPhysicsPositions only re-attempts body
-        // creation when the field IsNull, so a DEAD token must become
-        // retryable again here or a TR_PHYSICS entity whose creation once
-        // failed would never re-attempt on its next snapshot incarnation.
+        // Legacy contract (master 53652090): the outer condition is
+        // (live token || TR_PHYSICS). A dead token enters this block only
+        // when the entity is TR_PHYSICS — legacy line 37 gated on
+        // `physObjId && physObjId != -1 || trType == TR_PHYSICS`, so dead
+        // tokens on non-TR_PHYSICS entities are excluded here, then and
+        // now (CG_CPosePhysObjId_GetBody resolves a DEAD token to null).
+        // For the TR_PHYSICS case the field reset at the end of the block
+        // makes creation retryable on the entity's next snapshot
+        // incarnation: CG_CalcEntityPhysicsPositions only re-attempts
+        // body creation when the field IsNull.
         // (CG_CPosePhysObjId_TakeBody already stores INVALID_BODY_TOKEN;
         // this store makes the legacy contract explicit and covers any
         // path that does not go through TakeBody.)

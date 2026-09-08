@@ -2874,6 +2874,13 @@ add_test(
 )
 
 add_test(
+    NAME phys-obj-id-owner-bound-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/phys_obj_id_owner_bound_source_test.cmake
+)
+
+add_test(
     NAME effectscore-archive-physics-transaction
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
