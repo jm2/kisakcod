@@ -34,6 +34,13 @@
 #
 # Exits 0 only when the requested phase (and everything before it) passes.
 # Any other exit status means the gate is red; the failing stage is printed.
+#
+# The ctest phase parses the failed-test summary strictly: every summary
+# line must carry an explicitly known status, crash/timeout/Not Run
+# results are never tolerated, and nothing is tolerated at all while the
+# tracked-defect set is empty (see run_test below). An unrecognized
+# result — a new ctest status, a format change — fails the gate instead
+# of passing silently.
 
 set -euo pipefail
 
@@ -127,62 +134,112 @@ run_test() {
         return 0
     fi
 
-    # The environment-sensitive abi-scanner and security-count defects are
-    # pre-existing on master, tracked on ki-9b13 and ki-ya3t, and stay
-    # green on hosted CI (docs/task.md). The gate tolerates exactly this
-    # closed set — by exact test name — and fails on anything else.
-    local -a known_failures=(
-        abi-sizeof-debt-tripwire
-        abi-sizeof-scanner-fixture
-        security-source-regressions
-    )
+    # ctest exited nonzero, so something failed. Classify every failed
+    # result before deciding anything, and fail closed on anything this
+    # script cannot classify. The summary block is parsed strictly: each
+    # line must match "<index> - <name> (<status>)" with an explicitly
+    # known status. Any other line — a new ctest status vocabulary, a
+    # format change, a differently spelled result — is unrecognized and
+    # fails the gate; nothing is silently dropped. A crash (SEGFAULT and
+    # the other signal statuses), a Timeout, and a Not Run result are
+    # never tolerable regardless of the test name; only a plain (Failed)
+    # result is even eligible for tolerance.
+    #
+    # The tolerated set is EMPTY: the historical environment-sensitive
+    # ki-9b13/ki-ya3t baseline (abi-sizeof-debt-tripwire,
+    # abi-sizeof-scanner-fixture, security-source-regressions) was healed
+    # on master and both tracking beads are closed, so today every
+    # failure is unexpected. Re-add an entry only for an open, tracked
+    # defect, citing its bead id in the comment next to it.
+    local -a tolerated_failures=()
     local -a actual_failures=()
+    local -a actual_statuses=()
+    local -a unrecognized=()
+    local claimed_failed=-1
     local in_block=0
+    local line name status
+    local summary_grammar='^[[:space:]]*[0-9]+[[:space:]]-[[:space:]](.+)[[:space:]]\((Failed|Timeout|Not Run|SEGFAULT|SIGSEGV|SIGILL|SIGABRT|SIGFPE|SIGBUS|Illegal|Interrupt|Other)\)$'
+    local count_grammar='tests passed, ([0-9]+) tests failed out of'
     while IFS= read -r line; do
-        if [[ "$line" == "The following tests FAILED:" ]]; then
+        if [[ "$line" == *"The following tests FAILED:"* ]]; then
             in_block=1
             continue
         fi
-        if [[ "$in_block" -eq 1 ]]; then
-            if [[ "$line" =~ ^[[:space:]]*$ ]]; then
-                in_block=0
-                continue
-            fi
-            local name
-            name="$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[0-9]+ - (.*) \(Failed\)$/\1/')"
-            if [[ "$name" != "$line" ]]; then
-                actual_failures+=("$name")
-            fi
+        if [[ "$line" =~ $count_grammar ]]; then
+            claimed_failed="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$in_block" -ne 1 ]]; then
+            continue
+        fi
+        if [[ "$line" =~ ^[[:space:]]*$ ]]; then
+            in_block=0
+            continue
+        fi
+        if [[ "$line" =~ $summary_grammar ]]; then
+            actual_failures+=("${BASH_REMATCH[1]}")
+            actual_statuses+=("${BASH_REMATCH[2]}")
+        else
+            unrecognized+=("$line")
         fi
     done < "$ctest_log"
     rm -f "$ctest_log"
+
+    local raw
+    if [[ "${#unrecognized[@]}" -gt 0 ]]; then
+        echo "FAIL: ctest reported failure-summary lines this gate does not" >&2
+        echo "      recognize; refusing to guess, because crashes, timeouts," >&2
+        echo "      Not Run results, and mixed known/unknown failures must" >&2
+        echo "      never pass this gate:" >&2
+        for raw in "${unrecognized[@]}"; do
+            printf '      unrecognized summary line: %s\n' "$raw" >&2
+        done
+        return 1
+    fi
 
     if [[ "${#actual_failures[@]}" -eq 0 ]]; then
         echo "FAIL: ctest exited $ctest_status but no failed-test names were parsed" >&2
         return 1
     fi
 
-    local unexpected=0
-    local failed_name
-    for failed_name in "${actual_failures[@]}"; do
-        local is_known=0
-        local known
-        for known in "${known_failures[@]}"; do
-            if [[ "$failed_name" == "$known" ]]; then
-                is_known=1
-                break
+    if [[ "$claimed_failed" -ge 0 && "$claimed_failed" -ne "${#actual_failures[@]}" ]]; then
+        echo "FAIL: ctest counted $claimed_failed failed tests, but the summary" >&2
+        echo "      block yielded ${#actual_failures[@]}; refusing to pass on a" >&2
+        echo "      self-inconsistent test summary." >&2
+        return 1
+    fi
+
+    local unexpected=0 i
+    for i in "${!actual_failures[@]}"; do
+        name="${actual_failures[$i]}"
+        status="${actual_statuses[$i]}"
+        if [[ "$status" != "Failed" ]]; then
+            echo "FAIL: test '$name' reported status ($status); crashed," >&2
+            echo "      timed out, and Not Run results are never tolerated." >&2
+            unexpected=1
+            continue
+        fi
+        if [[ "${#tolerated_failures[@]}" -gt 0 ]]; then
+            local is_known=0
+            local known
+            for known in "${tolerated_failures[@]}"; do
+                if [[ "$name" == "$known" ]]; then
+                    is_known=1
+                    break
+                fi
+            done
+            if [[ "$is_known" -eq 0 ]]; then
+                echo "FAIL: unexpected test failure: $name" >&2
+                unexpected=1
             fi
-        done
-        if [[ "$is_known" -eq 0 ]]; then
-            echo "FAIL: unexpected test failure: $failed_name" >&2
+        else
+            echo "FAIL: unexpected test failure: $name" >&2
             unexpected=1
         fi
     done
     if [[ "$unexpected" -ne 0 ]]; then
         return 1
     fi
-    log "NOTE: tolerating the documented pre-existing local failures" \
-        "(tracked on ki-9b13/ki-ya3t, green on hosted CI):" \
+    log "NOTE: tolerating documented tracked failures:" \
         "${actual_failures[*]}"
     return 0
 }

@@ -562,10 +562,15 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   POSIX presets, and new tooling keeps that state honest: a `macos-arm64-mp` preset
   mirrors the `linux-amd64-mp` utility-only leg, and
   `scripts/ci/run-local-gate.sh engine-linux-macOS gate` runs the armament check,
-  configure, build, and ctest sequence locally, tolerating only the documented
-  environment-sensitive ki-9b13/ki-ya3t failures by exact name. Local gate evidence:
-  configure and build clean, 207/210 with exactly the three documented pre-existing
-  failures. Sockets (ki-eudd) and handle-relative recursive deletion (ki-3iv) remain
+  configure, build, and ctest sequence locally, parsing the ctest failed-test
+  summary strictly: every summary line must carry an explicitly known status,
+  crash/timeout/Not Run results are never tolerated, and the tolerated set is
+  empty — the historical environment-sensitive ki-9b13/ki-ya3t baseline was
+  healed on master and both tracking beads are closed, so every failure is
+  unexpected and unrecognized summary lines fail the gate instead of passing
+  silently. Local gate evidence at introduction: configure and build clean,
+  207/210 with exactly the three then-documented pre-existing failures (since
+  healed). Sockets (ki-eudd) and handle-relative recursive deletion (ki-3iv) remain
   open on their own beads.
 - CI-stabilized merged baseline: PR #101 repaired the MSVC `/WX` fuzz shadow,
   Mach crash/test portability, complete headless FX adapter, heap-only FX
