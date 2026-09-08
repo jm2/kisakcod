@@ -552,7 +552,9 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   per boundary call, key-up/zero-ASCII/Unicode/non-key records drain without output,
   console errors map into the raw-read vocabulary, and the windowed edit-control
   owner is untouched. Windows-leg runtime contracts cover repeat, control-byte
-  pass-through, CRLF, focus/resize drain, and Unicode-drain paths. The same branch
+  pass-through, CRLF, focus/resize drain, Unicode-drain paths, and the
+  per-call ignored-event budget that bounds one bytewise read even against a
+  flooded queue (events stay queued, none are dropped). The same branch
   carries the compiler-specific spelling-debt cleanup that unblocks the POSIX
   headless engine composition (`KISAK_ALIGNAS` struct spellings, exact-width case
   labels, include-order-independent `__cdecl`) with token-identical MSVC expansion.
@@ -568,7 +570,12 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   empty — the historical environment-sensitive ki-9b13/ki-ya3t baseline was
   healed on master and both tracking beads are closed, so every failure is
   unexpected and unrecognized summary lines fail the gate instead of passing
-  silently. Local gate evidence at introduction: configure and build clean,
+  silently. A green exit with zero executed tests also fails the gate: ctest
+  exits 0 on an empty test directory, so the gate additionally requires a
+  parsed nonzero executed-test count, and the POSIX presets set
+  `CMAKE_BUILD_TYPE=Release` at configuration because `--config Release` does
+  not select a configuration for the single-config Unix Makefiles generator.
+  Local gate evidence at introduction: configure and build clean,
   207/210 with exactly the three then-documented pre-existing failures (since
   healed). Sockets (ki-eudd) and handle-relative recursive deletion (ki-3iv) remain
   open on their own beads.

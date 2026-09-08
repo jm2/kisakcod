@@ -40,7 +40,9 @@
 # results are never tolerated, and nothing is tolerated at all while the
 # tracked-defect set is empty (see run_test below). An unrecognized
 # result — a new ctest status, a format change — fails the gate instead
-# of passing silently.
+# of passing silently. A green exit with zero executed tests also fails
+# the gate: ctest exits 0 on an empty test directory ("No tests were
+# found!!!"), and a gate that proves nothing must not report PASS.
 
 set -euo pipefail
 
@@ -129,14 +131,20 @@ run_test() {
     local ctest_status=0
     ctest --test-dir "$BUILD_DIR" -C Release --output-on-failure \
         | tee "$ctest_log" || ctest_status=${PIPESTATUS[0]}
-    if [[ "$ctest_status" -eq 0 ]]; then
+
+    # ctest exits 0 both when tests passed and when NOTHING was found, so
+    # the exit status alone cannot prove the phase ran. Reject the empty
+    # run outright, then parse the summary and require a nonzero executed
+    # test count on the green path below.
+    if grep -q "No tests were found!!!" "$ctest_log"; then
+        echo "FAIL: ctest found no tests to execute; a gate run that" >&2
+        echo "      executes nothing proves nothing, so it cannot pass." >&2
         rm -f "$ctest_log"
-        return 0
+        return 1
     fi
 
-    # ctest exited nonzero, so something failed. Classify every failed
-    # result before deciding anything, and fail closed on anything this
-    # script cannot classify. The summary block is parsed strictly: each
+    # Classify every result before deciding anything, and fail closed on
+    # anything this script cannot classify. The summary block is parsed strictly: each
     # line must match "<index> - <name> (<status>)" with an explicitly
     # known status. Any other line — a new ctest status vocabulary, a
     # format change, a differently spelled result — is unrecognized and
@@ -156,10 +164,11 @@ run_test() {
     local -a actual_statuses=()
     local -a unrecognized=()
     local claimed_failed=-1
+    local total_tests=-1
     local in_block=0
     local line name status
     local summary_grammar='^[[:space:]]*[0-9]+[[:space:]]-[[:space:]](.+)[[:space:]]\((Failed|Timeout|Not Run|SEGFAULT|SIGSEGV|SIGILL|SIGABRT|SIGFPE|SIGBUS|Illegal|Interrupt|Other)\)$'
-    local count_grammar='tests passed, ([0-9]+) tests failed out of'
+    local count_grammar='tests passed, ([0-9]+) tests failed out of ([0-9]+)'
     while IFS= read -r line; do
         if [[ "$line" == *"The following tests FAILED:"* ]]; then
             in_block=1
@@ -167,6 +176,7 @@ run_test() {
         fi
         if [[ "$line" =~ $count_grammar ]]; then
             claimed_failed="${BASH_REMATCH[1]}"
+            total_tests="${BASH_REMATCH[2]}"
         fi
         if [[ "$in_block" -ne 1 ]]; then
             continue
@@ -196,6 +206,31 @@ run_test() {
         return 1
     fi
 
+    if [[ "$ctest_status" -eq 0 ]]; then
+        # Green exit: still require positive proof that tests executed.
+        # A missing "out of N" summary is a format change or a truncated
+        # run — either way it is not a provable pass.
+        if [[ "$total_tests" -lt 0 ]]; then
+            echo "FAIL: ctest exited 0 but printed no executed-test count" >&2
+            echo "      ('tests passed ... out of N'); refusing to treat an" >&2
+            echo "      unparsable run as a pass." >&2
+            return 1
+        fi
+        if [[ "$total_tests" -eq 0 ]]; then
+            echo "FAIL: ctest exited 0 but executed 0 tests; a gate run" >&2
+            echo "      that executes nothing proves nothing." >&2
+            return 1
+        fi
+        if [[ "$claimed_failed" -gt 0 ]]; then
+            echo "FAIL: ctest exited 0 but its own summary claims" >&2
+            echo "      $claimed_failed failed test(s); refusing to pass on a" >&2
+            echo "      self-inconsistent test summary." >&2
+            return 1
+        fi
+        return 0
+    fi
+
+    # ctest exited nonzero, so something failed.
     if [[ "${#actual_failures[@]}" -eq 0 ]]; then
         echo "FAIL: ctest exited $ctest_status but no failed-test names were parsed" >&2
         return 1
