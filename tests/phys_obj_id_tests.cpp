@@ -373,10 +373,12 @@ bool TestReleaseReuseGenerationContract()
 //       completely undisturbed by the failed restore;
 //   (c) a later successful bind of the same owner (reuse path) bumps
 //       the generation so the stale saved token stays rejected forever.
-bool TestFailedLoadStaleTokenContract()
+// Split into two functions to keep per-function cyclomatic complexity
+// under Codacy's limit of 10; the scenario order and failure
+// semantics are unchanged.
+bool TestFailedLoadClearsStaleToken()
 {
     int foreignBody = 0;
-    int restoredBody = 0;
     phys_obj_id::BodySidecar<4> sidecar;
     const phys_obj_id::OwnerIndex owner = 1; // in-capacity slot
 
@@ -414,6 +416,27 @@ bool TestFailedLoadStaleTokenContract()
         return false;
     if (phantom != nullptr)
         return false;
+    return true;
+}
+
+bool TestFailedLoadReuseGeneration()
+{
+    int foreignBody = 0;
+    int restoredBody = 0;
+    phys_obj_id::BodySidecar<4> sidecar;
+    const phys_obj_id::OwnerIndex owner = 1; // in-capacity slot
+
+    // Another entity legitimately owns the slot the stale token names.
+    phys_obj_id::BodyToken foreignField = phys_obj_id::INVALID_BODY_TOKEN;
+    const phys_obj_id::TokenResult foreignBind =
+        phys_obj_id::WriteBind(sidecar, &foreignField, owner, &foreignBody);
+    if (!foreignBind)
+        return false;
+    const phys_obj_id::BodyToken savedToken = foreignBind.token;
+
+    // Loader pre-restoration clear, as above; the failed restore
+    // publishes nothing.
+    phys_obj_id::BodyToken field = phys_obj_id::INVALID_BODY_TOKEN;
 
     // (c) Reuse path: the foreign owner is legitimately torn down first
     //     (ConsumeRelease — the engine shutdown/unload contract), which
@@ -528,8 +551,10 @@ static const char *RunSidecarIntegrationTests()
         return "failed-bind collision contract";
     if (!TestReleaseReuseGenerationContract())
         return "release/reuse generation contract";
-    if (!TestFailedLoadStaleTokenContract())
-        return "failed-load stale-token contract";
+    if (!TestFailedLoadClearsStaleToken())
+        return "failed-load stale-token clear contract";
+    if (!TestFailedLoadReuseGeneration())
+        return "failed-load reuse generation contract";
     if (!TestDynEntOwnerIndexStrideContract())
         return "dynent owner-index stride contract";
     return nullptr;
