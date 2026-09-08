@@ -2794,7 +2794,12 @@ bool TestRemoveTreeConcurrentDiagnostics(const std::string &workingDirectory)
     const std::string inner = Join(fileRoot, "inner");
     const std::string blockerPath = Join(inner, "blocker.dat");
     SetCheckStage("concurrent-diagnostics/setup");
-    if (!CreateConcurrentProbeTree(anchorRoot)
+    // fileRoot must exist before inner is created: the platform
+    // CreateDirectory holds real ancestors and creates only the leaf —
+    // it never creates intermediate directories, so inner's parent
+    // missing here fails the setup deterministically on every host.
+    if (!Check(Sys_FileSystemCreateDirectory(fileRoot.c_str()))
+        || !CreateConcurrentProbeTree(anchorRoot)
         || !Check(Sys_FileSystemCreateDirectory(inner.c_str()))
         || !Check(WriteFile(blockerPath)))
     {
