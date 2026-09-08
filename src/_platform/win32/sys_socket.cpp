@@ -133,14 +133,24 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     if (raw == INVALID_SOCKET)
         return SysSocketOpenStatus::SystemFailure;
 
+    // A default wildcard bind still permits a competing interface-specific
+    // bind under the same Windows user. Reserve the entire port before
+    // binding so the portable exclusive-ownership contract also holds here.
+    const BOOL exclusive = TRUE;
+    if (setsockopt(raw, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+            reinterpret_cast<const char *>(&exclusive), sizeof(exclusive))
+        != 0)
+    {
+        closesocket(raw);
+        return SysSocketOpenStatus::SystemFailure;
+    }
+
     sockaddr_in local{};
     local.sin_family = AF_INET;
     local.sin_port = htons(port);
     local.sin_addr.s_addr = INADDR_ANY;
 
-    // No port-sharing socket option is set: the bind takes exclusive
-    // ownership of a nonzero port, so a second open of the same endpoint
-    // fails here instead of silently competing for its datagrams.
+    // SO_EXCLUSIVEADDRUSE covers wildcard and specific-interface competitors.
     if (bind(raw, reinterpret_cast<const sockaddr *>(&local),
             sizeof(local))
             != 0)

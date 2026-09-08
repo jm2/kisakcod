@@ -5,6 +5,16 @@
 // runs the full suite with no arguments; each stage names its checks and
 // a failing check reports the stage that owned it.
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#endif
+
 #include <qcommon/sys_socket.h>
 
 #include <chrono>
@@ -380,6 +390,45 @@ bool StageExclusiveBind(SocketFixture &)
         "exclusive bind (no candidate high port available)");
 }
 
+#if defined(_WIN32)
+// Two wrapper calls only compare wildcard binds. A native competitor bound
+// specifically to loopback must also be rejected, with or without reuse.
+bool StageExclusiveInterfaceBind(SocketFixture &fixture)
+{
+    for (int reuse = 0; reuse != 2; ++reuse)
+    {
+        const SOCKET competing = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (!Check(competing != INVALID_SOCKET, "native competitor opened"))
+            return false;
+        const BOOL enable = TRUE;
+        if (reuse != 0
+            && setsockopt(competing, SOL_SOCKET, SO_REUSEADDR,
+                   reinterpret_cast<const char *>(&enable), sizeof(enable))
+                != 0)
+        {
+            closesocket(competing);
+            return Check(false, "native competitor reuse option");
+        }
+
+        sockaddr_in specific{};
+        specific.sin_family = AF_INET;
+        specific.sin_port = htons(fixture.firstAddress.port);
+        specific.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        const int result = bind(competing,
+            reinterpret_cast<const sockaddr *>(&specific), sizeof(specific));
+        const int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
+        const bool closed = closesocket(competing) == 0;
+        if (!Check(result == SOCKET_ERROR
+                    && (error == WSAEACCES || error == WSAEADDRINUSE),
+                reuse != 0 ? "exclusive bind rejects specific reuse competitor"
+                           : "exclusive bind rejects specific competitor")
+            || !Check(closed, "native competitor closed"))
+            return false;
+    }
+    return true;
+}
+#endif
+
 // Teardown: close is unconditional, nulls the caller's handle, and a
 // second close is a no-op.
 bool StageTeardown(SocketFixture &fixture)
@@ -415,6 +464,9 @@ int main()
         &StageEndpointContract, &StageReceiveContract, &StageSendContract,
         &StageLoopbackSend, &StageLoopbackReply, &StageTruncationContract,
         &StageBroadcastOption, &StageExplicitBind, &StageExclusiveBind,
+#if defined(_WIN32)
+        &StageExclusiveInterfaceBind,
+#endif
         &StageTeardown};
 
     for (std::size_t index = 0; index < sizeof(stages) / sizeof(stages[0]);
