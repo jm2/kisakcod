@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 
 #include <universal/kisak_abi.h>
 #include <universal/phys_obj_id.h>
@@ -516,48 +517,56 @@ static_assert(sizeof(BreakablePieceLayout) == 0xC,
     "BreakablePiece runtime layout is frozen at 12 bytes");
 } // namespace
 
-// Runs the core token-contract cases in order. Returns nullptr when all
-// pass, otherwise the failed case's label.
-static const char *RunCoreTokenContractTests()
+// Table-driven case dispatch. Adding a case appends a table entry and
+// does NOT add a branch to any function — Codacy's per-function
+// cyclomatic limit of 10 is never re-tripped by new cases (the former
+// if-chain dispatchers grew past it as contracts were split).
+struct ContractCase
 {
-    if (!TestTokenSentinels())
-        return "sentinel contract";
-    if (!TestBindResolveRelease())
-        return "bind/resolve/release round-trip";
-    if (!TestStaleTokenRejection())
-        return "stale token rejection";
-    if (!TestDoubleBindRejected())
-        return "double-bind rejection";
-    if (!TestInvalidArguments())
-        return "invalid argument rejection";
+    bool (*run)();
+    const char *label;
+};
+
+// Runs the cases in order. Returns nullptr when all pass, otherwise
+// the failed case's label (first-failure semantics identical to the
+// former if-chain dispatchers).
+static const char *RunContractCases(const ContractCase *const cases, const std::size_t count)
+{
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (!cases[i].run())
+            return cases[i].label;
+    }
     return nullptr;
 }
 
-// Runs the sidecar-integration cases in order. Returns nullptr when all
-// pass, otherwise the failed case's label.
+static const char *RunCoreTokenContractTests()
+{
+    static constexpr ContractCase cases[] = {
+        {TestTokenSentinels, "sentinel contract"},
+        {TestBindResolveRelease, "bind/resolve/release round-trip"},
+        {TestStaleTokenRejection, "stale token rejection"},
+        {TestDoubleBindRejected, "double-bind rejection"},
+        {TestInvalidArguments, "invalid argument rejection"},
+    };
+    return RunContractCases(cases, std::size(cases));
+}
+
 static const char *RunSidecarIntegrationTests()
 {
-    if (!TestWriteBindHelper())
-        return "WriteBind helper";
-    if (!TestConsumeReleaseHelper())
-        return "ConsumeRelease helper";
-    if (!TestGlobalSidecarReflexiveBind())
-        return "global cpose sidecar bind";
-    if (!TestGlobalBreakablePieceSidecar())
-        return "global breakable piece sidecar bind";
-    if (!TestGlobalDynEntClientSidecar())
-        return "global dynent client sidecar bind";
-    if (!TestFailedBindCollisionContract())
-        return "failed-bind collision contract";
-    if (!TestReleaseReuseGenerationContract())
-        return "release/reuse generation contract";
-    if (!TestFailedLoadClearsStaleToken())
-        return "failed-load stale-token clear contract";
-    if (!TestFailedLoadReuseGeneration())
-        return "failed-load reuse generation contract";
-    if (!TestDynEntOwnerIndexStrideContract())
-        return "dynent owner-index stride contract";
-    return nullptr;
+    static constexpr ContractCase cases[] = {
+        {TestWriteBindHelper, "WriteBind helper"},
+        {TestConsumeReleaseHelper, "ConsumeRelease helper"},
+        {TestGlobalSidecarReflexiveBind, "global cpose sidecar bind"},
+        {TestGlobalBreakablePieceSidecar, "global breakable piece sidecar bind"},
+        {TestGlobalDynEntClientSidecar, "global dynent client sidecar bind"},
+        {TestFailedBindCollisionContract, "failed-bind collision contract"},
+        {TestReleaseReuseGenerationContract, "release/reuse generation contract"},
+        {TestFailedLoadClearsStaleToken, "failed-load stale-token clear contract"},
+        {TestFailedLoadReuseGeneration, "failed-load reuse generation contract"},
+        {TestDynEntOwnerIndexStrideContract, "dynent owner-index stride contract"},
+    };
+    return RunContractCases(cases, std::size(cases));
 }
 
 int main()
