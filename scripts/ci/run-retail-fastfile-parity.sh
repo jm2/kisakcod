@@ -11,16 +11,23 @@
 #
 #   capture_kind=envelope-v2
 #   hash_domain=kisakcod/m5-widened-graph-hash/v2
-#   leg=<declared capture-leg identity>
+#   platform=<harness-derived build/runtime identity>
+#   leg=<validated capture-leg identity>
 #   fastfile_bytes=<n>
 #   fastfile_zlib_stream=<0|1>
 #   graph_sha256=<64 hex>
 #
-# The harness stamps its invoking leg identity (from --leg, which this
-# driver sets to --host) into every capture; minted references record it.
-# The driver verifies leg identity before trusting a compare, so a
-# reference minted by a foreign tree cannot pose as another leg's
-# reference.
+# CAPTURE IDENTITY IS DERIVED, NOT ASSERTED. The harness derives its
+# platform identity from its own compile-time target (cross-checked against
+# the running kernel where observable) and accepts the driver's --leg label
+# only when it MATCHES that derived identity — a Linux-built binary cannot
+# stamp leg=windows-x86 onto its capture. The driver independently verifies
+# the emitted platform/leg identity against the declared --host/--ref
+# triples on BOTH paths: a mint whose capture is missing, incoherent, or
+# foreign to --host is refused (nothing is written), and a compare refuses
+# a reference whose recorded identity does not match --ref or whose
+# platform and leg disagree (a relabeled reference). Minted references
+# record the VALIDATED capture identity, never the requested label.
 #
 # MODES (--mode), named so a result can never claim more than was proven:
 #
@@ -58,14 +65,20 @@
 # must be PRESENT in both leg outputs and must match; a missing or mismatched
 # field aborts the gate before any digest compare, so the contract cannot
 # silently drift. --mode m5-graph additionally fails closed on leg identity
-# and refuses envelope-only captures outright.
+# and refuses envelope-only captures outright. Identity is validated on mint
+# AND compare: minting requires the capture's derived platform/leg identity
+# to be present and to match --host (foreign or missing identity writes
+# nothing), and comparing requires the reference's recorded identity to
+# match --ref and to be internally coherent (platform == leg).
 #
 # Exit codes:
 #   0  parity/consistency established (result named by mode + capture kind)
 #   1  parity/gate FAILED (digest, capture-kind, or leg-identity mismatch;
-#      envelope-only data under --mode m5-graph)
-#   2  usage or environment error (missing inputs, build failure, missing
-#      protocol/identity fields where the mode requires them)
+#      envelope-only data under --mode m5-graph; foreign or incoherent
+#      identity on a capture or reference)
+#   2  usage or environment error (missing inputs, build failure, capture
+#      refusal by the harness, missing protocol/identity fields where the
+#      mode requires them)
 #
 # Usage:
 #   scripts/ci/run-retail-fastfile-parity.sh --host <triple> --ref <triple>
@@ -163,6 +176,19 @@ if [ -n "$EMIT_REFERENCE_FILE" ] && [ -n "$REFERENCE_HASH_FILE" ]; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The driver cd's to the repo root before running the harness; resolve every
+# user-supplied path against the INVOCATION directory first so relative
+# paths keep working (and a missing file cannot masquerade as an identity
+# refusal later).
+absolute_path() {
+    case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        *) printf '%s\n' "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")" ;;
+    esac
+}
+[ -n "$FASTFILE" ] && FASTFILE="$(absolute_path "$FASTFILE")"
+[ -n "$REFERENCE_HASH_FILE" ] && REFERENCE_HASH_FILE="$(absolute_path "$REFERENCE_HASH_FILE")"
+[ -n "$EMIT_REFERENCE_FILE" ] && EMIT_REFERENCE_FILE="$(absolute_path "$EMIT_REFERENCE_FILE")"
 cd "$REPO_ROOT"
 
 HARNESS="kisakcod-retail-fastfile-parity-harness"
@@ -209,9 +235,20 @@ if [ -z "$HARNESS_BIN" ] || [ ! -e "$HARNESS_BIN" ]; then
 fi
 
 echo "=== Capturing host leg ($HOST_TRIPLE) ==="
-# The harness stamps the declared leg identity into the capture so the
-# compare below can verify each leg is what the invocation claims.
-HOST_OUTPUT="$("$HARNESS_BIN" --fastfile "$FASTFILE" --leg "$HOST_TRIPLE")"
+# The harness derives its platform identity from its own build/runtime and
+# accepts the requested leg label only when it matches that derivation —
+# so a foreign --host in this tree is refused at capture time and nothing
+# downstream (least of all a minted reference) can relabel it.
+HOST_CAPTURE_STATUS=0
+HOST_OUTPUT="$("$HARNESS_BIN" --fastfile "$FASTFILE" --leg "$HOST_TRIPLE")" \
+    || HOST_CAPTURE_STATUS=$?
+if [ "$HOST_CAPTURE_STATUS" -ne 0 ]; then
+    echo "run-retail-fastfile-parity: host capture refused (exit $HOST_CAPTURE_STATUS)." >&2
+    echo "  The harness validates --leg against its own derived platform identity;" >&2
+    echo "  a capture whose own executable contradicts the requested leg is never" >&2
+    echo "  emitted, so nothing can be minted or compared from it." >&2
+    exit 2
+fi
 
 parse_field() {
     # parse_field <output> <key>
@@ -221,10 +258,12 @@ parse_field() {
 HOST_KIND="$(parse_field "$HOST_OUTPUT" capture_kind)"
 HOST_DOMAIN="$(parse_field "$HOST_OUTPUT" hash_domain)"
 HOST_DIGEST="$(parse_field "$HOST_OUTPUT" graph_sha256)"
+HOST_PLATFORM="$(parse_field "$HOST_OUTPUT" platform)"
 HOST_LEG="$(parse_field "$HOST_OUTPUT" leg)"
 
 # FAIL-CLOSED on protocol identity: every leg output must carry all three
-# contract fields; a truncated or foreign output aborts before any compare.
+# contract fields plus the derived identity; a truncated or foreign output
+# aborts before any compare or mint.
 if [ -z "$HOST_DIGEST" ] || [ "${#HOST_DIGEST}" -ne 64 ]; then
     echo "run-retail-fastfile-parity: host leg produced no 64-hex graph_sha256" >&2
     printf '%s\n' "$HOST_OUTPUT" >&2
@@ -240,6 +279,34 @@ if [ -z "$HOST_DOMAIN" ]; then
     printf '%s\n' "$HOST_OUTPUT" >&2
     exit 2
 fi
+# The derived identity is REQUIRED from the capture itself: the harness
+# stamps it; a capture without it cannot be attributed to any leg.
+if [ -z "$HOST_PLATFORM" ]; then
+    echo "run-retail-fastfile-parity: host leg produced no platform identity (protocol" >&2
+    echo "  violation; the harness derives it from its own build/runtime)" >&2
+    printf '%s\n' "$HOST_OUTPUT" >&2
+    exit 2
+fi
+if [ -z "$HOST_LEG" ]; then
+    echo "run-retail-fastfile-parity: host leg produced no leg identity (protocol violation)" >&2
+    printf '%s\n' "$HOST_OUTPUT" >&2
+    exit 2
+fi
+# Identity must be COHERENT (platform == leg) and TRUE to the invocation
+# (leg == --host). These checks run on BOTH paths — compare AND mint:
+# minting a capture whose identity is incoherent or foreign to --host
+# would stock the gate with a reference that launders its origin.
+if [ "$HOST_PLATFORM" != "$HOST_LEG" ]; then
+    echo "run-retail-fastfile-parity: FAIL host capture identity is incoherent" >&2
+    echo "  (platform=$HOST_PLATFORM leg=$HOST_LEG); the leg label must name the" >&2
+    echo "  identity the harness derived from its own build/runtime." >&2
+    exit 1
+fi
+if [ "$HOST_LEG" != "$HOST_TRIPLE" ]; then
+    echo "run-retail-fastfile-parity: FAIL host leg identity mismatch (capture declares" >&2
+    echo "  platform=$HOST_PLATFORM leg=$HOST_LEG, invocation claims --host $HOST_TRIPLE)" >&2
+    exit 1
+fi
 
 if [ -n "$EMIT_REFERENCE_FILE" ]; then
     # An M5 runtime-graph reference must come from a runtime-graph capture;
@@ -253,22 +320,27 @@ if [ -n "$EMIT_REFERENCE_FILE" ]; then
         echo "  only after the runtime-graph walk (graph-v1) lands." >&2
         exit 1
     fi
+    # The reference records the VALIDATED capture identity (platform/leg as
+    # the harness emitted them, already checked coherent and equal to
+    # --host above) — never the requested label. A reference therefore
+    # cannot claim a leg its own capture did not.
     {
         echo "# kisakcod retail fast-file parity reference (mode=$MODE)"
         echo "# host=$HOST_TRIPLE ref=$REF_TRIPLE"
         echo "# fastfile=$(cd "$(dirname "$FASTFILE")" && pwd)/$(basename "$FASTFILE")"
         echo "capture_kind=$HOST_KIND"
         echo "hash_domain=$HOST_DOMAIN"
-        echo "leg=$HOST_TRIPLE"
+        echo "platform=$HOST_PLATFORM"
+        echo "leg=$HOST_LEG"
         echo "graph_sha256=$HOST_DIGEST"
     } >"$EMIT_REFERENCE_FILE"
     echo "=== Reference minted: $EMIT_REFERENCE_FILE ==="
-    echo "capture_kind=$HOST_KIND hash_domain=$HOST_DOMAIN leg=$HOST_TRIPLE"
+    echo "capture_kind=$HOST_KIND hash_domain=$HOST_DOMAIN platform=$HOST_PLATFORM leg=$HOST_LEG"
     echo "graph_sha256=$HOST_DIGEST"
     if kind_is_graph "$HOST_KIND"; then
-        echo "run-retail-fastfile-parity: OK reference emitted ($HOST_TRIPLE leg, runtime-graph capture)"
+        echo "run-retail-fastfile-parity: OK reference emitted ($HOST_LEG leg, runtime-graph capture)"
     else
-        echo "run-retail-fastfile-parity: OK reference emitted ($HOST_TRIPLE leg, ENVELOPE capture:"
+        echo "run-retail-fastfile-parity: OK reference emitted ($HOST_LEG leg, ENVELOPE capture:"
         echo "  envelope-consistency reference only — NOT an M5 runtime-graph reference)"
     fi
     exit 0
@@ -288,6 +360,7 @@ fi
 REF_KIND="$(parse_field "$(cat "$REFERENCE_HASH_FILE")" capture_kind)"
 REF_DOMAIN="$(parse_field "$(cat "$REFERENCE_HASH_FILE")" hash_domain)"
 REF_DIGEST="$(parse_field "$(cat "$REFERENCE_HASH_FILE")" graph_sha256)"
+REF_PLATFORM="$(parse_field "$(cat "$REFERENCE_HASH_FILE")" platform)"
 REF_LEG="$(parse_field "$(cat "$REFERENCE_HASH_FILE")" leg)"
 
 # FAIL-CLOSED: the reference MUST declare its capture_kind and hash_domain.
@@ -313,35 +386,44 @@ fi
 # gate refuses it (instrument mode tolerates leg-less legacy captures but
 # still verifies identity when present).
 if [ "$MODE" = "m5-graph" ]; then
-    if [ -z "$HOST_LEG" ]; then
-        echo "run-retail-fastfile-parity: FAIL host leg produced no leg identity (protocol violation;" >&2
-        echo "  --mode m5-graph requires verified leg identity)" >&2
-        exit 2
-    fi
     if [ -z "$REF_LEG" ]; then
         echo "run-retail-fastfile-parity: FAIL reference file has no leg identity: $REFERENCE_HASH_FILE" >&2
         echo "  Re-mint it on the $REF_TRIPLE side with --emit-reference." >&2
         exit 2
     fi
+    if [ -z "$REF_PLATFORM" ]; then
+        echo "run-retail-fastfile-parity: FAIL reference file has no platform identity: $REFERENCE_HASH_FILE" >&2
+        echo "  Re-mint it on the $REF_TRIPLE side with --emit-reference." >&2
+        exit 2
+    fi
 fi
 
-# Leg identity: each leg must be what the invocation declares. A reference
-# minted by a foreign tree (e.g. the host tree itself) must not pose as the
-# reference leg's capture.
-if [ -n "$HOST_LEG" ] && [ "$HOST_LEG" != "$HOST_TRIPLE" ]; then
-    echo "run-retail-fastfile-parity: FAIL host leg identity mismatch (capture declares leg=$HOST_LEG," >&2
-    echo "  invocation claims --host $HOST_TRIPLE)" >&2
-    exit 1
-fi
+# Reference identity: each recorded field must name the leg the invocation
+# claims. A minted reference is coherent by construction (the mint writes
+# only validated identity), so a relabeled file necessarily disagrees with
+# --ref on its leg or its platform line, and the checks below refuse it —
+# no separate coherence check is needed to catch a doctored reference.
 if [ -n "$REF_LEG" ] && [ "$REF_LEG" != "$REF_TRIPLE" ]; then
     echo "run-retail-fastfile-parity: FAIL reference leg identity mismatch (reference declares leg=$REF_LEG," >&2
     echo "  invocation claims --ref $REF_TRIPLE; re-mint it inside the $REF_TRIPLE tree)" >&2
     exit 1
 fi
+if [ -n "$REF_PLATFORM" ] && [ "$REF_PLATFORM" != "$REF_TRIPLE" ]; then
+    echo "run-retail-fastfile-parity: FAIL reference platform identity mismatch (reference declares" >&2
+    echo "  platform=$REF_PLATFORM, invocation claims --ref $REF_TRIPLE; re-mint it inside" >&2
+    echo "  the $REF_TRIPLE tree)" >&2
+    exit 1
+fi
+if [ -n "$REF_PLATFORM" ] && [ -n "$REF_LEG" ] && [ "$REF_PLATFORM" != "$REF_LEG" ]; then
+    echo "run-retail-fastfile-parity: FAIL reference identity is incoherent (platform=$REF_PLATFORM" >&2
+    echo "  leg=$REF_LEG); a minted reference records only validated, matching identity," >&2
+    echo "  so this file was edited after minting. Re-mint it inside the $REF_TRIPLE tree." >&2
+    exit 1
+fi
 
 echo "=== Comparing legs ==="
-echo "  host ($HOST_TRIPLE): capture_kind=$HOST_KIND domain=$HOST_DOMAIN leg=${HOST_LEG:-<none>}"
-echo "  ref  ($REF_TRIPLE): capture_kind=$REF_KIND domain=$REF_DOMAIN leg=${REF_LEG:-<none>}"
+echo "  host ($HOST_TRIPLE): capture_kind=$HOST_KIND domain=$HOST_DOMAIN platform=$HOST_PLATFORM leg=$HOST_LEG"
+echo "  ref  ($REF_TRIPLE): capture_kind=$REF_KIND domain=$REF_DOMAIN platform=${REF_PLATFORM:-<none>} leg=${REF_LEG:-<none>}"
 
 # --mode m5-graph is the M5 RUNTIME-GRAPH acceptance gate: envelope
 # captures hash fast-file bytes only and cannot satisfy it, no matter how
@@ -388,7 +470,7 @@ fi
 # of widened-runtime-graph parity.
 if [ "$MODE" = "m5-graph" ]; then
     echo "run-retail-fastfile-parity: OK widened-runtime-graph parity (M5; capture_kind=$HOST_KIND,"
-    echo "  host=$HOST_TRIPLE vs ref=$REF_TRIPLE, leg identity verified)"
+    echo "  host=$HOST_TRIPLE vs ref=$REF_TRIPLE, platform+leg identity verified)"
 elif kind_is_graph "$HOST_KIND"; then
     echo "run-retail-fastfile-parity: OK widened-graph digest matches (capture_kind=$HOST_KIND,"
     echo "  host=$HOST_TRIPLE vs ref=$REF_TRIPLE; instrument mode — the M5 acceptance gate is --mode m5-graph)"

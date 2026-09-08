@@ -9,7 +9,8 @@
 // Output protocol (stable; consumed by scripts/ci/run-retail-fastfile-parity.sh):
 //   capture_kind=envelope-v2
 //   hash_domain=kisakcod/m5-widened-graph-hash/v2
-//   leg=<declared capture-leg identity, when --leg is given>
+//   platform=<derived build/runtime identity of THIS executable>
+//   leg=<declared capture-leg identity, when --leg is given and validated>
 //   fastfile_path=<path>
 //   fastfile_bytes=<decimal size>
 //   fastfile_zlib_stream=<0|1>
@@ -27,11 +28,19 @@
 // runtime-graph walk (capture_kind graph-v1) enrolls through this identical
 // harness contract and output protocol as the native64 loader path lands;
 // the parity driver refuses to compare different capture kinds, so the
-// contract cannot silently drift. --leg stamps the invoking driver's leg
-// identity (the triple of the tree that ran this harness) into the output;
-// the driver verifies it against the requested --host/--ref triples before
-// trusting a compare, so a reference minted by a foreign tree cannot pose
-// as another leg's reference.
+// contract cannot silently drift.
+//
+// CAPTURE IDENTITY is derived, never asserted: `platform` comes from this
+// executable's own compile-time target (preprocessor defines are the
+// toolchain's statement of what it built) cross-checked against the running
+// kernel where the platform can observe it. --leg is an assertion that the
+// capture belongs to a named leg; it is accepted ONLY when it matches the
+// derived identity, so a Linux-built binary cannot stamp leg=windows-x86
+// onto its capture, and a capture cannot be minted under a label its own
+// executable contradicts. The parity driver re-verifies the emitted
+// identity against the requested --host/--ref triples before minting or
+// comparing, so a reference minted by a foreign tree cannot pose as
+// another leg's reference.
 //
 // Self-test mode synthesizes fixture fast-files in-process and verifies the
 // capture pipeline end-to-end (determinism, pointer-independence across
@@ -49,6 +58,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <sys/utsname.h>
+#endif
 
 namespace
 {
@@ -136,14 +149,98 @@ bool LegIdentityIsSafe(const std::string_view leg)
     return true;
 }
 
-// Renders the stable output protocol into `out`. `leg` may be null/empty
-// (no --leg given); the parity driver stamps the emitted identity into
-// minted references and verifies it against the requested --host/--ref
-// triples before trusting a compare.
+// Compile-time build identity: the platform this executable was built FOR.
+// The preprocessor defines are the toolchain's own record of its target;
+// they cannot be changed at runtime, so they anchor the capture identity.
+std::string BuildPlatformIdentity()
+{
+#if defined(_WIN32)
+    #if defined(_M_X64) || defined(__x86_64__)
+        return "windows-amd64";
+    #elif defined(_M_IX86) || defined(__i386__)
+        return "windows-x86";
+    #elif defined(_M_ARM64) || defined(__aarch64__)
+        return "windows-arm64";
+    #else
+        return "windows-unknown";
+    #endif
+#elif defined(__APPLE__)
+    #if defined(__aarch64__)
+        return "darwin-arm64";
+    #elif defined(__x86_64__)
+        return "darwin-amd64";
+    #else
+        return "darwin-unknown";
+    #endif
+#elif defined(__linux__)
+    #if defined(__x86_64__)
+        return "linux-amd64";
+    #elif defined(__aarch64__)
+        return "linux-arm64";
+    #elif defined(__i386__)
+        return "linux-x86";
+    #else
+        return "linux-unknown";
+    #endif
+#else
+    return "unknown-platform";
+#endif
+}
+
+#if !defined(_WIN32)
+// Runtime kernel identity from uname(3), mapped onto the same vocabulary as
+// the build identity. Returns false when the running kernel is not a
+// recognized parity-leg platform (the build identity then stands alone).
+bool RuntimePlatformIdentity(std::string &out)
+{
+    utsname info;
+    if (uname(&info) != 0)
+        return false;
+    const std::string_view sysname = info.sysname;
+    const std::string_view machine = info.machine;
+    if (sysname == "Linux")
+        out = "linux-";
+    else if (sysname == "Darwin")
+        out = "darwin-";
+    else
+        return false;
+    if (machine == "x86_64" || machine == "amd64")
+        out += "amd64";
+    else if (machine == "aarch64" || machine == "arm64")
+        out += "arm64";
+    else if (machine == "i386" || machine == "i686")
+        out += "x86";
+    else
+        return false;
+    return true;
+}
+#endif
+
+// The capture identity of THIS execution: the build identity, verified
+// against the running kernel where the platform can observe it. Returns
+// false under foreign execution (e.g. an amd64 build running under CPU
+// emulation on an arm64 kernel) — there the executable cannot honestly
+// attribute its capture to any leg, and refusing is the fail-closed path.
+bool DerivePlatformIdentity(std::string &out)
+{
+    out = BuildPlatformIdentity();
+#if !defined(_WIN32)
+    std::string runtime;
+    if (RuntimePlatformIdentity(runtime) && runtime != out)
+        return false;
+#endif
+    return true;
+}
+
+// Renders the stable output protocol into `out`. `platform` is the derived
+// identity (always emitted); `leg` may be null/empty (no --leg given). The
+// parity driver verifies both against the requested --host/--ref triples
+// before trusting a mint or a compare.
 void FormatCapture(
     const char *path,
     const std::vector<std::uint8_t> &bytes,
     const db::graph_hash::Digest &digest,
+    const std::string_view platform,
     const std::string_view leg,
     std::string &out)
 {
@@ -153,6 +250,9 @@ void FormatCapture(
     out += "capture_kind=envelope-v2\n";
     out += "hash_domain=";
     out += db::graph_hash::kHashDomain;
+    out += '\n';
+    out += "platform=";
+    out += platform;
     out += '\n';
     if (!leg.empty())
     {
@@ -178,15 +278,39 @@ void EmitCapture(
     const char *path,
     const std::vector<std::uint8_t> &bytes,
     const db::graph_hash::Digest &digest,
+    const std::string_view platform,
     const std::string_view leg)
 {
     std::string out;
-    FormatCapture(path, bytes, digest, leg, out);
+    FormatCapture(path, bytes, digest, platform, leg, out);
     std::fputs(out.c_str(), stdout);
 }
 
 int RunCapture(const char *path, const std::string_view leg)
 {
+    // Identity first: a capture that cannot be attributed is not emitted.
+    std::string platform;
+    if (!DerivePlatformIdentity(platform))
+    {
+        std::fprintf(stderr,
+            "error: this harness build (%s) is executing on a different"
+            " platform; capture identity cannot be established\n",
+            BuildPlatformIdentity().c_str());
+        return 2;
+    }
+    // --leg is an assertion about this executable's identity. It is checked
+    // against the derived build/runtime identity, never stamped verbatim:
+    // a Linux build cannot mint a leg=windows-x86 capture.
+    if (!leg.empty() && leg != platform)
+    {
+        std::fprintf(stderr,
+            "error: --leg '%.*s' does not match this executable's platform"
+            " identity '%s'; a foreign leg label cannot be stamped onto"
+            " this capture\n",
+            static_cast<int>(leg.size()), leg.data(), platform.c_str());
+        return 2;
+    }
+
     std::vector<std::uint8_t> bytes;
     if (!ReadFileBytes(path, bytes))
     {
@@ -211,7 +335,7 @@ int RunCapture(const char *path, const std::string_view leg)
         return 2;
     }
 
-    EmitCapture(path, bytes, digest, leg);
+    EmitCapture(path, bytes, digest, platform, leg);
     return 0;
 }
 
@@ -299,6 +423,50 @@ bool DigestHexIsCanonical(const char *hex)
     return true;
 }
 
+// Protocol contract: the envelope kind is NAMED as envelope (the parity
+// driver must never report an envelope match as runtime-graph parity), the
+// derived platform identity is always present, and the leg identity line
+// appears exactly when --leg declares one.
+void ExpectProtocolContract(
+    const std::vector<std::uint8_t> &fixture,
+    const db::graph_hash::Digest &digest)
+{
+    char hex[db::graph_hash::kHexDigestBytes];
+    db::graph_hash::FormatDigestHex(digest, hex);
+    Expect(DigestHexIsCanonical(hex), "digest hex is 64 lowercase characters");
+    std::printf("self_test_graph_sha256=%s\n", hex);
+
+    std::string protocol;
+    FormatCapture("fixture.ff", fixture, digest, "linux-amd64", "linux-amd64", protocol);
+    Expect(protocol.find("capture_kind=envelope-v2\n") != std::string::npos,
+        "protocol names the envelope capture kind explicitly");
+    Expect(protocol.find("\nplatform=linux-amd64\n") != std::string::npos,
+        "protocol carries the derived platform identity");
+    Expect(protocol.find("\nleg=linux-amd64\n") != std::string::npos,
+        "protocol carries the declared leg identity");
+    Expect(protocol.find("graph_sha256=" + std::string(hex)) != std::string::npos,
+        "protocol carries the capture digest");
+
+    std::string noLeg;
+    FormatCapture("fixture.ff", fixture, digest, "linux-amd64", {}, noLeg);
+    Expect(noLeg.find("\nplatform=linux-amd64\n") != std::string::npos,
+        "platform identity is emitted even without a declared leg");
+    Expect(noLeg.find("leg=") == std::string::npos,
+        "protocol omits the leg line when no leg is declared");
+
+    // Derived identity on the CI host must resolve and match the runtime
+    // kernel (the driver-gates test additionally exercises the refusal
+    // paths through the real binary).
+    std::string platform;
+    Expect(DerivePlatformIdentity(platform), "platform identity resolves on this host");
+    Expect(LegIdentityIsSafe(platform), "derived identity is a safe protocol token");
+    Expect(LegIdentityIsSafe("linux-amd64"), "triple-shaped leg identities are accepted");
+    Expect(!LegIdentityIsSafe(""), "empty leg identities are rejected");
+    Expect(!LegIdentityIsSafe("linux amd64"), "leg identities with whitespace are rejected");
+    Expect(!LegIdentityIsSafe("leg\ninjected"), "leg identities with newlines are rejected");
+    Expect(!LegIdentityIsSafe(std::string(65, 'x')), "overlong leg identities are rejected");
+}
+
 void TestSelfTest(const char *fixturePath)
 {
     const std::vector<std::uint8_t> fixture = SynthesizeZlibFixture();
@@ -320,33 +488,7 @@ void TestSelfTest(const char *fixturePath)
 
     ExpectDigestSensitivity(fixture, first);
     ExpectZlibDetection(fixture);
-
-    // Output formatting: exactly the contract lines, hex lowercase.
-    char hex[db::graph_hash::kHexDigestBytes];
-    db::graph_hash::FormatDigestHex(first, hex);
-    Expect(DigestHexIsCanonical(hex), "digest hex is 64 lowercase characters");
-    std::printf("self_test_graph_sha256=%s\n", hex);
-
-    // Protocol contract: the envelope kind is NAMED as envelope (the parity
-    // driver must never report an envelope match as runtime-graph parity),
-    // and the leg identity line appears exactly when --leg declares one.
-    std::string protocol;
-    FormatCapture("fixture.ff", fixture, first, "linux-amd64", protocol);
-    Expect(protocol.find("capture_kind=envelope-v2\n") != std::string::npos,
-        "protocol names the envelope capture kind explicitly");
-    Expect(protocol.find("\nleg=linux-amd64\n") != std::string::npos,
-        "protocol carries the declared leg identity");
-    Expect(protocol.find("graph_sha256=" + std::string(hex)) != std::string::npos,
-        "protocol carries the capture digest");
-    std::string noLeg;
-    FormatCapture("fixture.ff", fixture, first, {}, noLeg);
-    Expect(noLeg.find("leg=") == std::string::npos,
-        "protocol omits the leg line when no leg is declared");
-    Expect(LegIdentityIsSafe("linux-amd64"), "triple-shaped leg identities are accepted");
-    Expect(!LegIdentityIsSafe(""), "empty leg identities are rejected");
-    Expect(!LegIdentityIsSafe("linux amd64"), "leg identities with whitespace are rejected");
-    Expect(!LegIdentityIsSafe("leg\ninjected"), "leg identities with newlines are rejected");
-    Expect(!LegIdentityIsSafe(std::string(65, 'x')), "overlong leg identities are rejected");
+    ExpectProtocolContract(fixture, first);
 
     std::remove(fixturePath);
 }
@@ -357,44 +499,47 @@ void PrintUsage()
         "Usage:\n"
         "  retail_fastfile_parity_harness [--leg <identity>] --fastfile <path>\n"
         "  retail_fastfile_parity_harness --self-test [fixture-path]\n"
-        "--leg stamps the capture-leg identity (e.g. the host triple of the\n"
-        "tree running this harness) into the output protocol; the parity\n"
-        "driver verifies it against the requested legs before comparing.\n");
+        "--leg asserts the capture-leg identity; it is accepted only when it\n"
+        "matches the platform identity this executable derives from its own\n"
+        "build/runtime, so a foreign label cannot be stamped onto a capture.\n");
 }
 
-} // namespace
-
-int main(int argc, char **argv)
+struct HarnessOptions
 {
     const char *fastfilePath = nullptr;
     std::string leg;
     bool selfTest = false;
     const char *selfTestPath = "kisakcod-parity-selftest.tmp";
+};
 
+// Parses argv into `opts`. Returns the process exit code to use when
+// parsing fails (2), or 0 to continue into the selected mode.
+int ParseHarnessArgs(const int argc, char **argv, HarnessOptions &opts)
+{
     for (int i = 1; i < argc; ++i)
     {
         const std::string_view arg = argv[i];
         if (arg == "--fastfile" && i + 1 < argc)
         {
-            fastfilePath = argv[++i];
+            opts.fastfilePath = argv[++i];
         }
         else if (arg == "--leg" && i + 1 < argc)
         {
-            leg = argv[++i];
-            if (!LegIdentityIsSafe(leg))
+            opts.leg = argv[++i];
+            if (!LegIdentityIsSafe(opts.leg))
             {
                 std::fprintf(stderr,
                     "error: --leg must be 1-64 printable, non-whitespace characters"
                     " (got %zu bytes)\n",
-                    leg.size());
+                    opts.leg.size());
                 return 2;
             }
         }
         else if (arg == "--self-test")
         {
-            selfTest = true;
+            opts.selfTest = true;
             if (i + 1 < argc && argv[i + 1][0] != '-')
-                selfTestPath = argv[++i];
+                opts.selfTestPath = argv[++i];
         }
         else
         {
@@ -403,25 +548,38 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+    return 0;
+}
 
-    if (selfTest)
+int RunSelfTest(const char *fixturePath)
+{
+    TestSelfTest(fixturePath);
+    if (g_failures > 0)
     {
-        TestSelfTest(selfTestPath);
-        if (g_failures > 0)
-        {
-            std::fprintf(stderr, "retail-fastfile-parity-harness self-test: %d failure(s)\n",
-                g_failures);
-            return 1;
-        }
-        std::printf("retail-fastfile-parity-harness self-test: all checks passed\n");
-        return 0;
+        std::fprintf(stderr, "retail-fastfile-parity-harness self-test: %d failure(s)\n",
+            g_failures);
+        return 1;
     }
+    std::printf("retail-fastfile-parity-harness self-test: all checks passed\n");
+    return 0;
+}
 
-    if (!fastfilePath)
+} // namespace
+
+int main(int argc, char **argv)
+{
+    HarnessOptions opts;
+    const int parseStatus = ParseHarnessArgs(argc, argv, opts);
+    if (parseStatus != 0)
+        return parseStatus;
+
+    if (opts.selfTest)
+        return RunSelfTest(opts.selfTestPath);
+
+    if (!opts.fastfilePath)
     {
         PrintUsage();
         return 2;
     }
-
-    return RunCapture(fastfilePath, leg);
+    return RunCapture(opts.fastfilePath, opts.leg);
 }
