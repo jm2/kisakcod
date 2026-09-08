@@ -94,6 +94,14 @@ foreach(_marker IN ITEMS
     require_contains("${_win32_source}" "${_marker}"
         "Win32 socket backend must use the canonical Winsock primitive: ${_marker}")
 endforeach()
+# The receive length is clamped to the datagram bound before the signed
+# conversion: the public uint32 capacity converted directly to the Winsock
+# int length wraps negative at capacities of 2^31 and above, turning a
+# valid reserved receive window into an invalid request.
+require_contains("${_win32_source}" "static_cast<int>\\(recvLength\\)"
+    "Win32 socket backend must convert the clamped receive length, not the raw capacity")
+require_not_contains("${_win32_source}" "static_cast<int>\\(bufferCapacity\\)"
+    "Win32 socket backend must not convert the raw receive capacity to the signed length")
 # Exclusive bind ownership is contract: a port-sharing option would let a
 # second open of a held nonzero port succeed and silently compete for its
 # datagrams instead of reporting SystemFailure.
@@ -155,8 +163,9 @@ require_not_contains("${_macos_platform}" "_platform/win32/sys_socket\\.cpp"
     "the macOS service set must not register the Winsock backend")
 
 # The runtime suite proves the loopback datagram contract end to end,
-# including the explicit oversized-datagram truncation result and the
-# exclusive-ownership rejection of a second open of a held port.
+# including the explicit oversized-datagram truncation result, the
+# exclusive-ownership rejection of a second open of a held port, and the
+# receive-capacity boundary regression through a reserved 2-GiB window.
 foreach(_marker IN ITEMS
     "Sys_SocketOpenUdp\\(0, true, "
     "SysSocketRecvStatus::WouldBlock"
@@ -165,6 +174,7 @@ foreach(_marker IN ITEMS
     "MessageTooLarge"
     "Sys_SocketEnableBroadcast\\("
     "second open of a held port reports SystemFailure"
+    "oversize capacity receives the datagram"
     "Sys_SocketClose\\(&first\\) == SysSocketCloseStatus::Closed")
     require_contains("${_socket_tests}" "${_marker}"
         "socket runtime coverage: ${_marker}")

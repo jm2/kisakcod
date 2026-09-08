@@ -236,9 +236,19 @@ SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
 
     sockaddr_in from{};
     int fromLength = sizeof(from);
+    // The public capacity is the caller's uint32 receive window, but
+    // Winsock's recvfrom takes a signed int length. A direct conversion
+    // wraps a capacity of 2^31 or more to a negative length, turning a
+    // valid (reserved) receive window into an invalid request. Clamp to
+    // the IPv4 datagram bound BEFORE the signed conversion: no single
+    // datagram can exceed that bound, so real traffic never observes the
+    // clamp while every capacity stays representable.
+    std::uint32_t recvLength = bufferCapacity;
+    if (recvLength > SysSocketMaxDatagramBytes)
+        recvLength = SysSocketMaxDatagramBytes;
     const int received = recvfrom(handle->handle,
         static_cast<char *>(buffer),
-        static_cast<int>(bufferCapacity),
+        static_cast<int>(recvLength),
         0,
         reinterpret_cast<sockaddr *>(&from),
         &fromLength);

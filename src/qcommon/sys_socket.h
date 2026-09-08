@@ -126,7 +126,11 @@ SysSocketSendStatus KISAK_CDECL Sys_SocketSendTo(
     std::uint32_t byteCount,
     const SysSocketAddress *destination);
 
-// Receives one datagram into `buffer`. On Received, *outByteCount holds the
+// Receives one datagram into `buffer`. Capacities above
+// SysSocketMaxDatagramBytes are clamped to that bound before the native
+// call: no IPv4 datagram is larger, so valid traffic is unaffected, and
+// the clamp keeps an oversized caller window representable for the
+// platform's native signed receive length. On Received, *outByteCount holds the
 // payload size (never above `bufferCapacity`) and *outSource holds the
 // sender's endpoint when the pointer is non-null. Truncated reports a
 // datagram larger than `bufferCapacity`: exactly bufferCapacity bytes were

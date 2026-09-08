@@ -13,6 +13,9 @@
 #define NOMINMAX
 #endif
 #include <winsock2.h>
+#include <Windows.h>
+#else
+#include <sys/mman.h>
 #endif
 
 #include <qcommon/sys_socket.h>
@@ -306,6 +309,82 @@ bool StageTruncationContract(SocketFixture &fixture)
         "truncated datagram fully consumed");
 }
 
+// Reserves `regionBytes` of address space without committing it, so the
+// boundary stage can pass a real 2-GiB window to the receive call without
+// reserving real memory. The platform receive writes only the arriving
+// datagram's bytes, which land in the leading page; Windows therefore gets
+// an explicit commit for that page while POSIX backs pages lazily on
+// first touch. Returns null when the platform refuses the reservation.
+void *ReserveReceiveWindow(const std::uint32_t regionBytes)
+{
+#if defined(_WIN32)
+    void *region = VirtualAlloc(nullptr, regionBytes, MEM_RESERVE,
+        PAGE_READWRITE);
+    if (!region)
+        return nullptr;
+    if (!VirtualAlloc(region, 65536, MEM_COMMIT, PAGE_READWRITE))
+    {
+        VirtualFree(region, 0, MEM_RELEASE);
+        return nullptr;
+    }
+    return region;
+#else
+    void *region = mmap(nullptr, static_cast<std::size_t>(regionBytes),
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (region == MAP_FAILED)
+        return nullptr;
+    return region;
+#endif
+}
+
+void ReleaseReceiveWindow(void *const region,
+    const std::uint32_t regionBytes)
+{
+#if defined(_WIN32)
+    (void)regionBytes;
+    VirtualFree(region, 0, MEM_RELEASE);
+#else
+    munmap(region, static_cast<std::size_t>(regionBytes));
+#endif
+}
+
+// Receive-capacity boundary regression: the portable API takes a uint32
+// capacity while the native receive primitives take a signed (Winsock) or
+// size_t (POSIX) length. A direct conversion of a capacity at or above
+// 2^31 once wrapped negative on Winsock and turned a valid reserved
+// receive window into a failed call. The backend clamps the capacity to
+// the datagram bound before the signed conversion; this stage drives a
+// real loopback datagram through a reserved 2-GiB window on the native
+// platform, so the hosted Windows runners validate the Winsock boundary
+// natively and the Linux run guards the portable contract.
+bool StageOversizeCapacityBoundary(SocketFixture &fixture)
+{
+    constexpr std::uint32_t boundaryCapacity = UINT32_C(0x80000000);
+    void *window = ReserveReceiveWindow(boundaryCapacity);
+    if (!Check(window != nullptr, "reserve the 2 GiB receive window"))
+        return false;
+
+    std::uint8_t probe[40] = {};
+    SeedPayload(probe, sizeof(probe));
+    const bool sent = Check(Sys_SocketSendTo(fixture.first, probe,
+            sizeof(probe), &fixture.loopback)
+                == SysSocketSendStatus::Sent,
+        "send into the receive window");
+    std::uint32_t receivedBytes = 0;
+    const SysSocketRecvStatus status = RecvUntilDeadline(fixture.second,
+        window, boundaryCapacity, nullptr, &receivedBytes);
+    const bool received =
+        Check(status == SysSocketRecvStatus::Received,
+            "oversize capacity receives the datagram")
+        && Check(receivedBytes == sizeof(probe),
+            "oversize capacity receive size intact")
+        && Check(std::memcmp(probe, window, sizeof(probe)) == 0,
+            "oversize capacity receive bytes intact");
+    ReleaseReceiveWindow(window, boundaryCapacity);
+    return sent && received;
+}
+
 // Broadcast option applies on both backends and rejects bad handles.
 bool StageBroadcastOption(SocketFixture &fixture)
 {
@@ -462,7 +541,8 @@ int main()
     const StageFn stages[] = {&StageArgumentValidation,
         &StageEndpointContract, &StageReceiveContract, &StageSendContract,
         &StageLoopbackSend, &StageLoopbackReply, &StageTruncationContract,
-        &StageBroadcastOption, &StageExplicitBind, &StageExclusiveBind,
+        &StageOversizeCapacityBoundary, &StageBroadcastOption,
+        &StageExplicitBind, &StageExclusiveBind,
 #if defined(_WIN32)
         &StageExclusiveInterfaceBind,
 #endif
