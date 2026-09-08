@@ -235,9 +235,19 @@ SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
         return SysSocketRecvStatus::InvalidArgument;
 
     sockaddr_in from{};
+    // The public capacity is the caller's uint32 receive window, but the
+    // documented contract clamps capacities above
+    // SysSocketMaxDatagramBytes before the native call: platforms
+    // disagree on oversize iov_len (Darwin rejects a 2^31 receive
+    // window, Linux accepts it), so the clamp keeps every capacity
+    // representable and both backends on one behavior. No single IPv4
+    // datagram exceeds the bound, so real traffic never observes it.
+    std::uint32_t recvLength = bufferCapacity;
+    if (recvLength > SysSocketMaxDatagramBytes)
+        recvLength = SysSocketMaxDatagramBytes;
     iovec region{};
     region.iov_base = buffer;
-    region.iov_len = static_cast<size_t>(bufferCapacity);
+    region.iov_len = static_cast<size_t>(recvLength);
     msghdr message{};
     message.msg_name = &from;
     message.msg_namelen = sizeof(from);
