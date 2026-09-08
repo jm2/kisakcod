@@ -15,8 +15,9 @@
 # Platform honesty note: the engine targets are Win32-x86-only today
 # (CMakeLists.txt hard-fails any non-win32 engine build and that gate must not
 # be relaxed). The windows-x86 leg ships the real engine; the other five
-# supported pairs produce provenance-carrying portable-composition artifacts
-# until their platform backends land.
+# supported pairs produce provenance-carrying portable test-composition
+# artifacts (scaffolding with every engine option OFF) until their platform
+# backends land — those legs do not deliver engines.
 #
 # Retention policy: workflow artifacts pin 90 days; the GitHub release itself
 # is the long-term store.
@@ -151,9 +152,12 @@ jobs:
           retention-days: 90
 
   build-release:
-    # Production artifacts for every supported OS/architecture pair, built
-    # from the verified tag. Same shared script and packaging shape as
-    # ci.yml's windows-x86 production leg (CI validates what release ships).
+    # Release artifacts for every supported OS/architecture pair, built
+    # from the verified tag. windows-x86 ships the real engine; the other
+    # five legs are portable test/release scaffolding — every engine option
+    # OFF, packaging test binaries only — so their green does NOT claim
+    # engine delivery. Same shared script and packaging shape as ci.yml's
+    # windows-x86 leg (CI validates what release ships).
     name: Release / ${{ matrix.target }}
     needs: verify-tag
     runs-on: ${{ matrix.runner }}
@@ -217,11 +221,11 @@ jobs:
           ./scripts/ci/verify-artifact-arch.ps1 -Expected x86
           bin/Release/KisakCOD-mp.exe bin/Release/KisakCOD-dedi.exe
 
-      # Portable production composition legs use static `shell: bash` —
+      # Portable test-composition legs use static `shell: bash` —
       # expressions are not permitted in `shell:` (actionlint / GitHub
       # context-availability), the commands are shell-agnostic, and Git Bash
       # is preinstalled on the Windows runners.
-      - name: Configure portable production composition
+      - name: Configure portable test composition
         if: matrix.target != 'windows-x86'
         shell: bash
         run: >
@@ -233,7 +237,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TESTING=ON
 
-      - name: Build portable production composition
+      - name: Build portable test composition
         if: matrix.target != 'windows-x86'
         shell: bash
         run: cmake --build build-release --config Release --parallel
@@ -275,7 +279,7 @@ jobs:
             --arg tag "${{ needs.verify-tag.outputs.tag }}" \
             --arg commit "${{ needs.verify-tag.outputs.commit }}" \
             --arg target "${{ matrix.target }}" \
-            --arg config "portable-production-composition" \
+            --arg config "portable-test-composition" \
             --arg run "${GITHUB_RUN_ID}" \
             --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{tag: $tag, commit: $commit, target: $target, config: $config, workflow_run: $run, generated_at: $generated_at}' \
@@ -293,7 +297,7 @@ jobs:
           } else {
             Compress-Archive -Path build-release/tests/Release/*.exe -DestinationPath "dist/KisakCOD-${{ matrix.target }}-portable-Release.zip"
             $name = "KisakCOD-${{ matrix.target }}-portable-Release"
-            $config = "portable-production-composition"
+            $config = "portable-test-composition"
           }
           [ordered]@{
             tag           = "${{ needs.verify-tag.outputs.tag }}"
@@ -576,10 +580,12 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  production-complete:
+  scaffolding-complete:
     # The only direct prerequisite of publish: every release build, the
     # source archive, and the aggregate checksums must have succeeded.
-    name: Production complete
+    # (Renamed from production-complete: the five non-x86 legs are
+    # test-composition scaffolding, not shipped engines.)
+    name: Release scaffolding complete
     needs: checksums
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
@@ -605,7 +611,7 @@ jobs:
     name: Publish release
     needs:
       - verify-tag
-      - production-complete
+      - scaffolding-complete
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

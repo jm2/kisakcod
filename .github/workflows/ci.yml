@@ -7,9 +7,9 @@
 #   - every action is pinned to an immutable commit SHA (tag in comment)
 #   - no checkout keeps persisted credentials; build jobs stay read-only
 #     (contents: read is the only workflow permission)
-#   - production-builds runs a production leg for every supported
+#   - scaffolding-builds runs a per-target leg for every supported
 #     OS/architecture pair and uploads a target-labeled artifact with an
-#     explicit provenance manifest; production-complete is the required gate
+#     explicit provenance manifest; scaffolding-complete is the required gate
 #
 # Retention policy: CI artifacts live 14 days (debugging window); the release
 # workflow is the long-term store and pins 90 days there.
@@ -18,10 +18,12 @@
 # CMakeLists.txt fails configuration for any non-win32 engine build and for
 # 64-bit builds without the explicit KISAK_ALLOW_UNSUPPORTED_64BIT escape
 # hatch, and that gate must not be relaxed (docs/task.md, Known release
-# blockers). The windows-x86 production leg therefore builds and packages the
-# real engine binaries, while the other five legs gate the portable production
-# composition (the same required hosted legs the port has been merging
-# against) with architecture truth, smoke tests, packaging, and provenance.
+# blockers). The windows-x86 leg therefore builds and packages the real
+# engine binaries, while the other five legs are portable test/release
+# scaffolding (the same required hosted legs the port has been merging
+# against): every engine option is OFF, so they package test binaries only —
+# their green result is NOT five delivered engines. They still assert
+# architecture truth, run smoke tests, and publish provenance.
 
 name: CI
 
@@ -44,7 +46,7 @@ jobs:
   portable-tests:
     # Utility/test composition for every supported OS/architecture pair. This
     # is the portable source-composition gate the port has required on every
-    # change; it stays so the production-builds legs can evolve independently.
+    # change; it stays so the scaffolding-builds legs can evolve independently.
     name: Portable tests / ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
@@ -418,16 +420,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  production-builds:
-    # Production leg for every supported OS/architecture pair. The windows-x86
-    # leg builds and packages the real engine (MP + dedicated) through the same
-    # shared script release.yml uses. The other five legs gate the portable
-    # production composition for their target — the engine itself is
-    # Win32-x86-only until the CMakeLists platform gate is lifted, so instead
-    # of a matrix-only claim these legs assert architecture truth on the
+  scaffolding-builds:
+    # Per-target scaffolding gate for every supported OS/architecture pair.
+    # The windows-x86 leg builds and packages the real engine (MP + dedicated)
+    # through the same shared script release.yml uses. The other five legs are
+    # portable test/release scaffolding, NOT engine delivery — the engine is
+    # Win32-x86-only until the CMakeLists platform gate is lifted, so these
+    # legs configure every engine option OFF and package test binaries only.
+    # Instead of a matrix-only claim they assert architecture truth on the
     # binaries they built, run the full portable smoke suite, and publish a
     # target-labeled artifact with an explicit provenance manifest.
-    name: Production / ${{ matrix.target }}
+    name: Portable test/release scaffolding / ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     strategy:
@@ -501,12 +504,12 @@ jobs:
             generated_at  = (Get-Date).ToUniversalTime().ToString("o")
           } | ConvertTo-Json | Set-Content -Encoding utf8 dist/KisakCOD-windows-x86-provenance.json
 
-      # ---- portable production composition (all other targets) ----
+      # ---- portable test composition (all other targets) ----
       # Static `shell: bash` on every portable leg: expressions are not
       # permitted in `shell:` (actionlint / GitHub context-availability), the
       # commands are shell-agnostic, and Git Bash is preinstalled on the
       # Windows runners.
-      - name: Configure portable production composition
+      - name: Configure portable test composition
         if: matrix.target != 'windows-x86'
         shell: bash
         run: >
@@ -518,7 +521,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TESTING=ON
 
-      - name: Build portable production composition
+      - name: Build portable test composition
         if: matrix.target != 'windows-x86'
         shell: bash
         run: cmake --build build-release --config Release --parallel
@@ -560,7 +563,7 @@ jobs:
             --arg target '${{ matrix.target }}' \
             --arg commit "${GITHUB_SHA}" \
             --arg ref "${GITHUB_REF}" \
-            --arg config "portable-production-composition" \
+            --arg config "portable-test-composition" \
             --arg run "${GITHUB_RUN_ID}" \
             --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{target: $target, commit: $commit, ref: $ref, config: $config, workflow_run: $run, generated_at: $generated_at}' \
@@ -576,7 +579,7 @@ jobs:
             target        = "${{ matrix.target }}"
             commit        = $env:GITHUB_SHA
             ref           = $env:GITHUB_REF
-            config        = "portable-production-composition"
+            config        = "portable-test-composition"
             workflow_run  = $env:GITHUB_RUN_ID
             generated_at  = (Get-Date).ToUniversalTime().ToString("o")
           } | ConvertTo-Json | Set-Content -Encoding utf8 "dist/KisakCOD-${{ matrix.target }}-portable-Release-provenance.json"
@@ -588,11 +591,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  production-complete:
-    # The required production gate: every build job in this workflow plus the
-    # six production legs must succeed. Branch protection should require this
-    # single job.
-    name: Production complete
+  scaffolding-complete:
+    # The required CI gate: every build job in this workflow plus the six
+    # scaffolding legs must succeed. Branch protection should require this
+    # single job. (Renamed from production-complete: the five non-x86 legs
+    # are test-composition scaffolding, not shipped engines.)
+    name: Portable scaffolding complete
     needs:
       - portable-tests
       - windows-x86
@@ -600,7 +604,7 @@ jobs:
       - windows-x86-parity
       - windows-x86-nosteam
       - windows-x86-headless
-      - production-builds
+      - scaffolding-builds
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
