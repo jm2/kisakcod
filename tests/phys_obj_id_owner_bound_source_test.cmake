@@ -9,7 +9,10 @@ cmake_minimum_required(VERSION 3.16)
 #      before the entity lists are published;
 #   2. every failed-bind site destroys the freshly created body;
 #   3. the cpose creation Assign and the breakable-piece Bind run inside
-#      their documented CRITSECT_PHYSICS spans.
+#      their documented CRITSECT_PHYSICS spans;
+#   4. the SP save loader clears the serialized physObjId token BEFORE
+#      body restoration, so a failed Phys_ObjLoad can never leave a
+#      stale token that resolves to another owner's body.
 
 if(NOT DEFINED SOURCE_ROOT OR SOURCE_ROOT STREQUAL "")
     message(FATAL_ERROR "SOURCE_ROOT must identify the KisakCOD source tree")
@@ -110,9 +113,11 @@ require_ordered("${_sp_loader}"
     "Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);"
     "SP save-loader failed bind destroys the fresh body")
 require_ordered("${_sp_loader}"
-    "Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);"
     "dynEntClient->physObjId = 0;"
-    "SP save-loader clears the field only after the body is destroyed")
+    "Phys_ObjLoad(PHYS_WORLD_DYNENT, memFile)"
+    "SP save-loader clears the serialized token BEFORE body restoration so a"
+    " failed load cannot leave a stale token that resolves to another"
+    " owner's body")
 forbid_contains("${_sp_loader}"
     "leak the body"
     "SP save loader must not document a deliberate leak")

@@ -280,7 +280,10 @@ bool TestGlobalDynEntClientSidecar()
 // spawn, cpose creation) must (a) leave the winning binding untouched,
 // (b) destroy/release its fresh body, and (c) leave the slot cleanly
 // reusable with a bumped generation so stale tokens stay rejected.
-bool TestFailedBindReleaseReuseContract()
+// Split from the former single TestFailedBindReleaseReuseContract to
+// keep per-function cyclomatic complexity under Codacy's limit of 10;
+// the case order and failure semantics are unchanged.
+bool TestFailedBindCollisionContract()
 {
     int bodyA = 0;
     int bodyB = 0;
@@ -314,8 +317,24 @@ bool TestFailedBindReleaseReuseContract()
     void *phantom = nullptr;
     if (phys_obj_id::ConsumeRelease<void>(sidecar, &fieldB, &phantom))
         return false;
+    return true;
+}
 
-    // 4. Releasing the winning binding (shutdown/reuse teardown) hands
+bool TestReleaseReuseGenerationContract()
+{
+    int bodyA = 0;
+    int bodyB = 0;
+    phys_obj_id::BodySidecar<4> sidecar;
+    const phys_obj_id::OwnerIndex owner = 3; // in-capacity slot
+    phys_obj_id::BodyToken fieldA = phys_obj_id::INVALID_BODY_TOKEN;
+
+    // 1. First bind wins.
+    const phys_obj_id::TokenResult bindA =
+        phys_obj_id::WriteBind(sidecar, &fieldA, owner, &bodyA);
+    if (!bindA)
+        return false;
+
+    // 2. Releasing the winning binding (shutdown/reuse teardown) hands
     //    back exactly its body and clears the field.
     void *released = nullptr;
     if (!phys_obj_id::ConsumeRelease<void>(sidecar, &fieldA, &released))
@@ -323,8 +342,9 @@ bool TestFailedBindReleaseReuseContract()
     if (released != &bodyA)
         return false;
 
-    // 5. The slot is reusable: a new bind succeeds with a bumped
+    // 3. The slot is reusable: a new bind succeeds with a bumped
     //    generation, and the old token is stale (resolves to null).
+    phys_obj_id::BodyToken fieldB = phys_obj_id::INVALID_BODY_TOKEN;
     const phys_obj_id::TokenResult rebind =
         phys_obj_id::WriteBind(sidecar, &fieldB, owner, &bodyB);
     if (!rebind)
@@ -337,6 +357,85 @@ bool TestFailedBindReleaseReuseContract()
     if (phys_obj_id::ReadResolve<void>(sidecar, fieldA) != nullptr)
         return false;
     if (phys_obj_id::ReadResolve<void>(sidecar, fieldB) != &bodyB)
+        return false;
+    return true;
+}
+
+// Failed-load stale-token contract for the SP save-image rebuild (the
+// assessed probe case): a serialized DynEntityClient image can arrive
+// with a live-looking token whose body no longer exists, and the
+// production adapter (Phys_ObjLoad) can fail to restore any body at
+// all. The loader contract is:
+//   (a) the serialized token is cleared BEFORE restoration, so a
+//       failed load can never leave a token that resolves through the
+//       sidecar to whichever body now occupies that owner slot;
+//   (b) the foreign binding that currently owns the slot is left
+//       completely undisturbed by the failed restore;
+//   (c) a later successful bind of the same owner (reuse path) bumps
+//       the generation so the stale saved token stays rejected forever.
+bool TestFailedLoadStaleTokenContract()
+{
+    int foreignBody = 0;
+    int restoredBody = 0;
+    phys_obj_id::BodySidecar<4> sidecar;
+    const phys_obj_id::OwnerIndex owner = 1; // in-capacity slot
+
+    // Another entity legitimately owns the slot the stale token names;
+    // foreignField carries that live binding's token.
+    phys_obj_id::BodyToken foreignField = phys_obj_id::INVALID_BODY_TOKEN;
+    const phys_obj_id::TokenResult foreignBind =
+        phys_obj_id::WriteBind(sidecar, &foreignField, owner, &foreignBody);
+    if (!foreignBind)
+        return false;
+
+    // The save image hands the loader this stale saved token (as the
+    // assessed probe's field: token 65537 surviving a failed load).
+    const phys_obj_id::BodyToken savedToken = foreignBind.token;
+
+    // Loader pre-restoration clear (the fixed DynEnt_LoadEntities
+    // contract): the field is wiped BEFORE Phys_ObjLoad runs, and a
+    // failed load publishes nothing. Model the post-loader state:
+    phys_obj_id::BodyToken field = phys_obj_id::INVALID_BODY_TOKEN;
+
+    // (a) The cleared field must NOT resolve — before the fix, the
+    //     surviving stale token resolved to the foreign body here.
+    if (phys_obj_id::ReadResolve<void>(sidecar, field) != nullptr)
+        return false;
+
+    // (b) The foreign binding is undisturbed: its own token still
+    //     resolves to the foreign body.
+    if (phys_obj_id::ReadResolve<void>(sidecar, savedToken) != &foreignBody)
+        return false;
+
+    // Failed-restore cleanup: consuming the cleared field must find
+    // nothing (no phantom body for the runtime to destroy later).
+    void *phantom = nullptr;
+    if (phys_obj_id::ConsumeRelease<void>(sidecar, &field, &phantom))
+        return false;
+    if (phantom != nullptr)
+        return false;
+
+    // (c) Reuse path: the foreign owner is legitimately torn down first
+    //     (ConsumeRelease — the engine shutdown/unload contract), which
+    //     frees the slot; a later successful load of this entity then
+    //     binds the same owner with a bumped generation, so the stale
+    //     saved token can never be confused with the fresh binding.
+    void *foreignReleased = nullptr;
+    if (!phys_obj_id::ConsumeRelease<void>(sidecar, &foreignField, &foreignReleased))
+        return false;
+    if (foreignReleased != &foreignBody)
+        return false;
+
+    const phys_obj_id::TokenResult rebind =
+        phys_obj_id::WriteBind(sidecar, &field, owner, &restoredBody);
+    if (!rebind)
+        return false;
+    if (phys_obj_id::GenerationOf(rebind.token)
+        == phys_obj_id::GenerationOf(foreignBind.token))
+        return false;
+    if (phys_obj_id::ReadResolve<void>(sidecar, savedToken) != nullptr)
+        return false;
+    if (phys_obj_id::ReadResolve<void>(sidecar, field) != &restoredBody)
         return false;
     return true;
 }
@@ -425,8 +524,12 @@ static const char *RunSidecarIntegrationTests()
         return "global breakable piece sidecar bind";
     if (!TestGlobalDynEntClientSidecar())
         return "global dynent client sidecar bind";
-    if (!TestFailedBindReleaseReuseContract())
-        return "failed-bind release/reuse contract";
+    if (!TestFailedBindCollisionContract())
+        return "failed-bind collision contract";
+    if (!TestReleaseReuseGenerationContract())
+        return "release/reuse generation contract";
+    if (!TestFailedLoadStaleTokenContract())
+        return "failed-load stale-token contract";
     if (!TestDynEntOwnerIndexStrideContract())
         return "dynent owner-index stride contract";
     return nullptr;

@@ -658,6 +658,16 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
             DynEntityClient *const dynEntClient = &cm.dynEntClientList[drawType][dynEntId];
             if (hasPhys)
             {
+                // The serialized field may still carry the previous
+                // session's token, but nothing about it is trustworthy
+                // for THIS load: the body it named is gone, and the
+                // restoration below can fail outright. A surviving stale
+                // token would resolve through the sidecar to whichever
+                // body now occupies that owner slot — a different
+                // entity's body. Clear the token BEFORE restoration and
+                // let only a successful WriteBind publish a fresh one.
+                dynEntClient->physObjId = 0;
+
                 dxBody *const physObjIdBody = Phys_ObjLoad(PHYS_WORLD_DYNENT, memFile);
                 if (physObjIdBody)
                 {
@@ -682,10 +692,10 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
                         // an active slot, so this is a programming error —
                         // but the freshly created body must not leak:
                         // destroy it through the production adapter
-                        // (Phys_ObjDestroy manages its own locking) and
-                        // clear the field so the state stays consistent.
+                        // (Phys_ObjDestroy manages its own locking). The
+                        // field stays at the pre-restoration 0, so no
+                        // token for the destroyed body is ever published.
                         Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
-                        dynEntClient->physObjId = 0;
                     }
                 }
             }
