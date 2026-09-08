@@ -1376,10 +1376,60 @@ bool ParseEnumerationBatch(
     return true;
 }
 
-// Enumerates one real directory by handle. Names are collected with the
-// classification the enumeration reported; afterwards every name is
-// re-opened relative to the frame's anchor and every reopened object is
-// verified against that classification before any deletion happens.
+// Runs one NtQueryDirectoryFile batch into the enumeration buffer and
+// validates its readable extent. The batch's readable extent is the byte
+// count the kernel returned in Information, never the buffer's capacity:
+// a count larger than the buffer is impossible kernel behavior and fails
+// closed at "enumerate/query/length" rather than handing the parser
+// out-of-range memory. Returns the raw status; on success the returned
+// byte count goes out through *returnedBytes.
+KisakNtStatus QueryEnumerationBatch(
+    const HANDLE directory,
+    const KisakNtProcedures *const nt,
+    void *const buffer,
+    const std::uint32_t bufferBytes,
+    const bool restartScan,
+    std::uint32_t *const returnedBytes)
+{
+    NoteRemoveTreeStage("enumerate/query");
+    KisakIoStatusBlock ioStatus{};
+    const KisakNtStatus status = nt->queryDirectoryFile(
+        directory,
+        nullptr,
+        nullptr,
+        nullptr,
+        &ioStatus,
+        buffer,
+        bufferBytes,
+        kKisakFileDirectoryInformation,
+        0u,
+        nullptr,
+        restartScan ? 1u : 0u);
+    if (status == kKisakStatusNoMoreFiles
+        || status == kKisakStatusNoMoreEntries)
+    {
+        return status;
+    }
+    if (status != kKisakStatusSuccess)
+    {
+        NoteRemoveTreeFailure("enumerate/query", status);
+        return status;
+    }
+    if (ioStatus.Information > bufferBytes)
+    {
+        NoteRemoveTreeFailure("enumerate/query/length", 0);
+        return status;
+    }
+    *returnedBytes = static_cast<std::uint32_t>(ioStatus.Information);
+    return status;
+}
+
+// Enumerates the frame's held directory into the frame's name buckets.
+// ParseEnumerationBatch classifies each entry, and the deletion phases
+// rely on that classification the enumeration reported; afterwards every
+// name is re-opened relative to the frame's anchor and every reopened
+// object is verified against that classification before any deletion
+// happens.
 bool EnumerateHeldDirectory(
     RemoveTreeFrame *const frame,
     const KisakNtProcedures *const nt)
@@ -1392,20 +1442,14 @@ bool EnumerateHeldDirectory(
     bool restartScan = true;
     for (;;)
     {
-        NoteRemoveTreeStage("enumerate/query");
-        KisakIoStatusBlock ioStatus{};
-        const KisakNtStatus status = nt->queryDirectoryFile(
+        std::uint32_t returnedBytes = 0;
+        const KisakNtStatus status = QueryEnumerationBatch(
             frame->directory,
-            nullptr,
-            nullptr,
-            nullptr,
-            &ioStatus,
+            nt,
             buffer,
             bufferBytes,
-            kKisakFileDirectoryInformation,
-            0u,
-            nullptr,
-            restartScan ? 1u : 0u);
+            restartScan,
+            &returnedBytes);
         restartScan = false;
         if (status == kKisakStatusNoMoreFiles
             || status == kKisakStatusNoMoreEntries)
@@ -1413,23 +1457,9 @@ bool EnumerateHeldDirectory(
             break;
         }
         if (status != kKisakStatusSuccess)
-        {
-            NoteRemoveTreeFailure("enumerate/query", status);
             return false;
-        }
-        // The batch's readable extent is the byte count the kernel
-        // returned in Information, never the buffer's capacity: a count
-        // larger than the buffer is impossible kernel behavior, and an
-        // empty success carries nothing to parse — both fail closed
-        // rather than hand the parser uninitialized or out-of-range
-        // memory.
-        if (ioStatus.Information > bufferBytes)
-        {
-            NoteRemoveTreeFailure("enumerate/query/length", 0);
-            return false;
-        }
-        const auto returnedBytes =
-            static_cast<std::uint32_t>(ioStatus.Information);
+        // An empty success carries nothing to parse; fail closed rather
+        // than treat it as a batch.
         if (returnedBytes == 0)
         {
             NoteRemoveTreeFailure("enumerate/parse/empty", 0);
@@ -1923,13 +1953,27 @@ bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
     // disposition inside RemoveHeldTree deletes the tree root itself, so
     // no pathname removal ever happens.
     const bool removed = RemoveHeldTree(held);
+    if (!removed)
+    {
+        // The walk already recorded its failing stage and code; that
+        // record is the caller's diagnosis. The root handle still must
+        // be closed, but neither an interim stage note nor this close's
+        // result may clobber or shadow the record — a stage note here
+        // would overwrite the failing stage and reset the code to 0
+        // (ERROR_SUCCESS), exactly the "failure reports error 0"
+        // undiagnosability this hook exists to prevent. The same
+        // unchecked-cleanup-close discipline as RemoveHeldTree's failure
+        // path applies: a failed close cannot worsen the outcome, and
+        // the walk fails closed either way.
+        CloseHandle(held);
+        return false;
+    }
     NoteRemoveTreeStage("final/close");
     if (!CloseHandle(held))
     {
         NoteRemoveTreeFailure("final/close", GetLastError());
         return false;
     }
-    if (removed)
-        NoteRemoveTreeStage("complete");
-    return removed;
+    NoteRemoveTreeStage("complete");
+    return true;
 }

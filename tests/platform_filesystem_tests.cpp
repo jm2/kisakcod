@@ -2448,6 +2448,20 @@ bool TestRemoveTreeJunctionContract(const std::string &workingDirectory)
 }
 #endif // defined(_WIN32)
 
+// Dispatches the platform-neutral remove-tree contracts from main so the
+// entry point's branch count stays under the project complexity limit.
+// Stage notes and call order mirror the previous inline dispatch.
+int RunRemoveTreeCoreContracts(const std::string &workingDirectory)
+{
+    SetCheckStage("remove-tree-probes");
+    if (!TestRemoveTreeWalkProbes(workingDirectory))
+        return 1;
+    SetCheckStage("handle-relative-recursive-deletion");
+    if (!TestRemoveTreeContract(workingDirectory))
+        return 1;
+    return 0;
+}
+
 #if defined(_WIN32)
 // Deterministic race-interference contract: a file held open without
 // FILE_SHARE_DELETE must make the deletion service fail fast (the
@@ -2506,20 +2520,23 @@ bool TestRemoveTreeOpenHandleRace(const std::string &workingDirectory)
 }
 
 // Outcome one removal thread reports back: the call result plus the stage
-// the calling thread's diagnostic recorded. The record is thread-local in
-// the production unit, so only the walking thread can read its own walk's
-// stage — concurrent walks on other threads cannot clobber or observe it.
+// and raw failure code the calling thread's diagnostic recorded. The
+// record is thread-local in the production unit, so only the walking
+// thread can read its own walk's stage — concurrent walks on other
+// threads cannot clobber or observe it.
 struct RemovalOutcome
 {
     bool removed = true;
     const char *stage = "";
+    std::int32_t failureCode = 0;
 };
 
 // Runs one removal and records the calling thread's own diagnostic.
 void RunRecordedRemoval(const std::string &root, RemovalOutcome *outcome)
 {
     outcome->removed = Sys_FileSystemRemoveTree(root.c_str());
-    outcome->stage = Kisak_FileSystemLastRemoveTreeDiagnostic(nullptr);
+    outcome->stage = Kisak_FileSystemLastRemoveTreeDiagnostic(
+        &outcome->failureCode);
 }
 
 // Waits until path stops existing (the walk deleted it) with a bounded
@@ -2588,8 +2605,27 @@ bool VerifyDeletionFailureResult(
     const DWORD afterWalk)
 {
     SetCheckStage("deletion-failure-cleanup/failure-recorded");
-    if (!Check(std::strcmp(outcome.stage, "complete/mark") == 0))
+    // The walk must fail AT THE COMPLETION STAGE of the polluted
+    // directory. Both completion steps are legitimate refusal surfaces:
+    // the filesystem may reject the POSIX mark outright with the late
+    // entry present ("complete/mark"), or accept the mark and fail the
+    // deferred deletion when the anchor's handle closes
+    // ("complete/close") — the split is filesystem-specific (NTFS vs
+    // the CI legs' Dev Drive). A failure recorded at any other stage
+    // means the pollution was not detected at completion, or the walk's
+    // failure record was clobbered after the fact — both defects.
+    const bool failedAtCompletion =
+        std::strcmp(outcome.stage, "complete/mark") == 0
+        || std::strcmp(outcome.stage, "complete/close") == 0;
+    if (!Check(failedAtCompletion))
+    {
+        std::fprintf(
+            stderr,
+            "FAIL: deletion-failure walk recorded stage=%s code=%d\n",
+            outcome.stage,
+            outcome.failureCode);
         return false;
+    }
     SetCheckStage("deletion-failure-cleanup/no-handle-leak");
     // Every handle the walk opens is closed on every path; the pre-fix
     // completion helper leaked exactly one handle here — the failed child
@@ -2800,6 +2836,29 @@ bool TestRemoveTreeConcurrentDiagnostics(const std::string &workingDirectory)
     SetCheckStage("concurrent-diagnostics/retry-file-tree");
     return Check(Sys_FileSystemRemoveTree(fileRoot.c_str()));
 }
+
+// Dispatches the Win32-only remove-tree contracts from main (same
+// complexity-limit reason as RunRemoveTreeCoreContracts). Stage notes and
+// call order mirror the previous inline dispatch.
+int RunWin32RemoveTreeContracts(const std::string &workingDirectory)
+{
+    SetCheckStage("junction-reparse-contracts");
+    if (!TestRemoveTreeJunctionContract(workingDirectory))
+        return 1;
+    // Same gating as the junction contract: the open-handle sharing
+    // conflict is Win32-specific (POSIX unlink succeeds regardless of
+    // open handles), so the ungated call is provably always-false there.
+    SetCheckStage("deterministic-open-handle-race");
+    if (!TestRemoveTreeOpenHandleRace(workingDirectory))
+        return 1;
+    SetCheckStage("deletion-failure-cleanup");
+    if (!TestRemoveTreeDeletionFailureCleanup(workingDirectory))
+        return 1;
+    SetCheckStage("concurrent-call-diagnostics");
+    if (!TestRemoveTreeConcurrentDiagnostics(workingDirectory))
+        return 1;
+    return 0;
+}
 #endif // defined(_WIN32)
 }
 
@@ -2828,27 +2887,10 @@ int main()
     SetCheckStage("read-file-no-follow");
     if (!TestReadFileNoFollow(workingDirectory))
         return 1;
-    SetCheckStage("remove-tree-probes");
-    if (!TestRemoveTreeWalkProbes(workingDirectory))
-        return 1;
-    SetCheckStage("handle-relative-recursive-deletion");
-    if (!TestRemoveTreeContract(workingDirectory))
+    if (RunRemoveTreeCoreContracts(workingDirectory) != 0)
         return 1;
 #if defined(_WIN32)
-    SetCheckStage("junction-reparse-contracts");
-    if (!TestRemoveTreeJunctionContract(workingDirectory))
-        return 1;
-    // Same gating as the junction contract: the open-handle sharing
-    // conflict is Win32-specific (POSIX unlink succeeds regardless of
-    // open handles), so the ungated call is provably always-false there.
-    SetCheckStage("deterministic-open-handle-race");
-    if (!TestRemoveTreeOpenHandleRace(workingDirectory))
-        return 1;
-    SetCheckStage("deletion-failure-cleanup");
-    if (!TestRemoveTreeDeletionFailureCleanup(workingDirectory))
-        return 1;
-    SetCheckStage("concurrent-call-diagnostics");
-    if (!TestRemoveTreeConcurrentDiagnostics(workingDirectory))
+    if (RunWin32RemoveTreeContracts(workingDirectory) != 0)
         return 1;
 #endif
     return 0;
