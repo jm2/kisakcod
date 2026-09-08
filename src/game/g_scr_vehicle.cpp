@@ -25,6 +25,7 @@
 #include "bullet.h"
 #include <universal/surfaceflags.h>
 #include <bgame/bg_vehicle_material_time.h>
+#include <runtime/scalar_determinism.hpp>
 
 //Line 51763:  0006 : 00006554       unsigned short **s_flashTags      827b6554     g_scr_vehicle.obj
 
@@ -1051,10 +1052,14 @@ void __cdecl VEH_UpdateMaterialTime(gentity_s *ent)
     else
         scale = (speed * 0.0056818184f) * g_vehicleTexScrollScale->current.value;
 
-    // Input bounds for this legacy float-to-int conversion are separate from
-    // the signed-overflow fix below and remain to be validated at the script
-    // forcedMaterialSpeed boundary.
-    delta = (int)((scale * 0.050000001f) * 1000.0f);
+    // The script setforcedmaterialspeed boundary can push |speed| to any
+    // finite float, so this conversion must not rely on the bare cast: an
+    // out-of-range float-to-int conversion returns INT32_MIN on x86 but
+    // saturates on AArch64. The deterministic primitive saturates identically
+    // on every architecture and matches the cast for all in-range values,
+    // closing the producer-side range risk deferred from PR #42.
+    delta = runtime::determinism::FloatToIntSaturating(
+        (scale * 0.050000001f) * 1000.0f);
     ent->s.lerp.u.vehicle.materialTime =
         bg::vehicle_material_time::Advance(
             ent->s.lerp.u.vehicle.materialTime, delta);
