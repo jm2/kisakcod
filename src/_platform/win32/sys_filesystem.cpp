@@ -818,6 +818,15 @@ constexpr KisakNtStatus kKisakStatusNoMoreFiles =
 // typo; ReFS reports STATUS_NO_MORE_ENTRIES).
 constexpr KisakNtStatus kKisakStatusNoMoreEntries =
     static_cast<KisakNtStatus>(0x8000001Au);
+// The documented STATUS_INVALID_PARAMETER (ntstatus.h). Never produced by
+// the walk's kernel calls themselves; it is the fail-closed return the
+// enumeration query uses for its own bounds violation (an Information
+// byte count larger than the supplied buffer is impossible kernel
+// behavior), so the caller's status check — not the empty-batch branch —
+// observes the violation and the recorded 'enumerate/query/length' stage
+// survives as the caller-visible diagnostic.
+constexpr KisakNtStatus kKisakStatusInvalidParameter =
+    static_cast<KisakNtStatus>(0xC000000Du);
 
 // ---------------------------------------------------------------------------
 // Removal-walk diagnosability. Raw NT calls never set the Win32 last error,
@@ -1382,7 +1391,10 @@ bool ParseEnumerationBatch(
 // a count larger than the buffer is impossible kernel behavior and fails
 // closed at "enumerate/query/length" rather than handing the parser
 // out-of-range memory. Returns the raw status; on success the returned
-// byte count goes out through *returnedBytes.
+// byte count goes out through *returnedBytes. The bounds violation is
+// reported as kKisakStatusInvalidParameter — returning the query's own
+// success status would send the caller into its empty-batch branch and
+// overwrite the recorded violation with "enumerate/parse/empty".
 KisakNtStatus QueryEnumerationBatch(
     const HANDLE directory,
     const KisakNtProcedures *const nt,
@@ -1417,8 +1429,10 @@ KisakNtStatus QueryEnumerationBatch(
     }
     if (ioStatus.Information > bufferBytes)
     {
-        NoteRemoveTreeFailure("enumerate/query/length", 0);
-        return status;
+        NoteRemoveTreeFailure(
+            "enumerate/query/length",
+            kKisakStatusInvalidParameter);
+        return kKisakStatusInvalidParameter;
     }
     *returnedBytes = static_cast<std::uint32_t>(ioStatus.Information);
     return status;
