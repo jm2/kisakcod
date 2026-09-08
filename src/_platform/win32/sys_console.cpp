@@ -118,12 +118,23 @@ SysConsoleRawReadResult MapInputFailure(const DWORD error) noexcept
     return {SysConsoleRawReadStatus::IoError, 0};
 }
 
+// Upper bound on console input events consumed per bytewise read. The
+// line parser's read budget counts bytes, not events, so each bytewise
+// request must bound its own work: without a per-call event budget, a
+// console flooding ignored records (mouse-move and focus churn) makes
+// one byte request sweep the queue without end, and the caller's byte
+// budget cannot cap work it never observes. A call that exhausts this
+// budget reports NoData and leaves the remaining events queued for the
+// next call, so no input is dropped — the drain merely resumes later.
+constexpr DWORD CONSOLE_EVENT_READ_BUDGET = 64;
+
 // Drain pending console input events until one yields a Data byte, the
-// input queue is empty, or a fatal error is reported.
+// input queue is empty, the per-call event budget is exhausted, or a
+// fatal error is reported.
 //
 // Returns the first Data byte seen, EndOfFile when the input handle
 // reports a pipe-class EOF, IoError on any other console failure, or
-// NoData when the queue is empty.
+// NoData when the queue is empty or the event budget ran out.
 SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
 {
     if (pendingRepeat.remaining != 0)
@@ -133,8 +144,12 @@ SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
         return {SysConsoleRawReadStatus::Data, byte};
     }
 
+    DWORD eventsRead = 0;
     for (;;)
     {
+        if (eventsRead == CONSOLE_EVENT_READ_BUDGET)
+            return {SysConsoleRawReadStatus::NoData, 0};
+
         DWORD pending = 0;
         if (!GetNumberOfConsoleInputEvents(input, &pending))
             return MapInputFailure(GetLastError());
@@ -156,6 +171,7 @@ SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
         if (!ReadConsoleInputW(input, &event, 1, &readCount)
             || readCount == 0)
             return MapInputFailure(GetLastError());
+        ++eventsRead;
 
         const SysConsoleRawReadResult translated =
             TranslateConsoleEvent(event);

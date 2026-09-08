@@ -833,6 +833,39 @@ bool TestConsoleUnicodeKeyDrained(ConsoleInput &input)
     return Check(pass, "console unicode key event is drained");
 }
 
+// The ignored-event drain is bounded per bytewise read: a queue flooded
+// with more ignored records than a single call may consume must split
+// across calls instead of letting one request sweep without end (the
+// line parser's budget counts bytes, so it cannot bound this drain
+// itself). The first read reports NoData once the backend's per-call
+// event budget is exhausted mid-drain; the follow-up read proves the
+// flooded events stayed queued and the printable byte behind them is
+// delivered intact. The flood size exceeds the backend's drain budget
+// on purpose: raise this probe if the budget ever grows past it.
+bool TestConsoleIgnoredEventBudget(ConsoleInput &input)
+{
+    constexpr unsigned int ignoredEventFlood = 80;
+    INPUT_RECORD events[ignoredEventFlood + 2] = {};
+    for (unsigned int i = 0; i < ignoredEventFlood; ++i)
+        events[i] = ConsoleFocusEvent(i % 2 != 0);
+    events[ignoredEventFlood] = ConsoleKeyEvent(true, 'a');
+    events[ignoredEventFlood + 1] = ConsoleKeyEvent(true, '\n');
+    if (!Check(input.WriteEvents(events, static_cast<DWORD>(
+                    sizeof(events) / sizeof(events[0]))),
+            "write ignored-event flood"))
+    {
+        return false;
+    }
+    if (!ExpectRead("ignored-event budget bounds one read",
+            SysConsoleReadStatus::NoData))
+    {
+        return false;
+    }
+    return ExpectRead("events survive the bounded read",
+        SysConsoleReadStatus::LineReady,
+        "a");
+}
+
 bool TestConsoleInput()
 {
     ConsoleInput input;
@@ -849,7 +882,8 @@ bool TestConsoleInput()
         && TestConsoleControlCharactersPassThrough(input)
         && TestConsoleAutoRepeatYieldsAllBytes(input)
         && TestConsoleFocusEventDrained(input)
-        && TestConsoleUnicodeKeyDrained(input);
+        && TestConsoleUnicodeKeyDrained(input)
+        && TestConsoleIgnoredEventBudget(input);
 }
 #else
 int OutputDescriptor(const SysConsoleOutputStream stream)
