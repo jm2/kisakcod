@@ -413,6 +413,72 @@ private:
     bool active_ = false;
 };
 
+// Publishes a second, empty console input buffer as STD_INPUT_HANDLE
+// for the scope: a console-to-console stdin transition is the case
+// where a pending repeat captured on the old handle must not replay
+// into the new one. On destruction the previous standard handle is
+// restored and the swapped buffer is flushed and closed, leaving the
+// enclosing ConsoleInput fixture pristine.
+class ConsoleInputSwap
+{
+public:
+    ConsoleInputSwap() : saved_(GetStdHandle(STD_INPUT_HANDLE))
+    {
+        swapped_ = CreateFileW(
+            L"CONIN$",
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            0,
+            nullptr);
+        if (swapped_ == INVALID_HANDLE_VALUE)
+        {
+            swapped_ = nullptr;
+            return;
+        }
+        if (FlushConsoleInputBuffer(swapped_) == FALSE
+            || SetStdHandle(STD_INPUT_HANDLE, swapped_) == FALSE)
+        {
+            (void)CloseHandle(swapped_);
+            swapped_ = nullptr;
+            return;
+        }
+    }
+
+    ConsoleInputSwap(const ConsoleInputSwap &) = delete;
+    ConsoleInputSwap &operator=(const ConsoleInputSwap &) = delete;
+
+    ~ConsoleInputSwap()
+    {
+        if (swapped_ == nullptr)
+            return;
+        (void)SetStdHandle(STD_INPUT_HANDLE, saved_);
+        (void)FlushConsoleInputBuffer(swapped_);
+        (void)CloseHandle(swapped_);
+    }
+
+    [[nodiscard]] bool IsReady() const
+    {
+        return swapped_ != nullptr;
+    }
+
+    bool WriteEvents(const INPUT_RECORD *events, const DWORD count)
+    {
+        if (!IsReady() || events == nullptr || count == 0)
+            return false;
+        DWORD written = 0;
+        return WriteConsoleInputW(
+                   swapped_, events, count, &written)
+            != FALSE
+            && written == count;
+    }
+
+private:
+    HANDLE saved_ = nullptr;
+    HANDLE swapped_ = nullptr;
+};
+
 bool TestValidFlush()
 {
     std::array<WCHAR, MAX_PATH + 1> directory{};
@@ -682,6 +748,58 @@ bool TestConsoleAutoRepeatYieldsAllBytes(ConsoleInput &input)
         "console auto-repeat yields all repeat bytes", "aaaa");
 }
 
+// A pending auto-repeat must not follow a console-to-console stdin
+// swap. A repeat whose first byte is the line terminator leaves the
+// remaining repeats pending across the completed read; the next read
+// must consume them only while STD_INPUT_HANDLE still resolves to the
+// handle that produced them. After the swap the stale bytes are
+// discarded — the swapped console reports an empty queue instead of
+// replaying the old console's input, and its own input then reads
+// back unmixed.
+bool TestConsolePendingRepeatDiscardedOnHandleSwap(ConsoleInput &input)
+{
+    const INPUT_RECORD events[] = {
+        ConsoleKeyEvent(true, '\r', 3),
+    };
+    if (!Check(input.WriteEvents(events, static_cast<DWORD>(
+                    sizeof(events) / sizeof(events[0]))),
+            "write repeat terminator"))
+    {
+        return false;
+    }
+    // The first '\r' completes an empty line; two repeat bytes stay
+    // pending for the following reads.
+    if (!ExpectRead("repeat terminator completes with pending bytes",
+            SysConsoleReadStatus::LineReady, ""))
+    {
+        return false;
+    }
+
+    const ConsoleInputSwap swapped;
+    if (!Check(swapped.IsReady(), "create swapped console input"))
+        return false;
+    // The pending repeats belong to the previous handle: the swapped
+    // console's queue is empty, so the read reports NoData rather than
+    // replaying a stale terminator (which would surface as LineReady).
+    if (!ExpectRead("stale pending repeats do not cross the handle swap",
+            SysConsoleReadStatus::NoData))
+    {
+        return false;
+    }
+    const INPUT_RECORD ownInput[] = {
+        ConsoleKeyEvent(true, 'x'),
+        ConsoleKeyEvent(true, '\n'),
+    };
+    if (!Check(swapped.WriteEvents(ownInput, static_cast<DWORD>(
+                    sizeof(ownInput) / sizeof(ownInput[0]))),
+            "write swapped-console line"))
+    {
+        return false;
+    }
+    return ExpectRead("swapped console reads its own input after stale discard",
+        SysConsoleReadStatus::LineReady, "x");
+}
+
 // A focus event interleaved between KEY_UP and the printable byte
 // must be drained without producing output; the focus event is the
 // only event in this scenario that should be drained before the
@@ -881,6 +999,7 @@ bool TestConsoleInput()
         && TestConsoleZeroAsciiKeysDrained(input)
         && TestConsoleControlCharactersPassThrough(input)
         && TestConsoleAutoRepeatYieldsAllBytes(input)
+        && TestConsolePendingRepeatDiscardedOnHandleSwap(input)
         && TestConsoleFocusEventDrained(input)
         && TestConsoleUnicodeKeyDrained(input)
         && TestConsoleIgnoredEventBudget(input);

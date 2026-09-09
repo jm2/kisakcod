@@ -104,6 +104,12 @@ struct PendingRepeatState
 {
     unsigned char byte = 0;
     WORD remaining = 0;
+    // The standard-input handle that produced the pending bytes.
+    // STD_INPUT_HANDLE can be re-published between bytewise reads (a
+    // console re-open, or a harness swapping the handle), so a pending
+    // repeat captured on one console must never replay into another:
+    // consumption validates the handle and discards stale state.
+    HANDLE source = nullptr;
 };
 
 PendingRepeatState pendingRepeat;
@@ -139,9 +145,20 @@ SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
 {
     if (pendingRepeat.remaining != 0)
     {
-        const unsigned char byte = pendingRepeat.byte;
-        --pendingRepeat.remaining;
-        return {SysConsoleRawReadStatus::Data, byte};
+        if (pendingRepeat.source != input)
+        {
+            // Console-to-console transition: the pending bytes belong
+            // to a handle that is no longer published, so replaying
+            // them would inject the old console's input into the new
+            // one. Discard the state and drain the current handle.
+            pendingRepeat = PendingRepeatState{};
+        }
+        else
+        {
+            const unsigned char byte = pendingRepeat.byte;
+            --pendingRepeat.remaining;
+            return {SysConsoleRawReadStatus::Data, byte};
+        }
     }
 
     DWORD eventsRead = 0;
@@ -182,6 +199,7 @@ SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
             pendingRepeat.byte = translated.byte;
             pendingRepeat.remaining =
                 static_cast<WORD>(event.Event.KeyEvent.wRepeatCount - 1);
+            pendingRepeat.source = input;
         }
         return translated;
     }
