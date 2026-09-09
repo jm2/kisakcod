@@ -2182,7 +2182,15 @@ bool Scr_ScriptWatch::EvaluateWatchChildElement(
     return Scr_ScriptWatch::PostEvaluateWatchElement(childElement, &value);
 }
 
-int __cdecl CompareThreadIndices(uint32_t *arg1, uint32_t *arg2);
+// ki-n1et: the remote-debug watch children sort raw thread-id dwords, so
+// this TU keeps its own retail (uint32_t*, uint32_t*) comparator. The
+// previously shared scr_variable.cpp symbol was retyped for the widened
+// VariableDebugInfo records (82244072), which changed its MSVC decorated
+// name and broke the Windows x86 game link (LNK2019 from this object).
+static int __cdecl CompareThreadIndices(uint32_t *arg1, uint32_t *arg2)
+{
+    return *arg1 - *arg2;
+}
 
 void Scr_ScriptWatch::EvaluateWatchChildren(Scr_WatchElement_s *parentElement)
 {

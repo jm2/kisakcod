@@ -3337,21 +3337,27 @@ set_tests_properties(script-readstack-nested-contracts PROPERTIES TIMEOUT 60)
 # script-widening-value-contracts: the widened sval_u parse cell and the
 # widened runtime records must move full-width host pointers through copy
 # assignment and keep their RUNTIME_SIZE contract sizes on every target.
-add_executable(kisakcod-script-widening-value-tests
-    script_widening_value_test.cpp)
-target_include_directories(
-    kisakcod-script-widening-value-tests PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-script-widening-value-tests PRIVATE cxx_std_20)
-target_compile_definitions(
-    kisakcod-script-widening-value-tests PRIVATE KISAK_DEDI_HEADLESS=1)
-kisakcod_test_warnings(kisakcod-script-widening-value-tests)
-set_target_properties(
-    kisakcod-script-widening-value-tests PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-add_test(
-    NAME script-widening-value-contracts
-    COMMAND kisakcod-script-widening-value-tests)
+# Windows is excluded to match the _WIN32 guard inside the test TU itself
+# (its contract sizes assume the LP64 host ABI); wiring it into the Windows
+# portable legs tripped C1189 "#error: portable test target only" (82244072
+# rejection). The source-invariants ctest below still runs on every target.
+if(NOT WIN32)
+    add_executable(kisakcod-script-widening-value-tests
+        script_widening_value_test.cpp)
+    target_include_directories(
+        kisakcod-script-widening-value-tests PRIVATE ${SRC_DIR})
+    target_compile_features(
+        kisakcod-script-widening-value-tests PRIVATE cxx_std_20)
+    target_compile_definitions(
+        kisakcod-script-widening-value-tests PRIVATE KISAK_DEDI_HEADLESS=1)
+    kisakcod_test_warnings(kisakcod-script-widening-value-tests)
+    set_target_properties(
+        kisakcod-script-widening-value-tests PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(
+        NAME script-widening-value-contracts
+        COMMAND kisakcod-script-widening-value-tests)
+endif()
 
 # script-widening-source-invariants: pins the sizeof-based allocation,
 # stride and full-union forms the rework introduced and forbids the

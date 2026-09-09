@@ -59,7 +59,12 @@ int  VariableInfoFunctionCompare(VariableDebugInfo *info1, VariableDebugInfo *in
 	return -1;
 }
 
-int __cdecl CompareThreadIndices(VariableDebugInfo *arg1, VariableDebugInfo *arg2)
+// ki-n1et: typed dump-record comparator for the widened VariableDebugInfo
+// stride. Named distinctly from the raw thread-id CompareThreadIndices the
+// remote-debug UI uses (ui_component.cpp) so the two signatures can never
+// collide at link time again (MSVC decorates by parameter type; the 82244072
+// retype of this symbol broke every Windows x86 game link with LNK2019).
+int __cdecl CompareThreadDebugIndices(VariableDebugInfo *arg1, VariableDebugInfo *arg2)
 {
 	return (int)(arg1->pos - arg2->pos);
 }
@@ -1319,8 +1324,8 @@ void  Scr_DumpScriptVariables(bool spreadsheet,
 				}
 				else
 				{
-					VariableInfoCompareCallBack = (int(*)(const void *, const void *))CompareThreadIndices;
-					qsort(infoArray, num, sizeof(VariableDebugInfo), (int(*)(const void *, const void *))CompareThreadIndices);
+					VariableInfoCompareCallBack = (int(*)(const void *, const void *))CompareThreadDebugIndices;
+					qsort(infoArray, num, sizeof(VariableDebugInfo), (int(*)(const void *, const void *))CompareThreadDebugIndices);
 				}
 				i = 0;
 				while (i < num)
@@ -3390,7 +3395,7 @@ int __cdecl VariableInfoFileLineCompare(VariableDebugInfo* info1, VariableDebugI
 	if (fileCompare)
 		return fileCompare;
 	else
-		return CompareThreadIndices(info1, info2);
+		return CompareThreadDebugIndices(info1, info2);
 }
 
 uint32_t  FindVariableIndexInternal2(uint32_t name, uint32_t index)
