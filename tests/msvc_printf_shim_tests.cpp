@@ -7,7 +7,9 @@
 // implementation, so both hosts must satisfy it identically.
 #include <universal/msvc_printf_shim.h>
 
-#include <string.h>
+#include <algorithm>
+#include <cstring>
+#include <iterator>
 
 namespace
 {
@@ -42,16 +44,16 @@ int main()
 
     // A fitting write returns the produced length, terminator excluded,
     // exactly like the MSVC CRT functions.
-    memset(buffer, 0x7F, sizeof(buffer));
+    std::fill(std::begin(buffer), std::end(buffer), char{0x7F});
     Expect(_snprintf(buffer, sizeof(buffer), "%s %s\n", "name", "value")
             == 11,
         "fitting _snprintf returns the unterminated length");
-    Expect(strcmp(buffer, "name value\n") == 0,
+    Expect(std::strcmp(buffer, "name value\n") == 0,
         "fitting _snprintf writes the full output");
 
     // Truncation reports -1 — the return value Com_SaveDvarsToBuffer
     // relies on to stop before advancing past the allocation.
-    memset(buffer, 0x7F, sizeof(buffer));
+    std::fill(std::begin(buffer), std::end(buffer), char{0x7F});
     Expect(_snprintf(buffer, sizeof(buffer), "%s \"%s\"\n",
                 "a_dvar_name_much_longer_than_the_buffer", "value")
             == -1,
@@ -66,7 +68,7 @@ int main()
         "output of count characters truncates to -1");
 
     // vsnprintf through va_list keeps the same contract.
-    memset(buffer, 0x7F, sizeof(buffer));
+    std::fill(std::begin(buffer), std::end(buffer), char{0x7F});
     Expect(FormatForward(buffer, sizeof(buffer), "%d/%d", 12, 34) == 5,
         "fitting _vsnprintf returns the unterminated length");
     Expect(FormatForward(buffer, sizeof(buffer), "%0500d", 7) == -1,
@@ -76,9 +78,9 @@ int main()
     // vsnprintf's terminator within count on truncation (MSVC is allowed
     // to leave the buffer unterminated, so it is not asserted there).
 #if defined(__GNUC__)
-    memset(buffer, 0x7F, sizeof(buffer));
+    std::fill(std::begin(buffer), std::end(buffer), char{0x7F});
     (void)_snprintf(buffer, sizeof(buffer), "%s", "0123456789");
-    Expect(memchr(buffer, '\0', sizeof(buffer)) != nullptr,
+    Expect(std::find(std::begin(buffer), std::end(buffer), char{0}) != std::end(buffer),
         "truncated buffer stays terminated within count on POSIX");
 #endif
 
