@@ -297,41 +297,12 @@ typedef unsigned long long ull;
 #define MAKELL(num) num ## LL
 #define FMT_64 "ll"
 // KisakCOD port: the decompiled sources call the MSVC formatted-print
-// spellings directly, and their callers were compiled against the MSVC
-// return contract: _vsnprintf/_snprintf report truncation as -1. POSIX
-// snprintf/vsnprintf instead return the full required length, so plain
-// aliasing silently changed truncation semantics — Com_SaveDvarsToBuffer
-// advances its buffer by the return value after only a written<0 check,
-// so a translated truncation walked it past the allocation and
-// underflowed the remaining count. Keep the POSIX implementations but
-// restore the MSVC contract: any output that does not fit, terminator
-// included, returns -1. The POSIX truncated-buffer terminator is
-// retained, a strictly safer superset of MSVC (which may leave the
-// truncated buffer unterminated).
-static inline int KISAK_vsnprintf_trunc(
-    char *const buffer, const size_t count, const char *const format,
-    va_list args)
-{
-    const int written = vsnprintf(buffer, count, format, args);
-    if (written < 0 || (size_t)written >= count)
-        return -1;
-    return written;
-}
-
-static inline int KISAK_snprintf_trunc(
-    char *const buffer, const size_t count, const char *const format, ...)
-{
-    va_list args;
-    va_start(args, format);
-    const int written = vsnprintf(buffer, count, format, args);
-    va_end(args);
-    if (written < 0 || (size_t)written >= count)
-        return -1;
-    return written;
-}
-
-#define _vsnprintf KISAK_vsnprintf_trunc
-#define _snprintf KISAK_snprintf_trunc
+// spellings directly; on POSIX hosts these names are shimmed to wrappers
+// that keep the MSVC truncation contract (-1 when the output does not
+// fit) instead of POSIX's full-required-length return. See
+// msvc_printf_shim.h for the contract rationale and
+// tests/msvc_printf_shim_tests.cpp for the runtime contract.
+#include "msvc_printf_shim.h"
 #elif defined(_MSC_VER)
 typedef          __int64 ll;
 typedef unsigned __int64 ull;

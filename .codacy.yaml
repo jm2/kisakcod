@@ -9,6 +9,14 @@
 # its ABI contracts are pinned at compile time by static_asserts and
 # exercised byte-for-byte by tests/save_taginfo_tests.cpp.
 #
+# src/universal/msvc_printf_shim.h exists solely to host the two
+# _vsnprintf/_snprintf truncation wrappers: their bodies call vsnprintf
+# with a caller-supplied format string, which is the definition of a
+# printf-family wrapper and unavoidably trips CWE-134-style "use a
+# constant format" patterns. Nothing else will ever live in this file;
+# the truncation contract is runtime-tested by
+# tests/msvc_printf_shim_tests.cpp on every host.
+#
 # The remaining headers carry C++-only constructs on lines touched by the
 # platform port (ki-vuj). The same constructs are compile-checked by the
 # production gate on every supported compiler (cmake --preset
@@ -18,6 +26,7 @@
 # Excluding these paths from the C-parsed static analysis loses no signal.
 exclude_paths:
   - "src/game/taginfo_disk32.h"
+  - "src/universal/msvc_printf_shim.h"
   - "deps/ode/collision.h"
   - "deps/ode/objects.h"
   - "src/physics/ode/collision_trimesh_KISAK.h"
