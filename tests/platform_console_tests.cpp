@@ -422,21 +422,15 @@ private:
 class ConsoleInputSwap
 {
 public:
-    ConsoleInputSwap() : saved_(GetStdHandle(STD_INPUT_HANDLE))
+    // The swap handle is opened in the member initializer (an invalid
+    // CreateFileW handle collapses to nullptr there), so the body only
+    // handles the publish failure.
+    ConsoleInputSwap()
+        : saved_(GetStdHandle(STD_INPUT_HANDLE)),
+          swapped_(OpenSwappedInputBuffer())
     {
-        swapped_ = CreateFileW(
-            L"CONIN$",
-            GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr,
-            OPEN_EXISTING,
-            0,
-            nullptr);
-        if (swapped_ == INVALID_HANDLE_VALUE)
-        {
-            swapped_ = nullptr;
+        if (swapped_ == nullptr)
             return;
-        }
         if (FlushConsoleInputBuffer(swapped_) == FALSE
             || SetStdHandle(STD_INPUT_HANDLE, swapped_) == FALSE)
         {
@@ -479,6 +473,19 @@ public:
     }
 
 private:
+    static HANDLE OpenSwappedInputBuffer()
+    {
+        const HANDLE handle = CreateFileW(
+            L"CONIN$",
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            0,
+            nullptr);
+        return handle == INVALID_HANDLE_VALUE ? nullptr : handle;
+    }
+
     HANDLE saved_ = nullptr;
     HANDLE swapped_ = nullptr;
 };
@@ -988,6 +995,17 @@ bool TestConsoleIgnoredEventBudget(ConsoleInput &input)
         "a");
 }
 
+// Auto-repeat, pending-state discard, and the ignored-event budget all
+// exercise queued-state behavior beyond simple key translation; they
+// are grouped here to keep each test orchestrator within the scanner's
+// cyclomatic-complexity limit.
+bool TestConsolePendingStateContracts(ConsoleInput &input)
+{
+    return TestConsoleAutoRepeatYieldsAllBytes(input)
+        && TestConsolePendingRepeatDiscardedOnHandleSwap(input)
+        && TestConsoleIgnoredEventBudget(input);
+}
+
 bool TestConsoleInput()
 {
     ConsoleInput input;
@@ -1002,11 +1020,9 @@ bool TestConsoleInput()
         && TestConsoleCrlfLine(input)
         && TestConsoleZeroAsciiKeysDrained(input)
         && TestConsoleControlCharactersPassThrough(input)
-        && TestConsoleAutoRepeatYieldsAllBytes(input)
-        && TestConsolePendingRepeatDiscardedOnHandleSwap(input)
         && TestConsoleFocusEventDrained(input)
         && TestConsoleUnicodeKeyDrained(input)
-        && TestConsoleIgnoredEventBudget(input);
+        && TestConsolePendingStateContracts(input);
 }
 #else
 int OutputDescriptor(const SysConsoleOutputStream stream)

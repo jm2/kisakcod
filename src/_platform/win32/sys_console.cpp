@@ -134,6 +134,28 @@ SysConsoleRawReadResult MapInputFailure(const DWORD error) noexcept
 // next call, so no input is dropped — the drain merely resumes later.
 constexpr DWORD CONSOLE_EVENT_READ_BUDGET = 64;
 
+// Consume the pending auto-repeat byte when it belongs to the handle
+// being read; returns true with `result` set when a byte was taken,
+// false when the caller must drain the current handle instead. A
+// console-to-console transition discards the pending bytes: they were
+// captured on a handle that is no longer published, so replaying them
+// would inject the old console's input into the new one.
+bool TakePendingRepeatByte(
+    const HANDLE input, SysConsoleRawReadResult &result) noexcept
+{
+    if (pendingRepeat.remaining == 0)
+        return false;
+    if (pendingRepeat.source != input)
+    {
+        pendingRepeat = PendingRepeatState{};
+        return false;
+    }
+    const unsigned char byte = pendingRepeat.byte;
+    --pendingRepeat.remaining;
+    result = {SysConsoleRawReadStatus::Data, byte};
+    return true;
+}
+
 // Drain pending console input events until one yields a Data byte, the
 // input queue is empty, the per-call event budget is exhausted, or a
 // fatal error is reported.
@@ -143,23 +165,9 @@ constexpr DWORD CONSOLE_EVENT_READ_BUDGET = 64;
 // NoData when the queue is empty or the event budget ran out.
 SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
 {
-    if (pendingRepeat.remaining != 0)
-    {
-        if (pendingRepeat.source != input)
-        {
-            // Console-to-console transition: the pending bytes belong
-            // to a handle that is no longer published, so replaying
-            // them would inject the old console's input into the new
-            // one. Discard the state and drain the current handle.
-            pendingRepeat = PendingRepeatState{};
-        }
-        else
-        {
-            const unsigned char byte = pendingRepeat.byte;
-            --pendingRepeat.remaining;
-            return {SysConsoleRawReadStatus::Data, byte};
-        }
-    }
+    SysConsoleRawReadResult pending{};
+    if (TakePendingRepeatByte(input, pending))
+        return pending;
 
     DWORD eventsRead = 0;
     for (;;)

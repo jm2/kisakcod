@@ -4,7 +4,9 @@
 // without the terminator. On MSVC hosts these names are the real CRT
 // functions; on POSIX hosts q_shared.h shims them through
 // universal/msvc_printf_shim.h. This test asserts the CONTRACT, not the
-// implementation, so both hosts must satisfy it identically.
+// implementation, so both hosts satisfy it identically except at one
+// boundary the UCRT defines differently — the exact-fit len == count
+// case, split per host below with the shim's documented rationale.
 #include <universal/msvc_printf_shim.h>
 
 // Included directly: on MSVC the shim header keeps its body guarded out
@@ -81,13 +83,26 @@ int main()
             == -1,
         "truncating _snprintf returns -1");
 
-    // Exact-fit boundary: count-1 characters of output fit, count
-    // characters do not (the terminator never fits on truncation).
+    // Exact-fit boundary: count-1 characters of output fit with the
+    // terminator on every host.
     char exact[6] = {};
     Expect(_snprintf(exact, sizeof(exact), "%s", "12345") == 5,
         "output of count-1 characters fits");
+    // At len == count the hosts legitimately diverge, and the test pins
+    // each host's real contract instead of pretending they agree. The
+    // UCRT's _snprintf returns len (== count) and leaves the buffer
+    // unterminated; the POSIX shim's documented contract reports -1 for
+    // any output whose terminator does not fit — a strictly safer
+    // superset of UCRT truncation. Production callers only test
+    // written < 0, so on POSIX the shim merely stops one call earlier
+    // than the UCRT would, never overflowing or underflowing.
+#if defined(_MSC_VER)
+    Expect(_snprintf(exact, sizeof(exact), "%s", "123456") == 6,
+        "UCRT: output of count characters returns count, unterminated");
+#else
     Expect(_snprintf(exact, sizeof(exact), "%s", "123456") == -1,
-        "output of count characters truncates to -1");
+        "POSIX shim: output of count characters truncates to -1");
+#endif
 
     // vsnprintf through va_list keeps the same contract.
     std::fill(std::begin(buffer), std::end(buffer), char{0x7F});
