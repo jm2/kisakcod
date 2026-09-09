@@ -14,6 +14,21 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+// The legacy _vsnprintf/_snprintf spellings are the surface under test:
+// the decompiled callers were compiled against their MSVC truncation
+// contract, and on MSVC hosts those names are the real CRT functions this
+// file asserts (the shim in universal/msvc_printf_shim.h stays guarded
+// out there). MSVC deprecates both names (C4996) and /WX escalates the
+// warning to an error, so suppress the deprecation for this translation
+// unit only. This does not adopt the spellings anywhere new — it pins the
+// exact deprecated-but-contractual behavior production was built against;
+// the standard spellings (vsnprintf/snprintf) deliberately return a
+// different value on truncation and would not exercise this contract.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996) // legacy CRT names are the test surface
+#endif
+
 #include <algorithm>
 #include <cstring>
 #include <iterator>
@@ -99,3 +114,7 @@ int main()
     puts("msvc-printf-shim contracts OK");
     return 0;
 }
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
