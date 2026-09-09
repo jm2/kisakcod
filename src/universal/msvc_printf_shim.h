@@ -1,6 +1,15 @@
 #ifndef KISAK_MSVC_PRINTF_SHIM_H
 #define KISAK_MSVC_PRINTF_SHIM_H
 
+// MSVC keeps its own CRT implementations untouched: the native
+// _vsnprintf/_snprintf already carry the truncation contract below, so
+// the shim only exists to reproduce it on POSIX hosts. Guarding the
+// contents keeps every host exercising the implementation production
+// actually uses — including tests/msvc_printf_shim_tests.cpp, which
+// asserts the contract against the real CRT on Windows and against this
+// shim on POSIX.
+#if !defined(_MSC_VER)
+
 #include <stdarg.h>
 #include <stdio.h>
 
@@ -22,7 +31,7 @@
 // of a printf-family wrapper and unavoidably trips CWE-134-style
 // "use a constant format" scanners (see .codacy.yaml). The truncation
 // contract itself is runtime-tested by tests/msvc_printf_shim_tests.cpp
-// on every host, and MSVC keeps its own untouched implementations.
+// on every host.
 static inline int KISAK_vsnprintf_trunc(
     char *const buffer, const size_t count, const char *const format,
     va_list args)
@@ -47,5 +56,7 @@ static inline int KISAK_snprintf_trunc(
 
 #define _vsnprintf KISAK_vsnprintf_trunc
 #define _snprintf KISAK_snprintf_trunc
+
+#endif // !defined(_MSC_VER)
 
 #endif // KISAK_MSVC_PRINTF_SHIM_H
