@@ -24,6 +24,12 @@
 #     refused on compare — minted files are coherent by construction, so
 #     any relabeled reference necessarily violates a foreign-identity check;
 #   - success results are NAMED by mode + capture kind;
+#   - both protocol parsers (harness capture output and minted reference
+#     file) normalize a trailing CR: the documented Windows-x86 mint path
+#     runs the harness under a native CRT whose text mode turns LF into
+#     CRLF, and a parser that kept the CR read graph_sha256 as length 65
+#     and identity fields that never matched --host, aborting before any
+#     Windows reference could be minted (Codex P1, PR #113 review);
 #   - minting and comparing still round-trip in instrument mode.
 #
 # The real driver runs against the REAL harness in an already-configured
@@ -117,6 +123,19 @@ expect_silent() {
     local name="$1" needle="$2" file="${3:-$OUT_FILE}"
     if grep -Fq -- "$needle" "$file"; then
         echo "FAIL: $name — output must NOT contain: $needle" >&2
+        sed -n '1,30p' "$file" >&2
+        exit 1
+    fi
+    PASS=$((PASS + 1))
+}
+
+# expect_line_re <name> <ERE> [file] — some whole line must match exactly.
+# The end anchor is the point: a trailing CR (un-normalized CRLF) makes the
+# match fail, so this pins byte-clean parsed values, not prefixes.
+expect_line_re() {
+    local name="$1" regex="$2" file="${3:-$OUT_FILE}"
+    if ! grep -Eq -- "$regex" "$file"; then
+        echo "FAIL: $name — no line matching /$regex/ in $file" >&2
         sed -n '1,30p' "$file" >&2
         exit 1
     fi
@@ -447,5 +466,64 @@ expect_said "accepted capture records the derived platform" \
     "platform=$DERIVED_PLATFORM" "$OUT_FILE"
 expect_said "accepted capture records the validated leg" \
     "leg=$DERIVED_PLATFORM" "$OUT_FILE"
+
+# --- 15. Windows-CRT CRLF: both protocol parsers normalize a trailing CR ----
+# Codex P1 on PR #113 (review comment 3969024287): the documented Windows-x86
+# mint path runs the harness under a native CRT whose text mode translates
+# LF newlines to CRLF, and a reference minted inside that tree carries CRLF
+# line endings. A parser that kept the trailing CR read graph_sha256 as
+# length 65 and identity fields that never equaled --host, so the driver
+# aborted before minting any Windows reference. The stub below is the same
+# protocol-boundary fake as section 11, emitting CRLF the way a Windows
+# text-mode harness's output arrives (fixed windows-x86 identity: a
+# reference-leg stand-in whose emitted identity the driver validates against
+# the invocation, never this machine's derived identity).
+STUB_WIN_CRLF="$WORK/stub-win-crlf"
+mkdir -p "$STUB_WIN_CRLF"
+: >"$STUB_WIN_CRLF/CMakeCache.txt"
+cat >"$STUB_WIN_CRLF/kisakcod-retail-fastfile-parity-harness" <<'STUB'
+#!/usr/bin/env bash
+# test stub: Windows-CRT stand-in — the stable graph-v1 capture protocol
+# with CRLF line endings and a FIXED windows-x86 identity (reference-leg
+# stand-in only; printf format escapes emit the CR, no sed \r needed).
+while IFS= read -r line; do
+    printf '%s\r\n' "$line"
+done <<'FIELDS'
+capture_kind=graph-v1
+hash_domain=kisakcod/m5-widened-graph-hash/v2
+platform=windows-x86
+leg=windows-x86
+fastfile_bytes=4
+fastfile_zlib_stream=0
+graph_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+FIELDS
+STUB
+chmod +x "$STUB_WIN_CRLF/kisakcod-retail-fastfile-parity-harness"
+
+WIN_CRLF_MINT="$WORK/win-crlf-mint.txt"
+expect_status "mint from a CRLF (Windows-CRT) capture exits 0" 0 -- \
+    driver --mode instrument --host windows-x86 --ref linux-amd64 \
+        --fastfile "$FIXTURE" --build-dir "$STUB_WIN_CRLF" \
+        --emit-reference "$WIN_CRLF_MINT"
+expect_line_re "minted reference digest line is CR-free" \
+    '^graph_sha256=a{64}$' "$WIN_CRLF_MINT"
+expect_line_re "minted reference leg line is CR-free" \
+    '^leg=windows-x86$' "$WIN_CRLF_MINT"
+
+# The reference-file parser gets the same normalization: a reference minted
+# inside the Windows tree arrives with CRLF line endings and must compare.
+to_crlf() {
+    # LF to CRLF without sed \r escapes (BSD sed does not honor them).
+    while IFS= read -r line; do
+        printf '%s\r\n' "$line"
+    done <"$1" >"$2"
+}
+to_crlf "$WORK/graph-ref.txt" "$WORK/graph-ref-crlf.txt"
+expect_status "m5-graph accepts a CRLF (Windows-minted) reference (exit 0)" 0 -- \
+    driver --mode m5-graph --host linux-amd64 --ref windows-x86 \
+        --fastfile "$FIXTURE" --build-dir "$STUB_BUILD" \
+        --reference-hash "$WORK/graph-ref-crlf.txt"
+expect_said "CRLF-reference match is named widened-runtime-graph parity" \
+    "OK widened-runtime-graph parity (M5"
 
 echo "retail-fastfile-parity driver gates: $PASS check(s) passed"

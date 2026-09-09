@@ -64,12 +64,16 @@
 # The gate is FAIL-CLOSED on protocol identity: capture_kind and hash_domain
 # must be PRESENT in both leg outputs and must match; a missing or mismatched
 # field aborts the gate before any digest compare, so the contract cannot
-# silently drift. --mode m5-graph additionally fails closed on leg identity
-# and refuses envelope-only captures outright. Identity is validated on mint
-# AND compare: minting requires the capture's derived platform/leg identity
-# to be present and to match --host (foreign or missing identity writes
-# nothing), and comparing requires the reference's recorded identity to
-# match --ref and to be internally coherent (platform == leg).
+# silently drift. Field parsing normalizes a trailing CR on BOTH paths — the
+# Windows-x86 mint runs the harness under a native CRT whose text mode emits
+# CRLF, and a reference minted in that tree carries CRLF line endings; an
+# un-normalized CR would make the 64-hex digest read as 65 characters and
+# identity fields mismatch --host/--ref. --mode m5-graph additionally fails
+# closed on leg identity and refuses envelope-only captures outright. Identity
+# is validated on mint AND compare: minting requires the capture's derived
+# platform/leg identity to be present and to match --host (foreign or missing
+# identity writes nothing), and comparing requires the reference's recorded
+# identity to match --ref and to be internally coherent (platform == leg).
 #
 # Exit codes:
 #   0  parity/consistency established (result named by mode + capture kind)
@@ -252,7 +256,18 @@ fi
 
 parse_field() {
     # parse_field <output> <key>
-    printf '%s\n' "$1" | sed -n "s/^$2=//p"
+    # Both protocol parsers (harness capture output and minted reference
+    # file) flow through here, so this is the one place CRLF must be
+    # normalized: the documented Windows-x86 mint path runs the harness
+    # under a native CRT whose text mode translates LF newlines to CRLF,
+    # and a reference minted inside that tree carries CRLF line endings.
+    # A trailing CR left in a parsed value makes graph_sha256 read as
+    # length 65 and identity fields that never equal --host/--ref, so the
+    # driver would abort before minting or comparing anything. tr is used
+    # because BSD sed does not honor \r escapes; protocol values are
+    # single-line identity and digest fields in which a CR is never
+    # legitimate data.
+    printf '%s\n' "$1" | sed -n "s/^$2=//p" | tr -d '\r'
 }
 
 HOST_KIND="$(parse_field "$HOST_OUTPUT" capture_kind)"
