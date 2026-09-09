@@ -399,11 +399,15 @@ fastfile_zlib_stream=0
 graph_sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 FIELDS
 STUB
-    if [ "$drop" = "platform" ]; then
-        sed -i '/^platform=/d' "$dir/kisakcod-retail-fastfile-parity-harness"
-    else
-        sed -i '/^leg=/d' "$dir/kisakcod-retail-fastfile-parity-harness"
-    fi
+    # Drop the identity line portably: BSD sed (macOS) has no suffix-less
+    # `sed -i` — it consumes the pattern as the backup-suffix argument and
+    # then runs the file path as its script ("invalid command code f" on a
+    # /var/folders temp path), so filter through plain sed into a sibling
+    # and replace the file. Identical semantics on GNU and BSD sed.
+    sed "/^${drop}=/d" "$dir/kisakcod-retail-fastfile-parity-harness" \
+        >"$dir/kisakcod-retail-fastfile-parity-harness.dropped-${drop}"
+    mv "$dir/kisakcod-retail-fastfile-parity-harness.dropped-${drop}" \
+        "$dir/kisakcod-retail-fastfile-parity-harness"
     chmod +x "$dir/kisakcod-retail-fastfile-parity-harness"
 }
 make_incomplete_stub "$WORK/stub-noleg" leg
