@@ -7,6 +7,13 @@
 // implementation, so both hosts must satisfy it identically.
 #include <universal/msvc_printf_shim.h>
 
+// Included directly: on MSVC the shim header keeps its body guarded out
+// (the native CRT functions stay unmapped), so the varargs machinery
+// this test's forwarder uses and the fprintf/stderr diagnostics must
+// come from the C headers themselves.
+#include <stdarg.h>
+#include <stdio.h>
+
 #include <algorithm>
 #include <cstring>
 #include <iterator>

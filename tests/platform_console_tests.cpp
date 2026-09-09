@@ -463,7 +463,11 @@ public:
         return swapped_ != nullptr;
     }
 
-    bool WriteEvents(const INPUT_RECORD *events, const DWORD count)
+    // Const: writing through the swapped handle mutates the console
+    // queue, never this object's members, so the RAII swap may be held
+    // const while its buffer is populated (C2662 at the handle-swap
+    // contract test).
+    bool WriteEvents(const INPUT_RECORD *events, const DWORD count) const
     {
         if (!IsReady() || events == nullptr || count == 0)
             return false;
