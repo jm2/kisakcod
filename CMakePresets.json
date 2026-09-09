@@ -66,6 +66,7 @@
       "binaryDir": "${sourceDir}/build-macos-arm64-mp",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
         "KISAK_PLATFORM": "macos",
         "KISAK_BUILD_MP": "OFF",
         "KISAK_BUILD_DEDICATED": "OFF",
