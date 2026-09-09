@@ -30,7 +30,7 @@ void __cdecl TRACK_scr_evaluate();
 uint32_t __cdecl Scr_GetBuiltin(sval_u func_name);
 int __cdecl Scr_CompareCanonicalStrings(uint32_t *arg1, uint32_t *arg2);
 void __cdecl Scr_ArchiveCanonicalStrings();
-int __cdecl CompareCanonicalStrings(const char **arg1, const char **arg2);
+int __cdecl CompareCanonicalStrings(const ArchivedCanonicalStringInfo *arg1, const ArchivedCanonicalStringInfo *arg2);
 const char *__cdecl Scr_GetCanonicalString(uint32_t fieldName);
 void __cdecl Scr_InitEvaluate();
 void __cdecl Scr_EndLoadEvaluate();

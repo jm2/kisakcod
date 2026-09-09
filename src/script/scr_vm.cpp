@@ -118,7 +118,7 @@ Scr_StringNode_s* __cdecl Scr_GetStringList(const char* filename, char** pBuf)
         LABEL_10:
             if (*end == 10)
                 ++end;
-            v3 = (Scr_StringNode_s*)Hunk_AllocDebugMem(8);
+            v3 = (Scr_StringNode_s*)Hunk_AllocDebugMem(sizeof(Scr_StringNode_s));
             *pTail = v3;
             v3->text = text;
             v3->next = 0;
@@ -181,8 +181,10 @@ int __cdecl Scr_GetFunctionHandle(const char* filename, const char* name)
             "pos.type == VAR_CODE::pos || pos.type == VAR_DEVELOPER_CODE::pos");
     if (!Scr_IsInOpcodeMemory(v3.u.codePosValue))
         return 0;
-    result = v3.u.intValue - (uint32_t)scrVarPub.programBuffer;
-    if ((const char*)v3.u.intValue == scrVarPub.programBuffer)
+    // M4 (ki-n1et): the payload is a live code position; read it through
+    // the pointer member (intValue truncates it on 64-bit).
+    result = static_cast<int>(v3.u.codePosValue - scrVarPub.programBuffer);
+    if (v3.u.codePosValue == scrVarPub.programBuffer)
         MyAssertHandler(".\\script\\scr_main.cpp", 106, 0, "%s", "result");
     return result;
 }
@@ -377,11 +379,14 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
             case 'W':
                 if (top[-1].type != 1)
                     goto LABEL_19;
-            $LN54_3:
+                $LN54_3:
                 if (top->type != 9 || scrVmPub.function_count >= 32)
                     goto LABEL_19;
                 *localId = 0;
-                result = (char*)top->u.intValue;
+                // M4 (ki-n1et): VAR_FUNCTION payloads are live code
+                // positions (pushed through .u.codePosValue); retrieving
+                // them through intValue truncated the pointer on 64-bit.
+                result = (char*)top->u.codePosValue;
                 break;
             default:
                 goto LABEL_19;
@@ -543,7 +548,10 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
             case 94:
             case 96:
                 type = top->type;
-                value.u.intValue = top->u.intValue;
+                // M4 (ki-n1et): full widened cell copy; the ref-counted
+                // payload may be pointer-bearing and the intValue member
+                // only covers half of it on 64-bit.
+                value.u = top->u;
                 value.type = (Vartype_t)type;
                 AddRefToValue(type, value.u);
                 Scr_CastBool(&value);
@@ -560,7 +568,8 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
             case 95:
             case 97:
                 v7 = top->type;
-                value.u.intValue = top->u.intValue;
+                // M4 (ki-n1et): full widened cell copy (see cases 94/96).
+                value.u = top->u;
                 value.type = (Vartype_t)v7;
                 AddRefToValue(v7, value.u);
                 Scr_CastBool(&value);
@@ -1357,7 +1366,10 @@ void __cdecl Scr_TerminateWaittillThread(uint32_t localId, uint32_t startLocalId
             MyAssertHandler(".\\script\\scr_vm.cpp", 3276, 0, "%s", "stackId");
         if (GetValueType(stackId) != 10)
             MyAssertHandler(".\\script\\scr_vm.cpp", 3277, 0, "%s", "GetValueType( stackId ) == VAR_STACK");
-        stackValue = (VariableStackBuffer*)GetVariableValueAddress(stackId)->u.intValue;
+        // M4 (ki-n1et): VAR_STACK entries hold a live VariableStackBuffer
+        // pointer in the widened union; retrieve it through the pointer
+        // member (intValue truncates on 64-bit).
+        stackValue = GetVariableValueAddress(stackId)->u.stackValue;
         if (scrVarPub.developer)
             Scr_GetStackThreadPos(localId, stackValue, 1);
         VM_CancelNotifyInternal(notifyListOwnerId.stringValue, startLocalId, notifyListId, notifyNameListId, stringValue);
@@ -1372,7 +1384,8 @@ void __cdecl Scr_TerminateWaittillThread(uint32_t localId, uint32_t startLocalId
             MyAssertHandler(".\\script\\scr_vm.cpp", 3293, 0, "%s", "stackId");
         if (GetValueType(stackIda) != 10)
             MyAssertHandler(".\\script\\scr_vm.cpp", 3294, 0, "%s", "GetValueType( stackId ) == VAR_STACK");
-        stackValue = (VariableStackBuffer*)GetVariableValueAddress(stackIda)->u.intValue;
+        // M4 (ki-n1et): pointer-member retrieval (see above).
+        stackValue = GetVariableValueAddress(stackIda)->u.stackValue;
         if (scrVarPub.developer)
             Scr_GetStackThreadPos(localId, stackValue, 1);
         RemoveVariable(startLocalId, 0x18001u);
@@ -1410,7 +1423,8 @@ void __cdecl Scr_CancelNotifyList(uint32_t notifyListOwnerId)
         iassert(startLocalId);
         if (GetValueType(stackId) == VAR_STACK)
         {
-            stackValue = (VariableStackBuffer*)GetVariableValueAddress(stackId)->u.intValue;
+            // M4 (ki-n1et): pointer-member retrieval (see VM_CancelNotify).
+            stackValue = GetVariableValueAddress(stackId)->u.stackValue;
             Scr_CancelWaittill(startLocalId);
             VM_TrimStack(startLocalId, stackValue, 0);
         }
@@ -1426,7 +1440,8 @@ void __cdecl Scr_CancelNotifyList(uint32_t notifyListOwnerId)
                 iassert(!Scr_GetThreadNotifyName(selfStartLocalId));
                 iassert(GetValueType(stackId) == VAR_STACK);
                 VariableValueAddress = GetVariableValueAddress(stackId);
-                stackValue = (VariableStackBuffer*)VariableValueAddress->u.intValue;
+                // M4 (ki-n1et): pointer-member retrieval (see VM_CancelNotify).
+                stackValue = VariableValueAddress->u.stackValue;
                 iassert(!stackValue->pos);
                 VM_TrimStack(selfStartLocalId, stackValue, 1);
             }
@@ -3872,7 +3887,10 @@ void __cdecl VM_TerminateTime(uint32_t timeId)
             MyAssertHandler(".\\script\\scr_vm.cpp", 3803, 0, "%s", "startLocalId");
         if (GetValueType(stackId) != 10)
             MyAssertHandler(".\\script\\scr_vm.cpp", 3805, 0, "%s", "GetValueType( stackId ) == VAR_STACK");
-        stackValue = (VariableStackBuffer*)GetVariableValueAddress(stackId)->u.intValue;
+        // M4 (ki-n1et): pointer-member retrieval -- the producer publishes
+        // .u.stackValue; reading it back through intValue truncated the
+        // pointer on 64-bit (operator VM_TerminateTime probe).
+        stackValue = GetVariableValueAddress(stackId)->u.stackValue;
         RemoveObjectVariable(timeId, startLocalId);
         Scr_ClearWaitTime(startLocalId);
         VM_TerminateStack(startLocalId, startLocalId, stackValue);
@@ -5125,7 +5143,9 @@ uint32_t Scr_GetFunc(uint32_t index)
                     0,
                     "%s",
                     "Scr_IsInOpcodeMemory( value->u.codePosValue )");
-            return value->u.intValue - (uint32_t)scrVarPub.programBuffer;
+            // M4 (ki-n1et): VAR_FUNCTION payload is a live code position;
+            // the offset is the pointer delta, not an intValue read.
+            return static_cast<uint32_t>(value->u.codePosValue - scrVarPub.programBuffer);
         }
         scrVarPub.error_index = index + 1;
         Scr_Error(va("type %s is not a function", var_typename[value->type]));
@@ -5163,9 +5183,6 @@ XAnim_s * Scr_GetAnimTree(uint32_t index)
 {
     VariableValue *v3; // r29
     int type; // r11
-    VariableUnion *v5; // r11
-    int v7; // r4
-    int v8; // r3
     const char *v9; // r3
     const char *v10; // r4
 
@@ -5175,11 +5192,16 @@ XAnim_s * Scr_GetAnimTree(uint32_t index)
         type = v3->type;
         if (type == 6)
         {
-            if (v3->u.intValue <= scrAnimPub.xanim_num[1])
+            // M4 (ki-n1et): the retail form indexed the anim-tree lookup
+            // with raw `4 * handle` byte math over the decompiled
+            // xanim_num[-128] base -- the 32-bit scr_animtree_t record
+            // stride. The lookup entries widened with the ABI, so index
+            // the typed table (identical element on every width).
+            const uint32_t treeIndex = v3->u.intValue;
+            if (treeIndex <= scrAnimPub.xanim_num[1])
             {
-                v5 = (VariableUnion *)(4 * v3->u.intValue);
-                if (*(uint32_t *)((char *)&scrAnimPub.xanim_num[-128] + (_DWORD)v5))
-                    return *(XAnim_s **)((char *)&scrAnimPub.xanim_num[-128] + (_DWORD)v5);
+                if (scrAnimPub.xanim_lookup[1][treeIndex].anims)
+                    return scrAnimPub.xanim_lookup[1][treeIndex].anims;
             }
             scrVarPub.error_message = "bad anim tree";
         }

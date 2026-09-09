@@ -541,11 +541,13 @@ void  Scr_KillThread(uint32_t parentId);
 void  Scr_CheckLeakRange(uint32_t begin, uint32_t end);
 void  Scr_CheckLeaks(void);
 
-int  ThreadInfoCompare(_DWORD* info1, _DWORD* info2);
+// M4 (ki-n1et): dump-record comparators are typed (the retail _DWORD*
+// walks encoded the frozen 32-bit record layouts).
+int  ThreadInfoCompare(ThreadDebugInfo* info1, ThreadDebugInfo* info2);
 //int  VariableInfoCompare(void const*, void const*);
-int VariableInfoFileNameCompare(_DWORD* info1, _DWORD* info2);
-int VariableInfoCountCompare(_DWORD* info1, _DWORD* info2);
-int VariableInfoFileLineCompare(_DWORD* info1, _DWORD* info2);
+int VariableInfoFileNameCompare(VariableDebugInfo* info1, VariableDebugInfo* info2);
+int VariableInfoCountCompare(VariableDebugInfo* info1, VariableDebugInfo* info2);
+int VariableInfoFileLineCompare(VariableDebugInfo* info1, VariableDebugInfo* info2);
 uint32_t  FindVariableIndexInternal2(uint32_t name, uint32_t index);
 uint32_t FindVariableIndexInternal(uint32_t parentId, uint32_t name);
 unsigned short  AllocVariable(void);

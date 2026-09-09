@@ -46,14 +46,27 @@ RUNTIME_SIZE(scr_block_s, 0x218, 0x218);
 
 union sval_u // sizeof=0x4
 {                                       // ...
+    // M4 (ki-n1et): the parse-node union holds host pointers above the type
+    // word on 64-bit (node / codePosValue / block). Copying only the 32-bit
+    // Enum_t member dropped every pointer bit, so both assignment overloads
+    // move the full union representation instead. Byte-wise move (not member
+    // assignment) keeps this well-defined for the inactive members and is
+    // exactly sizeof(sval_u) on every target -- 4 bytes on ILP32, 8 bytes on
+    // native64.
     sval_u& operator=(const sval_u &other)
     {
-        this->type = other.type;
+        unsigned char *dst = reinterpret_cast<unsigned char *>(this);
+        const unsigned char *src = reinterpret_cast<const unsigned char *>(&other);
+        for (size_t i = 0; i < sizeof(sval_u); ++i)
+            dst[i] = src[i];
         return *this;
     }
     sval_u &operator=(sval_u &other)
     {
-        this->type = other.type;
+        unsigned char *dst = reinterpret_cast<unsigned char *>(this);
+        const unsigned char *src = reinterpret_cast<const unsigned char *>(&other);
+        for (size_t i = 0; i < sizeof(sval_u); ++i)
+            dst[i] = src[i];
         return *this;
     }
 
@@ -279,7 +292,7 @@ const char *__cdecl Scr_GetElementThreadPos(Scr_WatchElement_s *element);
 void __cdecl Scr_SetElementRefText(Scr_WatchElement_s *element, char *fieldText);
 void __cdecl Scr_ConnectElementChildren(Scr_WatchElement_s *parentElement);
 void __cdecl Scr_SortElementChildren(Scr_WatchElement_s *parentElement);
-int __cdecl CompareThreadElements(int *arg1, int *arg2);
+int __cdecl CompareThreadElements(Scr_WatchElement_s **arg1, Scr_WatchElement_s **arg2);
 Scr_WatchElement_s *__cdecl Scr_CreateWatchElement(char *text, Scr_WatchElement_s **prevElem, const char *name);
 void __cdecl Scr_Evaluate();
 void __cdecl Scr_CheckBreakonNotify(

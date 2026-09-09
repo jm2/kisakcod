@@ -2298,6 +2298,11 @@ void __cdecl Scr_CheckMaxSwitchCases(int count)
         Com_Error(ERR_DROP, "MAX_SWITCH_CASES exceeded");
 }
 
+// M4 (ki-n1et): the child-block scratch arrays hold MAX_SWITCH_CASES
+// (1024) block pointers. The literal 4096 encoded the 32-bit pointer
+// width; a native64 build silently halved the capacity and could overflow
+// past 512 break/continue blocks. Size by the pointer.
+
 void __cdecl Scr_AddContinueBlock(scr_block_s *block)
 {
     if (!block->abortLevel && scrCompileGlob.continueChildBlocks && scrCompilePub.developer_statement != 2)
@@ -2380,7 +2385,7 @@ void __cdecl EmitForStatement(
     oldContinueChildCount = scrCompileGlob.continueChildCount;
     breakChildCount = 0;
     continueChildCount = 0;
-    continueChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(4096, "EmitForStatement");
+    continueChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "EmitForStatement");
     scrCompileGlob.continueChildBlocks = continueChildBlocks;
     scrCompileGlob.continueChildCount = &continueChildCount;
     scrCompileGlob.breakBlock = forStatBlock->block;
@@ -2388,7 +2393,7 @@ void __cdecl EmitForStatement(
     {
         pos2 = 0;
         nextPos2 = 0;
-        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "EmitForStatement");
+        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "EmitForStatement");
         scrCompileGlob.breakChildCount = &breakChildCount;
     }
     else
@@ -2508,7 +2513,7 @@ void __cdecl EmitWhileStatement(
     {
         pos2 = 0;
         nextPos2 = 0;
-        breakChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(4096, "EmitWhileStatement");
+        breakChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "EmitWhileStatement");
         scrCompileGlob.breakChildCount = &breakChildCount;
     }
     else
@@ -2828,7 +2833,9 @@ void __cdecl EmitCaseStatementInfo(unsigned int name, sval_u sourcePos)
     }
     else
     {
-        newCaseStatement = (CaseStatementInfo*)Hunk_AllocateTempMemoryHigh(16, "EmitCaseStatementInfo");
+        // M4 (ki-n1et): record-sized allocation; 16 bytes was the frozen
+        // 32-bit CaseStatementInfo (two host pointers on native64).
+        newCaseStatement = (CaseStatementInfo*)Hunk_AllocateTempMemoryHigh(sizeof(CaseStatementInfo), "EmitCaseStatementInfo");
         newCaseStatement->name = name;
         newCaseStatement->codePos = TempMalloc(0);
         newCaseStatement->sourcePos = sourcePos.stringValue;
@@ -2895,7 +2902,7 @@ void __cdecl EmitSwitchStatementList(sval_u val, bool lastStatement, unsigned in
     oldBreakChildCount = scrCompileGlob.breakChildCount;
     oldBreakBlock = scrCompileGlob.breakBlock;
     breakChildCount = 0;
-    breakChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(4096, "EmitSwitchStatementList");
+    breakChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "EmitSwitchStatementList");
     scrCompileGlob.breakChildBlocks = breakChildBlocks;
     scrCompileGlob.breakChildCount = &breakChildCount;
     scrCompileGlob.breakBlock = 0;
@@ -3065,7 +3072,9 @@ void __cdecl EmitBreakStatement(sval_u sourcePos, scr_block_s *block)
 
         if (scrCompilePub.developer_statement != 2)
         {
-            newBreakStatement = (BreakStatementInfo*)Hunk_AllocateTempMemoryHigh(12, "EmitBreakStatement");
+            // M4 (ki-n1et): record-sized allocations (12 bytes was the
+            // frozen 32-bit node; three host pointers on native64).
+            newBreakStatement = (BreakStatementInfo*)Hunk_AllocateTempMemoryHigh(sizeof(BreakStatementInfo), "EmitBreakStatement");
             newBreakStatement->codePos = (char*)scrCompileGlob.codePos;
             newBreakStatement->nextCodePos = TempMalloc(0);
             newBreakStatement->next = scrCompileGlob.currentBreakStatement;
@@ -3096,7 +3105,7 @@ void __cdecl EmitContinueStatement(sval_u sourcePos, scr_block_s *block)
 
         if (scrCompilePub.developer_statement != 2)
         {
-            newContinueStatement = (ContinueStatementInfo*)Hunk_AllocateTempMemoryHigh(12, "EmitContinueStatement");
+            newContinueStatement = (ContinueStatementInfo*)Hunk_AllocateTempMemoryHigh(sizeof(ContinueStatementInfo), "EmitContinueStatement");
             newContinueStatement->codePos = (char*)scrCompileGlob.codePos;
             newContinueStatement->nextCodePos = TempMalloc(0);
             newContinueStatement->next = scrCompileGlob.currentContinueStatement;
@@ -3852,13 +3861,13 @@ void __cdecl Scr_CalcLocalVarsWhileStatement(sval_u expr, sval_u stmt, scr_block
     oldContinueChildCount = scrCompileGlob.continueChildCount;
     breakChildCount = 0;
     continueChildCount = 0;
-    continueChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsWhileStatement");
+    continueChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsWhileStatement");
     scrCompileGlob.continueChildBlocks = continueChildBlocks;
     scrCompileGlob.continueChildCount = &continueChildCount;
     abortLevel = block->abortLevel;
     if (constConditional)
     {
-        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsWhileStatement");
+        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsWhileStatement");
         scrCompileGlob.breakChildCount = &breakChildCount;
     }
     else
@@ -3927,13 +3936,13 @@ void __cdecl Scr_CalcLocalVarsForStatement(
     oldContinueChildCount = scrCompileGlob.continueChildCount;
     breakChildCount = 0;
     continueChildCount = 0;
-    continueChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsForStatement");
+    continueChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsForStatement");
     scrCompileGlob.continueChildBlocks = continueChildBlocks;
     scrCompileGlob.continueChildCount = &continueChildCount;
     abortLevel = block->abortLevel;
     if (constConditional)
     {
-        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsForStatement");
+        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsForStatement");
         scrCompileGlob.breakChildCount = &breakChildCount;
     }
     else
@@ -3999,13 +4008,13 @@ void __cdecl Scr_CalcLocalVarsSwitchStatement(sval_u stmtlist, scr_block_s *bloc
     oldBreakChildBlocks = scrCompileGlob.breakChildBlocks;
     oldBreakChildCount = scrCompileGlob.breakChildCount;
     breakChildCount = 0;
-    breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsSwitchStatement");
+    breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsSwitchStatement");
     scrCompileGlob.breakChildBlocks = breakChildBlocks;
     scrCompileGlob.breakChildCount = &breakChildCount;
     childCount = 0;
     currentBlock = 0;
     hasDefault = 0;
-    childBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsSwitchStatement");
+    childBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsSwitchStatement");
     for (node = stmtlist.node[0].node[1].node; node; node = node[1].node)
     {
         if (node[0].node[0].type == ENUM_case || node[0].node[0].type == ENUM_default)

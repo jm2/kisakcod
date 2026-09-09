@@ -339,6 +339,7 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
     }
 }
 
+//SCRIPT_READSTACK_SLICE_BEGIN
 namespace
 {
 // Maximum nested VAR_STACK records the reader tracks on its explicit frame
@@ -353,6 +354,7 @@ struct ScrReadStackFrame
     VariableStackBuffer *stack; // parent frame being filled
     char *buf;                  // parent record awaiting the child pointer
     unsigned __int16 remaining; // parent records left after that record
+    Vartype_t pendingType;      // type the suspended record must carry
 };
 
 // Writes one finished record (type byte + widened payload cell) into the
@@ -516,6 +518,12 @@ VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
             frames[depth].stack = stack;
             frames[depth].buf = buf;
             frames[depth].remaining = remaining;
+            // M4 (ki-n1et): `value` is REUSED while reading the child stack,
+            // so its type word is clobbered by the child's entries. Preserve
+            // the suspended record's type here; restoring only the payload
+            // below left the parent stack pointer tagged as the child's last
+            // entry type (e.g. VAR_INTEGER).
+            frames[depth].pendingType = value.type;
             ++depth;
             stack = Scr_ReadStackHead(memFile);
             buf = stack->buf;
@@ -524,8 +532,9 @@ VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
         if (!depth)
             return stack;
         // Child complete: store its pointer into the parent's pending record
-        // (value.type was set to VAR_STACK by Scr_LoadEntryCell).
+        // and restore the record's preserved type.
         --depth;
+        value.type = frames[depth].pendingType;
         value.u.stackValue = stack;
         stack = frames[depth].stack;
         buf = frames[depth].buf;
@@ -535,6 +544,7 @@ VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
         --remaining;
     }
 }
+//SCRIPT_READSTACK_SLICE_END
 
 void __cdecl Scr_DoLoadEntryInternal(VariableValue *value, MemoryFile *memFile)
 {
@@ -764,7 +774,11 @@ void __cdecl Scr_DoLoadObjectInfo(unsigned __int16 parentId, MemoryFile *memFile
             iassert(!(entryValue->w.type & VAR_MASK));
             --v13;
             v20 = type | entryValue->w.type;
-            entryValue->u.u.intValue = value.u.intValue;
+            // M4 (ki-n1et): move the full widened union. Copying only
+            // intValue dropped the pointer half of pointer-bearing child
+            // payloads on 64-bit (VariableUnion assignment copies the whole
+            // object representation).
+            entryValue->u.u = value.u;
             entryValue->w.type = v20;
         } while (v13);
     }
@@ -790,7 +804,10 @@ void __cdecl Scr_ReadGameEntry(MemoryFile *memFile)
             "%s",
             "!(tempValue.type & ~VAR_MASK)");
     gameId = scrVarPub.gameId;
-    v4.intValue = (int)v5.u.intValue;
+    // M4 (ki-n1et): full widened union move -- the entry may be
+    // pointer-bearing (e.g. a nested stack), and routing it through the
+    // 32-bit intValue member truncated it on 64-bit.
+    v4 = v5.u;
     scrVarGlob.variableList[gameId + VARIABLELIST_CHILD_BEGIN].w.type |= type;
     scrVarGlob.variableList[gameId + VARIABLELIST_CHILD_BEGIN].u.u = v4;
 }
@@ -1217,8 +1234,6 @@ static int CheckReferences()
     unsigned int i; // r31
     int v2; // r30
     int v3; // r9
-    unsigned int v4; // r7
-    VariableValueInternal_w *j; // r11
 
     if (!scrVarDebugPub || scrStringDebugGlob && scrStringDebugGlob->ignoreLeaks)
         return 1;
@@ -1238,18 +1253,26 @@ static int CheckReferences()
         }
     }
     v3 = 458754;
-    v4 = 16;
-    for (j = &scrVarGlob.variableList[2].w;
-        (j->status & 0x60) == 0
+    // M4 (ki-n1et): the walk advances one variable-table entry per step and
+    // compares the entry's value-union payload against its ref-count word.
+    // The retail form (`j += 4` on a 4-byte w pointer; `j[-1].status`
+    // aliasing the union) hard-codes the 16-byte 32-bit entry stride, and on
+    // a 24-byte native64 entry the same pointer delta would alias the HIGH
+    // half of the payload instead of the low dword retail compared. Walk by
+    // entry index and read the union payload member directly, with the same
+    // entry-0x8000 bound and byte-identical ref-count comparisons.
+    unsigned int entryIdx = 2;
+    VariableValueInternal_w *j = &scrVarGlob.variableList[entryIdx].w;
+    while ((j->status & 0x60) == 0
         || (j->type & 0x1Fu) < 0xE
         || *(_WORD *)((char *)scrVarDebugPub->varUsage + v3)
-        && *(unsigned __int16 *)((char *)scrVarDebugPub->varUsage + v3) == (unsigned __int16)j[-1].status + 1;
-        j += 4)
+        && *(unsigned __int16 *)((char *)scrVarDebugPub->varUsage + v3) == (unsigned __int16)scrVarGlob.variableList[entryIdx].u.u.intValue + 1)
     {
-        v4 += 16;
         v3 += 2;
-        if (v4 >= 0x80000)
+        ++entryIdx;
+        if (entryIdx > 0x8000u)
             return 1;
+        j = &scrVarGlob.variableList[entryIdx].w;
     }
     return 0;
 }
@@ -1447,14 +1470,15 @@ void __cdecl Scr_SaveSourceImmediate(SaveImmediate *save)
     unsigned int sourceBufferLookupLen = scrParserPub.sourceBufferLookupLen;
     if (sourceBufferLookupLen)
     {
-        bool *p_archive = &scrParserPub.sourceBufferLookup->archive;
-        do
+        // M4 (ki-n1et): index by element instead of advancing a member
+        // pointer by the frozen 32-bit record size (44 bytes); the native
+        // SourceBufferInfo record is 56 bytes, so the raw stride skipped
+        // every other entry's archive flag on 64-bit.
+        for (unsigned int archiveIdx = 0; archiveIdx < sourceBufferLookupLen; ++archiveIdx)
         {
-            if (*p_archive)
+            if (scrParserPub.sourceBufferLookup[archiveIdx].archive)
                 countOut = ++archivedCount;
-            --sourceBufferLookupLen;
-            p_archive += 44;  // sizeof(SourceBufferInfo) per IDA stride
-        } while (sourceBufferLookupLen);
+        }
     }
     SaveMemory_SaveWriteImmediate(&countOut, 4u, save);
 
@@ -1510,7 +1534,7 @@ void __cdecl Scr_LoadSource(MemoryFile *memFile, void *fileHandle)
             return;
         }
         saveSourceBufferLookup = (SaveSourceBufferInfo *)Hunk_AllocDebugMem(
-            8 * scrParserGlob.saveSourceBufferLookupLen,
+            sizeof(SaveSourceBufferInfo) * scrParserGlob.saveSourceBufferLookupLen,
             "Scr_LoadSource");
         scrParserGlob.saveSourceBufferLookup = saveSourceBufferLookup;
         v5 = scrParserGlob.saveSourceBufferLookupLen - 1;
@@ -1754,8 +1778,11 @@ void __cdecl AddSaveObjectChildren(unsigned int parentId)
     parentType = parentValue->w.type & 0x1F;
     for (i = FindLastSibling(parentId); i; i = FindPrevSibling(i))
     {
-        entryValue = (VariableValueInternal *)((char *)&scrVarGlob.variableList[VARIABLELIST_CHILD_BEGIN]
-            + __ROL4__(scrVarGlob.variableList[i + VARIABLELIST_CHILD_BEGIN].hash.id, 4));
+        // M4 (ki-n1et): typed table indexing. The retail idiom
+        // `(char*)&childBase + __ROL4__(id, 4)` hard-codes the 16-byte
+        // 32-bit entry stride; VariableValueInternal is 24 bytes on
+        // native64, so index by the id instead of rotating it.
+        entryValue = &scrVarGlob.variableList[scrVarGlob.variableList[i + VARIABLELIST_CHILD_BEGIN].hash.id + VARIABLELIST_CHILD_BEGIN];
         iassert(!IsObject(entryValue));
         if (parentType == VAR_ARRAY)
         {
@@ -1919,8 +1946,8 @@ void __cdecl DoSaveObjectInfo(unsigned int parentId, MemoryFile *memFile)
         MemFile_WriteData(memFile, 2, v18);
         for (j = FindLastSibling(parentId); j; j = FindPrevSibling(j))
         {
-            v14 = (VariableValueInternal *)((char *)&scrVarGlob.variableList[VARIABLELIST_CHILD_BEGIN]
-                + __ROL4__(scrVarGlob.variableList[j + VARIABLELIST_CHILD_BEGIN].hash.id, 4));
+            // M4 (ki-n1et): typed table indexing (see AddSaveObjectChildren).
+            v14 = &scrVarGlob.variableList[scrVarGlob.variableList[j + VARIABLELIST_CHILD_BEGIN].hash.id + VARIABLELIST_CHILD_BEGIN];
             v15 = v14->w.status & 0x60;
             if (!v15 || v15 == 96)
                 MyAssertHandler(
@@ -1937,7 +1964,11 @@ void __cdecl DoSaveObjectInfo(unsigned int parentId, MemoryFile *memFile)
                     "%s",
                     "!IsObject( entryValue )");
             w = v14->w;
-            v18[0].u.intValue = v14->u.u.intValue;
+            // M4 (ki-n1et): full widened union move into the saved value;
+            // the child payload may be pointer-bearing and the disk writer
+            // reads exactly the bytes its type needs (never widening the
+            // serialized tokens).
+            v18[0].u = v14->u.u;
             v18[0].type = (Vartype_t)(w.type & 0x1F);
             DoSaveEntry(v18, (VariableValue *)((unsigned int)w.status >> 8), v9, memFile);
         }

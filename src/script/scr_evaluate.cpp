@@ -59,7 +59,9 @@ void __cdecl Scr_ArchiveCanonicalStrings()
             len += strlen(SL_ConvertToString(stringValue)) + 1;
     }
     scrEvaluateGlob.archivedCanonicalStringsBuf = (char *)Hunk_AllocDebugMem(len);
-    scrEvaluateGlob.archivedCanonicalStrings = (ArchivedCanonicalStringInfo *)Hunk_AllocDebugMem(8 * scrVarPub.canonicalStrCount);
+    // M4 (ki-n1et): size by the element, not the frozen 32-bit record size;
+    // ArchivedCanonicalStringInfo is 16 bytes on native64.
+    scrEvaluateGlob.archivedCanonicalStrings = (ArchivedCanonicalStringInfo *)Hunk_AllocDebugMem(sizeof(ArchivedCanonicalStringInfo) * scrVarPub.canonicalStrCount);
     scrEvaluateGlob.canonicalStringLookup = (int *)Hunk_AllocDebugMem(4 * scrVarPub.canonicalStrCount + 4);
     i = 0;
     lena = 0;
@@ -90,7 +92,7 @@ void __cdecl Scr_ArchiveCanonicalStrings()
     qsort(
         scrEvaluateGlob.archivedCanonicalStrings,
         scrVarPub.canonicalStrCount,
-        8u,
+        sizeof(ArchivedCanonicalStringInfo),
         (int(__cdecl *)(const void *, const void *))CompareCanonicalStrings);
     for (ia = 0; ia < (int)scrVarPub.canonicalStrCount; ++ia)
     {
@@ -113,9 +115,13 @@ void __cdecl Scr_ArchiveCanonicalStrings()
     *scrEvaluateGlob.canonicalStringLookup = 0;
 }
 
-int __cdecl CompareCanonicalStrings(const char **arg1, const char **arg2)
+// M4 (ki-n1et): typed comparator. The retail form cast each record to
+// `const char **` and dereferenced element [1] -- width-correct only while
+// the record's pointer offset equals the pointer width. Compare the value
+// member directly so the record layout can never drift out from under it.
+int __cdecl CompareCanonicalStrings(const ArchivedCanonicalStringInfo *arg1, const ArchivedCanonicalStringInfo *arg2)
 {
-    return strcmp(arg1[1], arg2[1]);
+    return strcmp(arg1->value, arg2->value);
 }
 
 const char *__cdecl Scr_GetCanonicalString(uint32_t fieldName)

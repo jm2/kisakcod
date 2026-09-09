@@ -609,7 +609,9 @@ SourceBufferInfo *__cdecl Scr_GetNewSourceBuffer()
         iassert(scrParserPub.sourceBufferLookupLen < scrParserGlob.sourceBufferLookupMaxLen);
 
         newSourceBufferInfo = (char *)Hunk_AllocDebugMem(sizeof(SourceBufferInfo) * scrParserGlob.sourceBufferLookupMaxLen);
-        Com_Memcpy(newSourceBufferInfo, (char *)scrParserPub.sourceBufferLookup, 44 * scrParserPub.sourceBufferLookupLen);
+        // M4 (ki-n1et): grow-copy by the native record size; the frozen
+        // 44-byte stride truncated every second record on native64.
+        Com_Memcpy(newSourceBufferInfo, (char *)scrParserPub.sourceBufferLookup, sizeof(SourceBufferInfo) * scrParserPub.sourceBufferLookupLen);
         Hunk_FreeDebugMem();
         scrParserPub.sourceBufferLookup = (SourceBufferInfo *)newSourceBufferInfo;
     }

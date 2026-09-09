@@ -3282,6 +3282,86 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/script_native_layout_source_test.cmake)
 
+# script-readstack-nested-contracts: production-path behavioral regression
+# for the M4 (ki-n1et) nested VAR_STACK reader. The verbatim
+# Scr_ReadStack slice is extracted from src/script/scr_readwrite.cpp at
+# configure time via its "ki-n1et behavioral-test slice" anchors and
+# compiled into the test TU against the real MemoryFile reader subject.
+# Drives scalar-ended/empty children, siblings, multi-level nesting and
+# the SCR_READSTACK_MAX_NESTING bound through actual save-image bytes.
+set(_rw_slice_source "${SRC_DIR}/script/scr_readwrite.cpp")
+file(READ "${_rw_slice_source}" _rw_slice_text)
+set(_rw_slice_begin "//SCRIPT_READSTACK_SLICE_BEGIN")
+set(_rw_slice_end "//SCRIPT_READSTACK_SLICE_END")
+string(FIND "${_rw_slice_text}" "${_rw_slice_begin}" _rw_slice_b)
+string(FIND "${_rw_slice_text}" "${_rw_slice_end}" _rw_slice_e)
+if(_rw_slice_b EQUAL -1 OR _rw_slice_e EQUAL -1 OR _rw_slice_e LESS_EQUAL _rw_slice_b)
+    message(FATAL_ERROR
+        "Scr_ReadStack behavioral-test slice anchors missing or misordered "
+        "in src/script/scr_readwrite.cpp")
+endif()
+string(LENGTH "${_rw_slice_begin}" _rw_slice_begin_len)
+math(EXPR _rw_slice_b "${_rw_slice_b} + ${_rw_slice_begin_len} + 1")
+math(EXPR _rw_slice_len "${_rw_slice_e} - ${_rw_slice_b}")
+string(SUBSTRING "${_rw_slice_text}" "${_rw_slice_b}" "${_rw_slice_len}" _rw_slice_text)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(WRITE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/script_readstack_slice.inc"
+    "${_rw_slice_text}\n")
+
+add_executable(kisakcod-script-readstack-nested-tests
+    script_readstack_nested_test.cpp)
+target_include_directories(kisakcod-script-readstack-nested-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_compile_definitions(kisakcod-script-readstack-nested-tests PRIVATE KISAK_MP)
+target_compile_features(kisakcod-script-readstack-nested-tests PRIVATE cxx_std_20)
+# The verbatim decompiled slice keeps the legacy diagnostics isolation the
+# memfile subject uses (see its note above); the harness shares the TU.
+if(MSVC)
+    target_compile_options(kisakcod-script-readstack-nested-tests PRIVATE /W0)
+else()
+    target_compile_options(kisakcod-script-readstack-nested-tests PRIVATE -w)
+endif()
+target_link_libraries(
+    kisakcod-script-readstack-nested-tests PRIVATE
+        kisakcod-memfile-test-subject
+        Threads::Threads)
+set_target_properties(kisakcod-script-readstack-nested-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME script-readstack-nested-contracts
+    COMMAND kisakcod-script-readstack-nested-tests)
+set_tests_properties(script-readstack-nested-contracts PROPERTIES TIMEOUT 60)
+
+# script-widening-value-contracts: the widened sval_u parse cell and the
+# widened runtime records must move full-width host pointers through copy
+# assignment and keep their RUNTIME_SIZE contract sizes on every target.
+add_executable(kisakcod-script-widening-value-tests
+    script_widening_value_test.cpp)
+target_include_directories(
+    kisakcod-script-widening-value-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-script-widening-value-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-script-widening-value-tests PRIVATE KISAK_DEDI_HEADLESS=1)
+kisakcod_test_warnings(kisakcod-script-widening-value-tests)
+set_target_properties(
+    kisakcod-script-widening-value-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME script-widening-value-contracts
+    COMMAND kisakcod-script-widening-value-tests)
+
+# script-widening-source-invariants: pins the sizeof-based allocation,
+# stride and full-union forms the rework introduced and forbids the
+# literal-size / frozen-stride / narrow-copy forms from returning.
+add_test(
+    NAME script-widening-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/script_widening_source_test.cmake)
+
 # fuzz_fastfile: production-path fast-file fuzz harness. Exercises the
 # bounded BufCursor read path that backs every retail fast-file loader
 # (xasset families: xmodel, xanim, fx archive body state). The harness

@@ -263,10 +263,15 @@ void __cdecl Scr_FreeDebugExpr(ScriptExpression_t *expr)
     }
 }
 
+// M4 (ki-n1et): the debugger parse-node builders size their allocations in
+// 4-byte sval_u cells. The cell widened to sizeof(sval_u) (8 on native64),
+// so every node's trailing cell count is expressed in full cells -- the
+// node[N] writes below index widened cells.
+
 sval_u __cdecl debugger_node0(Enum_t type)
 {
     sval_u result;
-    result.node = Scr_AllocDebugExpr(type, 4, "debugger_node0");
+    result.node = Scr_AllocDebugExpr(type, sizeof(sval_u), "debugger_node0");
     return result;
 }
 
@@ -274,7 +279,7 @@ sval_u __cdecl debugger_node1(Enum_t type, sval_u val1)
 {
     sval_u result; // eax
 
-    result.node = Scr_AllocDebugExpr(type, 8, "debugger_node1");
+    result.node = Scr_AllocDebugExpr(type, 2 * sizeof(sval_u), "debugger_node1");
     result.node[1].node = val1.node;
 
     return result;
@@ -284,7 +289,7 @@ sval_u __cdecl debugger_node2(Enum_t type, sval_u val1, sval_u val2)
 {
     sval_u result; // eax
 
-    result.node = Scr_AllocDebugExpr(type, 12, "debugger_node2");
+    result.node = Scr_AllocDebugExpr(type, 3 * sizeof(sval_u), "debugger_node2");
     result.node[1].node = val1.node;
     result.node[2].node = val2.node;
     return result;
@@ -294,7 +299,7 @@ sval_u __cdecl debugger_node3(Enum_t type, sval_u val1, sval_u val2, sval_u val3
 {
     sval_u result; // eax
 
-    result.node = Scr_AllocDebugExpr(type, 16, "debugger_node3");
+    result.node = Scr_AllocDebugExpr(type, 4 * sizeof(sval_u), "debugger_node3");
     result.node[1].node = val1.node;
     result.node[2].node = val2.node;
     result.node[3].node = val3.node;
@@ -305,7 +310,7 @@ sval_u __cdecl debugger_node4(Enum_t type, sval_u val1, sval_u val2, sval_u val3
 {
     sval_u result; // eax
 
-    result.node = Scr_AllocDebugExpr(type, 20, "debugger_node4");
+    result.node = Scr_AllocDebugExpr(type, 5 * sizeof(sval_u), "debugger_node4");
     result.node[1].node = val1.node;
     result.node[2].node = val2.node;
     result.node[3].node = val3.node;
@@ -328,12 +333,20 @@ sval_u __cdecl debugger_buffer(Enum_t type, char *buf, uint32_t size, int alignm
     if ((alignment & (alignment - 1)) != 0)
         MyAssertHandler((char *)".\\script\\scr_parsetree.cpp", 594, 0, "%s", "IsPowerOf2( alignment )");
     alignmenta = alignment - 1;
-    result = Scr_AllocDebugExpr(type, size + alignmenta + 8, "debugger_buffer");
+    // M4 (ki-n1et): the trailing bytes cover result[0..1] before the
+    // aligned copy area starts at &result[2]; size those cells with the
+    // widened cell instead of the literal 8.
+    result = Scr_AllocDebugExpr(type, size + alignmenta + 2 * sizeof(sval_u), "debugger_buffer");
     bufCopy = reinterpret_cast<uint8_t *>(
         ~static_cast<uintptr_t>(alignmenta) &
         (reinterpret_cast<uintptr_t>(&result[2]) + alignmenta));
     memcpy(bufCopy, (uint8_t *)buf, size);
-    result[1].intValue = (int)bufCopy;
+    // M4 (ki-n1et): store the buffer pointer through the pointer member.
+    // The retail `(int)bufCopy` store truncated every pointer above 4 GiB
+    // on native64 while the consumers (Scr_EvalPrimitiveExpression /
+    // Scr_CompilePrimitiveExpression for ENUM_string/ENUM_istring) read
+    // the slot back through `.debugString`.
+    result[1].debugString = reinterpret_cast<const char *>(bufCopy);
     return *result; // sus deref
 }
 
