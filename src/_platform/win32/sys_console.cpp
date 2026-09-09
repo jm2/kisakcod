@@ -165,9 +165,9 @@ bool TakePendingRepeatByte(
 // NoData when the queue is empty or the event budget ran out.
 SysConsoleRawReadResult TryReadConsoleByte(const HANDLE input) noexcept
 {
-    SysConsoleRawReadResult pending{};
-    if (TakePendingRepeatByte(input, pending))
-        return pending;
+    SysConsoleRawReadResult repeat{};
+    if (TakePendingRepeatByte(input, repeat))
+        return repeat;
 
     DWORD eventsRead = 0;
     for (;;)
