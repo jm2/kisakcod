@@ -739,7 +739,8 @@ struct RemoveTreeFrame
 // owns it.
 bool EnumerateRemovalFrame(RemoveTreeFrame *const frame)
 {
-    const int ownedFd = dup(frame->directoryFd);
+    // Duplicate atomically with close-on-exec, matching every walk anchor.
+    const int ownedFd = fcntl(frame->directoryFd, F_DUPFD_CLOEXEC, 0);
     if (ownedFd < 0)
         return false;
     DIR *const directory = fdopendir(ownedFd);
@@ -867,7 +868,6 @@ bool RemoveTreeAt(const int directoryFd)
     }
     return ok;
 }
-}
 
 bool ParseRemoveTreePath(
     const char *const utf8Path,
@@ -906,6 +906,8 @@ bool OpenAncestorOfLeaf(
     }
     return true;
 }
+
+} // namespace
 
 bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
 {

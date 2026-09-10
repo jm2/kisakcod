@@ -791,6 +791,12 @@ struct KisakFileDispositionInfoEx
 
 namespace
 {
+// FileDispositionInfoEx has ABI value 21, but older SDKs omit its name.
+// Keep the runtime legacy fallback usable when compiling with those SDKs.
+// https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/ne-minwinbase-file_info_by_handle_class
+constexpr FILE_INFO_BY_HANDLE_CLASS kKisakFileDispositionInfoExClass =
+    static_cast<FILE_INFO_BY_HANDLE_CLASS>(21);
+
 // ---------------------------------------------------------------------------
 // NT runtime surface used for handle-relative recursive deletion.
 //
@@ -1165,7 +1171,7 @@ bool SetDeletionDisposition(
         | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
     if (SetFileInformationByHandle(
             handle,
-            FileDispositionInfoEx,
+            kKisakFileDispositionInfoExClass,
             &dispositionEx,
             sizeof(dispositionEx)))
     {
@@ -1909,6 +1915,8 @@ const char *Kisak_FileSystemLastRemoveTreeDiagnostic(
     return tRemoveTreeStage;
 }
 
+namespace
+{
 // Validates the raw removal path and resolves it to the extended absolute
 // form plus its volume-root length. Diagnostics record the exact
 // validation stage that rejected the path.
@@ -1946,6 +1954,8 @@ bool BuildRemovalExtendedPath(
     }
     return true;
 }
+
+} // namespace
 
 bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
 {

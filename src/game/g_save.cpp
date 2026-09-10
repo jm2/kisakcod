@@ -3,6 +3,7 @@
 #endif
 
 #include "g_save.h"
+#include "taginfo_save.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -54,22 +55,32 @@ const char *monthStr[12] =
   "DEC"
 };
 
-const saveField_t tagInfoFields[4] =
-{
-  { offsetof(tagInfo_s, parent), SF_ENTITY },
-  { offsetof(tagInfo_s, next),   SF_ENTITY },
-  { offsetof(tagInfo_s, name),   SF_STRING },
-  { 0, SF_NONE }
-};
-
 const saveField_t animscriptedFields[1] = { { 0, SF_NONE } };
 
-// tagInfo_s contains pointers, but the retail save payload is a fixed 112-byte
-// Disk32 record. Keep native64 SP compilation closed until that record has a
-// dedicated converter instead of silently reading host-width bytes.
-constexpr int kTagInfoDisk32Bytes = 0x70;
-static_assert(KISAK_ARCH_64BIT == 0,
-    "native64 SP requires a Disk32 tagInfo_s save converter");
+// Entity-address map the tagInfo record module uses to translate between
+// full native entity pointers and validated 1-based save-stream indices.
+// The stride must be the real host gentity_s stride — deriving indices from
+// the low 32 bits with a hard-coded 32-bit-era stride (the legacy
+// WriteField1 SF_ENTITY walker) corrupts the value on 64-bit hosts.
+static const taginfo_save::TagInfoEntityMap kTagInfoEntityMap = {
+    g_entities, sizeof(gentity_s), MAX_GENTITIES};
+
+// The tagInfo record module reports unrecoverable record defects here; the
+// callback must not return.
+static void G_TagInfoSaveFail(const char *message)
+{
+    Com_Error(ERR_DROP, "%s", message);
+}
+
+static const char *G_TagInfoStringFromHandle(const std::uint16_t handle)
+{
+    return SL_ConvertToString(handle);
+}
+
+static std::uint16_t G_TagInfoHandleFromString(const char *text)
+{
+    return static_cast<std::uint16_t>(SL_GetString(text, 0));
+}
 
 const saveField_t gclientFields[5] =
 {
@@ -820,16 +831,38 @@ void __cdecl WriteField2(const saveField_t *field, unsigned __int8 *base, SaveGa
         v11 = *(const void **)&base[ofs];
         if (!v11)
             return;
-        memcpy(v21, v11, kTagInfoDisk32Bytes);
-        v12 = SaveMemory_GetMemoryFile(save);
-        v13 = MemFile_GetUsedSize(v12);
-        //ProfMem_Begin("tagInfo", v13);
-        G_WriteStruct(
-            tagInfoFields,
-            *(unsigned __int8 **)&base[ofs],
-            v21,
-            kTagInfoDisk32Bytes,
-            save);
+        {
+            // The host tagInfo_s is 0x78 bytes on x64 / 0x70 on x86, but the
+            // retail wire image is a fixed 0x70-byte Disk32 record. The
+            // record write is owned by the taginfo_save module: entity
+            // indices are derived there from the FULL native pointers with
+            // stride/range validation (the legacy WriteField1 SF_ENTITY
+            // walker classifies through the low 32 bits and overwrites only
+            // 4 bytes of each 64-bit pointer, so it must not see these
+            // fields), the name handle travels as the retail 0/1 mark with
+            // the CString appended after the image.
+            //
+            // const_cast alone cannot change the pointee type, so routing a
+            // const void * straight to tagInfo_s * through it is ill-formed
+            // (MSVC C2440 on the x86 SP builds). Route through static_cast
+            // first; only the const is then cast away.
+            tagInfo_s *const hostOriginal = const_cast<tagInfo_s *>(
+                static_cast<const tagInfo_s *>(v11));
+            taginfo_save::TagInfoLiveRecord live{};
+            live.parent = hostOriginal->parent;
+            live.next = hostOriginal->next;
+            live.name = hostOriginal->name;
+            live.index = hostOriginal->index;
+            std::memcpy(live.axis, hostOriginal->axis, sizeof(live.axis));
+            std::memcpy(live.parentInvAxis, hostOriginal->parentInvAxis,
+                sizeof(live.parentInvAxis));
+            taginfo_save::WriteHostRecord(
+                SaveMemory_GetMemoryFile(save),
+                kTagInfoEntityMap,
+                G_TagInfoSaveFail,
+                G_TagInfoStringFromHandle,
+                live);
+        }
         goto LABEL_12;
     case SF_TYPE_SCRIPTED:
         v8 = *(const void **)&base[ofs];
@@ -1012,14 +1045,34 @@ void __cdecl ReadField(const saveField_t *field, unsigned __int8 *base, SaveGame
         if (*(unsigned int *)v7)
         {
             v25 = (unsigned __int8 *)MT_Alloc(
-                kTagInfoDisk32Bytes,
+                sizeof(tagInfo_s),
                 MT_TYPE_TAG_INFO);
             *(uintptr_t *)v7 = (uintptr_t)v25;
-            G_ReadStruct(
-                tagInfoFields,
-                v25,
-                kTagInfoDisk32Bytes,
-                save);
+            // The fixed 0x70-byte Disk32 record is read back through the
+            // taginfo_save module: entity indices are validated there and
+            // resolved into FULL native pointers (running the walker's
+            // SF_ENTITY post-processor over rebuilt host pointers would
+            // re-classify them through their low 32 bits and ERR_DROP on
+            // 64-bit hosts), and the trailing CString restores the live
+            // name handle.
+            taginfo_save::TagInfoRestoredRecord restored{};
+            taginfo_save::ReadHostRecord(
+                SaveMemory_GetMemoryFile(save),
+                kTagInfoEntityMap,
+                G_TagInfoSaveFail,
+                G_TagInfoHandleFromString,
+                restored);
+            tagInfo_s *const host = reinterpret_cast<tagInfo_s *>(v25);
+            std::memset(host, 0, sizeof(tagInfo_s));
+            host->parent = static_cast<gentity_s *>(
+                const_cast<void *>(restored.parent));
+            host->next = static_cast<gentity_s *>(
+                const_cast<void *>(restored.next));
+            host->name = restored.name;
+            host->index = restored.index;
+            std::memcpy(host->axis, restored.axis, sizeof(host->axis));
+            std::memcpy(host->parentInvAxis, restored.parentInvAxis,
+                sizeof(host->parentInvAxis));
         }
         break;
     case SF_TYPE_SCRIPTED:

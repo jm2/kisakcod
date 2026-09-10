@@ -45,6 +45,18 @@
         "KISAK_BUILD_SP": "OFF",
         "BUILD_TESTING": "ON"
       }
+    },
+    {
+      "name": "linux-arm64-mp",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-linux-arm64-mp",
+      "cacheVariables": {
+        "KISAK_PLATFORM": "linux",
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "OFF",
+        "KISAK_BUILD_SP": "OFF",
+        "BUILD_TESTING": "ON"
+      }
     }
   ]
 }
