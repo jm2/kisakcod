@@ -93,8 +93,8 @@ struct VariableStackBuffer // sizeof=0xC
     uint16_t bufLen;
     uint16_t localId;
     // Opaque one-byte value persisted byte-exactly in the save image (retail
-    // named this field 'time'; it is a plain uint8_t round-tripped by
-    // WriteStack / Scr_ReadStack, not a time_t, and has no other user).
+    // named this field 'time'; it is the low byte of the script tick,
+    // round-tripped by WriteStack / Scr_ReadStack, not a time_t).
     // cppcheck-suppress unusedStructMember -- consumed by the save reader/writer in scr_readwrite.cpp.
     uint8_t saveStamp;
     char buf[1];

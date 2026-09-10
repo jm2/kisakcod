@@ -638,7 +638,7 @@ void ConnectContinueStatements()
 
 	for (ContinueStatementInfo *statement = scrCompileGlob.currentContinueStatement; statement; statement = statement->next)
 	{
-		*(intptr_t *)statement->codePos = codePos - statement->nextCodePos;
+		Scr_WriteBytecodeValue(statement->codePos, static_cast<intptr_t>(codePos - statement->nextCodePos));
 	}
 }
 
@@ -654,7 +654,7 @@ void ConnectBreakStatements()
 
 	for (BreakStatementInfo *statement = scrCompileGlob.currentBreakStatement; statement; statement = statement->next)
 	{
-		*(intptr_t *)statement->codePos = codePos - statement->nextCodePos;
+		Scr_WriteBytecodeValue(statement->codePos, static_cast<intptr_t>(codePos - statement->nextCodePos));
 	}
 }
 
@@ -1372,6 +1372,7 @@ void EmitGetFloat(float value, sval_u sourcePos)
 EmitGetInteger
 ============
 */
+//SCRIPT_RUNTIME_GET_INTEGER_BEGIN
 void EmitGetInteger(int value, sval_u sourcePos)
 {
 	if (value < 0)
@@ -1418,6 +1419,7 @@ void EmitGetInteger(int value, sval_u sourcePos)
 	AddOpcodePos(sourcePos.stringValue, 1);
 	EmitCodepos((const char*)value);
 }
+//SCRIPT_RUNTIME_GET_INTEGER_END
 
 /*
 ============
@@ -5094,7 +5096,7 @@ void EmitIfElseStatement(sval_u expr, sval_u stmt1, sval_u stmt2, sval_u sourceP
 	if (!lastStatement)
 	{
 		offset = TempMallocAlignStrict(0) - nextPos2;
-		*(intptr_t *)pos2 = offset;
+		Scr_WriteBytecodeValue(pos2, static_cast<intptr_t>(offset));
 	}
 
 	Scr_InitFromChildBlocks(childBlocks, childCount, block);

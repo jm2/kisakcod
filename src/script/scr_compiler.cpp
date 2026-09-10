@@ -333,7 +333,7 @@ void __cdecl EmitGetFloat(float value, sval_u sourcePos)
 
 void __cdecl EmitCodepos(const char *pos)
 {
-    scrCompileGlob.codePos = (unsigned char*)TempMallocAlignStrict(sizeof(pos));
+    scrCompileGlob.codePos = reinterpret_cast<unsigned char *>(TempMallocAlignStrict(sizeof(pos)));
     Scr_WriteBytecodeValue(scrCompileGlob.codePos, pos);
 }
 

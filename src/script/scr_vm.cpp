@@ -328,6 +328,7 @@ char* __cdecl Scr_GetReturnPos(uint32_t* localId)
     return pos;
 }
 
+//SCRIPT_RUNTIME_NEXT_CODEPOS_BEGIN
 char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode, int mode, uint32_t* localId)
 {
     char* result; // eax
@@ -374,7 +375,7 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
                 if (scrVmPub.function_count >= 32)
                     goto LABEL_19;
                 *localId = 0;
-                result = *(char**)pos;
+                result = Scr_ReadBytecodeValue<char *>(pos);
                 break;
             case 'S':
             case 'W':
@@ -508,7 +509,7 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
             case 82:
             case 85:
             case 87:
-                pos += 4;
+                pos += sizeof(uintptr_t);
                 goto LABEL_67;
             case 9:
                 pos += 4;
@@ -544,7 +545,7 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
             case 84:
             case 86:
             case 129:
-                pos += 8;
+                pos += 2 * sizeof(uintptr_t);
                 goto LABEL_67;
             case 94:
             case 96:
@@ -556,7 +557,7 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
                 value.type = (Vartype_t)type;
                 AddRefToValue(type, value.u);
                 Scr_CastBool(&value);
-                v14 = *(_WORD*)pos;
+                v14 = Scr_ReadBytecodeValue<uint16_t>(pos);
                 pos += 2;
                 if (scrVarPub.error_message)
                     goto LABEL_67;
@@ -574,7 +575,7 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
                 value.type = (Vartype_t)v7;
                 AddRefToValue(v7, value.u);
                 Scr_CastBool(&value);
-                v13 = *(_WORD*)pos;
+                v13 = Scr_ReadBytecodeValue<uint16_t>(pos);
                 pos += 2;
                 if (scrVarPub.error_message)
                     goto LABEL_67;
@@ -585,9 +586,9 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
                 else
                     return (char*)pos;
             case 98:
-                return (char*)&pos[*(_DWORD*)pos + 4];
+                return (char*)&pos[Scr_ReadBytecodeValue<int32_t>(pos) + sizeof(uintptr_t)];
             case 99:
-                return (char*)&pos[-*(uint16_t*)pos + 2];
+                return (char*)&pos[-Scr_ReadBytecodeValue<uint16_t>(pos) + 2];
             case 124:
                 posb = &pos[Scr_ReadBytecodeValue<uintptr_t>(pos) + sizeof(uintptr_t)];
                 v12 = Scr_ReadBytecodeValue<unsigned short>(posb);
@@ -651,6 +652,7 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
         return result;
     }
 }
+//SCRIPT_RUNTIME_NEXT_CODEPOS_END
 
 void __cdecl VM_CancelNotify(uint32_t notifyListOwnerId, uint32_t startLocalId)
 {
@@ -1682,12 +1684,16 @@ uintptr_t Scr_ReadUnsigned(const char **pos)
 }
 //SCRIPT_RUNTIME_READ_UNSIGNED_END
 
+//SCRIPT_RUNTIME_READ_NATIVE_INT_BEGIN
 int Scr_ReadInt(const char **pos)
 {
     int value = Scr_ReadBytecodeValue<int>(*pos);
-    *pos += sizeof(int);
+    // EmitCodepos reserves a native slot for integer, animation and jump
+    // operands too; their scalar payload remains 32 bits.
+    *pos += sizeof(uintptr_t);
     return value;
 }
+//SCRIPT_RUNTIME_READ_NATIVE_INT_END
 
 //SCRIPT_RUNTIME_READ_SHORT_BEGIN
 unsigned short Scr_ReadUnsignedShort(const char **pos)

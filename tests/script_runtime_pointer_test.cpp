@@ -30,7 +30,8 @@ scrCompileGlob_t scrCompileGlob{};
 scrVarDebugPub_t scrVarDebugPubBuf{};
 struct { struct { int breakpointCount; const char *name; } func_table[SCR_FUNC_TABLE_SIZE]; } scrVmDebugPub;
 scrEvaluateGlob_t scrEvaluateGlob{};
-struct { int function_count = 0; } scrVmPub;
+struct FixtureFrame { struct { uint32_t localId = 37; } fs; } fixtureFrame;
+struct { int function_count = 0; FixtureFrame *function_frame = &fixtureFrame; } scrVmPub;
 scrVarDebugPub_t debugState{};
 scrVarDebugPub_t *scrVarDebugPub = &debugState;
 scrStringDebugGlob_t *scrStringDebugGlob = nullptr;
@@ -47,7 +48,8 @@ bool notifyFixture = false;
 uint32_t fixtureSelf = 71;
 std::vector<const float *> releasedVectors;
 const float *formattedVector = nullptr;
-std::vector<std::pair<uint32_t, uint32_t>> initializedRanges;
+struct InitializedRange { uint32_t first; uint32_t second; };
+std::vector<InitializedRange> initializedRanges;
 char bytecode[4096]{};
 size_t codeSize = 0;
 CaseStatementInfo *fixtureCases = nullptr;
@@ -125,9 +127,23 @@ char Scr_GetEntClassId(uint32_t) { return 'e'; }
 uint32_t GetArraySize(uint32_t) { return 0; }
 void I_strncpyz(char *out, const char *text, int size) { std::snprintf(out, size, "%s", text); }
 int Com_sprintf(char *out, uint32_t size, const char *format, ...) {
-    va_list args; va_start(args, format); int count = std::vsnprintf(out, size, format, args); va_end(args); return count;
+    va_list args;
+    va_start(args, format);
+    // Flawfinder: ignore -- every fixture call uses a production literal format and explicit buffer size.
+    int count = std::vsnprintf(out, size, format, args);
+    va_end(args);
+    return count;
 }
 void Scr_GetCodePos(const char *position, unsigned int, char *out, int size) { formattedCodePos = position; I_strncpyz(out, "function", size); }
+
+char *Scr_GetReturnPos(uint32_t *) { return nullptr; }
+void AddRefToValue(int, VariableUnion) {}
+void Scr_CastBool(VariableValue *value) { Check(value->type == VAR_INTEGER); }
+void Scr_ClearErrorMessage() { scrVarPub.error_message = nullptr; }
+bool IsValidArrayIndex(uint32_t value) { return value < MAX_ARRAYINDEX; }
+uint32_t GetInternalVariableIndex(uint32_t value) { return value; }
+char *va(const char *, ...) { static char message[] = "fixture diagnostic"; return message; }
+void EmitByte(unsigned char value) { *TempMalloc(1) = static_cast<char>(value); }
 
 #include "script_runtime_slice.inc"
 
@@ -198,6 +214,7 @@ void TestBuiltinsAndSwitch()
     Check(scrCompilePub.func_table_size == 1);
     reinterpret_cast<void (*)()>(scrCompilePub.func_table[0])();
     Check(callbackCount == 1);
+    Check(scrVmDebugPub.func_table[0].breakpointCount == 0);
     const auto method = reinterpret_cast<uintptr_t>(&BuiltinMethod);
     HighAddress(reinterpret_cast<const void *>(method));
     Check(AddFunction(method, "method") == 1);
@@ -207,9 +224,9 @@ void TestBuiltinsAndSwitch()
     Check(std::strcmp(scrVmDebugPub.func_table[0].name, "callback") == 0);
     // The real compiler emits and sorts unaligned records, then the real VM
     // readers must retain each name's matching native branch pointer.
-    char branches[3]{};
+    static char *branches = static_cast<char *>(Allocate(3));
     HighAddress(branches);
-    CaseStatementInfo cases[3] = {{3, branches, 1, nullptr}, {9, branches + 1, 2, nullptr}, {0, branches + 2, 3, nullptr}};
+    static CaseStatementInfo cases[3] = {{3, branches, 1, nullptr}, {9, branches + 1, 2, nullptr}, {0, branches + 2, 3, nullptr}};
     cases[0].next = &cases[1]; cases[1].next = &cases[2];
     fixtureCases = cases;
     EmitSwitchStatement({}, {}, {}, false, 0, nullptr);
@@ -230,11 +247,12 @@ void TestBuiltinsAndSwitch()
 }
 void TestNativeConsumers()
 {
-    float first[3] = {1, 2, 3}, second[3] = {1, 2, 3};
+    float first[3] = {1, 2, 3};
+    float second[3] = {1, 2, 3};
     HighAddress(first); HighAddress(second);
     for (int same = 1; same >= 0; --same) {
         second[0] = same ? 1 : 9;
-        VariableValue a{}, b{};
+        VariableValue a{}; VariableValue b{};
         a.type = b.type = VAR_VECTOR;
         a.u.vectorValue = first; b.u.vectorValue = second;
         releasedVectors.clear();
@@ -243,7 +261,7 @@ void TestNativeConsumers()
         Check(releasedVectors == std::vector<const float *>({first, second}));
     }
     for (int direction = 0; direction < 2; ++direction) {
-        VariableValue string{}, vector{};
+        VariableValue string{}; VariableValue vector{};
         string.type = VAR_STRING; string.u.stringValue = 1;
         vector.type = VAR_VECTOR; vector.u.vectorValue = first;
         releasedVectors.clear(); formattedVector = nullptr;
@@ -254,13 +272,54 @@ void TestNativeConsumers()
         Check(releasedVectors == std::vector<const float *>({first}));
     }
 #if UINTPTR_MAX > 0xffffffffu
-    VariableValue a{}, b{};
+    VariableValue a{}; VariableValue b{};
     a.type = b.type = VAR_FUNCTION;
     a.u.codePosValue = reinterpret_cast<const char *>(uintptr_t{0x100001234});
     b.u.codePosValue = reinterpret_cast<const char *>(uintptr_t{0x200001234});
     Scr_EvalEquality(&a, &b);
     Check(a.u.intValue == 0);
 #endif
+}
+void TestNativeOperandPositions()
+{
+    // The active compiler uses EmitCodepos for these scalar-valued slots.
+    // Check payload AND consumption, with a following opcode as a sentinel.
+    for (int number : {70000, -70000}) {
+        codeSize = 0;
+        EmitGetInteger(number, {});
+        EmitOpcode(OP_GetZero, 1, 0);
+        Check(static_cast<unsigned char>(bytecode[0]) == OP_GetInteger);
+        const char *position = bytecode + 1;
+        Check(Scr_ReadInt(&position) == number);
+        Check(position == bytecode + codeSize - 1 && *position == OP_GetZero);
+    }
+    scrVarPub.evaluate = true;
+    VariableValue top{}; top.type = VAR_INTEGER; top.u.intValue = 3;
+    uint32_t localId = 0;
+    for (Opcode_t op : {OP_GetInteger, OP_GetAnimation, OP_GetFunction,
+             OP_ScriptFunctionCall2, OP_ScriptFunctionCall, OP_ScriptMethodCall,
+             OP_ScriptThreadCallPointer, OP_ScriptMethodThreadCallPointer}) {
+        codeSize = 0; EmitOpcode(op, 0, 0); EmitCodepos(nullptr); EmitOpcode(OP_GetZero, 1, 0);
+        Check(Scr_GetNextCodepos(&top, bytecode, op, 1, &localId) == bytecode + 1 + sizeof(uintptr_t));
+    }
+    for (Opcode_t op : {OP_ScriptThreadCall, OP_ScriptMethodThreadCall, OP_object}) {
+        codeSize = 0; EmitOpcode(op, 0, 0); EmitCodepos(nullptr); EmitCodepos(nullptr); EmitOpcode(OP_GetZero, 1, 0);
+        Check(Scr_GetNextCodepos(&top, bytecode, op, 1, &localId) == bytecode + 1 + 2 * sizeof(uintptr_t));
+    }
+    codeSize = 0; EmitOpcode(OP_GetFloat, 0, 0); TempMalloc(sizeof(float)); EmitOpcode(OP_GetZero, 1, 0);
+    Check(Scr_GetNextCodepos(&top, bytecode, OP_GetFloat, 1, &localId) == bytecode + 1 + sizeof(float));
+    char branch{}; HighAddress(&branch);
+    codeSize = 0; EmitOpcode(OP_ScriptFunctionCall, 0, 0); EmitCodepos(&branch);
+    Check(Scr_GetNextCodepos(&top, bytecode, OP_ScriptFunctionCall, 2, &localId) == &branch);
+    codeSize = 0; EmitOpcode(OP_jump, 0, 0); EmitCodepos(reinterpret_cast<const char *>(uintptr_t{3})); TempMalloc(4);
+    Check(Scr_GetNextCodepos(&top, bytecode, OP_jump, 1, &localId) == bytecode + 1 + sizeof(uintptr_t) + 3);
+    const char *position = bytecode + 1; const int jump = Scr_ReadInt(&position); position += jump;
+    Check(position == bytecode + 1 + sizeof(uintptr_t) + 3);
+    // Exercise the actual debugger switch walker against production emission.
+    codeSize = 0; EmitSwitchStatement({}, {}, {}, false, 0, nullptr);
+    Check(Scr_GetNextCodepos(&top, bytecode, OP_switch, 1, &localId) == fixtureCases->codePos);
+    const char *endSwitch = bytecode + 1 + sizeof(uintptr_t);
+    Check(Scr_GetNextCodepos(&top, endSwitch, OP_endswitch, 1, &localId) == bytecode + codeSize);
 }
 void TestDebuggerFormatting()
 {
@@ -307,7 +366,7 @@ void TestVariableReinitialization()
 int main()
 {
     TestAllocations(); TestTerminate(); TestDebugReferences(); TestSaveObject();
-    TestBuiltinsAndSwitch(); TestNativeConsumers(); TestDebuggerFormatting(); TestArchivedThreads(); TestVariableReinitialization();
+    TestBuiltinsAndSwitch(); TestNativeOperandPositions(); TestNativeConsumers(); TestDebuggerFormatting(); TestArchivedThreads(); TestVariableReinitialization();
     for (void *p : allocations) std::free(p);
     std::printf("script runtime: %d checks passed\n", checks);
 }

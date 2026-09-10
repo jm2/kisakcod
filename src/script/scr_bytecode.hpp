@@ -17,6 +17,7 @@ template <typename T> inline T Scr_ReadBytecodeValue(const void *source)
 template <typename T> inline void Scr_WriteBytecodeValue(void *destination, T value)
 {
     static_assert(std::is_trivially_copyable_v<T>);
+    // Flawfinder: ignore -- caller reserves sizeof(T) bytes for this operand.
     std::memcpy(destination, &value, sizeof(value));
 }
 struct ScrSwitchCase
