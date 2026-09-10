@@ -910,7 +910,6 @@ void __cdecl Scr_SaveShutdown(bool savegame)
     char v2; // r20
     unsigned __int16 *v3; // r25
     int v4; // r30
-    VariableValueInternal *entry; // r27
     int v6; // r26
     const char *v7; // r31
 
@@ -919,7 +918,7 @@ void __cdecl Scr_SaveShutdown(bool savegame)
     {
         v3 = &scrVarPub.saveIdMap[1];
         v4 = 1;
-        entry = &scrVarGlob.variableList[2];
+        VariableValueInternal *entry = &scrVarGlob.variableList[2];
         v6 = 0x7FFF;
         do
         {
@@ -1610,6 +1609,7 @@ void __cdecl AddSaveStackInternal(const VariableStackBuffer *stackBuf)
             v5 = size - 1;
             v6 = VariableStackBuf_ReadCell(buf + 1);
             buf += VARIABLE_STACK_RECORD_SIZE;
+            // cppcheck-suppress misra-c2012-17.2 -- existing recursive save-graph traversal; this migration changes native cell width/stride, not traversal order or call graph.
             AddSaveEntryInternal(v4, v6);
             size = v5;
         } while (v5);

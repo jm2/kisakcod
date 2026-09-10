@@ -4,7 +4,9 @@ scr_classStruct_t g_classMap[CLASS_NUM_COUNT] = {
     {100, 10, 'e', "entity"}, {101, 20, 'h', "hudelem"},
     {102, 30, 'p', "pathnode"}, {103, 40, 'v', "vehiclenode"}
 };
-std::vector<unsigned int> removedSaveIds, writtenSaveIds, addedSaveIds;
+std::vector<unsigned int> removedSaveIds;
+std::vector<unsigned int> writtenSaveIds;
+std::vector<unsigned int> addedSaveIds;
 std::vector<const char *> leakPositions;
 unsigned char nextClassTag = 61;
 int debuggerRestoreCount = 0;
