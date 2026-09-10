@@ -18,6 +18,7 @@
 #include <script/scr_const.h>
 #include <universal/com_files.h>
 #include <qcommon/threads.h>
+#include <qcommon/sys_sync.h>
 #include <stringed/stringed_hooks.h>
 #include <database/database.h>
 #include <bgame/bg_public.h>
@@ -2150,7 +2151,14 @@ void __cdecl CG_Shutdown(int32_t localClientNum)
             Ragdoll_Remove(cent->pose.ragdollHandle);
             cent->pose.ragdollHandle = 0;
         }
-        if (dxBody *const physObjIdBody = CG_CPosePhysObjId_TakeBody(cent))
+        // Sidecar Release runs under the physics lock per the sidecar
+        // contract; Phys_ObjDestroy manages its own locking and stays
+        // outside the span (same pattern as CG_ShutdownEntity).
+        dxBody *physObjIdBody = nullptr;
+        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+        physObjIdBody = CG_CPosePhysObjId_TakeBody(cent);
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (physObjIdBody)
         {
             Phys_ObjDestroy(PHYS_WORLD_FX, physObjIdBody);
         }

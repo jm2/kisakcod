@@ -36,15 +36,23 @@ void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
         cent->currentState.pos.trType = TR_STATIONARY;
         cent->currentState.apos.trType = TR_STATIONARY;
     }
-    if (CG_CPosePhysObjId_GetBody(cent) || cent->currentState.pos.trType == TR_PHYSICS)
-    {
-        // Sidecar Release runs under the physics lock per the sidecar
-        // contract; Phys_ObjDestroy manages its own locking and stays
-        // outside (same pattern as the DynEntity client teardown).
-        dxBody *physObjIdBody = nullptr;
-        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    // The legacy outer condition is (live token || TR_PHYSICS). Both the
+    // Resolve and the Release are sidecar accesses, so they run inside
+    // the same CRITSECT_PHYSICS span per the sidecar contract; the
+    // self-locking Phys_ObjDestroy stays outside the span (same pattern
+    // as the DynEntity client teardown). TakeBody only runs when the
+    // legacy condition holds, so dead tokens on non-TR_PHYSICS entities
+    // keep their legacy field state (unwritten by shutdown).
+    dxBody *physObjIdBody = nullptr;
+    bool shutdownPhysics = false;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    shutdownPhysics = CG_CPosePhysObjId_GetBody(cent) != nullptr
+        || cent->currentState.pos.trType == TR_PHYSICS;
+    if (shutdownPhysics)
         physObjIdBody = CG_CPosePhysObjId_TakeBody(cent);
-        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (shutdownPhysics)
+    {
         if (physObjIdBody)
         {
             if (CG_IsEntityLinked(localClientNum, cent->nextState.number))

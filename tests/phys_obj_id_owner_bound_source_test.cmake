@@ -19,6 +19,12 @@ cmake_minimum_required(VERSION 3.16)
 #   6. the SP save saver ReadResolve runs inside a CRITSECT_PHYSICS span
 #      (the caller G_SaveMainState holds no lock) and leaves the span
 #      BEFORE Phys_ObjSave, which only reads the resolved body.
+#   7. the MP cpose sidecar accesses in CG_UpdatePhysicsPose,
+#      CG_PreProcess_GetDObj, CG_ShutdownEntity, and CG_Shutdown run
+#      inside CRITSECT_PHYSICS spans: the physics-pose guard inspects
+#      only the token field sentinels (no Resolve) outside the span,
+#      and every Resolve/Release is followed by the span's Leave BEFORE
+#      the self-locking Phys_ObjDestroy.
 
 if(NOT DEFINED SOURCE_ROOT OR SOURCE_ROOT STREQUAL "")
     message(FATAL_ERROR "SOURCE_ROOT must identify the KisakCOD source tree")
@@ -28,9 +34,10 @@ set(_load_obj_path "${SOURCE_ROOT}/src/DynEntity/DynEntity_load_obj.cpp")
 set(_pieces_path "${SOURCE_ROOT}/src/DynEntity/DynEntity_pieces.cpp")
 set(_ents_mp_path "${SOURCE_ROOT}/src/cgame_mp/cg_ents_mp.cpp")
 set(_snapshot_mp_path "${SOURCE_ROOT}/src/cgame_mp/cg_snapshot_mp.cpp")
+set(_main_mp_path "${SOURCE_ROOT}/src/cgame_mp/cg_main_mp.cpp")
 foreach(_path IN ITEMS
     "${_load_obj_path}" "${_pieces_path}"
-    "${_ents_mp_path}" "${_snapshot_mp_path}")
+    "${_ents_mp_path}" "${_snapshot_mp_path}" "${_main_mp_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing phys_obj_id owner-bound source: ${_path}")
     endif()
@@ -39,6 +46,7 @@ file(READ "${_load_obj_path}" _load_obj)
 file(READ "${_pieces_path}" _pieces)
 file(READ "${_ents_mp_path}" _ents_mp)
 file(READ "${_snapshot_mp_path}" _snapshot_mp)
+file(READ "${_main_mp_path}" _main_mp)
 
 function(extract_slice source start_marker end_marker out_var description)
     string(FIND "${source}" "${start_marker}" _start)
@@ -206,5 +214,91 @@ require_contains("${_snapshot_mp}"
 forbid_contains("${_snapshot_mp}"
     "the field is unconditionally"
     "shutdown comment must not misstate the legacy reset condition")
+
+# --- MP cpose sidecar locking: every Resolve/Release under the physics
+# --- lock (Codex P2 rework). The physics-pose guard inspects only the
+# --- token FIELD sentinels outside the span; the sidecar Resolve stays
+# --- inside it.
+extract_slice(
+    "${_ents_mp}"
+    "void __cdecl CG_UpdatePhysicsPose(centity_s *cent)"
+    "char __cdecl CG_ExpiredLaunch"
+    _pose_update
+    "MP physics-pose update")
+require_contains("${_pose_update}"
+    "phys_obj_id::IsNull(cent->pose.physObjId) || CG_CPosePhysObjId_IsDead(cent)"
+    "physics-pose guard inspects only the token field sentinels (no Resolve)")
+require_ordered("${_pose_update}"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "CG_CPosePhysObjId_GetBody(cent)"
+    "physics-pose sidecar Resolve enters CRITSECT_PHYSICS first")
+require_ordered("${_pose_update}"
+    "CG_CPosePhysObjId_GetBody(cent)"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "physics-pose sidecar Resolve runs inside the physics lock span")
+
+extract_slice(
+    "${_ents_mp}"
+    "DObj_s *__cdecl CG_PreProcess_GetDObj(int32_t localClientNum, int32_t entIndex, int32_t entType, XModel *model)"
+    "if (!obj && model)"
+    _preprocess_getdobj
+    "MP DObj preprocess teardown")
+require_ordered("${_preprocess_getdobj}"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "CG_CPosePhysObjId_TakeBody(cent)"
+    "DObj preprocess Release enters CRITSECT_PHYSICS first")
+require_ordered("${_preprocess_getdobj}"
+    "CG_CPosePhysObjId_TakeBody(cent)"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "DObj preprocess Release runs inside the physics lock span")
+require_ordered("${_preprocess_getdobj}"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "Phys_ObjDestroy(PHYS_WORLD_FX, physObjIdBody);"
+    "DObj preprocess leaves the lock span BEFORE the self-locking"
+    " Phys_ObjDestroy")
+
+extract_slice(
+    "${_snapshot_mp}"
+    "void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)"
+    "void __cdecl CG_SetInitialSnapshot"
+    _shutdown_entity
+    "MP entity shutdown")
+require_ordered("${_shutdown_entity}"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "CG_CPosePhysObjId_GetBody(cent)"
+    "entity-shutdown outer Resolve enters CRITSECT_PHYSICS first")
+require_ordered("${_shutdown_entity}"
+    "CG_CPosePhysObjId_GetBody(cent)"
+    "CG_CPosePhysObjId_TakeBody(cent)"
+    "entity-shutdown Release runs inside the same physics lock span")
+require_ordered("${_shutdown_entity}"
+    "CG_CPosePhysObjId_TakeBody(cent)"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "entity-shutdown leaves the physics lock span after the Release")
+require_ordered("${_shutdown_entity}"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "Phys_ObjDestroy(PHYS_WORLD_FX, physObjIdBody);"
+    "entity-shutdown leaves the lock span BEFORE the self-locking"
+    " Phys_ObjDestroy")
+
+extract_slice(
+    "${_main_mp}"
+    "void __cdecl CG_Shutdown(int32_t localClientNum)"
+    "Ragdoll_Shutdown();"
+    "_client_shutdown"
+    "MP client shutdown")
+require_ordered("${_client_shutdown}"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "CG_CPosePhysObjId_TakeBody(cent)"
+    "client-shutdown Release enters CRITSECT_PHYSICS first")
+require_ordered("${_client_shutdown}"
+    "CG_CPosePhysObjId_TakeBody(cent)"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "client-shutdown Release runs inside the physics lock span")
+require_ordered("${_client_shutdown}"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "Phys_ObjDestroy(PHYS_WORLD_FX, physObjIdBody);"
+    "client-shutdown leaves the lock span BEFORE the self-locking"
+    " Phys_ObjDestroy")
 
 message(STATUS "phys_obj_id owner-bound source invariants verified")

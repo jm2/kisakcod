@@ -1193,7 +1193,12 @@ void __cdecl CG_UpdatePhysicsPose(centity_s *cent)
     float quat[4] = {0.0f, 0.0f, 0.0f, 1.0f}; // [esp+0h] [ebp-10h] BYREF
     bool haveBody = false;
 
-    if (!CG_CPosePhysObjId_GetBody(cent) || CG_CPosePhysObjId_IsDead(cent))
+    // Guard on the token FIELD sentinels, not a sidecar Resolve: the
+    // sidecar contract requires every Resolve under CRITSECT_PHYSICS,
+    // and this legacy assert only inspects the field's NULL/DEAD values
+    // (legacy `assert(physObjId && physObjId != -1)`). The locked
+    // Resolve below decides whether a live body actually exists.
+    if (phys_obj_id::IsNull(cent->pose.physObjId) || CG_CPosePhysObjId_IsDead(cent))
         MyAssertHandler(
             ".\\cgame_mp\\cg_ents_mp.cpp",
             1281,
@@ -1302,7 +1307,14 @@ DObj_s *__cdecl CG_PreProcess_GetDObj(int32_t localClientNum, int32_t entIndex, 
     cent = CG_GetEntity(localClientNum, entIndex);
     if (obj && (!model || !CG_CheckDObjInfoMatches(localClientNum, entIndex, entType, model)))
     {
-        if (dxBody *const physObjIdBody = CG_CPosePhysObjId_TakeBody(cent))
+        // Sidecar Release runs under the physics lock per the sidecar
+        // contract; Phys_ObjDestroy manages its own locking and stays
+        // outside the span (same pattern as CG_ShutdownEntity).
+        dxBody *physObjIdBody = nullptr;
+        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+        physObjIdBody = CG_CPosePhysObjId_TakeBody(cent);
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (physObjIdBody)
         {
             if (CG_IsEntityLinked(localClientNum, cent->nextState.number))
                 CG_UnlinkEntity(localClientNum, cent->nextState.number);
