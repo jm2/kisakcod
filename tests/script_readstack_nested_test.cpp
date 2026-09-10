@@ -275,7 +275,8 @@ void TestScalarEndedChild()
     // THE regression: the nested record must be tagged VAR_STACK and hold
     // the child buffer pointer -- not the child's last entry type.
     CHECK(*RecordTypeByte(stack, 1) == 10);
-    CHECK(g_allocations.size() == 2);
+    if (!CHECK(g_allocations.size() == 2))
+        return;
     VariableStackBuffer *childBuf = g_allocations[1];  // [0] is the parent
     CHECK(PayloadHoldsPointer(stack, 1, childBuf));
 
@@ -308,7 +309,8 @@ void TestEmptyChild()
     CheckStackHeader(stack, 3, 0x56, 0x67);
 
     CHECK(*RecordTypeByte(stack, 1) == 10);
-    CHECK(g_allocations.size() == 2);
+    if (!CHECK(g_allocations.size() == 2))
+        return;
     VariableStackBuffer *childBuf = g_allocations[1];
     CHECK(PayloadHoldsPointer(stack, 1, childBuf));
     CHECK(childBuf->size == 0);
@@ -342,7 +344,8 @@ void TestSiblings()
     VariableStackBuffer *stack = RunReader(parent);
     CheckStackHeader(stack, 3, 0x65, 0x66);
 
-    CHECK(g_allocations.size() == 3);
+    if (!CHECK(g_allocations.size() == 3))
+        return;
     CHECK(*RecordTypeByte(stack, 0) == 10);
     CHECK(PayloadHoldsPointer(stack, 0, g_allocations[1]));
     CHECK(*RecordTypeByte(stack, 1) == 10);
@@ -377,7 +380,8 @@ void TestMultipleLevels()
     VariableStackBuffer *stack = RunReader(parent);
     CheckStackHeader(stack, 2, 0x75, 0x76);
 
-    CHECK(g_allocations.size() == 3);
+    if (!CHECK(g_allocations.size() == 3))
+        return;
     VariableStackBuffer *childBuf = g_allocations[1];  // [0] is the parent
     VariableStackBuffer *grandchildBuf = g_allocations[2];
     CHECK(*RecordTypeByte(stack, 0) == 10);
@@ -472,6 +476,7 @@ void TestNoNesting()
     CHECK(PayloadStartsWith(stack, 1, &value, 4));
     CHECK(g_allocations.size() == 1);
 }
+#include "script_stack_boundary_tests.hpp"
 }  // namespace
 
 void ReleaseAllocations()
@@ -483,6 +488,11 @@ void ReleaseAllocations()
 
 int RunContracts()
 {
+    TestStackSizeBoundaries();
+    TestMalformedStackBeforeAllocation();
+    ReleaseAllocations();
+    TestEmptyCellInitialization();
+    ReleaseAllocations();
     TestNoNesting();
     ReleaseAllocations();
     TestScalarEndedChild();

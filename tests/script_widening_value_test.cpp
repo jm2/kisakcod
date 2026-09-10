@@ -34,6 +34,8 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <algorithm>
+#include <new>
 
 namespace script_widening_value_test
 {
@@ -69,6 +71,28 @@ constexpr uintptr_t kHighPointerPattern = 0x00005A3C7E19B400ull;
 #else
 constexpr uintptr_t kHighPointerPattern = 0x7E19B400u;
 #endif
+
+void CheckScalarCellPadding(const unsigned char *bytes)
+{
+    for (size_t i = sizeof(uint32_t); i < sizeof(VariableUnion); ++i)
+        CHECK(bytes[i] == 0);
+}
+void TestScalarConstructorsInitializeNativeCell()
+{
+    alignas(VariableUnion) unsigned char bytes[sizeof(VariableUnion)];
+    std::fill_n(bytes, sizeof(bytes), 0xa5);
+    auto *cell = new (bytes) VariableUnion();
+    CHECK(cell->intValue == 0);
+    CheckScalarCellPadding(bytes);
+    std::fill_n(bytes, sizeof(bytes), 0xa5);
+    cell = new (bytes) VariableUnion(42);
+    CHECK(cell->intValue == 42);
+    CheckScalarCellPadding(bytes);
+    std::fill_n(bytes, sizeof(bytes), 0xa5);
+    cell = new (bytes) VariableUnion(1.5f);
+    CHECK(cell->floatValue == 1.5f);
+    CheckScalarCellPadding(bytes);
+}
 
 // In-place construction (no copy through the deprecated implicit copy
 // constructor; the tests exercise ASSIGNMENT, which is the defect surface).
@@ -174,6 +198,7 @@ void TestWidenedRecordSizes()
 
 int main()
 {
+    TestScalarConstructorsInitializeNativeCell();
     TestConstAssignmentPreservesPointer();
     TestNonConstAssignmentPreservesPointer();
     TestSelfAssignmentStable();

@@ -4,6 +4,7 @@
 
 struct ReadstackComError {};
 int g_readstackUnexpectedReports = 0;
+bool g_readstackNonfatalAsserts = false;
 
 char g_readstackDiagnostic[] = "script readstack test diagnostic";
 
@@ -36,6 +37,8 @@ void MyAssertHandler(
 {
     (void)type;
     (void)format;
+    if (g_readstackNonfatalAsserts)
+        return;
     std::fprintf(
         stderr,
         "script_readstack_nested_test: production assert fired at %s:%d\n",
@@ -142,7 +145,7 @@ void DoSaveEntryWithoutStack(unsigned int type, VariableUnion value, MemoryFile 
         WriteCodepos(value.codePosValue, memFile);
     else if (type == VAR_INTEGER || type == VAR_FLOAT)
         MemFile_WriteData(memFile, 4, &value.intValue);
-    else
+    else if (type != VAR_UNDEFINED && type != VAR_PRECODEPOS)
         std::abort();
 }
 }

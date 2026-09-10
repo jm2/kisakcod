@@ -37,7 +37,7 @@ struct Scr_ScriptWatch {
     bool PostEvaluateWatchElement(Scr_WatchElement_s *, VariableValue *);
 };
 struct Scr_ScriptCallStack { int numLines = 0; Scr_SourcePos2_t stack[33]{}; void UpdateStack(); };
-struct { const char *breakpointCodePos = nullptr; } scrDebuggerGlob;
+struct { const char *breakpointCodePos = nullptr; bool debugger_inited_system = true; } scrDebuggerGlob;
 char g_EndPos = 0;
 struct UI_Component { struct Globals { float charWidth = 1; }; static Globals g; };
 UI_Component::Globals UI_Component::g;
@@ -136,6 +136,13 @@ uint32_t *Scr_AllocDebugMem(int bytes, const char *) { return static_cast<uint32
 void Scr_FreeDebugMem(void *) {} // allocations remain tracked until fixture teardown
 uint32_t Scr_GetSourceBuffer(const char *position) { observedPositions.push_back(position); return static_cast<uint32_t>(observedPositions.size()); }
 uint32_t Scr_GetPrevSourcePos(const char *, uint32_t index) { return index; }
+
+bool Scr_IsSortWatchElement(Scr_WatchElement_s *element) { return element->threadList; }
+int CompareThreadElements(const void *left, const void *right) {
+    auto *a = *static_cast<Scr_WatchElement_s *const *>(left);
+    auto *b = *static_cast<Scr_WatchElement_s *const *>(right);
+    return (a->sourcePos > b->sourcePos) - (a->sourcePos < b->sourcePos);
+}
 
 #include "script_debugger_slice.inc"
 
@@ -243,6 +250,26 @@ void TestWatchChildStorage()
     }
     Check(references[2]->parent == children);
 }
+void TestWatchChildSorting()
+{
+    Scr_WatchElement_s parent{};
+    parent.threadList = true;
+    parent.childHead = &parent;
+    const size_t before = allocations.size();
+    Scr_SortElementChildren(&parent);
+    Check(parent.childHead == nullptr && allocations.size() == before);
+    Scr_WatchElement_s children[3]{};
+    HighAddress(children);
+    children[0].sourcePos = 2; children[1].sourcePos = 0; children[2].sourcePos = 1;
+    parent.childCount = 3; parent.childArrayHead = children;
+    Scr_SortElementChildren(&parent);
+    Check(parent.childHead == &children[1]);
+    Check(children[1].next == &children[2] && children[2].next == &children[0]);
+    Check(children[0].next == nullptr);
+    parent.childCount = 0;
+    Scr_SortElementChildren(&parent);
+    Check(parent.childHead == nullptr);
+}
 void TestCallStackFrames()
 {
     char code[8]{}; HighAddress(code);
@@ -280,7 +307,7 @@ int main()
     scrVarPub.evaluate = true;
     scrVmPub.top = scrVmPub.stack;
     scrVmPub.maxstack = scrVmPub.stack + 2047;
-    TestOrdinaryParseNodes(); TestExpressionCompilation(); TestDebuggerBuiltins(); TestBuiltinMethodCache(); TestEntityAndWatchTransfers(); TestWatchChildStorage(); TestCallStackFrames(); TestScriptWindowList();
+    TestOrdinaryParseNodes(); TestExpressionCompilation(); TestDebuggerBuiltins(); TestBuiltinMethodCache(); TestEntityAndWatchTransfers(); TestWatchChildStorage(); TestWatchChildSorting(); TestCallStackFrames(); TestScriptWindowList();
     Check(scrVmDebugPub.checkBreakon == 0 && g_breakonExpr == 0);
     Check(scrVmPub.maxstack == scrVmPub.stack + 2047);
     for (void *p : allocations) std::free(p);

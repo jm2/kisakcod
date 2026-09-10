@@ -1123,7 +1123,8 @@ LABEL_30:
                         // live-cells region and the reallocation sizing.
                         len = VARIABLE_STACK_RECORD_SIZE * size;
                         //bufLen = 5 * newSize + 11;
-                        bufLen = VARIABLE_STACK_RECORD_SIZE * newSize + (sizeof(VariableStackBuffer)-1);
+                        if (!VariableStackBuf_TrySize(newSize, bufLen))
+                            Com_Error(ERR_DROP, "VM_Notify: stack allocation length exceeds 16-bit limit");
 
                         if (!MT_Realloc(stackValue->bufLen, bufLen))
                         {
@@ -1137,6 +1138,7 @@ LABEL_30:
                             tempValue->u.stackValue = newStackValue;
                         }
 
+                        stackValue->bufLen = static_cast<uint16_t>(bufLen);
                         stackValue->size = newSize;
                         buf = &stackValue->buf[len];
                         newSize -= size;
@@ -1571,9 +1573,8 @@ VariableStackBuffer *__cdecl VM_ArchiveStack()
     // M4 (ki-n1et): the runtime archive image uses the widened value-cell
     // record stride over the widened header; the SERIALIZED stack stream is
     // written by WriteStack and keeps the retail packed records.
-    bufLen = VARIABLE_STACK_RECORD_SIZE * size + (sizeof(VariableStackBuffer) - 1);
-    if (bufLen != (uint16_t)bufLen)
-        MyAssertHandler(".\\script\\scr_vm.cpp", 2770, 0, "%s", "bufLen == (unsigned short)bufLen");
+    if (!VariableStackBuf_TrySize(size, bufLen))
+        Com_Error(ERR_DROP, "VM_ArchiveStack: stack allocation length exceeds 16-bit limit");
     stackValue = (VariableStackBuffer*) MT_Alloc(bufLen, MT_TYPE_THREAD);
     ++scrVarPub.numScriptThreads;
     localId = fs.localId;
@@ -1735,10 +1736,8 @@ VariableStackBuffer *VM_ArchiveStack2(int size, const char *codePos, VariableVal
 
     //bufLen = 5 * size + 11;
     // M4 (ki-n1et): widened runtime archive image (see VM_ArchiveStack).
-    bufLen = VARIABLE_STACK_RECORD_SIZE * size + (sizeof(VariableStackBuffer) - 1);
-
-    iassert(size == (unsigned short)size);
-    iassert(bufLen == (unsigned short)bufLen);
+    if (!VariableStackBuf_TrySize(size, bufLen))
+        Com_Error(ERR_DROP, "VM_ArchiveStack2: stack allocation length exceeds 16-bit limit");
 
     stackBuf = (VariableStackBuffer *)MT_Alloc(bufLen, MT_TYPE_THREAD);
     ++scrVarPub.numScriptThreads;

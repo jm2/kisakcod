@@ -1375,6 +1375,7 @@ void __cdecl Scr_ConnectElementChildren(Scr_WatchElement_s *parentElement)
     parentElement->childHead = newElements;
 }
 
+//SCRIPT_DEBUGGER_SORT_CHILDREN_BEGIN
 void __cdecl Scr_SortElementChildren(Scr_WatchElement_s *parentElement)
 {
     int newIndex; // [esp+4h] [ebp-10h]
@@ -1388,6 +1389,11 @@ void __cdecl Scr_SortElementChildren(Scr_WatchElement_s *parentElement)
     if (!Scr_IsSortWatchElement(parentElement))
         MyAssertHandler(".\\script\\scr_debugger.cpp", 5635, 0, "%s", "Scr_IsSortWatchElement( parentElement )");
     count = parentElement->childCount;
+    if (count == 0)
+    {
+        parentElement->childHead = nullptr;
+        return;
+    }
     newElements = parentElement->childArrayHead;
     // M4 (ki-n1et): the sort array holds live element pointers. The retail
     // form allocated 4 bytes per slot, stored pointers through uint32_t and
@@ -1404,6 +1410,8 @@ void __cdecl Scr_SortElementChildren(Scr_WatchElement_s *parentElement)
     parentElement->childHead = elementList[0];
     Scr_FreeDebugMem(elementList);
 }
+
+//SCRIPT_DEBUGGER_SORT_CHILDREN_END
 
 // M4 (ki-n1et): typed comparator over watch-element pointers. The retail
 // form read raw 32-bit offsets 72/76/48 (bufferIndex / sourcePos / the

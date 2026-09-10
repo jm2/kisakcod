@@ -387,7 +387,7 @@ void Scr_WriteStackRecord(char *buf, const VariableValue &value)
 VariableStackBuffer *__cdecl Scr_ReadStackHead(MemoryFile *memFile)
 {
     unsigned __int16 size; // r27
-    unsigned int bufLen; // r28
+    int bufLen; // r28
     VariableStackBuffer *stack; // r31
     unsigned __int8 header[8]; // [sp+50h] [-40h] BYREF
 
@@ -396,14 +396,8 @@ VariableStackBuffer *__cdecl Scr_ReadStackHead(MemoryFile *memFile)
 
     // M4 (ki-n1et): rebuild the RUNTIME image with the widened record stride;
     // the DISK records consumed below are unchanged retail bytes.
-    bufLen = VARIABLE_STACK_RECORD_SIZE * size + (sizeof(VariableStackBuffer) - 1);
-    if (bufLen != (unsigned __int16)bufLen)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp",
-            268,
-            0,
-            "%s",
-            "bufLen == (unsigned short)bufLen");
+    if (!VariableStackBuf_TrySize(size, bufLen))
+        Com_Error(ERR_DROP, "Scr_ReadStack: stack allocation length exceeds 16-bit limit");
     stack = reinterpret_cast<VariableStackBuffer *>(MT_Alloc(bufLen, MT_TYPE_THREAD));
     ++scrVarPub.numScriptThreads;
     stack->size = size;
@@ -420,7 +414,7 @@ VariableStackBuffer *__cdecl Scr_ReadStackHead(MemoryFile *memFile)
 // dword. Returns false for the kinds it does not handle.
 bool __cdecl Scr_LoadEntryValueCell(int type, VariableValue *value, MemoryFile *memFile)
 {
-    VariableUnion v8; // [sp+54h] [-1Ch] BYREF
+    VariableUnion v8{}; // [sp+54h] [-1Ch] BYREF
 
     switch (type)
     {
@@ -477,6 +471,7 @@ bool __cdecl Scr_LoadEntryCell(VariableValue *value, MemoryFile *memFile)
     const char *v6; // r3
     _BYTE v7[4]; // [sp+50h] [-20h] BYREF
 
+    value->u = VariableUnion{}; // A reused cell must not retain the previous pointer payload.
     MemFile_ReadData(memFile, 1, v7);
     v4 = v7[0];
     if ((v7[0] & 7) != 0)
@@ -512,7 +507,7 @@ VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
     // nesting depth is bounded and anything deeper fails loudly.
     ScrReadStackFrame frames[SCR_READSTACK_MAX_NESTING];
     int depth = 0;
-    VariableValue value; // [sp+58h] BYREF
+    VariableValue value{}; // [sp+58h] BYREF
 
     VariableStackBuffer *stack = Scr_ReadStackHead(memFile);
     char *buf = stack->buf;

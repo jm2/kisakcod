@@ -35,3 +35,14 @@ static inline void VariableStackBuf_WriteCell(void *payload, const VariableUnion
     VariableStackBuf_CopyCell(payload, &cell);
 }
 
+// Both allocation and the saved runtime allocation length must fit bufLen.
+// Check the record count before multiplication so malformed counts cannot wrap.
+static inline bool VariableStackBuf_TrySize(int recordCount, int &byteLength)
+{
+    constexpr size_t headerBytes = sizeof(VariableStackBuffer) - 1;
+    constexpr size_t maxRecords = (UINT16_MAX - headerBytes) / VARIABLE_STACK_RECORD_SIZE;
+    if (recordCount < 0 || static_cast<size_t>(recordCount) > maxRecords)
+        return false;
+    byteLength = static_cast<int>(headerBytes + VARIABLE_STACK_RECORD_SIZE * recordCount);
+    return true;
+}

@@ -107,11 +107,11 @@ RUNTIME_SIZE(VariableStackBuffer, 0xC, 0x10);
 
 union VariableUnion // sizeof=0x4
 {                                       // ...
-    VariableUnion(float f)
+    VariableUnion(float f) : VariableUnion()
     {
         floatValue = f;
     }
-    VariableUnion(int i)
+    VariableUnion(int i) : VariableUnion()
     {
         intValue = i;
     }
@@ -125,7 +125,8 @@ union VariableUnion // sizeof=0x4
     }
     VariableUnion()
     {
-        intValue = 0;
+        // Initialize the complete native cell before any narrower scalar store.
+        codePosValue = nullptr;
     }
 
     int intValue;

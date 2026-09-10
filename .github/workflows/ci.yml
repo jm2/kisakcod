@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# Superseded PR heads release runners; other events have unique run groups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   portable-tests:
     name: Portable tests / ${{ matrix.platform }}
