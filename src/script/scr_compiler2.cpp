@@ -100,6 +100,7 @@ int CompareCaseInfo(const void *a, const void *b)
 GetExpressionCount
 ============
 */
+//SCRIPT_DEBUGGER_COUNT_BEGIN
 int GetExpressionCount(sval_u exprlist)
 {
 	sval_u *node;
@@ -112,6 +113,7 @@ int GetExpressionCount(sval_u exprlist)
 
 	return expr_count;
 }
+//SCRIPT_DEBUGGER_COUNT_END
 
 /*
 ============

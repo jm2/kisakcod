@@ -2549,6 +2549,7 @@ void  Scr_ScriptWatch::EvaluateWatchElementExpression(
 }
 
 
+//SCRIPT_DEBUGGER_WATCH_POST_BEGIN
 bool __thiscall Scr_ScriptWatch::PostEvaluateWatchElement(
     Scr_WatchElement_s *element,
     VariableValue *value)
@@ -2584,7 +2585,7 @@ bool __thiscall Scr_ScriptWatch::PostEvaluateWatchElement(
         {
             element->valueDefined = 1;
             type = value->type;
-            element->value.u.intValue = value->u.intValue;
+            element->value.u = value->u;
             element->value.type = (Vartype_t)type;
         }
         else
@@ -2594,6 +2595,7 @@ bool __thiscall Scr_ScriptWatch::PostEvaluateWatchElement(
         return 1;
     }
 }
+//SCRIPT_DEBUGGER_WATCH_POST_END
 
 void Scr_ScriptWindow::SetScriptFile(const char *name)
 {

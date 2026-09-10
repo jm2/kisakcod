@@ -3305,6 +3305,7 @@ retry_14:
 #endif
 }
 
+//SCRIPT_DEBUGGER_WATCH_EQUAL_BEGIN
 char __cdecl Scr_WatchElementHasSameValue(Scr_WatchElement_s *element, VariableValue *newValue)
 {
     Vartype_t type; // edx
@@ -3316,7 +3317,7 @@ char __cdecl Scr_WatchElementHasSameValue(Scr_WatchElement_s *element, VariableV
         return 0;
     }
     type = element->value.type;
-    oldValue.u.intValue = element->value.u.intValue;
+    oldValue.u = element->value.u;
     oldValue.type = type;
     AddRefToValue(type, oldValue.u);
     Scr_EvalEquality(&oldValue, newValue);
@@ -3340,6 +3341,7 @@ char __cdecl Scr_WatchElementHasSameValue(Scr_WatchElement_s *element, VariableV
     }
     return 0;
 }
+//SCRIPT_DEBUGGER_WATCH_EQUAL_END
 
 int __cdecl Scr_HitAssignmentBreakpoint(VariableValue *top, char *pos, uint32_t localId, int forceBreak)
 {

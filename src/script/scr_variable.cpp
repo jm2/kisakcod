@@ -1713,6 +1713,7 @@ void  RemoveVariableValue(uint32_t parentId, uint32_t index)
 	FreeChildValue(parentId, id);
 }
 
+//SCRIPT_DEBUGGER_ENTITY_FIELD_BEGIN
 void  SetVariableEntityFieldValue(uint32_t entId, uint32_t fieldName, VariableValue* value)
 {
 	VariableValueInternal* entValue; // [esp+0h] [ebp-Ch]
@@ -1738,9 +1739,10 @@ void  SetVariableEntityFieldValue(uint32_t entId, uint32_t fieldName, VariableVa
 		iassert(!(entryValue->w.type & VAR_MASK));
 
 		entryValue->w.status |= value->type;
-		entryValue->u.u.intValue = value->u.intValue;
+		entryValue->u.u = value->u;
 	}
 }
+//SCRIPT_DEBUGGER_ENTITY_FIELD_END
 
 void  SetVariableFieldValue(uint32_t id, VariableValue* value)
 {
@@ -2734,6 +2736,7 @@ void  Scr_EvalBoolNot(VariableValue* value)
 }
 
 //SCRIPT_RUNTIME_EQUALITY_BEGIN
+//SCRIPT_DEBUGGER_EQUALITY_BEGIN
 void  Scr_EvalEquality(VariableValue* value1, VariableValue* value2)
 {
 	int32_t v2; // [esp+0h] [ebp-18h]
@@ -2803,6 +2806,7 @@ void  Scr_EvalEquality(VariableValue* value1, VariableValue* value2)
 		break;
 	}
 }
+//SCRIPT_DEBUGGER_EQUALITY_END
 //SCRIPT_RUNTIME_EQUALITY_END
 
 void  Scr_EvalInequality(VariableValue* value1, VariableValue* value2)
@@ -3011,7 +3015,7 @@ uint32_t Scr_EvalArrayRef(uint32_t parentId)
 		varValue.type = (Vartype_t)(parentValue->w.type & VAR_MASK);
 		if (varValue.type)
 		{
-			varValue.u.intValue = parentValue->u.u.intValue;
+			varValue.u = parentValue->u.u;
 		add_array:
 			if (varValue.type == VAR_POINTER)
 			{
@@ -3111,7 +3115,7 @@ void  ClearArray(uint32_t parentId, VariableValue* value)
 		parentValue = &scrVarGlob.variableList[parentId + VARIABLELIST_CHILD_BEGIN];
 		iassert((parentValue->w.status & VAR_STAT_MASK) != VAR_STAT_FREE);
 		varValue.type = (Vartype_t)(parentValue->w.status & 0x1F);
-		varValue.u.intValue = parentValue->u.u.intValue;
+		varValue.u = parentValue->u.u;
 	}
 	else
 	{

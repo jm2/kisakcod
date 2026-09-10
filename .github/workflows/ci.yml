@@ -62,6 +62,7 @@ jobs:
         run: >
           cmake --build build-script-sanitizers --parallel 4 --target
           kisakcod-script-runtime-pointer-tests
+          kisakcod-script-debugger-pointer-tests
           kisakcod-script-widening-value-tests
           kisakcod-script-readstack-nested-tests
       - name: Run script production contracts
@@ -70,7 +71,7 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1
         run: >
           ctest --test-dir build-script-sanitizers --output-on-failure
-          -R '^script-(runtime-pointer|widening-value|readstack-nested)-contracts$'
+          -R '^script-(runtime-pointer|debugger-pointer|widening-value|readstack-nested)-contracts$'
 
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
