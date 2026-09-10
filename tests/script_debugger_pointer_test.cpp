@@ -26,18 +26,27 @@ int g_breakonExpr = 0;
 int g_script_error_level = -1;
 jmp_buf g_script_error[33];
 struct { int checkBreakon = 0; } scrVmDebugPub;
-struct {
-    VariableValue stack[32]{};
-    VariableValue *top = stack;
-    VariableValue *maxstack = stack + 31;
-    uint32_t outparamcount = 0;
-    uint32_t inparamcount = 0;
-    uint32_t breakpointOutparamcount = 0;
-    bool debugCode = false;
-} scrVmPub;
+#include "script_debugger_types.inc"
+scrVmPub_t scrVmPub{};
 struct Scr_ScriptWatch {
     uint32_t localId = 0;
     bool PostEvaluateWatchElement(Scr_WatchElement_s *, VariableValue *);
+};
+struct Scr_ScriptCallStack { int numLines = 0; Scr_SourcePos2_t stack[33]{}; void UpdateStack(); };
+struct { const char *breakpointCodePos = nullptr; } scrDebuggerGlob;
+char g_EndPos = 0;
+struct UI_Component { struct Globals { float charWidth = 1; }; static Globals g; };
+UI_Component::Globals UI_Component::g;
+struct UI_LinesComponent { void UpdateHeight() {} };
+struct Scr_ScriptWindow { const char *name; const char *GetFilename() { return name; } };
+struct Scr_AbstractScriptList : UI_LinesComponent {
+    int numLines = 0;
+    int selectedLine = -1;
+    float size[2]{};
+    Scr_ScriptWindow **scriptWindows = nullptr;
+    void SetSelectedLineFocus(int index, bool) { selectedLine = index; }
+    void AddEntry(Scr_ScriptWindow *, bool);
+    void DeleteEntryInternal();
 };
 namespace {
 std::vector<void *> allocations;
@@ -49,6 +58,7 @@ int methodLookups = 0;
 bool hasCachedMethod = false;
 VariableValue cachedMethod{};
 char diagnostic[] = "debugger fixture";
+std::vector<const char *> observedPositions;
 void CheckAt(bool okay, const char *expression, int line) {
     ++checks;
     if (!okay) { std::fprintf(stderr, "script debugger:%d: %s failed\n", line, expression); std::abort(); }
@@ -114,6 +124,11 @@ void Scr_RemoveValue(Scr_WatchElement_s *element) { element->valueDefined = fals
 void ReplaceString(const char **out, const char *) { *out = "value"; }
 void Scr_GetValueString(uint32_t, VariableValue *value, int, char *out) { AddRefToValue(value->type, value->u); out[0] = 0; }
 int Com_sprintf(char *out, uint32_t, const char *, ...) { out[0] = 0; return 0; }
+
+uint32_t *Scr_AllocDebugMem(int bytes, const char *) { return static_cast<uint32_t *>(Allocate(bytes)); }
+void Scr_FreeDebugMem(void *) {} // allocations remain tracked until fixture teardown
+uint32_t Scr_GetSourceBuffer(const char *position) { observedPositions.push_back(position); return static_cast<uint32_t>(observedPositions.size()); }
+uint32_t Scr_GetPrevSourcePos(const char *, uint32_t index) { return index; }
 
 #include "script_debugger_slice.inc"
 
@@ -189,14 +204,52 @@ void TestEntityAndWatchTransfers()
     Check(element.valueDefined && element.value.u.vectorValue == payload);
     Check(Scr_WatchElementHasSameValue(&element, &value) == 1);
 }
+void TestLocalWatchStorage()
+{
+    Scr_WatchElement_s *children = nullptr;
+    Scr_WatchElement_s **references = nullptr;
+    Scr_AllocWatchChildArrays(3, &children, &references);
+    HighAddress(children); HighAddress(references);
+    for (int i = 0; i < 3; ++i) {
+        Check(children[i].parent == nullptr && children[i].next == nullptr);
+        children[i].parent = &children[2 - i]; references[i] = &children[i];
+    }
+    Check(references[2]->parent == children);
+    char code[8]{}; HighAddress(code);
+    scrVmPub.function_count = 2;
+    scrVmPub.function_frame_start[0].fs.pos = code + 1;
+    scrVmPub.function_frame_start[0].fs.localId = 0;
+    scrVmPub.function_frame_start[1].fs.pos = code + 3;
+    scrVmPub.function_frame_start[1].fs.localId = 37;
+    scrDebuggerGlob.breakpointCodePos = code + 4;
+    Scr_ScriptCallStack stack{}; stack.UpdateStack();
+    Check(stack.numLines == 3 && observedPositions.size() == 3);
+    Check(observedPositions[0] == code + 4 && observedPositions[1] == code + 2 && observedPositions[2] == code);
+    Check(stack.stack[1].sourcePos == 0 && stack.stack[2].sourcePos == 1);
+    scrVmPub.function_count = 0; stack.UpdateStack(); Check(stack.numLines == 0);
+    Scr_ScriptWindow windows[3] = {{"first"}, {"second"}, {"third"}};
+    HighAddress(windows);
+    Scr_AbstractScriptList list{};
+    list.AddEntry(&windows[0], false); list.AddEntry(&windows[2], false);
+    list.selectedLine = 1; list.AddEntry(&windows[1], true);
+    Check(list.numLines == 3 && list.scriptWindows[0] == &windows[0] && list.scriptWindows[1] == &windows[1] && list.scriptWindows[2] == &windows[2]);
+    list.selectedLine = 0; list.AddEntry(&windows[2], true);
+    Check(list.scriptWindows[0] == &windows[2] && list.scriptWindows[1] == &windows[0]);
+    list.selectedLine = 2; list.AddEntry(&windows[2], true);
+    Check(list.scriptWindows[0] == &windows[0] && list.scriptWindows[1] == &windows[2]);
+    list.selectedLine = 1; list.DeleteEntryInternal();
+    Check(list.numLines == 2 && list.scriptWindows[0] == &windows[0] && list.scriptWindows[1] == &windows[1]);
+}
 int main()
 {
     payload = static_cast<float *>(Allocate(3 * sizeof(float)));
     payload[0] = 1; payload[1] = 2; payload[2] = 3;
     scrVarPub.evaluate = true;
-    TestExpressionCompilation(); TestDebuggerBuiltins(); TestBuiltinMethodCache(); TestEntityAndWatchTransfers();
+    scrVmPub.top = scrVmPub.stack;
+    scrVmPub.maxstack = scrVmPub.stack + 2047;
+    TestExpressionCompilation(); TestDebuggerBuiltins(); TestBuiltinMethodCache(); TestEntityAndWatchTransfers(); TestLocalWatchStorage();
     Check(scrVmDebugPub.checkBreakon == 0 && g_breakonExpr == 0);
-    Check(scrVmPub.maxstack == scrVmPub.stack + 31);
+    Check(scrVmPub.maxstack == scrVmPub.stack + 2047);
     for (void *p : allocations) std::free(p);
     std::printf("script debugger: %d checks passed\n", checks);
 }

@@ -175,6 +175,7 @@ struct Scr_StringNode_s // sizeof=0x8
 // M4 (ki-n1et): two host pointers; widens 0x8 -> 0x10 on 64-bit.
 RUNTIME_SIZE(Scr_StringNode_s, 0x8, 0x10);
 
+//SCRIPT_DEBUGGER_VM_TYPES_BEGIN
 struct function_stack_t // sizeof=0x14
 {                                       // ...
     const char *pos;                    // ...
@@ -224,6 +225,7 @@ struct scrVmPub_t // sizeof=0x4328
 // save path archives stack CONTENTS through VariableStackBuffer, not
 // this image).
 RUNTIME_SIZE(scrVmPub_t, 0x4328, 0x8540);
+//SCRIPT_DEBUGGER_VM_TYPES_END
 
 struct FuncDebugData // sizeof=0x10
 {                                       // ...
