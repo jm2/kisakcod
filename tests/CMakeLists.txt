@@ -3228,6 +3228,43 @@ add_test(
     NAME xmodel-load-bounded-cursor
     COMMAND kisakcod-xmodel-load-tests)
 
+# xmodel_nested_cursor_test: production-call-graph contracts for the
+# scoped nested cursor ownership and the checked second-pass seek
+# (ki-okmr / #124). Drives the real buf_cursor entry points in the
+# exact sequence the production loaders issue (XModelLoadFile ->
+# nested XModelPartsPrecache / XModelSurfsPrecache windows, material
+# second-pass rewind) over controlled xmodel/xmodelparts fixtures:
+# cold/warm nested loads, parent position/limit/failure restoration,
+# truncated-input cleanup, and LIFO accounting at the save-stack bound.
+# The loader TUs cannot link in this portable binary (win32-only engine
+# headers); xmodel_cursor_source_invariants_test.cmake pins the
+# production call sites instead. CTest entries match the 'xmodel'
+# regex so the bead's build/test command resolves to this target.
+add_executable(kisakcod-xmodel-nested-cursor-tests
+    xmodel_nested_cursor_test.cpp
+    ${SRC_DIR}/xanim/buf_cursor.cpp)
+target_include_directories(
+    kisakcod-xmodel-nested-cursor-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-xmodel-nested-cursor-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-xmodel-nested-cursor-tests)
+set_target_properties(
+    kisakcod-xmodel-nested-cursor-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME xmodel-nested-cursor-ownership
+    COMMAND kisakcod-xmodel-nested-cursor-tests)
+
+# Source-contract gate for the same stage: the loader TUs are not
+# compilable on portable hosts, so the second-pass correction is pinned
+# textually — checked SeekTo positioning, cursor-owned checkpoint, no
+# raw pos rewind, and paired Activate/Deactivate teardown counts.
+add_test(
+    NAME xmodel-cursor-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/xmodel_cursor_source_invariants_test.cmake)
+
 # xanim_parts_split_test: contract tests for the XAnimParts disk mirror
 # vs native runtime split (M4 + Priority 7). The retail x86 layout is
 # frozen at exactly 88 bytes per XAnimParts instance via ONDISK_SIZE; the

@@ -19,6 +19,35 @@ thread_local bool g_activeValid = false;
 // together so the cursor and the caller's *pos cannot disagree.
 thread_local unsigned char **g_anchoredPos = nullptr;
 
+// Nested-activation save stack. Production loaders nest (XModelLoadFile
+// -> XModelPartsPrecache / XModelSurfsPrecache, XModelPiecesLoadFile ->
+// nested model registration), and each nesting level Activates its own
+// cursor. Activate pushes the live scope so the nested parse cannot
+// destroy the parent's position, anchor, limits or failure state, and
+// Deactivate pops it back. The depth bound covers any real call graph
+// many times over (deepest audited production nesting is 3); on
+// overflow the nested cursor is installed pre-failed so the nested
+// parse rejects through the ordinary malformed-input path instead of
+// silently corrupting the parent scope.
+struct SavedCursorScope
+{
+    BufCursor state;
+    unsigned char **anchoredPos;
+};
+
+constexpr size_t kMaxSavedScopes = 16;
+thread_local SavedCursorScope g_scopeStack[kMaxSavedScopes] = {};
+thread_local size_t g_scopeDepth = 0;
+
+// Activations that could NOT push a parent save because the stack was
+// full. Deactivate consumes these first so LIFO push/pop accounting
+// stays exact: a scope that never pushed never pops. After an unsaved
+// scope ends the parent state is unrecoverable (its cursor slot was
+// overwritten), so the cursor goes fully inactive — the same outward
+// behavior as the pre-scoping Deactivate — until the next outer
+// Deactivate restores its own parent save.
+thread_local size_t g_unsavedScopes = 0;
+
 // Internal: scan from current for a NUL terminator, bounded by end.
 // Returns the string length (excluding NUL) on success, or SIZE_MAX
 // on overrun. The bounded scan prevents an unbounded strlen-before-check
@@ -50,6 +79,39 @@ inline void SyncAnchoredPos()
 
 BufCursor *Activate(const unsigned char *buf, size_t size)
 {
+    if (g_activeValid)
+    {
+        // Nested activation: explicitly preserve the parent scope so the
+        // nested parse cannot destroy the outer cursor's anchored *pos,
+        // position, domain limits or failure state. The matching
+        // Deactivate restores exactly this state (LIFO — every loader
+        // Activates at entry and Deactivates on every exit).
+        if (g_scopeDepth >= kMaxSavedScopes)
+        {
+            // Fail closed on pathological nesting depth: install the new
+            // cursor but pre-fail it so every read returns zeros and the
+            // nested parse unwinds through its ordinary malformed-input
+            // path. The scope does not push a parent save (tracked in
+            // g_unsavedScopes so the matching Deactivate keeps LIFO
+            // accounting exact).
+            ++g_unsavedScopes;
+            g_active.begin = buf;
+            g_active.current = buf;
+            g_active.end = buf + size;
+            g_active.txnCheckpoint = nullptr;
+            g_active.maxBoneIdx = 0xFFFFFFFFu;
+            g_active.maxWeightIdx = 0xFFFFFFFFu;
+            g_active.maxTriIdx = 0xFFFFFFFFu;
+            g_active.maxStringLen = 0xFFFFFFFFu;
+            g_active.failed = true;
+            g_activeValid = true;
+            g_anchoredPos = nullptr;
+            return &g_active;
+        }
+        g_scopeStack[g_scopeDepth].state = g_active;
+        g_scopeStack[g_scopeDepth].anchoredPos = g_anchoredPos;
+        ++g_scopeDepth;
+    }
     g_active.begin = buf;
     g_active.current = buf;
     g_active.end = buf + size;
@@ -66,6 +128,31 @@ BufCursor *Activate(const unsigned char *buf, size_t size)
 
 void Deactivate()
 {
+    if (g_unsavedScopes > 0)
+    {
+        // This scope never pushed a parent save (save stack was full at
+        // its Activate), so there is nothing to pop and nothing to
+        // restore — go fully inactive without disturbing the stack.
+        --g_unsavedScopes;
+        g_activeValid = false;
+        g_anchoredPos = nullptr;
+        g_active = BufCursor{};
+        return;
+    }
+    if (g_scopeDepth > 0)
+    {
+        // Restore the parent scope exactly: position, anchor, limits and
+        // failure flag. Re-asserting the anchor writes the restored
+        // position back through the parent's *pos so the two views
+        // continue in lockstep (and heals any transient raw-pointer
+        // desync the parent picked up before the nested activation).
+        --g_scopeDepth;
+        g_active = g_scopeStack[g_scopeDepth].state;
+        g_anchoredPos = g_scopeStack[g_scopeDepth].anchoredPos;
+        g_activeValid = true;
+        SyncAnchoredPos();
+        return;
+    }
     g_activeValid = false;
     g_anchoredPos = nullptr;
     g_active = BufCursor{};
@@ -177,6 +264,36 @@ void AnchorPos(unsigned char **pos)
     {
         *pos = const_cast<unsigned char *>(g_active.current);
     }
+}
+
+const unsigned char *Tell()
+{
+    if (!g_activeValid)
+    {
+        return nullptr;
+    }
+    return g_active.current;
+}
+
+bool SeekTo(const unsigned char *target)
+{
+    if (!g_activeValid || g_active.failed)
+    {
+        return false;
+    }
+    if (target < g_active.begin || target > g_active.end)
+    {
+        // A checkpoint outside the active buffer means the caller's
+        // saved position is stale or corrupt. Latch failed so the
+        // caller's ordinary malformed-input cleanup runs; the position
+        // does not move.
+        g_active.failed = true;
+        SyncAnchoredPos();
+        return false;
+    }
+    g_active.current = target;
+    SyncAnchoredPos();
+    return true;
 }
 
 bool ReadString(char *out, size_t outSize)
