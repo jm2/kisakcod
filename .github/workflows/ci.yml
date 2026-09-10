@@ -1,3 +1,32 @@
+# CI gate for KisakCOD.
+#
+# Implements the multi-platform delivery contract from
+# docs/CI_RELEASE_WORKFLOW_AUDIT.md (bead ki-8px) and docs/task.md Priority 8:
+#   - every job has a bounded timeout (minutes are generous but finite)
+#   - superseded runs cancel (concurrency + cancel-in-progress)
+#   - every action is pinned to an immutable commit SHA (tag in comment)
+#   - no checkout keeps persisted credentials; build jobs stay read-only
+#     (contents: read is the only workflow permission)
+#   - scaffolding-builds runs a per-target leg for every supported
+#     OS/architecture pair and uploads a target-labeled artifact with an
+#     explicit provenance manifest recording the leg's ACTUAL resolved
+#     toolchain (scripts/ci/collect-toolchain.ps1); scaffolding-complete
+#     is the required gate
+#
+# Retention policy: CI artifacts live 14 days (debugging window); the release
+# workflow is the long-term store and pins 90 days there.
+#
+# Platform honesty note: the engine targets are Win32-x86-only today —
+# CMakeLists.txt fails configuration for any non-win32 engine build and for
+# 64-bit builds without the explicit KISAK_ALLOW_UNSUPPORTED_64BIT escape
+# hatch, and that gate must not be relaxed (docs/task.md, Known release
+# blockers). The windows-x86 leg therefore builds and packages the real
+# engine binaries, while the other five legs are portable test/release
+# scaffolding (the same required hosted legs the port has been merging
+# against): every engine option is OFF, so they package test binaries only —
+# their green result is NOT five delivered engines. They still assert
+# architecture truth, run smoke tests, and publish provenance.
+
 name: CI
 
 on:
@@ -10,10 +39,19 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Superseded runs on the same ref cancel instead of piling up.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   portable-tests:
+    # Utility/test composition for every supported OS/architecture pair. This
+    # is the portable source-composition gate the port has required on every
+    # change; it stays so the scaffolding-builds legs can evolve independently.
     name: Portable tests / ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -30,6 +68,8 @@ jobs:
             runner: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Configure
         run: >
@@ -46,9 +86,18 @@ jobs:
       - name: Run portable tests
         run: ctest --test-dir build-tests -C Release --output-on-failure
 
+  # Sealed surface: source-invariant seal tests pin this job's exact step
+  # shapes, names, and ordering, and normalize the file with comments left
+  # in place — so do not reword step names, reorder steps, add comments
+  # between the job key and its name, or reflow the artifact ref. Restored
+  # verbatim from base; only timeout-minutes, persist-credentials: false,
+  # and pinning the two actions no seal references were added. The
+  # upload-artifact ref must stay literal until the seal markers are
+  # updated (ki-yvj follow-up bead).
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
     runs-on: windows-2022
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +107,8 @@ jobs:
       DXSDK_VERSION: 9.29.952.8
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
@@ -179,6 +230,7 @@ jobs:
   windows-x86-sp:
     name: Windows x86 SP / ${{ matrix.config }}
     runs-on: windows-2022
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -188,6 +240,8 @@ jobs:
       DXSDK_VERSION: 9.29.952.8
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
@@ -231,11 +285,14 @@ jobs:
     # are uploaded on every outcome so a mismatch can be diffed offline.
     name: Windows x86 (byte parity)
     runs-on: windows-2022
+    timeout-minutes: 150
     env:
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
       DXSDK_VERSION: 9.29.952.8
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
@@ -285,11 +342,14 @@ jobs:
     # the POSIX/Vulkan platform layers land. Compile only; no artifact.
     name: Windows x86 (no Steam)
     runs-on: windows-2022
+    timeout-minutes: 120
     env:
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
       DXSDK_VERSION: 9.29.952.8
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
@@ -322,15 +382,17 @@ jobs:
           --target KisakCOD-mp KisakCOD-dedi
           --parallel
 
-
   windows-x86-headless:
     # This is the first real compile/link gate for the portable dedicated-server
     # source profile. Keep it independent of the legacy Windows client/media
     # build so headless cannot silently regain DirectX, Miles, Bink, or Steam.
     name: Windows x86 (headless dedicated)
     runs-on: windows-2022
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Configure
         shell: pwsh
@@ -359,3 +421,239 @@ jobs:
           path: bin/Release/KisakCOD-dedi.exe
           if-no-files-found: error
           retention-days: 14
+
+  scaffolding-builds:
+    # Per-target scaffolding gate for every supported OS/architecture pair.
+    # The windows-x86 leg builds and packages the real engine (MP + dedicated)
+    # through the same shared script release.yml uses. The other five legs are
+    # portable test/release scaffolding, NOT engine delivery — the engine is
+    # Win32-x86-only until the CMakeLists platform gate is lifted, so these
+    # legs configure every engine option OFF and package test binaries only.
+    # Instead of a matrix-only claim they assert architecture truth on the
+    # binaries they built, run the full portable smoke suite, and publish a
+    # target-labeled artifact with an explicit provenance manifest.
+    name: Portable test/release scaffolding / ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x86
+            runner: windows-2022
+            os: windows
+          - target: windows-amd64
+            runner: windows-2025
+            os: windows
+            cmake-arch: x64
+            pe-arch: x64
+          - target: windows-arm64
+            runner: windows-11-arm
+            os: windows
+            cmake-arch: ARM64
+            pe-arch: ARM64
+          - target: linux-amd64
+            runner: ubuntu-24.04
+            os: linux
+            file-arch: x86-64
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            os: linux
+            file-arch: aarch64
+          - target: macos-arm64
+            runner: macos-15
+            os: macos
+            file-arch: arm64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # ---- windows-x86: the real engine production artifact ----
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        if: matrix.target == 'windows-x86'
+        with:
+          dotnet-version: 8.x
+
+      - name: Build engine production binaries (shared profile)
+        if: matrix.target == 'windows-x86'
+        shell: pwsh
+        run: ./scripts/ci/build-windows-x86.ps1 -BuildDir build-release -Config Release
+
+      - name: Verify binary architecture (PE machine type)
+        if: matrix.target == 'windows-x86'
+        shell: pwsh
+        run: >
+          ./scripts/ci/verify-artifact-arch.ps1 -Expected x86
+          bin/Release/KisakCOD-mp.exe bin/Release/KisakCOD-dedi.exe
+
+      # Toolchain provenance for the engine artifact: build-release was
+      # configured by the shared script above (VS generator), so the
+      # collector records the real resolved toolchain BEFORE the manifest
+      # below embeds it. The shared script restores the DirectX SDK and
+      # publishes its resolved version to GITHUB_ENV; pass it through so the
+      # engine manifest records that dependency like the SP/no-Steam legs.
+      - name: Collect toolchain provenance
+        if: matrix.target == 'windows-x86'
+        shell: pwsh
+        run: >
+          ./scripts/ci/collect-toolchain.ps1 -BuildDir build-release
+          -OutFile build-toolchain.json
+          -SdkLabel 'DirectX SDK (D3DX)' -SdkVersion $env:DXSDK_VERSION
+
+      # Deep Windows x86 testing lives in the windows-x86 job (same shared
+      # script, Debug + Release, full transaction-test allowlist); the
+      # aggregator requires it, so this leg stays the release-parity
+      # build+package gate instead of duplicating that suite.
+      - name: Package production binaries
+        if: matrix.target == 'windows-x86'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path bin/Release/* -DestinationPath dist/KisakCOD-windows-x86.zip
+          # Actual resolved toolchain of THIS build; fails the step if the
+          # collector did not run.
+          $toolchain = Get-Content -LiteralPath build-toolchain.json -Raw | ConvertFrom-Json
+          [ordered]@{
+            target        = "${{ matrix.target }}"
+            commit        = $env:GITHUB_SHA
+            ref           = $env:GITHUB_REF
+            config        = "production-mp-dedi"
+            toolchain     = $toolchain
+            workflow_run  = $env:GITHUB_RUN_ID
+            generated_at  = (Get-Date).ToUniversalTime().ToString("o")
+          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 dist/KisakCOD-windows-x86-provenance.json
+
+      # ---- portable test composition (all other targets) ----
+      # Static `shell: bash` on every portable leg: expressions are not
+      # permitted in `shell:` (actionlint / GitHub context-availability), the
+      # commands are shell-agnostic, and Git Bash is preinstalled on the
+      # Windows runners.
+      - name: Configure portable test composition
+        if: matrix.target != 'windows-x86'
+        shell: bash
+        run: >
+          cmake -S . -B build-release
+          ${{ matrix.cmake-arch && format('-A {0}', matrix.cmake-arch) || '' }}
+          -DKISAK_BUILD_MP=OFF
+          -DKISAK_BUILD_DEDICATED=OFF
+          -DKISAK_BUILD_SP=OFF
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=ON
+
+      - name: Build portable test composition
+        if: matrix.target != 'windows-x86'
+        shell: bash
+        run: cmake --build build-release --config Release --parallel
+
+      - name: Verify binary architecture (ELF/Mach-O)
+        if: matrix.os == 'linux' || matrix.os == 'macos'
+        shell: bash
+        run: >
+          scripts/ci/verify-artifact-arch.sh '${{ matrix.file-arch }}'
+          build-release/tests/kisakcod-pool-allocator-tests
+          build-release/tests/kisakcod-db-zone-runtime-table-tests
+
+      - name: Verify binary architecture (PE machine type)
+        if: matrix.os == 'windows' && matrix.target != 'windows-x86'
+        shell: pwsh
+        run: >
+          ./scripts/ci/verify-artifact-arch.ps1 -Expected '${{ matrix.pe-arch }}'
+          build-release/tests/Release/kisakcod-pool-allocator-tests.exe
+          build-release/tests/Release/kisakcod-db-zone-runtime-table-tests.exe
+
+      - name: Run portable smoke suite
+        if: matrix.target != 'windows-x86'
+        shell: bash
+        run: ctest --test-dir build-release -C Release --output-on-failure
+
+      # Toolchain provenance: read the resolved compiler/linker/CMake/SDK
+      # versions out of this leg's build tree and embed them in the
+      # provenance manifest below (same as release.yml legs — CI validates
+      # what release ships, so their manifests carry the same truth). Runs
+      # on every portable leg after its build; the windows-x86 engine leg
+      # collects earlier, before its own manifest step above.
+      - name: Collect toolchain provenance
+        if: matrix.target != 'windows-x86'
+        shell: pwsh
+        run: >
+          ./scripts/ci/collect-toolchain.ps1 -BuildDir build-release
+          -OutFile build-toolchain.json
+
+      - name: Package portable composition
+        if: matrix.os == 'linux' || matrix.os == 'macos'
+        shell: bash
+        run: |
+          mkdir -p dist
+          # Reproducible archives need GNU tar (--sort/--owner/--group).
+          # macOS 15 runners alias bsdtar to `tar` and GNU tar to `gtar`;
+          # Linux runners have GNU tar as `tar`.
+          TAR="$(command -v gtar || command -v tar)"
+          "$TAR" --sort=name --owner=0 --group=0 \
+            -czf "dist/KisakCOD-${{ matrix.target }}-portable-Release.tar.gz" \
+            -C build-release/tests .
+          jq -n \
+            --arg target '${{ matrix.target }}' \
+            --arg commit "${GITHUB_SHA}" \
+            --arg ref "${GITHUB_REF}" \
+            --arg config "portable-test-composition" \
+            --arg run "${GITHUB_RUN_ID}" \
+            --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --slurpfile toolchain build-toolchain.json \
+            '{target: $target, commit: $commit, ref: $ref, config: $config, toolchain: $toolchain[0], workflow_run: $run, generated_at: $generated_at}' \
+            > "dist/KisakCOD-${{ matrix.target }}-portable-Release-provenance.json"
+
+      - name: Package portable composition
+        if: matrix.os == 'windows' && matrix.target != 'windows-x86'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path build-release/tests/Release/*.exe -DestinationPath "dist/KisakCOD-${{ matrix.target }}-portable-Release.zip"
+          $toolchain = Get-Content -LiteralPath build-toolchain.json -Raw | ConvertFrom-Json
+          [ordered]@{
+            target        = "${{ matrix.target }}"
+            commit        = $env:GITHUB_SHA
+            ref           = $env:GITHUB_REF
+            config        = "portable-test-composition"
+            toolchain     = $toolchain
+            workflow_run  = $env:GITHUB_RUN_ID
+            generated_at  = (Get-Date).ToUniversalTime().ToString("o")
+          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 "dist/KisakCOD-${{ matrix.target }}-portable-Release-provenance.json"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: KisakCOD-${{ matrix.target }}-Release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  scaffolding-complete:
+    # The required CI gate: every build job in this workflow plus the six
+    # scaffolding legs must succeed. Branch protection should require this
+    # single job. (Renamed from production-complete: the five non-x86 legs
+    # are test-composition scaffolding, not shipped engines.)
+    name: Portable scaffolding complete
+    needs:
+      - portable-tests
+      - windows-x86
+      - windows-x86-sp
+      - windows-x86-parity
+      - windows-x86-nosteam
+      - windows-x86-headless
+      - scaffolding-builds
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Enforce required job results
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "required results: $results"
+          fail=0
+          for r in $results; do
+            if [ "$r" != "success" ]; then
+              echo "required job result: $r" >&2
+              fail=1
+            fi
+          done
+          exit $fail
