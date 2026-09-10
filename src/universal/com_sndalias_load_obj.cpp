@@ -155,7 +155,9 @@ void __cdecl Com_LoadSoundAliasDefaults(snd_alias_build_s *alias, const char *so
     alias->pNext = 0;
 }
 
-BOOL __cdecl Com_IsValidName(
+// KisakCOD port: BOOL is a Win32 spelling for int; this file-local helper is
+// called unconditionally, so spell the identical-width type portably.
+int __cdecl Com_IsValidName(
     const char *token,
     uint32_t maxLength,
     int(__cdecl *validityFunction)(const char *),
