@@ -53,7 +53,12 @@
 // discipline is mandatory, not stylistic. The save stack is bounded;
 // overflowing it installs the nested cursor pre-failed so the nested
 // parse rejects through the ordinary malformed-input path instead of
-// corrupting the parent.
+// corrupting the parent. When an overflowed scope unwinds, the
+// overflowed caller's own state is gone, so its Deactivate leaves a
+// pre-failed, empty-but-active cursor: Failed() stays latched and
+// reads return zeros until the caller's own Deactivate restores the
+// nearest pushed ancestor — the failure remains latched through every
+// affected scope instead of decaying into an unbounded fallback.
 //
 // Checked checkpoint/seek.
 //
@@ -100,7 +105,9 @@ BufCursor *Activate(const unsigned char *buf, size_t size);
 
 // Tear down the active cursor and clear the thread-local. After this
 // returns Buf_Read<T> falls back to the original unbounded read until
-// another Activate call re-establishes the cursor.
+// another Activate call re-establishes the cursor. (Nested scopes
+// restore their parent instead; an overflowed scope's caller is left
+// active and pre-failed — see the ownership notes above.)
 void Deactivate();
 
 // True when the current active cursor has failed a bounds check. Loaders
