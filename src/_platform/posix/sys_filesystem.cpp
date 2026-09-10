@@ -622,9 +622,11 @@ enum class RemoveEntryKind
 RemoveEntryKind ClassifyEntryForRemoval(
     const int directoryFd,
     const char *const name,
-    struct stat *const status) // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/device/inode are used; timestamps are never read.
+    struct stat *const status)
 {
-    if (fstatat(directoryFd, name, status, AT_SYMLINK_NOFOLLOW) != 0) // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/device/inode are used; timestamps are never read.
+    if (fstatat(directoryFd, name, status, AT_SYMLINK_NOFOLLOW) != 0)
         return RemoveEntryKind::kStop;
     // Symbolic links are never traversed. They are removed only when
     // the path the test follows leads through the deletion service
@@ -646,22 +648,26 @@ struct RemovalEntry
     ino_t inode;
 };
 
-bool MatchesRemovalIdentity(const struct stat &status, const RemovalEntry &entry) // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
+// cppcheck-suppress y2038-unsafe-call -- Only mode/device/inode are used; timestamps are never read.
+bool MatchesRemovalIdentity(const struct stat &status, const RemovalEntry &entry)
 {
     return status.st_dev == entry.device && status.st_ino == entry.inode;
 }
 
 bool MatchesRemovalName(const int parentFd, const RemovalEntry &entry)
 {
-    struct stat status{}; // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
-    return fstatat(parentFd, entry.name.c_str(), &status, AT_SYMLINK_NOFOLLOW) == 0 // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/device/inode are used; timestamps are never read.
+    struct stat status{};
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/device/inode are used; timestamps are never read.
+    return fstatat(parentFd, entry.name.c_str(), &status, AT_SYMLINK_NOFOLLOW) == 0
         && MatchesRemovalIdentity(status, entry);
 }
 
 bool AppendEntryName(
     std::vector<RemovalEntry> *entries,
     const char *const name,
-    const struct stat &status) // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/device/inode are used; timestamps are never read.
+    const struct stat &status)
 {
     try
     {
@@ -677,7 +683,8 @@ bool AppendEntryName(
 bool AppendClassifiedEntry(
     const RemoveEntryKind kind,
     const char *const name,
-    const struct stat &status, // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/device/inode are used; timestamps are never read.
+    const struct stat &status,
     std::vector<RemovalEntry> *files,
     std::vector<RemovalEntry> *subdirectories,
     std::vector<RemovalEntry> *symlinks)
@@ -725,7 +732,8 @@ bool CollectDirectoryEntries(
         }
         if (!IsValidUtf8(name))
             return false;
-        struct stat status{}; // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
+        // cppcheck-suppress y2038-unsafe-call -- Only mode/device/inode are used; timestamps are never read.
+        struct stat status{};
         const RemoveEntryKind kind = ClassifyEntryForRemoval(directoryFd, name, &status);
         if (!AppendClassifiedEntry(
                 kind,
@@ -833,7 +841,8 @@ bool DescendToNextChild(
         return false;
     }
     struct stat status{};
-    if (fstat(childFd, &status) != 0 || !MatchesRemovalIdentity(status, entry)) // Flawfinder: ignore -- Only device/inode are used.
+    // cppcheck-suppress y2038-unsafe-call -- Only device/inode are used.
+    if (fstat(childFd, &status) != 0 || !MatchesRemovalIdentity(status, entry))
     {
         close(childFd);
         stack->pop_back();
@@ -963,8 +972,10 @@ bool OpenAncestorOfLeaf(
 // Use only object identity; timestamps have no role in deletion decisions.
 bool RemoveHeldLeaf(const int parentFd, const int leafFd, const std::string &leaf)
 {
-    struct stat openedStatus{}; // Flawfinder: ignore -- Only device/inode are read, never timestamps.
-    if (fstat(leafFd, &openedStatus) != 0) // Flawfinder: ignore -- Identity only; errors fail closed.
+    // cppcheck-suppress y2038-unsafe-call -- Only device/inode are read, never timestamps.
+    struct stat openedStatus{};
+    // cppcheck-suppress y2038-unsafe-call -- Identity only; errors fail closed.
+    if (fstat(leafFd, &openedStatus) != 0)
         return false;
     const RemovalEntry entry{leaf, openedStatus.st_dev, openedStatus.st_ino};
     return RemoveTreeAt(leafFd) && MatchesRemovalName(parentFd, entry)

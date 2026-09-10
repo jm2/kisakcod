@@ -1,10 +1,10 @@
-#include <array>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <Windows.h>
 
 #include <qcommon/sys_filesystem.h>
+#include "sys_filesystem_nt.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -829,8 +829,6 @@ constexpr FILE_INFO_BY_HANDLE_CLASS kKisakFileDispositionInfoExClass =
 // unit stays free of winternl.h and of a hard ntdll link dependency.
 // ---------------------------------------------------------------------------
 
-using KisakNtStatus = std::int32_t;
-
 constexpr KisakNtStatus kKisakStatusSuccess = 0;
 constexpr KisakNtStatus kKisakStatusNoMoreFiles =
     static_cast<KisakNtStatus>(0x80000006u);
@@ -912,51 +910,6 @@ constexpr std::uint32_t kKisakObjCaseInsensitive = 0x00000040u;
 // FileInformationClass.
 constexpr std::uint32_t kKisakFileIdExtdDirectoryInformation = 60u;
 
-struct KisakUnicodeString
-{
-    std::uint16_t Length;
-    std::uint16_t MaximumLength;
-    wchar_t *Buffer;
-};
-
-struct KisakIoStatusBlock
-{
-    union
-    {
-        KisakNtStatus Status;
-        void *Pointer;
-    };
-    std::uintptr_t Information;
-};
-
-struct KisakObjectAttributes
-{
-    std::uint32_t Length;
-    void *RootDirectory;
-    KisakUnicodeString *ObjectName;
-    std::uint32_t Attributes;
-    void *SecurityDescriptor;
-    void *SecurityQualityOfService;
-};
-
-struct KisakFileIdExtdDirectoryInformation
-{
-    std::uint32_t NextEntryOffset;
-    std::uint32_t FileIndex;
-    std::int64_t CreationTime;
-    std::int64_t LastAccessTime;
-    std::int64_t LastWriteTime;
-    std::int64_t ChangeTime;
-    std::int64_t EndOfFile;
-    std::int64_t AllocationSize;
-    std::uint32_t FileAttributes;
-    std::uint32_t FileNameLength;
-    std::uint32_t EaSize;
-    std::uint32_t ReparsePointTag;
-    std::array<unsigned char, 16> FileId;
-    wchar_t FileName[1];
-};
-
 // Layout pins for the NT ABI mirrors above. Several members are never
 // dereferenced, but they must exist at their documented offsets so the
 // members that follow them land where the kernel expects; these
@@ -1000,38 +953,6 @@ static_assert(
         && offsetof(KisakFileIdExtdDirectoryInformation, FileId) == 72u
         && offsetof(KisakFileIdExtdDirectoryInformation, FileName) == 88u,
     "FILE_ID_EXTD_DIR_INFORMATION must retain the documented NT layout");
-
-using KisakNtCreateFileFn = KisakNtStatus (__stdcall *)(
-    HANDLE *fileHandle,
-    std::uint32_t desiredAccess,
-    KisakObjectAttributes *objectAttributes,
-    KisakIoStatusBlock *ioStatusBlock,
-    std::int64_t *allocationSize,
-    std::uint32_t fileAttributes,
-    std::uint32_t shareAccess,
-    std::uint32_t createDisposition,
-    std::uint32_t createOptions,
-    void *eaBuffer,
-    std::uint32_t eaLength);
-
-using KisakNtQueryDirectoryFileFn = KisakNtStatus (__stdcall *)(
-    HANDLE fileHandle,
-    HANDLE event,
-    void *apcRoutine,
-    void *apcContext,
-    KisakIoStatusBlock *ioStatusBlock,
-    void *fileInformation,
-    std::uint32_t length,
-    std::uint32_t fileInformationClass,
-    std::uint32_t returnSingleEntry,
-    KisakUnicodeString *fileName,
-    std::uint32_t restartScan);
-
-struct KisakNtProcedures
-{
-    KisakNtCreateFileFn createFile;
-    KisakNtQueryDirectoryFileFn queryDirectoryFile;
-};
 
 const KisakNtProcedures *NtProcedures()
 {
@@ -1242,7 +1163,7 @@ enum class RemoveTreePhase
 struct RemovalEntry
 {
     std::wstring name;
-    std::array<unsigned char, 16> fileId;
+    KisakFileId fileId;
 };
 
 // FILE_ID_INFO uses a 64-bit volume serial and the complete 128-bit ID.
@@ -1250,7 +1171,7 @@ struct RemovalEntry
 struct KisakFileIdInfo
 {
     std::uint64_t volume;
-    std::array<unsigned char, 16> fileId;
+    KisakFileId fileId;
 };
 
 bool ReadRemovalIdentity(const HANDLE handle, KisakFileIdInfo *const info)
@@ -1303,7 +1224,7 @@ bool ClassifyEnumerationEntry(
         entry->FileNameLength / sizeof(wchar_t);
     // A filesystem that supplies no identity cannot support a safe
     // comparison; fail closed rather than delete by classification alone.
-    if (entry->FileId == std::array<unsigned char, 16>{})
+    if (entry->FileId == KisakFileId{})
         return false;
     try
     {
