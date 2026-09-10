@@ -38,6 +38,8 @@ bool KISAK_CDECL Sys_FileSystemReadFile(
 // Real regular files and real directories are removed; special files
 // (FIFOs, sockets, device nodes) are rejected.
 // Returns false on the first error and stops; partial state may remain.
+// Windows requires filesystem support for complete file identities; a query
+// failure or missing identity returns false before deleting that directory.
 bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *utf8Path);
 
 // These queries return absolute UTF-8 paths without truncation. On failure,

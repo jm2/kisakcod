@@ -1,3 +1,4 @@
+#include <array>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -909,7 +910,7 @@ constexpr std::uint32_t kKisakFileOpenReparsePoint = 0x00200000u;
 constexpr std::uint32_t kKisakObjCaseInsensitive = 0x00000040u;
 
 // FileInformationClass.
-constexpr std::uint32_t kKisakFileIdFullDirectoryInformation = 38u;
+constexpr std::uint32_t kKisakFileIdExtdDirectoryInformation = 60u;
 
 struct KisakUnicodeString
 {
@@ -938,7 +939,7 @@ struct KisakObjectAttributes
     void *SecurityQualityOfService;
 };
 
-struct KisakFileIdFullDirectoryInformation
+struct KisakFileIdExtdDirectoryInformation
 {
     std::uint32_t NextEntryOffset;
     std::uint32_t FileIndex;
@@ -951,7 +952,8 @@ struct KisakFileIdFullDirectoryInformation
     std::uint32_t FileAttributes;
     std::uint32_t FileNameLength;
     std::uint32_t EaSize;
-    alignas(8) std::uint64_t FileId;
+    std::uint32_t ReparsePointTag;
+    std::array<unsigned char, 16> FileId;
     wchar_t FileName[1];
 };
 
@@ -972,32 +974,32 @@ static_assert(
         == sizeof(void *),
     "OBJECT_ATTRIBUTES security members must be pointer-sized apart");
 static_assert(
-    offsetof(KisakFileIdFullDirectoryInformation, CreationTime)
-            - offsetof(KisakFileIdFullDirectoryInformation, FileIndex)
-        == sizeof(KisakFileIdFullDirectoryInformation::NextEntryOffset),
-    "FILE_ID_FULL_DIR_INFORMATION timestamps must follow FileIndex");
+    offsetof(KisakFileIdExtdDirectoryInformation, CreationTime)
+            - offsetof(KisakFileIdExtdDirectoryInformation, FileIndex)
+        == sizeof(KisakFileIdExtdDirectoryInformation::NextEntryOffset),
+    "FILE_ID_EXTD_DIR_INFORMATION timestamps must follow FileIndex");
 static_assert(
-    offsetof(KisakFileIdFullDirectoryInformation, LastAccessTime)
-            - offsetof(KisakFileIdFullDirectoryInformation, CreationTime)
+    offsetof(KisakFileIdExtdDirectoryInformation, LastAccessTime)
+            - offsetof(KisakFileIdExtdDirectoryInformation, CreationTime)
         == sizeof(std::int64_t)
-        && offsetof(KisakFileIdFullDirectoryInformation, LastWriteTime)
-                - offsetof(KisakFileIdFullDirectoryInformation, LastAccessTime)
+        && offsetof(KisakFileIdExtdDirectoryInformation, LastWriteTime)
+                - offsetof(KisakFileIdExtdDirectoryInformation, LastAccessTime)
             == sizeof(std::int64_t)
-        && offsetof(KisakFileIdFullDirectoryInformation, ChangeTime)
-                - offsetof(KisakFileIdFullDirectoryInformation, LastWriteTime)
+        && offsetof(KisakFileIdExtdDirectoryInformation, ChangeTime)
+                - offsetof(KisakFileIdExtdDirectoryInformation, LastWriteTime)
             == sizeof(std::int64_t)
-        && offsetof(KisakFileIdFullDirectoryInformation, EndOfFile)
-                - offsetof(KisakFileIdFullDirectoryInformation, ChangeTime)
+        && offsetof(KisakFileIdExtdDirectoryInformation, EndOfFile)
+                - offsetof(KisakFileIdExtdDirectoryInformation, ChangeTime)
             == sizeof(std::int64_t)
-        && offsetof(KisakFileIdFullDirectoryInformation, AllocationSize)
-                - offsetof(KisakFileIdFullDirectoryInformation, EndOfFile)
+        && offsetof(KisakFileIdExtdDirectoryInformation, AllocationSize)
+                - offsetof(KisakFileIdExtdDirectoryInformation, EndOfFile)
             == sizeof(std::int64_t),
-    "FILE_ID_FULL_DIR_INFORMATION timestamp/size chain must be contiguous");
+    "FILE_ID_EXTD_DIR_INFORMATION timestamp/size chain must be contiguous");
 static_assert(
-    offsetof(KisakFileIdFullDirectoryInformation, EaSize) == 64u
-        && offsetof(KisakFileIdFullDirectoryInformation, FileId) == 72u
-        && offsetof(KisakFileIdFullDirectoryInformation, FileName) == 80u,
-    "FILE_ID_FULL_DIR_INFORMATION must retain the documented NT layout");
+    offsetof(KisakFileIdExtdDirectoryInformation, EaSize) == 64u
+        && offsetof(KisakFileIdExtdDirectoryInformation, FileId) == 72u
+        && offsetof(KisakFileIdExtdDirectoryInformation, FileName) == 88u,
+    "FILE_ID_EXTD_DIR_INFORMATION must retain the documented NT layout");
 
 using KisakNtCreateFileFn = KisakNtStatus (__stdcall *)(
     HANDLE *fileHandle,
@@ -1240,21 +1242,31 @@ enum class RemoveTreePhase
 struct RemovalEntry
 {
     std::wstring name;
-    std::uint64_t fileId;
+    std::array<unsigned char, 16> fileId;
 };
+
+// FILE_ID_INFO uses a 64-bit volume serial and the complete 128-bit ID.
+// The legacy BY_HANDLE_FILE_INFORMATION index is not unique on ReFS.
+struct KisakFileIdInfo
+{
+    std::uint64_t volume;
+    std::array<unsigned char, 16> fileId;
+};
+
+bool ReadRemovalIdentity(const HANDLE handle, KisakFileIdInfo *const info)
+{
+    return GetFileInformationByHandleEx(
+        handle, static_cast<FILE_INFO_BY_HANDLE_CLASS>(18), info, sizeof(*info)) != 0;
+}
 
 bool VerifyEnumeratedIdentity(
     const HANDLE handle,
     const RemovalEntry &entry,
-    const DWORD expectedVolume)
+    const std::uint64_t expectedVolume)
 {
-    BY_HANDLE_FILE_INFORMATION info{};
-    if (!GetFileInformationByHandle(handle, &info))
-        return false;
-    const std::uint64_t fileId =
-        (static_cast<std::uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
-    return entry.fileId != 0 && fileId == entry.fileId
-        && info.dwVolumeSerialNumber == expectedVolume;
+    KisakFileIdInfo info{};
+    return ReadRemovalIdentity(handle, &info)
+        && info.fileId == entry.fileId && info.volume == expectedVolume;
 }
 
 struct RemoveTreeFrame
@@ -1263,7 +1275,7 @@ struct RemoveTreeFrame
     std::vector<RemovalEntry> files;
     std::vector<RemovalEntry> reparseChildren;
     std::vector<RemovalEntry> directories;
-    DWORD volume = 0;
+    std::uint64_t volume = 0;
     std::size_t nextDirectory = 0;      // cursor into directories
     RemoveTreePhase phase = RemoveTreePhase::kEnumerate;
     bool ownsHandle = false;            // root anchor stays caller-owned
@@ -1284,12 +1296,14 @@ bool IsDotOrDotDot(
 // attributes; the re-open-plus-verify step below re-checks it against the
 // live object before anything is deleted. Allocation failure fails closed.
 bool ClassifyEnumerationEntry(
-    const KisakFileIdFullDirectoryInformation *const entry,
+    const KisakFileIdExtdDirectoryInformation *const entry,
     RemoveTreeFrame *const frame)
 {
     const std::size_t nameCharacters =
         entry->FileNameLength / sizeof(wchar_t);
-    if (entry->FileId == 0)
+    // A filesystem that supplies no identity cannot support a safe
+    // comparison; fail closed rather than delete by classification alone.
+    if (entry->FileId == std::array<unsigned char, 16>{})
         return false;
     try
     {
@@ -1323,7 +1337,7 @@ bool ClassifyEnumerationEntry(
 // data and fails closed — the cursor never advances into capacity the
 // kernel did not fill.
 bool NextEnumerationOffset(
-    const KisakFileIdFullDirectoryInformation *const entry,
+    const KisakFileIdExtdDirectoryInformation *const entry,
     const std::uint32_t offset,
     const std::uint32_t returnedBytes,
     std::uint32_t *const next)
@@ -1334,7 +1348,7 @@ bool NextEnumerationOffset(
         *next = 0;
         return true;
     }
-    if (step < sizeof(KisakFileIdFullDirectoryInformation)
+    if (step < sizeof(KisakFileIdExtdDirectoryInformation)
         || step >= returnedBytes - offset)
     {
         return false;
@@ -1349,7 +1363,7 @@ bool NextEnumerationOffset(
 // name length that the extent check itself depends on — may be read.
 constexpr std::uint32_t kKisakDirEntryHeaderBytes =
     static_cast<std::uint32_t>(
-        offsetof(KisakFileIdFullDirectoryInformation, FileName));
+        offsetof(KisakFileIdExtdDirectoryInformation, FileName));
 
 // Validates one directory entry against the byte count the kernel
 // actually returned (IO_STATUS_BLOCK Information) before anything is
@@ -1362,7 +1376,7 @@ bool ParseEntryBounds(
     const void *const buffer,
     const std::uint32_t offset,
     const std::uint32_t returnedBytes,
-    const KisakFileIdFullDirectoryInformation **const entry)
+    const KisakFileIdExtdDirectoryInformation **const entry)
 {
     if (returnedBytes - offset < kKisakDirEntryHeaderBytes)
     {
@@ -1370,7 +1384,7 @@ bool ParseEntryBounds(
         return false;
     }
     *entry =
-        reinterpret_cast<const KisakFileIdFullDirectoryInformation *>(
+        reinterpret_cast<const KisakFileIdExtdDirectoryInformation *>(
             static_cast<const unsigned char *>(buffer) + offset);
     if ((*entry)->FileNameLength == 0)
     {
@@ -1405,7 +1419,7 @@ bool ParseEnumerationBatch(
     std::uint32_t offset = 0;
     for (;;)
     {
-        const KisakFileIdFullDirectoryInformation *entry = nullptr;
+        const KisakFileIdExtdDirectoryInformation *entry = nullptr;
         if (!ParseEntryBounds(buffer, offset, returnedBytes, &entry))
             return false;
         if (!IsDotOrDotDot(
@@ -1459,7 +1473,7 @@ KisakNtStatus QueryEnumerationBatch(
         &ioStatus,
         buffer,
         bufferBytes,
-        kKisakFileIdFullDirectoryInformation,
+        kKisakFileIdExtdDirectoryInformation,
         0u,
         nullptr,
         restartScan ? 1u : 0u);
@@ -1494,13 +1508,13 @@ bool EnumerateHeldDirectory(
     RemoveTreeFrame *const frame,
     const KisakNtProcedures *const nt)
 {
-    BY_HANDLE_FILE_INFORMATION info{};
-    if (!GetFileInformationByHandle(frame->directory, &info))
+    KisakFileIdInfo info{};
+    if (!ReadRemovalIdentity(frame->directory, &info))
     {
         NoteRemoveTreeFailure("enumerate/identity", GetLastError());
         return false;
     }
-    frame->volume = info.dwVolumeSerialNumber;
+    frame->volume = info.volume;
     // 64KiB dwarfs the largest legal NTFS directory entry.
     std::vector<std::uint64_t> enumerationBuffer(8192u);
     void *const buffer = enumerationBuffer.data();
@@ -1547,7 +1561,7 @@ bool EnumerateHeldDirectory(
 bool RemoveNamedEntries(
     const HANDLE heldDirectory,
     const std::vector<RemovalEntry> &names,
-    const DWORD expectedVolume,
+    const std::uint64_t expectedVolume,
     const std::uint32_t createOptions,
     const bool expectedReparse,
     const char *const stagePrefix)
