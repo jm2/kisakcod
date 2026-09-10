@@ -292,7 +292,7 @@ const char *__cdecl Scr_GetElementThreadPos(Scr_WatchElement_s *element);
 void __cdecl Scr_SetElementRefText(Scr_WatchElement_s *element, char *fieldText);
 void __cdecl Scr_ConnectElementChildren(Scr_WatchElement_s *parentElement);
 void __cdecl Scr_SortElementChildren(Scr_WatchElement_s *parentElement);
-int __cdecl CompareThreadElements(Scr_WatchElement_s **arg1, Scr_WatchElement_s **arg2);
+int __cdecl CompareThreadElements(const void *arg1, const void *arg2);
 Scr_WatchElement_s *__cdecl Scr_CreateWatchElement(char *text, Scr_WatchElement_s **prevElem, const char *name);
 void __cdecl Scr_Evaluate();
 void __cdecl Scr_CheckBreakonNotify(

@@ -17,10 +17,6 @@
 //      Scr_WatchElement_s, Scr_OpcodeList_s, Scr_StringNode_s,
 //      CaseStatementInfo, BreakStatementInfo, ContinueStatementInfo).
 
-#if defined(_WIN32)
-#error portable test target only
-#endif
-
 #ifndef KISAK_DEDI_HEADLESS
 #define KISAK_DEDI_HEADLESS 1
 #endif
@@ -84,7 +80,8 @@ void TestConstAssignmentPreservesPointer()
     destination.type = ENUM_NOP;
     destination.node = nullptr;
 
-    destination = source;
+    const sval_u &constSource = source;
+    destination = constSource;
 
     // The pointer payload is the regression surface (the retail operator=
     // kept `type` and dropped the pointer half).

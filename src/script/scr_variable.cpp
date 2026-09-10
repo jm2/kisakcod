@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "scr_main.h"
 #include "scr_animtree.h"
 #include "scr_variable.h"
@@ -53,7 +54,7 @@ int  VariableInfoFunctionCompare(VariableDebugInfo *info1, VariableDebugInfo *in
 	if (fileNameCompare)
 		return fileNameCompare;
 	if (!info1->functionName)
-		return 1;
+		return info2->functionName ? 1 : 0;
 	if (info2->functionName)
 		return I_stricmp(info1->functionName, info2->functionName);
 	return -1;
@@ -1264,7 +1265,7 @@ void  Scr_DumpScriptVariables(bool spreadsheet,
 {
 	uint32_t NumScriptVars; // eax
 	const char* pos; // [esp+0h] [ebp-24h]
-	int(__cdecl * VariableInfoCompareCallBack)(const void*, const void*); // [esp+4h] [ebp-20h]
+	int(__cdecl * VariableInfoCompareCallBack)(VariableDebugInfo*, VariableDebugInfo*); // [esp+4h] [ebp-20h]
 	uint32_t index; // [esp+8h] [ebp-1Ch]
 	VariableDebugInfo* pInfo; // [esp+Ch] [ebp-18h]
 	VariableDebugInfo* pInfoa; // [esp+Ch] [ebp-18h]
@@ -1279,7 +1280,7 @@ void  Scr_DumpScriptVariables(bool spreadsheet,
 	if (scrVarDebugPub
 		&& (scrVarPub.developer || !spreadsheet && !fileName && !functionName && !lineSort && !functionSummary && !minCount))
 	{
-		infoArray = (VariableDebugInfo*)Z_TryVirtualAlloc(sizeof(VariableDebugInfo) * 0x18000, "Scr_DumpScriptVariables", 0);
+		infoArray = reinterpret_cast<VariableDebugInfo *>(Z_TryVirtualAlloc(sizeof(VariableDebugInfo) * 0x18000, "Scr_DumpScriptVariables", 0));
 		if (infoArray)
 		{
 			num = 0;
@@ -1314,18 +1315,18 @@ void  Scr_DumpScriptVariables(bool spreadsheet,
 			{
 				if (summary)
 				{
-					VariableInfoCompareCallBack = (int(*)(const void *, const void *))VariableInfoFileNameCompare;
-					qsort(infoArray, num, sizeof(VariableDebugInfo), (int(*)(const void *, const void *))VariableInfoFileNameCompare);
+					VariableInfoCompareCallBack = VariableInfoFileNameCompare;
+					std::sort(infoArray, infoArray + num, [](VariableDebugInfo &a, VariableDebugInfo &b) { return VariableInfoFileNameCompare(&a, &b) < 0; });
 				}
 				else if (functionSummary)
 				{
-					VariableInfoCompareCallBack = (int(*)(const void *, const void *))VariableInfoFunctionCompare;
-					qsort(infoArray, num, sizeof(VariableDebugInfo), (int(*)(const void *, const void *))VariableInfoFunctionCompare);
+					VariableInfoCompareCallBack = VariableInfoFunctionCompare;
+					std::sort(infoArray, infoArray + num, [](VariableDebugInfo &a, VariableDebugInfo &b) { return VariableInfoFunctionCompare(&a, &b) < 0; });
 				}
 				else
 				{
-					VariableInfoCompareCallBack = (int(*)(const void *, const void *))CompareThreadDebugIndices;
-					qsort(infoArray, num, sizeof(VariableDebugInfo), (int(*)(const void *, const void *))CompareThreadDebugIndices);
+					VariableInfoCompareCallBack = CompareThreadDebugIndices;
+					std::sort(infoArray, infoArray + num, [](VariableDebugInfo &a, VariableDebugInfo &b) { return CompareThreadDebugIndices(&a, &b) < 0; });
 				}
 				i = 0;
 				while (i < num)
@@ -1338,9 +1339,9 @@ void  Scr_DumpScriptVariables(bool spreadsheet,
 					} while (i < num && !VariableInfoCompareCallBack(pInfoa, &infoArray[i]));
 				}
 				if (lineSort)
-					qsort(infoArray, num, sizeof(VariableDebugInfo), (int(*)(const void *, const void *))VariableInfoFileLineCompare);
+					std::sort(infoArray, infoArray + num, [](VariableDebugInfo &a, VariableDebugInfo &b) { return VariableInfoFileLineCompare(&a, &b) < 0; });
 				else
-					qsort(infoArray, num, sizeof(VariableDebugInfo), (int(*)(const void *, const void *))VariableInfoCountCompare);
+					std::sort(infoArray, infoArray + num, [](VariableDebugInfo &a, VariableDebugInfo &b) { return VariableInfoCountCompare(&a, &b) < 0; });
 				Com_Printf(23, "********************************\n");
 				if (spreadsheet)
 				{
@@ -3376,7 +3377,7 @@ int VariableInfoFileNameCompare(VariableDebugInfo* info1, VariableDebugInfo* inf
 	const char* fileName1 = info1->fileName;
 	const char* fileName2 = info2->fileName;
 	if (!fileName1)
-		return 1;
+		return fileName2 ? 1 : 0;
 	if (fileName2)
 		return I_stricmp(fileName1, fileName2);
 	return -1;

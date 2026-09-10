@@ -3866,6 +3866,7 @@ void __cdecl Scr_ShutdownSystem(uint8_t sys, int bComplete)
     }
 }
 
+//SCRIPT_RUNTIME_TERMINATE_BEGIN
 void __cdecl VM_TerminateTime(uint32_t timeId)
 {
     VariableStackBuffer* stackValue; // [esp+0h] [ebp-Ch]
@@ -3897,6 +3898,7 @@ void __cdecl VM_TerminateTime(uint32_t timeId)
     }
     RemoveRefToObject(timeId);
 }
+//SCRIPT_RUNTIME_TERMINATE_END
 
 BOOL __cdecl Scr_IsSystemActive()
 {

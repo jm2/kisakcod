@@ -1228,12 +1228,9 @@ static void CheckReferenceRange(unsigned int begin, unsigned int end)
     }
 }
 
+//SCRIPT_RUNTIME_REFERENCES_BEGIN
 static int CheckReferences()
 {
-    int v0; // r11
-    unsigned int i; // r31
-    int v2; // r30
-    int v3; // r9
 
     if (!scrVarDebugPub || scrStringDebugGlob && scrStringDebugGlob->ignoreLeaks)
         return 1;
@@ -1243,16 +1240,14 @@ static int CheckReferences()
     CheckReferenceRange(0x8002u, 0x18000u);
     if (scrVarPub.developer)
     {
-        v0 = 1;
-        for (i = 458754; i < 0x80000; i += 2)
+        // refCount follows a pointer-sized varUsage array: use its member,
+        // never the retail byte offset into scrVarDebugPub.
+        for (unsigned int i = 1; i < 0x8000; ++i)
         {
-            v2 = v0 + 1;
-            if (Scr_IsVariableBreakpoint(v0 + 1))
-                ++*(_WORD *)((char *)scrVarDebugPub->varUsage + i);
-            v0 = v2;
+            if (Scr_IsVariableBreakpoint(i + 1))
+                ++scrVarDebugPub->refCount[i];
         }
     }
-    v3 = 458754;
     // M4 (ki-n1et): the walk advances one variable-table entry per step and
     // compares the entry's value-union payload against its ref-count word.
     // The retail form (`j += 4` on a 4-byte w pointer; `j[-1].status`
@@ -1265,10 +1260,9 @@ static int CheckReferences()
     VariableValueInternal_w *j = &scrVarGlob.variableList[entryIdx].w;
     while ((j->status & 0x60) == 0
         || (j->type & 0x1Fu) < 0xE
-        || *(_WORD *)((char *)scrVarDebugPub->varUsage + v3)
-        && *(unsigned __int16 *)((char *)scrVarDebugPub->varUsage + v3) == (unsigned __int16)scrVarGlob.variableList[entryIdx].u.u.intValue + 1)
+        || (scrVarDebugPub->refCount[entryIdx - 1]
+            && scrVarDebugPub->refCount[entryIdx - 1] == static_cast<uint16_t>(scrVarGlob.variableList[entryIdx].u.u.intValue) + 1))
     {
-        v3 += 2;
         ++entryIdx;
         if (entryIdx > 0x8000u)
             return 1;
@@ -1276,6 +1270,7 @@ static int CheckReferences()
     }
     return 0;
 }
+//SCRIPT_RUNTIME_REFERENCES_END
 
 void __cdecl Scr_LoadShutdown()
 {
@@ -1315,29 +1310,19 @@ namespace
 // VAR_POINTER: the saved bytes are the script object local id.
 void __cdecl DoSaveEntryPointer(VariableUnion u, MemoryFile *memFile)
 {
-    unsigned int UsedSize; // r3
-    unsigned int v7; // r3
 
-    UsedSize = MemFile_GetUsedSize(memFile);
-    //ProfMem_Begin("pointer", UsedSize);
     WriteId((unsigned int)u.intValue, 1u, memFile);
-    v7 = MemFile_GetUsedSize(memFile);
-    //ProfMem_End(v7);
+
 }
 
 // Writes the type byte that prefixes every non-pointer payload.
 void __cdecl DoSaveEntryTypeByte(unsigned int type, MemoryFile *memFile)
 {
-    unsigned int v8; // r3
-    unsigned int v9; // r3
     _BYTE v30[4]; // [sp+50h] [-30h] BYREF
 
-    v8 = MemFile_GetUsedSize(memFile);
-    //ProfMem_Begin("type", v8);
     v30[0] = 8 * type;
     MemFile_WriteData(memFile, 1, v30);
-    v9 = MemFile_GetUsedSize(memFile);
-    //ProfMem_End(v9);
+
 }
 
 // Value-bearing payloads: the cell's native dword IS the saved bytes
@@ -1345,23 +1330,17 @@ void __cdecl DoSaveEntryTypeByte(unsigned int type, MemoryFile *memFile)
 // text. Returns true when this type was handled.
 bool __cdecl DoSaveEntryValuePayload(unsigned int type, VariableUnion u, MemoryFile *memFile)
 {
-    unsigned int v19; // r3
     const char *v20; // r3
-    unsigned int v21; // r3
-    unsigned int v22; // r3
-    unsigned int v23; // r3
     unsigned int v31[11]; // [sp+54h] [-2Ch] BYREF
 
     switch (type)
     {
     case 2u:
     case 3u:
-        v19 = MemFile_GetUsedSize(memFile);
-        //ProfMem_Begin("string", v19);
+
         v20 = SL_ConvertToString((unsigned __int16)u.intValue);
         MemFile_WriteCString(memFile, v20);
-        v21 = MemFile_GetUsedSize(memFile);
-        //ProfMem_End(v21);
+
         return true;
     case 4u:
         WriteVector((float *)u.vectorValue, memFile);
@@ -1370,12 +1349,10 @@ bool __cdecl DoSaveEntryValuePayload(unsigned int type, VariableUnion u, MemoryF
         WriteFloat(u.floatValue, memFile);
         return true;
     case 6u:
-        v22 = MemFile_GetUsedSize(memFile);
-        //ProfMem_Begin("int", v22);
+
         v31[0] = (unsigned int)u.intValue;
         MemFile_WriteData(memFile, 4, v31);
-        v23 = MemFile_GetUsedSize(memFile);
-        //ProfMem_End(v23);
+
         return true;
     case 0xBu:
         v31[0] = u.entityOffset;
@@ -1868,6 +1845,7 @@ void __cdecl AddSaveObject(unsigned int parentId)
     }
 }
 
+//SCRIPT_RUNTIME_SAVE_OBJECT_BEGIN
 void __cdecl DoSaveObjectInfo(unsigned int parentId, MemoryFile *memFile)
 {
     VariableValueInternal *v4; // r31
@@ -1884,7 +1862,7 @@ void __cdecl DoSaveObjectInfo(unsigned int parentId, MemoryFile *memFile)
     int v15; // r11
     VariableValueInternal_w w; // r11
     unsigned int v17; // r3
-    VariableValue v18[12]; // [sp+50h] [-60h] BYREF
+    VariableValue v18[12]{}; // [sp+50h] [-60h] BYREF
 
     v4 = &scrVarGlob.variableList[parentId + 1];
     if ((v4->w.status & 0x60) != 0x60)
@@ -1977,6 +1955,7 @@ void __cdecl DoSaveObjectInfo(unsigned int parentId, MemoryFile *memFile)
         return;
     }
 }
+//SCRIPT_RUNTIME_SAVE_OBJECT_END
 
 int __cdecl Scr_ConvertThreadToSave(unsigned __int16 handle)
 {

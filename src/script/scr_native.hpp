@@ -172,9 +172,13 @@ constexpr bool IsRuntimeReconstructionVartype(uint32_t type)
 union VariableUnionDisk
 {
     int32_t intValue;
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     float floatValue;
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint32_t stringValue;   // string-list id (SL_)
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint32_t pointerValue;  // script object local id / anim index
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint32_t entityOffset;
 };
 ONDISK_SIZE(VariableUnionDisk, 4);
@@ -203,11 +207,17 @@ ONDISK_OFFSET(VariableValueDisk, type, 4);
 // widening contract.
 struct VariableStackBufferNative
 {
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     const char *pos;
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint16_t size;
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint16_t bufLen;
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint16_t localId;
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint8_t saveStamp; // mirrors scr_variable.h's VariableStackBuffer::saveStamp
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     char buf[1];
 };
 RUNTIME_SIZE(VariableStackBufferNative, 0xC, 0x10);
@@ -218,8 +228,11 @@ union VariableUnionNative
 {
     int32_t intValue;
     float floatValue;
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint32_t stringValue;
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     const float *vectorValue;               // VAR_VECTOR: live vector-pool pointer
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     const char *codePosValue;               // codepos family: live script-code pointer
     uint32_t pointerValue;                  // script object local id / anim index
     VariableStackBufferNative *stackValue;  // VAR_STACK: live stack-buffer pointer

@@ -46,6 +46,31 @@ jobs:
       - name: Run portable tests
         run: ctest --test-dir build-tests -C Release --output-on-failure
 
+  script-sanitizers:
+    name: Script production paths / ASan + UBSan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Configure script sanitizer contracts
+        run: >
+          cmake -S . -B build-script-sanitizers
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF
+          -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -DKISAK_REQUIRE_HIGH_POINTERS=1"
+      - name: Build script production contracts
+        run: >
+          cmake --build build-script-sanitizers --parallel 4 --target
+          kisakcod-script-runtime-pointer-tests
+          kisakcod-script-widening-value-tests
+          kisakcod-script-readstack-nested-tests
+      - name: Run script production contracts
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: >
+          ctest --test-dir build-script-sanitizers --output-on-failure
+          -R '^script-(runtime-pointer|widening-value|readstack-nested)-contracts$'
+
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
     runs-on: windows-2022

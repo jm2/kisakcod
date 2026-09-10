@@ -987,7 +987,7 @@ void __cdecl EmitMethod(
             value = Scr_EvalVariable(methId);
             type = Scr_GetUncacheType(value.type);
             // M4 (ki-n1et): pointer-width builtin-method cache cell.
-            meth = (void(*)(scr_entref_t))value.u.codePosValue;
+            meth = reinterpret_cast<void(*)(scr_entref_t)>(const_cast<char *>(value.u.codePosValue));
         }
         else
         {
@@ -995,7 +995,7 @@ void __cdecl EmitMethod(
             meth = Scr_GetMethod(&pName, &type);
             methId = GetNewVariable(scrCompilePub.builtinMeth, name);
             value.type = Scr_GetCacheType(type);
-            value.u.codePosValue = (const char *)meth;
+            value.u.codePosValue = reinterpret_cast<const char *>(meth);
             SetVariableValue(methId, &value);
         }
     }

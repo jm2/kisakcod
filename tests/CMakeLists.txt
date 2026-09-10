@@ -3337,27 +3337,60 @@ set_tests_properties(script-readstack-nested-contracts PROPERTIES TIMEOUT 60)
 # script-widening-value-contracts: the widened sval_u parse cell and the
 # widened runtime records must move full-width host pointers through copy
 # assignment and keep their RUNTIME_SIZE contract sizes on every target.
-# Windows is excluded to match the _WIN32 guard inside the test TU itself
-# (its contract sizes assume the LP64 host ABI); wiring it into the Windows
-# portable legs tripped C1189 "#error: portable test target only" (82244072
-# rejection). The source-invariants ctest below still runs on every target.
-if(NOT WIN32)
-    add_executable(kisakcod-script-widening-value-tests
-        script_widening_value_test.cpp)
-    target_include_directories(
-        kisakcod-script-widening-value-tests PRIVATE ${SRC_DIR})
-    target_compile_features(
-        kisakcod-script-widening-value-tests PRIVATE cxx_std_20)
-    target_compile_definitions(
-        kisakcod-script-widening-value-tests PRIVATE KISAK_DEDI_HEADLESS=1)
-    kisakcod_test_warnings(kisakcod-script-widening-value-tests)
-    set_target_properties(
-        kisakcod-script-widening-value-tests PROPERTIES
-            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    add_test(
-        NAME script-widening-value-contracts
-        COMMAND kisakcod-script-widening-value-tests)
+add_executable(kisakcod-script-widening-value-tests
+    script_widening_value_test.cpp)
+target_include_directories(
+    kisakcod-script-widening-value-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-script-widening-value-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-script-widening-value-tests PRIVATE KISAK_DEDI_HEADLESS=1)
+kisakcod_test_warnings(kisakcod-script-widening-value-tests)
+set_target_properties(
+    kisakcod-script-widening-value-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME script-widening-value-contracts
+    COMMAND kisakcod-script-widening-value-tests)
+
+# Compile selected production bodies against real runtime record headers and
+# service doubles. These regressions exercise allocations and pointer consumers,
+# including the object-save handoff, rather than a copy of their algorithms.
+set(_runtime_slice "")
+function(kisakcod_append_runtime_slice FILE TAG)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SRC_DIR}/script/${FILE}")
+    file(READ "${SRC_DIR}/script/${FILE}" _source)
+    string(FIND "${_source}" "//SCRIPT_RUNTIME_${TAG}_BEGIN" _begin)
+    string(FIND "${_source}" "//SCRIPT_RUNTIME_${TAG}_END" _end)
+    if(_begin EQUAL -1 OR _end LESS_EQUAL _begin)
+        message(FATAL_ERROR "Production runtime slice ${TAG} is missing")
+    endif()
+    math(EXPR _length "${_end} - ${_begin}")
+    string(SUBSTRING "${_source}" ${_begin} ${_length} _body)
+    set(_runtime_slice "${_runtime_slice}${_body}\n" PARENT_SCOPE)
+endfunction()
+kisakcod_append_runtime_slice(scr_debugger.cpp WATCH)
+kisakcod_append_runtime_slice(scr_debugger.cpp OPCODE)
+kisakcod_append_runtime_slice(scr_evaluate.cpp CANON_COMPARE)
+kisakcod_append_runtime_slice(scr_evaluate.cpp CANON_ARCHIVE)
+kisakcod_append_runtime_slice(scr_vm.cpp TERMINATE)
+kisakcod_append_runtime_slice(scr_readwrite.cpp REFERENCES)
+kisakcod_append_runtime_slice(scr_readwrite.cpp SAVE_OBJECT)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/script_runtime_slice.inc" "${_runtime_slice}")
+add_executable(kisakcod-script-runtime-pointer-tests script_runtime_pointer_test.cpp)
+target_include_directories(kisakcod-script-runtime-pointer-tests PRIVATE
+    ${SRC_DIR} ${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_compile_definitions(kisakcod-script-runtime-pointer-tests PRIVATE KISAK_MP KISAK_DEDI_HEADLESS=1)
+target_compile_features(kisakcod-script-runtime-pointer-tests PRIVATE cxx_std_20)
+# The slices retain decompiler diagnostics, as the existing readstack subject does.
+if(MSVC)
+    target_compile_options(kisakcod-script-runtime-pointer-tests PRIVATE /W0)
+else()
+    target_compile_options(kisakcod-script-runtime-pointer-tests PRIVATE -w)
 endif()
+set_target_properties(kisakcod-script-runtime-pointer-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME script-runtime-pointer-contracts COMMAND kisakcod-script-runtime-pointer-tests)
 
 # script-widening-source-invariants: pins the sizeof-based allocation,
 # stride and full-union forms the rework introduced and forbids the

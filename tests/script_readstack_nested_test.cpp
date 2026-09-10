@@ -28,7 +28,6 @@
 
 #include <script/scr_variable.h>
 
-#include <csetjmp>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -69,27 +68,25 @@ bool Evaluate(bool cond, const char *const expr, const char *const file, int lin
 // the memfile subject and the reader slice reference (the qcommon headers
 // already declare most of them; see tests/memfile_tests.cpp for the same
 // pattern). The reader must hit its nesting bound through the loud
-// Com_Error path, so that double longjmps into the harness.
+// Com_Error path, so that double throws into the harness while allowing C++ fixture cleanup.
 // ---------------------------------------------------------------------------
 
-jmp_buf g_readstackComErrorJump;
+struct ReadstackComError {};
 int g_readstackUnexpectedReports = 0;
+
+char g_readstackDiagnostic[] = "script readstack test diagnostic";
 
 char *QDECL va(const char *format, ...)
 {
-    static char buffer[256];
-    va_list args;
-    va_start(args, format);
-    std::vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    return buffer;
+    (void)format;
+    return g_readstackDiagnostic;
 }
 
 void QDECL Com_Error(const errorParm_t code, const char *format, ...)
 {
     (void)code;
     (void)format;
-    std::longjmp(g_readstackComErrorJump, 1);
+    throw ReadstackComError{};
 }
 
 void QDECL Com_Printf(const int channel, const char *format, ...)
@@ -297,7 +294,16 @@ VariableStackBuffer *RunReader(const std::vector<uint8_t> &image)
         static_cast<int>(archive.size()),
         archive.data(),
         false);
-    VariableStackBuffer *stack = Scr_ReadStack(&reader);
+    VariableStackBuffer *stack = nullptr;
+    try
+    {
+        stack = Scr_ReadStack(&reader);
+    }
+    catch (const ReadstackComError &)
+    {
+        MemFile_Shutdown(&reader);
+        throw;
+    }
     if (!reader.memoryOverflow && reader.segmentIndex >= 0)
         MemFile_MoveToSegment(&reader, -1);
     MemFile_Shutdown(&reader);
@@ -500,13 +506,13 @@ void TestNestingLimit()
     AppendStackHead(image, 1, 0x52, 0x82, 0x83);
     AppendIntegerRecord(image, 1u);
 
-    if (setjmp(g_readstackComErrorJump) == 0)
+    try
     {
         RunReader(image);
         // Reaching here means the bound did not fire.
         CHECK(false);
     }
-    else
+    catch (const ReadstackComError &)
     {
         CHECK(true);
     }
@@ -531,19 +537,27 @@ void TestNoNesting()
 }
 }  // namespace
 
+void ReleaseAllocations()
+{
+    for (VariableStackBuffer *block : g_allocations)
+        std::free(block);
+    g_allocations.clear();
+}
+
 int main()
 {
     TestNoNesting();
-    g_allocations.clear();
+    ReleaseAllocations();
     TestScalarEndedChild();
-    g_allocations.clear();
+    ReleaseAllocations();
     TestEmptyChild();
-    g_allocations.clear();
+    ReleaseAllocations();
     TestSiblings();
-    g_allocations.clear();
+    ReleaseAllocations();
     TestMultipleLevels();
-    g_allocations.clear();
+    ReleaseAllocations();
     TestNestingLimit();
+    ReleaseAllocations();
 
     if (script_readstack_nested_test::g_failures)
     {

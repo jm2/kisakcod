@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "scr_debugger.h"
 
 #ifdef KISAK_DEDI_HEADLESS
@@ -1392,10 +1393,10 @@ void __cdecl Scr_SortElementChildren(Scr_WatchElement_s *parentElement)
     // form allocated 4 bytes per slot, stored pointers through uint32_t and
     // wrote the reordered `next` links through the frozen offset 96 -- all
     // of which truncate on native64. Typed pointer slots throughout.
-    elementList = (Scr_WatchElement_s **)Scr_AllocDebugMem(sizeof(Scr_WatchElement_s *) * count, "Scr_SortElementChildren");
+    elementList = reinterpret_cast<Scr_WatchElement_s **>(Scr_AllocDebugMem(sizeof(Scr_WatchElement_s *) * count, "Scr_SortElementChildren"));
     for (newIndex = 0; newIndex < count; ++newIndex)
         elementList[newIndex] = &newElements[newIndex];
-    qsort(elementList, count, sizeof(Scr_WatchElement_s *), (int(__cdecl *)(const void *, const void *))CompareThreadElements);
+    qsort(elementList, count, sizeof(Scr_WatchElement_s *), CompareThreadElements);
     for (newIndexa = 0; newIndexa < count; ++newIndexa)
     {
         elementList[newIndexa]->next = (newIndexa >= count - 1) ? 0 : elementList[newIndexa + 1];
@@ -1409,33 +1410,32 @@ void __cdecl Scr_SortElementChildren(Scr_WatchElement_s *parentElement)
 // packed objectType word), which shift on the widened record. The packed
 // objectType key compares the same four bytes (objectType, oldObjectType,
 // expand, breakpointType, little-endian) on every width.
-int __cdecl CompareThreadElements(Scr_WatchElement_s **arg1, Scr_WatchElement_s **arg2)
+int __cdecl CompareThreadElements(const void *arg1, const void *arg2)
 {
     const Scr_WatchElement_s *element1;
     const Scr_WatchElement_s *element2;
-    uint32_t typeKey1;
-    uint32_t typeKey2;
 
-    element1 = *arg1;
-    element2 = *arg2;
+    element1 = *static_cast<Scr_WatchElement_s *const *>(arg1);
+    element2 = *static_cast<Scr_WatchElement_s *const *>(arg2);
     if (scrParserPub.sourceBufferLookup[element1->bufferIndex].sortedIndex != scrParserPub.sourceBufferLookup[element2->bufferIndex].sortedIndex)
         return scrParserPub.sourceBufferLookup[element1->bufferIndex].sortedIndex
         - scrParserPub.sourceBufferLookup[element2->bufferIndex].sortedIndex;
     if (element1->sourcePos == element2->sourcePos)
     {
-        typeKey1 = (uint32_t)element1->objectType
-            | ((uint32_t)element1->oldObjectType << 8)
-            | ((uint32_t)element1->expand << 16)
-            | ((uint32_t)element1->breakpointType << 24);
-        typeKey2 = (uint32_t)element2->objectType
-            | ((uint32_t)element2->oldObjectType << 8)
-            | ((uint32_t)element2->expand << 16)
-            | ((uint32_t)element2->breakpointType << 24);
+        const uint32_t typeKey1 = static_cast<uint32_t>(element1->objectType)
+            | (static_cast<uint32_t>(element1->oldObjectType) << 8)
+            | (static_cast<uint32_t>(element1->expand) << 16)
+            | (static_cast<uint32_t>(element1->breakpointType) << 24);
+        const uint32_t typeKey2 = static_cast<uint32_t>(element2->objectType)
+            | (static_cast<uint32_t>(element2->oldObjectType) << 8)
+            | (static_cast<uint32_t>(element2->expand) << 16)
+            | (static_cast<uint32_t>(element2->breakpointType) << 24);
         return typeKey1 - typeKey2;
     }
     return element1->sourcePos - element2->sourcePos;
 }
 
+//SCRIPT_RUNTIME_WATCH_BEGIN
 Scr_WatchElement_s *__cdecl Scr_CreateWatchElement(char *text, Scr_WatchElement_s **prevElem, const char *name)
 {
     Scr_WatchElement_s *element; // [esp+0h] [ebp-4h]
@@ -1443,14 +1443,15 @@ Scr_WatchElement_s *__cdecl Scr_CreateWatchElement(char *text, Scr_WatchElement_
     // M4 (ki-n1et): allocate the record, not the frozen 32-bit size
     // (100 bytes); the widened element is 0xA0 on native64 and the memset
     // below already clears sizeof(Scr_WatchElement_s).
-    element = (Scr_WatchElement_s *)Scr_AllocDebugMem(sizeof(Scr_WatchElement_s), name);
-    memset((uint8_t *)element, 0, sizeof(Scr_WatchElement_s));
+    element = reinterpret_cast<Scr_WatchElement_s *>(Scr_AllocDebugMem(sizeof(Scr_WatchElement_s), name));
+    *element = {};
     element->valueText = CopyString((char *)"");
     element->refText = CopyString(text);
     element->next = *prevElem;
     *prevElem = element;
     return element;
 }
+//SCRIPT_RUNTIME_WATCH_END
 
 void __cdecl Scr_Evaluate()
 {
@@ -1668,7 +1669,7 @@ bool __cdecl Scr_RefToVariable(uint32_t id, int isObject)
         // M4 (ki-n1et): typed node construction. The retail form allocated
         // 8 raw bytes and wrote element/next through uint32_t stores,
         // truncating both pointers on native64.
-        elementNode = (Scr_WatchElementNode_s *)Scr_AllocDebugMem(sizeof(Scr_WatchElementNode_s), "Scr_RefToVariable2");
+        elementNode = reinterpret_cast<Scr_WatchElementNode_s *>(Scr_AllocDebugMem(sizeof(Scr_WatchElementNode_s), "Scr_RefToVariable2"));
         elementNode->element = scrDebuggerGlob.currentElement;
         elementNode->next = breakpoints->list;
         breakpoints->list = elementNode;
@@ -1817,8 +1818,8 @@ void __cdecl Scr_InitDebuggerMain()
         {
             // M4 (ki-n1et): the table holds 98304 host pointers; the frozen
             // 393216 bytes (0x18000 * 4) under-sized every slot on native64.
-            scrDebuggerGlob.variableBreakpoints = (Scr_WatchElementDoubleNode_t **)Hunk_AllocDebugMem(98304 * sizeof(Scr_WatchElementDoubleNode_t *));// , "scrDebuggerGlob.variableBreakpoints");
-            memset((uint8_t *)scrDebuggerGlob.variableBreakpoints, 0, 98304 * sizeof(Scr_WatchElementDoubleNode_t *));
+            scrDebuggerGlob.variableBreakpoints = static_cast<Scr_WatchElementDoubleNode_t **>(Hunk_AllocDebugMem(98304 * sizeof(Scr_WatchElementDoubleNode_t *)));// , "scrDebuggerGlob.variableBreakpoints");
+            std::fill_n(scrDebuggerGlob.variableBreakpoints, 98304, nullptr);
             scrDebuggerGlob.assignHead = 0;
             scrDebuggerGlob.assignHeadCodePos = 0;
             scrDebuggerGlob.disableBreakpoints = 0;
@@ -2031,6 +2032,7 @@ void __cdecl Scr_ShutdownDebuggerSystem(int restart)
     }
 }
 
+//SCRIPT_RUNTIME_OPCODE_BEGIN
 void __cdecl Scr_AddAssignmentPos(char *codePos)
 {
     Scr_OpcodeList_s *v1; // eax
@@ -2048,6 +2050,7 @@ void __cdecl Scr_AddAssignmentPos(char *codePos)
         scrDebuggerGlob.assignHead = v1;
     }
 }
+//SCRIPT_RUNTIME_OPCODE_END
 
 void __cdecl Scr_RunDebuggerRemote()
 {
@@ -3015,8 +3018,8 @@ void Scr_SetChildCountRemote()
     oldChildCount = parentElement->childCount;
     // M4 (ki-n1et): element-sized array allocation and clear; 100 bytes was
     // the frozen 32-bit Scr_WatchElement_s record.
-    newElements = (Scr_WatchElement_s *)Scr_AllocDebugMem(sizeof(Scr_WatchElement_s) * count, "Scr_SetChildCountRemote");
-    memset((uint8_t *)newElements, 0, sizeof(Scr_WatchElement_s) * count);
+    newElements = reinterpret_cast<Scr_WatchElement_s *>(Scr_AllocDebugMem(sizeof(Scr_WatchElement_s) * count, "Scr_SetChildCountRemote"));
+    std::fill_n(newElements, count, Scr_WatchElement_s{});
     oldIndex = 0;
     newIndex = 0;
     for (nameIndex = 0; nameIndex < count; ++nameIndex)

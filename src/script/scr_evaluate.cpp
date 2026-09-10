@@ -37,6 +37,7 @@ int __cdecl Scr_CompareCanonicalStrings(uint32_t *arg1, uint32_t *arg2)
     return scrEvaluateGlob.canonicalStringLookup[*arg1] - scrEvaluateGlob.canonicalStringLookup[*arg2];
 }
 
+//SCRIPT_RUNTIME_CANON_ARCHIVE_BEGIN
 void __cdecl Scr_ArchiveCanonicalStrings()
 {
     char v0; // [esp+13h] [ebp-35h]
@@ -61,7 +62,7 @@ void __cdecl Scr_ArchiveCanonicalStrings()
     scrEvaluateGlob.archivedCanonicalStringsBuf = (char *)Hunk_AllocDebugMem(len);
     // M4 (ki-n1et): size by the element, not the frozen 32-bit record size;
     // ArchivedCanonicalStringInfo is 16 bytes on native64.
-    scrEvaluateGlob.archivedCanonicalStrings = (ArchivedCanonicalStringInfo *)Hunk_AllocDebugMem(sizeof(ArchivedCanonicalStringInfo) * scrVarPub.canonicalStrCount);
+    scrEvaluateGlob.archivedCanonicalStrings = static_cast<ArchivedCanonicalStringInfo *>(Hunk_AllocDebugMem(sizeof(ArchivedCanonicalStringInfo) * scrVarPub.canonicalStrCount));
     scrEvaluateGlob.canonicalStringLookup = (int *)Hunk_AllocDebugMem(4 * scrVarPub.canonicalStrCount + 4);
     i = 0;
     lena = 0;
@@ -93,7 +94,7 @@ void __cdecl Scr_ArchiveCanonicalStrings()
         scrEvaluateGlob.archivedCanonicalStrings,
         scrVarPub.canonicalStrCount,
         sizeof(ArchivedCanonicalStringInfo),
-        (int(__cdecl *)(const void *, const void *))CompareCanonicalStrings);
+        [](const void *a, const void *b) { return CompareCanonicalStrings(static_cast<const ArchivedCanonicalStringInfo *>(a), static_cast<const ArchivedCanonicalStringInfo *>(b)); });
     for (ia = 0; ia < (int)scrVarPub.canonicalStrCount; ++ia)
     {
         if (!scrEvaluateGlob.archivedCanonicalStrings[ia].canonicalStr)
@@ -114,15 +115,18 @@ void __cdecl Scr_ArchiveCanonicalStrings()
     }
     *scrEvaluateGlob.canonicalStringLookup = 0;
 }
+//SCRIPT_RUNTIME_CANON_ARCHIVE_END
 
 // M4 (ki-n1et): typed comparator. The retail form cast each record to
 // `const char **` and dereferenced element [1] -- width-correct only while
 // the record's pointer offset equals the pointer width. Compare the value
 // member directly so the record layout can never drift out from under it.
+//SCRIPT_RUNTIME_CANON_COMPARE_BEGIN
 int __cdecl CompareCanonicalStrings(const ArchivedCanonicalStringInfo *arg1, const ArchivedCanonicalStringInfo *arg2)
 {
     return strcmp(arg1->value, arg2->value);
 }
+//SCRIPT_RUNTIME_CANON_COMPARE_END
 
 const char *__cdecl Scr_GetCanonicalString(uint32_t fieldName)
 {
