@@ -525,7 +525,7 @@ target_link_libraries(
     kisakcod-db-zone-script-string-ownership-tests PRIVATE Threads::Threads)
 if (KISAK_PLATFORM STREQUAL "win32")
     target_link_libraries(
-        kisakcod-db-zone-script-string-ownership-tests PRIVATE winmm)
+        kisakcod-db-zone-script-string-ownership-tests PRIVATE winmm ws2_32)
 endif()
 kisakcod_test_warnings(kisakcod-db-zone-script-string-ownership-tests)
 set_target_properties(
@@ -770,7 +770,7 @@ target_link_libraries(
     kisakcod-db-zone-runtime-table-tests PRIVATE Threads::Threads)
 if (KISAK_PLATFORM STREQUAL "win32")
     target_link_libraries(
-        kisakcod-db-zone-runtime-table-tests PRIVATE winmm)
+        kisakcod-db-zone-runtime-table-tests PRIVATE winmm ws2_32)
 endif()
 if (MSVC)
     # Several adversarial lifecycle tests intentionally retain multiple
@@ -2391,7 +2391,8 @@ target_compile_features(kisakcod-platform-service-runtime-tests PRIVATE cxx_std_
 target_compile_definitions(kisakcod-platform-service-runtime-tests PRIVATE KISAK_MP)
 target_link_libraries(kisakcod-platform-service-runtime-tests PRIVATE Threads::Threads)
 if (KISAK_PLATFORM STREQUAL "win32")
-    target_link_libraries(kisakcod-platform-service-runtime-tests PRIVATE winmm)
+    target_link_libraries(
+        kisakcod-platform-service-runtime-tests PRIVATE winmm ws2_32)
 endif()
 kisakcod_test_warnings(kisakcod-platform-service-runtime-tests)
 set_target_properties(kisakcod-platform-service-runtime-tests PROPERTIES
@@ -2414,7 +2415,7 @@ target_compile_features(kisakcod-worker-thread-lifecycle-tests PRIVATE cxx_std_2
 target_compile_definitions(kisakcod-worker-thread-lifecycle-tests PRIVATE KISAK_MP KISAK_DEDI_HEADLESS)
 target_link_libraries(kisakcod-worker-thread-lifecycle-tests PRIVATE Threads::Threads)
 if (KISAK_PLATFORM STREQUAL "win32")
-    target_link_libraries(kisakcod-worker-thread-lifecycle-tests PRIVATE winmm)
+    target_link_libraries(kisakcod-worker-thread-lifecycle-tests PRIVATE winmm ws2_32)
 endif()
 kisakcod_test_warnings(kisakcod-worker-thread-lifecycle-tests)
 set_target_properties(kisakcod-worker-thread-lifecycle-tests PROPERTIES
@@ -2556,6 +2557,35 @@ add_test(
     COMMAND kisakcod-platform-process-tests freeze-unsupported
 )
 set_tests_properties(platform-process-freeze-contracts PROPERTIES TIMEOUT 20)
+
+set(_platform_socket_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _platform_socket_sources INCLUDE REGEX "[/\\\\]sys_socket\\.cpp$")
+list(LENGTH _platform_socket_sources _platform_socket_source_count)
+if (NOT _platform_socket_source_count EQUAL 1)
+    message(FATAL_ERROR
+        "Expected exactly one selected platform sys_socket.cpp, found "
+        "${_platform_socket_source_count}")
+endif()
+
+add_executable(kisakcod-platform-socket-tests
+    platform_socket_tests.cpp
+    ${_platform_socket_sources}
+)
+target_include_directories(kisakcod-platform-socket-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-socket-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-platform-socket-tests PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(kisakcod-platform-socket-tests PRIVATE ws2_32)
+endif()
+kisakcod_test_warnings(kisakcod-platform-socket-tests)
+set_target_properties(kisakcod-platform-socket-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-socket-contracts
+    COMMAND kisakcod-platform-socket-tests
+)
+set_tests_properties(platform-socket-contracts PROPERTIES TIMEOUT 30)
 
 add_executable(kisakcod-platform-crash-tests
     platform_crash_tests.cpp
@@ -2778,6 +2808,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_process_source_test.cmake
+)
+
+add_test(
+    NAME platform-socket-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_socket_source_test.cmake
 )
 
 add_test(

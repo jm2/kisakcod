@@ -32,3 +32,11 @@ exclude_paths:
   - "src/physics/ode/collision_trimesh_KISAK.h"
   - "src/physics/ode/util.h"
   - "src/qcommon/graph.h"
+
+# Keep the existing socket-header Cppcheck exception in this single config.
+# The address and port fields are exercised by both platform backends;
+# header-only analysis cannot see those uses.
+engines:
+  cppcheck:
+    exclude_paths:
+      - "src/qcommon/sys_socket.h"
