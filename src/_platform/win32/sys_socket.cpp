@@ -257,11 +257,13 @@ SysSocketRecvStatus KISAK_CDECL Sys_SocketRecvFrom(
         const int error = WSAGetLastError();
         if (error == WSAEMSGSIZE)
         {
-            // An oversized datagram fills the buffer with its leading
+            // An oversized datagram fills the window with its leading
             // bytes and Winsock reports the discarded excess as
             // WSAEMSGSIZE; the whole-datagram contract maps that to
-            // Truncated instead of a system failure.
-            *outByteCount = static_cast<std::uint32_t>(bufferCapacity);
+            // Truncated instead of a system failure. The filled count is
+            // the clamped window the call was given — never the raw
+            // caller capacity, which the clamp may have reduced.
+            *outByteCount = recvLength;
             return SysSocketRecvStatus::Truncated;
         }
         return ClassifyRecvError(error);

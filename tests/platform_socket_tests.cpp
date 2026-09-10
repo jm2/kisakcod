@@ -310,7 +310,7 @@ bool StageTruncationContract(SocketFixture &fixture)
 }
 
 // Reserves `regionBytes` of address space without committing it, so the
-// boundary stage can pass a real 2-GiB window to the receive call without
+// boundary stage can pass a real window to the receive call without
 // reserving real memory. The platform receive writes only the arriving
 // datagram's bytes, which land in the leading page; Windows therefore gets
 // an explicit commit for that page while POSIX backs pages lazily on
@@ -355,14 +355,28 @@ void ReleaseReceiveWindow(void *const region,
 // 2^31 once wrapped negative on Winsock and turned a valid reserved
 // receive window into a failed call. The backend clamps the capacity to
 // the datagram bound before the signed conversion; this stage drives a
-// real loopback datagram through a reserved 2-GiB window on the native
+// real loopback datagram through a reserved window on the native
 // platform, so the hosted Windows runners validate the Winsock boundary
 // natively and the Linux run guards the portable contract.
+//
+// The window is full-scale (the whole 2-GiB boundary capacity) only on
+// 64-bit processes, where the reservation is guaranteed to fit. A 32-bit
+// process — the supported `-A Win32` configuration — has no contiguous
+// 2 GiB of user space to give (Win32 caps it at 2 GiB before
+// executables, DLLs, stacks, and heaps), so reserving the boundary there
+// would fail before the receive is ever exercised. Those hosts reserve a
+// datagram-scale window instead and still pass the full 2^31 capacity:
+// the clamp under test bounds the native length, and the only bytes the
+// receive may legally write are the datagram this stage just sent, so
+// the small window stays sound.
 bool StageOversizeCapacityBoundary(SocketFixture &fixture)
 {
     constexpr std::uint32_t boundaryCapacity = UINT32_C(0x80000000);
-    void *window = ReserveReceiveWindow(boundaryCapacity);
-    if (!Check(window != nullptr, "reserve the 2 GiB receive window"))
+    constexpr bool fullScaleWindow = sizeof(void *) >= 8;
+    const std::uint32_t windowBytes =
+        fullScaleWindow ? boundaryCapacity : UINT32_C(65536);
+    void *window = ReserveReceiveWindow(windowBytes);
+    if (!Check(window != nullptr, "reserve the boundary receive window"))
         return false;
 
     std::uint8_t probe[40] = {};
@@ -381,7 +395,7 @@ bool StageOversizeCapacityBoundary(SocketFixture &fixture)
             "oversize capacity receive size intact")
         && Check(std::memcmp(probe, window, sizeof(probe)) == 0,
             "oversize capacity receive bytes intact");
-    ReleaseReceiveWindow(window, boundaryCapacity);
+    ReleaseReceiveWindow(window, windowBytes);
     return sent && received;
 }
 

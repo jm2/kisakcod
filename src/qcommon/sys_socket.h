@@ -133,11 +133,14 @@ SysSocketSendStatus KISAK_CDECL Sys_SocketSendTo(
 // platform's native signed receive length. On Received, *outByteCount holds the
 // payload size (never above `bufferCapacity`) and *outSource holds the
 // sender's endpoint when the pointer is non-null. Truncated reports a
-// datagram larger than `bufferCapacity`: exactly bufferCapacity bytes were
-// copied into the buffer, the excess bytes were discarded, and *outByteCount
-// equals bufferCapacity; the datagram is consumed on both platforms, so
-// callers must treat a truncated payload as malformed and drop it rather
-// than process it. WouldBlock means no complete datagram was available.
+// datagram larger than the receive window: the leading window bytes were
+// copied — `bufferCapacity` clamped to SysSocketMaxDatagramBytes (the two
+// are identical whenever `bufferCapacity` is within the bound, and no IPv4
+// datagram exceeds the bound) — the excess bytes were discarded, and
+// *outByteCount equals that clamped window; the datagram is consumed on
+// both platforms, so callers must treat a truncated payload as malformed
+// and drop it rather than process it. WouldBlock means no complete
+// datagram was available.
 // SystemFailure reports a non-would-block system error (for example
 // receiver buffer exhaustion); the handle stays valid and the caller may
 // retry or close.

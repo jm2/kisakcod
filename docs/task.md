@@ -526,11 +526,15 @@ and pre-enrollment descriptions do not override later completion evidence.
   - [x] Provide tested Win32/POSIX time, synchronization, event/thread, virtual
     memory, UTF-8 filesystem/path, directory enumeration, worker-gate, and
     standard-stream console boundaries.
-  - [x] Land the tested portable process launch/control, signal-park, and
+  - [x] Land the portable process launch/control, signal-park, and
     crash-freeze service (`Sys_ProcessLaunch`/`Sys_ProcessWait`/
     `Sys_ProcessTerminate`/`Sys_SignalPark`/`Sys_ProcessFreezeForCrash`)
     across the Win32, POSIX, and macOS Mach backends with the
-    platform-process/platform-crash runtime contracts.
+    platform-process/platform-crash runtime contracts. The hosted suites
+    cover launch/control/signal-park and the freeze Unsupported contract;
+    the non-returning freeze paths (macOS Mach included) are
+    source/linkage-complete rather than hosted-runtime-tested, because
+    invoking them under CTest would hang the runner.
   - [x] Add the portable UDP socket service (`src/qcommon/sys_socket.h`,
     `Sys_SocketOpenUdp`/`Sys_SocketSendTo`/`Sys_SocketRecvFrom`/
     `Sys_SocketEnableBroadcast`/`Sys_SocketClose`) with the Winsock2 and BSD
