@@ -334,7 +334,9 @@ void TestNativeOperandPositions()
 }
 void TestIfElseOperandPatches()
 {
-    scr_block_s parent{}, first{}, second{};
+    scr_block_s parent{};
+    scr_block_s first{};
+    scr_block_s second{};
     sval_u firstBlock; firstBlock.block = &first;
     sval_u secondBlock; secondBlock.block = &second;
     for (bool last : {false, true}) {
