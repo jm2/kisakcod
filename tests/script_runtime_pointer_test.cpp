@@ -76,7 +76,7 @@ void *Hunk_AllocDebugMem(uint32_t size) { return Allocate(size); }
 const char *CopyString(const char *p) { return p; }
 const char *SL_ConvertToString(uint32_t id) { return id == 1 ? "zebra" : "alpha"; }
 void AddRefToObject(uint32_t) {}
-void RemoveRefToObject(uint32_t) {}
+void RemoveRefToObject(uint32_t id);
 uint32_t FindFirstSibling(uint32_t id) { if (notifyFixture) return id == 11 ? 12 : id == 13 ? 14 : 0; bool found = siblingPending; siblingPending = false; return found ? 2 : 0; }
 uint32_t FindNextSibling(uint32_t) { return 0; }
 uint32_t FindLastSibling(uint32_t) { return 2; }
@@ -91,7 +91,7 @@ void Scr_AddDebugRefCount(uint16_t *) {}
 void CheckReferenceRange(unsigned int, unsigned int) {}
 bool Scr_IsVariableBreakpoint(unsigned int id) { return id == 2; }
 bool IsObject(VariableValueInternal *entry) { return (entry->w.type & VAR_MASK) >= VAR_THREAD; }
-void WriteId(unsigned int, unsigned int, MemoryFile *) {}
+void WriteId(unsigned int, unsigned int, MemoryFile *);
 void SafeWriteString(unsigned __int16, MemoryFile *) {}
 int MemFile_GetUsedSize(MemoryFile *) { return 0; }
 void MemFile_WriteData(MemoryFile *, int, const void *) {}
@@ -153,7 +153,9 @@ uint32_t GetInternalVariableIndex(uint32_t value) { return value; }
 char *va(const char *, ...) { return fixtureDiagnostic; }
 void EmitByte(unsigned char value) { *TempMalloc(1) = static_cast<char>(value); }
 
+#include "script_save_runtime_test_support.hpp"
 #include "script_runtime_slice.inc"
+#include "script_save_runtime_tests.hpp"
 
 void TestAllocations()
 {
@@ -402,6 +404,7 @@ int main()
 {
     TestAllocations(); TestTerminate(); TestDebugReferences(); TestSaveObject();
     TestBuiltinsAndSwitch(); TestNativeOperandPositions(); TestIfElseOperandPatches(); TestNativeConsumers(); TestDebuggerFormatting(); TestArchivedThreads(); TestVariableReinitialization();
+    TestClassArraySaveLoad(); TestSaveShutdownEntries(); TestDebugExpressionSaveRefs();
     for (void *p : allocations) std::free(p);
     std::printf("script runtime: %d checks passed\n", checks);
 }

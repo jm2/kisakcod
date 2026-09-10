@@ -21,7 +21,7 @@
 //   2. Empty child (child size == 0).
 //   3. Siblings (two nested records in one parent).
 //   4. Multiple levels (three-deep nesting).
-//   5. The SCR_READSTACK_MAX_NESTING bound fails loudly (Com_Error).
+//   5. The SCR_STACK_MAX_NESTING bound fails loudly (Com_Error).
 //   6. Baseline: a nesting-free stack decodes unchanged.
 
 #include <universal/memfile.h>
@@ -400,10 +400,26 @@ void TestMultipleLevels()
     CHECK(*RecordTypeByte(grandchildBuf, 0) == 7);
 }
 
+void TestMaximumNestingRoundTrip()
+{
+    std::vector<uint8_t> image;
+    for (int i = 0; i < 16; ++i)
+    {
+        AppendStackHead(image, 1, 0x51, 0x80, 0x81);
+        image.push_back(kTypeStack);
+    }
+    AppendStackHead(image, 1, 0x52, 0x82, 0x83);
+    AppendIntegerRecord(image, 42u);
+    // RunReader also serializes the result through the production writer
+    // and compares the exact archive bytes. Root + 16 links must survive.
+    RunReader(image);
+    CHECK(g_allocations.size() == 17);
+}
+
 // Case 5: the nesting bound fails loudly instead of recursing.
 void TestNestingLimit()
 {
-    // SCR_READSTACK_MAX_NESTING + 1 suspended frames must hit Com_Error.
+    // SCR_STACK_MAX_NESTING + 1 suspended frames must hit Com_Error.
     std::vector<uint8_t> image;
     for (int i = 0; i < 17; ++i)
     {
@@ -502,6 +518,8 @@ int RunContracts()
     TestSiblings();
     ReleaseAllocations();
     TestMultipleLevels();
+    ReleaseAllocations();
+    TestMaximumNestingRoundTrip();
     ReleaseAllocations();
     TestNestingLimit();
     ReleaseAllocations();

@@ -322,7 +322,7 @@ void WriteStackHeader(const VariableStackBuffer *stack, MemoryFile *memFile)
 void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile)
 {
     struct Frame { const VariableStackBuffer *stack; unsigned int next; };
-    Frame frames[16]{};
+    Frame frames[SCR_STACK_MAX_NESTING + 1]{}; // root plus suspended parents
     unsigned int depth = 0;
     frames[0].stack = stackBuf;
     WriteStackHeader(stackBuf, memFile);
@@ -358,12 +358,6 @@ void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile
 //SCRIPT_READSTACK_SLICE_BEGIN
 namespace
 {
-// Maximum nested VAR_STACK records the reader tracks on its explicit frame
-// list. Retail save images never nest a stack cell inside a stack buffer;
-// the bound exists so a corrupt or crafted image fails loudly instead of
-// recursing without limit.
-constexpr int SCR_READSTACK_MAX_NESTING = 16;
-
 // One suspended parent while a nested stack frame is being read.
 struct ScrReadStackFrame
 {
@@ -505,7 +499,7 @@ VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
     // the host stack. The nesting is now an explicit frame list: identical
     // bytes consumed in identical order and identical buffers built, but the
     // nesting depth is bounded and anything deeper fails loudly.
-    ScrReadStackFrame frames[SCR_READSTACK_MAX_NESTING];
+    ScrReadStackFrame frames[SCR_STACK_MAX_NESTING];
     int depth = 0;
     VariableValue value{}; // [sp+58h] BYREF
 
@@ -524,7 +518,7 @@ VariableStackBuffer *__cdecl Scr_ReadStack(MemoryFile *memFile)
                 continue;
             }
             // Nested VAR_STACK entry: suspend this frame and read the child.
-            if (depth == SCR_READSTACK_MAX_NESTING)
+            if (depth == SCR_STACK_MAX_NESTING)
                 Com_Error(ERR_DROP, "Scr_ReadStack: nested stack save depth exceeds %i", depth);
             frames[depth].stack = stack;
             frames[depth].buf = buf;
@@ -910,12 +904,13 @@ static void Scr_RemoveDebuggerRefs()
     }
 }
 
+//SCRIPT_RUNTIME_SAVE_SHUTDOWN_BEGIN
 void __cdecl Scr_SaveShutdown(bool savegame)
 {
     char v2; // r20
     unsigned __int16 *v3; // r25
     int v4; // r30
-    VariableValueInternal_w *p_w; // r27
+    VariableValueInternal *entry; // r27
     int v6; // r26
     const char *v7; // r31
 
@@ -924,13 +919,13 @@ void __cdecl Scr_SaveShutdown(bool savegame)
     {
         v3 = &scrVarPub.saveIdMap[1];
         v4 = 1;
-        p_w = &scrVarGlob.variableList[2].w;
+        entry = &scrVarGlob.variableList[2];
         v6 = 0x7FFF;
         do
         {
-            if ((p_w->type & 0x60) != 0)
+            if ((entry->w.type & 0x60) != 0)
             {
-                if (!IsObject((VariableValueInternal *)&p_w[-2]))
+                if (!IsObject(entry))
                     MyAssertHandler(
                         "c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp",
                         968,
@@ -940,7 +935,7 @@ void __cdecl Scr_SaveShutdown(bool savegame)
                 v7 = scrVarDebugPub->varUsage[v4 + 1];
                 if (!v7)
                     MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 970, 0, "%s", "pos");
-                if (!*v3 && (p_w->type & 0x1F) != 0x15)
+                if (!*v3 && (entry->w.type & 0x1F) != 0x15)
                 {
                     if (!v2)
                     {
@@ -951,7 +946,7 @@ void __cdecl Scr_SaveShutdown(bool savegame)
                 }
             }
             --v6;
-            p_w += 4;
+            ++entry;
             ++v4;
             ++v3;
         } while (v6);
@@ -966,6 +961,37 @@ void __cdecl Scr_SaveShutdown(bool savegame)
             Com_Printf(23, "script variable leak due to cyclic usage\n");
     }
 }
+//SCRIPT_RUNTIME_SAVE_SHUTDOWN_END
+
+//SCRIPT_RUNTIME_CLASS_ARRAYS_BEGIN
+static void Scr_LoadClassArrays(MemoryFile *memFile)
+{
+    for (auto &entry : g_classMap)
+    {
+        iassert(!GetArraySize(entry.entArrayId));
+        if (scrVarDebugPub)
+            --scrVarDebugPub->extRefCount[entry.entArrayId];
+        RemoveRefToObject(entry.entArrayId);
+        unsigned char tag;
+        MemFile_ReadData(memFile, 1, &tag);
+        entry.entArrayId = Scr_ReadId(memFile, tag);
+        if (scrVarDebugPub)
+            ++scrVarDebugPub->extRefCount[entry.entArrayId];
+    }
+}
+
+static void Scr_WriteClassArrays(MemoryFile *memFile)
+{
+    for (const auto &entry : g_classMap)
+        WriteId(entry.entArrayId, 0, memFile);
+}
+
+static void Scr_AddSaveClassArrays()
+{
+    for (const auto &entry : g_classMap)
+        AddSaveObject(entry.entArrayId);
+}
+//SCRIPT_RUNTIME_CLASS_ARRAYS_END
 
 void __cdecl Scr_LoadPre(int sys, MemoryFile *memFile)
 {
@@ -985,10 +1011,6 @@ void __cdecl Scr_LoadPre(int sys, MemoryFile *memFile)
     unsigned int v16; // r3
     unsigned int v17; // r30
     unsigned int v18; // r3
-    int v19; // r29
-    unsigned __int16 *p_entArrayId; // r31
-    unsigned __int16 v21; // r10
-    scrVarDebugPub_t *v22; // r11
     unsigned __int8 v23[96]; // [sp+50h] [-60h] BYREF
 
     if (sys != 1)
@@ -1075,44 +1097,23 @@ void __cdecl Scr_LoadPre(int sys, MemoryFile *memFile)
     scrVarPub.freeEntList = v18;
     if (scrVarDebugPub)
         ++scrVarDebugPub->extRefCount[v18];
-    v19 = 4;
-    p_entArrayId = &g_classMap[0].entArrayId;
-    do
-    {
-        if (GetArraySize(*p_entArrayId))
-            MyAssertHandler(
-                "c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp",
-                1083,
-                0,
-                "%s",
-                "!GetArraySize( g_classMap[classnum].entArrayId )");
-        if (scrVarDebugPub)
-            --scrVarDebugPub->extRefCount[*p_entArrayId];
-        RemoveRefToObject(*p_entArrayId);
-        MemFile_ReadData(memFile, 1, v23);
-        v21 = Scr_ReadId(memFile, v23[0]);
-        v22 = scrVarDebugPub;
-        *p_entArrayId = v21;
-        if (v22)
-            ++v22->extRefCount[v21];
-        --v19;
-        p_entArrayId += 6;
-    } while (v19);
+    Scr_LoadClassArrays(memFile);
 }
 
+//SCRIPT_RUNTIME_DEBUG_EXPR_REFS_BEGIN
 static void Scr_AddDebugExprValueRefCount(unsigned __int16 *refCount, sval_u *val)
 {
     if (val->type == 81)
         ++refCount[val[1].type];
 }
 
-static void Scr_AddDebugExprRefCount(unsigned __int16 *refCount, sval_u *debugExprHead)
+static void Scr_AddDebugExprRefCount(unsigned __int16 *refCount, debugger_sval_s *debugExprHead)
 {
-    sval_u *i; // r31
-
-    for (i = debugExprHead; i; i = (sval_u *)i->type)
-        Scr_AddDebugExprValueRefCount(refCount, i + 1);
+    for (debugger_sval_s *node = debugExprHead; node; node = node->next)
+        Scr_AddDebugExprValueRefCount(refCount, reinterpret_cast<sval_u *>(node + 1));
 }
+
+//SCRIPT_RUNTIME_DEBUG_EXPR_REFS_END
 
 static void Scr_AddDebugRefCountChildren(Scr_WatchElement_s *element, unsigned __int16 *refCount)
 {
@@ -1134,7 +1135,7 @@ static void Scr_AddDebugRefCount(unsigned __int16 *refCount)
         {
             if (!i->expr.exprHead)
                 MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_debugger.cpp", 7231, 0, "%s", "expr->exprHead");
-            Scr_AddDebugExprRefCount(refCount, (sval_u*)i->expr.exprHead);
+            Scr_AddDebugExprRefCount(refCount, i->expr.exprHead);
         }
         Scr_AddDebugRefCountChildren(i, refCount);
     }
@@ -2001,8 +2002,6 @@ void __cdecl Scr_SavePost(MemoryFile *memFile)
     unsigned int v3; // r29
     unsigned __int16 *v4; // r28
     unsigned int v5; // r3
-    int v6; // r30
-    unsigned __int16 *p_entArrayId; // r29
     unsigned int v8[12]; // [sp+50h] [-30h] BYREF
 
     memset(idHistory, 0, 0x20u);
@@ -2035,14 +2034,7 @@ void __cdecl Scr_SavePost(MemoryFile *memFile)
     WriteId(scrVarPub.timeArrayId, 0, memFile);
     WriteId(scrVarPub.pauseArrayId, 0, memFile);
     WriteId(scrVarPub.freeEntList, 0, memFile);
-    v6 = 4;
-    p_entArrayId = &g_classMap[0].entArrayId;
-    do
-    {
-        WriteId(*p_entArrayId, 0, memFile);
-        --v6;
-        p_entArrayId += 6;
-    } while (v6);
+    Scr_WriteClassArrays(memFile);
 }
 
 void __cdecl AddSaveStack(const VariableStackBuffer *stackBuf)
@@ -2093,10 +2085,7 @@ void __cdecl AddSaveEntry(unsigned int type, VariableUnion u)
 
 void __cdecl Scr_SavePre(int sys)
 {
-    int v2; // r30
-    unsigned __int16 *p_entArrayId; // r29
     VariableValueInternal *v4; // r11
-    const VariableStackBuffer *stackValue; // r3
     int v6; // r11
 
     if (!scrVarPub.timeArrayId)
@@ -2114,23 +2103,15 @@ void __cdecl Scr_SavePre(int sys)
     AddSaveObject(scrVarPub.timeArrayId);
     AddSaveObject(scrVarPub.pauseArrayId);
     AddSaveObject(scrVarPub.freeEntList);
-    v2 = 4;
-    p_entArrayId = &g_classMap[0].entArrayId;
-    do
-    {
-        AddSaveObject(*p_entArrayId);
-        --v2;
-        p_entArrayId += 6;
-    } while (v2);
+    Scr_AddSaveClassArrays();
     v4 = &scrVarGlob.variableList[scrVarPub.gameId + VARIABLELIST_CHILD_BEGIN];
-    stackValue = v4->u.u.stackValue;
     v6 = v4->w.type & VAR_MASK;
     if (v6 == VAR_POINTER)
     {
-        AddSaveObject((unsigned int)stackValue);
+        AddSaveObject(v4->u.u.intValue);
     }
     else if (v6 == 10)
     {
-        AddSaveStack(stackValue);
+        AddSaveStack(v4->u.u.stackValue);
     }
 }

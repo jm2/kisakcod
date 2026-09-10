@@ -46,3 +46,6 @@ static inline bool VariableStackBuf_TrySize(int recordCount, int &byteLength)
     byteLength = static_cast<int>(headerBytes + VARIABLE_STACK_RECORD_SIZE * recordCount);
     return true;
 }
+
+// Number of nested links below the root accepted by both save directions.
+constexpr int SCR_STACK_MAX_NESTING = 16;
