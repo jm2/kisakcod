@@ -6,21 +6,106 @@ work item changes. Do not create session-specific handoff files.
 
 ## Porting checklist
 
-Last reconciled: **September 3, 2026**. A checked parent means that milestone's exit
-criteria are complete, not merely that substantial supporting work exists.
-Percentages are engineering-effort estimates and are not derived from the number
-of checked boxes.
+Last roadmap reconciliation: **September 9, 2026**. Reviewed local source
+`5f29e810` and the GitHub-master delta through `2c381031`; these are distinct
+snapshots. Local macOS ARM64 Release utility validation passed **211/211** tests,
+but does not certify the newer remote tree or any production engine. A checked
+parent means its stated exit criteria are complete. Historical effort estimates
+and CI counts below are dated evidence, not current delivery percentages.
 
-- [ ] Complete the full five-target porting plan — approximately **84%** of the
-  currently scoped engineering effort is complete, but strict production-target
-  delivery is still **0/5**.
+- [ ] Complete the full five-target MP client/headless-server plan — strict
+  production-target delivery remains **0/5**; native SP is deferred.
   - [x] Preserve the Windows x86 client and dedicated-server baseline in Debug
     and Release.
   - [x] Establish the portable build, test, ABI, security, platform-service, and
     Disk32/loader foundations described below.
   - [ ] Build, exercise, package, and release every requested production target.
 
-### Active critical path
+### Mandatory commercial network compatibility
+
+- [ ] Complete [#122 — original commercial 1.7 / Steam 1.8 compatibility](https://github.com/jm2/kisakcod/issues/122).
+  The owner's requirement is **perfect network compatibility with both original,
+  unmodified commercial releases**, on all five requested targets. Follow
+  [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md); earlier retail-non-goal
+  and fork-only self-consistency statements are superseded.
+  - [ ] Pin authentic executable/data hashes and version/provenance manifests for
+    both references. Neither is available in this checkout. Community CoD4x 1.8
+    is not the commercial Steam 1.8 reference; do not guess protocol numbers.
+  - [ ] Resolve the current protocol-`1` advertisement/admission and custom
+    ticket/GUID challenge exchange using reference evidence. Changing one
+    protocol constant or accepting every version is not sufficient.
+  - [ ] Validate both directions: each KisakCOD server with both original
+    commercial clients, and each KisakCOD client with the applicable original
+    commercial server profiles. Include discovery/auth/join, gameplay, pure and
+    downloads, stats/voice, map changes, reconnect and packet boundary behavior.
+  - [ ] Preserve valid retail encodings, numerical behavior and session semantics;
+    hardening may reject malformed input without recreating memory corruption.
+    No forced retail patches, CoD4x installation, upgrade/downgrade or new
+    KisakCOD-only authentication convention; do not bypass authentication.
+  - [ ] Require production serializer fixtures and command-driven simulation
+    against the commercial baselines. Fork-to-fork tests, struct assertions,
+    recorded-state playback and hash instruments are supporting evidence only.
+  - [ ] Keep missing binaries, unavailable external services or protected runner
+    infrastructure explicitly blocked. They cannot count as passed/skipped
+    compatibility or completed target delivery.
+
+### Current priorities and Gas City handoff
+
+Gas City runs on another machine. The fork issues below and this checkpoint are
+the handoff surface; no worker leases, bead state or assignments were changed.
+The operator should cross-link these issues into existing `ki-*` work before
+scheduling dependent tasks. All are open; creation is not implementation.
+Translate their staged acceptance criteria into an acyclic bead graph: reference
+capture and synthetic harness work can precede engine integration, while final
+licensed sessions consume the engine. Cross-references between broad issues do
+not mean each must finish before the other can start. Retain existing owners and
+reserve shared source areas before assigning implementation work.
+
+| Order / review item | Fork issue | Scope and existing-work coordination |
+|---|---|---|
+| Required parent | [#122](https://github.com/jm2/kisakcod/issues/122) | Commercial 1.7 and Steam 1.8 reference manifests, production dialect/auth repair and bidirectional release gates. |
+| Immediate / A01 | [#123](https://github.com/jm2/kisakcod/issues/123) | Correct full reassembly destination bounds while preserving valid commercial fragments; separate from socket PR #106. |
+| Immediate / A02 | [#124](https://github.com/jm2/kisakcod/issues/124) | Preserve nested model cursor ownership and checked second-pass rewind; actual cold/warm loader tests. |
+| Immediate / A03 | [#125](https://github.com/jm2/kisakcod/issues/125) | Strict nonempty corpus setup and real production parser/loader coverage; existing cursor tests remain useful. |
+| Evidence / A04 | [#126](https://github.com/jm2/kisakcod/issues/126) | Capability/evidence manifest and durable dashboard; extend `ki-yvj` rather than duplicate its workflows. |
+| Early oracle / A05 | [#127](https://github.com/jm2/kisakcod/issues/127) | Actual MSG reference fixtures and fixed-tick command-driven simulation; build on merged `ki-jgz` (#116). |
+| Valid-peer policy / A06 | [#128](https://github.com/jm2/kisakcod/issues/128) | Dvar flag/command audit preserving all legitimate retail behavior; no unverified broad allowlist. |
+| Native closure / A07 | [#129](https://github.com/jm2/kisakcod/issues/129) | Asset/subobject/native ABI and production-caller ledger; coordinate `ki-v4m`, `ki-n1et`, `ki-msb`. |
+| First engine / A08 | [#130](https://github.com/jm2/kisakcod/issues/130) | Real Win64/Linux amd64 headless MP integration and original-client sessions; consume `ki-eudd`/`ki-vuj`. |
+| Early client experiment / A09 | [#131](https://github.com/jm2/kisakcod/issues/131) | Retail shader/cache and Vulkan/MoltenVK feasibility before broad RHI edits; preserve native Vulkan destination. |
+| Client media / A10 | [#132](https://github.com/jm2/kisakcod/issues/132) | Audio/cinematic semantics and separate voice capture/playback; retain commercial codec/framing. |
+| Content/modes / A11 | [#133](https://github.com/jm2/kisakcod/issues/133) | Retail-content and MP mod regression matrix, commercial movement/behavior and pure checksums. |
+| Required CI / A12 | [#134](https://github.com/jm2/kisakcod/issues/134) | Hosted sanitizers, complete applicable Win32 runtime tests, exact-head exclusions and later protected retail gates. |
+| Client platform / A13 | [#135](https://github.com/jm2/kisakcod/issues/135) | Paths, input/window/focus and clean-install behavior with unchanged retail usercmd semantics. |
+| Operations / A14 | [#136](https://github.com/jm2/kisakcod/issues/136) | Retail-compatible multiplayer services/downloads/auth and headless lifecycle; extend `ki-eudd`/`ki-vuj`. |
+| Release / A15 | [#137](https://github.com/jm2/kisakcod/issues/137) | Exact production artifacts/provenance, clean-machine commercial interop and runtime budgets; downstream of `ki-yvj`. |
+
+Next integrated checkpoint: one real native64 headless server with its complete
+supported asset/VM/network closure, followed by original commercial client
+sessions. Windows reference and Linux composition can proceed independently of
+full client media. Start the commercial oracle and shader/MoltenVK feasibility
+work early; preserve the atomic seven-site loader contract and do not relax
+native engine gates based on utility results. Licensed stages remain deferred
+until protected infrastructure is provisioned; synthetic production integration
+can proceed meanwhile. Detailed findings and dependencies are in
+[ROADMAP_EXPANSION_PROPOSAL.md](ROADMAP_EXPANSION_PROPOSAL.md).
+
+Existing open PR snapshot: #99 `ki-v4m` physics ownership; #106 `ki-eudd` UDP;
+#107 `ki-yvj` release/test scaffolding (draft); #108 `ki-vuj` console/POSIX
+preparation; #113 `ki-msb` graph instrument; #114 `ki-3iv` deletion (draft);
+#119 `ki-n1et` VM (draft). These are implementations in progress, not missing
+beads to recreate. PR #108 explicitly leaves POSIX production sets gated;
+#107's five non-x86 artifacts are tests, and #113 does not yet provide real
+retail graph walks. GitHub master also contains #89 tagInfo conversion, #116
+scalar determinism, #121 upstream item/dvar changes and full action pins;
+the original source-review baseline predates those merges. Confirm exact current heads
+and operator ownership before ingestion.
+
+### Active critical path — implementation evidence
+
+The following checked history records completed prerequisites and their dated
+validation. The current issue-linked queue above controls new work; old counts
+and pre-enrollment descriptions do not override later completion evidence.
 
 - [x] Restore the authoritative expanded hosted-CI baseline before additional
   backlog implementation merges.
@@ -367,13 +452,15 @@ of checked boxes.
       post-merge jobs in run **30369149465**.
 - [ ] Enroll the guarded native FX/impact path and complete its rollback,
   high-address, alias, unload, and slot-reuse coverage.
-- [ ] Replace the remaining XAnim/XModel raw fast-file reads with bounded,
-  transactional cursors.
+- [ ] Complete bounded, transactional XAnim/XModel load-object reads, including
+  nested ownership and checked second-pass positioning (#124). Track production
+  database fast-file and FX parser coverage separately (#125).
 - [ ] Complete the remaining runtime ABI widening, production-path fuzzing, and
   loader/writer/save-side work that gates the first native 64-bit engine.
-  - [x] Add a Disk32/native converter for the pointer-bearing 112-byte
-    `tagInfo_s` save record before enabling native64 SP; `g_save.cpp` now fails
-    compilation rather than treating the host layout as the retail wire image.
+  - [x] Land the Disk32/native converter for the pointer-bearing 112-byte
+    `tagInfo_s` save record on GitHub master in PR #89. The original review baseline
+    predates that merge; reconcile before assigning duplicate work. Native SP
+    remains deferred and still needs its own production acceptance evidence.
 ### Milestone exit criteria
 
 - [x] **M0 — Build-system foundation and CI scaffolding.**
@@ -383,29 +470,28 @@ of checked boxes.
     target/source-override controls for portable utility builds.
   - [x] Keep the Windows x86 MP client, legacy dedicated, no-Steam, and
     dependency-free headless compile/link gates green.
-  - [x] Add and validate the hosted Windows x86 SP build, prove byte-identical
-    reference parity for the MP/SP/dedicated baseline, and provide a checked-in
+  - [x] Add and validate the hosted Windows x86 SP build, compare the shared
+    buildnumber reference object/stamps across MP/SP/dedicated, and provide a checked-in
     Linux configure preset. The `windows-x86-sp` job is a clone of the existing
     Windows x86 job with `-DKISAK_BUILD_SP=ON`; the byte-parity script is
     `scripts/ci/compare-byte-parity.sh` and the Linux configure preset is
-    `CMakePresets.json::linux-amd64-mp`. The SP build grows the hosted CI count
-    from nine to eleven (the two windows-x86-sp matrix entries plus the new
-    preset). New entries that reference the SP job must therefore use the
-    updated count. The SP compile was unblocked by dd7742ca (ki-tgh: the SP
+    `CMakePresets.json::linux-amd64-mp`. Require the current applicable CI jobs;
+    historical job counts are not a durable gate definition. The SP compile
+    was unblocked by dd7742ca (ki-tgh: the SP
     arm of `src/game/g_weapon.cpp` gained the missing `<xanim/xanim.h>`
     include, and the MP-only `src/EffectsCore/fx_archive.cpp` static_asserts
     were gated on `KISAK_MP`); the strict — no `continue-on-error` — SP matrix
     entries have been green since, e.g. both `Windows x86 SP / Debug` and
     `Windows x86 SP / Release` passed at exact head `74214074` in run
-    **33729405378**. Reference parity is now proven by an enforced gate, not
-    a scripted afterthought: the `windows-x86-parity` job builds all three
+    **33729405378**. The `windows-x86-parity` job builds all three
     Win32 presets with `-DKISAK_REPRODUCIBLE_BUILD=ON` (MSVC `/Brepro` pins
     the `__DATE__`/`__TIME__` and linker stamp inputs) and
     `scripts/ci/compare-byte-parity.sh` fails closed unless the retail
     sections of the shared reference object (`src/buildnumber.cpp`, no
     `KISAK_BUILD_*` conditionals) and the buildnumber stamps are
-    byte-identical across the MP/SP/dedicated build trees; a red parity job
-    cannot merge. The gate's first weeks compared whole object files and
+    byte-identical across the MP/SP/dedicated build trees. This checks one shared
+    object and stamps, not engine-wide byte equality, gameplay parity, or either
+    commercial reference. The gate's first weeks compared whole object files and
     never went green: MSVC records each target's object path, command line
     (with the variant's preprocessor definitions), and PDB path in the
     CodeView `.debug$*` sections (and `.chks64` checksums over them), so the three objects differed
@@ -417,6 +503,11 @@ of checked boxes.
     and passes the portable suite locally (205/208; the three failures are the
     pre-existing, environment-sensitive abi-scanner and security-count defects
     tracked on ki-9b13 and ki-ya3t that stay green on hosted CI).
+- [ ] **Mandatory commercial compatibility, separate from M0:** satisfy the
+  original-binary interoperability and production wire/simulation gates in
+  [#122](https://github.com/jm2/kisakcod/issues/122) and
+  [#127](https://github.com/jm2/kisakcod/issues/127). Completed M0 scaffolding
+  does not complete those gates.
 - [ ] **M1 — Cross-compiler and ABI hygiene.**
   - [x] Land `platform_compat.h`, `kisak_abi.h`, fixed-width atomics/locks, ABI
     tests, and eliminate direct executable `Interlocked` calls.
@@ -435,24 +526,34 @@ of checked boxes.
   - [x] Provide tested Win32/POSIX time, synchronization, event/thread, virtual
     memory, UTF-8 filesystem/path, directory enumeration, worker-gate, and
     standard-stream console boundaries.
-  - [ ] Finish sockets, process launch/control, handle-relative recursive deletion,
-    POSIX/Mach crash freezing, and native Win32 headless character-console input.
+  - [ ] Complete and enroll the socket, process, deletion, terminal crash-freeze,
+    and native Win32 headless console services in production. Process/crash
+    primitives already exist; verify their real worker/terminal lifecycle rather
+    than equating helper tests with production crash capture. Coordinate sockets
+    with PR #106, console/POSIX preparation with #108, and deletion with #114.
   - [ ] Populate and link the Linux/macOS production engine source sets.
 - [ ] **M4 — Native 64-bit runtime ABI.**
   - [x] Widen the completed XAnim, DObj, EffectsCore, ODE user-data, physics-pool,
     database, and related runtime families recorded below.
-  - [ ] Tokenize/widen MP pose, breakable-piece, and DynEntity physics ownership.
-  - [ ] Remove the SP physics `int` truncations and widen the script VM plus the
-    remaining runtime structures without changing serialized formats.
+  - [ ] Tokenize/widen MP pose, breakable-piece, and DynEntity physics ownership
+    through active PR #99, preserving frozen save records.
+  - [ ] Widen the script VM through active PR #119 and complete the production
+    runtime closure in [#129](https://github.com/jm2/kisakcod/issues/129), without
+    changing serialized formats. The previously cited SP physics locals in
+    `cg_ents.cpp` and `cg_snapshot.cpp` are already `uintptr_t`; do not recreate
+    that completed fix or make deferred native SP a prerequisite for MP delivery.
 - [ ] **M5 — Disk32 mirrors and widening loader.**
   - [x] Land Disk32 primitives, bounded FX conversion/restore foundations,
     zone-owned native storage, script-string walking/ownership, generation-keyed
     lifecycle control, PMem/stream/pending-copy authority, and the strict runtime
     table/controller prerequisites.
   - [x] Publish the serialized runtime facade.
-  - [ ] Perform the atomic seven-site production cutover.
+  - [x] Perform the atomic seven-site production cutover (`0d5a7558` and the
+    subsequent MSVC/CI repairs recorded above). Preserve the all-sites ownership
+    contract while completing downstream asset-family enrollment.
   - [ ] Complete production FX/impact integration, broader asset relocation,
-    bounded XAnim/XModel reads, the writer, and the save-side guard.
+    bounded XAnim/XModel load-object reads, and required writer/save conversion
+    paths. Separate deferred SP surfaces in the #129 capability ledger.
   - [ ] Load an unmodified retail fast-file on native64 and hash-match its widened
     runtime graph against the Windows x86 reference.
 - [ ] **M6 — Windows amd64 client and dedicated server.**
@@ -473,23 +574,28 @@ of checked boxes.
 
 ### Requested target delivery
 
-- [ ] **Windows amd64 — ~58%.**
+Every target below remains incomplete until its applicable client/server paths
+pass both commercial reference profiles in [#122](https://github.com/jm2/kisakcod/issues/122).
+Utility coverage is tracked separately from production delivery; effort
+percentages are not completion evidence.
+
+- [ ] **Windows amd64.**
   - [x] Portable utility CI.
   - [ ] Production client and dedicated-server engine.
   - [ ] Gameplay/parity smoke and target-labeled release artifact.
-- [ ] **Windows ARM64 — ~40%.**
+- [ ] **Windows ARM64.**
   - [x] Portable utility CI.
   - [ ] Production engine and architecture/dependency closure.
   - [ ] Cross-architecture parity and target-labeled release artifact.
-- [ ] **Linux amd64 — ~49%.**
+- [ ] **Linux amd64.**
   - [x] Portable utility CI.
   - [ ] Production headless server and full client.
   - [ ] Gameplay/parity smoke and target-labeled release artifact.
-- [ ] **Linux ARM64 — ~40%.**
+- [ ] **Linux ARM64.**
   - [x] Portable utility CI.
   - [ ] Production engine on real ARM64 hardware.
   - [ ] Cross-architecture parity and target-labeled release artifact.
-- [ ] **macOS ARM64 — ~31%.**
+- [ ] **macOS ARM64.**
   - [x] Portable utility CI.
   - [ ] MoltenVK production client.
   - [ ] Cross-architecture parity and signed/notarized application bundle.
@@ -521,16 +627,18 @@ of checked boxes.
   Windows amd64/ARM64 fuzz-runtime fixtures, macOS arm64 Mach linkage/runtime
   assumptions, and headless FX adapter boundary without weakening warnings or
   source composition; exact-head and post-merge expanded runs are fully green.
-- [ ] Keep the expanded 11-job CI matrix required and green before merging
-  future backlog implementation; investigate regressions against exact heads
-  rather than accepting stale or partially superseded runs.
+- [ ] Keep every current applicable CI job required and green before merging
+  future backlog implementation; investigate regressions against exact heads.
+  Add required sanitizer/runtime coverage in #134 and commercial-reference
+  evidence in #122/#127. A historical job count does not define acceptance.
 - [ ] Add required production CI jobs for all five requested targets.
 - [ ] Complete the M14 workflow/release parity, provenance, packaging, and
   checksum work.
 
-The Windows x86 baseline is approximately **93%**, and shared foundations and
-security are approximately **91%**. Windows x86 is retained as the compatibility
-and reference target; it is not one of the five requested strict-delivery boxes.
+Windows x86 remains the fork regression baseline and is not one of the five
+requested delivery boxes. Its green build/utility jobs do not certify commercial
+interoperability. Pin both original commercial binaries as the compatibility
+oracles, and record each production capability's exact evidence in #126.
 
 ## Detailed state and validation evidence
 
@@ -2524,7 +2632,13 @@ coverage does not satisfy an engine-delivery box.
 | Linux arm64 | Utility tests only; same blockers plus ARM determinism/dependencies. |
 | macOS arm64 | Utility tests only; same blockers plus SDL/Vulkan/MoltenVK application integration. |
 
-## Immediate queue
+## Historical queue and detailed implementation evidence
+
+The dated implementation sequence below is retained for traceability. Its
+priority numbers and forward-looking statements describe earlier checkpoints;
+the current issue queue and mandatory compatibility gate at the top of this
+document govern new Gas City assignments. Check current GitHub master and active
+PRs before treating historical open boxes as new work.
 
 PR #73 final head `7afb2ca5f4f90144184e698d909cd99c0e3477b5`
 passed all nine jobs in run **29781843001** with clean exact-head Codex/Gemini
@@ -2798,6 +2912,8 @@ surface is pinned by production-seal tests.
 - [ ] **Priority 4 — Bounded asset reads:** replace the 114 XAnim/XModel
    `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
+   Preserve nested cursor ownership and synchronize second-pass positions;
+   [#124](https://github.com/jm2/kisakcod/issues/124) records the current gaps.
 - [ ] **Priority 5 — Filesystem hardening:** keep the licensed-content smoke
    deferred and do not dispatch it while its required self-hosted runner
    and `KISAKCOD_GAME_DIR` secret are absent. Implement the designed handle-relative recursive deletion
@@ -2809,21 +2925,20 @@ surface is pinned by production-seal tests.
 - [ ] **Priority 7 — Remaining ABI blockers:** widen/tokenize the MP pose,
    breakable-piece, and DynEntity physics ownership families without changing
    saved bytes;
-   remove the SP `int`-temporary truncations, continue M1/M5 ABI cleanup, and add production fast-file fixtures/fuzzing
+   retain the completed SP native-width-local fixes, continue M1/M5 ABI cleanup, and add production fast-file fixtures/fuzzing
    before enabling any native64 engine target.
-   - [x] Production-path fast-file fuzz fixtures are now in place as the
+   - [x] Bounded cursor-primitive fuzz fixtures exist as the
      `fuzz_fastfile` target and its `fuzz-fastfile-cursor` / `fuzz-fastfile-corpus`
-     ctest entries. The harness links only against the bounded read primitives in
-     `src/xanim/buf_cursor.cpp` (the only path the retail fast-file loader funnels
-     through) and exercises attacker-controlled bytes across the XModel pieces,
-     XAnim parts, FX archive body state, and generic domain/typed reads with
-     seeded, mutated, and corpus-driven modes. The harness is deterministic and
-     CI-friendly: no random engine state, no FS_ReadFile, no Hunk, no thread
-     pool. 1M-iteration sweeps on xmodel/xanim/fx seeds run cleanly under the
-     local GCC build; bounded seeds with no crashes/aborts on the affected
-     families. Loader/writer/save-side guard work (the second half of the
-     Priority 7 contract) still requires the remaining UTF-8 path / save-record
-     converters — those land on separate beads.
+     CTest entries. The harness links `src/xanim/buf_cursor.cpp` and a test
+     translation unit; the fixture domain names do not establish execution of
+     production XModel, XAnim, database or FX parsers.
+   - [ ] Make the corpus gate fail when seeds are absent and run malformed
+     fixtures through the actual production consumers in
+     [#125](https://github.com/jm2/kisakcod/issues/125). The fresh review build
+     did not generate the custom seed target, yet the corpus test passed via
+     inline fallback. `FIXTURES_REQUIRED` cannot substitute for a fixture setup
+     test/build dependency. Primitive test passes do not close production
+     loader/writer or commercial-content validation.
 - [ ] **Priority 8 — Five-target delivery workflows:** before declaring
    requested-target delivery complete, audit `.github/workflows/ci.yml` and
    `release.yml` against the
@@ -2857,7 +2972,16 @@ reads; pending reads reject every retained receipt/lifecycle alias and stale or 
 
 ## Known release blockers
 
-- Headless source composition now configures, compiles, and links. Runs 29121929895, 29127753640,
+- Original commercial 1.7 and Steam 1.8 network compatibility is unproven and
+  mandatory under [#122](https://github.com/jm2/kisakcod/issues/122). Current
+  client/server protocol-`1` and custom challenge/identity paths require an audit
+  against both authentic references. No native target or release is complete
+  without the production wire, bidirectional session, and simulation evidence.
+- Fix the complete-output-size check in fragment reassembly (#123) and nested/
+  second-pass load-object cursor ownership (#124), preserving all valid retail
+  behavior. Existing corpus fallback and primitive-only fuzzing leave actual
+  production parser coverage open (#125).
+- Windows x86 headless source composition configures, compiles, and links. Runs 29121929895, 29127753640,
   and 29128702142 reduced unresolved symbols from 106 to 45 to zero while keeping all established
   jobs green. The binary is not release-ready until the protected licensed-content startup/map-load
   smoke eventually succeeds; the local runtime batch fixes its known base-path, redirected-output,
@@ -2923,16 +3047,19 @@ reads; pending reads reject every retained receipt/lifecycle alias and stale or 
   ordering can be relaxed. The unbounded load-object cursor is tracked separately under XAnim/XModel.
 - MP `cpose_t::physObjId`, `BreakablePiece::physObjId`, and `DynEntityClient::physObjId` remain frozen `int32_t` fields
   that publish and later recast ODE body pointers. `DynEntityClient` is also written/read as a raw 12-byte save image, so
-  naïve widening would silently change saved bytes. SP `cpose_t::physObjId` is native-width, but `cg_ents.cpp` and
-  `cg_snapshot.cpp` still copy it through `int` locals before validation/destruction. Introduce generation-checked
-  tokens/sidecars where ABI/save bytes must remain frozen, or split explicit saved mirrors from native-width runtime
-  storage, and remove the SP narrow temporaries before enabling any 64-bit engine target. The current pointer-truncation
-  tripwire intentionally records rather than hides this blocker.
+  naïve widening would silently change saved bytes. PR #99 owns the MP work.
+  SP `cpose_t::physObjId` and the previously cited `cg_ents.cpp`/`cg_snapshot.cpp`
+  locals are already native-width. Introduce generation-checked tokens/sidecars
+  where ABI/save bytes must remain frozen, or split explicit saved mirrors from
+  native runtime storage. Verify the actual production closure in #129; the
+  pointer-truncation tripwire is an inventory, not proof of completion.
 - XAnim tree/table ownership and DObj runtime storage are native-width-safe, but the animation payload
   is not: `XAnimIndices` and `XAnimParts` still freeze the retail 32-bit layout, `XAnimClone` still
   allocates 88 bytes, and load-object code contains matching 32-bit payload assumptions. The actual
-  native `XAnimParts` size is 0x88 on 64-bit. Split the disk mirror from the widened runtime payload
-  before treating any 64-bit XAnim translation unit as buildable.
+  native `XAnimParts` size is 0x88 on 64-bit. `xanim_native.h` supplies portable
+  test infrastructure for a split, but production consumers still need to adopt
+  and validate it. Complete the disk/native split and allocations in #129 before
+  treating the production XAnim path as native64-ready.
 - XModel physics collision still treats `BrushWrapper` as a common-prefix `cbrush_t` view. Shared field
   offsets match the supported x86 ABI, but unrelated-type aliasing, weaker wrapper alignment, and
   hardcoded 80/68-byte loader records make it invalid for runtime64. Resolve it with the Disk32/native
@@ -2940,10 +3067,12 @@ reads; pending reads reject every retained receipt/lifecycle alias and stale or 
 - Native event and thread services are selected, runtime-tested, and used by high-level orchestration.
   Renderer workers park cooperatively; private opaque handles own creation, identity, priority, and
   ordinal affinity; `threads.cpp` is free of native Windows threading APIs. Fatal-error freezing is
-  quarantined behind a terminal-only operation: Windows has a checked implementation, while Linux
-  signal parking and macOS Mach suspension remain required before useful POSIX crash stack capture.
-- Fast-file loading lacks a production-path malformed-input test harness and
-  completed-object/type provenance for direct offsets.
+  quarantined behind a terminal-only operation. Existing POSIX/Mach primitives
+  and utility tests still require validation in the real fatal-error worker
+  lifecycle before claiming useful POSIX production crash-stack capture.
+- Fast-file loading lacks a production-path malformed-input test harness (#125).
+  Inventory the remaining asset families and their completed-object/type
+  provenance in #129; retain the checks already implemented for enrolled paths.
 - Inline material declarations, techniques, passes, and arguments receive pre-use
   structural validation, and shared vertex declarations, techniques, both shader stages,
   nested water, and texture tables now require exact completed-object provenance. Complete

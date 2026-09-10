@@ -6,18 +6,46 @@
 
 ---
 
-## Implementation status (July 28, 2026)
+## Current policy and scheduling (September 9, 2026)
 
-Target policy is fixed: preserve retail assets and wire interoperability; use a
-shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
-and FFmpeg; publish portable packages for Linux; and require native CI plus
-licensed gameplay smoke tests.
+Target policy is fixed: preserve retail assets and achieve perfect network
+compatibility with the **original, unmodified commercial 1.7 and Steam 1.8
+client/server binaries**; use a shared **native Vulkan RHI** (MoltenVK on macOS)
+to replace D3D9, plus OpenAL Soft and FFmpeg; publish portable packages for Linux;
+and require native CI plus licensed gameplay smoke tests.
+
+The mandatory acceptance contract is [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md).
+The implementation and release gate is [fork issue #122](https://github.com/jm2/kisakcod/issues/122).
+Every requested platform must pass both native-client → original-server and
+original-client → native-headless-server interoperability for both exact reference
+builds. “Steam 1.8” means the original Steam-distributed binary, not community
+CoD4x 1.8. The reference executable/content hashes and observed protocol details
+are **pending verification**; no reference matrix cell is passed. Fork-to-fork
+protocol-1 tests, CoD4x tests, and switching a protocol constant cannot substitute
+for this gate. Preserve valid retail packet bytes and semantics without requiring
+patches, an added GUID argument, or the fork's Steam-ticket convention from an
+original peer. Optional incompatible modernization belongs outside the required
+retail-compatible path.
 
 **Committed scope is the MP client + the (headless) dedicated server. Single-player
 is deferred** — SP-only serialization surfaces (save-games) and SP subsystems are
 documented for completeness but are off the current critical path.
 
-The expanded hosted-CI baseline is green and stable. PR #101 repaired the
+Current execution follows the role-specific milestones in §7 and [task.md](task.md):
+[#130](https://github.com/jm2/kisakcod/issues/130) brings up the native headless server,
+[#127](https://github.com/jm2/kisakcod/issues/127) supplies original-reference and real
+command-driven simulation evidence, and [#131](https://github.com/jm2/kisakcod/issues/131)
+measures the renderer/shader route before broad integration. Active Gas City work keeps its existing
+owners. Client graphics/audio and deferred SP work do not gate a complete supported MP-server closure.
+
+### Historical implementation evidence (July–September 2026 checkpoints)
+
+The following PR narratives and their CI counts describe the cited commits, not a fresh certification
+of current master or a dispatch queue. In particular, the seven-site production enrollment has since
+landed; historical “zero enrollment” statements must not create duplicate work. Use the current
+[task checkpoint](task.md), the issues above and §7 for scheduling.
+
+At the PR #101 checkpoint, the expanded hosted-CI baseline was restored. PR #101 repaired the
 MSVC `/WX` fuzz warning, macOS Mach crash/test assumptions, complete headless FX
 adapter boundary, heap-only Windows ARM64 fixtures, directly terminable Win32
 child process, and backend-specific signal-parking expectations. All 11 jobs
@@ -353,8 +381,9 @@ Completed foundation work:
 - `build-win.ps1`, Windows CI, tagged release archives/checksums, and separately
   protected legacy/headless licensed dedicated-server smoke definitions;
 - Steam decoupled from `WIN32` behind `KISAK_ENABLE_STEAM`/`KISAK_STEAM` with a
-  persistent `cl_guid` fallback and `sv_requireSteam`, fixing the unjoinable
-  headless-dedi defect (see §10 H2);
+  persistent `cl_guid` fallback and `sv_requireSteam`, removing the fork's
+  headless desktop-Steam dependency; this custom handshake does not establish
+  original-binary interoperability and remains subject to §1.3/§10 H2;
 - a portable callback-driven FX archive admission controller with typed, fail-closed gate values,
   phase-aware TLS ownership, deterministic cleanup/generation tests, and production integration;
 - status-bearing, segment-bounded legacy `MemoryFile` RLE/zlib reads with caller-owned C-string capacity,
@@ -817,7 +846,14 @@ Completed foundation work:
   `disk32::Ptr32<T>` and covered by a portable atomics/layout compile-check that
   rides all five CI legs (see §10 M1).
 
-Remaining gates, in implementation order:
+### Historical queue (superseded; do not dispatch from this list)
+
+The sequence below records an earlier checkpoint. The production bridge and atomic seven-site
+cutover later landed as `0d5a7558` with MSVC repair `4859c9ee`; preserve their ownership contract
+rather than repeating or partially reenrolling them. The current queue is [task.md](task.md) and §7.
+Licensed runs still require their actual runner/content prerequisites.
+
+Historical remaining gates:
 
 1. Keep the protected licensed headless startup/map/network smoke deferred and do not dispatch it until
    its `[self-hosted, kisakcod, windows, x86]` runner and `KISAKCOD_GAME_DIR` secret are provisioned;
@@ -986,16 +1022,15 @@ Remaining gates, in implementation order:
 
 ## TL;DR
 
-- **Does going 64-bit break network compatibility with real (closed-source) COD4? No.** The wire
-  format is bit-level and bitness-independent; no pointer/`size_t`/`long` value is ever serialized,
-  no networked struct is blitted wholesale onto the wire, and no checksum runs over struct memory.
-  A byte-compatible 64-bit build is achievable. There is exactly **one** wire-affecting defect — the
-  Huffman tree builder in `src/qcommon/huffman.cpp` uses 32-bit-only pointer arithmetic — and it is a
-  small, localized fix that produces retail-identical codes. (Verified by three independent reviewers,
-  all confirming, high confidence.)
+- **Native64 can preserve the wire representation; original-binary compatibility is not yet proven.**
+  The reviewed MSG/netfield design uses fixed-width serialized values rather than native pointers.
+  The Huffman pointer-width repair is already present, but it is only one prerequisite. The current
+  protocol-1 checks and custom challenge/authentication exchange are blocking compatibility work.
+  Both original commercial 1.7 and original Steam 1.8 references must pass the mandatory
+  [network contract](NETWORK_COMPATIBILITY.md) in both directions on all five targets.
 
-- **So the Win64 phase-1 you asked for is viable on the network axis.** The blocker to a *fast* Win64
-  port is unrelated to networking: this codebase is a Hex-Rays **decompile that hard-codes the 32-bit
+- **The ABI conversion and original-peer network integration are both required.** This codebase is a
+  Hex-Rays **decompile that hard-codes the 32-bit
   ABI into its data layout** (~249 `static_assert(sizeof(T)==0x..)`, the GSC script VM's 4-byte
   pointer union, the fast-file asset loader's `(uint32_t*)` pointer fixups, and pointer-truncating
   memory allocators). Win64 is therefore **not a recompile — it is a near-rewrite of memory
@@ -1005,10 +1040,11 @@ Remaining gates, in implementation order:
   fast-files (`.ff` zones). A 64-bit engine cannot read real game data without a load-time
   translation layer. This is the practical reason Win64 is expensive.
 
-- **Committed sequencing** (details below): security/build foundations (Phase 0), a genuinely
-  headless server plus the shared 64-bit runtime/asset/VM conversion (Phase 1), native Linux amd64
-  and the Vulkan/OpenAL/FFmpeg client stack (Phase 2), Windows/Linux ARM64 (Phase 3), and macOS ARM64
-  through MoltenVK (Phase 4).
+- **Current scheduling:** integrate the complete supported MP-server closure through #130 first;
+  start #127 command-driven/original-reference evidence and #131 Vulkan/MoltenVK experiments in
+  parallel as their inputs become available. Native clients add their own runtime/media closure.
+  ARM CPU tests and Apple renderer experiments do not wait for a full Linux client. §7 defines
+  role-specific exits; all five completed targets must pass both directions of #122.
 
 - **The first confirmed remote memory-corruption paths are fixed in this change**
   (`docs/CODEBASE_AUDIT.md` → Critical). The remaining network parser assertion audit is still open.
@@ -1017,8 +1053,10 @@ Remaining gates, in implementation order:
 
 ## 1. The pivotal question: 64-bit vs. network compatibility
 
-You explicitly gated the Win64 phase on *"unless there's a blocker that would break network
-compatibility with the existing real closed-source COD4."* The analysis answers this decisively.
+The user requires perfect network compatibility with the original, unmodified commercial 1.7 and
+Steam 1.8 binaries. The layout analysis below explains why native64 need not change the wire
+representation; it is not evidence that today's protocol or handshake interoperates with either
+reference. [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md) defines the mandatory gate.
 
 ### 1.1 Why 64-bit does **not** change the bytes on the wire
 
@@ -1035,39 +1073,37 @@ host-order little-endian stores, matching retail x86; all modern targets (x86-64
 little-endian; the only `BigShort` is the UDP port, which is correct. C `long` never appears in the
 wire path.
 
-### 1.2 The one must-fix: the wire Huffman tree builder
+### 1.2 Huffman portability is a prerequisite, not the full network gate
 
-The gameplay snapshot/command stream is Huffman-compressed on the wire (server encode
-`sv_snapshot_mp.cpp:1326`; client decode `cl_parse_mp.cpp:485`; client encode `cl_input.cpp:282`;
-server decode `sv_client_mp.cpp:1583`). The tree is built from the fixed `msg_hData[256]` table, so
-the emitted codes are bitness-independent **and match retail COD4 if the tree is built correctly**.
-But the builder is written 32-bit-only:
+The gameplay snapshot/command stream uses Huffman compression built from the fixed
+`msg_hData[256]` table. The current `src/qcommon/huffman.cpp` comparator dereferences typed node
+pointers and both sorts use `sizeof(heap[0])`; the former 32-bit pointer/stride defect is repaired.
+Keep the existing bounds and round-trip tests. Add captured original-build golden vectors and
+production MSG/netchan coverage under [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md).
+Self round trips and equality to the fork's x86 output do not establish original-peer compatibility.
 
-- `src/qcommon/huffman.cpp:115` `nodeCmp` does `*(uint32_t*)(*(uint32_t*)left + 12)` — it truncates a
-  `nodetype*` to 32 bits and reads `weight` at byte offset **+12** (valid only when 3 pointers = 12
-  bytes; on 64-bit `weight` is at +24 and the pointer is 8 bytes).
-- `huffman.cpp:135,145` call `qsort(heap, 256, 4u, nodeCmp)` with element size hardcoded to **4**,
-  while `heap` is an array of 8-byte `nodetype*`.
+### 1.3 Required original-binary protocol and handshake integration
 
-On a naive x64 build this dereferences a truncated pointer (crash) or builds a *different* tree
-(every compressed packet differs → total incompatibility with real servers/clients).
+Current source rejects connect requests whose protocol is not `1`
+(`src/server_mp/sv_client_mp.cpp:655`), advertises a protocol dvar fixed to `1`
+(`src/server_mp/sv_init_mp.cpp:700`), and emits `1` in client connect userinfo
+(`src/client_mp/cl_main_mp.cpp:1120`). Its `getchallenge` variants also send custom Steam-ticket/
+SteamID or empty-ticket/`cl_guid` arguments (`cl_main_mp.cpp:1108,1112`). These are actual blocking
+implementation surfaces, not an independent option to support only the fork.
 
-**Fix (no wire change):**
-```cpp
-// nodeCmp:
-return ((const nodetype*)left)->weight - ((const nodetype*)right)->weight;
-// both qsort calls:
-qsort(heap, 256, sizeof(nodetype*), nodeCmp);
-```
-Add a round-trip test that compresses/decompresses a known vector and byte-matches the 32-bit output.
+First identify and hash the original commercial 1.7 and original Steam 1.8 client/server reference
+executables and required content, then capture their valid exchanges and establish their exact
+protocol/authentication behavior. Build labels alone do not determine a protocol number; this plan
+does not guess one. Changing the constants without implementing and validating the complete
+original exchange is insufficient. Do not require retail binary patches, fork-specific GUID
+arguments, or the fork's Steam-ticket convention. Distinguish original Steam 1.8 from community
+CoD4x 1.8 throughout fixtures and reports.
 
-### 1.3 Orthogonal note: protocol version
-
-The protocol version is pinned to `1` (`sv_client_mp.cpp:613`, dvar default `sv_init_mp.cpp:671`).
-This is a compile-time `int`, identical on 32/64-bit, so it does **not** affect the bitness question —
-but it does **not** match retail COD4's protocol number. Interop with retail servers/clients is a
-pre-existing KisakCOD-vs-retail matter independent of this port; decide separately whether KisakCOD
-intends to be wire-compatible with retail or only with itself.
+For Windows amd64/ARM64, Linux amd64/arm64, and macOS arm64, require native client → each original
+server and each original client → native headless server, preserving valid packet bytes, ordering,
+field semantics, authentication/identity behavior and gameplay exchanges. Record unknown reference
+details and unavailable runtime evidence as pending, never passed. The exact matrix and rejection
+rules are authoritative in [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md).
 
 ---
 
@@ -1111,27 +1147,26 @@ have 8-byte pointers) is that the source is a decompile that structurally encode
    `SOCKET`-into-`uint32_t` truncation (`win_net.cpp:531,874`); and `SetWindowLongA` truncating the
    64-bit `WndProc` pointer (`win_syscon.cpp:231` → use `SetWindowLongPtrA`/`GWLP_WNDPROC`).
 
-**Bottom line:** items 1–3 are the gating decision. You either keep the target 32-bit, or you commit
-to a full re-layout of structs + VM + asset pipeline. This is why "Win64 first" is wire-safe but not
-cheap.
+Native64 remains required. Runtime, VM and asset changes must cover every family reachable by each
+supported MP role, preserving frozen disk/wire representations. Native server integration can precede
+client-only graphics/audio and deferred SP work; original-peer interoperability remains unproven until
+[#122](https://github.com/jm2/kisakcod/issues/122) passes.
 
 ---
 
 ## 3. Recommended phasing
 
-Two independent axes of work exist, and it's important not to conflate them:
+Native-width runtime/asset conversion and platform integration are separate workstreams that meet
+at a runnable production role. The phase numbers below group deliverables; they are not a requirement
+to finish one full client before starting the next OS or architecture.
 
-- **Bitness axis** (32→64): dominated by §2. Huge. Blocks Win64 and 64-bit Linux/macOS equally.
-- **Cross-platform axis** (Windows→POSIX): dominated by the Win32/DX9/Miles/Bink surface. Large, but
-  *achievable while staying 32-bit*, which sidesteps the entire bitness axis.
-
-```
-Phase 0  Foundation, security, build/test/release hygiene                    [M]
-Phase 1  Headless dedicated server + disk32/runtime64/VM conversion          [XL]
-Phase 2  Linux amd64 + shared Vulkan/OpenAL/FFmpeg client stack               [XL]
-Phase 3  Windows ARM64 + Linux ARM64, NEON and architecture cleanup           [L]
-Phase 4  macOS ARM64 via MoltenVK                                             [L–XL]
-```
+| Workstream | Current sequencing |
+|---|---|
+| Foundation/security/evidence | Retain x86 gates, repair concrete regressions, pin original 1.7/Steam 1.8 references and provision required runtime evidence. |
+| Native64 headless MP server | Integrate the server-required VM/asset/physics/platform closure through #130. Windows amd64 can be an internal ABI reference; Linux amd64 preparation proceeds in parallel. Neither waits for client media. |
+| Renderer, SDL, audio/video | Run #131's representative Vulkan/MoltenVK/shader experiments early, then implement client capabilities against real assets. Audio/voice/cinematic work has separate acceptance. |
+| ARM64 CPU/server behavior | Start #127 command-driven tests as their production runtime slices become runnable; keep scalar correctness ahead of optional SIMD work. No full Linux-client prerequisite. |
+| Five-target client/product delivery | Finish each role on each platform when its dependencies and #122 original-peer cells pass. Apple feature experiments begin early; final macOS application signing remains a delivery step. |
 
 Wine + DXVK remains a useful deployment workaround for the existing Win32
 binary, but it is not a native port deliverable and is not a release gate.
@@ -1194,9 +1229,11 @@ resolves 64-bit, since modern macOS is 64-bit-only.
 
 ## Phase 1 — Headless dedicated server and native Win64 runtime
 
-Wire-safe (§1), but gated on the 32-bit-ABI rewrite (§2). Order of operations:
+Gated on both the 32-bit-ABI rewrite (§2) and the original-binary network contract (§1).
+Order of operations:
 
-1. **Huffman builder fix** (§1.2) — prerequisite for any 64-bit netcode; ~1 file.
+1. **Network compatibility** (§1): retain the completed Huffman pointer-width repair and integrate
+   the verified original protocol/handshake behavior, captured packet fixtures and live original peers.
 2. **Pointer-truncation sweep** (§2 items 4–5): convert all `(uint32_t)&`/`(int)&` alignment and
    array-walk sites to `uintptr_t`/typed pointers. Mechanical but must be exhaustive — a single missed
    hunk-allocator mask corrupts memory at startup.
@@ -1209,30 +1246,36 @@ Wire-safe (§1), but gated on the 32-bit-ABI rewrite (§2). Order of operations:
      size asserts. Cleaner runtime, but abandons retail assets (must re-bake all content) — usually a
      non-starter for a mod-focused project.
    Recommend **(A)**.
-4. **Script VM value representation (§2 item 2, detailed in §8):** widen `VariableUnion` to a native
-   8-byte union rather than going handle-based. The VM is pure-runtime (never serialized to a `.ff`;
-   its savegame path already decomposes values by type — `scr_readwrite.cpp`), only three of its
-   members are real pointers, and the ~215 deref sites in `src/script` then compile unchanged — the
-   cost is regenerating ~7 `scr_vm.h` size asserts and a 32 KB→64 KB value stack. (Handle/index
-   representation is the higher-touch, higher-risk fallback, kept only if the value-stack footprint
-   ever becomes a measured problem.)
-5. **Win64 compile breaks (§2 item 6):** MMX→SSE2 skinner, inline-asm removal, `_WIN32`→`_M_IX86`
-   guards, `SOCKET`/`SetWindowLongPtr` fixes.
-6. **Build:** x64 configuration — drop `/machine:x86` (`pre_build.cmake:78`), switch generator
-   platform to x64, point DXSDK at `lib/x64` (the June-2010 SDK ships x64 D3DX import libs; `d3d9.lib`
-   is in the modern Windows SDK for x64, so **DX9 itself is not a Win64 blocker**), and obtain 64-bit
-   deps (see §5): `steam_api64` (free, same SDK), and a plan for Bink/Miles (both 32-bit-only blobs).
+4. **Script VM value representation (§2 item 2, detailed in §8):** retain the chosen native-width
+   `VariableUnion`, with real pointers widened and semantic 32-bit values kept fixed. Active
+   [PR #119](https://github.com/jm2/kisakcod/pull/119) and
+   [#129](https://github.com/jm2/kisakcod/issues/129) must audit and integrate production value
+   stacks, code positions, archive/persistence paths, debug consumers, allocations and layouts.
+   Existing per-type serialization is evidence to inspect, not proof that every VM representation
+   is isolated from saved bytes. Field typedef changes alone do not complete the VM. Validate the
+   MP-required runtime and stack/archive closure first; full native SP/save compatibility stays
+   separately deferred while its existing byte contracts are preserved.
+5. **Win64 compile breaks (§2 item 6):** audit remaining active inline-asm/architecture guards and
+   native-width OS handles. Use the scalar skinning path; an MMX→SSE2 rewrite is optional optimization,
+   not a prerequisite for native server or client bring-up.
+6. **Build per role:** integrate actual native64 headless source/dependency closure first, with
+   no client media imports. Full client bring-up separately validates the selected renderer and
+   native audio/video dependencies. A temporary D3D9 reference build needs verified x64 import
+   paths; that does not make D3D9 or vendor media a headless-server dependency.
 
-**Deliverable:** a native 64-bit Windows exe, wire-compatible with 32-bit KisakCOD, still DX9. This is
-XL effort and the highest-risk phase; consider gating it behind whether you actually need native x64
-(vs. Wine handling Linux and 32-bit remaining fine on Windows).
+**Deliverable:** native64 Windows MP client and headless server components, each passing its role
+against both verified original commercial 1.7 and Steam 1.8 references. The server can reach its
+integration checkpoint before client graphics/audio. A fork-to-fork match is supplemental evidence;
+it cannot close the original-binary gate. Native64 remains required, and the shared Vulkan endpoint,
+MP/headless scope and atomic loader-ownership constraints remain unchanged.
 
 ---
 
 ## Phase 2 — Native Linux *(POSIX/SDL + Vulkan)*
 
-Everything in Phase 1 **plus** the cross-platform axis. Depends on Phase 0's platform-override
-plumbing.
+Use the matching native runtime/asset closure and platform source selection for each Linux role.
+Headless server integration proceeds independently of full Windows client completion. The SDL and
+renderer items below belong to the client track; they are not prerequisites for the server.
 
 - **Entry/window/input:** replace `WinMain` with `main()`; replace the hand-rolled Win32 window class
   + message pump and DirectInput with **SDL2/3** (window, events, relative mouse, clipboard,
@@ -1251,21 +1294,23 @@ plumbing.
 - **Rendering (committed: native Vulkan RHI, not a translation layer):** land a thin in-tree RHI
   (`src/gfx/kisak_rhi.h`) covering seven state groups (device/swapchain, context, pipeline collapsing
   `r_state.cpp` render+sampler state, buffers, textures, shader modules + constant binding,
-  query/fence, render-target + caps/VRAM). Implement **`RhiD3D9` as a passthrough first** and reroute
-  the **~400 device call sites** (308 `device->` + 79 `dx.device->`) to `rhi->` so Windows keeps
-  shipping on D3D9 at every commit; put **SDL3** under the surface; then add the **Vulkan backend**
-  behind the identical interface (MoltenVK gives macOS for free; the same backend serves linux
-  amd64/arm64 and win-arm64). **dxvk-native is demoted to an optional *intermediate* runtime** used to
-  stay demoable on Linux/macOS while the native backend is written — not the shipping endpoint. See
-  the shader subsection below and §9 for the D3D9-semantics risks.
+  query/fence, render-target + caps/VRAM). First run the bounded
+  [#131 renderer/shader experiment](https://github.com/jm2/kisakcod/issues/131) on representative
+  content, including Apple Silicon. Preserve D3D9 as a migration reference, then establish a boundary
+  that accounts for resource ownership, uploads, synchronization and pipelines before rerouting the
+  roughly 400 device call sites. Integrate **SDL3** and the shared **Vulkan backend** in tested
+  production slices. MoltenVK reduces renderer duplication but still requires feature fallbacks,
+  runtime validation and packaging; it does not make macOS free. **dxvk-native** remains an optional
+  intermediate experiment/differential oracle, not the shipping endpoint. See §9 for semantics risks.
 - **Audio:** rewrite `snd_mss.cpp` (54 `AIL_*` calls) against **OpenAL Soft**; gate Bink cinematics
   off or decode via **FFmpeg** (has bink/binkaudio decoders).
 
-**Highest-value first target: the dedicated server (`dedi`).** Headless, it avoids the D3D9 *and*
-audio blockers entirely — only entry point, console, threading, timing, filesystem, and sockets need
-porting. **Caveat:** today `dedi` still links the full client (D3D9, Miles) — see audit
-`scripts/dedi/CMakeLists.txt:40`; making it genuinely headless is a prerequisite and a worthy Phase 0/2
-task on its own.
+**Highest-value first integrated role: the headless dedicated server.** The existing Windows x86
+headless composition already excludes client media; Linux/macOS production source sets remain empty.
+[#130](https://github.com/jm2/kisakcod/issues/130) must integrate the native64 server-required
+runtime/VM/asset/physics and platform closure, then validate original-client sessions. It avoids
+client graphics/audio implementation, but cannot skip any asset structure required by supported maps.
+The legacy non-headless dedicated profile remains separate.
 
 The release target is Linux amd64. A 32-bit Linux build is not part of the
 supported matrix.
@@ -1280,35 +1325,42 @@ The runtime consumes **precompiled DX9 (SM3) bytecode baked into fast-files**
 **there is no turnkey DX9-SM3-bytecode→SPIR-V compiler** — DXBC SM4/5 is solved (vkd3d), but DX9 uses
 the older token-stream ISA. Strategy:
 
-- **Bring-up:** an **offline re-baker** (`tools/shader_rebake`) that emits a SPIR-V-carrying shader
-  load-def variant (`loadForRenderer` already multi-targets, `r_gfx.h:649,656`). The only
-  production-grade DX9→SPIR-V compiler that exists is **dxvk's DXSO module** — lift it as a standalone
-  offline tool (note: reusing it even offline partially reintroduces the translation code the native
-  goal wants gone; writing a DX9 lifter from scratch is a multi-month subproject).
-- **Long-term source of truth:** migrate the in-tree HLSL generator to **HLSL→SPIR-V via DXC** once the
-  RHI is stable.
+- **Feasibility and representation:** [#131](https://github.com/jm2/kisakcod/issues/131) compares
+  representative SM3 translation and rendering on Vulkan/MoltenVK before selecting the detailed
+  integration. Evaluate DXSO reuse and its maintenance/dependency cost rather than assuming that
+  lifting it into an offline tool is already solved. Keep original fast-files unchanged; use a
+  content-addressed derived shader cache/sidecar with explicit converter/version invalidation.
+- **Source compilation:** the current shader assembler reads original HLSL files from disk. An
+  HLSL→SPIR-V path may support assets with available source, but cannot replace arbitrary retail/mod
+  bytecode whose source is unavailable. It is a separately validated path, not a prerequisite that
+  forces users to rebake retail archives.
+
 
 ## Phase 3 — Windows ARM64 and Linux ARM64
 
-- Remove remaining x86 inline assembly and pointer-width assumptions.
-- Provide scalar reference paths plus SSE2/AVX dispatch on amd64 and NEON on ARM64.
-- Build and test all portable dependencies natively for both operating systems.
-- Require byte-identical network/asset fixtures and licensed gameplay smoke before packaging.
+- Start production command-driven simulation and server CPU tests through
+  [#127](https://github.com/jm2/kisakcod/issues/127) as soon as their runtime slices are available;
+  do not wait for a full Linux client.
+- Remove active x86-only assumptions and use the scalar correctness path. SSE2/AVX/NEON optimization
+  is optional downstream work with unchanged original-compatible behavior, not a bring-up gate.
+- Build and test actual role-specific dependencies on real ARM hardware.
+- Require native server/client execution, original-reference network cells, asset evidence and
+  applicable product tests before packaging; cross-compilation alone is insufficient.
 
 ---
 
-## Phase 4 — macOS ARM64 *(stretch, strictly downstream)*
+## Phase 4 — macOS ARM64 application delivery; early feature validation
 
-macOS has no D3D9 and no native Vulkan (only Metal via **MoltenVK**), and modern macOS is
-**64-bit-only** — so the 32-bit escape hatch does not exist and the §2 rewrite is mandatory. Two paths:
+macOS arm64 is a fixed target, not stretch scope. Native64 runtime conversion is mandatory, and the
+shared Vulkan path uses MoltenVK. Start representative shader, resource, surface and feature-fallback
+experiments in [#131](https://github.com/jm2/kisakcod/issues/131) alongside server ABI work.
+These experiments and ARM command-driven tests do not depend on a finished Linux client.
 
-- **Pragmatic:** run the Win64 build under **CrossOver/Wine with DXVK layered on MoltenVK** (the most
-  fragile of the stacks, but no native engine work).
-- **Native:** everything in Phase 2 + a Metal (or Vulkan-on-MoltenVK) RHI backend + an arm64/x86_64
-  universal build + macOS builds of all prebuilt deps. XL, only worth it if native macOS is a goal in
-  itself.
-
-Treat macOS as "after Win64 + Linux land."
+Deliver the native MP client and headless server when their respective runtime/platform closures,
+original-peer network cells and product tests pass. The final application needs macOS dependency
+packaging, signing/notarization and clean-machine validation. An x86_64 universal slice is not part
+of the fixed macOS arm64 requirement. Wine/CrossOver remains an optional deployment workaround and
+cannot close native macOS delivery.
 
 ---
 
@@ -1316,10 +1368,10 @@ Treat macOS as "after Win64 + Linux land."
 
 | Subsystem | Win64 | Native Linux | Native macOS | Notes |
 |---|---|---|---|---|
-| Netcode / wire format | S (Huffman only) | S | S | Wire is bitness/endian-neutral; see §1 |
+| Netcode / wire format | L (original-peer integration) | L | L | Preserve fixed-width encodings and pass both original references under #122; Huffman repair alone is insufficient |
 | 32-bit ABI (structs/VM/fast-file) | **XL** | **XL** | **XL** | The gating item; avoidable only by staying 32-bit |
 | Memory mgmt pointer truncation | M | M | M | `uintptr_t` sweep |
-| Rendering (native Vulkan RHI) | XL (RHI + Vulkan rewrite, ~400 device sites) | XL native (S via dxvk-native *interim*) | XL / free via MoltenVK under same RHI | D3D9 kept only as the `RhiD3D9` passthrough for parity, not the endpoint |
+| Rendering (native Vulkan RHI) | XL, measured by #131 | XL, shared Vulkan path | Shared backend plus measured MoltenVK/platform work | D3D9 is a migration reference; feature parity and resource lifetime need production evidence on every target |
 | Platform layer (win32/) | S | XL | XL | SDL + POSIX; `HWND` couples window/render/audio/input |
 | Threading | S | L | L | No POSIX `SuspendThread` |
 | Audio (Miles) | L (need x64 lib) | XL (OpenAL rewrite) | XL | 32-bit-only proprietary blob |
@@ -1339,19 +1391,24 @@ S=small · M=medium · L=large · XL=extra-large/rewrite.
 | **Bink Video** (`binkw32`) | 32-bit blob, `#ifdef CINEMA` | ❌ | ❌ | ❌ | Proprietary; stub cinematics or decode via FFmpeg (LGPL) |
 | **Steamworks** (`steam_api`) | 32-bit blob + headers | ✅ `steam_api64` | ✅ `libsteam_api.so` | ✅ `.dylib` | Redistributable; all in the same SDK, just not committed |
 | **ODE physics** | in-tree source | ✅ | ✅ | ✅ | LGPL/BSD (pick BSD); light 64-bit type audit |
-| **zlib 1.1.4** | in-tree source | ✅ | ✅ | ✅ | zlib license; **upgrade to 1.3.1** (1.1.4 has known CVEs; DEFLATE output unchanged so `.iwd`/`.ff` compat preserved) |
+| **zlib 1.1.4** | in-tree source | ✅ | ✅ | ✅ | zlib license; dependency upgrade tracked by #137. Pin and review the replacement version; shared DEFLATE format does not guarantee identical compressed output. Require original-stream, boundary, checksum and constrained-byte fixtures before accepting it. |
 | **Speex 1.1.9** | in-tree source | ✅ | ✅ | ✅ | Xiph BSD; **wire-locked** — codec version is embedded in voice packets, do not swap (e.g. to Opus) or in-game voice breaks vs. real clients |
 
-The two proprietary RAD blobs are the hard gate for every non-32-bit-Windows target and are legally
-questionable to ship in a public repo. The three source-drop deps are portability-clean.
+The RAD dependencies block the legacy full-client media composition, not the dependency-free
+headless profile. Portable clients require replacement media backends and verified dependency build
+recipes. Source availability alone does not prove the role-specific dependencies are ABI-, behavior-
+or packaging-correct; keep their integration and original voice compatibility gates explicit.
 
 ---
 
 ## 6. Risks and fixed constraints
 
-1. **Retail wire/asset compatibility is required.** The protocol-version mismatch (§1.3) must be
-   resolved with captured compatibility fixtures, and the checked fast-file translation (§2.3,
-   option A) is mandatory.
+1. **Original-binary network and retail-asset compatibility are required.** Both directions against
+   original commercial 1.7 and original Steam 1.8 must pass on every target under
+   [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md). Resolve protocol and custom-handshake
+   blockers using verified reference manifests, captured fixtures and live original peers; changing
+   a version constant or testing only the fork is insufficient. Checked Disk32 translation remains
+   mandatory.
 2. **Native 64-bit is required.** Windows amd64/ARM64, Linux amd64/arm64, and macOS arm64 are fixed
    targets, so the disk/runtime split and VM widening cannot be deferred.
 3. **Proprietary deps:** removing Miles/Bink blobs from the repo is both a legal and a portability
@@ -1364,30 +1421,46 @@ questionable to ship in a public repo. The three source-drop deps are portabilit
 
 ## 7. Milestone plan (M0–M14): dependency graph & critical path
 
-The phases above map onto 15 milestones. The dominant fact: **one mandatory shared foundation
-(M4+M5) gates all five targets** — there is no cheap first target, because even win64 on its
-friendliest toolchain requires the full ABI conversion, the fast-file mirror/relocation rewrite, and
-an audio-backend replacement (Miles is 32-bit-only). The good news is the pre-foundation work
-(M0–M2) and the entire platform layer (M3) are **validated on the existing 32-bit Windows build**
-before any struct widens.
+Milestones describe capabilities, not a single serial chain. M4/M5 are split by the asset and runtime
+families reachable from each supported MP role under
+[#129](https://github.com/jm2/kisakcod/issues/129). Every required server family must be complete and
+production-enrolled before that server is enabled, including atomic ownership cutovers; client-only
+families, audio/video and SP save support do not block its earlier integration checkpoint.
+
+[#130](https://github.com/jm2/kisakcod/issues/130) integrates the first native64 headless role while
+platform work proceeds in parallel. [#127](https://github.com/jm2/kisakcod/issues/127) starts real
+command-driven simulation and original-reference fixtures as the needed runtime becomes executable.
+[#131](https://github.com/jm2/kisakcod/issues/131) probes Vulkan/MoltenVK/shaders early. Keep the
+Windows x86 baseline and existing utility coverage throughout; neither is a substitute for production
+or [#122](https://github.com/jm2/kisakcod/issues/122) original-peer acceptance.
 
 | ID | Milestone | Effort | Depends on | Exit criterion (abridged) |
 |---|---|---|---|---|
-| **M0** | Build-system foundation & CI scaffolding (still 32-bit Win) | M | — | CMake produces byte-identical 32-bit mp/sp/dedi; `KISAK_TARGET_OS/ARCH` auto-detect; a Linux preset configures |
+| **M0** | Completed build-system foundation & CI scaffolding (still 32-bit Win) | M | — | Windows x86 profile builds and target detection; Linux utility preset configures; shared `buildnumber.cpp` retail object sections and stamps match across MP/SP/dedi variants. This is build-scaffolding evidence, not whole-engine or commercial-peer parity; #122 remains open. |
 | **M1** | Cross-compiler hygiene: `kisak_abi.h`, calling-conv & atomics headers | L | M0 | MSVC x86 build unchanged; GCC/Clang syntax-parse of the new headers passes; **fixed-width `sys_atomic.h`** replaces the `long` Interlocked shim |
 | **M2** | Pointer-truncation sweep + UBSan/ASan/tidy gate + Huffman fix | L | M1 | 32-bit build + map-load + demo-playback run **clean under ASan/UBSan**; Huffman table byte-identical to retail; CI tripwire fails new `(int)&`/`&0xFFFFF000` |
-| **M3** | Platform-abstraction layer (`Sys_*`/threads/net/fs/time + SDL3) | XL | M0, M1 *(parallel with M2/M4/M5)* | 32-bit Windows client+dedi run on the refactored layer with input/timer/net parity; POSIX backend dir compiles under GCC/Clang |
-| **M4** | 64-bit ABI conversion: runtime structs, GSC VM union, zone/hunk | XL | M2, M1 | win64 links; **dual asserts** live (ILP32 value on 32-bit AND LP64 value on 64-bit); GSC VM runs a script-heavy save/load correctly at 64-bit |
-| **M5** | Fast-file split: packed 32-bit mirrors + widening relocation loader | XL | M4 | an **unmodified retail `.ff`** loads on win64 and every runtime asset hash-matches the 32-bit reference dump; 32-bit build still loads it |
-| **M6** | win64 client + dedi bring-up (first native 64-bit target) | XL | M5, M4 (M3 rec.) | win64 client boots, loads a retail map, golden-image render match, **OpenAL** audio/voice; win64 dedi passes demo/replay parity |
-| **M7** | linux_amd64 **dedicated server** (headless) — first cross-platform runnable | L | M3, M5, M4, M1 | linux dedi compiles under GCC+Clang, loads a map **without GFX_D3D/Miles/Bink**, runs a match, demo-parity hashes bit-identical to win64 |
-| **M8** | native Vulkan RHI: `kisak_rhi.h` + `RhiD3D9` passthrough (reroute ~400 device sites, Windows stays green) → Vulkan backend + SDL3 surface + offline shader re-bake | XL | M6, M3, M5 | linux full client renders a retail map through the **native Vulkan backend** (re-baked SPIR-V shaders), golden-image match to win64; dxvk-native may serve as an interim backend feeding M9/M13 but is not the M8 deliverable |
-| **M9** | linux_amd64 **full client** — second native target | L | M8, M7, M6 | linux client fully playable; a **win64↔linux cross-play** demo-parity test shows bit-identical movement/physics; establishes the x86-64 FP baseline |
-| **M10** | ARM64 determinism & arch layer (OS-agnostic) | L | M9, M1 | an aarch64 build produces **bit-identical** movement + demo hashes to the x86-64 baseline; no `__rdtsc`/`__cpuid`/x87/`__m64`/inline-asm remain |
-| **M11** | win_arm64 — first ARM target (native D3D9on12 + Win32) | M | M10, M6, M4, M5 | win_arm64 client boots on Windows-11-ARM, renders via **D3D9on12**, cross-arch demo-parity vs win64 |
-| **M12** | linux_arm64 — cross-compiled Linux ARM | M | M9, M10 | runs on **real ARM hardware** (not emulated), cross-arch parity vs linux_amd64 & win64 |
-| **M13** | macos_arm64 — MoltenVK + bundle/codesign/notarize (final) | L | M9, M10 | **signed & notarized `.app`** renders via MoltenVK (feature-gap fallbacks verified), cross-arch parity vs win64/linux |
-| **M14** | Full 5-target CI matrix, packaging & required gates | L | M6, M9, M11, M12, M13 | all 5 production engines green as required gates; ASan/UBSan required on linux_amd64; cross-arch parity runs in CI; immutable-tag, least-privilege release artifacts and aggregate checksums published |
+| **M3** | Role-specific native platform services and source composition | XL | M0, M1; parallel with M2/M4/M5 | Integrate server entry/console/net/fs/thread/time services into actual headless targets; SDL/window/input and client platform behavior have separate production exits |
+| **M4** | Native64 runtime/VM/physics closure by MP role | XL | Relevant M1/M2 prerequisites | Production native-width structures and allocations, dual layout contracts, script-heavy MP execution and required VM stack/archive paths. Full SP saves remain deferred; server closure can precede client-only runtime work |
+| **M5** | Disk32 mirrors and production widening by supported content closure | XL | Matching M4 runtime families | Every asset/subobject reachable by the supported role loads from unmodified retail data; canonical graph evidence matches the x86 reference; publication/unload/rollback and atomic ownership remain valid |
+| **M6** | Windows amd64 MP delivery, server and client tracked separately | XL | Server: Windows M3 + server M4/M5; client: client closure + M8/media | #130 headless startup/map/session/cycle/shutdown first; later client graphics/audio and product tests. Each role passes both original references under #122; neither is complete merely because the other links |
+| **M7** | Linux amd64 headless MP server | L | Linux server M3, server M4/M5 and relevant M1/M2; no M6-client dependency | Actual GCC/Clang server links without client media, loads supported retail maps, runs both original-client sessions, and passes command-driven simulation/lifecycle checks through #127/#130 |
+| **M8** | Measured shared Vulkan/SDL renderer and shader integration | XL | #131 feasibility starts from available x86 assets; integration consumes relevant client M3/M4/M5 | Representative Linux/Apple feature proof first, then real production scenes and resource lifecycles. Preserve original archives via derived shader cache/sidecar. D3D9/dxvk-native are migration experiments/reference paths, not replacement endpoints |
+| **M9** | Linux amd64 MP full client | L | Linux client M3/M4/M5, M8, audio/voice/video acceptance | Playable original-content client with both original-server sessions under #122; production #127 command-driven movement/physics evidence and separate demo/presentation tests |
+| **M10** | ARM64 production CPU and determinism layer | L | Relevant M1/runtime slices and #127 harness; no full-client prerequisite | Execute fixed-tick commands with defined state/RNG on real ARM; compare original-visible semantics and per-field state with verified references. Scalar correctness first; optional SIMD stays downstream |
+| **M11** | Windows ARM64 MP client/server delivery | M–L | Role-specific Windows M3/M4/M5 and M10; client additionally M8/media | Real-hardware server/client runs and both #122 directions. Shared Vulkan remains intended graphics endpoint; any D3D9on12 experiment requires #131 dependency/device/caps evidence and is not assumed to work |
+| **M12** | Linux ARM64 MP client/server delivery | M–L | Role-specific Linux M3/M4/M5 and M10; client additionally M8/media | Real ARM server/client runtime and lifecycle evidence, both #122 directions and role-specific product tests; cross-compilation or a finished Linux amd64 client alone is insufficient |
+| **M13** | macOS ARM64 MP delivery and signed application | L | Role-specific macOS M3/M4/M5 and M10; client additionally M8/MoltenVK/media | Early Apple feature experiments feed a real native client/headless server; both #122 directions, feature fallbacks, signed/notarized client package and clean-machine execution |
+| **M14** | Five-target production CI, packaging and required release gates | L | Each platform's client/server exits and #122 | All five targets pass their complete original-reference matrix and production/product gates; required sanitizer coverage, immutable source identity, least-privilege release, symbols/provenance and complete artifacts/checksums |
+
+- [ ] **Original commercial 1.7 / Steam 1.8 network release gate — [#122](https://github.com/jm2/kisakcod/issues/122):** pending verified reference manifests and all required live interoperability cells. M0 completion does not close this gate.
+
+**Mandatory network exit criterion for every delivery milestone:** the
+[original-binary compatibility matrix](NETWORK_COMPATIBILITY.md) is part of these abridged exits.
+A server-only checkpoint requires both original reference clients → that native headless server;
+a client checkpoint requires that native client → both original reference servers. Each of the five
+completed platform targets requires both directions. M14 cannot pass with missing reference hashes,
+unexecuted cells, protocol-1-only fork tests, or CoD4x substitutes. Component compile/link and synthetic
+tests may progress while reference infrastructure is pending, but do not close this gate.
 
 M14 workflow parity must be checked against the maintained `jm2/CroMagRally` and `jm2/tributary` patterns. Utility-only
 matrix legs do not satisfy target delivery: required production jobs and target-labeled artifacts must cover Windows
@@ -1397,29 +1470,29 @@ checkout credentials disabled, keep build jobs read-only, give `contents: write`
 publish a reproducible source archive plus aggregate `SHA256SUMS`, and use bounded jobs, concurrency control, and pinned
 actions. Native package/signing formats become required only when their corresponding client milestones are real.
 
-**Critical path:** `M0 → M1 → M2 → M4 → M5 → M6 → M8 → M9 → M10 → M13 → M14`. The long pole is the
-contiguous **M4→M5→M6** block (ABI conversion → fast-file rewrite → first win64 bring-up); it cannot
-be parallelized away because every later target consumes its output. **M3 runs off the critical path**
-in parallel with M2/M4/M5 and only becomes blocking at M7/M8 — if it slips, it joins the critical path.
+**Current critical path:** close the supported MP-server runtime/asset graph and native platform
+composition, integrate it through #130, then execute its original-client cells under #122. Missing
+licensed runners or reference manifests stay pending; synthetic production integration continues
+without claiming retail acceptance. Full client delivery adds its own content/runtime closure,
+validated graphics/media and native-client → original-server cells. The time-critical unknowns are
+measured separately rather than treating M4→M5→a full Windows client as an indivisible block.
 
-```
-M0 → M1 → M2 → M4 → M5 → M6 → M8 → M9 → M10 ┬→ M11 ┐
-      └──→ M3 ─────────────┘   │    │       ├→ M12 ┼→ M14
-                    M7 ────────┘    │       └→ M13 ┘
-      (M3 feeds M7 & M8; M7 is the linux dedi beachhead off M5)
+```text
+M0/M1/M2 + role-specific M3 + server M4/M5 -> #130 native headless server
+                                                   |-> original-client cells (#122)
+Runnable runtime slices -> #127 command-driven tests -> M10 ARM CPU/server evidence
+Available x86 assets -> #131 Vulkan/MoltenVK proof -> M8/client media integration
+Client M3/M4/M5 + M8/media -> native clients -> original-server cells (#122)
+Each platform's two roles + complete #122 matrix + package/CI gates -> M14
 ```
 
-**Target order & why:** (1) **win64** — cheapest beachhead: exercises the entire mandatory ABI +
-fast-file crux while holding every other variable constant (same MSVC, native x64 D3D9 needs zero
-render rewrite, existing Win32 layer). (2) **linux_amd64**, entered via the **headless dedicated
-server** — forces GCC/Clang + POSIX + the 64-bit crux together but needs no render/audio/input
-(null-RHI stub), so it's the cheapest cross-platform runnable, the ASan/UBSan gate host, and the
-highest-value real artifact (Linux game servers); the full client then layers dxvk+SDL3+OpenAL.
-(3) **win_arm64** — cheapest ARM: the OS routes D3D9 through D3D9on12 so render "just works," the
-Win32 layer is reused, adding essentially only the ARM determinism layer. (4) **linux_arm64** — a
-near-pure matrix extension of the finished linux client + the ARM layer (main new cost: cross-compile
-toolchain + real-ARM CI). (5) **macos_arm64** — last: it needs the whole Linux client stack **and**
-the ARM layer **and** its own novel MoltenVK feature-gap + notarization work.
+**Scheduling policy:** Windows amd64 can supply the first internal native64 ABI reference if it
+reaches the server checkpoint sooner; Linux amd64 composition proceeds concurrently and need not
+wait for a playable Windows client. ARM CPU/server testing starts with runnable runtime slices,
+not after Linux full-client completion. Apple renderer feature probes also start early, while its
+signed application remains a later product exit. Windows ARM64 graphics and all native dependencies
+must be measured on real hardware through #131; D3D9on12 is neither an automatic portability result
+nor a required shipping shortcut. Keep the shared Vulkan destination and native MP/headless scope.
 
 ---
 
@@ -1448,15 +1521,19 @@ even under a 64-bit compiler.
    `byteoff=(off-1)&0xFFFFFFF`). Touchpoints: `db_stream_load.cpp:45-57`, `db_stream.cpp:81-105`,
    `db_load.cpp:552-1652` (all `Load_*` + convert call sites), `db_memory.cpp`.
 
-**GSC VM decision — widen the union, do *not* go handle-based** (refines §Phase 1 item 4): change
-`codePosValue`/`vectorValue`/`stackValue` (`scr_variable.h:100-140`) to native pointers; leave
-`intValue`/`floatValue`/`stringValue`/`pointerValue`/`entityOffset` at 32 bits. `VariableValue`
-becomes 0x10; regenerate `function_stack_t` (0x14→0x28), `scrVmPub_t`, and the 2048-entry value
-stack. The ~215 deref sites compile unchanged. This is lower-risk than handle-based because the VM is
-never serialized and its savegame path already decomposes by type.
+**GSC VM decision — retain the native-width union** (refines §Phase 1 item 4): real
+`codePosValue`/`vectorValue`/`stackValue` pointers widen; semantic integer/float/string/object-ID/
+entity-offset fields retain their specified widths. This representation decision does not prove
+production closure. [PR #119](https://github.com/jm2/kisakcod/pull/119) and
+[#129](https://github.com/jm2/kisakcod/issues/129) must check each value/stack allocation and stride,
+code-position/fixup consumer, archive/persistence boundary and debug reader, with dual layout
+contracts and actual script-heavy execution. Do not assume that the entire VM is never serialized
+because one save path encodes selected values by type. Preserve explicit saved representations and
+validate MP-required stack/archive consumers; full native SP and SP-save delivery remain separately
+deferred. Changing the union or regenerating assertions alone cannot close this milestone.
 
-**Do the pure-bug pointer-truncation sweep first, on the 32-bit build, UBSan-gated** (M2, before any
-struct widens): every `(int)&`/`(uint32_t)&` cast-of-address and `& 0xFFFFF000` page mask →
+**Repair known pointer-truncation defects before enabling each affected production slice**, retaining
+x86 coverage and appropriate sanitizer gates. Continue the shared M2 inventory in parallel: every `(int)&`/`(uint32_t)&` cast-of-address and `& 0xFFFFF000` page mask →
 `uintptr_t` + `~(uintptr_t)0xFFF`; the ~80 pointer-as-int loops (e.g. `sentient.cpp:441`'s `i+=116`
 stride, `g_utils.cpp:1846`, `cm_world.cpp:1226`) → typed pointer arithmetic so the compiler recomputes
 strides. Key sites: `com_memory.cpp:431-695`, `scr_parsetree.cpp:332`, `cl_main.cpp:625`,
@@ -1486,12 +1563,18 @@ a dev box and corrupt only in production.
   runtime asset's field values + pointers against a 32-bit reference dump — per-asset-type, before the
   loader is enabled globally. This is the mitigation for the single biggest quality risk on the
   critical path (the M5 relocation rewrite touches the least-testable code in the engine).
-- **Cross-arch demo-parity determinism harness (gates M9→M14):** play back a recorded demo and diff
-  per-frame movement/physics/entity state against a 32-bit reference, then across win64 ↔ linux ↔ ARM.
-  This catches VM widening *and* FP determinism regressions before they ship as MP desyncs. Pin FP to
-  round-to-nearest with **`-ffp-contract=off`** / `/fp:precise`; require the SSE2 and NEON skinning
-  paths to bit-match the reference. **`KISAK_PURE` x87 bit-exactness is physically impossible on ARM**
-  (no `fistp` analog) — hard-disable it off x86 and rely on the harness for parity.
+- **Original-peer network gate:** execute the complete two-reference, two-direction matrix in
+  [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md) on all five targets. Compare valid packet
+  encodings and semantics to original commercial 1.7 and Steam 1.8 captures; exercise original
+  authentication, connect, gameplay, reliable commands, map transitions and disconnect/reconnect.
+  Malformed-input hardening must preserve valid retail behavior. Do not require patched peers or
+  substitute the fork's protocol-1/GUID/Steam-ticket exchange.
+- **Simulation and playback gates:** add fixed-tick, input-driven production movement/server tests
+  with defined initial state and RNG, alongside original-peer sessions and MSG golden vectors.
+  Compare x86/x64/ARM state by field and tick; original behavior remains the compatibility oracle.
+  MP demo playback separately tests recorded-state decoding and presentation, not recomputation of
+  server physics. Pin floating-point behavior and test portable implementations against original
+  observations; optional SIMD or arithmetic changes must not alter valid network-visible behavior.
 - **Real ARM hardware runners are mandatory** (`ubuntu-24.04-arm`, `windows-11-arm`, `macos-15`):
   cross-compiled ARM cannot run on x64 builders, so compile-only jobs give false confidence for exactly
   the runtime-only bugs (truncation, `__m64`, memory ordering).
@@ -1531,68 +1614,47 @@ field-by-field writes (killing the `46104` magic), or declare saves version-bump
 with a `saveVersion` + arch/width tag; add a save round-trip + cross-width load test. **Not milestone
 gating for MP/dedi.**
 
-**H2 (IMPLEMENTED) — Steam auth: capability-gated; the existing dedi defect is fixed.**
+**H2 — The fork's Steam/no-Steam capability work does not satisfy original authentication.**
 
-*Why it exists (it is not retail behavior):* retail COD4 ran with no Steam. KisakCOD removed the CD-key
-scheme and PunkBuster, losing its stable player identity and ban primitive, so contributor LWSS grafted
-Steam in (commit `fc43d360`, 2025-06-23 — **not** the original decompile, **not** the recent porting
-work) to fill exactly that hole: `SteamID64` is substituted verbatim for the old `cdkeyHash` and
-becomes the server GUID (`sv_client_mp.cpp:204`, with the original `//…cdkeyHash` line commented right
-above), keeping `SV_IsBannedGuid`/`SV_IsTempBannedGuid` alive as string compares; a session ticket
-(`GetAuthSessionTicket`→`BeginAuthSession`) adds login-time anti-spoof auth. It is **not** an
-ownership/license gate (no `UserHasLicenseForApp`/`BIsSubscribedApp` anywhere in `src/`) and **not**
-matchmaking (persona name fetched but unused; master browser already dead).
+The existing `KISAK_ENABLE_STEAM`/`KISAK_STEAM`, persistent `cl_guid`, and `sv_requireSteam`
+implementation removed a desktop-Steam dependency from the fork's headless profile. It remains
+useful historical implementation evidence, but its custom `getchallenge` ticket/identity exchange
+is not the acceptance contract for an original commercial 1.7 or original Steam 1.8 peer. A
+Steam-distributed executable must not be assumed to use the fork's Steamworks-ticket convention.
 
-*Steam is portable, with one gap.* The layer uses the standard cross-platform Steamworks API; the only
-Windows include in `win_steam.cpp` is `<Windows.h>`. Valve ships `steam_api64`/`libsteam_api.so`/
-`.dylib` free in the same SDK, so Steam links natively on **win64, linux-amd64, macOS-arm64** with
-minimal fixup (guard refactor + `<Windows.h>` decouple + commit the per-target libs). **There is no
-ARM64 Steam library** (the SDK ships `linux32/linux64/osx/win64` only), so **win-arm64 and linux-arm64
-cannot link Steam** — that, not portability, is what mandates a fallback.
+The client currently emits custom ticket/SteamID or empty-ticket/GUID argument variants at
+`src/client_mp/cl_main_mp.cpp:1108,1112`; the server's challenge/identity checks and protocol-1
+connect acceptance must be reviewed together. Merely disabling Steam does not restore the original
+handshake. Implement the original behavior established by the exact reference binaries and captures,
+including identity, authorization and ban semantics, without asking those binaries to supply new
+arguments, authenticate through a new service convention, or accept a patch. Record unavailable
+original-service/reference prerequisites as blocked or pending evidence, not a compatibility pass.
 
-*Current state is a hard gate on both ends.* The client refuses to send a challenge without a real
-ticket (`cl_main_mp.cpp:1056-1060`); the server rejects an empty ticket/ID (`sv_client_mp.cpp:172-175`)
-and only issues `challengeResponse` if `Steam_CheckClientTicket` passes (`:210`, else *"Your Steam
-Client Ticket was Invalid"*). **Critical defect:** the dedicated server uses the *client*
-`SteamAPI_Init`, **not `SteamGameServer`** (none in tree), and `Steam_CheckClientTicket` returns false
-when the process isn't Steam-initialized (`win_steam.cpp:238-242`) — so a **headless dedi is presently
-unjoinable unless its operator is logged into a desktop Steam client that owns appid 7940**. Absurd for
-a Linux server; making Steam optional *fixes* this.
+Native Steamworks dependency availability is a separate build capability to verify per OS/architecture.
+It must not dictate what an original peer is required to send. Any optional incompatible identity or
+authentication mode must be isolated from the required original-compatible path and cannot satisfy
+[NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md).
 
-*What landed (commit on `master`).* A `KISAK_ENABLE_STEAM` CMake option (default **ON** everywhere a
-Steamworks lib exists, **OFF** on ARM — Valve ships no aarch64 library) defines a `KISAK_STEAM`
-capability macro **decoupled from `WIN32`**. All three `#ifdef WIN32 … #else #error` blocks are gone;
-every one of the eight Steam call sites is `#ifdef KISAK_STEAM`-guarded (verified programmatically) and
-`win_steam.cpp` compiles to an **empty translation unit** when off; `steam_api.lib`/`steam_api.dll` are
-linked/copied only when enabled. The no-Steam identity is a **persistent self-generated `cl_guid`**
-(`DVAR_ARCHIVE | DVAR_USERINFO`, seeded from `Sys_MillisecondsRaw()` folded with the srand-seeded
-`rand()` stream), sent as `getchallenge 0 "" "<cl_guid>"`; `CL_CDKeyValidate` becomes a no-op when off.
-**`sv_requireSteam` (default 0)** was added. Server accept policy in `SV_GetChallenge`: an identity
-(arg 3) is always required and always runs the ban path (`SV_IsBannedGuid`/`SV_IsTempBannedGuid`); if a
-ticket (arg 2) is present **on a `KISAK_STEAM` build it must validate** (anti-spoof preserved, same
-reject as before); a ticketless client is accepted unless `sv_requireSteam` is set; a **non-`KISAK_STEAM`
-server ignores any presented ticket** and treats the client as identity-only, so a Windows Steam client
-can still join an ARM server (**cross-play preserved**). The **headless-dedi-unjoinable defect is fixed**
-— `Steam_Init` is guarded, so a dedicated server no longer needs a logged-in desktop Steam client.
-`SV_DropClient` only ends a Steam session for a genuine all-digit `SteamID64` (not a hex `cl_guid`). A
-`windows-x86-nosteam` CI leg compiles the fallback path (the only buildable engine target today).
-*Adversarial review* (4 lenses, per-finding verification) confirmed the default Windows build is
-byte-identical and found one low-severity item — the `cl_guid` RNG was strengthened in response.
-*Follow-ups:* `steam_api64`/`libsteam_api.so`/`.dylib` still need committing for native Steam on
-win64/linux-amd64/macOS (works today via the same SDK); format self-gen GUIDs distinctly from 17-digit
-`SteamID64` if ban-namespace collisions ever matter. What's lost with Steam off — VAC-style async kick,
-the implicit ownership check, friends/browser (already unwired) — is all non-connect-critical.
+**H3 — Original-binary interoperability is a mandatory, currently unproven release gate.**
 
-**H3 — Testing strategy must be reconciled with reality; "retail parity" is a non-goal.** The
-existing 5-target CI matrix builds with `KISAK_BUILD_MP/DEDICATED/SP=OFF`, so it exercises **zero game
-code** (green-but-empty). "Wire parity vs retail" is infeasible/mis-framed — the protocol is pinned to
-`1` (not retail) and a retail `.ff` cannot live in a GPLv3 repo. *Corrected testing plan:* the goal is
-**self-consistency across the five builds**, not retail parity. Pin **x86-64 (linux_amd64 or win64) as
-the golden reference**; commit a golden vector set for `Sys_SnapVector`/`PM_` movement plus a short
-recorded demo; gate the three ARM legs **bit-exact** against it via **demo playback** (the wire-neutral
-`cl_demo.cpp` MSG stream is the right determinism oracle). Produce the asset-load oracle from a
-**self-generated `.ff`** built by the (Windows-only) asset tool in CI. Attach the **ASan/UBSan gate to
-a leg that actually builds the game (linux_amd64)**, not the portable-only legs.
+Portable utility jobs do not build the client/server production executable and cannot establish
+network compatibility. Fork self-consistency, scalar arithmetic fixtures and self-generated assets
+are useful intermediate checks; none substitutes for both original commercial 1.7 and original
+Steam 1.8 references. Community CoD4x 1.8 is a different peer and cannot stand in for Steam 1.8.
+
+Populate the pending executable/content reference manifest with verified hashes and captured behavior;
+do not invent protocol/build numbers from version labels. Gate all five targets on native client →
+each unmodified original server and each unmodified original client → native headless server.
+Preserve valid retail packet bytes and semantics, including commands and authentication. Use the
+protected licensed-content infrastructure for reference sessions and keep unavailable runs pending.
+Commit only distributable fixtures and evidence appropriate to the repository's content policy.
+
+The test layers must remain distinct: production MSG/Huffman/netchan golden vectors and malformed
+boundaries; input-driven PM/server simulation; MP demo decoding/presentation; graph-normalized asset
+comparison; and live original-peer sessions. Attach production ASan/UBSan to runnable engine paths as
+they become available. A self-generated `.ff` supports synthetic loader coverage but cannot certify
+retail-content or original-binary interoperability. See the exact gate and reference requirements in
+[NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md).
 
 **M1 — MMX/SSE skinning is dead code, not a render prerequisite (correction).** §Phase-3/render
 framing implied porting `r_model_skin_sse.cpp` (`__m64`) is a render blocker. It is not: the SSE call
@@ -1984,9 +2046,11 @@ all nine jobs in run **29942321576**, received a clean Codex review with zero th
 `0632a764`; all nine authoritative post-merge jobs passed in run **29943945374**. PR #83 completed the seven-adapter
 checked no-report/no-unlock contract and real-stack coverage gate. Exact head `6973a222` passed all nine hosted jobs in
 run **29948350036**, received a clean Codex review with both actionable threads resolved, and squash-merged as
-`beda5d39`; all nine authoritative post-merge jobs passed at that exact commit in run **29949463909**. No production
-loader caller is enrolled; the sole narrow bridge and atomic seven-site cutover are next. The ancestry checkpoint
-records reviewed history without importing code and therefore does not inflate the engineering estimate.
+`beda5d39`; all nine authoritative post-merge jobs passed at that exact commit in run **29949463909**.
+At that historical PR #83 checkpoint no production loader caller was enrolled. The sole bridge and
+atomic seven-site cutover subsequently landed as `0d5a7558` with MSVC repair `4859c9ee`; do not
+schedule that cutover again. Current remaining loader-family integration is tracked in #129 and
+[task.md](task.md). The ancestry checkpoint records reviewed history without importing code.
 PR #101 subsequently restored the expanded 11-job baseline at exact head
 `ac141fb9` and authoritative merge `fc66c03a`; runs **30367496573** and
 **30369149465** are fully green. The current 13-commit reconciliation through
@@ -2355,11 +2419,10 @@ shared-resource authentication as `6a67a66e`; exact final head `ca2d1149` ultima
 **29726370638**. PR #71 completes the exact-key composite adapters, PR #72 merges the capacity/demand prerequisite, and
 PR #73 merges the serialized facade. PR #74 published private exact-key callback borrowing but enrolls no caller; final
 head `79413a18` passed all nine jobs in run **29787341109** with clean reviews and zero unresolved threads, it
-squash-merged as `f996e16b`, and authoritative post-merge run **29788146050** passed all nine jobs. After completing the
-remaining loader prerequisites, enroll all seven sites
-atomically:
-five coordinator operations plus two exact-key
-root-journal stages. Root-string staging
+squash-merged as `f996e16b`, and authoritative post-merge run **29788146050** passed all nine jobs.
+The following was the historical enrollment contract, later fulfilled by the atomic `0d5a7558`
+cutover: five coordinator operations plus two exact-key root-journal stages. Preserve this contract
+for current loader extensions; it is not a request to recreate seven-site enrollment. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
 short borrowed batches under transaction -> registry -> string -> memory-tree order. The bounded legacy compatibility
 surface does not replace the typed guarantee. Static context slots and callback metadata
@@ -2379,21 +2442,26 @@ whole-segment compressed-finalization boundary remains a
 later integrity item
 because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is checked writer/save-guard
 retirement, broader completed-object/fast-file conversion,
-and that later segment-finalization boundary. Separate hard M4 blockers
-remain: MP `cpose_t::physObjId`, `BreakablePiece::physObjId`, and `DynEntityClient::physObjId` still truncate ODE
-pointers into `int32_t`; the 12-byte DynEntity client image is serialized directly, so it needs an explicit saved mirror
-or generation-checked token rather than naïve widening. SP `cpose_t` is native-width, but physics save/update/shutdown
-paths still narrow it through `int` locals. All three ownership families must be corrected before any native64 engine
-runtime can be enabled. The
-unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
-a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in
-`docs/task.md` and `docs/CODEBASE_AUDIT.md`.
+and that later segment-finalization boundary.
 
-**M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
+**September 9 reconciliation of this historical blocker list:** active PR #99 owns MP pose,
+breakable-piece and DynEntity physics ownership; verify its final production/save closure through
+[#129](https://github.com/jm2/kisakcod/issues/129) rather than starting a duplicate conversion.
+The old SP `cg_ents.cpp`/`cg_snapshot.cpp` pointer-through-`int` locals are already `uintptr_t`;
+full native SP remains deferred and does not gate MP. The old count of 114 wholly unbounded
+`Buf_Read` consumers predates the cursor implementation. The current issue is its nested-loader,
+seek/rewind, failure-propagation and real-parser coverage defects, tracked in
+[#124](https://github.com/jm2/kisakcod/issues/124) and
+[#125](https://github.com/jm2/kisakcod/issues/125). Do not create another primitive-only cursor
+migration or treat the existing primitive fuzz harness as production fast-file coverage. Current
+blockers and owner assignments are in [task.md](task.md).
+
+**M3 — Windows ARM64 graphics requires the #131 experiment; the old D3D9on12 shortcut is not a schedule assumption.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),
 which **D3D9on12 does not provide** any more than dxvk does — so Windows-ARM64 hits the same failure as
-Linux/macOS. *Move the `IDirectDraw7` replacement into an all-target step*, and validate the D3D9on12
-device-create + VRAM-query + double-`Direct3DCreate9` seam on the `windows-11-arm` runner.
+Linux/macOS. Keep the caps/VRAM replacement in the shared renderer work. If #131 uses D3D9on12
+as an intermediate experiment, validate device creation, import dependencies and the legacy VRAM
+query on actual Windows ARM64; a successful probe still does not replace the shared Vulkan endpoint.
 
 **M4 — Fatal-error thread freeze is isolated but still needs POSIX mechanisms.**
 `Sys_FreezeOtherThreadsForCrash` is now called only by `Sys_Error`; the abandoned SP executable-
