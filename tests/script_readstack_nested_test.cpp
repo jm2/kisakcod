@@ -189,6 +189,34 @@ scrVarPub_t scrVarPub{};
 
 #include <script_readstack_slice.inc>
 
+// Writer leaf services use the fixture's deliberately small token encoding.
+// The stack traversal, headers, and full-width cell reads are production code.
+void WriteCodepos(const char *pos, MemoryFile *memFile)
+{
+    const uint8_t token = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(pos) - 0x4000u);
+    MemFile_WriteData(memFile, 1, &token);
+}
+void WriteId(unsigned int id, unsigned int tag, MemoryFile *memFile)
+{
+    const uint8_t token[2] = {static_cast<uint8_t>(tag), static_cast<uint8_t>(id)};
+    MemFile_WriteData(memFile, 2, token);
+}
+namespace
+{
+void DoSaveEntryWithoutStack(unsigned int type, VariableUnion value, MemoryFile *memFile)
+{
+    const uint8_t encodedType = static_cast<uint8_t>(type << 3);
+    MemFile_WriteData(memFile, 1, &encodedType);
+    if (type == VAR_CODEPOS)
+        WriteCodepos(value.codePosValue, memFile);
+    else if (type == VAR_INTEGER || type == VAR_FLOAT)
+        MemFile_WriteData(memFile, 4, &value.intValue);
+    else
+        std::abort();
+}
+}
+#include <script_writestack_slice.inc>
+
 // ---------------------------------------------------------------------------
 // Test harness: builds packed retail save images and drives the production
 // reader through the real MemoryFile. Nested child bodies are laid out
@@ -281,6 +309,25 @@ std::vector<uint8_t> EncodeImage(const std::vector<uint8_t> &raw)
     return archive;
 }
 
+void VerifyWriterRoundTrip(const VariableStackBuffer *stack, const std::vector<uint8_t> &expected)
+{
+    std::vector<uint8_t> archive(expected.size() * 3 + 4096);
+    MemoryFile writer{};
+    MemFile_InitForWriting(&writer, static_cast<int>(archive.size()), archive.data(), false, false);
+    WriteStack(stack, &writer);
+    MemFile_StartSegment(&writer, -1);
+    CHECK(!writer.memoryOverflow);
+    const int length = writer.bufferSize;
+    MemFile_Shutdown(&writer);
+    MemoryFile reader{};
+    MemFile_InitForReading(&reader, length, archive.data(), false);
+    std::vector<uint8_t> actual(expected.size());
+    MemFile_ReadData(&reader, static_cast<int>(actual.size()), actual.data());
+    CHECK(actual == expected);
+    MemFile_MoveToSegment(&reader, -1);
+    MemFile_Shutdown(&reader);
+}
+
 // Runs the verbatim production reader over an image. The decoded stack is
 // MT_Alloc'd heap (not the archive), so the reader can be closed before
 // the assertions run -- required to release the memfile global stream
@@ -307,6 +354,7 @@ VariableStackBuffer *RunReader(const std::vector<uint8_t> &image)
     if (!reader.memoryOverflow && reader.segmentIndex >= 0)
         MemFile_MoveToSegment(&reader, -1);
     MemFile_Shutdown(&reader);
+    VerifyWriterRoundTrip(stack, image);
     return stack;
 }
 
@@ -518,6 +566,39 @@ void TestNestingLimit()
     }
 }
 
+void TestWriterNestingLimit()
+{
+    VariableStackBuffer *root = nullptr;
+    for (int i = 0; i < 17; ++i)
+    {
+        const size_t bytes = sizeof(VariableStackBuffer) - 1 + VARIABLE_STACK_RECORD_SIZE;
+        auto *stack = static_cast<VariableStackBuffer *>(MT_Alloc(static_cast<int>(bytes), 0));
+        *stack = {};
+        stack->size = 1;
+        stack->bufLen = static_cast<uint16_t>(bytes);
+        stack->pos = reinterpret_cast<const char *>(0x4001u);
+        stack->localId = 1;
+        stack->buf[0] = VAR_STACK;
+        VariableUnion value{};
+        value.stackValue = root;
+        VariableStackBuf_WriteCell(stack->buf + 1, value);
+        root = stack;
+    }
+    std::vector<uint8_t> archive(4096);
+    MemoryFile writer{};
+    MemFile_InitForWriting(&writer, static_cast<int>(archive.size()), archive.data(), false, false);
+    try
+    {
+        WriteStack(root, &writer);
+        CHECK(false);
+    }
+    catch (const ReadstackComError &)
+    {
+        CHECK(true);
+    }
+    MemFile_Shutdown(&writer);
+}
+
 // Case 6: baseline -- a nesting-free stack decodes unchanged.
 void TestNoNesting()
 {
@@ -544,7 +625,7 @@ void ReleaseAllocations()
     g_allocations.clear();
 }
 
-int main()
+int RunContracts()
 {
     TestNoNesting();
     ReleaseAllocations();
@@ -557,6 +638,8 @@ int main()
     TestMultipleLevels();
     ReleaseAllocations();
     TestNestingLimit();
+    ReleaseAllocations();
+    TestWriterNestingLimit();
     ReleaseAllocations();
 
     if (script_readstack_nested_test::g_failures)
@@ -572,4 +655,18 @@ int main()
         "script_readstack_nested_test: %d checks passed\n",
         script_readstack_nested_test::g_runs);
     return 0;
+}
+
+int main()
+{
+    try
+    {
+        return RunContracts();
+    }
+    catch (const ReadstackComError &)
+    {
+        ReleaseAllocations();
+        std::fputs("unexpected script stack error\n", stderr);
+        return 1;
+    }
 }

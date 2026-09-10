@@ -227,6 +227,7 @@ RUNTIME_OFFSET(VariableStackBufferNative, buf, 0xB, 0xF);
 union VariableUnionNative
 {
     int32_t intValue;
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     float floatValue;
     // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint32_t stringValue;
@@ -234,8 +235,10 @@ union VariableUnionNative
     const float *vectorValue;               // VAR_VECTOR: live vector-pool pointer
     // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     const char *codePosValue;               // codepos family: live script-code pointer
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint32_t pointerValue;                  // script object local id / anim index
     VariableStackBufferNative *stackValue;  // VAR_STACK: live stack-buffer pointer
+    // cppcheck-suppress unusedStructMember -- Named ABI mirror field; retained for layout compatibility.
     uint32_t entityOffset;
 };
 RUNTIME_SIZE(VariableUnionNative, 4, 8);

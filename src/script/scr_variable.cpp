@@ -1,5 +1,5 @@
-#include <algorithm>
 #include "scr_main.h"
+#include <algorithm>
 #include "scr_animtree.h"
 #include "scr_variable.h"
 #include "scr_stringlist.h"
@@ -1265,7 +1265,6 @@ void  Scr_DumpScriptVariables(bool spreadsheet,
 {
 	uint32_t NumScriptVars; // eax
 	const char* pos; // [esp+0h] [ebp-24h]
-	int(__cdecl * VariableInfoCompareCallBack)(VariableDebugInfo*, VariableDebugInfo*); // [esp+4h] [ebp-20h]
 	uint32_t index; // [esp+8h] [ebp-1Ch]
 	VariableDebugInfo* pInfo; // [esp+Ch] [ebp-18h]
 	VariableDebugInfo* pInfoa; // [esp+Ch] [ebp-18h]
@@ -1313,6 +1312,7 @@ void  Scr_DumpScriptVariables(bool spreadsheet,
 			}
 			else
 			{
+				int(__cdecl *VariableInfoCompareCallBack)(VariableDebugInfo*, VariableDebugInfo*);
 				if (summary)
 				{
 					VariableInfoCompareCallBack = VariableInfoFileNameCompare;

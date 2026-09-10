@@ -1,8 +1,8 @@
-#include <algorithm>
 #include "scr_debugger.h"
 
 #ifdef KISAK_DEDI_HEADLESS
 
+#include <algorithm>
 #include "scr_vm.h"
 
 #include <qcommon/qcommon.h>
@@ -1649,7 +1649,7 @@ bool __cdecl Scr_RefToVariable(uint32_t id, int isObject)
             return 0;
         // M4 (ki-n1et): record-sized allocations (8 bytes was the 32-bit
         // size of both node types; both hold two host pointers now).
-        breakpoints = (Scr_WatchElementDoubleNode_t *)Scr_AllocDebugMem(sizeof(Scr_WatchElementDoubleNode_t), "Scr_RefToVariable1");
+        breakpoints = reinterpret_cast<Scr_WatchElementDoubleNode_t *>(Scr_AllocDebugMem(sizeof(Scr_WatchElementDoubleNode_t), "Scr_RefToVariable1"));
         breakpoints->list = 0;
         breakpoints->removedList = 0;
         scrDebuggerGlob.variableBreakpoints[ida] = breakpoints;
@@ -2044,7 +2044,7 @@ void __cdecl Scr_AddAssignmentPos(char *codePos)
         scrDebuggerGlob.assignHeadCodePos = codePos;
         // M4 (ki-n1et): record-sized opcode node (8 bytes was the 32-bit
         // size; the node holds two host pointers now).
-        v1 = (Scr_OpcodeList_s *)Hunk_AllocDebugMem(sizeof(Scr_OpcodeList_s));
+        v1 = static_cast<Scr_OpcodeList_s *>(Hunk_AllocDebugMem(sizeof(Scr_OpcodeList_s)));
         v1->codePos = codePos;
         v1->next = scrDebuggerGlob.assignHead;
         scrDebuggerGlob.assignHead = v1;

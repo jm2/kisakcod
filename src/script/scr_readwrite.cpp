@@ -301,43 +301,59 @@ unsigned int Scr_ReadId(MemoryFile *memFile, unsigned int opcode)
     return result;
 }
 
+//SCRIPT_WRITESTACK_SLICE_BEGIN
+namespace
+{
+void DoSaveEntryWithoutStack(unsigned int type, VariableUnion value, MemoryFile *memFile);
+
+void WriteStackHeader(const VariableStackBuffer *stack, MemoryFile *memFile)
+{
+    if (!stack)
+        Com_Error(ERR_DROP, "null script stack while saving");
+    MemFile_WriteData(memFile, sizeof(stack->size), &stack->size);
+    WriteCodepos(stack->pos, memFile);
+    WriteId(stack->localId, 0, memFile);
+    MemFile_WriteData(memFile, sizeof(stack->saveStamp), &stack->saveStamp);
+}
+}
+
+// Keep nested stack serialization in stream order without native recursion.
+// The depth limit matches Scr_ReadStack, so every written nesting is readable.
 void __cdecl WriteStack(const VariableStackBuffer *stackBuf, MemoryFile *memFile)
 {
-    int v4; // r30
-    __int16 v5; // r11
-    const char *buf; // r31
-    unsigned int v7; // r3
-    __int16 v8; // r30
-    VariableUnion v9; // r4
-    _WORD v10[24]; // [sp+50h] [-30h] BYREF
-
-    iassert(stackBuf);
-    v10[0] = stackBuf->size;
-    v4 = v10[0];
-    MemFile_WriteData(memFile, 2, v10);
-    WriteCodepos(stackBuf->pos, memFile);
-    WriteId(stackBuf->localId, 0, memFile);
-
-    v10[0] = (v10[0] & 0xFF00) | (uint8_t)stackBuf->saveStamp;
-    MemFile_WriteData(memFile, 1, v10);
-    v5 = v4;
-    buf = stackBuf->buf;
-    if (v4)
+    struct Frame { const VariableStackBuffer *stack; unsigned int next; };
+    Frame frames[16]{};
+    unsigned int depth = 0;
+    frames[0].stack = stackBuf;
+    WriteStackHeader(stackBuf, memFile);
+    for (;;)
     {
-        do
+        Frame &frame = frames[depth];
+        if (frame.next == frame.stack->size)
         {
-            // M4 (ki-n1et): the runtime record is one widened value-cell slot
-            // plus the type byte; the SERIALIZED bytes it converts to stay the
-            // packed retail records.
-            v7 = (unsigned __int8)*buf;
-            v8 = v5 - 1;
-            v9 = VariableStackBuf_ReadCell(buf + 1);
-            buf += VARIABLE_STACK_RECORD_SIZE;
-            DoSaveEntryInternal(v7, v9, memFile);
-            v5 = v8;
-        } while (v8);
+            if (depth == 0)
+                return;
+            --depth;
+            continue;
+        }
+        const char *record = frame.stack->buf + frame.next++ * VARIABLE_STACK_RECORD_SIZE;
+        const unsigned int type = static_cast<unsigned char>(*record);
+        const VariableUnion value = VariableStackBuf_ReadCell(record + 1);
+        if (type != VAR_STACK)
+        {
+            DoSaveEntryWithoutStack(type, value, memFile);
+            continue;
+        }
+        if (depth + 1 == sizeof(frames) / sizeof(frames[0]))
+            Com_Error(ERR_DROP, "script stack nesting limit while saving");
+        const unsigned char stackType = VAR_STACK << 3;
+        MemFile_WriteData(memFile, 1, &stackType);
+        ++depth;
+        frames[depth] = Frame{value.stackValue, 0};
+        WriteStackHeader(value.stackValue, memFile);
     }
 }
+//SCRIPT_WRITESTACK_SLICE_END
 
 //SCRIPT_READSTACK_SLICE_BEGIN
 namespace
@@ -1343,7 +1359,7 @@ bool __cdecl DoSaveEntryValuePayload(unsigned int type, VariableUnion u, MemoryF
 
         return true;
     case 4u:
-        WriteVector((float *)u.vectorValue, memFile);
+        WriteVector(const_cast<float *>(u.vectorValue), memFile);
         return true;
     case 5u:
         WriteFloat(u.floatValue, memFile);
@@ -1369,24 +1385,14 @@ bool __cdecl DoSaveEntryValuePayload(unsigned int type, VariableUnion u, MemoryF
 // Returns true when this type was handled.
 bool __cdecl DoSaveEntryRuntimePayload(unsigned int type, VariableUnion u, MemoryFile *memFile)
 {
-    unsigned int v24; // r3
-    unsigned int v25; // r3
-
     switch (type)
     {
-    case 0u:
-    case 8u:
+    case VAR_UNDEFINED:
+    case VAR_PRECODEPOS:
         return true;
-    case 7u:
-    case 9u:
+    case VAR_CODEPOS:
+    case VAR_FUNCTION:
         WriteCodepos(u.codePosValue, memFile);
-        return true;
-    case 0xAu:
-        v24 = MemFile_GetUsedSize(memFile);
-        //ProfMem_Begin("stack", v24);
-        WriteStack(u.stackValue, memFile);
-        v25 = MemFile_GetUsedSize(memFile);
-        //ProfMem_End(v25);
         return true;
     default:
         return false;
@@ -1404,6 +1410,14 @@ void __cdecl DoSaveEntryPayload(unsigned int type, VariableUnion u, MemoryFile *
     if (!alwaysfails)
         MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\script\\scr_readwrite.cpp", 1172, 0, "unknown type");
 }
+// Leaf serializer: never calls WriteStack, keeping the writer call graph acyclic.
+void DoSaveEntryWithoutStack(unsigned int type, VariableUnion u, MemoryFile *memFile)
+{
+    if (type == VAR_POINTER)
+        DoSaveEntryPointer(u, memFile);
+    else
+        DoSaveEntryPayload(type, u, memFile);
+}
 } // namespace
 
 void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion u, MemoryFile *memFile)
@@ -1415,12 +1429,13 @@ void __cdecl DoSaveEntryInternal(unsigned int type, VariableUnion u, MemoryFile 
             0,
             "%s",
             "type == (unsigned char)type");
-    if (type == 1)
+    if (type == VAR_STACK)
     {
-        DoSaveEntryPointer(u, memFile);
+        DoSaveEntryTypeByte(type, memFile);
+        WriteStack(u.stackValue, memFile);
         return;
     }
-    DoSaveEntryPayload(type, u, memFile);
+    DoSaveEntryWithoutStack(type, u, memFile);
 }
 
 void __cdecl Scr_SaveSource(MemoryFile *memFile)

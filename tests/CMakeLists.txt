@@ -3309,6 +3309,18 @@ file(WRITE
     "${CMAKE_CURRENT_BINARY_DIR}/generated/script_readstack_slice.inc"
     "${_rw_slice_text}\n")
 
+# Keep the reader and writer fixtures tied to their actual production bodies.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_rw_slice_source}")
+file(READ "${_rw_slice_source}" _writer_source)
+string(FIND "${_writer_source}" "//SCRIPT_WRITESTACK_SLICE_BEGIN" _writer_begin)
+string(FIND "${_writer_source}" "//SCRIPT_WRITESTACK_SLICE_END" _writer_end)
+if(_writer_begin EQUAL -1 OR _writer_end LESS_EQUAL _writer_begin)
+    message(FATAL_ERROR "WriteStack behavioral-test slice is missing")
+endif()
+math(EXPR _writer_length "${_writer_end} - ${_writer_begin}")
+string(SUBSTRING "${_writer_source}" ${_writer_begin} ${_writer_length} _writer_body)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/script_writestack_slice.inc" "${_writer_body}")
+
 add_executable(kisakcod-script-readstack-nested-tests
     script_readstack_nested_test.cpp)
 target_include_directories(kisakcod-script-readstack-nested-tests PRIVATE
