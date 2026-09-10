@@ -1213,6 +1213,11 @@ require_source_ordered(
     "Netchan_ReassembledSpanFits(msg->maxsize, chan->fragmentLength)"
     "*(uint32_t *)msg->data = sequence;"
     "reassembly bounds check must precede both the prefix and payload writes")
+require_source_ordered(
+    "qcommon/net_chan_mp.cpp"
+    "Netchan_ReassembledSpanFits(msg->maxsize, chan->fragmentLength)"
+    "memcpy(msg->data + 4, chan->fragmentBuffer, chan->fragmentLength);"
+    "reassembly bounds check must precede the payload write")
 require_source_not_contains(
     "qcommon/net_chan_mp.cpp"
     "chan->fragmentLength > msg->maxsize"
