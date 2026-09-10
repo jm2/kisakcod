@@ -52,7 +52,9 @@ struct InitializedRange { uint32_t first; uint32_t second; };
 std::vector<InitializedRange> initializedRanges;
 char bytecode[4096]{};
 size_t codeSize = 0;
+CaseStatementInfo fixtureCaseStorage[3]{};
 CaseStatementInfo *fixtureCases = nullptr;
+char fixtureDiagnostic[] = "fixture diagnostic";
 int callbackCount = 0;
 int methodEntity = 0;
 const char *formattedCodePos = nullptr;
@@ -142,7 +144,7 @@ void Scr_CastBool(VariableValue *value) { Check(value->type == VAR_INTEGER); }
 void Scr_ClearErrorMessage() { scrVarPub.error_message = nullptr; }
 bool IsValidArrayIndex(uint32_t value) { return value < MAX_ARRAYINDEX; }
 uint32_t GetInternalVariableIndex(uint32_t value) { return value; }
-char *va(const char *, ...) { static char message[] = "fixture diagnostic"; return message; }
+char *va(const char *, ...) { return fixtureDiagnostic; }
 void EmitByte(unsigned char value) { *TempMalloc(1) = static_cast<char>(value); }
 
 #include "script_runtime_slice.inc"
@@ -224,9 +226,12 @@ void TestBuiltinsAndSwitch()
     Check(std::strcmp(scrVmDebugPub.func_table[0].name, "callback") == 0);
     // The real compiler emits and sorts unaligned records, then the real VM
     // readers must retain each name's matching native branch pointer.
-    static char *branches = static_cast<char *>(Allocate(3));
+    char *branches = static_cast<char *>(Allocate(3));
     HighAddress(branches);
-    static CaseStatementInfo cases[3] = {{3, branches, 1, nullptr}, {9, branches + 1, 2, nullptr}, {0, branches + 2, 3, nullptr}};
+    CaseStatementInfo *cases = fixtureCaseStorage;
+    cases[0] = {3, branches, 1, nullptr};
+    cases[1] = {9, branches + 1, 2, nullptr};
+    cases[2] = {0, branches + 2, 3, nullptr};
     cases[0].next = &cases[1]; cases[1].next = &cases[2];
     fixtureCases = cases;
     EmitSwitchStatement({}, {}, {}, false, 0, nullptr);
