@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iterator>
+#include <memory>
 
 #include <universal/kisak_abi.h>
 #include <universal/phys_obj_id.h>
@@ -535,51 +536,83 @@ bool TestDynEntOwnerIndexStrideContract()
 // publish the next live token instead. Owners below 0xFFFF can never
 // reach the sentinel (the owner bits differ), which is why no smaller
 // sidecar needs the skip.
-bool TestBindNeverPublishesReservedDeadToken()
-{
-    // Function-local static: 65536 slots do not fit the default stack on
-    // every host runner. Fresh zero-initialization matches the
-    // constructor's all-vacant semantics, and the test process is
-    // single-threaded.
-    static phys_obj_id::BodySidecar<65536> sidecar;
-    int body = 0;
-    const phys_obj_id::OwnerIndex owner = 0xFFFFu;  // only legal at full 16-bit capacity
 
-    // Drive the slot's generation to 0xFFFE: each cycle advances the
-    // generation twice (Bind publishes the next generation, Release bumps
-    // it again), so 32767 cycles = 65534 advances, and the generation
-    // cycle skips 0 (length 65535: 0 -> 1 -> ... -> 0xFFFF -> 1). The
-    // next Bind would then pack generation 0xFFFF with owner 0xFFFF —
-    // the reserved sentinel.
-    for (unsigned cycle = 0; cycle < 32767u; ++cycle)
+// Full 16-bit-capacity sidecar type used by the reserved-token
+// regression. Only this capacity can legally reach owner 0xFFFF, the
+// only owner index that can pack the reserved sentinel.
+using FullCapacitySidecar = phys_obj_id::BodySidecar<65536>;
+
+// Owned heap instance of the full-capacity sidecar: 65536 slots do not
+// fit the default stack on every host runner. make_unique value-initializes
+// the slot array, matching the all-vacant constructor semantics, and the
+// storage is freed when the test case's unique_ptr goes out of scope.
+[[nodiscard]] std::unique_ptr<FullCapacitySidecar> MakeFullCapacitySidecar()
+{
+    return std::make_unique<FullCapacitySidecar>();
+}
+
+// Rollover setup leg: drive the owner's slot generation to 0xFFFE. Each
+// cycle advances the generation twice (Bind publishes the next
+// generation, Release bumps it again), so 32767 cycles = 65534 advances,
+// and the generation cycle skips 0 (length 65535: 0 -> 1 -> ... ->
+// 0xFFFF -> 1). The next Bind would then pack generation 0xFFFF with
+// owner 0xFFFF — the reserved sentinel. Every cycle's release must hand
+// back exactly the bound body.
+bool DriveGenerationToReservedEdge(FullCapacitySidecar &sidecar,
+                                   const phys_obj_id::OwnerIndex owner,
+                                   int *const body)
+{
+    constexpr unsigned kReservedEdgeCycles = 32767u;
+    for (unsigned cycle = 0; cycle < kReservedEdgeCycles; ++cycle)
     {
-        const phys_obj_id::TokenResult bind = sidecar.Bind(owner, &body);
+        const phys_obj_id::TokenResult bind = sidecar.Bind(owner, body);
         if (!bind)
             return false;
         const phys_obj_id::BodyResult released = sidecar.Release(bind.token);
-        if (!released || released.body != &body)
+        if (!released)
+            return false;
+        if (released.body != body)
             return false;
     }
+    return true;
+}
 
-    const phys_obj_id::TokenResult reserved = sidecar.Bind(owner, &body);
+// Published-token checks leg: Bind must have skipped the reserved
+// sentinel and landed on the next live generation (0xFFFF wraps to 1,
+// never 0), and the published binding must resolve to its body.
+bool ReservedEdgeBindSkipsSentinelAndResolves(FullCapacitySidecar &sidecar,
+                                              const phys_obj_id::OwnerIndex owner,
+                                              int *const body)
+{
+    const phys_obj_id::TokenResult reserved = sidecar.Bind(owner, body);
     if (!reserved)
         return false;
-    // The reserved token must never be published: Bind lands on the
-    // next live generation (0xFFFF wraps to 1, never 0).
+    // The reserved token must never be published.
     if (reserved.token == phys_obj_id::DEAD_BODY_TOKEN)
         return false;
     if (reserved.token != phys_obj_id::PackToken(1, owner))
         return false;
     if (!phys_obj_id::IsLive(reserved.token))
         return false;
-    // The published binding is fully live: it resolves to its body...
+    // The published binding is fully live: it resolves to its body.
     const phys_obj_id::BodyResult resolved = sidecar.Resolve(reserved.token);
-    if (!resolved || resolved.body != &body)
+    if (!resolved)
         return false;
-    // ...and the sentinel contract itself is untouched.
-    if (sidecar.Resolve(phys_obj_id::DEAD_BODY_TOKEN))
+    return resolved.body == body;
+}
+
+bool TestBindNeverPublishesReservedDeadToken()
+{
+    const std::unique_ptr<FullCapacitySidecar> sidecar = MakeFullCapacitySidecar();
+    int body = 0;
+    const phys_obj_id::OwnerIndex owner = 0xFFFFu;  // only legal at full 16-bit capacity
+
+    if (!DriveGenerationToReservedEdge(*sidecar, owner, &body))
         return false;
-    return true;
+    if (!ReservedEdgeBindSkipsSentinelAndResolves(*sidecar, owner, &body))
+        return false;
+    // The sentinel contract itself is untouched.
+    return !sidecar->Resolve(phys_obj_id::DEAD_BODY_TOKEN);
 }
 
 // Saved-bytes regression: the runtime DynEntityClient/BreakablePiece
