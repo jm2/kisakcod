@@ -155,6 +155,13 @@ if ($linkerPath -or $linkerId -or $linkerVersion) {
 
 # --- SDKs -------------------------------------------------------------------
 $sdks = @()
+# Fail closed on a half-specified SDK: a label without a version (or the
+# reverse) would otherwise be silently dropped here, hiding a real dependency
+# from the published manifest.
+if ([string]::IsNullOrEmpty($SdkLabel) -ne [string]::IsNullOrEmpty($SdkVersion)) {
+    Write-Error "collect-toolchain: -SdkLabel and -SdkVersion must be passed together (label='$SdkLabel' version='$SdkVersion')"
+    exit 1
+}
 if ($SdkLabel -and $SdkVersion) {
     $sdks += [ordered]@{ name = $SdkLabel; version = $SdkVersion }
 }

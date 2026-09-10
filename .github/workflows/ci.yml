@@ -490,13 +490,16 @@ jobs:
       # Toolchain provenance for the engine artifact: build-release was
       # configured by the shared script above (VS generator), so the
       # collector records the real resolved toolchain BEFORE the manifest
-      # below embeds it.
+      # below embeds it. The shared script restores the DirectX SDK and
+      # publishes its resolved version to GITHUB_ENV; pass it through so the
+      # engine manifest records that dependency like the SP/no-Steam legs.
       - name: Collect toolchain provenance
         if: matrix.target == 'windows-x86'
         shell: pwsh
         run: >
           ./scripts/ci/collect-toolchain.ps1 -BuildDir build-release
           -OutFile build-toolchain.json
+          -SdkLabel 'DirectX SDK (D3DX)' -SdkVersion $env:DXSDK_VERSION
 
       # Deep Windows x86 testing lives in the windows-x86 job (same shared
       # script, Debug + Release, full transaction-test allowlist); the

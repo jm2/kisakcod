@@ -30,6 +30,14 @@ dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $DXSDK_VERSION
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $dxsdkNative = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$DXSDK_VERSION\build\native"
 
+# Publish the SDK version actually restored so downstream provenance steps
+# embed the resolved value (review P2) instead of restating this constant.
+# Reached only after the restore exited clean above; a bare local shell has
+# no GITHUB_ENV and skips this.
+if ($env:GITHUB_ENV) {
+    Add-Content -Path $env:GITHUB_ENV -Value "DXSDK_VERSION=$DXSDK_VERSION"
+}
+
 cmake -S . -B $BuildDir `
   -G "Visual Studio 17 2022" -A Win32 `
   -DCICD=ON "-DDXSDK_DIR=$dxsdkNative" `

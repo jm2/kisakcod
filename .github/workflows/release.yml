@@ -224,6 +224,20 @@ jobs:
           ./scripts/ci/verify-artifact-arch.ps1 -Expected x86
           bin/Release/KisakCOD-mp.exe bin/Release/KisakCOD-dedi.exe
 
+      # Toolchain provenance for the engine artifact: build-release was
+      # configured by the shared script above (VS generator), so the
+      # collector records the real resolved toolchain BEFORE the manifest
+      # below embeds it. The shared script restores the DirectX SDK and
+      # publishes its resolved version to GITHUB_ENV; pass it through so the
+      # engine manifest records that dependency like the SP/no-Steam legs.
+      - name: Collect toolchain provenance
+        if: matrix.target == 'windows-x86'
+        shell: pwsh
+        run: >
+          ./scripts/ci/collect-toolchain.ps1 -BuildDir build-release
+          -OutFile build-toolchain.json
+          -SdkLabel 'DirectX SDK (D3DX)' -SdkVersion $env:DXSDK_VERSION
+
       # Portable test-composition legs use static `shell: bash` —
       # expressions are not permitted in `shell:` (actionlint / GitHub
       # context-availability), the commands are shell-agnostic, and Git Bash
@@ -269,8 +283,10 @@ jobs:
       # Toolchain provenance (review P2): read the resolved compiler/linker/
       # CMake/SDK versions out of this leg's build tree and embed them in
       # the provenance manifest below, so every published portable artifact
-      # states the toolchain that actually built it.
+      # states the toolchain that actually built it. Portable legs restore
+      # no SDK by hand; the engine leg collected earlier (above).
       - name: Collect toolchain provenance
+        if: matrix.target != 'windows-x86'
         shell: pwsh
         run: >
           ./scripts/ci/collect-toolchain.ps1 -BuildDir build-release
