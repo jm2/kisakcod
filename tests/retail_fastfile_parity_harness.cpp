@@ -311,25 +311,14 @@ void EmitCapture(
 int RunCapture(const char *path, const std::string_view leg)
 {
     // Identity first: a capture that cannot be attributed is not emitted.
-    //
-    // Codacy disposition (ki-msb, "Condition '!DerivePlatformIdentity(platform)'
-    // is always false"): false positive, carried with evidence per operator
-    // directive. The condition is genuinely reachable: DerivePlatformIdentity
-    // returns false when RuntimePlatformIdentity() observes a running kernel
-    // that disagrees with the compile-time build identity (e.g. an amd64
-    // build executing under arm64 CPU emulation) — a real multi-arch scenario
-    // for the hosted parity legs, and the fail-closed refusal is intentional:
-    // a capture that cannot be honestly attributed must never be emitted.
-    // Folding it to "always false" requires proving
-    // RuntimePlatformIdentity(runtime) && runtime != out unsatisfiable, which
-    // no sound analysis can; the fold follows from the analyzer's library
-    // stub for uname(3), the same C-grade imprecision documented in
-    // .codacy.yaml. A behavior-preserving restructure cannot clear it (the
-    // fold follows the call, not the syntax), and a genuine Windows runtime
-    // check would refuse the documented x86-on-x64 windows-x86 mint path the
-    // hosted Windows legs rely on. Refusal semantics at the protocol boundary
-    // are exercised by the driver-gates negative sections.
+    // The caller mirrors the helper's preprocessor paths: the mismatch
+    // refusal is compiled only where identity derivation can fail (non-
+    // Windows, where the running kernel is observed via uname(3)); on
+    // Windows the derived identity is the compile-time build identity
+    // alone, so there is no failure path and no rejection branch to
+    // compile.
     std::string platform;
+#if !defined(_WIN32)
     if (!DerivePlatformIdentity(platform))
     {
         std::fprintf(stderr,
@@ -338,6 +327,13 @@ int RunCapture(const char *path, const std::string_view leg)
             BuildPlatformIdentity().c_str());
         return 2;
     }
+#else
+    // Infallible by construction on Windows. No runtime probe here is the
+    // documented x86-on-x64 capture-attribution contract: a windows-x86
+    // build executing under x64 Windows still attributes its capture as
+    // windows-x86.
+    DerivePlatformIdentity(platform);
+#endif
     // --leg is an assertion about this executable's identity. It is checked
     // against the derived build/runtime identity, never stamped verbatim:
     // a Linux build cannot mint a leg=windows-x86 capture.
