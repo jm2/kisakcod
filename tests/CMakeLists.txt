@@ -3489,3 +3489,22 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_scalar_determinism_source_test.cmake
 )
+
+# MSVC formatted-print boundary: _snprintf/_vsnprintf truncation must
+# report -1 (the contract the decompiled callers were compiled against),
+# never the POSIX required-length return. On MSVC hosts the real CRT
+# functions are asserted; on POSIX hosts the shim in
+# universal/msvc_printf_shim.h is asserted.
+add_executable(kisakcod-msvc-printf-shim-tests
+    msvc_printf_shim_tests.cpp
+)
+target_include_directories(kisakcod-msvc-printf-shim-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-msvc-printf-shim-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-msvc-printf-shim-tests)
+set_target_properties(kisakcod-msvc-printf-shim-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME msvc-printf-shim-contracts
+    COMMAND kisakcod-msvc-printf-shim-tests
+)

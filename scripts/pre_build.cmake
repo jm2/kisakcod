@@ -111,5 +111,21 @@ if (WIN32)
         )
     endif()
 else()
-    message(FATAL_ERROR "Portable target dependencies are not implemented for ${KISAK_PLATFORM}")
+    # POSIX (linux/macos) target dependencies. The engine links the system
+    # POSIX layers directly; there is no DirectX/Miles/Bink/Steam dependency
+    # because the headless source profile excludes client/media sources.
+    find_package(Threads REQUIRED)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC
+        UNIX
+        $<$<PLATFORM_ID:Darwin>:__APPLE__>
+    )
+    target_link_libraries(${PROJECT_NAME} PUBLIC
+        Threads::Threads
+        ${CMAKE_DL_LIBS}
+    )
+    if (KISAK_TARGET_ENABLE_STEAM)
+        message(FATAL_ERROR
+            "POSIX engine targets build with the cl_guid identity backend; "
+            "the desktop Steam client API is not linked.")
+    endif()
 endif()
