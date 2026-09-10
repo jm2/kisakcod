@@ -9,7 +9,9 @@
 #     (contents: read is the only workflow permission)
 #   - scaffolding-builds runs a per-target leg for every supported
 #     OS/architecture pair and uploads a target-labeled artifact with an
-#     explicit provenance manifest; scaffolding-complete is the required gate
+#     explicit provenance manifest recording the leg's ACTUAL resolved
+#     toolchain (scripts/ci/collect-toolchain.ps1); scaffolding-complete
+#     is the required gate
 #
 # Retention policy: CI artifacts live 14 days (debugging window); the release
 # workflow is the long-term store and pins 90 days there.
@@ -485,6 +487,17 @@ jobs:
           ./scripts/ci/verify-artifact-arch.ps1 -Expected x86
           bin/Release/KisakCOD-mp.exe bin/Release/KisakCOD-dedi.exe
 
+      # Toolchain provenance for the engine artifact: build-release was
+      # configured by the shared script above (VS generator), so the
+      # collector records the real resolved toolchain BEFORE the manifest
+      # below embeds it.
+      - name: Collect toolchain provenance
+        if: matrix.target == 'windows-x86'
+        shell: pwsh
+        run: >
+          ./scripts/ci/collect-toolchain.ps1 -BuildDir build-release
+          -OutFile build-toolchain.json
+
       # Deep Windows x86 testing lives in the windows-x86 job (same shared
       # script, Debug + Release, full transaction-test allowlist); the
       # aggregator requires it, so this leg stays the release-parity
@@ -495,14 +508,18 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path bin/Release/* -DestinationPath dist/KisakCOD-windows-x86.zip
+          # Actual resolved toolchain of THIS build; fails the step if the
+          # collector did not run.
+          $toolchain = Get-Content -LiteralPath build-toolchain.json -Raw | ConvertFrom-Json
           [ordered]@{
             target        = "${{ matrix.target }}"
             commit        = $env:GITHUB_SHA
             ref           = $env:GITHUB_REF
             config        = "production-mp-dedi"
+            toolchain     = $toolchain
             workflow_run  = $env:GITHUB_RUN_ID
             generated_at  = (Get-Date).ToUniversalTime().ToString("o")
-          } | ConvertTo-Json | Set-Content -Encoding utf8 dist/KisakCOD-windows-x86-provenance.json
+          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 dist/KisakCOD-windows-x86-provenance.json
 
       # ---- portable test composition (all other targets) ----
       # Static `shell: bash` on every portable leg: expressions are not
@@ -547,6 +564,19 @@ jobs:
         shell: bash
         run: ctest --test-dir build-release -C Release --output-on-failure
 
+      # Toolchain provenance: read the resolved compiler/linker/CMake/SDK
+      # versions out of this leg's build tree and embed them in the
+      # provenance manifest below (same as release.yml legs — CI validates
+      # what release ships, so their manifests carry the same truth). Runs
+      # on every portable leg after its build; the windows-x86 engine leg
+      # collects earlier, before its own manifest step above.
+      - name: Collect toolchain provenance
+        if: matrix.target != 'windows-x86'
+        shell: pwsh
+        run: >
+          ./scripts/ci/collect-toolchain.ps1 -BuildDir build-release
+          -OutFile build-toolchain.json
+
       - name: Package portable composition
         if: matrix.os == 'linux' || matrix.os == 'macos'
         shell: bash
@@ -566,7 +596,8 @@ jobs:
             --arg config "portable-test-composition" \
             --arg run "${GITHUB_RUN_ID}" \
             --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{target: $target, commit: $commit, ref: $ref, config: $config, workflow_run: $run, generated_at: $generated_at}' \
+            --slurpfile toolchain build-toolchain.json \
+            '{target: $target, commit: $commit, ref: $ref, config: $config, toolchain: $toolchain[0], workflow_run: $run, generated_at: $generated_at}' \
             > "dist/KisakCOD-${{ matrix.target }}-portable-Release-provenance.json"
 
       - name: Package portable composition
@@ -575,14 +606,16 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path build-release/tests/Release/*.exe -DestinationPath "dist/KisakCOD-${{ matrix.target }}-portable-Release.zip"
+          $toolchain = Get-Content -LiteralPath build-toolchain.json -Raw | ConvertFrom-Json
           [ordered]@{
             target        = "${{ matrix.target }}"
             commit        = $env:GITHUB_SHA
             ref           = $env:GITHUB_REF
             config        = "portable-test-composition"
+            toolchain     = $toolchain
             workflow_run  = $env:GITHUB_RUN_ID
             generated_at  = (Get-Date).ToUniversalTime().ToString("o")
-          } | ConvertTo-Json | Set-Content -Encoding utf8 "dist/KisakCOD-${{ matrix.target }}-portable-Release-provenance.json"
+          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 "dist/KisakCOD-${{ matrix.target }}-portable-Release-provenance.json"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
