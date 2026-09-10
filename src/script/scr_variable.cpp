@@ -87,6 +87,7 @@ bool IsObject(VariableValue* value)
 	return value->type >= VAR_THREAD;
 }
 
+//SCRIPT_RUNTIME_INIT_VARIABLES_BEGIN
 void Scr_InitVariables()
 {
 	if (!scrVarDebugPub)
@@ -104,11 +105,12 @@ void Scr_InitVariables()
 	scrVarPub.numScriptObjects = 0;
 
 	if (scrVarDebugPub)
-		memset(scrVarDebugPub, 0, 0x60000u);
+		std::fill_n(scrVarDebugPub->varUsage, 0x18000, nullptr);
 
 	Scr_InitVariableRange(VARIABLELIST_PARENT_BEGIN, VARIABLELIST_PARENT_SIZE + 1);
 	Scr_InitVariableRange(VARIABLELIST_CHILD_BEGIN, 0x18000u);
 }
+//SCRIPT_RUNTIME_INIT_VARIABLES_END
 
 void Scr_InitVariableRange(uint32_t begin, uint32_t end)
 {
@@ -1145,6 +1147,7 @@ int  Scr_GetClassnumForCharId(char charId)
 	return -1;
 }
 
+//SCRIPT_RUNTIME_FIND_THREADS_BEGIN
 uint32_t  Scr_FindAllThreads(uint32_t selfId, uint32_t* threads, uint32_t localId)
 {
 	VariableValueInternal_u Object{ 0 }; // eax
@@ -1168,7 +1171,7 @@ uint32_t  Scr_FindAllThreads(uint32_t selfId, uint32_t* threads, uint32_t localI
 		entryValue = &scrVarGlob.variableList[id + VARIABLELIST_CHILD_BEGIN];
 		if ((entryValue->w.status & 0x60) != 0 && (entryValue->w.status & 0x1F) == 0xA)
 		{
-			for (threadId = *(uint32_t*)(entryValue->u.u.intValue + 8);
+			for (threadId = entryValue->u.u.stackValue->localId;
 				threadId;
 				threadId = GetSafeParentLocalId(threadId))
 			{
@@ -1196,7 +1199,7 @@ uint32_t  Scr_FindAllThreads(uint32_t selfId, uint32_t* threads, uint32_t localI
 			{
 				if (GetValueType(stackId) == 10)
 				{
-					for (threadId = *(uint32_t*)(GetVariableValueAddress(stackId)->u.intValue + 8);
+					for (threadId = GetVariableValueAddress(stackId)->u.stackValue->localId;
 						threadId;
 						threadId = GetSafeParentLocalId(threadId))
 					{
@@ -1214,6 +1217,7 @@ uint32_t  Scr_FindAllThreads(uint32_t selfId, uint32_t* threads, uint32_t localI
 	}
 	return count;
 }
+//SCRIPT_RUNTIME_FIND_THREADS_END
 
 uint32_t  Scr_FindAllEndons(uint32_t threadId, uint32_t* names)
 {
@@ -2729,6 +2733,7 @@ void  Scr_EvalBoolNot(VariableValue* value)
 		value->u.intValue = value->u.intValue == 0;
 }
 
+//SCRIPT_RUNTIME_EQUALITY_BEGIN
 void  Scr_EvalEquality(VariableValue* value1, VariableValue* value2)
 {
 	int32_t v2; // [esp+0h] [ebp-18h]
@@ -2768,9 +2773,9 @@ void  Scr_EvalEquality(VariableValue* value1, VariableValue* value2)
 		break;
 	case VAR_VECTOR:
 		value1->type = VAR_INTEGER;
-		v2 = *(float*)value2->u.intValue == *(float*)value1->u.intValue
-			&& *(float*)(value2->u.intValue + 4) == *(float*)(value1->u.intValue + 4)
-			&& *(float*)(value2->u.intValue + 8) == *(float*)(value1->u.intValue + 8);
+		v2 = value2->u.vectorValue[0] == value1->u.vectorValue[0]
+			&& value2->u.vectorValue[1] == value1->u.vectorValue[1]
+			&& value2->u.vectorValue[2] == value1->u.vectorValue[2];
 		RemoveRefToVector(value1->u.vectorValue);
 		RemoveRefToVector(value2->u.vectorValue);
 		value1->u.intValue = v2;
@@ -2786,7 +2791,7 @@ void  Scr_EvalEquality(VariableValue* value1, VariableValue* value2)
 		break;
 	case VAR_FUNCTION:
 		value1->type = VAR_INTEGER;
-		value1->u.intValue = value1->u.intValue == value2->u.intValue;
+		value1->u.intValue = value1->u.codePosValue == value2->u.codePosValue;
 		break;
 	case VAR_ANIMATION:
 		value1->type = VAR_INTEGER;
@@ -2798,6 +2803,7 @@ void  Scr_EvalEquality(VariableValue* value1, VariableValue* value2)
 		break;
 	}
 }
+//SCRIPT_RUNTIME_EQUALITY_END
 
 void  Scr_EvalInequality(VariableValue* value1, VariableValue* value2)
 {
@@ -4427,6 +4433,7 @@ void  Scr_CastWeakerPair(VariableValue* value1, VariableValue* value2)
 	}
 }
 
+//SCRIPT_RUNTIME_STRING_PAIR_BEGIN
 void  Scr_CastWeakerStringPair(VariableValue* value1, VariableValue* value2)
 {
 	Vartype_t type1; // [esp+14h] [ebp-Ch]
@@ -4447,7 +4454,7 @@ void  Scr_CastWeakerStringPair(VariableValue* value1, VariableValue* value2)
 				{
 				case VAR_VECTOR:
 					value2->type = VAR_STRING;
-					constTempVector = (const float*)value2->u.intValue;
+					constTempVector = value2->u.vectorValue;
 					value2->u.stringValue = SL_GetStringForVector(value2->u.vectorValue);
 					RemoveRefToVector(constTempVector);
 					return;
@@ -4481,7 +4488,7 @@ void  Scr_CastWeakerStringPair(VariableValue* value1, VariableValue* value2)
 			{
 			case VAR_VECTOR:
 				value1->type = VAR_STRING;
-				constTempVectora = (const float*)value1->u.intValue;
+				constTempVectora = value1->u.vectorValue;
 				value1->u.stringValue = SL_GetStringForVector(value1->u.vectorValue);
 				RemoveRefToVector(constTempVectora);
 				return;
@@ -4508,6 +4515,7 @@ void  Scr_CastWeakerStringPair(VariableValue* value1, VariableValue* value2)
 		goto LABEL_28;
 	}
 }
+//SCRIPT_RUNTIME_STRING_PAIR_END
 float  Scr_GetEndonUsage(uint32_t parentId)
 {
 	VariableValueInternal_u Object; // eax

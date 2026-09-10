@@ -242,6 +242,7 @@ void __cdecl Scr_GetFieldValue(uint32_t objectId, const char *fieldName, int len
     }
 }
 
+//SCRIPT_RUNTIME_VALUE_STRING_BEGIN
 void __cdecl Scr_GetValueString(uint32_t localId, VariableValue *value, int len, char *s)
 {
     const XAnim_s *Anims; // eax
@@ -312,12 +313,8 @@ void __cdecl Scr_GetValueString(uint32_t localId, VariableValue *value, int len,
         Com_sprintf(s, len, "&\"%s\"", SL_ConvertToString(value->u.intValue));
         break;
     case 4:
-        sprintf(
-            s,
-            "(%g, %g, %g)",
-            *(float *)value->u.intValue,
-            *(float *)(value->u.intValue + 4),
-            *(float *)(value->u.intValue + 8));
+        Com_sprintf(s, len, "(%g, %g, %g)",
+            value->u.vectorValue[0], value->u.vectorValue[1], value->u.vectorValue[2]);
         break;
     case 5:
         Com_sprintf(s, len, "%g", value->u.floatValue);
@@ -326,7 +323,7 @@ void __cdecl Scr_GetValueString(uint32_t localId, VariableValue *value, int len,
         Com_sprintf(s, len, "%i", value->u.intValue);
         break;
     case 9:
-        Scr_GetCodePos((const char *)(value->u.intValue - 1), 1u, s, len);
+        Scr_GetCodePos(value->u.codePosValue - 1, 1u, s, len);
         break;
     case 0xB:
         intValue = (uint16_t)value->u.intValue;
@@ -339,6 +336,7 @@ void __cdecl Scr_GetValueString(uint32_t localId, VariableValue *value, int len,
         break;
     }
 }
+//SCRIPT_RUNTIME_VALUE_STRING_END
 
 void __cdecl Scr_EvalArrayVariable(uint32_t arrayId, VariableValue *value)
 {
@@ -1168,18 +1166,18 @@ void __cdecl Scr_EvalVariableExpression(sval_u expr, uint32_t localId, VariableV
         }
         break;
     case 0x51:
-        if (*(uint32_t *)(expr.type + 4) && Scr_IsThreadAlive(*(uint32_t *)(expr.type + 4)))
+        if (expr.node[1].idValue && Scr_IsThreadAlive(expr.node[1].idValue))
         {
-            value->u.intValue = *(uint32_t *)(expr.type + 4);
+            value->u.intValue = expr.node[1].idValue;
             value->type = VAR_POINTER;
             AddRefToObject(value->u.intValue);
         }
         else
         {
-            if (*(uint32_t *)(expr.type + 4))
+            if (expr.node[1].idValue)
             {
-                RemoveRefToObject(*(uint32_t *)(expr.type + 4));
-                *(uint32_t *)(expr.type + 4) = 0;
+                RemoveRefToObject(expr.node[1].idValue);
+                expr.node[1].idValue = 0;
             }
             value->type = VAR_UNDEFINED;
             Scr_Error("thread not active");
@@ -1190,7 +1188,7 @@ void __cdecl Scr_EvalVariableExpression(sval_u expr, uint32_t localId, VariableV
         Scr_Error("bad expression");
         break;
     case 0x57:
-        Scr_GetValue(*(uint32_t *)(expr.type + 4), value);
+        Scr_GetValue(expr.node[1].idValue, value);
         break;
     default:
         return;

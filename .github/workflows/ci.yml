@@ -56,7 +56,8 @@ jobs:
           cmake -S . -B build-script-sanitizers
           -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF
           -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
-          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -DKISAK_REQUIRE_HIGH_POINTERS=1"
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fPIE -DKISAK_REQUIRE_HIGH_POINTERS=1"
+          -DCMAKE_EXE_LINKER_FLAGS="-pie" -DCMAKE_POSITION_INDEPENDENT_CODE=ON
       - name: Build script production contracts
         run: >
           cmake --build build-script-sanitizers --parallel 4 --target

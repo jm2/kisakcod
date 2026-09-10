@@ -4,6 +4,7 @@
 #include "../qcommon/qcommon.h"
 
 #include "scr_compiler.h"
+#include "scr_bytecode.hpp"
 #include "scr_main.h"
 #include "scr_debugger.h"
 #include "scr_parser.h"
@@ -58,6 +59,7 @@ enum scr_builtin_type_t
 	BUILTIN_DEVELOPER_ONLY = 0x1,
 };
 
+//SCRIPT_RUNTIME_CALL_TYPES_BEGIN
 enum : __int32
 {
 	CALL_NONE = 0x0,
@@ -65,6 +67,7 @@ enum : __int32
 	CALL_THREAD = 0x2,
 	CALL_FUNCTION = 0x3,
 };
+//SCRIPT_RUNTIME_CALL_TYPES_END
 
 void EmitPreAssignmentPos()
 {
@@ -85,15 +88,12 @@ void EmitAssignmentPos()
 CompareCaseInfo
 ============
 */
-int CompareCaseInfo(const void *elem1, const void *elem2)
+//SCRIPT_RUNTIME_CASE_COMPARE_BEGIN
+int CompareCaseInfo(const void *a, const void *b)
 {
-	if (*(intptr_t *)elem1 > *(intptr_t *)elem2)
-	{
-		return -1;
-	}
-
-	return *(intptr_t *)elem1 < *(intptr_t *)elem2;
+    return Scr_CompareSwitchCases(a, b);
 }
+//SCRIPT_RUNTIME_CASE_COMPARE_END
 
 /*
 ============
@@ -696,7 +696,8 @@ void Scr_BeginDevScript(int *type, char **savedPos)
 	*type = BUILTIN_DEVELOPER_ONLY;
 }
 
-int __cdecl AddFunction(int func, const char *name)
+//SCRIPT_RUNTIME_ADD_FUNCTION_BEGIN
+int __cdecl AddFunction(uintptr_t func, const char *name)
 {
 	int i; // [esp+0h] [ebp-4h]
 
@@ -724,6 +725,7 @@ int __cdecl AddFunction(int func, const char *name)
 
 	return i;
 }
+//SCRIPT_RUNTIME_ADD_FUNCTION_END
 
 /*
 ============
@@ -1016,11 +1018,13 @@ void Scr_RegisterLocalVar(uint32_t name, sval_u sourcePos, scr_block_s *block)
 EmitCodepos
 ============
 */
+//SCRIPT_RUNTIME_EMIT_CODEPOS_BEGIN
 void EmitCodepos(const char *pos)
 {
 	scrCompileGlob.codePos = (byte *)TempMallocAlignStrict(sizeof(const char *));
-	*(const char **)scrCompileGlob.codePos = pos;
+	Scr_WriteBytecodeValue(scrCompileGlob.codePos, pos);
 }
+//SCRIPT_RUNTIME_EMIT_CODEPOS_END
 
 /*
 ============
@@ -1030,7 +1034,7 @@ EmitString
 void EmitString(uint32_t value)
 {
 	scrCompileGlob.codePos = (byte *)TempMallocAlignStrict(sizeof(unsigned short));
-	*(unsigned short *)scrCompileGlob.codePos = value;
+	Scr_WriteBytecodeValue(scrCompileGlob.codePos, static_cast<unsigned short>(value));
 }
 
 /*
@@ -1041,7 +1045,7 @@ EmitFloat
 void EmitFloat(float value)
 {
 	scrCompileGlob.codePos = (byte *)TempMallocAlignStrict(sizeof(float));
-	*(float *)scrCompileGlob.codePos = value;
+	Scr_WriteBytecodeValue(scrCompileGlob.codePos, value);
 }
 
 /*
@@ -1052,7 +1056,7 @@ EmitUnsignedShort
 void EmitUnsignedShort(unsigned short value)
 {
 	scrCompileGlob.codePos = (byte *)TempMallocAlignStrict(sizeof(unsigned short));
-	*(unsigned short *)scrCompileGlob.codePos = value;
+	Scr_WriteBytecodeValue(scrCompileGlob.codePos, static_cast<unsigned short>(value));
 }
 
 /*
@@ -1060,11 +1064,13 @@ void EmitUnsignedShort(unsigned short value)
 EmitShort
 ============
 */
+//SCRIPT_RUNTIME_EMIT_SHORT_BEGIN
 void EmitShort(short value)
 {
 	scrCompileGlob.codePos = (byte *)TempMallocAlignStrict(sizeof(short));
-	*(short *)scrCompileGlob.codePos = value;
+	Scr_WriteBytecodeValue(scrCompileGlob.codePos, value);
 }
+//SCRIPT_RUNTIME_EMIT_SHORT_END
 
 /*
 ============
@@ -1074,7 +1080,7 @@ EmitInteger
 void EmitInteger(int value)
 {
 	scrCompileGlob.codePos = (byte *)TempMallocAlignStrict(sizeof(int));
-	*(int *)scrCompileGlob.codePos = value;
+	Scr_WriteBytecodeValue(scrCompileGlob.codePos, value);
 }
 
 /*
@@ -3998,7 +4004,7 @@ script_method:
 	EmitCallBuiltinMethodOpcode(param_count, sourcePos);
 
 	//EmitUnsignedShort(AddFunction(meth, pName));
-	EmitShort(AddFunction((int)meth, pName));
+	EmitShort(AddFunction(reinterpret_cast<uintptr_t>(meth), pName));
 
 	AddOpcodePos(methodSourcePos.sourcePosValue, SOURCE_TYPE_NONE);
 	AddExpressionListOpcodePos(params);
@@ -4116,8 +4122,8 @@ script_function:
 	Scr_CompileRemoveRefToString(name);
 	EmitCallBuiltinOpcode(param_count, sourcePos);
 
-	//EmitUnsignedShort(AddFunction((intptr_t)func, pName));
-	EmitShort(AddFunction((intptr_t)func, pName));
+	//EmitUnsignedShort(AddFunction(reinterpret_cast<uintptr_t>(func), pName));
+	EmitShort(AddFunction(reinterpret_cast<uintptr_t>(func), pName));
 
 	AddExpressionListOpcodePos(params);
 
@@ -4814,6 +4820,7 @@ void EmitArrayVariableRef(sval_u expr, sval_u index, sval_u sourcePos, sval_u in
 EmitSwitchStatement
 ============
 */
+//SCRIPT_RUNTIME_EMIT_SWITCH_BEGIN
 void EmitSwitchStatement(sval_u expr, sval_u stmtlist, sval_u sourcePos, bool lastStatement, uint32_t endSourcePos, scr_block_s *block)
 {
 	CaseStatementInfo *oldCaseStatement; // [esp+0h] [ebp-24h]
@@ -4844,7 +4851,7 @@ void EmitSwitchStatement(sval_u expr, sval_u stmtlist, sval_u sourcePos, bool la
 	AddOpcodePos(sourcePos.stringValue, 0);
 	EmitShort(0);
 	pos2 = scrCompileGlob.codePos;
-	*(uintptr_t *)pos1 = (scrCompileGlob.codePos - (byte *)nextPos1);
+	Scr_WriteBytecodeValue(pos1, static_cast<uintptr_t>(scrCompileGlob.codePos - reinterpret_cast<byte *>(nextPos1)));
 	pos3 = TempMallocAlignStrict(0);
 	num = 0;
 
@@ -4858,16 +4865,16 @@ void EmitSwitchStatement(sval_u expr, sval_u stmtlist, sval_u sourcePos, bool la
 		num++;
 	}
 
-	*(unsigned short *)pos2 = num;
-	qsort(pos3, num, 8u, CompareCaseInfo);
+	Scr_WriteBytecodeValue(pos2, static_cast<unsigned short>(num));
+	qsort(pos3, num, sizeof(ScrSwitchCase), CompareCaseInfo);
 
 	while (num > 1)
 	{
-		if (*(intptr_t *)pos3 == *((intptr_t *)pos3 + 2))
+		if (Scr_ReadBytecodeValue<uintptr_t>(pos3) == Scr_ReadBytecodeValue<uintptr_t>(pos3 + sizeof(ScrSwitchCase)))
 		{
 			for (CaseStatementInfo *caseStatementa = scrCompileGlob.currentCaseStatement; caseStatementa; caseStatementa = caseStatementa->next)
 			{
-				if (caseStatementa->name == *(intptr_t *)pos3)
+				if (caseStatementa->name == Scr_ReadBytecodeValue<uintptr_t>(pos3))
 				{
 					CompileError(caseStatementa->sourcePos, "duplicate case expression");
 					return;
@@ -4875,7 +4882,7 @@ void EmitSwitchStatement(sval_u expr, sval_u stmtlist, sval_u sourcePos, bool la
 			}
 		}
 		--num;
-		pos3 += 8;
+		pos3 += sizeof(ScrSwitchCase);
 	}
 
 	ConnectBreakStatements();
@@ -4883,6 +4890,7 @@ void EmitSwitchStatement(sval_u expr, sval_u stmtlist, sval_u sourcePos, bool la
 	scrCompileGlob.bCanBreak = bOldCanBreak;
 	scrCompileGlob.currentBreakStatement = oldBreakStatement;
 }
+//SCRIPT_RUNTIME_EMIT_SWITCH_END
 
 /*
 ============

@@ -134,7 +134,7 @@ struct scrCompilePub_t
     unsigned char *opcodePos;
     uint32_t programLen;
     int func_table_size;
-    int func_table[SCR_FUNC_TABLE_SIZE];
+    uintptr_t func_table[SCR_FUNC_TABLE_SIZE];
 };
 
 void __cdecl Scr_CompileStatement(sval_u parseData);

@@ -95,6 +95,7 @@ struct VariableStackBuffer // sizeof=0xC
     // Opaque one-byte value persisted byte-exactly in the save image (retail
     // named this field 'time'; it is a plain uint8_t round-tripped by
     // WriteStack / Scr_ReadStack, not a time_t, and has no other user).
+    // cppcheck-suppress unusedStructMember -- consumed by the save reader/writer in scr_readwrite.cpp.
     uint8_t saveStamp;
     char buf[1];
 };

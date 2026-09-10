@@ -2,6 +2,7 @@
 // (GPL v3.0) (Thanks)
 
 #include "scr_compiler.h"
+#include "scr_bytecode.hpp"
 #include "scr_main.h"
 #include "scr_debugger.h"
 #include "scr_parser.h"
@@ -332,8 +333,8 @@ void __cdecl EmitGetFloat(float value, sval_u sourcePos)
 
 void __cdecl EmitCodepos(const char *pos)
 {
-    scrCompileGlob.codePos = (unsigned char*)TempMallocAlignStrict(4u);
-    *(unsigned int*)scrCompileGlob.codePos = (unsigned int)pos;
+    scrCompileGlob.codePos = (unsigned char*)TempMallocAlignStrict(sizeof(pos));
+    Scr_WriteBytecodeValue(scrCompileGlob.codePos, pos);
 }
 
 void __cdecl EmitGetInteger(int value, sval_u sourcePos)
@@ -517,7 +518,7 @@ void __cdecl EmitCallBuiltinOpcode(int param_count, sval_u sourcePos)
         EmitByte(param_count);
 }
 
-int __cdecl AddFunction(int func, const char *name)
+int __cdecl AddFunction(uintptr_t func, const char *name)
 {
     int i; // [esp+0h] [ebp-4h]
 
@@ -884,7 +885,7 @@ void __cdecl EmitCall(sval_u func_name, sval_u params, bool bStatement, scr_bloc
             {
                 Scr_CompileRemoveRefToString(name);
                 EmitCallBuiltinOpcode(param_count, sourcePos);
-                v4 = AddFunction((int)func, pName);
+                v4 = AddFunction(reinterpret_cast<uintptr_t>(func), pName);
                 EmitShort(v4);
                 AddExpressionListOpcodePos(params);
                 if (bStatement)
@@ -1015,7 +1016,7 @@ void __cdecl EmitMethod(
             {
                 Scr_CompileRemoveRefToString(name);
                 EmitCallBuiltinMethodOpcode(param_count, sourcePos);
-                v6 = AddFunction((int)meth, pName);
+                v6 = AddFunction(reinterpret_cast<uintptr_t>(meth), pName);
                 EmitShort(v6);
                 AddOpcodePos(methodSourcePos.stringValue, 0);
                 AddExpressionListOpcodePos(params);
@@ -2974,12 +2975,9 @@ void __cdecl EmitSwitchStatementList(sval_u val, bool lastStatement, unsigned in
     scrCompileGlob.breakBlock = oldBreakBlock;
 }
 
-int __cdecl CompareCaseInfo(_DWORD *elem1, _DWORD *elem2)
+int CompareCaseInfo(const void *a, const void *b)
 {
-    if (*elem1 <= *elem2)
-        return *elem1 < *elem2;
-    else
-        return -1;
+    return Scr_CompareSwitchCases(a, b);
 }
 
 void __cdecl EmitSwitchStatement(
@@ -3017,7 +3015,7 @@ void __cdecl EmitSwitchStatement(
     AddOpcodePos(sourcePos.stringValue, 0);
     EmitShort(0);
     pos2 = scrCompileGlob.codePos;
-    *pos1 = scrCompileGlob.codePos - (unsigned char*)nextPos1;
+    Scr_WriteBytecodeValue(pos1, static_cast<uintptr_t>(scrCompileGlob.codePos - reinterpret_cast<unsigned char *>(nextPos1)));
     pos3 = TempMallocAlignStrict(0);
     num = 0;
     caseStatement = scrCompileGlob.currentCaseStatement;
@@ -3028,15 +3026,15 @@ void __cdecl EmitSwitchStatement(
         caseStatement = caseStatement->next;
         ++num;
     }
-    *pos2 = num;
-    qsort(pos3, num, 8u, (int(*)(const void*, const void*))CompareCaseInfo);
+    Scr_WriteBytecodeValue(pos2, static_cast<unsigned short>(num));
+    qsort(pos3, num, sizeof(ScrSwitchCase), CompareCaseInfo);
     while (num > 1)
     {
-        if (*pos3 == *(pos3 + 2))
+        if (Scr_ReadBytecodeValue<uintptr_t>(pos3) == Scr_ReadBytecodeValue<uintptr_t>(pos3 + sizeof(ScrSwitchCase)))
         {
             for (caseStatementa = scrCompileGlob.currentCaseStatement; caseStatementa; caseStatementa = caseStatementa->next)
             {
-                if (caseStatementa->name == *pos3)
+                if (caseStatementa->name == Scr_ReadBytecodeValue<uintptr_t>(pos3))
                 {
                     CompileError(caseStatementa->sourcePos, "duplicate case expression");
                     return;
@@ -3044,7 +3042,7 @@ void __cdecl EmitSwitchStatement(
             }
         }
         --num;
-        pos3 += 8;
+        pos3 += sizeof(ScrSwitchCase);
     }
     ConnectBreakStatements();
     scrCompileGlob.currentCaseStatement = oldCaseStatement;

@@ -17,6 +17,13 @@
 //      Scr_WatchElement_s, Scr_OpcodeList_s, Scr_StringNode_s,
 //      CaseStatementInfo, BreakStatementInfo, ContinueStatementInfo).
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
+
 #ifndef KISAK_DEDI_HEADLESS
 #define KISAK_DEDI_HEADLESS 1
 #endif

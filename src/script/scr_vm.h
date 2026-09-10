@@ -13,6 +13,7 @@ enum $3FAD84344DD9017EDEA6C2E0F6A382A4 : __int32
 };
 
 // LWSS: Custom named enum so I'm forced to use this on EmitOpcode()
+//SCRIPT_RUNTIME_OPCODES_BEGIN
 enum Opcode_t : __int32
 {
     OP_End = 0x0,
@@ -155,6 +156,7 @@ enum Opcode_t : __int32
     OP_manualAndAssignmentBreakpoint = 0x89,
     OP_count = 0x8A,
 };
+//SCRIPT_RUNTIME_OPCODES_END
 inline Opcode_t &operator++(Opcode_t &e) {
     e = static_cast<Opcode_t>(static_cast<int>(e) + 1);
     return e;

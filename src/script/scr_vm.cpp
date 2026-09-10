@@ -1,5 +1,6 @@
 #include "scr_vm.h"
 
+#include "scr_bytecode.hpp"
 #include "scr_animtree.h"
 #include "scr_debugger.h"
 #include "scr_parser.h"
@@ -588,8 +589,8 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
             case 99:
                 return (char*)&pos[-*(uint16_t*)pos + 2];
             case 124:
-                posb = &pos[*(_DWORD*)pos + 4];
-                v12 = *(_WORD*)posb;
+                posb = &pos[Scr_ReadBytecodeValue<uintptr_t>(pos) + sizeof(uintptr_t)];
+                v12 = Scr_ReadBytecodeValue<unsigned short>(posb);
                 posa = posb + 2;
                 caseCount = v12;
                 v9 = top->type;
@@ -600,9 +601,9 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
                 else
                 {
                     if (v9 != 6)
-                        return (char*)&posa[8 * v12];
+                        return (char*)&posa[sizeof(ScrSwitchCase) * v12];
                     if (!IsValidArrayIndex(top->u.intValue))
-                        return (char*)&posa[8 * v12];
+                        return (char*)&posa[sizeof(ScrSwitchCase) * v12];
                     caseValue = GetInternalVariableIndex(top->u.intValue);
                 }
                 if (!v12)
@@ -611,7 +612,7 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
                     MyAssertHandler(".\\script\\scr_vm.cpp", 2516, 0, "%s", "caseValue");
                 break;
             case 125:
-                return (char*)&pos[8 * *(uint16_t*)pos + 2];
+                return (char*)&pos[sizeof(ScrSwitchCase) * Scr_ReadBytecodeValue<uint16_t>(pos) + 2];
             default:
                 if (!alwaysfails)
                 {
@@ -627,10 +628,10 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
             }
             do
             {
-                v11 = *(_DWORD*)posa;
-                posc = posa + 4;
-                v10 = *(const char**)posc;
-                posa = posc + 4;
+                v11 = static_cast<uint32_t>(Scr_ReadBytecodeValue<uintptr_t>(posa));
+                posc = posa + sizeof(uintptr_t);
+                v10 = Scr_ReadBytecodeValue<const char *>(posc);
+                posa += sizeof(ScrSwitchCase);
                 if (v11 == caseValue)
                 {
                     if (!v10)
@@ -1663,46 +1664,45 @@ uint32_t __cdecl GetDummyFieldValue()
     return scrVarPub.tempVariable;
 }
 
+//SCRIPT_RUNTIME_READ_CODEPOS_BEGIN
 const char *Scr_ReadCodePos(const char **pos)
 {
-    const char *value = *(reinterpret_cast<const char **>(const_cast<char *>(*pos)));
+    const char *value = Scr_ReadBytecodeValue<const char *>(*pos);
     *pos += sizeof(const char *);
     return value;
 }
+//SCRIPT_RUNTIME_READ_CODEPOS_END
 
+//SCRIPT_RUNTIME_READ_UNSIGNED_BEGIN
 uintptr_t Scr_ReadUnsigned(const char **pos)
 {
-    uintptr_t value = *(reinterpret_cast<const uintptr_t *>(*pos));
+    uintptr_t value = Scr_ReadBytecodeValue<uintptr_t>(*pos);
     *pos += sizeof(uintptr_t);
     return value;
 }
+//SCRIPT_RUNTIME_READ_UNSIGNED_END
 
 int Scr_ReadInt(const char **pos)
 {
-    int value = *(int *)*pos;
+    int value = Scr_ReadBytecodeValue<int>(*pos);
     *pos += sizeof(int);
     return value;
 }
 
+//SCRIPT_RUNTIME_READ_SHORT_BEGIN
 unsigned short Scr_ReadUnsignedShort(const char **pos)
 {
-    unsigned short value = *(reinterpret_cast<const unsigned short *>(*pos));
+    unsigned short value = Scr_ReadBytecodeValue<unsigned short>(*pos);
     *pos += sizeof(unsigned short);
     return value;
 }
+//SCRIPT_RUNTIME_READ_SHORT_END
 
-const uint32_t *Scr_ReadIntArray(const char **pos, int count)
-{
-    const uint32_t *value;
 
-    value = reinterpret_cast<const uint32_t *>(*pos);
-    *pos += sizeof(uint32_t) * count;
-    return value;
-}
 
 float Scr_ReadFloat(const char **pos)
 {
-    float value = *(reinterpret_cast<const float *>(*pos));
+    float value = Scr_ReadBytecodeValue<float>(*pos);
     *pos += sizeof(float);
     return value;
 }
@@ -2661,7 +2661,7 @@ CallBuiltIn:
             scrVmPub.top = fs.top;
             builtInTime = scrVmDebugPub.builtInTime;
             time = __rdtsc();
-            ((void (*)(void))scrCompilePub.func_table[builtinIndex])();
+            reinterpret_cast<void (*)(void)>(scrCompilePub.func_table[builtinIndex])();
             timeSpent = __rdtsc() - time;
             scrVmDebugPub.builtInTime = timeSpent + builtInTime;
             scrVmDebugPub.func_table[builtinIndex].prof += timeSpent;
@@ -2709,7 +2709,7 @@ CallBuiltinMethod:
                 }
                 builtInTime = scrVmDebugPub.builtInTime;
                 time = __rdtsc();
-                ((void (*)(scr_entref_t))scrCompilePub.func_table[builtinIndex])(entref);
+                reinterpret_cast<void (*)(scr_entref_t)>(scrCompilePub.func_table[builtinIndex])(entref);
                 timeSpent = __rdtsc() - time;
                 scrVmDebugPub.builtInTime = timeSpent + builtInTime;
                 scrVmDebugPub.func_table[builtinIndex].prof += timeSpent;
@@ -3419,7 +3419,7 @@ function_call:
 
         case OP_endswitch:
             caseCount = Scr_ReadUnsignedShort(&fs.pos);
-            Scr_ReadIntArray(&fs.pos, 2 * caseCount);
+            Scr_SkipSwitchCases(&fs.pos, caseCount);
             continue;
 
         case OP_vector:

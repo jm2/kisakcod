@@ -3357,6 +3357,10 @@ target_compile_features(
     kisakcod-script-widening-value-tests PRIVATE cxx_std_20)
 target_compile_definitions(
     kisakcod-script-widening-value-tests PRIVATE KISAK_DEDI_HEADLESS=1)
+if(MSVC)
+    # scrStringGlob_t intentionally aligns its table to 128 bytes.
+    target_compile_options(kisakcod-script-widening-value-tests PRIVATE /wd4324)
+endif()
 kisakcod_test_warnings(kisakcod-script-widening-value-tests)
 set_target_properties(
     kisakcod-script-widening-value-tests PROPERTIES
@@ -3388,6 +3392,21 @@ kisakcod_append_runtime_slice(scr_evaluate.cpp CANON_ARCHIVE)
 kisakcod_append_runtime_slice(scr_vm.cpp TERMINATE)
 kisakcod_append_runtime_slice(scr_readwrite.cpp REFERENCES)
 kisakcod_append_runtime_slice(scr_readwrite.cpp SAVE_OBJECT)
+kisakcod_append_runtime_slice(scr_vm.h OPCODES)
+kisakcod_append_runtime_slice(scr_compiler2.cpp CALL_TYPES)
+kisakcod_append_runtime_slice(scr_compiler2.cpp ADD_FUNCTION)
+kisakcod_append_runtime_slice(scr_compiler2.cpp EMIT_CODEPOS)
+kisakcod_append_runtime_slice(scr_compiler2.cpp EMIT_SHORT)
+kisakcod_append_runtime_slice(scr_compiler2.cpp CASE_COMPARE)
+kisakcod_append_runtime_slice(scr_compiler2.cpp EMIT_SWITCH)
+kisakcod_append_runtime_slice(scr_vm.cpp READ_CODEPOS)
+kisakcod_append_runtime_slice(scr_vm.cpp READ_UNSIGNED)
+kisakcod_append_runtime_slice(scr_vm.cpp READ_SHORT)
+kisakcod_append_runtime_slice(scr_variable.cpp INIT_VARIABLES)
+kisakcod_append_runtime_slice(scr_variable.cpp FIND_THREADS)
+kisakcod_append_runtime_slice(scr_variable.cpp EQUALITY)
+kisakcod_append_runtime_slice(scr_variable.cpp STRING_PAIR)
+kisakcod_append_runtime_slice(scr_evaluate.cpp VALUE_STRING)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/script_runtime_slice.inc" "${_runtime_slice}")
 add_executable(kisakcod-script-runtime-pointer-tests script_runtime_pointer_test.cpp)
 target_include_directories(kisakcod-script-runtime-pointer-tests PRIVATE
