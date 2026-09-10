@@ -1,4 +1,5 @@
 #include "ui_shared.h"
+#include <algorithm>
 #include <qcommon/sys_time.h>
 #include <win32/win_local.h>
 #include <win32/win_net_debug.h>
@@ -2200,7 +2201,7 @@ static void Scr_AllocWatchChildArrays(unsigned int count,
 {
     *children = reinterpret_cast<Scr_WatchElement_s *>(Scr_AllocDebugMem(
         sizeof(Scr_WatchElement_s) * count, "Scr_ScriptWatch::EvaluateWatchChildren3"));
-    memset(*children, 0, sizeof(Scr_WatchElement_s) * count);
+    std::fill_n(reinterpret_cast<unsigned char *>(*children), sizeof(Scr_WatchElement_s) * count, 0);
     *oldReferences = reinterpret_cast<Scr_WatchElement_s **>(Scr_AllocDebugMem(
         sizeof(Scr_WatchElement_s *) * count, "Scr_ScriptWatch::EvaluateWatchChildren"));
 }
@@ -3058,11 +3059,9 @@ void Scr_AbstractScriptList::AddEntry(Scr_ScriptWindow *scriptWindow, bool selec
     newScriptWindows = reinterpret_cast<Scr_ScriptWindow **>(Scr_AllocDebugMem(sizeof(*newScriptWindows) * newNumLines, "Scr_AbstractScriptList::AddEntry"));
     if (this->scriptWindows)
     {
-        memcpy(newScriptWindows, this->scriptWindows, sizeof(*newScriptWindows) * selectedLine);
-        memcpy(
-            &newScriptWindows[selectedLine + 1],
-            &this->scriptWindows[selectedLine],
-            sizeof(*newScriptWindows) * (this->numLines - selectedLine));
+        std::copy_n(this->scriptWindows, selectedLine, newScriptWindows);
+        std::copy_n(&this->scriptWindows[selectedLine], this->numLines - selectedLine,
+            &newScriptWindows[selectedLine + 1]);
         Scr_FreeDebugMem(this->scriptWindows);
     }
     this->scriptWindows = newScriptWindows;

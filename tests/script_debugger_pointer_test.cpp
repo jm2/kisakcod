@@ -10,6 +10,7 @@
 #include <script/scr_compiler.h>
 #include <script/scr_evaluate.h>
 #include <script/scr_stringlist.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -37,7 +38,7 @@ struct { const char *breakpointCodePos = nullptr; } scrDebuggerGlob;
 char g_EndPos = 0;
 struct UI_Component { struct Globals { float charWidth = 1; }; static Globals g; };
 UI_Component::Globals UI_Component::g;
-struct UI_LinesComponent { void UpdateHeight() {} };
+struct UI_LinesComponent { static void UpdateHeight() {} };
 struct Scr_ScriptWindow { const char *name; const char *GetFilename() { return name; } };
 struct Scr_AbstractScriptList : UI_LinesComponent {
     int numLines = 0;
@@ -204,7 +205,7 @@ void TestEntityAndWatchTransfers()
     Check(element.valueDefined && element.value.u.vectorValue == payload);
     Check(Scr_WatchElementHasSameValue(&element, &value) == 1);
 }
-void TestLocalWatchStorage()
+void TestWatchChildStorage()
 {
     Scr_WatchElement_s *children = nullptr;
     Scr_WatchElement_s **references = nullptr;
@@ -215,6 +216,9 @@ void TestLocalWatchStorage()
         children[i].parent = &children[2 - i]; references[i] = &children[i];
     }
     Check(references[2]->parent == children);
+}
+void TestCallStackFrames()
+{
     char code[8]{}; HighAddress(code);
     scrVmPub.function_count = 2;
     scrVmPub.function_frame_start[0].fs.pos = code + 1;
@@ -227,6 +231,9 @@ void TestLocalWatchStorage()
     Check(observedPositions[0] == code + 4 && observedPositions[1] == code + 2 && observedPositions[2] == code);
     Check(stack.stack[1].sourcePos == 0 && stack.stack[2].sourcePos == 1);
     scrVmPub.function_count = 0; stack.UpdateStack(); Check(stack.numLines == 0);
+}
+void TestScriptWindowList()
+{
     Scr_ScriptWindow windows[3] = {{"first"}, {"second"}, {"third"}};
     HighAddress(windows);
     Scr_AbstractScriptList list{};
@@ -247,7 +254,7 @@ int main()
     scrVarPub.evaluate = true;
     scrVmPub.top = scrVmPub.stack;
     scrVmPub.maxstack = scrVmPub.stack + 2047;
-    TestExpressionCompilation(); TestDebuggerBuiltins(); TestBuiltinMethodCache(); TestEntityAndWatchTransfers(); TestLocalWatchStorage();
+    TestExpressionCompilation(); TestDebuggerBuiltins(); TestBuiltinMethodCache(); TestEntityAndWatchTransfers(); TestWatchChildStorage(); TestCallStackFrames(); TestScriptWindowList();
     Check(scrVmDebugPub.checkBreakon == 0 && g_breakonExpr == 0);
     Check(scrVmPub.maxstack == scrVmPub.stack + 2047);
     for (void *p : allocations) std::free(p);
