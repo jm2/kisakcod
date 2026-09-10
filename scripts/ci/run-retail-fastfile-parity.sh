@@ -189,7 +189,21 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 absolute_path() {
     case "$1" in
         /*) printf '%s\n' "$1" ;;
-        *) printf '%s\n' "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")" ;;
+        *)
+            local parent resolved
+            parent="$(dirname "$1")"
+            # The inner cd MUST succeed: on failure the substitution is empty
+            # and the result collapses to "/<basename>" — a silently wrong
+            # absolute path at the filesystem root (CodeRabbit r3963160469 on
+            # PR #113; reachable via --emit-reference into a directory that
+            # does not exist yet, aiming the mint at the root). An
+            # unresolvable parent is an environment error: fail loudly.
+            resolved="$(cd "$parent" && pwd)" || {
+                echo "run-retail-fastfile-parity: cannot resolve parent directory '$parent' of '$1'" >&2
+                exit 2
+            }
+            printf '%s\n' "$resolved/$(basename "$1")"
+            ;;
     esac
 }
 [ -n "$FASTFILE" ] && FASTFILE="$(absolute_path "$FASTFILE")"

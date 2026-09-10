@@ -35,6 +35,15 @@
 #     malformed value like platform=windows-<CR>x86 used to be silently
 #     rewritten into a valid windows-x86 token and blessed with
 #     "platform+leg identity verified" (Codex P2, PR #113 review);
+#   - the harness refuses a fastfile path carrying CR or LF BEFORE any
+#     capture is emitted (the path is stamped verbatim as fastfile_path=,
+#     so an embedded newline would inject attacker-influenced protocol
+#     lines into the capture), and the driver refuses to mint from such a
+#     path (CodeRabbit r3961437648, PR #113);
+#   - absolute_path() fails loudly when a path's parent directory cannot
+#     be resolved: the old `cd && pwd` substitution collapsed to a silently
+#     wrong "/<basename>" at the filesystem root, aiming an
+#     --emit-reference mint at the root (CodeRabbit r3963160469, PR #113);
 #   - minting and comparing still round-trip in instrument mode.
 #
 # The real driver runs against the REAL harness in an already-configured
@@ -610,5 +619,62 @@ expect_status "mint from an embedded-CR capture is refused (exit 2)" 2 -- \
 expect_said "embedded-CR mint refusal names the malformed field" \
     "embedded CR" "$ERR_FILE"
 expect_absent "embedded-CR mint writes no reference" "$EMBEDDED_CR_MINT"
+
+# --- 17. protocol-boundary refusals: CR/LF paths and unresolvable parents ---
+# Two CodeRabbit Minors on PR #113 (r3961437648, r3963160469), fixed at
+# source with fail-closed refusals; printf format escapes emit the raw
+# bytes (no sed \r escapes; BSD-safe).
+
+# 17a. The REAL harness refuses a fastfile path carrying CR or LF BEFORE
+# any capture is emitted: the path is stamped verbatim as
+# fastfile_path=<path>, so an embedded newline would inject
+# attacker-influenced protocol lines into the capture. The refusal fires
+# before the file is even opened, so no fixture file needs to exist.
+LF_PATH="$(printf 'bad\npath.ff')"
+CR_PATH="$(printf 'bad\rpath.ff')"
+expect_status "real harness refuses an LF-bearing fastfile path (exit 2)" 2 -- \
+    "$REAL_HARNESS" --fastfile "$LF_PATH"
+expect_said "LF-path refusal names the protocol violation" \
+    "contains a CR or LF" "$ERR_FILE"
+expect_status "real harness refuses a CR-bearing fastfile path (exit 2)" 2 -- \
+    "$REAL_HARNESS" --fastfile "$CR_PATH"
+expect_said "CR-path refusal names the protocol violation" \
+    "contains a CR or LF" "$ERR_FILE"
+
+# 17b. End-to-end: the DRIVER refuses to mint from an LF-bearing fastfile
+# path — the harness refusal (exit 2) surfaces as a driver environment
+# error and no reference file is written.
+NEWLINE_FIXTURE="$WORK/$(printf 'bad\nname.ff')"
+printf 'x' >"$NEWLINE_FIXTURE"
+NEWLINE_MINT="$WORK/newline-mint.txt"
+expect_status "driver mint from an LF-bearing path is refused (exit 2)" 2 -- \
+    driver --mode instrument --host "$DERIVED_PLATFORM" --ref windows-x86 \
+        --fastfile "$NEWLINE_FIXTURE" --emit-reference "$NEWLINE_MINT"
+expect_said "LF-path mint refusal reports the host capture refusal" \
+    "host capture refused" "$ERR_FILE"
+expect_absent "refused LF-path mint writes no reference" "$NEWLINE_MINT"
+
+# 17c. absolute_path() fails LOUDLY when a RELATIVE path's parent directory
+# cannot be resolved: the old `cd && pwd` substitution collapsed to a
+# silently wrong "/<basename>" at the filesystem root. --emit-reference
+# targets a not-yet-existing file, so its parent may legitimately be
+# missing — the mint would then aim at /ref.txt instead of the requested
+# path. Both absolute_path consumers that can carry a missing parent are
+# exercised (relative paths: the `/*` pass-through branch has nothing to
+# resolve and cannot collapse).
+ROOT_AIM_MINT="ki-msb-missing-parent/ref.txt"
+expect_status "unresolvable parent on --emit-reference is refused (exit 2)" 2 -- \
+    driver --mode instrument --host "$DERIVED_PLATFORM" --ref windows-x86 \
+        --fastfile "$FIXTURE" --emit-reference "$ROOT_AIM_MINT"
+expect_said "unresolvable-parent refusal names the directory" \
+    "cannot resolve parent directory" "$ERR_FILE"
+expect_absent "refused mint leaves nothing at the collapsed root path" "/ref.txt"
+
+ROOT_AIM_REF="ki-msb-missing-parent-2/ref.txt"
+expect_status "unresolvable parent on --reference-hash is refused (exit 2)" 2 -- \
+    driver --mode instrument --host "$DERIVED_PLATFORM" --ref windows-x86 \
+        --fastfile "$FIXTURE" --reference-hash "$ROOT_AIM_REF"
+expect_said "unresolvable-parent refusal names the directory" \
+    "cannot resolve parent directory" "$ERR_FILE"
 
 echo "retail-fastfile-parity driver gates: $PASS check(s) passed"

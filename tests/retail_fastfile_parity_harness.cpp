@@ -149,6 +149,19 @@ bool LegIdentityIsSafe(const std::string_view leg)
     return true;
 }
 
+// The fastfile path is stamped verbatim as the fastfile_path=<path> line of
+// the k=v output protocol, so it must be free of CR and LF: an embedded
+// newline would inject attacker-influenced protocol lines into the capture
+// (CodeRabbit r3961437648 on PR #113). Checked BEFORE any capture is
+// emitted; the refusal fails closed like every other protocol violation.
+bool PathIsProtocolSafe(const char *path)
+{
+    for (const char *c = path; *c; ++c)
+        if (*c == '\n' || *c == '\r')
+            return false;
+    return true;
+}
+
 // Compile-time build identity: the platform this executable was built FOR.
 // The preprocessor defines are the toolchain's own record of its target;
 // they cannot be changed at runtime, so they anchor the capture identity.
@@ -338,6 +351,18 @@ int RunCapture(const char *path, const std::string_view leg)
         return 2;
     }
 
+    // The path becomes the fastfile_path line of the output protocol, so a
+    // path carrying CR or LF is refused BEFORE any capture is computed or
+    // emitted (CodeRabbit r3961437648): it would inject protocol lines into
+    // the capture output. Fail-closed, like every other protocol violation.
+    if (!PathIsProtocolSafe(path))
+    {
+        std::fprintf(stderr,
+            "error: fast-file path contains a CR or LF; a path that breaks"
+            " the line-oriented capture protocol is never emitted\n");
+        return 2;
+    }
+
     std::vector<std::uint8_t> bytes;
     if (!ReadFileBytes(path, bytes))
     {
@@ -492,6 +517,10 @@ void ExpectProtocolContract(
     Expect(!LegIdentityIsSafe("linux amd64"), "leg identities with whitespace are rejected");
     Expect(!LegIdentityIsSafe("leg\ninjected"), "leg identities with newlines are rejected");
     Expect(!LegIdentityIsSafe(std::string(65, 'x')), "overlong leg identities are rejected");
+
+    Expect(PathIsProtocolSafe("fixture.ff"), "newline-free fastfile paths are protocol-safe");
+    Expect(!PathIsProtocolSafe("bad\npath.ff"), "fastfile paths with LF are refused");
+    Expect(!PathIsProtocolSafe("bad\rpath.ff"), "fastfile paths with CR are refused");
 }
 
 void TestSelfTest(const char *fixturePath)
