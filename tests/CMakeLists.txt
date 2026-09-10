@@ -2601,6 +2601,27 @@ add_test(
     COMMAND kisakcod-net-wire-contract-tests
 )
 
+add_executable(kisakcod-net-chan-reassembly-tests
+    net_chan_reassembly_tests.cpp
+)
+# Same treatment as the wire-contract tests: the decompiled engine headers are
+# not -Wall -Wextra clean, so SYSTEM keeps the strict warning set on this
+# test's own code without failing on warnings inside those headers. The test
+# invokes the production Netchan_ReassembledSpanFits from net_chan_mp.h -- the
+# exact bounds function Netchan_Process consults before rebuilding a complete
+# message in the destination buffer.
+target_include_directories(kisakcod-net-chan-reassembly-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-net-chan-reassembly-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-net-chan-reassembly-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-net-chan-reassembly-tests)
+set_target_properties(kisakcod-net-chan-reassembly-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME net-chan-reassembly-span-contracts
+    COMMAND kisakcod-net-chan-reassembly-tests
+)
+
 add_executable(kisakcod-vehicle-material-time-tests
     vehicle_material_time_tests.cpp
 )

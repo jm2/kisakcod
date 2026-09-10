@@ -1206,6 +1206,19 @@ require_source_not_contains(
     "fake-lag delivery must not replace the caller's capacity with queued metadata")
 require_source_contains(
     "qcommon/net_chan_mp.cpp"
+    "Netchan_ReassembledSpanFits(msg->maxsize, chan->fragmentLength)"
+    "fragment reassembly must validate the complete output span (prefix + payload) against the destination")
+require_source_ordered(
+    "qcommon/net_chan_mp.cpp"
+    "Netchan_ReassembledSpanFits(msg->maxsize, chan->fragmentLength)"
+    "*(uint32_t *)msg->data = sequence;"
+    "reassembly bounds check must precede both the prefix and payload writes")
+require_source_not_contains(
+    "qcommon/net_chan_mp.cpp"
+    "chan->fragmentLength > msg->maxsize"
+    "reassembly must not gate the destination writes on the payload-only capacity check")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
     "if (length <= 0 || !data)"
     "fake-lag outbound input must use a release-active runtime check")
 require_source_contains(

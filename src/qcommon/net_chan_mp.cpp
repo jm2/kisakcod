@@ -1124,11 +1124,11 @@ int __cdecl Netchan_Process(netchan_t *chan, msg_t *msg)
         chan->fragmentLength += fragmentLength;
         if (fragmentLength == 1300)
             return 0;
-        if (chan->fragmentLength > msg->maxsize)
+        if (!Netchan_ReassembledSpanFits(msg->maxsize, chan->fragmentLength))
         {
             v10 = chan->fragmentLength;
             v7 = NET_AdrToString(chan->remoteAddress);
-            Com_Printf(16, "%s:fragmentLength %i > msg->maxsize\n", v7, v10);
+            Com_Printf(16, "%s:reassembled length %i does not fit msg->maxsize %i\n", v7, v10, msg->maxsize);
             return 0;
         }
         *(uint32_t *)msg->data = sequence;
