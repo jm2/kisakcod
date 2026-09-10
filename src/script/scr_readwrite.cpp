@@ -1623,11 +1623,12 @@ void __cdecl AddSaveEntryInternal(unsigned int type, VariableUnion u)
         if (u.intValue && !scrVarPub.saveIdMap[(unsigned int)u.intValue])
         {
             scrVarPub.saveIdMap[(unsigned int)u.intValue] = ++scrVarPub.savecount;
-            *(unsigned __int16 *)((char *)scrVarPub.saveIdMapRev + __ROL4__(scrVarPub.savecount, 1)) = (unsigned __int16)u.intValue;
+            scrVarPub.saveIdMapRev[scrVarPub.savecount] = static_cast<uint16_t>(u.intValue);
         }
     }
     else if (type == 10)
     {
+        // cppcheck-suppress misra-c2012-17.2 -- existing reciprocal save-graph call; traversal order and call graph are unchanged by the native-cell migration.
         AddSaveStackInternal(u.stackValue);
     }
 }
