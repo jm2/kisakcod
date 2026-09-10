@@ -102,6 +102,12 @@ void CompileError(uint32_t, const char *, ...) { std::abort(); }
 char *TempMalloc(uint32_t size) { Check(codeSize + size <= sizeof(bytecode)); char *p = bytecode + codeSize; codeSize += size; return p; }
 char *TempMallocAlignStrict(uint32_t size) { return TempMalloc(size); }
 void EmitExpression(sval_u, scr_block_s *) {}
+void Scr_TransferBlock(scr_block_s *, scr_block_s *) {}
+void EmitStatement(sval_u value, bool, uint32_t, scr_block_s *) { *TempMalloc(1) = static_cast<char>(value.intValue); }
+void EmitRemoveLocalVars(scr_block_s *, scr_block_s *) {}
+void EmitEnd() { *TempMalloc(1) = 0; }
+void EmitNOP2(bool, uint32_t, scr_block_s *) {}
+void Scr_InitFromChildBlocks(scr_block_s **, int count, scr_block_s *) { Check(count == 2); }
 void EmitOpcode(uint32_t op, int, int) { *TempMalloc(1) = static_cast<char>(op); }
 void EmitSwitchStatementList(sval_u, bool, uint32_t, scr_block_s *) { scrCompileGlob.currentCaseStatement = fixtureCases; }
 void AddOpcodePos(uint32_t, int) {}
@@ -326,6 +332,28 @@ void TestNativeOperandPositions()
     const char *endSwitch = bytecode + 1 + sizeof(uintptr_t);
     Check(Scr_GetNextCodepos(&top, endSwitch, OP_endswitch, 1, &localId) == bytecode + codeSize);
 }
+void TestIfElseOperandPatches()
+{
+    scr_block_s parent{}, first{}, second{};
+    sval_u firstBlock; firstBlock.block = &first;
+    sval_u secondBlock; secondBlock.block = &second;
+    for (bool last : {false, true}) {
+        codeSize = 0;
+        EmitIfElseStatement({}, sval_u(0x41), sval_u(0x42), {}, {}, last, 0,
+            &parent, &firstBlock, &secondBlock);
+        const char *position = bytecode + 1;
+        const auto skipThen = Scr_ReadUnsignedShort(&position);
+        const char *elseStart = position + skipThen;
+        Check(*position == 0x41 && *elseStart == 0x42);
+        Check(elseStart == bytecode + codeSize - 1);
+        if (!last) {
+            Check(position[1] == OP_jump);
+            position += 2;
+            const int skipElse = Scr_ReadInt(&position);
+            Check(position == elseStart && position + skipElse == bytecode + codeSize);
+        }
+    }
+}
 void TestDebuggerFormatting()
 {
     float coordinates[3] = {1, 2, 3}; HighAddress(coordinates);
@@ -371,7 +399,7 @@ void TestVariableReinitialization()
 int main()
 {
     TestAllocations(); TestTerminate(); TestDebugReferences(); TestSaveObject();
-    TestBuiltinsAndSwitch(); TestNativeOperandPositions(); TestNativeConsumers(); TestDebuggerFormatting(); TestArchivedThreads(); TestVariableReinitialization();
+    TestBuiltinsAndSwitch(); TestNativeOperandPositions(); TestIfElseOperandPatches(); TestNativeConsumers(); TestDebuggerFormatting(); TestArchivedThreads(); TestVariableReinitialization();
     for (void *p : allocations) std::free(p);
     std::printf("script runtime: %d checks passed\n", checks);
 }

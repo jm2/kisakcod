@@ -1061,11 +1061,13 @@ void EmitFloat(float value)
 EmitUnsignedShort
 ============
 */
+//SCRIPT_RUNTIME_EMIT_UNSIGNED_SHORT_BEGIN
 void EmitUnsignedShort(unsigned short value)
 {
 	scrCompileGlob.codePos = (byte *)TempMallocAlignStrict(sizeof(unsigned short));
 	Scr_WriteBytecodeValue(scrCompileGlob.codePos, static_cast<unsigned short>(value));
 }
+//SCRIPT_RUNTIME_EMIT_UNSIGNED_SHORT_END
 
 /*
 ============
@@ -5033,11 +5035,13 @@ void EmitWaittillStatement(sval_u obj, sval_u exprlist, sval_u sourcePos, sval_u
 EmitIfElseStatement
 ============
 */
+//SCRIPT_RUNTIME_EMIT_IF_ELSE_BEGIN
 void EmitIfElseStatement(sval_u expr, sval_u stmt1, sval_u stmt2, sval_u sourcePos, sval_u elseSourcePos, bool lastStatement, uint32_t endSourcePos, scr_block_s *block, sval_u *ifStatBlock, sval_u *elseStatBlock)
 {
 	int childCount, checksum;
 	scr_block_s *childBlocks[2];
-	const char *pos1, *pos2, *nextPos1, *nextPos2;
+	char *pos1, *pos2;
+	const char *nextPos1, *nextPos2;
 	uint32_t offset;
 
 	childCount = 0;
@@ -5047,7 +5051,7 @@ void EmitIfElseStatement(sval_u expr, sval_u stmt1, sval_u stmt2, sval_u sourceP
 	AddOpcodePos(sourcePos.sourcePosValue, SOURCE_TYPE_NONE);
 	EmitUnsignedShort(0);
 
-	pos1 = (const char *)scrCompileGlob.codePos;
+	pos1 = reinterpret_cast<char *>(scrCompileGlob.codePos);
 	nextPos1 = TempMalloc(0);
 
 	Scr_TransferBlock(block, ifStatBlock->block);
@@ -5078,7 +5082,7 @@ void EmitIfElseStatement(sval_u expr, sval_u stmt1, sval_u stmt2, sval_u sourceP
 		AddOpcodePos(elseSourcePos.sourcePosValue, SOURCE_TYPE_BREAKPOINT);
 		EmitCodepos(0);
 
-		pos2 = (const char *)scrCompileGlob.codePos;
+		pos2 = reinterpret_cast<char *>(scrCompileGlob.codePos);
 		nextPos2 = TempMalloc(0);
 	}
 
@@ -5086,7 +5090,7 @@ void EmitIfElseStatement(sval_u expr, sval_u stmt1, sval_u stmt2, sval_u sourceP
 
 	offset = TempMallocAlignStrict(0) - nextPos1;
 	iassert(offset < 65536);
-	*(unsigned short *)pos1 = offset;
+	Scr_WriteBytecodeValue(pos1, static_cast<unsigned short>(offset));
 
 	Scr_TransferBlock(block, elseStatBlock->block);
 
@@ -5107,6 +5111,7 @@ void EmitIfElseStatement(sval_u expr, sval_u stmt1, sval_u stmt2, sval_u sourceP
 
 	Scr_InitFromChildBlocks(childBlocks, childCount, block);
 }
+//SCRIPT_RUNTIME_EMIT_IF_ELSE_END
 
 /*
 ============
