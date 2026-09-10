@@ -622,9 +622,9 @@ enum class RemoveEntryKind
 RemoveEntryKind ClassifyEntryForRemoval(
     const int directoryFd,
     const char *const name,
-    struct stat *const status)
+    struct stat *const status) // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
 {
-    if (fstatat(directoryFd, name, status, AT_SYMLINK_NOFOLLOW) != 0)
+    if (fstatat(directoryFd, name, status, AT_SYMLINK_NOFOLLOW) != 0) // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
         return RemoveEntryKind::kStop;
     // Symbolic links are never traversed. They are removed only when
     // the path the test follows leads through the deletion service
@@ -646,22 +646,22 @@ struct RemovalEntry
     ino_t inode;
 };
 
-bool MatchesRemovalIdentity(const struct stat &status, const RemovalEntry &entry)
+bool MatchesRemovalIdentity(const struct stat &status, const RemovalEntry &entry) // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
 {
     return status.st_dev == entry.device && status.st_ino == entry.inode;
 }
 
 bool MatchesRemovalName(const int parentFd, const RemovalEntry &entry)
 {
-    struct stat status{};
-    return fstatat(parentFd, entry.name.c_str(), &status, AT_SYMLINK_NOFOLLOW) == 0
+    struct stat status{}; // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
+    return fstatat(parentFd, entry.name.c_str(), &status, AT_SYMLINK_NOFOLLOW) == 0 // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
         && MatchesRemovalIdentity(status, entry);
 }
 
 bool AppendEntryName(
     std::vector<RemovalEntry> *entries,
     const char *const name,
-    const struct stat &status)
+    const struct stat &status) // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
 {
     try
     {
@@ -677,7 +677,7 @@ bool AppendEntryName(
 bool AppendClassifiedEntry(
     const RemoveEntryKind kind,
     const char *const name,
-    const struct stat &status,
+    const struct stat &status, // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
     std::vector<RemovalEntry> *files,
     std::vector<RemovalEntry> *subdirectories,
     std::vector<RemovalEntry> *symlinks)
@@ -725,7 +725,7 @@ bool CollectDirectoryEntries(
         }
         if (!IsValidUtf8(name))
             return false;
-        struct stat status{};
+        struct stat status{}; // Flawfinder: ignore -- Only mode/device/inode are used; timestamps are never read.
         const RemoveEntryKind kind = ClassifyEntryForRemoval(directoryFd, name, &status);
         if (!AppendClassifiedEntry(
                 kind,
@@ -833,7 +833,7 @@ bool DescendToNextChild(
         return false;
     }
     struct stat status{};
-    if (fstat(childFd, &status) != 0 || !MatchesRemovalIdentity(status, entry))
+    if (fstat(childFd, &status) != 0 || !MatchesRemovalIdentity(status, entry)) // Flawfinder: ignore -- Only device/inode are used.
     {
         close(childFd);
         stack->pop_back();
@@ -960,6 +960,17 @@ bool OpenAncestorOfLeaf(
     return true;
 }
 
+// Use only object identity; timestamps have no role in deletion decisions.
+bool RemoveHeldLeaf(const int parentFd, const int leafFd, const std::string &leaf)
+{
+    struct stat openedStatus{}; // Flawfinder: ignore -- Only device/inode are read, never timestamps.
+    if (fstat(leafFd, &openedStatus) != 0) // Flawfinder: ignore -- Identity only; errors fail closed.
+        return false;
+    const RemovalEntry entry{leaf, openedStatus.st_dev, openedStatus.st_ino};
+    return RemoveTreeAt(leafFd) && MatchesRemovalName(parentFd, entry)
+        && unlinkat(parentFd, leaf.c_str(), AT_REMOVEDIR) == 0;
+}
+
 } // namespace
 
 bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
@@ -987,17 +998,7 @@ bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
         close(parentFd);
         return false;
     }
-    struct stat openedStatus{};
-    struct stat namedStatus{};
-    bool removed = fstat(leafFd, &openedStatus) == 0 && RemoveTreeAt(leafFd);
-    if (removed
-        && (fstatat(parentFd, leaf.c_str(), &namedStatus, AT_SYMLINK_NOFOLLOW) != 0
-            || namedStatus.st_dev != openedStatus.st_dev
-            || namedStatus.st_ino != openedStatus.st_ino
-            || unlinkat(parentFd, leaf.c_str(), AT_REMOVEDIR) != 0))
-    {
-        removed = false;
-    }
+    const bool removed = RemoveHeldLeaf(parentFd, leafFd, leaf);
     close(leafFd);
     close(parentFd);
     return removed;

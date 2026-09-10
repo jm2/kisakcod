@@ -1575,10 +1575,7 @@ bool RemoveNamedEntries(
         const bool verified = VerifyHandleKind(child, expectedReparse, false)
             && VerifyEnumeratedIdentity(child, entry, expectedVolume);
         const bool marked = verified
-            && SetDeletionDisposition(
-                child,
-                &dispositionCode,
-                &usedLegacyFallback);
+            && SetDeletionDisposition(child, &dispositionCode, &usedLegacyFallback);
         CloseHandle(child);
         if (!verified)
         {

@@ -2508,9 +2508,33 @@ void ReplaceEnumeratedRemovalEntry()
         && RenameRemovalFixture(fixture.incoming, fixture.victim);
 }
 
-// Invoke the real deletion walk, replacing an enumerated entry with another
-// object of the SAME kind at a deterministic boundary. No timing race or
-// mirrored deletion algorithm is involved. Both objects' payloads must survive.
+bool CreateRemovalPayload(const std::string &path, const bool directory)
+{
+    if (directory && !Check(Sys_FileSystemCreateDirectory(path.c_str())))
+        return false;
+    return Check(WriteFile(directory ? Join(path, "keep") : path));
+}
+
+bool RemovalPayloadSurvived(const std::string &path, const bool directory)
+{
+    const std::string payload = directory ? Join(path, "keep") : path;
+    std::vector<unsigned char> bytes;
+    return Sys_FileSystemReadFile(payload.c_str(), 8, &bytes)
+        && bytes == std::vector<unsigned char>{'x'};
+}
+
+bool PrepareRemovalReplacement(
+    const std::string &parent, const std::string &root,
+    const RemovalReplacement &fixture, const bool directory)
+{
+    return Check(Sys_FileSystemCreateDirectory(parent.c_str()))
+        && Check(Sys_FileSystemCreateDirectory(root.c_str()))
+        && CreateRemovalPayload(fixture.victim, directory)
+        && CreateRemovalPayload(fixture.incoming, directory);
+}
+
+// Run the real walk and replace an enumerated entry with a different object
+// of the same kind at a deterministic boundary. Both payloads must survive.
 bool ProbeRemoveTreeIdentityReplacement(
     const std::string &workingDirectory,
     const bool directory)
@@ -2519,32 +2543,20 @@ bool ProbeRemoveTreeIdentityReplacement(
     const std::string parent = MakeUniquePath(workingDirectory) + "-identity";
     const std::string root = Join(parent, "root");
     RemovalReplacement fixture{Join(root, "victim"), Join(parent, "original"), Join(parent, "incoming")};
-    if (!Check(Sys_FileSystemCreateDirectory(parent.c_str()))
-        || !Check(Sys_FileSystemCreateDirectory(root.c_str())))
-        return false;
-    if (directory && (!Check(Sys_FileSystemCreateDirectory(fixture.victim.c_str()))
-        || !Check(Sys_FileSystemCreateDirectory(fixture.incoming.c_str()))))
-        return false;
-    const std::string originalPayload = directory ? Join(fixture.victim, "keep") : fixture.victim;
-    const std::string incomingPayload = directory ? Join(fixture.incoming, "keep") : fixture.incoming;
-    if (!Check(WriteFile(originalPayload)) || !Check(WriteFile(incomingPayload)))
+    if (!PrepareRemovalReplacement(parent, root, fixture, directory))
         return false;
     removalReplacement = &fixture;
     Kisak_FileSystemSetRemoveTreeTestHook(ReplaceEnumeratedRemovalEntry);
     const bool removed = Sys_FileSystemRemoveTree(root.c_str());
     Kisak_FileSystemSetRemoveTreeTestHook(nullptr);
     removalReplacement = nullptr;
-    std::vector<unsigned char> originalBytes;
-    std::vector<unsigned char> replacementBytes;
-    const std::string movedPayload = directory ? Join(fixture.movedOriginal, "keep") : fixture.movedOriginal;
-    const bool preserved = Sys_FileSystemReadFile(movedPayload.c_str(), 8, &originalBytes)
-        && Sys_FileSystemReadFile(originalPayload.c_str(), 8, &replacementBytes)
-        && originalBytes == std::vector<unsigned char>{'x'}
-        && replacementBytes == originalBytes;
-    const bool passed = Check(fixture.replaced) && Check(!removed) && Check(preserved);
-    const bool cleaned = Sys_FileSystemRemoveTree(parent.c_str());
-    return Check(cleaned) && passed;
+    bool passed = Check(fixture.replaced);
+    passed = Check(!removed) && passed;
+    passed = Check(RemovalPayloadSurvived(fixture.movedOriginal, directory)) && passed;
+    passed = Check(RemovalPayloadSurvived(fixture.victim, directory)) && passed;
+    return Check(Sys_FileSystemRemoveTree(parent.c_str())) && passed;
 }
+
 #endif
 
 // Dispatches the platform-neutral remove-tree contracts from main so the
