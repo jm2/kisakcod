@@ -4,6 +4,7 @@
 #include <EffectsCore/fx_system.h>
 #include <universal/q_parse.h>
 #include <qcommon/com_bsp.h>
+#include <qcommon/sys_sync.h>
 #include <universal/phys_obj_id.h>
 
 const char *dynEntClassNames[2] =
@@ -680,11 +681,19 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
                     // The frozen field is int32_t; the sidecar token is the
                     // corresponding unsigned type, so alias through it
                     // explicitly (signed/unsigned pairs may alias).
+                    // The sidecar contract requires CRITSECT_PHYSICS for
+                    // every Bind/Resolve/Release: this loader runs from
+                    // G_LoadMainState WITHOUT the lock held, so the bind
+                    // takes the span itself. Phys_ObjLoad above and
+                    // Phys_ObjDestroy below manage their own locking and
+                    // must stay OUTSIDE the span.
+                    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
                     const phys_obj_id::TokenResult bind = phys_obj_id::WriteBind(
                         g_dynEntClientBodySidecar,
                         reinterpret_cast<phys_obj_id::BodyToken *>(&dynEntClient->physObjId),
                         owner,
                         physObjIdBody);
+                    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
                     if (bind.status != phys_obj_id::Status::Success)
                     {
                         // A failed bind means the slot is already occupied.
@@ -857,9 +866,19 @@ void DynEnt_SaveEntities(MemoryFile *memFile)
                 do
                 {
                     DynEntityClient *const dynEntClient = &(*dynEntClientList)[v5];
+                    // The sidecar contract requires CRITSECT_PHYSICS for
+                    // every Bind/Resolve/Release: this saver runs from
+                    // G_SaveMainState WITHOUT the lock held, so the
+                    // resolve takes the span itself — the same
+                    // resolve-inside/use-outside discipline as the
+                    // runtime paths in DynEntity_client.cpp. Phys_ObjSave
+                    // below only reads the already-resolved body and
+                    // stays OUTSIDE the span.
+                    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
                     dxBody *const physObjIdBody = phys_obj_id::ReadResolve<dxBody>(
                         g_dynEntClientBodySidecar,
                         dynEntClient->physObjId);
+                    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
                     //v6 = (_cntlzw((*dynEntClientList)[v5].physObjId) & 0x20) == 0;
                     v6 = (physObjIdBody != nullptr);
                     MemFile_WriteData(memFile, 1, &v6);

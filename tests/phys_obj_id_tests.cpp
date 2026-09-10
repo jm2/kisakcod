@@ -374,6 +374,11 @@ bool TestReleaseReuseGenerationContract()
 //       completely undisturbed by the failed restore;
 //   (c) a later successful bind of the same owner (reuse path) bumps
 //       the generation so the stale saved token stays rejected forever.
+// The runtime cases exercise the sidecar semantics that make those
+// loader rules load-bearing; the loader TU itself is Windows-CI-only
+// and cannot link into this portable binary, so the production clear
+// ordering is pinned textually by the
+// phys-obj-id-owner-bound-source-invariants gate.
 // Split into two functions to keep per-function cyclomatic complexity
 // under Codacy's limit of 10; the scenario order and failure
 // semantics are unchanged.
@@ -393,19 +398,34 @@ bool TestFailedLoadClearsStaleToken()
 
     // The save image hands the loader this stale saved token (as the
     // assessed probe's field: token 65537 surviving a failed load).
+    // The field arrives carrying it — the genuine pre-clear state the
+    // loader must repair, not an already-empty field.
     const phys_obj_id::BodyToken savedToken = foreignBind.token;
+    phys_obj_id::BodyToken field = savedToken;
+
+    // (a) The hazard, pre-clear: the stale token still resolves through
+    //     the sidecar to the FOREIGN entity's body — exactly what the
+    //     surviving token would hand the runtime. This assertion makes
+    //     the test fail-meaningful: a sidecar that rejected live tokens
+    //     vacuously, or a scenario without a real stale token, could not
+    //     reproduce it.
+    if (phys_obj_id::ReadResolve<void>(sidecar, field) != &foreignBody)
+        return false;
 
     // Loader pre-restoration clear (the fixed DynEnt_LoadEntities
-    // contract): the field is wiped BEFORE Phys_ObjLoad runs, and a
-    // failed load publishes nothing. Model the post-loader state:
-    phys_obj_id::BodyToken field = phys_obj_id::INVALID_BODY_TOKEN;
+    // contract, pinned on the engine TU by the
+    // phys-obj-id-owner-bound-source-invariants gate because the loader
+    // TU is Windows-CI-only and cannot link into this portable binary):
+    // the field is wiped BEFORE Phys_ObjLoad runs, and a failed load
+    // publishes nothing.
+    field = phys_obj_id::INVALID_BODY_TOKEN;
 
-    // (a) The cleared field must NOT resolve — before the fix, the
-    //     surviving stale token resolved to the foreign body here.
+    // (b) The cleared field must NOT resolve — the hazard from (a) is
+    //     severed by the clear itself.
     if (phys_obj_id::ReadResolve<void>(sidecar, field) != nullptr)
         return false;
 
-    // (b) The foreign binding is undisturbed: its own token still
+    // (c) The foreign binding is undisturbed: its own token still
     //     resolves to the foreign body.
     if (phys_obj_id::ReadResolve<void>(sidecar, savedToken) != &foreignBody)
         return false;

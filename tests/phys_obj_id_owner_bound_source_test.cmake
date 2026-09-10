@@ -12,7 +12,13 @@ cmake_minimum_required(VERSION 3.16)
 #      their documented CRITSECT_PHYSICS spans;
 #   4. the SP save loader clears the serialized physObjId token BEFORE
 #      body restoration, so a failed Phys_ObjLoad can never leave a
-#      stale token that resolves to another owner's body.
+#      stale token that resolves to another owner's body;
+#   5. the SP save loader WriteBind runs inside a CRITSECT_PHYSICS span
+#      (the caller G_LoadMainState holds no lock) and leaves the span
+#      BEFORE Phys_ObjDestroy, which manages its own locking;
+#   6. the SP save saver ReadResolve runs inside a CRITSECT_PHYSICS span
+#      (the caller G_SaveMainState holds no lock) and leaves the span
+#      BEFORE Phys_ObjSave, which only reads the resolved body.
 
 if(NOT DEFINED SOURCE_ROOT OR SOURCE_ROOT STREQUAL "")
     message(FATAL_ERROR "SOURCE_ROOT must identify the KisakCOD source tree")
@@ -118,9 +124,44 @@ require_ordered("${_sp_loader}"
     "SP save-loader clears the serialized token BEFORE body restoration so a"
     " failed load cannot leave a stale token that resolves to another"
     " owner's body")
+require_ordered("${_sp_loader}"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "phys_obj_id::WriteBind("
+    "SP save-loader WriteBind enters CRITSECT_PHYSICS (caller G_LoadMainState"
+    " holds no lock)")
+require_ordered("${_sp_loader}"
+    "phys_obj_id::WriteBind("
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "SP save-loader WriteBind runs inside the physics lock span")
+require_ordered("${_sp_loader}"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);"
+    "SP save-loader leaves the lock span BEFORE the self-locking"
+    " Phys_ObjDestroy rollback")
 forbid_contains("${_sp_loader}"
     "leak the body"
     "SP save loader must not document a deliberate leak")
+
+# --- SP save saver: ReadResolve inside the lock span; body save outside it.
+extract_slice(
+    "${_load_obj}"
+    "void DynEnt_SaveEntities(MemoryFile *memFile)"
+    "} while (v2);"
+    _saver
+    "SP save saver")
+require_ordered("${_saver}"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "phys_obj_id::ReadResolve<dxBody>("
+    "SP save saver ReadResolve enters CRITSECT_PHYSICS (caller G_SaveMainState"
+    " holds no lock)")
+require_ordered("${_saver}"
+    "phys_obj_id::ReadResolve<dxBody>("
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "SP save saver ReadResolve runs inside the physics lock span")
+require_ordered("${_saver}"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "Phys_ObjSave(physObjIdBody, memFile);"
+    "SP save saver leaves the lock span BEFORE the body-state save")
 
 # --- Breakable pieces: Bind inside the lock span; failed bind rolls back.
 extract_slice(
