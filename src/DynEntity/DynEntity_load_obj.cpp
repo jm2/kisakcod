@@ -4,6 +4,8 @@
 #include <EffectsCore/fx_system.h>
 #include <universal/q_parse.h>
 #include <qcommon/com_bsp.h>
+#include <qcommon/sys_sync.h>
+#include <universal/phys_obj_id.h>
 
 const char *dynEntClassNames[2] =
 {
@@ -596,6 +598,24 @@ void __cdecl DynEnt_LoadEntities()
                     "cm.dynEntCount[DYNENT_COLL_CLIENT_MODEL] + cm.dynEntCount[DYNENT_COLL_CLIENT_BRUSH] == dynEntCount");
             for (drawTypea = 0; drawTypea < 2; ++drawTypea)
             {
+                // The sidecar owner key packs drawType * 4096 + dynEntId;
+                // a per-draw-type count past the packing stride would
+                // collide MODEL keys into the BRUSH key range (e.g. MODEL
+                // id 4096 and BRUSH id 0 both derive owner 4096). This is
+                // untrusted map data, so it is rejected with ERR_DROP —
+                // an assert is compiled out of non-USE_ASSERTS release
+                // builds and would let colliding binds through — before
+                // the pose/client/coll lists are allocated or published.
+                // The bound matches the legacy total maximum (4095, see
+                // the dynEntStringCount gate above) so the accepted range
+                // and the message cannot drift.
+                if (cm.dynEntCount[drawTypea] >= phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
+                    Com_Error(
+                        ERR_DROP,
+                        "Found [%i] Dyn Entities of type [%i], Max is [%u]\n",
+                        cm.dynEntCount[drawTypea],
+                        drawTypea,
+                        phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType - 1u);
                 if (cm.dynEntCount[drawTypea])
                 {
                     cm.dynEntPoseList[drawTypea] = (DynEntityPose *)DynEnt_Alloc(cm.dynEntCount[drawTypea], 32);
@@ -616,6 +636,34 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
     {
         uint16_t count = 0;
         MemFile_ReadData(memFile, sizeof(count), (uint8_t *)&count);
+        // Same sidecar owner-key stride bound as the MP loader: the save
+        // image is untrusted data and a count at or past the stride would
+        // collide this draw type's keys into the next one's slot range.
+        // Rejected with ERR_DROP — an assert is compiled out of
+        // non-USE_ASSERTS release builds — before any save data is read
+        // or published. The bound matches the legacy map-loader maximum
+        // (4095) so the accepted range and the message cannot drift.
+        if (count >= phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
+            Com_Error(
+                ERR_DROP,
+                "Save image declares [%hu] Dyn Entities of type [%i], Max is [%u]\n",
+                count,
+                drawType,
+                phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType - 1u);
+        // The pose/client lists below were sized by the MAP load (which
+        // ran first and set cm.dynEntCount from the map's own entities),
+        // not by the save image. A crafted save declaring more entities
+        // than the map allocated would overflow those fixed allocations
+        // during the reads, so the pre-load allocated capacity is a hard
+        // bound too — captured BEFORE the save count replaces the field.
+        const uint16_t allocated = cm.dynEntCount[drawType];
+        if (count > allocated)
+            Com_Error(
+                ERR_DROP,
+                "Save image declares [%hu] Dyn Entities of type [%i], but the map allocated only [%hu]\n",
+                count,
+                drawType,
+                allocated);
         cm.dynEntCount[drawType] = count;
         if (count == 0)
             continue;
@@ -627,10 +675,62 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
         {
             uint8_t hasPhys = 0;
             MemFile_ReadData(memFile, 1, &hasPhys);
+            DynEntityClient *const dynEntClient = &cm.dynEntClientList[drawType][dynEntId];
             if (hasPhys)
-                cm.dynEntClientList[drawType][dynEntId].physObjId = (uintptr_t)Phys_ObjLoad(PHYS_WORLD_DYNENT, memFile);
+            {
+                // The serialized field may still carry the previous
+                // session's token, but nothing about it is trustworthy
+                // for THIS load: the body it named is gone, and the
+                // restoration below can fail outright. A surviving stale
+                // token would resolve through the sidecar to whichever
+                // body now occupies that owner slot — a different
+                // entity's body. Clear the token BEFORE restoration and
+                // let only a successful WriteBind publish a fresh one.
+                dynEntClient->physObjId = 0;
+
+                dxBody *const physObjIdBody = Phys_ObjLoad(PHYS_WORLD_DYNENT, memFile);
+                if (physObjIdBody)
+                {
+                    // Shared packing helper: must match the runtime bind
+                    // path in DynEntity_client.cpp exactly.
+                    const phys_obj_id::OwnerIndex owner =
+                        phys_obj_id::DynEntPhysObjId_MakeOwnerIndex(
+                            static_cast<std::uint32_t>(drawType),
+                            dynEntId);
+                    // The frozen field is int32_t; the sidecar token is the
+                    // corresponding unsigned type, so alias through it
+                    // explicitly (signed/unsigned pairs may alias).
+                    // The sidecar contract requires CRITSECT_PHYSICS for
+                    // every Bind/Resolve/Release: this loader runs from
+                    // G_LoadMainState WITHOUT the lock held, so the bind
+                    // takes the span itself. Phys_ObjLoad above and
+                    // Phys_ObjDestroy below manage their own locking and
+                    // must stay OUTSIDE the span.
+                    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                    const phys_obj_id::TokenResult bind = phys_obj_id::WriteBind(
+                        g_dynEntClientBodySidecar,
+                        reinterpret_cast<phys_obj_id::BodyToken *>(&dynEntClient->physObjId),
+                        owner,
+                        physObjIdBody);
+                    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                    if (bind.status != phys_obj_id::Status::Success)
+                    {
+                        // A failed bind means the slot is already occupied.
+                        // The legacy saved-image rebuild never re-occupies
+                        // an active slot, so this is a programming error —
+                        // but the freshly created body must not leak:
+                        // destroy it through the production adapter
+                        // (Phys_ObjDestroy manages its own locking). The
+                        // field stays at the pre-restoration 0, so no
+                        // token for the destroyed body is ever published.
+                        Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
+                    }
+                }
+            }
             else
-                cm.dynEntClientList[drawType][dynEntId].physObjId = 0;
+            {
+                dynEntClient->physObjId = 0;
+            }
         }
     }
 }
@@ -784,11 +884,25 @@ void DynEnt_SaveEntities(MemoryFile *memFile)
                 v5 = 0;
                 do
                 {
+                    DynEntityClient *const dynEntClient = &(*dynEntClientList)[v5];
+                    // The sidecar contract requires CRITSECT_PHYSICS for
+                    // every Bind/Resolve/Release: this saver runs from
+                    // G_SaveMainState WITHOUT the lock held, so the
+                    // resolve takes the span itself — the same
+                    // resolve-inside/use-outside discipline as the
+                    // runtime paths in DynEntity_client.cpp. Phys_ObjSave
+                    // below only reads the already-resolved body and
+                    // stays OUTSIDE the span.
+                    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+                    dxBody *const physObjIdBody = phys_obj_id::ReadResolve<dxBody>(
+                        g_dynEntClientBodySidecar,
+                        dynEntClient->physObjId);
+                    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
                     //v6 = (_cntlzw((*dynEntClientList)[v5].physObjId) & 0x20) == 0;
-                    v6 = (*dynEntClientList)[v5].physObjId != 0;
+                    v6 = (physObjIdBody != nullptr);
                     MemFile_WriteData(memFile, 1, &v6);
                     if (v6)
-                        Phys_ObjSave((dxBody*)(*dynEntClientList)[v5].physObjId, memFile);
+                        Phys_ObjSave(physObjIdBody, memFile);
                     v5 = (uint16_t)(v5 + 1);
                 } while (v5 < *dynEntCount);
             }

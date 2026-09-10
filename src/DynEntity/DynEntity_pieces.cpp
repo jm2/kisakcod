@@ -2,6 +2,7 @@
 #include <win32/win_local.h>
 #include <gfx_d3d/r_dpvs.h>
 #include <universal/profile.h>
+#include <universal/phys_obj_id.h>
 
 #include <cmath>
 #include <cstdlib>
@@ -135,15 +136,28 @@ void __cdecl DynEntPieces_AddDrawSurfs()
     {
         if (g_breakablePieces[i].active)
         {
+            // The sidecar contract requires Resolve to run under
+            // CRITSECT_PHYSICS: an unlocked ReadResolve can race a
+            // Bind/Release on this slot and publish a dangling body.
             Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-            Phys_ObjGetInterpolatedState(
-                PHYS_WORLD_FX,
-                (dxBody *)g_breakablePieces[i].physObjId,
-                placement.base.origin,
-                placement.base.quat);
-            placement.scale = 1.0;
-            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-            R_FilterXModelIntoScene(g_breakablePieces[i].model, &placement, 0, &g_breakablePieces[i].lightingHandle);
+            dxBody *const physObjIdBody = phys_obj_id::ReadResolve<dxBody>(
+                g_breakablePieceBodySidecar,
+                g_breakablePieces[i].physObjId);
+            if (physObjIdBody)
+            {
+                Phys_ObjGetInterpolatedState(
+                    PHYS_WORLD_FX,
+                    physObjIdBody,
+                    placement.base.origin,
+                    placement.base.quat);
+                placement.scale = 1.0;
+                Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+                R_FilterXModelIntoScene(g_breakablePieces[i].model, &placement, 0, &g_breakablePieces[i].lightingHandle);
+            }
+            else
+            {
+                Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+            }
         }
     }
 }
@@ -296,6 +310,32 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
                 spawnResult.body = nullptr;
             }
         }
+        // Sidecar Bind runs inside the physics lock span per the sidecar
+        // contract (same span as creation and the bullet-impact rollback).
+        // The slot is guaranteed vacant: the array is walked strictly
+        // forward and numPieces is the bound on the highest index, so a
+        // failed bind is a programming error — but the freshly created
+        // body must not leak: destroy it under this same lock exactly
+        // like the bullet-impact rollback above, then surface the failure.
+        phys_obj_id::TokenResult pieceBind{};
+        bool bindFailed = false;
+        if (spawnResult.status == PhysBodyModelCreateStatus::Success)
+        {
+            const phys_obj_id::OwnerIndex owner =
+                static_cast<phys_obj_id::OwnerIndex>(numPieces);
+            // Bind is a non-static member: call it on the global sidecar.
+            pieceBind = g_breakablePieceBodySidecar.Bind(owner, spawnResult.body);
+            if (!pieceBind)
+            {
+                bindFailed = true;
+                spawnResult.cleanupFailed =
+                    Phys_TryDestroyBodyLockedNoReport(
+                        PHYS_WORLD_FX,
+                        spawnResult.body)
+                    != PhysBodyRollbackStatus::Success;
+                spawnResult.body = nullptr;
+            }
+        }
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 
         if (spawnResult.cleanupFailed)
@@ -311,7 +351,9 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
         physObjId = spawnResult.body;
         if (spawnResult.status == PhysBodyModelCreateStatus::Success)
         {
-            g_breakablePieces[numPieces].physObjId = (int32_t)(uintptr_t)physObjId;
+            if (bindFailed)
+                return false;
+            g_breakablePieces[numPieces].physObjId = pieceBind.token;
             g_breakablePieces[numPieces].model = model;
             result = 1;
             g_breakablePieces[numPieces].lightingHandle = 0;
