@@ -10,6 +10,7 @@
 #include <script/scr_compiler.h>
 #include <script/scr_evaluate.h>
 #include <script/scr_stringlist.h>
+#include <universal/com_memory.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -22,6 +23,8 @@ scrVarGlob_t scrVarGlob{};
 scrCompilePub_t scrCompilePub{};
 scrCompileGlob_t scrCompileGlob{};
 scr_classStruct_t g_classMap[CLASS_NUM_COUNT] = {{0, 0, 0, ""}, {0, 0, 0, ""}, {0, 0, 0, ""}, {0, 0, 0, ""}};
+HunkUser nodeArena{};
+HunkUser *g_allocNodeUser = &nodeArena;
 debugger_sval_s *g_debugExprHead = nullptr;
 int g_breakonExpr = 0;
 int g_script_error_level = -1;
@@ -76,7 +79,10 @@ void *Allocate(size_t bytes) { void *p = std::malloc(bytes); if (!p) std::abort(
 }
 void MyAssertHandler(const char *, int, int, const char *, ...) { std::abort(); }
 void *Z_Malloc(int bytes, const char *, int) { return Allocate(bytes); }
-sval_u *Scr_AllocNode(int count) { return static_cast<sval_u *>(Allocate(count * sizeof(sval_u))); }
+void *Hunk_UserAlloc(HunkUser *user, uint32_t bytes, int alignment) {
+    Check(user == g_allocNodeUser && alignment == alignof(sval_u));
+    return Allocate(bytes);
+}
 const char *SL_ConvertToString(uint32_t) { return "fixture"; }
 uint16_t Scr_CompileCanonicalString(uint32_t id) { return static_cast<uint16_t>(id + 10); }
 uint32_t AllocValue() { return 7; }
@@ -136,6 +142,26 @@ uint32_t Scr_GetPrevSourcePos(const char *, uint32_t index) { return index; }
 sval_u IntegerExpression(int value) { return debugger_node1(ENUM_primitive_expression, debugger_node1(ENUM_integer, sval_u(value))); }
 sval_u ParameterList() { return prepend_node(IntegerExpression(11), linked_list_end(IntegerExpression(22))); }
 sval_u FunctionName() { return debugger_node1(ENUM_script_call, debugger_node1(ENUM_function, debugger_node1(ENUM_local_function, sval_u(1)))); }
+void TestOrdinaryParseNodes()
+{
+    char text[] = "native parse payload"; HighAddress(text);
+    sval_u value; value.debugString = text;
+    const sval_u nodes[] = {
+        node0(ENUM_integer), node1(ENUM_integer, value), node2(ENUM_integer, value, value),
+        node3(ENUM_integer, value, value, value), node4(ENUM_integer, value, value, value, value),
+        node5(ENUM_integer, value, value, value, value, value),
+        node6(ENUM_integer, value, value, value, value, value, value),
+        node7(ENUM_integer, value, value, value, value, value, value, value),
+        node8(ENUM_integer, value, value, value, value, value, value, value, value)};
+    for (size_t arity = 0; arity < std::size(nodes); ++arity) {
+        Check(nodes[arity].node[0].type == ENUM_integer);
+        for (size_t cell = 1; cell <= arity; ++cell) Check(nodes[arity].node[cell].debugString == text);
+    }
+    sval_u list = append_node(linked_list_end(value), value);
+    Check(list.node[0].node[0].debugString == text);
+    Check(list.node[1].node[0].debugString == text && list.node[1].node[1].node == nullptr);
+    Check(list.node[0].node[1].node == list.node[1].node);
+}
 void TestExpressionCompilation()
 {
     sval_u text = debugger_node1(ENUM_string, sval_u(1));
@@ -254,7 +280,7 @@ int main()
     scrVarPub.evaluate = true;
     scrVmPub.top = scrVmPub.stack;
     scrVmPub.maxstack = scrVmPub.stack + 2047;
-    TestExpressionCompilation(); TestDebuggerBuiltins(); TestBuiltinMethodCache(); TestEntityAndWatchTransfers(); TestWatchChildStorage(); TestCallStackFrames(); TestScriptWindowList();
+    TestOrdinaryParseNodes(); TestExpressionCompilation(); TestDebuggerBuiltins(); TestBuiltinMethodCache(); TestEntityAndWatchTransfers(); TestWatchChildStorage(); TestCallStackFrames(); TestScriptWindowList();
     Check(scrVmDebugPub.checkBreakon == 0 && g_breakonExpr == 0);
     Check(scrVmPub.maxstack == scrVmPub.stack + 2047);
     for (void *p : allocations) std::free(p);

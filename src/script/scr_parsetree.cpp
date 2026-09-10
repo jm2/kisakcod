@@ -24,11 +24,12 @@ void __cdecl Scr_ShutdownAllocNode()
     }
 }
 
+//SCRIPT_DEBUGGER_ORDINARY_NODES_BEGIN
 sval_u *__cdecl Scr_AllocNode(int size)
 {
     if (!g_allocNodeUser)
         MyAssertHandler(".\\script\\scr_parsetree.cpp", 82, 0, "%s", "g_allocNodeUser");
-    return (sval_u *)Hunk_UserAlloc(g_allocNodeUser, 4 * size, 4);
+    return static_cast<sval_u *>(Hunk_UserAlloc(g_allocNodeUser, sizeof(sval_u) * size, alignof(sval_u)));
 }
 
 sval_u __cdecl node0(Enum_t type)
@@ -165,6 +166,8 @@ sval_u __cdecl node8(
     return result;
 }
 
+//SCRIPT_DEBUGGER_ORDINARY_NODES_END
+
 // Decomp Status: Tested, Completed
 //SCRIPT_DEBUGGER_LINKED_LIST_END_BEGIN
 sval_u linked_list_end(sval_u val1)
@@ -197,6 +200,7 @@ sval_u prepend_node(sval_u val1, sval_u val2)
 //SCRIPT_DEBUGGER_PREPEND_NODE_END
 
 // Decomp Status: Tested, Completed
+//SCRIPT_DEBUGGER_APPEND_NODE_BEGIN
 sval_u append_node(sval_u val1, sval_u val2)
 {
     sval_u *node;
@@ -208,6 +212,8 @@ sval_u append_node(sval_u val1, sval_u val2)
     val1.node[1].node = node;
     return val1;
 }
+
+//SCRIPT_DEBUGGER_APPEND_NODE_END
 
 void __cdecl Scr_ClearDebugExpr(debugger_sval_s *debugExprHead)
 {
