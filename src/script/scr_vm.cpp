@@ -1132,6 +1132,7 @@ LABEL_30:
                             newStackValue->bufLen = bufLen;
                             newStackValue->pos = stackValue->pos;
                             newStackValue->localId = stackValue->localId;
+                            newStackValue->saveStamp = stackValue->saveStamp;
                             memcpy(newStackValue->buf, stackValue->buf, len);
                             MT_Free((unsigned char*)stackValue, stackValue->bufLen);
                             stackValue = newStackValue;
