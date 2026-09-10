@@ -29,6 +29,10 @@ const char *Kisak_FileSystemLastRemoveTreeDiagnostic(
     std::int32_t *failureCode);
 #endif
 
+#if defined(KISAK_FILESYSTEM_TEST_HOOKS)
+void Kisak_FileSystemSetRemoveTreeTestHook(void (*hook)());
+#endif
+
 namespace
 {
 #if defined(_WIN32)
@@ -2478,6 +2482,71 @@ int RunPathAndClassificationContracts(std::string *const workingDirectory)
     return 0;
 }
 
+#if defined(KISAK_FILESYSTEM_TEST_HOOKS)
+struct RemovalReplacement
+{
+    std::string victim;
+    std::string movedOriginal;
+    std::string incoming;
+    bool replaced = false;
+};
+thread_local RemovalReplacement *removalReplacement = nullptr;
+
+bool RenameRemovalFixture(const std::string &from, const std::string &to)
+{
+#if defined(_WIN32)
+    return MoveFileExW(ExtendedPath(from).c_str(), ExtendedPath(to).c_str(), 0) != 0;
+#else
+    return rename(from.c_str(), to.c_str()) == 0;
+#endif
+}
+
+void ReplaceEnumeratedRemovalEntry()
+{
+    RemovalReplacement &fixture = *removalReplacement;
+    fixture.replaced = RenameRemovalFixture(fixture.victim, fixture.movedOriginal)
+        && RenameRemovalFixture(fixture.incoming, fixture.victim);
+}
+
+// Invoke the real deletion walk, replacing an enumerated entry with another
+// object of the SAME kind at a deterministic boundary. No timing race or
+// mirrored deletion algorithm is involved. Both objects' payloads must survive.
+bool ProbeRemoveTreeIdentityReplacement(
+    const std::string &workingDirectory,
+    const bool directory)
+{
+    SetCheckStage(directory ? "remove-tree/directory-identity" : "remove-tree/file-identity");
+    const std::string parent = MakeUniquePath(workingDirectory) + "-identity";
+    const std::string root = Join(parent, "root");
+    RemovalReplacement fixture{Join(root, "victim"), Join(parent, "original"), Join(parent, "incoming")};
+    if (!Check(Sys_FileSystemCreateDirectory(parent.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(root.c_str())))
+        return false;
+    if (directory && (!Check(Sys_FileSystemCreateDirectory(fixture.victim.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(fixture.incoming.c_str()))))
+        return false;
+    const std::string originalPayload = directory ? Join(fixture.victim, "keep") : fixture.victim;
+    const std::string incomingPayload = directory ? Join(fixture.incoming, "keep") : fixture.incoming;
+    if (!Check(WriteFile(originalPayload)) || !Check(WriteFile(incomingPayload)))
+        return false;
+    removalReplacement = &fixture;
+    Kisak_FileSystemSetRemoveTreeTestHook(ReplaceEnumeratedRemovalEntry);
+    const bool removed = Sys_FileSystemRemoveTree(root.c_str());
+    Kisak_FileSystemSetRemoveTreeTestHook(nullptr);
+    removalReplacement = nullptr;
+    std::vector<unsigned char> originalBytes;
+    std::vector<unsigned char> replacementBytes;
+    const std::string movedPayload = directory ? Join(fixture.movedOriginal, "keep") : fixture.movedOriginal;
+    const bool preserved = Sys_FileSystemReadFile(movedPayload.c_str(), 8, &originalBytes)
+        && Sys_FileSystemReadFile(originalPayload.c_str(), 8, &replacementBytes)
+        && originalBytes == std::vector<unsigned char>{'x'}
+        && replacementBytes == originalBytes;
+    const bool passed = Check(fixture.replaced) && Check(!removed) && Check(preserved);
+    const bool cleaned = Sys_FileSystemRemoveTree(parent.c_str());
+    return Check(cleaned) && passed;
+}
+#endif
+
 // Dispatches the platform-neutral remove-tree contracts from main so the
 // entry point's branch count stays under the project complexity limit.
 // Stage notes and call order mirror the previous inline dispatch.
@@ -2489,6 +2558,11 @@ int RunRemoveTreeCoreContracts(const std::string &workingDirectory)
     SetCheckStage("handle-relative-recursive-deletion");
     if (!TestRemoveTreeContract(workingDirectory))
         return 1;
+#if defined(KISAK_FILESYSTEM_TEST_HOOKS)
+    if (!ProbeRemoveTreeIdentityReplacement(workingDirectory, true)
+        || !ProbeRemoveTreeIdentityReplacement(workingDirectory, false))
+        return 1;
+#endif
     return 0;
 }
 

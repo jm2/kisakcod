@@ -22,6 +22,24 @@
 #include <mach-o/dyld.h>
 #endif
 
+#if defined(KISAK_FILESYSTEM_TEST_HOOKS)
+namespace
+{
+thread_local void (*removeTreeTestHook)() = nullptr;
+}
+void Kisak_FileSystemSetRemoveTreeTestHook(void (*hook)())
+{
+    removeTreeTestHook = hook;
+}
+static void RunRemoveTreeTestHook()
+{
+    const auto hook = removeTreeTestHook;
+    removeTreeTestHook = nullptr;
+    if (hook)
+        hook();
+}
+#endif
+
 namespace
 {
 constexpr std::size_t kMaximumPathComponents = 256;
@@ -603,31 +621,51 @@ enum class RemoveEntryKind
 
 RemoveEntryKind ClassifyEntryForRemoval(
     const int directoryFd,
-    const char *const name)
+    const char *const name,
+    struct stat *const status)
 {
-    struct stat status{};
-    if (fstatat(directoryFd, name, &status, AT_SYMLINK_NOFOLLOW) != 0)
+    if (fstatat(directoryFd, name, status, AT_SYMLINK_NOFOLLOW) != 0)
         return RemoveEntryKind::kStop;
     // Symbolic links are never traversed. They are removed only when
     // the path the test follows leads through the deletion service
     // itself; otherwise deletion of their target would depend on
     // contents outside the engine's filesystem tree.
-    if (S_ISLNK(status.st_mode))
+    if (S_ISLNK(status->st_mode))
         return RemoveEntryKind::kSymlink;
-    if (S_ISREG(status.st_mode))
+    if (S_ISREG(status->st_mode))
         return RemoveEntryKind::kFile;
-    if (S_ISDIR(status.st_mode))
+    if (S_ISDIR(status->st_mode))
         return RemoveEntryKind::kDirectory;
     return RemoveEntryKind::kStop;
 }
 
+struct RemovalEntry
+{
+    std::string name;
+    dev_t device;
+    ino_t inode;
+};
+
+bool MatchesRemovalIdentity(const struct stat &status, const RemovalEntry &entry)
+{
+    return status.st_dev == entry.device && status.st_ino == entry.inode;
+}
+
+bool MatchesRemovalName(const int parentFd, const RemovalEntry &entry)
+{
+    struct stat status{};
+    return fstatat(parentFd, entry.name.c_str(), &status, AT_SYMLINK_NOFOLLOW) == 0
+        && MatchesRemovalIdentity(status, entry);
+}
+
 bool AppendEntryName(
-    std::vector<std::string> *entries,
-    const char *const name)
+    std::vector<RemovalEntry> *entries,
+    const char *const name,
+    const struct stat &status)
 {
     try
     {
-        entries->emplace_back(name);
+        entries->push_back(RemovalEntry{std::string(name), status.st_dev, status.st_ino});
     }
     catch (const std::bad_alloc &)
     {
@@ -639,18 +677,19 @@ bool AppendEntryName(
 bool AppendClassifiedEntry(
     const RemoveEntryKind kind,
     const char *const name,
-    std::vector<std::string> *files,
-    std::vector<std::string> *subdirectories,
-    std::vector<std::string> *symlinks)
+    const struct stat &status,
+    std::vector<RemovalEntry> *files,
+    std::vector<RemovalEntry> *subdirectories,
+    std::vector<RemovalEntry> *symlinks)
 {
     switch (kind)
     {
         case RemoveEntryKind::kFile:
-            return AppendEntryName(files, name);
+            return AppendEntryName(files, name, status);
         case RemoveEntryKind::kDirectory:
-            return AppendEntryName(subdirectories, name);
+            return AppendEntryName(subdirectories, name, status);
         case RemoveEntryKind::kSymlink:
-            return AppendEntryName(symlinks, name);
+            return AppendEntryName(symlinks, name, status);
         case RemoveEntryKind::kStop:
         default:
             return false;
@@ -668,9 +707,9 @@ bool AppendClassifiedEntry(
 bool CollectDirectoryEntries(
     const int directoryFd,
     DIR *const directory,
-    std::vector<std::string> *files,
-    std::vector<std::string> *subdirectories,
-    std::vector<std::string> *symlinks)
+    std::vector<RemovalEntry> *files,
+    std::vector<RemovalEntry> *subdirectories,
+    std::vector<RemovalEntry> *symlinks)
 {
     errno = 0;
     for (;;)
@@ -686,9 +725,12 @@ bool CollectDirectoryEntries(
         }
         if (!IsValidUtf8(name))
             return false;
+        struct stat status{};
+        const RemoveEntryKind kind = ClassifyEntryForRemoval(directoryFd, name, &status);
         if (!AppendClassifiedEntry(
-                ClassifyEntryForRemoval(directoryFd, name),
+                kind,
                 name,
+                status,
                 files,
                 subdirectories,
                 symlinks))
@@ -702,12 +744,13 @@ bool CollectDirectoryEntries(
 
 bool UnlinkEntriesAt(
     const int directoryFd,
-    const std::vector<std::string> &names,
+    const std::vector<RemovalEntry> &names,
     const int unlinkFlags)
 {
-    for (const std::string &name : names)
+    for (const RemovalEntry &entry : names)
     {
-        if (unlinkat(directoryFd, name.c_str(), unlinkFlags) != 0)
+        if (!MatchesRemovalName(directoryFd, entry)
+            || unlinkat(directoryFd, entry.name.c_str(), unlinkFlags) != 0)
             return false;
     }
     return true;
@@ -723,10 +766,10 @@ bool UnlinkEntriesAt(
 struct RemoveTreeFrame
 {
     int directoryFd = -1;                  // open descriptor for this directory
-    std::vector<std::string> files;
-    std::vector<std::string> subdirectories;
-    std::vector<std::string> symlinks;
-    std::string nameInParent;              // unlinkat(AT_REMOVEDIR) name in the parent
+    std::vector<RemovalEntry> files;
+    std::vector<RemovalEntry> subdirectories;
+    std::vector<RemovalEntry> symlinks;
+    RemovalEntry entryInParent{};          // identity and unlinkat name in the parent
     std::size_t nextSubdirectory = 0;      // cursor into subdirectories
     bool enumerated = false;               // entries collected and files unlinked?
     bool ownsFd = false;                   // root fd stays caller-owned
@@ -761,6 +804,9 @@ bool EnumerateRemovalFrame(RemoveTreeFrame *const frame)
     }
     if (closedir(directory) != 0)
         return false;
+#if defined(KISAK_FILESYSTEM_TEST_HOOKS)
+    RunRemoveTreeTestHook();
+#endif
     return UnlinkEntriesAt(frame->directoryFd, frame->files, 0);
 }
 
@@ -778,18 +824,24 @@ bool DescendToNextChild(
         O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
     stack->emplace_back();
     RemoveTreeFrame &child = stack->back();
-    const std::string &name =
-        frame->subdirectories[frame->nextSubdirectory];
+    const RemovalEntry &entry = frame->subdirectories[frame->nextSubdirectory];
     const int childFd = openat(
-        frame->directoryFd, name.c_str(), subdirectoryFlags);
+        frame->directoryFd, entry.name.c_str(), subdirectoryFlags);
     if (childFd < 0)
     {
         stack->pop_back();
         return false;
     }
+    struct stat status{};
+    if (fstat(childFd, &status) != 0 || !MatchesRemovalIdentity(status, entry))
+    {
+        close(childFd);
+        stack->pop_back();
+        return false;
+    }
     child.directoryFd = childFd;
     child.ownsFd = true;
-    child.nameInParent = name;
+    child.entryInParent = entry;
     ++frame->nextSubdirectory;
     return true;
 }
@@ -805,11 +857,12 @@ bool CompleteRemovalFrame(std::deque<RemoveTreeFrame> *const stack)
     stack->pop_back();
     if (!completed.ownsFd)
         return true;
-    close(completed.directoryFd);
     RemoveTreeFrame &parent = stack->back();
-    return unlinkat(
+    const bool matches = MatchesRemovalName(parent.directoryFd, completed.entryInParent);
+    close(completed.directoryFd);
+    return matches && unlinkat(
         parent.directoryFd,
-        completed.nameInParent.c_str(),
+        completed.entryInParent.name.c_str(),
         AT_REMOVEDIR) == 0;
 }
 
@@ -934,9 +987,14 @@ bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
         close(parentFd);
         return false;
     }
-    bool removed = RemoveTreeAt(leafFd);
+    struct stat openedStatus{};
+    struct stat namedStatus{};
+    bool removed = fstat(leafFd, &openedStatus) == 0 && RemoveTreeAt(leafFd);
     if (removed
-        && unlinkat(parentFd, leaf.c_str(), AT_REMOVEDIR) != 0)
+        && (fstatat(parentFd, leaf.c_str(), &namedStatus, AT_SYMLINK_NOFOLLOW) != 0
+            || namedStatus.st_dev != openedStatus.st_dev
+            || namedStatus.st_ino != openedStatus.st_ino
+            || unlinkat(parentFd, leaf.c_str(), AT_REMOVEDIR) != 0))
     {
         removed = false;
     }

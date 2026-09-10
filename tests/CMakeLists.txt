@@ -2467,6 +2467,7 @@ add_executable(kisakcod-platform-filesystem-tests
 )
 target_include_directories(kisakcod-platform-filesystem-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-platform-filesystem-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-platform-filesystem-tests PRIVATE KISAK_FILESYSTEM_TEST_HOOKS=1)
 kisakcod_test_warnings(kisakcod-platform-filesystem-tests)
 set_target_properties(kisakcod-platform-filesystem-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"

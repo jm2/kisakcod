@@ -28,7 +28,10 @@ bool KISAK_CDECL Sys_FileSystemReadFile(
 
 // Recursively deletes one real directory tree without following POSIX
 // symbolic links or Win32 reparse points. The leaf and every descent use
-// handle-relative operations so a racing rename cannot escape the boundary.
+// handle-relative operations. Enumerated entry identities are checked before
+// descent/deletion; a detected replacement fails instead of deleting the new
+// object. This is not an atomic filesystem snapshot: callers must serialize
+// concurrent writers when they require an all-or-nothing tree operation.
 // A leaf itself that is a symbolic link or reparse point is rejected.
 // During descent any symbolic link or reparse point encountered is removed
 // as itself and is never traversed; the target it references is preserved.
