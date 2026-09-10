@@ -15,6 +15,9 @@ using KisakNtStatus = std::int32_t;
 // cppcheck-suppress misra-c2012-12.3 -- A C++ template argument separator, not the comma operator.
 using KisakFileId = std::array<unsigned char, 16>;
 
+// These fields are consumed by sys_filesystem.cpp and the NT kernel ABI.
+// Standalone header analysis cannot see those consumers; none may be removed.
+// cppcheck-suppress-begin unusedStructMember
 struct KisakUnicodeString
 {
     std::uint16_t Length;
@@ -56,6 +59,7 @@ struct KisakFileIdExtdDirectoryInformation
     std::uint32_t FileNameLength;
     std::uint32_t EaSize;
     std::uint32_t ReparsePointTag;
+    // cppcheck-suppress misra-c2012-12.3 -- C++ array type, not a comma expression.
     KisakFileId FileId;
     wchar_t FileName[1];
 };
@@ -92,4 +96,5 @@ struct KisakNtProcedures
     KisakNtQueryDirectoryFileFn queryDirectoryFile;
 };
 
+// cppcheck-suppress-end unusedStructMember
 } // namespace
