@@ -26,6 +26,22 @@ bool KISAK_CDECL Sys_FileSystemReadFile(
     std::size_t maximumBytes,
     std::vector<unsigned char> *contents);
 
+// Recursively deletes one real directory tree without following POSIX
+// symbolic links or Win32 reparse points. The leaf and every descent use
+// handle-relative operations. Enumerated entry identities are checked before
+// descent/deletion; a detected replacement fails instead of deleting the new
+// object. This is not an atomic filesystem snapshot: callers must serialize
+// concurrent writers when they require an all-or-nothing tree operation.
+// A leaf itself that is a symbolic link or reparse point is rejected.
+// During descent any symbolic link or reparse point encountered is removed
+// as itself and is never traversed; the target it references is preserved.
+// Real regular files and real directories are removed; special files
+// (FIFOs, sockets, device nodes) are rejected.
+// Returns false on the first error and stops; partial state may remain.
+// Windows requires filesystem support for complete file identities; a query
+// failure or missing identity returns false before deleting that directory.
+bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *utf8Path);
+
 // These queries return absolute UTF-8 paths without truncation. On failure,
 // including insufficient capacity, output is reset to an empty string when
 // possible. Callers may retry with a larger buffer.

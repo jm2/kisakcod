@@ -2467,6 +2467,7 @@ add_executable(kisakcod-platform-filesystem-tests
 )
 target_include_directories(kisakcod-platform-filesystem-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-platform-filesystem-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-platform-filesystem-tests PRIVATE KISAK_FILESYSTEM_TEST_HOOKS=1)
 kisakcod_test_warnings(kisakcod-platform-filesystem-tests)
 set_target_properties(kisakcod-platform-filesystem-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
@@ -2475,7 +2476,14 @@ add_test(
     NAME platform-filesystem-path-contracts
     COMMAND kisakcod-platform-filesystem-tests
 )
-set_tests_properties(platform-filesystem-path-contracts PROPERTIES TIMEOUT 20)
+# The timeout must exceed the deletion-failure probe's bounded 30s wait
+# (WaitForPathGone in platform_filesystem_tests.cpp): that wait only
+# exhausts on the walk-fails-before-the-signal path — the very failure
+# this probe exists to report — so the diagnostic must land before CTest
+# kills the process. The passing path finishes in seconds; 90 keeps
+# several multiples of the worst-case wait plus fixture overhead while
+# still bounding a wedged run.
+set_tests_properties(platform-filesystem-path-contracts PROPERTIES TIMEOUT 90)
 
 # fuzz_sys_filesystem: production-path fuzz fixture for the no-follow
 # file read service. Links the same selected platform sys_filesystem.cpp
