@@ -39,6 +39,7 @@
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build-linux-amd64-mp",
       "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
         "KISAK_PLATFORM": "linux",
         "KISAK_BUILD_MP": "OFF",
         "KISAK_BUILD_DEDICATED": "OFF",
@@ -51,7 +52,22 @@
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build-linux-arm64-mp",
       "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
         "KISAK_PLATFORM": "linux",
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "OFF",
+        "KISAK_BUILD_SP": "OFF",
+        "BUILD_TESTING": "ON"
+      }
+    },
+    {
+      "name": "macos-arm64-mp",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-macos-arm64-mp",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "KISAK_PLATFORM": "macos",
         "KISAK_BUILD_MP": "OFF",
         "KISAK_BUILD_DEDICATED": "OFF",
         "KISAK_BUILD_SP": "OFF",

@@ -10,6 +10,25 @@
 
 #include <algorithm>
 
+// KisakCOD port: __rdtsc is the MSVC x86 cycle-counter intrinsic. GCC/Clang
+// expose the same counter via a builtin on x86 targets; other architectures
+// (macOS arm64) have no cycle counter, so fall back to the monotonic clock.
+// MSVC expansion is token-identical to the previous source. The tick type is
+// spelled unsigned __int64 — not uint64_t — to match the public ProfLoad_*
+// declarations in qcommon.h exactly: on LP64 hosts uint64_t is unsigned long
+// while __int64 is defined as long long, so a uint64_t definition would
+// silently declare a second, unrelated overload instead of defining the
+// declared entry point.
+#if defined(_MSC_VER)
+#define KISAK_PROFILE_TICKS() __rdtsc()
+#elif defined(__i386__) || defined(__x86_64__)
+#define KISAK_PROFILE_TICKS() static_cast<unsigned __int64>(__builtin_ia32_rdtsc())
+#else
+#include <chrono>
+#define KISAK_PROFILE_TICKS() \
+    static_cast<unsigned __int64>(std::chrono::steady_clock::now().time_since_epoch().count())
+#endif
+
 mapLoadProfile_t mapLoadProfile;
 
 const dvar_t *com_profileLoading;
@@ -37,7 +56,7 @@ void __cdecl ProfLoad_BeginTrackedValue(MapProfileTrackedValue type)
 
     if (mapLoadProfile.isLoading && mapLoadProfile.currentEntry && Sys_IsMainThread())
     {
-        ticks = __rdtsc();
+        ticks = KISAK_PROFILE_TICKS();
         ProfLoad_BeginTrackedValueTicks(&mapLoadProfile.elements[type], ticks);
         ++mapLoadProfile.elementAccessCount[type];
         for (entry = mapLoadProfile.currentEntry; entry; entry = entry->parent)
@@ -58,7 +77,7 @@ void __cdecl ProfLoad_EndTrackedValue(MapProfileTrackedValue type)
 
     if (mapLoadProfile.isLoading && mapLoadProfile.currentEntry && Sys_IsMainThread())
     {
-        ticks = __rdtsc();
+        ticks = KISAK_PROFILE_TICKS();
         ProfLoad_EndTrackedValueTicks(&mapLoadProfile.elements[type], ticks);
         for (entry = mapLoadProfile.currentEntry; entry; entry = entry->parent)
             ProfLoad_EndTrackedValueTicks(&entry->elements[type], ticks);
@@ -83,7 +102,7 @@ void __cdecl ProfLoad_Activate()
     iassert( mapLoadProfile.isLoading == false );
     memset((uint8_t *)&mapLoadProfile, 0, sizeof(mapLoadProfile));
     mapLoadProfile.isLoading = 1;
-    mapLoadProfile.ticksStart = __rdtsc();
+    mapLoadProfile.ticksStart = KISAK_PROFILE_TICKS();
     mapLoadProfile.ticksFinish = mapLoadProfile.ticksStart;
     Com_Printf(12, "^6Activating map load profiler\n");
 }
@@ -91,7 +110,7 @@ void __cdecl ProfLoad_Activate()
 void __cdecl ProfLoad_Deactivate()
 {
     iassert( mapLoadProfile.isLoading == true );
-    mapLoadProfile.ticksFinish = __rdtsc();
+    mapLoadProfile.ticksFinish = KISAK_PROFILE_TICKS();
     mapLoadProfile.isLoading = 0;
     ProfLoad_Print();
 }
@@ -338,7 +357,7 @@ void __cdecl ProfLoad_Begin(const char *label)
             v1 = 0;
         entry->indent = v1;
         mapLoadProfile.currentEntry = entry;
-        entry->ticksStart = __rdtsc();
+        entry->ticksStart = KISAK_PROFILE_TICKS();
         entry->label = label;
     }
 }
@@ -380,7 +399,7 @@ void __cdecl ProfLoad_End()
         entry = mapLoadProfile.currentEntry;
         iassert( entry );
         iassert( entry->label );
-        mapLoadProfile.ticksFinish = __rdtsc();
+        mapLoadProfile.ticksFinish = KISAK_PROFILE_TICKS();
         timeStepInTicks = mapLoadProfile.ticksFinish - entry->ticksStart;
         entry->ticksTotal += timeStepInTicks;
         if (!entry->parent)
