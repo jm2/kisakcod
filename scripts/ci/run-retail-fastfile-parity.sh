@@ -64,11 +64,13 @@
 # The gate is FAIL-CLOSED on protocol identity: capture_kind and hash_domain
 # must be PRESENT in both leg outputs and must match; a missing or mismatched
 # field aborts the gate before any digest compare, so the contract cannot
-# silently drift. Field parsing normalizes a trailing CR on BOTH paths — the
-# Windows-x86 mint runs the harness under a native CRT whose text mode emits
-# CRLF, and a reference minted in that tree carries CRLF line endings; an
-# un-normalized CR would make the 64-hex digest read as 65 characters and
-# identity fields mismatch --host/--ref. --mode m5-graph additionally fails
+# silently drift. Field parsing strips AT MOST ONE trailing CR — the CRLF
+# line terminator the Windows-x86 mint path's text-mode CRT adds — on BOTH
+# paths, and an un-normalized CR would otherwise make the 64-hex digest read
+# as 65 characters and identity fields mismatch --host/--ref. Any REMAINING
+# (embedded) CR is malformed protocol data and is REJECTED, never normalized
+# into a valid token: identity and digest values are single-line tokens in
+# which CR is never legitimate content. --mode m5-graph additionally fails
 # closed on leg identity and refuses envelope-only captures outright. Identity
 # is validated on mint AND compare: minting requires the capture's derived
 # platform/leg identity to be present and to match --host (foreign or missing
@@ -82,7 +84,7 @@
 #      identity on a capture or reference)
 #   2  usage or environment error (missing inputs, build failure, capture
 #      refusal by the harness, missing protocol/identity fields where the
-#      mode requires them)
+#      mode requires them, malformed protocol data such as an embedded CR)
 #
 # Usage:
 #   scripts/ci/run-retail-fastfile-parity.sh --host <triple> --ref <triple>
@@ -254,6 +256,10 @@ if [ "$HOST_CAPTURE_STATUS" -ne 0 ]; then
     exit 2
 fi
 
+# The CR byte, emitted via printf format escapes: BSD sed does not honor
+# \r escapes, and tr cannot express "at most one trailing CR".
+CR="$(printf '\r')"
+
 parse_field() {
     # parse_field <output> <key>
     # Both protocol parsers (harness capture output and minted reference
@@ -263,11 +269,29 @@ parse_field() {
     # and a reference minted inside that tree carries CRLF line endings.
     # A trailing CR left in a parsed value makes graph_sha256 read as
     # length 65 and identity fields that never equal --host/--ref, so the
-    # driver would abort before minting or comparing anything. tr is used
-    # because BSD sed does not honor \r escapes; protocol values are
-    # single-line identity and digest fields in which a CR is never
-    # legitimate data.
-    printf '%s\n' "$1" | sed -n "s/^$2=//p" | tr -d '\r'
+    # driver would abort before minting or comparing anything.
+    #
+    # Normalization strips AT MOST ONE terminal CR — the line terminator
+    # the Windows text-mode CRT adds — and nothing more. An EMBEDDED CR
+    # is malformed protocol data (identity and digest values are
+    # single-line tokens in which CR is never legitimate content), so the
+    # parser refuses the field instead of silently normalizing it into a
+    # valid token: Codex P2 r3980140395 — the previous `tr -d '\r'`
+    # rewrote a malformed platform=windows-<CR>x86 into windows-x86 and
+    # blessed the reference with "platform+leg identity verified".
+    local raw
+    raw="$(printf '%s\n' "$1" | sed -n "s/^$2=//p")"
+    case "$raw" in
+        # The one CRLF terminator the Windows text-mode CRT adds.
+        *"$CR") raw="${raw%"$CR"}" ;;
+    esac
+    case "$raw" in
+        *"$CR"*)
+            echo "run-retail-fastfile-parity: malformed protocol data: $2 value contains an embedded CR (fail-closed refusal)" >&2
+            exit 2
+            ;;
+    esac
+    printf '%s\n' "$raw"
 }
 
 HOST_KIND="$(parse_field "$HOST_OUTPUT" capture_kind)"

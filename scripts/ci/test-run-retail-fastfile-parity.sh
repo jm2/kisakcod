@@ -30,6 +30,11 @@
 #     CRLF, and a parser that kept the CR read graph_sha256 as length 65
 #     and identity fields that never matched --host, aborting before any
 #     Windows reference could be minted (Codex P1, PR #113 review);
+#   - that normalization strips AT MOST ONE terminal CR and REJECTS an
+#     embedded CR on both parse_field consumers (mint and compare): a
+#     malformed value like platform=windows-<CR>x86 used to be silently
+#     rewritten into a valid windows-x86 token and blessed with
+#     "platform+leg identity verified" (Codex P2, PR #113 review);
 #   - minting and comparing still round-trip in instrument mode.
 #
 # The real driver runs against the REAL harness in an already-configured
@@ -525,5 +530,85 @@ expect_status "m5-graph accepts a CRLF (Windows-minted) reference (exit 0)" 0 --
         --reference-hash "$WORK/graph-ref-crlf.txt"
 expect_said "CRLF-reference match is named widened-runtime-graph parity" \
     "OK widened-runtime-graph parity (M5"
+
+# --- 16. embedded CR is MALFORMED protocol data, never normalized -----------
+# Codex P2 on PR #113 (review comment 3980140395): the P1 fix's tr -d '\r'
+# removed CR ANYWHERE in a parsed value, so a malformed reference whose
+# identity fields carry an embedded CR (platform=windows-<CR>x86) was
+# silently rewritten into valid windows-x86 tokens and blessed with
+# "platform+leg identity verified" — the exact opposite of the documented
+# fail-closed protocol behavior. The parser now strips at most one TERMINAL
+# CR (the CRLF terminator, section 15) and rejects any remaining CR as
+# malformed, on BOTH parse_field consumers: the compare path (reference
+# file) and the mint path (harness capture output). Canonical LF and CRLF
+# references must still pass (sections 1-15). printf format escapes emit
+# the CR bytes (no sed \r escapes; BSD-safe).
+
+# 16a. compare path: a reference with embedded-CR identity fields fails
+# closed. Both identity fields are malformed in the operator's probe; they
+# would agree with each other and with --ref only BECAUSE the old parser
+# laundered them — which is exactly what must never happen again.
+EMBEDDED_CR_REF="$WORK/embedded-cr-ref.txt"
+{
+    echo "capture_kind=graph-v1"
+    echo "hash_domain=kisakcod/m5-widened-graph-hash/v2"
+    printf 'platform=windows-\rx86\r\n'
+    printf 'leg=windows-\rx86\r\n'
+    echo "graph_sha256=$GRAPH_DIGEST"
+} >"$EMBEDDED_CR_REF"
+expect_status "embedded-CR identity reference is refused (exit 2)" 2 -- \
+    driver --mode m5-graph --host linux-amd64 --ref windows-x86 \
+        --fastfile "$FIXTURE" --build-dir "$STUB_BUILD" \
+        --reference-hash "$EMBEDDED_CR_REF"
+expect_said "embedded-CR refusal names the malformed field" \
+    "embedded CR" "$ERR_FILE"
+expect_silent "embedded-CR refusal emits no OK result" "OK" "$OUT_FILE"
+
+# The digest field gets the same protection: an embedded CR inside the
+# 64-hex digest is malformed, not a formatting artifact — the old parser
+# silently stripped it and accepted the doctored digest as canonical
+# (CR-split, so the stripped value IS the valid reference digest).
+EMBEDDED_CR_DIGEST_REF="$WORK/embedded-cr-digest-ref.txt"
+{
+    echo "capture_kind=graph-v1"
+    echo "hash_domain=kisakcod/m5-widened-graph-hash/v2"
+    echo "platform=windows-x86"
+    echo "leg=windows-x86"
+    printf 'graph_sha256=%s\r%s\n' "${GRAPH_DIGEST:0:4}" "${GRAPH_DIGEST:4}"
+} >"$EMBEDDED_CR_DIGEST_REF"
+expect_status "embedded-CR digest reference is refused (exit 2)" 2 -- \
+    driver --mode m5-graph --host linux-amd64 --ref windows-x86 \
+        --fastfile "$FIXTURE" --build-dir "$STUB_BUILD" \
+        --reference-hash "$EMBEDDED_CR_DIGEST_REF"
+expect_said "embedded-CR digest refusal names the malformed field" \
+    "graph_sha256 value contains an embedded CR" "$ERR_FILE"
+
+# 16b. mint path: a harness capture with embedded-CR identity fields mints
+# nothing. Same parser, other consumer — the refusal must fire before any
+# reference file is written.
+STUB_CR_EMBED="$WORK/stub-cr-embed"
+mkdir -p "$STUB_CR_EMBED"
+: >"$STUB_CR_EMBED/CMakeCache.txt"
+cat >"$STUB_CR_EMBED/kisakcod-retail-fastfile-parity-harness" <<'STUB'
+#!/usr/bin/env bash
+# test stub: malformed capture — embedded CR inside the identity fields
+# (mint-refusal fixture; printf format escapes emit the CR bytes).
+echo 'capture_kind=graph-v1'
+echo 'hash_domain=kisakcod/m5-widened-graph-hash/v2'
+printf 'platform=windows-\rx86\r\n'
+printf 'leg=windows-\rx86\r\n'
+echo 'fastfile_bytes=4'
+echo 'fastfile_zlib_stream=0'
+echo 'graph_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+STUB
+chmod +x "$STUB_CR_EMBED/kisakcod-retail-fastfile-parity-harness"
+EMBEDDED_CR_MINT="$WORK/embedded-cr-mint.txt"
+expect_status "mint from an embedded-CR capture is refused (exit 2)" 2 -- \
+    driver --mode instrument --host windows-x86 --ref linux-amd64 \
+        --fastfile "$FIXTURE" --build-dir "$STUB_CR_EMBED" \
+        --emit-reference "$EMBEDDED_CR_MINT"
+expect_said "embedded-CR mint refusal names the malformed field" \
+    "embedded CR" "$ERR_FILE"
+expect_absent "embedded-CR mint writes no reference" "$EMBEDDED_CR_MINT"
 
 echo "retail-fastfile-parity driver gates: $PASS check(s) passed"
