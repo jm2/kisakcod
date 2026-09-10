@@ -749,6 +749,7 @@ void __cdecl Scr_CompileCallExpressionList(sval_u *exprlist)
     expr = debugger_node0(ENUM_NOP);
     for (node = exprlist->node[0].node; node; node = node[1].node)
     {
+        // cppcheck-suppress misra-c2012-17.2 -- existing recursive debugger AST traversal; this migration preserves its call graph and fixes native cell arguments.
         Scr_CompileExpression(&node[0]);
         expr = debugger_prepend_node(node[0], expr);
     }
@@ -1451,6 +1452,7 @@ void __cdecl Scr_PreEvalBuiltin(sval_u params, uint32_t localId)
         MyAssertHandler(".\\script\\scr_evaluate.cpp", 1581, 0, "%s", "scrVmPub.top <= scrVmPub.maxstack");
     index = 0;
     for (node = params.node[0].node; node; node = node[1].node)
+        // cppcheck-suppress misra-c2012-17.2 -- existing recursive debugger AST traversal; this migration preserves its call graph and fixes native cell arguments.
         Scr_EvalExpression(node[0], localId, &scrVmPub.top[-index++]);
     scrVmPub.outparamcount = expr_count;
     if (!scrVarPub.evaluate)
