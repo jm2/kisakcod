@@ -45,6 +45,9 @@ float *payload = nullptr;
 int checks = 0;
 int callbacks = 0;
 int methodClass = 0;
+int methodLookups = 0;
+bool hasCachedMethod = false;
+VariableValue cachedMethod{};
 char diagnostic[] = "debugger fixture";
 void CheckAt(bool okay, const char *expression, int line) {
     ++checks;
@@ -58,7 +61,7 @@ void HighAddress(const void *p) {
     Check(p != nullptr);
 #endif
 }
-void *Allocate(size_t bytes) { void *p = std::malloc(bytes); Check(p != nullptr); std::memset(p, 0xA5, bytes); allocations.push_back(p); HighAddress(p); return p; }
+void *Allocate(size_t bytes) { void *p = std::malloc(bytes); if (!p) std::abort(); std::memset(p, 0xA5, bytes); allocations.push_back(p); HighAddress(p); return p; }
 }
 void MyAssertHandler(const char *, int, int, const char *, ...) { std::abort(); }
 void *Z_Malloc(int bytes, const char *, int) { return Allocate(bytes); }
@@ -66,7 +69,9 @@ sval_u *Scr_AllocNode(int count) { return static_cast<sval_u *>(Allocate(count *
 const char *SL_ConvertToString(uint32_t) { return "fixture"; }
 uint16_t Scr_CompileCanonicalString(uint32_t id) { return static_cast<uint16_t>(id + 10); }
 uint32_t AllocValue() { return 7; }
-uint32_t FindVariable(uint32_t, uint32_t) { return 0; }
+uint32_t FindVariable(uint32_t parent, uint32_t) { return parent == 900 && hasCachedMethod ? 7 : 0; }
+VariableValue Scr_EvalVariable(uint32_t) { return cachedMethod; }
+void SetVariableValue(uint32_t, VariableValue *value) { cachedMethod = *value; hasCachedMethod = true; }
 bool IsObjectFree(uint32_t) { return false; }
 uint32_t GetObjectType(uint32_t) { return VAR_ENTITY; }
 int Scr_GetClassnumForCharId(char) { return 0; }
@@ -99,7 +104,7 @@ void FixtureBuiltin() {
 }
 void FixtureMethod(scr_entref_t entity) { Check(entity.entnum == 37); methodClass = entity.classnum; FixtureBuiltin(); }
 void (*Scr_GetFunction(const char **, int *))() { return FixtureBuiltin; }
-void (*Scr_GetMethod(const char **, int *))(scr_entref_t) { return FixtureMethod; }
+void (*Scr_GetMethod(const char **, int *))(scr_entref_t) { ++methodLookups; return FixtureMethod; }
 bool IsObject(VariableValue *value) { return value->type >= VAR_THREAD; }
 uint32_t FindArrayVariable(uint32_t, int) { return 0; }
 char SetEntityFieldValue(uint32_t, int, int, VariableValue *) { return 0; }
@@ -154,6 +159,23 @@ void TestDebuggerBuiltins()
     Scr_GetValue(0, &value);
     Check(value.type == VAR_VECTOR && value.u.vectorValue == payload);
 }
+void TestBuiltinMethodCache()
+{
+    scrCompilePub.builtinMeth = 900;
+    const char *name = "fixture";
+    int type = 0;
+    const int before = methodLookups;
+    const auto first = Scr_GetCachedBuiltinMethod(1, &name, &type);
+    const auto second = Scr_GetCachedBuiltinMethod(1, &name, &type);
+    Check(first == &FixtureMethod && second == first);
+    Check(methodLookups == before + 1 && type == BUILTIN_ANY);
+    HighAddress(reinterpret_cast<const void *>(second));
+    sval_u function; function.block = reinterpret_cast<scr_block_s *>(second);
+    sval_u params = ParameterList(); Scr_CompileCallExpressionList(&params);
+    VariableValue value{}; value.u.vectorValue = nullptr;
+    Scr_EvalMethod(debugger_node0(ENUM_self), function, params, 0, &value);
+    Check(callbacks == 3 && value.u.vectorValue == payload && methodClass == 2);
+}
 void TestEntityAndWatchTransfers()
 {
     VariableValue value{}; value.type = VAR_VECTOR; value.u.vectorValue = payload;
@@ -172,7 +194,7 @@ int main()
     payload = static_cast<float *>(Allocate(3 * sizeof(float)));
     payload[0] = 1; payload[1] = 2; payload[2] = 3;
     scrVarPub.evaluate = true;
-    TestExpressionCompilation(); TestDebuggerBuiltins(); TestEntityAndWatchTransfers();
+    TestExpressionCompilation(); TestDebuggerBuiltins(); TestBuiltinMethodCache(); TestEntityAndWatchTransfers();
     Check(scrVmDebugPub.checkBreakon == 0 && g_breakonExpr == 0);
     Check(scrVmPub.maxstack == scrVmPub.stack + 31);
     for (void *p : allocations) std::free(p);

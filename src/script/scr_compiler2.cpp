@@ -53,11 +53,13 @@ enum
 	FUNC_SCOPE_FAR
 };
 
+//SCRIPT_DEBUGGER_BUILTIN_TYPES_BEGIN
 enum scr_builtin_type_t
 {
 	BUILTIN_ANY = 0x0,
 	BUILTIN_DEVELOPER_ONLY = 0x1,
 };
+//SCRIPT_DEBUGGER_BUILTIN_TYPES_END
 
 //SCRIPT_RUNTIME_CALL_TYPES_BEGIN
 enum : __int32
@@ -202,6 +204,7 @@ void Scr_CalcLocalVarsArrayPrimitiveExpressionRef(sval_u expr, scr_block_s *bloc
 Scr_GetUncacheType
 ============
 */
+//SCRIPT_DEBUGGER_UNCACHE_TYPE_BEGIN
 int Scr_GetUncacheType(int type)
 {
 	if (type == VAR_CODEPOS)
@@ -212,12 +215,14 @@ int Scr_GetUncacheType(int type)
 	iassert(type == VAR_DEVELOPER_CODEPOS);
 	return BUILTIN_DEVELOPER_ONLY;
 }
+//SCRIPT_DEBUGGER_UNCACHE_TYPE_END
 
 /*
 ============
 Scr_GetCacheType
 ============
 */
+//SCRIPT_DEBUGGER_CACHE_TYPE_BEGIN
 int Scr_GetCacheType(int type)
 {
 	if (type == BUILTIN_ANY)
@@ -228,6 +233,7 @@ int Scr_GetCacheType(int type)
 	iassert(type == BUILTIN_DEVELOPER_ONLY);
 	return VAR_DEVELOPER_CODEPOS;
 }
+//SCRIPT_DEBUGGER_CACHE_TYPE_END
 
 /*
 ============
@@ -3908,10 +3914,36 @@ void Scr_CalcLocalVarsWhileStatement(sval_u expr, sval_u stmt, scr_block_s *bloc
 EmitMethod
 ============
 */
+//SCRIPT_DEBUGGER_METHOD_CACHE_BEGIN
+using ScrBuiltinMethod = void (*)(scr_entref_t);
+static ScrBuiltinMethod Scr_GetCachedBuiltinMethod(uint32_t name, const char **pName, int *type)
+{
+    if (scrCompilePub.developer_statement == 3)
+    {
+        *type = BUILTIN_ANY;
+        return Scr_GetMethod(pName, type);
+    }
+    uint32_t methodId = FindVariable(scrCompilePub.builtinMeth, name);
+    if (methodId)
+    {
+        const VariableValue value = Scr_EvalVariable(methodId);
+        *type = Scr_GetUncacheType(value.type);
+        return reinterpret_cast<ScrBuiltinMethod>(const_cast<char *>(value.u.codePosValue));
+    }
+    *type = BUILTIN_ANY;
+    const ScrBuiltinMethod method = Scr_GetMethod(pName, type);
+    methodId = GetNewVariable(scrCompilePub.builtinMeth, name);
+    VariableValue value;
+    value.type = static_cast<Vartype_t>(Scr_GetCacheType(*type));
+    value.u.codePosValue = reinterpret_cast<const char *>(method);
+    SetVariableValue(methodId, &value);
+    return method;
+}
+//SCRIPT_DEBUGGER_METHOD_CACHE_END
+
 void EmitMethod(sval_u expr, sval_u func_name, sval_u params, sval_u methodSourcePos, bool bStatement, scr_block_s *block)
 {
-	VariableValue value;
-	uint32_t methId, name;
+	uint32_t name;
 	char *savedPos = NULL;
 	void (*meth)(scr_entref_t);
 	int type, param_count;
@@ -3949,35 +3981,7 @@ script_method:
 	pName = SL_ConvertToString(name);
 	sourcePos = func_name.node[2];
 
-	if (scrCompilePub.developer_statement == 3)
-	{
-		type = BUILTIN_ANY;
-		meth = Scr_GetMethod(&pName, &type);
-	}
-	else
-	{
-		methId = FindVariable(scrCompilePub.builtinMeth, name);
-
-		if (methId)
-		{
-			value = Scr_EvalVariable(methId);
-			type = Scr_GetUncacheType(value.type);
-
-			meth = (void (*)(scr_entref_t))value.u.pointerValue;
-		}
-		else
-		{
-			type = BUILTIN_ANY;
-			meth = Scr_GetMethod(&pName, &type);
-
-			methId = GetNewVariable(scrCompilePub.builtinMeth, name);
-
-			value.type = (Vartype_t)Scr_GetCacheType(type);
-			value.u.pointerValue = (intptr_t)meth;
-
-			SetVariableValue(methId, &value);
-		}
-	}
+	meth = Scr_GetCachedBuiltinMethod(name, &pName, &type);
 
 	if (!meth)
 	{

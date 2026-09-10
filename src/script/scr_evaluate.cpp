@@ -644,6 +644,7 @@ void __cdecl Scr_CompilePrimitiveExpressionList(sval_u *exprlist)
     if (expr_count == 1)
     {
         nodea = exprlist->node[0].node;
+        // cppcheck-suppress misra-c2012-17.2 -- existing recursive debugger AST traversal; this migration corrects native cell arguments without changing its call graph.
         Scr_CompileExpression(&nodea[0]);
         *exprlist = nodea[0];
     }
@@ -652,6 +653,7 @@ void __cdecl Scr_CompilePrimitiveExpressionList(sval_u *exprlist)
         i = 0;
         for (node = exprlist->node[0].node; node; node = node[1].node)
         {
+            // cppcheck-suppress misra-c2012-17.2 -- existing recursive debugger AST traversal; this migration corrects native cell arguments without changing its call graph.
             Scr_CompileExpression(&node[0]);
             expr[i++] = node[0];
         }
@@ -677,6 +679,7 @@ char __cdecl Scr_CompileCallExpression(sval_u *expr)
             return 1;
         }
     }
+    // cppcheck-suppress misra-c2012-17.2 -- existing recursive debugger AST traversal; this migration corrects native cell arguments without changing its call graph.
     else if (type == ENUM_method && Scr_CompileMethod(&expr->node[1], &expr->node[2], &expr->node[3]))
     {
         *expr = debugger_node3(
