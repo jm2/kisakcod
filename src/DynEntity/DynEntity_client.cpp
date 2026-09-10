@@ -638,6 +638,17 @@ void __cdecl DynEntCl_Shutdown(int32_t localClientNum)
             dynEntClient = DynEnt_GetClientEntity(dynEntId, DYNENT_DRAW_MODEL);
             if ((dynEntClient->flags & 1) != 0)
             {
+                // Legacy shutdown cleared DYNENT_CL_ACTIVE for ANY
+                // non-zero physObjId token — including a recorded dead or
+                // stale token whose body no longer exists. TakeBody
+                // returns nullptr for those, so only the destroy may be
+                // conditional on it: the flag clear follows the legacy
+                // token condition, body or not, or dead-token entities
+                // would keep the active flag set across the shutdown.
+                // Field-sentinel inspection outside the span mirrors the
+                // documented MP pose-guard discipline.
+                const bool hadPhysObjIdToken =
+                    dynEntClient->physObjId != phys_obj_id::INVALID_BODY_TOKEN;
                 // Sidecar Release under the physics lock; Phys_ObjDestroy
                 // takes the lock itself.
                 Sys_EnterCriticalSection(CRITSECT_PHYSICS);
@@ -647,6 +658,9 @@ void __cdecl DynEntCl_Shutdown(int32_t localClientNum)
                 if (physObjIdBody)
                 {
                     Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
+                }
+                if (hadPhysObjIdToken)
+                {
                     dynEntClient->flags &= ~1u;
                 }
             }
@@ -657,7 +671,10 @@ void __cdecl DynEntCl_Shutdown(int32_t localClientNum)
             dynEntClienta = DynEnt_GetClientEntity(dynEntIda, DYNENT_DRAW_BRUSH);
             if ((dynEntClienta->flags & 1) != 0)
             {
-                // Same lock span as the MODEL shutdown loop above.
+                // Same legacy-condition flag clear as the MODEL shutdown
+                // loop above, and the same lock span.
+                const bool hadPhysObjIdToken =
+                    dynEntClienta->physObjId != phys_obj_id::INVALID_BODY_TOKEN;
                 Sys_EnterCriticalSection(CRITSECT_PHYSICS);
                 dxBody *const physObjIdBody =
                     DynEntPhysObjId_TakeBody(DYNENT_DRAW_BRUSH, dynEntIda, dynEntClienta);
@@ -665,6 +682,9 @@ void __cdecl DynEntCl_Shutdown(int32_t localClientNum)
                 if (physObjIdBody)
                 {
                     Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
+                }
+                if (hadPhysObjIdToken)
+                {
                     dynEntClienta->flags &= ~1u;
                 }
             }

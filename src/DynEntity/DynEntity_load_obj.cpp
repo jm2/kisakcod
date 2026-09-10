@@ -606,7 +606,10 @@ void __cdecl DynEnt_LoadEntities()
                 // an assert is compiled out of non-USE_ASSERTS release
                 // builds and would let colliding binds through — before
                 // the pose/client/coll lists are allocated or published.
-                if (cm.dynEntCount[drawTypea] > phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
+                // The bound matches the legacy total maximum (4095, see
+                // the dynEntStringCount gate above) so the accepted range
+                // and the message cannot drift.
+                if (cm.dynEntCount[drawTypea] >= phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
                     Com_Error(
                         ERR_DROP,
                         "Found [%i] Dyn Entities of type [%i], Max is [%u]\n",
@@ -634,17 +637,33 @@ void __cdecl DynEnt_LoadEntities(MemoryFile *memFile)
         uint16_t count = 0;
         MemFile_ReadData(memFile, sizeof(count), (uint8_t *)&count);
         // Same sidecar owner-key stride bound as the MP loader: the save
-        // image is untrusted data and a count past the stride would collide
-        // this draw type's keys into the next one's slot range. Rejected
-        // with ERR_DROP — an assert is compiled out of non-USE_ASSERTS
-        // release builds — before any save data is read or published.
-        if (count > phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
+        // image is untrusted data and a count at or past the stride would
+        // collide this draw type's keys into the next one's slot range.
+        // Rejected with ERR_DROP — an assert is compiled out of
+        // non-USE_ASSERTS release builds — before any save data is read
+        // or published. The bound matches the legacy map-loader maximum
+        // (4095) so the accepted range and the message cannot drift.
+        if (count >= phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType)
             Com_Error(
                 ERR_DROP,
                 "Save image declares [%hu] Dyn Entities of type [%i], Max is [%u]\n",
                 count,
                 drawType,
                 phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType - 1u);
+        // The pose/client lists below were sized by the MAP load (which
+        // ran first and set cm.dynEntCount from the map's own entities),
+        // not by the save image. A crafted save declaring more entities
+        // than the map allocated would overflow those fixed allocations
+        // during the reads, so the pre-load allocated capacity is a hard
+        // bound too — captured BEFORE the save count replaces the field.
+        const uint16_t allocated = cm.dynEntCount[drawType];
+        if (count > allocated)
+            Com_Error(
+                ERR_DROP,
+                "Save image declares [%hu] Dyn Entities of type [%i], but the map allocated only [%hu]\n",
+                count,
+                drawType,
+                allocated);
         cm.dynEntCount[drawType] = count;
         if (count == 0)
             continue;

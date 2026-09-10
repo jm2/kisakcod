@@ -526,6 +526,62 @@ bool TestDynEntOwnerIndexStrideContract()
     return true;
 }
 
+// Reserved-sentinel regression (review r3927639255 / r3980589115): a
+// full 16-bit-capacity sidecar can reach owner 0xFFFF, and at slot
+// generation 0xFFFF the packed token is exactly DEAD_BODY_TOKEN
+// (gen:16|idx:16 = 0xFFFFFFFF) — the sentinel Resolve rejects
+// unconditionally, so publishing it would strand a live body behind an
+// unresolvable token. Bind must skip the reserved generation value and
+// publish the next live token instead. Owners below 0xFFFF can never
+// reach the sentinel (the owner bits differ), which is why no smaller
+// sidecar needs the skip.
+bool TestBindNeverPublishesReservedDeadToken()
+{
+    // Function-local static: 65536 slots do not fit the default stack on
+    // every host runner. Fresh zero-initialization matches the
+    // constructor's all-vacant semantics, and the test process is
+    // single-threaded.
+    static phys_obj_id::BodySidecar<65536> sidecar;
+    int body = 0;
+    const phys_obj_id::OwnerIndex owner = 0xFFFFu;  // only legal at full 16-bit capacity
+
+    // Drive the slot's generation to 0xFFFE: each cycle advances the
+    // generation twice (Bind publishes the next generation, Release bumps
+    // it again), so 32767 cycles = 65534 advances, and the generation
+    // cycle skips 0 (length 65535: 0 -> 1 -> ... -> 0xFFFF -> 1). The
+    // next Bind would then pack generation 0xFFFF with owner 0xFFFF —
+    // the reserved sentinel.
+    for (unsigned cycle = 0; cycle < 32767u; ++cycle)
+    {
+        const phys_obj_id::TokenResult bind = sidecar.Bind(owner, &body);
+        if (!bind)
+            return false;
+        const phys_obj_id::BodyResult released = sidecar.Release(bind.token);
+        if (!released || released.body != &body)
+            return false;
+    }
+
+    const phys_obj_id::TokenResult reserved = sidecar.Bind(owner, &body);
+    if (!reserved)
+        return false;
+    // The reserved token must never be published: Bind lands on the
+    // next live generation (0xFFFF wraps to 1, never 0).
+    if (reserved.token == phys_obj_id::DEAD_BODY_TOKEN)
+        return false;
+    if (reserved.token != phys_obj_id::PackToken(1, owner))
+        return false;
+    if (!phys_obj_id::IsLive(reserved.token))
+        return false;
+    // The published binding is fully live: it resolves to its body...
+    const phys_obj_id::BodyResult resolved = sidecar.Resolve(reserved.token);
+    if (!resolved || resolved.body != &body)
+        return false;
+    // ...and the sentinel contract itself is untouched.
+    if (sidecar.Resolve(phys_obj_id::DEAD_BODY_TOKEN))
+        return false;
+    return true;
+}
+
 // Saved-bytes regression: the runtime DynEntityClient/BreakablePiece
 // struct sizes must NOT drift. These are enforced at compile time so a
 // layout drift fails the build before any test runs. The MP cpose_t
@@ -585,6 +641,7 @@ static const char *RunSidecarIntegrationTests()
         {TestFailedLoadClearsStaleToken, "failed-load stale-token clear contract"},
         {TestFailedLoadReuseGeneration, "failed-load reuse generation contract"},
         {TestDynEntOwnerIndexStrideContract, "dynent owner-index stride contract"},
+        {TestBindNeverPublishesReservedDeadToken, "reserved dead-token never published"},
     };
     return RunContractCases(cases, std::size(cases));
 }

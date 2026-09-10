@@ -16,7 +16,7 @@
 //   phys_obj_id::TokenResult bind = g_cposeBodySidecar.Bind(centNum, body);
 //   if (bind) cent->pose.physObjId = bind.token;
 // Usage from consumers:
-//   dxBody *body = CG_ResolvePhysObjId(cent->pose.physObjId);
+//   dxBody *body = CG_CPosePhysObjId_GetBody(cent);
 //   if (body) Phys_ObjDestroy(PHYS_WORLD_FX, body);
 // Usage from release sites (close out a body and clear the field):
 //   dxBody *body = nullptr;
@@ -182,10 +182,23 @@ class BodySidecar
         if (slots_[owner].body != nullptr)
             return {Status::AlreadyBound, INVALID_BODY_TOKEN};
 
-        const Generation nextGen = NextGeneration(slots_[owner].generation);
+        Generation nextGen = NextGeneration(slots_[owner].generation);
+        // The sentinel contract reserves 0xFFFFFFFF (generation 0xFFFF
+        // packed with owner 0xFFFF) as DEAD_BODY_TOKEN: Resolve rejects
+        // it unconditionally, so publishing it for a live binding would
+        // strand the body while the slot still owns it. Only a full
+        // 16-bit-capacity sidecar can reach owner 0xFFFF, and only at
+        // generation 0xFFFF; skip that one reserved generation value so
+        // the packed token always lands in the live token space.
+        BodyToken token = PackToken(nextGen, owner);
+        if (token == DEAD_BODY_TOKEN)
+        {
+            nextGen = NextGeneration(nextGen);
+            token = PackToken(nextGen, owner);
+        }
         slots_[owner].body = body;
         slots_[owner].generation = nextGen;
-        return {Status::Success, PackToken(nextGen, owner)};
+        return {Status::Success, token};
     }
 
     // Resolve a token to a body pointer. Returns Success only if the token

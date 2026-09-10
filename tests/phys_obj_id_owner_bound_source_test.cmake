@@ -25,24 +25,38 @@ cmake_minimum_required(VERSION 3.16)
 #      only the token field sentinels (no Resolve) outside the span,
 #      and every Resolve/Release is followed by the span's Leave BEFORE
 #      the self-locking Phys_ObjDestroy.
+#   8. the SP save loader bounds the declared per-draw-type count by the
+#      MAP-ALLOCATED capacity (captured before the save count replaces
+#      it) as well as the owner-key stride, both release-effective
+#      ERR_DROP paths ahead of any list read;
+#   9. both per-draw-type stride gates reject counts AT the stride
+#      (>= 4096), matching the legacy map-loader maximum and the
+#      "Max is 4095" message text;
+#  10. DynEntCl_Shutdown clears DYNENT_CL_ACTIVE under the legacy
+#      non-zero-token condition (captured before TakeBody), NOT nested
+#      inside the live-body conditional — dead/stale token entities
+#      drop the active flag across shutdown — and its TakeBody calls
+#      stay inside CRITSECT_PHYSICS spans.
 
 if(NOT DEFINED SOURCE_ROOT OR SOURCE_ROOT STREQUAL "")
     message(FATAL_ERROR "SOURCE_ROOT must identify the KisakCOD source tree")
 endif()
 
 set(_load_obj_path "${SOURCE_ROOT}/src/DynEntity/DynEntity_load_obj.cpp")
+set(_client_path "${SOURCE_ROOT}/src/DynEntity/DynEntity_client.cpp")
 set(_pieces_path "${SOURCE_ROOT}/src/DynEntity/DynEntity_pieces.cpp")
 set(_ents_mp_path "${SOURCE_ROOT}/src/cgame_mp/cg_ents_mp.cpp")
 set(_snapshot_mp_path "${SOURCE_ROOT}/src/cgame_mp/cg_snapshot_mp.cpp")
 set(_main_mp_path "${SOURCE_ROOT}/src/cgame_mp/cg_main_mp.cpp")
 foreach(_path IN ITEMS
-    "${_load_obj_path}" "${_pieces_path}"
+    "${_load_obj_path}" "${_client_path}" "${_pieces_path}"
     "${_ents_mp_path}" "${_snapshot_mp_path}" "${_main_mp_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing phys_obj_id owner-bound source: ${_path}")
     endif()
 endforeach()
 file(READ "${_load_obj_path}" _load_obj)
+file(READ "${_client_path}" _client)
 file(READ "${_pieces_path}" _pieces)
 file(READ "${_ents_mp_path}" _ents_mp)
 file(READ "${_snapshot_mp_path}" _snapshot_mp)
@@ -100,6 +114,12 @@ extract_slice(
 require_contains("${_mp_stride}"
     "kDynEntPhysObjIdOwnerPerDrawType"
     "MP def-loader gates on the shared owner-key stride constant")
+require_contains("${_mp_stride}"
+    ">= phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType"
+    "MP def-loader stride gate rejects counts AT the stride (legacy 4095 maximum)")
+forbid_contains("${_mp_stride}"
+    "> phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType"
+    "MP def-loader must not accept the stride-count maps its message rejects")
 require_ordered("${_mp_stride}"
     "Com_Error("
     "ERR_DROP"
@@ -119,6 +139,22 @@ require_ordered("${_sp_loader}"
     "kDynEntPhysObjIdOwnerPerDrawType"
     "ERR_DROP"
     "SP save loader rejects oversize save counts via ERR_DROP before reads")
+require_contains("${_sp_loader}"
+    "count >= phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType"
+    "SP save loader stride gate rejects counts AT the stride (legacy 4095 maximum)")
+forbid_contains("${_sp_loader}"
+    "> phys_obj_id::kDynEntPhysObjIdOwnerPerDrawType"
+    "SP save loader must not accept the stride-count save images its message rejects")
+require_ordered("${_sp_loader}"
+    "const uint16_t allocated = cm.dynEntCount[drawType];"
+    "cm.dynEntCount[drawType] = count;"
+    "SP save loader captures the map-allocated capacity BEFORE the save count"
+    " replaces it")
+require_ordered("${_sp_loader}"
+    "but the map allocated only [%hu]"
+    "MemFile_ReadData(memFile, sizeof(DynEntityPose) * count"
+    "SP save loader rejects counts above the allocated capacity BEFORE any"
+    " list read (a crafted save cannot overflow the map-sized lists)")
 forbid_contains("${_sp_loader}"
     "MyAssertHandler"
     "SP save loader stride gate cannot be assert-only")
@@ -300,5 +336,62 @@ require_ordered("${_client_shutdown}"
     "Phys_ObjDestroy(PHYS_WORLD_FX, physObjIdBody);"
     "client-shutdown leaves the lock span BEFORE the self-locking"
     " Phys_ObjDestroy")
+
+# --- DynEntCl_Shutdown: the legacy-condition flag clear plus sealed
+# --- lock spans. The clear must follow the legacy non-zero-token
+# --- condition (captured BEFORE TakeBody nulls the field), NOT the
+# --- live-body conditional — dead/stale token entities drop
+# --- DYNENT_CL_ACTIVE across shutdown exactly like they did before the
+# --- sidecar rework. The old nesting (clear inside if (physObjIdBody))
+# --- is forbidden textually so the regression cannot return.
+extract_slice(
+    "${_client}"
+    "void __cdecl DynEntCl_Shutdown(int32_t localClientNum)"
+    "void __cdecl DynEntCl_UnlinkEntity"
+    _dynent_shutdown
+    "dynent client shutdown")
+require_contains("${_dynent_shutdown}"
+    "dynEntClient->physObjId != phys_obj_id::INVALID_BODY_TOKEN"
+    "dynent shutdown captures the legacy non-zero-token condition (MODEL loop)")
+require_contains("${_dynent_shutdown}"
+    "dynEntClienta->physObjId != phys_obj_id::INVALID_BODY_TOKEN"
+    "dynent shutdown captures the legacy non-zero-token condition (BRUSH loop)")
+require_ordered("${_dynent_shutdown}"
+    "hadPhysObjIdToken ="
+    "dynEntClient->flags &= ~1u;"
+    "dynent shutdown MODEL flag clear follows the legacy token condition,"
+    " outside the live-body conditional")
+require_ordered("${_dynent_shutdown}"
+    "dynEntClienta->physObjId != phys_obj_id::INVALID_BODY_TOKEN"
+    "dynEntClienta->flags &= ~1u;"
+    "dynent shutdown BRUSH flag clear follows the legacy token condition,"
+    " outside the live-body conditional")
+forbid_contains("${_dynent_shutdown}"
+    "Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
+                    dynEntClient->flags &= ~1u;"
+    "dynent shutdown MODEL flag clear must not be nested inside the"
+    " live-body conditional")
+forbid_contains("${_dynent_shutdown}"
+    "Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);
+                    dynEntClienta->flags &= ~1u;"
+    "dynent shutdown BRUSH flag clear must not be nested inside the"
+    " live-body conditional")
+require_ordered("${_dynent_shutdown}"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "DynEntPhysObjId_TakeBody(DYNENT_DRAW_MODEL, dynEntId, dynEntClient);"
+    "dynent shutdown MODEL Release enters CRITSECT_PHYSICS first")
+require_ordered("${_dynent_shutdown}"
+    "DynEntPhysObjId_TakeBody(DYNENT_DRAW_MODEL, dynEntId, dynEntClient);"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "dynent shutdown MODEL Release runs inside the physics lock span")
+require_ordered("${_dynent_shutdown}"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "Phys_ObjDestroy(PHYS_WORLD_DYNENT, physObjIdBody);"
+    "dynent shutdown MODEL leaves the lock span BEFORE the self-locking"
+    " Phys_ObjDestroy")
+require_ordered("${_dynent_shutdown}"
+    "DynEntPhysObjId_TakeBody(DYNENT_DRAW_BRUSH, dynEntIda, dynEntClienta);"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "dynent shutdown BRUSH Release runs inside the physics lock span")
 
 message(STATUS "phys_obj_id owner-bound source invariants verified")
