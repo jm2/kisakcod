@@ -8,6 +8,8 @@
 #include <Windows.h>
 #endif
 #include <script/scr_main.h>
+#include <bgame/bg_hudelem.h>
+#include "script_game_hud_types.inc"
 #include <script/scr_debugger.h>
 #include <script/scr_evaluate.h>
 #include <script/scr_compiler.h>
@@ -154,8 +156,13 @@ char *va(const char *, ...) { return fixtureDiagnostic; }
 void EmitByte(unsigned char value) { *TempMalloc(1) = static_cast<char>(value); }
 
 #include "script_save_runtime_test_support.hpp"
+int fixtureFieldValue = 0;
+int Scr_GetInt(uint32_t index) { Check(index == 0); return fixtureFieldValue; }
+// The field-table lookup is doubled; the HUD record and setter are production.
+struct { int32_t ofs; } fields_0[] = {{static_cast<int32_t>(offsetof(game_hudelem_s, archived))}};
 #include "script_runtime_slice.inc"
 #include "script_save_runtime_tests.hpp"
+#include "script_scalar_field_tests.hpp"
 
 void TestAllocations()
 {
@@ -404,6 +411,7 @@ int main()
 {
     TestAllocations(); TestTerminate(); TestDebugReferences(); TestSaveObject();
     TestBuiltinsAndSwitch(); TestNativeOperandPositions(); TestIfElseOperandPatches(); TestNativeConsumers(); TestDebuggerFormatting(); TestArchivedThreads(); TestVariableReinitialization();
+    TestScalarScriptFieldStores();
     TestClassArraySaveLoad(); TestSaveShutdownEntries(); TestDebugExpressionSaveRefs();
     for (void *p : allocations) std::free(p);
     std::printf("script runtime: %d checks passed\n", checks);

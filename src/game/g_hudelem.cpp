@@ -298,10 +298,12 @@ void __cdecl HudElem_GetFlagHideWhenInMenu(game_hudelem_s *hud, int32_t offset)
         Scr_AddBool(0);
 }
 
+//SCRIPT_RUNTIME_HUD_BOOLEAN_BEGIN
 void __cdecl HudElem_SetBoolean(game_hudelem_s *hud, int32_t offset)
 {
-    *(VariableUnion *)((char *)&hud->elem.type + fields_0[offset].ofs) = Scr_GetInt(0);
+    *reinterpret_cast<int32_t *>(reinterpret_cast<char *>(hud) + fields_0[offset].ofs) = Scr_GetInt(0);
 }
+//SCRIPT_RUNTIME_HUD_BOOLEAN_END
 
 void __cdecl HudElem_SetColor(game_hudelem_s *hud, int32_t offset)
 {
