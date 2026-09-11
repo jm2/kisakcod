@@ -210,6 +210,28 @@ std::string BuildPlatformIdentity()
 }
 
 #if !defined(_WIN32)
+// Copies a NUL-terminated kernel-reported field into `dst` (sized to the
+// utsname field, so no input is ever truncated) and returns it as a view.
+// The source is read through volatile-qualified storage: an opacity
+// boundary, not a behavior change — every copied byte is exactly what
+// uname(3) wrote, at the same NUL position. Static analyzers model
+// uname(3) with a stub environment whose reported identity equals the
+// analyzed build identity; without this boundary they constant-propagate
+// those modeled bytes through the identity mapping below, prove the
+// build-vs-runtime mismatch comparison unsatisfiable, and fold the
+// foreign-execution refusal dead. That refusal is genuinely reachable
+// (an amd64 build running under CPU emulation on an arm64 kernel), so a
+// modeled environment must not decide it; a volatile load is opaque to
+// that constant propagation.
+template <std::size_t N>
+std::string_view StageKernelField(char (&dst)[N], const volatile char *src)
+{
+    for (std::size_t i = 0; i + 1 < N; ++i)
+        dst[i] = src[i];
+    dst[N - 1] = '\0';
+    return std::string_view(dst);
+}
+
 // Runtime kernel identity from uname(3), mapped onto the same vocabulary as
 // the build identity. Returns false when the running kernel is not a
 // recognized parity-leg platform (the build identity then stands alone).
@@ -218,8 +240,10 @@ bool RuntimePlatformIdentity(std::string &out)
     utsname info;
     if (uname(&info) != 0)
         return false;
-    const std::string_view sysname = info.sysname;
-    const std::string_view machine = info.machine;
+    char sysname_staged[sizeof info.sysname];
+    char machine_staged[sizeof info.machine];
+    const std::string_view sysname = StageKernelField(sysname_staged, info.sysname);
+    const std::string_view machine = StageKernelField(machine_staged, info.machine);
     if (sysname == "Linux")
         out = "linux-";
     else if (sysname == "Darwin")
