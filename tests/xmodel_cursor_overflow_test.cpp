@@ -25,12 +25,16 @@
 //     its own state.
 //
 // This suite is split from xmodel_nested_cursor_test.cpp: the overflow
-// contracts need no fixtures and share no state with the restore /
-// rewind contracts, and the split keeps each TU within the file-size
-// budget with every helper individually readable. All assertions are
-// retained in their original execution order.
+// contracts need no fixtures and share no contract state with the
+// restore / rewind contracts; both binaries share only the check
+// harness and fixtures header, tests/xmodel_cursor_test_support.h. The
+// split keeps each TU within the file-size budget with every helper
+// individually readable. All assertions are retained in their original
+// execution order.
 
 #include <xanim/buf_cursor.h>
+
+#include "xmodel_cursor_test_support.h"
 
 #include <cstdio>
 #include <cstring>
@@ -39,23 +43,10 @@ namespace xmodel_cursor_overflow_test
 {
 namespace
 {
-int g_failures = 0;
-int g_runs = 0;
-
-bool Evaluate(bool cond, const char *const expr, const char *const file, int line)
-{
-    ++g_runs;
-    if (!cond)
-    {
-        std::fprintf(stderr, "xmodel_cursor_overflow_test: %s:%d: %s\n", file, line, expr);
-        ++g_failures;
-        return false;
-    }
-    return true;
-}
+xmodel_cursor_test_support::Checker g_checker = {"xmodel_cursor_overflow_test"};
 }  // namespace
 
-#define CHECK(expr) Evaluate((expr), #expr, __FILE__, __LINE__)
+#define CHECK(expr) g_checker.Evaluate((expr), #expr, __FILE__, __LINE__)
 
 namespace
 {
@@ -209,8 +200,7 @@ int RunAll()
 {
     CHECK(TestScopeOverflowFailsClosed());
 
-    std::fprintf(stderr, "xmodel_cursor_overflow_test: %d/%d passed\n", g_runs - g_failures, g_runs);
-    return g_failures == 0 ? 0 : 1;
+    return g_checker.Report();
 }
 }  // namespace xmodel_cursor_overflow_test
 

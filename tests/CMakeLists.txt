@@ -3237,13 +3237,15 @@ add_test(
 # cold/warm nested loads, parent position/limit/failure restoration,
 # truncated-input cleanup, and three-level LIFO nesting. The
 # save-stack overflow fail-closed contracts run in their own TU,
-# kisakcod-xmodel-cursor-overflow-tests below.
+# kisakcod-xmodel-cursor-overflow-tests below; both suites share the
+# fixtures and CHECK harness via xmodel_cursor_test_support.h.
 # The loader TUs cannot link in this portable binary (win32-only engine
 # headers); xmodel_cursor_source_invariants_test.cmake pins the
 # production call sites instead. CTest entries match the 'xmodel'
 # regex so the bead's build/test command resolves to this target.
 add_executable(kisakcod-xmodel-nested-cursor-tests
     xmodel_nested_cursor_test.cpp
+    xmodel_cursor_test_support.h
     ${SRC_DIR}/xanim/buf_cursor.cpp)
 target_include_directories(
     kisakcod-xmodel-nested-cursor-tests PRIVATE ${SRC_DIR})
@@ -3266,9 +3268,11 @@ add_test(
 # re-activation in the overflowed frame overflows again, and the scopes
 # below unwind strictly LIFO. Split from xmodel_nested_cursor_test.cpp
 # so each contract suite stays within the file-size budget; same
-# production buf_cursor entry points, no fixtures shared.
+# production buf_cursor entry points, no fixtures of its own (the two
+# suites share fixtures/harness via xmodel_cursor_test_support.h).
 add_executable(kisakcod-xmodel-cursor-overflow-tests
     xmodel_cursor_overflow_test.cpp
+    xmodel_cursor_test_support.h
     ${SRC_DIR}/xanim/buf_cursor.cpp)
 target_include_directories(
     kisakcod-xmodel-cursor-overflow-tests PRIVATE ${SRC_DIR})
