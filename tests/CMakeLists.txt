@@ -3228,6 +3228,74 @@ add_test(
     NAME xmodel-load-bounded-cursor
     COMMAND kisakcod-xmodel-load-tests)
 
+# xmodel_nested_cursor_test: production-call-graph contracts for the
+# scoped nested cursor ownership and the checked second-pass seek
+# (ki-okmr / #124). Drives the real buf_cursor entry points in the
+# exact sequence the production loaders issue (XModelLoadFile ->
+# nested XModelPartsPrecache / XModelSurfsPrecache windows, material
+# second-pass rewind) over controlled xmodel/xmodelparts fixtures:
+# cold/warm nested loads, parent position/limit/failure restoration,
+# truncated-input cleanup, and three-level LIFO nesting. The
+# save-stack overflow fail-closed contracts run in their own TU,
+# kisakcod-xmodel-cursor-overflow-tests below; both suites share the
+# fixtures and CHECK harness via xmodel_cursor_test_support.h.
+# The loader TUs cannot link in this portable binary (win32-only engine
+# headers); xmodel_cursor_source_invariants_test.cmake pins the
+# production call sites instead. CTest entries match the 'xmodel'
+# regex so the bead's build/test command resolves to this target.
+add_executable(kisakcod-xmodel-nested-cursor-tests
+    xmodel_nested_cursor_test.cpp
+    xmodel_cursor_test_support.h
+    ${SRC_DIR}/xanim/buf_cursor.cpp)
+target_include_directories(
+    kisakcod-xmodel-nested-cursor-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-xmodel-nested-cursor-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-xmodel-nested-cursor-tests)
+set_target_properties(
+    kisakcod-xmodel-nested-cursor-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME xmodel-nested-cursor-ownership
+    COMMAND kisakcod-xmodel-nested-cursor-tests)
+
+# xmodel_cursor_overflow_test: fail-closed contracts for the buf_cursor
+# save-stack bound (ki-okmr / #124). Activation past the 16-slot save
+# stack installs a pre-failed scope whose reads fail closed; while an
+# overflow scope is open the depth is pinned at the bound, an overflow
+# scope's Deactivate pops nothing but leaves the overflowed caller
+# active and pre-failed (no unbounded legacy fallback), a sibling
+# re-activation in the overflowed frame overflows again, and the scopes
+# below unwind strictly LIFO. Split from xmodel_nested_cursor_test.cpp
+# so each contract suite stays within the file-size budget; same
+# production buf_cursor entry points, no fixtures of its own (the two
+# suites share fixtures/harness via xmodel_cursor_test_support.h).
+add_executable(kisakcod-xmodel-cursor-overflow-tests
+    xmodel_cursor_overflow_test.cpp
+    xmodel_cursor_test_support.h
+    ${SRC_DIR}/xanim/buf_cursor.cpp)
+target_include_directories(
+    kisakcod-xmodel-cursor-overflow-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-xmodel-cursor-overflow-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-xmodel-cursor-overflow-tests)
+set_target_properties(
+    kisakcod-xmodel-cursor-overflow-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME xmodel-cursor-overflow-fail-closed
+    COMMAND kisakcod-xmodel-cursor-overflow-tests)
+
+# Source-contract gate for the same stage: the loader TUs are not
+# compilable on portable hosts, so the second-pass correction is pinned
+# textually — checked SeekTo positioning, cursor-owned checkpoint, no
+# raw pos rewind, and paired Activate/Deactivate teardown counts.
+add_test(
+    NAME xmodel-cursor-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/xmodel_cursor_source_invariants_test.cmake)
+
 # xanim_parts_split_test: contract tests for the XAnimParts disk mirror
 # vs native runtime split (M4 + Priority 7). The retail x86 layout is
 # frozen at exactly 88 bytes per XAnimParts instance via ONDISK_SIZE; the
