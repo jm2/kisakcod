@@ -254,6 +254,34 @@ bool DerivePlatformIdentity(std::string &out)
     return true;
 }
 
+// Resolves the capture identity of THIS execution into `platform`, or
+// refuses fail-closed and returns false. The refusal and the identity
+// preprocessor paths live here, beside the identity helpers they mirror:
+// the mismatch refusal is compiled only where identity derivation can
+// fail (non-Windows, where the running kernel is observed via uname(3));
+// on Windows the derived identity is the compile-time build identity
+// alone, so there is no failure path and no rejection branch to compile.
+bool ResolveCaptureIdentityOrRefuse(std::string &platform)
+{
+#if !defined(_WIN32)
+    if (!DerivePlatformIdentity(platform))
+    {
+        std::fprintf(stderr,
+            "error: this harness build (%s) is executing on a different"
+            " platform; capture identity cannot be established\n",
+            BuildPlatformIdentity().c_str());
+        return false;
+    }
+#else
+    // Infallible by construction on Windows. No runtime probe here is the
+    // documented x86-on-x64 capture-attribution contract: a windows-x86
+    // build executing under x64 Windows still attributes its capture as
+    // windows-x86.
+    DerivePlatformIdentity(platform);
+#endif
+    return true;
+}
+
 // Renders the stable output protocol into `out`. `platform` is the derived
 // identity (always emitted); `leg` may be null/empty (no --leg given). The
 // parity driver verifies both against the requested --host/--ref triples
@@ -311,29 +339,11 @@ void EmitCapture(
 int RunCapture(const char *path, const std::string_view leg)
 {
     // Identity first: a capture that cannot be attributed is not emitted.
-    // The caller mirrors the helper's preprocessor paths: the mismatch
-    // refusal is compiled only where identity derivation can fail (non-
-    // Windows, where the running kernel is observed via uname(3)); on
-    // Windows the derived identity is the compile-time build identity
-    // alone, so there is no failure path and no rejection branch to
-    // compile.
+    // The identity preprocessor paths and the foreign-execution refusal
+    // live in ResolveCaptureIdentityOrRefuse beside the identity helpers.
     std::string platform;
-#if !defined(_WIN32)
-    if (!DerivePlatformIdentity(platform))
-    {
-        std::fprintf(stderr,
-            "error: this harness build (%s) is executing on a different"
-            " platform; capture identity cannot be established\n",
-            BuildPlatformIdentity().c_str());
+    if (!ResolveCaptureIdentityOrRefuse(platform))
         return 2;
-    }
-#else
-    // Infallible by construction on Windows. No runtime probe here is the
-    // documented x86-on-x64 capture-attribution contract: a windows-x86
-    // build executing under x64 Windows still attributes its capture as
-    // windows-x86.
-    DerivePlatformIdentity(platform);
-#endif
     // --leg is an assertion about this executable's identity. It is checked
     // against the derived build/runtime identity, never stamped verbatim:
     // a Linux build cannot mint a leg=windows-x86 capture.
