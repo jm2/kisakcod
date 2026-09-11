@@ -82,13 +82,13 @@ finish facade access):
 
 | # | Site | File |
 |---|---|---|
-| 1 | temporary `SL_GetStringOfSize` user-4 claim | `src/database/db_stream_load.cpp` (~:244) |
-| 2 | temporary `SL_GetStringOfSize` user-4 claim | `src/database/db_stream_load.cpp` (~:315) |
-| 3 | `SL_AddUser` user-4 reference | `src/database/db_stringtable_load.cpp` (~:27) |
-| 4 | dynamic-default `SL_GetString(name, 4)` | `src/database/db_registry.cpp` (~:1858) |
-| 5 | dynamic-default `SL_GetString(name, 4)` | `src/database/db_registry.cpp` (~:3557) |
-| 6 | `SL_TransferSystem(4, 8)` global sweep | `src/database/db_registry.cpp` in `DB_FreeUnusedResources` (~:3524) |
-| 7 | `SL_ShutdownSystem(8)` global sweep | `src/database/db_registry.cpp` in `DB_FreeUnusedResources` (~:3581) |
+| 1 | temporary `SL_GetStringOfSize` user-4 claim (`DbLoadLegacyBridge::TryInternUser4StringOfSize`) | `src/database/db_stream_load.cpp:244` |
+| 2 | temporary `SL_GetStringOfSize` user-4 claim (`DbLoadLegacyBridge::TryInternUser4StringOfSize`) | `src/database/db_stream_load.cpp:315` |
+| 3 | `SL_AddUser` user-4 reference (`DbLoadLegacyBridge::TryAddUser4`) | `src/database/db_stringtable_load.cpp:27` |
+| 4 | dynamic-default `SL_GetString(name, 4)` intern (`DbLoadLegacyBridge::TryInternUser4String`) | `src/database/db_registry.cpp:1858` |
+| 5 | dynamic-default `SL_GetString(name, 4)` re-intern (`DbLoadLegacyBridge::TryInternUser4String`) | `src/database/db_registry.cpp:3557` |
+| 6 | `SL_TransferSystem(4, 8)` global sweep (`DbLoadLegacyBridge::TryTransferUsers4To8`) | `src/database/db_registry.cpp:3524` (in `DB_FreeUnusedResources`) |
+| 7 | `SL_ShutdownSystem(8)` global sweep (`DbLoadLegacyBridge::TryShutdownUser8`) | `src/database/db_registry.cpp:3581` (in `DB_FreeUnusedResources`) |
 
 Source contracts require **zero raw sites** and freeze the exact bridge-call
 counts, so partial enrollment fails the seals
@@ -171,7 +171,7 @@ fail-closed iterators (`src/database/db_xasset_disk32.h/.cpp`; tests
 | Native runtime owner | Widened ownership stack, **build-enrolled zero-caller except §2.3**: 33-slot durable runtime table (fixed layouts frozen), script-string OwnershipBatch/journal/transaction, PMem checked scopes + serialized runtime, stream ownership, pending-copy ledger (2,048 records / 8 generations), registry coordinator, process-lifetime facade | `src/database/db_zone_*`, `db_registry_ownership_coordinator.*`, `src/universal/physicalmemory*`; per-component `*_production_seal_tests.cpp` |
 | Reader/converter | Converted reader for the container + string list; per-asset bodies still decompiled readers (§4.2–4.7) | `db_xasset_disk32.cpp` |
 | Publication/unload | Bridge-enrolled `SL_TransferSystem`/`SL_ShutdownSystem` sweeps in `DB_FreeUnusedResources`; retry-safe Live-unload and terminal-reset adapters exist production-neutral | `db_registry.cpp`; `db_zone_runtime_table` adapters |
-| Production enrollment | **Seven sites only** (§2.3). Table/facade/PMem/stream/pending have zero production callers by design. **Missing enrollment = every downstream asset family's staged load/commit path** | `docs/task.md` M5 rows |
+| Production enrollment | **Seven sites only** (§2.3). Table/facade/PMem/stream/pending have zero production callers by design. **Missing enrollment = every downstream asset family's staged load/commit routing through the durable table/facade.** The one enrolled exception runs outside this seam: the FX lease-bound archive restore is reached from the client archive paths (`cl_cgame.cpp:1220`, `cl_cgame_mp.cpp:1287` via `FX_Archive`) — client-side, not headless-server-reachable — while fast-file FX/impact adapter conversion is itself still zero-caller (§4.3) | `docs/task.md` M5 rows |
 | Requirement | Headless MP: required (script strings feed every family) | — |
 
 ### 4.2 Model & animation (XModel 0x03, XAnimParts 0x02, XModelPieces 0x00)
@@ -179,7 +179,7 @@ fail-closed iterators (`src/database/db_xasset_disk32.h/.cpp`; tests
 | Aspect | State | Evidence / owner |
 |---|---|---|
 | Frozen Disk32 schema | Partial: model pieces/stringtable/string extents frozen in `db_disk32.h` (`kXModelPieceBytes`…); surfaces/collision via `kXSurfaceCollision*Bytes`; **no full portable XModel/XAnim body schema module** — bodies are read by the decompiled fixup readers | `db_disk32.h`; `db_load.cpp` `Load_XAnim*`/`Load_XSurface*` |
-| Native runtime owner | XAnim/DObj/model-surface streams widened (merged M1/M4 work); **MP pose, BreakablePiece, DynEntity physics ownership still raw-width** — `sizeof(BreakablePiece)==0xC` sits at the top of the sizeof-debt ledger | `docs/task.md` M4; `tests/abi_sizeof_debt.allow`; **owner: PR #99 / `ki-v4m` (open)** |
+| Native runtime owner | XAnim/DObj/model-surface streams widened (merged M1/M4 work); **MP pose, BreakablePiece, DynEntity physics ownership still raw-width** — `sizeof(BreakablePiece)==0xC` sits at the top of the sizeof-debt ledger; **XAnimParts/XAnimIndices payload consumers still raw-width on native64**: production has not adopted `XAnimPartsNative` — `XAnimClone` allocates a hardcoded 88 bytes (`src/xanim/xanim.cpp:152`), the load-object path asserts `sizeof(XAnimParts)==88` (`src/xanim/xanim_load_obj.cpp:998`), and `xanim_native.h:37-43` records consumer migration as follow-up (64-bit runtime view is 0x88) | `docs/task.md` M4; `tests/abi_sizeof_debt.allow`; **owner: PR #99 / `ki-v4m` (open)**; XAnim payload consumer migration: no separate owner bead — tracked in §6.3 per `docs/task.md` |
 | Reader/converter | Load-object route bounded via `buf_cursor` with nested cursor ownership + checked second-pass rewind **in flight** (PR #140 / `ki-okmr`, production stage of #124); fast-file route is the decompiled reader; `fuzz_fastfile` is a primitive harness, not production-parser coverage | `src/xanim/xmodel_load_obj.cpp`, `src/xanim/buf_cursor.*`; **#124/`ki-ym2r`, #125 (A03) owners** |
 | Publication/unload | `Load_XModelAsset`/`Mark_XModelAsset` registration; DObj create/clone/unarchive failure-atomic transaction (merged P2 work); unload = zone free + DObj pool accounting | `db_registry.cpp`; `dobj_management.cpp` |
 | Test evidence | `xmodel_load_test.cpp`, `xanim_load_test.cpp`, `xanim_parts_split_test.cpp`, `model_surface_stream_tests.cpp`, `skel_memory_atomic_tests.cpp`, nested-cursor suite on #140 | tests/ |
@@ -191,9 +191,9 @@ fail-closed iterators (`src/database/db_xasset_disk32.h/.cpp`; tests
 |---|---|---|
 | Frozen Disk32 schema | Frozen: archive effect/system/buffer/body mirrors, fast-file effect/visual/trail/impact schemas, native64 `fx_archive_disk32` stride contracts | `src/EffectsCore/fx_archive_*_disk32.*`, `fx_fastfile_*` |
 | Native runtime owner | Widened: zero native atomics in EffectsCore, exact-width runtime records, native FX arena inside the zone-runtime slab plan | `fx_runtime.h`; PRs #2–#4, #33, #59 lineage |
-| Reader/converter | Converted reader: bounded two-pass effect/impact converters, frozen resolver transactions, retained-extent overlap checks, callback-free materialization, publish-after-materialize ordering; production restore uses the exact-lease-bound reader/candidate path; restore-side native64 guard/raw parser removed | `fx_convert.cpp`, `fx_archive_restore_*`; `docs/task.md` M5 row |
+| Reader/converter | Converted reader: bounded two-pass effect/impact converters, frozen resolver transactions, retained-extent overlap checks, callback-free materialization, publish-after-materialize ordering. **Two distinct consumers, not one seam:** (a) the lease-bound `FX_Restore` archive reader/candidate path, enrolled through the client archive paths; (b) the fast-file adapter conversion `TryWireEffectDefThroughActiveFxZoneAdapter`/`TryWireImpactTableThroughActiveFxZoneAdapter`, which converts only under an active zone-adapter binding. Restore-side native64 guard/raw parser removed | `fx_convert.cpp`, `fx_archive_restore_*`, `db_fx_zone_adapter_wiring.*`; `docs/task.md` M5 row |
 | Publication/unload | Zone-adapter wiring with fail-closed headless bridge; physics batch control + rollback recipes sealed | `db_fx_zone_adapter_wiring*.cpp` (+ headless variant), `fx_archive_physics_batch_control.*`, `tests/db_fx_zone_adapter_wiring_production_call_site_tests.cpp` |
-| Production enrollment | **Enrolled** for fast-file FX restore via the production `Load_FxEffectDefHandle`/`Load_FxImpactTablePtr` path and the lease-bound restore staging; physics/impact **live** enrollment still gated on the open FX/impact path item | `docs/task.md` "Enroll the guarded native FX/impact path…" (unchecked) |
+| Production enrollment | **Two seams with opposite states — do not conflate.** (a) Lease-bound `FX_Restore` archive restore: **enrolled** through the client archive paths (`cl_cgame.cpp:1220`; `cl_cgame_mp.cpp:1287` via `FX_Archive`) — client-side, not headless-server-reachable. (b) Fast-file FX/impact conversion: `Load_FxEffectDef` (`src/database/db_load.cpp:7126`) and `Load_FxImpactTable` (`src/database/db_load.cpp:8928`) call the `TryWire*` adapters, but these return null unless a binding is active; bindings are enrolled only by the zone runtime-table controller (`db_zone_runtime_table.cpp:2347`, `:4358`) after a `ZoneRuntimeFacade::TryBindStorage` receipt (`db_zone_runtime_facade.cpp:674`), which has **zero production callers** — so every shipping profile executes the decompiled fallback readers and this seam remains **build-enrolled, zero-caller**. Physics/impact **live** enrollment still gated on the open FX/impact path item | `docs/task.md` "Enroll the guarded native FX/impact path…" (unchecked) |
 | Test evidence | ~30 `fx_*` test/suite files (archive, reader, native, fastfile, restore, visibility, sidecar) | tests/ |
 | Requirement | Headless MP: required (FX is a shared asset type; headless realizes null but must parse/own) | — |
 
@@ -202,7 +202,7 @@ fail-closed iterators (`src/database/db_xasset_disk32.h/.cpp`; tests
 | Aspect | State | Evidence / owner |
 |---|---|---|
 | Frozen Disk32 schema | Frozen extents: `kSoundFileBytes=12`, `kSpeakerMapBytes=408`, `kSndAliasBytes=92`; MssSound header read as fixed 40 bytes | `db_disk32.h`; `db_load.cpp` `Load_MssSound` |
-| Alias/shared-inline semantics | **Inserted-pointer family**: `MssSound.data < 0xFFFFFFFE` → alias to zone bytes (`DB_ConvertOffsetToAlias`, `DBAliasKind::SoundData`); `0xFFFFFFFE` → fresh allocation **registered as inserted pointer** for later sharing; `0xFFFFFFFF` → fresh allocation, unshared. Every `LoadedSound` owns and frees its processed buffer (no cross-asset aliasing) | `db_load.cpp` `Load_MssSound` (~:2529) |
+| Alias/shared-inline semantics | **Inserted-pointer family**: `MssSound.data < 0xFFFFFFFE` → alias to zone bytes (`DB_ConvertOffsetToAlias`, `DBAliasKind::SoundData`); `0xFFFFFFFE` → fresh allocation **registered as inserted pointer** for later sharing; `0xFFFFFFFF` → fresh allocation, unshared. Every `LoadedSound` owns and frees its processed buffer (no cross-asset aliasing) | `db_load.cpp:2529` (`Load_MssSound`) |
 | Native runtime owner | Sound family runtime structures remain Miles-shaped; playback is a client-only dependency (Miles) — replacement tracked by A10/upstream #76, not this ledger | `src/sound/`; **A10/#132 owner** |
 | Reader/converter | Decompiled reader (`Load_snd_alias_list_t`, `Load_StreamedSound`, `Load_SoundFileRef`); no portable sound schema rewrite | `db_load.cpp` |
 | Publication/unload | `Load_/Mark_snd_alias_list_Asset`; unload via `DB_FreeUnusedResources` sweeps (bridge-enrolled §2.3) + zone free | `db_registry.cpp` |
@@ -214,7 +214,7 @@ fail-closed iterators (`src/database/db_xasset_disk32.h/.cpp`; tests
 | Aspect | State | Evidence / owner |
 |---|---|---|
 | Frozen Disk32 schema | Frozen extents: `kBrushWrapperBytes=80`, `kCBrushBytes=80`, `kCBrushSideBytes=12`, `kCPlaneBytes=20`, `kPhysGeomInfoBytes=68`, `kPhysGeomListBytes=44`, `kGameWorldSpBytes=44`, `kPathDataBytes=40`, `kPathNode*` family | `db_disk32.h` |
-| Alias semantics | Brush-side plane tokens: null and shared-inline (`0xFFFFFFFE`) are **hard errors** (`ERR_DROP`); inline allocates in block-4 with `DB_IsStreamRangeValid` check; offsets decode normally. This is the audited inserted-pointer rejection pattern for physics subobjects | `db_load.cpp` (~:5220–5250) |
+| Alias semantics | Brush-side plane tokens: null and shared-inline (`0xFFFFFFFE`) are **hard errors** (`ERR_DROP`); inline allocates in block-4 with `DB_IsStreamRangeValid` check; offsets decode normally. This is the audited inserted-pointer rejection pattern for physics subobjects | `src/database/db_load.cpp:5224-5258` (`Load_BrushWrapper` side-plane token walk) |
 | Native runtime owner | ODE user-data + physics pools widened (merged); **DynEntity/BreakablePiece/pose ownership raw-width pending #99**; physics sidecar authority sealed macro-off | `tests/abi_sizeof_debt.allow`; **owner: PR #99 / `ki-v4m`** |
 | Reader/converter | Decompiled readers with audited token checks (above); pathdata/AI nodes shared-extent constants exist but no converted walker | `db_load.cpp` |
 | Publication/unload | `Load_/Mark_PhysPresetAsset`; collision registration on map load; rollback recipes sealed on the physics sidecar | `tests/physics_rollback_recipe_source_test.cmake` |
@@ -248,7 +248,7 @@ fail-closed iterators (`src/database/db_xasset_disk32.h/.cpp`; tests
 
 | Aspect | State | Evidence / owner |
 |---|---|---|
-| tagInfo save record | **Converted and merged on GitHub master (PR #89 / `ki-f0w`). Do not recreate.** Pointer-bearing 112-byte Disk32 record (`tagInfo_s`, 0x70 x86 / 0x78 x64 host shape) converted via entity-map arena; production-path coverage through the `g_save.cpp` `SF_TYPE_TAG_INFO` branches | `src/game/g_save.cpp` (~:835–1050); `tests/save_taginfo_tests.cpp`, `save_taginfo_production_tests.cpp` |
+| tagInfo save record | **Converted and merged on GitHub master (PR #89 / `ki-f0w`). Do not recreate.** Pointer-bearing 112-byte Disk32 record (`tagInfo_s`, 0x70 x86 / 0x78 x64 host shape) converted via entity-map arena; production-path coverage through the `g_save.cpp` `SF_TYPE_TAG_INFO` branches | `src/game/g_save.cpp:780`, `:830`, `:1044`; `tests/save_taginfo_tests.cpp`, `save_taginfo_production_tests.cpp` |
 | Remaining save family | **Deferred (SP) by scope**: full SP save/load sizing debt (`g_save.cpp` array sizing), MP-required script VM persistence tracked with the VM owner below; demo decode is the A05 oracle input, not proof of simulation parity | `docs/CODEBASE_AUDIT.md` SP debt; **A05/#127, #119 owners** |
 | Requirement | Headless MP: no save path. Full MP client: profile/config only. SP persistence: deferred | — |
 
@@ -274,7 +274,8 @@ fail-closed iterators (`src/database/db_xasset_disk32.h/.cpp`; tests
 | Surface | Production callers today |
 |---|---|
 | Seven script-string/registry sites via `DbLoadLegacyBridge` | **7 (atomic, sealed)** |
-| FX fast-file restore staging | Enrolled via production FX load path (lease-bound reader/candidate) |
+| FX lease-bound archive restore (`FX_Restore` reader/candidate) | **1 path** — client archive-restore callers only (`cl_cgame.cpp:1220`; `cl_cgame_mp.cpp:1287` via `FX_Archive`); client-side, not headless-reachable |
+| FX fast-file adapter conversion (`TryWire*` / `TryBindStorage` binding) | **0** — `Load_FxEffectDef`/`Load_FxImpactTable` take the decompiled fallback readers in every shipping profile |
 | Durable runtime table / facade / coordinator / PMem checked scopes / stream ownership / pending-copy ledger / script-string OwnershipBatch / Live-unload & terminal-reset adapters | **0** (build-enrolled, source-sealed, deliberately production-neutral) |
 | `buf_cursor` bounded load-object reads | Enrolled on the x86 load-object route; nested-ownership correction in flight (#140) |
 | Native64 production engine | **None** (configuration gate armed; M6+ targets undelivered) |
@@ -293,19 +294,27 @@ checkpoint" queue from `docs/task.md`, refined to ledger rows:
    per family after #99/#119 land.*
 2. **Physics ownership conversion** (#99 / `ki-v4m`, open): pose,
    BreakablePiece, DynEntity — required before DynEnt-bearing maps load native64.
-3. **Script VM widening** (#119 / `ki-n1et`): server gameplay requires the VM;
+3. **XAnimParts/XAnimIndices payload consumer migration** (server-reachable
+   native64 blocker; no dedicated owner bead — #129 scope per `docs/task.md`):
+   production consumers still allocate and assert the retail 88-byte payload
+   (`src/xanim/xanim.cpp:152`, `src/xanim/xanim_load_obj.cpp:998`) while the
+   64-bit runtime view is 0x88; `xanim_native.h` stages the split but records
+   consumer adoption as follow-up. XAnim closure is headless-MP required
+   (§3), so this blocks a real headless server.
+4. **Script VM widening** (#119 / `ki-n1et`): server gameplay requires the VM;
    serialized formats must not change (Roadmap: "preserving serialized
    formats").
-4. **Model cursor production correction** (#140 / `ki-okmr` → #124): nested
+5. **Model cursor production correction** (#140 / `ki-okmr` → #124): nested
    ownership + checked rewind; then real cold/warm loader tests (#124
    acceptance).
-5. **World/collision parse hardening + real graph walks** (#113 / `ki-msb`
+6. **World/collision parse hardening + real graph walks** (#113 / `ki-msb`
    instrument over licensed assets): needed for the M5 hash-match exit.
-6. **Production fuzz coverage** (#125 / A03): fast-file harness currently models
+7. **Production fuzz coverage** (#125 / A03): fast-file harness currently models
    selected reads, not the production DB/XModel/FX composition.
-7. **Guarded native FX/impact live path** (`docs/task.md` open item): rollback,
-   high-address, alias, unload, slot-reuse coverage.
-8. **Engine composition** (A08 / #130, consuming `ki-eudd` sockets + `ki-vuj`
+8. **Guarded native FX/impact live path** (`docs/task.md` open item): rollback,
+   high-address, alias, unload, slot-reuse coverage — including fast-file
+   adapter binding enrollment (§4.3 seam b, zero-caller today).
+9. **Engine composition** (A08 / #130, consuming `ki-eudd` sockets + `ki-vuj`
    console, merged): first real Win64/Linux headless link, then retail-map
    closure per this ledger, then commercial sessions (#122).
 
