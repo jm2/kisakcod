@@ -224,7 +224,7 @@ string (`src/client_mp/cl_cgame_mp.cpp:750-753`): `Info_ValueForKey` on
 startup and map transitions, and is separate from `CG_ParseServerInfo`'s
 `g_gametype` sink. The caller's own 64-byte copy bounds the value to 63 payload
 bytes before the setter. It is a second server-controlled sink inside mutation
-family #2 of the section 5.7 summary, not a new family.
+family #2 of the section 5.8 summary, not a new family.
 
 ### 5.3 "cod" info configstring block (cgame, indices 20-275)
 
@@ -307,16 +307,59 @@ client perform an internal write to a client cheat dvar. Unlike families #1-#5
 it carries no name/value payload; the mutation is the fixed `cg_thirdPerson = 0`
 reset inside the restart handler, and it fires on every `B`/`n` byte received
 because the reset at `:249` precedes the `if (!savepersist)` block, so both
-`savepersist` values run the same `Dvar_SetBool`. The `B`/`n` byte itself can
-only originate from the fast-restart path: `map_restart` (`SV_MapRestart(0)`)
+`savepersist` values run the same `Dvar_SetBool`.
+
+Within KisakCOD's own normal server-side emission path, the `B`/`n` byte is
+produced only by the fast-restart branch: `map_restart` (`SV_MapRestart(0)`)
 spawns a new server at `:478-483` before reaching `:512-513`, while
 `fast_restart` (`SV_MapRestart(1)`) emits it from the fast-restart branch when
 the condition at `:476` is false (`sv_maxclients` unmodified, gametype
-unchanged) and `com_frameTime != sv.start_frameTime`. Once a hostile server sends the byte the
-client handler still applies the same fixed reset, but the emission is not
-attributable to `map_restart`.
+unchanged) and `com_frameTime != sv.start_frameTime`. That is an attribution of
+KisakCOD's server path, not a property the byte carries. The client cannot
+establish the sender's code path: `CG_DeployServerCommand` dispatches solely on
+the received first byte (`src/cgame_mp/cg_servercmds_mp.cpp:461`, `case 0x42`
+`'B'` at `:465-467`, `case 0x6E` `'n'` at `:613-615`), so a custom or hostile
+server that places `B`/`n` in its reliable command stream reaches the same
+handler and the same fixed reset. The client-side mutation below therefore holds
+for any origin; only the emission claim is limited to KisakCOD's normal
+server-side path.
 
-### 5.7 Path summary
+### 5.7 Initial-snapshot debug dvar write (`fs_debug`)
+
+Processing the first usable server snapshot performs a fixed internal dvar write
+that no name/value payload drives. `CG_ProcessSnapshots`
+(`src/cgame_mp/cg_snapshot_mp.cpp:566`) runs from `CG_DrawActiveFrame`
+(`src/cgame_mp/cg_view_mp.cpp:1332`). When a snapshot whose `snapFlags` lack bit
+`2` becomes the initial snapshot (`cg_snapshot_mp.cpp:590-598`), the function
+runs `CG_SetInitialSnapshot`, `CG_SetNextSnap` and `CG_TransitionSnapshot` and
+then:
+
+```c
+if (!cg_fs_debug->current.integer)
+    Dvar_SetInt(cg_fs_debug, 2);
+```
+
+(`src/cgame_mp/cg_snapshot_mp.cpp:596-597`).
+
+`cg_fs_debug` is registered as the integer dvar `fs_debug` with default `0` and
+`DVAR_NOFLAG` (`src/cgame_mp/cg_main_mp.cpp:920-925`). `Dvar_SetInt`
+(`src/universal/dvar.cpp:2540-2542`) delegates to
+`Dvar_SetIntFromSource(..., DVAR_SOURCE_INTERNAL)` (`:2333`), so the write uses
+the same internal source as families #1-#6; `fs_debug` is not `DVAR_CHEAT`, so
+that flag is irrelevant here. The written value `2` is a fixed literal and not
+server-supplied data: the server controls only the timing, namely that a first
+usable snapshot was received after cgame initialization.
+
+This is a seventh mutation family: a server-event-triggered internal write to a
+client dvar with no wire payload. It is transient rather than a lasting
+override — `CG_Init` resets `fs_debug` back to `0` when it observes the value
+`2` (`src/cgame_mp/cg_main_mp.cpp:1757-1758`) — so a test must record the
+in-window value, not just the post-frame final state. The snapshot is normal
+server traffic; the family is listed on the same reasoning that already counts
+the `B`/`n` fixed reset (section 5.6) as a family, because the audited property
+is the server-triggered internal mutation, not payload control.
+
+### 5.8 Path summary
 
 | # | Entry | Server input | Client sink | Source | Validation |
 |---|---|---|---|---|---|
@@ -328,6 +371,7 @@ attributable to `map_restart`.
 | 4b | configstring 1 (initial connect) | systeminfo `sv_cheats` 0 | `CL_SystemInfoChanged` → `Dvar_SetCheatState` (bulk reset of every `DVAR_CHEAT` dvar) | INTERNAL | none |
 | 5 | configstrings 1954-1969 | shock file name | `BG_LoadShellShockDvars` → local file → internal set | INTERNAL | client local file lookup |
 | 6 | `B` (0x42) / `n` (0x6E) reliable command | restart byte only | `CG_MapRestart` → `Dvar_SetBool(cg_thirdPerson, 0)` | INTERNAL | none (fixed reset of one `DVAR_CHEAT` dvar) |
+| 7 | Initial usable server snapshot | snapshot processing only | `CG_ProcessSnapshots` → `Dvar_SetInt(fs_debug, 2)` | INTERNAL | none (fixed write of one int dvar; `CG_Init` resets it to `0`) |
 
 ## 6. Special cases and client-local side effects
 
@@ -369,6 +413,15 @@ cheat-state reset, the reset value is applied regardless of the dvar's
 preexisting value, so a restart test must record the pre-restart
 `cg_thirdPerson` value and the post-restart reset outcome.
 
+A further client-local side effect is the initial-snapshot debug write (section
+5.7): processing the first usable server snapshot with `fs_debug == 0` calls
+`Dvar_SetInt(cg_fs_debug, 2)` (`src/cgame_mp/cg_snapshot_mp.cpp:596-597`), which
+reaches `Dvar_SetIntFromSource(..., DVAR_SOURCE_INTERNAL)`
+(`src/universal/dvar.cpp:2540-2542`, `:2333`). The value is a fixed literal, not
+a server payload, and `CG_Init` later resets `fs_debug` to `0` when it is `2`
+(`src/cgame_mp/cg_main_mp.cpp:1757-1758`). A snapshot-processing test must record
+the value while the snapshot is being applied, not only the settled frame state.
+
 ## 7. What the numeric flags actually authorize
 
 At this SHA the MP server-controlled paths reach the `DVAR_SOURCE_INTERNAL`
@@ -399,9 +452,10 @@ forged/hostile input.
 
 Observed at `a1ca543b` (source inspection only):
 
-- Multiplayer has exactly six dvar-mutation families in section 5.7; #1 and #6
-  are direct game-server commands, #2-#4 are configstring-derived, and #5 is a
-  local-file indirection.
+- Multiplayer has exactly seven dvar-mutation families in section 5.8; #1 and #6
+  are direct game-server commands, #2-#4 are configstring-derived, #5 is a
+  local-file indirection, and #7 is triggered by initial server-snapshot
+  processing.
 - The `v` command pair loop reads arguments at `i` and `i+1` without checking
   an even count; `Cmd_Argv` returns `""` past the end
   (`src/qcommon/cmd.cpp:103-112`), so a trailing odd argument degrades to an
@@ -438,6 +492,13 @@ Observed at `a1ca543b` (source inspection only):
   source (`src/cgame_mp/cg_servercmds_mp.cpp:465-467`, `:613-615`, `:212`,
   `:249`; registration at `src/cgame_mp/cg_main_mp.cpp:893`), so a
   `DVAR_CHEAT` client dvar changes without any `v` name/value payload.
+- Processing the first usable server snapshot with `fs_debug == 0` calls
+  `Dvar_SetInt(cg_fs_debug, 2)` from `CG_ProcessSnapshots`
+  (`src/cgame_mp/cg_snapshot_mp.cpp:596-597`; caller
+  `src/cgame_mp/cg_view_mp.cpp:1332`), reaching the internal source
+  (`src/universal/dvar.cpp:2540-2542`) with no `v` name/value payload. The
+  value is a fixed literal, and `CG_Init` resets `fs_debug` to `0` when it is
+  `2` (`src/cgame_mp/cg_main_mp.cpp:1757-1758`).
 - Re-registering an existing external dvar with a concrete type is handled by
   `Dvar_Reregister`/`Dvar_MakeExplicitType`
   (`dvar.cpp:1727-1735`, `:1788-1843`).
@@ -514,6 +575,7 @@ No cell is considered passed until it has a recorded result for both commercial
 | R6 | initial remote connection with systeminfo `sv_cheats` 0 | every `DVAR_CHEAT` dvar is reset to its reset value before systeminfo pairs apply; preexisting client cheat values do not survive | Ref |
 | R7 | cgame/map init from serverinfo configstring 0 | client `mapname` follows serverinfo `mapname` on startup and each map transition | Ref |
 | R8 | fast restart signalling `B` (`0x42`) / `n` (`0x6E`) | `CG_MapRestart` resets `cg_thirdPerson` to `0` even when the client had it non-zero before the restart; the `DVAR_CHEAT` reset is recorded separately for both commercial profiles | Ref |
+| R9 | initial usable server snapshot processed (`fs_debug` at `0`) | `CG_ProcessSnapshots` writes `fs_debug = 2` through the internal source while the snapshot is applied, and `CG_Init` settles it back to `0`; record the in-window value and the settled value separately and compare both to the reference | Ref |
 
 ### 9.4 Both references
 
@@ -577,6 +639,8 @@ All paths are relative to the repository root at
 | Map-restart command | `src/server_mp/sv_ccmds_mp.cpp:512-513`; `src/cgame_mp/cg_servercmds_mp.cpp:212`, `:249`, `:465-467`, `:613-615` |
 | `cg_thirdPerson` registration | `src/cgame_mp/cg_main_mp.cpp:893` |
 | `Dvar_SetBool` | `src/universal/dvar.cpp:2535-2538` |
+| Initial-snapshot `fs_debug` write | `src/cgame_mp/cg_snapshot_mp.cpp:566`, `:590-598`, `:596-597`; `src/cgame_mp/cg_view_mp.cpp:1332`; `src/cgame_mp/cg_main_mp.cpp:920-925`, `:1757-1758` |
+| `Dvar_SetInt` | `src/universal/dvar.cpp:2333`, `:2540-2542` |
 | cgame dispatch | `src/cgame_mp/cg_servercmds_mp.cpp:391-395`, `:461`, `:663-671` |
 | cgame dvar handler | `src/cgame_mp/cg_servercmds_mp.cpp:1359-1407` |
 | cgame configstrings | `src/cgame_mp/cg_servercmds_mp.cpp:34-72`, `:853-982` |
