@@ -1114,12 +1114,12 @@ void GScr_AnimHasNotetrack()
     const XAnim_s *Anims; // eax
     uint8_t v1; // al
     uint32_t  floatValue; // [esp-4h] [ebp-10h]
-    const char *anim; // [esp+8h] [ebp-4h]
+    scr_anim_s anim; // [esp+8h] [ebp-4h]
 
-    anim = Scr_GetAnim(0, 0).linkPointer;
+    anim = Scr_GetAnim(0, 0);
     floatValue = Scr_GetConstString(1);
-    Anims = Scr_GetAnims(HIWORD(anim));
-    v1 = XAnimNotetrackExists(Anims, (uint16_t)anim, floatValue);
+    Anims = Scr_GetAnims(anim.tree);
+    v1 = XAnimNotetrackExists(Anims, anim.index, floatValue);
     Scr_AddBool(v1);
 }
 
@@ -1127,13 +1127,13 @@ void GScr_GetNotetrackTimes()
 {
     const XAnim_s *Anims; // eax
     VariableUnion name; // [esp+4h] [ebp-8h]
-    const char *anim; // [esp+8h] [ebp-4h]
+    scr_anim_s anim; // [esp+8h] [ebp-4h]
 
-    anim = Scr_GetAnim(0, 0).linkPointer;
+    anim = Scr_GetAnim(0, 0);
     name.intValue = Scr_GetConstString(1);
     Scr_MakeArray();
-    Anims = Scr_GetAnims(HIWORD(anim));
-    XAnimAddNotetrackTimesToScriptArray(Anims, (uint16_t)anim, name.stringValue);
+    Anims = Scr_GetAnims(anim.tree);
+    XAnimAddNotetrackTimesToScriptArray(Anims, anim.index, name.stringValue);
 }
 
 void GScr_GetBrushModelCenter()

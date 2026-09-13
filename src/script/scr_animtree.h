@@ -2,6 +2,7 @@
 #include <xanim/xanim.h>
 #include <bgame/bg_local.h>
 
+//SCRIPT_RUNTIME_ANIM_PUBLIC_TYPE_BEGIN
 #define MAX_XANIMTREE_NUM       0x80 // 128
 
 struct scrAnimPub_t // sizeof=0x41C
@@ -23,6 +24,8 @@ struct scrAnimPub_t // sizeof=0x41C
 // scalar handle fields around it do not move relative to each other.
 RUNTIME_SIZE(scrAnimPub_t, 0x41C, 0x820);
 
+//SCRIPT_RUNTIME_ANIM_PUBLIC_TYPE_END
+
 struct scrAnimGlob_t // sizeof=0x20C
 {                                       // ...
     const char *start;                  // ...
@@ -35,6 +38,7 @@ struct scrAnimGlob_t // sizeof=0x20C
 // alignment).
 RUNTIME_SIZE(scrAnimGlob_t, 0x20C, 0x218);
 
+void Scr_ClearAnimationFixups();
 void __cdecl TRACK_scr_animtree();
 void __cdecl SetAnimCheck(int bAnimCheck);
 void __cdecl Scr_EmitAnimation(char *pos, uint32_t animName, uint32_t sourcePos);

@@ -4321,12 +4321,16 @@ void __cdecl Scr_AddFloat(float value)
     scrVmPub.top->u.floatValue = value;
 }
 
+//SCRIPT_RUNTIME_ANIM_ADD_BEGIN
 void __cdecl Scr_AddAnim(scr_anim_s value)
 {
     IncInParam();
     scrVmPub.top->type = VAR_ANIMATION;
-    scrVmPub.top->u.codePosValue = value.linkPointer;
+    scrVmPub.top->u = VariableUnion();
+    scrVmPub.top->u.stringValue = value.packed;
 }
+
+//SCRIPT_RUNTIME_ANIM_ADD_END
 
 void __cdecl Scr_AddUndefined()
 {

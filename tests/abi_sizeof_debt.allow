@@ -84,7 +84,6 @@ bgame/bg_local.h|static_assert:sizeof(lerpFrame_t)==0x30|1
 bgame/bg_local.h|static_assert:sizeof(objective_t)==0x1C|1
 bgame/bg_local.h|static_assert:sizeof(playerState_s)==0x2F64|1
 bgame/bg_local.h|static_assert:sizeof(pml_t)==0x80|1
-bgame/bg_local.h|static_assert:sizeof(scr_animtree_t)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(scr_vehicle_s)==0x354|1
 bgame/bg_local.h|static_assert:sizeof(shellshock_parms_t)==0x268|1
 bgame/bg_local.h|static_assert:sizeof(shellshock_parms_t_lookcontrol)==0x14|1
