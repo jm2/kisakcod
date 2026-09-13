@@ -351,13 +351,20 @@ server-supplied data: the server controls only the timing, namely that a first
 usable snapshot was received after cgame initialization.
 
 This is a seventh mutation family: a server-event-triggered internal write to a
-client dvar with no wire payload. It is transient rather than a lasting
-override — `CG_Init` resets `fs_debug` back to `0` when it observes the value
-`2` (`src/cgame_mp/cg_main_mp.cpp:1757-1758`) — so a test must record the
-in-window value, not just the post-frame final state. The snapshot is normal
-server traffic; the family is listed on the same reasoning that already counts
-the `B`/`n` fixed reset (section 5.6) as a family, because the audited property
-is the server-triggered internal mutation, not payload control.
+client dvar with no wire payload. It is not settled back to `0` within the same
+cgame lifecycle. `CG_Init` runs at cgame initialization, before the first
+`CG_DrawActiveFrame`/`CG_ProcessSnapshots` of that lifecycle: `CL_InitCGame`
+(`src/client_mp/cl_cgame_mp.cpp:724`) calls `CG_Init` at
+`src/client_mp/cl_cgame_mp.cpp:783`. Its reset of an existing `2` value
+(`src/cgame_mp/cg_main_mp.cpp:1757-1758`) therefore executes before the
+initial-snapshot branch writes `2`. That reset can clear a `2` left by a
+previous cgame initialization, but it does not run again later in this
+lifecycle, so initial processing may leave `fs_debug` at `2`. A test must record
+the in-window value and the value after initial processing, not assume a
+settled `0`. The snapshot is normal server traffic; the family is listed on the
+same reasoning that already counts the `B`/`n` fixed reset (section 5.6) as a
+family, because the audited property is the server-triggered internal mutation,
+not payload control.
 
 ### 5.8 Path summary
 
@@ -371,7 +378,7 @@ is the server-triggered internal mutation, not payload control.
 | 4b | configstring 1 (initial connect) | systeminfo `sv_cheats` 0 | `CL_SystemInfoChanged` → `Dvar_SetCheatState` (bulk reset of every `DVAR_CHEAT` dvar) | INTERNAL | none |
 | 5 | configstrings 1954-1969 | shock file name | `BG_LoadShellShockDvars` → local file → internal set | INTERNAL | client local file lookup |
 | 6 | `B` (0x42) / `n` (0x6E) reliable command | restart byte only | `CG_MapRestart` → `Dvar_SetBool(cg_thirdPerson, 0)` | INTERNAL | none (fixed reset of one `DVAR_CHEAT` dvar) |
-| 7 | Initial usable server snapshot | snapshot processing only | `CG_ProcessSnapshots` → `Dvar_SetInt(fs_debug, 2)` | INTERNAL | none (fixed write of one int dvar; `CG_Init` resets it to `0`) |
+| 7 | Initial usable server snapshot | snapshot processing only | `CG_ProcessSnapshots` → `Dvar_SetInt(fs_debug, 2)` | INTERNAL | none (fixed write of one int dvar; `CG_Init` runs earlier and does not settle it back, so it may remain `2`) |
 
 ## 6. Special cases and client-local side effects
 
@@ -418,9 +425,14 @@ A further client-local side effect is the initial-snapshot debug write (section
 `Dvar_SetInt(cg_fs_debug, 2)` (`src/cgame_mp/cg_snapshot_mp.cpp:596-597`), which
 reaches `Dvar_SetIntFromSource(..., DVAR_SOURCE_INTERNAL)`
 (`src/universal/dvar.cpp:2540-2542`, `:2333`). The value is a fixed literal, not
-a server payload, and `CG_Init` later resets `fs_debug` to `0` when it is `2`
-(`src/cgame_mp/cg_main_mp.cpp:1757-1758`). A snapshot-processing test must record
-the value while the snapshot is being applied, not only the settled frame state.
+a server payload. `CG_Init` runs at cgame initialization before the first
+`CG_DrawActiveFrame`/`CG_ProcessSnapshots` (`src/client_mp/cl_cgame_mp.cpp:724`,
+`:783`) and resets an existing `2` (`src/cgame_mp/cg_main_mp.cpp:1757-1758`),
+so that reset precedes — and does not settle — the `2` written during initial
+snapshot processing; initial processing can leave `fs_debug` at `2` for the rest
+of that lifecycle. A snapshot-processing test must record the value while the
+snapshot is being applied and after initial processing, not assume a settled
+frame state.
 
 ## 7. What the numeric flags actually authorize
 
@@ -497,8 +509,11 @@ Observed at `a1ca543b` (source inspection only):
   (`src/cgame_mp/cg_snapshot_mp.cpp:596-597`; caller
   `src/cgame_mp/cg_view_mp.cpp:1332`), reaching the internal source
   (`src/universal/dvar.cpp:2540-2542`) with no `v` name/value payload. The
-  value is a fixed literal, and `CG_Init` resets `fs_debug` to `0` when it is
-  `2` (`src/cgame_mp/cg_main_mp.cpp:1757-1758`).
+  value is a fixed literal. `CG_Init` runs at cgame initialization before the
+  first `CG_DrawActiveFrame`/`CG_ProcessSnapshots`
+  (`src/client_mp/cl_cgame_mp.cpp:724`, `:783`) and resets an existing `2`
+  (`src/cgame_mp/cg_main_mp.cpp:1757-1758`), so the reset precedes this write
+  rather than settling it; initial processing may leave `fs_debug` at `2`.
 - Re-registering an existing external dvar with a concrete type is handled by
   `Dvar_Reregister`/`Dvar_MakeExplicitType`
   (`dvar.cpp:1727-1735`, `:1788-1843`).
@@ -575,7 +590,7 @@ No cell is considered passed until it has a recorded result for both commercial
 | R6 | initial remote connection with systeminfo `sv_cheats` 0 | every `DVAR_CHEAT` dvar is reset to its reset value before systeminfo pairs apply; preexisting client cheat values do not survive | Ref |
 | R7 | cgame/map init from serverinfo configstring 0 | client `mapname` follows serverinfo `mapname` on startup and each map transition | Ref |
 | R8 | fast restart signalling `B` (`0x42`) / `n` (`0x6E`) | `CG_MapRestart` resets `cg_thirdPerson` to `0` even when the client had it non-zero before the restart; the `DVAR_CHEAT` reset is recorded separately for both commercial profiles | Ref |
-| R9 | initial usable server snapshot processed (`fs_debug` at `0`) | `CG_ProcessSnapshots` writes `fs_debug = 2` through the internal source while the snapshot is applied, and `CG_Init` settles it back to `0`; record the in-window value and the settled value separately and compare both to the reference | Ref |
+| R9 | initial usable server snapshot processed (`fs_debug` at `0`) | `CG_ProcessSnapshots` writes `fs_debug = 2` through the internal source while the snapshot is applied; `CG_Init` ran earlier at cgame initialization, so the value is not settled back to `0` in that lifecycle and may remain `2`; record the in-window value and the post-initial-processing value separately and compare both to the reference | Ref |
 
 ### 9.4 Both references
 
@@ -639,7 +654,7 @@ All paths are relative to the repository root at
 | Map-restart command | `src/server_mp/sv_ccmds_mp.cpp:512-513`; `src/cgame_mp/cg_servercmds_mp.cpp:212`, `:249`, `:465-467`, `:613-615` |
 | `cg_thirdPerson` registration | `src/cgame_mp/cg_main_mp.cpp:893` |
 | `Dvar_SetBool` | `src/universal/dvar.cpp:2535-2538` |
-| Initial-snapshot `fs_debug` write | `src/cgame_mp/cg_snapshot_mp.cpp:566`, `:590-598`, `:596-597`; `src/cgame_mp/cg_view_mp.cpp:1332`; `src/cgame_mp/cg_main_mp.cpp:920-925`, `:1757-1758` |
+| Initial-snapshot `fs_debug` write | `src/cgame_mp/cg_snapshot_mp.cpp:566`, `:590-598`, `:596-597`; `src/cgame_mp/cg_view_mp.cpp:1332`; `src/cgame_mp/cg_main_mp.cpp:920-925`, `:1757-1758`; `src/client_mp/cl_cgame_mp.cpp:724`, `:783` |
 | `Dvar_SetInt` | `src/universal/dvar.cpp:2333`, `:2540-2542` |
 | cgame dispatch | `src/cgame_mp/cg_servercmds_mp.cpp:391-395`, `:461`, `:663-671` |
 | cgame dvar handler | `src/cgame_mp/cg_servercmds_mp.cpp:1359-1407` |
