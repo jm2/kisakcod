@@ -2542,7 +2542,7 @@ void Scr_DumpScriptThreads(void)
 						pInfo->pos[j] = info.pos[info.posSize - j];
 				}
 			}
-			qsort(infoArray, num, sizeof(ThreadDebugInfo), (int(*)(const void*, const void*))ThreadInfoCompare);
+			std::sort(infoArray, infoArray + num, [](ThreadDebugInfo &a, ThreadDebugInfo &b) { return ThreadInfoCompare(&a, &b) < 0; });
 			Com_Printf(23, "********************************\n");
 			varUsage = 0.0;
 			endonUsage = 0.0;
