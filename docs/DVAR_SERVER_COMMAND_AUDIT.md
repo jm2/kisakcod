@@ -224,7 +224,7 @@ string (`src/client_mp/cl_cgame_mp.cpp:750-753`): `Info_ValueForKey` on
 startup and map transitions, and is separate from `CG_ParseServerInfo`'s
 `g_gametype` sink. The caller's own 64-byte copy bounds the value to 63 payload
 bytes before the setter. It is a second server-controlled sink inside mutation
-family #2 of the section 5.6 summary, not a new family.
+family #2 of the section 5.7 summary, not a new family.
 
 ### 5.3 "cod" info configstring block (cgame, indices 20-275)
 
@@ -273,7 +273,36 @@ client's own files (`:1994-1998`) and applies it through
 only through the *name* of a local file; the values come from client-side data.
 It is included for completeness and is not a wire-value-controlled dvar path.
 
-### 5.6 Path summary
+### 5.6 Map-restart server command (`B` / `n`)
+
+A fast map restart is signalled by a direct reliable game-server command byte,
+independently of the `v` family. `SV_MapRestart` sends
+`va("%c", savepersist != 0 ? 110 : 66)` through
+`SV_AddServerCommand(..., SV_CMD_RELIABLE, ...)`
+(`src/server_mp/sv_ccmds_mp.cpp:512-513`); the byte is `'n'` (`0x6E`) when
+`savepersist` is set and `'B'` (`0x42`) otherwise. `SV_CMD_RELIABLE = 0x1`
+(`src/server_mp/server_mp.h:24`).
+
+Client side, `CG_DeployServerCommand` (`cg_servercmds_mp.cpp:461`) dispatches
+`case 0x42` to `CG_MapRestart(localClientNum, 0)` (`:465-467`) and `case 0x6E`
+to `CG_MapRestart(localClientNum, 1)` (`:613-615`). `CG_MapRestart` (defined at
+`:212`) unconditionally executes `Dvar_SetBool(cg_thirdPerson, 0)` (`:249`).
+`Dvar_SetBool` (`src/universal/dvar.cpp:2535-2538`) delegates to
+`Dvar_SetBoolFromSource(..., DVAR_SOURCE_INTERNAL)` (`:2537`), so the write
+uses the same internal source as family #1 and does not consult
+`cg_thirdPerson`'s `DVAR_CHEAT` flag. `cg_thirdPerson` is registered as a
+boolean with `DVAR_CHEAT` at `src/cgame_mp/cg_main_mp.cpp:893`
+(`Dvar_RegisterBool("cg_thirdPerson", 0, DVAR_CHEAT, ...)`).
+
+This is a sixth mutation family: a direct game-server command that makes the
+client perform an internal write to a client cheat dvar. Unlike families #1-#5
+it carries no name/value payload; the mutation is the fixed `cg_thirdPerson = 0`
+reset inside the restart handler, and it fires on the `B`/`n` bytes regardless
+of whether the restart itself came from `map_restart`, `fast_restart` or a
+hostile server. Both `savepersist` values run the same `Dvar_SetBool` because
+the reset at `:249` precedes the `if (!savepersist)` block.
+
+### 5.7 Path summary
 
 | # | Entry | Server input | Client sink | Source | Validation |
 |---|---|---|---|---|---|
@@ -284,6 +313,7 @@ It is included for completeness and is not a wire-value-controlled dvar path.
 | 4 | configstring 1 | systeminfo pairs | `CL_SystemInfoChanged` → `Dvar_SetFromStringByName` | INTERNAL | domain parse |
 | 4b | configstring 1 (initial connect) | systeminfo `sv_cheats` 0 | `CL_SystemInfoChanged` → `Dvar_SetCheatState` (bulk reset of every `DVAR_CHEAT` dvar) | INTERNAL | none |
 | 5 | configstrings 1954-1969 | shock file name | `BG_LoadShellShockDvars` → local file → internal set | INTERNAL | client local file lookup |
+| 6 | `B` (0x42) / `n` (0x6E) reliable command | restart byte only | `CG_MapRestart` → `Dvar_SetBool(cg_thirdPerson, 0)` | INTERNAL | none (fixed reset of one `DVAR_CHEAT` dvar) |
 
 ## 6. Special cases and client-local side effects
 
@@ -317,6 +347,14 @@ buffer: `Dvar_CopyString` → `CopyString`/`SL_GetString_` stores it in the
 script-string table (section 5.1), so the 1023-byte bound applies only to the
 existing-dvar update path.
 
+A further client-local side effect is the map-restart reset (section 5.6): the
+`B`/`n` command drives `CG_MapRestart` → `Dvar_SetBool(cg_thirdPerson, 0)`
+(`cg_servercmds_mp.cpp:249`), an internal write to a `DVAR_CHEAT` dvar that
+does not come from a `v` name/value payload. As with the section 5.4
+cheat-state reset, the reset value is applied regardless of the dvar's
+preexisting value, so a restart test must record the pre-restart
+`cg_thirdPerson` value and the post-restart reset outcome.
+
 ## 7. What the numeric flags actually authorize
 
 At this SHA the MP server-controlled paths reach the `DVAR_SOURCE_INTERNAL`
@@ -347,9 +385,9 @@ forged/hostile input.
 
 Observed at `a1ca543b` (source inspection only):
 
-- Multiplayer has exactly the five dvar-mutation families in section 5;
-  only #1 is a direct game-server command, #2-#4 are configstring-derived and
-  #5 is a local-file indirection.
+- Multiplayer has exactly six dvar-mutation families in section 5; #1 and #6
+  are direct game-server commands, #2-#4 are configstring-derived, and #5 is a
+  local-file indirection.
 - The `v` command pair loop reads arguments at `i` and `i+1` without checking
   an even count; `Cmd_Argv` returns `""` past the end
   (`src/qcommon/cmd.cpp:103-112`), so a trailing odd argument degrades to an
@@ -381,6 +419,11 @@ Observed at `a1ca543b` (source inspection only):
   `CL_SystemInfoChanged` calls `Dvar_SetCheatState`
   (`src/client_mp/cl_parse_mp.cpp:214-219`), resetting every `DVAR_CHEAT`
   dvar through the internal source (`src/universal/dvar.cpp:2778-2791`).
+- The direct game-server command bytes `B` (`0x42`) and `n` (`0x6E`) call
+  `CG_MapRestart`, which resets `cg_thirdPerson` to `0` through the internal
+  source (`src/cgame_mp/cg_servercmds_mp.cpp:465-467`, `:613-615`, `:212`,
+  `:249`; registration at `src/cgame_mp/cg_main_mp.cpp:893`), so a
+  `DVAR_CHEAT` client dvar changes without any `v` name/value payload.
 - Re-registering an existing external dvar with a concrete type is handled by
   `Dvar_Reregister`/`Dvar_MakeExplicitType`
   (`dvar.cpp:1727-1735`, `:1788-1843`).
@@ -450,12 +493,13 @@ No cell is considered passed until it has a recorded result for both commercial
 | ID | Sequence | Expected invariant | Required evidence |
 |---|---|---|---|
 | R1 | connect → `v` set → disconnect → reconnect | dvar persistence/reset matches reference | Ref |
-| R2 | `map <name>` / `map_restart` | server-replicated values reapply; local resets match reference | Ref |
+| R2 | `map <name>` / `map_restart` | server-replicated values reapply; local resets match reference (the fast-restart `cg_thirdPerson` reset is R8) | Ref |
 | R3 | `setclientdvar` → `cvar_restart` | `DVAR_NORESTART`/archive behavior matches reference | Ref |
 | R4 | external dvar created by server → map change | registration/lifetime matches reference | Ref |
 | R5 | pure-check / download boundary | `sv_pure` handling unchanged | Ref |
 | R6 | initial remote connection with systeminfo `sv_cheats` 0 | every `DVAR_CHEAT` dvar is reset to its reset value before systeminfo pairs apply; preexisting client cheat values do not survive | Ref |
 | R7 | cgame/map init from serverinfo configstring 0 | client `mapname` follows serverinfo `mapname` on startup and each map transition | Ref |
+| R8 | fast restart signalling `B` (`0x42`) / `n` (`0x6E`) | `CG_MapRestart` resets `cg_thirdPerson` to `0` even when the client had it non-zero before the restart; the `DVAR_CHEAT` reset is recorded separately for both commercial profiles | Ref |
 
 ### 9.4 Both references
 
@@ -516,6 +560,9 @@ All paths are relative to the repository root at
 | By-name setters | `src/universal/dvar.cpp:2689-2714` |
 | Server builtins | `src/game_mp/g_client_script_cmd_mp.cpp:2097-2210`, `:3547-3548` |
 | Server send | `src/server/sv_game.cpp:944-956`; `src/server_mp/server_mp.h:23-24` |
+| Map-restart command | `src/server_mp/sv_ccmds_mp.cpp:512-513`; `src/cgame_mp/cg_servercmds_mp.cpp:212`, `:249`, `:465-467`, `:613-615` |
+| `cg_thirdPerson` registration | `src/cgame_mp/cg_main_mp.cpp:893` |
+| `Dvar_SetBool` | `src/universal/dvar.cpp:2535-2538` |
 | cgame dispatch | `src/cgame_mp/cg_servercmds_mp.cpp:391-395`, `:461`, `:663-671` |
 | cgame dvar handler | `src/cgame_mp/cg_servercmds_mp.cpp:1359-1407` |
 | cgame configstrings | `src/cgame_mp/cg_servercmds_mp.cpp:34-72`, `:853-982` |
