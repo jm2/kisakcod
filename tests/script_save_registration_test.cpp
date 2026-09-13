@@ -43,19 +43,19 @@ struct StackGraph {
     ~StackGraph() { for (auto *node : nodes) std::free(node); }
     VariableStackBuffer *Add(unsigned int localId, unsigned int count) {
         auto *node = static_cast<VariableStackBuffer *>(std::calloc(1, sizeof(VariableStackBuffer) + count * VARIABLE_STACK_RECORD_SIZE));
-        Check(node != nullptr);
+        if (!node) std::abort();
 #if defined(KISAK_REQUIRE_HIGH_POINTERS) && UINTPTR_MAX > UINT32_MAX
         Check(reinterpret_cast<uintptr_t>(node) > UINT32_MAX);
 #endif
         node->localId = static_cast<uint16_t>(localId); node->size = static_cast<uint16_t>(count);
         nodes.push_back(node); return node;
     }
-    void Link(VariableStackBuffer *parent, unsigned int index, VariableStackBuffer *child) {
+    static void Link(VariableStackBuffer *parent, unsigned int index, VariableStackBuffer *child) {
         char *record = parent->buf + index * VARIABLE_STACK_RECORD_SIZE;
         *record = VAR_STACK; VariableUnion value{}; value.stackValue = child;
         VariableStackBuf_WriteCell(record + 1, value);
     }
-    void Pointer(VariableStackBuffer *parent, unsigned int index, unsigned int id) {
+    static void Pointer(VariableStackBuffer *parent, unsigned int index, unsigned int id) {
         char *record = parent->buf + index * VARIABLE_STACK_RECORD_SIZE;
         *record = VAR_POINTER; VariableUnion value{}; value.stringValue = id;
         VariableStackBuf_WriteCell(record + 1, value);
@@ -99,19 +99,19 @@ void TestLimitThroughSavePre(bool throughObject) {
     Check(removedDebuggerRefs == 1);
 }
 void TestCyclesAndNulls() {
-    StackGraph graph; auto *root = graph.Add(100, 1); graph.Link(root, 0, root);
+    StackGraph graph; auto *root = graph.Add(100, 1); StackGraph::Link(root, 0, root);
     for (bool throughObject : {false, true}) {
         Reset(root, throughObject); ExpectError([] { Scr_SavePre(1); });
         Check(scrVarPub.savecount < 12);
     }
     Reset(nullptr); ExpectError([] { Scr_SavePre(1); });
-    graph.Link(root, 0, nullptr); Reset(root); ExpectError([] { Scr_SavePre(1); });
+    StackGraph::Link(root, 0, nullptr); Reset(root); ExpectError([] { Scr_SavePre(1); });
     VariableUnion value{}; value.stackValue = root;
     Reset(root); ExpectError([&] { AddSaveEntryInternal(VAR_STACK, value); });
 }
 void TestOrderAndSharedSiblings() {
     StackGraph graph; auto *root = graph.Add(100, 3); auto *child = graph.Add(101, 1);
-    graph.Link(root, 0, child); graph.Pointer(root, 1, 103); graph.Link(root, 2, child); graph.Pointer(child, 0, 102);
+    StackGraph::Link(root, 0, child); StackGraph::Pointer(root, 1, 103); StackGraph::Link(root, 2, child); StackGraph::Pointer(child, 0, 102);
     Reset(root); Scr_SavePre(1);
     const unsigned int expected[] = {1, 2, 3, 4, 6, 60, 100, 101, 102, 103};
     Check(scrVarPub.savecount == 10);
