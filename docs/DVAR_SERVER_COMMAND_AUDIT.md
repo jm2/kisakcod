@@ -170,6 +170,28 @@ Client side (cgame MP):
   `Dvar_RegisterString` at `:2163-2185`); if it exists it parses and writes
   with `Dvar_SetFromStringFromSource` (`:2707`, `:2600-2617`).
 
+The two branches then follow different storage paths, and they do not share one
+length limit:
+
+- **Existing dvar** (`Dvar_SetFromStringFromSource`, `:2600-2617`): the value
+  is copied into a 1028-byte stack buffer with `I_strncpyz(buf, string, 1024)`
+  (`:2607`). `I_strncpyz` (`src/universal/q_shared.cpp:45-53`) runs
+  `strncpy(dest, src, destsize - 1)` and terminates `dest[destsize - 1]`, so
+  this keeps at most **1023 payload bytes plus the NUL**, and the parse at
+  `:2608-2615` sees a value already truncated at 1023 bytes. A 1024-byte (or
+  longer) payload is therefore truncated before it is interpreted.
+  (`Dvar_SetStringFromSource`, used by `Dvar_SetStringByName`, uses the same
+  1024 capacity for the `DVAR_TYPE_STRING` case at `:2573`.)
+- **Unknown name** (`Dvar_RegisterString` → `Dvar_RegisterVariant` →
+  `Dvar_RegisterNew`, `:2163-2185`, `:1763-1786`, `:1556-1632`): the supplied
+  string is stored through `Dvar_CopyString` (`:1300-1305`) → `CopyString`
+  (`src/universal/com_memory.cpp:339-344`) → `SL_GetString_`/`SL_GetStringOfSize`
+  (`src/script/scr_stringlist.cpp:935-940`). That is the script-string store,
+  not the 1024-byte stack buffer, and it accepts up to the script-string limit
+  (byte count at most 65531 including the terminator, `scr_stringlist.cpp:963-985`).
+  An unknown-name value is therefore **not** truncated at 1024 bytes by this
+  path.
+
 Observed validation asymmetry: the server script interface validates names
 with `Dvar_IsValidName` (`g_client_script_cmd_mp.cpp:2135`, `:2190`), but the
 client-side `v` handler does not validate the name before
@@ -193,6 +215,17 @@ is a string parse, not an enum parse. `Dvar_SetStringByName`
 (`dvar.cpp:2689-2698`) is another `DVAR_SOURCE_INTERNAL` path (via
 `Dvar_SetString`, `:2555-2557`).
 
+The same configstring also feeds an independent **client** (not cgame) write on
+map initialization. `CL_InitCGame` reads the `mapname` key from the serverinfo
+string (`src/client_mp/cl_cgame_mp.cpp:750-753`): `Info_ValueForKey` on
+`gameState.stringOffsets[0]` (`:751`), `I_strncpyz(mapname, v1, 64)` into a
+68-byte local (`:752`), then `Dvar_SetStringByName("mapname", mapname)`
+(`:753`). This runs whenever cgame is initialized for a remote server, i.e. on
+startup and map transitions, and is separate from `CG_ParseServerInfo`'s
+`g_gametype` sink. The caller's own 64-byte copy bounds the value to 63 payload
+bytes before the setter. It is a second server-controlled sink inside mutation
+family #2 of the section 5.6 summary, not a new family.
+
 ### 5.3 "cod" info configstring block (cgame, indices 20-275)
 
 For indices in `[20, 276)` `CG_ConfigStringModified` calls `CG_ParseCodInfo`
@@ -214,6 +247,18 @@ systeminfo key the server replicates is a candidate client dvar registration
 or write through the same `DVAR_SOURCE_INTERNAL` path. It also sets
 `cl_connectedToPureServer` from `sv_pure` (`:241`).
 
+Before that key/value expansion, the same function performs a bulk
+client-local reset. When the local server is not running and
+`clientUIActives[0].connectionState < CA_ACTIVE` (`cl_parse_mp.cpp:214`), it
+reads `sv_cheats` from the systeminfo string (`:216-217`) and, when the value
+is zero, calls `Dvar_SetCheatState()` (`:218`). `Dvar_SetCheatState`
+(`src/universal/dvar.cpp:2778-2791`) walks the whole dvar pool and, for every
+dvar whose flags include `DVAR_CHEAT` (`0x80`), writes its **reset** value with
+`DVAR_SOURCE_INTERNAL`. On the initial remote connection this therefore
+overwrites preexisting client cheat-dvar values before any server key/value
+pair is applied, so a disconnect/reconnect test must record the preexisting
+values and their reset outcome.
+
 ### 5.5 Indirect local-file path: shellshock configstrings
 
 For configstring indices `[1954, 1970)` `CG_ConfigStringModified` uses the
@@ -234,8 +279,10 @@ It is included for completeness and is not a wire-value-controlled dvar path.
 |---|---|---|---|---|---|
 | 1 | `v` reliable command | `setclientdvar(s)` values | `CG_SetClientDvarFromServer` → `Dvar_SetFromStringByName` | INTERNAL | server script name check only; client none |
 | 2 | configstring 0 | serverinfo `g_gametype` | `CG_ParseServerInfo` → `Dvar_SetStringByName` | INTERNAL | domain parse |
+| 2b | configstring 0 (map init) | serverinfo `mapname` | `CL_InitCGame` → `Dvar_SetStringByName` | INTERNAL | caller copy to 64-byte buffer |
 | 3 | configstrings 20-275 | key/value blocks | `CG_ParseCodInfo` → `Dvar_SetFromStringByName` | INTERNAL | domain parse |
 | 4 | configstring 1 | systeminfo pairs | `CL_SystemInfoChanged` → `Dvar_SetFromStringByName` | INTERNAL | domain parse |
+| 4b | configstring 1 (initial connect) | systeminfo `sv_cheats` 0 | `CL_SystemInfoChanged` → `Dvar_SetCheatState` (bulk reset of every `DVAR_CHEAT` dvar) | INTERNAL | none |
 | 5 | configstrings 1954-1969 | shock file name | `BG_LoadShellShockDvars` → local file → internal set | INTERNAL | client local file lookup |
 
 ## 6. Special cases and client-local side effects
@@ -259,11 +306,16 @@ Any compatibility test must record the build's assert/PURE configuration
 rather than assume the check enforces.
 
 Generic-path side effects after a successful set are: possible new dvar
-registration (`dvar.cpp:2706`), internal string copy/truncation at 1024 bytes
-(`:2607`), `Dvar_SetVariant`'s value update and
-`dvar_modifiedFlags |= dvar->flags` (`:1407`), and the invalid-enum console
+registration (`dvar.cpp:2706`); for an existing dvar, an internal copy into a
+1024-capacity buffer by `I_strncpyz` (`:2607`) that keeps at most 1023 payload
+bytes plus the terminator; `Dvar_SetVariant`'s value update and
+`dvar_modifiedFlags |= dvar->flags` (`:1407`); and the invalid-enum console
 message plus reset fallback (`:2610-2615`). Enum parsing is done by
-`Dvar_StringToEnum` (`:1927-1960`); the sentinel `-1337` means "no match".
+`Dvar_StringToEnum` (`:1927-1960`); the sentinel `-1337` means "no match". A
+newly registered unknown-name dvar does not pass through the 1024-capacity
+buffer: `Dvar_CopyString` → `CopyString`/`SL_GetString_` stores it in the
+script-string table (section 5.1), so the 1023-byte bound applies only to the
+existing-dvar update path.
 
 ## 7. What the numeric flags actually authorize
 
@@ -305,11 +357,30 @@ Observed at `a1ca543b` (source inspection only):
 - `CG_SetClientDvarFromServer` normalizes names case-insensitively for its
   three special cases (`I_stricmp`), so `CG_ObjectiveText` and
   `cg_objectivetext` take the same branch as the canonical spelling.
-- Values are truncated to 1024 bytes by `I_strncpyz(buf, string, 1024)`
-  (`dvar.cpp:2607`) before parsing/storing.
+- For an **existing** dvar, `Dvar_SetFromStringFromSource` copies the value
+  with `I_strncpyz(buf, string, 1024)` (`dvar.cpp:2607`), so the parse/store
+  path sees at most **1023 payload bytes plus the NUL terminator**; a
+  1024-byte payload, and any longer payload, is already truncated before
+  parsing. An **unknown** name does not pass through that buffer:
+  `Dvar_RegisterString`/`Dvar_RegisterNew` store the supplied string via
+  `Dvar_CopyString` → `CopyString`/`SL_GetString_` (`dvar.cpp:1300-1305`,
+  `src/universal/com_memory.cpp:339-344`, `src/script/scr_stringlist.cpp:935-940`),
+  whose lexical limit is the script-string limit (65531 bytes including the
+  terminator, `scr_stringlist.cpp:963-985`), not 1024.
 - New server-named dvars are created with `DVAR_EXTERNAL` (`0x4000`) and an
-  allocated name (`dvar.cpp:1578-1581`), and the dvar pool is capped at 4096
-  (`dvar.cpp:1568-1572`), after which registration is a fatal error.
+  allocated name (`dvar.cpp:1578-1581`). When the pool already holds 4096
+  dvars, `Dvar_RegisterNew` calls `Com_Error(ERR_FATAL, ...)`
+  (`dvar.cpp:1568-1571`), so a unique unknown-name flood is a client-fatal
+  condition, not a bounded rejection. Whether that fatal behavior is
+  compatible with retail references is unresolved and is carried as the I8
+  acceptance question in section 9.2; this document does not change it.
+- `CL_InitCGame` also sets the client's `mapname` dvar from serverinfo
+  configstring 0 on map initialization (`src/client_mp/cl_cgame_mp.cpp:750-753`),
+  a second server-controlled configstring-0 sink beyond `CG_ParseServerInfo`.
+- On the initial remote connection with systeminfo `sv_cheats` false,
+  `CL_SystemInfoChanged` calls `Dvar_SetCheatState`
+  (`src/client_mp/cl_parse_mp.cpp:214-219`), resetting every `DVAR_CHEAT`
+  dvar through the internal source (`src/universal/dvar.cpp:2778-2791`).
 - Re-registering an existing external dvar with a concrete type is handled by
   `Dvar_Reregister`/`Dvar_MakeExplicitType`
   (`dvar.cpp:1727-1735`, `:1788-1843`).
@@ -338,16 +409,28 @@ original commercial server; `Ref` = both original references, each separately.
 | ID | Input | Target | Expected invariant | Required evidence |
 |---|---|---|---|---|
 | L1 | `setclientdvar <known dvar> "<value>"` | KC→KC, RefC→KC, KC→RefS | accepted; stored value equals sent value per type | wire + state capture, Ref |
-| L2 | `setclientdvars` with N pairs | KC→KC, RefC→KC | all pairs applied in order | wire + state capture, Ref |
-| L3 | special `cg_objectiveText` | KC→KC, RefC→KC | `objectiveText` set, no dvar created | state + Ref |
-| L4 | special `hud_drawHud` `0`/`1` | KC→KC, RefC→KC | `drawHud` set | state + Ref |
-| L5 | special `g_scriptMainMenu` | KC→KC, RefC→KC | `scriptMainMenu` set | state + Ref |
+| L2 | `setclientdvars` with N pairs | KC→KC, RefC→KC, KC→RefS | all pairs applied in order | wire + state capture, Ref |
+| L3 | special `cg_objectiveText` | KC→KC, RefC→KC, KC→RefS | `objectiveText` set, no dvar created | state + Ref |
+| L4 | special `hud_drawHud` `0`/`1` | KC→KC, RefC→KC, KC→RefS | `drawHud` set | state + Ref |
+| L5 | special `g_scriptMainMenu` | KC→KC, RefC→KC, KC→RefS | `scriptMainMenu` set | state + Ref |
 | L6 | value with spaces / quotes / backslashes | KC→KC, RefC→KC, KC→RefS | quoting round-trips; `"` handled per reference | byte-level Ref |
-| L7 | each dvar type `bool/float/vec2/vec3/vec4/int/enum/string/color` | KC→KC, RefC→KC | parse and domain behavior matches reference | type table + Ref |
+| L7 | each dvar type `bool/float/vec2/vec3/vec4/int/enum/string/color` | KC→KC, RefC→KC, KC→RefS | parse and domain behavior matches reference | type table + Ref |
 | L8 | serverinfo `g_gametype` change | KC→KC, RefC→KC, KC→RefS | client `g_gametype` follows server | Ref |
-| L9 | cod-info configstring pairs (up to 128) | KC→KC, RefC→KC | each key/value applies | Ref |
-| L10 | systeminfo key/value expansion | KC→KC, RefC→KC | each replicated key applies or registers | Ref |
-| L11 | legitimate mod that sets display dvars on join | KC→KC, RefC→KC | mod semantics preserved | mod fixture + Ref |
+| L9 | cod-info configstring pairs (up to 128) | KC→KC, RefC→KC, KC→RefS | each key/value applies | Ref |
+| L10 | systeminfo key/value expansion | KC→KC, RefC→KC, KC→RefS | each replicated key applies or registers | Ref |
+| L11 | legitimate mod that sets display dvars on join | KC→KC, RefC→KC, KC→RefS | mod semantics preserved | mod fixture + Ref |
+
+Per-row `KC→RefS` applicability and fixtures: every legitimate-input row now
+requires the native client → original commercial server direction. For L2–L5,
+L7 and L11 the `v`/dvar traffic is produced by a gametype/script mod running on
+the unmodified original commercial server; that fixture is part of the required
+evidence and does not replace the reference. L9's cod-info block is observed to
+be *consumed* by this client (section 5.3); whether either original server
+*emits* it is itself a KC→RefS observation, and an original server that turns
+out not to emit it is recorded as an evidence-backed `N/A` for that reference,
+never silently skipped. L10's systeminfo is emitted by both original servers.
+No cell is considered passed until it has a recorded result for both commercial
+1.7 and Steam 1.8 profiles.
 
 ### 9.2 Invalid / hostile inputs
 
@@ -357,10 +440,10 @@ original commercial server; `Ref` = both original references, each separately.
 | I2 | invalid name forged in a `v` command | defined client behavior; compare to reference; no memory/safety defect | KC→KC plus security review |
 | I3 | enum value not in the domain | console message and reset fallback; no crash | KC→KC + Ref |
 | I4 | numeric values out of domain / non-numeric | domain rejection/clamp matches reference | KC→KC + Ref |
-| I5 | value longer than 1024 bytes | documented truncation, no overflow | KC→KC + fuzz |
+| I5 | existing-dvar value of 1023, 1024 and longer payloads; unknown-name value of the same lengths | existing dvar stores at most 1023 payload bytes plus NUL (`I_strncpyz(...,1024)`), so a 1024-byte value is already truncated; an unknown name registers through `Dvar_CopyString`/script strings and is **not** cut at 1024; no overflow either way | KC→KC + fuzz, per path |
 | I6 | `v` with odd argument count | empty trailing value, no OOB | KC→KC |
-| I7 | `hud_drawHud` > 1 | behavior recorded per build assert config | KC→KC (Release and asserts build) |
-| I8 | unknown-name flood / 4096-dvar cap | bounded failure, no silent corruption | KC→KC + fuzz |
+| I7 | `hud_drawHud` negative, non-numeric and > 1 values | `atoi` conversion: `> 1` (including a negative input converted to `uint32_t`) reaches `MyAssertHandler`; non-numeric becomes `0` and is assigned; record Release (empty `MyAssertHandler`) and asserts builds separately; no runtime evidence invented from source | KC→KC (Release and asserts build) |
+| I8 | unknown-name flood reaching the 4096-dvar cap | observed source behavior is `Com_Error(ERR_FATAL)` from `Dvar_RegisterNew`; a client-fatal exit is not a bounded rejection and its compatibility acceptance is unresolved — run an isolated fatal-path test in a child process, and do not add production limits or silently accept the outcome | KC→KC + isolated fatal-path run |
 
 ### 9.3 Reconnect and map transitions
 
@@ -371,6 +454,8 @@ original commercial server; `Ref` = both original references, each separately.
 | R3 | `setclientdvar` → `cvar_restart` | `DVAR_NORESTART`/archive behavior matches reference | Ref |
 | R4 | external dvar created by server → map change | registration/lifetime matches reference | Ref |
 | R5 | pure-check / download boundary | `sv_pure` handling unchanged | Ref |
+| R6 | initial remote connection with systeminfo `sv_cheats` 0 | every `DVAR_CHEAT` dvar is reset to its reset value before systeminfo pairs apply; preexisting client cheat values do not survive | Ref |
+| R7 | cgame/map init from serverinfo configstring 0 | client `mapname` follows serverinfo `mapname` on startup and each map transition | Ref |
 
 ### 9.4 Both references
 
@@ -435,6 +520,11 @@ All paths are relative to the repository root at
 | cgame dvar handler | `src/cgame_mp/cg_servercmds_mp.cpp:1359-1407` |
 | cgame configstrings | `src/cgame_mp/cg_servercmds_mp.cpp:34-72`, `:853-982` |
 | client systeminfo | `src/client_mp/cl_parse_mp.cpp:171-245` |
+| cheat-state reset | `src/client_mp/cl_parse_mp.cpp:214-219`; `src/universal/dvar.cpp:2778-2791` |
+| initial map name | `src/client_mp/cl_cgame_mp.cpp:750-753` |
+| string normalize | `src/universal/q_shared.cpp:45-53` |
+| string storage | `src/universal/dvar.cpp:1300-1312`; `src/universal/com_memory.cpp:339-344`; `src/script/scr_stringlist.cpp:935-940`, `:963-985` |
+| pool cap / fatal | `src/universal/dvar.cpp:1568-1572` |
 | shellshock indirection | `src/bgame/bg_misc.cpp:1985-2014`; `src/universal/dvar.cpp:2862-2924` |
 | Argument access | `src/qcommon/cmd.cpp:103-112` |
 | Assert policy | `src/universal/assertive.h:3-31`; `src/universal/assertive.cpp:643-691` |
