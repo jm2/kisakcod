@@ -67,7 +67,7 @@ struct StackGraph {
     }
 };
 void Reset(VariableStackBuffer *stack, bool throughObject = false) {
-    scrVarPub = {}; scrVarGlob = {}; removedDebuggerRefs = 0;
+    std::memset(&scrVarPub, 0, sizeof(scrVarPub)); std::memset(&scrVarGlob, 0, sizeof(scrVarGlob)); removedDebuggerRefs = 0;
     scrVarPub.levelId = 1; scrVarPub.animId = 2; scrVarPub.timeArrayId = 3;
     scrVarPub.pauseArrayId = 4; scrVarPub.freeEntList = 6; scrVarPub.gameId = 7;
     for (unsigned int i = 0; i < 200; ++i) scrVarGlob.variableList[i + 1].w.type = VAR_ENTITY | 0x60;

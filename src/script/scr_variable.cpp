@@ -65,10 +65,15 @@ int  VariableInfoFunctionCompare(VariableDebugInfo *info1, VariableDebugInfo *in
 // remote-debug UI uses (ui_component.cpp) so the two signatures can never
 // collide at link time again (MSVC decorates by parameter type; the 82244072
 // retype of this symbol broke every Windows x86 game link with LNK2019).
+//SCRIPT_RUNTIME_DEBUG_POSITION_COMPARE_BEGIN
 int __cdecl CompareThreadDebugIndices(VariableDebugInfo *arg1, VariableDebugInfo *arg2)
 {
-	return (int)(arg1->pos - arg2->pos);
+	const uintptr_t left = reinterpret_cast<uintptr_t>(arg1->pos);
+	const uintptr_t right = reinterpret_cast<uintptr_t>(arg2->pos);
+	return (left > right) - (left < right);
 }
+
+//SCRIPT_RUNTIME_DEBUG_POSITION_COMPARE_END
 
 void __cdecl Scr_Cleanup()
 {
@@ -112,6 +117,7 @@ void Scr_InitVariables()
 }
 //SCRIPT_RUNTIME_INIT_VARIABLES_END
 
+//SCRIPT_RUNTIME_INIT_VARIABLE_RANGE_BEGIN
 void Scr_InitVariableRange(uint32_t begin, uint32_t end)
 {
 	uint32_t index; // [esp+4h] [ebp-8h]
@@ -144,6 +150,8 @@ void Scr_InitVariableRange(uint32_t begin, uint32_t end)
 	valuea->hash.u.prev = end - begin - 1;
 	scrVarGlob.variableList[end - 1].u.next = 0;
 }
+
+//SCRIPT_RUNTIME_INIT_VARIABLE_RANGE_END
 
 void Scr_InitClassMap()
 {
@@ -265,6 +273,7 @@ uint32_t  GetStartLocalId(uint32_t threadId)
 	return threadId;
 }
 
+//SCRIPT_RUNTIME_ALLOC_VALUE_BEGIN
 uint32_t  AllocValue(void)
 {
 	VariableValueInternal* entry; // [esp+0h] [ebp-14h]
@@ -324,6 +333,8 @@ uint32_t  AllocValue(void)
 	entryValue->w.status = (unsigned char)entryValue->w.status;
 	return entry->hash.id;
 }
+
+//SCRIPT_RUNTIME_ALLOC_VALUE_END
 
 uint32_t  AllocObject(void)
 {
@@ -705,6 +716,7 @@ void  SetVariableValue(uint32_t id, struct VariableValue* value)
 	entryValue->u.u = value->u;
 }
 
+//SCRIPT_RUNTIME_SET_NEW_VARIABLE_VALUE_BEGIN
 void  SetNewVariableValue(uint32_t id, struct VariableValue* value)
 {
 	VariableValueInternal* entryValue; // [esp+0h] [ebp-4h]
@@ -723,6 +735,8 @@ void  SetNewVariableValue(uint32_t id, struct VariableValue* value)
 	entryValue->w.type |= value->type;
 	entryValue->u.u = value->u;
 }
+
+//SCRIPT_RUNTIME_SET_NEW_VARIABLE_VALUE_END
 
 VariableValueInternal_u* GetVariableValueAddress(uint32_t id)
 {
@@ -1752,6 +1766,7 @@ void  SetVariableFieldValue(uint32_t id, VariableValue* value)
 		SetVariableEntityFieldValue(scrVarPub.entId, scrVarPub.entFieldName, value);
 }
 
+//SCRIPT_RUNTIME_EVAL_VARIABLE_BEGIN
 VariableValue  Scr_EvalVariable(uint32_t id)
 {
 	VariableValueInternal* entryValue; // [esp+0h] [ebp-Ch]
@@ -1767,6 +1782,8 @@ VariableValue  Scr_EvalVariable(uint32_t id)
 
 	return value;
 }
+
+//SCRIPT_RUNTIME_EVAL_VARIABLE_END
 
 void  Scr_EvalBoolComplement(VariableValue* value)
 {
@@ -3364,6 +3381,7 @@ void  Scr_CheckLeaks(void)
 	}
 }
 
+//SCRIPT_RUNTIME_THREAD_INFO_COMPARE_BEGIN
 int  ThreadInfoCompare(ThreadDebugInfo* info1, ThreadDebugInfo* info2)
 {
 	const char* pos1; // [esp+0h] [ebp-Ch]
@@ -3379,8 +3397,12 @@ int  ThreadInfoCompare(ThreadDebugInfo* info1, ThreadDebugInfo* info2)
 		if (pos1 != pos2)
 			break;
 	}
-	return (int)(pos1 - pos2);
+	const uintptr_t left = reinterpret_cast<uintptr_t>(pos1);
+	const uintptr_t right = reinterpret_cast<uintptr_t>(pos2);
+	return (left > right) - (left < right);
 }
+
+//SCRIPT_RUNTIME_THREAD_INFO_COMPARE_END
 
 int VariableInfoFileNameCompare(VariableDebugInfo* info1, VariableDebugInfo* info2)
 {

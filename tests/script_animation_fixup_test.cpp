@@ -87,7 +87,7 @@ void Begin(bool debug = true) {
     Check(liveAllocations.empty()); Check(scrAnimationFixups == nullptr);
     ClearCells(); releasedObjects.clear(); code.fill(static_cast<char>(0x55));
     scrAnimPub = {}; scrAnimPub.animtrees = 7; scrAnimPub.animtree_loading = true;
-    scrVarPub = {}; scrVarPub.programBuffer = code.data(); scrCompilePub.programLen = code.size();
+    std::memset(&scrVarPub, 0, sizeof(scrVarPub)); scrVarPub.programBuffer = code.data(); scrCompilePub.programLen = code.size();
     scrVarPub.varUsagePos = "fixture"; scrVarDebugPub = debug ? &debugState : nullptr;
     debugState.extRefCount[7] = 1; diagnosticPosition = nullptr;
 }

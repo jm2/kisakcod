@@ -13,6 +13,7 @@
 #include <script/scr_debugger.h>
 #include <script/scr_evaluate.h>
 #include <script/scr_compiler.h>
+#include <script/scr_parser.h>
 #include <script/scr_stringlist.h>
 #include <universal/memfile.h>
 #include <universal/sys_atomic.h>
@@ -100,7 +101,22 @@ void MemFile_WriteData(MemoryFile *, int, const void *) {}
 void DoSaveEntry(VariableValue *value, VariableValue *, bool, MemoryFile *) { savedChild = *value; }
 
 void Com_Error(errorParm_t, const char *, ...) { std::abort(); }
-void CompileError(uint32_t, const char *, ...) { std::abort(); }
+struct ExpectedCompileError {};
+bool expectCompileError = false;
+void CompileError(uint32_t, const char *, ...) {
+    if (expectCompileError) throw ExpectedCompileError{};
+    std::abort();
+}
+void Scr_TerminalError(const char *) { std::abort(); }
+uint32_t fixtureThreadSlot = 0;
+uint32_t GetVariable(uint32_t posId, uint32_t name) { Check(posId == 999 && name == 1); return fixtureThreadSlot; }
+bool IsObject(VariableValue *entry) { return entry->type >= VAR_THREAD; }
+scrParserPub_t scrParserPub{};
+const char *lookedUpSourcePosition = nullptr;
+uint32_t Scr_GetSourceBuffer(const char *position) { lookedUpSourcePosition = position; return 0; }
+namespace FixtureRange {
+#include "script_variable_range.inc"
+}
 char *TempMalloc(uint32_t size) { Check(codeSize + size <= sizeof(bytecode)); char *p = bytecode + codeSize; codeSize += size; return p; }
 char *TempMallocAlignStrict(uint32_t size) { return TempMalloc(size); }
 void EmitExpression(sval_u, scr_block_s *) {}
@@ -114,7 +130,7 @@ void EmitOpcode(uint32_t op, int, int) { *TempMalloc(1) = static_cast<char>(op);
 void EmitSwitchStatementList(sval_u, bool, uint32_t, scr_block_s *) { scrCompileGlob.currentCaseStatement = fixtureCases; }
 void AddOpcodePos(uint32_t, int) {}
 void ConnectBreakStatements() {}
-void Scr_InitVariableRange(uint32_t begin, uint32_t end) { initializedRanges.emplace_back(begin, end); }
+void Scr_InitVariableRange(uint32_t begin, uint32_t end) { initializedRanges.emplace_back(begin, end); FixtureRange::Scr_InitVariableRange(begin, end); }
 uint32_t GetSafeParentLocalId(uint32_t) { return 0; }
 uint32_t Scr_GetSelf(uint32_t) { return fixtureSelf; }
 uint32_t FindVariable(uint32_t, uint32_t) { return notifyFixture ? 10 : 0; }
@@ -163,6 +179,7 @@ struct { int32_t ofs; } fields_0[] = {{static_cast<int32_t>(offsetof(game_hudele
 #include "script_runtime_slice.inc"
 #include "script_save_runtime_tests.hpp"
 #include "script_scalar_field_tests.hpp"
+#include "script_compiler_position_tests.hpp"
 
 void TestAllocations()
 {
@@ -412,6 +429,7 @@ int main()
     TestAllocations(); TestTerminate(); TestDebugReferences(); TestSaveObject();
     TestBuiltinsAndSwitch(); TestNativeOperandPositions(); TestIfElseOperandPatches(); TestNativeConsumers(); TestDebuggerFormatting(); TestArchivedThreads(); TestVariableReinitialization();
     TestScalarScriptFieldStores();
+    TestCompilerThreadPositions(); TestNativeDebugOrdering();
     TestClassArraySaveLoad(); TestSaveShutdownEntries(); TestDebugExpressionSaveRefs();
     for (void *p : allocations) std::free(p);
     std::printf("script runtime: %d checks passed\n", checks);

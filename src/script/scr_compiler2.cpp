@@ -2694,6 +2694,7 @@ void Scr_CreateVector(VariableCompileValue *constValue, VariableValue *value)
 SpecifyThreadPosition
 ============
 */
+//SCRIPT_RUNTIME_SPECIFY_THREAD_POSITION_BEGIN
 uint32_t SpecifyThreadPosition(uint32_t posId, uint32_t name, uint32_t sourcePos, int type)
 {
 	uint32_t id;
@@ -2705,19 +2706,21 @@ uint32_t SpecifyThreadPosition(uint32_t posId, uint32_t name, uint32_t sourcePos
 	if (pos.type == VAR_UNDEFINED)
 	{
 		pos.type = (Vartype_t)type;
-		pos.u.intValue = 0;
+		pos.u.codePosValue = nullptr;
 
 		SetNewVariableValue(id, &pos);
 		return id;
 	}
 
-	if (pos.u.intValue)
+	if (pos.u.codePosValue)
 		CompileError(sourcePos, "function '%s' already defined in '%s'", SL_ConvertToString(name), scrParserPub.sourceBufferLookup[Scr_GetSourceBuffer(pos.u.codePosValue)].buf);
 	else
 		CompileError(sourcePos, "function '%s' already defined", SL_ConvertToString(name));
 
 	return 0;
 }
+
+//SCRIPT_RUNTIME_SPECIFY_THREAD_POSITION_END
 
 /*
 ============
