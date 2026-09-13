@@ -276,7 +276,15 @@ It is included for completeness and is not a wire-value-controlled dvar path.
 ### 5.6 Map-restart server command (`B` / `n`)
 
 A fast map restart is signalled by a direct reliable game-server command byte,
-independently of the `v` family. `SV_MapRestart` sends
+independently of the `v` family. The byte is emitted only from the fast-restart
+branch of `SV_MapRestart`; the entry points differ:
+`SV_MapRestart_f` calls `SV_MapRestart(0)` (`src/server_mp/sv_ccmds_mp.cpp:451-453`)
+and `SV_FastRestart_f` calls `SV_MapRestart(1)` (`:536-539`). With
+`fast_restart == 0` the `!fast_restart` term makes the condition at `:476` true,
+so control takes the `SV_SpawnServer(mapname)` branch at `:478-483` and never
+reaches the reliable emission. Only the `fast_restart != 0` case can fall through
+to the `else if (com_frameTime != sv.start_frameTime)` branch at `:484-528`,
+which emits the byte. `SV_MapRestart` sends
 `va("%c", savepersist != 0 ? 110 : 66)` through
 `SV_AddServerCommand(..., SV_CMD_RELIABLE, ...)`
 (`src/server_mp/sv_ccmds_mp.cpp:512-513`); the byte is `'n'` (`0x6E`) when
@@ -297,10 +305,16 @@ boolean with `DVAR_CHEAT` at `src/cgame_mp/cg_main_mp.cpp:893`
 This is a sixth mutation family: a direct game-server command that makes the
 client perform an internal write to a client cheat dvar. Unlike families #1-#5
 it carries no name/value payload; the mutation is the fixed `cg_thirdPerson = 0`
-reset inside the restart handler, and it fires on the `B`/`n` bytes regardless
-of whether the restart itself came from `map_restart`, `fast_restart` or a
-hostile server. Both `savepersist` values run the same `Dvar_SetBool` because
-the reset at `:249` precedes the `if (!savepersist)` block.
+reset inside the restart handler, and it fires on every `B`/`n` byte received
+because the reset at `:249` precedes the `if (!savepersist)` block, so both
+`savepersist` values run the same `Dvar_SetBool`. The `B`/`n` byte itself can
+only originate from the fast-restart path: `map_restart` (`SV_MapRestart(0)`)
+spawns a new server at `:478-483` before reaching `:512-513`, while
+`fast_restart` (`SV_MapRestart(1)`) emits it from the fast-restart branch when
+the condition at `:476` is false (`sv_maxclients` unmodified, gametype
+unchanged) and `com_frameTime != sv.start_frameTime`. Once a hostile server sends the byte the
+client handler still applies the same fixed reset, but the emission is not
+attributable to `map_restart`.
 
 ### 5.7 Path summary
 
@@ -385,7 +399,7 @@ forged/hostile input.
 
 Observed at `a1ca543b` (source inspection only):
 
-- Multiplayer has exactly six dvar-mutation families in section 5; #1 and #6
+- Multiplayer has exactly six dvar-mutation families in section 5.7; #1 and #6
   are direct game-server commands, #2-#4 are configstring-derived, and #5 is a
   local-file indirection.
 - The `v` command pair loop reads arguments at `i` and `i+1` without checking
