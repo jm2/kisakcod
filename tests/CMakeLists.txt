@@ -3447,6 +3447,24 @@ set_target_properties(kisakcod-script-runtime-pointer-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME script-runtime-pointer-contracts COMMAND kisakcod-script-runtime-pointer-tests)
 
+# Save preparation walks actual object and nested-stack registration paths.
+set(_runtime_slice "")
+kisakcod_append_runtime_slice(scr_readwrite.cpp SAVE_REGISTRATION)
+kisakcod_append_runtime_slice(scr_readwrite.cpp SAVE_OBJECT_REGISTRATION)
+kisakcod_append_runtime_slice(scr_readwrite.cpp SAVE_PRE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/script_save_registration.inc" "${_runtime_slice}")
+add_executable(kisakcod-script-save-registration-tests script_save_registration_test.cpp)
+target_include_directories(kisakcod-script-save-registration-tests PRIVATE ${SRC_DIR} ${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_compile_definitions(kisakcod-script-save-registration-tests PRIVATE KISAK_MP KISAK_DEDI_HEADLESS=1)
+target_compile_features(kisakcod-script-save-registration-tests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(kisakcod-script-save-registration-tests PRIVATE /W0)
+else()
+    target_compile_options(kisakcod-script-save-registration-tests PRIVATE -w)
+endif()
+set_target_properties(kisakcod-script-save-registration-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME script-save-registration-contracts COMMAND kisakcod-script-save-registration-tests)
+
 # Animation fixups compile production records, allocation/link consumers and cleanup.
 set(_runtime_slice "")
 kisakcod_append_runtime_slice(../bgame/bg_local.h ANIM_HANDLE_TYPES)

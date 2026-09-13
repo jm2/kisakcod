@@ -1582,56 +1582,87 @@ void __cdecl Scr_SkipSource(MemoryFile *memFile, void *fileHandle)
     }
 }
 
+//SCRIPT_RUNTIME_SAVE_REGISTRATION_BEGIN
+namespace
+{
+void RegisterSaveId(unsigned int id)
+{
+    if (id && !scrVarPub.saveIdMap[id])
+    {
+        scrVarPub.saveIdMap[id] = ++scrVarPub.savecount;
+        scrVarPub.saveIdMapRev[scrVarPub.savecount] = static_cast<uint16_t>(id);
+    }
+}
+
+// Yield object IDs in the original depth-first order without native recursion.
+// Keeping traversal separate from object registration also avoids callbacks
+// re-entering the same walker while AddSaveObject scans object children.
+class SaveStackIterator
+{
+    struct Frame { const VariableStackBuffer *stack; int next; };
+    Frame frames[SCR_STACK_MAX_NESTING + 1]{};
+    unsigned int depth = 0;
+public:
+    explicit SaveStackIterator(const VariableStackBuffer *stack)
+    {
+        if (!stack)
+            Com_Error(ERR_DROP, "null script stack while preparing save");
+        frames[0] = Frame{stack, -1};
+    }
+
+    bool Next(unsigned int &id)
+    {
+        for (;;)
+        {
+            Frame &frame = frames[depth];
+            if (frame.next == -1)
+            {
+                frame.next = 0;
+                id = frame.stack->localId;
+                return true;
+            }
+            if (frame.next == frame.stack->size)
+            {
+                if (depth == 0)
+                    return false;
+                --depth;
+                continue;
+            }
+            const char *record = frame.stack->buf + frame.next++ * VARIABLE_STACK_RECORD_SIZE;
+            const unsigned int type = static_cast<unsigned char>(*record);
+            const VariableUnion value = VariableStackBuf_ReadCell(record + 1);
+            if (type == VAR_POINTER)
+            {
+                id = value.stringValue;
+                return true;
+            }
+            if (type == VAR_STACK)
+            {
+                if (depth == SCR_STACK_MAX_NESTING || !value.stackValue)
+                    Com_Error(ERR_DROP, "script stack nesting limit or null stack while preparing save");
+                frames[++depth] = Frame{value.stackValue, -1};
+            }
+        }
+    }
+};
+}
+
 void __cdecl AddSaveStackInternal(const VariableStackBuffer *stackBuf)
 {
-    int localId; // r7
-    unsigned __int16 size; // r11
-    const char *buf; // r31
-    unsigned int v4; // r3
-    unsigned __int16 v5; // r30
-    VariableUnion v6; // r4
-
-    localId = stackBuf->localId;
-    if (stackBuf->localId && !scrVarPub.saveIdMap[localId])
-    {
-        scrVarPub.saveIdMap[localId] = ++scrVarPub.savecount;
-        *(unsigned __int16 *)((char *)scrVarPub.saveIdMapRev + __ROL4__(scrVarPub.savecount, 1)) = localId;
-    }
-    size = stackBuf->size;
-    buf = stackBuf->buf;
-    if (size)
-    {
-        do
-        {
-            // M4 (ki-n1et): widened runtime record stride; the walk only
-            // classifies entries, the serialized stream is unchanged.
-            v4 = (unsigned __int8)*buf;
-            v5 = size - 1;
-            v6 = VariableStackBuf_ReadCell(buf + 1);
-            buf += VARIABLE_STACK_RECORD_SIZE;
-            // cppcheck-suppress misra-c2012-17.2 -- existing recursive save-graph traversal; this migration changes native cell width/stride, not traversal order or call graph.
-            AddSaveEntryInternal(v4, v6);
-            size = v5;
-        } while (v5);
-    }
+    SaveStackIterator stack(stackBuf);
+    unsigned int id;
+    while (stack.Next(id))
+        RegisterSaveId(id);
 }
 
 void __cdecl AddSaveEntryInternal(unsigned int type, VariableUnion u)
 {
-    if (type == 1)
-    {
-        if (u.intValue && !scrVarPub.saveIdMap[(unsigned int)u.intValue])
-        {
-            scrVarPub.saveIdMap[(unsigned int)u.intValue] = ++scrVarPub.savecount;
-            scrVarPub.saveIdMapRev[scrVarPub.savecount] = static_cast<uint16_t>(u.intValue);
-        }
-    }
-    else if (type == 10)
-    {
-        // cppcheck-suppress misra-c2012-17.2 -- existing reciprocal save-graph call; traversal order and call graph are unchanged by the native-cell migration.
+    if (type == VAR_POINTER)
+        RegisterSaveId(u.stringValue);
+    else if (type == VAR_STACK)
         AddSaveStackInternal(u.stackValue);
-    }
 }
+//SCRIPT_RUNTIME_SAVE_REGISTRATION_END
 
 // local variable allocation has failed, the output may be wrong!
 void __cdecl DoSaveEntry(VariableValue *value, VariableValue *name, bool isArray, MemoryFile *memFile)
@@ -1746,6 +1777,7 @@ void __cdecl DoSaveEntry(VariableValue *value, VariableValue *name, bool isArray
     }
 }
 
+//SCRIPT_RUNTIME_SAVE_OBJECT_REGISTRATION_BEGIN
 void __cdecl AddSaveObjectChildren(unsigned int parentId)
 {
     VariableValueInternal *parentValue; // r23
@@ -1856,6 +1888,8 @@ void __cdecl AddSaveObject(unsigned int parentId)
         } while (v2 < scrVarPub.savecount);
     }
 }
+
+//SCRIPT_RUNTIME_SAVE_OBJECT_REGISTRATION_END
 
 //SCRIPT_RUNTIME_SAVE_OBJECT_BEGIN
 void __cdecl DoSaveObjectInfo(unsigned int parentId, MemoryFile *memFile)
@@ -2038,38 +2072,13 @@ void __cdecl Scr_SavePost(MemoryFile *memFile)
     Scr_WriteClassArrays(memFile);
 }
 
+//SCRIPT_RUNTIME_SAVE_PRE_BEGIN
 void __cdecl AddSaveStack(const VariableStackBuffer *stackBuf)
 {
-    int size; // r9
-    CONST char *buf; // r31
-    int v4; // r10
-    __int16 v5; // r29
-    VariableUnion v6; // r3
-
-    AddSaveObject(stackBuf->localId);
-    size = stackBuf->size;
-    buf = stackBuf->buf;
-    if (size)
-    {
-        do
-        {
-            v4 = (unsigned __int8)*buf;
-            v5 = size - 1;
-            v6 = VariableStackBuf_ReadCell(buf + 1);
-            buf += VARIABLE_STACK_RECORD_SIZE;
-            if (v4 == 1)
-            {
-                AddSaveObject((unsigned int)v6.intValue);
-            }
-            else if (v4 == 10)
-            {
-                AddSaveStack(v6.stackValue);
-            }
-            //LOWORD(size) = v5;
-            size = (size & 0xFFFF0000) | ((uint32_t)v5 & 0xFFFF);
-
-        } while (v5);
-    }
+    SaveStackIterator stack(stackBuf);
+    unsigned int id;
+    while (stack.Next(id))
+        AddSaveObject(id);
 }
 
 void __cdecl AddSaveEntry(unsigned int type, VariableUnion u)
@@ -2116,3 +2125,4 @@ void __cdecl Scr_SavePre(int sys)
         AddSaveStack(v4->u.u.stackValue);
     }
 }
+//SCRIPT_RUNTIME_SAVE_PRE_END

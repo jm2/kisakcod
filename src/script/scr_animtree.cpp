@@ -1,6 +1,6 @@
 #include "scr_animtree.h"
 
-#include <cstring>
+#include "scr_bytecode.hpp"
 #include <universal/com_memory.h>
 
 #include <qcommon/mem_track.h>
@@ -84,7 +84,7 @@ static const char *Scr_AllocAnimationFixup(char *position, const char *next)
     fixup->allocatedNext = scrAnimationFixups;
     scrAnimationFixups = fixup;
     const scr_anim_s empty;
-    std::memcpy(position, &empty, sizeof(empty));
+    Scr_WriteBytecodeValue(position, empty);
     return reinterpret_cast<const char *>(fixup);
 }
 
@@ -342,7 +342,7 @@ void __cdecl ConnectScriptToAnim(
              fixup; fixup = fixup->next)
         {
             // Bytecode operands can be unaligned; write only the frozen handle.
-            std::memcpy(fixup->position, &anim, sizeof(anim));
+            Scr_WriteBytecodeValue(fixup->position, anim);
         }
 
         value->u.codePosValue = NULL;
