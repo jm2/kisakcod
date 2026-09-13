@@ -1,6 +1,12 @@
 # Pointer-truncation debt burndown (milestone M2). Tokens are <rel>|<index>.
 # Generated seed = the sites remaining AFTER the initial uintptr_t sweep.
 # Fixing a site lowers its file's count; remove the now-stale highest-index line.
+#
+# 2026-09-09 (ki-n1et rework): script/scr_debugger.cpp|1 removed -- the
+# watch-element pointer stores on this branch are typed
+# (Scr_RefToVariable / Scr_SortElementChildren). Every other tracked site
+# was re-verified live against this branch's tree: the tripwire still
+# counts them, so their tokens remain until their own burndown fixes them.
 cgame/cg_newdraw.cpp|1
 cgame/cg_newdraw.cpp|2
 cgame_mp/cg_ents_mp.cpp|1
@@ -20,8 +26,6 @@ gfx_d3d/r_material_load_obj.cpp|2
 qcommon/common.cpp|1
 qcommon/sv_msg_write_mp.cpp|1
 qcommon/sv_msg_write_mp.cpp|2
-script/scr_debugger.cpp|1
-script/scr_debugger.cpp|2
 script/scr_parser.cpp|1
 script/scr_parser.cpp|2
 universal/com_memory.cpp|1

@@ -32,3 +32,8 @@ exclude_paths:
   - "src/physics/ode/collision_trimesh_KISAK.h"
   - "src/physics/ode/util.h"
   - "src/qcommon/graph.h"
+
+# Engine headers are C++; keep analysis enabled and select the proper parser.
+engines:
+  cppcheck:
+    language: c++

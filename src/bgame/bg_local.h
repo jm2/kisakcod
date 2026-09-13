@@ -202,15 +202,16 @@ enum ViewLockTypes : __int32
 //    $6CB7272563F4458FB40A4A5E123C4ABA __s0;
 //    const char *linkPointer;
 //};
+//SCRIPT_RUNTIME_ANIM_HANDLE_TYPES_BEGIN
 struct scr_anim_s // sizeof=0x4
 {   
     scr_anim_s()
     {
-        linkPointer = NULL;
+        packed = 0;
     }
     scr_anim_s(int i)
     {
-        linkPointer = (const char *)i; // KISAKHACK
+        packed = static_cast<uint32_t>(i);
     }
     // ...
     //$76411D3CC105A18E6E4A61D5A929E310 ___u0; // ...
@@ -221,7 +222,7 @@ struct scr_anim_s // sizeof=0x4
             uint16_t index;
             uint16_t tree;
         };
-        const char* linkPointer;
+        uint32_t packed; // Frozen animation handle, never a host pointer.
     };
 };
 static_assert(sizeof(struct scr_anim_s) == 0x4);
@@ -233,6 +234,8 @@ struct loadAnim_t // sizeof=0x48
     char szAnimName[64];
 };
 static_assert((sizeof(struct loadAnim_t) * 512) == 36864);
+
+//SCRIPT_RUNTIME_ANIM_HANDLE_TYPES_END
 
 struct pml_t // sizeof=0x80
 {                                       // ...
@@ -429,6 +432,7 @@ struct animScript_t // sizeof=0x204
 };
 static_assert(sizeof(animScript_t) == 0x204);
 
+//SCRIPT_RUNTIME_ANIM_TREE_TYPE_BEGIN
 struct scr_animtree_t // sizeof=0x4
 {                                       // ...
     scr_animtree_t()
@@ -437,7 +441,8 @@ struct scr_animtree_t // sizeof=0x4
     }
     XAnim_s* anims;                     // ...
 };
-static_assert(sizeof(scr_animtree_t) == 0x4);
+RUNTIME_SIZE(scr_animtree_t, 0x4, 0x8);
+//SCRIPT_RUNTIME_ANIM_TREE_TYPE_END
 
 struct KISAK_ALIGNAS(8) animScriptData_t // sizeof=0x9A9D0
 {                                       // ...

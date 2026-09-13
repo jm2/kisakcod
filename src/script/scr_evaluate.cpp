@@ -37,6 +37,7 @@ int __cdecl Scr_CompareCanonicalStrings(uint32_t *arg1, uint32_t *arg2)
     return scrEvaluateGlob.canonicalStringLookup[*arg1] - scrEvaluateGlob.canonicalStringLookup[*arg2];
 }
 
+//SCRIPT_RUNTIME_CANON_ARCHIVE_BEGIN
 void __cdecl Scr_ArchiveCanonicalStrings()
 {
     char v0; // [esp+13h] [ebp-35h]
@@ -59,7 +60,9 @@ void __cdecl Scr_ArchiveCanonicalStrings()
             len += strlen(SL_ConvertToString(stringValue)) + 1;
     }
     scrEvaluateGlob.archivedCanonicalStringsBuf = (char *)Hunk_AllocDebugMem(len);
-    scrEvaluateGlob.archivedCanonicalStrings = (ArchivedCanonicalStringInfo *)Hunk_AllocDebugMem(8 * scrVarPub.canonicalStrCount);
+    // M4 (ki-n1et): size by the element, not the frozen 32-bit record size;
+    // ArchivedCanonicalStringInfo is 16 bytes on native64.
+    scrEvaluateGlob.archivedCanonicalStrings = static_cast<ArchivedCanonicalStringInfo *>(Hunk_AllocDebugMem(sizeof(ArchivedCanonicalStringInfo) * scrVarPub.canonicalStrCount));
     scrEvaluateGlob.canonicalStringLookup = (int *)Hunk_AllocDebugMem(4 * scrVarPub.canonicalStrCount + 4);
     i = 0;
     lena = 0;
@@ -90,8 +93,8 @@ void __cdecl Scr_ArchiveCanonicalStrings()
     qsort(
         scrEvaluateGlob.archivedCanonicalStrings,
         scrVarPub.canonicalStrCount,
-        8u,
-        (int(__cdecl *)(const void *, const void *))CompareCanonicalStrings);
+        sizeof(ArchivedCanonicalStringInfo),
+        [](const void *a, const void *b) { return CompareCanonicalStrings(static_cast<const ArchivedCanonicalStringInfo *>(a), static_cast<const ArchivedCanonicalStringInfo *>(b)); });
     for (ia = 0; ia < (int)scrVarPub.canonicalStrCount; ++ia)
     {
         if (!scrEvaluateGlob.archivedCanonicalStrings[ia].canonicalStr)
@@ -112,11 +115,18 @@ void __cdecl Scr_ArchiveCanonicalStrings()
     }
     *scrEvaluateGlob.canonicalStringLookup = 0;
 }
+//SCRIPT_RUNTIME_CANON_ARCHIVE_END
 
-int __cdecl CompareCanonicalStrings(const char **arg1, const char **arg2)
+// M4 (ki-n1et): typed comparator. The retail form cast each record to
+// `const char **` and dereferenced element [1] -- width-correct only while
+// the record's pointer offset equals the pointer width. Compare the value
+// member directly so the record layout can never drift out from under it.
+//SCRIPT_RUNTIME_CANON_COMPARE_BEGIN
+int __cdecl CompareCanonicalStrings(const ArchivedCanonicalStringInfo *arg1, const ArchivedCanonicalStringInfo *arg2)
 {
-    return strcmp(arg1[1], arg2[1]);
+    return strcmp(arg1->value, arg2->value);
 }
+//SCRIPT_RUNTIME_CANON_COMPARE_END
 
 const char *__cdecl Scr_GetCanonicalString(uint32_t fieldName)
 {
@@ -232,6 +242,7 @@ void __cdecl Scr_GetFieldValue(uint32_t objectId, const char *fieldName, int len
     }
 }
 
+//SCRIPT_RUNTIME_VALUE_STRING_BEGIN
 void __cdecl Scr_GetValueString(uint32_t localId, VariableValue *value, int len, char *s)
 {
     const XAnim_s *Anims; // eax
@@ -302,12 +313,8 @@ void __cdecl Scr_GetValueString(uint32_t localId, VariableValue *value, int len,
         Com_sprintf(s, len, "&\"%s\"", SL_ConvertToString(value->u.intValue));
         break;
     case 4:
-        sprintf(
-            s,
-            "(%g, %g, %g)",
-            *(float *)value->u.intValue,
-            *(float *)(value->u.intValue + 4),
-            *(float *)(value->u.intValue + 8));
+        Com_sprintf(s, len, "(%g, %g, %g)",
+            value->u.vectorValue[0], value->u.vectorValue[1], value->u.vectorValue[2]);
         break;
     case 5:
         Com_sprintf(s, len, "%g", value->u.floatValue);
@@ -316,7 +323,7 @@ void __cdecl Scr_GetValueString(uint32_t localId, VariableValue *value, int len,
         Com_sprintf(s, len, "%i", value->u.intValue);
         break;
     case 9:
-        Scr_GetCodePos((const char *)(value->u.intValue - 1), 1u, s, len);
+        Scr_GetCodePos(value->u.codePosValue - 1, 1u, s, len);
         break;
     case 0xB:
         intValue = (uint16_t)value->u.intValue;
@@ -329,6 +336,7 @@ void __cdecl Scr_GetValueString(uint32_t localId, VariableValue *value, int len,
         break;
     }
 }
+//SCRIPT_RUNTIME_VALUE_STRING_END
 
 void __cdecl Scr_EvalArrayVariable(uint32_t arrayId, VariableValue *value)
 {
@@ -389,6 +397,7 @@ void __cdecl Scr_EvalFieldVariable(uint32_t fieldName, VariableValue *value, uin
     Scr_EvalFieldVariableInternal(objectId, fieldName, value);
 }
 
+//SCRIPT_DEBUGGER_SCR_COMPILEEXPRESSION_BEGIN
 void __cdecl Scr_CompileExpression(sval_u *expr)
 {
     switch (expr->node[0].type)
@@ -424,7 +433,9 @@ void __cdecl Scr_CompileExpression(sval_u *expr)
         return;
     }
 }
+//SCRIPT_DEBUGGER_SCR_COMPILEEXPRESSION_END
 
+//SCRIPT_DEBUGGER_SCR_COMPILEPRIMITIVEEXPRESSION_BEGIN
 void __cdecl Scr_CompilePrimitiveExpression(sval_u *expr)
 {
     sval_u tempVariableId; // [esp+2Ch] [ebp-8h]
@@ -440,7 +451,7 @@ void __cdecl Scr_CompilePrimitiveExpression(sval_u *expr)
         break;
     case ENUM_string:
     case ENUM_istring:
-        *expr = debugger_string(expr->node[0].type, (char *)SL_ConvertToString(*(uint32_t *)(expr->type + 4)));
+        *expr = debugger_string(expr->node[0].type, const_cast<char *>(SL_ConvertToString(expr->node[1].stringValue)));
         break;
     case ENUM_variable:
         Scr_CompileVariableExpression(&expr->node[1]);
@@ -490,7 +501,9 @@ void __cdecl Scr_CompilePrimitiveExpression(sval_u *expr)
         break;
     }
 }
+//SCRIPT_DEBUGGER_SCR_COMPILEPRIMITIVEEXPRESSION_END
 
+//SCRIPT_DEBUGGER_SCR_COMPILEVARIABLEEXPRESSION_BEGIN
 void __cdecl Scr_CompileVariableExpression(sval_u *expr)
 {
     signed int ObjectType; // [esp+14h] [ebp-54h]
@@ -504,8 +517,8 @@ void __cdecl Scr_CompileVariableExpression(sval_u *expr)
     switch (expr->node[0].type)
     {
     case ENUM_local_variable:
-        *(uint32_t *)(expr->type + 4) = Scr_CompileCanonicalString(*(uint32_t *)(expr->type + 4));
-        if (*(uint32_t *)(expr->type + 4))
+        expr->node[1].stringValue = Scr_CompileCanonicalString(expr->node[1].stringValue);
+        if (expr->node[1].stringValue)
         {
             tempVariableId.block = (scr_block_s*)AllocValue();
             *expr = debugger_node4(ENUM_local_variable, expr->node[1], 0, 0, tempVariableId);
@@ -522,8 +535,8 @@ void __cdecl Scr_CompileVariableExpression(sval_u *expr)
         break;
     case ENUM_field_variable:
         Scr_CompilePrimitiveExpressionFieldObject(&expr->node[1]);
-        *(uint32_t *)(expr->type + 8) = Scr_CompileCanonicalString(*(uint32_t *)(expr->type + 8));
-        if (*(uint32_t *)(expr->type + 8))
+        expr->node[2].stringValue = Scr_CompileCanonicalString(expr->node[2].stringValue);
+        if (expr->node[2].stringValue)
             *expr = debugger_node3(ENUM_field_variable, expr->node[1], expr->node[2], 0);
         else
             *expr = debugger_node0(ENUM_unknown_field);
@@ -533,7 +546,7 @@ void __cdecl Scr_CompileVariableExpression(sval_u *expr)
         *expr = debugger_node1(ENUM_self_field, expr->node[1]);
         break;
     case ENUM_object:
-        s = SL_ConvertToString(*(uint32_t *)(expr->type + 4));
+        s = SL_ConvertToString(expr->node[1].stringValue);
         if (*s == 116)
         {
             idValue.intValue = atoi(s + 1);
@@ -573,7 +586,9 @@ void __cdecl Scr_CompileVariableExpression(sval_u *expr)
         break;
     }
 }
+//SCRIPT_DEBUGGER_SCR_COMPILEVARIABLEEXPRESSION_END
 
+//SCRIPT_DEBUGGER_SCR_COMPILEPRIMITIVEEXPRESSIONFIELDOBJECT_BEGIN
 void __cdecl Scr_CompilePrimitiveExpressionFieldObject(sval_u *expr)
 {
     sval_u tempVariableId; // [esp+18h] [ebp-8h]
@@ -603,6 +618,7 @@ void __cdecl Scr_CompilePrimitiveExpressionFieldObject(sval_u *expr)
         break;
     }
 }
+//SCRIPT_DEBUGGER_SCR_COMPILEPRIMITIVEEXPRESSIONFIELDOBJECT_END
 
 //int __cdecl GetExpressionCount(sval_u exprlist)
 //{
@@ -615,6 +631,7 @@ void __cdecl Scr_CompilePrimitiveExpressionFieldObject(sval_u *expr)
 //    return expr_count;
 //}
 
+//SCRIPT_DEBUGGER_SCR_COMPILEPRIMITIVEEXPRESSIONLIST_BEGIN
 void __cdecl Scr_CompilePrimitiveExpressionList(sval_u *exprlist)
 {
     sval_u *nodea; // [esp+8h] [ebp-18h]
@@ -623,29 +640,33 @@ void __cdecl Scr_CompilePrimitiveExpressionList(sval_u *exprlist)
     int i; // [esp+10h] [ebp-10h]
     sval_u expr[3]; // [esp+14h] [ebp-Ch]
 
-    expr_count = GetExpressionCount((sval_u)exprlist->type);
+    expr_count = GetExpressionCount(*exprlist);
     if (expr_count == 1)
     {
-        nodea = *(sval_u **)exprlist->type;
-        Scr_CompileExpression(nodea->node);
-        exprlist->type = nodea->node->type;
+        nodea = exprlist->node[0].node;
+        // cppcheck-suppress misra-c2012-17.2 -- existing recursive debugger AST traversal; this migration corrects native cell arguments without changing its call graph.
+        Scr_CompileExpression(&nodea[0]);
+        *exprlist = nodea[0];
     }
     else if (expr_count == 3)
     {
         i = 0;
-        for (node = *(sval_u **)exprlist->type; node; node = node[1].node)
+        for (node = exprlist->node[0].node; node; node = node[1].node)
         {
-            Scr_CompileExpression(node->node);
-            expr[i++] = (sval_u)node->node->type;
+            // cppcheck-suppress misra-c2012-17.2 -- existing recursive debugger AST traversal; this migration corrects native cell arguments without changing its call graph.
+            Scr_CompileExpression(&node[0]);
+            expr[i++] = node[0];
         }
-        exprlist->type = debugger_node3(ENUM_vector, expr[0], expr[1], expr[2]).type;
+        *exprlist = debugger_node3(ENUM_vector, expr[0], expr[1], expr[2]);
     }
     else
     {
-        exprlist->type = debugger_node0(ENUM_bad_expression).type;
+        *exprlist = debugger_node0(ENUM_bad_expression);
     }
 }
+//SCRIPT_DEBUGGER_SCR_COMPILEPRIMITIVEEXPRESSIONLIST_END
 
+//SCRIPT_DEBUGGER_SCR_COMPILECALLEXPRESSION_BEGIN
 char __cdecl Scr_CompileCallExpression(sval_u *expr)
 {
     Enum_t type = expr->node[0].type;
@@ -658,7 +679,8 @@ char __cdecl Scr_CompileCallExpression(sval_u *expr)
             return 1;
         }
     }
-    else if (type == ENUM_method && Scr_CompileMethod(&expr->node[1], &expr->node[2], (sval_u *)(expr->type + 12)))
+    // cppcheck-suppress misra-c2012-17.2 -- existing recursive debugger AST traversal; this migration corrects native cell arguments without changing its call graph.
+    else if (type == ENUM_method && Scr_CompileMethod(&expr->node[1], &expr->node[2], &expr->node[3]))
     {
         *expr = debugger_node3(
             ENUM_method,
@@ -669,7 +691,9 @@ char __cdecl Scr_CompileCallExpression(sval_u *expr)
     }
     return 0;
 }
+//SCRIPT_DEBUGGER_SCR_COMPILECALLEXPRESSION_END
 
+//SCRIPT_DEBUGGER_SCR_GETBUILTIN_BEGIN
 uint32_t __cdecl Scr_GetBuiltin(sval_u func_name)
 {
     if (func_name.node[0].type != ENUM_script_call)
@@ -692,7 +716,9 @@ uint32_t __cdecl Scr_GetBuiltin(sval_u func_name)
 
     return 0;
 }
+//SCRIPT_DEBUGGER_SCR_GETBUILTIN_END
 
+//SCRIPT_DEBUGGER_SCR_COMPILEFUNCTION_BEGIN
 char __cdecl Scr_CompileFunction(sval_u *func_name, sval_u *params)
 {
     void(__cdecl * func)(); // [esp+0h] [ebp-10h]
@@ -700,7 +726,7 @@ char __cdecl Scr_CompileFunction(sval_u *func_name, sval_u *params)
     const char *pName; // [esp+8h] [ebp-8h] BYREF
     int type; // [esp+Ch] [ebp-4h] BYREF
 
-    name = Scr_GetBuiltin((sval_u)func_name->type);
+    name = Scr_GetBuiltin(*func_name);
     if (!name)
         return 0;
     pName = SL_ConvertToString(name);
@@ -708,25 +734,30 @@ char __cdecl Scr_CompileFunction(sval_u *func_name, sval_u *params)
     func = Scr_GetFunction(&pName, &type);
     if (!func)
         return 0;
-    func_name->block = (scr_block_s*)func;
+    func_name->block = reinterpret_cast<scr_block_s *>(func);
     Scr_CompileCallExpressionList(params);
     return 1;
 }
+//SCRIPT_DEBUGGER_SCR_COMPILEFUNCTION_END
 
+//SCRIPT_DEBUGGER_SCR_COMPILECALLEXPRESSIONLIST_BEGIN
 void __cdecl Scr_CompileCallExpressionList(sval_u *exprlist)
 {
     sval_u *node; // [esp+8h] [ebp-8h]
     sval_u expr; // [esp+Ch] [ebp-4h]
 
-    expr.type = debugger_node0(ENUM_NOP).type;
-    for (node = *(sval_u **)exprlist->type; node; node = node[1].node)
+    expr = debugger_node0(ENUM_NOP);
+    for (node = exprlist->node[0].node; node; node = node[1].node)
     {
-        Scr_CompileExpression(node->node);
-        expr.type = debugger_prepend_node((sval_u)node->node->type, expr).type;
+        // cppcheck-suppress misra-c2012-17.2 -- existing recursive debugger AST traversal; this migration preserves its call graph and fixes native cell arguments.
+        Scr_CompileExpression(&node[0]);
+        expr = debugger_prepend_node(node[0], expr);
     }
-    exprlist->type = expr.type;
+    *exprlist = expr;
 }
+//SCRIPT_DEBUGGER_SCR_COMPILECALLEXPRESSIONLIST_END
 
+//SCRIPT_DEBUGGER_SCR_COMPILEMETHOD_BEGIN
 char __cdecl Scr_CompileMethod(sval_u *expr, sval_u *func_name, sval_u *params)
 {
     void(__cdecl * meth)(scr_entref_t); // [esp+0h] [ebp-10h]
@@ -734,7 +765,7 @@ char __cdecl Scr_CompileMethod(sval_u *expr, sval_u *func_name, sval_u *params)
     const char *pName; // [esp+8h] [ebp-8h] BYREF
     int type; // [esp+Ch] [ebp-4h] BYREF
 
-    name = Scr_GetBuiltin((sval_u)func_name->type);
+    name = Scr_GetBuiltin(*func_name);
     if (!name)
         return 0;
     pName = SL_ConvertToString(name);
@@ -743,10 +774,11 @@ char __cdecl Scr_CompileMethod(sval_u *expr, sval_u *func_name, sval_u *params)
     if (!meth)
         return 0;
     Scr_CompilePrimitiveExpression(expr);
-    func_name->block = (scr_block_s*)meth;
+    func_name->block = reinterpret_cast<scr_block_s *>(meth);
     Scr_CompileCallExpressionList(params);
     return 1;
 }
+//SCRIPT_DEBUGGER_SCR_COMPILEMETHOD_END
 
 void __cdecl Scr_CompileText(const char *text, ScriptExpression_t *scriptExpr)
 {
@@ -765,7 +797,7 @@ void __cdecl Scr_CompileTextInternal(const char *text, ScriptExpression_t *scrip
     char *start; // [esp+28h] [ebp-14h]
     char *end; // [esp+2Ch] [ebp-10h]
     HunkUser *user; // [esp+30h] [ebp-Ch]
-    uint32_t *expr; // [esp+38h] [ebp-4h]
+    sval_u *expr; // parser node cells use native width
 
     if (!strcmp(text, "<locals>"))
     {
@@ -792,9 +824,9 @@ void __cdecl Scr_CompileTextInternal(const char *text, ScriptExpression_t *scrip
         else
         {
             scrCompilePub.developer_statement = 3;
-            expr = (uint32_t *)scriptExpr->parseData.type;
-            scriptExpr->parseData.type = (Enum_t)*(uint32_t *)(scriptExpr->parseData.type + 4);
-            if (*expr == 65)
+            expr = scriptExpr->parseData.node;
+            scriptExpr->parseData = expr[1];
+            if (expr[0].type == ENUM_expression)
             {
                 varUsagePos = scrVarPub.varUsagePos;
                 if (!scrVarPub.varUsagePos)
@@ -807,7 +839,7 @@ void __cdecl Scr_CompileTextInternal(const char *text, ScriptExpression_t *scrip
             }
             else
             {
-                if (*expr != 83)
+                if (expr[0].type != ENUM_statement)
                     MyAssertHandler(".\\script\\scr_evaluate.cpp", 2142, 0, "%s", "expr.node[0].type == ENUM_statement");
                 user = Hunk_UserCreate(0x10000, "Scr_CompileTextInternal", 0, 0, 0);
                 TempMemoryReset(user);
@@ -1158,18 +1190,18 @@ void __cdecl Scr_EvalVariableExpression(sval_u expr, uint32_t localId, VariableV
         }
         break;
     case 0x51:
-        if (*(uint32_t *)(expr.type + 4) && Scr_IsThreadAlive(*(uint32_t *)(expr.type + 4)))
+        if (expr.node[1].idValue && Scr_IsThreadAlive(expr.node[1].idValue))
         {
-            value->u.intValue = *(uint32_t *)(expr.type + 4);
+            value->u.intValue = expr.node[1].idValue;
             value->type = VAR_POINTER;
             AddRefToObject(value->u.intValue);
         }
         else
         {
-            if (*(uint32_t *)(expr.type + 4))
+            if (expr.node[1].idValue)
             {
-                RemoveRefToObject(*(uint32_t *)(expr.type + 4));
-                *(uint32_t *)(expr.type + 4) = 0;
+                RemoveRefToObject(expr.node[1].idValue);
+                expr.node[1].idValue = 0;
             }
             value->type = VAR_UNDEFINED;
             Scr_Error("thread not active");
@@ -1180,7 +1212,7 @@ void __cdecl Scr_EvalVariableExpression(sval_u expr, uint32_t localId, VariableV
         Scr_Error("bad expression");
         break;
     case 0x57:
-        Scr_GetValue(*(uint32_t *)(expr.type + 4), value);
+        Scr_GetValue(expr.node[1].idValue, value);
         break;
     default:
         return;
@@ -1268,6 +1300,7 @@ void __cdecl Scr_EvalSelfValue(VariableValue *value)
     }
 }
 
+//SCRIPT_DEBUGGER_SCR_GETVALUE_BEGIN
 void __cdecl Scr_GetValue(uint32_t index, VariableValue *value)
 {
     VariableValue *v2; // edx
@@ -1284,11 +1317,12 @@ void __cdecl Scr_GetValue(uint32_t index, VariableValue *value)
     {
         v2 = &scrVmPub.top[-(int)index];
         type = v2->type;
-        value->u.intValue = v2->u.intValue;
+        value->u = v2->u;
         value->type = type;
         AddRefToValue(value->type, value->u);
     }
 }
+//SCRIPT_DEBUGGER_SCR_GETVALUE_END
 
 VariableValue* Scr_GetValue(uint32_t param)
 {
@@ -1369,6 +1403,7 @@ void __cdecl Scr_EvalCallExpression(sval_u expr, uint32_t localId, VariableValue
     }
 }
 
+//SCRIPT_DEBUGGER_SCR_EVALFUNCTION_BEGIN
 void __cdecl Scr_EvalFunction(sval_u func_name, sval_u params, uint32_t localId, VariableValue *value)
 {
     Scr_PreEvalBuiltin(params, localId);
@@ -1382,7 +1417,7 @@ void __cdecl Scr_EvalFunction(sval_u func_name, sval_u params, uint32_t localId,
             33);
 
     if (!setjmp(g_script_error[g_script_error_level]))
-        ((void (*)(void))func_name.type)();
+        reinterpret_cast<void (*)()>(func_name.block)();
     if (g_script_error_level < 0)
         MyAssertHandler(
             ".\\script\\scr_evaluate.cpp",
@@ -1394,7 +1429,9 @@ void __cdecl Scr_EvalFunction(sval_u func_name, sval_u params, uint32_t localId,
     --g_script_error_level;
     Scr_PostEvalBuiltin(value);
 }
+//SCRIPT_DEBUGGER_SCR_EVALFUNCTION_END
 
+//SCRIPT_DEBUGGER_SCR_PREEVALBUILTIN_BEGIN
 void __cdecl Scr_PreEvalBuiltin(sval_u params, uint32_t localId)
 {
     sval_u *node; // [esp+0h] [ebp-Ch]
@@ -1414,8 +1451,9 @@ void __cdecl Scr_PreEvalBuiltin(sval_u params, uint32_t localId)
     if (scrVmPub.top > scrVmPub.maxstack)
         MyAssertHandler(".\\script\\scr_evaluate.cpp", 1581, 0, "%s", "scrVmPub.top <= scrVmPub.maxstack");
     index = 0;
-    for (node = *(sval_u **)params.type; node; node = node[1].node)
-        Scr_EvalExpression((sval_u)node->type, localId, &scrVmPub.top[-index++]);
+    for (node = params.node[0].node; node; node = node[1].node)
+        // cppcheck-suppress misra-c2012-17.2 -- existing recursive debugger AST traversal; this migration preserves its call graph and fixes native cell arguments.
+        Scr_EvalExpression(node[0], localId, &scrVmPub.top[-index++]);
     scrVmPub.outparamcount = expr_count;
     if (!scrVarPub.evaluate)
         MyAssertHandler(".\\script\\scr_evaluate.cpp", 1593, 0, "%s", "scrVarPub.evaluate");
@@ -1424,7 +1462,9 @@ void __cdecl Scr_PreEvalBuiltin(sval_u params, uint32_t localId)
         MyAssertHandler(".\\script\\scr_evaluate.cpp", 1596, 0, "%s", "!scrVmPub.debugCode");
     scrVmPub.debugCode = 1;
 }
+//SCRIPT_DEBUGGER_SCR_PREEVALBUILTIN_END
 
+//SCRIPT_DEBUGGER_SCR_POSTEVALBUILTIN_BEGIN
 void __cdecl Scr_PostEvalBuiltin(VariableValue *value)
 {
     Vartype_t type; // ecx
@@ -1442,7 +1482,7 @@ void __cdecl Scr_PostEvalBuiltin(VariableValue *value)
             MyAssertHandler(".\\script\\scr_evaluate.cpp", 1619, 0, "%s", "scrVmPub.inparamcount == 1");
         scrVmPub.inparamcount = 0;
         type = scrVmPub.top->type;
-        value->u.intValue = scrVmPub.top->u.intValue;
+        value->u = scrVmPub.top->u;
         value->type = type;
         --scrVmPub.top;
     }
@@ -1451,7 +1491,9 @@ void __cdecl Scr_PostEvalBuiltin(VariableValue *value)
         value->type = VAR_UNDEFINED;
     }
 }
+//SCRIPT_DEBUGGER_SCR_POSTEVALBUILTIN_END
 
+//SCRIPT_DEBUGGER_SCR_EVALMETHOD_BEGIN
 void __cdecl Scr_EvalMethod(sval_u expr, sval_u func_name, sval_u params, uint32_t localId, VariableValue *value)
 {
     const char *v5; // eax
@@ -1493,7 +1535,7 @@ void __cdecl Scr_EvalMethod(sval_u expr, sval_u func_name, sval_u params, uint32
         }
         entref = Scr_GetEntityIdRef(objectId.stringValue);
         RemoveRefToObject(objectId.stringValue);
-        ((void(__cdecl *)(uint32_t))func_name.type)(entref.entnum); // KISAKTODO: fubar'd union 'entref'
+        reinterpret_cast<void (*)(scr_entref_t)>(func_name.block)(entref);
     }
     if (g_script_error_level < 0)
         MyAssertHandler(
@@ -1506,6 +1548,7 @@ void __cdecl Scr_EvalMethod(sval_u expr, sval_u func_name, sval_u params, uint32
     --g_script_error_level;
     Scr_PostEvalBuiltin(value);
 }
+//SCRIPT_DEBUGGER_SCR_EVALMETHOD_END
 
 void __cdecl Scr_EvalBoolOrExpression(sval_u expr1, sval_u expr2, uint32_t localId, VariableValue *value)
 {
@@ -1782,9 +1825,9 @@ bool __cdecl Scr_RefCall(sval_u params)
     bool exprRemoved; // [esp+7h] [ebp-1h]
 
     exprRemoved = 0;
-    for (node = *(sval_u **)params.type; node; node = node[1].node)
+    for (node = params.node[0].node; node; node = node[1].node)
     {
-        if (Scr_RefExpression((sval_u)node->type))
+        if (Scr_RefExpression(node[0]))
             exprRemoved = 1;
     }
     return exprRemoved;

@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# Superseded PR heads release runners; other events have unique run groups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   portable-tests:
     name: Portable tests / ${{ matrix.platform }}
@@ -45,6 +50,35 @@ jobs:
 
       - name: Run portable tests
         run: ctest --test-dir build-tests -C Release --output-on-failure
+
+  script-sanitizers:
+    name: Script production paths / ASan + UBSan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Configure script sanitizer contracts
+        run: >
+          cmake -S . -B build-script-sanitizers
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF
+          -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fPIE -DKISAK_REQUIRE_HIGH_POINTERS=1"
+          -DCMAKE_EXE_LINKER_FLAGS="-pie" -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+      - name: Build script production contracts
+        run: >
+          cmake --build build-script-sanitizers --parallel 4 --target
+          kisakcod-script-runtime-pointer-tests
+          kisakcod-script-animation-fixup-tests
+          kisakcod-script-save-registration-tests
+          kisakcod-script-debugger-pointer-tests
+          kisakcod-script-widening-value-tests
+          kisakcod-script-readstack-nested-tests
+      - name: Run script production contracts
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: >
+          ctest --test-dir build-script-sanitizers --output-on-failure
+          -R '^script-(runtime-pointer|animation-fixup|save-registration|debugger-pointer|widening-value|readstack-nested)-contracts$'
 
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
