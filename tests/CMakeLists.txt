@@ -3398,6 +3398,68 @@ add_test(
     NAME script-widening-value-contracts
     COMMAND kisakcod-script-widening-value-tests)
 
+# script-parser-stack-growth-contracts: behavioral regression for the parser
+# state/value stack relocation (ki-pycb). The relocation fragments are
+# extracted verbatim from both parser sources at configure time, so this TU
+# executes the real copy and cursor-restore statements against the real sval_u
+# value cell and short state cell rather than a separate reimplementation.
+function(kisakcod_extract_yacc_growth_slice source begin_mark end_mark output)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
+    file(READ "${source}" _slice_text)
+    string(FIND "${_slice_text}" "${begin_mark}" _slice_begin)
+    string(FIND "${_slice_text}" "${end_mark}" _slice_end)
+    if(_slice_begin EQUAL -1 OR _slice_end EQUAL -1 OR _slice_end LESS_EQUAL _slice_begin)
+        message(FATAL_ERROR
+            "Parser growth slice anchors missing or misordered in ${source}")
+    endif()
+    string(LENGTH "${begin_mark}" _slice_begin_len)
+    math(EXPR _slice_begin "${_slice_begin} + ${_slice_begin_len}")
+    math(EXPR _slice_len "${_slice_end} - ${_slice_begin}")
+    string(SUBSTRING "${_slice_text}" "${_slice_begin}" "${_slice_len}" _slice_body)
+    string(STRIP "${_slice_body}" _slice_body)
+    file(WRITE "${output}" "${_slice_body}\n")
+endfunction()
+
+set(_yacc_growth_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${_yacc_growth_generated_dir}")
+# The built parser (client/dedicated/server targets) and the unbuilt generated
+# reference carry the same growth block; both slices are pinned by this test.
+kisakcod_extract_yacc_growth_slice(
+    "${SRC_DIR}/script/scr_yacc2.cpp"
+    "//SCRIPT_YACC2_GROWTH_SLICE_BEGIN"
+    "//SCRIPT_YACC2_GROWTH_SLICE_END"
+    "${_yacc_growth_generated_dir}/script_yacc2_growth_slice.inc")
+kisakcod_extract_yacc_growth_slice(
+    "${SRC_DIR}/script/scr_yacc.cpp"
+    "//SCRIPT_YACC_GROWTH_SLICE_BEGIN"
+    "//SCRIPT_YACC_GROWTH_SLICE_END"
+    "${_yacc_growth_generated_dir}/script_yacc_growth_slice.inc")
+
+add_executable(kisakcod-script-parser-stack-growth-tests
+    script_parser_stack_growth_test.cpp)
+target_include_directories(
+    kisakcod-script-parser-stack-growth-tests PRIVATE
+        ${SRC_DIR}
+        ${_yacc_growth_generated_dir})
+target_compile_definitions(
+    kisakcod-script-parser-stack-growth-tests PRIVATE KISAK_DEDI_HEADLESS=1)
+target_compile_features(
+    kisakcod-script-parser-stack-growth-tests PRIVATE cxx_std_20)
+# The verbatim slices keep the decompiled parser's allocation/copy idioms
+# (alloca, memcpy over the parse-value union); isolate their diagnostics.
+if(MSVC)
+    target_compile_options(kisakcod-script-parser-stack-growth-tests PRIVATE /W0)
+else()
+    target_compile_options(kisakcod-script-parser-stack-growth-tests PRIVATE -w)
+endif()
+set_target_properties(
+    kisakcod-script-parser-stack-growth-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME script-parser-stack-growth-contracts
+    COMMAND kisakcod-script-parser-stack-growth-tests)
+set_tests_properties(script-parser-stack-growth-contracts PROPERTIES TIMEOUT 60)
+
 # Compile selected production bodies against real runtime record headers and
 # service doubles. These regressions exercise allocations and pointer consumers,
 # including the object-save handoff, rather than a copy of their algorithms.

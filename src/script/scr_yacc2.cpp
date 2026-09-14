@@ -1135,6 +1135,7 @@ yynewstate:
 			//iassert(needs_free == false);
 			//needs_free = true;
 
+			//SCRIPT_YACC2_GROWTH_SLICE_BEGIN
 			// YYSTACK_RELOCATE (yyss_alloc, yyss);
 			yyss = (short *)alloca(sizeof(short) * yystacksize);
 			//yyss = (short *)malloc(sizeof(short) * yystacksize);
@@ -1151,6 +1152,7 @@ yynewstate:
 
 			yyvsp = &yyvs[yysize - 1];
 			yyssp = &yyss[yysize - 1];
+			//SCRIPT_YACC2_GROWTH_SLICE_END
 
 			// YYDPRINTF ((stderr, "Stack size increased to %lu\n", (unsigned long int) yystacksize));
 

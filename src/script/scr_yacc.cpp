@@ -6171,11 +6171,18 @@ int __cdecl yyparse()
             //v21 = &v18;
             //yyss = &v18;
             //_yy_memcpy(&v18, yyss1, 2 * v37);
+            //SCRIPT_YACC_GROWTH_SLICE_BEGIN
+            // Relocate only the slots the old storage actually holds. v37 is
+            // the live state entry count (yyssp - yyss + 1) captured before
+            // the cursor moved; the value cursor advances in lockstep with
+            // the state cursor at this growth check, so v37 bounds the old
+            // value storage too. Reading the doubled yystacksize here would
+            // over-read both old arrays.
             yyss = (short *)alloca(sizeof(short) *yystacksize);
-            memcpy(yyss, yyss1, sizeof(short) * yystacksize);
+            memcpy(yyss, yyss1, sizeof(short) * v37);
 
             yyvs = (stype_t *)alloca(sizeof(stype_t) * yystacksize);
-            memcpy(yyvs, yyvs1, sizeof(stype_t) * yystacksize);
+            memcpy(yyvs, yyvs1, sizeof(stype_t) * v37);
             //v2 = alloca(8 * yystacksize);
             //v20 = &v18;
             //yyvs = &v18;
@@ -6183,6 +6190,7 @@ int __cdecl yyparse()
 
             yyssp = &yyss[v37 - 1];
             yyvsp = &yyvs[v37 - 1];
+            //SCRIPT_YACC_GROWTH_SLICE_END
             if (yyssp >= &yyss[yystacksize - 1])
                 goto yyabortlab;
         }

@@ -3014,6 +3014,29 @@ Resolved on the PR #71 repair head: lower-level `ActiveZoneStreamBinding::block`
 the exact live generation when Bound plus complete singleton authority, while intentionally preserving canonical Idle
 reads; pending reads reject every retained receipt/lifecycle alias and stale or reclaimed lifecycle key.
 
+## Parser stack-relocation checkpoint (ki-pycb, 2026-09-14)
+
+The generated `src/script/scr_yacc.cpp` `yyparse` growth path doubled
+`yystacksize` and then copied the doubled element count out of the old state and
+value arrays, reading past their live storage. The relocation now bounds both
+copies by the live element count `v37 = yyssp - yyss + 1` captured before the
+cursor advances, restoring the original `2 * v37` / `8 * v37` intent; the value
+cursor tracks the state cursor at that check, so the same count bounds both old
+buffers. `src/script/scr_yacc2.cpp`, the parser actually built into the
+client/dedicated/server targets, already used the equivalent live bound
+`yysize`, so this change brings the unbuilt generated reference in line rather
+than altering production behavior.
+
+Regression `script-parser-stack-growth-contracts` extracts the relocation
+statements verbatim from both sources at configure time and drives the first
+capacity crossing and repeated growth through the 10000 cap, checking state
+values, source positions, native pointer payloads and both cursor offsets; a
+POSIX guarded-memory control reproduces the pre-fix bound and proves it faults,
+while the fixed production path passes. The contract is enrolled in the
+`script-sanitizers` ASan+UBSan job. This is a bounded parser stage only: the
+parent #129 production-parser closure and #122 network compatibility remain
+open.
+
 ## Known release blockers
 
 - Original commercial 1.7 and Steam 1.8 network compatibility is unproven and

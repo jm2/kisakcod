@@ -76,13 +76,14 @@ jobs:
           kisakcod-script-debugger-pointer-tests
           kisakcod-script-widening-value-tests
           kisakcod-script-readstack-nested-tests
+          kisakcod-script-parser-stack-growth-tests
       - name: Run script production contracts
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: halt_on_error=1
         run: >
           ctest --test-dir build-script-sanitizers --output-on-failure
-          -R '^script-(runtime-pointer|animation-fixup|save-registration|debugger-pointer|widening-value|readstack-nested)-contracts$'
+          -R '^script-(runtime-pointer|animation-fixup|save-registration|debugger-pointer|widening-value|readstack-nested|parser-stack-growth)-contracts$'
 
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
