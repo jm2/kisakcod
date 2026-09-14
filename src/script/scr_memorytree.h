@@ -40,7 +40,9 @@ struct MemoryNode // sizeof=0xC
     uint16_t next;              // XREF: MT_Init(void)+4E/w
     uint32_t padding[2];            // XREF: MT_RemoveHeadMemoryNode+61/w
 };
-static_assert(sizeof(MemoryNode) == 12);
+// M4 (ki-n1et): 16-bit free-tree links plus scalar padding -- no host
+// pointers, frozen at native width on every target.
+RUNTIME_SIZE(MemoryNode, 12, 12);
 
 #define MEMORY_NODE_BITS 16
 #define MEMORY_NODE_COUNT 0x10000
@@ -311,7 +313,10 @@ struct KISAK_ALIGNAS(128) scrMemTreeGlob_t // sizeof=0xC0380
     // otherwise diagnoses the implicit tail padding as C4324 under /WX.
     uint8_t reservedCacheLineAlignment[0x54];
 };
-static_assert(sizeof(scrMemTreeGlob_t) == 0xC0380);
+// M4 (ki-n1et): node array of frozen MemoryNode entries plus scalar
+// bit-tables and counters -- no host pointers, frozen at native width on
+// every target (the memory tree indexes nodes by 16-bit handles).
+RUNTIME_SIZE(scrMemTreeGlob_t, 0xC0380, 0xC0380);
 
 int MT_GetSubTreeSize(int nodeNum);
 void MT_DumpTree(void);

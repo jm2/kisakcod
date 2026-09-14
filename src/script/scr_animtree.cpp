@@ -1,5 +1,8 @@
 #include "scr_animtree.h"
 
+#include "scr_bytecode.hpp"
+#include <universal/com_memory.h>
+
 #include <qcommon/mem_track.h>
 #include <universal/q_parse.h>
 
@@ -49,31 +52,61 @@ void __cdecl Scr_EmitAnimation(char *pos, uint32_t animName, uint32_t sourcePos)
         CompileError(sourcePos, "#using_animtree was not specified");
 }
 
+//SCRIPT_RUNTIME_ANIM_FIXUPS_BEGIN
+struct Scr_AnimationFixup
+{
+    char *position;
+    Scr_AnimationFixup *next;
+    Scr_AnimationFixup *allocatedNext;
+};
+static Scr_AnimationFixup *scrAnimationFixups = nullptr;
+
+void Scr_ClearAnimationFixups()
+{
+    while (scrAnimationFixups)
+    {
+        Scr_AnimationFixup *next = scrAnimationFixups->allocatedNext;
+        Z_Free(scrAnimationFixups, 0);
+        scrAnimationFixups = next;
+    }
+}
+
+static const char *Scr_AllocAnimationFixup(char *position, const char *next)
+{
+    auto *fixup = static_cast<Scr_AnimationFixup *>(Z_Malloc(sizeof(Scr_AnimationFixup), "script animation fixup", 0));
+    if (!fixup)
+    {
+        Com_Error(ERR_FATAL, "Could not allocate script animation fixup");
+        return nullptr;
+    }
+    fixup->position = position;
+    fixup->next = reinterpret_cast<Scr_AnimationFixup *>(const_cast<char *>(next));
+    fixup->allocatedNext = scrAnimationFixups;
+    scrAnimationFixups = fixup;
+    const scr_anim_s empty;
+    Scr_WriteBytecodeValue(position, empty);
+    return reinterpret_cast<const char *>(fixup);
+}
+
 void __cdecl Scr_EmitAnimationInternal(char *pos, uint32_t animName, uint32_t names)
 {
-    uint32_t NewVariable; // eax
-    VariableValueInternal_u *value; // [esp+0h] [ebp-10h]
-    uint32_t animId; // [esp+4h] [ebp-Ch]
-    VariableValue tempValue; // [esp+8h] [ebp-8h] BYREF
-
     iassert(names);
-    animId = FindVariable(names, animName);
-
+    const uint32_t animId = FindVariable(names, animName);
     if (animId)
     {
-        value = GetVariableValueAddress(animId);
-        *(const char **)pos = value->u.codePosValue;
-        value->u.codePosValue = pos;
+        VariableValueInternal_u *value = GetVariableValueAddress(animId);
+        value->u.codePosValue = Scr_AllocAnimationFixup(pos, value->u.codePosValue);
     }
     else
     {
-        NewVariable = GetNewVariable(names, animName);
-        *(unsigned char**)pos = NULL;
+        const uint32_t newVariable = GetNewVariable(names, animName);
+        VariableValue tempValue;
         tempValue.type = VAR_CODEPOS;
-        tempValue.u.codePosValue = pos;
-        SetVariableValue(NewVariable, &tempValue);
+        tempValue.u.codePosValue = Scr_AllocAnimationFixup(pos, nullptr);
+        SetVariableValue(newVariable, &tempValue);
     }
 }
+//SCRIPT_RUNTIME_ANIM_FIXUPS_END
 
 int __cdecl Scr_GetAnimsIndex(const XAnim_s *anims)
 {
@@ -239,7 +272,8 @@ void __cdecl Scr_LoadAnimTreeAtIndex(uint32_t index, void *(__cdecl *Alloc)(int)
             RemoveRefToObject(scrAnimPub.animtree_node);
             scrAnimPub.animtree_node = 0;
             tempValue.type = VAR_CODEPOS;
-            tempValue.u.intValue = (int)animtree;
+            // M4 (ki-n1et): live XAnim pointer through the pointer member.
+            tempValue.u.codePosValue = reinterpret_cast<const char *>(animtree);
             Variable = GetVariable(fileId, 1);
             SetVariableValue(Variable, &tempValue);
             XAnimSetupSyncNodes(animtree);
@@ -280,6 +314,7 @@ int __cdecl Scr_GetAnimTreeSize(uint32_t parentNode)
     return size;
 }
 
+//SCRIPT_RUNTIME_ANIM_CONNECT_BEGIN
 void __cdecl ConnectScriptToAnim(
     uint32_t names,
     uint16_t index,
@@ -288,10 +323,8 @@ void __cdecl ConnectScriptToAnim(
     uint16_t treeIndex)
 {
     scr_anim_s anim; // [esp+4h] [ebp-14h]
-    const char *codePos; // [esp+8h] [ebp-10h]
     uint32_t animId; // [esp+Ch] [ebp-Ch]
     VariableValueInternal_u *value; // [esp+10h] [ebp-8h]
-    const char *nextCodePos; // [esp+14h] [ebp-4h]
 
     animId = FindVariable(names, name);
     if (animId)
@@ -305,15 +338,18 @@ void __cdecl ConnectScriptToAnim(
         anim.index = index;
         anim.tree = treeIndex;
 
-        for (codePos = (char *)value->u.codePosValue; codePos; codePos = nextCodePos)
+        for (auto *fixup = reinterpret_cast<const Scr_AnimationFixup *>(value->u.codePosValue);
+             fixup; fixup = fixup->next)
         {
-            nextCodePos = *(const char **)codePos;
-            *(scr_anim_s *)codePos = anim;
+            // Bytecode operands can be unaligned; write only the frozen handle.
+            Scr_WriteBytecodeValue(fixup->position, anim);
         }
 
         value->u.codePosValue = NULL;
     }
 }
+
+//SCRIPT_RUNTIME_ANIM_CONNECT_END
 
 int __cdecl Scr_CreateAnimationTree(
     uint32_t parentNode,
@@ -417,6 +453,7 @@ LABEL_13:
     return childIndexa;
 }
 
+//SCRIPT_RUNTIME_ANIM_CHECK_BEGIN
 void __cdecl Scr_CheckAnimsDefined(uint32_t names, uint32_t filename)
 {
     uint32_t name; // [esp+0h] [ebp-10h]
@@ -431,16 +468,20 @@ void __cdecl Scr_CheckAnimsDefined(uint32_t names, uint32_t filename)
         iassert(name < SL_MAX_STRING_INDEX);
 
         value = GetVariableValueAddress(animId);
-        if (value->u.intValue)
+        // M4 (ki-n1et): codepos-family cell holds a live host pointer.
+        if (value->u.codePosValue)
         {
             msg = va("animation '%s' not defined in anim tree '%s'", SL_ConvertToString(name), SL_ConvertToString(filename));
-            if (Scr_IsInOpcodeMemory(value->u.codePosValue))
-                CompileError2((char *)value->u.intValue, "%s", msg);
+            char *position = reinterpret_cast<const Scr_AnimationFixup *>(value->u.codePosValue)->position;
+            if (Scr_IsInOpcodeMemory(position))
+                CompileError2(position, "%s", msg);
             else
                 Com_Error(ERR_DROP, "%s", msg);
         }
     }
 }
+
+//SCRIPT_RUNTIME_ANIM_CHECK_END
 
 bool __cdecl Scr_LoadAnimTreeInternal(const char *filename, uint32_t parentNode, uint32_t names)
 {

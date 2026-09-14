@@ -36,7 +36,10 @@ exclude_paths:
 # Keep the existing socket-header Cppcheck exception in this single config.
 # The address and port fields are exercised by both platform backends;
 # header-only analysis cannot see those uses.
+#
+# Engine headers are C++; keep analysis enabled and select the proper parser.
 engines:
   cppcheck:
+    language: c++
     exclude_paths:
       - "src/qcommon/sys_socket.h"
