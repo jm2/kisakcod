@@ -220,6 +220,19 @@ struct RelocationPointers
     const ValueT *oldValueCursor;
 };
 
+// True only when both restored cursors sit on the last live slot of the NEW
+// storage. CheckRelocation subtracts each cursor from its base pointer, which is
+// defined behavior only when both name elements of the same array object; this
+// predicate lets that function stop before the subtraction when a cursor was
+// left on the old storage (or anywhere outside the fresh allocation). It is a
+// separate helper so a static analyzer that cannot resolve the extracted slice
+// sees an opaque call rather than a repeated placement expression.
+template <typename ValueT>
+bool CursorsRestoredToNewTop(const RelocationPointers<ValueT> &p, int live)
+{
+    return p.stateCursor == p.stateBase + (live - 1) && p.valueCursor == p.valueBase + (live - 1);
+}
+
 // All post-relocation cursor/pointer assertions live here rather than at the
 // call site, for the analyzer-opacity reason described above.
 template <typename ValueT>
@@ -243,6 +256,15 @@ void CheckRelocation(const RelocationPointers<ValueT> &p, int live, int overflow
     CHECK(*p.stateCursor == p.oldStateBase[live - 1]);
     CHECK(p.valueCursor->pos == p.oldValueBase[live - 1].pos);
     CHECK(p.valueCursor->val.codePosValue == p.oldValueBase[live - 1].val.codePosValue);
+
+    // Both cursor placements must hold before the differences below: if a cursor
+    // failed to move into the NEW storage, `cursor - base` would subtract
+    // pointers that are not elements of the same array object, which is
+    // undefined behavior. The CHECKs above have already recorded any failed
+    // placement; this guard only stops the function before that subtraction so
+    // the failure path cannot invoke it.
+    if (!CursorsRestoredToNewTop<ValueT>(p, live))
+        return;
 
     // Offset restored independently: derived from the OLD cursor/base pair,
     // then required to agree with the NEW cursor/base pair.

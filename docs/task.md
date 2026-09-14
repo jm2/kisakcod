@@ -3045,7 +3045,12 @@ or declaration drifts. Cursor restoration is proven independently (the cursors
 start on the old storage and the restored offsets are derived from the old
 cursor/base pair), the real max-depth predicate is exercised at and just below
 the limit, and a POSIX guarded-memory control reproduces the pre-fix bound and
-proves it faults while the fixed paths pass. The contract is enrolled in the
+proves it faults while the fixed paths pass. The contract's offset assertions
+are guarded: if a restored cursor fails to land in the new storage, the check
+returns before subtracting that cursor from its base, so the failure path never
+performs the cross-storage pointer subtraction that would be undefined
+behavior, while every placement, reverted-restore and payload assertion still
+runs and is recorded. The contract is enrolled in the
 `script-sanitizers` ASan+UBSan job. Local evidence on the rework head: full
 Release build clean, `ctest` 228/228, and the focused script-sanitizers
 ASan+UBSan contracts 7/7. This is a bounded parser stage only: the parent #129
