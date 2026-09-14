@@ -3403,14 +3403,16 @@ add_test(
 # extracted verbatim from both parser sources at configure time, so this TU
 # executes the real copy and cursor-restore statements against the real sval_u
 # value cell and short state cell rather than a separate reimplementation.
-function(kisakcod_extract_yacc_growth_slice source begin_mark end_mark output)
+# The record declarations, initial stack depth and max-depth limit are also
+# extracted, and configure fails closed if any anchor or declaration drifts.
+function(kisakcod_extract_yacc_between source begin_mark end_mark output)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
     file(READ "${source}" _slice_text)
     string(FIND "${_slice_text}" "${begin_mark}" _slice_begin)
     string(FIND "${_slice_text}" "${end_mark}" _slice_end)
     if(_slice_begin EQUAL -1 OR _slice_end EQUAL -1 OR _slice_end LESS_EQUAL _slice_begin)
         message(FATAL_ERROR
-            "Parser growth slice anchors missing or misordered in ${source}")
+            "Parser anchors '${begin_mark}' missing or misordered in ${source}")
     endif()
     string(LENGTH "${begin_mark}" _slice_begin_len)
     math(EXPR _slice_begin "${_slice_begin} + ${_slice_begin_len}")
@@ -3420,20 +3422,102 @@ function(kisakcod_extract_yacc_growth_slice source begin_mark end_mark output)
     file(WRITE "${output}" "${_slice_body}\n")
 endfunction()
 
+# Extract the max-depth literal (and prove it is a single integer) from the
+# guard predicate the parser actually evaluates, so the test cannot drift from
+# the production limit without a configure-time failure.
+function(kisakcod_yacc_maxdepth source begin_mark end_mark out_var)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
+    file(READ "${source}" _md_text)
+    string(FIND "${_md_text}" "${begin_mark}" _md_begin)
+    string(FIND "${_md_text}" "${end_mark}" _md_end)
+    if(_md_begin EQUAL -1 OR _md_end LESS_EQUAL _md_begin)
+        message(FATAL_ERROR "Max-depth anchors missing in ${source}")
+    endif()
+    string(LENGTH "${begin_mark}" _md_begin_len)
+    math(EXPR _md_begin "${_md_begin} + ${_md_begin_len}")
+    math(EXPR _md_len "${_md_end} - ${_md_begin}")
+    string(SUBSTRING "${_md_text}" "${_md_begin}" "${_md_len}" _md_body)
+    string(REGEX MATCHALL "[0-9]+" _md_numbers "${_md_body}")
+    list(LENGTH _md_numbers _md_count)
+    if(NOT _md_count EQUAL 1)
+        message(FATAL_ERROR
+            "Expected exactly one max-depth literal in ${source}, got '${_md_body}'")
+    endif()
+    set(${out_var} "${_md_numbers}" PARENT_SCOPE)
+endfunction()
+
 set(_yacc_growth_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${_yacc_growth_generated_dir}")
+
 # The built parser (client/dedicated/server targets) and the unbuilt generated
-# reference carry the same growth block; both slices are pinned by this test.
-kisakcod_extract_yacc_growth_slice(
+# reference carry the same growth block; both slices are pinned by this test,
+# including the live-count capture, the doubling/clamp and the overflowing
+# predicate, so the test executes the real decision rather than reproducing it.
+kisakcod_extract_yacc_between(
     "${SRC_DIR}/script/scr_yacc2.cpp"
     "//SCRIPT_YACC2_GROWTH_SLICE_BEGIN"
     "//SCRIPT_YACC2_GROWTH_SLICE_END"
     "${_yacc_growth_generated_dir}/script_yacc2_growth_slice.inc")
-kisakcod_extract_yacc_growth_slice(
+kisakcod_extract_yacc_between(
     "${SRC_DIR}/script/scr_yacc.cpp"
     "//SCRIPT_YACC_GROWTH_SLICE_BEGIN"
     "//SCRIPT_YACC_GROWTH_SLICE_END"
     "${_yacc_growth_generated_dir}/script_yacc_growth_slice.inc")
+
+# Real record declarations. The production declaration becomes the test's
+# stype_t; the generated declaration is renamed and checked against it.
+kisakcod_extract_yacc_between(
+    "${SRC_DIR}/script/scr_yacc2.cpp"
+    "//SCRIPT_YACC2_STYPE_BEGIN"
+    "//SCRIPT_YACC2_STYPE_END"
+    "${_yacc_growth_generated_dir}/script_stype_production.inc")
+kisakcod_extract_yacc_between(
+    "${SRC_DIR}/script/scr_yacc.cpp"
+    "//SCRIPT_YACC_STYPE_BEGIN"
+    "//SCRIPT_YACC_STYPE_END"
+    "${_yacc_growth_generated_dir}/script_stype_generated_raw.inc")
+file(READ "${_yacc_growth_generated_dir}/script_stype_generated_raw.inc" _gen_stype_text)
+if(NOT _gen_stype_text MATCHES "struct stype_t")
+    message(FATAL_ERROR "Generated parser declaration missing 'struct stype_t'")
+endif()
+string(REPLACE "stype_t" "generated_stype_t" _gen_stype_text "${_gen_stype_text}")
+file(WRITE "${_yacc_growth_generated_dir}/script_stype_generated.inc" "${_gen_stype_text}")
+
+# Real initial stack depths: the built parser's YYINITDEPTH expression
+# (200 + sizeof(stype_t)) and the generated reference's literal array bound.
+kisakcod_extract_yacc_between(
+    "${SRC_DIR}/script/scr_yacc2.cpp"
+    "//SCRIPT_YACC2_INITDEPTH_BEGIN"
+    "//SCRIPT_YACC2_INITDEPTH_END"
+    "${_yacc_growth_generated_dir}/script_yacc2_initdepth.inc")
+file(READ "${SRC_DIR}/script/scr_yacc.cpp" _gen_yacc_text)
+string(REGEX MATCH "yyssa\\[([0-9]+)\\]" _gen_yyssa "${_gen_yacc_text}")
+set(_gen_depth "${CMAKE_MATCH_1}")
+string(REGEX MATCH "yyvsa\\[([0-9]+)\\]" _gen_yyvsa "${_gen_yacc_text}")
+if(_gen_depth STREQUAL "" OR NOT _gen_depth EQUAL ${CMAKE_MATCH_1})
+    message(FATAL_ERROR
+        "Generated parser state/value initial depths missing or mismatched")
+endif()
+file(WRITE "${_yacc_growth_generated_dir}/script_yacc_initial_depth.inc"
+    "#define SCRIPT_YACC_INITIAL_CAPACITY ${_gen_depth}\n")
+
+# The max-depth limit is read from the guard predicate both parsers evaluate.
+kisakcod_yacc_maxdepth(
+    "${SRC_DIR}/script/scr_yacc2.cpp"
+    "//SCRIPT_YACC2_MAXDEPTH_BEGIN"
+    "//SCRIPT_YACC2_MAXDEPTH_END"
+    _yacc2_maxdepth)
+kisakcod_yacc_maxdepth(
+    "${SRC_DIR}/script/scr_yacc.cpp"
+    "//SCRIPT_YACC_MAXDEPTH_BEGIN"
+    "//SCRIPT_YACC_MAXDEPTH_END"
+    _yacc_maxdepth)
+if(NOT _yacc2_maxdepth EQUAL _yacc_maxdepth)
+    message(FATAL_ERROR
+        "Max-depth limit differs between parsers: ${_yacc2_maxdepth} != ${_yacc_maxdepth}")
+endif()
+file(WRITE "${_yacc_growth_generated_dir}/script_yacc_maxdepth.inc"
+    "#define SCRIPT_YACC_STACK_LIMIT ${_yacc2_maxdepth}\n")
 
 add_executable(kisakcod-script-parser-stack-growth-tests
     script_parser_stack_growth_test.cpp)
@@ -3446,7 +3530,7 @@ target_compile_definitions(
 target_compile_features(
     kisakcod-script-parser-stack-growth-tests PRIVATE cxx_std_20)
 # The verbatim slices keep the decompiled parser's allocation/copy idioms
-# (alloca, memcpy over the parse-value union); isolate their diagnostics.
+# (alloca copies over the parse-value union); isolate their diagnostics.
 if(MSVC)
     target_compile_options(kisakcod-script-parser-stack-growth-tests PRIVATE /W0)
 else()

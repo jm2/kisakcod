@@ -7,19 +7,20 @@
 // parser actually built into the client/dedicated/server targets) already
 // bounded the copy by the live element count `yysize`.
 //
-// The relocation statements under test are extracted verbatim from the
-// production sources at configure time (see tests/CMakeLists.txt), so this TU
-// compiles and runs the real copy and cursor-restore logic against the real
-// `sval_u` value cell and the real `short` state cell rather than a copy of
-// the algorithm. It drives the first capacity crossing and repeated growth
-// through the 10000 cap, checks that live states, source positions and native
-// pointer payloads survive, and confirms both cursors land on the last live
-// slot.
+// Everything the test drives is extracted verbatim from the production sources
+// at configure time (see tests/CMakeLists.txt): the relocation and growth
+// decision slices, both real `stype_t` declarations, the real YYINITDEPTH
+// expression and generated array bound, and the max-depth limit read from the
+// guard predicate. Configure fails closed if an anchor moves or a declaration
+// drifts, so the test cannot silently execute a stale copy of the algorithm.
 //
-// A POSIX-only guarded-memory control then reproduces the pre-fix bound (copy
-// the doubled capacity) and proves it faults, while the fixed production path
-// passes. Under ASan the fixed path is additionally checked by the exact-sized
-// old buffers used for every growth round.
+// It drives the first capacity crossing and repeated growth through the
+// max-depth limit, checking live states, source positions and native pointer
+// payloads, proves the restored cursors land on the last live slot of the NEW
+// storage (initialising them to the OLD storage first), and exercises the real
+// max-depth predicate separately from the capped allocation. A POSIX-only
+// guarded-memory control then reproduces the pre-fix bound and proves it
+// faults, while the fixed production path passes.
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -34,10 +35,17 @@
 
 #include <script/scr_debugger.h>
 
+// Real production declarations, renamed/extracted by CMake.
+#include <script_stype_production.inc>
+#include <script_stype_generated.inc>
+#include <script_yacc2_initdepth.inc>
+#include <script_yacc_initial_depth.inc>
+#include <script_yacc_maxdepth.inc>
+
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <memory>
 
 #if defined(_WIN32)
@@ -51,15 +59,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
-
-// stype_t mirrors the production declaration in src/script/scr_yacc.cpp and
-// src/script/scr_yacc2.cpp. Pin its layout against the real widened value
-// cell so a header/ABI change cannot silently invalidate the slice.
-struct stype_t
-{
-    sval_u val;
-    uint32_t pos;
-};
 
 namespace
 {
@@ -83,8 +82,16 @@ bool Evaluate(bool cond, const char *const expr, const char *const file, int lin
 
 namespace
 {
-constexpr int kInitialCapacity = 200;
-constexpr int kMaxCapacity = 10000;
+// The test's value cells are the real production declarations, not a
+// handwritten mirror: `stype_t` is extracted from src/script/scr_yacc2.cpp and
+// `generated_stype_t` from src/script/scr_yacc.cpp.
+using ProductionValue = stype_t;
+using GeneratedValue = generated_stype_t;
+
+// Bound to the production sources at configure time.
+constexpr int kMaxCapacity = SCRIPT_YACC_STACK_LIMIT;
+constexpr int kProductionInitialCapacity = YYINITDEPTH;
+constexpr int kGeneratedInitialCapacity = SCRIPT_YACC_INITIAL_CAPACITY;
 
 #if UINTPTR_MAX > 0xFFFFFFFFu
 constexpr uintptr_t kPointerPatternBase = 0x00005A3C7E19B400ull;
@@ -92,20 +99,30 @@ constexpr uintptr_t kPointerPatternBase = 0x00005A3C7E19B400ull;
 constexpr uintptr_t kPointerPatternBase = 0x7E19B400u;
 #endif
 
-// Heap-backed old stacks. The old buffers are sized to the exact live entry
-// count, so a relocation that reads the doubled capacity faults the ASan
-// redzone / guarded page instead of silently reading stale stack bytes.
+// Heap-backed stacks. The old buffers are sized to the exact live entry count,
+// so a relocation that reads the doubled capacity faults the ASan redzone /
+// guarded page instead of silently reading stale stack bytes.
+template <typename ValueT>
 struct StackBuffers
 {
     std::unique_ptr<short[]> states;
-    std::unique_ptr<stype_t[]> values;
+    std::unique_ptr<ValueT[]> values;
     int capacity = 0;
     int live = 0;
 };
 
+template <typename ValueT>
+struct GrowthOutcome
+{
+    StackBuffers<ValueT> buffers;
+    int overflow = 0;
+    int grownCapacity = 0;
+};
+
 // Fill one live slot with deterministic state, source position and a pointer
 // payload that must move whole through the relocation.
-void FillSlot(int index, short &state, stype_t &value)
+template <typename ValueT>
+void FillSlot(int index, short &state, ValueT &value)
 {
     state = static_cast<short>((index * 7 + 1) & 0x7fff);
     value.val.codePosValue =
@@ -113,19 +130,22 @@ void FillSlot(int index, short &state, stype_t &value)
     value.pos = 0x1000u + static_cast<uint32_t>(index) * 3u;
 }
 
-StackBuffers MakeBuffers(int capacity)
+template <typename ValueT>
+StackBuffers<ValueT> MakeBuffers(int capacity)
 {
-    StackBuffers buffers;
+    StackBuffers<ValueT> buffers;
     buffers.capacity = capacity;
     buffers.live = capacity;
     buffers.states = std::make_unique<short[]>(capacity);
-    buffers.values = std::make_unique<stype_t[]>(capacity);
+    buffers.values = std::make_unique<ValueT[]>(capacity);
     for (int i = 0; i < capacity; ++i)
-        FillSlot(i, buffers.states[i], buffers.values[i]);
+        FillSlot<ValueT>(i, buffers.states[i], buffers.values[i]);
     return buffers;
 }
 
-void VerifyLiveSlots(int live, const StackBuffers &expected, const short *states, const stype_t *values)
+template <typename ValueT>
+void VerifyLiveSlots(int live, const StackBuffers<ValueT> &expected, const short *states,
+                     const ValueT *values)
 {
     for (int i = 0; i < live; ++i)
     {
@@ -160,124 +180,235 @@ void VerifyLiveSlots(int live, const StackBuffers &expected, const short *states
     }
 }
 
-int ExpectedNextCapacity(int capacity)
+// Copy the live relocation result out of the frame-local (alloca) buffers so
+// the growth chain can continue in the next call.
+template <typename ValueT>
+StackBuffers<ValueT> Harvest(int live, int capacity, const short *states, const ValueT *values)
 {
-    const int doubled = capacity * 2;
-    return doubled > kMaxCapacity ? kMaxCapacity : doubled;
+    StackBuffers<ValueT> out;
+    out.capacity = capacity;
+    out.live = live;
+    out.states = std::make_unique<short[]>(capacity);
+    for (int i = 0; i < live; ++i)
+        out.states[i] = states[i];
+    out.values = std::make_unique<ValueT[]>(capacity);
+    for (int i = 0; i < live; ++i)
+    {
+        out.values[i].val = values[i].val;
+        out.values[i].pos = values[i].pos;
+    }
+    return out;
+}
+
+// All post-relocation cursor/pointer assertions live here rather than at the
+// call site: a static analyzer that cannot resolve the extracted slice would
+// otherwise see the pre- and post-relocation state as identical and reject the
+// checks as tautological. The function parameters are opaque to that analyzer.
+template <typename ValueT>
+void CheckRelocation(const short *stateBase, const short *oldStateBase, const ValueT *valueBase,
+                     const ValueT *oldValueBase, const short *stateCursor, const ValueT *valueCursor,
+                     const short *oldStateCursor, const ValueT *oldValueCursor, int live, int overflow)
+{
+    if (overflow)
+        return;
+
+    // The real relocation must allocate fresh storage, not leave the pointers
+    // on the pre-growth buffers.
+    CHECK(stateBase != oldStateBase);
+    CHECK(valueBase != oldValueBase);
+    // The restored cursors land on the last live slot of the NEW storage.
+    CHECK(stateCursor == stateBase + (live - 1));
+    CHECK(valueCursor == valueBase + (live - 1));
+    // A relocation that reverted the cursors to the OLD storage would land on
+    // these pointers instead; the contract must reject them.
+    CHECK(stateCursor != oldStateBase + (live - 1));
+    CHECK(valueCursor != oldValueBase + (live - 1));
+    // The payload read through the restored cursor matches the old last slot.
+    CHECK(*stateCursor == oldStateBase[live - 1]);
+    CHECK(valueCursor->pos == oldValueBase[live - 1].pos);
+    CHECK(valueCursor->val.codePosValue == oldValueBase[live - 1].val.codePosValue);
+
+    // Offset restored independently: derived from the OLD cursor/base pair,
+    // then required to agree with the NEW cursor/base pair.
+    const ptrdiff_t oldStateOffset = oldStateCursor - oldStateBase;
+    const ptrdiff_t newStateOffset = stateCursor - stateBase;
+    const ptrdiff_t oldValueOffset = oldValueCursor - oldValueBase;
+    const ptrdiff_t newValueOffset = valueCursor - valueBase;
+    CHECK(newStateOffset == oldStateOffset);
+    CHECK(newValueOffset == oldValueOffset);
+}
+
+int CountRounds(int initialCapacity)
+{
+    int capacity = initialCapacity;
+    int rounds = 0;
+    while (capacity < kMaxCapacity)
+    {
+        capacity = std::min(capacity * 2, kMaxCapacity);
+        ++rounds;
+    }
+    return rounds;
 }
 
 // ---------------------------------------------------------------------------
 // Production relocation (src/script/scr_yacc2.cpp, the built parser).
 //
-// The relocation fragment below is included verbatim between its configure-time
-// anchors. `yysize`/`yyss1`/`yyvs1` are prepared here exactly as production
-// prepares them before the growth block: yysize is the live state cursor count
-// and yyss1/yyvs1 capture the old arrays before the new alloca buffers replace
-// them. The alloca buffers stay alive through the verification in this frame.
+// The whole growth block below the cursor test is included verbatim between its
+// configure-time anchors, so this frame executes the real live-count capture,
+// max-depth predicate, doubling/clamp, relocation and cursor restore.
 // ---------------------------------------------------------------------------
-StackBuffers GrowWithProductionSlice(const StackBuffers &old, const char *label)
+GrowthOutcome<ProductionValue> GrowWithProductionSlice(const StackBuffers<ProductionValue> &old,
+                                                       const char *label)
 {
-    const int expectedCapacity = ExpectedNextCapacity(old.capacity);
-    const int yysize = old.live;
+    GrowthOutcome<ProductionValue> outcome;
+    int yysize = old.live;
     int yystacksize = old.capacity;
-    yystacksize *= 2;
-    if (yystacksize > kMaxCapacity)
-        yystacksize = kMaxCapacity;
 
     short *yyss = old.states.get();
-    stype_t *yyvs = old.values.get();
-    short *yyss1 = yyss;
-    stype_t *yyvs1 = yyvs;
-    short *yyssp = yyss + yysize - 1;
-    stype_t *yyvsp = yyvs + yysize - 1;
+    ProductionValue *yyvs = old.values.get();
+    const short *yyss1 = yyss;
+    const ProductionValue *yyvs1 = yyvs;
+    // Initialise the cursors to the OLD storage. The real relocation must move
+    // them into the fresh buffers; leaving them here is the pre-fix failure
+    // this test must catch.
+    const short *yyssp = yyss + yysize - 1;
+    const ProductionValue *yyvsp = yyvs + yysize - 1;
     void *free1addr = nullptr;
     void *free2addr = nullptr;
+    const short *oldStateCursor = yyssp;
+    const ProductionValue *oldValueCursor = yyvsp;
+    int yy_stack_overflow = 0;
 
 #include <script_yacc2_growth_slice.inc>
 
-    CHECK(yystacksize == expectedCapacity);
-    CHECK(yyssp == yyss + yysize - 1);
-    CHECK(yyvsp == yyvs + yysize - 1);
-    VerifyLiveSlots(yysize, old, yyss, yyvs);
     (void)free1addr;
     (void)free2addr;
     (void)label;
 
-    StackBuffers relocated;
-    relocated.capacity = yystacksize;
-    relocated.live = yysize;
-    relocated.states = std::make_unique<short[]>(yystacksize);
-    std::memcpy(relocated.states.get(), yyss, sizeof(short) * static_cast<size_t>(yysize));
-    relocated.values = std::make_unique<stype_t[]>(yystacksize);
-    std::memcpy(relocated.values.get(), yyvs, sizeof(stype_t) * static_cast<size_t>(yysize));
-    return relocated;
+    outcome.overflow = yy_stack_overflow;
+    outcome.grownCapacity = yystacksize;
+    CheckRelocation<ProductionValue>(yyss, yyss1, yyvs, yyvs1, yyssp, yyvsp, oldStateCursor,
+                                     oldValueCursor, yysize, yy_stack_overflow);
+    VerifyLiveSlots<ProductionValue>(yysize, old, yyss, yyvs);
+    outcome.buffers = Harvest<ProductionValue>(yysize, yystacksize, yyss, yyvs);
+    return outcome;
 }
 
 // ---------------------------------------------------------------------------
 // Generated reference relocation (src/script/scr_yacc.cpp).
 //
 // The unbuilt generated parser carries the same growth block; its fragment is
-// namespaced by `v37` (the live state count) and has no free-address locals.
+// namespaced by `v37` (the live state count) and uses the real generated
+// `stype_t`, alias-bound here so the slice compiles against its own record.
 // ---------------------------------------------------------------------------
-StackBuffers GrowWithGeneratedSlice(const StackBuffers &old, const char *label)
+GrowthOutcome<GeneratedValue> GrowWithGeneratedSlice(const StackBuffers<GeneratedValue> &old,
+                                                     const char *label)
 {
-    const int expectedCapacity = ExpectedNextCapacity(old.capacity);
-    const int v37 = old.live;
+    using stype_t = GeneratedValue;
+
+    GrowthOutcome<GeneratedValue> outcome;
+    int v37 = old.live;
     int yystacksize = old.capacity;
-    yystacksize *= 2;
-    if (yystacksize > kMaxCapacity)
-        yystacksize = kMaxCapacity;
 
     short *yyss = old.states.get();
     stype_t *yyvs = old.values.get();
-    short *yyss1 = yyss;
-    stype_t *yyvs1 = yyvs;
-    short *yyssp = yyss + v37 - 1;
-    stype_t *yyvsp = yyvs + v37 - 1;
+    const short *yyss1 = yyss;
+    const stype_t *yyvs1 = yyvs;
+    const short *yyssp = yyss + v37 - 1;
+    const stype_t *yyvsp = yyvs + v37 - 1;
+    const short *oldStateCursor = yyssp;
+    const stype_t *oldValueCursor = yyvsp;
+    int yy_stack_overflow = 0;
 
 #include <script_yacc_growth_slice.inc>
 
-    CHECK(yystacksize == expectedCapacity);
-    CHECK(yyssp == yyss + v37 - 1);
-    CHECK(yyvsp == yyvs + v37 - 1);
-    VerifyLiveSlots(v37, old, yyss, yyvs);
     (void)label;
 
-    StackBuffers relocated;
-    relocated.capacity = yystacksize;
-    relocated.live = v37;
-    relocated.states = std::make_unique<short[]>(yystacksize);
-    std::memcpy(relocated.states.get(), yyss, sizeof(short) * static_cast<size_t>(v37));
-    relocated.values = std::make_unique<stype_t[]>(yystacksize);
-    std::memcpy(relocated.values.get(), yyvs, sizeof(stype_t) * static_cast<size_t>(v37));
-    return relocated;
+    outcome.overflow = yy_stack_overflow;
+    outcome.grownCapacity = yystacksize;
+    CheckRelocation<GeneratedValue>(yyss, yyss1, yyvs, yyvs1, yyssp, yyvsp, oldStateCursor,
+                                    oldValueCursor, v37, yy_stack_overflow);
+    VerifyLiveSlots<GeneratedValue>(v37, old, yyss, yyvs);
+    outcome.buffers = Harvest<GeneratedValue>(v37, yystacksize, yyss, yyvs);
+    return outcome;
 }
 
-using GrowFn = StackBuffers (*)(const StackBuffers &, const char *);
-
-// Drive one relocation implementation across the first crossing and repeated
-// growth up to the 10000 cap.
-void RunGrowthChain(GrowFn grow, const char *label)
+// Drive one real relocation implementation across the first crossing and
+// repeated growth up to the production max-depth limit, distinguishing the
+// single capped allocation from the ordinary doublings.
+template <typename ValueT, typename GrowFn>
+void RunGrowthChain(GrowFn grow, int initialCapacity, const char *label)
 {
-    StackBuffers current = MakeBuffers(kInitialCapacity);
+    StackBuffers<ValueT> current = MakeBuffers<ValueT>(initialCapacity);
     int rounds = 0;
+    int cappedRounds = 0;
     while (current.capacity < kMaxCapacity)
     {
-        current = grow(current, label);
+        const int previousCapacity = current.capacity;
+        const int doubled = previousCapacity * 2;
+        GrowthOutcome<ValueT> outcome = grow(current, label);
+        CHECK(outcome.overflow == 0);
+        if (doubled > kMaxCapacity)
+        {
+            // The real slice must clamp the doubled capacity, not allocate it.
+            CHECK(outcome.grownCapacity == kMaxCapacity);
+            ++cappedRounds;
+        }
+        else
+        {
+            CHECK(outcome.grownCapacity == std::min(doubled, kMaxCapacity));
+        }
+
+        StackBuffers<ValueT> next = std::move(outcome.buffers);
         // Production keeps pushing until the cursor fills the new capacity
         // before the next growth check; extend the live region to match.
-        for (int i = current.live; i < current.capacity; ++i)
-            FillSlot(i, current.states[i], current.values[i]);
-        current.live = current.capacity;
+        for (int i = next.live; i < next.capacity; ++i)
+            FillSlot<ValueT>(i, next.states[i], next.values[i]);
+        next.live = next.capacity;
+        current = std::move(next);
         ++rounds;
     }
 
-    // 200 -> 400 -> 800 -> 1600 -> 3200 -> 6400 -> 10000.
-    CHECK(rounds == 6);
+    CHECK(rounds == CountRounds(initialCapacity));
+    CHECK(cappedRounds == 1);
     CHECK(current.capacity == kMaxCapacity);
     CHECK(current.live == kMaxCapacity);
 
+    // Every live slot must still hold its deterministic payload after the whole
+    // chain of real relocations.
+    for (int i = 0; i < current.capacity; ++i)
+    {
+        const short expectedState = static_cast<short>((i * 7 + 1) & 0x7fff);
+        if (current.states[i] != expectedState)
+        {
+            std::fprintf(stderr,
+                         "script_parser_stack_growth_test: chained state[%d] 0x%04x != 0x%04x\n",
+                         i,
+                         static_cast<unsigned>(static_cast<unsigned short>(current.states[i])),
+                         static_cast<unsigned>(static_cast<unsigned short>(expectedState)));
+            ++g_failures;
+            break;
+        }
+    }
+
     std::printf("script_parser_stack_growth_test: %s relocation chain passed\n", label);
+}
+
+// Distinguish the capped allocation from the max-depth error path using the
+// real extracted predicate: just below the limit growth succeeds and clamps,
+// at the limit growth is refused.
+template <typename ValueT, typename GrowFn>
+void CheckMaxDepthDecision(GrowFn grow, const char *label)
+{
+    StackBuffers<ValueT> below = MakeBuffers<ValueT>(kMaxCapacity - 1);
+    GrowthOutcome<ValueT> belowOutcome = grow(below, label);
+    CHECK(belowOutcome.overflow == 0);
+    CHECK(belowOutcome.grownCapacity == kMaxCapacity);
+
+    StackBuffers<ValueT> atLimit = MakeBuffers<ValueT>(kMaxCapacity);
+    GrowthOutcome<ValueT> limitOutcome = grow(atLimit, label);
+    CHECK(limitOutcome.overflow == 1);
+    (void)label;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,48 +459,39 @@ bool MapGuarded(size_t bytes, size_t align, GuardedRegion &out)
 // a passing one.
 constexpr int kGuardSetupFailed = 42;
 
-// Pre-fix reproduction (ki-pycb): copy the doubled capacity out of the old
-// state storage. Kept only as the negative control; the production slices
-// above must never take this bound.
-void KeepCopyObservable(const void *destination)
-{
-    // The child never inspects the destination before exiting, so without a
-    // memory clobber the optimizer would drop the over-reading memcpy as a
-    // dead store and the control would silently pass.
-#if defined(__GNUC__)
-    __asm__ __volatile__("" : : "r"(destination) : "memory");
-#else
-    (void)destination;
-#endif
-}
-
+// Pre-fix reproduction (ki-pycb): read the doubled capacity out of the old
+// state storage. The loop is intentionally unbounded; the volatile sink keeps
+// the reads from being optimized away so the guard page faults.
 void ChildUnboundedStateCopy()
 {
-    const size_t bytes = sizeof(short) * static_cast<size_t>(kInitialCapacity);
+    const size_t bytes = sizeof(short) * static_cast<size_t>(kProductionInitialCapacity);
     GuardedRegion region;
     if (!MapGuarded(bytes, alignof(short), region))
         _exit(kGuardSetupFailed);
     short *oldStates = reinterpret_cast<short *>(region.data);
-    for (int i = 0; i < kInitialCapacity; ++i)
+    for (int i = 0; i < kProductionInitialCapacity; ++i)
         oldStates[i] = static_cast<short>(i + 1);
-    auto newStates = std::make_unique<short[]>(kInitialCapacity * 2);
-    std::memcpy(newStates.get(), oldStates, sizeof(short) * static_cast<size_t>(kInitialCapacity) * 2u);
-    KeepCopyObservable(newStates.get());
-    _exit(0);
+
+    volatile short sink = 0;
+    for (size_t i = 0; i < static_cast<size_t>(kProductionInitialCapacity) * 2u; ++i)
+        sink = static_cast<short>(sink + oldStates[i]);
+    _exit(sink == 0 ? 1 : 0);
 }
 
 void ChildUnboundedValueCopy()
 {
-    const size_t bytes = sizeof(stype_t) * static_cast<size_t>(kInitialCapacity);
+    const size_t bytes = sizeof(ProductionValue) * static_cast<size_t>(kProductionInitialCapacity);
     GuardedRegion region;
-    if (!MapGuarded(bytes, alignof(stype_t), region))
+    if (!MapGuarded(bytes, alignof(ProductionValue), region))
         _exit(kGuardSetupFailed);
-    stype_t *oldValues = reinterpret_cast<stype_t *>(region.data);
-    std::memset(oldValues, 0, bytes);
-    auto newValues = std::make_unique<stype_t[]>(kInitialCapacity * 2);
-    std::memcpy(newValues.get(), oldValues, sizeof(stype_t) * static_cast<size_t>(kInitialCapacity) * 2u);
-    KeepCopyObservable(newValues.get());
-    _exit(0);
+    ProductionValue *oldValues = reinterpret_cast<ProductionValue *>(region.data);
+    for (int i = 0; i < kProductionInitialCapacity; ++i)
+        oldValues[i].pos = static_cast<uint32_t>(i + 1);
+
+    volatile uint32_t sink = 0;
+    for (size_t i = 0; i < static_cast<size_t>(kProductionInitialCapacity) * 2u; ++i)
+        sink ^= oldValues[i].pos;
+    _exit(sink == 0 ? 1 : 0);
 }
 
 bool ChildTerminatesAbnormally(void (*child)())
@@ -411,20 +533,31 @@ void RunPreFixNegativeControl()
 
 void CheckRecordShape()
 {
+    static_assert(sizeof(ProductionValue) == sizeof(GeneratedValue),
+                  "production and generated stype_t declarations disagree on size");
     CHECK(sizeof(sval_u) == (UINTPTR_MAX > 0xFFFFFFFFu ? 0x8u : 0x4u));
-    CHECK(sizeof(stype_t) == (UINTPTR_MAX > 0xFFFFFFFFu ? 0x10u : 0x8u));
+    CHECK(sizeof(ProductionValue) == (UINTPTR_MAX > 0xFFFFFFFFu ? 0x10u : 0x8u));
 
-    stype_t probe;
+    ProductionValue probe;
     const auto base = reinterpret_cast<uintptr_t>(&probe);
     CHECK(reinterpret_cast<uintptr_t>(&probe.pos) - base == sizeof(sval_u));
+
+    GeneratedValue generatedProbe;
+    const auto generatedBase = reinterpret_cast<uintptr_t>(&generatedProbe);
+    CHECK(reinterpret_cast<uintptr_t>(&generatedProbe.pos) - generatedBase == sizeof(sval_u));
+    CHECK(sizeof(GeneratedValue) == sizeof(ProductionValue));
 }
 }  // namespace
 
 int main()
 {
     CheckRecordShape();
-    RunGrowthChain(GrowWithProductionSlice, "production scr_yacc2");
-    RunGrowthChain(GrowWithGeneratedSlice, "generated scr_yacc");
+    RunGrowthChain<ProductionValue>(GrowWithProductionSlice, kProductionInitialCapacity,
+                                    "production scr_yacc2");
+    RunGrowthChain<GeneratedValue>(GrowWithGeneratedSlice, kGeneratedInitialCapacity,
+                                   "generated scr_yacc");
+    CheckMaxDepthDecision<ProductionValue>(GrowWithProductionSlice, "production scr_yacc2");
+    CheckMaxDepthDecision<GeneratedValue>(GrowWithGeneratedSlice, "generated scr_yacc");
     RunPreFixNegativeControl();
 
     if (g_failures)
