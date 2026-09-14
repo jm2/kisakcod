@@ -14,7 +14,9 @@
 #include <EffectsCore/fx_system.h>
 #include <aim_assist/aim_assist.h>
 #include <universal/profile.h>
+#include <qcommon/sys_sync.h>
 #include <cgame/cg_pose_atomic.h>
+#include <cgame/cg_phys_obj_id.h>
 
 void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
 {
@@ -34,17 +36,45 @@ void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
         cent->currentState.pos.trType = TR_STATIONARY;
         cent->currentState.apos.trType = TR_STATIONARY;
     }
-    if (cent->pose.physObjId && cent->pose.physObjId != -1 || cent->currentState.pos.trType == TR_PHYSICS)
+    // The legacy outer condition is (live token || TR_PHYSICS). Both the
+    // Resolve and the Release are sidecar accesses, so they run inside
+    // the same CRITSECT_PHYSICS span per the sidecar contract; the
+    // self-locking Phys_ObjDestroy stays outside the span (same pattern
+    // as the DynEntity client teardown). TakeBody only runs when the
+    // legacy condition holds, so dead tokens on non-TR_PHYSICS entities
+    // keep their legacy field state (unwritten by shutdown).
+    dxBody *physObjIdBody = nullptr;
+    bool shutdownPhysics = false;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    shutdownPhysics = CG_CPosePhysObjId_GetBody(cent) != nullptr
+        || cent->currentState.pos.trType == TR_PHYSICS;
+    if (shutdownPhysics)
+        physObjIdBody = CG_CPosePhysObjId_TakeBody(cent);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (shutdownPhysics)
     {
-        if (cent->pose.physObjId != -1 && cent->pose.physObjId)
+        if (physObjIdBody)
         {
             if (CG_IsEntityLinked(localClientNum, cent->nextState.number))
                 CG_UnlinkEntity(localClientNum, cent->nextState.number);
-            Phys_ObjDestroy(PHYS_WORLD_FX, (dxBody *)cent->pose.physObjId);
+            Phys_ObjDestroy(PHYS_WORLD_FX, physObjIdBody);
         }
         cent->currentState.pos.trType = TR_STATIONARY;
         cent->currentState.apos.trType = TR_STATIONARY;
-        cent->pose.physObjId = 0;
+        // Legacy contract (master 53652090): the outer condition is
+        // (live token || TR_PHYSICS). A dead token enters this block only
+        // when the entity is TR_PHYSICS — legacy line 37 gated on
+        // `physObjId && physObjId != -1 || trType == TR_PHYSICS`, so dead
+        // tokens on non-TR_PHYSICS entities are excluded here, then and
+        // now (CG_CPosePhysObjId_GetBody resolves a DEAD token to null).
+        // For the TR_PHYSICS case the field reset at the end of the block
+        // makes creation retryable on the entity's next snapshot
+        // incarnation: CG_CalcEntityPhysicsPositions only re-attempts
+        // body creation when the field IsNull.
+        // (CG_CPosePhysObjId_TakeBody already stores INVALID_BODY_TOKEN;
+        // this store makes the legacy contract explicit and covers any
+        // path that does not go through TakeBody.)
+        cent->pose.physObjId = phys_obj_id::INVALID_BODY_TOKEN;
     }
 }
 

@@ -2180,6 +2180,23 @@ add_test(
 )
 set_tests_properties(cgame-pose-atomic-protocols PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-phys-obj-id-tests
+    phys_obj_id_tests.cpp
+    ${SRC_DIR}/bgame/bg_phys_obj_id_tables.cpp
+)
+target_include_directories(kisakcod-phys-obj-id-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-phys-obj-id-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-phys-obj-id-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-phys-obj-id-tests)
+set_target_properties(kisakcod-phys-obj-id-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME phys-obj-id-sidecar-contracts
+    COMMAND kisakcod-phys-obj-id-tests
+)
+set_tests_properties(phys-obj-id-sidecar-contracts PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-renderer-reservation-atomic-tests
     renderer_reservation_atomic_tests.cpp
 )
@@ -2883,6 +2900,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/physics_rollback_recipe_source_test.cmake
+)
+
+add_test(
+    NAME phys-obj-id-owner-bound-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/phys_obj_id_owner_bound_source_test.cmake
 )
 
 add_test(

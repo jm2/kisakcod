@@ -18,11 +18,13 @@
 #include <script/scr_const.h>
 #include <universal/com_files.h>
 #include <qcommon/threads.h>
+#include <qcommon/sys_sync.h>
 #include <stringed/stringed_hooks.h>
 #include <database/database.h>
 #include <bgame/bg_public.h>
 #include <gfx_d3d/r_bsp.h>
 #include <gfx_d3d/r_primarylights.h>
+#include <cgame/cg_phys_obj_id.h>
 #include <gfx_d3d/r_model.h>
 #include <script/scr_vm.h>
 #include <game_mp/g_main_mp.h>
@@ -2149,13 +2151,16 @@ void __cdecl CG_Shutdown(int32_t localClientNum)
             Ragdoll_Remove(cent->pose.ragdollHandle);
             cent->pose.ragdollHandle = 0;
         }
-        if (cent->pose.physObjId)
+        // Sidecar Release runs under the physics lock per the sidecar
+        // contract; Phys_ObjDestroy manages its own locking and stays
+        // outside the span (same pattern as CG_ShutdownEntity).
+        dxBody *physObjIdBody = nullptr;
+        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+        physObjIdBody = CG_CPosePhysObjId_TakeBody(cent);
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (physObjIdBody)
         {
-            if (cent->pose.physObjId != -1)
-            {
-                Phys_ObjDestroy(PHYS_WORLD_FX, (dxBody*)cent->pose.physObjId);
-                cent->pose.physObjId = 0;
-            }
+            Phys_ObjDestroy(PHYS_WORLD_FX, physObjIdBody);
         }
     }
     Ragdoll_Shutdown();
