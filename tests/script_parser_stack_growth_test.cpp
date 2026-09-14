@@ -200,40 +200,56 @@ StackBuffers<ValueT> Harvest(int live, int capacity, const short *states, const 
     return out;
 }
 
-// All post-relocation cursor/pointer assertions live here rather than at the
-// call site: a static analyzer that cannot resolve the extracted slice would
-// otherwise see the pre- and post-relocation state as identical and reject the
-// checks as tautological. The function parameters are opaque to that analyzer.
+// Groups the four base pointers and four cursors the relocation contract
+// inspects, so CheckRelocation stays within the analyzer's method-parameter
+// budget (Codacy flags a 10-parameter method; the limit is 8). The aggregate is
+// passed by const reference, not by value: the individual pointers then remain
+// as opaque to a static analyzer as the previous individual parameters, so a
+// checker that cannot resolve the extracted slice still cannot see the pre- and
+// post-relocation state as identical and reject the checks as tautological.
 template <typename ValueT>
-void CheckRelocation(const short *stateBase, const short *oldStateBase, const ValueT *valueBase,
-                     const ValueT *oldValueBase, const short *stateCursor, const ValueT *valueCursor,
-                     const short *oldStateCursor, const ValueT *oldValueCursor, int live, int overflow)
+struct RelocationPointers
+{
+    const short *stateBase;
+    const ValueT *valueBase;
+    const short *oldStateBase;
+    const ValueT *oldValueBase;
+    const short *stateCursor;
+    const ValueT *valueCursor;
+    const short *oldStateCursor;
+    const ValueT *oldValueCursor;
+};
+
+// All post-relocation cursor/pointer assertions live here rather than at the
+// call site, for the analyzer-opacity reason described above.
+template <typename ValueT>
+void CheckRelocation(const RelocationPointers<ValueT> &p, int live, int overflow)
 {
     if (overflow)
         return;
 
     // The real relocation must allocate fresh storage, not leave the pointers
     // on the pre-growth buffers.
-    CHECK(stateBase != oldStateBase);
-    CHECK(valueBase != oldValueBase);
+    CHECK(p.stateBase != p.oldStateBase);
+    CHECK(p.valueBase != p.oldValueBase);
     // The restored cursors land on the last live slot of the NEW storage.
-    CHECK(stateCursor == stateBase + (live - 1));
-    CHECK(valueCursor == valueBase + (live - 1));
+    CHECK(p.stateCursor == p.stateBase + (live - 1));
+    CHECK(p.valueCursor == p.valueBase + (live - 1));
     // A relocation that reverted the cursors to the OLD storage would land on
     // these pointers instead; the contract must reject them.
-    CHECK(stateCursor != oldStateBase + (live - 1));
-    CHECK(valueCursor != oldValueBase + (live - 1));
+    CHECK(p.stateCursor != p.oldStateBase + (live - 1));
+    CHECK(p.valueCursor != p.oldValueBase + (live - 1));
     // The payload read through the restored cursor matches the old last slot.
-    CHECK(*stateCursor == oldStateBase[live - 1]);
-    CHECK(valueCursor->pos == oldValueBase[live - 1].pos);
-    CHECK(valueCursor->val.codePosValue == oldValueBase[live - 1].val.codePosValue);
+    CHECK(*p.stateCursor == p.oldStateBase[live - 1]);
+    CHECK(p.valueCursor->pos == p.oldValueBase[live - 1].pos);
+    CHECK(p.valueCursor->val.codePosValue == p.oldValueBase[live - 1].val.codePosValue);
 
     // Offset restored independently: derived from the OLD cursor/base pair,
     // then required to agree with the NEW cursor/base pair.
-    const ptrdiff_t oldStateOffset = oldStateCursor - oldStateBase;
-    const ptrdiff_t newStateOffset = stateCursor - stateBase;
-    const ptrdiff_t oldValueOffset = oldValueCursor - oldValueBase;
-    const ptrdiff_t newValueOffset = valueCursor - valueBase;
+    const ptrdiff_t oldStateOffset = p.oldStateCursor - p.oldStateBase;
+    const ptrdiff_t newStateOffset = p.stateCursor - p.stateBase;
+    const ptrdiff_t oldValueOffset = p.oldValueCursor - p.oldValueBase;
+    const ptrdiff_t newValueOffset = p.valueCursor - p.valueBase;
     CHECK(newStateOffset == oldStateOffset);
     CHECK(newValueOffset == oldValueOffset);
 }
@@ -287,8 +303,9 @@ GrowthOutcome<ProductionValue> GrowWithProductionSlice(const StackBuffers<Produc
 
     outcome.overflow = yy_stack_overflow;
     outcome.grownCapacity = yystacksize;
-    CheckRelocation<ProductionValue>(yyss, yyss1, yyvs, yyvs1, yyssp, yyvsp, oldStateCursor,
-                                     oldValueCursor, yysize, yy_stack_overflow);
+    const RelocationPointers<ProductionValue> relocation{yyss,  yyvs,  yyss1,          yyvs1,
+                                                         yyssp, yyvsp, oldStateCursor, oldValueCursor};
+    CheckRelocation<ProductionValue>(relocation, yysize, yy_stack_overflow);
     VerifyLiveSlots<ProductionValue>(yysize, old, yyss, yyvs);
     outcome.buffers = Harvest<ProductionValue>(yysize, yystacksize, yyss, yyvs);
     return outcome;
@@ -326,18 +343,29 @@ GrowthOutcome<GeneratedValue> GrowWithGeneratedSlice(const StackBuffers<Generate
 
     outcome.overflow = yy_stack_overflow;
     outcome.grownCapacity = yystacksize;
-    CheckRelocation<GeneratedValue>(yyss, yyss1, yyvs, yyvs1, yyssp, yyvsp, oldStateCursor,
-                                    oldValueCursor, v37, yy_stack_overflow);
+    const RelocationPointers<GeneratedValue> relocation{yyss,  yyvs,  yyss1,          yyvs1,
+                                                        yyssp, yyvsp, oldStateCursor, oldValueCursor};
+    CheckRelocation<GeneratedValue>(relocation, v37, yy_stack_overflow);
     VerifyLiveSlots<GeneratedValue>(v37, old, yyss, yyvs);
     outcome.buffers = Harvest<GeneratedValue>(v37, yystacksize, yyss, yyvs);
     return outcome;
 }
 
+// The real relocation implementations are function templates; naming their
+// instantiated type lets the chain drivers below take a single template
+// parameter. A two-parameter `template <typename ValueT, typename GrowFn>`
+// list is misread by cppcheck's misra-c2012-12.3 check as the comma operator
+// (the comma there only separates template parameters), so keeping the
+// template parameter list to one argument avoids the false positive without
+// weakening the relocation coverage.
+template <typename ValueT>
+using RelocationGrowFn = GrowthOutcome<ValueT> (*)(const StackBuffers<ValueT> &, const char *);
+
 // Drive one real relocation implementation across the first crossing and
 // repeated growth up to the production max-depth limit, distinguishing the
 // single capped allocation from the ordinary doublings.
-template <typename ValueT, typename GrowFn>
-void RunGrowthChain(GrowFn grow, int initialCapacity, const char *label)
+template <typename ValueT>
+void RunGrowthChain(RelocationGrowFn<ValueT> grow, int initialCapacity, const char *label)
 {
     StackBuffers<ValueT> current = MakeBuffers<ValueT>(initialCapacity);
     int rounds = 0;
@@ -397,8 +425,8 @@ void RunGrowthChain(GrowFn grow, int initialCapacity, const char *label)
 // Distinguish the capped allocation from the max-depth error path using the
 // real extracted predicate: just below the limit growth succeeds and clamps,
 // at the limit growth is refused.
-template <typename ValueT, typename GrowFn>
-void CheckMaxDepthDecision(GrowFn grow, const char *label)
+template <typename ValueT>
+void CheckMaxDepthDecision(RelocationGrowFn<ValueT> grow, const char *label)
 {
     StackBuffers<ValueT> below = MakeBuffers<ValueT>(kMaxCapacity - 1);
     GrowthOutcome<ValueT> belowOutcome = grow(below, label);
