@@ -1371,7 +1371,7 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
     XModelConfig config; // [esp+234h] [ebp-1440h] BYREF
     XModelPartsLoad *modelParts; // [esp+166Ch] [ebp-8h]
     const char *v40; // [esp+1670h] [ebp-4h]
-    unsigned __int8 *v36;
+    const unsigned __int8 *v36;
 
     if (Com_IsLegacyXModelName(name))
     {
@@ -1416,7 +1416,12 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
         goto LABEL_28;
 
     model->numLods = 0;
-    v36 = pos;
+    // Cursor-owned checkpoint of the LOD-table start. The material second
+    // pass rewinds here through buf_cursor::SeekTo so the cursor, the
+    // bounded reads and the anchored *pos stay in lockstep; a raw
+    // `pos =` rewind would leave the cursor at the first-pass end and
+    // every second-pass read would parse at (or past) the wrong offset.
+    v36 = buf_cursor::Tell();
     numsurfs = 0;
     for (i = 0; i < 4; ++i)
     {
@@ -1476,7 +1481,15 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
         model->lodRampType = 0;
         if (XModelAllowLoadMesh())
         {
-            pos = v36;
+            // Checked second-pass positioning: rewind the CURSOR to the
+            // LOD-table checkpoint (re-syncing the anchored *pos) instead
+            // of rewinding only the raw pointer. SeekTo fails closed on a
+            // stale or out-of-range checkpoint or an already-failed
+            // cursor, rejecting the model through the ordinary
+            // malformed-input cleanup instead of parsing valid content
+            // at the wrong position.
+            if (!buf_cursor::SeekTo(v36))
+                goto LABEL_28;
             iassert(config.entries[0].filename[0]);
             model->numsurfs = numsurfs;
             model->surfs = (XSurface *)Alloc(sizeof(XSurface) * numsurfs);

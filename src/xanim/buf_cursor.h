@@ -34,6 +34,45 @@
 // also walks both back together so any subsequent Buf_Read<T> cannot
 // read past the checkpoint.
 //
+// Nested cursor ownership (scoped save/restore).
+//
+// Production loaders nest: XModelLoadFile activates a cursor over the
+// xmodel buffer and then calls XModelPartsPrecache / XModelSurfsPrecache,
+// which each Activate their own cursor over a different file buffer.
+// A naive Activate would overwrite the parent's position, limits, failure
+// state and anchored *pos, and a naive Deactivate would clear them
+// entirely — the outer parse would resume unbounded or at the wrong
+// position. Instead, Activate explicitly saves the parent scope (full
+// cursor state including the anchored *pos slot) and Deactivate restores
+// it exactly: position, anchor, domain limits and failure flag. The
+// saves are LIFO because every loader Activates at entry and Deactivates
+// on every exit (audited: XModelLoadFile, XModelPartsLoadFile,
+// R_XModelSurfsLoadFile, XModelPiecesLoadFile, XAnimLoadFile). A loader
+// that returns without Deactivating breaks the LIFO contract and would
+// restore a parent anchor into a dead frame — the per-exit Deactivate
+// discipline is mandatory, not stylistic. The save stack is bounded;
+// overflowing it installs the nested cursor pre-failed so the nested
+// parse rejects through the ordinary malformed-input path instead of
+// corrupting the parent. When an overflowed scope unwinds, the
+// overflowed caller's own state is gone, so its Deactivate leaves a
+// pre-failed, empty-but-active cursor: Failed() stays latched and
+// reads return zeros until the caller's own Deactivate restores the
+// nearest pushed ancestor — the failure remains latched through every
+// affected scope instead of decaying into an unbounded fallback.
+//
+// Checked checkpoint/seek.
+//
+// The material second pass in XModelLoadFile rewinds to the LOD table
+// and re-reads the surface names for material registration. The rewind
+// must move the CURSOR (and the anchored *pos with it) — not just the
+// raw pointer — so the subsequent reads stay bounded and in position.
+// Tell() returns the cursor-owned checkpoint; SeekTo(target) validates
+// that target lies inside the active buffer, moves current there and
+// re-syncs the anchor. A SeekTo outside the buffer, on an inactive
+// cursor or on a failed cursor moves nothing and returns false (and
+// latches failed when the target is out of range) so the second pass
+// fails closed instead of parsing valid content at the wrong position.
+//
 // UBSan alignment hazard.
 //
 // The original Buf_Read<T> uses *reinterpret_cast<const T *>(*pos) which
@@ -66,7 +105,9 @@ BufCursor *Activate(const unsigned char *buf, size_t size);
 
 // Tear down the active cursor and clear the thread-local. After this
 // returns Buf_Read<T> falls back to the original unbounded read until
-// another Activate call re-establishes the cursor.
+// another Activate call re-establishes the cursor. (Nested scopes
+// restore their parent instead; an overflowed scope's caller is left
+// active and pre-failed — see the ownership notes above.)
 void Deactivate();
 
 // True when the current active cursor has failed a bounds check. Loaders
@@ -102,6 +143,21 @@ void SetStringLimit(uint32_t maxStringLen);
 // failed instead of silently walking off the end. Compares against end
 // before updating so the cursor cannot Advance past the buffer.
 void Advance(ptrdiff_t delta);
+
+// Cursor-owned checkpoint: returns the active cursor's current position
+// so a caller can SeekTo it later (the material second pass). Returns
+// nullptr when no cursor is active — callers must treat a null
+// checkpoint as a failed load, not seek to it.
+const unsigned char *Tell();
+
+// Checked absolute seek: moves the active cursor to target and re-syncs
+// the anchored *pos. The target must lie within [begin, end] of the
+// active buffer — the check is what makes the rewind safe against a
+// corrupted or stale checkpoint. Returns false and moves nothing when
+// no cursor is active, the cursor has already failed, or target is out
+// of range; an out-of-range target additionally latches Failed() so the
+// caller's ordinary malformed-input cleanup runs.
+bool SeekTo(const unsigned char *target);
 
 // String read: scan from current until a NUL is observed, copy
 // (including NUL) into out, and advance. Returns false and marks the
