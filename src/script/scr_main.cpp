@@ -16,12 +16,17 @@
 
 #undef GetObject
 
+//SCRIPT_RUNTIME_ANIM_CODE_RANGE_BEGIN
 bool Scr_IsInOpcodeMemory(char const* pos)
 {
     iassert(scrVarPub.programBuffer);
     iassert(pos);
-    return pos - scrVarPub.programBuffer < scrCompilePub.programLen;
+    const uintptr_t address = reinterpret_cast<uintptr_t>(pos);
+    const uintptr_t start = reinterpret_cast<uintptr_t>(scrVarPub.programBuffer);
+    return address >= start && address - start < scrCompilePub.programLen;
 }
+
+//SCRIPT_RUNTIME_ANIM_CODE_RANGE_END
 
 bool Scr_IsIdentifier(char const* token)
 {
@@ -315,6 +320,7 @@ void __cdecl Scr_PrecacheAnimTrees(void *(__cdecl *Alloc)(int), int user)
         Scr_LoadAnimTreeAtIndex(i, Alloc, user);
 }
 
+//SCRIPT_RUNTIME_ANIM_END_LOAD_BEGIN
 void __cdecl Scr_EndLoadAnimTrees()
 {
     iassert(scrAnimPub.animtrees);
@@ -325,12 +331,15 @@ void __cdecl Scr_EndLoadAnimTrees()
     scrAnimPub.animtrees = 0;
     if (scrAnimPub.animtree_node)
         RemoveRefToObject(scrAnimPub.animtree_node);
+    Scr_ClearAnimationFixups();
     SL_ShutdownSystem(2);
     if (scrVarPub.programBuffer && !scrVarPub.endScriptBuffer)
         scrVarPub.endScriptBuffer = TempMalloc(0);
     scrAnimPub.animtree_loading = 0;
     scrVarPub.varUsagePos = 0;
 }
+
+//SCRIPT_RUNTIME_ANIM_END_LOAD_END
 
 void __cdecl Scr_FreeScripts(uint8_t sys)
 {
