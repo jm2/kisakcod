@@ -3014,6 +3014,48 @@ Resolved on the PR #71 repair head: lower-level `ActiveZoneStreamBinding::block`
 the exact live generation when Bound plus complete singleton authority, while intentionally preserving canonical Idle
 reads; pending reads reject every retained receipt/lifecycle alias and stale or reclaimed lifecycle key.
 
+## Parser stack-relocation checkpoint (ki-pycb, 2026-09-14)
+
+The generated `src/script/scr_yacc.cpp` `yyparse` growth path doubled
+`yystacksize` and then copied the doubled element count out of the old state and
+value arrays, reading past their live storage. Both parsers now capture the live
+element count (`v37 = yyssp - yyss + 1` in the generated reference, `yysize` in
+the built parser) before the cursor advances and move only those live slots into
+the freshly allocated doubled storage, restoring the original `2 * v37` /
+`8 * v37` intent. The relocation is expressed as an element loop rather than a
+`memcpy` so the destination cannot be read as unchecked; the value cursor tracks
+the state cursor at that check, so the same count bounds both old buffers.
+`src/script/scr_yacc2.cpp`, the parser actually built into the
+client/dedicated/server targets, already used the equivalent live bound
+`yysize`, so this brings the unbuilt generated reference in line rather than
+altering production behavior. The max-depth decision is now an explicit
+`yy_stack_overflow` predicate evaluated inside the extracted growth block, kept
+distinct from the capped allocation that clamps the doubled capacity to the
+existing 10000 default; no new limit, serialized form, ownership or cleanup
+behavior was introduced.
+
+Regression `script-parser-stack-growth-contracts` extracts the relocation and
+growth-decision statements verbatim from both sources at configure time and
+drives the first capacity crossing and repeated growth through the 10000 cap,
+checking state values, source positions, native pointer payloads and both cursor
+offsets. It binds the real extracted `stype_t` declarations from both parsers,
+the built parser's real `YYINITDEPTH` (`200 + sizeof(stype_t)`) and the
+generated reference's literal array bound; configure fails closed if an anchor
+or declaration drifts. Cursor restoration is proven independently (the cursors
+start on the old storage and the restored offsets are derived from the old
+cursor/base pair), the real max-depth predicate is exercised at and just below
+the limit, and a POSIX guarded-memory control reproduces the pre-fix bound and
+proves it faults while the fixed paths pass. The contract's offset assertions
+are guarded: if a restored cursor fails to land in the new storage, the check
+returns before subtracting that cursor from its base, so the failure path never
+performs the cross-storage pointer subtraction that would be undefined
+behavior, while every placement, reverted-restore and payload assertion still
+runs and is recorded. The contract is enrolled in the
+`script-sanitizers` ASan+UBSan job. Local evidence on the rework head: full
+Release build clean, `ctest` 228/228, and the focused script-sanitizers
+ASan+UBSan contracts 7/7. This is a bounded parser stage only: the parent #129
+production-parser closure and #122 network compatibility remain open.
+
 ## Known release blockers
 
 - Original commercial 1.7 and Steam 1.8 network compatibility is unproven and
