@@ -5,6 +5,10 @@
 // served scr_yacc.cpp's LOBYTE macro, which now carries its own fallback.
 #if defined(_WIN32)
 #include <Windows.h>
+#else
+// Portability (ki-n1et): the flex allocator declaration below is the only
+// Win32-typedef user; it is never defined or called outside Windows.
+typedef void *LPVOID;
 #endif
 
 // LWSS: this enum name is kinda retarded

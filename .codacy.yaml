@@ -42,3 +42,8 @@ exclude_paths:
   - "src/physics/ode/util.h"
   - "src/qcommon/graph.h"
   - "tests/xmodel_cursor_test_support.h"
+
+# Engine headers are C++; keep analysis enabled and select the proper parser.
+engines:
+  cppcheck:
+    language: c++
