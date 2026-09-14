@@ -296,6 +296,13 @@ typedef unsigned long long ull;
 #define __int8  char
 #define MAKELL(num) num ## LL
 #define FMT_64 "ll"
+// KisakCOD port: the decompiled sources call the MSVC formatted-print
+// spellings directly; on POSIX hosts these names are shimmed to wrappers
+// that keep the MSVC truncation contract (-1 when the output does not
+// fit) instead of POSIX's full-required-length return. See
+// msvc_printf_shim.h for the contract rationale and
+// tests/msvc_printf_shim_tests.cpp for the runtime contract.
+#include "msvc_printf_shim.h"
 #elif defined(_MSC_VER)
 typedef          __int64 ll;
 typedef unsigned __int64 ull;

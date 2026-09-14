@@ -1,6 +1,12 @@
 #pragma once
 
-enum DevEventType : __int32
+// KisakCOD port: this header is included directly by graph.cpp before any
+// qcommon composition, so it must pull the calling-convention spellings it
+// uses from the dependency-free compatibility leaf.
+#include <universal/platform_compat.h>
+#include <cstdint>
+
+enum DevEventType : int32_t
 {                                       // ...
     EVENT_ACTIVATE = 0x0,
     EVENT_DEACTIVATE = 0x1,

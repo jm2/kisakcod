@@ -189,7 +189,9 @@ void __cdecl Scr_SetGenericField(uint8_t *b, fieldtype_t type, int32_t ofs)
     switch (type)
     {
     case F_INT:
-        *(VariableUnion *)&b[ofs] = Scr_GetInt(0);
+        //SCRIPT_RUNTIME_GENERIC_INT_FIELD_BEGIN
+        *reinterpret_cast<int32_t *>(&b[ofs]) = Scr_GetInt(0);
+        //SCRIPT_RUNTIME_GENERIC_INT_FIELD_END
         break;
     case F_FLOAT:
         *(float *)&b[ofs] = Scr_GetFloat(0);

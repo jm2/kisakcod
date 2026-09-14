@@ -1,6 +1,10 @@
 #include "buildnumber.h"
 #include <stdio.h>
 
+// KisakCOD port: __cdecl spelling from the dependency-free compatibility
+// leaf; this TU does not include the qcommon composition.
+#include <universal/platform_compat.h>
+
 char buildnumbuf[128];
 
 /*

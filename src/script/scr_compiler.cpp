@@ -2,6 +2,7 @@
 // (GPL v3.0) (Thanks)
 
 #include "scr_compiler.h"
+#include "scr_bytecode.hpp"
 #include "scr_main.h"
 #include "scr_debugger.h"
 #include "scr_parser.h"
@@ -332,8 +333,8 @@ void __cdecl EmitGetFloat(float value, sval_u sourcePos)
 
 void __cdecl EmitCodepos(const char *pos)
 {
-    scrCompileGlob.codePos = (unsigned char*)TempMallocAlignStrict(4u);
-    *(unsigned int*)scrCompileGlob.codePos = (unsigned int)pos;
+    scrCompileGlob.codePos = reinterpret_cast<unsigned char *>(TempMallocAlignStrict(sizeof(pos)));
+    Scr_WriteBytecodeValue(scrCompileGlob.codePos, pos);
 }
 
 void __cdecl EmitGetInteger(int value, sval_u sourcePos)
@@ -517,7 +518,7 @@ void __cdecl EmitCallBuiltinOpcode(int param_count, sval_u sourcePos)
         EmitByte(param_count);
 }
 
-int __cdecl AddFunction(int func, const char *name)
+int __cdecl AddFunction(uintptr_t func, const char *name)
 {
     int i; // [esp+0h] [ebp-4h]
 
@@ -663,7 +664,8 @@ void __cdecl EmitFunction(sval_u func, sval_u sourcePos)
             pos.type);
     if (pos.type == 13)
         goto LABEL_26;
-    if (!pos.u.intValue)
+    // M4 (ki-n1et): codepos-family cells hold live host pointers.
+    if (!pos.u.codePosValue)
     {
     LABEL_39:
         if (!threadId)
@@ -684,7 +686,8 @@ void __cdecl EmitFunction(sval_u func, sval_u sourcePos)
             count.u.intValue = 0;
         }
         valueId = GetNewVariable(threadId, count.u.intValue + 2);
-        value.u.intValue = (int)scrCompileGlob.codePos;
+        // M4 (ki-n1et): live codepos pointer through the pointer member.
+        value.u.codePosValue = scrCompileGlob.codePos;
         if (scrCompilePub.developer_statement)
         {
             if (!scrVarPub.developer_script)
@@ -853,7 +856,9 @@ void __cdecl EmitCall(sval_u func_name, sval_u params, bool bStatement, scr_bloc
         {
             value = Scr_EvalVariable(funcId);
             type = Scr_GetUncacheType(value.type);
-            func = (void(*)())value.u.intValue;
+            // M4 (ki-n1et): builtin-function cache cells hold live function
+            // pointers; store/load through the pointer-width member.
+            func = reinterpret_cast<void(__cdecl *)()>(value.u.codePosValue);
         }
         else
         {
@@ -861,7 +866,7 @@ void __cdecl EmitCall(sval_u func_name, sval_u params, bool bStatement, scr_bloc
             func = Scr_GetFunction(&pName, &type);
             funcId = GetNewVariable(scrCompilePub.builtinFunc, name);
             value.type = Scr_GetCacheType(type);
-            value.u.intValue = (int)func;
+            value.u.codePosValue = reinterpret_cast<const char *>(func);
             SetVariableValue(funcId, &value);
         }
     }
@@ -880,7 +885,7 @@ void __cdecl EmitCall(sval_u func_name, sval_u params, bool bStatement, scr_bloc
             {
                 Scr_CompileRemoveRefToString(name);
                 EmitCallBuiltinOpcode(param_count, sourcePos);
-                v4 = AddFunction((int)func, pName);
+                v4 = AddFunction(reinterpret_cast<uintptr_t>(func), pName);
                 EmitShort(v4);
                 AddExpressionListOpcodePos(params);
                 if (bStatement)
@@ -982,7 +987,8 @@ void __cdecl EmitMethod(
         {
             value = Scr_EvalVariable(methId);
             type = Scr_GetUncacheType(value.type);
-            meth = (void(*)(scr_entref_t))value.u.intValue;
+            // M4 (ki-n1et): pointer-width builtin-method cache cell.
+            meth = reinterpret_cast<void(*)(scr_entref_t)>(const_cast<char *>(value.u.codePosValue));
         }
         else
         {
@@ -990,7 +996,7 @@ void __cdecl EmitMethod(
             meth = Scr_GetMethod(&pName, &type);
             methId = GetNewVariable(scrCompilePub.builtinMeth, name);
             value.type = Scr_GetCacheType(type);
-            value.u.intValue = (int)meth;
+            value.u.codePosValue = reinterpret_cast<const char *>(meth);
             SetVariableValue(methId, &value);
         }
     }
@@ -1010,7 +1016,7 @@ void __cdecl EmitMethod(
             {
                 Scr_CompileRemoveRefToString(name);
                 EmitCallBuiltinMethodOpcode(param_count, sourcePos);
-                v6 = AddFunction((int)meth, pName);
+                v6 = AddFunction(reinterpret_cast<uintptr_t>(meth), pName);
                 EmitShort(v6);
                 AddOpcodePos(methodSourcePos.stringValue, 0);
                 AddExpressionListOpcodePos(params);
@@ -1310,7 +1316,8 @@ void __cdecl Scr_CreateVector(VariableCompileValue *constValue, VariableValue *v
         }
     }
     value->type = VAR_VECTOR;
-    value->u.intValue = (int)Scr_AllocVector(vec);
+    // M4 (ki-n1et): live vector-pool pointer through the pointer member.
+    value->u.vectorValue = Scr_AllocVector(vec);
 }
 
 void __cdecl Scr_PushValue(VariableCompileValue *constValue)
@@ -2292,6 +2299,11 @@ void __cdecl Scr_CheckMaxSwitchCases(int count)
         Com_Error(ERR_DROP, "MAX_SWITCH_CASES exceeded");
 }
 
+// M4 (ki-n1et): the child-block scratch arrays hold MAX_SWITCH_CASES
+// (1024) block pointers. The literal 4096 encoded the 32-bit pointer
+// width; a native64 build silently halved the capacity and could overflow
+// past 512 break/continue blocks. Size by the pointer.
+
 void __cdecl Scr_AddContinueBlock(scr_block_s *block)
 {
     if (!block->abortLevel && scrCompileGlob.continueChildBlocks && scrCompilePub.developer_statement != 2)
@@ -2374,7 +2386,7 @@ void __cdecl EmitForStatement(
     oldContinueChildCount = scrCompileGlob.continueChildCount;
     breakChildCount = 0;
     continueChildCount = 0;
-    continueChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(4096, "EmitForStatement");
+    continueChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "EmitForStatement");
     scrCompileGlob.continueChildBlocks = continueChildBlocks;
     scrCompileGlob.continueChildCount = &continueChildCount;
     scrCompileGlob.breakBlock = forStatBlock->block;
@@ -2382,7 +2394,7 @@ void __cdecl EmitForStatement(
     {
         pos2 = 0;
         nextPos2 = 0;
-        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "EmitForStatement");
+        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "EmitForStatement");
         scrCompileGlob.breakChildCount = &breakChildCount;
     }
     else
@@ -2502,7 +2514,7 @@ void __cdecl EmitWhileStatement(
     {
         pos2 = 0;
         nextPos2 = 0;
-        breakChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(4096, "EmitWhileStatement");
+        breakChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "EmitWhileStatement");
         scrCompileGlob.breakChildCount = &breakChildCount;
     }
     else
@@ -2822,7 +2834,9 @@ void __cdecl EmitCaseStatementInfo(unsigned int name, sval_u sourcePos)
     }
     else
     {
-        newCaseStatement = (CaseStatementInfo*)Hunk_AllocateTempMemoryHigh(16, "EmitCaseStatementInfo");
+        // M4 (ki-n1et): record-sized allocation; 16 bytes was the frozen
+        // 32-bit CaseStatementInfo (two host pointers on native64).
+        newCaseStatement = (CaseStatementInfo*)Hunk_AllocateTempMemoryHigh(sizeof(CaseStatementInfo), "EmitCaseStatementInfo");
         newCaseStatement->name = name;
         newCaseStatement->codePos = TempMalloc(0);
         newCaseStatement->sourcePos = sourcePos.stringValue;
@@ -2889,7 +2903,7 @@ void __cdecl EmitSwitchStatementList(sval_u val, bool lastStatement, unsigned in
     oldBreakChildCount = scrCompileGlob.breakChildCount;
     oldBreakBlock = scrCompileGlob.breakBlock;
     breakChildCount = 0;
-    breakChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(4096, "EmitSwitchStatementList");
+    breakChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "EmitSwitchStatementList");
     scrCompileGlob.breakChildBlocks = breakChildBlocks;
     scrCompileGlob.breakChildCount = &breakChildCount;
     scrCompileGlob.breakBlock = 0;
@@ -2961,12 +2975,9 @@ void __cdecl EmitSwitchStatementList(sval_u val, bool lastStatement, unsigned in
     scrCompileGlob.breakBlock = oldBreakBlock;
 }
 
-int __cdecl CompareCaseInfo(_DWORD *elem1, _DWORD *elem2)
+int CompareCaseInfo(const void *a, const void *b)
 {
-    if (*elem1 <= *elem2)
-        return *elem1 < *elem2;
-    else
-        return -1;
+    return Scr_CompareSwitchCases(a, b);
 }
 
 void __cdecl EmitSwitchStatement(
@@ -3004,7 +3015,7 @@ void __cdecl EmitSwitchStatement(
     AddOpcodePos(sourcePos.stringValue, 0);
     EmitShort(0);
     pos2 = scrCompileGlob.codePos;
-    *pos1 = scrCompileGlob.codePos - (unsigned char*)nextPos1;
+    Scr_WriteBytecodeValue(pos1, static_cast<uintptr_t>(scrCompileGlob.codePos - reinterpret_cast<unsigned char *>(nextPos1)));
     pos3 = TempMallocAlignStrict(0);
     num = 0;
     caseStatement = scrCompileGlob.currentCaseStatement;
@@ -3015,15 +3026,15 @@ void __cdecl EmitSwitchStatement(
         caseStatement = caseStatement->next;
         ++num;
     }
-    *pos2 = num;
-    qsort(pos3, num, 8u, (int(*)(const void*, const void*))CompareCaseInfo);
+    Scr_WriteBytecodeValue(pos2, static_cast<unsigned short>(num));
+    qsort(pos3, num, sizeof(ScrSwitchCase), CompareCaseInfo);
     while (num > 1)
     {
-        if (*pos3 == *(pos3 + 2))
+        if (Scr_ReadBytecodeValue<uintptr_t>(pos3) == Scr_ReadBytecodeValue<uintptr_t>(pos3 + sizeof(ScrSwitchCase)))
         {
             for (caseStatementa = scrCompileGlob.currentCaseStatement; caseStatementa; caseStatementa = caseStatementa->next)
             {
-                if (caseStatementa->name == *pos3)
+                if (caseStatementa->name == Scr_ReadBytecodeValue<uintptr_t>(pos3))
                 {
                     CompileError(caseStatementa->sourcePos, "duplicate case expression");
                     return;
@@ -3031,7 +3042,7 @@ void __cdecl EmitSwitchStatement(
             }
         }
         --num;
-        pos3 += 8;
+        pos3 += sizeof(ScrSwitchCase);
     }
     ConnectBreakStatements();
     scrCompileGlob.currentCaseStatement = oldCaseStatement;
@@ -3059,7 +3070,9 @@ void __cdecl EmitBreakStatement(sval_u sourcePos, scr_block_s *block)
 
         if (scrCompilePub.developer_statement != 2)
         {
-            newBreakStatement = (BreakStatementInfo*)Hunk_AllocateTempMemoryHigh(12, "EmitBreakStatement");
+            // M4 (ki-n1et): record-sized allocations (12 bytes was the
+            // frozen 32-bit node; three host pointers on native64).
+            newBreakStatement = (BreakStatementInfo*)Hunk_AllocateTempMemoryHigh(sizeof(BreakStatementInfo), "EmitBreakStatement");
             newBreakStatement->codePos = (char*)scrCompileGlob.codePos;
             newBreakStatement->nextCodePos = TempMalloc(0);
             newBreakStatement->next = scrCompileGlob.currentBreakStatement;
@@ -3090,7 +3103,7 @@ void __cdecl EmitContinueStatement(sval_u sourcePos, scr_block_s *block)
 
         if (scrCompilePub.developer_statement != 2)
         {
-            newContinueStatement = (ContinueStatementInfo*)Hunk_AllocateTempMemoryHigh(12, "EmitContinueStatement");
+            newContinueStatement = (ContinueStatementInfo*)Hunk_AllocateTempMemoryHigh(sizeof(ContinueStatementInfo), "EmitContinueStatement");
             newContinueStatement->codePos = (char*)scrCompileGlob.codePos;
             newContinueStatement->nextCodePos = TempMalloc(0);
             newContinueStatement->next = scrCompileGlob.currentContinueStatement;
@@ -3535,7 +3548,8 @@ unsigned int __cdecl SpecifyThreadPosition(unsigned int threadId, unsigned int n
     pos = Scr_EvalVariable(posId);
     if (pos.type)
     {
-        if (pos.u.intValue)
+        // M4 (ki-n1et): codepos-family cell holds a live host pointer.
+        if (pos.u.codePosValue)
         {
             buf = scrParserPub.sourceBufferLookup[Scr_GetSourceBuffer(pos.u.codePosValue)].buf;
             v4 = SL_ConvertToString(name);
@@ -3551,7 +3565,7 @@ unsigned int __cdecl SpecifyThreadPosition(unsigned int threadId, unsigned int n
     else
     {
         pos.type = type;
-        pos.u.intValue = 0;
+        pos.u.codePosValue = 0;
         SetNewVariableValue(posId, &pos);
         return posId;
     }
@@ -3845,13 +3859,13 @@ void __cdecl Scr_CalcLocalVarsWhileStatement(sval_u expr, sval_u stmt, scr_block
     oldContinueChildCount = scrCompileGlob.continueChildCount;
     breakChildCount = 0;
     continueChildCount = 0;
-    continueChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsWhileStatement");
+    continueChildBlocks = (scr_block_s**)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsWhileStatement");
     scrCompileGlob.continueChildBlocks = continueChildBlocks;
     scrCompileGlob.continueChildCount = &continueChildCount;
     abortLevel = block->abortLevel;
     if (constConditional)
     {
-        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsWhileStatement");
+        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsWhileStatement");
         scrCompileGlob.breakChildCount = &breakChildCount;
     }
     else
@@ -3920,13 +3934,13 @@ void __cdecl Scr_CalcLocalVarsForStatement(
     oldContinueChildCount = scrCompileGlob.continueChildCount;
     breakChildCount = 0;
     continueChildCount = 0;
-    continueChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsForStatement");
+    continueChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsForStatement");
     scrCompileGlob.continueChildBlocks = continueChildBlocks;
     scrCompileGlob.continueChildCount = &continueChildCount;
     abortLevel = block->abortLevel;
     if (constConditional)
     {
-        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsForStatement");
+        breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsForStatement");
         scrCompileGlob.breakChildCount = &breakChildCount;
     }
     else
@@ -3992,13 +4006,13 @@ void __cdecl Scr_CalcLocalVarsSwitchStatement(sval_u stmtlist, scr_block_s *bloc
     oldBreakChildBlocks = scrCompileGlob.breakChildBlocks;
     oldBreakChildCount = scrCompileGlob.breakChildCount;
     breakChildCount = 0;
-    breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsSwitchStatement");
+    breakChildBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsSwitchStatement");
     scrCompileGlob.breakChildBlocks = breakChildBlocks;
     scrCompileGlob.breakChildCount = &breakChildCount;
     childCount = 0;
     currentBlock = 0;
     hasDefault = 0;
-    childBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(4096, "Scr_CalcLocalVarsSwitchStatement");
+    childBlocks = (scr_block_s **)Hunk_AllocateTempMemoryHigh(sizeof(scr_block_s *) * MAX_SWITCH_CASES, "Scr_CalcLocalVarsSwitchStatement");
     for (node = stmtlist.node[0].node[1].node; node; node = node[1].node)
     {
         if (node[0].node[0].type == ENUM_case || node[0].node[0].type == ENUM_default)
@@ -4139,7 +4153,8 @@ void __cdecl SetThreadPosition(unsigned int threadId)
 
     v1 = TempMalloc(0);
     Variable = FindVariable(threadId, 1u);
-    GetVariableValueAddress(Variable)->u.intValue = (int)v1;
+    // M4 (ki-n1et): live pointer into the compiler temp buffer.
+    GetVariableValueAddress(Variable)->u.codePosValue = v1;
 }
 
 void __cdecl InitThread(int type)
@@ -4363,16 +4378,19 @@ void __cdecl LinkThread(unsigned int threadId, VariableValue *pos, bool allowFar
                     MyAssertHandler(".\\script\\scr_compiler.cpp", 2319, 0, "%s", "scrVarPub.developer_script");
                 if (type == 7)
                 {
-                    CompileError2((char*)value->u.intValue, "normal script cannot reference a function in a /# ... #/ comment");
+                    // M4 (ki-n1et): the cell holds a live host pointer into
+                    // the fixup stream; only the pointed-to DWORD slot stays
+                    // 32-bit (serialized fastfile format).
+                    CompileError2((char *)value->u.codePosValue, "normal script cannot reference a function in a /# ... #/ comment");
                     return;
                 }
             }
-            if (!pos->type || !allowFarCall && *(DWORD*)value->u.intValue == 1)
+            if (!pos->type || !allowFarCall && *(DWORD *)value->u.codePosValue == 1)
             {
-                CompileError2((char*)value->u.intValue, "unknown function");
+                CompileError2((char *)value->u.codePosValue, "unknown function");
                 return;
             }
-            *(DWORD*)value->u.intValue = pos->u.intValue;
+            *(DWORD *)value->u.codePosValue = pos->u.intValue;
             RemoveVariable(threadId, i + 2);
         }
         RemoveVariable(threadId, 0);

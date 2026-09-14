@@ -628,7 +628,11 @@ void __cdecl SND_StopChannelAndPlayChainAlias(uint32_t chanId);
 void __cdecl StopChannel(int chanId);
 void __cdecl SND_AddPhysicsSound(snd_alias_list_t *aliasList, float *org);
 double __cdecl SND_GetVolumeNormalized();
+// KisakCOD port: the client window-binding hook is a Win32-only surface;
+// POSIX builds have no HWND and no client window system.
+#ifdef _WIN32
 void __cdecl SND_SetHWND(HWND hwnd);
+#endif
 void __cdecl SND_SetData(MssSoundCOD4 *mssSound, void *srcData);
 
 #ifdef KISAK_SP

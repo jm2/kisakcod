@@ -1830,11 +1830,13 @@ struct Scr_ScriptWatch : UI_LinesComponent // sizeof=0x34
     void UpdateBreakpoint(bool add);
 };
 
+//SCRIPT_DEBUGGER_SOURCE_POS_TYPE_BEGIN
 struct Scr_SourcePos2_t // sizeof=0x8
 {                                       // ...
     uint32_t bufferIndex;           // ...
     uint32_t sourcePos;             // ...
 };
+//SCRIPT_DEBUGGER_SOURCE_POS_TYPE_END
 
 struct Scr_ScriptCallStack : UI_LinesComponent // sizeof=0x12C
 {                                       // ...

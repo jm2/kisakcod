@@ -27,6 +27,11 @@
 #include <ode/collision_space.h>
 #include <ode/contact.h>
 
+// KisakCOD ABI port: COD4's vendored extensions spell fixed-width types with
+// MSVC-only __int32/__int16 keywords; <stdint.h> provides the identical-width
+// spellings on every supported compiler.
+#include <stdint.h>
+
  // LWSS ADD - COD4 User data
 struct cbrush_t;
 
@@ -182,7 +187,7 @@ typedef struct dGeomClass {
   // dGeomDtorFn *dtor; REM
 } dGeomClass;
 
-enum PhysicsGeomType : __int32
+enum PhysicsGeomType : int32_t
 {                                       // ...
     PHYS_GEOM_NONE = 0x0,
     PHYS_GEOM_BOX = 0x1,
@@ -208,7 +213,7 @@ struct GeomStateBox // sizeof=0xC
 };
 union GeomStateBrush_u // sizeof=0x4
 {                                       // ...
-    unsigned __int16 brushModel;
+    uint16_t brushModel;
     const cbrush_t *brush;
 };
 struct GeomStateBrush // sizeof=0x1C

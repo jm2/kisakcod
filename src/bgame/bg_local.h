@@ -202,15 +202,16 @@ enum ViewLockTypes : __int32
 //    $6CB7272563F4458FB40A4A5E123C4ABA __s0;
 //    const char *linkPointer;
 //};
+//SCRIPT_RUNTIME_ANIM_HANDLE_TYPES_BEGIN
 struct scr_anim_s // sizeof=0x4
 {   
     scr_anim_s()
     {
-        linkPointer = NULL;
+        packed = 0;
     }
     scr_anim_s(int i)
     {
-        linkPointer = (const char *)i; // KISAKHACK
+        packed = static_cast<uint32_t>(i);
     }
     // ...
     //$76411D3CC105A18E6E4A61D5A929E310 ___u0; // ...
@@ -221,7 +222,7 @@ struct scr_anim_s // sizeof=0x4
             uint16_t index;
             uint16_t tree;
         };
-        const char* linkPointer;
+        uint32_t packed; // Frozen animation handle, never a host pointer.
     };
 };
 static_assert(sizeof(struct scr_anim_s) == 0x4);
@@ -233,6 +234,8 @@ struct loadAnim_t // sizeof=0x48
     char szAnimName[64];
 };
 static_assert((sizeof(struct loadAnim_t) * 512) == 36864);
+
+//SCRIPT_RUNTIME_ANIM_HANDLE_TYPES_END
 
 struct pml_t // sizeof=0x80
 {                                       // ...
@@ -340,7 +343,7 @@ struct shellshock_parms_t_movement // sizeof=0x1
 };
 static_assert(sizeof(shellshock_parms_t_movement) == 0x1);
 
-const struct shellshock_parms_t // sizeof=0x268
+struct shellshock_parms_t // sizeof=0x268
 {                                       // ...
     shellshock_parms_t_screenblend screenBlend;
     shellshock_parms_t_view view;
@@ -365,7 +368,7 @@ struct shellshock_t // sizeof=0x20
 };
 static_assert(sizeof(shellshock_t) == 0x20);
 
-struct __declspec(align(8)) animation_s // sizeof=0x68
+struct KISAK_ALIGNAS(8) animation_s // sizeof=0x68
 {                                       // ...
     char name[64];
     int32_t initialLerp;
@@ -429,6 +432,7 @@ struct animScript_t // sizeof=0x204
 };
 static_assert(sizeof(animScript_t) == 0x204);
 
+//SCRIPT_RUNTIME_ANIM_TREE_TYPE_BEGIN
 struct scr_animtree_t // sizeof=0x4
 {                                       // ...
     scr_animtree_t()
@@ -437,9 +441,10 @@ struct scr_animtree_t // sizeof=0x4
     }
     XAnim_s* anims;                     // ...
 };
-static_assert(sizeof(scr_animtree_t) == 0x4);
+RUNTIME_SIZE(scr_animtree_t, 0x4, 0x8);
+//SCRIPT_RUNTIME_ANIM_TREE_TYPE_END
 
-struct __declspec(align(8)) animScriptData_t // sizeof=0x9A9D0
+struct KISAK_ALIGNAS(8) animScriptData_t // sizeof=0x9A9D0
 {                                       // ...
     animation_s animations[512];
     uint32_t numAnimations;

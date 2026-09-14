@@ -109,6 +109,30 @@ struct netchan_t // sizeof=0x62C
     netProfileInfo_t prof;
 };
 
+// Wire size of the sequence prefix Netchan_Process writes ahead of a
+// reassembled payload when it rebuilds a complete message in the
+// destination msg buffer.
+constexpr int32_t NETCHAN_REASSEMBLY_PREFIX_SIZE = 4;
+
+// Validates the COMPLETE output span of fragment reassembly -- the four-byte
+// sequence prefix plus the accumulated fragment payload -- against the
+// destination buffer capacity. Netchan_Process must consult this BEFORE it
+// writes either the prefix or the payload into msg->data; the historical
+// check compared the payload alone and let a full reassembly run four bytes
+// past the end of the destination buffer.
+//
+// The arithmetic is overflow-safe by construction: the subtraction is only
+// evaluated after the capacity is proven to hold the prefix, so no signed
+// operation can wrap for ANY int32 inputs (negative capacities, INT32_MAX
+// lengths, ...). The exact-width int32_t operands keep the verdict identical
+// on ILP32 and native64 targets.
+constexpr bool Netchan_ReassembledSpanFits(int32_t destinationCapacity, int32_t reassembledLength)
+{
+    return reassembledLength >= 0
+        && destinationCapacity >= NETCHAN_REASSEMBLY_PREFIX_SIZE
+        && reassembledLength <= destinationCapacity - NETCHAN_REASSEMBLY_PREFIX_SIZE;
+}
+
 struct fakedLatencyPackets_t // sizeof=0x50
 {
     bool outbound;
