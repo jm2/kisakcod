@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""
-Regression tests for CI inventory derivation and matrix expansion.
+"""Regression tests for CI inventory derivation and matrix expansion."""
 
-Run with:  python3 scripts/ci/test_capability_dashboard_inventory.py
-
-These tests pin the two concrete review findings on PR #150: matrix legs must
-be a real Cartesian product with GitHub include/exclude semantics (and must
-fail explicitly on an unsupported shape instead of guessing a count), and the
-workflow inventory must cover both ``*.yml`` and ``*.yaml``.  They are
-stdlib-only so any hosted Python can run them.
-"""
+# Run with:  python3 scripts/ci/test_capability_dashboard_inventory.py
+#
+# These tests pin the two concrete review findings on PR #150: matrix legs must
+# be a real Cartesian product with GitHub include/exclude semantics (and must
+# fail explicitly on an unsupported shape instead of guessing a count), and the
+# workflow inventory must cover both ``*.yml`` and ``*.yaml``.  They are
+# stdlib-only so any hosted Python can run them.
 
 from __future__ import annotations
 

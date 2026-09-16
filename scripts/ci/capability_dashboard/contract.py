@@ -1,13 +1,11 @@
-"""
-Fixed delivery contract and typed evidence predicates.
+"""Fixed delivery contract and typed evidence predicates."""
 
-This module owns the parts of the capability dashboard that must not be
-editable through ``docs/capability/manifest.json``: the mandatory delivery
-policy (#122 network compatibility, #126 acceptance), the canonical
-validation-level ranking, and the explicit package-result token.  Both
-validation and aggregation import these constants, so a weakened or reordered
-manifest cannot manufacture a delivered target.
-"""
+# This module owns the parts of the capability dashboard that must not be
+# editable through ``docs/capability/manifest.json``: the mandatory delivery
+# policy (#122 network compatibility, #126 acceptance), the canonical
+# validation-level ranking, and the explicit package-result token.  Both
+# validation and aggregation import these constants, so a weakened or reordered
+# manifest cannot manufacture a delivered target.
 
 from __future__ import annotations
 

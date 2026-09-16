@@ -1,10 +1,8 @@
-"""
-Filesystem locations and the generated-file marker for the dashboard.
+"""Filesystem locations and the generated-file marker for the dashboard."""
 
-The package lives at ``scripts/ci/capability_dashboard``; every repository
-path is derived from this file's location so the generator works regardless of
-the current working directory or the checkout root.
-"""
+# The package lives at ``scripts/ci/capability_dashboard``; every repository
+# path is derived from this file's location so the generator works regardless of
+# the current working directory or the checkout root.
 
 from __future__ import annotations
 

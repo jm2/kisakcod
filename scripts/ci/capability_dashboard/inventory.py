@@ -1,12 +1,11 @@
-"""
-Derive the CI and test inventories from repository files.
+"""Derive the CI and test inventories from repository files."""
 
-The dashboard never hand-maintains job counts or completion percentages.  CI
-jobs are parsed from ``.github/workflows/*.yml`` and ``*.yaml``; matrix legs are
-expanded with GitHub's Cartesian product and include/exclude semantics so the
-reported invocation count is real.  A matrix shape this line-oriented parser
-cannot interpret is reported as an explicit error instead of a guessed count.
-"""
+# The dashboard never hand-maintains job counts or completion percentages.  CI
+# jobs are parsed from ``.github/workflows/*.yml`` and ``*.yaml``; matrix legs
+# are expanded with GitHub's Cartesian product and include/exclude semantics so
+# the reported invocation count is real.  A matrix shape this line-oriented
+# parser cannot interpret is reported as an explicit error instead of a guessed
+# count.
 
 from __future__ import annotations
 

@@ -1,16 +1,14 @@
-"""
-Capability dashboard generator package.
+"""Capability dashboard generator package."""
 
-The stable entry point is ``scripts/ci/capability-dashboard.py``; this package
-holds the implementation split into cohesive modules:
-
-* :mod:`capability_dashboard.contract` -- the fixed, non-editable policy;
-* :mod:`capability_dashboard.manifest` -- loading and strict validation;
-* :mod:`capability_dashboard.inventory` -- CI/test inventory derivation;
-* :mod:`capability_dashboard.aggregate` -- requested-target delivery;
-* :mod:`capability_dashboard.render` -- deterministic Markdown rendering;
-* :mod:`capability_dashboard.cli` -- argument parsing and the ``--check`` gate.
-"""
+# The stable entry point is ``scripts/ci/capability-dashboard.py``; this package
+# holds the implementation split into cohesive modules:
+#
+# * :mod:`capability_dashboard.contract` -- the fixed, non-editable policy;
+# * :mod:`capability_dashboard.manifest` -- loading and strict validation;
+# * :mod:`capability_dashboard.inventory` -- CI/test inventory derivation;
+# * :mod:`capability_dashboard.aggregate` -- requested-target delivery;
+# * :mod:`capability_dashboard.render` -- deterministic Markdown rendering;
+# * :mod:`capability_dashboard.cli` -- argument parsing and the ``--check`` gate.
 
 from __future__ import annotations
 

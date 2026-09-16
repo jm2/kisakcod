@@ -1,11 +1,9 @@
-"""
-Manifest loading and strict, fail-closed schema validation.
+"""Manifest loading and strict, fail-closed schema validation."""
 
-``validate_manifest`` never treats a schema problem as a warning: an omitted,
-empty or weakened mandatory delivery policy is an error.  The checks are split
-into small, independently auditable helpers so each stays simple and the
-mandatory contract stays in exactly one place.
-"""
+# ``validate_manifest`` never treats a schema problem as a warning: an omitted,
+# empty or weakened mandatory delivery policy is an error.  The checks are split
+# into small, independently auditable helpers so each stays simple and the
+# mandatory contract stays in exactly one place.
 
 from __future__ import annotations
 
@@ -85,21 +83,30 @@ def _validate_validation_levels(levels: list, errors: list[str]) -> None:
         )
 
 
+def _validate_modes(modes: list, errors: list[str]) -> None:
+    """Require a non-empty declared mode set."""
+    if not modes:
+        errors.append("enums.modes must be a non-empty list")
+
+
+def _validate_targets(targets: list, errors: list[str]) -> list[str]:
+    """Validate the requested-target list and return its ids."""
+    target_ids = [target.get("id") for target in targets]
+    if len(set(target_ids)) != len(target_ids):
+        errors.append("targets contain duplicate ids")
+    if not any(target.get("requested") for target in targets):
+        errors.append("targets must contain at least one requested target")
+    return target_ids
+
+
 def _build_context(manifest: dict, errors: list[str]) -> SchemaContext:
     """Return the validated enum sets and target ids for a manifest."""
     enums = manifest.get("enums") or {}
     levels = enums.get("validation_levels") or []
     _validate_validation_levels(levels, errors)
     modes = enums.get("modes") or []
-    if not modes:
-        errors.append("enums.modes must be a non-empty list")
-
-    targets = manifest.get("targets") or []
-    target_ids = [target.get("id") for target in targets]
-    if len(set(target_ids)) != len(target_ids):
-        errors.append("targets contain duplicate ids")
-    if not any(target.get("requested") for target in targets):
-        errors.append("targets must contain at least one requested target")
+    _validate_modes(modes, errors)
+    target_ids = _validate_targets(manifest.get("targets") or [], errors)
 
     return SchemaContext(
         target_ids=target_ids,

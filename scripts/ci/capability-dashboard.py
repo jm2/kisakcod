@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""
-Generate the KisakCOD capability dashboard from the evidence manifest.
+"""Generate the KisakCOD capability dashboard from the evidence manifest."""
 
-The implementation lives in the ``capability_dashboard`` package next to this
-launcher.  This file only keeps the documented
-``python3 scripts/ci/capability-dashboard.py`` entry point stable, and
-re-exports the package API for callers that import the script path directly.
-
-The manifest (``docs/capability/manifest.json``) is the small authoritative
-dataset.  The package validates it against the fixed mandatory delivery
-contract, derives the CI job inventory from ``.github/workflows/*.yml`` and
-``*.yaml`` plus the test inventory from ``tests/CMakeLists.txt`` /
-``CMakePresets.json``, and renders a deterministic Markdown dashboard that
-``--check`` verifies is current.
-"""
+# The implementation lives in the ``capability_dashboard`` package next to this
+# launcher.  This file only keeps the documented
+# ``python3 scripts/ci/capability-dashboard.py`` entry point stable, and
+# re-exports the package API for callers that import the script path directly.
+#
+# The manifest (``docs/capability/manifest.json``) is the small authoritative
+# dataset.  The package validates it against the fixed mandatory delivery
+# contract, derives the CI job inventory from ``.github/workflows/*.yml`` and
+# ``*.yaml`` plus the test inventory from ``tests/CMakeLists.txt`` /
+# ``CMakePresets.json``, and renders a deterministic Markdown dashboard that
+# ``--check`` verifies is current.
 
 from __future__ import annotations
 

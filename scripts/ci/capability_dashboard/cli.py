@@ -1,9 +1,7 @@
-"""
-Command-line entry point for the capability dashboard generator.
+"""Command-line entry point for the capability dashboard generator."""
 
-This module wires loading, validation, inventory derivation, aggregation and
-rendering together, and implements the ``--check`` currency gate used by CI.
-"""
+# This module wires loading, validation, inventory derivation, aggregation and
+# rendering together, and implements the ``--check`` currency gate used by CI.
 
 from __future__ import annotations
 

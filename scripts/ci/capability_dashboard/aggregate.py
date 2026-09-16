@@ -1,13 +1,11 @@
-"""
-Compute requested-target delivery against the fixed mandatory contract.
+"""Compute requested-target delivery against the fixed mandatory contract."""
 
-The required modes, commercial references, validation threshold and boolean
-gates come from the module-level policy in :mod:`capability_dashboard.contract`,
-never from the manifest's editable ``aggregate`` block, so a weakened or
-emptied aggregate cannot change the computed result.  Promoted rows must carry
-a complete evidence record and validated references must carry their own
-provenance.
-"""
+# The required modes, commercial references, validation threshold and boolean
+# gates come from the module-level policy in
+# :mod:`capability_dashboard.contract`, never from the manifest's editable
+# ``aggregate`` block, so a weakened or emptied aggregate cannot change the
+# computed result.  Promoted rows must carry a complete evidence record and
+# validated references must carry their own provenance.
 
 from __future__ import annotations
 

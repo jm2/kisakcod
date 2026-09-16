@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""
-Unit tests for scripts/ci/capability-dashboard.py.
+"""Unit tests for scripts/ci/capability-dashboard.py."""
 
-Run with:  python3 scripts/ci/test_capability_dashboard.py
-
-These tests do not need a CMake build; they exercise the manifest schema,
-the line-oriented CI parser, the test-inventory derivation, and the aggregate
-delivery gate.  They are intentionally stdlib-only so any hosted Python can
-run them.
-"""
+# Run with:  python3 scripts/ci/test_capability_dashboard.py
+#
+# These tests do not need a CMake build; they exercise the manifest schema,
+# the line-oriented CI parser, the test-inventory derivation, and the aggregate
+# delivery gate.  They are intentionally stdlib-only so any hosted Python can
+# run them.
 
 from __future__ import annotations
 

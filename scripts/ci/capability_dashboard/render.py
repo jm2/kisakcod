@@ -1,10 +1,8 @@
-"""
-Render the deterministic Markdown capability dashboard.
+"""Render the deterministic Markdown capability dashboard."""
 
-The renderer is split into one helper per section so each stays simple.  The
-output is byte-for-byte deterministic for a given manifest and inventory, which
-is what makes the ``--check`` currency gate meaningful.
-"""
+# The renderer is split into one helper per section so each stays simple.  The
+# output is byte-for-byte deterministic for a given manifest and inventory,
+# which is what makes the ``--check`` currency gate meaningful.
 
 from __future__ import annotations
 
@@ -45,14 +43,14 @@ def _render_header(manifest: dict) -> list[str]:
         "",
         (
             "Source manifest: `docs/capability/manifest.json`; "
-            "manifest authoring base: "
-            f"`{_fmt(manifest.get('authoring_base'))}`."
+            + "manifest authoring base: "
+            + f"`{_fmt(manifest.get('authoring_base'))}`."
         ),
         (
             "CI and test inventories are derived from "
-            "`.github/workflows/*.yml`, `.github/workflows/*.yaml`, "
-            "`tests/CMakeLists.txt` and `CMakePresets.json`, not maintained "
-            "by hand."
+            + "`.github/workflows/*.yml`, `.github/workflows/*.yaml`, "
+            + "`tests/CMakeLists.txt` and `CMakePresets.json`, not maintained "
+            + "by hand."
         ),
         "",
     ]
@@ -66,13 +64,13 @@ def _render_aggregate(aggregate: dict) -> list[str]:
         "",
         (
             "A requested target counts as delivered only when every required "
-            f"mode ({', '.join(modes)}) reaches "
-            f"`{aggregate['required_level']}` with a package result, the "
-            "capability is production-enrolled, and both required commercial "
-            "reference profiles "
-            f"({', '.join(aggregate['required_refs'])}) are validated. "
-            "Test, scaffold, instrument, CoD4x and fork-only evidence is "
-            "excluded from this aggregate."
+            + f"mode ({', '.join(modes)}) reaches "
+            + f"`{aggregate['required_level']}` with a package result, the "
+            + "capability is production-enrolled, and both required commercial "
+            + "reference profiles "
+            + f"({', '.join(aggregate['required_refs'])}) are validated. "
+            + "Test, scaffold, instrument, CoD4x and fork-only evidence is "
+            + "excluded from this aggregate."
         ),
         "",
         "| Requested target | " + " | ".join(modes) + " | Delivered |",
@@ -90,8 +88,8 @@ def _render_aggregate(aggregate: dict) -> list[str]:
         lines.append("")
         lines.append(
             "Commercial reference gate is **not satisfied**, so no requested "
-            "target can be delivered even if a mode row reaches the required "
-            "level."
+            + "target can be delivered even if a mode row reaches the required "
+            + "level."
         )
     lines.append("")
     return lines
@@ -107,8 +105,10 @@ def _render_references(manifest: dict) -> list[str]:
     ]
     for reference in manifest.get("commercial_references") or []:
         lines.append(
-            "| {id} | {origin} | {required} | {status} | {sha} | {run} | "
-            "{blocker} |".format(
+            (
+                "| {id} | {origin} | {required} | {status} | {sha} | "
+                + "{run} | {blocker} |"
+            ).format(
                 id=_escape(reference.get("id")),
                 origin=_escape(reference.get("origin")),
                 required=_escape(_fmt(reference.get("required"))),
@@ -146,13 +146,15 @@ def _render_capabilities(manifest: dict) -> list[str]:
         "## Capability rows",
         "",
         "| Capability | Target | Mode | Owner | Implementation | "
-        "Production enrolled | Strongest validation | Evidence | Blocker |",
+        + "Production enrolled | Strongest validation | Evidence | Blocker |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for cap in capabilities:
         lines.append(
-            "| {id} | {target} | {mode} | {owner} | {impl} | {enrolled} | "
-            "{level} | {evidence} | {blocker} |".format(
+            (
+                "| {id} | {target} | {mode} | {owner} | {impl} | "
+                + "{enrolled} | {level} | {evidence} | {blocker} |"
+            ).format(
                 id=_escape(cap.get("id")),
                 target=_escape(cap.get("target")),
                 mode=_escape(cap.get("mode")),
@@ -174,13 +176,15 @@ def _render_supporting(manifest: dict) -> list[str]:
         "## Supporting evidence (never advances a production row)",
         "",
         "| Evidence | Provenance | Kind | Strongest validation | "
-        "Counts toward delivery | Note |",
+        + "Counts toward delivery | Note |",
         "|---|---|---|---|---|---|",
     ]
     for item in manifest.get("supporting_evidence") or []:
         lines.append(
-            "| {label} (`{id}`) | {prov} | {kind} | {level} | {counts} | "
-            "{note} |".format(
+            (
+                "| {label} (`{id}`) | {prov} | {kind} | {level} | {counts} | "
+                + "{note} |"
+            ).format(
                 id=_escape(item.get("id")),
                 label=_escape(item.get("label")),
                 prov=_escape(item.get("provenance")),
@@ -201,7 +205,7 @@ def _render_ci_inventory(ci: dict) -> list[str]:
         "",
         (
             f"{ci['workflow_count']} workflows, {ci['job_count']} jobs, "
-            f"{ci['invocations']} matrix-expanded job invocations."
+            + f"{ci['invocations']} matrix-expanded job invocations."
         ),
         "",
         "| Workflow | Job | Matrix legs | Self-hosted |",
@@ -233,8 +237,8 @@ def _render_test_inventory(tests: dict) -> list[str]:
         "",
         (
             "Counts describe the current tree only. Dated local/CI snapshots "
-            "from earlier trees belong in `docs/task.md`'s historical "
-            "sections, not here."
+            + "from earlier trees belong in `docs/task.md`'s historical "
+            + "sections, not here."
         ),
         "",
     ]
