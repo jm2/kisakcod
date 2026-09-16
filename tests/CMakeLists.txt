@@ -3984,8 +3984,9 @@ set_tests_properties(database-graph-hash-canonical PROPERTIES TIMEOUT 20)
 # Original retail bytecode is identified by content hash, the sidecar is
 # versioned by format and converter identity, and stale or corrupt evidence is
 # regenerated from the untouched original inputs. The portable core is
-# exercised on the Linux host; the Windows renderer enrolls it at the D3D9
-# shader creation boundary.
+# exercised on the Linux host. Build enrollment is the database/engine source
+# manifest; wiring it into the D3D9 shader creation boundary is future
+# renderer integration.
 add_executable(kisakcod-shader-cache-tests
     shader_cache_tests.cpp
     ${SRC_DIR}/database/shader_cache.cpp

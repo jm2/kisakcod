@@ -12,10 +12,12 @@
 //
 // This header is the platform-neutral core of that policy. It contains no
 // D3D9/Win32 types and performs no file I/O, so it compiles and is tested on
-// the Linux host while the Windows renderer enrolls it at the D3D9 shader
-// creation boundary. The original retail bytecode is never rewritten and
-// never copied into an archive: callers only read it, mint a content address
-// from it, and store a derived artifact beside it under a versioned directory.
+// the Linux host. Build enrollment is limited to the database/engine source
+// manifest (scripts/common_files.cmake); enrolling it at the D3D9 shader
+// creation boundary is future renderer integration and is not wired by this
+// change. The original retail bytecode is never rewritten and never copied
+// into an archive: callers only read it, mint a content address from it, and
+// store a derived artifact beside it under a versioned directory.
 //
 // The derived artifact itself (SPIR-V today) is produced by the translator at
 // the platform boundary. This core owns identity, versioning, framing and
@@ -23,6 +25,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -118,6 +121,18 @@ static_assert(kSidecarHeaderBytes == 8 + 5 * 4
         + db::graph_hash::kDigestBytes + 4 + 4
         + db::graph_hash::kDigestBytes,
     "sidecar header size must match the serialized framing");
+
+// True when the fixed header plus this payload length is representable as a
+// std::size_t. artifactSize is the caller's real buffer length, so the total
+// (not just the payload) is what may wrap: on ILP32 hosts
+// kSidecarHeaderBytes + artifactSize overflows for payload lengths that still
+// fit the u32 framing field. Callers must check this before sizing a buffer
+// or reading a payload, and must not treat the u32 limit as sufficient.
+inline constexpr bool SidecarTotalSizeRepresentable(const std::size_t artifactSize) noexcept
+{
+    return artifactSize
+        <= (std::numeric_limits<std::size_t>::max)() - kSidecarHeaderBytes;
+}
 
 // Validates the original D3D9 bytecode for the given stage and renderer.
 bool ValidateSourceProgram(const std::uint32_t *program,

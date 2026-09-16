@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 namespace
@@ -60,6 +61,7 @@ constexpr std::size_t kOffsetFormatVersion = 8;
 constexpr std::size_t kOffsetConverterVersion = 12;
 constexpr std::size_t kOffsetLoadForRenderer = 20;
 constexpr std::size_t kOffsetArtifactKind = 60;
+constexpr std::size_t kOffsetArtifactSize = 64;
 constexpr std::size_t kOffsetArtifactHash = 68;
 
 void WriteU32At(std::vector<std::uint8_t> &bytes,
@@ -414,6 +416,53 @@ void TestDigestWidthIndependence()
         "artifact hash is sensitive to content");
 }
 
+void TestSidecarSizeBoundary()
+{
+    // The full sidecar (header + payload) must stay representable in
+    // std::size_t. On ILP32, kSidecarHeaderBytes + a u32-sized payload wraps,
+    // so the guard has to fire before any buffer is sized or the payload is
+    // read. These cases are allocation-free: a one-dword dummy stands in for
+    // the payload, and a guard failure would be observable as a non-empty
+    // result (or a read past the dummy) rather than as a huge allocation.
+    const std::size_t maxSize = (std::numeric_limits<std::size_t>::max)();
+    Expect(db::shader_cache::SidecarTotalSizeRepresentable(0),
+        "an empty payload is representable");
+    Expect(db::shader_cache::SidecarTotalSizeRepresentable(
+               maxSize - db::shader_cache::kSidecarHeaderBytes),
+        "the largest representable payload is accepted");
+    Expect(!db::shader_cache::SidecarTotalSizeRepresentable(
+               maxSize - db::shader_cache::kSidecarHeaderBytes + 1),
+        "one byte past the representable payload is rejected");
+    Expect(!db::shader_cache::SidecarTotalSizeRepresentable(maxSize),
+        "an unrepresentable payload is rejected");
+
+    SourceIdentity identity;
+    Expect(IdentityFor(kVertexSm2, 5, Stage::Vertex, 0, identity),
+        "identity for the size-boundary build");
+    const std::uint32_t dummy = 0;
+    Expect(db::shader_cache::BuildSidecar(identity, DerivedArtifactKind::SpirV,
+               &dummy, maxSize).empty(),
+        "a SIZE_MAX payload is rejected without allocation");
+#if SIZE_MAX > UINT32_MAX
+    Expect(db::shader_cache::BuildSidecar(identity, DerivedArtifactKind::SpirV,
+               &dummy, static_cast<std::size_t>(UINT32_MAX) + 1).empty(),
+        "a payload above the u32 framing limit is rejected");
+#endif
+
+    // A recorded payload size that cannot be represented must classify as
+    // regeneration instead of being trusted into the size computation.
+    const std::vector<std::uint8_t> derived = {0x01};
+    std::vector<std::uint8_t> oversized = db::shader_cache::BuildSidecar(
+        identity, DerivedArtifactKind::SpirV, derived.data(), derived.size());
+    WriteU32At(oversized, kOffsetArtifactSize,
+        (std::numeric_limits<std::uint32_t>::max)());
+    std::vector<std::uint8_t> artifact;
+    Expect(LookupWithSidecar(oversized, kVertexSm2, 5, Stage::Vertex, 0, artifact)
+            == LookupResult::NeedsRegeneration,
+        "an unrepresentable recorded size forces regeneration");
+    Expect(artifact.empty(), "an unrepresentable recorded size yields no artifact");
+}
+
 } // namespace
 
 int main()
@@ -430,6 +479,7 @@ int main()
     TestNaming();
     TestBuildGuards();
     TestDigestWidthIndependence();
+    TestSidecarSizeBoundary();
 
     if (g_failures > 0)
     {

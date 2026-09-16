@@ -32,7 +32,11 @@ compiled bytecode rather than on regenerated source.
 
 The portable core is `src/database/shader_cache.{h,cpp}`. It has no D3D9 or
 Win32 surface and performs no file I/O; translation and storage stay at the
-platform boundary where the retail archives are read (never rewritten).
+platform boundary where the retail archives are read (never rewritten). This
+change enrolls the core in the database/engine source manifest
+(`scripts/common_files.cmake`) and exercises it on the Linux host; enrolling it
+at the D3D9 shader creation boundary (the production call site) is future
+renderer integration and is not wired here.
 
 * Every digest is a domain-separated SHA-256 over an explicit, width-tagged,
   little-endian stream (`db::graph_hash::GraphHashBuilder`). The domain tag is

@@ -247,11 +247,19 @@ std::vector<std::uint8_t> BuildSidecar(const SourceIdentity &source,
     const std::size_t artifactSize)
 {
     std::vector<std::uint8_t> bytes;
+    // Reject an unrepresentable total before sizing a buffer or reading the
+    // payload. The u32 framing limit alone is not enough: on ILP32,
+    // kSidecarHeaderBytes + artifactSize can wrap even when artifactSize still
+    // fits the framing field, which would under-allocate the buffer and then
+    // overrun it in the header write and payload memcpy below.
     if (artifact == nullptr || artifactSize == 0
-        || artifactSize > static_cast<std::size_t>(UINT32_MAX))
+        || artifactSize > static_cast<std::size_t>(UINT32_MAX)
+        || !SidecarTotalSizeRepresentable(artifactSize))
     {
         return bytes;
     }
+
+    const std::size_t totalSize = kSidecarHeaderBytes + artifactSize;
 
     SidecarHeader header;
     header.formatVersion = kFormatVersion;
@@ -264,8 +272,8 @@ std::vector<std::uint8_t> BuildSidecar(const SourceIdentity &source,
     header.artifactSize = static_cast<std::uint32_t>(artifactSize);
     header.artifactHash = HashArtifact(artifact, artifactSize);
 
-    bytes.resize(kSidecarHeaderBytes + artifactSize);
-    if (!SerializeSidecarHeader(header, bytes.data(), kSidecarHeaderBytes))
+    bytes.resize(totalSize);
+    if (!SerializeSidecarHeader(header, bytes.data(), bytes.size()))
     {
         bytes.clear();
         return bytes;
@@ -305,16 +313,19 @@ LookupResult LookupDerivedShader(const std::uint8_t *const sidecarBytes,
 
     if (header.artifactKind != DerivedArtifactKind::SpirV
         || header.artifactSize == 0
+        || !SidecarTotalSizeRepresentable(header.artifactSize)
         || !SidecarHeaderMatchesSource(header, source))
     {
         return LookupResult::NeedsRegeneration;
     }
 
     const std::size_t payloadOffset = kSidecarHeaderBytes;
+    // SidecarTotalSizeRepresentable guarantees this addition cannot wrap.
     const std::size_t expectedSize =
         payloadOffset + static_cast<std::size_t>(header.artifactSize);
-    // A short file, trailing bytes, or an overflowing length is corruption.
-    if (expectedSize != sidecarSize || expectedSize < payloadOffset)
+    // A short file or trailing bytes is corruption; the size is checked here
+    // rather than trusted from the header.
+    if (expectedSize != sidecarSize)
     {
         return LookupResult::NeedsRegeneration;
     }
