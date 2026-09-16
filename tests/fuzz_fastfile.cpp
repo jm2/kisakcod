@@ -45,6 +45,7 @@
 #include <xanim/buf_cursor.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -157,8 +158,68 @@ bool IsSafeEntryName(const std::string &name)
     return p.filename().string() == name;
 }
 
+// The manifest grammar is exact: `fnv1a64-hex size kind name`, one
+// space-separated token per field and nothing after the name. The hash is
+// a fixed 16-hex-digit FNV-1a value, the size is an unsigned decimal that
+// must fit uint64_t, and the kind is one of the tracked classifications.
+// Parsing rejects signs, trailing garbage, partial conversions and
+// overflow so a mutated manifest cannot slip past the checked corpus gate.
+
+// Strict fixed-width hex parse for the 64-bit FNV-1a hash field. Requires
+// exactly 16 hex digits (the generator always emits `%016llx`), rejects a
+// sign or `0x` prefix, and verifies the whole token was consumed.
+bool ParseManifestHash(const std::string &token, uint64_t &out)
+{
+    if (token.size() != 16)
+        return false;
+    for (const char c : token)
+    {
+        const bool hexDigit = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                              (c >= 'A' && c <= 'F');
+        if (!hexDigit)
+            return false;
+    }
+
+    errno = 0;
+    char *end = nullptr;
+    const unsigned long long value = std::strtoull(token.c_str(), &end, 16);
+    if (end != token.c_str() + token.size() || errno == ERANGE)
+        return false;
+    out = static_cast<uint64_t>(value);
+    return true;
+}
+
+// Strict unsigned decimal parse for the size field. Rejects signs, empty
+// or non-digit tokens, trailing garbage, and uint64_t overflow that
+// strtoull would otherwise silently clamp to ULLONG_MAX.
+bool ParseManifestSize(const std::string &token, uint64_t &out)
+{
+    if (token.empty())
+        return false;
+    for (const char c : token)
+    {
+        if (c < '0' || c > '9')
+            return false;
+    }
+
+    errno = 0;
+    char *end = nullptr;
+    const unsigned long long value = std::strtoull(token.c_str(), &end, 10);
+    if (end != token.c_str() + token.size() || errno == ERANGE)
+        return false;
+    out = static_cast<uint64_t>(value);
+    return true;
+}
+
+// The only classifications the manifest tracker records.
+bool IsValidCorpusKind(const std::string &kind)
+{
+    return kind == "valid" || kind == "malformed";
+}
+
 // Load and parse the corpus manifest. Returns false on a missing,
-// unreadable, or malformed manifest; the caller fails closed.
+// unreadable, or malformed manifest; the caller fails closed. Every field
+// is validated strictly and a line carrying extra tokens is rejected.
 bool LoadCorpusManifest(const std::string &dir, std::vector<CorpusEntry> &entries)
 {
     const std::string path = dir + "/" + kCorpusManifestName;
@@ -180,15 +241,35 @@ bool LoadCorpusManifest(const std::string &dir, std::vector<CorpusEntry> &entrie
         std::string sizeStr;
         std::string kind;
         std::string name;
+        std::string extra;
         if (!(ls >> hashHex >> sizeStr >> kind >> name))
         {
             std::fprintf(stderr, "fuzz_fastfile: malformed manifest line: %s\n", line.c_str());
             return false;
         }
+        if (ls >> extra)
+        {
+            std::fprintf(stderr, "fuzz_fastfile: manifest line has trailing fields: %s\n",
+                         line.c_str());
+            return false;
+        }
 
         CorpusEntry entry;
-        entry.hash = std::strtoull(hashHex.c_str(), nullptr, 16);
-        entry.size = std::strtoull(sizeStr.c_str(), nullptr, 10);
+        if (!ParseManifestHash(hashHex, entry.hash))
+        {
+            std::fprintf(stderr, "fuzz_fastfile: malformed manifest hash: %s\n", hashHex.c_str());
+            return false;
+        }
+        if (!ParseManifestSize(sizeStr, entry.size))
+        {
+            std::fprintf(stderr, "fuzz_fastfile: malformed manifest size: %s\n", sizeStr.c_str());
+            return false;
+        }
+        if (!IsValidCorpusKind(kind))
+        {
+            std::fprintf(stderr, "fuzz_fastfile: unknown corpus kind: %s\n", kind.c_str());
+            return false;
+        }
         entry.kind = kind;
         entry.name = name;
         entries.push_back(entry);
@@ -1185,6 +1266,48 @@ int RunCorpusGate(const char *scratchRoot)
         return true;
     };
 
+    // Copy the accepted corpus and rewrite its manifest through `transform`,
+    // returning the new directory path. Used by the strict-manifest negative
+    // regressions below; the payload files are left untouched so only the
+    // manifest field under test differs.
+    auto mutateManifest = [&](const std::string &dest, auto transform) -> bool {
+        if (!copyValid(dest))
+            return false;
+
+        const std::string manifestPath = dest + "/" + kCorpusManifestName;
+        std::vector<std::string> lines;
+        {
+            std::ifstream in(manifestPath);
+            if (!in.is_open())
+            {
+                std::fprintf(stderr, "fuzz_fastfile: gate: could not read manifest %s\n",
+                             manifestPath.c_str());
+                return false;
+            }
+            std::string line;
+            while (std::getline(in, line))
+                lines.push_back(line);
+        }
+
+        std::ofstream out(manifestPath, std::ios::binary | std::ios::trunc);
+        if (!out.is_open())
+        {
+            std::fprintf(stderr, "fuzz_fastfile: gate: could not rewrite manifest %s\n",
+                         manifestPath.c_str());
+            return false;
+        }
+        for (const std::string &line : lines)
+            out << transform(line) << "\n";
+        out.flush();
+        if (!out)
+        {
+            std::fprintf(stderr, "fuzz_fastfile: gate: manifest rewrite failed for %s\n",
+                         manifestPath.c_str());
+            return false;
+        }
+        return true;
+    };
+
     // A listed entry removed from disk.
     const std::string missingEntry = root + "/missing_entry";
     if (copyValid(missingEntry))
@@ -1221,6 +1344,91 @@ int RunCorpusGate(const char *scratchRoot)
                       static_cast<std::streamsize>(bytes.size()));
         }
         expectFail("hash-mismatched entry", hashMismatch);
+    }
+
+    // Strict-manifest regressions: a mutated manifest must be rejected
+    // instead of silently accepting clamped or trailing fields. Each case
+    // copies the accepted corpus and rewrites the manifest in place. These
+    // cover the previously lenient strtoull/kind/field-count paths.
+    const std::string sizeGarbage = root + "/manifest_size_garbage";
+    if (mutateManifest(sizeGarbage, [](const std::string &line) {
+            if (line.empty() || line[0] == '#')
+                return line;
+            std::istringstream ls(line);
+            std::string hash, size, kind, name;
+            ls >> hash >> size >> kind >> name;
+            return hash + " " + size + "x " + kind + " " + name;
+        }))
+    {
+        expectFail("size token with garbage suffix", sizeGarbage);
+    }
+
+    // A size that overflows uint64_t: strtoull clamps to ULLONG_MAX, so
+    // without the ERANGE check the old parser silently accepted it.
+    const std::string sizeOverflow = root + "/manifest_size_overflow";
+    if (mutateManifest(sizeOverflow, [](const std::string &line) {
+            if (line.empty() || line[0] == '#')
+                return line;
+            std::istringstream ls(line);
+            std::string hash, size, kind, name;
+            ls >> hash >> size >> kind >> name;
+            return hash + " 99999999999999999999999999 " + kind + " " + name;
+        }))
+    {
+        expectFail("overflowing size token", sizeOverflow);
+    }
+
+    // A signed size: strtoull accepts a leading '-' and wraps the value.
+    const std::string sizeSigned = root + "/manifest_size_signed";
+    if (mutateManifest(sizeSigned, [](const std::string &line) {
+            if (line.empty() || line[0] == '#')
+                return line;
+            std::istringstream ls(line);
+            std::string hash, size, kind, name;
+            ls >> hash >> size >> kind >> name;
+            return hash + " -" + size + " " + kind + " " + name;
+        }))
+    {
+        expectFail("signed size token", sizeSigned);
+    }
+
+    // A hash whose token is not exactly 16 hex digits.
+    const std::string hashGarbage = root + "/manifest_hash_garbage";
+    if (mutateManifest(hashGarbage, [](const std::string &line) {
+            if (line.empty() || line[0] == '#')
+                return line;
+            std::istringstream ls(line);
+            std::string hash, size, kind, name;
+            ls >> hash >> size >> kind >> name;
+            return "zz" + hash + " " + size + " " + kind + " " + name;
+        }))
+    {
+        expectFail("non-hex hash token", hashGarbage);
+    }
+
+    // An unknown classification outside the valid/malformed enum.
+    const std::string bogusKind = root + "/manifest_bogus_kind";
+    if (mutateManifest(bogusKind, [](const std::string &line) {
+            if (line.empty() || line[0] == '#')
+                return line;
+            std::istringstream ls(line);
+            std::string hash, size, kind, name;
+            ls >> hash >> size >> kind >> name;
+            return hash + " " + size + " bogus " + name;
+        }))
+    {
+        expectFail("unknown corpus kind", bogusKind);
+    }
+
+    // A fifth token beyond the four grammar fields.
+    const std::string extraToken = root + "/manifest_extra_token";
+    if (mutateManifest(extraToken, [](const std::string &line) {
+            if (line.empty() || line[0] == '#')
+                return line;
+            return line + " UNPARSED";
+        }))
+    {
+        expectFail("manifest line with trailing token", extraToken);
     }
 
     // Sentinel preservation: caller content under the supplied parent must
