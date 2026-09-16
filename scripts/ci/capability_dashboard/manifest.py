@@ -141,25 +141,19 @@ def _validate_reference(reference: dict, errors: list[str]) -> None:
 
 
 def _is_reference_id(value: object) -> TypeGuard[str]:
-    """
-    Return True for a usable commercial-reference id.
-
-    An id must be a string with at least one non-whitespace character.  A
-    missing, ``null``, empty, whitespace-only or non-string id is not usable:
-    downstream code keys references by id, so a malformed id used to slip past
-    validation and then raise ``KeyError`` while aggregating.
-    """
+    """Return True for a usable commercial-reference id."""
+    # An id must be a string with at least one non-whitespace character.  A
+    # missing, null, empty, whitespace-only or non-string id is not usable:
+    # downstream code keys references by id, so a malformed id used to slip past
+    # validation and then raise KeyError while aggregating.
     return isinstance(value, str) and bool(value.strip())
 
 
 def _validate_references(references: list, errors: list[str]) -> list[str]:
-    """
-    Validate every commercial reference and return their usable ids.
-
-    Invalid rows never contribute an id, so the duplicate and membership checks
-    below cannot be defeated by an id-less row, and the returned ids are safe to
-    index by.
-    """
+    """Validate every commercial reference and return their usable ids."""
+    # Invalid rows never contribute an id, so the duplicate and membership
+    # checks below cannot be defeated by an id-less row, and the returned ids
+    # are safe to index by.
     valid: list[dict] = []
     ref_ids: list[str] = []
     for reference in references:
