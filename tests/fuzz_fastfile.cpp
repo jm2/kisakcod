@@ -988,19 +988,126 @@ int RunCorpus(const char *corpusDir)
 
 int GenerateSeeds(const char *outDir);
 
-// Negative gate: prove the corpus contract rejects every malformed
-// corpus condition and accepts only the generated manifest corpus. The
-// scratch root is passed by CTest (under the build tree), never a
-// hardcoded /tmp path.
-int RunCorpusGate(const char *scratchRoot)
+// Create dir (and parents) if needed, reporting the first filesystem error.
+bool EnsureDirectory(const std::filesystem::path &dir, const char *label)
 {
-    if (scratchRoot == nullptr || scratchRoot[0] == 0)
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (!ec && std::filesystem::is_directory(dir))
+        return true;
+    const std::string detail = ec ? ec.message() : std::string("not a directory");
+    std::fprintf(stderr, "fuzz_fastfile: %s unavailable: %s: %s\n", label,
+                 dir.string().c_str(), detail.c_str());
+    return false;
+}
+
+bool WriteTextFile(const std::filesystem::path &file, const std::string &text)
+{
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out << text;
+    out.flush();
+    return static_cast<bool>(out);
+}
+
+std::string UniqueNonce()
+{
+    std::random_device rd;
+    return std::to_string((static_cast<unsigned long long>(rd()) << 32) ^
+                          static_cast<unsigned long long>(rd()));
+}
+
+// Caller-supplied parent scratch root plus the exclusively owned scratch
+// child and preservation sentinel this gate creates inside it. The
+// destructor removes only the child and sentinel this object created —
+// never the caller's parent or any of its pre-existing content.
+struct CallerScratch
+{
+    std::filesystem::path parent;
+    std::filesystem::path owned;
+    std::filesystem::path sentinel;
+    std::string sentinelText = "preserve caller content\n";
+
+    CallerScratch() = default;
+    CallerScratch(const CallerScratch &) = delete;
+    CallerScratch &operator=(const CallerScratch &) = delete;
+
+    ~CallerScratch()
     {
-        std::fprintf(stderr, "fuzz_fastfile: corpus-gate requires a scratch directory\n");
-        return 1;
+        std::error_code ignore;
+        if (!owned.empty())
+            std::filesystem::remove_all(owned, ignore);
+        if (!sentinel.empty())
+            std::filesystem::remove_all(sentinel, ignore);
     }
 
+    bool Prepare(const char *scratchRoot)
+    {
+        if (scratchRoot == nullptr || scratchRoot[0] == 0)
+        {
+            std::fprintf(stderr, "fuzz_fastfile: corpus-gate requires a scratch directory\n");
+            return false;
+        }
+        parent = std::filesystem::path(scratchRoot);
+        if (!EnsureDirectory(parent, "scratch parent"))
+            return false;
+
+        const std::string nonce = UniqueNonce();
+        sentinel = parent / ("corpus-gate-sentinel-" + nonce);
+        if (!EnsureDirectory(sentinel, "caller sentinel") ||
+            !WriteTextFile(sentinel / "keep.txt", sentinelText))
+        {
+            std::fprintf(stderr, "fuzz_fastfile: could not write caller sentinel %s\n",
+                         sentinel.string().c_str());
+            return false;
+        }
+
+        for (unsigned int attempt = 0; attempt < 64 && owned.empty(); ++attempt)
+        {
+            const std::filesystem::path candidate =
+                parent / ("corpus-gate-" + nonce + "-" + std::to_string(attempt));
+            std::error_code ec;
+            if (std::filesystem::create_directory(candidate, ec))
+                owned = candidate;
+            else if (ec)
+                break;
+        }
+        if (owned.empty())
+        {
+            std::fprintf(stderr, "fuzz_fastfile: could not allocate owned scratch under %s\n",
+                         parent.string().c_str());
+            return false;
+        }
+        return true;
+    }
+
+    bool CallerContentPreserved() const
+    {
+        std::vector<unsigned char> bytes;
+        if (!ReadFileChecked((sentinel / "keep.txt").string(), bytes))
+            return false;
+        return std::string(bytes.begin(), bytes.end()) == sentinelText;
+    }
+};
+
+// Negative gate: prove the corpus contract rejects every malformed
+// corpus condition and accepts only the generated manifest corpus.
+//
+// The supplied path is a caller-owned PARENT scratch root (CTest passes
+// one under the build tree, never a hardcoded /tmp path; the CLI may
+// pass any path). The gate NEVER removes that parent or any pre-existing
+// content in it: it allocates a freshly created, exclusively owned child
+// directory underneath and uses only that, then removes only the child it
+// created. A sentinel written into the parent before the gate runs is
+// re-checked afterwards, so a regression that deletes caller content
+// fails the test.
+int RunCorpusGate(const char *scratchRoot)
+{
+    CallerScratch scratch;
+    if (!scratch.Prepare(scratchRoot))
+        return 1;
+
     int failures = 0;
+    std::error_code ec;
 
     auto expectFail = [&](const std::string &label, const std::string &dir) {
         if (RunCorpusDir(dir) == 0)
@@ -1029,16 +1136,7 @@ int RunCorpusGate(const char *scratchRoot)
         }
     };
 
-    const std::string root(scratchRoot);
-    std::error_code ec;
-    std::filesystem::remove_all(std::filesystem::path(root), ec);
-    std::filesystem::create_directories(std::filesystem::path(root), ec);
-    if (ec)
-    {
-        std::fprintf(stderr, "fuzz_fastfile: could not create scratch root %s: %s\n",
-                     root.c_str(), ec.message().c_str());
-        return 1;
-    }
+    const std::string root = scratch.owned.string();
 
     // Absent corpus directory.
     expectFail("absent corpus", root + "/absent");
@@ -1123,6 +1221,20 @@ int RunCorpusGate(const char *scratchRoot)
                       static_cast<std::streamsize>(bytes.size()));
         }
         expectFail("hash-mismatched entry", hashMismatch);
+    }
+
+    // Sentinel preservation: caller content under the supplied parent must
+    // survive the gate untouched.
+    if (!scratch.CallerContentPreserved())
+    {
+        std::fprintf(stderr,
+                     "fuzz_fastfile: gate: caller sentinel %s was removed or altered\n",
+                     scratch.sentinel.string().c_str());
+        ++failures;
+    }
+    else
+    {
+        std::fprintf(stdout, "fuzz_fastfile: gate: caller content preserved\n");
     }
 
     if (failures != 0)
