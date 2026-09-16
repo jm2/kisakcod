@@ -101,6 +101,7 @@ set(BGAME
     "${SRC_DIR}/bgame/bg_misc.cpp"
     "${SRC_DIR}/bgame/bg_misctables.cpp"
     "${SRC_DIR}/bgame/bg_perks_mp.cpp"
+    "${SRC_DIR}/bgame/bg_phys_obj_id_tables.cpp"
     "${SRC_DIR}/bgame/bg_pmove.cpp"
     "${SRC_DIR}/bgame/bg_public.h"
     "${SRC_DIR}/bgame/bg_slidemove.cpp"
