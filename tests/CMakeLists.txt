@@ -2180,6 +2180,23 @@ add_test(
 )
 set_tests_properties(cgame-pose-atomic-protocols PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-phys-obj-id-tests
+    phys_obj_id_tests.cpp
+    ${SRC_DIR}/bgame/bg_phys_obj_id_tables.cpp
+)
+target_include_directories(kisakcod-phys-obj-id-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-phys-obj-id-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-phys-obj-id-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-phys-obj-id-tests)
+set_target_properties(kisakcod-phys-obj-id-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME phys-obj-id-sidecar-contracts
+    COMMAND kisakcod-phys-obj-id-tests
+)
+set_tests_properties(phys-obj-id-sidecar-contracts PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-renderer-reservation-atomic-tests
     renderer_reservation_atomic_tests.cpp
 )
@@ -2886,6 +2903,13 @@ add_test(
 )
 
 add_test(
+    NAME phys-obj-id-owner-bound-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/phys_obj_id_owner_bound_source_test.cmake
+)
+
+add_test(
     NAME effectscore-archive-physics-transaction
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
@@ -3466,6 +3490,153 @@ add_test(
     NAME script-widening-value-contracts
     COMMAND kisakcod-script-widening-value-tests)
 
+# script-parser-stack-growth-contracts: behavioral regression for the parser
+# state/value stack relocation (ki-pycb). The relocation fragments are
+# extracted verbatim from both parser sources at configure time, so this TU
+# executes the real copy and cursor-restore statements against the real sval_u
+# value cell and short state cell rather than a separate reimplementation.
+# The record declarations, initial stack depth and max-depth limit are also
+# extracted, and configure fails closed if any anchor or declaration drifts.
+function(kisakcod_extract_yacc_between source begin_mark end_mark output)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
+    file(READ "${source}" _slice_text)
+    string(FIND "${_slice_text}" "${begin_mark}" _slice_begin)
+    string(FIND "${_slice_text}" "${end_mark}" _slice_end)
+    if(_slice_begin EQUAL -1 OR _slice_end EQUAL -1 OR _slice_end LESS_EQUAL _slice_begin)
+        message(FATAL_ERROR
+            "Parser anchors '${begin_mark}' missing or misordered in ${source}")
+    endif()
+    string(LENGTH "${begin_mark}" _slice_begin_len)
+    math(EXPR _slice_begin "${_slice_begin} + ${_slice_begin_len}")
+    math(EXPR _slice_len "${_slice_end} - ${_slice_begin}")
+    string(SUBSTRING "${_slice_text}" "${_slice_begin}" "${_slice_len}" _slice_body)
+    string(STRIP "${_slice_body}" _slice_body)
+    file(WRITE "${output}" "${_slice_body}\n")
+endfunction()
+
+# Extract the max-depth literal (and prove it is a single integer) from the
+# guard predicate the parser actually evaluates, so the test cannot drift from
+# the production limit without a configure-time failure.
+function(kisakcod_yacc_maxdepth source begin_mark end_mark out_var)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
+    file(READ "${source}" _md_text)
+    string(FIND "${_md_text}" "${begin_mark}" _md_begin)
+    string(FIND "${_md_text}" "${end_mark}" _md_end)
+    if(_md_begin EQUAL -1 OR _md_end LESS_EQUAL _md_begin)
+        message(FATAL_ERROR "Max-depth anchors missing in ${source}")
+    endif()
+    string(LENGTH "${begin_mark}" _md_begin_len)
+    math(EXPR _md_begin "${_md_begin} + ${_md_begin_len}")
+    math(EXPR _md_len "${_md_end} - ${_md_begin}")
+    string(SUBSTRING "${_md_text}" "${_md_begin}" "${_md_len}" _md_body)
+    string(REGEX MATCHALL "[0-9]+" _md_numbers "${_md_body}")
+    list(LENGTH _md_numbers _md_count)
+    if(NOT _md_count EQUAL 1)
+        message(FATAL_ERROR
+            "Expected exactly one max-depth literal in ${source}, got '${_md_body}'")
+    endif()
+    set(${out_var} "${_md_numbers}" PARENT_SCOPE)
+endfunction()
+
+set(_yacc_growth_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${_yacc_growth_generated_dir}")
+
+# The built parser (client/dedicated/server targets) and the unbuilt generated
+# reference carry the same growth block; both slices are pinned by this test,
+# including the live-count capture, the doubling/clamp and the overflowing
+# predicate, so the test executes the real decision rather than reproducing it.
+kisakcod_extract_yacc_between(
+    "${SRC_DIR}/script/scr_yacc2.cpp"
+    "//SCRIPT_YACC2_GROWTH_SLICE_BEGIN"
+    "//SCRIPT_YACC2_GROWTH_SLICE_END"
+    "${_yacc_growth_generated_dir}/script_yacc2_growth_slice.inc")
+kisakcod_extract_yacc_between(
+    "${SRC_DIR}/script/scr_yacc.cpp"
+    "//SCRIPT_YACC_GROWTH_SLICE_BEGIN"
+    "//SCRIPT_YACC_GROWTH_SLICE_END"
+    "${_yacc_growth_generated_dir}/script_yacc_growth_slice.inc")
+
+# Real record declarations. The production declaration becomes the test's
+# stype_t; the generated declaration is renamed and checked against it.
+kisakcod_extract_yacc_between(
+    "${SRC_DIR}/script/scr_yacc2.cpp"
+    "//SCRIPT_YACC2_STYPE_BEGIN"
+    "//SCRIPT_YACC2_STYPE_END"
+    "${_yacc_growth_generated_dir}/script_stype_production.inc")
+kisakcod_extract_yacc_between(
+    "${SRC_DIR}/script/scr_yacc.cpp"
+    "//SCRIPT_YACC_STYPE_BEGIN"
+    "//SCRIPT_YACC_STYPE_END"
+    "${_yacc_growth_generated_dir}/script_stype_generated_raw.inc")
+file(READ "${_yacc_growth_generated_dir}/script_stype_generated_raw.inc" _gen_stype_text)
+if(NOT _gen_stype_text MATCHES "struct stype_t")
+    message(FATAL_ERROR "Generated parser declaration missing 'struct stype_t'")
+endif()
+string(REPLACE "stype_t" "generated_stype_t" _gen_stype_text "${_gen_stype_text}")
+file(WRITE "${_yacc_growth_generated_dir}/script_stype_generated.inc" "${_gen_stype_text}")
+
+# Real initial stack depths: the built parser's YYINITDEPTH expression
+# (200 + sizeof(stype_t)) and the generated reference's literal array bound.
+kisakcod_extract_yacc_between(
+    "${SRC_DIR}/script/scr_yacc2.cpp"
+    "//SCRIPT_YACC2_INITDEPTH_BEGIN"
+    "//SCRIPT_YACC2_INITDEPTH_END"
+    "${_yacc_growth_generated_dir}/script_yacc2_initdepth.inc")
+file(READ "${SRC_DIR}/script/scr_yacc.cpp" _gen_yacc_text)
+string(REGEX MATCH "yyssa\\[([0-9]+)\\]" _gen_yyssa "${_gen_yacc_text}")
+set(_gen_depth "${CMAKE_MATCH_1}")
+string(REGEX MATCH "yyvsa\\[([0-9]+)\\]" _gen_yyvsa "${_gen_yacc_text}")
+set(_gen_value_depth "${CMAKE_MATCH_1}")
+if(_gen_depth STREQUAL "" OR _gen_value_depth STREQUAL "" OR NOT _gen_depth EQUAL "${_gen_value_depth}")
+    message(FATAL_ERROR
+        "Generated parser state/value initial depths missing or mismatched")
+endif()
+file(WRITE "${_yacc_growth_generated_dir}/script_yacc_initial_depth.inc"
+    "#define SCRIPT_YACC_INITIAL_CAPACITY ${_gen_depth}\n")
+
+# The max-depth limit is read from the guard predicate both parsers evaluate.
+kisakcod_yacc_maxdepth(
+    "${SRC_DIR}/script/scr_yacc2.cpp"
+    "//SCRIPT_YACC2_MAXDEPTH_BEGIN"
+    "//SCRIPT_YACC2_MAXDEPTH_END"
+    _yacc2_maxdepth)
+kisakcod_yacc_maxdepth(
+    "${SRC_DIR}/script/scr_yacc.cpp"
+    "//SCRIPT_YACC_MAXDEPTH_BEGIN"
+    "//SCRIPT_YACC_MAXDEPTH_END"
+    _yacc_maxdepth)
+if(NOT _yacc2_maxdepth EQUAL _yacc_maxdepth)
+    message(FATAL_ERROR
+        "Max-depth limit differs between parsers: ${_yacc2_maxdepth} != ${_yacc_maxdepth}")
+endif()
+file(WRITE "${_yacc_growth_generated_dir}/script_yacc_maxdepth.inc"
+    "#define SCRIPT_YACC_STACK_LIMIT ${_yacc2_maxdepth}\n")
+
+add_executable(kisakcod-script-parser-stack-growth-tests
+    script_parser_stack_growth_test.cpp)
+target_include_directories(
+    kisakcod-script-parser-stack-growth-tests PRIVATE
+        ${SRC_DIR}
+        ${_yacc_growth_generated_dir})
+target_compile_definitions(
+    kisakcod-script-parser-stack-growth-tests PRIVATE KISAK_DEDI_HEADLESS=1)
+target_compile_features(
+    kisakcod-script-parser-stack-growth-tests PRIVATE cxx_std_20)
+# The verbatim slices keep the decompiled parser's allocation/copy idioms
+# (alloca copies over the parse-value union); isolate their diagnostics.
+if(MSVC)
+    target_compile_options(kisakcod-script-parser-stack-growth-tests PRIVATE /W0)
+else()
+    target_compile_options(kisakcod-script-parser-stack-growth-tests PRIVATE -w)
+endif()
+set_target_properties(
+    kisakcod-script-parser-stack-growth-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME script-parser-stack-growth-contracts
+    COMMAND kisakcod-script-parser-stack-growth-tests)
+set_tests_properties(script-parser-stack-growth-contracts PROPERTIES TIMEOUT 60)
+
 # Compile selected production bodies against real runtime record headers and
 # service doubles. These regressions exercise allocations and pointer consumers,
 # including the object-save handoff, rather than a copy of their algorithms.
@@ -3821,3 +3992,58 @@ add_test(
     NAME msvc-printf-shim-contracts
     COMMAND kisakcod-msvc-printf-shim-tests
 )
+# M5 exit (ki-msb): canonical widened-runtime-graph capture. The parity
+# digest is a domain-separated SHA-256 over a framed, typed, little-endian
+# stream; pointer-bearing values never enter it, so a 32-bit reference walk
+# and a widened 64-bit walk of one logical graph produce one digest.
+add_executable(kisakcod-db-graph-hash-tests
+    db_graph_hash_tests.cpp
+    ${SRC_DIR}/database/db_graph_hash.cpp)
+target_include_directories(
+    kisakcod-db-graph-hash-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-graph-hash-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-graph-hash-tests)
+set_target_properties(kisakcod-db-graph-hash-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-graph-hash-canonical
+    COMMAND kisakcod-db-graph-hash-tests)
+set_tests_properties(database-graph-hash-canonical PROPERTIES TIMEOUT 20)
+
+# M5 exit (ki-msb): retail fast-file parity harness. Runs on the native64
+# host against an unmodified retail fast-file and emits the capture digest
+# consumed by scripts/ci/run-retail-fastfile-parity.sh; --self-test exercises
+# the full pipeline on synthesized fixtures so CI covers the instrument
+# without retail assets.
+add_executable(kisakcod-retail-fastfile-parity-harness
+    retail_fastfile_parity_harness.cpp
+    ${SRC_DIR}/database/db_graph_hash.cpp)
+target_include_directories(
+    kisakcod-retail-fastfile-parity-harness PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-retail-fastfile-parity-harness PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-retail-fastfile-parity-harness)
+set_target_properties(kisakcod-retail-fastfile-parity-harness PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME retail-fastfile-parity-harness-self-test
+    COMMAND kisakcod-retail-fastfile-parity-harness --self-test)
+set_tests_properties(retail-fastfile-parity-harness-self-test PROPERTIES
+    TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+# ki-msb PR #113 review correction: the parity DRIVER's acceptance boundary
+# is negative-tested — envelope-only captures can never pass the --mode
+# m5-graph runtime-graph gate, success results are named by mode + capture
+# kind, and leg identity is enforced. Runs the real driver against the
+# harness built above plus a stub graph-v1 harness for the positive
+# runtime-graph path. POSIX-only: the driver is a bash instrument run on the
+# Linux host leg; Windows legs mint references and run the C++ self-test.
+if(UNIX)
+    add_test(
+        NAME retail-fastfile-parity-driver-gates
+        COMMAND "${CMAKE_SOURCE_DIR}/scripts/ci/test-run-retail-fastfile-parity.sh"
+            --build-dir "${CMAKE_BINARY_DIR}")
+    set_tests_properties(retail-fastfile-parity-driver-gates PROPERTIES
+        TIMEOUT 120 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
