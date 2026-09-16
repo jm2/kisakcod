@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "checksums": "SHA256SUMS.txt",
+  "required_prerequisites": [
+    "verify-tag",
+    "build-source",
+    "build-release",
+    "windows-x86-sp-release",
+    "windows-x86-nosteam-release",
+    "windows-x86-headless-release",
+    "checksums"
+  ],
+  "source": {
+    "archive": "KisakCOD-${tag}-source.tar.gz",
+    "provenance": "KisakCOD-${tag}-source-provenance.json",
+    "identity_member": "release-identity.json"
+  },
+  "profiles": [
+    {
+      "target": "windows-x86",
+      "config": "production-mp-dedi",
+      "artifacts": ["KisakCOD-windows-x86.zip"],
+      "provenance": "KisakCOD-windows-x86-provenance.json",
+      "required_inventory": [
+        "toolchain",
+        "dependencies",
+        "runtime_lookup",
+        "notices",
+        "symbols"
+      ]
+    },
+    {
+      "target": "windows-x86-sp",
+      "config": "production-sp",
+      "artifacts": ["KisakCOD-windows-x86-sp.zip"],
+      "provenance": "KisakCOD-windows-x86-sp-provenance.json",
+      "required_inventory": [
+        "toolchain",
+        "dependencies",
+        "runtime_lookup",
+        "notices",
+        "symbols"
+      ]
+    },
+    {
+      "target": "windows-x86-nosteam",
+      "config": "production-mp-dedi-nosteam",
+      "artifacts": ["KisakCOD-windows-x86-nosteam.zip"],
+      "provenance": "KisakCOD-windows-x86-nosteam-provenance.json",
+      "required_inventory": [
+        "toolchain",
+        "dependencies",
+        "runtime_lookup",
+        "notices",
+        "symbols"
+      ]
+    },
+    {
+      "target": "windows-x86-headless",
+      "config": "production-dedi-headless",
+      "artifacts": ["KisakCOD-windows-x86-headless.zip"],
+      "provenance": "KisakCOD-windows-x86-headless-provenance.json",
+      "required_inventory": [
+        "toolchain",
+        "dependencies",
+        "runtime_lookup",
+        "notices",
+        "symbols"
+      ]
+    },
+    {
+      "target": "windows-amd64",
+      "config": "portable-test-composition",
+      "artifacts": ["KisakCOD-windows-amd64-portable-Release.zip"],
+      "provenance": "KisakCOD-windows-amd64-portable-Release-provenance.json",
+      "required_inventory": ["toolchain"]
+    },
+    {
+      "target": "windows-arm64",
+      "config": "portable-test-composition",
+      "artifacts": ["KisakCOD-windows-arm64-portable-Release.zip"],
+      "provenance": "KisakCOD-windows-arm64-portable-Release-provenance.json",
+      "required_inventory": ["toolchain"]
+    },
+    {
+      "target": "linux-amd64",
+      "config": "portable-test-composition",
+      "artifacts": ["KisakCOD-linux-amd64-portable-Release.tar.gz"],
+      "provenance": "KisakCOD-linux-amd64-portable-Release-provenance.json",
+      "required_inventory": ["toolchain"]
+    },
+    {
+      "target": "linux-arm64",
+      "config": "portable-test-composition",
+      "artifacts": ["KisakCOD-linux-arm64-portable-Release.tar.gz"],
+      "provenance": "KisakCOD-linux-arm64-portable-Release-provenance.json",
+      "required_inventory": ["toolchain"]
+    },
+    {
+      "target": "macos-arm64",
+      "config": "portable-test-composition",
+      "artifacts": ["KisakCOD-macos-arm64-portable-Release.tar.gz"],
+      "provenance": "KisakCOD-macos-arm64-portable-Release-provenance.json",
+      "required_inventory": ["toolchain"]
+    }
+  ]
+}

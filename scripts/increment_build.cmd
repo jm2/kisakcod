@@ -11,6 +11,12 @@ if "%~1"=="" (
 set "BUILD_DIR=%~1"
 set "BUILD_DIR=%BUILD_DIR:/=\%"
 
+:: Optional third argument: the immutable source commit resolved by
+:: scripts/extern/resolve_source_identity.cmake. Empty when the caller cannot
+:: establish one; the generated header records the empty string rather than
+:: inventing a revision.
+set "SOURCE_COMMIT=%~3"
+
 :: Ensure paths are properly quoted
 set "BUILD_FILE=%BUILD_DIR%\buildnumber.txt"
 set "HEADER_FILE=%BUILD_DIR%\buildnumber.h"
@@ -34,6 +40,7 @@ echo %BUILD_NUMBER% > "%BUILD_FILE%"
 (
     echo #pragma once
     echo #define BUILD_NUMBER %BUILD_NUMBER%
+    echo #define KISAK_SOURCE_COMMIT "!SOURCE_COMMIT!"
     echo:
     echo char ^*__cdecl getBuildNumber^(^)^;
     echo int getBuildNumberAsInt^(^)^;
