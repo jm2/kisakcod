@@ -176,6 +176,36 @@ void TestMissingSidecar()
     Expect(artifact.empty(), "a missing sidecar yields no artifact");
 }
 
+// Serialize a parsed header into an exact-size buffer and reparse it,
+// confirming every field survives the round trip.
+void VerifySerializedHeaderRoundTrip(const SidecarHeader &header)
+{
+    std::uint8_t serialized[db::shader_cache::kSidecarHeaderBytes];
+    Expect(db::shader_cache::SerializeSidecarHeader(header, serialized, sizeof(serialized)),
+        "header serializes into an exact-size buffer");
+    SidecarHeader reparsed;
+    Expect(db::shader_cache::ParseSidecarHeader(serialized, sizeof(serialized), reparsed),
+        "serialized header reparses");
+    Expect(reparsed.formatVersion == header.formatVersion,
+        "header round trip preserves the format version");
+    Expect(reparsed.converterVersion == header.converterVersion,
+        "header round trip preserves the converter version");
+    Expect(reparsed.stage == header.stage,
+        "header round trip preserves the stage");
+    Expect(reparsed.loadForRenderer == header.loadForRenderer,
+        "header round trip preserves the renderer");
+    Expect(reparsed.sourceDwordCount == header.sourceDwordCount,
+        "header round trip preserves the source dword count");
+    Expect(reparsed.sourceHash == header.sourceHash,
+        "header round trip preserves the source hash");
+    Expect(reparsed.artifactKind == header.artifactKind,
+        "header round trip preserves the artifact kind");
+    Expect(reparsed.artifactSize == header.artifactSize,
+        "header round trip preserves the artifact size");
+    Expect(reparsed.artifactHash == header.artifactHash,
+        "header round trip preserves the artifact hash");
+}
+
 void TestSidecarRoundTrip()
 {
     SourceIdentity identity;
@@ -217,30 +247,7 @@ void TestSidecarRoundTrip()
     Expect(artifact == derived, "a cache hit returns the exact derived bytes");
 
     // Explicit header serialization must round-trip every field.
-    std::uint8_t serialized[db::shader_cache::kSidecarHeaderBytes];
-    Expect(db::shader_cache::SerializeSidecarHeader(header, serialized, sizeof(serialized)),
-        "header serializes into an exact-size buffer");
-    SidecarHeader reparsed;
-    Expect(db::shader_cache::ParseSidecarHeader(serialized, sizeof(serialized), reparsed),
-        "serialized header reparses");
-    Expect(reparsed.formatVersion == header.formatVersion,
-        "header round trip preserves the format version");
-    Expect(reparsed.converterVersion == header.converterVersion,
-        "header round trip preserves the converter version");
-    Expect(reparsed.stage == header.stage,
-        "header round trip preserves the stage");
-    Expect(reparsed.loadForRenderer == header.loadForRenderer,
-        "header round trip preserves the renderer");
-    Expect(reparsed.sourceDwordCount == header.sourceDwordCount,
-        "header round trip preserves the source dword count");
-    Expect(reparsed.sourceHash == header.sourceHash,
-        "header round trip preserves the source hash");
-    Expect(reparsed.artifactKind == header.artifactKind,
-        "header round trip preserves the artifact kind");
-    Expect(reparsed.artifactSize == header.artifactSize,
-        "header round trip preserves the artifact size");
-    Expect(reparsed.artifactHash == header.artifactHash,
-        "header round trip preserves the artifact hash");
+    VerifySerializedHeaderRoundTrip(header);
 }
 
 void TestVersionInvalidation()
