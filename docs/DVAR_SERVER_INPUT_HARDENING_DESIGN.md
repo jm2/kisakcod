@@ -37,8 +37,11 @@ the audit.
 - **Mandatory contract:** perfect interoperation with unmodified original
   commercial 1.7 and unmodified Steam commercial 1.8 is required and remains
   **unproven**. Community CoD4x is a different reference and is not a
-  substitute. Any protection whose behavior is not proven against both
-  references is an acceptance blocker, not a compatibility exception.
+  substitute. Any protection whose behavior could bind on valid commercial
+  input and is not proven against both references is an acceptance blocker, not
+  a compatibility exception. A protection that only refuses malformed/invalid
+  input is governed by invariant 4 and principle 4, which permit the refusal
+  without proving the references are non-fatal at the same point.
 - **Reference inputs are unavailable** in this checkout; see the audit's
   section 10. Their unavailability is carried forward here as a blocker, never
   as a waived or skipped test.
@@ -144,7 +147,9 @@ commercial behavior is delivered through the optional mode, while one that only
 refuses malformed/invalid input may be eligible for the default path.
 "Default" is the production behavior today. "Optional mode" describes what the
 opt-in mode would do. "Reference evidence required" is the evidence that would
-have to be captured before the option could be enabled. "Status" is the
+have to be captured before the option could be enabled: reference captures for a
+reference-dependent protection, or the caller-safety and valid-input preservation
+evidence named in the row for eligible default hardening. "Status" is the
 acceptance state of the option, not of the A06 task.
 
 | ID | Class | Proposed optional protection | Valid retail behavior at risk | Reference evidence required | Status |
@@ -210,7 +215,10 @@ optional mode exists for the incompatible restrictions:
 3. **No default allowlist.** The mode does not install a permitted-name list,
    a default cap or a default rejection rule.
 4. **Per-protection gates.** Each protection in section 5 is independently
-   gated, so an operator can enable only those with resolved reference evidence.
+   gated, so an operator can enable an optional-mode protection only with its
+   resolved reference evidence. Eligible default hardening on malformed/invalid
+   input (HP3(a)) is not enabled through this mode; it is gated by its own
+   caller-safety and valid-input preservation evidence (section 8).
 5. **No compatibility claim.** Enabling the mode is not a certification of
    retail compatibility and does not satisfy #122. Both commercial profiles
    remain release gates in `NETWORK_COMPATIBILITY.md`.
@@ -221,18 +229,40 @@ optional mode exists for the incompatible restrictions:
 
 ## 8. Test requirements
 
-These extend the audit's matrix (section 9) and must be run against both
-original commercial 1.7 and Steam commercial 1.8 before any protection can be
-accepted:
+These extend the audit's matrix (section 9). The evidence required depends on
+whether a protection is reference-dependent or is eligible default hardening:
+
+- **Reference-dependent valid-input/compatibility certification.** A protection
+  that could bind on valid commercial behavior — HP1, HP2, HP3(b), HP4, HP5 and
+  HP6 — can be accepted only after the rows below are run against both original
+  commercial 1.7 and Steam commercial 1.8. Full
+  [#122](https://github.com/jm2/kisakcod/issues/122) certification stays blocked
+  until both profiles pass; this document certifies neither.
+- **Eligible default hardening on malformed/invalid input.** Hardening that only
+  refuses malformed/invalid input and cannot alter a valid commercial message —
+  HP3(a) malformed-flood refusal, and the already-bounded paths in section 5 —
+  does not carry the both-reference commercial run as a precondition. Its
+  acceptance basis is controlled malformed-input tests, a caller-safety audit and
+  valid-input preservation evidence. Valid-input behavior requirements are not
+  waived: no protection may reject or alter a valid commercial message, and no
+  valid-input or compatibility claim is certified without the reference evidence
+  above.
 
 1. **No-valid-rejection proof.** For every protection, run the audit's
    legitimate-command rows L1–L11 in the default configuration and (once the
-   relevant evidence is captured) in the optional mode, and prove the applied
-   wire bytes and client state are identical to the reference. A protection
-   that rejects or alters any L row fails.
+   relevant evidence is captured) in the optional mode, and prove no valid
+   command is rejected or altered. A protection that rejects or alters any L row
+   fails. For a reference-dependent protection the applied wire bytes and client
+   state must additionally be identical to the reference; for eligible default
+   hardening the default-path L-row result is the valid-input preservation
+   evidence and no commercial-reference run is a precondition.
 2. **Invalid-input handling.** For every protection, run the corresponding
-   I1–I8 rows and R1–R9 transition rows, and record the optional-mode outcome
-   against the reference outcome. For HP6 the corresponding row is I6, which is
+   I1–I8 rows and R1–R9 transition rows in the default configuration and (where
+   applicable) the optional mode. For eligible default hardening the controlled
+   malformed-input outcomes, caller-safety audit and valid-input preservation
+   evidence are the acceptance basis and do not require a commercial-reference
+   run. For a reference-dependent protection, record the outcome against the
+   reference outcome. For HP6 the corresponding row is I6, which is
    a `v` command with an **odd payload count** (arguments after the verb; even
    total `Cmd_Argc`), matching the convention in section 3.
 3. **Disconnect / reconnect / map transitions.** R1–R9 remain required with the
@@ -244,10 +274,12 @@ accepted:
 5. **Build-configuration matrix.** HP5's assert behavior must be recorded for a
    Release build (empty `MyAssertHandler`) and for an asserts-enabled build,
    separately.
-6. **Both references, both directions.** Every row is recorded per reference
-   profile and per direction (native client → commercial server, commercial
-   client → native server, and the commercial-to-commercial baseline). Missing
-   evidence stays pending, never passing.
+6. **Both references, both directions.** For every reference-dependent
+   protection, each row is recorded per reference profile and per direction
+   (native client → commercial server, commercial client → native server, and the
+   commercial-to-commercial baseline). Eligible default hardening records its
+   controlled malformed-input, caller-safety and valid-input preservation
+   evidence separately. Missing evidence stays pending, never passing.
 
 ## 9. Open evidence questions
 
