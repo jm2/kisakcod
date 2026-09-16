@@ -11,7 +11,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -192,16 +191,22 @@ void TestSidecarRoundTrip()
     SidecarHeader header;
     Expect(db::shader_cache::ParseSidecarHeader(sidecar.data(), sidecar.size(), header),
         "a freshly built sidecar parses");
-    Expect(header.formatVersion == db::shader_cache::kFormatVersion
-            && header.converterVersion == db::shader_cache::kConverterVersion,
-        "sidecar records the current format and converter versions");
-    Expect(header.stage == Stage::Pixel && header.loadForRenderer == 1,
-        "sidecar records stage and renderer");
-    Expect(header.sourceDwordCount == 4 && header.sourceHash == identity.contentHash,
-        "sidecar records the original size and content checksum");
-    Expect(header.artifactKind == DerivedArtifactKind::SpirV
-            && header.artifactSize == derived.size(),
-        "sidecar records the derived kind and size");
+    Expect(header.formatVersion == db::shader_cache::kFormatVersion,
+        "sidecar records the current format version");
+    Expect(header.converterVersion == db::shader_cache::kConverterVersion,
+        "sidecar records the current converter version");
+    Expect(header.stage == Stage::Pixel,
+        "sidecar records the shader stage");
+    Expect(header.loadForRenderer == 1,
+        "sidecar records the shader renderer");
+    Expect(header.sourceDwordCount == 4,
+        "sidecar records the original dword count");
+    Expect(header.sourceHash == identity.contentHash,
+        "sidecar records the original content checksum");
+    Expect(header.artifactKind == DerivedArtifactKind::SpirV,
+        "sidecar records the derived artifact kind");
+    Expect(header.artifactSize == derived.size(),
+        "sidecar records the derived artifact size");
     Expect(header.artifactHash == db::shader_cache::HashArtifact(derived.data(), derived.size()),
         "sidecar records the derived artifact hash");
 
@@ -218,16 +223,24 @@ void TestSidecarRoundTrip()
     SidecarHeader reparsed;
     Expect(db::shader_cache::ParseSidecarHeader(serialized, sizeof(serialized), reparsed),
         "serialized header reparses");
-    Expect(reparsed.formatVersion == header.formatVersion
-            && reparsed.converterVersion == header.converterVersion
-            && reparsed.stage == header.stage
-            && reparsed.loadForRenderer == header.loadForRenderer
-            && reparsed.sourceDwordCount == header.sourceDwordCount
-            && reparsed.sourceHash == header.sourceHash
-            && reparsed.artifactKind == header.artifactKind
-            && reparsed.artifactSize == header.artifactSize
-            && reparsed.artifactHash == header.artifactHash,
-        "header round trip preserves every field");
+    Expect(reparsed.formatVersion == header.formatVersion,
+        "header round trip preserves the format version");
+    Expect(reparsed.converterVersion == header.converterVersion,
+        "header round trip preserves the converter version");
+    Expect(reparsed.stage == header.stage,
+        "header round trip preserves the stage");
+    Expect(reparsed.loadForRenderer == header.loadForRenderer,
+        "header round trip preserves the renderer");
+    Expect(reparsed.sourceDwordCount == header.sourceDwordCount,
+        "header round trip preserves the source dword count");
+    Expect(reparsed.sourceHash == header.sourceHash,
+        "header round trip preserves the source hash");
+    Expect(reparsed.artifactKind == header.artifactKind,
+        "header round trip preserves the artifact kind");
+    Expect(reparsed.artifactSize == header.artifactSize,
+        "header round trip preserves the artifact size");
+    Expect(reparsed.artifactHash == header.artifactHash,
+        "header round trip preserves the artifact hash");
 }
 
 void TestVersionInvalidation()
@@ -303,10 +316,11 @@ void TestCorruptSidecarRegeneration()
             == LookupResult::NeedsRegeneration,
         "a flipped payload byte forces regeneration");
 
-    std::vector<std::uint8_t> zeroedHash = sidecar;
-    std::uint8_t zeroDigest[db::graph_hash::kDigestBytes] = {};
-    std::memcpy(zeroedHash.data() + kOffsetArtifactHash, zeroDigest, sizeof(zeroDigest));
-    Expect(LookupWithSidecar(zeroedHash, kVertexSm2, 5, Stage::Vertex, 0, artifact)
+    std::vector<std::uint8_t> wrongHash = sidecar;
+    // Perturb the recorded artifact hash so it no longer matches the payload.
+    // A single in-range byte write is used rather than a raw bulk copy.
+    wrongHash[kOffsetArtifactHash] ^= 0xFF;
+    Expect(LookupWithSidecar(wrongHash, kVertexSm2, 5, Stage::Vertex, 0, artifact)
             == LookupResult::NeedsRegeneration,
         "a wrong artifact hash forces regeneration");
 

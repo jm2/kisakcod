@@ -1,5 +1,6 @@
 #include "database/shader_cache.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -40,21 +41,38 @@ std::uint32_t ReadU32(const std::uint8_t *in) noexcept
         | (static_cast<std::uint32_t>(in[3]) << 24);
 }
 
-void WriteDigest(std::uint8_t *out, const Digest &digest) noexcept
+void WriteDigest(std::uint8_t *const out, const Digest &digest) noexcept
 {
-    std::memcpy(out, digest.data(), digest.size());
+    // std::copy writes exactly digest.size() bytes; the digest is a fixed
+    // std::array so the destination requirement is explicit in the type.
+    std::copy(digest.begin(), digest.end(), out);
 }
 
-Digest ReadDigest(const std::uint8_t *in) noexcept
+Digest ReadDigest(const std::uint8_t *const in) noexcept
 {
     Digest digest{};
-    std::memcpy(digest.data(), in, digest.size());
+    std::copy_n(in, digest.size(), digest.begin());
     return digest;
 }
 
 bool IsKnownStage(const std::uint32_t value) noexcept
 {
     return value == 0 || value == 1;
+}
+
+// True when the header's versions, artifact kind, framing size and source
+// identity all still describe the current format and the supplied source.
+// Extracted from LookupDerivedShader so the classification stays one cohesive
+// predicate; every failing clause maps to the same regeneration outcome.
+bool SidecarHeaderUsable(const SidecarHeader &header,
+    const SourceIdentity &source) noexcept
+{
+    return header.formatVersion == kFormatVersion
+        && header.converterVersion == kConverterVersion
+        && header.artifactKind == DerivedArtifactKind::SpirV
+        && header.artifactSize != 0
+        && SidecarTotalSizeRepresentable(header.artifactSize)
+        && SidecarHeaderMatchesSource(header, source);
 }
 
 } // namespace
@@ -167,7 +185,7 @@ bool SerializeSidecarHeader(const SidecarHeader &header,
     }
 
     std::size_t offset = 0;
-    std::memcpy(outBytes + offset, kSidecarMagic, sizeof(kSidecarMagic));
+    std::copy(std::begin(kSidecarMagic), std::end(kSidecarMagic), outBytes + offset);
     offset += sizeof(kSidecarMagic);
     WriteU32(outBytes + offset, header.formatVersion);
     offset += 4;
@@ -251,7 +269,7 @@ std::vector<std::uint8_t> BuildSidecar(const SourceIdentity &source,
     // payload. The u32 framing limit alone is not enough: on ILP32,
     // kSidecarHeaderBytes + artifactSize can wrap even when artifactSize still
     // fits the framing field, which would under-allocate the buffer and then
-    // overrun it in the header write and payload memcpy below.
+    // overrun it in the header write and payload copy below.
     if (artifact == nullptr || artifactSize == 0
         || artifactSize > static_cast<std::size_t>(UINT32_MAX)
         || !SidecarTotalSizeRepresentable(artifactSize))
@@ -278,7 +296,10 @@ std::vector<std::uint8_t> BuildSidecar(const SourceIdentity &source,
         bytes.clear();
         return bytes;
     }
-    std::memcpy(bytes.data() + kSidecarHeaderBytes, artifact, artifactSize);
+    // totalSize (checked representable above) is exactly header + payload, so
+    // the payload write destination is the tail of the same buffer.
+    const std::uint8_t *const payload = static_cast<const std::uint8_t *>(artifact);
+    std::copy_n(payload, artifactSize, bytes.data() + kSidecarHeaderBytes);
     return bytes;
 }
 
@@ -305,16 +326,7 @@ LookupResult LookupDerivedShader(const std::uint8_t *const sidecarBytes,
         return LookupResult::Missing;
     }
 
-    if (header.formatVersion != kFormatVersion
-        || header.converterVersion != kConverterVersion)
-    {
-        return LookupResult::NeedsRegeneration;
-    }
-
-    if (header.artifactKind != DerivedArtifactKind::SpirV
-        || header.artifactSize == 0
-        || !SidecarTotalSizeRepresentable(header.artifactSize)
-        || !SidecarHeaderMatchesSource(header, source))
+    if (!SidecarHeaderUsable(header, source))
     {
         return LookupResult::NeedsRegeneration;
     }

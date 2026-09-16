@@ -58,7 +58,7 @@ artifact payload. Fields are serialized little-endian, one at a time.
 
 | Offset | Field | Purpose |
 |-------:|-------|---------|
-| 0 | magic `KSDShdr1` | Reject foreign/truncated files |
+| 0 | magic `KSDSHDR1` | Reject foreign/truncated files |
 | 8 | `formatVersion` | Sidecar framing identity |
 | 12 | `converterVersion` | Translator identity |
 | 16 | `stage` | Vertex / pixel |
