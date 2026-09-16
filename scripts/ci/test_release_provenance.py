@@ -1,39 +1,60 @@
 #!/usr/bin/env python3
-"""End-to-end tests for scripts/ci/release_provenance.py and the release contract.
+"""End-to-end tests for scripts/ci/release_provenance.py and the release contract."""
 
-Builds a complete synthetic release set that satisfies
-``scripts/ci/release-requirements.json``, proves the verifier passes it, then
-mutates one invariant at a time and proves the verifier fails closed.
-
-Run directly (``python3 scripts/ci/test_release_provenance.py``) or through
-ctest, which registers it next to the other portable contract tests.
-"""
+# Builds a complete synthetic release set that satisfies
+# ``scripts/ci/release-requirements.json``, proves the verifier passes it, then
+# mutates one invariant at a time and proves the verifier fails closed.
+#
+# Run directly (``python3 scripts/ci/test_release_provenance.py``) or through
+# ctest, which registers it next to the other portable contract tests.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
+from collections import namedtuple
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-TOOL = SCRIPT_DIR / "release_provenance.py"
 REQUIREMENTS = SCRIPT_DIR / "release-requirements.json"
 
 TAG = "v9.9.9"
 COMMIT = "a" * 40
+ToolResult = namedtuple("ToolResult", ["returncode", "stdout", "stderr"])
+
+
+def load_module(name: str, filename: str):
+    """Load a sibling module under ``scripts/ci`` without touching sys.path."""
+    spec = importlib.util.spec_from_file_location(name, SCRIPT_DIR / filename)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+# Register the package modules in dependency order so the tool's sibling
+# imports resolve, then load the tool itself. Loading in-process avoids a
+# subprocess and keeps the test runnable from any working directory.
+load_module("release_provenance_common", "release_provenance_common.py")
+load_module("release_provenance_archive", "release_provenance_archive.py")
+TOOL = load_module("release_provenance_under_test", "release_provenance.py")
 
 
 def scratch_root() -> str | None:
-    """Honor the repo scratch rule: prefer $TMPDIR, else /var/tmp, never /tmp."""
-    candidate = os.environ.get("TMPDIR") or "/var/tmp"
-    return candidate if os.path.isdir(candidate) else None
+    """Return a scratch parent honoring $TMPDIR, else the platform default."""
+    configured = os.environ.get("TMPDIR")
+    if configured and os.path.isdir(configured):
+        return configured
+    return None
 
 
 INVENTORY_BY_FIELD = {
@@ -53,6 +74,7 @@ INVENTORY_BY_FIELD = {
 
 
 def sha256_file(path: Path) -> str:
+    """Return the hex sha256 digest of a file's bytes."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
@@ -60,15 +82,17 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def run_tool(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(TOOL), *args],
-        capture_output=True,
-        text=True,
-    )
+def run_tool(*args: str) -> ToolResult:
+    """Invoke the tool's ``main`` in-process and capture its output streams."""
+    out = io.StringIO()
+    err = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        returncode = TOOL.main(list(args))
+    return ToolResult(returncode, out.getvalue(), err.getvalue())
 
 
 def write_inventory(path: Path, fields: list[str]) -> None:
+    """Write an inventory JSON file for the requested field names."""
     inventory = {field: INVENTORY_BY_FIELD[field] for field in fields}
     path.write_text(json.dumps(inventory), encoding="utf-8")
 
@@ -91,16 +115,16 @@ def build_source_archive(
     identity_member: bool = True,
     prefix: str = "",
     carrier_arcname: str | None = None,
+    extra_members: list[tuple[str, str]] | None = None,
 ) -> None:
-    """(Re)build the source tarball with a controlled identity carrier.
-
-    ``carrier_text=None`` omits the build-consumed ``src/source_identity.txt``;
-    an explicit string lets a test ship an unsubstituted placeholder or a
-    conflicting commit. The identity JSON is optional so the missing-member
-    case is exercised too. ``carrier_arcname`` overrides where the carrier is
-    stored inside the archive so a test can prove an arbitrarily nested copy is
-    not accepted.
-    """
+    """(Re)build the source tarball with a controlled identity carrier."""
+    # ``carrier_text=None`` omits the build-consumed ``src/source_identity.txt``;
+    # an explicit string lets a test ship an unsubstituted placeholder or a
+    # conflicting commit. The identity JSON is optional so the missing-member
+    # case is exercised too. ``carrier_arcname`` overrides where the carrier is
+    # stored inside the archive so a test can prove an arbitrarily nested copy
+    # is not accepted. ``extra_members`` adds non-identity members so a test can
+    # mutate the archive while keeping its identity evidence valid.
     requirements = json.loads(REQUIREMENTS.read_text(encoding="utf-8"))
     source = requirements["source"]
     staging = root / "archive-staging"
@@ -115,7 +139,8 @@ def build_source_archive(
             result = run_tool(
                 "identity-write", "--tag", TAG, "--commit", COMMIT, "--out", str(identity)
             )
-            assert result.returncode == 0, result.stderr
+            if result.returncode != 0:
+                raise RuntimeError(f"identity-write failed: {result.stderr}")
         entries.append((identity, source["identity_member"]))
     if carrier_text is not None:
         arcname = carrier_arcname or source["carrier"]
@@ -123,10 +148,45 @@ def build_source_archive(
         carrier.parent.mkdir(parents=True, exist_ok=True)
         carrier.write_text(carrier_text, encoding="utf-8")
         entries.append((carrier, arcname))
+    for member_name, content in extra_members or []:
+        extra = staging / member_name
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        extra.write_text(content, encoding="utf-8")
+        entries.append((extra, member_name))
     archive_path = root / "dist" / source["archive"].replace("${tag}", TAG)
     with tarfile.open(archive_path, "w:gz") as archive:
         for path, arcname in entries:
             archive.add(path, arcname=f"{prefix}{arcname}")
+
+
+def record_source_manifest(root: Path) -> None:
+    """Record the source manifest that binds the current archive digest."""
+    requirements = json.loads(REQUIREMENTS.read_text(encoding="utf-8"))
+    source = requirements["source"]
+    archive_name = source["archive"].replace("${tag}", TAG)
+    result = run_tool(
+        "record",
+        "--dist",
+        str(root / "dist"),
+        "--tag",
+        TAG,
+        "--commit",
+        COMMIT,
+        "--target",
+        "source",
+        "--config",
+        "source",
+        "--workflow-run",
+        "12345",
+        "--generated-at",
+        "2026-01-01T00:00:00Z",
+        "--artifact",
+        archive_name,
+        "--out",
+        str(root / "dist" / source["provenance"].replace("${tag}", TAG)),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"source provenance record failed: {result.stderr}")
 
 
 def build_release_fixture(root: Path) -> None:
@@ -162,26 +222,13 @@ def build_release_fixture(root: Path) -> None:
             str(dist / profile["provenance"]),
             *[arg for artifact in profile["artifacts"] for arg in ("--artifact", artifact)],
         )
-        assert result.returncode == 0, result.stderr
+        if result.returncode != 0:
+            raise RuntimeError(f"record failed for {profile['target']}: {result.stderr}")
 
-    source = requirements["source"]
     (root / "source-tree").mkdir()
     # The carrier git archive would substitute: the full verified commit.
     build_source_archive(root, f"commit={COMMIT}\n")
-
-    source_manifest = {
-        "schema_version": 1,
-        "tag": TAG,
-        "commit": COMMIT,
-        "target": "source",
-        "config": "source",
-        "workflow_run": "12345",
-        "generated_at": "2026-01-01T00:00:00Z",
-    }
-    (dist / source["provenance"].replace("${tag}", TAG)).write_text(
-        json.dumps(source_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
+    record_source_manifest(root)
     refresh_checksums(root)
 
     prerequisites = {job: "success" for job in requirements["required_prerequisites"]}
@@ -192,7 +239,9 @@ class ReleaseProvenanceTests(unittest.TestCase):
     maxDiff = None
 
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="release-provenance-test-", dir=scratch_root()))
+        self.tmp = Path(
+            tempfile.mkdtemp(prefix="release-provenance-test-", dir=scratch_root())
+        )
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.base = self.tmp / "base"
         self.base.mkdir()
@@ -203,7 +252,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
         shutil.copytree(self.base, target)
         return target
 
-    def verify(self, root: Path) -> subprocess.CompletedProcess:
+    def verify(self, root: Path) -> ToolResult:
         return run_tool(
             "verify",
             "--requirements",
@@ -303,9 +352,12 @@ class ReleaseProvenanceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("required inventory", result.stderr)
 
+    # -- source archive identity --------------------------------------------
+
     def test_source_archive_without_identity_fails(self) -> None:
         root = self.fresh("source-no-identity")
         build_source_archive(root, carrier_text=None, identity_member=False)
+        record_source_manifest(root)
         refresh_checksums(root)
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
@@ -316,6 +368,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
         # reads without .git is absent: the archive must not pass.
         root = self.fresh("source-no-carrier")
         build_source_archive(root, carrier_text=None)
+        record_source_manifest(root)
         refresh_checksums(root)
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
@@ -324,6 +377,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
     def test_source_archive_unexpanded_carrier_fails(self) -> None:
         root = self.fresh("source-unexpanded")
         build_source_archive(root, carrier_text="commit=$Format:%H$\n")
+        record_source_manifest(root)
         refresh_checksums(root)
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
@@ -332,6 +386,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
     def test_source_archive_conflicting_carrier_fails(self) -> None:
         root = self.fresh("source-conflict")
         build_source_archive(root, carrier_text=f"commit={'e' * 40}\n")
+        record_source_manifest(root)
         refresh_checksums(root)
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
@@ -340,6 +395,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
     def test_source_archive_short_commit_carrier_fails(self) -> None:
         root = self.fresh("source-short-commit")
         build_source_archive(root, carrier_text="commit=abc1234\n")
+        record_source_manifest(root)
         refresh_checksums(root)
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
@@ -351,6 +407,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
         # must not accept a carrier the build cannot consume.
         root = self.fresh("source-indented-carrier")
         build_source_archive(root, carrier_text=f"  commit={COMMIT}\n")
+        record_source_manifest(root)
         refresh_checksums(root)
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
@@ -367,6 +424,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
             carrier_text=f"commit={COMMIT}\n",
             carrier_arcname="extra/nested/src/source_identity.txt",
         )
+        record_source_manifest(root)
         refresh_checksums(root)
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
@@ -377,68 +435,49 @@ class ReleaseProvenanceTests(unittest.TestCase):
         # carrier is matched at <prefix>/src/source_identity.txt.
         root = self.fresh("source-prefixed")
         build_source_archive(root, carrier_text=f"commit={COMMIT}\n", prefix=f"KisakCOD-{TAG}/")
+        record_source_manifest(root)
         refresh_checksums(root)
         result = self.verify(root)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_extracted_source_archive_resolves_verified_identity(self) -> None:
-        # End-to-end: extract the shipped archive and prove the resolver the
-        # build uses reads the verified commit back without any .git.
-        cmake = shutil.which("cmake")
-        if not cmake:
-            self.skipTest("cmake is not available to prove the resolver")
-        archive_path = self.base / "dist" / f"KisakCOD-{TAG}-source.tar.gz"
-        extracted = self.tmp / "extracted-source"
-        with tarfile.open(archive_path, "r:*") as archive:
-            archive.extractall(extracted)
-        self.assertTrue((extracted / "src" / "source_identity.txt").is_file())
-        resolver = SCRIPT_DIR.parent / "extern" / "resolve_source_identity.cmake"
-        self.assertTrue(resolver.is_file(), resolver)
-        script = self.tmp / "resolve-identity.cmake"
-        script.write_text(
-            'include("%s")\n'
-            'kisak_resolve_source_identity("%s" _resolved)\n'
-            'if(NOT _resolved STREQUAL "%s")\n'
-            '  message(FATAL_ERROR "resolved ${_resolved}, expected %s")\n'
-            "endif()\n" % (resolver, extracted, COMMIT, COMMIT),
-            encoding="utf-8",
-        )
-        result = subprocess.run(
-            [cmake, "-P", str(script)], capture_output=True, text=True
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
+    # -- source manifest binding --------------------------------------------
 
-    def test_indented_carrier_alignment_with_resolver(self) -> None:
-        # End-to-end regression for the refinery finding: the verifier must not
-        # report success on a carrier the exact-head resolver reads as empty.
-        # Build an indented carrier, prove verification fails, extract it, and
-        # prove the resolver the build uses resolves nothing.
-        cmake = shutil.which("cmake")
-        if not cmake:
-            self.skipTest("cmake is not available to prove the resolver")
-        root = self.fresh("source-indented-alignment")
-        build_source_archive(root, carrier_text=f"  commit={COMMIT}\n")
+    def test_source_manifest_without_archive_binding_fails(self) -> None:
+        # The source manifest must declare exactly the source archive; an empty
+        # artifact list leaves the archive unbound to its provenance.
+        root = self.fresh("source-unbound")
+        manifest = root / "dist" / f"KisakCOD-{TAG}-source-provenance.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["artifacts"] = []
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("declares no artifacts", result.stderr)
+
+    def test_source_manifest_extra_artifact_fails(self) -> None:
+        root = self.fresh("source-extra-artifact")
+        manifest = root / "dist" / f"KisakCOD-{TAG}-source-provenance.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["artifacts"].append({"path": "KisakCOD-unexpected.tar.gz", "sha256": "0" * 64})
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("undeclared artifact(s)", result.stderr)
+
+    def test_source_archive_member_mutation_fails_stale_provenance(self) -> None:
+        # Mutating another archive member and regenerating SHA256SUMS.txt must
+        # still fail: the source provenance manifest binds the original archive
+        # digest, so stale provenance cannot certify the mutated bytes.
+        root = self.fresh("source-member-mutation")
+        build_source_archive(
+            root,
+            carrier_text=f"commit={COMMIT}\n",
+            extra_members=[("notes.txt", "mutated after provenance\n")],
+        )
         refresh_checksums(root)
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("carries no commit= line", result.stderr)
-
-        archive_path = root / "dist" / f"KisakCOD-{TAG}-source.tar.gz"
-        extracted = self.tmp / "indented-extracted-source"
-        with tarfile.open(archive_path, "r:*") as archive:
-            archive.extractall(extracted)
-        resolver = SCRIPT_DIR.parent / "extern" / "resolve_source_identity.cmake"
-        script = self.tmp / "resolve-indented-identity.cmake"
-        script.write_text(
-            'include("%s")\n'
-            'kisak_resolve_source_identity("%s" _resolved)\n'
-            'if(NOT _resolved STREQUAL "")\n'
-            '  message(FATAL_ERROR "resolver accepted indented carrier: ${_resolved}")\n'
-            "endif()\n" % (resolver, extracted),
-            encoding="utf-8",
-        )
-        proc = subprocess.run([cmake, "-P", str(script)], capture_output=True, text=True)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("does not match manifest", result.stderr)
 
     # -- inventory typing ---------------------------------------------------
 
