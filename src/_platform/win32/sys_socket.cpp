@@ -397,8 +397,7 @@ SysSocketResolveStatus ResolveHostAddress(
     addrinfo *results = nullptr;
     const int failure = getaddrinfo(hostname, nullptr, &hints, &results);
     if (failure != 0 || !results)
-        return failure == EAI_NONAME ? SysSocketResolveStatus::NotFound
-                                     : SysSocketResolveStatus::SystemFailure;
+        return Sys_SocketResolveErrorStatus(failure);
 
     SysSocketAddress resolved{};
     const bool mapped = ToSocketAddress(
@@ -411,6 +410,23 @@ SysSocketResolveStatus ResolveHostAddress(
     return SysSocketResolveStatus::Resolved;
 }
 } // namespace
+
+SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveErrorStatus(
+    const int resolverError)
+{
+    // EAI_NODATA is the Winsock no-address code (WSANO_DATA) and differs from
+    // EAI_NONAME (WSAHOST_NOT_FOUND); an existing name with no IPv4 address
+    // is reported as addressless there, and the public contract folds both
+    // into NotFound. The guard keeps genuine resolver errors -- temporary,
+    // unrecoverable, resource -- as SystemFailure.
+#if defined(EAI_NODATA) && (EAI_NODATA != EAI_NONAME)
+    if (resolverError == EAI_NODATA)
+        return SysSocketResolveStatus::NotFound;
+#endif
+    if (resolverError == EAI_NONAME)
+        return SysSocketResolveStatus::NotFound;
+    return SysSocketResolveStatus::SystemFailure;
+}
 
 SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveHost(
     const char *const hostname,

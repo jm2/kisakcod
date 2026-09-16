@@ -66,6 +66,7 @@ foreach(_marker IN ITEMS
     "bool KISAK_CDECL Sys_SocketMakeAnyAddress\\("
     "bool KISAK_CDECL Sys_SocketAddressIsEqual\\("
     "SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveHost\\("
+    "SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveErrorStatus\\("
     "NotFound,")
     require_contains("${_header}" "${_marker}"
         "portable socket header owns its declared contract: ${_marker}")
@@ -93,7 +94,8 @@ foreach(_marker IN ITEMS
     "WSAStartup"
     "WSAEWOULDBLOCK"
     "WSAEMSGSIZE"
-    "getaddrinfo\\(")
+    "getaddrinfo\\("
+    "defined\\(EAI_NODATA\\)")
     require_contains("${_win32_source}" "${_marker}"
         "Win32 socket backend must use the canonical Winsock primitive: ${_marker}")
 endforeach()
@@ -133,7 +135,8 @@ foreach(_marker IN ITEMS
     "EAGAIN \\|\\| errno == EWOULDBLOCK"
     "getsockname\\("
     "getaddrinfo\\("
-    "close\\(")
+    "close\\("
+    "defined\\(EAI_NODATA\\)")
     require_contains("${_posix_source}" "${_marker}"
         "POSIX socket backend must use the canonical BSD primitive: ${_marker}")
 endforeach()
@@ -181,6 +184,8 @@ foreach(_marker IN ITEMS
     "oversize capacity receives the datagram"
     "Sys_SocketResolveHost\\("
     "unresolvable host does not resolve"
+    "Sys_SocketResolveErrorStatus\\("
+    "addressless hostname maps to NotFound"
     "Sys_SocketClose\\(&first\\) == SysSocketCloseStatus::Closed")
     require_contains("${_socket_tests}" "${_marker}"
         "socket runtime coverage: ${_marker}")

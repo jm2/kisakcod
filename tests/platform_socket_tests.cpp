@@ -13,8 +13,10 @@
 #define NOMINMAX
 #endif
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <Windows.h>
 #else
+#include <netdb.h>
 #include <sys/mman.h>
 #endif
 
@@ -521,46 +523,98 @@ bool StageExclusiveInterfaceBind(SocketFixture &fixture)
 }
 #endif
 
-// Host resolution contract: argument validation and fail-closed behavior,
-// with the resolver-independent literals ("localhost" and a dotted quad)
-// covered end to end. A name the host resolver cannot map must not publish
-// a partial endpoint.
-bool StageHostResolution(SocketFixture &)
+bool IsLoopbackAddress(const SysSocketAddress &address)
+{
+    const std::uint8_t loopback[4] = {127, 0, 0, 1};
+    return std::memcmp(address.address, loopback, sizeof(loopback)) == 0;
+}
+
+bool IsUntouchedEndpoint(const SysSocketAddress &address)
+{
+    const std::uint8_t expected[4] = {203, 0, 113, 9};
+    return std::memcmp(address.address, expected, sizeof(expected)) == 0
+        && address.port == 65000;
+}
+
+// Argument validation: null or empty names and a null out-pointer are
+// rejected before any resolver work.
+bool CheckResolveArgumentValidation()
 {
     SysSocketAddress address{};
-    if (!Check(Sys_SocketResolveHost(nullptr, 28960, &address) ==
+    return Check(Sys_SocketResolveHost(nullptr, 28960, &address) ==
                    SysSocketResolveStatus::InvalidArgument,
-            "resolve null host")
-        || !Check(Sys_SocketResolveHost("", 28960, &address) ==
+               "resolve null host")
+        && Check(Sys_SocketResolveHost("", 28960, &address) ==
                    SysSocketResolveStatus::InvalidArgument,
-            "resolve empty host")
-        || !Check(Sys_SocketResolveHost("127.0.0.1", 28960, nullptr) ==
+               "resolve empty host")
+        && Check(Sys_SocketResolveHost("127.0.0.1", 28960, nullptr) ==
                    SysSocketResolveStatus::InvalidArgument,
-            "resolve null out pointer"))
-        return false;
+               "resolve null out pointer");
+}
 
-    if (!Check(Sys_SocketResolveHost("127.0.0.1", 28960, &address) ==
+// Resolver-independent literals resolve end to end without a resolver round
+// trip: a dotted quad carries its bytes, and the exact name "localhost" maps
+// to loopback. Both carry the requested port.
+bool CheckDottedQuadLiteral()
+{
+    SysSocketAddress address{};
+    return Check(Sys_SocketResolveHost("127.0.0.1", 28960, &address) ==
                    SysSocketResolveStatus::Resolved,
-            "resolve dotted quad")
-        || !Check(address.address[0] == 127 && address.address[1] == 0
-                && address.address[2] == 0 && address.address[3] == 1,
-            "dotted quad maps to its bytes")
-        || !Check(address.port == 28960, "resolved port is carried"))
-        return false;
+               "resolve dotted quad")
+        && Check(IsLoopbackAddress(address), "dotted quad maps to its bytes")
+        && Check(address.port == 28960, "resolved port is carried");
+}
 
-    if (!Check(Sys_SocketResolveHost("localhost", 1234, &address) ==
+bool CheckLocalhostLiteral()
+{
+    SysSocketAddress address{};
+    return Check(Sys_SocketResolveHost("localhost", 1234, &address) ==
                    SysSocketResolveStatus::Resolved,
-            "resolve localhost")
-        || !Check(address.address[0] == 127 && address.address[1] == 0
-                && address.address[2] == 0 && address.address[3] == 1,
-            "localhost maps to loopback")
-        || !Check(address.port == 1234, "localhost port is carried"))
-        return false;
+               "resolve localhost")
+        && Check(IsLoopbackAddress(address), "localhost maps to loopback")
+        && Check(address.port == 1234, "localhost port is carried");
+}
 
-    // `.invalid` is reserved by RFC 6761 and must not resolve; treat any
-    // non-Resolved outcome as the failure contract rather than pinning the
-    // exact status, since a captive resolver may report SystemFailure. The
-    // endpoint must be untouched either way.
+// Deterministic coverage of the resolver-independent status mapping: an
+// unknown name and the platform's distinct no-address code both map to
+// NotFound. EAI_NODATA is absent or aliased on some platforms, so that case
+// is guarded exactly like the production classifier.
+bool CheckResolveNotFoundCodes()
+{
+    if (!Check(Sys_SocketResolveErrorStatus(EAI_NONAME) ==
+                   SysSocketResolveStatus::NotFound,
+            "unknown hostname maps to NotFound"))
+        return false;
+#if defined(EAI_NODATA) && (EAI_NODATA != EAI_NONAME)
+    if (!Check(Sys_SocketResolveErrorStatus(EAI_NODATA) ==
+                   SysSocketResolveStatus::NotFound,
+            "addressless hostname maps to NotFound"))
+        return false;
+#endif
+    return true;
+}
+
+// Every genuine resolver error -- temporary, unrecoverable, or a misuse of
+// the classifier -- stays SystemFailure.
+bool CheckResolveSystemFailureCodes()
+{
+    return Check(Sys_SocketResolveErrorStatus(EAI_AGAIN) ==
+                     SysSocketResolveStatus::SystemFailure,
+               "temporary resolver failure stays SystemFailure")
+        && Check(Sys_SocketResolveErrorStatus(EAI_FAIL) ==
+                     SysSocketResolveStatus::SystemFailure,
+               "unrecoverable resolver failure stays SystemFailure")
+        && Check(Sys_SocketResolveErrorStatus(0) ==
+                     SysSocketResolveStatus::SystemFailure,
+               "non-failure code fails closed");
+}
+
+// `.invalid` is reserved by RFC 6761 and must not resolve; treat any
+// non-Resolved outcome as the failure contract rather than pinning the
+// exact status, since a captive resolver may report SystemFailure. The
+// endpoint must be untouched either way.
+bool CheckResolveFailureContract()
+{
     SysSocketAddress untouched{};
     untouched.address[0] = 203;
     untouched.address[1] = 0;
@@ -571,10 +625,21 @@ bool StageHostResolution(SocketFixture &)
         Sys_SocketResolveHost("invalid.invalid", 28960, &untouched);
     return Check(missing != SysSocketResolveStatus::Resolved,
                "unresolvable host does not resolve")
-        && Check(untouched.address[0] == 203 && untouched.address[1] == 0
-                && untouched.address[2] == 113 && untouched.address[3] == 9
-                && untouched.port == 65000,
+        && Check(IsUntouchedEndpoint(untouched),
             "failed resolve leaves the endpoint untouched");
+}
+
+// Host resolution contract: argument validation, resolver-independent
+// literals, deterministic status mapping, and fail-closed failure behavior.
+// A name the host resolver cannot map must not publish a partial endpoint.
+bool StageHostResolution(SocketFixture &)
+{
+    return CheckResolveArgumentValidation()
+        && CheckDottedQuadLiteral()
+        && CheckLocalhostLiteral()
+        && CheckResolveNotFoundCodes()
+        && CheckResolveSystemFailureCodes()
+        && CheckResolveFailureContract();
 }
 
 // Teardown: close is unconditional, nulls the caller's handle, and a
