@@ -34,10 +34,17 @@ def scratch_root() -> str | None:
     """Honor the repo scratch rule: prefer $TMPDIR, else /var/tmp, never /tmp."""
     candidate = os.environ.get("TMPDIR") or "/var/tmp"
     return candidate if os.path.isdir(candidate) else None
+
+
 INVENTORY_BY_FIELD = {
     "toolchain": {"cmake": "3.30.0", "compiler": "clang 19.1.0"},
     "dependencies": [
-        {"name": "SDL2", "source": "https://example.invalid/sdl2", "revision": "abc123", "features": ["shared"]}
+        {
+            "name": "SDL2",
+            "source": "https://example.invalid/sdl2",
+            "revision": "abc123",
+            "features": ["shared"],
+        }
     ],
     "runtime_lookup": [{"name": "zlib", "path": "libz.so.1", "sha256": "b" * 64}],
     "notices": [{"path": "THIRD_PARTY_NOTICES.txt", "sha256": "c" * 64}],
@@ -303,7 +310,15 @@ class ReleaseProvenanceTests(unittest.TestCase):
 
     def test_identity_verify_detects_mismatch(self) -> None:
         identity = self.base / "source-tree" / "release-identity.json"
-        ok = run_tool("identity-verify", "--identity", str(identity), "--tag", TAG, "--commit", COMMIT)
+        ok = run_tool(
+            "identity-verify",
+            "--identity",
+            str(identity),
+            "--tag",
+            TAG,
+            "--commit",
+            COMMIT,
+        )
         self.assertEqual(ok.returncode, 0, ok.stderr)
         bad = run_tool(
             "identity-verify", "--identity", str(identity), "--tag", TAG, "--commit", "0" * 40

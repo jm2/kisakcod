@@ -538,7 +538,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
                     actual = sha256_file(dist / name)
                     if actual != entries[name]:
                         failures.append(
-                            f"checksums: {name} sha256 {actual} does not match manifest {entries[name]}"
+                            f"checksums: {name} sha256 {actual} does not match "
+                            f"manifest {entries[name]}"
                         )
 
     if failures:
