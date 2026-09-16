@@ -83,6 +83,23 @@ jobs:
       - name: Build portable tests
         run: cmake --build build-tests --config Release --parallel
 
+      # The checked-in inventory is the canonical cross-platform list of
+      # portable tests the selection manifests partition. Verify that this
+      # Linux amd64 leg discovers nothing outside it, so a test added to the
+      # build cannot silently escape the manifests.
+      - name: Verify portable test inventory (Linux amd64)
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          ctest --test-dir build-tests -N \
+            | sed -n 's/^ *Test *#[0-9]*: *//p' > discovered-tests.txt
+          PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
+          "$PY" scripts/ci/check-test-selection.py \
+            --label "portable-tests / Linux amd64" \
+            --inventory scripts/ci/test-selection/portable-inventory.txt \
+            --selected scripts/ci/test-selection/windows-x86.selected.txt \
+            --excluded scripts/ci/test-selection/windows-x86.excluded.tsv \
+            --discovered discovered-tests.txt
+
       - name: Run portable tests
         run: ctest --test-dir build-tests -C Release --output-on-failure
 
@@ -115,8 +132,45 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: halt_on_error=1
         run: >
-          ctest --test-dir build-script-sanitizers --output-on-failure
+          ctest --test-dir build-script-sanitizers --output-on-failure --no-tests=error
           -R '^script-(runtime-pointer|animation-fixup|save-registration|debugger-pointer|widening-value|readstack-nested|parser-stack-growth)-contracts$'
+
+  portable-sanitizers:
+    # Required hosted ASan+UBSan execution over the portable profile (#134).
+    # Both language frontends are instrumented because the suite links C
+    # production subjects (the vendored zlib translation units in the memfile
+    # test subject) alongside C++ production-body fixtures; instrumenting only
+    # C++ would overstate the coverage. The per-test timeout is the bounded
+    # budget that keeps a single hung subject from occupying the runner.
+    name: Portable tests / ASan + UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Configure portable sanitizer contracts
+        run: >
+          cmake -S . -B build-portable-sanitizers
+          -DKISAK_PLATFORM=linux
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF
+          -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build portable sanitizer contracts
+        run: cmake --build build-portable-sanitizers --parallel
+
+      - name: Run portable sanitizer contracts
+        run: >
+          ctest --test-dir build-portable-sanitizers --output-on-failure
+          --no-tests=error --timeout 300
 
   # Sealed surface: source-invariant seal tests pin this job's exact step
   # shapes, names, and ordering, and normalize the file with comments left
@@ -247,10 +301,33 @@ jobs:
 
       - name: Run portable transaction tests
         shell: pwsh
-        run: >
-          ctest --test-dir "build-${{ matrix.config }}"
-          -C "${{ matrix.config }}" --output-on-failure
-          -R "^(actor-grenade-prediction-cache-contracts|actor-grenade-safe-target-(radius-contracts|source-invariants)|ui-safety-runtime-contracts|ui-safety-source-invariants|target-table-(parse-and-layout-contracts|source-invariants)|target-client-source-invariants|missile-layout-(mp|sp)-compile-contracts|missile-union-layout-source-invariants|weapon-model-safety-(contracts|source-invariants)|weapon-input-safety-contracts|upstream-safe-fixlets-source-invariants|upstream-sort-(contracts|source-invariants)|upstream-reconciliation-(aim-safety-contracts|angle-math-contracts|command-dispatch-contracts|source-invariants)|upstream-820b0a03-core-source-invariants|upstream-last-four-source-invariants|hudelem-sort-((mp|sp)-contracts|source-invariants)|sound-dry-send-source-invariants|renderer-value-encoding-contracts|pool-native-pointer-freelist|universal-physicalmemory-legacy-(layout-and-indexing|source-invariants)|universal-physicalmemory-runtime-(control|production-test-access-sealed)|universal-physicalmemory-checked-(scopes|api-sealed|source-invariants)|database-xasset-disk32-envelope|database-script-string-disk32-walk|database-script-string-transaction-journal|database-script-string-ownership-source-invariants|database-zone-load-context-lifecycle|database-zone-stream-ownership-(runtime-contracts|production-test-access-sealed|source-invariants)|database-zone-pending-copy-(ledger|production-test-access-sealed|source-invariants)|database-zone-script-string-ownership-(controller|source-invariants)|database-registry-ownership-(coordinator|production-test-access-sealed|source-invariants)|database-zone-runtime-callback-context(-production-test-access-sealed|-macro-off-object-symbol-sealed|-source-invariants)?|database-zone-runtime-facade(-production-test-access-sealed|-source-invariants)?|database-zone-runtime-table-(ownership|stable-context-(legacy-descriptors|unused-busy|managed-key|bank-key|terminal-phase|claimed-neighbor|unused-neighbor)|source-invariants|production-test-access-sealed|unload-unsafe-[0-6]|unload-invalid-(missing-value|extra-value|unknown-option)|mutation-unsafe-(backend|postcondition)|mutation-invalid-(missing-value|extra-value|kind))|database-zone-runtime-stable-context-(integration|forgotten-finish)|database-zone-runtime-storage-(layout|source-invariants)|database-referenced-fastfile-format|qcommon-server-file-compare|script-string-packed-atomic-contracts|script-memorytree-try-contracts|script-string-report-free-ownership-contracts|platform-console-(runtime-contracts|invalid-eof-contracts|sigpipe-(default|ignore)-contracts|source-invariants)|platform-service-runtime-contracts|effectscore-physics-sidecar-production-test-access-sealed|effectscore-effect-table-(transactional-restore|bounded-save)|effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec|effectscore-archive-body-state-disk32-codec|effectscore-archive-reader-disk32|effectscore-archive-restore-candidate-disk32|effectscore-fastfile-disk32-schema|effectscore-fastfile-(native|impact-native)-disk32-conversion|effectscore-fastfile-native-arena|effectscore-fastfile-zone-adapter-disk32)$"
+        run: |
+          ctest --test-dir "build-${{ matrix.config }}" `
+            -C "${{ matrix.config }}" --output-on-failure --no-tests=error `
+            -R "^(actor-grenade-prediction-cache-contracts|actor-grenade-safe-target-(radius-contracts|source-invariants)|ui-safety-runtime-contracts|ui-safety-source-invariants|target-table-(parse-and-layout-contracts|source-invariants)|target-client-source-invariants|missile-layout-(mp|sp)-compile-contracts|missile-union-layout-source-invariants|weapon-model-safety-(contracts|source-invariants)|weapon-input-safety-contracts|upstream-safe-fixlets-source-invariants|upstream-sort-(contracts|source-invariants)|upstream-reconciliation-(aim-safety-contracts|angle-math-contracts|command-dispatch-contracts|source-invariants)|upstream-820b0a03-core-source-invariants|upstream-last-four-source-invariants|hudelem-sort-((mp|sp)-contracts|source-invariants)|sound-dry-send-source-invariants|renderer-value-encoding-contracts|pool-native-pointer-freelist|universal-physicalmemory-legacy-(layout-and-indexing|source-invariants)|universal-physicalmemory-runtime-(control|production-test-access-sealed)|universal-physicalmemory-checked-(scopes|api-sealed|source-invariants)|database-xasset-disk32-envelope|database-script-string-disk32-walk|database-script-string-transaction-journal|database-script-string-ownership-source-invariants|database-zone-load-context-lifecycle|database-zone-stream-ownership-(runtime-contracts|production-test-access-sealed|source-invariants)|database-zone-pending-copy-(ledger|production-test-access-sealed|source-invariants)|database-zone-script-string-ownership-(controller|source-invariants)|database-registry-ownership-(coordinator|production-test-access-sealed|source-invariants)|database-zone-runtime-callback-context(-production-test-access-sealed|-macro-off-object-symbol-sealed|-source-invariants)?|database-zone-runtime-facade(-production-test-access-sealed|-source-invariants)?|database-zone-runtime-table-(ownership|stable-context-(legacy-descriptors|unused-busy|managed-key|bank-key|terminal-phase|claimed-neighbor|unused-neighbor)|source-invariants|production-test-access-sealed|unload-unsafe-[0-6]|unload-invalid-(missing-value|extra-value|unknown-option)|mutation-unsafe-(backend|postcondition)|mutation-invalid-(missing-value|extra-value|kind))|database-zone-runtime-stable-context-(integration|forgotten-finish)|database-zone-runtime-storage-(layout|source-invariants)|database-referenced-fastfile-format|qcommon-server-file-compare|script-string-packed-atomic-contracts|script-memorytree-try-contracts|script-string-report-free-ownership-contracts|platform-console-(runtime-contracts|invalid-eof-contracts|sigpipe-(default|ignore)-contracts|source-invariants)|platform-service-runtime-contracts|effectscore-physics-sidecar-production-test-access-sealed|effectscore-effect-table-(transactional-restore|bounded-save)|effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec|effectscore-archive-body-state-disk32-codec|effectscore-archive-reader-disk32|effectscore-archive-restore-candidate-disk32|effectscore-fastfile-disk32-schema|effectscore-fastfile-(native|impact-native)-disk32-conversion|effectscore-fastfile-native-arena|effectscore-fastfile-zone-adapter-disk32)$" 2>&1 | Tee-Object -FilePath ctest-windows-x86.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Fail closed on selection drift. The filter above stays inline in this
+      # workflow because the source-invariant tests treat the literal test
+      # names here as the ILP32 enrollment record. This step checks the run it
+      # actually produced against the written manifest: every executed test
+      # must be selected or justified-excluded, and every selected test must
+      # have executed. An omitted or dead entry fails instead of silently
+      # not running. See scripts/ci/test-selection/.
+      - name: Verify executed test selection (ILP32)
+        if: always()
+        shell: bash
+        run: |
+          ctest --test-dir "build-${{ matrix.config }}" -C "${{ matrix.config }}" -N \
+            | sed -n 's/.*Test *#[0-9]*: *//p' > discovered-tests.txt
+          PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
+          "$PY" scripts/ci/check-test-selection.py \
+            --label "windows-x86 / ${{ matrix.config }}" \
+            --inventory scripts/ci/test-selection/portable-inventory.txt \
+            --selected scripts/ci/test-selection/windows-x86.selected.txt \
+            --excluded scripts/ci/test-selection/windows-x86.excluded.tsv \
+            --discovered discovered-tests.txt \
+            --executed ctest-windows-x86.log
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

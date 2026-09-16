@@ -331,6 +331,52 @@ license/notarization handling, no required aggregator.
   token. Fail closed on mismatch.
 - Files: `.github/workflows/ci.yml`.
 
+### 17. Required hosted sanitizer coverage and checked test selection (#134)
+
+Two remaining A12 gaps are addressed here rather than in a competing CI design:
+
+- **Portable ASan+UBSan is now a required hosted job.** The new
+  `portable-sanitizers` job in `.github/workflows/ci.yml` configures the
+  tests-only portable profile with clang, instruments both language frontends
+  (`-DCMAKE_C_FLAGS` and `-DCMAKE_CXX_FLAGS`), and runs the full portable suite
+  with `--no-tests=error` and a bounded `--timeout 300`. Instrumenting the C
+  flags as well matters because the memfile test subject links vendored zlib C
+  translation units; C++-only flags would overstate the coverage. The existing
+  `script-sanitizers` job still covers the script production paths and now also
+  fails closed on an empty selection. Local evidence on the change head:
+  `ctest` 235/235 under the portable Release gate and 234/234 under the same
+  clang ASan+UBSan configuration (the static
+  `effectscore-effect-table-stack-usage` contract is intentionally not
+  registered under sanitizer instrumentation, so it is the one test absent
+  there).
+- **The `windows-x86` ILP32 selection is now a checked manifest, not an inline
+  regex alone.** `scripts/ci/check-test-selection.py` fails closed when any
+  inventory test is neither selected nor justified-excluded, when a selected
+  name is absent from the inventory, when an exclusion has no reason, or when
+  the executed run is not exactly `selected and discovered` (so a discovered
+  selected test that silently fails to run, or any unselected test that runs,
+  fails the job). The filter stays inline in `ci.yml` because the source
+  invariant tests read those literal names as the ILP32 enrollment record, and
+  the manifest is the written classification of every name the filter does and
+  does not run; the derived comparison makes the two unable to disagree. The
+  omitted tests live in `scripts/ci/test-selection/windows-x86.excluded.tsv`
+  with a per-test justification. `scripts/ci/test-selection/portable-inventory.txt`
+  is the canonical cross-platform inventory and the Linux amd64 portable leg
+  verifies it discovers nothing outside that list, so a test added to or
+  removed from the build cannot silently change what the manifests claim to
+  cover.
+- **Stale baseline exclusions are gone.** `scripts/ci/run-arm64-determinism.sh`
+  no longer filters `abi-sizeof|security-source-regressions` by name; those
+  tests are healed on master and both tracking beads are closed. The matrix now
+  requires the whole portable suite (verified locally) and fails closed on an
+  empty run.
+
+Scope: these are helper/contract executions. They are not commercial
+compatibility, native engine runtime, or licensed original-binary session
+evidence, which remain deferred under #122 until the protected runner and
+unmodified commercial 1.7 / Steam 1.8 references are provisioned. ILP32
+applicability for the remaining labeled tests is tracked under #134.
+
 ## Concrete patch proposal
 
 The following is the proposed `ci.yml`/`release.yml` shape. It is intentionally
