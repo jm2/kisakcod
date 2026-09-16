@@ -371,12 +371,9 @@ class DeliveryEvidenceContractTests(unittest.TestCase):
         )
 
     def _fully_promoted(self, package_result):
-        """
-        Promote every requested-target row and validate both references.
-
-        ``package_result`` is the only knob; callers set it to the explicit
-        success token, a failure/pending token, or an arbitrary string.
-        """
+        """Promote every requested-target row and validate both references."""
+        # ``package_result`` is the only knob; callers set it to the explicit
+        # success token, a failure/pending token, or an arbitrary string.
         manifest = copy.deepcopy(self.manifest)
         for reference in manifest["commercial_references"]:
             reference["status"] = "validated"

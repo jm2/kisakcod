@@ -255,14 +255,11 @@ def _parse_matrix_block(lines: list[str]) -> MatrixSpec:
 
 
 def _cartesian(axes: dict[str, list[str]]) -> list[dict[str, str]]:
-    """
-    Expand matrix axes into their Cartesian product of assignments.
-
-    An include-only matrix declares no axes, and GitHub turns each ``include``
-    entry into its own job rather than a single empty combination.  Returning
-    an empty base list here is what makes ``_apply_includes`` append every
-    include as a separate leg instead of collapsing them onto ``{}``.
-    """
+    """Expand matrix axes into their Cartesian product of assignments."""
+    # An include-only matrix declares no axes, and GitHub turns each ``include``
+    # entry into its own job rather than a single empty combination.  Returning
+    # an empty base list here is what makes ``_apply_includes`` append every
+    # include as a separate leg instead of collapsing them onto ``{}``.
     if not axes:
         return []
     combinations: list[dict[str, str]] = [{}]

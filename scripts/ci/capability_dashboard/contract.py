@@ -102,13 +102,10 @@ def claims_delivery_level(capability: dict) -> bool:
 
 
 def capability_evidence_complete(capability: dict) -> bool:
-    """
-    Return True when a promoted capability row carries complete evidence.
-
-    Pending rows may leave ``sha``/``run``/``package_result`` null, but a row
-    claiming the packaged delivery level must carry an exact SHA, a run id and
-    an explicit successful package result.
-    """
+    """Return True when a promoted capability row carries complete evidence."""
+    # Pending rows may leave ``sha``/``run``/``package_result`` null, but a row
+    # claiming the packaged delivery level must carry an exact SHA, a run id and
+    # an explicit successful package result.
     evidence = capability.get("evidence") or {}
     return (
         is_sha(evidence.get("sha"))
