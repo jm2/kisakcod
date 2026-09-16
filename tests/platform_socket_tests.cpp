@@ -29,6 +29,17 @@
 #include <cstring>
 #include <thread>
 
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+// Test-only resolver seam installed by the backend when the suite is built
+// with KISAK_SOCKET_TEST_HOOKS (see tests/CMakeLists.txt). It lets the
+// failure contract force a resolver outcome instead of borrowing the host's
+// resolver configuration.
+void KISAK_CDECL Kisak_SocketSetResolveTestHook(int (*hook)(const char *,
+    const char *,
+    const addrinfo *,
+    addrinfo **));
+#endif
+
 namespace
 {
 const char *checkStage = "startup";
@@ -536,6 +547,33 @@ bool IsUntouchedEndpoint(const SysSocketAddress &address)
         && address.port == 65000;
 }
 
+SysSocketAddress UntouchedEndpoint()
+{
+    SysSocketAddress endpoint{};
+    endpoint.address[0] = 203;
+    endpoint.address[1] = 0;
+    endpoint.address[2] = 113;
+    endpoint.address[3] = 9;
+    endpoint.port = 65000;
+    return endpoint;
+}
+
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+// Resolver error the forced query reports. The same hook covers both mapped
+// outcomes so the failure path is driven by the seam, not the host resolver.
+thread_local int forcedResolveError = EAI_NONAME;
+
+int FailResolveQuery(const char *,
+    const char *,
+    const addrinfo *,
+    addrinfo **outResults)
+{
+    if (outResults)
+        *outResults = nullptr;
+    return forcedResolveError;
+}
+#endif
+
 // Argument validation: null or empty names and a null out-pointer are
 // rejected before any resolver work.
 bool CheckResolveArgumentValidation()
@@ -609,24 +647,48 @@ bool CheckResolveSystemFailureCodes()
                "non-failure code fails closed");
 }
 
-// `.invalid` is reserved by RFC 6761 and must not resolve; treat any
-// non-Resolved outcome as the failure contract rather than pinning the
-// exact status, since a captive resolver may report SystemFailure. The
-// endpoint must be untouched either way.
+// The failed-resolution contract must not depend on the host's resolver:
+// `.invalid` is reserved by RFC 6761, but a hosts entry or resolver override
+// could still answer it, so the test seam forces the outcome. EAI_NONAME pins
+// the NotFound half and EAI_AGAIN the SystemFailure half, both end to end
+// through Sys_SocketResolveHost; the endpoint must stay untouched either way,
+// because a failure never publishes a partially populated address.
 bool CheckResolveFailureContract()
 {
-    SysSocketAddress untouched{};
-    untouched.address[0] = 203;
-    untouched.address[1] = 0;
-    untouched.address[2] = 113;
-    untouched.address[3] = 9;
-    untouched.port = 65000;
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+    SysSocketAddress missingEndpoint = UntouchedEndpoint();
+    forcedResolveError = EAI_NONAME;
+    Kisak_SocketSetResolveTestHook(FailResolveQuery);
+    const SysSocketResolveStatus missing =
+        Sys_SocketResolveHost("invalid.invalid", 28960, &missingEndpoint);
+    Kisak_SocketSetResolveTestHook(nullptr);
+    bool passed = Check(missing == SysSocketResolveStatus::NotFound,
+                       "unresolvable host does not resolve")
+        && Check(IsUntouchedEndpoint(missingEndpoint),
+            "failed resolve leaves the endpoint untouched");
+
+    SysSocketAddress failedEndpoint = UntouchedEndpoint();
+    forcedResolveError = EAI_AGAIN;
+    Kisak_SocketSetResolveTestHook(FailResolveQuery);
+    const SysSocketResolveStatus failed =
+        Sys_SocketResolveHost("invalid.invalid", 28960, &failedEndpoint);
+    Kisak_SocketSetResolveTestHook(nullptr);
+    forcedResolveError = EAI_NONAME;
+    passed = Check(failed == SysSocketResolveStatus::SystemFailure,
+               "forced system resolver failure does not resolve")
+        && passed;
+    return Check(IsUntouchedEndpoint(failedEndpoint),
+               "forced system failure leaves the endpoint untouched")
+        && passed;
+#else
+    SysSocketAddress untouched = UntouchedEndpoint();
     const SysSocketResolveStatus missing =
         Sys_SocketResolveHost("invalid.invalid", 28960, &untouched);
     return Check(missing != SysSocketResolveStatus::Resolved,
                "unresolvable host does not resolve")
         && Check(IsUntouchedEndpoint(untouched),
             "failed resolve leaves the endpoint untouched");
+#endif
 }
 
 // Host resolution contract: argument validation, resolver-independent

@@ -2598,6 +2598,7 @@ add_executable(kisakcod-platform-socket-tests
 )
 target_include_directories(kisakcod-platform-socket-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-platform-socket-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-platform-socket-tests PRIVATE KISAK_SOCKET_TEST_HOOKS=1)
 target_link_libraries(kisakcod-platform-socket-tests PRIVATE Threads::Threads)
 if (KISAK_PLATFORM STREQUAL "win32")
     target_link_libraries(kisakcod-platform-socket-tests PRIVATE ws2_32)

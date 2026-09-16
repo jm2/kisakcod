@@ -95,7 +95,9 @@ foreach(_marker IN ITEMS
     "WSAEWOULDBLOCK"
     "WSAEMSGSIZE"
     "getaddrinfo\\("
-    "defined\\(EAI_NODATA\\)")
+    "defined\\(EAI_NODATA\\)"
+    "KISAK_SOCKET_TEST_HOOKS"
+    "Kisak_SocketSetResolveTestHook")
     require_contains("${_win32_source}" "${_marker}"
         "Win32 socket backend must use the canonical Winsock primitive: ${_marker}")
 endforeach()
@@ -136,7 +138,9 @@ foreach(_marker IN ITEMS
     "getsockname\\("
     "getaddrinfo\\("
     "close\\("
-    "defined\\(EAI_NODATA\\)")
+    "defined\\(EAI_NODATA\\)"
+    "KISAK_SOCKET_TEST_HOOKS"
+    "Kisak_SocketSetResolveTestHook")
     require_contains("${_posix_source}" "${_marker}"
         "POSIX socket backend must use the canonical BSD primitive: ${_marker}")
 endforeach()
@@ -186,6 +190,8 @@ foreach(_marker IN ITEMS
     "unresolvable host does not resolve"
     "Sys_SocketResolveErrorStatus\\("
     "addressless hostname maps to NotFound"
+    "Kisak_SocketSetResolveTestHook\\(FailResolveQuery\\)"
+    "forced system resolver failure does not resolve"
     "Sys_SocketClose\\(&first\\) == SysSocketCloseStatus::Closed")
     require_contains("${_socket_tests}" "${_marker}"
         "socket runtime coverage: ${_marker}")
@@ -197,6 +203,7 @@ foreach(_marker IN ITEMS
     "platform-socket-contracts"
     "platform-socket-source-invariants"
     "platform_socket_source_test\\.cmake"
+    "target_compile_definitions\\(kisakcod-platform-socket-tests PRIVATE KISAK_SOCKET_TEST_HOOKS=1\\)"
     "platform_socket_tests\\.cpp")
     require_contains("${_tests_cmake}" "${_marker}"
         "socket test registration: ${_marker}")

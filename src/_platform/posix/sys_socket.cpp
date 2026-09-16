@@ -26,6 +26,29 @@ struct SysSocket
     int handle{-1};
 };
 
+// Test seam (test builds only). When KISAK_SOCKET_TEST_HOOKS is defined the
+// suite can install a query that replaces the native getaddrinfo call, so the
+// failed-resolution contract is exercised deterministically instead of
+// depending on the host's resolver configuration. Production builds do not
+// define the macro, so neither the hook nor the setter exists in the shipped
+// service.
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+using SocketResolveQuery = int (*)(const char *node,
+    const char *service,
+    const addrinfo *hints,
+    addrinfo **results);
+
+namespace
+{
+thread_local SocketResolveQuery resolveHostTestHook = nullptr;
+} // namespace
+
+void KISAK_CDECL Kisak_SocketSetResolveTestHook(SocketResolveQuery hook)
+{
+    resolveHostTestHook = hook;
+}
+#endif
+
 namespace
 {
 bool ToSocketAddress(const sockaddr_in &source, SysSocketAddress *out) noexcept
@@ -392,7 +415,14 @@ SysSocketResolveStatus ResolveHostAddress(
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_protocol = IPPROTO_UDP;
     addrinfo *results = nullptr;
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+    const SocketResolveQuery query = resolveHostTestHook;
+    const int failure = query
+        ? query(hostname, nullptr, &hints, &results)
+        : getaddrinfo(hostname, nullptr, &hints, &results);
+#else
     const int failure = getaddrinfo(hostname, nullptr, &hints, &results);
+#endif
     if (failure != 0 || !results)
         return Sys_SocketResolveErrorStatus(failure);
 
