@@ -40,11 +40,13 @@
 #include <client_mp/client_mp.h>
 #include "scr_compiler.h"
 
+//SCRIPT_YACC_STYPE_BEGIN
 struct stype_t // sizeof=0x8
 {                                       // ...
     sval_u val;                         // ...
     unsigned int pos;                   // ...
 };
+//SCRIPT_YACC_STYPE_END
 
 // KISAKTODO ICF'd function that just returns first arg. 
 sval_u __cdecl node1_(unsigned int pool)
@@ -6149,10 +6151,47 @@ int __cdecl yyparse()
         *++yyssp = (short)yystate;
         if (yyssp >= &yyss[yystacksize - 1])
         {
+            int yy_stack_overflow;
+            //SCRIPT_YACC_GROWTH_SLICE_BEGIN
             yyvs1 = yyvs;
             yyss1 = yyss;
             v37 = yyssp - yyss + 1;
-            if (yystacksize >= 10000)
+            //SCRIPT_YACC_MAXDEPTH_BEGIN
+            yy_stack_overflow = (yystacksize >= 10000);
+            //SCRIPT_YACC_MAXDEPTH_END
+            if (!yy_stack_overflow)
+            {
+                yystacksize *= 2;
+                if (yystacksize > 10000)
+                    yystacksize = 10000;
+
+                //v1 = alloca(2 * yystacksize);
+                //v21 = &v18;
+                //yyss = &v18;
+                //_yy_memcpy(&v18, yyss1, 2 * v37);
+                // Relocate only the slots the old storage actually holds. v37 is
+                // the live state entry count (yyssp - yyss + 1) captured before
+                // the cursor moved; the value cursor advances in lockstep with
+                // the state cursor at this growth check, so v37 bounds the old
+                // value storage too. Reading the doubled yystacksize here would
+                // over-read both old arrays.
+                yyss = (short *)alloca(sizeof(short) *yystacksize);
+                for (int yyi = 0; yyi < v37; ++yyi)
+                    yyss[yyi] = yyss1[yyi];
+
+                yyvs = (stype_t *)alloca(sizeof(stype_t) * yystacksize);
+                for (int yyi = 0; yyi < v37; ++yyi)
+                    yyvs[yyi] = yyvs1[yyi];
+                //v2 = alloca(8 * yystacksize);
+                //v20 = &v18;
+                //yyvs = &v18;
+                //_yy_memcpy(&v18, yyvs1, 8 * v37);
+
+                yyssp = &yyss[v37 - 1];
+                yyvsp = &yyvs[v37 - 1];
+            }
+            //SCRIPT_YACC_GROWTH_SLICE_END
+            if (yy_stack_overflow)
             {
                 v17 = "parser stack overflow";
                 yyerror();
@@ -6163,26 +6202,6 @@ int __cdecl yyparse()
                 }
                 return 2;
             }
-            yystacksize *= 2;
-            if (yystacksize > 10000)
-                yystacksize = 10000;
-
-            //v1 = alloca(2 * yystacksize);
-            //v21 = &v18;
-            //yyss = &v18;
-            //_yy_memcpy(&v18, yyss1, 2 * v37);
-            yyss = (short *)alloca(sizeof(short) *yystacksize);
-            memcpy(yyss, yyss1, sizeof(short) * yystacksize);
-
-            yyvs = (stype_t *)alloca(sizeof(stype_t) * yystacksize);
-            memcpy(yyvs, yyvs1, sizeof(stype_t) * yystacksize);
-            //v2 = alloca(8 * yystacksize);
-            //v20 = &v18;
-            //yyvs = &v18;
-            //_yy_memcpy(&v18, yyvs1, 8 * v37);
-
-            yyssp = &yyss[v37 - 1];
-            yyvsp = &yyvs[v37 - 1];
             if (yyssp >= &yyss[yystacksize - 1])
                 goto yyabortlab;
         }

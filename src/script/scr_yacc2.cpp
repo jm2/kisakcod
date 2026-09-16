@@ -20,11 +20,13 @@
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
 
+//SCRIPT_YACC2_STYPE_BEGIN
 struct stype_t // sizeof=0x8
 {                                       // ...
 	sval_u val;                         // ...
 	uint32_t pos;                   // ...
 };
+//SCRIPT_YACC2_STYPE_END
 
 #define YY_BUF_SIZE 0x4000 //16384
 
@@ -1011,7 +1013,9 @@ int __cdecl yylex()
 	}
 }
 
+//SCRIPT_YACC2_INITDEPTH_BEGIN
 #define YYINITDEPTH 200 + sizeof(stype_t)
+//SCRIPT_YACC2_INITDEPTH_END
 int yyparse()
 {
 	/*-------------------------.
@@ -1098,6 +1102,8 @@ yynewstate:
 
 		if (yyssp >= &yyss[yystacksize - 1])
 		{
+			int yy_stack_overflow;
+			//SCRIPT_YACC2_GROWTH_SLICE_BEGIN
 			yyvs1 = yyvs;
 			yyss1 = yyss;
 
@@ -1105,7 +1111,49 @@ yynewstate:
 			yysize = yyssp - yyss + 1;
 
 			/* Extend the stack our own way.  */
-			if (yystacksize >= 10000) // YYMAXDEPTH
+			//SCRIPT_YACC2_MAXDEPTH_BEGIN
+			yy_stack_overflow = (yystacksize >= 10000); // YYMAXDEPTH
+			//SCRIPT_YACC2_MAXDEPTH_END
+			if (!yy_stack_overflow)
+			{
+				yystacksize *= 2;
+				if (yystacksize > 10000) // YYMAXDEPTH
+				{
+					yystacksize = 10000; // YYMAXDEPTH
+				}
+
+				//iassert(needs_free == false);
+				//needs_free = true;
+
+				// YYSTACK_RELOCATE (yyss_alloc, yyss);
+				yyss = (short *)alloca(sizeof(short) * yystacksize);
+				//yyss = (short *)malloc(sizeof(short) * yystacksize);
+				free1addr = yyss;
+				// Move only the yysize live state slots the old yyss1 storage
+				// holds; the destination was sized for the doubled capacity.
+				for (int yyi = 0; yyi < yysize; ++yyi)
+				{
+					yyss[yyi] = yyss1[yyi];
+				}
+
+				// YYSTACK_RELOCATE (yyvs_alloc, yyvs);
+				yyvs = (stype_t *)alloca(sizeof(stype_t) * yystacksize);
+				//yyvs = (stype_t *)malloc(sizeof(stype_t) * yystacksize);
+				free2addr = yyvs;
+				// The value cursor tracks the state cursor at this growth
+				// check, so the old yyvs1 storage holds the same yysize live
+				// slots.
+				for (int yyi = 0; yyi < yysize; ++yyi)
+				{
+					yyvs[yyi] = yyvs1[yyi];
+				}
+
+				yyvsp = &yyvs[yysize - 1];
+				yyssp = &yyss[yysize - 1];
+			}
+			//SCRIPT_YACC2_GROWTH_SLICE_END
+
+			if (yy_stack_overflow)
 			{
 				if (!yychar) // yyerror yyexhaustedlab
 				{
@@ -1125,32 +1173,6 @@ yynewstate:
 
 				return 2;
 			}
-
-			yystacksize *= 2;
-			if (yystacksize > 10000) // YYMAXDEPTH
-			{
-				yystacksize = 10000; // YYMAXDEPTH
-			}
-
-			//iassert(needs_free == false);
-			//needs_free = true;
-
-			// YYSTACK_RELOCATE (yyss_alloc, yyss);
-			yyss = (short *)alloca(sizeof(short) * yystacksize);
-			//yyss = (short *)malloc(sizeof(short) * yystacksize);
-			free1addr = yyss;
-			//memcpy(yyss, yyss1, sizeof(short) * yystacksize);
-			memcpy(yyss, yyss1, sizeof(short) * yysize); // LWSS CHANGE
-
-			// YYSTACK_RELOCATE (yyvs_alloc, yyvs);
-			yyvs = (stype_t *)alloca(sizeof(stype_t) * yystacksize);
-			//yyvs = (stype_t *)malloc(sizeof(stype_t) * yystacksize);
-			free2addr = yyvs;
-			//memcpy(yyss, yyvs1, sizeof(stype_t) * yystacksize);
-			memcpy(yyvs, yyvs1, sizeof(stype_t) * yysize); // LWSS CHANGE
-
-			yyvsp = &yyvs[yysize - 1];
-			yyssp = &yyss[yysize - 1];
 
 			// YYDPRINTF ((stderr, "Stack size increased to %lu\n", (unsigned long int) yystacksize));
 
