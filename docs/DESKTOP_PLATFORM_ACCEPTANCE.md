@@ -114,6 +114,11 @@ There is no logical/framebuffer size abstraction and no portable window/event
 seam: `HWND` couples windowing to the D3D device, sound and input, exactly as
 [PORTING.md](PORTING.md) §"Platform layer (win32/)" warns.
 
+`WM_POWERBROADCAST` is handled only to filter APM messages
+(`win_wndproc.cpp` ~337–341, returning early for `wParam > 1`); it does not
+drive any thread suspend/resume handshake. The render/database pause path is
+engine-event driven (see §3.4 and P4.4).
+
 ### 3.3 Input, clipboard and usercmd generation
 
 - **Mouse:** `IN_ActivateWin32Mouse` / `IN_Win32Mouse` / `IN_MouseMove`
@@ -173,8 +178,19 @@ seam: `HWND` couples windowing to the D3D device, sound and input, exactly as
   it differs from `fs_basepath` (~2234, ~2255, ~2269, ~2280). Setting
   `fs_homepath` to a writable location distinct from a read-only `fs_basepath`
   is a supported configuration today.
-- **Consequence for clean install:** the *default* is collocated, not
-  separated. `fs_basepath` defaults to `Sys_Cwd()` (~1477) and `fs_homepath`
+- **Remaining base-path writers (player profiles):** not every engine-managed
+  write is routed through `fs_homepath`. `Com_NewPlayerProfile` and
+  `Com_DeletePlayerProfile` (`src/qcommon/com_playerprofile.cpp` ~197/~163) both
+  build their OS path with
+  `FS_BuildOSPath(fs_basepath, "players", <profilePath>, osPath)` (~210/~171)
+  and then call `FS_CreatePath` (~211) or `Sys_RemoveDirTree` (~172). With a
+  distinct writable `fs_homepath` and a read-only install/retail root, normal
+  profile creation or deletion therefore still targets the base (install) tree
+  and can fail or attempt to modify it. This is a remaining gap that the
+  `fs_homepath` override does not cover; P1.5 and DP-FS-07 require it to be
+  documented and covered with separated writable/read-only roots.
+- **Consequence for clean install:** the *default* is collocated, not separated.
+  `fs_basepath` defaults to `Sys_Cwd()` (~1477) and `fs_homepath`
   defaults to `fs_basepath` (~1488–1489); no `Sys_DefaultHomePath`-style
   per-user path is wired in. Out of the box, config/saves/logs are written
   under the working directory / install directory, with no automatic per-user
@@ -224,6 +240,14 @@ seam: `HWND` couples windowing to the D3D device, sound and input, exactly as
   production callers; `Sys_FileSystemReadFile` and `Sys_FileSystemRemoveTree`
   share the same validator but are driven today by tests and fuzz, and POSIX
   `Sys_RemoveDirTree` is still a stub (`win_common.cpp` ~68–75).
+- **Open-path follow behavior:** the no-follow guarantee above belongs to the
+  portable operations (`Sys_FileSystemReadFile`, `Sys_FileSystemRemoveTree`).
+  The engine's actual loose-file lookup instead opens the assembled OS path with
+  `FS_FileOpenReadBinary` (`com_files.cpp` ~1006 and callers such as ~956,
+  ~1013), which is a plain `fopen`-class open and follows an in-root
+  symlink/reparse component. Lexical `qpath` validation therefore cannot keep a
+  resolved *open* under the trusted root; P2.2b/DP-FS-06 must additionally
+  require a rooted no-follow open whose resolved target stays under the root.
 - **Existing coverage:** `tests/platform_filesystem_tests.cpp`
   (`TestFilteredCollectionAndPathHelpers` ~702) exercises *normalization and
   ordering* only — separator/case folding, filter matching and sort order on
@@ -277,6 +301,15 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
 - **P1.4** Existing `fs_homepath`/`fs_basepath` behavior MUST be preserved as
   an override so retail-compatible configurations and existing mods continue
   to resolve paths; the new defaults MUST NOT break explicit dvar/paths.
+- **P1.5** Player-profile creation (`Com_NewPlayerProfile`) and deletion
+  (`Com_DeletePlayerProfile`) MUST operate on the writable per-user root, not on
+  `fs_basepath`. At the recorded SHA both build `players/<profile>` from
+  `fs_basepath` (`com_playerprofile.cpp` ~210/~171) and then create or remove it
+  there, so with a distinct writable `fs_homepath` and a read-only install root
+  normal profile create/delete still targets the install tree. This remaining
+  base-path writer MUST NOT be treated as satisfied by the `fs_homepath`
+  override; DP-FS-07 covers create/delete with separated writable and read-only
+  roots.
 
 ### P2 — Case-sensitive filenames and safe path normalization
 
@@ -331,6 +364,15 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
   by the backend component validators audited in §3.4; #135 requires it to be
   specified and tested separately (DP-FS-06) with no production behavior change
   in this definition stage, and no retail wire/command behavior change.
+  - Containment MUST be enforced on the **resolved** path and MUST consider path
+    components that are themselves symlinks or reparse points. A `qpath` whose
+    lexical form is clean but that traverses an in-root link/reparse component to
+    a target outside the root MUST fail closed. Because the engine's loose-file
+    lookup (`FS_FileOpenReadBinary`) follows such links, lexical input checks
+    alone are insufficient: the rooted caller MUST use a **no-follow open**
+    (open each component without traversing links/reparse points and verify the
+    resolved target stays under the root). DP-FS-05 verifies enumeration only and
+    does not satisfy this.
 - **P2.3** Path length MUST be bounded and fail closed with a diagnostic rather
   than truncating into a different file (`FS_BuildOSPath` bound).
 - **P2.4** Directory enumeration used by asset discovery MUST exclude symlinks
@@ -359,9 +401,22 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
 - **P4.3** Windowed/edge-resize, fullscreen toggle, and monitor add/remove or
   resolution change MUST preserve a valid swapchain/target and reproduce the
   existing `vid_restart`/`r_fullscreen` semantics.
-- **P4.4** Suspend/resume MUST stop and restart timing and render loops
-  without wall-clock jumps entering usercmd timing; on POSIX this replaces the
-  Win32 `SuspendThread`/`ResumeThread` handshake with condition variables. The
+- **P4.4** OS suspend/resume MUST stop and restart timing and render loops
+  without wall-clock jumps entering usercmd timing. This is an OS power-lifecycle
+  concern and is **separate** from two independent thread contracts that MUST NOT
+  be conflated with it: (a) initially-suspended thread startup, which the Win32
+  backend starts with a raw `ResumeThread`
+  (`src/_platform/win32/sys_thread.cpp` ~328, `Sys_ThreadStart`); and (b)
+  terminal crash freezing, which uses `SuspendThread` (~463,
+  `Sys_ThreadForceSuspendForCrash`). At the recorded SHA the render/database
+  pause handshake is driven by engine events, not by those raw calls:
+  `renderPausedEvent` and `wakeDatabaseEvent`/`resumedDatabaseEvent` are created,
+  set and waited in `src/qcommon/threads.cpp` (~377, ~403–406, ~635–644,
+  ~744–754), and `WM_POWERBROADCAST` (`src/win32/win_wndproc.cpp` ~337) does not
+  drive the suspend/resume handshake. A POSIX client therefore replaces the OS
+  power-lifecycle handling with a platform power seam; it does not need to
+  replicate `ResumeThread`/`SuspendThread`, and this requirement MUST NOT
+  prescribe condition variables for thread startup or crash-freeze. The
   audio-device suspend/resume handshake is A10's lifecycle acceptance
   ([#132](https://github.com/jm2/kisakcod/issues/132)); A13 owns the shared
   platform suspend/resume seam that A10's audio loop attaches to, and DP-WIN-04
@@ -410,6 +465,8 @@ implicit one.
 | Windows x86/amd64 client | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022), CMake ≥ 3.16, Windows SDK 10.0.22621 | Vulkan 1.1 driver, or D3D9 migration reference | 1024×768 minimum; keyboard+mouse required | 32-bit x86 is the compatibility reference |
 | Linux amd64 client | Ubuntu 22.04 / glibc 2.35 LTS class | GCC ≥ 12 or Clang ≥ 15, CMake ≥ 3.16 | Vulkan 1.1 loader + driver, SDL3 windowing | X11 or Wayland; 1024×768 minimum | release target |
 | Linux amd64 headless server | Ubuntu 22.04 class | GCC ≥ 12 or Clang ≥ 15 | none | none (console/stdio) | priority role |
+| Linux arm64 client | Ubuntu 22.04 / glibc 2.35 LTS class (arm64) | GCC ≥ 12 or Clang ≥ 15, CMake ≥ 3.16 | Vulkan 1.1 loader + arm64 driver, SDL3 windowing | X11 or Wayland; 1024×768 minimum | shipped target (see §3.1) |
+| Linux arm64 headless server | Ubuntu 22.04 class (arm64) | GCC ≥ 12 or Clang ≥ 15 | none | none (console/stdio) | shipped target (see §3.1) |
 | macOS arm64 client | macOS 13 (Ventura) or later | AppleClang 15 / Xcode 15, CMake ≥ 3.16 | Metal via MoltenVK; Vulkan 1.1 feature set | 1024×768 minimum | signed/notarized app; x86_64 slice not required |
 | macOS arm64 headless server | macOS 13 or later | AppleClang 15 / Xcode 15 | none | none | |
 | Windows ARM64 | TBD, follows Windows 10 floor | MSVC v143 ARM64 | Vulkan 1.1 where available | keyboard+mouse | Phase 3 |
@@ -417,7 +474,10 @@ implicit one.
 Open validation items for this table: exact Vulkan feature/extension floor,
 whether 1024×768 is the real minimum for the retail UI, and the Linux display
 server support statement. Rows are **proposed** until the corresponding test
-evidence exists.
+evidence exists. Every shipped target in §3.1 has a row here — including Linux
+arm64 client/server and Windows ARM64 — so DP-REQ-01's "All targets" gate has a
+floor to validate for each and cannot be marked complete while a delivery target
+is undefined.
 
 ## 6. Clean-install acceptance matrix
 
@@ -427,24 +487,25 @@ satisfy the row). No row is `pass`.
 
 | ID | Requirement | Procedure / harness | Platforms | Required evidence | Status |
 |---|---|---|---|---|---|
-| DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert config/cache/log created under the per-user root and retail data read from the read-only root; assert no engine write under install/data | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log | planned |
+| DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert each artifact lands in its **exact role-specific root** and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%`, cache and logs under `%LOCALAPPDATA%`. Linux: config under `$XDG_CONFIG_HOME` (fallback `~/.config`), cache under `$XDG_CACHE_HOME` (fallback `~/.cache`), state/logs under `$XDG_STATE_HOME` (fallback `~/.local/state`). macOS: config/state under `~/Library/Application Support`, logs under `~/Library/Logs`. Repeat with each environment variable overridden and with it unset to assert the documented fallbacks. A build that puts every artifact under one singular root (for example all of `%APPDATA%` or all of `$XDG_CONFIG_HOME`) MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log | planned |
 | DP-FS-02 | P2.1/P2.1a case-sensitive lookup | On a case-sensitive host, place a mixed-case asset and require exact-case resolution first; assert a folded fallback only under the P2.1a conditions (read-only retail/mod content, single unambiguous match) and assert fail-closed rejection on a case-only collision. A fallback not validated against a commercial reference stays unproven. | Linux | Linux test with retail-shaped fixture + commercial-reference result | partial |
 | DP-FS-03 | P2.2/P2.2a backend rejection **and** positive acceptance at the general path-accepting operations | Through a **production path-accepting operation** — `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`) and `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`) — assert **per platform** both negatives and positives. Win negatives: `..`, control/Win32-invalid bytes, reserved DOS device base names, trailing dot/space, over-long components; fail closed with no effect. Linux/macOS negatives: invalid UTF-8, `..`, component-count overflow. Positives (all platforms): a well-formed absolute path under a configured/temp root succeeds, because these are general filesystem APIs rather than engine-relative gates; on Linux/macOS a DOS device base name such as `CON` is a valid filename and MUST NOT be rejected without contrary compatibility evidence; the compare/sort helpers remain non-validating. `TestFilteredCollectionAndPathHelpers` covers normalization/ordering only and cannot satisfy this row. | Win, Linux, macOS | CTest output at exact head | partial |
 | DP-FS-04 | P2.3 path-length bound | Build an over-length engine path and assert fail-closed with diagnostic, no truncation | Win, Linux, macOS | CTest output | partial |
 | DP-FS-05 | P2.4 no-follow enumeration | Existing remove-tree/list link/reparse cases plus an asset-discovery walk | Win, Linux, macOS | CTest output | partial |
-| DP-FS-06 | P2.2b rooted engine-relative input validation (separately planned) | Feed untrusted engine-relative `qpath` values (absolute segments, `..` traversal, `\`/`:` alias spellings, invalid bytes) through the rooted caller that joins them to the trusted engine root and assert fail-closed rejection before any path-accepting operation, while legitimate absolute API inputs from P2.2a still succeed. Rooted validator not implemented at the recorded SHA; no production behavior change in this definition stage and no retail wire/command change. | Win, Linux, macOS | CTest output at exact head | planned |
+| DP-FS-06 | P2.2b rooted engine-relative input validation (separately planned) | Feed untrusted engine-relative `qpath` values (absolute segments, `..` traversal, `\`/`:` alias spellings, invalid bytes) through the rooted caller that joins them to the trusted engine root and assert fail-closed rejection before any path-accepting or open operation, while legitimate absolute API inputs from P2.2a still succeed. Include link/reparse coverage: a lexically clean `qpath` that traverses an in-root symlink/reparse component to a target outside the root MUST fail closed at the rooted no-follow open, and any returned handle MUST refer to a target under the root. DP-FS-05's enumeration-only exclusion does not satisfy this row. Rooted validator not implemented at the recorded SHA; no production behavior change in this definition stage and no retail wire/command change. | Win, Linux, macOS | CTest output at exact head | planned |
+| DP-FS-07 | P1.5 player-profile create/delete under separated roots | With a distinct writable per-user root and a read-only install/retail root, create and delete a player profile; assert the `players/<profile>` directory is created and removed under the writable root, and that neither operation touches or fails on the read-only install tree. At the recorded SHA both paths use `fs_basepath` (`com_playerprofile.cpp` ~210/~171), so this row cannot pass until that writer is moved. | Win, Linux, macOS | CTest output + path trace | planned |
 | DP-IN-01 | P3.1 non-US keys/text | Scripted layout matrix (de/fr/ja) through the window/input seam: dead keys, AltGr, text field, IME | Win, Linux, macOS | Input harness trace | planned |
 | DP-IN-02 | P3.2 clipboard | Get/set round-trip for ASCII, non-ASCII, overlong and empty text in text fields | Win, Linux, macOS | Harness output | planned |
 | DP-IN-03 | P3.3 relative mouse | Feed a fixed physical-motion trace and compare per-frame deltas against the Win32 baseline under fixed dvars | Win, Linux, macOS | Delta trace diff | planned |
 | DP-WIN-01 | P4.1 focus loss/regain | Toggle focus/minimize; assert capture release, no spurious usercmds, predictable re-acquire | Win, Linux, macOS | Event + usercmd trace | planned |
 | DP-WIN-02 | P4.2 logical/framebuffer mapping | Render at 100%/150%/200% DPI and assert correct UI scale and mouse mapping | Win, Linux (X11/Wayland), macOS | Screenshot + mapping test | planned |
 | DP-WIN-03 | P4.3 resize/fullscreen/monitor change | Windowed resize, fullscreen toggle, monitor add/remove, resolution change; assert valid target and preserved semantics | Win, Linux, macOS | Manual + automated harness | planned |
-| DP-WIN-04 | P4.4 suspend/resume | OS suspend/resume; assert timing/render restart through the shared platform seam with no usercmd wall-clock jump; the audio-device resume handshake is A10 | Win, Linux, macOS | Trace + wall-clock assertions | planned |
+| DP-WIN-04 | P4.4 OS suspend/resume | OS suspend/resume; assert timing/render restart through the shared platform seam with no usercmd wall-clock jump. Assert separately that the initially-suspended thread-start contract and the terminal crash-freeze contract are unaffected; `WM_POWERBROADCAST` is not expected to drive either (`ResumeThread`/`SuspendThread` are used for thread start/crash freeze, not OS power). The audio-device resume handshake is A10. | Win, Linux, macOS | Trace + wall-clock assertions | planned |
 | DP-CMD-01 | P5.1–P5.3 usercmd preservation | Same input trace through the migration; compare against the Win32 baseline AND the #127/A05 commercial reference fixtures | Win, Linux, macOS | Trace diff + #127 fixtures | blocked on #127/#122 |
 | DP-DEV-01 | P6.1 absent display/input device | Start with no display or input device, or with a forced display/input init failure; assert bounded diagnostic and fallback/clean exit. Absent/failed audio devices are A10 ([#132](https://github.com/jm2/kisakcod/issues/132)), not this row. | Win, Linux, macOS | Harness output + exit code | planned |
 | DP-DEV-02 | P6.2 cleanup/restart | Fail init midway, clean up, restart; assert idempotent cleanup and no leaked global state | Win, Linux, macOS | Harness output | planned |
 | DP-DEV-03 | P6.3 clean-machine startup | Fresh image, no config, read-only data dir, malformed config; assert actionable diagnostics | Win, Linux, macOS | Image run log | planned |
-| DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) | All targets | Requirements doc + measured evidence | planned |
+| DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) for **every** row, explicitly including Linux arm64 client/server and Windows ARM64 | All targets | Requirements doc + measured evidence | planned |
 
 ## 7. Retail usercmd invariants that must not change
 
@@ -482,10 +543,10 @@ authorized to change in the platform migration:
 - **Commercial compatibility** is required by #122 and cannot be substituted by
   fork-to-fork or CoD4x tests. DP-CMD-01 stays blocked until #127 supplies
   reference fixtures and a licensed reference session is available.
-- **Native composition**: DP-FS-01 and all DP-IN/DP-WIN rows require a native
-  Linux/macOS client composition (A08/A09 and the client platform exits) that
-  does not exist at the recorded SHA. They are planned against the eventual
-  seam, not retrofitted to Win32.
+- **Native composition**: DP-FS-01, DP-FS-07 and all DP-IN/DP-WIN rows require
+  a native Linux/macOS client composition (A08/A09 and the client platform
+  exits) that does not exist at the recorded SHA. They are planned against the
+  eventual seam, not retrofitted to Win32.
 - **Audio lifecycle**: absent/failed audio devices, permission changes and
   audio suspend/resume are A10 ([#132](https://github.com/jm2/kisakcod/issues/132)).
   A13 owns the shared platform suspend/resume seam A10 attaches to, but neither
@@ -503,6 +564,12 @@ authorized to change in the platform migration:
 - This document is the acceptance baseline for #135. Changes to a requirement,
   a minimum-requirement row, or a test ID require a recorded reason and must
   keep #135 open.
+- Recorded reason for the DP-FS-07 addition and the P1.5/P2.2b/P4.4/§5 row
+  changes: final-head review of PR #148 found that the `fs_homepath` override
+  did not cover `Com_NewPlayerProfile`/`Com_DeletePlayerProfile`, that DP-FS-06
+  could pass with an in-root symlink/reparse escape, that DP-FS-01 did not test
+  the separate P1.2 per-role roots, that the §5 table omitted Linux arm64, and
+  that P4.4 conflated OS power resume with raw thread suspend/resume.
 - The SDL migration must land behind the seam described here; do not reclassify
   an unimplemented window/input/filesystem behavior as "done" because a
   primitive compiles or a portable helper test passes.
