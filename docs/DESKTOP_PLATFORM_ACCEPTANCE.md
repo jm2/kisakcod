@@ -167,9 +167,11 @@ seam: `HWND` couples windowing to the D3D device, sound and input, exactly as
   `Sys_FileSystemCreateDirectory`, `Sys_FileSystemReadFile` (no-follow, ".."
   rejected, bounded), `Sys_FileSystemListDirectory[Filtered]` (real entries,
   stable case-insensitive ordering), and `Sys_FileSystemRemoveTree` (never
-  traverses links/reparse points). The win32 backend additionally rejects
-  Win32-invalid bytes, normalization aliases and reserved DOS device
-  components on referenced-file admission.
+  traverses links/reparse points). The win32 backend additionally validates
+  path components (`src/_platform/win32/sys_filesystem.cpp` ~186–226),
+  rejecting Win32-invalid characters, reserved DOS device base names
+  (`CON`/`PRN`/`AUX`/`NUL`/`CONIN$`/`CONOUT$`/`COM1-9`/`LPT1-9`), trailing dot
+  or space, `..`, and excessive component counts.
 - **Existing coverage:** `tests/platform_filesystem_tests.cpp`
   (`TestFilteredCollectionAndPathHelpers` ~702 and the remove-tree suites)
   exercises separator/case folding, filter matching and link/reparse refusal.
