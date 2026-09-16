@@ -167,12 +167,15 @@ class ManifestValidationTests(unittest.TestCase):
         errors = cd.validate_manifest(broken)
         self.assertTrue(any("counts_toward_delivery" in error for error in errors))
 
-    def test_aggregate_requires_declared_references(self):
+    def test_undeclared_reference_is_rejected(self):
         broken = copy.deepcopy(self.manifest)
-        broken["aggregate"]["required_commercial_references"] = ["commercial-1.7"]
-        # Only referencing a declared reference is fine; an undeclared one is not.
-        self.assertEqual(cd.validate_manifest(broken), [])
-        broken["aggregate"]["required_commercial_references"] = ["steam-9.9"]
+        # Adding an undeclared reference on top of the mandatory ones is an
+        # error; the mandatory references themselves are exercised below.
+        broken["aggregate"]["required_commercial_references"] = [
+            "commercial-1.7",
+            "steam-1.8",
+            "steam-9.9",
+        ]
         errors = cd.validate_manifest(broken)
         self.assertTrue(any("steam-9.9" in error for error in errors))
 
@@ -188,6 +191,117 @@ class ManifestValidationTests(unittest.TestCase):
         self.assertTrue(
             any("required_strongest_validation" in error for error in level_errors)
         )
+
+
+class MandatoryContractTests(unittest.TestCase):
+    """The delivery contract cannot be weakened through the manifest (#126)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.manifest_path = REPO_ROOT / "docs" / "capability" / "manifest.json"
+        cls.manifest = cd.load_manifest(cls.manifest_path)
+
+    def test_mandatory_modes_cannot_be_omitted_or_emptied(self):
+        for weakened in ([], ["mp-client"], ["headless-server"], ["sp"]):
+            with self.subTest(modes=weakened):
+                broken = copy.deepcopy(self.manifest)
+                broken["aggregate"]["required_modes"] = weakened
+                errors = cd.validate_manifest(broken)
+                self.assertTrue(
+                    any("required_modes" in error for error in errors),
+                    msg=f"weakened modes {weakened!r} were accepted: {errors}",
+                )
+
+        for cap in cd.MANDATORY_REQUIRED_MODES:
+            broken = copy.deepcopy(self.manifest)
+            broken["aggregate"]["required_modes"] = [
+                m for m in cd.MANDATORY_REQUIRED_MODES if m != cap
+            ]
+            errors = cd.validate_manifest(broken)
+            self.assertTrue(any(cap in error for error in errors))
+
+    def test_mandatory_modes_cannot_be_absent_key(self):
+        broken = copy.deepcopy(self.manifest)
+        del broken["aggregate"]["required_modes"]
+        errors = cd.validate_manifest(broken)
+        self.assertTrue(any("required_modes" in error for error in errors))
+
+    def test_mandatory_references_cannot_be_omitted_or_emptied(self):
+        for weakened in ([], ["commercial-1.7"], ["steam-1.8"]):
+            with self.subTest(refs=weakened):
+                broken = copy.deepcopy(self.manifest)
+                broken["aggregate"]["required_commercial_references"] = weakened
+                errors = cd.validate_manifest(broken)
+                self.assertTrue(
+                    any(
+                        "required_commercial_references" in error
+                        for error in errors
+                    ),
+                    msg=f"weakened refs {weakened!r} were accepted: {errors}",
+                )
+
+        missing = copy.deepcopy(self.manifest)
+        missing["aggregate"]["required_commercial_references"] = ["commercial-1.7"]
+        errors = cd.validate_manifest(missing)
+        self.assertTrue(any("steam-1.8" in error for error in errors))
+
+    def test_mandatory_validation_threshold_cannot_be_weakened(self):
+        for weakened in ("linked_production", "original_peer_compatibility", "none"):
+            with self.subTest(level=weakened):
+                broken = copy.deepcopy(self.manifest)
+                broken["aggregate"]["required_strongest_validation"] = weakened
+                errors = cd.validate_manifest(broken)
+                self.assertTrue(
+                    any(
+                        "required_strongest_validation" in error
+                        for error in errors
+                    ),
+                    msg=f"weakened level {weakened!r} was accepted: {errors}",
+                )
+
+    def test_mandatory_boolean_gates_cannot_be_disabled(self):
+        for field in (
+            "require_commercial_reference_validation",
+            "require_package_result",
+        ):
+            with self.subTest(field=field):
+                broken = copy.deepcopy(self.manifest)
+                broken["aggregate"][field] = False
+                errors = cd.validate_manifest(broken)
+                self.assertTrue(
+                    any(field in error for error in errors),
+                    msg=f"disabled {field} was accepted: {errors}",
+                )
+
+    def test_emptied_aggregate_cannot_manufacture_delivery(self):
+        # Exact refinery reproduction: emptying the editable policy keys used to
+        # return no validation errors and report delivered=5 with every
+        # commercial reference pending and no production/package evidence.
+        broken = copy.deepcopy(self.manifest)
+        broken["aggregate"]["required_modes"] = []
+        broken["aggregate"]["required_commercial_references"] = []
+
+        self.assertNotEqual(cd.validate_manifest(broken), [])
+
+        result = cd.compute_aggregate(broken)
+        self.assertEqual(result["delivered"], 0)
+        self.assertEqual(result["requested"], 5)
+        self.assertFalse(result["references_ok"])
+        self.assertEqual(result["required_modes"], ["mp-client", "headless-server"])
+        self.assertEqual(
+            result["required_refs"], ["commercial-1.7", "steam-1.8"]
+        )
+
+    def test_weakened_gates_cannot_manufacture_delivery(self):
+        # Disabling the boolean gates and refs must not promote unpromoted rows,
+        # even when the commercial references are marked validated.
+        broken = copy.deepcopy(self.manifest)
+        broken["aggregate"]["require_commercial_reference_validation"] = False
+        broken["aggregate"]["require_package_result"] = False
+        for reference in broken["commercial_references"]:
+            reference["status"] = "validated"
+        result = cd.compute_aggregate(broken)
+        self.assertEqual(result["delivered"], 0)
 
 
 class AggregateTests(unittest.TestCase):

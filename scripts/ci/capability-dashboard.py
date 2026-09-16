@@ -41,6 +41,22 @@ GENERATED_MARKER = (
     "Regenerate with `python3 scripts/ci/capability-dashboard.py`. -->"
 )
 
+# --------------------------------------------------------------------------
+# Mandatory delivery contract
+# --------------------------------------------------------------------------
+# The delivery policy is fixed by the product requirements (#122 network
+# compatibility, #126 acceptance) and must not be editable through the
+# manifest.  ``validate_manifest`` rejects an aggregate that omits or weakens
+# any of these requirements, and ``compute_aggregate`` always evaluates against
+# these values -- never against the manifest's editable ``aggregate`` block --
+# so emptying ``required_modes``/``required_commercial_references`` (or flipping
+# the boolean gates off) cannot manufacture delivered targets.
+MANDATORY_REQUIRED_MODES = ("mp-client", "headless-server")
+MANDATORY_REQUIRED_COMMERCIAL_REFERENCES = ("commercial-1.7", "steam-1.8")
+MANDATORY_REQUIRED_STRONGEST_VALIDATION = "packaged_clean_machine"
+MANDATORY_REQUIRE_COMMERCIAL_REFERENCE_VALIDATION = True
+MANDATORY_REQUIRE_PACKAGE_RESULT = True
+
 REQUIRED_CAPABILITY_FIELDS = (
     "id",
     "target",
@@ -94,23 +110,81 @@ def validate_manifest(manifest: dict) -> list[str]:
     ref_ids = [r.get("id") for r in references]
     if len(set(ref_ids)) != len(ref_ids):
         errors.append("commercial_references contain duplicate ids")
-    aggregate = manifest.get("aggregate") or {}
-    for required in aggregate.get("required_commercial_references") or []:
+
+    # The aggregate must declare the mandatory contract exactly.  Omitted,
+    # empty or weakened policy is a schema error, not a warning.
+    aggregate = manifest.get("aggregate")
+    if not isinstance(aggregate, dict):
+        errors.append(
+            "aggregate must be an object declaring the mandatory delivery "
+            "policy"
+        )
+        aggregate = {}
+
+    declared_modes = aggregate.get("required_modes")
+    if not isinstance(declared_modes, list) or not declared_modes:
+        errors.append(
+            "aggregate.required_modes must be a non-empty list containing the "
+            f"mandatory modes {list(MANDATORY_REQUIRED_MODES)!r}"
+        )
+        declared_modes = []
+    for mode in MANDATORY_REQUIRED_MODES:
+        if mode not in declared_modes:
+            errors.append(
+                f"aggregate.required_modes must include mandatory mode {mode!r}"
+            )
+    for mode in declared_modes:
+        if mode not in modes:
+            errors.append(
+                f"aggregate.required_mode {mode!r} is not a declared mode"
+            )
+
+    declared_refs = aggregate.get("required_commercial_references")
+    if not isinstance(declared_refs, list) or not declared_refs:
+        errors.append(
+            "aggregate.required_commercial_references must be a non-empty "
+            "list containing both mandatory commercial references "
+            f"{list(MANDATORY_REQUIRED_COMMERCIAL_REFERENCES)!r}"
+        )
+        declared_refs = []
+    for required in MANDATORY_REQUIRED_COMMERCIAL_REFERENCES:
+        if required not in declared_refs:
+            errors.append(
+                "aggregate.required_commercial_references must include "
+                f"mandatory reference {required!r}"
+            )
+    for required in declared_refs:
         if required not in ref_ids:
             errors.append(
                 f"aggregate requires commercial reference {required!r} "
                 "which is not declared"
             )
-    if aggregate.get("required_strongest_validation") not in validation_levels:
+
+    declared_level = aggregate.get("required_strongest_validation")
+    if declared_level != MANDATORY_REQUIRED_STRONGEST_VALIDATION:
+        errors.append(
+            "aggregate.required_strongest_validation must be "
+            f"{MANDATORY_REQUIRED_STRONGEST_VALIDATION!r}"
+        )
+    elif declared_level not in validation_levels:
         errors.append(
             "aggregate.required_strongest_validation must be a declared "
             "validation level"
         )
-    for mode in aggregate.get("required_modes") or []:
-        if mode not in modes:
-            errors.append(
-                f"aggregate.required_mode {mode!r} is not a declared mode"
-            )
+
+    if (
+        aggregate.get("require_commercial_reference_validation")
+        is not MANDATORY_REQUIRE_COMMERCIAL_REFERENCE_VALIDATION
+    ):
+        errors.append(
+            "aggregate.require_commercial_reference_validation must be true"
+        )
+    if (
+        aggregate.get("require_package_result")
+        is not MANDATORY_REQUIRE_PACKAGE_RESULT
+    ):
+        errors.append("aggregate.require_package_result must be true")
+
     for reference in references:
         rid = reference.get("id", "<missing>")
         if reference.get("status") not in ("pending", "validated", "blocked"):
@@ -352,17 +426,21 @@ def derive_test_inventory(
 # Aggregate
 # --------------------------------------------------------------------------
 def compute_aggregate(manifest: dict) -> dict:
-    aggregate = manifest.get("aggregate") or {}
+    """Compute requested-target delivery against the mandatory contract.
+
+    The required modes, commercial references, validation threshold and boolean
+    gates are read from the module-level mandatory policy, never from the
+    manifest's editable ``aggregate`` block.  A weakened or emptied aggregate
+    therefore cannot change the computed result.
+    """
     refs = {r["id"]: r for r in manifest.get("commercial_references") or []}
-    required_refs = aggregate.get("required_commercial_references") or []
-    require_ref_validation = bool(
-        aggregate.get("require_commercial_reference_validation")
-    )
-    required_level = aggregate.get("required_strongest_validation")
+    required_refs = list(MANDATORY_REQUIRED_COMMERCIAL_REFERENCES)
+    require_ref_validation = MANDATORY_REQUIRE_COMMERCIAL_REFERENCE_VALIDATION
+    required_level = MANDATORY_REQUIRED_STRONGEST_VALIDATION
     levels = (manifest.get("enums") or {}).get("validation_levels") or []
     level_rank = {name: rank for rank, name in enumerate(levels)}
-    required_modes = aggregate.get("required_modes") or []
-    require_package = bool(aggregate.get("require_package_result"))
+    required_modes = list(MANDATORY_REQUIRED_MODES)
+    require_package = MANDATORY_REQUIRE_PACKAGE_RESULT
 
     refs_ok = True
     if require_ref_validation:
