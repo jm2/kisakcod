@@ -2,19 +2,13 @@
 #include <cstdint>
 #include <universal/platform_compat.h>
 
-struct nodetype // sizeof=0x14 retail; 0x18 here (see order)
+struct nodetype // sizeof=0x14
 {                                       // ...
     nodetype* left;
     nodetype* right;
     nodetype* parent;
     int weight;
     int symbol;
-    // Deterministic tie-break slot stamped by Huff_BuildFromData before each
-    // qsort. The retail comparator orders by weight only, so equal-weight
-    // nodes were left to qsort's implementation-defined tie behavior; that
-    // made the derived codebook differ across libc implementations. This
-    // field is never serialized and does not affect the wire format.
-    int order;
 };
 
 struct huff_t // sizeof=0x4C14
