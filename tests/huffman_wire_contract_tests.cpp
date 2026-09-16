@@ -17,12 +17,14 @@
 // docs/NETWORK_COMPATIBILITY.md, which still requires authentic 1.7/Steam-1.8
 // references.
 //
-// Compatibility caveat this test makes observable: a Huffman codebook is only
-// wire-compatible if every peer derives the SAME code. The production builder
-// orders candidate nodes with qsort, whose tie-breaking is implementation
-// defined, so the codebook is only safe to pin -- and to trust across libc
-// implementations -- while ties cannot change it. The pinned bytes below fail
-// loudly if that ever stops being true.
+// Wire compatibility requires every peer to derive the SAME code. The retail
+// comparator orders candidate nodes by weight only, and msg_hData contains
+// duplicate weights (for example symbols 228 and 231), so the production
+// builder pins equal-weight ordering with an explicit deterministic tie-break
+// (nodetype::order) before each qsort. Without that, qsort's
+// implementation-defined handling of equal elements made the codebook differ
+// across libc implementations. The pinned bytes below fail loudly if the
+// tie-break is ever removed.
 
 #include <qcommon/huffman.h>
 #include <qcommon/msg_huffman_data.h>
@@ -165,185 +167,230 @@ void checkRoundTrip(const std::vector<std::uint8_t> &input,
     if (decoded == static_cast<int>(input.size()))
         CHECK(std::memcmp(out.data(), input.data(), input.size()) == 0);
 }
+
+// Emit the exact bit sequence Huff_Compress would write for one symbol,
+// trimmed to whole bytes (the trailing pad bits are not part of the code).
+std::vector<std::uint8_t> emitCode(int symbol)
+{
+    std::vector<std::uint8_t> code(16, 0);
+    int offset = 0;
+    Huff_offsetTransmit(&g_huff.compressDecompress, symbol, code.data(), &offset);
+    code.resize(static_cast<std::size_t>((offset + 7) / 8));
+    return code;
+}
 } // namespace
 
-int main()
+// --- 1. Shared table integrity ---------------------------------------------
+// msg_hData is the retail weight table. If any value changes, the code
+// changes and interoperability breaks, so pin the exact bytes.
+void checkTableIntegrity()
 {
-    // --- 1. Shared table integrity -----------------------------------------
-    // msg_hData is the retail weight table. If any value changes, the code
-    // changes and interoperability breaks, so pin the exact bytes.
+    std::uint64_t tableFnv = 14695981039346656037ULL;
+    std::uint64_t tableSum = 0;
+    for (int i = 0; i < 256; ++i)
     {
-        std::uint64_t tableFnv = 14695981039346656037ULL;
-        std::uint64_t tableSum = 0;
-        for (int i = 0; i < 256; ++i)
+        const int w = msg_hData[i];
+        CHECK(w > 0);
+        tableSum += static_cast<std::uint64_t>(w);
+        for (int shift = 0; shift < 32; shift += 8)
         {
-            const int w = msg_hData[i];
-            CHECK(w > 0);
-            tableSum += static_cast<std::uint64_t>(w);
-            for (int shift = 0; shift < 32; shift += 8)
-            {
-                tableFnv ^= static_cast<std::uint8_t>((w >> shift) & 0xFF);
-                tableFnv *= 1099511628211ULL;
-            }
-        }
-        CHECK(tableSum == 2154226ULL);
-        CHECK(tableFnv == 7312978016625600390ULL);
-    }
-
-    buildTree();
-
-    // --- 2. Derived code length distribution -------------------------------
-    {
-        int histogram[12] = {0};
-        for (int i = 0; i < 256; ++i)
-        {
-            const int length = Huff_bitCount(&g_huff.compressDecompress, i);
-            CHECK(length >= 1 && length <= 11);
-            if (length >= 1 && length <= 11)
-                ++histogram[length];
-        }
-        for (int length = 1; length <= 11; ++length)
-            CHECK(histogram[length] == kLengthHistogram[length]);
-    }
-
-    // --- 3. Code words agree with the reported lengths ---------------------
-    // Huff_offsetTransmit is the exact bit emitter used by Huff_Compress, so a
-    // disagreement with Huff_bitCount would mean the compressor writes a
-    // different number of bits than the codebook advertises.
-    {
-        for (int symbol = 0; symbol < 256; ++symbol)
-        {
-            std::uint8_t code[16];
-            std::memset(code, 0, sizeof(code));
-            int offset = 0;
-            Huff_offsetTransmit(&g_huff.compressDecompress, symbol, code, &offset);
-            CHECK(offset == Huff_bitCount(&g_huff.compressDecompress, symbol));
+            tableFnv ^= static_cast<std::uint8_t>((w >> shift) & 0xFF);
+            tableFnv *= 1099511628211ULL;
         }
     }
+    CHECK(tableSum == 2154226ULL);
+    CHECK(tableFnv == 7312978016625600390ULL);
+}
 
-    // --- 4. Fixed-input byte fixtures --------------------------------------
+// --- 2. Derived code length distribution -----------------------------------
+void checkLengthHistogram()
+{
+    int histogram[12] = {0};
+    for (int i = 0; i < 256; ++i)
     {
-        const std::vector<std::uint8_t> identity = fixtureIdentity32();
-        const std::vector<std::uint8_t> stride = fixtureStride64();
-        const std::vector<std::uint8_t> zeros = fixtureZeros4096();
-        const std::vector<std::uint8_t> alphabet = fixtureFullAlphabet();
-
-        const std::vector<std::uint8_t> cIdentity =
-            compress(identity.data(), identity.size());
-        const std::vector<std::uint8_t> cStride =
-            compress(stride.data(), stride.size());
-        const std::vector<std::uint8_t> cZeros =
-            compress(zeros.data(), zeros.size());
-        const std::vector<std::uint8_t> cAlphabet =
-            compress(alphabet.data(), alphabet.size());
-
-        CHECK(cIdentity.size() == sizeof(kF1Compressed));
-        CHECK(std::memcmp(cIdentity.data(), kF1Compressed,
-                          sizeof(kF1Compressed)) == 0);
-
-        CHECK(cStride.size() == sizeof(kF2Compressed));
-        CHECK(std::memcmp(cStride.data(), kF2Compressed,
-                          sizeof(kF2Compressed)) == 0);
-
-        CHECK(cZeros.size() == 1536);
-        CHECK(fnv1a64(cZeros.data(), cZeros.size()) == 2387247832005793061ULL);
-
-        CHECK(cAlphabet.size() == 273);
-        CHECK(fnv1a64(cAlphabet.data(), cAlphabet.size()) == 1399084440640432086ULL);
-
-        // --- 5. Round trips through the production decoder -----------------
-        checkRoundTrip(identity, cIdentity);
-        checkRoundTrip(stride, cStride);
-        checkRoundTrip(zeros, cZeros);
-        checkRoundTrip(alphabet, cAlphabet);
+        const int length = Huff_bitCount(&g_huff.compressDecompress, i);
+        CHECK(length >= 1 && length <= 11);
+        if (length >= 1 && length <= 11)
+            ++histogram[length];
     }
+    for (int length = 1; length <= 11; ++length)
+        CHECK(histogram[length] == kLengthHistogram[length]);
+}
 
-    // --- 6. Decoder boundary behavior --------------------------------------
-    {
-        // A run of zero bits walks left until the code runs out partway through
-        // a symbol; the production decoder stops there and reports the symbols
-        // it completed. Pin the count so a tree/length change is visible.
-        std::vector<std::uint8_t> zeroInput(16, 0);
-        std::vector<std::uint8_t> zeroOutput(256);
-        const int decoded = decompress(zeroInput, zeroOutput);
-        CHECK(decoded == 25);
-
-        // The 257th tree leaf is the dummy symbol 256. A valid peer never
-        // emits it, so the decoder must reject it rather than write it out.
-        std::uint8_t dummyCode[16];
-        std::memset(dummyCode, 0, sizeof(dummyCode));
-        int dummyBits = 0;
-        Huff_offsetTransmit(&g_huff.compressDecompress, 256, dummyCode, &dummyBits);
-        CHECK(dummyBits == 11);
-        std::vector<std::uint8_t> dummyOutput(64);
-        const int dummyDecoded = Huff_Decompress(
-            g_huff.compressDecompress.tree, dummyCode,
-            static_cast<int>((dummyBits + 7) / 8), dummyOutput.data(),
-            static_cast<int>(dummyOutput.size()));
-        CHECK(dummyDecoded == -1);
-    }
-
-    // --- 7. Primitive read/write agreement ---------------------------------
+// --- 3. Code words agree with the reported lengths -------------------------
+// Huff_offsetTransmit is the exact bit emitter used by Huff_Compress, so a
+// disagreement with Huff_bitCount would mean the compressor writes a
+// different number of bits than the codebook advertises.
+void checkEmittedBitsMatchLengths()
+{
+    for (int symbol = 0; symbol < 256; ++symbol)
     {
         std::uint8_t code[16];
         std::memset(code, 0, sizeof(code));
         int offset = 0;
-        Huff_offsetTransmit(&g_huff.compressDecompress, 'A', code, &offset);
-
-        int symbol = -1;
-        int readOffset = 0;
-        const bool read = Huff_offsetReceive(g_huff.compressDecompress.tree,
-                                             &symbol, code, &readOffset, offset);
-        CHECK(read);
-        CHECK(symbol == 'A');
-        CHECK(readOffset == offset);
-
-        // One bit is shorter than the shortest code (length 3): refuse.
-        int truncatedSymbol = -1;
-        int truncatedOffset = 0;
-        const bool truncated = Huff_offsetReceive(
-            g_huff.compressDecompress.tree, &truncatedSymbol, code,
-            &truncatedOffset, 1);
-        CHECK(!truncated);
+        Huff_offsetTransmit(&g_huff.compressDecompress, symbol, code, &offset);
+        CHECK(offset == Huff_bitCount(&g_huff.compressDecompress, symbol));
     }
+}
 
-    // --- 8. Argument and capacity guards -----------------------------------
-    {
-        std::vector<std::uint8_t> input = fixtureStride64();
-        std::uint8_t out[512];
-        std::vector<std::uint8_t> compressed;
-        int result = 0;
+// --- 4. Fixed-input byte fixtures ------------------------------------------
+void checkFixedInputFixtures()
+{
+    const std::vector<std::uint8_t> identity = fixtureIdentity32();
+    const std::vector<std::uint8_t> stride = fixtureStride64();
+    const std::vector<std::uint8_t> zeros = fixtureZeros4096();
+    const std::vector<std::uint8_t> alphabet = fixtureFullAlphabet();
 
-        CHECK(Huff_Compress(nullptr, input.data(), 64, out, 512) == -1);
-        CHECK(Huff_Compress(&g_huff.compressDecompress, nullptr, 64, out, 512) == -1);
-        CHECK(Huff_Compress(&g_huff.compressDecompress, input.data(), -1, out, 512) == -1);
-        CHECK(Huff_Compress(&g_huff.compressDecompress, input.data(), 64, nullptr, 512) == -1);
-        CHECK(Huff_Compress(&g_huff.compressDecompress, input.data(), 64, out, -1) == -1);
-        // No room for the fixed code: refuse rather than emit a partial stream.
-        CHECK(Huff_Compress(&g_huff.compressDecompress, input.data(), 64, out, 0) == -1);
+    const std::vector<std::uint8_t> cIdentity =
+        compress(identity.data(), identity.size());
+    const std::vector<std::uint8_t> cStride =
+        compress(stride.data(), stride.size());
+    const std::vector<std::uint8_t> cZeros =
+        compress(zeros.data(), zeros.size());
+    const std::vector<std::uint8_t> cAlphabet =
+        compress(alphabet.data(), alphabet.size());
 
-        compressed = compress(input.data(), input.size());
-        CHECK(compressed.size() == sizeof(kF2Compressed));
+    CHECK(cIdentity.size() == sizeof(kF1Compressed));
+    CHECK(std::memcmp(cIdentity.data(), kF1Compressed,
+                      sizeof(kF1Compressed)) == 0);
 
-        const int size = static_cast<int>(compressed.size());
-        CHECK(Huff_Decompress(nullptr, compressed.data(), size, out, 512) == -1);
-        CHECK(Huff_Decompress(g_huff.compressDecompress.tree, nullptr, size, out, 512) == -1);
-        CHECK(Huff_Decompress(g_huff.compressDecompress.tree, compressed.data(), -1, out, 512) == -1);
-        CHECK(Huff_Decompress(g_huff.compressDecompress.tree, compressed.data(), size, nullptr, 512) == -1);
-        CHECK(Huff_Decompress(g_huff.compressDecompress.tree, compressed.data(), size, out, -1) == -1);
-        CHECK(Huff_Decompress(g_huff.compressDecompress.tree, compressed.data(),
-                              INT_MAX / 8 + 1, out, 512) == -1);
-        // Output buffer cannot hold even the first symbol.
-        CHECK(Huff_Decompress(g_huff.compressDecompress.tree, compressed.data(), size, out, 0) == -1);
+    CHECK(cStride.size() == sizeof(kF2Compressed));
+    CHECK(std::memcmp(cStride.data(), kF2Compressed,
+                      sizeof(kF2Compressed)) == 0);
 
-        // Empty input is a valid no-op with non-null buffers.
-        std::uint8_t dummy = 0;
-        const int outCapacity = static_cast<int>(sizeof(out));
-        result = Huff_Compress(&g_huff.compressDecompress, &dummy, 0, out, outCapacity);
-        CHECK(result == 0);
-        result = Huff_Decompress(g_huff.compressDecompress.tree, &dummy, 0, out, outCapacity);
-        CHECK(result == 0);
-    }
+    CHECK(cZeros.size() == 1536);
+    CHECK(fnv1a64(cZeros.data(), cZeros.size()) == 2387247832005793061ULL);
+
+    CHECK(cAlphabet.size() == 273);
+    CHECK(fnv1a64(cAlphabet.data(), cAlphabet.size()) == 1399084440640432086ULL);
+
+    // --- 5. Round trips through the production decoder ---------------------
+    checkRoundTrip(identity, cIdentity);
+    checkRoundTrip(stride, cStride);
+    checkRoundTrip(zeros, cZeros);
+    checkRoundTrip(alphabet, cAlphabet);
+}
+
+// --- 6. Decoder boundary behavior ------------------------------------------
+void checkDecoderBoundaries()
+{
+    // A run of zero bits walks left until the code runs out partway through
+    // a symbol; the production decoder stops there and reports the symbols
+    // it completed. Pin the count so a tree/length change is visible.
+    std::vector<std::uint8_t> zeroInput(16, 0);
+    std::vector<std::uint8_t> zeroOutput(256);
+    const int decoded = decompress(zeroInput, zeroOutput);
+    CHECK(decoded == 25);
+
+    // The 257th tree leaf is the dummy symbol 256. A valid peer never
+    // emits it, so the decoder must reject it rather than write it out.
+    std::uint8_t dummyCode[16];
+    std::memset(dummyCode, 0, sizeof(dummyCode));
+    int dummyBits = 0;
+    Huff_offsetTransmit(&g_huff.compressDecompress, 256, dummyCode, &dummyBits);
+    CHECK(dummyBits == 11);
+    std::vector<std::uint8_t> dummyOutput(64);
+    const int dummyDecoded = Huff_Decompress(
+        g_huff.compressDecompress.tree, dummyCode,
+        static_cast<int>((dummyBits + 7) / 8), dummyOutput.data(),
+        static_cast<int>(dummyOutput.size()));
+    CHECK(dummyDecoded == -1);
+}
+
+// --- 7. Primitive read/write agreement -------------------------------------
+void checkPrimitiveReadWrite()
+{
+    std::uint8_t code[16];
+    std::memset(code, 0, sizeof(code));
+    int offset = 0;
+    Huff_offsetTransmit(&g_huff.compressDecompress, 'A', code, &offset);
+
+    int symbol = -1;
+    int readOffset = 0;
+    const bool read = Huff_offsetReceive(g_huff.compressDecompress.tree,
+                                         &symbol, code, &readOffset, offset);
+    CHECK(read);
+    CHECK(symbol == 'A');
+    CHECK(readOffset == offset);
+
+    // One bit is shorter than the shortest code (length 3): refuse.
+    int truncatedSymbol = -1;
+    int truncatedOffset = 0;
+    const bool truncated = Huff_offsetReceive(
+        g_huff.compressDecompress.tree, &truncatedSymbol, code,
+        &truncatedOffset, 1);
+    CHECK(!truncated);
+}
+
+// --- 8. Argument and capacity guards ---------------------------------------
+void checkArgumentAndCapacityGuards()
+{
+    std::vector<std::uint8_t> input = fixtureStride64();
+    std::uint8_t out[512];
+    std::vector<std::uint8_t> compressed;
+    int result = 0;
+
+    CHECK(Huff_Compress(nullptr, input.data(), 64, out, 512) == -1);
+    CHECK(Huff_Compress(&g_huff.compressDecompress, nullptr, 64, out, 512) == -1);
+    CHECK(Huff_Compress(&g_huff.compressDecompress, input.data(), -1, out, 512) == -1);
+    CHECK(Huff_Compress(&g_huff.compressDecompress, input.data(), 64, nullptr, 512) == -1);
+    CHECK(Huff_Compress(&g_huff.compressDecompress, input.data(), 64, out, -1) == -1);
+    // No room for the fixed code: refuse rather than emit a partial stream.
+    CHECK(Huff_Compress(&g_huff.compressDecompress, input.data(), 64, out, 0) == -1);
+
+    compressed = compress(input.data(), input.size());
+    CHECK(compressed.size() == sizeof(kF2Compressed));
+
+    const int size = static_cast<int>(compressed.size());
+    CHECK(Huff_Decompress(nullptr, compressed.data(), size, out, 512) == -1);
+    CHECK(Huff_Decompress(g_huff.compressDecompress.tree, nullptr, size, out, 512) == -1);
+    CHECK(Huff_Decompress(g_huff.compressDecompress.tree, compressed.data(), -1, out, 512) == -1);
+    CHECK(Huff_Decompress(g_huff.compressDecompress.tree, compressed.data(), size, nullptr, 512) == -1);
+    CHECK(Huff_Decompress(g_huff.compressDecompress.tree, compressed.data(), size, out, -1) == -1);
+    CHECK(Huff_Decompress(g_huff.compressDecompress.tree, compressed.data(),
+                          INT_MAX / 8 + 1, out, 512) == -1);
+    // Output buffer cannot hold even the first symbol.
+    CHECK(Huff_Decompress(g_huff.compressDecompress.tree, compressed.data(), size, out, 0) == -1);
+
+    // Empty input is a valid no-op with non-null buffers.
+    std::uint8_t dummy = 0;
+    const int outCapacity = static_cast<int>(sizeof(out));
+    result = Huff_Compress(&g_huff.compressDecompress, &dummy, 0, out, outCapacity);
+    CHECK(result == 0);
+    result = Huff_Decompress(g_huff.compressDecompress.tree, &dummy, 0, out, outCapacity);
+    CHECK(result == 0);
+}
+
+// --- 9. Duplicate-weight tie-break -----------------------------------------
+// msg_hData gives symbols 228 and 231 the same weight (4683), and F2 contains
+// both. Weight alone is therefore not a total order: before the comparator
+// gained its nodetype::order tie-break, the derived tree -- and these code
+// words -- depended on qsort's implementation-defined treatment of equal
+// elements, which differed between glibc, macOS libc and UCRT. Pin both codes
+// explicitly so a regression to weight-only ordering is visible on every host,
+// including ones whose qsort happens to agree by luck.
+void checkDuplicateWeightTieBreak()
+{
+    CHECK(msg_hData[228] == msg_hData[231]);
+    const std::vector<std::uint8_t> expected228 = {0x7d, 0x00};
+    const std::vector<std::uint8_t> expected231 = {0x7d, 0x01};
+    CHECK(emitCode(228) == expected228);
+    CHECK(emitCode(231) == expected231);
+}
+
+int main()
+{
+    checkTableIntegrity();
+
+    buildTree();
+
+    checkLengthHistogram();
+    checkEmittedBitsMatchLengths();
+    checkFixedInputFixtures();
+    checkDecoderBoundaries();
+    checkPrimitiveReadWrite();
+    checkArgumentAndCapacityGuards();
+    checkDuplicateWeightTieBreak();
 
     if (g_failed)
     {

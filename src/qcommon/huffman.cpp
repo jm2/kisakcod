@@ -162,7 +162,29 @@ int __cdecl nodeCmp(const void *left, const void *right)
         return -1;
     if (leftNode->weight > rightNode->weight)
         return 1;
+    // The retail table contains duplicate weights (for example symbols 228
+    // and 231), so weight alone is not a total order. qsort's handling of
+    // equal elements is implementation defined: a stable libc keeps the
+    // pre-sort order, an unstable one may swap equal-weight nodes and change
+    // their code words. Break the tie on the slot stamped by
+    // Huff_BuildFromData so every platform derives the same codebook.
+    if (leftNode->order < rightNode->order)
+        return -1;
+    if (leftNode->order > rightNode->order)
+        return 1;
     return 0;
+}
+
+// Stamp each candidate with its current slot before sorting. Combined with the
+// comparator above this makes every qsort call a stable sort by weight: nodes
+// of equal weight keep the order they already had, which is exactly the code
+// assignment the pinned wire fixtures were captured from. Using the slot rather
+// than the creation sequence matters because the builder re-sorts the window
+// starting at heapHead and the freshly created internal node sits first in it.
+static void __cdecl Huff_stampSortOrder(nodetype **heap, int first, int count)
+{
+    for (int i = 0; i < count; ++i)
+        heap[first + i]->order = i;
 }
 
 void __cdecl Huff_BuildFromData(huff_t *huff, const int *msg_hData)
@@ -182,6 +204,7 @@ void __cdecl Huff_BuildFromData(huff_t *huff, const int *msg_hData)
         inited = Huff_initNode(huff, i, msg_hData[i]);
         heap[i] = inited;
     }
+    Huff_stampSortOrder(heap, 0, 256);
     qsort(heap, 0x100u, sizeof(heap[0]), nodeCmp);
     v3 = Huff_initNode(huff, 257, 1);
     v3->left = huff->tree;
@@ -192,6 +215,7 @@ void __cdecl Huff_BuildFromData(huff_t *huff, const int *msg_hData)
     heap[0] = v3;
     while (numNodes > 1)
     {
+        Huff_stampSortOrder(heap, heapHead, 256 - heapHead);
         qsort(&heap[heapHead], 256 - heapHead, sizeof(heap[0]), nodeCmp);
         v4 = Huff_initNode(huff, 257, 1);
         v4->left = heap[heapHead];
