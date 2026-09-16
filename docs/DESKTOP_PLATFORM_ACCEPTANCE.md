@@ -199,8 +199,14 @@ seam: `HWND` couples windowing to the D3D device, sound and input, exactly as
   `Sys_FileSystemReadFile` (no-follow, bounded),
   `Sys_FileSystemListDirectory[Filtered]` (real entries, stable
   case-insensitive ordering) and `Sys_FileSystemRemoveTree` (never traverses
-  links/reparse points). That validation is the production external-path
-  rejection boundary. On win32 it is `HasUnsafeRawComponent`
+  links/reparse points). These are general filesystem APIs: their validation
+  rejects the backend-specific invalid component sets below but deliberately
+  accepts well-formed absolute paths and platform-valid names, because callers
+  pass configured roots, build paths and test/temp roots. It is therefore
+  **not** a rooted engine-relative input gate; the caller that joins an
+  untrusted `qpath` to a trusted root is the separate rooted boundary in P2.2b,
+  which the audited tree does not implement. On win32 it is
+  `HasUnsafeRawComponent`
   (`src/_platform/win32/sys_filesystem.cpp` ~152, invoked at ~507, ~560, ~664
   and ~1924), rejecting `..`, control and Win32-invalid characters
   (`<`/`>`/`"`/`|`/`*`, bare `?`/`:`), trailing dot or space, reserved DOS
@@ -298,17 +304,33 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
   case-insensitively only where engine-path semantics require it. That
   normalization/compare contract is the `Sys_FileSystem*EnginePaths*` helpers
   (`src/qcommon/sys_filesystem.h` ~208–255), which have **no rejection
-  result**. Rejection of unsafe external paths is a **separate production
-  boundary**: the path-accepting operations validate before any filesystem
-  work (win32 `HasUnsafeRawComponent`, POSIX/macOS `SplitSafePath`; see §3.4)
-  and MUST fail closed with no partial effect. The enforced set is
-  backend-specific and MUST be stated per platform rather than asserted as one
-  portable rule. Win32 rejects `..`, control/Win32-invalid bytes, trailing
-  dot/space, reserved DOS device base names and bare `?`/`:`; POSIX/macOS
-  reject invalid UTF-8, `..` and component-count overflow. Absolute-path
-  injection and normalization aliases are **not** rejected by either validator
-  today: where #135 requires them, a new validator MUST be specified and is not
-  claimed as covered.
+  result**. Validation is a **separate production boundary**: the path-accepting
+  operations validate before any filesystem work (win32 `HasUnsafeRawComponent`,
+  POSIX/macOS `SplitSafePath`; see §3.4) and MUST fail closed with no partial
+  effect. The enforced set is backend-specific and MUST be stated per platform
+  rather than asserted as one portable rule.
+- **P2.2a (general path-accepting operations).** The path-accepting operations
+  are general filesystem APIs. Their legitimate inputs include well-formed
+  **absolute paths** — configured roots and build paths that callers resolve
+  themselves — and names that are valid on the host platform. The current win32
+  validator rejects `..`, control/Win32-invalid bytes, trailing dot/space,
+  reserved DOS device base names and bare `?`/`:`; POSIX/macOS reject invalid
+  UTF-8, `..` and component-count overflow (see §3.4). Both accept a well-formed
+  absolute path, and neither rejects a name merely because it is a DOS device
+  base name on POSIX. #135 does **not** require broadening these APIs to refuse
+  absolute paths, and MUST NOT impose win32 name rules on POSIX absent
+  compatibility evidence; existing legitimate callers (loaders, configured
+  roots, test/temp roots) MUST keep working.
+- **P2.2b (rooted external-input validation, separately planned).** Untrusted
+  **engine-relative** input — a `qpath`-style value supplied by a mod, network
+  message, or console/command input — MUST be validated at the **rooted caller**
+  that joins it to the trusted engine root, before it reaches any path-accepting
+  operation: absolute segments, `..` traversal, normalization aliases and
+  invalid bytes are rejected there so the resolved path stays under the intended
+  root. This rooted boundary is distinct from P2.2a and is **not** implemented
+  by the backend component validators audited in §3.4; #135 requires it to be
+  specified and tested separately (DP-FS-06) with no production behavior change
+  in this definition stage, and no retail wire/command behavior change.
 - **P2.3** Path length MUST be bounded and fail closed with a diagnostic rather
   than truncating into a different file (`FS_BuildOSPath` bound).
 - **P2.4** Directory enumeration used by asset discovery MUST exclude symlinks
@@ -407,9 +429,10 @@ satisfy the row). No row is `pass`.
 |---|---|---|---|---|---|
 | DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert config/cache/log created under the per-user root and retail data read from the read-only root; assert no engine write under install/data | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log | planned |
 | DP-FS-02 | P2.1/P2.1a case-sensitive lookup | On a case-sensitive host, place a mixed-case asset and require exact-case resolution first; assert a folded fallback only under the P2.1a conditions (read-only retail/mod content, single unambiguous match) and assert fail-closed rejection on a case-only collision. A fallback not validated against a commercial reference stays unproven. | Linux | Linux test with retail-shaped fixture + commercial-reference result | partial |
-| DP-FS-03 | P2.2 rejection at the production validation boundary | Drive `..`, control/Win32-invalid bytes, DOS device base names, trailing dot/space, over-long component paths, absolute paths and alias spellings through a **production path-accepting operation** — `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`) and `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`) — and require fail-closed rejection with no effect. The compare/sort helpers (`TestFilteredCollectionAndPathHelpers`) cannot satisfy this row; cases no current backend rejects (absolute-path injection, POSIX DOS-name parity) require a specified new validator. | Win, Linux, macOS | CTest output at exact head | partial |
+| DP-FS-03 | P2.2/P2.2a backend rejection **and** positive acceptance at the general path-accepting operations | Through a **production path-accepting operation** — `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`) and `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`) — assert **per platform** both negatives and positives. Win negatives: `..`, control/Win32-invalid bytes, reserved DOS device base names, trailing dot/space, over-long components; fail closed with no effect. Linux/macOS negatives: invalid UTF-8, `..`, component-count overflow. Positives (all platforms): a well-formed absolute path under a configured/temp root succeeds, because these are general filesystem APIs rather than engine-relative gates; on Linux/macOS a DOS device base name such as `CON` is a valid filename and MUST NOT be rejected without contrary compatibility evidence; the compare/sort helpers remain non-validating. `TestFilteredCollectionAndPathHelpers` covers normalization/ordering only and cannot satisfy this row. | Win, Linux, macOS | CTest output at exact head | partial |
 | DP-FS-04 | P2.3 path-length bound | Build an over-length engine path and assert fail-closed with diagnostic, no truncation | Win, Linux, macOS | CTest output | partial |
 | DP-FS-05 | P2.4 no-follow enumeration | Existing remove-tree/list link/reparse cases plus an asset-discovery walk | Win, Linux, macOS | CTest output | partial |
+| DP-FS-06 | P2.2b rooted engine-relative input validation (separately planned) | Feed untrusted engine-relative `qpath` values (absolute segments, `..` traversal, `\`/`:` alias spellings, invalid bytes) through the rooted caller that joins them to the trusted engine root and assert fail-closed rejection before any path-accepting operation, while legitimate absolute API inputs from P2.2a still succeed. Rooted validator not implemented at the recorded SHA; no production behavior change in this definition stage and no retail wire/command change. | Win, Linux, macOS | CTest output at exact head | planned |
 | DP-IN-01 | P3.1 non-US keys/text | Scripted layout matrix (de/fr/ja) through the window/input seam: dead keys, AltGr, text field, IME | Win, Linux, macOS | Input harness trace | planned |
 | DP-IN-02 | P3.2 clipboard | Get/set round-trip for ASCII, non-ASCII, overlong and empty text in text fields | Win, Linux, macOS | Harness output | planned |
 | DP-IN-03 | P3.3 relative mouse | Feed a fixed physical-motion trace and compare per-frame deltas against the Win32 baseline under fixed dvars | Win, Linux, macOS | Delta trace diff | planned |
