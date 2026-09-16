@@ -17,6 +17,12 @@
 # the truncation contract is runtime-tested by
 # tests/msvc_printf_shim_tests.cpp on every host.
 #
+# src/database/db_graph_hash.h is namespace-scoped inline constexpr
+# configuration and a class interface; no C translation unit includes
+# it. The same constructs are compile-checked by the production gate
+# on every supported compiler (cmake --preset linux-amd64-mp /
+# macos-arm64-mp, MSVC on the hosted Windows legs).
+#
 # The remaining headers carry C++-only constructs on lines touched by the
 # platform port (ki-vuj). The same constructs are compile-checked by the
 # production gate on every supported compiler (cmake --preset
@@ -27,6 +33,7 @@
 exclude_paths:
   - "src/game/taginfo_disk32.h"
   - "src/universal/msvc_printf_shim.h"
+  - "src/database/db_graph_hash.h"
   - "deps/ode/collision.h"
   - "deps/ode/objects.h"
   - "src/physics/ode/collision_trimesh_KISAK.h"
