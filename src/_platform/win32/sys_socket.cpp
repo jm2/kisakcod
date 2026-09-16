@@ -375,13 +375,11 @@ bool KISAK_CDECL Sys_SocketAddressIsEqual(
 
 namespace
 {
-// Maps `hostname` to an IPv4 endpoint with a zero port. Numeric dotted-quad
-// literals and the exact name "localhost" are handled here so they never
-// depend on host resolver configuration or an available network; every
-// other value is delegated to getaddrinfo(AF_INET), which requires Winsock
-// to be initialized first. The endpoint is written only on Resolved: a
-// caller-visible failure never carries a half-populated address.
-SysSocketResolveStatus ResolveHostAddress(
+// Resolves the literal host forms that must never touch the OS resolver:
+// the exact name "localhost" and numeric dotted-quad addresses. Returns
+// true and fills `outAddress` on a match; false leaves it untouched so the
+// caller can fall through to getaddrinfo(AF_INET).
+bool TryResolveLiteralHost(
     const char *const hostname,
     SysSocketAddress *const outAddress) noexcept
 {
@@ -392,7 +390,7 @@ SysSocketResolveStatus ResolveHostAddress(
         outAddress->address[2] = 0;
         outAddress->address[3] = 1;
         outAddress->port = 0;
-        return SysSocketResolveStatus::Resolved;
+        return true;
     }
 
     in_addr literal{};
@@ -407,8 +405,24 @@ SysSocketResolveStatus ResolveHostAddress(
             static_cast<std::uint8_t>((host >> 8) & 0xFFUL);
         outAddress->address[3] = static_cast<std::uint8_t>(host & 0xFFUL);
         outAddress->port = 0;
-        return SysSocketResolveStatus::Resolved;
+        return true;
     }
+
+    return false;
+}
+
+// Maps `hostname` to an IPv4 endpoint with a zero port. Literal forms are
+// resolved by TryResolveLiteralHost without host resolver configuration or
+// an available network; every other value is delegated to
+// getaddrinfo(AF_INET), which requires Winsock to be initialized first. The
+// endpoint is written only on Resolved: a caller-visible failure never
+// carries a half-populated address.
+SysSocketResolveStatus ResolveHostAddress(
+    const char *const hostname,
+    SysSocketAddress *const outAddress) noexcept
+{
+    if (TryResolveLiteralHost(hostname, outAddress))
+        return SysSocketResolveStatus::Resolved;
 
     if (!EnsureWinsockStarted())
         return SysSocketResolveStatus::SystemFailure;
