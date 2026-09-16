@@ -76,7 +76,7 @@ reserve shared source areas before assigning implementation work.
 | Client media / A10 | [#132](https://github.com/jm2/kisakcod/issues/132) | Audio/cinematic semantics and separate voice capture/playback; retain commercial codec/framing. |
 | Content/modes / A11 | [#133](https://github.com/jm2/kisakcod/issues/133) | Retail-content and MP mod regression matrix, commercial movement/behavior and pure checksums. |
 | Required CI / A12 | [#134](https://github.com/jm2/kisakcod/issues/134) | Hosted sanitizers, complete applicable Win32 runtime tests, exact-head exclusions and later protected retail gates. |
-| Client platform / A13 | [#135](https://github.com/jm2/kisakcod/issues/135) | Paths, input/window/focus and clean-install behavior with unchanged retail usercmd semantics. |
+| Client platform / A13 | [#135](https://github.com/jm2/kisakcod/issues/135) | Paths, input/window/focus and clean-install behavior with unchanged retail usercmd semantics. Acceptance definition: [DESKTOP_PLATFORM_ACCEPTANCE.md](DESKTOP_PLATFORM_ACCEPTANCE.md). |
 | Operations / A14 | [#136](https://github.com/jm2/kisakcod/issues/136) | Retail-compatible multiplayer services/downloads/auth and headless lifecycle; extend `ki-eudd`/`ki-vuj`. |
 | Release / A15 | [#137](https://github.com/jm2/kisakcod/issues/137) | Exact production artifacts/provenance, clean-machine commercial interop and runtime budgets; downstream of `ki-yvj`. |
 
