@@ -77,6 +77,8 @@ add_test(
     NAME source-archive-identity-contracts
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DKISAK_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+        -DKISAK_TEST_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/source_archive_identity_test.cmake
 )
 set_tests_properties(source-archive-identity-contracts PROPERTIES

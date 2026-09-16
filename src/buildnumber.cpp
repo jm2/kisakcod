@@ -14,6 +14,19 @@ char buildnumbuf[128];
 
 // LWSS: shared between SP/MP for simplicity
 
+// The immutable source revision this binary was built from. A checkout
+// resolves HEAD; a `git archive` source tree without `.git` resolves the
+// substituted src/source_identity.txt (see
+// scripts/extern/resolve_source_identity.cmake). Referencing the generated
+// KISAK_SOURCE_COMMIT macro here keeps the value in the compiled artifact, so
+// a released binary still records its source identity after the build tree is
+// discarded. It is an accessor, not display text, so existing output is
+// unchanged.
+const char *__cdecl getSourceCommit()
+{
+	return KISAK_SOURCE_COMMIT;
+}
+
 char *__cdecl getBuildNumber()
 {
 #ifndef ARRAYSIZE

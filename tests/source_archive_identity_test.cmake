@@ -38,6 +38,75 @@ function(require_contains SOURCE_VARIABLE NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+# Prove the resolved commit reaches a compiled artifact from a git-free source
+# tree. The real src/buildnumber.cpp is compiled against a header stamped the
+# same way increment_build.sh/.cmd stamp it, and the linked binary must print
+# the carrier's commit. Before the accessor existed the macro was written to
+# the generated header but never referenced, so the released binary carried no
+# source identity at all.
+function(check_compiled_identity)
+    if(NOT DEFINED KISAK_TEST_CXX_COMPILER OR KISAK_TEST_CXX_COMPILER STREQUAL "")
+        message(STATUS "No C++ compiler provided; skipping the compiled-identity case")
+        return()
+    endif()
+    set(_tree "${_test_root}/compile-tree")
+    file(MAKE_DIRECTORY "${_tree}/src/universal")
+    file(COPY "${SOURCE_ROOT}/src/buildnumber.cpp" DESTINATION "${_tree}/src")
+    file(COPY "${SOURCE_ROOT}/src/universal/platform_compat.h"
+        DESTINATION "${_tree}/src/universal")
+    file(WRITE "${_tree}/src/source_identity.txt" "commit=${_archive_commit}\n")
+    kisak_resolve_source_identity("${_tree}" _resolved)
+    if(NOT _resolved STREQUAL "${_archive_commit}")
+        message(FATAL_ERROR
+            "The git-free compile tree did not resolve its carrier: expected "
+            "'${_archive_commit}', found '${_resolved}'")
+    endif()
+    file(WRITE "${_tree}/src/buildnumber.h"
+        "#pragma once\n"
+        "#define BUILD_NUMBER 1\n"
+        "#define KISAK_SOURCE_COMMIT \"${_resolved}\"\n"
+        "\n"
+        "char* getBuildNumber();\n"
+        "int getBuildNumberAsInt();\n"
+        "const char* getSourceCommit();\n")
+    file(WRITE "${_tree}/main.cpp"
+        "#include <cstdio>\n"
+        "#include \"buildnumber.h\"\n"
+        "int main() { std::puts(getSourceCommit()); return 0; }\n")
+    set(_exe "${_tree}/identity-check")
+    if(KISAK_TEST_CXX_COMPILER_ID STREQUAL "MSVC")
+        set(_exe "${_tree}/identity-check.exe")
+        set(_compile_args /nologo /O2 /std:c++17 /EHsc "/I${_tree}/src"
+            "${_tree}/src/buildnumber.cpp" "${_tree}/main.cpp" "/Fe:${_exe}")
+    else()
+        set(_compile_args -O2 -std=c++17 "-I${_tree}/src"
+            "${_tree}/src/buildnumber.cpp" "${_tree}/main.cpp" -o "${_exe}")
+    endif()
+    execute_process(
+        COMMAND "${KISAK_TEST_CXX_COMPILER}" ${_compile_args}
+        WORKING_DIRECTORY "${_tree}"
+        RESULT_VARIABLE _compile_result
+        ERROR_VARIABLE _compile_stderr)
+    if(NOT _compile_result EQUAL 0)
+        message(FATAL_ERROR
+            "Failed to compile the archive-build source-identity consumer: "
+            "${_compile_stderr}")
+    endif()
+    execute_process(
+        COMMAND "${_exe}"
+        OUTPUT_VARIABLE _compiled_identity
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _run_result)
+    if(NOT _run_result EQUAL 0)
+        message(FATAL_ERROR "The compiled archive-build identity check did not run")
+    endif()
+    if(NOT _compiled_identity STREQUAL "${_archive_commit}")
+        message(FATAL_ERROR
+            "The compiled archive build did not record its source commit: "
+            "expected '${_archive_commit}', found '${_compiled_identity}'")
+    endif()
+endfunction()
+
 # A tree with a substituted carrier but no `.git` must resolve from the carrier.
 if(DEFINED CONTRACT_CASE AND CONTRACT_CASE STREQUAL "invalid_override")
     set(KISAK_SOURCE_COMMIT "not-a-commit-hash")
@@ -50,6 +119,9 @@ read_normalized(
     "${SOURCE_ROOT}/src/.gitattributes" _attributes "export-subst attribute")
 read_normalized(
     "${SOURCE_ROOT}/src/source_identity.txt" _carrier "identity carrier")
+read_normalized(
+    "${SOURCE_ROOT}/src/buildnumber.cpp" _buildnumber_cpp
+    "compiled source-identity consumer")
 read_normalized(
     "${SOURCE_ROOT}/scripts/extern/increment_build.cmake" _cmake
     "build-number CMake wiring")
@@ -65,6 +137,9 @@ read_normalized(
 read_normalized(
     "${SOURCE_ROOT}/scripts/ci/release_provenance.py" _verifier
     "release provenance verifier")
+read_normalized(
+    "${SOURCE_ROOT}/scripts/ci/release_provenance_archive.py" _archive_verifier
+    "release provenance archive verifier")
 
 # Mutation mode is used only by the self-checks at the end of this file.
 if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
@@ -88,16 +163,36 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "kisak_resolve_source_identity(\"\${CMAKE_SOURCE_DIR}\" KISAK_RESOLVED_SOURCE_COMMIT)"
             ""
             _cmake "${_cmake}")
+    elseif(CONTRACT_MUTATION STREQUAL "cpp_consumer")
+        string(REPLACE
+            "KISAK_SOURCE_COMMIT"
+            ""
+            _buildnumber_cpp "${_buildnumber_cpp}")
+    elseif(CONTRACT_MUTATION STREQUAL "cpp_getter")
+        string(REPLACE
+            "getSourceCommit"
+            ""
+            _buildnumber_cpp "${_buildnumber_cpp}")
+    elseif(CONTRACT_MUTATION STREQUAL "sh_header_getter")
+        string(REPLACE
+            "const char* getSourceCommit();"
+            ""
+            _sh "${_sh}")
+    elseif(CONTRACT_MUTATION STREQUAL "cmd_header_getter")
+        string(REPLACE
+            "const char ^*__cdecl getSourceCommit^(^)^;"
+            ""
+            _cmd "${_cmd}")
     elseif(CONTRACT_MUTATION STREQUAL "test_registration")
         string(REPLACE
             "NAME source-archive-identity-contracts"
             ""
             _tests "${_tests}")
-    elseif(CONTRACT_MUTATION STREQUAL "verifier_strip_commit_anchor")
+    elseif(CONTRACT_MUTATION STREQUAL "carrier_grammar")
         string(REPLACE
             "if line.startswith(\"commit=\")"
             "if line.strip().startswith(\"commit=\")"
-            _verifier "${_verifier}")
+            _archive_verifier "${_archive_verifier}")
     else()
         message(FATAL_ERROR
             "Unknown source-identity mutation: ${CONTRACT_MUTATION}")
@@ -137,6 +232,22 @@ require_contains(
     _cmd "#define KISAK_SOURCE_COMMIT \"!SOURCE_COMMIT!\""
     "the Windows stamp script records the source commit")
 
+# The generated header must expose the accessor and the compiled TU must
+# reference the macro, or the resolved commit is only written to a header and
+# never emitted into the released binary.
+require_contains(
+    _sh "getSourceCommit"
+    "the POSIX stamp script declares the source-commit accessor")
+require_contains(
+    _cmd "getSourceCommit"
+    "the Windows stamp script declares the source-commit accessor")
+require_contains(
+    _buildnumber_cpp "KISAK_SOURCE_COMMIT"
+    "the compiled build-number TU references the source commit macro")
+require_contains(
+    _buildnumber_cpp "getSourceCommit"
+    "the compiled build-number TU defines the source-commit accessor")
+
 # The contract must run in the portable suite it is written for.
 require_contains(
     _tests "NAME source-archive-identity-contracts"
@@ -158,7 +269,7 @@ require_contains(
 # one, or an indented carrier passes verification while the build resolves
 # nothing.
 require_contains(
-    _verifier "line.startswith(\"commit=\")"
+    _archive_verifier "line.startswith(\"commit=\")"
     "release verifier applies the resolver's column-zero carrier grammar")
 
 if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
@@ -288,6 +399,8 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         message(STATUS "git not found; skipping the checkout identity case")
     endif()
 
+    check_compiled_identity()
+
     file(REMOVE_RECURSE "${_test_root}")
 
     # Reject a malformed explicit override instead of recording it.
@@ -315,8 +428,12 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         sh_header_macro
         cmd_header_macro
         cmake_resolver_call
+        cpp_consumer
+        cpp_getter
+        sh_header_getter
+        cmd_header_getter
         test_registration
-        verifier_strip_commit_anchor)
+        carrier_grammar)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"
