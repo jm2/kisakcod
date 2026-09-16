@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeGuard
 
 from .contract import (
     CANONICAL_VALIDATION_ORDER,
@@ -139,8 +140,9 @@ def _validate_reference(reference: dict, errors: list[str]) -> None:
         )
 
 
-def _is_reference_id(value: object) -> bool:
-    """Return True for a usable commercial-reference id.
+def _is_reference_id(value: object) -> TypeGuard[str]:
+    """
+    Return True for a usable commercial-reference id.
 
     An id must be a string with at least one non-whitespace character.  A
     missing, ``null``, empty, whitespace-only or non-string id is not usable:
@@ -151,7 +153,8 @@ def _is_reference_id(value: object) -> bool:
 
 
 def _validate_references(references: list, errors: list[str]) -> list[str]:
-    """Validate every commercial reference and return their usable ids.
+    """
+    Validate every commercial reference and return their usable ids.
 
     Invalid rows never contribute an id, so the duplicate and membership checks
     below cannot be defeated by an id-less row, and the returned ids are safe to

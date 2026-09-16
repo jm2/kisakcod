@@ -24,7 +24,8 @@ from .contract import (
 
 
 def _reference_gate(manifest: dict) -> bool:
-    """Return True when both mandatory references are validated with provenance.
+    """
+    Return True when both mandatory references are validated with provenance.
 
     Rows without a usable id are skipped rather than indexed, so aggregating a
     manifest that never passed ``validate_manifest`` cannot raise ``KeyError``

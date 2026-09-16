@@ -136,6 +136,7 @@ jobs:
       - name: Run dashboard unit tests
         run: |
           python3 scripts/ci/test_capability_dashboard.py
+          python3 scripts/ci/test_capability_dashboard_delivery.py
           python3 scripts/ci/test_capability_dashboard_inventory.py
 
   # Sealed surface: source-invariant seal tests pin this job's exact step
