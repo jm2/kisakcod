@@ -120,12 +120,23 @@ seam: `HWND` couples windowing to the D3D device, sound and input, exactly as
   (~136, ~139, ~151) to produce a relative delta. `IN_RecenterMouse` and
   `IN_SetCursorPos` exist (~397, ~551). There is a DirectInput controller path
   (`win_input.cpp` ~198–201) for external controllers.
-- **Keyboard/text:** `WM_KEYDOWN`/`WM_SYSKEYDOWN` produce key events
-  (`win_wndproc.cpp` ~367–386); `WM_CHAR` produces character events (~382).
-  There is **no IME, no keyboard-layout-aware translation** (`ToUnicode`,
-  `GetKeyboardLayout`, `WM_IME_*`, `ImmGetContext` do not appear), so non-US
-  console keys and dead-key/text composition are unproven and likely
-  incomplete.
+- **Keyboard/text:** `WM_KEYDOWN`/`WM_SYSKEYDOWN` produce physical key events
+  through `MapKey` (`win_wndproc.cpp` ~367–379). The message pump calls
+  `TranslateMessage` immediately before `DispatchMessageA`
+  (`src/win32/win_main.cpp` ~136–137, and the secondary pump ~398–399), and the
+  `WM_CHAR` it generates is queued as a text event (`win_wndproc.cpp` ~382–383).
+  The OS message-translation path **is** therefore wired: text input is not
+  absent, it arrives as `WM_CHAR` code units the platform translated from the
+  keystroke. What is missing is layout-aware handling beyond that default path:
+  `ToUnicode`, `GetKeyboardLayout`, `WM_IME_*` and `ImmGetContext` do not
+  appear anywhere in the tree, and the client window is ANSI
+  (`RegisterClassA`/`CreateWindowExA`, `win_main.cpp` ~688, ~695), so text is
+  limited to the ANSI `WM_CHAR` path with no IME composition and no Unicode
+  `WM_UNICHAR`. Three things must stay distinct when judging this: physical key
+  mapping and console keys (present, via `MapKey`/`SE_KEY`); OS-translated ANSI
+  text (present, via `TranslateMessage`/`WM_CHAR`); and non-US layout, dead-key,
+  AltGr and IME composition (no evidence, likely incomplete). No non-US runtime
+  evidence was captured for this stage.
 - **Clipboard:** `Sys_GetClipboardData` / `Sys_SetClipboardData` are Win32-only
   (`src/win32/win_main.cpp` ~481, ~508; declared in `win_local.h` ~146). Text
   fields call them (`src/ui/ui_component.cpp` ~1984, ~2020, ~3008, ~4069;
@@ -151,11 +162,24 @@ seam: `HWND` couples windowing to the D3D device, sound and input, exactly as
 - `Sys_DefaultInstallPath` (`win_common.cpp` ~440) resolves the executable's
   parent directory (or CWD under a debugger) via
   `Sys_FileSystemGetExecutablePath`.
-- **Consequence for clean install:** config/saves/logs are written under the
-  working directory / install directory. There is no per-user writable
-  config/cache/log separation and no explicit read-only retail-data source
-  distinct from the write location. This is a concrete, named gap for #135 and
-  is what P1 below requires.
+- **Read root vs write location:** an explicit separation already exists in
+  the engine, but only by dvar override. Engine-managed writes build their OS
+  path from `fs_homepath`, not the read root — `FS_FOpenTextFileWrite`
+  (~766), `FS_FOpenFileAppend` (~794) and `FS_Delete` (~1167) all use
+  `fs_homepath` + `fs_gamedir`. Reads instead add base and home as separate
+  search paths in `FS_Startup` (~2226 onward), adding the home root only when
+  it differs from `fs_basepath` (~2234, ~2255, ~2269, ~2280). Setting
+  `fs_homepath` to a writable location distinct from a read-only `fs_basepath`
+  is a supported configuration today.
+- **Consequence for clean install:** the *default* is collocated, not
+  separated. `fs_basepath` defaults to `Sys_Cwd()` (~1477) and `fs_homepath`
+  defaults to `fs_basepath` (~1488–1489); no `Sys_DefaultHomePath`-style
+  per-user path is wired in. Out of the box, config/saves/logs are written
+  under the working directory / install directory, with no automatic per-user
+  config/cache/log layout and no *discovered* read-only retail root. The gap
+  for #135 is the missing automatic per-user layout and automatic retail-root
+  discovery, not the absence of any read/write separation; P1 below requires
+  it.
 - **OS path assembly:** `FS_BuildOSPath` / `FS_BuildOSPathForThread`
   (`com_files.cpp` ~569/~574) assemble `base/game/qpath`, enforce an OS path
   length bound (~598), then `FS_ReplaceSeparators` (~540) emits engine-style
