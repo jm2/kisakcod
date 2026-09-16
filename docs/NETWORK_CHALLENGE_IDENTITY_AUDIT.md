@@ -128,18 +128,35 @@ resent here; it is bound to the server-side challenge record from step 4.2.
 
 ### 4.5 Server admission — `SV_DirectConnect`
 
-`src/server_mp/sv_client_mp.cpp:621`, admission path at `:653-728`:
+`src/server_mp/sv_client_mp.cpp:621`, admission path at `:653-878`:
 
-1. `protocol` must equal `1` (`:655-660`).
-2. Find the challenge record matching the source address **and** the supplied
-   challenge value; if none, reply `error\nEXE_BAD_CHALLENGE` (`:684-698`).
-3. Compute the challenge ping and apply `sv_minPing` / `sv_maxPing` for
-   non-LAN clients (`:699-727`).
-4. The PunkBuster authorization block is commented out
-   (`:731-749`), as are the CD-key server hooks (`:271-304`).
-
-The identity stored in 4.2 step 6 is copied into the connecting client's
-`cdkeyHash` (`:690`) and remains the fork's GUID / ban key for the session.
+1. `protocol` must equal `1`; otherwise the server replies
+   `EXE_SERVER_IS_DIFFERENT_VER 1.0` (`:655-660`).
+2. An existing client on the same base address and `qport`/port is rejected as
+   a too-soon reconnect before any challenge handling (`:666-681`).
+3. The **non-local** admission block, guarded by
+   `if (!NET_IsLocalAddress(from))` (`:684-728`):
+   - Find the challenge record matching the source address **and** the supplied
+     challenge value; if none, reply `error\nEXE_BAD_CHALLENGE` (`:686-698`).
+   - Compute the challenge `firstPing` (`:699-707`) and, for non-LAN sources,
+     apply `sv_minPing` / `sv_maxPing` (`:712-726`).
+4. **A local source skips that entire block.** `cdkeyHash[0]` is cleared at
+   `:682`, then for `NET_IsLocalAddress(from)` the challenge record is never
+   matched, no `EXE_BAD_CHALLENGE` is emitted, the `firstPing` / `sv_minPing` /
+   `sv_maxPing` gate is not evaluated, and the local `cdkeyHash` buffer stays
+   empty.
+5. The PunkBuster authorization block is commented out (`:731-749`), as are the
+   CD-key server hooks (`:271-304`).
+6. Admission allocates `newcl` and copies the identity from 4.2 step 6 through
+   that local buffer: `:690` (`memcpy(cdkeyHash, svs.challenges[i].cdkeyHash,
+   0x21u)`) is a **challenge-record-to-local-buffer** copy, not a client-field
+   assignment. The actual `newcl->cdkeyHash` copies are `:822-824` (before
+   `ClientConnect`) and `:857-859` (after a successful `ClientConnect`). The
+   value is the fork's GUID / ban key for the session when populated; a local
+   client keeps the empty buffer and connects with an unknown GUID.
+7. Additional rejection paths outside the challenge block: server-full
+   (`error\nEXE_SERVERISFULL`, `:794-798`) and a `ClientConnect` denial, which
+   replies `error\n%s` (`:837-843`).
 
 ### 4.6 The legacy authorization path is inert
 
@@ -157,10 +174,15 @@ The identity stored in 4.2 step 6 is copied into the connecting client's
   only from the `ipAuthorize` connectionless packet (`src/server_mp/sv_main_mp.cpp:730-733`),
   which would have to arrive from an authorize server the fork never contacts.
 
-Net effect: no CD-key authorization round-trip occurs. Authentication/rejection
-decisions are made entirely inside `SV_GetChallenge` from the ticket and the
-identity argument. This is a deliberate fork behaviour, and it is the single
-largest known difference to audit against the commercial exchange.
+Net effect: no CD-key authorization round-trip occurs, and the fork's
+ticket/identity authorization decision is made inside `SV_GetChallenge` from the
+ticket and the identity argument. That is **not** the only admission gate:
+`SV_DirectConnect` independently rejects on protocol mismatch (`:655-660`),
+too-soon reconnect (`:666-681`), bad challenge (`:686-698`), `sv_minPing` /
+`sv_maxPing` (`:714-726`) and server-full (`:794-798`), and can also reject
+through `ClientConnect` (`:837-843`). Removing the authorization round-trip is a
+deliberate fork behaviour, and it is the single largest known difference to
+audit against the commercial exchange.
 
 ## 5. Fork-specific deviations to resolve against references
 
@@ -173,9 +195,9 @@ guessing a number or by copying CoD4x behaviour.
 | D1 | `getchallenge` always carries a ticket slot and an identity argument; the server rejects an empty identity | `cl_main_mp.cpp:1108,1112`; `sv_client_mp.cpp:178-182` | A peer that does not supply the fork's extra arguments is refused before any challenge is issued | Captured discovery/challenge exchange from both commercial profiles |
 | D2 | Server admission never performs a CD-key authorization round-trip; `svs.authorizeAddress` is never set | `sv_client_mp.cpp:71,58-111`; `cl_main_mp.cpp:593-659` | Commercial 1.7/Steam 1.8 authorization semantics and provider constraints are not modelled | Reference capture plus documented provider configuration for both profiles |
 | D3 | `protocol` is `1` on both ends and `"1.0"` is the only version string | `sv_init_mp.cpp:700`; `sv_client_mp.cpp:655-660`; `cl_main_mp.cpp:1121` | The admitted dialect is a fork choice, not a verified commercial value | Reference manifests: executable SHA-256, file/displayed version, build metadata (never a guessed constant) |
-| D4 | `challengeResponse` is emitted immediately for any accepted identity; the commercial timing/first-ping gate is not modelled | `sv_client_mp.cpp:254-268` | A peer whose retry/timing expectations differ may not converge | Captured challenge/retry timing from the references |
+| D4 | `challengeResponse` is emitted immediately for any accepted identity (`:268`); the server's own `firstPing` and `sv_minPing`/`sv_maxPing` gate is applied later in `SV_DirectConnect` for non-local sources only (`:699-707,712-726`) | `sv_client_mp.cpp:254-268,684-728` | A peer whose retry/timing expectations differ may not converge; a local peer bypasses the ping gate entirely | Captured challenge/retry timing from the references |
 | D5 | Accepted identities are only decimal SteamID64 or 32-hex GUID | `sv_client_mp.cpp:190-204`; `identity.h:9-48` | The identity namespace/short form a commercial peer presents in this exchange is unverified | Reference capture of the identity bytes and their documented meaning |
-| D6 | `cdkeyHash` (the session/ban key) is simply the identity string | `sv_client_mp.cpp:224`; `server_mp.h:761` | Commercial ban/identity conventions may key on a different value | Reference evidence of the commercial identity/ban key |
+| D6 | `cdkeyHash` (the session/ban key) is the identity string for non-local clients and stays empty for local clients | `sv_client_mp.cpp:224,682,822-824,857-859`; `server_mp.h:761` | Commercial ban/identity conventions may key on a different value | Reference evidence of the commercial identity/ban key |
 | D7 | Steam ticket validation is compile-time gated; non-Steam builds ignore any ticket | `sv_client_mp.cpp:228-252` | Ticket handling must be characterised per profile and launch mode | Reference runs in each profile/mode, including ticket-bearing and ticketless peers |
 
 ## 6. Required evidence (fail-closed)
