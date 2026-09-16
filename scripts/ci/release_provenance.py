@@ -410,22 +410,46 @@ def find_archive_members(archive: tarfile.TarFile, member: str) -> list[tarfile.
     ]
 
 
-def find_carrier_members(archive: tarfile.TarFile, carrier: str) -> list[tarfile.TarInfo]:
-    """Match the build-consumed carrier by its path relative to the tree root.
+def member_path_parts(name: str) -> list[str]:
+    """Split an archive member path into its non-empty components."""
+    return [part for part in name.replace("\\", "/").split("/") if part]
 
-    ``git archive`` normally prefixes every entry with a top-level directory, so
-    ``src/source_identity.txt`` is identified by its trailing path components
-    rather than by basename alone.
+
+def find_carrier_members(archive: tarfile.TarFile, carrier: str) -> list[tarfile.TarInfo]:
+    """Match the build-consumed carrier at the path the resolver actually reads.
+
+    ``scripts/extern/resolve_source_identity.cmake`` reads
+    ``<source_dir>/<carrier>`` from the extracted tree. A ``git archive`` either
+    stores repository-relative paths (no prefix) or places every entry under one
+    top-level directory (``git archive --prefix=<dir>/``), so the only
+    consumable locations are ``<carrier>`` and ``<top-level-dir>/<carrier>``.
+    Matching by trailing path components alone would also accept an arbitrarily
+    nested copy such as ``a/b/src/source_identity.txt``, which extraction never
+    puts where the resolver looks.
     """
-    wanted = [part for part in carrier.replace("\\", "/").split("/") if part]
-    matches = []
+    wanted = member_path_parts(carrier)
+    if not wanted:
+        return []
+    top_dirs: set[str] = set()
+    has_top_level_file = False
     for item in archive.getmembers():
         if not item.isfile():
             continue
-        parts = [part for part in item.name.replace("\\", "/").split("/") if part]
-        if parts[-len(wanted):] == wanted:
-            matches.append(item)
-    return matches
+        parts = member_path_parts(item.name)
+        if len(parts) == 1:
+            has_top_level_file = True
+        elif parts:
+            top_dirs.add(parts[0])
+
+    locations = [wanted]
+    if not has_top_level_file and len(top_dirs) == 1:
+        locations.append([next(iter(top_dirs)), *wanted])
+
+    return [
+        item
+        for item in archive.getmembers()
+        if item.isfile() and member_path_parts(item.name) in locations
+    ]
 
 
 def verify_archive_identity_member(
@@ -471,6 +495,10 @@ def verify_archive_carrier(
     the archive must carry that file with the substituted full commit. An absent
     member, an unexpanded ``$Format:...$`` placeholder, a malformed value, or a
     value that conflicts with the verified release each fail closed.
+
+    The commit line is parsed with the resolver's own grammar: ``file(STRINGS
+    ... REGEX "^commit=")`` matches ``commit=`` at column zero, so a line with
+    leading whitespace is not a usable identity and must not be accepted here.
     """
     members = find_carrier_members(archive, carrier_member)
     if not members:
@@ -491,9 +519,9 @@ def verify_archive_carrier(
             failures.append(f"source: {carrier_member} is not valid UTF-8 ({exc})")
             continue
         values = [
-            line.split("=", 1)[1].strip()
+            line[len("commit="):].strip()
             for line in text.splitlines()
-            if line.strip().startswith("commit=")
+            if line.startswith("commit=")
         ]
         if not values:
             failures.append(f"source: {carrier_member} carries no commit= line")

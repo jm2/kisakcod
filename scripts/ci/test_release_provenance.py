@@ -90,13 +90,16 @@ def build_source_archive(
     carrier_text: str | None,
     identity_member: bool = True,
     prefix: str = "",
+    carrier_arcname: str | None = None,
 ) -> None:
     """(Re)build the source tarball with a controlled identity carrier.
 
     ``carrier_text=None`` omits the build-consumed ``src/source_identity.txt``;
     an explicit string lets a test ship an unsubstituted placeholder or a
     conflicting commit. The identity JSON is optional so the missing-member
-    case is exercised too.
+    case is exercised too. ``carrier_arcname`` overrides where the carrier is
+    stored inside the archive so a test can prove an arbitrarily nested copy is
+    not accepted.
     """
     requirements = json.loads(REQUIREMENTS.read_text(encoding="utf-8"))
     source = requirements["source"]
@@ -115,10 +118,11 @@ def build_source_archive(
             assert result.returncode == 0, result.stderr
         entries.append((identity, source["identity_member"]))
     if carrier_text is not None:
-        carrier = staging / source["carrier"]
+        arcname = carrier_arcname or source["carrier"]
+        carrier = staging / arcname
         carrier.parent.mkdir(parents=True, exist_ok=True)
         carrier.write_text(carrier_text, encoding="utf-8")
-        entries.append((carrier, source["carrier"]))
+        entries.append((carrier, arcname))
     archive_path = root / "dist" / source["archive"].replace("${tag}", TAG)
     with tarfile.open(archive_path, "w:gz") as archive:
         for path, arcname in entries:
@@ -341,9 +345,36 @@ class ReleaseProvenanceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("not a full 40-hex commit", result.stderr)
 
+    def test_source_archive_indented_carrier_fails(self) -> None:
+        # The resolver matches `^commit=` at column zero (file(STRINGS ... REGEX
+        # "^commit=")), so a leading space is not a usable identity. The verifier
+        # must not accept a carrier the build cannot consume.
+        root = self.fresh("source-indented-carrier")
+        build_source_archive(root, carrier_text=f"  commit={COMMIT}\n")
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("carries no commit= line", result.stderr)
+
+    def test_source_archive_nested_carrier_fails(self) -> None:
+        # The resolver reads <source_dir>/src/source_identity.txt after
+        # extraction; a deeper nested copy is never placed there, so matching by
+        # trailing components alone would certify an archive the build reads no
+        # identity from.
+        root = self.fresh("source-nested-carrier")
+        build_source_archive(
+            root,
+            carrier_text=f"commit={COMMIT}\n",
+            carrier_arcname="extra/nested/src/source_identity.txt",
+        )
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("build-consumed identity carrier", result.stderr)
+
     def test_prefixed_source_archive_passes(self) -> None:
         # git archive may prefix the tree with a top-level directory; the
-        # carrier is matched by its trailing src/source_identity.txt path.
+        # carrier is matched at <prefix>/src/source_identity.txt.
         root = self.fresh("source-prefixed")
         build_source_archive(root, carrier_text=f"commit={COMMIT}\n", prefix=f"KisakCOD-{TAG}/")
         refresh_checksums(root)
@@ -376,6 +407,38 @@ class ReleaseProvenanceTests(unittest.TestCase):
             [cmake, "-P", str(script)], capture_output=True, text=True
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_indented_carrier_alignment_with_resolver(self) -> None:
+        # End-to-end regression for the refinery finding: the verifier must not
+        # report success on a carrier the exact-head resolver reads as empty.
+        # Build an indented carrier, prove verification fails, extract it, and
+        # prove the resolver the build uses resolves nothing.
+        cmake = shutil.which("cmake")
+        if not cmake:
+            self.skipTest("cmake is not available to prove the resolver")
+        root = self.fresh("source-indented-alignment")
+        build_source_archive(root, carrier_text=f"  commit={COMMIT}\n")
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("carries no commit= line", result.stderr)
+
+        archive_path = root / "dist" / f"KisakCOD-{TAG}-source.tar.gz"
+        extracted = self.tmp / "indented-extracted-source"
+        with tarfile.open(archive_path, "r:*") as archive:
+            archive.extractall(extracted)
+        resolver = SCRIPT_DIR.parent / "extern" / "resolve_source_identity.cmake"
+        script = self.tmp / "resolve-indented-identity.cmake"
+        script.write_text(
+            'include("%s")\n'
+            'kisak_resolve_source_identity("%s" _resolved)\n'
+            'if(NOT _resolved STREQUAL "")\n'
+            '  message(FATAL_ERROR "resolver accepted indented carrier: ${_resolved}")\n'
+            "endif()\n" % (resolver, extracted),
+            encoding="utf-8",
+        )
+        proc = subprocess.run([cmake, "-P", str(script)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     # -- inventory typing ---------------------------------------------------
 

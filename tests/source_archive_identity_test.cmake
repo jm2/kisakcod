@@ -93,6 +93,11 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "NAME source-archive-identity-contracts"
             ""
             _tests "${_tests}")
+    elseif(CONTRACT_MUTATION STREQUAL "verifier_strip_commit_anchor")
+        string(REPLACE
+            "if line.startswith(\"commit=\")"
+            "if line.strip().startswith(\"commit=\")"
+            _verifier "${_verifier}")
     else()
         message(FATAL_ERROR
             "Unknown source-identity mutation: ${CONTRACT_MUTATION}")
@@ -149,6 +154,12 @@ require_contains(
 require_contains(
     _verifier "source.get(\"carrier\""
     "release verifier reads the configured build-consumed identity carrier")
+# The verifier must apply the resolver's own column-zero grammar, not a stripped
+# one, or an indented carrier passes verification while the build resolves
+# nothing.
+require_contains(
+    _verifier "line.startswith(\"commit=\")"
+    "release verifier applies the resolver's column-zero carrier grammar")
 
 if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
     # --- Resolver behavior on controlled trees -----------------------------
@@ -196,6 +207,20 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         message(FATAL_ERROR
             "The substituted carrier did not resolve the archived commit: "
             "expected '${_archive_commit}', found '${_archive_identity}'")
+    endif()
+
+    # Leading whitespace is not the carrier grammar: the resolver matches
+    # `^commit=` at column zero, so an indented line must not resolve. This pins
+    # the grammar the release verifier must mirror.
+    set(_indented_tree "${_test_root}/indented-tree")
+    file(MAKE_DIRECTORY "${_indented_tree}/src")
+    file(WRITE "${_indented_tree}/src/source_identity.txt"
+        "  commit=${_archive_commit}\n")
+    kisak_resolve_source_identity("${_indented_tree}" _indented_identity)
+    if(NOT _indented_identity STREQUAL "")
+        message(FATAL_ERROR
+            "An indented commit= line was accepted as an identity: "
+            "'${_indented_identity}'")
     endif()
 
     # An explicit override wins over both a checkout and a carrier.
@@ -290,7 +315,8 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         sh_header_macro
         cmd_header_macro
         cmake_resolver_call
-        test_registration)
+        test_registration
+        verifier_strip_commit_anchor)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"
