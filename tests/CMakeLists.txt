@@ -4065,3 +4065,19 @@ if(UNIX)
     set_tests_properties(retail-fastfile-parity-driver-gates PROPERTIES
         TIMEOUT 120 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
+
+# A11 (ki-ubw0): retail-content and MP mod compatibility regression matrix.
+# docs/RETAIL_CONTENT_MATRIX.md carries a machine-readable axis/case/
+# disposition index; this source test fails closed if a required production
+# target, commercial profile, configuration mode, case family or the upstream
+# #89/#40 disposition is dropped, and negative-tests its own gates so a
+# silently weakened contract cannot pass. Portable: CMake-only, no shell.
+add_test(
+    NAME retail-content-matrix-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/retail_content_matrix_source_test.cmake
+)
+set_tests_properties(retail-content-matrix-source-invariants PROPERTIES
+    TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
