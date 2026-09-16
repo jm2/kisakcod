@@ -39,9 +39,10 @@ the audit.
   **unproven**. Community CoD4x is a different reference and is not a
   substitute. Any protection whose behavior could bind on valid commercial
   input and is not proven against both references is an acceptance blocker, not
-  a compatibility exception. A protection that only refuses malformed/invalid
-  input is governed by invariant 4 and principle 4, which permit the refusal
-  without proving the references are non-fatal at the same point.
+   a compatibility exception. A protection that only refuses input a
+   context-specific discriminator proves invalid — and that cannot match a valid
+   commercial message — is governed by invariant 4 and principle 4, which permit
+   the refusal without proving the references are non-fatal at the same point.
 - **Reference inputs are unavailable** in this checkout; see the audit's
   section 10. Their unavailability is carried forward here as a blocker, never
   as a waived or skipped test.
@@ -57,10 +58,11 @@ Not in scope, and explicitly declined here:
 - No default allowlist, no default limit, no default dvar flag change, and no
   default rejection rule over **valid** commercial input. This design stage
   changes no production behavior in `CG_SetClientDvarFromServer`'s general path.
-  Security hardening of **malformed/invalid** input is not declined by this
-  bullet: invariant 4 permits rejecting malformed input, and hardening that
-  cannot reject or alter a valid commercial message is not blanket-deferred to
-  the optional mode.
+  Security hardening of input that a context-specific discriminator proves
+  invalid, and that cannot reject or alter a valid commercial message, is not
+  declined by this bullet: invariant 4 permits rejecting actually-proven
+  malformed input, and such hardening is not blanket-deferred to the optional
+  mode.
 - No certification of retail compatibility from source inspection.
 - No change to unrelated work, including the #106 merge hold or the
   operator-owned #119 (`ki-n1et`).
@@ -70,10 +72,11 @@ Not in scope, and explicitly declined here:
 Restrictions that could reject or alter valid commercial behavior are delivered
 as a **separate, default-off optional mode**, so the commercial-compatible
 default path stays byte-for-byte and behavior-for-behavior unchanged unless an
-operator explicitly opts in. Hardening that only refuses malformed/invalid input
-and cannot alter a valid commercial message is not forced into that mode: it is
-a security fix eligible for the default path under invariant 4. This document
-enables neither; it records both designs and the evidence each still requires.
+operator explicitly opts in. Hardening that only refuses input a
+context-specific discriminator proves invalid and cannot alter a valid
+commercial message is not forced into that mode: it is a security fix eligible
+for the default path under invariant 4. This document enables neither; it
+records both designs and the evidence each still requires.
 
 ## 3. Invalid / unsafe input classes
 
@@ -87,7 +90,7 @@ the audit performed no runtime analysis.
 | C1 | `v` command with a dvar name outside the server script grammar `[A-Za-z0-9_]` | `CG_SetClientDvarFromServer` → `Dvar_SetFromStringByName` |
 | C2 | `v` command whose name is unknown, creating a new `DVAR_EXTERNAL` string dvar | `Dvar_RegisterString` → `Dvar_RegisterNew` |
 | C3 | Repeated unique unknown names exhausting the 4096-dvar pool | `Dvar_RegisterNew` → `Com_Error(ERR_FATAL, ...)` |
-| C4 | `v` value longer than the existing-dvar 1023-byte store bound, or an unknown-name value longer than that | `Dvar_SetFromStringFromSource` (`I_strncpyz(...,1024)`) or `Dvar_CopyString`/script-string store |
+| C4 | **Sink-level** value longer than the existing-dvar 1023-byte store bound, or an unknown-name value longer than that — a direct-call sink property, not reachable through a server-controlled `v` command (see the reachable command boundary below) | `Dvar_SetFromStringFromSource` (`I_strncpyz(...,1024)`) or `Dvar_CopyString`/script-string store |
 | C5 | `hud_drawHud` value that is negative, non-numeric, or greater than 1 | `CG_SetDrawHud` → `atoi`, `MyAssertHandler`, assignment |
 | C6 | `v` command with an odd **payload** count — the arguments after the verb, i.e. an even total `Cmd_Argc` — a trailing name whose value is read as empty | loop `for (i = 1; i < Cmd_Argc(); i += 2)` reads `Cmd_Argv(i + 1)` past the end |
 | C7 | Out-of-domain numeric or enum values | `Dvar_ValueInDomain` rejection / enum reset fallback |
@@ -101,6 +104,26 @@ give an **odd** total `Cmd_Argc` and an even payload count. A trailing name with
 no value gives an **even** total `Cmd_Argc` and an **odd** payload count. The
 invalid case is the odd payload count (even total), never an odd total; counting
 from the verb index instead of the payload would invert the condition.
+
+Reachable `v` command boundary for C4 (and HP4/T4 below): server commands are
+not parsed directly from the network message. `CL_ParseCommandString`
+(`src/client_mp/cl_parse_mp.cpp:1192-1205`) copies the complete command string
+into `clc->serverCommands[seq & 0x7F]`, one of 128 1024-byte slots
+(`char serverCommands[128][1024]`, `src/client_mp/client_mp.h:187`), using
+`I_strncpyz(..., 1024)`. The cgame then executes from that slot:
+`s = clc->serverCommands[serverCommandNumber & 0x7F]`
+(`src/client_mp/cl_cgame_mp.cpp:268`), `Cmd_TokenizeString(s)` (`:274`), and the
+`v` dispatch loop reads the tokenized result
+(`src/cgame_mp/cg_servercmds_mp.cpp:663-670`). At most **1023 bytes** remain
+for the verb, the name, the separators and the value **together**, so a `v`
+value that reaches either sink through this server-controlled path can never
+exceed the existing-dvar 1023-byte store bound; a longer value is truncated at
+the command slot before tokenization, not at the sink. C4 is therefore a
+**sink-level** question. A direct call to `Dvar_SetFromStringByName` /
+`Dvar_SetFromStringFromSource` (or the script-string registration path) can
+still present an arbitrarily long value, but that exercises the sink in
+isolation, not the reachable server-controlled input; the two must be modeled
+and tested separately (section 8).
 
 ## 4. Design principles
 
@@ -119,13 +142,19 @@ from the verb index instead of the payload would invert the condition.
    security fix may reject malformed/invalid input while retaining every valid
    commercial message and its semantics; reproducing a fatal or memory-unsafe
    outcome is **not** required. Two questions must be separated.
-   - **Malformed/invalid input** (for example a forged out-of-grammar `v` name
-     or a unique unknown-name flood) may be refused gracefully. That refusal is
-     a robustness improvement, not a compatibility change, and it does **not**
-     require evidence that the original builds are non-fatal at the same point.
-     Hardening that only refuses such input and cannot alter a valid commercial
-     message is therefore eligible for the default path; it is not blanket-
-     deferred to the optional mode.
+   - **Malformed/invalid input** may be refused gracefully, but only when a
+     context-specific discriminator proves the input is invalid and cannot also
+     be a valid commercial message. That refusal is a robustness improvement,
+     not a compatibility change, and it does **not** require evidence that the
+     original builds are non-fatal at the same point. Hardening that both
+     refuses only such proven-invalid input and cannot alter a valid commercial
+     message is eligible for the default path; it is not blanket-deferred to
+     the optional mode. Input that merely looks unusual does not qualify: an
+     out-of-grammar `v` name may be a name that a commercial server or mod
+     legitimately sends (HP1), and a high registration volume is
+     indistinguishable from a supported high-volume mod at the pool-cap branch
+     (HP3). Inferring hostile intent from those bytes is not valid, so neither
+     is treated as malformed; both stay under their reference-dependent gates.
    - **Valid high-volume or boundary input** (for example a supported mod that
      legitimately registers many server-created dvars) must still be accepted
      exactly as the references accept it. Where a protection could bind on valid
@@ -144,7 +173,8 @@ from the verb index instead of the payload would invert the condition.
 
 Each protection is a design option; an option that could reject or alter valid
 commercial behavior is delivered through the optional mode, while one that only
-refuses malformed/invalid input may be eligible for the default path.
+refuses input a context-specific discriminator proves invalid may be eligible
+for the default path. No row below currently qualifies as the latter.
 "Default" is the production behavior today. "Optional mode" describes what the
 opt-in mode would do. "Reference evidence required" is the evidence that would
 have to be captured before the option could be enabled: reference captures for a
@@ -156,8 +186,8 @@ acceptance state of the option, not of the A06 task.
 |---|---|---|---|---|---|
 | HP1 | C1 | Reject or ignore client `v` names that fail a reference-validated grammar. The client currently length-bounds the name to 149 bytes (`I_strncpyz(text, v23, 150)`, `src/cgame_mp/cg_servercmds_mp.cpp:663-668`) but does not grammar-check it, unlike the server script path (`Dvar_IsValidName`, `src/universal/dvar.cpp:305-319`; used at `src/game_mp/g_client_script_cmd_mp.cpp:2135`, `:2190`). | Original servers or mods may legitimately send `v` names containing characters outside `[A-Za-z0-9_]`; enforcing the script grammar would drop those commands. | Captured `v` name grammar and full name set from both commercial references and a supported-mod fixture. | BLOCKED — do not enable without evidence. |
 | HP2 | C2 | Bound or deny new unknown-name dvar registrations in the optional mode (for example, require a permitting policy before `Dvar_RegisterString` creates a `DVAR_EXTERNAL` dvar). | Server-created dvars may be a supported mod feature; a bound could reject valid mod setup. | Evidence that the references create unknown-name dvars, with counts and names. | BLOCKED — do not enable without evidence. |
-| HP3 | C3 | Convert the 4096-dvar pool-cap `Com_Error(ERR_FATAL, ...)` (`src/universal/dvar.cpp:1568-1571`) into a bounded, non-fatal refusal, with callers handling the failure. Two cases are separated: **(a)** a forged/malformed unique-unknown-name flood is invalid input, and refusing it gracefully is the reference-independent security hardening invariant 4 permits — it does not require proving the references are non-fatal; **(b)** any cap or refusal that could bind **valid** high-volume registration (a supported mod) must not reject valid registration and must handle callers that assume registration succeeds. | For (a), none beyond caller safety under a refusal. For (b), valid commercial/mod input could legitimately approach the cap; a bound that rejects it is incompatible and belongs in the default-off optional mode. | (a) caller-safety audit of the refusal path. (b) reference/mod evidence that valid registration volume cannot reach the cap, plus the caller-safety audit. | SPLIT — (a) malformed-flood refusal eligible without reference evidence; (b) cap binding valid registration BLOCKED — do not enable without evidence. |
-| HP4 | C4 | Reject values longer than a reference-validated bound, or normalize the existing-dvar (1023-byte) and unknown-name (script-string) paths to one bound. | Rejecting long values could break valid mod commands; the two existing bounds already differ, so any single new bound changes at least one valid behavior class. | Maximum value lengths actually sent by both references, per dvar type and path. | BLOCKED — do not enable without evidence. |
+| HP3 | C3 | Convert the 4096-dvar pool-cap `Com_Error(ERR_FATAL, ...)` (`src/universal/dvar.cpp:1568-1571`) into a bounded, non-fatal refusal, with callers handling the failure. The pool-cap branch only observes `dvarCount >= 4096` (`src/universal/dvar.cpp:1568`) and has no invalid-input discriminator, so it cannot separate a hostile unknown-name flood from a supported high-volume mod: the refusal would bind identically in both cases. Caller-safety tests alone therefore cannot qualify it for the default path. Without a demonstrated context-specific invalid-input discriminator or a reference-backed bound showing valid registration volume cannot reach the cap, the entire shared cap change is reference-dependent and belongs in the default-off optional mode. | Valid commercial/mod input could legitimately approach the cap; a bound that rejects it is incompatible. | Reference/mod evidence that valid registration volume cannot reach the cap, plus the caller-safety audit; or a demonstrated context-specific invalid-input discriminator that cannot match valid registration. | BLOCKED — do not enable without evidence. |
+| HP4 | C4 | Reconcile value-length handling at the **sink** — the existing-dvar 1023-byte store bound and the unknown-name script-string store — rather than for reachable `v` input. A server-controlled `v` value is already capped well below 1023 bytes by the earlier 1024-byte command slot (section 3), so a new `v` length bound is not a reachable hardening tradeoff; the reachable boundary to model and test is the command slot, not the sink. Any sink-level bound or normalization still changes at least one of the two existing direct-call paths. | For reachable `v` input, none: the command slot already bounded it. For direct sink callers, rejecting or normalizing a long value can change behavior relative to the two existing paths. | Maximum value lengths per dvar type and path for both references, with direct-sink tests and reachable-network-input tests recorded separately (section 8). | BLOCKED — sink-level change; do not enable without evidence. |
 | HP5 | C5 | Enforce a defined `hud_drawHud` range in every build instead of relying on `MyAssertHandler`, which is empty in a non-PURE Release build (`src/cgame_mp/cg_servercmds_mp.cpp:1389-1400`; assert policy `src/universal/assertive.cpp:643-691`). Options: clamp, ignore out-of-range, or reject. | Clamping or rejecting changes `cgameGlob->drawHud` for a value the original client may have assigned verbatim. | Reference behavior for `hud_drawHud` values `0`, `1`, `>1`, negative and non-numeric, per build configuration. | BLOCKED — do not enable without evidence. |
 | HP6 | C6 | Define deterministic handling of a `v` command with an **odd payload count** (arguments after the verb; equivalently an even total `Cmd_Argc`) that leaves a trailing name with no value, instead of silently reading an empty value for it (loop `for (i = 1; i < Cmd_Argc(); i += 2)`, `src/cgame_mp/cg_servercmds_mp.cpp:663-670`). | The original client may tolerate the odd payload and apply a partial command; changing the outcome can diverge. | Reference behavior for a `v` command with an odd payload count (even total `Cmd_Argc`). | BLOCKED — do not enable without evidence. |
 | HP7 | C7 | Keep the existing domain rejection and enum reset fallback; do not tighten domain behavior in the optional mode without evidence. | Any tightened domain check would reject values the reference accepts. | Domain behavior captured from both references. | NO CHANGE PROPOSED — existing behavior retained. |
@@ -172,6 +202,12 @@ mistaken for open findings):
   `src/cgame_mp/cg_servercmds_mp.cpp:663-668`).
 - The existing-dvar string store is already bounded to 1023 payload bytes plus
   the NUL (`I_strncpyz(buf, string, 1024)`, `src/universal/dvar.cpp:2607`).
+- The server-controlled `v` command is already bounded **before** tokenization:
+  `CL_ParseCommandString` copies the complete command into a 1024-byte
+  `serverCommands` slot (`I_strncpyz(..., 1024)`,
+  `src/client_mp/cl_parse_mp.cpp:1192-1205`; `src/client_mp/client_mp.h:187`),
+  leaving at most 1023 bytes for verb, name, separators and value together, so
+  the reachable `v` value is below the existing-dvar 1023-byte store bound.
 
 ## 6. Unresolved tradeoff register (acceptance blockers)
 
@@ -185,8 +221,8 @@ compatibility contract in [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md).
 |---|---|---|---|
 | T1 | Name-grammar enforcement may reject valid retail or mod `v` names. | HP1, HP2 | Cannot accept until both references' `v` name sets are captured and shown to satisfy the grammar for every valid command. |
 | T2 | Bounding unknown-name registrations may reject a supported mod feature. | HP2 | Cannot accept until reference/mod evidence shows whether server-created dvars are part of valid behavior and at what volume. |
-| T3 | Replacing the fatal pool-cap with a graceful refusal requires a caller-safety audit (callers may assume registration always succeeds). It does **not** require evidence that the references are non-fatal: reproducing a fatal malformed-input outcome is not a compatibility requirement (invariant 4). The unresolved risk is that a cap could bind **valid** high-volume registration. | HP3 | Malformed-flood refusal: caller-safety audit only. Valid-input cap: cannot accept until reference/mod registration volume is shown not to reach the cap. |
-| T4 | Any single value-length bound alters at least one of the two existing paths. | HP4 | Cannot accept until reference value lengths per path are captured. |
+| T3 | Replacing the fatal pool-cap with a graceful refusal requires a caller-safety audit (callers may assume registration always succeeds). Reproducing a fatal outcome is not a compatibility requirement in itself (invariant 4), but the pool-cap branch only observes `dvarCount >= 4096` and has no invalid-input discriminator: it cannot distinguish a hostile unknown-name flood from a supported high-volume mod, so a refusal binds both. The cap change is therefore reference-dependent, not eligible default hardening until a discriminator or reference-backed bound exists. | HP3 | Cannot accept until reference/mod registration volume is shown not to reach the cap, or a context-specific invalid-input discriminator is demonstrated; the caller-safety audit is also required. |
+| T4 | A reachable server-controlled `v` value cannot exceed the existing-dvar 1023-byte store bound because `CL_ParseCommandString` truncates the whole command into a 1024-byte slot first (section 3), so a new `v` length bound is not a reachable tradeoff. A sink-level value-length bound or normalization still alters at least one of the two existing direct-call paths, and direct-sink tests must not be presented as reachable network behavior. | HP4 | Cannot accept a sink-level change until reference value lengths per path are captured, with direct-sink and reachable-network-input evidence recorded separately. |
 | T5 | Range handling for `hud_drawHud` changes client state relative to the reference. | HP5 | Cannot accept until reference behavior is captured for in-range and out-of-range inputs. |
 | T6 | `v` handling of an odd payload count (even total `Cmd_Argc`) changes a tolerated outcome. | HP6 | Cannot accept until reference behavior for an odd payload count (even total `Cmd_Argc`) is captured. |
 
@@ -200,11 +236,12 @@ criteria, applied per protection.
 
 The protections above that could reject or alter valid commercial behavior are
 reserved for a separate, default-off optional mode. This reservation is not a
-blanket deferral of every protection: hardening that only refuses
-**malformed/invalid** input and cannot alter any valid commercial message is a
-security fix permitted by [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md)
-invariant 4, and is not required to be hidden behind the optional mode. The
-optional mode exists for the incompatible restrictions:
+blanket deferral of every protection: hardening that only refuses input a
+context-specific discriminator proves invalid, and that cannot alter any valid
+commercial message, is a security fix permitted by
+[NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md) invariant 4, and is not
+required to be hidden behind the optional mode. The optional mode exists for the
+incompatible restrictions:
 
 1. **Default off.** The mode is inactive in every default build and every
    commercial-compatible configuration. The default path is the audited current
@@ -216,9 +253,11 @@ optional mode exists for the incompatible restrictions:
    a default cap or a default rejection rule.
 4. **Per-protection gates.** Each protection in section 5 is independently
    gated, so an operator can enable an optional-mode protection only with its
-   resolved reference evidence. Eligible default hardening on malformed/invalid
-   input (HP3(a)) is not enabled through this mode; it is gated by its own
-   caller-safety and valid-input preservation evidence (section 8).
+   resolved reference evidence. No protection in section 5 currently qualifies
+   as eligible default hardening: name-grammar rejection (HP1) and the pool-cap
+   refusal (HP3) both bind input that may be valid and stay reference-dependent
+   (section 8). The optional mode remains available for any restriction that
+   could reject or alter valid commercial behavior.
 5. **No compatibility claim.** Enabling the mode is not a certification of
    retail compatibility and does not satisfy #122. Both commercial profiles
    remain release gates in `NETWORK_COMPATIBILITY.md`.
@@ -233,38 +272,45 @@ These extend the audit's matrix (section 9). The evidence required depends on
 whether a protection is reference-dependent or is eligible default hardening:
 
 - **Reference-dependent valid-input/compatibility certification.** A protection
-  that could bind on valid commercial behavior — HP1, HP2, HP3(b), HP4, HP5 and
+  that could bind on valid commercial behavior — HP1, HP2, HP3, HP4, HP5 and
   HP6 — can be accepted only after the rows below are run against both original
   commercial 1.7 and Steam commercial 1.8. Full
   [#122](https://github.com/jm2/kisakcod/issues/122) certification stays blocked
   until both profiles pass; this document certifies neither.
-- **Eligible default hardening on malformed/invalid input.** Hardening that only
-  refuses malformed/invalid input and cannot alter a valid commercial message —
-  HP3(a) malformed-flood refusal, and the already-bounded paths in section 5 —
-  does not carry the both-reference commercial run as a precondition. Its
-  acceptance basis is controlled malformed-input tests, a caller-safety audit and
-  valid-input preservation evidence. Valid-input behavior requirements are not
-  waived: no protection may reject or alter a valid commercial message, and no
-  valid-input or compatibility claim is certified without the reference evidence
-  above.
+- **Eligible default hardening on proven-malformed input.** Hardening that only
+  refuses input a context-specific discriminator proves invalid, and that cannot
+  alter a valid commercial message, does not carry the both-reference commercial
+  run as a precondition. Its acceptance basis is controlled malformed-input
+  tests, a caller-safety audit and valid-input preservation evidence. No
+  protection in section 5 currently qualifies: name-grammar rejection (HP1) and
+  the pool-cap refusal (HP3) can bind input that may be valid. Valid-input
+  behavior requirements are not waived: no protection may reject or alter a
+  valid commercial message, and no valid-input or compatibility claim is
+  certified without the reference evidence above.
 
 1. **No-valid-rejection proof.** For every protection, run the audit's
    legitimate-command rows L1–L11 in the default configuration and (once the
    relevant evidence is captured) in the optional mode, and prove no valid
    command is rejected or altered. A protection that rejects or alters any L row
    fails. For a reference-dependent protection the applied wire bytes and client
-   state must additionally be identical to the reference; for eligible default
-   hardening the default-path L-row result is the valid-input preservation
-   evidence and no commercial-reference run is a precondition.
+   state must additionally be identical to the reference; for a protection that
+   qualifies as eligible default hardening, the default-path L-row result is the
+   valid-input preservation evidence and no commercial-reference run is a
+   precondition.
 2. **Invalid-input handling.** For every protection, run the corresponding
    I1–I8 rows and R1–R9 transition rows in the default configuration and (where
-   applicable) the optional mode. For eligible default hardening the controlled
-   malformed-input outcomes, caller-safety audit and valid-input preservation
-   evidence are the acceptance basis and do not require a commercial-reference
-   run. For a reference-dependent protection, record the outcome against the
-   reference outcome. For HP6 the corresponding row is I6, which is
-   a `v` command with an **odd payload count** (arguments after the verb; even
-   total `Cmd_Argc`), matching the convention in section 3.
+   applicable) the optional mode. For a protection that qualifies as eligible
+   default hardening, the controlled malformed-input outcomes, caller-safety
+   audit and valid-input preservation evidence are the acceptance basis and do
+   not require a commercial-reference run. For a reference-dependent protection,
+   record the outcome against the reference outcome. The value-length row (I5)
+   must distinguish a **direct sink call** from **reachable network input**: the
+   reachable `v` path is already bounded by the 1024-byte command slot
+   (section 3), so a direct sink test that exceeds that bound does not model
+   reachable server behavior and must be reported separately. For HP6 the
+   corresponding row is I6, which is a `v` command with an **odd payload count**
+   (arguments after the verb; even total `Cmd_Argc`), matching the convention in
+   section 3.
 3. **Disconnect / reconnect / map transitions.** R1–R9 remain required with the
    optional mode on and off, including the `sv_cheats` cheat-state reset (R6),
    `mapname` init (R7), the `B`/`n` `cg_thirdPerson` reset (R8) and the initial
@@ -277,9 +323,10 @@ whether a protection is reference-dependent or is eligible default hardening:
 6. **Both references, both directions.** For every reference-dependent
    protection, each row is recorded per reference profile and per direction
    (native client → commercial server, commercial client → native server, and the
-   commercial-to-commercial baseline). Eligible default hardening records its
-   controlled malformed-input, caller-safety and valid-input preservation
-   evidence separately. Missing evidence stays pending, never passing.
+   commercial-to-commercial baseline). A protection that qualifies as eligible
+   default hardening records its controlled malformed-input, caller-safety and
+   valid-input preservation evidence separately. Missing evidence stays pending,
+   never passing.
 
 ## 9. Open evidence questions
 
@@ -288,7 +335,13 @@ whether a protection is reference-dependent or is eligible default hardening:
 - Do either reference's servers create unknown-name dvars at join, and how many
   per session?
 - What is each reference's behavior when the dvar pool is exhausted?
-- What value lengths do the references actually send per dvar type and path?
+- What value lengths do the references actually send per dvar type and path,
+  and is the reachable `v` budget always below the existing-dvar 1023-byte store
+  bound once the 1024-byte command slot (`CL_ParseCommandString`) is accounted
+  for?
+- Can any server-controlled path other than the `v` command deliver a value to
+  `Dvar_SetFromStringByName`/`Dvar_SetFromStringFromSource` longer than the
+  command-slot budget?
 - What are the reference outcomes for `hud_drawHud` `>1`, negative and
   non-numeric, and for a `v` command with an odd payload count (even total
   `Cmd_Argc`)?
@@ -318,6 +371,8 @@ All paths are relative to the repository root at
 | Name grammar check | `src/universal/dvar.cpp:305-319` |
 | Unknown-name registration and pool-cap fatal | `src/universal/dvar.cpp:1556-1585`, `:1568-1571` |
 | Existing-dvar string bound | `src/universal/dvar.cpp:2600-2617` |
+| Client server-command slot (reachable `v` length bound) | `src/client_mp/client_mp.h:187`; `src/client_mp/cl_parse_mp.cpp:1192-1205` |
+| cgame server-command execution from the slot | `src/client_mp/cl_cgame_mp.cpp:268-274` |
 | Domain check | `src/universal/dvar.cpp:493-543` |
 | Assert policy | `src/universal/assertive.cpp:643-691` |
 | Dvar type/flag definitions | `src/universal/q_shared.h:482-519` |
