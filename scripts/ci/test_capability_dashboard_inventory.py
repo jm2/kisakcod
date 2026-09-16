@@ -139,6 +139,53 @@ class MatrixExpansionTests(unittest.TestCase):
         )
         self.assertEqual(cd.matrix_legs(job), 3)
 
+    def test_exclude_then_reinclude_keeps_combination(self):
+        # Exact refinery reproduction: GitHub evaluates ``exclude`` against the
+        # original combinations and only then applies ``include``, so an
+        # include re-adds an excluded combination instead of being stripped
+        # after the fact.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, mac]",
+            "        exclude:",
+            "          - os: linux",
+            "        include:",
+            "          - os: linux",
+        )
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_exclude_key_from_include_does_not_remove_combinations(self):
+        # Excludes only match the original axis combinations.  A field carried
+        # solely by an include must not delete the augmented leg.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, mac]",
+            "        exclude:",
+            "          - arch: x64",
+            "        include:",
+            "          - os: linux",
+            "            arch: x64",
+        )
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_include_only_matrix_is_not_pruned_by_excludes(self):
+        # An include-only matrix has no original combinations, so excludes
+        # cannot remove any of the include-created legs.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        exclude:",
+            "          - platform: Linux",
+            "        include:",
+            "          - platform: Linux",
+            "            runner: ubuntu-24.04",
+            "          - platform: macOS",
+            "            runner: macos-15",
+        )
+        self.assertEqual(cd.matrix_legs(job), 2)
+
     def test_unsupported_inline_matrix_fails_explicitly(self):
         job = self._job("    strategy:", "      matrix: {os: [linux]}")
         with self.assertRaises(cd.MatrixExpansionError):

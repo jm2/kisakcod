@@ -320,9 +320,13 @@ def _apply_excludes(
 
 def _expand_matrix(spec: MatrixSpec) -> int:
     """Return the number of invocations a parsed matrix expands to."""
+    # GitHub evaluates ``exclude`` against the original axis combinations and
+    # only then applies ``include``.  Exclusions therefore run first, which is
+    # what lets an include re-add a combination that an exclude removed and
+    # keeps include-only keys out of exclusion matching.
     axes, includes, excludes = spec
-    combinations = _apply_includes(_cartesian(axes), includes, set(axes))
-    return len(_apply_excludes(combinations, excludes))
+    base = _apply_excludes(_cartesian(axes), excludes)
+    return len(_apply_includes(base, includes, set(axes)))
 
 
 def matrix_legs(job_lines: list[str]) -> int:
