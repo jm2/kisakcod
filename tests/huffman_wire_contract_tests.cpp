@@ -18,26 +18,26 @@
 // references (#122).
 //
 // Tie ordering. The production comparator orders candidate nodes by weight
-// only, exactly like retail. msg_hData contains duplicate weights (symbols 228
-// and 231 are both 4683), so weight alone is not a total order and the tree the
-// builder derives from the equal-weight nodes is defined by the host qsort's
-// implementation-defined handling of equal elements. glibc and the Windows/
-// macOS C libraries pick opposite orders, which swaps the two equal-weight
-// 9-bit code words and changes the compressed bytes of any input containing
-// both symbols. This test therefore:
+// only, exactly like retail. msg_hData contains two duplicate weights --
+// 3889 at symbols 155/205 and 4683 at symbols 228/231 -- so weight alone is not
+// a total order and the tree the builder derives from those equal-weight nodes
+// is defined by the host qsort's implementation-defined handling of equal
+// elements. Different C libraries choose different orders, which changes the
+// compressed bytes of any input containing an affected symbol. This test
+// therefore:
 //
 //   - pins the platform-INDEPENDENT contracts on every host (the weight table,
-//     the code-length histogram, per-symbol emitted bit counts, the two
-//     complementary equal-weight code words, round trips and decoder
+//     the code-length histogram, per-symbol emitted bit counts, the exact pair
+//     of code words each equal-weight pair may take, round trips and decoder
 //     boundaries), and
-//   - pins byte-exact output only for fixtures whose bytes are tie-order
-//     independent, plus the tie-dependent fixtures on a host whose qsort
-//     produced the ordering the recorded goldens were captured with.
+//   - pins byte-exact output only for fixtures whose bytes this host's
+//     equal-weight ordering can produce, and reports the ordering it did derive
+//     otherwise.
 //
-// Neither equal-weight ordering is certified as retail-correct. Selecting one
+// Neither ordering of either pair is certified as retail-correct. Selecting one
 // requires the authentic reference evidence tracked by #122, so the test
-// reports the ordering the host derived instead of silently normalizing it or
-// changing the production comparator to force one codebook.
+// reports what it found instead of silently normalizing it or changing the
+// production comparator to force one code book.
 
 #include <qcommon/huffman.h>
 #include <qcommon/msg_huffman_data.h>
@@ -66,17 +66,19 @@ namespace
 {
 bool g_failed = false;
 
-// Which of the two weight-consistent code books this host's qsort derived.
-// Both are valid Huffman codes for the retail weight table; the choice is
-// implementation-defined by the comparator and is not certified as retail.
-enum class TieOrder
+// How a host's qsort ordered one equal-weight pair. kReference is the ordering
+// the recorded goldens were captured with (lower symbol gets the lower code
+// word); kAlternate is the mirror image. Both are valid Huffman codes for the
+// retail table; neither is certified as retail without #122 evidence.
+enum class PairOrder
 {
     kUnknown,
-    kSymbol228First,
-    kSymbol231First,
+    kReference,
+    kAlternate,
 };
 
-TieOrder g_tieOrder = TieOrder::kUnknown;
+PairOrder g_pair155 = PairOrder::kUnknown;
+PairOrder g_pair228 = PairOrder::kUnknown;
 
 #define CHECK(cond)                                                               \
     do {                                                                          \
@@ -138,6 +140,14 @@ std::vector<std::uint8_t> emitCode(int symbol)
     return code;
 }
 
+// Reference code words for the two equal-weight pairs, recorded on a host whose
+// qsort ordered the lower symbol first. Each pair must always take exactly
+// these two code words; only the assignment may differ between hosts.
+const std::uint8_t kCode155Reference[] = {0xe6, 0x01};
+const std::uint8_t kCode205Reference[] = {0x16, 0x00};
+const std::uint8_t kCode228Reference[] = {0x7d, 0x00};
+const std::uint8_t kCode231Reference[] = {0x7d, 0x01};
+
 // ---------------------------------------------------------------------------
 // Fixed inputs. All are synthetic and redistributable; none is a commercial
 // capture.
@@ -173,15 +183,17 @@ std::vector<std::uint8_t> fixtureFullAlphabet()
 }
 
 // F1 = 0x00..0x1F. Explicit golden bytes: a small, reviewable fixture that
-// contains neither equal-weight symbol, so it is tie-order independent.
+// contains none of the equal-weight symbols, so its bytes are tie-order
+// independent and identical on every host observed so far.
 const std::uint8_t kF1Compressed[] = {
     0x29, 0xdb, 0xfa, 0x4d, 0x80, 0xab, 0x1b, 0x61, 0xa7, 0x43,
     0x4b, 0xdd, 0x5a, 0xa2, 0xc4, 0x54, 0xee, 0xef, 0x75, 0xa4,
     0xbc, 0xca, 0x83, 0x7b, 0x38, 0x4b, 0x34, 0x83, 0x31,
 };
 
-// F2 = (i * 37) & 0xFF for i in [0, 64). Contains both equal-weight symbols.
-// Golden bytes recorded on a host that ordered symbol 228 before 231.
+// F2 = (i * 37) & 0xFF for i in [0, 64). It contains the 228/231 pair but not
+// the 155/205 pair, so its bytes depend only on the 228/231 ordering. Golden
+// bytes recorded with the reference ordering.
 const std::uint8_t kF2Compressed[] = {
     0x69, 0x71, 0xfc, 0x49, 0x1b, 0x82, 0x8f, 0xd7, 0x63, 0xff,
     0xff, 0xc1, 0xbb, 0x56, 0x1b, 0x88, 0xc3, 0xf9, 0xa1, 0x06,
@@ -192,20 +204,73 @@ const std::uint8_t kF2Compressed[] = {
     0x3c, 0x3a, 0xda, 0x4b, 0x14, 0x9b, 0x85, 0x70,
 };
 
-// Size pins. Huffman code lengths do not depend on the tie order (the change
-// swaps two code words of equal length), so these hold on every host.
+// Size pins. Huffman code lengths do not depend on the tie order (the choice
+// only reassigns code words of equal length), so these hold on every host.
 const std::size_t kZerosCompressedSize = 1536;
 const std::size_t kAlphabetCompressedSize = 273;
 
-// Content pins recorded on the 228-first host. The zeros fixture uses only
-// symbol 0, so its bytes are tie-order independent; the alphabet fixture
-// contains both equal-weight symbols, so its exact bytes are not.
+// Content pins recorded with both pairs in the reference ordering. The zeros
+// fixture uses only symbol 0 (tie-order independent); the alphabet fixture
+// contains both equal-weight pairs, so its exact bytes depend on both.
 const std::uint64_t kZerosFnv = 2387247832005793061ULL;
-const std::uint64_t kAlphabetFnv228First = 1399084440640432086ULL;
+const std::uint64_t kAlphabetFnvReference = 1399084440640432086ULL;
+
+// FNV-1a over the whole derived code book (for each symbol in order: its bit
+// length, then its code bytes), recorded with both pairs in the reference
+// ordering. The alphabet fixture's bytes are only comparable to the reference
+// golden when this whole code book matches, so gate that assertion on it.
+const std::uint64_t kReferenceCodebookFnv = 9186525495699572604ULL;
 
 // Pinned code-length histogram over the 256 symbols (index = bit length).
 // min length 3, max length 11; counts sum to 256.
 const int kLengthHistogram[12] = {0, 0, 0, 1, 0, 2, 8, 15, 69, 147, 13, 1};
+
+PairOrder classifyPair(int lowSymbol, int highSymbol,
+                       const std::uint8_t *referenceLow,
+                       const std::uint8_t *referenceHigh)
+{
+    const std::vector<std::uint8_t> codeLow = emitCode(lowSymbol);
+    const std::vector<std::uint8_t> codeHigh = emitCode(highSymbol);
+    const std::vector<std::uint8_t> refLow(referenceLow, referenceLow + 2);
+    const std::vector<std::uint8_t> refHigh(referenceHigh, referenceHigh + 2);
+
+    if (codeLow == refLow && codeHigh == refHigh)
+        return PairOrder::kReference;
+    if (codeLow == refHigh && codeHigh == refLow)
+        return PairOrder::kAlternate;
+
+    // Fail closed: a pair that takes anything other than its two known code
+    // words is an equal-weight-ordering change this test does not characterize.
+    std::fprintf(stderr,
+                 "FAIL: equal-weight symbols %d/%d did not take the expected "
+                 "complementary code words\n",
+                 lowSymbol, highSymbol);
+    g_failed = true;
+    return PairOrder::kUnknown;
+}
+
+// Fingerprint every derived code word so a host whose whole code book matches
+// the reference capture can be distinguished from one that only matches on the
+// symbols a given fixture happens to use.
+std::uint64_t codebookFingerprint()
+{
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (int symbol = 0; symbol < 256; ++symbol)
+    {
+        const std::vector<std::uint8_t> code = emitCode(symbol);
+        const std::uint8_t bits =
+            static_cast<std::uint8_t>(Huff_bitCount(&g_huff.compressDecompress,
+                                                    symbol));
+        hash ^= bits;
+        hash *= 1099511628211ULL;
+        for (std::size_t i = 0; i < code.size(); ++i)
+        {
+            hash ^= code[i];
+            hash *= 1099511628211ULL;
+        }
+    }
+    return hash;
+}
 } // namespace
 
 // Compare a compressed stream with a golden only after the sizes match, so a
@@ -274,36 +339,17 @@ void checkTableIntegrity()
 }
 
 // --- 2. Equal-weight code book characterization ----------------------------
-// msg_hData gives symbols 228 and 231 the same weight (4683). Any valid Huffman
-// code from that table must assign each of them one of the two complementary
-// 9-bit code words below; only which symbol gets which depends on the host
-// qsort. Record the host's choice and fail if it is neither.
+// msg_hData duplicates two weights: 3889 at symbols 155/205 and 4683 at
+// symbols 228/231. Each pair must take the same two complementary code words
+// on every host; only which symbol gets which is implementation-defined.
+// Classify both pairs and fail if either does something uncharacterized.
 void detectTieOrder()
 {
-    static const std::vector<std::uint8_t> kFirst228 = {0x7d, 0x00};
-    static const std::vector<std::uint8_t> kFirst231 = {0x7d, 0x01};
-
+    CHECK(msg_hData[155] == msg_hData[205]);
     CHECK(msg_hData[228] == msg_hData[231]);
 
-    const std::vector<std::uint8_t> code228 = emitCode(228);
-    const std::vector<std::uint8_t> code231 = emitCode(231);
-
-    if (code228 == kFirst228 && code231 == kFirst231)
-    {
-        g_tieOrder = TieOrder::kSymbol228First;
-    }
-    else if (code228 == kFirst231 && code231 == kFirst228)
-    {
-        g_tieOrder = TieOrder::kSymbol231First;
-    }
-    else
-    {
-        g_tieOrder = TieOrder::kUnknown;
-        std::fprintf(stderr,
-                     "FAIL: equal-weight symbols 228/231 did not receive the "
-                     "expected complementary 9-bit code words\n");
-        g_failed = true;
-    }
+    g_pair155 = classifyPair(155, 205, kCode155Reference, kCode205Reference);
+    g_pair228 = classifyPair(228, 231, kCode228Reference, kCode231Reference);
 }
 
 // --- 3. Derived code length distribution -----------------------------------
@@ -348,36 +394,40 @@ void checkInvariantFixtures(const std::vector<std::uint8_t> &cIdentity,
 }
 
 // --- 6. Tie-order-dependent fixed-input fixtures ---------------------------
+// F2 depends on the 228/231 ordering only; the alphabet fixture depends on
+// both pairs. Assert byte-exact content exactly when this host derived the
+// ordering the goldens were recorded with; otherwise report the difference.
 void checkTieDependentFixtures(const std::vector<std::uint8_t> &cStride,
                                const std::vector<std::uint8_t> &cAlphabet)
 {
-    // Code lengths are tie-order independent, so the stream sizes still pin
-    // exactly even though the byte content does not.
     checkPinnedSize("F2", cStride, sizeof(kF2Compressed));
     checkPinnedSize("alphabet", cAlphabet, kAlphabetCompressedSize);
 
-    if (g_tieOrder == TieOrder::kSymbol228First)
+    const bool codebookMatchesReference =
+        codebookFingerprint() == kReferenceCodebookFnv;
+
+    if (codebookMatchesReference)
     {
-        // The goldens were recorded with symbol 228 before 231. Byte-exact
-        // comparison is only meaningful for that ordering.
         if (cStride.size() == sizeof(kF2Compressed))
             CHECK(std::memcmp(cStride.data(), kF2Compressed,
                               sizeof(kF2Compressed)) == 0);
         if (cAlphabet.size() == kAlphabetCompressedSize)
             CHECK(fnv1a64(cAlphabet.data(), cAlphabet.size()) ==
-                  kAlphabetFnv228First);
+                  kAlphabetFnvReference);
         return;
     }
 
-    // This host ordered symbol 231 before 228, so the two equal-weight code
-    // words are swapped and the tie-dependent byte streams legitimately differ.
-    // Neither ordering is certified as retail-correct; byte-exact comparison
-    // for these inputs waits on the #122 reference evidence. Report it rather
-    // than normalize it or change production to force one code book.
+    // This host derived a different weight-consistent code book from the
+    // reference capture. Neither ordering is certified as retail-correct; the
+    // authentic 1.7/Steam-1.8 references (#122) are required before either byte
+    // stream can be called compatible. Report the ordering this host derived
+    // instead of normalizing it or changing production to force one code book.
     std::fprintf(stdout,
-                 "note: host ordered symbol 231 before 228; the two equal-weight "
-                 "9-bit code words are swapped, so byte-exact F2/alphabet "
-                 "comparison is deferred to issue #122\n");
+                 "note: host derived a different weight-consistent code book "
+                 "(155/205=%s, 228/231=%s); byte-exact F2/alphabet comparison "
+                 "deferred to issue #122\n",
+                 g_pair155 == PairOrder::kReference ? "reference" : "alternate",
+                 g_pair228 == PairOrder::kReference ? "reference" : "alternate");
 }
 
 void checkFixedInputFixtures()
@@ -516,8 +566,9 @@ int main()
         return 1;
     }
 
-    std::fprintf(stdout, "huffman wire contracts OK (tie order: %s)\n",
-                 g_tieOrder == TieOrder::kSymbol228First ? "228-first"
-                                                         : "231-first");
+    std::fprintf(stdout,
+                 "huffman wire contracts OK (155/205=%s, 228/231=%s)\n",
+                 g_pair155 == PairOrder::kReference ? "reference" : "alternate",
+                 g_pair228 == PairOrder::kReference ? "reference" : "alternate");
     return 0;
 }
