@@ -87,7 +87,10 @@ full client media. Start the commercial oracle and shader/MoltenVK feasibility
 work early; preserve the atomic seven-site loader contract and do not relax
 native engine gates based on utility results. Licensed stages remain deferred
 until protected infrastructure is provisioned; synthetic production integration
-can proceed meanwhile. Detailed findings and dependencies are in
+can proceed meanwhile. A08's honest composition state, gate inventory, and
+ordered bounded stages (S1-S8) are recorded in
+[A08_HEADLESS_SERVER_STAGING.md](A08_HEADLESS_SERVER_STAGING.md). Detailed
+findings and dependencies are in
 [ROADMAP_EXPANSION_PROPOSAL.md](ROADMAP_EXPANSION_PROPOSAL.md).
 
 Existing open PR snapshot: #99 `ki-v4m` physics ownership; #106 `ki-eudd` UDP;
