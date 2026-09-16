@@ -1,34 +1,46 @@
-// fuzz_fastfile: production-path fast-file fuzz harness for the bounded
-// BufCursor read path that backs every XAsset-family loader in
-// src/xanim/, src/xmodel/, src/database/, and src/EffectsCore/.
+// fuzz_fastfile: bounded cursor-primitive fuzz harness. It feeds
+// synthetic XAsset-shaped byte streams (xmodel pieces header shapes,
+// xanim parts header shapes, fx archive body state shapes, plus
+// adversarial and truncated variants) through the bounded BufCursor
+// read primitives in src/xanim/buf_cursor.cpp.
 //
-// The harness links only against the bounded read primitives
-// (src/xanim/buf_cursor.cpp) — production loaders and their heavy
+// This is a PRIMITIVE harness, not production-parser coverage. It does
+// NOT link or drive the real DB loader, the production XModel/XAnim
+// parsers, or FX restore composition — those consumers and their heavy
 // dependencies (FS_ReadFile, Hunk_AllocateTempMemory, Com_PrintError,
-// the EffectsCore runtime, etc.) are intentionally NOT linked. The
-// point of this harness is to stress the bounded read path that
-// every retail fast-file loader funnels through, not to re-test the
-// full load path (which is exercised by the existing ctest suites).
+// the EffectsCore runtime, etc.) are intentionally NOT linked here. The
+// byte layouts below are synthetic sketches of the read patterns; a
+// green run does not establish production-loader safety. Real parser /
+// loader enrollment is tracked under issue #125 (A03) and gated on the
+// load-object migration in #124 (A02).
 //
-// The harness is intentionally deterministic and CI-friendly: it
-// runs a fixed corpus of bounded seeds (one per XAsset family) plus
-// a sweep of mutated seeds that mutate each byte in turn, then
-// reports any failure (crash, abort, Failed() inconsistent with the
-// expected behavior, or an out-of-bounds read). The harness returns
-// 0 on success and non-zero on the first failure.
+// Keeping the harness decoupled from production code is deliberate: it
+// stays available on every build target and pins the bounded read
+// contract independently of the loader rewrite.
+//
+// The harness is deterministic and CI-friendly: the `seeds` mode runs
+// the built-in inline corpus, and the `corpus <dir>` mode requires a
+// generated corpus with a checked manifest and fails closed when the
+// corpus is absent, empty, unreadable, or manifest-mismatched (it never
+// falls back to the inline seeds). It reports any failure (crash,
+// abort, Failed() inconsistent with the expected behavior, or an
+// out-of-bounds read) and returns non-zero on the first failure.
 //
 // Build target: fuzz_fastfile
-// CTest entries: fuzz-fastfile-cursor, fuzz-fastfile-corpus
+// CTest entries: fuzz-fastfile-cursor (inline seeds),
+//   fuzz-fastfile-corpus-setup / fuzz-fastfile-corpus (manifest corpus),
+//   fuzz-fastfile-corpus-rejects-missing and fuzz-fastfile-corpus-gate
+//   (fail-closed negative gates)
 //
-// Affected families exercised:
+// Synthetic header shapes exercised:
 //   - xmodel pieces header
 //   - xanim parts header
 //   - fx archive body state frame header
 //   - generic typed cursor reads (u8/u16/u32/float)
 //
 // The harness MUST NOT change the on-disk production guards. It only
-// adds feeding attacker-controlled bytes into the bounded read path
-// and asserting that the contract holds.
+// feeds attacker-controlled bytes into the bounded read path and
+// asserts that the contract holds.
 
 #include <xanim/buf_cursor.h>
 
@@ -42,6 +54,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fuzz_fastfile
@@ -80,16 +93,113 @@ int Fail(const char *const message)
     }                                                                     \
 } while (0)
 
-// Read a file's bytes into a vector. Returns empty on failure.
-std::vector<unsigned char> ReadFile(const char *path)
+// 64-bit FNV-1a over the seed bytes. This is an integrity / drift check
+// for the on-disk corpus manifest, not a cryptographic digest: it makes
+// a silently truncated or edited seed fail the corpus gate instead of
+// being exercised under a stale manifest entry.
+uint64_t Fnv1a64(const std::vector<unsigned char> &bytes)
 {
+    uint64_t h = 14695981039346656037ull; // FNV-1a 64-bit offset basis
+    for (const unsigned char b : bytes)
+    {
+        h ^= static_cast<uint64_t>(b);
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+// Strict file read that distinguishes "empty file" (success) from
+// "missing/unreadable/non-regular file" (failure). The existing ReadFile
+// conflates the two, which is exactly the ambiguity the corpus gate must
+// not inherit.
+bool ReadFileChecked(const std::string &path, std::vector<unsigned char> &out)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(std::filesystem::path(path), ec) || ec)
+        return false;
+
     std::ifstream in(path, std::ios::binary);
-    if (!in)
-        return {};
+    if (!in.is_open())
+        return false;
+
     std::ostringstream ss;
     ss << in.rdbuf();
+    if (in.bad())
+        return false;
+
     const std::string s = ss.str();
-    return std::vector<unsigned char>(s.begin(), s.end());
+    out.assign(s.begin(), s.end());
+    return true;
+}
+
+// Corpus manifest entry. `name` is always a bare filename; `kind` is the
+// case classification the tracker records ("valid" or "malformed").
+struct CorpusEntry
+{
+    std::string name;
+    std::string kind;
+    uint64_t size = 0;
+    uint64_t hash = 0;
+};
+
+constexpr const char *kCorpusManifestName = "fuzz_seeds.manifest";
+
+// A manifest entry name must be a bare filename: no separators, no `.` /
+// `..`. Without this a crafted manifest could point the corpus reader at
+// an arbitrary path.
+bool IsSafeEntryName(const std::string &name)
+{
+    if (name.empty() || name == "." || name == "..")
+        return false;
+    if (name.find('/') != std::string::npos || name.find('\\') != std::string::npos)
+        return false;
+    const std::filesystem::path p(name);
+    return p.filename().string() == name;
+}
+
+// Load and parse the corpus manifest. Returns false on a missing,
+// unreadable, or malformed manifest; the caller fails closed.
+bool LoadCorpusManifest(const std::string &dir, std::vector<CorpusEntry> &entries)
+{
+    const std::string path = dir + "/" + kCorpusManifestName;
+    std::ifstream in(path);
+    if (!in.is_open())
+    {
+        std::fprintf(stderr, "fuzz_fastfile: corpus manifest missing: %s\n", path.c_str());
+        return false;
+    }
+
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.empty() || line[0] == '#')
+            continue;
+
+        std::istringstream ls(line);
+        std::string hashHex;
+        std::string sizeStr;
+        std::string kind;
+        std::string name;
+        if (!(ls >> hashHex >> sizeStr >> kind >> name))
+        {
+            std::fprintf(stderr, "fuzz_fastfile: malformed manifest line: %s\n", line.c_str());
+            return false;
+        }
+
+        CorpusEntry entry;
+        entry.hash = std::strtoull(hashHex.c_str(), nullptr, 16);
+        entry.size = std::strtoull(sizeStr.c_str(), nullptr, 10);
+        entry.kind = kind;
+        entry.name = name;
+        entries.push_back(entry);
+    }
+
+    if (in.bad())
+    {
+        std::fprintf(stderr, "fuzz_fastfile: manifest read error: %s\n", path.c_str());
+        return false;
+    }
+    return true;
 }
 
 // Exercise: a bounded read of an arbitrary typed payload must never
@@ -741,47 +851,287 @@ int RunSeeds()
     return 0;
 }
 
-int RunCorpus(const char *corpusDir)
+// A generated corpus case: the on-disk filename, its classification, and
+// the bytes. `kind` is recorded in the manifest so the tracker can tell
+// valid wire-shape seeds from malformed / minimized regression inputs.
+struct SeedSpec
 {
-    if (corpusDir == nullptr || corpusDir[0] == 0)
+    const char *name;
+    const char *kind;
+    std::vector<unsigned char> bytes;
+};
+
+// The generated corpus: the three synthetic valid header shapes plus the
+// cheap adversarial inputs a fuzzer finds first and two minimized
+// truncations of the valid headers.
+std::vector<SeedSpec> BuildCorpusSeeds()
+{
+    std::vector<SeedSpec> seeds;
+    seeds.push_back({"xmodel_pieces_valid.bin", "valid", BuildXModelPiecesSeed()});
+    seeds.push_back({"xanim_parts_valid.bin", "valid", BuildXAnimPartsSeed()});
+    seeds.push_back({"fx_archive_body_state_valid.bin", "valid", BuildFxArchiveBodyStateSeed()});
+
+    seeds.push_back({"empty.bin", "malformed", {}});
+    seeds.push_back({"single_byte.bin", "malformed", {0xAAu}});
+    seeds.push_back({"zeros_64.bin", "malformed", std::vector<unsigned char>(64u, 0u)});
+    seeds.push_back({"ones_64.bin", "malformed", std::vector<unsigned char>(64u, 0xFFu)});
     {
-        return RunSeeds();
+        std::vector<unsigned char> alt(64u);
+        for (size_t i = 0; i < alt.size(); ++i)
+            alt[i] = static_cast<unsigned char>((i & 1u) ? 0xAAu : 0x55u);
+        seeds.push_back({"alt_64.bin", "malformed", std::move(alt)});
+    }
+    seeds.push_back({"ones_256.bin", "malformed", std::vector<unsigned char>(256u, 0xFFu)});
+
+    // Minimized regressions: truncate each valid header so the bounded
+    // read path must trip its limit rather than read past end.
+    {
+        std::vector<unsigned char> xmodel = BuildXModelPiecesSeed();
+        if (xmodel.size() > 1u)
+            xmodel.resize(xmodel.size() / 2u);
+        seeds.push_back({"truncated_xmodel_pieces.bin", "malformed", std::move(xmodel)});
+
+        std::vector<unsigned char> xanim = BuildXAnimPartsSeed();
+        if (xanim.size() > 1u)
+            xanim.resize(xanim.size() / 2u);
+        seeds.push_back({"truncated_xanim_parts.bin", "malformed", std::move(xanim)});
     }
 
-    std::vector<std::string> files;
+    return seeds;
+}
+
+// Strict corpus mode. Every failure (absent, non-directory, unreadable,
+// missing / malformed manifest, missing / size-mismatched / hash-
+// mismatched entry, empty manifest) is terminal: this never falls back
+// to the inline seeds.
+int RunCorpusDir(const std::string &corpusDir)
+{
+    if (corpusDir.empty())
     {
-        std::error_code ec;
-        const std::filesystem::directory_iterator it(
-            std::filesystem::path(corpusDir), ec);
-        if (ec)
+        std::fprintf(stderr, "fuzz_fastfile: corpus requires a directory\n");
+        return 1;
+    }
+
+    std::error_code ec;
+    const std::filesystem::path dir(corpusDir);
+    if (!std::filesystem::is_directory(dir, ec) || ec)
+    {
+        const std::string detail = ec ? (" (" + ec.message() + ")") : std::string();
+        std::fprintf(stderr, "fuzz_fastfile: corpus directory missing or unreadable: %s%s\n",
+                     corpusDir.c_str(), detail.c_str());
+        return 1;
+    }
+
+    std::vector<CorpusEntry> entries;
+    if (!LoadCorpusManifest(corpusDir, entries))
+        return 1;
+    if (entries.empty())
+    {
+        std::fprintf(stderr, "fuzz_fastfile: corpus manifest lists no entries: %s/%s\n",
+                     corpusDir.c_str(), kCorpusManifestName);
+        return 1;
+    }
+
+    // Validate every entry against the manifest BEFORE exercising any of
+    // them, so a mismatched corpus fails without a partial sweep.
+    std::vector<std::vector<unsigned char>> payloads;
+    payloads.reserve(entries.size());
+    for (const CorpusEntry &entry : entries)
+    {
+        if (!IsSafeEntryName(entry.name))
         {
-            // Fall back: synthesize a tiny inline corpus.
-            std::fprintf(stderr, "fuzz_fastfile: could not list corpus dir %s; running inline seeds\n", corpusDir);
-            return RunSeeds();
+            std::fprintf(stderr, "fuzz_fastfile: unsafe corpus entry name: %s\n", entry.name.c_str());
+            return 1;
         }
-        for (const std::filesystem::directory_entry &entry : it)
+
+        std::vector<unsigned char> bytes;
+        if (!ReadFileChecked(corpusDir + "/" + entry.name, bytes))
         {
-            if (!entry.is_regular_file(ec))
-                continue;
-            files.push_back(entry.path().filename().string());
+            std::fprintf(stderr, "fuzz_fastfile: corpus entry missing or unreadable: %s\n",
+                         entry.name.c_str());
+            return 1;
         }
+        if (bytes.size() != entry.size)
+        {
+            std::fprintf(stderr,
+                         "fuzz_fastfile: corpus entry size mismatch for %s (manifest=%llu actual=%zu)\n",
+                         entry.name.c_str(), static_cast<unsigned long long>(entry.size), bytes.size());
+            return 1;
+        }
+        if (Fnv1a64(bytes) != entry.hash)
+        {
+            std::fprintf(stderr, "fuzz_fastfile: corpus entry hash mismatch for %s\n",
+                         entry.name.c_str());
+            return 1;
+        }
+        payloads.push_back(std::move(bytes));
     }
 
-    if (files.empty())
+    std::size_t malformed = 0;
+    for (size_t i = 0; i < entries.size(); ++i)
     {
-        std::fprintf(stderr, "fuzz_fastfile: empty corpus dir %s; running inline seeds\n", corpusDir);
-        return RunSeeds();
-    }
-
-    for (const std::string &name : files)
-    {
-        const std::string full = std::string(corpusDir) + "/" + name;
-        const std::vector<unsigned char> bytes = ReadFile(full.c_str());
-        if (ExerciseSeed(bytes, name.c_str()) != 0)
+        if (entries[i].kind == "malformed")
+            ++malformed;
+        if (ExerciseSeed(payloads[i], entries[i].name.c_str()) != 0)
             return 1;
     }
 
-    std::fprintf(stdout, "fuzz_fastfile: corpus ok (%zu files, runs=%d)\n", files.size(), g_runs);
+    std::fprintf(stdout, "fuzz_fastfile: corpus ok (%zu files, %zu malformed, runs=%d)\n",
+                 entries.size(), malformed, g_runs);
+    return 0;
+}
+
+int RunCorpus(const char *corpusDir)
+{
+    return RunCorpusDir(corpusDir == nullptr ? std::string() : std::string(corpusDir));
+}
+
+int GenerateSeeds(const char *outDir);
+
+// Negative gate: prove the corpus contract rejects every malformed
+// corpus condition and accepts only the generated manifest corpus. The
+// scratch root is passed by CTest (under the build tree), never a
+// hardcoded /tmp path.
+int RunCorpusGate(const char *scratchRoot)
+{
+    if (scratchRoot == nullptr || scratchRoot[0] == 0)
+    {
+        std::fprintf(stderr, "fuzz_fastfile: corpus-gate requires a scratch directory\n");
+        return 1;
+    }
+
+    int failures = 0;
+
+    auto expectFail = [&](const std::string &label, const std::string &dir) {
+        if (RunCorpusDir(dir) == 0)
+        {
+            std::fprintf(stderr,
+                         "fuzz_fastfile: gate: expected rejection but corpus passed: %s\n",
+                         label.c_str());
+            ++failures;
+        }
+        else
+        {
+            std::fprintf(stdout, "fuzz_fastfile: gate: %s rejected\n", label.c_str());
+        }
+    };
+    auto expectOk = [&](const std::string &label, const std::string &dir) {
+        if (RunCorpusDir(dir) != 0)
+        {
+            std::fprintf(stderr,
+                         "fuzz_fastfile: gate: expected acceptance but corpus failed: %s\n",
+                         label.c_str());
+            ++failures;
+        }
+        else
+        {
+            std::fprintf(stdout, "fuzz_fastfile: gate: %s accepted\n", label.c_str());
+        }
+    };
+
+    const std::string root(scratchRoot);
+    std::error_code ec;
+    std::filesystem::remove_all(std::filesystem::path(root), ec);
+    std::filesystem::create_directories(std::filesystem::path(root), ec);
+    if (ec)
+    {
+        std::fprintf(stderr, "fuzz_fastfile: could not create scratch root %s: %s\n",
+                     root.c_str(), ec.message().c_str());
+        return 1;
+    }
+
+    // Absent corpus directory.
+    expectFail("absent corpus", root + "/absent");
+
+    // Existing directory with no manifest at all.
+    const std::string noManifest = root + "/no_manifest";
+    std::filesystem::create_directories(std::filesystem::path(noManifest), ec);
+    expectFail("directory without manifest", noManifest);
+
+    // Corpus path is a regular file, not a directory.
+    const std::string notADir = root + "/not_a_dir";
+    {
+        std::ofstream f(notADir, std::ios::binary);
+        f << 'x';
+    }
+    expectFail("corpus path is a regular file", notADir);
+
+    // Manifest present but lists no entries.
+    const std::string emptyManifest = root + "/empty_manifest";
+    std::filesystem::create_directories(std::filesystem::path(emptyManifest), ec);
+    {
+        std::ofstream m(emptyManifest + "/" + kCorpusManifestName);
+        m << "# no entries\n";
+    }
+    expectFail("manifest with no entries", emptyManifest);
+
+    // Valid generated corpus is accepted.
+    const std::string valid = root + "/valid";
+    if (GenerateSeeds(valid.c_str()) != 0)
+    {
+        std::fprintf(stderr, "fuzz_fastfile: gate: could not generate the valid corpus\n");
+        return 1;
+    }
+    expectOk("generated corpus", valid);
+
+    auto copyValid = [&](const std::string &dest) -> bool {
+        std::error_code copyEc;
+        std::filesystem::copy(std::filesystem::path(valid), std::filesystem::path(dest),
+                              std::filesystem::copy_options::recursive, copyEc);
+        if (copyEc)
+        {
+            std::fprintf(stderr, "fuzz_fastfile: gate: could not copy corpus to %s: %s\n",
+                         dest.c_str(), copyEc.message().c_str());
+            return false;
+        }
+        return true;
+    };
+
+    // A listed entry removed from disk.
+    const std::string missingEntry = root + "/missing_entry";
+    if (copyValid(missingEntry))
+    {
+        std::error_code rmEc;
+        std::filesystem::remove(std::filesystem::path(missingEntry + "/xanim_parts_valid.bin"), rmEc);
+        expectFail("removed manifest entry", missingEntry);
+    }
+
+    // A listed entry whose size no longer matches the manifest. Scope the
+    // append stream so it is flushed to disk before the corpus re-reads it.
+    const std::string sizeMismatch = root + "/size_mismatch";
+    if (copyValid(sizeMismatch))
+    {
+        {
+            std::ofstream append(sizeMismatch + "/xmodel_pieces_valid.bin",
+                                 std::ios::binary | std::ios::app);
+            append << 'X';
+        }
+        expectFail("size-mismatched entry", sizeMismatch);
+    }
+
+    // A listed entry whose bytes changed without changing size.
+    const std::string hashMismatch = root + "/hash_mismatch";
+    if (copyValid(hashMismatch))
+    {
+        const std::string target = hashMismatch + "/xmodel_pieces_valid.bin";
+        std::vector<unsigned char> bytes;
+        if (ReadFileChecked(target, bytes) && !bytes.empty())
+        {
+            bytes[0] = static_cast<unsigned char>(bytes[0] ^ 0xFFu);
+            std::ofstream out(target, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char *>(bytes.data()),
+                      static_cast<std::streamsize>(bytes.size()));
+        }
+        expectFail("hash-mismatched entry", hashMismatch);
+    }
+
+    if (failures != 0)
+    {
+        std::fprintf(stderr, "fuzz_fastfile: corpus gate FAILED (%d unmet expectations)\n", failures);
+        return 1;
+    }
+
+    std::fprintf(stdout, "fuzz_fastfile: corpus gate ok\n");
     return 0;
 }
 
@@ -817,8 +1167,9 @@ int RunRandom(const char *corpusDir, unsigned long iterations)
         if (ExerciseSeed(mutated, label) != 0)
         {
             ++totalFailures;
-            // Persist the offending seed to the corpus dir so the
-            // fuzzer can be re-run with --corpus=... to reproduce.
+            // Persist the offending seed next to the corpus dir so it can
+            // be minimized and added to a manifest-checked corpus to
+            // reproduce.
             if (corpusDir != nullptr && corpusDir[0] != 0)
             {
                 const std::string path = std::string(corpusDir) + "/crash_" + std::to_string(i) + ".bin";
@@ -838,7 +1189,7 @@ int RunRandom(const char *corpusDir, unsigned long iterations)
     return 0;
 }
 
-int RunGenSeeds(const char *outDir)
+int GenerateSeeds(const char *outDir)
 {
     if (outDir == nullptr || outDir[0] == 0)
     {
@@ -846,91 +1197,88 @@ int RunGenSeeds(const char *outDir)
         return 1;
     }
 
-    auto xmodel = BuildXModelPiecesSeed();
-    auto xanim = BuildXAnimPartsSeed();
-    auto fx = BuildFxArchiveBodyStateSeed();
-
-    // Ensure the directory exists.
     std::error_code mkdirEc;
     std::filesystem::create_directories(std::filesystem::path(outDir), mkdirEc);
     if (mkdirEc)
     {
-        std::fprintf(stderr, "fuzz_fastfile: could not create %s\n", outDir);
+        std::fprintf(stderr, "fuzz_fastfile: could not create %s: %s\n",
+                     outDir, mkdirEc.message().c_str());
         return 1;
     }
 
-    struct SeedOut
-    {
-        const char *name;
-        std::vector<unsigned char> bytes;
-    };
+    const std::vector<SeedSpec> seeds = BuildCorpusSeeds();
+    std::ostringstream manifest;
+    manifest << "# fuzz_fastfile corpus manifest v1\n";
+    manifest << "# fields: fnv1a64-hex size kind name\n";
 
-    const SeedOut seeds[] = {
-        {"xmodel_pieces_valid.bin",  xmodel},
-        {"xanim_parts_valid.bin",    xanim},
-        {"fx_archive_body_state_valid.bin", fx},
-        {"empty.bin",       {}},
-        {"single_byte.bin", {0xAAu}},
-        {"zeros_64.bin",    std::vector<unsigned char>(64u, 0u)},
-        {"ones_64.bin",     std::vector<unsigned char>(64u, 0xFFu)},
-        {"alt_64.bin",      std::vector<unsigned char>(64u)},
-        {"ones_256.bin",    std::vector<unsigned char>(256u, 0xFFu)},
-    };
-
-    int written = 0;
-    for (const SeedOut &s : seeds)
+    for (const SeedSpec &s : seeds)
     {
         const std::string path = std::string(outDir) + "/" + s.name;
-        std::ofstream out(path, std::ios::binary);
-        if (!out)
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        if (!out.is_open())
         {
             std::fprintf(stderr, "fuzz_fastfile: could not write %s\n", path.c_str());
             return 1;
         }
-        out.write(reinterpret_cast<const char *>(s.bytes.data()),
-                  static_cast<std::streamsize>(s.bytes.size()));
+        if (!s.bytes.empty())
+        {
+            out.write(reinterpret_cast<const char *>(s.bytes.data()),
+                      static_cast<std::streamsize>(s.bytes.size()));
+        }
+        out.flush();
         if (!out)
         {
             std::fprintf(stderr, "fuzz_fastfile: write failed for %s\n", path.c_str());
             return 1;
         }
-        ++written;
+
+        char hashHex[17];
+        std::snprintf(hashHex, sizeof(hashHex), "%016llx",
+                      static_cast<unsigned long long>(Fnv1a64(s.bytes)));
+        manifest << hashHex << " " << s.bytes.size() << " " << s.kind << " " << s.name << "\n";
     }
 
-    // Fill the alt_64.bin alternating pattern now that the vector is
-    // allocated empty above.
+    const std::string manifestPath = std::string(outDir) + "/" + kCorpusManifestName;
+    std::ofstream mout(manifestPath, std::ios::binary | std::ios::trunc);
+    if (!mout.is_open())
     {
-        std::vector<unsigned char> pattern(64u);
-        for (size_t i = 0; i < pattern.size(); ++i)
-            pattern[i] = static_cast<unsigned char>(i & 1u ? 0xAAu : 0x55u);
-        const std::string path = std::string(outDir) + "/alt_64.bin";
-        std::ofstream out(path, std::ios::binary);
-        if (!out)
-        {
-            std::fprintf(stderr, "fuzz_fastfile: could not write %s\n", path.c_str());
-            return 1;
-        }
-        out.write(reinterpret_cast<const char *>(pattern.data()),
-                  static_cast<std::streamsize>(pattern.size()));
-        ++written;
+        std::fprintf(stderr, "fuzz_fastfile: could not write manifest %s\n", manifestPath.c_str());
+        return 1;
+    }
+    const std::string manifestText = manifest.str();
+    mout.write(manifestText.data(), static_cast<std::streamsize>(manifestText.size()));
+    mout.flush();
+    if (!mout)
+    {
+        std::fprintf(stderr, "fuzz_fastfile: manifest write failed for %s\n", manifestPath.c_str());
+        return 1;
     }
 
-    std::fprintf(stdout, "fuzz_fastfile: genseeds wrote %d seeds to %s\n", written, outDir);
+    std::fprintf(stdout, "fuzz_fastfile: genseeds wrote %zu seeds + manifest to %s\n",
+                 seeds.size(), outDir);
     return 0;
+}
+
+int RunGenSeeds(const char *outDir)
+{
+    return GenerateSeeds(outDir);
 }
 
 void PrintUsage(const char *argv0)
 {
     std::fprintf(stdout,
-        "fuzz_fastfile — production-path fast-file fuzz harness\n"
-        "Usage: %s [seeds] [corpus <dir>] [random <count> <dir>] [genseeds <dir>]\n"
-        "  seeds                 run the built-in seed corpus (default)\n"
-        "  corpus <dir>          run every file in <dir> as a seed\n"
+        "fuzz_fastfile — bounded cursor-primitive fuzz harness\n"
+        "Usage: %s [seeds] [corpus <dir>] [corpus-gate <dir>] "
+        "[random <count> <dir>] [genseeds <dir>]\n"
+        "  seeds                 run the built-in inline seed corpus (default)\n"
+        "  corpus <dir>          run the manifest-checked corpus in <dir>;\n"
+        "                        fails closed on absent/empty/mismatched input\n"
+        "  corpus-gate <dir>     self-check the corpus contract (negative gate)\n"
         "  random <n> <dir>      run <n> mutated iterations, persisting crashes\n"
-        "  genseeds <dir>        write the bounded seed corpus to <dir>\n"
-        "Built-in seeds cover xmodel parts, xanim parts, fx archive body state,\n"
-        "and the empty / single-byte / all-zero / all-ones / alternating-7F\n"
-        "adversarial inputs.\n",
+        "  genseeds <dir>        write the bounded corpus + manifest to <dir>\n"
+        "The generated corpus covers the synthetic xmodel pieces, xanim parts\n"
+        "and fx archive body state header shapes plus empty / single-byte /\n"
+        "all-zero / all-ones / alternating / truncated malformed inputs.\n",
         argv0);
 }
 
@@ -949,6 +1297,8 @@ int main(int argc, char **argv)
         return RunSeeds();
     if (mode == "corpus" && argc >= 3)
         return RunCorpus(argv[2]);
+    if (mode == "corpus-gate" && argc >= 3)
+        return RunCorpusGate(argv[2]);
     if (mode == "random" && argc >= 4)
     {
         const unsigned long iterations = std::strtoul(argv[2], nullptr, 10);

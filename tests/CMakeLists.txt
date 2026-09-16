@@ -3821,14 +3821,15 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/script_widening_source_test.cmake)
 
-# fuzz_fastfile: production-path fast-file fuzz harness. Exercises the
-# bounded BufCursor read path that backs every retail fast-file loader
-# (xasset families: xmodel, xanim, fx archive body state). The harness
-# links only against the bounded read primitives (no FS_ReadFile, no
-# Hunk, no Com_PrintError) so it stays available on every build target
-# and feeds attacker-controlled bytes into the bounded read contract.
-# CTest entries match 'fuzz|fastfile' so the named-regex filter in the
-# bead's build/test commands resolves correctly.
+# fuzz_fastfile: bounded cursor-primitive fuzz harness. It feeds synthetic
+# XAsset-shaped byte streams (xmodel pieces, xanim parts, fx archive body
+# state) through the bounded BufCursor read primitives in
+# src/xanim/buf_cursor.cpp. It is NOT production-parser coverage: the real
+# DB loader, production XModel/XAnim parsers and FX restore composition are
+# intentionally not linked here (no FS_ReadFile, no Hunk, no Com_PrintError),
+# so a green run pins the bounded-read contract only. Real parser/loader
+# enrollment is tracked under #125 (A03). CTest entries match 'fuzz|fastfile'
+# so the named-regex filter in the bead's build/test commands resolves.
 add_executable(fuzz_fastfile
     fuzz_fastfile.cpp
     ${SRC_DIR}/xanim/buf_cursor.cpp)
@@ -3849,22 +3850,32 @@ set_target_properties(
 add_test(
     NAME fuzz-fastfile-cursor
     COMMAND fuzz_fastfile seeds)
-# Seed the corpus into the build dir at build time so the corpus test
-# is hermetic and doesn't depend on a hand-maintained source tree.
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds/xmodel_pieces_valid.bin
-    COMMAND fuzz_fastfile genseeds
-        ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds
-    DEPENDS fuzz_fastfile
-    COMMENT "fuzz_fastfile: generating bounded seed corpus")
-add_custom_target(fuzz_fastfile_corpus_seeds DEPENDS
-    ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds/xmodel_pieces_valid.bin)
-add_dependencies(fuzz_fastfile_corpus_seeds fuzz_fastfile)
+# The manifest-checked corpus is generated, not hand-maintained. Wire the
+# generation as a real CTest setup fixture so the corpus test cannot run
+# before the seeds exist. The previous build-target wiring was invisible to
+# CTest, so a fresh build passed fuzz-fastfile-corpus with no corpus by
+# falling back to the inline seeds.
+add_test(
+    NAME fuzz-fastfile-corpus-setup
+    COMMAND fuzz_fastfile genseeds ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds)
+set_tests_properties(fuzz-fastfile-corpus-setup PROPERTIES
+    FIXTURES_SETUP fuzz_fastfile_corpus_seeds)
 add_test(
     NAME fuzz-fastfile-corpus
     COMMAND fuzz_fastfile corpus ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds)
 set_tests_properties(fuzz-fastfile-corpus PROPERTIES
     FIXTURES_REQUIRED fuzz_fastfile_corpus_seeds)
+# Fail-closed negative gates: an absent corpus must be rejected instead of
+# silently falling back to the inline seeds, and the manifest contract must
+# reject empty / unreadable / manifest-mismatched corpora.
+add_test(
+    NAME fuzz-fastfile-corpus-rejects-missing
+    COMMAND fuzz_fastfile corpus ${CMAKE_CURRENT_BINARY_DIR}/fuzz_seeds_absent)
+set_tests_properties(fuzz-fastfile-corpus-rejects-missing PROPERTIES
+    WILL_FAIL TRUE)
+add_test(
+    NAME fuzz-fastfile-corpus-gate
+    COMMAND fuzz_fastfile corpus-gate ${CMAKE_CURRENT_BINARY_DIR}/fuzz_corpus_gate)
 
 # tagInfo_s <-> tagInfoDisk32_s save-record converter. The header is header
 # only so the test compiles standalone against the production wire image;
