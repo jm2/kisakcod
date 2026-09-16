@@ -77,19 +77,30 @@ sites: `SND_StartAlias2DSample` (`snd_driver.cpp:351`),
 
 | Subject | State at this SHA | Evidence |
 |---|---|---|
-| Codec | In-tree **Speex 1.1.9** (`SPEEX_VERSION "speex-1.1.9"`), compiled from `src/groupvoice/speex/`, headers in `deps/speex/` | `src/groupvoice/speex/misc.h:38-43` |
+| Codec | In-tree **Speex 1.1.9** (`SPEEX_VERSION "speex-1.1.9"`), compiled from `src/groupvoice/speex/`, headers in `deps/speex/`. This is the fork's observed build; whether retail/Steam peers used this version or bitstream is not established here (see §2.2 paragraph and VOX-8) | `src/groupvoice/speex/misc.h:38-43` |
 | Encoder/decoder | `Encode_Init` selects narrowband/wideband/ultra-wideband Speex modes; `Encode_Sample` uses `speex_encode_int`/`speex_bits_write`; `Decode_*` uses `speex_bits_read_from`/`speex_decode_int` | `src/groupvoice/encode.cpp`, `decode.cpp` |
 | Capture/playback device layer | DirectSound-based `record_dsound.cpp`, `play_dsound.cpp`, `directsound.h`; Windows mixer/waveIn plumbing in `win_voice.cpp` | `src/groupvoice/`, `src/win32/win_voice.cpp` |
-| Client send framing | Client builds an out-of-band `"v"` message: `MSG_WriteString("v")`, `MSG_WriteShort(qport)`, packet-count byte, then per packet a size byte + payload; asserts `dataSize > 0` and `< 2<<15` | `src/client_mp/cl_voice.cpp:46-57` |
-| Client receive framing | `CL_VoicePacket` reads packet-count byte (`<= 0x28`), then per packet `talker` byte, `dataSize` byte (**1..256**), payload; rejects otherwise | `src/client_mp/cl_voice.cpp:63-90` |
-| Server relay | `SV_QueueVoicePacket` caps the per-client queue at **40** packets and enforces `talkerNum == (byte)talkerNum`; `G_BroadcastVoice`/`voice_global` gate delivery | `src/server_mp/sv_voice_mp.cpp:11,109-144` |
+| Client→server send (in-game and pre-game), as emitted here | Out-of-band `"v"` message: `MSG_WriteString("v")`, `MSG_WriteShort(qport)`, packet-count byte, then per packet a **one-byte** size field + payload. The send-side `MyAssertHandler` guards are the literal predicates `dataSize > 0` and `dataSize < (2<<15)`; because `MSG_WriteByte` transmits only the low 8 bits, the wire size field is `dataSize & 0xFF`, so a sender length ≥ 256 is malformed (truncated on the wire) and is **not** a valid range | `src/client_mp/cl_voice.cpp:44-57` |
+| Client→server receive, in-game (`SV_UserVoice`) | Packet-count byte, then per packet a **one-byte** size field (`MSG_ReadByte`, representable 0..255) + payload; no `talker` byte (sender resolved by address+qport). Accept predicate `dataSize <= 0 \|\| dataSize > 256`; the `> 256` arm is a literal defensive predicate a byte can never satisfy, so the *effective* accepted positive range is **1..255**. A size byte of `0` logs "invalid voice packet" and aborts the batch; a truncated read returns `-1` (buffer overflow flag) and is likewise rejected; size `256` is not representable on the wire | `src/server_mp/sv_voice_mp.cpp:104-119` |
+| Client→server receive, pre-game (`SV_PreGameUserVoice`) | Packet-count byte, then per packet a **two-byte (16-bit)** size field (`MSG_ReadShort`) + payload. Same accept predicate `dataSize <= 0 \|\| dataSize > 256`, so the accepted range here is **1..256**; `0`, negative/truncated reads and values above 256 are rejected | `src/server_mp/sv_voice_mp.cpp:161-169` |
+| Server→client send (`SV_WriteVoiceDataToClient`) | Out-of-band `"v"` message: packet-count byte (asserted `>0` and `<= 40`), then per packet a `talker` byte + **one-byte** size field (`MSG_WriteByte`) + payload. `dataSize < (2<<15)` is asserted but only the low byte reaches the wire | `src/server_mp/sv_snapshot_mp.cpp:1872-1896`, `:1916` |
+| Client receive of server voice (`CL_VoicePacket`) | Packet-count byte accepted only when `<= 0x28` (40), then per packet a `talker` byte, a **one-byte** size field (`MSG_ReadByte`, representable 0..255) + payload. Accept predicate `dataSize <= 0 \|\| dataSize > 256`; the `> 256` arm is unreachable for a byte, so the effective accepted positive range is **1..255**. `talker >= 0x40` is rejected, and a size byte of `0` (or a truncated/negative read) aborts the batch | `src/client_mp/cl_voice.cpp:65-93` |
+| Server relay | `SV_QueueVoicePacket` caps the per-client queue at **40** packets and enforces `talkerNum == (byte)talkerNum`; `G_BroadcastVoice`/`voice_global` gate delivery | `src/server_mp/sv_voice_mp.cpp:11,94-146` |
 | Voice lifecycle entry points | `Voice_Init`/`Voice_Shutdown` called from the sound system (`snd.cpp:3699`,`:3940`); `Voice_SendVoiceData`, `Voice_IncomingVoiceData` | `src/win32/win_local.h:176-182`, `win_voice.cpp` |
 
-The **voice wire format is a compatibility contract**, not an internal detail:
-`talker` and one-byte `dataSize` (1..256) plus a Speex 1.1.9 payload are exactly
-what unmodified original peers exchange. The codec version and bitstream are
-embedded in those bytes, so a different codec (for example Opus) or different
-framing breaks in-game voice against real clients.
+The **voice wire format is a compatibility contract**, not an internal detail.
+What this source inspection establishes is the *fork's own observed framing* at
+the recorded SHA — the directional byte layouts tabulated above, and the in-tree
+codec identified by its `SPEEX_VERSION` string (`speex-1.1.9`). It does **not**
+establish that unmodified original commercial 1.7 or Steam 1.8 peers exchange
+exactly these bytes, nor that retail shipped this codec version or bitstream:
+no original-reference capture was made here, so the equivalence claim is
+expressly **deferred to VOX-8** and must not be recorded as proven retail fact.
+The retained design intent is that the codec payload is embedded in these bytes,
+so a substituted codec (for example Opus) or changed framing would risk breaking
+in-game voice against real clients; that is a risk hypothesis to be tested
+against the references, not a certified fact. Directional gates and the
+malformed-length cases live in §4.2.
 
 ### 2.3 Cinematics
 
@@ -173,8 +184,10 @@ dependency).
 | ID | Gate (requirement) | Production subject | Method / fixture | Evidence required | Status |
 |---|---|---|---|---|---|
 | VOX-1 | Encode/decode round-trips **Speex 1.1.9** narrowband/wideband/ultra-wideband byte-for-byte for fixed input at a fixed quality | `Encode_Sample`/`Decode_*`, `src/groupvoice/speex/` | Golden bitstream fixtures captured from this build; assert exact bytes | Golden vectors committed with the test | pending |
-| VOX-2 | Client→server framing is byte-exact: `"v"`, `qport`, count, then `size`+payload per packet; sizes in `(0, 2<<15)` on send and `1..256` on receive | `cl_voice.cpp:46-90` | Serialize known packets and diff against expected bytes; malformed-size rejection tests | Byte diff + rejection tests | pending |
-| VOX-3 | Server relay preserves talker byte and payload and enforces the 40-packet cap and byte-talker assertion | `sv_voice_mp.cpp:109-144` | Queue flood + identity-boundary tests | Byte diff + assertion tests | pending |
+| VOX-2a | **Client→server in-game** framing byte-exact: out-of-band `"v"` + `qport` short, packet-count byte, then per packet one-byte size + payload; accepted server-side positive sizes **1..255**. Include zero and truncation/error cases; do not treat sender lengths ≥ 256 as valid (they truncate to the low byte on the wire) | `cl_voice.cpp:44-57` (send), `sv_voice_mp.cpp:104-119` (receive) | Serialize known packets and diff against expected bytes; cases: size 0, size 255, sender length ≥256 shown truncated, truncated payload | Byte diff + rejection tests | pending |
+| VOX-2b | **Client→server pre-game** framing byte-exact: packet-count byte, then per packet a 16-bit size + payload; accepted sizes **1..256** (0 and >256 rejected) | `sv_voice_mp.cpp:161-169` | Serialize known pre-game packets; cases: size 0, 256, 257, truncated payload | Byte diff + rejection tests | pending |
+| VOX-2c | **Server→client** framing byte-exact: out-of-band `"v"`, packet-count byte (`1..40`), then per packet `talker` byte + one-byte size + payload; client accepts positive sizes **1..255** and `talker < 0x40` | `sv_snapshot_mp.cpp:1872-1896`, `cl_voice.cpp:65-93` | Serialize known packets; cases: count 0/41, size 0/255, talker 0x40, truncated payload | Byte diff + rejection tests | pending |
+| VOX-3 | Server relay preserves talker byte and payload and enforces the 40-packet cap and byte-talker assertion | `sv_voice_mp.cpp:94-146` | Queue flood + identity-boundary tests | Byte diff + assertion tests | pending |
 | VOX-4 | Capture device lifecycle: init, default-device change, removal, re-open, shutdown without leak or crash | `win_voice.cpp` mixer/waveIn, `record_dsound.cpp`, `Voice_Init`/`Voice_Shutdown` (`win_voice.cpp:588/640`) | Device-present / device-absent / device-swap sequences on each client target | Lifecycle trace + leak report | pending |
 | VOX-5 | Playback/loss/recovery: missing, late and reordered voice packets degrade gracefully and drop cleanly | `Voice_IncomingVoiceData` (`win_voice.cpp:732`), `DSound_HandleBufferUnderrun` (`play_dsound.cpp:178`) | Loss/reorder/late-arrival injection | Recovery trace | pending |
 | VOX-6 | Permission/default-device changes are observed and do not stall the game loop | `win_voice.cpp:100-160` mixer path | Permission-denied and no-device fixtures | Trace + no-hang assertion | pending |
@@ -212,7 +225,7 @@ dependency).
 ## 5. Relationship to commercial compatibility (#122)
 
 - Media gates **never** override byte or behavioral compatibility. Network
-  voice bytes (VOX-2/VOX-3/VOX-7) and disk asset bytes (CIN-1, NUL-1) are part
+  voice bytes (VOX-2a/2b/2c/VOX-3/VOX-7) and disk asset bytes (CIN-1, NUL-1) are part
   of the mandatory contract; the permissiveness of #122's
   "Test non-network rendering/audio details with suitable tolerances, but
   retain exactness wherever they affect packet contents or network-visible
@@ -247,8 +260,9 @@ each with its own PR and final-head CI plus substantive review, for example:
 
 1. AUD: reproduce the #76 defect set (reverb/volume/playback/shutdown) as
    failing tests before selecting/among backend candidates.
-2. VOX: byte-exact Speex 1.1.9 and framing fixtures (VOX-1/2/3) — independent
-   of any device backend and runnable now.
+2. VOX: byte-exact in-tree Speex 1.1.9 and directional framing fixtures
+   (VOX-1/2a/2b/2c/3) — independent of any device backend and runnable now;
+   retail-equivalence assertions stay with VOX-8.
 3. CIN: define and build the target-selectable cinematic stub (CIN-6) so
    non-Windows targets link.
 4. NUL: a headless media lifecycle test proving NUL-1/2/3.
