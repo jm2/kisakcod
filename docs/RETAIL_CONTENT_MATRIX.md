@@ -24,8 +24,10 @@ not claim every arbitrary third-party mod is supported.
 
 **Machine-checked contract:** the `retail-content-matrix:v1` index block in
 §11 is the canonical axis/case/disposition index. It is guarded by
-`tests/retail_content_matrix_source_test.cmake`, so the required targets, case
-families and upstream dispositions cannot be silently dropped. The outcome
+`tests/retail_content_matrix_source_test.cmake`, so the required targets and
+their production/reference roles, case families, individual named case ids with
+their intended families, the §4 catalog/index membership and the upstream
+dispositions cannot be silently dropped. The outcome
 matrix (§6) records results separately and stays **Blocked** for every
 commercial cell until a reference manifest id and case evidence exist; the
 guard test does not certify a cell — it only refuses to let the contract shrink

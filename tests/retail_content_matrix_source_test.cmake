@@ -3,8 +3,10 @@ cmake_minimum_required(VERSION 3.16)
 # Guards the A11 retail-content / MP mod compatibility regression matrix
 # (docs/RETAIL_CONTENT_MATRIX.md, fork issue #133). The document carries a
 # machine-readable axis/case/disposition index; this test fails closed if a
-# required target, commercial profile, configuration mode, case family or
-# upstream (#89/#40) disposition is dropped.
+# required target (with its production/reference role), commercial profile,
+# configuration mode, named case (with its intended family) or upstream
+# (#89/#40) disposition is dropped, or if the §4 catalog and the index disagree
+# about which cases exist.
 #
 # When run as the primary test it additionally exercises its own negative
 # paths by mutating copies of the document and asserting the validator
@@ -48,6 +50,7 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     string(REPLACE "\n" ";" _index_lines "${_block}")
 
     set(_targets "")
+    set(_target_roles "")
     set(_profiles "")
     set(_profile_kinds "")
     set(_modes "")
@@ -62,6 +65,7 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         endif()
         if(_line MATCHES "^target[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
             list(APPEND _targets "${CMAKE_MATCH_1}")
+            list(APPEND _target_roles "${CMAKE_MATCH_2}")
         elseif(_line MATCHES "^profile[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
             list(APPEND _profiles "${CMAKE_MATCH_1}")
             list(APPEND _profile_kinds "${CMAKE_MATCH_2}")
@@ -78,19 +82,29 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         endif()
     endforeach()
 
-    set(_required_targets
+    set(_required_production_targets
         win-amd64 win-arm64 linux-amd64 linux-arm64 macos-arm64)
-    foreach(_target IN LISTS _required_targets)
+    foreach(_target IN LISTS _required_production_targets)
         list(FIND _targets "${_target}" _target_index)
         if(_target_index EQUAL -1)
             message(FATAL_ERROR
                 "Retail-content matrix is missing required target '${_target}' in ${DOC_PATH}")
+        endif()
+        list(GET _target_roles ${_target_index} _target_role)
+        if(NOT _target_role STREQUAL "production")
+            message(FATAL_ERROR
+                "Retail-content matrix target '${_target}' must have role 'production', found '${_target_role}' in ${DOC_PATH}")
         endif()
     endforeach()
     list(FIND _targets "win-x86" _reference_target_index)
     if(_reference_target_index EQUAL -1)
         message(FATAL_ERROR
             "Retail-content matrix is missing the win-x86 reference platform in ${DOC_PATH}")
+    endif()
+    list(GET _target_roles ${_reference_target_index} _reference_target_role)
+    if(NOT _reference_target_role STREQUAL "reference")
+        message(FATAL_ERROR
+            "Retail-content matrix target 'win-x86' must have role 'reference', found '${_reference_target_role}' in ${DOC_PATH}")
     endif()
 
     set(_required_profiles original-commercial-1.7 steam-commercial-1.8)
@@ -125,6 +139,43 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         endif()
     endforeach()
 
+    # Required named cases: family presence alone is not enough, because a named
+    # map-cycle/download/demo case can vanish while its family still has other
+    # members (e.g. dropping SM-03 leaves stock-map populated by SM-01/SM-02).
+    # Each required case id must be present AND carry its intended family.
+    set(_required_cases
+        "SM-01 stock-map"
+        "SM-02 stock-map"
+        "SM-03 stock-map"
+        "MOD-01 fastfile-mod"
+        "MOD-02 fastfile-mod"
+        "MOD-03 raw-mod"
+        "PC-01 download-pure"
+        "PC-02 download-pure"
+        "PC-03 download-pure"
+        "PC-04 download-pure"
+        "DEMO-01 demo"
+        "DEMO-02 demo"
+        "DEMO-03 demo"
+        "UP89-01 upstream-89"
+        "UP89-02 upstream-89"
+        "UP40-01 upstream-40")
+    foreach(_entry IN LISTS _required_cases)
+        string(REPLACE " " ";" _parts "${_entry}")
+        list(GET _parts 0 _required_case_id)
+        list(GET _parts 1 _required_case_family)
+        list(FIND _cases "${_required_case_id}" _case_index)
+        if(_case_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix is missing required named case '${_required_case_id}' in ${DOC_PATH}")
+        endif()
+        list(GET _families ${_case_index} _case_family)
+        if(NOT _case_family STREQUAL "${_required_case_family}")
+            message(FATAL_ERROR
+                "Retail-content matrix case '${_required_case_id}' must belong to family '${_required_case_family}', found '${_case_family}' in ${DOC_PATH}")
+        endif()
+    endforeach()
+
     foreach(_upstream IN ITEMS upstream-89 upstream-40)
         list(FIND _dispositions "${_upstream}" _disposition_index)
         if(_disposition_index EQUAL -1)
@@ -139,6 +190,32 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     if(NOT _case_count EQUAL _unique_case_count)
         message(FATAL_ERROR
             "Retail-content matrix contains duplicate case ids in ${DOC_PATH}")
+    endif()
+
+    # Catalog/index membership cross-check: the §4 case catalog and the
+    # machine-readable index must name exactly the same cases. Without this, a
+    # case can be dropped from one side (e.g. the catalog row removed) while the
+    # other side still lists it, so the contract shrinks unnoticed.
+    string(FIND "${DOC_TEXT}" "## 4." _catalog_begin)
+    string(FIND "${DOC_TEXT}" "## 5." _catalog_end)
+    if(_catalog_begin EQUAL -1 OR _catalog_end EQUAL -1 OR _catalog_end LESS_EQUAL _catalog_begin)
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the §4 catalog or §5 section in ${DOC_PATH}")
+    endif()
+    math(EXPR _catalog_length "${_catalog_end} - ${_catalog_begin}")
+    string(SUBSTRING "${DOC_TEXT}" ${_catalog_begin} ${_catalog_length} _catalog_text)
+    string(REGEX MATCHALL "`[A-Z][A-Z0-9]*-[0-9]+`" _catalog_tokens "${_catalog_text}")
+    set(_catalog_cases "")
+    foreach(_token IN LISTS _catalog_tokens)
+        string(REPLACE "`" "" _catalog_case "${_token}")
+        list(APPEND _catalog_cases "${_catalog_case}")
+    endforeach()
+    list(REMOVE_DUPLICATES _catalog_cases)
+    list(SORT _catalog_cases)
+    list(SORT _cases)
+    if(NOT "${_catalog_cases}" STREQUAL "${_cases}")
+        message(FATAL_ERROR
+            "Retail-content matrix catalog cases [${_catalog_cases}] do not match index cases [${_cases}] in ${DOC_PATH}")
     endif()
 
     # The document must keep its non-claim language: licensed references are
@@ -206,5 +283,34 @@ if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'drop-fastfile-family' did not apply")
 endif()
 expect_rejected("drop-fastfile-family" "${_mutated}")
+
+# Remove exactly ONE member of a multi-case family. stock-map still has SM-01
+# and SM-02, so a family-presence-only guard would accept the shrink; the
+# required-named-case check must reject it.
+string(REPLACE "case SM-03 stock-map\n" "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-stock-map-member' did not apply")
+endif()
+expect_rejected("drop-stock-map-member" "${_mutated}")
+
+# Flip a target's role while keeping its id. The win-x86 reference platform
+# must not be relabelled production (nor a production target relabelled
+# reference); the role check must reject it.
+string(REPLACE "target win-x86 reference\n" "target win-x86 production\n" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'change-target-role' did not apply")
+endif()
+expect_rejected("change-target-role" "${_mutated}")
+
+# Rename a case id in the §4 catalog only, leaving the index untouched: the
+# catalog/index membership cross-check must reject the divergence.
+string(REPLACE
+    "`SM-03` | `map`/`map_rotate`"
+    "`SM-99` | `map`/`map_rotate`"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'catalog-index-mismatch' did not apply")
+endif()
+expect_rejected("catalog-index-mismatch" "${_mutated}")
 
 file(REMOVE_RECURSE "${_scratch_dir}")
