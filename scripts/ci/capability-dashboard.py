@@ -15,7 +15,12 @@ dataset.  This tool:
 Supporting evidence (utility/test/scaffold/instrument rows) is rendered in its
 own section and can never advance a production target.  A requested target is
 delivered only when every required mode reaches ``packaged_clean_machine`` with
-a package result and both required commercial reference profiles are validated.
+an explicit *successful* package result and a complete, correctly typed
+evidence record (exact SHA and run), and both required commercial reference
+profiles are validated with their own provenance.  Package success is an
+explicit token, not truthiness; a ``failed``/``pending``/arbitrary string never
+counts.  Validation-level ranking is fixed in this module, so reordering the
+manifest's editable ``enums.validation_levels`` cannot promote a weak level.
 
 This tool has no third-party dependencies; it is intentionally a small
 line-oriented parser so it can run in any CI job with a system Python.
@@ -57,6 +62,34 @@ MANDATORY_REQUIRED_STRONGEST_VALIDATION = "packaged_clean_machine"
 MANDATORY_REQUIRE_COMMERCIAL_REFERENCE_VALIDATION = True
 MANDATORY_REQUIRE_PACKAGE_RESULT = True
 
+# Canonical validation ordering.  Ranking is fixed here so that reordering the
+# manifest's editable ``enums.validation_levels`` cannot promote a weak level
+# past the delivery threshold.  ``validate_manifest`` requires the declared set
+# to match these names exactly (order-insensitive), while ``compute_aggregate``
+# always ranks against this constant -- never against the manifest order.
+CANONICAL_VALIDATION_ORDER = (
+    "none",
+    "configured",
+    "compiled",
+    "linked_production",
+    "synthetic_integration",
+    "licensed_content_startup",
+    "original_peer_compatibility",
+    "packaged_clean_machine",
+)
+VALIDATION_RANK = {
+    name: rank for rank, name in enumerate(CANONICAL_VALIDATION_ORDER)
+}
+
+# Explicit package-result contract.  A package smoke is successful only when it
+# reports the success token; ``failed``, ``pending`` or any arbitrary truthy
+# string (a hash, ``ok``, a path, ...) is not a successful package result.
+PACKAGE_RESULT_SUCCESS = "passed"
+PACKAGE_RESULT_VALUES = ("pending", "passed", "failed")
+
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+
 REQUIRED_CAPABILITY_FIELDS = (
     "id",
     "target",
@@ -78,6 +111,58 @@ def load_manifest(path: Path) -> dict:
 
 
 # --------------------------------------------------------------------------
+# Evidence typing helpers
+# --------------------------------------------------------------------------
+def _is_sha(value) -> bool:
+    """True for a non-empty commit-style SHA (7-64 hex characters)."""
+    return isinstance(value, str) and bool(_SHA_RE.match(value.strip()))
+
+
+def _is_sha256(value) -> bool:
+    """True for a full 64-hex-character SHA-256 digest."""
+    return isinstance(value, str) and bool(_SHA256_RE.match(value.strip()))
+
+
+def _is_evidence_run(value) -> bool:
+    """True for a non-empty run identifier (string or int, never bool)."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, str) and bool(value.strip())
+
+
+def claims_delivery_level(cap: dict) -> bool:
+    """True when a capability claims the mandatory packaged-delivery level."""
+    rank = VALIDATION_RANK.get(cap.get("strongest_validation"))
+    return rank is not None and rank >= VALIDATION_RANK[
+        MANDATORY_REQUIRED_STRONGEST_VALIDATION
+    ]
+
+
+def capability_evidence_complete(cap: dict) -> bool:
+    """Complete, correctly typed evidence for a promoted capability row.
+
+    Pending rows may leave ``sha``/``run``/``package_result`` null, but a row
+    claiming the packaged delivery level must carry an exact SHA, a run id and
+    an explicit successful package result.
+    """
+    evidence = cap.get("evidence") or {}
+    return (
+        _is_sha(evidence.get("sha"))
+        and _is_evidence_run(evidence.get("run"))
+        and evidence.get("package_result") == PACKAGE_RESULT_SUCCESS
+    )
+
+
+def reference_provenance_complete(reference: dict) -> bool:
+    """True when a validated commercial reference carries its own provenance."""
+    return _is_sha256(reference.get("sha256")) and _is_evidence_run(
+        reference.get("evidence_run")
+    )
+
+
+# --------------------------------------------------------------------------
 # Validation
 # --------------------------------------------------------------------------
 def validate_manifest(manifest: dict) -> list[str]:
@@ -96,6 +181,28 @@ def validate_manifest(manifest: dict) -> list[str]:
 
     if not validation_levels:
         errors.append("enums.validation_levels must be a non-empty list")
+    else:
+        if len(validation_levels) != len(set(validation_levels)):
+            errors.append("enums.validation_levels must not contain duplicates")
+        unknown_levels = [
+            level for level in validation_levels if level not in VALIDATION_RANK
+        ]
+        missing_levels = [
+            level
+            for level in CANONICAL_VALIDATION_ORDER
+            if level not in validation_levels
+        ]
+        if unknown_levels:
+            errors.append(
+                "enums.validation_levels contains unknown levels "
+                f"{unknown_levels!r}; the level set is fixed and its order is "
+                "not significant"
+            )
+        if missing_levels:
+            errors.append(
+                "enums.validation_levels is missing canonical levels "
+                f"{missing_levels!r}"
+            )
     if not modes:
         errors.append("enums.modes must be a non-empty list")
 
@@ -189,6 +296,18 @@ def validate_manifest(manifest: dict) -> list[str]:
         rid = reference.get("id", "<missing>")
         if reference.get("status") not in ("pending", "validated", "blocked"):
             errors.append(f"reference {rid}: status must be pending/validated/blocked")
+        elif reference.get("status") == "validated":
+            # A validated reference is the compatibility oracle; it must carry
+            # its own exact provenance or the "validated" claim is unsupported.
+            if not _is_sha256(reference.get("sha256")):
+                errors.append(
+                    f"reference {rid}: validated status requires a 64-hex "
+                    "sha256 digest"
+                )
+            if not _is_evidence_run(reference.get("evidence_run")):
+                errors.append(
+                    f"reference {rid}: validated status requires an evidence_run"
+                )
 
     seen_capability_ids: set[str] = set()
     for cap in manifest.get("capabilities") or []:
@@ -231,6 +350,45 @@ def validate_manifest(manifest: dict) -> list[str]:
         for field in ("sha", "run", "package_result"):
             if field not in evidence:
                 errors.append(f"capability {cid}: evidence missing {field!r}")
+        evidence_sha = evidence.get("sha")
+        evidence_run = evidence.get("run")
+        package_result = evidence.get("package_result")
+        if evidence_sha is not None and not _is_sha(evidence_sha):
+            errors.append(
+                f"capability {cid}: evidence.sha must be a commit SHA or null"
+            )
+        if evidence_run is not None and not _is_evidence_run(evidence_run):
+            errors.append(
+                f"capability {cid}: evidence.run must be a non-empty run id "
+                "or null"
+            )
+        if package_result is not None and package_result not in PACKAGE_RESULT_VALUES:
+            errors.append(
+                f"capability {cid}: evidence.package_result must be one of "
+                f"{list(PACKAGE_RESULT_VALUES)!r} or null (arbitrary strings "
+                "are not a package result)"
+            )
+        if claims_delivery_level(cap):
+            # A row claiming the packaged delivery level must be fully
+            # evidenced; pending rows keep null fields.
+            if not _is_sha(evidence_sha):
+                errors.append(
+                    f"capability {cid}: claiming "
+                    f"{MANDATORY_REQUIRED_STRONGEST_VALIDATION!r} requires an "
+                    "exact evidence.sha"
+                )
+            if not _is_evidence_run(evidence_run):
+                errors.append(
+                    f"capability {cid}: claiming "
+                    f"{MANDATORY_REQUIRED_STRONGEST_VALIDATION!r} requires an "
+                    "evidence.run"
+                )
+            if package_result != PACKAGE_RESULT_SUCCESS:
+                errors.append(
+                    f"capability {cid}: claiming "
+                    f"{MANDATORY_REQUIRED_STRONGEST_VALIDATION!r} requires "
+                    f"evidence.package_result == {PACKAGE_RESULT_SUCCESS!r}"
+                )
         if not (cap.get("blocker") or "").strip():
             errors.append(f"capability {cid}: blocker must be non-empty")
 
@@ -431,21 +589,28 @@ def compute_aggregate(manifest: dict) -> dict:
     The required modes, commercial references, validation threshold and boolean
     gates are read from the module-level mandatory policy, never from the
     manifest's editable ``aggregate`` block.  A weakened or emptied aggregate
-    therefore cannot change the computed result.
+    therefore cannot change the computed result.  Validation-level rank comes
+    from the fixed ``VALIDATION_RANK`` constant, package success from the
+    explicit ``PACKAGE_RESULT_SUCCESS`` token, and promoted rows must carry a
+    complete evidence record; validated references must carry their own
+    provenance.
     """
     refs = {r["id"]: r for r in manifest.get("commercial_references") or []}
     required_refs = list(MANDATORY_REQUIRED_COMMERCIAL_REFERENCES)
     require_ref_validation = MANDATORY_REQUIRE_COMMERCIAL_REFERENCE_VALIDATION
     required_level = MANDATORY_REQUIRED_STRONGEST_VALIDATION
-    levels = (manifest.get("enums") or {}).get("validation_levels") or []
-    level_rank = {name: rank for rank, name in enumerate(levels)}
+    # Ranking always comes from the fixed module constant; the manifest's
+    # editable level order can never influence delivery.
+    required_rank = VALIDATION_RANK[required_level]
     required_modes = list(MANDATORY_REQUIRED_MODES)
     require_package = MANDATORY_REQUIRE_PACKAGE_RESULT
 
     refs_ok = True
     if require_ref_validation:
         refs_ok = all(
-            refs.get(rid, {}).get("status") == "validated" for rid in required_refs
+            refs.get(rid, {}).get("status") == "validated"
+            and reference_provenance_complete(refs.get(rid, {}))
+            for rid in required_refs
         )
 
     rows = []
@@ -468,14 +633,16 @@ def compute_aggregate(manifest: dict) -> dict:
                 mode_states[mode] = {"state": "missing", "capability": None}
                 delivered = False
                 continue
-            reached = level_rank.get(cap.get("strongest_validation"), -1) >= (
-                level_rank.get(required_level, 10 ** 6)
+            reached = VALIDATION_RANK.get(cap.get("strongest_validation"), -1) >= (
+                required_rank
             )
-            package_ok = bool(
+            package_ok = (
                 (cap.get("evidence") or {}).get("package_result")
+                == PACKAGE_RESULT_SUCCESS
             ) or not require_package
             enrolled = bool(cap.get("production_enrolled"))
-            mode_delivered = reached and package_ok and enrolled
+            evidence_ok = capability_evidence_complete(cap)
+            mode_delivered = reached and package_ok and enrolled and evidence_ok
             mode_states[mode] = {
                 "state": "delivered" if mode_delivered else "pending",
                 "capability": cap,
