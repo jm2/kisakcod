@@ -12,6 +12,10 @@ snapshots. Local macOS ARM64 Release utility validation passed **211/211** tests
 but does not certify the newer remote tree or any production engine. A checked
 parent means its stated exit criteria are complete. Historical effort estimates
 and CI counts below are dated evidence, not current delivery percentages.
+Current delivery state and derived CI/test counts live in the generated
+[capability dashboard](CAPABILITY_DASHBOARD.md) (source:
+[`docs/capability/manifest.json`](capability/manifest.json)); it is
+reconciled by `scripts/ci/capability-dashboard.py` and checked in CI.
 
 - [ ] Complete the full five-target MP client/headless-server plan — strict
   production-target delivery remains **0/5**; native SP is deferred.
@@ -2154,7 +2158,11 @@ oracles, and record each production capability's exact evidence in #126.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **84% complete by current engineering effort**. PR #62 merged the production-neutral
+- Historical effort narrative (superseded; retained for audit only). The former
+  **84%** engineering-effort estimate and the per-platform percentages below had
+  no reproducible denominator and are no longer current evidence; the generated
+  [capability dashboard](CAPABILITY_DASHBOARD.md) is the authoritative delivery
+  source. PR #62 merged the production-neutral
   pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
   registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
   tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy PMem
@@ -2197,11 +2205,10 @@ oracles, and record each production capability's exact evidence in #126.
   checkpoint `6e0e6107` and exact upstream ancestry; all 11 exact-head and
   post-merge jobs passed in runs **30387093520** and **30388420989**,
   respectively.
-  Windows x86 is about
-  **93%**, shared
-  foundations/security about **91%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
-  **40%**, and macOS arm64 about **31%**. None of the five requested 64-bit/non-Windows engine targets builds end to end
-  yet, so strict target delivery remains **0/5**.
+  None of the five requested 64-bit/non-Windows engine targets builds end to end
+  yet, so strict target delivery remains **0/5**; the generated
+  [capability dashboard](CAPABILITY_DASHBOARD.md) replaces the former
+  per-platform percentage estimates with per-capability evidence rows.
 - Initial upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
   security changes. It restores several primarily SP features plus real shared renderer, XAnim, and
