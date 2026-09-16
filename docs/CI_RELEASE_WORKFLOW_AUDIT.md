@@ -349,22 +349,24 @@ Two remaining A12 gaps are addressed here rather than in a competing CI design:
   `effectscore-effect-table-stack-usage` contract is intentionally not
   registered under sanitizer instrumentation, so it is the one test absent
   there).
-- **The `windows-x86` ILP32 selection is now a checked manifest, not an inline
-  regex alone.** `scripts/ci/check-test-selection.py` fails closed when any
-  inventory test is neither selected nor justified-excluded, when a selected
-  name is absent from the inventory, when an exclusion has no reason, or when
-  the executed run is not exactly `selected and discovered` (so a discovered
-  selected test that silently fails to run, or any unselected test that runs,
-  fails the job). The filter stays inline in `ci.yml` because the source
-  invariant tests read those literal names as the ILP32 enrollment record, and
-  the manifest is the written classification of every name the filter does and
-  does not run; the derived comparison makes the two unable to disagree. The
-  omitted tests live in `scripts/ci/test-selection/windows-x86.excluded.tsv`
-  with a per-test justification. `scripts/ci/test-selection/portable-inventory.txt`
-  is the canonical cross-platform inventory and the Linux amd64 portable leg
-  verifies it discovers nothing outside that list, so a test added to or
-  removed from the build cannot silently change what the manifests claim to
-  cover.
+- **The `windows-x86` ILP32 selection is now a checked classification, not an
+  inline regex alone.** `scripts/ci/test-selection/portable-inventory.txt` is
+  the canonical cross-platform inventory. Each profile partitions it into three
+  explicit, reason-carrying groups: `windows-x86.selected.txt` (tests the
+  profile runs), `windows-x86.excluded.tsv` (tests the profile discovers but
+  intentionally does not run), and `windows-x86.absent.tsv` (tests the platform
+  backend never registers). `scripts/ci/check-test-selection.py` then enforces,
+  on the windows-x86 leg, that every selected test is discovered *and*
+  executed, that every platform-absent test stays undiscovered, that every
+  not-enrolled test really is discovered, and that nothing runs outside the
+  selection. Platform absence is therefore an audited classification, never the
+  accidental result of intersecting two sets, so a selected test cannot simply
+  disappear. The Linux amd64 reference leg validates the canonical inventory
+  with `--discovered-scope exact`, which fails on removals as well as
+  additions. `scripts/ci/test_check_test_selection.py` provides checked-in
+  negative regressions (removed selected test, empty run, unclassified
+  addition, reason-less entry, inventory removal) and runs in its own required
+  `test-selection-checker` job.
 - **Stale baseline exclusions are gone.** `scripts/ci/run-arm64-determinism.sh`
   no longer filters `abi-sizeof|security-source-regressions` by name; those
   tests are healed on master and both tracking beads are closed. The matrix now

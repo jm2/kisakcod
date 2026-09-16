@@ -77,8 +77,6 @@ missile-layout-sp-compile-contracts
 missile-union-layout-source-invariants
 platform-console-invalid-eof-contracts
 platform-console-runtime-contracts
-platform-console-sigpipe-default-contracts
-platform-console-sigpipe-ignore-contracts
 platform-console-source-invariants
 platform-service-runtime-contracts
 pool-native-pointer-freelist
