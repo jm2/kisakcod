@@ -3,7 +3,7 @@
 <!-- GENERATED FILE - DO NOT EDIT. Regenerate with `python3 scripts/ci/capability-dashboard.py`. -->
 
 Source manifest: `docs/capability/manifest.json`; manifest authoring base: `2babfed8adb17a5b3c80db288890992ec51ec49c`.
-CI and test inventories are derived from `.github/workflows/*.yml`, `tests/CMakeLists.txt` and `CMakePresets.json`, not maintained by hand.
+CI and test inventories are derived from `.github/workflows/*.yml`, `.github/workflows/*.yaml`, `tests/CMakeLists.txt` and `CMakePresets.json`, not maintained by hand.
 
 ## Requested target delivery: 0/5
 

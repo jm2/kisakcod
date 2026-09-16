@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""
+Regression tests for CI inventory derivation and matrix expansion.
+
+Run with:  python3 scripts/ci/test_capability_dashboard_inventory.py
+
+These tests pin the two concrete review findings on PR #150: matrix legs must
+be a real Cartesian product with GitHub include/exclude semantics (and must
+fail explicitly on an unsupported shape instead of guessing a count), and the
+workflow inventory must cover both ``*.yml`` and ``*.yaml``.  They are
+stdlib-only so any hosted Python can run them.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import tempfile
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+MODULE_PATH = HERE / "capability-dashboard.py"
+
+spec = importlib.util.spec_from_file_location(
+    "capability_dashboard_inventory_launcher", MODULE_PATH
+)
+if spec is None or spec.loader is None:
+    raise ImportError(f"cannot load {MODULE_PATH}")
+cd = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cd)
+
+
+MINIMAL_WORKFLOW = """\
+name: Fixture
+
+on:
+  push:
+
+jobs:
+  plain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run
+        run: echo hi
+"""
+
+
+class YamlInventoryTests(unittest.TestCase):
+    """Both workflow spellings must be inventoried (#150 review r4030126257)."""
+
+    def test_yaml_suffix_is_inventoried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow_dir = Path(tmp)
+            (workflow_dir / "fixture.yml").write_text(
+                MINIMAL_WORKFLOW, encoding="utf-8"
+            )
+            (workflow_dir / "fixture.yaml").write_text(
+                MINIMAL_WORKFLOW, encoding="utf-8"
+            )
+            inventory = cd.derive_ci_inventory(workflow_dir)
+        self.assertEqual(inventory["workflow_count"], 2)
+        self.assertEqual(
+            {workflow["file"] for workflow in inventory["workflows"]},
+            {"fixture.yml", "fixture.yaml"},
+        )
+
+    def test_yaml_only_workflow_is_inventoried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow_dir = Path(tmp)
+            (workflow_dir / "extra.yaml").write_text(
+                MINIMAL_WORKFLOW, encoding="utf-8"
+            )
+            inventory = cd.derive_ci_inventory(workflow_dir)
+        self.assertEqual(inventory["workflow_count"], 1)
+        self.assertEqual(inventory["workflows"][0]["file"], "extra.yaml")
+
+
+class MatrixExpansionTests(unittest.TestCase):
+    """Matrix legs must be a real Cartesian product (#150 review r4030126249)."""
+
+    @staticmethod
+    def _job(*lines):
+        return ["    runs-on: ubuntu-latest", *lines]
+
+    def test_cartesian_product_is_axes_product(self):
+        # Exact refinery reproduction: two axes of 2x3 summed to 5 instead of
+        # expanding to the 6 real job invocations.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, mac, win]",
+            "        config: [Debug, Release]",
+        )
+        self.assertEqual(cd.matrix_legs(job), 6)
+
+    def test_include_only_matrix_is_one_leg_per_entry(self):
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        include:",
+            "          - platform: Linux",
+            "            runner: ubuntu-24.04",
+            "          - platform: macOS",
+            "            runner: macos-15",
+        )
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_include_augments_matching_combinations(self):
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, mac]",
+            "        include:",
+            "          - os: linux",
+            "            arch: x64",
+        )
+        # The include augments the linux combination; it adds no leg.
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_include_with_new_axis_key_adds_a_leg(self):
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, mac]",
+            "        include:",
+            "          - os: win",
+            "            arch: x64",
+        )
+        # No base combination has os=win, so the include becomes its own leg.
+        self.assertEqual(cd.matrix_legs(job), 3)
+
+    def test_exclude_removes_matching_combinations(self):
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, mac]",
+            "        config: [Debug, Release]",
+            "        exclude:",
+            "          - os: mac",
+            "            config: Debug",
+        )
+        self.assertEqual(cd.matrix_legs(job), 3)
+
+    def test_unsupported_inline_matrix_fails_explicitly(self):
+        job = self._job("    strategy:", "      matrix: {os: [linux]}")
+        with self.assertRaises(cd.MatrixExpansionError):
+            cd.matrix_legs(job)
+
+    def test_non_scalar_axis_entry_fails_explicitly(self):
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os:",
+            "          - name: linux",
+        )
+        with self.assertRaises(cd.MatrixExpansionError):
+            cd.matrix_legs(job)
+
+    def test_inline_axis_must_be_a_list(self):
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: linux",
+        )
+        with self.assertRaises(cd.MatrixExpansionError):
+            cd.matrix_legs(job)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

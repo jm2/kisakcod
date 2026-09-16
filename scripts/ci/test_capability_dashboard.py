@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Unit tests for scripts/ci/capability-dashboard.py.
+"""
+Unit tests for scripts/ci/capability-dashboard.py.
 
 Run with:  python3 scripts/ci/test_capability_dashboard.py
 
@@ -22,8 +23,11 @@ HERE = Path(__file__).resolve().parent
 MODULE_PATH = HERE / "capability-dashboard.py"
 REPO_ROOT = HERE.parents[1]
 
-spec = importlib.util.spec_from_file_location("capability_dashboard", MODULE_PATH)
-assert spec and spec.loader, f"cannot load {MODULE_PATH}"
+spec = importlib.util.spec_from_file_location(
+    "capability_dashboard_launcher", MODULE_PATH
+)
+if spec is None or spec.loader is None:
+    raise ImportError(f"cannot load {MODULE_PATH}")
 cd = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cd)
 
@@ -369,7 +373,8 @@ class DeliveryEvidenceContractTests(unittest.TestCase):
         )
 
     def _fully_promoted(self, package_result):
-        """Promote every requested-target row and validate both references.
+        """
+        Promote every requested-target row and validate both references.
 
         ``package_result`` is the only knob; callers set it to the explicit
         success token, a failure/pending token, or an arbitrary string.
