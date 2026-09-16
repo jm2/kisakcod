@@ -176,6 +176,19 @@ class ManifestValidationTests(unittest.TestCase):
         errors = cd.validate_manifest(broken)
         self.assertTrue(any("steam-9.9" in error for error in errors))
 
+    def test_aggregate_requires_declared_mode_and_level(self):
+        broken_mode = copy.deepcopy(self.manifest)
+        broken_mode["aggregate"]["required_modes"] = ["mp-client", "bogus-mode"]
+        mode_errors = cd.validate_manifest(broken_mode)
+        self.assertTrue(any("bogus-mode" in error for error in mode_errors))
+
+        broken_level = copy.deepcopy(self.manifest)
+        broken_level["aggregate"]["required_strongest_validation"] = "bogus-level"
+        level_errors = cd.validate_manifest(broken_level)
+        self.assertTrue(
+            any("required_strongest_validation" in error for error in level_errors)
+        )
+
 
 class AggregateTests(unittest.TestCase):
     @classmethod

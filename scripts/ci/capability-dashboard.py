@@ -101,6 +101,16 @@ def validate_manifest(manifest: dict) -> list[str]:
                 f"aggregate requires commercial reference {required!r} "
                 "which is not declared"
             )
+    if aggregate.get("required_strongest_validation") not in validation_levels:
+        errors.append(
+            "aggregate.required_strongest_validation must be a declared "
+            "validation level"
+        )
+    for mode in aggregate.get("required_modes") or []:
+        if mode not in modes:
+            errors.append(
+                f"aggregate.required_mode {mode!r} is not a declared mode"
+            )
     for reference in references:
         rid = reference.get("id", "<missing>")
         if reference.get("status") not in ("pending", "validated", "blocked"):
