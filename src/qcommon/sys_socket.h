@@ -179,3 +179,31 @@ bool KISAK_CDECL Sys_SocketMakeAnyAddress(
 bool KISAK_CDECL Sys_SocketAddressIsEqual(
     const SysSocketAddress *first,
     const SysSocketAddress *second);
+
+enum class SysSocketResolveStatus : std::uint8_t
+{
+    Resolved,
+    InvalidArgument,
+    NotFound,
+    SystemFailure,
+};
+
+// Resolves `hostname` to an IPv4 endpoint carrying `port`. This is the
+// portable replacement for the platform-specific `Sys_StringToAdr` helper
+// the production network layer calls before `connect`/master queries, and
+// it is the DNS half of address/configuration handling that the datagram
+// send/receive primitives above do not need but a client or headless server
+// does. Numeric dotted-quad literals and the exact name "localhost" are
+// resolved without a resolver round trip, so those inputs behave identically
+// whether or not DNS is provisioned; every other value goes through the
+// host resolver, which may block while it consults it.
+//
+// Fail-closed contract: a null or empty `hostname`, or a null out-pointer,
+// is InvalidArgument; a name the resolver cannot map is NotFound; and any
+// other resolver failure is SystemFailure. `*outAddress` is written only on
+// Resolved, so a failure never leaves a caller observing a partially
+// populated endpoint.
+SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveHost(
+    const char *hostname,
+    std::uint16_t port,
+    SysSocketAddress *outAddress);

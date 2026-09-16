@@ -521,6 +521,62 @@ bool StageExclusiveInterfaceBind(SocketFixture &fixture)
 }
 #endif
 
+// Host resolution contract: argument validation and fail-closed behavior,
+// with the resolver-independent literals ("localhost" and a dotted quad)
+// covered end to end. A name the host resolver cannot map must not publish
+// a partial endpoint.
+bool StageHostResolution(SocketFixture &)
+{
+    SysSocketAddress address{};
+    if (!Check(Sys_SocketResolveHost(nullptr, 28960, &address) ==
+                   SysSocketResolveStatus::InvalidArgument,
+            "resolve null host")
+        || !Check(Sys_SocketResolveHost("", 28960, &address) ==
+                   SysSocketResolveStatus::InvalidArgument,
+            "resolve empty host")
+        || !Check(Sys_SocketResolveHost("127.0.0.1", 28960, nullptr) ==
+                   SysSocketResolveStatus::InvalidArgument,
+            "resolve null out pointer"))
+        return false;
+
+    if (!Check(Sys_SocketResolveHost("127.0.0.1", 28960, &address) ==
+                   SysSocketResolveStatus::Resolved,
+            "resolve dotted quad")
+        || !Check(address.address[0] == 127 && address.address[1] == 0
+                && address.address[2] == 0 && address.address[3] == 1,
+            "dotted quad maps to its bytes")
+        || !Check(address.port == 28960, "resolved port is carried"))
+        return false;
+
+    if (!Check(Sys_SocketResolveHost("localhost", 1234, &address) ==
+                   SysSocketResolveStatus::Resolved,
+            "resolve localhost")
+        || !Check(address.address[0] == 127 && address.address[1] == 0
+                && address.address[2] == 0 && address.address[3] == 1,
+            "localhost maps to loopback")
+        || !Check(address.port == 1234, "localhost port is carried"))
+        return false;
+
+    // `.invalid` is reserved by RFC 6761 and must not resolve; treat any
+    // non-Resolved outcome as the failure contract rather than pinning the
+    // exact status, since a captive resolver may report SystemFailure. The
+    // endpoint must be untouched either way.
+    SysSocketAddress untouched{};
+    untouched.address[0] = 203;
+    untouched.address[1] = 0;
+    untouched.address[2] = 113;
+    untouched.address[3] = 9;
+    untouched.port = 65000;
+    const SysSocketResolveStatus missing =
+        Sys_SocketResolveHost("invalid.invalid", 28960, &untouched);
+    return Check(missing != SysSocketResolveStatus::Resolved,
+               "unresolvable host does not resolve")
+        && Check(untouched.address[0] == 203 && untouched.address[1] == 0
+                && untouched.address[2] == 113 && untouched.address[3] == 9
+                && untouched.port == 65000,
+            "failed resolve leaves the endpoint untouched");
+}
+
 // Teardown: close is unconditional, nulls the caller's handle, and a
 // second close is a no-op.
 bool StageTeardown(SocketFixture &fixture)
@@ -553,7 +609,8 @@ int main()
         return ReportFailure();
 
     const StageFn stages[] = {&StageArgumentValidation,
-        &StageEndpointContract, &StageReceiveContract, &StageSendContract,
+        &StageEndpointContract, &StageHostResolution, &StageReceiveContract,
+        &StageSendContract,
         &StageLoopbackSend, &StageLoopbackReply, &StageTruncationContract,
         &StageOversizeCapacityBoundary, &StageBroadcastOption,
         &StageExplicitBind, &StageExclusiveBind,

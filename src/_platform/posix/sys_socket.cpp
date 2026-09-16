@@ -12,6 +12,7 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <new>
 #include <sys/socket.h>
@@ -347,4 +348,81 @@ bool KISAK_CDECL Sys_SocketAddressIsEqual(
         equal = (first->port == second->port);
     }
     return equal;
+}
+
+namespace
+{
+// Maps `hostname` to an IPv4 endpoint with a zero port. Numeric dotted-quad
+// literals and the exact name "localhost" are handled here so they never
+// depend on host resolver configuration or an available network; every
+// other value is delegated to getaddrinfo(AF_INET). The endpoint is written
+// only on Resolved: a caller-visible failure never carries a half-populated
+// address.
+SysSocketResolveStatus ResolveHostAddress(
+    const char *const hostname,
+    SysSocketAddress *const outAddress) noexcept
+{
+    if (std::strcmp(hostname, "localhost") == 0)
+    {
+        outAddress->address[0] = 127;
+        outAddress->address[1] = 0;
+        outAddress->address[2] = 0;
+        outAddress->address[3] = 1;
+        outAddress->port = 0;
+        return SysSocketResolveStatus::Resolved;
+    }
+
+    in_addr literal{};
+    if (inet_pton(AF_INET, hostname, &literal) == 1)
+    {
+        const std::uint32_t host = ntohl(literal.s_addr);
+        outAddress->address[0] =
+            static_cast<std::uint8_t>((host >> 24) & 0xFFU);
+        outAddress->address[1] =
+            static_cast<std::uint8_t>((host >> 16) & 0xFFU);
+        outAddress->address[2] =
+            static_cast<std::uint8_t>((host >> 8) & 0xFFU);
+        outAddress->address[3] = static_cast<std::uint8_t>(host & 0xFFU);
+        outAddress->port = 0;
+        return SysSocketResolveStatus::Resolved;
+    }
+
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_protocol = IPPROTO_UDP;
+    addrinfo *results = nullptr;
+    const int failure = getaddrinfo(hostname, nullptr, &hints, &results);
+    if (failure != 0 || !results)
+        return failure == EAI_NONAME ? SysSocketResolveStatus::NotFound
+                                     : SysSocketResolveStatus::SystemFailure;
+
+    SysSocketAddress resolved{};
+    const bool mapped = ToSocketAddress(
+        *reinterpret_cast<const sockaddr_in *>(results->ai_addr), &resolved);
+    freeaddrinfo(results);
+    if (!mapped)
+        return SysSocketResolveStatus::SystemFailure;
+    resolved.port = 0;
+    *outAddress = resolved;
+    return SysSocketResolveStatus::Resolved;
+}
+} // namespace
+
+SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveHost(
+    const char *const hostname,
+    const std::uint16_t port,
+    SysSocketAddress *const outAddress)
+{
+    if (!hostname || hostname[0] == '\0' || !outAddress)
+        return SysSocketResolveStatus::InvalidArgument;
+
+    SysSocketAddress resolved{};
+    const SysSocketResolveStatus status =
+        ResolveHostAddress(hostname, &resolved);
+    if (status != SysSocketResolveStatus::Resolved)
+        return status;
+    resolved.port = port;
+    *outAddress = resolved;
+    return SysSocketResolveStatus::Resolved;
 }
