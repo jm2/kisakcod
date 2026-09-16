@@ -88,7 +88,10 @@ baseline kept as an additional regression/reference platform
 commercial profile is recorded per applicable mode, and no target/profile may be
 marked passing while a required mode is unrecorded
 ([NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md), "Real bidirectional
-sessions").
+sessions"). Case→mode applicability is declared per case in the §11 `case-mode`
+lines, so a listen-only case such as `SM-01` is never required in a dedicated
+cell and a dedicated-only case such as `SM-02` is never required in a listen
+cell; a case contributes a child only in the modes declared for it.
 
 ### 2.4 Session directions
 
@@ -97,6 +100,14 @@ Every content case records the applicable directions separately:
 - `KC-server ↔ commercial-client` (each commercial client against a KisakCOD server target).
 - `KC-client ↔ commercial-server` (each KisakCOD client target against the applicable commercial server profile).
 - `KC ↔ KC` — supplemental only.
+
+Direction applicability follows the target role (§2.1): the
+`kc-server-commercial-client` direction requires a server-capable target and the
+`kc-client-commercial-server` direction requires a client-capable target. The
+client-only `macos-arm64` target therefore produces no
+`kc-server-commercial-client` child; the §11 `target-role` lines encode each
+target's capabilities and the §6.3 `Required directions` column is derived from
+them, so an inapplicable direction is never required.
 
 ## 3. Reference manifest requirements (both profiles)
 
@@ -231,38 +242,49 @@ case and direction, not by an aggregate cell alone.
   forces the aggregate to Blocked/Fail/Defined/Pending. An aggregate may never
   be promoted while a required case or direction child is unrecorded.
 
-Required children for a commercial cell are every §4 case whose "Targets"
-include the target, in both commercial directions
-(`kc-server-commercial-client`, `kc-client-commercial-server`), for the cell's
-mode. The §11 `outcome` lines enumerate this required set and the §11
+Required children for a commercial cell are only the **applicable**
+combinations: a §4 case contributes a child only in the modes declared for it
+(§11 `case-mode`), and a target contributes a child only in the directions its
+role supports (§11 `target-role`). `kc-server-commercial-client` children
+require a server-capable target and `kc-client-commercial-server` children
+require a client-capable target; the client-only `macos-arm64` target therefore
+produces no `kc-server-commercial-client` child, and `SM-01` (listen) / `SM-02`
+(dedicated) produce no child for the non-matching mode. The §11 `outcome` lines
+enumerate exactly this applicable case×mode×direction set, and the §11
 `completeness aggregate pass-requires-all-case-directions` line fixes the
-roll-up policy, so a missing case or a missing direction cannot count as a pass.
+roll-up policy, so an applicable child cannot be omitted and an inapplicable
+mode/role combination cannot be required. An applicability change must move the
+`case-mode`/`target-role` declarations, the `outcome` triples and the §6.3
+`Required directions` column together.
 
 ### 6.2 Required child-record ledger
 
-Each required named case records both commercial directions; the full child set
-is the cross-product of this table with the applicable (target, mode, profile)
-axes. `Status` is the current §1 label (`Blocked / none` means no evidence is
-recorded); a Pass must attach the §4 required evidence named in the last column.
+Each required named case declares the modes it applies to (`Modes`); its two
+commercial direction cells are required only for those modes and only for
+targets whose role supports the direction (§6.1). The full child set is
+therefore the cross-product of this table with the applicable
+(target, mode, profile) axes, not an unconditional cross-product. `Status` is
+the current §1 label (`Blocked / none` means no evidence is recorded); a Pass
+must attach the §4 required evidence named in the last column.
 
-| Case | kc-server-commercial-client | kc-client-commercial-server | Applicable §5 lifecycle stages | Required evidence (§4) |
-|---|---|---|---|---|
-| `SM-01` | Blocked / none | Blocked / none | content load, client join, gameplay | Reference id + sanitized load/join log |
-| `SM-02` | Blocked / none | Blocked / none | content load, client join, gameplay | Reference id + server/client log |
-| `SM-03` | Blocked / none | Blocked / none | map change, unload, reconnect | Reference id + before/after zone + reconnect log |
-| `MOD-01` | Blocked / none | Blocked / none | content load, gameplay, unload | Mod content hash + reference id + log |
-| `MOD-02` | Blocked / none | Blocked / none | content load, gameplay, unload | `fs_game` value + file manifest + reference id |
-| `MOD-03` | Blocked / none | Blocked / none | content load, gameplay, unload | File list + hashes + reference id |
-| `PC-01` | Blocked / none | Blocked / none | client join | Reference id + server/client log |
-| `PC-02` | Blocked / none | Blocked / none | client join | Reference id + pure manifest + log |
-| `PC-03` | Blocked / none | Blocked / none | client join | Reference id + rejection log + hashes |
-| `PC-04` | Blocked / none | Blocked / none | client join, reconnect | Reference id + transfer log |
-| `DEMO-01` | Blocked / none | Blocked / none | demo record/playback | Reference id + demo header dump |
-| `DEMO-02` | Blocked / none | Blocked / none | demo record/playback | Reference id + playback log |
-| `DEMO-03` | Blocked / none | Blocked / none | demo record/playback | Both reference ids + playback log |
-| `UP89-01` | Blocked / none | Blocked / none | content load, client join | Reference id + crashing-stage log |
-| `UP89-02` | Blocked / none | Blocked / none | content load, client join | Reference id + map/asset isolation |
-| `UP40-01` | Blocked / none | Blocked / none | gameplay (movement/physics) | Reference id + movement comparison |
+| Case | Modes | kc-server-commercial-client | kc-client-commercial-server | Applicable §5 lifecycle stages | Required evidence (§4) |
+|---|---|---|---|---|---|
+| `SM-01` | listen | Blocked / none | Blocked / none | content load, client join, gameplay | Reference id + sanitized load/join log |
+| `SM-02` | dedicated | Blocked / none | Blocked / none | content load, client join, gameplay | Reference id + server/client log |
+| `SM-03` | listen, dedicated | Blocked / none | Blocked / none | map change, unload, reconnect | Reference id + before/after zone + reconnect log |
+| `MOD-01` | listen, dedicated | Blocked / none | Blocked / none | content load, gameplay, unload | Mod content hash + reference id + log |
+| `MOD-02` | listen, dedicated | Blocked / none | Blocked / none | content load, gameplay, unload | `fs_game` value + file manifest + reference id |
+| `MOD-03` | listen, dedicated | Blocked / none | Blocked / none | content load, gameplay, unload | File list + hashes + reference id |
+| `PC-01` | listen, dedicated | Blocked / none | Blocked / none | client join | Reference id + server/client log |
+| `PC-02` | listen, dedicated | Blocked / none | Blocked / none | client join | Reference id + pure manifest + log |
+| `PC-03` | listen, dedicated | Blocked / none | Blocked / none | client join | Reference id + rejection log + hashes |
+| `PC-04` | listen, dedicated | Blocked / none | Blocked / none | client join, reconnect | Reference id + transfer log |
+| `DEMO-01` | listen, dedicated | Blocked / none | Blocked / none | demo record/playback | Reference id + demo header dump |
+| `DEMO-02` | listen, dedicated | Blocked / none | Blocked / none | demo record/playback | Reference id + playback log |
+| `DEMO-03` | listen, dedicated | Blocked / none | Blocked / none | demo record/playback | Both reference ids + playback log |
+| `UP89-01` | listen | Blocked / none | Blocked / none | content load, client join | Reference id + crashing-stage log |
+| `UP89-02` | listen | Blocked / none | Blocked / none | content load, client join | Reference id + map/asset isolation |
+| `UP40-01` | listen, dedicated | Blocked / none | Blocked / none | gameplay (movement/physics) | Reference id + movement comparison |
 
 ### 6.3 Aggregate roll-up
 
@@ -270,27 +292,33 @@ The aggregate cell is derived, never standalone: it can only be as strong as
 its weakest required child. At this basis every commercial child is **Blocked**
 (no reference manifest) and every `kisakcod-self` child is **Supplemental** with
 no claim of parity, so the roll-up below stays Blocked/Supplemental. The matrix
-is rendered per target; each cell is `status` / evidence-ref.
+is rendered per target; each cell is `status` / evidence-ref. The
+`Required directions` column is derived from the §11 `target-role` lines: a
+client-only target such as `macos-arm64` requires only the
+`kc-client-commercial-server` direction and is never required to produce a
+`kc-server-commercial-client` result, while a dual-role target requires both.
+Per-case mode filtering (§11 `case-mode`) applies within each cell.
 
-| Target | Mode | original-commercial-1.7 | steam-commercial-1.8 | kisakcod-self |
-|---|---|---|---|---|
-| `win-amd64` | listen | Blocked / none | Blocked / none | Supplemental / none |
-| `win-amd64` | dedicated | Blocked / none | Blocked / none | Supplemental / none |
-| `win-arm64` | listen | Blocked / none | Blocked / none | Supplemental / none |
-| `win-arm64` | dedicated | Blocked / none | Blocked / none | Supplemental / none |
-| `linux-amd64` | listen | Blocked / none | Blocked / none | Supplemental / none |
-| `linux-amd64` | dedicated | Blocked / none | Blocked / none | Supplemental / none |
-| `linux-arm64` | listen | Blocked / none | Blocked / none | Supplemental / none |
-| `linux-arm64` | dedicated | Blocked / none | Blocked / none | Supplemental / none |
-| `macos-arm64` | listen | Blocked / none | Blocked / none | Supplemental / none |
-| `macos-arm64` | dedicated | Blocked / none | Blocked / none | Supplemental / none |
-| `win-x86` (reference) | listen | Blocked / none | Blocked / none | Supplemental / none |
-| `win-x86` (reference) | dedicated | Blocked / none | Blocked / none | Supplemental / none |
+| Target | Mode | Required directions | original-commercial-1.7 | steam-commercial-1.8 | kisakcod-self |
+|---|---|---|---|---|---|
+| `win-amd64` | listen | both | Blocked / none | Blocked / none | Supplemental / none |
+| `win-amd64` | dedicated | both | Blocked / none | Blocked / none | Supplemental / none |
+| `win-arm64` | listen | both | Blocked / none | Blocked / none | Supplemental / none |
+| `win-arm64` | dedicated | both | Blocked / none | Blocked / none | Supplemental / none |
+| `linux-amd64` | listen | both | Blocked / none | Blocked / none | Supplemental / none |
+| `linux-amd64` | dedicated | both | Blocked / none | Blocked / none | Supplemental / none |
+| `linux-arm64` | listen | both | Blocked / none | Blocked / none | Supplemental / none |
+| `linux-arm64` | dedicated | both | Blocked / none | Blocked / none | Supplemental / none |
+| `macos-arm64` | listen | `kc-client-commercial-server` | Blocked / none | Blocked / none | Supplemental / none |
+| `macos-arm64` | dedicated | `kc-client-commercial-server` | Blocked / none | Blocked / none | Supplemental / none |
+| `win-x86` (reference) | listen | both | Blocked / none | Blocked / none | Supplemental / none |
+| `win-x86` (reference) | dedicated | both | Blocked / none | Blocked / none | Supplemental / none |
 
-No cell may be promoted to **Pass** while any required case/direction child is
-unrecorded or non-Pass (§6.1), and none may pass without the reference manifest
-id and the case evidence from §4. A cell that cannot be executed because a
-required profile/mode is unavailable stays **Blocked**, never "skipped".
+No cell may be promoted to **Pass** while any applicable required case/direction
+child is unrecorded or non-Pass (§6.1), and none may pass without the reference
+manifest id and the case evidence from §4. A cell that cannot be executed
+because a required profile/mode is unavailable stays **Blocked**, never
+"skipped"; a mode/role combination that cannot apply is not required at all.
 
 ## 7. Existing implementation and test inventory
 
@@ -346,17 +374,30 @@ licensed reference session.
 
 ## 11. Machine-readable matrix index (v1)
 
-The block below is the canonical axis/case/direction/disposition index validated
-by `tests/retail_content_matrix_source_test.cmake`. Edit §2–§4 and this block
-together. New cases need a `case <id> <family>` line plus one
-`outcome <id> <direction>` child record per required direction; new families
-must be covered by §4, new directions need a `direction <id> <kind>` line, and a
-promotion to `Pass` requires the reference-manifest id plus case evidence
-recorded in §6. Every required case must keep both commercial `outcome` lines,
-and the `completeness aggregate pass-requires-all-case-directions` line must
-stay, because it forces an aggregate cell to depend on all required
-case×direction children. The two `disposition` entries must stay **blocked**
-while their licensed references are unavailable.
+The block below is the canonical axis/case/applicability/direction/disposition
+index validated by `tests/retail_content_matrix_source_test.cmake`. Edit §2–§6
+and this block together. New cases need a `case <id> <family>` line plus a
+`case-mode <id> <mode...>` applicability line and one
+`outcome <id> <mode> <direction>` child record per applicable
+mode×required direction; new families must be covered by §4; new directions need
+a `direction <id> <kind>` line and a `target-role` capability on every target
+that can carry it; new targets need a `target-role <id> <role...>` line, a §6.3
+aggregate row whose `Required directions` column matches that role, and the
+applicable `outcome` triples. Promotion to `Pass` requires the reference-manifest
+id plus case evidence recorded in §6.
+
+`case-mode` encodes case→mode applicability, so a listen-only case (`SM-01`) is
+never required in a dedicated cell and a dedicated-only case (`SM-02`) is never
+required in a listen cell. `target-role` encodes target capability:
+`kc-server-commercial-client` outcomes require a server-capable target and
+`kc-client-commercial-server` outcomes require a client-capable target, so the
+client-only `macos-arm64` target is never required to produce a
+server-direction child. The `outcome` lines therefore enumerate exactly the
+applicable case×mode×direction children, and the
+`completeness aggregate pass-requires-all-case-directions` line must stay,
+because it forces an aggregate cell to depend on all applicable
+case×mode×direction children. The two `disposition` entries must stay
+**blocked** while their licensed references are unavailable.
 
 <!-- retail-content-matrix:v1
 target win-amd64 production
@@ -365,6 +406,12 @@ target linux-amd64 production
 target linux-arm64 production
 target macos-arm64 production
 target win-x86 reference
+target-role win-amd64 client server
+target-role win-arm64 client server
+target-role linux-amd64 client server
+target-role linux-arm64 client server
+target-role macos-arm64 client
+target-role win-x86 client server
 profile original-commercial-1.7 commercial
 profile steam-commercial-1.8 commercial
 profile kisakcod-self supplemental
@@ -389,38 +436,78 @@ case DEMO-03 demo
 case UP89-01 upstream-89
 case UP89-02 upstream-89
 case UP40-01 upstream-40
-outcome SM-01 kc-server-commercial-client
-outcome SM-01 kc-client-commercial-server
-outcome SM-02 kc-server-commercial-client
-outcome SM-02 kc-client-commercial-server
-outcome SM-03 kc-server-commercial-client
-outcome SM-03 kc-client-commercial-server
-outcome MOD-01 kc-server-commercial-client
-outcome MOD-01 kc-client-commercial-server
-outcome MOD-02 kc-server-commercial-client
-outcome MOD-02 kc-client-commercial-server
-outcome MOD-03 kc-server-commercial-client
-outcome MOD-03 kc-client-commercial-server
-outcome PC-01 kc-server-commercial-client
-outcome PC-01 kc-client-commercial-server
-outcome PC-02 kc-server-commercial-client
-outcome PC-02 kc-client-commercial-server
-outcome PC-03 kc-server-commercial-client
-outcome PC-03 kc-client-commercial-server
-outcome PC-04 kc-server-commercial-client
-outcome PC-04 kc-client-commercial-server
-outcome DEMO-01 kc-server-commercial-client
-outcome DEMO-01 kc-client-commercial-server
-outcome DEMO-02 kc-server-commercial-client
-outcome DEMO-02 kc-client-commercial-server
-outcome DEMO-03 kc-server-commercial-client
-outcome DEMO-03 kc-client-commercial-server
-outcome UP89-01 kc-server-commercial-client
-outcome UP89-01 kc-client-commercial-server
-outcome UP89-02 kc-server-commercial-client
-outcome UP89-02 kc-client-commercial-server
-outcome UP40-01 kc-server-commercial-client
-outcome UP40-01 kc-client-commercial-server
+case-mode SM-01 listen
+case-mode SM-02 dedicated
+case-mode SM-03 listen dedicated
+case-mode MOD-01 listen dedicated
+case-mode MOD-02 listen dedicated
+case-mode MOD-03 listen dedicated
+case-mode PC-01 listen dedicated
+case-mode PC-02 listen dedicated
+case-mode PC-03 listen dedicated
+case-mode PC-04 listen dedicated
+case-mode DEMO-01 listen dedicated
+case-mode DEMO-02 listen dedicated
+case-mode DEMO-03 listen dedicated
+case-mode UP89-01 listen
+case-mode UP89-02 listen
+case-mode UP40-01 listen dedicated
+outcome SM-01 listen kc-server-commercial-client
+outcome SM-01 listen kc-client-commercial-server
+outcome SM-02 dedicated kc-server-commercial-client
+outcome SM-02 dedicated kc-client-commercial-server
+outcome SM-03 listen kc-server-commercial-client
+outcome SM-03 listen kc-client-commercial-server
+outcome SM-03 dedicated kc-server-commercial-client
+outcome SM-03 dedicated kc-client-commercial-server
+outcome MOD-01 listen kc-server-commercial-client
+outcome MOD-01 listen kc-client-commercial-server
+outcome MOD-01 dedicated kc-server-commercial-client
+outcome MOD-01 dedicated kc-client-commercial-server
+outcome MOD-02 listen kc-server-commercial-client
+outcome MOD-02 listen kc-client-commercial-server
+outcome MOD-02 dedicated kc-server-commercial-client
+outcome MOD-02 dedicated kc-client-commercial-server
+outcome MOD-03 listen kc-server-commercial-client
+outcome MOD-03 listen kc-client-commercial-server
+outcome MOD-03 dedicated kc-server-commercial-client
+outcome MOD-03 dedicated kc-client-commercial-server
+outcome PC-01 listen kc-server-commercial-client
+outcome PC-01 listen kc-client-commercial-server
+outcome PC-01 dedicated kc-server-commercial-client
+outcome PC-01 dedicated kc-client-commercial-server
+outcome PC-02 listen kc-server-commercial-client
+outcome PC-02 listen kc-client-commercial-server
+outcome PC-02 dedicated kc-server-commercial-client
+outcome PC-02 dedicated kc-client-commercial-server
+outcome PC-03 listen kc-server-commercial-client
+outcome PC-03 listen kc-client-commercial-server
+outcome PC-03 dedicated kc-server-commercial-client
+outcome PC-03 dedicated kc-client-commercial-server
+outcome PC-04 listen kc-server-commercial-client
+outcome PC-04 listen kc-client-commercial-server
+outcome PC-04 dedicated kc-server-commercial-client
+outcome PC-04 dedicated kc-client-commercial-server
+outcome DEMO-01 listen kc-server-commercial-client
+outcome DEMO-01 listen kc-client-commercial-server
+outcome DEMO-01 dedicated kc-server-commercial-client
+outcome DEMO-01 dedicated kc-client-commercial-server
+outcome DEMO-02 listen kc-server-commercial-client
+outcome DEMO-02 listen kc-client-commercial-server
+outcome DEMO-02 dedicated kc-server-commercial-client
+outcome DEMO-02 dedicated kc-client-commercial-server
+outcome DEMO-03 listen kc-server-commercial-client
+outcome DEMO-03 listen kc-client-commercial-server
+outcome DEMO-03 dedicated kc-server-commercial-client
+outcome DEMO-03 dedicated kc-client-commercial-server
+outcome UP89-01 listen kc-server-commercial-client
+outcome UP89-01 listen kc-client-commercial-server
+outcome UP89-02 listen kc-server-commercial-client
+outcome UP89-02 listen kc-client-commercial-server
+outcome UP40-01 listen kc-server-commercial-client
+outcome UP40-01 listen kc-client-commercial-server
+outcome UP40-01 dedicated kc-server-commercial-client
+outcome UP40-01 dedicated kc-client-commercial-server
 completeness aggregate pass-requires-all-case-directions
 disposition upstream-89 blocked unavailable named-mod and licensed retail fixtures, no reproduction claimed
 disposition upstream-40 blocked needs pinned commercial movement baseline, scalar-determinism evidence is supplemental

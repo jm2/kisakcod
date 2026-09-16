@@ -2,13 +2,15 @@ cmake_minimum_required(VERSION 3.16)
 
 # Guards the A11 retail-content / MP mod compatibility regression matrix
 # (docs/RETAIL_CONTENT_MATRIX.md, fork issue #133). The document carries a
-# machine-readable axis/case/direction/disposition index; this test fails closed
-# if a required target (with its production/reference role), commercial profile,
-# configuration mode, commercial session direction, named case (with its
-# intended family), case×direction child record or aggregate completeness policy
-# is dropped, if the §4 catalog and the index disagree about which cases exist,
-# or if an unavailable-evidence upstream disposition is promoted away from
-# 'blocked'.
+# machine-readable axis/case/applicability/direction/disposition index; this test
+# fails closed if a required target (with its production/reference role),
+# target-role capability, commercial profile, configuration mode, commercial
+# session direction, named case (with its intended family), case-mode
+# applicability, applicable case×mode×direction child record, §6.3 aggregate
+# cell/direction scope or aggregate completeness policy is dropped or an
+# inapplicable mode/role requirement is introduced, if the §4 catalog and the
+# index disagree about which cases exist, or if an unavailable-evidence upstream
+# disposition is promoted away from 'blocked'.
 #
 # When run as the primary test it additionally exercises its own negative
 # paths by mutating copies of the document and asserting the validator
@@ -53,6 +55,8 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
 
     set(_targets "")
     set(_target_roles "")
+    set(_target_role_targets "")
+    set(_target_role_values "")
     set(_profiles "")
     set(_profile_kinds "")
     set(_modes "")
@@ -60,6 +64,8 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     set(_direction_kinds "")
     set(_cases "")
     set(_families "")
+    set(_case_mode_cases "")
+    set(_case_mode_values "")
     set(_outcome_pairs "")
     set(_completeness_keys "")
     set(_completeness_values "")
@@ -74,6 +80,9 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         if(_line MATCHES "^target[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
             list(APPEND _targets "${CMAKE_MATCH_1}")
             list(APPEND _target_roles "${CMAKE_MATCH_2}")
+        elseif(_line MATCHES "^target-role[ \t]+([^ \t]+)[ \t]+(.+)$")
+            list(APPEND _target_role_targets "${CMAKE_MATCH_1}")
+            list(APPEND _target_role_values "${CMAKE_MATCH_2}")
         elseif(_line MATCHES "^profile[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
             list(APPEND _profiles "${CMAKE_MATCH_1}")
             list(APPEND _profile_kinds "${CMAKE_MATCH_2}")
@@ -85,8 +94,11 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         elseif(_line MATCHES "^case[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
             list(APPEND _cases "${CMAKE_MATCH_1}")
             list(APPEND _families "${CMAKE_MATCH_2}")
-        elseif(_line MATCHES "^outcome[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
-            list(APPEND _outcome_pairs "${CMAKE_MATCH_1} ${CMAKE_MATCH_2}")
+        elseif(_line MATCHES "^case-mode[ \t]+([^ \t]+)[ \t]+(.+)$")
+            list(APPEND _case_mode_cases "${CMAKE_MATCH_1}")
+            list(APPEND _case_mode_values "${CMAKE_MATCH_2}")
+        elseif(_line MATCHES "^outcome[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
+            list(APPEND _outcome_pairs "${CMAKE_MATCH_1} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3}")
         elseif(_line MATCHES "^completeness[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
             list(APPEND _completeness_keys "${CMAKE_MATCH_1}")
             list(APPEND _completeness_values "${CMAKE_MATCH_2}")
@@ -123,6 +135,104 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         message(FATAL_ERROR
             "Retail-content matrix target 'win-x86' must have role 'reference', found '${_reference_target_role}' in ${DOC_PATH}")
     endif()
+
+    # Target-role applicability. Each target declares the session roles it can
+    # carry; a client-only target must not be required to produce a
+    # server-direction child. The declarations are required, known-valued and
+    # unique, encode the §2.1 roles exactly (macos-arm64 is client-only; the
+    # other five targets are dual-role), and drive the derived direction scope
+    # checked against the §6.3 aggregate table.
+    foreach(_target IN LISTS _targets)
+        list(FIND _target_role_targets "${_target}" _trole_index)
+        if(_trole_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix target '${_target}' has no target-role applicability line in ${DOC_PATH}")
+        endif()
+        list(GET _target_role_values ${_trole_index} _trole_string)
+        string(REPLACE " " ";" _troles "${_trole_string}")
+        list(LENGTH _troles _trole_count)
+        list(REMOVE_DUPLICATES _troles)
+        list(LENGTH _troles _trole_unique_count)
+        if(NOT _trole_count EQUAL _trole_unique_count)
+            message(FATAL_ERROR
+                "Retail-content matrix target '${_target}' has duplicate target-role capabilities in ${DOC_PATH}")
+        endif()
+        if(_trole_count EQUAL 0)
+            message(FATAL_ERROR
+                "Retail-content matrix target '${_target}' has no target-role capabilities in ${DOC_PATH}")
+        endif()
+        foreach(_cap IN LISTS _troles)
+            if(NOT _cap STREQUAL "client" AND NOT _cap STREQUAL "server")
+                message(FATAL_ERROR
+                    "Retail-content matrix target '${_target}' has unknown target-role capability '${_cap}' in ${DOC_PATH}")
+            endif()
+        endforeach()
+    endforeach()
+    foreach(_trole_target IN LISTS _target_role_targets)
+        list(FIND _targets "${_trole_target}" _trole_known_index)
+        if(_trole_known_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix target-role line references unknown target '${_trole_target}' in ${DOC_PATH}")
+        endif()
+    endforeach()
+    list(LENGTH _target_role_targets _trole_line_count)
+    set(_target_role_targets_unique ${_target_role_targets})
+    list(REMOVE_DUPLICATES _target_role_targets_unique)
+    list(LENGTH _target_role_targets_unique _trole_line_unique_count)
+    if(NOT _trole_line_count EQUAL _trole_line_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix contains duplicate target-role applicability lines in ${DOC_PATH}")
+    endif()
+    # Hardcoded §2.1 role invariants: an inapplicable server role on a
+    # client-only target (or loss of a dual-role capability) is exactly the
+    # impossible-child requirement this guard must reject.
+    foreach(_target IN ITEMS macos-arm64)
+        list(FIND _target_role_targets "${_target}" _rct_index)
+        list(GET _target_role_values ${_rct_index} _rct_string)
+        string(REPLACE " " ";" _rct_caps "${_rct_string}")
+        list(FIND _rct_caps "client" _rct_client)
+        list(FIND _rct_caps "server" _rct_server)
+        if(_rct_client EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix client-only target '${_target}' must have the 'client' capability in ${DOC_PATH}")
+        endif()
+        if(NOT _rct_server EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix client-only target '${_target}' must not have the 'server' capability in ${DOC_PATH}")
+        endif()
+    endforeach()
+    foreach(_target IN ITEMS win-amd64 win-arm64 linux-amd64 linux-arm64 win-x86)
+        list(FIND _target_role_targets "${_target}" _rdr_index)
+        list(GET _target_role_values ${_rdr_index} _rdr_string)
+        string(REPLACE " " ";" _rdr_caps "${_rdr_string}")
+        list(FIND _rdr_caps "client" _rdr_client)
+        list(FIND _rdr_caps "server" _rdr_server)
+        if(_rdr_client EQUAL -1 OR _rdr_server EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix dual-role target '${_target}' must have both 'client' and 'server' capabilities in ${DOC_PATH}")
+        endif()
+    endforeach()
+
+    # Derived direction scope per target from its declared capabilities.
+    set(_has_server_target FALSE)
+    set(_has_client_target FALSE)
+    foreach(_target IN LISTS _targets)
+        list(FIND _target_role_targets "${_target}" _ds_index)
+        list(GET _target_role_values ${_ds_index} _ds_string)
+        string(REPLACE " " ";" _ds_caps "${_ds_string}")
+        set(_ds_dirs "")
+        list(FIND _ds_caps "server" _ds_server)
+        list(FIND _ds_caps "client" _ds_client)
+        if(NOT _ds_server EQUAL -1)
+            set(_has_server_target TRUE)
+            list(APPEND _ds_dirs "kc-server-commercial-client")
+        endif()
+        if(NOT _ds_client EQUAL -1)
+            set(_has_client_target TRUE)
+            list(APPEND _ds_dirs "kc-client-commercial-server")
+        endif()
+        set(_target_scope_${_target} "${_ds_dirs}")
+    endforeach()
 
     set(_required_profiles original-commercial-1.7 steam-commercial-1.8)
     foreach(_profile IN LISTS _required_profiles)
@@ -212,53 +322,228 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         endif()
     endforeach()
 
-    # Case×direction child records. §2.4 requires each direction to be recorded
-    # separately and §4 declares the case ids to be the outcome keys, so an
-    # aggregate cell must not be able to pass while a required case or direction
-    # child is absent. Every required named case must declare BOTH commercial
-    # directions, and every declared child must reference a known case and a
-    # known direction exactly once.
+    # Case-mode applicability. Each case declares the configuration modes it
+    # applies to (e.g. SM-01 listen, SM-02 dedicated). A case contributes a
+    # child only in its declared modes, so an aggregate dedicated cell never
+    # requires the listen-only SM-01 and a listen cell never requires the
+    # dedicated-only SM-02. Declarations are required, known-valued and unique.
+    set(_required_case_modes
+        "SM-01 listen"
+        "SM-02 dedicated"
+        "SM-03 listen dedicated"
+        "MOD-01 listen dedicated"
+        "MOD-02 listen dedicated"
+        "MOD-03 listen dedicated"
+        "PC-01 listen dedicated"
+        "PC-02 listen dedicated"
+        "PC-03 listen dedicated"
+        "PC-04 listen dedicated"
+        "DEMO-01 listen dedicated"
+        "DEMO-02 listen dedicated"
+        "DEMO-03 listen dedicated"
+        "UP89-01 listen"
+        "UP89-02 listen"
+        "UP40-01 listen dedicated")
+    foreach(_cm_case IN LISTS _case_mode_cases)
+        list(FIND _cases "${_cm_case}" _cm_known_index)
+        if(_cm_known_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix case-mode line references unknown case '${_cm_case}' in ${DOC_PATH}")
+        endif()
+    endforeach()
+    list(LENGTH _case_mode_cases _cm_line_count)
+    set(_case_mode_cases_unique ${_case_mode_cases})
+    list(REMOVE_DUPLICATES _case_mode_cases_unique)
+    list(LENGTH _case_mode_cases_unique _cm_line_unique_count)
+    if(NOT _cm_line_count EQUAL _cm_line_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix contains duplicate case-mode applicability lines in ${DOC_PATH}")
+    endif()
+    foreach(_entry IN LISTS _required_case_modes)
+        string(REPLACE " " ";" _rcm_parts "${_entry}")
+        list(GET _rcm_parts 0 _rcm_case)
+        list(REMOVE_AT _rcm_parts 0)
+        list(SORT _rcm_parts)
+        list(FIND _case_mode_cases "${_rcm_case}" _rcm_index)
+        if(_rcm_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix case '${_rcm_case}' has no case-mode applicability line in ${DOC_PATH}")
+        endif()
+        list(GET _case_mode_values ${_rcm_index} _rcm_actual_string)
+        string(REPLACE " " ";" _rcm_actual "${_rcm_actual_string}")
+        foreach(_rcm_mode IN LISTS _rcm_actual)
+            list(FIND _modes "${_rcm_mode}" _rcm_mode_index)
+            if(_rcm_mode_index EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix case '${_rcm_case}' declares unknown mode '${_rcm_mode}' in ${DOC_PATH}")
+            endif()
+        endforeach()
+        list(SORT _rcm_actual)
+        if(NOT "${_rcm_actual}" STREQUAL "${_rcm_parts}")
+            message(FATAL_ERROR
+                "Retail-content matrix case '${_rcm_case}' applicable modes [${_rcm_actual}] must be [${_rcm_parts}] in ${DOC_PATH}")
+        endif()
+    endforeach()
+
+    # Applicable case×mode×direction child records. A child is required only when
+    # the case applies to the mode and a target capable of the direction's role
+    # exists. The declared outcome set must equal exactly this derived set: an
+    # applicable child must not be omitted, and an inapplicable mode or an
+    # impossible target-role direction must not be required.
+    set(_required_outcomes "")
+    foreach(_entry IN LISTS _required_cases)
+        string(REPLACE " " ";" _parts "${_entry}")
+        list(GET _parts 0 _required_case_id)
+        list(FIND _case_mode_cases "${_required_case_id}" _ro_cm_index)
+        list(GET _case_mode_values ${_ro_cm_index} _ro_modes_string)
+        string(REPLACE " " ";" _ro_modes "${_ro_modes_string}")
+        foreach(_mode IN LISTS _ro_modes)
+            if(_has_server_target)
+                list(APPEND _required_outcomes "${_required_case_id} ${_mode} kc-server-commercial-client")
+            endif()
+            if(_has_client_target)
+                list(APPEND _required_outcomes "${_required_case_id} ${_mode} kc-client-commercial-server")
+            endif()
+        endforeach()
+    endforeach()
+
     list(LENGTH _outcome_pairs _pair_count)
     if(_pair_count EQUAL 0)
         message(FATAL_ERROR
-            "Retail-content matrix declares no case×direction outcome child records in ${DOC_PATH}")
+            "Retail-content matrix declares no case×mode×direction outcome child records in ${DOC_PATH}")
     endif()
     list(REMOVE_DUPLICATES _outcome_pairs)
     list(LENGTH _outcome_pairs _unique_pair_count)
     if(NOT _pair_count EQUAL _unique_pair_count)
         message(FATAL_ERROR
-            "Retail-content matrix contains duplicate case×direction outcome child records in ${DOC_PATH}")
+            "Retail-content matrix contains duplicate case×mode×direction outcome child records in ${DOC_PATH}")
     endif()
     foreach(_pair IN LISTS _outcome_pairs)
         string(REPLACE " " ";" _pair_parts "${_pair}")
         list(GET _pair_parts 0 _pair_case)
-        list(GET _pair_parts 1 _pair_direction)
+        list(GET _pair_parts 1 _pair_mode)
+        list(GET _pair_parts 2 _pair_direction)
         list(FIND _cases "${_pair_case}" _pair_case_index)
         if(_pair_case_index EQUAL -1)
             message(FATAL_ERROR
                 "Retail-content matrix outcome child references unknown case '${_pair_case}' in ${DOC_PATH}")
+        endif()
+        list(FIND _modes "${_pair_mode}" _pair_mode_index)
+        if(_pair_mode_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix outcome child references unknown mode '${_pair_mode}' in ${DOC_PATH}")
         endif()
         list(FIND _directions "${_pair_direction}" _pair_direction_index)
         if(_pair_direction_index EQUAL -1)
             message(FATAL_ERROR
                 "Retail-content matrix outcome child references unknown direction '${_pair_direction}' in ${DOC_PATH}")
         endif()
-    endforeach()
-    foreach(_entry IN LISTS _required_cases)
-        string(REPLACE " " ";" _parts "${_entry}")
-        list(GET _parts 0 _required_case_id)
-        foreach(_direction IN LISTS _required_commercial_directions)
-            list(FIND _outcome_pairs "${_required_case_id} ${_direction}" _required_pair_index)
-            if(_required_pair_index EQUAL -1)
-                message(FATAL_ERROR
-                    "Retail-content matrix is missing required case×direction child record '${_required_case_id} ${_direction}' in ${DOC_PATH}")
-            endif()
-        endforeach()
+        list(FIND _case_mode_cases "${_pair_case}" _pair_cm_index)
+        list(GET _case_mode_values ${_pair_cm_index} _pair_case_modes_string)
+        string(REPLACE " " ";" _pair_case_modes "${_pair_case_modes_string}")
+        list(FIND _pair_case_modes "${_pair_mode}" _pair_mode_applicable)
+        if(_pair_mode_applicable EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix outcome child '${_pair}' requires an inapplicable mode for case '${_pair_case}' in ${DOC_PATH}")
+        endif()
+        if(_pair_direction STREQUAL "kc-server-commercial-client" AND NOT _has_server_target)
+            message(FATAL_ERROR
+                "Retail-content matrix outcome child '${_pair}' requires a server-capable target that does not exist in ${DOC_PATH}")
+        endif()
+        if(_pair_direction STREQUAL "kc-client-commercial-server" AND NOT _has_client_target)
+            message(FATAL_ERROR
+                "Retail-content matrix outcome child '${_pair}' requires a client-capable target that does not exist in ${DOC_PATH}")
+        endif()
     endforeach()
 
+    set(_required_outcomes_sorted ${_required_outcomes})
+    list(SORT _required_outcomes_sorted)
+    set(_declared_outcomes_sorted ${_outcome_pairs})
+    list(SORT _declared_outcomes_sorted)
+    if(NOT "${_required_outcomes_sorted}" STREQUAL "${_declared_outcomes_sorted}")
+        message(FATAL_ERROR
+            "Retail-content matrix applicable outcome children [${_required_outcomes_sorted}] do not match declared outcome children [${_declared_outcomes_sorted}] in ${DOC_PATH}")
+    endif()
+
+    # §6.3 aggregate table applicability. Every applicable (target, mode) cell
+    # must appear exactly once, with a 'Required directions' scope equal to the
+    # target's derived role capabilities. This is the aggregate-level expression
+    # of target-role applicability: the client-only macos-arm64 target must
+    # require only kc-client-commercial-server and must never be required to
+    # produce a server-direction result.
+    string(FIND "${DOC_TEXT}" "### 6.3" _agg_begin)
+    string(FIND "${DOC_TEXT}" "## 7." _agg_end)
+    if(_agg_begin EQUAL -1 OR _agg_end EQUAL -1 OR _agg_end LESS_EQUAL _agg_begin)
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the §6.3 aggregate roll-up or §7 section in ${DOC_PATH}")
+    endif()
+    math(EXPR _agg_length "${_agg_end} - ${_agg_begin}")
+    string(SUBSTRING "${DOC_TEXT}" ${_agg_begin} ${_agg_length} _agg_text)
+    string(REPLACE "\r\n" "\n" _agg_text "${_agg_text}")
+    string(REPLACE "\n" ";" _agg_lines "${_agg_text}")
+    set(_agg_cells "")
+    foreach(_line IN LISTS _agg_lines)
+        if(_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[^|]*\\|[ \t]*(listen|dedicated)[ \t]*\\|[ \t]*([^|]+)[ \t]*\\|")
+            set(_cell_target "${CMAKE_MATCH_1}")
+            set(_cell_mode "${CMAKE_MATCH_2}")
+            set(_cell_scope "${CMAKE_MATCH_3}")
+            string(STRIP "${_cell_scope}" _cell_scope)
+            string(REPLACE "`" "" _cell_scope "${_cell_scope}")
+            if(_cell_scope STREQUAL "both")
+                set(_cell_scope "kc-server-commercial-client kc-client-commercial-server")
+            endif()
+            string(REPLACE " " ";" _cell_scope_list "${_cell_scope}")
+            foreach(_scope_dir IN LISTS _cell_scope_list)
+                list(FIND _required_commercial_directions "${_scope_dir}" _scope_dir_index)
+                if(_scope_dir_index EQUAL -1)
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.3 cell '${_cell_target} ${_cell_mode}' has unknown required direction '${_scope_dir}' in ${DOC_PATH}")
+                endif()
+            endforeach()
+            list(FIND _targets "${_cell_target}" _cell_target_index)
+            if(_cell_target_index EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.3 cell references unknown target '${_cell_target}' in ${DOC_PATH}")
+            endif()
+            set(_expected_scope "${_target_scope_${_cell_target}}")
+            set(_cell_scope_sorted ${_cell_scope_list})
+            list(SORT _cell_scope_sorted)
+            set(_expected_scope_sorted ${_expected_scope})
+            list(SORT _expected_scope_sorted)
+            if(NOT "${_cell_scope_sorted}" STREQUAL "${_expected_scope_sorted}")
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.3 cell '${_cell_target} ${_cell_mode}' required directions [${_cell_scope_sorted}] must match target-role scope [${_expected_scope_sorted}] in ${DOC_PATH}")
+            endif()
+            list(APPEND _agg_cells "${_cell_target} ${_cell_mode}")
+        endif()
+    endforeach()
+    # Expected cells: every target in every mode, exactly once.
+    set(_expected_agg_cells "")
+    foreach(_target IN LISTS _targets)
+        foreach(_mode IN LISTS _modes)
+            list(APPEND _expected_agg_cells "${_target} ${_mode}")
+        endforeach()
+    endforeach()
+    set(_agg_cells_sorted ${_agg_cells})
+    list(SORT _agg_cells_sorted)
+    set(_expected_agg_cells_sorted ${_expected_agg_cells})
+    list(SORT _expected_agg_cells_sorted)
+    if(NOT "${_agg_cells_sorted}" STREQUAL "${_expected_agg_cells_sorted}")
+        message(FATAL_ERROR
+            "Retail-content matrix §6.3 aggregate cells [${_agg_cells_sorted}] must list every applicable target×mode cell [${_expected_agg_cells_sorted}] in ${DOC_PATH}")
+    endif()
+    list(LENGTH _agg_cells _agg_cell_count)
+    set(_agg_cells_unique ${_agg_cells})
+    list(REMOVE_DUPLICATES _agg_cells_unique)
+    list(LENGTH _agg_cells_unique _agg_cell_unique_count)
+    if(NOT _agg_cell_count EQUAL _agg_cell_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix §6.3 contains duplicate aggregate cells in ${DOC_PATH}")
+    endif()
+
     # Explicit aggregate completeness policy: an aggregate target/mode/profile
-    # cell is Pass only when every required case×direction child is Pass. This
-    # keeps a missing case or direction from ever counting as a pass.
+    # cell is Pass only when every applicable case×mode×direction child is Pass.
+    # This keeps a missing applicable child from ever counting as a pass.
     list(FIND _completeness_keys "aggregate" _completeness_index)
     if(_completeness_index EQUAL -1)
         message(FATAL_ERROR
@@ -330,7 +615,11 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         "not available in this checkout"
         "child record"
         "weakest required child"
-        "pass-requires-all-case-directions")
+        "pass-requires-all-case-directions"
+        "case-mode"
+        "target-role"
+        "client-only"
+        "applicable")
         string(FIND "${DOC_TEXT}" "${_needle}" _needle_pos)
         if(_needle_pos EQUAL -1)
             message(FATAL_ERROR
@@ -464,15 +753,99 @@ if(_mutated STREQUAL _matrix_text)
 endif()
 expect_rejected("drop-completeness-policy" "${_mutated}")
 
-# Drop ONE case×direction child record. The case and direction still exist
-# elsewhere, so only the per-case child-coverage check can catch the shrink.
+# Drop ONE case×mode×direction child record. The case, mode and direction still
+# exist elsewhere, so only the applicable-child coverage check can catch the
+# shrink.
 string(REPLACE
-    "outcome SM-03 kc-server-commercial-client\n"
+    "outcome SM-03 listen kc-server-commercial-client\n"
     "" _mutated "${_matrix_text}")
 if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'drop-case-direction-child' did not apply")
 endif()
 expect_rejected("drop-case-direction-child" "${_mutated}")
+
+# Drop a case-mode applicability line: the case then has no declared modes, so
+# the applicability derivation and the mode invariant must reject it.
+string(REPLACE "case-mode SM-01 listen\n" "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-case-mode' did not apply")
+endif()
+expect_rejected("drop-case-mode" "${_mutated}")
+
+# Flip a case's applicable mode (listen -> dedicated). SM-01's declared listen
+# outcome children then reference an inapplicable mode, and the mode invariant
+# must reject it.
+string(REPLACE
+    "case-mode SM-01 listen\n"
+    "case-mode SM-01 dedicated\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'flip-case-mode' did not apply")
+endif()
+expect_rejected("flip-case-mode" "${_mutated}")
+
+# Require an impossible child: SM-02 is dedicated-only, so declaring a listen
+# child for it must be rejected rather than silently required.
+string(REPLACE
+    "outcome SM-02 dedicated kc-server-commercial-client\n"
+    "outcome SM-02 dedicated kc-server-commercial-client\noutcome SM-02 listen kc-server-commercial-client\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'add-unapplicable-mode-child' did not apply")
+endif()
+expect_rejected("add-unapplicable-mode-child" "${_mutated}")
+
+# Drop an applicable child (SM-01 listen, client direction). It is required by
+# the applicable-child derivation, so dropping it must be rejected.
+string(REPLACE
+    "outcome SM-01 listen kc-client-commercial-server\n"
+    "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-applicable-child' did not apply")
+endif()
+expect_rejected("drop-applicable-child" "${_mutated}")
+
+# Grant the client-only macos-arm64 target a server role: the hardcoded
+# target-role invariant must reject the impossible server-direction requirement.
+string(REPLACE
+    "target-role macos-arm64 client\n"
+    "target-role macos-arm64 client server\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'grant-server-role-to-client-only' did not apply")
+endif()
+expect_rejected("grant-server-role-to-client-only" "${_mutated}")
+
+# Demote a dual-role target to client-only: the hardcoded target-role invariant
+# must reject the lost server capability.
+string(REPLACE
+    "target-role win-amd64 client server\n"
+    "target-role win-amd64 client\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'demote-dual-role-target' did not apply")
+endif()
+expect_rejected("demote-dual-role-target" "${_mutated}")
+
+# Drop a target-role applicability line entirely.
+string(REPLACE
+    "target-role linux-amd64 client server\n"
+    "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-target-role' did not apply")
+endif()
+expect_rejected("drop-target-role" "${_mutated}")
+
+# Widen the client-only macOS aggregate cell to require both directions: the
+# §6.3 direction-scope check must reject the impossible server requirement.
+string(REPLACE
+    "| `macos-arm64` | listen | `kc-client-commercial-server` |"
+    "| `macos-arm64` | listen | both |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'widen-client-only-scope' did not apply")
+endif()
+expect_rejected("widen-client-only-scope" "${_mutated}")
 
 # Remove the weakest-child bound from the §6 schema text: the aggregate cell
 # could then be read as standalone evidence again.
