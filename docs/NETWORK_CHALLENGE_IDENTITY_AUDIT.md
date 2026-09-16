@@ -85,25 +85,31 @@ fork-client path that sends a bare `getchallenge`.
    (`:168-171`).
 3. Reject the request when the identity argument is empty
    (`:178-182`, `"A client identity is required"`).
-4. Enforce an identity-format namespace (`:190-204`):
+4. Bound the ticket length **before** the compile-time Steam branch
+   (`:184-188`): a ticket longer than `sizeof(decodedSteamTicket)` (the
+   1152-byte buffer `:172`) hits `iassert(0)` and returns without emitting a
+   `challengeResponse`. This bound is common to both build variants, so only
+   tickets within it reach the namespace and validation logic below.
+5. Enforce an identity-format namespace (`:190-204`):
    - `KISAK_STEAM` builds require **ticket ⇒ decimal SteamID64**, and
      **no ticket ⇒ 32-hex GUID**.
    - non-Steam builds accept a presented ticket with either identity form, but
      still require a 32-hex GUID when no ticket is presented.
-5. Check permanent and temporary ban lists keyed on the identity
+6. Check permanent and temporary ban lists keyed on the identity
    (`:206-221`).
-6. Store the identity into the challenge record's `cdkeyHash` field
+7. Store the identity into the challenge record's `cdkeyHash` field
    (`:224`; `challenge_t` at `src/server_mp/server_mp.h:752`, field
    `cdkeyHash[33]` at `:761`).
-7. Steam builds only: decode and validate the ticket against the claimed
+8. Steam builds only: decode and validate the ticket against the claimed
    SteamID64; any presented ticket that fails is rejected (`:228-246`).
-8. Non-Steam builds: any presented ticket is ignored and the client is treated
-   as identity-only (`:247-252`).
-9. Unless a validated ticket succeeded, reject when the operator dvar
-   `sv_requireSteam` is enabled (`:254-265`; dvar registered at
-   `src/server_mp/sv_init_mp.cpp:735-739`, default `true` under `KISAK_STEAM`
-   and `false` otherwise, per `:730-734`).
-10. Emit `challengeResponse <n>` immediately (`:268`).
+9. Non-Steam builds: a presented ticket that passed the length bound in
+   step 4 is ignored and the client is treated as identity-only (`:247-252`);
+   an oversized ticket was already rejected before this branch.
+10. Unless a validated ticket succeeded, reject when the operator dvar
+    `sv_requireSteam` is enabled (`:254-265`; dvar registered at
+    `src/server_mp/sv_init_mp.cpp:735-739`, default `true` under `KISAK_STEAM`
+    and `false` otherwise, per `:730-734`).
+11. Emit `challengeResponse <n>` immediately (`:268`).
 
 ### 4.3 Identity helpers
 
@@ -123,8 +129,10 @@ On `challengeResponse` (`src/client_mp/cl_main_mp.cpp:1497` dispatch,
 `:1769-1780` handler) the client stores the challenge and moves to
 `CA_CHALLENGING`. `CL_CheckForResend` then builds the `connect` userinfo
 (`:1117-1134`): the usual info string plus `protocol`=1, `challenge`, and
-`qport`, sent as `connect "<userinfo>"`. The identity/ticket is **not**
-resent here; it is bound to the server-side challenge record from step 4.2.
+`qport`, sent as `connect "<userinfo>"`. The identity/ticket is **not** resent
+here. For a non-local source it is bound to the server-side challenge record
+from step 4.2 by the admission lookup in 4.5; a local source skips that lookup
+and keeps the empty `cdkeyHash` buffer (see 4.5 items 3–4).
 
 ### 4.5 Server admission — `SV_DirectConnect`
 
@@ -166,10 +174,20 @@ resent here; it is bound to the server-side challenge record from step 4.2.
 - `svs.authorizeAddress` is never assigned anywhere under `src/` at this SHA;
   the only references are reads (`src/server_mp/sv_client_mp.cpp:71,109,271-288`
   and `src/server_mp/sv_main_pc_mp.cpp:119`). It therefore keeps its
-  zero-initialised `NA_BAD` type, so `SV_AuthorizeRequest`
-  (`src/server_mp/sv_client_mp.cpp:58-111`) never sends `getIpAuthorize`. Its
-  only live call site (`src/server_mp/sv_client_mp.cpp:1706`, after a dropped
-  gamestate resend) is consequently also a no-op.
+  zero-initialised value. `netadrtype_t` defines `NA_BOT = 0` and `NA_BAD = 1`
+  (`src/qcommon/net_chan_mp.h:24-27`), so `authorizeAddress.type` is `NA_BOT`,
+  **not** `NA_BAD`. The guard at `src/server_mp/sv_client_mp.cpp:71`
+  (`authorizeAddress.type != NA_BAD`) therefore passes, and `SV_AuthorizeRequest`
+  (`:58-111`) builds the `getIpAuthorize` request and attempts the send through
+  `NET_OutOfBandPrint(NS_SERVER, svs.authorizeAddress, ...)` (`:109`). That send
+  is discarded downstream, because the destination is the zero-valued `NA_BOT`
+  address and `NET_SendPacket` does not route a zero `to.type`
+  (`src/qcommon/net_chan_mp.cpp:1360-1367` returns `0`; `NET_OutOfBandPrint`
+  reaches it via `FakeLag_SendPacket` → `FakeLag_SendPacket_Real`). No
+  `getIpAuthorize` packet leaves the host, but this function is not a no-op
+  behind an `NA_BAD` guard: it constructs the request and attempts a send that
+  is then dropped. Its only live call site (`src/server_mp/sv_client_mp.cpp:1706`,
+  after a dropped gamestate resend) behaves the same way.
 - `SV_AuthorizeIpPacket` (`src/server_mp/sv_main_pc_mp.cpp:104`) is reachable
   only from the `ipAuthorize` connectionless packet (`src/server_mp/sv_main_mp.cpp:730-733`),
   which would have to arrive from an authorize server the fork never contacts.
@@ -198,7 +216,7 @@ guessing a number or by copying CoD4x behaviour.
 | D4 | `challengeResponse` is emitted immediately for any accepted identity (`:268`); the server's own `firstPing` and `sv_minPing`/`sv_maxPing` gate is applied later in `SV_DirectConnect` for non-local sources only (`:699-707,712-726`) | `sv_client_mp.cpp:254-268,684-728` | A peer whose retry/timing expectations differ may not converge; a local peer bypasses the ping gate entirely | Captured challenge/retry timing from the references |
 | D5 | Accepted identities are only decimal SteamID64 or 32-hex GUID | `sv_client_mp.cpp:190-204`; `identity.h:9-48` | The identity namespace/short form a commercial peer presents in this exchange is unverified | Reference capture of the identity bytes and their documented meaning |
 | D6 | `cdkeyHash` (the session/ban key) is the identity string for non-local clients and stays empty for local clients | `sv_client_mp.cpp:224,682,822-824,857-859`; `server_mp.h:761` | Commercial ban/identity conventions may key on a different value | Reference evidence of the commercial identity/ban key |
-| D7 | Steam ticket validation is compile-time gated; non-Steam builds ignore any ticket | `sv_client_mp.cpp:228-252` | Ticket handling must be characterised per profile and launch mode | Reference runs in each profile/mode, including ticket-bearing and ticketless peers |
+| D7 | Steam ticket validation is compile-time gated; non-Steam builds ignore any ticket that passes the shared length bound, and an oversized ticket is rejected before the branch | `sv_client_mp.cpp:184-188,228-252` | Ticket handling must be characterised per profile and launch mode | Reference runs in each profile/mode, including ticket-bearing and ticketless peers |
 
 ## 6. Required evidence (fail-closed)
 
