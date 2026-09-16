@@ -27,14 +27,19 @@ not claim every arbitrary third-party mod is supported.
 `tests/retail_content_matrix_source_test.cmake`, so the required targets and
 their production/reference roles, case families, individual named case ids with
 their intended families, the required commercial session directions, the
-case×direction child records the outcome schema keys on, the aggregate
-completeness policy, the §4 catalog/index membership and the upstream
-dispositions cannot be silently dropped or promoted. The upstream dispositions
-must stay **blocked** while the licensed references are unavailable. The
-outcome matrix (§6) records results separately and stays **Blocked** for every
+case×direction child records the outcome schema keys on, the §6.3 aggregate
+direction scope and per-profile status/evidence cells, the aggregate
+completeness policy, the §4 catalog/index membership, the uniqueness of
+disposition ids and the upstream dispositions cannot be silently dropped or
+promoted. The upstream dispositions must stay **blocked** while the licensed
+references are unavailable, each disposition id is a unique key, and every
+commercial §6.3 cell must stay **Blocked / none** (status and evidence-ref
+both checked) while the reference manifests are unavailable. The outcome
+matrix (§6) records results separately and stays **Blocked** for every
 commercial cell until a reference manifest id and case evidence exist; the
-guard test does not certify a cell — it only refuses to let the contract shrink
-or an unavailable-evidence disposition be promoted unnoticed.
+guard test does not certify a cell — it only refuses to let the contract shrink,
+an aggregate commercial cell be promoted, or an unavailable-evidence
+disposition be promoted unnoticed.
 
 ---
 
@@ -396,8 +401,10 @@ server-direction child. The `outcome` lines therefore enumerate exactly the
 applicable case×mode×direction children, and the
 `completeness aggregate pass-requires-all-case-directions` line must stay,
 because it forces an aggregate cell to depend on all applicable
-case×mode×direction children. The two `disposition` entries must stay
-**blocked** while their licensed references are unavailable.
+case×mode×direction children. Each `disposition` id must appear exactly once and
+both `disposition` entries must stay **blocked** while their licensed references
+are unavailable; every commercial §6.3 result/evidence cell must stay
+`Blocked / none` until a real run cites a reference manifest id.
 
 <!-- retail-content-matrix:v1
 target win-amd64 production

@@ -7,7 +7,8 @@ cmake_minimum_required(VERSION 3.16)
 # target-role capability, commercial profile, configuration mode, commercial
 # session direction, named case (with its intended family), case-mode
 # applicability, applicable case×mode×direction child record, §6.3 aggregate
-# cell/direction scope or aggregate completeness policy is dropped or an
+# cell/direction scope or per-profile result/evidence cell, aggregate
+# completeness policy, or disposition uniqueness is dropped or an
 # inapplicable mode/role requirement is introduced, if the §4 catalog and the
 # index disagree about which cases exist, or if an unavailable-evidence upstream
 # disposition is promoted away from 'blocked'.
@@ -481,12 +482,16 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     string(SUBSTRING "${DOC_TEXT}" ${_agg_begin} ${_agg_length} _agg_text)
     string(REPLACE "\r\n" "\n" _agg_text "${_agg_text}")
     string(REPLACE "\n" ";" _agg_lines "${_agg_text}")
+    # §6.3 aggregate row tail: the three per-profile `status / evidence-ref`
+    # cells (original-commercial-1.7, steam-commercial-1.8, kisakcod-self).
+    set(_aggregate_profile_columns original-commercial-1.7 steam-commercial-1.8)
     set(_agg_cells "")
     foreach(_line IN LISTS _agg_lines)
-        if(_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[^|]*\\|[ \t]*(listen|dedicated)[ \t]*\\|[ \t]*([^|]+)[ \t]*\\|")
+        if(_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[^|]*\\|[ \t]*(listen|dedicated)[ \t]*\\|[ \t]*([^|]+)[ \t]*\\|(.*)$")
             set(_cell_target "${CMAKE_MATCH_1}")
             set(_cell_mode "${CMAKE_MATCH_2}")
             set(_cell_scope "${CMAKE_MATCH_3}")
+            set(_cell_tail "${CMAKE_MATCH_4}")
             string(STRIP "${_cell_scope}" _cell_scope)
             string(REPLACE "`" "" _cell_scope "${_cell_scope}")
             if(_cell_scope STREQUAL "both")
@@ -514,6 +519,40 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
                 message(FATAL_ERROR
                     "Retail-content matrix §6.3 cell '${_cell_target} ${_cell_mode}' required directions [${_cell_scope_sorted}] must match target-role scope [${_expected_scope_sorted}] in ${DOC_PATH}")
             endif()
+            # The per-profile result/evidence cells are part of the checked
+            # contract, not renderer decoration: while the licensed reference
+            # manifests are unavailable every commercial aggregate cell must
+            # stay `Blocked / none`. Parse the target, mode, direction scope
+            # AND both commercial status/evidence cells so promoting an
+            # aggregate to `Pass`, or attaching evidence that no run produced,
+            # cannot slip through as a one-word edit.
+            string(REPLACE "|" ";" _cell_tail_parts "${_cell_tail}")
+            list(LENGTH _cell_tail_parts _cell_tail_count)
+            # Three profile columns plus the empty segment bounded by the row's
+            # trailing pipe.
+            if(NOT _cell_tail_count EQUAL 4)
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.3 cell '${_cell_target} ${_cell_mode}' must carry original-commercial-1.7, steam-commercial-1.8 and kisakcod-self result/evidence cells in ${DOC_PATH}")
+            endif()
+            foreach(_agg_profile_index 0 1)
+                list(GET _aggregate_profile_columns ${_agg_profile_index} _agg_profile)
+                list(GET _cell_tail_parts ${_agg_profile_index} _agg_cell_raw)
+                string(STRIP "${_agg_cell_raw}" _agg_cell)
+                string(REPLACE "/" ";" _agg_cell_fields "${_agg_cell}")
+                list(LENGTH _agg_cell_fields _agg_field_count)
+                if(NOT _agg_field_count EQUAL 2)
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.3 cell '${_cell_target} ${_cell_mode}' ${_agg_profile} must be 'status / evidence-ref', found '${_agg_cell}' in ${DOC_PATH}")
+                endif()
+                list(GET _agg_cell_fields 0 _agg_status)
+                list(GET _agg_cell_fields 1 _agg_evidence)
+                string(STRIP "${_agg_status}" _agg_status)
+                string(STRIP "${_agg_evidence}" _agg_evidence)
+                if(NOT _agg_status STREQUAL "Blocked" OR NOT _agg_evidence STREQUAL "none")
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.3 commercial aggregate cell '${_cell_target} ${_cell_mode}' ${_agg_profile} must stay 'Blocked / none' while the licensed reference manifests are unavailable, found '${_agg_status} / ${_agg_evidence}' in ${DOC_PATH}")
+                endif()
+            endforeach()
             list(APPEND _agg_cells "${_cell_target} ${_cell_mode}")
         endif()
     endforeach()
@@ -553,6 +592,20 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     if(NOT _aggregate_policy STREQUAL "pass-requires-all-case-directions")
         message(FATAL_ERROR
             "Retail-content matrix aggregate completeness policy must be 'pass-requires-all-case-directions', found '${_aggregate_policy}' in ${DOC_PATH}")
+    endif()
+
+    # Disposition ids are keys, so they must be unique. Reject duplicates
+    # BEFORE the status check: list(FIND) selects the first match, so a
+    # conflicting `disposition upstream-89 pass` appended after the genuine
+    # `blocked` entry would otherwise be silently ignored and the promotion
+    # would pass validation.
+    list(LENGTH _dispositions _disposition_count)
+    set(_dispositions_unique ${_dispositions})
+    list(REMOVE_DUPLICATES _dispositions_unique)
+    list(LENGTH _dispositions_unique _disposition_unique_count)
+    if(NOT _disposition_count EQUAL _disposition_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix contains duplicate disposition ids [${_dispositions}] in ${DOC_PATH}")
     endif()
 
     # Upstream dispositions must stay blocked while the licensed references are
@@ -733,6 +786,19 @@ if(_mutated STREQUAL _matrix_text)
 endif()
 expect_rejected("promote-upstream-40" "${_mutated}")
 
+# Append a CONFLICTING duplicate disposition id after the genuine blocked
+# entry. The status check uses list(FIND), which selects the first match, so
+# without an explicit duplicate-id rejection the appended 'pass' would be
+# ignored and the promotion would validate.
+string(REPLACE
+    "disposition upstream-89 blocked unavailable named-mod and licensed retail fixtures, no reproduction claimed\n"
+    "disposition upstream-89 blocked unavailable named-mod and licensed retail fixtures, no reproduction claimed\ndisposition upstream-89 pass competing duplicate\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'conflicting-duplicate-disposition' did not apply")
+endif()
+expect_rejected("conflicting-duplicate-disposition" "${_mutated}")
+
 # Drop one commercial session direction. The outcome key must not collapse back
 # to an aggregate target/mode/profile cell.
 string(REPLACE
@@ -846,6 +912,31 @@ if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'widen-client-only-scope' did not apply")
 endif()
 expect_rejected("widen-client-only-scope" "${_mutated}")
+
+# Promote the first commercial §6.3 aggregate cell from Blocked to Pass while
+# keeping the evidence-ref at 'none'. The aggregate cell is derived, and the
+# licensed reference manifests are unavailable, so the status/evidence cells
+# must be parsed and held at 'Blocked / none'.
+string(REPLACE
+    "| `win-amd64` | listen | both | Blocked / none | Blocked / none | Supplemental / none |"
+    "| `win-amd64` | listen | both | Pass / none | Blocked / none | Supplemental / none |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-aggregate-cell' did not apply")
+endif()
+expect_rejected("promote-aggregate-cell" "${_mutated}")
+
+# Attach an evidence-ref to a commercial §6.3 aggregate cell while claiming no
+# pass. The evidence-ref is validated too, so a fabricated reference id cannot
+# be recorded without a real run.
+string(REPLACE
+    "| `win-amd64` | listen | both | Blocked / none | Blocked / none | Supplemental / none |"
+    "| `win-amd64` | listen | both | Blocked / manifest-1 | Blocked / none | Supplemental / none |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-aggregate-evidence' did not apply")
+endif()
+expect_rejected("promote-aggregate-evidence" "${_mutated}")
 
 # Remove the weakest-child bound from the §6 schema text: the aggregate cell
 # could then be read as standalone evidence again.
