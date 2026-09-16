@@ -23,15 +23,18 @@ and an `sv_pure` checkbox do not satisfy these named cases, and this ledger does
 not claim every arbitrary third-party mod is supported.
 
 **Machine-checked contract:** the `retail-content-matrix:v1` index block in
-§11 is the canonical axis/case/disposition index. It is guarded by
+§11 is the canonical axis/case/direction/disposition index. It is guarded by
 `tests/retail_content_matrix_source_test.cmake`, so the required targets and
 their production/reference roles, case families, individual named case ids with
-their intended families, the §4 catalog/index membership and the upstream
-dispositions cannot be silently dropped. The outcome
-matrix (§6) records results separately and stays **Blocked** for every
+their intended families, the required commercial session directions, the
+case×direction child records the outcome schema keys on, the aggregate
+completeness policy, the §4 catalog/index membership and the upstream
+dispositions cannot be silently dropped or promoted. The upstream dispositions
+must stay **blocked** while the licensed references are unavailable. The
+outcome matrix (§6) records results separately and stays **Blocked** for every
 commercial cell until a reference manifest id and case evidence exist; the
 guard test does not certify a cell — it only refuses to let the contract shrink
-unnoticed.
+or an unavailable-evidence disposition be promoted unnoticed.
 
 ---
 
@@ -202,13 +205,72 @@ so no stage is left implicit.
 | Map change | `SM-03` | `SV_Map_f` (`src/server_mp/sv_ccmds_mp.cpp:371`), `SV_MapRestart` (`:456`), `SV_SpawnServer` (`src/server_mp/sv_init_mp.cpp:390`) |
 | Unload | `SM-03`, `MOD-01`–`MOD-03` | `DB_RemoveXAsset` (`src/database/db_registry.cpp:3343`), `DB_FreeXZoneMemory` (`:3387`) |
 | Reconnect | `SM-03`, `PC-04` | `CL_Disconnect` (`src/client_mp/cl_main_mp.cpp:470`) then `CL_CheckForResend` (`:1042`) |
+| Demo record/playback | `DEMO-01`–`DEMO-03` | `CL_Record_f` (`src/client_mp/cl_main_mp.cpp:2789`), `CL_PlayDemo_f` (`:2972`) |
 
-## 6. Outcome matrix
+## 6. Outcome records (case × direction children)
 
-Every cell below is a required recorded result. At this basis every commercial
-cell is **Blocked** (no reference manifest) and every `kisakcod-self` cell is
-**Supplemental** with no claim of parity. The matrix is rendered per target;
-each cell is `status` / evidence-ref.
+The issue requires tracking content load, client join, gameplay, map change,
+unload and reconnect **by target and commercial profile**. §2.4 additionally
+requires every session direction to be recorded separately, and §4 declares the
+case ids to be the outcome keys. The outcome schema therefore keys evidence by
+case and direction, not by an aggregate cell alone.
+
+### 6.1 Record schema
+
+- **Child record** — the unit of evidence:
+  `(target, mode, profile, case, direction) → status / evidence-ref`, where
+  `direction` is one of the §2.4 ids and `status` is the §1 vocabulary. Each
+  child record carries the applicable §5 lifecycle stages and the §4 required
+  evidence for its case, and is Pass only from a real run citing the §3
+  reference manifest id and that evidence.
+- A missing licensed reference yields **Blocked**, never an implicit Pass.
+  `kc-kc` children are **Supplemental** and never satisfy a commercial cell.
+- **Aggregate cell** — the §6.3 roll-up `(target, mode, profile)`. It is Pass
+  only when every required child record for that cell is Pass. The **weakest
+  required child** bounds the cell: any Blocked/Fail/Defined/Pending child
+  forces the aggregate to Blocked/Fail/Defined/Pending. An aggregate may never
+  be promoted while a required case or direction child is unrecorded.
+
+Required children for a commercial cell are every §4 case whose "Targets"
+include the target, in both commercial directions
+(`kc-server-commercial-client`, `kc-client-commercial-server`), for the cell's
+mode. The §11 `outcome` lines enumerate this required set and the §11
+`completeness aggregate pass-requires-all-case-directions` line fixes the
+roll-up policy, so a missing case or a missing direction cannot count as a pass.
+
+### 6.2 Required child-record ledger
+
+Each required named case records both commercial directions; the full child set
+is the cross-product of this table with the applicable (target, mode, profile)
+axes. `Status` is the current §1 label (`Blocked / none` means no evidence is
+recorded); a Pass must attach the §4 required evidence named in the last column.
+
+| Case | kc-server-commercial-client | kc-client-commercial-server | Applicable §5 lifecycle stages | Required evidence (§4) |
+|---|---|---|---|---|
+| `SM-01` | Blocked / none | Blocked / none | content load, client join, gameplay | Reference id + sanitized load/join log |
+| `SM-02` | Blocked / none | Blocked / none | content load, client join, gameplay | Reference id + server/client log |
+| `SM-03` | Blocked / none | Blocked / none | map change, unload, reconnect | Reference id + before/after zone + reconnect log |
+| `MOD-01` | Blocked / none | Blocked / none | content load, gameplay, unload | Mod content hash + reference id + log |
+| `MOD-02` | Blocked / none | Blocked / none | content load, gameplay, unload | `fs_game` value + file manifest + reference id |
+| `MOD-03` | Blocked / none | Blocked / none | content load, gameplay, unload | File list + hashes + reference id |
+| `PC-01` | Blocked / none | Blocked / none | client join | Reference id + server/client log |
+| `PC-02` | Blocked / none | Blocked / none | client join | Reference id + pure manifest + log |
+| `PC-03` | Blocked / none | Blocked / none | client join | Reference id + rejection log + hashes |
+| `PC-04` | Blocked / none | Blocked / none | client join, reconnect | Reference id + transfer log |
+| `DEMO-01` | Blocked / none | Blocked / none | demo record/playback | Reference id + demo header dump |
+| `DEMO-02` | Blocked / none | Blocked / none | demo record/playback | Reference id + playback log |
+| `DEMO-03` | Blocked / none | Blocked / none | demo record/playback | Both reference ids + playback log |
+| `UP89-01` | Blocked / none | Blocked / none | content load, client join | Reference id + crashing-stage log |
+| `UP89-02` | Blocked / none | Blocked / none | content load, client join | Reference id + map/asset isolation |
+| `UP40-01` | Blocked / none | Blocked / none | gameplay (movement/physics) | Reference id + movement comparison |
+
+### 6.3 Aggregate roll-up
+
+The aggregate cell is derived, never standalone: it can only be as strong as
+its weakest required child. At this basis every commercial child is **Blocked**
+(no reference manifest) and every `kisakcod-self` child is **Supplemental** with
+no claim of parity, so the roll-up below stays Blocked/Supplemental. The matrix
+is rendered per target; each cell is `status` / evidence-ref.
 
 | Target | Mode | original-commercial-1.7 | steam-commercial-1.8 | kisakcod-self |
 |---|---|---|---|---|
@@ -225,9 +287,10 @@ each cell is `status` / evidence-ref.
 | `win-x86` (reference) | listen | Blocked / none | Blocked / none | Supplemental / none |
 | `win-x86` (reference) | dedicated | Blocked / none | Blocked / none | Supplemental / none |
 
-No cell may be promoted to **Pass** without the reference manifest id and the
-case evidence from §4. A cell that cannot be executed because a required
-profile/mode is unavailable stays **Blocked**, never "skipped".
+No cell may be promoted to **Pass** while any required case/direction child is
+unrecorded or non-Pass (§6.1), and none may pass without the reference manifest
+id and the case evidence from §4. A cell that cannot be executed because a
+required profile/mode is unavailable stays **Blocked**, never "skipped".
 
 ## 7. Existing implementation and test inventory
 
@@ -283,11 +346,17 @@ licensed reference session.
 
 ## 11. Machine-readable matrix index (v1)
 
-The block below is the canonical axis/case/disposition index validated by
-`tests/retail_content_matrix_source_test.cmake`. Edit §2–§4 and this block
-together. New cases need a `case <id> <family>` line, new families must be
-covered by §4, and a promotion to `Pass` requires the reference-manifest id plus
-case evidence recorded in §6.
+The block below is the canonical axis/case/direction/disposition index validated
+by `tests/retail_content_matrix_source_test.cmake`. Edit §2–§4 and this block
+together. New cases need a `case <id> <family>` line plus one
+`outcome <id> <direction>` child record per required direction; new families
+must be covered by §4, new directions need a `direction <id> <kind>` line, and a
+promotion to `Pass` requires the reference-manifest id plus case evidence
+recorded in §6. Every required case must keep both commercial `outcome` lines,
+and the `completeness aggregate pass-requires-all-case-directions` line must
+stay, because it forces an aggregate cell to depend on all required
+case×direction children. The two `disposition` entries must stay **blocked**
+while their licensed references are unavailable.
 
 <!-- retail-content-matrix:v1
 target win-amd64 production
@@ -301,6 +370,9 @@ profile steam-commercial-1.8 commercial
 profile kisakcod-self supplemental
 mode listen
 mode dedicated
+direction kc-server-commercial-client commercial
+direction kc-client-commercial-server commercial
+direction kc-kc supplemental
 case SM-01 stock-map
 case SM-02 stock-map
 case SM-03 stock-map
@@ -317,6 +389,39 @@ case DEMO-03 demo
 case UP89-01 upstream-89
 case UP89-02 upstream-89
 case UP40-01 upstream-40
+outcome SM-01 kc-server-commercial-client
+outcome SM-01 kc-client-commercial-server
+outcome SM-02 kc-server-commercial-client
+outcome SM-02 kc-client-commercial-server
+outcome SM-03 kc-server-commercial-client
+outcome SM-03 kc-client-commercial-server
+outcome MOD-01 kc-server-commercial-client
+outcome MOD-01 kc-client-commercial-server
+outcome MOD-02 kc-server-commercial-client
+outcome MOD-02 kc-client-commercial-server
+outcome MOD-03 kc-server-commercial-client
+outcome MOD-03 kc-client-commercial-server
+outcome PC-01 kc-server-commercial-client
+outcome PC-01 kc-client-commercial-server
+outcome PC-02 kc-server-commercial-client
+outcome PC-02 kc-client-commercial-server
+outcome PC-03 kc-server-commercial-client
+outcome PC-03 kc-client-commercial-server
+outcome PC-04 kc-server-commercial-client
+outcome PC-04 kc-client-commercial-server
+outcome DEMO-01 kc-server-commercial-client
+outcome DEMO-01 kc-client-commercial-server
+outcome DEMO-02 kc-server-commercial-client
+outcome DEMO-02 kc-client-commercial-server
+outcome DEMO-03 kc-server-commercial-client
+outcome DEMO-03 kc-client-commercial-server
+outcome UP89-01 kc-server-commercial-client
+outcome UP89-01 kc-client-commercial-server
+outcome UP89-02 kc-server-commercial-client
+outcome UP89-02 kc-client-commercial-server
+outcome UP40-01 kc-server-commercial-client
+outcome UP40-01 kc-client-commercial-server
+completeness aggregate pass-requires-all-case-directions
 disposition upstream-89 blocked unavailable named-mod and licensed retail fixtures, no reproduction claimed
 disposition upstream-40 blocked needs pinned commercial movement baseline, scalar-determinism evidence is supplemental
 -->

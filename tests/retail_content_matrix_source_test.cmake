@@ -2,11 +2,13 @@ cmake_minimum_required(VERSION 3.16)
 
 # Guards the A11 retail-content / MP mod compatibility regression matrix
 # (docs/RETAIL_CONTENT_MATRIX.md, fork issue #133). The document carries a
-# machine-readable axis/case/disposition index; this test fails closed if a
-# required target (with its production/reference role), commercial profile,
-# configuration mode, named case (with its intended family) or upstream
-# (#89/#40) disposition is dropped, or if the §4 catalog and the index disagree
-# about which cases exist.
+# machine-readable axis/case/direction/disposition index; this test fails closed
+# if a required target (with its production/reference role), commercial profile,
+# configuration mode, commercial session direction, named case (with its
+# intended family), case×direction child record or aggregate completeness policy
+# is dropped, if the §4 catalog and the index disagree about which cases exist,
+# or if an unavailable-evidence upstream disposition is promoted away from
+# 'blocked'.
 #
 # When run as the primary test it additionally exercises its own negative
 # paths by mutating copies of the document and asserting the validator
@@ -54,9 +56,15 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     set(_profiles "")
     set(_profile_kinds "")
     set(_modes "")
+    set(_directions "")
+    set(_direction_kinds "")
     set(_cases "")
     set(_families "")
+    set(_outcome_pairs "")
+    set(_completeness_keys "")
+    set(_completeness_values "")
     set(_dispositions "")
+    set(_disposition_statuses "")
 
     foreach(_line IN LISTS _index_lines)
         string(STRIP "${_line}" _line)
@@ -71,11 +79,20 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
             list(APPEND _profile_kinds "${CMAKE_MATCH_2}")
         elseif(_line MATCHES "^mode[ \t]+([^ \t]+)$")
             list(APPEND _modes "${CMAKE_MATCH_1}")
+        elseif(_line MATCHES "^direction[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
+            list(APPEND _directions "${CMAKE_MATCH_1}")
+            list(APPEND _direction_kinds "${CMAKE_MATCH_2}")
         elseif(_line MATCHES "^case[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
             list(APPEND _cases "${CMAKE_MATCH_1}")
             list(APPEND _families "${CMAKE_MATCH_2}")
+        elseif(_line MATCHES "^outcome[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
+            list(APPEND _outcome_pairs "${CMAKE_MATCH_1} ${CMAKE_MATCH_2}")
+        elseif(_line MATCHES "^completeness[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
+            list(APPEND _completeness_keys "${CMAKE_MATCH_1}")
+            list(APPEND _completeness_values "${CMAKE_MATCH_2}")
         elseif(_line MATCHES "^disposition[ \t]+([^ \t]+)[ \t]+([^ \t]+).*$")
             list(APPEND _dispositions "${CMAKE_MATCH_1}")
+            list(APPEND _disposition_statuses "${CMAKE_MATCH_2}")
         else()
             message(FATAL_ERROR
                 "Unrecognized retail-content matrix index line in ${DOC_PATH}: '${_line}'")
@@ -129,6 +146,25 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         endif()
     endforeach()
 
+    # Session directions. The two commercial directions are required and must be
+    # classed commercial; kc-kc is supplemental and never satisfies a commercial
+    # cell. Without this, the outcome key can silently collapse back to an
+    # aggregate target/mode/profile cell.
+    set(_required_commercial_directions
+        kc-server-commercial-client kc-client-commercial-server)
+    foreach(_direction IN LISTS _required_commercial_directions)
+        list(FIND _directions "${_direction}" _direction_index)
+        if(_direction_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix is missing required session direction '${_direction}' in ${DOC_PATH}")
+        endif()
+        list(GET _direction_kinds ${_direction_index} _direction_kind)
+        if(NOT _direction_kind STREQUAL "commercial")
+            message(FATAL_ERROR
+                "Retail-content matrix direction '${_direction}' must be class 'commercial', found '${_direction_kind}' in ${DOC_PATH}")
+        endif()
+    endforeach()
+
     set(_required_families
         stock-map fastfile-mod raw-mod download-pure demo upstream-89 upstream-40)
     foreach(_family IN LISTS _required_families)
@@ -176,11 +212,77 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         endif()
     endforeach()
 
+    # Case×direction child records. §2.4 requires each direction to be recorded
+    # separately and §4 declares the case ids to be the outcome keys, so an
+    # aggregate cell must not be able to pass while a required case or direction
+    # child is absent. Every required named case must declare BOTH commercial
+    # directions, and every declared child must reference a known case and a
+    # known direction exactly once.
+    list(LENGTH _outcome_pairs _pair_count)
+    if(_pair_count EQUAL 0)
+        message(FATAL_ERROR
+            "Retail-content matrix declares no case×direction outcome child records in ${DOC_PATH}")
+    endif()
+    list(REMOVE_DUPLICATES _outcome_pairs)
+    list(LENGTH _outcome_pairs _unique_pair_count)
+    if(NOT _pair_count EQUAL _unique_pair_count)
+        message(FATAL_ERROR
+            "Retail-content matrix contains duplicate case×direction outcome child records in ${DOC_PATH}")
+    endif()
+    foreach(_pair IN LISTS _outcome_pairs)
+        string(REPLACE " " ";" _pair_parts "${_pair}")
+        list(GET _pair_parts 0 _pair_case)
+        list(GET _pair_parts 1 _pair_direction)
+        list(FIND _cases "${_pair_case}" _pair_case_index)
+        if(_pair_case_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix outcome child references unknown case '${_pair_case}' in ${DOC_PATH}")
+        endif()
+        list(FIND _directions "${_pair_direction}" _pair_direction_index)
+        if(_pair_direction_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix outcome child references unknown direction '${_pair_direction}' in ${DOC_PATH}")
+        endif()
+    endforeach()
+    foreach(_entry IN LISTS _required_cases)
+        string(REPLACE " " ";" _parts "${_entry}")
+        list(GET _parts 0 _required_case_id)
+        foreach(_direction IN LISTS _required_commercial_directions)
+            list(FIND _outcome_pairs "${_required_case_id} ${_direction}" _required_pair_index)
+            if(_required_pair_index EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix is missing required case×direction child record '${_required_case_id} ${_direction}' in ${DOC_PATH}")
+            endif()
+        endforeach()
+    endforeach()
+
+    # Explicit aggregate completeness policy: an aggregate target/mode/profile
+    # cell is Pass only when every required case×direction child is Pass. This
+    # keeps a missing case or direction from ever counting as a pass.
+    list(FIND _completeness_keys "aggregate" _completeness_index)
+    if(_completeness_index EQUAL -1)
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the aggregate completeness policy in ${DOC_PATH}")
+    endif()
+    list(GET _completeness_values ${_completeness_index} _aggregate_policy)
+    if(NOT _aggregate_policy STREQUAL "pass-requires-all-case-directions")
+        message(FATAL_ERROR
+            "Retail-content matrix aggregate completeness policy must be 'pass-requires-all-case-directions', found '${_aggregate_policy}' in ${DOC_PATH}")
+    endif()
+
+    # Upstream dispositions must stay blocked while the licensed references are
+    # unavailable: the status token is required, not just the upstream id, so it
+    # cannot be silently promoted to 'pass'.
     foreach(_upstream IN ITEMS upstream-89 upstream-40)
         list(FIND _dispositions "${_upstream}" _disposition_index)
         if(_disposition_index EQUAL -1)
             message(FATAL_ERROR
                 "Retail-content matrix is missing the '${_upstream}' reproduction disposition in ${DOC_PATH}")
+        endif()
+        list(GET _disposition_statuses ${_disposition_index} _disposition_status)
+        if(NOT _disposition_status STREQUAL "blocked")
+            message(FATAL_ERROR
+                "Retail-content matrix '${_upstream}' disposition must stay 'blocked' while the licensed reference is unavailable, found '${_disposition_status}' in ${DOC_PATH}")
         endif()
     endforeach()
 
@@ -218,9 +320,17 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
             "Retail-content matrix catalog cases [${_catalog_cases}] do not match index cases [${_cases}] in ${DOC_PATH}")
     endif()
 
-    # The document must keep its non-claim language: licensed references are
-    # unavailable and a missing reference is a blocker, not a pass.
-    foreach(_needle "unmodified" "blocker" "not available in this checkout")
+    # The document must keep its non-claim language and the case×direction
+    # outcome schema: licensed references are unavailable, a missing reference is
+    # a blocker, and an aggregate cell may never exceed its weakest required
+    # child.
+    foreach(_needle
+        "unmodified"
+        "blocker"
+        "not available in this checkout"
+        "child record"
+        "weakest required child"
+        "pass-requires-all-case-directions")
         string(FIND "${DOC_TEXT}" "${_needle}" _needle_pos)
         if(_needle_pos EQUAL -1)
             message(FATAL_ERROR
@@ -312,5 +422,67 @@ if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'catalog-index-mismatch' did not apply")
 endif()
 expect_rejected("catalog-index-mismatch" "${_mutated}")
+
+# Promote the unavailable-evidence upstream dispositions to 'pass'. The guard
+# must store and require the status token, not just the upstream id, or a
+# blocked commercial reference could be silently certified by editing one word.
+string(REPLACE
+    "disposition upstream-89 blocked"
+    "disposition upstream-89 pass"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-upstream-89' did not apply")
+endif()
+expect_rejected("promote-upstream-89" "${_mutated}")
+
+string(REPLACE
+    "disposition upstream-40 blocked"
+    "disposition upstream-40 pass"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-upstream-40' did not apply")
+endif()
+expect_rejected("promote-upstream-40" "${_mutated}")
+
+# Drop one commercial session direction. The outcome key must not collapse back
+# to an aggregate target/mode/profile cell.
+string(REPLACE
+    "direction kc-client-commercial-server commercial\n"
+    "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-commercial-direction' did not apply")
+endif()
+expect_rejected("drop-commercial-direction" "${_mutated}")
+
+# Drop the aggregate completeness policy: an aggregate pass would then no longer
+# be tied to all required case×direction children.
+string(REPLACE
+    "completeness aggregate pass-requires-all-case-directions\n"
+    "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-completeness-policy' did not apply")
+endif()
+expect_rejected("drop-completeness-policy" "${_mutated}")
+
+# Drop ONE case×direction child record. The case and direction still exist
+# elsewhere, so only the per-case child-coverage check can catch the shrink.
+string(REPLACE
+    "outcome SM-03 kc-server-commercial-client\n"
+    "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-case-direction-child' did not apply")
+endif()
+expect_rejected("drop-case-direction-child" "${_mutated}")
+
+# Remove the weakest-child bound from the §6 schema text: the aggregate cell
+# could then be read as standalone evidence again.
+string(REPLACE
+    "weakest required child"
+    "aggregate summary"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-aggregate-bound' did not apply")
+endif()
+expect_rejected("drop-aggregate-bound" "${_mutated}")
 
 file(REMOVE_RECURSE "${_scratch_dir}")
