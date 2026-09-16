@@ -72,10 +72,12 @@ startup diagnostics.
 
 **Out of scope, explicitly deferred:** game controllers/rumble (beyond the
 existing Win32 DirectInput path), HDR and other new display features, audio
-device behavior (A10), renderer feature behavior (A09/M8), retail-content and
-mod packaging (A11/A15), single-player save/load (SP is deferred), and any
-incompatible modernization. These must not be smuggled into the SDL migration
-or the platform layer; each needs its own acceptance.
+device behavior including absent/failed devices, permission changes and
+suspend/resume lifecycle (A10, [#132](https://github.com/jm2/kisakcod/issues/132)),
+renderer feature behavior (A09/M8), retail-content and mod packaging (A11/A15),
+single-player save/load (SP is deferred), and any incompatible modernization.
+These must not be smuggled into the SDL migration or the platform layer; each
+needs its own acceptance.
 
 ## 3. Current-state source audit at `2babfed8`
 
@@ -182,26 +184,51 @@ seam: `HWND` couples windowing to the D3D device, sound and input, exactly as
   it.
 - **OS path assembly:** `FS_BuildOSPath` / `FS_BuildOSPathForThread`
   (`com_files.cpp` ~569/~574) assemble `base/game/qpath`, enforce an OS path
-  length bound (~598), then `FS_ReplaceSeparators` (~540) emits engine-style
-  separators; `FS_ConvertPath` (~1434) changes case/separators for lookups.
-- **Portable path semantics:** `src/qcommon/sys_filesystem.h` provides the
-  portable, tested surface: `Sys_FileSystemCompareEnginePaths` /
-  `Sys_FileSystemEnginePathsEqual` (ASCII case-insensitive, `\` and `:` fold to
-  `/`), `Sys_FileSystemHasExtension`, `Sys_FileSystemSortPathPointers`,
-  `Sys_FileSystemCreateDirectory`, `Sys_FileSystemReadFile` (no-follow, ".."
-  rejected, bounded), `Sys_FileSystemListDirectory[Filtered]` (real entries,
-  stable case-insensitive ordering), and `Sys_FileSystemRemoveTree` (never
-  traverses links/reparse points). The win32 backend additionally validates
-  path components (`src/_platform/win32/sys_filesystem.cpp` ~186–226),
-  rejecting Win32-invalid characters, reserved DOS device base names
-  (`CON`/`PRN`/`AUX`/`NUL`/`CONIN$`/`CONOUT$`/`COM1-9`/`LPT1-9`), trailing dot
-  or space, `..`, and excessive component counts.
+  length bound (~598), then `FS_ReplaceSeparators` (~540) emits Win32-style
+  separators and `FS_ConvertPath` (~1434) folds `\` and `:` to `/` for lookups;
+  neither changes case.
+- **Portable path semantics:** `src/qcommon/sys_filesystem.h` exposes two
+  deliberately distinct surfaces. The **normalization/compare** helpers —
+  `Sys_FileSystemCompareEnginePaths` (~208) / `Sys_FileSystemEnginePathsEqual`
+  (~236) (ASCII case-insensitive, `\` and `:` fold to `/`),
+  `Sys_FileSystemSortPathPointers` (~243) and `Sys_FileSystemMatchesPathFilter`
+  (~261) — normalize and order otherwise arbitrary bytes and have **no
+  rejection result**; they are not, and must not be cited as, the unsafe-path
+  gate. The **path-accepting operations** instead validate the caller-supplied
+  path before doing any filesystem work: `Sys_FileSystemCreateDirectory`,
+  `Sys_FileSystemReadFile` (no-follow, bounded),
+  `Sys_FileSystemListDirectory[Filtered]` (real entries, stable
+  case-insensitive ordering) and `Sys_FileSystemRemoveTree` (never traverses
+  links/reparse points). That validation is the production external-path
+  rejection boundary. On win32 it is `HasUnsafeRawComponent`
+  (`src/_platform/win32/sys_filesystem.cpp` ~152, invoked at ~507, ~560, ~664
+  and ~1924), rejecting `..`, control and Win32-invalid characters
+  (`<`/`>`/`"`/`|`/`*`, bare `?`/`:`), trailing dot or space, reserved DOS
+  device base names (`CON`/`PRN`/`AUX`/`NUL`/`CONIN$`/`CONOUT$`/`COM1-9`/
+  `LPT1-9`) and component-count overflow. On POSIX/macOS it is `SplitSafePath`
+  (`src/_platform/posix/sys_filesystem.cpp` ~124, invoked at ~163, ~250, ~297
+  and via `ParseRemoveTreePath` ~941), rejecting invalid UTF-8, `..` and
+  component-count overflow. The two validators are **not equivalent**: DOS
+  device names and the Win32 byte rules are win32-only, while UTF-8 validity
+  is POSIX-only, and neither rejects a well-formed absolute path. Of the
+  path-accepting operations, `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`,
+  `src/universal/win_common.cpp` ~21) and
+  `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`, ~330/~371) are
+  the ones currently wired to
+  production callers; `Sys_FileSystemReadFile` and `Sys_FileSystemRemoveTree`
+  share the same validator but are driven today by tests and fuzz, and POSIX
+  `Sys_RemoveDirTree` is still a stub (`win_common.cpp` ~68–75).
 - **Existing coverage:** `tests/platform_filesystem_tests.cpp`
-  (`TestFilteredCollectionAndPathHelpers` ~702 and the remove-tree suites)
-  exercises separator/case folding, filter matching and link/reparse refusal.
-  This is real coverage of the portable helpers, but it does **not** cover the
-  user-visible config/cache/log layout, read-only retail discovery, or a
-  case-sensitive host filesystem end to end.
+  (`TestFilteredCollectionAndPathHelpers` ~702) exercises *normalization and
+  ordering* only — separator/case folding, filter matching and sort order on
+  the helpers — so it is real coverage but **not** a rejection test. Rejection
+  assertions that do exist (`Sys_FileSystemReadFile`/`Sys_FileSystemRemoveTree`
+  with `..`, invalid UTF-8, links and reparse points, ~882/~933 and
+  ~1197–1201) target the portable operations rather than the win32 component
+  validator through a production entry point; no test drives an unsafe path
+  through `Sys_Mkdir`/`Sys_ListFiles`. None of this covers the user-visible
+  config/cache/log layout, read-only retail discovery, or a case-sensitive host
+  filesystem end to end.
 
 ### 3.5 Diagnostics, device lifecycle and existing portable coverage
 
@@ -217,8 +244,8 @@ seam: `HWND` couples windowing to the D3D device, sound and input, exactly as
   (`.github/workflows/ci.yml`, "Portable tests" job).
 - There is **no** window/input/focus/clipboard/resize/suspend test harness and
   no clean-install or absent-device harness. Device-absence and initialization
-  failure handling for display/audio/input is therefore unimplemented as
-  acceptance, even where code has partial error paths.
+  failure handling for display and input (audio is A10) is therefore
+  unimplemented as acceptance, even where code has partial error paths.
 
 ## 4. Normative requirements
 
@@ -249,12 +276,39 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
 
 - **P2.1** On case-sensitive hosts (Linux) asset lookup MUST NOT rely on
   case-insensitive matching succeeding; the on-disk case of retail/mod assets
-  is authoritative, and lookups MUST try exact case before any folded fallback.
+  is authoritative. The current engine already behaves this way: it builds the
+  OS path with `FS_BuildOSPathForThread` and opens it directly
+  (`FS_FileOpenReadBinary`, `src/universal/com_files.cpp` ~1006), so the host
+  filesystem's case rules decide every lookup. There is **no explicit folded
+  probe today**, so any case-insensitive fallback is new behavior.
+- **P2.1a (permitted fold-fallback policy).** A folded (case-insensitive) probe
+  MAY be attempted only when all of the following hold: (a) the exact requested
+  case was probed first and failed; (b) the lookup is a read of retail/mod
+  content through an engine-relative path — never an engine-constructed write
+  path (config/cache/log/save) and never an externally supplied absolute path;
+  and (c) the folded probe resolves to exactly one on-disk entry. If a folded
+  probe matches two or more entries that differ only by case in the same
+  directory, the lookup MUST fail closed with a diagnostic and MUST NOT use
+  enumeration order to choose a winner. Engine-constructed paths MUST use exact
+  case. A fallback is acceptable for #135 acceptance only when a
+  commercial-reference comparison (DP-CMD-01/#127) shows the unmodified
+  commercial client resolving the same name; until that evidence exists the
+  fallback is unproven and DP-FS-02 stays `partial`.
 - **P2.2** Path normalization MUST fold `\` and `:` to `/` and compare ASCII
-  case-insensitively only where the engine's engine-path semantics require it
-  (`Sys_FileSystem*EnginePaths*`), and MUST reject `..`, absolute-path
-  injection, NUL/control bytes, Win32-invalid bytes, normalization aliases and
-  reserved DOS device names on externally supplied paths.
+  case-insensitively only where engine-path semantics require it. That
+  normalization/compare contract is the `Sys_FileSystem*EnginePaths*` helpers
+  (`src/qcommon/sys_filesystem.h` ~208–255), which have **no rejection
+  result**. Rejection of unsafe external paths is a **separate production
+  boundary**: the path-accepting operations validate before any filesystem
+  work (win32 `HasUnsafeRawComponent`, POSIX/macOS `SplitSafePath`; see §3.4)
+  and MUST fail closed with no partial effect. The enforced set is
+  backend-specific and MUST be stated per platform rather than asserted as one
+  portable rule. Win32 rejects `..`, control/Win32-invalid bytes, trailing
+  dot/space, reserved DOS device base names and bare `?`/`:`; POSIX/macOS
+  reject invalid UTF-8, `..` and component-count overflow. Absolute-path
+  injection and normalization aliases are **not** rejected by either validator
+  today: where #135 requires them, a new validator MUST be specified and is not
+  claimed as covered.
 - **P2.3** Path length MUST be bounded and fail closed with a diagnostic rather
   than truncating into a different file (`FS_BuildOSPath` bound).
 - **P2.4** Directory enumeration used by asset discovery MUST exclude symlinks
@@ -283,9 +337,13 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
 - **P4.3** Windowed/edge-resize, fullscreen toggle, and monitor add/remove or
   resolution change MUST preserve a valid swapchain/target and reproduce the
   existing `vid_restart`/`r_fullscreen` semantics.
-- **P4.4** Suspend/resume MUST stop and restart timing and audio/render loops
+- **P4.4** Suspend/resume MUST stop and restart timing and render loops
   without wall-clock jumps entering usercmd timing; on POSIX this replaces the
-  Win32 `SuspendThread`/`ResumeThread` handshake with condition variables.
+  Win32 `SuspendThread`/`ResumeThread` handshake with condition variables. The
+  audio-device suspend/resume handshake is A10's lifecycle acceptance
+  ([#132](https://github.com/jm2/kisakcod/issues/132)); A13 owns the shared
+  platform suspend/resume seam that A10's audio loop attaches to, and DP-WIN-04
+  tests the seam, not the audio device.
 
 ### P5 — Retail usercmd and movement preservation
 
@@ -300,9 +358,12 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
 
 ### P6 — Absent devices, failures, cleanup/restart, diagnostics
 
-- **P6.1** An absent or failed display/input/audio device MUST produce a
+- **P6.1** An absent or failed **display or input** device MUST produce a
   bounded, human-readable diagnostic and a defined fallback or clean exit —
-  never an unbounded loop, null dereference or silent no-op.
+  never an unbounded loop, null dereference or silent no-op. Absent/failed
+  audio devices, audio permission changes and audio suspend/resume are A10
+  acceptance ([#132](https://github.com/jm2/kisakcod/issues/132)), not #135;
+  see §2 and §8.
 - **P6.2** Initialization failure MUST leave no half-initialized global state;
   cleanup MUST be idempotent and restart MUST work without process restart
   where the design allows.
@@ -345,8 +406,8 @@ satisfy the row). No row is `pass`.
 | ID | Requirement | Procedure / harness | Platforms | Required evidence | Status |
 |---|---|---|---|---|---|
 | DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert config/cache/log created under the per-user root and retail data read from the read-only root; assert no engine write under install/data | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log | planned |
-| DP-FS-02 | P2.1 case-sensitive lookup | On a case-sensitive host, place a mixed-case asset and require exact-case resolution; assert folded fallback only where specified | Linux | Linux test with retail-shaped fixture | partial |
-| DP-FS-03 | P2.2 normalization/rejection | Extend `tests/platform_filesystem_tests.cpp` (`TestFilteredCollectionAndPathHelpers`) with `..`, absolute injection, NUL/control, Win32-invalid, DOS-device and alias cases through the engine-path helpers | Win, Linux, macOS | CTest output at exact head | partial |
+| DP-FS-02 | P2.1/P2.1a case-sensitive lookup | On a case-sensitive host, place a mixed-case asset and require exact-case resolution first; assert a folded fallback only under the P2.1a conditions (read-only retail/mod content, single unambiguous match) and assert fail-closed rejection on a case-only collision. A fallback not validated against a commercial reference stays unproven. | Linux | Linux test with retail-shaped fixture + commercial-reference result | partial |
+| DP-FS-03 | P2.2 rejection at the production validation boundary | Drive `..`, control/Win32-invalid bytes, DOS device base names, trailing dot/space, over-long component paths, absolute paths and alias spellings through a **production path-accepting operation** — `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`) and `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`) — and require fail-closed rejection with no effect. The compare/sort helpers (`TestFilteredCollectionAndPathHelpers`) cannot satisfy this row; cases no current backend rejects (absolute-path injection, POSIX DOS-name parity) require a specified new validator. | Win, Linux, macOS | CTest output at exact head | partial |
 | DP-FS-04 | P2.3 path-length bound | Build an over-length engine path and assert fail-closed with diagnostic, no truncation | Win, Linux, macOS | CTest output | partial |
 | DP-FS-05 | P2.4 no-follow enumeration | Existing remove-tree/list link/reparse cases plus an asset-discovery walk | Win, Linux, macOS | CTest output | partial |
 | DP-IN-01 | P3.1 non-US keys/text | Scripted layout matrix (de/fr/ja) through the window/input seam: dead keys, AltGr, text field, IME | Win, Linux, macOS | Input harness trace | planned |
@@ -355,9 +416,9 @@ satisfy the row). No row is `pass`.
 | DP-WIN-01 | P4.1 focus loss/regain | Toggle focus/minimize; assert capture release, no spurious usercmds, predictable re-acquire | Win, Linux, macOS | Event + usercmd trace | planned |
 | DP-WIN-02 | P4.2 logical/framebuffer mapping | Render at 100%/150%/200% DPI and assert correct UI scale and mouse mapping | Win, Linux (X11/Wayland), macOS | Screenshot + mapping test | planned |
 | DP-WIN-03 | P4.3 resize/fullscreen/monitor change | Windowed resize, fullscreen toggle, monitor add/remove, resolution change; assert valid target and preserved semantics | Win, Linux, macOS | Manual + automated harness | planned |
-| DP-WIN-04 | P4.4 suspend/resume | OS suspend/resume; assert timing/audio/render restart with no usercmd wall-clock jump | Win, Linux, macOS | Trace + wall-clock assertions | planned |
+| DP-WIN-04 | P4.4 suspend/resume | OS suspend/resume; assert timing/render restart through the shared platform seam with no usercmd wall-clock jump; the audio-device resume handshake is A10 | Win, Linux, macOS | Trace + wall-clock assertions | planned |
 | DP-CMD-01 | P5.1–P5.3 usercmd preservation | Same input trace through the migration; compare against the Win32 baseline AND the #127/A05 commercial reference fixtures | Win, Linux, macOS | Trace diff + #127 fixtures | blocked on #127/#122 |
-| DP-DEV-01 | P6.1 absent device | Start with no display/input/audio device or with a forced init failure; assert bounded diagnostic and fallback/clean exit | Win, Linux, macOS | Harness output + exit code | planned |
+| DP-DEV-01 | P6.1 absent display/input device | Start with no display or input device, or with a forced display/input init failure; assert bounded diagnostic and fallback/clean exit. Absent/failed audio devices are A10 ([#132](https://github.com/jm2/kisakcod/issues/132)), not this row. | Win, Linux, macOS | Harness output + exit code | planned |
 | DP-DEV-02 | P6.2 cleanup/restart | Fail init midway, clean up, restart; assert idempotent cleanup and no leaked global state | Win, Linux, macOS | Harness output | planned |
 | DP-DEV-03 | P6.3 clean-machine startup | Fresh image, no config, read-only data dir, malformed config; assert actionable diagnostics | Win, Linux, macOS | Image run log | planned |
 | DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) | All targets | Requirements doc + measured evidence | planned |
@@ -368,8 +429,8 @@ The following are the concrete behaviors to pin in DP-IN-03 and DP-CMD-01.
 They are read from the current `src/client_mp/cl_input.cpp` path and are *not*
 authorized to change in the platform migration:
 
-- Mouse look applies, in order: acceleration (`cl_mouseAccel` × per-frame rate
-  + `sensitivity`), the cgame FOV sensitivity scale, then `m_yaw` (yaw) and
+- Mouse look applies, in order: acceleration (`cl_mouseAccel` × per-frame rate +
+  `sensitivity`), the cgame FOV sensitivity scale, then `m_yaw` (yaw) and
   `m_pitch` (pitch).
 - Per-frame input is normalized by `frame_msec` (bounded so a zero frame is not
   divided by).
@@ -384,7 +445,10 @@ authorized to change in the platform migration:
 
 - Controllers/rumble beyond the existing Win32 path, HDR, and other new display
   features: out of scope, separate issues required.
-- Audio device behavior, voice capture/playback: A10.
+- Audio device behavior including absent/failed devices, permission changes,
+  suspend/resume lifecycle, and voice capture/playback: A10
+  ([#132](https://github.com/jm2/kisakcod/issues/132)). A13 supplies the shared
+  platform suspend/resume seam A10 depends on but does not test the device.
 - Renderer feature parity, shader conversion: A09/M8.
 - Retail-content/mod matrix and packaging: A11/A15.
 - Single-player save/load and its path layout: deferred with SP.
@@ -399,6 +463,11 @@ authorized to change in the platform migration:
   Linux/macOS client composition (A08/A09 and the client platform exits) that
   does not exist at the recorded SHA. They are planned against the eventual
   seam, not retrofitted to Win32.
+- **Audio lifecycle**: absent/failed audio devices, permission changes and
+  audio suspend/resume are A10 ([#132](https://github.com/jm2/kisakcod/issues/132)).
+  A13 owns the shared platform suspend/resume seam A10 attaches to, but neither
+  re-scopes the other: DP-WIN-04 and DP-DEV-01 stop at the display/input
+  boundary and do not certify an audio device.
 - **CI coverage**: the applicable Win32 runtime tests and hosted sanitizers are
   A12. New harnesses must be enrolled so they run where they are applicable;
   excluding a failing platform is not acceptance.
