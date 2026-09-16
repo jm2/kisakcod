@@ -77,13 +77,13 @@ sites: `SND_StartAlias2DSample` (`snd_driver.cpp:351`),
 
 | Subject | State at this SHA | Evidence |
 |---|---|---|
-| Codec | In-tree **Speex 1.1.9** (`SPEEX_VERSION "speex-1.1.9"`), compiled from `src/groupvoice/speex/`, headers in `deps/speex/`. This is the fork's observed build; whether retail/Steam peers used this version or bitstream is not established here (see §2.2 paragraph and VOX-8) | `src/groupvoice/speex/misc.h:38-43` |
+| Codec | In-tree **Speex 1.1.9** (`SPEEX_VERSION "speex-1.1.9"`), compiled from `src/groupvoice/speex/`, headers in `deps/speex/`. This is the fork's observed build; whether retail/Steam peers used this version or bitstream is not established here, so retention of this build is conditional on reference evidence, not a source-version freeze (see §2.2 paragraph, DEP-3 and VOX-8) | `src/groupvoice/speex/misc.h:38-43` |
 | Encoder/decoder | `Encode_Init` selects narrowband/wideband/ultra-wideband Speex modes; `Encode_Sample` uses `speex_encode_int`/`speex_bits_write`; `Decode_Sample` uses `speex_bits_read_from`/`speex_decode` (float output truncated to `int16`) | `src/groupvoice/encode.cpp`, `decode.cpp` |
 | Capture/playback device layer | DirectSound-based `record_dsound.cpp`, `play_dsound.cpp`, `directsound.h`; Windows mixer/waveIn plumbing in `win_voice.cpp` | `src/groupvoice/`, `src/win32/win_voice.cpp` |
-| Client→server send — the fork's **only** client voice writer (`CL_WriteVoicePacket`, reached via `CL_VoiceTransmit`), used both in-game and, while its guard allows, pre-game | Out-of-band `"v"` message: `MSG_WriteString("v")`, `MSG_WriteShort(qport)`, packet-count byte, then per packet a **one-byte** size field + payload. The send guard permits client `connectionState` `CA_ACTIVE` (9), `CA_LOADING` (7) or `CA_PRIMED` (8) and is identical on every path. The `MyAssertHandler` guards are the literal predicates `dataSize > 0` and `dataSize < (2<<15)`; because `MSG_WriteByte` transmits only the low 8 bits, the wire size field is `dataSize & 0xFF`, so a sender length ≥ 256 is malformed (truncated on the wire) and is **not** a valid range | `src/client_mp/cl_voice.cpp:38-57`, `cl_main_mp.cpp:1978-1998`, enum `client_mp.h:328-340` |
+| Client→server send — the fork's **only** client voice writer (`CL_WriteVoicePacket`, reached only via `CL_VoiceTransmit`) | Out-of-band `"v"` message: `MSG_WriteString("v")`, `MSG_WriteShort(qport)`, packet-count byte, then per packet a **one-byte** size field + payload. `CL_WriteVoicePacket`'s local guard accepts client `connectionState` `CA_ACTIVE` (9), `CA_LOADING` (7) or `CA_PRIMED` (8), but every effective caller is gated upstream by `Voice_SendVoiceData` (`win_voice.cpp:86-93`), which requires `CA_ACTIVE`; no reachable path transmits while `CA_LOADING`/`CA_PRIMED` (see the reachability audit below). The `MyAssertHandler` guards are the literal predicates `dataSize > 0` and `dataSize < (2<<15)`; because `MSG_WriteByte` transmits only the low 8 bits, the wire size field is `dataSize & 0xFF`, so a sender length ≥ 256 is malformed (truncated on the wire) and is **not** a valid range | `src/client_mp/cl_voice.cpp:38-57`, `cl_main_mp.cpp:1978-1998`, effective callers `src/win32/win_voice.cpp:86-93,445-565`, enum `client_mp.h:328-340` |
 | Server dispatch of the client `"v"` out-of-band packet | `SV_VoicePacket` reads `qport` (`MSG_ReadShort`), resolves the client by address, ignores `header.state == CS_ZOMBIE` (1), routes `header.state >= CS_ACTIVE` (4) to `SV_UserVoice` (in-game) and `header.state` 2..3 (`CS_CONNECTED`/`CS_CLIENTLOADING`) to `SV_PreGameUserVoice` | `src/server_mp/sv_main_pc_mp.cpp:314-334`, `sv_main_mp.cpp:697-700`, state enum `server_mp.h:12-19` |
 | Client→server receive, in-game (`SV_UserVoice`) | Packet-count byte, then per packet a **one-byte** size field (`MSG_ReadByte`, representable 0..255) + payload; no `talker` byte (sender resolved by address+qport). Accept predicate `dataSize <= 0 \|\| dataSize > 256`; the `> 256` arm is a literal defensive predicate a byte can never satisfy, so the *effective* accepted positive range is **1..255**. A size byte of `0` logs "invalid voice packet" and aborts the batch; a truncated read returns `-1` (buffer overflow flag) and is likewise rejected; size `256` is not representable on the wire | `src/server_mp/sv_voice_mp.cpp:104-119` |
-| Client→server receive, pre-game (`SV_PreGameUserVoice`) | Packet-count byte, then per packet a **two-byte (16-bit)** size field (`MSG_ReadShort`) + payload. Same accept predicate `dataSize <= 0 \|\| dataSize > 256`, so the reader's accepted range is **1..256**; `0`, negative/truncated reads and values above 256 are rejected. **This 16-bit reader has no matching fork writer:** the fork's only client sender writes a one-byte size on every path, so the two widths cannot be presented as one proven working pre-game exchange — see the unresolved finding below | `src/server_mp/sv_voice_mp.cpp:161-169`, dispatch at `sv_main_pc_mp.cpp:330-332` |
+| Client→server receive, pre-game (`SV_PreGameUserVoice`) | Packet-count byte, then per packet a **two-byte (16-bit)** size field (`MSG_ReadShort`) + payload. Same accept predicate `dataSize <= 0 \|\| dataSize > 256`, so the reader's accepted range is **1..256**; `0`, negative/truncated reads and values above 256 are rejected. **This 16-bit reader is unmatched in this fork:** no effective fork client path emits a 16-bit pre-game size (every reachable transmit path is `CA_ACTIVE`-gated and one-byte — see the reachability audit below), so its origin is unknown from this tree and it cannot be presented as a proven working pre-game exchange — see the unresolved finding below | `src/server_mp/sv_voice_mp.cpp:161-169`, dispatch at `sv_main_pc_mp.cpp:330-332` |
 | Server→client send (`SV_WriteVoiceDataToClient`) | Out-of-band `"v"` message: packet-count byte (asserted `>0` and `<= 40`), then per packet a `talker` byte + **one-byte** size field (`MSG_WriteByte`) + payload. `dataSize < (2<<15)` is asserted but only the low byte reaches the wire | `src/server_mp/sv_snapshot_mp.cpp:1872-1896`, `:1916` |
 | Client receive of server voice (`CL_VoicePacket`) | Packet-count byte accepted only when `<= 0x28` (40), then per packet a `talker` byte, a **one-byte** size field (`MSG_ReadByte`, representable 0..255) + payload. Accept predicate `dataSize <= 0 \|\| dataSize > 256`; the `> 256` arm is unreachable for a byte, so the effective accepted positive range is **1..255**. `talker >= 0x40` is rejected, and a size byte of `0` (or a truncated/negative read) aborts the batch | `src/client_mp/cl_voice.cpp:65-93` |
 | Server relay | `SV_QueueVoicePacket` caps the per-client queue at **40** packets and enforces `talkerNum == (byte)talkerNum`; `G_BroadcastVoice`/`voice_global` gate delivery | `src/server_mp/sv_voice_mp.cpp:11,94-146` |
@@ -103,28 +103,40 @@ in-game voice against real clients; that is a risk hypothesis to be tested
 against the references, not a certified fact. Directional gates and the
 malformed-length cases live in §4.2.
 
-**Unresolved fork send/receive width mismatch (pre-game path).** The fork has
-exactly one client voice writer — `CL_WriteVoicePacket`, reached only through
-`CL_VoiceTransmit` (`cl_main_mp.cpp:1978-1998`) — and it writes a **one-byte**
-size field with `MSG_WriteByte` (`cl_voice.cpp:53`) on every path its
-connection-state guard permits (`CA_ACTIVE`, `CA_LOADING`, `CA_PRIMED`;
-`cl_voice.cpp:38-41`). The server, however, dispatches the same received `"v"`
-out-of-band packet by its own state machine: `SV_VoicePacket` routes
-`header.state >= CS_ACTIVE` (4) to `SV_UserVoice` — which reads a one-byte size
-and therefore matches the sender — but routes `header.state` `CS_CONNECTED` (2)
-or `CS_CLIENTLOADING` (3) to `SV_PreGameUserVoice`, which reads a **two-byte**
-size (`MSG_ReadShort`, `sv_voice_mp.cpp:164`). The client guard states that
-permit sending (`CA_LOADING`/`CA_PRIMED`) overlap the window in which the
-server-side client can still be `CS_CLIENTLOADING`, so the two fork paths
-disagree on the size-field width and the widths cannot be presented as one
-proven working pre-game exchange. Source inspection found **no** branch of the
-fork client that emits a 16-bit pre-game size. This is recorded as an
-**unresolved source finding**, not a production defect and not a fix: either
-the pre-game reader format has no fork writer, or the client can reach that
-reader with a width it cannot parse. It must be resolved against the pinned
-original commercial 1.7 / Steam 1.8 references before any pre-game voice gate
-(VOX-2b) is claimed as met; no speculative production change is authorized by
-this audit.
+**Reachability audit of the client sender (removes the claimed pre-game
+overlap).** The fork's only client voice writer is `CL_WriteVoicePacket`
+(`cl_voice.cpp:13-63`), reached only through `CL_VoiceTransmit`
+(`cl_main_mp.cpp:1978-1998`). `CL_WriteVoicePacket` writes a **one-byte** size
+field with `MSG_WriteByte` (`cl_voice.cpp:53`), and its own guard additionally
+accepts `CA_LOADING`/`CA_PRIMED` (`cl_voice.cpp:38-41`). That broader arm is a
+**local writer guard, not an effective caller state**: `CL_VoiceTransmit` has
+exactly two call sites, both inside `Record_QueueAudioDataForEncoding`
+(`win_voice.cpp`): line 451 (via `Client_SendVoiceData`, after `Encode_Sample`
+produced a frame) and line 562 (flush when the talk key is not held); and
+`Client_SendVoiceData` (`win_voice.cpp:445-454`) has no other caller. Both call
+sites are downstream of the `Voice_SendVoiceData()` gate at
+`win_voice.cpp:482-483`, which returns early unless
+`clientUIActives[0].connectionState == CA_ACTIVE` (`win_voice.cpp:86-93`). On
+every path this tree can actually reach, the client therefore transmits only
+while `CA_ACTIVE`, which the server routes to the one-byte `SV_UserVoice`. The
+previously recorded claim that the `CA_LOADING`/`CA_PRIMED` client window
+overlaps the server-side `CS_CLIENTLOADING` state is **not established** by any
+reachable caller and is withdrawn.
+
+**Unmatched pre-game reader format (unresolved source finding).** The server
+dispatches the received `"v"` out-of-band packet by its own state machine:
+`SV_VoicePacket` routes `header.state >= CS_ACTIVE` (4) to `SV_UserVoice`
+(one-byte size, matches the reachable sender) and `header.state`
+`CS_CONNECTED` (2) / `CS_CLIENTLOADING` (3) to `SV_PreGameUserVoice`, which
+reads a **two-byte** size (`MSG_ReadShort`, `sv_voice_mp.cpp:164`). Source
+inspection found **no** effective fork client path that emits a 16-bit pre-game
+size, so this reader format is **unmatched in this fork** and its origin (a
+different/legacy client, or a path not present in this tree) is unknown from
+the source at this SHA. It is recorded as an **unresolved source finding**, not
+a reachable mismatch and not a production defect, and no speculative production
+change is authorized by this audit. The format must be resolved against the
+pinned original commercial 1.7 / Steam 1.8 references before any pre-game voice
+gate (VOX-2b) is claimed as met.
 
 ### 2.3 Cinematics
 
@@ -209,8 +221,8 @@ dependency).
 |---|---|---|---|---|---|
 | VOX-1a | **Encoder bitstream** is byte-identical to pinned golden vectors: fixed PCM input at a fixed sampling rate/quality, for narrowband/wideband/ultra-wideband, reproduces the exact bytes `Encode_Sample` emits | `Encode_Init`/`Encode_SetOptions`/`Encode_Sample`, `src/groupvoice/speex/` | Pinned PCM input frames at fixed rate/quality; compare `Encode_Sample` output bytes exactly | Golden encoded bitstreams committed with the test; provenance = generated from this in-tree Speex 1.1.9 build at the recorded SHA (never retail/captured) | pending |
 | VOX-1b | **Decoder output** for the VOX-1a encoded vectors matches pinned decoder PCM within a recorded tolerance. It is **not** asserted byte-equal to the original PCM input, nor exact against retail (a lossy codec does not reproduce source PCM bit-exactly) | `Decode_Init`/`Decode_Sample` | Same encoded vectors; compare decoded `int16` PCM (`speex_decode` output truncated at `decode.cpp:78-79`) against pinned `Decode_Sample` output with an explicit sample-level tolerance (Section 5) | Pinned decoded-PCM reference + tolerance record | pending |
-| VOX-2a | **Client→server in-game** framing byte-exact: out-of-band `"v"` + `qport` short, packet-count byte, then per packet one-byte size + payload; accepted server-side positive sizes **1..255**. Include zero and truncation/error cases; do not treat sender lengths ≥ 256 as valid (they truncate to the low byte on the wire). The writer is the same `CL_WriteVoicePacket` used on the pre-game path, so this is the fork's only sender width | `cl_voice.cpp:38-57` (send), `sv_voice_mp.cpp:104-119` (receive) | Serialize known packets and diff against expected bytes; cases: size 0, size 255, sender length ≥256 shown truncated, truncated payload | Byte diff + rejection tests | pending |
-| VOX-2b | **Client→server pre-game reader format**: packet-count byte, then per packet a 16-bit size (`MSG_ReadShort`) + payload; reader-accepted sizes **1..256** (0, negative and >256 rejected). **No matching fork writer** — the fork's only sender emits a one-byte size (VOX-2a), so this is an unresolved source finding (see §2.2) and a fork-to-fork round-trip is not valid proof | `sv_voice_mp.cpp:161-169`, dispatch `sv_main_pc_mp.cpp:330-332` | Reader-side rejection cases: raw 16-bit sizes 0, 256, 257, truncated payload. Any writer fixture requires recorded provenance and must not assert a one-byte writer / 16-bit reader pair as a working exchange | Reader rejection tests + explicit unresolved-finding record | pending |
+| VOX-2a | **Client→server in-game** framing byte-exact: out-of-band `"v"` + `qport` short, packet-count byte, then per packet one-byte size + payload; accepted server-side positive sizes **1..255**. Include zero and truncation/error cases; do not treat sender lengths ≥ 256 as valid (they truncate to the low byte on the wire). The writer is the fork's only sender, and its broader `CA_LOADING`/`CA_PRIMED` guard arms are not reachable through any effective caller (`Voice_SendVoiceData` requires `CA_ACTIVE`), so this one-byte format is the only reachable client→server width | `cl_voice.cpp:38-57` (send), effective callers `win_voice.cpp:86-93,445-565`, `sv_voice_mp.cpp:104-119` (receive) | Serialize known packets and diff against expected bytes; cases: size 0, size 255, sender length ≥256 shown truncated, truncated payload | Byte diff + rejection tests | pending |
+| VOX-2b | **Client→server pre-game reader format**: packet-count byte, then per packet a 16-bit size (`MSG_ReadShort`) + payload; reader-accepted sizes **1..256** (0, negative and >256 rejected). **Unmatched/unknown format in this fork** — no effective client path emits a 16-bit pre-game size (see the §2.2 reachability audit), so its origin is unknown from this tree; this is an unresolved source finding and a fork-to-fork round-trip is not valid proof | `sv_voice_mp.cpp:161-169`, dispatch `sv_main_pc_mp.cpp:330-332` | Reader-side rejection cases: raw 16-bit sizes 0, 256, 257, truncated payload. Any writer fixture requires recorded provenance and must not assert a one-byte writer / 16-bit reader pair as a working exchange | Reader rejection tests + explicit unresolved-finding record | pending |
 | VOX-2c | **Server→client** framing byte-exact: out-of-band `"v"`, packet-count byte (`1..40`), then per packet `talker` byte + one-byte size + payload; client accepts positive sizes **1..255** and `talker < 0x40` | `sv_snapshot_mp.cpp:1872-1896`, `cl_voice.cpp:65-93` | Serialize known packets; cases: count 0/41, size 0/255, talker 0x40, truncated payload | Byte diff + rejection tests | pending |
 | VOX-3 | Server relay preserves talker byte and payload and enforces the 40-packet cap and byte-talker assertion | `sv_voice_mp.cpp:94-146` | Queue flood + identity-boundary tests | Byte diff + assertion tests | pending |
 | VOX-4 | Capture device lifecycle: init, default-device change, removal, re-open, shutdown without leak or crash | `win_voice.cpp` mixer/waveIn, `record_dsound.cpp`, `Voice_Init`/`Voice_Shutdown` (`win_voice.cpp:588/640`) | Device-present / device-absent / device-swap sequences on each client target | Lifecycle trace + leak report | pending |
@@ -245,7 +257,7 @@ dependency).
 |---|---|---|---|---|---|
 | DEP-1 | Miles and Bink proprietary, 32-bit-only blobs are removed from or replaced before portable release | `deps/msslib`, `deps/binklib` | Packaging audit on each release target | Provenance/SBOM + package contents | not-implemented |
 | DEP-2 | Replacement libraries are pinned, license-audited and reproducible (no unpinned downloads) | OpenAL Soft / FFmpeg candidates | Pin source + license review + notices update | Pinned recipe + notices diff | not-implemented |
-| DEP-3 | Wire-locked voice codec (Speex 1.1.9) stays in-tree and unmodified; only the device layer changes | `src/groupvoice/speex`, `deps/speex` | Guard: checksum/codec-version assertion | Source guard + version check | not-implemented |
+| DEP-3 | Voice codec implementation is preserved **conditional on authentic reference evidence**: the observed in-tree Speex 1.1.9 build (`src/groupvoice/speex`, `deps/speex`) is to remain as implemented *until* a recorded original commercial 1.7 / Steam 1.8 reference establishes the required wire codec/profile; mandatory commercial wire behavior governs any evidence-backed correction, not an unverified source-version identity | `src/groupvoice/speex`, `deps/speex` | Guard: codec-version/checksum assertion **plus** a recorded reference-evidence decision before any codec change | Source guard + version check + reference record | not-implemented |
 
 ## 5. Relationship to commercial compatibility (#122)
 
@@ -256,6 +268,10 @@ dependency).
   retain exactness wherever they affect packet contents or network-visible
   behavior." clause ([NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md))
   applies only to rendering/audio detail, **not** to valid wire/disk encodings.
+- Codec preservation (DEP-3) is conditional, not a source-version freeze: the
+  in-tree Speex 1.1.9 build is retained as implemented until a pinned commercial
+  reference establishes the required wire codec/profile. Mandatory commercial
+  wire behavior governs any evidence-backed correction.
 - Tolerance policy for AUD-3/AUD-4/AUD-6/CIN-4/VOX-1b must be recorded
   explicitly (signal, scene, sample rate, window; for VOX-1b the PCM comparison
   method and per-sample tolerance) before results are accepted; a pass with
@@ -275,11 +291,14 @@ dependency).
 - **Not implemented:** there is no OpenAL (or other portable) backend, no
   voice device abstraction layer, and no audio/voice/cinematic test suite
   beyond `sound_dry_send_source_test.cmake`.
-- **Unresolved source finding:** the pre-game client→server size-field width
-  mismatch in §2.2 — the fork's one-byte client writer versus the two-byte
-  pre-game server reader (`MSG_ReadShort`). It is not a proven exchange and is
-  not fixed here; it must be resolved against the pinned commercial references
-  before VOX-2b is claimed, and no speculative production change is inferred.
+- **Unresolved source finding:** the server's pre-game client→server reader
+  (`SV_PreGameUserVoice`, two-byte `MSG_ReadShort` size) is **unmatched in this
+  tree** — no effective fork client path emits a 16-bit pre-game size; every
+  reachable transmit path is `CA_ACTIVE`-gated and writes a one-byte size (§2.2
+  reachability audit). The reader format is unmatched/unknown, not a proven
+  exchange and not a reachable mismatch. It is not fixed here and must be
+  resolved against the pinned commercial references before VOX-2b is claimed;
+  no speculative production change is inferred.
 - **This document does not certify:** any audio/voice/cinematic behavior, any
   original-reference interoperation, any target's media closure, or packaging
   readiness. It defines the gates and the evidence each requires.
@@ -294,8 +313,9 @@ each with its own PR and final-head CI plus substantive review, for example:
 2. VOX: pinned in-tree Speex 1.1.9 encoder-bitstream vectors (VOX-1a), pinned
    decoder PCM with an explicit tolerance (VOX-1b), and directional framing
    fixtures (VOX-2a/2c/3) — independent of any device backend and runnable now.
-   The VOX-2b pre-game width mismatch must be resolved against the pinned
-   references first; retail-equivalence assertions stay with VOX-8.
+   The VOX-2b pre-game reader format is unmatched in this fork and its origin is
+   unknown from source, so it must be resolved against the pinned references
+   first; retail-equivalence assertions stay with VOX-8.
 3. CIN: define and build the target-selectable cinematic stub (CIN-6) so
    non-Windows targets link.
 4. NUL: a headless media lifecycle test proving NUL-1/2/3.
