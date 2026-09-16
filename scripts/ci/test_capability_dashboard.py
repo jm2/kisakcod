@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import copy
 import importlib.util
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -193,6 +192,76 @@ class ManifestValidationTests(unittest.TestCase):
         self.assertTrue(
             any("required_strongest_validation" in error for error in level_errors)
         )
+
+
+class ReferenceIdentityTests(unittest.TestCase):
+    """Reference ids are checked before anything indexes by id (PR #150)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.manifest = cd.load_manifest(
+            REPO_ROOT / "docs" / "capability" / "manifest.json"
+        )
+
+    def _append_reference(self, reference):
+        manifest = copy.deepcopy(self.manifest)
+        manifest["commercial_references"].append(reference)
+        return manifest
+
+    def test_missing_reference_id_is_rejected(self):
+        # A bare {"status": "pending"} row used to validate cleanly and then
+        # raise KeyError("id") while computing the aggregate.
+        broken = self._append_reference({"status": "pending"})
+        errors = cd.validate_manifest(broken)
+        self.assertTrue(
+            any("id must be a non-empty string" in error for error in errors),
+            msg=f"id-less reference was accepted: {errors}",
+        )
+        result = cd.compute_aggregate(broken)
+        self.assertFalse(result["references_ok"])
+        self.assertEqual(result["delivered"], 0)
+
+    def test_empty_and_whitespace_reference_ids_are_rejected(self):
+        for bad in ("", "   ", "\t\n"):
+            with self.subTest(rid=bad):
+                errors = cd.validate_manifest(
+                    self._append_reference({"id": bad, "status": "pending"})
+                )
+                self.assertTrue(
+                    any(
+                        "id must be a non-empty string" in error
+                        for error in errors
+                    ),
+                    msg=f"empty reference id {bad!r} was accepted: {errors}",
+                )
+
+    def test_non_string_reference_ids_are_rejected(self):
+        for bad in (None, 7, ["commercial-2.0"], {"id": "x"}):
+            with self.subTest(rid=bad):
+                errors = cd.validate_manifest(
+                    self._append_reference({"id": bad, "status": "pending"})
+                )
+                self.assertTrue(
+                    any(
+                        "id must be a non-empty string" in error
+                        for error in errors
+                    ),
+                    msg=f"non-string reference id {bad!r} was accepted: {errors}",
+                )
+
+    def test_duplicate_reference_ids_are_still_rejected(self):
+        broken = copy.deepcopy(self.manifest)
+        broken["commercial_references"].append(
+            {"id": "commercial-1.7", "status": "pending"}
+        )
+        errors = cd.validate_manifest(broken)
+        self.assertTrue(any("duplicate ids" in error for error in errors))
+
+    def test_valid_extra_reference_is_accepted(self):
+        # A syntactically valid additional reference is not an error; the
+        # mandatory declared references are what the membership check enforces.
+        broken = self._append_reference({"id": "mac-app-2.0", "status": "pending"})
+        self.assertEqual(cd.validate_manifest(broken), [])
 
 
 class MandatoryContractTests(unittest.TestCase):
@@ -548,22 +617,21 @@ class RenderTests(unittest.TestCase):
             missing = Path(tmp) / "missing.md"
             self.assertEqual(cd.main(["--check", "--output", str(missing)]), 1)
 
-    def test_stdout_mode_keeps_json_stdout_clean(self):
-        # --stdout must emit only the rendered dashboard on stdout.  A JSON
-        # parser must not see advisory text mixed into stdout.
+    def test_stdout_mode_emits_exactly_the_rendered_dashboard(self):
+        # --stdout must emit only the rendered dashboard on stdout.  Comparing
+        # the entire captured stream catches appended or interleaved advisory
+        # text; a Markdown prefix check plus a JSONDecodeError assertion did
+        # not, because Markdown already fails JSON parsing regardless of any
+        # extra trailing envelope.
         import io
         import contextlib
 
+        expected, _ = cd.build_dashboard()
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             code = cd.main(["--stdout"])
         self.assertEqual(code, 0)
-        text = buffer.getvalue()
-        self.assertTrue(text.startswith("# KisakCOD capability dashboard"))
-        # Reparsing as JSON must fail on markdown, proving nothing JSON-ish was
-        # interleaved as a trailing envelope.
-        with self.assertRaises(json.JSONDecodeError):
-            json.loads(text)
+        self.assertEqual(buffer.getvalue(), expected)
 
 
 if __name__ == "__main__":

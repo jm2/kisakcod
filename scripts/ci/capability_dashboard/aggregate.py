@@ -24,11 +24,19 @@ from .contract import (
 
 
 def _reference_gate(manifest: dict) -> bool:
-    """Return True when both mandatory references are validated with provenance."""
-    references = {
-        reference["id"]: reference
-        for reference in manifest.get("commercial_references") or []
-    }
+    """Return True when both mandatory references are validated with provenance.
+
+    Rows without a usable id are skipped rather than indexed, so aggregating a
+    manifest that never passed ``validate_manifest`` cannot raise ``KeyError``
+    (it simply fails the gate).
+    """
+    references: dict[str, dict] = {}
+    for reference in manifest.get("commercial_references") or []:
+        if not isinstance(reference, dict):
+            continue
+        rid = reference.get("id")
+        if isinstance(rid, str) and rid.strip():
+            references[rid] = reference
     return all(
         references.get(rid, {}).get("status") == "validated"
         and reference_provenance_complete(references.get(rid, {}))

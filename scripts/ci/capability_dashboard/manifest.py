@@ -139,12 +139,42 @@ def _validate_reference(reference: dict, errors: list[str]) -> None:
         )
 
 
+def _is_reference_id(value: object) -> bool:
+    """Return True for a usable commercial-reference id.
+
+    An id must be a string with at least one non-whitespace character.  A
+    missing, ``null``, empty, whitespace-only or non-string id is not usable:
+    downstream code keys references by id, so a malformed id used to slip past
+    validation and then raise ``KeyError`` while aggregating.
+    """
+    return isinstance(value, str) and bool(value.strip())
+
+
 def _validate_references(references: list, errors: list[str]) -> list[str]:
-    """Validate every commercial reference and return their ids."""
-    ref_ids = [reference.get("id") for reference in references]
+    """Validate every commercial reference and return their usable ids.
+
+    Invalid rows never contribute an id, so the duplicate and membership checks
+    below cannot be defeated by an id-less row, and the returned ids are safe to
+    index by.
+    """
+    valid: list[dict] = []
+    ref_ids: list[str] = []
+    for reference in references:
+        if not isinstance(reference, dict):
+            errors.append("commercial_references entries must be objects")
+            continue
+        rid = reference.get("id")
+        if not _is_reference_id(rid):
+            errors.append(
+                "commercial reference id must be a non-empty string "
+                f"(got {rid!r})"
+            )
+            continue
+        valid.append(reference)
+        ref_ids.append(rid)
     if len(set(ref_ids)) != len(ref_ids):
         errors.append("commercial_references contain duplicate ids")
-    for reference in references:
+    for reference in valid:
         _validate_reference(reference, errors)
     return ref_ids
 
