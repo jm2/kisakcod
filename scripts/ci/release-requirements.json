@@ -13,7 +13,8 @@
   "source": {
     "archive": "KisakCOD-${tag}-source.tar.gz",
     "provenance": "KisakCOD-${tag}-source-provenance.json",
-    "identity_member": "release-identity.json"
+    "identity_member": "release-identity.json",
+    "carrier": "src/source_identity.txt"
   },
   "profiles": [
     {

@@ -26,9 +26,11 @@ This tool implements the stronger contract required for production packages
                       source archive carries its version identity.
 * ``identity-verify`` verify that identity against an expected tag/commit.
 
-``verify`` also opens a declared source archive and checks the identity member
-it carries, which is what lets a rebuild from the archive keep version identity
-when ``.git`` is absent.
+``verify`` also opens a declared source archive and checks that it carries both
+the ``release-identity.json`` member (tag and commit) and the build-consumed
+``src/source_identity.txt`` carrier with the substituted full commit, which is
+what lets a rebuild from the archive keep version identity when ``.git`` is
+absent.
 
 The tool is Python-standard-library only, never mutates the release directory,
 and prints a precise ``FAIL:`` line for every violated invariant before exiting
@@ -89,12 +91,76 @@ def load_json(path: Path) -> dict:
     return value
 
 
-def is_nonempty(value: object) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, (list, dict, str)):
-        return len(value) > 0
-    return True
+def is_nonempty_str(value: object) -> bool:
+    return isinstance(value, str) and value.strip() != ""
+
+
+def is_sha256(value: object) -> bool:
+    return isinstance(value, str) and SHA256_RE.match(value) is not None
+
+
+def validate_toolchain(value: object) -> str | None:
+    """A toolchain record maps tool names to non-empty version strings.
+
+    A boolean flag, a number, or a string is a claim that toolchain evidence
+    exists, not the evidence itself, so only an object of concrete versions is
+    accepted.
+    """
+    if not isinstance(value, dict) or not value:
+        return "must be a non-empty object of tool name -> non-empty version"
+    for key, item in value.items():
+        if not is_nonempty_str(key) or not is_nonempty_str(item):
+            return f"entry {key!r} must map to a non-empty string"
+    return None
+
+
+def validate_dependencies(value: object) -> str | None:
+    """Each dependency must name its source, revision and enabled features."""
+    if not isinstance(value, list) or not value:
+        return "must be a non-empty list of dependency records"
+    for index, entry in enumerate(value):
+        if not isinstance(entry, dict):
+            return f"entry {index} must be an object"
+        if "name" in entry and not is_nonempty_str(entry.get("name")):
+            return f"entry {index} name must be a non-empty string"
+        if not is_nonempty_str(entry.get("source")):
+            return f"entry {index} source must be a non-empty string"
+        if not is_nonempty_str(entry.get("revision")):
+            return f"entry {index} revision must be a non-empty string"
+        features = entry.get("features")
+        if not isinstance(features, list) or not features:
+            return f"entry {index} features must be a non-empty list"
+        if any(not is_nonempty_str(feature) for feature in features):
+            return f"entry {index} features must be non-empty strings"
+    return None
+
+
+def validate_artifact_records(field: str):
+    def validate(value: object) -> str | None:
+        if not isinstance(value, list) or not value:
+            return f"must be a non-empty list of {field} records"
+        for index, entry in enumerate(value):
+            if not isinstance(entry, dict):
+                return f"entry {index} must be an object"
+            if not is_nonempty_str(entry.get("path")):
+                return f"entry {index} path must be a non-empty string"
+            if "sha256" in entry and not is_sha256(entry.get("sha256")):
+                return f"entry {index} sha256 must be a 64-hex digest"
+        return None
+
+    return validate
+
+
+# Required inventory field -> typed validator. A manifest that claims a required
+# inventory entry is present must carry a real record: ``false``/``0`` and
+# wrong-typed or structurally incomplete records are rejected.
+INVENTORY_VALIDATORS = {
+    "toolchain": validate_toolchain,
+    "dependencies": validate_dependencies,
+    "runtime_lookup": validate_artifact_records("runtime lookup"),
+    "notices": validate_artifact_records("notices"),
+    "symbols": validate_artifact_records("symbols"),
+}
 
 
 def check_identity_shape(tag: str, commit: str) -> None:
@@ -185,8 +251,12 @@ def cmd_record(args: argparse.Namespace) -> int:
     if args.inventory:
         inventory = load_json(Path(args.inventory))
         for field in INVENTORY_FIELDS:
-            if field in inventory:
-                manifest[field] = inventory[field]
+            if field not in inventory:
+                continue
+            problem = INVENTORY_VALIDATORS[field](inventory[field])
+            if problem is not None:
+                raise GateError(f"inventory field {field!r} is invalid: {problem}")
+            manifest[field] = inventory[field]
 
     artifacts = []
     for name in args.artifact:
@@ -291,10 +361,11 @@ def verify_manifest_identity(
         if field not in INVENTORY_FIELDS:
             failures.append(f"{profile_label}: unknown required inventory field {field!r}")
             continue
-        if not is_nonempty(record.get(field)):
+        problem = INVENTORY_VALIDATORS[field](record.get(field))
+        if problem is not None:
             failures.append(
                 f"{profile_label}: {manifest_path.name} required inventory {field!r} "
-                "is missing or empty"
+                f"is missing or invalid: {problem}"
             )
 
     artifacts = record.get("artifacts")
@@ -332,46 +403,141 @@ def verify_manifest_identity(
     return failures, sorted(names)
 
 
+def find_archive_members(archive: tarfile.TarFile, member: str) -> list[tarfile.TarInfo]:
+    """Match a member by basename (``release-identity.json`` is shipped flat)."""
+    return [
+        item for item in archive.getmembers() if item.isfile() and Path(item.name).name == member
+    ]
+
+
+def find_carrier_members(archive: tarfile.TarFile, carrier: str) -> list[tarfile.TarInfo]:
+    """Match the build-consumed carrier by its path relative to the tree root.
+
+    ``git archive`` normally prefixes every entry with a top-level directory, so
+    ``src/source_identity.txt`` is identified by its trailing path components
+    rather than by basename alone.
+    """
+    wanted = [part for part in carrier.replace("\\", "/").split("/") if part]
+    matches = []
+    for item in archive.getmembers():
+        if not item.isfile():
+            continue
+        parts = [part for part in item.name.replace("\\", "/").split("/") if part]
+        if parts[-len(wanted):] == wanted:
+            matches.append(item)
+    return matches
+
+
+def verify_archive_identity_member(
+    archive: tarfile.TarFile, identity_member: str, tag: str, commit: str
+) -> list[str]:
+    """Verify the shipped ``release-identity.json`` pins tag and commit."""
+    members = find_archive_members(archive, identity_member)
+    if not members:
+        return [
+            f"source: archive does not contain {identity_member}; a rebuild would "
+            "lose version identity without .git"
+        ]
+    failures: list[str] = []
+    for member in members:
+        extracted = archive.extractfile(member)
+        if extracted is None:
+            failures.append(f"source: could not read {identity_member} from archive")
+            continue
+        try:
+            identity = json.loads(extracted.read().decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            failures.append(f"source: {member.name} is not readable JSON ({exc})")
+            continue
+        if not isinstance(identity, dict):
+            failures.append(f"source: {member.name} is not a JSON object")
+            continue
+        for key, expected in (("tag", tag), ("commit", commit)):
+            if identity.get(key) != expected:
+                failures.append(
+                    f"source: {member.name} {key} {identity.get(key)!r} does not match "
+                    f"verified release {expected!r}"
+                )
+    return failures
+
+
+def verify_archive_carrier(
+    archive: tarfile.TarFile, carrier_member: str, commit: str
+) -> list[str]:
+    """Verify the identity carrier the build actually consumes without ``.git``.
+
+    ``scripts/extern/resolve_source_identity.cmake`` reads
+    ``<source_dir>/src/source_identity.txt`` when no checkout is available, so
+    the archive must carry that file with the substituted full commit. An absent
+    member, an unexpanded ``$Format:...$`` placeholder, a malformed value, or a
+    value that conflicts with the verified release each fail closed.
+    """
+    members = find_carrier_members(archive, carrier_member)
+    if not members:
+        return [
+            f"source: archive does not contain the build-consumed identity carrier "
+            f"{carrier_member}; a rebuild without .git could not recover the verified "
+            "revision"
+        ]
+    failures: list[str] = []
+    for member in members:
+        extracted = archive.extractfile(member)
+        if extracted is None:
+            failures.append(f"source: could not read {carrier_member} from archive")
+            continue
+        try:
+            text = extracted.read().decode("utf-8")
+        except UnicodeDecodeError as exc:
+            failures.append(f"source: {carrier_member} is not valid UTF-8 ({exc})")
+            continue
+        values = [
+            line.split("=", 1)[1].strip()
+            for line in text.splitlines()
+            if line.strip().startswith("commit=")
+        ]
+        if not values:
+            failures.append(f"source: {carrier_member} carries no commit= line")
+            continue
+        for value in values:
+            if "$Format:" in value:
+                failures.append(
+                    f"source: {carrier_member} still holds the unsubstituted "
+                    f"export-subst placeholder {value!r}; git archive did not expand it"
+                )
+            elif not COMMIT_RE.match(value):
+                failures.append(
+                    f"source: {carrier_member} commit {value!r} is not a full 40-hex commit"
+                )
+            elif value != commit:
+                failures.append(
+                    f"source: {carrier_member} commit {value!r} does not match "
+                    f"verified release {commit!r}"
+                )
+    return failures
+
+
 def verify_source_archive(
     archive_path: Path,
     identity_member: str,
+    carrier_member: str,
     tag: str,
     commit: str,
 ) -> list[str]:
-    """Prove a source archive carries the verified release identity."""
-    failures: list[str] = []
+    """Prove a source archive carries the verified release identity.
+
+    The JSON identity member pins tag and commit; the build-consumed carrier
+    pins the exact full commit a rebuild would resolve without ``.git``. Both
+    are required so the verifier cannot pass an archive whose identity evidence
+    is disconnected from what the build reads.
+    """
     if not archive_path.is_file():
         return [f"source: archive {archive_path.name} is missing from dist"]
     try:
         with tarfile.open(archive_path, "r:*") as archive:
-            member = next(
-                (
-                    item
-                    for item in archive.getmembers()
-                    if Path(item.name).name == identity_member and item.isfile()
-                ),
-                None,
-            )
-            if member is None:
-                return [
-                    f"source: archive {archive_path.name} does not contain {identity_member}; "
-                    "a rebuild would lose version identity without .git"
-                ]
-            extracted = archive.extractfile(member)
-            if extracted is None:
-                return [f"source: could not read {identity_member} from {archive_path.name}"]
-            identity = json.loads(extracted.read().decode("utf-8"))
-    except (tarfile.TarError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            failures = verify_archive_identity_member(archive, identity_member, tag, commit)
+            failures.extend(verify_archive_carrier(archive, carrier_member, commit))
+    except tarfile.TarError as exc:
         return [f"source: archive {archive_path.name} could not be read ({exc})"]
-
-    if not isinstance(identity, dict):
-        return [f"source: {identity_member} is not a JSON object"]
-    for key, expected in (("tag", tag), ("commit", commit)):
-        if identity.get(key) != expected:
-            failures.append(
-                f"source: {identity_member} {key} {identity.get(key)!r} does not match "
-                f"verified release {expected!r}"
-            )
     return failures
 
 
@@ -486,6 +652,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
             verify_source_archive(
                 dist / archive_name,
                 source.get("identity_member", "release-identity.json"),
+                source.get("carrier", "src/source_identity.txt"),
                 args.tag,
                 args.commit,
             )

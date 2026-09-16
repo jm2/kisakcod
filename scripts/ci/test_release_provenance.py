@@ -73,6 +73,58 @@ def write_inventory(path: Path, fields: list[str]) -> None:
     path.write_text(json.dumps(inventory), encoding="utf-8")
 
 
+def refresh_checksums(root: Path) -> None:
+    """Rewrite SHA256SUMS.txt to cover exactly the current dist files."""
+    requirements = json.loads(REQUIREMENTS.read_text(encoding="utf-8"))
+    checksums = requirements["checksums"]
+    dist = root / "dist"
+    lines = []
+    for item in sorted(dist.iterdir()):
+        if item.is_file() and item.name != checksums:
+            lines.append(f"{sha256_file(item)}  {item.name}\n")
+    (dist / checksums).write_text("".join(lines), encoding="utf-8")
+
+
+def build_source_archive(
+    root: Path,
+    carrier_text: str | None,
+    identity_member: bool = True,
+    prefix: str = "",
+) -> None:
+    """(Re)build the source tarball with a controlled identity carrier.
+
+    ``carrier_text=None`` omits the build-consumed ``src/source_identity.txt``;
+    an explicit string lets a test ship an unsubstituted placeholder or a
+    conflicting commit. The identity JSON is optional so the missing-member
+    case is exercised too.
+    """
+    requirements = json.loads(REQUIREMENTS.read_text(encoding="utf-8"))
+    source = requirements["source"]
+    staging = root / "archive-staging"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    (staging / "CMakeLists.txt").write_text("project(KisakCOD)\n", encoding="utf-8")
+    entries = [(staging / "CMakeLists.txt", "CMakeLists.txt")]
+    if identity_member:
+        identity = root / "source-tree" / source["identity_member"]
+        if not identity.is_file():
+            result = run_tool(
+                "identity-write", "--tag", TAG, "--commit", COMMIT, "--out", str(identity)
+            )
+            assert result.returncode == 0, result.stderr
+        entries.append((identity, source["identity_member"]))
+    if carrier_text is not None:
+        carrier = staging / source["carrier"]
+        carrier.parent.mkdir(parents=True, exist_ok=True)
+        carrier.write_text(carrier_text, encoding="utf-8")
+        entries.append((carrier, source["carrier"]))
+    archive_path = root / "dist" / source["archive"].replace("${tag}", TAG)
+    with tarfile.open(archive_path, "w:gz") as archive:
+        for path, arcname in entries:
+            archive.add(path, arcname=f"{prefix}{arcname}")
+
+
 def build_release_fixture(root: Path) -> None:
     """Create a complete dist/ that satisfies the shipped release contract."""
     requirements = json.loads(REQUIREMENTS.read_text(encoding="utf-8"))
@@ -109,24 +161,9 @@ def build_release_fixture(root: Path) -> None:
         assert result.returncode == 0, result.stderr
 
     source = requirements["source"]
-    staging = root / "source-tree"
-    staging.mkdir()
-    identity = staging / source["identity_member"]
-    result = run_tool(
-        "identity-write",
-        "--tag",
-        TAG,
-        "--commit",
-        COMMIT,
-        "--out",
-        str(identity),
-    )
-    assert result.returncode == 0, result.stderr
-    (staging / "CMakeLists.txt").write_text("project(KisakCOD)\n", encoding="utf-8")
-    archive_name = source["archive"].replace("${tag}", TAG)
-    with tarfile.open(dist / archive_name, "w:gz") as archive:
-        archive.add(staging / "CMakeLists.txt", arcname="CMakeLists.txt")
-        archive.add(identity, arcname=source["identity_member"])
+    (root / "source-tree").mkdir()
+    # The carrier git archive would substitute: the full verified commit.
+    build_source_archive(root, f"commit={COMMIT}\n")
 
     source_manifest = {
         "schema_version": 1,
@@ -141,12 +178,7 @@ def build_release_fixture(root: Path) -> None:
         json.dumps(source_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
-    checksums = requirements["checksums"]
-    lines = []
-    for item in sorted(dist.iterdir()):
-        if item.is_file() and item.name != checksums:
-            lines.append(f"{sha256_file(item)}  {item.name}\n")
-    (dist / checksums).write_text("".join(lines), encoding="utf-8")
+    refresh_checksums(root)
 
     prerequisites = {job: "success" for job in requirements["required_prerequisites"]}
     (root / "prerequisites.json").write_text(json.dumps(prerequisites), encoding="utf-8")
@@ -269,14 +301,165 @@ class ReleaseProvenanceTests(unittest.TestCase):
 
     def test_source_archive_without_identity_fails(self) -> None:
         root = self.fresh("source-no-identity")
-        archive_path = root / "dist" / f"KisakCOD-{TAG}-source.tar.gz"
-        with tarfile.open(archive_path, "w:gz") as archive:
-            member = root / "replacement.txt"
-            member.write_text("no identity here\n", encoding="utf-8")
-            archive.add(member, arcname="replacement.txt")
+        build_source_archive(root, carrier_text=None, identity_member=False)
+        refresh_checksums(root)
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
         self.assertIn("does not contain release-identity.json", result.stderr)
+
+    def test_source_archive_without_build_carrier_fails(self) -> None:
+        # The JSON identity member is present but the file the build actually
+        # reads without .git is absent: the archive must not pass.
+        root = self.fresh("source-no-carrier")
+        build_source_archive(root, carrier_text=None)
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("build-consumed identity carrier", result.stderr)
+
+    def test_source_archive_unexpanded_carrier_fails(self) -> None:
+        root = self.fresh("source-unexpanded")
+        build_source_archive(root, carrier_text="commit=$Format:%H$\n")
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("unsubstituted", result.stderr)
+
+    def test_source_archive_conflicting_carrier_fails(self) -> None:
+        root = self.fresh("source-conflict")
+        build_source_archive(root, carrier_text=f"commit={'e' * 40}\n")
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not match verified release", result.stderr)
+
+    def test_source_archive_short_commit_carrier_fails(self) -> None:
+        root = self.fresh("source-short-commit")
+        build_source_archive(root, carrier_text="commit=abc1234\n")
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not a full 40-hex commit", result.stderr)
+
+    def test_prefixed_source_archive_passes(self) -> None:
+        # git archive may prefix the tree with a top-level directory; the
+        # carrier is matched by its trailing src/source_identity.txt path.
+        root = self.fresh("source-prefixed")
+        build_source_archive(root, carrier_text=f"commit={COMMIT}\n", prefix=f"KisakCOD-{TAG}/")
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_extracted_source_archive_resolves_verified_identity(self) -> None:
+        # End-to-end: extract the shipped archive and prove the resolver the
+        # build uses reads the verified commit back without any .git.
+        cmake = shutil.which("cmake")
+        if not cmake:
+            self.skipTest("cmake is not available to prove the resolver")
+        archive_path = self.base / "dist" / f"KisakCOD-{TAG}-source.tar.gz"
+        extracted = self.tmp / "extracted-source"
+        with tarfile.open(archive_path, "r:*") as archive:
+            archive.extractall(extracted)
+        self.assertTrue((extracted / "src" / "source_identity.txt").is_file())
+        resolver = SCRIPT_DIR.parent / "extern" / "resolve_source_identity.cmake"
+        self.assertTrue(resolver.is_file(), resolver)
+        script = self.tmp / "resolve-identity.cmake"
+        script.write_text(
+            'include("%s")\n'
+            'kisak_resolve_source_identity("%s" _resolved)\n'
+            'if(NOT _resolved STREQUAL "%s")\n'
+            '  message(FATAL_ERROR "resolved ${_resolved}, expected %s")\n'
+            "endif()\n" % (resolver, extracted, COMMIT, COMMIT),
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            [cmake, "-P", str(script)], capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    # -- inventory typing ---------------------------------------------------
+
+    def test_boolean_inventory_value_fails(self) -> None:
+        # A manifest that claims required inventory with `false` is not evidence.
+        root = self.fresh("inventory-false")
+        manifest = root / "dist" / "KisakCOD-windows-x86-provenance.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["notices"] = False
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("required inventory", result.stderr)
+
+    def test_zero_inventory_value_fails(self) -> None:
+        root = self.fresh("inventory-zero")
+        manifest = root / "dist" / "KisakCOD-windows-x86-sp-provenance.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["symbols"] = 0
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("required inventory", result.stderr)
+
+    def test_empty_object_inventory_value_fails(self) -> None:
+        root = self.fresh("inventory-empty-object")
+        manifest = root / "dist" / "KisakCOD-windows-x86-nosteam-provenance.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["runtime_lookup"] = {}
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("required inventory", result.stderr)
+
+    def test_incomplete_dependency_record_fails(self) -> None:
+        root = self.fresh("inventory-incomplete-dependency")
+        manifest = root / "dist" / "KisakCOD-windows-x86-headless-provenance.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        del data["dependencies"][0]["features"]
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("features", result.stderr)
+
+    def test_wrong_typed_inventory_record_fails(self) -> None:
+        root = self.fresh("inventory-wrong-type")
+        manifest = root / "dist" / "KisakCOD-windows-x86-provenance.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["dependencies"] = ["SDL2"]
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("required inventory", result.stderr)
+
+    def test_record_rejects_invalid_inventory(self) -> None:
+        # The producer fails closed too: a boolean inventory field never reaches
+        # a manifest in the first place.
+        root = self.tmp / "record-invalid-inventory"
+        dist = root / "dist"
+        dist.mkdir(parents=True)
+        (dist / "KisakCOD-windows-x86.zip").write_bytes(b"artifact")
+        inventory = root / "inventory.json"
+        inventory.write_text(json.dumps({"toolchain": False}), encoding="utf-8")
+        result = run_tool(
+            "record",
+            "--dist",
+            str(dist),
+            "--tag",
+            TAG,
+            "--commit",
+            COMMIT,
+            "--target",
+            "windows-x86",
+            "--config",
+            "production-mp-dedi",
+            "--inventory",
+            str(inventory),
+            "--out",
+            str(root / "manifest.json"),
+            "--artifact",
+            "KisakCOD-windows-x86.zip",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("invalid", result.stderr)
 
     # -- prerequisites ------------------------------------------------------
 

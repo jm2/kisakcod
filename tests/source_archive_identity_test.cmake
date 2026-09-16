@@ -59,6 +59,12 @@ read_normalized(
     "${SOURCE_ROOT}/scripts/increment_build.cmd" _cmd "Windows build-number script")
 read_normalized(
     "${SOURCE_ROOT}/tests/CMakeLists.txt" _tests "portable test registration")
+read_normalized(
+    "${SOURCE_ROOT}/scripts/ci/release-requirements.json" _release_requirements
+    "release requirements contract")
+read_normalized(
+    "${SOURCE_ROOT}/scripts/ci/release_provenance.py" _verifier
+    "release provenance verifier")
 
 # Mutation mode is used only by the self-checks at the end of this file.
 if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
@@ -133,6 +139,16 @@ require_contains(
 require_contains(
     _tests "source_archive_identity_test.cmake"
     "portable test registration points at this script")
+
+# The release verifier must check the very carrier the resolver reads, not only
+# the JSON identity member, or an archive could pass verification while a
+# rebuild without `.git` loses the verified revision.
+require_contains(
+    _release_requirements "src/source_identity.txt"
+    "release requirements pin the build-consumed identity carrier")
+require_contains(
+    _verifier "source.get(\"carrier\""
+    "release verifier reads the configured build-consumed identity carrier")
 
 if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
     # --- Resolver behavior on controlled trees -----------------------------
