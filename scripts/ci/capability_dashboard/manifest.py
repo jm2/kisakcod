@@ -114,16 +114,16 @@ def _target_ids(targets: list, errors: list[str]) -> list[str]:
 
 def _requested_target_ids(targets: list) -> set[str]:
     """Return the ids a target marks as requested and usable."""
-    return {
-        target["id"]
-        for target in targets
-        if (
-            isinstance(target, dict)
-            and target.get("requested")
-            and isinstance(target.get("id"), str)
-            and target.get("id").strip()
-        )
-    }
+    # ``target.get("id")`` is bound once per row: repeating the optional
+    # member access inline defeats the analyzer's member narrowing.
+    requested: set[str] = set()
+    for target in targets:
+        if not isinstance(target, dict) or not target.get("requested"):
+            continue
+        target_id = target.get("id")
+        if isinstance(target_id, str) and target_id.strip():
+            requested.add(target_id)
+    return requested
 
 
 def _check_duplicate_targets(target_ids: list[str], errors: list[str]) -> None:

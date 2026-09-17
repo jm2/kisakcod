@@ -49,15 +49,15 @@ def _unquote(value: str) -> str:
     return value
 
 
-def _strip_yaml_comment(value: str) -> str:
-    """Remove an unquoted trailing YAML comment from ``value``."""
-    # A ``#`` starts a comment only when it begins the value or is preceded
-    # by whitespace, and never inside a quoted scalar.  Stripping it keeps
-    # ``runs-on: self-hosted  # box`` from being compared with its comment
-    # still attached (reported as hosted) and keeps ``[a, b]  # note`` a
-    # readable flow list instead of an unsupported shape.
-    quote: str | None = None
-    index = 0
+def _quoted_span_end(value: str, start: int) -> int:
+    """Return the index just past the closing quote opening at ``start``.
+
+    Doubled single quotes continue a single-quoted scalar and a backslash
+    escapes the next character inside double quotes.  An unterminated scalar
+    consumes the rest of ``value``: no comment can start inside it.
+    """
+    quote = value[start]
+    index = start + 1
     while index < len(value):
         char = value[index]
         if quote == "'":
@@ -65,16 +65,31 @@ def _strip_yaml_comment(value: str) -> str:
                 if index + 1 < len(value) and value[index + 1] == "'":
                     index += 2
                     continue
-                quote = None
+                return index + 1
         elif quote == '"':
             if char == "\\":
                 index += 2
                 continue
             if char == '"':
-                quote = None
-        elif char in ("'", '"'):
-            quote = char
-        elif char == "#" and (index == 0 or value[index - 1].isspace()):
+                return index + 1
+        index += 1
+    return len(value)
+
+
+def _strip_yaml_comment(value: str) -> str:
+    """Remove an unquoted trailing YAML comment from ``value``."""
+    # A ``#`` starts a comment only when it begins the value or is preceded
+    # by whitespace, and never inside a quoted scalar.  Stripping it keeps
+    # ``runs-on: self-hosted  # box`` from being compared with its comment
+    # still attached (reported as hosted) and keeps ``[a, b]  # note`` a
+    # readable flow list instead of an unsupported shape.
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char in ("'", '"'):
+            index = _quoted_span_end(value, index)
+            continue
+        if char == "#" and (index == 0 or value[index - 1].isspace()):
             return value[:index].strip()
         index += 1
     return value.strip()

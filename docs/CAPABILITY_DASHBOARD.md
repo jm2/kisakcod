@@ -59,7 +59,7 @@ Commercial reference gate is **not satisfied**, so no requested target can be de
 
 ## Derived CI inventory
 
-3 workflows, 12 jobs, 18 matrix-expanded job invocations.
+3 workflows, 22 jobs, 38 matrix-expanded job invocations.
 
 | Workflow | Job | Matrix legs | Self-hosted |
 |---|---|---|---|
@@ -71,19 +71,29 @@ Commercial reference gate is **not satisfied**, so no requested target can be de
 | ci.yml | windows-x86-parity (Windows x86 (byte parity)) | 1 | no |
 | ci.yml | windows-x86-nosteam (Windows x86 (no Steam)) | 1 | no |
 | ci.yml | windows-x86-headless (Windows x86 (headless dedicated)) | 1 | no |
+| ci.yml | scaffolding-builds (Portable test/release scaffolding / ${{ matrix.target }}) | 6 | no |
+| ci.yml | scaffolding-complete (Portable scaffolding complete) | 1 | no |
 | licensed-smoke.yml | preflight (Preflight (licensed infrastructure)) | 1 | no |
 | licensed-smoke.yml | windows-x86 (Windows x86 legacy dedicated) | 1 | yes |
 | licensed-smoke.yml | windows-x86-headless (Windows x86 headless dedicated) | 1 | yes |
-| release.yml | windows-x86 (release-windows-x86) | 1 | no |
+| release.yml | verify-tag (Verify release tag) | 1 | no |
+| release.yml | build-source (Source archive) | 1 | no |
+| release.yml | build-release (Release / ${{ matrix.target }}) | 6 | no |
+| release.yml | windows-x86-sp-release (Release / windows-x86 SP) | 1 | no |
+| release.yml | windows-x86-nosteam-release (Release / windows-x86 (no Steam)) | 1 | no |
+| release.yml | windows-x86-headless-release (Release / windows-x86 (headless dedicated)) | 1 | no |
+| release.yml | checksums (Aggregate checksums) | 1 | no |
+| release.yml | scaffolding-complete (Release scaffolding complete) | 1 | no |
+| release.yml | publish-release (Publish release) | 1 | no |
 
 ## Derived test inventory
 
 | Item | Count |
 |---|---|
 | Configure presets | 6 |
-| `add_executable` registrations | 127 |
-| `add_test` registrations | 212 |
-| `*_tests.cpp` source files | 114 |
-| `*_source_test.cmake` contract files | 53 |
+| `add_executable` registrations | 129 |
+| `add_test` registrations | 215 |
+| `*_tests.cpp` source files | 116 |
+| `*_source_test.cmake` contract files | 54 |
 
 Counts describe the current tree only. Dated local/CI snapshots from earlier trees belong in `docs/task.md`'s historical sections, not here.
