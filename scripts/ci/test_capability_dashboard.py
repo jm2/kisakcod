@@ -332,6 +332,188 @@ class CapabilityIdentityTests(unittest.TestCase):
         self.assertEqual(cd.validate_manifest(broken), [])
 
 
+class MalformedFieldTypeTests(unittest.TestCase):
+    """Malformed field/container *types* error, never raise (PR #150).
+
+    ``validate_manifest`` dereferences field values and iterates containers,
+    so a wrong JSON type used to escape as AttributeError (``int.strip``,
+    ``list.get``) or TypeError (iterating an int); the CLI catches only
+    SystemExit, so the run died in a traceback instead of reporting the
+    invalid manifest.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.manifest = cd.load_manifest(
+            REPO_ROOT / "docs" / "capability" / "manifest.json"
+        )
+
+    def _broken(self, mutate):
+        manifest = copy.deepcopy(self.manifest)
+        mutate(manifest)
+        return manifest
+
+    def test_scalar_owner_and_blocker_are_rejected_not_raised(self):
+        cases = [
+            ("owner", "owner must be a non-empty string"),
+            ("blocker", "blocker must be a non-empty string"),
+        ]
+        for field, message in cases:
+            for bad in (7, [], {}, None):
+                with self.subTest(field=field, value=bad):
+                    errors = cd.validate_manifest(
+                        self._broken(
+                            lambda m, f=field, v=bad: (
+                                m["capabilities"][0].__setitem__(f, v)
+                            )
+                        )
+                    )
+                    self.assertTrue(
+                        any(message in error for error in errors),
+                        msg=f"{field}={bad!r} did not produce a schema "
+                        f"error: {errors}",
+                    )
+
+    def test_non_object_evidence_is_rejected_not_raised(self):
+        # A list ``evidence`` used to raise AttributeError from
+        # ``evidence.get(...)``; a scalar used to raise TypeError from the
+        # ``field not in evidence`` membership test.
+        for bad in (["bad"], "bad", 7):
+            with self.subTest(evidence=bad):
+                errors = cd.validate_manifest(
+                    self._broken(
+                        lambda m, v=bad: (
+                            m["capabilities"][0].__setitem__("evidence", v)
+                        )
+                    )
+                )
+                self.assertTrue(
+                    any(
+                        "evidence must be an object" in error
+                        for error in errors
+                    ),
+                    msg=f"evidence={bad!r} did not produce a schema "
+                    f"error: {errors}",
+                )
+
+    def test_non_list_evidence_kinds_are_rejected_not_raised(self):
+        errors = cd.validate_manifest(
+            self._broken(
+                lambda m: m["capabilities"][0].__setitem__("evidence_kinds", 7)
+            )
+        )
+        self.assertTrue(
+            any("evidence_kinds must be a list" in error for error in errors),
+            msg=f"scalar evidence_kinds was not rejected: {errors}",
+        )
+
+    def test_supporting_evidence_record_must_be_an_object(self):
+        # The renderer reads ``evidence.note``, so a truthy non-object
+        # evidence record used to pass validation and raise AttributeError
+        # while rendering -- after the CLI's SystemExit-only catch.
+        errors = cd.validate_manifest(
+            self._broken(
+                lambda m: m["supporting_evidence"][0].__setitem__(
+                    "evidence", ["bad"]
+                )
+            )
+        )
+        self.assertTrue(
+            any(
+                "supporting evidence" in error
+                and "evidence must be an object" in error
+                for error in errors
+            ),
+            msg=f"non-object supporting evidence record was accepted: "
+            f"{errors}",
+        )
+
+    def test_non_object_enums_are_rejected_not_raised(self):
+        # ``enums.get(...)`` used to raise AttributeError for a scalar
+        # ``enums`` block.
+        errors = cd.validate_manifest(self._broken(lambda m: m.__setitem__("enums", 7)))
+        self.assertTrue(
+            any("enums must be an object" in error for error in errors),
+            msg=f"scalar enums was not rejected: {errors}",
+        )
+
+    def test_non_list_validation_levels_are_rejected_not_raised(self):
+        # A scalar ``validation_levels`` used to raise TypeError from
+        # ``len()``/``set()``, and an unhashable entry (a list) from
+        # ``set(levels)`` itself.
+        for bad in (7, "packaged_clean_machine", [["a"], "configured"]):
+            with self.subTest(levels=bad):
+                errors = cd.validate_manifest(
+                    self._broken(
+                        lambda m, v=bad: m["enums"].__setitem__(
+                            "validation_levels", v
+                        )
+                    )
+                )
+                self.assertTrue(
+                    any(
+                        "enums.validation_levels" in error
+                        for error in errors
+                    ),
+                    msg=f"validation_levels={bad!r} was not rejected: "
+                    f"{errors}",
+                )
+
+    def test_non_object_manifest_root_is_rejected_not_raised(self):
+        # ``json.load`` can return any JSON value; every helper dereferences
+        # the manifest mapping, so a non-object root used to raise
+        # AttributeError from ``manifest.get(...)``.
+        for bad in ([1, 2], "manifest", 7, None):
+            with self.subTest(root=bad):
+                errors = cd.validate_manifest(bad)
+                self.assertEqual(errors, ["manifest must be a JSON object"])
+
+    def test_scalar_top_level_containers_are_rejected_not_raised(self):
+        # Iterating a scalar container used to raise TypeError; iterating a
+        # dict silently iterated its keys.
+        cases = [
+            ("targets", "targets must be a list"),
+            ("capabilities", "capabilities must be a list"),
+            ("commercial_references", "commercial_references must be a list"),
+            ("supporting_evidence", "supporting_evidence must be a list"),
+        ]
+        for field, message in cases:
+            for bad in (7, "x", {"a": 1}):
+                with self.subTest(field=field, value=bad):
+                    errors = cd.validate_manifest(
+                        self._broken(lambda m, f=field, v=bad: m.__setitem__(f, v))
+                    )
+                    self.assertTrue(
+                        any(message in error for error in errors),
+                        msg=f"{field}={bad!r} did not produce a schema "
+                        f"error: {errors}",
+                    )
+
+    def test_cli_reports_malformed_field_as_validation_failure(self):
+        # The documented CLI failure path: a malformed field value must reach
+        # the user as "manifest validation failed" with exit status 2, not as
+        # an uncaught traceback from a non-SystemExit exception.
+        import contextlib
+        import io
+        import json
+
+        broken = copy.deepcopy(self.manifest)
+        broken["capabilities"][0]["owner"] = 7
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "broken-manifest.json"
+            manifest_path.write_text(
+                json.dumps(broken), encoding="utf-8"
+            )
+            buffer = io.StringIO()
+            with contextlib.redirect_stderr(buffer):
+                code = cd.main(["--stdout", "--manifest", str(manifest_path)])
+        self.assertEqual(code, 2)
+        self.assertIn("manifest validation failed", buffer.getvalue())
+        self.assertIn(
+            "owner must be a non-empty string", buffer.getvalue()
+        )
+
+
 class MandatoryContractTests(unittest.TestCase):
     """The delivery contract cannot be weakened through the manifest (#126)."""
 

@@ -61,8 +61,44 @@ def load_manifest(path: Path) -> dict:
         return json.load(handle)
 
 
+def _as_list(value: object, what: str, errors: list[str]) -> list:
+    """Return ``value`` as a list, recording a schema error otherwise."""
+    # Container types are validated before iteration or concatenation so a
+    # malformed manifest (an int, string or object where a list is required)
+    # yields a schema error instead of an uncaught TypeError/AttributeError
+    # from the dereference itself.  A missing or null container behaves like
+    # the previous ``or []`` coercion and is reported by the field-specific
+    # checks instead.
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        errors.append(f"{what} must be a list")
+        return []
+    return value
+
+
+def _as_object(value: object, what: str, errors: list[str]) -> dict:
+    """Return ``value`` as a dict, recording a schema error otherwise."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        errors.append(f"{what} must be an object")
+        return {}
+    return value
+
+
 def _validate_validation_levels(levels: list, errors: list[str]) -> None:
     """Validate the editable validation-level set against the fixed names."""
+    # Non-string entries are reported and dropped before the set/membership
+    # checks: an unhashable entry (a list) used to raise TypeError from
+    # ``set(levels)`` instead of producing a schema error.
+    non_string = [level for level in levels if not isinstance(level, str)]
+    if non_string:
+        errors.append(
+            "enums.validation_levels entries must be strings "
+            f"(got {non_string!r})"
+        )
+        levels = [level for level in levels if isinstance(level, str)]
     if not levels:
         errors.append("enums.validation_levels must be a non-empty list")
         return
@@ -175,20 +211,36 @@ def _validate_targets(targets: list, errors: list[str]) -> list[str]:
 
 def _build_context(manifest: dict, errors: list[str]) -> SchemaContext:
     """Return the validated enum sets and target ids for a manifest."""
-    enums = manifest.get("enums") or {}
-    levels = enums.get("validation_levels") or []
+    # ``enums`` and every declared enum set are container-checked before they
+    # are dereferenced or concatenated: a malformed ``enums`` (a scalar or a
+    # list) used to raise AttributeError from ``enums.get(...)`` and a
+    # non-list ``evidence_kinds`` used to raise TypeError from the
+    # ``+ ["none"]`` concatenation in the supporting-evidence check.
+    enums = _as_object(manifest.get("enums"), "enums", errors)
+    levels = _as_list(
+        enums.get("validation_levels"), "enums.validation_levels", errors
+    )
     _validate_validation_levels(levels, errors)
-    modes = enums.get("modes") or []
+    modes = _as_list(enums.get("modes"), "enums.modes", errors)
     _validate_modes(modes, errors)
-    target_ids = _validate_targets(manifest.get("targets") or [], errors)
+    targets = _as_list(manifest.get("targets"), "targets", errors)
+    target_ids = _validate_targets(targets, errors)
 
     return SchemaContext(
         target_ids=target_ids,
         modes=modes,
-        implementation_states=enums.get("implementation_states") or [],
+        implementation_states=_as_list(
+            enums.get("implementation_states"),
+            "enums.implementation_states",
+            errors,
+        ),
         validation_levels=levels,
-        evidence_kinds=enums.get("evidence_kinds") or [],
-        provenance_classes=enums.get("provenance_classes") or [],
+        evidence_kinds=_as_list(
+            enums.get("evidence_kinds"), "enums.evidence_kinds", errors
+        ),
+        provenance_classes=_as_list(
+            enums.get("provenance_classes"), "enums.provenance_classes", errors
+        ),
     )
 
 
@@ -368,8 +420,12 @@ def _validate_capability_identity(
         )
     if not isinstance(capability.get("production_enrolled"), bool):
         errors.append(f"capability {cid}: production_enrolled must be a bool")
-    if not (capability.get("owner") or "").strip():
-        errors.append(f"capability {cid}: owner must be non-empty")
+    owner = capability.get("owner")
+    if not isinstance(owner, str) or not owner.strip():
+        # ``owner`` is dereferenced with ``.strip()``, so a non-string value
+        # (an int) used to raise AttributeError instead of producing this
+        # schema error.
+        errors.append(f"capability {cid}: owner must be a non-empty string")
     if not isinstance(capability.get("dependencies"), list):
         errors.append(f"capability {cid}: dependencies must be a list")
 
@@ -383,7 +439,14 @@ def _validate_capability_levels(
             f"capability {cid}: unknown strongest_validation "
             f"{capability.get('strongest_validation')!r}"
         )
-    for kind in capability.get("evidence_kinds") or []:
+    # ``evidence_kinds`` is iterated, so it is container-checked first: a
+    # scalar value used to raise TypeError from the iteration itself.
+    evidence_kinds = _as_list(
+        capability.get("evidence_kinds"),
+        f"capability {cid}: evidence_kinds",
+        errors,
+    )
+    for kind in evidence_kinds:
         if not context.knows_kind(kind):
             errors.append(f"capability {cid}: unknown evidence kind {kind!r}")
 
@@ -485,7 +548,8 @@ def _validate_capabilities(
     """Validate every capability row and reject duplicate ids."""
     seen_ids: set[str] = set()
     seen_pairs: set[tuple[str, str]] = set()
-    for capability in manifest.get("capabilities") or []:
+    capabilities = _as_list(manifest.get("capabilities"), "capabilities", errors)
+    for capability in capabilities:
         if not isinstance(capability, dict):
             # A null or scalar row used to raise AttributeError from
             # ``.get()``; report a schema error instead so validation never
@@ -513,18 +577,29 @@ def _validate_capabilities(
         )
         _validate_capability_identity(capability, cid, context, errors)
         _validate_capability_levels(capability, cid, context, errors)
-        _validate_evidence_fields(
-            capability, cid, capability.get("evidence") or {}, errors
+        evidence = _as_object(
+            capability.get("evidence"),
+            f"capability {cid}: evidence",
+            errors,
         )
-        if not (capability.get("blocker") or "").strip():
-            errors.append(f"capability {cid}: blocker must be non-empty")
+        _validate_evidence_fields(capability, cid, evidence, errors)
+        blocker = capability.get("blocker")
+        if not isinstance(blocker, str) or not blocker.strip():
+            # ``blocker`` is dereferenced with ``.strip()``, so a non-string
+            # value used to raise AttributeError like ``owner`` above.
+            errors.append(
+                f"capability {cid}: blocker must be a non-empty string"
+            )
 
 
 def _validate_supporting_evidence(
     manifest: dict, context: SchemaContext, errors: list[str]
 ) -> None:
     """Validate supporting rows, which can never count toward delivery."""
-    for item in manifest.get("supporting_evidence") or []:
+    supporting = _as_list(
+        manifest.get("supporting_evidence"), "supporting_evidence", errors
+    )
+    for item in supporting:
         if not isinstance(item, dict):
             # Same contract as capabilities: report the malformed row, never
             # raise from ``.get()``.
@@ -551,16 +626,33 @@ def _validate_supporting_evidence(
                 f"supporting evidence {sid}: supporting evidence must set "
                 "counts_toward_delivery=false"
             )
+        evidence = item.get("evidence")
+        if evidence is not None and not isinstance(evidence, dict):
+            # The renderer reads ``evidence.note``, so a truthy non-object
+            # evidence record used to pass validation and then raise
+            # AttributeError while rendering.
+            errors.append(
+                f"supporting evidence {sid}: evidence must be an object"
+            )
 
 
 def validate_manifest(manifest: dict) -> list[str]:
     """Return a list of human-readable schema errors (empty means valid)."""
+    if not isinstance(manifest, dict):
+        # ``json.load`` can hand back any JSON value and every helper below
+        # dereferences the manifest mapping, so a non-object root is one
+        # schema error instead of an uncaught AttributeError from ``.get()``.
+        return ["manifest must be a JSON object"]
     errors: list[str] = []
     if manifest.get("schema_version") != 1:
         errors.append("schema_version must be 1")
 
     context = _build_context(manifest, errors)
-    references = manifest.get("commercial_references") or []
+    references = _as_list(
+        manifest.get("commercial_references"),
+        "commercial_references",
+        errors,
+    )
     ref_ids = _validate_references(references, errors)
     _validate_aggregate(manifest, context, ref_ids, errors)
     _validate_capabilities(manifest, context, errors)
