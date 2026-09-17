@@ -44,7 +44,7 @@ echo %BUILD_NUMBER% > "%BUILD_FILE%"
     echo:
     echo char ^*__cdecl getBuildNumber^(^)^;
     echo int getBuildNumberAsInt^(^)^;
-    echo const char ^*__cdecl getSourceCommit^(^)^;
+    echo extern "C" const char ^*__cdecl getSourceCommit^(^)^;
 ) > "%HEADER_FILE%"
 
 echo Updated build number to %BUILD_NUMBER%

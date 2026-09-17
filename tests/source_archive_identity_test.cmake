@@ -7,8 +7,9 @@ cmake_minimum_required(VERSION 3.16)
 # src/source_identity.txt (src/.gitattributes marks it `export-subst`), and
 # scripts/extern/resolve_source_identity.cmake prefers an explicit override,
 # then a working checkout, then that carrier. These checks execute the resolver
-# against controlled trees and pin the wiring that carries the resolved commit
-# into the generated src/buildnumber.h.
+# against controlled trees, pin the wiring that carries the resolved commit into
+# the generated src/buildnumber.h, and prove the accessor's revision bytes
+# survive release dead-code elimination in a compiled artifact.
 
 if(NOT DEFINED SOURCE_ROOT OR SOURCE_ROOT STREQUAL "")
     message(FATAL_ERROR "SOURCE_ROOT must identify the KisakCOD source tree")
@@ -38,12 +39,65 @@ function(require_contains SOURCE_VARIABLE NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+# The ASCII-hex encoding of a commit string, matching ``file(READ ... HEX)`` so
+# a compiled artifact can be searched for the exact revision bytes without
+# decoding the whole binary. Commits are lowercase ``[0-9a-f]``, so each ASCII
+# byte encodes as ``3``+digit or ``6``+letter.
+function(commit_bytes_hex COMMIT OUT_VARIABLE)
+    set(_lookup "0123456789abcdef")
+    string(TOLOWER "${COMMIT}" _commit)
+    set(_hex "")
+    string(LENGTH "${_commit}" _length)
+    math(EXPR _last "${_length} - 1")
+    foreach(_index RANGE 0 ${_last})
+        string(SUBSTRING "${_commit}" ${_index} 1 _character)
+        string(FIND "${_lookup}" "${_character}" _nibble)
+        if(_nibble LESS 10)
+            # '0'..'9' are ASCII 0x30..0x39: high nibble 3, low nibble the digit.
+            set(_high "3")
+            set(_low "${_nibble}")
+        else()
+            # 'a'..'f' are ASCII 0x61..0x66: high nibble 6, low nibble 1..6.
+            set(_high "6")
+            math(EXPR _low "${_nibble} - 9")
+        endif()
+        string(SUBSTRING "${_lookup}" ${_low} 1 _low_character)
+        string(APPEND _hex "${_high}${_low_character}")
+    endforeach()
+    set(${OUT_VARIABLE} "${_hex}" PARENT_SCOPE)
+endfunction()
+
+# Require (@PRESENT TRUE) or forbid (@PRESENT FALSE) the exact revision bytes in
+# a linked artifact.
+function(require_identity_bytes PATH COMMIT PRESENT DESCRIPTION)
+    file(READ "${PATH}" _artifact_hex HEX)
+    commit_bytes_hex("${COMMIT}" _needle)
+    string(FIND "${_artifact_hex}" "${_needle}" _position)
+    if(PRESENT)
+        if(_position EQUAL -1)
+            message(FATAL_ERROR
+                "The release-linked artifact lost its source identity "
+                "(${DESCRIPTION}): '${COMMIT}' is absent from ${PATH}")
+        endif()
+    elseif(NOT _position EQUAL -1)
+        message(FATAL_ERROR
+            "The negative-retention control kept its source identity "
+            "(${DESCRIPTION}): '${COMMIT}' is present in ${PATH}")
+    endif()
+endfunction()
+
 # Prove the resolved commit reaches a compiled artifact from a git-free source
-# tree. The real src/buildnumber.cpp is compiled against a header stamped the
-# same way increment_build.sh/.cmd stamp it, and the linked binary must print
-# the carrier's commit. Before the accessor existed the macro was written to
-# the generated header but never referenced, so the released binary carried no
-# source identity at all.
+# tree, and that release dead-code elimination cannot discard it. The real
+# src/buildnumber.cpp is compiled against a header stamped the same way
+# increment_build.sh/.cmd stamp it, with the release optimization surface the
+# shipped binaries use: /Gy plus /OPT:REF on MSVC, and
+# -ffunction-sections/-fdata-sections plus --gc-sections on ELF. The fixture
+# caller deliberately uses only the production consumers (getBuildNumber and
+# getBuildNumberAsInt); it never calls getSourceCommit(), so the identity can
+# only survive through the retention mechanism defined beside the accessor. A
+# second fixture built from a copy with the retention markers removed is the
+# negative control: under the same optimization it must lose the bytes, which
+# proves the presence assertion is sensitive to the fix.
 function(check_compiled_identity)
     if(NOT DEFINED KISAK_TEST_CXX_COMPILER OR KISAK_TEST_CXX_COMPILER STREQUAL "")
         message(STATUS "No C++ compiler provided; skipping the compiled-identity case")
@@ -61,6 +115,17 @@ function(check_compiled_identity)
             "The git-free compile tree did not resolve its carrier: expected "
             "'${_archive_commit}', found '${_resolved}'")
     endif()
+    # The stripped copy is the negative control: identical translation unit with
+    # every retention mechanism removed.
+    file(READ "${SOURCE_ROOT}/src/buildnumber.cpp" _buildnumber_source)
+    foreach(_retention_marker IN ITEMS
+        "__attribute__((retain))"
+        "#pragma comment(linker, \"/include:_getSourceCommit\")"
+        "#pragma comment(linker, \"/include:getSourceCommit\")")
+        string(REPLACE "${_retention_marker}" "" _buildnumber_source
+            "${_buildnumber_source}")
+    endforeach()
+    file(WRITE "${_tree}/src/buildnumber_stripped.cpp" "${_buildnumber_source}")
     file(WRITE "${_tree}/src/buildnumber.h"
         "#pragma once\n"
         "#define BUILD_NUMBER 1\n"
@@ -68,28 +133,53 @@ function(check_compiled_identity)
         "\n"
         "char* getBuildNumber();\n"
         "int getBuildNumberAsInt();\n"
-        "const char* getSourceCommit();\n")
+        "extern \"C\" const char* getSourceCommit();\n")
     file(WRITE "${_tree}/main.cpp"
         "#include <cstdio>\n"
         "#include \"buildnumber.h\"\n"
-        "int main() { std::puts(getSourceCommit()); return 0; }\n")
+        "// Production consumers only: getSourceCommit() is deliberately not\n"
+        "// called, so the identity can only survive through the production\n"
+        "// retention mechanism, never a test-only reference.\n"
+        "int main() {\n"
+        "    std::printf(\"%d %s\\n\", getBuildNumberAsInt(), getBuildNumber());\n"
+        "    return 0;\n"
+        "}\n")
     # Build the fixture through the configured CMake toolchain/generator rather
     # than executing the compiler directly. A Visual Studio generator drives
     # cl.exe through MSBuild, which initializes the compiler's INCLUDE/LIB
     # environment; a bare cl.exe spawned from `cmake -P` inherits neither and
     # fails with C1083 (cannot open <stdio.h>). The nested project compiles the
-    # same real src/buildnumber.cpp accessor, so the exact identity assertion
-    # still runs against a genuine compiled consumer on every platform.
+    # same real src/buildnumber.cpp, so the exact byte assertion still runs
+    # against a genuine compiled consumer on every platform.
     file(WRITE "${_tree}/CMakeLists.txt"
         "cmake_minimum_required(VERSION 3.16)\n"
         "project(kisak_archive_identity_fixture CXX)\n"
-        "add_executable(identity-check\n"
+        "add_executable(identity-retained\n"
         "    \"\${CMAKE_CURRENT_SOURCE_DIR}/src/buildnumber.cpp\"\n"
         "    \"\${CMAKE_CURRENT_SOURCE_DIR}/main.cpp\")\n"
-        "target_include_directories(identity-check PRIVATE\n"
-        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/src\")\n"
-        "set_target_properties(identity-check PROPERTIES\n"
-        "    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)\n")
+        "add_executable(identity-stripped\n"
+        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/src/buildnumber_stripped.cpp\"\n"
+        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/main.cpp\")\n"
+        "foreach(_fixture IN ITEMS identity-retained identity-stripped)\n"
+        "    target_include_directories(\${_fixture} PRIVATE\n"
+        "        \"\${CMAKE_CURRENT_SOURCE_DIR}/src\")\n"
+        "    set_target_properties(\${_fixture} PROPERTIES\n"
+        "        CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)\n"
+        "    if(MSVC)\n"
+        "        target_compile_options(\${_fixture} PRIVATE \"\$<\$<CONFIG:Release>:/Gy>\")\n"
+        "        target_link_options(\${_fixture} PRIVATE\n"
+        "            \"\$<\$<CONFIG:Release>:/OPT:REF>\"\n"
+        "            \"\$<\$<CONFIG:Release>:/OPT:ICF>\")\n"
+        "    else()\n"
+        "        target_compile_options(\${_fixture} PRIVATE\n"
+        "            \"\$<\$<CONFIG:Release>:-ffunction-sections>\"\n"
+        "            \"\$<\$<CONFIG:Release>:-fdata-sections>\")\n"
+        "        if(NOT APPLE)\n"
+        "            target_link_options(\${_fixture} PRIVATE\n"
+        "                \"\$<\$<CONFIG:Release>:-Wl,--gc-sections>\")\n"
+        "        endif()\n"
+        "    endif()\n"
+        "endforeach()\n")
     set(_build "${_tree}/build")
     set(_configure_args "-S" "${_tree}" "-B" "${_build}")
     if(DEFINED KISAK_TEST_GENERATOR AND NOT KISAK_TEST_GENERATOR STREQUAL "")
@@ -139,32 +229,54 @@ function(check_compiled_identity)
     endif()
     # The executable suffix follows the host platform, not the compiler id:
     # every Windows toolchain (MSVC, MinGW GNU, clang-cl) produces
-    # ``identity-check.exe``, and keying on MSVC alone would miss the MinGW and
-    # clang-cl fixtures even though they built correctly.
+    # ``identity-retained.exe``, and keying on MSVC alone would miss the MinGW
+    # and clang-cl fixtures even though they built correctly.
     if(CMAKE_HOST_WIN32)
-        set(_exe_name "identity-check.exe")
+        set(_retained_name "identity-retained.exe")
+        set(_stripped_name "identity-stripped.exe")
     else()
-        set(_exe_name "identity-check")
+        set(_retained_name "identity-retained")
+        set(_stripped_name "identity-stripped")
     endif()
-    file(GLOB_RECURSE _exe_candidates "${_build}/${_exe_name}")
-    list(FILTER _exe_candidates EXCLUDE REGEX "/CMakeFiles/")
-    if(NOT _exe_candidates)
+    file(GLOB_RECURSE _retained_candidates "${_build}/${_retained_name}")
+    list(FILTER _retained_candidates EXCLUDE REGEX "/CMakeFiles/")
+    if(NOT _retained_candidates)
         message(FATAL_ERROR
-            "The compiled archive-build identity fixture produced no ${_exe_name}")
+            "The compiled archive-build identity fixture produced no ${_retained_name}")
     endif()
-    list(GET _exe_candidates 0 _exe)
+    list(GET _retained_candidates 0 _retained_exe)
+    file(GLOB_RECURSE _stripped_candidates "${_build}/${_stripped_name}")
+    list(FILTER _stripped_candidates EXCLUDE REGEX "/CMakeFiles/")
+    if(NOT _stripped_candidates)
+        message(FATAL_ERROR
+            "The compiled archive-build identity fixture produced no ${_stripped_name}")
+    endif()
+    list(GET _stripped_candidates 0 _stripped_exe)
     execute_process(
-        COMMAND "${_exe}"
-        OUTPUT_VARIABLE _compiled_identity
+        COMMAND "${_retained_exe}"
+        OUTPUT_VARIABLE _compiled_output
         OUTPUT_STRIP_TRAILING_WHITESPACE
         RESULT_VARIABLE _run_result)
     if(NOT _run_result EQUAL 0)
-        message(FATAL_ERROR "The compiled archive-build identity check did not run")
-    endif()
-    if(NOT _compiled_identity STREQUAL "${_archive_commit}")
         message(FATAL_ERROR
-            "The compiled archive build did not record its source commit: "
-            "expected '${_archive_commit}', found '${_compiled_identity}'")
+            "The compiled archive-build identity fixture did not run: "
+            "${_compiled_output}")
+    endif()
+    require_identity_bytes("${_retained_exe}" "${_archive_commit}" TRUE
+        "getSourceCommit is retained through release dead stripping")
+    # The negative control is meaningful only where the fixture's own flags
+    # deterministically dead-strip the unreferenced accessor and its literal.
+    # GNU on ELF splits the literal into its own section, so --gc-sections
+    # removes it once the function is dropped. Clang merges string literals
+    # into one .rodata.str1.1 section that surviving consumers keep alive,
+    # Darwin's default Release link does not dead-strip, and MSVC only discards
+    # the data as a COMDAT (not cl.exe's default), so the assertion is
+    # restricted to the GNU/ELF leg where it is deterministic. The positive
+    # retention assertion above still runs on every platform.
+    if(KISAK_TEST_CXX_COMPILER_ID STREQUAL "GNU"
+            AND CMAKE_HOST_UNIX AND NOT CMAKE_HOST_APPLE)
+        require_identity_bytes("${_stripped_exe}" "${_archive_commit}" FALSE
+            "removing the retention markers drops the identity under release dead stripping")
     endif()
 endfunction()
 
@@ -232,6 +344,19 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
     elseif(CONTRACT_MUTATION STREQUAL "cpp_getter")
         string(REPLACE
             "getSourceCommit"
+            ""
+            _buildnumber_cpp "${_buildnumber_cpp}")
+    elseif(CONTRACT_MUTATION STREQUAL "cpp_retention")
+        string(REPLACE
+            "__attribute__((retain))"
+            ""
+            _buildnumber_cpp "${_buildnumber_cpp}")
+        string(REPLACE
+            "KISAK_SOURCE_IDENTITY_RETAIN const char"
+            ""
+            _buildnumber_cpp "${_buildnumber_cpp}")
+        string(REPLACE
+            "/include:getSourceCommit"
             ""
             _buildnumber_cpp "${_buildnumber_cpp}")
     elseif(CONTRACT_MUTATION STREQUAL "sh_header_getter")
@@ -302,12 +427,33 @@ require_contains(
 require_contains(
     _cmd "getSourceCommit"
     "the Windows stamp script declares the source-commit accessor")
+# The definition uses C linkage so the retention directive can name a stable
+# linker symbol; the generated declarations must match or the accessor does not
+# link.
+require_contains(
+    _sh "extern \"C\" const char* getSourceCommit();"
+    "the POSIX stamp script declares the source-commit accessor with C linkage")
+require_contains(
+    _cmd "extern \"C\" const char ^*__cdecl getSourceCommit^(^)^;"
+    "the Windows stamp script declares the source-commit accessor with C linkage")
 require_contains(
     _buildnumber_cpp "KISAK_SOURCE_COMMIT"
     "the compiled build-number TU references the source commit macro")
 require_contains(
     _buildnumber_cpp "getSourceCommit"
     "the compiled build-number TU defines the source-commit accessor")
+# Referencing the macro is not enough under release optimization: the compiled
+# TU must also force the accessor into the linked image, or the linker discards
+# it together with its revision string.
+require_contains(
+    _buildnumber_cpp "__attribute__((retain))"
+    "the compiled build-number TU marks the source-commit accessor retain")
+require_contains(
+    _buildnumber_cpp "KISAK_SOURCE_IDENTITY_RETAIN const char"
+    "the compiled build-number TU applies the retention attribute to the accessor")
+require_contains(
+    _buildnumber_cpp "/include:getSourceCommit"
+    "the compiled build-number TU forces the source-commit accessor into the image")
 
 # The contract must run in the portable suite it is written for.
 require_contains(
@@ -491,6 +637,7 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         cmake_resolver_call
         cpp_consumer
         cpp_getter
+        cpp_retention
         sh_header_getter
         cmd_header_getter
         test_registration

@@ -43,7 +43,7 @@ cat <<EOF > "$HEADER_FILE"
 
 char* getBuildNumber();
 int getBuildNumberAsInt();
-const char* getSourceCommit();
+extern "C" const char* getSourceCommit();
 EOF
 
 echo "Updated build number to $BUILD_NUMBER"
