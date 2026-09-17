@@ -68,7 +68,11 @@ requirements.
 
 **In scope for the headless dedicated server only where it shares the surface:**
 filesystem paths/normalization, console/stdio behavior, process lifecycle,
-startup diagnostics.
+startup diagnostics. Shared-surface requirements are evidenced **per role**:
+client results and dedicated-server results are independent evidence and
+neither certifies the other. Profile/UI-only operations are client-role tests
+and are never forced onto headless roles; a headless role's evidence covers
+the writable paths and clean-start diagnostics that role actually produces.
 
 **Out of scope, explicitly deferred:** game controllers/rumble (beyond the
 existing Win32 DirectInput path), HDR and other new display features, audio
@@ -297,9 +301,13 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
 
 ### P1 — Writable paths and read-only retail discovery
 
-- **P1.1** The client MUST separate, by role: a **read-only retail data root**
-  (discovered, never written during normal play) and a **per-user writable
-  root** for config, cache, logs, and (SP, when resumed) saves.
+- **P1.1** Each shipped role — the MP client, and the headless dedicated
+  server for the filesystem surface it shares per §2 — MUST separate: a
+  **read-only retail data root** (discovered, never written during normal
+  play) and a **per-user writable root** for config, cache, logs, and, for
+  the client only, (SP, when resumed) saves. The separation MUST be
+  evidenced independently per role: client results MUST NOT certify the
+  dedicated server's writable paths or clean start, and vice versa.
 - **P1.2** The writable root MUST use the platform convention:
   Windows `%APPDATA%`/`%LOCALAPPDATA%` (roaming for config, local for
   cache/logs; if either variable is unset or empty, the affected role roots
@@ -312,7 +320,15 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
   MUST fail closed with an actionable diagnostic and MUST NOT fall back to
   writing under the install or retail data tree),
   Linux `$XDG_CONFIG_HOME`/`$XDG_CACHE_HOME`/`$XDG_STATE_HOME`
-  (falling back to `~/.config`, `~/.cache`, `~/.local/state`), macOS
+  (falling back to `~/.config`, `~/.cache`, `~/.local/state`); per the
+  [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/)
+  each variable is honored only when it names an **absolute** path: an
+  **empty** value MUST be treated as unset (per-role default), a
+  **relative** value MUST be ignored as invalid (per-role default;
+  CWD-relative resolution MUST NOT be accepted), and if no usable root can
+  be resolved (for example no determinable home directory), resolution MUST
+  fail closed with an actionable diagnostic and MUST NOT fall back to
+  writing under the install or retail data tree), macOS
   config/state under `~/Library/Application Support`, cache under
   `~/Library/Caches`, and logs under `~/Library/Logs`.
 - **P1.3** The retail data root MUST be selectable (install path, `-basepath`,
@@ -337,8 +353,11 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
   (`com_files.cpp` ~2232; the `fs_homepath` block ~2238–2244 adds
   devraw/raw only). These remaining base-path writers and the missing home
   `players` search enrollment MUST NOT be treated as satisfied by the
-  `fs_homepath` override; DP-FS-07 covers create/delete and the full
-  save/restart/reload cycle with separated writable and read-only roots.
+  `fs_homepath` override; DP-FS-07 covers the ordered
+  create/select/save/restart/reload/delete lifecycle with separated
+  writable and read-only roots. Player profiles are a client-role surface:
+  dedicated-server roles have no player profiles, and this requirement and
+  DP-FS-07 are not asserted on headless roles.
 
 ### P2 — Case-sensitive filenames and safe path normalization
 
@@ -531,13 +550,13 @@ satisfy the row). No row is `pass`.
 
 | ID | Requirement | Procedure / harness | Platforms | Required evidence | Status |
 |---|---|---|---|---|---|
-| DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert each artifact lands in its **exact role-specific root** and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%`, cache and logs under `%LOCALAPPDATA%`; with `%APPDATA%` or `%LOCALAPPDATA%` unset or empty, the affected role roots MUST land where `SHGetKnownFolderPath` resolves `FOLDERID_RoamingAppData` (config) and `FOLDERID_LocalAppData` (cache/logs) with the per-role split preserved — the assertion is equality with the Known Folder API result, not with the default `%USERPROFILE%\AppData` layout, so a redirected session still passes and a default-layout re-derivation fails; when the applicable Known Folder lookup fails, launch MUST fail with an actionable diagnostic and no engine write under install/data. Linux: config under `$XDG_CONFIG_HOME` (fallback `~/.config`), cache under `$XDG_CACHE_HOME` (fallback `~/.cache`), state/logs under `$XDG_STATE_HOME` (fallback `~/.local/state`). macOS: config/state under `~/Library/Application Support`, cache under `~/Library/Caches`, logs under `~/Library/Logs`. Repeat with each environment variable overridden and with it unset to assert the documented fallbacks. A build that puts every artifact under one singular root (for example all of `%APPDATA%` or all of `$XDG_CONFIG_HOME`) MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log | planned |
+| DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert each artifact lands in its **exact role-specific root** and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%`, cache and logs under `%LOCALAPPDATA%`; with `%APPDATA%` or `%LOCALAPPDATA%` unset or empty, the affected role roots MUST land where `SHGetKnownFolderPath` resolves `FOLDERID_RoamingAppData` (config) and `FOLDERID_LocalAppData` (cache/logs) with the per-role split preserved — the assertion is equality with the Known Folder API result, not with the default `%USERPROFILE%\AppData` layout, so a redirected session still passes and a default-layout re-derivation fails; when the applicable Known Folder lookup fails, launch MUST fail with an actionable diagnostic and no engine write under install/data. Linux: config under `$XDG_CONFIG_HOME` (fallback `~/.config`), cache under `$XDG_CACHE_HOME` (fallback `~/.cache`), state/logs under `$XDG_STATE_HOME` (fallback `~/.local/state`); for each XDG variable also assert the **empty** value (treated as unset → per-role default) and a **relative** value such as `relative/path` (ignored as invalid → per-role default), and that no such run writes under the install/data tree or resolves a CWD-relative root; when no usable root can be resolved, launch MUST fail with an actionable diagnostic and no install/data write. macOS: config/state under `~/Library/Application Support`, cache under `~/Library/Caches`, logs under `~/Library/Logs`. Repeat with each environment variable overridden, empty, set to a relative path, and unset, to assert the documented behavior for every case. Evidence is recorded independently for the **client** role and the **headless dedicated server** role on each OS: the server asserts the writable config/cache/log roots and clean-start diagnostics it actually produces, client results MUST NOT certify the dedicated server paths (or vice versa), and client-only profile/UI operations are not asserted on headless roles. A build that puts every artifact under one singular root (for example all of `%APPDATA%` or all of `$XDG_CONFIG_HOME`) MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log (per role) | planned |
 | DP-FS-02 | P2.1/P2.1a case-sensitive lookup | On a case-sensitive host, place a mixed-case asset and require exact-case resolution first; assert a folded fallback only under the P2.1a conditions (read-only retail/mod content, single unambiguous match) and assert fail-closed rejection on a case-only collision. A fallback not validated against a commercial reference stays unproven. | Linux | Linux test with retail-shaped fixture + commercial-reference result | partial |
 | DP-FS-03 | P2.2/P2.2a backend rejection **and** positive acceptance at the general path-accepting operations | Through a **production path-accepting operation** — `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`) and `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`) — assert **per platform** both negatives and positives. Win negatives: `..`, control/Win32-invalid bytes, reserved DOS device base names, trailing dot/space, over-long individual components, and a distinct component-count overflow case (more than `kMaximumPathComponents` = 256 short components, each individually legal, exercising the count guard in win32 `HasUnsafeRawComponent` — src/_platform/win32/sys_filesystem.cpp ~223 — so the row cannot pass if only the over-long-component check survives); fail closed with no effect. Linux/macOS negatives: invalid UTF-8, `..`, component-count overflow. Positives (all platforms): a well-formed absolute path under a configured/temp root succeeds, because these are general filesystem APIs rather than engine-relative gates; on Linux/macOS a DOS device base name such as `CON` is a valid filename and MUST NOT be rejected without contrary compatibility evidence; the compare/sort helpers remain non-validating. `TestFilteredCollectionAndPathHelpers` covers normalization/ordering only and cannot satisfy this row. | Win, Linux, macOS | CTest output at exact head | partial |
 | DP-FS-04 | P2.3 path-length bound | Build an over-length engine path and assert fail-closed with diagnostic, no truncation | Win, Linux, macOS | CTest output | partial |
 | DP-FS-05 | P2.4 no-follow enumeration | Existing remove-tree/list link/reparse cases plus an asset-discovery walk | Win, Linux, macOS | CTest output | partial |
 | DP-FS-06 | P2.2b rooted engine-relative input validation (separately planned) | Feed untrusted engine-relative `qpath` values (absolute segments, `..` traversal, `\`/`:` alias spellings, invalid bytes) through the rooted caller that joins them to the trusted engine root and assert fail-closed rejection before any path-accepting or open operation, while legitimate absolute API inputs from P2.2a still succeed. Include link/reparse coverage: a lexically clean `qpath` that traverses an in-root symlink/reparse component to a target outside the root MUST fail closed at the rooted no-follow open, and any returned handle MUST refer to a target under the root. DP-FS-05's enumeration-only exclusion does not satisfy this row. Rooted validator not implemented at the recorded SHA; no production behavior change in this definition stage and no retail wire/command change. | Win, Linux, macOS | CTest output at exact head | planned |
-| DP-FS-07 | P1.5 player-profile create/delete **and save/restart/reload persistence** under separated roots | With a distinct writable per-user root and a read-only install/retail root: (a) create and delete a player profile; assert the `players/<profile>` directory is created and removed under the writable root and that neither operation touches or fails on the read-only install tree; (b) select the profile and save — assert `profiles/active.txt` (`Com_ChangePlayerProfile` ~648 → `FS_WriteFileToDir` → `FS_FOpenFileWriteToDirForThread`, `com_files.cpp` ~3170) and the profile's `config_mp.cfg`/stats artifacts are written under the writable root with nothing written into the read-only retail tree; (c) restart the engine (fresh `FS_Startup`) and assert `Com_SetInitialPlayerProfile` (`com_playerprofile.cpp` ~145) re-selects the same profile by reading `profiles/active.txt` through the search paths and that the saved config/stats reload from the writable root. At the recorded SHA create/delete target `fs_basepath` (`com_playerprofile.cpp` ~210/~171), the active-profile write targets `fs_homepath` (`com_files.cpp` ~3170), and `FS_Startup` enrolls `players` as a search path only under `fs_basepath` (~2232; the `fs_homepath` block adds devraw/raw only) — a build that leaves the writable root's `players` directory un-enrolled MUST fail the restart/reload leg and cannot pass this row. | Win, Linux, macOS | CTest output + path trace | planned |
+| DP-FS-07 | P1.5 player-profile create/select/save/restart/reload/delete lifecycle under separated roots (client role) | With a distinct writable per-user root and a read-only install/retail root, run one ordered lifecycle over the same profile; the deletion leg runs last (or against an explicitly separate deletion profile) so it cannot invalidate the persistence legs: (a) create the profile; assert the `players/<profile>` directory is created under the writable root and the read-only install tree is not touched or failed on; (b) select the profile and save — assert `profiles/active.txt` (`Com_ChangePlayerProfile` ~648 → `FS_WriteFileToDir` → `FS_FOpenFileWriteToDirForThread`, `com_files.cpp` ~3170) and the profile's `config_mp.cfg`/stats artifacts are written under the writable root with nothing written into the read-only retail tree; (c) restart the engine (fresh `FS_Startup`) and assert `Com_SetInitialPlayerProfile` (`com_playerprofile.cpp` ~145) re-selects the same profile by reading `profiles/active.txt` through the search paths and that the saved config/stats reload from the writable root; (d) delete the profile; assert the `players/<profile>` directory is removed under the writable root and the read-only install tree is not touched or failed on. At the recorded SHA create/delete target `fs_basepath` (`com_playerprofile.cpp` ~210/~171), the active-profile write targets `fs_homepath` (`com_files.cpp` ~3170), and `FS_Startup` enrolls `players` as a search path only under `fs_basepath` (~2232; the `fs_homepath` block adds devraw/raw only) — a build that leaves the writable root's `players` directory un-enrolled MUST fail the restart/reload leg and cannot pass this row. | Win, Linux, macOS (client role; dedicated servers have no player profiles) | CTest output + path trace | planned |
 | DP-IN-01 | P3.1 non-US keys/text | Scripted layout matrix (de/fr/ja) through the window/input seam: dead keys, AltGr, text field, IME | Win, Linux, macOS | Input harness trace | planned |
 | DP-IN-02 | P3.2 clipboard | Get/set round-trip for ASCII, non-ASCII, overlong and empty text in text fields | Win, Linux, macOS | Harness output | planned |
 | DP-IN-03 | P3.3 relative mouse | Feed a fixed physical-motion trace and compare per-frame deltas against the Win32 baseline under fixed dvars | Win, Linux, macOS | Delta trace diff | planned |
@@ -548,7 +567,7 @@ satisfy the row). No row is `pass`.
 | DP-CMD-01 | P5.1–P5.3 usercmd preservation | Same input trace through the migration; compare against the Win32 baseline AND the #127/A05 commercial reference fixtures | Win, Linux, macOS | Trace diff + #127 fixtures | blocked on #127/#122 |
 | DP-DEV-01 | P6.1 absent display/input device | Start with no display or input device, or with a forced display/input init failure; assert bounded diagnostic and fallback/clean exit. Absent/failed audio devices are A10 ([#132](https://github.com/jm2/kisakcod/issues/132)), not this row. | Win, Linux, macOS | Harness output + exit code | planned |
 | DP-DEV-02 | P6.2 cleanup/restart | Fail init midway, clean up, restart; assert idempotent cleanup and no leaked global state | Win, Linux, macOS | Harness output | planned |
-| DP-DEV-03 | P6.3 clean-machine startup | Fresh image, no config, read-only data dir, malformed config; assert actionable diagnostics | Win, Linux, macOS | Image run log | planned |
+| DP-DEV-03 | P6.3 clean-machine startup | Fresh image, no config, read-only data dir, malformed config; assert actionable diagnostics. Run and record independently per role (client and headless dedicated server): a client run does not certify the server role, and headless evidence covers the diagnostics that role actually produces | Win, Linux, macOS | Image run log (per role) | planned |
 | DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) for **every** row, independently per role and per architecture — explicitly including Linux arm64 client/server, the separate Windows x86 and Windows amd64 client rows (each with its own architecture-specific minimum-configuration evidence; PORTING.md M6 tracks amd64 client delivery independently), and every Windows server row (x86 dedicated, amd64 headless, ARM64 headless); a client result never certifies the server role of the same OS (PORTING.md M6/M11 track the roles separately). The Windows ARM64 client and Windows ARM64 headless server rows are **blocked** — no validated ARM64 OS floor, and the client's committed Vulkan endpoint is additionally unvalidated on ARM64 — and this row MUST NOT pass while either stays blocked | All targets | Requirements doc + measured evidence | planned |
 
 ## 7. Retail usercmd invariants that must not change
@@ -685,6 +704,32 @@ authorized to change in the platform migration:
   carries separate Windows x86 client and Windows amd64 client rows, and
   DP-REQ-01 requires architecture-specific minimum-configuration evidence
   for each. Documentation-only, no runtime behavior change.
+- Recorded reason for the DP-FS-07 ordered profile lifecycle, the per-role
+  client/headless evidence rules (§2, P1.1, P1.5, DP-FS-01, DP-DEV-03) and
+  the XDG empty/relative-value contract (P1.2, DP-FS-01): fresh requested
+  review of PR #148 at head `b1dec7f3`
+  ([discussion_r4040801246](https://github.com/jm2/kisakcod/pull/148#discussion_r4040801246),
+  [discussion_r4040801252](https://github.com/jm2/kisakcod/pull/148#discussion_r4040801252),
+  [discussion_r4040801263](https://github.com/jm2/kisakcod/pull/148#discussion_r4040801263))
+  found that DP-FS-07's step (a) created *and deleted* the profile before
+  steps (b)/(c) selected, saved and reloaded that same profile, so the row
+  was not runnable as written; that §2 declared headless-server
+  filesystem/diagnostic coverage while P1.1/DP-FS-01 mandated and evidenced
+  client behavior only; and that P1.2/DP-FS-01 defined neither empty nor
+  relative XDG values, which the
+  [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/)
+  resolves as unset (empty) and invalid-ignored (relative), requiring
+  absolute paths. DP-FS-07 now runs one ordered
+  create/select/save/restart/reload/delete lifecycle (deletion last, or
+  against an explicitly separate deletion profile) preserving every
+  separated-root, config/stats and missing-home-`players`-enrollment
+  assertion; shared-surface requirements are evidenced independently per
+  role with client results never certifying dedicated-server paths and
+  profile/UI-only tests scoped to client roles; and XDG variables are
+  defined and tested for unset, empty, relative and valid-absolute cases
+  with per-role fallback locations, no CWD-relative acceptance, no
+  install-tree writes and fail-closed diagnostics when no usable root
+  resolves. Documentation-only, no runtime behavior change.
 - The SDL migration must land behind the seam described here; do not reclassify
   an unimplemented window/input/filesystem behavior as "done" because a
   primitive compiles or a portable helper test passes.
