@@ -7,16 +7,19 @@
 #
 # This module is the entry point registered with ctest. The source-archive and
 # inventory suites were split into sibling modules to keep each file's
-# non-comment line count under the analyzer's per-file limit; build_suite()
-# loads them so a direct run still executes the whole contract. Run directly
+# non-comment line count under the analyzer's per-file limit; they are imported
+# statically below so build_suite() assembles one runnable suite and a direct
+# run still executes the whole contract. Run directly
 # (``python3 scripts/ci/test_release_provenance.py``) or through ctest.
 
 from __future__ import annotations
 
-import importlib
 import json
 import sys
 import unittest
+
+import test_release_provenance_archive
+import test_release_provenance_inventory
 
 from release_provenance_testlib import (
     COMMIT,
@@ -24,11 +27,6 @@ from release_provenance_testlib import (
     TAG,
     ReleaseProvenanceTestBase,
     run_tool,
-)
-
-SIBLING_TEST_MODULES = (
-    "test_release_provenance_archive",
-    "test_release_provenance_inventory",
 )
 
 
@@ -264,8 +262,8 @@ def build_suite() -> unittest.TestSuite:
     """Load this module and its split sibling suites into one runnable suite."""
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromModule(sys.modules[__name__])
-    for name in SIBLING_TEST_MODULES:
-        suite.addTests(loader.loadTestsFromModule(importlib.import_module(name)))
+    suite.addTests(loader.loadTestsFromModule(test_release_provenance_archive))
+    suite.addTests(loader.loadTestsFromModule(test_release_provenance_inventory))
     return suite
 
 
