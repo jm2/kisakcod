@@ -293,7 +293,8 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
   Windows `%APPDATA%`/`%LOCALAPPDATA%` (roaming for config, local for
   cache/logs), Linux `$XDG_CONFIG_HOME`/`$XDG_CACHE_HOME`/`$XDG_STATE_HOME`
   (falling back to `~/.config`, `~/.cache`, `~/.local/state`), macOS
-  `~/Library/Application Support` and `~/Library/Logs`.
+  config/state under `~/Library/Application Support`, cache under
+  `~/Library/Caches`, and logs under `~/Library/Logs`.
 - **P1.3** The retail data root MUST be selectable (install path, `-basepath`,
   or equivalent) and MUST be validated read-only for engine-managed writes;
   failure to discover it MUST produce an actionable diagnostic, not a crash or
@@ -487,7 +488,7 @@ satisfy the row). No row is `pass`.
 
 | ID | Requirement | Procedure / harness | Platforms | Required evidence | Status |
 |---|---|---|---|---|---|
-| DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert each artifact lands in its **exact role-specific root** and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%`, cache and logs under `%LOCALAPPDATA%`. Linux: config under `$XDG_CONFIG_HOME` (fallback `~/.config`), cache under `$XDG_CACHE_HOME` (fallback `~/.cache`), state/logs under `$XDG_STATE_HOME` (fallback `~/.local/state`). macOS: config/state under `~/Library/Application Support`, logs under `~/Library/Logs`. Repeat with each environment variable overridden and with it unset to assert the documented fallbacks. A build that puts every artifact under one singular root (for example all of `%APPDATA%` or all of `$XDG_CONFIG_HOME`) MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log | planned |
+| DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert each artifact lands in its **exact role-specific root** and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%`, cache and logs under `%LOCALAPPDATA%`. Linux: config under `$XDG_CONFIG_HOME` (fallback `~/.config`), cache under `$XDG_CACHE_HOME` (fallback `~/.cache`), state/logs under `$XDG_STATE_HOME` (fallback `~/.local/state`). macOS: config/state under `~/Library/Application Support`, cache under `~/Library/Caches`, logs under `~/Library/Logs`. Repeat with each environment variable overridden and with it unset to assert the documented fallbacks. A build that puts every artifact under one singular root (for example all of `%APPDATA%` or all of `$XDG_CONFIG_HOME`) MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log | planned |
 | DP-FS-02 | P2.1/P2.1a case-sensitive lookup | On a case-sensitive host, place a mixed-case asset and require exact-case resolution first; assert a folded fallback only under the P2.1a conditions (read-only retail/mod content, single unambiguous match) and assert fail-closed rejection on a case-only collision. A fallback not validated against a commercial reference stays unproven. | Linux | Linux test with retail-shaped fixture + commercial-reference result | partial |
 | DP-FS-03 | P2.2/P2.2a backend rejection **and** positive acceptance at the general path-accepting operations | Through a **production path-accepting operation** — `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`) and `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`) — assert **per platform** both negatives and positives. Win negatives: `..`, control/Win32-invalid bytes, reserved DOS device base names, trailing dot/space, over-long components; fail closed with no effect. Linux/macOS negatives: invalid UTF-8, `..`, component-count overflow. Positives (all platforms): a well-formed absolute path under a configured/temp root succeeds, because these are general filesystem APIs rather than engine-relative gates; on Linux/macOS a DOS device base name such as `CON` is a valid filename and MUST NOT be rejected without contrary compatibility evidence; the compare/sort helpers remain non-validating. `TestFilteredCollectionAndPathHelpers` covers normalization/ordering only and cannot satisfy this row. | Win, Linux, macOS | CTest output at exact head | partial |
 | DP-FS-04 | P2.3 path-length bound | Build an over-length engine path and assert fail-closed with diagnostic, no truncation | Win, Linux, macOS | CTest output | partial |
@@ -570,6 +571,14 @@ authorized to change in the platform migration:
   could pass with an in-root symlink/reparse escape, that DP-FS-01 did not test
   the separate P1.2 per-role roots, that the §5 table omitted Linux arm64, and
   that P4.4 conflated OS power resume with raw thread suspend/resume.
+- Recorded reason for adding the macOS cache root to P1.2 and DP-FS-01:
+  final-head review of PR #148 ([discussion_r4034644017](https://github.com/jm2/kisakcod/pull/148#discussion_r4034644017))
+  found that P1.1 includes cache but P1.2 and the DP-FS-01 macOS clause listed
+  only Application Support config/state and Library/Logs, so the role-specific
+  acceptance gate never verified macOS caches despite requiring exact
+  role-specific locations and excluding writes into the install tree. The
+  chosen convention is `~/Library/Caches`; documentation-only, no runtime
+  behavior change.
 - The SDL migration must land behind the seam described here; do not reclassify
   an unimplemented window/input/filesystem behavior as "done" because a
   primitive compiles or a portable helper test passes.
