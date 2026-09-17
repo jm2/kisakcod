@@ -759,14 +759,25 @@ otherwise:
   `tests/db_validation_tests.cpp` (§11) operate on `uint32` sizes/offsets in
   that token domain — they pin top-of-token-space behavior (sentinels,
   block-4 tail) and do **not** execute >4 GiB host addresses. Full-width
-  (>4 GiB) host storage/conversion coverage exists only where a named test
-  pins it: `TestPointerBytesRemainNativeWidth`
+  (>4 GiB) host storage/conversion coverage is pinned where a named test pins
+  it — and the pins are not confined to one family (§12 keeps the evidence
+  kinds distinct): `TestPointerBytesRemainNativeWidth`
   (`tests/model_surface_stream_tests.cpp:341`, ctest
-  `renderer-model-surface-stream-contracts`, XModel/XSurface family) plus the
-  cross-family static gates (`pointer-truncation-tripwire`, 24 tracked
-  narrow-conversion sites; `abi-sizeof-debt-tripwire`). Every other family's
-  host-width behavior therefore carries a high-address **ME** classification
-  (§12): token-domain bounds are proven, >4 GiB execution is not.
+  `renderer-model-surface-stream-contracts`, XModel/XSurface family —
+  synthetic high-address pointer-bit preservation) and
+  `TestHappyPathAndFullWidthIdentities`
+  (`tests/fx_fastfile_impact_native_disk32_tests.cpp:564-635`, ctest
+  `effectscore-fastfile-impact-native-disk32-conversion`, FX / ImpactFx
+  family — real high-address conversion: the materialized native impact
+  table's every native handle is compared to its resolved identity, and each
+  expected address is asserted to exceed `UINT32_MAX` on 64-bit, `:615-624`)
+  plus the cross-family static gates (`pointer-truncation-tripwire`, 24
+  tracked narrow-conversion sites; `abi-sizeof-debt-tripwire`). Both fixtures
+  are bounded test-process conversion/storage receipts — neither is
+  production enrollment (the FX/impact native binding is still zero-caller,
+  §4) nor retail parity. Every family whose row does not name one of these
+  pins still carries a high-address **ME** classification (§12): token-domain
+  bounds are proven, >4 GiB execution is not.
 
 Per-family matrix:
 
@@ -928,14 +939,28 @@ production wiring before a capability can be claimed. **MI** rows are the
 honest "the portable rewrite has not happened" entries and must not be
 closed by documentation.
 
-**High-address (>4 GiB) evidence, per family.** No family has an execution
-fixture exercising >4 GiB host addresses. The only full-width pins are
-`TestPointerBytesRemainNativeWidth` (XModel/XSurface family, via ctest
-`renderer-model-surface-stream-contracts`) and the cross-family static
-gates (`pointer-truncation-tripwire`, `abi-sizeof-debt-tripwire`) — see
-§10's token-domain vs host-width breakdown. Every family row above that
-does not name one of those pins therefore carries an implicit high-address
-**ME** entry on top of any explicitly listed gaps.
+**High-address (>4 GiB) evidence, per family.** Four evidence kinds are kept
+distinct and must not be conflated: (a) **synthetic pointer-bit
+preservation** — `TestPointerBytesRemainNativeWidth` (XModel/XSurface family,
+via ctest `renderer-model-surface-stream-contracts`); (b) **real high-address
+conversion** — `TestHappyPathAndFullWidthIdentities`
+(`tests/fx_fastfile_impact_native_disk32_tests.cpp:564-635`, FX / ImpactFx
+family, via ctest `effectscore-fastfile-impact-native-disk32-conversion`): it
+materializes the native impact table and compares every native handle to its
+resolved identity, asserting each expected address exceeds `UINT32_MAX` on
+64-bit (`:615-624`); (c) **token-domain arithmetic** — the `uint32`
+sentinel/block/span tests, all families; (d) **production execution** — a
+shipping profile exercising >4 GiB host addresses: **none**. Beyond (a) and
+the cross-family static gates (`pointer-truncation-tripwire`,
+`abi-sizeof-debt-tripwire`), only the FX / ImpactFx family currently holds a
+(b)-class receipt; the other FX fixture cases that touch high addresses are
+synthetic and failure-path-only (forced wrapped asset identities,
+`fx_fastfile_impact_native_disk32_tests.cpp:820-822`; a limit-valued output
+pointer rejected by the materialization preflight, `:1256-1262`), and (d)
+remains open for **every** family — the FX/impact production binding is still
+zero-caller (§4). Every family row above that does not name one of these pins
+therefore carries an implicit high-address **ME** entry on top of any
+explicitly listed gaps.
 
 ---
 
@@ -991,12 +1016,35 @@ does not name one of those pins therefore carries an implicit high-address
     `disk32_tests.cpp`) from >4 GiB host storage/conversion coverage, which
     exists only via `TestPointerBytesRemainNativeWidth` (XModel/XSurface) and
     the static truncation/ABI gates; every other family records an explicit
-    high-address **ME** entry (§12 note).
+    high-address **ME** entry (§12 note). *(High-address wording superseded
+    by the `e59c95d7` rework entry below, which credits the FX / ImpactFx
+    conversion fixture.)*
   - §12's Script VM row credits the **merged** PR #119 (`f0b4157a`, verified
     ancestor of basis `ba508d15` via `git merge-base --is-ancestor`) instead
     of describing it as pending scope, and restates remaining raw-width debt
     as the 24 `pointer_truncation.allow` tracked sites plus SP script
     persistence.
+- **Rework of review `e59c95d7` finding** (one P2 evidence correction;
+  citations re-verified against this head before each edit; the review
+  `31965d30` UI expression/listBox and PR #119 fixes are retained unchanged):
+  - §10's and §12's high-address statements no longer classify every
+    non-XModel family as lacking >4 GiB execution evidence. The FX / ImpactFx
+    family holds a **real high-address conversion** receipt —
+    `TestHappyPathAndFullWidthIdentities`
+    (`tests/fx_fastfile_impact_native_disk32_tests.cpp:564-635`, ctest
+    `effectscore-fastfile-impact-native-disk32-conversion`, green at this
+    head): it materializes the native impact table and compares every
+    materialized native handle to its resolved identity, asserting each
+    expected address exceeds `UINT32_MAX` on 64-bit (`:615-624`). §12 now
+    separates the four evidence kinds (synthetic pointer-bit preservation /
+    real high-address conversion / token-domain arithmetic / production
+    execution). A related-FX-fixture audit found no additional family-level
+    >4 GiB execution receipt: the file's other high-address touches are
+    synthetic failure-path inputs (wrapped forced asset identities
+    `:820-822`; a limit-valued output pointer rejected by the
+    materialization preflight `:1256-1262`). The legitimate gaps stand
+    unchanged: production enrollment (the FX/impact binding is still
+    zero-caller, §4) and retail parity remain missing for every family.
 - **Criteria mapping.** Criterion 1 (exhaustive inventory): §9.0–§9.12
   enumerate every pointer-bearing subobject walk of all 33 registered
   families (26 dispatchable types + XModelPieces nested-only + the 6
