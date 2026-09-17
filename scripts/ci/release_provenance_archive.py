@@ -75,7 +75,8 @@ def _carrier_locations(archive: tarfile.TarFile, carrier: str) -> list[list[str]
 
 
 def _carrier_alias_members(archive: tarfile.TarFile, carrier: str) -> list[tarfile.TarInfo]:
-    """Return members that reach a carrier location only via backslashes.
+    """
+    Return members that reach a carrier location only via backslashes.
 
     Reading a member's backslashes as separators can make a noncanonical
     name look like the build-consumed carrier. POSIX extraction keeps the
@@ -170,6 +171,30 @@ def _carrier_value_failures(carrier_member: str, value: str, commit: str) -> lis
     return []
 
 
+def _carrier_commit_failures(
+    archive: tarfile.TarFile, carrier_member: str, member: tarfile.TarInfo, commit: str
+) -> list[str]:
+    """Return failures for one shipped carrier member's ``commit=`` lines."""
+    extracted = archive.extractfile(member)
+    if extracted is None:
+        return [f"source: could not read {carrier_member} from archive"]
+    try:
+        text = extracted.read().decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return [f"source: {carrier_member} is not valid UTF-8 ({exc})"]
+    values = [
+        line[len("commit=") :].strip()
+        for line in text.splitlines()
+        if line.startswith("commit=")
+    ]
+    if not values:
+        return [f"source: {carrier_member} carries no commit= line"]
+    failures: list[str] = []
+    for value in values:
+        failures.extend(_carrier_value_failures(carrier_member, value, commit))
+    return failures
+
+
 def verify_archive_carrier(
     archive: tarfile.TarFile, carrier_member: str, commit: str
 ) -> list[str]:
@@ -197,25 +222,7 @@ def verify_archive_carrier(
         )
         return [message]
     for member in members:
-        extracted = archive.extractfile(member)
-        if extracted is None:
-            failures.append(f"source: could not read {carrier_member} from archive")
-            continue
-        try:
-            text = extracted.read().decode("utf-8")
-        except UnicodeDecodeError as exc:
-            failures.append(f"source: {carrier_member} is not valid UTF-8 ({exc})")
-            continue
-        values = [
-            line[len("commit=") :].strip()
-            for line in text.splitlines()
-            if line.startswith("commit=")
-        ]
-        if not values:
-            failures.append(f"source: {carrier_member} carries no commit= line")
-            continue
-        for value in values:
-            failures.extend(_carrier_value_failures(carrier_member, value, commit))
+        failures.extend(_carrier_commit_failures(archive, carrier_member, member, commit))
     return failures
 
 
