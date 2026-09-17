@@ -473,6 +473,8 @@ implicit one.
 | Target | Minimum OS | Toolchain | Graphics | Display/input | Notes |
 |---|---|---|---|---|---|
 | Windows x86/amd64 client | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022), CMake ≥ 3.16, Windows SDK 10.0.22621 | Vulkan 1.1 driver, or D3D9 migration reference | 1024×768 minimum; keyboard+mouse required | 32-bit x86 is the compatibility reference |
+| Windows x86 dedicated server | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022), CMake ≥ 3.16, Windows SDK 10.0.22621 | none | none (console/stdio; headless-capable) | existing Win32 dedicated server role, `KISAK_DEDI_HEADLESS` profile; compatibility reference server |
+| Windows amd64 headless server | Windows 10 22H2 (build 19045) / Windows Server 2022 class or later | MSVC v143 (VS 2022) x64, CMake ≥ 3.16, Windows SDK 10.0.22621 | none | none (console/stdio) | M6 server role; delivery tracked separately from the M6 client (PORTING.md) |
 | Linux amd64 client | Ubuntu 22.04 / glibc 2.35 LTS class | GCC ≥ 12 or Clang ≥ 15, CMake ≥ 3.16 | Vulkan 1.1 loader + driver, SDL3 windowing | X11 or Wayland; 1024×768 minimum | release target |
 | Linux amd64 headless server | Ubuntu 22.04 class | GCC ≥ 12 or Clang ≥ 15 | none | none (console/stdio) | priority role |
 | Linux arm64 client | Ubuntu 22.04 / glibc 2.35 LTS class (arm64) | GCC ≥ 12 or Clang ≥ 15, CMake ≥ 3.16 | Vulkan 1.1 loader + arm64 driver, SDL3 windowing | X11 or Wayland; 1024×768 minimum | shipped target (see §3.1) |
@@ -480,18 +482,23 @@ implicit one.
 | macOS arm64 client | macOS 13 (Ventura) or later | AppleClang 15 / Xcode 15, CMake ≥ 3.16 | Metal via MoltenVK; Vulkan 1.1 feature set | 1024×768 minimum | signed/notarized app; x86_64 slice not required |
 | macOS arm64 headless server | macOS 13 or later | AppleClang 15 / Xcode 15 | none | none | |
 | Windows ARM64 client | **Blocked — no validated OS floor** (see note below) | MSVC v143 ARM64 (candidate only) | **Blocked — committed Vulkan 1.1 endpoint unvalidated on ARM64** | keyboard+mouse (candidate only) | Phase 3; DP-REQ-01 counts this row as blocked |
+| Windows ARM64 headless server | **Blocked — no validated ARM64 OS floor** (see note below) | MSVC v143 ARM64 (candidate only) | none | none (console/stdio) | M11 server role; blocked with the ARM64 client row; requires real-hardware validation |
 
 Open validation items for this table: exact Vulkan feature/extension floor,
 whether 1024×768 is the real minimum for the retail UI, and the Linux display
 server support statement. Rows are **proposed** until the corresponding test
 evidence exists. Every shipped target in §3.1 has a row here — including Linux
-arm64 client/server and Windows ARM64 — so DP-REQ-01's "All targets" gate has a
-row to validate for each and cannot be marked complete while a delivery target
-is undefined. The Windows ARM64 row is **explicitly blocked**, not merely
-proposed: it has no validated OS or graphics floor and its committed Vulkan 1.1
-endpoint has no ARM64 driver validation evidence, so DP-REQ-01 MUST treat it
-as blocked and cannot pass until a concrete OS/toolchain/graphics floor is
-published in this table and validated on its minimum configuration.
+arm64 client/server, the existing Windows x86 dedicated server, and the
+Windows amd64/ARM64 headless server roles required by PORTING.md M6/M11 — so
+DP-REQ-01's "All targets" gate has a row to validate for each and cannot be
+marked complete while a delivery target is undefined. Server floors are
+validated per role: one role's validation does not stand in for another's.
+The Windows ARM64 rows (client and headless server) are **explicitly
+blocked**, not merely proposed: neither has a validated ARM64 OS floor, and
+the client's committed Vulkan 1.1 endpoint additionally has no ARM64 driver
+validation evidence, so DP-REQ-01 MUST treat both as blocked and cannot pass
+until concrete OS/toolchain (and, for the client, graphics) floors are
+published in this table and validated on their minimum configurations.
 
 ## 6. Clean-install acceptance matrix
 
@@ -519,7 +526,7 @@ satisfy the row). No row is `pass`.
 | DP-DEV-01 | P6.1 absent display/input device | Start with no display or input device, or with a forced display/input init failure; assert bounded diagnostic and fallback/clean exit. Absent/failed audio devices are A10 ([#132](https://github.com/jm2/kisakcod/issues/132)), not this row. | Win, Linux, macOS | Harness output + exit code | planned |
 | DP-DEV-02 | P6.2 cleanup/restart | Fail init midway, clean up, restart; assert idempotent cleanup and no leaked global state | Win, Linux, macOS | Harness output | planned |
 | DP-DEV-03 | P6.3 clean-machine startup | Fresh image, no config, read-only data dir, malformed config; assert actionable diagnostics | Win, Linux, macOS | Image run log | planned |
-| DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) for **every** row, explicitly including Linux arm64 client/server. The Windows ARM64 row is **blocked** — no validated OS/graphics floor and an unvalidated committed Vulkan endpoint — and this row MUST NOT pass while it stays blocked | All targets | Requirements doc + measured evidence | planned |
+| DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) for **every** row, independently per role — explicitly including Linux arm64 client/server and every Windows server row (x86 dedicated, amd64 headless, ARM64 headless); a client result never certifies the server role of the same OS (PORTING.md M6/M11 track the roles separately). The Windows ARM64 client and Windows ARM64 headless server rows are **blocked** — no validated ARM64 OS floor, and the client's committed Vulkan endpoint is additionally unvalidated on ARM64 — and this row MUST NOT pass while either stays blocked | All targets | Requirements doc + measured evidence | planned |
 
 ## 7. Retail usercmd invariants that must not change
 
@@ -620,6 +627,16 @@ authorized to change in the platform migration:
   concrete floor is published and validated; DP-FS-03 adds a distinct
   >256-components Win32 negative. Documentation-only, no runtime behavior
   change.
+- Recorded reason for adding the Windows server rows to §5 and the per-role
+  DP-REQ-01 gate: final-head review of PR #148
+  ([discussion_r4038991132](https://github.com/jm2/kisakcod/pull/148#discussion_r4038991132))
+  found that §5 held Windows client rows only while claiming every shipped
+  target represented, although PORTING.md M6/M11 require Windows amd64/ARM64
+  server delivery and the existing Windows x86 dedicated server also needs its
+  role floor. §5 now carries Windows x86 dedicated, Windows amd64 headless and
+  Windows ARM64 headless server rows — explicitly blocked where no floor
+  evidence exists — and DP-REQ-01 validates each role independently.
+  Documentation-only, no runtime behavior change.
 - The SDL migration must land behind the seam described here; do not reclassify
   an unimplemented window/input/filesystem behavior as "done" because a
   primitive compiles or a portable helper test passes.
