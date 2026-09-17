@@ -138,11 +138,10 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     endif()
 
     # Target-role applicability. Each target declares the session roles it can
-    # carry; a client-only target must not be required to produce a
-    # server-direction child. The declarations are required, known-valued and
-    # unique, encode the §2.1 roles exactly (macos-arm64 is client-only; the
-    # other five targets are dual-role), and drive the derived direction scope
-    # checked against the §6.3 aggregate table.
+    # carry; an inapplicable direction must not be required. The declarations are
+    # required, known-valued and unique, encode the §2.1 roles exactly (all six
+    # targets, including macos-arm64, are dual-role and must stay so), and drive
+    # the derived direction scope checked against the §6.3 aggregate table.
     foreach(_target IN LISTS _targets)
         list(FIND _target_role_targets "${_target}" _trole_index)
         if(_trole_index EQUAL -1)
@@ -184,25 +183,13 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         message(FATAL_ERROR
             "Retail-content matrix contains duplicate target-role applicability lines in ${DOC_PATH}")
     endif()
-    # Hardcoded §2.1 role invariants: an inapplicable server role on a
-    # client-only target (or loss of a dual-role capability) is exactly the
-    # impossible-child requirement this guard must reject.
-    foreach(_target IN ITEMS macos-arm64)
-        list(FIND _target_role_targets "${_target}" _rct_index)
-        list(GET _target_role_values ${_rct_index} _rct_string)
-        string(REPLACE " " ";" _rct_caps "${_rct_string}")
-        list(FIND _rct_caps "client" _rct_client)
-        list(FIND _rct_caps "server" _rct_server)
-        if(_rct_client EQUAL -1)
-            message(FATAL_ERROR
-                "Retail-content matrix client-only target '${_target}' must have the 'client' capability in ${DOC_PATH}")
-        endif()
-        if(NOT _rct_server EQUAL -1)
-            message(FATAL_ERROR
-                "Retail-content matrix client-only target '${_target}' must not have the 'server' capability in ${DOC_PATH}")
-        endif()
-    endforeach()
-    foreach(_target IN ITEMS win-amd64 win-arm64 linux-amd64 linux-arm64 win-x86)
+    # Hardcoded §2.1 role invariants: losing a dual-role capability is exactly
+    # the commercial-interoperability coverage reduction this guard must reject.
+    # Every requested target — including macos-arm64, which delivers the MoltenVK
+    # client and the headless server — must keep both capabilities; demoting any
+    # of them to client-only would drop the original-client → native-server
+    # direction and is rejected.
+    foreach(_target IN ITEMS win-amd64 win-arm64 linux-amd64 linux-arm64 macos-arm64 win-x86)
         list(FIND _target_role_targets "${_target}" _rdr_index)
         list(GET _target_role_values ${_rdr_index} _rdr_string)
         string(REPLACE " " ";" _rdr_caps "${_rdr_string}")
@@ -469,9 +456,9 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     # §6.3 aggregate table applicability. Every applicable (target, mode) cell
     # must appear exactly once, with a 'Required directions' scope equal to the
     # target's derived role capabilities. This is the aggregate-level expression
-    # of target-role applicability: the client-only macos-arm64 target must
-    # require only kc-client-commercial-server and must never be required to
-    # produce a server-direction result.
+    # of target-role applicability: the dual-role macos-arm64 target must require
+    # both kc-client-commercial-server and kc-server-commercial-client, so its
+    # server direction cannot be silently dropped.
     string(FIND "${DOC_TEXT}" "### 6.3" _agg_begin)
     string(FIND "${DOC_TEXT}" "## 7." _agg_end)
     if(_agg_begin EQUAL -1 OR _agg_end EQUAL -1 OR _agg_end LESS_EQUAL _agg_begin)
@@ -871,16 +858,17 @@ if(_mutated STREQUAL _matrix_text)
 endif()
 expect_rejected("drop-applicable-child" "${_mutated}")
 
-# Grant the client-only macos-arm64 target a server role: the hardcoded
-# target-role invariant must reject the impossible server-direction requirement.
+# Demote the dual-role macos-arm64 target to client-only: this is exactly the
+# commercial-interoperability coverage reduction the guard must reject, because
+# it drops the original-client → native-headless-server direction.
 string(REPLACE
-    "target-role macos-arm64 client\n"
     "target-role macos-arm64 client server\n"
+    "target-role macos-arm64 client\n"
     _mutated "${_matrix_text}")
 if(_mutated STREQUAL _matrix_text)
-    message(FATAL_ERROR "Negative self-test mutation 'grant-server-role-to-client-only' did not apply")
+    message(FATAL_ERROR "Negative self-test mutation 'demote-macos-server-role' did not apply")
 endif()
-expect_rejected("grant-server-role-to-client-only" "${_mutated}")
+expect_rejected("demote-macos-server-role" "${_mutated}")
 
 # Demote a dual-role target to client-only: the hardcoded target-role invariant
 # must reject the lost server capability.
@@ -902,16 +890,16 @@ if(_mutated STREQUAL _matrix_text)
 endif()
 expect_rejected("drop-target-role" "${_mutated}")
 
-# Widen the client-only macOS aggregate cell to require both directions: the
-# §6.3 direction-scope check must reject the impossible server requirement.
+# Narrow the dual-role macOS aggregate cell to the client direction only: the
+# §6.3 direction-scope check must reject dropping the required server direction.
 string(REPLACE
-    "| `macos-arm64` | listen | `kc-client-commercial-server` |"
     "| `macos-arm64` | listen | both |"
+    "| `macos-arm64` | listen | `kc-client-commercial-server` |"
     _mutated "${_matrix_text}")
 if(_mutated STREQUAL _matrix_text)
-    message(FATAL_ERROR "Negative self-test mutation 'widen-client-only-scope' did not apply")
+    message(FATAL_ERROR "Negative self-test mutation 'narrow-macos-aggregate-scope' did not apply")
 endif()
-expect_rejected("widen-client-only-scope" "${_mutated}")
+expect_rejected("narrow-macos-aggregate-scope" "${_mutated}")
 
 # Promote the first commercial §6.3 aggregate cell from Blocked to Pass while
 # keeping the evidence-ref at 'none'. The aggregate cell is derived, and the

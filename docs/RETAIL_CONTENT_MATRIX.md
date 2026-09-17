@@ -76,7 +76,7 @@ baseline kept as an additional regression/reference platform
 | `win-arm64` | Windows ARM64 | Production engine |
 | `linux-amd64` | Linux amd64 | Production headless server + full client |
 | `linux-arm64` | Linux ARM64 (real hardware) | Production engine |
-| `macos-arm64` | macOS ARM64 | Production client (MoltenVK) |
+| `macos-arm64` | macOS ARM64 | Production client (MoltenVK) + headless server |
 | `win-x86` | Windows x86 | **Reference/regression only**; not the sole oracle |
 
 ### 2.2 Commercial profiles
@@ -108,11 +108,15 @@ Every content case records the applicable directions separately:
 
 Direction applicability follows the target role (§2.1): the
 `kc-server-commercial-client` direction requires a server-capable target and the
-`kc-client-commercial-server` direction requires a client-capable target. The
-client-only `macos-arm64` target therefore produces no
-`kc-server-commercial-client` child; the §11 `target-role` lines encode each
+`kc-client-commercial-server` direction requires a client-capable target. Every
+requested production target carries both roles — `macos-arm64` delivers the
+MoltenVK client **and** the headless server (`docs/PORTING.md`, "Required
+original-binary protocol and handshake integration"; phase 4) — so each target
+produces both direction children. The §11 `target-role` lines encode each
 target's capabilities and the §6.3 `Required directions` column is derived from
-them, so an inapplicable direction is never required.
+them, so an inapplicable direction is never required; a target that carried only
+the client role would not be required to produce a server-direction child, but no
+requested target is client-only.
 
 ## 3. Reference manifest requirements (both profiles)
 
@@ -252,9 +256,10 @@ combinations: a §4 case contributes a child only in the modes declared for it
 (§11 `case-mode`), and a target contributes a child only in the directions its
 role supports (§11 `target-role`). `kc-server-commercial-client` children
 require a server-capable target and `kc-client-commercial-server` children
-require a client-capable target; the client-only `macos-arm64` target therefore
-produces no `kc-server-commercial-client` child, and `SM-01` (listen) / `SM-02`
-(dedicated) produce no child for the non-matching mode. The §11 `outcome` lines
+require a client-capable target; every requested production target, including
+`macos-arm64`, carries both roles, so each produces both direction children,
+while `SM-01` (listen) / `SM-02` (dedicated) produce no child for the
+non-matching mode. The §11 `outcome` lines
 enumerate exactly this applicable case×mode×direction set, and the §11
 `completeness aggregate pass-requires-all-case-directions` line fixes the
 roll-up policy, so an applicable child cannot be omitted and an inapplicable
@@ -299,9 +304,11 @@ its weakest required child. At this basis every commercial child is **Blocked**
 no claim of parity, so the roll-up below stays Blocked/Supplemental. The matrix
 is rendered per target; each cell is `status` / evidence-ref. The
 `Required directions` column is derived from the §11 `target-role` lines: a
-client-only target such as `macos-arm64` requires only the
-`kc-client-commercial-server` direction and is never required to produce a
-`kc-server-commercial-client` result, while a dual-role target requires both.
+dual-role target such as `macos-arm64` requires both the
+`kc-client-commercial-server` and `kc-server-commercial-client` directions; a
+hypothetical client-only target would require only
+`kc-client-commercial-server` and is never required to produce a
+`kc-server-commercial-client` result, but no requested target is client-only.
 Per-case mode filtering (§11 `case-mode`) applies within each cell.
 
 | Target | Mode | Required directions | original-commercial-1.7 | steam-commercial-1.8 | kisakcod-self |
@@ -314,8 +321,8 @@ Per-case mode filtering (§11 `case-mode`) applies within each cell.
 | `linux-amd64` | dedicated | both | Blocked / none | Blocked / none | Supplemental / none |
 | `linux-arm64` | listen | both | Blocked / none | Blocked / none | Supplemental / none |
 | `linux-arm64` | dedicated | both | Blocked / none | Blocked / none | Supplemental / none |
-| `macos-arm64` | listen | `kc-client-commercial-server` | Blocked / none | Blocked / none | Supplemental / none |
-| `macos-arm64` | dedicated | `kc-client-commercial-server` | Blocked / none | Blocked / none | Supplemental / none |
+| `macos-arm64` | listen | both | Blocked / none | Blocked / none | Supplemental / none |
+| `macos-arm64` | dedicated | both | Blocked / none | Blocked / none | Supplemental / none |
 | `win-x86` (reference) | listen | both | Blocked / none | Blocked / none | Supplemental / none |
 | `win-x86` (reference) | dedicated | both | Blocked / none | Blocked / none | Supplemental / none |
 
@@ -395,10 +402,12 @@ id plus case evidence recorded in §6.
 never required in a dedicated cell and a dedicated-only case (`SM-02`) is never
 required in a listen cell. `target-role` encodes target capability:
 `kc-server-commercial-client` outcomes require a server-capable target and
-`kc-client-commercial-server` outcomes require a client-capable target, so the
-client-only `macos-arm64` target is never required to produce a
-server-direction child. The `outcome` lines therefore enumerate exactly the
-applicable case×mode×direction children, and the
+`kc-client-commercial-server` outcomes require a client-capable target.
+`macos-arm64` carries both roles — the MoltenVK client and the headless
+server — so it is required to produce both direction children and must not be
+demoted to client-only; only a target that genuinely lacked the server role
+would be excused from a server-direction child. The `outcome` lines therefore
+enumerate exactly the applicable case×mode×direction children, and the
 `completeness aggregate pass-requires-all-case-directions` line must stay,
 because it forces an aggregate cell to depend on all applicable
 case×mode×direction children. Each `disposition` id must appear exactly once and
@@ -417,7 +426,7 @@ target-role win-amd64 client server
 target-role win-arm64 client server
 target-role linux-amd64 client server
 target-role linux-arm64 client server
-target-role macos-arm64 client
+target-role macos-arm64 client server
 target-role win-x86 client server
 profile original-commercial-1.7 commercial
 profile steam-commercial-1.8 commercial
