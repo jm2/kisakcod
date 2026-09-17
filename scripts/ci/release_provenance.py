@@ -315,8 +315,13 @@ def _verify_source(
     if manifest_path.is_file():
         # The source manifest must declare exactly the source archive and bind
         # its digest, otherwise mutating any other archive member and
-        # regenerating SHA256SUMS.txt would leave stale provenance passing.
-        expectation = ManifestExpectation(label="source", tag=tag, commit=commit, config="source")
+        # regenerating SHA256SUMS.txt would leave stale provenance passing. The
+        # expected target is pinned too: a manifest that claims another
+        # profile's target must fail the target-identity check even when every
+        # hash it carries was honestly refreshed.
+        expectation = ManifestExpectation(
+            label="source", tag=tag, commit=commit, target="source", config="source"
+        )
         manifest_failures, declared = verify_manifest_identity(manifest_path, expectation, dist)
         failures.extend(manifest_failures)
         failures.extend(_manifest_set_failures("source", declared, {archive_name}))

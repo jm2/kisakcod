@@ -193,6 +193,31 @@ class SourceArchiveIdentityTests(ReleaseProvenanceTestBase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("undeclared artifact(s)", result.stderr)
 
+    def test_source_manifest_wrong_target_fails(self) -> None:
+        # A source manifest mislabeled with another profile's target must fail
+        # the target-identity check. Refreshing checksums afterwards isolates
+        # the failure to the identity contract: every digest in the manifest is
+        # honest, so only the wrong target can explain the gate error.
+        root = self.fresh("source-wrong-target")
+        manifest = root / "dist" / f"KisakCOD-{TAG}-source-provenance.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["target"] = "windows-x86"
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("source:", result.stderr)
+        self.assertIn("does not match expected", result.stderr)
+
+    def test_source_manifest_correct_target_passes(self) -> None:
+        # The correct-target positive: a source manifest recorded with the
+        # source target keeps the whole release verifiable.
+        root = self.fresh("source-correct-target")
+        record_source_manifest(root)
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_source_archive_member_mutation_fails_stale_provenance(self) -> None:
         # Mutating another archive member and regenerating SHA256SUMS.txt must
         # still fail: the source provenance manifest binds the original archive
