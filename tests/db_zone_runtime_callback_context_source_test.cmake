@@ -634,44 +634,103 @@ endforeach()
 
 get_filename_component(
     _this_source_seal "${CMAKE_CURRENT_LIST_FILE}" ABSOLUTE)
-file(GLOB_RECURSE _build_controls
-    "${SOURCE_ROOT}/CMakeLists.txt"
-    "${SOURCE_ROOT}/*.cmake"
-    "${SOURCE_ROOT}/*.yml"
-    "${SOURCE_ROOT}/*.yaml"
-    "${SOURCE_ROOT}/*.ps1"
-    "${SOURCE_ROOT}/*.bat")
-foreach(_path IN LISTS _build_controls)
-    get_filename_component(_absolute_path "${_path}" ABSOLUTE)
-    if(_absolute_path STREQUAL _this_source_seal
-       OR _absolute_path STREQUAL _tests_path
-       OR _absolute_path STREQUAL _table_seal_path)
-        continue()
-    endif()
-    # Root-level agent worktree containers (worktrees/<bead>/) are git-excluded
-    # local copies, not production build controls. Their copied CMakeLists.txt
-    # and *.cmake files legitimately grant TestAccess to their own fixture
-    # targets, so scanning them false-positives. Only the root container is
-    # excluded: an ordinary nested scripts/worktrees control that grants this
-    # macro must still be rejected. This mirrors the reviewed exclusion in
-    # db_zone_runtime_facade_source_test.cmake.
-    file(RELATIVE_PATH _relative "${SOURCE_ROOT}" "${_absolute_path}")
-    if(_relative MATCHES "^worktrees/"
-       OR _relative MATCHES "(^|/)\\.(codex-worktrees|git)/")
-        continue()
-    endif()
-    file(READ "${_absolute_path}" _build_control)
-    string(FIND
-        "${_build_control}"
-        "KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING"
-        _macro_reference)
-    if(NOT _macro_reference EQUAL -1)
-        file(RELATIVE_PATH _relative "${SOURCE_ROOT}" "${_absolute_path}")
-        message(FATAL_ERROR
-            "Callback TestAccess macro leaked into production build control: "
-            "${_relative}")
-    endif()
+
+# Scan every supported build-control format below SCAN_ROOT for the callback
+# TestAccess macro. Root-level agent worktree containers (worktrees/<bead>/)
+# are git-excluded local copies, not production build controls: their copied
+# CMakeLists.txt and *.cmake files legitimately grant TestAccess to their own
+# fixture targets, so they are ignored. Only that root container is excluded;
+# an ordinary nested scripts/worktrees/ control that grants this macro is a
+# production build control and must still be rejected. SKIP_PATHS names
+# absolute paths reviewed as non-production (this seal itself and the two
+# test-tree registrations). The paired fixtures below drive this exact scan
+# over synthetic trees.
+function(scan_callback_context_build_controls SCAN_ROOT SKIP_PATHS OUTPUT)
+    file(GLOB_RECURSE _build_controls
+        "${SCAN_ROOT}/CMakeLists.txt"
+        "${SCAN_ROOT}/*.cmake"
+        "${SCAN_ROOT}/*.yml"
+        "${SCAN_ROOT}/*.yaml"
+        "${SCAN_ROOT}/*.ps1"
+        "${SCAN_ROOT}/*.bat")
+    set(_violations)
+    foreach(_path IN LISTS _build_controls)
+        get_filename_component(_absolute_path "${_path}" ABSOLUTE)
+        list(FIND SKIP_PATHS "${_absolute_path}" _skip_index)
+        if(NOT _skip_index EQUAL -1)
+            continue()
+        endif()
+        file(RELATIVE_PATH _relative "${SCAN_ROOT}" "${_absolute_path}")
+        if(_relative MATCHES "^worktrees/"
+           OR _relative MATCHES "(^|/)\\.(codex-worktrees|git)/")
+            continue()
+        endif()
+        file(READ "${_absolute_path}" _build_control)
+        string(FIND
+            "${_build_control}"
+            "KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING"
+            _macro_reference)
+        if(NOT _macro_reference EQUAL -1)
+            list(APPEND _violations "${_relative}")
+        endif()
+    endforeach()
+    set(${OUTPUT} "${_violations}" PARENT_SCOPE)
+endfunction()
+
+# This file names the token in its detector, and the tests manifest and
+# runtime-table seal are reviewed TestAccess registrations, not production
+# build controls. Everything else must be sealed.
+scan_callback_context_build_controls(
+    "${SOURCE_ROOT}"
+    "${_this_source_seal};${_tests_path};${_table_seal_path}"
+    _callback_context_build_control_violations)
+foreach(_relative IN LISTS _callback_context_build_control_violations)
+    message(FATAL_ERROR
+        "Callback TestAccess macro leaked into production build control: "
+        "${_relative}")
 endforeach()
+
+# Paired persistent fixtures for the worktree anchoring, driven through the
+# exact scan above over synthetic trees. A TestAccess-bearing control under
+# root worktrees/<bead>/ must be ignored; the equivalent control under
+# scripts/worktrees/ must be rejected. The nested case is a silent false
+# negative under the prior unanchored (^|/)worktrees/ filter, so a regression
+# fails these assertions.
+set(_callback_worktree_fixture_root
+    "${CMAKE_CURRENT_BINARY_DIR}/callback-context-worktree-scan")
+
+file(REMOVE_RECURSE "${_callback_worktree_fixture_root}/ignored")
+file(MAKE_DIRECTORY
+    "${_callback_worktree_fixture_root}/ignored/worktrees/ki-fixture/tests")
+file(WRITE
+    "${_callback_worktree_fixture_root}/ignored/worktrees/ki-fixture/tests/CMakeLists.txt"
+    "target_compile_definitions(agent-copy PRIVATE KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING=1)\n")
+scan_callback_context_build_controls(
+    "${_callback_worktree_fixture_root}/ignored" ""
+    _callback_ignored_fixture_violations)
+if(NOT _callback_ignored_fixture_violations STREQUAL "")
+    message(FATAL_ERROR
+        "Callback scan rejected a root worktrees/<bead>/ agent control: "
+        "${_callback_ignored_fixture_violations}")
+endif()
+
+file(REMOVE_RECURSE "${_callback_worktree_fixture_root}/nested")
+file(MAKE_DIRECTORY
+    "${_callback_worktree_fixture_root}/nested/scripts/worktrees")
+file(WRITE
+    "${_callback_worktree_fixture_root}/nested/scripts/worktrees/generated.cmake"
+    "add_compile_definitions(KISAK_DB_ZONE_RUNTIME_CALLBACK_CONTEXT_TESTING=1)\n")
+scan_callback_context_build_controls(
+    "${_callback_worktree_fixture_root}/nested" ""
+    _callback_nested_fixture_violations)
+if(NOT _callback_nested_fixture_violations STREQUAL
+   "scripts/worktrees/generated.cmake")
+    message(FATAL_ERROR
+        "Callback scan failed to reject the nested scripts/worktrees control: "
+        "'${_callback_nested_fixture_violations}'")
+endif()
+
+file(REMOVE_RECURSE "${_callback_worktree_fixture_root}")
 
 foreach(_marker IN ITEMS
     "g_contextStore"
