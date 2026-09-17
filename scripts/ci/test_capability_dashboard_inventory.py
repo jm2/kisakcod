@@ -182,6 +182,125 @@ jobs:
         self.assertEqual(cd.matrix_legs(job), 0)
 
 
+class JobsIndentationTests(unittest.TestCase):
+    """Any consistent job-key indent inventories; unsupported shapes fail."""
+
+    FOUR_SPACE_WORKFLOW = """\
+name: Fixture
+
+on:
+  push:
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Run
+              run: echo hi
+"""
+
+    TWO_FOUR_SPACE_JOBS_WORKFLOW = """\
+name: Fixture
+
+on:
+  push:
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Build
+              run: echo build
+    test:
+        runs-on: [ubuntu-24.04]
+        steps:
+            - name: Test
+              run: echo test
+"""
+
+    @staticmethod
+    def _inventory(workflow_text):
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow_dir = Path(tmp)
+            (workflow_dir / "fixture.yml").write_text(
+                workflow_text, encoding="utf-8"
+            )
+            return cd.derive_ci_inventory(workflow_dir)
+
+    def test_four_space_job_is_inventoried(self):
+        # PR #150 rework review (exact-head reproduction): job keys were
+        # only recognised at exactly indent 2, so this valid workflow with
+        # a four-space jobs mapping reported job_count=0/invocations=0
+        # without any error.
+        inventory = self._inventory(self.FOUR_SPACE_WORKFLOW)
+        workflow = inventory["workflows"][0]
+        self.assertEqual([job["id"] for job in workflow["jobs"]], ["build"])
+        self.assertEqual(workflow["job_count"], 1)
+        self.assertEqual(workflow["invocations"], 1)
+
+    def test_multiple_four_space_jobs_keep_boundaries(self):
+        # Peer job keys at the mapping's own indent must start new jobs:
+        # neither merging into one job nor dropping the second job.
+        inventory = self._inventory(self.TWO_FOUR_SPACE_JOBS_WORKFLOW)
+        workflow = inventory["workflows"][0]
+        self.assertEqual(
+            [job["id"] for job in workflow["jobs"]], ["build", "test"]
+        )
+        self.assertEqual(workflow["job_count"], 2)
+        self.assertEqual(workflow["invocations"], 2)
+
+    def test_two_space_jobs_still_inventories(self):
+        # The standard shape keeps its exact behaviour alongside the
+        # newly supported indents.
+        inventory = self._inventory(MINIMAL_WORKFLOW)
+        workflow = inventory["workflows"][0]
+        self.assertEqual([job["id"] for job in workflow["jobs"]], ["plain"])
+        self.assertEqual(workflow["invocations"], 1)
+
+    def test_non_job_peer_at_job_indent_fails_explicitly(self):
+        # A block-sequence item at the job-key indent is a shape this
+        # contract does not support: it must fail explicitly instead of
+        # silently publishing an empty or partial inventory.
+        with self.assertRaises(cd.JobsStructureError):
+            self._inventory(
+                "\n".join(
+                    [
+                        "name: Fixture",
+                        "",
+                        "on:",
+                        "  push:",
+                        "",
+                        "jobs:",
+                        "  build:",
+                        "    runs-on: ubuntu-latest",
+                        "  - name: stray",
+                        "",
+                    ]
+                )
+            )
+
+    def test_dedent_below_job_indent_fails_explicitly(self):
+        # A mapping key dedented below the jobs mapping's child indent is
+        # not a job peer this parser can bound: fail explicitly.
+        with self.assertRaises(cd.JobsStructureError):
+            self._inventory(
+                "\n".join(
+                    [
+                        "name: Fixture",
+                        "",
+                        "on:",
+                        "  push:",
+                        "",
+                        "jobs:",
+                        "    build:",
+                        "        runs-on: ubuntu-latest",
+                        "  stray: peer",
+                        "",
+                    ]
+                )
+            )
+
+
 class MatrixExpansionTests(unittest.TestCase):
     """Matrix legs must be a real Cartesian product (#150 review r4030126249)."""
 
@@ -545,6 +664,33 @@ class SelfHostedRunsOnTests(unittest.TestCase):
 
     def test_expression_with_trailing_comment_is_not_self_hosted(self):
         job = self._probe(["    runs-on: ${{ matrix.runner }}  # runtime"])
+        self.assertFalse(job["self_hosted"])
+
+    def test_comment_only_key_reads_following_block_labels(self):
+        # PR #150 rework review (exact-head reproduction): the scalar versus
+        # block decision used ``match.group(1).strip()`` before removing
+        # YAML comments, so ``runs-on:  # runner labels`` treated the comment
+        # as the scalar value and never read the block labels that follow;
+        # the same job reported hosted.
+        job = self._probe(
+            [
+                "    runs-on:  # runner labels",
+                "      - self-hosted",
+                "      - linux",
+            ]
+        )
+        self.assertTrue(job["self_hosted"])
+
+    def test_comment_only_key_with_hosted_block_labels_is_hosted(self):
+        # The comment-only key must genuinely parse the labels rather than
+        # default to either answer: a hosted block stays hosted.
+        job = self._probe(
+            [
+                "    runs-on:  # runner labels",
+                "      - ubuntu-24.04",
+                "      - macos-15",
+            ]
+        )
         self.assertFalse(job["self_hosted"])
 
     def test_block_mapping_fails_closed(self):

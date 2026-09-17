@@ -32,6 +32,7 @@ from .contract import (
     reference_provenance_complete,
 )
 from .inventory import (
+    JobsStructureError,
     MatrixExpansionError,
     UnsupportedRunsOnError,
     derive_ci_inventory,
@@ -57,6 +58,7 @@ __all__ = [
     "DEFAULT_MANIFEST",
     "DEFAULT_OUTPUT",
     "GENERATED_MARKER",
+    "JobsStructureError",
     "MANDATORY_REQUESTED_TARGET_IDS",
     "MANDATORY_REQUIRED_COMMERCIAL_REFERENCES",
     "MANDATORY_REQUIRED_MODES",

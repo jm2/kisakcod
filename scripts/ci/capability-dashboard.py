@@ -30,6 +30,7 @@ from capability_dashboard import (  # noqa: E402,F401  pylint: disable=wrong-imp
     PACKAGE_RESULT_VALUES,
     REQUIRED_CAPABILITY_FIELDS,
     VALIDATION_RANK,
+    JobsStructureError,
     MatrixExpansionError,
     UnsupportedRunsOnError,
     build_dashboard,
@@ -57,6 +58,7 @@ _matrix_legs = matrix_legs
 
 __all__ = [
     "CANONICAL_VALIDATION_ORDER",
+    "JobsStructureError",
     "MANDATORY_REQUESTED_TARGET_IDS",
     "MANDATORY_REQUIRED_COMMERCIAL_REFERENCES",
     "MANDATORY_REQUIRED_MODES",

@@ -25,6 +25,10 @@ class MatrixExpansionError(ValueError):
     """Raised when a matrix block uses a shape this parser cannot expand."""
 
 
+class JobsStructureError(ValueError):
+    """Raised when a jobs block uses a shape this parser cannot inventory."""
+
+
 # A parsed matrix is a plain tuple so the parser stays a set of cohesive
 # functions: ``(axes, includes, excludes)``.
 MatrixSpec = tuple[
@@ -147,7 +151,21 @@ def _collect_indented(lines: list[str], start: int, parent_indent: int) -> list[
 
 
 def _job_blocks(block: list[str]) -> list[tuple[str, list[str]]]:
-    """Split the jobs block into ``(job_id, lines)`` pairs at indent 2."""
+    """Split the jobs block into ``(job_id, lines)`` pairs."""
+    # The jobs mapping's children define their own indentation: two spaces is
+    # the common shape, but any consistent indent is valid YAML.  Hard-coding
+    # indent 2 made a four-space workflow report job_count=0 and
+    # invocations=0 without any error, silently publishing an incomplete
+    # inventory for a valid nonempty jobs mapping.
+    child_indent = None
+    for raw in block:
+        if _is_skippable(raw):
+            continue
+        child_indent = _indent(raw)
+        break
+    if child_indent is None:
+        # An empty ``jobs:`` mapping: zero jobs is the honest inventory.
+        return []
     jobs: list[tuple[str, list[str]]] = []
     current_id = None
     current_lines: list[str] = []
@@ -156,16 +174,27 @@ def _job_blocks(block: list[str]) -> list[tuple[str, list[str]]]:
             if current_id is not None:
                 current_lines.append(raw)
             continue
+        indent = _indent(raw)
         # A trailing comment on the job key (``build:  # linux build``) is
         # valid YAML; match the comment-stripped key or the job merges into
         # its predecessor and silently disappears from the inventory.
         normalized = _strip_yaml_comment(raw)
-        if _indent(raw) == 2 and JOB_KEY_RE.match(normalized):
+        if indent == child_indent:
+            if not JOB_KEY_RE.match(normalized):
+                raise JobsStructureError(
+                    "unsupported jobs mapping entry at the job-key indent: "
+                    f"{normalized!r}"
+                )
             if current_id is not None:
                 jobs.append((current_id, current_lines))
             current_id = normalized[:-1]
             current_lines = [raw]
-        elif current_id is not None:
+        elif current_id is None or indent < child_indent:
+            raise JobsStructureError(
+                "unsupported jobs block indentation: "
+                f"{normalized!r} (job indent {child_indent})"
+            )
+        else:
             current_lines.append(raw)
     if current_id is not None:
         jobs.append((current_id, current_lines))
@@ -523,7 +552,13 @@ def _self_hosted(job_lines: list[str]) -> bool:
         match = _RUNS_ON_RE.match(raw.strip())
         if match is None:
             continue
-        inline = match.group(1).strip()
+        # Strip the unquoted comment before choosing scalar, flow, or block
+        # handling: ``runs-on:  # runner labels`` must classify as a key with
+        # no inline value so the block labels that follow are actually read.
+        # Treating the comment as the scalar made the same job report hosted
+        # whenever the key line carried a comment.  Quoted hashes are value
+        # text and survive the strip.
+        inline = _strip_yaml_comment(match.group(1))
         if inline:
             if inline.startswith("["):
                 return any(
