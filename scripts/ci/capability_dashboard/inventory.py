@@ -50,13 +50,10 @@ def _unquote(value: str) -> str:
 
 
 def _quoted_span_end(value: str, start: int) -> int:
-    """
-    Return the index just past the closing quote opening at ``start``.
-
-    Doubled single quotes continue a single-quoted scalar and a backslash
-    escapes the next character inside double quotes.  An unterminated scalar
-    consumes the rest of ``value``: no comment can start inside it.
-    """
+    """Return the index just past the closing quote opening at ``start``."""
+    # Doubled single quotes continue a single-quoted scalar and a backslash
+    # escapes the next character inside double quotes.  An unterminated
+    # scalar consumes the rest of ``value``: no comment can start inside it.
     quote = value[start]
     index = start + 1
     while index < len(value):
