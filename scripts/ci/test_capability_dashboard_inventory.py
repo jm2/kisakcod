@@ -303,6 +303,58 @@ jobs:
             )
 
 
+class RunPayloadNotJobConfigurationTests(unittest.TestCase):
+    """Heredoc data inside a run payload is never workflow configuration."""
+
+    HEREDOC_MATRIX_WORKFLOW = """\
+name: Fixture
+
+on:
+  push:
+
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Emit
+        run: |
+          cat <<'EOF'
+          matrix:
+            label: [a, b, c]
+          EOF
+"""
+
+    def _inventory(self, workflow_text):
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow_dir = Path(tmp)
+            (workflow_dir / "fixture.yml").write_text(
+                workflow_text, encoding="utf-8"
+            )
+            return cd.derive_ci_inventory(workflow_dir)
+
+    def test_heredoc_matrix_payload_inventories_one_invocation(self):
+        # Exact #150 review P2 reproduction: one ubuntu-latest job with no
+        # ``strategy:`` whose run payload holds a literal ``matrix:`` line
+        # inventoried job_count=1/invocations=3; the heredoc is shell data
+        # and both jobs execute exactly once.
+        inventory = self._inventory(self.HEREDOC_MATRIX_WORKFLOW)
+        self.assertEqual(inventory["workflow_count"], 1)
+        workflow = inventory["workflows"][0]
+        self.assertEqual(workflow["job_count"], 1)
+        self.assertEqual(workflow["invocations"], 1)
+
+    def test_payload_without_matrix_word_stays_one_invocation(self):
+        # Control from the same review: renaming only the literal to
+        # ``payload:`` always reported one invocation; the structural fix
+        # must not move the honest count.
+        inventory = self._inventory(
+            self.HEREDOC_MATRIX_WORKFLOW.replace("matrix:", "payload:")
+        )
+        workflow = inventory["workflows"][0]
+        self.assertEqual(workflow["job_count"], 1)
+        self.assertEqual(workflow["invocations"], 1)
+
+
 class JobNameTests(unittest.TestCase):
     """A derived job name comes from the job's own ``name:`` key only."""
 

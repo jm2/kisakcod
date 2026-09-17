@@ -297,6 +297,34 @@ class MatrixExpansionTests(unittest.TestCase):
         with self.assertRaises(cd.MatrixExpansionError):
             cd.matrix_legs(job)
 
+    def test_run_payload_heredoc_matrix_is_not_job_configuration(self):
+        # Exact #150 review P2 reproduction: one job with no ``strategy:``
+        # whose run payload contains a literal ``matrix:`` line.  The old
+        # scan read the heredoc as the job's matrix and expanded three
+        # phantom invocations; the heredoc is shell data, not workflow
+        # configuration.
+        job = self._job(
+            "    steps:",
+            "      - name: Emit",
+            "        run: |",
+            "          cat <<'EOF'",
+            "          matrix:",
+            "            label: [a, b, c]",
+            "          EOF",
+        )
+        self.assertEqual(cd.matrix_legs(job), 0)
+
+    def test_strategy_matrix_still_expands_after_payload_scan_narrowing(self):
+        # Control for the heredoc regression: a real job-level
+        # ``strategy.matrix`` keeps expanding while the payload scan is
+        # restricted to the job's direct keys.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        label: [a, b, c]",
+        )
+        self.assertEqual(cd.matrix_legs(job), 3)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

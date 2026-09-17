@@ -214,11 +214,49 @@ def _job_blocks(block: list[str]) -> list[tuple[str, list[str]]]:
 # --------------------------------------------------------------------------
 # Matrix expansion
 # --------------------------------------------------------------------------
+def _job_key_indent(job_lines: list[str]) -> int | None:
+    """Return the indent shared by a job mapping's direct keys."""
+    # The first non-skippable line after the job key is one of the job's own
+    # keys and every direct key shares its indent.  Restricting job-level
+    # key scans to this indent keeps deeper lines (steps, run payloads,
+    # heredoc data) from masquerading as workflow configuration.
+    for raw in job_lines[1:]:
+        if _is_skippable(raw):
+            continue
+        return _indent(raw)
+    return None
+
+
+def _strategy_block(job_lines: list[str]) -> list[str] | None:
+    """Return the lines inside the job's ``strategy:`` mapping, or None."""
+    key_indent = _job_key_indent(job_lines)
+    if key_indent is None:
+        return None
+    for index, raw in enumerate(job_lines[1:], start=1):
+        if _is_skippable(raw) or _indent(raw) != key_indent:
+            continue
+        if _strip_yaml_comment(raw) == "strategy:":
+            return _collect_indented(job_lines, index + 1, key_indent)
+    return None
+
+
 def _matrix_block(job_lines: list[str]) -> list[str] | None:
-    """Return the lines inside a job's ``matrix:`` mapping, or None."""
+    """Return the lines inside a job's ``strategy.matrix`` mapping, or None."""
+    # A ``matrix:`` line is workflow configuration only as a direct child of
+    # the job's ``strategy:`` mapping.  The same literal inside a step's run
+    # payload (shell heredoc data) is not configuration and must not expand
+    # invocations (#150 review P2).
+    strategy = _strategy_block(job_lines)
+    if strategy is None:
+        return None
+    strategy_indent = _child_indent(strategy)
+    if strategy_indent is None:
+        return None
     # ``matrix:  # build matrix`` is the mapping boundary, not an inline
     # declaration; strip the comment before deciding.
-    for index, raw in enumerate(job_lines):
+    for index, raw in enumerate(strategy):
+        if _is_skippable(raw) or _indent(raw) != strategy_indent:
+            continue
         stripped = _strip_yaml_comment(raw)
         if not stripped.startswith("matrix:"):
             continue
@@ -227,7 +265,7 @@ def _matrix_block(job_lines: list[str]) -> list[str] | None:
                 "inline matrix declarations are not supported: "
                 f"{stripped!r}"
             )
-        return _collect_indented(job_lines, index + 1, _indent(raw))
+        return _collect_indented(strategy, index + 1, strategy_indent)
     return None
 
 
@@ -558,7 +596,16 @@ def _self_hosted(job_lines: list[str]) -> bool:
     # ``self_hosted=False`` for the scalar form, a list that does not start with
     # the label, and a block sequence.  Parse the complete supported value (or
     # raise) so a hidden self-hosted job cannot be reported as hosted.
+    #
+    # ``runs-on`` is job metadata only at the job mapping's direct-key indent:
+    # the same literal inside a step's run payload is shell data, not runner
+    # configuration, and must not classify the job (#150 review P2).
+    key_indent = _job_key_indent(job_lines)
+    if key_indent is None:
+        return False
     for index, raw in enumerate(job_lines):
+        if _is_skippable(raw) or _indent(raw) != key_indent:
+            continue
         match = _RUNS_ON_RE.match(raw.strip())
         if match is None:
             continue

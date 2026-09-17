@@ -135,6 +135,39 @@ class SelfHostedRunsOnTests(unittest.TestCase):
         )
         self.assertTrue(job["self_hosted"])
 
+    def test_run_payload_runs_on_is_not_job_metadata(self):
+        # Exact #150 review P2 discipline for ``runs-on``: the literal inside
+        # a step's run payload is shell heredoc data, not runner
+        # configuration.  The old scan matched it at any indent and
+        # classified this hosted job as self-hosted.
+        job = self._probe(
+            [
+                "    runs-on: ubuntu-latest",
+                "    steps:",
+                "      - name: Emit",
+                "        run: |",
+                "          cat <<'EOF'",
+                "          runs-on: self-hosted",
+                "          EOF",
+            ]
+        )
+        self.assertFalse(job["self_hosted"])
+
+    def test_payload_only_runs_on_never_classifies_the_job(self):
+        # Stricter shape of the same finding: with no job-level ``runs-on``
+        # at all, a payload literal must not invent runner metadata.
+        job = self._probe(
+            [
+                "    steps:",
+                "      - name: Emit",
+                "        run: |",
+                "          cat <<'EOF'",
+                "          runs-on: self-hosted",
+                "          EOF",
+            ]
+        )
+        self.assertFalse(job["self_hosted"])
+
     def test_comment_only_key_with_hosted_block_labels_is_hosted(self):
         # The comment-only key must genuinely parse the labels rather than
         # default to either answer: a hosted block stays hosted.
