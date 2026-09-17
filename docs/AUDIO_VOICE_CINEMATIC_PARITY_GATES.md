@@ -257,6 +257,20 @@ backend/tests yet), `pending` (method defined, execution not run), `blocked`
 (requires licensed references/runners or a target that cannot link the
 dependency).
 
+`Status` records **implementation progress** — how much of a gate's method
+exists and has been executed. An **acceptance blocker** is a separate
+dimension: a condition outside the gate's own work — licensed
+references/runners, or a target that cannot link a required native
+dependency — that prevents the gate from being accepted until it is removed.
+The two are tracked distinctly: gates blocked on licensed references carry
+status `blocked` directly (AUD-9, VOX-8), while gates whose work has not
+started keep their implementation status (`not-implemented`) and their
+acceptance blocker is recorded in §6. Where both apply, the blocker controls
+acceptance — a gate with a standing blocker cannot be accepted no matter how
+far its implementation advances — and no blocker waives the missing
+evidence: removing the blocker still leaves the gate's own evidence
+requirements fully in force.
+
 ### 4.1 Audio playback gates
 
 | ID | Gate (requirement) | Production subject | Method / fixture | Evidence required | Status |
@@ -317,13 +331,20 @@ dependency).
 
 ## 5. Relationship to commercial compatibility (#122)
 
-- Media gates **never** override byte or behavioral compatibility. Network
-  voice bytes (VOX-2a/2b/2c/VOX-3/VOX-7) and disk asset bytes (CIN-1, NUL-1) are part
-  of the mandatory contract; the permissiveness of #122's
+- Media gates **never** override byte or behavioral compatibility. Valid
+  network voice wire bytes (VOX-2a/2b/2c/VOX-3/VOX-7) and valid serialized
+  disk asset encodings are both part of the mandatory contract; the
+  permissiveness of #122's
   "Test non-network rendering/audio details with suitable tolerances, but
   retain exactness wherever they affect packet contents or network-visible
   behavior." clause ([NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md))
-  applies only to rendering/audio detail, **not** to valid wire/disk encodings.
+  applies only to rendering/audio detail, **not** to valid wire/disk
+  encodings. Evidence boundary: no media gate in §4 currently demonstrates
+  serialized disk-byte equality — CIN-1 is a decoded-frame/checksum
+  comparison and NUL-1 is a headless parse/ownership/allocation gate, and
+  neither frame hashes nor media checksums prove disk-byte identity. Disk
+  asset-byte compatibility therefore stays **unproven** (never waived) until
+  an explicit serialized-byte-diff fixture is defined for it.
 - Codec preservation (DEP-3) is conditional, not a source-version freeze: the
   in-tree Speex 1.1.9 build is retained as implemented until a pinned commercial
   reference establishes the required wire codec/profile. Mandatory commercial
@@ -341,9 +362,15 @@ dependency).
 
 - **Blocked on licensed references/runners:** AUD-9, VOX-8, and retail
   portions of CIN-1/CIN-4. No available/skipped profile may count as passing.
-- **Blocked on target capability:** CIN-6/NUL-4/DEP-1 — Miles and Bink are
-  32-bit Windows-only; macOS and ARM cannot link them and need a defined stub
-  or replacement.
+- **Blocked on target capability** (acceptance blocker; the §4 rows keep
+  implementation status `not-implemented` — see the status/blocker dimensions
+  in §4): CIN-6/NUL-4/DEP-1. Miles and Bink are 32-bit Windows-only; macOS
+  and ARM cannot link them and need a defined stub or replacement. This
+  capability blocker is what controls acceptance of these gates: until a
+  target-linkable stub or replacement exists, the required per-target
+  evidence cannot be produced on the affected targets. The missing evidence
+  is **not waived** — it is unproducible today and remains required once the
+  blocker is removed.
 - **Not implemented:** there is no OpenAL (or other portable) backend, no
   voice device abstraction layer, and no audio/voice/cinematic test suite
   beyond `sound_dry_send_source_test.cmake`.
