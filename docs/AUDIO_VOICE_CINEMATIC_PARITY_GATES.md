@@ -86,7 +86,7 @@ sites: `SND_StartAlias2DSample` (`snd_driver.cpp:351`),
 | Client→server receive, pre-game (`SV_PreGameUserVoice`) | Packet-count byte, then per packet a **two-byte (16-bit)** size field (`MSG_ReadShort`) + payload. Same accept predicate `dataSize <= 0 \|\| dataSize > 256`, so the reader's accepted range is **1..256**; `0`, negative/truncated reads and values above 256 are rejected. **This 16-bit reader is unmatched in this fork:** no effective fork client path emits a 16-bit pre-game size (every reachable transmit path is `CA_ACTIVE`-gated and one-byte — see the reachability audit below), so its origin is unknown from this tree and it cannot be presented as a proven working pre-game exchange — see the unresolved finding below | `src/server_mp/sv_voice_mp.cpp:161-169`, dispatch at `sv_main_pc_mp.cpp:330-332` |
 | Server→client send (`SV_WriteVoiceDataToClient`) | Out-of-band `"v"` message: packet-count byte (asserted `>0` and `<= 40`), then per packet a `talker` byte + **one-byte** size field (`MSG_WriteByte`) + payload. `dataSize < (2<<15)` is asserted but only the low byte reaches the wire | `src/server_mp/sv_snapshot_mp.cpp:1872-1896`, `:1916` |
 | Client receive of server voice (`CL_VoicePacket`) | Packet-count byte accepted only when `<= 0x28` (40), then per packet a `talker` byte, a **one-byte** size field (`MSG_ReadByte`, representable 0..255) + payload. Accept predicate `dataSize <= 0 \|\| dataSize > 256`; the `> 256` arm is unreachable for a byte, so the effective accepted positive range is **1..255**. `talker >= 0x40` is rejected, and a size byte of `0` (or a truncated/negative read) aborts the batch | `src/client_mp/cl_voice.cpp:65-93` |
-| Server relay | `SV_QueueVoicePacket` caps the per-client queue at **40** packets and enforces `talkerNum == (byte)talkerNum`; `G_BroadcastVoice`/`voice_global` gate delivery | `src/server_mp/sv_voice_mp.cpp:11,94-146` |
+| Server relay | `SV_QueueVoicePacket` caps the per-client queue at **40** packets (`voicePacketCount < 40`) and bounds its `talkerNum`/`clientNum` arguments to `[0, sv_maxclients)` with four separate reachable assertions. The stored talker is the `uint8_t` field of `VoicePacket_t`, filled by implicit narrowing and written to clients with `MSG_WriteByte`. The byte-range assertion whose diagnostic string reads `"talkerNum == static_cast<byte>(talkerNum)"` is **not enforced**: its guard predicate is the self-comparison `if (talkerNum != talkerNum)`, always false, so the handler body is unreachable (see the dead-assertion finding below). `G_BroadcastVoice`/`voice_global` gate delivery | `src/server_mp/sv_voice_mp.cpp:11-58` (delivery gate), `:125-146` (queue/bounds), struct `g_client_public_mp.h:206-211`, writer `sv_snapshot_mp.cpp:1885-1894` |
 | Voice lifecycle entry points | `Voice_Init`/`Voice_Shutdown` called from the sound system (`snd.cpp:3699`,`:3940`); `Voice_SendVoiceData`, `Voice_IncomingVoiceData` | `src/win32/win_local.h:176-182`, `win_voice.cpp` |
 
 The **voice wire format is a compatibility contract**, not an internal detail.
@@ -137,6 +137,37 @@ a reachable mismatch and not a production defect, and no speculative production
 change is authorized by this audit. The format must be resolved against the
 pinned original commercial 1.7 / Steam 1.8 references before any pre-game voice
 gate (VOX-2b) is claimed as met.
+
+**Dead byte-range talker assertion (corrected source finding).** An earlier
+revision of the table above recorded that `SV_QueueVoicePacket` "enforces
+`talkerNum == (byte)talkerNum`". Direct inspection at the recorded SHA corrects
+that: the intended byte-range check is **not enforced**. The guard at
+`sv_voice_mp.cpp:142` is the self-comparison `if (talkerNum != talkerNum)`,
+which is always false, so its `MyAssertHandler` body (`:143`) is unreachable.
+The only surviving record of the intent is that handler's diagnostic string
+`"talkerNum == static_cast<byte>(talkerNum)"`, whose `149` line label is the
+decompiled source line, not the current file line. The four concerns are
+distinct and are recorded separately:
+
+- **Actual predicate:** `talkerNum != talkerNum` (always false). No byte-range
+  assertion executes.
+- **Diagnostic intent:** the string and its line label record the author's
+  intended postcondition — that the talker index fit in a byte — which the
+  predicate does not implement.
+- **Reachable talker constraints:** `SV_QueueVoicePacket` has exactly two call
+  paths. `G_BroadcastVoice` (`sv_voice_mp.cpp:52`) passes `talker->s.number`,
+  and `SV_PreGameUserVoice` (`:182`) passes `talker = cl - svs.clients`. Both
+  are `[0, sv_maxclients)` client/entity indices, already bounded by the four
+  separate reachable assertions at `:129-136` and, upstream, by the `< 0x40`
+  asserts in `SV_ClientHasClientMuted`. The stored field is `uint8_t`
+  (`VoicePacket_t.talker`, `g_client_public_mp.h:208`), so even an out-of-byte
+  value would narrow silently rather than trap. On every path this tree can
+  reach `talkerNum < 256` holds, so the dead predicate is an inventory and
+  hardening gap, **not** a reachable defect.
+- **Future hardening:** making the assertion effective would be a production
+  change. It is **not** authorized or required by this docs audit and needs its
+  own bounded change, tests and review (§7 item 5). This audit records the gap
+  only and changes no production code.
 
 ### 2.3 Cinematics
 
@@ -224,7 +255,7 @@ dependency).
 | VOX-2a | **Client→server in-game** framing byte-exact: out-of-band `"v"` + `qport` short, packet-count byte, then per packet one-byte size + payload; accepted server-side positive sizes **1..255**. Include zero and truncation/error cases; do not treat sender lengths ≥ 256 as valid (they truncate to the low byte on the wire). The writer is the fork's only sender, and its broader `CA_LOADING`/`CA_PRIMED` guard arms are not reachable through any effective caller (`Voice_SendVoiceData` requires `CA_ACTIVE`), so this one-byte format is the only reachable client→server width | `cl_voice.cpp:38-57` (send), effective callers `win_voice.cpp:86-93,445-565`, `sv_voice_mp.cpp:104-119` (receive) | Serialize known packets and diff against expected bytes; cases: size 0, size 255, sender length ≥256 shown truncated, truncated payload | Byte diff + rejection tests | pending |
 | VOX-2b | **Client→server pre-game reader format**: packet-count byte, then per packet a 16-bit size (`MSG_ReadShort`) + payload; reader-accepted sizes **1..256** (0, negative and >256 rejected). **Unmatched/unknown format in this fork** — no effective client path emits a 16-bit pre-game size (see the §2.2 reachability audit), so its origin is unknown from this tree; this is an unresolved source finding and a fork-to-fork round-trip is not valid proof | `sv_voice_mp.cpp:161-169`, dispatch `sv_main_pc_mp.cpp:330-332` | Reader-side rejection cases: raw 16-bit sizes 0, 256, 257, truncated payload. Any writer fixture requires recorded provenance and must not assert a one-byte writer / 16-bit reader pair as a working exchange | Reader rejection tests + explicit unresolved-finding record | pending |
 | VOX-2c | **Server→client** framing byte-exact: out-of-band `"v"`, packet-count byte (`1..40`), then per packet `talker` byte + one-byte size + payload; client accepts positive sizes **1..255** and `talker < 0x40` | `sv_snapshot_mp.cpp:1872-1896`, `cl_voice.cpp:65-93` | Serialize known packets; cases: count 0/41, size 0/255, talker 0x40, truncated payload | Byte diff + rejection tests | pending |
-| VOX-3 | Server relay preserves talker byte and payload and enforces the 40-packet cap and byte-talker assertion | `sv_voice_mp.cpp:94-146` | Queue flood + identity-boundary tests | Byte diff + assertion tests | pending |
+| VOX-3 | Server relay preserves the stored talker byte and payload byte-exactly and enforces the **40-packet cap** and the reachable `[0, sv_maxclients)` `talkerNum`/`clientNum` bounds. It does **not** enforce a byte-range talker assertion: the intended check is a dead self-comparison (`if (talkerNum != talkerNum)`, `sv_voice_mp.cpp:142`) whose diagnostic string merely records the intent (see §2.2 dead-assertion finding). Hardening that predicate is a separate production change, not part of this gate | `sv_voice_mp.cpp:125-146` (queue/bounds), `:142-144` (inert byte assert + narrowing store), `sv_snapshot_mp.cpp:1885-1894` (byte writer), `g_client_public_mp.h:206-211` (`uint8_t talker`) | Queue flood (cap 40) + identity-boundary cases (`0`, `sv_maxclients`−1, `sv_maxclients`, negative) that exercise the reachable assertions; record that no byte-range assertion fires | Byte diff + bound/rejection tests + inert-predicate record | pending |
 | VOX-4 | Capture device lifecycle: init, default-device change, removal, re-open, shutdown without leak or crash | `win_voice.cpp` mixer/waveIn, `record_dsound.cpp`, `Voice_Init`/`Voice_Shutdown` (`win_voice.cpp:588/640`) | Device-present / device-absent / device-swap sequences on each client target | Lifecycle trace + leak report | pending |
 | VOX-5 | Playback/loss/recovery: missing, late and reordered voice packets degrade gracefully and drop cleanly | `Voice_IncomingVoiceData` (`win_voice.cpp:732`), `DSound_HandleBufferUnderrun` (`play_dsound.cpp:178`) | Loss/reorder/late-arrival injection | Recovery trace | pending |
 | VOX-6 | Permission/default-device changes are observed and do not stall the game loop | `win_voice.cpp:100-160` mixer path | Permission-denied and no-device fixtures | Trace + no-hang assertion | pending |
@@ -299,6 +330,14 @@ dependency).
   exchange and not a reachable mismatch. It is not fixed here and must be
   resolved against the pinned commercial references before VOX-2b is claimed;
   no speculative production change is inferred.
+- **Corrected source finding (no live defect):** the server relay's intended
+  byte-range talker assertion is inert — its predicate is the always-false
+  `talkerNum != talkerNum` (`sv_voice_mp.cpp:142`) while only the diagnostic
+  string records the intent. Reachable callers bound the talker to
+  `[0, sv_maxclients)` and the stored field is `uint8_t`, so no reachable path
+  violates byte range. This is an inventory correction, not a production defect
+  and not a basis for a code change (§2.2). Hardening the predicate is out of
+  scope for this docs audit.
 - **This document does not certify:** any audio/voice/cinematic behavior, any
   original-reference interoperation, any target's media closure, or packaging
   readiness. It defines the gates and the evidence each requires.
@@ -319,6 +358,10 @@ each with its own PR and final-head CI plus substantive review, for example:
 3. CIN: define and build the target-selectable cinematic stub (CIN-6) so
    non-Windows targets link.
 4. NUL: a headless media lifecycle test proving NUL-1/2/3.
+5. VOX hardening (optional, separate bounded change): make the relay's intended
+   byte-range talker assertion effective (`sv_voice_mp.cpp:142`). This is a
+   production change and must not be folded into this docs stage; it needs its
+   own PR, tests and review.
 
 None of these may close [#132](https://github.com/jm2/kisakcod/issues/132),
 which retains its full original acceptance; helper-only coverage cannot claim a
