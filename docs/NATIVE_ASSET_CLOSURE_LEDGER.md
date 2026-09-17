@@ -667,9 +667,17 @@ GfxWorld — walk `Load_GfxWorld` (`db_load.cpp:10637-11084`), entry `Load_GfxWo
 | Menu | 284-byte menuDef + `window` (156 B, name/group XStrings + background material `:8431-8436`) | `Load_menuDef_t` (`:8582`), `Load_Window` (`:8439`) | `:8582-8585` | zone bump; **no `disk32::` extent** (284/156 literals) | material alias | — |
 | Menu | `font`/`onOpen`/`onClose`/`onESC`/`allowedBinding`/`soundName` XStrings | `Load_XString` ×6 | `:8586-8605` | zone C-string | — | — |
 | Menu | `onKey` handler chain (recursive) | `Load_ItemKeyHandler` (def `:8446`) | `:8594-8599` | 4-byte bump `:8596`; `action` XString `:8449-8450` | recursive `next` `:8451-8456` | — |
-| Menu | `visibleExp`/`rectXExp`/`rectYExp` + item expressions | `Load_statement` | `:8600-8609`, `:8536-8551` | statement allocs | — | — |
+| Menu | menu-level `visibleExp`/`rectXExp`/`rectYExp` statements | `Load_statement` ×3 | `:8601`, `:8607`, `:8609` | statement chain (two rows below) | — | — |
+| Menu | itemDef statements (`visibleExp`/`textExp`/`materialExp`/`rectXExp`/`rectYExp`/`rectWExp`/`rectHExp`/`forecolorAExp`) | `Load_statement` ×8 | `:8536-8551` | statement chain (next row) | — | — |
+| Menu | statement root — 8-byte (`entries` ptr + `numEntries`) | `Load_statement` (def `:8361-8370`) | non-null `entries` → arena alloc `:8366` + `Load_expressionEntry_ptrArray(1, numEntries)` `:8366-8368` | 4-byte token-array bump | — | span `ERR_DROP` `:51` |
+| Menu | `entries[numEntries]` token array → one 12-byte `expressionEntry` per non-null token | `Load_expressionEntry_ptrArray` (def `:8346-8359`) → `Load_expressionEntry_ptr` (def `:8335-8344`) | array stream `:8351`; per-entry arena alloc `:8340` + `Load_expressionEntry` `:8340-8342` | 4-byte bump per entry | — | — |
+| Menu | `expressionEntry->data` union | `Load_entryInternalData` (def `:8314-8326`) | `type != 0` → `Load_Operand` `:8316-8320`; `type == 0` → `Load_Operator` 4-byte `:8321-8325` | — | — | — |
+| Menu | `Operand` (8-byte) + `internals` union | `Load_Operand` (def `:8302-8307`) → `Load_operandInternalDataUnion` (def `:8277-8300`) | `VAL_FLOAT` → floatVal stream `:8281-8288`; **`VAL_STRING` → `Load_XString` zone C-string `:8289-8293`**; `0` → int stream `:8295-8299` | the `VAL_STRING` leaf is the expression chain's only pointer-bearing step | — | span `ERR_DROP` `:51` |
 | Menu | `items[itemCount]` (372-byte itemDef, 11 XStrings `:8502-8523`) | `Load_itemDef_ptrArray` (def `:8565`) → `Load_itemDef_t` (`:8499`) | `:8610-8615` | 4-byte bump `:8612` | sound alias `focusSound` `:8533`; `enableDvar` XString | — |
-| Menu | `typeData` by item type | `Load_itemDefData_t` (def `:8466`): listBox `:8471`, editField `:8483`, multiDef `:8487` (32 XStrings ×2 `:8408-8415`), string `:8491` | `:8534-8535` | per-type allocs `:8402`, `:8422`, `:8559` | — | — |
+| Menu | `typeData` dispatch by item type | `Load_itemDefData_t` (def `:8466-8495`): type 6 → listBox `:8470-8473`; types 4/9/0x10/0x12/0xB/0xE/0xA/0/0x11 → editField `:8474-8485`; type 0xC → multiDef `:8486-8489`; type 0xD → string `:8490-8493` | call `:8535` | per-type token arena allocs `:8386`, `:8402`, `:8422` | — | — |
+| Menu | listBox `typeData` → `listBoxDef_t` (340-byte) | `Load_listBoxDef_ptr` (def `:8381-8390`) → `Load_listBoxDef_t` (def `:8372-8379`) | arena alloc `:8386`; root `:8374` | **`doubleClick` XString `:8375-8376` (zone C-string); `selectIcon` `:8377-8378` material alias** | — | — |
+| Menu | editField `typeData` → `editFieldDef_s` (32-byte, plain) | `Load_editFieldDef_ptr` (def `:8397-8406`) → `Load_editFieldDef_t` (def `:8392-8395`) | arena alloc `:8402`; root `:8394` | **no nested pointers** | — | — |
+| Menu | multiDef `typeData` → `multiDef_s` (392-byte) | `Load_multiDef_ptr` (def `:8417-8426`) → `Load_multiDef_t` (def `:8408-8415`) | arena alloc `:8422`; root `:8410` | **two 32-entry XString arrays `:8411-8414` → 64 zone C-strings** | — | — |
 | Menu | pointer token | `Load_menuDef_ptr` (def `:8619`) | `:8619-8653` | inline alloc `:8631`; insert `:8634`; publish `:8640-8643`; alias `:8647-8649` | registration `Load_MenuAsset` (`db_registry.cpp:1108-1120`, re-parents items `:1116-1117`) | — |
 | LocalizeEntry | 8-byte header + `value`/`name` | `Load_LocalizeEntry` (`:8846`), entry `Load_LocalizeEntryPtr` (def `:8855`) | `:8846-8889` | zone C-strings; **no `disk32::` extent** (8 literal) | insert `:8870` / alias `:8883-8885` | — |
 | Weapon | 2168-byte header | `Load_WeaponDef` (def `:9028`) | `:9028` | zone bump; **no `disk32::` extent** (2168 literal) | — | accuracy-graph `ERR_DROP` `:985`, `:1001` (validators `:978-1007`) |
@@ -738,16 +746,27 @@ otherwise:
   §9), and inserted-pointer publication (`DB_SetInsertedPointer`) happens
   only after the body walk succeeds — the pointer token is registered
   (slot) before children are read and published (sealed) after.
-- **High-address behavior.** All pointer fields are 4-byte tokens in the
-  32-bit token space; offset decode enforces `kOffsetMask = 0x0FFFFFFF`,
-  block-index validity and `offset + requiredBytes <= blockSize`
-  (`db_disk32.h:12`, `DecodeOffset`); block-4 (`kDirectBlock4`,
-  `db_load.cpp:34`) is the shared relocation block. Top-of-space behavior
-  (tokens near `0xFFFFFFFF`, block-4 tail) is pinned by
-  `tests/disk32_tests.cpp` ("inline sentinel was accepted as an offset",
-  "out-of-range block was accepted", "out-of-range byte span was accepted"
-  rejection cases) and per-kind extent assertions in
-  `tests/db_relocation_tests.cpp` / `tests/db_validation_tests.cpp` (§11).
+- **High-address behavior (token domain vs host width).** All pointer fields
+  are 4-byte tokens in the 32-bit token space; offset decode enforces
+  `kOffsetMask = 0x0FFFFFFF`, block-index validity and
+  `offset + requiredBytes <= blockSize` (`db_disk32.h:12`, `DecodeOffset`);
+  block-4 (`kDirectBlock4`, `db_load.cpp:34`) is the shared relocation block.
+  These bounds are **32-bit-domain arithmetic**: they constrain the token
+  space, not host pointer widths. `tests/disk32_tests.cpp` ("inline sentinel
+  was accepted as an offset", "out-of-range block was accepted",
+  "out-of-range byte span was accepted" rejection cases) and the per-kind
+  extent assertions in `tests/db_relocation_tests.cpp` /
+  `tests/db_validation_tests.cpp` (§11) operate on `uint32` sizes/offsets in
+  that token domain — they pin top-of-token-space behavior (sentinels,
+  block-4 tail) and do **not** execute >4 GiB host addresses. Full-width
+  (>4 GiB) host storage/conversion coverage exists only where a named test
+  pins it: `TestPointerBytesRemainNativeWidth`
+  (`tests/model_surface_stream_tests.cpp:341`, ctest
+  `renderer-model-surface-stream-contracts`, XModel/XSurface family) plus the
+  cross-family static gates (`pointer-truncation-tripwire`, 24 tracked
+  narrow-conversion sites; `abi-sizeof-debt-tripwire`). Every other family's
+  host-width behavior therefore carries a high-address **ME** classification
+  (§12): token-domain bounds are proven, >4 GiB execution is not.
 
 Per-family matrix:
 
@@ -788,7 +807,10 @@ document as the only pending edit:
 
 This supersedes the "217/217" figure quoted from the 2026-09-11 self-review
 of #141's head — the suite has grown to 238 registered ctest tests at this
-head. Named receipts below are quoted from this run.
+head. Named receipts below are quoted from this run. The full 238-test
+roster was additionally re-discovered and re-executed green at the
+corrective head `73b995dc` with this §9–§13 revision as the only pending
+edit (rework of review `31965d30` findings).
 
 ### 11.2 What "the graph walker" is, per family
 
@@ -828,22 +850,30 @@ per-family converted walker substitutes for it.
 
 ### 11.4 Exact test receipts per family (framework: bespoke `main()` + `CHECK`/`Expect` harnesses; no Catch2/googletest anywhere in `tests/`)
 
+Receipt provenance: the **ctest names** column quotes registered `ctest -N`
+discovery at this head (`73b995dc…`, 238 tests; full roster in §11.1), and
+the §11.1 run executed every registered test green — so each named ctest
+receipt below is validated at this head. The **representative exact test
+names** column quotes test-function/`CHECK` symbols read from the test
+sources at this head; those are file-level assertions, not ctest units, and
+are provenance citations rather than independently re-run receipts.
+
 | Family | Test files | Representative exact test names | ctest names (from the §11.1 run) |
 |---|---|---|---|
-| Envelope/disk32 primitives | `db_xasset_disk32_tests.cpp`, `db_script_string_disk32_tests.cpp`, `disk32_tests.cpp` | `TestExactSchemaBytes`, `TestHeaderValidationAndLimits`, `TestBuildAdmissionPolicy`, `TestUnalignedIteratorAndGuardBytes`, `TestIteratorFailureAtomicity`, `TestLateRejectionIsAtomic`, `TestMaximumAssetIteration`; `TestExactTokenSchema`, `TestTokenClassesAndRawPreservation`, `TestSharedInlinePreflightIsAtomic` | `database-xasset-disk32-envelope` (#14), `disk32-pointer-token-bounds` (#13), `database-script-string-disk32-walk` |
+| Envelope/disk32 primitives | `db_xasset_disk32_tests.cpp`, `db_script_string_disk32_tests.cpp`, `disk32_tests.cpp` | `TestExactSchemaBytes`, `TestHeaderValidationAndLimits`, `TestBuildAdmissionPolicy`, `TestUnalignedIteratorAndGuardBytes`, `TestIteratorFailureAtomicity`, `TestLateRejectionIsAtomic`, `TestMaximumAssetIteration`; `TestExactTokenSchema`, `TestTokenClassesAndRawPreservation`, `TestSharedInlinePreflightIsAtomic` | `database-xasset-disk32-envelope` (#14), `disk32-pointer-token-bounds` (#13), `database-script-string-disk32-walk` (#15) |
 | Alias/relocation machinery | `db_relocation_tests.cpp` | `TestDirectResolver`, `TestDirectCString`, `"material water requires exact completed starts"`, `"sound files require exact completed starts"`, `"completed shared-object disk32 schemas remain fixed"` (pins `kSoundFileBytes==12`, `kSpeakerMapBytes==408`, `kSndAliasBytes==92`, `kGfxLightBytes==64`, `kDpvsPlaneBytes==20`, `kStringTableBytes==16`) | `database-relocation-alias-provenance` (#85) |
-| Validation/checked arithmetic | `db_validation_tests.cpp`, `db_asset_mode_tests.cpp` | `"checked clipmap brush global extents accepted"`, `"complete clipmap brush graph with a shared plane accepted"`, `"path visibility uses the complete directed-pair bit matrix"`, `"path tree cycle rejected"`, `"world portal graph rejects an interior target cell pointer"`; `"MP must reject SP clipmaps"`, `"MP must accept PVS clipmaps"` | `database-checked-arithmetic` (#87), `database-asset-mode` |
-| XAnimParts / XModel / XModelPieces | `xanim_load_test.cpp`, `xmodel_load_test.cpp`, `xanim_parts_split_test.cpp`, `model_surface_stream_tests.cpp`, `skel_memory_atomic_tests.cpp` | `TestXModelPiecesParse`, `TestOverrunLatchesFailed`, `TestTransactionalRollback`, `TestReadStringBounds`, `TestReadBoneLimit`, `TestReadTriLimit`, `TestUnalignedReads`; `TestConfigFileParse`, `TestCollisionDataParse`, `TestFullLoadSequenceSync`, `TestXModelPartsParse`; `CHECK(sizeof(XAnimParts) == 88u)`; `TestFormerRigidStackBoundary`, `TestMixedStreamAndNativeAlignment`, `TestPointerBytesRemainNativeWidth`, `TestExactAndMalformedCursorBounds` | `xanim-load-bounded-cursor` (#213), `xmodel-load-bounded-cursor` (#214), `xanim-parts-split-contracts` (#215), `renderer-model-surface-stream-contracts` (#121), `skeleton-memory-atomic-protocols` |
-| Material / Image / TechniqueSet | (no dedicated loader suite — **evidence gap**, §12) covered via `db_validation_tests.cpp` material sections and `shader_cache_tests.cpp` | `TestBrushWrapper`-adjacent material sections: `"one-pass material technique disk extent accepted"`, `"maximum shader load definition accepted"`, `"maximum material argument layout accepted"`, `"maximum water grid downsamples one picmip level"`; `TestSourceIdentity`, `TestSidecarRoundTrip`, `TestCorruptSidecarRegeneration` | inside `database-checked-arithmetic`; `database-derived-shader-cache-contracts` |
+| Validation/checked arithmetic | `db_validation_tests.cpp`, `db_asset_mode_tests.cpp` | `"checked clipmap brush global extents accepted"`, `"complete clipmap brush graph with a shared plane accepted"`, `"path visibility uses the complete directed-pair bit matrix"`, `"path tree cycle rejected"`, `"world portal graph rejects an interior target cell pointer"`; `"MP must reject SP clipmaps"`, `"MP must accept PVS clipmaps"` | `database-checked-arithmetic` (#87), `database-build-mode-asset-policy` (#88) |
+| XAnimParts / XModel / XModelPieces | `xanim_load_test.cpp`, `xmodel_load_test.cpp`, `xanim_parts_split_test.cpp`, `model_surface_stream_tests.cpp`, `skel_memory_atomic_tests.cpp` | `TestXModelPiecesParse`, `TestOverrunLatchesFailed`, `TestTransactionalRollback`, `TestReadStringBounds`, `TestReadBoneLimit`, `TestReadTriLimit`, `TestUnalignedReads`; `TestConfigFileParse`, `TestCollisionDataParse`, `TestFullLoadSequenceSync`, `TestXModelPartsParse`; `CHECK(sizeof(XAnimParts) == 88u)`; `TestFormerRigidStackBoundary`, `TestMixedStreamAndNativeAlignment`, `TestPointerBytesRemainNativeWidth`, `TestExactAndMalformedCursorBounds` | `xanim-load-bounded-cursor` (#213), `xmodel-load-bounded-cursor` (#214), `xanim-parts-split-contracts` (#215), `renderer-model-surface-stream-contracts` (#121), `skeleton-memory-atomic-protocols` (#116) |
+| Material / Image / TechniqueSet | (no dedicated loader suite — **evidence gap**, §12) covered via `db_validation_tests.cpp` material sections and `shader_cache_tests.cpp` | `TestBrushWrapper`-adjacent material sections: `"one-pass material technique disk extent accepted"`, `"maximum shader load definition accepted"`, `"maximum material argument layout accepted"`, `"maximum water grid downsamples one picmip level"`; `TestSourceIdentity`, `TestSidecarRoundTrip`, `TestCorruptSidecarRegeneration` | `database-checked-arithmetic` (#87, material extent sections); `database-derived-shader-cache-contracts` (#235) |
 | Sound family | `sound_dry_send_source_test.cmake` (source-contract only; **no runtime loader suite**) | source-contract pins: `SND_SetData` headless guard `#ifndef KISAK_DEDI_HEADLESS`, `DB_SetInsertedPointer(… SoundData …)` retention, `DB_ClearHeadlessSoundRuntimeData` presence | `sound-dry-send-source-invariants` |
-| ClipMap / PathData / GfxWorld / physics | `db_validation_tests.cpp`, `phys_*_tests.cpp` | brush/path/world fixture checks quoted above; `TestTokenSentinels`, `TestBindResolveRelease`, `TestStaleTokenRejection`; `TestInvalidCallbacksAreRejectedBeforeAllocation`, `TestBodyAllocationFailureIsStable`, `TestUserDataFailureRollsBackBody` | inside `database-checked-arithmetic`; `phys-obj-id`, `phys-resource-pair` |
-| UI/data families | `ui_safety_tests.cpp`, `hudelem_sort_tests.cpp`, `weapon_input_safety_tests.cpp`, `weapon_model_safety_tests.cpp` | `TestSavegameCountCapacity`, `TestSavegameSlotResolution`, `TestCapacityFailureIsAtomic`, `TestAppendFailureIsAtomic`, `TestNativePointerSort`; weapon mains check attack-suppression flags and model-slot bounds — **no fast-file weapon loader suite** | `ui-safety`, `hudelem-sort`, `weapon-input-safety`, `weapon-model-safety` |
-| FX / ImpactFx | `fx_fastfile_disk32_tests.cpp`, `fx_fastfile_native_disk32_tests.cpp`, `fx_fastfile_impact_native_disk32_tests.cpp`, `fx_fastfile_zone_adapter_disk32_tests.cpp`, `fx_fastfile_native_arena_tests.cpp`, `fx_archive_*_tests.cpp` (12 files), `db_fx_zone_adapter_wiring*_tests.cpp` | `TestEffectDefinitionGoldenBytes`, `TestElementDefinitionGoldenBytes`, `TestImpactGoldenBytes`; `TestValidDefinitions`, `TestMaximumGraphAndResolverJournal`, `TestPointerSpanAndProvenanceFailures`, `TestFutureTokenMutationRestore`; `TestHappyPathAndFullWidthIdentities`, `TestPlanAliasChecksPrecedeCallbacks`, `TestLegacyTokenCompatibility`; `TestZeroElementEffect`, `TestAllVisualKindsEffect`, `TestPublicationRejectionStrandsCommittedStorage`, `TestArenaExhaustionFailsClosed`; `TestNoBindingReturnsNull`, `TestProductionCallSiteNoBindingFallsThrough`; `TestEveryEffectHandleRoundTrip`, `TestMaximumPhysicsCapacity`, `TestLeaseGatesAndCallbackReentry`; `TestSuccessPath`, `TestLiveRecoveryInjection`, `TestSnapshotRecoveryInjection`, `TestSafeEmptyInjection` | `fx-fastfile-*`, `fx-archive-*`, `database-fx-zone-adapter-wiring*` families — all green in the §11.1 run |
-| Zone runtime / script strings | `db_zone_*_tests.cpp` (9 files), `db_load_legacy_bridge_tests.cpp`, `script_string_*_tests.cpp` | `TestClaimCommitAndFailureAtomicity`, `TestLiveUnloadRetryAtEveryCleanupBoundary`, `TestCompositionAuthentication`, `TestHappyPathRoundTrip`, `TestInternValidationGuards`, `TestBackToBackCyclesDoNotPoison`; `deterministicContracts`, `twoWayUserTransferContention` | `database-load-legacy-bridge` (#69) + the `database-zone-*` family |
-| Save/tagInfo | `save_taginfo_tests.cpp`, `save_taginfo_production_tests.cpp` | `TestStaticContracts`, `TestForwardRoundTrip`, `TestWireImageBytes`; `TestNamedRecordRoundTrip`, `TestWireParityWithPinnedConverter`, `TestWriteRejectsMisalignedPointer` | `save-taginfo` variants |
-| ABI gates | `pointer_truncation_test.cmake`, `abi_sizeof_debt_test.cmake`, `headless_profile_test.cmake`, `headless_include_debt_test.cmake` | allowlist inventories (not pass/fail units): `pointer_truncation.allow` 24 tracked sites, `abi_sizeof_debt.allow` 183 entries + formula ledger 7 (+13-line file), `headless_include_debt.allow` 21 entries | `pointer-truncation-tripwire`, `abi-sizeof-debt-tripwire`, `dedi-headless-source-profile`, `dedi-headless-client-media-include-debt` — all green in the §11.1 run |
-| Parity instrument | `retail_fastfile_parity_harness.cpp`, `db_graph_hash_tests.cpp` | `TestSha256KnownAnswers`, `TestWidthParityProperty`, `TestFloatCanonicalization`; `TestSelfTest` | `retail-fastfile-parity-harness-self-test`, `retail-fastfile-parity-driver-gates` (#238), `database-graph-hash` |
-| Production seals | 9 `*_production_seal_tests.cpp` + object-inspection scripts | e.g. `db_load_legacy_bridge_production_seal_tests.cpp` (bridge surface pinned, test-access denied), `db_zone_runtime_table_production_seal_tests.cpp` (exact record sizes), `fx_physics_sidecar_production_seal_tests.cpp` (`!CanMutateActiveCount`), `physicalmemory_runtime_production_seal_tests.cpp` | `database-load-legacy-bridge-production-test-access-sealed` (#68) and the `*-production-test-access-sealed` family — all green |
+| ClipMap / PathData / GfxWorld / physics | `db_validation_tests.cpp`, `phys_*_tests.cpp` | brush/path/world fixture checks quoted above; `TestTokenSentinels`, `TestBindResolveRelease`, `TestStaleTokenRejection`; `TestInvalidCallbacksAreRejectedBeforeAllocation`, `TestBodyAllocationFailureIsStable`, `TestUserDataFailureRollsBackBody` | inside `database-checked-arithmetic` (#87); `phys-obj-id-sidecar-contracts` (#118), `physics-resource-pair-rollback` (#103), `phys-obj-id-owner-bound-source-invariants` (#171) |
+| UI/data families | `ui_safety_tests.cpp`, `hudelem_sort_tests.cpp`, `weapon_input_safety_tests.cpp`, `weapon_model_safety_tests.cpp` | `TestSavegameCountCapacity`, `TestSavegameSlotResolution`, `TestCapacityFailureIsAtomic`, `TestAppendFailureIsAtomic`, `TestNativePointerSort`; weapon mains check attack-suppression flags and model-slot bounds — **no fast-file weapon loader suite** | `ui-safety-runtime-contracts` (#3), `ui-safety-source-invariants` (#4), `hudelem-sort-mp-contracts` (#154), `hudelem-sort-sp-contracts` (#155), `hudelem-sort-source-invariants` (#200), `weapon-input-safety-contracts` (#153), `weapon-model-safety-contracts` (#152), `weapon-model-safety-source-invariants` (#206) |
+| FX / ImpactFx | `fx_fastfile_disk32_tests.cpp`, `fx_fastfile_native_disk32_tests.cpp`, `fx_fastfile_impact_native_disk32_tests.cpp`, `fx_fastfile_zone_adapter_disk32_tests.cpp`, `fx_fastfile_native_arena_tests.cpp`, `fx_archive_*_tests.cpp` (12 files), `db_fx_zone_adapter_wiring*_tests.cpp` | `TestEffectDefinitionGoldenBytes`, `TestElementDefinitionGoldenBytes`, `TestImpactGoldenBytes`; `TestValidDefinitions`, `TestMaximumGraphAndResolverJournal`, `TestPointerSpanAndProvenanceFailures`, `TestFutureTokenMutationRestore`; `TestHappyPathAndFullWidthIdentities`, `TestPlanAliasChecksPrecedeCallbacks`, `TestLegacyTokenCompatibility`; `TestZeroElementEffect`, `TestAllVisualKindsEffect`, `TestPublicationRejectionStrandsCommittedStorage`, `TestArenaExhaustionFailsClosed`; `TestNoBindingReturnsNull`, `TestProductionCallSiteNoBindingFallsThrough`; `TestEveryEffectHandleRoundTrip`, `TestMaximumPhysicsCapacity`, `TestLeaseGatesAndCallbackReentry`; `TestSuccessPath`, `TestLiveRecoveryInjection`, `TestSnapshotRecoveryInjection`, `TestSafeEmptyInjection` | `effectscore-fastfile-disk32-schema` (#76), `effectscore-fastfile-native-disk32-conversion` (#77), `effectscore-fastfile-impact-native-disk32-conversion` (#78), `effectscore-fastfile-native-arena` (#79), `effectscore-fastfile-zone-adapter-disk32` (#80), `effectscore-fastfile-disk32-source-invariants` (#182), `effectscore-fastfile-zone-adapter-source-invariants` (#183); `effectscore-archive-disk32-codec` (#67), `effectscore-archive-body-state-disk32-codec` (#70), `effectscore-archive-system-disk32-codec` (#71), `effectscore-archive-buffers-disk32-codec` (#72), `effectscore-archive-native-disk32-codec` (#73), `effectscore-archive-reader-disk32` (#74), `effectscore-archive-restore-candidate-disk32` (#75), `effectscore-archive-physics-transaction` (#172), `effectscore-archive-capacity-planning` (#97), `effectscore-archive-restore-control` (#98), `effectscore-archive-physics-batch-control` (#99), `effectscore-archive-gate-control` (#101), `effectscore-archive-restore-workspace` (#102), `effectscore-archive-snapshot-publication-source-invariants` (#176), `effectscore-archive-system-disk32-source-invariants` (#177), `effectscore-archive-buffers-disk32-source-invariants` (#178), `effectscore-archive-native-disk32-source-invariants` (#179), `effectscore-archive-body-state-disk32-source-invariants` (#180), `effectscore-archive-reader-disk32-source-invariants` (#181); `effectscore-effect-table-transactional-restore` (#9), `effectscore-effect-table-bounded-save` (#10), `effectscore-effect-table-stack-usage` (#11), `effectscore-fixed-width-atomic-layouts` (#92), `effectscore-runtime-blob-layout` (#93), `effectscore-missing-effect-alias` (#94), `effectscore-physics-body-sidecar` (#95), `effectscore-physics-sidecar-production-test-access-sealed` (#96), `effectscore-effect-table-source-invariants` (#173), `effectscore-effect-table-save-source-invariants` (#174), `effectscore-live-physics-source-invariants` (#175), `effectscore-visibility-publication` (#111), `effectscore-iterator-atomic-protocol` (#112), `effectscore-snapshot-publication-coherence` (#113), `effectscore-pool-and-handle-contracts` (#114); `database-fx-zone-adapter-wiring` (#82), `database-fx-zone-adapter-wiring-production-call-site` (#83), `database-fx-zone-adapter-wiring-headless` (#84) — all green in the §11.1 run |
+| Zone runtime / script strings | `db_zone_*_tests.cpp` (9 files), `db_load_legacy_bridge_tests.cpp`, `script_string_*_tests.cpp` | `TestClaimCommitAndFailureAtomicity`, `TestLiveUnloadRetryAtEveryCleanupBoundary`, `TestCompositionAuthentication`, `TestHappyPathRoundTrip`, `TestInternValidationGuards`, `TestBackToBackCyclesDoNotPoison`; `deterministicContracts`, `twoWayUserTransferContention` | `database-load-legacy-bridge` (#69); `database-zone-load-context-lifecycle` (#16), `database-zone-stream-ownership-runtime-contracts` (#17), `database-zone-pending-copy-ledger` (#19), `database-zone-script-string-ownership-controller` (#22), `database-zone-runtime-facade` (#25), `database-zone-runtime-callback-context` (#27), `database-zone-runtime-table-ownership` (#30), `database-zone-runtime-storage-layout` (#81), `database-zone-runtime-stable-context-integration` (#65), `database-zone-runtime-stable-context-forgotten-finish` (#66) — plus the `database-zone-runtime-table-*` parameter variants (#31–#64) and the `database-zone-*`-`source-invariants` set (#186–#197), all in the §11.1 roster |
+| Save/tagInfo | `save_taginfo_tests.cpp`, `save_taginfo_production_tests.cpp` | `TestStaticContracts`, `TestForwardRoundTrip`, `TestWireImageBytes`; `TestNamedRecordRoundTrip`, `TestWireParityWithPinnedConverter`, `TestWriteRejectsMisalignedPointer` | `save-taginfo-disk32-converter` (#229), `save-taginfo-production-path` (#230) |
+| ABI gates | `pointer_truncation_test.cmake`, `abi_sizeof_debt_test.cmake`, `headless_profile_test.cmake`, `headless_include_debt_test.cmake` | allowlist inventories (not pass/fail units): `pointer_truncation.allow` 24 tracked sites, `abi_sizeof_debt.allow` 183 entries + formula ledger 7 (+13-line file), `headless_include_debt.allow` 21 entries | `pointer-truncation-tripwire` (#163), `abi-sizeof-debt-tripwire` (#167), `dedi-headless-source-profile` (#161), `dedi-headless-client-media-include-debt` (#162) — all green in the §11.1 run |
+| Parity instrument | `retail_fastfile_parity_harness.cpp`, `db_graph_hash_tests.cpp` | `TestSha256KnownAnswers`, `TestWidthParityProperty`, `TestFloatCanonicalization`; `TestSelfTest` | `retail-fastfile-parity-harness-self-test` (#237), `retail-fastfile-parity-driver-gates` (#238), `database-graph-hash-canonical` (#234) |
+| Production seals | 9 `*_production_seal_tests.cpp` + object-inspection scripts | e.g. `db_load_legacy_bridge_production_seal_tests.cpp` (bridge surface pinned, test-access denied), `db_zone_runtime_table_production_seal_tests.cpp` (exact record sizes), `fx_physics_sidecar_production_seal_tests.cpp` (`!CanMutateActiveCount`), `physicalmemory_runtime_production_seal_tests.cpp` | `database-load-legacy-bridge-production-test-access-sealed` (#68), `database-zone-stream-ownership-production-test-access-sealed` (#18), `database-zone-pending-copy-production-test-access-sealed` (#20), `database-registry-ownership-production-test-access-sealed` (#24), `database-zone-runtime-facade-production-test-access-sealed` (#26), `database-zone-runtime-callback-context-production-test-access-sealed` (#28), `database-zone-runtime-callback-context-macro-off-object-symbol-sealed` (#29), `database-zone-runtime-table-production-test-access-sealed` (#64), `effectscore-physics-sidecar-production-test-access-sealed` (#96), `universal-physicalmemory-runtime-production-test-access-sealed` (#108) — all green in the §11.1 run |
 
 **Explicit evidence gaps in this column** (missing fixtures/tests, not missing
 production behavior): no runtime loader suite exists for Material/Image/
@@ -887,7 +917,7 @@ Absence of a label means that kind of gap does not apply to the family.
 | RawFile / StringTable | covered by relocation pins only | — | — | — |
 | FX / ImpactFx | — | decompiled fallback remains the shipping reader by design | **fast-file adapter conversion is build-enrolled zero-caller**: `TryBindStorage` (`db_zone_runtime_facade.cpp:674`) has zero production callers; enrollment gated on `docs/task.md` "Enroll the guarded native FX/impact path…" (unchecked) | — |
 | Save/tagInfo | — | remaining `g_save.cpp` SP sizing debt | tagInfo conversion **is** enrolled (merged #89) | full SP save/load **SP** |
-| Script VM | — | raw-width VM in-tree; widening is PR #119/`ki-n1et` scope | — | full SP script persistence **SP** |
+| Script VM | — | raw-width VM is **fixed**: script runtime pointers were widened to native width by merged PR #119 (`f0b4157a`, "abi: widen script runtime pointers while preserving serialized formats" — a merge commit already in this basis's ancestry, so it is landed work, not pending scope); serialized script formats were preserved unchanged. Remaining raw-width debt is the 24 `pointer_truncation.allow` tracked narrow-conversion sites (cross-family, §2.4 counts) | — | full SP script persistence **SP** |
 | World-graph parity instrument | — | — | n/a (instrument itself missing: #113/`ki-msb`) | — |
 
 Reading guide: a family can be fully *implemented* (decompiled reader is
@@ -897,6 +927,15 @@ test work, not implementation. **MPE** rows are the only gaps that require
 production wiring before a capability can be claimed. **MI** rows are the
 honest "the portable rewrite has not happened" entries and must not be
 closed by documentation.
+
+**High-address (>4 GiB) evidence, per family.** No family has an execution
+fixture exercising >4 GiB host addresses. The only full-width pins are
+`TestPointerBytesRemainNativeWidth` (XModel/XSurface family, via ctest
+`renderer-model-surface-stream-contracts`) and the cross-family static
+gates (`pointer-truncation-tripwire`, `abi-sizeof-debt-tripwire`) — see
+§10's token-domain vs host-width breakdown. Every family row above that
+does not name one of those pins therefore carries an implicit high-address
+**ME** entry on top of any explicitly listed gaps.
 
 ---
 
@@ -922,6 +961,42 @@ closed by documentation.
     DynEntityDef (`:7300`).
   - The test-count receipt grows from 217 (#141 era) to **238/238** at this
     head (§11.1).
+- **Rework of review `31965d30` findings** (four P2 corrections; citations
+  re-verified against the recorded basis `ba508d15` before each edit):
+  - §9.10 menu statement walks are now enumerated to the leaves: the
+    `Load_statement` chain (`:8361-8370` → `Load_expressionEntry_ptrArray`
+    `:8346-8359` → `Load_expressionEntry_ptr` `:8335-8344` →
+    `Load_expressionEntry` `:8328-8333` → `Load_entryInternalData`
+    `:8314-8326` → `Load_Operand` `:8302-8307` →
+    `Load_operandInternalDataUnion` `:8277-8300`, whose `VAL_STRING` branch
+    follows the pointer through `Load_XString`) and the `typeData` interiors
+    (`Load_listBoxDef_t` `doubleClick`/`selectIcon`, `Load_editFieldDef_t`
+    plain 32-byte body, `Load_multiDef_t` 2×32 XString arrays). §9.1–§9.9
+    were audited for the same grouped-row pattern; their nested walks were
+    already enumerated (XAnim delta frames, XSurface collision trees,
+    brush-side plane tokens, pathnode tree splits, GfxWorld portals), so no
+    other rows changed.
+  - §11.4's ctest column now quotes registered `ctest -N` discovery names
+    exactly (e.g. `database-build-mode-asset-policy`,
+    `phys-obj-id-sidecar-contracts`, `physics-resource-pair-rollback`,
+    `ui-safety-runtime-contracts`, `weapon-input-safety-contracts`,
+    `save-taginfo-disk32-converter`, `database-graph-hash-canonical`, the
+    `effectscore-*` fastfile/archive/runtime sets); the prior shorthand
+    (`database-asset-mode`, `phys-obj-id`, `ui-safety`, `fx-fastfile-*`,
+    `save-taginfo variants`, …) mixed historical shorthand with registered
+    names and is replaced. A provenance note separates validated-at-this-head
+    ctest receipts from file-level test-function citations.
+  - §10's high-address bullet now separates 32-bit token-domain bounds
+    (sentinels, block index, span — pinned by `uint32`-domain
+    `disk32_tests.cpp`) from >4 GiB host storage/conversion coverage, which
+    exists only via `TestPointerBytesRemainNativeWidth` (XModel/XSurface) and
+    the static truncation/ABI gates; every other family records an explicit
+    high-address **ME** entry (§12 note).
+  - §12's Script VM row credits the **merged** PR #119 (`f0b4157a`, verified
+    ancestor of basis `ba508d15` via `git merge-base --is-ancestor`) instead
+    of describing it as pending scope, and restates remaining raw-width debt
+    as the 24 `pointer_truncation.allow` tracked sites plus SP script
+    persistence.
 - **Criteria mapping.** Criterion 1 (exhaustive inventory): §9.0–§9.12
   enumerate every pointer-bearing subobject walk of all 33 registered
   families (26 dispatchable types + XModelPieces nested-only + the 6
