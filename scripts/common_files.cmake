@@ -204,6 +204,10 @@ set(DATABASE
     "${SRC_DIR}/database/db_stream.cpp"
     "${SRC_DIR}/database/db_stream_load.cpp"
     "${SRC_DIR}/database/db_stringtable_load.cpp"
+    "${SRC_DIR}/database/db_graph_hash.cpp"
+    "${SRC_DIR}/database/db_graph_hash.h"
+    "${SRC_DIR}/database/shader_cache.cpp"
+    "${SRC_DIR}/database/shader_cache.h"
 )
 
 set(DEVGUI
@@ -535,6 +539,7 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/sys_filesystem.h"
     "${SRC_DIR}/qcommon/sys_memory.h"
     "${SRC_DIR}/qcommon/sys_process.h"
+    "${SRC_DIR}/qcommon/sys_socket.h"
     "${SRC_DIR}/qcommon/sys_sync.cpp"
     "${SRC_DIR}/qcommon/sys_sync.h"
     "${SRC_DIR}/qcommon/sys_thread.h"

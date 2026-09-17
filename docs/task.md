@@ -69,7 +69,7 @@ reserve shared source areas before assigning implementation work.
 | Immediate / A03 | [#125](https://github.com/jm2/kisakcod/issues/125) | Strict nonempty corpus setup and real production parser/loader coverage; existing cursor tests remain useful. |
 | Evidence / A04 | [#126](https://github.com/jm2/kisakcod/issues/126) | Capability/evidence manifest and durable dashboard; extend `ki-yvj` rather than duplicate its workflows. |
 | Early oracle / A05 | [#127](https://github.com/jm2/kisakcod/issues/127) | Actual MSG reference fixtures and fixed-tick command-driven simulation; build on merged `ki-jgz` (#116). |
-| Valid-peer policy / A06 | [#128](https://github.com/jm2/kisakcod/issues/128) | Dvar flag/command audit preserving all legitimate retail behavior; no unverified broad allowlist. Initial source inventory and reference test matrix: [DVAR_SERVER_COMMAND_AUDIT.md](DVAR_SERVER_COMMAND_AUDIT.md). |
+| Valid-peer policy / A06 | [#128](https://github.com/jm2/kisakcod/issues/128) | Dvar flag/command audit preserving all legitimate retail behavior; no unverified broad allowlist. Initial source inventory and reference test matrix: [DVAR_SERVER_COMMAND_AUDIT.md](DVAR_SERVER_COMMAND_AUDIT.md). Hardening design and tradeoff register (docs only, no production change): [DVAR_SERVER_INPUT_HARDENING_DESIGN.md](DVAR_SERVER_INPUT_HARDENING_DESIGN.md). |
 | Native closure / A07 | [#129](https://github.com/jm2/kisakcod/issues/129) | Asset/subobject/native ABI and production-caller ledger; coordinate `ki-v4m`, `ki-n1et`, `ki-msb`. |
 | First engine / A08 | [#130](https://github.com/jm2/kisakcod/issues/130) | Real Win64/Linux amd64 headless MP integration and original-client sessions; consume `ki-eudd`/`ki-vuj`. |
 | Early client experiment / A09 | [#131](https://github.com/jm2/kisakcod/issues/131) | Retail shader/cache and Vulkan/MoltenVK feasibility before broad RHI edits; preserve native Vulkan destination. |
@@ -526,6 +526,21 @@ and pre-enrollment descriptions do not override later completion evidence.
   - [x] Provide tested Win32/POSIX time, synchronization, event/thread, virtual
     memory, UTF-8 filesystem/path, directory enumeration, worker-gate, and
     standard-stream console boundaries.
+  - [x] Land the portable process launch/control, signal-park, and
+    crash-freeze service (`Sys_ProcessLaunch`/`Sys_ProcessWait`/
+    `Sys_ProcessTerminate`/`Sys_SignalPark`/`Sys_ProcessFreezeForCrash`)
+    across the Win32, POSIX, and macOS Mach backends with the
+    platform-process/platform-crash runtime contracts. The hosted suites
+    cover launch/control/signal-park and the freeze Unsupported contract;
+    the non-returning freeze paths (macOS Mach included) are
+    source/linkage-complete rather than hosted-runtime-tested, because
+    invoking them under CTest would hang the runner.
+  - [x] Add the portable UDP socket service (`src/qcommon/sys_socket.h`,
+    `Sys_SocketOpenUdp`/`Sys_SocketSendTo`/`Sys_SocketRecvFrom`/
+    `Sys_SocketEnableBroadcast`/`Sys_SocketClose`) with the Winsock2 and BSD
+    backends registered in all three platform service sets, loopback
+    send/receive runtime contracts, and the platform-socket source-invariant
+    seals; the service has zero production callers until the net layer ports.
   - [ ] Complete and enroll the socket, process, deletion, terminal crash-freeze,
     and native Win32 headless console services in production. Process/crash
     primitives already exist; verify their real worker/terminal lifecycle rather
