@@ -16,6 +16,8 @@ database-graph-hash-canonical
 database-load-atomic-protocols
 database-load-legacy-bridge
 database-load-legacy-bridge-production-test-access-sealed
+database-derived-shader-cache-contracts
+database-derived-shader-cache-source-invariants
 database-referenced-fastfile-format
 database-registry-ownership-coordinator
 database-registry-ownership-production-test-access-sealed
@@ -138,6 +140,7 @@ hudelem-sort-mp-contracts
 hudelem-sort-source-invariants
 hudelem-sort-sp-contracts
 huffman-bounds-and-pointer-width
+huffman-wire-format-contracts
 identity-format-and-overflow
 missile-layout-mp-compile-contracts
 missile-layout-sp-compile-contracts

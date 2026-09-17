@@ -1,6 +1,8 @@
 actor-grenade-prediction-cache-contracts
 actor-grenade-safe-target-radius-contracts
 actor-grenade-safe-target-source-invariants
+database-derived-shader-cache-contracts
+database-derived-shader-cache-source-invariants
 database-referenced-fastfile-format
 database-registry-ownership-coordinator
 database-registry-ownership-production-test-access-sealed
@@ -72,6 +74,7 @@ effectscore-physics-sidecar-production-test-access-sealed
 hudelem-sort-mp-contracts
 hudelem-sort-source-invariants
 hudelem-sort-sp-contracts
+huffman-wire-format-contracts
 missile-layout-mp-compile-contracts
 missile-layout-sp-compile-contracts
 missile-union-layout-source-invariants
