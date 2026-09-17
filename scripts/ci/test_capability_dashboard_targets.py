@@ -222,5 +222,69 @@ class MalformedTargetRowTests(unittest.TestCase):
         )
 
 
+class MalformedCapabilityRowTests(unittest.TestCase):
+    """Malformed capability and supporting-evidence rows error, never raise."""
+
+    def _errors_for(self, manifest):
+        # A minimal manifest: only the row list under test is exercised, so
+        # the schema checks around it add their own (expected) errors.
+        return cd.validate_manifest(manifest)
+
+    def test_null_capability_row_returns_error_not_exception(self):
+        # A null row reached ``capability.get(...)`` and raised
+        # AttributeError instead of reporting a validation error.
+        errors = self._errors_for(
+            {"schema_version": 1, "capabilities": [None]}
+        )
+        self.assertTrue(
+            any(
+                "capabilities entries must be objects" in error
+                for error in errors
+            ),
+            msg=f"null capability row did not produce a validation "
+            f"error: {errors}",
+        )
+
+    def test_scalar_capability_row_returns_error_not_exception(self):
+        errors = self._errors_for(
+            {"schema_version": 1, "capabilities": [7, "windows-amd64"]}
+        )
+        self.assertTrue(
+            any(
+                "capabilities entries must be objects" in error
+                for error in errors
+            ),
+            msg=f"scalar capability row did not produce a validation "
+            f"error: {errors}",
+        )
+
+    def test_null_supporting_evidence_row_returns_error_not_exception(self):
+        # ``_validate_supporting_evidence`` had the same ``.get()`` gap.
+        errors = self._errors_for(
+            {"schema_version": 1, "supporting_evidence": [None]}
+        )
+        self.assertTrue(
+            any(
+                "supporting evidence entries must be objects" in error
+                for error in errors
+            ),
+            msg=f"null supporting-evidence row did not produce a "
+            f"validation error: {errors}",
+        )
+
+    def test_scalar_supporting_evidence_row_returns_error_not_exception(self):
+        errors = self._errors_for(
+            {"schema_version": 1, "supporting_evidence": [True]}
+        )
+        self.assertTrue(
+            any(
+                "supporting evidence entries must be objects" in error
+                for error in errors
+            ),
+            msg=f"scalar supporting-evidence row did not produce a "
+            f"validation error: {errors}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

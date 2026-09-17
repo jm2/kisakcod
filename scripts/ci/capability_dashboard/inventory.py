@@ -582,13 +582,24 @@ def _self_hosted(job_lines: list[str]) -> bool:
 
 def _job_entry(job_id: str, job_lines: list[str]) -> dict:
     """Build one derived CI job record."""
+    # ``name`` must be the job's own key: a step's ``name:`` sits deeper in
+    # the block and is not the job name, and a trailing comment is not value
+    # text.  Key-level lines share the first child key's indent, so deeper
+    # lines are skipped and only the job's own ``name:`` can rename it.
     name = job_id
-    for raw in job_lines:
-        stripped = raw.strip()
+    key_indent = None
+    for raw in job_lines[1:]:
+        if _is_skippable(raw):
+            continue
+        if key_indent is None:
+            key_indent = _indent(raw)
+        if _indent(raw) != key_indent:
+            continue
+        stripped = _strip_yaml_comment(raw)
         if stripped.startswith("name:"):
             value = stripped[len("name:") :].strip()
             if value and not value.startswith("${{"):
-                name = f"{job_id} ({value})"
+                name = f"{job_id} ({_unquote(value)})"
             break
     return {
         "id": job_id,

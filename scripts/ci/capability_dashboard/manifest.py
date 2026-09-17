@@ -447,6 +447,28 @@ def _validate_evidence_fields(
         _validate_promoted_evidence(cid, evidence, errors)
 
 
+def _check_capability_pair(
+    cid: str,
+    target: object,
+    mode: object,
+    seen_pairs: set,
+    errors: list[str],
+) -> None:
+    """Reject a second capability row reusing a (target, mode) pair."""
+    # A capability is matched to an aggregate row by its (target, mode)
+    # pair, so two rows sharing a pair make delivery order-dependent: the
+    # first row found wins and a copied row with a new id can add a target
+    # without adding delivery.  Reject the ambiguity instead of picking one.
+    if not (isinstance(target, str) and isinstance(mode, str)):
+        return
+    if (target, mode) in seen_pairs:
+        errors.append(
+            f"capability {cid}: duplicate target/mode pair "
+            f"{(target, mode)!r}"
+        )
+    seen_pairs.add((target, mode))
+
+
 def _validate_capabilities(
     manifest: dict, context: SchemaContext, errors: list[str]
 ) -> None:
@@ -454,23 +476,23 @@ def _validate_capabilities(
     seen_ids: set[str] = set()
     seen_pairs: set[tuple[str, str]] = set()
     for capability in manifest.get("capabilities") or []:
+        if not isinstance(capability, dict):
+            # A null or scalar row used to raise AttributeError from
+            # ``.get()``; report a schema error instead so validation never
+            # raises, and the row contributes no id or pair.
+            errors.append("capabilities entries must be objects")
+            continue
         cid = capability.get("id", "<missing>")
         if cid in seen_ids:
             errors.append(f"capability {cid}: duplicate id")
         seen_ids.add(cid)
-        # A capability is matched to an aggregate row by its (target, mode)
-        # pair, so two rows sharing a pair make delivery order-dependent: the
-        # first row found wins and a copied row with a new id can add a target
-        # without adding delivery.  Reject the ambiguity instead of picking one.
-        target = capability.get("target")
-        mode = capability.get("mode")
-        if isinstance(target, str) and isinstance(mode, str):
-            if (target, mode) in seen_pairs:
-                errors.append(
-                    f"capability {cid}: duplicate target/mode pair "
-                    f"{(target, mode)!r}"
-                )
-            seen_pairs.add((target, mode))
+        _check_capability_pair(
+            cid,
+            capability.get("target"),
+            capability.get("mode"),
+            seen_pairs,
+            errors,
+        )
         _validate_capability_identity(capability, cid, context, errors)
         _validate_capability_levels(capability, cid, context, errors)
         _validate_evidence_fields(
@@ -485,6 +507,11 @@ def _validate_supporting_evidence(
 ) -> None:
     """Validate supporting rows, which can never count toward delivery."""
     for item in manifest.get("supporting_evidence") or []:
+        if not isinstance(item, dict):
+            # Same contract as capabilities: report the malformed row, never
+            # raise from ``.get()``.
+            errors.append("supporting evidence entries must be objects")
+            continue
         sid = item.get("id", "<missing>")
         if item.get("provenance") not in context.provenance_classes:
             errors.append(

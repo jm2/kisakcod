@@ -303,5 +303,125 @@ jobs:
             )
 
 
+class JobNameTests(unittest.TestCase):
+    """A derived job name comes from the job's own ``name:`` key only."""
+
+    def _job_name(self, workflow_text):
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow_dir = Path(tmp)
+            (workflow_dir / "fixture.yml").write_text(
+                workflow_text, encoding="utf-8"
+            )
+            inventory = cd.derive_ci_inventory(workflow_dir)
+        return inventory["workflows"][0]["jobs"][0]["name"]
+
+    def test_step_name_never_becomes_the_job_name(self):
+        # A step written as ``uses:`` with ``name:`` on the continuation
+        # line puts ``name:`` at a deeper indent; the old scan matched any
+        # line and renamed the job ``build (Checkout)``.  Only the job's
+        # own key indent may rename it.
+        workflow = "\n".join(
+            [
+                "name: Fixture",
+                "",
+                "on:",
+                "  push:",
+                "",
+                "jobs:",
+                "  build:",
+                "    runs-on: ubuntu-latest",
+                "    steps:",
+                "      - uses: actions/checkout@v4",
+                "        name: Checkout",
+                "",
+            ]
+        )
+        self.assertEqual(self._job_name(workflow), "build")
+
+    def test_dash_step_name_without_job_name_keeps_job_id(self):
+        # MINIMAL_WORKFLOW has no job-level ``name:`` at all, so the
+        # derived name must stay the job id.
+        self.assertEqual(self._job_name(MINIMAL_WORKFLOW), "plain")
+
+    def test_job_level_name_with_comment_is_stripped(self):
+        # A trailing comment is not value text: ``Build  # linux`` must not
+        # render as ``build (Build  # linux)``.
+        workflow = "\n".join(
+            [
+                "name: Fixture",
+                "",
+                "on:",
+                "  push:",
+                "",
+                "jobs:",
+                "  build:",
+                "    name: Build  # linux",
+                "    runs-on: ubuntu-latest",
+                "    steps:",
+                "      - name: Run",
+                "        run: echo hi",
+                "",
+            ]
+        )
+        self.assertEqual(self._job_name(workflow), "build (Build)")
+
+    def test_quoted_name_keeps_hash_and_drops_quotes(self):
+        # A quoted ``#`` is value text and the quotes are not part of it.
+        workflow = "\n".join(
+            [
+                "name: Fixture",
+                "",
+                "on:",
+                "  push:",
+                "",
+                "jobs:",
+                "  build:",
+                '    name: "Build #1"',
+                "    runs-on: ubuntu-latest",
+                "",
+            ]
+        )
+        self.assertEqual(self._job_name(workflow), "build (Build #1)")
+
+    def test_expression_name_keeps_the_job_id(self):
+        workflow = "\n".join(
+            [
+                "name: Fixture",
+                "",
+                "on:",
+                "  push:",
+                "",
+                "jobs:",
+                "  build:",
+                "    name: ${{ github.workflow }}",
+                "    runs-on: ubuntu-latest",
+                "",
+            ]
+        )
+        self.assertEqual(self._job_name(workflow), "build")
+
+    def test_job_name_before_deeper_keys_is_still_found(self):
+        # A job-level ``name:`` declared before ``runs-on:``/``steps:`` is
+        # found, and a later step name does not override it.
+        workflow = "\n".join(
+            [
+                "name: Fixture",
+                "",
+                "on:",
+                "  push:",
+                "",
+                "jobs:",
+                "  build:",
+                "    name: Build",
+                "    runs-on: ubuntu-latest",
+                "    steps:",
+                "      - name: Checkout",
+                "        uses: actions/checkout@v4",
+                "",
+            ]
+        )
+        self.assertEqual(self._job_name(workflow), "build (Build)")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
