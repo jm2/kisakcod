@@ -9,6 +9,8 @@ build:
 
 * a selected test that is no longer discovered (removed or renamed target),
 * a run that executes no tests at all,
+* a selected test that reports a non-execution status (disabled, skipped,
+  failed dependency) while ``ctest`` still exits 0,
 * a legitimate platform absence that is explicitly classified rather than
   silently intersected away.
 
@@ -109,6 +111,92 @@ CASES: List[Case] = [
         absent="\n",
         discovered="A\nB\nC\n",
         executed="1/1 Test #1: A ... Passed\n",
+        enforce="1",
+    ),
+    # A disabled selected test alongside a passing selected test produces a
+    # zero ctest exit status but proves nothing: the disabled entry reports
+    # "***Not Run (Disabled)" and must count as non-execution.
+    Case(
+        "disabled_selected_fails",
+        1,
+        inventory="A\nB\nC\n",
+        selected="A\nB\n",
+        excluded="",
+        absent="C\treason-c\n",
+        discovered="A\nB\n",
+        executed=("1/2 Test #1: A ................................"
+                  "***Not Run (Disabled)   0.00 sec\n"
+                  "    Start 2: B\n"
+                  "2/2 Test #2: B ................................"
+                  "   Passed    0.01 sec\n"
+                  "\n"
+                  "100% tests passed, 0 tests failed out of 1\n"
+                  "\n"
+                  "The following tests did not run:\n"
+                  "\t  1 - A (Disabled)\n"),
+        enforce="1",
+    ),
+    # A selected test whose dependency failed reports "***Not Run (Depends
+    # on failed test)"; that is not execution either.
+    Case(
+        "dependency_not_run_selected_fails",
+        1,
+        inventory="A\nB\nC\n",
+        selected="A\nB\n",
+        excluded="",
+        absent="C\treason-c\n",
+        discovered="A\nB\n",
+        executed=("1/2 Test #1: A ................................"
+                  "   Passed    0.01 sec\n"
+                  "2/2 Test #2: B ................................"
+                  "***Not Run (Depends on failed test)   0.00 sec\n"),
+        enforce="1",
+    ),
+    # A skipped selected test (SKIP_RETURN_CODE) executes no test body.
+    Case(
+        "skipped_selected_fails",
+        1,
+        inventory="A\nB\nC\n",
+        selected="A\n",
+        excluded="B\treason-b\n",
+        absent="C\treason-c\n",
+        discovered="A\nB\n",
+        executed=("1/2 Test #1: A ................................"
+                  "***Skipped   0.00 sec\n"
+                  "2/2 Test #2: B ................................"
+                  "   Passed    0.01 sec\n"),
+        enforce="1",
+    ),
+    # A result line without a recognizable status is unattributable; the
+    # checker must refuse the evidence instead of trusting it.
+    Case(
+        "unattributable_execution_fails",
+        1,
+        inventory="A\nB\nC\n",
+        selected="A\n",
+        excluded="B\treason-b\n",
+        absent="C\treason-c\n",
+        discovered="A\nB\n",
+        executed=("1/2 Test #1: A ................................"
+                  "   0.01 sec\n"
+                  "2/2 Test #2: B ................................"
+                  "   Passed    0.01 sec\n"),
+        enforce="1",
+    ),
+    # Control for the disabled case: the same manifest with every selected
+    # test affirmatively executed passes.
+    Case(
+        "full_execution_control_passes",
+        0,
+        inventory="A\nB\nC\n",
+        selected="A\nB\n",
+        excluded="",
+        absent="C\treason-c\n",
+        discovered="A\nB\n",
+        executed=("1/2 Test #1: A ................................"
+                  "   Passed    0.01 sec\n"
+                  "2/2 Test #2: B ................................"
+                  "   Passed    0.01 sec\n"),
         enforce="1",
     ),
     # A not-enrolled exclusion without a reason column must fail.

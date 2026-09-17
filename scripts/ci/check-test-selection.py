@@ -40,9 +40,14 @@ Invariants
     removed from the build fails just like an unclassified addition.
 
 ``--executed``
-    Optional listing of the tests a real run executed.  The executed set must
-    equal the selected set: nothing outside the selection may run, and a
-    selection that runs nothing fails.
+    Optional raw ``ctest`` run report of the tests a real run executed.
+    Only per-test result lines with an affirmative execution status count
+    as evidence: a ``***Not Run`` (disabled, failed dependency, ...) or
+    ``***Skipped`` entry proves the test body did not run, and a result
+    line with an unrecognized status fails the check instead of being
+    trusted.  The executed set must equal the selected set: nothing
+    outside the selection may run, and a selection that runs nothing
+    fails.
 
 ``--enforce-platform-absence``
     Turns on the full profile invariants (selected must be discovered, absent
@@ -64,9 +69,21 @@ import re
 import sys
 from typing import Iterable, List, Sequence, Set, Tuple
 
-# Matches both a plain ``ctest -N`` listing ("  Test  #4: name") and the
-# per-test progress lines of a real ctest run ("4/233 Test #4: name ... Passed").
+# Matches the discovery listing of ``ctest -N`` ("  Test  #4: name").
+# Discovery-only: a listing line says a test exists, never that it ran.
 CTEST_LISTING = re.compile(r"\bTest\s+#\d+:\s*(\S+)")
+# Matches a per-test result line of a real ctest run ("1/233 Test #1: name
+# ...   Passed    0.05 sec").  Only these lines may count as execution
+# evidence, and the status after the name is classified explicitly.
+CTEST_RESULT = re.compile(
+    r"^\s*\d+/\d+\s+Test\s+#\d+:\s*(?P<name>\S+)\s+(?P<trail>.*)$"
+)
+# Statuses that prove the test binary actually ran.  A failed or crashed
+# test still executed (and the ctest exit status already reports the
+# failure); what must never pass as execution is a test that did not run.
+EXECUTED_STATUSES = ("passed", "failed", "timeout", "exception")
+NOT_RUN_MARKER = "***not run"
+SKIPPED_MARKER = "***skipped"
 # A bare test name; used to accept a plain name-list discovery file.
 TEST_NAME = re.compile(r"[A-Za-z0-9_.\-]+")
 
@@ -101,7 +118,11 @@ def read_reasoned(path: str, kind: str) -> List[Tuple[str, str]]:
 
 
 def read_discovery(path: str) -> List[str]:
-    """Read a plain name list or a raw ``ctest`` listing/report."""
+    """Read a plain name list or a raw ``ctest -N`` listing.
+
+    Discovery-only: this parser answers "which tests exist", never "which
+    tests ran".  Use :func:`read_execution` for execution evidence.
+    """
     names: List[str] = []
     with open(path, encoding="utf-8") as handle:
         for raw in handle:
@@ -116,6 +137,39 @@ def read_discovery(path: str) -> List[str]:
             line = raw.strip()
             if line and not line.startswith("#") and TEST_NAME.fullmatch(line):
                 names.append(line)
+    return names
+
+
+def read_execution(path: str) -> List[str]:
+    """Read a raw ``ctest`` run report; return the tests that actually ran.
+
+    A per-test result line counts as execution evidence only when its
+    status is affirmative (``Passed``, or a ran-and-failed ``Failed`` /
+    ``Timeout`` / ``Exception`` outcome).  ``***Not Run ...`` (disabled,
+    failed dependency, ...) and ``***Skipped`` entries are not execution:
+    their bodies never ran even though ``ctest`` may exit 0.  A result
+    line with no recognized status raises, so a truncated or unknown-
+    format log cannot pass as evidence.
+    """
+    names: List[str] = []
+    with open(path, encoding="utf-8") as handle:
+        for lineno, raw in enumerate(handle, start=1):
+            line = raw.rstrip("\n")
+            match = CTEST_RESULT.match(line)
+            if not match:
+                continue
+            name = match.group("name")
+            trail = match.group("trail").lower()
+            if NOT_RUN_MARKER in trail or SKIPPED_MARKER in trail:
+                continue
+            if any(status in trail for status in EXECUTED_STATUSES):
+                names.append(name)
+                continue
+            raise ValueError(
+                "%s line %d carries a ctest result for '%s' with an "
+                "unrecognized execution status; execution evidence must "
+                "name its status: %r" % (path, lineno, name, line)
+            )
     return names
 
 
@@ -217,8 +271,8 @@ def check_discovery(scope: str, inventory: Set[str], selected: Set[str],
         executed - expected, "executed tests outside the selected set")
     failures += report_violation(
         expected - executed,
-        "selected tests that did not execute (dead selection: they silently "
-        "did not run)",
+        "selected tests that did not execute (dead selection: a disabled, "
+        "skipped, or not-run entry is not execution evidence)",
     )
     if not executed:
         print(
@@ -278,7 +332,7 @@ def check_run(args: argparse.Namespace) -> int:
         raise ValueError("--enforce-platform-absence requires --absent")
     if args.discovered:
         discovered = set(read_discovery(args.discovered))
-        executed = set(read_discovery(args.executed)) if args.executed else None
+        executed = set(read_execution(args.executed)) if args.executed else None
         failures += check_discovery(
             args.discovered_scope, inventory, selected, excluded, absent,
             discovered, executed, args.enforce_platform_absence)
