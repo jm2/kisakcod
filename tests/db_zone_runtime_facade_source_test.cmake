@@ -1756,7 +1756,7 @@ set(_runtime_facade_filtered_build_controls)
 foreach(_path IN LISTS _runtime_facade_build_controls)
     file(RELATIVE_PATH _relative "${SOURCE_ROOT}" "${_path}")
     if(NOT _relative MATCHES "(^|/)\\.(codex-worktrees|git)/"
-       AND NOT _relative MATCHES "(^|/)worktrees/")
+       AND NOT _relative MATCHES "^worktrees/")
         list(APPEND _runtime_facade_filtered_build_controls "${_path}")
     endif()
 endforeach()

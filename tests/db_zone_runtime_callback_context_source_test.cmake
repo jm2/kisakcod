@@ -648,13 +648,15 @@ foreach(_path IN LISTS _build_controls)
        OR _absolute_path STREQUAL _table_seal_path)
         continue()
     endif()
-    # Nested agent worktrees (worktrees/<bead>/) are git-excluded local
-    # containers, not production build controls. Their copied CMakeLists.txt
+    # Root-level agent worktree containers (worktrees/<bead>/) are git-excluded
+    # local copies, not production build controls. Their copied CMakeLists.txt
     # and *.cmake files legitimately grant TestAccess to their own fixture
-    # targets, so scanning them false-positives. This mirrors the reviewed
-    # exclusion in db_zone_runtime_facade_source_test.cmake.
+    # targets, so scanning them false-positives. Only the root container is
+    # excluded: an ordinary nested scripts/worktrees control that grants this
+    # macro must still be rejected. This mirrors the reviewed exclusion in
+    # db_zone_runtime_facade_source_test.cmake.
     file(RELATIVE_PATH _relative "${SOURCE_ROOT}" "${_absolute_path}")
-    if(_relative MATCHES "(^|/)worktrees/"
+    if(_relative MATCHES "^worktrees/"
        OR _relative MATCHES "(^|/)\\.(codex-worktrees|git)/")
         continue()
     endif()
