@@ -395,7 +395,7 @@ resolve via `DB_ConvertOffsetToAlias` (`db_stream_load.cpp:131-166`,
 (`db_stream_load.cpp:168-209`), `DB_ConvertOffsetToCString`
 (`db_stream_load.cpp:211-227`), or deferred `DB_ResolveDirectPointer`;
 inserted-pointer publication is `DB_InsertPointer` (`db_stream.cpp:324-346`)
-+ `DB_SetInsertedPointer` (`db_stream.cpp:348-409`); completed shared
+and `DB_SetInsertedPointer` (`db_stream.cpp:348-409`); completed shared
 objects are `DB_RegisterPointerSlot` (`db_stream.cpp:304-322`) +
 `DB_CompleteObject` (`db_stream.cpp:411+`, per-kind schema validation
 `:428-482`). `DBAliasKind` values: `db_relocation.h:36-85`; exact-start
@@ -482,6 +482,7 @@ publication classes: `db_relocation.h:87-114`.
 
 | Subobject | Loader symbol | Site | Alloc/Disk32 | Alias/inline | Failure |
 |---|---|---|---|---|---|
+| material pointer token (entry `Load_MaterialHandle`, distinct from the table-body grammars below) | `Load_MaterialHandle` | `:4639-4676` | 4-byte token `Load_Stream` `:4644`; block-0 push `:4645`; null token skips the walk `:4646`; inline `-1`/`-2` → `AllocLoad_FxElemVisStateSample` `:4651`; `DB_InsertPointer(DBAliasKind::Material)` on `-2` only `:4653-4656`; publish `DB_SetInsertedPointer` `:4663-4667`; offset → `DB_ConvertOffsetToAlias(…, Material)` `:4671-4673` | registration `Load_MaterialAsset` `:4662` (`db_registry.cpp:927`) | body `!Load_Material(1)` → pop + return unpublished `:4657-4661` |
 | 80-byte root | `Load_Stream` | `:4429` | zone bump; **no `disk32::` extent** (80 literal) | — | pointer-count sanity `DB_ValidatePointerCount` `:4430-4444`; extent precompute `ERR_DROP` `:4459` |
 | `info` (24 B) + `info.name` | `Load_MaterialInfo` (def `:3079-3084`) | `:4463-4464` | zone bump | — | — |
 | `techniqueSet` | `Load_MaterialTechniqueSetPtr` (def `:4386`; §9.5) | `:4465-4466` | — | techset alias | false `:4469` |
@@ -668,6 +669,7 @@ GfxWorld — walk `Load_GfxWorld` (`db_load.cpp:10637-11084`), entry `Load_GfxWo
 | Font | `glyphs[glyphCount]` (24 B) | `Load_GlyphArray` (def `:11221`) | `:11246-11260` | 4-byte bump `:11250` | offset convert `:11256-11260` | — |
 | Font | pointer token | `Load_FontHandle` (def `:11266`) | `:11266-11300` | inline alloc `:11278`; insert `:11281`; publish `:11287-11290`; alias `:11294-11296` | registration `Load_FontAsset` `:11285` (`db_registry.cpp:1088-1091`) | — |
 | MenuList | 12-byte header + `name` + `menus[]` | `Load_MenuList` (`:8672`), `Load_menuDef_ptrArray` (def `:8655`) | `:8672-8681` | 4-byte bump `:8678` | menu alias per entry | — |
+| MenuList | pointer token | `Load_MenuListPtr` (def `:8685`; dispatch `:11409`) | `:8685-8718` | 4-byte token `:8690`; block-0 push `:8691`; null token skips the walk `:8692`; inline `-1`/`-2` → `AllocLoad_FxElemVisStateSample` `:8697-8698`; `DB_InsertPointer(DBAliasKind::MenuList)` on `-2` only `:8699-8702`; body `Load_MenuList(1)` void — no failure short-circuit `:8703`; publish `DB_SetInsertedPointer` `:8705-8709`; offset → `DB_ConvertOffsetToAlias(…, MenuList)` `:8713-8715` | registration `Load_MenuListAsset` `:8704` (`db_registry.cpp:1098`) | — |
 | Menu | 284-byte menuDef + `window` (156 B, name/group XStrings + background material `:8431-8436`) | `Load_menuDef_t` (`:8582`), `Load_Window` (`:8439`) | `:8582-8585` | zone bump; **no `disk32::` extent** (284/156 literals) | material alias | — |
 | Menu | `font`/`onOpen`/`onClose`/`onESC`/`allowedBinding`/`soundName` XStrings | `Load_XString` ×6 | `:8586-8605` | zone C-string | — | — |
 | Menu | `onKey` handler chain (recursive) | `Load_ItemKeyHandler` (def `:8446`) | `:8594-8599` | 4-byte bump `:8596`; `action` XString `:8449-8450` | recursive `next` `:8451-8456` | — |
@@ -871,7 +873,7 @@ per-family converted walker substitutes for it.
 | XAnimParts | `Load_XAnimPartsPtr` → `Load_XAnimParts` → `Load_XAnimDeltaPart*`/`Load_XAnimIndices` | none for the fast-file body; load-object route bounded by `buf_cursor` (`xanim_load_obj.cpp`, `XAnimLoadFile`) |
 | XModel | `Load_XModelPtr` → `Load_XModel` → `Load_XSurface(Array)` → collision trees; `DB_ValidateLoadedXModel` | load-object route via `buf_cursor` (`xmodel_load_obj.cpp`); nested-ownership correction in flight #140/`ki-okmr` |
 | XModelPieces | `Load_XModelPiecesPtr` via `Load_DynEntityDef` (nested-only, §9.3) | none |
-| Material / TechniqueSet / Image | `Load_MaterialHandle` → `Load_Material`; `Load_MaterialTechniqueSetPtr`; `Load_GfxImagePtr` | none — the four-way table grammar is inline in the decompiled readers |
+| Material / TechniqueSet / Image | `Load_MaterialHandle` → `Load_Material`; `Load_MaterialTechniqueSetPtr`; `Load_GfxImagePtr` | none — the Material table grammars are per-table (§9.4, §10): only **textureTable** is completion-sealed and alias-capable (`:4502-4534`, `:4538-4541`); **constantTable**/**stateBitsTable** use plain inline bump loads (`:4572-4577`, `:4615-4620`) or direct block-4 `DB_ConvertOffsetToPointer` conversion, alignment 16/4 (`:4580-4584`, `:4623-4627`) |
 | Sound family | `Load_snd_alias_list_ptr`/`Load_LoadedSoundPtr`/`Load_SndCurvePtr` chains (§9.7) | none |
 | ClipMap(Pvs)/ComWorld/GameWorld/MapEnts/PathData | `Load_clipMap_ptr` → `Load_clipMap_t`; `Load_ComWorldPtr`; `Load_GameWorldSp/MpPtr`; `Load_MapEntsPtr`; `Load_PathData` | none |
 | GfxWorld / LightDef | `Load_GfxWorldPtr` → `Load_GfxWorld` (cell/portal/aabb recursion); `Load_GfxLightDefPtr` | none — real world-graph walks over licensed assets remain the #113 instrument gap |
