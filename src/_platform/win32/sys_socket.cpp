@@ -461,10 +461,18 @@ SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveErrorStatus(
     // EAI_NODATA is the Winsock no-address code (WSANO_DATA) and differs from
     // EAI_NONAME (WSAHOST_NOT_FOUND); an existing name with no IPv4 address
     // is reported as addressless there, and the public contract folds both
-    // into NotFound. The guard keeps genuine resolver errors -- temporary,
-    // unrecoverable, resource -- as SystemFailure.
+    // into NotFound. EAI_ADDRFAMILY, where Winsock defines it, is the same
+    // "no address in the requested family" outcome for an AF_INET request and
+    // folds in too. The guards keep genuine resolver errors -- temporary,
+    // unrecoverable, resource -- as SystemFailure and tolerate platforms that
+    // omit the code or alias it to one already classified.
 #if defined(EAI_NODATA) && (EAI_NODATA != EAI_NONAME)
     if (resolverError == EAI_NODATA)
+        return SysSocketResolveStatus::NotFound;
+#endif
+#if defined(EAI_ADDRFAMILY) && (EAI_ADDRFAMILY != EAI_NONAME) \
+    && (EAI_ADDRFAMILY != EAI_NODATA)
+    if (resolverError == EAI_ADDRFAMILY)
         return SysSocketResolveStatus::NotFound;
 #endif
     if (resolverError == EAI_NONAME)

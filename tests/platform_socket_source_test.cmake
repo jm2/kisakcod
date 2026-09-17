@@ -96,6 +96,7 @@ foreach(_marker IN ITEMS
     "WSAEMSGSIZE"
     "getaddrinfo\\("
     "defined\\(EAI_NODATA\\)"
+    "defined\\(EAI_ADDRFAMILY\\)"
     "KISAK_SOCKET_TEST_HOOKS"
     "Kisak_SocketSetResolveTestHook")
     require_contains("${_win32_source}" "${_marker}"
@@ -139,6 +140,7 @@ foreach(_marker IN ITEMS
     "getaddrinfo\\("
     "close\\("
     "defined\\(EAI_NODATA\\)"
+    "defined\\(EAI_ADDRFAMILY\\)"
     "KISAK_SOCKET_TEST_HOOKS"
     "Kisak_SocketSetResolveTestHook")
     require_contains("${_posix_source}" "${_marker}"
@@ -190,8 +192,10 @@ foreach(_marker IN ITEMS
     "unresolvable host does not resolve"
     "Sys_SocketResolveErrorStatus\\("
     "addressless hostname maps to NotFound"
+    "address-family no-address maps to NotFound"
     "Kisak_SocketSetResolveTestHook\\(FailResolveQuery\\)"
     "forced system resolver failure does not resolve"
+    "forced address-family no-address does not resolve"
     "Sys_SocketClose\\(&first\\) == SysSocketCloseStatus::Closed")
     require_contains("${_socket_tests}" "${_marker}"
         "socket runtime coverage: ${_marker}")

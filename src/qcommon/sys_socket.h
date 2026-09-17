@@ -191,7 +191,8 @@ enum class SysSocketResolveStatus : std::uint8_t
 // Classifies a nonzero host-resolver failure into the portable status used by
 // Sys_SocketResolveHost. `resolverError` is a getaddrinfo error code --
 // EAI_NONAME, the platform's distinct no-address code (EAI_NODATA, or the
-// Winsock equivalent), or any other resolver error. A name the IPv4 resolver
+// Winsock equivalent), EAI_ADDRFAMILY (the name maps to no address in the
+// requested family), or any other resolver error. A name the IPv4 resolver
 // cannot map, whether unknown or addressless, is NotFound; every other
 // failure (temporary, unrecoverable, resource or configuration) is
 // SystemFailure. The classification is resolver-independent and therefore

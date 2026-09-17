@@ -614,9 +614,10 @@ bool CheckLocalhostLiteral()
 }
 
 // Deterministic coverage of the resolver-independent status mapping: an
-// unknown name and the platform's distinct no-address code both map to
-// NotFound. EAI_NODATA is absent or aliased on some platforms, so that case
-// is guarded exactly like the production classifier.
+// unknown name, the platform's distinct no-address code, and the
+// requested-family no-address code all map to NotFound. EAI_NODATA and
+// EAI_ADDRFAMILY are absent or aliased on some platforms, so each case is
+// guarded exactly like the production classifier.
 bool CheckResolveNotFoundCodes()
 {
     if (!Check(Sys_SocketResolveErrorStatus(EAI_NONAME) ==
@@ -627,6 +628,13 @@ bool CheckResolveNotFoundCodes()
     if (!Check(Sys_SocketResolveErrorStatus(EAI_NODATA) ==
                    SysSocketResolveStatus::NotFound,
             "addressless hostname maps to NotFound"))
+        return false;
+#endif
+#if defined(EAI_ADDRFAMILY) && (EAI_ADDRFAMILY != EAI_NONAME) \
+    && (EAI_ADDRFAMILY != EAI_NODATA)
+    if (!Check(Sys_SocketResolveErrorStatus(EAI_ADDRFAMILY) ==
+                   SysSocketResolveStatus::NotFound,
+            "address-family no-address maps to NotFound"))
         return false;
 #endif
     return true;
@@ -677,9 +685,30 @@ bool CheckResolveFailureContract()
     passed = Check(failed == SysSocketResolveStatus::SystemFailure,
                "forced system resolver failure does not resolve")
         && passed;
-    return Check(IsUntouchedEndpoint(failedEndpoint),
+    passed = Check(IsUntouchedEndpoint(failedEndpoint),
                "forced system failure leaves the endpoint untouched")
         && passed;
+
+    // The address-family no-address result is the other resolver code that
+    // means "no IPv4 address for this name": it must propagate end to end as
+    // NotFound and leave the endpoint untouched, exactly like EAI_NONAME.
+#if defined(EAI_ADDRFAMILY) && (EAI_ADDRFAMILY != EAI_NONAME) \
+    && (EAI_ADDRFAMILY != EAI_NODATA)
+    SysSocketAddress noAddressEndpoint = UntouchedEndpoint();
+    forcedResolveError = EAI_ADDRFAMILY;
+    Kisak_SocketSetResolveTestHook(FailResolveQuery);
+    const SysSocketResolveStatus noAddress = Sys_SocketResolveHost(
+        "invalid.invalid", 28960, &noAddressEndpoint);
+    Kisak_SocketSetResolveTestHook(nullptr);
+    forcedResolveError = EAI_NONAME;
+    passed = Check(noAddress == SysSocketResolveStatus::NotFound,
+               "forced address-family no-address does not resolve")
+        && passed;
+    passed = Check(IsUntouchedEndpoint(noAddressEndpoint),
+               "forced address-family no-address leaves the endpoint untouched")
+        && passed;
+#endif
+    return passed;
 #else
     SysSocketAddress untouched = UntouchedEndpoint();
     const SysSocketResolveStatus missing =
