@@ -73,16 +73,23 @@ add_test(
 
 # Source-archive builds must keep a recoverable revision identity without
 # `.git`; the resolved commit is carried into the generated buildnumber header.
+# The compiled fixture is built through a nested CMake configure/build with the
+# same generator and toolchain, so a Visual Studio generator gets MSBuild's
+# compiler environment (INCLUDE/LIB) instead of a bare cl.exe with none. The
+# generator and platform/toolset are forwarded for that nested build.
 add_test(
     NAME source-archive-identity-contracts
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -DKISAK_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}
         -DKISAK_TEST_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}
+        -DKISAK_TEST_GENERATOR=${CMAKE_GENERATOR}
+        -DKISAK_TEST_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}
+        -DKISAK_TEST_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/source_archive_identity_test.cmake
 )
 set_tests_properties(source-archive-identity-contracts PROPERTIES
-    TIMEOUT 120 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    TIMEOUT 300 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
 add_executable(kisakcod-target-table-tests
     target_table_tests.cpp

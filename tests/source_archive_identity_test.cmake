@@ -73,25 +73,82 @@ function(check_compiled_identity)
         "#include <cstdio>\n"
         "#include \"buildnumber.h\"\n"
         "int main() { std::puts(getSourceCommit()); return 0; }\n")
-    set(_exe "${_tree}/identity-check")
-    if(KISAK_TEST_CXX_COMPILER_ID STREQUAL "MSVC")
-        set(_exe "${_tree}/identity-check.exe")
-        set(_compile_args /nologo /O2 /std:c++17 /EHsc "/I${_tree}/src"
-            "${_tree}/src/buildnumber.cpp" "${_tree}/main.cpp" "/Fe:${_exe}")
-    else()
-        set(_compile_args -O2 -std=c++17 "-I${_tree}/src"
-            "${_tree}/src/buildnumber.cpp" "${_tree}/main.cpp" -o "${_exe}")
+    # Build the fixture through the configured CMake toolchain/generator rather
+    # than executing the compiler directly. A Visual Studio generator drives
+    # cl.exe through MSBuild, which initializes the compiler's INCLUDE/LIB
+    # environment; a bare cl.exe spawned from `cmake -P` inherits neither and
+    # fails with C1083 (cannot open <stdio.h>). The nested project compiles the
+    # same real src/buildnumber.cpp accessor, so the exact identity assertion
+    # still runs against a genuine compiled consumer on every platform.
+    file(WRITE "${_tree}/CMakeLists.txt"
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "project(kisak_archive_identity_fixture CXX)\n"
+        "add_executable(identity-check\n"
+        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/src/buildnumber.cpp\"\n"
+        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/main.cpp\")\n"
+        "target_include_directories(identity-check PRIVATE\n"
+        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/src\")\n"
+        "set_target_properties(identity-check PROPERTIES\n"
+        "    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)\n")
+    set(_build "${_tree}/build")
+    set(_configure_args "-S" "${_tree}" "-B" "${_build}")
+    if(DEFINED KISAK_TEST_GENERATOR AND NOT KISAK_TEST_GENERATOR STREQUAL "")
+        list(APPEND _configure_args "-G" "${KISAK_TEST_GENERATOR}")
+        if(DEFINED KISAK_TEST_GENERATOR_PLATFORM
+                AND NOT KISAK_TEST_GENERATOR_PLATFORM STREQUAL "")
+            list(APPEND _configure_args "-A" "${KISAK_TEST_GENERATOR_PLATFORM}")
+        endif()
+        if(DEFINED KISAK_TEST_GENERATOR_TOOLSET
+                AND NOT KISAK_TEST_GENERATOR_TOOLSET STREQUAL "")
+            list(APPEND _configure_args "-T" "${KISAK_TEST_GENERATOR_TOOLSET}")
+        endif()
+    endif()
+    set(_fixture_vs FALSE)
+    if(KISAK_TEST_CXX_COMPILER_ID STREQUAL "MSVC"
+            AND (NOT DEFINED KISAK_TEST_GENERATOR
+                OR KISAK_TEST_GENERATOR STREQUAL ""
+                OR KISAK_TEST_GENERATOR MATCHES "^Visual Studio"))
+        set(_fixture_vs TRUE)
+    endif()
+    if(NOT _fixture_vs)
+        # Single-config generators need the build type and the exact configured
+        # compiler; a multi-config Visual Studio generator selects both itself.
+        list(APPEND _configure_args
+            "-DCMAKE_BUILD_TYPE=Release"
+            "-DCMAKE_CXX_COMPILER=${KISAK_TEST_CXX_COMPILER}")
     endif()
     execute_process(
-        COMMAND "${KISAK_TEST_CXX_COMPILER}" ${_compile_args}
-        WORKING_DIRECTORY "${_tree}"
-        RESULT_VARIABLE _compile_result
-        ERROR_VARIABLE _compile_stderr)
-    if(NOT _compile_result EQUAL 0)
+        COMMAND "${CMAKE_COMMAND}" ${_configure_args}
+        RESULT_VARIABLE _fixture_configure_result
+        OUTPUT_VARIABLE _fixture_configure_stdout
+        ERROR_VARIABLE _fixture_configure_stderr)
+    if(NOT _fixture_configure_result EQUAL 0)
+        message(FATAL_ERROR
+            "Failed to configure the archive-build identity fixture: "
+            "${_fixture_configure_stdout} ${_fixture_configure_stderr}")
+    endif()
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" --build "${_build}" --config Release
+        RESULT_VARIABLE _fixture_build_result
+        OUTPUT_VARIABLE _fixture_build_stdout
+        ERROR_VARIABLE _fixture_build_stderr)
+    if(NOT _fixture_build_result EQUAL 0)
         message(FATAL_ERROR
             "Failed to compile the archive-build source-identity consumer: "
-            "${_compile_stderr}")
+            "${_fixture_build_stdout} ${_fixture_build_stderr}")
     endif()
+    if(KISAK_TEST_CXX_COMPILER_ID STREQUAL "MSVC")
+        set(_exe_name "identity-check.exe")
+    else()
+        set(_exe_name "identity-check")
+    endif()
+    file(GLOB_RECURSE _exe_candidates "${_build}/${_exe_name}")
+    list(FILTER _exe_candidates EXCLUDE REGEX "/CMakeFiles/")
+    if(NOT _exe_candidates)
+        message(FATAL_ERROR
+            "The compiled archive-build identity fixture produced no ${_exe_name}")
+    endif()
+    list(GET _exe_candidates 0 _exe)
     execute_process(
         COMMAND "${_exe}"
         OUTPUT_VARIABLE _compiled_identity
