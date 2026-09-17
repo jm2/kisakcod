@@ -513,8 +513,8 @@ implicit one.
 
 | Target | Minimum OS | Toolchain | Graphics | Display/input | Notes |
 |---|---|---|---|---|---|
-| Windows x86 client | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022) x86, CMake ≥ 3.16, Windows SDK 10.0.22621 | Vulkan 1.1 driver, or D3D9 migration reference | 1024×768 minimum; keyboard+mouse required | 32-bit x86 is the compatibility reference; floor evidence MUST be measured on an x86 minimum configuration |
-| Windows amd64 client | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022) x64, CMake ≥ 3.16, Windows SDK 10.0.22621 | Vulkan 1.1 driver, or D3D9 migration reference | 1024×768 minimum; keyboard+mouse required | M6 amd64 client delivery (PORTING.md); floor evidence MUST be measured independently on an amd64 minimum configuration — x86 client evidence does not certify this row |
+| Windows x86 client | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022) x86, CMake ≥ 3.16, Windows SDK 10.0.22621 | Vulkan 1.1 driver (required acceptance endpoint; D3D9 migration/reference evidence is recorded separately under its own label and cannot satisfy this row) | 1024×768 minimum; keyboard+mouse required | 32-bit x86 is the compatibility reference; floor evidence MUST be measured on an x86 minimum configuration |
+| Windows amd64 client | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022) x64, CMake ≥ 3.16, Windows SDK 10.0.22621 | Vulkan 1.1 driver (required acceptance endpoint; D3D9 migration/reference evidence is recorded separately under its own label and cannot satisfy this row) | 1024×768 minimum; keyboard+mouse required | M6 amd64 client delivery (PORTING.md); floor evidence MUST be measured independently on an amd64 minimum configuration — x86 client evidence does not certify this row |
 | Windows x86 dedicated server | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022), CMake ≥ 3.16, Windows SDK 10.0.22621 | none | none (console/stdio; headless-capable) | existing Win32 dedicated server role, `KISAK_DEDI_HEADLESS` profile; compatibility reference server |
 | Windows amd64 headless server | Windows 10 22H2 (build 19045) / Windows Server 2022 class or later | MSVC v143 (VS 2022) x64, CMake ≥ 3.16, Windows SDK 10.0.22621 | none | none (console/stdio) | M6 server role; delivery tracked separately from the M6 client (PORTING.md) |
 | Linux amd64 client | Ubuntu 22.04 / glibc 2.35 LTS class | GCC ≥ 12 or Clang ≥ 15, CMake ≥ 3.16 | Vulkan 1.1 loader + driver, SDL3 windowing | X11 or Wayland; 1024×768 minimum | release target |
@@ -537,7 +537,12 @@ DP-REQ-01's "All targets" gate has a row to validate for each and cannot be
 marked complete while a delivery target is undefined. Server floors are
 validated per role, and the Windows client floors are validated per
 architecture: one role's or architecture's validation does not stand in for
-another's.
+another's. The Windows x86 and Windows amd64 client rows require a native
+**Vulkan 1.1 driver** as the graphics endpoint for acceptance; D3D9 (and
+dxvk-native) migration/reference evidence is recorded separately under its own
+label and cannot satisfy those rows' graphics floor, because PORTING.md M8
+classifies D3D9/dxvk-native as migration experiments/reference paths, not
+replacement endpoints.
 The Windows ARM64 rows (client and headless server) are **explicitly
 blocked**, not merely proposed: neither has a validated ARM64 OS floor, and
 the client's committed Vulkan 1.1 endpoint additionally has no ARM64 driver
@@ -571,7 +576,7 @@ satisfy the row). No row is `pass`.
 | DP-DEV-01 | P6.1 absent display/input device | Start with no display or input device, or with a forced display/input init failure; assert bounded diagnostic and fallback/clean exit. Absent/failed audio devices are A10 ([#132](https://github.com/jm2/kisakcod/issues/132)), not this row. | Win, Linux, macOS | Harness output + exit code | planned |
 | DP-DEV-02 | P6.2 cleanup/restart | Fail init midway, clean up, restart; assert idempotent cleanup and no leaked global state | Win, Linux, macOS | Harness output | planned |
 | DP-DEV-03 | P6.3 clean-machine startup | Fresh image, no config, read-only data dir, malformed config; assert actionable diagnostics. Run and record independently per role (client and headless dedicated server): a client run does not certify the server role, and headless evidence covers the diagnostics that role actually produces | Win, Linux, macOS | Image run log (per role) | planned |
-| DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) for **every** row, independently per role and per architecture — explicitly including Linux arm64 client/server, the separate Windows x86 and Windows amd64 client rows (each with its own architecture-specific minimum-configuration evidence; PORTING.md M6 tracks amd64 client delivery independently), and every Windows server row (x86 dedicated, amd64 headless, ARM64 headless); a client result never certifies the server role of the same OS (PORTING.md M6/M11 track the roles separately). The Windows ARM64 client and Windows ARM64 headless server rows are **blocked** — no validated ARM64 OS floor, and the client's committed Vulkan endpoint is additionally unvalidated on ARM64 — and this row MUST NOT pass while either stays blocked | All targets | Requirements doc + measured evidence | planned |
+| DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) for **every** row, independently per role and per architecture — explicitly including Linux arm64 client/server, the separate Windows x86 and Windows amd64 client rows (each with its own architecture-specific minimum-configuration evidence; PORTING.md M6 tracks amd64 client delivery independently; acceptance requires the native Vulkan 1.1 graphics endpoint, and any D3D9 migration/reference evidence is recorded separately under its own label and cannot satisfy those rows' graphics floor — PORTING.md M8 keeps D3D9/dxvk-native as migration experiments/reference paths, not replacement endpoints), and every Windows server row (x86 dedicated, amd64 headless, ARM64 headless); a client result never certifies the server role of the same OS (PORTING.md M6/M11 track the roles separately). The Windows ARM64 client and Windows ARM64 headless server rows are **blocked** — no validated ARM64 OS floor, and the client's committed Vulkan endpoint is additionally unvalidated on ARM64 — and this row MUST NOT pass while either stays blocked | All targets | Requirements doc + measured evidence | planned |
 
 ## 7. Retail usercmd invariants that must not change
 
