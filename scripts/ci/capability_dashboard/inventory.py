@@ -150,6 +150,23 @@ def _collect_indented(lines: list[str], start: int, parent_indent: int) -> list[
     return block
 
 
+def _child_indent(block: list[str]) -> int | None:
+    """Return the indent shared by the jobs mapping's direct children."""
+    for raw in block:
+        if _is_skippable(raw):
+            continue
+        return _indent(raw)
+    return None
+
+
+def _close_job(
+    jobs: list[tuple[str, list[str]]], job_id: str | None, lines: list[str]
+) -> None:
+    """Append a finished job to ``jobs`` unless no job is open."""
+    if job_id is not None:
+        jobs.append((job_id, lines))
+
+
 def _job_blocks(block: list[str]) -> list[tuple[str, list[str]]]:
     """Split the jobs block into ``(job_id, lines)`` pairs."""
     # The jobs mapping's children define their own indentation: two spaces is
@@ -157,12 +174,7 @@ def _job_blocks(block: list[str]) -> list[tuple[str, list[str]]]:
     # indent 2 made a four-space workflow report job_count=0 and
     # invocations=0 without any error, silently publishing an incomplete
     # inventory for a valid nonempty jobs mapping.
-    child_indent = None
-    for raw in block:
-        if _is_skippable(raw):
-            continue
-        child_indent = _indent(raw)
-        break
+    child_indent = _child_indent(block)
     if child_indent is None:
         # An empty ``jobs:`` mapping: zero jobs is the honest inventory.
         return []
@@ -185,8 +197,7 @@ def _job_blocks(block: list[str]) -> list[tuple[str, list[str]]]:
                     "unsupported jobs mapping entry at the job-key indent: "
                     f"{normalized!r}"
                 )
-            if current_id is not None:
-                jobs.append((current_id, current_lines))
+            _close_job(jobs, current_id, current_lines)
             current_id = normalized[:-1]
             current_lines = [raw]
         elif current_id is None or indent < child_indent:
@@ -196,8 +207,7 @@ def _job_blocks(block: list[str]) -> list[tuple[str, list[str]]]:
             )
         else:
             current_lines.append(raw)
-    if current_id is not None:
-        jobs.append((current_id, current_lines))
+    _close_job(jobs, current_id, current_lines)
     return jobs
 
 
