@@ -106,22 +106,28 @@ jobs:
         run: ctest --test-dir build-tests -C Release --output-on-failure
 
   test-selection-checker:
-    # The selection checker is itself a fail-closed gate, so its failure modes
-    # are covered by checked-in regressions: a removed selected test, an empty
-    # run, a legitimate classified platform absence, and an unclassified
-    # addition all have explicit expectations.
-    name: Test-selection checker self-test
+    # The selection checker and the aggregate-enrollment checker are both
+    # fail-closed gates, so their failure modes are covered by checked-in
+    # regressions: a removed selected test, an empty run, a legitimate
+    # classified platform absence, an unclassified addition, a required gate
+    # dropped from the scaffolding-complete aggregate, and a weakened
+    # aggregate enforcement step all have explicit expectations.
+    name: Test-selection + aggregate checker self-test
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Negative/positive checker regressions
         run: python3 scripts/ci/test_check_test_selection.py
+      - name: Negative/positive aggregate dependency regressions
+        run: python3 scripts/ci/test_check_ci_aggregate.py
 
   script-sanitizers:
     name: Script production paths / ASan + UBSan
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -306,6 +312,8 @@ jobs:
           kisakcod-hudelem-sort-mp-tests
           kisakcod-hudelem-sort-sp-tests
           kisakcod-fx-physics-sidecar-production-seal-tests
+          kisakcod-huffman-wire-contract-tests
+          kisakcod-shader-cache-tests
           --parallel
 
       - name: Enforce FX archive stack budgets
@@ -755,13 +763,20 @@ jobs:
           retention-days: 14
 
   scaffolding-complete:
-    # The required CI gate: every build job in this workflow plus the six
-    # scaffolding legs must succeed. Branch protection should require this
-    # single job. (Renamed from production-complete: the five non-x86 legs
-    # are test-composition scaffolding, not shipped engines.)
+    # The required CI gate: every other job in this workflow — the six
+    # scaffolding legs, the engine build legs, and the sanitizer and
+    # selection/aggregate checker gates — must succeed. Branch protection
+    # should require this single job. scripts/ci/check-ci-aggregate.py pins
+    # this enrollment (needs == every other job) and the fail-closed
+    # enforcement below, so a required gate cannot silently disappear from
+    # the aggregate. (Renamed from production-complete: the five non-x86
+    # legs are test-composition scaffolding, not shipped engines.)
     name: Portable scaffolding complete
     needs:
       - portable-tests
+      - test-selection-checker
+      - script-sanitizers
+      - portable-sanitizers
       - windows-x86
       - windows-x86-sp
       - windows-x86-parity

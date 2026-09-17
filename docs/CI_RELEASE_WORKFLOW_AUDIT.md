@@ -367,6 +367,32 @@ Two remaining A12 gaps are addressed here rather than in a competing CI design:
   negative regressions (removed selected test, empty run, unclassified
   addition, reason-less entry, inventory removal) and runs in its own required
   `test-selection-checker` job.
+- **Required gates are mechanically enrolled in the aggregate (rework
+  fix).** The first review of this branch found that `portable-sanitizers`
+  and `test-selection-checker` were described as required but absent from
+  `scaffolding-complete.needs`, so the single branch-protection aggregate
+  could succeed while either gate failed or never ran. The aggregate now
+  depends on every other job in the workflow — `portable-tests`,
+  `test-selection-checker`, `script-sanitizers`, `portable-sanitizers`, the
+  five windows-x86 legs, and `scaffolding-builds` — and
+  `scripts/ci/check-ci-aggregate.py` (with
+  `scripts/ci/test_check_ci_aggregate.py` regressions, run in the
+  `test-selection-checker` job) pins that invariant mechanically: `needs`
+  must equal every other job exactly (a missing or unenrolled job fails),
+  and the enforcement script is extracted and executed against synthetic
+  result vectors — an all-success run must pass, and failure, skipped, and
+  cancelled at the first and last enrolled position must each fail — so a
+  required gate can neither silently disappear from the aggregate nor have
+  its enforcement weakened without failing CI. `script-sanitizers` and
+  `test-selection-checker` also carry the explicit `timeout-minutes` bounds
+  the workflow header contract promises for every job. The same review
+  found the windows-x86 build compiled neither
+  `kisakcod-huffman-wire-contract-tests` nor `kisakcod-shader-cache-tests`
+  although both are standalone test executables (not engine-target
+  dependencies) and the ILP32 selection executes their
+  `huffman-wire-format-contracts` and `database-derived-shader-cache-*`
+  tests; both targets are now built explicitly in that job, so the selected
+  tests exist on a clean Win32 runner instead of failing there.
 - **Stale baseline exclusions are gone.** `scripts/ci/run-arm64-determinism.sh`
   no longer filters `abi-sizeof|security-source-regressions` by name; those
   tests are healed on master and both tracking beads are closed. The matrix now
