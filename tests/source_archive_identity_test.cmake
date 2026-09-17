@@ -602,6 +602,11 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "OUTPUT \"\${SRC_DIR}/buildnumber.h\""
             ""
             _cmake "${_cmake}")
+    elseif(CONTRACT_MUTATION STREQUAL "stamp_publish_guard")
+        string(REPLACE
+            "file(REMOVE \"\${KISAK_STAMP_PUBLISH_HEADER}\")"
+            ""
+            _stamp "${_stamp}")
     else()
         message(FATAL_ERROR
             "Unknown source-identity mutation: ${CONTRACT_MUTATION}")
@@ -666,6 +671,23 @@ require_contains(
 require_contains(
     _cmake "update_build_number DEPENDS \"\${SRC_DIR}/buildnumber.h\""
     "the public stamp target pulls the published header into ordinary builds")
+
+# Timestamp resolution is not uniform across generators: Apple's GNU Make
+# 3.81, the default generator on macOS CI, compares whole seconds, so a stamp
+# that rewrites the staged header within the same wall-clock second in which
+# the previous build published the old revision ties the publish edge's mtime
+# comparison and the copy is skipped - the stale revision survives one
+# ordinary build. The stamp must therefore remove a published header whose
+# content it has superseded: a missing output forces the publish edge to run
+# on every generator, and the recreated file re-dirties compiled consumers in
+# the same ordinary build regardless of clock resolution. An unchanged stamp
+# compares equal and removes nothing, so clean rebuilds stay clean.
+require_contains(
+    _cmake "\"-DKISAK_STAMP_PUBLISH_HEADER=\${SRC_DIR}/buildnumber.h\""
+    "increment_build.cmake tells the stamp which header the publish edge owns")
+require_contains(
+    _stamp "file(REMOVE \"\${KISAK_STAMP_PUBLISH_HEADER}\")"
+    "the stamp removes a published header its content has superseded")
 
 # Both stamp scripts must forward the commit into the generated header.
 require_contains(
@@ -1028,6 +1050,7 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         stamp_delegation
         stamp_override_forward
         publish_edge
+        stamp_publish_guard
         cpp_consumer
         cpp_getter
         cpp_retention

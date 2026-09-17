@@ -20,6 +20,8 @@
 #   KISAK_STAMP_SOURCE_DIR - the source tree to resolve the identity against.
 #   KISAK_STAMP_SRC_DIR    - the directory that receives buildnumber.h.
 #   KISAK_STAMP_SCRIPTS_DIR - this project's scripts directory.
+#   KISAK_STAMP_PUBLISH_HEADER - the published buildnumber.h the publish edge
+#     owns; see the coarse-clock guard at the end of this script.
 
 if(NOT DEFINED KISAK_STAMP_SOURCE_DIR OR KISAK_STAMP_SOURCE_DIR STREQUAL "")
     message(FATAL_ERROR
@@ -74,4 +76,30 @@ if(NOT _stamp_result EQUAL 0)
     message(FATAL_ERROR
         "increment_build${SCRIPT_EXT} failed with exit code ${_stamp_result}; "
         "buildnumber.h was not updated")
+endif()
+
+# Coarse-clock publish guard. Build tools do not agree on timestamp
+# resolution: Apple's GNU Make 3.81 (the default generator on macOS CI)
+# compares whole seconds, so when the stamp rewrites the staged header in the
+# same wall-clock second in which the previous build published the old
+# revision, the publish edge's mtime comparison ties and the copy is skipped -
+# the stale revision survives one ordinary build. Remove the published header
+# when the stamped content differs from it: a missing output forces the
+# publish edge to run on every generator, and the recreated file re-dirties
+# compiled consumers in the same ordinary build regardless of clock
+# resolution. An unchanged stamp compares equal and removes nothing, so
+# unchanged rebuilds still leave the published header - and every consumer -
+# untouched.
+if(DEFINED KISAK_STAMP_PUBLISH_HEADER AND NOT KISAK_STAMP_PUBLISH_HEADER STREQUAL "")
+    if(EXISTS "${KISAK_STAMP_PUBLISH_HEADER}")
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E compare_files
+                "${KISAK_STAMP_SRC_DIR}/buildnumber.h"
+                "${KISAK_STAMP_PUBLISH_HEADER}"
+            RESULT_VARIABLE _publish_compare_result
+        )
+        if(NOT _publish_compare_result EQUAL 0)
+            file(REMOVE "${KISAK_STAMP_PUBLISH_HEADER}")
+        endif()
+    endif()
 endif()
