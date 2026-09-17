@@ -55,6 +55,17 @@ xmodel_cursor_test_support::Checker g_checker = {"xmodel_nested_cursor_test"};
 
 namespace
 {
+// Resolve a cursor-owned offset checkpoint back to a pointer inside the
+// caller's buffer. Test code holds the real buffer start, so begin +
+// offset is always within the object (the cursor validated the offset
+// against that same window). Keeps the position assertions readable
+// without reintroducing raw-pointer checkpoints into the cursor API.
+const unsigned char *ResolveCheckpoint(const buf_cursor::Checkpoint &checkpoint,
+                                       const unsigned char *bufferBegin)
+{
+    return bufferBegin + checkpoint.offset;
+}
+
 // Config header + collision header: everything XModelLoadFile reads
 // before the LOD table.
 void RunConfigAndCollisionHeader(unsigned char *&pos)
@@ -216,9 +227,9 @@ bool TestNestedPartsLoadRestoresParent()
 
         // Checkpoint the bone-info start exactly like the production
         // loader does around the nested parts load.
-        const unsigned char *meshCheckpoint = buf_cursor::Tell();
-        CHECK(meshCheckpoint != nullptr);
-        CHECK(meshCheckpoint == pos);
+        const buf_cursor::Checkpoint meshCheckpoint = buf_cursor::Tell();
+        CHECK(meshCheckpoint.valid);
+        CHECK(ResolveCheckpoint(meshCheckpoint, modelFile.bytes.data()) == pos);
         const uint32_t parentBoneLimit = buf_cursor::Current()->maxBoneIdx;
         CHECK(parentBoneLimit == 4);
 
@@ -231,8 +242,8 @@ bool TestNestedPartsLoadRestoresParent()
         // ran on default limits; nothing leaked in either direction).
         const buf_cursor::BufCursor *parent = buf_cursor::Current();
         CHECK(parent != nullptr);
-        CHECK(parent->current == meshCheckpoint);
-        CHECK(pos == meshCheckpoint);
+        CHECK(parent->current == ResolveCheckpoint(meshCheckpoint, modelFile.bytes.data()));
+        CHECK(pos == ResolveCheckpoint(meshCheckpoint, modelFile.bytes.data()));
         CHECK(!buf_cursor::Failed());
         CHECK(parent->maxBoneIdx == parentBoneLimit);
         CHECK(parent->maxStringLen == 64);
@@ -272,7 +283,7 @@ void ExpectNestedFailureLeavesParentClean(const ByteWriter &modelFile)
     buf_cursor::AnchorPos(&pos);
     RunConfigAndCollisionHeader(pos);
     RunLodTableWalk(pos);
-    const unsigned char *checkpoint = buf_cursor::Tell();
+    const buf_cursor::Checkpoint checkpoint = buf_cursor::Tell();
 
     // Truncated parts fixture: version+counts only, no body.
     ByteWriter truncated;
@@ -294,8 +305,9 @@ void ExpectNestedFailureLeavesParentClean(const ByteWriter &modelFile)
     // Parent restored: clean, positioned, readable.
     CHECK(buf_cursor::Current() != nullptr);
     CHECK(!buf_cursor::Failed());
-    CHECK(buf_cursor::Tell() == checkpoint);
-    CHECK(pos == checkpoint);
+    CHECK(buf_cursor::Tell().valid);
+    CHECK(buf_cursor::Tell().offset == checkpoint.offset);
+    CHECK(pos == ResolveCheckpoint(checkpoint, modelFile.bytes.data()));
     float value = Buf_Read<float>(&pos);
     CHECK(value == 0.25f);
     buf_cursor::Deactivate();
@@ -376,44 +388,49 @@ void RunSecondPassLodNameReread()
     CHECK(!buf_cursor::Failed());
 }
 
-// Checked-seek rejection: a null checkpoint, an out-of-range target
-// and an inactive cursor all fail closed without moving the position.
+// Checked-seek rejection: an invalid (no-cursor) checkpoint, an
+// out-of-range offset and an inactive cursor all fail closed without
+// moving the position.
 void ExpectSeekRejectsBadCheckpoints()
 {
-    unsigned char buffer[8] = {};
-    unsigned char *probe = buffer;
+    // Spare storage: eight active bytes plus one trailing byte, so the
+    // out-of-range offset refers to a real element of this array (its
+    // valid one-past pointer) instead of pointer arithmetic past the end
+    // of the activated window — which would be undefined behavior.
+    unsigned char storage[9] = {};
+    unsigned char *probe = storage;
 
-    // A null checkpoint (no active cursor at Tell() time) must be
-    // rejected — and because it is out of range, it latches failed.
-    buf_cursor::Activate(buffer, sizeof(buffer));
+    // An invalid checkpoint (no active cursor at Tell() time) must be
+    // rejected — and because it is invalid, it latches failed.
+    buf_cursor::Activate(storage, 8);
     buf_cursor::AnchorPos(&probe);
-    CHECK(!buf_cursor::SeekTo(nullptr));
+    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, false}));
     CHECK(buf_cursor::Failed());
-    CHECK(buf_cursor::Tell() == buffer);  // did not move
+    CHECK(buf_cursor::Tell().valid);
+    CHECK(buf_cursor::Tell().offset == 0);  // did not move
+    CHECK(probe == storage);
     buf_cursor::Deactivate();
 
-    // Out-of-range target: rejected, latched, position unmoved; a
-    // failed cursor rejects further seeks. The bad checkpoint is
-    // derived from the cursor's recorded end (one past the legal
-    // one-past-end sentinel) rather than pointer arithmetic on the
-    // array, which GCC -Warray-bounds rightly rejects.
-    buf_cursor::Activate(buffer, sizeof(buffer));
+    // Out-of-range offset: rejected, latched, position unmoved; a failed
+    // cursor rejects further seeks. The offset points one past the
+    // active eight-byte window but is still the valid one-past of the
+    // nine-byte spare storage, so the rejected target never leaves the
+    // array's permitted pointer domain.
+    buf_cursor::Activate(storage, 8);
     buf_cursor::AnchorPos(&probe);
-    const unsigned char *pastEndRecorded = buf_cursor::Current()->end;
-    const unsigned char *pastEnd = pastEndRecorded + 1;
-    CHECK(!buf_cursor::SeekTo(pastEnd));
+    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{sizeof(storage), true}));
     CHECK(buf_cursor::Failed());
-    CHECK(buf_cursor::Tell() == buffer);
-    CHECK(!buf_cursor::SeekTo(buffer));
+    CHECK(buf_cursor::Tell().offset == 0);
+    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, true}));
     CHECK(buf_cursor::Failed());
     buf_cursor::Deactivate();
 
     // Inactive cursor: rejected without touching anything.
-    CHECK(!buf_cursor::SeekTo(buffer));
+    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, true}));
     CHECK(buf_cursor::Current() == nullptr);
 }
 
-// Boundary checkpoints are legal (begin and one-past-end), and a
+// Boundary checkpoints are legal (offset 0 and offset size), and a
 // successful seek re-syncs the anchor.
 void ExpectSeekAcceptsBoundaryCheckpoints()
 {
@@ -423,10 +440,10 @@ void ExpectSeekAcceptsBoundaryCheckpoints()
     buf_cursor::AnchorPos(&probe);
     buf_cursor::Advance(4);
     CHECK(probe == buffer + 4);
-    CHECK(buf_cursor::SeekTo(buffer + sizeof(buffer)));
+    CHECK(buf_cursor::SeekTo(buf_cursor::Checkpoint{sizeof(buffer), true}));
     CHECK(probe == buffer + sizeof(buffer));
     CHECK(!buf_cursor::Failed());
-    CHECK(buf_cursor::SeekTo(buffer));
+    CHECK(buf_cursor::SeekTo(buf_cursor::Checkpoint{0, true}));
     CHECK(probe == buffer);
     CHECK(!buf_cursor::Failed());
     buf_cursor::Deactivate();
@@ -450,18 +467,18 @@ bool TestSecondPassCheckedSeek()
 
     // Production checkpoint: v36 = Tell() right after the collision
     // header, BEFORE the first LOD walk.
-    const unsigned char *lodTableStart = buf_cursor::Tell();
-    CHECK(lodTableStart != nullptr);
-    CHECK(lodTableStart == pos);
+    const buf_cursor::Checkpoint lodTableStart = buf_cursor::Tell();
+    CHECK(lodTableStart.valid);
+    CHECK(ResolveCheckpoint(lodTableStart, modelFile.bytes.data()) == pos);
 
     // First pass walks the LOD table.
     RunLodTableWalk(pos);
-    CHECK(pos != lodTableStart);
+    CHECK(pos != ResolveCheckpoint(lodTableStart, modelFile.bytes.data()));
 
     // Second pass: checked rewind, then per-LOD Advance(2) + names.
     CHECK(buf_cursor::SeekTo(lodTableStart));
-    CHECK(buf_cursor::Tell() == lodTableStart);
-    CHECK(pos == lodTableStart);  // anchored *pos followed the cursor
+    CHECK(buf_cursor::Tell().offset == lodTableStart.offset);
+    CHECK(pos == ResolveCheckpoint(lodTableStart, modelFile.bytes.data()));  // anchored *pos followed the cursor
     RunSecondPassLodNameReread();
 
     // A third pass rewinds and re-reads identically (warm-cache repeat
@@ -475,7 +492,7 @@ bool TestSecondPassCheckedSeek()
 
     buf_cursor::Deactivate();
     CHECK(buf_cursor::Current() == nullptr);
-    CHECK(buf_cursor::Tell() == nullptr);
+    CHECK(!buf_cursor::Tell().valid);
 
     // Checked-seek rejection contracts.
     ExpectSeekRejectsBadCheckpoints();
@@ -602,7 +619,8 @@ bool TestDeepNestedLifoRestoration()
     buf_cursor::Activate(modelFile.bytes.data(), modelFile.bytes.size());
     buf_cursor::AnchorPos(&modelPos);
     (void)Buf_Read<unsigned short>(&modelPos);  // config version
-    const unsigned char *modelCheckpoint = buf_cursor::Tell();
+    const buf_cursor::Checkpoint modelCheckpoint = buf_cursor::Tell();
+    CHECK(modelCheckpoint.valid);
 
     unsigned char *surfsPos = surfsFile.bytes.data();
     buf_cursor::Activate(surfsFile.bytes.data(), surfsFile.bytes.size());
@@ -612,7 +630,8 @@ bool TestDeepNestedLifoRestoration()
     buf_cursor::SetBoneLimit(128);
     buf_cursor::SetWeightLimit(4);
     (void)Buf_Read<unsigned short>(&surfsPos);  // surfs version
-    const unsigned char *surfsCheckpoint = buf_cursor::Tell();
+    const buf_cursor::Checkpoint surfsCheckpoint = buf_cursor::Tell();
+    CHECK(surfsCheckpoint.valid);
 
     unsigned char *piecePos = pieceFile.bytes.data();
     buf_cursor::Activate(pieceFile.bytes.data(), pieceFile.bytes.size());
@@ -627,14 +646,14 @@ bool TestDeepNestedLifoRestoration()
     // Unwind: pieces -> surfs -> model, each restoring its own parent.
     buf_cursor::Deactivate();
     CHECK(buf_cursor::Current() != nullptr);
-    CHECK(buf_cursor::Tell() == surfsCheckpoint);
-    CHECK(surfsPos == surfsCheckpoint);
+    CHECK(buf_cursor::Tell().offset == surfsCheckpoint.offset);
+    CHECK(surfsPos == ResolveCheckpoint(surfsCheckpoint, surfsFile.bytes.data()));
     CHECK(!buf_cursor::Failed());
 
     buf_cursor::Deactivate();
     CHECK(buf_cursor::Current() != nullptr);
-    CHECK(buf_cursor::Tell() == modelCheckpoint);
-    CHECK(modelPos == modelCheckpoint);
+    CHECK(buf_cursor::Tell().offset == modelCheckpoint.offset);
+    CHECK(modelPos == ResolveCheckpoint(modelCheckpoint, modelFile.bytes.data()));
     CHECK(!buf_cursor::Failed());
     // The surfs scope's tightened limits did not leak into the model
     // scope: the restored parent is back on the cursor defaults.

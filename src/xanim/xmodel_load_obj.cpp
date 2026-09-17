@@ -1371,7 +1371,7 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
     XModelConfig config; // [esp+234h] [ebp-1440h] BYREF
     XModelPartsLoad *modelParts; // [esp+166Ch] [ebp-8h]
     const char *v40; // [esp+1670h] [ebp-4h]
-    const unsigned __int8 *v36;
+    buf_cursor::Checkpoint v36{};
 
     if (Com_IsLegacyXModelName(name))
     {

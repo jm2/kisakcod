@@ -309,32 +309,34 @@ void AnchorPos(unsigned char **pos)
     }
 }
 
-const unsigned char *Tell()
+Checkpoint Tell()
 {
     if (!g_activeValid)
     {
-        return nullptr;
+        return Checkpoint{0, false};
     }
-    return g_active.current;
+    return Checkpoint{static_cast<size_t>(g_active.current - g_active.begin), true};
 }
 
-bool SeekTo(const unsigned char *target)
+bool SeekTo(const Checkpoint &checkpoint)
 {
     if (!g_activeValid || g_active.failed)
     {
         return false;
     }
-    if (target < g_active.begin || target > g_active.end)
+    // Validate the cursor-owned offset against the active window BEFORE
+    // forming any pointer. An invalid checkpoint (captured with no active
+    // cursor) or an offset past the active end means the caller's saved
+    // position is stale or corrupt: latch failed so the caller's ordinary
+    // malformed-input cleanup runs, and do not move.
+    const size_t size = static_cast<size_t>(g_active.end - g_active.begin);
+    if (!checkpoint.valid || checkpoint.offset > size)
     {
-        // A checkpoint outside the active buffer means the caller's
-        // saved position is stale or corrupt. Latch failed so the
-        // caller's ordinary malformed-input cleanup runs; the position
-        // does not move.
         g_active.failed = true;
         SyncAnchoredPos();
         return false;
     }
-    g_active.current = target;
+    g_active.current = g_active.begin + checkpoint.offset;
     SyncAnchoredPos();
     return true;
 }

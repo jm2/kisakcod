@@ -66,12 +66,14 @@
 // and re-reads the surface names for material registration. The rewind
 // must move the CURSOR (and the anchored *pos with it) — not just the
 // raw pointer — so the subsequent reads stay bounded and in position.
-// Tell() returns the cursor-owned checkpoint; SeekTo(target) validates
-// that target lies inside the active buffer, moves current there and
-// re-syncs the anchor. A SeekTo outside the buffer, on an inactive
-// cursor or on a failed cursor moves nothing and returns false (and
-// latches failed when the target is out of range) so the second pass
-// fails closed instead of parsing valid content at the wrong position.
+// Tell() captures a cursor-owned offset checkpoint; SeekTo(checkpoint)
+// validates that offset against the active buffer window, forms the
+// destination pointer only after the check, moves current there and
+// re-syncs the anchor. A SeekTo of an invalid or out-of-range
+// checkpoint, on an inactive cursor or on a failed cursor moves nothing
+// and returns false (and latches failed when the checkpoint is invalid
+// or out of range) so the second pass fails closed instead of parsing
+// valid content at the wrong position.
 //
 // UBSan alignment hazard.
 //
@@ -144,20 +146,36 @@ void SetStringLimit(uint32_t maxStringLen);
 // before updating so the cursor cannot Advance past the buffer.
 void Advance(ptrdiff_t delta);
 
-// Cursor-owned checkpoint: returns the active cursor's current position
-// so a caller can SeekTo it later (the material second pass). Returns
-// nullptr when no cursor is active — callers must treat a null
-// checkpoint as a failed load, not seek to it.
-const unsigned char *Tell();
+// Cursor-owned checkpoint: a byte offset from the active buffer's begin
+// plus a validity flag, rather than a raw pointer. Representing the
+// position as an offset lets SeekTo validate it before any pointer is
+// formed, so a null, unrelated or stale checkpoint can never take part
+// in a pointer comparison with unspecified ordering. `valid` is false
+// when no cursor was active at Tell() time; callers must treat an
+// invalid checkpoint as a failed load, not seek to it. A checkpoint is
+// scoped to the activation that produced it — its offset is only
+// meaningful against that activation's buffer.
+struct Checkpoint
+{
+    size_t offset;
+    bool valid;
+};
 
-// Checked absolute seek: moves the active cursor to target and re-syncs
-// the anchored *pos. The target must lie within [begin, end] of the
-// active buffer — the check is what makes the rewind safe against a
-// corrupted or stale checkpoint. Returns false and moves nothing when
-// no cursor is active, the cursor has already failed, or target is out
-// of range; an out-of-range target additionally latches Failed() so the
-// caller's ordinary malformed-input cleanup runs.
-bool SeekTo(const unsigned char *target);
+// Capture the active cursor's current position as a cursor-owned
+// checkpoint so a caller can SeekTo it later (the material second pass).
+// Returns an invalid checkpoint when no cursor is active.
+Checkpoint Tell();
+
+// Checked absolute seek to a cursor-owned checkpoint: validates the
+// checkpoint against the active buffer window and only then forms the
+// destination pointer (begin + offset) and re-syncs the anchored *pos.
+// The offset must lie within [0, size] of the active buffer — the check
+// is what makes the rewind safe against a corrupted or stale checkpoint.
+// Returns false and moves nothing when no cursor is active, the cursor
+// has already failed, the checkpoint is invalid, or its offset is out of
+// range; an invalid or out-of-range checkpoint additionally latches
+// Failed() so the caller's ordinary malformed-input cleanup runs.
+bool SeekTo(const Checkpoint &checkpoint);
 
 // String read: scan from current until a NUL is observed, copy
 // (including NUL) into out, and advance. Returns false and marks the
