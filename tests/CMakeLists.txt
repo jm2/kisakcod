@@ -3379,6 +3379,43 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/xmodel_cursor_source_invariants_test.cmake)
 
+# xmodel_loader_entry_test: production-loader entry-point contracts
+# (ki-okmr / #124). Links and executes the REAL XModelLoadFile
+# (src/xanim/xmodel_load_obj.cpp) — its config/collision/LOD parsing,
+# its nested parts/surfs cursor windows and its checked material
+# second pass — over controlled fixtures served by the harness file
+# system (xmodel_loader_entry_harness.hpp: in-memory FS and hunk cache,
+# the two renderer dvars, capture stubs, and the nested
+# XModelPartsLoadFile contract whose production TU has not been
+# migrated yet; R_XModelSurfsLoadFile needs no stand-in). The loader
+# TU's DirectX/Miles/ODE header web and MSVC decompiled dialect
+# (raw __declspec(align(16)), `const struct` definitions) compile only
+# under the win32-x86 platform, so this target is gated to the Windows
+# x86 CI leg and never configured on the portable 64-bit legs; the
+# portable suites above plus xmodel_cursor_source_invariants cover the
+# cursor contracts everywhere else.
+if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    add_executable(kisakcod-xmodel-loader-entry-tests
+        xmodel_loader_entry_test.cpp
+        xmodel_loader_entry_harness.hpp
+        xmodel_cursor_test_support.hpp
+        ${SRC_DIR}/xanim/xmodel_load_obj.cpp
+        ${SRC_DIR}/xanim/buf_cursor.cpp
+        ${SRC_DIR}/universal/com_math.cpp
+        ${SRC_DIR}/qcommon/com_pack.cpp)
+    target_include_directories(
+        kisakcod-xmodel-loader-entry-tests PRIVATE ${SRC_DIR})
+    target_compile_features(
+        kisakcod-xmodel-loader-entry-tests PRIVATE cxx_std_20)
+    kisakcod_test_warnings(kisakcod-xmodel-loader-entry-tests)
+    set_target_properties(
+        kisakcod-xmodel-loader-entry-tests PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(
+        NAME xmodel-loader-entry-native
+        COMMAND kisakcod-xmodel-loader-entry-tests)
+endif ()
+
 # xanim_parts_split_test: contract tests for the XAnimParts disk mirror
 # vs native runtime split (M4 + Priority 7). The retail x86 layout is
 # frozen at exactly 88 bytes per XAnimParts instance via ONDISK_SIZE; the
