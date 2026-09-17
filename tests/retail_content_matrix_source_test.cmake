@@ -24,7 +24,10 @@ cmake_minimum_required(VERSION 3.16)
 # cell/direction scope or per-profile result/evidence cell (commercial cells
 # held at 'Blocked / none', the non-derived kisakcod-self supplemental
 # annotation held at 'Supplemental / none' and never enrolled in the
-# commercial ledger), aggregate completeness policies, or disposition uniqueness
+# commercial ledger), aggregate completeness policies (each declared exactly
+# once: the policy lookups resolve keys with a first-match find, so a
+# duplicated — identical or conflicting — completeness declaration is
+# rejected), or disposition uniqueness
 # is dropped or an inapplicable mode/role requirement is introduced, if the
 # §4 catalog rows and the index disagree about which cases exist (membership
 # is read from the first cell of actual catalog table rows, so a prose
@@ -709,6 +712,20 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     # an inapplicable axis or promoted without failing validation. The
     # `child-count` line pins the derived record count so the ledger size is an
     # explicit, reviewable part of the contract.
+    # Completeness policies are single-declaration. The policy lookups below
+    # resolve keys with list(FIND), which silently accepts only the first
+    # occurrence, so a duplicated `completeness` line — identical or with a
+    # conflicting aggregate / child-ledger / commercial-baseline value — could
+    # contradict the canonical policy and still validate. Fail closed on any
+    # duplicate key before lookup.
+    list(LENGTH _completeness_keys _completeness_policy_count)
+    set(_completeness_keys_unique ${_completeness_keys})
+    list(REMOVE_DUPLICATES _completeness_keys_unique)
+    list(LENGTH _completeness_keys_unique _completeness_policy_unique_count)
+    if(NOT _completeness_policy_count EQUAL _completeness_policy_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix contains duplicate completeness policy declarations in ${DOC_PATH}")
+    endif()
     list(FIND _completeness_keys "child-ledger" _child_ledger_policy_index)
     if(_child_ledger_policy_index EQUAL -1)
         message(FATAL_ERROR
@@ -2405,6 +2422,19 @@ if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'drop-baseline-policy' did not apply")
 endif()
 expect_rejected("drop-baseline-policy" "${_mutated}")
+
+# Append a conflicting duplicate commercial-baseline completeness policy. The
+# policy lookups must fail closed on the duplicated key instead of silently
+# keeping the first declaration: an aggregate cell could otherwise pass under
+# a contradictory baseline prerequisite.
+string(REPLACE
+    "completeness commercial-baseline aggregate-pass-requires-matching-baseline\n"
+    "completeness commercial-baseline aggregate-pass-requires-matching-baseline\ncompleteness commercial-baseline aggregate-pass-without-baseline\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'duplicate-baseline-policy' did not apply")
+endif()
+expect_rejected("duplicate-baseline-policy" "${_mutated}")
 
 # The §6.4 rendered ledger cannot show a baseline result the canonical
 # records do not carry: promoting its first cell must be rejected too.
