@@ -28,6 +28,29 @@ struct SysSocket
     SOCKET handle{INVALID_SOCKET};
 };
 
+// Test seam (test builds only). When KISAK_SOCKET_TEST_HOOKS is defined the
+// suite can install a query that replaces the native getaddrinfo call, so the
+// failed-resolution contract is exercised deterministically instead of
+// depending on the host's resolver configuration. Production builds do not
+// define the macro, so neither the hook nor the setter exists in the shipped
+// service.
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+using SocketResolveQuery = int (*)(const char *node,
+    const char *service,
+    const addrinfo *hints,
+    addrinfo **results);
+
+namespace
+{
+thread_local SocketResolveQuery resolveHostTestHook = nullptr;
+} // namespace
+
+void KISAK_CDECL Kisak_SocketSetResolveTestHook(SocketResolveQuery hook)
+{
+    resolveHostTestHook = hook;
+}
+#endif
+
 namespace
 {
 // Winsock is initialized once per process on the first open and stays
@@ -348,4 +371,129 @@ bool KISAK_CDECL Sys_SocketAddressIsEqual(
         equal = (first->port == second->port);
     }
     return equal;
+}
+
+namespace
+{
+// Resolves the literal host forms that must never touch the OS resolver:
+// the exact name "localhost" and numeric dotted-quad addresses. Returns
+// true and fills `outAddress` on a match; false leaves it untouched so the
+// caller can fall through to getaddrinfo(AF_INET).
+bool TryResolveLiteralHost(
+    const char *const hostname,
+    SysSocketAddress *const outAddress) noexcept
+{
+    if (std::strcmp(hostname, "localhost") == 0)
+    {
+        outAddress->address[0] = 127;
+        outAddress->address[1] = 0;
+        outAddress->address[2] = 0;
+        outAddress->address[3] = 1;
+        outAddress->port = 0;
+        return true;
+    }
+
+    in_addr literal{};
+    if (inet_pton(AF_INET, hostname, &literal) == 1)
+    {
+        const unsigned long host = ntohl(literal.s_addr);
+        outAddress->address[0] =
+            static_cast<std::uint8_t>((host >> 24) & 0xFFUL);
+        outAddress->address[1] =
+            static_cast<std::uint8_t>((host >> 16) & 0xFFUL);
+        outAddress->address[2] =
+            static_cast<std::uint8_t>((host >> 8) & 0xFFUL);
+        outAddress->address[3] = static_cast<std::uint8_t>(host & 0xFFUL);
+        outAddress->port = 0;
+        return true;
+    }
+
+    return false;
+}
+
+// Maps `hostname` to an IPv4 endpoint with a zero port. Literal forms are
+// resolved by TryResolveLiteralHost without host resolver configuration or
+// an available network; every other value is delegated to
+// getaddrinfo(AF_INET), which requires Winsock to be initialized first. The
+// endpoint is written only on Resolved: a caller-visible failure never
+// carries a half-populated address.
+SysSocketResolveStatus ResolveHostAddress(
+    const char *const hostname,
+    SysSocketAddress *const outAddress) noexcept
+{
+    if (TryResolveLiteralHost(hostname, outAddress))
+        return SysSocketResolveStatus::Resolved;
+
+    if (!EnsureWinsockStarted())
+        return SysSocketResolveStatus::SystemFailure;
+
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_protocol = IPPROTO_UDP;
+    addrinfo *results = nullptr;
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+    const SocketResolveQuery query = resolveHostTestHook;
+    const int failure = query
+        ? query(hostname, nullptr, &hints, &results)
+        : getaddrinfo(hostname, nullptr, &hints, &results);
+#else
+    const int failure = getaddrinfo(hostname, nullptr, &hints, &results);
+#endif
+    if (failure != 0 || !results)
+        return Sys_SocketResolveErrorStatus(failure);
+
+    SysSocketAddress resolved{};
+    const bool mapped = ToSocketAddress(
+        *reinterpret_cast<const sockaddr_in *>(results->ai_addr), &resolved);
+    freeaddrinfo(results);
+    if (!mapped)
+        return SysSocketResolveStatus::SystemFailure;
+    resolved.port = 0;
+    *outAddress = resolved;
+    return SysSocketResolveStatus::Resolved;
+}
+} // namespace
+
+SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveErrorStatus(
+    const int resolverError)
+{
+    // EAI_NODATA is the Winsock no-address code (WSANO_DATA) and differs from
+    // EAI_NONAME (WSAHOST_NOT_FOUND); an existing name with no IPv4 address
+    // is reported as addressless there, and the public contract folds both
+    // into NotFound. EAI_ADDRFAMILY, where Winsock defines it, is the same
+    // "no address in the requested family" outcome for an AF_INET request and
+    // folds in too. The guards keep genuine resolver errors -- temporary,
+    // unrecoverable, resource -- as SystemFailure and tolerate platforms that
+    // omit the code or alias it to one already classified.
+#if defined(EAI_NODATA) && (EAI_NODATA != EAI_NONAME)
+    if (resolverError == EAI_NODATA)
+        return SysSocketResolveStatus::NotFound;
+#endif
+#if defined(EAI_ADDRFAMILY) && (EAI_ADDRFAMILY != EAI_NONAME) \
+    && (EAI_ADDRFAMILY != EAI_NODATA)
+    if (resolverError == EAI_ADDRFAMILY)
+        return SysSocketResolveStatus::NotFound;
+#endif
+    if (resolverError == EAI_NONAME)
+        return SysSocketResolveStatus::NotFound;
+    return SysSocketResolveStatus::SystemFailure;
+}
+
+SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveHost(
+    const char *const hostname,
+    const std::uint16_t port,
+    SysSocketAddress *const outAddress)
+{
+    if (!hostname || hostname[0] == '\0' || !outAddress)
+        return SysSocketResolveStatus::InvalidArgument;
+
+    SysSocketAddress resolved{};
+    const SysSocketResolveStatus status =
+        ResolveHostAddress(hostname, &resolved);
+    if (status != SysSocketResolveStatus::Resolved)
+        return status;
+    resolved.port = port;
+    *outAddress = resolved;
+    return SysSocketResolveStatus::Resolved;
 }

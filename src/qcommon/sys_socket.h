@@ -179,3 +179,45 @@ bool KISAK_CDECL Sys_SocketMakeAnyAddress(
 bool KISAK_CDECL Sys_SocketAddressIsEqual(
     const SysSocketAddress *first,
     const SysSocketAddress *second);
+
+enum class SysSocketResolveStatus : std::uint8_t
+{
+    Resolved,
+    InvalidArgument,
+    NotFound,
+    SystemFailure,
+};
+
+// Classifies a nonzero host-resolver failure into the portable status used by
+// Sys_SocketResolveHost. `resolverError` is a getaddrinfo error code --
+// EAI_NONAME, the platform's distinct no-address code (EAI_NODATA, or the
+// Winsock equivalent), EAI_ADDRFAMILY (the name maps to no address in the
+// requested family), or any other resolver error. A name the IPv4 resolver
+// cannot map, whether unknown or addressless, is NotFound; every other
+// failure (temporary, unrecoverable, resource or configuration) is
+// SystemFailure. The classification is resolver-independent and therefore
+// deterministically testable without depending on live DNS. A zero (success)
+// code is not a failure and fails closed to SystemFailure.
+SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveErrorStatus(
+    int resolverError);
+
+// Resolves `hostname` to an IPv4 endpoint carrying `port`. This is the
+// portable replacement for the platform-specific `Sys_StringToAdr` helper
+// the production network layer calls before `connect`/master queries, and
+// it is the DNS half of address/configuration handling that the datagram
+// send/receive primitives above do not need but a client or headless server
+// does. Numeric dotted-quad literals and the exact name "localhost" are
+// resolved without a resolver round trip, so those inputs behave identically
+// whether or not DNS is provisioned; every other value goes through the
+// host resolver, which may block while it consults it.
+//
+// Fail-closed contract: a null or empty `hostname`, or a null out-pointer,
+// is InvalidArgument; a name the resolver cannot map, whether unknown or
+// addressless, is NotFound (see Sys_SocketResolveErrorStatus); and any other
+// resolver failure is SystemFailure. `*outAddress` is written only on
+// Resolved, so a failure never leaves a caller observing a partially
+// populated endpoint.
+SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveHost(
+    const char *hostname,
+    std::uint16_t port,
+    SysSocketAddress *outAddress);
