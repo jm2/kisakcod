@@ -2678,6 +2678,26 @@ add_test(
     COMMAND kisakcod-net-chan-reassembly-tests
 )
 
+add_executable(kisakcod-huffman-wire-contract-tests
+    huffman_wire_contract_tests.cpp
+    ${SRC_DIR}/qcommon/huffman.cpp
+)
+# Links the production Huffman codec (huffman.cpp) and the shared retail
+# msg_hData table, then pins the derived codebook and fixed-input byte output.
+# huffman.cpp is decompiled engine code, so SYSTEM keeps the strict warning set
+# on the test's own code without failing the build on decompiled headers.
+target_include_directories(kisakcod-huffman-wire-contract-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-huffman-wire-contract-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-huffman-wire-contract-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-huffman-wire-contract-tests)
+set_target_properties(kisakcod-huffman-wire-contract-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME huffman-wire-format-contracts
+    COMMAND kisakcod-huffman-wire-contract-tests
+)
+
 add_executable(kisakcod-vehicle-material-time-tests
     vehicle_material_time_tests.cpp
 )
