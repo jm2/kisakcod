@@ -88,12 +88,10 @@ def _as_object(value: object, what: str, errors: list[str]) -> dict:
 
 
 def _string_levels(levels: list, errors: list[str]) -> list[str]:
-    """Return the string entries, reporting any non-string ones.
-
-    Non-string entries are reported and dropped before the set/membership
-    checks: an unhashable entry (a list) used to raise TypeError from
-    ``set(levels)`` instead of producing a schema error.
-    """
+    """Return the string entries, reporting any non-string ones."""
+    # Non-string entries are reported and dropped before the set/membership
+    # checks: an unhashable entry (a list) used to raise TypeError from
+    # ``set(levels)`` instead of producing a schema error.
     non_string = [level for level in levels if not isinstance(level, str)]
     if non_string:
         errors.append(
