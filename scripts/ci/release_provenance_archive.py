@@ -16,7 +16,7 @@ import json
 import tarfile
 from pathlib import Path
 
-from release_provenance_common import COMMIT_RE
+from release_provenance_common import COMMIT_RE, identity_field_failures
 
 
 def find_archive_members(archive: tarfile.TarFile, member: str) -> list[tarfile.TarInfo]:
@@ -103,12 +103,11 @@ def verify_archive_identity_member(
         if not isinstance(identity, dict):
             failures.append(f"source: {member.name} is not a JSON object")
             continue
-        for key, expected in (("tag", tag), ("commit", commit)):
-            if identity.get(key) != expected:
-                failures.append(
-                    f"source: {member.name} {key} {identity.get(key)!r} does not "
-                    f"match verified release {expected!r}"
-                )
+        # Reuse the CLI identity-verify field contract (schema_version, tag,
+        # commit) instead of re-checking only tag/commit: an identity that the
+        # CLI rejects must not pass verification just because it travelled
+        # inside the source archive.
+        failures.extend(identity_field_failures(identity, f"source: {member.name}", tag, commit))
     return failures
 
 

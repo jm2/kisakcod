@@ -119,6 +119,7 @@ def build_source_archive(
     prefix: str = "",
     carrier_arcname: str | None = None,
     extra_members: list[tuple[str, str]] | None = None,
+    identity_text: str | None = None,
 ) -> None:
     """(Re)build the source tarball with a controlled identity carrier."""
     # ``carrier_text=None`` omits the build-consumed ``src/source_identity.txt``;
@@ -128,6 +129,9 @@ def build_source_archive(
     # stored inside the archive so a test can prove an arbitrarily nested copy
     # is not accepted. ``extra_members`` adds non-identity members so a test can
     # mutate the archive while keeping its identity evidence valid.
+    # ``identity_text`` ships a raw ``release-identity.json`` body instead of the
+    # writer's output, so a test can pin a member whose schema/tag/commit
+    # contract the archive verifier must reject.
     requirements = json.loads(REQUIREMENTS.read_text(encoding="utf-8"))
     source = requirements["source"]
     staging = root / "archive-staging"
@@ -138,7 +142,10 @@ def build_source_archive(
     entries = [(staging / "CMakeLists.txt", "CMakeLists.txt")]
     if identity_member:
         identity = root / "source-tree" / source["identity_member"]
-        if not identity.is_file():
+        if identity_text is not None:
+            identity.parent.mkdir(parents=True, exist_ok=True)
+            identity.write_text(identity_text, encoding="utf-8")
+        elif not identity.is_file():
             result = run_tool(
                 "identity-write", "--tag", TAG, "--commit", COMMIT, "--out", str(identity)
             )
@@ -365,6 +372,64 @@ class ReleaseProvenanceTests(unittest.TestCase):
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
         self.assertIn("does not contain release-identity.json", result.stderr)
+
+    def test_source_archive_identity_missing_schema_fails(self) -> None:
+        # The archive member must satisfy the same schema/tag/commit contract as
+        # the CLI identity-verify path; a missing schema_version used to pass
+        # because only tag/commit were checked.
+        root = self.fresh("source-identity-no-schema")
+        build_source_archive(
+            root,
+            carrier_text=f"commit={COMMIT}\n",
+            identity_text=json.dumps({"tag": TAG, "commit": COMMIT, "version": TAG.lstrip("v")}),
+        )
+        record_source_manifest(root)
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("schema_version", result.stderr)
+
+    def test_source_archive_identity_wrong_schema_fails(self) -> None:
+        root = self.fresh("source-identity-bad-schema")
+        build_source_archive(
+            root,
+            carrier_text=f"commit={COMMIT}\n",
+            identity_text=json.dumps(
+                {
+                    "schema_version": 2,
+                    "tag": TAG,
+                    "commit": COMMIT,
+                    "version": TAG.lstrip("v"),
+                }
+            ),
+        )
+        record_source_manifest(root)
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("schema_version", result.stderr)
+
+    def test_source_archive_identity_wrong_commit_fails(self) -> None:
+        # The archive member tags the wrong commit although the build carrier is
+        # correct: the JSON identity is still disconnected from the release.
+        root = self.fresh("source-identity-wrong-commit")
+        build_source_archive(
+            root,
+            carrier_text=f"commit={COMMIT}\n",
+            identity_text=json.dumps(
+                {
+                    "schema_version": 1,
+                    "tag": TAG,
+                    "commit": "e" * 40,
+                    "version": TAG.lstrip("v"),
+                }
+            ),
+        )
+        record_source_manifest(root)
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not match verified release", result.stderr)
 
     def test_source_archive_without_build_carrier_fails(self) -> None:
         # The JSON identity member is present but the file the build actually
@@ -594,6 +659,19 @@ class ReleaseProvenanceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no --prerequisites", result.stderr)
 
+    # -- malformed input ----------------------------------------------------
+
+    def test_invalid_utf8_manifest_is_controlled_gate_error(self) -> None:
+        # ``load_json`` opens manifests in binary mode; a non-UTF-8 file must
+        # surface as a controlled gate failure, not an uncaught traceback.
+        root = self.fresh("invalid-utf8-manifest")
+        manifest = root / "dist" / "KisakCOD-windows-x86-provenance.json"
+        manifest.write_bytes(b"\xff\xfe\x00")
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("invalid JSON", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     # -- identity round-trip ------------------------------------------------
 
     def test_identity_verify_detects_mismatch(self) -> None:
@@ -613,6 +691,84 @@ class ReleaseProvenanceTests(unittest.TestCase):
         )
         self.assertEqual(bad.returncode, 1)
         self.assertIn("does not match", bad.stderr)
+
+    def test_identity_verify_rejects_missing_schema_version(self) -> None:
+        # The CLI and archive paths share one field contract: an identity
+        # lacking schema_version must be rejected by both.
+        root = self.tmp / "identity-no-schema"
+        root.mkdir()
+        identity = root / "release-identity.json"
+        identity.write_text(
+            json.dumps({"tag": TAG, "commit": COMMIT, "version": TAG.lstrip("v")}),
+            encoding="utf-8",
+        )
+        result = run_tool(
+            "identity-verify",
+            "--identity",
+            str(identity),
+            "--tag",
+            TAG,
+            "--commit",
+            COMMIT,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("schema_version", result.stderr)
+
+    def test_identity_explicit_version_round_trip(self) -> None:
+        # identity-write accepts an explicit --version; identity-verify must
+        # accept the very identity the writer produced when given that version.
+        root = self.tmp / "identity-explicit-version"
+        root.mkdir()
+        identity = root / "release-identity.json"
+        written = run_tool(
+            "identity-write",
+            "--tag",
+            TAG,
+            "--commit",
+            COMMIT,
+            "--version",
+            "custom",
+            "--out",
+            str(identity),
+        )
+        self.assertEqual(written.returncode, 0, written.stderr)
+        record = json.loads(identity.read_text(encoding="utf-8"))
+        self.assertEqual(record["version"], "custom")
+
+        ok = run_tool(
+            "identity-verify",
+            "--identity",
+            str(identity),
+            "--tag",
+            TAG,
+            "--commit",
+            COMMIT,
+            "--version",
+            "custom",
+        )
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+
+        # Without the explicit version the tag-derived default is required.
+        default = run_tool(
+            "identity-verify", "--identity", str(identity), "--tag", TAG, "--commit", COMMIT
+        )
+        self.assertEqual(default.returncode, 1)
+        self.assertIn("version", default.stderr)
+
+        # A mismatched explicit version must fail closed.
+        mismatch = run_tool(
+            "identity-verify",
+            "--identity",
+            str(identity),
+            "--tag",
+            TAG,
+            "--commit",
+            COMMIT,
+            "--version",
+            "other",
+        )
+        self.assertEqual(mismatch.returncode, 1)
+        self.assertIn("version", mismatch.stderr)
 
 
 if __name__ == "__main__":

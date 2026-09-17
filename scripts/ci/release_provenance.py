@@ -25,8 +25,13 @@
 #                       binds (digest included), and ``SHA256SUMS.txt`` covers
 #                       exactly the published file set.
 # * ``identity-write``  write a deterministic ``release-identity.json`` so a
-#                       source archive carries its version identity.
-# * ``identity-verify`` verify that identity against an expected tag/commit.
+#                       source archive carries its version identity. The version
+#                       defaults to the tag with a leading ``v`` stripped, but an
+#                       explicit ``--version`` may override it.
+# * ``identity-verify`` verify that identity against an expected tag/commit and
+#                       the effective version (the explicit ``--version`` when
+#                       supplied, otherwise the tag-derived default), so an
+#                       identity the writer produced is always verifiable.
 #
 # The tool is Python-standard-library only, never mutates the release directory,
 # and prints a precise ``FAIL:`` line for every violated invariant before
@@ -41,7 +46,6 @@ from pathlib import Path
 
 from release_provenance_archive import verify_source_archive
 from release_provenance_common import (
-    IDENTITY_KEYS,
     INVENTORY_FIELDS,
     INVENTORY_VALIDATORS,
     SCHEMA_VERSION,
@@ -49,6 +53,7 @@ from release_provenance_common import (
     GateError,
     ManifestExpectation,
     check_identity_shape,
+    identity_field_failures,
     load_json,
     sha256_file,
     verify_manifest_identity,
@@ -122,28 +127,42 @@ def cmd_identity_write(args: argparse.Namespace) -> int:
     return 0
 
 
+def _expected_identity_version(args: argparse.Namespace) -> str:
+    """Return the effective version an identity must carry for this call.
+
+    ``identity-write`` may record an explicit ``--version`` instead of the
+    tag-derived default, so the verifier accepts the same override. Without an
+    explicit version the tag-derived value is required, and a tag that cannot
+    yield one (``v``) is a usage error rather than a silent empty match.
+    """
+    if args.version is not None:
+        if not args.version:
+            raise GateError("--version must not be empty")
+        return args.version
+    derived = args.tag.lstrip("v")
+    if not derived:
+        raise GateError(
+            f"cannot derive a version from tag {args.tag!r}; pass --version"
+        )
+    return derived
+
+
 def cmd_identity_verify(args: argparse.Namespace) -> int:
-    """Verify a release-identity.json against an expected tag and commit."""
+    """Verify a release-identity.json against an expected tag, commit and version."""
     check_identity_shape(args.tag, args.commit)
     identity = load_json(Path(args.identity))
-    if identity.get("schema_version") != SCHEMA_VERSION:
-        raise GateError(
-            f"{args.identity}: schema_version {identity.get('schema_version')!r} "
-            f"is not {SCHEMA_VERSION}"
-        )
-    for key, expected in zip(IDENTITY_KEYS, (args.tag, args.commit)):
-        actual = identity.get(key)
-        if actual != expected:
-            raise GateError(
-                f"{args.identity}: {key} {actual!r} does not match expected {expected!r}"
-            )
-    expected_version = args.tag.lstrip("v")
+    # Share the schema/tag/commit field contract with the source-archive member
+    # check so both paths reject exactly the same malformed identity.
+    failures = identity_field_failures(identity, str(args.identity), args.tag, args.commit)
+    expected_version = _expected_identity_version(args)
     actual_version = identity.get("version")
     if actual_version != expected_version:
-        raise GateError(
-            f"{args.identity}: version {actual_version!r} does not match tag-derived "
+        failures.append(
+            f"{args.identity}: version {actual_version!r} does not match expected "
             f"{expected_version!r}"
         )
+    if failures:
+        raise GateError("; ".join(failures))
     return 0
 
 
@@ -466,6 +485,11 @@ def build_parser() -> argparse.ArgumentParser:
     identity_verify.add_argument("--identity", required=True)
     identity_verify.add_argument("--tag", required=True)
     identity_verify.add_argument("--commit", required=True)
+    identity_verify.add_argument(
+        "--version",
+        default=None,
+        help="explicit version identity-write recorded; defaults to the tag-derived value",
+    )
     identity_verify.set_defaults(func=cmd_identity_verify)
 
     record = sub.add_parser("record", help="record a provenance manifest")

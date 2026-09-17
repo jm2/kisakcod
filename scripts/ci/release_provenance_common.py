@@ -52,8 +52,12 @@ def load_json(path: Path) -> dict:
             value = json.load(handle)
     except FileNotFoundError:
         raise GateError(f"{path}: file not found")
-    except json.JSONDecodeError as exc:
-        raise GateError(f"{path}: invalid JSON ({exc})")
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # ``json.load`` reads bytes and detects their encoding, so a file that is
+        # not valid UTF-8 (or any supported encoding) raises UnicodeDecodeError
+        # as well. Both are malformed input and must surface as the documented
+        # gate error instead of an uncaught traceback.
+        raise GateError(f"{path}: invalid JSON ({exc})") from exc
     if not isinstance(value, dict):
         raise GateError(f"{path}: expected a JSON object")
     return value
@@ -81,6 +85,33 @@ def check_identity_shape(tag: str, commit: str) -> None:
         raise GateError("release tag must not be empty")
     if not COMMIT_RE.match(commit or ""):
         raise GateError(f"release commit {commit!r} is not a full 40-hex commit")
+
+
+def identity_field_failures(record: dict, label: str, tag: str, commit: str) -> list[str]:
+    """Return schema_version/tag/commit mismatches for one identity record.
+
+    The CLI ``identity-verify`` path and the source-archive member check must
+    reject exactly the same malformed identity, so the field-level contract
+    lives here instead of being duplicated. ``label`` names the record in the
+    failure text (an identity file path or an archive member).
+
+    The record's ``version`` is deliberately not checked: the tag-derived
+    version contract is reconciled by the ``identity-verify`` caller that knows
+    the expected value, and the archive member carries no such expectation.
+    """
+    failures: list[str] = []
+    if record.get("schema_version") != SCHEMA_VERSION:
+        failures.append(
+            f"{label}: schema_version {record.get('schema_version')!r} "
+            f"is not {SCHEMA_VERSION}"
+        )
+    for key, expected in zip(IDENTITY_KEYS, (tag, commit)):
+        actual = record.get(key)
+        if actual != expected:
+            failures.append(
+                f"{label}: {key} {actual!r} does not match verified release {expected!r}"
+            )
+    return failures
 
 
 def _validate_toolchain(value: object) -> str | None:
