@@ -737,15 +737,37 @@ otherwise:
   resource escapes zone memory (ClipMap `CM_Unload`, ComWorld
   `Com_UnloadWorld`, GfxWorld `DB_MediaUnloadGfxWorld`, LoadedSound
   `DB_RemoveLoadedSound`, TechniqueSet/Image media release).
-- **Failure grammar.** All load-path validation failures are
+- **Failure grammar (corrected: per-object seal ordering is not whole-zone
+  atomicity).** All load-path validation failures are
   `Com_Error(ERR_DROP, …)` (long-jump zone-load abort) or an ordered boolean
-  false return that unwinds to the same abort. A failed zone load leaves no
-  partially published asset behind because asset registration
-  (`DB_AddXAsset`) happens only after a family's subobject walk completes
-  (per-family `Load_<Type>Asset` call inside the pointer-token readers,
-  §9), and inserted-pointer publication (`DB_SetInsertedPointer`) happens
-  only after the body walk succeeds — the pointer token is registered
-  (slot) before children are read and published (sealed) after.
+  false return that unwinds to the same abort. What the sources demonstrate
+  is **per-object seal ordering**: within one object's reader, the pointer
+  token is registered (slot) before children are read, and that object's own
+  publication — inserted pointer (`DB_SetInsertedPointer`,
+  `db_load.cpp:4410-4414`) or completion seal (`DB_CompleteObject`,
+  `db_load.cpp:4525-4530`) — happens only after its body walk succeeds. A
+  zone load is **not** demonstrated to be transactional, on three counts.
+  (1) *Prior child publications survive a later parent failure:* a nested
+  asset whose walk completes is registered into the global asset pool
+  mid-parent-walk — `Load_Material` reaches `Load_MaterialTechniqueSetPtr`
+  (`db_load.cpp:4465-4469`), whose reader calls
+  `Load_MaterialTechniqueSetAsset` →
+  `DB_AddXAsset(ASSET_TYPE_TECHNIQUE_SET)` → `DB_LinkXAssetEntry` under
+  `db_hashCritSect` (`db_load.cpp:4409`, `db_registry.cpp:938-942`,
+  `:2095-2118`) — while the parent Material can still fail afterwards
+  aligning/allocating/loading its own texture table
+  (`db_load.cpp:4483-4523`), leaving the completed child published. (2) *The
+  abort is fatal, not a rollback:* the `DB_Thread` long-jump handler
+  (`db_registry.cpp:2691-2699`) calls `Com_ErrorAbort()`, whose body is
+  `Sys_Error("%s", com_errorMessage)` (`qcommon/common.cpp:883-886`) — the
+  process dies carrying any partial publications. (3) *Cleanup is wholesale
+  only:* zone data has no per-subobject free (first shared invariant above);
+  it is reclaimed with the process on a load abort or with the zone's PMem
+  blocks on unload, and no source mechanism repairs or unwinds in-process
+  partial publication. Whole-zone rollback / "a failed zone load leaves no
+  partially published asset behind" is therefore **ME** (§12 taxonomy): no
+  source path and no test demonstrates it, and this ledger no longer claims
+  it.
 - **High-address behavior (token domain vs host width).** All pointer fields
   are 4-byte tokens in the 32-bit token space; offset decode enforces
   `kOffsetMask = 0x0FFFFFFF`, block-index validity and
@@ -785,7 +807,7 @@ Per-family matrix:
 |---|---|---|---|
 | Container envelope | `kInline` preserved verbatim; shared-inline token rejected in the script-string walk (`UnsupportedSharedInline`) — no shared-inline protocol at envelope level | Envelope records read through fail-closed iterators into caller-provided bounds | Iterator failure is atomic: no partial list escapes (`db_xasset_disk32.cpp`) |
 | XAnimParts | Asset-level: inline alloc / `-2` inserted pointer (`DBAliasKind::XAnimParts`) / offset alias (`:2422`, `:2428-2431`, `:2435-2437`). **No sub-object aliasing inside the body** — every payload array is a fresh bump | Zone blocks; load-object route additionally hunk-persistent (`Hunk_SetDataForFile` type 4; `g_animUser` temp arena destroyed per-anim `xanim_load_obj.cpp:1650-1657`) | Body walk has iassert sentinels on stream state; a false return from any sub-walk unwinds to `ERR_DROP`; runtime-struct consumption still raw-width (XAnim payload consumer gap, §6.3) |
-| XModel | Asset-level inserted-pointer/alias (`:6030`, `:6040-6044`, `:6048-6050`); sub-surface `vertList`/`collisionTree` aliases (`:3395-3398`, `:3212-3215`); physGeoms completed shared object | Zone blocks (surfs); load-object route hunk types 3/4/5 (`xmodel_load_obj.cpp:1086`, `:1292`, `:1914`) | 13-point post-walk validation `DB_ValidateLoadedXModel`; collision-layout precheck before any allocation (`:5766-5780`) — malformed headers abort before zone bytes are consumed |
+| XModel | Asset-level inserted-pointer/alias (`:6030`, `:6040-6044`, `:6048-6050`); sub-surface `vertList`/`collisionTree` aliases (`:3395-3398`, `:3212-3215`); physGeoms completed shared object | Zone blocks (surfs); load-object route hunk types 3/4/5 (`xmodel_load_obj.cpp:1086`, `:1292`, `:1914`) | 13-point post-walk validation `DB_ValidateLoadedXModel`; collision-layout precheck (`:5765-5780`) runs after `Load_Stream` consumes the 220-byte header (`db_load.cpp:5764`) but before any sub-object allocation — a malformed header aborts with the header bytes already charged to the zone stream, not before zone bytes are consumed |
 | XModelPieces | Nested-only family (§9.3): alias-slot object with `DB_CompleteObject` publication (`:6156-6172`); piece models are XModel aliases | Zone blocks | Array-extent `ERR_DROP` before per-piece walk (`:6086-6097`) |
 | Material | textureTable/constantTable/stateBits each independently: empty-present (nulled), inline (fresh bump + `DB_CompleteObject`), direct block-4 pointer, or shared alias — the four-way grammar is the material family's signature invariant (`:4471-4627`) | Zone blocks; technique-set/image members owned by their own families; **material root has no remove handler** (`db_registry.cpp:3306-3343`) | Empty-span tokens must literally equal `disk32::kInline` (`:4483`, `:4553`, `:4596`); per-table extent precompute with `ERR_DROP` before reads; `DB_CompleteObject` per-kind schema validation (`db_stream.cpp:428-482`) |
 | TechniqueSet + shaders | techset/technique/vertexDecl/shader inserted-pointer + alias grammar (`:4400-4420`, `:4282-4309`, `:4034-4065`, `:3797-3826`); shader program payload sized by validated `programSize` DWORDs, never native `sizeof` | Zone blocks; GPU program release on complete-fail (`:3813-3817`, pixel `:3878-3882`); media release via `DB_MediaReleaseTechniqueSet` (`db_registry.cpp:3294-3298`) | Renderer-variant mixing is a hard `ERR_DROP` at pass, technique and techset levels; `flags &= 0x3F` canonicalization `:4131` |
@@ -1045,6 +1067,28 @@ explicitly listed gaps.
     materialization preflight `:1256-1262`). The legitimate gaps stand
     unchanged: production enrollment (the FX/impact binding is still
     zero-caller, §4) and retail parity remain missing for every family.
+- **Rework of review `91337ca4` finding** (one P2 failure/rollback-evidence
+  correction; citations re-verified against this head before each edit; the
+  `31965d30` UI/test-name and `e59c95d7` high-address corrections are
+  retained unchanged):
+  - §10's failure-grammar bullet no longer claims whole-zone publication
+    atomicity. It now separates per-object seal ordering (slot registration
+    before children; `DB_SetInsertedPointer`/`DB_CompleteObject` after the
+    object's own body walk) from what is *not* demonstrated: nested assets
+    register into the global pool mid-parent-walk
+    (`Load_MaterialTechniqueSetAsset` → `DB_AddXAsset` →
+    `DB_LinkXAssetEntry`, `db_load.cpp:4409`, `db_registry.cpp:938-942`,
+    `:2095-2118`) before the parent can still fail
+    (`db_load.cpp:4483-4523`); the `DB_Thread` long jump ends in
+    `Com_ErrorAbort` → `Sys_Error` (`db_registry.cpp:2691-2699`,
+    `qcommon/common.cpp:883-886`), a fatal abort rather than a rollback;
+    and cleanup is wholesale-only zone reclamation. Whole-zone rollback is
+    marked **ME** instead of claimed. §10's XModel row no longer says
+    malformed headers abort before zone bytes are consumed: `Load_Stream`
+    reads the 220-byte header (`db_load.cpp:5764`) before the collision
+    precheck (`:5765-5780`), so the header bytes are consumed first; the
+    precheck still precedes any sub-object allocation. Documentation only —
+    no production code, serialization, or gate change.
 - **Criteria mapping.** Criterion 1 (exhaustive inventory): §9.0–§9.12
   enumerate every pointer-bearing subobject walk of all 33 registered
   families (26 dispatchable types + XModelPieces nested-only + the 6
