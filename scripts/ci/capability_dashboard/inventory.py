@@ -50,7 +50,8 @@ def _unquote(value: str) -> str:
 
 
 def _quoted_span_end(value: str, start: int) -> int:
-    """Return the index just past the closing quote opening at ``start``.
+    """
+    Return the index just past the closing quote opening at ``start``.
 
     Doubled single quotes continue a single-quoted scalar and a backslash
     escapes the next character inside double quotes.  An unterminated scalar
@@ -93,6 +94,28 @@ def _strip_yaml_comment(value: str) -> str:
             return value[:index].strip()
         index += 1
     return value.strip()
+
+
+def _split_flow_items(inner: str) -> list[str]:
+    """Split flow-list content on commas outside quoted scalars."""
+    # A quoted scalar may contain commas (``["linux,debug", "windows"]``),
+    # doubled single quotes, and backslash escapes; ``_quoted_span_end``
+    # consumes one in a single step, so separators inside it never split an
+    # item and quoted hashes and escaped quotes stay intact.
+    items: list[str] = []
+    start = 0
+    index = 0
+    while index < len(inner):
+        char = inner[index]
+        if char in ("'", '"'):
+            index = _quoted_span_end(inner, index)
+            continue
+        if char == ",":
+            items.append(inner[start:index])
+            start = index + 1
+        index += 1
+    items.append(inner[start:])
+    return items
 
 
 # --------------------------------------------------------------------------
@@ -174,7 +197,11 @@ def _parse_flow_list(text: str, key: str) -> list[str]:
     inner = stripped[1:-1].strip()
     if not inner:
         return []
-    return [_unquote(item.strip()) for item in inner.split(",") if item.strip()]
+    return [
+        _unquote(item.strip())
+        for item in _split_flow_items(inner)
+        if item.strip()
+    ]
 
 
 def _parse_axis_value(raw: str, key: str) -> str:
@@ -219,7 +246,16 @@ def _split_entry(text: str, label: str) -> tuple[str, str]:
         raise MatrixExpansionError(
             f"matrix {label} entry must be key: value, got {text!r}"
         )
-    return match.group(1), _unquote(match.group(2).strip())
+    # An unquoted trailing comment is not part of the value: keeping it
+    # attached made an exclude such as ``- os: windows # omit windows``
+    # never match its combination.  A value that is only a comment reads
+    # as YAML null, which this explicit contract does not support.
+    value = _strip_yaml_comment(match.group(2))
+    if not value:
+        raise MatrixExpansionError(
+            f"matrix {label} entry must be key: value, got {text!r}"
+        )
+    return match.group(1), _unquote(value)
 
 
 def _entry_indent_guard(item_indent: int, indent: int, label: str) -> None:
@@ -421,7 +457,11 @@ def _flow_items(text: str) -> list[str]:
     inner = stripped[1:-1].strip()
     if not inner:
         return []
-    return [_unquote(item.strip()) for item in inner.split(",") if item.strip()]
+    return [
+        _unquote(item.strip())
+        for item in _split_flow_items(inner)
+        if item.strip()
+    ]
 
 
 def _scalar_self_hosted(value: str) -> bool:

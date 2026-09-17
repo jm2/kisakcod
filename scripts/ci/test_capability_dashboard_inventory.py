@@ -268,6 +268,82 @@ class MatrixExpansionTests(unittest.TestCase):
         )
         self.assertEqual(cd.matrix_legs(job), 1)
 
+    def test_quoted_comma_in_axis_flow_item_is_not_a_separator(self):
+        # PR #150 rework review: ``["linux,debug", "windows"]`` was split
+        # blindly on commas and returned 3 legs instead of 2.  A comma
+        # inside a quoted scalar is value text, not a separator.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        label: [\"linux,debug\", \"windows\"]",
+        )
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_escaped_quotes_in_axis_flow_item_are_intact(self):
+        # A backslash escapes the next character inside double quotes, so
+        # the escaped quote must not terminate the quoted span and split
+        # the item.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            '        label: ["win \\"x\\"", mac]',
+        )
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_exclude_value_with_trailing_comment_still_matches(self):
+        # PR #150 rework review: the exclude value kept its comment
+        # (``windows # omit windows``) and never matched, leaving 2 legs
+        # instead of 1.  The comment must be stripped so the exclusion
+        # applies.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, windows]",
+            "        exclude:",
+            "          - os: windows # omit windows",
+        )
+        self.assertEqual(cd.matrix_legs(job), 1)
+
+    def test_include_value_with_trailing_comment_still_matches(self):
+        # Same finding on the include side: stripping the comment must keep
+        # the include augmenting its matching combination (2 axes legs, no
+        # extra include leg).
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, mac]",
+            "        include:",
+            "          - os: linux  # annotate the linux leg",
+            "            arch: x64",
+        )
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_quoted_hash_in_exclude_value_is_preserved(self):
+        # A quoted ``#`` inside an include/exclude value is value text: the
+        # exclusion must still match the literal ``win #1`` combination
+        # while the unquoted trailing comment is stripped.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        label: [\"win #1\", mac]",
+            "        exclude:",
+            '          - label: "win #1"  # drop the odd label',
+        )
+        self.assertEqual(cd.matrix_legs(job), 1)
+
+    def test_comment_only_include_value_fails_explicitly(self):
+        # A comment-only value reads as YAML null, which this explicit
+        # contract does not support; fail closed instead of guessing.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, mac]",
+            "        include:",
+            "          - os:  # null is not a supported include value",
+        )
+        with self.assertRaises(cd.MatrixExpansionError):
+            cd.matrix_legs(job)
+
 
 class SelfHostedRunsOnTests(unittest.TestCase):
     """The complete ``runs-on`` value is parsed, or parsing fails closed."""
@@ -350,6 +426,13 @@ class SelfHostedRunsOnTests(unittest.TestCase):
         # label, and parsing must neither raise nor strip into the quotes.
         job = self._probe(['    runs-on: "self # host"  # annotated'])
         self.assertFalse(job["self_hosted"])
+
+    def test_flow_list_quoted_comma_item_still_finds_self_hosted(self):
+        # PR #150 rework review (runs-on shares the flow-list splitter): a
+        # comma inside a quoted scalar must not corrupt the split, or the
+        # self-hosted label after it stops matching.
+        job = self._probe(['    runs-on: ["linux,debug", self-hosted]'])
+        self.assertTrue(job["self_hosted"])
 
     def test_expression_with_trailing_comment_is_not_self_hosted(self):
         job = self._probe(["    runs-on: ${{ matrix.runner }}  # runtime"])
