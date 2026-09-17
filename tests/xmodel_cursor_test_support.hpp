@@ -10,8 +10,8 @@
 // Header-only by design: each test binary instantiates its own
 // Checker, so counters and failure reports never cross binaries.
 
-#ifndef XMODEL_CURSOR_TEST_SUPPORT_H
-#define XMODEL_CURSOR_TEST_SUPPORT_H
+#ifndef XMODEL_CURSOR_TEST_SUPPORT_HPP
+#define XMODEL_CURSOR_TEST_SUPPORT_HPP
 
 #include <cstdint>
 #include <cstdio>
@@ -175,4 +175,4 @@ inline ByteWriter BuildSurfsHeaderFile(short numsurfs)
 
 }  // namespace xmodel_cursor_test_support
 
-#endif  // XMODEL_CURSOR_TEST_SUPPORT_H
+#endif  // XMODEL_CURSOR_TEST_SUPPORT_HPP

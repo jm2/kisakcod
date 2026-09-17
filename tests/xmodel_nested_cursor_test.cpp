@@ -25,14 +25,14 @@
 // The save-stack overflow (fail-closed) contracts live in their own
 // translation unit, tests/xmodel_cursor_overflow_test.cpp. The two
 // suites share only this file's support header,
-// tests/xmodel_cursor_test_support.h (the controlled fixtures and the
+// tests/xmodel_cursor_test_support.hpp (the controlled fixtures and the
 // CHECK harness, defined once for both binaries); no contract state is
 // shared, and the split keeps each TU within the file-size budget with
 // every helper individually readable. All assertions are retained.
 
 #include <xanim/buf_cursor.h>
 
-#include "xmodel_cursor_test_support.h"
+#include "xmodel_cursor_test_support.hpp"
 
 #include <cstdint>
 #include <cstdio>

@@ -23,15 +23,6 @@
 # on every supported compiler (cmake --preset linux-amd64-mp /
 # macos-arm64-mp, MSVC on the hosted Windows legs).
 #
-# tests/xmodel_cursor_test_support.h is the C++-only shared fixture and
-# CHECK-harness header for the two xmodel cursor contract suites
-# (kisakcod-xmodel-nested-cursor-tests and
-# kisakcod-xmodel-cursor-overflow-tests, compiled and run on every host
-# incl. the hosted legs). It is header-only by design with
-# namespace-scoped fixtures, so the C parser false-positives on the
-# namespace definition itself; the header's contracts are exercised by
-# both suites on every test run.
-#
 # The remaining headers carry C++-only constructs on lines touched by the
 # platform port (ki-vuj). The same constructs are compile-checked by the
 # production gate on every supported compiler (cmake --preset
@@ -48,7 +39,6 @@ exclude_paths:
   - "src/physics/ode/collision_trimesh_KISAK.h"
   - "src/physics/ode/util.h"
   - "src/qcommon/graph.h"
-  - "tests/xmodel_cursor_test_support.h"
 
 # Keep the existing socket-header Cppcheck exception in this single config.
 # The address and port fields are exercised by both platform backends;

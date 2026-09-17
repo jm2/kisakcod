@@ -27,14 +27,14 @@
 // This suite is split from xmodel_nested_cursor_test.cpp: the overflow
 // contracts need no fixtures and share no contract state with the
 // restore / rewind contracts; both binaries share only the check
-// harness and fixtures header, tests/xmodel_cursor_test_support.h. The
+// harness and fixtures header, tests/xmodel_cursor_test_support.hpp. The
 // split keeps each TU within the file-size budget with every helper
 // individually readable. All assertions are retained in their original
 // execution order.
 
 #include <xanim/buf_cursor.h>
 
-#include "xmodel_cursor_test_support.h"
+#include "xmodel_cursor_test_support.hpp"
 
 #include <cstdio>
 #include <cstring>
