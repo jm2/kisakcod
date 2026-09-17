@@ -6,6 +6,11 @@
 # absent member, an unexpanded ``$Format:...$`` placeholder, a malformed value
 # or a value that conflicts with the verified release each fail closed.
 #
+# The shipped ``release-identity.json`` must equally pin the verified tag,
+# commit and effective version (an explicit override or the tag-derived
+# default), so an identity the CLI identity-verify path rejects cannot pass
+# just because it travelled inside the archive.
+#
 # The commit line is parsed with the resolver's own grammar: ``file(STRINGS ...
 # REGEX "^commit=")`` matches ``commit=`` at column zero, so a line with leading
 # whitespace is not a usable identity and must not be accepted here.
@@ -75,15 +80,12 @@ def _carrier_locations(archive: tarfile.TarFile, carrier: str) -> list[list[str]
 
 
 def _carrier_alias_members(archive: tarfile.TarFile, carrier: str) -> list[tarfile.TarInfo]:
-    """
-    Return members that reach a carrier location only via backslashes.
-
-    Reading a member's backslashes as separators can make a noncanonical
-    name look like the build-consumed carrier. POSIX extraction keeps the
-    backslash inside the filename, so such a member never lands on the path
-    ``resolve_source_identity.cmake`` reads and its value is identity
-    evidence the build can never recover.
-    """
+    """Return members that reach a carrier location only via backslashes."""
+    # Reading a member's backslashes as separators can make a noncanonical
+    # name look like the build-consumed carrier. POSIX extraction keeps the
+    # backslash inside the filename, so such a member never lands on the path
+    # ``resolve_source_identity.cmake`` reads and its value is identity
+    # evidence the build can never recover.
     locations = _carrier_locations(archive, carrier)
     if not locations:
         return []
@@ -120,9 +122,9 @@ def find_carrier_members(archive: tarfile.TarFile, carrier: str) -> list[tarfile
 
 
 def verify_archive_identity_member(
-    archive: tarfile.TarFile, identity_member: str, tag: str, commit: str
+    archive: tarfile.TarFile, identity_member: str, tag: str, commit: str, version: str
 ) -> list[str]:
-    """Verify the shipped ``release-identity.json`` pins tag and commit."""
+    """Verify the shipped ``release-identity.json`` pins tag, commit and version."""
     members = find_archive_members(archive, identity_member)
     if not members:
         message = (
@@ -145,10 +147,15 @@ def verify_archive_identity_member(
             failures.append(f"source: {member.name} is not a JSON object")
             continue
         # Reuse the CLI identity-verify field contract (schema_version, tag,
-        # commit) instead of re-checking only tag/commit: an identity that the
-        # CLI rejects must not pass verification just because it travelled
-        # inside the source archive.
-        failures.extend(identity_field_failures(identity, f"source: {member.name}", tag, commit))
+        # commit, version) instead of re-checking only tag/commit: an identity
+        # that the CLI rejects must not pass verification just because it
+        # travelled inside the source archive. version is the effective
+        # expected value the caller derived (explicit override or tag default),
+        # so a member whose version is wrong or missing fails here exactly as
+        # the standalone identity-verify fails.
+        failures.extend(
+            identity_field_failures(identity, f"source: {member.name}", tag, commit, version)
+        )
     return failures
 
 
@@ -232,17 +239,21 @@ def verify_source_archive(
     carrier_member: str,
     tag: str,
     commit: str,
+    version: str,
 ) -> list[str]:
     """Prove a source archive carries the verified release identity."""
-    # The JSON identity member pins tag and commit; the build-consumed carrier
-    # pins the exact full commit a rebuild would resolve without ``.git``. Both
-    # are required so the verifier cannot pass an archive whose identity
-    # evidence is disconnected from what the build reads.
+    # The JSON identity member pins tag, commit and the effective version; the
+    # build-consumed carrier pins the exact full commit a rebuild would resolve
+    # without ``.git``. Both are required so the verifier cannot pass an
+    # archive whose identity evidence is disconnected from what the build
+    # reads.
     if not archive_path.is_file():
         return [f"source: archive {archive_path.name} is missing from dist"]
     try:
         with tarfile.open(archive_path, "r:*") as archive:
-            failures = verify_archive_identity_member(archive, identity_member, tag, commit)
+            failures = verify_archive_identity_member(
+                archive, identity_member, tag, commit, version
+            )
             failures.extend(verify_archive_carrier(archive, carrier_member, commit))
     except tarfile.TarError as exc:
         return [f"source: archive {archive_path.name} could not be read ({exc})"]

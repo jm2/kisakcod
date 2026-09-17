@@ -19,6 +19,7 @@ import sys
 import unittest
 
 import test_release_provenance_archive
+import test_release_provenance_archive_version
 import test_release_provenance_inventory
 
 from release_provenance_testlib import (
@@ -263,6 +264,7 @@ def build_suite() -> unittest.TestSuite:
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromModule(sys.modules[__name__])
     suite.addTests(loader.loadTestsFromModule(test_release_provenance_archive))
+    suite.addTests(loader.loadTestsFromModule(test_release_provenance_archive_version))
     suite.addTests(loader.loadTestsFromModule(test_release_provenance_inventory))
     return suite
 

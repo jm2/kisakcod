@@ -87,16 +87,20 @@ def check_identity_shape(tag: str, commit: str) -> None:
         raise GateError(f"release commit {commit!r} is not a full 40-hex commit")
 
 
-def identity_field_failures(record: dict, label: str, tag: str, commit: str) -> list[str]:
-    """Return schema_version/tag/commit mismatches for one identity record."""
+def identity_field_failures(
+    record: dict, label: str, tag: str, commit: str, version: str | None = None
+) -> list[str]:
+    """Return schema_version/tag/commit/version mismatches for one identity record."""
     # The CLI identity-verify path and the source-archive member check must
     # reject exactly the same malformed identity, so the field-level contract
     # lives here instead of being duplicated. label names the record in the
     # failure text (an identity file path or an archive member).
     #
-    # The record's version is deliberately not checked: the tag-derived version
-    # contract is reconciled by the identity-verify caller that knows the
-    # expected value, and the archive member carries no such expectation.
+    # version is the effective expected version (an explicit override or the
+    # tag-derived default) computed by a caller that knows it. Passing it makes
+    # the record's version part of the shared contract, so an identity whose
+    # version is missing or different fails both paths. A caller with no
+    # version expectation may omit it.
     failures: list[str] = []
     if record.get("schema_version") != SCHEMA_VERSION:
         failures.append(
@@ -109,6 +113,10 @@ def identity_field_failures(record: dict, label: str, tag: str, commit: str) -> 
             failures.append(
                 f"{label}: {key} {actual!r} does not match verified release {expected!r}"
             )
+    if version is not None and record.get("version") != version:
+        failures.append(
+            f"{label}: version {record.get('version')!r} does not match expected {version!r}"
+        )
     return failures
 
 

@@ -22,7 +22,10 @@
 #                       verified tag and commit, every required inventory field
 #                       is present, every required prerequisite succeeded, the
 #                       source manifest declares exactly the source archive it
-#                       binds (digest included), and ``SHA256SUMS.txt`` covers
+#                       binds (digest included), the source archive's identity
+#                       member pins the effective version (the explicit
+#                       ``--version`` when supplied, otherwise the tag-derived
+#                       default), and ``SHA256SUMS.txt`` covers
 #                       exactly the published file set.
 # * ``identity-write``  write a deterministic ``release-identity.json`` so a
 #                       source archive carries its version identity. The version
@@ -130,9 +133,9 @@ def cmd_identity_write(args: argparse.Namespace) -> int:
 def _expected_identity_version(args: argparse.Namespace) -> str:
     """Return the effective version an identity must carry for this call."""
     # identity-write may record an explicit --version instead of the
-    # tag-derived default, so the verifier accepts the same override. Without an
-    # explicit version the tag-derived value is required, and a tag that cannot
-    # yield one (v) is a usage error rather than a silent empty match.
+    # tag-derived default, so the verifiers accept the same override. Without
+    # an explicit version the tag-derived value is required, and a tag that
+    # cannot yield one (v) is a usage error rather than a silent empty match.
     if args.version is not None:
         if not args.version:
             raise GateError("--version must not be empty")
@@ -149,16 +152,13 @@ def cmd_identity_verify(args: argparse.Namespace) -> int:
     """Verify a release-identity.json against an expected tag, commit and version."""
     check_identity_shape(args.tag, args.commit)
     identity = load_json(Path(args.identity))
-    # Share the schema/tag/commit field contract with the source-archive member
-    # check so both paths reject exactly the same malformed identity.
-    failures = identity_field_failures(identity, str(args.identity), args.tag, args.commit)
+    # Share the schema/tag/commit/version field contract with the
+    # source-archive member check so both paths reject exactly the same
+    # malformed identity, including a wrong or missing version.
     expected_version = _expected_identity_version(args)
-    actual_version = identity.get("version")
-    if actual_version != expected_version:
-        failures.append(
-            f"{args.identity}: version {actual_version!r} does not match expected "
-            f"{expected_version!r}"
-        )
+    failures = identity_field_failures(
+        identity, str(args.identity), args.tag, args.commit, expected_version
+    )
     if failures:
         raise GateError("; ".join(failures))
     return 0
@@ -303,7 +303,7 @@ def _verify_profiles(
 
 
 def _verify_source(
-    source: dict, dist: Path, tag: str, commit: str
+    source: dict, dist: Path, tag: str, commit: str, version: str
 ) -> tuple[list[str], set[str]]:
     """Verify the source profile and its archive identity."""
     archive_name = substitute_tag(source["archive"], tag)
@@ -328,6 +328,10 @@ def _verify_source(
     else:
         failures.append(f"source: provenance manifest {provenance_name} is missing from dist")
 
+    # The archive's identity member must satisfy the full field contract the
+    # CLI identity-verify path enforces, including the effective version:
+    # otherwise a member with a wrong or missing version would pass the
+    # archive-specific identity gate while the standalone verify rejected it.
     failures.extend(
         verify_source_archive(
             dist / archive_name,
@@ -335,6 +339,7 @@ def _verify_source(
             source.get("carrier", "src/source_identity.txt"),
             tag,
             commit,
+            version,
         )
     )
     return failures, expected
@@ -447,7 +452,12 @@ def cmd_verify(args: argparse.Namespace) -> int:
     failures.extend(profile_failures)
     source = requirements.get("source")
     if source:
-        source_failures, source_expected = _verify_source(source, dist, args.tag, args.commit)
+        # The effective version contract is scoped to the source leg: an
+        # explicit --version override wins, otherwise the tag-derived default
+        # is required, exactly as the standalone identity-verify decides it.
+        source_failures, source_expected = _verify_source(
+            source, dist, args.tag, args.commit, _expected_identity_version(args)
+        )
         failures.extend(source_failures)
         expected |= source_expected
     checksums_name = requirements.get("checksums")
@@ -514,6 +524,11 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--dist", required=True)
     verify.add_argument("--tag", required=True)
     verify.add_argument("--commit", required=True)
+    verify.add_argument(
+        "--version",
+        default=None,
+        help="explicit version identity-write recorded; defaults to the tag-derived value",
+    )
     verify.add_argument("--prerequisites", default=None)
     verify.set_defaults(func=cmd_verify)
 
