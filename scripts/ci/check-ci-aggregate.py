@@ -11,17 +11,31 @@ not `success`. Without mechanical pinning, two silent failure modes exist:
   fails or never runs;
 * the enforcement step is weakened (results not consumed, non-success
   ignored, hard-coded exit) — the aggregate then succeeds despite a failed
-  dependency.
+  dependency;
+* the enforcement step is suppressed by a workflow control rather than by
+  its script: a step-level `if:` evaluating false makes GitHub skip the
+  sole enforcement step, and `continue-on-error: true` makes GitHub ignore
+  its failure — in both cases the aggregate job reports success even though
+  enforcement never rejected anything, while a simulation of the script
+  body alone would still pass (the #134 rework review reproduced both
+  false-success mutations against the exact workflow);
+* the aggregate job itself is skipped or its failure tolerated: without its
+  own `if: ${{ always() && !cancelled() }}` GitHub skips the job when a
+  dependency fails, and a job-level `continue-on-error` turns a failed
+  aggregate into a green run.
 
-This checker pins both invariants. It parses the workflow — treating
+This checker pins every invariant. It parses the workflow — treating
 comment and blank lines as transparent so an unindented comment cannot
 conceal a job from the enrollment comparison — requires the aggregate's
 `needs:` list to equal every other job exactly (missing and extra entries
-both fail), extracts the enforcement script, and executes it against
-synthetic result vectors: an all-success run must exit 0, and each
-non-success kind (failure / skipped / cancelled) must exit non-zero
-wherever it appears, so a failed required gate cannot yield aggregate
-success.
+both fail), pins the aggregate job's condition to the known-safe shape and
+rejects job-level error tolerance, extracts the enforcement step and
+rejects any `if:` / `continue-on-error:` key in that step's mapping
+(outside the run block, where such text is shell), and executes the
+enforcement script against synthetic result vectors: an all-success run
+must exit 0, and each non-success kind (failure / skipped / cancelled)
+must exit non-zero wherever it appears, so a failed required gate cannot
+yield aggregate success.
 
 Run directly:
 
@@ -49,6 +63,17 @@ NEEDS_KEY = re.compile(r"^    needs:\s*$")
 NEEDS_ITEM = re.compile(r"^      - ([A-Za-z0-9_-]+)\s*$")
 NON_SUCCESS_KINDS = ("failure", "skipped", "cancelled")
 SIMULATION_TIMEOUT_SECONDS = 30
+# The only aggregate-job condition that keeps the sole enforcement step
+# running when a dependency fails (so the script can reject the run) while
+# still letting a cancelled run stay cancelled. Pinned exactly: any other
+# condition can skip the aggregate and turn a failed gate into success.
+AGGREGATE_JOB_IF = "${{ always() && !cancelled() }}"
+JOB_IF_KEY = re.compile(r"^    if:(.*)$")
+JOB_CONTINUE_ON_ERROR_KEY = re.compile(r"^    continue-on-error:")
+# Step-mapping skip/error-tolerance controls. No value of either key is
+# safe on the enforcement step: a false `if` skips it, `continue-on-error`
+# discards its failure.
+STEP_CONTROL_KEY = re.compile(r"^\s+(if|continue-on-error):")
 DEFAULT_WORKFLOW = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     os.pardir, os.pardir, ".github", "workflows", "ci.yml"))
@@ -153,10 +178,18 @@ def extract_needs(job_body: str) -> list:
 
 
 def extract_enforcement(job_body: str) -> str:
-    """Extract the aggregate enforcement step's shell script."""
+    """Extract the aggregate enforcement step's shell script.
+
+    Also fails closed when the step mapping carries a skip or
+    error-tolerance control (`if:`, `continue-on-error:`) anywhere outside
+    the run block: GitHub would skip the sole enforcement step or ignore
+    its failure while the script-body simulation still passes, so the step
+    mapping is pinned to the unconditional, error-intolerant shape.
+    """
     lines = job_body.splitlines()
     for index, line in enumerate(lines):
         if "- name:" in line and ENFORCEMENT_STEP_NAME in line:
+            step_indent = len(line) - len(line.lstrip(" "))
             run_index = None
             for offset in range(index + 1, min(index + 6, len(lines))):
                 if re.match(r"^\s+run: \|\s*$", lines[offset]):
@@ -185,9 +218,94 @@ def extract_enforcement(job_body: str) -> str:
                 raise CheckError(
                     "the %s step's run block is empty"
                     % ENFORCEMENT_STEP_NAME)
+            reject_enforcement_step_controls(
+                lines, index, run_index, base_indent, step_indent)
             return script
     raise CheckError(
         "no `%s` step found in %s" % (ENFORCEMENT_STEP_NAME, AGGREGATE_JOB))
+
+
+def run_block_end(lines: list, run_index: int, base_indent: int) -> int:
+    """Index of the first non-blank line at or below the run block indent."""
+    for offset in range(run_index + 1, len(lines)):
+        candidate = lines[offset]
+        if candidate.strip() and (
+                len(candidate) - len(candidate.lstrip(" ")) <= base_indent):
+            return offset
+    return len(lines)
+
+
+def reject_enforcement_step_controls(lines: list, name_index: int,
+                                     run_index: int, base_indent: int,
+                                     step_indent: int) -> None:
+    """Fail closed on skip/error-tolerance controls on the enforcement step.
+
+    GitHub skips a step whose `if:` evaluates false and ignores a step's
+    failure under `continue-on-error: true`. Either control on the sole
+    enforcement step lets the aggregate job report success even though
+    nothing rejected the dependency results, while the script simulation
+    still passes — the #134 rework review reproduced both false-success
+    mutations against the exact workflow. No value of either key is safe
+    here, so any occurrence in the step mapping outside the run block
+    (where the same text would be shell) fails closed. Comment and blank
+    lines are transparent; a dedent to the step-list indent ends the step.
+    """
+    block_end = run_block_end(lines, run_index, base_indent)
+    for offset in range(name_index + 1, len(lines)):
+        candidate = lines[offset]
+        stripped = candidate.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(candidate) - len(candidate.lstrip(" "))
+        if indent <= step_indent:
+            break  # left the enforcement step's mapping
+        if run_index < offset < block_end:
+            continue  # run-block shell text, not a step mapping key
+        if STEP_CONTROL_KEY.match(candidate):
+            raise CheckError(
+                "the %s step carries a skip/error-tolerance control (%r): "
+                "GitHub would skip the sole enforcement step or ignore its "
+                "failure while the simulated script still passes"
+                % (ENFORCEMENT_STEP_NAME, stripped))
+
+
+def check_aggregate_job_controls(job_body: str) -> None:
+    """Pin the aggregate job's own skip/error-tolerance controls.
+
+    The aggregate must run when a dependency fails — otherwise GitHub
+    skips the job (default `needs` semantics) and the skipped required
+    gate reports success. Its job-level `if:` is therefore pinned to the
+    known-safe `${{ always() && !cancelled() }}` expression, and any
+    job-level `continue-on-error` (which would discard a failed
+    enforcement result) is rejected.
+    """
+    job_if = None
+    for line in job_body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if JOB_CONTINUE_ON_ERROR_KEY.match(line):
+            raise CheckError(
+                "%s carries a job-level `continue-on-error` control: "
+                "GitHub would ignore a failed enforcement result"
+                % AGGREGATE_JOB)
+        match = JOB_IF_KEY.match(line)
+        if match is not None:
+            if job_if is not None:
+                raise CheckError(
+                    "%s has more than one job-level `if:`" % AGGREGATE_JOB)
+            job_if = " ".join(match.group(1).split())
+    if job_if is None:
+        raise CheckError(
+            "%s has no job-level `if:` — without `%s` GitHub skips the "
+            "aggregate when a dependency fails and the skipped required "
+            "gate reports success" % (AGGREGATE_JOB, AGGREGATE_JOB_IF))
+    if job_if != AGGREGATE_JOB_IF:
+        raise CheckError(
+            "%s.if is `%s`; the pinned safe shape is `%s` — any other "
+            "condition can skip the aggregate and turn a failed gate "
+            "into aggregate success" % (AGGREGATE_JOB, job_if,
+                                        AGGREGATE_JOB_IF))
 
 
 def simulate(script: str, results: list) -> int:
@@ -212,11 +330,12 @@ def simulate(script: str, results: list) -> int:
 
 
 def check_workflow(path: str) -> str:
-    """Validate enrollment completeness and fail-closed enforcement."""
+    """Validate enrollment, job/step controls, and fail-closed enforcement."""
     jobs = split_jobs(read_text(path))
     if AGGREGATE_JOB not in jobs:
         raise CheckError("no `%s` aggregate job in the workflow"
                          % AGGREGATE_JOB)
+    check_aggregate_job_controls(jobs[AGGREGATE_JOB])
     others = set(jobs) - {AGGREGATE_JOB}
     needs = extract_needs(jobs[AGGREGATE_JOB])
     need_set = set(needs)
@@ -254,7 +373,8 @@ def check_workflow(path: str) -> str:
                     "the aggregate succeeds while a required gate is %s "
                     "(needs position %d)" % (kind, position))
             simulations += 1
-    return ("OK: %s enrolls all %d other jobs; enforcement verified "
+    return ("OK: %s enrolls all %d other jobs; job condition pinned, "
+            "enforcement step unconditional; enforcement verified "
             "fail-closed (%d simulations)."
             % (AGGREGATE_JOB, len(needs), simulations))
 
