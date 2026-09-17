@@ -299,6 +299,9 @@ read_normalized(
     "${SOURCE_ROOT}/scripts/extern/increment_build.cmake" _cmake
     "build-number CMake wiring")
 read_normalized(
+    "${SOURCE_ROOT}/scripts/extern/stamp_build_number.cmake" _stamp
+    "build-time stamp script")
+read_normalized(
     "${SOURCE_ROOT}/scripts/increment_build.sh" _sh "POSIX build-number script")
 read_normalized(
     "${SOURCE_ROOT}/scripts/increment_build.cmd" _cmd "Windows build-number script")
@@ -333,7 +336,17 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             _cmd "${_cmd}")
     elseif(CONTRACT_MUTATION STREQUAL "cmake_resolver_call")
         string(REPLACE
-            "kisak_resolve_source_identity(\"\${CMAKE_SOURCE_DIR}\" KISAK_RESOLVED_SOURCE_COMMIT)"
+            "kisak_resolve_source_identity(\"\${KISAK_STAMP_SOURCE_DIR}\" KISAK_RESOLVED_SOURCE_COMMIT)"
+            ""
+            _stamp "${_stamp}")
+    elseif(CONTRACT_MUTATION STREQUAL "stamp_delegation")
+        string(REPLACE
+            "-P \"\${SCRIPTS_DIR}/extern/stamp_build_number.cmake\""
+            ""
+            _cmake "${_cmake}")
+    elseif(CONTRACT_MUTATION STREQUAL "stamp_override_forward")
+        string(REPLACE
+            "\"-DKISAK_SOURCE_COMMIT=\${KISAK_SOURCE_COMMIT}\""
             ""
             _cmake "${_cmake}")
     elseif(CONTRACT_MUTATION STREQUAL "cpp_consumer")
@@ -393,16 +406,29 @@ require_contains(
     _carrier "commit=$Format:%H$"
     "the carrier holds the git archive commit placeholder")
 
-# Configure resolves the identity and passes it through to the stamp script.
+# Stamping must resolve the identity when the update_build_number target RUNS,
+# not when CMake configures: a reused build directory after a commit or
+# checkout that changes no CMake input never re-runs CMake, so a
+# configure-time resolution stamps freshly built binaries with a stale
+# revision. Pin the delegation wiring and the build-time resolution separately.
 require_contains(
-    _cmake "include(\"\${SCRIPTS_DIR}/extern/resolve_source_identity.cmake\")"
-    "increment_build.cmake includes the resolver")
+    _cmake "\"-DKISAK_STAMP_SOURCE_DIR=\${CMAKE_SOURCE_DIR}\""
+    "increment_build.cmake points the build-time stamp at the source tree")
 require_contains(
-    _cmake "kisak_resolve_source_identity(\"\${CMAKE_SOURCE_DIR}\" KISAK_RESOLVED_SOURCE_COMMIT)"
-    "increment_build.cmake resolves CMAKE_SOURCE_DIR")
+    _cmake "\"-DKISAK_SOURCE_COMMIT=\${KISAK_SOURCE_COMMIT}\""
+    "increment_build.cmake forwards a configure-time override to the build-time stamp")
 require_contains(
-    _cmake "\"\${KISAK_RESOLVED_SOURCE_COMMIT}\""
-    "increment_build.cmake passes the resolved commit to the stamp script")
+    _cmake "-P \"\${SCRIPTS_DIR}/extern/stamp_build_number.cmake\""
+    "increment_build.cmake delegates stamping to the build-time script")
+require_contains(
+    _stamp "include(\"\${KISAK_STAMP_SCRIPTS_DIR}/extern/resolve_source_identity.cmake\")"
+    "the build-time stamp script includes the resolver")
+require_contains(
+    _stamp "kisak_resolve_source_identity(\"\${KISAK_STAMP_SOURCE_DIR}\" KISAK_RESOLVED_SOURCE_COMMIT)"
+    "the build-time stamp script resolves the identity when the build runs")
+require_contains(
+    _stamp "\"\${KISAK_RESOLVED_SOURCE_COMMIT}\""
+    "the build-time stamp script passes the resolved commit to the stamp script")
 
 # Both stamp scripts must forward the commit into the generated header.
 require_contains(
@@ -602,6 +628,132 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
                 "An extracted archive inherited the enclosing repository's "
                 "HEAD: expected '${_archive_commit}', found '${_nested_identity}'")
         endif()
+
+        # Regression: the stamp target must resolve the identity when it RUNS.
+        # Configure once at commit A, advance the tree to commit B without
+        # touching any CMake input, rebuild the stamp target, and require B —
+        # not A, into the freshly written header. CMake never re-runs on a pure
+        # commit/checkout, so a configure-time resolution would keep stamping
+        # the stale revision A into newly built binaries.
+        set(_stamp_repo "${_test_root}/stamp-repo")
+        set(_stamp_build "${_stamp_repo}/build")
+        set(_stamp_src_dir "${_stamp_build}/stamped-src")
+        file(MAKE_DIRECTORY "${_stamp_repo}")
+        file(WRITE "${_stamp_repo}/CMakeLists.txt"
+            "cmake_minimum_required(VERSION 3.16)\n"
+            "project(kisak_stamp_freshness NONE)\n"
+            "set(SCRIPTS_DIR \"${SOURCE_ROOT}/scripts\")\n"
+            "set(SRC_DIR \"\${CMAKE_CURRENT_BINARY_DIR}/stamped-src\")\n"
+            "file(MAKE_DIRECTORY \"\${SRC_DIR}\")\n"
+            "include(\"\${SCRIPTS_DIR}/extern/increment_build.cmake\")\n")
+        file(WRITE "${_stamp_repo}/tracked.txt" "revision A\n")
+        execute_process(
+            COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" init -q "${_stamp_repo}"
+            RESULT_VARIABLE _stamp_init_result
+            ERROR_QUIET)
+        execute_process(
+            COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" -C "${_stamp_repo}" add -A
+            RESULT_VARIABLE _stamp_add_result
+            ERROR_QUIET)
+        execute_process(
+            COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" -C "${_stamp_repo}"
+                -c user.email=identity@example.invalid
+                -c user.name=identity commit -qm "stamp A"
+            RESULT_VARIABLE _stamp_commit_a_result
+            ERROR_QUIET)
+        execute_process(
+            COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" -C "${_stamp_repo}"
+                rev-parse HEAD
+            OUTPUT_VARIABLE _stamp_head_a
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _stamp_head_a_result
+            ERROR_QUIET)
+        if(NOT (_stamp_init_result EQUAL 0 AND _stamp_add_result EQUAL 0
+                AND _stamp_commit_a_result EQUAL 0 AND _stamp_head_a_result EQUAL 0))
+            message(FATAL_ERROR "Failed to build the stamp-freshness fixture at A")
+        endif()
+        set(_stamp_configure_args "-S" "${_stamp_repo}" "-B" "${_stamp_build}")
+        if(DEFINED KISAK_TEST_GENERATOR AND NOT KISAK_TEST_GENERATOR STREQUAL "")
+            list(APPEND _stamp_configure_args "-G" "${KISAK_TEST_GENERATOR}")
+            if(DEFINED KISAK_TEST_GENERATOR_PLATFORM
+                    AND NOT KISAK_TEST_GENERATOR_PLATFORM STREQUAL "")
+                list(APPEND _stamp_configure_args "-A" "${KISAK_TEST_GENERATOR_PLATFORM}")
+            endif()
+            if(DEFINED KISAK_TEST_GENERATOR_TOOLSET
+                    AND NOT KISAK_TEST_GENERATOR_TOOLSET STREQUAL "")
+                list(APPEND _stamp_configure_args "-T" "${KISAK_TEST_GENERATOR_TOOLSET}")
+            endif()
+        endif()
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" ${_stamp_configure_args}
+            RESULT_VARIABLE _stamp_configure_result
+            OUTPUT_VARIABLE _stamp_configure_stdout
+            ERROR_VARIABLE _stamp_configure_stderr)
+        if(NOT _stamp_configure_result EQUAL 0)
+            message(FATAL_ERROR
+                "Failed to configure the stamp-freshness fixture: "
+                "${_stamp_configure_stdout} ${_stamp_configure_stderr}")
+        endif()
+        # Build the stamp target at A, then again after advancing to B. The
+        # second build must not reconfigure: that is the entire defect surface.
+        foreach(_stamp_leg IN ITEMS a b)
+            if(_stamp_leg STREQUAL "b")
+                file(WRITE "${_stamp_repo}/tracked.txt" "revision B\n")
+                execute_process(
+                    COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" -C "${_stamp_repo}"
+                        -c user.email=identity@example.invalid
+                        -c user.name=identity commit -qam "stamp B"
+                    RESULT_VARIABLE _stamp_commit_b_result
+                    ERROR_QUIET)
+                execute_process(
+                    COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" -C "${_stamp_repo}"
+                        rev-parse HEAD
+                    OUTPUT_VARIABLE _stamp_head_b
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    RESULT_VARIABLE _stamp_head_b_result
+                    ERROR_QUIET)
+                if(NOT (_stamp_commit_b_result EQUAL 0 AND _stamp_head_b_result EQUAL 0)
+                        OR _stamp_head_b STREQUAL _stamp_head_a)
+                    message(FATAL_ERROR
+                        "Failed to advance the stamp-freshness fixture to B")
+                endif()
+            endif()
+            execute_process(
+                COMMAND "${CMAKE_COMMAND}" --build "${_stamp_build}"
+                    --target update_build_number
+                RESULT_VARIABLE _stamp_build_result
+                OUTPUT_VARIABLE _stamp_build_stdout
+                ERROR_VARIABLE _stamp_build_stderr)
+            if(NOT _stamp_build_result EQUAL 0)
+                message(FATAL_ERROR
+                    "The stamp-freshness fixture failed to build at ${_stamp_leg}: "
+                    "${_stamp_build_stdout} ${_stamp_build_stderr}")
+            endif()
+            string(TOUPPER "${_stamp_leg}" _stamp_leg_upper)
+            set(_stamp_header_var _stamp_header_${_stamp_leg})
+            file(READ "${_stamp_src_dir}/buildnumber.h" ${_stamp_header_var})
+        endforeach()
+        string(FIND "${_stamp_header_a}" "${_stamp_head_a}" _stamp_a_position)
+        if(_stamp_a_position EQUAL -1)
+            message(FATAL_ERROR
+                "The stamp-freshness fixture did not stamp its configure-time "
+                "revision: '${_stamp_head_a}' is absent from the first header")
+        endif()
+        string(FIND "${_stamp_header_b}" "${_stamp_head_b}" _stamp_b_position)
+        if(_stamp_b_position EQUAL -1)
+            message(FATAL_ERROR
+                "Rebuilding the stamp target after a commit that changed no "
+                "CMake input kept the stale revision: expected "
+                "'${_stamp_head_b}' in the rebuilt header, found "
+                "'${_stamp_head_a}' (configure-time identity resolution "
+                "regressed")
+        endif()
+        string(FIND "${_stamp_header_b}" "${_stamp_head_a}" _stamp_stale_position)
+        if(NOT _stamp_stale_position EQUAL -1)
+            message(FATAL_ERROR
+                "The rebuilt stamp header still carries the stale revision "
+                "'${_stamp_head_a}'")
+        endif()
     else()
         message(STATUS "git not found; skipping the checkout identity case")
     endif()
@@ -635,6 +787,8 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         sh_header_macro
         cmd_header_macro
         cmake_resolver_call
+        stamp_delegation
+        stamp_override_forward
         cpp_consumer
         cpp_getter
         cpp_retention

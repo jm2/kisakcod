@@ -1,32 +1,30 @@
-if (WIN32)
-  set(SCRIPT_EXT .cmd)
-else()
-  set(SCRIPT_EXT .sh)
-endif()
+# The build number and source identity are stamped when the update_build_number
+# target RUNS, not when CMake configures. Resolving them only at configure time
+# stamps a reused build directory with a stale revision after any commit or
+# checkout that changes no CMake input: CMake never re-runs, so the previously
+# configured revision reached freshly built binaries. add_custom_target is
+# always out-of-date, so the build-time stamp script below re-resolves the
+# commit count and the source identity on every build.
+#
+# Resolution semantics are unchanged and live in
+# scripts/extern/resolve_source_identity.cmake: an explicit KISAK_SOURCE_COMMIT
+# override wins, then the working checkout's HEAD, then the substituted
+# src/source_identity.txt carrier of a git-free source archive.
 
-# Get the current git commit count and save it to GIT_COMMIT_COUNT
-execute_process(
-  COMMAND git rev-list --count HEAD
-  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  OUTPUT_VARIABLE GIT_COMMIT_COUNT
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  ERROR_QUIET
-)
-if (NOT GIT_COMMIT_COUNT MATCHES "^[0-9]+$")
-  set(GIT_COMMIT_COUNT 0)
-endif()
-
-# Resolve the immutable source commit. In a checkout this is HEAD; in a `git
-# archive` source tree without `.git` it is the substituted
-# src/source_identity.txt, so archive builds keep a recoverable revision
-# identity instead of silently losing it. Passed through to the generated
-# src/buildnumber.h as KISAK_SOURCE_COMMIT.
-include("${SCRIPTS_DIR}/extern/resolve_source_identity.cmake")
-kisak_resolve_source_identity("${CMAKE_SOURCE_DIR}" KISAK_RESOLVED_SOURCE_COMMIT)
-
-# Add a custom target to increment the build number
+# An explicit KISAK_SOURCE_COMMIT override (cache variable or environment) is
+# part of the resolution contract, so a configure-time cache override is
+# forwarded into the stamp process: cmake -P runs in its own process and would
+# never see this build's cache. Forwarding an undefined value is harmless: it
+# arrives empty and the resolver skips an empty override in favor of the
+# checkout or archive carrier.
 add_custom_target(
   update_build_number
-  COMMAND "${SCRIPTS_DIR}/increment_build${SCRIPT_EXT}" "${SRC_DIR}" "${GIT_COMMIT_COUNT}" "${KISAK_RESOLVED_SOURCE_COMMIT}"
+  COMMAND "${CMAKE_COMMAND}"
+    "-DKISAK_STAMP_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+    "-DKISAK_STAMP_SRC_DIR=${SRC_DIR}"
+    "-DKISAK_STAMP_SCRIPTS_DIR=${SCRIPTS_DIR}"
+    "-DKISAK_SOURCE_COMMIT=${KISAK_SOURCE_COMMIT}"
+    -P "${SCRIPTS_DIR}/extern/stamp_build_number.cmake"
   COMMENT "Running build number script..."
+  VERBATIM
 )
