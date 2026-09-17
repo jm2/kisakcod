@@ -18,10 +18,13 @@ cmake_minimum_required(VERSION 3.16)
 # is dropped or an inapplicable mode/role requirement is introduced, if the
 # §4 catalog rows and the index disagree about which cases exist (membership
 # is read from the first cell of actual catalog table rows, so a prose
-# cross-reference cannot supply a deleted row's id), or if an
+# cross-reference cannot supply a deleted row's id), if a §6.2 displayed
+# Modes cell narrows, widens, duplicates or otherwise diverges from the
+# case's canonical case-mode declaration (the per-case view must display
+# exactly the applicability the index declares), or if an
 # unavailable-evidence upstream disposition, commercial §6.2 child cell,
-# full-key child record or §6.3 aggregate cell is promoted away from
-# 'Blocked / none'.
+# full-key child record, §6.3 aggregate cell or §4.5 visible upstream
+# disposition label is promoted away from 'Blocked / none' / '**Blocked**'.
 #
 # When run as the primary test it additionally exercises its own negative
 # paths by mutating copies of the document and asserting the validator
@@ -666,14 +669,17 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     string(REPLACE "\n" ";" _child_lines "${_child_text}")
     # Row shape: | `case` | modes | kc-server-commercial-client cell |
     # kc-client-commercial-server cell | stages | required-evidence |.
-    # The header and separator rows have no backticked leading cell and never
-    # match; a data row reformatted to dodge this regex simply drops its case
-    # from the ledger set and fails the coverage check below, so the parser
-    # cannot be sidestepped by restructuring a row.
+    # The Modes cell is validated too: the per-case view must display exactly
+    # the applicability the index declares. The header and separator rows have
+    # no backticked leading cell and never match; a data row reformatted to
+    # dodge this regex simply drops its case from the ledger set and fails the
+    # coverage check below, so the parser cannot be sidestepped by
+    # restructuring a row.
     set(_ledger_cases "")
     foreach(_line IN LISTS _child_lines)
         if(_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[ \t]*\\|[ \t]*([^|]+)\\|([^|]*)\\|([^|]*)\\|")
             set(_ledger_case "${CMAKE_MATCH_1}")
+            set(_ledger_modes_cell "${CMAKE_MATCH_2}")
             set(_cell_server "${CMAKE_MATCH_3}")
             set(_cell_client "${CMAKE_MATCH_4}")
             list(FIND _cases "${_ledger_case}" _ledger_known_index)
@@ -682,6 +688,55 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
                     "Retail-content matrix §6.2 child ledger references unknown case '${_ledger_case}' in ${DOC_PATH}")
             endif()
             list(APPEND _ledger_cases "${_ledger_case}")
+            # Displayed Modes cell: hold it against the case's canonical
+            # case-mode declaration. Narrowing the cell hides required modes
+            # from the rendered per-case view, an entry no index line declares
+            # invents applicability, and a duplicate entry would let one cell
+            # claim a mode twice — so the parsed mode set must equal the
+            # declared set exactly, fail closed on an unknown token, and never
+            # pass on an empty or duplicated cell (review finding
+            # r4039453978).
+            string(REPLACE "`" "" _ledger_modes_text "${_ledger_modes_cell}")
+            string(REPLACE "," ";" _ledger_modes_raw "${_ledger_modes_text}")
+            set(_ledger_modes "")
+            foreach(_ledger_mode_token IN LISTS _ledger_modes_raw)
+                string(STRIP "${_ledger_mode_token}" _ledger_mode_token)
+                if(_ledger_mode_token STREQUAL "")
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.2 child ledger case '${_ledger_case}' has an empty Modes entry in ${DOC_PATH}")
+                endif()
+                list(APPEND _ledger_modes "${_ledger_mode_token}")
+            endforeach()
+            list(LENGTH _ledger_modes _ledger_modes_count)
+            set(_ledger_modes_unique ${_ledger_modes})
+            list(REMOVE_DUPLICATES _ledger_modes_unique)
+            list(LENGTH _ledger_modes_unique _ledger_modes_unique_count)
+            if(NOT _ledger_modes_count EQUAL _ledger_modes_unique_count)
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.2 child ledger case '${_ledger_case}' has duplicate Modes entries in ${DOC_PATH}")
+            endif()
+            foreach(_ledger_mode IN LISTS _ledger_modes)
+                list(FIND _modes "${_ledger_mode}" _ledger_mode_known)
+                if(_ledger_mode_known EQUAL -1)
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.2 child ledger case '${_ledger_case}' displays unknown mode '${_ledger_mode}' in ${DOC_PATH}")
+                endif()
+            endforeach()
+            list(FIND _case_mode_cases "${_ledger_case}" _ledger_cm_index)
+            if(_ledger_cm_index EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.2 child ledger case '${_ledger_case}' has no case-mode applicability declaration in ${DOC_PATH}")
+            endif()
+            list(GET _case_mode_values ${_ledger_cm_index} _ledger_cm_declared_string)
+            string(REPLACE " " ";" _ledger_cm_declared ${_ledger_cm_declared_string})
+            set(_ledger_modes_sorted ${_ledger_modes})
+            list(SORT _ledger_modes_sorted)
+            set(_ledger_cm_declared_sorted ${_ledger_cm_declared})
+            list(SORT _ledger_cm_declared_sorted)
+            if(NOT "${_ledger_modes_sorted}" STREQUAL "${_ledger_cm_declared_sorted}")
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.2 child ledger case '${_ledger_case}' displayed Modes [${_ledger_modes_sorted}] must equal its case-mode declaration [${_ledger_cm_declared_sorted}] in ${DOC_PATH}")
+            endif()
             foreach(_ledger_cell IN ITEMS "${_cell_server}" "${_cell_client}")
                 string(STRIP "${_ledger_cell}" _ledger_cell)
                 string(REPLACE "/" ";" _ledger_fields "${_ledger_cell}")
@@ -918,6 +973,19 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
             "Retail-content matrix contains duplicate case ids in ${DOC_PATH}")
     endif()
 
+    # Capture the index's upstream-family case set while the case/family lists
+    # are still aligned (the catalog cross-check below sorts _cases): the
+    # §4.5 visible-disposition check must hold exactly these cases.
+    set(_index_upstream_cases "")
+    set(_family_scan_index 0)
+    foreach(_case_id IN LISTS _cases)
+        list(GET _families ${_family_scan_index} _case_family)
+        if(_case_family MATCHES "^upstream-")
+            list(APPEND _index_upstream_cases "${_case_id}")
+        endif()
+        math(EXPR _family_scan_index "${_family_scan_index} + 1")
+    endforeach()
+
     # Catalog/index membership cross-check: the §4 case catalog and the
     # machine-readable index must name exactly the same cases. Without this, a
     # case can be dropped from one side (e.g. the catalog row removed) while the
@@ -953,6 +1021,94 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     if(NOT "${_catalog_cases}" STREQUAL "${_cases}")
         message(FATAL_ERROR
             "Retail-content matrix catalog cases [${_catalog_cases}] do not match index cases [${_cases}] in ${DOC_PATH}")
+    endif()
+
+    # §4.5 visible upstream reproduction dispositions. The index `disposition`
+    # lines are machine-readable and are already held at 'blocked', but they
+    # are not what a reader sees: the §4.5 catalog rows carry the displayed
+    # disposition labels. Promoting a visible '**Blocked**' cell to '**Pass**'
+    # while the hidden index entry stays blocked claims an unavailable
+    # reproduction in the rendered document, so the actual §4.5 table rows are
+    # parsed and every upstream case's visible disposition label is held at
+    # '**Blocked**' (review finding r4039453986).
+    string(FIND "${DOC_TEXT}" "### 4.5" _upstream_begin)
+    string(FIND "${DOC_TEXT}" "## 5." _upstream_end)
+    if(_upstream_begin EQUAL -1 OR _upstream_end EQUAL -1 OR _upstream_end LESS_EQUAL _upstream_begin)
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the §4.5 upstream reproductions section or §5 section in ${DOC_PATH}")
+    endif()
+    math(EXPR _upstream_length "${_upstream_end} - ${_upstream_begin}")
+    string(SUBSTRING "${DOC_TEXT}" ${_upstream_begin} ${_upstream_length} _upstream_text)
+    string(REPLACE "\r\n" "\n" _upstream_text "${_upstream_text}")
+    # Shield semicolons before line-splitting: the upstream rows carry
+    # semicolons inside their cells ('without crashing; failure captured',
+    # 'fixtures; depends on `UP89-01`'), and CMake splits list values on
+    # every unescaped ';' — an unshielded split would shatter such a row into
+    # fragments whose trailing parts never match the row regex, letting the
+    # disposition half dodge this check entirely (CMake's own '\;' escaping
+    # does not survive the foreach boundary, hence a literal placeholder).
+    string(REPLACE ";" "{@}" _upstream_text "${_upstream_text}")
+    string(REPLACE "\n" ";" _upstream_lines "${_upstream_text}")
+    # Row shape: | `case-id` | upstream | fixture | invariant | disposition |
+    # — the same first-cell convention as the §6.2 ledger parser. The header
+    # and separator rows have no backticked leading cell and never match; a
+    # restructured row drops its case from the parsed set and fails the
+    # coverage check below, so the parser cannot be dodged by reformatting.
+    set(_upstream_row_cases "")
+    foreach(_upstream_line IN LISTS _upstream_lines)
+        string(REPLACE "{@}" ";" _upstream_line "${_upstream_line}")
+        if(_upstream_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[ \t]*\\|(.*)$")
+            set(_upstream_row_case "${CMAKE_MATCH_1}")
+            list(FIND _cases "${_upstream_row_case}" _upstream_row_known)
+            if(_upstream_row_known EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix §4.5 upstream reproductions table references unknown case '${_upstream_row_case}' in ${DOC_PATH}")
+            endif()
+            list(APPEND _upstream_row_cases "${_upstream_row_case}")
+            # A five-column row carries exactly six pipes. Counting pipes
+            # directly avoids the list-splitting trap: the cells themselves
+            # contain plain semicolons, which would otherwise turn into
+            # phantom list separators and shift every cell index.
+            string(REGEX REPLACE "[^|]" "" _upstream_pipes "${_upstream_line}")
+            string(LENGTH "${_upstream_pipes}" _upstream_pipe_count)
+            if(NOT _upstream_pipe_count EQUAL 6)
+                message(FATAL_ERROR
+                    "Retail-content matrix §4.5 upstream reproduction row '${_upstream_row_case}' must keep the five-column catalog shape in ${DOC_PATH}")
+            endif()
+            # The visible disposition is the sixth cell. Shield the cells'
+            # semicolons again so the pipe split yields exactly one element
+            # per column.
+            string(REPLACE ";" "{@}" _upstream_cells_input "${_upstream_line}")
+            string(REPLACE "|" ";" _upstream_cells "${_upstream_cells_input}")
+            list(GET _upstream_cells 5 _upstream_visible_disposition)
+            string(REPLACE "{@}" ";" _upstream_visible_disposition "${_upstream_visible_disposition}")
+            string(STRIP "${_upstream_visible_disposition}" _upstream_visible_disposition)
+            if(NOT _upstream_visible_disposition MATCHES "^\\*\\*Blocked\\*\\*")
+                message(FATAL_ERROR
+                    "Retail-content matrix §4.5 upstream reproduction '${_upstream_row_case}' visible disposition must stay '**Blocked**' while the licensed reference is unavailable, found '${_upstream_visible_disposition}' in ${DOC_PATH}")
+            endif()
+        endif()
+    endforeach()
+    # Coverage and uniqueness: the §4.5 rows must carry exactly the index's
+    # upstream-family cases — a dropped row would take its visible blocked
+    # disposition out of the rendered document, a duplicated row cannot be
+    # allowed to carry a second label, and an extra row names a case the index
+    # never declared upstream.
+    list(LENGTH _upstream_row_cases _upstream_row_count)
+    set(_upstream_row_cases_unique ${_upstream_row_cases})
+    list(REMOVE_DUPLICATES _upstream_row_cases_unique)
+    list(LENGTH _upstream_row_cases_unique _upstream_row_unique_count)
+    if(NOT _upstream_row_count EQUAL _upstream_row_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix §4.5 upstream reproductions table contains duplicate case rows in ${DOC_PATH}")
+    endif()
+    set(_index_upstream_cases_sorted ${_index_upstream_cases})
+    list(SORT _index_upstream_cases_sorted)
+    set(_upstream_row_cases_sorted ${_upstream_row_cases_unique})
+    list(SORT _upstream_row_cases_sorted)
+    if(NOT "${_upstream_row_cases_sorted}" STREQUAL "${_index_upstream_cases_sorted}")
+        message(FATAL_ERROR
+            "Retail-content matrix §4.5 upstream reproduction rows [${_upstream_row_cases_sorted}] must cover exactly the index upstream-family cases [${_index_upstream_cases_sorted}] in ${DOC_PATH}")
     endif()
 
     # The document must keep its non-claim language and the case×direction
@@ -1460,5 +1616,86 @@ if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'drop-child-ledger-policy' did not apply")
 endif()
 expect_rejected("drop-child-ledger-policy" "${_mutated}")
+
+# r4039453978 exact reproduced bypass: narrow the MOD-01 §6.2 Modes cell from
+# 'listen, dedicated' to 'listen'. The parser captured the cell but never
+# compared it with the canonical case-mode declaration, so the per-case view
+# silently displayed weaker applicability than the index declares. The
+# displayed Modes set must equal the declared set exactly.
+string(REPLACE
+    "| `MOD-01` | listen, dedicated |"
+    "| `MOD-01` | listen |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'narrow-ledger-modes' did not apply")
+endif()
+expect_rejected("narrow-ledger-modes" "${_mutated}")
+
+# The symmetric widening: an extra mode the case-mode line does not declare
+# invents applicability and must be rejected by the same set equality.
+string(REPLACE
+    "| `SM-01` | listen |"
+    "| `SM-01` | listen, dedicated |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'widen-ledger-modes' did not apply")
+endif()
+expect_rejected("widen-ledger-modes" "${_mutated}")
+
+# An unknown mode token is not an applicability declaration the index knows,
+# so it fails closed instead of being tolerated as prose.
+string(REPLACE
+    "| `PC-01` | listen, dedicated |"
+    "| `PC-01` | listen, dedicated, lan |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'unknown-ledger-mode' did not apply")
+endif()
+expect_rejected("unknown-ledger-mode" "${_mutated}")
+
+# A duplicated entry would let one cell claim a mode twice.
+string(REPLACE
+    "| `PC-02` | listen, dedicated |"
+    "| `PC-02` | listen, listen |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'duplicate-ledger-mode' did not apply")
+endif()
+expect_rejected("duplicate-ledger-mode" "${_mutated}")
+
+# r4039453986 exact reproduced bypass: promote the §4.5 UP89-01 visible
+# disposition label from '**Blocked**' to '**Pass**' while the hidden §11
+# index disposition stays blocked. The rendered document would then claim an
+# unavailable reproduction, so the visible label is held at '**Blocked**'.
+string(REPLACE
+    "| **Blocked** — named mod content and licensed retail fixtures are not available in this checkout; no reproduction is claimed. |"
+    "| **Pass** — named mod content and licensed retail fixtures are not available in this checkout; no reproduction is claimed. |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-up89-01-visible-disposition' did not apply")
+endif()
+expect_rejected("promote-up89-01-visible-disposition" "${_mutated}")
+
+# The second upstream-89 case row: every upstream row is checked
+# individually, not just one per family.
+string(REPLACE
+    "| **Blocked** — same unavailable fixtures; depends on `UP89-01`. |"
+    "| **Pass** — same unavailable fixtures; depends on `UP89-01`. |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-up89-02-visible-disposition' did not apply")
+endif()
+expect_rejected("promote-up89-02-visible-disposition" "${_mutated}")
+
+# The upstream-40 family: its visible '**Blocked**' label cannot be promoted
+# any more than its index disposition can.
+string(REPLACE
+    "| **Blocked** — needs a pinned commercial reference; ties to A05/#127 and `ki-jgz`/`#116` scalar-determinism evidence, which is supplemental. |"
+    "| **Pass** — needs a pinned commercial reference; ties to A05/#127 and `ki-jgz`/`#116` scalar-determinism evidence, which is supplemental. |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-up40-01-visible-disposition' did not apply")
+endif()
+expect_rejected("promote-up40-01-visible-disposition" "${_mutated}")
 
 file(REMOVE_RECURSE "${_scratch_dir}")

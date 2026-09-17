@@ -197,7 +197,11 @@ Client demo commands are registered in `src/client_mp/cl_main_mp.cpp:2789`
 ### 4.5 Upstream reproductions (#89 and #40)
 
 These reproduce the concrete regressions the issue names; each has an explicit
-disposition and is **not** satisfied by generic asset safety.
+disposition and is **not** satisfied by generic asset safety. The visible
+disposition labels are guarded directly: the guard parses the §4.5 rows and
+holds every upstream row's visible disposition at **Blocked** — exactly like
+its §11 `disposition` entry — so a promoted rendered label cannot claim a
+reproduction the blocked index does not support.
 
 | ID | Upstream | Input / fixture | Expected invariant | Disposition at this basis |
 |---|---|---|---|---|
@@ -299,7 +303,11 @@ the current §1 label (`Blocked / none` means no evidence is recorded); a Pass
 must attach the §4 required evidence named in the last column. The guard
 validates these cells directly: while the licensed reference manifests are
 unavailable, every commercial direction cell in this ledger must stay
-`Blocked / none`, the ledger must cover exactly the §11 case set, every §11
+`Blocked / none`, the ledger must cover exactly the §11 case set, each row's
+displayed `Modes` cell must equal that case's §11 `case-mode` declaration
+exactly (narrowing it, adding an undeclared mode, or duplicating an entry is
+rejected, so the per-case view cannot display weaker or invented
+applicability), every §11
 full-key child record must exist exactly once at `Blocked / none`, and neither
 the status nor the evidence half may be promoted — a fabricated child claim
 cannot bypass the aggregate roll-up by hiding in a single cell, and it cannot

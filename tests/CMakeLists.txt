@@ -4069,9 +4069,11 @@ endif()
 # A11 (ki-ubw0): retail-content and MP mod compatibility regression matrix.
 # docs/RETAIL_CONTENT_MATRIX.md carries a machine-readable axis/case/
 # disposition index; this source test fails closed if a required production
-# target, commercial profile, configuration mode, case family or the upstream
-# #89/#40 disposition is dropped, and negative-tests its own gates so a
-# silently weakened contract cannot pass. Portable: CMake-only, no shell.
+# target, commercial profile, configuration mode, case family, the §6.2
+# displayed Modes applicability or the upstream #89/#40 index or §4.5 visible
+# disposition is dropped, narrowed or promoted, and negative-tests its own
+# gates so a silently weakened contract cannot pass. Portable: CMake-only, no
+# shell.
 add_test(
     NAME retail-content-matrix-source-invariants
     COMMAND ${CMAKE_COMMAND}
