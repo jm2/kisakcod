@@ -1740,29 +1740,68 @@ function(runtime_facade_build_control_is_sealed PATH VARIABLE OUTPUT)
     set(${OUTPUT} TRUE PARENT_SCOPE)
 endfunction()
 
-file(GLOB_RECURSE _runtime_facade_build_controls
-    LIST_DIRECTORIES FALSE
-    "${SOURCE_ROOT}/*CMakeLists.txt"
-    "${SOURCE_ROOT}/*.cmake"
-    "${SOURCE_ROOT}/*.yml"
-    "${SOURCE_ROOT}/*.yaml"
-    "${SOURCE_ROOT}/*.bat"
-    "${SOURCE_ROOT}/*.ps1"
-    "${SOURCE_ROOT}/*CMakePresets.json"
-    "${SOURCE_ROOT}/.github/workflows/*.yml"
-    "${SOURCE_ROOT}/.github/workflows/*.yaml")
-list(REMOVE_DUPLICATES _runtime_facade_build_controls)
-set(_runtime_facade_filtered_build_controls)
-foreach(_path IN LISTS _runtime_facade_build_controls)
-    file(RELATIVE_PATH _relative "${SOURCE_ROOT}" "${_path}")
-    if(NOT _relative MATCHES "(^|/)\\.(codex-worktrees|git)/")
-        list(APPEND _runtime_facade_filtered_build_controls "${_path}")
+# Returns TRUE when RELATIVE (below the scanned root) names a non-production
+# agent worktree container. Only the root-level worktrees/<bead>/ container is
+# excluded: an ordinary nested scripts/worktrees/ control remains a production
+# build control and must stay visible to the scan.
+function(runtime_facade_build_control_path_is_excluded RELATIVE OUTPUT)
+    if("${RELATIVE}" MATCHES "(^|/)\\.(codex-worktrees|git)/"
+       OR "${RELATIVE}" MATCHES "^worktrees/")
+        set(${OUTPUT} TRUE PARENT_SCOPE)
+    else()
+        set(${OUTPUT} FALSE PARENT_SCOPE)
     endif()
-endforeach()
-set(_runtime_facade_build_controls
-    ${_runtime_facade_filtered_build_controls})
+endfunction()
+
+# Scan every supported facade build-control format below SCAN_ROOT. SKIP_PATHS
+# names absolute paths reviewed as non-production (this seal itself names the
+# token in its detector and fixtures). Returns the traversed controls plus the
+# relative paths whose content is not sealed. The paired fixtures below drive
+# this exact scan over synthetic trees.
+function(scan_runtime_facade_build_controls
+    SCAN_ROOT SKIP_PATHS OUT_CONTROLS OUT_VIOLATIONS)
+    file(GLOB_RECURSE _controls
+        LIST_DIRECTORIES FALSE
+        "${SCAN_ROOT}/*CMakeLists.txt"
+        "${SCAN_ROOT}/*.cmake"
+        "${SCAN_ROOT}/*.yml"
+        "${SCAN_ROOT}/*.yaml"
+        "${SCAN_ROOT}/*.bat"
+        "${SCAN_ROOT}/*.ps1"
+        "${SCAN_ROOT}/*CMakePresets.json"
+        "${SCAN_ROOT}/.github/workflows/*.yml"
+        "${SCAN_ROOT}/.github/workflows/*.yaml")
+    list(REMOVE_DUPLICATES _controls)
+    set(_violations)
+    foreach(_path IN LISTS _controls)
+        file(RELATIVE_PATH _relative "${SCAN_ROOT}" "${_path}")
+        runtime_facade_build_control_path_is_excluded("${_relative}" _excluded)
+        if(_excluded)
+            continue()
+        endif()
+        get_filename_component(_absolute_path "${_path}" ABSOLUTE)
+        list(FIND SKIP_PATHS "${_absolute_path}" _skip_index)
+        if(NOT _skip_index EQUAL -1)
+            continue()
+        endif()
+        file(READ "${_absolute_path}" _build_control)
+        runtime_facade_build_control_is_sealed(
+            "${_absolute_path}" _build_control _build_control_is_sealed)
+        if(NOT _build_control_is_sealed)
+            list(APPEND _violations "${_relative}")
+        endif()
+    endforeach()
+    set(${OUT_CONTROLS} "${_controls}" PARENT_SCOPE)
+    set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
+endfunction()
+
 get_filename_component(
     _runtime_facade_source_seal_path "${CMAKE_CURRENT_LIST_FILE}" ABSOLUTE)
+scan_runtime_facade_build_controls(
+    "${SOURCE_ROOT}"
+    "${_runtime_facade_source_seal_path}"
+    _runtime_facade_build_controls
+    _runtime_facade_build_control_violations)
 foreach(_sentinel IN ITEMS
     "${SOURCE_ROOT}/CMakeLists.txt"
     "${_tests_cmake_path}"
@@ -1777,22 +1816,55 @@ foreach(_sentinel IN ITEMS
             "Runtime facade macro seal lost build-control traversal: ${_sentinel}")
     endif()
 endforeach()
-
-foreach(_path IN LISTS _runtime_facade_build_controls)
-    if(_path STREQUAL _runtime_facade_source_seal_path)
-        # This seal necessarily names the token in its detector and fixtures.
-        continue()
-    endif()
-    file(READ "${_path}" _build_control)
-    runtime_facade_build_control_is_sealed(
-        "${_path}" _build_control _build_control_is_sealed)
-    if(NOT _build_control_is_sealed)
-        file(RELATIVE_PATH _relative "${SOURCE_ROOT}" "${_path}")
-        message(FATAL_ERROR
-            "Runtime facade test-access macro leaked into build control: "
-            "${_relative}")
-    endif()
+foreach(_relative IN LISTS _runtime_facade_build_control_violations)
+    message(FATAL_ERROR
+        "Runtime facade test-access macro leaked into build control: "
+        "${_relative}")
 endforeach()
+
+# Paired persistent fixtures for the worktree anchoring, driven through the
+# exact scan above over synthetic trees. A TestAccess-bearing control under
+# root worktrees/<bead>/ must be ignored; the equivalent control under
+# scripts/worktrees/ must be rejected. The nested case is a silent false
+# negative under the prior unanchored (^|/)worktrees/ filter, so a regression
+# fails these assertions.
+set(_runtime_facade_worktree_fixture_root
+    "${CMAKE_CURRENT_BINARY_DIR}/runtime-facade-worktree-scan")
+
+file(REMOVE_RECURSE "${_runtime_facade_worktree_fixture_root}/ignored")
+file(MAKE_DIRECTORY
+    "${_runtime_facade_worktree_fixture_root}/ignored/worktrees/ki-fixture/tests")
+file(WRITE
+    "${_runtime_facade_worktree_fixture_root}/ignored/worktrees/ki-fixture/tests/CMakeLists.txt"
+    "target_compile_definitions(agent-copy PRIVATE KISAK_DB_ZONE_RUNTIME_FACADE_TESTING=1)\n")
+scan_runtime_facade_build_controls(
+    "${_runtime_facade_worktree_fixture_root}/ignored" ""
+    _runtime_facade_ignored_fixture_controls
+    _runtime_facade_ignored_fixture_violations)
+if(NOT _runtime_facade_ignored_fixture_violations STREQUAL "")
+    message(FATAL_ERROR
+        "Runtime facade scan rejected a root worktrees/<bead>/ agent control: "
+        "${_runtime_facade_ignored_fixture_violations}")
+endif()
+
+file(REMOVE_RECURSE "${_runtime_facade_worktree_fixture_root}/nested")
+file(MAKE_DIRECTORY
+    "${_runtime_facade_worktree_fixture_root}/nested/scripts/worktrees")
+file(WRITE
+    "${_runtime_facade_worktree_fixture_root}/nested/scripts/worktrees/generated.cmake"
+    "add_compile_definitions(KISAK_DB_ZONE_RUNTIME_FACADE_TESTING=1)\n")
+scan_runtime_facade_build_controls(
+    "${_runtime_facade_worktree_fixture_root}/nested" ""
+    _runtime_facade_nested_fixture_controls
+    _runtime_facade_nested_fixture_violations)
+if(NOT _runtime_facade_nested_fixture_violations STREQUAL
+   "scripts/worktrees/generated.cmake")
+    message(FATAL_ERROR
+        "Runtime facade scan failed to reject the nested scripts/worktrees "
+        "control: '${_runtime_facade_nested_fixture_violations}'")
+endif()
+
+file(REMOVE_RECURSE "${_runtime_facade_worktree_fixture_root}")
 
 set(_macro_good_fixture "${_expected_runtime_facade_test_definition}")
 runtime_facade_build_control_is_sealed(
