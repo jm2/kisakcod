@@ -292,11 +292,14 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
 - **P1.2** The writable root MUST use the platform convention:
   Windows `%APPDATA%`/`%LOCALAPPDATA%` (roaming for config, local for
   cache/logs; if either variable is unset or empty, the affected role roots
-  MUST resolve to the profile locations those variables normally name —
-  `%USERPROFILE%\AppData\Roaming` for config, `%USERPROFILE%\AppData\Local`
-  for cache/logs — preserving the per-role split, and if `%USERPROFILE%` is
-  also unavailable, resolution MUST fail closed with an actionable diagnostic
-  and MUST NOT fall back to writing under the install or retail data tree),
+  MUST resolve through the Windows Known Folder API — `SHGetKnownFolderPath`
+  with `FOLDERID_RoamingAppData` for config and `FOLDERID_LocalAppData` for
+  cache/logs — rather than by re-deriving the default `%USERPROFILE%\AppData`
+  layout, so a policy-redirected AppData location keeps working and the
+  per-role split is preserved even in sessions where `%USERPROFILE%` itself
+  is unavailable; if the applicable Known Folder lookup also fails, resolution
+  MUST fail closed with an actionable diagnostic and MUST NOT fall back to
+  writing under the install or retail data tree),
   Linux `$XDG_CONFIG_HOME`/`$XDG_CACHE_HOME`/`$XDG_STATE_HOME`
   (falling back to `~/.config`, `~/.cache`, `~/.local/state`), macOS
   config/state under `~/Library/Application Support`, cache under
@@ -476,15 +479,19 @@ implicit one.
 | Linux arm64 headless server | Ubuntu 22.04 class (arm64) | GCC ≥ 12 or Clang ≥ 15 | none | none (console/stdio) | shipped target (see §3.1) |
 | macOS arm64 client | macOS 13 (Ventura) or later | AppleClang 15 / Xcode 15, CMake ≥ 3.16 | Metal via MoltenVK; Vulkan 1.1 feature set | 1024×768 minimum | signed/notarized app; x86_64 slice not required |
 | macOS arm64 headless server | macOS 13 or later | AppleClang 15 / Xcode 15 | none | none | |
-| Windows ARM64 | TBD, follows Windows 10 floor | MSVC v143 ARM64 | Vulkan 1.1 where available | keyboard+mouse | Phase 3 |
+| Windows ARM64 client | **Blocked — no validated OS floor** (see note below) | MSVC v143 ARM64 (candidate only) | **Blocked — committed Vulkan 1.1 endpoint unvalidated on ARM64** | keyboard+mouse (candidate only) | Phase 3; DP-REQ-01 counts this row as blocked |
 
 Open validation items for this table: exact Vulkan feature/extension floor,
 whether 1024×768 is the real minimum for the retail UI, and the Linux display
 server support statement. Rows are **proposed** until the corresponding test
 evidence exists. Every shipped target in §3.1 has a row here — including Linux
 arm64 client/server and Windows ARM64 — so DP-REQ-01's "All targets" gate has a
-floor to validate for each and cannot be marked complete while a delivery target
-is undefined.
+row to validate for each and cannot be marked complete while a delivery target
+is undefined. The Windows ARM64 row is **explicitly blocked**, not merely
+proposed: it has no validated OS or graphics floor and its committed Vulkan 1.1
+endpoint has no ARM64 driver validation evidence, so DP-REQ-01 MUST treat it
+as blocked and cannot pass until a concrete OS/toolchain/graphics floor is
+published in this table and validated on its minimum configuration.
 
 ## 6. Clean-install acceptance matrix
 
@@ -494,9 +501,9 @@ satisfy the row). No row is `pass`.
 
 | ID | Requirement | Procedure / harness | Platforms | Required evidence | Status |
 |---|---|---|---|---|---|
-| DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert each artifact lands in its **exact role-specific root** and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%`, cache and logs under `%LOCALAPPDATA%`; with `%APPDATA%` or `%LOCALAPPDATA%` unset, config MUST land under `%USERPROFILE%\AppData\Roaming` and cache/logs under `%USERPROFILE%\AppData\Local` with the per-role split preserved; with `%USERPROFILE%` also unavailable, launch MUST fail with an actionable diagnostic and no engine write under install/data. Linux: config under `$XDG_CONFIG_HOME` (fallback `~/.config`), cache under `$XDG_CACHE_HOME` (fallback `~/.cache`), state/logs under `$XDG_STATE_HOME` (fallback `~/.local/state`). macOS: config/state under `~/Library/Application Support`, cache under `~/Library/Caches`, logs under `~/Library/Logs`. Repeat with each environment variable overridden and with it unset to assert the documented fallbacks. A build that puts every artifact under one singular root (for example all of `%APPDATA%` or all of `$XDG_CONFIG_HOME`) MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log | planned |
+| DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert each artifact lands in its **exact role-specific root** and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%`, cache and logs under `%LOCALAPPDATA%`; with `%APPDATA%` or `%LOCALAPPDATA%` unset or empty, the affected role roots MUST land where `SHGetKnownFolderPath` resolves `FOLDERID_RoamingAppData` (config) and `FOLDERID_LocalAppData` (cache/logs) with the per-role split preserved — the assertion is equality with the Known Folder API result, not with the default `%USERPROFILE%\AppData` layout, so a redirected session still passes and a default-layout re-derivation fails; when the applicable Known Folder lookup fails, launch MUST fail with an actionable diagnostic and no engine write under install/data. Linux: config under `$XDG_CONFIG_HOME` (fallback `~/.config`), cache under `$XDG_CACHE_HOME` (fallback `~/.cache`), state/logs under `$XDG_STATE_HOME` (fallback `~/.local/state`). macOS: config/state under `~/Library/Application Support`, cache under `~/Library/Caches`, logs under `~/Library/Logs`. Repeat with each environment variable overridden and with it unset to assert the documented fallbacks. A build that puts every artifact under one singular root (for example all of `%APPDATA%` or all of `$XDG_CONFIG_HOME`) MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log | planned |
 | DP-FS-02 | P2.1/P2.1a case-sensitive lookup | On a case-sensitive host, place a mixed-case asset and require exact-case resolution first; assert a folded fallback only under the P2.1a conditions (read-only retail/mod content, single unambiguous match) and assert fail-closed rejection on a case-only collision. A fallback not validated against a commercial reference stays unproven. | Linux | Linux test with retail-shaped fixture + commercial-reference result | partial |
-| DP-FS-03 | P2.2/P2.2a backend rejection **and** positive acceptance at the general path-accepting operations | Through a **production path-accepting operation** — `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`) and `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`) — assert **per platform** both negatives and positives. Win negatives: `..`, control/Win32-invalid bytes, reserved DOS device base names, trailing dot/space, over-long components; fail closed with no effect. Linux/macOS negatives: invalid UTF-8, `..`, component-count overflow. Positives (all platforms): a well-formed absolute path under a configured/temp root succeeds, because these are general filesystem APIs rather than engine-relative gates; on Linux/macOS a DOS device base name such as `CON` is a valid filename and MUST NOT be rejected without contrary compatibility evidence; the compare/sort helpers remain non-validating. `TestFilteredCollectionAndPathHelpers` covers normalization/ordering only and cannot satisfy this row. | Win, Linux, macOS | CTest output at exact head | partial |
+| DP-FS-03 | P2.2/P2.2a backend rejection **and** positive acceptance at the general path-accepting operations | Through a **production path-accepting operation** — `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`) and `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`) — assert **per platform** both negatives and positives. Win negatives: `..`, control/Win32-invalid bytes, reserved DOS device base names, trailing dot/space, over-long individual components, and a distinct component-count overflow case (more than `kMaximumPathComponents` = 256 short components, each individually legal, exercising the count guard in win32 `HasUnsafeRawComponent` — src/_platform/win32/sys_filesystem.cpp ~223 — so the row cannot pass if only the over-long-component check survives); fail closed with no effect. Linux/macOS negatives: invalid UTF-8, `..`, component-count overflow. Positives (all platforms): a well-formed absolute path under a configured/temp root succeeds, because these are general filesystem APIs rather than engine-relative gates; on Linux/macOS a DOS device base name such as `CON` is a valid filename and MUST NOT be rejected without contrary compatibility evidence; the compare/sort helpers remain non-validating. `TestFilteredCollectionAndPathHelpers` covers normalization/ordering only and cannot satisfy this row. | Win, Linux, macOS | CTest output at exact head | partial |
 | DP-FS-04 | P2.3 path-length bound | Build an over-length engine path and assert fail-closed with diagnostic, no truncation | Win, Linux, macOS | CTest output | partial |
 | DP-FS-05 | P2.4 no-follow enumeration | Existing remove-tree/list link/reparse cases plus an asset-discovery walk | Win, Linux, macOS | CTest output | partial |
 | DP-FS-06 | P2.2b rooted engine-relative input validation (separately planned) | Feed untrusted engine-relative `qpath` values (absolute segments, `..` traversal, `\`/`:` alias spellings, invalid bytes) through the rooted caller that joins them to the trusted engine root and assert fail-closed rejection before any path-accepting or open operation, while legitimate absolute API inputs from P2.2a still succeed. Include link/reparse coverage: a lexically clean `qpath` that traverses an in-root symlink/reparse component to a target outside the root MUST fail closed at the rooted no-follow open, and any returned handle MUST refer to a target under the root. DP-FS-05's enumeration-only exclusion does not satisfy this row. Rooted validator not implemented at the recorded SHA; no production behavior change in this definition stage and no retail wire/command change. | Win, Linux, macOS | CTest output at exact head | planned |
@@ -512,7 +519,7 @@ satisfy the row). No row is `pass`.
 | DP-DEV-01 | P6.1 absent display/input device | Start with no display or input device, or with a forced display/input init failure; assert bounded diagnostic and fallback/clean exit. Absent/failed audio devices are A10 ([#132](https://github.com/jm2/kisakcod/issues/132)), not this row. | Win, Linux, macOS | Harness output + exit code | planned |
 | DP-DEV-02 | P6.2 cleanup/restart | Fail init midway, clean up, restart; assert idempotent cleanup and no leaked global state | Win, Linux, macOS | Harness output | planned |
 | DP-DEV-03 | P6.3 clean-machine startup | Fresh image, no config, read-only data dir, malformed config; assert actionable diagnostics | Win, Linux, macOS | Image run log | planned |
-| DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) for **every** row, explicitly including Linux arm64 client/server and Windows ARM64 | All targets | Requirements doc + measured evidence | planned |
+| DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) for **every** row, explicitly including Linux arm64 client/server. The Windows ARM64 row is **blocked** — no validated OS/graphics floor and an unvalidated committed Vulkan endpoint — and this row MUST NOT pass while it stays blocked | All targets | Requirements doc + measured evidence | planned |
 
 ## 7. Retail usercmd invariants that must not change
 
@@ -595,7 +602,24 @@ authorized to change in the platform migration:
   config, `%USERPROFILE%\AppData\Local` for cache/logs, preserving the
   per-role split) and requires fail-closed diagnostics with no install-tree
   fallback when `%USERPROFILE%` is also unavailable; documentation-only, no
-  runtime behavior change.
+  runtime behavior change. Superseded by the Known Folder contract below.
+- Recorded reason for the Windows Known Folder fallback (P1.2, DP-FS-01), the
+  explicit Windows ARM64 block (§5, DP-REQ-01) and the Win32 component-count
+  negative (DP-FS-03): final-head review of PR #148
+  ([discussion_r4038665231](https://github.com/jm2/kisakcod/pull/148#discussion_r4038665231),
+  [discussion_r4038665244](https://github.com/jm2/kisakcod/pull/148#discussion_r4038665244),
+  [discussion_r4038665250](https://github.com/jm2/kisakcod/pull/148#discussion_r4038665250))
+  found that re-deriving `%USERPROFILE%\AppData` writes to the default layout
+  instead of a policy-redirected known folder and rejects sessions the Known
+  Folder API could still resolve; that the Windows ARM64 `TBD` row gave
+  DP-REQ-01 no measurable floor to validate; and that DP-FS-03's Win32
+  negatives omitted the component-count guard. P1.2/DP-FS-01 now resolve an
+  unset or empty variable through `SHGetKnownFolderPath`
+  (`FOLDERID_RoamingAppData`/`FOLDERID_LocalAppData`) and fail closed only
+  when that lookup fails; the Windows ARM64 row is explicitly blocked until a
+  concrete floor is published and validated; DP-FS-03 adds a distinct
+  >256-components Win32 negative. Documentation-only, no runtime behavior
+  change.
 - The SDL migration must land behind the seam described here; do not reclassify
   an unimplemented window/input/filesystem behavior as "done" because a
   primitive compiles or a portable helper test passes.
