@@ -186,9 +186,20 @@ engine-event driven (see §3.4 and P4.4).
   and then call `FS_CreatePath` (~211) or `Sys_RemoveDirTree` (~172). With a
   distinct writable `fs_homepath` and a read-only install/retail root, normal
   profile creation or deletion therefore still targets the base (install) tree
-  and can fail or attempt to modify it. This is a remaining gap that the
-  `fs_homepath` override does not cover; P1.5 and DP-FS-07 require it to be
-  documented and covered with separated writable/read-only roots.
+  and can fail or attempt to modify it. The save/reload cycle has the mirror
+  gap: profile/config/stat writes go through
+  `FS_FOpenFileWriteToDirForThread` (`src/universal/com_files.cpp` ~3170),
+  which builds its path from `fs_homepath`, but `FS_Startup` (~2226–2240)
+  enrolls the `players` directory only under `fs_basepath` (~2232) and never
+  enrolls `players` under a distinct `fs_homepath` — so a profile saved under
+  the writable root is not reachable through the search paths on the next
+  start, and `Com_SetInitialPlayerProfile`
+  (`src/qcommon/com_playerprofile.cpp` ~145, reading `profiles/active.txt` via
+  `FS_ReadFile` at ~151) cannot reload it. These are remaining gaps that the
+  `fs_homepath` override does not cover; P1.5 and DP-FS-07 require them to be
+  documented and covered with separated writable/read-only roots across the
+  full save, restart and reload cycle, so missing home `players` search
+  enrollment cannot pass.
 - **Consequence for clean install:** the *default* is collocated, not separated.
   `fs_basepath` defaults to `Sys_Cwd()` (~1477) and `fs_homepath`
   defaults to `fs_basepath` (~1488–1489); no `Sys_DefaultHomePath`-style
@@ -311,15 +322,23 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
 - **P1.4** Existing `fs_homepath`/`fs_basepath` behavior MUST be preserved as
   an override so retail-compatible configurations and existing mods continue
   to resolve paths; the new defaults MUST NOT break explicit dvar/paths.
-- **P1.5** Player-profile creation (`Com_NewPlayerProfile`) and deletion
-  (`Com_DeletePlayerProfile`) MUST operate on the writable per-user root, not on
-  `fs_basepath`. At the recorded SHA both build `players/<profile>` from
-  `fs_basepath` (`com_playerprofile.cpp` ~210/~171) and then create or remove it
-  there, so with a distinct writable `fs_homepath` and a read-only install root
-  normal profile create/delete still targets the install tree. This remaining
-  base-path writer MUST NOT be treated as satisfied by the `fs_homepath`
-  override; DP-FS-07 covers create/delete with separated writable and read-only
-  roots.
+- **P1.5** Player-profile creation (`Com_NewPlayerProfile`), deletion
+  (`Com_DeletePlayerProfile`), and selection persistence — saving the selected
+  profile (`profiles/active.txt` plus the profile's `config_mp.cfg`/stats),
+  restarting, and re-selecting the same profile — MUST operate on and be
+  served from the writable per-user root, not from `fs_basepath`. At the
+  recorded SHA creation and deletion build `players/<profile>` from
+  `fs_basepath` (`com_playerprofile.cpp` ~210/~171) and then create or remove
+  it there; the active-profile write instead lands under `fs_homepath`
+  (`Com_ChangePlayerProfile` ~648 → `FS_FOpenFileWriteToDirForThread`,
+  `com_files.cpp` ~3170); and `Com_SetInitialPlayerProfile` re-reads
+  `profiles/active.txt` through the search paths (~145) even though
+  `FS_Startup` enrolls the `players` directory only under `fs_basepath`
+  (`com_files.cpp` ~2232; the `fs_homepath` block ~2238–2244 adds
+  devraw/raw only). These remaining base-path writers and the missing home
+  `players` search enrollment MUST NOT be treated as satisfied by the
+  `fs_homepath` override; DP-FS-07 covers create/delete and the full
+  save/restart/reload cycle with separated writable and read-only roots.
 
 ### P2 — Case-sensitive filenames and safe path normalization
 
@@ -472,7 +491,8 @@ implicit one.
 
 | Target | Minimum OS | Toolchain | Graphics | Display/input | Notes |
 |---|---|---|---|---|---|
-| Windows x86/amd64 client | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022), CMake ≥ 3.16, Windows SDK 10.0.22621 | Vulkan 1.1 driver, or D3D9 migration reference | 1024×768 minimum; keyboard+mouse required | 32-bit x86 is the compatibility reference |
+| Windows x86 client | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022) x86, CMake ≥ 3.16, Windows SDK 10.0.22621 | Vulkan 1.1 driver, or D3D9 migration reference | 1024×768 minimum; keyboard+mouse required | 32-bit x86 is the compatibility reference; floor evidence MUST be measured on an x86 minimum configuration |
+| Windows amd64 client | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022) x64, CMake ≥ 3.16, Windows SDK 10.0.22621 | Vulkan 1.1 driver, or D3D9 migration reference | 1024×768 minimum; keyboard+mouse required | M6 amd64 client delivery (PORTING.md); floor evidence MUST be measured independently on an amd64 minimum configuration — x86 client evidence does not certify this row |
 | Windows x86 dedicated server | Windows 10 22H2 (build 19045) or later | MSVC v143 (VS 2022), CMake ≥ 3.16, Windows SDK 10.0.22621 | none | none (console/stdio; headless-capable) | existing Win32 dedicated server role, `KISAK_DEDI_HEADLESS` profile; compatibility reference server |
 | Windows amd64 headless server | Windows 10 22H2 (build 19045) / Windows Server 2022 class or later | MSVC v143 (VS 2022) x64, CMake ≥ 3.16, Windows SDK 10.0.22621 | none | none (console/stdio) | M6 server role; delivery tracked separately from the M6 client (PORTING.md) |
 | Linux amd64 client | Ubuntu 22.04 / glibc 2.35 LTS class | GCC ≥ 12 or Clang ≥ 15, CMake ≥ 3.16 | Vulkan 1.1 loader + driver, SDL3 windowing | X11 or Wayland; 1024×768 minimum | release target |
@@ -487,12 +507,15 @@ implicit one.
 Open validation items for this table: exact Vulkan feature/extension floor,
 whether 1024×768 is the real minimum for the retail UI, and the Linux display
 server support statement. Rows are **proposed** until the corresponding test
-evidence exists. Every shipped target in §3.1 has a row here — including Linux
+evidence exists. Every shipped target in §3.1 has a row here — including the
+separate Windows x86 and Windows amd64 client rows, Linux
 arm64 client/server, the existing Windows x86 dedicated server, and the
 Windows amd64/ARM64 headless server roles required by PORTING.md M6/M11 — so
 DP-REQ-01's "All targets" gate has a row to validate for each and cannot be
 marked complete while a delivery target is undefined. Server floors are
-validated per role: one role's validation does not stand in for another's.
+validated per role, and the Windows client floors are validated per
+architecture: one role's or architecture's validation does not stand in for
+another's.
 The Windows ARM64 rows (client and headless server) are **explicitly
 blocked**, not merely proposed: neither has a validated ARM64 OS floor, and
 the client's committed Vulkan 1.1 endpoint additionally has no ARM64 driver
@@ -514,7 +537,7 @@ satisfy the row). No row is `pass`.
 | DP-FS-04 | P2.3 path-length bound | Build an over-length engine path and assert fail-closed with diagnostic, no truncation | Win, Linux, macOS | CTest output | partial |
 | DP-FS-05 | P2.4 no-follow enumeration | Existing remove-tree/list link/reparse cases plus an asset-discovery walk | Win, Linux, macOS | CTest output | partial |
 | DP-FS-06 | P2.2b rooted engine-relative input validation (separately planned) | Feed untrusted engine-relative `qpath` values (absolute segments, `..` traversal, `\`/`:` alias spellings, invalid bytes) through the rooted caller that joins them to the trusted engine root and assert fail-closed rejection before any path-accepting or open operation, while legitimate absolute API inputs from P2.2a still succeed. Include link/reparse coverage: a lexically clean `qpath` that traverses an in-root symlink/reparse component to a target outside the root MUST fail closed at the rooted no-follow open, and any returned handle MUST refer to a target under the root. DP-FS-05's enumeration-only exclusion does not satisfy this row. Rooted validator not implemented at the recorded SHA; no production behavior change in this definition stage and no retail wire/command change. | Win, Linux, macOS | CTest output at exact head | planned |
-| DP-FS-07 | P1.5 player-profile create/delete under separated roots | With a distinct writable per-user root and a read-only install/retail root, create and delete a player profile; assert the `players/<profile>` directory is created and removed under the writable root, and that neither operation touches or fails on the read-only install tree. At the recorded SHA both paths use `fs_basepath` (`com_playerprofile.cpp` ~210/~171), so this row cannot pass until that writer is moved. | Win, Linux, macOS | CTest output + path trace | planned |
+| DP-FS-07 | P1.5 player-profile create/delete **and save/restart/reload persistence** under separated roots | With a distinct writable per-user root and a read-only install/retail root: (a) create and delete a player profile; assert the `players/<profile>` directory is created and removed under the writable root and that neither operation touches or fails on the read-only install tree; (b) select the profile and save — assert `profiles/active.txt` (`Com_ChangePlayerProfile` ~648 → `FS_WriteFileToDir` → `FS_FOpenFileWriteToDirForThread`, `com_files.cpp` ~3170) and the profile's `config_mp.cfg`/stats artifacts are written under the writable root with nothing written into the read-only retail tree; (c) restart the engine (fresh `FS_Startup`) and assert `Com_SetInitialPlayerProfile` (`com_playerprofile.cpp` ~145) re-selects the same profile by reading `profiles/active.txt` through the search paths and that the saved config/stats reload from the writable root. At the recorded SHA create/delete target `fs_basepath` (`com_playerprofile.cpp` ~210/~171), the active-profile write targets `fs_homepath` (`com_files.cpp` ~3170), and `FS_Startup` enrolls `players` as a search path only under `fs_basepath` (~2232; the `fs_homepath` block adds devraw/raw only) — a build that leaves the writable root's `players` directory un-enrolled MUST fail the restart/reload leg and cannot pass this row. | Win, Linux, macOS | CTest output + path trace | planned |
 | DP-IN-01 | P3.1 non-US keys/text | Scripted layout matrix (de/fr/ja) through the window/input seam: dead keys, AltGr, text field, IME | Win, Linux, macOS | Input harness trace | planned |
 | DP-IN-02 | P3.2 clipboard | Get/set round-trip for ASCII, non-ASCII, overlong and empty text in text fields | Win, Linux, macOS | Harness output | planned |
 | DP-IN-03 | P3.3 relative mouse | Feed a fixed physical-motion trace and compare per-frame deltas against the Win32 baseline under fixed dvars | Win, Linux, macOS | Delta trace diff | planned |
@@ -526,7 +549,7 @@ satisfy the row). No row is `pass`.
 | DP-DEV-01 | P6.1 absent display/input device | Start with no display or input device, or with a forced display/input init failure; assert bounded diagnostic and fallback/clean exit. Absent/failed audio devices are A10 ([#132](https://github.com/jm2/kisakcod/issues/132)), not this row. | Win, Linux, macOS | Harness output + exit code | planned |
 | DP-DEV-02 | P6.2 cleanup/restart | Fail init midway, clean up, restart; assert idempotent cleanup and no leaked global state | Win, Linux, macOS | Harness output | planned |
 | DP-DEV-03 | P6.3 clean-machine startup | Fresh image, no config, read-only data dir, malformed config; assert actionable diagnostics | Win, Linux, macOS | Image run log | planned |
-| DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) for **every** row, independently per role — explicitly including Linux arm64 client/server and every Windows server row (x86 dedicated, amd64 headless, ARM64 headless); a client result never certifies the server role of the same OS (PORTING.md M6/M11 track the roles separately). The Windows ARM64 client and Windows ARM64 headless server rows are **blocked** — no validated ARM64 OS floor, and the client's committed Vulkan endpoint is additionally unvalidated on ARM64 — and this row MUST NOT pass while either stays blocked | All targets | Requirements doc + measured evidence | planned |
+| DP-REQ-01 | P7.1 minimum requirements | Publish §5 and validate each floor on the minimum configuration (or record a measured reason) for **every** row, independently per role and per architecture — explicitly including Linux arm64 client/server, the separate Windows x86 and Windows amd64 client rows (each with its own architecture-specific minimum-configuration evidence; PORTING.md M6 tracks amd64 client delivery independently), and every Windows server row (x86 dedicated, amd64 headless, ARM64 headless); a client result never certifies the server role of the same OS (PORTING.md M6/M11 track the roles separately). The Windows ARM64 client and Windows ARM64 headless server rows are **blocked** — no validated ARM64 OS floor, and the client's committed Vulkan endpoint is additionally unvalidated on ARM64 — and this row MUST NOT pass while either stays blocked | All targets | Requirements doc + measured evidence | planned |
 
 ## 7. Retail usercmd invariants that must not change
 
@@ -637,6 +660,31 @@ authorized to change in the platform migration:
   Windows ARM64 headless server rows — explicitly blocked where no floor
   evidence exists — and DP-REQ-01 validates each role independently.
   Documentation-only, no runtime behavior change.
+- Recorded reason for extending DP-FS-07 and P1.5 to the full profile
+  persistence cycle: final-head review of PR #148
+  ([discussion_r4039366892](https://github.com/jm2/kisakcod/pull/148#discussion_r4039366892))
+  found that DP-FS-07 covered only create/delete, while the source splits
+  profile persistence across roots: `Com_ChangePlayerProfile` writes
+  `profiles/active.txt` under `fs_homepath`
+  (`FS_FOpenFileWriteToDirForThread`, `com_files.cpp` ~3170),
+  `Com_SetInitialPlayerProfile` re-reads it through the search paths
+  (`com_playerprofile.cpp` ~145), and `FS_Startup` enrolls `players` only
+  under `fs_basepath` (`com_files.cpp` ~2232), so with separated roots the
+  saved selection and profile config are invisible after restart until the
+  writable root's `players` directory is enrolled in the search paths.
+  DP-FS-07 now requires save, restart and reload of the selected
+  profile/config/stats from the writable root with separated read-only
+  retail roots, and a missing home `players` search enrollment fails the
+  row. Documentation-only, no runtime behavior change.
+- Recorded reason for splitting the Windows client row in §5: final-head
+  review of PR #148
+  ([discussion_r4039366906](https://github.com/jm2/kisakcod/pull/148#discussion_r4039366906))
+  found that the combined `Windows x86/amd64 client` row let one
+  architecture's minimum-configuration evidence stand in for both, while
+  PORTING.md M6 requires amd64 client delivery in its own right. §5 now
+  carries separate Windows x86 client and Windows amd64 client rows, and
+  DP-REQ-01 requires architecture-specific minimum-configuration evidence
+  for each. Documentation-only, no runtime behavior change.
 - The SDL migration must land behind the seam described here; do not reclassify
   an unimplemented window/input/filesystem behavior as "done" because a
   primitive compiles or a portable helper test passes.
