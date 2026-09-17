@@ -30,13 +30,20 @@ their intended families, the required commercial session directions, the
 case×direction child records the outcome schema keys on, the full-key §11
 `child` records (one per applicable `(target, mode, profile, case, direction)`
 commercial child — 672 at this basis — with exact coverage, uniqueness and
-`Blocked / none` enforcement), the §6.3 aggregate direction scope and
-per-profile status/evidence cells, the aggregate completeness policy, the §4
+`Blocked / none` enforcement), the §5↔§11 lifecycle-stage vocabulary and
+per-case stage assignments (§5 rows, the §11 `stage`/`stages` lines and the
+§6.2 stage cells must agree exactly), the §4 catalog `Targets` cells against
+the target applicability derived from the full-key child records, the
+commercial-to-commercial baseline records and their completeness policy (§2.5,
+§6.4), the §6.3 aggregate direction scope and
+per-profile status/evidence cells, the aggregate completeness policies, the §4
 catalog/index membership, the uniqueness of disposition ids and the upstream
 dispositions cannot be silently dropped or promoted. The upstream dispositions must stay **blocked** while the licensed
 references are unavailable, each disposition id is a unique key, and every
 commercial §6.3 cell must stay **Blocked / none** (status and evidence-ref
-both checked) while the reference manifests are unavailable. The outcome
+both checked) while the reference manifests are unavailable. Every
+commercial-to-commercial baseline record must stay **Blocked / none** for the
+same reason. The outcome
 matrix (§6) records results separately and stays **Blocked** for every
 commercial cell until a reference manifest id and case evidence exist; the
 guard test does not certify a cell — it only refuses to let the contract shrink,
@@ -120,6 +127,32 @@ them, so an inapplicable direction is never required; a target that carried only
 the client role would not be required to produce a server-direction child, but no
 requested target is client-only.
 
+### 2.5 Commercial-to-commercial baseline direction
+
+`docs/NETWORK_COMPATIBILITY.md` ("Interop testing procedure", required
+sequence) requires the **authentic commercial-to-commercial baseline** to be
+established before any KisakCOD↔commercial comparison: each commercial
+profile's own unmodified client joined to its own unmodified server, per case
+and per declared mode. That baseline direction is recorded here explicitly so
+it cannot remain implicit:
+
+- `original-commercial-1.7 client ↔ original-commercial-1.7 server` and
+  `steam-commercial-1.8 client ↔ steam-commercial-1.8 server`, per
+  `(profile, mode, case)`, recorded as the §11 `baseline` records and the §6.4
+  ledger. These records are **commercial-profile only**: no `kisakcod-self`
+  baseline exists, because a fork cannot baseline itself against the commercial
+  references it must match.
+- A commercial aggregate §6.3 cell may be promoted to Pass only when every
+  required child record for that cell **and** the matching-profile baseline
+  records for its cases are Pass (§11
+  `completeness commercial-baseline aggregate-pass-requires-matching-baseline`).
+  The cross-direction children (`KC ↔ commercial`) and the supplemental
+  `KC ↔ KC` fork pairs stay separate from this baseline and never substitute
+  for it.
+- The baseline records are distinct from native cross-target coverage: they
+  capture original-retail behavior per commercial profile, not a fork-only
+  golden baseline, and not a native64 rebake.
+
 ## 3. Reference manifest requirements (both profiles)
 
 `NETWORK_COMPATIBILITY.md` defines the required reference manifest. Both
@@ -144,25 +177,32 @@ sanitized fixture and evidence metadata may be recorded.
 
 Each case is a named, reproducible input with an expected invariant and a
 required-evidence column. Case ids are stable and are the keys the outcome
-matrix (§6) records. "Targets" lists the axis ids from §2; a case must be
-recorded for every applicable target and **both** commercial profiles before it
+matrix (§6) records. The `Targets` cell lists the exact §2 axis ids the case
+applies to; it must equal the target applicability derived from the §11
+full-key `child` records (a case contributes a child for every role-capable
+target in each declared mode), so narrowing the displayed target list — e.g.
+a mod case recorded for `win-x86` only — cannot make a catalog row claim less
+than the outcome schema requires, and widening it cannot claim more. The
+guard parses this cell for every non-upstream row and rejects missing,
+extra, duplicated or unknown target ids. A case must be
+recorded for every listed target and **both** commercial profiles before it
 can pass.
 
 ### 4.1 Stock maps (local content load, join, map change, unload)
 
 | ID | Input / fixture | Expected invariant | Required evidence | Targets |
 |---|---|---|---|---|
-| `SM-01` | Stock MP map, local listen-server load | Map zone loads, client joins, spawns, gameplay starts | Reference id + sanitized load/join log | all production + `win-x86` |
-| `SM-02` | Stock MP map, dedicated server | Headless load and client join over the same assets | Reference id + server/client log | all production + `win-x86` |
-| `SM-03` | `map`/`map_rotate` between two stock maps | Content unload/reload and reconnect match the reference | Reference id + before/after zone + reconnect log | all production + `win-x86` |
+| `SM-01` | Stock MP map, local listen-server load | Map zone loads, client joins, spawns, gameplay starts | Reference id + sanitized load/join log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
+| `SM-02` | Stock MP map, dedicated server | Headless load and client join over the same assets | Reference id + server/client log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
+| `SM-03` | `map`/`map_rotate` between two stock maps | Content unload/reload and reconnect match the reference | Reference id + before/after zone + reconnect log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
 
 ### 4.2 Fast-file and raw-file mod cases
 
 | ID | Input / fixture | Expected invariant | Required evidence | Targets |
 |---|---|---|---|---|
-| `MOD-01` | Full `.ff` fast-file mod zone (non-`iwd` content) | Mod zone loads and gameplay runs on listen and dedicated without crash and without rebaking | Mod content hash + reference id + log | all production + `win-x86` |
-| `MOD-02` | Mod using `fs_game` base directory with mixed `.ff`/`iwd` overlays | File-system base and override ordering match the reference; no fork-only path is required | `fs_game` value + file manifest + reference id | all production + `win-x86` |
-| `MOD-03` | Raw-file override mod (`raw/` and config/script overrides) | Raw overrides are read through the production file path with unchanged semantics | File list + hashes + reference id | all production + `win-x86` |
+| `MOD-01` | Full `.ff` fast-file mod zone (non-`iwd` content) | Mod zone loads and gameplay runs on listen and dedicated without crash and without rebaking | Mod content hash + reference id + log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
+| `MOD-02` | Mod using `fs_game` base directory with mixed `.ff`/`iwd` overlays | File-system base and override ordering match the reference; no fork-only path is required | `fs_game` value + file manifest + reference id | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
+| `MOD-03` | Raw-file override mod (`raw/` and config/script overrides) | Raw overrides are read through the production file path with unchanged semantics | File list + hashes + reference id | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
 
 `fs_game` handling is production code at `src/server_mp/sv_client_mp.cpp:74`
 and `src/server_mp/sv_main_mp.cpp:564`; raw reads go through
@@ -174,10 +214,10 @@ golden baseline (acceptance criterion in #133).
 
 | ID | Input / fixture | Expected invariant | Required evidence | Targets |
 |---|---|---|---|---|
-| `PC-01` | `sv_pure 0`, unmodified stock client | Join succeeds; no pure rejection | Reference id + server/client log | all production + `win-x86` |
-| `PC-02` | `sv_pure 1`, unmodified stock content | Content is accepted; no valid retail file is rejected | Reference id + pure manifest + log | all production + `win-x86` |
-| `PC-03` | `sv_pure 1`, modified content | Modified content is rejected for the same reason and at the same stage as the reference | Reference id + rejection log + hashes | all production + `win-x86` |
-| `PC-04` | Server download path (`sv_allowDownload`/`sv_wwwDownload`, client `cl_allowDownload`/`cl_wwwDownload`) | Download/pure behavior matches the reference; no valid retail behavior is broadened or rejected | Reference id + transfer log | all production + `win-x86` |
+| `PC-01` | `sv_pure 0`, unmodified stock client | Join succeeds; no pure rejection | Reference id + server/client log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
+| `PC-02` | `sv_pure 1`, unmodified stock content | Content is accepted; no valid retail file is rejected | Reference id + pure manifest + log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
+| `PC-03` | `sv_pure 1`, modified content | Modified content is rejected for the same reason and at the same stage as the reference | Reference id + rejection log + hashes | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
+| `PC-04` | Server download path (`sv_allowDownload`/`sv_wwwDownload`, client `cl_allowDownload`/`cl_wwwDownload`) | Download/pure behavior matches the reference; no valid retail behavior is broadened or rejected | Reference id + transfer log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
 
 Pure/download dvars are declared at `src/server_mp/server_mp.h:941`, `:952`,
 `:954` and `src/client_mp/client_mp.h:609`, `:610`; server download entry points
@@ -187,12 +227,16 @@ at `src/server_mp/server_mp.h:1244`.
 
 | ID | Input / fixture | Expected invariant | Required evidence | Targets |
 |---|---|---|---|---|
-| `DEMO-01` | Record a stock MP session | Demo is recorded with the reference's format/provenance | Reference id + demo header dump | `win-x86` + production clients |
-| `DEMO-02` | Play back a stock demo on the same profile | Playback fidelity matches the reference | Reference id + playback log | `win-x86` + production clients |
-| `DEMO-03` | Play back a demo recorded by the other commercial profile | Cross-profile behavior is recorded explicitly, not assumed interchangeable | Both reference ids + playback log | `win-x86` + production clients |
+| `DEMO-01` | Record a stock MP session | Demo is recorded with the reference's format/provenance | Reference id + demo header dump | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
+| `DEMO-02` | Play back a stock demo on the same profile | Playback fidelity matches the reference | Reference id + playback log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
+| `DEMO-03` | Play back a demo recorded by the other commercial profile | Cross-profile behavior is recorded explicitly, not assumed interchangeable | Both reference ids + playback log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |
 
 Client demo commands are registered in `src/client_mp/cl_main_mp.cpp:2789`
-(`CL_Record_f`) and `:2972` (`CL_PlayDemo_f`).
+(`CL_Record_f`) and `:2972` (`CL_PlayDemo_f`). Demo record/playback is a
+client-side path, so the cases apply to every target's client role (each
+target carries both roles, §2.1) and the derived child applicability is all
+six targets; `win-x86` remains the provenance reference host for demo
+formats.
 
 ### 4.5 Upstream reproductions (#89 and #40)
 
@@ -219,19 +263,32 @@ recorded as **Supplemental**, not as the commercial baseline.
 ## 5. Lifecycle outcome coverage
 
 The issue requires tracking content load, client join, gameplay, map change,
-unload and reconnect per target and commercial profile. Each case row records
-each applicable outcome; the mapping below fixes which cases cover which stage
-so no stage is left implicit.
+unload and reconnect per target and commercial profile. Each case records each
+applicable outcome; the mapping below fixes which cases cover which stage so no
+stage is left implicit. The first column is the canonical **stage id**; the
+same ids are the §11 `stage`/`stages` index lines and the §6.2 stage cells,
+and the three representations must agree exactly (§11 `stages` lines are the
+canonical per-case sets; this table is the per-stage inversion; the §6.2 cells
+are the rendered per-case view). The guard checks all three against each
+other and against the hardcoded canonical sets, so dropping a case from a
+stage here, narrowing a §6.2 cell, or deleting a §11 `stages` line cannot
+shrink the required stage coverage.
 
-| Lifecycle stage | Cases | Production entry point (basis tree) |
+| Stage id | Cases | Production entry point (basis tree) |
 |---|---|---|
-| Content load | `SM-01`, `SM-02`, `MOD-01`–`MOD-03` | `DB_LoadXAssets`/`DB_LoadXZone` (`src/database/db_registry.cpp:2463`, `:2576`) |
-| Client join / auth | `SM-01`, `SM-02`, `PC-01`–`PC-04` | `SV_DirectConnect` (`src/server_mp/sv_client_mp.cpp:621`), `SV_GetChallenge` (`:130`), `CL_CheckForResend` (`src/client_mp/cl_main_mp.cpp:1042`) |
-| Gameplay | `SM-01`, `SM-02`, `MOD-01`–`MOD-03`, `UP40-01` | Server/client game loop and pmove (`src/bgame/bg_pmove.cpp:608`) |
-| Map change | `SM-03` | `SV_Map_f` (`src/server_mp/sv_ccmds_mp.cpp:371`), `SV_MapRestart` (`:456`), `SV_SpawnServer` (`src/server_mp/sv_init_mp.cpp:390`) |
-| Unload | `SM-03`, `MOD-01`–`MOD-03` | `DB_RemoveXAsset` (`src/database/db_registry.cpp:3343`), `DB_FreeXZoneMemory` (`:3387`) |
-| Reconnect | `SM-03`, `PC-04` | `CL_Disconnect` (`src/client_mp/cl_main_mp.cpp:470`) then `CL_CheckForResend` (`:1042`) |
-| Demo record/playback | `DEMO-01`–`DEMO-03` | `CL_Record_f` (`src/client_mp/cl_main_mp.cpp:2789`), `CL_PlayDemo_f` (`:2972`) |
+| `content-load` | `SM-01`, `SM-02`, `MOD-01`, `MOD-02`, `MOD-03`, `UP89-01`, `UP89-02` | `DB_LoadXAssets`/`DB_LoadXZone` (`src/database/db_registry.cpp:2463`, `:2576`) |
+| `client-join` | `SM-01`, `SM-02`, `PC-01`, `PC-02`, `PC-03`, `PC-04`, `UP89-01`, `UP89-02` | `SV_DirectConnect` (`src/server_mp/sv_client_mp.cpp:621`), `SV_GetChallenge` (`:130`), `CL_CheckForResend` (`src/client_mp/cl_main_mp.cpp:1042`) |
+| `gameplay` | `SM-01`, `SM-02`, `MOD-01`, `MOD-02`, `MOD-03`, `UP40-01` | Server/client game loop and pmove (`src/bgame/bg_pmove.cpp:608`) |
+| `map-change` | `SM-03` | `SV_Map_f` (`src/server_mp/sv_ccmds_mp.cpp:371`), `SV_MapRestart` (`:456`), `SV_SpawnServer` (`src/server_mp/sv_init_mp.cpp:390`) |
+| `unload` | `SM-03`, `MOD-01`, `MOD-02`, `MOD-03` | `DB_RemoveXAsset` (`src/database/db_registry.cpp:3343`), `DB_FreeXZoneMemory` (`:3387`) |
+| `reconnect` | `SM-03`, `PC-04` | `CL_Disconnect` (`src/client_mp/cl_main_mp.cpp:470`) then `CL_CheckForResend` (`:1042`) |
+| `demo-record-playback` | `DEMO-01`, `DEMO-02`, `DEMO-03` | `CL_Record_f` (`src/client_mp/cl_main_mp.cpp:2789`), `CL_PlayDemo_f` (`:2972`) |
+
+`UP89-01`/`UP89-02` carry `content-load` and `client-join` because the #89
+reproduction is specifically a load/join-stage crash (the per-map isolation
+case exists to attribute the stage), and `UP40-01` carries `gameplay` because
+the movement regression is network-visible gameplay behavior. The §6.2 stage
+cells and the §11 `stages` lines must list these same ids.
 
 ## 6. Outcome records (case × direction children)
 
@@ -259,11 +316,26 @@ case and direction, not by an aggregate cell alone.
   records; neither place can promote a child the other keeps blocked.
 - A missing licensed reference yields **Blocked**, never an implicit Pass.
   `kc-kc` children are **Supplemental** and never satisfy a commercial cell.
+- **Commercial-to-commercial baseline record** —
+  `(profile, mode, case) → status / evidence-ref`, keyed by commercial
+  profile only (§2.5): the profile's own unmodified client against its own
+  unmodified server for that case and mode. It is materialized canonically as
+  the §11 `baseline <profile> <mode> <case> <status> <evidence-ref>` lines
+  (one per applicable commercial `(profile, mode, case)`) and rendered as the
+  §6.4 ledger. A baseline record is the prerequisite `docs/NETWORK_COMPATIBILITY.md`
+  requires — the authentic commercial behavior that makes a commercial
+  aggregate cell meaningful — so it stays separate from the cross-direction
+  child records, the supplemental `KC ↔ KC` fork pairs and native cross-target
+  coverage. There is no `kisakcod-self` baseline; a fork cannot baseline
+  itself.
 - **Aggregate cell** — the §6.3 roll-up `(target, mode, profile)`. It is Pass
-  only when every required child record for that cell is Pass. The **weakest
+  only when every required child record for that cell is Pass **and** the
+  matching-profile baseline records (same commercial profile, applicable
+  modes, all cases contributing children to that cell) are Pass. The **weakest
   required child** bounds the cell: any Blocked/Fail/Defined/Pending child
   forces the aggregate to Blocked/Fail/Defined/Pending. An aggregate may never
-  be promoted while a required case or direction child is unrecorded.
+  be promoted while a required case or direction child is unrecorded, nor
+  while a matching-profile baseline record is unrecorded or not Pass.
 
 Required children for a commercial cell are only the **applicable**
 combinations: a §4 case contributes a child only in the modes declared for it
@@ -307,31 +379,34 @@ unavailable, every commercial direction cell in this ledger must stay
 displayed `Modes` cell must equal that case's §11 `case-mode` declaration
 exactly (narrowing it, adding an undeclared mode, or duplicating an entry is
 rejected, so the per-case view cannot display weaker or invented
-applicability), every §11
+applicability), the `Lifecycle stages` cell must equal that case's §11
+`stages` declaration exactly (canonical §5 stage ids; a narrowed cell — e.g.
+`SM-03` reduced to `map-change` — a duplicated, unknown or missing stage id
+is rejected, and the §5 per-stage inversion must agree), every §11
 full-key child record must exist exactly once at `Blocked / none`, and neither
 the status nor the evidence half may be promoted — a fabricated child claim
 cannot bypass the aggregate roll-up by hiding in a single cell, and it cannot
 hide behind the per-case view either, because the §11 records key every target,
 mode and profile independently.
 
-| Case | Modes | kc-server-commercial-client | kc-client-commercial-server | Applicable §5 lifecycle stages | Required evidence (§4) |
+| Case | Modes | kc-server-commercial-client | kc-client-commercial-server | Lifecycle stages (§5 ids) | Required evidence (§4) |
 |---|---|---|---|---|---|
-| `SM-01` | listen | Blocked / none | Blocked / none | content load, client join, gameplay | Reference id + sanitized load/join log |
-| `SM-02` | dedicated | Blocked / none | Blocked / none | content load, client join, gameplay | Reference id + server/client log |
-| `SM-03` | listen, dedicated | Blocked / none | Blocked / none | map change, unload, reconnect | Reference id + before/after zone + reconnect log |
-| `MOD-01` | listen, dedicated | Blocked / none | Blocked / none | content load, gameplay, unload | Mod content hash + reference id + log |
-| `MOD-02` | listen, dedicated | Blocked / none | Blocked / none | content load, gameplay, unload | `fs_game` value + file manifest + reference id |
-| `MOD-03` | listen, dedicated | Blocked / none | Blocked / none | content load, gameplay, unload | File list + hashes + reference id |
-| `PC-01` | listen, dedicated | Blocked / none | Blocked / none | client join | Reference id + server/client log |
-| `PC-02` | listen, dedicated | Blocked / none | Blocked / none | client join | Reference id + pure manifest + log |
-| `PC-03` | listen, dedicated | Blocked / none | Blocked / none | client join | Reference id + rejection log + hashes |
-| `PC-04` | listen, dedicated | Blocked / none | Blocked / none | client join, reconnect | Reference id + transfer log |
-| `DEMO-01` | listen, dedicated | Blocked / none | Blocked / none | demo record/playback | Reference id + demo header dump |
-| `DEMO-02` | listen, dedicated | Blocked / none | Blocked / none | demo record/playback | Reference id + playback log |
-| `DEMO-03` | listen, dedicated | Blocked / none | Blocked / none | demo record/playback | Both reference ids + playback log |
-| `UP89-01` | listen | Blocked / none | Blocked / none | content load, client join | Reference id + crashing-stage log |
-| `UP89-02` | listen | Blocked / none | Blocked / none | content load, client join | Reference id + map/asset isolation |
-| `UP40-01` | listen, dedicated | Blocked / none | Blocked / none | gameplay (movement/physics) | Reference id + movement comparison |
+| `SM-01` | listen | Blocked / none | Blocked / none | `content-load`, `client-join`, `gameplay` | Reference id + sanitized load/join log |
+| `SM-02` | dedicated | Blocked / none | Blocked / none | `content-load`, `client-join`, `gameplay` | Reference id + server/client log |
+| `SM-03` | listen, dedicated | Blocked / none | Blocked / none | `map-change`, `unload`, `reconnect` | Reference id + before/after zone + reconnect log |
+| `MOD-01` | listen, dedicated | Blocked / none | Blocked / none | `content-load`, `gameplay`, `unload` | Mod content hash + reference id + log |
+| `MOD-02` | listen, dedicated | Blocked / none | Blocked / none | `content-load`, `gameplay`, `unload` | `fs_game` value + file manifest + reference id |
+| `MOD-03` | listen, dedicated | Blocked / none | Blocked / none | `content-load`, `gameplay`, `unload` | File list + hashes + reference id |
+| `PC-01` | listen, dedicated | Blocked / none | Blocked / none | `client-join` | Reference id + server/client log |
+| `PC-02` | listen, dedicated | Blocked / none | Blocked / none | `client-join` | Reference id + pure manifest + log |
+| `PC-03` | listen, dedicated | Blocked / none | Blocked / none | `client-join` | Reference id + rejection log + hashes |
+| `PC-04` | listen, dedicated | Blocked / none | Blocked / none | `client-join`, `reconnect` | Reference id + transfer log |
+| `DEMO-01` | listen, dedicated | Blocked / none | Blocked / none | `demo-record-playback` | Reference id + demo header dump |
+| `DEMO-02` | listen, dedicated | Blocked / none | Blocked / none | `demo-record-playback` | Reference id + playback log |
+| `DEMO-03` | listen, dedicated | Blocked / none | Blocked / none | `demo-record-playback` | Both reference ids + playback log |
+| `UP89-01` | listen | Blocked / none | Blocked / none | `content-load`, `client-join` | Reference id + crashing-stage log |
+| `UP89-02` | listen | Blocked / none | Blocked / none | `content-load`, `client-join` | Reference id + map/asset isolation |
+| `UP40-01` | listen, dedicated | Blocked / none | Blocked / none | `gameplay` | Reference id + movement comparison |
 
 ### 6.3 Aggregate roll-up
 
@@ -377,6 +452,47 @@ child is unrecorded or non-Pass (§6.1), and none may pass without the reference
 manifest id and the case evidence from §4. A cell that cannot be executed
 because a required profile/mode is unavailable stays **Blocked**, never
 "skipped"; a mode/role combination that cannot apply is not required at all.
+In addition, a commercial cell's **matching-profile baselines** (§2.5) must be
+Pass first: the commercial-to-commercial baseline records of §6.4 for the same
+profile, over the cases contributing children to that cell, gate the aggregate
+(§11 `completeness commercial-baseline aggregate-pass-requires-matching-baseline`).
+
+### 6.4 Commercial-to-commercial baseline ledger
+
+The per-case view of the canonical §11 `baseline` records
+(`(profile, mode, case) → status / evidence-ref`, §2.5): each commercial
+profile's own unmodified client against its own unmodified server, per declared
+mode. `docs/NETWORK_COMPATIBILITY.md` requires this baseline to be established
+first — no §6.3 commercial aggregate cell may pass while a matching-profile
+baseline record is not Pass, so the cross-direction (`KC ↔ commercial`) and
+supplemental (`KC ↔ KC`) results in §6.2/§6.3 never stand in for the original
+retail behavior of each profile itself. The records are commercial-profile
+only (no `kisakcod-self` baseline exists), stay separate from native
+cross-target coverage, and do not replace compatibility with a fork-only
+golden baseline. The guard pins every record at exactly `Blocked / none`
+(status and evidence-ref both checked) while the licensed reference
+manifests are unavailable, requires the §11 record set to cover exactly the
+declared `(profile, mode, case)` cross-product, and rejects any promotion or
+extra record.
+
+| Case | Modes | original-commercial-1.7 baseline | steam-commercial-1.8 baseline |
+|---|---|---|---|
+| `SM-01` | listen | Blocked / none | Blocked / none |
+| `SM-02` | dedicated | Blocked / none | Blocked / none |
+| `SM-03` | listen, dedicated | Blocked / none | Blocked / none |
+| `MOD-01` | listen, dedicated | Blocked / none | Blocked / none |
+| `MOD-02` | listen, dedicated | Blocked / none | Blocked / none |
+| `MOD-03` | listen, dedicated | Blocked / none | Blocked / none |
+| `PC-01` | listen, dedicated | Blocked / none | Blocked / none |
+| `PC-02` | listen, dedicated | Blocked / none | Blocked / none |
+| `PC-03` | listen, dedicated | Blocked / none | Blocked / none |
+| `PC-04` | listen, dedicated | Blocked / none | Blocked / none |
+| `DEMO-01` | listen, dedicated | Blocked / none | Blocked / none |
+| `DEMO-02` | listen, dedicated | Blocked / none | Blocked / none |
+| `DEMO-03` | listen, dedicated | Blocked / none | Blocked / none |
+| `UP89-01` | listen | Blocked / none | Blocked / none |
+| `UP89-02` | listen | Blocked / none | Blocked / none |
+| `UP40-01` | listen, dedicated | Blocked / none | Blocked / none |
 
 ## 7. Existing implementation and test inventory
 
@@ -472,7 +588,19 @@ are unavailable; every commercial §6.2 child direction cell, every full-key
 `child` record and every
 commercial §6.3 result/evidence cell must stay `Blocked / none` until a real
 run cites a reference manifest id, and the §6.2 ledger must cover exactly the
-case set declared above.
+case set declared above. `stage` lines declare the canonical §5
+lifecycle-stage vocabulary and `stages <case> <stage...>` lines the canonical
+per-case stage sets; the §5 per-stage inversion and the §6.2 `Lifecycle
+stages` cells must equal them exactly, so stage coverage cannot shrink in one
+representation while the others still declare it. `baseline <profile> <mode>
+<case> <status> <evidence-ref>` lines materialize the §6.1
+commercial-to-commercial baseline records over the declared case-mode
+cross-product, commercial profiles only (no `kisakcod-self` baseline exists);
+`baseline-count` pins their derived count;
+`completeness commercial-baseline aggregate-pass-requires-matching-baseline`
+must stay: it makes every §6.3 commercial aggregate cell depend on the
+matching-profile baselines of §6.4, so a promoted aggregate cannot skip the
+authentic commercial-to-commercial baseline the interop contract requires.
 
 <!-- retail-content-matrix:v1
 target win-amd64 production
@@ -527,6 +655,29 @@ case-mode DEMO-03 listen dedicated
 case-mode UP89-01 listen
 case-mode UP89-02 listen
 case-mode UP40-01 listen dedicated
+stage content-load
+stage client-join
+stage gameplay
+stage map-change
+stage unload
+stage reconnect
+stage demo-record-playback
+stages SM-01 content-load client-join gameplay
+stages SM-02 content-load client-join gameplay
+stages SM-03 map-change unload reconnect
+stages MOD-01 content-load gameplay unload
+stages MOD-02 content-load gameplay unload
+stages MOD-03 content-load gameplay unload
+stages PC-01 client-join
+stages PC-02 client-join
+stages PC-03 client-join
+stages PC-04 client-join reconnect
+stages DEMO-01 demo-record-playback
+stages DEMO-02 demo-record-playback
+stages DEMO-03 demo-record-playback
+stages UP89-01 content-load client-join
+stages UP89-02 content-load client-join
+stages UP40-01 gameplay
 outcome SM-01 listen kc-server-commercial-client
 outcome SM-01 listen kc-client-commercial-server
 outcome SM-02 dedicated kc-server-commercial-client
@@ -1257,7 +1408,65 @@ child win-x86 dedicated original-commercial-1.7 UP40-01 kc-server-commercial-cli
 child win-x86 dedicated steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
 child win-x86 dedicated original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
 child win-x86 dedicated steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+baseline-count 56
+baseline original-commercial-1.7 listen SM-01 Blocked none
+baseline steam-commercial-1.8 listen SM-01 Blocked none
+baseline original-commercial-1.7 dedicated SM-02 Blocked none
+baseline steam-commercial-1.8 dedicated SM-02 Blocked none
+baseline original-commercial-1.7 listen SM-03 Blocked none
+baseline steam-commercial-1.8 listen SM-03 Blocked none
+baseline original-commercial-1.7 dedicated SM-03 Blocked none
+baseline steam-commercial-1.8 dedicated SM-03 Blocked none
+baseline original-commercial-1.7 listen MOD-01 Blocked none
+baseline steam-commercial-1.8 listen MOD-01 Blocked none
+baseline original-commercial-1.7 dedicated MOD-01 Blocked none
+baseline steam-commercial-1.8 dedicated MOD-01 Blocked none
+baseline original-commercial-1.7 listen MOD-02 Blocked none
+baseline steam-commercial-1.8 listen MOD-02 Blocked none
+baseline original-commercial-1.7 dedicated MOD-02 Blocked none
+baseline steam-commercial-1.8 dedicated MOD-02 Blocked none
+baseline original-commercial-1.7 listen MOD-03 Blocked none
+baseline steam-commercial-1.8 listen MOD-03 Blocked none
+baseline original-commercial-1.7 dedicated MOD-03 Blocked none
+baseline steam-commercial-1.8 dedicated MOD-03 Blocked none
+baseline original-commercial-1.7 listen PC-01 Blocked none
+baseline steam-commercial-1.8 listen PC-01 Blocked none
+baseline original-commercial-1.7 dedicated PC-01 Blocked none
+baseline steam-commercial-1.8 dedicated PC-01 Blocked none
+baseline original-commercial-1.7 listen PC-02 Blocked none
+baseline steam-commercial-1.8 listen PC-02 Blocked none
+baseline original-commercial-1.7 dedicated PC-02 Blocked none
+baseline steam-commercial-1.8 dedicated PC-02 Blocked none
+baseline original-commercial-1.7 listen PC-03 Blocked none
+baseline steam-commercial-1.8 listen PC-03 Blocked none
+baseline original-commercial-1.7 dedicated PC-03 Blocked none
+baseline steam-commercial-1.8 dedicated PC-03 Blocked none
+baseline original-commercial-1.7 listen PC-04 Blocked none
+baseline steam-commercial-1.8 listen PC-04 Blocked none
+baseline original-commercial-1.7 dedicated PC-04 Blocked none
+baseline steam-commercial-1.8 dedicated PC-04 Blocked none
+baseline original-commercial-1.7 listen DEMO-01 Blocked none
+baseline steam-commercial-1.8 listen DEMO-01 Blocked none
+baseline original-commercial-1.7 dedicated DEMO-01 Blocked none
+baseline steam-commercial-1.8 dedicated DEMO-01 Blocked none
+baseline original-commercial-1.7 listen DEMO-02 Blocked none
+baseline steam-commercial-1.8 listen DEMO-02 Blocked none
+baseline original-commercial-1.7 dedicated DEMO-02 Blocked none
+baseline steam-commercial-1.8 dedicated DEMO-02 Blocked none
+baseline original-commercial-1.7 listen DEMO-03 Blocked none
+baseline steam-commercial-1.8 listen DEMO-03 Blocked none
+baseline original-commercial-1.7 dedicated DEMO-03 Blocked none
+baseline steam-commercial-1.8 dedicated DEMO-03 Blocked none
+baseline original-commercial-1.7 listen UP89-01 Blocked none
+baseline steam-commercial-1.8 listen UP89-01 Blocked none
+baseline original-commercial-1.7 listen UP89-02 Blocked none
+baseline steam-commercial-1.8 listen UP89-02 Blocked none
+baseline original-commercial-1.7 listen UP40-01 Blocked none
+baseline steam-commercial-1.8 listen UP40-01 Blocked none
+baseline original-commercial-1.7 dedicated UP40-01 Blocked none
+baseline steam-commercial-1.8 dedicated UP40-01 Blocked none
 completeness aggregate pass-requires-all-case-directions
+completeness commercial-baseline aggregate-pass-requires-matching-baseline
 disposition upstream-89 blocked unavailable named-mod and licensed retail fixtures, no reproduction claimed
 disposition upstream-40 blocked needs pinned commercial movement baseline, scalar-determinism evidence is supplemental
 -->

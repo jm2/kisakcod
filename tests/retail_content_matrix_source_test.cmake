@@ -10,11 +10,21 @@ cmake_minimum_required(VERSION 3.16)
 # case coverage or per-direction result/evidence cell, §6.1 full-key child
 # record (exact `(target, mode, profile, case, direction)` coverage, uniqueness,
 # axis applicability and `Blocked / none` state, with the pinned record count
-# and the child-ledger completeness policy), §6.3 aggregate
+# and the child-ledger completeness policy), §5 lifecycle-stage vocabulary and
+# per-case stage assignment (§11 `stage`/`stages` lines, the §5 per-stage
+# inversion and the §6.2 stage cells must agree exactly, fail-closed on
+# narrowed/missing/duplicated/unknown stage ids), §4 catalog `Targets` cells
+# against the target applicability derived from the full-key child records
+# (so a mod case narrowed to `win-x86` in the catalog cannot claim less than
+# the outcome schema requires), the commercial-to-commercial baseline records
+# (exact `(profile, mode, case)` coverage, uniqueness, `Blocked / none` state,
+# pinned count, and the `aggregate-pass-requires-matching-baseline` policy that
+# gates §6.3 aggregate promotion on §2.5 baselines) and the §6.4 baseline
+# ledger's rendered rows, §6.3 aggregate
 # cell/direction scope or per-profile result/evidence cell (commercial cells
 # held at 'Blocked / none', the non-derived kisakcod-self supplemental
 # annotation held at 'Supplemental / none' and never enrolled in the
-# commercial ledger), aggregate completeness policy, or disposition uniqueness
+# commercial ledger), aggregate completeness policies, or disposition uniqueness
 # is dropped or an inapplicable mode/role requirement is introduced, if the
 # §4 catalog rows and the index disagree about which cases exist (membership
 # is read from the first cell of actual catalog table rows, so a prose
@@ -89,6 +99,13 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     set(_completeness_values "")
     set(_dispositions "")
     set(_disposition_statuses "")
+    set(_stages "")
+    set(_stage_cases "")
+    set(_stage_values "")
+    set(_baseline_keys "")
+    set(_baseline_statuses "")
+    set(_baseline_evidences "")
+    set(_baseline_count_declared "")
 
     foreach(_line IN LISTS _index_lines)
         string(STRIP "${_line}" _line)
@@ -115,6 +132,23 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         elseif(_line MATCHES "^case-mode[ \t]+([^ \t]+)[ \t]+(.+)$")
             list(APPEND _case_mode_cases "${CMAKE_MATCH_1}")
             list(APPEND _case_mode_values "${CMAKE_MATCH_2}")
+        elseif(_line MATCHES "^stage[ \t]+([^ \t]+)$")
+            # Canonical §5 lifecycle-stage vocabulary entry.
+            list(APPEND _stages "${CMAKE_MATCH_1}")
+        elseif(_line MATCHES "^stages[ \t]+([^ \t]+)[ \t]+(.+)$")
+            # Canonical per-case §5 stage assignment: the exact set the §5
+            # inversion and the §6.2 stage cells must display.
+            list(APPEND _stage_cases "${CMAKE_MATCH_1}")
+            list(APPEND _stage_values "${CMAKE_MATCH_2}")
+        elseif(_line MATCHES "^baseline[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
+            # §6.1 commercial-to-commercial baseline record
+            # (profile, mode, case) → status / evidence-ref.
+            list(APPEND _baseline_keys
+                "${CMAKE_MATCH_1} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3}")
+            list(APPEND _baseline_statuses "${CMAKE_MATCH_4}")
+            list(APPEND _baseline_evidences "${CMAKE_MATCH_5}")
+        elseif(_line MATCHES "^baseline-count[ \t]+([0-9]+)$")
+            set(_baseline_count_declared "${CMAKE_MATCH_1}")
         elseif(_line MATCHES "^outcome[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
             list(APPEND _outcome_pairs "${CMAKE_MATCH_1} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3}")
         elseif(_line MATCHES "^child[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
@@ -400,6 +434,191 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         endif()
     endforeach()
 
+    # §5 lifecycle-stage coverage. `stage` lines declare the canonical stage
+    # vocabulary and `stages <case> <stage...>` lines the canonical per-case
+    # stage sets; the §5 table is the per-stage inversion and the §6.2 ledger
+    # cells the rendered view, and all representations must agree exactly.
+    # Without this, a §6.2 stage cell can be narrowed (review finding
+    # r4040758525: SM-03 reduced from 'map change, unload, reconnect' to
+    # 'map change' validated), a §11 stages line deleted, or the §5 inversion
+    # edited, while the remaining prose still reads plausibly. The canonical
+    # sets are hardcoded here so the document cannot weaken them in any one
+    # representation unnoticed.
+    set(_required_stages
+        content-load client-join gameplay map-change unload reconnect
+        demo-record-playback)
+    set(_required_case_stages
+        "SM-01=content-load client-join gameplay"
+        "SM-02=content-load client-join gameplay"
+        "SM-03=map-change unload reconnect"
+        "MOD-01=content-load gameplay unload"
+        "MOD-02=content-load gameplay unload"
+        "MOD-03=content-load gameplay unload"
+        "PC-01=client-join"
+        "PC-02=client-join"
+        "PC-03=client-join"
+        "PC-04=client-join reconnect"
+        "DEMO-01=demo-record-playback"
+        "DEMO-02=demo-record-playback"
+        "DEMO-03=demo-record-playback"
+        "UP89-01=content-load client-join"
+        "UP89-02=content-load client-join"
+        "UP40-01=gameplay")
+    foreach(_stage IN LISTS _required_stages)
+        list(FIND _stages "${_stage}" _stage_index)
+        if(_stage_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix is missing required §5 lifecycle stage '${_stage}' in ${DOC_PATH}")
+        endif()
+    endforeach()
+    list(LENGTH _stages _stage_count)
+    set(_stages_unique ${_stages})
+    list(REMOVE_DUPLICATES _stages_unique)
+    list(LENGTH _stages_unique _stage_unique_count)
+    if(NOT _stage_count EQUAL _stage_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix contains duplicate §11 stage vocabulary lines in ${DOC_PATH}")
+    endif()
+    list(LENGTH _required_stages _required_stage_count)
+    if(NOT _stage_count EQUAL _required_stage_count)
+        message(FATAL_ERROR
+            "Retail-content matrix §11 stage vocabulary [${_stages}] must declare exactly the §5 stages [${_required_stages}] in ${DOC_PATH}")
+    endif()
+    # The declared per-case sets: required, unique, known case, known stage,
+    # no duplicate tokens.
+    list(LENGTH _stage_cases _stage_cases_count)
+    set(_stage_cases_unique ${_stage_cases})
+    list(REMOVE_DUPLICATES _stage_cases_unique)
+    list(LENGTH _stage_cases_unique _stage_cases_unique_count)
+    if(NOT _stage_cases_count EQUAL _stage_cases_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix contains duplicate §11 stages lines in ${DOC_PATH}")
+    endif()
+    set(_stage_case_pairs "")
+    set(_stages_scan_index 0)
+    foreach(_st_case IN LISTS _stage_cases)
+        list(FIND _cases "${_st_case}" _st_known_case)
+        if(_st_known_case EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix §11 stages line references unknown case '${_st_case}' in ${DOC_PATH}")
+        endif()
+        list(GET _stage_values ${_stages_scan_index} _st_values)
+        string(REPLACE " " ";" _st_list "${_st_values}")
+        foreach(_st IN LISTS _st_list)
+            list(FIND _required_stages "${_st}" _st_known_stage)
+            if(_st_known_stage EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix §11 stages line for case '${_st_case}' references unknown lifecycle stage '${_st}' in ${DOC_PATH}")
+            endif()
+            list(APPEND _stage_case_pairs "${_st} ${_st_case}")
+        endforeach()
+        math(EXPR _stages_scan_index "${_stages_scan_index} + 1")
+    endforeach()
+    # The declared sets must equal the canonical per-case sets exactly, with
+    # no duplicated stage token on any line.
+    foreach(_rcs IN LISTS _required_case_stages)
+        string(REPLACE "=" ";" _rcs_parts "${_rcs}")
+        list(GET _rcs_parts 0 _rcs_case)
+        list(GET _rcs_parts 1 _rcs_values)
+        string(REPLACE " " ";" _rcs_list "${_rcs_values}")
+        list(FIND _stage_cases "${_rcs_case}" _rcs_index)
+        if(_rcs_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix is missing the §11 stages line for case '${_rcs_case}' in ${DOC_PATH}")
+        endif()
+        list(GET _stage_values ${_rcs_index} _rcs_declared_values)
+        string(REPLACE " " ";" _rcs_declared "${_rcs_declared_values}")
+        list(LENGTH _rcs_declared _rcs_declared_count)
+        set(_rcs_declared_unique ${_rcs_declared})
+        list(REMOVE_DUPLICATES _rcs_declared_unique)
+        list(LENGTH _rcs_declared_unique _rcs_declared_unique_count)
+        if(NOT _rcs_declared_count EQUAL _rcs_declared_unique_count)
+            message(FATAL_ERROR
+                "Retail-content matrix §11 stages line for case '${_rcs_case}' has duplicate stage entries in ${DOC_PATH}")
+        endif()
+        set(_rcs_declared_sorted ${_rcs_declared})
+        list(SORT _rcs_declared_sorted)
+        set(_rcs_list_sorted ${_rcs_list})
+        list(SORT _rcs_list_sorted)
+        if(NOT "${_rcs_declared_sorted}" STREQUAL "${_rcs_list_sorted}")
+            message(FATAL_ERROR
+                "Retail-content matrix §11 stages for case '${_rcs_case}' [${_rcs_declared_sorted}] must equal the canonical set [${_rcs_list_sorted}] in ${DOC_PATH}")
+        endif()
+    endforeach()
+    # And the stages lines must cover exactly the index case set: a deleted
+    # line drops that case's stage contract, an invented line claims coverage
+    # the index never declared.
+    set(_stage_cases_sorted ${_stage_cases_unique})
+    list(SORT _stage_cases_sorted)
+    set(_cases_for_stages ${_cases})
+    list(REMOVE_DUPLICATES _cases_for_stages)
+    list(SORT _cases_for_stages)
+    if(NOT "${_stage_cases_sorted}" STREQUAL "${_cases_for_stages}")
+        message(FATAL_ERROR
+            "Retail-content matrix §11 stages lines [${_stage_cases_sorted}] must cover exactly the index cases [${_cases_for_stages}] in ${DOC_PATH}")
+    endif()
+    # §5 per-stage inversion: the visible table must invert the declared
+    # per-case sets exactly — same (stage, case) pairs, every vocabulary stage
+    # present exactly once, no unknown stage row, no unknown case reference.
+    string(FIND "${DOC_TEXT}" "## 5." _s5_begin)
+    string(FIND "${DOC_TEXT}" "## 6." _s5_end)
+    if(_s5_begin EQUAL -1 OR _s5_end EQUAL -1 OR _s5_end LESS_EQUAL _s5_begin)
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the §5 lifecycle coverage or §6 section in ${DOC_PATH}")
+    endif()
+    math(EXPR _s5_length "${_s5_end} - ${_s5_begin}")
+    string(SUBSTRING "${DOC_TEXT}" ${_s5_begin} ${_s5_length} _s5_text)
+    string(REPLACE "\r\n" "\n" _s5_text "${_s5_text}")
+    string(REPLACE ";" "{@}" _s5_text "${_s5_text}")
+    string(REPLACE "\n" ";" _s5_lines "${_s5_text}")
+    set(_s5_rows "")
+    set(_s5_pairs "")
+    foreach(_s5_line IN LISTS _s5_lines)
+        string(REPLACE "{@}" ";" _s5_line "${_s5_line}")
+        if(_s5_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[ \t]*\\|[ \t]*([^|]+)\\|")
+            set(_s5_stage "${CMAKE_MATCH_1}")
+            set(_s5_cases_cell "${CMAKE_MATCH_2}")
+            list(FIND _required_stages "${_s5_stage}" _s5_known_stage)
+            if(_s5_known_stage EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix §5 table references unknown lifecycle stage '${_s5_stage}' in ${DOC_PATH}")
+            endif()
+            list(FIND _s5_rows "${_s5_stage}" _s5_row_dupe)
+            if(NOT _s5_row_dupe EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix §5 table contains duplicate rows for stage '${_s5_stage}' in ${DOC_PATH}")
+            endif()
+            list(APPEND _s5_rows "${_s5_stage}")
+            string(REGEX MATCHALL "`[^`]+`" _s5_case_ticks "${_s5_cases_cell}")
+            foreach(_s5_tick IN LISTS _s5_case_ticks)
+                string(REPLACE "`" "" _s5_case "${_s5_tick}")
+                string(STRIP "${_s5_case}" _s5_case)
+                list(FIND _cases "${_s5_case}" _s5_known_case)
+                if(_s5_known_case EQUAL -1)
+                    message(FATAL_ERROR
+                        "Retail-content matrix §5 stage '${_s5_stage}' row references unknown case '${_s5_case}' in ${DOC_PATH}")
+                endif()
+                list(APPEND _s5_pairs "${_s5_stage} ${_s5_case}")
+            endforeach()
+        endif()
+    endforeach()
+    set(_s5_rows_sorted ${_s5_rows})
+    list(SORT _s5_rows_sorted)
+    set(_required_stages_sorted ${_required_stages})
+    list(SORT _required_stages_sorted)
+    if(NOT "${_s5_rows_sorted}" STREQUAL "${_required_stages_sorted}")
+        message(FATAL_ERROR
+            "Retail-content matrix §5 stage rows [${_s5_rows_sorted}] must cover exactly the lifecycle stages [${_required_stages_sorted}] in ${DOC_PATH}")
+    endif()
+    set(_s5_pairs_sorted ${_s5_pairs})
+    list(SORT _s5_pairs_sorted)
+    set(_stage_case_pairs_sorted ${_stage_case_pairs})
+    list(SORT _stage_case_pairs_sorted)
+    if(NOT "${_s5_pairs_sorted}" STREQUAL "${_stage_case_pairs_sorted}")
+        message(FATAL_ERROR
+            "Retail-content matrix §5 stage-to-case mapping [${_s5_pairs_sorted}] must invert the §11 stages declarations [${_stage_case_pairs_sorted}] exactly in ${DOC_PATH}")
+    endif()
+
     # Applicable case×mode×direction child records. A child is required only when
     # the case applies to the mode and a target capable of the direction's role
     # exists. The declared outcome set must equal exactly this derived set: an
@@ -648,6 +867,89 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
             "Retail-content matrix full-key child records (${_child_record_count}) do not exactly cover the applicable target×mode×profile×case×direction children (${_required_child_count}) in ${DOC_PATH}")
     endif()
 
+    # Derived target applicability per case: every target that contributes a
+    # full-key child record for the case. The §4 catalog Targets cells must
+    # display exactly this scope, so the rendered catalog cannot claim less
+    # (a mod case narrowed to win-x86) or more than the outcome schema
+    # requires (review finding r4040758531).
+    foreach(_rk IN LISTS _required_child_keys)
+        string(REPLACE " " ";" _rk_parts "${_rk}")
+        list(GET _rk_parts 0 _rk_target)
+        list(GET _rk_parts 3 _rk_case)
+        set(_rk_scope "${_case_target_scope_${_rk_case}}")
+        list(FIND _rk_scope "${_rk_target}" _rk_dupe)
+        if(_rk_dupe EQUAL -1)
+            list(APPEND _rk_scope "${_rk_target}")
+            set(_case_target_scope_${_rk_case} "${_rk_scope}")
+        endif()
+    endforeach()
+
+    # Commercial-to-commercial baseline records (§2.5, §6.4): each commercial
+    # profile baselines its own client against its own server per declared
+    # (mode, case). The records must cover exactly the declared commercial
+    # cross-product — so a kisakcod-self baseline or a fabricated profile is
+    # an extra record and fails — stay unique, stay 'Blocked / none', and the
+    # baseline completeness policy must stay: an aggregate cell may never pass
+    # while a matching-profile baseline is not Pass (review finding
+    # r4040758518).
+    list(FIND _completeness_keys "commercial-baseline" _baseline_policy_index)
+    if(_baseline_policy_index EQUAL -1)
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the commercial-baseline completeness policy in ${DOC_PATH}")
+    endif()
+    list(GET _completeness_values ${_baseline_policy_index} _baseline_policy)
+    if(NOT _baseline_policy STREQUAL "aggregate-pass-requires-matching-baseline")
+        message(FATAL_ERROR
+            "Retail-content matrix commercial-baseline completeness policy must be 'aggregate-pass-requires-matching-baseline', found '${_baseline_policy}' in ${DOC_PATH}")
+    endif()
+    if(_baseline_count_declared STREQUAL "")
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the baseline-count line in ${DOC_PATH}")
+    endif()
+    list(LENGTH _baseline_keys _baseline_record_count)
+    if(NOT _baseline_count_declared EQUAL _baseline_record_count)
+        message(FATAL_ERROR
+            "Retail-content matrix baseline-count ${_baseline_count_declared} must equal the declared baseline records (${_baseline_record_count}) in ${DOC_PATH}")
+    endif()
+    list(LENGTH _baseline_keys _baseline_keys_count)
+    set(_baseline_keys_unique ${_baseline_keys})
+    list(REMOVE_DUPLICATES _baseline_keys_unique)
+    list(LENGTH _baseline_keys_unique _baseline_keys_unique_count)
+    if(NOT _baseline_keys_count EQUAL _baseline_keys_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix contains duplicate baseline records in ${DOC_PATH}")
+    endif()
+    set(_required_baselines "")
+    set(_baseline_scan_index 0)
+    foreach(_bl_case IN LISTS _case_mode_cases)
+        list(GET _case_mode_values ${_baseline_scan_index} _bl_modes_string)
+        string(REPLACE " " ";" _bl_modes "${_bl_modes_string}")
+        foreach(_bl_mode IN LISTS _bl_modes)
+            foreach(_bl_profile IN LISTS _child_commercial_profiles)
+                list(APPEND _required_baselines "${_bl_profile} ${_bl_mode} ${_bl_case}")
+            endforeach()
+        endforeach()
+        math(EXPR _baseline_scan_index "${_baseline_scan_index} + 1")
+    endforeach()
+    set(_required_baselines_sorted ${_required_baselines})
+    list(SORT _required_baselines_sorted)
+    set(_baseline_keys_sorted ${_baseline_keys})
+    list(SORT _baseline_keys_sorted)
+    if(NOT "${_baseline_keys_sorted}" STREQUAL "${_required_baselines_sorted}")
+        message(FATAL_ERROR
+            "Retail-content matrix baseline records [${_baseline_keys_sorted}] must cover exactly the commercial (profile, mode, case) cross-product [${_required_baselines_sorted}] in ${DOC_PATH}")
+    endif()
+    set(_baseline_check_index 0)
+    foreach(_bl_key IN LISTS _baseline_keys)
+        list(GET _baseline_statuses ${_baseline_check_index} _bl_status)
+        list(GET _baseline_evidences ${_baseline_check_index} _bl_evidence)
+        if(NOT _bl_status STREQUAL "Blocked" OR NOT _bl_evidence STREQUAL "none")
+            message(FATAL_ERROR
+                "Retail-content matrix baseline record '${_bl_key}' must stay 'Blocked / none' while the licensed reference manifests are unavailable, found '${_bl_status} / ${_bl_evidence}' in ${DOC_PATH}")
+        endif()
+        math(EXPR _baseline_check_index "${_baseline_check_index} + 1")
+    endforeach()
+
     # §6.2 child-record ledger. Each case row carries one `status / evidence-ref`
     # cell per commercial direction; it is the per-case view of the §6.1
     # full-key child records above, which remain the canonical individually
@@ -677,11 +979,12 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     # restructuring a row.
     set(_ledger_cases "")
     foreach(_line IN LISTS _child_lines)
-        if(_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[ \t]*\\|[ \t]*([^|]+)\\|([^|]*)\\|([^|]*)\\|")
+        if(_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[ \t]*\\|[ \t]*([^|]+)\\|([^|]*)\\|([^|]*)\\|([^|]*)\\|")
             set(_ledger_case "${CMAKE_MATCH_1}")
             set(_ledger_modes_cell "${CMAKE_MATCH_2}")
             set(_cell_server "${CMAKE_MATCH_3}")
             set(_cell_client "${CMAKE_MATCH_4}")
+            set(_ledger_stages_cell "${CMAKE_MATCH_5}")
             list(FIND _cases "${_ledger_case}" _ledger_known_index)
             if(_ledger_known_index EQUAL -1)
                 message(FATAL_ERROR
@@ -737,6 +1040,53 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
                 message(FATAL_ERROR
                     "Retail-content matrix §6.2 child ledger case '${_ledger_case}' displayed Modes [${_ledger_modes_sorted}] must equal its case-mode declaration [${_ledger_cm_declared_sorted}] in ${DOC_PATH}")
             endif()
+            # Lifecycle stages cell: the rendered per-case stage view must
+            # equal the case's canonical §11 stages declaration exactly —
+            # canonical §5 stage ids only, no duplicates, no empty entries
+            # (review finding r4040758525: narrowing SM-03's cell from
+            # 'map change, unload, reconnect' to 'map change' previously
+            # validated because this cell was never parsed).
+            string(REPLACE "`" "" _ledger_stages_text "${_ledger_stages_cell}")
+            string(REPLACE "," ";" _ledger_stages_raw "${_ledger_stages_text}")
+            set(_ledger_stages "")
+            foreach(_ledger_stage_token IN LISTS _ledger_stages_raw)
+                string(STRIP "${_ledger_stage_token}" _ledger_stage_token)
+                if(_ledger_stage_token STREQUAL "")
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.2 child ledger case '${_ledger_case}' has an empty Lifecycle stages entry in ${DOC_PATH}")
+                endif()
+                list(APPEND _ledger_stages "${_ledger_stage_token}")
+            endforeach()
+            list(LENGTH _ledger_stages _ledger_stages_count)
+            set(_ledger_stages_unique ${_ledger_stages})
+            list(REMOVE_DUPLICATES _ledger_stages_unique)
+            list(LENGTH _ledger_stages_unique _ledger_stages_unique_count)
+            if(NOT _ledger_stages_count EQUAL _ledger_stages_unique_count)
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.2 child ledger case '${_ledger_case}' has duplicate Lifecycle stages entries in ${DOC_PATH}")
+            endif()
+            foreach(_ledger_stage IN LISTS _ledger_stages)
+                list(FIND _required_stages "${_ledger_stage}" _ledger_stage_known)
+                if(_ledger_stage_known EQUAL -1)
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.2 child ledger case '${_ledger_case}' displays unknown lifecycle stage '${_ledger_stage}' in ${DOC_PATH}")
+                endif()
+            endforeach()
+            list(FIND _stage_cases "${_ledger_case}" _ledger_stg_index)
+            if(_ledger_stg_index EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.2 child ledger case '${_ledger_case}' has no §11 stages declaration in ${DOC_PATH}")
+            endif()
+            list(GET _stage_values ${_ledger_stg_index} _ledger_stg_declared_string)
+            string(REPLACE " " ";" _ledger_stg_declared "${_ledger_stg_declared_string}")
+            set(_ledger_stages_sorted ${_ledger_stages})
+            list(SORT _ledger_stages_sorted)
+            set(_ledger_stg_declared_sorted ${_ledger_stg_declared})
+            list(SORT _ledger_stg_declared_sorted)
+            if(NOT "${_ledger_stages_sorted}" STREQUAL "${_ledger_stg_declared_sorted}")
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.2 child ledger case '${_ledger_case}' displayed Lifecycle stages [${_ledger_stages_sorted}] must equal its §11 stages declaration [${_ledger_stg_declared_sorted}] in ${DOC_PATH}")
+            endif()
             foreach(_ledger_cell IN ITEMS "${_cell_server}" "${_cell_client}")
                 string(STRIP "${_ledger_cell}" _ledger_cell)
                 string(REPLACE "/" ";" _ledger_fields "${_ledger_cell}")
@@ -786,10 +1136,10 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     # both kc-client-commercial-server and kc-server-commercial-client, so its
     # server direction cannot be silently dropped.
     string(FIND "${DOC_TEXT}" "### 6.3" _agg_begin)
-    string(FIND "${DOC_TEXT}" "## 7." _agg_end)
+    string(FIND "${DOC_TEXT}" "### 6.4" _agg_end)
     if(_agg_begin EQUAL -1 OR _agg_end EQUAL -1 OR _agg_end LESS_EQUAL _agg_begin)
         message(FATAL_ERROR
-            "Retail-content matrix is missing the §6.3 aggregate roll-up or §7 section in ${DOC_PATH}")
+            "Retail-content matrix is missing the §6.3 aggregate roll-up or §6.4 baseline ledger section in ${DOC_PATH}")
     endif()
     math(EXPR _agg_length "${_agg_end} - ${_agg_begin}")
     string(SUBSTRING "${DOC_TEXT}" ${_agg_begin} ${_agg_length} _agg_text)
@@ -921,6 +1271,109 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
             "Retail-content matrix §6.3 contains duplicate aggregate cells in ${DOC_PATH}")
     endif()
 
+    # §6.4 commercial-to-commercial baseline ledger: the rendered per-case view
+    # of the §11 baseline records (review finding r4040758518). Every case row
+    # must appear exactly once, display exactly its declared modes, and keep
+    # both profile cells at 'Blocked / none' — the ledger cannot show a
+    # baseline result the canonical records do not carry.
+    string(FIND "${DOC_TEXT}" "### 6.4" _b4_begin)
+    string(FIND "${DOC_TEXT}" "## 7." _b4_end)
+    if(_b4_begin EQUAL -1 OR _b4_end EQUAL -1 OR _b4_end LESS_EQUAL _b4_begin)
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the §6.4 baseline ledger or §7 section in ${DOC_PATH}")
+    endif()
+    math(EXPR _b4_length "${_b4_end} - ${_b4_begin}")
+    string(SUBSTRING "${DOC_TEXT}" ${_b4_begin} ${_b4_length} _b4_text)
+    string(REPLACE "\r\n" "\n" _b4_text "${_b4_text}")
+    string(REPLACE "\n" ";" _b4_lines "${_b4_text}")
+    set(_b4_cases "")
+    foreach(_b4_line IN LISTS _b4_lines)
+        if(_b4_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[ \t]*\\|[ \t]*([^|]+)\\|([^|]*)\\|([^|]*)\\|")
+            set(_b4_case "${CMAKE_MATCH_1}")
+            set(_b4_modes_cell "${CMAKE_MATCH_2}")
+            set(_b4_cell_17 "${CMAKE_MATCH_3}")
+            set(_b4_cell_18 "${CMAKE_MATCH_4}")
+            list(APPEND _b4_cases "${_b4_case}")
+            # Modes cell: the ledger must display exactly the case's
+            # case-mode declaration — same discipline as the §6.2 ledger.
+            string(REPLACE "`" "" _b4_modes_text "${_b4_modes_cell}")
+            string(REPLACE "," ";" _b4_modes_raw "${_b4_modes_text}")
+            set(_b4_modes "")
+            foreach(_b4_mode_token IN LISTS _b4_modes_raw)
+                string(STRIP "${_b4_mode_token}" _b4_mode_token)
+                if(_b4_mode_token STREQUAL "")
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.4 baseline ledger case '${_b4_case}' has an empty Modes entry in ${DOC_PATH}")
+                endif()
+                list(APPEND _b4_modes "${_b4_mode_token}")
+            endforeach()
+            list(LENGTH _b4_modes _b4_modes_count)
+            set(_b4_modes_unique ${_b4_modes})
+            list(REMOVE_DUPLICATES _b4_modes_unique)
+            list(LENGTH _b4_modes_unique _b4_modes_unique_count)
+            if(NOT _b4_modes_count EQUAL _b4_modes_unique_count)
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.4 baseline ledger case '${_b4_case}' has duplicate Modes entries in ${DOC_PATH}")
+            endif()
+            foreach(_b4_mode IN LISTS _b4_modes)
+                list(FIND _modes "${_b4_mode}" _b4_mode_known)
+                if(_b4_mode_known EQUAL -1)
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.4 baseline ledger case '${_b4_case}' displays unknown mode '${_b4_mode}' in ${DOC_PATH}")
+                endif()
+            endforeach()
+            list(FIND _case_mode_cases "${_b4_case}" _b4_cm_index)
+            if(_b4_cm_index EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.4 baseline ledger case '${_b4_case}' has no case-mode applicability declaration in ${DOC_PATH}")
+            endif()
+            list(GET _case_mode_values ${_b4_cm_index} _b4_cm_declared_string)
+            string(REPLACE " " ";" _b4_cm_declared "${_b4_cm_declared_string}")
+            set(_b4_modes_sorted ${_b4_modes})
+            list(SORT _b4_modes_sorted)
+            set(_b4_cm_declared_sorted ${_b4_cm_declared})
+            list(SORT _b4_cm_declared_sorted)
+            if(NOT "${_b4_modes_sorted}" STREQUAL "${_b4_cm_declared_sorted}")
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.4 baseline ledger case '${_b4_case}' displayed Modes [${_b4_modes_sorted}] must equal its case-mode declaration [${_b4_cm_declared_sorted}] in ${DOC_PATH}")
+            endif()
+            foreach(_b4_cell IN ITEMS "${_b4_cell_17}" "${_b4_cell_18}")
+                string(STRIP "${_b4_cell}" _b4_cell)
+                string(REPLACE "/" ";" _b4_fields "${_b4_cell}")
+                list(LENGTH _b4_fields _b4_field_count)
+                if(NOT _b4_field_count EQUAL 2)
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.4 baseline ledger case '${_b4_case}' baseline cell must be 'status / evidence-ref', found '${_b4_cell}' in ${DOC_PATH}")
+                endif()
+                list(GET _b4_fields 0 _b4_status)
+                list(GET _b4_fields 1 _b4_evidence)
+                string(STRIP "${_b4_status}" _b4_status)
+                string(STRIP "${_b4_evidence}" _b4_evidence)
+                if(NOT _b4_status STREQUAL "Blocked" OR NOT _b4_evidence STREQUAL "none")
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.4 baseline ledger case '${_b4_case}' baseline cell must stay 'Blocked / none' while the licensed reference manifests are unavailable, found '${_b4_status} / ${_b4_evidence}' in ${DOC_PATH}")
+                endif()
+            endforeach()
+        endif()
+    endforeach()
+    list(LENGTH _b4_cases _b4_count)
+    set(_b4_cases_unique ${_b4_cases})
+    list(REMOVE_DUPLICATES _b4_cases_unique)
+    list(LENGTH _b4_cases_unique _b4_unique_count)
+    if(NOT _b4_count EQUAL _b4_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix §6.4 baseline ledger contains duplicate case rows in ${DOC_PATH}")
+    endif()
+    set(_b4_cases_sorted ${_b4_cases_unique})
+    list(SORT _b4_cases_sorted)
+    set(_cases_for_b4 ${_cases})
+    list(REMOVE_DUPLICATES _cases_for_b4)
+    list(SORT _cases_for_b4)
+    if(NOT "${_b4_cases_sorted}" STREQUAL "${_cases_for_b4}")
+        message(FATAL_ERROR
+            "Retail-content matrix §6.4 baseline ledger cases [${_b4_cases_sorted}] must cover exactly the index cases [${_cases_for_b4}] in ${DOC_PATH}")
+    endif()
+
     # Explicit aggregate completeness policy: an aggregate target/mode/profile
     # cell is Pass only when every applicable case×mode×direction child is Pass.
     # This keeps a missing applicable child from ever counting as a pass.
@@ -975,11 +1428,15 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
 
     # Capture the index's upstream-family case set while the case/family lists
     # are still aligned (the catalog cross-check below sorts _cases): the
-    # §4.5 visible-disposition check must hold exactly these cases.
+    # §4.5 visible-disposition check must hold exactly these cases. Also
+    # record each case's family — the catalog Targets check below must skip
+    # the §4.5 upstream rows, which carry a Disposition column instead of
+    # Targets.
     set(_index_upstream_cases "")
     set(_family_scan_index 0)
     foreach(_case_id IN LISTS _cases)
         list(GET _families ${_family_scan_index} _case_family)
+        set(_family_of_${_case_id} "${_case_family}")
         if(_case_family MATCHES "^upstream-")
             list(APPEND _index_upstream_cases "${_case_id}")
         endif()
@@ -1003,6 +1460,14 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     math(EXPR _catalog_length "${_catalog_end} - ${_catalog_begin}")
     string(SUBSTRING "${DOC_TEXT}" ${_catalog_begin} ${_catalog_length} _catalog_text)
     string(REPLACE "\r\n" "\n" _catalog_text "${_catalog_text}")
+    # Shield semicolons before line-splitting (same discipline as the §4.5
+    # parser): catalog rows carry semicolons inside their cells (MOD-02's
+    # invariant reads 'match the reference; no fork-only path is required'),
+    # and CMake splits list values on every unescaped ';' — an unshielded
+    # split would shatter such a row into fragments, letting the fragment
+    # carrying the Targets cell dodge the applicability check entirely
+    # (review finding r4040758531).
+    string(REPLACE ";" "{@}" _catalog_text "${_catalog_text}")
     string(REPLACE "\n" ";" _catalog_lines "${_catalog_text}")
     # Row shape: | `case-id` | ... — the same first-cell convention as the §6.2
     # ledger parser. Header/separator rows have no backticked leading cell and
@@ -1011,8 +1476,76 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     # reformatting.
     set(_catalog_cases "")
     foreach(_catalog_line IN LISTS _catalog_lines)
-        if(_catalog_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[ \t]*\\|")
-            list(APPEND _catalog_cases "${CMAKE_MATCH_1}")
+        string(REPLACE "{@}" ";" _catalog_line "${_catalog_line}")
+        if(_catalog_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[ \t]*\\|(.*)$")
+            set(_catalog_case "${CMAKE_MATCH_1}")
+            set(_catalog_tail "${CMAKE_MATCH_2}")
+            list(APPEND _catalog_cases "${_catalog_case}")
+            # Catalog Targets cell (review finding r4040758531): for every
+            # non-upstream row the displayed target ids must equal exactly the
+            # target applicability derived from the full-key child records.
+            # Without this check, narrowing MOD-01's cell to 'win-x86'
+            # validated while the outcome schema still required children for
+            # every role-capable target. Upstream §4.5 rows carry a
+            # Disposition column instead of Targets and are skipped.
+            set(_catalog_family "${_family_of_${_catalog_case}}")
+            if(NOT _catalog_family MATCHES "^upstream-")
+                string(REGEX REPLACE "[^|]" "" _catalog_pipes "${_catalog_tail}")
+                string(LENGTH "${_catalog_pipes}" _catalog_pipe_count)
+                # Five columns total: the id cell (already matched, its two
+                # bounding pipes consumed by the regex) plus four cells whose
+                # separation and trailing pipe leave exactly four pipes in the
+                # tail.
+                if(NOT _catalog_pipe_count EQUAL 4)
+                    message(FATAL_ERROR
+                        "Retail-content matrix catalog row '${_catalog_case}' must keep the five-column shape with a Targets cell in ${DOC_PATH}")
+                endif()
+                # Split the tail into cells: [Input, Invariant, Evidence,
+                # Targets, ""], so the Targets cell is index 3. Shield the
+                # cells' semicolons exactly like the §4.5 parser.
+                string(REPLACE ";" "{@}" _catalog_cells_input "${_catalog_tail}")
+                string(REPLACE "|" ";" _catalog_cells "${_catalog_cells_input}")
+                list(GET _catalog_cells 3 _catalog_targets_cell)
+                string(REPLACE "{@}" ";" _catalog_targets_cell "${_catalog_targets_cell}")
+                string(REGEX MATCHALL "`[^`]+`" _catalog_target_ticks "${_catalog_targets_cell}")
+                set(_catalog_targets "")
+                foreach(_catalog_tick IN LISTS _catalog_target_ticks)
+                    string(REPLACE "`" "" _catalog_target "${_catalog_tick}")
+                    string(STRIP "${_catalog_target}" _catalog_target)
+                    list(APPEND _catalog_targets "${_catalog_target}")
+                endforeach()
+                list(LENGTH _catalog_targets _catalog_targets_count)
+                if(_catalog_targets_count EQUAL 0)
+                    message(FATAL_ERROR
+                        "Retail-content matrix catalog row '${_catalog_case}' must list its applicable target ids in the Targets cell in ${DOC_PATH}")
+                endif()
+                set(_catalog_targets_unique ${_catalog_targets})
+                list(REMOVE_DUPLICATES _catalog_targets_unique)
+                list(LENGTH _catalog_targets_unique _catalog_targets_unique_count)
+                if(NOT _catalog_targets_count EQUAL _catalog_targets_unique_count)
+                    message(FATAL_ERROR
+                        "Retail-content matrix catalog row '${_catalog_case}' has duplicate target ids in its Targets cell in ${DOC_PATH}")
+                endif()
+                foreach(_catalog_target IN LISTS _catalog_targets)
+                    list(FIND _targets "${_catalog_target}" _catalog_target_known)
+                    if(_catalog_target_known EQUAL -1)
+                        message(FATAL_ERROR
+                            "Retail-content matrix catalog row '${_catalog_case}' references unknown target '${_catalog_target}' in ${DOC_PATH}")
+                    endif()
+                endforeach()
+                if(NOT DEFINED _case_target_scope_${_catalog_case})
+                    message(FATAL_ERROR
+                        "Retail-content matrix catalog row '${_catalog_case}' has no derived target applicability in ${DOC_PATH}")
+                endif()
+                set(_catalog_case_scope "${_case_target_scope_${_catalog_case}}")
+                list(SORT _catalog_case_scope)
+                set(_catalog_targets_sorted ${_catalog_targets})
+                list(SORT _catalog_targets_sorted)
+                if(NOT "${_catalog_targets_sorted}" STREQUAL "${_catalog_case_scope}")
+                    message(FATAL_ERROR
+                        "Retail-content matrix catalog Targets cell for '${_catalog_case}' [${_catalog_targets_sorted}] must equal the target applicability derived from the full-key child records [${_catalog_case_scope}] in ${DOC_PATH}")
+                endif()
+            endif()
         endif()
     endforeach()
     list(REMOVE_DUPLICATES _catalog_cases)
@@ -1122,6 +1655,8 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
         "child record"
         "weakest required child"
         "pass-requires-all-case-directions"
+        "aggregate-pass-requires-matching-baseline"
+        "commercial-to-commercial baseline"
         "case-mode"
         "target-role"
         "client-only"
@@ -1450,8 +1985,8 @@ expect_rejected("promote-supplemental-pass-invented" "${_mutated}")
 # so without direct child-ledger cell validation a per-case commercial pass
 # claim could slip through while every aggregate stays Blocked.
 string(REPLACE
-    "| `SM-01` | listen | Blocked / none | Blocked / none | content load, client join, gameplay |"
-    "| `SM-01` | listen | Pass / none | Blocked / none | content load, client join, gameplay |"
+    "| `SM-01` | listen | Blocked / none | Blocked / none | `content-load`, `client-join`, `gameplay` |"
+    "| `SM-01` | listen | Pass / none | Blocked / none | `content-load`, `client-join`, `gameplay` |"
     _mutated "${_matrix_text}")
 if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'promote-child-status-server' did not apply")
@@ -1461,8 +1996,8 @@ expect_rejected("promote-child-status-server" "${_mutated}")
 # Same child status promotion in the kc-client-commercial-server direction
 # (SM-03): both commercial directions of the ledger are validated.
 string(REPLACE
-    "| `SM-03` | listen, dedicated | Blocked / none | Blocked / none | map change, unload, reconnect |"
-    "| `SM-03` | listen, dedicated | Blocked / none | Pass / none | map change, unload, reconnect |"
+    "| `SM-03` | listen, dedicated | Blocked / none | Blocked / none | `map-change`, `unload`, `reconnect` |"
+    "| `SM-03` | listen, dedicated | Blocked / none | Pass / none | `map-change`, `unload`, `reconnect` |"
     _mutated "${_matrix_text}")
 if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'promote-child-status-client' did not apply")
@@ -1473,8 +2008,8 @@ expect_rejected("promote-child-status-client" "${_mutated}")
 # cell while keeping the Blocked status: an evidence-ref no run produced must
 # be rejected exactly like a status promotion.
 string(REPLACE
-    "| `SM-02` | dedicated | Blocked / none | Blocked / none | content load, client join, gameplay |"
-    "| `SM-02` | dedicated | Blocked / fabricated-log | Blocked / none | content load, client join, gameplay |"
+    "| `SM-02` | dedicated | Blocked / none | Blocked / none | `content-load`, `client-join`, `gameplay` |"
+    "| `SM-02` | dedicated | Blocked / fabricated-log | Blocked / none | `content-load`, `client-join`, `gameplay` |"
     _mutated "${_matrix_text}")
 if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'promote-child-evidence-server' did not apply")
@@ -1484,8 +2019,8 @@ expect_rejected("promote-child-evidence-server" "${_mutated}")
 # Fabricated child evidence in the kc-client-commercial-server direction
 # (PC-01): the evidence-ref half of the cell is validated in both directions.
 string(REPLACE
-    "| `PC-01` | listen, dedicated | Blocked / none | Blocked / none | client join |"
-    "| `PC-01` | listen, dedicated | Blocked / none | Blocked / fabricated-log | client join |"
+    "| `PC-01` | listen, dedicated | Blocked / none | Blocked / none | `client-join` |"
+    "| `PC-01` | listen, dedicated | Blocked / none | Blocked / fabricated-log | `client-join` |"
     _mutated "${_matrix_text}")
 if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'promote-child-evidence-client' did not apply")
@@ -1497,8 +2032,8 @@ expect_rejected("promote-child-evidence-client" "${_mutated}")
 # aggregate cell unchanged. Both the status and evidence halves of the child
 # cell must reject this.
 string(REPLACE
-    "| `SM-01` | listen | Blocked / none | Blocked / none | content load, client join, gameplay |"
-    "| `SM-01` | listen | Pass / fabricated-log | Blocked / none | content load, client join, gameplay |"
+    "| `SM-01` | listen | Blocked / none | Blocked / none | `content-load`, `client-join`, `gameplay` |"
+    "| `SM-01` | listen | Pass / fabricated-log | Blocked / none | `content-load`, `client-join`, `gameplay` |"
     _mutated "${_matrix_text}")
 if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'promote-child-fabricated-pass' did not apply")
@@ -1509,7 +2044,7 @@ expect_rejected("promote-child-fabricated-pass" "${_mutated}")
 # escape the blocked-status policy by removing their row, so the ledger must
 # cover exactly the index case set.
 string(REPLACE
-    "| `SM-01` | listen | Blocked / none | Blocked / none | content load, client join, gameplay | Reference id + sanitized load/join log |\n"
+    "| `SM-01` | listen | Blocked / none | Blocked / none | `content-load`, `client-join`, `gameplay` | Reference id + sanitized load/join log |\n"
     "" _mutated "${_matrix_text}")
 if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'drop-child-ledger-row' did not apply")
@@ -1697,5 +2232,189 @@ if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'promote-up40-01-visible-disposition' did not apply")
 endif()
 expect_rejected("promote-up40-01-visible-disposition" "${_mutated}")
+
+# ————— Review finding r4040758531: §4 catalog Targets cells —————
+
+# The exact reproduced review mutation: narrow MOD-01's Targets cell to the
+# win-x86 reference platform while the full-key child records still require
+# the case for every role-capable target. The catalog must not claim less
+# than the outcome schema requires.
+string(REPLACE
+    "Mod content hash + reference id + log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |"
+    "Mod content hash + reference id + log | `win-x86` |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'narrow-mod01-targets' did not apply")
+endif()
+expect_rejected("narrow-mod01-targets" "${_mutated}")
+
+# Silently drop one production target (macos-arm64) from SM-01's Targets
+# cell: the derived applicability still requires it, so the shrink must be
+# rejected.
+string(REPLACE
+    "sanitized load/join log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |"
+    "sanitized load/join log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `win-x86` |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-sm01-target' did not apply")
+endif()
+expect_rejected("drop-sm01-target" "${_mutated}")
+
+# An invented target id in the Targets cell claims applicability the axis
+# never declared.
+string(REPLACE
+    "Mod content hash + reference id + log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |"
+    "Mod content hash + reference id + log | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86`, `win-xyz` |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'unknown-catalog-target' did not apply")
+endif()
+expect_rejected("unknown-catalog-target" "${_mutated}")
+
+# A duplicated target id in the Targets cell cannot widen the claim either.
+string(REPLACE
+    "`fs_game` value + file manifest + reference id | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86` |"
+    "`fs_game` value + file manifest + reference id | `win-amd64`, `win-arm64`, `linux-amd64`, `linux-arm64`, `macos-arm64`, `win-x86`, `win-x86` |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'duplicate-catalog-target' did not apply")
+endif()
+expect_rejected("duplicate-catalog-target" "${_mutated}")
+
+# ————— Review finding r4040758525: §6.2 lifecycle-stage cells —————
+
+# The exact reproduced review mutation: narrow SM-03's stage cell from
+# 'map change, unload, reconnect' to 'map change' — the mutation that
+# previously validated because the stages cell was never parsed.
+string(REPLACE
+    "| Blocked / none | `map-change`, `unload`, `reconnect` | Reference id + before/after zone + reconnect log |"
+    "| Blocked / none | `map-change` | Reference id + before/after zone + reconnect log |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'narrow-sm03-stages-cell' did not apply")
+endif()
+expect_rejected("narrow-sm03-stages-cell" "${_mutated}")
+
+# Delete the canonical §11 stages line for SM-03: the rendered cell would
+# still display three stages, so the index↔rendered cross-check must reject
+# the divergence.
+string(REPLACE "stages SM-03 map-change unload reconnect\n" "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-stages-line' did not apply")
+endif()
+expect_rejected("drop-stages-line" "${_mutated}")
+
+# Add a stage the canonical set does not declare for SM-01 (unload is a real
+# stage id but belongs to SM-03/MOD-01..03): the exact-set check must reject
+# the widening.
+string(REPLACE
+    "| Blocked / none | `content-load`, `client-join`, `gameplay` | Reference id + sanitized load/join log |"
+    "| Blocked / none | `content-load`, `client-join`, `gameplay`, `unload` | Reference id + sanitized load/join log |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'extra-ledger-stage' did not apply")
+endif()
+expect_rejected("extra-ledger-stage" "${_mutated}")
+
+# An unknown stage token must fail closed on the vocabulary check.
+string(REPLACE
+    "| Blocked / none | `content-load`, `client-join`, `gameplay` | Reference id + sanitized load/join log |"
+    "| Blocked / none | `content-load`, `client-join`, `gameplay`, `bogus-stage` | Reference id + sanitized load/join log |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'unknown-ledger-stage' did not apply")
+endif()
+expect_rejected("unknown-ledger-stage" "${_mutated}")
+
+# A duplicated stage token in the cell cannot double-count coverage.
+string(REPLACE
+    "| Blocked / none | `content-load`, `client-join`, `gameplay` | Reference id + sanitized load/join log |"
+    "| Blocked / none | `content-load`, `content-load`, `client-join`, `gameplay` | Reference id + sanitized load/join log |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'duplicate-ledger-stage' did not apply")
+endif()
+expect_rejected("duplicate-ledger-stage" "${_mutated}")
+
+# Remove SM-03 from the §5 map-change row: the visible per-stage inversion
+# must still match the declared per-case sets exactly.
+string(REPLACE
+    "| `map-change` | `SM-03` |"
+    "| `map-change` |  |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'section5-drop-case' did not apply")
+endif()
+expect_rejected("section5-drop-case" "${_mutated}")
+
+# ————— Review finding r4040758518: commercial-to-commercial baselines —————
+
+# Promote one baseline record to Pass with a fabricated evidence-ref: the
+# authentic commercial-to-commercial baseline is unavailable, so the record
+# must stay 'Blocked / none'.
+string(REPLACE
+    "baseline original-commercial-1.7 listen SM-01 Blocked none"
+    "baseline original-commercial-1.7 listen SM-01 Pass join-log"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-baseline-record' did not apply")
+endif()
+expect_rejected("promote-baseline-record" "${_mutated}")
+
+# Drop one baseline record: the coverage check must hold the full
+# (profile, mode, case) cross-product.
+string(REPLACE
+    "baseline original-commercial-1.7 listen SM-01 Blocked none\n"
+    ""
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-baseline-record' did not apply")
+endif()
+expect_rejected("drop-baseline-record" "${_mutated}")
+
+# Append a conflicting duplicate baseline record: uniqueness must fail before
+# the status check can select the first (genuine) match.
+string(REPLACE
+    "baseline original-commercial-1.7 listen SM-01 Blocked none\n"
+    "baseline original-commercial-1.7 listen SM-01 Blocked none\nbaseline original-commercial-1.7 listen SM-01 Pass competing duplicate\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'duplicate-baseline-record' did not apply")
+endif()
+expect_rejected("duplicate-baseline-record" "${_mutated}")
+
+# A fork cannot baseline itself: a kisakcod-self baseline record is an extra
+# record outside the commercial cross-product and must be rejected, keeping
+# community/fork-only results out of the commercial baseline set.
+string(REPLACE
+    "baseline original-commercial-1.7 listen SM-01 Blocked none\n"
+    "baseline original-commercial-1.7 listen SM-01 Blocked none\nbaseline kisakcod-self listen SM-01 Supplemental none\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'add-self-baseline' did not apply")
+endif()
+expect_rejected("add-self-baseline" "${_mutated}")
+
+# Drop the baseline completeness policy: an aggregate cell could then pass
+# without its matching-profile baselines.
+string(REPLACE
+    "completeness commercial-baseline aggregate-pass-requires-matching-baseline\n"
+    ""
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-baseline-policy' did not apply")
+endif()
+expect_rejected("drop-baseline-policy" "${_mutated}")
+
+# The §6.4 rendered ledger cannot show a baseline result the canonical
+# records do not carry: promoting its first cell must be rejected too.
+string(REPLACE
+    "| `SM-01` | listen | Blocked / none | Blocked / none |\n"
+    "| `SM-01` | listen | Pass / ref-1 | Blocked / none |\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-baseline-ledger-cell' did not apply")
+endif()
+expect_rejected("promote-baseline-ledger-cell" "${_mutated}")
 
 file(REMOVE_RECURSE "${_scratch_dir}")
