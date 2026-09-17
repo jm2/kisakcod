@@ -106,24 +106,39 @@ invalid case is the odd payload count (even total), never an odd total; counting
 from the verb index instead of the payload would invert the condition.
 
 Reachable `v` command boundary for C4 (and HP4/T4 below): server commands are
-not parsed directly from the network message. `CL_ParseCommandString`
-(`src/client_mp/cl_parse_mp.cpp:1192-1205`) copies the complete command string
+not parsed directly from the network message, and the first component that
+bounds the wire string is the string reader, not the command slot.
+`CL_ParseCommandString` (`src/client_mp/cl_parse_mp.cpp:1192-1205`) reads the
+command with `s = MSG_ReadString(msg)` (`:1199`) and only then copies the result
 into `clc->serverCommands[seq & 0x7F]`, one of 128 1024-byte slots
 (`char serverCommands[128][1024]`, `src/client_mp/client_mp.h:187`), using
-`I_strncpyz(..., 1024)`. The cgame then executes from that slot:
+`I_strncpyz(..., 1024)` (`:1204`). `MSG_ReadString`
+(`src/qcommon/msg_mp.cpp:484-501`) is the upstream boundary: it consumes bytes
+from the wire until the terminating NUL (a read that fails past the message end
+returns `-1` and is treated as NUL, `:493-494`), stores at most the first 1024
+bytes (`if (l < 0x400) string[l] = ...`, `:495`), runs each stored byte through
+`I_CleanChar` (`:496`; maps byte 146 to `'`,
+`src/universal/q_shared.cpp:518-524`), and then forces `string[1023] = 0`
+(`:500`). A command longer than 1024 wire bytes is therefore truncated and
+`I_CleanChar`-adjusted inside `MSG_ReadString` before the `I_strncpyz` slot
+copy, which can only shorten the already-bounded result, not widen it. The
+cgame then executes from that slot:
 `s = clc->serverCommands[serverCommandNumber & 0x7F]`
 (`src/client_mp/cl_cgame_mp.cpp:268`), `Cmd_TokenizeString(s)` (`:274`), and the
 `v` dispatch loop reads the tokenized result
 (`src/cgame_mp/cg_servercmds_mp.cpp:663-670`). At most **1023 bytes** remain
 for the verb, the name, the separators and the value **together**, so a `v`
 value that reaches either sink through this server-controlled path can never
-exceed the existing-dvar 1023-byte store bound; a longer value is truncated at
-the command slot before tokenization, not at the sink. C4 is therefore a
+exceed the existing-dvar 1023-byte store bound; a longer value is truncated by
+the wire string reader before tokenization, not at the sink. C4 is therefore a
 **sink-level** question. A direct call to `Dvar_SetFromStringByName` /
 `Dvar_SetFromStringFromSource` (or the script-string registration path) can
 still present an arbitrarily long value, but that exercises the sink in
-isolation, not the reachable server-controlled input; the two must be modeled
-and tested separately (section 8).
+isolation, not the reachable server-controlled input. A test that injects
+directly into `serverCommands` bypasses `MSG_ReadString`'s byte consumption,
+`I_CleanChar` adjustment and truncation and is likewise not a reachable-input
+test. The direct sink, the direct slot injection and the reachable wire path
+must be modeled and tested separately (section 8).
 
 ## 4. Design principles
 
@@ -187,7 +202,7 @@ acceptance state of the option, not of the A06 task.
 | HP1 | C1 | Reject or ignore client `v` names that fail a reference-validated grammar. The client currently length-bounds the name to 149 bytes (`I_strncpyz(text, v23, 150)`, `src/cgame_mp/cg_servercmds_mp.cpp:663-668`) but does not grammar-check it, unlike the server script path (`Dvar_IsValidName`, `src/universal/dvar.cpp:305-319`; used at `src/game_mp/g_client_script_cmd_mp.cpp:2135`, `:2190`). | Original servers or mods may legitimately send `v` names containing characters outside `[A-Za-z0-9_]`; enforcing the script grammar would drop those commands. | Captured `v` name grammar and full name set from both commercial references and a supported-mod fixture. | BLOCKED — do not enable without evidence. |
 | HP2 | C2 | Bound or deny new unknown-name dvar registrations in the optional mode (for example, require a permitting policy before `Dvar_RegisterString` creates a `DVAR_EXTERNAL` dvar). | Server-created dvars may be a supported mod feature; a bound could reject valid mod setup. | Evidence that the references create unknown-name dvars, with counts and names. | BLOCKED — do not enable without evidence. |
 | HP3 | C3 | Convert the 4096-dvar pool-cap `Com_Error(ERR_FATAL, ...)` (`src/universal/dvar.cpp:1568-1571`) into a bounded, non-fatal refusal, with callers handling the failure. The pool-cap branch only observes `dvarCount >= 4096` (`src/universal/dvar.cpp:1568`) and has no invalid-input discriminator, so it cannot separate a hostile unknown-name flood from a supported high-volume mod: the refusal would bind identically in both cases. Caller-safety tests alone therefore cannot qualify it for the default path. Without a demonstrated context-specific invalid-input discriminator or a reference-backed bound showing valid registration volume cannot reach the cap, the entire shared cap change is reference-dependent and belongs in the default-off optional mode. | Valid commercial/mod input could legitimately approach the cap; a bound that rejects it is incompatible. | Reference/mod evidence that valid registration volume cannot reach the cap, plus the caller-safety audit; or a demonstrated context-specific invalid-input discriminator that cannot match valid registration. | BLOCKED — do not enable without evidence. |
-| HP4 | C4 | Reconcile value-length handling at the **sink** — the existing-dvar 1023-byte store bound and the unknown-name script-string store — rather than for reachable `v` input. A server-controlled `v` value is already capped well below 1023 bytes by the earlier 1024-byte command slot (section 3), so a new `v` length bound is not a reachable hardening tradeoff; the reachable boundary to model and test is the command slot, not the sink. Any sink-level bound or normalization still changes at least one of the two existing direct-call paths. | For reachable `v` input, none: the command slot already bounded it. For direct sink callers, rejecting or normalizing a long value can change behavior relative to the two existing paths. | Maximum value lengths per dvar type and path for both references, with direct-sink tests and reachable-network-input tests recorded separately (section 8). | BLOCKED — sink-level change; do not enable without evidence. |
+| HP4 | C4 | Reconcile value-length handling at the **sink** — the existing-dvar 1023-byte store bound and the unknown-name script-string store — rather than for reachable `v` input. A server-controlled `v` value is already capped at 1023 bytes by the upstream `MSG_ReadString` wire reader and the subsequent non-narrowing command-slot copy (section 3), so a new `v` length bound is not a reachable hardening tradeoff; the reachable boundary to model and test is the wire string reader plus the command slot, not the sink. Any sink-level bound or normalization still changes at least one of the two existing direct-call paths. | For reachable `v` input, none: the upstream wire string reader already bounded it. For direct sink callers, rejecting or normalizing a long value can change behavior relative to the two existing paths. | Maximum value lengths per dvar type and path for both references, with direct-sink tests and reachable-network-input tests recorded separately (section 8). | BLOCKED — sink-level change; do not enable without evidence. |
 | HP5 | C5 | Enforce a defined `hud_drawHud` range in every build instead of relying on `MyAssertHandler`, which is empty in a non-PURE Release build (`src/cgame_mp/cg_servercmds_mp.cpp:1389-1400`; assert policy `src/universal/assertive.cpp:643-691`). Options: clamp, ignore out-of-range, or reject. | Clamping or rejecting changes `cgameGlob->drawHud` for a value the original client may have assigned verbatim. | Reference behavior for `hud_drawHud` values `0`, `1`, `>1`, negative and non-numeric, per build configuration. | BLOCKED — do not enable without evidence. |
 | HP6 | C6 | Define deterministic handling of a `v` command with an **odd payload count** (arguments after the verb; equivalently an even total `Cmd_Argc`) that leaves a trailing name with no value, instead of silently reading an empty value for it (loop `for (i = 1; i < Cmd_Argc(); i += 2)`, `src/cgame_mp/cg_servercmds_mp.cpp:663-670`). | The original client may tolerate the odd payload and apply a partial command; changing the outcome can diverge. | Reference behavior for a `v` command with an odd payload count (even total `Cmd_Argc`). | BLOCKED — do not enable without evidence. |
 | HP7 | C7 | Keep the existing domain rejection and enum reset fallback; do not tighten domain behavior in the optional mode without evidence. | Any tightened domain check would reject values the reference accepts. | Domain behavior captured from both references. | NO CHANGE PROPOSED — existing behavior retained. |
@@ -203,7 +218,9 @@ mistaken for open findings):
 - The existing-dvar string store is already bounded to 1023 payload bytes plus
   the NUL (`I_strncpyz(buf, string, 1024)`, `src/universal/dvar.cpp:2607`).
 - The server-controlled `v` command is already bounded **before** tokenization:
-  `CL_ParseCommandString` copies the complete command into a 1024-byte
+  `MSG_ReadString` consumes the wire string and stores at most the first 1024
+  bytes, forcing `string[1023] = 0` (`src/qcommon/msg_mp.cpp:484-501`), and
+  `CL_ParseCommandString` then copies that result into a 1024-byte
   `serverCommands` slot (`I_strncpyz(..., 1024)`,
   `src/client_mp/cl_parse_mp.cpp:1192-1205`; `src/client_mp/client_mp.h:187`),
   leaving at most 1023 bytes for verb, name, separators and value together, so
@@ -219,10 +236,10 @@ compatibility contract in [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md).
 
 | ID | Tradeoff | Protections | Blocker statement |
 |---|---|---|---|
-| T1 | Name-grammar enforcement may reject valid retail or mod `v` names. | HP1, HP2 | Cannot accept until both references' `v` name sets are captured and shown to satisfy the grammar for every valid command. |
+| T1 | Name-grammar enforcement may reject valid retail or mod `v` names. | HP1 | Cannot accept until both references' `v` name sets are captured and shown to satisfy the grammar for every valid command. |
 | T2 | Bounding unknown-name registrations may reject a supported mod feature. | HP2 | Cannot accept until reference/mod evidence shows whether server-created dvars are part of valid behavior and at what volume. |
 | T3 | Replacing the fatal pool-cap with a graceful refusal requires a caller-safety audit (callers may assume registration always succeeds). Reproducing a fatal outcome is not a compatibility requirement in itself (invariant 4), but the pool-cap branch only observes `dvarCount >= 4096` and has no invalid-input discriminator: it cannot distinguish a hostile unknown-name flood from a supported high-volume mod, so a refusal binds both. The cap change is therefore reference-dependent, not eligible default hardening until a discriminator or reference-backed bound exists. | HP3 | Cannot accept until reference/mod registration volume is shown not to reach the cap, or a context-specific invalid-input discriminator is demonstrated; the caller-safety audit is also required. |
-| T4 | A reachable server-controlled `v` value cannot exceed the existing-dvar 1023-byte store bound because `CL_ParseCommandString` truncates the whole command into a 1024-byte slot first (section 3), so a new `v` length bound is not a reachable tradeoff. A sink-level value-length bound or normalization still alters at least one of the two existing direct-call paths, and direct-sink tests must not be presented as reachable network behavior. | HP4 | Cannot accept a sink-level change until reference value lengths per path are captured, with direct-sink and reachable-network-input evidence recorded separately. |
+| T4 | A reachable server-controlled `v` value cannot exceed the existing-dvar 1023-byte store bound because `MSG_ReadString` first consumes the wire string and stores at most 1024 bytes (forcing `string[1023] = 0`), and the later `CL_ParseCommandString` `I_strncpyz` copy is non-narrowing (section 3), so a new `v` length bound is not a reachable tradeoff. A sink-level value-length bound or normalization still alters at least one of the two existing direct-call paths, and neither direct-sink tests nor direct `serverCommands` injection may be presented as reachable network behavior. | HP4 | Cannot accept a sink-level change until reference value lengths per path are captured, with direct-sink and reachable-network-input evidence recorded separately. |
 | T5 | Range handling for `hud_drawHud` changes client state relative to the reference. | HP5 | Cannot accept until reference behavior is captured for in-range and out-of-range inputs. |
 | T6 | `v` handling of an odd payload count (even total `Cmd_Argc`) changes a tolerated outcome. | HP6 | Cannot accept until reference behavior for an odd payload count (even total `Cmd_Argc`) is captured. |
 
@@ -304,13 +321,19 @@ whether a protection is reference-dependent or is eligible default hardening:
    audit and valid-input preservation evidence are the acceptance basis and do
    not require a commercial-reference run. For a reference-dependent protection,
    record the outcome against the reference outcome. The value-length row (I5)
-   must distinguish a **direct sink call** from **reachable network input**: the
-   reachable `v` path is already bounded by the 1024-byte command slot
-   (section 3), so a direct sink test that exceeds that bound does not model
-   reachable server behavior and must be reported separately. For HP6 the
-   corresponding row is I6, which is a `v` command with an **odd payload count**
-   (arguments after the verb; even total `Cmd_Argc`), matching the convention in
-   section 3.
+   must distinguish a **direct sink call**, **direct `serverCommands`
+   injection**, and **reachable network input**. The reachable `v` path is
+   bounded upstream by `MSG_ReadString`, which consumes the wire string, applies
+   `I_CleanChar` to each stored byte and forces `string[1023] = 0` before
+   `CL_ParseCommandString` copies the result into the command slot (section 3).
+   A reachable test must therefore exercise that wire reader (or parse a
+   `svc_serverCommand` message end to end) so byte consumption, `I_CleanChar`
+   adjustment and truncation are all covered; a direct sink test that exceeds
+   the store bound, or a test that injects directly into `serverCommands`, does
+   not model reachable server behavior and must be reported separately. For HP6
+   the corresponding row is I6, which is a `v` command with an **odd payload
+   count** (arguments after the verb; even total `Cmd_Argc`), matching the
+   convention in section 3.
 3. **Disconnect / reconnect / map transitions.** R1–R9 remain required with the
    optional mode on and off, including the `sv_cheats` cheat-state reset (R6),
    `mapname` init (R7), the `B`/`n` `cg_thirdPerson` reset (R8) and the initial
@@ -337,8 +360,8 @@ whether a protection is reference-dependent or is eligible default hardening:
 - What is each reference's behavior when the dvar pool is exhausted?
 - What value lengths do the references actually send per dvar type and path,
   and is the reachable `v` budget always below the existing-dvar 1023-byte store
-  bound once the 1024-byte command slot (`CL_ParseCommandString`) is accounted
-  for?
+  bound once the upstream `MSG_ReadString` wire reader and the non-narrowing
+  `CL_ParseCommandString` command-slot copy are accounted for?
 - Can any server-controlled path other than the `v` command deliver a value to
   `Dvar_SetFromStringByName`/`Dvar_SetFromStringFromSource` longer than the
   command-slot budget?
@@ -371,7 +394,8 @@ All paths are relative to the repository root at
 | Name grammar check | `src/universal/dvar.cpp:305-319` |
 | Unknown-name registration and pool-cap fatal | `src/universal/dvar.cpp:1556-1585`, `:1568-1571` |
 | Existing-dvar string bound | `src/universal/dvar.cpp:2600-2617` |
-| Client server-command slot (reachable `v` length bound) | `src/client_mp/client_mp.h:187`; `src/client_mp/cl_parse_mp.cpp:1192-1205` |
+| Upstream wire string reader (first reachable `v` truncation and `I_CleanChar` adjustment) | `src/qcommon/msg_mp.cpp:484-501`; `I_CleanChar` `src/universal/q_shared.cpp:518-524` |
+| Client server-command slot (second, non-narrowing `v` copy) | `src/client_mp/client_mp.h:187`; `src/client_mp/cl_parse_mp.cpp:1192-1205` |
 | cgame server-command execution from the slot | `src/client_mp/cl_cgame_mp.cpp:268-274` |
 | Domain check | `src/universal/dvar.cpp:493-543` |
 | Assert policy | `src/universal/assertive.cpp:643-691` |
