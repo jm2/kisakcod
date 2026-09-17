@@ -87,21 +87,25 @@ def _as_object(value: object, what: str, errors: list[str]) -> dict:
     return value
 
 
-def _validate_validation_levels(levels: list, errors: list[str]) -> None:
-    """Validate the editable validation-level set against the fixed names."""
-    # Non-string entries are reported and dropped before the set/membership
-    # checks: an unhashable entry (a list) used to raise TypeError from
-    # ``set(levels)`` instead of producing a schema error.
+def _string_levels(levels: list, errors: list[str]) -> list[str]:
+    """Return the string entries, reporting any non-string ones.
+
+    Non-string entries are reported and dropped before the set/membership
+    checks: an unhashable entry (a list) used to raise TypeError from
+    ``set(levels)`` instead of producing a schema error.
+    """
     non_string = [level for level in levels if not isinstance(level, str)]
     if non_string:
         errors.append(
             "enums.validation_levels entries must be strings "
             f"(got {non_string!r})"
         )
-        levels = [level for level in levels if isinstance(level, str)]
-    if not levels:
-        errors.append("enums.validation_levels must be a non-empty list")
-        return
+        return [level for level in levels if isinstance(level, str)]
+    return list(levels)
+
+
+def _check_level_coverage(levels: list[str], errors: list[str]) -> None:
+    """Reject duplicates, unknown levels and missing canonical levels."""
     if len(levels) != len(set(levels)):
         errors.append("enums.validation_levels must not contain duplicates")
     unknown = [level for level in levels if level not in VALIDATION_RANK]
@@ -119,6 +123,15 @@ def _validate_validation_levels(levels: list, errors: list[str]) -> None:
             "enums.validation_levels is missing canonical levels "
             f"{missing!r}"
         )
+
+
+def _validate_validation_levels(levels: list, errors: list[str]) -> None:
+    """Validate the editable validation-level set against the fixed names."""
+    strings = _string_levels(levels, errors)
+    if not strings:
+        errors.append("enums.validation_levels must be a non-empty list")
+        return
+    _check_level_coverage(strings, errors)
 
 
 def _validate_modes(modes: list, errors: list[str]) -> None:

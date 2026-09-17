@@ -138,6 +138,7 @@ jobs:
           python3 scripts/ci/test_capability_dashboard.py
           python3 scripts/ci/test_capability_dashboard_delivery.py
           python3 scripts/ci/test_capability_dashboard_inventory.py
+          python3 scripts/ci/test_capability_dashboard_manifest_types.py
           python3 scripts/ci/test_capability_dashboard_matrix.py
           python3 scripts/ci/test_capability_dashboard_self_hosted.py
           python3 scripts/ci/test_capability_dashboard_targets.py
