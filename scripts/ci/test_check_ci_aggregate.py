@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Negative and positive regression tests for check-ci-aggregate.py.
+"""
+Negative and positive regression tests for check-ci-aggregate.py.
 
 The aggregate-enrollment checker is a fail-closed CI gate, so its failure
 modes matter as much as its success path.  Each case below builds a small
@@ -18,6 +19,10 @@ branch-protection aggregate can silently stop protecting the build:
 * a `needs:` entry that references no real job,
 * duplicate needs entries, an empty needs list, and a missing aggregate,
 * an enforcement step that consumes the results but ignores non-success,
+* an enforcement step that silently skips one dependency's result while
+  consuming the rest (the middle-position-loss mutation: caught by
+  simulating a non-success result at every needs position, not only the
+  first and last),
 * an enforcement step that does not consume the results at all,
 * the #134 rework-review false-success mutations: a step-level `if: false`
   that makes GitHub skip the sole enforcement step, and step-level
@@ -43,7 +48,10 @@ Exits non-zero and prints the failing case names if any assertion fails.
 from __future__ import annotations
 
 import os
-import subprocess
+# subprocess is the only way to exercise the checker as a real process,
+# which is the contract under test (its exit status). The command is a
+# fixed interpreter plus this repository's own checked-in script.
+import subprocess  # nosec
 import sys
 import tempfile
 from typing import List, Optional
@@ -80,13 +88,37 @@ NONCONSUMING_ENFORCEMENT = """\
           exit 0
 """
 
+# Consumes every result but silently skips the second dependency's
+# result: the exact mutation the #134 rework review reproduced against a
+# checker that simulated only the first and last needs positions. A
+# checker must exercise a non-success result at EVERY needs position to
+# catch it.
+MIDDLE_IGNORING_ENFORCEMENT = """\
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "required results: $results"
+          fail=0
+          i=0
+          for r in $results; do
+            i=$((i + 1))
+            if [ "$i" -eq 2 ]; then
+              continue
+            fi
+            if [ "$r" != "success" ]; then
+              echo "required job result: $r" >&2
+              fail=1
+            fi
+          done
+          exit $fail
+"""
+
 
 def synthetic_workflow(needs: List[str],
                        jobs: Optional[List[str]] = None,
                        enforcement: str = GOOD_ENFORCEMENT,
                        include_aggregate: bool = True,
                        interject: str = "") -> str:
-    """Build a minimal workflow with the real file's shape and indentation.
+    """
+    Build a minimal workflow with the real file's shape and indentation.
 
     `interject` is spliced verbatim immediately before the aggregate block,
     so fixtures can place comments (any indentation) inside the jobs
@@ -157,7 +189,8 @@ TIMEOUT_LINE = "    timeout-minutes: 10\n"
 
 
 def insert_after_enforcement_name(workflow: str, insertion: str) -> str:
-    """Splice step-level lines directly after the enforcement step name.
+    """
+    Splice step-level lines directly after the enforcement step name.
 
     This is the exact position the #134 rework review used for its two
     reproduced false-success mutations against the real ci.yml.
@@ -167,7 +200,8 @@ def insert_after_enforcement_name(workflow: str, insertion: str) -> str:
 
 
 def append_after_run_block(workflow: str, insertion: str) -> str:
-    """Place step-level lines after the enforcement run block.
+    """
+    Place step-level lines after the enforcement run block.
 
     A mapping key may follow the `run: |` block, so this position is as
     valid YAML — and as effective against GitHub — as the one above.
@@ -181,7 +215,12 @@ def replace_aggregate_if(workflow: str, replacement: str) -> str:
 
 
 class Case:
+    """One synthetic workflow fixture and the checker exit it must yield."""
+
     def __init__(self, name: str, expect_rc: int, workflow: str) -> None:
+        """
+        Record the case name, expected checker exit status, and workflow.
+        """
         self.name = name
         self.expect_rc = expect_rc
         self.workflow = workflow
@@ -235,7 +274,7 @@ CASES: List[Case] = [
         synthetic_workflow(
             needs=["gate-a", "gate-b"],
             interject=("# prose comment at column zero\n"
-                       "  # indented note between jobs\n")),
+                       + "  # indented note between jobs\n")),
     ),
     # A flow-style job entry at job-key indentation is invisible to the
     # line parser, so it must fail closed instead of being swallowed.
@@ -301,6 +340,18 @@ CASES: List[Case] = [
         1,
         synthetic_workflow(needs=["gate-a", "gate-b"],
                            enforcement=NONCONSUMING_ENFORCEMENT),
+    ),
+    # A mutant enforcement script that skips the second dependency's
+    # result must fail: the checker simulates a non-success result at
+    # EVERY needs position, so the ignored middle position is exercised.
+    # A checker that sampled only the first and last positions accepted
+    # this exact script — the #134 rework review reproduction.
+    Case(
+        "middle_position_loss_fails",
+        1,
+        synthetic_workflow(needs=["gate-a", "gate-b", "gate-c"],
+                           jobs=["gate-a", "gate-b", "gate-c"],
+                           enforcement=MIDDLE_IGNORING_ENFORCEMENT),
     ),
     # --- workflow-control false-success mutations (#134 rework P2) ------
     # Step-level `if: false` directly after the enforcement step name (the
@@ -388,7 +439,12 @@ def run_case(case: Case, workflow_path: str,
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(workflow_text)
         command = [sys.executable, CHECKER, "--workflow", path]
-        proc = subprocess.run(command, capture_output=True, text=True)
+        # The checker under test is this repository's own checked-in
+        # script run against a fixture this process just wrote; a nonzero
+        # exit is the negative cases' expected outcome, so check=False is
+        # intentional — the exit status is the assertion.
+        proc = subprocess.run(  # nosec
+            command, capture_output=True, text=True, check=False)
         if proc.returncode != case.expect_rc:
             return ("%s: expected rc=%d, got rc=%d\n%s"
                     % (case.name, case.expect_rc, proc.returncode,

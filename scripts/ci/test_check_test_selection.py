@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Negative and positive regression tests for check-test-selection.py.
+"""
+Negative and positive regression tests for check-test-selection.py.
 
 The checker is a fail-closed CI gate, so its failure modes matter as much as
 its success path.  Each case below builds a small synthetic manifest in a
@@ -24,7 +25,10 @@ Exits non-zero and prints the failing case names if any assertion fails.
 from __future__ import annotations
 
 import os
-import subprocess
+# subprocess is the only way to exercise the checker as a real process,
+# which is the contract under test (its exit status). The command is a
+# fixed interpreter plus this repository's own checked-in script.
+import subprocess  # nosec
 import sys
 import tempfile
 from typing import List, Optional
@@ -34,7 +38,12 @@ CHECKER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 
 class Case:
+    """One synthetic manifest set and the checker exit it must yield."""
+
     def __init__(self, name: str, expect_rc: int, **files: str) -> None:
+        """
+        Record the case name, expected checker exit status, and manifests.
+        """
         self.name = name
         self.expect_rc = expect_rc
         self.files = files
@@ -125,15 +134,15 @@ CASES: List[Case] = [
         absent="C\treason-c\n",
         discovered="A\nB\n",
         executed=("1/2 Test #1: A ................................"
-                  "***Not Run (Disabled)   0.00 sec\n"
-                  "    Start 2: B\n"
-                  "2/2 Test #2: B ................................"
-                  "   Passed    0.01 sec\n"
-                  "\n"
-                  "100% tests passed, 0 tests failed out of 1\n"
-                  "\n"
-                  "The following tests did not run:\n"
-                  "\t  1 - A (Disabled)\n"),
+                  + "***Not Run (Disabled)   0.00 sec\n"
+                  + "    Start 2: B\n"
+                  + "2/2 Test #2: B ................................"
+                  + "   Passed    0.01 sec\n"
+                  + "\n"
+                  + "100% tests passed, 0 tests failed out of 1\n"
+                  + "\n"
+                  + "The following tests did not run:\n"
+                  + "\t  1 - A (Disabled)\n"),
         enforce="1",
     ),
     # A selected test whose dependency failed reports "***Not Run (Depends
@@ -147,9 +156,9 @@ CASES: List[Case] = [
         absent="C\treason-c\n",
         discovered="A\nB\n",
         executed=("1/2 Test #1: A ................................"
-                  "   Passed    0.01 sec\n"
-                  "2/2 Test #2: B ................................"
-                  "***Not Run (Depends on failed test)   0.00 sec\n"),
+                  + "   Passed    0.01 sec\n"
+                  + "2/2 Test #2: B ................................"
+                  + "***Not Run (Depends on failed test)   0.00 sec\n"),
         enforce="1",
     ),
     # A skipped selected test (SKIP_RETURN_CODE) executes no test body.
@@ -162,9 +171,9 @@ CASES: List[Case] = [
         absent="C\treason-c\n",
         discovered="A\nB\n",
         executed=("1/2 Test #1: A ................................"
-                  "***Skipped   0.00 sec\n"
-                  "2/2 Test #2: B ................................"
-                  "   Passed    0.01 sec\n"),
+                  + "***Skipped   0.00 sec\n"
+                  + "2/2 Test #2: B ................................"
+                  + "   Passed    0.01 sec\n"),
         enforce="1",
     ),
     # A result line without a recognizable status is unattributable; the
@@ -178,9 +187,9 @@ CASES: List[Case] = [
         absent="C\treason-c\n",
         discovered="A\nB\n",
         executed=("1/2 Test #1: A ................................"
-                  "   0.01 sec\n"
-                  "2/2 Test #2: B ................................"
-                  "   Passed    0.01 sec\n"),
+                  + "   0.01 sec\n"
+                  + "2/2 Test #2: B ................................"
+                  + "   Passed    0.01 sec\n"),
         enforce="1",
     ),
     # Control for the disabled case: the same manifest with every selected
@@ -194,9 +203,9 @@ CASES: List[Case] = [
         absent="C\treason-c\n",
         discovered="A\nB\n",
         executed=("1/2 Test #1: A ................................"
-                  "   Passed    0.01 sec\n"
-                  "2/2 Test #2: B ................................"
-                  "   Passed    0.01 sec\n"),
+                  + "   Passed    0.01 sec\n"
+                  + "2/2 Test #2: B ................................"
+                  + "   Passed    0.01 sec\n"),
         enforce="1",
     ),
     # A not-enrolled exclusion without a reason column must fail.
@@ -293,7 +302,12 @@ def run_case(case: Case) -> Optional[str]:
         if case.files.get("enforce"):
             command.append("--enforce-platform-absence")
 
-        proc = subprocess.run(command, capture_output=True, text=True)
+        # The checker under test is this repository's own checked-in
+        # script run against fixtures this process just wrote; a nonzero
+        # exit is the negative cases' expected outcome, so check=False is
+        # intentional — the exit status is the assertion.
+        proc = subprocess.run(  # nosec
+            command, capture_output=True, text=True, check=False)
         if proc.returncode != case.expect_rc:
             return ("%s: expected rc=%d, got rc=%d\n%s"
                     % (case.name, case.expect_rc, proc.returncode,

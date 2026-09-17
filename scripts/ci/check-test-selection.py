@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fail-closed checker for per-profile CTest selection manifests.
+"""
+Fail-closed checker for per-profile CTest selection manifests.
 
 The hosted jobs historically selected their tests with a single inline ``ctest
 -R`` regular expression.  A name that stopped matching, a target that stopped
@@ -67,7 +68,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from typing import Iterable, List, Sequence, Set, Tuple
+from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
 # Matches the discovery listing of ``ctest -N`` ("  Test  #4: name").
 # Discovery-only: a listing line says a test exists, never that it ran.
@@ -87,6 +88,8 @@ SKIPPED_MARKER = "***skipped"
 # A bare test name; used to accept a plain name-list discovery file.
 TEST_NAME = re.compile(r"[A-Za-z0-9_.\-]+")
 
+Reasoned = List[Tuple[str, str]]
+
 
 def read_name_file(path: str) -> List[str]:
     """Read one test name per line, ignoring blanks and comments."""
@@ -99,9 +102,9 @@ def read_name_file(path: str) -> List[str]:
     return names
 
 
-def read_reasoned(path: str, kind: str) -> List[Tuple[str, str]]:
+def read_reasoned(path: str, kind: str) -> Reasoned:
     """Read ``name<TAB>reason`` entries, rejecting a missing reason column."""
-    entries: List[Tuple[str, str]] = []
+    entries: Reasoned = []
     with open(path, encoding="utf-8") as handle:
         for lineno, raw in enumerate(handle, start=1):
             line = raw.rstrip("\n")
@@ -118,7 +121,8 @@ def read_reasoned(path: str, kind: str) -> List[Tuple[str, str]]:
 
 
 def read_discovery(path: str) -> List[str]:
-    """Read a plain name list or a raw ``ctest -N`` listing.
+    """
+    Read a plain name list or a raw ``ctest -N`` listing.
 
     Discovery-only: this parser answers "which tests exist", never "which
     tests ran".  Use :func:`read_execution` for execution evidence.
@@ -141,7 +145,8 @@ def read_discovery(path: str) -> List[str]:
 
 
 def read_execution(path: str) -> List[str]:
-    """Read a raw ``ctest`` run report; return the tests that actually ran.
+    """
+    Read a raw ``ctest`` run report; return the tests that actually ran.
 
     A per-test result line counts as execution evidence only when its
     status is affirmative (``Passed``, or a ran-and-failed ``Failed`` /
@@ -225,49 +230,52 @@ def check_manifests(inventory: Set[str], selected: Set[str],
     return failures
 
 
-def check_discovery(scope: str, inventory: Set[str], selected: Set[str],
-                    excluded: Set[str], absent: Set[str],
-                    discovered: Set[str], executed: Set[str],
-                    enforce_absence: bool) -> int:
-    """Check discovery/execution against the classification."""
+def check_platform_profile(selected: Set[str], excluded: Set[str],
+                           absent: Set[str], discovered: Set[str]) -> int:
+    """
+    Check the platform-profile discovery invariants.
+
+    Every selected test must be discovered (a dead selection silently did
+    not run), every platform-absent test must be undiscovered, every
+    excluded test must still be discovered, and nothing outside the
+    selected/justified-excluded sets may be discovered.
+    """
     failures = report_violation(
-        discovered - inventory,
-        "discovered tests missing from the inventory (classify them as "
-        "selected, excluded, or platform-absent)",
+        selected - discovered,
+        "selected tests not discovered by the platform (dead selection: "
+        "they silently did not run; classify them platform-absent if the "
+        "backend does not register them)",
     )
-    if scope == "exact":
-        failures += report_violation(
-            inventory - discovered,
-            "inventory tests not discovered by ctest (remove them from the "
-            "inventory or restore the test)",
-        )
-    if enforce_absence:
-        failures += report_violation(
-            selected - discovered,
-            "selected tests not discovered by the platform (dead selection: "
-            "they silently did not run; classify them platform-absent if the "
-            "backend does not register them)",
-        )
-        failures += report_violation(
-            absent & discovered,
-            "platform-absent tests that were discovered after all (they are "
-            "misclassified)",
-        )
-        failures += report_violation(
-            excluded - discovered,
-            "excluded (not-enrolled) tests that were not discovered (classify "
-            "them platform-absent instead)",
-        )
-        failures += report_violation(
-            discovered - selected - excluded,
-            "discovered tests neither selected nor justified-excluded",
-        )
-    if executed is None:
-        return failures
-    # With --enforce-platform-absence every selected test is already known to
-    # be discovered, so the expected executed set is the whole selection.
-    expected = selected if enforce_absence else (selected & discovered)
     failures += report_violation(
+        absent & discovered,
+        "platform-absent tests that were discovered after all (they are "
+        "misclassified)",
+    )
+    failures += report_violation(
+        excluded - discovered,
+        "excluded (not-enrolled) tests that were not discovered (classify "
+        "them platform-absent instead)",
+    )
+    failures += report_violation(
+        discovered - selected - excluded,
+        "discovered tests neither selected nor justified-excluded",
+    )
+    return failures
+
+
+def check_execution(selected: Set[str], discovered: Set[str],
+                    executed: Set[str], enforce_absence: bool) -> int:
+    """
+    Check the executed evidence against the selection.
+
+    Nothing outside the selection may run and a selection that runs
+    nothing proves nothing.  With --enforce-platform-absence every
+    selected test is already known to be discovered, so the expected
+    executed set is the whole selection; otherwise only selected tests
+    that were also discovered are expected to have executed.
+    """
+    expected = selected if enforce_absence else (selected & discovered)
+    failures = report_violation(
         executed - expected, "executed tests outside the selected set")
     failures += report_violation(
         expected - executed,
@@ -284,25 +292,58 @@ def check_discovery(scope: str, inventory: Set[str], selected: Set[str],
     return failures
 
 
-def check_run(args: argparse.Namespace) -> int:
-    """Run every check and return the number of violations found."""
+def check_discovery(scope: str, inventory: Set[str], selected: Set[str],
+                    excluded: Set[str], absent: Set[str],
+                    discovered: Set[str], executed: Optional[Set[str]],
+                    enforce_absence: bool) -> int:
+    """Check discovery/execution against the classification."""
+    failures = report_violation(
+        discovered - inventory,
+        "discovered tests missing from the inventory (classify them as "
+        "selected, excluded, or platform-absent)",
+    )
+    if scope == "exact":
+        failures += report_violation(
+            inventory - discovered,
+            "inventory tests not discovered by ctest (remove them from the "
+            "inventory or restore the test)",
+        )
+    if enforce_absence:
+        failures += check_platform_profile(selected, excluded, absent,
+                                           discovered)
+    if executed is None:
+        return failures
+    failures += check_execution(selected, discovered, executed,
+                                enforce_absence)
+    return failures
+
+
+def read_manifests(args: argparse.Namespace) -> Tuple[
+        List[str], List[str], Reasoned, Reasoned]:
+    """Read every manifest named on the command line."""
     inventory_list = read_name_file(args.inventory)
     selected_list = read_name_file(args.selected)
     exclusion_entries = read_reasoned(args.excluded, "exclusion")
     absence_entries = (
         read_reasoned(args.absent, "platform-absence") if args.absent else []
     )
-    excluded_list = [name for name, _ in exclusion_entries]
-    absent_list = [name for name, _ in absence_entries]
+    return inventory_list, selected_list, exclusion_entries, absence_entries
 
+
+def check_entry_quality(inventory_list: List[str], selected_list: List[str],
+                        exclusion_entries: Reasoned,
+                        absence_entries: Reasoned) -> int:
+    """Fail closed on duplicate entries and missing reason columns."""
     failures = report_violation(
         duplicates(inventory_list), "duplicate inventory entries")
     failures += report_violation(
         duplicates(selected_list), "duplicate selected entries")
     failures += report_violation(
-        duplicates(excluded_list), "duplicate excluded entries")
+        duplicates([name for name, _ in exclusion_entries]),
+        "duplicate excluded entries")
     failures += report_violation(
-        duplicates(absent_list), "duplicate platform-absent entries")
+        duplicates([name for name, _ in absence_entries]),
+        "duplicate platform-absent entries")
     failures += report_violation(
         {name for name, reason in exclusion_entries if not reason},
         "excluded tests without a reason",
@@ -311,6 +352,42 @@ def check_run(args: argparse.Namespace) -> int:
         {name for name, reason in absence_entries if not reason},
         "platform-absent tests without a reason",
     )
+    return failures
+
+
+def check_run_evidence(args: argparse.Namespace, inventory: Set[str],
+                       selected: Set[str], excluded: Set[str],
+                       absent: Set[str]) -> int:
+    """
+    Validate the flag combinations and check discovery/execution evidence.
+
+    Raises when the flags are mutually inconsistent (--executed without
+    --discovered, platform enforcement without an --absent manifest);
+    returns 0 when no discovery evidence was requested, otherwise the
+    number of discovery/execution violations.
+    """
+    if args.executed and not args.discovered:
+        raise ValueError("--executed requires --discovered")
+    if args.enforce_platform_absence and not args.absent:
+        raise ValueError("--enforce-platform-absence requires --absent")
+    if not args.discovered:
+        return 0
+    discovered = set(read_discovery(args.discovered))
+    executed = set(read_execution(args.executed)) if args.executed else None
+    return check_discovery(
+        args.discovered_scope, inventory, selected, excluded, absent,
+        discovered, executed, args.enforce_platform_absence)
+
+
+def check_run(args: argparse.Namespace) -> int:
+    """Run every check and return the number of violations found."""
+    inventory_list, selected_list, exclusion_entries, absence_entries = (
+        read_manifests(args))
+    excluded_list = [name for name, _ in exclusion_entries]
+    absent_list = [name for name, _ in absence_entries]
+
+    failures = check_entry_quality(
+        inventory_list, selected_list, exclusion_entries, absence_entries)
 
     inventory = set(inventory_list)
     selected = set(selected_list)
@@ -326,16 +403,8 @@ def check_run(args: argparse.Namespace) -> int:
         )
         failures += 1
 
-    if args.executed and not args.discovered:
-        raise ValueError("--executed requires --discovered")
-    if args.enforce_platform_absence and not args.absent:
-        raise ValueError("--enforce-platform-absence requires --absent")
-    if args.discovered:
-        discovered = set(read_discovery(args.discovered))
-        executed = set(read_execution(args.executed)) if args.executed else None
-        failures += check_discovery(
-            args.discovered_scope, inventory, selected, excluded, absent,
-            discovered, executed, args.enforce_platform_absence)
+    failures += check_run_evidence(args, inventory, selected, excluded,
+                                   absent)
 
     if args.emit_regex:
         with open(args.emit_regex, "w", encoding="utf-8") as handle:

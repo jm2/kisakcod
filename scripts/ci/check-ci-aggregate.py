@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fail closed on required-gate enrollment drift in .github/workflows/ci.yml.
+"""
+Fail closed on required-gate enrollment drift in .github/workflows/ci.yml.
 
 `scaffolding-complete` is the single branch-protection aggregate for CI: the
 workflow promises that it depends on EVERY other job in the workflow, and its
@@ -34,8 +35,10 @@ rejects any `if:` / `continue-on-error:` key in that step's mapping
 (outside the run block, where such text is shell), and executes the
 enforcement script against synthetic result vectors: an all-success run
 must exit 0, and each non-success kind (failure / skipped / cancelled)
-must exit non-zero wherever it appears, so a failed required gate cannot
-yield aggregate success.
+must exit non-zero at EVERY needs position, so no dependency can be
+silently ignored — a checker that sampled only the first and last
+positions accepted a mutant enforcement script that skipped the second
+dependency's result (#134 rework review).
 
 Run directly:
 
@@ -50,7 +53,11 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import subprocess
+import shutil
+# subprocess is required to execute the enforcement script under
+# simulation; the invocation below is list-form with an absolute
+# interpreter path and a private script file (see simulate).
+import subprocess  # nosec
 import sys
 import tempfile
 
@@ -88,11 +95,36 @@ def read_text(path: str) -> str:
         with open(path, "r", encoding="utf-8") as handle:
             return handle.read()
     except OSError as exc:
-        raise CheckError("cannot read workflow %s: %s" % (path, exc))
+        raise CheckError("cannot read workflow %s: %s" % (path, exc)) from exc
+
+
+def jobs_section_start(lines: list) -> int:
+    """Index one past the top-level `jobs:` key, or fail closed."""
+    for index, line in enumerate(lines):
+        if line.rstrip() == "jobs:":
+            return index + 1
+    raise CheckError("workflow has no top-level `jobs:` section")
+
+
+def begin_job(line: str, order: list, bodies: dict) -> str:
+    """Start a new two-space job mapping entry, refusing invisible syntax."""
+    match = JOB_KEY.match(line)
+    if match is None:
+        raise CheckError(
+            "unsupported job entry at two-space indent (flow style, "
+            "quoted key, or inline value would be invisible to the "
+            "exact-needs check): %r" % line.strip())
+    name = match.group(1)
+    if name in bodies:
+        raise CheckError("duplicate job key: %s" % name)
+    order.append(name)
+    bodies[name] = []
+    return name
 
 
 def split_jobs(text: str) -> dict:
-    """Return {job_id: job_body} for the top-level `jobs:` section.
+    """
+    Return {job_id: job_body} for the top-level `jobs:` section.
 
     Only two-space-indented `key:` lines inside the `jobs:` block are job
     ids; everything else (steps, strategy, matrix entries) is nested deeper
@@ -111,17 +143,10 @@ def split_jobs(text: str) -> dict:
     still run it.
     """
     lines = text.splitlines()
-    start = None
-    for index, line in enumerate(lines):
-        if line.rstrip() == "jobs:":
-            start = index + 1
-            break
-    if start is None:
-        raise CheckError("workflow has no top-level `jobs:` section")
     order = []
     bodies = {}
     current = None
-    for line in lines[start:]:
+    for line in lines[jobs_section_start(lines):]:
         if not line.strip() or line.lstrip().startswith("#"):
             # Transparent for section boundaries, but kept in the current
             # job body so downstream extraction sees the file verbatim.
@@ -136,17 +161,7 @@ def split_jobs(text: str) -> dict:
             break  # dedent below the jobs section: next top-level key
         indent = len(line) - len(line.lstrip(" "))
         if indent == 2:
-            match = JOB_KEY.match(line)
-            if match is None:
-                raise CheckError(
-                    "unsupported job entry at two-space indent (flow style, "
-                    "quoted key, or inline value would be invisible to the "
-                    "exact-needs check): %r" % line.strip())
-            current = match.group(1)
-            if current in bodies:
-                raise CheckError("duplicate job key: %s" % current)
-            order.append(current)
-            bodies[current] = []
+            current = begin_job(line, order, bodies)
         elif current is None:
             raise CheckError(
                 "content before the first job key inside `jobs:` (refusing "
@@ -177,8 +192,41 @@ def extract_needs(job_body: str) -> list:
     raise CheckError("%s has no `needs:` list" % AGGREGATE_JOB)
 
 
+def find_run_marker(lines: list, name_index: int) -> int:
+    """Index of the enforcement step's literal `run: |` line."""
+    for offset in range(name_index + 1, min(name_index + 6, len(lines))):
+        if re.match(r"^\s+run: \|\s*$", lines[offset]):
+            return offset
+    raise CheckError(
+        "the %s step has no literal `run: |` block" % ENFORCEMENT_STEP_NAME)
+
+
+def dedent_run_block(lines: list, run_index: int) -> str:
+    """Extract and dedent the run block's shell text, failing on empty."""
+    run_line = lines[run_index]
+    base_indent = len(run_line) - len(run_line.lstrip())
+    block = []
+    for candidate in lines[run_index + 1:]:
+        if not candidate.strip():
+            block.append("")
+            continue
+        if len(candidate) - len(candidate.lstrip()) <= base_indent:
+            break
+        block.append(candidate)
+    while block and not block[-1].strip():
+        block.pop()
+    script = "\n".join(
+        line[min(base_indent + 2, len(line)):] if line.strip()
+        else "" for line in block)
+    if not script.strip():
+        raise CheckError(
+            "the %s step's run block is empty" % ENFORCEMENT_STEP_NAME)
+    return script
+
+
 def extract_enforcement(job_body: str) -> str:
-    """Extract the aggregate enforcement step's shell script.
+    """
+    Extract the aggregate enforcement step's shell script.
 
     Also fails closed when the step mapping carries a skip or
     error-tolerance control (`if:`, `continue-on-error:`) anywhere outside
@@ -188,39 +236,16 @@ def extract_enforcement(job_body: str) -> str:
     """
     lines = job_body.splitlines()
     for index, line in enumerate(lines):
-        if "- name:" in line and ENFORCEMENT_STEP_NAME in line:
-            step_indent = len(line) - len(line.lstrip(" "))
-            run_index = None
-            for offset in range(index + 1, min(index + 6, len(lines))):
-                if re.match(r"^\s+run: \|\s*$", lines[offset]):
-                    run_index = offset
-                    break
-            if run_index is None:
-                raise CheckError(
-                    "the %s step has no literal `run: |` block"
-                    % ENFORCEMENT_STEP_NAME)
-            run_line = lines[run_index]
-            base_indent = len(run_line) - len(run_line.lstrip())
-            block = []
-            for candidate in lines[run_index + 1:]:
-                if not candidate.strip():
-                    block.append("")
-                    continue
-                if len(candidate) - len(candidate.lstrip()) <= base_indent:
-                    break
-                block.append(candidate)
-            while block and not block[-1].strip():
-                block.pop()
-            script = "\n".join(
-                line[min(base_indent + 2, len(line)):] if line.strip()
-                else "" for line in block)
-            if not script.strip():
-                raise CheckError(
-                    "the %s step's run block is empty"
-                    % ENFORCEMENT_STEP_NAME)
-            reject_enforcement_step_controls(
-                lines, index, run_index, base_indent, step_indent)
-            return script
+        if "- name:" not in line or ENFORCEMENT_STEP_NAME not in line:
+            continue
+        step_indent = len(line) - len(line.lstrip(" "))
+        run_index = find_run_marker(lines, index)
+        script = dedent_run_block(lines, run_index)
+        run_line = lines[run_index]
+        base_indent = len(run_line) - len(run_line.lstrip())
+        reject_enforcement_step_controls(
+            lines, index, run_index, base_indent, step_indent)
+        return script
     raise CheckError(
         "no `%s` step found in %s" % (ENFORCEMENT_STEP_NAME, AGGREGATE_JOB))
 
@@ -238,7 +263,8 @@ def run_block_end(lines: list, run_index: int, base_indent: int) -> int:
 def reject_enforcement_step_controls(lines: list, name_index: int,
                                      run_index: int, base_indent: int,
                                      step_indent: int) -> None:
-    """Fail closed on skip/error-tolerance controls on the enforcement step.
+    """
+    Fail closed on skip/error-tolerance controls on the enforcement step.
 
     GitHub skips a step whose `if:` evaluates false and ignores a step's
     failure under `continue-on-error: true`. Either control on the sole
@@ -270,7 +296,8 @@ def reject_enforcement_step_controls(lines: list, name_index: int,
 
 
 def check_aggregate_job_controls(job_body: str) -> None:
-    """Pin the aggregate job's own skip/error-tolerance controls.
+    """
+    Pin the aggregate job's own skip/error-tolerance controls.
 
     The aggregate must run when a dependency fails — otherwise GitHub
     skips the job (default `needs` semantics) and the skipped required
@@ -308,7 +335,16 @@ def check_aggregate_job_controls(job_body: str) -> None:
                                         AGGREGATE_JOB_IF))
 
 
-def simulate(script: str, results: list) -> int:
+def resolve_bash() -> str:
+    """Return the absolute path of a bash interpreter, failing closed."""
+    bash = shutil.which("bash")
+    if bash is None:
+        raise CheckError(
+            "no bash interpreter found for the enforcement simulation")
+    return bash
+
+
+def simulate(bash: str, script: str, results: list) -> int:
     """Execute the enforcement script with a synthetic result vector."""
     substituted = JOIN_EXPRESSION.sub(" ".join(results), script, count=1)
     descriptor, path = tempfile.mkstemp(
@@ -317,27 +353,33 @@ def simulate(script: str, results: list) -> int:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(substituted)
         try:
-            completed = subprocess.run(
-                ["bash", path], capture_output=True, text=True,
+            # The simulated script's exit status is the result under test:
+            # an intentional nonzero outcome is data, never a checker
+            # error, so `check=False` is required. The invocation is safe
+            # by construction: list-form argv, an absolute interpreter
+            # path from resolve_bash(), and a private mkstemp file this
+            # process just wrote — no shell, no untrusted input.
+            completed = subprocess.run(  # nosec
+                [bash, path], capture_output=True, text=True, check=False,
                 timeout=SIMULATION_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             raise CheckError(
                 "enforcement simulation timed out after %ds"
-                % SIMULATION_TIMEOUT_SECONDS)
+                % SIMULATION_TIMEOUT_SECONDS) from exc
         return completed.returncode
     finally:
         os.unlink(path)
 
 
-def check_workflow(path: str) -> str:
-    """Validate enrollment, job/step controls, and fail-closed enforcement."""
-    jobs = split_jobs(read_text(path))
-    if AGGREGATE_JOB not in jobs:
-        raise CheckError("no `%s` aggregate job in the workflow"
-                         % AGGREGATE_JOB)
-    check_aggregate_job_controls(jobs[AGGREGATE_JOB])
+def check_enrollment(jobs: dict, needs: list) -> None:
+    """
+    Fail closed unless the aggregate's needs list equals the job set.
+
+    Missing entries let a gate fail without failing the aggregate, extras
+    reference no real job and protect nothing, and duplicates do not make
+    a gate "more required" — all three are drift and all three fail.
+    """
     others = set(jobs) - {AGGREGATE_JOB}
-    needs = extract_needs(jobs[AGGREGATE_JOB])
     need_set = set(needs)
     duplicates = sorted(name for name in need_set
                         if needs.count(name) > 1)
@@ -354,25 +396,49 @@ def check_workflow(path: str) -> str:
     if extra:
         raise CheckError("%s.needs entries with no such job: %s"
                          % (AGGREGATE_JOB, ", ".join(extra)))
+
+
+def verify_enforcement(bash: str, script: str, needs: list) -> int:
+    """
+    Simulate the enforcement script against every synthetic result vector.
+
+    The all-success vector must pass, and every non-success kind must fail
+    the aggregate at EVERY needs position: a checker that sampled only the
+    first and last positions accepted a mutant enforcement script that
+    skipped the second dependency's result (#134 rework review). Returns
+    the number of simulations executed.
+    """
+    simulations = 1
+    if simulate(bash, script, ["success"] * len(needs)) != 0:
+        raise CheckError(
+            "the enforcement step fails an all-success aggregate run")
+    for kind in NON_SUCCESS_KINDS:
+        for position in range(len(needs)):
+            vector = ["success"] * len(needs)
+            vector[position] = kind
+            if simulate(bash, script, vector) == 0:
+                raise CheckError(
+                    "the aggregate succeeds while a required gate is %s "
+                    "(needs position %d)" % (kind, position))
+            simulations += 1
+    return simulations
+
+
+def check_workflow(path: str) -> str:
+    """Validate enrollment, job/step controls, and fail-closed enforcement."""
+    jobs = split_jobs(read_text(path))
+    if AGGREGATE_JOB not in jobs:
+        raise CheckError("no `%s` aggregate job in the workflow"
+                         % AGGREGATE_JOB)
+    check_aggregate_job_controls(jobs[AGGREGATE_JOB])
+    needs = extract_needs(jobs[AGGREGATE_JOB])
+    check_enrollment(jobs, needs)
     script = extract_enforcement(jobs[AGGREGATE_JOB])
     if not JOIN_EXPRESSION.search(script):
         raise CheckError(
             "the enforcement step does not consume every needs result via "
             "join(needs.*.result)")
-    simulations = 0
-    if simulate(script, ["success"] * len(needs)) != 0:
-        raise CheckError(
-            "the enforcement step fails an all-success aggregate run")
-    simulations += 1
-    for kind in NON_SUCCESS_KINDS:
-        for position in sorted({0, len(needs) - 1}):
-            vector = ["success"] * len(needs)
-            vector[position] = kind
-            if simulate(script, vector) == 0:
-                raise CheckError(
-                    "the aggregate succeeds while a required gate is %s "
-                    "(needs position %d)" % (kind, position))
-            simulations += 1
+    simulations = verify_enforcement(resolve_bash(), script, needs)
     return ("OK: %s enrolls all %d other jobs; job condition pinned, "
             "enforcement step unconditional; enforcement verified "
             "fail-closed (%d simulations)."
