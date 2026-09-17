@@ -10,6 +10,11 @@ branch-protection aggregate can silently stop protecting the build:
 * a required gate dropped from `scaffolding-complete.needs` (the case the
   #134 rework review found for the sanitizer and checker jobs),
 * a job that exists but is not enrolled anywhere,
+* a job concealed from the enrollment comparison by an unindented YAML
+  comment (the #134 re-review false-success reproduction: comments are
+  transparent to the jobs mapping, so the hidden gate still fails),
+* syntax the jobs parser cannot faithfully attribute (flow-style or
+  tab-indented entries) instead of silently swallowing a job,
 * a `needs:` entry that references no real job,
 * duplicate needs entries, an empty needs list, and a missing aggregate,
 * an enforcement step that consumes the results but ignores non-success,
@@ -70,8 +75,14 @@ NONCONSUMING_ENFORCEMENT = """\
 def synthetic_workflow(needs: List[str],
                        jobs: Optional[List[str]] = None,
                        enforcement: str = GOOD_ENFORCEMENT,
-                       include_aggregate: bool = True) -> str:
-    """Build a minimal workflow with the real file's shape and indentation."""
+                       include_aggregate: bool = True,
+                       interject: str = "") -> str:
+    """Build a minimal workflow with the real file's shape and indentation.
+
+    `interject` is spliced verbatim immediately before the aggregate block,
+    so fixtures can place comments (any indentation) inside the jobs
+    mapping the way the real workflow does.
+    """
     job_ids = jobs if jobs is not None else ["gate-a", "gate-b"]
     blocks = []
     for job_id in job_ids:
@@ -83,6 +94,7 @@ def synthetic_workflow(needs: List[str],
             "      - name: Run\n"
             "        run: echo %s\n" % (job_id, job_id, job_id))
     if include_aggregate:
+        blocks.append(interject)
         needs_lines = "".join("      - %s\n" % entry for entry in needs)
         blocks.append(
             "  scaffolding-complete:\n"
@@ -108,6 +120,26 @@ def synthetic_workflow(needs: List[str],
         "\n"
         "jobs:\n"
         + "".join(blocks))
+
+
+def append_gate(workflow: str, job_id: str, leading_comment: str = "") -> str:
+    """Append an unenrolled failing gate after the aggregate job."""
+    return (
+        workflow
+        + leading_comment
+        + "  %s:\n" % job_id
+        + "    name: Hidden gate %s\n" % job_id
+        + "    runs-on: ubuntu-24.04\n"
+        + "    steps:\n"
+        + "      - name: Run\n"
+        + "        run: exit 1\n")
+
+
+def comment_between_needs(workflow: str) -> str:
+    """Split the aggregate's needs list with an unindented comment."""
+    return workflow.replace(
+        "      - gate-a\n      - gate-b\n",
+        "      - gate-a\n# comment between needs entries\n      - gate-b\n")
 
 
 class Case:
@@ -138,6 +170,61 @@ CASES: List[Case] = [
         1,
         synthetic_workflow(needs=["gate-a"],
                            jobs=["gate-a", "gate-b", "gate-c"]),
+    ),
+    # The #134 re-review false-success reproduction: an unindented comment
+    # is valid YAML *inside* the jobs mapping, so the job after it must
+    # still be discovered and its absence from needs must fail.
+    Case(
+        "comment_hidden_unenrolled_job_fails",
+        1,
+        append_gate(synthetic_workflow(needs=["gate-a", "gate-b"]),
+                    "hidden-gate",
+                    "# Additional required gate\n"),
+    ),
+    # Control for the case above: the identical hidden gate without the
+    # comment also fails, proving the comment was the only difference.
+    Case(
+        "hidden_job_without_comment_fails",
+        1,
+        append_gate(synthetic_workflow(needs=["gate-a", "gate-b"]),
+                    "hidden-gate"),
+    ),
+    # Comments between jobs (any indentation) must NOT break parsing of an
+    # otherwise well-formed, fully enrolled workflow.
+    Case(
+        "comment_interjection_accepted",
+        0,
+        synthetic_workflow(
+            needs=["gate-a", "gate-b"],
+            interject=("# prose comment at column zero\n"
+                       "  # indented note between jobs\n")),
+    ),
+    # A flow-style job entry at job-key indentation is invisible to the
+    # line parser, so it must fail closed instead of being swallowed.
+    Case(
+        "flow_style_entry_after_comment_fails",
+        1,
+        synthetic_workflow(needs=["gate-a", "gate-b"])
+        + "# Additional required gate\n"
+        + "  hidden-gate: {name: Flow style gate}\n",
+    ),
+    # Tab indentation is invalid YAML; refuse to guess rather than parse.
+    Case(
+        "tab_indented_entry_fails",
+        1,
+        synthetic_workflow(needs=["gate-a", "gate-b"])
+        + "# Additional required gate\n"
+        + "\thidden-gate:\n",
+    ),
+    # A comment splitting the needs list truncates the parsed list; the
+    # then-missing entry fails closed (never silently dropped the other
+    # way).
+    Case(
+        "comment_inside_needs_fails",
+        1,
+        comment_between_needs(
+            synthetic_workflow(needs=["gate-a", "gate-b"],
+                               jobs=["gate-a", "gate-b"])),
     ),
     # A needs entry referencing no real job cannot protect anything.
     Case(

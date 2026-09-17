@@ -13,12 +13,15 @@ not `success`. Without mechanical pinning, two silent failure modes exist:
   ignored, hard-coded exit) — the aggregate then succeeds despite a failed
   dependency.
 
-This checker pins both invariants. It parses the workflow, requires the
-aggregate's `needs:` list to equal every other job exactly (missing and
-extra entries both fail), extracts the enforcement script, and executes it
-against synthetic result vectors: an all-success run must exit 0, and each
-non-success kind (failure / skipped / cancelled) must exit non-zero wherever
-it appears, so a failed required gate cannot yield aggregate success.
+This checker pins both invariants. It parses the workflow — treating
+comment and blank lines as transparent so an unindented comment cannot
+conceal a job from the enrollment comparison — requires the aggregate's
+`needs:` list to equal every other job exactly (missing and extra entries
+both fail), extracts the enforcement script, and executes it against
+synthetic result vectors: an all-success run must exit 0, and each
+non-success kind (failure / skipped / cancelled) must exit non-zero
+wherever it appears, so a failed required gate cannot yield aggregate
+success.
 
 Run directly:
 
@@ -69,6 +72,18 @@ def split_jobs(text: str) -> dict:
     Only two-space-indented `key:` lines inside the `jobs:` block are job
     ids; everything else (steps, strategy, matrix entries) is nested deeper
     or list items and stays inside the current job's body.
+
+    Comment and blank lines are transparent at any indentation: YAML allows
+    them between mapping entries, so they never end the `jobs:` mapping and
+    never hide a following job from this parser (an *unindented* comment is
+    still inside the mapping — treating it as a boundary would let a comment
+    conceal every job after it from the exact-needs check). A non-comment
+    column-0 line is the next top-level key and ends the section. Any other
+    line this parser cannot faithfully attribute (tab indentation, flow-style
+    or quoted or inline-valued entries at job-key indentation, content before
+    the first job key) fails closed instead of being silently swallowed, so
+    no syntax can make a job disappear here while GitHub Actions would
+    still run it.
     """
     lines = text.splitlines()
     start = None
@@ -82,16 +97,36 @@ def split_jobs(text: str) -> dict:
     bodies = {}
     current = None
     for line in lines[start:]:
-        if line and not line.startswith(" "):
+        if not line.strip() or line.lstrip().startswith("#"):
+            # Transparent for section boundaries, but kept in the current
+            # job body so downstream extraction sees the file verbatim.
+            if current is not None:
+                bodies[current].append(line)
+            continue
+        if line.startswith("\t"):
+            raise CheckError(
+                "tab-indented line inside `jobs:` (invalid YAML "
+                "indentation; refusing to guess): %r" % line.strip())
+        if not line.startswith(" "):
             break  # dedent below the jobs section: next top-level key
-        match = JOB_KEY.match(line)
-        if match:
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 2:
+            match = JOB_KEY.match(line)
+            if match is None:
+                raise CheckError(
+                    "unsupported job entry at two-space indent (flow style, "
+                    "quoted key, or inline value would be invisible to the "
+                    "exact-needs check): %r" % line.strip())
             current = match.group(1)
             if current in bodies:
                 raise CheckError("duplicate job key: %s" % current)
             order.append(current)
             bodies[current] = []
-        elif current is not None:
+        elif current is None:
+            raise CheckError(
+                "content before the first job key inside `jobs:` (refusing "
+                "to guess): %r" % line.strip())
+        else:
             bodies[current].append(line)
     if not order:
         raise CheckError("the `jobs:` section parsed to zero jobs")
