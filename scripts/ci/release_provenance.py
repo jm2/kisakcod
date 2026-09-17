@@ -475,14 +475,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build the argument parser for every subcommand."""
-    parser = argparse.ArgumentParser(
-        prog="release_provenance.py",
-        description="Record release provenance and gate release completeness.",
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-
+def _add_identity_write_parser(sub: argparse._SubParsersAction) -> None:
+    """Register the identity-write subcommand."""
     identity_write = sub.add_parser(
         "identity-write", help="write a deterministic release-identity.json"
     )
@@ -492,6 +486,9 @@ def build_parser() -> argparse.ArgumentParser:
     identity_write.add_argument("--out", required=True)
     identity_write.set_defaults(func=cmd_identity_write)
 
+
+def _add_identity_verify_parser(sub: argparse._SubParsersAction) -> None:
+    """Register the identity-verify subcommand."""
     identity_verify = sub.add_parser(
         "identity-verify", help="verify a release-identity.json against a tag/commit"
     )
@@ -505,6 +502,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     identity_verify.set_defaults(func=cmd_identity_verify)
 
+
+def _add_record_parser(sub: argparse._SubParsersAction) -> None:
+    """Register the record subcommand."""
     record = sub.add_parser("record", help="record a provenance manifest")
     record.add_argument("--dist", required=True)
     record.add_argument("--tag", required=True)
@@ -519,6 +519,9 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--out", required=True)
     record.set_defaults(func=cmd_record)
 
+
+def _add_verify_parser(sub: argparse._SubParsersAction) -> None:
+    """Register the verify subcommand."""
     verify = sub.add_parser("verify", help="fail closed on an incomplete release set")
     verify.add_argument("--requirements", required=True)
     verify.add_argument("--dist", required=True)
@@ -532,6 +535,18 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--prerequisites", default=None)
     verify.set_defaults(func=cmd_verify)
 
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for every subcommand."""
+    parser = argparse.ArgumentParser(
+        prog="release_provenance.py",
+        description="Record release provenance and gate release completeness.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    _add_identity_write_parser(sub)
+    _add_identity_verify_parser(sub)
+    _add_record_parser(sub)
+    _add_verify_parser(sub)
     return parser
 
 
