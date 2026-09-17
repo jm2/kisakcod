@@ -275,7 +275,12 @@ targets whose role supports the direction (§6.1). The full child set is
 therefore the cross-product of this table with the applicable
 (target, mode, profile) axes, not an unconditional cross-product. `Status` is
 the current §1 label (`Blocked / none` means no evidence is recorded); a Pass
-must attach the §4 required evidence named in the last column.
+must attach the §4 required evidence named in the last column. The guard
+validates these cells directly: while the licensed reference manifests are
+unavailable, every commercial direction cell in this ledger must stay
+`Blocked / none`, the ledger must cover exactly the §11 case set, and neither
+the status nor the evidence half may be promoted — a fabricated child claim
+cannot bypass the aggregate roll-up by hiding in a single cell.
 
 | Case | Modes | kc-server-commercial-client | kc-client-commercial-server | Applicable §5 lifecycle stages | Required evidence (§4) |
 |---|---|---|---|---|---|
@@ -412,8 +417,10 @@ enumerate exactly the applicable case×mode×direction children, and the
 because it forces an aggregate cell to depend on all applicable
 case×mode×direction children. Each `disposition` id must appear exactly once and
 both `disposition` entries must stay **blocked** while their licensed references
-are unavailable; every commercial §6.3 result/evidence cell must stay
-`Blocked / none` until a real run cites a reference manifest id.
+are unavailable; every commercial §6.2 child direction cell and every
+commercial §6.3 result/evidence cell must stay `Blocked / none` until a real
+run cites a reference manifest id, and the §6.2 ledger must cover exactly the
+case set declared above.
 
 <!-- retail-content-matrix:v1
 target win-amd64 production

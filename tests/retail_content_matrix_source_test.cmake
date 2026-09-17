@@ -6,12 +6,14 @@ cmake_minimum_required(VERSION 3.16)
 # fails closed if a required target (with its production/reference role),
 # target-role capability, commercial profile, configuration mode, commercial
 # session direction, named case (with its intended family), case-mode
-# applicability, applicable case×mode×direction child record, §6.3 aggregate
+# applicability, applicable case×mode×direction child record, §6.2 child ledger
+# case coverage or per-direction result/evidence cell, §6.3 aggregate
 # cell/direction scope or per-profile result/evidence cell, aggregate
 # completeness policy, or disposition uniqueness is dropped or an
 # inapplicable mode/role requirement is introduced, if the §4 catalog and the
 # index disagree about which cases exist, or if an unavailable-evidence upstream
-# disposition is promoted away from 'blocked'.
+# disposition, commercial §6.2 child cell or §6.3 aggregate cell is promoted
+# away from 'Blocked / none'.
 #
 # When run as the primary test it additionally exercises its own negative
 # paths by mutating copies of the document and asserting the validator
@@ -451,6 +453,84 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     if(NOT "${_required_outcomes_sorted}" STREQUAL "${_declared_outcomes_sorted}")
         message(FATAL_ERROR
             "Retail-content matrix applicable outcome children [${_required_outcomes_sorted}] do not match declared outcome children [${_declared_outcomes_sorted}] in ${DOC_PATH}")
+    endif()
+
+    # §6.2 child-record ledger. Each case row carries one `status / evidence-ref`
+    # cell per commercial direction; the §11 outcome triples carry no result
+    # fields, so this ledger is the only place a per-case commercial claim can
+    # live. While the licensed reference manifests are unavailable every
+    # commercial child cell must stay `Blocked / none`, exactly like the §6.3
+    # aggregates and the upstream dispositions: without parsing these cells, a
+    # fabricated `Pass / <log>` in one child cell escapes the guard while the
+    # aggregate roll-up still reads all-Blocked.
+    string(FIND "${DOC_TEXT}" "### 6.2" _child_begin)
+    string(FIND "${DOC_TEXT}" "### 6.3" _child_end)
+    if(_child_begin EQUAL -1 OR _child_end EQUAL -1 OR _child_end LESS_EQUAL _child_begin)
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the §6.2 child ledger or §6.3 section in ${DOC_PATH}")
+    endif()
+    math(EXPR _child_length "${_child_end} - ${_child_begin}")
+    string(SUBSTRING "${DOC_TEXT}" ${_child_begin} ${_child_length} _child_text)
+    string(REPLACE "\r\n" "\n" _child_text "${_child_text}")
+    string(REPLACE "\n" ";" _child_lines "${_child_text}")
+    # Row shape: | `case` | modes | kc-server-commercial-client cell |
+    # kc-client-commercial-server cell | stages | required-evidence |.
+    # The header and separator rows have no backticked leading cell and never
+    # match; a data row reformatted to dodge this regex simply drops its case
+    # from the ledger set and fails the coverage check below, so the parser
+    # cannot be sidestepped by restructuring a row.
+    set(_ledger_cases "")
+    foreach(_line IN LISTS _child_lines)
+        if(_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[ \t]*\\|[ \t]*([^|]+)\\|([^|]*)\\|([^|]*)\\|")
+            set(_ledger_case "${CMAKE_MATCH_1}")
+            set(_cell_server "${CMAKE_MATCH_3}")
+            set(_cell_client "${CMAKE_MATCH_4}")
+            list(FIND _cases "${_ledger_case}" _ledger_known_index)
+            if(_ledger_known_index EQUAL -1)
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.2 child ledger references unknown case '${_ledger_case}' in ${DOC_PATH}")
+            endif()
+            list(APPEND _ledger_cases "${_ledger_case}")
+            foreach(_ledger_cell IN ITEMS "${_cell_server}" "${_cell_client}")
+                string(STRIP "${_ledger_cell}" _ledger_cell)
+                string(REPLACE "/" ";" _ledger_fields "${_ledger_cell}")
+                list(LENGTH _ledger_fields _ledger_field_count)
+                if(NOT _ledger_field_count EQUAL 2)
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.2 child ledger case '${_ledger_case}' commercial direction cell must be 'status / evidence-ref', found '${_ledger_cell}' in ${DOC_PATH}")
+                endif()
+                list(GET _ledger_fields 0 _ledger_status)
+                list(GET _ledger_fields 1 _ledger_evidence)
+                string(STRIP "${_ledger_status}" _ledger_status)
+                string(STRIP "${_ledger_evidence}" _ledger_evidence)
+                if(NOT _ledger_status STREQUAL "Blocked" OR NOT _ledger_evidence STREQUAL "none")
+                    message(FATAL_ERROR
+                        "Retail-content matrix §6.2 child ledger case '${_ledger_case}' commercial direction cell must stay 'Blocked / none' while the licensed reference manifests are unavailable, found '${_ledger_status} / ${_ledger_evidence}' in ${DOC_PATH}")
+                endif()
+            endforeach()
+        endif()
+    endforeach()
+    # Coverage and uniqueness: dropping a ledger row must not hide a case's
+    # child cells from the blocked-status policy, and a duplicated row cannot
+    # carry a conflicting claim.
+    list(LENGTH _ledger_cases _ledger_count)
+    if(_ledger_count EQUAL 0)
+        message(FATAL_ERROR
+            "Retail-content matrix §6.2 child ledger contains no case rows in ${DOC_PATH}")
+    endif()
+    list(REMOVE_DUPLICATES _ledger_cases)
+    list(LENGTH _ledger_cases _ledger_unique_count)
+    if(NOT _ledger_count EQUAL _ledger_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix §6.2 child ledger contains duplicate case rows in ${DOC_PATH}")
+    endif()
+    set(_ledger_sorted ${_ledger_cases})
+    list(SORT _ledger_sorted)
+    set(_cases_sorted ${_cases})
+    list(SORT _cases_sorted)
+    if(NOT "${_ledger_sorted}" STREQUAL "${_cases_sorted}")
+        message(FATAL_ERROR
+            "Retail-content matrix §6.2 child ledger cases [${_ledger_sorted}] must cover exactly the index cases [${_cases_sorted}] in ${DOC_PATH}")
     endif()
 
     # §6.3 aggregate table applicability. Every applicable (target, mode) cell
@@ -925,6 +1005,77 @@ if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'promote-aggregate-evidence' did not apply")
 endif()
 expect_rejected("promote-aggregate-evidence" "${_mutated}")
+
+# Promote the SM-01 kc-server-commercial-client §6.2 child cell to Pass while
+# keeping evidence at 'none'. The §11 outcome triples carry no result fields,
+# so without direct child-ledger cell validation a per-case commercial pass
+# claim could slip through while every aggregate stays Blocked.
+string(REPLACE
+    "| `SM-01` | listen | Blocked / none | Blocked / none | content load, client join, gameplay |"
+    "| `SM-01` | listen | Pass / none | Blocked / none | content load, client join, gameplay |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-child-status-server' did not apply")
+endif()
+expect_rejected("promote-child-status-server" "${_mutated}")
+
+# Same child status promotion in the kc-client-commercial-server direction
+# (SM-03): both commercial directions of the ledger are validated.
+string(REPLACE
+    "| `SM-03` | listen, dedicated | Blocked / none | Blocked / none | map change, unload, reconnect |"
+    "| `SM-03` | listen, dedicated | Blocked / none | Pass / none | map change, unload, reconnect |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-child-status-client' did not apply")
+endif()
+expect_rejected("promote-child-status-client" "${_mutated}")
+
+# Attach fabricated evidence to the SM-02 kc-server-commercial-client child
+# cell while keeping the Blocked status: an evidence-ref no run produced must
+# be rejected exactly like a status promotion.
+string(REPLACE
+    "| `SM-02` | dedicated | Blocked / none | Blocked / none | content load, client join, gameplay |"
+    "| `SM-02` | dedicated | Blocked / fabricated-log | Blocked / none | content load, client join, gameplay |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-child-evidence-server' did not apply")
+endif()
+expect_rejected("promote-child-evidence-server" "${_mutated}")
+
+# Fabricated child evidence in the kc-client-commercial-server direction
+# (PC-01): the evidence-ref half of the cell is validated in both directions.
+string(REPLACE
+    "| `PC-01` | listen, dedicated | Blocked / none | Blocked / none | client join |"
+    "| `PC-01` | listen, dedicated | Blocked / none | Blocked / fabricated-log | client join |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-child-evidence-client' did not apply")
+endif()
+expect_rejected("promote-child-evidence-client" "${_mutated}")
+
+# The exact reproduced review bypass: promote the SM-01
+# kc-server-commercial-client child cell to `Pass / fabricated-log` with every
+# aggregate cell unchanged. Both the status and evidence halves of the child
+# cell must reject this.
+string(REPLACE
+    "| `SM-01` | listen | Blocked / none | Blocked / none | content load, client join, gameplay |"
+    "| `SM-01` | listen | Pass / fabricated-log | Blocked / none | content load, client join, gameplay |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-child-fabricated-pass' did not apply")
+endif()
+expect_rejected("promote-child-fabricated-pass" "${_mutated}")
+
+# Drop the SM-01 §6.2 ledger row entirely: the child cells must not be able to
+# escape the blocked-status policy by removing their row, so the ledger must
+# cover exactly the index case set.
+string(REPLACE
+    "| `SM-01` | listen | Blocked / none | Blocked / none | content load, client join, gameplay | Reference id + sanitized load/join log |\n"
+    "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-child-ledger-row' did not apply")
+endif()
+expect_rejected("drop-child-ledger-row" "${_mutated}")
 
 # Remove the weakest-child bound from the §6 schema text: the aggregate cell
 # could then be read as standalone evidence again.
