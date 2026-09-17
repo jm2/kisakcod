@@ -469,6 +469,16 @@ def _check_capability_pair(
     seen_pairs.add((target, mode))
 
 
+def _is_capability_id(value: object) -> TypeGuard[str]:
+    """Return True for a usable capability id."""
+    # Same contract as commercial-reference ids: a string with at least one
+    # non-whitespace character.  A missing, null, empty, whitespace-only or
+    # non-string id is not usable: an unhashable id (a list or dict) used to
+    # raise TypeError from the seen_ids membership test before validation
+    # could return its schema errors.
+    return isinstance(value, str) and bool(value.strip())
+
+
 def _validate_capabilities(
     manifest: dict, context: SchemaContext, errors: list[str]
 ) -> None:
@@ -482,7 +492,15 @@ def _validate_capabilities(
             # raises, and the row contributes no id or pair.
             errors.append("capabilities entries must be objects")
             continue
-        cid = capability.get("id", "<missing>")
+        cid = capability.get("id")
+        if not _is_capability_id(cid):
+            # Record the schema error and skip the row: a capability without
+            # a usable id has no stable identity to dedupe or report the
+            # remaining fields against.
+            errors.append(
+                f"capability id must be a non-empty string (got {cid!r})"
+            )
+            continue
         if cid in seen_ids:
             errors.append(f"capability {cid}: duplicate id")
         seen_ids.add(cid)

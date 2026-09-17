@@ -264,6 +264,74 @@ class ReferenceIdentityTests(unittest.TestCase):
         self.assertEqual(cd.validate_manifest(broken), [])
 
 
+class CapabilityIdentityTests(unittest.TestCase):
+    """Capability ids are checked before the seen_ids set (PR #150)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.manifest = cd.load_manifest(
+            REPO_ROOT / "docs" / "capability" / "manifest.json"
+        )
+
+    def _manifest_with_first_id(self, value=None, *, delete=False):
+        manifest = copy.deepcopy(self.manifest)
+        if delete:
+            del manifest["capabilities"][0]["id"]
+        else:
+            manifest["capabilities"][0]["id"] = value
+        return manifest
+
+    def test_missing_capability_id_is_rejected(self):
+        # An id-less row used to fall back to a placeholder and scatter
+        # follow-on field errors; it now records one schema error and is
+        # skipped, so it cannot contribute an id or a pair.
+        errors = cd.validate_manifest(self._manifest_with_first_id(delete=True))
+        self.assertTrue(
+            any("id must be a non-empty string" in error for error in errors),
+            msg=f"id-less capability was accepted: {errors}",
+        )
+
+    def test_empty_and_whitespace_capability_ids_are_rejected(self):
+        for bad in ("", "   ", "\t\n"):
+            with self.subTest(cid=bad):
+                errors = cd.validate_manifest(self._manifest_with_first_id(bad))
+                self.assertTrue(
+                    any(
+                        "id must be a non-empty string" in error
+                        for error in errors
+                    ),
+                    msg=f"empty capability id {bad!r} was accepted: {errors}",
+                )
+
+    def test_non_string_capability_ids_never_reach_set_membership(self):
+        # The unhashable list/dict ids used to raise TypeError from the
+        # seen_ids membership test before validate_manifest could return its
+        # schema errors, and the CLI catches only SystemExit, so the run died
+        # in an uncaught traceback instead of reporting the invalid manifest.
+        for bad in (None, 7, ["delivery"], {"id": "x"}):
+            with self.subTest(cid=bad):
+                errors = cd.validate_manifest(self._manifest_with_first_id(bad))
+                self.assertTrue(
+                    any(
+                        "id must be a non-empty string" in error
+                        for error in errors
+                    ),
+                    msg=f"non-string capability id {bad!r} was accepted: {errors}",
+                )
+
+    def test_duplicate_capability_ids_are_still_rejected(self):
+        broken = copy.deepcopy(self.manifest)
+        broken["capabilities"][1]["id"] = broken["capabilities"][0]["id"]
+        errors = cd.validate_manifest(broken)
+        self.assertTrue(any("duplicate id" in error for error in errors))
+
+    def test_valid_renamed_capability_id_is_accepted(self):
+        # A distinct, well-formed id changes nothing: validation stays clean
+        # and the row keeps contributing its target/mode pair to delivery.
+        broken = self._manifest_with_first_id("renamed-capability")
+        self.assertEqual(cd.validate_manifest(broken), [])
+
+
 class MandatoryContractTests(unittest.TestCase):
     """The delivery contract cannot be weakened through the manifest (#126)."""
 
