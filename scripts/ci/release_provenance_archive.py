@@ -123,10 +123,11 @@ def _carrier_value_failures(carrier_member: str, value: str, commit: str) -> lis
     if not COMMIT_RE.match(value):
         return [f"source: {carrier_member} commit {value!r} is not a full 40-hex commit"]
     if value != commit:
-        return [
+        message = (
             f"source: {carrier_member} commit {value!r} does not match "
             f"verified release {commit!r}"
-        ]
+        )
+        return [message]
     return []
 
 

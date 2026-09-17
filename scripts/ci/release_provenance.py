@@ -318,7 +318,9 @@ def _verify_source(
     return failures, expected
 
 
-def _completeness_failures(dist: Path, expected: set[str], checksums_name: str) -> list[str]:
+def _completeness_failures(
+    dist: Path, expected: set[str], checksums_name: str | None
+) -> list[str]:
     """Require dist to hold exactly the expected published file set."""
     actual_files = sorted(
         item.name for item in dist.iterdir() if item.is_file() and item.name != checksums_name
@@ -360,7 +362,9 @@ def _checksum_entry_failures(
     return failures
 
 
-def _checksum_failures(dist: Path, checksums_name: str, expected: set[str]) -> list[str]:
+def _checksum_failures(
+    dist: Path, checksums_name: str | None, expected: set[str]
+) -> list[str]:
     """Verify SHA256SUMS.txt covers exactly the expected set and matches bytes."""
     if not checksums_name:
         return []
@@ -425,6 +429,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
         failures.extend(source_failures)
         expected |= source_expected
     checksums_name = requirements.get("checksums")
+    if checksums_name is not None and not isinstance(checksums_name, str):
+        raise GateError(
+            f"{requirements_path}: checksums must name a checksum manifest string"
+        )
     failures.extend(_completeness_failures(dist, expected, checksums_name))
     failures.extend(_checksum_failures(dist, checksums_name, expected))
     return _report_verify(args, failures, len(expected), len(profiles))

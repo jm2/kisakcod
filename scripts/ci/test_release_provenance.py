@@ -34,7 +34,10 @@ ToolResult = namedtuple("ToolResult", ["returncode", "stdout", "stderr"])
 
 def load_module(name: str, filename: str):
     """Load a sibling module under ``scripts/ci`` without touching sys.path."""
-    spec = importlib.util.spec_from_file_location(name, SCRIPT_DIR / filename)
+    path = SCRIPT_DIR / filename
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load module {name!r} from {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
