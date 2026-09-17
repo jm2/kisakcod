@@ -11,12 +11,17 @@ cmake_minimum_required(VERSION 3.16)
 # record (exact `(target, mode, profile, case, direction)` coverage, uniqueness,
 # axis applicability and `Blocked / none` state, with the pinned record count
 # and the child-ledger completeness policy), §6.3 aggregate
-# cell/direction scope or per-profile result/evidence cell, aggregate
-# completeness policy, or disposition uniqueness is dropped or an
-# inapplicable mode/role requirement is introduced, if the §4 catalog and the
-# index disagree about which cases exist, or if an unavailable-evidence upstream
-# disposition, commercial §6.2 child cell, full-key child record or §6.3
-# aggregate cell is promoted away from 'Blocked / none'.
+# cell/direction scope or per-profile result/evidence cell (commercial cells
+# held at 'Blocked / none', the non-derived kisakcod-self supplemental
+# annotation held at 'Supplemental / none' and never enrolled in the
+# commercial ledger), aggregate completeness policy, or disposition uniqueness
+# is dropped or an inapplicable mode/role requirement is introduced, if the
+# §4 catalog rows and the index disagree about which cases exist (membership
+# is read from the first cell of actual catalog table rows, so a prose
+# cross-reference cannot supply a deleted row's id), or if an
+# unavailable-evidence upstream disposition, commercial §6.2 child cell,
+# full-key child record or §6.3 aggregate cell is promoted away from
+# 'Blocked / none'.
 #
 # When run as the primary test it additionally exercises its own negative
 # paths by mutating copies of the document and asserting the validator
@@ -806,6 +811,34 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
                         "Retail-content matrix §6.3 commercial aggregate cell '${_cell_target} ${_cell_mode}' ${_agg_profile} must stay 'Blocked / none' while the licensed reference manifests are unavailable, found '${_agg_status} / ${_agg_evidence}' in ${DOC_PATH}")
                 endif()
             endforeach()
+            # The kisakcod-self column is a non-derived supplemental
+            # annotation, not a readiness result: fork-only runs are never
+            # enrolled in the commercial ledger (§6.1 child records are
+            # commercial-profile only) and can never substitute for a
+            # commercial profile, so the annotation is pinned at exactly
+            # 'Supplemental / none'. Without this check the column is counted
+            # by the tail-shape test above but never validated, and flipping a
+            # cell to 'Pass / <invented>' validates.
+            list(GET _cell_tail_parts 2 _sup_cell_raw)
+            string(STRIP "${_sup_cell_raw}" _sup_cell)
+            string(REPLACE "/" ";" _sup_cell_fields "${_sup_cell}")
+            list(LENGTH _sup_cell_fields _sup_field_count)
+            if(NOT _sup_field_count EQUAL 2)
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.3 cell '${_cell_target} ${_cell_mode}' kisakcod-self must be 'status / evidence-ref', found '${_sup_cell}' in ${DOC_PATH}")
+            endif()
+            list(GET _sup_cell_fields 0 _sup_status)
+            list(GET _sup_cell_fields 1 _sup_evidence)
+            string(STRIP "${_sup_status}" _sup_status)
+            string(STRIP "${_sup_evidence}" _sup_evidence)
+            if(NOT _sup_status STREQUAL "Supplemental")
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.3 cell '${_cell_target} ${_cell_mode}' kisakcod-self is a non-derived supplemental annotation and must stay 'Supplemental', found '${_sup_status}' in ${DOC_PATH}")
+            endif()
+            if(NOT _sup_evidence STREQUAL "none")
+                message(FATAL_ERROR
+                    "Retail-content matrix §6.3 cell '${_cell_target} ${_cell_mode}' kisakcod-self supplemental annotation carries no evidence claim, found '${_sup_evidence}' in ${DOC_PATH}")
+            endif()
             list(APPEND _agg_cells "${_cell_target} ${_cell_mode}")
         endif()
     endforeach()
@@ -888,7 +921,11 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     # Catalog/index membership cross-check: the §4 case catalog and the
     # machine-readable index must name exactly the same cases. Without this, a
     # case can be dropped from one side (e.g. the catalog row removed) while the
-    # other side still lists it, so the contract shrinks unnoticed.
+    # other side still lists it, so the contract shrinks unnoticed. The §4 side
+    # is read from the first cell of actual catalog table rows — not from every
+    # case-like token in the section: a prose cross-reference (the UP89-02 row's
+    # 'depends on `UP89-01`' note) would otherwise supply a deleted row's id
+    # and the missing-row document would validate.
     string(FIND "${DOC_TEXT}" "## 4." _catalog_begin)
     string(FIND "${DOC_TEXT}" "## 5." _catalog_end)
     if(_catalog_begin EQUAL -1 OR _catalog_end EQUAL -1 OR _catalog_end LESS_EQUAL _catalog_begin)
@@ -897,11 +934,18 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     endif()
     math(EXPR _catalog_length "${_catalog_end} - ${_catalog_begin}")
     string(SUBSTRING "${DOC_TEXT}" ${_catalog_begin} ${_catalog_length} _catalog_text)
-    string(REGEX MATCHALL "`[A-Z][A-Z0-9]*-[0-9]+`" _catalog_tokens "${_catalog_text}")
+    string(REPLACE "\r\n" "\n" _catalog_text "${_catalog_text}")
+    string(REPLACE "\n" ";" _catalog_lines "${_catalog_text}")
+    # Row shape: | `case-id` | ... — the same first-cell convention as the §6.2
+    # ledger parser. Header/separator rows have no backticked leading cell and
+    # never match; a restructured row drops its case from the parsed set and
+    # fails the membership check below, so the parser cannot be dodged by
+    # reformatting.
     set(_catalog_cases "")
-    foreach(_token IN LISTS _catalog_tokens)
-        string(REPLACE "`" "" _catalog_case "${_token}")
-        list(APPEND _catalog_cases "${_catalog_case}")
+    foreach(_catalog_line IN LISTS _catalog_lines)
+        if(_catalog_line MATCHES "^[ \t]*\\|[ \t]*`([^`]+)`[ \t]*\\|")
+            list(APPEND _catalog_cases "${CMAKE_MATCH_1}")
+        endif()
     endforeach()
     list(REMOVE_DUPLICATES _catalog_cases)
     list(SORT _catalog_cases)
@@ -1017,6 +1061,23 @@ if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'catalog-index-mismatch' did not apply")
 endif()
 expect_rejected("catalog-index-mismatch" "${_mutated}")
+
+# The exact reproduced review bypass: delete the UP89-01 §4 catalog row while
+# retaining its non-claim phrase in prose. The UP89-02 row's 'depends on
+# `UP89-01`' cross-reference still supplies the id to a section-wide token
+# scan, so a token-based membership check passes with the row gone (the literal
+# deletion previously failed only because the row happened to carry the
+# 'not available in this checkout' phrase). Membership must be read from
+# actual catalog table rows, so the missing row is rejected while the
+# non-claim prose stays.
+string(REPLACE
+    "| `UP89-01` | [#89](https://github.com/SwagSoftware/KisakCOD/issues/89) | Named listen-server mods launched on any map (per the upstream report) | Mod launches and loads a stock map without crashing; failure captured with the crashing stage | **Blocked** — named mod content and licensed retail fixtures are not available in this checkout; no reproduction is claimed. |\n"
+    "The #89 named-mod launch reproduction is not recorded as a catalog row here; named mod content and licensed retail fixtures are not available in this checkout; no reproduction is claimed.\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-catalog-row-up89-01' did not apply")
+endif()
+expect_rejected("drop-catalog-row-up89-01" "${_mutated}")
 
 # Promote the unavailable-evidence upstream dispositions to 'pass'. The guard
 # must store and require the status token, not just the upstream id, or a
@@ -1191,6 +1252,42 @@ if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'promote-aggregate-evidence' did not apply")
 endif()
 expect_rejected("promote-aggregate-evidence" "${_mutated}")
+
+# The kisakcod-self §6.3 column is a non-derived supplemental annotation, not
+# a commercial result: promoting its status half must be rejected exactly like
+# a commercial promotion (review finding r4038931549 — this column was
+# previously counted by the row-shape check but never validated).
+string(REPLACE
+    "| `win-amd64` | dedicated | both | Blocked / none | Blocked / none | Supplemental / none |"
+    "| `win-amd64` | dedicated | both | Blocked / none | Blocked / none | Pass / none |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-supplemental-status' did not apply")
+endif()
+expect_rejected("promote-supplemental-status" "${_mutated}")
+
+# Same pin on the evidence half: a supplemental annotation carries no evidence
+# claim, so attaching an invented reference id must be rejected independently.
+string(REPLACE
+    "| `win-arm64` | listen | both | Blocked / none | Blocked / none | Supplemental / none |"
+    "| `win-arm64` | listen | both | Blocked / none | Blocked / none | Supplemental / invented |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-supplemental-evidence' did not apply")
+endif()
+expect_rejected("promote-supplemental-evidence" "${_mutated}")
+
+# The exact reproduced review bypass: flip one Supplemental / none cell to
+# 'Pass / invented'. Both halves of the annotation are pinned, so the
+# combined edit must fail as well.
+string(REPLACE
+    "| `linux-amd64` | listen | both | Blocked / none | Blocked / none | Supplemental / none |"
+    "| `linux-amd64` | listen | both | Blocked / none | Blocked / none | Pass / invented |"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-supplemental-pass-invented' did not apply")
+endif()
+expect_rejected("promote-supplemental-pass-invented" "${_mutated}")
 
 # Promote the SM-01 kc-server-commercial-client §6.2 child cell to Pass while
 # keeping evidence at 'none'. The §11 outcome triples carry no result fields,

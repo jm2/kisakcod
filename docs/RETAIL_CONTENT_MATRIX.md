@@ -334,8 +334,12 @@ target/mode/profile prefix (filtered by case-mode applicability and the
 target's role scope), and the cell's readiness is derived from those records —
 the weakest of them bounds the cell, never the reverse. At this basis every
 commercial child is **Blocked**
-(no reference manifest) and every `kisakcod-self` child is **Supplemental** with
-no claim of parity, so the roll-up below stays Blocked/Supplemental. The matrix
+(no reference manifest) and every `kisakcod-self` run is **Supplemental** with
+no claim of parity, so the roll-up below stays Blocked/Supplemental. The
+`kisakcod-self` column is a non-derived supplemental annotation, not a
+readiness result: the guard pins each cell at exactly `Supplemental / none`,
+and no `kisakcod-self` record is enrolled in the §6.1 commercial child ledger,
+so fork-only runs can never substitute for either commercial profile. The matrix
 is rendered per target; each cell is `status` / evidence-ref. The
 `Required directions` column is derived from the §11 `target-role` lines: a
 dual-role target such as `macos-arm64` requires both the
