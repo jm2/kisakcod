@@ -280,6 +280,211 @@ function(check_compiled_identity)
     endif()
 endfunction()
 
+# Prove the published buildnumber.h schedules its compiled consumer in the SAME
+# ordinary build. Ninja validates the dependency graph up front, so a header
+# rewritten mid-build by an order dependency on an always-run utility target
+# does not re-dirty translation units the graph already judged fresh: after a
+# commit that changed no CMake input, one ordinary build relinked the consumer
+# with a buildnumber.cpp object still compiled against the previous revision,
+# and only a second build produced the current one. Configure and build a real
+# compiled identity consumer at commit A, advance to B by changing only
+# main.cpp, run ONE ordinary build, and require the linked artifact to carry B
+# and no A.
+function(check_incremental_stamp_schedules_consumer)
+    if(NOT KISAK_TEST_GIT_EXECUTABLE)
+        message(STATUS
+            "git not found; skipping the incremental stamp fixture")
+        return()
+    endif()
+    if(NOT DEFINED KISAK_TEST_CXX_COMPILER OR KISAK_TEST_CXX_COMPILER STREQUAL "")
+        message(STATUS
+            "No C++ compiler provided; skipping the incremental stamp fixture")
+        return()
+    endif()
+    set(_tree "${_test_root}/incremental-tree")
+    set(_build "${_tree}/build")
+    set(_stamp_dir "${_build}/stamped-src")
+    file(MAKE_DIRECTORY "${_tree}/consumer/universal")
+    file(COPY "${SOURCE_ROOT}/src/buildnumber.cpp"
+        DESTINATION "${_tree}/consumer")
+    file(COPY "${SOURCE_ROOT}/src/universal/platform_compat.h"
+        DESTINATION "${_tree}/consumer/universal")
+    # The compiled identity consumer mirrors the production wiring: the real
+    # src/buildnumber.cpp plus a caller, ordered with scripts/pre_build.cmake's
+    # add_dependencies(${PROJECT_NAME} update_build_number).
+    file(WRITE "${_tree}/main.cpp"
+        "#include <cstdio>\n"
+        "#include \"buildnumber.h\"\n"
+        "// revision A\n"
+        "int main() {\n"
+        "    std::printf(\"%s\\n%d\\n\", getSourceCommit(), getBuildNumberAsInt());\n"
+        "    return 0;\n"
+        "}\n")
+    file(WRITE "${_tree}/CMakeLists.txt"
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "project(kisak_incremental_identity CXX)\n"
+        "set(SCRIPTS_DIR \"${SOURCE_ROOT}/scripts\")\n"
+        "set(SRC_DIR \"\${CMAKE_CURRENT_BINARY_DIR}/stamped-src\")\n"
+        "file(MAKE_DIRECTORY \"\${SRC_DIR}\")\n"
+        "include(\"\${SCRIPTS_DIR}/extern/increment_build.cmake\")\n"
+        "add_executable(identity-consumer\n"
+        "    consumer/buildnumber.cpp\n"
+        "    main.cpp)\n"
+        "target_include_directories(identity-consumer PRIVATE\n"
+        "    \"\${SRC_DIR}\"\n"
+        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/consumer\")\n"
+        "# Production ordering: scripts/pre_build.cmake wires the stamp into\n"
+        "# the project target with add_dependencies(\${PROJECT_NAME}\n"
+        "# update_build_number).\n"
+        "add_dependencies(identity-consumer update_build_number)\n")
+    foreach(_leg IN ITEMS a b)
+        if(_leg STREQUAL "b")
+            file(WRITE "${_tree}/main.cpp"
+                "#include <cstdio>\n"
+                "#include \"buildnumber.h\"\n"
+                "// revision B\n"
+                "int main() {\n"
+                "    std::printf(\"%s\\n%d\\n\", getSourceCommit(), getBuildNumberAsInt());\n"
+                "    return 0;\n"
+                "}\n")
+            execute_process(
+                COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" -C "${_tree}"
+                    -c user.email=identity@example.invalid
+                    -c user.name=identity commit -qam "revision B"
+                RESULT_VARIABLE _commit_result
+                ERROR_QUIET)
+        else()
+            execute_process(
+                COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" init -q "${_tree}"
+                RESULT_VARIABLE _init_result
+                ERROR_QUIET)
+            execute_process(
+                COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" -C "${_tree}" add -A
+                RESULT_VARIABLE _add_result
+                ERROR_QUIET)
+            execute_process(
+                COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" -C "${_tree}"
+                    -c user.email=identity@example.invalid
+                    -c user.name=identity commit -qm "revision A"
+                RESULT_VARIABLE _commit_result
+                ERROR_QUIET)
+        endif()
+        execute_process(
+            COMMAND "${KISAK_TEST_GIT_EXECUTABLE}" -C "${_tree}" rev-parse HEAD
+            OUTPUT_VARIABLE _head_${_leg}
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _head_result
+            ERROR_QUIET)
+        if(_leg STREQUAL "a")
+            if(NOT (_init_result EQUAL 0 AND _add_result EQUAL 0
+                    AND _commit_result EQUAL 0 AND _head_result EQUAL 0))
+                message(FATAL_ERROR
+                    "Failed to build the incremental stamp fixture at A")
+            endif()
+            set(_configure_args "-S" "${_tree}" "-B" "${_build}")
+            if(DEFINED KISAK_TEST_GENERATOR AND NOT KISAK_TEST_GENERATOR STREQUAL "")
+                list(APPEND _configure_args "-G" "${KISAK_TEST_GENERATOR}")
+                if(DEFINED KISAK_TEST_GENERATOR_PLATFORM
+                        AND NOT KISAK_TEST_GENERATOR_PLATFORM STREQUAL "")
+                    list(APPEND _configure_args "-A" "${KISAK_TEST_GENERATOR_PLATFORM}")
+                endif()
+                if(DEFINED KISAK_TEST_GENERATOR_TOOLSET
+                        AND NOT KISAK_TEST_GENERATOR_TOOLSET STREQUAL "")
+                    list(APPEND _configure_args "-T" "${KISAK_TEST_GENERATOR_TOOLSET}")
+                endif()
+            endif()
+            set(_fixture_vs FALSE)
+            if(KISAK_TEST_CXX_COMPILER_ID STREQUAL "MSVC"
+                    AND (NOT DEFINED KISAK_TEST_GENERATOR
+                        OR KISAK_TEST_GENERATOR STREQUAL ""
+                        OR KISAK_TEST_GENERATOR MATCHES "^Visual Studio"))
+                set(_fixture_vs TRUE)
+            endif()
+            if(NOT _fixture_vs)
+                # Single-config generators need the build type and the exact
+                # configured compiler; a multi-config Visual Studio generator
+                # selects both itself.
+                list(APPEND _configure_args
+                    "-DCMAKE_BUILD_TYPE=Release"
+                    "-DCMAKE_CXX_COMPILER=${KISAK_TEST_CXX_COMPILER}")
+            endif()
+            execute_process(
+                COMMAND "${CMAKE_COMMAND}" ${_configure_args}
+                RESULT_VARIABLE _configure_result
+                OUTPUT_VARIABLE _configure_stdout
+                ERROR_VARIABLE _configure_stderr)
+            if(NOT _configure_result EQUAL 0)
+                message(FATAL_ERROR
+                    "Failed to configure the incremental stamp fixture: "
+                    "${_configure_stdout} ${_configure_stderr}")
+            endif()
+        elseif(NOT (_commit_result EQUAL 0 AND _head_result EQUAL 0)
+                OR _head_b STREQUAL _head_a)
+            message(FATAL_ERROR
+                "Failed to advance the incremental stamp fixture to B")
+        endif()
+        # ONE ordinary build per leg: no reconfigure, no target selection.
+        # The second leg is the entire defect surface.
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" --build "${_build}" --config Release
+            RESULT_VARIABLE _build_result
+            OUTPUT_VARIABLE _build_stdout
+            ERROR_VARIABLE _build_stderr)
+        if(NOT _build_result EQUAL 0)
+            message(FATAL_ERROR
+                "The incremental stamp fixture failed to build at ${_leg}: "
+                "${_build_stdout} ${_build_stderr}")
+        endif()
+        file(GLOB_RECURSE _consumer_candidates "${_build}/identity-consumer*")
+        list(FILTER _consumer_candidates EXCLUDE REGEX "/CMakeFiles/")
+        if(NOT _consumer_candidates)
+            message(FATAL_ERROR
+                "The incremental stamp fixture produced no identity-consumer "
+                "executable at ${_leg}")
+        endif()
+        list(GET _consumer_candidates 0 _consumer_exe)
+        execute_process(
+            COMMAND "${_consumer_exe}"
+            OUTPUT_VARIABLE _run_output_${_leg}
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _run_result)
+        if(NOT _run_result EQUAL 0)
+            message(FATAL_ERROR
+                "The incremental stamp fixture did not run at ${_leg}: "
+                "${_run_output_${_leg}}")
+        endif()
+    endforeach()
+    # Leg A sanity: the first ordinary build carries its own revision.
+    string(FIND "${_run_output_a}" "${_head_a}" _a_position)
+    if(_a_position EQUAL -1)
+        message(FATAL_ERROR
+            "The first ordinary build did not carry its own revision: "
+            "expected '${_head_a}' from the consumer, got '${_run_output_a}'")
+    endif()
+    # The defect surface: ONE ordinary build after a commit that changed only
+    # main.cpp must relink the consumer with B.
+    string(FIND "${_run_output_b}" "${_head_b}" _b_position)
+    if(_b_position EQUAL -1)
+        message(FATAL_ERROR
+            "One ordinary build after a commit that changed only main.cpp "
+            "still linked the previous revision: expected '${_head_b}' from "
+            "the consumer, got '${_run_output_b}' (the published header did "
+            "not reschedule its compiled consumer in the same build)")
+    endif()
+    string(FIND "${_run_output_b}" "${_head_a}" _stale_position)
+    if(NOT _stale_position EQUAL -1)
+        message(FATAL_ERROR
+            "The rebuilt consumer still carries the stale revision "
+            "'${_head_a}'")
+    endif()
+    # The consumer output proves the accessor call, the byte search proves the
+    # revision itself is in the linked artifact.
+    require_identity_bytes("${_consumer_exe}" "${_head_b}" TRUE
+        "one ordinary build after a commit publishes the new revision into the linked artifact")
+    require_identity_bytes("${_consumer_exe}" "${_head_a}" FALSE
+        "the linked artifact must not keep the previous revision after one ordinary build")
+endfunction()
+
 # A tree with a substituted carrier but no `.git` must resolve from the carrier.
 if(DEFINED CONTRACT_CASE AND CONTRACT_CASE STREQUAL "invalid_override")
     set(KISAK_SOURCE_COMMIT "not-a-commit-hash")
@@ -392,6 +597,11 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "if line.startswith(\"commit=\")"
             "if line.strip().startswith(\"commit=\")"
             _archive_verifier "${_archive_verifier}")
+    elseif(CONTRACT_MUTATION STREQUAL "publish_edge")
+        string(REPLACE
+            "OUTPUT \"\${SRC_DIR}/buildnumber.h\""
+            ""
+            _cmake "${_cmake}")
     else()
         message(FATAL_ERROR
             "Unknown source-identity mutation: ${CONTRACT_MUTATION}")
@@ -429,6 +639,33 @@ require_contains(
 require_contains(
     _stamp "\"\${KISAK_RESOLVED_SOURCE_COMMIT}\""
     "the build-time stamp script passes the resolved commit to the stamp script")
+
+# Stamping through an order dependency alone cannot update compiled consumers:
+# Ninja validates the graph up front, so a header rewritten mid-build cannot
+# re-dirty translation units the graph already judged fresh, and one ordinary
+# build after a commit that changed no CMake input would relink a stale
+# buildnumber.cpp object. The header must therefore be published as a declared
+# build edge output from a staging copy, so Ninja's restat reschedules its
+# consumers in the same ordinary build, and the publish must be
+# content-comparing so unchanged stamps rebuild nothing.
+require_contains(
+    _cmake "\"-DKISAK_STAMP_SRC_DIR=\${KISAK_STAMP_STAGE_DIR}\""
+    "increment_build.cmake stamps into a staging directory")
+require_contains(
+    _cmake "OUTPUT \"\${SRC_DIR}/buildnumber.h\""
+    "the published buildnumber.h is a declared build edge output")
+require_contains(
+    _cmake "-E copy_if_different"
+    "publication is content-comparing so restat can hold consumers clean")
+require_contains(
+    _cmake "BYPRODUCTS \"\${KISAK_STAMP_STAGE_DIR}/buildnumber.h\""
+    "the stamp declares the staged header as a generator-tracked byproduct")
+require_contains(
+    _cmake "DEPENDS \"\${KISAK_STAMP_STAGE_DIR}/buildnumber.h\" update_build_number_stamp"
+    "the publish edge is driven by the staged header and runs after the stamp")
+require_contains(
+    _cmake "update_build_number DEPENDS \"\${SRC_DIR}/buildnumber.h\""
+    "the public stamp target pulls the published header into ordinary builds")
 
 # Both stamp scripts must forward the commit into the generated header.
 require_contains(
@@ -759,6 +996,7 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
     endif()
 
     check_compiled_identity()
+    check_incremental_stamp_schedules_consumer()
 
     file(REMOVE_RECURSE "${_test_root}")
 
@@ -789,6 +1027,7 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         cmake_resolver_call
         stamp_delegation
         stamp_override_forward
+        publish_edge
         cpp_consumer
         cpp_getter
         cpp_retention
