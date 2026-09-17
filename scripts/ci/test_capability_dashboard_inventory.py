@@ -235,6 +235,39 @@ class MatrixExpansionTests(unittest.TestCase):
         with self.assertRaises(cd.MatrixExpansionError):
             cd.matrix_legs(job)
 
+    def test_axis_flow_list_with_trailing_comment_parses(self):
+        # ``os: [linux, mac]  # note`` reached the flow-list parser with the
+        # comment attached and failed the ``]`` shape check.  A trailing
+        # comment is valid YAML and must not change the derived leg count.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, mac]  # both build on CI",
+        )
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_axis_block_value_with_trailing_comment_is_clean(self):
+        # A block-sequence axis value kept its comment attached, so the axis
+        # value silently became ``linux  # first``.  The comment must be
+        # stripped and the value preserved verbatim.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os:",
+            "          - linux  # first leg",
+            "          - windows",
+        )
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_quoted_hash_in_axis_value_is_preserved(self):
+        # A ``#`` inside a quoted scalar is value text, not a comment.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        label: [\"win #1\"]",
+        )
+        self.assertEqual(cd.matrix_legs(job), 1)
+
 
 class SelfHostedRunsOnTests(unittest.TestCase):
     """The complete ``runs-on`` value is parsed, or parsing fails closed."""
@@ -296,6 +329,30 @@ class SelfHostedRunsOnTests(unittest.TestCase):
 
     def test_expression_is_not_statically_self_hosted(self):
         job = self._probe(["    runs-on: ${{ matrix.runner }}"])
+        self.assertFalse(job["self_hosted"])
+
+    def test_scalar_with_trailing_comment_is_self_hosted(self):
+        # The comment used to stay attached, so ``self-hosted  # box`` was
+        # compared verbatim and reported as a hosted runner.
+        job = self._probe(["    runs-on: self-hosted  # dedicated box"])
+        self.assertTrue(job["self_hosted"])
+
+    def test_flow_list_with_trailing_comment_parses(self):
+        # The comment broke the ``]`` shape check and raised instead of
+        # parsing a fully supported flow value.
+        job = self._probe(
+            ["    runs-on: [self-hosted, linux]  # dedicated box"]
+        )
+        self.assertTrue(job["self_hosted"])
+
+    def test_quoted_hash_is_not_a_comment(self):
+        # A quoted ``#`` is value text: the scalar is not the self-hosted
+        # label, and parsing must neither raise nor strip into the quotes.
+        job = self._probe(['    runs-on: "self # host"  # annotated'])
+        self.assertFalse(job["self_hosted"])
+
+    def test_expression_with_trailing_comment_is_not_self_hosted(self):
+        job = self._probe(["    runs-on: ${{ matrix.runner }}  # runtime"])
         self.assertFalse(job["self_hosted"])
 
     def test_block_mapping_fails_closed(self):

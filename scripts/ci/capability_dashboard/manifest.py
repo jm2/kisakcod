@@ -91,17 +91,38 @@ def _validate_modes(modes: list, errors: list[str]) -> None:
         errors.append("enums.modes must be a non-empty list")
 
 
-def _target_ids(targets: list) -> list[str]:
+def _target_ids(targets: list, errors: list[str]) -> list[str]:
     """Return the declared target ids, in declaration order."""
-    return [target.get("id") for target in targets]
+    # Malformed rows never contribute an id: a null or scalar row used to
+    # raise AttributeError from ``.get()`` and a non-string id used to reach
+    # the duplicate check, where an unhashable id raised TypeError.  The
+    # validation contract is a list of errors, never an exception.
+    target_ids: list[str] = []
+    for target in targets:
+        if not isinstance(target, dict):
+            errors.append("targets entries must be objects")
+            continue
+        target_id = target.get("id")
+        if not isinstance(target_id, str) or not target_id.strip():
+            errors.append(
+                f"target id must be a non-empty string (got {target_id!r})"
+            )
+            continue
+        target_ids.append(target_id)
+    return target_ids
 
 
 def _requested_target_ids(targets: list) -> set[str]:
     """Return the ids a target marks as requested and usable."""
     return {
-        target.get("id")
+        target["id"]
         for target in targets
-        if target.get("requested") and isinstance(target.get("id"), str)
+        if (
+            isinstance(target, dict)
+            and target.get("requested")
+            and isinstance(target.get("id"), str)
+            and target.get("id").strip()
+        )
     }
 
 
@@ -144,7 +165,7 @@ def _validate_targets(targets: list, errors: list[str]) -> list[str]:
     # a mandatory target, and it cannot smuggle an extra target into the
     # aggregate.  ``requested`` alone is editable, so it cannot be the only
     # source of truth for which targets the aggregate reports.
-    target_ids = _target_ids(targets)
+    target_ids = _target_ids(targets, errors)
     requested_ids = _requested_target_ids(targets)
     _check_duplicate_targets(target_ids, errors)
     _check_mandatory_targets(target_ids, requested_ids, errors)

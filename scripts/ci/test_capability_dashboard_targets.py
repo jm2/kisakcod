@@ -162,5 +162,65 @@ class CapabilityRowIdentityTests(unittest.TestCase):
         self.assertEqual(cd.validate_manifest(broken), [])
 
 
+class MalformedTargetRowTests(unittest.TestCase):
+    """Malformed target rows return validation errors, never exceptions."""
+
+    def _errors_for(self, targets):
+        # A minimal manifest: only the targets list is exercised, so the
+        # schema checks around it will add their own (expected) errors.
+        return cd.validate_manifest({"schema_version": 1, "targets": targets})
+
+    def test_null_target_row_returns_error_not_exception(self):
+        # A null row reached ``target.get(...)`` and raised AttributeError
+        # instead of reporting a validation error.
+        errors = self._errors_for([None])
+        self.assertTrue(
+            any("targets entries must be objects" in error for error in errors),
+            msg=f"null target row did not produce a validation error: {errors}",
+        )
+
+    def test_scalar_target_row_returns_error_not_exception(self):
+        errors = self._errors_for([1, "windows-amd64"])
+        self.assertTrue(
+            any("targets entries must be objects" in error for error in errors),
+            msg=f"scalar target row did not produce a validation error: {errors}",
+        )
+
+    def test_unhashable_target_id_returns_error_not_exception(self):
+        # ``{"id": []}`` used to reach the duplicate check, where
+        # ``set(target_ids)`` raised TypeError.
+        errors = self._errors_for([{"id": []}, {"id": {"a": 1}}])
+        self.assertTrue(
+            any(
+                "target id must be a non-empty string" in error
+                for error in errors
+            ),
+            msg=f"unhashable target id did not produce a validation error: "
+            f"{errors}",
+        )
+
+    def test_empty_and_whitespace_ids_are_rejected(self):
+        errors = self._errors_for([{"id": ""}, {"id": "   "}])
+        self.assertTrue(
+            any(
+                "target id must be a non-empty string" in error
+                for error in errors
+            ),
+            msg=f"blank target ids were accepted: {errors}",
+        )
+
+    def test_malformed_rows_cannot_defeat_mandatory_contract(self):
+        # A null row carrying the only declaration of a mandatory target must
+        # still trip the mandatory-target error, not silently shrink the set.
+        errors = self._errors_for([{"id": "windows-amd64"}, None])
+        self.assertTrue(
+            any(
+                "must declare the mandatory target" in error
+                for error in errors
+            ),
+            msg=f"malformed row masked the mandatory contract: {errors}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

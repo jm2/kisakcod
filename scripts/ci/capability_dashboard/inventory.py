@@ -49,6 +49,37 @@ def _unquote(value: str) -> str:
     return value
 
 
+def _strip_yaml_comment(value: str) -> str:
+    """Remove an unquoted trailing YAML comment from ``value``."""
+    # A ``#`` starts a comment only when it begins the value or is preceded
+    # by whitespace, and never inside a quoted scalar.  Stripping it keeps
+    # ``runs-on: self-hosted  # box`` from being compared with its comment
+    # still attached (reported as hosted) and keeps ``[a, b]  # note`` a
+    # readable flow list instead of an unsupported shape.
+    quote: str | None = None
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if quote == "'":
+            if char == "'":
+                if index + 1 < len(value) and value[index + 1] == "'":
+                    index += 2
+                    continue
+                quote = None
+        elif quote == '"':
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                quote = None
+        elif char in ("'", '"'):
+            quote = char
+        elif char == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index].strip()
+        index += 1
+    return value.strip()
+
+
 # --------------------------------------------------------------------------
 # Job-level YAML scanning
 # --------------------------------------------------------------------------
@@ -120,7 +151,7 @@ def _matrix_block(job_lines: list[str]) -> list[str] | None:
 
 def _parse_flow_list(text: str, key: str) -> list[str]:
     """Parse an inline flow list such as ``[Debug, Release]``."""
-    stripped = text.strip()
+    stripped = _strip_yaml_comment(text)
     if not (stripped.startswith("[") and stripped.endswith("]")):
         raise MatrixExpansionError(
             f"matrix axis {key!r} must be a list, got {stripped!r}"
@@ -133,7 +164,7 @@ def _parse_flow_list(text: str, key: str) -> list[str]:
 
 def _parse_axis_value(raw: str, key: str) -> str:
     """Parse one block-sequence axis value, rejecting non-scalars."""
-    stripped = raw.strip()
+    stripped = _strip_yaml_comment(raw)
     if not stripped.startswith("- "):
         raise MatrixExpansionError(
             f"matrix axis {key!r} is not a scalar list: {stripped!r}"
@@ -367,7 +398,7 @@ class UnsupportedRunsOnError(ValueError):
 
 def _flow_items(text: str) -> list[str]:
     """Parse an inline flow list such as ``[self-hosted, linux]``."""
-    stripped = text.strip()
+    stripped = _strip_yaml_comment(text)
     if not (stripped.startswith("[") and stripped.endswith("]")):
         raise UnsupportedRunsOnError(
             f"runs-on flow value must be a list, got {stripped!r}"
@@ -380,7 +411,7 @@ def _flow_items(text: str) -> list[str]:
 
 def _scalar_self_hosted(value: str) -> bool:
     """Return True when one ``runs-on`` scalar is the self-hosted label."""
-    stripped = value.strip()
+    stripped = _strip_yaml_comment(value)
     if stripped.startswith("${{"):
         # A GitHub expression is a supported value whose runner is only known
         # at run time; it is not statically the self-hosted label.
