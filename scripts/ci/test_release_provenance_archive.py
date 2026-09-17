@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import tarfile
 import unittest
 
 from release_provenance_testlib import (
@@ -158,6 +159,42 @@ class SourceArchiveIdentityTests(ReleaseProvenanceTestBase):
         result = self.verify(root)
         self.assertEqual(result.returncode, 1)
         self.assertIn("build-consumed identity carrier", result.stderr)
+
+    def test_source_archive_backslash_carrier_alias_fails(self) -> None:
+        # A member literally named src\source_identity.txt is a single
+        # top-level file on the POSIX extraction host: tar member paths are
+        # POSIX paths, so the backslash is an ordinary filename character,
+        # never a separator. resolve_source_identity.cmake reads the
+        # slash-separated <source_dir>/src/source_identity.txt, which
+        # extraction never creates from that member, so the verifier must
+        # reject the noncanonical alias instead of accepting its value.
+        root = self.fresh("source-backslash-carrier")
+        build_source_archive(
+            root,
+            carrier_text=f"commit={COMMIT}\n",
+            carrier_arcname="src\\source_identity.txt",
+        )
+        record_source_manifest(root)
+        refresh_checksums(root)
+        result = self.verify(root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("literal backslash", result.stderr)
+        # Extracted-tree resolver assertion: reproduce what the release
+        # assembly host hands the build. The archive still contains the
+        # verified commit, but only under a name the resolver never reads.
+        tree = self.tmp / "extracted-backslash-carrier"
+        tree.mkdir()
+        archive_path = root / "dist" / f"KisakCOD-{TAG}-source.tar.gz"
+        with tarfile.open(archive_path, "r:gz") as archive:
+            archive.extractall(tree, filter="data")
+        literal = tree / "src\\source_identity.txt"
+        self.assertTrue(literal.is_file())
+        self.assertEqual(literal.read_text(encoding="utf-8"), f"commit={COMMIT}\n")
+        self.assertFalse(
+            (tree / "src" / "source_identity.txt").exists(),
+            "extraction produced the build-consumed carrier path, so the "
+            "shipped alias would not strand the resolver",
+        )
 
     def test_prefixed_source_archive_passes(self) -> None:
         # git archive may prefix the tree with a top-level directory; the

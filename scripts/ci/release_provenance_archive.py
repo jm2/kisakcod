@@ -19,16 +19,32 @@ from pathlib import Path
 from release_provenance_common import COMMIT_RE, identity_field_failures
 
 
+def posix_member_basename(name: str) -> str:
+    """Return the final ``/``-separated component of a tar member path."""
+    return name.rsplit("/", 1)[-1]
+
+
 def find_archive_members(archive: tarfile.TarFile, member: str) -> list[tarfile.TarInfo]:
     """Match a member by basename (``release-identity.json`` is shipped flat)."""
+    # Tar member names are POSIX paths, so the basename must be taken with
+    # POSIX semantics; a host-native Path would read backslashes as
+    # separators on Windows and diverge from what extraction produces.
     return [
-        item for item in archive.getmembers() if item.isfile() and Path(item.name).name == member
+        item
+        for item in archive.getmembers()
+        if item.isfile() and posix_member_basename(item.name) == member
     ]
 
 
 def member_path_parts(name: str) -> list[str]:
-    """Split an archive member path into its non-empty components."""
-    return [part for part in name.replace("\\", "/").split("/") if part]
+    """Split a tar member's POSIX path into its non-empty components."""
+    # Tar member names are POSIX paths: ``/`` is the only separator. A
+    # literal backslash is an ordinary filename character on the POSIX
+    # extraction host, so normalizing it to ``/`` would treat a member named
+    # ``src\source_identity.txt`` as the build-consumed
+    # ``src/source_identity.txt`` even though extraction keeps it a single
+    # top-level file the resolver never reads.
+    return [part for part in name.split("/") if part]
 
 
 def _archive_layout(archive: tarfile.TarFile) -> tuple[bool, set[str]]:
@@ -56,6 +72,30 @@ def _carrier_locations(archive: tarfile.TarFile, carrier: str) -> list[list[str]
     if not has_top_level_file and len(top_dirs) == 1:
         locations.append([next(iter(top_dirs)), *wanted])
     return locations
+
+
+def _carrier_alias_members(archive: tarfile.TarFile, carrier: str) -> list[tarfile.TarInfo]:
+    """Return members that reach a carrier location only via backslashes.
+
+    Reading a member's backslashes as separators can make a noncanonical
+    name look like the build-consumed carrier. POSIX extraction keeps the
+    backslash inside the filename, so such a member never lands on the path
+    ``resolve_source_identity.cmake`` reads and its value is identity
+    evidence the build can never recover.
+    """
+    locations = _carrier_locations(archive, carrier)
+    if not locations:
+        return []
+    aliases: list[tarfile.TarInfo] = []
+    for item in archive.getmembers():
+        if not item.isfile() or "\\" not in item.name:
+            continue
+        if member_path_parts(item.name) in locations:
+            continue
+        normalized = [part for part in item.name.replace("\\", "/").split("/") if part]
+        if normalized in locations:
+            aliases.append(item)
+    return aliases
 
 
 def find_carrier_members(archive: tarfile.TarFile, carrier: str) -> list[tarfile.TarInfo]:
@@ -135,14 +175,27 @@ def verify_archive_carrier(
 ) -> list[str]:
     """Verify the identity carrier the build actually consumes without ``.git``."""
     members = find_carrier_members(archive, carrier_member)
+    failures: list[str] = []
+    # Reject noncanonical aliases explicitly: a member only reaches a carrier
+    # location when its backslashes are read as separators, but the POSIX
+    # extraction host keeps the literal name, so accepting its value would
+    # certify an identity the build cannot recover from the extracted tree.
+    for alias in _carrier_alias_members(archive, carrier_member):
+        failures.append(
+            "source: member "
+            f"{alias.name!r} names the identity carrier with a literal backslash; "
+            "tar member paths are POSIX paths, so extraction never produces the "
+            f"build-consumed path {carrier_member} the resolver reads"
+        )
     if not members:
+        if failures:
+            return failures
         message = (
             "source: archive does not contain the build-consumed identity carrier "
             f"{carrier_member}; a rebuild without .git could not recover the "
             "verified revision"
         )
         return [message]
-    failures: list[str] = []
     for member in members:
         extracted = archive.extractfile(member)
         if extracted is None:
