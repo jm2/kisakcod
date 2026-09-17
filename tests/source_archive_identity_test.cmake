@@ -137,7 +137,11 @@ function(check_compiled_identity)
             "Failed to compile the archive-build source-identity consumer: "
             "${_fixture_build_stdout} ${_fixture_build_stderr}")
     endif()
-    if(KISAK_TEST_CXX_COMPILER_ID STREQUAL "MSVC")
+    # The executable suffix follows the host platform, not the compiler id:
+    # every Windows toolchain (MSVC, MinGW GNU, clang-cl) produces
+    # ``identity-check.exe``, and keying on MSVC alone would miss the MinGW and
+    # clang-cl fixtures even though they built correctly.
+    if(CMAKE_HOST_WIN32)
         set(_exe_name "identity-check.exe")
     else()
         set(_exe_name "identity-check")
