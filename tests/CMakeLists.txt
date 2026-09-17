@@ -3981,6 +3981,34 @@ add_test(
     COMMAND kisakcod-db-graph-hash-tests)
 set_tests_properties(database-graph-hash-canonical PROPERTIES TIMEOUT 20)
 
+# A09 / #131 (ki-y49k): content-addressed derived shader cache/sidecar core.
+# Original retail bytecode is identified by content hash, the sidecar is
+# versioned by format and converter identity, and stale or corrupt evidence is
+# regenerated from the untouched original inputs. The portable core is
+# exercised on the Linux host. Build enrollment is the database/engine source
+# manifest; wiring it into the D3D9 shader creation boundary is future
+# renderer integration.
+add_executable(kisakcod-shader-cache-tests
+    shader_cache_tests.cpp
+    ${SRC_DIR}/database/shader_cache.cpp
+    ${SRC_DIR}/database/db_graph_hash.cpp)
+target_include_directories(
+    kisakcod-shader-cache-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-shader-cache-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-shader-cache-tests)
+set_target_properties(kisakcod-shader-cache-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-derived-shader-cache-contracts
+    COMMAND kisakcod-shader-cache-tests)
+set_tests_properties(database-derived-shader-cache-contracts PROPERTIES TIMEOUT 20)
+add_test(
+    NAME database-derived-shader-cache-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/shader_cache_source_test.cmake)
+
 # M5 exit (ki-msb): retail fast-file parity harness. Runs on the native64
 # host against an unmodified retail fast-file and emits the capture digest
 # consumed by scripts/ci/run-retail-fastfile-parity.sh; --self-test exercises

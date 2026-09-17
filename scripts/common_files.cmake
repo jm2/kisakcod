@@ -204,6 +204,10 @@ set(DATABASE
     "${SRC_DIR}/database/db_stream.cpp"
     "${SRC_DIR}/database/db_stream_load.cpp"
     "${SRC_DIR}/database/db_stringtable_load.cpp"
+    "${SRC_DIR}/database/db_graph_hash.cpp"
+    "${SRC_DIR}/database/db_graph_hash.h"
+    "${SRC_DIR}/database/shader_cache.cpp"
+    "${SRC_DIR}/database/shader_cache.h"
 )
 
 set(DEVGUI
