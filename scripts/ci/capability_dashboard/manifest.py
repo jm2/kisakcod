@@ -91,20 +91,30 @@ def _validate_modes(modes: list, errors: list[str]) -> None:
         errors.append("enums.modes must be a non-empty list")
 
 
-def _validate_targets(targets: list, errors: list[str]) -> list[str]:
-    """Validate the requested-target list and return its ids."""
-    target_ids = [target.get("id") for target in targets]
-    if len(set(target_ids)) != len(target_ids):
-        errors.append("targets contain duplicate ids")
-    requested_ids = {
+def _target_ids(targets: list) -> list[str]:
+    """Return the declared target ids, in declaration order."""
+    return [target.get("id") for target in targets]
+
+
+def _requested_target_ids(targets: list) -> set[str]:
+    """Return the ids a target marks as requested and usable."""
+    return {
         target.get("id")
         for target in targets
         if target.get("requested") and isinstance(target.get("id"), str)
     }
-    # The requested set is fixed by #122/#126: a manifest cannot drop or disable
-    # a mandatory target, and it cannot smuggle an extra target into the
-    # aggregate.  ``requested`` alone is editable, so it cannot be the only
-    # source of truth for which targets the aggregate reports.
+
+
+def _check_duplicate_targets(target_ids: list[str], errors: list[str]) -> None:
+    """Reject a target list that repeats an id."""
+    if len(set(target_ids)) != len(target_ids):
+        errors.append("targets contain duplicate ids")
+
+
+def _check_mandatory_targets(
+    target_ids: list[str], requested_ids: set[str], errors: list[str]
+) -> None:
+    """Require every mandatory target to be declared and requested."""
     for required in MANDATORY_REQUESTED_TARGET_IDS:
         if required not in target_ids:
             errors.append(
@@ -114,6 +124,10 @@ def _validate_targets(targets: list, errors: list[str]) -> list[str]:
             errors.append(
                 f"target {required!r} is mandatory and must be requested"
             )
+
+
+def _check_extra_requested(requested_ids: set[str], errors: list[str]) -> None:
+    """Reject requested targets outside the fixed mandatory set."""
     extra = sorted(
         rid for rid in requested_ids if rid not in MANDATORY_REQUESTED_TARGET_IDS
     )
@@ -122,6 +136,19 @@ def _validate_targets(targets: list, errors: list[str]) -> list[str]:
             "targets mark non-mandatory targets as requested: "
             f"{extra!r}; the requested set is fixed"
         )
+
+
+def _validate_targets(targets: list, errors: list[str]) -> list[str]:
+    """Validate the requested-target list and return its ids."""
+    # The requested set is fixed by #122/#126: a manifest cannot drop or disable
+    # a mandatory target, and it cannot smuggle an extra target into the
+    # aggregate.  ``requested`` alone is editable, so it cannot be the only
+    # source of truth for which targets the aggregate reports.
+    target_ids = _target_ids(targets)
+    requested_ids = _requested_target_ids(targets)
+    _check_duplicate_targets(target_ids, errors)
+    _check_mandatory_targets(target_ids, requested_ids, errors)
+    _check_extra_requested(requested_ids, errors)
     return target_ids
 
 
