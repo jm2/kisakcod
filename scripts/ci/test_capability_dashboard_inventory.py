@@ -210,6 +210,31 @@ class MatrixExpansionTests(unittest.TestCase):
         with self.assertRaises(cd.MatrixExpansionError):
             cd.matrix_legs(job)
 
+    def test_inline_include_flow_list_fails_explicitly(self):
+        # Exact refinery reproduction: the parser discarded the inline value
+        # and reported 0 legs (rendered as 1 invocation) for a two-entry
+        # include-only matrix.  It must fail closed instead of undercounting.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        include: [{os: linux}, {os: windows}]",
+        )
+        with self.assertRaises(cd.MatrixExpansionError):
+            cd.matrix_legs(job)
+
+    def test_inline_exclude_flow_list_fails_explicitly(self):
+        # Exact refinery reproduction: an inline exclude of one of two axis
+        # values left 2 legs instead of 1.  Reject the unsupported shape
+        # rather than silently publishing the inaccurate count.
+        job = self._job(
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, windows]",
+            "        exclude: [{os: windows}]",
+        )
+        with self.assertRaises(cd.MatrixExpansionError):
+            cd.matrix_legs(job)
+
 
 class SelfHostedRunsOnTests(unittest.TestCase):
     """The complete ``runs-on`` value is parsed, or parsing fails closed."""

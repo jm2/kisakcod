@@ -242,6 +242,15 @@ def _parse_matrix_block(lines: list[str]) -> MatrixSpec:
             )
         key, inline = match.group(1), match.group(2).strip()
         if key in ("include", "exclude"):
+            # ``include``/``exclude`` hold a list of mappings, which this
+            # line-oriented parser cannot read from a flow value.  Silently
+            # dropping the inline value would publish an inaccurate invocation
+            # count, so reject it explicitly instead of guessing.
+            if inline:
+                raise MatrixExpansionError(
+                    f"inline matrix {key} declarations are not supported: "
+                    f"{raw.strip()!r}"
+                )
             entries, index = _parse_entry_list(
                 lines, index + 1, _indent(raw), key
             )
