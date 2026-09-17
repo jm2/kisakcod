@@ -14,6 +14,7 @@ from typing import TypeGuard
 
 from .contract import (
     CANONICAL_VALIDATION_ORDER,
+    MANDATORY_REQUESTED_TARGET_IDS,
     MANDATORY_REQUIRED_COMMERCIAL_REFERENCES,
     MANDATORY_REQUIRED_MODES,
     MANDATORY_REQUIRED_STRONGEST_VALIDATION,
@@ -95,8 +96,32 @@ def _validate_targets(targets: list, errors: list[str]) -> list[str]:
     target_ids = [target.get("id") for target in targets]
     if len(set(target_ids)) != len(target_ids):
         errors.append("targets contain duplicate ids")
-    if not any(target.get("requested") for target in targets):
-        errors.append("targets must contain at least one requested target")
+    requested_ids = {
+        target.get("id")
+        for target in targets
+        if target.get("requested") and isinstance(target.get("id"), str)
+    }
+    # The requested set is fixed by #122/#126: a manifest cannot drop or disable
+    # a mandatory target, and it cannot smuggle an extra target into the
+    # aggregate.  ``requested`` alone is editable, so it cannot be the only
+    # source of truth for which targets the aggregate reports.
+    for required in MANDATORY_REQUESTED_TARGET_IDS:
+        if required not in target_ids:
+            errors.append(
+                f"targets must declare the mandatory target {required!r}"
+            )
+        elif required not in requested_ids:
+            errors.append(
+                f"target {required!r} is mandatory and must be requested"
+            )
+    extra = sorted(
+        rid for rid in requested_ids if rid not in MANDATORY_REQUESTED_TARGET_IDS
+    )
+    if extra:
+        errors.append(
+            "targets mark non-mandatory targets as requested: "
+            f"{extra!r}; the requested set is fixed"
+        )
     return target_ids
 
 
@@ -379,11 +404,25 @@ def _validate_capabilities(
 ) -> None:
     """Validate every capability row and reject duplicate ids."""
     seen_ids: set[str] = set()
+    seen_pairs: set[tuple[str, str]] = set()
     for capability in manifest.get("capabilities") or []:
         cid = capability.get("id", "<missing>")
         if cid in seen_ids:
             errors.append(f"capability {cid}: duplicate id")
         seen_ids.add(cid)
+        # A capability is matched to an aggregate row by its (target, mode)
+        # pair, so two rows sharing a pair make delivery order-dependent: the
+        # first row found wins and a copied row with a new id can add a target
+        # without adding delivery.  Reject the ambiguity instead of picking one.
+        target = capability.get("target")
+        mode = capability.get("mode")
+        if isinstance(target, str) and isinstance(mode, str):
+            if (target, mode) in seen_pairs:
+                errors.append(
+                    f"capability {cid}: duplicate target/mode pair "
+                    f"{(target, mode)!r}"
+                )
+            seen_pairs.add((target, mode))
         _validate_capability_identity(capability, cid, context, errors)
         _validate_capability_levels(capability, cid, context, errors)
         _validate_evidence_fields(

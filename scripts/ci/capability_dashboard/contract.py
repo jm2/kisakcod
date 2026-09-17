@@ -16,6 +16,20 @@ import re
 # against these values -- never against the manifest's editable ``aggregate``
 # block.
 MANDATORY_REQUIRED_MODES: tuple[str, ...] = ("mp-client", "headless-server")
+
+# The mandatory requested-target set.  ``requested`` is an editable manifest
+# flag, so a manifest that disabled the flag on every target but one used to
+# shrink the aggregate to a single requested target (compute_aggregate reported
+# ``requested=1``).  The complete five-target set is pinned here and the
+# validator rejects a manifest that omits a mandatory target, disables its
+# ``requested`` flag, or marks any non-mandatory target as requested.
+MANDATORY_REQUESTED_TARGET_IDS: tuple[str, ...] = (
+    "windows-amd64",
+    "windows-arm64",
+    "linux-amd64",
+    "linux-arm64",
+    "macos-arm64",
+)
 MANDATORY_REQUIRED_COMMERCIAL_REFERENCES: tuple[str, ...] = (
     "commercial-1.7",
     "steam-1.8",

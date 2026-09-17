@@ -16,6 +16,7 @@ from .aggregate import compute_aggregate
 from .cli import build_dashboard, main
 from .contract import (
     CANONICAL_VALIDATION_ORDER,
+    MANDATORY_REQUESTED_TARGET_IDS,
     MANDATORY_REQUIRED_COMMERCIAL_REFERENCES,
     MANDATORY_REQUIRED_MODES,
     MANDATORY_REQUIRED_STRONGEST_VALIDATION,
@@ -32,6 +33,7 @@ from .contract import (
 )
 from .inventory import (
     MatrixExpansionError,
+    UnsupportedRunsOnError,
     derive_ci_inventory,
     derive_test_inventory,
     matrix_legs,
@@ -55,6 +57,7 @@ __all__ = [
     "DEFAULT_MANIFEST",
     "DEFAULT_OUTPUT",
     "GENERATED_MARKER",
+    "MANDATORY_REQUESTED_TARGET_IDS",
     "MANDATORY_REQUIRED_COMMERCIAL_REFERENCES",
     "MANDATORY_REQUIRED_MODES",
     "MANDATORY_REQUIRED_STRONGEST_VALIDATION",
@@ -63,6 +66,7 @@ __all__ = [
     "PACKAGE_RESULT_VALUES",
     "REPO_ROOT",
     "REQUIRED_CAPABILITY_FIELDS",
+    "UnsupportedRunsOnError",
     "VALIDATION_RANK",
     "WORKFLOW_DIR",
     "_matrix_legs",

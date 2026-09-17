@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from .contract import (
+    MANDATORY_REQUESTED_TARGET_IDS,
     MANDATORY_REQUIRED_COMMERCIAL_REFERENCES,
     MANDATORY_REQUIRED_MODES,
     MANDATORY_REQUIRED_STRONGEST_VALIDATION,
@@ -103,6 +104,25 @@ def _target_row(
     }
 
 
+def _requested_targets(manifest: dict) -> list[dict]:
+    """Return the pinned requested targets, using declared rows when present."""
+    # The editable ``requested`` flag cannot change which targets the aggregate
+    # reports: the pinned set is the contract's, not the manifest's.  A declared
+    # target is used for its metadata; an omitted one still yields a row so the
+    # dashboard can never silently shrink to fewer requested targets.
+    declared: dict[str, dict] = {}
+    for target in manifest.get("targets") or []:
+        if not isinstance(target, dict):
+            continue
+        target_id = target.get("id")
+        if isinstance(target_id, str):
+            declared[target_id] = target
+    return [
+        declared.get(target_id, {"id": target_id})
+        for target_id in MANDATORY_REQUESTED_TARGET_IDS
+    ]
+
+
 def compute_aggregate(manifest: dict) -> dict:
     """Return requested-target delivery computed against the fixed contract."""
     capabilities = manifest.get("capabilities") or []
@@ -112,13 +132,12 @@ def compute_aggregate(manifest: dict) -> dict:
         references_ok = _reference_gate(manifest)
     rows = [
         _target_row(target, capabilities, required_rank, references_ok)
-        for target in manifest.get("targets") or []
-        if target.get("requested")
+        for target in _requested_targets(manifest)
     ]
     return {
         "rows": rows,
         "delivered": sum(1 for row in rows if row["delivered"]),
-        "requested": len(rows),
+        "requested": len(MANDATORY_REQUESTED_TARGET_IDS),
         "references_ok": references_ok,
         "required_level": MANDATORY_REQUIRED_STRONGEST_VALIDATION,
         "required_modes": list(MANDATORY_REQUIRED_MODES),

@@ -349,6 +349,87 @@ def _workflow_paths(workflow_dir: Path) -> list[Path]:
     return [found[name] for name in sorted(found)]
 
 
+_RUNS_ON_RE = re.compile(r"^runs-on:\s*(.*)$")
+
+
+class UnsupportedRunsOnError(ValueError):
+    """Raised when a job's ``runs-on`` value uses a shape we cannot read."""
+
+
+def _flow_items(text: str) -> list[str]:
+    """Parse an inline flow list such as ``[self-hosted, linux]``."""
+    stripped = text.strip()
+    if not (stripped.startswith("[") and stripped.endswith("]")):
+        raise UnsupportedRunsOnError(
+            f"runs-on flow value must be a list, got {stripped!r}"
+        )
+    inner = stripped[1:-1].strip()
+    if not inner:
+        return []
+    return [_unquote(item.strip()) for item in inner.split(",") if item.strip()]
+
+
+def _scalar_self_hosted(value: str) -> bool:
+    """Return True when one ``runs-on`` scalar is the self-hosted label."""
+    stripped = value.strip()
+    if stripped.startswith("${{"):
+        # A GitHub expression is a supported value whose runner is only known
+        # at run time; it is not statically the self-hosted label.
+        return False
+    if stripped.startswith("{") or stripped.startswith("["):
+        raise UnsupportedRunsOnError(
+            f"unsupported runs-on value {stripped!r}"
+        )
+    return _unquote(stripped) == "self-hosted"
+
+
+def _block_self_hosted(
+    job_lines: list[str], index: int, key_indent: int
+) -> bool:
+    """Return True when a block-sequence ``runs-on`` contains self-hosted."""
+    found = False
+    cursor = index + 1
+    while cursor < len(job_lines):
+        raw = job_lines[cursor]
+        if _is_skippable(raw):
+            cursor += 1
+            continue
+        if _indent(raw) <= key_indent:
+            break
+        stripped = raw.strip()
+        if not stripped.startswith("- "):
+            raise UnsupportedRunsOnError(
+                "unsupported block runs-on entry; expected a scalar list "
+                f"item, got {stripped!r}"
+            )
+        if _scalar_self_hosted(stripped[2:]):
+            found = True
+        cursor += 1
+    return found
+
+
+def _self_hosted(job_lines: list[str]) -> bool:
+    """Return True when a job's ``runs-on`` selects a self-hosted runner."""
+    # The previous probe only recognised ``[self-hosted`` and therefore reported
+    # ``self_hosted=False`` for the scalar form, a list that does not start with
+    # the label, and a block sequence.  Parse the complete supported value (or
+    # raise) so a hidden self-hosted job cannot be reported as hosted.
+    for index, raw in enumerate(job_lines):
+        match = _RUNS_ON_RE.match(raw.strip())
+        if match is None:
+            continue
+        inline = match.group(1).strip()
+        if inline:
+            if inline.startswith("["):
+                return any(
+                    _unquote(item) == "self-hosted"
+                    for item in _flow_items(inline)
+                )
+            return _scalar_self_hosted(inline)
+        return _block_self_hosted(job_lines, index, _indent(raw))
+    return False
+
+
 def _job_entry(job_id: str, job_lines: list[str]) -> dict:
     """Build one derived CI job record."""
     name = job_id
@@ -363,9 +444,7 @@ def _job_entry(job_id: str, job_lines: list[str]) -> dict:
         "id": job_id,
         "name": name,
         "matrix_legs": matrix_legs(job_lines),
-        "self_hosted": any(
-            "runs-on:" in raw and "[self-hosted" in raw for raw in job_lines
-        ),
+        "self_hosted": _self_hosted(job_lines),
     }
 
 

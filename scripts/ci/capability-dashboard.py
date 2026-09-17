@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from capability_dashboard import (  # noqa: E402,F401  pylint: disable=wrong-import-position,import-error
     CANONICAL_VALIDATION_ORDER,
+    MANDATORY_REQUESTED_TARGET_IDS,
     MANDATORY_REQUIRED_COMMERCIAL_REFERENCES,
     MANDATORY_REQUIRED_MODES,
     MANDATORY_REQUIRED_STRONGEST_VALIDATION,
@@ -30,6 +31,7 @@ from capability_dashboard import (  # noqa: E402,F401  pylint: disable=wrong-imp
     REQUIRED_CAPABILITY_FIELDS,
     VALIDATION_RANK,
     MatrixExpansionError,
+    UnsupportedRunsOnError,
     build_dashboard,
     capability_evidence_complete,
     claims_delivery_level,
@@ -55,6 +57,7 @@ _matrix_legs = matrix_legs
 
 __all__ = [
     "CANONICAL_VALIDATION_ORDER",
+    "MANDATORY_REQUESTED_TARGET_IDS",
     "MANDATORY_REQUIRED_COMMERCIAL_REFERENCES",
     "MANDATORY_REQUIRED_MODES",
     "MANDATORY_REQUIRED_STRONGEST_VALIDATION",
@@ -62,6 +65,7 @@ __all__ = [
     "PACKAGE_RESULT_SUCCESS",
     "PACKAGE_RESULT_VALUES",
     "REQUIRED_CAPABILITY_FIELDS",
+    "UnsupportedRunsOnError",
     "VALIDATION_RANK",
     "_job_blocks",
     "_jobs_block",
