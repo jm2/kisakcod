@@ -128,13 +128,11 @@ def cmd_identity_write(args: argparse.Namespace) -> int:
 
 
 def _expected_identity_version(args: argparse.Namespace) -> str:
-    """Return the effective version an identity must carry for this call.
-
-    ``identity-write`` may record an explicit ``--version`` instead of the
-    tag-derived default, so the verifier accepts the same override. Without an
-    explicit version the tag-derived value is required, and a tag that cannot
-    yield one (``v``) is a usage error rather than a silent empty match.
-    """
+    """Return the effective version an identity must carry for this call."""
+    # identity-write may record an explicit --version instead of the
+    # tag-derived default, so the verifier accepts the same override. Without an
+    # explicit version the tag-derived value is required, and a tag that cannot
+    # yield one (v) is a usage error rather than a silent empty match.
     if args.version is not None:
         if not args.version:
             raise GateError("--version must not be empty")

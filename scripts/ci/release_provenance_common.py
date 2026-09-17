@@ -88,17 +88,15 @@ def check_identity_shape(tag: str, commit: str) -> None:
 
 
 def identity_field_failures(record: dict, label: str, tag: str, commit: str) -> list[str]:
-    """Return schema_version/tag/commit mismatches for one identity record.
-
-    The CLI ``identity-verify`` path and the source-archive member check must
-    reject exactly the same malformed identity, so the field-level contract
-    lives here instead of being duplicated. ``label`` names the record in the
-    failure text (an identity file path or an archive member).
-
-    The record's ``version`` is deliberately not checked: the tag-derived
-    version contract is reconciled by the ``identity-verify`` caller that knows
-    the expected value, and the archive member carries no such expectation.
-    """
+    """Return schema_version/tag/commit mismatches for one identity record."""
+    # The CLI identity-verify path and the source-archive member check must
+    # reject exactly the same malformed identity, so the field-level contract
+    # lives here instead of being duplicated. label names the record in the
+    # failure text (an identity file path or an archive member).
+    #
+    # The record's version is deliberately not checked: the tag-derived version
+    # contract is reconciled by the identity-verify caller that knows the
+    # expected value, and the archive member carries no such expectation.
     failures: list[str] = []
     if record.get("schema_version") != SCHEMA_VERSION:
         failures.append(
