@@ -27,11 +27,13 @@ not claim every arbitrary third-party mod is supported.
 `tests/retail_content_matrix_source_test.cmake`, so the required targets and
 their production/reference roles, case families, individual named case ids with
 their intended families, the required commercial session directions, the
-case×direction child records the outcome schema keys on, the §6.3 aggregate
-direction scope and per-profile status/evidence cells, the aggregate
-completeness policy, the §4 catalog/index membership, the uniqueness of
-disposition ids and the upstream dispositions cannot be silently dropped or
-promoted. The upstream dispositions must stay **blocked** while the licensed
+case×direction child records the outcome schema keys on, the full-key §11
+`child` records (one per applicable `(target, mode, profile, case, direction)`
+commercial child — 672 at this basis — with exact coverage, uniqueness and
+`Blocked / none` enforcement), the §6.3 aggregate direction scope and
+per-profile status/evidence cells, the aggregate completeness policy, the §4
+catalog/index membership, the uniqueness of disposition ids and the upstream
+dispositions cannot be silently dropped or promoted. The upstream dispositions must stay **blocked** while the licensed
 references are unavailable, each disposition id is a unique key, and every
 commercial §6.3 cell must stay **Blocked / none** (status and evidence-ref
 both checked) while the reference manifests are unavailable. The outcome
@@ -242,7 +244,15 @@ case and direction, not by an aggregate cell alone.
   `direction` is one of the §2.4 ids and `status` is the §1 vocabulary. Each
   child record carries the applicable §5 lifecycle stages and the §4 required
   evidence for its case, and is Pass only from a real run citing the §3
-  reference manifest id and that evidence.
+  reference manifest id and that evidence. Every axis of the key is part of the
+  recorded result: a pass on `win-amd64`/listen/1.7 never stands for
+  `linux-arm64`/dedicated/1.8. The full-key child records are materialized
+  canonically as `child <target> <mode> <profile> <case> <direction>
+  <status> <evidence-ref>` lines in the §11 index — one line per applicable
+  commercial child, generated from the §11 `target-role` × `case-mode` ×
+  commercial-`profile` declarations, with exact coverage and uniqueness
+  enforced by the guard. The §6.2 ledger is the per-case view of the same
+  records; neither place can promote a child the other keeps blocked.
 - A missing licensed reference yields **Blocked**, never an implicit Pass.
   `kc-kc` children are **Supplemental** and never satisfy a commercial cell.
 - **Aggregate cell** — the §6.3 roll-up `(target, mode, profile)`. It is Pass
@@ -260,7 +270,11 @@ require a client-capable target; every requested production target, including
 `macos-arm64`, carries both roles, so each produces both direction children,
 while `SM-01` (listen) / `SM-02` (dedicated) produce no child for the
 non-matching mode. The §11 `outcome` lines
-enumerate exactly this applicable case×mode×direction set, and the §11
+enumerate exactly this applicable case×mode×direction set, the §11 `child`
+records materialize the full-key commercial children that set produces (every
+applicable case×mode×direction combination crossed with the six targets and
+the two commercial profiles — 672 records at this basis, pinned by the
+`child-count` line), and the §11
 `completeness aggregate pass-requires-all-case-directions` line fixes the
 roll-up policy, so an applicable child cannot be omitted and an inapplicable
 mode/role combination cannot be required. An applicability change must move the
@@ -271,16 +285,26 @@ mode/role combination cannot be required. An applicability change must move the
 
 Each required named case declares the modes it applies to (`Modes`); its two
 commercial direction cells are required only for those modes and only for
-targets whose role supports the direction (§6.1). The full child set is
-therefore the cross-product of this table with the applicable
+targets whose role supports the direction (§6.1). This table is the
+**per-case view** of the canonical full-key child ledger: the individually
+keyed unit of evidence is the §11 `child` record
+`(target, mode, profile, case, direction)`, and each direction cell below
+summarizes exactly the full-key records sharing its case and direction — it
+never fuses them into one result. A direction cell may therefore only claim
+what every one of its full-key records claims; when any child differs, the
+cell must be split out of this view and recorded per key in §11. The full
+child set is therefore the cross-product of this table with the applicable
 (target, mode, profile) axes, not an unconditional cross-product. `Status` is
 the current §1 label (`Blocked / none` means no evidence is recorded); a Pass
 must attach the §4 required evidence named in the last column. The guard
 validates these cells directly: while the licensed reference manifests are
 unavailable, every commercial direction cell in this ledger must stay
-`Blocked / none`, the ledger must cover exactly the §11 case set, and neither
+`Blocked / none`, the ledger must cover exactly the §11 case set, every §11
+full-key child record must exist exactly once at `Blocked / none`, and neither
 the status nor the evidence half may be promoted — a fabricated child claim
-cannot bypass the aggregate roll-up by hiding in a single cell.
+cannot bypass the aggregate roll-up by hiding in a single cell, and it cannot
+hide behind the per-case view either, because the §11 records key every target,
+mode and profile independently.
 
 | Case | Modes | kc-server-commercial-client | kc-client-commercial-server | Applicable §5 lifecycle stages | Required evidence (§4) |
 |---|---|---|---|---|---|
@@ -304,7 +328,12 @@ cannot bypass the aggregate roll-up by hiding in a single cell.
 ### 6.3 Aggregate roll-up
 
 The aggregate cell is derived, never standalone: it can only be as strong as
-its weakest required child. At this basis every commercial child is **Blocked**
+its weakest required child. The required children of a `(target, mode,
+profile)` cell are exactly the §11 full-key `child` records sharing that
+target/mode/profile prefix (filtered by case-mode applicability and the
+target's role scope), and the cell's readiness is derived from those records —
+the weakest of them bounds the cell, never the reverse. At this basis every
+commercial child is **Blocked**
 (no reference manifest) and every `kisakcod-self` child is **Supplemental** with
 no claim of parity, so the roll-up below stays Blocked/Supplemental. The matrix
 is rendered per target; each cell is `status` / evidence-ref. The
@@ -400,8 +429,9 @@ mode×required direction; new families must be covered by §4; new directions ne
 a `direction <id> <kind>` line and a `target-role` capability on every target
 that can carry it; new targets need a `target-role <id> <role...>` line, a §6.3
 aggregate row whose `Required directions` column matches that role, and the
-applicable `outcome` triples. Promotion to `Pass` requires the reference-manifest
-id plus case evidence recorded in §6.
+applicable `outcome` triples. Any applicability change also requires the full-key
+`child` records to be regenerated and the `child-count` line updated. Promotion
+to `Pass` requires the reference-manifest id plus case evidence recorded in §6.
 
 `case-mode` encodes case→mode applicability, so a listen-only case (`SM-01`) is
 never required in a dedicated cell and a dedicated-only case (`SM-02`) is never
@@ -415,9 +445,19 @@ would be excused from a server-direction child. The `outcome` lines therefore
 enumerate exactly the applicable case×mode×direction children, and the
 `completeness aggregate pass-requires-all-case-directions` line must stay,
 because it forces an aggregate cell to depend on all applicable
-case×mode×direction children. Each `disposition` id must appear exactly once and
+case×mode×direction children. The `child` lines materialize the §6.1 full-key
+child records: one
+`child <target> <mode> <profile> <case> <direction> <status> <evidence-ref>`
+record per applicable commercial child — the case×mode×direction outcomes
+crossed with every target whose role supports the direction and both
+commercial profiles — and the `child-count` line pins the derived record
+count, so the guard can reject a lost, duplicated, wrong-axis or promoted
+record as a one-line diff. `completeness child-ledger full-key-blocked-none`
+must stay: it keeps every full-key record at `Blocked / none` while the
+licensed references are unavailable. Each `disposition` id must appear exactly once and
 both `disposition` entries must stay **blocked** while their licensed references
-are unavailable; every commercial §6.2 child direction cell and every
+are unavailable; every commercial §6.2 child direction cell, every full-key
+`child` record and every
 commercial §6.3 result/evidence cell must stay `Blocked / none` until a real
 run cites a reference manifest id, and the §6.2 ledger must cover exactly the
 case set declared above.
@@ -531,6 +571,680 @@ outcome UP40-01 listen kc-server-commercial-client
 outcome UP40-01 listen kc-client-commercial-server
 outcome UP40-01 dedicated kc-server-commercial-client
 outcome UP40-01 dedicated kc-client-commercial-server
+child-count 672
+completeness child-ledger full-key-blocked-none
+child win-amd64 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 SM-01 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 SM-01 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 SM-01 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 SM-02 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 SM-02 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 SM-02 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 SM-02 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 UP89-01 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 UP89-01 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 UP89-01 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 UP89-01 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 UP89-02 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 UP89-02 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 UP89-02 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 UP89-02 kc-client-commercial-server Blocked none
+child win-amd64 listen original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child win-amd64 listen steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child win-amd64 listen original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child win-amd64 listen steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child win-amd64 dedicated original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child win-amd64 dedicated steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child win-amd64 dedicated original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child win-amd64 dedicated steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 SM-01 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 SM-01 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 SM-01 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 SM-02 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 SM-02 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 SM-02 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 SM-02 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 UP89-01 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 UP89-01 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 UP89-01 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 UP89-01 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 UP89-02 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 UP89-02 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 UP89-02 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 UP89-02 kc-client-commercial-server Blocked none
+child win-arm64 listen original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child win-arm64 listen steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child win-arm64 listen original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child win-arm64 listen steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child win-arm64 dedicated original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child win-arm64 dedicated steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child win-arm64 dedicated original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child win-arm64 dedicated steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 SM-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 SM-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 SM-01 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 SM-02 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 SM-02 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 SM-02 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 SM-02 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 UP89-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 UP89-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 UP89-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 UP89-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 UP89-02 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 UP89-02 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 UP89-02 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 UP89-02 kc-client-commercial-server Blocked none
+child linux-amd64 listen original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child linux-amd64 listen original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child linux-amd64 listen steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child linux-amd64 dedicated original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child linux-amd64 dedicated steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 SM-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 SM-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 SM-01 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 SM-02 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 SM-02 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 SM-02 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 SM-02 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 UP89-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 UP89-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 UP89-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 UP89-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 UP89-02 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 UP89-02 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 UP89-02 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 UP89-02 kc-client-commercial-server Blocked none
+child linux-arm64 listen original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child linux-arm64 listen original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child linux-arm64 listen steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child linux-arm64 dedicated original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child linux-arm64 dedicated steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 SM-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 SM-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 SM-01 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 SM-02 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 SM-02 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 SM-02 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 SM-02 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 UP89-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 UP89-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 UP89-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 UP89-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 UP89-02 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 UP89-02 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 UP89-02 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 UP89-02 kc-client-commercial-server Blocked none
+child macos-arm64 listen original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child macos-arm64 listen original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child macos-arm64 listen steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child macos-arm64 dedicated original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child macos-arm64 dedicated steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 SM-01 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 SM-01 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 SM-01 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 SM-02 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 SM-02 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 SM-02 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 SM-02 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 SM-03 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 SM-03 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 SM-03 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 SM-03 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 MOD-01 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 MOD-01 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 MOD-01 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 MOD-01 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 MOD-02 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 MOD-02 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 MOD-02 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 MOD-03 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 MOD-03 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 MOD-03 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 MOD-03 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 PC-01 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 PC-01 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 PC-01 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 PC-01 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 PC-02 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 PC-02 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 PC-02 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 PC-02 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 PC-03 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 PC-03 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 PC-03 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 PC-04 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 PC-04 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 PC-04 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 PC-04 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 DEMO-01 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 DEMO-01 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 DEMO-01 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 DEMO-01 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 DEMO-02 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 DEMO-02 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 DEMO-02 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 DEMO-02 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 DEMO-03 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 DEMO-03 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 DEMO-03 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 DEMO-03 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 UP89-01 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 UP89-01 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 UP89-01 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 UP89-01 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 UP89-02 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 UP89-02 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 UP89-02 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 UP89-02 kc-client-commercial-server Blocked none
+child win-x86 listen original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child win-x86 listen steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child win-x86 listen original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child win-x86 listen steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
+child win-x86 dedicated original-commercial-1.7 UP40-01 kc-server-commercial-client Blocked none
+child win-x86 dedicated steam-commercial-1.8 UP40-01 kc-server-commercial-client Blocked none
+child win-x86 dedicated original-commercial-1.7 UP40-01 kc-client-commercial-server Blocked none
+child win-x86 dedicated steam-commercial-1.8 UP40-01 kc-client-commercial-server Blocked none
 completeness aggregate pass-requires-all-case-directions
 disposition upstream-89 blocked unavailable named-mod and licensed retail fixtures, no reproduction claimed
 disposition upstream-40 blocked needs pinned commercial movement baseline, scalar-determinism evidence is supplemental

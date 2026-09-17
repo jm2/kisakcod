@@ -7,13 +7,16 @@ cmake_minimum_required(VERSION 3.16)
 # target-role capability, commercial profile, configuration mode, commercial
 # session direction, named case (with its intended family), case-mode
 # applicability, applicable case×mode×direction child record, §6.2 child ledger
-# case coverage or per-direction result/evidence cell, §6.3 aggregate
+# case coverage or per-direction result/evidence cell, §6.1 full-key child
+# record (exact `(target, mode, profile, case, direction)` coverage, uniqueness,
+# axis applicability and `Blocked / none` state, with the pinned record count
+# and the child-ledger completeness policy), §6.3 aggregate
 # cell/direction scope or per-profile result/evidence cell, aggregate
 # completeness policy, or disposition uniqueness is dropped or an
 # inapplicable mode/role requirement is introduced, if the §4 catalog and the
 # index disagree about which cases exist, or if an unavailable-evidence upstream
-# disposition, commercial §6.2 child cell or §6.3 aggregate cell is promoted
-# away from 'Blocked / none'.
+# disposition, commercial §6.2 child cell, full-key child record or §6.3
+# aggregate cell is promoted away from 'Blocked / none'.
 #
 # When run as the primary test it additionally exercises its own negative
 # paths by mutating copies of the document and asserting the validator
@@ -70,6 +73,10 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
     set(_case_mode_cases "")
     set(_case_mode_values "")
     set(_outcome_pairs "")
+    set(_child_records "")
+    set(_child_statuses "")
+    set(_child_evidences "")
+    set(_child_count_declared "")
     set(_completeness_keys "")
     set(_completeness_values "")
     set(_dispositions "")
@@ -102,6 +109,16 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
             list(APPEND _case_mode_values "${CMAKE_MATCH_2}")
         elseif(_line MATCHES "^outcome[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
             list(APPEND _outcome_pairs "${CMAKE_MATCH_1} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3}")
+        elseif(_line MATCHES "^child[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
+            # §6.1 full-key child record: the canonical per-child unit of
+            # evidence, keyed by every declared axis. Fields after the key are
+            # the current status and evidence-ref.
+            list(APPEND _child_records
+                "${CMAKE_MATCH_1} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5}")
+            list(APPEND _child_statuses "${CMAKE_MATCH_6}")
+            list(APPEND _child_evidences "${CMAKE_MATCH_7}")
+        elseif(_line MATCHES "^child-count[ \t]+([0-9]+)$")
+            set(_child_count_declared "${CMAKE_MATCH_1}")
         elseif(_line MATCHES "^completeness[ \t]+([^ \t]+)[ \t]+([^ \t]+)$")
             list(APPEND _completeness_keys "${CMAKE_MATCH_1}")
             list(APPEND _completeness_values "${CMAKE_MATCH_2}")
@@ -455,14 +472,183 @@ function(validate_retail_content_matrix DOC_PATH DOC_TEXT)
             "Retail-content matrix applicable outcome children [${_required_outcomes_sorted}] do not match declared outcome children [${_declared_outcomes_sorted}] in ${DOC_PATH}")
     endif()
 
+    # §6.1 full-key child records. The outcome triples above key children by
+    # (case, mode, direction) only; the child-record schema keys every declared
+    # axis: (target, mode, profile, case, direction). The `child` lines are the
+    # canonical generated ledger of applicable commercial children — the
+    # outcome set crossed with every target whose role supports the direction
+    # and with both commercial profiles — and the guard derives the same set
+    # from the declarations, so a record cannot be lost, duplicated, moved to
+    # an inapplicable axis or promoted without failing validation. The
+    # `child-count` line pins the derived record count so the ledger size is an
+    # explicit, reviewable part of the contract.
+    list(FIND _completeness_keys "child-ledger" _child_ledger_policy_index)
+    if(_child_ledger_policy_index EQUAL -1)
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the child-ledger completeness policy in ${DOC_PATH}")
+    endif()
+    list(GET _completeness_values ${_child_ledger_policy_index} _child_ledger_policy)
+    if(NOT _child_ledger_policy STREQUAL "full-key-blocked-none")
+        message(FATAL_ERROR
+            "Retail-content matrix child-ledger completeness policy must be 'full-key-blocked-none', found '${_child_ledger_policy}' in ${DOC_PATH}")
+    endif()
+
+    list(LENGTH _child_records _child_record_count)
+    if(_child_record_count EQUAL 0)
+        message(FATAL_ERROR
+            "Retail-content matrix declares no full-key child records in ${DOC_PATH}")
+    endif()
+    if(_child_count_declared STREQUAL "")
+        message(FATAL_ERROR
+            "Retail-content matrix is missing the child-count line pinning the full-key record count in ${DOC_PATH}")
+    endif()
+    if(NOT _child_count_declared EQUAL _child_record_count)
+        message(FATAL_ERROR
+            "Retail-content matrix child-count ${_child_count_declared} does not match the ${_child_record_count} declared full-key child records in ${DOC_PATH}")
+    endif()
+    set(_child_records_unique ${_child_records})
+    list(REMOVE_DUPLICATES _child_records_unique)
+    list(LENGTH _child_records_unique _child_record_unique_count)
+    if(NOT _child_record_count EQUAL _child_record_unique_count)
+        message(FATAL_ERROR
+            "Retail-content matrix contains duplicate full-key child records in ${DOC_PATH}")
+    endif()
+
+    # Commercial profiles only: kisakcod-self is supplemental and never fills a
+    # commercial child record.
+    set(_child_commercial_profiles "")
+    foreach(_profile IN LISTS _profiles)
+        list(FIND _profiles "${_profile}" _child_profile_index)
+        list(GET _profile_kinds ${_child_profile_index} _child_profile_kind)
+        if(_child_profile_kind STREQUAL "commercial")
+            list(APPEND _child_commercial_profiles "${_profile}")
+        endif()
+    endforeach()
+    if(_child_commercial_profiles STREQUAL "")
+        message(FATAL_ERROR
+            "Retail-content matrix has no commercial profile to derive full-key children from in ${DOC_PATH}")
+    endif()
+
+    # Derive the required full-key child set from the declarations: every
+    # target, every applicable case-mode pair, the directions the target's role
+    # supports, both commercial profiles. This derivation — not the rendered
+    # tables — is what §6.3 aggregate readiness reads.
+    set(_required_child_keys "")
+    foreach(_target IN LISTS _targets)
+        list(FIND _target_role_targets "${_target}" _fk_role_index)
+        list(GET _target_role_values ${_fk_role_index} _fk_role_string)
+        string(REPLACE " " ";" _fk_caps "${_fk_role_string}")
+        set(_fk_dirs "")
+        list(FIND _fk_caps "server" _fk_server)
+        if(NOT _fk_server EQUAL -1)
+            list(APPEND _fk_dirs "kc-server-commercial-client")
+        endif()
+        list(FIND _fk_caps "client" _fk_client)
+        if(NOT _fk_client EQUAL -1)
+            list(APPEND _fk_dirs "kc-client-commercial-server")
+        endif()
+        foreach(_entry IN LISTS _required_cases)
+            string(REPLACE " " ";" _fk_parts "${_entry}")
+            list(GET _fk_parts 0 _fk_case)
+            list(FIND _case_mode_cases "${_fk_case}" _fk_cm_index)
+            list(GET _case_mode_values ${_fk_cm_index} _fk_modes_string)
+            string(REPLACE " " ";" _fk_modes "${_fk_modes_string}")
+            foreach(_fk_mode IN LISTS _fk_modes)
+                foreach(_fk_dir IN LISTS _fk_dirs)
+                    foreach(_fk_profile IN LISTS _child_commercial_profiles)
+                        list(APPEND _required_child_keys
+                            "${_target} ${_fk_mode} ${_fk_profile} ${_fk_case} ${_fk_dir}")
+                    endforeach()
+                endforeach()
+            endforeach()
+        endforeach()
+    endforeach()
+
+    # Per-record validation: known axes, applicable mode, direction within the
+    # target's role scope, commercial profile, and the blocked/none state.
+    math(EXPR _child_last_index "${_child_record_count} - 1")
+    foreach(_ci RANGE ${_child_last_index})
+        list(GET _child_records ${_ci} _ck)
+        string(REPLACE " " ";" _ck_parts "${_ck}")
+        list(GET _ck_parts 0 _ck_target)
+        list(GET _ck_parts 1 _ck_mode)
+        list(GET _ck_parts 2 _ck_profile)
+        list(GET _ck_parts 3 _ck_case)
+        list(GET _ck_parts 4 _ck_direction)
+        list(FIND _targets "${_ck_target}" _ck_index)
+        if(_ck_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix full-key child record '${_ck}' references unknown target '${_ck_target}' in ${DOC_PATH}")
+        endif()
+        list(FIND _modes "${_ck_mode}" _ck_index)
+        if(_ck_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix full-key child record '${_ck}' references unknown mode '${_ck_mode}' in ${DOC_PATH}")
+        endif()
+        list(FIND _profiles "${_ck_profile}" _ck_index)
+        if(_ck_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix full-key child record '${_ck}' references unknown profile '${_ck_profile}' in ${DOC_PATH}")
+        endif()
+        list(GET _profile_kinds ${_ck_index} _ck_profile_kind)
+        if(NOT _ck_profile_kind STREQUAL "commercial")
+            message(FATAL_ERROR
+                "Retail-content matrix full-key child record '${_ck}' must use a commercial profile, found '${_ck_profile}' in ${DOC_PATH}")
+        endif()
+        list(FIND _cases "${_ck_case}" _ck_index)
+        if(_ck_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix full-key child record '${_ck}' references unknown case '${_ck_case}' in ${DOC_PATH}")
+        endif()
+        list(FIND _directions "${_ck_direction}" _ck_index)
+        if(_ck_index EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix full-key child record '${_ck}' references unknown direction '${_ck_direction}' in ${DOC_PATH}")
+        endif()
+        list(FIND _case_mode_cases "${_ck_case}" _ck_index)
+        list(GET _case_mode_values ${_ck_index} _ck_case_modes_string)
+        string(REPLACE " " ";" _ck_case_modes "${_ck_case_modes_string}")
+        list(FIND _ck_case_modes "${_ck_mode}" _ck_mode_applicable)
+        if(_ck_mode_applicable EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix full-key child record '${_ck}' requires an inapplicable mode for case '${_ck_case}' in ${DOC_PATH}")
+        endif()
+        set(_ck_scope "${_target_scope_${_ck_target}}")
+        list(FIND _ck_scope "${_ck_direction}" _ck_dir_applicable)
+        if(_ck_dir_applicable EQUAL -1)
+            message(FATAL_ERROR
+                "Retail-content matrix full-key child record '${_ck}' requires a direction the target's role does not support in ${DOC_PATH}")
+        endif()
+        list(GET _child_statuses ${_ci} _ck_status)
+        list(GET _child_evidences ${_ci} _ck_evidence)
+        if(NOT _ck_status STREQUAL "Blocked" OR NOT _ck_evidence STREQUAL "none")
+            message(FATAL_ERROR
+                "Retail-content matrix full-key child record '${_ck}' must stay 'Blocked / none' while the licensed reference manifests are unavailable, found '${_ck_status} / ${_ck_evidence}' in ${DOC_PATH}")
+        endif()
+    endforeach()
+
+    # Exact coverage: the declared records must equal the derived applicable
+    # set — a missing record is a coverage loss, an extra record is a wrong
+    # axis (or a fabricated applicability), and either must fail.
+    set(_required_child_keys_sorted ${_required_child_keys})
+    list(SORT _required_child_keys_sorted)
+    set(_child_records_sorted ${_child_records})
+    list(SORT _child_records_sorted)
+    if(NOT "${_required_child_keys_sorted}" STREQUAL "${_child_records_sorted}")
+        list(LENGTH _required_child_keys_sorted _required_child_count)
+        message(FATAL_ERROR
+            "Retail-content matrix full-key child records (${_child_record_count}) do not exactly cover the applicable target×mode×profile×case×direction children (${_required_child_count}) in ${DOC_PATH}")
+    endif()
+
     # §6.2 child-record ledger. Each case row carries one `status / evidence-ref`
-    # cell per commercial direction; the §11 outcome triples carry no result
-    # fields, so this ledger is the only place a per-case commercial claim can
-    # live. While the licensed reference manifests are unavailable every
-    # commercial child cell must stay `Blocked / none`, exactly like the §6.3
-    # aggregates and the upstream dispositions: without parsing these cells, a
-    # fabricated `Pass / <log>` in one child cell escapes the guard while the
-    # aggregate roll-up still reads all-Blocked.
+    # cell per commercial direction; it is the per-case view of the §6.1
+    # full-key child records above, which remain the canonical individually
+    # keyed units of evidence. While the licensed reference manifests are
+    # unavailable every commercial child cell must stay `Blocked / none`,
+    # exactly like the full-key records, the §6.3 aggregates and the upstream
+    # dispositions: without parsing these cells, a fabricated `Pass / <log>` in
+    # one child cell escapes the guard while the aggregate roll-up still reads
+    # all-Blocked.
     string(FIND "${DOC_TEXT}" "### 6.2" _child_begin)
     string(FIND "${DOC_TEXT}" "### 6.3" _child_end)
     if(_child_begin EQUAL -1 OR _child_end EQUAL -1 OR _child_end LESS_EQUAL _child_begin)
@@ -1087,5 +1273,95 @@ if(_mutated STREQUAL _matrix_text)
     message(FATAL_ERROR "Negative self-test mutation 'drop-aggregate-bound' did not apply")
 endif()
 expect_rejected("drop-aggregate-bound" "${_mutated}")
+
+# Drop ONE full-key §6.1 child record. The derived applicable set still
+# requires it, so exact coverage must reject the loss — this is the review's
+# core finding: a per-case view without full-key records can silently claim
+# coverage for every other target/mode/profile combination.
+string(REPLACE
+    "child win-amd64 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none\n"
+    "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-full-key-child' did not apply")
+endif()
+expect_rejected("drop-full-key-child" "${_mutated}")
+
+# Duplicate a full-key child record verbatim: the key must stay unique, so a
+# repeated record cannot carry a second conflicting claim later.
+string(REPLACE
+    "child win-amd64 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none\n"
+    "child win-amd64 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none\nchild win-amd64 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none\n"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'duplicate-full-key-child' did not apply")
+endif()
+expect_rejected("duplicate-full-key-child" "${_mutated}")
+
+# Move a record to a wrong axis: SM-01 is listen-only, so its record on the
+# dedicated mode is an inapplicable-axis record and the listen variant is
+# missing; both the applicability check and exact coverage must reject.
+string(REPLACE
+    "child win-amd64 listen original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none"
+    "child win-amd64 dedicated original-commercial-1.7 SM-01 kc-server-commercial-client Blocked none"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'wrong-axis-full-key-child' did not apply")
+endif()
+expect_rejected("wrong-axis-full-key-child" "${_mutated}")
+
+# Swap a record's commercial profile for the supplemental kisakcod-self: a
+# supplemental profile never fills a commercial child record, and the original
+# commercial record is missing.
+string(REPLACE
+    "child win-amd64 listen steam-commercial-1.8 SM-01 kc-server-commercial-client Blocked none"
+    "child win-amd64 listen kisakcod-self SM-01 kc-server-commercial-client Blocked none"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'wrong-profile-full-key-child' did not apply")
+endif()
+expect_rejected("wrong-profile-full-key-child" "${_mutated}")
+
+# Promote one full-key child record's status while the licensed references are
+# unavailable: the per-record blocked policy must reject it exactly like a
+# §6.2 cell promotion.
+string(REPLACE
+    "child win-arm64 listen original-commercial-1.7 MOD-02 kc-client-commercial-server Blocked none"
+    "child win-arm64 listen original-commercial-1.7 MOD-02 kc-client-commercial-server Pass none"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'promote-full-key-child' did not apply")
+endif()
+expect_rejected("promote-full-key-child" "${_mutated}")
+
+# Fabricate evidence on a full-key child record: the evidence half is
+# validated per record too, not only in the §6.2 per-case view.
+string(REPLACE
+    "child linux-amd64 dedicated steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked none"
+    "child linux-amd64 dedicated steam-commercial-1.8 PC-03 kc-server-commercial-client Blocked fabricated-log"
+    _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'fabricate-full-key-child-evidence' did not apply")
+endif()
+expect_rejected("fabricate-full-key-child-evidence" "${_mutated}")
+
+# Drop the child-count pin: the exact generated record count must stay
+# declared so coverage drift shows up as a reviewable one-line diff.
+string(REPLACE
+    "child-count 672\n"
+    "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-child-count' did not apply")
+endif()
+expect_rejected("drop-child-count" "${_mutated}")
+
+# Drop the child-ledger completeness policy: the full-key records could then
+# drift away from the blocked state without the policy being missed.
+string(REPLACE
+    "completeness child-ledger full-key-blocked-none\n"
+    "" _mutated "${_matrix_text}")
+if(_mutated STREQUAL _matrix_text)
+    message(FATAL_ERROR "Negative self-test mutation 'drop-child-ledger-policy' did not apply")
+endif()
+expect_rejected("drop-child-ledger-policy" "${_mutated}")
 
 file(REMOVE_RECURSE "${_scratch_dir}")
