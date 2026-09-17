@@ -120,9 +120,12 @@ def _split_flow_items(inner: str) -> list[str]:
 # --------------------------------------------------------------------------
 def _jobs_block(lines: list[str]) -> list[str]:
     """Return the lines strictly inside the top-level ``jobs:`` mapping."""
+    # ``jobs:  # build jobs`` is valid YAML: matching the raw line instead
+    # of the comment-stripped one missed the mapping entirely and silently
+    # inventoried zero jobs for the whole workflow.
     start = None
     for index, raw in enumerate(lines):
-        if raw.rstrip() == "jobs:":
+        if _indent(raw) == 0 and _strip_yaml_comment(raw) == "jobs:":
             start = index
             break
     if start is None:
@@ -153,11 +156,14 @@ def _job_blocks(block: list[str]) -> list[tuple[str, list[str]]]:
             if current_id is not None:
                 current_lines.append(raw)
             continue
-        stripped = raw.strip()
-        if _indent(raw) == 2 and JOB_KEY_RE.match(stripped):
+        # A trailing comment on the job key (``build:  # linux build``) is
+        # valid YAML; match the comment-stripped key or the job merges into
+        # its predecessor and silently disappears from the inventory.
+        normalized = _strip_yaml_comment(raw)
+        if _indent(raw) == 2 and JOB_KEY_RE.match(normalized):
             if current_id is not None:
                 jobs.append((current_id, current_lines))
-            current_id = stripped[:-1]
+            current_id = normalized[:-1]
             current_lines = [raw]
         elif current_id is not None:
             current_lines.append(raw)
@@ -171,8 +177,10 @@ def _job_blocks(block: list[str]) -> list[tuple[str, list[str]]]:
 # --------------------------------------------------------------------------
 def _matrix_block(job_lines: list[str]) -> list[str] | None:
     """Return the lines inside a job's ``matrix:`` mapping, or None."""
+    # ``matrix:  # build matrix`` is the mapping boundary, not an inline
+    # declaration; strip the comment before deciding.
     for index, raw in enumerate(job_lines):
-        stripped = raw.strip()
+        stripped = _strip_yaml_comment(raw)
         if not stripped.startswith("matrix:"):
             continue
         if stripped != "matrix:":
@@ -319,7 +327,12 @@ def _parse_matrix_block(lines: list[str]) -> MatrixSpec:
             raise MatrixExpansionError(
                 f"unsupported matrix line: {raw.strip()!r}"
             )
-        key, inline = match.group(1), match.group(2).strip()
+        key = match.group(1)
+        # A trailing comment after the key is not an inline value: keeping
+        # it attached made ``include:  # note`` and ``os:  # axes below``
+        # fail as unsupported inline declarations instead of reading the
+        # block that follows.
+        inline = _strip_yaml_comment(match.group(2))
         if key in ("include", "exclude"):
             # ``include``/``exclude`` hold a list of mappings, which this
             # line-oriented parser cannot read from a flow value.  Silently

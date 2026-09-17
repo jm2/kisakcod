@@ -73,6 +73,115 @@ class YamlInventoryTests(unittest.TestCase):
         self.assertEqual(inventory["workflows"][0]["file"], "extra.yaml")
 
 
+class StructuralCommentTests(unittest.TestCase):
+    """Trailing comments on structural keys must not delete inventory rows."""
+
+    COMMENTED_JOBS_WORKFLOW = """\
+name: Fixture
+
+on:
+  push:
+
+jobs:  # build jobs
+  plain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run
+        run: echo hi
+"""
+
+    COMMENTED_JOB_KEY_WORKFLOW = """\
+name: Fixture
+
+on:
+  push:
+
+jobs:
+  plain:  # linux build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run
+        run: echo hi
+"""
+
+    @staticmethod
+    def _inventory(workflow_text):
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow_dir = Path(tmp)
+            (workflow_dir / "fixture.yml").write_text(
+                workflow_text, encoding="utf-8"
+            )
+            return cd.derive_ci_inventory(workflow_dir)
+
+    def test_jobs_key_with_trailing_comment_still_inventories(self):
+        # Exact refinery reproduction at PR #150 head 66b401db: the bare
+        # ``jobs:`` line inventories job_count=1/invocations=1, but the same
+        # fixture with ``jobs:  # build jobs`` matched no structural key and
+        # silently published job_count=0/invocations=0 without any error.
+        inventory = self._inventory(self.COMMENTED_JOBS_WORKFLOW)
+        workflow = inventory["workflows"][0]
+        self.assertEqual(workflow["job_count"], 1)
+        self.assertEqual(workflow["invocations"], 1)
+
+    def test_job_key_with_trailing_comment_still_inventories(self):
+        # A trailing comment on a job key has the corresponding omission
+        # risk: the bare-key match must see the comment-stripped key or the
+        # job merges into its predecessor and silently disappears.
+        inventory = self._inventory(self.COMMENTED_JOB_KEY_WORKFLOW)
+        workflow = inventory["workflows"][0]
+        self.assertEqual([job["id"] for job in workflow["jobs"]], ["plain"])
+        self.assertEqual(workflow["invocations"], 1)
+
+    def test_matrix_key_with_trailing_comment_parses(self):
+        # ``matrix:  # build matrix`` is the mapping boundary, not an
+        # unsupported inline declaration.
+        job = [
+            "    runs-on: ubuntu-latest",
+            "    strategy:",
+            "      matrix:  # build matrix",
+            "        os: [linux, mac]",
+        ]
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_axis_block_after_commented_inline_placeholder_parses(self):
+        # A comment after the axis key is not an inline flow value: the
+        # block sequence that follows must still be read instead of the
+        # comment text failing the flow-list shape check.
+        job = [
+            "    runs-on: ubuntu-latest",
+            "    strategy:",
+            "      matrix:",
+            "        os:  # both build on CI",
+            "          - linux",
+            "          - windows",
+        ]
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_commented_include_key_still_parses_block_list(self):
+        # ``include:  # note`` must read the block list that follows rather
+        # than treating the comment as an unsupported inline declaration.
+        job = [
+            "    runs-on: ubuntu-latest",
+            "    strategy:",
+            "      matrix:",
+            "        os: [linux, mac]",
+            "        include:  # annotate the linux leg",
+            "          - os: linux",
+            "            arch: x64",
+        ]
+        self.assertEqual(cd.matrix_legs(job), 2)
+
+    def test_commented_out_matrix_stays_ignored(self):
+        # A commented-out matrix is not a matrix: the job must stay a
+        # single leg instead of expanding the commented shape.
+        job = [
+            "    runs-on: ubuntu-latest",
+            "    # matrix:",
+            "    #   os: [linux, mac]",
+        ]
+        self.assertEqual(cd.matrix_legs(job), 0)
+
+
 class MatrixExpansionTests(unittest.TestCase):
     """Matrix legs must be a real Cartesian product (#150 review r4030126249)."""
 
