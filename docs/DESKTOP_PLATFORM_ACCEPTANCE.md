@@ -320,7 +320,7 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
   MUST fail closed with an actionable diagnostic and MUST NOT fall back to
   writing under the install or retail data tree),
   Linux `$XDG_CONFIG_HOME`/`$XDG_CACHE_HOME`/`$XDG_STATE_HOME`
-  (falling back to `~/.config`, `~/.cache`, `~/.local/state`); per the
+  (falling back to `~/.config`, `~/.cache`, `~/.local/state`; per the
   [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/)
   each variable is honored only when it names an **absolute** path: an
   **empty** value MUST be treated as unset (per-role default), a
