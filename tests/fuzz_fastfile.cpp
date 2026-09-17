@@ -30,7 +30,7 @@
 // adds feeding attacker-controlled bytes into the bounded read path
 // and asserting that the contract holds.
 
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
 #include <algorithm>
 #include <cstdint>

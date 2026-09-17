@@ -6,7 +6,7 @@
 #include <universal/com_files.h>
 #include <universal/com_memory.h>
 #include <qcommon/qcommon.h>
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
 enum $69AF8E44C9D6025F282D494F15F1F016 : __int32
 {

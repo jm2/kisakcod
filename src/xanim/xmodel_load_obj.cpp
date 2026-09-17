@@ -10,7 +10,7 @@
 #endif
 #include "xanim.h"
 #include <physics/phys_local.h>
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
 XModelDefault g_default;
 Material *g_materials[1];

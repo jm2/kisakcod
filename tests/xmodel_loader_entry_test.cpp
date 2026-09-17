@@ -17,7 +17,9 @@
 // tests/CMakeLists.txt gates this target to the Windows x86 CI leg.
 
 #include <xanim/xmodel.h>
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
+
+#include <universal/msvc_printf_shim.h>
 
 #include "xmodel_loader_entry_harness.hpp"
 
@@ -25,6 +27,89 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+
+// ---------------------------------------------------------------------------
+// Harness definitions. The printf-family wrappers (Com_PrintError,
+// Com_sprintf, Com_Error) are the only functions DEFINED here: their
+// bodies necessarily call a printf function with a caller-supplied
+// format string, and every production printf wrapper in this
+// repository lives in a .cpp — common.cpp, r_warn.cpp — so these do
+// too (a header body re-triggers the CWE-134 lexical pattern). The
+// remaining engine-service endpoints are defined inline in the
+// harness header at global scope, matching the production signatures
+// the loader TU resolves against. The harness state itself is
+// namespace-scope storage in this TU.
+// ---------------------------------------------------------------------------
+namespace xmodel_loader_entry_harness
+{
+namespace
+{
+HarnessState g_harnessState;
+}  // namespace
+
+HarnessState &State()
+{
+    return g_harnessState;
+}
+
+void ResetHarness()
+{
+    HarnessState &s = State();
+    s.files.clear();
+    s.hunkData.clear();
+    s.errors.clear();
+    s.materialRegistrations.clear();
+    s.fsReads = 0;
+    s.fsFrees = 0;
+    s.nestedPartsActivations = 0;
+    s.physPresetCalls = 0;
+    s.collMapCalls = 0;
+}
+}  // namespace xmodel_loader_entry_harness
+
+void Com_PrintError(int channel, const char *fmt, ...)
+{
+    char buffer[1024];
+    va_list args;
+    va_start(args, fmt);
+    _vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    xmodel_loader_entry_harness::RecordedError error;
+    error.channel = channel;
+    error.text = buffer;
+    xmodel_loader_entry_harness::State().errors.push_back(error);
+}
+
+int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    // _vsnprintf carries the MSVC truncation contract on every host:
+    // the native CRT spelling on the win32-x86 leg, KISAK_vsnprintf_trunc
+    // through universal/msvc_printf_shim.h on POSIX hosts.
+    const int written = _vsnprintf(dest, size, fmt, args);
+    va_end(args);
+    return written;
+}
+
+void Com_Error(errorParm_t code, const char *fmt, ...)
+{
+    char buffer[256];
+    va_list args;
+    va_start(args, fmt);
+    _vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    xmodel_loader_entry_harness::RecordedError error;
+    error.channel = static_cast<int>(code);
+    error.text = buffer;
+    xmodel_loader_entry_harness::State().errors.push_back(error);
+    // ERR_FATAL terminates the process in production; reaching it
+    // during an entry-point contract is a defect, so fail the test
+    // process loudly with the recorded message.
+    std::fprintf(stderr, "xmodel_loader_entry: Com_Error(%d): %s\n",
+                 static_cast<int>(code), buffer);
+    std::abort();
+}
 
 namespace xmodel_loader_entry_test
 {

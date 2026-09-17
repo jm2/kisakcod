@@ -1,4 +1,4 @@
-#include "buf_cursor.h"
+#include "buf_cursor.hpp"
 
 #include <stdint.h>
 #include <string.h>

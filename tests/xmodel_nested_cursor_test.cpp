@@ -33,7 +33,7 @@
 // tests/xmodel_nested_cursor_walks.hpp, included here as a pure
 // organizational split with every assertion retained verbatim.
 
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
 #include "xmodel_cursor_test_support.hpp"
 

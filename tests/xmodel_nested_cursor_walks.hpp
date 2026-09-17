@@ -15,7 +15,7 @@
 #ifndef XMODEL_NESTED_CURSOR_WALKS_HPP
 #define XMODEL_NESTED_CURSOR_WALKS_HPP
 
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
 #include "xmodel_cursor_test_support.hpp"
 

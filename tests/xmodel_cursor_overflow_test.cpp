@@ -32,7 +32,7 @@
 // individually readable. All assertions are retained in their original
 // execution order.
 
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
 #include "xmodel_cursor_test_support.hpp"
 

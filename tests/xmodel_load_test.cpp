@@ -12,7 +12,7 @@
 // read collision data then read LOD table" sequence that the master
 // xmodel_load_obj.cpp follows end-to-end.
 
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
 #include <cstdint>
 #include <cstdio>

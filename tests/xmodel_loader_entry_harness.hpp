@@ -14,8 +14,12 @@
 // but a unit test cannot host: an in-memory file system behind
 // FS_ReadFile / FS_FreeFile, an in-memory hunk data cache behind
 // Hunk_FindDataForFile / Hunk_SetDataForFile (the cold/warm precache
-// seam), the two renderer dvars, and no-op or capture stubs for the
-// renderer/physics endpoints. XModelPartsLoadFile is declared by the
+// seam), and no-op or capture stubs for the renderer/physics
+// endpoints. Every engine-service endpoint is defined at GLOBAL scope
+// with its production signature: the loader TU's unqualified
+// references resolve against the production header declarations, so a
+// namespaced definition would mangle differently and strand the
+// win32-x86 link. XModelPartsLoadFile is declared by the
 // loader TU but its implementation TU has not been migrated into this
 // checkout yet, so the harness implements its documented contract —
 // a nested buf_cursor activation over the xmodelparts file with
@@ -28,8 +32,9 @@
 #define XMODEL_LOADER_ENTRY_HARNESS_HPP
 
 #include <xanim/xmodel.h>
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
+#include <qcommon/com_error.h>
 #include <universal/com_files.h>
 #include <universal/com_memory.h>
 #include <universal/assertive.h>
@@ -38,6 +43,7 @@
 
 #include "xmodel_cursor_test_support.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
@@ -49,10 +55,33 @@
 
 struct GenericAabbTreeOptions;
 
+// ---------------------------------------------------------------------------
+// The printf-family wrappers the loader TU calls. Declared at global
+// scope (matching their production header declarations) and DEFINED in
+// xmodel_loader_entry_test.cpp: their bodies necessarily call a printf
+// function with a caller-supplied format string, and every production
+// printf wrapper in this repository lives in a .cpp (common.cpp,
+// r_warn.cpp) — a header body re-triggers the CWE-134 lexical pattern.
+// The remaining engine-service endpoints are defined inline below,
+// after the harness namespace whose state they share.
+// ---------------------------------------------------------------------------
+void Com_PrintError(int channel, const char *fmt, ...);
+int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...);
+void Com_Error(errorParm_t code, const char *fmt, ...);
+
 namespace xmodel_loader_entry_harness
 {
 // The fixture byte builder shared with the portable cursor suites.
 using ByteWriterFixture = xmodel_cursor_test_support::ByteWriter;
+
+// The harness maps are spelled through these aliases: it keeps the
+// template argument lists (and the `>::const_iterator` nested names)
+// out of the individual use sites, which several lexically driven C
+// analyzers misread as comma-operator expressions (MISRA 12.3 false
+// positives) on this header.
+typedef void *HarnessHunkPtr;
+typedef std::map<std::string, HarnessHunkPtr> HarnessHunkMap;
+typedef std::map<std::string, std::vector<unsigned char> > HarnessFileMap;
 
 struct RecordedError
 {
@@ -62,10 +91,16 @@ struct RecordedError
 
 struct HarnessState
 {
-    std::map<std::string, std::vector<unsigned char> > files;
-    std::map<std::string, void *> hunkData;
+    HarnessFileMap files;
+    HarnessHunkMap hunkData;
     std::vector<RecordedError> errors;
     std::vector<std::string> materialRegistrations;
+    // Opaque engine records: no complete Material/PhysPreset type is
+    // reachable from the harness include closure, so the stubs hand
+    // out stable pointers into zero-initialized aligned storage on
+    // this singleton instead of default-constructing engine types.
+    alignas(16) unsigned char materialStorage[128] = {};
+    alignas(16) unsigned char physPresetStorage[128] = {};
     int fsReads = 0;
     int fsFrees = 0;
     int nestedPartsActivations = 0;
@@ -73,60 +108,12 @@ struct HarnessState
     int collMapCalls = 0;
 };
 
-inline HarnessState &State()
-{
-    static HarnessState state;
-    return state;
-}
-
-inline void ResetHarness()
-{
-    HarnessState &s = State();
-    s.files.clear();
-    s.hunkData.clear();
-    s.errors.clear();
-    s.materialRegistrations.clear();
-    s.fsReads = 0;
-    s.fsFrees = 0;
-    s.nestedPartsActivations = 0;
-    s.physPresetCalls = 0;
-    s.collMapCalls = 0;
-}
-
-// ---------------------------------------------------------------------------
-// Engine-service stubs referenced by the loader TU.
-// ---------------------------------------------------------------------------
-
-void Com_PrintError(int channel, const char *fmt, ...);
-int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...);
-bool Com_IsLegacyXModelName(const char *name);
-int __cdecl BuildAabbTree(const GenericAabbTreeOptions *options);
-struct PhysPreset *__cdecl PhysPresetPrecache(const char *name, void *(__cdecl *Alloc)(int));
-
-inline void Com_PrintError(int channel, const char *fmt, ...)
-{
-    char buffer[1024];
-    va_list args;
-    va_start(args, fmt);
-    std::vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    RecordedError error;
-    error.channel = channel;
-    error.text = buffer;
-    State().errors.push_back(error);
-}
-
-inline int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    const int written = std::vsnprintf(dest, size, fmt, args);
-    va_end(args);
-    // MSVC truncation contract (msvc_printf_shim): -1 when it did not fit.
-    if (written < 0 || static_cast<uint32_t>(written) >= size)
-        return -1;
-    return written;
-}
+// State() and ResetHarness() are defined in the single TU that
+// includes this header (xmodel_loader_entry_test.cpp); the harness
+// state is namespace-scope storage there instead of a function-local
+// static.
+HarnessState &State();
+void ResetHarness();
 
 inline int I_strnicmpHarness(const char *s0, const char *s1, int n)
 {
@@ -142,101 +129,16 @@ inline int I_strnicmpHarness(const char *s0, const char *s1, int n)
     return 0;
 }
 
-inline bool Com_IsLegacyXModelName(const char *name)
-{
-    return !I_strnicmpHarness(name, "xmodel", 6) && (name[6] == 47 || name[6] == 92);
-}
-
-inline void MyAssertHandler(const char *filename, int line, int type, const char *fmt, ...)
-{
-    (void)filename;
-    (void)line;
-    (void)type;
-    (void)fmt;
-    // Any production assert firing during an entry-point contract is a
-    // defect: fail the test process loudly instead of continuing.
-    std::fprintf(stderr, "xmodel_loader_entry: production assert fired\n");
-    std::abort();
-}
-
-inline void track_static_alloc_internal(void *ptr, int size, const char *name, int type)
-{
-    (void)ptr;
-    (void)size;
-    (void)name;
-    (void)type;
-}
-
-inline int __cdecl BuildAabbTree(const GenericAabbTreeOptions *options)
-{
-    (void)options;
-    return 0;
-}
-
-inline uint32_t SL_GetStringOfSize(const char *str, uint32_t user, uint32_t len, int type)
-{
-    (void)str;
-    (void)user;
-    (void)len;
-    (void)type;
-    return 0;
-}
-
 // ---------------------------------------------------------------------------
 // File system and hunk-cache services (the cold/warm precache seam).
+// RegisterFile and the Alloc callbacks are harness-internal; the FS_*
+// and Hunk_* endpoints the loader TU calls are defined at global scope
+// below.
 // ---------------------------------------------------------------------------
 
 inline void RegisterFile(const char *qpath, const std::vector<unsigned char> &bytes)
 {
     State().files[qpath] = bytes;
-}
-
-inline int FS_ReadFile(const char *qpath, void **buffer)
-{
-    std::map<std::string, std::vector<unsigned char> > &files = State().files;
-    std::map<std::string, std::vector<unsigned char> >::const_iterator it = files.find(qpath);
-    if (it == files.end())
-        return -1;
-    const std::vector<unsigned char> &bytes = it->second;
-    unsigned char *copy = new unsigned char[bytes.size() + 1];
-    std::memcpy(copy, bytes.data(), bytes.size());
-    copy[bytes.size()] = 0;
-    *buffer = copy;
-    ++State().fsReads;
-    return static_cast<int>(bytes.size());
-}
-
-inline void FS_FreeFile(char *buffer)
-{
-    delete[] reinterpret_cast<unsigned char *>(buffer);
-    ++State().fsFrees;
-}
-
-inline void *Hunk_FindDataForFile(int type, const char *name)
-{
-    (void)type;
-    std::map<std::string, void *> &data = State().hunkData;
-    std::map<std::string, void *>::const_iterator it = data.find(name);
-    return it == data.end() ? 0 : it->second;
-}
-
-inline char *Hunk_SetDataForFile(int type, const char *name, void *data, void *(__cdecl *alloc)(int))
-{
-    (void)type;
-    (void)alloc;
-    State().hunkData[name] = data;
-    return static_cast<char *>(data);
-}
-
-inline uint32_t *Hunk_AllocateTempMemory(int size, const char *name)
-{
-    (void)name;
-    return static_cast<uint32_t *>(std::malloc(static_cast<size_t>(size)));
-}
-
-inline void Hunk_FreeTempMemory(char *buf)
-{
-    std::free(buf);
 }
 
 // The loader's Alloc/AllocColl callbacks mirror hunk allocation
@@ -251,55 +153,6 @@ inline void *__cdecl HarnessAlloc(int size)
 inline void *__cdecl HarnessAllocColl(int size)
 {
     return std::calloc(1, static_cast<size_t>(size));
-}
-
-// ---------------------------------------------------------------------------
-// Dvars, renderer and physics endpoints.
-// ---------------------------------------------------------------------------
-
-inline const dvar_t *DedicatedDvar()
-{
-    static dvar_s dvar;
-    return &dvar;
-}
-
-inline const dvar_t *ModelVertColorDvar()
-{
-    static dvar_s dvar;
-    return &dvar;
-}
-
-inline Material *Material_RegisterHandle(const char *name, int imageTrack)
-{
-    (void)imageTrack;
-    static Material material;
-    State().materialRegistrations.push_back(name);
-    return &material;
-}
-
-inline void R_GetXModelBounds(XModel *model, const float (*axes)[3], float *mins, float *maxs)
-{
-    (void)model;
-    (void)axes;
-    mins[0] = mins[1] = mins[2] = -1.0f;
-    maxs[0] = maxs[1] = maxs[2] = 1.0f;
-}
-
-inline PhysPreset *PhysPresetPrecache(const char *name, void *(__cdecl *Alloc)(int))
-{
-    (void)name;
-    (void)Alloc;
-    static PhysPreset preset;
-    ++State().physPresetCalls;
-    return &preset;
-}
-
-inline PhysGeomList *XModel_LoadPhysicsCollMap(const char *name, void *(__cdecl *Alloc)(int))
-{
-    (void)name;
-    (void)Alloc;
-    ++State().collMapCalls;
-    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +186,11 @@ inline unsigned char *PartsReadCounts(unsigned char *pos, PartsParseCounts &coun
     return pos;
 }
 
-inline bool PartsReadBodies(unsigned char *pos, const PartsParseCounts &counts)
+// The body walk consumes a fixed number of bytes per child bone; every
+// individual read is checked and latches the cursor on overrun, which
+// the caller observes through buf_cursor::Failed() — so this step has
+// no failure result of its own.
+inline void PartsReadBodies(unsigned char *pos, const PartsParseCounts &counts)
 {
     for (int i = counts.numRootBones; i < counts.numBones; ++i)
     {
@@ -343,7 +200,13 @@ inline bool PartsReadBodies(unsigned char *pos, const PartsParseCounts &counts)
         for (int q = 0; q < 4; ++q)
             (void)buf_cursor::Buf_Read<uint16_t>(&pos);
     }
-    return true;
+}
+
+// A count block is usable only when it parsed and declares a sane bone
+// budget for the fixture walk.
+inline bool PartsCountsUsable(const unsigned char *countsPos, const PartsParseCounts &counts)
+{
+    return countsPos != 0 && counts.numBones > 0 && counts.numBones <= 8;
 }
 
 inline bool PartsReadNames(const PartsParseCounts &counts)
@@ -387,21 +250,42 @@ inline XModelPartsLoad *PartsBuildResult(const PartsParseCounts &counts,
     return parts;
 }
 
+// Opens xmodelparts/<name>. A zero-length file is freed again right
+// away and reported as a 0-length read, matching the production
+// loader's contract; a missing file reports -1 with *buf untouched.
+inline int PartsOpenFile(const char *name, unsigned char **buf)
+{
+    char filename[68];
+    if (Com_sprintf(filename, static_cast<uint32_t>(sizeof(filename)),
+                    "xmodelparts/%s", name) < 0)
+    {
+        return -1;
+    }
+    const int fileLen = FS_ReadFile(filename, reinterpret_cast<void **>(buf));
+    if (fileLen == 0)
+        FS_FreeFile(reinterpret_cast<char *>(*buf));
+    return fileLen;
+}
+
+// Malformed parts input: latch failed and fail closed, exactly like
+// the production loader's rejection paths.
+inline XModelPartsLoad *PartsFailClosed(unsigned char *buf, const char *name)
+{
+    buf_cursor::Fail();
+    buf_cursor::Deactivate();
+    FS_FreeFile(reinterpret_cast<char *>(buf));
+    Com_PrintError(19, "ERROR: Cannot find xmodelparts '%s'.\n", name);
+    return 0;
+}
+
 inline XModelPartsLoad *XModelPartsLoadFile(XModel *model, const char *name,
                                             void *(__cdecl *Alloc)(int))
 {
     (void)model;
-    char filename[68];
-    if (Com_sprintf(filename, sizeof(filename), "xmodelparts/%s", name) < 0)
-        return 0;
     unsigned char *buf = 0;
-    const int fileLen = FS_ReadFile(filename, reinterpret_cast<void **>(&buf));
+    const int fileLen = PartsOpenFile(name, &buf);
     if (fileLen <= 0)
-    {
-        if (fileLen == 0)
-            FS_FreeFile(reinterpret_cast<char *>(buf));
         return 0;
-    }
 
     unsigned char *pos = buf;
     buf_cursor::Activate(buf, static_cast<size_t>(fileLen));
@@ -410,23 +294,19 @@ inline XModelPartsLoad *XModelPartsLoadFile(XModel *model, const char *name,
 
     PartsParseCounts counts = {0, 0, 0};
     unsigned char *countsPos = PartsReadCounts(pos, counts);
+    const bool usable = PartsCountsUsable(countsPos, counts);
     bool useBones = false;
-    if (countsPos && counts.numBones > 0 && counts.numBones <= 8
-        && PartsReadBodies(countsPos, counts) && PartsReadNames(counts)
-        && PartsReadTail(counts, useBones) && !buf_cursor::Failed())
+    if (usable)
+        PartsReadBodies(countsPos, counts);
+    if (usable && PartsReadNames(counts) && PartsReadTail(counts, useBones)
+        && !buf_cursor::Failed())
     {
         buf_cursor::Deactivate();
         FS_FreeFile(reinterpret_cast<char *>(buf));
         return PartsBuildResult(counts, Alloc);
     }
 
-    // Malformed parts input: latch failed and fail closed, exactly like
-    // the production loader's rejection paths.
-    buf_cursor::Fail();
-    buf_cursor::Deactivate();
-    FS_FreeFile(reinterpret_cast<char *>(buf));
-    Com_PrintError(19, "ERROR: Cannot find xmodelparts '%s'.\n", name);
-    return 0;
+    return PartsFailClosed(buf, name);
 }
 
 // ---------------------------------------------------------------------------
@@ -545,5 +425,171 @@ inline void RegisterValidModel(const char *name)
 }
 
 }  // namespace xmodel_loader_entry_harness
+
+// ---------------------------------------------------------------------------
+// Global-scope engine-service definitions.
+//
+// The loader TU (xmodel_load_obj.cpp) references every function below
+// unqualified through the production headers; its references resolve
+// to GLOBAL symbols, so these definitions must live at global scope
+// with the production signatures — a namespaced definition would
+// mangle differently and strand the win32-x86 link. The bodies live
+// in this header (included by exactly one TU); the printf-family
+// wrappers above are the exception and are defined in the test TU.
+// Harness state and the opaque Material/PhysPreset storage ride on
+// the harness singleton.
+// ---------------------------------------------------------------------------
+
+inline void MyAssertHandler(const char *filename, int line, int type, const char *fmt, ...)
+{
+    (void)filename;
+    (void)line;
+    (void)type;
+    (void)fmt;
+    // Any production assert firing during an entry-point contract is a
+    // defect: fail the test process loudly instead of continuing.
+    std::fprintf(stderr, "xmodel_loader_entry: production assert fired\n");
+    std::abort();
+}
+
+inline void track_static_alloc_internal(void *ptr, int size, const char *name, int type)
+{
+    (void)ptr;
+    (void)size;
+    (void)name;
+    (void)type;
+}
+
+inline uint32_t SL_GetStringOfSize(const char *str, uint32_t user, uint32_t len, int type)
+{
+    (void)str;
+    (void)user;
+    (void)len;
+    (void)type;
+    return 0;
+}
+
+inline int __cdecl BuildAabbTree(const GenericAabbTreeOptions *options)
+{
+    (void)options;
+    return 0;
+}
+
+inline int FS_ReadFile(const char *qpath, void **buffer)
+{
+    xmodel_loader_entry_harness::HarnessFileMap &files =
+        xmodel_loader_entry_harness::State().files;
+    xmodel_loader_entry_harness::HarnessFileMap::const_iterator it = files.find(qpath);
+    if (it == files.end())
+        return -1;
+    const std::vector<unsigned char> &bytes = it->second;
+    unsigned char *copy = new unsigned char[bytes.size() + 1];
+    // Bounded, iterator-based copy: same bytes, same terminator, with
+    // the destination capacity visible in the expression itself.
+    std::copy(bytes.begin(), bytes.end(), copy);
+    copy[bytes.size()] = 0;
+    *buffer = copy;
+    ++xmodel_loader_entry_harness::State().fsReads;
+    return static_cast<int>(bytes.size());
+}
+
+inline void FS_FreeFile(char *buffer)
+{
+    delete[] reinterpret_cast<unsigned char *>(buffer);
+    ++xmodel_loader_entry_harness::State().fsFrees;
+}
+
+inline uint32_t *Hunk_AllocateTempMemory(int size, const char *name)
+{
+    (void)name;
+    return static_cast<uint32_t *>(std::malloc(static_cast<size_t>(size)));
+}
+
+inline void Hunk_FreeTempMemory(char *buf)
+{
+    std::free(buf);
+}
+
+inline void *Hunk_FindDataForFile(int type, const char *name)
+{
+    (void)type;
+    xmodel_loader_entry_harness::HarnessHunkMap &data =
+        xmodel_loader_entry_harness::State().hunkData;
+    xmodel_loader_entry_harness::HarnessHunkMap::const_iterator it = data.find(name);
+    return it == data.end() ? 0 : it->second;
+}
+
+inline char *Hunk_SetDataForFile(int type, const char *name, void *data,
+                                 void *(__cdecl *alloc)(int))
+{
+    (void)type;
+    (void)alloc;
+    xmodel_loader_entry_harness::State().hunkData[name] = data;
+    return static_cast<char *>(data);
+}
+
+inline Material *__cdecl Material_RegisterHandle(const char *name, int imageTrack)
+{
+    (void)imageTrack;
+    xmodel_loader_entry_harness::State().materialRegistrations.push_back(name);
+    return reinterpret_cast<Material *>(
+        &xmodel_loader_entry_harness::State().materialStorage[0]);
+}
+
+inline struct PhysPreset *__cdecl PhysPresetPrecache(const char *name,
+                                                     void *(__cdecl *Alloc)(int))
+{
+    (void)name;
+    (void)Alloc;
+    ++xmodel_loader_entry_harness::State().physPresetCalls;
+    return reinterpret_cast<PhysPreset *>(
+        &xmodel_loader_entry_harness::State().physPresetStorage[0]);
+}
+
+inline void ProfLoad_Begin(const char *label)
+{
+    (void)label;
+}
+
+inline void ProfLoad_End()
+{
+}
+
+inline void R_GetXModelBounds(XModel *model, const float (*axes)[3], float *mins, float *maxs)
+{
+    (void)model;
+    (void)axes;
+    mins[0] = mins[1] = mins[2] = -1.0f;
+    maxs[0] = maxs[1] = maxs[2] = 1.0f;
+}
+
+inline struct PhysGeomList *__cdecl XModel_LoadPhysicsCollMap(const char *name,
+                                                              void *(__cdecl *Alloc)(int))
+{
+    (void)name;
+    (void)Alloc;
+    ++xmodel_loader_entry_harness::State().collMapCalls;
+    return 0;
+}
+
+inline int XModelNumBones(const XModel *model)
+{
+    return model->numBones;
+}
+
+inline bool Com_IsLegacyXModelName(const char *name)
+{
+    return !xmodel_loader_entry_harness::I_strnicmpHarness(name, "xmodel", 6)
+           && (name[6] == 47 || name[6] == 92);
+}
+
+// The loader TU declares XModelPartsLoadFile at file scope and calls
+// it for the nested parts load; route the global name to the harness
+// implementation in the namespace above.
+inline XModelPartsLoad *XModelPartsLoadFile(XModel *model, const char *name,
+                                            void *(__cdecl *Alloc)(int))
+{
+    return xmodel_loader_entry_harness::XModelPartsLoadFile(model, name, Alloc);
+}
 
 #endif  // XMODEL_LOADER_ENTRY_HARNESS_HPP
