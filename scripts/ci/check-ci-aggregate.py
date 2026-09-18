@@ -455,12 +455,10 @@ def reject_enforcement_step_controls(step: dict) -> None:
 
 
 def next_significant(lines: list, index: int, base_indent: int):
-    """Next non-transparent line deeper than `base_indent`, or None.
-
-    Returns (index, indent, stripped_text) for the next line that is
-    neither blank nor a comment and does not dedent to `base_indent` or
-    shallower; None when the block ends (dedent or end of input).
-    """
+    """Next non-transparent line deeper than `base_indent`, or None."""
+    # Returns (index, indent, stripped_text) for the next line that is
+    # neither blank nor a comment and does not dedent to `base_indent` or
+    # shallower; None when the block ends (dedent or end of input).
     while index < len(lines):
         text = lines[index].strip()
         if text and not text.startswith("#"):
