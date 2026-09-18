@@ -1491,7 +1491,10 @@ int __cdecl NET_StringToAdr(char *s, netadr_t *a)
         // literal parser rejects. Every other name resolves through the
         // portable socket-service resolver, so production traffic no longer
         // depends on the platform-specific legacy host-lookup path.
-        const size_t baseLength = strlen(base);
+        // I_strncpyz above always NUL-terminates base, so this equals
+        // strlen(base); the explicit bound makes the over-read impossible
+        // by construction rather than by caller invariant.
+        const size_t baseLength = strnlen(base, sizeof(base));
         const bool legacyPlatformShape =
             (baseLength == 21 && base[8] == '.')
             || (base[0] >= '0' && base[0] <= '9');
@@ -1507,7 +1510,16 @@ int __cdecl NET_StringToAdr(char *s, netadr_t *a)
                 == SysSocketResolveStatus::Resolved)
             {
                 a->type = NA_IP;
-                memcpy(a->ip, socketAddress.address, sizeof(a->ip));
+                // Bounded four-octet copy: netadr_t::ip and
+                // SysSocketAddress::address are both fixed four-byte
+                // arrays, so the element loop is size-exact and the
+                // destination bound is visible at every write.
+                static_assert(sizeof(a->ip) == sizeof(socketAddress.address),
+                    "address octet width mismatch");
+                for (size_t octet = 0; octet < sizeof(a->ip); ++octet)
+                {
+                    a->ip[octet] = socketAddress.address[octet];
+                }
                 a->port = 0;
                 resolved = true;
             }
