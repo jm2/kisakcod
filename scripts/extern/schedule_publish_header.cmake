@@ -54,9 +54,6 @@ if(NOT EXISTS "${KISAK_PUBLISH_SUPERSEDED_MARKER}")
     return()
 endif()
 
-# Consume the marker exactly once, whether or not aging proceeds below.
-file(REMOVE "${KISAK_PUBLISH_SUPERSEDED_MARKER}")
-
 if(NOT EXISTS "${KISAK_PUBLISH_HEADER}")
     message(FATAL_ERROR
         "The stamp superseded ${KISAK_PUBLISH_HEADER} but the publish edge "
@@ -65,8 +62,13 @@ endif()
 
 # Windows builders (MSBuild, and Ninja over NTFS) compare high-resolution
 # timestamps; the whole-second tie is a POSIX make defect. There is nothing
-# to age there and no behavior changes on those generators.
+# to age there and no behavior changes on those generators. That no-op is a
+# successful publication, so the marker is consumed on this path too; every
+# failure path below instead aborts the script with the marker still on
+# disk, keeping the interrupted publication diagnosable for the next
+# publish edge.
 if(NOT UNIX OR CMAKE_HOST_WIN32)
+    file(REMOVE "${KISAK_PUBLISH_SUPERSEDED_MARKER}")
     return()
 endif()
 
@@ -144,3 +146,8 @@ if(NOT KISAK_PUBLISH_TOUCH_RESULT EQUAL 0)
         "${KISAK_PUBLISH_TOUCH_RESULT}; the freshly published header would "
         "tie whole-second make comparisons against already-built consumers")
 endif()
+
+# Aging succeeded: only now consume the marker; every failure path above
+# aborts the script with the marker still on disk as forensic state, and
+# the next publish edge retries the aging instead of losing the record.
+file(REMOVE "${KISAK_PUBLISH_SUPERSEDED_MARKER}")

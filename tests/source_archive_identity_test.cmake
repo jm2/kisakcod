@@ -672,6 +672,20 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "file(TIMESTAMP \"\${KISAK_PUBLISH_CLOCK_PROBE}\""
             "string(TIMESTAMP \"\${KISAK_PUBLISH_CLOCK_PROBE}\""
             _aging "${_aging}")
+    elseif(CONTRACT_MUTATION STREQUAL "publish_marker_early")
+        # The rejected ordering: consume the marker before aging runs, so a
+        # mid-script clock or touch failure destroys the forensic record.
+        # Remove the post-aging consumption and re-insert it before the
+        # aging guards; the ordering contract must reject the result.
+        # Needles operate on the whitespace-normalized source.
+        string(REPLACE
+            "# Aging succeeded: only now consume the marker; every failure path above # aborts the script with the marker still on disk as forensic state, and # the next publish edge retries the aging instead of losing the record. file(REMOVE \"\${KISAK_PUBLISH_SUPERSEDED_MARKER}\")"
+            ""
+            _aging "${_aging}")
+        string(REPLACE
+            "if(NOT EXISTS \"\${KISAK_PUBLISH_HEADER}\")"
+            "file(REMOVE \"\${KISAK_PUBLISH_SUPERSEDED_MARKER}\") if(NOT EXISTS \"\${KISAK_PUBLISH_HEADER}\")"
+            _aging "${_aging}")
     elseif(CONTRACT_MUTATION STREQUAL "stamp_superseded_marker")
         string(REPLACE
             "\"\${KISAK_STAMP_SUPERSEDED_MARKER}\""
@@ -783,6 +797,18 @@ require_contains(
 require_contains(
     _aging "file(REMOVE \"\${KISAK_PUBLISH_SUPERSEDED_MARKER}\")"
     "the aging step consumes the superseded marker it acts on")
+# Consumption must not precede aging: a mid-script failure must leave the
+# marker on disk as forensic state for the next publish edge, and the
+# Windows no-op path - a successful publication with nothing to age - must
+# still consume it instead of leaking it forever. Needles are matched
+# against whitespace-normalized source, so they pin the ORDER of the
+# normalized tokens.
+require_contains(
+    _aging "if(NOT UNIX OR CMAKE_HOST_WIN32) file(REMOVE \"\${KISAK_PUBLISH_SUPERSEDED_MARKER}\") return()"
+    "the Windows no-op path consumes the superseded marker because the no-op is a successful publication")
+require_contains(
+    _aging "already-built consumers\") endif() # Aging succeeded: only now consume the marker"
+    "the aging step consumes the superseded marker only after POSIX aging succeeds")
 require_contains(
     _aging "\"\${KISAK_PUBLISH_NOW_EPOCH} + 1\""
     "the aging step derives the future mtime from the wall clock")
@@ -1166,6 +1192,7 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         stamp_publish_guard
         publish_aging
         publish_clock_source
+        publish_marker_early
         stamp_superseded_marker
         cpp_consumer
         cpp_getter

@@ -186,7 +186,17 @@ class SourceArchiveIdentityTests(ReleaseProvenanceTestBase):
         tree.mkdir()
         archive_path = root / "dist" / f"KisakCOD-{TAG}-source.tar.gz"
         with tarfile.open(archive_path, "r:gz") as archive:
-            archive.extractall(tree, filter="data")
+            # extractall accepts filter="data" only on Python 3.12+ and the
+            # security backports (3.11.4+, 3.10.12+, 3.9.17+); older
+            # interpreters raise TypeError. Feature-detect the filter itself
+            # instead of guessing versions, because the backports make
+            # version checks wrong. The archive is synthesized by this test
+            # from a known member list, so the unfiltered fallback does not
+            # weaken any assertion below.
+            if hasattr(tarfile, "data_filter"):
+                archive.extractall(tree, filter="data")
+            else:
+                archive.extractall(tree)
         literal = tree / "src\\source_identity.txt"
         self.assertTrue(literal.is_file())
         self.assertEqual(literal.read_text(encoding="utf-8"), f"commit={COMMIT}\n")
