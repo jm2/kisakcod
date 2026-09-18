@@ -313,13 +313,16 @@ inline void RegisterValidModel(const char *name)
 // to GLOBAL symbols, so these definitions must live at global scope
 // with the production signatures — a namespaced definition would
 // mangle differently and strand the win32-x86 link. The bodies live
-// in this header (included by exactly one TU); the printf-family
-// wrappers above are the exception and are defined in the test TU.
-// Harness state and the opaque Material/PhysPreset storage ride on
-// the harness singleton.
+// in this header (included by exactly one TU) as STRONG (non-inline)
+// definitions: the production OBJs carry plain external references,
+// and an inline function the including TU never calls is never
+// emitted, which strands the link (LNK2019) exactly like a missing
+// definition. The printf-family wrappers above are the exception and
+// are defined in the test TU. Harness state and the opaque
+// Material/PhysPreset storage ride on the harness singleton.
 // ---------------------------------------------------------------------------
 
-inline void MyAssertHandler(const char *filename, int line, int type, const char *fmt, ...)
+void MyAssertHandler(const char *filename, int line, int type, const char *fmt, ...)
 {
     (void)filename;
     (void)line;
@@ -331,7 +334,7 @@ inline void MyAssertHandler(const char *filename, int line, int type, const char
     std::abort();
 }
 
-inline void track_static_alloc_internal(void *ptr, int size, const char *name, int type)
+void track_static_alloc_internal(void *ptr, int size, const char *name, int type)
 {
     (void)ptr;
     (void)size;
@@ -339,7 +342,7 @@ inline void track_static_alloc_internal(void *ptr, int size, const char *name, i
     (void)type;
 }
 
-inline uint32_t SL_GetStringOfSize(const char *str, uint32_t user, uint32_t len, int type)
+uint32_t SL_GetStringOfSize(const char *str, uint32_t user, uint32_t len, int type)
 {
     (void)str;
     (void)user;
@@ -348,13 +351,13 @@ inline uint32_t SL_GetStringOfSize(const char *str, uint32_t user, uint32_t len,
     return 0;
 }
 
-inline int __cdecl BuildAabbTree(const GenericAabbTreeOptions *options)
+int __cdecl BuildAabbTree(const GenericAabbTreeOptions *options)
 {
     (void)options;
     return 0;
 }
 
-inline int FS_ReadFile(const char *qpath, void **buffer)
+int FS_ReadFile(const char *qpath, void **buffer)
 {
     auto &state = xmodel_loader_entry_harness::State();
     const auto fileIt = state.files.find(qpath);
@@ -377,24 +380,24 @@ inline int FS_ReadFile(const char *qpath, void **buffer)
     return static_cast<int>(bytes.size());
 }
 
-inline void FS_FreeFile(char *buffer)
+void FS_FreeFile(char *buffer)
 {
     delete[] reinterpret_cast<unsigned char *>(buffer);
     ++xmodel_loader_entry_harness::State().fsFrees;
 }
 
-inline uint32_t *Hunk_AllocateTempMemory(int size, const char *name)
+uint32_t *Hunk_AllocateTempMemory(int size, const char *name)
 {
     (void)name;
     return static_cast<uint32_t *>(std::malloc(static_cast<size_t>(size)));
 }
 
-inline void Hunk_FreeTempMemory(char *buf)
+void Hunk_FreeTempMemory(char *buf)
 {
     std::free(buf);
 }
 
-inline void *Hunk_FindDataForFile(int type, const char *name)
+void *Hunk_FindDataForFile(int type, const char *name)
 {
     (void)type;
     auto &data = xmodel_loader_entry_harness::State().hunkData;
@@ -402,7 +405,7 @@ inline void *Hunk_FindDataForFile(int type, const char *name)
     return it == data.end() ? 0 : it->second;
 }
 
-inline char *Hunk_SetDataForFile(int type, const char *name, void *data,
+char *Hunk_SetDataForFile(int type, const char *name, void *data,
                                  void *(__cdecl *alloc)(int))
 {
     (void)type;
@@ -411,7 +414,7 @@ inline char *Hunk_SetDataForFile(int type, const char *name, void *data,
     return static_cast<char *>(data);
 }
 
-inline Material *__cdecl Material_RegisterHandle(const char *name, int imageTrack)
+Material *__cdecl Material_RegisterHandle(const char *name, int imageTrack)
 {
     (void)imageTrack;
     xmodel_loader_entry_harness::State().materialRegistrations.push_back(name);
@@ -419,7 +422,7 @@ inline Material *__cdecl Material_RegisterHandle(const char *name, int imageTrac
         &xmodel_loader_entry_harness::State().materialStorage[0]);
 }
 
-inline struct PhysPreset *__cdecl PhysPresetPrecache(const char *name,
+struct PhysPreset *__cdecl PhysPresetPrecache(const char *name,
                                                      void *(__cdecl *Alloc)(int))
 {
     (void)name;
@@ -429,16 +432,16 @@ inline struct PhysPreset *__cdecl PhysPresetPrecache(const char *name,
         &xmodel_loader_entry_harness::State().physPresetStorage[0]);
 }
 
-inline void ProfLoad_Begin(const char *label)
+void ProfLoad_Begin(const char *label)
 {
     (void)label;
 }
 
-inline void ProfLoad_End()
+void ProfLoad_End()
 {
 }
 
-inline void R_GetXModelBounds(XModel *model, const float (*axes)[3], float *mins, float *maxs)
+void R_GetXModelBounds(XModel *model, const float (*axes)[3], float *mins, float *maxs)
 {
     (void)model;
     (void)axes;
@@ -446,7 +449,7 @@ inline void R_GetXModelBounds(XModel *model, const float (*axes)[3], float *mins
     maxs[0] = maxs[1] = maxs[2] = 1.0f;
 }
 
-inline struct PhysGeomList *__cdecl XModel_LoadPhysicsCollMap(const char *name,
+struct PhysGeomList *__cdecl XModel_LoadPhysicsCollMap(const char *name,
                                                               void *(__cdecl *Alloc)(int))
 {
     (void)name;
@@ -455,16 +458,96 @@ inline struct PhysGeomList *__cdecl XModel_LoadPhysicsCollMap(const char *name,
     return 0;
 }
 
-inline int XModelNumBones(const XModel *model)
+int XModelNumBones(const XModel *model)
 {
     return model->numBones;
 }
 
-inline bool Com_IsLegacyXModelName(const char *name)
+bool Com_IsLegacyXModelName(const char *name)
 {
     return !xmodel_loader_entry_harness::I_strnicmpHarness(name, "xmodel", 6)
            && (name[6] == 47 || name[6] == 92);
 }
+
+// ---------------------------------------------------------------------------
+// Missing production externals the enrolled TUs reference. Cycle-3
+// link errors listed these against xmodel_load_obj.obj /
+// com_math.obj; each stub below mirrors the production declaration
+// exactly (symbol spelling) and either reproduces the retail contract
+// or is provably never driven by the entry-point contracts.
+// ---------------------------------------------------------------------------
+
+// Transient string formatting. Production va() (common.cpp) hands out
+// rotating static buffers formatted with the truncating CRT primitive;
+// the loader builds transient filenames/strings through it, so the
+// contract matters. Same spelling, same truncation behavior
+// (_vsnprintf, covered by _CRT_SECURE_NO_WARNINGS on the test TU).
+char *va(const char *format, ...)
+{
+    static char buffers[8][1024];
+    static int index;
+    char *buffer = buffers[index];
+    index = (index + 1) & 7;
+    va_list args;
+    va_start(args, format);
+    _vsnprintf(buffer, sizeof(buffers[0]), format, args);
+    va_end(args);
+    buffer[sizeof(buffers[0]) - 1] = '\0';
+    return buffer;
+}
+
+// Angle helpers reached only through com_math paths the entry-point
+// contracts never drive (surface/bone records come from file bytes);
+// deterministic neutral values keep the stubs honest.
+void __cdecl AngleVectors(const float *angles, float *forward, float *right, float *up)
+{
+    (void)angles;
+    if (forward)
+    {
+        forward[0] = 0.0f;
+        forward[1] = 0.0f;
+        forward[2] = 0.0f;
+    }
+    if (right)
+    {
+        right[0] = 0.0f;
+        right[1] = 0.0f;
+        right[2] = 0.0f;
+    }
+    if (up)
+    {
+        up[0] = 0.0f;
+        up[1] = 0.0f;
+        up[2] = 0.0f;
+    }
+}
+
+float __cdecl AngleDelta(float a1, float a2)
+{
+    (void)a1;
+    (void)a2;
+    return 0.0f;
+}
+
+namespace xmodel_loader_entry_harness
+{
+// Retail storage for the r_modelVertColor dvar, which
+// XModel_UseModelVertColor reads (xmodel_load_obj.cpp:23). Retail
+// registers it as a bool defaulting to 1 (r_dvars.cpp:1097 — "Set to
+// 0 to replace all model vertex colors with white when loaded"), so
+// the tests exercise the vertex-color path commercial builds take.
+inline dvar_t &RModelVertColorStorage()
+{
+    static dvar_t storage;
+    storage.name = "r_modelVertColor";
+    storage.current.enabled = true;
+    return storage;
+}
+}  // namespace xmodel_loader_entry_harness
+
+// Definition mirrors r_dvars.h:247 / r_dvars.cpp:243 exactly so the
+// symbol matches the production reference.
+const dvar_t *r_modelVertColor = &xmodel_loader_entry_harness::RModelVertColorStorage();
 
 // ---------------------------------------------------------------------------
 // Stubs for xanim_load_obj.cpp.
@@ -478,7 +561,7 @@ inline bool Com_IsLegacyXModelName(const char *name)
 // opaque records, and I_strnicmp reuses the harness comparator.
 // ---------------------------------------------------------------------------
 
-inline HunkUser *Hunk_UserCreate(int maxSize, const char *name, bool fixed,
+HunkUser *Hunk_UserCreate(int maxSize, const char *name, bool fixed,
                                  bool tempMem, int type)
 {
     (void)maxSize;
@@ -489,31 +572,31 @@ inline HunkUser *Hunk_UserCreate(int maxSize, const char *name, bool fixed,
     return static_cast<HunkUser *>(std::calloc(1, sizeof(HunkUser)));
 }
 
-inline void *Hunk_UserAlloc(HunkUser *user, uint32_t size, int alignment)
+void *Hunk_UserAlloc(HunkUser *user, uint32_t size, int alignment)
 {
     (void)user;
     (void)alignment;
     return std::calloc(1, static_cast<size_t>(size));
 }
 
-inline void Hunk_UserDestroy(HunkUser *user)
+void Hunk_UserDestroy(HunkUser *user)
 {
     std::free(user);
 }
 
-inline int I_strnicmp(const char *s0, const char *s1, int n)
+int I_strnicmp(const char *s0, const char *s1, int n)
 {
     return xmodel_loader_entry_harness::I_strnicmpHarness(s0, s1, n);
 }
 
-inline XModel *__cdecl R_RegisterModel(const char *name)
+XModel *__cdecl R_RegisterModel(const char *name)
 {
     (void)name;
     return reinterpret_cast<XModel *>(
         &xmodel_loader_entry_harness::State().modelStorage[0]);
 }
 
-inline uint32_t SL_GetString_(const char *str, uint32_t user, int type)
+uint32_t SL_GetString_(const char *str, uint32_t user, int type)
 {
     (void)str;
     (void)user;
@@ -521,7 +604,7 @@ inline uint32_t SL_GetString_(const char *str, uint32_t user, int type)
     return 0;
 }
 
-inline XModel *__cdecl XModelPrecache(char *name, void *(__cdecl *Alloc)(int),
+XModel *__cdecl XModelPrecache(char *name, void *(__cdecl *Alloc)(int),
                                       void *(__cdecl *AllocColl)(int))
 {
     (void)name;
