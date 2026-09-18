@@ -374,10 +374,11 @@ Two remaining A12 gaps are addressed here rather than in a competing CI design:
   counts no longer describe the current suite. Re-measured on this
   branch's rework head: `ctest` 239/239 under the portable Release gate,
   with `ctest -N` discovery listing exactly the 239-inventory tests and
-  the `--discovered-scope exact` manifest check passing; the ASan+UBSan
-  count for the rework head is established by its hosted
-  `portable-sanitizers` run rather than carried forward from the older
-  measurement.
+  the `--discovered-scope exact` manifest check passing. The ASan+UBSan
+  count for the rework head is not established here and is not carried
+  forward from the older measurement: it is pending the exact-head
+  hosted `portable-sanitizers` run (GitHub Actions run 35370192571) and
+  will be recorded only once that run completes.
 - **The `windows-x86` ILP32 selection is now a checked classification, not an
   inline regex alone.** `scripts/ci/test-selection/portable-inventory.txt` is
   the canonical cross-platform inventory. Each profile partitions it into three
