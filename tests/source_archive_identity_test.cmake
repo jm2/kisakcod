@@ -39,6 +39,14 @@ function(require_contains SOURCE_VARIABLE NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+function(require_not_contains SOURCE_VARIABLE NEEDLE DESCRIPTION)
+    string(FIND "${${SOURCE_VARIABLE}}" "${NEEDLE}" _position)
+    if(NOT _position EQUAL -1)
+        message(FATAL_ERROR
+            "Rejected source-identity pattern (${DESCRIPTION}): '${NEEDLE}'")
+    endif()
+endfunction()
+
 # The ASCII-hex encoding of a commit string, matching ``file(READ ... HEX)`` so
 # a compiled artifact can be searched for the exact revision bytes without
 # decoding the whole binary. Commits are lowercase ``[0-9a-f]``, so each ASCII
@@ -691,6 +699,19 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "\"\${KISAK_STAMP_SUPERSEDED_MARKER}\""
             ""
             _stamp "${_stamp}")
+    elseif(CONTRACT_MUTATION STREQUAL "stamp_marker_cleanup")
+        # The rejected ordering: let the stamp consume a leftover marker when
+        # the current stamp does not supersede. An interrupted supersede must
+        # survive to the publish edge's aging step in the same build; a
+        # stamp-side cleanup races that publish edge and can leave the
+        # recreated header un-aged against whole-second consumer ties. The
+        # mutation re-inserts the cleanup at the stamp's tail; the
+        # never-consume invariant must reject the result. Needles operate on
+        # the whitespace-normalized source.
+        string(REPLACE
+            "file(REMOVE \"\${KISAK_STAMP_PUBLISH_HEADER}\") endif() endif() endif()"
+            "file(REMOVE \"\${KISAK_STAMP_PUBLISH_HEADER}\") endif() if(NOT EXISTS \"\${KISAK_STAMP_SUPERSEDED_MARKER}\") file(REMOVE \"\${KISAK_STAMP_SUPERSEDED_MARKER}\") endif() endif() endif()"
+            _stamp "${_stamp}")
     else()
         message(FATAL_ERROR
             "Unknown source-identity mutation: ${CONTRACT_MUTATION}")
@@ -772,7 +793,10 @@ require_contains(
 # publish edge must age the recreated header one second into the future, so
 # it is strictly newer than any existing consumer at whole-second resolution
 # - without sleeps, retries, or a second build. An unchanged stamp compares
-# equal, removes nothing, and writes no marker, so clean rebuilds stay clean.
+# equal and removes nothing, so clean rebuilds stay clean. The marker's
+# lifetime ends at the publish edge: the stamp never consumes it, because a
+# stamp-side cleanup races the publish edge that may still run in the same
+# build after an interrupted supersede.
 require_contains(
     _cmake "\"-DKISAK_STAMP_PUBLISH_HEADER=\${SRC_DIR}/buildnumber.h\""
     "increment_build.cmake tells the stamp which header the publish edge owns")
@@ -785,6 +809,14 @@ require_contains(
 require_contains(
     _stamp "\"\${KISAK_STAMP_SUPERSEDED_MARKER}\""
     "the stamp records superseded publications for the publish edge's aging step")
+# The marker is consumed by the aging step and by nothing else: a stamp-side
+# cleanup would race the publish edge that is still about to run after an
+# interrupted supersede, and would destroy the forensic record that makes the
+# next publish edge retry the aging instead of silently publishing an
+# un-aged, tie-prone header.
+require_not_contains(
+    _stamp "file(REMOVE \"\${KISAK_STAMP_SUPERSEDED_MARKER}\")"
+    "the stamp never consumes the superseded marker; the aging step does")
 require_contains(
     _cmake "\"-DKISAK_PUBLISH_SUPERSEDED_MARKER=\${KISAK_STAMP_SUPERSEDED_MARKER}\""
     "increment_build.cmake hands the superseded marker to the aging step")
@@ -1194,6 +1226,7 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         publish_clock_source
         publish_marker_early
         stamp_superseded_marker
+        stamp_marker_cleanup
         cpp_consumer
         cpp_getter
         cpp_retention

@@ -22,7 +22,13 @@
 #
 # The step is deliberately inert whenever the stamp published identical
 # content: no marker, no touch, so unchanged rebuilds leave the published
-# header - and every consumer - untouched. The offset is written once per
+# header - and every consumer - untouched. The marker is consumed HERE, and
+# only here: if a run is interrupted between the supersede and this aging
+# step, a leftover marker makes the NEXT publish edge age its (possibly
+# identical) publication once and then the marker is gone. That costs one
+# extra aging pass; dropping the marker stamp-side instead could race a
+# publish edge that is still about to run and leave a recreated header
+# un-aged against whole-second consumer ties. The offset is written once per
 # actual content change; consumers converge as soon as wall time passes the
 # aged stamp, and later changes re-age the header.
 #
