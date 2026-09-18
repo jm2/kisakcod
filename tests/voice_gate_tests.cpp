@@ -73,6 +73,18 @@ void test_mode_geometry()
 
 void test_golden_streams()
 {
+    // GoldenStream is defined here rather than in voice_gate_test_support.hpp:
+    // this translation unit is its only consumer, and keeping the struct
+    // beside the golden definitions makes the member consumption visible in a
+    // single file (static-analysis "never used" false positive). The fields
+    // are the pinned vector parameters — do not remove.
+    struct GoldenStream
+    {
+        int bandwidth_enum;
+        int samplerate;
+        int quality;
+        const char *hex;
+    };
     const GoldenStream goldens[] = {
         {0, kProductionSamplerate, kShippedVoiceQuality, kGoldenNbHex},
         {1, 16000, kShippedVoiceQuality, kGoldenWbHex},

@@ -365,16 +365,9 @@ inline std::vector<int16_t> decode_stream(const std::vector<char> &stream,
 // can flip truncated samples near integer boundaries and would break the
 // byte-exact encode comparison on some targets). The vectors are a function
 // of this tree's builders + encoder only. Never retail, never captured
-// traffic. Defined in tests/voice_gate_tests.cpp (single copy across the
-// suite).
+// traffic. The GoldenStream type and the golden definitions live in
+// tests/voice_gate_tests.cpp (single copy across the suite).
 // ---------------------------------------------------------------------------
-struct GoldenStream
-{
-    int bandwidth_enum;
-    int samplerate;
-    int quality;
-    const char *hex;
-};
 
 extern const char *kGoldenNbHex;
 extern const char *kGoldenWbHex;
