@@ -194,6 +194,31 @@ jobs:
           ctest --test-dir build-portable-sanitizers --output-on-failure
           --no-tests=error --timeout 300
 
+  capability-dashboard:
+    # Keeps docs/CAPABILITY_DASHBOARD.md derived rather than hand-maintained.
+    # The generator validates the evidence manifest, re-parses this workflow
+    # set and tests/CMakeLists.txt, and fails when the committed dashboard is
+    # stale.
+    name: Capability evidence dashboard
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Validate the evidence manifest and dashboard currency
+        run: python3 scripts/ci/capability-dashboard.py --check
+
+      - name: Run dashboard unit tests
+        run: |
+          python3 scripts/ci/test_capability_dashboard.py
+          python3 scripts/ci/test_capability_dashboard_delivery.py
+          python3 scripts/ci/test_capability_dashboard_inventory.py
+          python3 scripts/ci/test_capability_dashboard_manifest_types.py
+          python3 scripts/ci/test_capability_dashboard_matrix.py
+          python3 scripts/ci/test_capability_dashboard_self_hosted.py
+          python3 scripts/ci/test_capability_dashboard_targets.py
+
   # Sealed surface: source-invariant seal tests pin this job's exact step
   # shapes, names, and ordering, and normalize the file with comments left
   # in place — so do not reword step names, reorder steps, add comments
@@ -777,6 +802,7 @@ jobs:
       - test-selection-checker
       - script-sanitizers
       - portable-sanitizers
+      - capability-dashboard
       - windows-x86
       - windows-x86-sp
       - windows-x86-parity
