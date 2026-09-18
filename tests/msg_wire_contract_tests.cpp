@@ -387,11 +387,14 @@ void test_compare_wire_reporter()
     CHECK(d4.byteIndex == 0);
     CHECK(d4.bitIndex == 4);
     CHECK(d4.fieldName != nullptr && std::strcmp(d4.fieldName, "pair16") == 0);
+}
 
-    // Multi-byte STRING span attribution: a 4-byte string span (32 bits)
-    // must name drift in its LAST byte too — this is the byte-count-vs-bit-
-    // length trap: 4 here means 4 BITS, which stops at byte 0 and reports
-    // (unmapped) for every later byte of the string.
+// Multi-byte STRING span attribution: a 4-byte string span (32 bits) must
+// name drift in its LAST byte too — this is the byte-count-vs-bit-length
+// trap: 4 here means 4 BITS, which stops at byte 0 and reports (unmapped)
+// for every later byte of the string.
+void test_string_span_attribution()
+{
     msg_t mStr;
     std::uint8_t bufStr[8];
     makeMsg(mStr, bufStr, 8);
@@ -440,6 +443,7 @@ int main()
     test_string_framing();
     test_read_data_and_splits();
     test_compare_wire_reporter();
+    test_string_span_attribution();
 
     if (g_failed)
     {

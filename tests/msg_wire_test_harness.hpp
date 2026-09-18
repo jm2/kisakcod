@@ -223,6 +223,7 @@ void test_scalar_framing();
 void test_angle16_quantization();
 void test_huffman_msg_block();
 void test_compare_wire_reporter();
+void test_string_span_attribution();
 
 // msg_wire_delta_framing_tests.cpp
 void test_delta_key_xor();
