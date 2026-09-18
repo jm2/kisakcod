@@ -513,6 +513,8 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/com_playerprofile.cpp"
     "${SRC_DIR}/qcommon/com_playerprofile.h"
     "${SRC_DIR}/qcommon/com_profilemapload.cpp"
+    "${SRC_DIR}/qcommon/dl_http.cpp"
+    "${SRC_DIR}/qcommon/dl_http.h"
     "${SRC_DIR}/qcommon/dl_main.cpp"
     "${SRC_DIR}/qcommon/dl_main.h"
     "${SRC_DIR}/qcommon/dobj_management.cpp"

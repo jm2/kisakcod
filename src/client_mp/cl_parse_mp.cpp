@@ -9,6 +9,7 @@
 #include <universal/com_files.h>
 #include <win32/win_local.h>
 #include <qcommon/cmd.h>
+#include <qcommon/dl_http.h>
 #include <qcommon/dl_main.h>
 #include <universal/com_constantconfigstrings.h>
 #include <database/database.h>
@@ -276,6 +277,32 @@ void __cdecl CL_ParseWWWDownload(int localClientNum, msg_t *msg)
     {
         legacyHacks.cl_downloadSize = cls.downloadSize;
         Com_DPrintf(14, "Server redirected download: %s\n", cls.downloadName);
+        // Retail transport parity: the meter showed the download URL with
+        // credentials masked (scheme://*:*authority/path); reproduce that
+        // display form so URL-embedded credentials never reach the UI.
+        {
+            DlRedirectUrl displayName{};
+            if (Dl_ParseRedirectUrl(cls.downloadName, &displayName)
+                == DlUrlStatus::Ok
+                && displayName.hasBasicAuth)
+            {
+                if (displayName.port == 80)
+                    Com_sprintf(legacyHacks.cl_downloadName,
+                        sizeof(legacyHacks.cl_downloadName),
+                        "http://*:*%s%s", displayName.host,
+                        displayName.path);
+                else
+                    Com_sprintf(legacyHacks.cl_downloadName,
+                        sizeof(legacyHacks.cl_downloadName),
+                        "http://*:*%s:%u%s", displayName.host,
+                        displayName.port, displayName.path);
+            }
+            else
+            {
+                I_strncpyz(legacyHacks.cl_downloadName, cls.downloadName,
+                    sizeof(legacyHacks.cl_downloadName));
+            }
+        }
         cls.wwwDlInProgress = 1;
         CL_AddReliableCommand(localClientNum, "wwwdl ack");
         FS_BuildOSPath(fs_homepath, cls.downloadTempName, (char *)"", toOSPath);

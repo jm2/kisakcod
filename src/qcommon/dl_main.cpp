@@ -1,255 +1,313 @@
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// HTTP/www download transport (CODEBASE_AUDIT.md H4).
+//
+// The retail client fetched server-redirected downloads with libwww over
+// HTTP; this build implements the same client-side contract directly on
+// the portable Sys_Socket* stream extension plus the pure protocol helpers
+// in dl_http.cpp. There is no wire-protocol risk: the wwwdl handshake with
+// the server is unchanged, and any transport failure is reported to the
+// server as "wwwdl fail", which switches the transfer to the in-band UDP
+// download exactly as it did with the retail client.
+//
+// Scope matches the retail observable behavior: absolute http:// redirect
+// URLs (with optional Basic credentials taken from the URL userinfo),
+// bounded redirects, Content-Length or connection-close body framing,
+// progress fed to the legacy meter, and a soft stall timeout. https/ftp
+// URLs and chunked bodies are unsupported and fail the download, which
+// falls back in-band rather than breaking the transfer.
+
 #include "dl_main.h"
-#include "qcommon.h"
 
-//#include <WWWLib.h>
-//#include <WWWInit.h>
-//#include <HTReqMan.h>
-
+#include <qcommon/com_fileaccess.h>
+#include <qcommon/dl_http.h>
+#include <qcommon/qcommon.h>
+#include <qcommon/sys_socket.h>
+#include <qcommon/sys_time.h>
 #include <universal/com_files.h>
 
-int __cdecl DL_VPrintf(const char *fmt, char *argptr)
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+
+// The client reports the failure to the server, which switches the
+// transfer to the in-band download; keep the log lines at channel 14 to
+// sit next to the client's own wwwdl diagnostics.
+constexpr int DlPrintChannel = 14;
+
+// Soft stall timeout: a download that makes no progress for this long
+// fails to the in-band fallback instead of wedging the client. The retail
+// library's host timeout behaved the same way (30 s default).
+constexpr std::uint32_t DlStallTimeoutMs = UINT32_C(30000);
+
+// Bounded redirect chain. The retail library followed redirects without a
+// tight bound, which is a redirect-loop hazard, so the chain is capped and
+// an exhausted chain fails to the in-band fallback.
+constexpr int DlMaxRedirects = 8;
+
+// Request staging buffer. The largest component is a 1 KiB path; the
+// headers add a few hundred bytes, so this can never overflow for a URL
+// Dl_ParseRedirectUrl accepted.
+constexpr std::uint32_t DlRequestBufferSize = UINT32_C(4096);
+
+// Response head accumulator. Dl_ParseResponseHead fails closed once the
+// head exceeds DlResponseHeadMaxLength, so the accumulator only needs that
+// much head room (plus slack for one in-flight read).
+constexpr std::uint32_t DlHeadBufferSize = DlResponseHeadMaxLength + 256;
+
+// Body staging buffer between the socket and the download file.
+constexpr std::uint32_t DlBodyBufferSize = UINT32_C(32768);
+
+namespace
 {
-    char msg[1028]; // [esp+10h] [ebp-408h] BYREF
-
-    _vsnprintf(msg, 0x400u, fmt, argptr);
-    Com_Printf(0, "%s", msg);
-    return &msg[strlen(msg) + 1] - &msg[1];
-}
-
-void DL_CancelDownload()
+enum class DlTransportState : std::uint8_t
 {
-    // STUB
-}
-//int dl_running;
-//_HTRequest *dl_request;
-//void __cdecl DL_CancelDownload()
-//{
-//    if (dl_running)
-//    {
-//        HTEventList_unregisterAll();
-//        HTHost_setEventTimeout(-1);
-//        dl_running = 0;
-//    }
-//    if (dl_request)
-//    {
-//        HTRequest_kill(dl_request);
-//        HTRequest_delete(dl_request);
-//        dl_request = 0;
-//    }
-//}
-//
-//int terminate_status;
-//int __cdecl terminate_handler(_HTRequest *request, struct _HTResponse *response, void *param, int status)
-//{
-//    terminate_status = status;
-//    HTEventList_stopLoop();
-//    return 0;
-//}
+    Idle,
+    Connecting,
+    SendRequest,
+    ReadHead,
+    ReadBody,
+};
 
-//int __cdecl HTFTP_setRawBytesCount(_HTRequest *a1)
-//{
-//    return 0;
-//#if 0
-//    _HTNet *v2; // [esp+0h] [ebp-8h]
-//    int v3; // [esp+4h] [ebp-4h]
-//
-//    v2 = HTRequest_net(a1);
-//    v3 = HTAnchor_encoding();
-//    HTNet_setRawBytesCount(*(_DWORD *)(v3 + 52), 1);
-//    return HTNet_setRawBytesCount(*(_DWORD *)(v3 + 48), 1);
-//#endif
-//}
-//
-//int dl_is_ftp;
-//int __cdecl HTAlertCallback_progress(_HTRequest *request, _HTAlertOpcode op)
-//{
-//    return 0;
-//#if 0
-//    if (op == HT_PROG_READ)
-//    {
-//        if (dl_is_ftp)
-//        {
-//            if (!HTNet_rawBytesCount(request->net))
-//            {
-//                Com_DPrintf(0, "Force raw byte count on request->net %p\n", request->net);
-//                HTFTP_setRawBytesCount(request);
-//            }
-//            legacyHacks.cl_downloadCount = HTFTP_getDNetRawBytesCount((int)request);
-//        }
-//        else
-//        {
-//            legacyHacks.cl_downloadCount = HTRequest_bytesRead(request);
-//        }
-//    }
-//    return 1;
-//#endif
-//}
-
-int dl_initialized;
-void __cdecl DL_InitDownload()
+struct DlTransport
 {
-    return;
-#if 0
-    if (!dl_initialized)
+    DlTransportState state{DlTransportState::Idle};
+    SysSocketHandle socket{nullptr};
+    FILE *file{nullptr};
+
+    // Current request target (updated across redirects).
+    char host[256]{};
+    char path[1024]{};
+    char user[64]{};
+    char password[64]{};
+    std::uint16_t port{80};
+    bool hasBasicAuth{false};
+
+    char request[DlRequestBufferSize]{};
+    std::uint32_t requestLength{0};
+    std::uint32_t requestSent{0};
+
+    char head[DlHeadBufferSize]{};
+    std::uint32_t headLength{0};
+
+    std::uint64_t contentLength{0};
+    bool hasContentLength{false};
+
+    std::uint64_t bytesRead{0};
+    std::uint32_t lastProgressMs{0};
+    int redirectsFollowed{0};
+
+    bool running{false};
+};
+
+DlTransport dl_transport;
+bool dl_isMotd = false;
+bool dl_initialized = false;
+
+// Fails the active download: releases the transport and marks the state so
+// the next DL_InProgress/DL_DownloadLoop observation reports the failure
+// contract to the client (which sends "wwwdl fail" and the server falls
+// back to the in-band download).
+void DlAbort()
+{
+    Sys_SocketClose(&dl_transport.socket);
+    if (dl_transport.file)
     {
-        HTProfile_newNoCacheClient("ID_DOWNLOAD", "1.0");
-            HTAlertInit();
-        HTAlert_setInteractive(1);
-        HTPrint_setCallback(DL_VPrintf);
-        HTTrace_setCallback(DL_VPrintf);
-        HTNet_addAfter(terminate_handler, 0, 0, (void *)1, 0xFFFF);
-        HTAlert_add(HTAlertCallback_progress, 0xFFFF);
-        HTAlert_add(HTAlertCallback_confirm, 0x20000);
-        HTAlert_add(HTAlertCallback_prompt, 1835008);
-        Com_Printf(0, "Client download subsystem initialized\n");
-        dl_initialized = 1;
+        FS_FileClose(dl_transport.file);
+        dl_transport.file = nullptr;
     }
-#endif
+    dl_transport.state = DlTransportState::Idle;
+    dl_transport.running = false;
 }
 
-bool dl_isMotd;
-int __cdecl DL_BeginDownload(char *localName, char *remoteName)
+// Issues the connect for the current request target. Everything up to the
+// TCP connect is synchronous (parse + resolve, as the retail library's
+// setup was); the handshake itself is polled by DL_DownloadLoop.
+bool DlStartConnect()
 {
-    return 0;
-#if 0
-    char *v3; // eax
-    char *v4; // eax
-    char *v5; // eax
-    char *url; // [esp+20h] [ebp-1Ch] BYREF
-    char *path; // [esp+24h] [ebp-18h]
-    char *login; // [esp+28h] [ebp-14h]
-    char *access; // [esp+2Ch] [ebp-10h]
-    char *ptr; // [esp+30h] [ebp-Ch]
-    char *passwd; // [esp+34h] [ebp-8h]
-    _HTBasic *basic; // [esp+38h] [ebp-4h]
-
-    access = 0;
-    url = 0;
-    login = 0;
-    path = 0;
-    ptr = 0;
-    if (dl_running)
+    Sys_SocketClose(&dl_transport.socket);
+    SysSocketAddress endpoint{};
+    const SysSocketResolveStatus resolved = Sys_SocketResolveHost(
+        dl_transport.host, dl_transport.port, &endpoint);
+    if (resolved != SysSocketResolveStatus::Resolved)
     {
-        iassert( dl_isMotd );
-        DL_CancelDownload();
+        Com_DPrintf(DlPrintChannel, "DL: cannot resolve download host %s\n",
+            dl_transport.host);
+        return false;
     }
-    terminate_status = -1000;
-    if (localName && remoteName)
+
+    if (Sys_SocketOpenStream(true, &dl_transport.socket)
+        != SysSocketStreamOpenStatus::Opened)
     {
-        DL_InitDownload();
-        access = (char *)HTParse((uint8_t *)remoteName, (uint8_t *)"", 16);
-        if (!_stricmp(access, "ftp"))
+        Com_DPrintf(DlPrintChannel, "DL: cannot open stream socket\n");
+        return false;
+    }
+
+    const SysSocketStreamConnectStatus connected = Sys_SocketConnectStream(
+        dl_transport.socket, &endpoint);
+    if (connected == SysSocketStreamConnectStatus::Connected)
+    {
+        dl_transport.state = DlTransportState::SendRequest;
+        return true;
+    }
+    if (connected == SysSocketStreamConnectStatus::InProgress)
+    {
+        dl_transport.state = DlTransportState::Connecting;
+        return true;
+    }
+    Com_DPrintf(DlPrintChannel, "DL: connect to %s failed\n",
+        dl_transport.host);
+    return false;
+}
+
+// Builds the GET request for the current target. Returns false on an
+// internal formatting failure (a URL the parser accepted always fits).
+bool DlBuildRequest()
+{
+    DlRedirectUrl target{};
+    std::memcpy(target.host, dl_transport.host, sizeof(target.host));
+    std::memcpy(target.path, dl_transport.path, sizeof(target.path));
+    std::memcpy(target.user, dl_transport.user, sizeof(target.user));
+    std::memcpy(target.password, dl_transport.password,
+        sizeof(target.password));
+    target.port = dl_transport.port;
+    target.hasBasicAuth = dl_transport.hasBasicAuth;
+
+    const DlRequestStatus formatted = Dl_FormatGetRequest(target,
+        dl_transport.request, sizeof(dl_transport.request),
+        &dl_transport.requestLength);
+    if (formatted != DlRequestStatus::Ok)
+    {
+        Com_DPrintf(DlPrintChannel, "DL: cannot format request (%u)\n",
+            static_cast<unsigned>(formatted));
+        return false;
+    }
+    dl_transport.requestSent = 0;
+    return true;
+}
+
+// Retargets the transport to `redirect` and restarts the connection for the
+// next request attempt. Returns false when the redirect chain is exhausted
+// or the new connection cannot be established.
+bool DlFollowRedirect(const DlRedirectUrl &redirect)
+{
+    if (dl_transport.redirectsFollowed >= DlMaxRedirects)
+    {
+        Com_DPrintf(DlPrintChannel, "DL: too many redirects\n");
+        return false;
+    }
+    ++dl_transport.redirectsFollowed;
+
+    std::memcpy(dl_transport.host, redirect.host, sizeof(dl_transport.host));
+    std::memcpy(dl_transport.path, redirect.path, sizeof(dl_transport.path));
+    std::memcpy(dl_transport.user, redirect.user, sizeof(dl_transport.user));
+    std::memcpy(dl_transport.password, redirect.password,
+        sizeof(dl_transport.password));
+    dl_transport.port = redirect.port;
+    dl_transport.hasBasicAuth = redirect.hasBasicAuth;
+    Com_DPrintf(DlPrintChannel, "DL: redirect to %s:%u%s\n",
+        dl_transport.host, static_cast<unsigned>(dl_transport.port),
+        dl_transport.path);
+
+    // Body bytes buffered before the redirect belong to the old response;
+    // discard them and start the next request with a clean accumulator.
+    dl_transport.headLength = 0;
+    dl_transport.hasContentLength = false;
+    dl_transport.contentLength = 0;
+    if (!DlBuildRequest())
+        return false;
+    return DlStartConnect();
+}
+
+// Applies the parsed head: 2xx arms the body phase, a redirect retargets
+// the transport, everything else fails to the in-band fallback.
+bool DlApplyHead(const DlResponseHead &head)
+{
+    if (head.statusCode / 100 == 3)
+    {
+        if (!head.hasLocation)
         {
-            dl_is_ftp = 1;
-            HTHost_setEventTimeout(-1);
+            Com_DPrintf(DlPrintChannel,
+                "DL: redirect without Location, failing to in-band\n");
+            return false;
         }
-        else
+
+        const char *location = head.location;
+        DlRedirectUrl redirect{};
+        if (std::strstr(location, "://"))
         {
-            dl_is_ftp = 0;
-            HTHost_setEventTimeout(30000);
-        }
-        dl_request = (_HTRequest *)HTRequest_new();
-        if (!_stricmp(access, "http")
-            && (login = (char *)HTParse((uint8_t *)remoteName, (uint8_t *)"", 8),
-                path = (char *)HTParse((uint8_t *)remoteName, (uint8_t *)"", 5),
-                strchr((uint8_t *)login, 0x40u),
-                (ptr = v3) != 0))
-        {
-            *ptr = 0;
-            strchr((uint8_t *)login, 0x3Au);
-            passwd = v4;
-            if (v4)
+            // Absolute redirect: parse as a full URL (scheme must be http).
+            if (Dl_ParseRedirectUrl(location, &redirect) != DlUrlStatus::Ok)
             {
-                *passwd++ = 0;
-                HTUnEscape(passwd);
+                Com_DPrintf(DlPrintChannel,
+                    "DL: unsupported redirect target, failing to in-band\n");
+                return false;
             }
-            HTUnEscape(login);
-            basic = (_HTBasic *)HTBasic_new();
-            HTSACopy((void **)&basic->uid, (uint8_t *)login);
-            HTSACopy((void **)&basic->pw, (uint8_t *)passwd);
-            basic_credentials((int)dl_request, (int)basic);
-            HTBasic_delete((void **)&basic->uid);
-            url = (char *)HTMemory_malloc(strlen(ptr + 1) + strlen(path) + 8);
-            sprintf(url, "http://%s%s", ptr + 1, path);
-            Com_DPrintf(0, "HTTP Basic Auth - %s %s %s\n", login, passwd, url);
-            HTMemory_free(login);
-            login = 0;
-            HTMemory_free(path);
-            path = 0;
+        }
+        else if (location[0] == '/')
+        {
+            // Path-absolute redirect: same origin and credentials, new
+            // path. The fragment is not part of a request target.
+            std::uint32_t pathLength = 0;
+            while (location[pathLength] != '\0'
+                && location[pathLength] != '#')
+                ++pathLength;
+            std::memcpy(redirect.host, dl_transport.host,
+                sizeof(redirect.host));
+            std::memcpy(redirect.user, dl_transport.user,
+                sizeof(redirect.user));
+            std::memcpy(redirect.password, dl_transport.password,
+                sizeof(redirect.password));
+            redirect.port = dl_transport.port;
+            redirect.hasBasicAuth = dl_transport.hasBasicAuth;
+            if (pathLength + 1 > sizeof(redirect.path))
+            {
+                Com_DPrintf(DlPrintChannel,
+                    "DL: redirect target too long, failing to in-band\n");
+                return false;
+            }
+            std::memcpy(redirect.path, location, pathLength);
+            redirect.path[pathLength] = '\0';
         }
         else
         {
-            HTSACopy((void **)&url, (uint8_t *)remoteName);
+            // Relative references beyond path-absolute are unsupported;
+            // the retail library resolved them, but real redirectors serve
+            // absolute or path-absolute targets, and anything else fails
+            // to the in-band fallback.
+            Com_DPrintf(DlPrintChannel,
+                "DL: unsupported redirect target, failing to in-band\n");
+            return false;
         }
-        HTMemory_free(access);
-        access = 0;
-        FS_CreatePath(localName);
-        if (HTLoadToFile((uint8_t *)url, (int)dl_request, localName) == 1)
-        {
-            HTMemory_free(url);
-            url = 0;
-            access = (char *)HTParse((uint8_t *)remoteName, (uint8_t *)"", 16);
-            login = (char *)HTParse((uint8_t *)remoteName, (uint8_t *)"", 8);
-            path = (char *)HTParse((uint8_t *)remoteName, (uint8_t *)"", 5);
-            strchr((uint8_t *)login, 0x40u);
-            ptr = v5;
-            if (v5)
-                Com_sprintf(legacyHacks.cl_downloadName, 0x40u, "%s://*:*%s%s", access, ptr, path);
-            else
-                Com_sprintf(legacyHacks.cl_downloadName, 0x40u, remoteName);
-            HTMemory_free(path);
-            path = 0;
-            HTMemory_free(login);
-            login = 0;
-            HTMemory_free(access);
-            access = 0;
-            if (dl_is_ftp)
-                HTHost_setEventTimeout(30000);
-            HTEventList_init();
-            dl_running = 1;
-            return 1;
-        }
-        else
-        {
-            Com_DPrintf(0, "HTLoadToFile failed\n");
-            HTMemory_free(url);
-            url = 0;
-            HTProfile_delete();
-                return 0;
-        }
-    }
-    else
-    {
-        Com_DPrintf(0, "Empty download URL or empty local file name\n");
-        return 0;
-    }
-#endif
-}
 
-int __cdecl DL_DownloadLoop()
-{
-    return 0;
-#if 0
-    iassert( dl_running );
-    if (HTEventList_pump())
-        return 0;
-    HTEventList_unregisterAll();
-    HTHost_setEventTimeout(-1);
-    HTRequest_kill(dl_request);
-    HTRequest_delete(dl_request);
-    dl_request = 0;
-    dl_running = 0;
-    if (terminate_status >= 0)
-        return 1;
-    Com_Printf(0, "DL_DownloadLoop: request terminated with failure status %d\n", terminate_status);
-    return 2;
-#endif
+        return DlFollowRedirect(redirect);
+    }
+
+    if (head.statusCode / 100 == 2)
+    {
+        if (head.chunked)
+        {
+            // Dechunking is not implemented; fail to the in-band fallback
+            // rather than persisting a corrupt body.
+            Com_DPrintf(DlPrintChannel,
+                "DL: chunked body unsupported, failing to in-band\n");
+            return false;
+        }
+        dl_transport.hasContentLength = head.hasContentLength;
+        dl_transport.contentLength = head.contentLength;
+        dl_transport.state = DlTransportState::ReadBody;
+        return true;
+    }
+
+    Com_DPrintf(DlPrintChannel, "DL: HTTP status %d, failing to in-band\n",
+        head.statusCode);
+    return false;
 }
+} // namespace
 
 bool __cdecl DL_InProgress()
 {
-    return false;
-    //return dl_running > 0;
+    return dl_transport.running;
 }
 
 bool __cdecl DL_DLIsMotd()
@@ -257,3 +315,290 @@ bool __cdecl DL_DLIsMotd()
     return dl_isMotd;
 }
 
+int __cdecl DL_BytesRead()
+{
+    // The progress meter is an int on the client side; a download beyond
+    // 2 GiB keeps counting internally but the meter saturates.
+    if (dl_transport.bytesRead > 2147483647ULL)
+        return 2147483647;
+    return static_cast<int>(dl_transport.bytesRead);
+}
+
+void __cdecl DL_InitDownload()
+{
+    if (!dl_initialized)
+    {
+        dl_initialized = true;
+        Com_Printf(DlPrintChannel, "Client download subsystem initialized\n");
+    }
+}
+
+void __cdecl DL_CancelDownload()
+{
+    // Unconditional teardown: the client abandons the transfer, the socket
+    // and the temp file handle are released, and the temp file itself is
+    // left on disk (the retail client did not delete it either; only a
+    // completed download is renamed into place by the caller).
+    Sys_SocketClose(&dl_transport.socket);
+    if (dl_transport.file)
+    {
+        FS_FileClose(dl_transport.file);
+        dl_transport.file = nullptr;
+    }
+    dl_transport = DlTransport{};
+    dl_isMotd = false;
+}
+
+int __cdecl DL_BeginDownload(char *localName, char *remoteName)
+{
+    if (dl_transport.running)
+        return 0;
+    if (!localName || !remoteName || remoteName[0] == '\0')
+        return 0;
+
+    DL_InitDownload();
+
+    DlRedirectUrl url{};
+    if (Dl_ParseRedirectUrl(remoteName, &url) != DlUrlStatus::Ok)
+    {
+        Com_DPrintf(DlPrintChannel,
+            "DL: unsupported download URL, failing to in-band\n");
+        return 0;
+    }
+
+    // The client passed an OS path under fs_homepath for the temp file;
+    // create its directories and open it for writing before any network
+    // work, so an unwritable target fails the download up front.
+    if (FS_CreatePath(localName) != 0)
+    {
+        Com_DPrintf(DlPrintChannel, "DL: cannot create path %s\n", localName);
+        return 0;
+    }
+    FILE *file = FS_FileOpenWriteBinary(localName);
+    if (!file)
+    {
+        Com_DPrintf(DlPrintChannel, "DL: cannot open %s for writing\n",
+            localName);
+        return 0;
+    }
+
+    dl_transport = DlTransport{};
+    dl_transport.file = file;
+    std::memcpy(dl_transport.host, url.host, sizeof(dl_transport.host));
+    std::memcpy(dl_transport.path, url.path, sizeof(dl_transport.path));
+    std::memcpy(dl_transport.user, url.user, sizeof(dl_transport.user));
+    std::memcpy(dl_transport.password, url.password,
+        sizeof(dl_transport.password));
+    dl_transport.port = url.port;
+    dl_transport.hasBasicAuth = url.hasBasicAuth;
+
+    if (!DlBuildRequest() || !DlStartConnect())
+    {
+        DlAbort();
+        return 0;
+    }
+
+    dl_transport.lastProgressMs = Sys_Milliseconds();
+    dl_transport.running = true;
+    return 1;
+}
+
+int __cdecl DL_DownloadLoop()
+{
+    if (!dl_transport.running)
+        return DL_FAILED;
+
+    // Soft stall timeout: no bytes and no state progress for a full
+    // timeout window fails the download to the in-band fallback.
+    const std::uint32_t now = Sys_Milliseconds();
+    if (now - dl_transport.lastProgressMs > DlStallTimeoutMs)
+    {
+        Com_DPrintf(DlPrintChannel,
+            "DL: download stalled, failing to in-band\n");
+        DlAbort();
+        return DL_FAILED;
+    }
+
+    switch (dl_transport.state)
+    {
+        case DlTransportState::Connecting:
+        {
+            const SysSocketStreamPollStatus ready = Sys_SocketPollConnected(
+                dl_transport.socket);
+            if (ready == SysSocketStreamPollStatus::InProgress)
+                return DL_CONTINUE;
+            if (ready != SysSocketStreamPollStatus::Ready)
+            {
+                Com_DPrintf(DlPrintChannel, "DL: connection failed\n");
+                DlAbort();
+                return DL_FAILED;
+            }
+            dl_transport.lastProgressMs = now;
+            dl_transport.state = DlTransportState::SendRequest;
+            [[fallthrough]];
+        }
+        case DlTransportState::SendRequest:
+        {
+            while (dl_transport.requestSent < dl_transport.requestLength)
+            {
+                std::uint32_t sent = 0;
+                const SysSocketStreamSendStatus status = Sys_SocketSendStream(
+                    dl_transport.socket,
+                    dl_transport.request + dl_transport.requestSent,
+                    dl_transport.requestLength - dl_transport.requestSent,
+                    &sent);
+                if (status == SysSocketStreamSendStatus::WouldBlock)
+                    return DL_CONTINUE;
+                if (status == SysSocketStreamSendStatus::Sent)
+                {
+                    dl_transport.requestSent += sent;
+                    dl_transport.lastProgressMs = now;
+                    continue;
+                }
+                Com_DPrintf(DlPrintChannel, "DL: request send failed\n");
+                DlAbort();
+                return DL_FAILED;
+            }
+            dl_transport.state = DlTransportState::ReadHead;
+            [[fallthrough]];
+        }
+        case DlTransportState::ReadHead:
+        {
+            // Alternate parsing and pulling until the head completes.
+            for (;;)
+            {
+                DlResponseHead head{};
+                const DlResponseEvent event = Dl_ParseResponseHead(
+                    dl_transport.head, &dl_transport.headLength, &head);
+                if (event == DlResponseEvent::NeedMoreData)
+                {
+                    if (dl_transport.headLength
+                        >= sizeof(dl_transport.head))
+                    {
+                        Com_DPrintf(DlPrintChannel,
+                            "DL: response head overflow\n");
+                        DlAbort();
+                        return DL_FAILED;
+                    }
+                    std::uint32_t received = 0;
+                    const SysSocketStreamRecvStatus status =
+                        Sys_SocketRecvStream(dl_transport.socket,
+                            dl_transport.head + dl_transport.headLength,
+                            static_cast<std::uint32_t>(
+                                sizeof(dl_transport.head)
+                                - dl_transport.headLength),
+                            &received);
+                    if (status == SysSocketStreamRecvStatus::WouldBlock)
+                        return DL_CONTINUE;
+                    if (status == SysSocketStreamRecvStatus::Disconnected)
+                    {
+                        Com_DPrintf(DlPrintChannel,
+                            "DL: connection closed before response head\n");
+                        DlAbort();
+                        return DL_FAILED;
+                    }
+                    if (status != SysSocketStreamRecvStatus::Received)
+                    {
+                        Com_DPrintf(DlPrintChannel,
+                            "DL: head receive failed\n");
+                        DlAbort();
+                        return DL_FAILED;
+                    }
+                    dl_transport.headLength += received;
+                    dl_transport.lastProgressMs = now;
+                    continue;
+                }
+                if (event == DlResponseEvent::StatusError)
+                {
+                    Com_DPrintf(DlPrintChannel,
+                        "DL: malformed response head\n");
+                    DlAbort();
+                    return DL_FAILED;
+                }
+
+                dl_transport.lastProgressMs = now;
+                if (!DlApplyHead(head))
+                {
+                    DlAbort();
+                    return DL_FAILED;
+                }
+                if (dl_transport.state == DlTransportState::Connecting
+                    || dl_transport.state == DlTransportState::SendRequest)
+                {
+                    // A redirect retargeted the transport; resume the pump
+                    // next frame from the new connection.
+                    return DL_CONTINUE;
+                }
+                break; // 2xx: body phase follows in this pump
+            }
+            [[fallthrough]];
+        }
+        case DlTransportState::ReadBody:
+        {
+            for (;;)
+            {
+                char body[DlBodyBufferSize];
+                std::uint32_t received = 0;
+                const SysSocketStreamRecvStatus status = Sys_SocketRecvStream(
+                    dl_transport.socket, body, sizeof(body), &received);
+                if (status == SysSocketStreamRecvStatus::WouldBlock)
+                    return DL_CONTINUE;
+                if (status == SysSocketStreamRecvStatus::Disconnected)
+                {
+                    // Connection-close framing: EOF completes the body
+                    // when no Content-Length was declared; with a declared
+                    // length a short body is a truncation.
+                    if (!dl_transport.hasContentLength)
+                        break;
+                    Com_DPrintf(DlPrintChannel, "DL: truncated download\n");
+                    DlAbort();
+                    return DL_FAILED;
+                }
+                if (status != SysSocketStreamRecvStatus::Received)
+                {
+                    Com_DPrintf(DlPrintChannel, "DL: body receive failed\n");
+                    DlAbort();
+                    return DL_FAILED;
+                }
+
+                if (dl_transport.hasContentLength
+                    && dl_transport.bytesRead + received
+                        > dl_transport.contentLength)
+                {
+                    // Overshoot: keep the declared prefix only.
+                    received = static_cast<std::uint32_t>(
+                        dl_transport.contentLength - dl_transport.bytesRead);
+                }
+                if (received != 0)
+                {
+                    const std::uint32_t written = FS_FileWrite(body,
+                        received, dl_transport.file);
+                    if (written != received)
+                    {
+                        Com_DPrintf(DlPrintChannel,
+                            "DL: write failed (disk full?)\n");
+                        DlAbort();
+                        return DL_FAILED;
+                    }
+                    dl_transport.bytesRead += received;
+                    dl_transport.lastProgressMs = now;
+                }
+
+                if (dl_transport.hasContentLength
+                    && dl_transport.bytesRead >= dl_transport.contentLength)
+                    break; // complete
+            }
+
+            // Transfer complete: release the transport, keep the file.
+            FS_FileClose(dl_transport.file);
+            dl_transport.file = nullptr;
+            Sys_SocketClose(&dl_transport.socket);
+            dl_transport.state = DlTransportState::Idle;
+            dl_transport.running = false;
+            return DL_DONE;
+        }
+        default:
+            DlAbort();
+            return DL_FAILED;
+    }
+}

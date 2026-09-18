@@ -497,3 +497,196 @@ SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveHost(
     *outAddress = resolved;
     return SysSocketResolveStatus::Resolved;
 }
+
+// ---- TCP stream client extension (Win32) ------------------------------------
+
+namespace
+{
+bool StreamArgumentsValid(SysSocketHandle const handle,
+    const void *const buffer,
+    const std::uint32_t byteCount) noexcept
+{
+    return handle && handle->handle != INVALID_SOCKET && buffer
+        && byteCount != 0;
+}
+} // namespace
+
+SysSocketStreamOpenStatus KISAK_CDECL Sys_SocketOpenStream(
+    const bool nonBlocking,
+    SysSocketHandle *const outHandle)
+{
+    if (!outHandle || *outHandle)
+        return SysSocketStreamOpenStatus::InvalidArgument;
+    if (!EnsureWinsockStarted())
+        return SysSocketStreamOpenStatus::SystemFailure;
+
+    const SOCKET raw = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (raw == INVALID_SOCKET)
+        return SysSocketStreamOpenStatus::SystemFailure;
+
+    if (nonBlocking)
+    {
+        u_long mode = 1;
+        if (ioctlsocket(raw, FIONBIO, &mode) != 0)
+        {
+            closesocket(raw);
+            return SysSocketStreamOpenStatus::SystemFailure;
+        }
+    }
+
+    // Allocation is non-throwing so a failure cannot bypass the status
+    // contract and leak the already-open socket.
+    SysSocket *socket = new (std::nothrow) SysSocket();
+    if (!socket)
+    {
+        closesocket(raw);
+        return SysSocketStreamOpenStatus::SystemFailure;
+    }
+    socket->handle = raw;
+    *outHandle = socket;
+    return SysSocketStreamOpenStatus::Opened;
+}
+
+SysSocketStreamConnectStatus KISAK_CDECL Sys_SocketConnectStream(
+    SysSocketHandle const handle,
+    const SysSocketAddress *const destination)
+{
+    if (!handle || handle->handle == INVALID_SOCKET || !destination)
+        return SysSocketStreamConnectStatus::InvalidArgument;
+
+    const sockaddr_in to = ToSockaddrIn(*destination);
+    const int failure = connect(handle->handle,
+        reinterpret_cast<const sockaddr *>(&to), sizeof(to));
+    if (failure == 0)
+        return SysSocketStreamConnectStatus::Connected;
+    // WSAEWOULDBLOCK marks a non-blocking handshake in flight (and an
+    // interrupted one stays pending rather than restarting); WSAEALREADY
+    // and WSAEISCONN fold into their caller-observable outcomes. All of
+    // the in-flight forms report InProgress, which the caller resolves
+    // through Sys_SocketPollConnected.
+    const int error = WSAGetLastError();
+    if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS
+        || error == WSAEALREADY)
+        return SysSocketStreamConnectStatus::InProgress;
+    if (error == WSAEISCONN)
+        return SysSocketStreamConnectStatus::Connected;
+    return SysSocketStreamConnectStatus::SystemFailure;
+}
+
+SysSocketStreamPollStatus KISAK_CDECL Sys_SocketPollConnected(
+    SysSocketHandle const handle)
+{
+    if (!handle || handle->handle == INVALID_SOCKET)
+        return SysSocketStreamPollStatus::InvalidArgument;
+
+    // select() with a zero timeout observes connect completion on Windows
+    // the same way poll(POLLOUT) does on POSIX. The first select argument
+    // is ignored on Windows and meaningful on POSIX hosts only.
+    fd_set writeSet{};
+    FD_ZERO(&writeSet);
+    FD_SET(handle->handle, &writeSet);
+    fd_set errorSet{};
+    FD_ZERO(&errorSet);
+    FD_SET(handle->handle, &errorSet);
+    timeval instant{};
+    const int ready = select(0, nullptr, &writeSet, &errorSet, &instant);
+    if (ready == SOCKET_ERROR)
+        return SysSocketStreamPollStatus::SystemFailure;
+    if (ready == 0)
+        return SysSocketStreamPollStatus::InProgress;
+
+    // Writability (or the except set) ends the handshake; SO_ERROR names
+    // the outcome. Zero is established, anything else is the real
+    // refusal -- select artifacts are never reported as Failed.
+    int socketError = 0;
+    int errorLength = sizeof(socketError);
+    if (getsockopt(handle->handle, SOL_SOCKET, SO_ERROR,
+            reinterpret_cast<char *>(&socketError), &errorLength)
+        != 0)
+        return SysSocketStreamPollStatus::SystemFailure;
+    if (socketError == 0)
+        return SysSocketStreamPollStatus::Ready;
+    return SysSocketStreamPollStatus::Failed;
+}
+
+SysSocketStreamSendStatus KISAK_CDECL Sys_SocketSendStream(
+    SysSocketHandle const handle,
+    const void *const data,
+    const std::uint32_t byteCount,
+    std::uint32_t *const outSentBytes)
+{
+    if (outSentBytes)
+        *outSentBytes = 0;
+    if (!StreamArgumentsValid(handle, data, byteCount) || !outSentBytes)
+        return SysSocketStreamSendStatus::InvalidArgument;
+
+    // The public length is the caller's uint32 request, but Winsock's
+    // send takes a signed int length. Clamp to the fixed socket bound
+    // BEFORE the signed conversion so a length of 2^31 or more cannot
+    // wrap negative; a stream send simply continues from the reported
+    // partial progress when the request was clamped.
+    std::uint32_t sendLength = byteCount;
+    if (sendLength > SysSocketMaxDatagramBytes)
+        sendLength = SysSocketMaxDatagramBytes;
+    const int sent = send(handle->handle,
+        static_cast<const char *>(data),
+        static_cast<int>(sendLength),
+        0);
+    if (sent == SOCKET_ERROR)
+    {
+        const int error = WSAGetLastError();
+        if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS)
+            return SysSocketStreamSendStatus::WouldBlock;
+        if (error == WSAECONNRESET || error == WSAECONNABORTED
+            || error == WSAESHUTDOWN)
+            return SysSocketStreamSendStatus::Disconnected;
+        return SysSocketStreamSendStatus::SystemFailure;
+    }
+    // A stream send of zero cannot occur for a nonzero length, but the
+    // guard keeps the contract honest on exotic platforms.
+    if (sent == 0)
+        return SysSocketStreamSendStatus::WouldBlock;
+    *outSentBytes = static_cast<std::uint32_t>(sent);
+    return SysSocketStreamSendStatus::Sent;
+}
+
+SysSocketStreamRecvStatus KISAK_CDECL Sys_SocketRecvStream(
+    SysSocketHandle const handle,
+    void *const buffer,
+    const std::uint32_t bufferCapacity,
+    std::uint32_t *const outByteCount)
+{
+    if (outByteCount)
+        *outByteCount = 0;
+    if (!StreamArgumentsValid(handle, buffer, bufferCapacity) || !outByteCount)
+        return SysSocketStreamRecvStatus::InvalidArgument;
+
+    // The public capacity is the caller's uint32 receive window, but
+    // Winsock's recv takes a signed int length. Clamp to the fixed
+    // socket bound BEFORE the signed conversion so a capacity of 2^31
+    // or more cannot wrap negative; a stream read simply continues in
+    // another chunk when the window was clamped.
+    std::uint32_t recvLength = bufferCapacity;
+    if (recvLength > SysSocketMaxDatagramBytes)
+        recvLength = SysSocketMaxDatagramBytes;
+    const int received = recv(handle->handle,
+        static_cast<char *>(buffer),
+        static_cast<int>(recvLength),
+        0);
+    if (received == SOCKET_ERROR)
+    {
+        const int error = WSAGetLastError();
+        if (error == WSAEWOULDBLOCK)
+            return SysSocketStreamRecvStatus::WouldBlock;
+        if (error == WSAECONNRESET || error == WSAECONNABORTED
+            || error == WSAESHUTDOWN)
+            return SysSocketStreamRecvStatus::Disconnected;
+        return SysSocketStreamRecvStatus::SystemFailure;
+    }
+    // Zero bytes on a stream is the peer's orderly shutdown: the stream
+    // is finished and will never yield more data.
+    if (received == 0)
+        return SysSocketStreamRecvStatus::Disconnected;
+    *outByteCount = static_cast<std::uint32_t>(received);
+    return SysSocketStreamRecvStatus::Received;
+}

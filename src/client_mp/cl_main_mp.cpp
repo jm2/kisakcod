@@ -2051,6 +2051,9 @@ void __cdecl CL_WWWDownload()
     char to_ospath[260]; // [esp+18h] [ebp-108h] BYREF
 
     ret = (dlStatus_t)DL_DownloadLoop();
+    // Feed the legacy progress meter from the transport; the retail
+    // library updated the same counter from its read callback.
+    legacyHacks.cl_downloadCount = DL_BytesRead();
     if (ret)
     {
         if (DL_DLIsMotd())
