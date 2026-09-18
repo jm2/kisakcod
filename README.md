@@ -65,7 +65,10 @@ Use the **[fork issues](https://github.com/jm2/kisakcod/issues)** for this fork'
 implementation and delivery backlog; upstream reports remain available in
 [SwagSoftware/KisakCOD](https://github.com/SwagSoftware/KisakCOD/issues).
 [The current roadmap](docs/task.md) maps fork issues to existing Gas City work,
-which runs separately. All porting changes must follow the
+which runs separately. Current per-capability delivery evidence is summarized in
+the generated [capability dashboard](docs/CAPABILITY_DASHBOARD.md), reconciled
+from [`docs/capability/manifest.json`](docs/capability/manifest.json) by
+`scripts/ci/capability-dashboard.py`. All porting changes must follow the
 [original commercial 1.7 / Steam 1.8 network compatibility contract](docs/NETWORK_COMPATIBILITY.md).
 
 ## Troubleshooting
