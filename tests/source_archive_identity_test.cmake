@@ -507,6 +507,9 @@ read_normalized(
     "${SOURCE_ROOT}/scripts/extern/stamp_build_number.cmake" _stamp
     "build-time stamp script")
 read_normalized(
+    "${SOURCE_ROOT}/scripts/extern/schedule_publish_header.cmake" _aging
+    "publish-edge aging script")
+read_normalized(
     "${SOURCE_ROOT}/scripts/increment_build.sh" _sh "POSIX build-number script")
 read_normalized(
     "${SOURCE_ROOT}/scripts/increment_build.cmd" _cmd "Windows build-number script")
@@ -607,6 +610,16 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "file(REMOVE \"\${KISAK_STAMP_PUBLISH_HEADER}\")"
             ""
             _stamp "${_stamp}")
+    elseif(CONTRACT_MUTATION STREQUAL "publish_aging")
+        string(REPLACE
+            "-P \"\${SCRIPTS_DIR}/extern/schedule_publish_header.cmake\""
+            ""
+            _cmake "${_cmake}")
+    elseif(CONTRACT_MUTATION STREQUAL "stamp_superseded_marker")
+        string(REPLACE
+            "\"\${KISAK_STAMP_SUPERSEDED_MARKER}\""
+            ""
+            _stamp "${_stamp}")
     else()
         message(FATAL_ERROR
             "Unknown source-identity mutation: ${CONTRACT_MUTATION}")
@@ -673,21 +686,52 @@ require_contains(
     "the public stamp target pulls the published header into ordinary builds")
 
 # Timestamp resolution is not uniform across generators: Apple's GNU Make
-# 3.81, the default generator on macOS CI, compares whole seconds, so a stamp
+# 3.81, the default generator on macOS CI, compares whole seconds. A stamp
 # that rewrites the staged header within the same wall-clock second in which
 # the previous build published the old revision ties the publish edge's mtime
 # comparison and the copy is skipped - the stale revision survives one
 # ordinary build. The stamp must therefore remove a published header whose
 # content it has superseded: a missing output forces the publish edge to run
-# on every generator, and the recreated file re-dirties compiled consumers in
-# the same ordinary build regardless of clock resolution. An unchanged stamp
-# compares equal and removes nothing, so clean rebuilds stay clean.
+# on every generator. Removal alone still leaves the consumer-shaped half of
+# the same defect: the recreated header can land in the same wall-clock
+# second in which the previous build compiled its consumers, and a
+# whole-second make then ties the header against those objects, skips their
+# recompilation, and relinks the previous revision's identity. The stamp must
+# therefore record each supersede in a build-directory marker, and the
+# publish edge must age the recreated header one second into the future, so
+# it is strictly newer than any existing consumer at whole-second resolution
+# - without sleeps, retries, or a second build. An unchanged stamp compares
+# equal, removes nothing, and writes no marker, so clean rebuilds stay clean.
 require_contains(
     _cmake "\"-DKISAK_STAMP_PUBLISH_HEADER=\${SRC_DIR}/buildnumber.h\""
     "increment_build.cmake tells the stamp which header the publish edge owns")
 require_contains(
     _stamp "file(REMOVE \"\${KISAK_STAMP_PUBLISH_HEADER}\")"
     "the stamp removes a published header its content has superseded")
+require_contains(
+    _cmake "\"-DKISAK_STAMP_SUPERSEDED_MARKER=\${KISAK_STAMP_SUPERSEDED_MARKER}\""
+    "increment_build.cmake tells the stamp where to record superseded publications")
+require_contains(
+    _stamp "\"\${KISAK_STAMP_SUPERSEDED_MARKER}\""
+    "the stamp records superseded publications for the publish edge's aging step")
+require_contains(
+    _cmake "\"-DKISAK_PUBLISH_SUPERSEDED_MARKER=\${KISAK_STAMP_SUPERSEDED_MARKER}\""
+    "increment_build.cmake hands the superseded marker to the aging step")
+require_contains(
+    _cmake "-P \"\${SCRIPTS_DIR}/extern/schedule_publish_header.cmake\""
+    "the publish edge ages a recreated header past whole-second resolution")
+require_contains(
+    _aging "if(NOT EXISTS \"\${KISAK_PUBLISH_SUPERSEDED_MARKER}\")"
+    "the aging step stays inert when the stamp published identical content")
+require_contains(
+    _aging "file(REMOVE \"\${KISAK_PUBLISH_SUPERSEDED_MARKER}\")"
+    "the aging step consumes the superseded marker it acts on")
+require_contains(
+    _aging "\"\${KISAK_PUBLISH_NOW_EPOCH} + 1\""
+    "the aging step derives the future mtime from the wall clock")
+require_contains(
+    _aging "-t \"\${KISAK_PUBLISH_FUTURE_STAMP}\""
+    "the aging step sets the recreated header's mtime into the future")
 
 # Both stamp scripts must forward the commit into the generated header.
 require_contains(
@@ -1051,6 +1095,8 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         stamp_override_forward
         publish_edge
         stamp_publish_guard
+        publish_aging
+        stamp_superseded_marker
         cpp_consumer
         cpp_getter
         cpp_retention

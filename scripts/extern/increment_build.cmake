@@ -26,21 +26,36 @@
 # unchanged stamp leaves the header untouched and every consumer stays clean.
 #
 # The staging round-trip alone still leaves one clock-shaped hole, closed by
-# the stamp script: build tools disagree on timestamp resolution, and Apple's
-# GNU Make 3.81 (the default generator on macOS CI) compares whole seconds.
-# A stamp that rewrites the staged header within the same wall-clock second in
-# which the previous build published the old revision ties the publish edge's
-# mtime comparison, and make skips the copy - the stale revision survives one
-# ordinary build. The stamp therefore also receives the published header's
-# path and removes it whenever the stamped content differs: a missing output
-# forces the publish edge to run on every generator, and the recreated file
-# re-dirties compiled consumers in the same ordinary build regardless of clock
-# resolution. An unchanged stamp compares equal and removes nothing.
+# the stamp script together with the publish edge's aging step: build tools
+# disagree on timestamp resolution, and Apple's GNU Make 3.81 (the default
+# generator on macOS CI) compares whole seconds. A stamp that rewrites the
+# staged header within the same wall-clock second in which the previous build
+# published the old revision ties the publish edge's mtime comparison, and
+# make skips the copy - the stale revision survives one ordinary build. The
+# stamp therefore also receives the published header's path and removes it
+# whenever the stamped content differs: a missing output forces the publish
+# edge to run on every generator. Removal alone still leaves the consumer-
+# shaped half of the same defect: the recreated header can land in the same
+# wall-clock second in which the previous build compiled its consumers, and a
+# whole-second make then ties the header against those objects and skips
+# their recompilation, relinking the previous revision's identity. The stamp
+# therefore records every supersede in a build-directory marker, and the
+# second publish command below (schedule_publish_header.cmake) ages the
+# freshly published header one second into the future, so it is strictly
+# newer than any existing consumer at whole-second resolution. An unchanged
+# stamp compares equal, removes nothing, and writes no marker: clean rebuilds
+# stay clean.
 
 # The staging directory must exist before the platform stamp script writes
 # into it.
 set(KISAK_STAMP_STAGE_DIR "${CMAKE_BINARY_DIR}/buildnumber-stamp")
 file(MAKE_DIRECTORY "${KISAK_STAMP_STAGE_DIR}")
+
+# The stamp script writes this marker in the build tree (never the source
+# tree) whenever it supersedes the published header, and
+# schedule_publish_header.cmake consumes it from here: the marker's lifetime
+# is exactly one superseded publication that has not yet been aged.
+set(KISAK_STAMP_SUPERSEDED_MARKER "${KISAK_STAMP_STAGE_DIR}/buildnumber.h.superseded")
 
 # An explicit KISAK_SOURCE_COMMIT override (cache variable or environment) is
 # part of the resolution contract, so a configure-time cache override is
@@ -58,6 +73,7 @@ add_custom_target(
     "-DKISAK_STAMP_SCRIPTS_DIR=${SCRIPTS_DIR}"
     "-DKISAK_SOURCE_COMMIT=${KISAK_SOURCE_COMMIT}"
     "-DKISAK_STAMP_PUBLISH_HEADER=${SRC_DIR}/buildnumber.h"
+    "-DKISAK_STAMP_SUPERSEDED_MARKER=${KISAK_STAMP_SUPERSEDED_MARKER}"
     -P "${SCRIPTS_DIR}/extern/stamp_build_number.cmake"
   BYPRODUCTS "${KISAK_STAMP_STAGE_DIR}/buildnumber.h"
   COMMENT "Running build number script..."
@@ -74,11 +90,20 @@ add_custom_target(
 # one timestamp-resolution step, the stamp has already removed the published
 # header (see the coarse-clock guard in stamp_build_number.cmake): a missing
 # output forces this edge to run and restores the header with fresh content.
+# The second command consumes the stamp's superseded marker and ages the
+# recreated header one second into the future, because a whole-second make
+# (Apple's GNU Make 3.81) would otherwise tie it against the consumers the
+# previous build compiled and never recompile them; see
+# schedule_publish_header.cmake for the full resolution analysis.
 add_custom_command(
   OUTPUT "${SRC_DIR}/buildnumber.h"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
     "${KISAK_STAMP_STAGE_DIR}/buildnumber.h"
     "${SRC_DIR}/buildnumber.h"
+  COMMAND "${CMAKE_COMMAND}"
+    "-DKISAK_PUBLISH_HEADER=${SRC_DIR}/buildnumber.h"
+    "-DKISAK_PUBLISH_SUPERSEDED_MARKER=${KISAK_STAMP_SUPERSEDED_MARKER}"
+    -P "${SCRIPTS_DIR}/extern/schedule_publish_header.cmake"
   DEPENDS "${KISAK_STAMP_STAGE_DIR}/buildnumber.h"
     update_build_number_stamp
   COMMENT "Publishing stamped buildnumber.h"

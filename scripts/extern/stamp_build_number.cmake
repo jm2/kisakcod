@@ -22,6 +22,10 @@
 #   KISAK_STAMP_SCRIPTS_DIR - this project's scripts directory.
 #   KISAK_STAMP_PUBLISH_HEADER - the published buildnumber.h the publish edge
 #     owns; see the coarse-clock guard at the end of this script.
+#   KISAK_STAMP_SUPERSEDED_MARKER - build-directory marker written when the
+#     guard supersedes the published header; the publish edge's aging step
+#     (schedule_publish_header.cmake) consumes it to re-dirty whole-second
+#     make consumers. Never written into the source tree.
 
 if(NOT DEFINED KISAK_STAMP_SOURCE_DIR OR KISAK_STAMP_SOURCE_DIR STREQUAL "")
     message(FATAL_ERROR
@@ -34,6 +38,11 @@ endif()
 if(NOT DEFINED KISAK_STAMP_SCRIPTS_DIR OR KISAK_STAMP_SCRIPTS_DIR STREQUAL "")
     message(FATAL_ERROR
         "stamp_build_number.cmake requires KISAK_STAMP_SCRIPTS_DIR")
+endif()
+if(NOT DEFINED KISAK_STAMP_SUPERSEDED_MARKER
+        OR KISAK_STAMP_SUPERSEDED_MARKER STREQUAL "")
+    message(FATAL_ERROR
+        "stamp_build_number.cmake requires KISAK_STAMP_SUPERSEDED_MARKER")
 endif()
 
 if(CMAKE_HOST_WIN32)
@@ -85,12 +94,18 @@ endif()
 # revision, the publish edge's mtime comparison ties and the copy is skipped -
 # the stale revision survives one ordinary build. Remove the published header
 # when the stamped content differs from it: a missing output forces the
-# publish edge to run on every generator, and the recreated file re-dirties
-# compiled consumers in the same ordinary build regardless of clock
-# resolution. An unchanged stamp compares equal and removes nothing, so
-# unchanged rebuilds still leave the published header - and every consumer -
-# untouched.
+# publish edge to run on every generator. Removal alone cannot reschedule the
+# CONSUMERS, though: the recreated header can land in the same wall-clock
+# second in which the previous build compiled them, and a whole-second make
+# then ties it against those objects and skips their recompilation. Every
+# supersede therefore leaves KISAK_STAMP_SUPERSEDED_MARKER in the build tree,
+# which the publish edge's aging step (schedule_publish_header.cmake)
+# consumes to make the recreated header strictly newer than any existing
+# consumer. An unchanged stamp compares equal, removes nothing, and clears
+# any marker a previously interrupted run may have left behind, so unchanged
+# rebuilds still leave the published header - and every consumer - untouched.
 if(DEFINED KISAK_STAMP_PUBLISH_HEADER AND NOT KISAK_STAMP_PUBLISH_HEADER STREQUAL "")
+    set(_stamp_superseded FALSE)
     if(EXISTS "${KISAK_STAMP_PUBLISH_HEADER}")
         execute_process(
             COMMAND "${CMAKE_COMMAND}" -E compare_files
@@ -99,7 +114,16 @@ if(DEFINED KISAK_STAMP_PUBLISH_HEADER AND NOT KISAK_STAMP_PUBLISH_HEADER STREQUA
             RESULT_VARIABLE _publish_compare_result
         )
         if(NOT _publish_compare_result EQUAL 0)
+            set(_stamp_superseded TRUE)
+            file(READ "${KISAK_STAMP_PUBLISH_HEADER}" _stamp_superseded_content)
+            file(WRITE "${KISAK_STAMP_SUPERSEDED_MARKER}" "${_stamp_superseded_content}")
             file(REMOVE "${KISAK_STAMP_PUBLISH_HEADER}")
         endif()
+    endif()
+    if(NOT _stamp_superseded AND EXISTS "${KISAK_STAMP_SUPERSEDED_MARKER}")
+        # A previous run was interrupted between the supersede and the aging
+        # step. Content matches now, so the stale marker must not age an
+        # untouched publication.
+        file(REMOVE "${KISAK_STAMP_SUPERSEDED_MARKER}")
     endif()
 endif()
