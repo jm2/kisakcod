@@ -7,8 +7,11 @@
 // (tests/CMakeLists.txt kisakcod-msg-wire-contract-tests) link the real
 // production codec instead of a reimplementation, while the Win32 game and
 // dedicated builds keep compiling the same functions (registered in
-// scripts/mp/mp_files.cmake). Function bodies are unchanged; behavior is
-// identical.
+// scripts/mp/mp_files.cmake). Behavior is identical. One deliberate text
+// deviation from the verbatim bodies: MSG_ReadDeltaUsercmdKey copies
+// usercmd_s with struct assignment rather than memcpy (a static-analysis
+// buffer-copy finding at the retail call site); the copy is field-identical
+// for the POD struct and the wire bytes are unchanged.
 
 #ifndef KISAK_MP
 #error This File is MultiPlayer Only
@@ -771,7 +774,11 @@ void __cdecl MSG_ReadDeltaUsercmdKey(msg_t *msg, int key, const usercmd_s *from,
     iassert( from->buttons < (1 << BUTTON_BIT_COUNT) );
     iassert( from->weapon < (1 << MAX_WEAPONS_BITS) );
     iassert( from->offHandIndex < (1 << MAX_WEAPONS_BITS) );
-    memcpy(to, from, sizeof(usercmd_s));
+    // Struct assignment instead of the retail memcpy(to, from,
+    // sizeof(usercmd_s)): usercmd_s is a plain POD struct, so the copy is
+    // field-identical and the wire bytes are unchanged (pinned by
+    // kisakcod-msg-wire-contract-tests).
+    *to = *from;
     if (MSG_ReadBit(msg))
         to->serverTime = from->serverTime + MSG_ReadByte(msg);
     else
