@@ -217,7 +217,7 @@ because that active baseline cannot link on targets that lose the 32-bit
 | Subject | Coverage at this SHA |
 |---|---|
 | Sound | One focused CMake test, `tests/sound_dry_send_source_test.cmake`; no sound-loader runtime suite and no playback suite (`NATIVE_ASSET_CLOSURE_LEDGER.md` §4.4) |
-| Voice | Codec-level suite `tests/voice_gate_tests.cpp` (ctest `voice-codec-gate-contracts`): golden encode streams (nb/wb), per-frame-wire-length decode vs pinned reference, `srand(1)` determinism contract, DTX amplitude-bounded frames, lookahead-aligned round trip with pinned bounds, corrupt-frame rejection. Source contracts `tests/voice_framing_source_test.cmake` and `tests/audio_gate_source_test.cmake`. Still **no runtime device-lifecycle suite** (`AUD-*`/`VOX-*` runtime rows remain `not-implemented`) |
+| Voice | Codec-level suite `tests/voice_gate_tests.cpp` + `tests/voice_gate_decode_test.cpp` (ctest `voice-codec-gate-contracts`): golden encode streams (nb/wb), per-frame-wire-length decode vs pinned reference, seed-free decoder determinism (fixed-point comfort-noise LCG in `misc.c`), DTX amplitude-bounded frames, lookahead-aligned round trip with pinned bounds, corrupt-frame rejection. Source contracts `tests/voice_framing_source_test.cmake` and `tests/audio_gate_source_test.cmake`. Still **no runtime device-lifecycle suite** (`AUD-*`/`VOX-*` runtime rows remain `not-implemented`) |
 | Cinematics | Source contract `tests/cinematic_gate_source_test.cmake` (Bink IO/error/mix-bin/texture-split pins). **No decode/seek/A-V runtime tests** |
 | Null media | Source contract `tests/null_media_gate_source_test.cmake` (`KISAK_DEDI_HEADLESS` init guards, dedicated source-list media and proprietary-dependency exclusions) |
 
@@ -241,11 +241,18 @@ the codec we ship; wire bytes are unchanged.
   (`SPEEX_GET_LOOKAHEAD`: encoder 80, decoder 0 in this snapshot). Any
   decode-side PCM reference must align by the lookahead before comparing;
   upstream's own `testenc` compensates with `skip_group_delay`.
-- **Decoder PCM is deterministic only given the libc PRNG seed.** DTX comfort
-  noise (`nb_celp.c` `speex_rand_vec`) and unstable-pitch concealment
-  (`speex_rand`) consume libc `rand()`. Two decoders in one process share the
-  stream; the gate seeds `srand(1)` per decode pass and bounds DTX frames by
-  amplitude only (`kDtxAmplitudeBound`).
+- **Decoder PCM is deterministic without any libc randomness API.**
+  Receiver-local synthesis — the nb submode-1 vocoder noise excitation
+  (`noise_codebook_unquant`), the null-submode comfort-noise branch, and
+  loss concealment — originally consumed libc `rand()`. The ki-dkeb CWE-327
+  repair replaced it with the fixed-point LCG in `misc.c`, drawn through
+  per-decoder state (`DecState`/`SBDecState` `rand_state`, seeded once at
+  decoder init), so decoded output is a deterministic function of the
+  bitstream alone, independent of interleaving. Synthesis samples never
+  appear on the wire: the pinned encoder bitstreams are byte-identical, and
+  the pinned decode reference was regenerated under the LCG via
+  `--dump-goldens` in the same commit. DTX-classified frames remain
+  amplitude-bounded (`kDtxAmplitudeBound`) rather than sample-pinned.
 - **UWB encode segfaults in this snapshot** (stacked `sb_encode`). Production
   never selects it: `win_voice.cpp` pins `g_current_bandwidth_setting = 0`
   (narrowband only), enforced by the audio gate source contract.

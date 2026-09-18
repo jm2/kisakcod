@@ -4180,6 +4180,7 @@ configure_file(
 
 add_executable(kisakcod-voice-gate-tests
     voice_gate_tests.cpp
+    voice_gate_decode_test.cpp
     ${SPEEX_CODEC_SOURCES}
 )
 target_include_directories(kisakcod-voice-gate-tests PRIVATE
@@ -4191,13 +4192,15 @@ if(MSVC)
     set_source_files_properties(${SPEEX_CODEC_SOURCES} PROPERTIES
         COMPILE_OPTIONS "/w")
     set_source_files_properties(
-        "${CMAKE_CURRENT_SOURCE_DIR}/voice_gate_tests.cpp" PROPERTIES
+        "${CMAKE_CURRENT_SOURCE_DIR}/voice_gate_tests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/voice_gate_decode_test.cpp" PROPERTIES
         COMPILE_OPTIONS "/W4;/WX")
 else()
     set_source_files_properties(${SPEEX_CODEC_SOURCES} PROPERTIES
         COMPILE_OPTIONS "-w")
     set_source_files_properties(
-        "${CMAKE_CURRENT_SOURCE_DIR}/voice_gate_tests.cpp" PROPERTIES
+        "${CMAKE_CURRENT_SOURCE_DIR}/voice_gate_tests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/voice_gate_decode_test.cpp" PROPERTIES
         COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
 endif()
 if(UNIX AND NOT APPLE)

@@ -829,6 +829,9 @@ void *sb_decoder_init(const SpeexMode *m)
 
    st->first=1;
 
+   /* Deterministic noise-synthesis state (see misc.c speex_rand_seeded):
+      every decoder starts from the same fixed seed. */
+   st->rand_state = 1u;
 
    st->x0d=speex_alloc((st->frame_size)*sizeof(spx_sig_t));
    st->x1d=speex_alloc((st->frame_size)*sizeof(spx_sig_t));
@@ -1157,7 +1160,7 @@ int sb_decode(void *state, SpeexBits *bits, void *vout)
          scale = SHL(MULT16_16(DIV32_16(SHL(gc,SIG_SHIFT-4),filter_ratio),(1+el)),4);
 
          SUBMODE(innovation_unquant)(exc, SUBMODE(innovation_params), st->subframeSize, 
-                                bits, stack);
+                                bits, stack, &st->rand_state);
 
          signal_mul(exc,exc,scale,st->subframeSize);
 
@@ -1168,7 +1171,7 @@ int sb_decode(void *state, SpeexBits *bits, void *vout)
             for (i=0;i<st->subframeSize;i++)
                innov2[i]=0;
             SUBMODE(innovation_unquant)(innov2, SUBMODE(innovation_params), st->subframeSize, 
-                                bits, stack);
+                                bits, stack, &st->rand_state);
             for (i=0;i<st->subframeSize;i++)
                innov2[i]*=scale/(float)SIG_SCALING*(1/2.5);
             for (i=0;i<st->subframeSize;i++)
