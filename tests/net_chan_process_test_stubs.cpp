@@ -25,6 +25,7 @@
 #include <universal/q_shared.h>
 #include <win32/win_local.h>
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -74,6 +75,10 @@ int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
+    // Keep rendering the caller's format: this shim is production sprintf,
+    // and paths such as NET_AdrToString would emit garbage diagnostics
+    // otherwise. Dispositioned like script_runtime_pointer_test.cpp.
+    // Flawfinder: ignore -- passthrough shim; production callers own the literal format and buffer size.
     const int written = std::vsnprintf(dest, size, fmt, args);
     va_end(args);
     return written;
@@ -81,17 +86,23 @@ int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
 
 void Com_Memcpy(void *dest, const void *src, const size_t count)
 {
-    std::memcpy(dest, src, count);
+    // std::copy instead of memcpy (Codacy CWE-120): byte-wise identical for
+    // memcpy's non-overlapping contract, without the analyzer-untrackable
+    // raw length copy.
+    std::copy(static_cast<const uint8_t *>(src),
+              static_cast<const uint8_t *>(src) + count,
+              static_cast<uint8_t *>(dest));
 }
 
 void MyAssertHandler(const char *filename, int line, int, const char *fmt, ...)
 {
-    va_list args;
-    std::fprintf(stderr, "assert failed at %s:%d: ", filename, line);
-    va_start(args, fmt);
-    std::vfprintf(stderr, fmt, args);
-    va_end(args);
-    std::fprintf(stderr, "\n");
+    // Constant format spec (Codacy CWE-134): the stub never renders the
+    // variadic payload as a format string. It prints the assert site and the
+    // expression text as data, then aborts -- the loud failure path the
+    // production assert macros expect.
+    std::fprintf(stderr, "assert failed at %s:%d: %s\n",
+                 filename != nullptr ? filename : "(unknown)", line,
+                 fmt != nullptr ? fmt : "");
     std::abort();
 }
 

@@ -8,14 +8,16 @@
 //
 //   * valid complete and fragmented messages (both socks, qport placement),
 //   * fragment ordering, duplicate/old sequences and gap accounting,
-//   * boundary destination capacities around the complete output span
-//     (sequence prefix + reassembled payload) versus msg->maxsize,
 //   * invalid input (illegal/negative fragment lengths, truncated fragment
-//     headers) and the resulting failure state,
-//   * the stage-1 regression: a reassembly whose COMPLETE span exceeds
-//     msg->maxsize must be rejected before EITHER the four-byte sequence
-//     prefix or the payload is written, leaving the destination bytes,
-//     cursize, and sequence state untouched.
+//     headers) and the resulting failure state.
+//
+// The span-capacity block of the original single-TU layout (boundary
+// destination capacities around the complete output span versus msg->maxsize,
+// and the stage-1 no-write rejection regression) now lives in
+// net_chan_process_span_tests.cpp, sharing these fixtures through
+// net_chan_process_test_support.h; Codacy's per-file length limit drove the
+// split. RunNetChanProcessContracts invokes the span contracts last, so the
+// original contract order is unchanged.
 //
 // The production TUs (qcommon/net_chan_mp.cpp, qcommon/msg_mp.cpp,
 // qcommon/huffman.cpp) are linked into this target only on the ILP32 Win32
@@ -24,185 +26,14 @@
 // or reimplemented here, and the wire bytes are written with the production
 // MSG writers so the packet shape stays pinned to the shipped protocol.
 
-#include <qcommon/net_chan_mp.h>
+#include "net_chan_process_test_support.h"
 
 #include <cstdint>
-#include <cstdio>
-#include <cstring>
+
+using namespace netchan_test;
 
 namespace
 {
-// MAX_MSGLEN-sized reassembly/destination buffers, as shipped.
-constexpr int32_t kMaxMsgLen = 0x40000;
-
-// The engine's fragment threshold: a fragment of exactly this many payload
-// bytes means "more fragments expected".
-constexpr int kFragmentFullLength = 1300;
-
-constexpr uint16_t kQPort = 0x1234;
-
-constexpr uint8_t kSentinel = 0xCD;
-
-int fail(const char *message)
-{
-    std::fprintf(stderr, "%s\n", message);
-    return 1;
-}
-
-// ---------------------------------------------------------------------------
-// Inert dvars. Netchan_Process gates every print path on
-// showpackets/showdrop and NetProf_PrepProfiling dereferences net_profile
-// unconditionally, so the pointers (defined in net_chan_mp.cpp and left null
-// until Netchan_Init runs) must point at benign zero-valued dvars before the
-// first call. Keeping them at zero also holds the production print paths
-// inert, exactly as in a default server.
-// ---------------------------------------------------------------------------
-
-dvar_t MakeInertDvar(const char *name)
-{
-    dvar_t dvar{};
-    dvar.name = name;
-    dvar.description = "net-chan reassembly test inert dvar";
-    dvar.current.integer = 0;
-    return dvar;
-}
-
-struct InertDvars
-{
-    dvar_t showpackets = MakeInertDvar("showpackets");
-    dvar_t showdrop = MakeInertDvar("showdrop");
-    dvar_t packetDebug = MakeInertDvar("packetDebug");
-    dvar_t net_profile = MakeInertDvar("net_profile");
-    dvar_t net_showprofile = MakeInertDvar("net_showprofile");
-    dvar_t net_lanauthorize = MakeInertDvar("net_lanauthorize");
-    dvar_t msg_printEntityNums = MakeInertDvar("msg_printEntityNums");
-    dvar_t msg_dumpEnts = MakeInertDvar("msg_dumpEnts");
-    dvar_t msg_hudelemspew = MakeInertDvar("msg_hudelemspew");
-    dvar_t fakelag_target = MakeInertDvar("fakelag_target");
-    dvar_t fakelag_packetloss = MakeInertDvar("fakelag_packetloss");
-    dvar_t fakelag_currentjitter = MakeInertDvar("fakelag_currentjitter");
-    dvar_t fakelag_jitter = MakeInertDvar("fakelag_jitter");
-    dvar_t fakelag_current = MakeInertDvar("fakelag_current");
-    dvar_t fakelag_jitterinterval = MakeInertDvar("fakelag_jitterinterval");
-};
-
-const InertDvars &Inert()
-{
-    static const InertDvars instance;
-    return instance;
-}
-
-void InstallInertDvars()
-{
-    showpackets = &Inert().showpackets;
-    showdrop = &Inert().showdrop;
-    packetDebug = &Inert().packetDebug;
-    net_profile = &Inert().net_profile;
-    net_showprofile = &Inert().net_showprofile;
-    net_lanauthorize = &Inert().net_lanauthorize;
-    msg_printEntityNums = &Inert().msg_printEntityNums;
-    msg_dumpEnts = &Inert().msg_dumpEnts;
-    msg_hudelemspew = &Inert().msg_hudelemspew;
-    fakelag_target = &Inert().fakelag_target;
-    fakelag_packetloss = &Inert().fakelag_packetloss;
-    fakelag_currentjitter = &Inert().fakelag_currentjitter;
-    fakelag_jitter = &Inert().fakelag_jitter;
-    fakelag_current = &Inert().fakelag_current;
-    fakelag_jitterinterval = &Inert().fakelag_jitterinterval;
-}
-
-// ---------------------------------------------------------------------------
-// Channel fixture: production Netchan_Setup over MAX_MSGLEN-sized buffers.
-// ---------------------------------------------------------------------------
-
-uint8_t g_fragmentBuffer[kMaxMsgLen];
-uint8_t g_unsentBuffer[16];
-
-struct ChanFixture
-{
-    netchan_t chan{};
-
-    explicit ChanFixture(netsrc_t sock)
-    {
-        netadr_t address{};
-        address.type = NA_IP;
-        address.ip[0] = 127;
-        address.ip[1] = 0;
-        address.ip[2] = 0;
-        address.ip[3] = 1;
-        address.port = 28960;
-        Netchan_Setup(sock, &chan, address, kQPort,
-                      reinterpret_cast<char *>(g_unsentBuffer),
-                      static_cast<int>(sizeof(g_unsentBuffer)),
-                      reinterpret_cast<char *>(g_fragmentBuffer), kMaxMsgLen);
-    }
-};
-
-// ---------------------------------------------------------------------------
-// Wire-format packet builder. Uses the production MSG writers so the packet
-// shape is pinned to the shipped protocol from the writing side as well.
-// ---------------------------------------------------------------------------
-
-struct PacketBuilder
-{
-    msg_t msg{};
-
-    PacketBuilder(uint8_t *buffer, int size, uint32_t sequence, netsrc_t sock)
-    {
-        std::memset(buffer, kSentinel, static_cast<size_t>(size));
-        MSG_Init(&msg, buffer, size);
-        MSG_WriteLong(&msg, static_cast<int>(sequence));
-        if (sock == NS_SERVER)
-            MSG_WriteShort(&msg, static_cast<int16_t>(kQPort));
-    }
-
-    void AddFragmentHeader(uint32_t fragmentStart, uint16_t fragmentLength)
-    {
-        MSG_WriteLong(&msg, static_cast<int>(fragmentStart));
-        MSG_WriteShort(&msg, static_cast<int16_t>(fragmentLength));
-    }
-
-    void AddPayload(const uint8_t *payload, int length)
-    {
-        MSG_WriteData(&msg, const_cast<uint8_t *>(payload),
-                      static_cast<uint32_t>(length));
-    }
-};
-
-uint32_t FragmentSequence(uint32_t sequence)
-{
-    return sequence | 0x80000000u;
-}
-
-uint32_t UnmaskedSequence(uint32_t sequence)
-{
-    return sequence & ~0x80000000u;
-}
-
-void FillPattern(uint8_t *buffer, int length, uint8_t seed)
-{
-    for (int i = 0; i < length; ++i)
-        buffer[i] = static_cast<uint8_t>(seed + static_cast<uint8_t>(i));
-}
-
-bool PatternMatches(const uint8_t *buffer, int length, uint8_t seed)
-{
-    for (int i = 0; i < length; ++i)
-    {
-        if (buffer[i] != static_cast<uint8_t>(seed + static_cast<uint8_t>(i)))
-            return false;
-    }
-    return true;
-}
-
-bool LittleEndianPrefixMatches(const uint8_t *buffer, uint32_t sequence)
-{
-    return buffer[0] == static_cast<uint8_t>(sequence)
-        && buffer[1] == static_cast<uint8_t>(sequence >> 8)
-        && buffer[2] == static_cast<uint8_t>(sequence >> 16)
-        && buffer[3] == static_cast<uint8_t>(sequence >> 24);
-}
-
 // ---------------------------------------------------------------------------
 // 1. Valid complete (unfragmented) messages on both socks.
 // ---------------------------------------------------------------------------
@@ -318,22 +149,21 @@ bool oldSequenceRejected()
 
 // ---------------------------------------------------------------------------
 // 3. Valid fragmented reassembly: ordering, content, prefix, sequence state.
+//    Split into phase helpers to stay under Codacy's per-function complexity
+//    and length limits; the phases chain in order and preserve every
+//    assertion of the original single-function contract.
 // ---------------------------------------------------------------------------
 
-bool fragmentedReassemblyAccepted()
+// Bootstrap plus fragment 1: pending reassembly state after a full-length
+// fragment, before the sequence itself has advanced.
+bool firstFragmentLeavesPendingReassembly(ChanFixture &fixture,
+                                          uint8_t *storage,
+                                          const uint8_t *firstPayload)
 {
-    ChanFixture fixture(NS_SERVER);
-    uint8_t storage[kMaxMsgLen];
-
     // Advance the sequence so the reassembly itself has no gap.
     PacketBuilder bootstrap(storage, kMaxMsgLen, 99u, NS_SERVER);
     if (Netchan_Process(&fixture.chan, &bootstrap.msg) != 1)
         return false;
-
-    uint8_t firstPayload[kFragmentFullLength];
-    uint8_t secondPayload[100];
-    FillPattern(firstPayload, kFragmentFullLength, 0x10);
-    FillPattern(secondPayload, 100, 0x90);
 
     // Fragment 1: full-length fragment, reassembly continues. The sequence
     // advances only when the message completes, so incomingSequence is still
@@ -350,8 +180,15 @@ bool fragmentedReassemblyAccepted()
         return false;
     if (!PatternMatches(g_fragmentBuffer, kFragmentFullLength, 0x10))
         return false;
+    return true;
+}
 
-    // Fragment 2: short fragment completes the message.
+// Fragment 2 completes the message: production returns it with the complete
+// output span -- four-byte prefix plus the reassembled payload.
+bool completingFragmentWritesFullSpan(ChanFixture &fixture, uint8_t *storage,
+                                      const uint8_t *secondPayload,
+                                      msg_t *completingPacket)
+{
     PacketBuilder fragment2(storage, kMaxMsgLen, FragmentSequence(100u),
                             NS_SERVER);
     fragment2.AddFragmentHeader(kFragmentFullLength, 100u);
@@ -359,7 +196,6 @@ bool fragmentedReassemblyAccepted()
     if (Netchan_Process(&fixture.chan, &fragment2.msg) != 1)
         return false;
 
-    // Complete output span: four-byte prefix plus 1400 payload bytes.
     if (fragment2.msg.cursize != kFragmentFullLength + 100 + 4)
         return false;
     if (!LittleEndianPrefixMatches(storage, UnmaskedSequence(100u)))
@@ -368,8 +204,16 @@ bool fragmentedReassemblyAccepted()
         return false;
     if (!PatternMatches(&storage[4 + kFragmentFullLength], 100, 0x90))
         return false;
+    *completingPacket = fragment2.msg;
+    return true;
+}
 
-    // Sequence/reliable state after completion.
+// Sequence/reliable state after completion, plus the reader position the
+// production completion leaves behind.
+bool completionAdvancesSequenceAndState(ChanFixture &fixture,
+                                        msg_t *completingPacket,
+                                        const uint8_t *firstPayload)
+{
     if (fixture.chan.incomingSequence != 100)
         return false;
     if (fixture.chan.dropped != 0)
@@ -383,11 +227,30 @@ bool fragmentedReassemblyAccepted()
         | (static_cast<int>(firstPayload[1]) << 8)
         | (static_cast<int>(firstPayload[2]) << 16)
         | (static_cast<int>(firstPayload[3]) << 24);
-    if (MSG_ReadLong(&fragment2.msg) != expectedFirstLong)
+    if (MSG_ReadLong(completingPacket) != expectedFirstLong)
         return false;
-    if (fragment2.msg.readcount != 8)
+    if (completingPacket->readcount != 8)
         return false;
     return true;
+}
+
+bool fragmentedReassemblyAccepted()
+{
+    ChanFixture fixture(NS_SERVER);
+    uint8_t storage[kMaxMsgLen];
+    uint8_t firstPayload[kFragmentFullLength];
+    uint8_t secondPayload[100];
+    FillPattern(firstPayload, kFragmentFullLength, 0x10);
+    FillPattern(secondPayload, 100, 0x90);
+
+    if (!firstFragmentLeavesPendingReassembly(fixture, storage, firstPayload))
+        return false;
+    msg_t completingPacket{};
+    if (!completingFragmentWritesFullSpan(fixture, storage, secondPayload,
+                                          &completingPacket))
+        return false;
+    return completionAdvancesSequenceAndState(fixture, &completingPacket,
+                                              firstPayload);
 }
 
 bool singleFragmentKeepsReassemblyState()
@@ -522,7 +385,10 @@ bool negativeFragmentLengthRejected()
         return false;
     if (fixture.chan.fragmentLength != 0)
         return false;
-    if (fixture.chan.fragmentSequence != static_cast<int>(FragmentSequence(4u)))
+    // Production masks the wire sequence before recording it, so the stored
+    // fragmentSequence is 4, not 0x80000004 (refinery review, Codex finding).
+    if (fixture.chan.fragmentSequence
+        != static_cast<int>(UnmaskedSequence(4u)))
         return false;
     return true;
 }
@@ -555,26 +421,30 @@ bool truncatedFragmentHeaderFailsSafely()
     uint8_t storage[64];
     FillPattern(storage, static_cast<int>(sizeof(storage)), kSentinel);
 
-    // Sequence present, fragment header cut off: the fragment header reads
-    // fail (overflowed), the packet is rejected, the sequence does NOT
-    // advance (only completing packets advance it), but the gap counter is
-    // reported -- historical reliable semantics.
-    msg_t packet;
-    std::memset(&packet, 0, sizeof(packet));
-    packet.data = storage;
-    packet.maxsize = static_cast<int>(sizeof(storage));
-    MSG_WriteLong(&packet, static_cast<int>(FragmentSequence(6u)));
-    // Truncate AFTER writing: MSG_WriteLong advances cursize, so resetting
-    // it here is what cuts the packet down to the bare sequence long.
-    packet.cursize = 4; // sequence long only; qport/fragment header missing
+    // Sequence, qport, and fragmentStart present; only the fragmentLength
+    // short is cut off. The earlier header reads succeed, so execution
+    // reaches the fragment-length validation itself: the truncated length
+    // reads back as -1, the length guard rejects the packet ("illegal
+    // fragment length"), the sequence does NOT advance (only completing
+    // packets advance it), but the gap counter is reported -- historical
+    // reliable semantics. (Refinery review: a bare-sequence packet never
+    // reaches this guard -- production rejects it at the fragment offset
+    // check first -- so this packet carries the full header minus the final
+    // short.)
+    PacketBuilder packet(storage, static_cast<int>(sizeof(storage)),
+                         FragmentSequence(6u), NS_SERVER);
+    MSG_WriteLong(&packet.msg, 0); // fragmentStart only; fragmentLength missing
 
-    if (Netchan_Process(&fixture.chan, &packet) != 0)
+    if (Netchan_Process(&fixture.chan, &packet.msg) != 0)
         return false;
     if (fixture.chan.incomingSequence != 0)
         return false;
     if (fixture.chan.fragmentLength != 0)
         return false;
-    if (fixture.chan.fragmentSequence != static_cast<int>(FragmentSequence(6u)))
+    // Production masks the wire sequence before recording it (refinery
+    // review, Codex finding).
+    if (fixture.chan.fragmentSequence
+        != static_cast<int>(UnmaskedSequence(6u)))
         return false;
     if (fixture.chan.dropped != 5)
         return false;
@@ -582,158 +452,14 @@ bool truncatedFragmentHeaderFailsSafely()
 }
 
 // ---------------------------------------------------------------------------
-// 6. The stage-1 regression: the COMPLETE output span (prefix + payload) is
-//    validated against msg->maxsize before either write, and a rejection
-//    leaves the destination bytes and cursize untouched.
+// Contract runners. Grouped by concern to stay under Codacy's per-function
+// complexity limit; the invocation order in RunNetChanProcessContracts below
+// is exactly the original single-runner order (span contracts last, from
+// net_chan_process_span_tests.cpp).
 // ---------------------------------------------------------------------------
 
-uint8_t g_expectedStorage[kMaxMsgLen];
-int g_expectedCursize = 0;
-
-// Runs a two-fragment reassembly into a destination of the given capacity
-// (fragment payloads 1300 + 100 = 1400 bytes, sequence 50). Snapshots the
-// destination after the completing fragment is crafted, then runs the
-// production call. Returns the production verdict (true == completed), and
-// reports the completing packet's cursize afterwards.
-bool runCompletingReassembly(uint8_t *storage, int destinationCapacity,
-                             netchan_t *chan, int *finalCursize)
+int RunUnfragmentedPacketContracts()
 {
-    uint8_t firstPayload[kFragmentFullLength];
-    uint8_t secondPayload[100];
-    FillPattern(firstPayload, kFragmentFullLength, 0x11);
-    FillPattern(secondPayload, 100, 0x22);
-
-    PacketBuilder fragment1(storage, destinationCapacity,
-                            FragmentSequence(50u), NS_SERVER);
-    fragment1.AddFragmentHeader(0u, kFragmentFullLength);
-    fragment1.AddPayload(firstPayload, kFragmentFullLength);
-    if (Netchan_Process(chan, &fragment1.msg) != 0)
-        return false;
-
-    PacketBuilder fragment2(storage, destinationCapacity,
-                            FragmentSequence(50u), NS_SERVER);
-    fragment2.AddFragmentHeader(kFragmentFullLength, 100u);
-    fragment2.AddPayload(secondPayload, 100);
-    std::memcpy(g_expectedStorage, storage,
-                static_cast<size_t>(destinationCapacity));
-    g_expectedCursize = fragment2.msg.cursize;
-    const int verdict = Netchan_Process(chan, &fragment2.msg);
-    *finalCursize = fragment2.msg.cursize;
-    return verdict == 1;
-}
-
-bool overflowSpanRejectedWithoutWrite()
-{
-    ChanFixture fixture(NS_SERVER);
-    uint8_t storage[kMaxMsgLen];
-
-    const int reassembledLength = kFragmentFullLength + 100; // 1400
-    // One byte SHORT of the complete span: prefix (4) + 1400 = 1404 > 1403.
-    const int destinationCapacity = reassembledLength + 3;
-    int finalCursize = -1;
-
-    if (runCompletingReassembly(storage, destinationCapacity, &fixture.chan,
-                                &finalCursize))
-        return false; // an overflowing reassembly span was accepted
-
-    if (fixture.chan.incomingSequence != 0)
-        return false; // rejected: sequence must not advance
-    if (fixture.chan.fragmentLength != reassembledLength)
-        return false; // buffered data survives; only completion resets it
-    // The stage-1 contract: neither prefix nor payload written anywhere.
-    if (std::memcmp(storage, g_expectedStorage,
-                    static_cast<size_t>(destinationCapacity)) != 0)
-        return false;
-    if (finalCursize != g_expectedCursize)
-        return false;
-    return true;
-}
-
-bool boundarySpanAccepted()
-{
-    ChanFixture fixture(NS_SERVER);
-    uint8_t storage[kMaxMsgLen];
-
-    const int reassembledLength = kFragmentFullLength + 100; // 1400
-    // EXACT complete-span capacity: prefix (4) + 1400 = 1404 == 1404.
-    const int destinationCapacity = reassembledLength + 4;
-    int finalCursize = -1;
-
-    if (!runCompletingReassembly(storage, destinationCapacity, &fixture.chan,
-                                 &finalCursize))
-        return false;
-
-    if (fixture.chan.incomingSequence != 50)
-        return false;
-    if (fixture.chan.fragmentLength != 0)
-        return false;
-    if (finalCursize != reassembledLength + 4)
-        return false;
-    if (!LittleEndianPrefixMatches(storage, UnmaskedSequence(50u)))
-        return false;
-    if (!PatternMatches(&storage[4], kFragmentFullLength, 0x11))
-        return false;
-    if (!PatternMatches(&storage[4 + kFragmentFullLength], 100, 0x22))
-        return false;
-    return true;
-}
-
-bool subPrefixCapacityFragmentRejected()
-{
-    ChanFixture fixture(NS_SERVER);
-    // The packet itself needs its normal storage; the DESTINATION capacity
-    // that Netchan_Process validates is msg->maxsize, so craft normally and
-    // then point the message at a sub-prefix capacity.
-    uint8_t storage[16];
-
-    PacketBuilder fragment(storage, static_cast<int>(sizeof(storage)),
-                           FragmentSequence(7u), NS_SERVER);
-    fragment.AddFragmentHeader(0u, 0u);
-    fragment.msg.maxsize = 3; // cannot even hold the bare sequence prefix
-
-    std::memcpy(g_expectedStorage, storage, sizeof(storage));
-    g_expectedCursize = fragment.msg.cursize;
-    if (Netchan_Process(&fixture.chan, &fragment.msg) != 0)
-        return false;
-    if (std::memcmp(storage, g_expectedStorage, sizeof(storage)) != 0)
-        return false;
-    if (fragment.msg.cursize != g_expectedCursize)
-        return false;
-    if (fixture.chan.incomingSequence != 0)
-        return false;
-    return true;
-}
-
-bool barePrefixCapacityAccepted()
-{
-    ChanFixture fixture(NS_SERVER);
-    uint8_t storage[16];
-
-    PacketBuilder fragment(storage, static_cast<int>(sizeof(storage)),
-                           FragmentSequence(8u), NS_SERVER);
-    fragment.AddFragmentHeader(0u, 0u);
-    fragment.msg.maxsize = 4; // exactly the bare sequence prefix
-
-    if (Netchan_Process(&fixture.chan, &fragment.msg) != 1)
-        return false;
-    if (fragment.msg.cursize != 4)
-        return false;
-    if (!LittleEndianPrefixMatches(storage, UnmaskedSequence(8u)))
-        return false;
-    if (fixture.chan.incomingSequence != 8)
-        return false;
-    if (fixture.chan.fragmentLength != 0)
-        return false;
-    return true;
-}
-} // namespace
-
-// Entry point invoked from net_chan_reassembly_tests.cpp when the target is
-// linked with the production netchan TUs (ILP32 Win32 leg).
-int RunNetChanProcessContracts()
-{
-    InstallInertDvars();
-
     if (!unfragmentedServerPacketAccepted())
         return fail("server-sock unfragmented packet was not accepted cleanly");
     if (!unfragmentedClientPacketAccepted())
@@ -744,6 +470,11 @@ int RunNetChanProcessContracts()
         return fail("duplicate sequence was accepted or advanced state");
     if (!oldSequenceRejected())
         return fail("old sequence was accepted or advanced state");
+    return 0;
+}
+
+int RunFragmentReassemblyContracts()
+{
     if (!fragmentedReassemblyAccepted())
         return fail("valid two-fragment reassembly produced wrong output span, prefix, or state");
     if (!singleFragmentKeepsReassemblyState())
@@ -752,20 +483,32 @@ int RunNetChanProcessContracts()
         return fail("fragment ordering was not enforced or recovery reassembly corrupted output");
     if (!newSequenceResetsPartialReassembly())
         return fail("a new sequence did not restart the fragment buffer cleanly");
+    return 0;
+}
+
+int RunInvalidFragmentContracts()
+{
     if (!negativeFragmentLengthRejected())
         return fail("a negative fragment length was accepted or corrupted state");
     if (!fragmentLengthBeyondPacketRejected())
         return fail("a fragment length beyond the packet bytes was accepted or corrupted state");
     if (!truncatedFragmentHeaderFailsSafely())
         return fail("a truncated fragment header did not fail safely");
-    if (!overflowSpanRejectedWithoutWrite())
-        return fail("an overflowing reassembly touched the destination buffer or state");
-    if (!boundarySpanAccepted())
-        return fail("the exact-capacity reassembly span was rejected or wrote past its end");
-    if (!subPrefixCapacityFragmentRejected())
-        return fail("a reassembly into a sub-prefix destination was not rejected without writes");
-    if (!barePrefixCapacityAccepted())
-        return fail("a bare-prefix completion was rejected or wrote more than the prefix");
-
     return 0;
+}
+} // namespace
+
+// Entry point invoked from net_chan_reassembly_tests.cpp when the target is
+// linked with the production netchan TUs (ILP32 Win32 leg).
+int RunNetChanProcessContracts()
+{
+    InstallInertDvars();
+
+    if (RunUnfragmentedPacketContracts() != 0)
+        return 1;
+    if (RunFragmentReassemblyContracts() != 0)
+        return 1;
+    if (RunInvalidFragmentContracts() != 0)
+        return 1;
+    return RunNetChanSpanContracts();
 }
