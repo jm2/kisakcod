@@ -309,37 +309,27 @@ void AnchorPos(unsigned char **pos)
     }
 }
 
-Checkpoint Tell()
+// Tell() and SeekTo() are defined inline in buf_cursor.hpp over the
+// detail:: bridge below, so a header TU sees the Checkpoint members in
+// use and the rewind contract stays auditable next to the struct.
+namespace detail
 {
+bool QueryActive(BufCursor **out)
+{
+    *out = nullptr;
     if (!g_activeValid)
     {
-        return Checkpoint{0, false};
-    }
-    return Checkpoint{static_cast<size_t>(g_active.current - g_active.begin), true};
-}
-
-bool SeekTo(const Checkpoint &checkpoint)
-{
-    if (!g_activeValid || g_active.failed)
-    {
         return false;
     }
-    // Validate the cursor-owned offset against the active window BEFORE
-    // forming any pointer. An invalid checkpoint (captured with no active
-    // cursor) or an offset past the active end means the caller's saved
-    // position is stale or corrupt: latch failed so the caller's ordinary
-    // malformed-input cleanup runs, and do not move.
-    const size_t size = static_cast<size_t>(g_active.end - g_active.begin);
-    if (!checkpoint.valid || checkpoint.offset > size)
-    {
-        g_active.failed = true;
-        SyncAnchoredPos();
-        return false;
-    }
-    g_active.current = g_active.begin + checkpoint.offset;
-    SyncAnchoredPos();
+    *out = &g_active;
     return true;
 }
+
+void SyncAnchored()
+{
+    SyncAnchoredPos();
+}
+}  // namespace detail
 
 bool ReadString(char *out, size_t outSize)
 {

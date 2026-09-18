@@ -161,10 +161,39 @@ struct Checkpoint
     bool valid;
 };
 
+// Internal bridge to the cursor's thread-local active state. Declared
+// here and defined in buf_cursor.cpp so Tell()/SeekTo() can be defined
+// inline in this header: a header TU then sees every Checkpoint member
+// read and written, instead of analyzing the struct standalone where
+// both members look unused (a false positive the standalone scan
+// reported on Checkpoint::offset / Checkpoint::valid).
+namespace detail
+{
+// Out-param query of the active cursor. Returns true with *out set to
+// the active cursor only when a valid activation is installed; returns
+// false (with *out nulled) when no cursor is active. This preserves the
+// distinction between "no activation" (Tell's invalid checkpoint,
+// SeekTo's side-effect-free false) and "activation present".
+bool QueryActive(BufCursor **out);
+// Re-syncs the anchored caller *pos after a cursor move (forwards to
+// the translation unit's SyncAnchoredPos).
+void SyncAnchored();
+}  // namespace detail
+
 // Capture the active cursor's current position as a cursor-owned
 // checkpoint so a caller can SeekTo it later (the material second pass).
 // Returns an invalid checkpoint when no cursor is active.
-Checkpoint Tell();
+inline Checkpoint Tell()
+{
+    BufCursor *active = nullptr;
+    Checkpoint checkpoint{0, false};
+    if (detail::QueryActive(&active))
+    {
+        checkpoint.offset = static_cast<size_t>(active->current - active->begin);
+        checkpoint.valid = true;
+    }
+    return checkpoint;
+}
 
 // Checked absolute seek to a cursor-owned checkpoint: validates the
 // checkpoint against the active buffer window and only then forms the
@@ -175,7 +204,24 @@ Checkpoint Tell();
 // has already failed, the checkpoint is invalid, or its offset is out of
 // range; an invalid or out-of-range checkpoint additionally latches
 // Failed() so the caller's ordinary malformed-input cleanup runs.
-bool SeekTo(const Checkpoint &checkpoint);
+inline bool SeekTo(const Checkpoint &checkpoint)
+{
+    BufCursor *active = nullptr;
+    if (!detail::QueryActive(&active) || active->failed)
+    {
+        return false;
+    }
+    const size_t size = static_cast<size_t>(active->end - active->begin);
+    if (!checkpoint.valid || checkpoint.offset > size)
+    {
+        active->failed = true;
+        detail::SyncAnchored();
+        return false;
+    }
+    active->current = active->begin + checkpoint.offset;
+    detail::SyncAnchored();
+    return true;
+}
 
 // String read: scan from current until a NUL is observed, copy
 // (including NUL) into out, and advance. Returns false and marks the
