@@ -253,6 +253,70 @@ void __cdecl CL_ParseMapCenter(int localClientNum)
     sscanf(mapCenterString, "%f %f %f", cls.mapCenter, &cls.mapCenter[1], &cls.mapCenter[2]);
 }
 
+namespace
+{
+// Bounded copy helper for CL_SanitizeDownloadUrl: appends at most
+// capacity - length - 1 bytes and always leaves the result terminated.
+void CL_AppendBounded(char *out, std::size_t &length, const std::size_t capacity,
+    const char *text, const std::size_t count)
+{
+    for (std::size_t index = 0;
+        index < count && length + 1 < capacity; ++index)
+        out[length++] = text[index];
+}
+
+// Renders a download URL for every displayed or logged surface with
+// URL-embedded credentials masked: "http://user:pass@host/path" becomes
+// the retail meter form "http://*:*host/path". Only the authority's
+// userinfo (everything before the last '@' before the first '/', '?' or
+// '#') is rewritten; the source URL is never modified, so the transport
+// still receives the real credentials. Without credentials the URL is
+// copied verbatim (bounded).
+void CL_SanitizeDownloadUrl(const char *source, char *out,
+    const std::size_t capacity)
+{
+    if (!out || capacity == 0)
+        return;
+    std::size_t length = 0;
+    out[0] = '\0';
+    if (!source)
+        return;
+
+    const char *authority = std::strstr(source, "://");
+    const std::size_t schemeLength =
+        authority ? static_cast<std::size_t>(authority - source) + 3 : 0;
+    const char *rest = source + schemeLength;
+    while (*rest != '\0' && *rest != '/' && *rest != '?' && *rest != '#')
+        ++rest;
+
+    const char *at = nullptr;
+    for (const char *scan = rest; scan > source + schemeLength;)
+    {
+        --scan;
+        if (*scan == '@')
+        {
+            at = scan;
+            break;
+        }
+    }
+
+    if (!at)
+    {
+        CL_AppendBounded(out, length, capacity, source,
+            std::strlen(source));
+        out[length] = '\0';
+        return;
+    }
+
+    CL_AppendBounded(out, length, capacity, source, schemeLength);
+    CL_AppendBounded(out, length, capacity, "*:*", 3);
+    CL_AppendBounded(out, length, capacity, at + 1,
+        static_cast<std::size_t>(rest - (at + 1)));
+    CL_AppendBounded(out, length, capacity, rest, std::strlen(rest));
+    out[length] = '\0';
+}
+} // namespace
+
 void __cdecl CL_ParseWWWDownload(int localClientNum, msg_t *msg)
 {
     char *String; // eax
@@ -276,7 +340,14 @@ void __cdecl CL_ParseWWWDownload(int localClientNum, msg_t *msg)
     else
     {
         legacyHacks.cl_downloadSize = cls.downloadSize;
-        Com_DPrintf(14, "Server redirected download: %s\n", cls.downloadName);
+        // Every logged form of the URL goes through the sanitizer so
+        // URL-embedded credentials never reach the console or the
+        // failure message (the meter composition below masks via the
+        // URL parser, retail scheme://*:*authority/path style).
+        char sanitizedUrl[1024];
+        CL_SanitizeDownloadUrl(cls.downloadName, sanitizedUrl,
+            sizeof(sanitizedUrl));
+        Com_DPrintf(14, "Server redirected download: %s\n", sanitizedUrl);
         // Retail transport parity: the meter showed the download URL with
         // credentials masked (scheme://*:*authority/path); reproduce that
         // display form so URL-embedded credentials never reach the UI.
@@ -313,7 +384,7 @@ void __cdecl CL_ParseWWWDownload(int localClientNum, msg_t *msg)
             CL_AddReliableCommand(localClientNum, "wwwdl fail");
             DL_CancelDownload();
             cls.wwwDlInProgress = 0;
-            Com_Printf(14, "Failed to initialize download for '%s'\n", cls.downloadName);
+            Com_Printf(14, "Failed to initialize download for '%s'\n", sanitizedUrl);
         }
         if ((cls.downloadFlags & 1) != 0)
         {

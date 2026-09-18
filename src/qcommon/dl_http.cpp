@@ -43,6 +43,35 @@ bool IsSchemeHttp(const char *const scheme, const std::uint32_t length) noexcept
     return EqualsIgnoreCase(scheme, length, "http");
 }
 
+// Value of one hex digit, or -1 when the character is not hexadecimal.
+int DlHexDigitValue(const char value) noexcept
+{
+    if (value >= '0' && value <= '9')
+        return value - '0';
+    if (value >= 'a' && value <= 'f')
+        return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F')
+        return value - 'A' + 10;
+    return -1;
+}
+
+// Decodes one %XX escape at `index` (bounded by `length`); on success
+// writes the raw byte to `outValue` and returns true.
+bool DecodePercentEscape(const char *const source,
+    const std::uint32_t length,
+    const std::uint32_t index,
+    char *const outValue) noexcept
+{
+    if (index + 2 >= length)
+        return false;
+    const int high = DlHexDigitValue(source[index + 1]);
+    const int low = DlHexDigitValue(source[index + 2]);
+    if (high < 0 || low < 0)
+        return false;
+    *outValue = static_cast<char>((high << 4) | low);
+    return true;
+}
+
 // Decodes %XX escapes in place semantics without allocation: reads `source`
 // (length `length`, not necessarily NUL-terminated within `length`) into
 // `out` (capacity `capacity`). Returns false on a truncated/invalid escape
@@ -66,26 +95,12 @@ bool PercentDecode(const char *const source,
             ++index;
             continue;
         }
-        if (index + 2 >= length)
-            return false;
-        const char hexHigh = source[index + 1];
-        const char hexLow = source[index + 2];
-        const auto digit = [](const char value) -> int {
-            if (value >= '0' && value <= '9')
-                return value - '0';
-            if (value >= 'a' && value <= 'f')
-                return value - 'a' + 10;
-            if (value >= 'A' && value <= 'F')
-                return value - 'A' + 10;
-            return -1;
-        };
-        const int high = digit(hexHigh);
-        const int low = digit(hexLow);
-        if (high < 0 || low < 0)
+        char decoded = '\0';
+        if (!DecodePercentEscape(source, length, index, &decoded))
             return false;
         if (written + 1 >= capacity)
             return false;
-        out[written++] = static_cast<char>((high << 4) | low);
+        out[written++] = decoded;
         index += 3;
     }
     out[written] = '\0';
@@ -428,6 +443,42 @@ DlUrlStatus KISAK_CDECL Dl_ParseRedirectUrl(
     return DlUrlStatus::Ok;
 }
 
+// Appends the Authorization header for the URL's HTTP Basic credential
+// pair. Returns InvalidArgument for an over-long pair or an encoding
+// failure, TooLong on an output overflow, Ok on success.
+DlRequestStatus AppendBasicAuthHeader(const DlRedirectUrl &url,
+    char *const buffer,
+    const std::uint32_t capacity,
+    std::uint32_t *const length) noexcept
+{
+    // user:pass, the HTTP Basic credential pair. The combined form is
+    // bounded by the URL field sizes, so a fixed 160-byte scratch can
+    // never overflow.
+    char credentials[160];
+    const std::uint32_t userLength =
+        static_cast<std::uint32_t>(std::strlen(url.user));
+    const std::uint32_t passwordLength =
+        static_cast<std::uint32_t>(std::strlen(url.password));
+    if (userLength + 1 + passwordLength + 1 > sizeof(credentials))
+        return DlRequestStatus::InvalidArgument;
+    std::memcpy(credentials, url.user, userLength);
+    credentials[userLength] = ':';
+    std::memcpy(credentials + userLength + 1, url.password,
+        passwordLength);
+    credentials[userLength + 1 + passwordLength] = '\0';
+
+    char encoded[DlBase64EncodedLength(sizeof(credentials)) + 1];
+    if (!Base64Encode(credentials, userLength + 1 + passwordLength,
+            encoded, sizeof(encoded)))
+        return DlRequestStatus::InvalidArgument;
+    if (!AppendText(buffer, capacity, length, "Authorization: Basic ", 21)
+        || !AppendText(buffer, capacity, length, encoded,
+            static_cast<std::uint32_t>(std::strlen(encoded)))
+        || !AppendCRLF(buffer, capacity, length))
+        return DlRequestStatus::TooLong;
+    return DlRequestStatus::Ok;
+}
+
 DlRequestStatus KISAK_CDECL Dl_FormatGetRequest(
     const DlRedirectUrl &url,
     char *const buffer,
@@ -473,31 +524,10 @@ DlRequestStatus KISAK_CDECL Dl_FormatGetRequest(
 
     if (url.hasBasicAuth)
     {
-        // user:pass, the HTTP Basic credential pair. The combined form is
-        // bounded by the URL field sizes, so a fixed 160-byte scratch can
-        // never overflow.
-        char credentials[160];
-        const std::uint32_t userLength =
-            static_cast<std::uint32_t>(std::strlen(url.user));
-        const std::uint32_t passwordLength =
-            static_cast<std::uint32_t>(std::strlen(url.password));
-        if (userLength + 1 + passwordLength + 1 > sizeof(credentials))
-            return DlRequestStatus::InvalidArgument;
-        std::memcpy(credentials, url.user, userLength);
-        credentials[userLength] = ':';
-        std::memcpy(credentials + userLength + 1, url.password,
-            passwordLength);
-        credentials[userLength + 1 + passwordLength] = '\0';
-
-        char encoded[DlBase64EncodedLength(sizeof(credentials)) + 1];
-        if (!Base64Encode(credentials, userLength + 1 + passwordLength,
-                encoded, sizeof(encoded)))
-            return DlRequestStatus::InvalidArgument;
-        if (!AppendText(buffer, capacity, &length, "Authorization: Basic ", 21)
-            || !AppendText(buffer, capacity, &length, encoded,
-                static_cast<std::uint32_t>(std::strlen(encoded)))
-            || !AppendCRLF(buffer, capacity, &length))
-            return DlRequestStatus::TooLong;
+        const DlRequestStatus authStatus =
+            AppendBasicAuthHeader(url, buffer, capacity, &length);
+        if (authStatus != DlRequestStatus::Ok)
+            return authStatus;
     }
 
     if (!AppendText(buffer, capacity, &length, "Connection: close", 17)
@@ -602,7 +632,11 @@ DlResponseEvent KISAK_CDECL Dl_ParseResponseHead(
                     char value[sizeof(out->location)];
                     if (TrimCopy(colon + 1, valueLength, value, sizeof(value)))
                     {
-                        std::memcpy(out->location, value, sizeof(value));
+                        // Copy only the terminated prefix: TrimCopy
+                        // writes the value and its terminator but leaves
+                        // the staging buffer's tail untouched.
+                        std::memcpy(out->location, value,
+                            std::strlen(value) + 1);
                         out->hasLocation = true;
                     }
                 }

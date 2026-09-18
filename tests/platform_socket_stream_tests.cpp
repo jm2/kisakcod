@@ -37,15 +37,36 @@
 namespace
 {
 const char *checkStage = "startup";
+// A failing check records its stage both for diagnostics and for the
+// process exit code: a broken contract must fail the run, not just print.
+bool checkFailed = false;
 
 bool Check(const bool condition, const char *const stage)
 {
     if (!condition)
     {
         checkStage = stage;
+        checkFailed = true;
         return false;
     }
     return true;
+}
+
+// The raw platform socket handle: on Windows SOCKET is an unsigned
+// UINT_PTR, so signed-comparison validity checks silently never fire.
+// Every raw-handle validity decision in this harness goes through the
+// alias and the explicit invalid constant instead.
+#ifdef _WIN32
+using RawSocket = SOCKET;
+constexpr RawSocket kInvalidRawSocket = INVALID_SOCKET;
+#else
+using RawSocket = int;
+constexpr RawSocket kInvalidRawSocket = -1;
+#endif
+
+constexpr bool RawSocketIsValid(const RawSocket socket) noexcept
+{
+    return socket != kInvalidRawSocket;
 }
 
 // A raw platform listener on the loopback interface. The test controls
@@ -57,7 +78,7 @@ public:
     bool Start()
     {
         listenSocket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (listenSocket < 0)
+        if (!RawSocketIsValid(listenSocket))
             return false;
         sockaddr_in address{};
         address.sin_family = AF_INET;
@@ -79,8 +100,10 @@ public:
     }
 
     // Bounds a raw blocking wait so a pathological stall fails a check
-    // instead of hanging the suite past its CTest timeout.
-    static bool WaitReadable(int socket, int timeoutMilliseconds)
+    // instead of hanging the suite past its CTest timeout. Windows
+    // ignores the first select() argument, so pass 0 there instead of
+    // narrowing the unsigned handle for a value the platform discards.
+    static bool WaitReadable(const RawSocket socket, const int timeoutMilliseconds)
     {
 #ifdef _WIN32
         fd_set readable;
@@ -90,7 +113,7 @@ public:
         waitTimeout.tv_sec = timeoutMilliseconds / 1000;
         waitTimeout.tv_usec
             = (timeoutMilliseconds % 1000) * 1000;
-        return ::select(socket + 1, &readable, nullptr, nullptr,
+        return ::select(0, &readable, nullptr, nullptr,
                    &waitTimeout)
             > 0;
 #else
@@ -109,8 +132,8 @@ public:
     {
         if (!WaitReadable(listenSocket, 5000))
             return false;
-        peerSocket = static_cast<int>(accept(listenSocket, nullptr, nullptr));
-        if (peerSocket < 0)
+        peerSocket = accept(listenSocket, nullptr, nullptr);
+        if (!RawSocketIsValid(peerSocket))
             return false;
         // Accepted sockets do not inherit the timeout options everywhere;
         // bound the raw send/recv waits on the peer as well.
@@ -172,41 +195,36 @@ public:
 
     void ClosePeer()
     {
-        if (peerSocket >= 0)
+        if (RawSocketIsValid(peerSocket))
         {
 #ifdef _WIN32
             closesocket(peerSocket);
 #else
             ::close(peerSocket);
 #endif
-            peerSocket = -1;
+            peerSocket = kInvalidRawSocket;
         }
     }
 
     void Stop()
     {
         ClosePeer();
-        if (listenSocket >= 0)
+        if (RawSocketIsValid(listenSocket))
         {
 #ifdef _WIN32
             closesocket(listenSocket);
 #else
             ::close(listenSocket);
 #endif
-            listenSocket = -1;
+            listenSocket = kInvalidRawSocket;
         }
     }
 
     std::uint16_t Port() const { return port_; }
 
 private:
-#ifdef _WIN32
-    SOCKET listenSocket{INVALID_SOCKET};
-    SOCKET peerSocket{INVALID_SOCKET};
-#else
-    int listenSocket{-1};
-    int peerSocket{-1};
-#endif
+    RawSocket listenSocket{kInvalidRawSocket};
+    RawSocket peerSocket{kInvalidRawSocket};
     std::uint16_t port_{0};
 };
 
@@ -628,6 +646,12 @@ int main()
     StageBlockingConnect();
     StageConnectRefused();
 
+    if (checkFailed)
+    {
+        std::printf("platform_socket_stream: stage '%s' failed\n",
+            checkStage);
+        return 1;
+    }
     std::printf("platform_socket_stream: all stages passed\n");
     return 0;
 }

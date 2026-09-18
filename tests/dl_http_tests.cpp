@@ -16,12 +16,16 @@
 namespace
 {
 const char *checkStage = "startup";
+// A failing check records its stage both for diagnostics and for the
+// process exit code: a broken contract must fail the run, not just print.
+bool checkFailed = false;
 
 bool Check(const bool condition, const char *const stage)
 {
     if (!condition)
     {
         checkStage = stage;
+        checkFailed = true;
         return false;
     }
     return true;
@@ -159,10 +163,16 @@ void StageUrlParseBounds()
         "url-host-too-long");
 
     char longPath[1200];
-    longPath[0] = '\0';
-    for (int index = 0; index < 200; ++index)
-        std::strncat(longPath, "/aaaaaaaaaa", sizeof(longPath)
-            - std::strlen(longPath) - 1);
+    // Bounded fill equivalent to the previous strncat loop: append the
+    // 11-character fragment until one more would not fit, leaving room
+    // for the terminator. sizeof-1 bound keeps the copy explicit.
+    std::uint32_t longPathLength = 0;
+    while (longPathLength + 11 < sizeof(longPath))
+    {
+        std::memcpy(longPath + longPathLength, "/aaaaaaaaaa", 11);
+        longPathLength += 11;
+    }
+    longPath[longPathLength] = '\0';
     char longPathUrl[1600];
     std::snprintf(longPathUrl, sizeof(longPathUrl),
         "http://cdn.example.com%s", longPath);
@@ -194,14 +204,14 @@ void StageRequestFormat()
     Check(Dl_FormatGetRequest(url, request, sizeof(request), &length)
             == DlRequestStatus::Ok,
         "request-simple");
-    static const char *const expectedSimple =
+    static const char expectedSimple[] =
         "GET /maps/mp_ship.map HTTP/1.1\r\n"
         "Host: cdn.example.com\r\n"
         "User-Agent: ID_DOWNLOAD/1.0\r\n"
         "Accept: */*\r\n"
         "Connection: close\r\n"
         "\r\n";
-    Check(length == std::strlen(expectedSimple), "request-simple");
+    Check(length == sizeof(expectedSimple) - 1, "request-simple");
     Check(std::memcmp(request, expectedSimple, length) == 0,
         "request-simple");
 
@@ -211,16 +221,23 @@ void StageRequestFormat()
     Check(Dl_FormatGetRequest(url, request, sizeof(request), &length)
             == DlRequestStatus::Ok,
         "request-port");
-    static const char *const expectedPort =
+    static const char expectedPort[] =
         "GET /f.map HTTP/1.1\r\n"
         "Host: cdn.example.com:8080\r\n"
         "User-Agent: ID_DOWNLOAD/1.0\r\n"
         "Accept: */*\r\n"
         "Connection: close\r\n"
         "\r\n";
-    Check(length == std::strlen(expectedPort), "request-port");
+    Check(length == sizeof(expectedPort) - 1, "request-port");
     Check(std::memcmp(request, expectedPort, length) == 0, "request-port");
+}
 
+void StageRequestAuthFormat()
+{
+    char request[2048];
+    std::uint32_t length = 0;
+
+    DlRedirectUrl url{};
     Check(Dl_ParseRedirectUrl("http://user:pass@cdn.example.com/f.map",
               &url)
             == DlUrlStatus::Ok,
@@ -228,7 +245,7 @@ void StageRequestFormat()
     Check(Dl_FormatGetRequest(url, request, sizeof(request), &length)
             == DlRequestStatus::Ok,
         "request-auth");
-    static const char *const expectedAuth =
+    static const char expectedAuth[] =
         "GET /f.map HTTP/1.1\r\n"
         "Host: cdn.example.com\r\n"
         "User-Agent: ID_DOWNLOAD/1.0\r\n"
@@ -236,7 +253,7 @@ void StageRequestFormat()
         "Authorization: Basic dXNlcjpwYXNz\r\n"
         "Connection: close\r\n"
         "\r\n";
-    Check(length == std::strlen(expectedAuth), "request-auth");
+    Check(length == sizeof(expectedAuth) - 1, "request-auth");
     Check(std::memcmp(request, expectedAuth, length) == 0, "request-auth");
 
     // Contract rejections.
@@ -257,7 +274,7 @@ void StageRequestFormat()
 
 void StageHeadParseComplete()
 {
-    static const char *const response =
+    static const char response[] =
         "HTTP/1.1 200 OK\r\n"
         "Server: redirector\r\n"
         "Content-Length: 11\r\n"
@@ -267,7 +284,7 @@ void StageHeadParseComplete()
 
     char buffer[512];
     std::uint32_t length =
-        static_cast<std::uint32_t>(std::strlen(response));
+        static_cast<std::uint32_t>(sizeof(response) - 1);
     std::memcpy(buffer, response, length);
 
     DlResponseHead head{};
@@ -292,10 +309,10 @@ void StageHeadParseIncremental()
 
     // Feed the head in fragments; every incomplete prefix is NeedMoreData
     // and preserves the accumulated bytes.
-    static const char *const response =
+    static const char response[] =
         "HTTP/1.0 301 Moved\r\nLocation: http://origin/f.map\r\n\r\nBODY";
     const std::uint32_t total =
-        static_cast<std::uint32_t>(std::strlen(response));
+        static_cast<std::uint32_t>(sizeof(response) - 1);
     for (std::uint32_t feed = 1; feed < total; feed += 7)
     {
         length = feed;
@@ -323,7 +340,7 @@ void StageHeadParseHeaders()
 {
     // Case-insensitive names, first occurrence wins, continuation lines
     // skipped, lenient LF LF terminator accepted.
-    static const char *const response =
+    static const char response[] =
         "HTTP/1.1 404 Not Found\r\n"
         "content-length: 5\r\n"
         "CONTENT-LENGTH: 999\r\n"
@@ -333,7 +350,8 @@ void StageHeadParseHeaders()
         "\n\r\nrest";
 
     char buffer[512];
-    std::uint32_t length = static_cast<std::uint32_t>(std::strlen(response));
+    std::uint32_t length =
+        static_cast<std::uint32_t>(sizeof(response) - 1);
     std::memcpy(buffer, response, length);
 
     DlResponseHead head{};
@@ -357,8 +375,9 @@ void StageHeadParseFailures()
     char buffer[256];
 
     // Not HTTP at all.
-    static const char *const garbage = "NOT HTTP\r\n\r\nbody";
-    std::uint32_t length = static_cast<std::uint32_t>(std::strlen(garbage));
+    static const char garbage[] = "NOT HTTP\r\n\r\nbody";
+    std::uint32_t length =
+        static_cast<std::uint32_t>(sizeof(garbage) - 1);
     std::memcpy(buffer, garbage, length);
     Check(Dl_ParseResponseHead(buffer, &length, &head)
             == DlResponseEvent::StatusError,
@@ -366,16 +385,16 @@ void StageHeadParseFailures()
     Check(head.statusCode == 0, "head-garbage");
 
     // Non-decimal status.
-    static const char *const badStatus = "HTTP/1.1 abc x\r\n\r\n";
-    length = static_cast<std::uint32_t>(std::strlen(badStatus));
+    static const char badStatus[] = "HTTP/1.1 abc x\r\n\r\n";
+    length = static_cast<std::uint32_t>(sizeof(badStatus) - 1);
     std::memcpy(buffer, badStatus, length);
     Check(Dl_ParseResponseHead(buffer, &length, &head)
             == DlResponseEvent::StatusError,
         "head-bad-status");
 
     // Empty head (immediate terminator).
-    static const char *const empty = "\n\n";
-    length = static_cast<std::uint32_t>(std::strlen(empty));
+    static const char empty[] = "\n\n";
+    length = static_cast<std::uint32_t>(sizeof(empty) - 1);
     std::memcpy(buffer, empty, length);
     Check(Dl_ParseResponseHead(buffer, &length, &head)
             == DlResponseEvent::StatusError,
@@ -383,8 +402,8 @@ void StageHeadParseFailures()
 
     // Truncated escape of a status line is still a parse failure, never a
     // hang; and an unterminated head under the bound is NeedMoreData.
-    static const char *const partial = "HTTP/1.1 200 OK\r\nContent-Len";
-    length = static_cast<std::uint32_t>(std::strlen(partial));
+    static const char partial[] = "HTTP/1.1 200 OK\r\nContent-Len";
+    length = static_cast<std::uint32_t>(sizeof(partial) - 1);
     std::memcpy(buffer, partial, length);
     Check(Dl_ParseResponseHead(buffer, &length, &head)
             == DlResponseEvent::NeedMoreData,
@@ -394,7 +413,7 @@ void StageHeadParseFailures()
     char oversized[DlResponseHeadMaxLength + 64];
     std::memset(oversized, 'x', sizeof(oversized));
     oversized[0] = '\n';
-    length = sizeof(oversized);
+    length = static_cast<std::uint32_t>(sizeof(oversized));
     Check(Dl_ParseResponseHead(oversized, &length, &head)
             == DlResponseEvent::StatusError,
         "head-overflow");
@@ -409,11 +428,17 @@ int main()
     StageUrlParseFailures();
     StageUrlParseBounds();
     StageRequestFormat();
+    StageRequestAuthFormat();
     StageHeadParseComplete();
     StageHeadParseIncremental();
     StageHeadParseHeaders();
     StageHeadParseFailures();
 
+    if (checkFailed)
+    {
+        std::printf("dl_http: stage '%s' failed\n", checkStage);
+        return 1;
+    }
     std::printf("dl_http: all stages passed\n");
     return 0;
 }

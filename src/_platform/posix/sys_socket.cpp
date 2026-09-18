@@ -150,15 +150,37 @@ int OpenCloexecUdpDescriptor() noexcept
     return plain;
 }
 
+// Best-effort SIGPIPE suppression at the socket level: on platforms that
+// provide SO_NOSIGPIPE (macOS/BSD, which lack MSG_NOSIGNAL), a send to a
+// reset peer reports EPIPE instead of raising a process-fatal SIGPIPE.
+// Failure to set it leaves the socket usable; the per-call MSG_NOSIGNAL
+// on platforms that define it is the primary guard.
+void ApplyNoSigpipe(const int descriptor) noexcept
+{
+#if defined(SO_NOSIGPIPE)
+    const int disableSigpipe = 1;
+    setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &disableSigpipe,
+        sizeof(disableSigpipe));
+#else
+    (void)descriptor;
+#endif
+}
+
 // Stream (TCP) counterpart of OpenCloexecUdpDescriptor: one unbound,
 // unconnected IPv4 TCP socket marked close-on-exec before it can be
-// observed by another part of the process. Returns -1 on any failure.
+// observed by another part of the process. SO_NOSIGPIPE is applied where
+// the platform provides it so download sends against a resetting peer
+// fail the transfer instead of killing the process. Returns -1 on any
+// failure.
 int OpenCloexecStreamDescriptor() noexcept
 {
 #if defined(SOCK_CLOEXEC)
     const int raw = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
     if (raw >= 0)
+    {
+        ApplyNoSigpipe(raw);
         return raw;
+    }
 #endif
     const int plain = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (plain < 0)
@@ -168,6 +190,7 @@ int OpenCloexecStreamDescriptor() noexcept
         close(plain);
         return -1;
     }
+    ApplyNoSigpipe(plain);
     return plain;
 }
 
@@ -176,6 +199,44 @@ bool StreamArgumentsValid(SysSocketHandle const handle,
     const std::uint32_t byteCount) noexcept
 {
     return handle && handle->handle >= 0 && buffer && byteCount != 0;
+}
+
+// One EINTR-retried stream send; split out so the status-mapping contract
+// stays at the same complexity as the receive path. MSG_NOSIGNAL keeps a
+// peer reset during a send from killing the process via SIGPIPE (POSIX);
+// platforms without it are covered by the socket-level SO_NOSIGPIPE
+// applied at creation.
+ssize_t StreamSend(const int descriptor,
+    const void *const data,
+    const std::uint32_t byteCount) noexcept
+{
+#if defined(MSG_NOSIGNAL)
+    constexpr int sendFlags = MSG_NOSIGNAL;
+#else
+    constexpr int sendFlags = 0;
+#endif
+    ssize_t sent = 0;
+    do
+    {
+        sent = send(descriptor, data, static_cast<size_t>(byteCount),
+            sendFlags);
+    } while (sent < 0 && errno == EINTR);
+    return sent;
+}
+
+// One EINTR-retried stream receive.
+ssize_t StreamRecv(const int descriptor,
+    void *const buffer,
+    const std::uint32_t bufferCapacity) noexcept
+{
+    ssize_t received = 0;
+    do
+    {
+        received = recv(descriptor, buffer,
+            static_cast<size_t>(bufferCapacity),
+            0);
+    } while (received < 0 && errno == EINTR);
+    return received;
 }
 } // namespace
 
@@ -614,11 +675,7 @@ SysSocketStreamSendStatus KISAK_CDECL Sys_SocketSendStream(
     if (!StreamArgumentsValid(handle, data, byteCount) || !outSentBytes)
         return SysSocketStreamSendStatus::InvalidArgument;
 
-    ssize_t sent = 0;
-    do
-    {
-        sent = send(handle->handle, data, static_cast<size_t>(byteCount), 0);
-    } while (sent < 0 && errno == EINTR);
+    const ssize_t sent = StreamSend(handle->handle, data, byteCount);
     if (sent < 0)
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -646,14 +703,8 @@ SysSocketStreamRecvStatus KISAK_CDECL Sys_SocketRecvStream(
     if (!StreamArgumentsValid(handle, buffer, bufferCapacity) || !outByteCount)
         return SysSocketStreamRecvStatus::InvalidArgument;
 
-    ssize_t received = 0;
-    do
-    {
-        received = recv(handle->handle,
-            buffer,
-            static_cast<size_t>(bufferCapacity),
-            0);
-    } while (received < 0 && errno == EINTR);
+    const ssize_t received = StreamRecv(handle->handle, buffer,
+        bufferCapacity);
     if (received < 0)
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK)

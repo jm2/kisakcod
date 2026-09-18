@@ -509,6 +509,41 @@ bool StreamArgumentsValid(SysSocketHandle const handle,
     return handle && handle->handle != INVALID_SOCKET && buffer
         && byteCount != 0;
 }
+
+// One nonblocking stream send; split out so the status-mapping contract
+// stays at the same complexity as the receive path. The public length is
+// the caller's uint32 request, but Winsock's send takes a signed int
+// length: clamp to the fixed socket bound BEFORE the signed conversion
+// so a length of 2^31 or more cannot wrap negative; a stream send simply
+// continues from the reported partial progress when the request was
+// clamped.
+int StreamSend(SOCKET const descriptor,
+    const void *const data,
+    const std::uint32_t byteCount) noexcept
+{
+    std::uint32_t sendLength = byteCount;
+    if (sendLength > SysSocketMaxDatagramBytes)
+        sendLength = SysSocketMaxDatagramBytes;
+    return send(descriptor,
+        static_cast<const char *>(data),
+        static_cast<int>(sendLength),
+        0);
+}
+
+// One nonblocking stream receive with the same clamp-before-convert
+// discipline for the caller's uint32 receive window.
+int StreamRecv(SOCKET const descriptor,
+    void *const buffer,
+    const std::uint32_t bufferCapacity) noexcept
+{
+    std::uint32_t recvLength = bufferCapacity;
+    if (recvLength > SysSocketMaxDatagramBytes)
+        recvLength = SysSocketMaxDatagramBytes;
+    return recv(descriptor,
+        static_cast<char *>(buffer),
+        static_cast<int>(recvLength),
+        0);
+}
 } // namespace
 
 SysSocketStreamOpenStatus KISAK_CDECL Sys_SocketOpenStream(
@@ -620,18 +655,7 @@ SysSocketStreamSendStatus KISAK_CDECL Sys_SocketSendStream(
     if (!StreamArgumentsValid(handle, data, byteCount) || !outSentBytes)
         return SysSocketStreamSendStatus::InvalidArgument;
 
-    // The public length is the caller's uint32 request, but Winsock's
-    // send takes a signed int length. Clamp to the fixed socket bound
-    // BEFORE the signed conversion so a length of 2^31 or more cannot
-    // wrap negative; a stream send simply continues from the reported
-    // partial progress when the request was clamped.
-    std::uint32_t sendLength = byteCount;
-    if (sendLength > SysSocketMaxDatagramBytes)
-        sendLength = SysSocketMaxDatagramBytes;
-    const int sent = send(handle->handle,
-        static_cast<const char *>(data),
-        static_cast<int>(sendLength),
-        0);
+    const int sent = StreamSend(handle->handle, data, byteCount);
     if (sent == SOCKET_ERROR)
     {
         const int error = WSAGetLastError();
@@ -661,18 +685,7 @@ SysSocketStreamRecvStatus KISAK_CDECL Sys_SocketRecvStream(
     if (!StreamArgumentsValid(handle, buffer, bufferCapacity) || !outByteCount)
         return SysSocketStreamRecvStatus::InvalidArgument;
 
-    // The public capacity is the caller's uint32 receive window, but
-    // Winsock's recv takes a signed int length. Clamp to the fixed
-    // socket bound BEFORE the signed conversion so a capacity of 2^31
-    // or more cannot wrap negative; a stream read simply continues in
-    // another chunk when the window was clamped.
-    std::uint32_t recvLength = bufferCapacity;
-    if (recvLength > SysSocketMaxDatagramBytes)
-        recvLength = SysSocketMaxDatagramBytes;
-    const int received = recv(handle->handle,
-        static_cast<char *>(buffer),
-        static_cast<int>(recvLength),
-        0);
+    const int received = StreamRecv(handle->handle, buffer, bufferCapacity);
     if (received == SOCKET_ERROR)
     {
         const int error = WSAGetLastError();

@@ -459,6 +459,15 @@ masked out of the display name (`cl_parse_mp.cpp`). Pinned by
 `tests/dl_http_tests.cpp`, `tests/platform_socket_stream_tests.cpp`, and
 `tests/dl_download_source_test.cmake`.
 
+Review rework hardening: credentials are masked in every surfaced URL form — the meter
+composition (retail `http://*:*authority/path` scheme) and the dev/failure log lines,
+through one bounded sanitizer — and the display path never parses unbounded user input
+into fixed buffers. `SIGPIPE` is suppressed at stream-socket creation (`SO_NOSIGPIPE`
+where defined) and per-send (`MSG_NOSIGNAL` where defined), so a mid-download peer reset
+surfaces as a `Disconnected` status instead of process death. Response-head bytes
+pipelined with the body are drained into the file before the body loop, so no early
+payload bytes are dropped on fast servers.
+
 ### H5. `set(WIN32 …)` clobbers CMake's built-in `WIN32`, defeating every `if(WIN32)` guard
 `scripts/common_files.cmake:558`
 
