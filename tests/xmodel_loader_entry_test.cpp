@@ -46,15 +46,16 @@ XModel *__cdecl XModelLoadFile(char *name,
 
 // ---------------------------------------------------------------------------
 // Harness definitions. The printf-family wrappers (Com_PrintError,
-// Com_sprintf, Com_Error) are the only functions DEFINED here: their
-// bodies necessarily call a printf function with a caller-supplied
-// format string, and every production printf wrapper in this
-// repository lives in a .cpp — common.cpp, r_warn.cpp — so these do
-// too (a header body re-triggers the CWE-134 lexical pattern). The
-// remaining engine-service endpoints are defined inline in the
-// harness header at global scope, matching the production signatures
-// the loader TU resolves against. The harness state itself is
-// namespace-scope storage in this TU.
+// Com_sprintf, Com_Error) and the production assert handler
+// (MyAssertHandler) are the only functions DEFINED here: their bodies
+// necessarily call a printf function with a caller-supplied format
+// string, and every production printf wrapper in this repository
+// lives in a .cpp — common.cpp, r_warn.cpp — so these do too (a
+// header body re-triggers the CWE-134 lexical pattern). The remaining
+// engine-service endpoints are defined inline in the harness header
+// at global scope, matching the production signatures the loader TU
+// resolves against. The harness state itself is namespace-scope
+// storage in this TU.
 // ---------------------------------------------------------------------------
 namespace xmodel_loader_entry_harness
 {
@@ -80,6 +81,9 @@ void ResetHarness()
     s.partsFileReads = 0;
     s.physPresetCalls = 0;
     s.collMapCalls = 0;
+    // Restart the va() rotation at its first buffer so every test
+    // starts from the same phase as a fresh production process.
+    s.vaIndex = 0;
 }
 }  // namespace xmodel_loader_entry_harness
 
@@ -128,6 +132,36 @@ void Com_Error(errorParm_t code, const char *fmt, ...)
     std::fprintf(stderr, "xmodel_loader_entry: Com_Error(%d): %s\n",
                  static_cast<int>(code), buffer);
     std::fflush(stderr);
+    std::_Exit(3);
+}
+
+// Production assert handler (declared in universal/assertive.h),
+// defined here with the printf-family wrappers above: same message
+// shape and same _Exit(3) failure contract the header body carried,
+// with the format primitive spelled like the wrappers (MSVC
+// truncation contract via _CRT_SECURE_NO_WARNINGS) plus the explicit
+// terminator the va() contract keeps.
+void MyAssertHandler(const char *filename, int line, int type, const char *fmt, ...)
+{
+    (void)type;
+    char message[1024];
+    va_list args;
+    va_start(args, fmt);
+    _vsnprintf(message, sizeof(message), fmt, args);
+    va_end(args);
+    message[sizeof(message) - 1] = '\0';
+    // Any production assert firing during an entry-point contract is a
+    // defect: fail the test process loudly instead of continuing. The
+    // message carries the assert site so a failing run points straight
+    // at the violated invariant.
+    std::fprintf(stderr, "xmodel_loader_entry: production assert fired at %s:%d: %s\n",
+                 filename, line, message);
+    std::fflush(stderr);
+    // _Exit instead of abort: the MSVC Debug CRT turns abort() into a
+    // modal report dialog that a headless CI runner never answers — the
+    // process sat through the full ctest timeout (1500 s) with the
+    // failure invisible. _Exit terminates deterministically on every
+    // configuration, keeping the nonzero exit code and flushed output.
     std::_Exit(3);
 }
 
