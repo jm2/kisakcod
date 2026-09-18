@@ -6,11 +6,13 @@
 // walk the buf_cursor entry points in the loaders' exact call sequence,
 // this binary links and executes the REAL production loader entry
 // point — XModelLoadFile from src/xanim/xmodel_load_obj.cpp, with its
-// real config/collision/LOD parsing, real nested parts/surfs cursor
+// real config/collision/LOD parsing, the real production
+// XModelPartsLoadFile nested parts parse (xanim_load_obj.cpp is
+// enrolled for its real ConsumeQuatNoSwap), real nested surfs cursor
 // windows, and its real checked material second pass (SeekTo against a
 // cursor-owned Checkpoint). Controlled fixtures are served through the
 // harness file system; see xmodel_loader_entry_harness.hpp for the
-// service stubs and the XModelPartsLoadFile contract note.
+// service stubs.
 //
 // Win32-x86 only: the loader TU's DirectX/Miles/ODE header web and
 // MSVC decompiled dialect do not compile on the portable 64-bit legs;
@@ -61,7 +63,7 @@ void ResetHarness()
     s.materialRegistrations.clear();
     s.fsReads = 0;
     s.fsFrees = 0;
-    s.nestedPartsActivations = 0;
+    s.partsFileReads = 0;
     s.physPresetCalls = 0;
     s.collMapCalls = 0;
 }
@@ -172,7 +174,9 @@ bool TestValidColdLoad()
     CHECK(model->collLod == 0);
     CHECK(State().physPresetCalls == 1);
     CHECK(State().collMapCalls == 1);
-    CHECK(State().nestedPartsActivations == 1);
+    // The real XModelPartsLoadFile ran exactly once, observed at the
+    // file-system boundary (one xmodelparts read).
+    CHECK(State().partsFileReads == 1);
 
     // The material second pass re-read all three surface names at the
     // rewound LOD-table position, in first-pass order.
@@ -200,12 +204,12 @@ bool TestValidWarmReload()
     CHECK(first != nullptr);
     const int coldReads = State().fsReads;
     CHECK(coldReads == 4);
-    CHECK(State().nestedPartsActivations == 1);
+    CHECK(State().partsFileReads == 1);
 
     XModel *second = XModelLoadFile(const_cast<char *>("warmmodel"), HarnessAlloc, HarnessAllocColl);
     CHECK(second != nullptr);
     CHECK(State().fsReads == coldReads + 1);
-    CHECK(State().nestedPartsActivations == 1);  // warm cache: no nested load
+    CHECK(State().partsFileReads == 1);  // warm hunk cache: no second parts read
     CHECK(State().materialRegistrations.size() == 6);
     CHECK(State().materialRegistrations[3] == "mc/mat_first_a");
     CHECK(State().materialRegistrations[4] == "mc/mat_first_b");
@@ -221,8 +225,8 @@ bool TestEarlyRejections()
     ResetHarness();
     XModel *missing = XModelLoadFile(const_cast<char *>("nosuchmodel"), HarnessAlloc, HarnessAllocColl);
     CHECK(missing == nullptr);
-    CHECK(State().errors.size() == 1);
-    CHECK(State().errors[0].text.find("not found") != std::string::npos);
+    CHECK(ErrorCount() == 1);
+    CHECK(ErrorsContain(19, "not found"));
     return ExpectCleanTeardown(0);
 }
 
@@ -232,15 +236,15 @@ bool TestEmptyAndLegacyNameRejections()
     State().files["xmodel/emptyparts"] = std::vector<unsigned char>();
     XModel *empty = XModelLoadFile(const_cast<char *>("emptyparts"), HarnessAlloc, HarnessAllocColl);
     CHECK(empty == nullptr);
-    CHECK(State().errors.size() == 1);
-    CHECK(State().errors[0].text.find("0 length") != std::string::npos);
+    CHECK(ErrorCount() == 1);
+    CHECK(ErrorsContain(19, "0 length"));
     CHECK(ExpectCleanTeardown(1));
 
     ResetHarness();
     XModel *legacy = XModelLoadFile(const_cast<char *>("xmodel/legacy"), HarnessAlloc, HarnessAllocColl);
     CHECK(legacy == nullptr);
-    CHECK(State().errors.size() == 1);
-    CHECK(State().errors[0].text.find("Remove xmodel prefix") != std::string::npos);
+    CHECK(ErrorCount() == 1);
+    CHECK(ErrorsContain(19, "Remove xmodel prefix"));
     return ExpectCleanTeardown(0);
 }
 
@@ -256,16 +260,17 @@ bool TestTruncatedModelFile()
 
     XModel *model = XModelLoadFile(const_cast<char *>("cutmodel"), HarnessAlloc, HarnessAllocColl);
     CHECK(model == nullptr);
-    CHECK(State().errors.size() == 1);
-    CHECK(State().errors[0].text.find("malformed surface name") != std::string::npos);
+    CHECK(ErrorCount() == 1);
+    CHECK(ErrorsContain(19, "malformed surface name"));
     return ExpectCleanTeardown(1);
 }
 
 // Truncating AFTER the first pass but before the bone infos exercises
-// the checked second pass against a latched cursor: the bone-info reads
-// overrun, Failed() latches, and SeekTo(v36) must fail closed so the
-// loader rejects through the ordinary cleanup instead of re-parsing at
-// the wrong position.
+// the checked second pass against a latched cursor: the parts parse
+// succeeds (one xmodelparts read), the bone-info reads overrun, Failed()
+// latches, and SeekTo(v36) must fail closed so the loader rejects
+// through the ordinary cleanup instead of re-parsing at the wrong
+// position.
 bool TestSecondPassFailsClosedWhenLatched()
 {
     ResetHarness();
@@ -276,45 +281,65 @@ bool TestSecondPassFailsClosedWhenLatched()
 
     XModel *model = XModelLoadFile(const_cast<char *>("latchmodel"), HarnessAlloc, HarnessAllocColl);
     CHECK(model == nullptr);
+    CHECK(State().partsFileReads == 1);
     // The latched second pass rejects silently through the ordinary
     // cleanup path — no error print is issued on it.
     CHECK(State().errors.empty());
-    return ExpectCleanTeardown(1);
+    return ExpectCleanTeardown(2);
 }
 
 // A malformed nested parts file must fail closed inside its own window
 // and reject the model, with the parent cursor restored and the whole
-// scope tree deactivated afterwards.
+// scope tree deactivated afterwards. The truncated parts file is
+// served at "xmodelparts/lod_a" — the name the production loader
+// resolves through config.entries[0].filename. The 6-byte cut keeps
+// exactly the version/counts block, so the production parser runs its
+// child-bone walk against an exhausted cursor: the parent weight
+// degrades to 0 (which passes the index < i assert), the name read
+// fails, and the real loader prints "malformed bone name" followed by
+// the precache's "Cannot find xmodelparts 'lod_a'" — two recorded
+// errors total.
 bool TestTruncatedNestedParts()
 {
     ResetHarness();
     RegisterValidModel("badparts");
-    std::vector<unsigned char> truncated(BuildEntryPartsFile().bytes.begin(),
-                                         BuildEntryPartsFile().bytes.begin() + 8);
-    State().files["xmodelparts/badparts"] = truncated;
+    ByteWriterFixture full = BuildEntryPartsFile();
+    std::vector<unsigned char> truncated(full.bytes.begin(),
+                                         full.bytes.begin() + 6);
+    State().files["xmodelparts/lod_a"] = truncated;
 
     XModel *model = XModelLoadFile(const_cast<char *>("badparts"), HarnessAlloc, HarnessAllocColl);
     CHECK(model == nullptr);
-    CHECK(State().nestedPartsActivations == 1);
-    CHECK(State().errors.size() == 1);
-    CHECK(State().errors[0].text.find("Cannot find xmodelparts") != std::string::npos);
+    CHECK(State().partsFileReads == 1);
+    CHECK(ErrorCount() == 2);
+    CHECK(ErrorsContain(19, "malformed bone name"));
+    CHECK(ErrorsContain(19, "Cannot find xmodelparts"));
     return ExpectCleanTeardown(2);
 }
 
 // A truncated nested surfs file is rejected by the production
 // R_XModelSurfsLoadFile fail-closed path and rejects the whole model.
+// The 11-byte cut keeps the version/count header and the first
+// surface's vertCount/triCount with real nonzero values — every _DEBUG
+// assert on the parse path sees a consistent shape (triCount > 0, the
+// deformed == (vertListCount == 0) invariant) — and starves the rigid
+// vert list walk, so the cursor latches and the surface file is
+// rejected as malformed data.
 bool TestTruncatedNestedSurfs()
 {
     ResetHarness();
     RegisterValidModel("badsurfs");
-    std::vector<unsigned char> truncated(BuildEntrySurfsFile(2).bytes.begin(),
-                                         BuildEntrySurfsFile(2).bytes.begin() + 12);
+    ByteWriterFixture full = BuildEntrySurfsFile(2);
+    std::vector<unsigned char> truncated(full.bytes.begin(),
+                                         full.bytes.begin() + 11);
     State().files["xmodelsurfs/lod_a"] = truncated;
 
     XModel *model = XModelLoadFile(const_cast<char *>("badsurfs"), HarnessAlloc, HarnessAllocColl);
     CHECK(model == nullptr);
-    CHECK(State().nestedPartsActivations == 1);
-    CHECK(!State().errors.empty());
+    CHECK(State().partsFileReads == 1);
+    CHECK(ErrorCount() == 2);
+    CHECK(ErrorsContain(19, "has malformed surface data"));
+    CHECK(ErrorsContain(19, "Cannot find 'xmodelsurfs"));
     return ExpectCleanTeardown(3);
 }
 
@@ -330,8 +355,8 @@ bool TestBadConfigVersion()
 
     XModel *model = XModelLoadFile(const_cast<char *>("oldmodel"), HarnessAlloc, HarnessAllocColl);
     CHECK(model == nullptr);
-    CHECK(State().errors.size() == 1);
-    CHECK(State().errors[0].text.find("out of date") != std::string::npos);
+    CHECK(ErrorCount() == 1);
+    CHECK(ErrorsContain(19, "out of date"));
     return ExpectCleanTeardown(1);
 }
 

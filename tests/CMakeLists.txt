@@ -3382,32 +3382,60 @@ add_test(
 # xmodel_loader_entry_test: production-loader entry-point contracts
 # (ki-okmr / #124). Links and executes the REAL XModelLoadFile
 # (src/xanim/xmodel_load_obj.cpp) — its config/collision/LOD parsing,
-# its nested parts/surfs cursor windows and its checked material
-# second pass — over controlled fixtures served by the harness file
-# system (xmodel_loader_entry_harness.hpp: in-memory FS and hunk cache,
-# the two renderer dvars, capture stubs, and the nested
-# XModelPartsLoadFile contract whose production TU has not been
-# migrated yet; R_XModelSurfsLoadFile needs no stand-in). The loader
-# TU's DirectX/Miles/ODE header web and MSVC decompiled dialect
-# (raw __declspec(align(16)), `const struct` definitions) compile only
-# under the win32-x86 platform, so this target is gated to the Windows
-# x86 CI leg and never configured on the portable 64-bit legs; the
-# portable suites above plus xmodel_cursor_source_invariants cover the
-# cursor contracts everywhere else.
+# its real nested parts parse (xanim_load_obj.cpp is enrolled for its
+# ConsumeQuatNoSwap), its real nested surfs windows and its checked
+# material second pass — over controlled fixtures served by the
+# harness file system (xmodel_loader_entry_harness.hpp: in-memory FS
+# and hunk cache, capture stubs; neither nested loader needs a
+# stand-in). The loader TUs' DirectX/Miles/ODE header web and MSVC
+# decompiled dialect (raw __declspec(align(16)), `const struct`
+# definitions) compile only under the win32-x86 platform, so this
+# target is gated to the Windows x86 CI leg and never configured on
+# the portable 64-bit legs; the portable suites above plus
+# xmodel_cursor_source_invariants cover the cursor contracts
+# everywhere else.
 if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     add_executable(kisakcod-xmodel-loader-entry-tests
         xmodel_loader_entry_test.cpp
         xmodel_loader_entry_harness.hpp
         xmodel_cursor_test_support.hpp
         ${SRC_DIR}/xanim/xmodel_load_obj.cpp
+        ${SRC_DIR}/xanim/xanim_load_obj.cpp
         ${SRC_DIR}/xanim/buf_cursor.cpp
         ${SRC_DIR}/universal/com_math.cpp
         ${SRC_DIR}/qcommon/com_pack.cpp)
+    # The vendored SDK include root: the loader TU's transitive header
+    # web pulls in <ode/ode.h> (via dobj.h) and <msslib/mss.h> (via
+    # snd_public.h), exactly as the game target's DEPS_DIR include does.
     target_include_directories(
-        kisakcod-xmodel-loader-entry-tests PRIVATE ${SRC_DIR})
+        kisakcod-xmodel-loader-entry-tests PRIVATE
+            ${SRC_DIR}
+            ${CMAKE_SOURCE_DIR}/deps)
     target_compile_features(
         kisakcod-xmodel-loader-entry-tests PRIVATE cxx_std_20)
-    kisakcod_test_warnings(kisakcod-xmodel-loader-entry-tests)
+    # The SP flavor: XModelAllowLoadMesh()'s body is #elif KISAK_SP (an
+    # unconditional true) and both branches compile out without a KISAK_*
+    # define, leaving the function without a return (C4716). KISAK_SP is
+    # the SP game target's own definition for these TUs (scripts/sp), and
+    # it keeps KISAK_DEDI_HEADLESS undefined so XModelLoadFile runs its
+    # real parse instead of the headless abort.
+    target_compile_definitions(
+        kisakcod-xmodel-loader-entry-tests PRIVATE KISAK_SP)
+    # Strict warnings apply to the test TU only (the harness header
+    # rides on its inclusion): the production loader TUs compile at the
+    # game target's warning level (/W3 /permissive-, platform.cmake).
+    # The decompiled dialect is not W4-clean — com_math.h's nameless
+    # float4x4/mat4x4 unions trip C4201, and that header reaches the
+    # TEST TU too through xmodel.h — so the test TU suppresses exactly
+    # that production-header diagnostic (same pattern as the /wd4324
+    # script-layout targets) while keeping /W4 /WX on everything else.
+    if (MSVC)
+        set_source_files_properties(xmodel_loader_entry_test.cpp PROPERTIES
+            COMPILE_OPTIONS "/W4;/WX;/wd4201")
+    else()
+        set_source_files_properties(xmodel_loader_entry_test.cpp PROPERTIES
+            COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+    endif()
     set_target_properties(
         kisakcod-xmodel-loader-entry-tests PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

@@ -19,14 +19,10 @@
 // with its production signature: the loader TU's unqualified
 // references resolve against the production header declarations, so a
 // namespaced definition would mangle differently and strand the
-// win32-x86 link. XModelPartsLoadFile is declared by the
-// loader TU but its implementation TU has not been migrated into this
-// checkout yet, so the harness implements its documented contract —
-// a nested buf_cursor activation over the xmodelparts file with
-// Deactivate on every exit, fail-closed on malformed input — which is
-// the nested-cursor production shape the loader's parent restoration
-// is exercised against. R_XModelSurfsLoadFile needs no stand-in: its
-// production implementation lives in the loader TU itself.
+// win32-x86 link. XModelPartsLoadFile and R_XModelSurfsLoadFile need
+// no stand-in: their production implementations live in the loader TU
+// itself, which drives the REAL nested parts parse (xanim_load_obj.cpp
+// is enrolled in the target for its real ConsumeQuatNoSwap).
 
 #ifndef XMODEL_LOADER_ENTRY_HARNESS_HPP
 #define XMODEL_LOADER_ENTRY_HARNESS_HPP
@@ -82,6 +78,7 @@ using ByteWriterFixture = xmodel_cursor_test_support::ByteWriter;
 typedef void *HarnessHunkPtr;
 typedef std::map<std::string, HarnessHunkPtr> HarnessHunkMap;
 typedef std::map<std::string, std::vector<unsigned char> > HarnessFileMap;
+typedef std::vector<RecordedError> RecordedErrorList;
 
 struct RecordedError
 {
@@ -93,17 +90,18 @@ struct HarnessState
 {
     HarnessFileMap files;
     HarnessHunkMap hunkData;
-    std::vector<RecordedError> errors;
+    RecordedErrorList errors;
     std::vector<std::string> materialRegistrations;
-    // Opaque engine records: no complete Material/PhysPreset type is
-    // reachable from the harness include closure, so the stubs hand
-    // out stable pointers into zero-initialized aligned storage on
-    // this singleton instead of default-constructing engine types.
+    // Opaque engine records: no complete Material/PhysPreset/XModel
+    // type is reachable from the harness include closure, so the stubs
+    // hand out stable pointers into zero-initialized aligned storage
+    // on this singleton instead of default-constructing engine types.
     alignas(16) unsigned char materialStorage[128] = {};
     alignas(16) unsigned char physPresetStorage[128] = {};
+    alignas(16) unsigned char modelStorage[128] = {};
     int fsReads = 0;
     int fsFrees = 0;
-    int nestedPartsActivations = 0;
+    int partsFileReads = 0;
     int physPresetCalls = 0;
     int collMapCalls = 0;
 };
@@ -114,6 +112,30 @@ struct HarnessState
 // static.
 HarnessState &State();
 void ResetHarness();
+
+// In-header readers over the recorded errors: the tests assert through
+// these, so the RecordedError fields and the errors list are exercised
+// by the harness itself rather than only by the including test TU.
+inline int ErrorCount()
+{
+    return static_cast<int>(State().errors.size());
+}
+
+// True when some recorded error was printed on `channel` and carries
+// `substring` in its formatted text.
+inline bool ErrorsContain(int channel, const char *substring)
+{
+    const RecordedErrorList &errors = State().errors;
+    for (size_t i = 0; i < errors.size(); ++i)
+    {
+        if (errors[i].channel == channel
+            && errors[i].text.find(substring) != std::string::npos)
+        {
+            return true;
+        }
+    }
+    return false;
+}
 
 inline int I_strnicmpHarness(const char *s0, const char *s1, int n)
 {
@@ -153,160 +175,6 @@ inline void *__cdecl HarnessAlloc(int size)
 inline void *__cdecl HarnessAllocColl(int size)
 {
     return std::calloc(1, static_cast<size_t>(size));
-}
-
-// ---------------------------------------------------------------------------
-// The nested xmodelparts loader contract.
-//
-// Declared by the loader TU (xmodel_load_obj.cpp); its production
-// implementation TU has not been migrated into this checkout. This
-// implementation follows the documented production shape: FS_ReadFile,
-// a nested buf_cursor activation over the xmodelparts buffer, the
-// version/counts/bodies/names/classification/useBones byte walk, and
-// Deactivate on every exit — fail-closed (cursor Failed + null return)
-// on malformed input. The harness counts each activation so tests can
-// distinguish a cold nested load from a warm hunk-cache hit.
-// ---------------------------------------------------------------------------
-
-struct PartsParseCounts
-{
-    int numChildBones;
-    int numRootBones;
-    int numBones;
-};
-
-inline unsigned char *PartsReadCounts(unsigned char *pos, PartsParseCounts &counts)
-{
-    const uint16_t version = buf_cursor::Buf_Read<uint16_t>(&pos);
-    if (version != 25)
-        return 0;
-    counts.numChildBones = buf_cursor::Buf_Read<uint16_t>(&pos);
-    counts.numRootBones = buf_cursor::Buf_Read<uint16_t>(&pos);
-    counts.numBones = counts.numChildBones + counts.numRootBones;
-    return pos;
-}
-
-// The body walk consumes a fixed number of bytes per child bone; every
-// individual read is checked and latches the cursor on overrun, which
-// the caller observes through buf_cursor::Failed() — so this step has
-// no failure result of its own.
-inline void PartsReadBodies(unsigned char *pos, const PartsParseCounts &counts)
-{
-    for (int i = counts.numRootBones; i < counts.numBones; ++i)
-    {
-        (void)buf_cursor::ReadWeight();  // parent index byte
-        for (int f = 0; f < 3; ++f)
-            (void)buf_cursor::Buf_Read<float>(&pos);
-        for (int q = 0; q < 4; ++q)
-            (void)buf_cursor::Buf_Read<uint16_t>(&pos);
-    }
-}
-
-// A count block is usable only when it parsed and declares a sane bone
-// budget for the fixture walk.
-inline bool PartsCountsUsable(const unsigned char *countsPos, const PartsParseCounts &counts)
-{
-    return countsPos != 0 && counts.numBones > 0 && counts.numBones <= 8;
-}
-
-inline bool PartsReadNames(const PartsParseCounts &counts)
-{
-    for (int i = 0; i < counts.numBones; ++i)
-    {
-        char nameBuf[128];
-        if (!buf_cursor::ReadString(nameBuf, sizeof(nameBuf)))
-            return false;
-    }
-    return true;
-}
-
-inline bool PartsReadTail(const PartsParseCounts &counts, bool &useBones)
-{
-    unsigned char classification[8] = {0xEE, 0xEE};
-    if (!buf_cursor::ReadBytes(classification, sizeof(classification),
-                               static_cast<size_t>(counts.numBones)))
-        return false;
-    useBones = (buf_cursor::ReadWeight() != 0);
-    return !buf_cursor::Failed();
-}
-
-// Materialize the parsed parts into the production XModelPartsLoad
-// shape the loader's XModelCopyXModelParts consumes. Allocations come
-// from the loader's own Alloc callback.
-inline XModelPartsLoad *PartsBuildResult(const PartsParseCounts &counts,
-                                         void *(__cdecl *Alloc)(int))
-{
-    XModelPartsLoad *parts = static_cast<XModelPartsLoad *>(Alloc(sizeof(XModelPartsLoad)));
-    std::memset(parts, 0, sizeof(*parts));
-    parts->numBones = static_cast<uint8_t>(counts.numBones);
-    parts->numRootBones = static_cast<uint8_t>(counts.numRootBones);
-    parts->parentList = static_cast<uint8_t *>(Alloc(static_cast<int>(counts.numBones)));
-    parts->quats = static_cast<int16_t *>(Alloc(static_cast<int>(8 * counts.numBones)));
-    parts->trans = static_cast<float *>(Alloc(static_cast<int>(12 * counts.numBones)));
-    parts->partClassification =
-        static_cast<uint8_t *>(Alloc(static_cast<int>(counts.numBones)));
-    parts->partClassification[0] = 0;
-    parts->partClassification[1] = 1;
-    return parts;
-}
-
-// Opens xmodelparts/<name>. A zero-length file is freed again right
-// away and reported as a 0-length read, matching the production
-// loader's contract; a missing file reports -1 with *buf untouched.
-inline int PartsOpenFile(const char *name, unsigned char **buf)
-{
-    char filename[68];
-    if (Com_sprintf(filename, static_cast<uint32_t>(sizeof(filename)),
-                    "xmodelparts/%s", name) < 0)
-    {
-        return -1;
-    }
-    const int fileLen = FS_ReadFile(filename, reinterpret_cast<void **>(buf));
-    if (fileLen == 0)
-        FS_FreeFile(reinterpret_cast<char *>(*buf));
-    return fileLen;
-}
-
-// Malformed parts input: latch failed and fail closed, exactly like
-// the production loader's rejection paths.
-inline XModelPartsLoad *PartsFailClosed(unsigned char *buf, const char *name)
-{
-    buf_cursor::Fail();
-    buf_cursor::Deactivate();
-    FS_FreeFile(reinterpret_cast<char *>(buf));
-    Com_PrintError(19, "ERROR: Cannot find xmodelparts '%s'.\n", name);
-    return 0;
-}
-
-inline XModelPartsLoad *XModelPartsLoadFile(XModel *model, const char *name,
-                                            void *(__cdecl *Alloc)(int))
-{
-    (void)model;
-    unsigned char *buf = 0;
-    const int fileLen = PartsOpenFile(name, &buf);
-    if (fileLen <= 0)
-        return 0;
-
-    unsigned char *pos = buf;
-    buf_cursor::Activate(buf, static_cast<size_t>(fileLen));
-    buf_cursor::AnchorPos(&pos);
-    ++State().nestedPartsActivations;
-
-    PartsParseCounts counts = {0, 0, 0};
-    unsigned char *countsPos = PartsReadCounts(pos, counts);
-    const bool usable = PartsCountsUsable(countsPos, counts);
-    bool useBones = false;
-    if (usable)
-        PartsReadBodies(countsPos, counts);
-    if (usable && PartsReadNames(counts) && PartsReadTail(counts, useBones)
-        && !buf_cursor::Failed())
-    {
-        buf_cursor::Deactivate();
-        FS_FreeFile(reinterpret_cast<char *>(buf));
-        return PartsBuildResult(counts, Alloc);
-    }
-
-    return PartsFailClosed(buf, name);
 }
 
 // ---------------------------------------------------------------------------
@@ -391,7 +259,10 @@ inline ByteWriterFixture BuildEntryPartsFile()
     w.Push16(25);
     w.Push16(1);            // numChildBones
     w.Push16(1);            // numRootBones
-    w.Push8(1);             // child parent index
+    // Child parent index. The production XModelPartsLoadFile asserts
+    // index < i per child bone (i starts at numRootBones), so the only
+    // valid parent for the single child is root bone 0.
+    w.Push8(0);
     w.PushFloat(0.0f); w.PushFloat(0.0f); w.PushFloat(0.0f);
     w.Push16(0); w.Push16(0); w.Push16(0); w.Push16(0x7FFF);
     w.PushString("tag_root");
@@ -410,18 +281,21 @@ inline ByteWriterFixture BuildEntryModelFile()
     return w;
 }
 
-// Registers the full valid model corpus under `name`.
+// Registers the full valid model corpus under `name`. The parts file
+// is served under the name the production loader resolves:
+// XModelLoadFile passes (const char *)&config — config.entries[0]
+// .filename, "lod_a" for this fixture — to XModelPartsPrecache, which
+// keys the hunk cache with it and reads "xmodelparts/lod_a" from the
+// file system. The surfs files follow the same entries[i].filename
+// convention they always did.
 inline void RegisterValidModel(const char *name)
 {
     std::string path;
     path = std::string("xmodel/") + name;
     RegisterFile(path.c_str(), BuildEntryModelFile().bytes);
-    path = std::string("xmodelparts/") + name;
-    RegisterFile(path.c_str(), BuildEntryPartsFile().bytes);
-    path = std::string("xmodelsurfs/lod_a");
-    RegisterFile(path.c_str(), BuildEntrySurfsFile(2).bytes);
-    path = std::string("xmodelsurfs/lod_b");
-    RegisterFile(path.c_str(), BuildEntrySurfsFile(1).bytes);
+    RegisterFile("xmodelparts/lod_a", BuildEntryPartsFile().bytes);
+    RegisterFile("xmodelsurfs/lod_a", BuildEntrySurfsFile(2).bytes);
+    RegisterFile("xmodelsurfs/lod_b", BuildEntrySurfsFile(1).bytes);
 }
 
 }  // namespace xmodel_loader_entry_harness
@@ -477,19 +351,24 @@ inline int __cdecl BuildAabbTree(const GenericAabbTreeOptions *options)
 
 inline int FS_ReadFile(const char *qpath, void **buffer)
 {
-    xmodel_loader_entry_harness::HarnessFileMap &files =
-        xmodel_loader_entry_harness::State().files;
-    xmodel_loader_entry_harness::HarnessFileMap::const_iterator it = files.find(qpath);
-    if (it == files.end())
+    auto &state = xmodel_loader_entry_harness::State();
+    const auto fileIt = state.files.find(qpath);
+    if (fileIt == state.files.end())
         return -1;
-    const std::vector<unsigned char> &bytes = it->second;
+    const std::vector<unsigned char> &bytes = fileIt->second;
     unsigned char *copy = new unsigned char[bytes.size() + 1];
     // Bounded, iterator-based copy: same bytes, same terminator, with
     // the destination capacity visible in the expression itself.
     std::copy(bytes.begin(), bytes.end(), copy);
     copy[bytes.size()] = 0;
     *buffer = copy;
-    ++xmodel_loader_entry_harness::State().fsReads;
+    ++state.fsReads;
+    // Real service-boundary instrumentation: the tests distinguish a
+    // cold nested parts load from a warm hunk-cache hit by counting
+    // actual xmodelparts file reads here, instead of observing loader
+    // internals.
+    if (std::strncmp(qpath, "xmodelparts/", 12) == 0)
+        ++state.partsFileReads;
     return static_cast<int>(bytes.size());
 }
 
@@ -513,9 +392,8 @@ inline void Hunk_FreeTempMemory(char *buf)
 inline void *Hunk_FindDataForFile(int type, const char *name)
 {
     (void)type;
-    xmodel_loader_entry_harness::HarnessHunkMap &data =
-        xmodel_loader_entry_harness::State().hunkData;
-    xmodel_loader_entry_harness::HarnessHunkMap::const_iterator it = data.find(name);
+    auto &data = xmodel_loader_entry_harness::State().hunkData;
+    const auto it = data.find(name);
     return it == data.end() ? 0 : it->second;
 }
 
@@ -583,13 +461,70 @@ inline bool Com_IsLegacyXModelName(const char *name)
            && (name[6] == 47 || name[6] == 92);
 }
 
-// The loader TU declares XModelPartsLoadFile at file scope and calls
-// it for the nested parts load; route the global name to the harness
-// implementation in the namespace above.
-inline XModelPartsLoad *XModelPartsLoadFile(XModel *model, const char *name,
-                                            void *(__cdecl *Alloc)(int))
+// ---------------------------------------------------------------------------
+// Stubs for xanim_load_obj.cpp.
+//
+// xanim_load_obj.cpp is enrolled in the test target so the real
+// XModelPartsLoadFile parse runs (its ConsumeQuatNoSwap decodes the
+// child-bone quaternions). The TU references the XAnim-side engine
+// endpoints below, but the entry-point tests never drive the XAnim
+// paths, so capture-free stable stubs suffice: Hunk_User* back onto
+// plain zeroed allocations, string/model registries hand out stable
+// opaque records, and I_strnicmp reuses the harness comparator.
+// ---------------------------------------------------------------------------
+
+inline HunkUser *Hunk_UserCreate(int maxSize, const char *name, bool fixed,
+                                 bool tempMem, int type)
 {
-    return xmodel_loader_entry_harness::XModelPartsLoadFile(model, name, Alloc);
+    (void)maxSize;
+    (void)name;
+    (void)fixed;
+    (void)tempMem;
+    (void)type;
+    return static_cast<HunkUser *>(std::calloc(1, sizeof(HunkUser)));
+}
+
+inline void *Hunk_UserAlloc(HunkUser *user, uint32_t size, int alignment)
+{
+    (void)user;
+    (void)alignment;
+    return std::calloc(1, static_cast<size_t>(size));
+}
+
+inline void Hunk_UserDestroy(HunkUser *user)
+{
+    std::free(user);
+}
+
+inline int I_strnicmp(const char *s0, const char *s1, int n)
+{
+    return xmodel_loader_entry_harness::I_strnicmpHarness(s0, s1, n);
+}
+
+inline XModel *__cdecl R_RegisterModel(const char *name)
+{
+    (void)name;
+    return reinterpret_cast<XModel *>(
+        &xmodel_loader_entry_harness::State().modelStorage[0]);
+}
+
+inline uint32_t SL_GetString_(const char *str, uint32_t user, int type)
+{
+    (void)str;
+    (void)user;
+    (void)type;
+    return 0;
+}
+
+inline XModel *__cdecl XModelPrecache(char *name, void *(__cdecl *Alloc)(int),
+                                      void *(__cdecl *AllocColl)(int))
+{
+    (void)name;
+    (void)Alloc;
+    (void)AllocColl;
+    // Only the XAnim-side loader paths call this; the entry-point
+    // tests never reach it.
+    return 0;
 }
 
 #endif  // XMODEL_LOADER_ENTRY_HARNESS_HPP
