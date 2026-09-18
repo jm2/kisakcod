@@ -21,16 +21,21 @@ the gap table is verified against the cited workflow file.
 
 ## Current-state summary
 
-`ci.yml` currently has eleven top-level jobs (`portable-tests`,
+`ci.yml` currently has twelve top-level jobs (`portable-tests`,
 `test-selection-checker`, `script-sanitizers`, `portable-sanitizers`,
-`windows-x86`, `windows-x86-sp`, `windows-x86-parity`, `windows-x86-nosteam`,
-`windows-x86-headless`, `scaffolding-builds`, `scaffolding-complete`). Together
-they exercise Windows x86 MP + dedicated (Debug + Release), Windows x86 SP
-(Debug + Release), the Windows x86 Steam OFF compile fallback, the Windows x86
-headless dedicated configuration, hosted sanitizer coverage
-(`script-sanitizers`, `portable-sanitizers`), the checked test selection
-(`test-selection-checker`), and `scaffolding-builds` for all six target
-OS/arch pairs — `windows-x86` plus the five portable pairs.
+`capability-dashboard`, `windows-x86`, `windows-x86-sp`, `windows-x86-parity`,
+`windows-x86-nosteam`, `windows-x86-headless`, `scaffolding-builds`,
+`scaffolding-complete`). Together they exercise Windows x86 MP + dedicated
+(Debug + Release), Windows x86 SP (Debug + Release), the Windows x86 Steam OFF
+compile fallback, the Windows x86 headless dedicated configuration, hosted
+sanitizer coverage (`script-sanitizers`, `portable-sanitizers`), the checked
+test selection (`test-selection-checker`), the derived capability-evidence
+dashboard currency (`capability-dashboard`), and `scaffolding-builds` for all
+six target OS/arch pairs — `windows-x86` plus the five portable pairs.
+`capability-dashboard` (integrated from master after the audit-time snapshot
+below was written) keeps `docs/CAPABILITY_DASHBOARD.md` derived rather than
+hand-maintained: it re-validates the evidence manifest and fails when the
+committed dashboard is stale.
 `scaffolding-complete` (added since the audit-time snapshot below was
 written; see gap 17) is the single branch-protection gate: its `needs:` list
 must equal every other job exactly, pinned by
@@ -403,8 +408,9 @@ Two remaining A12 gaps are addressed here rather than in a competing CI design:
   `scaffolding-complete.needs`, so the single branch-protection aggregate
   could succeed while either gate failed or never ran. The aggregate now
   depends on every other job in the workflow — `portable-tests`,
-  `test-selection-checker`, `script-sanitizers`, `portable-sanitizers`, the
-  five windows-x86 legs, and `scaffolding-builds` — and
+  `test-selection-checker`, `script-sanitizers`, `portable-sanitizers`,
+  `capability-dashboard`, the five windows-x86 legs, and
+  `scaffolding-builds` — and
   `scripts/ci/check-ci-aggregate.py` (with
   `scripts/ci/test_check_ci_aggregate.py` regressions, run in the
   `test-selection-checker` job) pins that invariant mechanically: `needs`
