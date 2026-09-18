@@ -1,0 +1,3 @@
+# Resolve the exact archived commit into src/source_identity.txt so a source
+# archive built without a working .git still records its revision identity.
+source_identity.txt export-subst

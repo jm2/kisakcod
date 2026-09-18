@@ -71,6 +71,26 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/ui_safety_source_test.cmake
 )
 
+# Source-archive builds must keep a recoverable revision identity without
+# `.git`; the resolved commit is carried into the generated buildnumber header.
+# The compiled fixture is built through a nested CMake configure/build with the
+# same generator and toolchain, so a Visual Studio generator gets MSBuild's
+# compiler environment (INCLUDE/LIB) instead of a bare cl.exe with none. The
+# generator and platform/toolset are forwarded for that nested build.
+add_test(
+    NAME source-archive-identity-contracts
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DKISAK_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+        -DKISAK_TEST_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}
+        -DKISAK_TEST_GENERATOR=${CMAKE_GENERATOR}
+        -DKISAK_TEST_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}
+        -DKISAK_TEST_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/source_archive_identity_test.cmake
+)
+set_tests_properties(source-archive-identity-contracts PROPERTIES
+    TIMEOUT 300 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
 add_executable(kisakcod-target-table-tests
     target_table_tests.cpp
 )
@@ -4086,3 +4106,22 @@ add_test(
 )
 set_tests_properties(retail-content-matrix-source-invariants PROPERTIES
     TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+# ki-tcjg (#137 acceptance 1 and 2): release provenance completeness contract.
+# scripts/ci/release-requirements.json declares the expected published artifact
+# and prerequisite set for every release profile; the verifier fails closed when
+# an expected artifact, provenance identity, required inventory field,
+# prerequisite, or checksum is missing or inconsistent. The test builds a
+# complete synthetic release set, proves it passes, then breaks one invariant at
+# a time. POSIX + Python only: the release assembly host is Linux.
+if(UNIX)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME release-provenance-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/scripts/ci/test_release_provenance.py")
+        set_tests_properties(release-provenance-contract PROPERTIES
+            TIMEOUT 180 WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
+    endif()
+endif()

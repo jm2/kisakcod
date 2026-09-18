@@ -1,0 +1,16 @@
+# Immutable source identity carried into `git archive` source tarballs.
+#
+# Every other identity source in this tree comes from the working `.git`
+# directory (the commit count stamped into `src/buildnumber.h` by
+# scripts/extern/increment_build.cmake). A source archive produced by
+# `git archive` has no `.git`, so this file is the carrier that keeps the
+# exact revision recoverable after extraction.
+#
+# The placeholders below are literal in a normal checkout. src/.gitattributes
+# marks this file `export-subst`, so `git archive` substitutes the archived
+# commit into them. scripts/extern/resolve_source_identity.cmake reads this
+# file only when `.git` cannot provide the commit, and never accepts
+# unsubstituted `$Format:...$` text as an identity.
+#
+# Do not edit the placeholder text; it is a git archive substitution key.
+commit=$Format:%H$
