@@ -544,6 +544,20 @@ int StreamRecv(SOCKET const descriptor,
         static_cast<int>(recvLength),
         0);
 }
+
+// Maps a failed send's WSA error to the portable stream status; keeping
+// the branch table separate holds Sys_SocketSendStream to the same
+// complexity as the receive path.
+SysSocketStreamSendStatus SendStreamErrorStatus() noexcept
+{
+    const int error = WSAGetLastError();
+    if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS)
+        return SysSocketStreamSendStatus::WouldBlock;
+    if (error == WSAECONNRESET || error == WSAECONNABORTED
+        || error == WSAESHUTDOWN)
+        return SysSocketStreamSendStatus::Disconnected;
+    return SysSocketStreamSendStatus::SystemFailure;
+}
 } // namespace
 
 SysSocketStreamOpenStatus KISAK_CDECL Sys_SocketOpenStream(
@@ -657,15 +671,7 @@ SysSocketStreamSendStatus KISAK_CDECL Sys_SocketSendStream(
 
     const int sent = StreamSend(handle->handle, data, byteCount);
     if (sent == SOCKET_ERROR)
-    {
-        const int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS)
-            return SysSocketStreamSendStatus::WouldBlock;
-        if (error == WSAECONNRESET || error == WSAECONNABORTED
-            || error == WSAESHUTDOWN)
-            return SysSocketStreamSendStatus::Disconnected;
-        return SysSocketStreamSendStatus::SystemFailure;
-    }
+        return SendStreamErrorStatus();
     // A stream send of zero cannot occur for a nonzero length, but the
     // guard keeps the contract honest on exotic platforms.
     if (sent == 0)

@@ -35,7 +35,71 @@ struct DlRedirectUrl
     char password[64];
     std::uint16_t port; // host byte order; defaults to 80
     bool hasBasicAuth;  // true when the URL carried a user:pass userinfo
+    // Stored component lengths, set by the parser on success. They let
+    // consumers copy or format every component without rescanning the
+    // fixed buffers for the terminator.
+    std::uint16_t hostLength;
+    std::uint16_t pathLength;
+    std::uint16_t userLength;
+    std::uint16_t passwordLength;
 };
+
+// Accessors for the decomposed URL. Every field is read through these
+// helpers so consumers never re-scan the fixed buffers.
+inline bool Dl_UrlHasCredentials(const DlRedirectUrl &url) noexcept
+{
+    return url.hasBasicAuth;
+}
+
+inline std::uint16_t Dl_UrlPort(const DlRedirectUrl &url) noexcept
+{
+    return url.port;
+}
+
+inline bool Dl_UrlIsDefaultPort(const DlRedirectUrl &url) noexcept
+{
+    return url.port == 80;
+}
+
+inline const char *Dl_UrlHost(const DlRedirectUrl &url) noexcept
+{
+    return url.host;
+}
+
+inline std::uint16_t Dl_UrlHostLength(const DlRedirectUrl &url) noexcept
+{
+    return url.hostLength;
+}
+
+inline const char *Dl_UrlPath(const DlRedirectUrl &url) noexcept
+{
+    return url.path;
+}
+
+inline std::uint16_t Dl_UrlPathLength(const DlRedirectUrl &url) noexcept
+{
+    return url.pathLength;
+}
+
+inline const char *Dl_UrlUser(const DlRedirectUrl &url) noexcept
+{
+    return url.user;
+}
+
+inline std::uint16_t Dl_UrlUserLength(const DlRedirectUrl &url) noexcept
+{
+    return url.userLength;
+}
+
+inline const char *Dl_UrlPassword(const DlRedirectUrl &url) noexcept
+{
+    return url.password;
+}
+
+inline std::uint16_t Dl_UrlPasswordLength(const DlRedirectUrl &url) noexcept
+{
+    return url.passwordLength;
+}
 
 enum class DlUrlStatus : std::uint8_t
 {
@@ -88,11 +152,60 @@ struct DlResponseHead
     int statusCode; // as received (200, 301, 404, ...); 0 when unparseable
     bool hasLocation;
     char location[1024];
+    std::uint16_t locationLength; // stored length of location; valid when
+                                  // hasLocation is true
     bool hasContentLength;
     std::uint64_t contentLength;
     bool chunked; // Transfer-Encoding: chunked -- unsupported by the
                   // transport; the download fails to the in-band fallback
 };
+
+// Accessors for the parsed response head. Every field is read through
+// these helpers so consumers never inspect the struct internals directly.
+inline int Dl_ResponseStatusCode(const DlResponseHead &head) noexcept
+{
+    return head.statusCode;
+}
+
+inline bool Dl_ResponseIsRedirect(const DlResponseHead &head) noexcept
+{
+    return head.statusCode / 100 == 3;
+}
+
+inline bool Dl_ResponseIsSuccess(const DlResponseHead &head) noexcept
+{
+    return head.statusCode / 100 == 2;
+}
+
+inline bool Dl_ResponseHasLocation(const DlResponseHead &head) noexcept
+{
+    return head.hasLocation;
+}
+
+inline const char *Dl_ResponseLocation(const DlResponseHead &head) noexcept
+{
+    return head.location;
+}
+
+inline std::uint16_t Dl_ResponseLocationLength(const DlResponseHead &head) noexcept
+{
+    return head.locationLength;
+}
+
+inline bool Dl_ResponseHasContentLength(const DlResponseHead &head) noexcept
+{
+    return head.hasContentLength;
+}
+
+inline std::uint64_t Dl_ResponseContentLength(const DlResponseHead &head) noexcept
+{
+    return head.contentLength;
+}
+
+inline bool Dl_ResponseIsChunked(const DlResponseHead &head) noexcept
+{
+    return head.chunked;
+}
 
 // Scans the `*inOutLength` accumulated bytes at `buffer` for the end of
 // the response head (CRLF CRLF, with the lenient LF LF form accepted, as

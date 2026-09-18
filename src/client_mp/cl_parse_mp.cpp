@@ -265,23 +265,29 @@ void CL_AppendBounded(char *out, std::size_t &length, const std::size_t capacity
         out[length++] = text[index];
 }
 
-// Renders a download URL for every displayed or logged surface with
-// URL-embedded credentials masked: "http://user:pass@host/path" becomes
-// the retail meter form "http://*:*host/path". Only the authority's
-// userinfo (everything before the last '@' before the first '/', '?' or
-// '#') is rewritten; the source URL is never modified, so the transport
-// still receives the real credentials. Without credentials the URL is
-// copied verbatim (bounded).
-void CL_SanitizeDownloadUrl(const char *source, char *out,
-    const std::size_t capacity)
+// Appends the NUL-terminated tail at `text`, stopping at the terminator
+// or when the output is full, whichever comes first; the bound is the
+// output capacity, never an unbounded scan of the input.
+void CL_AppendTerminated(char *out, std::size_t &length,
+    const std::size_t capacity, const char *text)
 {
-    if (!out || capacity == 0)
-        return;
-    std::size_t length = 0;
-    out[0] = '\0';
-    if (!source)
-        return;
+    for (const char *scan = text; *scan != '\0' && length + 1 < capacity;
+        ++scan)
+        out[length++] = *scan;
+}
 
+// The pieces of a download URL the sanitizer rewrites.
+struct CL_UrlAuthoritySplit
+{
+    const char *rest; // first authority terminator ('/', '?', '#', or end)
+    const char *at;   // last '@' inside the authority, or nullptr
+    std::size_t schemeLength; // "scheme://" prefix length
+};
+
+// Splits the display URL into its authority pieces: everything before the
+// last '@' before the first '/', '?' or '#' is the authority's userinfo.
+CL_UrlAuthoritySplit CL_SplitUrlAuthority(const char *source)
+{
     const char *authority = std::strstr(source, "://");
     const std::size_t schemeLength =
         authority ? static_cast<std::size_t>(authority - source) + 3 : 0;
@@ -299,20 +305,40 @@ void CL_SanitizeDownloadUrl(const char *source, char *out,
             break;
         }
     }
+    return {rest, at, schemeLength};
+}
 
-    if (!at)
+// Renders a download URL for every displayed or logged surface with
+// URL-embedded credentials masked: "http://user:pass@host/path" becomes
+// the retail meter form "http://*:*host/path". Only the authority's
+// userinfo (everything before the last '@' before the first '/', '?' or
+// '#') is rewritten; the source URL is never modified, so the transport
+// still receives the real credentials. Without credentials the URL is
+// copied verbatim (bounded).
+void CL_SanitizeDownloadUrl(const char *source, char *out,
+    const std::size_t capacity)
+{
+    if (!out || capacity == 0)
+        return;
+    std::size_t length = 0;
+    out[0] = '\0';
+    if (!source)
+        return;
+
+    const CL_UrlAuthoritySplit split = CL_SplitUrlAuthority(source);
+    if (!split.at)
     {
-        CL_AppendBounded(out, length, capacity, source,
-            std::strlen(source));
+        // No credentials: copy the URL verbatim (bounded by the output).
+        CL_AppendTerminated(out, length, capacity, source);
         out[length] = '\0';
         return;
     }
 
-    CL_AppendBounded(out, length, capacity, source, schemeLength);
+    CL_AppendBounded(out, length, capacity, source, split.schemeLength);
     CL_AppendBounded(out, length, capacity, "*:*", 3);
-    CL_AppendBounded(out, length, capacity, at + 1,
-        static_cast<std::size_t>(rest - (at + 1)));
-    CL_AppendBounded(out, length, capacity, rest, std::strlen(rest));
+    CL_AppendBounded(out, length, capacity, split.at + 1,
+        static_cast<std::size_t>(split.rest - (split.at + 1)));
+    CL_AppendTerminated(out, length, capacity, split.rest);
     out[length] = '\0';
 }
 } // namespace

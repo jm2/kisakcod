@@ -39,6 +39,17 @@ bool CheckString(const char *const actual,
         stage);
 }
 
+// Bounded test-fixture copy: asserts that the count fits the destination
+// and then copies byte by byte, so a stage authoring error fails the run
+// instead of overrunning the buffer.
+void CopyBounded(char *const out, const std::size_t capacity,
+    const char *const source, const std::size_t count)
+{
+    Check(count <= capacity, "test-fixture-copy");
+    for (std::size_t index = 0; index < count; ++index)
+        out[index] = source[index];
+}
+
 void StageUrlParseBasics()
 {
     DlRedirectUrl url{};
@@ -48,6 +59,8 @@ void StageUrlParseBasics()
         "url-basic");
     CheckString(url.host, "cdn.example.com", "url-basic");
     CheckString(url.path, "/maps/mp_ship.map", "url-basic");
+    Check(url.hostLength == 15, "url-basic");
+    Check(url.pathLength == 17, "url-basic");
     Check(url.port == 80, "url-basic");
     Check(!url.hasBasicAuth, "url-basic");
 
@@ -169,7 +182,9 @@ void StageUrlParseBounds()
     std::uint32_t longPathLength = 0;
     while (longPathLength + 11 < sizeof(longPath))
     {
-        std::memcpy(longPath + longPathLength, "/aaaaaaaaaa", 11);
+        CopyBounded(longPath + longPathLength, sizeof(longPath)
+                - longPathLength - 1,
+            "/aaaaaaaaaa", 11);
         longPathLength += 11;
     }
     longPath[longPathLength] = '\0';
@@ -285,7 +300,7 @@ void StageHeadParseComplete()
     char buffer[512];
     std::uint32_t length =
         static_cast<std::uint32_t>(sizeof(response) - 1);
-    std::memcpy(buffer, response, length);
+    CopyBounded(buffer, sizeof(buffer), response, length);
 
     DlResponseHead head{};
     Check(Dl_ParseResponseHead(buffer, &length, &head)
@@ -316,7 +331,7 @@ void StageHeadParseIncremental()
     for (std::uint32_t feed = 1; feed < total; feed += 7)
     {
         length = feed;
-        std::memcpy(buffer, response, feed);
+        CopyBounded(buffer, sizeof(buffer), response, feed);
         Check(Dl_ParseResponseHead(buffer, &length, &head)
                 == DlResponseEvent::NeedMoreData,
             "head-incremental");
@@ -324,7 +339,7 @@ void StageHeadParseIncremental()
     }
 
     length = total;
-    std::memcpy(buffer, response, total);
+    CopyBounded(buffer, sizeof(buffer), response, total);
     Check(Dl_ParseResponseHead(buffer, &length, &head)
             == DlResponseEvent::HeadComplete,
         "head-incremental-final");
@@ -332,6 +347,7 @@ void StageHeadParseIncremental()
     Check(head.hasLocation, "head-incremental-final");
     CheckString(head.location, "http://origin/f.map",
         "head-incremental-final");
+    Check(head.locationLength == 19, "head-incremental-final");
     Check(length == 4 && std::memcmp(buffer, "BODY", 4) == 0,
         "head-incremental-final");
 }
@@ -352,7 +368,7 @@ void StageHeadParseHeaders()
     char buffer[512];
     std::uint32_t length =
         static_cast<std::uint32_t>(sizeof(response) - 1);
-    std::memcpy(buffer, response, length);
+    CopyBounded(buffer, sizeof(buffer), response, length);
 
     DlResponseHead head{};
     Check(Dl_ParseResponseHead(buffer, &length, &head)
@@ -378,7 +394,7 @@ void StageHeadParseFailures()
     static const char garbage[] = "NOT HTTP\r\n\r\nbody";
     std::uint32_t length =
         static_cast<std::uint32_t>(sizeof(garbage) - 1);
-    std::memcpy(buffer, garbage, length);
+    CopyBounded(buffer, sizeof(buffer), garbage, length);
     Check(Dl_ParseResponseHead(buffer, &length, &head)
             == DlResponseEvent::StatusError,
         "head-garbage");
@@ -387,7 +403,7 @@ void StageHeadParseFailures()
     // Non-decimal status.
     static const char badStatus[] = "HTTP/1.1 abc x\r\n\r\n";
     length = static_cast<std::uint32_t>(sizeof(badStatus) - 1);
-    std::memcpy(buffer, badStatus, length);
+    CopyBounded(buffer, sizeof(buffer), badStatus, length);
     Check(Dl_ParseResponseHead(buffer, &length, &head)
             == DlResponseEvent::StatusError,
         "head-bad-status");
@@ -395,7 +411,7 @@ void StageHeadParseFailures()
     // Empty head (immediate terminator).
     static const char empty[] = "\n\n";
     length = static_cast<std::uint32_t>(sizeof(empty) - 1);
-    std::memcpy(buffer, empty, length);
+    CopyBounded(buffer, sizeof(buffer), empty, length);
     Check(Dl_ParseResponseHead(buffer, &length, &head)
             == DlResponseEvent::StatusError,
         "head-empty");
@@ -404,7 +420,7 @@ void StageHeadParseFailures()
     // hang; and an unterminated head under the bound is NeedMoreData.
     static const char partial[] = "HTTP/1.1 200 OK\r\nContent-Len";
     length = static_cast<std::uint32_t>(sizeof(partial) - 1);
-    std::memcpy(buffer, partial, length);
+    CopyBounded(buffer, sizeof(buffer), partial, length);
     Check(Dl_ParseResponseHead(buffer, &length, &head)
             == DlResponseEvent::NeedMoreData,
         "head-partial");

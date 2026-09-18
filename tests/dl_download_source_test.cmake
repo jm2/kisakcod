@@ -6,15 +6,20 @@ endif()
 
 # The HTTP download transport must route every network byte through the
 # portable Sys_Socket* stream service and every disk byte through the
-# engine file service, with the pure protocol helpers in dl_http.cpp kept
-# dependency-free. These invariants pin that layering so a later edit
-# cannot quietly reintroduce raw sockets, raw stdio, or platform leaks
-# into the download path.
+# engine file service, with the pure protocol helpers in dl_http.cpp /
+# dl_http_url.cpp / dl_http_parse.cpp kept dependency-free. These
+# invariants pin that layering so a later edit cannot quietly reintroduce
+# raw sockets, raw stdio, or platform leaks into the download path.
 
 set(_dl_main_source_path "${SOURCE_ROOT}/src/qcommon/dl_main.cpp")
 set(_dl_main_header_path "${SOURCE_ROOT}/src/qcommon/dl_main.h")
+set(_dl_main_internal_path "${SOURCE_ROOT}/src/qcommon/dl_main_internal.h")
+set(_dl_main_pump_path "${SOURCE_ROOT}/src/qcommon/dl_main_pump.cpp")
 set(_dl_http_source_path "${SOURCE_ROOT}/src/qcommon/dl_http.cpp")
 set(_dl_http_header_path "${SOURCE_ROOT}/src/qcommon/dl_http.h")
+set(_dl_http_internal_path "${SOURCE_ROOT}/src/qcommon/dl_http_internal.h")
+set(_dl_http_url_path "${SOURCE_ROOT}/src/qcommon/dl_http_url.cpp")
+set(_dl_http_parse_path "${SOURCE_ROOT}/src/qcommon/dl_http_parse.cpp")
 set(_socket_header_path "${SOURCE_ROOT}/src/qcommon/sys_socket.h")
 set(_posix_source_path "${SOURCE_ROOT}/src/_platform/posix/sys_socket.cpp")
 set(_win32_source_path "${SOURCE_ROOT}/src/_platform/win32/sys_socket.cpp")
@@ -25,8 +30,13 @@ set(_tests_cmake_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 foreach(_path IN ITEMS
     "${_dl_main_source_path}"
     "${_dl_main_header_path}"
+    "${_dl_main_internal_path}"
+    "${_dl_main_pump_path}"
     "${_dl_http_source_path}"
     "${_dl_http_header_path}"
+    "${_dl_http_internal_path}"
+    "${_dl_http_url_path}"
+    "${_dl_http_parse_path}"
     "${_socket_header_path}"
     "${_posix_source_path}"
     "${_win32_source_path}"
@@ -40,14 +50,26 @@ endforeach()
 
 file(READ "${_dl_main_source_path}" _dl_main_source)
 file(READ "${_dl_main_header_path}" _dl_main_header)
+file(READ "${_dl_main_internal_path}" _dl_main_internal)
+file(READ "${_dl_main_pump_path}" _dl_main_pump)
 file(READ "${_dl_http_source_path}" _dl_http_source)
 file(READ "${_dl_http_header_path}" _dl_http_header)
+file(READ "${_dl_http_internal_path}" _dl_http_internal)
+file(READ "${_dl_http_url_path}" _dl_http_url)
+file(READ "${_dl_http_parse_path}" _dl_http_parse)
 file(READ "${_socket_header_path}" _socket_header)
 file(READ "${_posix_source_path}" _posix_source)
 file(READ "${_win32_source_path}" _win32_source)
 file(READ "${_cl_main_source_path}" _cl_main_source)
 file(READ "${_cl_parse_source_path}" _cl_parse_source)
 file(READ "${_tests_cmake_path}" _tests_cmake)
+
+# The transport split (state machine + pumps) and the protocol split
+# (formatting + URL parsing + head parsing) are checked as unions: the
+# invariants constrain the transport and the protocol unit as wholes, not
+# the file layout that happens to hold them today.
+set(_dl_transport_source "${_dl_main_source}${_dl_main_pump}")
+set(_dl_protocol_source "${_dl_http_source}${_dl_http_url}${_dl_http_parse}")
 
 function(require_contains _content _needle _message)
     if(NOT _content MATCHES "${_needle}")
@@ -145,7 +167,7 @@ foreach(_marker IN ITEMS
     "DL_CancelDownload\\("
     "DL_InitDownload\\("
     "DL_DownloadLoop\\(")
-    require_contains("${_dl_main_source}" "${_marker}"
+    require_contains("${_dl_transport_source}" "${_marker}"
         "download transport must own the pinned service call: ${_marker}")
 endforeach()
 # Raw socket primitives, resolver calls, and stdio are banned in the
@@ -168,7 +190,7 @@ foreach(_forbidden IN ITEMS
     "fread\\("
     "fclose\\("
     "legacyHacks")
-    require_not_contains("${_dl_main_source}" "${_forbidden}"
+    require_not_contains("${_dl_transport_source}" "${_forbidden}"
         "download transport must not bypass the service layer: ${_forbidden}")
 endforeach()
 
@@ -192,7 +214,7 @@ foreach(_marker IN ITEMS
     "Dl_FormatGetRequest\\("
     "Dl_ParseResponseHead\\("
     "Authorization: Basic ")
-    require_contains("${_dl_http_source}" "${_marker}"
+    require_contains("${_dl_protocol_source}" "${_marker}"
         "download protocol unit must own the pinned helper: ${_marker}")
 endforeach()
 foreach(_forbidden IN ITEMS
@@ -203,7 +225,7 @@ foreach(_forbidden IN ITEMS
     "sys/socket\\.h"
     "winsock"
     "qcommon/qcommon\\.h")
-    require_not_contains("${_dl_http_source}" "${_forbidden}"
+    require_not_contains("${_dl_protocol_source}" "${_forbidden}"
         "download protocol unit must stay dependency-free: ${_forbidden}")
 endforeach()
 
@@ -221,10 +243,24 @@ foreach(_marker IN ITEMS
         "client parse must preserve the masked download display name: ${_marker}")
 endforeach()
 
+# The split units stay wired to their shared internal headers, and the
+# transport/protocol unions stay dependency-free through those headers.
+function(require_internal_include _content _needle)
+    require_contains("${_content}" "${_needle}"
+        "split download unit must include its shared internal header: ${_needle}")
+endfunction()
+require_internal_include("${_dl_main_source}" "dl_main_internal\\.h")
+require_internal_include("${_dl_main_pump}" "dl_main_internal\\.h")
+require_internal_include("${_dl_http_source}" "dl_http_internal\\.h")
+require_internal_include("${_dl_http_url}" "dl_http_internal\\.h")
+require_internal_include("${_dl_http_parse}" "dl_http_internal\\.h")
+
 # The protocol unit and both test binaries stay registered in the test
 # build, and the source invariants run in ctest.
 foreach(_marker IN ITEMS
     "dl_http\\.cpp"
+    "dl_http_url\\.cpp"
+    "dl_http_parse\\.cpp"
     "dl_http_tests\\.cpp"
     "platform_socket_stream_tests\\.cpp"
     "dl-download-source-invariants"

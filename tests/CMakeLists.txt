@@ -2636,6 +2636,8 @@ set_tests_properties(platform-socket-stream-contracts PROPERTIES TIMEOUT 30)
 add_executable(kisakcod-dl-http-tests
     dl_http_tests.cpp
     ${SRC_DIR}/qcommon/dl_http.cpp
+    ${SRC_DIR}/qcommon/dl_http_parse.cpp
+    ${SRC_DIR}/qcommon/dl_http_url.cpp
 )
 target_include_directories(kisakcod-dl-http-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-dl-http-tests PRIVATE cxx_std_20)
