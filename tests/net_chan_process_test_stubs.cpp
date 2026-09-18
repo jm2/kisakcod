@@ -20,6 +20,7 @@
 #include <qcommon/sys_time.h>
 #include <universal/assertive.h>
 #include <universal/com_files.h>
+#include <universal/com_math.h>
 #include <universal/com_memory.h>
 #include <universal/platform_compat.h>
 #include <universal/q_shared.h>
@@ -250,4 +251,62 @@ int LongSwap(int l)
 char *BG_GetEntityTypeName(int32_t)
 {
     return const_cast<char *>("entity");
+}
+
+// --- production storage and helpers referenced by the linked TUs ---------------
+//
+// The Win32 ILP32 leg links qcommon/net_chan_mp.cpp, qcommon/msg_mp.cpp and
+// qcommon/huffman.cpp directly. Those translation units also reference a few
+// production symbols whose real definitions live in large engine TUs this
+// target deliberately does not link (universal/q_shared.cpp,
+// universal/com_math.cpp, qcommon/sv_msg_write_mp.cpp). Reassembly never
+// executes them (see each note), so they are provided here as inert
+// header-typed definitions: signature drift still fails the compile, and the
+// production code under test is unchanged.
+
+// sv_msg_write_mp.cpp owns the real storage; msg_mp.cpp only references the
+// globals. They are touched solely by MSG_initHuffmanInternal() and the
+// MSG_Compress/MSG_Decompress helpers, and the reassembly path drives none of
+// those (Netchan_Process handles fragments and delivery, not compression).
+huffman_t msgHuff;
+netFieldOrderInfo_t orderInfo;
+
+// sv_msg_write_mp.cpp: entity-state decode only (delta-entity reads and
+// MSG_DumpNetFieldChanges diagnostics). Netchan_Process delivers the message
+// without decoding entity state, so the stub only has to link.
+const NetFieldList *__cdecl MSG_GetStateFieldListForEntityType(int)
+{
+    return nullptr;
+}
+
+// q_shared.cpp: rotating static buffers. Mirrors the production shape (two
+// 1024-byte slots, round-robin) minus the Sys_GetValue thread-context
+// plumbing the tests do not link.
+char *QDECL va(const char *format, ...)
+{
+    static char buffers[2][1024];
+    static int index = 0;
+    char *const buf = buffers[index];
+    index = (index + 1) % 2;
+
+    va_list args;
+    va_start(args, format);
+    // Flawfinder: ignore -- passthrough shim; production callers own the literal format and buffer size.
+    std::vsnprintf(buf, sizeof(buffers[0]), format, args);
+    va_end(args);
+    return buf;
+}
+
+// com_math.cpp: fakelag packet-loss/jitter draws. The stub dvars keep every
+// fakelag value at zero, so the FakeLag_SendPacket guards short-circuit and
+// these only have to link. Deterministic lower-bound returns keep any
+// accidental call reproducible instead of random.
+float __cdecl flrand(float minValue, float)
+{
+    return minValue;
+}
+
+int __cdecl irand(int minValue, int)
+{
+    return minValue;
 }
