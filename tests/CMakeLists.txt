@@ -2698,6 +2698,35 @@ add_test(
     COMMAND kisakcod-huffman-wire-contract-tests
 )
 
+add_executable(kisakcod-msg-wire-contract-tests
+    msg_wire_contract_tests.cpp
+    ${SRC_DIR}/qcommon/msg_bits_mp.cpp
+    ${SRC_DIR}/qcommon/huffman.cpp
+)
+# Links the production MP bit-codec (msg_bits_mp.cpp, the code motion of the
+# MSG bit primitives out of msg_mp.cpp) together with the Huffman codec, so
+# every wire golden is checked against the real retail encoder/decoder rather
+# than a reimplementation. The engine headers AND the decompiled production
+# TUs are not -Wall -Wextra clean (the engine build does not enable those
+# flags), so the strict warning set applies to the test's own code only.
+target_include_directories(kisakcod-msg-wire-contract-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-msg-wire-contract-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-msg-wire-contract-tests PRIVATE KISAK_MP)
+if (MSVC)
+    set_source_files_properties(msg_wire_contract_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "/W4;/WX")
+else()
+    set_source_files_properties(msg_wire_contract_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+endif()
+set_target_properties(kisakcod-msg-wire-contract-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME msg-wire-format-contracts
+    COMMAND kisakcod-msg-wire-contract-tests
+)
+
 add_executable(kisakcod-vehicle-material-time-tests
     vehicle_material_time_tests.cpp
 )
