@@ -183,7 +183,11 @@ bool TestValidColdLoad()
     CHECK(model->lodInfo[1].dist == 150.0f);
     CHECK(model->lodInfo[0].partBits[0] == static_cast<int>(0x80000000u));
     CHECK(model->surfs[0].vertCount == 3);
-    CHECK(model->surfs[0].triCount == 1);
+    // The file declares triCount 1; the retail surface reader pads an
+    // odd triangle count to an even slot count with a duplicated
+    // sentinel index and reports the padded count, so the loaded
+    // surface carries 2.
+    CHECK(model->surfs[0].triCount == 2);
     CHECK(model->radius == 1.0f);
     CHECK(model->collLod == 0);
     CHECK(State().physPresetCalls == 1);

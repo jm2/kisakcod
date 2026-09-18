@@ -399,18 +399,23 @@ void Hunk_FreeTempMemory(char *buf)
 
 void *Hunk_FindDataForFile(int type, const char *name)
 {
-    (void)type;
+    // Retail hunk-data cache keys on the file type AND the name: the
+    // xmodelparts and xmodelsurfs records of one LOD share a bare name
+    // ("lod_a"), so a name-only key collides the two records and hands
+    // the surfs lookup a parts header — observed as a staging
+    // XModelSurfs whose surfs pointer was the parts numBones/
+    // numRootBones word (0x102), faulting on the first surface read.
+    // Compose the type into the key to keep the namespaces apart.
     auto &data = xmodel_loader_entry_harness::State().hunkData;
-    const auto it = data.find(name);
+    const auto it = data.find(std::to_string(type) + ":" + name);
     return it == data.end() ? 0 : it->second;
 }
 
 char *Hunk_SetDataForFile(int type, const char *name, void *data,
                                  void *(__cdecl *alloc)(int))
 {
-    (void)type;
     (void)alloc;
-    xmodel_loader_entry_harness::State().hunkData[name] = data;
+    xmodel_loader_entry_harness::State().hunkData[std::to_string(type) + ":" + name] = data;
     return static_cast<char *>(data);
 }
 
