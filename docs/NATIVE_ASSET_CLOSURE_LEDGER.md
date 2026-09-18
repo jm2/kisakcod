@@ -670,16 +670,16 @@ GfxWorld — walk `Load_GfxWorld` (`db_load.cpp:10637-11084`), entry `Load_GfxWo
 | Font | pointer token | `Load_FontHandle` (def `:11266`) | `:11266-11300` | inline alloc `:11278`; insert `:11281`; publish `:11287-11290`; alias `:11294-11296` | registration `Load_FontAsset` `:11285` (`db_registry.cpp:1088-1091`) | — |
 | MenuList | 12-byte header + `name` + `menus[]` | `Load_MenuList` (`:8672`), `Load_menuDef_ptrArray` (def `:8655`) | `:8672-8681` | 4-byte bump `:8678` | menu alias per entry | — |
 | MenuList | pointer token | `Load_MenuListPtr` (def `:8685`; dispatch `:11409`) | `:8685-8718` | 4-byte token `:8690`; block-0 push `:8691`; null token skips the walk `:8692`; inline `-1`/`-2` → `AllocLoad_FxElemVisStateSample` `:8697-8698`; `DB_InsertPointer(DBAliasKind::MenuList)` on `-2` only `:8699-8702`; body `Load_MenuList(1)` void — no failure short-circuit `:8703`; publish `DB_SetInsertedPointer` `:8705-8709`; offset → `DB_ConvertOffsetToAlias(…, MenuList)` `:8713-8715` | registration `Load_MenuListAsset` `:8704` (`db_registry.cpp:1098`) | — |
-| Menu | 284-byte menuDef + `window` (156 B, name/group XStrings + background material `:8431-8436`) | `Load_menuDef_t` (`:8582`), `Load_Window` (`:8439`) | `:8582-8585` | zone bump; **no `disk32::` extent** (284/156 literals) | material alias | — |
+| Menu | `window` (156 B, name/group XStrings + background material `:8431-8436`) — one shared walker with two call sites: menuDef root (284 B) **and** itemDef root (372 B) | menu caller `Load_menuDef_t` (`:8582`); item caller `Load_itemDef_t` (`:8499`); shared `Load_Window` (`:8439`) → `Load_windowDef_t` (`:8428`) | menu `:8584-8585`; item `:8500-8501` | zone bump; **no `disk32::` extent** (284/156 literals) | material alias (both call sites) | — |
 | Menu | `font`/`onOpen`/`onClose`/`onESC`/`allowedBinding`/`soundName` XStrings | `Load_XString` ×6 | `:8586-8605` | zone C-string | — | — |
-| Menu | `onKey` handler chain (recursive) | `Load_ItemKeyHandler` (def `:8446`) | `:8594-8599` | 4-byte bump `:8596`; `action` XString `:8449-8450` | recursive `next` `:8451-8456` | — |
+| Menu | `onKey` handler chain (recursive) — one shared walker with two call sites: menuDef level **and** per itemDef | shared `Load_ItemKeyHandler` (def `:8446`) + recursive tail `Load_ItemKeyHandlerNext` (def `:8459`); callers `Load_menuDef_t`, `Load_itemDef_t` | menu `:8594-8599`; item `:8524-8528` | 4-byte bump menu `:8596` / item `:8526`; `action` XString `:8449-8450` | recursive `next` `:8451-8456` (alloc `:8453`; tail rebind + walk `:8461-8463`) | — |
 | Menu | menu-level `visibleExp`/`rectXExp`/`rectYExp` statements | `Load_statement` ×3 | `:8601`, `:8607`, `:8609` | statement chain (two rows below) | — | — |
 | Menu | itemDef statements (`visibleExp`/`textExp`/`materialExp`/`rectXExp`/`rectYExp`/`rectWExp`/`rectHExp`/`forecolorAExp`) | `Load_statement` ×8 | `:8536-8551` | statement chain (next row) | — | — |
 | Menu | statement root — 8-byte (`entries` ptr + `numEntries`) | `Load_statement` (def `:8361-8370`) | non-null `entries` → arena alloc `:8366` + `Load_expressionEntry_ptrArray(1, numEntries)` `:8366-8368` | 4-byte token-array bump | — | span `ERR_DROP` `:51` |
 | Menu | `entries[numEntries]` token array → one 12-byte `expressionEntry` per non-null token | `Load_expressionEntry_ptrArray` (def `:8346-8359`) → `Load_expressionEntry_ptr` (def `:8335-8344`) | array stream `:8351`; per-entry arena alloc `:8340` + `Load_expressionEntry` `:8340-8342` | 4-byte bump per entry | — | — |
 | Menu | `expressionEntry->data` union | `Load_entryInternalData` (def `:8314-8326`) | `type != 0` → `Load_Operand` `:8316-8320`; `type == 0` → `Load_Operator` 4-byte `:8321-8325` | — | — | — |
 | Menu | `Operand` (8-byte) + `internals` union | `Load_Operand` (def `:8302-8307`) → `Load_operandInternalDataUnion` (def `:8277-8300`) | `VAL_FLOAT` → floatVal stream `:8281-8288`; **`VAL_STRING` → `Load_XString` zone C-string `:8289-8293`**; `0` → int stream `:8295-8299` | the `VAL_STRING` leaf is the expression chain's only pointer-bearing step | — | span `ERR_DROP` `:51` |
-| Menu | `items[itemCount]` (372-byte itemDef, 11 XStrings `:8502-8523`) | `Load_itemDef_ptrArray` (def `:8565`) → `Load_itemDef_t` (`:8499`) | `:8610-8615` | 4-byte bump `:8612` | sound alias `focusSound` `:8533`; `enableDvar` XString | — |
+| Menu | `items[itemCount]` (372-byte itemDef: `window` subwalk — shared row above, item call `:8500-8501`; 11 XStrings `:8502-8523`; per-item `onKey` subwalk — shared row above, item call `:8524-8528`; `enableDvar` `:8530`; `focusSound` `:8532-8533`; `typeData` + statements in the next two rows) | `Load_itemDef_ptrArray` (def `:8565`) → `Load_itemDef_t` (`:8499`) | `:8610-8615` | 4-byte bump `:8612` | sound alias `focusSound` `:8533` | — |
 | Menu | `typeData` dispatch by item type | `Load_itemDefData_t` (def `:8466-8495`): type 6 → listBox `:8470-8473`; types 4/9/0x10/0x12/0xB/0xE/0xA/0/0x11 → editField `:8474-8485`; type 0xC → multiDef `:8486-8489`; type 0xD → string `:8490-8493` | call `:8535` | per-type token arena allocs `:8386`, `:8402`, `:8422` | — | — |
 | Menu | listBox `typeData` → `listBoxDef_t` (340-byte) | `Load_listBoxDef_ptr` (def `:8381-8390`) → `Load_listBoxDef_t` (def `:8372-8379`) | arena alloc `:8386`; root `:8374` | **`doubleClick` XString `:8375-8376` (zone C-string); `selectIcon` `:8377-8378` material alias** | — | — |
 | Menu | editField `typeData` → `editFieldDef_s` (32-byte, plain) | `Load_editFieldDef_ptr` (def `:8397-8406`) → `Load_editFieldDef_t` (def `:8392-8395`) | arena alloc `:8402`; root `:8394` | **no nested pointers** | — | — |
@@ -1128,6 +1128,28 @@ explicitly listed gaps.
     (`Load_GfxSurface` → `Load_MaterialHandle`, `:4867-4871`) grouped rows as
     plain-stream/sub-alloc walkers with no additional hidden nested tokens.
     §10's GfxWorld row now credits the per-instance XModel tokens.
+- **Rework of review `cb1504f7` finding** (one P2 inventory correction;
+  citations re-verified against this head before each edit; the `31965d30`,
+  `e59c95d7`, `91337ca4`, and `b3cd8218` corrections are retained unchanged):
+  - §9.10's Menu `window` and `onKey` rows now cover **both** call sites of
+    the shared walkers, and the itemDef row cross-references the item-level
+    edges. `Load_Window` → `Load_windowDef_t` (`:8439`/`:8428`: 156-byte
+    stream `:8441`/`:8430`, name/group XStrings `:8431-8434`, background
+    material `:8435-8436`) is reached from `Load_menuDef_t` (`:8584-8585`)
+    *and* first from `Load_itemDef_t` for every `items[]` entry
+    (`varWindow = &varitemDef_t->window; Load_Window(0)`, `:8500-8501`) —
+    so item-specific backgrounds and names/groups are now enumerated. The
+    recursive `Load_ItemKeyHandler` chain (def `:8446`: 12-byte stream
+    `:8448`, `action` XString `:8449-8450`; recursive `next` alloc `:8453`
+    and tail `Load_ItemKeyHandlerNext` def `:8459`, rebind + walk
+    `:8461-8463`) is reached from `Load_menuDef_t` (`:8594-8599`, alloc
+    `:8596`) *and* per item (`if (varitemDef_t->onKey)` →
+    `AllocLoad_FxElemVisStateSample` → `Load_ItemKeyHandler(1)`,
+    `:8524-8528`) — so per-item key-handler chains are now enumerated. No
+    new walker, implementation, or test exists or is needed: these are the
+    same shared leaf walkers already documented, with menu and item call
+    sites kept distinguishable in the rows. The mark twins (`Mark_Window`,
+    `Mark_itemDef_t` `:8759`) remain outside §9.10's load-path scope.
 - **Criteria mapping.** Criterion 1 (exhaustive inventory): §9.0–§9.12
   enumerate every pointer-bearing subobject walk of all 33 registered
   families (26 dispatchable types + XModelPieces nested-only + the 6
