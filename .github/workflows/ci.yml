@@ -261,6 +261,7 @@ jobs:
           kisakcod-hudelem-sort-mp-tests
           kisakcod-hudelem-sort-sp-tests
           kisakcod-fx-physics-sidecar-production-seal-tests
+          kisakcod-voice-gate-tests
           --parallel
 
       - name: Enforce FX archive stack budgets

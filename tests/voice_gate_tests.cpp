@@ -39,6 +39,7 @@
 #include <cstring>
 #include <numeric>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -54,24 +55,25 @@ void check(bool condition, const char *message)
     }
 }
 
+constexpr char kHexDigits[] = "0123456789abcdef";
+
 std::string to_hex(const std::vector<char> &bytes)
 {
-    static const char *digits = "0123456789abcdef";
     std::string out;
     out.reserve(bytes.size() * 2);
     for (char c : bytes)
     {
         unsigned char u = static_cast<unsigned char>(c);
-        out.push_back(digits[u >> 4]);
-        out.push_back(digits[u & 0xF]);
+        out.push_back(kHexDigits[u >> 4]);
+        out.push_back(kHexDigits[u & 0xF]);
     }
     return out;
 }
 
-std::vector<char> from_hex(const char *hex)
+std::vector<char> from_hex(std::string_view hex)
 {
     std::vector<char> out;
-    const size_t n = std::strlen(hex);
+    const size_t n = hex.size();
     out.reserve(n / 2);
     for (size_t i = 0; i + 1 < n; i += 2)
     {
@@ -88,11 +90,14 @@ std::vector<char> from_hex(const char *hex)
 // ---------------------------------------------------------------------------
 // Deterministic test PCM (no rand()). The LCG is fixed-point and identical on
 // every target; the tone/chirp builders only use sinf on constant arguments.
+// The state is unsigned so the multiply wraparound is well-defined; the low
+// 32 bits of the sequence are identical to the two's-complement wrap the
+// golden vectors were generated with, so the pinned bytes are unchanged.
 // ---------------------------------------------------------------------------
-int32_t lcg_next(int32_t &state)
+uint32_t lcg_next(uint32_t &state)
 {
-    state = state * 1103515245 + 12345;
-    return (state >> 16) & 0x7FFF;
+    state = state * 1103515245u + 12345u;
+    return static_cast<int32_t>((state >> 16) & 0x7FFFu);
 }
 
 constexpr int kFrameNb = 160;   // narrowband frame at 8 kHz
@@ -111,7 +116,7 @@ void fill_sine(int16_t *pcm, int n, float freq, float rate, float scale)
         pcm[i] = static_cast<int16_t>(sinf(2.0f * 3.14159265f * freq * i / rate) * scale);
 }
 
-void fill_noise(int16_t *pcm, int n, int32_t seed)
+void fill_noise(int16_t *pcm, int n, uint32_t seed)
 {
     for (int i = 0; i < n; ++i)
         pcm[i] = static_cast<int16_t>(lcg_next(seed) - 16384);
@@ -279,7 +284,6 @@ std::vector<int16_t> decode_stream(const std::vector<char> &stream,
 // ---------------------------------------------------------------------------
 struct GoldenStream
 {
-    const char *id;
     int bandwidth_enum;
     int samplerate;
     int quality;
@@ -368,8 +372,8 @@ void test_mode_geometry()
 void test_golden_streams()
 {
     const GoldenStream goldens[] = {
-        {"nb", 0, kProductionSamplerate, kShippedVoiceQuality, kGoldenNbHex},
-        {"wb", 1, 16000, kShippedVoiceQuality, kGoldenWbHex},
+        {0, kProductionSamplerate, kShippedVoiceQuality, kGoldenNbHex},
+        {1, 16000, kShippedVoiceQuality, kGoldenWbHex},
     };
     for (const GoldenStream &golden : goldens)
     {
@@ -444,48 +448,27 @@ constexpr int kDecodeTolerance = 8; // recorded tolerance (measured max diff on
                                     // the generation build was 0 across the
                                     // stream; 8 absorbs libm ULP drift)
 // DTX comfort-noise frames decode from libc rand() (in-tree nb_celp.c
-// speex_rand_vec); their PCM is randomized by design. The gate only bounds
-// their amplitude, so the bound must sit above any legal comfort-noise level
-// while still catching runaway output. Recorded max on the generation build
-// was far below this bound.
+// speex_rand_vec; see misc.c:162 — it draws from the global libc PRNG). The
+// gate only bounds their amplitude, so the bound must sit above any legal
+// comfort-noise level while still catching runaway output. Recorded max on
+// the generation build was far below this bound.
 constexpr int kDtxAmplitudeBound = 6000;
 
-void test_decode_golden()
+// Frame-class-aware comparison against the pinned decode reference. DTX
+// frames (submode 0: sub-2-byte or a first byte whose nb submode nibble is 0)
+// decode to comfort noise generated from libc rand() (in-tree nb_celp.c
+// speex_rand_vec at the DTX branch) — randomized by design and identical in
+// spirit in the original binary codec; their wire bytes are deterministic but
+// their PCM is not. The gate pins DTX frames by sample count and amplitude
+// bound only, and pins every deterministic frame against the recorded
+// reference. Returns the max abs diff over deterministic frames; reports the
+// DTX frame count through *dtx_frames_out.
+int compare_decoded_to_reference(const std::vector<int16_t> &decoded,
+                                 const std::vector<char> &reference,
+                                 const std::vector<char> &stream,
+                                 const std::vector<int> &lengths,
+                                 int *dtx_frames_out)
 {
-    const std::vector<char> stream = from_hex(kGoldenNbHex);
-    const std::vector<char> reference = from_hex(kGoldenNbDecodeHex);
-    check(stream.size() % 2 == 0 && !stream.empty(), "golden nb stream is well-formed");
-
-    // Re-encode to recover the per-frame byte lengths the wire framing would
-    // carry; encoding is byte-identical to the golden stream (VOX-1a), so the
-    // lengths match the golden frames exactly.
-    std::vector<int> lengths;
-    const std::vector<char> reencoded = encode_stream(
-        0, kProductionSamplerate, kShippedVoiceQuality, nb_stream_frames(), &lengths);
-    check(to_hex(reencoded) == kGoldenNbHex, "re-encoded stream matches the golden hex");
-    check(static_cast<int>(stream.size()) ==
-              std::accumulate(lengths.begin(), lengths.end(), 0),
-          "frame lengths cover the golden stream exactly");
-
-    Decoder dec;
-    check(decoder_open(dec, 0, kProductionSamplerate), "decoder opens (nb)");
-    check(dec.frame_size == kFrameNb, "decoder frame geometry matches nb");
-    std::srand(1); // DTX comfort-noise frames consume libc rand(); fix the seed
-    const std::vector<int16_t> decoded = decode_stream(stream, lengths, dec);
-    decoder_close(dec);
-    check(decoded.size() == lengths.size() * static_cast<size_t>(kFrameNb),
-          "every golden nb frame decodes");
-
-    check(decoded.size() * 2 == reference.size(),
-          "VOX-1b: decoded sample count matches the pinned reference");
-
-    // Frame-class-aware pinning. DTX frames (submode 0: sub-2-byte or a first
-    // byte whose nb submode nibble is 0) decode to comfort noise generated
-    // from libc rand() (in-tree nb_celp.c speex_rand_vec at the DTX branch) —
-    // randomized by design and identical in spirit in the original binary
-    // codec; their wire bytes are deterministic but their PCM is not. The
-    // gate pins DTX frames by sample count and amplitude bound only, and
-    // pins every deterministic frame against the recorded reference.
     auto is_dtx_frame = [&stream](int frame_offset) {
         return frame_offset >= static_cast<int>(stream.size()) ||
                (static_cast<unsigned char>(stream[frame_offset]) & 0x78) == 0;
@@ -517,6 +500,48 @@ void test_decode_golden()
             ++dtx_frames;
         offset += lengths[f];
     }
+    *dtx_frames_out = dtx_frames;
+    return max_diff;
+}
+
+void test_decode_golden()
+{
+    const std::vector<char> stream = from_hex(kGoldenNbHex);
+    const std::vector<char> reference = from_hex(kGoldenNbDecodeHex);
+    check(stream.size() % 2 == 0 && !stream.empty(), "golden nb stream is well-formed");
+
+    // Re-encode to recover the per-frame byte lengths the wire framing would
+    // carry; encoding is byte-identical to the golden stream (VOX-1a), so the
+    // lengths match the golden frames exactly.
+    std::vector<int> lengths;
+    const std::vector<char> reencoded = encode_stream(
+        0, kProductionSamplerate, kShippedVoiceQuality, nb_stream_frames(), &lengths);
+    check(to_hex(reencoded) == kGoldenNbHex, "re-encoded stream matches the golden hex");
+    check(static_cast<int>(stream.size()) ==
+              std::accumulate(lengths.begin(), lengths.end(), 0),
+          "frame lengths cover the golden stream exactly");
+
+    Decoder dec;
+    check(decoder_open(dec, 0, kProductionSamplerate), "decoder opens (nb)");
+    check(dec.frame_size == kFrameNb, "decoder frame geometry matches nb");
+    // Codacy CWE-327 disposition (recorded evidence): srand(1) is
+    // deterministic test seeding, not a security primitive. The in-tree Speex
+    // 1.1.9 decoder generates DTX comfort-noise PCM from libc rand()
+    // (nb_celp.c DTX branch -> misc.c speex_rand_vec/speex_rand), so seeding
+    // the global libc PRNG is the only way to make the decoded stream
+    // reproducible; rand() here carries no secret and no cryptographic role.
+    std::srand(1);
+    const std::vector<int16_t> decoded = decode_stream(stream, lengths, dec);
+    decoder_close(dec);
+    check(decoded.size() == lengths.size() * static_cast<size_t>(kFrameNb),
+          "every golden nb frame decodes");
+
+    check(decoded.size() * 2 == reference.size(),
+          "VOX-1b: decoded sample count matches the pinned reference");
+
+    int dtx_frames = 0;
+    const int max_diff =
+        compare_decoded_to_reference(decoded, reference, stream, lengths, &dtx_frames);
     check(max_diff <= kDecodeTolerance,
           "VOX-1b: decoded PCM within the recorded tolerance");
     std::fprintf(stderr,
@@ -525,7 +550,7 @@ void test_decode_golden()
 
     // Determinism: decoding is a deterministic function of the bitstream and
     // the libc PRNG seed. DTX comfort noise consumes rand(); re-seeding makes
-    // repeated passes exactly comparable.
+    // repeated passes exactly comparable (same CWE-327 disposition as above).
     Decoder dec2;
     decoder_open(dec2, 0, kProductionSamplerate);
     std::srand(1);
@@ -644,8 +669,8 @@ void dump_goldens()
             decoder_open(dec, 0, samplerate);
             const std::vector<int16_t> pcm = decode_stream(encoded, lengths, dec);
             decoder_close(dec);
-            std::vector<char> pcm_bytes(pcm.size() * 2);
-            std::memcpy(pcm_bytes.data(), pcm.data(), pcm_bytes.size());
+            std::vector<char> pcm_bytes(pcm.size() * sizeof(int16_t));
+            std::memcpy(pcm_bytes.data(), pcm.data(), pcm.size() * sizeof(int16_t));
             std::printf("static const char *kGolden%sDecodeHex =\n    \"", id);
             std::fputs(to_hex(pcm_bytes).c_str(), stdout);
             std::printf("\";\n");

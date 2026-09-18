@@ -187,3 +187,30 @@ forbid_contains(_server "Decode_Sample(" "server decode exclusion survives mutat
 require_contains(_winvoice
     "data_len = Decode_Sample((char *)&data[v5], v3, out, g_frame_size);"
     "playback frame walk survives mutations")
+
+if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
+    foreach(_mutation IN ITEMS
+        download_talker_dropped
+        relay_cap_raised
+        client_size_bound_loosened
+        playback_fixed_stride
+        server_side_decode
+        mute_gate_bypassed)
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}"
+                "-DSOURCE_ROOT=${SOURCE_ROOT}"
+                "-DCONTRACT_MUTATION=${_mutation}"
+                -P "${CMAKE_CURRENT_LIST_FILE}"
+            RESULT_VARIABLE _mutation_result
+            OUTPUT_VARIABLE _mutation_stdout
+            ERROR_VARIABLE _mutation_stderr)
+        if(_mutation_result EQUAL 0)
+            message(STATUS "Mutation stdout: ${_mutation_stdout}")
+            message(STATUS "Mutation stderr: ${_mutation_stderr}")
+            message(FATAL_ERROR
+                "Voice framing contract accepted mutation: ${_mutation}")
+        endif()
+    endforeach()
+endif()
+
+message(STATUS "Voice framing source contract passed")

@@ -157,3 +157,28 @@ require_contains(_dedi
 require_contains(_dedi
     "if (_rel MATCHES \"^\\\\.\\\\./deps/(binklib|msslib)/\")"
     "proprietary dependency exclusion survives mutations")
+
+if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
+    foreach(_mutation IN ITEMS
+        init_unguarded
+        groupvoice_allowed_in_dedi
+        bink_allowed_in_dedi
+        sound_allowed_in_dedi)
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}"
+                "-DSOURCE_ROOT=${SOURCE_ROOT}"
+                "-DCONTRACT_MUTATION=${_mutation}"
+                -P "${CMAKE_CURRENT_LIST_FILE}"
+            RESULT_VARIABLE _mutation_result
+            OUTPUT_VARIABLE _mutation_stdout
+            ERROR_VARIABLE _mutation_stderr)
+        if(_mutation_result EQUAL 0)
+            message(STATUS "Mutation stdout: ${_mutation_stdout}")
+            message(STATUS "Mutation stderr: ${_mutation_stderr}")
+            message(FATAL_ERROR
+                "Null media gate contract accepted mutation: ${_mutation}")
+        endif()
+    endforeach()
+endif()
+
+message(STATUS "Null media gate source contract passed")

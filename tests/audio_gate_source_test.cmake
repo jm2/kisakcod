@@ -167,3 +167,30 @@ require_count(_decode "v5 = 2 * frame_size;" 1
 require_contains(_encode
     "if (sv_voiceQuality->current.integer != g_encoder_quality)"
     "quality sync survives mutations")
+
+if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
+    foreach(_mutation IN ITEMS
+        wideband_default
+        samplerate_changed
+        server_quality_default_changed
+        dtx_disabled
+        decode_silent_fix
+        quality_sync_inverted)
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}"
+                "-DSOURCE_ROOT=${SOURCE_ROOT}"
+                "-DCONTRACT_MUTATION=${_mutation}"
+                -P "${CMAKE_CURRENT_LIST_FILE}"
+            RESULT_VARIABLE _mutation_result
+            OUTPUT_VARIABLE _mutation_stdout
+            ERROR_VARIABLE _mutation_stderr)
+        if(_mutation_result EQUAL 0)
+            message(STATUS "Mutation stdout: ${_mutation_stdout}")
+            message(STATUS "Mutation stderr: ${_mutation_stderr}")
+            message(FATAL_ERROR
+                "Audio gate contract accepted mutation: ${_mutation}")
+        endif()
+    endforeach()
+endif()
+
+message(STATUS "Audio gate source contract passed")
