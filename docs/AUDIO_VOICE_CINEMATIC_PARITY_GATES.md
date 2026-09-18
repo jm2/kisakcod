@@ -217,9 +217,47 @@ because that active baseline cannot link on targets that lose the 32-bit
 | Subject | Coverage at this SHA |
 |---|---|
 | Sound | One focused CMake test, `tests/sound_dry_send_source_test.cmake`; no sound-loader runtime suite and no playback suite (`NATIVE_ASSET_CLOSURE_LEDGER.md` §4.4) |
-| Voice | **None** — no encode/decode, framing, or device-lifecycle tests |
-| Cinematics | **None** — no Bink decode/seek/A-V tests |
-| Null media | No dedicated null-media test |
+| Voice | Codec-level suite `tests/voice_gate_tests.cpp` (ctest `voice-codec-gate-contracts`): golden encode streams (nb/wb), per-frame-wire-length decode vs pinned reference, `srand(1)` determinism contract, DTX amplitude-bounded frames, lookahead-aligned round trip with pinned bounds, corrupt-frame rejection. Source contracts `tests/voice_framing_source_test.cmake` and `tests/audio_gate_source_test.cmake`. Still **no runtime device-lifecycle suite** (`AUD-*`/`VOX-*` runtime rows remain `not-implemented`) |
+| Cinematics | Source contract `tests/cinematic_gate_source_test.cmake` (Bink IO/error/mix-bin/texture-split pins). **No decode/seek/A-V runtime tests** |
+| Null media | Source contract `tests/null_media_gate_source_test.cmake` (`KISAK_DEDI_HEADLESS` init guards, dedicated source-list media and proprietary-dependency exclusions) |
+
+All source contracts self-verify via `CONTRACT_MUTATION` negative controls:
+each registered mutation is a plausible regression that the checks must
+reject; the clean script must pass first.
+
+### 2.6 Codec-level findings from the voice gate work (stage 2)
+
+These findings were measured against the vendored Speex 1.1.9 snapshot and
+cross-checked against upstream speex-1.2.1 (`-DFLOATING_POINT` build of
+`libspeex`, plus upstream `testenc` and lookahead probes). They characterize
+the codec we ship; wire bytes are unchanged.
+
+- **An earlier "snapshot produces garbage" suspicion is retracted.** An
+  unaligned PCM comparison made both the in-tree snapshot and upstream 1.2.1
+  look uncorrelated; the probe, not the codec, was wrong. Upstream `testenc`
+  reports SNR 4.5 dB on white noise (expected for a vocoder — noise is
+  incompressible) and 7.5 dB on a sine at quality 8.
+- **Narrowband encode has an 80-sample algorithmic lookahead**
+  (`SPEEX_GET_LOOKAHEAD`: encoder 80, decoder 0 in this snapshot). Any
+  decode-side PCM reference must align by the lookahead before comparing;
+  upstream's own `testenc` compensates with `skip_group_delay`.
+- **Decoder PCM is deterministic only given the libc PRNG seed.** DTX comfort
+  noise (`nb_celp.c` `speex_rand_vec`) and unstable-pitch concealment
+  (`speex_rand`) consume libc `rand()`. Two decoders in one process share the
+  stream; the gate seeds `srand(1)` per decode pass and bounds DTX frames by
+  amplitude only (`kDtxAmplitudeBound`).
+- **UWB encode segfaults in this snapshot** (stacked `sb_encode`). Production
+  never selects it: `win_voice.cpp` pins `g_current_bandwidth_setting = 0`
+  (narrowband only), enforced by the audio gate source contract.
+- **Round trip (8 kHz, quality 3, 440 Hz sine):** after 80-sample alignment,
+  steady-state mean abs diff ≈ 1.8k with a ≤ 4-sample transient at the
+  interframe seam (max ≈ 14.4k); the gate pins max ≤ 18000 / mean ≤ 3000 with
+  these values documented.
+- **Production `Decode_Sample` returns `2 * frame_size` samples**
+  (`v5 = 2 * frame_size`, `decode.cpp:77`) although `speex_decode` fills only
+  `frame_size` — retail day46 behavior, now pinned verbatim by the audio gate
+  with a forbid on a silent "fix" (`v5 = frame_size;`). Any correction needs a
+  §5/#122 compatibility analysis first.
 
 ## 3. Upstream OpenAL (PR #88) selective-reuse audit
 
@@ -375,8 +413,14 @@ requirements fully in force.
   is **not waived** — it is unproducible today and remains required once the
   blocker is removed.
 - **Not implemented:** there is no OpenAL (or other portable) backend, no
-  voice device abstraction layer, and no audio/voice/cinematic test suite
-  beyond `sound_dry_send_source_test.cmake`.
+  voice device abstraction layer, and no audio/voice/cinematic runtime test
+  suite. The stage-2 additions (codec gate + four source contracts, §2.5) are
+  build/CI-verifiable contracts, not runtime device or interop evidence.
+- **Codec findings are characterization, not certification** (§2.6): the
+  golden/round-trip/determinism results validate the vendored snapshot
+  against itself and against an upstream 1.2.1 build. They do not prove
+  interoperation with the original commercial binaries; that still requires
+  the #122 licensed reference evidence (VOX-8).
 - **Unresolved source finding:** the server's pre-game client→server reader
   (`SV_PreGameUserVoice`, two-byte `MSG_ReadShort` size) is **unmatched in this
   tree** — no effective fork client path emits a 16-bit pre-game size; every
