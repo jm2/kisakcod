@@ -396,7 +396,10 @@ void __cdecl CL_ParseWWWDownload(int localClientNum, msg_t *msg)
             }
             else
             {
-                I_strncpyz(legacyHacks.cl_downloadName, cls.downloadName,
+                // Parse-rejected URLs keep the masked form: the raw URL
+                // may carry user:pass@ credentials and the UI fallback
+                // must uphold the same invariant as every other surface.
+                I_strncpyz(legacyHacks.cl_downloadName, sanitizedUrl,
                     sizeof(legacyHacks.cl_downloadName));
             }
         }

@@ -105,6 +105,11 @@ void StageUrlParseCredentials()
     CheckString(url.user, "token", "url-user-only");
     CheckString(url.password, "", "url-user-only");
     Check(url.hasBasicAuth, "url-user-only");
+    Check(url.userLength == 5, "url-user-only");
+    // Regression: the password decode is skipped for token@host URLs, so
+    // the stale USER decode length must not leak into passwordLength (it
+    // over-read the empty password buffer into the Basic auth header).
+    Check(url.passwordLength == 0, "url-user-only");
 }
 
 void StageUrlParseFailures()
@@ -270,6 +275,28 @@ void StageRequestAuthFormat()
         "\r\n";
     Check(length == sizeof(expectedAuth) - 1, "request-auth");
     Check(std::memcmp(request, expectedAuth, length) == 0, "request-auth");
+
+    // Regression: userinfo without a password encodes the Basic pair as
+    // base64("token:") with nothing after it -- the skipped password
+    // decode must not leak the stale USER length into the header bytes.
+    Check(Dl_ParseRedirectUrl("http://token@cdn.example.com/f.map", &url)
+            == DlUrlStatus::Ok,
+        "request-auth-user-only");
+    Check(Dl_FormatGetRequest(url, request, sizeof(request), &length)
+            == DlRequestStatus::Ok,
+        "request-auth-user-only");
+    static const char expectedAuthUserOnly[] =
+        "GET /f.map HTTP/1.1\r\n"
+        "Host: cdn.example.com\r\n"
+        "User-Agent: ID_DOWNLOAD/1.0\r\n"
+        "Accept: */*\r\n"
+        "Authorization: Basic dG9rZW46\r\n"
+        "Connection: close\r\n"
+        "\r\n";
+    Check(length == sizeof(expectedAuthUserOnly) - 1,
+        "request-auth-user-only");
+    Check(std::memcmp(request, expectedAuthUserOnly, length) == 0,
+        "request-auth-user-only");
 
     // Contract rejections.
     Check(Dl_FormatGetRequest(url, nullptr, sizeof(request), &length)

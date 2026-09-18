@@ -227,11 +227,18 @@ bool StoreCredentials(const DlUrlPieces &pieces,
             sizeof(out->user), &storedLength))
         return false;
     out->userLength = static_cast<std::uint16_t>(storedLength);
-    if (pieces.passBegin
-        && !PercentDecode(pieces.passBegin, pieces.passLength, out->password,
-            sizeof(out->password), &storedLength))
-        return false;
-    out->passwordLength = static_cast<std::uint16_t>(storedLength);
+    // Userinfo without a password (token@host) skips the password decode;
+    // reset the scratch length and store it only inside the guarded branch
+    // so the stale USER decode length can never leak into passwordLength
+    // and over-read the empty password buffer in the Basic header.
+    storedLength = 0;
+    if (pieces.passBegin)
+    {
+        if (!PercentDecode(pieces.passBegin, pieces.passLength, out->password,
+                sizeof(out->password), &storedLength))
+            return false;
+        out->passwordLength = static_cast<std::uint16_t>(storedLength);
+    }
     out->hasBasicAuth = true;
     return true;
 }
