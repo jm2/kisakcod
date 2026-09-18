@@ -308,13 +308,23 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
   the client only, (SP, when resumed) saves. The separation MUST be
   evidenced independently per role: client results MUST NOT certify the
   dedicated server's writable paths or clean start, and vice versa.
-- **P1.2** The writable root MUST use the platform convention:
-  Windows `%APPDATA%`/`%LOCALAPPDATA%` (roaming for config, local for
-  cache/logs; if either variable is unset, empty, or set to a **relative**
+- **P1.2** The writable root MUST be the platform-convention base directory
+  joined with a product-role leaf: `KisakCOD-mp` for the MP client and
+  `KisakCOD-dedi` for the headless dedicated server, matching the shipped
+  binary stems (`KisakCOD-mp.exe`, `KisakCOD-dedi.exe`). Client and
+  dedicated-server state MUST NOT share one leaf; every path assertion in
+  this document compares the platform base **plus** the role leaf, and
+  artifacts of one role are never read from or written under the other
+  role's directories. Windows: config under `%APPDATA%\<role leaf>` and
+  cache/logs under `%LOCALAPPDATA%\<role leaf>` (roaming for config, local
+  for cache/logs; client `%APPDATA%\KisakCOD-mp`,
+  `%LOCALAPPDATA%\KisakCOD-mp`; if either variable is unset, empty, or set
+  to a **relative**
   path, the value is unusable as a root and the affected role roots
   MUST resolve through the Windows Known Folder API — `SHGetKnownFolderPath`
   with `FOLDERID_RoamingAppData` for config and `FOLDERID_LocalAppData` for
-  cache/logs — rather than by re-deriving the default `%USERPROFILE%\AppData`
+  cache/logs — **joined with the same role leaf**, rather than by
+  re-deriving the default `%USERPROFILE%\AppData`
   layout and rather than by resolving the variable's value against the
   current working directory, so a policy-redirected AppData location keeps
   working, the per-role split is preserved even in sessions where
@@ -322,18 +332,25 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
   accepted; if the applicable Known Folder lookup also fails, resolution
   MUST fail closed with an actionable diagnostic and MUST NOT fall back to
   writing under the install or retail data tree),
-  Linux `$XDG_CONFIG_HOME`/`$XDG_CACHE_HOME`/`$XDG_STATE_HOME`
-  (falling back to `~/.config`, `~/.cache`, `~/.local/state`; per the
+  Linux config under `$XDG_CONFIG_HOME/<role leaf>`, cache under
+  `$XDG_CACHE_HOME/<role leaf>`, state/logs under
+  `$XDG_STATE_HOME/<role leaf>` (per-role fallbacks `~/.config/<role leaf>`,
+  `~/.cache/<role leaf>`, `~/.local/state/<role leaf>` — client
+  `~/.config/KisakCOD-mp`, `~/.cache/KisakCOD-mp`,
+  `~/.local/state/KisakCOD-mp`, `-dedi` leaf for the server; per the
   [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/)
   each variable is honored only when it names an **absolute** path: an
-  **empty** value MUST be treated as unset (per-role default), a
-  **relative** value MUST be ignored as invalid (per-role default;
+  **empty** value MUST be treated as unset (per-role default base plus role
+  leaf), a
+  **relative** value MUST be ignored as invalid (per-role default base plus
+  role leaf;
   CWD-relative resolution MUST NOT be accepted), and if no usable root can
   be resolved (for example no determinable home directory), resolution MUST
   fail closed with an actionable diagnostic and MUST NOT fall back to
   writing under the install or retail data tree), macOS
-  config/state under `~/Library/Application Support`, cache under
-  `~/Library/Caches`, and logs under `~/Library/Logs`.
+  config/state under `~/Library/Application Support/<role leaf>`, cache
+  under `~/Library/Caches/<role leaf>`, and logs under
+  `~/Library/Logs/<role leaf>`.
 - **P1.3** The retail data root MUST be selectable (install path, `-basepath`,
   or equivalent) and MUST be validated read-only for engine-managed writes;
   failure to discover it MUST produce an actionable diagnostic, not a crash or
@@ -558,7 +575,7 @@ satisfy the row). No row is `pass`.
 
 | ID | Requirement | Procedure / harness | Platforms | Required evidence | Status |
 |---|---|---|---|---|---|
-| DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert each artifact lands in its **exact role-specific root** and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%`, cache and logs under `%LOCALAPPDATA%`; with `%APPDATA%` or `%LOCALAPPDATA%` unset, empty, or set to a **relative** path such as `relative\path`, the affected role roots MUST land where `SHGetKnownFolderPath` resolves `FOLDERID_RoamingAppData` (config) and `FOLDERID_LocalAppData` (cache/logs) with the per-role split preserved — the assertion is equality with the Known Folder API result, not with the default `%USERPROFILE%\AppData` layout and not with any CWD-relative resolution of the variable value, so a redirected session still passes and a default-layout re-derivation or CWD-relative root fails; when the applicable Known Folder lookup fails, launch MUST fail with an actionable diagnostic and no engine write under install/data. Linux: config under `$XDG_CONFIG_HOME` (fallback `~/.config`), cache under `$XDG_CACHE_HOME` (fallback `~/.cache`), state/logs under `$XDG_STATE_HOME` (fallback `~/.local/state`); for each XDG variable also assert the **empty** value (treated as unset → per-role default) and a **relative** value such as `relative/path` (ignored as invalid → per-role default), and that no such run writes under the install/data tree or resolves a CWD-relative root; when no usable root can be resolved, launch MUST fail with an actionable diagnostic and no install/data write. macOS: config/state under `~/Library/Application Support`, cache under `~/Library/Caches`, logs under `~/Library/Logs`. Repeat with each environment variable overridden, empty, set to a relative path, and unset, to assert the documented behavior for every case. Evidence is recorded independently for the **client** role and the **headless dedicated server** role on each OS: the server asserts the writable config/cache/log roots and clean-start diagnostics it actually produces, client results MUST NOT certify the dedicated server paths (or vice versa), and client-only profile/UI operations are not asserted on headless roles. A build that puts every artifact under one singular root (for example all of `%APPDATA%` or all of `$XDG_CONFIG_HOME`) MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log (per role) | planned |
+| DP-FS-01 | P1.1–P1.4 writable vs read-only layout | Launch with no config; assert each artifact lands in its **exact role-specific root** — the platform base directory plus the P1.2 product-role leaf — and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%\<role leaf>`, cache and logs under `%LOCALAPPDATA%\<role leaf>` (P1.2 leaves: `KisakCOD-mp` client, `KisakCOD-dedi` server); with `%APPDATA%` or `%LOCALAPPDATA%` unset, empty, or set to a **relative** path such as `relative\path`, the affected role roots MUST land at the `SHGetKnownFolderPath` result for `FOLDERID_RoamingAppData` (config) and `FOLDERID_LocalAppData` (cache/logs) **joined with the role leaf**, with the per-role split preserved — the assertion is equality with the Known Folder API result **plus the role leaf**, never equality with the bare Known Folder base, not with the default `%USERPROFILE%\AppData` layout and not with any CWD-relative resolution of the variable value, so a redirected session still passes and a base-only root, a default-layout re-derivation or a CWD-relative root fails; when the applicable Known Folder lookup fails, launch MUST fail with an actionable diagnostic and no engine write under install/data. Linux: config under `$XDG_CONFIG_HOME/<role leaf>` (fallback `~/.config/<role leaf>`), cache under `$XDG_CACHE_HOME/<role leaf>` (fallback `~/.cache/<role leaf>`), state/logs under `$XDG_STATE_HOME/<role leaf>` (fallback `~/.local/state/<role leaf>`), each asserted as base **plus** the P1.2 role leaf; for each XDG variable also assert the **empty** value (treated as unset → per-role default base plus role leaf) and a **relative** value such as `relative/path` (ignored as invalid → per-role default base plus role leaf), and that no such run writes under the install/data tree or resolves a CWD-relative root; when no usable root can be resolved, launch MUST fail with an actionable diagnostic and no install/data write. macOS: config/state under `~/Library/Application Support/<role leaf>`, cache under `~/Library/Caches/<role leaf>`, logs under `~/Library/Logs/<role leaf>` (base plus the P1.2 role leaf). Repeat with each environment variable overridden, empty, set to a relative path, and unset, to assert the documented behavior for every case. Evidence is recorded independently for the **client** role and the **headless dedicated server** role on each OS: the server asserts the writable config/cache/log roots and clean-start diagnostics it actually produces, client results MUST NOT certify the dedicated server paths (or vice versa), and client-only profile/UI operations are not asserted on headless roles. A build that puts every artifact under one singular base directory, or under one leaf shared by both roles (for example all of `%APPDATA%`, or all of `$XDG_CONFIG_HOME/KisakCOD-mp` including the dedicated server), MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log (per role) | planned |
 | DP-FS-02 | P2.1/P2.1a case-sensitive lookup | On a case-sensitive host, place a mixed-case asset and require exact-case resolution first; assert a folded fallback only under the P2.1a conditions (read-only retail/mod content, single unambiguous match) and assert fail-closed rejection on a case-only collision. A fallback not validated against a commercial reference stays unproven. | Linux | Linux test with retail-shaped fixture + commercial-reference result | partial |
 | DP-FS-03 | P2.2/P2.2a backend rejection **and** positive acceptance at the general path-accepting operations | Through a **production path-accepting operation** — `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`) and `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`) — assert **per platform** both negatives and positives. Win negatives: `..`, control/Win32-invalid bytes, reserved DOS device base names, trailing dot/space, over-long individual components, and a distinct component-count overflow case (more than `kMaximumPathComponents` = 256 short components, each individually legal, exercising the count guard in win32 `HasUnsafeRawComponent` — src/_platform/win32/sys_filesystem.cpp ~223 — so the row cannot pass if only the over-long-component check survives); fail closed with no effect. Linux/macOS negatives: invalid UTF-8, `..`, component-count overflow. Positives (all platforms): a well-formed absolute path under a configured/temp root succeeds, because these are general filesystem APIs rather than engine-relative gates; on Linux/macOS a DOS device base name such as `CON` is a valid filename and MUST NOT be rejected without contrary compatibility evidence; the compare/sort helpers remain non-validating. `TestFilteredCollectionAndPathHelpers` covers normalization/ordering only and cannot satisfy this row. | Win, Linux, macOS | CTest output at exact head | partial |
 | DP-FS-04 | P2.3 path-length bound | Build an over-length engine path and assert fail-closed with diagnostic, no truncation | Win, Linux, macOS | CTest output | partial |
@@ -752,8 +769,27 @@ authorized to change in the platform migration:
   Known Folder lookup also fails. This mirrors the XDG relative-value rule
   already defined for Linux; accepting a relative Windows value was rejected
   because a CWD-dependent writable root would make config/cache/log
-  locations depend on the launch directory and scatter per-user artifacts.
-  Documentation-only, no runtime behavior change.
+   locations depend on the launch directory and scatter per-user artifacts.
+   Documentation-only, no runtime behavior change.
+- Recorded reason for defining concrete product-role leaves in P1.2 and
+  base-plus-leaf equality in DP-FS-01: fresh requested review of PR #148 at
+  head `197a9412`
+  ([discussion_r4041583584](https://github.com/jm2/kisakcod/pull/148#discussion_r4041583584))
+  found that P1.2 and DP-FS-01 listed shared platform base directories
+  (`%APPDATA%`, `$XDG_CONFIG_HOME`, `~/Library/...`) with no stable
+  product/role leaf, and that DP-FS-01's Known Folder fallback asserted
+  equality with the bare `SHGetKnownFolderPath` result while claiming exact
+  role-specific roots, so two builds placing artifacts in different
+  subdirectories of the same base — or the client and the dedicated server
+  sharing one directory — could both pass. P1.2 now defines the
+  product-role leaves `KisakCOD-mp` (MP client) and `KisakCOD-dedi`
+  (headless dedicated server), matching the shipped binary stems, with
+  client/server state never sharing a leaf, and DP-FS-01's positive,
+  override, empty/unset, relative and Known Folder fallback assertions
+  compare the platform base **plus** the role leaf. Explicit
+  `fs_homepath`/`fs_basepath` override compatibility (P1.4) and the
+  fail-closed/no-install-write semantics are unchanged. Documentation-only,
+  no runtime behavior change.
 - The SDL migration must land behind the seam described here; do not reclassify
   an unimplemented window/input/filesystem behavior as "done" because a
   primitive compiles or a portable helper test passes.
