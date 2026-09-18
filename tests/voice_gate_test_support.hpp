@@ -83,14 +83,19 @@ inline std::vector<char> from_hex(std::string_view hex)
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic test PCM (no rand()). The LCG is fixed-point and identical on
-// every target; the tone/chirp builders only use sinf on constant arguments.
-// The state is unsigned so the multiply wraparound is well-defined; the low
-// 32 bits of the sequence are identical to the two's-complement wrap the
-// golden vectors were generated with, so the pinned bytes are unchanged.
-// The in-tree Speex comfort-noise generator (misc.c speex_rand_vec /
-// speex_rand) now draws from the same fixed-point LCG family instead of libc
-// rand(), so no libc randomness API remains anywhere in the decode path.
+// Deterministic test PCM (no rand(), no libm). Every builder below uses only
+// integer arithmetic, so the PCM — and therefore the pinned encoder bytes —
+// are identical on every host and toolchain. The tone/chirp builders draw
+// from a checked-in Q15 quarter-wave sine table with a fixed-point phase
+// accumulator (a libm sinf result can differ by an ULP between libm
+// implementations, which flips truncated samples near integer boundaries and
+// would break the byte-exact VOX-1a comparison on some hosts). The state is
+// unsigned so the multiply wraparound is well-defined; the low 32 bits of
+// the sequence are identical to the two's-complement wrap the golden vectors
+// were generated with, so the pinned bytes are unchanged. The in-tree Speex
+// comfort-noise generator (misc.c speex_rand_vec / speex_rand) now draws
+// from the same fixed-point LCG family instead of libc rand(), so no libc
+// randomness API remains anywhere in the decode path.
 // ---------------------------------------------------------------------------
 inline uint32_t lcg_next(uint32_t &state)
 {
@@ -102,16 +107,86 @@ constexpr int kFrameNb = 160;   // narrowband frame at 8 kHz
 constexpr int kFrameWb = 320;   // wideband frame at 16 kHz
 constexpr int kFrameUwb = 640;  // ultra-wideband frame at 32 kHz
 
+// Q15 quarter-wave sine table: kSineQ15[j] = round(32767*sin(2*pi*j/1024))
+// for j in [0,256] (a quarter cycle of 1024 phase steps). The full-wave
+// lookup folds the phase with the usual quadrant symmetry, so the one
+// checked-in table covers every phase deterministically.
+constexpr int16_t kSineQ15[257] = {
+    0, 201, 402, 603, 804, 1005,
+    1206, 1407, 1608, 1809, 2009, 2210,
+    2410, 2611, 2811, 3012, 3212, 3412,
+    3612, 3811, 4011, 4210, 4410, 4609,
+    4808, 5007, 5205, 5404, 5602, 5800,
+    5998, 6195, 6393, 6590, 6786, 6983,
+    7179, 7375, 7571, 7767, 7962, 8157,
+    8351, 8545, 8739, 8933, 9126, 9319,
+    9512, 9704, 9896, 10087, 10278, 10469,
+    10659, 10849, 11039, 11228, 11417, 11605,
+    11793, 11980, 12167, 12353, 12539, 12725,
+    12910, 13094, 13279, 13462, 13645, 13828,
+    14010, 14191, 14372, 14553, 14732, 14912,
+    15090, 15269, 15446, 15623, 15800, 15976,
+    16151, 16325, 16499, 16673, 16846, 17018,
+    17189, 17360, 17530, 17700, 17869, 18037,
+    18204, 18371, 18537, 18703, 18868, 19032,
+    19195, 19357, 19519, 19680, 19841, 20000,
+    20159, 20317, 20475, 20631, 20787, 20942,
+    21096, 21250, 21403, 21554, 21705, 21856,
+    22005, 22154, 22301, 22448, 22594, 22739,
+    22884, 23027, 23170, 23311, 23452, 23592,
+    23731, 23870, 24007, 24143, 24279, 24413,
+    24547, 24680, 24811, 24942, 25072, 25201,
+    25329, 25456, 25582, 25708, 25832, 25955,
+    26077, 26198, 26319, 26438, 26556, 26674,
+    26790, 26905, 27019, 27133, 27245, 27356,
+    27466, 27575, 27683, 27790, 27896, 28001,
+    28105, 28208, 28310, 28411, 28510, 28609,
+    28706, 28803, 28898, 28992, 29085, 29177,
+    29268, 29358, 29447, 29534, 29621, 29706,
+    29791, 29874, 29956, 30037, 30117, 30195,
+    30273, 30349, 30424, 30498, 30571, 30643,
+    30714, 30783, 30852, 30919, 30985, 31050,
+    31113, 31176, 31237, 31297, 31356, 31414,
+    31470, 31526, 31580, 31633, 31685, 31736,
+    31785, 31833, 31880, 31926, 31971, 32014,
+    32057, 32098, 32137, 32176, 32213, 32250,
+    32285, 32318, 32351, 32382, 32412, 32441,
+    32469, 32495, 32521, 32545, 32567, 32589,
+    32609, 32628, 32646, 32663, 32678, 32692,
+    32705, 32717, 32728, 32737, 32745, 32752,
+    32757, 32761, 32765, 32766, 32767
+};
+
+// Q15 sample of sin(2*pi*phase/1024) for any phase; pure integer folding.
+inline int sine_q15_at(int phase)
+{
+    const int j = phase & 0x3FF; // 1024-step cycle
+    if (j < 256)
+        return kSineQ15[j];
+    if (j < 512)
+        return kSineQ15[512 - j];
+    if (j < 768)
+        return -kSineQ15[j - 512];
+    return -kSineQ15[1024 - j];
+}
+
 inline void fill_silence(int16_t *pcm, int n)
 {
     for (int i = 0; i < n; ++i)
         pcm[i] = 0;
 }
 
-inline void fill_sine(int16_t *pcm, int n, float freq, float rate, float scale)
+// phase advances (freq/rate)*1024 steps per sample; all-integer, so the
+// PCM is a pure function of the arguments on every host.
+inline void fill_sine(int16_t *pcm, int n, int freq, int rate, int scale)
 {
+    int phase = 0;
+    const int step = (freq * 1024) / rate;
     for (int i = 0; i < n; ++i)
-        pcm[i] = static_cast<int16_t>(sinf(2.0f * 3.14159265f * freq * i / rate) * scale);
+    {
+        phase += step;
+        pcm[i] = static_cast<int16_t>((sine_q15_at(phase) * scale) >> 15);
+    }
 }
 
 inline void fill_noise(int16_t *pcm, int n, uint32_t seed)
@@ -120,13 +195,18 @@ inline void fill_noise(int16_t *pcm, int n, uint32_t seed)
         pcm[i] = static_cast<int16_t>(lcg_next(seed) - 16384);
 }
 
-inline void fill_chirp(int16_t *pcm, int n, float rate, float scale)
+// Integer chirp: instantaneous frequency sweeps 200..(200+sweep) Hz linearly
+// (Q8 phase accumulation) while the amplitude ramps scale..0 over n samples.
+inline void fill_chirp(int16_t *pcm, int n, int rate, int scale)
 {
+    int64_t phase_q8 = 0;
     for (int i = 0; i < n; ++i)
     {
-        float f = 200.0f + 1800.0f * static_cast<float>(i) / static_cast<float>(n);
+        const int f = 200 + (1800 * i) / n;
+        phase_q8 += (static_cast<int64_t>(f) * 1024 * 256) / rate;
+        const int64_t amp = static_cast<int64_t>(scale) * (n - i);
         pcm[i] = static_cast<int16_t>(
-            sinf(2.0f * 3.14159265f * f * i / rate) * scale * (1.0f - static_cast<float>(i) / n));
+            (sine_q15_at(static_cast<int>(phase_q8 >> 8)) * amp / n) >> 15);
     }
 }
 
@@ -278,9 +358,15 @@ inline std::vector<int16_t> decode_stream(const std::vector<char> &stream,
 
 // ---------------------------------------------------------------------------
 // Golden vectors (VOX-1a). Provenance: generated from this in-tree Speex
-// 1.1.9 build with --dump-goldens at worktree base 270dc9cf (polecat/ki-dkeb
-// stage-2 branch, September 2026). Never retail, never captured traffic.
-// Defined in tests/voice_gate_tests.cpp (single copy across the suite).
+// 1.1.9 build with --dump-goldens. Originally recorded at worktree base
+// 270dc9cf (polecat/ki-dkeb stage-2 branch, September 2026); regenerated
+// when the test PCM builders were replaced with integer-only fixed-point
+// sine/chirp synthesis (no libm sinf — a libm ULP difference between hosts
+// can flip truncated samples near integer boundaries and would break the
+// byte-exact encode comparison on some targets). The vectors are a function
+// of this tree's builders + encoder only. Never retail, never captured
+// traffic. Defined in tests/voice_gate_tests.cpp (single copy across the
+// suite).
 // ---------------------------------------------------------------------------
 struct GoldenStream
 {
@@ -310,17 +396,17 @@ inline std::vector<std::vector<int16_t>> nb_stream_frames()
     // reflect encoder state (VOX-1a pins the whole stream).
     std::vector<std::vector<int16_t>> frames;
     frames.emplace_back(kFrameNb, 0);
-    fill_sine(frames.back().data(), kFrameNb, 440.0f, 8000.0f, 12000.0f);
+    fill_sine(frames.back().data(), kFrameNb, 440, 8000, 12000);
     frames.emplace_back(kFrameNb, 0);
     fill_noise(frames.back().data(), kFrameNb, 0x1234);
     frames.emplace_back(kFrameNb, 0);
     fill_silence(frames.back().data(), kFrameNb);
     frames.emplace_back(kFrameNb, 0);
-    fill_chirp(frames.back().data(), kFrameNb, 8000.0f, 9000.0f);
+    fill_chirp(frames.back().data(), kFrameNb, 8000, 9000);
     frames.emplace_back(kFrameNb, 0);
     fill_square(frames.back().data(), kFrameNb, 8, 20000);
     frames.emplace_back(kFrameNb, 0);
-    fill_sine(frames.back().data(), kFrameNb, 1000.0f, 8000.0f, 6000.0f);
+    fill_sine(frames.back().data(), kFrameNb, 1000, 8000, 6000);
     return frames;
 }
 
@@ -328,7 +414,7 @@ inline std::vector<std::vector<int16_t>> wb_stream_frames()
 {
     std::vector<std::vector<int16_t>> frames;
     frames.emplace_back(kFrameWb, 0);
-    fill_sine(frames.back().data(), kFrameWb, 440.0f, 16000.0f, 12000.0f);
+    fill_sine(frames.back().data(), kFrameWb, 440, 16000, 12000);
     frames.emplace_back(kFrameWb, 0);
     fill_noise(frames.back().data(), kFrameWb, 0x1234);
     return frames;

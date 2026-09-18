@@ -1485,6 +1485,9 @@ int sb_decoder_ctl(void *state, int request, void *ptr)
             st->mem_sp[i]=0;
          for (i=0;i<QMF_ORDER;i++)
             st->g0_mem[i]=st->g1_mem[i]=0;
+         /* Deterministic noise synthesis restarts from the fixed seed (see
+            misc.c speex_rand_seeded). */
+         st->rand_state = 1u;
       }
       break;
    case SPEEX_SET_SUBMODE_ENCODING:

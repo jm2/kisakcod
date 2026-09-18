@@ -1953,6 +1953,9 @@ int nb_decoder_ctl(void *state, int request, void *ptr)
             st->excBuf[i]=0;
          for (i=0;i<st->frameSize;i++)
             st->inBuf[i] = 0;
+         /* Deterministic noise synthesis restarts from the fixed seed (see
+            misc.c speex_rand_seeded). */
+         st->rand_state = 1u;
       }
       break;
    case SPEEX_SET_SUBMODE_ENCODING:

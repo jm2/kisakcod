@@ -23,7 +23,8 @@ namespace voice_gate
 // decoder PCM within kDecodeTolerance per sample.
 constexpr int kDecodeTolerance = 8; // recorded tolerance (measured max diff on
                                     // the generation build was 0 across the
-                                    // stream; 8 absorbs libm ULP drift)
+                                    // stream; 8 absorbs residual
+                                    // cross-platform fixed-point drift)
 // Comfort-noise frames decode from the in-tree Speex noise synthesis (the
 // null-submode comfort-noise branch and the nb submode-1 vocoder noise
 // excitation via noise_codebook_unquant), which now draws from the
@@ -110,11 +111,21 @@ void test_decode_golden()
     check(dec.frame_size == kFrameNb, "decoder frame geometry matches nb");
     const std::vector<int16_t> decoded = decode_stream(stream, lengths, dec);
     decoder_close(dec);
-    check(decoded.size() == lengths.size() * static_cast<size_t>(kFrameNb),
-          "every golden nb frame decodes");
+    // decode_stream returns a short vector when a frame is truncated or a
+    // decode fails; stop before the reference comparison, which indexes the
+    // decoded samples frame-for-frame.
+    const bool decoded_all =
+        decoded.size() == lengths.size() * static_cast<size_t>(kFrameNb);
+    check(decoded_all, "every golden nb frame decodes");
+    if (!decoded_all)
+        return;
 
-    check(decoded.size() * 2 == reference.size(),
+    const bool reference_matches =
+        decoded.size() * 2 == reference.size();
+    check(reference_matches,
           "VOX-1b: decoded sample count matches the pinned reference");
+    if (!reference_matches)
+        return;
 
     int dtx_frames = 0;
     const int max_diff =
@@ -182,7 +193,7 @@ void test_round_trip_lossy_not_bitexact()
     // compared to the input stream offset by the lookahead.
     const int kEncoderLookahead = 80; // nb encoder SPEEX_GET_LOOKAHEAD
     std::vector<int16_t> frame(kFrameNb, 0);
-    fill_sine(frame.data(), kFrameNb, 440.0f, 8000.0f, 12000.0f);
+    fill_sine(frame.data(), kFrameNb, 440, 8000, 12000);
     std::vector<int> lengths;
     const std::vector<char> bytes = encode_stream(0, kProductionSamplerate, kShippedVoiceQuality,
                                                   {frame, frame}, &lengths);
@@ -193,6 +204,11 @@ void test_round_trip_lossy_not_bitexact()
     const std::vector<int16_t> decoded = decode_stream(bytes, lengths, dec);
     decoder_close(dec);
     check(decoded.size() == 2 * static_cast<size_t>(kFrameNb), "both frames decoded");
+    // decode_stream stops early on a failed decode; the alignment window
+    // below indexes decoded[sample] and divides by the compared count, so a
+    // short decode must stop this test before those run.
+    if (decoded.size() != 2 * static_cast<size_t>(kFrameNb))
+        return;
 
     int max_diff = 0;
     int64_t sum_abs = 0;
@@ -210,6 +226,11 @@ void test_round_trip_lossy_not_bitexact()
             max_diff = diff;
         sum_abs += diff;
         ++compared;
+    }
+    if (compared == 0)
+    {
+        check(false, "alignment window is empty");
+        return;
     }
     std::fprintf(stderr,
                  "note: aligned round-trip max diff %d, mean abs diff %lld over %d samples at input scale 12000\n",
