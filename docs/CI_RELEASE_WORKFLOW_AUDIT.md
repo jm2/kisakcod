@@ -370,10 +370,10 @@ Two remaining A12 gaps are addressed here rather than in a competing CI design:
   same clang ASan+UBSan configuration (the static
   `effectscore-effect-table-stack-usage` contract is intentionally not
   registered under sanitizer instrumentation, so it is the one test absent
-  there); the portable inventory has since grown to 238 tests, so those
+  there); the portable inventory has since grown to 239 tests, so those
   counts no longer describe the current suite. Re-measured on this
-  branch's rework head: `ctest` 238/238 under the portable Release gate,
-  with `ctest -N` discovery listing exactly the 238-inventory tests and
+  branch's rework head: `ctest` 239/239 under the portable Release gate,
+  with `ctest -N` discovery listing exactly the 239-inventory tests and
   the `--discovered-scope exact` manifest check passing; the ASan+UBSan
   count for the rework head is established by its hosted
   `portable-sanitizers` run rather than carried forward from the older

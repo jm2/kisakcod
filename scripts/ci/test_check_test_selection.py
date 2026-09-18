@@ -127,6 +127,19 @@ CASES: List[Case] = [
         executed="",
         enforce="1",
     ),
+    # Platform enforcement with --discovered omitted must be rejected as a
+    # usage error: the early "no discovery evidence requested" success path
+    # would otherwise let the advertised fail-closed enforcement mode pass
+    # on zero evidence.
+    Case(
+        "enforcement_without_discovery_flag_fails",
+        1,
+        inventory="A\nB\nC\nD\n",
+        selected="A\n",
+        excluded="B\treason-b\n",
+        absent="C\treason-c\nD\treason-d\n",
+        enforce="1",
+    ),
     # A discovered test that is in neither selected nor excluded must fail.
     Case(
         "unclassified_discovered_fails",

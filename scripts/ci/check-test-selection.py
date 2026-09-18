@@ -52,7 +52,10 @@
 # ``--enforce-platform-absence``
 #     Turns on the full profile invariants (selected must be discovered, absent
 #     must be undiscovered, excluded must be discovered, and discovery must equal
-#     selected plus excluded).  The POSIX reference leg intentionally omits this
+#     selected plus excluded).  Those invariants are proven from discovery
+#     evidence, so enforcement requires ``--absent`` and ``--discovered`` and
+#     refuses either combination without them rather than passing on zero
+#     evidence.  The POSIX reference leg intentionally omits this
 #     flag because it validates the cross-platform inventory, not one platform's
 #     registrations.
 #
@@ -346,13 +349,18 @@ def check_run_evidence(args: argparse.Namespace, inventory: Set[str],
                        absent: Set[str]) -> int:
     """Validate flag combinations and check discovery/execution evidence."""
     # Raises when the flags are mutually inconsistent (--executed without
-    # --discovered, platform enforcement without an --absent manifest);
-    # returns 0 when no discovery evidence was requested, otherwise the
-    # number of discovery/execution violations.
+    # --discovered, platform enforcement without an --absent manifest or
+    # without --discovered evidence); returns 0 when no discovery evidence
+    # was requested, otherwise the number of discovery/execution violations.
     if args.executed and not args.discovered:
         raise ValueError("--executed requires --discovered")
     if args.enforce_platform_absence and not args.absent:
         raise ValueError("--enforce-platform-absence requires --absent")
+    if args.enforce_platform_absence and not args.discovered:
+        # The platform profile invariants are exactly what --discovered
+        # exists to prove; letting enforcement pass on zero discovery
+        # evidence would silently make the mode vacuous.
+        raise ValueError("--enforce-platform-absence requires --discovered")
     if not args.discovered:
         return 0
     discovered = set(read_discovery(args.discovered))
