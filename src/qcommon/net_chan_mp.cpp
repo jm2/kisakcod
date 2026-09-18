@@ -12,6 +12,7 @@
 #include <universal/com_files.h>
 #include <server_mp/server_mp.h>
 #include <win32/win_net.h>
+#include "sys_socket.h"
 #ifndef KISAK_DEDI_HEADLESS
 #include <cgame_mp/cg_local_mp.h>
 #endif
@@ -1483,7 +1484,35 @@ int __cdecl NET_StringToAdr(char *s, netadr_t *a)
         port = v3;
         if (v3)
             *port++ = 0;
-        if (Sys_StringToAdr(base, a))
+        // Host-part dispatch. Two shapes stay on the legacy platform helper
+        // so their retail semantics are preserved exactly: 21-character
+        // IPX-format strings, and digit-leading numerics whose inet_addr
+        // rules accept partial forms (e.g. "a.b.c") that the portable
+        // literal parser rejects. Every other name resolves through the
+        // portable socket-service resolver, so production traffic no longer
+        // depends on the platform-specific legacy host-lookup path.
+        const size_t baseLength = strlen(base);
+        const bool legacyPlatformShape =
+            (baseLength == 21 && base[8] == '.')
+            || (base[0] >= '0' && base[0] <= '9');
+        bool resolved = false;
+        if (legacyPlatformShape)
+        {
+            resolved = Sys_StringToAdr(base, a) != 0;
+        }
+        else
+        {
+            SysSocketAddress socketAddress;
+            if (Sys_SocketResolveHost(base, 0, &socketAddress)
+                == SysSocketResolveStatus::Resolved)
+            {
+                a->type = NA_IP;
+                memcpy(a->ip, socketAddress.address, sizeof(a->ip));
+                a->port = 0;
+                resolved = true;
+            }
+        }
+        if (resolved)
         {
             if (a->ip[0] == 255 && a->ip[1] == 255 && a->ip[2] == 255 && a->ip[3] == 255)
             {
@@ -1505,10 +1534,7 @@ int __cdecl NET_StringToAdr(char *s, netadr_t *a)
                 return 1;
             }
         }
-        else
-        {
-            a->type = NA_BAD;
-            return 0;
-        }
+        a->type = NA_BAD;
+        return 0;
     }
 }
