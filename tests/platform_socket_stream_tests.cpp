@@ -21,6 +21,7 @@
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -77,13 +78,59 @@ public:
         return true;
     }
 
+    // Bounds a raw blocking wait so a pathological stall fails a check
+    // instead of hanging the suite past its CTest timeout.
+    static bool WaitReadable(int socket, int timeoutMilliseconds)
+    {
+#ifdef _WIN32
+        fd_set readable;
+        FD_ZERO(&readable);
+        FD_SET(socket, &readable);
+        timeval waitTimeout{};
+        waitTimeout.tv_sec = timeoutMilliseconds / 1000;
+        waitTimeout.tv_usec
+            = (timeoutMilliseconds % 1000) * 1000;
+        return ::select(socket + 1, &readable, nullptr, nullptr,
+                   &waitTimeout)
+            > 0;
+#else
+        pollfd waiting{};
+        waiting.fd = socket;
+        waiting.events = POLLIN;
+        return ::poll(&waiting, 1, timeoutMilliseconds) > 0;
+#endif
+    }
+
     // Blocks until the client connects. Safe: every stage connects before
     // calling this, so the accept cannot wait on anything but this
-    // process.
+    // process -- and the wait is bounded so a broken connect surfaces as
+    // a failed check rather than a hang.
     bool Accept()
     {
+        if (!WaitReadable(listenSocket, 5000))
+            return false;
         peerSocket = static_cast<int>(accept(listenSocket, nullptr, nullptr));
-        return peerSocket >= 0;
+        if (peerSocket < 0)
+            return false;
+        // Accepted sockets do not inherit the timeout options everywhere;
+        // bound the raw send/recv waits on the peer as well.
+#ifdef _WIN32
+        const DWORD waitMilliseconds = 5000;
+        setsockopt(peerSocket, SOL_SOCKET, SO_RCVTIMEO,
+            reinterpret_cast<const char *>(&waitMilliseconds),
+            sizeof(waitMilliseconds));
+        setsockopt(peerSocket, SOL_SOCKET, SO_SNDTIMEO,
+            reinterpret_cast<const char *>(&waitMilliseconds),
+            sizeof(waitMilliseconds));
+#else
+        timeval waitTimeout{};
+        waitTimeout.tv_sec = 5;
+        setsockopt(peerSocket, SOL_SOCKET, SO_RCVTIMEO, &waitTimeout,
+            sizeof(waitTimeout));
+        setsockopt(peerSocket, SOL_SOCKET, SO_SNDTIMEO, &waitTimeout,
+            sizeof(waitTimeout));
+#endif
+        return true;
     }
 
     bool SendAll(const char *data, std::uint32_t length) const
@@ -228,10 +275,12 @@ bool RunNonBlockingExchange(LoopbackListener &listener)
         return false;
     Check(sent <= sizeof(requestPart1) - 1, "stream-send-part1");
     std::uint32_t sentPart1 = sent;
-    if (sent < sizeof(requestPart1) - 1)
+    if (sentPart1 < sizeof(requestPart1) - 1)
     {
-        // Drained partially; push the remainder.
-        while (sentPart1 < sizeof(requestPart1) - 1)
+        // Drained partially; push the remainder. Bounded like every
+        // other pump in this harness.
+        bool part1Delivered = false;
+        for (int attempt = 0; attempt < 2000; ++attempt)
         {
             const SysSocketStreamSendStatus status = Sys_SocketSendStream(
                 client, requestPart1 + sentPart1,
@@ -245,7 +294,14 @@ bool RunNonBlockingExchange(LoopbackListener &listener)
             if (status != SysSocketStreamSendStatus::Sent)
                 return Check(false, "stream-send-retry");
             sentPart1 += sent;
+            if (sentPart1 >= sizeof(requestPart1) - 1)
+            {
+                part1Delivered = true;
+                break;
+            }
         }
+        if (!Check(part1Delivered, "stream-send-retry-bound"))
+            return false;
     }
     if (!Check(Sys_SocketSendStream(client, requestPart2,
                    static_cast<std::uint32_t>(sizeof(requestPart2) - 1),
@@ -255,8 +311,10 @@ bool RunNonBlockingExchange(LoopbackListener &listener)
         return false;
     if (sent < sizeof(requestPart2) - 1)
     {
+        // Bounded like the part-1 pump.
         std::uint32_t sentPart2 = sent;
-        while (sentPart2 < sizeof(requestPart2) - 1)
+        bool part2Delivered = false;
+        for (int attempt = 0; attempt < 2000; ++attempt)
         {
             const SysSocketStreamSendStatus status = Sys_SocketSendStream(
                 client, requestPart2 + sentPart2,
@@ -270,7 +328,14 @@ bool RunNonBlockingExchange(LoopbackListener &listener)
             if (status != SysSocketStreamSendStatus::Sent)
                 return Check(false, "stream-send-retry");
             sentPart2 += sent;
+            if (sentPart2 >= sizeof(requestPart2) - 1)
+            {
+                part2Delivered = true;
+                break;
+            }
         }
+        if (!Check(part2Delivered, "stream-send-retry-bound"))
+            return false;
     }
 
     // The listener received the exact bytes the client queued.
@@ -307,10 +372,12 @@ bool RunNonBlockingExchange(LoopbackListener &listener)
     listener.ClosePeer();
 
     // Read boundary: the first window must carry data exactly as sent,
-    // never more.
+    // never more. The wait is bounded like every other pump in this
+    // harness: a missing window is a contract failure, not a stall.
     char first[8]{};
     std::uint32_t firstLength = 0;
-    for (;;)
+    bool firstReceived = false;
+    for (int attempt = 0; attempt < 2000; ++attempt)
     {
         const SysSocketStreamRecvStatus status = Sys_SocketRecvStream(client,
             first, sizeof(first), &firstLength);
@@ -321,17 +388,23 @@ bool RunNonBlockingExchange(LoopbackListener &listener)
         }
         if (status != SysSocketStreamRecvStatus::Received)
             return Check(false, "stream-recv-first");
+        firstReceived = true;
         break;
     }
+    if (!Check(firstReceived, "stream-recv-first-bound"))
+        return false;
     Check(firstLength >= 1 && firstLength <= sizeof(first),
         "stream-recv-first");
     Check(std::memcmp(first, response, firstLength) == 0,
         "stream-recv-first");
 
     // Drain the rest until the peer's orderly shutdown surfaces as
-    // Disconnected.
+    // Disconnected. Bounded like the first-window pump: after the peer
+    // closed, the FIN must surface within the bound or the contract
+    // failed.
     bool sawRemainder = false;
-    for (;;)
+    bool sawDisconnect = false;
+    for (int attempt = 0; attempt < 2000; ++attempt)
     {
         char chunk[64];
         std::uint32_t chunkLength = 0;
@@ -348,9 +421,14 @@ bool RunNonBlockingExchange(LoopbackListener &listener)
             continue;
         }
         if (status == SysSocketStreamRecvStatus::Disconnected)
+        {
+            sawDisconnect = true;
             break;
+        }
         return Check(false, "stream-recv-disconnect");
     }
+    if (!Check(sawDisconnect, "stream-recv-disconnect-bound"))
+        return false;
     Check(sawRemainder, "stream-recv-disconnect");
 
     // The stream is finished; every further read reports Disconnected and
@@ -441,8 +519,10 @@ void StageNonBlockingExchange()
     LoopbackListener listener;
     if (!Check(listener.Start(), "listener-start"))
         return;
-    if (!RunNonBlockingExchange(listener))
-        return;
+    // Stop is unconditional: a failed exchange must not leak the raw
+    // listener descriptors into later stages. Check() already recorded
+    // the failing stage tag inside RunNonBlockingExchange.
+    RunNonBlockingExchange(listener);
     listener.Stop();
 }
 
