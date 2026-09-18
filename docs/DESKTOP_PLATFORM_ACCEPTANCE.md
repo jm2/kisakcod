@@ -350,20 +350,26 @@ change default input, gameplay, wire bytes or user-visible retail behavior.
   writing under the install or retail data tree), macOS
   config/state under `~/Library/Application Support/<role leaf>`, cache
   under `~/Library/Caches/<role leaf>`, and logs under
-  `~/Library/Logs/<role leaf>`, where `~` is the **trusted per-user
-  home**: the `getpwuid` home-directory result for the effective user
-  (what `NSHomeDirectory()` reports for a non-sandboxed process), not an
-  unvalidated read of `$HOME`; `$HOME` participates only as a validated
-  override, mirroring the per-variable matrix above — it is honored when
-  it names an **absolute** path, an **unset** or **empty** value selects
-  the trusted `getpwuid` home (per-role default base plus role leaf), a
-  **relative** value such as `relative/path` MUST be ignored as invalid
-  (trusted `getpwuid` home plus role leaf; CWD-relative resolution MUST
-  NOT be accepted), and if no usable home can be resolved (no passwd
-  entry for the effective user, or an empty/relative/unusable `pw_dir`),
-  resolution MUST fail closed with an actionable diagnostic and MUST NOT
-  fall back to writing under the install or retail data tree or the
-  current working directory.
+  `~/Library/Logs/<role leaf>`, where `~` resolves by fixed precedence
+  among two sources, mirroring the per-variable matrix above: (1) the
+  `$HOME` override — honored whenever it names an **absolute** path,
+  without requiring passwd resolution; (2) the **trusted per-user
+  home** — the `getpwuid` home-directory result for the effective user
+  (what `NSHomeDirectory()` reports for a non-sandboxed process), never
+  an unvalidated read of `$HOME` — consulted only when `$HOME` is
+  **unset** or **empty** (trusted `getpwuid` home plus role leaf) or
+  invalid, where a **relative** value such as `relative/path` MUST be
+  ignored as invalid (trusted `getpwuid` home plus role leaf;
+  CWD-relative resolution MUST NOT be accepted); and (3) fail-closed —
+  only when **neither** a usable absolute `$HOME` override **nor** a
+  usable `getpwuid` home can be resolved (no passwd entry for the
+  effective user, or an empty/relative/unusable `pw_dir`) MUST
+  resolution fail closed with an actionable diagnostic, and it MUST
+  NOT fall back to writing under the install or retail data tree or
+  the current working directory. A valid absolute `$HOME` override
+  therefore remains effective even when the passwd lookup fails or its
+  `pw_dir` is unusable — the two sources are alternatives, never
+  cumulative requirements.
 - **P1.3** The retail data root MUST be selectable (install path, `-basepath`,
   or equivalent) and MUST be validated read-only for engine-managed writes;
   failure to discover it MUST produce an actionable diagnostic, not a crash or
@@ -592,7 +598,7 @@ satisfy the row). No row is `pass`.
 
 | ID | Requirement | Procedure / harness | Platforms | Required evidence | Status |
 |---|---|---|---|---|---|
-| DP-FS-01 | P1.1–P1.2 writable vs read-only layout (P1.3 retail-root selection/discovery-failure and P1.4 explicit-override cases: DP-FS-08) | Launch with no config; assert each artifact lands in its **exact role-specific root** — the platform base directory plus the P1.2 product-role leaf — and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%\<role leaf>`, cache and logs under `%LOCALAPPDATA%\<role leaf>` (P1.2 leaves: `KisakCOD-mp` client, `KisakCOD-dedi` server); with `%APPDATA%` or `%LOCALAPPDATA%` unset, empty, or set to a **relative** path such as `relative\path`, the affected role roots MUST land at the `SHGetKnownFolderPath` result for `FOLDERID_RoamingAppData` (config) and `FOLDERID_LocalAppData` (cache/logs) **joined with the role leaf**, with the per-role split preserved — the assertion is equality with the Known Folder API result **plus the role leaf**, never equality with the bare Known Folder base, not with the default `%USERPROFILE%\AppData` layout and not with any CWD-relative resolution of the variable value, so a redirected session still passes and a base-only root, a default-layout re-derivation or a CWD-relative root fails; when the applicable Known Folder lookup fails, launch MUST fail with an actionable diagnostic and no engine write under install/data. Linux: config under `$XDG_CONFIG_HOME/<role leaf>` (fallback `~/.config/<role leaf>`), cache under `$XDG_CACHE_HOME/<role leaf>` (fallback `~/.cache/<role leaf>`), state/logs under `$XDG_STATE_HOME/<role leaf>` (fallback `~/.local/state/<role leaf>`), each asserted as base **plus** the P1.2 role leaf; for each XDG variable also assert the **empty** value (treated as unset → per-role default base plus role leaf) and a **relative** value such as `relative/path` (ignored as invalid → per-role default base plus role leaf), and that no such run writes under the install/data tree or resolves a CWD-relative root; when no usable root can be resolved, launch MUST fail with an actionable diagnostic and no install/data write. macOS: config/state under `~/Library/Application Support/<role leaf>`, cache under `~/Library/Caches/<role leaf>`, logs under `~/Library/Logs/<role leaf>` (base plus the P1.2 role leaf), where `~` is the trusted per-user home — the `getpwuid` home-directory result for the effective user; with `HOME` unset or **empty**, the affected macOS role roots MUST land at the trusted `getpwuid` home **joined with the role leaf**; with `HOME` set to a **relative** path such as `relative/path`, the value MUST be ignored as invalid and the role roots MUST land at the trusted `getpwuid` home **plus the role leaf** — never a CWD-relative resolution of the variable value; when no usable home can be resolved, launch MUST fail with an actionable diagnostic and no install/data or CWD write. Repeat with each environment variable overridden, empty, set to a relative path, and unset, to assert the documented behavior for every case. Evidence is recorded independently for the **client** role and the **headless dedicated server** role on each OS, including each OS's per-variable override/empty/relative/unset matrix (`%APPDATA%`/`%LOCALAPPDATA%`, the XDG variables, and macOS `HOME`): the server asserts the writable config/cache/log roots and clean-start diagnostics it actually produces, client results MUST NOT certify the dedicated server paths (or vice versa), and client-only profile/UI operations are not asserted on headless roles. A build that puts every artifact under one singular base directory, or under one leaf shared by both roles (for example all of `%APPDATA%`, or all of `$XDG_CONFIG_HOME/KisakCOD-mp` including the dedicated server), MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log (per role) | planned |
+| DP-FS-01 | P1.1–P1.2 writable vs read-only layout (P1.3 retail-root selection/discovery-failure and P1.4 explicit-override cases: DP-FS-08) | Launch with no config; assert each artifact lands in its **exact role-specific root** — the platform base directory plus the P1.2 product-role leaf — and retail data is read from the read-only root, with no engine write under install/data. Windows: config under `%APPDATA%\<role leaf>`, cache and logs under `%LOCALAPPDATA%\<role leaf>` (P1.2 leaves: `KisakCOD-mp` client, `KisakCOD-dedi` server); with `%APPDATA%` or `%LOCALAPPDATA%` unset, empty, or set to a **relative** path such as `relative\path`, the affected role roots MUST land at the `SHGetKnownFolderPath` result for `FOLDERID_RoamingAppData` (config) and `FOLDERID_LocalAppData` (cache/logs) **joined with the role leaf**, with the per-role split preserved — the assertion is equality with the Known Folder API result **plus the role leaf**, never equality with the bare Known Folder base, not with the default `%USERPROFILE%\AppData` layout and not with any CWD-relative resolution of the variable value, so a redirected session still passes and a base-only root, a default-layout re-derivation or a CWD-relative root fails; when the applicable Known Folder lookup fails, launch MUST fail with an actionable diagnostic and no engine write under install/data. Linux: config under `$XDG_CONFIG_HOME/<role leaf>` (fallback `~/.config/<role leaf>`), cache under `$XDG_CACHE_HOME/<role leaf>` (fallback `~/.cache/<role leaf>`), state/logs under `$XDG_STATE_HOME/<role leaf>` (fallback `~/.local/state/<role leaf>`), each asserted as base **plus** the P1.2 role leaf; for each XDG variable also assert the **empty** value (treated as unset → per-role default base plus role leaf) and a **relative** value such as `relative/path` (ignored as invalid → per-role default base plus role leaf), and that no such run writes under the install/data tree or resolves a CWD-relative root; when no usable root can be resolved, launch MUST fail with an actionable diagnostic and no install/data write. macOS: config/state under `~/Library/Application Support/<role leaf>`, cache under `~/Library/Caches/<role leaf>`, logs under `~/Library/Logs/<role leaf>` (base plus the P1.2 role leaf), where `~` follows the P1.2 fixed precedence; with `HOME` set to a **valid absolute** path, the affected macOS role roots MUST land at that absolute path **joined with the role leaf** — asserted even when the passwd lookup fails or its `pw_dir` is unusable, since the override never requires passwd resolution; with `HOME` unset or **empty**, the affected macOS role roots MUST land at the trusted `getpwuid` home **joined with the role leaf**; with `HOME` set to a **relative** path such as `relative/path`, the value MUST be ignored as invalid and the role roots MUST land at the trusted `getpwuid` home **plus the role leaf** — never a CWD-relative resolution of the variable value; and launch MUST fail with an actionable diagnostic and no install/data or CWD write only when **neither** a usable absolute `HOME` override **nor** a usable `getpwuid` home can be resolved (no passwd entry for the effective user, or an empty/relative/unusable `pw_dir`). Repeat with each environment variable overridden, empty, set to a relative path, and unset, to assert the documented behavior for every case. Evidence is recorded independently for the **client** role and the **headless dedicated server** role on each OS, including each OS's per-variable override/empty/relative/unset matrix (`%APPDATA%`/`%LOCALAPPDATA%`, the XDG variables, and macOS `HOME`): the server asserts the writable config/cache/log roots and clean-start diagnostics it actually produces, client results MUST NOT certify the dedicated server paths (or vice versa), and client-only profile/UI operations are not asserted on headless roles. A build that puts every artifact under one singular base directory, or under one leaf shared by both roles (for example all of `%APPDATA%`, or all of `$XDG_CONFIG_HOME/KisakCOD-mp` including the dedicated server), MUST fail this row. | Win, Linux, macOS | New `platform_paths_tests` + clean-install image log (per role) | planned |
 | DP-FS-02 | P2.1/P2.1a case-sensitive lookup | On a case-sensitive host, place a mixed-case asset and require exact-case resolution first; assert a folded fallback only under the P2.1a conditions (read-only retail/mod content, single unambiguous match) and assert fail-closed rejection on a case-only collision. A fallback not validated against a commercial reference stays unproven. | Linux | Linux test with retail-shaped fixture + commercial-reference result | partial |
 | DP-FS-03 | P2.2/P2.2a backend rejection **and** positive acceptance at the general path-accepting operations | Through a **production path-accepting operation** — `Sys_FileSystemCreateDirectory` (via `Sys_Mkdir`) and `Sys_FileSystemListDirectory[Filtered]` (via `Sys_ListFiles`) — assert **per platform** both negatives and positives. Win negatives: `..`, control/Win32-invalid bytes, reserved DOS device base names, trailing dot/space, over-long individual components, and a distinct component-count overflow case (more than `kMaximumPathComponents` = 256 short components, each individually legal, exercising the count guard in win32 `HasUnsafeRawComponent` — src/_platform/win32/sys_filesystem.cpp ~223 — so the row cannot pass if only the over-long-component check survives); fail closed with no effect. Linux/macOS negatives: invalid UTF-8, `..`, component-count overflow. Positives (all platforms): a well-formed absolute path under a configured/temp root succeeds, because these are general filesystem APIs rather than engine-relative gates; on Linux/macOS a DOS device base name such as `CON` is a valid filename and MUST NOT be rejected without contrary compatibility evidence; the compare/sort helpers remain non-validating. `TestFilteredCollectionAndPathHelpers` covers normalization/ordering only and cannot satisfy this row. | Win, Linux, macOS | CTest output at exact head | partial |
 | DP-FS-04 | P2.3 path-length bound | Build an over-length engine path and assert fail-closed with diagnostic, no truncation | Win, Linux, macOS | CTest output | partial |
@@ -850,6 +856,23 @@ authorized to change in the platform migration:
   macOS `HOME` matrix as base-plus-role-leaf equality within the existing
   per-role client/headless evidence requirement. Documentation-only, no
   runtime behavior change.
+- Recorded reason for the macOS `$HOME`/passwd precedence clarification
+  (P1.2, DP-FS-01): fresh requested review of PR #148 at head `72313840`
+  ([discussion_r4049675298](https://github.com/jm2/kisakcod/pull/148#discussion_r4049675298))
+  found a precedence ambiguity: P1.2 required honoring a valid absolute
+  `$HOME` override and separately required fail-closed resolution when
+  the passwd lookup fails (no entry, or an unusable `pw_dir`), so when
+  both applied — a valid absolute override AND an unresolvable passwd
+  home — the clauses demanded conflicting outcomes and DP-FS-01 could
+  not determine whether the combined case uses the override or rejects
+  launch. P1.2 now fixes one precedence, consistent with the Windows
+  clause: a valid absolute `$HOME` override is honored without
+  requiring passwd resolution, `getpwuid` is consulted only when the
+  override is unset, empty or invalid, and fail-closed applies only
+  when neither a usable absolute override nor a usable `getpwuid` home
+  resolves; DP-FS-01 adds the combined override-with-failed-passwd case
+  to the matrix (role roots at the override joined with the role leaf).
+  Documentation-only, no runtime behavior change.
 - The SDL migration must land behind the seam described here; do not reclassify
   an unimplemented window/input/filesystem behavior as "done" because a
   primitive compiles or a portable helper test passes.
