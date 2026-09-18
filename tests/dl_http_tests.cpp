@@ -276,9 +276,37 @@ void StageRequestAuthFormat()
     Check(length == sizeof(expectedAuth) - 1, "request-auth");
     Check(std::memcmp(request, expectedAuth, length) == 0, "request-auth");
 
-    // Regression: userinfo without a password encodes the Basic pair as
-    // base64("token:") with nothing after it -- the skipped password
-    // decode must not leak the stale USER length into the header bytes.
+    // Contract rejections.
+    Check(Dl_FormatGetRequest(url, nullptr, sizeof(request), &length)
+            == DlRequestStatus::InvalidArgument,
+        "request-null-buffer");
+    Check(Dl_FormatGetRequest(url, request, sizeof(request), nullptr)
+            == DlRequestStatus::InvalidArgument,
+        "request-null-length");
+    DlRedirectUrl broken{};
+    Check(Dl_FormatGetRequest(broken, request, sizeof(request), &length)
+            == DlRequestStatus::InvalidArgument,
+        "request-unparsed-url");
+    Check(Dl_FormatGetRequest(url, request, 16, &length)
+            == DlRequestStatus::TooLong,
+        "request-too-long");
+}
+
+// Regression: userinfo without a password encodes the Basic pair as
+// base64("token:") with nothing after it -- the skipped password decode
+// must not leak the stale USER length into the header bytes. The stale
+// state lives in the reused DlRedirectUrl, so the user:pass parse below
+// recreates the carryover precondition before the token-only parse.
+void StageRequestAuthUserOnlyFormat()
+{
+    char request[2048];
+    std::uint32_t length = 0;
+
+    DlRedirectUrl url{};
+    Check(Dl_ParseRedirectUrl("http://user:pass@cdn.example.com/f.map",
+              &url)
+            == DlUrlStatus::Ok,
+        "request-auth-user-only-setup");
     Check(Dl_ParseRedirectUrl("http://token@cdn.example.com/f.map", &url)
             == DlUrlStatus::Ok,
         "request-auth-user-only");
@@ -297,21 +325,6 @@ void StageRequestAuthFormat()
         "request-auth-user-only");
     Check(std::memcmp(request, expectedAuthUserOnly, length) == 0,
         "request-auth-user-only");
-
-    // Contract rejections.
-    Check(Dl_FormatGetRequest(url, nullptr, sizeof(request), &length)
-            == DlRequestStatus::InvalidArgument,
-        "request-null-buffer");
-    Check(Dl_FormatGetRequest(url, request, sizeof(request), nullptr)
-            == DlRequestStatus::InvalidArgument,
-        "request-null-length");
-    DlRedirectUrl broken{};
-    Check(Dl_FormatGetRequest(broken, request, sizeof(request), &length)
-            == DlRequestStatus::InvalidArgument,
-        "request-unparsed-url");
-    Check(Dl_FormatGetRequest(url, request, 16, &length)
-            == DlRequestStatus::TooLong,
-        "request-too-long");
 }
 
 void StageHeadParseComplete()
@@ -472,6 +485,7 @@ int main()
     StageUrlParseBounds();
     StageRequestFormat();
     StageRequestAuthFormat();
+    StageRequestAuthUserOnlyFormat();
     StageHeadParseComplete();
     StageHeadParseIncremental();
     StageHeadParseHeaders();
