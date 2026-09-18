@@ -281,18 +281,22 @@ const NetFieldList *__cdecl MSG_GetStateFieldListForEntityType(int)
 
 // q_shared.cpp: rotating static buffers. Mirrors the production shape (two
 // 1024-byte slots, round-robin) minus the Sys_GetValue thread-context
-// plumbing the tests do not link.
+// plumbing the tests do not link. The two slots live at file scope instead
+// of as function-local statics (Codacy local-static finding on this new test
+// code): static storage at TU level, same two-slot round-robin, identical
+// behavior — only the declaration location changed.
+static char va_buffers[2][1024];
+static int va_buffer_index = 0;
+
 char *QDECL va(const char *format, ...)
 {
-    static char buffers[2][1024];
-    static int index = 0;
-    char *const buf = buffers[index];
-    index = (index + 1) % 2;
+    char *const buf = va_buffers[va_buffer_index];
+    va_buffer_index = (va_buffer_index + 1) % 2;
 
     va_list args;
     va_start(args, format);
     // Flawfinder: ignore -- passthrough shim; production callers own the literal format and buffer size.
-    std::vsnprintf(buf, sizeof(buffers[0]), format, args);
+    std::vsnprintf(buf, sizeof(va_buffers[0]), format, args);
     va_end(args);
     return buf;
 }
