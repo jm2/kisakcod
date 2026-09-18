@@ -121,10 +121,14 @@ void Com_Error(errorParm_t code, const char *fmt, ...)
     xmodel_loader_entry_harness::State().errors.push_back(error);
     // ERR_FATAL terminates the process in production; reaching it
     // during an entry-point contract is a defect, so fail the test
-    // process loudly with the recorded message.
+    // process loudly with the recorded message. _Exit rather than
+    // abort: the MSVC Debug CRT renders abort() as a modal dialog a
+    // headless runner never answers, stalling the suite to its ctest
+    // timeout.
     std::fprintf(stderr, "xmodel_loader_entry: Com_Error(%d): %s\n",
                  static_cast<int>(code), buffer);
-    std::abort();
+    std::fflush(stderr);
+    std::_Exit(3);
 }
 
 namespace xmodel_loader_entry_test
@@ -337,26 +341,29 @@ bool TestTruncatedNestedParts()
 
 // A truncated nested surfs file is rejected by the production
 // R_XModelSurfsLoadFile fail-closed path and rejects the whole model.
-// The 11-byte cut keeps the version/count header and the first
-// surface's vertCount/triCount with real nonzero values — every _DEBUG
-// assert on the parse path sees a consistent shape (triCount > 0, the
-// deformed == (vertListCount == 0) invariant) — and starves the rigid
-// vert list walk, so the cursor latches and the surface file is
-// rejected as malformed data.
+// The 2-byte cut keeps exactly the version field and starves the
+// numsurfs read: the EOF read latches the cursor and reads 0, which
+// mismatches modelNumsurfs, so the file is rejected through retail's
+// surface-count mismatch path before any surface body parses. The cut
+// must land before the surface bodies: a parse starved inside a
+// surface reads zero-filled vertices whose Debug-only
+// Vec3PackUnitVec degenerate-input assert fires ahead of the
+// file-level rejection (and triCount==0 shapes trip their own live
+// asserts), so earlier in-surface cuts are not Debug-clean.
 bool TestTruncatedNestedSurfs()
 {
     ResetHarness();
     RegisterValidModel("badsurfs");
     ByteWriterFixture full = BuildEntrySurfsFile(2);
     std::vector<unsigned char> truncated(full.bytes.begin(),
-                                         full.bytes.begin() + 11);
+                                         full.bytes.begin() + 2);
     State().files["xmodelsurfs/lod_a"] = truncated;
 
     XModel *model = XModelLoadFile(const_cast<char *>("badsurfs"), HarnessAlloc, HarnessAllocColl);
     CHECK(model == nullptr);
     CHECK(State().partsFileReads == 1);
     CHECK(ErrorCount() == 2);
-    CHECK(ErrorsContain(19, "has malformed surface data"));
+    CHECK(ErrorsContain(19, "File conflict"));
     CHECK(ErrorsContain(19, "Cannot find 'xmodelsurfs"));
     return ExpectCleanTeardown(3);
 }

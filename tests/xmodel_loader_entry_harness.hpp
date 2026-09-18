@@ -324,14 +324,25 @@ inline void RegisterValidModel(const char *name)
 
 void MyAssertHandler(const char *filename, int line, int type, const char *fmt, ...)
 {
-    (void)filename;
-    (void)line;
     (void)type;
-    (void)fmt;
+    char message[1024];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(message, sizeof(message), fmt, args);
+    va_end(args);
     // Any production assert firing during an entry-point contract is a
-    // defect: fail the test process loudly instead of continuing.
-    std::fprintf(stderr, "xmodel_loader_entry: production assert fired\n");
-    std::abort();
+    // defect: fail the test process loudly instead of continuing. The
+    // message carries the assert site so a failing run points straight
+    // at the violated invariant.
+    std::fprintf(stderr, "xmodel_loader_entry: production assert fired at %s:%d: %s\n",
+                 filename, line, message);
+    std::fflush(stderr);
+    // _Exit instead of abort: the MSVC Debug CRT turns abort() into a
+    // modal report dialog that a headless CI runner never answers — the
+    // process sat through the full ctest timeout (1500 s) with the
+    // failure invisible. _Exit terminates deterministically on every
+    // configuration, keeping the nonzero exit code and flushed output.
+    std::_Exit(3);
 }
 
 void track_static_alloc_internal(void *ptr, int size, const char *name, int type)
