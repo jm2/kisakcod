@@ -157,6 +157,29 @@ bool SplitUserInfo(const char *const authority,
     return true;
 }
 
+// Parses the 1..5 decimal digits following `colon` into a 16-bit port.
+// False on a non-digit, an out-of-range digit count, or a value above
+// 65535.
+bool ParsePortDigits(const char *const colon,
+    const std::uint32_t digits,
+    std::uint16_t *const outPort) noexcept
+{
+    if (digits == 0 || digits > 5)
+        return false;
+    unsigned value = 0;
+    for (std::uint32_t index = 1; index <= digits; ++index)
+    {
+        const char digit = colon[index];
+        if (digit < '0' || digit > '9')
+            return false;
+        value = value * 10u + static_cast<unsigned>(digit - '0');
+    }
+    if (value > 65535u)
+        return false;
+    *outPort = static_cast<std::uint16_t>(value);
+    return true;
+}
+
 // Parses an optional trailing ':port' (decimal, 1..5 digits) and trims it
 // from the host span. False on a malformed or out-of-range port or an
 // empty host.
@@ -177,19 +200,8 @@ bool SplitHostPort(DlUrlPieces *const pieces,
     {
         const std::uint32_t digits = pieces->hostLength
             - static_cast<std::uint32_t>(colon - pieces->hostBegin) - 1;
-        if (digits == 0 || digits > 5)
+        if (!ParsePortDigits(colon, digits, &port))
             return false;
-        unsigned value = 0;
-        for (std::uint32_t index = 1; index <= digits; ++index)
-        {
-            const char digit = colon[index];
-            if (digit < '0' || digit > '9')
-                return false;
-            value = value * 10u + static_cast<unsigned>(digit - '0');
-        }
-        if (value > 65535u)
-            return false;
-        port = static_cast<std::uint16_t>(value);
         pieces->hostLength =
             static_cast<std::uint32_t>(colon - pieces->hostBegin);
     }
@@ -260,6 +272,13 @@ enum class DlPrologueStatus : std::uint8_t
     Unsupported, // scheme missing or not http
 };
 
+// True for the characters that terminate an authority span: the path,
+// query, or fragment separator.
+constexpr bool IsAuthorityTerminator(const char character) noexcept
+{
+    return character == '/' || character == '?' || character == '#';
+}
+
 DlPrologueStatus SplitPrologue(const char *const url,
     const char **const outAuthority,
     std::uint32_t *const outAuthorityLength) noexcept
@@ -276,9 +295,7 @@ DlPrologueStatus SplitPrologue(const char *const url,
     // The authority ends at the first path, query, or fragment separator.
     std::uint32_t authorityLength = 0;
     while (authority[authorityLength] != '\0'
-        && authority[authorityLength] != '/'
-        && authority[authorityLength] != '?'
-        && authority[authorityLength] != '#')
+        && !IsAuthorityTerminator(authority[authorityLength]))
         ++authorityLength;
     *outAuthority = authority;
     *outAuthorityLength = authorityLength;

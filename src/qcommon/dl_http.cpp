@@ -17,10 +17,31 @@
 
 namespace
 {
+// RFC 4648 standard base64 alphabet, shared by the quantum emitter and
+// the encoder below.
+constexpr char kBase64Alphabet[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
 constexpr std::uint32_t DlBase64EncodedLength(const std::uint32_t rawLength) noexcept
 {
     // 3 raw bytes -> 4 characters, padded with '=' to the full quantum.
     return ((rawLength + 2u) / 3u) * 4u;
+}
+
+// Emits the top `sextets` (1..4) 6-bit groups of a packed 3-byte quantum
+// as alphabet characters, most significant first. The caller pads the
+// unused tail of the quantum with '='.
+void EmitBase64Sextets(const std::uint32_t group,
+    const std::uint32_t sextets,
+    char *const out,
+    std::uint32_t *const written) noexcept
+{
+    std::uint32_t shift = 18;
+    for (std::uint32_t emitted = 0; emitted < sextets; ++emitted)
+    {
+        out[(*written)++] = kBase64Alphabet[(group >> shift) & 0x3FU];
+        shift -= 6;
+    }
 }
 
 // Encodes `raw` (length `rawLength`) as base64 into `out` (capacity
@@ -32,8 +53,6 @@ bool Base64Encode(const char *const raw,
     const std::uint32_t capacity,
     std::uint32_t *const outEncodedLength) noexcept
 {
-    static constexpr char kAlphabet[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     const std::uint32_t encodedLength = DlBase64EncodedLength(rawLength);
     if (encodedLength + 1 > capacity)
         return false;
@@ -48,10 +67,7 @@ bool Base64Encode(const char *const raw,
         const std::uint32_t group = (static_cast<std::uint32_t>(first) << 16)
             | (static_cast<std::uint32_t>(second) << 8)
             | static_cast<std::uint32_t>(third);
-        out[written++] = kAlphabet[(group >> 18) & 0x3FU];
-        out[written++] = kAlphabet[(group >> 12) & 0x3FU];
-        out[written++] = kAlphabet[(group >> 6) & 0x3FU];
-        out[written++] = kAlphabet[group & 0x3FU];
+        EmitBase64Sextets(group, 4, out, &written);
         index += 3;
     }
     const std::uint32_t remaining = rawLength - index;
@@ -59,8 +75,7 @@ bool Base64Encode(const char *const raw,
     {
         const auto first = static_cast<unsigned char>(raw[index]);
         const std::uint32_t group = static_cast<std::uint32_t>(first) << 16;
-        out[written++] = kAlphabet[(group >> 18) & 0x3FU];
-        out[written++] = kAlphabet[(group >> 12) & 0x3FU];
+        EmitBase64Sextets(group, 2, out, &written);
         out[written++] = '=';
         out[written++] = '=';
     }
@@ -70,9 +85,7 @@ bool Base64Encode(const char *const raw,
         const auto second = static_cast<unsigned char>(raw[index + 1]);
         const std::uint32_t group = (static_cast<std::uint32_t>(first) << 16)
             | (static_cast<std::uint32_t>(second) << 8);
-        out[written++] = kAlphabet[(group >> 18) & 0x3FU];
-        out[written++] = kAlphabet[(group >> 12) & 0x3FU];
-        out[written++] = kAlphabet[(group >> 6) & 0x3FU];
+        EmitBase64Sextets(group, 3, out, &written);
         out[written++] = '=';
     }
     out[written] = '\0';

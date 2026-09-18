@@ -2614,6 +2614,7 @@ add_test(
 set_tests_properties(platform-socket-contracts PROPERTIES TIMEOUT 30)
 
 add_executable(kisakcod-platform-socket-stream-tests
+    platform_socket_stream_harness.cpp
     platform_socket_stream_tests.cpp
     ${_platform_socket_sources}
 )
