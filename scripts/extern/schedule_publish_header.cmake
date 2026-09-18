@@ -25,6 +25,18 @@
 # header - and every consumer - untouched. The offset is written once per
 # actual content change; consumers converge as soon as wall time passes the
 # aged stamp, and later changes re-age the header.
+#
+# The clock itself must be the REAL wall clock. CMake's string(TIMESTAMP)
+# honors SOURCE_DATE_EPOCH ("its value will be used instead of the current
+# time"), so a reproducible-build environment would age the freshly published
+# header to the pinned epoch - typically years in the past. Existing consumer
+# objects are then strictly newer at whole-second resolution, make skips their
+# recompilation, and binaries relink with the previous revision's identity:
+# exactly the defect this step exists to prevent, reintroduced through the
+# calendar source. The clock is therefore read from the filesystem instead
+# (see below); the header's CONTENT stays deterministic, and this step only
+# runs when the content actually changed, so reproducible-build semantics are
+# preserved end to end.
 
 if(NOT DEFINED KISAK_PUBLISH_HEADER OR KISAK_PUBLISH_HEADER STREQUAL "")
     message(FATAL_ERROR
@@ -66,13 +78,31 @@ if(NOT KISAK_PUBLISH_TOUCH_PROGRAM)
         "against already-built consumers")
 endif()
 
-# One second into the future, derived from the wall clock, so the value is
+# One second into the future, derived from the true wall clock, so the value is
 # always strictly greater than any pre-existing consumer's whole-second
 # timestamp. The calendar fields come from pure integer civil-from-days
 # arithmetic (Hinnant's algorithm) - no date utility is consulted - and
 # `touch -t` receives UTC fields under TZ=UTC0, the one spelling both GNU
 # and BSD touch interpret identically.
-string(TIMESTAMP KISAK_PUBLISH_NOW_EPOCH "%s")
+#
+# string(TIMESTAMP) cannot supply that clock: it substitutes SOURCE_DATE_EPOCH
+# when the environment defines one, backdating the header into the past (see
+# the comment block above). The true current time is read from the filesystem
+# instead: file(TOUCH) stamps a probe file with the real current mtime and
+# file(TIMESTAMP) reads that mtime back, and neither command consults
+# SOURCE_DATE_EPOCH. The probe lives beside the superseded marker, inside the
+# build tree.
+set(KISAK_PUBLISH_CLOCK_PROBE "${KISAK_PUBLISH_SUPERSEDED_MARKER}.clock")
+file(TOUCH "${KISAK_PUBLISH_CLOCK_PROBE}")
+file(TIMESTAMP "${KISAK_PUBLISH_CLOCK_PROBE}" KISAK_PUBLISH_NOW_EPOCH "%s")
+file(REMOVE "${KISAK_PUBLISH_CLOCK_PROBE}")
+if(KISAK_PUBLISH_NOW_EPOCH STREQUAL "" OR KISAK_PUBLISH_NOW_EPOCH MATCHES "[^0-9]")
+    message(FATAL_ERROR
+        "The publish-edge aging step read no usable wall-clock epoch from a "
+        "touched probe file ('${KISAK_PUBLISH_NOW_EPOCH}'); refusing to "
+        "publish a header that whole-second make implementations would tie "
+        "against already-built consumers")
+endif()
 math(EXPR KISAK_PUBLISH_FUTURE_EPOCH "${KISAK_PUBLISH_NOW_EPOCH} + 1")
 math(EXPR _aging_day_number "${KISAK_PUBLISH_FUTURE_EPOCH} / 86400")
 math(EXPR _aging_seconds "${KISAK_PUBLISH_FUTURE_EPOCH} % 86400")

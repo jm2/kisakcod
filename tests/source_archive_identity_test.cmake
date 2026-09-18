@@ -290,7 +290,22 @@ endfunction()
 # compiled identity consumer at commit A, advance to B by changing only
 # main.cpp, run ONE ordinary build, and require the linked artifact to carry B
 # and no A.
+#
+# An optional first argument pins SOURCE_DATE_EPOCH to a reproducible-build
+# epoch for the entire A/B cycle. CMake's string(TIMESTAMP) substitutes that
+# epoch for the current time, so an aging step that derives its clock from
+# string(TIMESTAMP) backdates the freshly published header years into the
+# past: existing consumer objects are then strictly newer at whole-second
+# resolution, make skips their recompilation, and the relink carries A. The
+# pinned run asserts the SAME one-ordinary-build outcome end to end, and
+# additionally requires the published header's mtime to postdate a pre-build
+# wall-clock lower bound, naming the backdating defect directly.
 function(check_incremental_stamp_schedules_consumer)
+    set(_fixture_sde "${ARGV0}")
+    set(_fixture_name incremental-tree)
+    if(NOT _fixture_sde STREQUAL "")
+        set(_fixture_name incremental-tree-source-date-epoch)
+    endif()
     if(NOT KISAK_TEST_GIT_EXECUTABLE)
         message(STATUS
             "git not found; skipping the incremental stamp fixture")
@@ -301,7 +316,7 @@ function(check_incremental_stamp_schedules_consumer)
             "No C++ compiler provided; skipping the incremental stamp fixture")
         return()
     endif()
-    set(_tree "${_test_root}/incremental-tree")
+    set(_tree "${_test_root}/${_fixture_name}")
     set(_build "${_tree}/build")
     set(_stamp_dir "${_build}/stamped-src")
     file(MAKE_DIRECTORY "${_tree}/consumer/universal")
@@ -337,6 +352,17 @@ function(check_incremental_stamp_schedules_consumer)
         "# the project target with add_dependencies(\${PROJECT_NAME}\n"
         "# update_build_number).\n"
         "add_dependencies(identity-consumer update_build_number)\n")
+    if(NOT _fixture_sde STREQUAL "")
+        # Export the reproducible-build epoch to every configure and build
+        # child process, and take a whole-second wall-clock lower bound BEFORE
+        # any build runs: the aged publication must strictly postdate it, so
+        # the post-build assertion cannot pass a backdated header no matter
+        # how slowly the builds execute.
+        set(_saved_source_date_epoch "$ENV{SOURCE_DATE_EPOCH}")
+        set(ENV{SOURCE_DATE_EPOCH} "${_fixture_sde}")
+        file(TOUCH "${_tree}/clock-probe")
+        file(TIMESTAMP "${_tree}/clock-probe" _sde_prebuild_epoch "%s")
+    endif()
     foreach(_leg IN ITEMS a b)
         if(_leg STREQUAL "b")
             file(WRITE "${_tree}/main.cpp"
@@ -483,6 +509,32 @@ function(check_incremental_stamp_schedules_consumer)
         "one ordinary build after a commit publishes the new revision into the linked artifact")
     require_identity_bytes("${_consumer_exe}" "${_head_a}" FALSE
         "the linked artifact must not keep the previous revision after one ordinary build")
+    if(NOT _fixture_sde STREQUAL "")
+        # Restore the caller's reproducible-build environment first: the
+        # assertions below must read real mtimes, not the pinned epoch.
+        if(_saved_source_date_epoch STREQUAL "")
+            unset(ENV{SOURCE_DATE_EPOCH})
+        else()
+            set(ENV{SOURCE_DATE_EPOCH} "${_saved_source_date_epoch}")
+        endif()
+        # The aged publication must strictly postdate the pre-build wall-clock
+        # bound. An aging step clocked from string(TIMESTAMP) would read the
+        # pinned SOURCE_DATE_EPOCH itself - years in the past - and this
+        # assertion names that backdating directly, independently of the
+        # linked-artifact checks above.
+        set(_published_header "${_build}/stamped-src/buildnumber.h")
+        file(TIMESTAMP "${_published_header}" _sde_header_epoch "%s")
+        if(_sde_header_epoch STREQUAL ""
+                OR NOT _sde_header_epoch GREATER "${_sde_prebuild_epoch}")
+            message(FATAL_ERROR
+                "With SOURCE_DATE_EPOCH=${_fixture_sde} the published header "
+                "was not aged to the real wall clock: mtime epoch "
+                "'${_sde_header_epoch}' does not postdate the pre-build bound "
+                "'${_sde_prebuild_epoch}' (a reproducible-build timestamp "
+                "input backdated the publication below its already-built "
+                "consumers)")
+        endif()
+    endif()
 endfunction()
 
 # A tree with a substituted carrier but no `.git` must resolve from the carrier.
@@ -615,6 +667,11 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "-P \"\${SCRIPTS_DIR}/extern/schedule_publish_header.cmake\""
             ""
             _cmake "${_cmake}")
+    elseif(CONTRACT_MUTATION STREQUAL "publish_clock_source")
+        string(REPLACE
+            "file(TIMESTAMP \"\${KISAK_PUBLISH_CLOCK_PROBE}\""
+            "string(TIMESTAMP \"\${KISAK_PUBLISH_CLOCK_PROBE}\""
+            _aging "${_aging}")
     elseif(CONTRACT_MUTATION STREQUAL "stamp_superseded_marker")
         string(REPLACE
             "\"\${KISAK_STAMP_SUPERSEDED_MARKER}\""
@@ -729,6 +786,12 @@ require_contains(
 require_contains(
     _aging "\"\${KISAK_PUBLISH_NOW_EPOCH} + 1\""
     "the aging step derives the future mtime from the wall clock")
+require_contains(
+    _aging "file(TIMESTAMP \"\${KISAK_PUBLISH_CLOCK_PROBE}\" KISAK_PUBLISH_NOW_EPOCH \"%s\")"
+    "the aging step reads the true wall clock from a touched probe file, not string(TIMESTAMP)")
+require_contains(
+    _aging "KISAK_PUBLISH_NOW_EPOCH MATCHES \"[^0-9]\""
+    "the aging step fails closed when the wall-clock probe is unreadable")
 require_contains(
     _aging "-t \"\${KISAK_PUBLISH_FUTURE_STAMP}\""
     "the aging step sets the recreated header's mtime into the future")
@@ -1063,6 +1126,12 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
 
     check_compiled_identity()
     check_incremental_stamp_schedules_consumer()
+    # The same A/B cycle under a reproducible-build epoch: string(TIMESTAMP)
+    # would substitute 2023-11-14 for the current time and backdate the aged
+    # publication below its already-built consumers, so one ordinary build
+    # would relink A. The pinned run must behave identically to the unpinned
+    # one.
+    check_incremental_stamp_schedules_consumer("1700000000")
 
     file(REMOVE_RECURSE "${_test_root}")
 
@@ -1096,6 +1165,7 @@ if(NOT DEFINED CONTRACT_MUTATION AND NOT DEFINED CONTRACT_CASE)
         publish_edge
         stamp_publish_guard
         publish_aging
+        publish_clock_source
         stamp_superseded_marker
         cpp_consumer
         cpp_getter
