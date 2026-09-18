@@ -343,12 +343,20 @@ Two remaining A12 gaps are addressed here rather than in a competing CI design:
   flags as well matters because the memfile test subject links vendored zlib C
   translation units; C++-only flags would overstate the coverage. The existing
   `script-sanitizers` job still covers the script production paths and now also
-  fails closed on an empty selection. Local evidence on the change head:
-  `ctest` 235/235 under the portable Release gate and 234/234 under the same
-  clang ASan+UBSan configuration (the static
+  fails closed on an empty selection. Local evidence, tied to the head that
+  produced it: the pre-rework head of this branch (8e65ec72) measured
+  `ctest` 235/235 under the portable Release gate and 234/234 under the
+  same clang ASan+UBSan configuration (the static
   `effectscore-effect-table-stack-usage` contract is intentionally not
   registered under sanitizer instrumentation, so it is the one test absent
-  there).
+  there); the portable inventory has since grown to 238 tests, so those
+  counts no longer describe the current suite. Re-measured on this
+  branch's rework head: `ctest` 238/238 under the portable Release gate,
+  with `ctest -N` discovery listing exactly the 238-inventory tests and
+  the `--discovered-scope exact` manifest check passing; the ASan+UBSan
+  count for the rework head is established by its hosted
+  `portable-sanitizers` run rather than carried forward from the older
+  measurement.
 - **The `windows-x86` ILP32 selection is now a checked classification, not an
   inline regex alone.** `scripts/ci/test-selection/portable-inventory.txt` is
   the canonical cross-platform inventory. Each profile partitions it into three
@@ -381,9 +389,12 @@ Two remaining A12 gaps are addressed here rather than in a competing CI design:
   must equal every other job exactly (a missing or unenrolled job fails),
   and the enforcement script is extracted and executed against synthetic
   result vectors — an all-success run must pass, and failure, skipped, and
-  cancelled at the first and last enrolled position must each fail — so a
-  required gate can neither silently disappear from the aggregate nor have
-  its enforcement weakened without failing CI. `script-sanitizers` and
+  cancelled must each fail at EVERY enrolled position (a checker that
+  sampled only the first and last positions accepted a mutant enforcement
+  script that skipped the second dependency's result; the every-position
+  simulation catches it) — so a required gate can neither silently
+  disappear from the aggregate nor have its enforcement weakened without
+  failing CI. `script-sanitizers` and
   `test-selection-checker` also carry the explicit `timeout-minutes` bounds
   the workflow header contract promises for every job. The same review
   found the windows-x86 build compiled neither

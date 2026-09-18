@@ -1,67 +1,65 @@
 #!/usr/bin/env python3
-"""
-Fail-closed checker for per-profile CTest selection manifests.
-
-The hosted jobs historically selected their tests with a single inline ``ctest
--R`` regular expression.  A name that stopped matching, a target that stopped
-being built, or a test silently dropped from the expression produced no error
-at all: ``ctest`` exits 0 when a filter matches nothing, and a name that no
-longer exists is simply not reported.  This checker turns that silent selection
-drift into a hard failure.
-
-Classification
---------------
-
-The canonical inventory is the cross-platform set of portable tests.  Each
-profile partitions it into three disjoint, explicitly written groups:
-
-``--selected``
-    Tests the profile runs.  Every selected test must be *discovered* and
-    *executed* on the profile: this is the anti-disappearance invariant.  A
-    selected test that the platform quietly stops building fails the check.
-
-``--excluded``
-    Tests the profile discovers but intentionally does not run, as
-    ``name<TAB>reason``.  Every entry needs a reason, and a not-enrolled test
-    must actually be discovered (otherwise it is misclassified).
-
-``--absent``
-    Tests the profile's platform never registers at all, as
-    ``name<TAB>reason``.  Every entry needs a reason, and an absent test must
-    *not* be discovered.  Platform absence is therefore an explicit, audited
-    classification, never an accidental side effect of intersecting sets.
-
-Invariants
-----------
-
-``--discovered``
-    Optional listing (a plain name list or raw ``ctest`` output) of the tests
-    ctest actually found.  Discovery may never leave the inventory.  With
-    ``--discovered-scope exact`` the inventory must equal discovery, so a test
-    removed from the build fails just like an unclassified addition.
-
-``--executed``
-    Optional raw ``ctest`` run report of the tests a real run executed.
-    Only per-test result lines with an affirmative execution status count
-    as evidence: a ``***Not Run`` (disabled, failed dependency, ...) or
-    ``***Skipped`` entry proves the test body did not run, and a result
-    line with an unrecognized status fails the check instead of being
-    trusted.  The executed set must equal the selected set: nothing
-    outside the selection may run, and a selection that runs nothing
-    fails.
-
-``--enforce-platform-absence``
-    Turns on the full profile invariants (selected must be discovered, absent
-    must be undiscovered, excluded must be discovered, and discovery must equal
-    selected plus excluded).  The POSIX reference leg intentionally omits this
-    flag because it validates the cross-platform inventory, not one platform's
-    registrations.
-
-Exit status is 0 only when every check passes; otherwise each violation is
-printed as ``FAIL: ...`` and the process exits 1.  ``--emit-regex`` writes the
-``ctest -R`` expression built from the selected set so a workflow filter cannot
-drift from the manifest.
-"""
+"""Fail-closed checker for per-profile CTest selection manifests."""
+#
+# The hosted jobs historically selected their tests with a single inline ``ctest
+# -R`` regular expression.  A name that stopped matching, a target that stopped
+# being built, or a test silently dropped from the expression produced no error
+# at all: ``ctest`` exits 0 when a filter matches nothing, and a name that no
+# longer exists is simply not reported.  This checker turns that silent selection
+# drift into a hard failure.
+#
+# Classification
+# --------------
+#
+# The canonical inventory is the cross-platform set of portable tests.  Each
+# profile partitions it into three disjoint, explicitly written groups:
+#
+# ``--selected``
+#     Tests the profile runs.  Every selected test must be *discovered* and
+#     *executed* on the profile: this is the anti-disappearance invariant.  A
+#     selected test that the platform quietly stops building fails the check.
+#
+# ``--excluded``
+#     Tests the profile discovers but intentionally does not run, as
+#     ``name<TAB>reason``.  Every entry needs a reason, and a not-enrolled test
+#     must actually be discovered (otherwise it is misclassified).
+#
+# ``--absent``
+#     Tests the profile's platform never registers at all, as
+#     ``name<TAB>reason``.  Every entry needs a reason, and an absent test must
+#     *not* be discovered.  Platform absence is therefore an explicit, audited
+#     classification, never an accidental side effect of intersecting sets.
+#
+# Invariants
+# ----------
+#
+# ``--discovered``
+#     Optional listing (a plain name list or raw ``ctest`` output) of the tests
+#     ctest actually found.  Discovery may never leave the inventory.  With
+#     ``--discovered-scope exact`` the inventory must equal discovery, so a test
+#     removed from the build fails just like an unclassified addition.
+#
+# ``--executed``
+#     Optional raw ``ctest`` run report of the tests a real run executed.
+#     Only per-test result lines with an affirmative execution status count
+#     as evidence: a ``***Not Run`` (disabled, failed dependency, ...) or
+#     ``***Skipped`` entry proves the test body did not run, and a result
+#     line with an unrecognized status fails the check instead of being
+#     trusted.  The executed set must equal the selected set: nothing
+#     outside the selection may run, and a selection that runs nothing
+#     fails.
+#
+# ``--enforce-platform-absence``
+#     Turns on the full profile invariants (selected must be discovered, absent
+#     must be undiscovered, excluded must be discovered, and discovery must equal
+#     selected plus excluded).  The POSIX reference leg intentionally omits this
+#     flag because it validates the cross-platform inventory, not one platform's
+#     registrations.
+#
+# Exit status is 0 only when every check passes; otherwise each violation is
+# printed as ``FAIL: ...`` and the process exits 1.  ``--emit-regex`` writes the
+# ``ctest -R`` expression built from the selected set so a workflow filter cannot
+# drift from the manifest.
 
 from __future__ import annotations
 
@@ -121,8 +119,7 @@ def read_reasoned(path: str, kind: str) -> Reasoned:
 
 
 def read_discovery(path: str) -> List[str]:
-    """
-    Read a plain name list or a raw ``ctest -N`` listing.
+    """Read a plain name list or a raw ``ctest -N`` listing.
 
     Discovery-only: this parser answers "which tests exist", never "which
     tests ran".  Use :func:`read_execution` for execution evidence.
@@ -145,8 +142,7 @@ def read_discovery(path: str) -> List[str]:
 
 
 def read_execution(path: str) -> List[str]:
-    """
-    Read a raw ``ctest`` run report; return the tests that actually ran.
+    """Read a raw ``ctest`` run report; return the tests that actually ran.
 
     A per-test result line counts as execution evidence only when its
     status is affirmative (``Passed``, or a ran-and-failed ``Failed`` /
@@ -232,8 +228,7 @@ def check_manifests(inventory: Set[str], selected: Set[str],
 
 def check_platform_profile(selected: Set[str], excluded: Set[str],
                            absent: Set[str], discovered: Set[str]) -> int:
-    """
-    Check the platform-profile discovery invariants.
+    """Check the platform-profile discovery invariants.
 
     Every selected test must be discovered (a dead selection silently did
     not run), every platform-absent test must be undiscovered, every
@@ -265,8 +260,7 @@ def check_platform_profile(selected: Set[str], excluded: Set[str],
 
 def check_execution(selected: Set[str], discovered: Set[str],
                     executed: Set[str], enforce_absence: bool) -> int:
-    """
-    Check the executed evidence against the selection.
+    """Check the executed evidence against the selection.
 
     Nothing outside the selection may run and a selection that runs
     nothing proves nothing.  With --enforce-platform-absence every
@@ -358,8 +352,7 @@ def check_entry_quality(inventory_list: List[str], selected_list: List[str],
 def check_run_evidence(args: argparse.Namespace, inventory: Set[str],
                        selected: Set[str], excluded: Set[str],
                        absent: Set[str]) -> int:
-    """
-    Validate the flag combinations and check discovery/execution evidence.
+    """Validate flag combinations and check discovery/execution evidence.
 
     Raises when the flags are mutually inconsistent (--executed without
     --discovered, platform enforcement without an --absent manifest);

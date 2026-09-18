@@ -1,56 +1,54 @@
 #!/usr/bin/env python3
-"""
-Negative and positive regression tests for check-ci-aggregate.py.
-
-The aggregate-enrollment checker is a fail-closed CI gate, so its failure
-modes matter as much as its success path.  Each case below builds a small
-synthetic workflow in a temporary directory and asserts the checker's exit
-status.  In particular the regressions cover the ways the single
-branch-protection aggregate can silently stop protecting the build:
-
-* a required gate dropped from `scaffolding-complete.needs` (the case the
-  #134 rework review found for the sanitizer and checker jobs),
-* a job that exists but is not enrolled anywhere,
-* a job concealed from the enrollment comparison by an unindented YAML
-  comment (the #134 re-review false-success reproduction: comments are
-  transparent to the jobs mapping, so the hidden gate still fails),
-* syntax the jobs parser cannot faithfully attribute (flow-style or
-  tab-indented entries) instead of silently swallowing a job,
-* a `needs:` entry that references no real job,
-* duplicate needs entries, an empty needs list, and a missing aggregate,
-* an enforcement step that consumes the results but ignores non-success,
-* an enforcement step that silently skips one dependency's result while
-  consuming the rest (the middle-position-loss mutation: caught by
-  simulating a non-success result at every needs position, not only the
-  first and last),
-* an enforcement step that does not consume the results at all,
-* the #134 rework-review false-success mutations: a step-level `if: false`
-  that makes GitHub skip the sole enforcement step, and step-level
-  `continue-on-error: true` that makes GitHub ignore its failure — both at
-  their exact reproduced position (directly after the step name) and at
-  the equally valid position after the run block,
-* aggregate-job-level skip/error-tolerance controls: a job `if:` other
-  than the pinned safe shape (or no `if:` at all) can skip the aggregate
-  when a dependency fails, and a job-level `continue-on-error` discards a
-  failed enforcement result.
-
-The positive cases validate a well-formed synthetic workflow and the real
-checked-in `.github/workflows/ci.yml`, so a required gate cannot silently
-disappear from selection or from the aggregate without this suite failing.
-
-Run directly:
-
-    python3 scripts/ci/test_check_ci_aggregate.py
-
-Exits non-zero and prints the failing case names if any assertion fails.
-"""
+"""Negative and positive regression tests for check-ci-aggregate.py."""
+#
+# The aggregate-enrollment checker is a fail-closed CI gate, so its failure
+# modes matter as much as its success path.  Each case below builds a small
+# synthetic workflow in a temporary directory and asserts the checker's exit
+# status.  In particular the regressions cover the ways the single
+# branch-protection aggregate can silently stop protecting the build:
+#
+# * a required gate dropped from `scaffolding-complete.needs` (the case the
+#   #134 rework review found for the sanitizer and checker jobs),
+# * a job that exists but is not enrolled anywhere,
+# * a job concealed from the enrollment comparison by an unindented YAML
+#   comment (the #134 re-review false-success reproduction: comments are
+#   transparent to the jobs mapping, so the hidden gate still fails),
+# * syntax the jobs parser cannot faithfully attribute (flow-style or
+#   tab-indented entries) instead of silently swallowing a job,
+# * a `needs:` entry that references no real job,
+# * duplicate needs entries, an empty needs list, and a missing aggregate,
+# * an enforcement step that consumes the results but ignores non-success,
+# * an enforcement step that silently skips one dependency's result while
+#   consuming the rest (the middle-position-loss mutation: caught by
+#   simulating a non-success result at every needs position, not only the
+#   first and last),
+# * an enforcement step that does not consume the results at all,
+# * the #134 rework-review false-success mutations: a step-level `if: false`
+#   that makes GitHub skip the sole enforcement step, and step-level
+#   `continue-on-error: true` that makes GitHub ignore its failure — both at
+#   their exact reproduced position (directly after the step name) and at
+#   the equally valid position after the run block,
+# * aggregate-job-level skip/error-tolerance controls: a job `if:` other
+#   than the pinned safe shape (or no `if:` at all) can skip the aggregate
+#   when a dependency fails, and a job-level `continue-on-error` discards a
+#   failed enforcement result.
+#
+# The positive cases validate a well-formed synthetic workflow and the real
+# checked-in `.github/workflows/ci.yml`, so a required gate cannot silently
+# disappear from selection or from the aggregate without this suite failing.
+#
+# Run directly:
+#
+#     python3 scripts/ci/test_check_ci_aggregate.py
+#
+# Exits non-zero and prints the failing case names if any assertion fails.
 
 from __future__ import annotations
 
 import os
 # subprocess is the only way to exercise the checker as a real process,
 # which is the contract under test (its exit status). The command is a
-# fixed interpreter plus this repository's own checked-in script.
+# literal interpreter name plus this repository's own checked-in script.
 import subprocess  # nosec
 import sys
 import tempfile
@@ -117,8 +115,7 @@ def synthetic_workflow(needs: List[str],
                        enforcement: str = GOOD_ENFORCEMENT,
                        include_aggregate: bool = True,
                        interject: str = "") -> str:
-    """
-    Build a minimal workflow with the real file's shape and indentation.
+    """Build a minimal workflow with the real file's shape and indentation.
 
     `interject` is spliced verbatim immediately before the aggregate block,
     so fixtures can place comments (any indentation) inside the jobs
@@ -189,8 +186,7 @@ TIMEOUT_LINE = "    timeout-minutes: 10\n"
 
 
 def insert_after_enforcement_name(workflow: str, insertion: str) -> str:
-    """
-    Splice step-level lines directly after the enforcement step name.
+    """Splice step-level lines directly after the enforcement step name.
 
     This is the exact position the #134 rework review used for its two
     reproduced false-success mutations against the real ci.yml.
@@ -200,8 +196,7 @@ def insert_after_enforcement_name(workflow: str, insertion: str) -> str:
 
 
 def append_after_run_block(workflow: str, insertion: str) -> str:
-    """
-    Place step-level lines after the enforcement run block.
+    """Place step-level lines after the enforcement run block.
 
     A mapping key may follow the `run: |` block, so this position is as
     valid YAML — and as effective against GitHub — as the one above.
@@ -218,9 +213,7 @@ class Case:
     """One synthetic workflow fixture and the checker exit it must yield."""
 
     def __init__(self, name: str, expect_rc: int, workflow: str) -> None:
-        """
-        Record the case name, expected checker exit status, and workflow.
-        """
+        """Record the case name, expected checker exit status, and workflow."""
         self.name = name
         self.expect_rc = expect_rc
         self.workflow = workflow
@@ -438,13 +431,16 @@ def run_case(case: Case, workflow_path: str,
             path = os.path.join(tmp, "ci.yml")
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(workflow_text)
-        command = [sys.executable, CHECKER, "--workflow", path]
         # The checker under test is this repository's own checked-in
         # script run against a fixture this process just wrote; a nonzero
         # exit is the negative cases' expected outcome, so check=False is
-        # intentional — the exit status is the assertion.
+        # intentional — the exit status is the assertion. The interpreter
+        # is named literally (env-resolved `python3`, the same
+        # interpreter the checker's own shebang requests) so the executed
+        # command is a static, auditable argv.
         proc = subprocess.run(  # nosec
-            command, capture_output=True, text=True, check=False)
+            ["python3", CHECKER, "--workflow", path],
+            capture_output=True, text=True, check=False)
         if proc.returncode != case.expect_rc:
             return ("%s: expected rc=%d, got rc=%d\n%s"
                     % (case.name, case.expect_rc, proc.returncode,

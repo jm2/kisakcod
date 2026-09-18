@@ -1,52 +1,49 @@
 #!/usr/bin/env python3
-"""
-Fail closed on required-gate enrollment drift in .github/workflows/ci.yml.
-
-`scaffolding-complete` is the single branch-protection aggregate for CI: the
-workflow promises that it depends on EVERY other job in the workflow, and its
-"Enforce required job results" step must fail when any dependency result is
-not `success`. Without mechanical pinning, two silent failure modes exist:
-
-* a required gate (e.g. a sanitizer or checker job) is added to the workflow
-  but never enrolled in `needs:` — the aggregate then succeeds while the gate
-  fails or never runs;
-* the enforcement step is weakened (results not consumed, non-success
-  ignored, hard-coded exit) — the aggregate then succeeds despite a failed
-  dependency;
-* the enforcement step is suppressed by a workflow control rather than by
-  its script: a step-level `if:` evaluating false makes GitHub skip the
-  sole enforcement step, and `continue-on-error: true` makes GitHub ignore
-  its failure — in both cases the aggregate job reports success even though
-  enforcement never rejected anything, while a simulation of the script
-  body alone would still pass (the #134 rework review reproduced both
-  false-success mutations against the exact workflow);
-* the aggregate job itself is skipped or its failure tolerated: without its
-  own `if: ${{ always() && !cancelled() }}` GitHub skips the job when a
-  dependency fails, and a job-level `continue-on-error` turns a failed
-  aggregate into a green run.
-
-This checker pins every invariant. It parses the workflow — treating
-comment and blank lines as transparent so an unindented comment cannot
-conceal a job from the enrollment comparison — requires the aggregate's
-`needs:` list to equal every other job exactly (missing and extra entries
-both fail), pins the aggregate job's condition to the known-safe shape and
-rejects job-level error tolerance, extracts the enforcement step and
-rejects any `if:` / `continue-on-error:` key in that step's mapping
-(outside the run block, where such text is shell), and executes the
-enforcement script against synthetic result vectors: an all-success run
-must exit 0, and each non-success kind (failure / skipped / cancelled)
-must exit non-zero at EVERY needs position, so no dependency can be
-silently ignored — a checker that sampled only the first and last
-positions accepted a mutant enforcement script that skipped the second
-dependency's result (#134 rework review).
-
-Run directly:
-
-    python3 scripts/ci/check-ci-aggregate.py [--workflow PATH]
-
-Exits non-zero on any violation; an unparsable or absent aggregate fails
-closed as well.
-"""
+"""Fail closed on required-gate enrollment drift in .github/workflows/ci.yml."""
+# `scaffolding-complete` is the single branch-protection aggregate for CI: the
+# workflow promises that it depends on EVERY other job in the workflow, and its
+# "Enforce required job results" step must fail when any dependency result is
+# not `success`. Without mechanical pinning, silent failure modes exist:
+#
+# * a required gate (e.g. a sanitizer or checker job) is added to the workflow
+#   but never enrolled in `needs:` — the aggregate then succeeds while the gate
+#   fails or never runs;
+# * the enforcement step is weakened (results not consumed, non-success
+#   ignored, hard-coded exit) — the aggregate then succeeds despite a failed
+#   dependency;
+# * the enforcement step is suppressed by a workflow control rather than by
+#   its script: a step-level `if:` evaluating false makes GitHub skip the
+#   sole enforcement step, and `continue-on-error: true` makes GitHub ignore
+#   its failure — in both cases the aggregate job reports success even though
+#   enforcement never rejected anything, while a simulation of the script
+#   body alone would still pass (the #134 rework review reproduced both
+#   false-success mutations against the exact workflow);
+# * the aggregate job itself is skipped or its failure tolerated: without its
+#   own `if: ${{ always() && !cancelled() }}` GitHub skips the job when a
+#   dependency fails, and a job-level `continue-on-error` turns a failed
+#   aggregate into a green run.
+#
+# This checker pins every invariant. It parses the workflow — treating
+# comment and blank lines as transparent so an unindented comment cannot
+# conceal a job from the enrollment comparison — requires the aggregate's
+# `needs:` list to equal every other job exactly (missing and extra entries
+# both fail), pins the aggregate job's condition to the known-safe shape and
+# rejects job-level error tolerance, extracts the enforcement step and
+# rejects any `if:` / `continue-on-error:` key in that step's mapping
+# (outside the run block, where such text is shell), and executes the
+# enforcement script against synthetic result vectors: an all-success run
+# must exit 0, and each non-success kind (failure / skipped / cancelled)
+# must exit non-zero at EVERY needs position, so no dependency can be
+# silently ignored — a checker that sampled only the first and last
+# positions accepted a mutant enforcement script that skipped the second
+# dependency's result (#134 rework review).
+#
+# Run directly:
+#
+#     python3 scripts/ci/check-ci-aggregate.py [--workflow PATH]
+#
+# Exits non-zero on any violation; an unparsable or absent aggregate fails
+# closed as well.
 
 from __future__ import annotations
 
@@ -55,8 +52,8 @@ import os
 import re
 import shutil
 # subprocess is required to execute the enforcement script under
-# simulation; the invocation below is list-form with an absolute
-# interpreter path and a private script file (see simulate).
+# simulation; the invocation below is list-form with a literal
+# interpreter name and a private script file (see simulate).
 import subprocess  # nosec
 import sys
 import tempfile
@@ -122,9 +119,46 @@ def begin_job(line: str, order: list, bodies: dict) -> str:
     return name
 
 
-def split_jobs(text: str) -> dict:
+def ends_jobs_section(line: str) -> bool:
+    """True when a non-comment, non-blank line dedents to the top level."""
+    return (bool(line.strip())
+            and not line.lstrip().startswith("#")
+            and not line.startswith(" ")
+            and not line.startswith("\t"))
+
+
+def transcribe_jobs_line(line: str, current, order: list,
+                         bodies: dict):
+    """Fold one indented `jobs:` line into its job's body.
+
+    Comment and blank lines are transparent (kept in the current job body
+    verbatim). Any line this parser cannot faithfully attribute fails
+    closed instead of being silently swallowed, so no syntax can make a
+    job disappear here while GitHub Actions would still run it.
     """
-    Return {job_id: job_body} for the top-level `jobs:` section.
+    if not line.strip() or line.lstrip().startswith("#"):
+        # Transparent for section boundaries, but kept in the current
+        # job body so downstream extraction sees the file verbatim.
+        if current is not None:
+            bodies[current].append(line)
+        return current
+    if line.startswith("\t"):
+        raise CheckError(
+            "tab-indented line inside `jobs:` (invalid YAML "
+            "indentation; refusing to guess): %r" % line.strip())
+    indent = len(line) - len(line.lstrip(" "))
+    if indent == 2:
+        return begin_job(line, order, bodies)
+    if current is None:
+        raise CheckError(
+            "content before the first job key inside `jobs:` (refusing "
+            "to guess): %r" % line.strip())
+    bodies[current].append(line)
+    return current
+
+
+def split_jobs(text: str) -> dict:
+    """Return {job_id: job_body} for the top-level `jobs:` section.
 
     Only two-space-indented `key:` lines inside the `jobs:` block are job
     ids; everything else (steps, strategy, matrix entries) is nested deeper
@@ -135,39 +169,16 @@ def split_jobs(text: str) -> dict:
     never hide a following job from this parser (an *unindented* comment is
     still inside the mapping — treating it as a boundary would let a comment
     conceal every job after it from the exact-needs check). A non-comment
-    column-0 line is the next top-level key and ends the section. Any other
-    line this parser cannot faithfully attribute (tab indentation, flow-style
-    or quoted or inline-valued entries at job-key indentation, content before
-    the first job key) fails closed instead of being silently swallowed, so
-    no syntax can make a job disappear here while GitHub Actions would
-    still run it.
+    column-0 line is the next top-level key and ends the section.
     """
     lines = text.splitlines()
     order = []
     bodies = {}
     current = None
     for line in lines[jobs_section_start(lines):]:
-        if not line.strip() or line.lstrip().startswith("#"):
-            # Transparent for section boundaries, but kept in the current
-            # job body so downstream extraction sees the file verbatim.
-            if current is not None:
-                bodies[current].append(line)
-            continue
-        if line.startswith("\t"):
-            raise CheckError(
-                "tab-indented line inside `jobs:` (invalid YAML "
-                "indentation; refusing to guess): %r" % line.strip())
-        if not line.startswith(" "):
+        if ends_jobs_section(line):
             break  # dedent below the jobs section: next top-level key
-        indent = len(line) - len(line.lstrip(" "))
-        if indent == 2:
-            current = begin_job(line, order, bodies)
-        elif current is None:
-            raise CheckError(
-                "content before the first job key inside `jobs:` (refusing "
-                "to guess): %r" % line.strip())
-        else:
-            bodies[current].append(line)
+        current = transcribe_jobs_line(line, current, order, bodies)
     if not order:
         raise CheckError("the `jobs:` section parsed to zero jobs")
     return {name: "\n".join(bodies[name]) for name in order}
@@ -225,8 +236,7 @@ def dedent_run_block(lines: list, run_index: int) -> str:
 
 
 def extract_enforcement(job_body: str) -> str:
-    """
-    Extract the aggregate enforcement step's shell script.
+    """Extract the aggregate enforcement step's shell script.
 
     Also fails closed when the step mapping carries a skip or
     error-tolerance control (`if:`, `continue-on-error:`) anywhere outside
@@ -263,8 +273,7 @@ def run_block_end(lines: list, run_index: int, base_indent: int) -> int:
 def reject_enforcement_step_controls(lines: list, name_index: int,
                                      run_index: int, base_indent: int,
                                      step_indent: int) -> None:
-    """
-    Fail closed on skip/error-tolerance controls on the enforcement step.
+    """Fail closed on skip/error-tolerance controls on the enforcement step.
 
     GitHub skips a step whose `if:` evaluates false and ignores a step's
     failure under `continue-on-error: true`. Either control on the sole
@@ -296,8 +305,7 @@ def reject_enforcement_step_controls(lines: list, name_index: int,
 
 
 def check_aggregate_job_controls(job_body: str) -> None:
-    """
-    Pin the aggregate job's own skip/error-tolerance controls.
+    """Pin the aggregate job's own skip/error-tolerance controls.
 
     The aggregate must run when a dependency fails — otherwise GitHub
     skips the job (default `needs` semantics) and the skipped required
@@ -335,16 +343,14 @@ def check_aggregate_job_controls(job_body: str) -> None:
                                         AGGREGATE_JOB_IF))
 
 
-def resolve_bash() -> str:
-    """Return the absolute path of a bash interpreter, failing closed."""
-    bash = shutil.which("bash")
-    if bash is None:
+def ensure_bash() -> None:
+    """Fail closed unless a bash interpreter is available for simulation."""
+    if shutil.which("bash") is None:
         raise CheckError(
             "no bash interpreter found for the enforcement simulation")
-    return bash
 
 
-def simulate(bash: str, script: str, results: list) -> int:
+def simulate(script: str, results: list) -> int:
     """Execute the enforcement script with a synthetic result vector."""
     substituted = JOIN_EXPRESSION.sub(" ".join(results), script, count=1)
     descriptor, path = tempfile.mkstemp(
@@ -355,12 +361,13 @@ def simulate(bash: str, script: str, results: list) -> int:
         try:
             # The simulated script's exit status is the result under test:
             # an intentional nonzero outcome is data, never a checker
-            # error, so `check=False` is required. The invocation is safe
-            # by construction: list-form argv, an absolute interpreter
-            # path from resolve_bash(), and a private mkstemp file this
-            # process just wrote — no shell, no untrusted input.
+            # error, so `check=False` is required. The invocation shape is
+            # static and auditable: the literal interpreter name (its
+            # presence was just verified by ensure_bash) followed by the
+            # private mkstemp file this process just wrote — no shell, no
+            # untrusted input, and static analyzers can verify the argv.
             completed = subprocess.run(  # nosec
-                [bash, path], capture_output=True, text=True, check=False,
+                ["bash", path], capture_output=True, text=True, check=False,
                 timeout=SIMULATION_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired as exc:
             raise CheckError(
@@ -372,8 +379,7 @@ def simulate(bash: str, script: str, results: list) -> int:
 
 
 def check_enrollment(jobs: dict, needs: list) -> None:
-    """
-    Fail closed unless the aggregate's needs list equals the job set.
+    """Fail closed unless the aggregate's needs list equals the job set.
 
     Missing entries let a gate fail without failing the aggregate, extras
     reference no real job and protect nothing, and duplicates do not make
@@ -398,9 +404,8 @@ def check_enrollment(jobs: dict, needs: list) -> None:
                          % (AGGREGATE_JOB, ", ".join(extra)))
 
 
-def verify_enforcement(bash: str, script: str, needs: list) -> int:
-    """
-    Simulate the enforcement script against every synthetic result vector.
+def verify_enforcement(script: str, needs: list) -> int:
+    """Simulate the enforcement script against every synthetic result vector.
 
     The all-success vector must pass, and every non-success kind must fail
     the aggregate at EVERY needs position: a checker that sampled only the
@@ -409,14 +414,14 @@ def verify_enforcement(bash: str, script: str, needs: list) -> int:
     the number of simulations executed.
     """
     simulations = 1
-    if simulate(bash, script, ["success"] * len(needs)) != 0:
+    if simulate(script, ["success"] * len(needs)) != 0:
         raise CheckError(
             "the enforcement step fails an all-success aggregate run")
     for kind in NON_SUCCESS_KINDS:
         for position in range(len(needs)):
             vector = ["success"] * len(needs)
             vector[position] = kind
-            if simulate(bash, script, vector) == 0:
+            if simulate(script, vector) == 0:
                 raise CheckError(
                     "the aggregate succeeds while a required gate is %s "
                     "(needs position %d)" % (kind, position))
@@ -438,7 +443,8 @@ def check_workflow(path: str) -> str:
         raise CheckError(
             "the enforcement step does not consume every needs result via "
             "join(needs.*.result)")
-    simulations = verify_enforcement(resolve_bash(), script, needs)
+    ensure_bash()  # fail closed before any simulation if bash is absent
+    simulations = verify_enforcement(script, needs)
     return ("OK: %s enrolls all %d other jobs; job condition pinned, "
             "enforcement step unconditional; enforcement verified "
             "fail-closed (%d simulations)."

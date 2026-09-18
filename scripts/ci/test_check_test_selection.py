@@ -1,33 +1,31 @@
 #!/usr/bin/env python3
-"""
-Negative and positive regression tests for check-test-selection.py.
-
-The checker is a fail-closed CI gate, so its failure modes matter as much as
-its success path.  Each case below builds a small synthetic manifest in a
-temporary directory and asserts the checker's exit status.  In particular the
-regressions cover the three ways a selection can silently stop protecting the
-build:
-
-* a selected test that is no longer discovered (removed or renamed target),
-* a run that executes no tests at all,
-* a selected test that reports a non-execution status (disabled, skipped,
-  failed dependency) while ``ctest`` still exits 0,
-* a legitimate platform absence that is explicitly classified rather than
-  silently intersected away.
-
-Run directly:
-
-    python3 scripts/ci/test_check_test_selection.py
-
-Exits non-zero and prints the failing case names if any assertion fails.
-"""
+"""Negative and positive regression tests for check-test-selection.py."""
+#
+# The checker is a fail-closed CI gate, so its failure modes matter as much as
+# its success path.  Each case below builds a small synthetic manifest in a
+# temporary directory and asserts the checker's exit status.  In particular the
+# regressions cover the three ways a selection can silently stop protecting the
+# build:
+#
+# * a selected test that is no longer discovered (removed or renamed target),
+# * a run that executes no tests at all,
+# * a selected test that reports a non-execution status (disabled, skipped,
+#   failed dependency) while ``ctest`` still exits 0,
+# * a legitimate platform absence that is explicitly classified rather than
+#   silently intersected away.
+#
+# Run directly:
+#
+#     python3 scripts/ci/test_check_test_selection.py
+#
+# Exits non-zero and prints the failing case names if any assertion fails.
 
 from __future__ import annotations
 
 import os
 # subprocess is the only way to exercise the checker as a real process,
 # which is the contract under test (its exit status). The command is a
-# fixed interpreter plus this repository's own checked-in script.
+# literal interpreter name plus this repository's own checked-in script.
 import subprocess  # nosec
 import sys
 import tempfile
@@ -41,9 +39,7 @@ class Case:
     """One synthetic manifest set and the checker exit it must yield."""
 
     def __init__(self, name: str, expect_rc: int, **files: str) -> None:
-        """
-        Record the case name, expected checker exit status, and manifests.
-        """
+        """Record the case name, expected checker exit status, and manifests."""
         self.name = name
         self.expect_rc = expect_rc
         self.files = files
@@ -288,26 +284,29 @@ def run_case(case: Case) -> Optional[str]:
                 handle.write(value)
             paths[key] = path
 
-        command = [sys.executable, CHECKER, "--label", case.name,
-                   "--inventory", paths["inventory"],
-                   "--selected", paths["selected"],
-                   "--excluded", paths["excluded"]]
-        if "absent" in paths:
-            command += ["--absent", paths["absent"]]
-        if "discovered" in paths:
-            command += ["--discovered", paths["discovered"],
-                        "--discovered-scope", case.files.get("scope", "subset")]
-        if "executed" in paths:
-            command += ["--executed", paths["executed"]]
-        if case.files.get("enforce"):
-            command.append("--enforce-platform-absence")
-
         # The checker under test is this repository's own checked-in
         # script run against fixtures this process just wrote; a nonzero
         # exit is the negative cases' expected outcome, so check=False is
-        # intentional — the exit status is the assertion.
+        # intentional — the exit status is the assertion. The interpreter
+        # is named literally (env-resolved `python3`, the same interpreter
+        # the checker's own shebang requests) and the optional manifests
+        # are appended with starred conditionals, so the executed command
+        # is a single static, auditable argv literal.
         proc = subprocess.run(  # nosec
-            command, capture_output=True, text=True, check=False)
+            ["python3", CHECKER,
+             "--label", case.name,
+             "--inventory", paths["inventory"],
+             "--selected", paths["selected"],
+             "--excluded", paths["excluded"],
+             *(["--absent", paths["absent"]] if "absent" in paths else []),
+             *(["--discovered", paths["discovered"],
+                "--discovered-scope", case.files.get("scope", "subset")]
+               if "discovered" in paths else []),
+             *(["--executed", paths["executed"]]
+               if "executed" in paths else []),
+             *(["--enforce-platform-absence"]
+               if case.files.get("enforce") else [])],
+            capture_output=True, text=True, check=False)
         if proc.returncode != case.expect_rc:
             return ("%s: expected rc=%d, got rc=%d\n%s"
                     % (case.name, case.expect_rc, proc.returncode,
