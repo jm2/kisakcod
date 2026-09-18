@@ -3421,17 +3421,21 @@ if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     # real parse instead of the headless abort.
     target_compile_definitions(
         kisakcod-xmodel-loader-entry-tests PRIVATE KISAK_SP)
-    # Strict warnings apply to the test TU only (the harness header
-    # rides on its inclusion): the production loader TUs compile at the
-    # game target's warning level (/W3 /permissive-, platform.cmake).
-    # The decompiled dialect is not W4-clean — com_math.h's nameless
-    # float4x4/mat4x4 unions trip C4201, and that header reaches the
-    # TEST TU too through xmodel.h — so the test TU suppresses exactly
-    # that production-header diagnostic (same pattern as the /wd4324
-    # script-layout targets) while keeping /W4 /WX on everything else.
+    # Warning policy: the test TU compiles at the game target's own
+    # warning surface (/W3, platform.cmake) with /WX. The surface-content
+    # assertions need the full production header web (xmodel.h plus
+    # xanim.h for the real XSurface definition, through
+    # r_material/r_gfx/r_bsp/bg_weapons) — exactly the web game TUs
+    # compile at /W3 — so /W4 would mean suppressing an open-ended set
+    # of level-4 decompiled-dialect diagnostics; /WX still makes every
+    # warning that does fire an error. _CRT_SECURE_NO_WARNINGS covers
+    # the deliberate _vsnprintf truncation contract in the Com_* printf
+    # wrappers (the native CRT spelling on the win32-x86 leg; POSIX
+    # hosts route through universal/msvc_printf_shim.h).
     if (MSVC)
         set_source_files_properties(xmodel_loader_entry_test.cpp PROPERTIES
-            COMPILE_OPTIONS "/W4;/WX;/wd4201")
+            COMPILE_OPTIONS "/W3;/WX"
+            COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS")
     else()
         set_source_files_properties(xmodel_loader_entry_test.cpp PROPERTIES
             COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")

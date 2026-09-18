@@ -19,6 +19,10 @@
 // tests/CMakeLists.txt gates this target to the Windows x86 CI leg.
 
 #include <xanim/xmodel.h>
+// Full XSurface definition for the surface-content assertions below:
+// xmodel.h only forward-declares `struct XSurface *surfs`, and the
+// production definer is the same xanim.h the loader TU includes.
+#include <xanim/xanim.h>
 #include <xanim/buf_cursor.hpp>
 
 #include <universal/msvc_printf_shim.h>
@@ -29,6 +33,16 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+
+// The production entry under test. No engine header declares
+// XModelLoadFile — like the retail layout it is defined at global
+// scope in src/xanim/xmodel_load_obj.cpp — so this TU carries the
+// exact production signature and links the real definition from the
+// enrolled loader TU. The tests assert against the returned XModel
+// records, never against a stand-in.
+XModel *__cdecl XModelLoadFile(char *name,
+                               void *(__cdecl *Alloc)(int),
+                               void *(__cdecl *AllocColl)(int));
 
 // ---------------------------------------------------------------------------
 // Harness definitions. The printf-family wrappers (Com_PrintError,

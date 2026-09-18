@@ -78,13 +78,18 @@ using ByteWriterFixture = xmodel_cursor_test_support::ByteWriter;
 typedef void *HarnessHunkPtr;
 typedef std::map<std::string, HarnessHunkPtr> HarnessHunkMap;
 typedef std::map<std::string, std::vector<unsigned char> > HarnessFileMap;
-typedef std::vector<RecordedError> RecordedErrorList;
 
+// Declared BEFORE the RecordedErrorList alias that embeds it: MSVC
+// rejects an undeclared template argument at the alias point, and
+// this header is parsed only by the win32-x86 leg (MSVC), so the
+// portable suite cannot catch an ordering slip here.
 struct RecordedError
 {
     int channel;
     std::string text;
 };
+
+typedef std::vector<RecordedError> RecordedErrorList;
 
 struct HarnessState
 {
