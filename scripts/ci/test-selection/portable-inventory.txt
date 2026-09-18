@@ -180,6 +180,7 @@ qcommon-server-file-compare
 renderer-bounded-reservation-protocols
 renderer-model-surface-stream-contracts
 renderer-value-encoding-contracts
+retail-content-matrix-source-invariants
 retail-fastfile-parity-driver-gates
 retail-fastfile-parity-harness-self-test
 runtime-scalar-determinism-contracts
