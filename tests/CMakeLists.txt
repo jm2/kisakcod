@@ -2678,6 +2678,38 @@ add_test(
     COMMAND kisakcod-net-chan-reassembly-tests
 )
 
+# Stage 2 (issue #123): on the engine's actual ILP32 Win32 target, link the
+# production netchan layer into the test and drive Netchan_Process itself
+# over wire-format packets (net_chan_process_tests.cpp), with inert stubs for
+# the engine environment it does not need (net_chan_process_test_stubs.cpp).
+# The engine's game/server header chain carries ILP32 layout assertions
+# (EntHandleInfo, pml_t), so these production TUs can only compile where the
+# engine itself compiles; portable legs keep the predicate-only shape above.
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    target_sources(kisakcod-net-chan-reassembly-tests PRIVATE
+        net_chan_process_tests.cpp
+        net_chan_process_test_stubs.cpp
+        ${SRC_DIR}/qcommon/net_chan_mp.cpp
+        ${SRC_DIR}/qcommon/msg_mp.cpp
+        ${SRC_DIR}/qcommon/huffman.cpp
+    )
+    target_compile_definitions(kisakcod-net-chan-reassembly-tests PRIVATE
+        KISAKCOD_NET_CHAN_PROCESS_TESTS_AVAILABLE
+        KISAK_DEDI_HEADLESS
+    )
+    # The production TUs are decompiled engine code and are not -W4 clean;
+    # the per-source /W3 mirrors the engine target's own warning level
+    # (per-source options come after target options, so /W3 wins on MSVC).
+    # Scoped to MSVC: msg_mp/huffman also compile under GCC/Clang in the
+    # portable huffman-wire target, where /W3 is not a valid flag.
+    set_source_files_properties(
+        ${SRC_DIR}/qcommon/net_chan_mp.cpp
+        ${SRC_DIR}/qcommon/msg_mp.cpp
+        ${SRC_DIR}/qcommon/huffman.cpp
+        PROPERTIES COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/W3>"
+    )
+endif()
+
 add_executable(kisakcod-huffman-wire-contract-tests
     huffman_wire_contract_tests.cpp
     ${SRC_DIR}/qcommon/huffman.cpp
