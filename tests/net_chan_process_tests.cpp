@@ -470,17 +470,19 @@ bool newSequenceResetsPartialReassembly()
 {
     ChanFixture fixture(NS_SERVER);
     uint8_t storage[kMaxMsgLen];
-    uint8_t payload[100];
-    FillPattern(payload, 100, 0x60);
+    uint8_t payload[kFragmentFullLength];
+    FillPattern(payload, kFragmentFullLength, 0x60);
 
-    // Partial reassembly from a message that never completes.
+    // Partial reassembly from a message that never completes: a full-length
+    // fragment means "more fragments expected", so the reassembly stays
+    // pending (a short fragment at offset 0 would complete immediately).
     PacketBuilder fragment1(storage, kMaxMsgLen, FragmentSequence(10u),
                             NS_SERVER);
-    fragment1.AddFragmentHeader(0u, 100u);
-    fragment1.AddPayload(payload, 100);
+    fragment1.AddFragmentHeader(0u, kFragmentFullLength);
+    fragment1.AddPayload(payload, kFragmentFullLength);
     if (Netchan_Process(&fixture.chan, &fragment1.msg) != 0)
         return false;
-    if (fixture.chan.fragmentLength != 100)
+    if (fixture.chan.fragmentLength != kFragmentFullLength)
         return false;
 
     // A different sequence restarts the fragment buffer from zero.
@@ -551,6 +553,7 @@ bool truncatedFragmentHeaderFailsSafely()
 {
     ChanFixture fixture(NS_SERVER);
     uint8_t storage[64];
+    FillPattern(storage, static_cast<int>(sizeof(storage)), kSentinel);
 
     // Sequence present, fragment header cut off: the fragment header reads
     // fail (overflowed), the packet is rejected, the sequence does NOT
@@ -560,8 +563,10 @@ bool truncatedFragmentHeaderFailsSafely()
     std::memset(&packet, 0, sizeof(packet));
     packet.data = storage;
     packet.maxsize = static_cast<int>(sizeof(storage));
-    packet.cursize = 4; // sequence long only; qport/fragment header missing
     MSG_WriteLong(&packet, static_cast<int>(FragmentSequence(6u)));
+    // Truncate AFTER writing: MSG_WriteLong advances cursize, so resetting
+    // it here is what cuts the packet down to the bare sequence long.
+    packet.cursize = 4; // sequence long only; qport/fragment header missing
 
     if (Netchan_Process(&fixture.chan, &packet) != 0)
         return false;
