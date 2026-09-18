@@ -421,7 +421,7 @@ publication classes: `db_relocation.h:87-114`.
 | `notify[notifyCount]` | `Load_XAnimNotifyInfoArray` → `Load_XAnimNotifyInfo` | `:2356-2358`, `:2320-2340` | zone bump (4-byte) | notify name script string `:2323-2324` | — |
 | `deltaPart` | `Load_XAnimDeltaPart` | `:2362-2364` | zone bump (4-byte) | — | — |
 | `deltaPart->trans` | `Load_XAnimPartTrans` | `:2184-2186`, hdr `:2304-2318` | zone bump | — | `MyAssertHandler` `:2307`, `:2310-2315` |
-| `trans->u.frames` (28-byte `XAnimPartTransFrames`) | `Load_XAnimPartTransFrames` | `:2272-2288` | in-place stream (`Load_Stream(…, 28)` `:2276`) | — | `MyAssertHandler` `:2275`, `:2278-2283` |
+| `trans->u.frames` (fixed 28-byte streamed prefix of `XAnimPartTransFrames`; struct extent `sizeof=0x20` = 32 B, `xanim.h:76-84`) | `Load_XAnimPartTransFrames` | `:2272-2288` | in-place stream (`Load_Stream(…, 28)` `:2276`): the 28 bytes are the fixed prefix through the `frames` union token (`mins[3]`+`size[3]` 24 B + `frames` 4 B), not the full 32-byte struct extent — the stream stops immediately before `.indices` (post-stream position asserted at `&…->indices` `:2277-2283`); the `.indices` bytes are then consumed by the separate in-place `Load_XAnimDynamicIndicesTrans` walk (`:2284-2285`) and the 2 trailing padding bytes are never streamed | — | `MyAssertHandler` `:2275`, `:2278-2283` |
 | `trans->u.frames.indices` | `Load_XAnimDynamicIndicesTrans` (rebind `varXAnimDynamicIndicesTrans = &varXAnimPartTransFrames->indices` `:2284`, call `:2285`) | def `:2196-2232` | in-place stream; `indexCount = DB_CheckedCountSum(size, 1, "animation translation indices")` `:2198-2201`; ≥0x100 frames ushort `:2214-2215` / below byte `:2229-2230` | — | `MyAssertHandler` `:2205`, `:2208-2213`, `:2220`, `:2222-2228`; count overflow `ERR_DROP` (`:1185`) |
 | `trans->u.frames.frames` (union `XAnimDynamicFrames`, `xanim.h:71-75`) | `Load_XAnimDynamicFrames` (rebind `varXAnimDynamicFrames = &varXAnimPartTransFrames->frames` `:2286`, call `:2287`) | def `:2244-2270` | **pointer-bearing nested alloc, only when the on-disk `_1` frame pointer is present** (`:2251`/`:2261`): `smallTrans` → `AllocLoad_raw_byte` `:2253` + `Load_ByteVecArray(1, frameCount)` (3-byte stride `:2236`); otherwise → `AllocLoad_FxElemVisStateSample` (4-byte) `:2263` + `Load_UShortVecArray(1, frameCount)` (6-byte stride `:2241`); `frameCount = size ? DB_CheckedCountSum(size, 1, "animation translation frames") : 0` `:2246-2248`, count-0 stream `:2255-2258` / `:2265-2268` | — | count overflow `ERR_DROP` "animation translation frames" (`:2247` → `:1185`); absent `_1` leaves the union null, no alloc |
 | `deltaPart->quat` | `Load_XAnimDeltaPartQuat` | `:2190-2192`, hdr `:2170-2177` | zone bump | — | iassert `:2172`, `:2174` |
@@ -1191,8 +1191,12 @@ explicitly listed gaps.
   `0a000670` corrections are retained unchanged):
   - §9.1's grouped `trans->u` row is split to the leaves, and the previously
     omitted **pointer-bearing** `frames` field is now enumerated:
-    `Load_XAnimPartTransFrames` streams the 28-byte `XAnimPartTransFrames`
-    body in place (`:2276`), rebinds `varXAnimDynamicIndicesTrans` to
+    `Load_XAnimPartTransFrames` streams the fixed 28-byte prefix of the
+    32-byte (`sizeof=0x20`, `xanim.h:76-84`) `XAnimPartTransFrames` in place
+    (`:2276`) — the stream stops immediately before `.indices` (per the
+    `:2277-2283` stream-position assert); `.indices` is then walked
+    separately in place and the 2 trailing padding bytes are never streamed —
+    rebinds `varXAnimDynamicIndicesTrans` to
     `.indices` for the in-place index walk (`:2284-2285`,
     `Load_XAnimDynamicIndicesTrans` `:2196-2232`), and then rebinds
     `varXAnimDynamicFrames` to `.frames` and calls **`Load_XAnimDynamicFrames`**
