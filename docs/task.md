@@ -74,7 +74,7 @@ reserve shared source areas before assigning implementation work.
 | First engine / A08 | [#130](https://github.com/jm2/kisakcod/issues/130) | Real Win64/Linux amd64 headless MP integration and original-client sessions; consume `ki-eudd`/`ki-vuj`. |
 | Early client experiment / A09 | [#131](https://github.com/jm2/kisakcod/issues/131) | Retail shader/cache and Vulkan/MoltenVK feasibility before broad RHI edits; preserve native Vulkan destination. |
 | Client media / A10 | [#132](https://github.com/jm2/kisakcod/issues/132) | Audio/cinematic semantics and separate voice capture/playback; retain commercial codec/framing. |
-| Content/modes / A11 | [#133](https://github.com/jm2/kisakcod/issues/133) | Retail-content and MP mod regression matrix, commercial movement/behavior and pure checksums. |
+| Content/modes / A11 | [#133](https://github.com/jm2/kisakcod/issues/133) | Retail-content and MP mod regression matrix, commercial movement/behavior and pure checksums. Named case catalog, reference manifest schema and upstream #89/#40 dispositions: [RETAIL_CONTENT_MATRIX.md](RETAIL_CONTENT_MATRIX.md). |
 | Required CI / A12 | [#134](https://github.com/jm2/kisakcod/issues/134) | Hosted sanitizers, complete applicable Win32 runtime tests, exact-head exclusions and later protected retail gates. |
 | Client platform / A13 | [#135](https://github.com/jm2/kisakcod/issues/135) | Paths, input/window/focus and clean-install behavior with unchanged retail usercmd semantics. |
 | Operations / A14 | [#136](https://github.com/jm2/kisakcod/issues/136) | Retail-compatible multiplayer services/downloads/auth and headless lifecycle; extend `ki-eudd`/`ki-vuj`. |
