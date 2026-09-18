@@ -402,9 +402,14 @@ void test_read_data_and_splits()
 
     msg_t m3{};
     MSG_InitReadOnlySplit(&m3, primary, 2, split, 2);
-    std::uint8_t out3[8];
+    std::uint8_t out3[8] = {};
     MSG_ReadData(&m3, out3, 8);
     CHECK(m3.overflowed == 1);
+    // The overflow arm fills the whole destination with 0xFF bytes (the
+    // retail memset(data, 0xFF, len)); pinned byte-for-byte because the
+    // repair replaces that memset with an explicit loop.
+    for (std::uint8_t i = 0; i < 8; ++i)
+        CHECK(out3[i] == 0xFF);
 
     // MSG_Discard / MSG_ClearLastReferencedEntity bookkeeping.
     msg_t m4;

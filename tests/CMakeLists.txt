@@ -2702,10 +2702,15 @@ add_executable(kisakcod-msg-wire-contract-tests
     msg_wire_contract_tests.cpp
     msg_wire_delta_framing_tests.cpp
     ${SRC_DIR}/qcommon/msg_bits_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_write_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_read_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_usercmd_mp.cpp
     ${SRC_DIR}/qcommon/huffman.cpp
 )
-# Links the production MP bit-codec (msg_bits_mp.cpp, the code motion of the
-# MSG bit primitives out of msg_mp.cpp) together with the Huffman codec, so
+# Links the production MP bit-codec (the msg_bits_*_mp.cpp TUs, the code
+# motion of the MSG bit primitives out of msg_mp.cpp, split by function
+# family for the static-analysis file-size budget) together with the Huffman
+# codec, so
 # every wire golden is checked against the real retail encoder/decoder rather
 # than a reimplementation. The two test TUs share the harness and link stubs
 # in msg_wire_test_harness.hpp. The engine headers AND the decompiled
