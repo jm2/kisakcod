@@ -70,8 +70,9 @@ import os
 import re
 import shutil
 # subprocess is required to execute the enforcement script under
-# simulation; the invocation below is list-form with a literal
-# interpreter name and a private script file (see simulate).
+# simulation; both accepted invocation shapes are list-form with a
+# literal interpreter name and a private script file (see
+# run_shell_simulation).
 import subprocess  # nosec
 import sys
 import tempfile
@@ -248,11 +249,11 @@ def extract_needs(job_body: str) -> list:
     raise CheckError("%s has no `needs:` list" % AGGREGATE_JOB)
 
 
-def collect_run_block(lines: list, run_index: int, owner: str) -> str:
-    """Extract and dedent a `run: |` block's shell text, failing on empty."""
+def collect_raw_block(lines: list, run_index: int) -> list:
+    """Gather the raw lines of a `run: |` block until it dedents."""
     # Content is every following line indented deeper than the `run:` key
-    # (blank lines transparent); the block is dedented by its shallowest
-    # content indent, so the extracted text is what GitHub hands the shell.
+    # (blank lines transparent); the caller dedents the result, so the
+    # extracted text is what GitHub hands the shell.
     run_indent = len(lines[run_index]) - len(lines[run_index].lstrip(" "))
     block = []
     for candidate in lines[run_index + 1:]:
@@ -262,10 +263,22 @@ def collect_run_block(lines: list, run_index: int, owner: str) -> str:
         if len(candidate) - len(candidate.lstrip(" ")) <= run_indent:
             break
         block.append(candidate)
+    return block
+
+
+def trim_blank_tail(block: list, owner: str) -> list:
+    """Drop trailing blank lines; fail closed on an all-blank block."""
     while block and not block[-1].strip():
         block.pop()
     if not block:
         raise CheckError("the %r step's run block is empty" % owner)
+    return block
+
+
+def dedent_run_block(block: list, owner: str) -> str:
+    """Dedent raw block lines by their shallowest content indent."""
+    # The remaining block must dedent to non-blank shell text, or the
+    # step's run body is empty, which fails closed.
     base = min(len(line) - len(line.lstrip(" "))
                for line in block if line.strip())
     script = "\n".join(
@@ -273,6 +286,97 @@ def collect_run_block(lines: list, run_index: int, owner: str) -> str:
     if not script.strip():
         raise CheckError("the %r step's run block is empty" % owner)
     return script
+
+
+def collect_run_block(lines: list, run_index: int, owner: str) -> str:
+    """Extract and dedent a `run: |` block's shell text, failing on empty."""
+    return dedent_run_block(
+        trim_blank_tail(collect_raw_block(lines, run_index), owner), owner)
+
+
+def find_steps_index(lines: list) -> int:
+    """Locate the aggregate's sole `steps:` key, failing on drift."""
+    steps_index = None
+    for index, line in enumerate(lines):
+        if STEPS_KEY.match(line):
+            if steps_index is not None:
+                raise CheckError(
+                    "%s has more than one `steps:` list" % AGGREGATE_JOB)
+            steps_index = index
+    if steps_index is None:
+        raise CheckError("%s has no `steps:` list" % AGGREGATE_JOB)
+    return steps_index
+
+
+def parse_step_item(line: str) -> dict:
+    """Parse a six-space `- name:` list item into a step mapping."""
+    item = STEP_ITEM_NAME.match(line)
+    if item is None:
+        raise CheckError(
+            "unsupported %s steps entry (steps parse as exact "
+            "`- name:` mappings; flow style, name-less or oddly "
+            "indented items refuse to guess): %r"
+            % (AGGREGATE_JOB, line.strip()))
+    return {"name": item.group(1).strip()}
+
+
+def skip_run_block(lines: list, index: int, run_indent: int) -> int:
+    """Advance past a consumed `run: |` block's opaque shell body."""
+    index += 1
+    while index < len(lines):
+        candidate = lines[index]
+        if candidate.strip() and (
+                len(candidate) - len(candidate.lstrip(" ")) <= run_indent):
+            break
+        index += 1
+    return index
+
+
+def bind_run_block(lines: list, index: int, key_indent: int,
+                   step: dict, rest: str) -> int:
+    """Bind a step's `run: |` block; return the next parse index."""
+    if rest not in RUN_BLOCK_INDICATORS:
+        raise CheckError(
+            "the %r step in %s must carry a literal `run: |` "
+            "block (a `%s` scalar would not reproduce as the "
+            "shell text GitHub runs)"
+            % (step["name"], AGGREGATE_JOB, rest))
+    step["run"] = collect_run_block(lines, index, step["name"])
+    return skip_run_block(lines, index, key_indent)
+
+
+def parse_step_keys(lines: list, index: int, step: dict) -> int:
+    """Consume one step's eight-space mapping entries; return next index."""
+    # A step's keys sit at eight-space indent; a dedent to six spaces or
+    # shallower ends the step (next `- name:` item, or the list's end).
+    while index < len(lines):
+        inner = lines[index]
+        inner_stripped = inner.strip()
+        if not inner_stripped or inner_stripped.startswith("#"):
+            index += 1
+            continue
+        inner_indent = len(inner) - len(inner.lstrip(" "))
+        if inner_indent <= 6:
+            break  # next step item, or the end of the steps list
+        key_match = STEP_MAPPING_KEY.match(inner)
+        if key_match is None:
+            raise CheckError(
+                "unsupported key inside the %r step in %s (only "
+                "eight-space `key: value` entries parse): %r"
+                % (step["name"], AGGREGATE_JOB, inner_stripped))
+        key = key_match.group(1)
+        rest = key_match.group(2).strip()
+        if key == "run":
+            index = bind_run_block(lines, index, inner_indent, step, rest)
+            continue
+        if not rest:
+            raise CheckError(
+                "the %r step key `%s` in %s carries a nested block; "
+                "only inline `key: value` entries and `run: |` blocks "
+                "parse" % (step["name"], key, AGGREGATE_JOB))
+        step[key] = rest
+        index += 1
+    return index
 
 
 def parse_aggregate_steps(job_body: str) -> list:
@@ -287,17 +391,8 @@ def parse_aggregate_steps(job_body: str) -> list:
     # the list; any shape this parser cannot attribute exactly fails
     # closed rather than being silently swallowed.
     lines = job_body.splitlines()
-    steps_index = None
-    for index, line in enumerate(lines):
-        if STEPS_KEY.match(line):
-            if steps_index is not None:
-                raise CheckError(
-                    "%s has more than one `steps:` list" % AGGREGATE_JOB)
-            steps_index = index
-    if steps_index is None:
-        raise CheckError("%s has no `steps:` list" % AGGREGATE_JOB)
     steps = []
-    index = steps_index + 1
+    index = find_steps_index(lines) + 1
     while index < len(lines):
         line = lines[index]
         stripped = line.strip()
@@ -307,57 +402,9 @@ def parse_aggregate_steps(job_body: str) -> list:
         indent = len(line) - len(line.lstrip(" "))
         if indent <= 4:
             break  # left the steps list for the rest of the job body
-        item = STEP_ITEM_NAME.match(line)
-        if item is None:
-            raise CheckError(
-                "unsupported %s steps entry (steps parse as exact "
-                "`- name:` mappings; flow style, name-less or oddly "
-                "indented items refuse to guess): %r"
-                % (AGGREGATE_JOB, stripped))
-        step = {"name": item.group(1).strip()}
+        step = parse_step_item(line)
         steps.append(step)
-        index += 1
-        while index < len(lines):
-            inner = lines[index]
-            inner_stripped = inner.strip()
-            if not inner_stripped or inner_stripped.startswith("#"):
-                index += 1
-                continue
-            inner_indent = len(inner) - len(inner.lstrip(" "))
-            if inner_indent <= 6:
-                break  # next step item, or the end of the steps list
-            key_match = STEP_MAPPING_KEY.match(inner)
-            if key_match is None:
-                raise CheckError(
-                    "unsupported key inside the %r step in %s (only "
-                    "eight-space `key: value` entries parse): %r"
-                    % (step["name"], AGGREGATE_JOB, inner_stripped))
-            key = key_match.group(1)
-            rest = key_match.group(2).strip()
-            if key == "run":
-                if rest not in RUN_BLOCK_INDICATORS:
-                    raise CheckError(
-                        "the %r step in %s must carry a literal `run: |` "
-                        "block (a `%s` scalar would not reproduce as the "
-                        "shell text GitHub runs)"
-                        % (step["name"], AGGREGATE_JOB, rest))
-                step["run"] = collect_run_block(lines, index, step["name"])
-                index += 1
-                while index < len(lines):
-                    candidate = lines[index]
-                    if candidate.strip() and (
-                            len(candidate)
-                            - len(candidate.lstrip(" ")) <= inner_indent):
-                        break
-                    index += 1
-                continue
-            if not rest:
-                raise CheckError(
-                    "the %r step key `%s` in %s carries a nested block; "
-                    "only inline `key: value` entries and `run: |` blocks "
-                    "parse" % (step["name"], key, AGGREGATE_JOB))
-            step[key] = rest
-            index += 1
+        index = parse_step_keys(lines, index + 1, step)
     return steps
 
 
@@ -407,6 +454,75 @@ def reject_enforcement_step_controls(step: dict) -> None:
                 "passes" % (ENFORCEMENT_STEP_NAME, key, step[key]))
 
 
+def next_significant(lines: list, index: int, base_indent: int):
+    """Next non-transparent line deeper than `base_indent`, or None.
+
+    Returns (index, indent, stripped_text) for the next line that is
+    neither blank nor a comment and does not dedent to `base_indent` or
+    shallower; None when the block ends (dedent or end of input).
+    """
+    while index < len(lines):
+        text = lines[index].strip()
+        if text and not text.startswith("#"):
+            indent = len(lines[index]) - len(lines[index].lstrip(" "))
+            if indent <= base_indent:
+                return None
+            return (index, indent, text)
+        index += 1
+    return None
+
+
+def expect_defaults_run(lines: list, index: int, base_indent: int,
+                        run_key, scope: str) -> int:
+    """Consume the required `run:` key line of a `defaults:` block."""
+    found = next_significant(lines, index, base_indent)
+    if found is not None:
+        found_index, indent, text = found
+        if indent == base_indent + 2 and run_key.match(lines[found_index]):
+            return found_index + 1
+        raise CheckError(
+            "unsupported %s `defaults:` shape (expected `run:` at "
+            "%d-space indent): %r"
+            % (scope, base_indent + 2, text))
+    raise CheckError(
+        "incomplete %s `defaults:` block (expected the exact "
+        "`defaults:` / `run:` / `shell:` shape)" % scope)
+
+
+def expect_defaults_shell(lines: list, index: int, base_indent: int,
+                          shell_key, scope: str):
+    """Consume the required `shell:` value line; return (shell, next)."""
+    found = next_significant(lines, index, base_indent)
+    if found is not None:
+        found_index, indent, text = found
+        shell_match = shell_key.match(lines[found_index])
+        if indent == base_indent + 4 and shell_match is not None:
+            return shell_match.group(1).strip(), found_index + 1
+        raise CheckError(
+            "unsupported %s `defaults:` shape (expected `shell:` at "
+            "%d-space indent): %r" % (scope, base_indent + 4, text))
+    raise CheckError(
+        "incomplete %s `defaults:` block (expected the exact "
+        "`defaults:` / `run:` / `shell:` shape)" % scope)
+
+
+def reject_defaults_trailer(lines: list, index: int, base_indent: int,
+                            shell_key, scope: str) -> None:
+    """Fail on any content after `shell:` before the block dedents."""
+    # A second `shell:` entry does not make a default "more set", and any
+    # other trailing key would be an unparsed shape: both fail closed.
+    found = next_significant(lines, index, base_indent)
+    if found is None:
+        return
+    found_index, indent, text = found
+    if indent == base_indent + 4 and shell_key.match(lines[found_index]):
+        raise CheckError(
+            "%s declares more than one `defaults.run.shell`" % scope)
+    raise CheckError(
+        "unsupported %s `defaults:` shape (expected `shell:` at "
+        "%d-space indent): %r" % (scope, base_indent + 4, text))
+
+
 def scan_defaults_shell(lines: list, defaults_key, run_key, shell_key,
                         scope: str):
     """Return the scope's `defaults.run.shell` value, or None if unset."""
@@ -427,38 +543,12 @@ def scan_defaults_shell(lines: list, defaults_key, run_key, shell_key,
                 "value would be invisible to the shell check): %r"
                 % (scope, line.strip()))
         base_indent = len(line) - len(line.lstrip(" "))
-        shell = None
-        seen_run = False
-        for candidate in lines[index + 1:]:
-            text = candidate.strip()
-            if not text or text.startswith("#"):
-                continue
-            indent = len(candidate) - len(candidate.lstrip(" "))
-            if indent <= base_indent:
-                break
-            if not seen_run:
-                if indent == base_indent + 2 and run_key.match(candidate):
-                    seen_run = True
-                    continue
-                raise CheckError(
-                    "unsupported %s `defaults:` shape (expected `run:` at "
-                    "%d-space indent): %r"
-                    % (scope, base_indent + 2, text))
-            shell_match = shell_key.match(candidate)
-            if indent == base_indent + 4 and shell_match is not None:
-                if shell is not None:
-                    raise CheckError(
-                        "%s declares more than one `defaults.run.shell`"
-                        % scope)
-                shell = shell_match.group(1).strip()
-                continue
-            raise CheckError(
-                "unsupported %s `defaults:` shape (expected `shell:` at "
-                "%d-space indent): %r" % (scope, base_indent + 4, text))
-        if not seen_run or shell is None:
-            raise CheckError(
-                "incomplete %s `defaults:` block (expected the exact "
-                "`defaults:` / `run:` / `shell:` shape)" % scope)
+        after_run = expect_defaults_run(lines, index + 1, base_indent,
+                                        run_key, scope)
+        shell, after_shell = expect_defaults_shell(
+            lines, after_run, base_indent, shell_key, scope)
+        reject_defaults_trailer(lines, after_shell, base_indent,
+                                shell_key, scope)
         return shell
     return None
 
@@ -550,6 +640,35 @@ def ensure_bash() -> None:
             "no bash interpreter found for the enforcement simulation")
 
 
+def run_shell_simulation(command: list, path: str) -> int:
+    """Run the enforcement script under the pinned effective-shell argv."""
+    # The simulated script's exit status is the result under test: an
+    # intentional nonzero outcome is data, never a checker error, so
+    # `check=False` is required. Both accepted GitHub shell shapes are
+    # simulated with their exact literal argv — only the private mkstemp
+    # script path this process just wrote varies — so each shape keeps
+    # its distinct flags and the invocation stays static and
+    # analyzer-verifiable; `command` is the pinned argv selected by
+    # effective_shell_command, and any other value fails closed rather
+    # than simulating a shell the checker never accepted. No shell, no
+    # untrusted input; the interpreter presence ensure_bash verified.
+    if command == GITHUB_DEFAULT_SHELL_COMMAND:
+        completed = subprocess.run(  # nosec
+            ["bash", "-e", path], capture_output=True, text=True,
+            check=False, timeout=SIMULATION_TIMEOUT_SECONDS)
+        return completed.returncode
+    if command == PLAIN_BASH_SHELL_COMMAND:
+        completed = subprocess.run(  # nosec
+            ["bash", "--noprofile", "--norc", "-eo", "pipefail", path],
+            capture_output=True, text=True, check=False,
+            timeout=SIMULATION_TIMEOUT_SECONDS)
+        return completed.returncode
+    raise CheckError(
+        "refusing to simulate under an unpinned shell argv %r; only the "
+        "GitHub default and plain `bash` shapes are accepted"
+        % (command,))
+
+
 def simulate(script: str, results: list, command: list) -> int:
     """Execute the enforcement script with a synthetic result vector."""
     substituted = JOIN_EXPRESSION.sub(" ".join(results), script, count=1)
@@ -559,23 +678,11 @@ def simulate(script: str, results: list, command: list) -> int:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(substituted)
         try:
-            # The simulated script's exit status is the result under test:
-            # an intentional nonzero outcome is data, never a checker
-            # error, so `check=False` is required. The invocation shape is
-            # static and auditable: the pinned argv for the effective
-            # GitHub shell (see effective_shell_command) — a literal bash
-            # command line whose interpreter presence ensure_bash just
-            # verified — followed by the private mkstemp file this process
-            # just wrote. No shell, no untrusted input, and static
-            # analyzers can verify the argv.
-            completed = subprocess.run(  # nosec
-                command + [path], capture_output=True, text=True,
-                check=False, timeout=SIMULATION_TIMEOUT_SECONDS)
+            return run_shell_simulation(command, path)
         except subprocess.TimeoutExpired as exc:
             raise CheckError(
                 "enforcement simulation timed out after %ds"
                 % SIMULATION_TIMEOUT_SECONDS) from exc
-        return completed.returncode
     finally:
         os.unlink(path)
 
