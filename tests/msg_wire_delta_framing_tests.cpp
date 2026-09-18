@@ -35,14 +35,16 @@ void test_delta_key_xor()
     // Unchanged -> single 0 bit.
     MSG_WriteDeltaKey(&m, key, 7, 7, 8);
     // Changed -> 1 bit + (key ^ new) masked to 8 bits: 0x5A ^ 0x2C = 0x76,
-    // LSB-first from bit 2: bits 3,4,6,7 set + carry bit into byte1 bit0.
+    // LSB-first from bit 2: byte 0 payload bits 3,4,6,7 set + the two carry
+    // bits into byte 1 bits 0-1 (bit 0 set, the MSB at bit 1 currently 0 --
+    // both covered by the carry span so a drift there still names the field).
     MSG_WriteDeltaKey(&m, key, 0, 0x2C, 8);
     const std::uint8_t want[] = {0xDA, 0x01};
     const WireSpan spans[] = {
         {"unchanged-flag", 0, 0, 1},
         {"changed-flag", 0, 1, 1},
         {"xored-payload", 0, 2, 6},
-        {"xored-payload-carry", 1, 0, 1},
+        {"xored-payload-carry", 1, 0, 2},
     };
     compareWire(m, "WriteDeltaKey", want, sizeof(want), spans, 4);
 
@@ -284,15 +286,17 @@ void test_usercmd_selected_location()
 
     // Machine-verified against the production encoder: keya = 500 ^ 1 = 501
     // = 0x1F5; the 20-bit buttons>>1 payload is keya ^ 0x8000 = 0x81F5 and the
-    // selLoc payloads are the raw bytes keya ^ 7 = 0xF2 and keya ^ 9 = 0xFC
-    // (each preceded by its flag bit).
+    // selLoc payloads are the raw bytes keya ^ 7 = 0xF2 and keya ^ 9 = 0xFC.
+    // Each selLoc is preceded by its change flag bit: selloc0's flag shares
+    // byte 4 with the payload tail; selloc1's flag opens byte 6 and the raw
+    // payload byte follows at byte 7.
     const std::uint8_t want[] = {0x09, 0x00, 0xEB, 0x03, 0x81, 0xF2, 0x01, 0xFC};
     const WireSpan spans[] = {
         {"buttons>>1-20bit", 2, 0, 8}, {"buttons>>1-mid", 3, 0, 8},
         {"payload-tail+flags", 4, 0, 8}, {"selloc0-xored", 5, 0, 8},
-        {"selloc1-xored", 6, 0, 8},
+        {"selloc1-flag", 6, 0, 8}, {"selloc1-xored", 7, 0, 8},
     };
-    compareWire(m, "usercmd selectedLocation", want, sizeof(want), spans, 5);
+    compareWire(m, "usercmd selectedLocation", want, sizeof(want), spans, 6);
 
     MSG_BeginReading(&m);
     usercmd_s out{};
