@@ -21,14 +21,35 @@ the gap table is verified against the cited workflow file.
 
 ## Current-state summary
 
-`ci.yml` has five top-level jobs (`portable-tests`, `windows-x86`,
-`windows-x86-sp`, `windows-x86-nosteam`, `windows-x86-headless`) that together
-exercise Windows x86 MP + dedicated (Debug + Release), Windows x86 SP (Debug +
-Release), the Windows x86 Steam OFF compile fallback, the Windows x86 headless
-dedicated configuration, and `portable-tests` only for the other four target
-OS/arch pairs. None of those four pairs has a production engine build, smoke
-gate, package step, or release artifact. No `production-complete` aggregator
-exists.
+`ci.yml` currently has eleven top-level jobs (`portable-tests`,
+`test-selection-checker`, `script-sanitizers`, `portable-sanitizers`,
+`windows-x86`, `windows-x86-sp`, `windows-x86-parity`, `windows-x86-nosteam`,
+`windows-x86-headless`, `scaffolding-builds`, `scaffolding-complete`). Together
+they exercise Windows x86 MP + dedicated (Debug + Release), Windows x86 SP
+(Debug + Release), the Windows x86 Steam OFF compile fallback, the Windows x86
+headless dedicated configuration, hosted sanitizer coverage
+(`script-sanitizers`, `portable-sanitizers`), the checked test selection
+(`test-selection-checker`), and `scaffolding-builds` for all six target
+OS/arch pairs — `windows-x86` plus the five portable pairs.
+`scaffolding-complete` (added since the audit-time snapshot below was
+written; see gap 17) is the single branch-protection gate: its `needs:` list
+must equal every other job exactly, pinned by
+`scripts/ci/check-ci-aggregate.py`. The five portable pairs still have no
+production engine build, smoke gate, package step, or release artifact: every
+engine option is OFF on those legs, so they package test binaries only and
+their green result is NOT five delivered engines.
+
+The audit-time snapshot this document was written against is kept below,
+dated, so it does not contradict the implemented state above.
+
+`ci.yml` at audit time had five top-level jobs (`portable-tests`,
+`windows-x86`, `windows-x86-sp`, `windows-x86-nosteam`, `windows-x86-headless`)
+that together exercised Windows x86 MP + dedicated (Debug + Release), Windows
+x86 SP (Debug + Release), the Windows x86 Steam OFF compile fallback, the
+Windows x86 headless dedicated configuration, and `portable-tests` only for
+the other four target OS/arch pairs. None of those four pairs had a production
+engine build, smoke gate, package step, or release artifact, and no
+production-complete aggregator existed.
 
 `release.yml` has a single `windows-x86` job that runs on tag push or
 `workflow_dispatch`, builds MP + dedicated via Visual Studio 17 2022, packs

@@ -45,6 +45,13 @@ REPO_ROOT = os.path.normpath(os.path.join(
 # the shell, without spawning a process per case.
 _CHECKER_SPEC = importlib.util.spec_from_file_location(
     "check_test_selection", CHECKER_PATH)
+if _CHECKER_SPEC is None or _CHECKER_SPEC.loader is None:
+    # Fail closed when the module cannot be loaded as a spec/loader pair:
+    # a missing or malformed checker file must break the suite loudly, not
+    # crash mid-assertion with an opaque AttributeError.
+    raise RuntimeError(
+        "cannot load %s as a Python module (missing spec or loader)"
+        % CHECKER_PATH)
 CHECKER = importlib.util.module_from_spec(_CHECKER_SPEC)
 _CHECKER_SPEC.loader.exec_module(CHECKER)
 
@@ -340,12 +347,14 @@ def run_case(case: Case) -> Optional[str]:
 def cli_smoke_test() -> Optional[str]:
     """Run the checked-in checker as a real process, argv fully static."""
     # The one process-level assertion: the checked-in script executes under
-    # its shebang interpreter against this repository's own checked-in
-    # selection manifests and exits 0. The argv is entirely literal and
-    # relative to the repo root, so static analyzers can verify every
-    # element; cwd selects this repository's root.
+    # the system python3 interpreter (the same interpreter its shebang
+    # resolves and the one running this suite) against this repository's
+    # own checked-in selection manifests and exits 0. Every argv element is
+    # a string literal, so static analyzers can verify the invocation
+    # without tracing dynamic values; the relative paths resolve against
+    # the repo root passed as cwd.
     proc = subprocess.run(  # nosec
-        [sys.executable, "scripts/ci/check-test-selection.py",
+        ["python3", "scripts/ci/check-test-selection.py",
          "--label", "cli-smoke",
          "--inventory", "scripts/ci/test-selection/portable-inventory.txt",
          "--selected", "scripts/ci/test-selection/windows-x86.selected.txt",

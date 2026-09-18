@@ -31,7 +31,17 @@
 # * aggregate-job-level skip/error-tolerance controls: a job `if:` other
 #   than the pinned safe shape (or no `if:` at all) can skip the aggregate
 #   when a dependency fails, and a job-level `continue-on-error` discards a
-#   failed enforcement result.
+#   failed enforcement result,
+# * the 1aaba85b rework-review P2 mutations: a heredoc fake enforcement
+#   step (a documentation step whose `cat <<'EOF'` run block embeds an
+#   indented fake `- name:` / `run: |` / script copy — the old text-marker
+#   extractor accepted it with a full simulation pass), a duplicate
+#   enforcement step, an enforcement step without a `run:` key of its own,
+#   and a custom effective `shell:` at each of the three GitHub scopes
+#   (step, job `defaults.run.shell`, workflow `defaults.run.shell`) —
+#   with positive controls proving an explicit plain `shell: bash` at
+#   step and workflow scope stays accepted and the same heredoc fake next
+#   to the real enforcement step does not disturb enforcement.
 #
 # The positive cases validate a well-formed synthetic workflow and the real
 # checked-in `.github/workflows/ci.yml`, so a required gate cannot silently
@@ -71,6 +81,13 @@ REAL_WORKFLOW = os.path.normpath(os.path.join(
 # the shell, without spawning a process per case.
 _CHECKER_SPEC = importlib.util.spec_from_file_location(
     "check_ci_aggregate", CHECKER_PATH)
+if _CHECKER_SPEC is None or _CHECKER_SPEC.loader is None:
+    # Fail closed when the module cannot be loaded as a spec/loader pair:
+    # a missing or malformed checker file must break the suite loudly, not
+    # crash mid-assertion with an opaque AttributeError.
+    raise RuntimeError(
+        "cannot load %s as a Python module (missing spec or loader)"
+        % CHECKER_PATH)
 CHECKER = importlib.util.module_from_spec(_CHECKER_SPEC)
 _CHECKER_SPEC.loader.exec_module(CHECKER)
 
@@ -210,6 +227,62 @@ def append_after_run_block(workflow: str, insertion: str) -> str:
     # A mapping key may follow the `run: |` block, so this position is as
     # valid YAML — and as effective against GitHub — as the one above.
     return workflow + insertion
+
+
+HEREDOC_FAKE_STEP = (
+    "      - name: Print documentation only\n"
+    "        run: |\n"
+    "          cat <<'EOF'\n"
+    "          - name: Enforce required job results\n"
+    "            run: |\n"
+    + "".join("    " + line + "\n"
+              for line in GOOD_ENFORCEMENT.splitlines())
+    + "          EOF\n")
+
+
+def with_documentation_only_step(workflow: str) -> str:
+    """Swap the real enforcement step for the review's heredoc fake."""
+    # The 1aaba85b rework reproduction: the aggregate's only step prints a
+    # heredoc whose text embeds an indented fake enforcement step and a
+    # copy of the original script. A text-marker extractor matched the
+    # fake name, extracted the fake run block, and passed a full
+    # simulation; the structure-aware parser sees one documentation step
+    # and no enforcement at all.
+    return workflow.replace(
+        ENFORCEMENT_NAME_LINE + "        run: |\n" + GOOD_ENFORCEMENT,
+        HEREDOC_FAKE_STEP, 1)
+
+
+def prepend_documentation_step(workflow: str) -> str:
+    """Insert the heredoc fake before the real enforcement step."""
+    # Positive control for the parser's literal-content handling: the fake
+    # step text inside the run block must be ignored as shell, while the
+    # real step that follows is still found (exactly once) and enforced.
+    return workflow.replace(
+        ENFORCEMENT_NAME_LINE, HEREDOC_FAKE_STEP + ENFORCEMENT_NAME_LINE, 1)
+
+
+def duplicate_enforcement_step(workflow: str) -> str:
+    """Append a second real enforcement step to the aggregate."""
+    return (workflow + ENFORCEMENT_NAME_LINE
+            + "        run: |\n" + GOOD_ENFORCEMENT)
+
+
+def add_job_defaults_shell(workflow: str, value: str) -> str:
+    """Insert a job-level `defaults.run.shell` into the aggregate job."""
+    return workflow.replace(
+        "  scaffolding-complete:\n",
+        "  scaffolding-complete:\n"
+        "    defaults:\n"
+        "      run:\n"
+        "        shell: %s\n" % value, 1)
+
+
+def add_workflow_defaults_shell(workflow: str, value: str) -> str:
+    """Insert a workflow-level `defaults.run.shell` above the jobs."""
+    return workflow.replace(
+        "jobs:\n",
+        "defaults:\n  run:\n    shell: %s\njobs:\n" % value, 1)
 
 
 def replace_aggregate_if(workflow: str, replacement: str) -> str:
@@ -427,6 +500,98 @@ CASES: List[Case] = [
         synthetic_workflow(needs=["gate-a", "gate-b"]).replace(
             TIMEOUT_LINE, TIMEOUT_LINE + "    continue-on-error: true\n"),
     ),
+    # --- 1aaba85b rework-review P2: structure-aware enforcement ----------
+    # The exact reproduction: the aggregate's only step is a documentation
+    # print whose heredoc text embeds an indented fake enforcement step
+    # and a copy of the original script. The old text-marker extractor
+    # accepted this with a full simulation pass; the parser must see no
+    # enforcement step at all and fail closed.
+    Case(
+        "heredoc_fake_enforcement_fails",
+        1,
+        with_documentation_only_step(
+            synthetic_workflow(needs=["gate-a", "gate-b"])),
+    ),
+    # Positive control: the same heredoc fake in front of the real step is
+    # ignored as literal shell text — exactly one real enforcement step is
+    # found and the workflow stays green.
+    Case(
+        "heredoc_fake_plus_real_enforcement_passes",
+        0,
+        prepend_documentation_step(
+            synthetic_workflow(needs=["gate-a", "gate-b"])),
+    ),
+    # Exactly one enforcement step is pinned: a second one with the same
+    # name fails closed instead of silently checking either.
+    Case(
+        "duplicate_enforcement_step_fails",
+        1,
+        duplicate_enforcement_step(
+            synthetic_workflow(needs=["gate-a", "gate-b"])),
+    ),
+    # The enforcement step must own its `run:` block: a same-named step
+    # without a run key proves nothing and fails closed.
+    Case(
+        "enforcement_step_without_run_fails",
+        1,
+        synthetic_workflow(needs=["gate-a", "gate-b"]).replace(
+            "        run: |\n" + GOOD_ENFORCEMENT,
+            "        uses: actions/checkout@v4\n", 1),
+    ),
+    # --- 1aaba85b rework-review P2: effective-shell binding --------------
+    # A custom shell can discard the enforcement exit status, so the
+    # checker resolves the effective shell (step > job defaults >
+    # workflow defaults) and refuses anything but the GitHub default or
+    # plain bash. The wrapper below is the review's exact reproduction at
+    # step scope.
+    Case(
+        "step_shell_wrapper_fails",
+        1,
+        insert_after_enforcement_name(
+            synthetic_workflow(needs=["gate-a", "gate-b"]),
+            "        shell: bash -c 'bash \"{0}\"; exit 0'\n"),
+    ),
+    # The same wrapper via the aggregate job's defaults.run.shell.
+    Case(
+        "job_defaults_shell_wrapper_fails",
+        1,
+        add_job_defaults_shell(
+            synthetic_workflow(needs=["gate-a", "gate-b"]),
+            "bash -c 'bash \"{0}\"; exit 0'"),
+    ),
+    # The same wrapper via workflow-level defaults.run.shell.
+    Case(
+        "workflow_defaults_shell_wrapper_fails",
+        1,
+        add_workflow_defaults_shell(
+            synthetic_workflow(needs=["gate-a", "gate-b"]),
+            "bash -c 'bash \"{0}\"; exit 0'"),
+    ),
+    # A non-bash interpreter is likewise refused: the checker would not
+    # know what it is simulating.
+    Case(
+        "step_shell_other_interpreter_fails",
+        1,
+        insert_after_enforcement_name(
+            synthetic_workflow(needs=["gate-a", "gate-b"]),
+            "        shell: python\n"),
+    ),
+    # Positive controls: an explicit plain `shell: bash` is accepted at
+    # step scope and at workflow defaults scope — the checker binds the
+    # effective shell rather than blanket-rejecting `defaults:` blocks.
+    Case(
+        "step_shell_plain_bash_accepted",
+        0,
+        insert_after_enforcement_name(
+            synthetic_workflow(needs=["gate-a", "gate-b"]),
+            "        shell: bash\n"),
+    ),
+    Case(
+        "workflow_defaults_shell_bash_accepted",
+        0,
+        add_workflow_defaults_shell(
+            synthetic_workflow(needs=["gate-a", "gate-b"]), "bash"),
+    ),
 ]
 
 
@@ -470,12 +635,14 @@ def run_case(case: Case, workflow_path: str,
 def cli_smoke_test() -> Optional[str]:
     """Run the checked-in checker as a real process, argv fully static."""
     # The one process-level assertion: the checked-in script executes under
-    # its shebang interpreter against the real checked-in workflow and
-    # exits 0. The argv is entirely literal and relative to the repo root,
-    # so static analyzers can verify every element; cwd selects this
-    # repository's root.
+    # the system python3 interpreter (the same interpreter its shebang
+    # resolves and the one running this suite) against the real checked-in
+    # workflow and exits 0. Every argv element is a string literal, so
+    # static analyzers can verify the invocation without tracing dynamic
+    # values; the relative paths resolve against the repo root passed as
+    # cwd.
     proc = subprocess.run(  # nosec
-        [sys.executable, "scripts/ci/check-ci-aggregate.py",
+        ["python3", "scripts/ci/check-ci-aggregate.py",
          "--workflow", ".github/workflows/ci.yml"],
         cwd=REPO_ROOT, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
