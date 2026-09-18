@@ -57,6 +57,7 @@ import shutil
 import subprocess  # nosec
 import sys
 import tempfile
+from typing import Optional, Sequence
 
 AGGREGATE_JOB = "scaffolding-complete"
 ENFORCEMENT_STEP_NAME = "Enforce required job results"
@@ -129,13 +130,11 @@ def ends_jobs_section(line: str) -> bool:
 
 def transcribe_jobs_line(line: str, current, order: list,
                          bodies: dict):
-    """Fold one indented `jobs:` line into its job's body.
-
-    Comment and blank lines are transparent (kept in the current job body
-    verbatim). Any line this parser cannot faithfully attribute fails
-    closed instead of being silently swallowed, so no syntax can make a
-    job disappear here while GitHub Actions would still run it.
-    """
+    """Fold one indented `jobs:` line into its job's body."""
+    # Comment and blank lines are transparent (kept in the current job body
+    # verbatim). Any line this parser cannot faithfully attribute fails
+    # closed instead of being silently swallowed, so no syntax can make a
+    # job disappear here while GitHub Actions would still run it.
     if not line.strip() or line.lstrip().startswith("#"):
         # Transparent for section boundaries, but kept in the current
         # job body so downstream extraction sees the file verbatim.
@@ -158,19 +157,17 @@ def transcribe_jobs_line(line: str, current, order: list,
 
 
 def split_jobs(text: str) -> dict:
-    """Return {job_id: job_body} for the top-level `jobs:` section.
-
-    Only two-space-indented `key:` lines inside the `jobs:` block are job
-    ids; everything else (steps, strategy, matrix entries) is nested deeper
-    or list items and stays inside the current job's body.
-
-    Comment and blank lines are transparent at any indentation: YAML allows
-    them between mapping entries, so they never end the `jobs:` mapping and
-    never hide a following job from this parser (an *unindented* comment is
-    still inside the mapping — treating it as a boundary would let a comment
-    conceal every job after it from the exact-needs check). A non-comment
-    column-0 line is the next top-level key and ends the section.
-    """
+    """Return {job_id: job_body} for the top-level `jobs:` section."""
+    # Only two-space-indented `key:` lines inside the `jobs:` block are job
+    # ids; everything else (steps, strategy, matrix entries) is nested deeper
+    # or list items and stays inside the current job's body.
+    #
+    # Comment and blank lines are transparent at any indentation: YAML allows
+    # them between mapping entries, so they never end the `jobs:` mapping and
+    # never hide a following job from this parser (an *unindented* comment is
+    # still inside the mapping — treating it as a boundary would let a comment
+    # conceal every job after it from the exact-needs check). A non-comment
+    # column-0 line is the next top-level key and ends the section.
     lines = text.splitlines()
     order = []
     bodies = {}
@@ -236,14 +233,12 @@ def dedent_run_block(lines: list, run_index: int) -> str:
 
 
 def extract_enforcement(job_body: str) -> str:
-    """Extract the aggregate enforcement step's shell script.
-
-    Also fails closed when the step mapping carries a skip or
-    error-tolerance control (`if:`, `continue-on-error:`) anywhere outside
-    the run block: GitHub would skip the sole enforcement step or ignore
-    its failure while the script-body simulation still passes, so the step
-    mapping is pinned to the unconditional, error-intolerant shape.
-    """
+    """Extract the aggregate enforcement step's shell script."""
+    # Also fails closed when the step mapping carries a skip or
+    # error-tolerance control (`if:`, `continue-on-error:`) anywhere outside
+    # the run block: GitHub would skip the sole enforcement step or ignore
+    # its failure while the script-body simulation still passes, so the step
+    # mapping is pinned to the unconditional, error-intolerant shape.
     lines = job_body.splitlines()
     for index, line in enumerate(lines):
         if "- name:" not in line or ENFORCEMENT_STEP_NAME not in line:
@@ -273,18 +268,16 @@ def run_block_end(lines: list, run_index: int, base_indent: int) -> int:
 def reject_enforcement_step_controls(lines: list, name_index: int,
                                      run_index: int, base_indent: int,
                                      step_indent: int) -> None:
-    """Fail closed on skip/error-tolerance controls on the enforcement step.
-
-    GitHub skips a step whose `if:` evaluates false and ignores a step's
-    failure under `continue-on-error: true`. Either control on the sole
-    enforcement step lets the aggregate job report success even though
-    nothing rejected the dependency results, while the script simulation
-    still passes — the #134 rework review reproduced both false-success
-    mutations against the exact workflow. No value of either key is safe
-    here, so any occurrence in the step mapping outside the run block
-    (where the same text would be shell) fails closed. Comment and blank
-    lines are transparent; a dedent to the step-list indent ends the step.
-    """
+    """Fail closed on enforcement-step skip/error-tolerance controls."""
+    # GitHub skips a step whose `if:` evaluates false and ignores a step's
+    # failure under `continue-on-error: true`. Either control on the sole
+    # enforcement step lets the aggregate job report success even though
+    # nothing rejected the dependency results, while the script simulation
+    # still passes — the #134 rework review reproduced both false-success
+    # mutations against the exact workflow. No value of either key is safe
+    # here, so any occurrence in the step mapping outside the run block
+    # (where the same text would be shell) fails closed. Comment and blank
+    # lines are transparent; a dedent to the step-list indent ends the step.
     block_end = run_block_end(lines, run_index, base_indent)
     for offset in range(name_index + 1, len(lines)):
         candidate = lines[offset]
@@ -305,15 +298,13 @@ def reject_enforcement_step_controls(lines: list, name_index: int,
 
 
 def check_aggregate_job_controls(job_body: str) -> None:
-    """Pin the aggregate job's own skip/error-tolerance controls.
-
-    The aggregate must run when a dependency fails — otherwise GitHub
-    skips the job (default `needs` semantics) and the skipped required
-    gate reports success. Its job-level `if:` is therefore pinned to the
-    known-safe `${{ always() && !cancelled() }}` expression, and any
-    job-level `continue-on-error` (which would discard a failed
-    enforcement result) is rejected.
-    """
+    """Pin the aggregate job's own skip/error-tolerance controls."""
+    # The aggregate must run when a dependency fails — otherwise GitHub
+    # skips the job (default `needs` semantics) and the skipped required
+    # gate reports success. Its job-level `if:` is therefore pinned to the
+    # known-safe `${{ always() && !cancelled() }}` expression, and any
+    # job-level `continue-on-error` (which would discard a failed
+    # enforcement result) is rejected.
     job_if = None
     for line in job_body.splitlines():
         stripped = line.strip()
@@ -379,12 +370,10 @@ def simulate(script: str, results: list) -> int:
 
 
 def check_enrollment(jobs: dict, needs: list) -> None:
-    """Fail closed unless the aggregate's needs list equals the job set.
-
-    Missing entries let a gate fail without failing the aggregate, extras
-    reference no real job and protect nothing, and duplicates do not make
-    a gate "more required" — all three are drift and all three fail.
-    """
+    """Fail closed unless the aggregate's needs list equals the job set."""
+    # Missing entries let a gate fail without failing the aggregate, extras
+    # reference no real job and protect nothing, and duplicates do not make
+    # a gate "more required" — all three are drift and all three fail.
     others = set(jobs) - {AGGREGATE_JOB}
     need_set = set(needs)
     duplicates = sorted(name for name in need_set
@@ -405,14 +394,12 @@ def check_enrollment(jobs: dict, needs: list) -> None:
 
 
 def verify_enforcement(script: str, needs: list) -> int:
-    """Simulate the enforcement script against every synthetic result vector.
-
-    The all-success vector must pass, and every non-success kind must fail
-    the aggregate at EVERY needs position: a checker that sampled only the
-    first and last positions accepted a mutant enforcement script that
-    skipped the second dependency's result (#134 rework review). Returns
-    the number of simulations executed.
-    """
+    """Simulate the enforcement script against every result vector."""
+    # The all-success vector must pass, and every non-success kind must fail
+    # the aggregate at EVERY needs position: a checker that sampled only the
+    # first and last positions accepted a mutant enforcement script that
+    # skipped the second dependency's result (#134 rework review). Returns
+    # the number of simulations executed.
     simulations = 1
     if simulate(script, ["success"] * len(needs)) != 0:
         raise CheckError(
@@ -451,14 +438,17 @@ def check_workflow(path: str) -> str:
             % (AGGREGATE_JOB, len(needs), simulations))
 
 
-def main() -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Pin scaffolding-complete aggregate enrollment and "
                     "fail-closed enforcement.")
     parser.add_argument(
         "--workflow", default=DEFAULT_WORKFLOW,
         help="path to the workflow file (default: %(default)s)")
-    arguments = parser.parse_args()
+    # `argv=None` makes argparse read sys.argv, so the CLI behavior is
+    # unchanged; an explicit list lets the regression suite invoke this
+    # exact entry point in-process.
+    arguments = parser.parse_args(argv)
     try:
         print(check_workflow(arguments.workflow))
     except CheckError as error:

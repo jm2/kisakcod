@@ -119,11 +119,9 @@ def read_reasoned(path: str, kind: str) -> Reasoned:
 
 
 def read_discovery(path: str) -> List[str]:
-    """Read a plain name list or a raw ``ctest -N`` listing.
-
-    Discovery-only: this parser answers "which tests exist", never "which
-    tests ran".  Use :func:`read_execution` for execution evidence.
-    """
+    """Read a plain name list or a raw ``ctest -N`` listing."""
+    # Discovery-only: this parser answers "which tests exist", never "which
+    # tests ran".  Use :func:`read_execution` for execution evidence.
     names: List[str] = []
     with open(path, encoding="utf-8") as handle:
         for raw in handle:
@@ -142,16 +140,14 @@ def read_discovery(path: str) -> List[str]:
 
 
 def read_execution(path: str) -> List[str]:
-    """Read a raw ``ctest`` run report; return the tests that actually ran.
-
-    A per-test result line counts as execution evidence only when its
-    status is affirmative (``Passed``, or a ran-and-failed ``Failed`` /
-    ``Timeout`` / ``Exception`` outcome).  ``***Not Run ...`` (disabled,
-    failed dependency, ...) and ``***Skipped`` entries are not execution:
-    their bodies never ran even though ``ctest`` may exit 0.  A result
-    line with no recognized status raises, so a truncated or unknown-
-    format log cannot pass as evidence.
-    """
+    """Read a raw ``ctest`` run report; return the tests that actually ran."""
+    # A per-test result line counts as execution evidence only when its
+    # status is affirmative (``Passed``, or a ran-and-failed ``Failed`` /
+    # ``Timeout`` / ``Exception`` outcome).  ``***Not Run ...`` (disabled,
+    # failed dependency, ...) and ``***Skipped`` entries are not execution:
+    # their bodies never ran even though ``ctest`` may exit 0.  A result
+    # line with no recognized status raises, so a truncated or unknown-
+    # format log cannot pass as evidence.
     names: List[str] = []
     with open(path, encoding="utf-8") as handle:
         for lineno, raw in enumerate(handle, start=1):
@@ -228,13 +224,11 @@ def check_manifests(inventory: Set[str], selected: Set[str],
 
 def check_platform_profile(selected: Set[str], excluded: Set[str],
                            absent: Set[str], discovered: Set[str]) -> int:
-    """Check the platform-profile discovery invariants.
-
-    Every selected test must be discovered (a dead selection silently did
-    not run), every platform-absent test must be undiscovered, every
-    excluded test must still be discovered, and nothing outside the
-    selected/justified-excluded sets may be discovered.
-    """
+    """Check the platform-profile discovery invariants."""
+    # Every selected test must be discovered (a dead selection silently did
+    # not run), every platform-absent test must be undiscovered, every
+    # excluded test must still be discovered, and nothing outside the
+    # selected/justified-excluded sets may be discovered.
     failures = report_violation(
         selected - discovered,
         "selected tests not discovered by the platform (dead selection: "
@@ -260,14 +254,12 @@ def check_platform_profile(selected: Set[str], excluded: Set[str],
 
 def check_execution(selected: Set[str], discovered: Set[str],
                     executed: Set[str], enforce_absence: bool) -> int:
-    """Check the executed evidence against the selection.
-
-    Nothing outside the selection may run and a selection that runs
-    nothing proves nothing.  With --enforce-platform-absence every
-    selected test is already known to be discovered, so the expected
-    executed set is the whole selection; otherwise only selected tests
-    that were also discovered are expected to have executed.
-    """
+    """Check the executed evidence against the selection."""
+    # Nothing outside the selection may run and a selection that runs
+    # nothing proves nothing.  With --enforce-platform-absence every
+    # selected test is already known to be discovered, so the expected
+    # executed set is the whole selection; otherwise only selected tests
+    # that were also discovered are expected to have executed.
     expected = selected if enforce_absence else (selected & discovered)
     failures = report_violation(
         executed - expected, "executed tests outside the selected set")
@@ -352,13 +344,11 @@ def check_entry_quality(inventory_list: List[str], selected_list: List[str],
 def check_run_evidence(args: argparse.Namespace, inventory: Set[str],
                        selected: Set[str], excluded: Set[str],
                        absent: Set[str]) -> int:
-    """Validate flag combinations and check discovery/execution evidence.
-
-    Raises when the flags are mutually inconsistent (--executed without
-    --discovered, platform enforcement without an --absent manifest);
-    returns 0 when no discovery evidence was requested, otherwise the
-    number of discovery/execution violations.
-    """
+    """Validate flag combinations and check discovery/execution evidence."""
+    # Raises when the flags are mutually inconsistent (--executed without
+    # --discovered, platform enforcement without an --absent manifest);
+    # returns 0 when no discovery evidence was requested, otherwise the
+    # number of discovery/execution violations.
     if args.executed and not args.discovered:
         raise ValueError("--executed requires --discovered")
     if args.enforce_platform_absence and not args.absent:

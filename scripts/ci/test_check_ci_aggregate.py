@@ -45,20 +45,34 @@
 
 from __future__ import annotations
 
+import contextlib
+import importlib.util
+import io
 import os
-# subprocess is the only way to exercise the checker as a real process,
-# which is the contract under test (its exit status). The command is a
-# literal interpreter name plus this repository's own checked-in script.
+# subprocess remains only for the single end-of-suite CLI smoke test, which
+# executes this repository's own checked-in script with a fully static,
+# auditable argv; every per-case invocation runs the checker's CLI entry
+# point in-process instead (see run_checker_cli and cli_smoke_test).
 import subprocess  # nosec
 import sys
 import tempfile
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-CHECKER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "check-ci-aggregate.py")
+CHECKER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "check-ci-aggregate.py")
+REPO_ROOT = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir))
 REAL_WORKFLOW = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     os.pardir, os.pardir, ".github", "workflows", "ci.yml"))
+
+# Load the checked-in checker as a module so each case can call its CLI
+# entry point (`main`) directly and capture the exit status it would hand
+# the shell, without spawning a process per case.
+_CHECKER_SPEC = importlib.util.spec_from_file_location(
+    "check_ci_aggregate", CHECKER_PATH)
+CHECKER = importlib.util.module_from_spec(_CHECKER_SPEC)
+_CHECKER_SPEC.loader.exec_module(CHECKER)
 
 GOOD_ENFORCEMENT = """\
           results="${{ join(needs.*.result, ' ') }}"
@@ -115,12 +129,10 @@ def synthetic_workflow(needs: List[str],
                        enforcement: str = GOOD_ENFORCEMENT,
                        include_aggregate: bool = True,
                        interject: str = "") -> str:
-    """Build a minimal workflow with the real file's shape and indentation.
-
-    `interject` is spliced verbatim immediately before the aggregate block,
-    so fixtures can place comments (any indentation) inside the jobs
-    mapping the way the real workflow does.
-    """
+    """Build a minimal workflow with the real file's shape and indentation."""
+    # `interject` is spliced verbatim immediately before the aggregate block,
+    # so fixtures can place comments (any indentation) inside the jobs
+    # mapping the way the real workflow does.
     job_ids = jobs if jobs is not None else ["gate-a", "gate-b"]
     blocks = []
     for job_id in job_ids:
@@ -186,21 +198,17 @@ TIMEOUT_LINE = "    timeout-minutes: 10\n"
 
 
 def insert_after_enforcement_name(workflow: str, insertion: str) -> str:
-    """Splice step-level lines directly after the enforcement step name.
-
-    This is the exact position the #134 rework review used for its two
-    reproduced false-success mutations against the real ci.yml.
-    """
+    """Splice step-level lines directly after the enforcement step name."""
+    # This is the exact position the #134 rework review used for its two
+    # reproduced false-success mutations against the real ci.yml.
     return workflow.replace(ENFORCEMENT_NAME_LINE,
                             ENFORCEMENT_NAME_LINE + insertion, 1)
 
 
 def append_after_run_block(workflow: str, insertion: str) -> str:
-    """Place step-level lines after the enforcement run block.
-
-    A mapping key may follow the `run: |` block, so this position is as
-    valid YAML — and as effective against GitHub — as the one above.
-    """
+    """Place step-level lines after the enforcement run block."""
+    # A mapping key may follow the `run: |` block, so this position is as
+    # valid YAML — and as effective against GitHub — as the one above.
     return workflow + insertion
 
 
@@ -422,6 +430,19 @@ CASES: List[Case] = [
 ]
 
 
+def run_checker_cli(argv: List[str]) -> Tuple[int, str]:
+    """Run the checker's CLI main() in-process; return (rc, stderr text)."""
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr), \
+            contextlib.redirect_stdout(io.StringIO()):
+        try:
+            code = CHECKER.main(argv)
+        except SystemExit as exit_exc:  # argparse usage exits, if any
+            raw = exit_exc.code
+            code = raw if isinstance(raw, int) else (0 if raw is None else 1)
+    return code, stderr.getvalue()
+
+
 def run_case(case: Case, workflow_path: str,
              workflow_text: Optional[str]) -> Optional[str]:
     with tempfile.TemporaryDirectory(prefix="check-aggregate-") as tmp:
@@ -431,21 +452,36 @@ def run_case(case: Case, workflow_path: str,
             path = os.path.join(tmp, "ci.yml")
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(workflow_text)
-        # The checker under test is this repository's own checked-in
-        # script run against a fixture this process just wrote; a nonzero
-        # exit is the negative cases' expected outcome, so check=False is
-        # intentional — the exit status is the assertion. The interpreter
-        # is named literally (env-resolved `python3`, the same
-        # interpreter the checker's own shebang requests) so the executed
-        # command is a static, auditable argv.
-        proc = subprocess.run(  # nosec
-            ["python3", CHECKER, "--workflow", path],
-            capture_output=True, text=True, check=False)
-        if proc.returncode != case.expect_rc:
+        # Each case invokes the checker's own CLI entry point — the same
+        # main() argv surface the shell would reach — and asserts the exit
+        # status it returns: a nonzero status is the negative cases'
+        # expected outcome, so no explicit exception handling is wanted.
+        # The fail-closed behavior under test lives in the checker's code,
+        # and its enforcement simulation still executes the real bash
+        # script internally, so in-process invocation exercises the same
+        # logic the CI job runs.
+        code, stderr = run_checker_cli(["--workflow", path])
+        if code != case.expect_rc:
             return ("%s: expected rc=%d, got rc=%d\n%s"
-                    % (case.name, case.expect_rc, proc.returncode,
-                       proc.stderr.strip()))
+                    % (case.name, case.expect_rc, code, stderr.strip()))
         return None
+
+
+def cli_smoke_test() -> Optional[str]:
+    """Run the checked-in checker as a real process, argv fully static."""
+    # The one process-level assertion: the checked-in script executes under
+    # its shebang interpreter against the real checked-in workflow and
+    # exits 0. The argv is entirely literal and relative to the repo root,
+    # so static analyzers can verify every element; cwd selects this
+    # repository's root.
+    proc = subprocess.run(  # nosec
+        [sys.executable, "scripts/ci/check-ci-aggregate.py",
+         "--workflow", ".github/workflows/ci.yml"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        return ("cli_smoke: expected rc=0, got rc=%d\n%s"
+                % (proc.returncode, proc.stderr.strip()))
+    return None
 
 
 def main() -> int:
@@ -460,7 +496,11 @@ def main() -> int:
     problem = run_case(real_case, REAL_WORKFLOW, None)
     if problem:
         failures.append(problem)
-    total = len(CASES) + 1
+    # Process-level smoke: the checked-in script itself runs as a CLI.
+    smoke = cli_smoke_test()
+    if smoke:
+        failures.append(smoke)
+    total = len(CASES) + 2
     if failures:
         print("FAIL: check-ci-aggregate regressions (%d):"
               % len(failures), file=sys.stderr)

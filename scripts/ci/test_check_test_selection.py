@@ -22,17 +22,31 @@
 
 from __future__ import annotations
 
+import contextlib
+import importlib.util
+import io
 import os
-# subprocess is the only way to exercise the checker as a real process,
-# which is the contract under test (its exit status). The command is a
-# literal interpreter name plus this repository's own checked-in script.
+# subprocess remains only for the single end-of-suite CLI smoke test, which
+# executes this repository's own checked-in script with a fully static,
+# auditable argv; every per-case invocation runs the checker's CLI entry
+# point in-process instead (see run_checker_cli and cli_smoke_test).
 import subprocess  # nosec
 import sys
 import tempfile
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-CHECKER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "check-test-selection.py")
+CHECKER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "check-test-selection.py")
+REPO_ROOT = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir))
+
+# Load the checked-in checker as a module so each case can call its CLI
+# entry point (`main`) directly and capture the exit status it would hand
+# the shell, without spawning a process per case.
+_CHECKER_SPEC = importlib.util.spec_from_file_location(
+    "check_test_selection", CHECKER_PATH)
+CHECKER = importlib.util.module_from_spec(_CHECKER_SPEC)
+_CHECKER_SPEC.loader.exec_module(CHECKER)
 
 
 class Case:
@@ -271,6 +285,19 @@ CASES: List[Case] = [
 ]
 
 
+def run_checker_cli(argv: List[str]) -> Tuple[int, str]:
+    """Run the checker's CLI main() in-process; return (rc, stderr text)."""
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr), \
+            contextlib.redirect_stdout(io.StringIO()):
+        try:
+            code = CHECKER.main(argv)
+        except SystemExit as exit_exc:  # argparse usage exits, if any
+            raw = exit_exc.code
+            code = raw if isinstance(raw, int) else (0 if raw is None else 1)
+    return code, stderr.getvalue()
+
+
 def run_case(case: Case) -> Optional[str]:
     with tempfile.TemporaryDirectory(prefix="check-selection-") as tmp:
         paths = {}
@@ -284,39 +311,62 @@ def run_case(case: Case) -> Optional[str]:
                 handle.write(value)
             paths[key] = path
 
-        # The checker under test is this repository's own checked-in
-        # script run against fixtures this process just wrote; a nonzero
-        # exit is the negative cases' expected outcome, so check=False is
-        # intentional — the exit status is the assertion. The interpreter
-        # is named literally (env-resolved `python3`, the same interpreter
-        # the checker's own shebang requests) and the optional manifests
-        # are appended with starred conditionals, so the executed command
-        # is a single static, auditable argv literal.
-        proc = subprocess.run(  # nosec
-            ["python3", CHECKER,
-             "--label", case.name,
-             "--inventory", paths["inventory"],
-             "--selected", paths["selected"],
-             "--excluded", paths["excluded"],
-             *(["--absent", paths["absent"]] if "absent" in paths else []),
-             *(["--discovered", paths["discovered"],
-                "--discovered-scope", case.files.get("scope", "subset")]
-               if "discovered" in paths else []),
-             *(["--executed", paths["executed"]]
-               if "executed" in paths else []),
-             *(["--enforce-platform-absence"]
-               if case.files.get("enforce") else [])],
-            capture_output=True, text=True, check=False)
-        if proc.returncode != case.expect_rc:
+        # Each case invokes the checker's own CLI entry point — the same
+        # main() argv surface the shell would reach, with the optional
+        # manifests appended exactly as the CLI consumes them — and asserts
+        # the exit status it returns: a nonzero status is the negative
+        # cases' expected outcome, so no explicit exception handling is
+        # wanted here either.
+        argv = ["--label", case.name,
+                "--inventory", paths["inventory"],
+                "--selected", paths["selected"],
+                "--excluded", paths["excluded"]]
+        if "absent" in paths:
+            argv += ["--absent", paths["absent"]]
+        if "discovered" in paths:
+            argv += ["--discovered", paths["discovered"],
+                     "--discovered-scope", case.files.get("scope", "subset")]
+        if "executed" in paths:
+            argv += ["--executed", paths["executed"]]
+        if case.files.get("enforce"):
+            argv += ["--enforce-platform-absence"]
+        code, stderr = run_checker_cli(argv)
+        if code != case.expect_rc:
             return ("%s: expected rc=%d, got rc=%d\n%s"
-                    % (case.name, case.expect_rc, proc.returncode,
-                       proc.stderr.strip()))
+                    % (case.name, case.expect_rc, code, stderr.strip()))
         return None
+
+
+def cli_smoke_test() -> Optional[str]:
+    """Run the checked-in checker as a real process, argv fully static."""
+    # The one process-level assertion: the checked-in script executes under
+    # its shebang interpreter against this repository's own checked-in
+    # selection manifests and exits 0. The argv is entirely literal and
+    # relative to the repo root, so static analyzers can verify every
+    # element; cwd selects this repository's root.
+    proc = subprocess.run(  # nosec
+        [sys.executable, "scripts/ci/check-test-selection.py",
+         "--label", "cli-smoke",
+         "--inventory", "scripts/ci/test-selection/portable-inventory.txt",
+         "--selected", "scripts/ci/test-selection/windows-x86.selected.txt",
+         "--excluded", "scripts/ci/test-selection/windows-x86.excluded.tsv",
+         "--absent", "scripts/ci/test-selection/windows-x86.absent.tsv"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        return ("cli_smoke: expected rc=0, got rc=%d\n%s"
+                % (proc.returncode, proc.stderr.strip()))
+    return None
 
 
 def main() -> int:
     failures = [problem for problem in (run_case(c) for c in CASES)
                 if problem]
+    # Process-level smoke: the checked-in script itself runs as a CLI
+    # against the repository's real selection manifests.
+    smoke = cli_smoke_test()
+    if smoke:
+        failures.append(smoke)
+    total = len(CASES) + 1
     if failures:
         print("FAIL: check-test-selection regressions (%d):"
               % len(failures), file=sys.stderr)
@@ -324,7 +374,7 @@ def main() -> int:
             print("  " + problem.replace("\n", "\n  "), file=sys.stderr)
         return 1
     print("OK: check-test-selection regressions passed (%d cases)."
-          % len(CASES))
+          % total)
     return 0
 
 
