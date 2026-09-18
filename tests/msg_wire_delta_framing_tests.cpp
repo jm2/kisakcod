@@ -314,8 +314,12 @@ void test_string_framing()
     MSG_WriteString(&m, "hi");
     MSG_WriteString(&m, "a\x92" "c"); // 146 cleans to 39 ('\'') on the wire
     const std::uint8_t want[] = {'h', 'i', 0, 'a', '\'', 'c', 0};
+    // WireSpan::bits is a BIT length (spanFor matches in absolute bit
+    // coordinates): "hi\0" covers 3 bytes = 24 bits and "a'c\0" covers
+    // 4 bytes = 32 bits, so drift in ANY byte of either encoded string
+    // names that string instead of reporting (unmapped).
     const WireSpan spans[] = {
-        {"string0", 0, 0, 3}, {"string1", 3, 0, 4},
+        {"string0", 0, 0, 3 * 8}, {"string1", 3, 0, 4 * 8},
     };
     compareWire(m, "WriteString + I_CleanChar", want, sizeof(want), spans, 2);
 

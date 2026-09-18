@@ -387,6 +387,38 @@ void test_compare_wire_reporter()
     CHECK(d4.byteIndex == 0);
     CHECK(d4.bitIndex == 4);
     CHECK(d4.fieldName != nullptr && std::strcmp(d4.fieldName, "pair16") == 0);
+
+    // Multi-byte STRING span attribution: a 4-byte string span (32 bits)
+    // must name drift in its LAST byte too — this is the byte-count-vs-bit-
+    // length trap: 4 here means 4 BITS, which stops at byte 0 and reports
+    // (unmapped) for every later byte of the string.
+    msg_t mStr;
+    std::uint8_t bufStr[8];
+    makeMsg(mStr, bufStr, 8);
+    MSG_WriteByte(&mStr, 'a');
+    MSG_WriteByte(&mStr, 'b');
+    MSG_WriteByte(&mStr, 'c');
+    MSG_WriteByte(&mStr, 0); // string terminator
+    const WireSpan strSpans[] = {
+        {"stringy", 0, 0, 4 * 8},
+        {"after", 4, 0, 8},
+    };
+
+    // Drift in the terminator byte (byte 3, bit 0): produced 0x00 vs 0x01.
+    const std::uint8_t expectedStr[] = {'a', 'b', 'c', 0x01};
+    const WireDiff d5 = compareWireNegative(mStr, expectedStr, sizeof(expectedStr), strSpans, 2);
+    CHECK(!d5.ok);
+    CHECK(d5.byteIndex == 3);
+    CHECK(d5.bitIndex == 0);
+    CHECK(d5.fieldName != nullptr && std::strcmp(d5.fieldName, "stringy") == 0);
+
+    // And mid-string (byte 2, bit 1): produced 'c' vs 0x61 -> bit 1.
+    const std::uint8_t expectedStrMid[] = {'a', 'b', 0x61, 0x00};
+    const WireDiff d6 = compareWireNegative(mStr, expectedStrMid, sizeof(expectedStrMid), strSpans, 2);
+    CHECK(!d6.ok);
+    CHECK(d6.byteIndex == 2);
+    CHECK(d6.bitIndex == 1);
+    CHECK(d6.fieldName != nullptr && std::strcmp(d6.fieldName, "stringy") == 0);
 }
 
 int main()
