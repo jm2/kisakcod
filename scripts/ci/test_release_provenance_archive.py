@@ -196,7 +196,11 @@ class SourceArchiveIdentityTests(ReleaseProvenanceTestBase):
             if hasattr(tarfile, "data_filter"):
                 archive.extractall(tree, filter="data")
             else:
-                archive.extractall(tree)
+                # B202 is a false positive here: the members were written by
+                # build_source_archive() above from a literal list, and this
+                # branch only runs on interpreters whose tarfile predates
+                # extraction filters, so no safe-filter argument exists.
+                archive.extractall(tree)  # nosec B202
         literal = tree / "src\\source_identity.txt"
         self.assertTrue(literal.is_file())
         self.assertEqual(literal.read_text(encoding="utf-8"), f"commit={COMMIT}\n")
