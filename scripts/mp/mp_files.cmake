@@ -151,6 +151,7 @@ set(GROUPVOICE_SPEEX
 
 set(QCOMMON
     ${QCOMMON}
+    "${SRC_DIR}/qcommon/msg_bits_mp.cpp"
     "${SRC_DIR}/qcommon/msg_mp.cpp"
     "${SRC_DIR}/qcommon/msg_mp.h"
     "${SRC_DIR}/qcommon/net_chan_mp.cpp"
