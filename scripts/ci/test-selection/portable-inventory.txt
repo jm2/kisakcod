@@ -91,6 +91,8 @@ database-zone-stream-ownership-source-invariants
 dedi-headless-client-media-include-debt
 dedi-headless-source-profile
 disk32-pointer-token-bounds
+dl-download-source-invariants
+dl-http-protocol-contracts
 effectscore-archive-body-state-disk32-codec
 effectscore-archive-body-state-disk32-source-invariants
 effectscore-archive-buffers-disk32-codec
@@ -172,6 +174,7 @@ platform-service-runtime-contracts
 platform-service-sp-contracts
 platform-socket-contracts
 platform-socket-source-invariants
+platform-socket-stream-contracts
 platform-virtual-memory-contracts
 pointer-truncation-tripwire
 pool-native-pointer-freelist
