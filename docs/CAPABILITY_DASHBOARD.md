@@ -59,12 +59,14 @@ Commercial reference gate is **not satisfied**, so no requested target can be de
 
 ## Derived CI inventory
 
-3 workflows, 22 jobs, 38 matrix-expanded job invocations.
+3 workflows, 24 jobs, 40 matrix-expanded job invocations.
 
 | Workflow | Job | Matrix legs | Self-hosted |
 |---|---|---|---|
 | ci.yml | portable-tests (Portable tests / ${{ matrix.platform }}) | 5 | no |
+| ci.yml | test-selection-checker (Test-selection + aggregate checker self-test) | 1 | no |
 | ci.yml | script-sanitizers (Script production paths / ASan + UBSan) | 1 | no |
+| ci.yml | portable-sanitizers (Portable tests / ASan + UBSan) | 1 | no |
 | ci.yml | capability-dashboard (Capability evidence dashboard) | 1 | no |
 | ci.yml | windows-x86 (Windows x86 / ${{ matrix.config }}) | 2 | no |
 | ci.yml | windows-x86-sp (Windows x86 SP / ${{ matrix.config }}) | 2 | no |
