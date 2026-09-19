@@ -55,8 +55,8 @@ or production behavior per PR; separate naming from observable behavior changes.
 | ID | Workstream | Prerequisites / exit evidence |
 |---|---|---|
 | R1 | Aspect, light, depth and stencil names (4 commits) | First batch. Exact integer values/widths, production aspect/stencil/light fixtures; existing renderer gate and hosted MP/SP compilation. No structure member types/layouts change. |
-| R2 | Image formats, flags, semantics, categories and tracking (5) | After R1. Frozen disk tags/masks and image decode/allocation tests; preserve bounded mip arithmetic. |
-| R3 | Shader constants/arguments and final techniques (5) | After R1/R2. Final enum location, every shader slot frozen, material loader/dispatch tests and hosted renderer builds. Coordinate the database-facing hunks with D1. |
+| R2 | Image formats, flags, semantics, categories and tracking (5) | After R1, start formats/flags and decoder coverage, then semantics/categories. Tracking consumers are a separate slice that waits for overlapping owners. Frozen disk tags/masks and allocation tests; preserve bounded mip arithmetic. |
+| R3 | Shader constants/arguments and final techniques (5) | After R1; can proceed while R2 tracking consumers wait. Final enum location, every shader slot frozen, material loader/dispatch tests and hosted renderer builds. Coordinate the database-facing hunks with D1. |
 | R4 | Surface dispatch names (1) | After R3. Map endpoint names onto the fork's native stream; retain checked multiplication/reservation and production source contracts. |
 | D1 | Database declaration relocation, zone flags, XAsset tags (3) | Audit actual cross-TU references before moving declarations; preserve public facade, callbacks, zone ownership and Disk32 type validation. Existing registry/lifecycle tests plus full engine link. Split relocation from values if it makes review clearer. |
 | D2 | Field types and loader tables (1) | After D1/S1. Migrate final names onto bounded native/Disk32 loaders; field-width, table and parser tests before table churn. |
@@ -91,6 +91,19 @@ adds coverage to an existing registered test so it does not churn shared CI
 selectors, inventories or dashboard totals. Before landing, compare merge
 conflicts with each still-open PR against the same master baseline; do not
 introduce a new conflict into a worker's work.
+
+A path-level audit against fetched PR heads identifies these additional scheduling
+constraints. R2 tracking touches `client_mp/cl_main_mp.cpp` (#157) and
+`xanim/xmodel_load_obj.cpp` (#140); keep that broad consumer sweep separate from
+image format/flag and decoder work. D1 zone-flag consumers also touch #157's
+client file, so declaration/reference auditing can proceed before that consumer
+slice. G1 serialized values overlap #159's `msg_mp.cpp` and
+`sv_msg_write_mp.cpp`; reuse its fixtures after landing. R3 has no direct overlap
+with those six PRs and need not wait for the image-tracking slice. A1's ownership
+constraint is broader than direct file overlap because ki-dkeb defines its
+production acceptance gates. C1 remains last because its broad consumer sweep
+overlaps #159, #157 and #140. These are scheduling dependencies, not a claim that
+all changes in the same file would conflict.
 
 For every batch: refresh endpoints/owners, identify surviving final hunks, adapt
 to the current fork, freeze ABI/wire values where applicable, run focused tests
@@ -127,6 +140,19 @@ asserted. Renderer and OS services are doubles; no retail/GPU parity is claimed.
 No registered tests, workflow selectors, inventory entries or dashboard totals
 are added. Hosted Windows MP/dedicated/SP compilation remains required.
 
-Local evidence is recorded in the PR after the final validation run. The next
-implementation batch is R2; refresh upstream/master, fork master and active
-Gas City owners before starting it.
+Local validation on the final production tree:
+
+- GCC Release: **239/239** portable CTest entries passed.
+- Clang ASan + UBSan: renderer production contracts passed with leak detection
+  and halt-on-error enabled.
+- CI checker regressions: **19** selection, **36** aggregate and **141** dashboard
+  cases passed. Portable discovery matches the unchanged inventory exactly;
+  the generated dashboard is current.
+- All six merge simulations returned valid Git trees and introduced no new
+  conflicts. PR #153 already conflicts in `docs/CAPABILITY_DASHBOARD.md`; this
+  branch leaves that pre-existing conflict unchanged.
+
+[PR #163](https://github.com/jm2/kisakcod/pull/163) carries the protected hosted
+checks and landing evidence. The next implementation slice is R2 formats/flags;
+refresh upstream/master, fork master and active Gas City owners before starting
+it. R3 can follow independently while R2's tracking consumers wait.
