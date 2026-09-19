@@ -2763,6 +2763,22 @@ add_test(
     COMMAND kisakcod-upstream-angle-math-tests
 )
 
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/upstream_b3199_tests.cmake")
+
+add_executable(kisakcod-upstream-b3199-mp-tests upstream_b3199_tests.cpp)
+add_executable(kisakcod-upstream-b3199-sp-tests upstream_b3199_tests.cpp)
+foreach(profile IN ITEMS mp sp)
+    string(TOUPPER "${profile}" profile_upper)
+    target_include_directories(kisakcod-upstream-b3199-${profile}-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/upstream-b3199")
+    target_compile_definitions(kisakcod-upstream-b3199-${profile}-tests PRIVATE KISAK_${profile_upper})
+    target_compile_features(kisakcod-upstream-b3199-${profile}-tests PRIVATE cxx_std_20)
+    kisakcod_test_warnings(kisakcod-upstream-b3199-${profile}-tests)
+    set_target_properties(kisakcod-upstream-b3199-${profile}-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+endforeach()
+add_test(NAME upstream-b3199-mp-production-contracts COMMAND kisakcod-upstream-b3199-mp-tests)
+add_test(NAME upstream-b3199-sp-production-contracts COMMAND kisakcod-upstream-b3199-sp-tests)
+
 add_executable(kisakcod-upstream-aim-safety-tests
     upstream_aim_safety_tests.cpp
 )
