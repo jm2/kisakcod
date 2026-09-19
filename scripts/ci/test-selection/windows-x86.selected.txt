@@ -79,6 +79,7 @@ missile-layout-mp-compile-contracts
 missile-layout-sp-compile-contracts
 missile-union-layout-source-invariants
 msg-wire-format-contracts
+net-chan-reassembly-span-contracts
 platform-console-invalid-eof-contracts
 platform-console-runtime-contracts
 platform-console-source-invariants
