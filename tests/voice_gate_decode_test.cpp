@@ -40,12 +40,8 @@ constexpr int kDecodeTolerance = 8; // recorded tolerance (measured max diff on
 // round-trip gate allows.
 constexpr int kDtxAmplitudeBound = 16000;
 
-// Frame-class-aware comparison against the pinned decode reference. DTX
-// frames decode to comfort noise — receiver-local synthesis that never
-// appears on the wire, so their content is validated by the amplitude bound
-// rather than sample-pinned; every deterministic frame is pinned against the
-// recorded reference sample-for-sample. Returns the max abs diff over
-// deterministic frames; reports the DTX frame count through *dtx_frames_out.
+// Classify one transmitted frame as receiver-local comfort noise (true) or
+// a deterministic, sample-pinnable vocoded frame (false).
 //
 // Wire classification mirrors the in-tree Speex nb codec (nb_celp.c):
 //   - submode 0 (null submode: a first byte whose nb submode nibble is 0)
@@ -59,47 +55,55 @@ constexpr int kDtxAmplitudeBound = 16000;
 //     silence frame arrives as 0x0e... — a nonzero submode nibble — so the
 //     marker, not the nibble, decides.
 //   - any other submode is a deterministic vocoded frame.
+bool is_dtx_frame(const std::vector<char> &stream, int frame_offset)
+{
+    if (frame_offset < 0 || frame_offset >= static_cast<int>(stream.size()))
+        return true; // nothing transmitted: not sample-pinnable
+    const unsigned int first =
+        static_cast<unsigned char>(stream[frame_offset]);
+    const unsigned int submode = (first & 0x78) >> 3;
+    if (submode == 0)
+        return true; // null submode: comfort noise, no payload
+    if (submode != 1)
+        return false; // deterministic vocoded frame
+    // Submode 1: the DTX marker is the last 4 bits of the 43-bit frame
+    // before byte padding — frame bit 39 is the LSB of byte 4 and frame
+    // bits 40-42 are the top 3 bits of byte 5 (its low 5 bits are
+    // zero padding). DTX is signaled by the marker value 15 (0b1111).
+    constexpr int kSubmode1BitsPerFrame = 43; // modes.c nb_submode1
+    constexpr int kSubmode1FrameBytes = (kSubmode1BitsPerFrame + 7) / 8;
+    if (frame_offset + kSubmode1FrameBytes > static_cast<int>(stream.size()))
+        return true; // truncated frame: not sample-pinnable
+    const unsigned int marker =
+        ((static_cast<unsigned int>(static_cast<unsigned char>(
+              stream[frame_offset + 4])) &
+          1u)
+         << 3) |
+        (static_cast<unsigned int>(static_cast<unsigned char>(
+             stream[frame_offset + 5])) >>
+         5);
+    return marker == 15;
+}
+
+// Frame-class-aware comparison against the pinned decode reference. DTX
+// frames decode to comfort noise — receiver-local synthesis that never
+// appears on the wire, so their content is validated by the amplitude bound
+// rather than sample-pinned; every deterministic frame is pinned against the
+// recorded reference sample-for-sample. Returns the max abs diff over
+// deterministic frames; reports the DTX frame count through *dtx_frames_out.
+// Per-frame classification is is_dtx_frame() above.
 int compare_decoded_to_reference(const std::vector<int16_t> &decoded,
                                  const std::vector<char> &reference,
                                  const std::vector<char> &stream,
                                  const std::vector<int> &lengths,
                                  int *dtx_frames_out)
 {
-    auto is_dtx_frame = [&stream](int frame_offset) {
-        if (frame_offset < 0 || frame_offset >= static_cast<int>(stream.size()))
-            return true; // nothing transmitted: not sample-pinnable
-        const unsigned int first =
-            static_cast<unsigned char>(stream[frame_offset]);
-        const unsigned int submode = (first & 0x78) >> 3;
-        if (submode == 0)
-            return true; // null submode: comfort noise, no payload
-        if (submode != 1)
-            return false; // deterministic vocoded frame
-        // Submode 1: the DTX marker is the last 4 bits of the 43-bit frame
-        // before byte padding — frame bit 39 is the LSB of byte 4 and frame
-        // bits 40-42 are the top 3 bits of byte 5 (its low 5 bits are
-        // zero padding). DTX is signaled by the marker value 15 (0b1111).
-        constexpr int kSubmode1BitsPerFrame = 43; // modes.c nb_submode1
-        constexpr int kSubmode1FrameBytes = (kSubmode1BitsPerFrame + 7) / 8;
-        if (frame_offset + kSubmode1FrameBytes >
-            static_cast<int>(stream.size()))
-            return true; // truncated frame: not sample-pinnable
-        const unsigned int marker =
-            ((static_cast<unsigned int>(static_cast<unsigned char>(
-                  stream[frame_offset + 4])) &
-              1u)
-             << 3) |
-            (static_cast<unsigned int>(static_cast<unsigned char>(
-                 stream[frame_offset + 5])) >>
-             5);
-        return marker == 15;
-    };
     int max_diff = 0;
     int dtx_frames = 0;
     int offset = 0;
     for (size_t f = 0; f < lengths.size(); ++f)
     {
-        const bool dtx = is_dtx_frame(offset);
+        const bool dtx = is_dtx_frame(stream, offset);
         for (int i = 0; i < kFrameNb; ++i)
         {
             const size_t s = f * static_cast<size_t>(kFrameNb) + static_cast<size_t>(i);
