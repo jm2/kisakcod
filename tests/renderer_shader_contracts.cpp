@@ -92,7 +92,8 @@ void CheckSurfaceDispatch()
 }
 
 struct GfxCmdBufSourceState { struct { float consts[58][4]; } input; };
-int dirtyCalls, dirtySlot;
+int dirtyCalls;
+int dirtySlot;
 GfxCmdBufSourceState *dirtySource;
 void R_DirtyCodeConstant(GfxCmdBufSourceState *source, CodeConstant slot)
 {
@@ -111,7 +112,12 @@ void Com_Error(int code, const char *, ...) { CHECK(code == ERR_DROP); ++errors;
 
 void CheckGameTime()
 {
-    struct Example { float time, sine, cosine, fraction; };
+    struct Example {
+        float gameTime;
+        float sine;
+        float cosine;
+        float fraction;
+    };
     constexpr Example examples[] = {
         {0, 0, 1, 0}, {0.25f, 1, 0, 0.25f}, {0.5f, 0, -1, 0.5f},
         {1.75f, -1, 0, 0.75f}, {-0.25f, -1, 0, 0.75f}
@@ -120,35 +126,35 @@ void CheckGameTime()
         GfxCmdBufSourceState source{};
         for (auto &row : source.input.consts) for (auto &value : row) value = -123;
         dirtyCalls = 0;
-        R_SetGameTime(&source, example.time);
+        R_SetGameTime(&source, example.gameTime);
         CHECK(dirtyCalls == 1 && dirtySlot == 18 && dirtySource == &source);
         CHECK(std::abs(source.input.consts[18][0] - example.sine) < 0.000001f);
         CHECK(std::abs(source.input.consts[18][1] - example.cosine) < 0.000001f);
         CHECK(source.input.consts[18][2] == example.fraction);
-        CHECK(source.input.consts[18][3] == example.time);
+        CHECK(source.input.consts[18][3] == example.gameTime);
         for (int slot = 0; slot < 58; ++slot)
             if (slot != 18) for (const float value : source.input.consts[slot]) CHECK(value == -123);
         dirtySource = nullptr;
     }
 }
+constexpr const char *techniqueNames[] = {
+    "depth prepass", "build floatz", "build shadowmap depth", "build shadowmap color",
+    "unlit", "emissive", "emissive shadow", "lit", "lit sun", "lit sun shadow",
+    "lit spot", "lit spot shadow", "lit omni", "lit omni shadow", "lit instanced",
+    "lit instanced sun", "lit instanced sun shadow", "lit instanced spot",
+    "lit instanced spot shadow", "lit instanced omni", "lit instanced omni shadow",
+    "light spot", "light omni", "light spot shadow", "fakelight normal", "fakelight view",
+    "sunlight preview", "case texture", "solid wireframe", "shaded wireframe",
+    "shadowcookie caster", "shadowcookie receiver", "debug bumpmap", "debug bumpmap instanced"
+};
+static_assert(ARRAY_COUNT(techniqueNames) == 34);
 void CheckTechniques()
 {
-    constexpr const char *names[] = {
-        "depth prepass", "build floatz", "build shadowmap depth", "build shadowmap color",
-        "unlit", "emissive", "emissive shadow", "lit", "lit sun", "lit sun shadow",
-        "lit spot", "lit spot shadow", "lit omni", "lit omni shadow", "lit instanced",
-        "lit instanced sun", "lit instanced sun shadow", "lit instanced spot",
-        "lit instanced spot shadow", "lit instanced omni", "lit instanced omni shadow",
-        "light spot", "light omni", "light spot shadow", "fakelight normal", "fakelight view",
-        "sunlight preview", "case texture", "solid wireframe", "shaded wireframe",
-        "shadowcookie caster", "shadowcookie receiver", "debug bumpmap", "debug bumpmap instanced"
-    };
-    static_assert(ARRAY_COUNT(names) == 34);
     for (int slot = 0; slot < 34; ++slot) {
         char quoted[64];
-        std::snprintf(quoted, sizeof(quoted), "\"%s\"", names[slot]);
+        std::snprintf(quoted, sizeof(quoted), "\"%s\"", techniqueNames[slot]);
         CHECK(Material_TechniqueTypeForName(quoted) == slot);
-        CHECK(Material_TechniqueTypeForName(names[slot]) == 34);
+        CHECK(Material_TechniqueTypeForName(techniqueNames[slot]) == 34);
     }
     CHECK(Material_TechniqueTypeForName("") == 34);
     CHECK(Material_TechniqueTypeForName("\"unknown\"") == 34);
@@ -206,11 +212,11 @@ void CheckPixelLiterals()
 } // namespace
 void RunRendererShaderContracts()
 {
-    for (const auto select : shaderSelectors) {
-        CHECK(select(0) == 3);
-        CHECK(select(1) == 5);
-        CHECK(select(-1) == 5);
-        CHECK(select(255) == 5);
+    for (const auto chooseShaderKind : shaderSelectors) {
+        CHECK(chooseShaderKind(0) == 3);
+        CHECK(chooseShaderKind(1) == 5);
+        CHECK(chooseShaderKind(-1) == 5);
+        CHECK(chooseShaderKind(255) == 5);
     }
     CheckSurfaceDispatch();
     CheckGameTime();
