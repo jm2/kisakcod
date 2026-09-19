@@ -6,7 +6,9 @@ actor-grenade-safe-target-radius-contracts
 actor-grenade-safe-target-source-invariants
 actor-navigation-geometry
 actor-navigation-source-invariants
+audio-gate-source-invariants
 cgame-pose-atomic-protocols
+cinematic-gate-source-invariants
 database-build-mode-asset-policy
 database-checked-arithmetic
 database-fx-zone-adapter-wiring
@@ -150,6 +152,7 @@ missile-union-layout-source-invariants
 msvc-printf-shim-contracts
 net-chan-reassembly-span-contracts
 net-wire-format-contracts
+null-media-source-invariants
 phys-obj-id-owner-bound-source-invariants
 phys-obj-id-sidecar-contracts
 physics-native-user-geom-storage
@@ -232,6 +235,8 @@ upstream-sort-contracts
 upstream-sort-source-invariants
 vehicle-material-time-contracts
 vehicle-material-time-source-invariants
+voice-codec-gate-contracts
+voice-framing-source-invariants
 weapon-input-safety-contracts
 weapon-model-safety-contracts
 weapon-model-safety-source-invariants

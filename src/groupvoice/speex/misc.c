@@ -128,6 +128,53 @@ void *speex_alloc (int size)
    return calloc(size,1);
 }
 
+/* Deterministic pseudo-random source for receiver-local synthesis (CWE-327
+   repair, ki-dkeb). Speex 1.1.9 filled comfort-noise and vocoder-noise
+   excitation from libc rand(); these samples are synthesized at the decoder
+   and never appear on the wire, so swapping the PRNG preserves every
+   transmitted byte (the voice gate pins the encoder bitstreams
+   byte-exactly) while making decoded output reproducible on every target
+   with no libc randomness API. The generator is the same fixed-point LCG
+   the voice gate's PCM builders use; unsigned state makes the wraparound
+   well-defined and the sequence identical everywhere.
+
+   All in-tree callers draw through speex_rand_seeded/speex_rand_vec_seeded
+   with caller-owned state (each decoder's rand_state), so decoded output is
+   a deterministic function of the bitstream alone. The global-state
+   variants below are retained for API compatibility with upstream callers;
+   no in-tree caller remains. */
+static float speex_rand_unit(spx_uint32_t *state)
+{
+   *state = *state * 1103515245u + 12345u;
+   return ((float)((*state >> 16) & 0x7fffu))/32767.0f;
+}
+
+static spx_uint32_t speex_rand_state = 1u;
+
+void speex_rand_vec(float std, spx_sig_t *data, int len)
+{
+   int i;
+   for (i=0;i<len;i++)
+      data[i]+=SIG_SCALING*3*std*(speex_rand_unit(&speex_rand_state)-.5f);
+}
+
+float speex_rand(float std)
+{
+   return 3*std*(speex_rand_unit(&speex_rand_state)-.5f);
+}
+
+float speex_rand_seeded(float std, spx_uint32_t *state)
+{
+   return 3*std*(speex_rand_unit(state)-.5f);
+}
+
+void speex_rand_vec_seeded(float std, spx_sig_t *data, int len, spx_uint32_t *state)
+{
+   int i;
+   for (i=0;i<len;i++)
+      data[i]+=SIG_SCALING*3*std*(speex_rand_unit(state)-.5f);
+}
+
 void *speex_realloc (void *ptr, int size)
 {
    return realloc(ptr, size);
@@ -157,18 +204,6 @@ void speex_warning(const char *str)
 void speex_warning_int(const char *str, int val)
 {
    fprintf (stderr, "warning: %s %d\n", str, val);
-}
-
-void speex_rand_vec(float std, spx_sig_t *data, int len)
-{
-   int i;
-   for (i=0;i<len;i++)
-      data[i]+=SIG_SCALING*3*std*((((float)rand())/RAND_MAX)-.5);
-}
-
-float speex_rand(float std)
-{
-   return 3*std*((((float)rand())/RAND_MAX)-.5);
 }
 
 void _speex_putc(int ch, void *file)
