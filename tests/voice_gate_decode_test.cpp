@@ -31,17 +31,34 @@ constexpr int kDecodeTolerance = 8; // recorded tolerance (measured max diff on
 // deterministic fixed-point LCG in misc.c through per-decoder state — no
 // libc randomness API remains in the decode path (CWE-327 repair). The gate
 // only bounds their amplitude, so the bound must sit above any legal
-// comfort-noise level while still catching runaway output. Recorded max on
-// the generation build was far below this bound.
-constexpr int kDtxAmplitudeBound = 6000;
+// comfort-noise level while still catching runaway output. The pinned
+// stream's single DTX-marked submode-1 silence frame peaks at 13775 on the
+// generation build (the encoder transmits its noise-floor gain estimate in
+// the frame's 5-bit excitation-gain field, so the decoder's comfort noise
+// rides just under that scale); the bound sits above the recorded peak with
+// headroom while staying below the 18000 speech-transient limit the
+// round-trip gate allows.
+constexpr int kDtxAmplitudeBound = 16000;
 
 // Frame-class-aware comparison against the pinned decode reference. DTX
-// frames (submode 0: sub-2-byte or a first byte whose nb submode nibble is 0)
-// decode to comfort noise — receiver-local synthesis that never appears on
-// the wire, so their content is validated by the amplitude bound rather than
-// sample-pinned; every deterministic frame is pinned against the recorded
-// reference sample-for-sample. Returns the max abs diff over deterministic
-// frames; reports the DTX frame count through *dtx_frames_out.
+// frames decode to comfort noise — receiver-local synthesis that never
+// appears on the wire, so their content is validated by the amplitude bound
+// rather than sample-pinned; every deterministic frame is pinned against the
+// recorded reference sample-for-sample. Returns the max abs diff over
+// deterministic frames; reports the DTX frame count through *dtx_frames_out.
+//
+// Wire classification mirrors the in-tree Speex nb codec (nb_celp.c):
+//   - submode 0 (null submode: a first byte whose nb submode nibble is 0)
+//     transmits no payload; the decoder synthesizes comfort noise locally.
+//   - submode 1 is a 43-bit frame (modes.c nb_submode1 bits_per_frame,
+//     padded to 6 bytes): 1 wideband + 4 submode + 3x6 LSP + 7 pitch +
+//     4 forced pitch gain + 5 excitation gain + a trailing 4-bit DTX
+//     marker. nb_encode packs 15 into that marker exactly when it
+//     suppresses a silence frame under VAD+DTX (st->dtx_count), and
+//     nb_decode enables DTX only for the marker value 15. The suite's
+//     silence frame arrives as 0x0e... — a nonzero submode nibble — so the
+//     marker, not the nibble, decides.
+//   - any other submode is a deterministic vocoded frame.
 int compare_decoded_to_reference(const std::vector<int16_t> &decoded,
                                  const std::vector<char> &reference,
                                  const std::vector<char> &stream,
@@ -49,8 +66,33 @@ int compare_decoded_to_reference(const std::vector<int16_t> &decoded,
                                  int *dtx_frames_out)
 {
     auto is_dtx_frame = [&stream](int frame_offset) {
-        return frame_offset >= static_cast<int>(stream.size()) ||
-               (static_cast<unsigned char>(stream[frame_offset]) & 0x78) == 0;
+        if (frame_offset < 0 || frame_offset >= static_cast<int>(stream.size()))
+            return true; // nothing transmitted: not sample-pinnable
+        const unsigned int first =
+            static_cast<unsigned char>(stream[frame_offset]);
+        const unsigned int submode = (first & 0x78) >> 3;
+        if (submode == 0)
+            return true; // null submode: comfort noise, no payload
+        if (submode != 1)
+            return false; // deterministic vocoded frame
+        // Submode 1: the DTX marker is the last 4 bits of the 43-bit frame
+        // before byte padding — frame bit 39 is the LSB of byte 4 and frame
+        // bits 40-42 are the top 3 bits of byte 5 (its low 5 bits are
+        // zero padding). DTX is signaled by the marker value 15 (0b1111).
+        constexpr int kSubmode1BitsPerFrame = 43; // modes.c nb_submode1
+        constexpr int kSubmode1FrameBytes = (kSubmode1BitsPerFrame + 7) / 8;
+        if (frame_offset + kSubmode1FrameBytes >
+            static_cast<int>(stream.size()))
+            return true; // truncated frame: not sample-pinnable
+        const unsigned int marker =
+            ((static_cast<unsigned int>(static_cast<unsigned char>(
+                  stream[frame_offset + 4])) &
+              1u)
+             << 3) |
+            (static_cast<unsigned int>(static_cast<unsigned char>(
+                 stream[frame_offset + 5])) >>
+             5);
+        return marker == 15;
     };
     int max_diff = 0;
     int dtx_frames = 0;
@@ -132,6 +174,12 @@ void test_decode_golden()
         compare_decoded_to_reference(decoded, reference, stream, lengths, &dtx_frames);
     check(max_diff <= kDecodeTolerance,
           "VOX-1b: decoded PCM within the recorded tolerance");
+    // The stream contains a VAD-suppressed silence frame transmitted as a
+    // submode-1 DTX-marked frame; if classification ever regresses to the
+    // nibble-only form, the comfort-noise amplitude bound becomes a dead
+    // assertion path — pin the exercised path itself.
+    check(dtx_frames > 0,
+          "VOX-1b: at least one DTX frame exercised the comfort-noise amplitude bound");
     std::fprintf(stderr,
                  "note: decode max diff %d (tolerance %d), %d of %zu frames are DTX (bounded, not pinned)\n",
                  max_diff, kDecodeTolerance, dtx_frames, lengths.size());
