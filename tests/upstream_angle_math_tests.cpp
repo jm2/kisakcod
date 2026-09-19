@@ -4,6 +4,9 @@
 #include <cstdio>
 #include <limits>
 
+int RunUpstreamB3199MpContracts();
+int RunUpstreamB3199SpContracts();
+
 namespace
 {
 int failures = 0;
@@ -25,6 +28,8 @@ void CheckNear(float actual, float expected, const char *description)
 
 int main()
 {
+    RunUpstreamB3199MpContracts();
+    RunUpstreamB3199SpContracts();
     CheckNear(AngleSubtract(0.0f, 0.0f), 0.0f, "zero delta");
     CheckNear(AngleSubtract(180.0f, 0.0f), -180.0f, "+180 tie");
     CheckNear(AngleSubtract(-180.0f, 0.0f), -180.0f, "-180 tie");
