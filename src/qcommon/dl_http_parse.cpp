@@ -238,33 +238,41 @@ void ApplyTransferEncodingHeader(DlResponseHead *const out,
         out->chunked = true;
 }
 
+// Content-Length: the first occurrence wins, matching the retail
+// library's parsing. False when the head must be rejected: a present
+// Content-Length whose decimal value overflows 64 bits is malformed,
+// not absent, and reaches the response-rejection path through this
+// return.
+bool ApplyContentLengthHeader(DlResponseHead *const out,
+    const DlHeaderLine &header) noexcept
+{
+    std::uint64_t parsedLength = 0;
+    bool overflow = false;
+    if (!out->hasContentLength)
+    {
+        if (!ParseContentLength(header.value, header.valueLength,
+                &parsedLength, &overflow))
+        {
+            if (overflow)
+                return false;
+            // Empty/non-decimal keeps the lenient absent-length
+            // behavior; a later header may still supply a value.
+            return true;
+        }
+        out->hasContentLength = true;
+        out->contentLength = parsedLength;
+    }
+    return true;
+}
+
 // Applies one header line; the first occurrence of each consumed field
 // wins, matching the retail library's parsing. False when the head must
-// be rejected: a present Content-Length whose decimal value overflows
-// 64 bits is malformed, not absent, and reaches the response-rejection
-// path through this return.
+// be rejected (an overflowing Content-Length).
 bool ApplyHeader(DlResponseHead *const out, const DlHeaderLine &header) noexcept
 {
     if (EqualsIgnoreCase(header.name, header.nameLength, "Content-Length"))
-    {
-        std::uint64_t parsedLength = 0;
-        bool overflow = false;
-        if (!out->hasContentLength)
-        {
-            if (!ParseContentLength(header.value, header.valueLength,
-                    &parsedLength, &overflow))
-            {
-                if (overflow)
-                    return false;
-                // Empty/non-decimal keeps the lenient absent-length
-                // behavior; a later header may still supply a value.
-                return true;
-            }
-            out->hasContentLength = true;
-            out->contentLength = parsedLength;
-        }
-    }
-    else if (EqualsIgnoreCase(header.name, header.nameLength, "Location"))
+        return ApplyContentLengthHeader(out, header);
+    if (EqualsIgnoreCase(header.name, header.nameLength, "Location"))
     {
         if (!out->hasLocation)
             ApplyLocationHeader(out, header.value, header.valueLength);
@@ -287,6 +295,25 @@ std::uint32_t DlHeaderBlockStart(const char *const buffer,
     return cursor + 1; // skip the status line's newline
 }
 
+// Measures the header line starting at `cursor`: *outLineEnd receives
+// the offset just past the line's terminating newline; the return value
+// is the line length with the CR of a CRLF ending stripped, if present.
+std::uint32_t HeaderLineSpan(const char *const buffer,
+    const std::uint32_t cursor,
+    const std::uint32_t headEnd,
+    std::uint32_t *const outLineEnd) noexcept
+{
+    std::uint32_t lineEnd = cursor;
+    while (lineEnd < headEnd && buffer[lineEnd] != '\n')
+        ++lineEnd;
+    std::uint32_t lineLength = lineEnd - cursor;
+    // Strip the CR of a CRLF ending, if present.
+    if (lineLength > 0 && buffer[cursor + lineLength - 1] == '\r')
+        --lineLength;
+    *outLineEnd = lineEnd;
+    return lineLength;
+}
+
 // Parses every complete header line in [start, headEnd). Continuation
 // lines (leading SP/HT, RFC 7230 obs-fold) are skipped, as before.
 // False when a header rejects the head (an overflowing Content-Length).
@@ -298,13 +325,9 @@ bool ParseHeaderLines(DlResponseHead *const out,
     std::uint32_t cursor = start;
     while (cursor < headEnd)
     {
-        std::uint32_t lineEnd = cursor;
-        while (lineEnd < headEnd && buffer[lineEnd] != '\n')
-            ++lineEnd;
-        std::uint32_t lineLength = lineEnd - cursor;
-        // Strip the CR of a CRLF ending, if present.
-        if (lineLength > 0 && buffer[cursor + lineLength - 1] == '\r')
-            --lineLength;
+        std::uint32_t lineEnd = 0;
+        const std::uint32_t lineLength =
+            HeaderLineSpan(buffer, cursor, headEnd, &lineEnd);
 
         const char *line = buffer + cursor;
         if (lineLength > 0 && line[0] != ' ' && line[0] != '\t')
