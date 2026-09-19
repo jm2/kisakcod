@@ -107,6 +107,26 @@ public:
 #endif
     }
 
+    // Writable twin of WaitReadable: bounds a raw blocking send wait so
+    // a pathological stall fails a check instead of hanging the suite
+    // past its CTest timeout. Same wait semantics as WaitReadable: a
+    // relative millisecond timeout with no wall-clock year involved.
+    static bool WaitWritable(const RawSocket socket,
+        const int timeoutMilliseconds)
+    {
+#ifdef _WIN32
+        WSAPOLLFD waiting{};
+        waiting.fd = socket;
+        waiting.events = POLLWRNORM;
+        return ::WSAPoll(&waiting, 1, timeoutMilliseconds) > 0;
+#else
+        pollfd waiting{};
+        waiting.fd = socket;
+        waiting.events = POLLOUT;
+        return ::poll(&waiting, 1, timeoutMilliseconds) > 0;
+#endif
+    }
+
     // Blocks until the client connects. Safe: every stage connects before
     // calling this, so the accept cannot wait on anything but this
     // process -- and the wait is bounded so a broken connect surfaces as
@@ -119,11 +139,13 @@ public:
         if (!RawSocketIsValid(peerSocket))
             return false;
         // Accepted sockets do not inherit the timeout options everywhere;
-        // bound the raw send/recv waits on the peer as well. The POSIX
-        // SO_*TIMEO options require a struct timeval here, so the 5 s
-        // bound is expressed entirely as a fixed microsecond constant:
-        // the time-typed tv_sec member stays zero-initialized and no
-        // wait is derived from a wall-clock year.
+        // on Windows the 5 s bound is expressed as DWORD milliseconds in
+        // the SO_*TIMEO options. POSIX SO_*TIMEO would require a struct
+        // timeval, which the analyzer flags as a Y2038-unsafe type, so
+        // on that platform no timeout option is set here at all: the
+        // raw peer pumps below bound every blocking wait with the poll
+        // primitives instead, which carry the same 5 s bound with no
+        // wall-clock year involved.
 #ifdef _WIN32
         const DWORD waitMilliseconds = 5000;
         setsockopt(peerSocket, SOL_SOCKET, SO_RCVTIMEO,
@@ -132,13 +154,6 @@ public:
         setsockopt(peerSocket, SOL_SOCKET, SO_SNDTIMEO,
             reinterpret_cast<const char *>(&waitMilliseconds),
             sizeof(waitMilliseconds));
-#else
-        timeval waitTimeout{};
-        waitTimeout.tv_usec = 5000000;
-        setsockopt(peerSocket, SOL_SOCKET, SO_RCVTIMEO, &waitTimeout,
-            sizeof(waitTimeout));
-        setsockopt(peerSocket, SOL_SOCKET, SO_SNDTIMEO, &waitTimeout,
-            sizeof(waitTimeout));
 #endif
         return true;
     }
@@ -151,6 +166,12 @@ public:
             const int sent = ::send(peerSocket, data,
                 static_cast<int>(length), 0);
 #else
+            // POSIX gets no SO_SNDTIMEO here (the timeval it requires is
+            // Y2038-flagged); bound each blocking send with the poll
+            // twin instead. A socket that never becomes writable fails
+            // the check rather than hanging the suite.
+            if (!WaitWritable(peerSocket, 5000))
+                return false;
             const ssize_t sent = ::send(peerSocket, data, length, 0);
 #endif
             if (sent <= 0)
@@ -170,6 +191,12 @@ public:
             const int received = ::recv(peerSocket, buffer,
                 static_cast<int>(length), 0);
 #else
+            // POSIX gets no SO_RCVTIMEO here (the timeval it requires is
+            // Y2038-flagged); bound each blocking recv with the poll
+            // primitive instead. A socket with no data within the bound
+            // fails the check rather than hanging the suite.
+            if (!WaitReadable(peerSocket, 5000))
+                return false;
             const ssize_t received = ::recv(peerSocket, buffer, length, 0);
 #endif
             if (received <= 0)
