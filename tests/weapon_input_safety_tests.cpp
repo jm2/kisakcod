@@ -5,6 +5,7 @@
 #include <limits>
 
 void RunGameplayValueContracts();
+void RunWeaponValueContracts();
 
 namespace
 {
@@ -18,6 +19,7 @@ int Fail(const char *const message)
 int main()
 {
     RunGameplayValueContracts();
+    RunWeaponValueContracts();
     using bg::weapon_input::IsAttackSuppressed;
     using bg::weapon_input::kFriendlyFireSuppressed;
     using bg::weapon_input::kWeaponsDisabled;

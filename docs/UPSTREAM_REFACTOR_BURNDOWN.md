@@ -358,3 +358,35 @@ Validation:
 - **244/244 portable Release tests pass**; the focused gameplay gate passes Clang
   ASan/UBSan. CTest registrations and inventories are unchanged. Hosted MP/SP
   compilation remains required before merge.
+
+## Gameplay slice G1b: weapon states and animation values
+
+`0f139a7f` and `5c27f2af` are implemented on
+`integration/refactor-g1-weapon-names`, pending protected integration after G1a.
+All 16 production files retain their numeric behavior and native layouts. The
+shared animation declarations replace the old local enum at their final upstream
+location. The fork's grenade input bit and simplified per-frame firing predicate
+are retained. Two originally unsigned weapon-state comparisons keep explicit
+`uint32_t` conversions, preserving the behavior of invalid negative states.
+
+The animation array already held 33 entries. The new `NUM_WEAP_ANIMS` names that
+storage extent, while the rate helper deliberately retains its exclusive bound
+of 32 using `WEAP_ANIM_ADS_DOWN`, exactly as upstream does. The boolean ADS selector
+retains its existing mapping to slots 31 and 32. Viewmodel range aliases remain
+unchanged.
+
+Validation extends the existing weapon-input gate without new CTest entries:
+
+- 93 frozen assertions cover every production weapon-state, animation-file and
+  animation-command value; all three enum widths remain 32 bits.
+- The production prone-interruption body covers all 27 states plus negative,
+  minimum/maximum integer and out-of-range inputs. The full production animation
+  dispatcher covers all 30 commands, both toggle-bit states and empty/nonempty
+  clips, including previous-animation bookkeeping and both ADS mappings.
+- The production animation-slot declaration and rate-offset table retain 33
+  entries. The actual rate helper accepts index 31 and asserts at index 32.
+  Fixture engine services are doubles; these are numeric/dispatch contracts.
+- All 16 production files pass token equivalence after reviewed enum, unsigned
+  comparison and boolean-selector substitutions. **244/244 portable Release
+  tests pass**, and the focused gameplay gate passes Clang ASan/UBSan. Hosted
+  MP/SP engine compilation remains required before merge.

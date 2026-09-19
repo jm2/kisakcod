@@ -2890,6 +2890,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/gameplay_value_contracts.cmake")
 add_executable(kisakcod-weapon-input-safety-tests
     weapon_input_safety_tests.cpp
     gameplay_value_contracts.cpp
+    weapon_value_contracts.cpp
 )
 target_include_directories(kisakcod-weapon-input-safety-tests PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/renderer-enums")

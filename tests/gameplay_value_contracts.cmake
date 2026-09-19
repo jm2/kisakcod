@@ -7,3 +7,12 @@ kisakcod_renderer_enum_slice(bgame/bg_perks_mp.cpp "const char *bg_perkNames[" "
 kisakcod_renderer_enum_slice(bgame/bg_perks_mp.cpp "uint32_t __cdecl BG_GetPerkIndexForName(" "\n}" gameplay_perk_lookup)
 kisakcod_renderer_enum_slice(game_mp/g_client_script_cmd_mp.cpp "bool __cdecl IsBulletImpactMOD(" "\n}" gameplay_bullet_mod)
 kisakcod_renderer_enum_slice(game_mp/g_vehicles_mp.cpp "bool __cdecl G_VehImmuneToDamage(" "\n}" gameplay_vehicle_immunity)
+
+kisakcod_renderer_enum_slice(bgame/bg_weapons.h "enum weaponstate_t" "\n};" weapon_state_enum)
+kisakcod_renderer_enum_slice(bgame/bg_weapons.h "enum weapAnimFiles_t" "\n};" weapon_file_enum)
+kisakcod_renderer_enum_slice(bgame/bg_weapons.h "enum weapAnimNumber_t" "\n};" weapon_command_enum)
+kisakcod_renderer_enum_slice(bgame/bg_weapons.cpp "int __cdecl PM_InteruptWeaponWithProneMove(" "\n}" weapon_prone_body)
+kisakcod_renderer_enum_slice(cgame/cg_weapons.cpp "int32_t g_animRateOffsets[" "\n};" weapon_rate_offsets)
+kisakcod_renderer_enum_slice(cgame/cg_weapons.cpp "double __cdecl GetWeaponAnimRate(" "\n}" weapon_rate_body)
+kisakcod_renderer_enum_slice(cgame/cg_weapons.cpp "void __cdecl WeaponRunXModelAnims(" "\n}" weapon_run_anims_body)
+kisakcod_renderer_enum_slice(xanim/xanim.h "const char* szXAnims[" ";" weapon_animation_slots)

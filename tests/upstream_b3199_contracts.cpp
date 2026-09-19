@@ -174,7 +174,7 @@ struct playerState_s {
     float aimSpreadScale=0; int clientNum=0;
 };
 struct pmove_t { playerState_s *ps; struct { int weapon=2; } cmd; };
-constexpr int PMF_LADDER=1, PMF_SPRINTING=2, WEAPON_READY=0;
+constexpr int PMF_LADDER=1, PMF_SPRINTING=2, WEAPON_READY=0, WEAP_IDLE=0;
 constexpr int EV_FIRST_RAISE_WEAPON=1, EV_RAISE_WEAPON=2;
 #define WEAPONSTATE_DROPPING(value) ((value) == 1)
 #ifdef KISAK_MP

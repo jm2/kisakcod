@@ -213,8 +213,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Rewrites a large weapon-state surface across input, prediction, gameplay, and HUD code. This fork's SP/MP layouts and native-width work require a dedicated state-value audit.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1b-weapon-states-and-animation-values",
+      "hunk_disposition": "All surviving weapon-state declaration and consumer hunks adopted. G_ClientDoPerFrameNotifies keeps the fork expression. Two <= 4u comparisons retain explicit uint32_t conversion so invalid negative states keep their existing behavior; native player-state layouts are unchanged."
     },
     {
       "commit": "c0c19174ff805f76fdd0d7d5900c7c9e2a378ea9",
@@ -303,8 +305,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Adds and propagates weapon-animation names through animation, event, and weapon paths. Adopt only with frozen numeric values and MP/SP animation parity coverage.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1b-weapon-states-and-animation-values",
+      "hunk_disposition": "Final shared weapon animation file and command declarations and all runtime consumers adopted; old local enum removed. Preserve the existing 33-slot storage and exclusive rate-helper bound 32 (WEAP_ANIM_ADS_DOWN), the fork grenade input bit, and the boolean ADS selector mapping."
     },
     {
       "commit": "66b37ca5fd362f379c6f073edcba817fbda81e96",
