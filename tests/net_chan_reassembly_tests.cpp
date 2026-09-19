@@ -22,6 +22,11 @@
 #include <cstdio>
 #include <limits>
 
+#ifdef KISAKCOD_NET_CHAN_PROCESS_TESTS_AVAILABLE
+// Defined in net_chan_process_tests.cpp, linked on the ILP32 Win32 leg.
+int RunNetChanProcessContracts();
+#endif
+
 namespace
 {
 int fail(const char *message)
@@ -171,6 +176,13 @@ int main()
         return fail("negative payload length was accepted");
     if (!Netchan_ReassembledSpanFits(0x40000, 0x40000 - 4))
         return fail("exact-capacity span was rejected");
+
+#ifdef KISAKCOD_NET_CHAN_PROCESS_TESTS_AVAILABLE
+    // On the ILP32 Win32 leg the target additionally links the production
+    // netchan TUs; drive Netchan_Process itself over wire-format packets.
+    if (RunNetChanProcessContracts() != 0)
+        return fail("production Netchan_Process contract violation");
+#endif
 
     return 0;
 }

@@ -2678,6 +2678,59 @@ add_test(
     COMMAND kisakcod-net-chan-reassembly-tests
 )
 
+# Stage 2 (issue #123): on the engine's actual ILP32 Win32 target, link the
+# production netchan layer into the test and drive Netchan_Process itself
+# over wire-format packets (net_chan_process_tests.cpp), with inert stubs for
+# the engine environment it does not need (net_chan_process_test_stubs.cpp).
+# The engine's game/server header chain carries ILP32 layout assertions
+# (EntHandleInfo, pml_t), so these production TUs can only compile where the
+# engine itself compiles; portable legs keep the predicate-only shape above.
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    # The production TUs are decompiled engine code and are not -W4 clean, so
+    # they compile in a dedicated object library at the engine target's own
+    # warning level (/W3 on MSVC). A directory-scoped
+    # set_source_files_properties /W3 is applied AFTER each consuming
+    # target's own options and therefore leaks into every target compiling
+    # these files -- it silently dropped the huffman-wire contract target's
+    # /W4 coverage of huffman.cpp (refinery review, Codex finding).
+    # Target-level options on the object library keep the downgrade scoped to
+    # exactly these three sources. Scoped to MSVC: msg_mp/huffman also compile
+    # under GCC/Clang in the portable huffman-wire target, where /W3 is not a
+    # valid flag.
+    add_library(kisakcod-net-chan-production-objects OBJECT
+        ${SRC_DIR}/qcommon/net_chan_mp.cpp
+        ${SRC_DIR}/qcommon/msg_mp.cpp
+        ${SRC_DIR}/qcommon/huffman.cpp
+    )
+    # Same treatment as the wire-contract tests: the decompiled engine headers
+    # are not warning-clean, so SYSTEM keeps the strict warning set on the
+    # consumers' own code. PUBLIC so the usage requirements reach the test
+    # target through target_link_libraries, mirroring the compilation
+    # environment these TUs had when they lived on the shared test target.
+    target_include_directories(kisakcod-net-chan-production-objects SYSTEM PUBLIC ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-net-chan-production-objects PUBLIC cxx_std_20)
+    target_compile_definitions(kisakcod-net-chan-production-objects PUBLIC
+        KISAK_MP
+        KISAK_DEDI_HEADLESS
+    )
+    target_compile_options(kisakcod-net-chan-production-objects PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/W3>
+    )
+
+    target_sources(kisakcod-net-chan-reassembly-tests PRIVATE
+        net_chan_process_tests.cpp
+        net_chan_process_span_tests.cpp
+        net_chan_process_test_stubs.cpp
+    )
+    target_link_libraries(kisakcod-net-chan-reassembly-tests PRIVATE
+        kisakcod-net-chan-production-objects
+    )
+    target_compile_definitions(kisakcod-net-chan-reassembly-tests PRIVATE
+        KISAKCOD_NET_CHAN_PROCESS_TESTS_AVAILABLE
+        KISAK_DEDI_HEADLESS
+    )
+endif()
+
 add_executable(kisakcod-huffman-wire-contract-tests
     huffman_wire_contract_tests.cpp
     ${SRC_DIR}/qcommon/huffman.cpp
@@ -2762,6 +2815,20 @@ add_test(
     NAME upstream-reconciliation-angle-math-contracts
     COMMAND kisakcod-upstream-angle-math-tests
 )
+
+
+# Run both profiles of the curated production regressions in the existing
+# upstream reconciliation gate, including its portable/sanitizer/Win32 legs.
+include("${CMAKE_CURRENT_SOURCE_DIR}/upstream_b3199_tests.cmake")
+foreach(profile IN ITEMS mp sp)
+    string(TOUPPER "${profile}" profile_upper)
+    add_library(kisakcod-upstream-b3199-${profile}-contracts OBJECT upstream_b3199_contracts.cpp)
+    target_include_directories(kisakcod-upstream-b3199-${profile}-contracts PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/upstream-b3199")
+    target_compile_definitions(kisakcod-upstream-b3199-${profile}-contracts PRIVATE KISAK_${profile_upper})
+    target_compile_features(kisakcod-upstream-b3199-${profile}-contracts PRIVATE cxx_std_20)
+    kisakcod_test_warnings(kisakcod-upstream-b3199-${profile}-contracts)
+    target_sources(kisakcod-upstream-angle-math-tests PRIVATE $<TARGET_OBJECTS:kisakcod-upstream-b3199-${profile}-contracts>)
+endforeach()
 
 add_executable(kisakcod-upstream-aim-safety-tests
     upstream_aim_safety_tests.cpp

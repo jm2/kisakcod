@@ -95,7 +95,7 @@ Commercial reference gate is **not satisfied**, so no requested target can be de
 | Configure presets | 6 |
 | `add_executable` registrations | 132 |
 | `add_test` registrations | 220 |
-| `*_tests.cpp` source files | 116 |
+| `*_tests.cpp` source files | 118 |
 | `*_source_test.cmake` contract files | 55 |
 
 Counts describe the current tree only. Dated local/CI snapshots from earlier trees belong in `docs/task.md`'s historical sections, not here.
