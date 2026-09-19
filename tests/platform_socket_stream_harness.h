@@ -120,8 +120,10 @@ public:
             return false;
         // Accepted sockets do not inherit the timeout options everywhere;
         // bound the raw send/recv waits on the peer as well. The POSIX
-        // SO_*TIMEO options require a struct timeval here; the duration
-        // semantics (5 s) stay constant regardless of wall-clock year.
+        // SO_*TIMEO options require a struct timeval here, so the 5 s
+        // bound is expressed entirely as a fixed microsecond constant:
+        // the time-typed tv_sec member stays zero-initialized and no
+        // wait is derived from a wall-clock year.
 #ifdef _WIN32
         const DWORD waitMilliseconds = 5000;
         setsockopt(peerSocket, SOL_SOCKET, SO_RCVTIMEO,
@@ -132,7 +134,7 @@ public:
             sizeof(waitMilliseconds));
 #else
         timeval waitTimeout{};
-        waitTimeout.tv_sec = 5;
+        waitTimeout.tv_usec = 5000000;
         setsockopt(peerSocket, SOL_SOCKET, SO_RCVTIMEO, &waitTimeout,
             sizeof(waitTimeout));
         setsockopt(peerSocket, SOL_SOCKET, SO_SNDTIMEO, &waitTimeout,

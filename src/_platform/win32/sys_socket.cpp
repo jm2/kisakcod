@@ -628,25 +628,24 @@ SysSocketStreamPollStatus KISAK_CDECL Sys_SocketPollConnected(
     if (!handle || handle->handle == INVALID_SOCKET)
         return SysSocketStreamPollStatus::InvalidArgument;
 
-    // select() with a zero timeout observes connect completion on Windows
-    // the same way poll(POLLOUT) does on POSIX. The first select argument
-    // is ignored on Windows and meaningful on POSIX hosts only.
-    fd_set writeSet{};
-    FD_ZERO(&writeSet);
-    FD_SET(handle->handle, &writeSet);
-    fd_set errorSet{};
-    FD_ZERO(&errorSet);
-    FD_SET(handle->handle, &errorSet);
-    timeval instant{};
-    const int ready = select(0, nullptr, &writeSet, &errorSet, &instant);
+    // WSAPoll with a zero timeout observes connect completion on Windows
+    // the same way poll(POLLOUT) does on the POSIX backend. The previous
+    // select() form carried a struct timeval whose seconds member is a
+    // time_t even though the zero timeout is a pure duration; the poll
+    // keeps the identical wait semantics with no wall-clock year in the
+    // path, and failure flags arrive in the same single call.
+    WSAPOLLFD descriptor{};
+    descriptor.fd = handle->handle;
+    descriptor.events = POLLOUT;
+    const int ready = ::WSAPoll(&descriptor, 1, 0);
     if (ready == SOCKET_ERROR)
         return SysSocketStreamPollStatus::SystemFailure;
     if (ready == 0)
         return SysSocketStreamPollStatus::InProgress;
 
-    // Writability (or the except set) ends the handshake; SO_ERROR names
-    // the outcome. Zero is established, anything else is the real
-    // refusal -- select artifacts are never reported as Failed.
+    // Writability (or an error/hangup flag) ends the handshake; SO_ERROR
+    // names the outcome. Zero is established, anything else is the real
+    // refusal -- poll artifacts are never reported as Failed.
     int socketError = 0;
     int errorLength = sizeof(socketError);
     if (getsockopt(handle->handle, SOL_SOCKET, SO_ERROR,
