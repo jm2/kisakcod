@@ -968,8 +968,8 @@ void __cdecl ExitLevel()
     int32_t ia; // [esp+4h] [ebp-4h]
 
     Cbuf_AddText(0, "map_rotate\n");
-    level.teamScores[1] = 0;
-    level.teamScores[2] = 0;
+    level.teamScores[TEAM_AXIS] = 0;
+    level.teamScores[TEAM_ALLIES] = 0;
     for (i = 0; i < g_maxclients->current.integer; ++i)
     {
         if (level.clients[i].sess.connected == CON_CONNECTED)
@@ -1070,10 +1070,10 @@ void __cdecl G_UpdateObjectiveToClients()
                 MyAssertHandler(".\\game_mp\\g_main_mp.cpp", 1544, 0, "%s", "ent->client");
             ps = &ent->client->ps;
             team = ent->client->sess.cs.team;
-            for (objNum = 0; objNum < 16; ++objNum)
+            for (objNum = 0; objNum < MAX_OBJECTIVES; ++objNum)
             {
                 obj = &level.objectives[objNum];
-                if (obj->state && (!obj->teamNum || obj->teamNum == team))
+                if (obj->state != OBJST_EMPTY && (obj->teamNum == TEAM_FREE || obj->teamNum == team))
                     memcpy(&ps->objective[objNum], obj, sizeof(ps->objective[objNum]));
                 else
                     ps->objective[objNum].state = OBJST_EMPTY;
@@ -1695,7 +1695,7 @@ bool __cdecl OnSameTeam(struct gentity_s *ent1, struct gentity_s *ent2)
 {
     if (!ent1->client || !ent2->client)
         return 0;
-    if (ent1->client->sess.cs.team)
+    if (ent1->client->sess.cs.team != TEAM_FREE)
         return ent1->client->sess.cs.team == ent2->client->sess.cs.team;
     return 0;
 }

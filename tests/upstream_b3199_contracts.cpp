@@ -136,6 +136,7 @@ static void Run()
 }
 
 namespace score_tests {
+constexpr int TEAM_SPECTATOR = 3;
 struct Material;
 #include "score_type.inc"
 struct cg_s { int teamScores[2]; score_t scores[5]; int numScores; };

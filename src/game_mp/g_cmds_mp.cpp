@@ -86,8 +86,8 @@ void __cdecl SendScoreboard(gentity_s *ent)
         "%c %i %i %i %i%s",
         98,
         i,
-        level.teamScores[1],
-        level.teamScores[2],
+        level.teamScores[TEAM_AXIS],
+        level.teamScores[TEAM_ALLIES],
         scoreLimit,
         msg);
     if (entryLen >= 0)
@@ -97,7 +97,7 @@ void __cdecl SendScoreboard(gentity_s *ent)
     else
     {
         Com_PrintError(15, "Scoreboard message too large > %i.  Message not sent.\n", 1432);
-        Com_DPrintf(6, "%c %i %i %i %i%s", 98, i, level.teamScores[1], level.teamScores[2], scoreLimit, msg);
+        Com_DPrintf(6, "%c %i %i %i %i%s", 98, i, level.teamScores[TEAM_AXIS], level.teamScores[TEAM_ALLIES], scoreLimit, msg);
     }
 }
 

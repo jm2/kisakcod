@@ -7,6 +7,7 @@
 void RunGameplayValueContracts();
 void RunWeaponValueContracts();
 void RunEntityValueContracts();
+void RunTeamObjectiveContracts();
 
 namespace
 {
@@ -22,6 +23,7 @@ int main()
     RunGameplayValueContracts();
     RunWeaponValueContracts();
     RunEntityValueContracts();
+    RunTeamObjectiveContracts();
     using bg::weapon_input::IsAttackSuppressed;
     using bg::weapon_input::kFriendlyFireSuppressed;
     using bg::weapon_input::kWeaponsDisabled;

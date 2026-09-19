@@ -478,14 +478,14 @@ void __cdecl CG_ParseObjectiveChange(int localClientNum, unsigned int num)
             "(localClientNum == 0)",
             localClientNum);
     ConfigString = CL_GetConfigString(localClientNum, num);
-    if (num - 11 >= 0x10)
+    if (num - CS_OBJECTIVES >= MAX_OBJECTIVES)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_scoreboard.cpp",
             420,
             0,
             "objectiveIndex doesn't index MAX_OBJECTIVES\n\t%i not in [0, %i)",
-            num - 11,
-            16);
+            num - CS_OBJECTIVES,
+            MAX_OBJECTIVES);
     v5 = &cgArray[0].refdef.primaryLights[69].origin[284 * num + 1];
     if (!*ConfigString)
     {
@@ -528,15 +528,15 @@ void __cdecl CG_ParseObjectiveChange(int localClientNum, unsigned int num)
     else
         *v5 = 0.0;
     v8 = *(unsigned int *)v5;
-    if (*(int *)v5 < 0 || v8 > 5)
+    if (*(int *)v5 < OBJST_EMPTY || v8 >= OBJST_NUMSTATES)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_scoreboard.cpp",
             439,
             0,
             "objectiveInfo->state not in [OBJST_EMPTY, OBJST_NUMSTATES - 1]\n\t%i not in [%i, %i]",
             v8,
-            0,
-            5);
+            OBJST_EMPTY,
+            OBJST_NUMSTATES - 1);
     if (v6 != 4 && *(unsigned int *)v5 == 4)
         v5[281] = *(float *)&cgArray[0].time;
     if (!*(unsigned int *)v5)

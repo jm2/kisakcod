@@ -484,8 +484,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Team constants span script, gameplay, and snapshots; require SP/MP numeric parity.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1d-teams-and-applicable-objective-names",
+      "hunk_disposition": "Both commits consolidated to final team consumer and array names. Existing typed CG_SortSingleClientScore insertion is preserved; diagnostic-only SendScoreboard overlap keeps current console channel values. SP and MP team counts remain distinct."
     },
     {
       "commit": "336a5da5b506076c23795b0afb7cbd1a8793ed59",
@@ -746,8 +748,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Additional team replacements depend on the preceding team migration and commercial protocol parity.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1d-teams-and-applicable-objective-names",
+      "hunk_disposition": "Both commits consolidated to final team consumer and array names. Existing typed CG_SortSingleClientScore insertion is preserved; diagnostic-only SendScoreboard overlap keeps current console channel values. SP and MP team counts remain distinct."
     },
     {
       "commit": "7d9fadb81363caf02490eecbe9f834ea35676408",
@@ -816,8 +820,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Objective-state identifiers are snapshot/script-facing; require exact numeric contracts.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "partially-implemented-hud-prerequisite-deferred",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1d-teams-and-applicable-objective-names",
+      "hunk_disposition": "Applicable objective counts, state checks, SP configstring slots, MP network loops and declarations implemented. The current SP compass iterator uses its actual objective-array end. Two SP scoreboard naming sites depend on outside-goal ea36ca33 HUD fixes: CG_DrawObjectiveList boundary and CG_ParseObjectiveChange typed objective indexing. Keep those sites unresolved pending the user scope choice; no HUD behavior fix is imported."
     },
     {
       "commit": "b3199b90f416c62265eef87e643f59dadbc29838",

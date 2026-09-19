@@ -120,7 +120,7 @@ char __cdecl CG_DrawScoreboard_GetTeamColorIndex(int32_t team, int32_t localClie
 
     bcassert(cgameGlob->clientNum, MAX_CLIENTS);
 
-    if (team != 2 && team != 1)
+    if (team != TEAM_ALLIES && team != TEAM_AXIS)
         return 55;
 
     if (cgameGlob->bgs.clientinfo[cgameGlob->clientNum].team != TEAM_ALLIES
@@ -338,27 +338,27 @@ void __cdecl CG_DrawScoreboard_ScoresList(int32_t localClientNum, float alpha)
         }
         color[4] = y;
         drawLine = 1;
-        if (cgameGlob->teamPlayers[1] || cgameGlob->teamPlayers[2])
+        if (cgameGlob->teamPlayers[TEAM_AXIS] || cgameGlob->teamPlayers[TEAM_ALLIES])
         {
             team = cgameGlob->bgs.clientinfo[cgameGlob->clientNum].team;
             if (team != TEAM_AXIS && team != TEAM_ALLIES)
                 team = TEAM_ALLIES;
             ya = CG_DrawTeamOfClientScore(localClientNum, color, y, team, listWidth, &drawLine);
             if (team == TEAM_AXIS)
-                teama = 2;
+                teama = TEAM_ALLIES;
             else
-                teama = 1;
+                teama = TEAM_AXIS;
             yd = ya + 4.0;
             ye = CG_DrawTeamOfClientScore(localClientNum, color, yd, teama, listWidth, &drawLine);
             y = ye + 4.0;
         }
-        if (cgameGlob->teamPlayers[0])
+        if (cgameGlob->teamPlayers[TEAM_FREE])
         {
-            yf = CG_DrawTeamOfClientScore(localClientNum, color, y, 0, listWidth, &drawLine);
+            yf = CG_DrawTeamOfClientScore(localClientNum, color, y, TEAM_FREE, listWidth, &drawLine);
             y = yf + 4.0;
         }
-        if (cgameGlob->teamPlayers[3])
-            CG_DrawTeamOfClientScore(localClientNum, color, y, 3, listWidth, &drawLine);
+        if (cgameGlob->teamPlayers[TEAM_SPECTATOR])
+            CG_DrawTeamOfClientScore(localClientNum, color, y, TEAM_SPECTATOR, listWidth, &drawLine);
         cgameGlob->scoresBottom = drawLine - 1;
         CG_DrawScrollbar(localClientNum, color, scrollbarTop);
     }
@@ -431,13 +431,13 @@ int32_t __cdecl CG_ScoreboardTotalLines(int32_t localClientNum)
     cgameGlob = CG_GetLocalClientGlobals(localClientNum);
 
     total = cgameGlob->numScores;
-    if (cgameGlob->teamPlayers[0])
+    if (cgameGlob->teamPlayers[TEAM_FREE])
         ++total;
-    if (cgameGlob->teamPlayers[1])
+    if (cgameGlob->teamPlayers[TEAM_AXIS])
         ++total;
-    if (cgameGlob->teamPlayers[2])
+    if (cgameGlob->teamPlayers[TEAM_ALLIES])
         ++total;
-    if (cgameGlob->teamPlayers[3])
+    if (cgameGlob->teamPlayers[TEAM_SPECTATOR])
         ++total;
     return total;
 }
@@ -571,16 +571,16 @@ double __cdecl CG_DrawScoreboard_ListBanner(
     scrPlace = &scrPlaceView[localClientNum];
     v17 = CG_BannerScoreboardScaleMultiplier() * 0.3499999940395355;
     bannerFont = UI_GetFontHandle(scrPlace, cg_scoreboardFont->current.integer, v17);
-    if (team)
+    if (team != TEAM_FREE)
     {
-        if (team == 1)
+        if (team == TEAM_AXIS)
         {
             shaderName = (char *)Dvar_GetString("g_TeamIcon_Axis");
             teamName = Dvar_GetString("g_TeamName_Axis");
             v8 = SEH_LocalizeTextMessage(teamName, "scoreboard team name", LOCMSG_SAFE);
             displayString = va("%s", v8);
         }
-        else if (team == 2)
+        else if (team == TEAM_ALLIES)
         {
             shaderName = (char *)Dvar_GetString("g_TeamIcon_Allies");
             teamNamea = Dvar_GetString("g_TeamName_Allies");
@@ -589,7 +589,7 @@ double __cdecl CG_DrawScoreboard_ListBanner(
         }
         else
         {
-            if (team != 3)
+            if (team != TEAM_SPECTATOR)
                 MyAssertHandler(
                     ".\\cgame_mp\\cg_scoreboard_mp.cpp",
                     666,
@@ -733,7 +733,7 @@ double __cdecl CG_DrawClientScore(
             DrawListString(localClientNum, (char *)string, x, y, w, info[i].iAlignment, listFont, v23, 3, textColor);
             break;
         case LCT_SCORE:
-            if (score->team != 3)
+            if (score->team != TEAM_SPECTATOR)
             {
                 string = va("%i", score->score);
                 v22 = CG_BannerScoreboardScaleMultiplier() * 0.3499999940395355;
@@ -741,7 +741,7 @@ double __cdecl CG_DrawClientScore(
             }
             break;
         case LCT_DEATHS:
-            if (score->team != 3)
+            if (score->team != TEAM_SPECTATOR)
             {
                 string = va("%i", score->deaths);
                 v21 = CG_BannerScoreboardScaleMultiplier() * 0.3499999940395355;
@@ -800,7 +800,7 @@ double __cdecl CG_DrawClientScore(
             }
             break;
         case LCT_KILLS:
-            if (score->team != 3)
+            if (score->team != TEAM_SPECTATOR)
             {
                 string = va("%i", score->kills);
                 v20 = CG_BannerScoreboardScaleMultiplier() * 0.3499999940395355;
@@ -837,7 +837,7 @@ double __cdecl CG_DrawClientScore(
             }
             break;
         case LCT_ASSISTS:
-            if (score->team != 3)
+            if (score->team != TEAM_SPECTATOR)
             {
                 string = va("%i", score->assists);
                 v19 = CG_BannerScoreboardScaleMultiplier() * 0.3499999940395355;

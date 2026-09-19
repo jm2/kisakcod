@@ -420,3 +420,44 @@ constant masks, boolean expressions, unsigned comparisons and high-word cleanup.
 **244/244 portable Release tests pass**; the focused gameplay gate passes Clang
 ASan/UBSan, and the capability dashboard is current. CTest inventory is unchanged;
 hosted MP/SP compilation remains required before merge.
+
+## Gameplay slice G1d: teams and applicable objective names
+
+`ea6c2ea1` and `e08d61d9` are consolidated on
+`integration/refactor-g1-team-objective-names`, pending protected integration
+after G1c. Final team labels and array extents are adopted once. MP still has
+four teams and SP five; the typed MP scoreboard insertion is retained. The one
+diagnostic conflict changes only team indices, leaving its current console
+channels for the later channel refactor.
+
+`2e96b1e4` is **partially implemented, not complete**. Applicable counts, state
+checks, array extents and network loops are adopted without changing values.
+The SP configstring declaration currently lives in `client.h`, so the objective
+range is named there; the later N1 relocation can move the final declaration
+once. SP retains slots 11..26 and both profiles retain 16 objectives. The SP
+compass retains its existing typed iterator, now comparing with the objective
+array end. A fixture compiles the actual adjacent objective/target declarations
+to verify that this is the same address as the former target-array sentinel.
+
+Two remaining SP scoreboard sites depend on **outside-goal `ea36ca33` HUD fixes**:
+
+- `CG_DrawObjectiveList` still uses a decompiler boundary into `visionSetPreLoaded`;
+  the upstream count rename assumes its earlier correction to `objectives + 16`.
+- `CG_ParseObjectiveChange` still uses decompiled primary-light-relative storage;
+  the upstream index rename assumes its earlier conversion to `objectiveInfo_t`.
+
+The matching numeric validation labels in the parser are adopted, but these two
+storage/boundary changes are deferred. The user has been asked whether to include
+those limited prerequisites. No response is treated as authorization to expand
+the scope, and this row is not counted as discharged while the decision is open.
+
+Validation: all 26 changed production files pass the numeric-token audit, with
+only the reviewed boolean, integer-bound and equivalent array-end forms.
+Production declarations freeze team/state values, 28-byte objective records and
+field offsets, objective/team array extents and SP configstring slots. Production
+scoreboard line counts cover all team-presence masks; the full production
+objective-distribution function verifies complete record bytes for all teams,
+visible/hidden/invalid states and inactive clients. **244/244 portable Release
+tests pass**. The gameplay gate and existing MP/SP typed-scoreboard fixture pass
+Clang ASan/UBSan; the dashboard is current. Hosted engine compilation remains
+required. This is no claim that the deferred SP HUD code is repaired.
