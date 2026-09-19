@@ -1554,12 +1554,12 @@ inline bool IsPowerOf2(int num)
     return (num & (num - 1)) == 0;
 }
 
-// Buf_Read<T> now lives in <xanim/buf_cursor.h>. Include buf_cursor.h
+// Buf_Read<T> now lives in <xanim/buf_cursor.hpp>. Include buf_cursor.hpp
 // here so every translation unit that already pulls in qcommon.h
 // automatically picks up the cursor-aware Buf_Read<T> without source
 // changes. The cursor is a no-op when no Activate has been called,
 // so legacy callers stay bit-identical to the original unbounded read.
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
 // x86 (32- and 64-bit) always has SSE2; ARM does not have <xmmintrin.h> at all,
 // and <intrin.h> is MSVC-only. Guarding these is what lets shared headers such as
