@@ -461,3 +461,8 @@ visible/hidden/invalid states and inactive clients. **244/244 portable Release
 tests pass**. The gameplay gate and existing MP/SP typed-scoreboard fixture pass
 Clang ASan/UBSan; the dashboard is current. Hosted engine compilation remains
 required. This is no claim that the deferred SP HUD code is repaired.
+
+After integrating the already-landed PR #159 MSG work from master `7014af15`,
+**245/245 portable Release tests pass**, including `msg-wire-format-contracts`.
+Fresh merge simulations against #164, #157, #153 and #140 introduce no conflicts;
+#157 and #140 have also refreshed their own bases and now merge cleanly.
