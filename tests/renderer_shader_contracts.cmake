@@ -30,3 +30,9 @@ foreach(expression IN LISTS shader_expressions)
 endforeach()
 string(APPEND shader_selectors "};\nstatic_assert(sizeof(shaderSelectors) / sizeof(shaderSelectors[0]) == 2);\n")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/renderer-enums/shader_selectors.inc" "${shader_selectors}")
+
+# Surface names share the material declaration boundary, but retain native streams.
+kisakcod_renderer_enum_slice(gfx_d3d/r_material.h "enum surfaceType_t" "\n};" surface_enum)
+kisakcod_renderer_enum_slice(gfx_d3d/r_draw_method.h "enum GfxDrawSceneMethod" "\n};" draw_scene_enum)
+kisakcod_renderer_enum_slice(gfx_d3d/r_draw_method.h "struct GfxDrawMethod" "\n};" draw_method_record)
+kisakcod_renderer_enum_slice(gfx_d3d/r_draw_method.cpp "void __cdecl R_ForceLitTechType(" "\n}" force_lit_body)

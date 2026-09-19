@@ -32,6 +32,9 @@ void Require(bool value, const char *expression, int line)
 #include "technique_enum.inc"
 #include "shader_arg_enum.inc"
 #include "texture_source.inc"
+#include "surface_enum.inc"
+#include "draw_scene_enum.inc"
+#include "draw_method_record.inc"
 #include "renderer_shader_expected.inc"
 #include "shader_selectors.inc"
 static_assert(std::is_same_v<std::underlying_type_t<CodeConstant>, std::int32_t>);
@@ -58,6 +61,35 @@ static_assert(std::extent_v<decltype(MaterialTechniqueSet::techniques)> == 34);
 static_assert(std::extent_v<decltype(Material::stateBitsEntry)> == 34);
 static_assert(sizeof(Material::stateBitsEntry) == 34);
 static_assert(sizeof(MaterialConstantDef) == 32);
+
+static_assert(sizeof(surfaceType_t) == 4);
+static_assert(SF_TRIANGLES == 0 && SF_TRIANGLES_PRETESS == 1
+    && SF_BEGIN_STATICMODEL == 2 && SF_STATICMODEL_RIGID == 2
+    && SF_STATICMODEL_PRETESS == 3 && SF_STATICMODEL_CACHED == 4
+    && SF_STATICMODEL_SKINNED == 5 && SF_END_STATICMODEL == 6 && SF_BMODEL == 6
+    && SF_BEGIN_XMODEL == 7 && SF_XMODEL_RIGID == 7 && SF_XMODEL_RIGID_SKINNED == 8
+    && SF_XMODEL_SKINNED == 9 && SF_END_XMODEL == 10 && SF_BEGIN_FX == 10
+    && SF_CODE_MESH == 10 && SF_MARK_MESH == 11 && SF_PARTICLE_CLOUD == 12
+    && SF_END_FX == 13 && SF_NUM_SURFACE_TYPES == 13 && SF_FORCE_32_BITS == -1);
+static_assert(std::extent_v<decltype(GfxDrawMethod::litTechType), 0> == 13);
+static_assert(std::extent_v<decltype(GfxDrawMethod::litTechType), 1> == 7);
+GfxDrawMethod gfxDrawMethod;
+#include "force_lit_body.inc"
+void CheckSurfaceDispatch()
+{
+    for (int technique = 0; technique <= 36; ++technique) {
+        std::memset(&gfxDrawMethod, 0, sizeof(gfxDrawMethod));
+        gfxDrawMethod.drawScene = GFX_DRAW_SCENE_DEBUGSHADER;
+        gfxDrawMethod.baseTechType = TECHNIQUE_DEPTH_PREPASS;
+        gfxDrawMethod.emissiveTechType = TECHNIQUE_NONE;
+        R_ForceLitTechType(static_cast<MaterialTechniqueType>(technique));
+        for (const auto &surface : gfxDrawMethod.litTechType)
+            for (const auto value : surface) CHECK(value == technique);
+        CHECK(gfxDrawMethod.drawScene == GFX_DRAW_SCENE_DEBUGSHADER);
+        CHECK(gfxDrawMethod.baseTechType == TECHNIQUE_DEPTH_PREPASS);
+        CHECK(gfxDrawMethod.emissiveTechType == TECHNIQUE_NONE);
+    }
+}
 
 struct GfxCmdBufSourceState { struct { float consts[58][4]; } input; };
 int dirtyCalls, dirtySlot;
@@ -180,6 +212,7 @@ void RunRendererShaderContracts()
         CHECK(select(-1) == 5);
         CHECK(select(255) == 5);
     }
+    CheckSurfaceDispatch();
     CheckGameTime();
     CheckTechniques();
     CheckPixelLiterals();

@@ -262,3 +262,43 @@ with auto-merge off. Its initial diff includes R2; after R2 lands, the effective
 diff becomes this R3 slice. Mark it ready and enable protected auto-merge only
 then. Never merge the child into the R2 work branch. CI/review observations
 remain hourly.
+
+## Fourth slice: R4 surface values
+
+`07eb572a` is included with R3 in PR #166 to share the hosted renderer/engine
+validation. Static-model bucket arithmetic and draw-method loop bounds adopt the
+final surface names. Scene dispatch already uses the correct rigid-skinned and
+skinned names; its two rigid aliases now use `SF_XMODEL_RIGID`. The fork's checked
+native surface cursors, offsets, record strides, ownership and validation remain
+unchanged. The old upstream raw-pointer parsing is obsolete here.
+
+All three changed production files are token-equivalent after frozen enum
+substitution and folding `SF_END_STATICMODEL - SF_BEGIN_STATICMODEL` to four.
+The existing renderer gate freezes all 21 surface enumerators and compiles the
+actual `R_ForceLitTechType`, checking all 13-by-7 destinations and preserving
+adjacent fields for every technique value. Renderer value and native-stream
+contracts pass in Release and Clang ASan/UBSan; **244/244 portable Release tests
+pass**. No tests are newly registered.
+
+## Verified no-replay records
+
+- **Worker names `336a5da5`: resolved by the fork rewrite.** Commit
+  `97727069a627cf9d798f6a60217c19aac0fa30ae` replaces all 17 raw queue buffer
+  assignments with `R_BindWorkerCmdBuffer<WRKCMD_...>`, deriving native sizes from
+  typed payloads. Both FX pending predicates and the cached-static-model warning
+  exception already use the final names. The old callback array and separate
+  `R_InitWorkerCmdsPos` are gone. Completion scans retain bounded fixed-width
+  indices with `WRKCMD_COUNT` and atomic outstanding-count ownership. Replaying
+  upstream's raw sizes or `inSize` polling would regress the fork. The existing
+  queue protocol/lifecycle tests and source contracts cover this implementation;
+  source checks require exactly 17 typed bindings and prohibit raw buffer sizes.
+  The unrelated SP wait fix remains outside the refactor-only goal.
+- **Audio macro rename `ae9d584d`: inapplicable to this fork.** For each of its
+  five changed files (`r_cinematic.cpp`, `snd_driver.cpp`,
+  `snd_driver_load_obj.cpp`, `snd_local.h`, `snd_public.h`), replacing every
+  `KISAK_SOUND` in the parent with `KISAK_OPENAL` produces byte-identical commit
+  content. Neither macro appears in the fork's CMake/scripts/sound/cinematic
+  sources; its OpenAL implementation files are absent. The prerequisite new
+  backend feature `6501b04f` is outside this goal. No backend is imported to make
+  a macro rename applicable. The other sound cleanup/relocation/name records
+  remain open and require their own hunk audits.

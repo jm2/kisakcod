@@ -877,7 +877,7 @@ void __cdecl R_AddXModelSurfacesCamera(
             }
             if (skinnedCachedOffset == -2)
             {
-                surfType = SF_BEGIN_XMODEL;
+                surfType = SF_XMODEL_RIGID;
             }
             else
             {
@@ -1125,7 +1125,7 @@ void __cdecl R_AddDObjSurfacesCamera(
                 reinterpret_cast<GfxModelSkinnedSurface *>(record.data);
             const surfaceType_t surfType =
                 record.kind == model_surface_stream::RecordKind::Rigid
-                ? SF_BEGIN_XMODEL
+                ? SF_XMODEL_RIGID
                 : SF_XMODEL_SKINNED;
             if (!*material || modelSurf->xsurf != &surfaces[surfaceIndex])
                 return;
