@@ -21,14 +21,40 @@ the gap table is verified against the cited workflow file.
 
 ## Current-state summary
 
-`ci.yml` has five top-level jobs (`portable-tests`, `windows-x86`,
-`windows-x86-sp`, `windows-x86-nosteam`, `windows-x86-headless`) that together
-exercise Windows x86 MP + dedicated (Debug + Release), Windows x86 SP (Debug +
-Release), the Windows x86 Steam OFF compile fallback, the Windows x86 headless
-dedicated configuration, and `portable-tests` only for the other four target
-OS/arch pairs. None of those four pairs has a production engine build, smoke
-gate, package step, or release artifact. No `production-complete` aggregator
-exists.
+`ci.yml` currently has twelve top-level jobs (`portable-tests`,
+`test-selection-checker`, `script-sanitizers`, `portable-sanitizers`,
+`capability-dashboard`, `windows-x86`, `windows-x86-sp`, `windows-x86-parity`,
+`windows-x86-nosteam`, `windows-x86-headless`, `scaffolding-builds`,
+`scaffolding-complete`). Together they exercise Windows x86 MP + dedicated
+(Debug + Release), Windows x86 SP (Debug + Release), the Windows x86 Steam OFF
+compile fallback, the Windows x86 headless dedicated configuration, hosted
+sanitizer coverage (`script-sanitizers`, `portable-sanitizers`), the checked
+test selection (`test-selection-checker`), the derived capability-evidence
+dashboard currency (`capability-dashboard`), and `scaffolding-builds` for all
+six target OS/arch pairs — `windows-x86` plus the five portable pairs.
+`capability-dashboard` (integrated from master after the audit-time snapshot
+below was written) keeps `docs/CAPABILITY_DASHBOARD.md` derived rather than
+hand-maintained: it re-validates the evidence manifest and fails when the
+committed dashboard is stale.
+`scaffolding-complete` (added since the audit-time snapshot below was
+written; see gap 17) is the single branch-protection gate: its `needs:` list
+must equal every other job exactly, pinned by
+`scripts/ci/check-ci-aggregate.py`. The five portable pairs still have no
+production engine build, smoke gate, package step, or release artifact: every
+engine option is OFF on those legs, so they package test binaries only and
+their green result is NOT five delivered engines.
+
+The audit-time snapshot this document was written against is kept below,
+dated, so it does not contradict the implemented state above.
+
+`ci.yml` at audit time had five top-level jobs (`portable-tests`,
+`windows-x86`, `windows-x86-sp`, `windows-x86-nosteam`, `windows-x86-headless`)
+that together exercised Windows x86 MP + dedicated (Debug + Release), Windows
+x86 SP (Debug + Release), the Windows x86 Steam OFF compile fallback, the
+Windows x86 headless dedicated configuration, and `portable-tests` only for
+the other four target OS/arch pairs. None of those four pairs had a production
+engine build, smoke gate, package step, or release artifact, and no
+production-complete aggregator existed.
 
 `release.yml` has a single `windows-x86` job that runs on tag push or
 `workflow_dispatch`, builds MP + dedicated via Visual Studio 17 2022, packs
@@ -330,6 +356,93 @@ license/notarization handling, no required aggregator.
   on Windows) and asserts the output contains the expected architecture
   token. Fail closed on mismatch.
 - Files: `.github/workflows/ci.yml`.
+
+### 17. Required hosted sanitizer coverage and checked test selection (#134)
+
+Two remaining A12 gaps are addressed here rather than in a competing CI design:
+
+- **Portable ASan+UBSan is now a required hosted job.** The new
+  `portable-sanitizers` job in `.github/workflows/ci.yml` configures the
+  tests-only portable profile with clang, instruments both language frontends
+  (`-DCMAKE_C_FLAGS` and `-DCMAKE_CXX_FLAGS`), and runs the full portable suite
+  with `--no-tests=error` and a bounded `--timeout 300`. Instrumenting the C
+  flags as well matters because the memfile test subject links vendored zlib C
+  translation units; C++-only flags would overstate the coverage. The existing
+  `script-sanitizers` job still covers the script production paths and now also
+  fails closed on an empty selection. Local evidence, tied to the head that
+  produced it: the pre-rework head of this branch (8e65ec72) measured
+  `ctest` 235/235 under the portable Release gate and 234/234 under the
+  same clang ASan+UBSan configuration (the static
+  `effectscore-effect-table-stack-usage` contract is intentionally not
+  registered under sanitizer instrumentation, so it is the one test absent
+  there); the portable inventory has since grown to 239 tests, so those
+  counts no longer describe the current suite. Re-measured on this
+  branch's rework head: `ctest` 239/239 under the portable Release gate,
+  with `ctest -N` discovery listing exactly the 239-inventory tests and
+  the `--discovered-scope exact` manifest check passing. The ASan+UBSan
+  count for the rework head is not established here and is not carried
+  forward from the older measurement: it is pending the exact-head
+  hosted `portable-sanitizers` run (GitHub Actions run 35370192571) and
+  will be recorded only once that run completes.
+- **The `windows-x86` ILP32 selection is now a checked classification, not an
+  inline regex alone.** `scripts/ci/test-selection/portable-inventory.txt` is
+  the canonical cross-platform inventory. Each profile partitions it into three
+  explicit, reason-carrying groups: `windows-x86.selected.txt` (tests the
+  profile runs), `windows-x86.excluded.tsv` (tests the profile discovers but
+  intentionally does not run), and `windows-x86.absent.tsv` (tests the platform
+  backend never registers). `scripts/ci/check-test-selection.py` then enforces,
+  on the windows-x86 leg, that every selected test is discovered *and*
+  executed, that every platform-absent test stays undiscovered, that every
+  not-enrolled test really is discovered, and that nothing runs outside the
+  selection. Platform absence is therefore an audited classification, never the
+  accidental result of intersecting two sets, so a selected test cannot simply
+  disappear. The Linux amd64 reference leg validates the canonical inventory
+  with `--discovered-scope exact`, which fails on removals as well as
+  additions. `scripts/ci/test_check_test_selection.py` provides checked-in
+  negative regressions (removed selected test, empty run, unclassified
+  addition, reason-less entry, inventory removal) and runs in its own required
+  `test-selection-checker` job.
+- **Required gates are mechanically enrolled in the aggregate (rework
+  fix).** The first review of this branch found that `portable-sanitizers`
+  and `test-selection-checker` were described as required but absent from
+  `scaffolding-complete.needs`, so the single branch-protection aggregate
+  could succeed while either gate failed or never ran. The aggregate now
+  depends on every other job in the workflow — `portable-tests`,
+  `test-selection-checker`, `script-sanitizers`, `portable-sanitizers`,
+  `capability-dashboard`, the five windows-x86 legs, and
+  `scaffolding-builds` — and
+  `scripts/ci/check-ci-aggregate.py` (with
+  `scripts/ci/test_check_ci_aggregate.py` regressions, run in the
+  `test-selection-checker` job) pins that invariant mechanically: `needs`
+  must equal every other job exactly (a missing or unenrolled job fails),
+  and the enforcement script is extracted and executed against synthetic
+  result vectors — an all-success run must pass, and failure, skipped, and
+  cancelled must each fail at EVERY enrolled position (a checker that
+  sampled only the first and last positions accepted a mutant enforcement
+  script that skipped the second dependency's result; the every-position
+  simulation catches it) — so a required gate can neither silently
+  disappear from the aggregate nor have its enforcement weakened without
+  failing CI. `script-sanitizers` and
+  `test-selection-checker` also carry the explicit `timeout-minutes` bounds
+  the workflow header contract promises for every job. The same review
+  found the windows-x86 build compiled neither
+  `kisakcod-huffman-wire-contract-tests` nor `kisakcod-shader-cache-tests`
+  although both are standalone test executables (not engine-target
+  dependencies) and the ILP32 selection executes their
+  `huffman-wire-format-contracts` and `database-derived-shader-cache-*`
+  tests; both targets are now built explicitly in that job, so the selected
+  tests exist on a clean Win32 runner instead of failing there.
+- **Stale baseline exclusions are gone.** `scripts/ci/run-arm64-determinism.sh`
+  no longer filters `abi-sizeof|security-source-regressions` by name; those
+  tests are healed on master and both tracking beads are closed. The matrix now
+  requires the whole portable suite (verified locally) and fails closed on an
+  empty run.
+
+Scope: these are helper/contract executions. They are not commercial
+compatibility, native engine runtime, or licensed original-binary session
+evidence, which remain deferred under #122 until the protected runner and
+unmodified commercial 1.7 / Steam 1.8 references are provisioned. ILP32
+applicability for the remaining labeled tests is tracked under #134.
 
 ## Concrete patch proposal
 
