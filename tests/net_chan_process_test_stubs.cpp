@@ -264,11 +264,18 @@ char *BG_GetEntityTypeName(int32_t)
 // header-typed definitions: signature drift still fails the compile, and the
 // production code under test is unchanged.
 
-// sv_msg_write_mp.cpp owns the real storage; msg_mp.cpp only references the
-// globals. They are touched solely by MSG_initHuffmanInternal() and the
+// msgHuff is no longer defined here: its production definition moved from
+// sv_msg_write_mp.cpp into qcommon/msg_bits_mp.cpp (verbatim code motion),
+// and msg_bits_mp.cpp is enrolled in kisakcod-net-chan-production-objects,
+// so the real storage is linked with the code under test. Defining a second
+// copy in this TU made the Win32 ILP32 link fail with LNK2005/LNK1169
+// (multiply-defined symbol); the extern declaration in sv_msg_write_mp.h
+// keeps references compiling against the production definition. The huffman
+// state is touched solely by MSG_initHuffmanInternal() and the
 // MSG_Compress/MSG_Decompress helpers, and the reassembly path drives none of
 // those (Netchan_Process handles fragments and delivery, not compression).
-huffman_t msgHuff;
+// orderInfo keeps its stub definition: its real storage still lives in
+// sv_msg_write_mp.cpp, which this target deliberately does not link.
 netFieldOrderInfo_t orderInfo;
 
 // sv_msg_write_mp.cpp: entity-state decode only (delta-entity reads and
