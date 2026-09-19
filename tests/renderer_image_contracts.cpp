@@ -1,5 +1,6 @@
 // Current production records and bodies; D3D/engine services below are doubles.
 // This protects the naming migration, not full GPU or retail-image parity.
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -89,10 +90,16 @@ const char *va(const char *, ...) { return "fixture diagnostic"; }
 #include "image_usage_body.inc"
 #include "image_mip_count_body.inc"
 #include "image_bitmap_body.inc"
-struct { int picmip, picmipBump, picmipSpec; } imageGlobals{};
+struct {
+    int picmip;
+    int picmipBump;
+    int picmipSpec;
+} imageGlobals{};
 #include "image_picmip_body.inc"
 
-int dispatchKind, dispatchBytes, dispatchCalls;
+int dispatchKind;
+int dispatchBytes;
+int dispatchCalls;
 _D3DFORMAT dispatchFormat;
 GfxImage *expectedImage;
 const GfxImageFileHeader *expectedHeader;
@@ -111,7 +118,7 @@ void Image_LoadDxtc(GfxImage *image, const GfxImageFileHeader *header, uint8_t *
 { Capture(3, image, header, data, format, bytes); }
 #include "image_dispatch_body.inc"
 
-void TestFormats()
+void TestFormatDispatch()
 {
     constexpr _D3DFORMAT formats[] = {D3DFMT_A8R8G8B8, D3DFMT_X8R8G8B8, D3DFMT_A8L8, D3DFMT_L8, D3DFMT_A8,
         D3DFMT_A8R8G8B8, D3DFMT_X8R8G8B8, D3DFMT_A8L8, D3DFMT_L8, D3DFMT_A8, D3DFMT_DXT1, D3DFMT_DXT3, D3DFMT_DXT5};
@@ -130,6 +137,11 @@ void TestFormats()
             CHECK(dispatchCalls==0 && assertions==1); // Includes unsupported DXN (14).
         }
     }
+    expectedImage=nullptr; expectedHeader=nullptr; expectedData=nullptr;
+}
+void TestBitmapPixels()
+{
+    GfxImageFileHeader header{};
     constexpr uint8_t input[][8]={{1,2,3,4,5,6,7,8},{1,2,3,4,5,6,0,0},{11,22,33,44,0,0,0,0},{11,22,0,0,0,0,0,0},{11,22,0,0,0,0,0,0}};
     constexpr GfxRawPixel output[][2]={{{3,2,1,4},{7,6,5,8}},{{3,2,1,255},{6,5,4,255}},{{11,11,11,22},{33,33,33,44}},{{11,11,11,255},{22,22,22,255}},{{0,0,0,11},{0,0,0,22}}};
     header.dimensions[0]=2; header.dimensions[1]=1;
@@ -143,9 +155,8 @@ void TestFormats()
         CHECK(std::memcmp(pixels,output[kind],sizeof(output[kind]))==0);
         CHECK(pixels[2].r==0xA5 && pixels[2].g==0xA5 && pixels[2].b==0xA5 && pixels[2].a==0xA5);
     }
-    expectedImage=nullptr; expectedHeader=nullptr; expectedData=nullptr;
 }
-void TestFlagsAndSemantics()
+void TestFlags()
 {
     for (int low=0; low<256; ++low) {
         CHECK(Image_CountMipmaps(static_cast<char>(low),16,4,1)==((low&2) ? 1u : 5u));
@@ -156,24 +167,46 @@ void TestFlagsAndSemantics()
             CHECK(Image_GetUsage(low|0x30000,depth)==2);
         CHECK(Image_GetUsage(low|0x40000,D3DFMT_A8R8G8B8)==0);
     }
+}
+void TestSemantics()
+{
+    // Frozen baseline outcomes, independent of the production enum labels.
+    struct Expected {
+        bool usesLevel;
+        int first;
+        int second;
+        int failures;
+    };
+    constexpr Expected expected[] = {
+        {false,0,0,0}, {false,0,0,0}, {true,0,2,0}, {false,0,0,1},
+        {false,0,0,1}, {false,1,2,0}, {false,0,0,1}, {false,0,0,1},
+        {false,2,2,0}, {false,0,0,1}, {false,0,0,1}, {true,0,2,0}
+    };
     for (int semantic=0; semantic<12; ++semantic) {
         for (int level : {-1,0,1,3,4}) {
-            imageGlobals={level,1,2}; Picmip mip{}; assertions=0;
+            imageGlobals.picmip=level;
+            imageGlobals.picmipBump=1;
+            imageGlobals.picmipSpec=2;
+            Picmip mip{};
+            assertions=0;
             Image_PicmipForSemantic(static_cast<uint8_t>(semantic),&mip);
-            const bool usesLevel=semantic==2 || semantic==11;
-            const bool valid=semantic==0 || semantic==1 || usesLevel || semantic==5 || semantic==8;
-            const int clamped=level<0 ? 0 : level>3 ? 3 : level;
-            const int expected=usesLevel ? clamped : semantic==5 ? 1 : semantic==8 ? 2 : 0;
-            CHECK(mip.platform[0]==expected);
-            CHECK(mip.platform[1]==((usesLevel || semantic==5 || semantic==8) ? 2 : 0));
-            CHECK(assertions==(valid ? 0 : 1));
+            const auto &outcome=expected[semantic];
+            CHECK(mip.platform[0]==(outcome.usesLevel ? std::clamp(level,0,3) : outcome.first));
+            CHECK(mip.platform[1]==outcome.second);
+            CHECK(assertions==outcome.failures);
         }
     }
 }
 
 union XAssetHeader { GfxImage *image; };
-int releases, reloads, defaults, rebuilds, errors;
-bool reloadOK, defaultOK, prog;
+int releases;
+int reloads;
+int defaults;
+int rebuilds;
+int errors;
+bool reloadOK;
+bool defaultOK;
+bool prog;
 void Image_Release(GfxImage *image) { CHECK(image==expectedImage); ++releases; }
 char Image_ReloadFromFile(GfxImage *) { ++reloads; return reloadOK; }
 char Image_AssignDefaultTexture(GfxImage *) { ++defaults; return defaultOK; }
@@ -182,40 +215,56 @@ void Image_Rebuild(GfxImage *) { ++rebuilds; }
 void Com_PrintError(int, const char *, ...) { ++errors; }
 #include "image_release_body.inc"
 #include "image_recovery_body.inc"
-void TestCategories()
+void CheckFailedRecovery(const GfxImage &image, bool failed)
+{
+    CHECK(reloads==int(image.category==3 && !image.delayLoadPixels));
+    CHECK(defaults==reloads);
+    CHECK(rebuilds==int(image.category>=5 && !prog));
+    CHECK(failed==(image.category<5 && !(image.category==3 && image.delayLoadPixels)));
+    CHECK(errors==int(failed));
+}
+void TestCategoryFailures()
 {
     GfxImage image{}; image.name="test"; expectedImage=&image;
+    XAssetHeader asset{};
+    asset.image=&image;
     for (int category=1; category<=7; ++category) {
         image.category=static_cast<uint8_t>(category);
-        releases=0; R_FreeLostImage(XAssetHeader{&image},nullptr);
-        CHECK(releases==(category>=5 ? 1 : 0));
+        releases=0; R_FreeLostImage(asset,nullptr);
+        CHECK(releases==int(category>=5));
         for (bool delayed : {false,true}) {
             for (bool isProg : {false,true}) {
                 image.delayLoadPixels=delayed; prog=isProg;
                 reloadOK=defaultOK=false; reloads=defaults=rebuilds=errors=0;
                 bool failed=false;
-                R_RebuildLostImage(XAssetHeader{&image},&failed);
-                CHECK(reloads==((category==3 && !delayed) ? 1 : 0));
-                CHECK(defaults==reloads);
-                CHECK(rebuilds==((category>=5 && !isProg) ? 1 : 0));
-                CHECK(failed==(category<5 && !(category==3 && delayed)));
-                CHECK(errors==(failed ? 1 : 0));
+                R_RebuildLostImage(asset,&failed);
+                CheckFailedRecovery(image,failed);
             }
         }
     }
+    expectedImage=nullptr;
+}
+void TestCategoryRecovery()
+{
+    GfxImage image{}; image.name="test"; expectedImage=&image;
+    XAssetHeader asset{};
+    asset.image=&image;
     image.category=3; image.delayLoadPixels=false;
     for (bool successViaReload : {false,true}) {
         reloadOK=successViaReload; defaultOK=!successViaReload;
         reloads=defaults=errors=0; bool failed=false;
-        R_RebuildLostImage(XAssetHeader{&image},&failed);
-        CHECK(!failed && errors==0 && reloads==1 && defaults==(successViaReload ? 0 : 1));
+        R_RebuildLostImage(asset,&failed);
+        CHECK(!failed && errors==0 && reloads==1 && defaults==int(!successViaReload));
     }
     expectedImage=nullptr;
 }
 } // namespace
 void RunRendererImageContracts()
 {
-    TestFormats();
-    TestFlagsAndSemantics();
-    TestCategories();
+    TestFormatDispatch();
+    TestBitmapPixels();
+    TestFlags();
+    TestSemantics();
+    TestCategoryFailures();
+    TestCategoryRecovery();
 }
