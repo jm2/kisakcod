@@ -77,6 +77,17 @@ void speex_rand_vec(float std, spx_sig_t *data, int len);
 
 float speex_rand(float std);
 
+/** Seeded variants of speex_rand/speex_rand_vec (ki-dkeb CWE-327 repair):
+    same deterministic generator, but the caller owns the state. All in-tree
+    decoders use these (nb/sb decode pass their own rand_state) so
+    comfort-noise and vocoder-noise synthesis are a deterministic function
+    of the bitstream and per-decoder state alone, independent of
+    interleaving and of any global PRNG. The unseeded variants are retained
+    for upstream API compatibility only. */
+float speex_rand_seeded(float std, spx_uint32_t *state);
+
+void speex_rand_vec_seeded(float std, spx_sig_t *data, int len, spx_uint32_t *state);
+
 void _speex_putc(int ch, void *file);
 
 #endif

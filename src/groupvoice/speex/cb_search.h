@@ -66,7 +66,8 @@ spx_sig_t *exc,
 const void *par,                      /* non-overlapping codebook */
 int   nsf,                      /* number of samples in subframe */
 SpeexBits *bits,
-char *stack
+char *stack,
+spx_uint32_t *rand_state         /* caller-owned noise state (unused here) */
 );
 
 
@@ -92,7 +93,8 @@ spx_sig_t *exc,
 const void *par,                      /* non-overlapping codebook */
 int   nsf,                      /* number of samples in subframe */
 SpeexBits *bits,
-char *stack
+char *stack,
+spx_uint32_t *rand_state         /* caller-owned noise state (ki-dkeb CWE-327) */
 );
 
 #endif
