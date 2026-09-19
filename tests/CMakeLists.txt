@@ -3346,6 +3346,13 @@ add_test(
 )
 
 add_test(
+    NAME voice-codec-guard-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/voice_codec_guard_source_test.cmake
+)
+
+add_test(
     NAME pool-native-pointer-source-invariants
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
