@@ -1,4 +1,5 @@
 #include "r_light.h"
+#include <gfx_d3d/r_primarylights.h>
 #include <qcommon/qcommon.h>
 #include <universal/com_files.h>
 #include <universal/com_memory.h>
@@ -215,14 +216,14 @@ bool __cdecl R_LightImportanceGreaterEqual(const GfxLight *light0, const GfxLigh
     float radiusSq[2]; // [esp+1Ch] [ebp-10h]
     float distSq[2]; // [esp+24h] [ebp-8h]
 
-    if (light0->type != 3 && light0->type != 2)
+    if (light0->type != GFX_LIGHT_TYPE_OMNI && light0->type != GFX_LIGHT_TYPE_SPOT)
         MyAssertHandler(
             ".\\r_light.cpp",
             132,
             1,
             "%s",
             "light0->type == GFX_LIGHT_TYPE_OMNI || light0->type == GFX_LIGHT_TYPE_SPOT");
-    if (light1->type != 3 && light1->type != 2)
+    if (light1->type != GFX_LIGHT_TYPE_OMNI && light1->type != GFX_LIGHT_TYPE_SPOT)
         MyAssertHandler(
             ".\\r_light.cpp",
             133,
@@ -230,7 +231,7 @@ bool __cdecl R_LightImportanceGreaterEqual(const GfxLight *light0, const GfxLigh
             "%s",
             "light1->type == GFX_LIGHT_TYPE_OMNI || light1->type == GFX_LIGHT_TYPE_SPOT");
     if (light0->type != light1->type)
-        return light0->type == 2;
+        return light0->type == GFX_LIGHT_TYPE_SPOT;
     radiusSq[0] = light0->radius * light0->radius;
     radiusSq[1] = light1->radius * light1->radius;
     Vec3Sub(rg.viewOrg, light0->origin, diff);
@@ -730,7 +731,7 @@ void __cdecl R_GetStaticModelLightSurfs(const GfxLight **visibleLights, int visi
                     if (!R_AllocDrawSurf(&surfData.delayedCmdBuf, drawSurf, &surfData.drawSurfList, 3u))
                         break;
                     R_AddDelayedStaticModelDrawSurf(&surfData.delayedCmdBuf, &surfaces[surfaceIndex], (uint8_t*)list, 1u);
-                    if (light->type == 2 && r_spotLightShadows->current.enabled && r_spotLightSModelShadows->current.enabled)
+                    if (light->type == GFX_LIGHT_TYPE_SPOT && r_spotLightShadows->current.enabled && r_spotLightSModelShadows->current.enabled)
                     {
                         if (!R_AllocDrawSurf(&shadowSurfData.delayedCmdBuf, drawSurf, &shadowSurfData.drawSurfList, 3u))
                             break;
@@ -811,7 +812,7 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
     for (lightIndex = 0; lightIndex < visibleCount; ++lightIndex)
     {
         light = visibleLights[lightIndex];
-        if (light->type == 2)
+        if (light->type == GFX_LIGHT_TYPE_SPOT)
             R_CalcSpotLightPlanes(light, planes[lightIndex]);
     }
     sceneEntCount = R_GetSceneDObjCount();
@@ -835,14 +836,14 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
             if (lightIndex >= visibleCount)
                 continue;
             light = visibleLights[lightIndex];
-            if (light->type != 3 && light->type != 2)
+            if (light->type != GFX_LIGHT_TYPE_OMNI && light->type != GFX_LIGHT_TYPE_SPOT)
                 MyAssertHandler(
                     ".\\r_light.cpp",
                     902,
                     1,
                     "%s",
                     "light->type == GFX_LIGHT_TYPE_OMNI || light->type == GFX_LIGHT_TYPE_SPOT");
-            if (light->type == 3)
+            if (light->type == GFX_LIGHT_TYPE_OMNI)
             {
                 distSq = PointToBoxDistSq(light->origin, bounds, bounds + 3);
                 v4 = light->radius * light->radius;
@@ -862,7 +863,7 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
                     drawSurf = &visLight->drawSurfs[visLightDrawSurfCount];
                     newDrawSurf = R_AddDObjSurfaces(sceneEnt, TECHNIQUE_LIGHT_OMNI, drawSurf, (GfxDrawSurf *)&visLight[1]);
                     visLight->drawSurfCount += newDrawSurf - drawSurf;
-                    if (light->type == 2
+                    if (light->type == GFX_LIGHT_TYPE_SPOT
                         && r_spotLightShadows->current.enabled
                         && r_spotLightEntityShadows->current.enabled
                         && (frontEndDataOut->gfxEnts[sceneEnt->gfxEntIndex].renderFxFlags & 1) == 0)
@@ -900,14 +901,14 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
                 if (lightIndex >= visibleCount)
                     goto LABEL_39;
                 light = visibleLights[lightIndex];
-                if (light->type != 3 && light->type != 2)
+                if (light->type != GFX_LIGHT_TYPE_OMNI && light->type != GFX_LIGHT_TYPE_SPOT)
                     MyAssertHandler(
                         ".\\r_light.cpp",
                         963,
                         1,
                         "%s",
                         "light->type == GFX_LIGHT_TYPE_OMNI || light->type == GFX_LIGHT_TYPE_SPOT");
-                if (light->type == 3)
+                if (light->type == GFX_LIGHT_TYPE_OMNI)
                     break;
                 iassert( light->type == GFX_LIGHT_TYPE_SPOT );
                 if (R_SphereInPlanes(planes[lightIndex], sceneModel->placement.base.origin, sceneModel->radius))
@@ -932,7 +933,7 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
                 drawSurf,
                 (GfxDrawSurf *)&visLight[1]);
             visLight->drawSurfCount += newDrawSurf - drawSurf;
-            if (light->type == 2 && r_spotLightShadows->current.enabled && r_spotLightEntityShadows->current.enabled)
+            if (light->type == GFX_LIGHT_TYPE_SPOT && r_spotLightShadows->current.enabled && r_spotLightEntityShadows->current.enabled)
             {
                 if (lightIndex)
                     MyAssertHandler(
@@ -973,14 +974,14 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
                 if (lightIndex >= visibleCount)
                     goto LABEL_64;
                 light = visibleLights[lightIndex];
-                if (light->type != 3 && light->type != 2)
+                if (light->type != GFX_LIGHT_TYPE_OMNI && light->type != GFX_LIGHT_TYPE_SPOT)
                     MyAssertHandler(
                         ".\\r_light.cpp",
                         1018,
                         1,
                         "%s",
                         "light->type == GFX_LIGHT_TYPE_OMNI || light->type == GFX_LIGHT_TYPE_SPOT");
-                if (light->type == 3)
+                if (light->type == GFX_LIGHT_TYPE_OMNI)
                     break;
                 iassert( light->type == GFX_LIGHT_TYPE_SPOT );
                 if (R_SphereInPlanes(planes[lightIndex], dynEntPose->pose.origin, dynEntPose->radius))
@@ -1006,7 +1007,7 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
                 drawSurf,
                 lastDrawSurf);
             visLight->drawSurfCount += newDrawSurf - drawSurf;
-            if (light->type == 2 && r_spotLightShadows->current.enabled && r_spotLightEntityShadows->current.enabled)
+            if (light->type == GFX_LIGHT_TYPE_SPOT && r_spotLightShadows->current.enabled && r_spotLightEntityShadows->current.enabled)
             {
                 if (lightIndex)
                     MyAssertHandler(
@@ -1047,14 +1048,14 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
                 if (lightIndex >= visibleCount)
                     goto LABEL_89;
                 light = visibleLights[lightIndex];
-                if (light->type != 3 && light->type != 2)
+                if (light->type != GFX_LIGHT_TYPE_OMNI && light->type != GFX_LIGHT_TYPE_SPOT)
                     MyAssertHandler(
                         ".\\r_light.cpp",
                         1074,
                         1,
                         "%s",
                         "light->type == GFX_LIGHT_TYPE_OMNI || light->type == GFX_LIGHT_TYPE_SPOT");
-                if (light->type == 3)
+                if (light->type == GFX_LIGHT_TYPE_OMNI)
                     break;
                 iassert( light->type == GFX_LIGHT_TYPE_SPOT );
                 if (R_BoxInPlanes(planes[lightIndex], bmodel->writable.mins, bmodel->writable.maxs))
@@ -1078,7 +1079,7 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
                 drawSurf,
                 (GfxDrawSurf *)&visLight[1]);
             visLight->drawSurfCount += newDrawSurf - drawSurf;
-            if (light->type == 2 && r_spotLightShadows->current.enabled && r_spotLightEntityShadows->current.enabled)
+            if (light->type == GFX_LIGHT_TYPE_SPOT && r_spotLightShadows->current.enabled && r_spotLightEntityShadows->current.enabled)
             {
                 if (lightIndex)
                     MyAssertHandler(
@@ -1120,14 +1121,14 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
                 if (lightIndex >= visibleCount)
                     goto LABEL_114;
                 light = visibleLights[lightIndex];
-                if (light->type != 3 && light->type != 2)
+                if (light->type != GFX_LIGHT_TYPE_OMNI && light->type != GFX_LIGHT_TYPE_SPOT)
                     MyAssertHandler(
                         ".\\r_light.cpp",
                         1129,
                         1,
                         "%s",
                         "light->type == GFX_LIGHT_TYPE_OMNI || light->type == GFX_LIGHT_TYPE_SPOT");
-                if (light->type == 3)
+                if (light->type == GFX_LIGHT_TYPE_OMNI)
                     break;
                 iassert( light->type == GFX_LIGHT_TYPE_SPOT );
                 if (R_BoxInPlanes(planes[lightIndex], bmodel->writable.mins, bmodel->writable.maxs))
@@ -1151,7 +1152,7 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
                 drawSurf,
                 (GfxDrawSurf *)&visLight[1]);
             visLight->drawSurfCount += newDrawSurf - drawSurf;
-            if (light->type == 2 && r_spotLightShadows->current.enabled && r_spotLightEntityShadows->current.enabled)
+            if (light->type == GFX_LIGHT_TYPE_SPOT && r_spotLightShadows->current.enabled && r_spotLightEntityShadows->current.enabled)
             {
                 if (lightIndex)
                     MyAssertHandler(
@@ -1424,7 +1425,7 @@ int __cdecl R_GetTechniqueForLightType(const GfxLight *light, const GfxViewInfo 
     const char *v3; // eax
 
     iassert( viewInfo );
-    if (light->type == 2)
+    if (light->type == GFX_LIGHT_TYPE_SPOT)
     {
         if (!r_spotLightShadows->current.enabled)
             return 21;
@@ -1447,7 +1448,7 @@ int __cdecl R_GetTechniqueForLightType(const GfxLight *light, const GfxViewInfo 
             return 21;
         }
     }
-    else if (light->type == 3)
+    else if (light->type == GFX_LIGHT_TYPE_OMNI)
     {
         return 22;
     }

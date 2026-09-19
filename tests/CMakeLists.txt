@@ -2767,9 +2767,13 @@ add_test(
     COMMAND kisakcod-vehicle-material-time-tests
 )
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/renderer_enum_contracts.cmake")
 add_executable(kisakcod-renderer-value-encoding-tests
     renderer_value_encoding_tests.cpp
+    renderer_enum_contracts.cpp
 )
+target_include_directories(kisakcod-renderer-value-encoding-tests PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/renderer-enums")
 target_include_directories(
     kisakcod-renderer-value-encoding-tests PRIVATE ${SRC_DIR})
 target_compile_features(
