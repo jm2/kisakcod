@@ -15,6 +15,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <new>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -147,6 +148,95 @@ int OpenCloexecUdpDescriptor() noexcept
         return -1;
     }
     return plain;
+}
+
+// Best-effort SIGPIPE suppression at the socket level: on platforms that
+// provide SO_NOSIGPIPE (macOS/BSD, which lack MSG_NOSIGNAL), a send to a
+// reset peer reports EPIPE instead of raising a process-fatal SIGPIPE.
+// Failure to set it leaves the socket usable; the per-call MSG_NOSIGNAL
+// on platforms that define it is the primary guard.
+void ApplyNoSigpipe(const int descriptor) noexcept
+{
+#if defined(SO_NOSIGPIPE)
+    const int disableSigpipe = 1;
+    setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &disableSigpipe,
+        sizeof(disableSigpipe));
+#else
+    (void)descriptor;
+#endif
+}
+
+// Stream (TCP) counterpart of OpenCloexecUdpDescriptor: one unbound,
+// unconnected IPv4 TCP socket marked close-on-exec before it can be
+// observed by another part of the process. SO_NOSIGPIPE is applied where
+// the platform provides it so download sends against a resetting peer
+// fail the transfer instead of killing the process. Returns -1 on any
+// failure.
+int OpenCloexecStreamDescriptor() noexcept
+{
+#if defined(SOCK_CLOEXEC)
+    const int raw = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
+    if (raw >= 0)
+    {
+        ApplyNoSigpipe(raw);
+        return raw;
+    }
+#endif
+    const int plain = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (plain < 0)
+        return -1;
+    if (fcntl(plain, F_SETFD, FD_CLOEXEC) != 0)
+    {
+        close(plain);
+        return -1;
+    }
+    ApplyNoSigpipe(plain);
+    return plain;
+}
+
+bool StreamArgumentsValid(SysSocketHandle const handle,
+    const void *const buffer,
+    const std::uint32_t byteCount) noexcept
+{
+    return handle && handle->handle >= 0 && buffer && byteCount != 0;
+}
+
+// One EINTR-retried stream send; split out so the status-mapping contract
+// stays at the same complexity as the receive path. MSG_NOSIGNAL keeps a
+// peer reset during a send from killing the process via SIGPIPE (POSIX);
+// platforms without it are covered by the socket-level SO_NOSIGPIPE
+// applied at creation.
+ssize_t StreamSend(const int descriptor,
+    const void *const data,
+    const std::uint32_t byteCount) noexcept
+{
+#if defined(MSG_NOSIGNAL)
+    constexpr int sendFlags = MSG_NOSIGNAL;
+#else
+    constexpr int sendFlags = 0;
+#endif
+    ssize_t sent = 0;
+    do
+    {
+        sent = send(descriptor, data, static_cast<size_t>(byteCount),
+            sendFlags);
+    } while (sent < 0 && errno == EINTR);
+    return sent;
+}
+
+// One EINTR-retried stream receive.
+ssize_t StreamRecv(const int descriptor,
+    void *const buffer,
+    const std::uint32_t bufferCapacity) noexcept
+{
+    ssize_t received = 0;
+    do
+    {
+        received = recv(descriptor, buffer,
+            static_cast<size_t>(bufferCapacity),
+            0);
+    } while (received < 0 && errno == EINTR);
+    return received;
 }
 } // namespace
 
@@ -480,4 +570,153 @@ SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveHost(
     resolved.port = port;
     *outAddress = resolved;
     return SysSocketResolveStatus::Resolved;
+}
+
+SysSocketStreamOpenStatus KISAK_CDECL Sys_SocketOpenStream(
+    const bool nonBlocking,
+    SysSocketHandle *const outHandle)
+{
+    if (!outHandle || *outHandle)
+        return SysSocketStreamOpenStatus::InvalidArgument;
+
+    const int raw = OpenCloexecStreamDescriptor();
+    if (raw < 0)
+        return SysSocketStreamOpenStatus::SystemFailure;
+
+    if (nonBlocking)
+    {
+        const int flags = fcntl(raw, F_GETFL, 0);
+        if (flags < 0
+            || fcntl(raw, F_SETFL, flags | O_NONBLOCK) < 0)
+        {
+            close(raw);
+            return SysSocketStreamOpenStatus::SystemFailure;
+        }
+    }
+
+    // Allocation is non-throwing so a failure cannot bypass the status
+    // contract and leak the already-open descriptor.
+    SysSocket *socket = new (std::nothrow) SysSocket();
+    if (!socket)
+    {
+        close(raw);
+        return SysSocketStreamOpenStatus::SystemFailure;
+    }
+    socket->handle = raw;
+    *outHandle = socket;
+    return SysSocketStreamOpenStatus::Opened;
+}
+
+SysSocketStreamConnectStatus KISAK_CDECL Sys_SocketConnectStream(
+    SysSocketHandle const handle,
+    const SysSocketAddress *const destination)
+{
+    if (!handle || handle->handle < 0 || !destination)
+        return SysSocketStreamConnectStatus::InvalidArgument;
+
+    const sockaddr_in to = ToSockaddrIn(*destination);
+    const int failure = connect(handle->handle,
+        reinterpret_cast<const sockaddr *>(&to), sizeof(to));
+    if (failure == 0)
+        return SysSocketStreamConnectStatus::Connected;
+    // EINTR does not mean "retry": a non-blocking connect attempt stays
+    // pending after an interruption, and a blocking one that a signal cut
+    // short surfaces EALREADY/EISCONN on the next observation. All of the
+    // in-flight outcomes fold into InProgress, which the caller resolves
+    // through Sys_SocketPollConnected.
+    if (errno == EINPROGRESS || errno == EINTR || errno == EALREADY)
+        return SysSocketStreamConnectStatus::InProgress;
+    if (errno == EISCONN)
+        return SysSocketStreamConnectStatus::Connected;
+    return SysSocketStreamConnectStatus::SystemFailure;
+}
+
+SysSocketStreamPollStatus KISAK_CDECL Sys_SocketPollConnected(
+    SysSocketHandle const handle)
+{
+    if (!handle || handle->handle < 0)
+        return SysSocketStreamPollStatus::InvalidArgument;
+
+    pollfd descriptor{};
+    descriptor.fd = handle->handle;
+    descriptor.events = POLLOUT;
+    const int ready = poll(&descriptor, 1, 0);
+    if (ready < 0)
+    {
+        if (errno == EINTR)
+            return SysSocketStreamPollStatus::InProgress;
+        return SysSocketStreamPollStatus::SystemFailure;
+    }
+    if (ready == 0)
+        return SysSocketStreamPollStatus::InProgress;
+
+    // Writability (or an error/hangup flag) ends the handshake; SO_ERROR
+    // names the outcome. Zero is established, anything else is the real
+    // refusal -- poll artifacts are never reported as Failed.
+    int socketError = 0;
+    socklen_t errorLength = sizeof(socketError);
+    if (getsockopt(handle->handle, SOL_SOCKET, SO_ERROR, &socketError,
+            &errorLength)
+        != 0)
+        return SysSocketStreamPollStatus::SystemFailure;
+    if (socketError == 0)
+        return SysSocketStreamPollStatus::Ready;
+    return SysSocketStreamPollStatus::Failed;
+}
+
+SysSocketStreamSendStatus KISAK_CDECL Sys_SocketSendStream(
+    SysSocketHandle const handle,
+    const void *const data,
+    const std::uint32_t byteCount,
+    std::uint32_t *const outSentBytes)
+{
+    if (outSentBytes)
+        *outSentBytes = 0;
+    if (!StreamArgumentsValid(handle, data, byteCount) || !outSentBytes)
+        return SysSocketStreamSendStatus::InvalidArgument;
+
+    const ssize_t sent = StreamSend(handle->handle, data, byteCount);
+    if (sent < 0)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return SysSocketStreamSendStatus::WouldBlock;
+        if (errno == EPIPE || errno == ECONNRESET)
+            return SysSocketStreamSendStatus::Disconnected;
+        return SysSocketStreamSendStatus::SystemFailure;
+    }
+    // A stream send of zero cannot occur for a nonzero length, but the
+    // guard keeps the contract honest on exotic platforms.
+    if (sent == 0)
+        return SysSocketStreamSendStatus::WouldBlock;
+    *outSentBytes = static_cast<std::uint32_t>(sent);
+    return SysSocketStreamSendStatus::Sent;
+}
+
+SysSocketStreamRecvStatus KISAK_CDECL Sys_SocketRecvStream(
+    SysSocketHandle const handle,
+    void *const buffer,
+    const std::uint32_t bufferCapacity,
+    std::uint32_t *const outByteCount)
+{
+    if (outByteCount)
+        *outByteCount = 0;
+    if (!StreamArgumentsValid(handle, buffer, bufferCapacity) || !outByteCount)
+        return SysSocketStreamRecvStatus::InvalidArgument;
+
+    const ssize_t received = StreamRecv(handle->handle, buffer,
+        bufferCapacity);
+    if (received < 0)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return SysSocketStreamRecvStatus::WouldBlock;
+        if (errno == ECONNRESET)
+            return SysSocketStreamRecvStatus::Disconnected;
+        return SysSocketStreamRecvStatus::SystemFailure;
+    }
+    // Zero bytes on a stream is the peer's orderly shutdown: the stream
+    // is finished and will never yield more data.
+    if (received == 0)
+        return SysSocketStreamRecvStatus::Disconnected;
+    *outByteCount = static_cast<std::uint32_t>(received);
+    return SysSocketStreamRecvStatus::Received;
 }

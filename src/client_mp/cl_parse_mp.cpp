@@ -9,6 +9,7 @@
 #include <universal/com_files.h>
 #include <win32/win_local.h>
 #include <qcommon/cmd.h>
+#include <qcommon/dl_http.h>
 #include <qcommon/dl_main.h>
 #include <universal/com_constantconfigstrings.h>
 #include <database/database.h>
@@ -252,6 +253,101 @@ void __cdecl CL_ParseMapCenter(int localClientNum)
     sscanf(mapCenterString, "%f %f %f", cls.mapCenter, &cls.mapCenter[1], &cls.mapCenter[2]);
 }
 
+namespace
+{
+// Bounded copy helper for CL_SanitizeDownloadUrl: appends at most
+// capacity - length - 1 bytes and always leaves the result terminated.
+void CL_AppendBounded(char *out, std::size_t &length, const std::size_t capacity,
+    const char *text, const std::size_t count)
+{
+    for (std::size_t index = 0;
+        index < count && length + 1 < capacity; ++index)
+        out[length++] = text[index];
+}
+
+// Appends the NUL-terminated tail at `text`, stopping at the terminator
+// or when the output is full, whichever comes first; the bound is the
+// output capacity, never an unbounded scan of the input.
+void CL_AppendTerminated(char *out, std::size_t &length,
+    const std::size_t capacity, const char *text)
+{
+    for (const char *scan = text; *scan != '\0' && length + 1 < capacity;
+        ++scan)
+        out[length++] = *scan;
+}
+
+// The pieces of a download URL the sanitizer rewrites.
+struct CL_UrlAuthoritySplit
+{
+    const char *rest; // first authority terminator ('/', '?', '#', or end)
+    const char *at;   // last '@' inside the authority, or nullptr
+    std::size_t schemeLength; // "scheme://" prefix length
+};
+
+// Splits the display URL into its authority pieces: everything before the
+// last '@' before the first '/', '?' or '#' is the authority's userinfo.
+CL_UrlAuthoritySplit CL_SplitUrlAuthority(const char *source)
+{
+    const char *authority = std::strstr(source, "://");
+    const std::size_t schemeLength =
+        authority ? static_cast<std::size_t>(authority - source) + 3 : 0;
+    const char *rest = source + schemeLength;
+    while (*rest != '\0' && *rest != '/' && *rest != '?' && *rest != '#')
+        ++rest;
+
+    const char *at = nullptr;
+    for (const char *scan = rest; scan > source + schemeLength;)
+    {
+        --scan;
+        if (*scan == '@')
+        {
+            at = scan;
+            break;
+        }
+    }
+    return {rest, at, schemeLength};
+}
+
+} // namespace
+
+// Renders a download URL for every displayed or logged surface with
+// URL-embedded credentials masked: "http://user:pass@host/path" becomes
+// the retail meter form "http://*:*host/path". Only the authority's
+// userinfo (everything before the last '@' before the first '/', '?' or
+// '#') is rewritten; the source URL is never modified, so the transport
+// still receives the real credentials. Without credentials the URL is
+// copied verbatim (bounded).
+//
+// Declared in client_mp.h: the later WWW failure paths in cl_main_mp.cpp
+// route their download-name messages through this same sanitizer so no
+// displayed or logged surface ever sees URL-embedded credentials.
+void CL_SanitizeDownloadUrl(const char *source, char *out,
+    const std::size_t capacity)
+{
+    if (!out || capacity == 0)
+        return;
+    std::size_t length = 0;
+    out[0] = '\0';
+    if (!source)
+        return;
+
+    const CL_UrlAuthoritySplit split = CL_SplitUrlAuthority(source);
+    if (!split.at)
+    {
+        // No credentials: copy the URL verbatim (bounded by the output).
+        CL_AppendTerminated(out, length, capacity, source);
+        out[length] = '\0';
+        return;
+    }
+
+    CL_AppendBounded(out, length, capacity, source, split.schemeLength);
+    CL_AppendBounded(out, length, capacity, "*:*", 3);
+    CL_AppendBounded(out, length, capacity, split.at + 1,
+        static_cast<std::size_t>(split.rest - (split.at + 1)));
+    CL_AppendTerminated(out, length, capacity, split.rest);
+    out[length] = '\0';
+}
+
 void __cdecl CL_ParseWWWDownload(int localClientNum, msg_t *msg)
 {
     char *String; // eax
@@ -275,7 +371,43 @@ void __cdecl CL_ParseWWWDownload(int localClientNum, msg_t *msg)
     else
     {
         legacyHacks.cl_downloadSize = cls.downloadSize;
-        Com_DPrintf(14, "Server redirected download: %s\n", cls.downloadName);
+        // Every logged form of the URL goes through the sanitizer so
+        // URL-embedded credentials never reach the console or the
+        // failure message (the meter composition below masks via the
+        // URL parser, retail scheme://*:*authority/path style).
+        char sanitizedUrl[1024];
+        CL_SanitizeDownloadUrl(cls.downloadName, sanitizedUrl,
+            sizeof(sanitizedUrl));
+        Com_DPrintf(14, "Server redirected download: %s\n", sanitizedUrl);
+        // Retail transport parity: the meter showed the download URL with
+        // credentials masked (scheme://*:*authority/path); reproduce that
+        // display form so URL-embedded credentials never reach the UI.
+        {
+            DlRedirectUrl displayName{};
+            if (Dl_ParseRedirectUrl(cls.downloadName, &displayName)
+                == DlUrlStatus::Ok
+                && displayName.hasBasicAuth)
+            {
+                if (displayName.port == 80)
+                    Com_sprintf(legacyHacks.cl_downloadName,
+                        sizeof(legacyHacks.cl_downloadName),
+                        "http://*:*%s%s", displayName.host,
+                        displayName.path);
+                else
+                    Com_sprintf(legacyHacks.cl_downloadName,
+                        sizeof(legacyHacks.cl_downloadName),
+                        "http://*:*%s:%u%s", displayName.host,
+                        displayName.port, displayName.path);
+            }
+            else
+            {
+                // Parse-rejected URLs keep the masked form: the raw URL
+                // may carry user:pass@ credentials and the UI fallback
+                // must uphold the same invariant as every other surface.
+                I_strncpyz(legacyHacks.cl_downloadName, sanitizedUrl,
+                    sizeof(legacyHacks.cl_downloadName));
+            }
+        }
         cls.wwwDlInProgress = 1;
         CL_AddReliableCommand(localClientNum, "wwwdl ack");
         FS_BuildOSPath(fs_homepath, cls.downloadTempName, (char *)"", toOSPath);
@@ -286,7 +418,7 @@ void __cdecl CL_ParseWWWDownload(int localClientNum, msg_t *msg)
             CL_AddReliableCommand(localClientNum, "wwwdl fail");
             DL_CancelDownload();
             cls.wwwDlInProgress = 0;
-            Com_Printf(14, "Failed to initialize download for '%s'\n", cls.downloadName);
+            Com_Printf(14, "Failed to initialize download for '%s'\n", sanitizedUrl);
         }
         if ((cls.downloadFlags & 1) != 0)
         {

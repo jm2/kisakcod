@@ -167,7 +167,11 @@ endfunction()
 string(ASCII 92 _pending_copy_backslash)
 string(ASCII 13 _pending_copy_carriage_return)
 string(ASCII 10 _pending_copy_line_feed)
-set(_pending_copy_block_comment "/\\*([^*]|\\*+[^*/])*\\*+/")
+# Deterministic block-comment matcher: the classic (a|ab)* style
+# alternation makes cmake's regex engine blow its stack (SIGSEGV) on
+# comment-heavy files; this unrolled form accepts the identical language
+# in linear time.
+set(_pending_copy_block_comment "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/")
 set(_pending_copy_comment_atom
     "([ \t\r\n]|${_pending_copy_block_comment}|//[^\r\n]*)")
 set(_pending_copy_comment_gap "${_pending_copy_comment_atom}*")
