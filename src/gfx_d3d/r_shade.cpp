@@ -7,6 +7,7 @@
 #include "r_buffers.h"
 #include "r_utils.h"
 #include "r_water.h"
+#include "r_image.h"
 #include <database/db_validation.h>
 
 
@@ -334,15 +335,15 @@ void __cdecl R_OverrideImage(GfxImage **image, const MaterialTextureDef *texdef)
     {
         switch (texdef->semantic)
         {
-        case 0u:
-        case 1u:
-        case 0xBu:
+        case TS_2D:
+        case TS_FUNCTION:
+        case TS_WATER_MAP:
             return;
-        case 2u:
+        case TS_COLOR_MAP:
             if (r_colorMap->current.integer != 1)
                 *image = (GfxImage *)R_OverrideGrayscaleImage(r_colorMap);
             break;
-        case 5u:
+        case TS_NORMAL_MAP:
             if (r_normalMap->current.integer)
             {
                 iassert(r_normalMap->current.integer == R_NORMAL_OVERRIDE_NONE);
@@ -352,7 +353,7 @@ void __cdecl R_OverrideImage(GfxImage **image, const MaterialTextureDef *texdef)
                 *image = rgp.identityNormalMapImage;
             }
             break;
-        case 8u:
+        case TS_SPECULAR_MAP:
             if (r_specularMap->current.integer != 1)
                 *image = (GfxImage *)R_OverrideGrayscaleImage(r_specularMap);
             break;
@@ -521,7 +522,7 @@ const MaterialTextureDef *__cdecl R_SetPixelSamplerFromMaterial(
             material->info.name);
         return nullptr;
     }
-    if (texDef->semantic == 11)
+    if (texDef->semantic == TS_WATER_MAP)
     {
         if (r_drawWater->current.enabled)
             floatTime = context.source->sceneDef.floatTime;

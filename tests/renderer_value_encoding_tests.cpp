@@ -6,6 +6,7 @@
 #include <limits>
 
 void RunRendererEnumContracts();
+void RunRendererImageContracts();
 
 namespace
 {
@@ -95,6 +96,7 @@ bool TestMipmapResolution()
 int main()
 {
     RunRendererEnumContracts();
+    RunRendererImageContracts();
     if (!TestPreTessPacking())
         return Fail("pre-tess packing or failure atomicity");
     if (!TestMipmapResolution())

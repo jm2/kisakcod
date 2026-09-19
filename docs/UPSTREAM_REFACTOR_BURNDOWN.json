@@ -34,7 +34,8 @@
       "historical_disposition": "Selectively present; remainder deferred",
       "remaining_boundary": "PRs #40, #43, and #46 contain the reviewed radius/target corrections and stronger entity/weapon checks. Further `g_weapon` gameplay changes remain deferred until SP is compiled and a retail behavior oracle exists.",
       "workstream": "L1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "77404c6175b710d739bdc1b8aca5b395f72e5758",
@@ -43,7 +44,8 @@
       "historical_disposition": "Selectively present; remainder deferred/rejected",
       "remaining_boundary": "Reviewed fixes already landed through PRs #41, #43, and #44. Other raw SP gameplay, UI, and API edits remain deferred; actor-aim behavior changes are rejected pending an executable retail oracle.",
       "workstream": "L1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "ba3c79f3a5107aa30379178ce2c106081f29320b",
@@ -52,7 +54,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Dynent save/load still needs a Disk32/native physics schema and lifetime design. Importing the raw fixed-width save image would deepen the native64 blocker.",
       "workstream": "L2",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "07daaf99f5ec816693f9a82692cff7089e58e511",
@@ -61,7 +64,8 @@
       "historical_disposition": "Selectively adapted; remainder deferred",
       "remaining_boundary": "PR #65 corrects the stale brush-definition identity/access in `r_dpvs`. The broader SP event-sequence changes remain deferred until SP production translation units are compiled and tested.",
       "workstream": "L1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "28757acc3bd1cb3b3654e2a4d454b877ae846238",
@@ -70,7 +74,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "This is an unbuilt SP behavior change and needs the SP compile gate plus a gameplay oracle.",
       "workstream": "L1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "ea36ca33f212203a79a3d48ed6d27f5dc3846a3f",
@@ -79,7 +84,8 @@
       "historical_disposition": "Selectively adapted; remainder deferred",
       "remaining_boundary": "PR #65 adapts the signed wrap semantics of `AngleSubtract` through a shared `AngleDelta` implementation with exact-boundary and NaN tests. Other SP HUD, pose, and gameplay changes remain deferred.",
       "workstream": "L1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "29a94c8cbad7ad2050abd3e1437a2fa4b392e766",
@@ -88,7 +94,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "The icon asset change needs provenance/license confirmation and belongs in optional packaging, not an engine-content reconciliation batch.",
       "workstream": "X1",
-      "status": "outside-runtime-scope"
+      "status": "outside-runtime-scope",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "b19e686ad1e7c09cc5094a9b082f1bc1ab7d4399",
@@ -97,7 +104,8 @@
       "historical_disposition": "Sound cleanup adapted; remainder deferred/rejected",
       "remaining_boundary": "PR #65 U2 commit `b40fd7bb` replaces seven scoreboard-derived dry operands with a sound-owned dry-level helper whose value is exactly `1.0f`, avoiding the false sound-to-cgame dependency. The existing wet-level ABI remains unchanged. Other SP behavior is deferred; actor-offset changes are rejected without an oracle. Loaded-but-unused dry/effect fields are a separate audio-backend question.",
       "workstream": "L1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "6f0284ad8c1fa367304e5eefa44d39d744ddbefc",
@@ -106,7 +114,8 @@
       "historical_disposition": "Selectively present",
       "remaining_boundary": "PR #63 contains the safe typed-sort, NaN-ordering, complete shadow-candidate, and row-zero fixes. Its filesystem change was superseded by the native-pointer service from `d5a6e799`; matrix precision rewrites remain deferred for numerical/determinism evidence.",
       "workstream": "L3",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "2164cd1accf6607a05203547e50858211dcef094",
@@ -115,7 +124,8 @@
       "historical_disposition": "Selectively adapted; remainder deferred/rejected",
       "remaining_boundary": "PR #65 fixes ordinary and server command lookup through one tested exact linked-list finder, including tail dispatch. SP prone/save work remains deferred. The raw screenshot implementation is rejected in favor of a future bounded, portable capture boundary.",
       "workstream": "L1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "601ddcc45ccd3530c0f406c78d51476e6dac940c",
@@ -124,7 +134,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "A wholesale linkage move is unsafe without a dedicated cross-translation-unit audit against this port's substantially changed database boundary. No source hunk was imported.",
       "workstream": "D1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     },
     {
       "commit": "14900b6b8c833ad091bdfbf58e6d8d0360f965b1",
@@ -133,7 +144,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Replaces raw zone-mask values across database, client, server, renderer, and command paths. This fork has a substantially hardened registry and zone-lifecycle surface; adopt only with exact flag-value, caller, and archive-lifecycle contracts.",
       "workstream": "D1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "3794790874809ba6c78b849b4e55cae7551a72bc",
@@ -142,8 +154,11 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "A small naming-only migration, but it changes a shared renderer dvar type. It offers no behavior fix and should land independently with value/layout assertions.",
       "workstream": "R1",
-      "status": "implemented-in-this-change",
-      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#first-batch-r1"
+      "status": "merged",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#first-batch-r1",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_pr": 163,
+      "completion_merge": "53a187db655e743caf6d038b35501e11111689e1"
     },
     {
       "commit": "90b7a52a0099b32f7093b1e0e8a8261ce7266554",
@@ -152,7 +167,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Moves perk identifiers into a shared enum and rewrites script/server consumers. Perk indices cross gameplay and script boundaries; require exact numeric and profile-specific coverage.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "2f4eb59ec34e9df72730d451f5cbedbd1312eff0",
@@ -161,7 +177,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Replaces numeric stat indices in 27 network, prediction, message, and gameplay files. The values are protocol-visible and need MP/SP serialization parity tests before migration.",
       "workstream": "N1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "2a0747b73cd899af58b2aa1f1fead7681d852469",
@@ -170,7 +187,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Renames gameplay damage-mask bits across SP and MP. Preserve exact bit values and mixed-mask behavior through focused damage tests before adoption.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "8b23c3105bc33988c6e3b38085c239f42a0610b2",
@@ -179,7 +197,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Broadly renames means-of-death values crossing scripts, gameplay, and network state. It is behavior-neutral only if every numeric value remains exact; no such local oracle accompanies the upstream change.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "0f139a7f6f5ed43d027869ed8cabd1461090e467",
@@ -188,7 +207,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Rewrites a large weapon-state surface across input, prediction, gameplay, and HUD code. This fork's SP/MP layouts and native-width work require a dedicated state-value audit.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "c0c19174ff805f76fdd0d7d5900c7c9e2a378ea9",
@@ -197,7 +217,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Replaces turret bit constants across actor, script, SP, and MP paths. Needs exact bitmask and save/network contract checks rather than inclusion in an ancestry-only batch.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "441e1e44c24fce24009a3f3e8404c8d314b1c08b",
@@ -206,7 +227,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Entity type IDs are savegame and snapshot visible. The 16-file replacement needs explicit frozen-value and serialization evidence.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "25fa0e8ab167ac718c6be4cf9e61210240b518b3",
@@ -215,7 +237,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Migrates input bits across 23 client, movement, gameplay, and message files. User-command bits are network protocol, so raw textual equivalence is insufficient.",
       "workstream": "N1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "355b68a0190786487f669edb9ca24dddd7cf6f52",
@@ -224,7 +247,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "This is not naming-only: it consolidates MP/SP masks and changes a helicopter water-surface comparison, while touching 63 files. It overlaps this fork's separately sealed profile masks and needs dedicated collision/gameplay parity review.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "df46aa636caf67422de28195b64fd0086d91e24f",
@@ -233,7 +257,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Moves vehicle mode numbers into a shared enum across script and MP/SP gameplay. Require frozen script values and both-profile tests.",
       "workstream": "V1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "008cfc53e7dee0bf23e6f38ab0b4e9d1b8977c82",
@@ -242,7 +267,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Introduces shared names for MP helicopter damage stages. The network/game enum values need explicit compatibility assertions first.",
       "workstream": "V1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "b77b84fbb64f60c3764fc7c6049705f70c853f13",
@@ -251,7 +277,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Replaces vehicle sound indices in script and gameplay code. Defer until exact asset/script slot contracts cover the migration.",
       "workstream": "V1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "c2543fd25e65a0bd65ed3666f582ce04b83916e5",
@@ -260,7 +287,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Includes roughly 1,000 lines of loader-table churn plus shared field-type changes. It intersects fast-file parsing and must be reviewed against the fork's bounded loader and Disk32 work.",
       "workstream": "D2",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "5c27f2afb55bdfe5ccf1f14e84c6251a1292b4a0",
@@ -269,7 +297,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Adds and propagates weapon-animation names through animation, event, and weapon paths. Adopt only with frozen numeric values and MP/SP animation parity coverage.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "66b37ca5fd362f379c6f073edcba817fbda81e96",
@@ -278,7 +307,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "The implementation is x86 SSE/MMX and MSVC oriented, adds unrelated Tracy instrumentation, and has no scalar/ARM implementation or golden-output parity oracle. It cannot be the portable renderer path for Windows ARM64, Linux ARM64, or macOS ARM64.",
       "workstream": "R6",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "8f966011229b78eebb1d2229f84e10fdc796bd25",
@@ -287,7 +317,8 @@
       "historical_disposition": "Selectively adapted",
       "remaining_boundary": "SP weapon input now suppresses both firing and melee for the friendly-fire `0x08` and disable-weapons `0x80` flags through one tested helper. MP behavior is unchanged. The broad dvar/input/sound churn remains deferred pending profile-specific production compilation and gameplay parity evidence.",
       "workstream": "L1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     },
     {
       "commit": "c182ac29518e614827d41484411fd21c6ae9074f",
@@ -296,7 +327,8 @@
       "historical_disposition": "Selectively adapted",
       "remaining_boundary": "Corrected the looping diagnostic channel and source indices without importing the roughly thousand-line sound rewrite. The larger audio lifecycle change remains deferred to the portable OpenAL Soft backend work.",
       "workstream": "A1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     },
     {
       "commit": "6501b04f33f241f63b2a54d16adeb8be125c6198",
@@ -305,7 +337,8 @@
       "historical_disposition": "Deferred epic",
       "remaining_boundary": "The approximately 17,000-line backend/vendor batch needs a dedicated license and supply-chain review, ownership/lifecycle design, fuzzing, and Linux/Windows/macOS plus amd64/ARM64 validation. The audited version retains Win32/x86 assumptions and unchecked truncation, channel, and allocation paths, so none of it was imported here.",
       "workstream": "A1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "6cf492addc1f03485a5c539073c5455d62d5a7fd",
@@ -314,7 +347,8 @@
       "historical_disposition": "Selectively adapted and hardened",
       "remaining_boundary": "Corrected the explicit SP movement-state layout and linked/dead transitions while compile-time seals preserve the distinct MP layout. Retained the ragdoll secondary-bone correction with optional-index validation and fixed the menu fade duration through the intended integer value. Unrelated fastfile, save, mod, subtitle, and replay changes remain deferred.",
       "workstream": "L1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "820b0a030a5a797306f65c3b8fe93767e136a900",
@@ -323,7 +357,8 @@
       "historical_disposition": "Selectively adapted; remainder rejected/deferred",
       "remaining_boundary": "Retained only the runtime renderer correction as a typed local `AllowAllStaticModels` callback. The roughly 96,000-line Windows MFC/D3D editor import and its shared-header/API churn are outside the committed MP client/server runtime scope, lack a Linux/macOS/ARM64 design, and require separate provenance, security, dependency, and packaging review.",
       "workstream": "X1",
-      "status": "outside-runtime-scope"
+      "status": "outside-runtime-scope",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "e87739e36b19d0eca44866f6d819be222b6e5f96",
@@ -332,7 +367,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Server connection-state names cross handshake and snapshot paths; retain current client-state values pending protocol-specific parity review.",
       "workstream": "N1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "707f9b0701604980f7955ccbfc6513b3ee3ab778",
@@ -341,8 +377,11 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Renderer light-kind naming needs frozen asset values and renderer-profile compilation.",
       "workstream": "R1",
-      "status": "implemented-in-this-change",
-      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#first-batch-r1"
+      "status": "merged",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#first-batch-r1",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_pr": 163,
+      "completion_merge": "53a187db655e743caf6d038b35501e11111689e1"
     },
     {
       "commit": "8c033d086472841febf65131f75790470de606c7",
@@ -351,7 +390,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Console-channel renaming spans nearly every subsystem and includes previously excluded editor/audio files; no behavioral fix requires this migration.",
       "workstream": "C1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "cc8c8dd582ac6bc1112f46d43361d1d236a486ca",
@@ -360,7 +400,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Vehicle type names cross SP/MP asset and gameplay records; require exact-value and profile checks.",
       "workstream": "V1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "3082d41f1ef6fc1e15295881a0490d06af8eca51",
@@ -369,7 +410,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Vehicle ride-slot identifiers need SP animation/occupant parity coverage.",
       "workstream": "V1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "07eb572a9eff271121da3740ddf0f8904c5861f0",
@@ -378,7 +420,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Surface-type migration overlaps the fork's checked native surface stream; retain its existing representation.",
       "workstream": "R4",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "0492cb9e13776628a0e43e4b8726ef4b27efe494",
@@ -387,7 +430,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Physics geometry identifiers cross serialized/ODE boundaries; need explicit value and dispatch coverage.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "17d0a98be48acad5fdec5c054f230d17397401ac",
@@ -396,7 +440,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Renderer constant indices are shader ABI; require exact slot-value tests before broad replacement.",
       "workstream": "R3",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "a97810c650c8a99134459e0f4d475cb7a04b3405",
@@ -405,7 +450,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Script value tags overlap the fork's widened value cells and ownership contracts; preserve the tested runtime migration.",
       "workstream": "S1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "ea6c2ea1be22365fbe175fdd867e8b68f8184b25",
@@ -414,7 +460,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Team constants span script, gameplay, and snapshots; require SP/MP numeric parity.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "336a5da5b506076c23795b0afb7cbd1a8793ed59",
@@ -423,7 +470,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Worker dispatch identifiers overlap atomic/publication changes; require queue and dispatch contracts.",
       "workstream": "W1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "0bced932f9e8c95d3cf4f74ce947c8fef6d07013",
@@ -432,7 +480,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Shader argument tags are asset-facing; require loader and runtime type parity.",
       "workstream": "R3",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "c5477bc3eaf735594cc4df5defdc5ae79631ff40",
@@ -441,7 +490,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "XAsset tags span the heavily modified Disk32 registry and lifecycle; require value, dispatch, and ownership validation.",
       "workstream": "D1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "9b808d838a7e059b8f2d780ae72f85c46a4cb53c",
@@ -450,8 +500,11 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Depth-range naming affects renderer state; defer alongside profile-specific renderer tests.",
       "workstream": "R1",
-      "status": "implemented-in-this-change",
-      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#first-batch-r1"
+      "status": "merged",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#first-batch-r1",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_pr": 163,
+      "completion_merge": "53a187db655e743caf6d038b35501e11111689e1"
     },
     {
       "commit": "9d1ab0d5455b5560793e0d80100c7ec0dacde737",
@@ -460,7 +513,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Technique indices are shader/material ABI; require frozen-value and dispatch tests.",
       "workstream": "R3",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "3d40b791502d932803528c2609bf32fbe528e31c",
@@ -469,7 +523,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Further technique replacements depend on the preceding material migration; retain the current sealed asset boundary.",
       "workstream": "R3",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "40bf0bd9af4dc1f762187e68280ed9101a9ea94d",
@@ -478,8 +533,11 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Stencil identifiers need renderer state tests; no isolated behavior correction accompanies the renaming.",
       "workstream": "R1",
-      "status": "implemented-in-this-change",
-      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#first-batch-r1"
+      "status": "merged",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#first-batch-r1",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_pr": 163,
+      "completion_merge": "53a187db655e743caf6d038b35501e11111689e1"
     },
     {
       "commit": "78a1a09ae9c3d4135c16ff8e92646dfdd47a8063",
@@ -488,7 +546,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Image file-format tags are serialized; require exact numeric and decoder coverage.",
       "workstream": "R2",
-      "status": "planned"
+      "status": "implemented-in-this-change",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#second-batch-r2-image-values",
+      "hunk_disposition": "All runtime format definitions and decoder/loader dispatch replacements adopted. Unsupported format IDs retain their existing assertion behavior; no new decoder is introduced."
     },
     {
       "commit": "2f320b36eba048a8f55ff929dd80e53a6b30c4d9",
@@ -497,7 +558,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Image flags cross disk/native loader boundaries; require frozen bitmask tests.",
       "workstream": "R2",
-      "status": "planned"
+      "status": "implemented-in-this-change",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#second-batch-r2-image-values",
+      "hunk_disposition": "All runtime flag substitutions adopted. Preserve checked mipmap dimensions and early invalid-dimension exit in Image_TrackFullscreenTexture. Add the existing image declaration dependency without the old include-order sweep."
     },
     {
       "commit": "057bdb52f4c2c10659c09732cd15db2d702f7e76",
@@ -506,7 +570,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Texture semantics are material/image ABI; require loader and renderer parity.",
       "workstream": "R2",
-      "status": "planned"
+      "status": "implemented-in-this-change",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#second-batch-r2-image-values",
+      "hunk_disposition": "Surviving semantic substitutions adopted. R_SetSkyImage and Material_HasNormalMap already use final names with stronger fork validation and are retained. R_LoadCaseTextures and Radiant-only consumers are absent from the fork and are not introduced."
     },
     {
       "commit": "84ef10ab5dbc937b4e2af1163fe524dffdf0d767",
@@ -515,7 +582,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Image category naming requires asset-value and allocation-policy tests.",
       "workstream": "R2",
-      "status": "planned"
+      "status": "implemented-in-this-change",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#second-batch-r2-image-values",
+      "hunk_disposition": "All surviving category substitutions adopted. Preserve the fork callback/data signature and reported recovery failures in R_RebuildLostImage. The upstream-only R_ReloadImages comment is inapplicable."
     },
     {
       "commit": "5f30b9a7a11646e3962fba3bfb54ad2291208af6",
@@ -524,7 +594,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Image tracking names require allocation/diagnostic parity; no immediate behavior fix.",
       "workstream": "R2",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "f848c49c936fd810522a5e538d7b26dc236e2a47",
@@ -533,7 +604,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Animation condition identifiers cross script and weapon consumers; require exact index/value contracts.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "67812f6ae3325b269ba235a9f3733587221c12c5",
@@ -542,7 +614,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Key-code migration spans input and UI; require platform-specific input coverage.",
       "workstream": "I1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "dfc84fa0c11dd29d3c2b64d6bf3b28bfa62855d2",
@@ -551,7 +624,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Additional key codes depend on the preceding migration; retain existing input values.",
       "workstream": "I1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "d39d2d8936a9e2f6d90a91ee8f441d694458f6a8",
@@ -560,7 +634,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Animation move identifiers require SP/MP animation and serialization parity.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "478087d5c059b4166b9429234cc53347ef6d569c",
@@ -569,7 +644,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Cursor hints are gameplay/network-facing; require exact-value and snapshot coverage.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "b5feb29879f4f53dbf998ef6ed910c741a0f2e32",
@@ -578,7 +654,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Sound enum migration overlaps active portable audio/voice work; preserve its current source contracts.",
       "workstream": "A1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "f51cc9303abcbe00b868b56c7bca151d9f1e0b65",
@@ -587,7 +664,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Spread-state naming is gameplay-visible; require weapon-state parity.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "a8690d3e98099e20195bd38c6840f9de7de71c32",
@@ -596,7 +674,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Player-state naming crosses prediction and snapshots; require frozen MP/SP values and wire tests.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "482bcd1881852b72ba5ea57bd4f8d59003faebf2",
@@ -605,7 +684,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Further material-technique replacements depend on earlier deferred shader ABI migrations.",
       "workstream": "R3",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "9cfde1ae38db75e5ba3e0d75b6ceff8535345578",
@@ -614,7 +694,8 @@
       "historical_disposition": "Deferred; existing protections retained",
       "remaining_boundary": "The 33-file SP/MP decompiler cleanup mixes field widths, actor indexing/sorting, allocation sizes, script entity references, and dvar pointers. The fork already has a typed tagInfo allocation and a narrowed generic integer-field store, which must survive. Remaining fixes, including SP actor/console-command consumers, need separate production-body tests. No hunks from this commit are imported.",
       "workstream": "L1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     },
     {
       "commit": "e08d61d95432bd7aab21742f6694541a58bb8e2f",
@@ -623,7 +704,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Additional team replacements depend on the preceding team migration and commercial protocol parity.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "7d9fadb81363caf02490eecbe9f834ea35676408",
@@ -632,7 +714,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Const and static-dummy changes touch message readers/writers and client baselines, overlapping active message compatibility work. Defer until production-path and wire fixtures validate both profiles.",
       "workstream": "N1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "f1bab4665df56257daba92f497bd4cdb5bbdded2",
@@ -641,7 +724,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "MP configstring indices are protocol-visible; require the commercial compatibility oracle and exact slot contracts.",
       "workstream": "N1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "bdc170ed1026b3622a27ca7e077f2464f396b890",
@@ -650,7 +734,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Moving MAX_CONFIGSTRINGS depends on the deferred MP configstring migration; preserve separate SP/MP limits.",
       "workstream": "N1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     },
     {
       "commit": "ad325cdf17e3a6730e43a60cded021264cdc5971",
@@ -659,7 +744,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Key-catcher flag naming depends on input/UI migrations and needs exact mask tests.",
       "workstream": "I1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "f1cef213f86a79d1fa46242a94f4b11ffddc2306",
@@ -668,7 +754,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Weapon-type naming spans gameplay and renderer consumers; require SP/MP value contracts.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "69f9e020b782ebccf9f2bc7a2fd086aa4d61644f",
@@ -677,7 +764,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Stationary trajectory naming crosses prediction and network state; require frozen values.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "2e96b1e40308ad05178af401567a0c1f728b22cb",
@@ -686,7 +774,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Objective-state identifiers are snapshot/script-facing; require exact numeric contracts.",
       "workstream": "G1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "b3199b90f416c62265eef87e643f59dadbc29838",
@@ -695,7 +784,8 @@
       "historical_disposition": "Selectively adapted; remainder deferred",
       "remaining_boundary": "Use typed score entries for both directions of scoreboard insertion and the actual console activeLineCount member. Defer broad client/UI accessor churn, snapshot initialization and audio script changes. The proposed autocomplete copy still needs a separate trailing-space/cursor capacity audit; importing its bounded copy alone is insufficient. Existing native pose and snapshot protections remain unchanged.",
       "workstream": "I1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     },
     {
       "commit": "fb1b7d3e31adf323bbc838f8cf0dad799aa8bc3a",
@@ -704,7 +794,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "A roughly 2,900-line rewrite of `src/EffectsCore/fx_marks.cpp` plus `fx_system.cpp` churn. This tree's FX area is sealed by mutation-sensitive source contracts, and the `security-source-regressions` fx_system invariant count is already under separate repair (ki-ya3t); importing the rewrite here would make that attribution impossible. Needs a dedicated FX review batch with contract re-derivation.",
       "workstream": "R5",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "7b8980bcd45cc0756687cf82891cdcb70e8aad15",
@@ -713,7 +804,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Four KISAK_SP lines adding `SV_WaitServer()` to `Com_SyncThreads`. This tree's `Com_SyncThreads` differs structurally from upstream's, and no local configuration compiles the SP profile (the Linux host cannot build the windows-x86-sp preset); the fix must land through the hosted SP build loop.",
       "workstream": "W1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "f6e4ebccbf7abebfd3c7f509def12425572b722c",
@@ -722,7 +814,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Rewrites the build-number update to a `-P` script that only rewrites `buildnumber.h` on change. This tree's `scripts/ci/compare-byte-parity.sh` depends on the current `increment_build.sh` behavior for byte-parity generation; adopting the new scheme requires re-validating that tooling in a dedicated batch.",
       "workstream": "B1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     },
     {
       "commit": "35e8c797cdcf5b794187053da754a2be501acba7",
@@ -731,7 +824,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Upstream uses `cmake -E copy_directory_if_different`, which is newer than this project's declared CMake 3.16 minimum. The race fix needs a dedicated compatibility-preserving implementation; the unsupported command is not imported.",
       "workstream": "B1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "outside-refactor-goal"
     },
     {
       "commit": "4c9bb1505fbbf5d0cd60b548b360580a21afae96",
@@ -740,7 +834,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "SP vehicle code churn explicitly marked work-in-progress upstream; entangled with #18/#19. Needs a dedicated SP gameplay review batch; this tree compiles SP only through the hosted Windows x86 SP loop.",
       "workstream": "V1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "5f77d720fb277817d952fb9774682574f8d8ae7a",
@@ -749,7 +844,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "+2,664/\u22123,679 SP vehicle refactor; prerequisite for #19. Same SP validation constraint as #17.",
       "workstream": "V1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "explicit-refactor"
     },
     {
       "commit": "aa2ed669d725ecdf66b8bc2f0b97fb9b77ffdd79",
@@ -758,7 +854,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Fixes corruption in code shaped by #17/#18; cannot be imported in isolation. Same SP validation constraint.",
       "workstream": "V1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "refactor-dependency"
     },
     {
       "commit": "3f570489c8b09c2a0411a921c8cada5276b1c360",
@@ -767,7 +864,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Part of the upstream OpenAL restructuring epic deferred at `820b0a03` (row 9 of that ledger); the churn organizes OpenAL-specific implementation surface this tree does not carry.",
       "workstream": "A1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     },
     {
       "commit": "ae9d584d7cc2cd52ddc4c6dc9f4346a266a4d77b",
@@ -776,7 +874,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Same deferred OpenAL epic; the `KISAK_SOUND` gate does not exist in this tree.",
       "workstream": "A1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     },
     {
       "commit": "a40f1568fdbf4c3abef2b5fbc1d3de8a0d43c404",
@@ -785,7 +884,8 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Same deferred OpenAL epic (+1,643/\u22121,501).",
       "workstream": "A1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     },
     {
       "commit": "43f95fd05c321d14ef72435e50c4e54a710ddbd8",
@@ -794,7 +894,17 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Same deferred OpenAL epic; touches the shared sound headers only downstream of the OpenAL split.",
       "workstream": "A1",
-      "status": "planned"
+      "status": "planned",
+      "refactor_goal_scope": "structural-hunk-audit"
     }
-  ]
+  ],
+  "active_goal": {
+    "scope": "Deferred upstream refactors only, per user clarification 2026-09-19. Preserve the historical 85-row ledger. Audit only refactoring hunks in mixed commits; include fixes only when required for the final refactored implementation. Unrelated fixes/features/imports are not completion requirements.",
+    "explicit_refactor_rows": 56,
+    "structural_audit_rows": 11,
+    "dependency_rows": 1,
+    "outside_goal_rows": 17,
+    "ci_review_poll_seconds": 3600,
+    "audited_fork_base": "d2c86bc61f5a6b52a769407a0c36e708eb9c9b54"
+  }
 }

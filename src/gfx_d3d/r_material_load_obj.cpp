@@ -5243,7 +5243,7 @@ Material *__cdecl Material_CreateLayered(
             newTexEntry->samplerState= v5->samplerState;
             newTexEntry->semantic= v5->semantic;
             newTexEntry->u = v5->u;
-            if ((newTexEntry->samplerState & 0x18) == 8 && (newTexEntry->semantic == 2 || newTexEntry->semantic == 5))
+            if ((newTexEntry->samplerState & 0x18) == 8 && (newTexEntry->semantic == TS_COLOR_MAP || newTexEntry->semantic == TS_NORMAL_MAP))
             {
                 newTexEntry->samplerState &= 0xE7u;
                 newTexEntry->samplerState |= 0x10u;
@@ -5611,12 +5611,12 @@ BOOL __cdecl Material_FinishLoadingTexdef(
     if (material->info.sortKey == 4
         && R_IsWorldMaterialType(materialType)
         && (texdef->samplerState & 0x18) == 8
-        && (texdef->semantic == 2 || texdef->semantic == 5))
+        && (texdef->semantic == TS_COLOR_MAP || texdef->semantic == TS_NORMAL_MAP))
     {
         texdef->samplerState &= 0xE7u;
         texdef->samplerState |= 0x10u;
     }
-    if (texdef->semantic == 11)
+    if (texdef->semantic == TS_WATER_MAP)
         return Material_RegisterWaterImage(
             (const MaterialWaterDef*)(
                 (const char*)material + texdef->u.waterDefOffset)) != 0;
@@ -6075,7 +6075,7 @@ Material *__cdecl Material_LoadRaw(const MaterialRaw *mtlRaw, uint32_t materialT
                     "%s",
                     "material->textureTable[texIndex].samplerState & SAMPLER_FILTER_MASK");
             material->textureTable[texIndex].semantic = textureTableRaw[texIndex].semantic;
-            if (material->textureTable[texIndex].semantic == 11)
+            if (material->textureTable[texIndex].semantic == TS_WATER_MAP)
             {
                 material->textureTable[texIndex].u.water =
                     Material_RegisterWaterImage(
