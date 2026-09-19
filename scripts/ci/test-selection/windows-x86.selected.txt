@@ -80,6 +80,7 @@ huffman-wire-format-contracts
 missile-layout-mp-compile-contracts
 missile-layout-sp-compile-contracts
 missile-union-layout-source-invariants
+net-chan-reassembly-span-contracts
 null-media-source-invariants
 platform-console-invalid-eof-contracts
 platform-console-runtime-contracts
