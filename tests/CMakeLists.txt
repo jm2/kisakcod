@@ -2734,13 +2734,20 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     # these files -- it silently dropped the huffman-wire contract target's
     # /W4 coverage of huffman.cpp (refinery review, Codex finding).
     # Target-level options on the object library keep the downgrade scoped to
-    # exactly these three sources. Scoped to MSVC: msg_mp/huffman also compile
+    # exactly these sources. Scoped to MSVC: msg_mp/huffman also compile
     # under GCC/Clang in the portable huffman-wire target, where /W3 is not a
     # valid flag.
     add_library(kisakcod-net-chan-production-objects OBJECT
         ${SRC_DIR}/qcommon/net_chan_mp.cpp
         ${SRC_DIR}/qcommon/msg_mp.cpp
         ${SRC_DIR}/qcommon/huffman.cpp
+        # NET_StringToAdr resolves non-legacy platform-shaped addresses
+        # through the portable socket service, so the selected platform
+        # sys_socket.cpp must compile alongside net_chan_mp.obj; without it
+        # the Win32 ILP32 leg fails to link (LNK2019 on Sys_SocketResolveHost).
+        # The single-platform selection filter above already guarantees
+        # exactly one backend per configure.
+        ${_platform_socket_sources}
     )
     # Same treatment as the wire-contract tests: the decompiled engine headers
     # are not warning-clean, so SYSTEM keeps the strict warning set on the
@@ -2756,6 +2763,10 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     target_compile_options(kisakcod-net-chan-production-objects PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W3>
     )
+    # The enrolled platform socket backend speaks Winsock on this platform;
+    # the import library must reach the test executable that links this
+    # object library (PUBLIC propagates link dependencies to consumers).
+    target_link_libraries(kisakcod-net-chan-production-objects PUBLIC ws2_32)
 
     target_sources(kisakcod-net-chan-reassembly-tests PRIVATE
         net_chan_process_tests.cpp
