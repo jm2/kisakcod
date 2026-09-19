@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <limits>
 
+void RunRendererEnumContracts();
+
 namespace
 {
 int Fail(const char *const message)
@@ -92,6 +94,7 @@ bool TestMipmapResolution()
 
 int main()
 {
+    RunRendererEnumContracts();
     if (!TestPreTessPacking())
         return Fail("pre-tess packing or failure atomicity");
     if (!TestMipmapResolution())
