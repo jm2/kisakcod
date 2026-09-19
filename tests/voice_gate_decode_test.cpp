@@ -211,8 +211,13 @@ void test_corrupt_decode_rejected()
     std::vector<int> lengths;
     const std::vector<char> encoded =
         encode_stream(0, kProductionSamplerate, kShippedVoiceQuality, nb_stream_frames(), &lengths);
-    check(!lengths.empty() && lengths[0] >= 2 && encoded.size() >= 40,
+    const bool can_corrupt =
+        !lengths.empty() && lengths[0] >= 2 &&
+        encoded.size() >= static_cast<size_t>(lengths[0]);
+    check(can_corrupt,
           "golden nb stream is long enough to corrupt");
+    if (!can_corrupt)
+        return;
     std::vector<char> corrupt(encoded.begin(), encoded.begin() + lengths[0]);
     for (int i = 0; i < static_cast<int>(corrupt.size()); ++i)
         corrupt[i] = static_cast<char>(corrupt[i] ^ 0xA5);

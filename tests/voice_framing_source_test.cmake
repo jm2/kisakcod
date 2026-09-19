@@ -74,6 +74,9 @@ require_contains(_client
     "MSG_WriteByte(&msg, cl_voiceCommunication.voicePacketCount)"
     "client upload writes the packet-count byte first")
 require_contains(_client
+    "MSG_WriteByte(&msg, cl_voiceCommunication.voicePackets[voicePacket].dataSize)"
+    "client upload writes the per-frame size byte")
+require_contains(_client
     "cl_voiceCommunication.voicePackets[voicePacket].dataSize <= 0"
     "client upload rejects non-positive frame sizes")
 require_contains(_client
@@ -150,6 +153,10 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
         string(REPLACE
             "MSG_WriteByte(msg, client->voicePackets[packet].dataSize);"
             "" _snapshot "${_snapshot}")
+    elseif(CONTRACT_MUTATION STREQUAL "upload_size_byte_dropped")
+        string(REPLACE
+            "MSG_WriteByte(&msg, cl_voiceCommunication.voicePackets[voicePacket].dataSize);"
+            "" _client "${_client}")
     elseif(CONTRACT_MUTATION STREQUAL "relay_cap_raised")
         string(REPLACE
             "client->voicePacketCount < 40" "client->voicePacketCount < 41"
@@ -192,6 +199,9 @@ require_contains(_snapshot
 require_contains(_snapshot
     "MSG_WriteByte(msg, client->voicePackets[packet].dataSize)"
     "download size byte survives mutations")
+require_contains(_client
+    "MSG_WriteByte(&msg, cl_voiceCommunication.voicePackets[voicePacket].dataSize)"
+    "upload size byte survives mutations")
 forbid_contains(_server "speex_" "server codec exclusion survives mutations")
 forbid_contains(_server "Decode_Sample(" "server decode exclusion survives mutations")
 require_contains(_winvoice
@@ -202,6 +212,7 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
     foreach(_mutation IN ITEMS
         download_talker_dropped
         download_size_byte_dropped
+        upload_size_byte_dropped
         relay_cap_raised
         client_size_bound_loosened
         playback_fixed_stride
