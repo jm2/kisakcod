@@ -689,8 +689,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Cursor hints are gameplay/network-facing; require exact-value and snapshot coverage.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1f-hint-and-type-check-names",
+      "hunk_disposition": "Final shared hint declarations and SP/MP consumers adopted, preserving 133 material slots, offset 4, all alternate-model item banks and distinct profile inventory policies. Existing numeric image tracking arguments remain for R2 tracking."
     },
     {
       "commit": "b5feb29879f4f53dbf998ef6ed910c741a0f2e32",
@@ -808,8 +810,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Weapon-type naming spans gameplay and renderer consumers; require SP/MP value contracts.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1f-hint-and-type-check-names",
+      "hunk_disposition": "All surviving weapon-type zero/nonzero consumers now name WEAPTYPE_BULLET; exact values and existing control flow preserved."
     },
     {
       "commit": "69f9e020b782ebccf9f2bc7a2fd086aa4d61644f",
@@ -818,8 +822,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Stationary trajectory naming crosses prediction and network state; require frozen values.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1f-hint-and-type-check-names",
+      "hunk_disposition": "All surviving trajectory zero/nonzero consumers now name TR_STATIONARY; exact signed enum values and existing motion behavior preserved."
     },
     {
       "commit": "2e96b1e40308ad05178af401567a0c1f728b22cb",

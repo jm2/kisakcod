@@ -9,6 +9,7 @@ void RunWeaponValueContracts();
 void RunEntityValueContracts();
 void RunTeamObjectiveContracts();
 void RunAnimationValueContracts();
+void RunHintValueContracts();
 
 namespace
 {
@@ -26,6 +27,7 @@ int main()
     RunEntityValueContracts();
     RunTeamObjectiveContracts();
     RunAnimationValueContracts();
+    RunHintValueContracts();
     using bg::weapon_input::IsAttackSuppressed;
     using bg::weapon_input::kFriendlyFireSuppressed;
     using bg::weapon_input::kWeaponsDisabled;

@@ -500,3 +500,26 @@ compilation is still required before merge.
 The G1 family slices are retained as separate reviewable commits in one prepared
 stack. Once the renderer/script prerequisites land, publish the coherent G1
 stack together to reduce duplicate hosted builds and shared-runner load.
+
+
+## Gameplay slice G1f: hint and type-check names
+
+`478087d5`, `f1cef213` and `69f9e020` are implemented on
+`integration/refactor-g1-hint-type-names`, pending protected integration. The
+27 production files adopt shared cursor-hint names, bullet-type checks and
+stationary-trajectory checks. Existing image tracking values remain unchanged
+for the later R2 tracking slice. No wire or record field changes.
+
+The hint enum replaces the three old client macros in the shared gameplay
+header. Both profiles keep 133 material slots and weapon offset 4. Production
+SP/MP item-hint functions run against small service doubles across every item
+index in all 16 alternate-model banks and boundary/ownership/inventory cases.
+The fixture preserves the distinct SP grenade rule and MP non-primary-inventory
+rule rather than combining their policies. It freezes 33 values/aliases and four
+32-bit enum widths, including the weapon and trajectory declarations.
+
+All 27 production files pass token equivalence with only the reviewed names and
+zero/nonzero expression substitutions normalized. **245/245 portable Release
+tests pass**, including the inherited MSG wire fixtures. The gameplay gate also
+passes Clang ASan/UBSan. Dashboard and CTest inventory checks pass. Hosted engine
+compilation and protected review remain required before merge.

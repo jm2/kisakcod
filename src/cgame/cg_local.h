@@ -21,10 +21,7 @@ struct ScreenPlacement;
 
 #define SURF_TYPECOUNT 29
 
-#define WEAPON_HINT_OFFSET 4
 
-#define FIRST_WEAPON_HINT 5
-#define LAST_WEAPON_HINT 132
 
 #define MYMODELCOUNT 4
 

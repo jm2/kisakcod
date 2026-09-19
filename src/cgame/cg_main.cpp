@@ -966,9 +966,9 @@ void __cdecl CG_RegisterGraphics(int localClientNum, const char *mapname)
     cgMedia.tracerMaterial = Material_RegisterHandle("gfx_tracer", 6);
     cgMedia.laserMaterial = Material_RegisterHandle("gfx_laser", 6);
     cgMedia.laserLightMaterial = Material_RegisterHandle("gfx_laser_light", 6);
-    cgMedia.hintMaterials[2] = Material_RegisterHandle("hint_usable", 7);
-    cgMedia.hintMaterials[3] = Material_RegisterHandle("hint_health", 7);
-    cgMedia.hintMaterials[4] = Material_RegisterHandle("hint_friendly", 7);
+    cgMedia.hintMaterials[HINT_ACTIVATE] = Material_RegisterHandle("hint_usable", 7);
+    cgMedia.hintMaterials[HINT_HEALTH] = Material_RegisterHandle("hint_health", 7);
+    cgMedia.hintMaterials[HINT_FRIENDLY] = Material_RegisterHandle("hint_friendly", 7);
     cgMedia.stanceMaterials[0] = Material_RegisterHandle("stance_stand", 7);
     cgMedia.stanceMaterials[1] = Material_RegisterHandle("stance_crouch", 7);
     cgMedia.stanceMaterials[2] = Material_RegisterHandle("stance_prone", 7);

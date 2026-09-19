@@ -514,7 +514,7 @@ void __cdecl FireWeapon(gentity_s *ent, int gametime)
         else
             fAimSpreadAmount = (maxSpread - minSpread) * aimSpreadScale + minSpread;
 
-        if (wp.weapDef->weapType)
+        if (wp.weapDef->weapType != WEAPTYPE_BULLET)
         {
             if (wp.weapDef->weapType == WEAPTYPE_GRENADE)
             {

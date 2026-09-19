@@ -1,0 +1,10 @@
+# Current production names, material extents and profile-specific item hint policy.
+kisakcod_renderer_enum_slice(bgame/bg_local.h "enum hintType_t" "\n};" hint_enum)
+kisakcod_renderer_enum_slice(bgame/bg_local.h "#define WEAPON_HINT_OFFSET " "\n" hint_offset)
+kisakcod_renderer_enum_slice(bgame/bg_weapons.h "enum weapType_t" "\n};" hint_weapon_enum)
+kisakcod_renderer_enum_slice(bgame/bg_weapons.h "enum weapInventoryType_t" "\n};" hint_inventory_enum)
+kisakcod_renderer_enum_slice(universal/q_shared.h "enum trType_t" "\n};" hint_trajectory_enum)
+kisakcod_renderer_enum_slice(cgame/cg_main.h "    Material *hintMaterials[" ";" hint_materials_sp)
+kisakcod_renderer_enum_slice(cgame_mp/cg_local_mp.h "    Material *hintMaterials[" ";" hint_materials_mp)
+kisakcod_renderer_enum_slice(game/player_use.cpp "int __cdecl Player_GetItemCursorHint(" "\n}" hint_item_sp)
+kisakcod_renderer_enum_slice(game_mp/player_use_mp.cpp "int32_t __cdecl Player_GetItemCursorHint(" "\n}" hint_item_mp)

@@ -620,6 +620,20 @@ enum PlayerSpreadOverrideState : __int32
     PSOS_ENABLED = 0x2,
 };
 
+enum hintType_t : __int32
+{
+    HINT_NONE = 0x0,
+    HINT_NOICON = 0x1,
+    HINT_ACTIVATE = 0x2,
+    HINT_HEALTH = 0x3,
+    HINT_FRIENDLY = 0x4,
+    FIRST_WEAPON_HINT = 0x5,
+    LAST_WEAPON_HINT = 0x84,
+    HINT_NUM_HINTS = 0x85,
+};
+
+#define WEAPON_HINT_OFFSET HINT_FRIENDLY
+
 enum ActionSlotType : __int32
 {                                       // XREF: playerState_s/r
     ACTIONSLOTTYPE_DONOTHING = 0x0,

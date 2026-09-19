@@ -1880,7 +1880,7 @@ void __cdecl PM_SetReloadingState(playerState_s *ps)
     WeaponDef *weapDef; // [esp+4h] [ebp-4h]
 
     weapDef = BG_GetWeaponDef(ps->weapon);
-    if (ps->ammoclip[BG_ClipForWeapon(ps->weapon)] || weapDef->weapType)
+    if (ps->ammoclip[BG_ClipForWeapon(ps->weapon)] || weapDef->weapType != WEAPTYPE_BULLET)
     {
         PM_StartWeaponAnim(ps, WEAP_RELOAD);
         ps->weaponTime = weapDef->iReloadTime;
@@ -1922,7 +1922,7 @@ void __cdecl PM_SetWeaponReloadAddAmmoDelay(playerState_s *ps)
     }
     else
     {
-        if (ps->ammoclip[BG_ClipForWeapon(ps->weapon)] || weapDef->weapType)
+        if (ps->ammoclip[BG_ClipForWeapon(ps->weapon)] || weapDef->weapType != WEAPTYPE_BULLET)
             reloadTime = weapDef->iReloadTime;
         else
             reloadTime = weapDef->iReloadEmptyTime;
@@ -2016,7 +2016,7 @@ void __cdecl PM_Weapon_ReloadDelayedAction(playerState_s *ps)
             }
             else
             {
-                if (ps->ammoclip[BG_ClipForWeapon(ps->weapon)] || weapDef->weapType)
+                if (ps->ammoclip[BG_ClipForWeapon(ps->weapon)] || weapDef->weapType != WEAPTYPE_BULLET)
                     reloadTime = weapDef->iReloadTime;
                 else
                     reloadTime = weapDef->iReloadEmptyTime;
