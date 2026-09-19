@@ -244,13 +244,39 @@ bool StoreCredentials(const DlUrlPieces &pieces,
 }
 
 // Stores the request path: everything from the first '/' up to (not
-// including) any fragment, or the '/' root when the URL ends at the
-// authority. False on overflow.
+// including) any fragment, the '/' root when the URL ends at the
+// authority, or '/' plus the query when the reference begins with '?'.
+// Dropping a query-only reference's query would request the wrong
+// resource and lose authorization parameters carried in it. False on
+// overflow.
 bool StorePath(const char *const authority,
     const std::uint32_t authorityLength,
     DlRedirectUrl *const out) noexcept
 {
     const char *afterAuthority = authority + authorityLength;
+    if (*afterAuthority == '?')
+    {
+        // Query-only reference: store the root byte and then the query
+        // span (up to any '#'), so "http://host?token=abc" requests
+        // "/?token=abc" and not "/". CopyRaw bounds the span against
+        // the path buffer minus the root byte already stored.
+        std::uint32_t queryLength = 0;
+        while (afterAuthority[queryLength] != '\0'
+            && afterAuthority[queryLength] != '#')
+            ++queryLength;
+        out->path[0] = '/';
+        std::uint32_t storedLength = 0;
+        if (!CopyRaw(afterAuthority, queryLength, out->path + 1,
+                sizeof(out->path) - 1, &storedLength))
+        {
+            // Fail closed: no half-written path may survive a failed
+            // parse.
+            out->path[0] = '\0';
+            return false;
+        }
+        out->pathLength = static_cast<std::uint16_t>(storedLength + 1);
+        return true;
+    }
     std::uint32_t pathLength = 0;
     if (*afterAuthority == '/')
     {

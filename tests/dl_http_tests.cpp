@@ -75,6 +75,32 @@ void StageUrlParseBasics()
         "url-port-query");
     Check(url.port == 8080, "url-port-query");
     CheckString(url.path, "/a b.map?x=1", "url-port-query");
+
+    // Regression: a query-only reference keeps its query. The path store
+    // used to replace every reference without a leading '/' with the
+    // bare root, silently requesting the wrong resource and dropping
+    // authorization parameters carried in the query.
+    Check(Dl_ParseRedirectUrl("http://cdn.example.com?token=abc", &url)
+            == DlUrlStatus::Ok,
+        "url-query-only");
+    CheckString(url.path, "/?token=abc", "url-query-only");
+    Check(url.pathLength == 11, "url-query-only");
+    CheckString(url.host, "cdn.example.com", "url-query-only");
+
+    // A fragment after a query-only reference is not part of the path.
+    Check(Dl_ParseRedirectUrl("http://cdn.example.com?a=1#frag", &url)
+            == DlUrlStatus::Ok,
+        "url-query-only-fragment");
+    CheckString(url.path, "/?a=1", "url-query-only-fragment");
+    Check(url.pathLength == 5, "url-query-only-fragment");
+
+    // A lone '?' stores the root plus the empty query span, exactly as
+    // the reference expressed it.
+    Check(Dl_ParseRedirectUrl("http://cdn.example.com?#frag", &url)
+            == DlUrlStatus::Ok,
+        "url-query-only-empty");
+    CheckString(url.path, "/?", "url-query-only-empty");
+    Check(url.pathLength == 2, "url-query-only-empty");
 }
 
 void StageUrlParseCredentials()
@@ -199,6 +225,20 @@ void StageUrlParseBounds()
     Check(Dl_ParseRedirectUrl(longPathUrl, &url) == DlUrlStatus::TooLong,
         "url-path-too-long");
 
+    // A query-only reference whose span overflows the path buffer is
+    // rejected too, and fails closed (no partial path survives).
+    char longQuery[1200];
+    longQuery[0] = '?';
+    for (int index = 1; index < 1100; ++index)
+        longQuery[index] = 'q';
+    longQuery[1100] = '\0';
+    char longQueryUrl[1400];
+    std::snprintf(longQueryUrl, sizeof(longQueryUrl),
+        "http://cdn.example.com%s", longQuery);
+    Check(Dl_ParseRedirectUrl(longQueryUrl, &url) == DlUrlStatus::TooLong,
+        "url-query-too-long");
+    Check(url.path[0] == '\0', "url-query-too-long");
+
     // A component at exactly the bound still parses.
     char maxHost[256];
     for (int index = 0; index < 255; ++index)
@@ -250,6 +290,26 @@ void StageRequestFormat()
         "\r\n";
     Check(length == sizeof(expectedPort) - 1, "request-port");
     Check(std::memcmp(request, expectedPort, length) == 0, "request-port");
+
+    // Regression: a query-only reference must survive into the request
+    // line as "GET /?token=abc" -- the dropped-query bug requested "/"
+    // and lost the authorization token.
+    Check(Dl_ParseRedirectUrl("http://cdn.example.com?token=abc", &url)
+            == DlUrlStatus::Ok,
+        "request-parse");
+    Check(Dl_FormatGetRequest(url, request, sizeof(request), &length)
+            == DlRequestStatus::Ok,
+        "request-query-only");
+    static const char expectedQueryOnly[] =
+        "GET /?token=abc HTTP/1.1\r\n"
+        "Host: cdn.example.com\r\n"
+        "User-Agent: ID_DOWNLOAD/1.0\r\n"
+        "Accept: */*\r\n"
+        "Connection: close\r\n"
+        "\r\n";
+    Check(length == sizeof(expectedQueryOnly) - 1, "request-query-only");
+    Check(std::memcmp(request, expectedQueryOnly, length) == 0,
+        "request-query-only");
 }
 
 void StageRequestAuthFormat()
@@ -475,6 +535,61 @@ void StageHeadParseFailures()
         "head-overflow");
 }
 
+// Regression: a Content-Length that overflows 64 bits must reject the
+// response head. The old parser wrapped 18446744073709551616 (2^64) to a
+// length of 0, declared the body complete immediately, and a zero-byte
+// file could be renamed into place; the head now fails into the pump's
+// StatusError path, which aborts the transfer -- the temp file handle is
+// closed by DlAbort and never renamed into place.
+void StageHeadParseContentLengthOverflow()
+{
+    DlResponseHead head{};
+    char buffer[256];
+
+    // 2^64: decimal digits, but one past the representable maximum.
+    static const char overflowing[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 18446744073709551616\r\n"
+        "\r\n"
+        "0123456789";
+    std::uint32_t length =
+        static_cast<std::uint32_t>(sizeof(overflowing) - 1);
+    CopyBounded(buffer, sizeof(buffer), overflowing, length);
+    Check(Dl_ParseResponseHead(buffer, &length, &head)
+            == DlResponseEvent::StatusError,
+        "head-content-length-overflow");
+    Check(!head.hasContentLength, "head-content-length-overflow");
+
+    // 2^64 - 1, the largest representable length, still parses.
+    static const char maxLegal[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 18446744073709551615\r\n"
+        "\r\n";
+    length = static_cast<std::uint32_t>(sizeof(maxLegal) - 1);
+    CopyBounded(buffer, sizeof(buffer), maxLegal, length);
+    Check(Dl_ParseResponseHead(buffer, &length, &head)
+            == DlResponseEvent::HeadComplete,
+        "head-content-length-max");
+    Check(head.hasContentLength
+            && head.contentLength == 18446744073709551615ULL,
+        "head-content-length-max");
+
+    // First occurrence wins: an overflow in a later, ignored
+    // Content-Length does not reject a head whose first value parsed.
+    static const char overflowSecond[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 5\r\n"
+        "Content-Length: 18446744073709551616\r\n"
+        "\r\nhello";
+    length = static_cast<std::uint32_t>(sizeof(overflowSecond) - 1);
+    CopyBounded(buffer, sizeof(buffer), overflowSecond, length);
+    Check(Dl_ParseResponseHead(buffer, &length, &head)
+            == DlResponseEvent::HeadComplete,
+        "head-content-length-first-wins");
+    Check(head.hasContentLength && head.contentLength == 5,
+        "head-content-length-first-wins");
+}
+
 } // namespace
 
 int main()
@@ -490,6 +605,7 @@ int main()
     StageHeadParseIncremental();
     StageHeadParseHeaders();
     StageHeadParseFailures();
+    StageHeadParseContentLengthOverflow();
 
     if (checkFailed)
     {

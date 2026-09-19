@@ -144,10 +144,16 @@ bool SplitHeaderLine(const char *const line,
 // Parses a Content-Length value: trimmed decimal digits only, as the
 // retail library accepted. False when the value is empty, non-decimal,
 // or too long for the parser -- an absent length, exactly as before.
+// *outOverflow is set when the digits are decimal but exceed 64 bits:
+// that is a malformed response rather than an absent length, and the
+// caller rejects the head instead of letting the value wrap (2^64 would
+// silently parse as a length of 0 and mark a truncated body complete).
 bool ParseContentLength(const char *const value,
     const std::uint32_t valueLength,
-    std::uint64_t *const outLength) noexcept
+    std::uint64_t *const outLength,
+    bool *const outOverflow) noexcept
 {
+    *outOverflow = false;
     char digits[32];
     std::uint32_t digitsLength = 0;
     if (!TrimCopy(value, valueLength, digits, sizeof(digits), &digitsLength))
@@ -160,7 +166,17 @@ bool ParseContentLength(const char *const value,
         const char digit = digits[index];
         if (digit < '0' || digit > '9')
             return false;
-        parsed = parsed * 10u + static_cast<std::uint64_t>(digit - '0');
+        const std::uint64_t magnitude =
+            static_cast<std::uint64_t>(digit - '0');
+        // Guard every step against overflow: parsed * 10 + magnitude
+        // must stay representable, so the value fails into the
+        // response-rejection path instead of wrapping.
+        if (parsed > (UINT64_MAX - magnitude) / 10u)
+        {
+            *outOverflow = true;
+            return false;
+        }
+        parsed = parsed * 10u + magnitude;
     }
     *outLength = parsed;
     return true;
@@ -191,16 +207,27 @@ void ApplyTransferEncodingHeader(DlResponseHead *const out,
 }
 
 // Applies one header line; the first occurrence of each consumed field
-// wins, matching the retail library's parsing.
-void ApplyHeader(DlResponseHead *const out, const DlHeaderLine &header) noexcept
+// wins, matching the retail library's parsing. False when the head must
+// be rejected: a present Content-Length whose decimal value overflows
+// 64 bits is malformed, not absent, and reaches the response-rejection
+// path through this return.
+bool ApplyHeader(DlResponseHead *const out, const DlHeaderLine &header) noexcept
 {
     if (EqualsIgnoreCase(header.name, header.nameLength, "Content-Length"))
     {
         std::uint64_t parsedLength = 0;
-        if (!out->hasContentLength
-            && ParseContentLength(header.value, header.valueLength,
-                &parsedLength))
+        bool overflow = false;
+        if (!out->hasContentLength)
         {
+            if (!ParseContentLength(header.value, header.valueLength,
+                    &parsedLength, &overflow))
+            {
+                if (overflow)
+                    return false;
+                // Empty/non-decimal keeps the lenient absent-length
+                // behavior; a later header may still supply a value.
+                return true;
+            }
             out->hasContentLength = true;
             out->contentLength = parsedLength;
         }
@@ -215,6 +242,7 @@ void ApplyHeader(DlResponseHead *const out, const DlHeaderLine &header) noexcept
     {
         ApplyTransferEncodingHeader(out, header.value, header.valueLength);
     }
+    return true;
 }
 
 // Header lines start after the status line and run to the head end.
@@ -229,7 +257,8 @@ std::uint32_t DlHeaderBlockStart(const char *const buffer,
 
 // Parses every complete header line in [start, headEnd). Continuation
 // lines (leading SP/HT, RFC 7230 obs-fold) are skipped, as before.
-void ParseHeaderLines(DlResponseHead *const out,
+// False when a header rejects the head (an overflowing Content-Length).
+bool ParseHeaderLines(DlResponseHead *const out,
     const char *const buffer,
     const std::uint32_t start,
     const std::uint32_t headEnd) noexcept
@@ -249,11 +278,13 @@ void ParseHeaderLines(DlResponseHead *const out,
         if (lineLength > 0 && line[0] != ' ' && line[0] != '\t')
         {
             DlHeaderLine header{};
-            if (SplitHeaderLine(line, lineLength, &header))
-                ApplyHeader(out, header);
+            if (SplitHeaderLine(line, lineLength, &header)
+                && !ApplyHeader(out, header))
+                return false;
         }
         cursor = lineEnd + 1;
     }
+    return true;
 }
 
 bool HeadArgumentsValid(const char *const buffer,
@@ -289,8 +320,12 @@ DlResponseEvent KISAK_CDECL Dl_ParseResponseHead(
     if (!ParseStatusCode(buffer, headEnd, &out->statusCode))
         return DlResponseEvent::StatusError;
 
-    ParseHeaderLines(out, buffer, DlHeaderBlockStart(buffer, headEnd),
-        headEnd);
+    // A header can reject the head outright: an overflowing
+    // Content-Length aborts the transfer before any body byte is
+    // written, so a truncated body can never be renamed into place.
+    if (!ParseHeaderLines(out, buffer, DlHeaderBlockStart(buffer, headEnd),
+            headEnd))
+        return DlResponseEvent::StatusError;
 
     // Consume the head: keep only body bytes at the front of the buffer.
     const std::uint32_t bodyLength = length - headEnd;
