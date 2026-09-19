@@ -2942,6 +2942,7 @@ add_executable(kisakcod-weapon-input-safety-tests
     weapon_value_contracts.cpp
     entity_value_contracts.cpp
     team_objective_contracts.cpp
+    animation_value_contracts.cpp
 )
 target_include_directories(kisakcod-weapon-input-safety-tests PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/renderer-enums")

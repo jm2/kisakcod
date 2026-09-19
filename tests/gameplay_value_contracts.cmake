@@ -55,3 +55,5 @@ kisakcod_renderer_enum_slice(cgame_mp/cg_scoreboard_mp.cpp "int32_t __cdecl CG_S
 kisakcod_renderer_enum_slice(bgame/bg_local.h "    objective_t objective[" ";" player_objective_array)
 kisakcod_renderer_enum_slice(game_mp/g_main_mp.h "    objective_t objectives[" ";" level_objective_array)
 kisakcod_renderer_enum_slice(game_mp/g_main_mp.cpp "void __cdecl G_UpdateObjectiveToClients(" "\n}" objective_clients_body)
+
+include("${CMAKE_CURRENT_LIST_DIR}/animation_value_contracts.cmake")

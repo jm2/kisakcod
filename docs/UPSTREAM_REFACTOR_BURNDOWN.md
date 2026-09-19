@@ -466,3 +466,37 @@ After integrating the already-landed PR #159 MSG work from master `7014af15`,
 **245/245 portable Release tests pass**, including `msg-wire-format-contracts`.
 Fresh merge simulations against #164, #157, #153 and #140 introduce no conflicts;
 #157 and #140 have also refreshed their own bases and now merge cleanly.
+
+## Gameplay slice G1e: animation and movement values
+
+`f848c49c`, `d39d2d89`, `f51cc930` and `a8690d3e` are implemented on
+`integration/refactor-g1-animation-names`, pending protected integration. These
+13 production files use final condition, note, movement, mantle, stance and
+spread names. The fork retains its ABI header/alignment macro, native records,
+typed weapon fields, current attack bit and debug channel, and SP spawn logic.
+The ten define counters are cleared with the final `sizeof`-bounded zeroing.
+
+`animation_s::noteType` changes from `int32_t` to the explicitly signed 32-bit
+note enum; every assignment is named. The actual production record remains
+104 bytes with alignment 8, `movetype` at offset 88 and `noteType` at offset 96.
+The condition typedef becomes upstream's explicit signed enum; it has no other
+type-name consumers in the fork. Exact values and widths are frozen separately.
+
+The existing gameplay gate now compiles actual declarations and bodies for
+reload-note assignment, define-counter reset, stance selection, mantle
+transitions, spread selection for both profiles, and movement-name lookup.
+It freezes 144 numeric values and 14 enum widths, exercises all limb/reload-owner
+combinations and untouched animation slots, preserves all 21 move names and the
+unknown fallback, and tests mantle midpoint ties and range extremes. Spread
+coverage includes disabled, resetting, enabled and invalid states with the MP
+perk multiplier. Services and reduced enclosing contexts remain fixture doubles.
+
+All 13 production files pass token equivalence after reviewed enum replacements,
+zero-initialization and equivalent stance selection. **245/245 portable Release
+tests pass**. Final gameplay and MP/SP weapon/scoreboard slices pass Release and
+Clang ASan/UBSan. The dashboard and CTest inventory remain current. Hosted engine
+compilation is still required before merge.
+
+The G1 family slices are retained as separate reviewable commits in one prepared
+stack. Once the renderer/script prerequisites land, publish the coherent G1
+stack together to reduce duplicate hosted builds and shared-runner load.

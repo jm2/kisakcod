@@ -243,12 +243,12 @@ void __cdecl PM_ProjectVelocity(const float *velIn, const float *normal, float *
 int32_t __cdecl PM_GetEffectiveStance(const playerState_s *ps)
 {
     if (ps->viewHeightTarget == 22)
-        return 2;
+        return PM_STANCE_CROUCH;
 
     if (ps->viewHeightTarget == 40)
-        return 2;
+        return PM_STANCE_CROUCH;
 
-    return ps->viewHeightTarget == 11;
+    return ps->viewHeightTarget == 11 ? PM_STANCE_PRONE : PM_STANCE_STAND;
 }
 
 int32_t __cdecl PM_GetSprintLeft(const playerState_s *ps, int32_t gametime)
@@ -479,10 +479,10 @@ bool __cdecl PM_ShouldMakeFootsteps(pmove_t *pm)
     bWalking = ps->pm_flags & PMF_WALKING;
 
     iStance = PM_GetEffectiveStance(ps);
-    if (iStance == 1)
+    if (iStance == PM_STANCE_PRONE)
         return false;
 
-    if (iStance == 2)
+    if (iStance == PM_STANCE_CROUCH)
         return false;
 
     if ((ps->pm_flags & PMF_BACKWARDS_RUN) != 0)
@@ -533,7 +533,7 @@ void __cdecl PM_UpdateLean(
     if ((ps->eFlags & 0x300) != 0)
         leaning = 0;
 
-    if (PM_GetEffectiveStance(ps) == 1)
+    if (PM_GetEffectiveStance(ps) == PM_STANCE_PRONE)
         fLeanMax = 0.25;
     else
         fLeanMax = 0.5;
@@ -1422,7 +1422,7 @@ void __cdecl PmoveSingle(pmove_t *pm)
         }
     }
     stance = PM_GetEffectiveStance(ps);
-    if ((ps->pm_flags & PMF_SIGHT_AIMING) != 0 && stance == 1 && !BG_UsingSniperScope(ps))
+    if ((ps->pm_flags & PMF_SIGHT_AIMING) != 0 && stance == PM_STANCE_PRONE && !BG_UsingSniperScope(ps))
     {
         pm->cmd.forwardmove = 0;
         pm->cmd.rightmove = 0;
@@ -1489,7 +1489,7 @@ void __cdecl PmoveSingle(pmove_t *pm)
         pm->cmd.forwardmove = 0;
         pm->cmd.rightmove = 0;
     }
-    if (stance == 1 && (ps->pm_flags & PMF_PRONEMOVE_OVERRIDDEN) != 0)
+    if (stance == PM_STANCE_PRONE && (ps->pm_flags & PMF_PRONEMOVE_OVERRIDDEN) != 0)
     {
         pm->cmd.forwardmove = 0;
         pm->cmd.rightmove = 0;
@@ -2349,11 +2349,11 @@ void __cdecl PM_WalkMove(pmove_t *pm, pml_t *pml)
         {
             acceleration = 1.0;
         }
-        else if (iStance == 1)
+        else if (iStance == PM_STANCE_PRONE)
         {
             acceleration = 19.0;
         }
-        else if (iStance == 2)
+        else if (iStance == PM_STANCE_CROUCH)
         {
             acceleration = 12.0;
         }
@@ -2488,11 +2488,11 @@ double __cdecl PM_CmdScaleForStance(const pmove_t *pm)
             iassert(pm->ps);
 
             stance = PM_GetEffectiveStance(pm->ps);
-            if (stance == 1)
+            if (stance == PM_STANCE_PRONE)
             {
                 return 0.15000001;
             }
-            else if (stance == 2)
+            else if (stance == PM_STANCE_CROUCH)
             {
                 return 0.64999998;
             }
@@ -3351,7 +3351,7 @@ void __cdecl PM_CheckDuck(pmove_t *pm, pml_t *pml)
             }
             PM_ViewHeightAdjust(pm, pml);
             iStance = PM_GetEffectiveStance(ps);
-            if (iStance == 1)
+            if (iStance == PM_STANCE_PRONE)
             {
                 pm->maxs[2] = 30.0;
                 ps->eFlags |= 8u;
@@ -3359,7 +3359,7 @@ void __cdecl PM_CheckDuck(pmove_t *pm, pml_t *pml)
                 ps->pm_flags |= PMF_PRONE;
                 ps->pm_flags &= ~PMF_DUCKED;
             }
-            else if (iStance == 2)
+            else if (iStance == PM_STANCE_CROUCH)
             {
                 pm->maxs[2] = 50.0;
                 ps->eFlags |= 4u;
@@ -3768,7 +3768,7 @@ int32_t __cdecl PM_GetStanceEx(int32_t stance, int32_t backward)
     iassert(stance < PM_STANCE_BACKWARD_FIRST);
 
     if (backward)
-        return stance + 3;
+        return stance + PM_STANCE_BACKWARD_FIRST;
     else
         return stance;
 }
@@ -3826,7 +3826,7 @@ void __cdecl PM_Footsteps_NotMoving(pmove_t *pm, int32_t stance)
         ci = 0;
     else
         ci = &bgs->clientinfo[ps->clientNum];
-    if (ci && player_turnAnims->current.enabled && stance != 1)
+    if (ci && player_turnAnims->current.enabled && stance != PM_STANCE_PRONE)
         turnAdjust = PM_Footsteps_TurnAnim(ci);
     EffectiveStance = PM_GetEffectiveStance(ps);
     anim = PM_GetNotMovingAnim(EffectiveStance, turnAdjust);
@@ -4061,7 +4061,7 @@ void __cdecl PM_SetStrafeCondition(pmove_t *pm)
         strafeState = ANIM_STRAFE_NOT;
     }
 
-    BG_SetConditionValue(pm->ps->clientNum, 8u, strafeState);
+    BG_SetConditionValue(pm->ps->clientNum, ANIM_COND_STRAFING, strafeState);
 }
 
 void __cdecl PM_Footstep_NotTryingToMove(pmove_t *pm)
@@ -4283,7 +4283,7 @@ void __cdecl PM_CheckLadderMove(pmove_t *pm, pml_t *pml)
 
         if (ps->pm_type < PM_DEAD)
         {
-            if ((ps->pm_flags & PMF_LADDER_FALL) != 0 || PM_GetEffectiveStance(ps) == 1 || pm->cmd.serverTime - ps->jumpTime < 300)
+            if ((ps->pm_flags & PMF_LADDER_FALL) != 0 || PM_GetEffectiveStance(ps) == PM_STANCE_PRONE || pm->cmd.serverTime - ps->jumpTime < 300)
             {
                 PM_ClearLadderFlag(ps);
             }

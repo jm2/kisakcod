@@ -162,6 +162,10 @@ static void Run()
 }
 
 namespace weapon_tests {
+#ifdef KISAK_MP
+constexpr int ANIM_COND_PLAYERANIMTYPE = 0;
+constexpr int ANIM_COND_WEAPONCLASS = 1;
+#endif
 struct WeaponDef {
     const void *nativePointers[4]{};
     int iRaiseTime=101, iAltRaiseTime=102, quickRaiseTime=103;

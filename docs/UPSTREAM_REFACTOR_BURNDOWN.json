@@ -645,8 +645,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Animation condition identifiers cross script and weapon consumers; require exact index/value contracts.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1e-animation-and-movement-values",
+      "hunk_disposition": "All condition, table-extent, note-type and reset hunks adopted. Preserve KISAK_ALIGNAS(8), typed WeaponDef members, current debug channel and attack bit; noteType remains a signed 32-bit cell. Add the final bg_public.h dependency without removing the fork ABI include."
     },
     {
       "commit": "67812f6ae3325b269ba235a9f3733587221c12c5",
@@ -675,8 +677,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Animation move identifiers require SP/MP animation and serialization parity.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1e-animation-and-movement-values",
+      "hunk_disposition": "All 21 GetMoveTypeName case labels use the final movement enum; strings and unknown fallback are unchanged."
     },
     {
       "commit": "478087d5c059b4166b9429234cc53347ef6d569c",
@@ -705,8 +709,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Spread-state naming is gameplay-visible; require weapon-state parity.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1e-animation-and-movement-values",
+      "hunk_disposition": "Final shared spread-override enum and all SP/MP consumers adopted; SP spawn keeps its current stat access and other fields."
     },
     {
       "commit": "a8690d3e98099e20195bd38c6840f9de7de71c32",
@@ -715,8 +721,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Player-state naming crosses prediction and snapshots; require frozen MP/SP values and wire tests.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1e-animation-and-movement-values",
+      "hunk_disposition": "Final mantle declarations, transition tables, stance consumers and melee animation labels adopted. Keep the fork native records, view-height behavior, prediction and checked weapon representations."
     },
     {
       "commit": "482bcd1881852b72ba5ea57bd4f8d59003faebf2",
