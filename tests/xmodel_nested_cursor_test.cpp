@@ -30,8 +30,10 @@
 // shared, and the split keeps each TU within the file-size budget with
 // every helper individually readable — the suite's reusable
 // production-walk helpers additionally live in
-// tests/xmodel_nested_cursor_walks.hpp, included here as a pure
-// organizational split with every assertion retained verbatim.
+// tests/xmodel_nested_cursor_walks.hpp, and the checkpoint
+// activation-scoping contracts (the PR #140 rework) in
+// tests/xmodel_cursor_activation_scope_tests.hpp, each included here as
+// a pure organizational split with every assertion retained verbatim.
 
 #include <xanim/buf_cursor.hpp>
 
@@ -61,6 +63,7 @@ xmodel_cursor_test_support::Checker g_checker = {"xmodel_nested_cursor_test"};
 // suite's Checker, verbatim.
 #define CHECK(expr) xmodel_nested_cursor_test::g_checker.Evaluate((expr), #expr, __FILE__, __LINE__)
 #include "xmodel_nested_cursor_walks.hpp"
+#include "xmodel_cursor_activation_scope_tests.hpp"
 
 namespace xmodel_nested_cursor_test
 {
@@ -268,7 +271,7 @@ void ExpectSeekRejectsBadCheckpoints()
     // rejected — and because it is invalid, it latches failed.
     buf_cursor::Activate(storage, 8);
     buf_cursor::AnchorPos(&probe);
-    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, false}));
+    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, 0, false}));
     CHECK(buf_cursor::Failed());
     CHECK(buf_cursor::Tell().valid);
     CHECK(buf_cursor::Tell().offset == 0);  // did not move
@@ -279,35 +282,44 @@ void ExpectSeekRejectsBadCheckpoints()
     // cursor rejects further seeks. The offset points one past the
     // active eight-byte window but is still the valid one-past of the
     // nine-byte spare storage, so the rejected target never leaves the
-    // array's permitted pointer domain.
+    // array's permitted pointer domain. The checkpoints carry the live
+    // activation generation (captured through Tell), so these rejects
+    // turn on validity/range/failure state alone.
     buf_cursor::Activate(storage, 8);
     buf_cursor::AnchorPos(&probe);
-    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{sizeof(storage), true}));
+    const uint64_t liveActivation = buf_cursor::Tell().activation;
+    CHECK(liveActivation != 0);
+    CHECK(!buf_cursor::SeekTo(
+        buf_cursor::Checkpoint{sizeof(storage), liveActivation, true}));
     CHECK(buf_cursor::Failed());
     CHECK(buf_cursor::Tell().offset == 0);
-    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, true}));
+    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, liveActivation, true}));
     CHECK(buf_cursor::Failed());
     buf_cursor::Deactivate();
 
     // Inactive cursor: rejected without touching anything.
-    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, true}));
+    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, 0, true}));
     CHECK(buf_cursor::Current() == nullptr);
 }
 
 // Boundary checkpoints are legal (offset 0 and offset size), and a
-// successful seek re-syncs the anchor.
+// successful seek re-syncs the anchor. The hand-built checkpoints carry
+// the live activation generation so the accepts are identity-matched.
 void ExpectSeekAcceptsBoundaryCheckpoints()
 {
     unsigned char buffer[8] = {};
     unsigned char *probe = buffer;
     buf_cursor::Activate(buffer, sizeof(buffer));
     buf_cursor::AnchorPos(&probe);
+    const uint64_t liveActivation = buf_cursor::Tell().activation;
+    CHECK(liveActivation != 0);
     buf_cursor::Advance(4);
     CHECK(probe == buffer + 4);
-    CHECK(buf_cursor::SeekTo(buf_cursor::Checkpoint{sizeof(buffer), true}));
+    CHECK(buf_cursor::SeekTo(
+        buf_cursor::Checkpoint{sizeof(buffer), liveActivation, true}));
     CHECK(probe == buffer + sizeof(buffer));
     CHECK(!buf_cursor::Failed());
-    CHECK(buf_cursor::SeekTo(buf_cursor::Checkpoint{0, true}));
+    CHECK(buf_cursor::SeekTo(buf_cursor::Checkpoint{0, liveActivation, true}));
     CHECK(probe == buffer);
     CHECK(!buf_cursor::Failed());
     buf_cursor::Deactivate();
@@ -538,6 +550,8 @@ int RunAll()
     CHECK(TestNestedPartsLoadRestoresParent());
     CHECK(TestNestedFailureStateIsolation());
     CHECK(TestSecondPassCheckedSeek());
+    CHECK(TestSeekRejectsStaleActivationCheckpoints());
+    CHECK(TestSeekRejectsNestedChildCheckpoint());
     CHECK(TestTruncatedInputCleanupContract());
     CHECK(TestDeepNestedLifoRestoration());
 

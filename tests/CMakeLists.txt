@@ -3328,6 +3328,7 @@ add_test(
 add_executable(kisakcod-xmodel-nested-cursor-tests
     xmodel_nested_cursor_test.cpp
     xmodel_nested_cursor_walks.hpp
+    xmodel_cursor_activation_scope_tests.hpp
     xmodel_cursor_test_support.hpp
     ${SRC_DIR}/xanim/buf_cursor.cpp)
 target_include_directories(

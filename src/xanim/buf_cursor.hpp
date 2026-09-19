@@ -69,10 +69,17 @@
 // Tell() captures a cursor-owned offset checkpoint; SeekTo(checkpoint)
 // validates that offset against the active buffer window, forms the
 // destination pointer only after the check, moves current there and
-// re-syncs the anchor. A SeekTo of an invalid or out-of-range
-// checkpoint, on an inactive cursor or on a failed cursor moves nothing
-// and returns false (and latches failed when the checkpoint is invalid
-// or out of range) so the second pass fails closed instead of parsing
+// re-syncs the anchor. The checkpoint also carries the activation
+// identity (a per-thread generation bumped by every Activate) it was
+// captured under, and SeekTo() compares it against the active cursor
+// BEFORE applying the offset: a checkpoint from an earlier activation
+// (a Deactivate/Activate cycle, even over the same buffer) or from a
+// nested child's window is stale and must never move the current
+// activation's cursor. A SeekTo of an invalid, out-of-range or
+// activation-mismatched checkpoint, on an inactive cursor or on a
+// failed cursor moves nothing and returns false (and latches failed
+// when the checkpoint is invalid, out of range, or activation-
+// mismatched) so the second pass fails closed instead of parsing
 // valid content at the wrong position.
 //
 // UBSan alignment hazard.
@@ -96,6 +103,13 @@ struct BufCursor
     uint32_t maxTriIdx;
     uint32_t maxStringLen;
     bool failed;
+    // Activation identity of this cursor (the per-thread generation
+    // minted by the Activate that installed it, restored with the rest
+    // of the saved parent scope on a nested pop). Tell() captures it
+    // into the Checkpoint and SeekTo() compares it before applying the
+    // offset, which is what scopes a checkpoint to the activation that
+    // produced it.
+    uint64_t activation;
 };
 
 // Activate a fresh cursor over [buf, buf + size) and make it the active
@@ -153,11 +167,18 @@ void Advance(ptrdiff_t delta);
 // in a pointer comparison with unspecified ordering. `valid` is false
 // when no cursor was active at Tell() time; callers must treat an
 // invalid checkpoint as a failed load, not seek to it. A checkpoint is
-// scoped to the activation that produced it — its offset is only
-// meaningful against that activation's buffer.
+// scoped to the activation that produced it — `activation` records the
+// cursor's generation at Tell() time, and SeekTo() rejects a checkpoint
+// whose generation does not match the active cursor BEFORE applying the
+// offset, so a checkpoint captured before a Deactivate/Activate cycle
+// or inside a nested child window can never move a later or foreign
+// activation's cursor.
 struct Checkpoint
 {
     size_t offset;
+    // Activation generation of the cursor this checkpoint was captured
+    // on (0 is never a live generation — the counter is pre-incremented).
+    uint64_t activation;
     bool valid;
 };
 
@@ -165,8 +186,8 @@ struct Checkpoint
 // here and defined in buf_cursor.cpp so Tell()/SeekTo() can be defined
 // inline in this header: a header TU then sees every Checkpoint member
 // read and written, instead of analyzing the struct standalone where
-// both members look unused (a false positive the standalone scan
-// reported on Checkpoint::offset / Checkpoint::valid).
+// its members look unused (a false positive the standalone scan
+// reported on Checkpoint::offset / Checkpoint::valid / Checkpoint::activation).
 namespace detail
 {
 // Out-param query of the active cursor. Returns true with *out set to
@@ -186,10 +207,11 @@ void SyncAnchored();
 inline Checkpoint Tell()
 {
     BufCursor *active = nullptr;
-    Checkpoint checkpoint{0, false};
+    Checkpoint checkpoint{0, 0, false};
     if (detail::QueryActive(&active))
     {
         checkpoint.offset = static_cast<size_t>(active->current - active->begin);
+        checkpoint.activation = active->activation;
         checkpoint.valid = true;
     }
     return checkpoint;
@@ -201,9 +223,11 @@ inline Checkpoint Tell()
 // The offset must lie within [0, size] of the active buffer — the check
 // is what makes the rewind safe against a corrupted or stale checkpoint.
 // Returns false and moves nothing when no cursor is active, the cursor
-// has already failed, the checkpoint is invalid, or its offset is out of
-// range; an invalid or out-of-range checkpoint additionally latches
-// Failed() so the caller's ordinary malformed-input cleanup runs.
+// has already failed, the checkpoint is invalid, its offset is out of
+// range, or its activation does not match the active cursor; an
+// invalid, out-of-range or activation-mismatched checkpoint
+// additionally latches Failed() so the caller's ordinary malformed-input
+// cleanup runs.
 inline bool SeekTo(const Checkpoint &checkpoint)
 {
     BufCursor *active = nullptr;
@@ -212,7 +236,8 @@ inline bool SeekTo(const Checkpoint &checkpoint)
         return false;
     }
     const size_t size = static_cast<size_t>(active->end - active->begin);
-    if (!checkpoint.valid || checkpoint.offset > size)
+    if (!checkpoint.valid || checkpoint.activation != active->activation
+        || checkpoint.offset > size)
     {
         active->failed = true;
         detail::SyncAnchored();

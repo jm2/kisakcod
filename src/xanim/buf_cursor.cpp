@@ -12,6 +12,18 @@ namespace
 thread_local BufCursor g_active{};
 thread_local bool g_activeValid = false;
 
+// Monotonic activation identity for the thread. Every Activate mints
+// the next generation into the cursor it installs (the overflow paths
+// included — their synthetic installs are fresh activations too);
+// Deactivate's parent restore puts the saved parent generation back,
+// and the top-level teardown drops to generation 0, which is never a
+// live generation. Checkpoints carry the generation they were captured
+// under and SeekTo() rejects a mismatch, so a checkpoint captured
+// before a Deactivate/Activate cycle (over the same buffer or not) or
+// inside a nested child window can never move a later or foreign
+// activation's cursor.
+thread_local uint64_t g_activationGeneration = 0;
+
 // The caller's *pos pointer that the cursor keeps in sync. Anchored
 // by AnchorPos immediately after Activate so future Buf_Read<T> can
 // write *pos back to the cursor's current without the caller having
@@ -130,6 +142,7 @@ BufCursor *Activate(const unsigned char *buf, size_t size)
             g_active.maxTriIdx = 0xFFFFFFFFu;
             g_active.maxStringLen = 0xFFFFFFFFu;
             g_active.failed = true;
+            g_active.activation = ++g_activationGeneration;
             g_activeValid = true;
             g_anchoredPos = nullptr;
             return &g_active;
@@ -147,6 +160,7 @@ BufCursor *Activate(const unsigned char *buf, size_t size)
     g_active.maxTriIdx = 0xFFFFFFFFu;
     g_active.maxStringLen = 0xFFFFFFFFu;
     g_active.failed = false;
+    g_active.activation = ++g_activationGeneration;
     g_activeValid = true;
     g_anchoredPos = nullptr;
     return &g_active;
@@ -178,6 +192,10 @@ void Deactivate()
         g_active.maxTriIdx = 0xFFFFFFFFu;
         g_active.maxStringLen = 0xFFFFFFFFu;
         g_active.failed = true;
+        // The synthetic reinstall is a fresh activation, not the
+        // overflowed caller's: mint a new generation so checkpoints
+        // captured by the destroyed scope are stale here too.
+        g_active.activation = ++g_activationGeneration;
         g_activeValid = true;
         g_anchoredPos = nullptr;
         return;
