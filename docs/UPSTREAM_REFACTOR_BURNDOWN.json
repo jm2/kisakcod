@@ -456,8 +456,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Script value tags overlap the fork's widened value cells and ownership contracts; preserve the tested runtime migration.",
       "workstream": "S1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#script-value-slice-s1",
+      "hunk_disposition": "All surviving script/compiler/debugger/UI tag and mask replacements adopted. Apply moved save/read replacements in Scr_LoadEntryValueCell, Scr_LoadEntryRuntimeCell, DoSaveEntryValuePayload and AddSaveEntry; existing runtime payload/stack iterator/registration helpers already use final tags. Preserve native pointer union members, bounded save registration, iterative stack traversal, and native reference-count iteration. No old pointer-punned save/VM arithmetic is restored."
     },
     {
       "commit": "ea6c2ea1be22365fbe175fdd867e8b68f8184b25",

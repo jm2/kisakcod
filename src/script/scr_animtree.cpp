@@ -194,7 +194,7 @@ void __cdecl Scr_PrecacheAnimationTree(uint32_t parentNode)
         name = GetVariableName(node);
         if (name < SL_MAX_STRING_INDEX)
         {
-            if (GetValueType(node) == 1)
+            if (GetValueType(node) == VAR_POINTER)
             {
                 Object = FindObject(node);
                 Scr_PrecacheAnimationTree(Object.u.stringValue);
@@ -298,7 +298,7 @@ int __cdecl Scr_GetAnimTreeSize(uint32_t parentNode)
     {
         if (GetVariableName(node) < SL_MAX_STRING_INDEX)
         {
-            if (GetValueType(node) == 1)
+            if (GetValueType(node) == VAR_POINTER)
             {
                 Object = FindObject(node);
                 size += Scr_GetAnimTreeSize(Object.u.stringValue);
@@ -414,7 +414,7 @@ LABEL_13:
             name = GetVariableName(nodeRefa);
             if (name < SL_MAX_STRING_INDEX)
             {
-                if (GetValueType(nodeRefa) != 1)
+                if (GetValueType(nodeRefa) != VAR_POINTER)
                 {
                     if (processAdditive)
                         continue;

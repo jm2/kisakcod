@@ -302,3 +302,29 @@ pass**. No tests are newly registered.
   backend feature `6501b04f` is outside this goal. No backend is imported to make
   a macro rename applicable. The other sound cleanup/relocation/name records
   remain open and require their own hunk audits.
+
+## Script value slice: S1
+
+`a97810c6` is implemented on `integration/refactor-s1-script-value-names`,
+pending protected integration after the renderer branch. It changes only tag
+and mask spellings in the eight upstream runtime/UI files. Fork-only native
+pointer fields, union payloads, bounds checks and iterative traversal remain.
+
+The upstream save/load monolith no longer exists in the fork. Its remaining
+names are applied in `Scr_LoadEntryValueCell`, `Scr_LoadEntryRuntimeCell` and
+`DoSaveEntryValuePayload`. `DoSaveEntryRuntimePayload`,
+`DoSaveEntryWithoutStack`, `DoSaveEntryInternal`, `SaveStackIterator` and
+`AddSaveEntryInternal` already contain their final named branches. The surviving
+`AddSaveEntry` and typed `Scr_SaveShutdown` walk get the equivalent tag names.
+Compiler, evaluator and VM conflicts retain typed code-position/vector/stack
+access; only the condition labels change. Reference iteration retains native
+record strides instead of upstream's old raw pointer offsets.
+
+All eight production files pass token equivalence after enum/mask substitution,
+including the fixed-width `~VAR_MASK` and the `[VAR_BEGIN_REF, VAR_END_REF)` range.
+The existing value-split fixture now also freezes the **production** `Vartype_t`
+values 0..25, aliases, masks and 32-bit enum width alongside its existing disk
+encoding checks. No serialized bytes, runtime record layouts or test inventory
+entries change. **244/244 portable Release tests pass**; seven focused Clang
+ASan/UBSan suites pass: value split, native layout, nested read/write stack,
+runtime pointers, save registration, animation fixups and debugger pointers.

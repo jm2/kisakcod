@@ -186,6 +186,23 @@ void CheckReconstructionKinds()
 
 void CheckVartypeEncoding()
 {
+    // Tie the production dispatcher enum to the same frozen 0..25 save tags.
+    constexpr Vartype_t productionTags[] = {
+        ::VAR_UNDEFINED, ::VAR_POINTER, ::VAR_STRING, ::VAR_ISTRING,
+        ::VAR_VECTOR, ::VAR_FLOAT, ::VAR_INTEGER, ::VAR_CODEPOS,
+        ::VAR_PRECODEPOS, ::VAR_FUNCTION, ::VAR_STACK, ::VAR_ANIMATION,
+        ::VAR_DEVELOPER_CODEPOS, ::VAR_INCLUDE_CODEPOS, ::VAR_THREAD, ::VAR_NOTIFY_THREAD,
+        ::VAR_TIME_THREAD, ::VAR_CHILD_THREAD, ::VAR_OBJECT, ::VAR_DEAD_ENTITY,
+        ::VAR_ENTITY, ::VAR_ARRAY, ::VAR_DEAD_THREAD, ::VAR_COUNT,
+        ::VAR_THREAD_LIST, ::VAR_ENDON_LIST,
+    };
+    static_assert(sizeof(Vartype_t) == 4);
+    static_assert(sizeof(productionTags) / sizeof(productionTags[0]) == 26);
+    for (unsigned int tag = 0; tag < 26; ++tag)
+        CHECK(static_cast<unsigned int>(productionTags[tag]) == tag);
+    CHECK(VAR_BEGIN_REF == 1 && VAR_END_REF == 5);
+    CHECK(VAR_MASK == 0x1F && VAR_STAT_MASK == 0x60);
+
     // The numeric values are the retail save-path encoding; the dispatcher
     // and the save/load code must never drift apart.
     CHECK(script::VAR_UNDEFINED == 0x0u);
