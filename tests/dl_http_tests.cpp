@@ -383,6 +383,7 @@ int main()
     StageHeadParseContentLengthOverlongLenient();
     StageHeadParseContentLengthMax();
     StageHeadParseContentLengthFirstWins();
+    StageResponseStatusAcceptance();
 
     if (checkFailed)
     {

@@ -246,8 +246,9 @@ bool Dl_ApplyRedirect(const char *const location)
 }
 } // namespace
 
-// Applies the parsed head: 2xx arms the body phase, a redirect retargets
-// the transport, everything else fails to the in-band fallback.
+// Applies the parsed head: a 200 (the only full-representation success)
+// arms the body phase, a redirect retargets the transport, everything
+// else fails to the in-band fallback.
 bool DlApplyHead(const DlResponseHead &head)
 {
     if (Dl_ResponseIsRedirect(head))

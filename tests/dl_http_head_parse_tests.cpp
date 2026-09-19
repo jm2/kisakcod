@@ -277,3 +277,55 @@ void StageHeadParseContentLengthFirstWins()
     Check(head.hasContentLength && head.contentLength == 5,
         "head-content-length-first-wins");
 }
+
+// Status acceptance: only 200 is a full-representation download success.
+// The transport sends no Range header and neither validates Content-Range
+// nor assembles partial bodies, so a 206 Partial Content must not pass
+// the success gate (it would install a truncated artifact), and a
+// 204 No Content has no body at all. Both heads still parse; both must
+// fail to the in-band fallback via the success gate.
+void StageResponseStatusAcceptance()
+{
+    DlResponseHead head{};
+    char buffer[256];
+
+    static const char okFull[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 5\r\n"
+        "\r\n"
+        "hello";
+    std::uint32_t length = static_cast<std::uint32_t>(sizeof(okFull) - 1);
+    CopyBounded(buffer, sizeof(buffer), okFull, length);
+    Check(Dl_ParseResponseHead(buffer, &length, &head)
+            == DlResponseEvent::HeadComplete,
+        "status-acceptance-200");
+    Check(head.statusCode == 200, "status-acceptance-200");
+    Check(Dl_ResponseIsSuccess(head), "status-acceptance-200");
+
+    static const char partialContent[] =
+        "HTTP/1.1 206 Partial Content\r\n"
+        "Content-Range: bytes 0-4/25\r\n"
+        "Content-Length: 5\r\n"
+        "\r\n"
+        "hello";
+    length = static_cast<std::uint32_t>(sizeof(partialContent) - 1);
+    CopyBounded(buffer, sizeof(buffer), partialContent, length);
+    Check(Dl_ParseResponseHead(buffer, &length, &head)
+            == DlResponseEvent::HeadComplete,
+        "status-acceptance-206-parses");
+    Check(head.statusCode == 206, "status-acceptance-206-parses");
+    Check(!Dl_ResponseIsSuccess(head),
+        "status-acceptance-206-rejected");
+
+    static const char noContent[] =
+        "HTTP/1.1 204 No Content\r\n"
+        "\r\n";
+    length = static_cast<std::uint32_t>(sizeof(noContent) - 1);
+    CopyBounded(buffer, sizeof(buffer), noContent, length);
+    Check(Dl_ParseResponseHead(buffer, &length, &head)
+            == DlResponseEvent::HeadComplete,
+        "status-acceptance-204-parses");
+    Check(head.statusCode == 204, "status-acceptance-204-parses");
+    Check(!Dl_ResponseIsSuccess(head),
+        "status-acceptance-204-rejected");
+}

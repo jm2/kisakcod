@@ -308,6 +308,8 @@ CL_UrlAuthoritySplit CL_SplitUrlAuthority(const char *source)
     return {rest, at, schemeLength};
 }
 
+} // namespace
+
 // Renders a download URL for every displayed or logged surface with
 // URL-embedded credentials masked: "http://user:pass@host/path" becomes
 // the retail meter form "http://*:*host/path". Only the authority's
@@ -315,6 +317,10 @@ CL_UrlAuthoritySplit CL_SplitUrlAuthority(const char *source)
 // '#') is rewritten; the source URL is never modified, so the transport
 // still receives the real credentials. Without credentials the URL is
 // copied verbatim (bounded).
+//
+// Declared in client_mp.h: the later WWW failure paths in cl_main_mp.cpp
+// route their download-name messages through this same sanitizer so no
+// displayed or logged surface ever sees URL-embedded credentials.
 void CL_SanitizeDownloadUrl(const char *source, char *out,
     const std::size_t capacity)
 {
@@ -341,7 +347,6 @@ void CL_SanitizeDownloadUrl(const char *source, char *out,
     CL_AppendTerminated(out, length, capacity, split.rest);
     out[length] = '\0';
 }
-} // namespace
 
 void __cdecl CL_ParseWWWDownload(int localClientNum, msg_t *msg)
 {

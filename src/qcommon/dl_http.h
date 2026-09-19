@@ -172,9 +172,14 @@ inline bool Dl_ResponseIsRedirect(const DlResponseHead &head) noexcept
     return head.statusCode / 100 == 3;
 }
 
+// Only 200 is a full-representation success. This transport sends no
+// Range header and does not validate Content-Range or assemble partial
+// responses, so a 206 Partial Content must fail to the in-band fallback
+// instead of installing a truncated artifact; a 204 No Content carries
+// no body at all. Any other 2xx is likewise not a full representation.
 inline bool Dl_ResponseIsSuccess(const DlResponseHead &head) noexcept
 {
-    return head.statusCode / 100 == 2;
+    return head.statusCode == 200;
 }
 
 inline bool Dl_ResponseHasLocation(const DlResponseHead &head) noexcept

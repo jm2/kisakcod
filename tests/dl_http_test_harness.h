@@ -59,5 +59,6 @@ void StageHeadParseContentLengthOverflowBeyond();
 void StageHeadParseContentLengthOverlongLenient();
 void StageHeadParseContentLengthMax();
 void StageHeadParseContentLengthFirstWins();
+void StageResponseStatusAcceptance();
 
 #endif // DL_HTTP_TEST_HARNESS_H

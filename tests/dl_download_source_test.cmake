@@ -243,6 +243,16 @@ foreach(_marker IN ITEMS
         "client parse must preserve the masked download display name: ${_marker}")
 endforeach()
 
+# The later WWW failure paths route the download name through the same
+# sanitizer: cls.downloadName may still carry user:password@ when the
+# transfer fails, and no logged or dropped message may show it.
+require_contains("${_cl_main_source}"
+    "CL_SanitizeDownloadUrl\\(cls\\.downloadName"
+    "client main must route WWW failure messages through the URL sanitizer")
+require_not_contains("${_cl_main_source}"
+    "Download failure while getting %s\", cls\\.downloadName"
+    "client main must not log the raw download name on WWW failure")
+
 # The split units stay wired to their shared internal headers, and the
 # transport/protocol unions stay dependency-free through those headers.
 function(require_internal_include _content _needle)
