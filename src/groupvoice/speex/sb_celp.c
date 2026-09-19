@@ -335,6 +335,43 @@ void *sb_encoder_init(const SpeexMode *m)
 void sb_encoder_destroy(void *state)
 {
    SBEncState *st=(SBEncState*)state;
+   /* Free all allocated memory. sb_encoder_init heap-allocates every member
+      below unconditionally (the VAR_ARRAYS/USE_ALLOCA switch only covers the
+      state struct itself), so each open leaks them unless they are freed
+      here — nb_encoder_destroy has done exactly this for the narrow band. */
+
+   speex_free (st->x0d);
+   speex_free (st->x1d);
+   speex_free (st->high);
+   speex_free (st->y0);
+   speex_free (st->y1);
+   speex_free (st->h0_mem);
+   speex_free (st->h1_mem);
+   speex_free (st->g0_mem);
+   speex_free (st->g1_mem);
+   speex_free (st->buf);
+   speex_free (st->excBuf);
+   speex_free (st->res);
+   speex_free (st->sw);
+   speex_free (st->target);
+   speex_free (st->window);
+   speex_free (st->lagWindow);
+   speex_free (st->autocorr);
+   speex_free (st->lpc);
+   speex_free (st->bw_lpc1);
+   speex_free (st->bw_lpc2);
+   speex_free (st->lsp);
+   speex_free (st->qlsp);
+   speex_free (st->old_lsp);
+   speex_free (st->old_qlsp);
+   speex_free (st->interp_lsp);
+   speex_free (st->interp_qlsp);
+   speex_free (st->interp_lpc);
+   speex_free (st->interp_qlpc);
+   speex_free (st->pi_gain);
+   speex_free (st->mem_sp);
+   speex_free (st->mem_sp2);
+   speex_free (st->mem_sw);
 
    speex_encoder_destroy(st->st_low);
 
@@ -864,6 +901,24 @@ void sb_decoder_destroy(void *state)
 {
    SBDecState *st;
    st = (SBDecState*)state;
+   /* Free all allocated memory: sb_decoder_init heap-allocates every member
+      below unconditionally, mirroring the nb_decoder_destroy pattern. */
+
+   speex_free (st->x0d);
+   speex_free (st->x1d);
+   speex_free (st->high);
+   speex_free (st->y0);
+   speex_free (st->y1);
+   speex_free (st->g0_mem);
+   speex_free (st->g1_mem);
+   speex_free (st->exc);
+   speex_free (st->qlsp);
+   speex_free (st->old_qlsp);
+   speex_free (st->interp_qlsp);
+   speex_free (st->interp_qlpc);
+   speex_free (st->pi_gain);
+   speex_free (st->mem_sp);
+
    speex_decoder_destroy(st->st_low);
 
    speex_free(state);
@@ -1488,6 +1543,10 @@ int sb_decoder_ctl(void *state, int request, void *ptr)
          /* Deterministic noise synthesis restarts from the fixed seed (see
             misc.c speex_rand_seeded). */
          st->rand_state = 1u;
+         /* The low-band decoder carries the same branch-added rand_state
+            (DecState, see nb_celp.c): reset it with the rest of the narrow
+            band so post-reset decode equals a freshly initialized decoder. */
+         speex_decoder_ctl(st->st_low, SPEEX_RESET_STATE, ptr);
       }
       break;
    case SPEEX_SET_SUBMODE_ENCODING:
