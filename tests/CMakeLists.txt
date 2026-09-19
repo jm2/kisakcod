@@ -2769,10 +2769,12 @@ add_test(
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/renderer_enum_contracts.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/renderer_image_contracts.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/renderer_shader_contracts.cmake")
 add_executable(kisakcod-renderer-value-encoding-tests
     renderer_value_encoding_tests.cpp
     renderer_enum_contracts.cpp
     renderer_image_contracts.cpp
+    renderer_shader_contracts.cpp
 )
 target_include_directories(kisakcod-renderer-value-encoding-tests PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/renderer-enums")

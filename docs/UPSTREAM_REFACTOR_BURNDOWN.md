@@ -63,7 +63,7 @@ must not be redone.
 
 | Chain / area | Final action and evidence |
 |---|---|
-| `9d1ab0d5` → `3d40b791` → `482bcd18` | One final technique migration. The last commit moves `MaterialTechniqueType` from `r_rendercmds.h` to `r_material.h`; do not first install the old declaration location and move it again. Retain earlier consumers still present at the endpoint. Omit Radiant consumers absent from the fork. |
+| `9d1ab0d5` → `3d40b791` → `482bcd18` | One final technique migration. `3d40b791` is an empty commit (identical tree to its parent), so there is no second intermediate implementation. The last commit moves `MaterialTechniqueType` from `r_rendercmds.h` to `r_material.h`; do not first install the old declaration location and move it again. Retain earlier consumers still present at the endpoint. Omit Radiant consumers absent from the fork. |
 | `ea6c2ea1` → `e08d61d9` | One team migration using the final declarations and array extents. The later commit adds remaining consumers; it does **not** make all earlier replacements redundant. Keep the fork's typed scoreboard insertion. |
 | `67812f6a` → `dfc84fa0` → `ad325cdf`, then `b3199b90` | Migrate final key/catcher names once, along with surviving typed-accessor changes. Audit autocomplete capacity/cursor behavior separately; a bounded copy alone is insufficient. |
 | `4c9bb150` → `5f77d720` → `aa2ed669`, then vehicle names and `9cfde1ae` | Port the final vehicle functions directly. Skip the intermediate WIP implementation and its bad pointer arithmetic. The final corruption fix explicitly repairs `CG_Vehicle_PreControllers` and a missing clamp assignment. Keep the fork's tested tank-tread sentinel and wrap handling. |
@@ -211,3 +211,54 @@ contracts pass with leak detection and halt-on-error. The inventory matches
 portable discovery exactly and the dashboard is current. Protected hosted
 checks are recorded on the batch PR. An hourly monitor
 tracks PR completion/review state without changing CI jobs or Gas City state.
+
+## Third batch: R3 shader and material values
+
+Consolidates `17d0a98b`, `0bced932`, `9d1ab0d5` and `482bcd18` against the
+final upstream endpoint. `3d40b791` has no changes: tree
+`6b95a2384a7ea03d64b389788cad4bdcb98eca80` is identical to its sole parent,
+`9d1ab0d5455b5560793e0d80100c7ec0dacde737`. This closes that historical record
+without replaying nonexistent work. The four code-bearing records remain
+**implemented pending protected merge**, separate from that empty-commit result.
+
+`MaterialTechniqueType` moves directly to its final `r_material.h` home with
+unchanged values and increment operators. Shader slots, argument tags, technique
+indices and array counts use the upstream names. The two arithmetic shader-kind
+selectors become equivalent named ternaries. The monotonically increasing lit
+technique loop keeps its range `[7, 14)` with upstream's `<` spelling.
+
+Fork adaptations preserve bounded named-constant lookup and error paths, checked
+database loads, vertex-format/pass-count remap validation, and the already
+complete `sizeof(stateBitsEntry)` copy in `Material_CreateLayered`. The fork's
+runtime technique-enable table is unchanged. Upstream-only Radiant consumers,
+editor comments and shadow-caster helper are not introduced.
+
+Validation extends the existing renderer gate, with no new CTest registration:
+
+- 151 frozen numeric assertions cover every code-constant, argument and technique
+  declaration; argument types remain 16-bit and material technique arrays remain
+  34 entries. Current production declarations are compiled by the fixture.
+- Production game-time writes preserve slot 18 and leave all other slots intact;
+  all 34 quoted technique names retain their indices and unknown names return 34.
+- Production pixel-literal collection and registration preserve argument-group
+  boundaries, named/literal tags, sorted destinations, missing-name failures and
+  null-table handling. Both changed shader-kind selector expressions are compiled
+  directly from the source. Engine services use test doubles; this is not a GPU
+  execution or retail asset parity claim.
+- All **244/244 portable Release tests pass**. The focused renderer gate also
+  passes Clang ASan/UBSan with leak detection and halt-on-error enabled.
+- A token audit covers all 17 changed production files after frozen enum value
+  substitution. Reviewed equivalent boolean/selector/loop spellings, the identical
+  declaration relocation and one diagnostic string are normalized separately.
+  No record widths or ownership implementations change.
+
+Integration audit against master `7014af15` (which now includes PR #159) found
+no new conflicts with PRs #164, #157, #153 or #140. Those branches already have
+unrelated baseline conflicts; this batch does not change their worktrees.
+
+The branch is stacked on R2 while its protected merge is pending. Hosted CI only
+runs for PRs targeting `master`, so publish R3 as a **draft targeting master**
+with auto-merge off. Its initial diff includes R2; after R2 lands, the effective
+diff becomes this R3 slice. Mark it ready and enable protected auto-merge only
+then. Never merge the child into the R2 work branch. CI/review observations
+remain hourly.

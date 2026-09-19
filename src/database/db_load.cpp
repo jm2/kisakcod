@@ -4347,7 +4347,7 @@ bool __cdecl Load_MaterialTechniqueSet(bool atStreamStart)
     varXString = &varMaterialTechniqueSet->name;
     Load_XString(0);
     varMaterialTechniquePtr = varMaterialTechniqueSet->techniques;
-    if (!Load_MaterialTechniquePtrArray(0, 34))
+    if (!Load_MaterialTechniquePtrArray(0, TECHNIQUE_COUNT))
     {
         DB_PopStreamPos();
         return false;

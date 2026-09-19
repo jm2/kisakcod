@@ -440,8 +440,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Renderer constant indices are shader ABI; require exact slot-value tests before broad replacement.",
       "workstream": "R3",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "hunk_disposition": "All six runtime consumer files adopt the upstream constant names with unchanged slots and arithmetic.",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#third-batch-r3-shader-and-material-values"
     },
     {
       "commit": "a97810c650c8a99134459e0f4d475cb7a04b3405",
@@ -480,8 +482,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Shader argument tags are asset-facing; require loader and runtime type parity.",
       "workstream": "R3",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "hunk_disposition": "All surviving runtime tag substitutions adopted, including equivalent vertex/pixel selectors. Preserve bounded FindSortedNameHash lookups, null/error returns, and sampler validation in the fork.",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#third-batch-r3-shader-and-material-values"
     },
     {
       "commit": "c5477bc3eaf735594cc4df5defdc5ae79631ff40",
@@ -513,8 +517,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Technique indices are shader/material ABI; require frozen-value and dispatch tests.",
       "workstream": "R3",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "hunk_disposition": "All surviving runtime technique consumers adopted directly with the final 482bcd18 declaration location. Preserve the fork runtime-only technique-enable table; no Radiant consumers are introduced.",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#third-batch-r3-shader-and-material-values"
     },
     {
       "commit": "3d40b791502d932803528c2609bf32fbe528e31c",
@@ -523,8 +529,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Further technique replacements depend on the preceding material migration; retain the current sealed asset boundary.",
       "workstream": "R3",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "resolved-empty-upstream-commit",
+      "refactor_goal_scope": "explicit-refactor",
+      "hunk_disposition": "Empty upstream commit: its tree 6b95a2384a7ea03d64b389788cad4bdcb98eca80 equals parent 9d1ab0d5455b5560793e0d80100c7ec0dacde737. No implementation exists to replay.",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#third-batch-r3-shader-and-material-values"
     },
     {
       "commit": "40bf0bd9af4dc1f762187e68280ed9101a9ea94d",
@@ -546,10 +554,11 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Image file-format tags are serialized; require exact numeric and decoder coverage.",
       "workstream": "R2",
-      "status": "implemented-in-this-change",
+      "status": "implemented-pending-merge",
       "refactor_goal_scope": "explicit-refactor",
       "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#second-batch-r2-image-values",
-      "hunk_disposition": "All runtime format definitions and decoder/loader dispatch replacements adopted. Unsupported format IDs retain their existing assertion behavior; no new decoder is introduced."
+      "hunk_disposition": "All runtime format definitions and decoder/loader dispatch replacements adopted. Unsupported format IDs retain their existing assertion behavior; no new decoder is introduced.",
+      "pull_request": 165
     },
     {
       "commit": "2f320b36eba048a8f55ff929dd80e53a6b30c4d9",
@@ -558,10 +567,11 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Image flags cross disk/native loader boundaries; require frozen bitmask tests.",
       "workstream": "R2",
-      "status": "implemented-in-this-change",
+      "status": "implemented-pending-merge",
       "refactor_goal_scope": "explicit-refactor",
       "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#second-batch-r2-image-values",
-      "hunk_disposition": "All runtime flag substitutions adopted. Preserve checked mipmap dimensions and early invalid-dimension exit in Image_TrackFullscreenTexture. Add the existing image declaration dependency without the old include-order sweep."
+      "hunk_disposition": "All runtime flag substitutions adopted. Preserve checked mipmap dimensions and early invalid-dimension exit in Image_TrackFullscreenTexture. Add the existing image declaration dependency without the old include-order sweep.",
+      "pull_request": 165
     },
     {
       "commit": "057bdb52f4c2c10659c09732cd15db2d702f7e76",
@@ -570,10 +580,11 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Texture semantics are material/image ABI; require loader and renderer parity.",
       "workstream": "R2",
-      "status": "implemented-in-this-change",
+      "status": "implemented-pending-merge",
       "refactor_goal_scope": "explicit-refactor",
       "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#second-batch-r2-image-values",
-      "hunk_disposition": "Surviving semantic substitutions adopted. R_SetSkyImage and Material_HasNormalMap already use final names with stronger fork validation and are retained. R_LoadCaseTextures and Radiant-only consumers are absent from the fork and are not introduced."
+      "hunk_disposition": "Surviving semantic substitutions adopted. R_SetSkyImage and Material_HasNormalMap already use final names with stronger fork validation and are retained. R_LoadCaseTextures and Radiant-only consumers are absent from the fork and are not introduced.",
+      "pull_request": 165
     },
     {
       "commit": "84ef10ab5dbc937b4e2af1163fe524dffdf0d767",
@@ -582,10 +593,11 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Image category naming requires asset-value and allocation-policy tests.",
       "workstream": "R2",
-      "status": "implemented-in-this-change",
+      "status": "implemented-pending-merge",
       "refactor_goal_scope": "explicit-refactor",
       "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#second-batch-r2-image-values",
-      "hunk_disposition": "All surviving category substitutions adopted. Preserve the fork callback/data signature and reported recovery failures in R_RebuildLostImage. The upstream-only R_ReloadImages comment is inapplicable."
+      "hunk_disposition": "All surviving category substitutions adopted. Preserve the fork callback/data signature and reported recovery failures in R_RebuildLostImage. The upstream-only R_ReloadImages comment is inapplicable.",
+      "pull_request": 165
     },
     {
       "commit": "5f30b9a7a11646e3962fba3bfb54ad2291208af6",
@@ -684,8 +696,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Further material-technique replacements depend on earlier deferred shader ABI migrations.",
       "workstream": "R3",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "hunk_disposition": "Final MaterialTechniqueType declaration and existing increment operators moved into r_material.h; all surviving counts and consumers adopted. Preserve checked database-loader return handling, Material_ValidateRemappedTechniqueSet validation, and the existing complete sizeof-based Material_CreateLayered copy. Absent Radiant-only functions/comments are inapplicable.",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#third-batch-r3-shader-and-material-values"
     },
     {
       "commit": "9cfde1ae38db75e5ba3e0d75b6ceff8535345578",
