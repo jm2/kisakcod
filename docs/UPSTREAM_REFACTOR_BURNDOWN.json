@@ -259,8 +259,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "This is not naming-only: it consolidates MP/SP masks and changes a helicopter water-surface comparison, while touching 63 files. It overlaps this fork's separately sealed profile masks and needs dedicated collision/gameplay parity review.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1g-collision-and-surface-names",
+      "hunk_disposition": "Surviving collision/surface names and shared infoParms relocation adopted with exact numeric values. Preserve existing player-only masks in fork PM/AI ground tracing and existing PHYS_WORLD_CLIPMASK profile boundary. Absent prone-view/stencil helpers and Radiant consumers are inapplicable. Helicopter water comparison is an unrelated behavior fix and remains outside the refactor goal."
     },
     {
       "commit": "df46aa636caf67422de28195b64fd0086d91e24f",

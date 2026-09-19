@@ -2,6 +2,7 @@
 #error This file is for SinglePlayer only 
 #endif
 
+#include <universal/surfaceflags.h>
 #include "player_use.h"
 #include "g_local.h"
 #include <script/scr_const.h>
@@ -1099,7 +1100,7 @@ void __cdecl Player_UpdateLookAtEntity(gentity_s *ent)
         {
             if ((traceEnt->r.contents & 0x4000) != 0)
             {
-                if ((traceresult.surfaceFlags & 0x10) == 0)
+                if ((traceresult.surfaceFlags & SURF_NOIMPACT) == 0)
                 {
                     iassert(traceEnt->sentient);
 
@@ -1144,7 +1145,7 @@ void __cdecl Player_UpdateLookAtEntity(gentity_s *ent)
                             actor = traceEnt->actor;
                             if (actor)
                             {
-                                if (actor->bDontAvoidPlayer || (actor->Physics.iTraceMask & 0x2000000) == 0)
+                                if (actor->bDontAvoidPlayer || (actor->Physics.iTraceMask & CONTENTS_PLAYER) == 0)
                                     client->ps.weapFlags = v20 | 0x200;
                             }
                         }

@@ -59,3 +59,5 @@ kisakcod_renderer_enum_slice(game_mp/g_main_mp.cpp "void __cdecl G_UpdateObjecti
 include("${CMAKE_CURRENT_LIST_DIR}/animation_value_contracts.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/hint_value_contracts.cmake")
+
+include("${CMAKE_CURRENT_LIST_DIR}/collision_value_contracts.cmake")

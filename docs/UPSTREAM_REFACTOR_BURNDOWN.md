@@ -523,3 +523,45 @@ zero/nonzero expression substitutions normalized. **245/245 portable Release
 tests pass**, including the inherited MSG wire fixtures. The gameplay gate also
 passes Clang ASan/UBSan. Dashboard and CTest inventory checks pass. Hosted engine
 compilation and protected review remain required before merge.
+
+
+## Gameplay slice G1g: collision and surface names
+
+The refactoring hunks of `355b68a0` are implemented on
+`integration/refactor-g1-collision-names`, pending protected integration. The
+57 production files adopt contents bits, trace masks and surface flags, with
+`infoParms` moved from a header definition to one shared definition. The neutral
+surface header replaces both old `SURF_TYPECOUNT` declarations; this preserves
+the fork's headless include boundary. Profile selectors use the fork's existing
+`defined(KISAK_SP/MP)` convention.
+
+Hunk exceptions are explicit:
+
+- `BG_CheckProneView` and `Material_CastsStencilShadow` do not exist in this fork;
+  their naming hunks and unused stencil-file include are inapplicable. Radiant
+  consumers are absent. Newline-only hunks do not import code.
+- Current `PM_playerTrace`, stance traces and `AIPhys_GroundTrace` filter only
+  the player bit. They now name `CONTENTS_PLAYER`; importing upstream's assumed
+  broader SP predecessor would change behavior. Existing SP actor-corpse and
+  grenade masks do include actor bits and use `MASK_CHARACTER` / its complement.
+- Fork `PHYS_WORLD_CLIPMASK` remains unchanged: SP `0x0280e491`, MP `0x02806c91`.
+  The vehicle ground-plant names are adapted to the existing SP function and
+  preserve the `529` / `66065` branch values. No final vehicle rewrite is replayed
+  here; V1 owns that work.
+- The malformed helicopter water comparison is left unchanged. Its correction
+  is an independent behavior fix in the mixed commit, outside the refactor goal.
+
+Token comparison passes for all 57 production files under applicable SP/MP
+preprocessing after reviewed name/constant normalization, surface extraction,
+assertion line movement and the equivalent vehicle mask assignment. The moved
+60-entry table matches every prior string and numeric field, including the
+historical `foilage` spelling, opaque-glass alias and zero sentinel.
+
+The existing gameplay gate compiles the production table/name functions,
+`PM_playerTrace` and touch registration. It freezes all 32 contents bits, aliases,
+profile/physics masks and surface boundaries; tests all encoded surface types
+with unrelated/sign bits; preserves the 28-name lookup boundary; and exercises
+retry/no-retry masks and world-hit touch behavior. **245/245 portable Release
+tests pass**, with the final contents-bit extension checked again in the focused
+gate. Clang ASan/UBSan, dashboard and inventory checks pass. Hosted engine builds
+and protected review are still required before merge.

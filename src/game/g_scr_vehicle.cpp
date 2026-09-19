@@ -125,7 +125,7 @@ void __cdecl VEH_InitEntity(gentity_s *ent, scr_vehicle_s *veh, int32_t infoIdx)
 #ifdef KISAK_MP
     ent->handler = ENT_HANDLER_HELICOPTER;
     ent->r.svFlags = 4;
-    ent->r.contents = 8320;
+    ent->r.contents = MASK_WEAPONCLIP;
     ent->s.lerp.eFlags = 0;
     ent->s.lerp.pos.trType = TR_INTERPOLATE;
     ent->s.lerp.apos.trType = TR_INTERPOLATE;
@@ -150,9 +150,9 @@ void __cdecl VEH_InitEntity(gentity_s *ent, scr_vehicle_s *veh, int32_t infoIdx)
     int spawnflags = ent->spawnflags;
     ent->handler = ENT_HANDLER_VEHICLE_INIT;
     ent->r.svFlags = 4;
-    ent->r.contents = 8320;
+    ent->r.contents = MASK_WEAPONCLIP;
     if ((spawnflags & 1) != 0)
-        ent->r.contents = 0x202080;
+        ent->r.contents = MASK_WEAPONCLIP | CONTENTS_USE;
     ent->s.lerp.eFlags = 0;
     ent->s.eType = ET_VEHICLE;
     ent->s.lerp.pos.trType = TR_INTERPOLATE;
@@ -3733,7 +3733,7 @@ void VEH_SetupCollmap(gentity_s *ent)
         {
             ent->s.index.item = CollMap->s.index.item;
             SV_SetBrushModel(ent);
-            ent->r.contents = 0x800000;
+            ent->r.contents = CONTENTS_VEHICLE;
             if (ent->spawnflags & 1)
                 ent->r.contents = 0xA00000;
         }
@@ -4318,11 +4318,11 @@ void VEH_GroundPlant(gentity_s *ent, vehicle_physic_t *phys, int gravity)
     scr_vehicle = ent->scr_vehicle;
     info = &s_vehicleInfos[scr_vehicle->infoIdx];
     iassert((info->type == VEH_WHEELS_4) || (info->type == VEH_TANK));
-    content = 529;
+    content = CONTENTS_SOLID | CONTENTS_GLASS | CONTENTS_VEHICLECLIP;
     numWheels = info->type == 0 ? 4 : 6;
 
     if ((scr_vehicle->flags & 1) != 0)
-        content = 66065;
+        content |= CONTENTS_PLAYERCLIP;
 
     //angles = phys->angles;
 
@@ -4387,7 +4387,7 @@ void VEH_GroundPlant(gentity_s *ent, vehicle_physic_t *phys, int gravity)
         else
         {
             Vec3Lerp(traceStart, traceEnd, trace.fraction, hitPos);
-            phys->wheelSurfType[i] = (trace.surfaceFlags >> 20) & 0x1F;
+            phys->wheelSurfType[i] = SURF_TYPEINDEX(trace.surfaceFlags);
         }
 
         if (gravity)

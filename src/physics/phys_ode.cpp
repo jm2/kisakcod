@@ -1,3 +1,4 @@
+#include <universal/surfaceflags.h>
 #include "phys_local.h"
 #include <qcommon/sys_time.h>
 #include <qcommon/mem_track.h>
@@ -5227,15 +5228,15 @@ void __cdecl Phys_PlayCollisionSound(int localClientNum, dxBody *body, uint32_t 
                 "sndClass doesn't index AUDIOPHYS_CLASSMAX\n\t%i not in [0, %i)",
                 sndClass,
                 50);
-        if (((contactList->contacts[0].surfFlags & 0x1F00000) >> 20) >= 0x1Du)
+        if (SURF_TYPEINDEX(contactList->contacts[0].surfFlags) >= 0x1Du)
             MyAssertHandler(
                 ".\\physics\\phys_ode.cpp",
                 1294,
                 0,
                 "SURF_TYPEINDEX( contactList->contacts[0].surfFlags ) doesn't index SURF_TYPECOUNT\n\t%i not in [0, %i)",
-                (contactList->contacts[0].surfFlags & 0x1F00000) >> 20,
+                SURF_TYPEINDEX(contactList->contacts[0].surfFlags),
                 29);
-        sound = cgMedia.physCollisionSound[sndClass][(contactList->contacts[0].surfFlags & 0x1F00000) >> 20];
+        sound = cgMedia.physCollisionSound[sndClass][SURF_TYPEINDEX(contactList->contacts[0].surfFlags)];
         if (sound)
             SND_AddPhysicsSound(sound, pos);
     }

@@ -2,6 +2,7 @@
 #error This File is MultiPlayer Only
 #endif
 
+#include <universal/surfaceflags.h>
 #include "cg_local_mp.h"
 #include <qcommon/sys_time.h>
 #include "cg_public_mp.h"
@@ -530,14 +531,14 @@ void __cdecl SetupPoseControllers(int32_t localClientNum, DObj_s *obj, centity_s
                 Vec3Mad(wheelPos, 40.0, axis[2], traceStart);
                 scale = -suspTravel;
                 Vec3Mad(wheelPos, scale, axis[2], traceEnd);
-                CG_TraceCapsule(&trace, traceStart, (float *)vec3_origin, (float *)vec3_origin, traceEnd, ns->number, 529);
+                CG_TraceCapsule(&trace, traceStart, (float *)vec3_origin, (float *)vec3_origin, traceEnd, ns->number, CONTENTS_SOLID | CONTENTS_GLASS | CONTENTS_VEHICLECLIP);
                 v5 = CompressUnit(trace.fraction);
                 cent->pose.vehicle.wheelFraction[tireIdx] = v5;
                 if (tireIdx == cgameGlob->vehicleFrame % 4)
                 {
                     fxInfo->tireActive[tireIdx] = 1;
                     Vec3Lerp(traceStart, traceEnd, trace.fraction, fxInfo->tireGroundPoint[tireIdx]);
-                    fxInfo->tireGroundSurfType[tireIdx] = (trace.surfaceFlags & 0x1F00000) >> 20;
+                    fxInfo->tireGroundSurfType[tireIdx] = SURF_TYPEINDEX(trace.surfaceFlags);
                 }
             }
         }
@@ -687,7 +688,7 @@ void __cdecl VehicleFXTest(int32_t localClientNum, const DObj_s *obj, centity_s 
             end[0] = v13;
             end[1] = v14;
             end[2] = v15;
-            CG_TraceCapsule(&trace, cent->currentState.pos.trBase, mins, maxs, end, entityNum, 2097);
+            CG_TraceCapsule(&trace, cent->currentState.pos.trBase, mins, maxs, end, entityNum, MASK_HELI_DUST_TRACE);
             nextDustInc = 1000;
             if (trace.fraction < 1.0)
             {

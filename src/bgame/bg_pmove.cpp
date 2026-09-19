@@ -1,3 +1,4 @@
+#include <universal/surfaceflags.h>
 #include "bg_public.h"
 #include "bg_local.h"
 #include <universal/profile.h>
@@ -160,12 +161,12 @@ void __cdecl PM_playerTrace(
     uint16_t EntityHitId; // ax
 
     pmoveHandlers[pm->handler].trace(results, start, mins, maxs, end, passEntityNum, contentMask);
-    if (results->startsolid && (results->contents & 0x2000000) != 0)
+    if (results->startsolid && (results->contents & CONTENTS_PLAYER) != 0)
     {
         EntityHitId = Trace_GetEntityHitId(results);
         PM_AddTouchEnt(pm, EntityHitId);
-        pm->tracemask &= ~0x2000000u;
-        pmoveHandlers[pm->handler].trace(results, start, mins, maxs, end, passEntityNum, contentMask & 0xFDFFFFFF);
+        pm->tracemask &= ~CONTENTS_PLAYER;
+        pmoveHandlers[pm->handler].trace(results, start, mins, maxs, end, passEntityNum, contentMask & ~CONTENTS_PLAYER);
     }
 }
 
@@ -339,10 +340,10 @@ uint32_t __cdecl PM_GroundSurfaceType(pml_t *pml)
 
     iassert(pml);
 
-    if ((pml->groundTrace.surfaceFlags & 0x2000) != 0)
+    if ((pml->groundTrace.surfaceFlags & SURF_NOSTEPS) != 0)
         return 0;
 
-    iSurfType = (pml->groundTrace.surfaceFlags & 0x1F00000) >> 20;
+    iSurfType = SURF_TYPEINDEX(pml->groundTrace.surfaceFlags);
 
     iassert(iSurfType < SURF_TYPECOUNT);
 
@@ -432,11 +433,11 @@ void __cdecl PM_FootstepEvent(pmove_t *pm, pml_t *pml, char iOldBobCycle, char i
                 iassert(maxs[1] >= mins[1]);
                 iassert(maxs[2] >= mins[2]);
 
-                iClipMask = pm->tracemask & 0xFDFEFFFF;
+                iClipMask = pm->tracemask & ~(CONTENTS_PLAYER | CONTENTS_PLAYERCLIP);
                 fTraceDist = -31.0;
                 Vec3Mad(ps->origin, -31.0, ps->vLadderVec, vEnd);
                 PM_playerTrace(pm, &trace, ps->origin, mins, maxs, vEnd, ps->clientNum, iClipMask);
-                iSurfaceType = (trace.surfaceFlags & 0x1F00000) >> 20;
+                iSurfaceType = SURF_TYPEINDEX(trace.surfaceFlags);
                 if (trace.fraction == 1.0 || !iSurfaceType)
                     iSurfaceType = 21;
                 BG_AddPredictableEventToPlayerstate(EV_FOOTSTEP_RUN, iSurfaceType, ps);
@@ -591,7 +592,7 @@ void __cdecl PM_UpdateLean(
         tmaxs[0] = 8.0;
         tmaxs[1] = 8.0;
         tmaxs[2] = 8.0;
-        capsuleTrace(&trace, start, tmins, tmaxs, end, ps->clientNum, 0x2810011);
+        capsuleTrace(&trace, start, tmins, tmaxs, end, ps->clientNum, MASK_PLAYERSOLID);
         fLean = UnGetLeanFraction(trace.fraction);
         v5 = I_fabs(ps->leanf);
         if (fLean < (double)v5)
@@ -1384,7 +1385,7 @@ void __cdecl PmoveSingle(pmove_t *pm)
     }
     ps->pm_flags &= ~PMF_NO_PRONE;
     if (ps->pm_type >= PM_DEAD)
-        pm->tracemask &= ~0x2000000u;
+        pm->tracemask &= ~CONTENTS_PLAYER;
     if ((ps->pm_flags & PMF_PRONE) == 0 || BG_UsingSniperScope(ps))
     {
         ps->pm_flags &= ~PMF_PRONEMOVE_OVERRIDDEN;
@@ -1827,7 +1828,7 @@ bool __cdecl PM_CanStand(playerState_s *ps, pmove_t *pm)
         playerMaxs,
         ps->origin,
         ps->clientNum,
-        pm->tracemask & 0xFDFFFFFF);
+        pm->tracemask & ~CONTENTS_PLAYER);
 
     return !trace.allsolid;
 }
@@ -1909,7 +1910,7 @@ void __cdecl PM_Friction(playerState_s *ps, pml_t *pml)
         {
             drop = player_meleeChargeFriction->current.value * pml->frametime;
         }
-        else if (pml->walking && (pml->groundTrace.surfaceFlags & 2) == 0 && (ps->pm_flags & PMF_TIME_KNOCKBACK) == 0)
+        else if (pml->walking && (pml->groundTrace.surfaceFlags & SURF_SLICK) == 0 && (ps->pm_flags & PMF_TIME_KNOCKBACK) == 0)
         {
             if (stopspeed->current.value <= (double)speed)
                 value = speed;
@@ -2345,7 +2346,7 @@ void __cdecl PM_WalkMove(pmove_t *pm, pml_t *pml)
         PM_ProjectVelocity(wishdir, pml->groundTrace.normal, wishdir);
         iStance = PM_GetEffectiveStance(ps);
 
-        if ((pml->groundTrace.surfaceFlags & 2) != 0 || (ps->pm_flags & PMF_TIME_KNOCKBACK) != 0)
+        if ((pml->groundTrace.surfaceFlags & SURF_SLICK) != 0 || (ps->pm_flags & PMF_TIME_KNOCKBACK) != 0)
         {
             acceleration = 1.0;
         }
@@ -2367,7 +2368,7 @@ void __cdecl PM_WalkMove(pmove_t *pm, pml_t *pml)
 
         PM_Accelerate(ps, pml, wishdir, wishspeed, acceleration);
 
-        if ((pml->groundTrace.surfaceFlags & 2) != 0 || (ps->pm_flags & PMF_TIME_KNOCKBACK) != 0)
+        if ((pml->groundTrace.surfaceFlags & SURF_SLICK) != 0 || (ps->pm_flags & PMF_TIME_KNOCKBACK) != 0)
             ps->velocity[2] = ps->velocity[2] - (double)ps->gravity * pml->frametime;
 
         PM_ProjectVelocity(ps->velocity, pml->groundTrace.normal, ps->velocity);
@@ -2825,7 +2826,7 @@ void __cdecl PM_CrashLand(playerState_s *ps, pml_t *pml)
         if (bg_fallDamageMinHeight->current.value < (float)bg_fallDamageMaxHeight->current.value)
         {
             if (bg_fallDamageMinHeight->current.value >= (float)fallHeight
-                || (pml->groundTrace.surfaceFlags & 1) != 0
+                || (pml->groundTrace.surfaceFlags & SURF_NODAMAGE) != 0
                 || ps->pm_type >= PM_DEAD)
             {
                 damage = 0;
@@ -2874,7 +2875,7 @@ void __cdecl PM_CrashLand(playerState_s *ps, pml_t *pml)
         surfaceType = PM_GroundSurfaceType(pml);
         if (damage)
         {
-            if (damage >= 100 || (pml->groundTrace.surfaceFlags & 2) != 0)
+            if (damage >= 100 || (pml->groundTrace.surfaceFlags & SURF_SLICK) != 0)
             {
                 Vec3Scale(ps->velocity, 0.67000002f, ps->velocity);
             }
@@ -3201,7 +3202,7 @@ void __cdecl PM_CheckDuck(pmove_t *pm, pml_t *pml)
                                     pm->maxs,
                                     ps->origin,
                                     ps->clientNum,
-                                    pm->tracemask & 0xFDFFFFFF);
+                                    pm->tracemask & ~CONTENTS_PLAYER);
                                 if (trace.allsolid)
                                 {
                                     if ((pm->cmd.buttons & 0x1000) == 0)
@@ -3233,7 +3234,7 @@ void __cdecl PM_CheckDuck(pmove_t *pm, pml_t *pml)
                                 pm->maxs,
                                 ps->origin,
                                 ps->clientNum,
-                                pm->tracemask & 0xFDFFFFFF);
+                                pm->tracemask & ~CONTENTS_PLAYER);
                             if (trace.allsolid)
                             {
                                 pm->maxs[2] = 50.0;
@@ -3244,7 +3245,7 @@ void __cdecl PM_CheckDuck(pmove_t *pm, pml_t *pml)
                                     pm->maxs,
                                     ps->origin,
                                     ps->clientNum,
-                                    pm->tracemask & 0xFDFFFFFF);
+                                    pm->tracemask & ~CONTENTS_PLAYER);
                                 if (trace.allsolid)
                                 {
                                     if ((pm->cmd.buttons & 0x1000) == 0)
@@ -3273,7 +3274,7 @@ void __cdecl PM_CheckDuck(pmove_t *pm, pml_t *pml)
                                 pm->maxs,
                                 ps->origin,
                                 ps->clientNum,
-                                pm->tracemask & 0xFDFFFFFF);
+                                pm->tracemask & ~CONTENTS_PLAYER);
                             if (trace.allsolid)
                             {
                                 if ((pm->cmd.buttons & 0x1000) == 0)
@@ -3391,7 +3392,7 @@ void __cdecl PM_CheckDuck(pmove_t *pm, pml_t *pml)
                     pm->maxs,
                     vEnd,
                     ps->clientNum,
-                    pm->tracemask & 0xFDFFFFFF);
+                    pm->tracemask & ~CONTENTS_PLAYER);
                 Vec3Lerp(ps->origin, vEnd, trace.fraction, vEnd);
                 pmoveHandlers[pm->handler].trace(
                     &trace,
@@ -3400,7 +3401,7 @@ void __cdecl PM_CheckDuck(pmove_t *pm, pml_t *pml)
                     pm->maxs,
                     ps->origin,
                     ps->clientNum,
-                    pm->tracemask & 0xFDFFFFFF);
+                    pm->tracemask & ~CONTENTS_PLAYER);
                 Vec3Lerp(vEnd, ps->origin, trace.fraction, ps->origin);
                 ps->proneDirection = ps->viewangles[1];
                 vPoint[0] = ps->origin[0];
@@ -3414,7 +3415,7 @@ void __cdecl PM_CheckDuck(pmove_t *pm, pml_t *pml)
                     pm->maxs,
                     vPoint,
                     ps->clientNum,
-                    pm->tracemask & 0xFDFFFFFF);
+                    pm->tracemask & ~CONTENTS_PLAYER);
                 if (trace.startsolid || trace.fraction >= 1.0)
                 {
                     ps->proneDirectionPitch = 0.0;
@@ -4308,7 +4309,7 @@ void __cdecl PM_CheckLadderMove(pmove_t *pm, pml_t *pml)
 
                 Vec3Mad(ps->origin, tracedist, vLadderCheckDir, spot);
                 PM_playerTrace(pm, &trace, ps->origin, mins, maxs, spot, ps->clientNum, pm->tracemask);
-                if (trace.fraction >= 1.0 || (trace.surfaceFlags & 8) == 0 || pml->walking && pm->cmd.forwardmove <= 0)
+                if (trace.fraction >= 1.0 || (trace.surfaceFlags & SURF_LADDER) == 0 || pml->walking && pm->cmd.forwardmove <= 0)
                     goto LABEL_45;
 
                 if ((ps->pm_flags & PMF_LADDER) != 0)
@@ -4326,7 +4327,7 @@ void __cdecl PM_CheckLadderMove(pmove_t *pm, pml_t *pml)
                 if (trace.fraction >= 1.0)
                     goto LABEL_45;
 
-                if ((trace.surfaceFlags & 8) != 0)
+                if ((trace.surfaceFlags & SURF_LADDER) != 0)
                 {
                 LABEL_42:
                     PM_SetLadderFlag(ps);

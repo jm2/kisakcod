@@ -1,3 +1,4 @@
+#include <universal/surfaceflags.h>
 #include "r_material.h"
 #include <database/db_validation.h>
 #include "r_utils.h"
@@ -6032,7 +6033,7 @@ Material *__cdecl Material_LoadRaw(const MaterialRaw *mtlRaw, uint32_t materialT
     material->info.name = strDest;
     iassert(!material->info.drawSurf.fields.materialSortedIndex);
     material->info.gameFlags = mtlRaw->info.gameFlags;
-    v4 = (mtlRaw->info.surfaceFlags & 0x1F00000) >> 20;
+    v4 = SURF_TYPEINDEX(mtlRaw->info.surfaceFlags);
     surfIndex = v4;
     if (v4)
     {
@@ -6139,7 +6140,7 @@ Material *__cdecl Material_LoadRaw(const MaterialRaw *mtlRaw, uint32_t materialT
             0,
             "%s",
             "!(material->info.gameFlags & MTL_GAMEFLAG_CASTS_SHADOW)");
-    if ((mtlRaw->info.surfaceFlags & 0x40000) == 0
+    if ((mtlRaw->info.surfaceFlags & SURF_NOCASTSHADOW) == 0
         && Material_GetTechnique(material, TECHNIQUE_BUILD_SHADOWMAP_DEPTH)
         && (material->stateFlags & 4) == 0)
     {

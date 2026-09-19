@@ -1,3 +1,4 @@
+#include <universal/surfaceflags.h>
 #include "qcommon.h"
 #include "threads.h"
 
@@ -207,7 +208,7 @@ void __cdecl CM_Trace(
     iassert( results->surfaceFlags != SURF_INVALID );
     oldSurfaceFlags = results->surfaceFlags;
     oldFrac = results->fraction;
-    results->surfaceFlags = -1;
+    results->surfaceFlags = SURF_INVALID;
     if (*end == *start && end[1] == start[1] && end[2] == start[2])
     {
         tw.isPoint = 0;
@@ -274,7 +275,7 @@ void __cdecl CM_Trace(
     }
     else
     {
-        if (results->surfaceFlags != -1 && oldFrac != results->fraction)
+        if (results->surfaceFlags != SURF_INVALID && oldFrac != results->fraction)
             MyAssertHandler(
                 ".\\qcommon\\cm_trace.cpp",
                 1476,
@@ -452,7 +453,7 @@ void __cdecl CM_TestBoxInBrush(const traceWork_t *tw, cbrush_t *brush, trace_t *
         trace->allsolid = 1;
         trace->fraction = 0.0;
         trace->contents = brush->contents;
-        trace->surfaceFlags = 0;
+        trace->surfaceFlags = SURF_NONE;
     }
 }
 
@@ -513,7 +514,7 @@ void __cdecl CM_TestCapsuleInCapsule(const traceWork_t *tw, trace_t *trace)
         trace->startsolid = 1;
         trace->allsolid = 1;
         trace->fraction = 0.0;
-        trace->surfaceFlags = 0;
+        trace->surfaceFlags = SURF_NONE;
         return;
     }
     Vec3Sub(p2, bottom, tmp);
@@ -523,7 +524,7 @@ void __cdecl CM_TestCapsuleInCapsule(const traceWork_t *tw, trace_t *trace)
         trace->startsolid = 1;
         trace->allsolid = 1;
         trace->fraction = 0.0;
-        trace->surfaceFlags = 0;
+        trace->surfaceFlags = SURF_NONE;
         return;
     }
     fHeightDiff = tw->extents.start[2] - offset[2];
@@ -541,7 +542,7 @@ void __cdecl CM_TestCapsuleInCapsule(const traceWork_t *tw, trace_t *trace)
             trace->startsolid = 1;
             trace->allsolid = 1;
             trace->fraction = 0.0;
-            trace->surfaceFlags = 0;
+            trace->surfaceFlags = SURF_NONE;
         }
     }
 }
@@ -1007,7 +1008,7 @@ void __cdecl CM_TraceThroughBrush(const traceWork_t *tw, cbrush_t *brush, trace_
         {
             trace->allsolid = 1;
             trace->fraction = 0.0;
-            trace->surfaceFlags = 0;
+            trace->surfaceFlags = SURF_NONE;
         }
     }
 }
@@ -1187,7 +1188,7 @@ int __cdecl CM_TraceSphereThroughSphere(
                     trace->normal[2] = vNormal[2];
                     trace->contents = tw->threadInfo.box_brush->contents;
                     trace->walkable = 0;
-                    trace->surfaceFlags = 0;
+                    trace->surfaceFlags = SURF_NONE;
                     return 0;
                 }
             }
@@ -1208,7 +1209,7 @@ int __cdecl CM_TraceSphereThroughSphere(
         trace->walkable = 0;
         Vec3NormalizeTo(vDelta, trace->normal);
         trace->contents = tw->threadInfo.box_brush->contents;
-        trace->surfaceFlags = 0;
+        trace->surfaceFlags = SURF_NONE;
         Vec3Sub(vEnd, vStationary, vDelta);
         if (fRadiusSqrd >= Vec3LengthSq(vDelta))
             trace->allsolid = 1;
@@ -1292,7 +1293,7 @@ int __cdecl CM_TraceCylinderThroughCylinder(
                         trace->normal[1] = vNormal[1];
                         trace->normal[2] = vNormal[2];
                         trace->contents = tw->threadInfo.box_brush->contents;
-                        trace->surfaceFlags = 0;
+                        trace->surfaceFlags = SURF_NONE;
                         trace->walkable = 0;
                         return 0;
                     }
@@ -1325,7 +1326,7 @@ int __cdecl CM_TraceCylinderThroughCylinder(
             vDelta[2] = 0.0;
             Vec3NormalizeTo(vDelta, trace->normal);
             trace->contents = tw->threadInfo.box_brush->contents;
-            trace->surfaceFlags = 0;
+            trace->surfaceFlags = SURF_NONE;
             Vec3Sub(tw->extents.end, vStationary, vDelta);
             iassert( fTotalHeight >= 0 );
             v10 = I_fabs(vDelta[2]);

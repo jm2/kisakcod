@@ -1,3 +1,4 @@
+#include <universal/surfaceflags.h>
 #include "game_public.h"
 #include <bgame/bg_weapon_model_safety.h>
 #include <server/sv_world.h>
@@ -287,7 +288,7 @@ char __cdecl Melee_Trace(
         Vec3Lerp(wp->muzzleTrace, end, trace->fraction, endPos);
         if (!traceIndex)
             G_CheckHitTriggerDamage(ent, wp->muzzleTrace, endPos, damage, 7u);
-        if ((trace->surfaceFlags & 0x10) == 0 && trace->fraction != 1.0)
+        if ((trace->surfaceFlags & SURF_NOIMPACT) == 0 && trace->fraction != 1.0)
         {
             if (melee_debug->current.enabled)
                 G_DebugLineWithDuration(wp->muzzleTrace, endPos, colorGreen, 1, 200);
@@ -309,7 +310,7 @@ char __cdecl Melee_Trace(
             G_DebugLineWithDuration(start, end, colorRed, 1, 200);
         G_LocationalTrace(trace, start, end, ent->s.number, 0x2806891, bulletPriorityMap);
         Vec3Lerp(start, end, trace->fraction, endPos);
-        if ((trace->surfaceFlags & 0x10) == 0 && !trace->startsolid && trace->fraction != 1.0)
+        if ((trace->surfaceFlags & SURF_NOIMPACT) == 0 && !trace->startsolid && trace->fraction != 1.0)
             return 1;
     }
     return 0;

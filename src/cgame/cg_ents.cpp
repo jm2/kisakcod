@@ -1145,7 +1145,7 @@ void __cdecl CG_Vehicle_PreControllers(int localClientNum, const DObj_s *obj, ce
                 end[1] = (axis[2][1] * (-height)) + transformed[1];
                 end[2] = (axis[2][2] * (-height)) + transformed[2];
 
-                CG_TraceCapsule(&traceresults, start, vec3_origin, vec3_origin, end, cent->nextState.number, 529);
+                CG_TraceCapsule(&traceresults, start, vec3_origin, vec3_origin, end, cent->nextState.number, CONTENTS_SOLID | CONTENTS_GLASS | CONTENTS_VEHICLECLIP);
                 //HIWORD(v24->triggerTime) = CompressUnit(v39.fraction);
                 v24->triggerTime = CompressUnit(traceresults.fraction);
             }
