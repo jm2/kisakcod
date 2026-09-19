@@ -2734,12 +2734,23 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     # these files -- it silently dropped the huffman-wire contract target's
     # /W4 coverage of huffman.cpp (refinery review, Codex finding).
     # Target-level options on the object library keep the downgrade scoped to
-    # exactly these sources. Scoped to MSVC: msg_mp/huffman also compile
-    # under GCC/Clang in the portable huffman-wire target, where /W3 is not a
-    # valid flag.
+    # exactly these seven sources. Scoped to MSVC: msg_mp, huffman and the
+    # msg_bits_* TUs also compile under GCC/Clang in the portable
+    # huffman-wire/msg-wire-contract targets, where /W3 is not a valid flag.
+    # The four msg_bits_*_mp.cpp TUs are build-list enrollments only: the MSG
+    # bit primitives (MSG_Init/Write*/Read*/ReadAngle16,
+    # GetMinBitCountForNum) live there since the codec was split out of
+    # msg_mp.cpp, and net_chan_mp.cpp plus the Netchan_Process driver tests
+    # reference them -- without them this Win32-ILP32 link fails with
+    # unresolved externals. This mirrors the engine link set, where the split
+    # left msg_mp.cpp and msg_bits_*_mp.cpp with disjoint symbol sets.
     add_library(kisakcod-net-chan-production-objects OBJECT
         ${SRC_DIR}/qcommon/net_chan_mp.cpp
         ${SRC_DIR}/qcommon/msg_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_write_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_read_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_usercmd_mp.cpp
         ${SRC_DIR}/qcommon/huffman.cpp
         # NET_StringToAdr resolves non-legacy platform-shaped addresses
         # through the portable socket service, so the selected platform
@@ -2800,6 +2811,44 @@ set_target_properties(kisakcod-huffman-wire-contract-tests PROPERTIES
 add_test(
     NAME huffman-wire-format-contracts
     COMMAND kisakcod-huffman-wire-contract-tests
+)
+
+add_executable(kisakcod-msg-wire-contract-tests
+    msg_wire_contract_tests.cpp
+    msg_wire_delta_framing_tests.cpp
+    ${SRC_DIR}/qcommon/msg_bits_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_write_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_read_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_usercmd_mp.cpp
+    ${SRC_DIR}/qcommon/huffman.cpp
+)
+# Links the production MP bit-codec (the msg_bits_*_mp.cpp TUs, the code
+# motion of the MSG bit primitives out of msg_mp.cpp, split by function
+# family for the static-analysis file-size budget) together with the Huffman
+# codec, so
+# every wire golden is checked against the real retail encoder/decoder rather
+# than a reimplementation. The two test TUs share the harness and link stubs
+# in msg_wire_test_harness.hpp. The engine headers AND the decompiled
+# production TUs are not -Wall -Wextra clean (the engine build does not enable
+# those flags), so the strict warning set applies to the test's own code only.
+target_include_directories(kisakcod-msg-wire-contract-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-msg-wire-contract-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-msg-wire-contract-tests PRIVATE KISAK_MP)
+if (MSVC)
+    set_source_files_properties(msg_wire_contract_tests.cpp
+        msg_wire_delta_framing_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "/W4;/WX")
+else()
+    set_source_files_properties(msg_wire_contract_tests.cpp
+        msg_wire_delta_framing_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+endif()
+set_target_properties(kisakcod-msg-wire-contract-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME msg-wire-format-contracts
+    COMMAND kisakcod-msg-wire-contract-tests
 )
 
 add_executable(kisakcod-vehicle-material-time-tests
