@@ -560,6 +560,38 @@ void StageHeadParseContentLengthOverflow()
         "head-content-length-overflow");
     Check(!head.hasContentLength, "head-content-length-overflow");
 
+    // 40 decimal digits overflow the parser's scratch buffer before the
+    // arithmetic guard runs; an all-decimal span still rejects the head
+    // instead of silently falling back to connection-close framing,
+    // where a short body followed by the peer's close would pass as
+    // complete.
+    static const char fortyDigits[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 9999999999999999999999999999999999999999\r\n"
+        "\r\n"
+        "0123456789";
+    length = static_cast<std::uint32_t>(sizeof(fortyDigits) - 1);
+    CopyBounded(buffer, sizeof(buffer), fortyDigits, length);
+    Check(Dl_ParseResponseHead(buffer, &length, &head)
+            == DlResponseEvent::StatusError,
+        "head-content-length-overlong");
+    Check(!head.hasContentLength, "head-content-length-overlong");
+
+    // An over-long non-decimal value keeps the lenient absent-length
+    // behavior: the head completes with no declared length.
+    static const char overlongNonDecimal[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: "
+        "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqr\r\n"
+        "\r\n"
+        "body";
+    length = static_cast<std::uint32_t>(sizeof(overlongNonDecimal) - 1);
+    CopyBounded(buffer, sizeof(buffer), overlongNonDecimal, length);
+    Check(Dl_ParseResponseHead(buffer, &length, &head)
+            == DlResponseEvent::HeadComplete,
+        "head-content-length-overlong-lenient");
+    Check(!head.hasContentLength, "head-content-length-overlong-lenient");
+
     // 2^64 - 1, the largest representable length, still parses.
     static const char maxLegal[] =
         "HTTP/1.1 200 OK\r\n"

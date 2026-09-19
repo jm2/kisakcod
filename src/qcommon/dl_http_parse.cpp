@@ -141,6 +141,29 @@ bool SplitHeaderLine(const char *const line,
     return false;
 }
 
+// True when the whitespace-trimmed span is non-empty and every byte is
+// a decimal digit. Distinguishes an over-long all-decimal
+// Content-Length (a malformed length that must reject) from other
+// over-long values, which stay lenient.
+bool TrimmedAllDecimal(const char *const value,
+    const std::uint32_t length) noexcept
+{
+    std::uint32_t begin = 0;
+    std::uint32_t end = length;
+    while (begin < end && IsHeaderSpace(value[begin]))
+        ++begin;
+    while (end > begin && IsHeaderSpace(value[end - 1]))
+        --end;
+    if (begin == end)
+        return false;
+    for (std::uint32_t index = begin; index < end; ++index)
+    {
+        if (value[index] < '0' || value[index] > '9')
+            return false;
+    }
+    return true;
+}
+
 // Parses a Content-Length value: trimmed decimal digits only, as the
 // retail library accepted. False when the value is empty, non-decimal,
 // or too long for the parser -- an absent length, exactly as before.
@@ -148,6 +171,9 @@ bool SplitHeaderLine(const char *const line,
 // that is a malformed response rather than an absent length, and the
 // caller rejects the head instead of letting the value wrap (2^64 would
 // silently parse as a length of 0 and mark a truncated body complete).
+// The same applies to an all-decimal value too long for the scratch
+// buffer: falling back to read-until-close framing there would let a
+// short body followed by the peer's close pass as complete.
 bool ParseContentLength(const char *const value,
     const std::uint32_t valueLength,
     std::uint64_t *const outLength,
@@ -157,7 +183,13 @@ bool ParseContentLength(const char *const value,
     char digits[32];
     std::uint32_t digitsLength = 0;
     if (!TrimCopy(value, valueLength, digits, sizeof(digits), &digitsLength))
+    {
+        // Over-long for the scratch buffer: every all-decimal value this
+        // large is past 2^64-1 (20 digits suffice), so it is an overflow
+        // whenever the trimmed span is entirely decimal.
+        *outOverflow = TrimmedAllDecimal(value, valueLength);
         return false;
+    }
     if (digitsLength == 0)
         return false;
     std::uint64_t parsed = 0;
