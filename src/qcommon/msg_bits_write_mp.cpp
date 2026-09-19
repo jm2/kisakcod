@@ -18,6 +18,11 @@
 //     bound is one past the scan the retail strlen could perform on a
 //     non-terminated input, and for every NUL-terminated input (the only
 //     kind the callers produce) strnlen returns the same length.
+//   - MSG_WriteShort / MSG_WriteLong: the retail unaligned *_WORD* /
+//     uint32_t* cursor stores are replaced by sizeof-sized memcpy stores
+//     (UBSan misaligned-store finding); both compile to the identical
+//     little-endian 2- / 4-byte store sequence the retail x86 binary
+//     emits, so the wire bytes are unchanged at every cursor alignment.
 
 #ifndef KISAK_MP
 static_assert(false, "This File is MultiPlayer Only");
@@ -73,7 +78,10 @@ void __cdecl MSG_WriteShort(msg_t *msg, __int16 c)
     }
     else
     {
-        *(_WORD *)&msg->data[msg->cursize] = c;
+        // sizeof-sized memcpy instead of the retail unaligned _WORD* store
+        // (UBSan misaligned-store finding); same little-endian bytes at the
+        // same cursor, retail wire output unchanged.
+        memcpy(&msg->data[msg->cursize], &c, sizeof(c));
         msg->cursize = newsize;
     }
 }
@@ -90,7 +98,10 @@ void __cdecl MSG_WriteLong(msg_t *msg, int c)
     }
     else
     {
-        *(uint32_t *)&msg->data[msg->cursize] = c;
+        // sizeof-sized memcpy instead of the retail unaligned uint32_t*
+        // store (UBSan misaligned-store finding); same little-endian bytes
+        // at the same cursor, retail wire output unchanged.
+        memcpy(&msg->data[msg->cursize], &c, sizeof(c));
         msg->cursize = newsize;
     }
 }

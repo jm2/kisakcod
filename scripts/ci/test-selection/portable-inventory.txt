@@ -145,6 +145,7 @@ identity-format-and-overflow
 missile-layout-mp-compile-contracts
 missile-layout-sp-compile-contracts
 missile-union-layout-source-invariants
+msg-wire-format-contracts
 msvc-printf-shim-contracts
 net-chan-reassembly-span-contracts
 net-wire-format-contracts
