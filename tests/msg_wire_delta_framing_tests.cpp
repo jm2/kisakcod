@@ -211,12 +211,13 @@ void test_usercmd_high_path()
     const std::uint8_t want[] = {0x89, 0x05, 0x41, 0xAD, 0xC1, 0x5A,
                                  0xFB, 0xD9, 0xD4, 0xAD, 0x68};
     const WireSpan spans[] = {
+        {"highpath-flags", 0, 0, 8}, {"servertime-delta", 1, 0, 8},
         {"buttons>>1-20bit", 4, 0, 8}, {"buttons>>1-mid", 5, 0, 8},
         {"buttons>>1-tail+weapon", 6, 0, 8}, {"offhand+flags", 7, 0, 8},
         {"angles2-xored", 2, 0, 16}, {"meleeYaw-xored", 8, 0, 16},
         {"meleeDist-xored", 10, 0, 8},
     };
-    compareWire(m, "usercmd high path", want, sizeof(want), spans, 7);
+    compareWire(m, "usercmd high path", want, sizeof(want), spans, 9);
 
     MSG_BeginReading(&m);
     usercmd_s out{};
