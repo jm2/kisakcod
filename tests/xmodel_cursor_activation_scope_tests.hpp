@@ -3,7 +3,11 @@
 //
 // Organizational split only, mirroring xmodel_nested_cursor_walks.hpp:
 // the activation-scoping contract section lives here so the suite TU
-// stays within the file-size analyzer budget. This header is included
+// stays within the file-size analyzer budget, and the
+// TestSeekRejectsStaleActivationCheckpoints case groups are extracted
+// into named stage helpers (per rejection class) so every function
+// stays within the per-function budget — the ki-oh65/ki-dkeb stage
+// split precedent, bodies moved verbatim. This header is included
 // by exactly one TU, xmodel_nested_cursor_test.cpp, AFTER that TU
 // defines its Checker instance and the CHECK macro these contracts
 // evaluate through; no contract state is shared and no assertion is
@@ -39,12 +43,17 @@
 
 namespace xmodel_nested_cursor_test
 {
-// A checkpoint captured on one activation is stale after the matching
-// Deactivate — even against the same buffer re-activated or a larger
-// fresh buffer. SeekTo must reject it through the latched-failed path
-// without moving the cursor or the anchored *pos, while a checkpoint
-// of the live activation with the same offset still seeks.
-inline bool TestSeekRejectsStaleActivationCheckpoints()
+// TestSeekRejectsStaleActivationCheckpoints is split into named stages
+// per rejection class (capture/teardown-zero, same-buffer re-activation
+// mismatch, larger-fresh-window, positive control) so each helper stays
+// within the per-function analyzer budget — the ki-oh65/ki-dkeb stage
+// split precedent. Every CHECK below is byte-identical to the original
+// single-body version; only the function boundaries moved.
+
+// Stage: capture a checkpoint at top level, then tear the cursor stack
+// back down to zero active cursors with a clean failure state. The
+// returned checkpoint is stale against every later activation.
+inline buf_cursor::Checkpoint CaptureStaleCheckpointTopLevelTeardownZero()
 {
     unsigned char bufferA[8] = {};
     unsigned char *posA = bufferA;
@@ -58,7 +67,15 @@ inline bool TestSeekRejectsStaleActivationCheckpoints()
     buf_cursor::Deactivate();
     CHECK(buf_cursor::Current() == nullptr);
     CHECK(!buf_cursor::Failed());
+    return staleCheckpoint;
+}
 
+// Stage (activation mismatch): the old checkpoint must not apply even
+// though its offset (4) fits the re-activated same-size window exactly.
+inline void RejectStaleCheckpointSameBufferReactivate(
+    const buf_cursor::Checkpoint &staleCheckpoint)
+{
+    unsigned char bufferA[8] = {};
     // Same buffer re-activated: the generation has moved on, so the
     // old checkpoint must not apply even though its offset (4) fits
     // this window exactly. Buffer identity alone is not activation
@@ -74,11 +91,18 @@ inline bool TestSeekRejectsStaleActivationCheckpoints()
     buf_cursor::Deactivate();
     CHECK(buf_cursor::Current() == nullptr);
     CHECK(!buf_cursor::Failed());
+}
 
+// Stage (out-of-window identity): a fresh, LARGER window must reject
+// the stale checkpoint too — the rejection is identity-driven, not
+// size-driven.
+inline void RejectStaleCheckpointLargerFreshWindow(
+    const buf_cursor::Checkpoint &staleCheckpoint)
+{
+    unsigned char bufferB[16] = {};
     // Fresh activation over a LARGER buffer: the stale offset (4) fits
     // the 16-byte window a fortiori and must still be rejected — the
     // rejection is identity-driven, not size-driven.
-    unsigned char bufferB[16] = {};
     unsigned char *posB = bufferB;
     buf_cursor::Activate(bufferB, sizeof(bufferB));
     buf_cursor::AnchorPos(&posB);
@@ -89,7 +113,15 @@ inline bool TestSeekRejectsStaleActivationCheckpoints()
     CHECK(posB == bufferB);
     buf_cursor::Deactivate();
     CHECK(!buf_cursor::Failed());
+}
 
+// Stage (positive control): a checkpoint of the LIVE activation with
+// the very same offset value is accepted, so the rejections above
+// turned on activation identity, not on the offset value or window.
+inline void AcceptOwnActivationCheckpointSameWindow(
+    const buf_cursor::Checkpoint &staleCheckpoint)
+{
+    unsigned char bufferB[16] = {};
     // Positive control on the same 16-byte window: a checkpoint of
     // THIS activation with the very same offset value (4) is accepted,
     // and a hand-built same-activation checkpoint at offset 0 seeks
@@ -112,6 +144,20 @@ inline bool TestSeekRejectsStaleActivationCheckpoints()
     buf_cursor::Deactivate();
     CHECK(buf_cursor::Current() == nullptr);
     CHECK(!buf_cursor::Failed());
+}
+
+// A checkpoint captured on one activation is stale after the matching
+// Deactivate — even against the same buffer re-activated or a larger
+// fresh buffer. SeekTo must reject it through the latched-failed path
+// without moving the cursor or the anchored *pos, while a checkpoint
+// of the live activation with the same offset still seeks.
+inline bool TestSeekRejectsStaleActivationCheckpoints()
+{
+    const buf_cursor::Checkpoint staleCheckpoint =
+        CaptureStaleCheckpointTopLevelTeardownZero();
+    RejectStaleCheckpointSameBufferReactivate(staleCheckpoint);
+    RejectStaleCheckpointLargerFreshWindow(staleCheckpoint);
+    AcceptOwnActivationCheckpointSameWindow(staleCheckpoint);
     return true;
 }
 
