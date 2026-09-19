@@ -2051,6 +2051,9 @@ void __cdecl CL_WWWDownload()
     char to_ospath[260]; // [esp+18h] [ebp-108h] BYREF
 
     ret = (dlStatus_t)DL_DownloadLoop();
+    // Feed the legacy progress meter from the transport; the retail
+    // library updated the same counter from its read callback.
+    legacyHacks.cl_downloadCount = DL_BytesRead();
     if (ret)
     {
         if (DL_DLIsMotd())
@@ -2086,14 +2089,23 @@ void __cdecl CL_WWWDownload()
         }
         else if (cls.wwwDlDisconnected)
         {
-            error = va("Download failure while getting %s", cls.downloadName);
+            char maskedUrl[1024];
+            // Failure-path parity with the parse-side masking: the raw
+            // cls.downloadName may still carry user:password@ here, and
+            // the drop message must uphold the same credential invariant.
+            CL_SanitizeDownloadUrl(cls.downloadName, maskedUrl,
+                sizeof(maskedUrl));
+            error = va("Download failure while getting %s", maskedUrl);
             cls.wwwDlDisconnected = 0;
             CL_ClearStaticDownload();
             Com_Error(ERR_DROP, "%s", error);
         }
         else
         {
-            Com_Printf(14, "Download failure while getting %s", cls.downloadName);
+            char maskedUrl[1024];
+            CL_SanitizeDownloadUrl(cls.downloadName, maskedUrl,
+                sizeof(maskedUrl));
+            Com_Printf(14, "Download failure while getting %s", maskedUrl);
             CL_AddReliableCommand(0, "wwwdl fail");
             cls.wwwDlInProgress = 0;
         }

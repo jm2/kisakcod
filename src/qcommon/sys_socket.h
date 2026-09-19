@@ -221,3 +221,122 @@ SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveHost(
     const char *hostname,
     std::uint16_t port,
     SysSocketAddress *outAddress);
+
+// ---- TCP stream client extension -------------------------------------------
+//
+// The datagram API above serves the game protocol; the download client
+// additionally needs a byte stream to speak HTTP to content redirectors. The
+// stream extension reuses the same opaque handle and endpoint types and
+// follows the same fail-closed contract: platform types stay out of this
+// header, null handles and null out-pointers are rejected before any system
+// call, and a failure return never leaves partially published state behind.
+
+enum class SysSocketStreamOpenStatus : std::uint8_t
+{
+    Opened,
+    InvalidArgument,
+    SystemFailure,
+};
+
+// Sys_SocketConnectStream outcomes. InProgress is reported only by a
+// non-blocking socket whose three-way handshake has not completed; the
+// caller then polls with Sys_SocketPollConnected until Ready or Failed.
+enum class SysSocketStreamConnectStatus : std::uint8_t
+{
+    Connected,
+    InProgress,
+    InvalidArgument,
+    InvalidHandle,
+    SystemFailure,
+};
+
+// Sys_SocketPollConnected outcomes for a connect still in flight. Ready
+// guarantees the connection was established; Failed reports the peer
+// refusal or network error (retrieved via SO_ERROR, so it is the real
+// failure, not a poll artifact).
+enum class SysSocketStreamPollStatus : std::uint8_t
+{
+    Ready,
+    InProgress,
+    Failed,
+    InvalidArgument,
+    InvalidHandle,
+    SystemFailure,
+};
+
+// Sys_SocketSendStream outcomes. Sent means at least one byte was accepted
+// by the transport; *outSentBytes carries how many (it may be below
+// byteCount when the send buffer filled). WouldBlock means nothing was
+// queued and the caller may retry the same payload unchanged.
+enum class SysSocketStreamSendStatus : std::uint8_t
+{
+    Sent,
+    WouldBlock,
+    Disconnected,
+    InvalidArgument,
+    InvalidHandle,
+    SystemFailure,
+};
+
+// Sys_SocketRecvStream outcomes for a stream socket. Received carries
+// 1..bufferCapacity bytes; Disconnected reports an orderly peer shutdown
+// (zero-byte read) or a reset, and means no further data will ever arrive.
+enum class SysSocketStreamRecvStatus : std::uint8_t
+{
+    Received,
+    WouldBlock,
+    Disconnected,
+    InvalidArgument,
+    InvalidHandle,
+    SystemFailure,
+};
+
+// Opens an unbound, unconnected TCP/IPv4 stream socket. No port is bound
+// and no connection is made; Sys_SocketConnectStream performs both for the
+// client role. When `nonBlocking` is true every subsequent stream
+// operation reports WouldBlock/InProgress instead of stalling. On success
+// *outHandle (which the caller must pass in null) receives a non-null
+// handle, closed later through the ordinary Sys_SocketClose.
+SysSocketStreamOpenStatus KISAK_CDECL Sys_SocketOpenStream(
+    bool nonBlocking,
+    SysSocketHandle *outHandle);
+
+// Connects `handle` to `destination`. On a blocking socket the call
+// reports Connected or SystemFailure. On a non-blocking socket it reports
+// InProgress while the handshake is pending (retry-independent: the
+// caller must not call connect again, only poll) and Connected when the
+// handshake completed inline.
+SysSocketStreamConnectStatus KISAK_CDECL Sys_SocketConnectStream(
+    SysSocketHandle handle,
+    const SysSocketAddress *destination);
+
+// Polls a non-blocking connect started by Sys_SocketConnectStream. Ready
+// means the connection is established and stream I/O may proceed; Failed
+// means the handshake was refused or errored; InProgress means the caller
+// should poll again later (after its frame yield). Calling this on a
+// connection that already completed is valid and reports Ready.
+SysSocketStreamPollStatus KISAK_CDECL Sys_SocketPollConnected(
+    SysSocketHandle handle);
+
+// Sends `byteCount` bytes from `data` on a connected stream. Partial
+// progress is reported through *outSentBytes on Sent (1..byteCount); the
+// caller resends the remainder from the offset. WouldBlock reports that
+// zero bytes were queued. Disconnected reports a broken connection; the
+// handle remains valid for Sys_SocketClose only.
+SysSocketStreamSendStatus KISAK_CDECL Sys_SocketSendStream(
+    SysSocketHandle handle,
+    const void *data,
+    std::uint32_t byteCount,
+    std::uint32_t *outSentBytes);
+
+// Receives stream bytes into `buffer`. On Received, *outByteCount holds
+// 1..bufferCapacity bytes copied. Disconnected reports an orderly peer
+// shutdown or a reset: the stream is finished and will never yield more
+// data. WouldBlock reports that no data was available on a non-blocking
+// socket; a blocking socket only returns Received or Disconnected (or a
+// failure status).
+SysSocketStreamRecvStatus KISAK_CDECL Sys_SocketRecvStream(
+    SysSocketHandle handle,
+    void *buffer,
+    std::uint32_t bufferCapacity,
+    std::uint32_t *outByteCount);

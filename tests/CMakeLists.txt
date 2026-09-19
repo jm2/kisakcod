@@ -2613,6 +2613,46 @@ add_test(
 )
 set_tests_properties(platform-socket-contracts PROPERTIES TIMEOUT 30)
 
+add_executable(kisakcod-platform-socket-stream-tests
+    platform_socket_stream_harness.cpp
+    platform_socket_stream_tests.cpp
+    ${_platform_socket_sources}
+)
+target_include_directories(kisakcod-platform-socket-stream-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-socket-stream-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-platform-socket-stream-tests PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(kisakcod-platform-socket-stream-tests PRIVATE ws2_32)
+endif()
+kisakcod_test_warnings(kisakcod-platform-socket-stream-tests)
+set_target_properties(kisakcod-platform-socket-stream-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-socket-stream-contracts
+    COMMAND kisakcod-platform-socket-stream-tests
+)
+set_tests_properties(platform-socket-stream-contracts PROPERTIES TIMEOUT 30)
+
+add_executable(kisakcod-dl-http-tests
+    dl_http_tests.cpp
+    dl_http_head_parse_tests.cpp
+    ${SRC_DIR}/qcommon/dl_http.cpp
+    ${SRC_DIR}/qcommon/dl_http_parse.cpp
+    ${SRC_DIR}/qcommon/dl_http_url.cpp
+)
+target_include_directories(kisakcod-dl-http-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-dl-http-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-dl-http-tests)
+set_target_properties(kisakcod-dl-http-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME dl-http-protocol-contracts
+    COMMAND kisakcod-dl-http-tests
+)
+set_tests_properties(dl-http-protocol-contracts PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-platform-crash-tests
     platform_crash_tests.cpp
     ${_platform_process_sources}
@@ -2712,6 +2752,13 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         ${SRC_DIR}/qcommon/msg_bits_read_mp.cpp
         ${SRC_DIR}/qcommon/msg_bits_usercmd_mp.cpp
         ${SRC_DIR}/qcommon/huffman.cpp
+        # NET_StringToAdr resolves non-legacy platform-shaped addresses
+        # through the portable socket service, so the selected platform
+        # sys_socket.cpp must compile alongside net_chan_mp.obj; without it
+        # the Win32 ILP32 leg fails to link (LNK2019 on Sys_SocketResolveHost).
+        # The single-platform selection filter above already guarantees
+        # exactly one backend per configure.
+        ${_platform_socket_sources}
     )
     # Same treatment as the wire-contract tests: the decompiled engine headers
     # are not warning-clean, so SYSTEM keeps the strict warning set on the
@@ -2727,6 +2774,10 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     target_compile_options(kisakcod-net-chan-production-objects PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W3>
     )
+    # The enrolled platform socket backend speaks Winsock on this platform;
+    # the import library must reach the test executable that links this
+    # object library (PUBLIC propagates link dependencies to consumers).
+    target_link_libraries(kisakcod-net-chan-production-objects PUBLIC ws2_32)
 
     target_sources(kisakcod-net-chan-reassembly-tests PRIVATE
         net_chan_process_tests.cpp
@@ -3004,6 +3055,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_socket_source_test.cmake
+)
+
+add_test(
+    NAME dl-download-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/dl_download_source_test.cmake
 )
 
 add_test(

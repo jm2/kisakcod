@@ -228,7 +228,11 @@ string(ASCII 13 _registry_coordinator_carriage_return)
 string(ASCII 10 _registry_coordinator_line_feed)
 string(ASCII 12 _registry_coordinator_form_feed)
 string(ASCII 11 _registry_coordinator_vertical_tab)
-set(_registry_coordinator_block_comment "/\\*([^*]|\\*+[^*/])*\\*+/")
+# Deterministic block-comment matcher: the classic (a|ab)* style
+# alternation makes cmake's regex engine blow its stack (SIGSEGV) on
+# comment-heavy files; this unrolled form accepts the identical language
+# in linear time.
+set(_registry_coordinator_block_comment "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/")
 set(_registry_coordinator_comment_atom
     "([ \t\r\n${_registry_coordinator_form_feed}${_registry_coordinator_vertical_tab}]|${_registry_coordinator_block_comment}|//[^\r\n]*)")
 set(_registry_coordinator_comment_gap
