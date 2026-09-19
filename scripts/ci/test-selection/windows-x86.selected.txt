@@ -115,6 +115,7 @@ upstream-safe-fixlets-source-invariants
 upstream-sort-contracts
 upstream-sort-source-invariants
 voice-codec-gate-contracts
+voice-codec-guard-source-invariants
 voice-framing-source-invariants
 weapon-input-safety-contracts
 weapon-model-safety-contracts
