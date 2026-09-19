@@ -532,7 +532,8 @@ spx_sig_t *exc,
 const void *par,                      /* non-overlapping codebook */
 int   nsf,                      /* number of samples in subframe */
 SpeexBits *bits,
-char *stack
+char *stack,
+spx_uint32_t *rand_state         /* caller-owned noise state (unused here) */
 )
 {
    int i,j;
@@ -618,8 +619,9 @@ spx_sig_t *exc,
 const void *par,                      /* non-overlapping codebook */
 int   nsf,                      /* number of samples in subframe */
 SpeexBits *bits,
-char *stack
+char *stack,
+spx_uint32_t *rand_state         /* caller-owned noise state (ki-dkeb CWE-327) */
 )
 {
-   speex_rand_vec(1, exc, nsf);
+   speex_rand_vec_seeded(1, exc, nsf, rand_state);
 }
