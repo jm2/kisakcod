@@ -2,6 +2,15 @@
 
 #include <universal/q_shared.h>
 
+enum GfxAspectRatio : int32_t
+{
+    GFX_ASPECT_RATIO_AUTO = 0x0,
+    GFX_ASPECT_RATIO_STANDARD = 0x1,
+    GFX_ASPECT_RATIO_WIDE_16_10 = 0x2,
+    GFX_ASPECT_RATIO_WIDE_16_9 = 0x3,
+    GFX_ASPECT_RATIO_COUNT = 0x4,
+};
+
 void __cdecl R_ReflectionProbeRegisterDvars();
 void __cdecl R_RegisterDvars();
 const dvar_t *R_RegisterWorkerThreadDvar(const char *name, uint32_t workerIndex);

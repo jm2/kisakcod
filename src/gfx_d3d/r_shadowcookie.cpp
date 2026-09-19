@@ -1,4 +1,5 @@
 #include "r_shadowcookie.h"
+#include <gfx_d3d/r_primarylights.h>
 #include "r_pretess.h"
 #include "r_scene.h"
 #include <qcommon/mem_track.h>
@@ -429,7 +430,7 @@ static void __cdecl R_GetSunAxes(float (*sunAxis)[3][3])
     float *dir; // [esp+18h] [ebp-4h]
 
     iassert( frontEndDataOut );
-    if (frontEndDataOut->sunLight.type != 1)
+    if (frontEndDataOut->sunLight.type != GFX_LIGHT_TYPE_DIR)
         MyAssertHandler(
             (char *)".\\r_shadowcookie.cpp",
             63,
