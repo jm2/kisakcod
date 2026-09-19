@@ -8,7 +8,11 @@ endfunction()
 string(ASCII 92 _checked_pmem_backslash)
 string(ASCII 13 _checked_pmem_carriage_return)
 string(ASCII 10 _checked_pmem_line_feed)
-set(_checked_pmem_block_comment "/\\*([^*]|\\*+[^*/])*\\*+/")
+# Deterministic block-comment matcher: the classic (a|ab)* style
+# alternation makes cmake's regex engine blow its stack (SIGSEGV) on
+# comment-heavy files; this unrolled form accepts the identical language
+# in linear time.
+set(_checked_pmem_block_comment "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/")
 set(_checked_pmem_comment_atom
     "([ \t\r\n]|${_checked_pmem_block_comment}|//[^\r\n]*)")
 set(_checked_pmem_comment_gap "${_checked_pmem_comment_atom}*")

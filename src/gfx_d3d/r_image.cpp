@@ -277,7 +277,7 @@ void __cdecl Image_SetupRenderTarget(
 {
     iassert(image);
     iassert(image->semantic == TS_2D);
-    Image_SetupAndLoad(image, width, height, 1, 131075, imageFormat);
+    Image_SetupAndLoad(image, width, height, 1, IMG_FLAG_NOPICMIP | IMG_FLAG_NOMIPMAPS | IMG_FLAG_RENDER_TARGET, imageFormat);
 }
 
 void __cdecl Load_Texture(GfxTexture *remoteLoadDef, GfxImage *image)
@@ -364,7 +364,7 @@ void __cdecl Load_Texture(GfxTexture *remoteLoadDef, GfxImage *image)
             }
             iassert(data == &loadDef->data[loadDef->resourceSize]);
         }
-        else if (image->category == 5)
+        else if (image->category == IMG_CATEGORY_WATER)
         {
             image->delayLoadPixels = 0;
             if (loadDef->dimensions[0] >> r_picmip_water->current.integer < 4)
@@ -474,7 +474,7 @@ uint32_t __cdecl Image_CountMipmaps(char imageFlags, uint32_t width, uint32_t he
     uint32_t mipRes; // [esp+0h] [ebp-8h]
     uint32_t mipCount; // [esp+4h] [ebp-4h]
 
-    if ((imageFlags & 2) != 0)
+    if ((imageFlags & IMG_FLAG_NOMIPMAPS) != 0)
         return 1;
     mipCount = 1;
     for (mipRes = 1; mipRes < width || mipRes < height || mipRes < depth; mipRes *= 2)
@@ -586,7 +586,7 @@ GfxImage *__cdecl Image_LoadBuiltin(char *name, uint8_t semantic, uint8_t imageT
             break;
     }
 
-    image = Image_Alloc(name, 1u, semantic, imageTrack);
+    image = Image_Alloc(name, IMG_CATEGORY_AUTO_GENERATED, semantic, imageTrack);
     iassert(image);
     constructorTable[tableIndex].LoadCallback(image);
     return image;
@@ -780,7 +780,7 @@ void __cdecl R_SetPicmip()
 
 void R_InitRawImage()
 {
-    rgp.rawImage = Image_AllocProg(11, 4u, 0);
+    rgp.rawImage = Image_AllocProg(11, IMG_CATEGORY_RAW, TS_2D);
     iassert(rgp.rawImage);
 }
 
@@ -805,19 +805,19 @@ bool __cdecl Image_IsCodeImage(int track)
 
 void R_InitCodeImages()
 {
-    rgp.whiteImage = Image_Register("$white", 1u, 0);
+    rgp.whiteImage = Image_Register("$white", TS_FUNCTION, 0);
     iassert(rgp.whiteImage);
-    rgp.blackImage = Image_Register("$black", 1u, 0);
+    rgp.blackImage = Image_Register("$black", TS_FUNCTION, 0);
     iassert(rgp.blackImage);
-    rgp.blackImage3D = Image_Register("$black_3d", 1u, 0);
+    rgp.blackImage3D = Image_Register("$black_3d", TS_FUNCTION, 0);
     iassert(rgp.blackImage3D);
-    rgp.blackImageCube = Image_Register("$black_cube", 1u, 0);
+    rgp.blackImageCube = Image_Register("$black_cube", TS_FUNCTION, 0);
     iassert(rgp.blackImageCube);
-    rgp.grayImage = Image_Register("$gray", 1u, 0);
+    rgp.grayImage = Image_Register("$gray", TS_FUNCTION, 0);
     iassert(rgp.grayImage);
-    rgp.identityNormalMapImage = Image_Register("$identitynormalmap", 1u, 0);
+    rgp.identityNormalMapImage = Image_Register("$identitynormalmap", TS_FUNCTION, 0);
     iassert(rgp.identityNormalMapImage);
-    rgp.pixelCostColorCodeImage = Image_Register("$pixelcostcolorcode", 1u, 0);
+    rgp.pixelCostColorCodeImage = Image_Register("$pixelcostcolorcode", TS_FUNCTION, 0);
     iassert(rgp.pixelCostColorCodeImage);
 }
 
@@ -986,7 +986,7 @@ void __cdecl R_FreeLostImage(XAssetHeader header, void *)
     iassert( image );
     iassert( image->category != IMG_CATEGORY_UNKNOWN );
 
-    if (image->category >= 5)
+    if (image->category >= IMG_CATEGORY_FIRST_UNMANAGED)
         Image_Release(header.image);
 }
 
@@ -1009,9 +1009,9 @@ char __cdecl Image_AssignDefaultTexture(GfxImage *image)
 {
     if (image->mapType != MAPTYPE_2D)
         return 0;
-    if (image->semantic == 5)
+    if (image->semantic == TS_NORMAL_MAP)
         return R_DuplicateTexture(image, rgp.identityNormalMapImage);
-    if (image->semantic == 8)
+    if (image->semantic == TS_SPECULAR_MAP)
         return R_DuplicateTexture(image, rgp.blackImage);
     return R_DuplicateTexture(image, rgp.whiteImage);
 }
@@ -1026,11 +1026,11 @@ void __cdecl Image_Rebuild(GfxImage *image)
     iassert( image->category >= IMG_CATEGORY_FIRST_UNMANAGED );
     iassert( !image->texture.basemap );
     category = image->category;
-    if (category == 5)
+    if (category == IMG_CATEGORY_WATER)
     {
         Image_BuildWaterMap(image);
     }
-    else if (category == 6)
+    else if (category == IMG_CATEGORY_RENDERTARGET)
     {
         if (!alwaysfails)
             MyAssertHandler(".\\r_image.cpp", 905, 1, "non-prog image cannot be a render target");
@@ -1051,9 +1051,9 @@ void __cdecl R_RebuildLostImage(XAssetHeader header, void *data)
 
     if (!image->texture.basemap)
     {
-        if (image->category < 5)
+        if (image->category < IMG_CATEGORY_FIRST_UNMANAGED)
         {
-            if (image->category == 3)
+            if (image->category == IMG_CATEGORY_LOAD_FROM_FILE)
             {
                 if (!image->delayLoadPixels && !Image_ReloadFromFile(image) && !Image_AssignDefaultTexture(image))
                 {
@@ -1204,7 +1204,7 @@ void __cdecl Image_Create3DTexture_PC(
     image->depth = depth;
     image->mapType = MAPTYPE_3D;
     usage = Image_GetUsage(imageFlags, imageFormat);
-    if ((imageFlags & 0x40000) != 0)
+    if ((imageFlags & IMG_FLAG_SYSTEMMEM) != 0)
     {
         v7 = dx.device->CreateVolumeTexture(width, height, depth, mipmapCount, 0, imageFormat, D3DPOOL_SYSTEMMEM, (IDirect3DVolumeTexture9 **)&image->texture, 0);
     }
@@ -1268,7 +1268,7 @@ void __cdecl Image_UpdatePicmip(GfxImage *image)
     Picmip picmip; // [esp+0h] [ebp-4h] BYREF
 
     iassert( image );
-    if (image->category == 3 && !image->noPicmip)
+    if (image->category == IMG_CATEGORY_LOAD_FROM_FILE && !image->noPicmip)
     {
         Image_GetPicmip(image, &picmip);
         if (image->picmip.platform[0] != picmip.platform[0])
@@ -1298,7 +1298,7 @@ void __cdecl Image_Create2DTexture_PC(
     image->depth = 1;
     image->mapType = MAPTYPE_2D;
     usage = Image_GetUsage(imageFlags, imageFormat);
-    if ((imageFlags & 0x40000) != 0)
+    if ((imageFlags & IMG_FLAG_SYSTEMMEM) != 0)
         v6 = dx.device->CreateTexture(
             width,
             height,

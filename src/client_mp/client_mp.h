@@ -403,6 +403,12 @@ void __cdecl CL_ResetSkeletonCache(int32_t localClientNum);
 void __cdecl CL_ClearState(int32_t localClientNum);
 void __cdecl CL_Disconnect(int32_t localClientNum);
 void __cdecl CL_ClearStaticDownload();
+// Masks URL-embedded credentials out of a download URL for every
+// displayed or logged surface (retail meter form
+// scheme://*:*authority/path). Shared by the parse path and the later
+// WWW failure paths; defined in cl_parse_mp.cpp.
+void CL_SanitizeDownloadUrl(const char *source, char *out,
+    std::size_t capacity);
 void __cdecl CL_ForwardCommandToServer(int32_t localClientNum, const char *string);
 void __cdecl CL_RequestAuthorization(netsrc_t localClientNum);
 void __cdecl CL_ForwardToServer_f();

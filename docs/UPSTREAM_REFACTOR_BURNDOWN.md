@@ -3,6 +3,33 @@
 Audit date: 2026-09-18 (America/New_York). Fork base `7d51f020cffb1580d599921d1ea6cf872ae1a571`;
 upstream endpoint `b3199b90f416c62265eef87e643f59dadbc29838`. Recheck both before each batch.
 
+## Active goal: upstream refactors only (2026-09-19)
+
+The user clarified that the continuing goal is **the deferred upstream refactor
+work only**, not every deferred fix or feature in the historical inventory.
+The `refactor_goal_scope` field is the active filter. It selects **56 explicit
+refactor commit rows, 11 structural/mixed rows for hunk-level audit, and one
+vehicle correctness dependency** (`aa2ed669`): 68 candidate records to discharge.
+This is not a claim that there are 68 independent refactors. The other **17
+records remain historically deferred but are outside this goal**.
+
+For mixed commits, only surviving refactoring hunks count. Examples include
+profile-specific dvar organization, database declaration relocation, final client
+accessors and typed decompiler cleanup. Do not import unrelated gameplay fixes,
+add a new audio backend, change matrix precision, add SIMD, or import Radiant to
+close this refactor goal. Backend-only refactors whose prerequisite feature the
+fork does not carry need explicit inapplicability evidence, not implementation
+of that feature. A later fix needed to avoid recreating a broken intermediate
+vehicle refactor remains part of the final endpoint. Raise and defer decisions
+that cannot be resolved from the final upstream code and existing fork contract.
+
+R1 has landed in [PR #163](https://github.com/jm2/kisakcod/pull/163), merge
+`53a187db`; all required platform/engine checks passed. CI/review monitoring for
+this effort polls at most once per hour, with protected auto-merge used as the
+completion trigger. The work remains isolated from active Gas City worktrees.
+The broader workstream table below is the historical audit map; this scope
+filter takes precedence over its unrelated fix/feature rows.
+
 ## Scope and accounting
 
 The six historical ledgers contain **85 unique commits with explicitly deferred
@@ -113,10 +140,10 @@ Never mark an oracle-dependent change done on the strength of a build alone.
 
 ## First batch: R1
 
-This change implements four complete upstream refactor rows. The inventory has
-**4 implemented in this change, 79 planned runtime rows, and 2 exclusions**.
-“Implemented in this change” describes this branch; delivery still requires its
-protected PR to land. Historical deferral counts above are not rewritten.
+PR #163 implemented four complete upstream refactor rows. At that checkpoint, the inventory had
+**4 implemented, 79 planned runtime rows, and 2 exclusions**.
+That PR has now landed. Historical deferral counts above are not rewritten;
+the active refactor-only filter supersedes the original broad scope.
 
 | Commit | Completion disposition |
 |---|---|
@@ -156,3 +183,31 @@ Local validation on the final production tree:
 checks and landing evidence. The next implementation slice is R2 formats/flags;
 refresh upstream/master, fork master and active Gas City owners before starting
 it. R3 can follow independently while R2's tracking consumers wait.
+
+## Second batch: R2 image values
+
+Commits `78a1a09a`, `2f320b36`, `057bdb52`, and `84ef10ab` are implemented
+by this batch. Tracking commit `5f30b9a7` remains open and separate. The JSON
+records the surviving/adapted/inapplicable hunk disposition for each row.
+
+The format enum exactly retains upstream values 0–15. The file header still
+stores format and flags as bytes in its 28-byte disk layout; image semantic and
+category fields remain bytes. All 17 changed production files compare equal
+after frozen enum substitutions and constant flag unions, excluding only the
+new declaration and reviewed includes. Stronger fork sky/normal-map validation,
+checked dimensions, typed callback signatures and recovery error reporting are
+preserved. Absent Radiant/case-texture functions are not introduced.
+
+The existing renderer value gate compiles current production declarations and
+bodies to check dispatch over all byte-valued format IDs, bitmap output and
+pixel count, flag combinations, picmip selection/clamping, and category release
+and recovery decisions. The D3D/engine services are doubles; this is naming and
+behavior regression coverage, not a new decoder or full retail/GPU parity claim.
+The unsupported DXN format remains unsupported. Source registrations, CTest
+names, CI selectors and dashboard totals remain unchanged.
+
+GCC Release passes **244/244** portable tests; focused Clang ASan+UBSan
+contracts pass with leak detection and halt-on-error. The inventory matches
+portable discovery exactly and the dashboard is current. Protected hosted
+checks are recorded on the batch PR. An hourly monitor
+tracks PR completion/review state without changing CI jobs or Gas City state.

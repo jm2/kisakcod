@@ -15,6 +15,7 @@ set(_win32_platform_cmake
     "${SOURCE_ROOT}/scripts/platform/win32/platform.cmake")
 set(_socket_tests_path "${SOURCE_ROOT}/tests/platform_socket_tests.cpp")
 set(_tests_cmake_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
+set(_net_chan_source_path "${SOURCE_ROOT}/src/qcommon/net_chan_mp.cpp")
 
 foreach(_path IN ITEMS
     "${_header_path}"
@@ -24,7 +25,8 @@ foreach(_path IN ITEMS
     "${_macos_platform_cmake}"
     "${_win32_platform_cmake}"
     "${_socket_tests_path}"
-    "${_tests_cmake_path}")
+    "${_tests_cmake_path}"
+    "${_net_chan_source_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing platform-socket source: ${_path}")
     endif()
@@ -38,6 +40,7 @@ file(READ "${_macos_platform_cmake}" _macos_platform)
 file(READ "${_win32_platform_cmake}" _win32_platform)
 file(READ "${_socket_tests_path}" _socket_tests)
 file(READ "${_tests_cmake_path}" _tests_cmake)
+file(READ "${_net_chan_source_path}" _net_chan_source)
 
 function(require_contains _content _needle _message)
     if(NOT _content MATCHES "${_needle}")
@@ -158,6 +161,66 @@ foreach(_forbidden IN ITEMS
     "SO_REUSEPORT")
     require_not_contains("${_posix_source}" "${_forbidden}"
         "POSIX socket backend must not import Winsock or share bound ports: ${_forbidden}")
+endforeach()
+
+# Production enrollment: NET_StringToAdr resolves hostnames through the
+# portable socket-service resolver instead of the platform gethostbyname
+# path, while the shapes whose retail semantics are pinned (21-character
+# IPX-format strings and digit-leading numeric literals with inet_addr's
+# partial-form rules) stay on the legacy platform helper. A resolver
+# failure maps to the same observable NA_BAD result the legacy path
+# produced.
+#
+# These are ordered multi-line relationship windows, not independent
+# markers: each window binds the dispatch and failure constructs into one
+# match, so sending ordinary names to the legacy helper, sending legacy
+# shapes to the portable resolver, or dropping the NA_BAD failure mapping
+# breaks the window. CR characters are stripped first so the windows match
+# under either checkout EOL convention.
+string(REGEX REPLACE "\r" "" _net_chan_norm "${_net_chan_source}")
+
+# The bounded host length and the portable service include are single
+# constructs; the relationships below carry the dispatch structure.
+require_contains("${_net_chan_norm}" "#include \"sys_socket.h\""
+    "NET_StringToAdr must include the portable socket service header")
+require_contains("${_net_chan_norm}"
+    "const size_t baseLength = strnlen\\(base, sizeof\\(base\\)\\);"
+    "NET_StringToAdr must measure the host through the bounded strnlen")
+
+# Dispatch relationship: the legacy-shape predicate feeds one selection in
+# which the legacy branch alone owns Sys_StringToAdr and the ordinary
+# hostname branch alone owns Sys_SocketResolveHost with its status gate --
+# all in one ordered block.
+require_contains("${_net_chan_norm}"
+    "const bool legacyPlatformShape =\n[^\n]*\\(baseLength == 21 && base\\[8\\] == '\\.'\\)\n[^\n]*\\|\\| \\(base\\[0\\] >= '0' && base\\[0\\] <= '9'\\);\n[^\n]*bool resolved = false;\n[^\n]*if \\(legacyPlatformShape\\)\n[^\n]*\\{\n[^\n]*resolved = Sys_StringToAdr\\(base, a\\) != 0;\n[^\n]*\\}\n[^\n]*else\n[^\n]*\\{\n[^\n]*SysSocketAddress socketAddress;\n[^\n]*if \\(Sys_SocketResolveHost\\(base, 0, &socketAddress\\)\n[^\n]*== SysSocketResolveStatus::Resolved\\)"
+    "NET_StringToAdr must dispatch legacy shapes to Sys_StringToAdr and ordinary hostnames to the portable resolver, in that order")
+
+# Publication relationship: only inside the Resolved gate is the address
+# published as NA_IP through the bounded four-octet element copy, the port
+# reset, and the success flag -- in that order.
+require_contains("${_net_chan_norm}"
+    "== SysSocketResolveStatus::Resolved\\)\n[^\n]*\\{\n[^\n]*a->type = NA_IP;\n.*static_assert\\(sizeof\\(a->ip\\) == sizeof\\(socketAddress\\.address\\),\n[^\n]*\"address octet width mismatch\"\\);\n[^\n]*for \\(size_t octet = 0; octet < sizeof\\(a->ip\\); \\+\\+octet\\)\n[^\n]*\\{\n[^\n]*a->ip\\[octet\\] = socketAddress\\.address\\[octet\\];\n[^\n]*\\}\n[^\n]*a->port = 0;\n[^\n]*resolved = true;"
+    "NET_StringToAdr must publish a resolved address only inside the Resolved gate via the bounded octet copy")
+
+# Failure relationship: a resolved broadcast address maps to NA_BAD with an
+# immediate failure return, and an unresolved host falls through the
+# resolved branch to the same NA_BAD result -- both bound to their
+# surrounding control flow.
+require_contains("${_net_chan_norm}"
+    "if \\(resolved\\)\n[^\n]*\\{\n[^\n]*if \\(a->ip\\[0\\] == 255 && a->ip\\[1\\] == 255 && a->ip\\[2\\] == 255 && a->ip\\[3\\] == 255\\)\n[^\n]*\\{\n[^\n]*a->type = NA_BAD;\n[^\n]*return 0;\n[^\n]*\\}"
+    "NET_StringToAdr must map a resolved broadcast address to NA_BAD with a failure return")
+require_contains("${_net_chan_norm}"
+    "a->port = v5;\n[^\n]*return 1;\n[^\n]*\\}\n[^\n]*\\}\n[^\n]*a->type = NA_BAD;\n[^\n]*return 0;"
+    "NET_StringToAdr must map an unresolved host to NA_BAD as the dispatch fallthrough")
+# The portable header stays the only resolver contract in qcommon: the
+# enrollment must not re-declare platform resolver primitives locally.
+foreach(_forbidden IN ITEMS
+    "gethostbyname"
+    "getaddrinfo"
+    "addrinfo"
+    "hostent")
+    require_not_contains("${_net_chan_source}" "${_forbidden}"
+        "NET_StringToAdr must resolve through the portable service, not raw resolver primitives: ${_forbidden}")
 endforeach()
 
 # Each platform source set registers exactly its own backend.
