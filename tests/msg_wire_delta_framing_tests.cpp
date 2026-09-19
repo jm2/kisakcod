@@ -290,14 +290,17 @@ void test_usercmd_selected_location()
     // selLoc payloads are the raw bytes keya ^ 7 = 0xF2 and keya ^ 9 = 0xFC.
     // Each selLoc is preceded by its change flag bit: selloc0's flag shares
     // byte 4 with the payload tail; selloc1's flag opens byte 6 and the raw
-    // payload byte follows at byte 7.
+    // payload byte follows at byte 7. Byte 0 is the control-flag byte
+    // (0x09: bit0 servertime delta-byte flag, bit3 buttons field flag) and
+    // byte 1 is the raw serverTime delta (500 -> 500 = 0).
     const std::uint8_t want[] = {0x09, 0x00, 0xEB, 0x03, 0x81, 0xF2, 0x01, 0xFC};
     const WireSpan spans[] = {
+        {"selloc-flags", 0, 0, 8}, {"servertime-delta", 1, 0, 8},
         {"buttons>>1-20bit", 2, 0, 8}, {"buttons>>1-mid", 3, 0, 8},
         {"payload-tail+flags", 4, 0, 8}, {"selloc0-xored", 5, 0, 8},
         {"selloc1-flag", 6, 0, 8}, {"selloc1-xored", 7, 0, 8},
     };
-    compareWire(m, "usercmd selectedLocation", want, sizeof(want), spans, 6);
+    compareWire(m, "usercmd selectedLocation", want, sizeof(want), spans, 8);
 
     MSG_BeginReading(&m);
     usercmd_s out{};
