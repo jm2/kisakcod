@@ -225,8 +225,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Replaces turret bit constants across actor, script, SP, and MP paths. Needs exact bitmask and save/network contract checks rather than inclusion in an ancestry-only batch.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1c-entity-turret-and-physics-values",
+      "hunk_disposition": "All turret flag hunks adopted, including equivalent combined masks, mode selection and the bit-3 test replacing the decompiler high-word temporary. Existing SP/MP pitch-cap differences and flag field widths remain."
     },
     {
       "commit": "441e1e44c24fce24009a3f3e8404c8d314b1c08b",
@@ -235,8 +237,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Entity type IDs are savegame and snapshot visible. The 16-file replacement needs explicit frozen-value and serialization evidence.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1c-entity-turret-and-physics-values",
+      "hunk_disposition": "All entity-type consumers adopted with profile-specific values. CG_Vehicle preserves the fork material-time conversion; three event-bound comparisons retain explicit uint32_t conversion to preserve negative-state behavior. Comment-only weapon hunk also accounted for."
     },
     {
       "commit": "25fa0e8ab167ac718c6be4cf9e61210240b518b3",
@@ -443,8 +447,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Physics geometry identifiers cross serialized/ODE boundaries; need explicit value and dispatch coverage.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1c-entity-turret-and-physics-values",
+      "hunk_disposition": "All world/geometry names adopted. The former Phys_ObjSetCollisionFromXModel box predicate now lives in Phys_TryBuildCollisionFromXModel; change only that label and retain capacity, transaction, rollback and failure handling."
     },
     {
       "commit": "17d0a98be48acad5fdec5c054f230d17397401ac",

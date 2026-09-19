@@ -390,3 +390,33 @@ Validation extends the existing weapon-input gate without new CTest entries:
   comparison and boolean-selector substitutions. **244/244 portable Release
   tests pass**, and the focused gameplay gate passes Clang ASan/UBSan. Hosted
   MP/SP engine compilation remains required before merge.
+
+## Gameplay slice G1c: entity, turret and physics values
+
+`c0c19174`, `441e1e44` and `0492cb9e` are implemented on
+`integration/refactor-g1-entity-physics-names`, pending protected integration after
+G1b. All 23 production files retain the existing SP/MP layouts and values. Turret
+flag names include the equivalent mode masks and the direct bit-3 test replacing
+an overlapping decompiler high-word temporary. Profile-specific pitch-cap
+behavior remains unchanged.
+
+The fork's `CG_Vehicle` material-time conversion is preserved. Three event-bound
+comparisons retain explicit unsigned conversion so negative entity tags keep
+their prior behavior. The box predicate formerly in
+`Phys_ObjSetCollisionFromXModel` is adapted in its current transactional helper,
+`Phys_TryBuildCollisionFromXModel`; capacity checks, failure reporting, rollback
+and ownership are untouched.
+
+Validation freezes all 12 turret flags, all 36 SP/MP entity tags, and all 11
+physics world/geometry tags using actual production declarations. The production
+turret mode function covers all four modes over 65,536 flag combinations plus the
+sign bit and invalid mode. Production physics-world lookup covers every world
+and an unknown pointer; production entity light-visibility and all three event
+comparisons cover valid, negative and out-of-range tags. Service objects are
+fixture doubles, without a retail simulation claim.
+
+All 23 production files pass token equivalence after the individually reviewed
+constant masks, boolean expressions, unsigned comparisons and high-word cleanup.
+**244/244 portable Release tests pass**; the focused gameplay gate passes Clang
+ASan/UBSan, and the capability dashboard is current. CTest inventory is unchanged;
+hosted MP/SP compilation remains required before merge.

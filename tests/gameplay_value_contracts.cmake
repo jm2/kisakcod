@@ -16,3 +16,27 @@ kisakcod_renderer_enum_slice(cgame/cg_weapons.cpp "int32_t g_animRateOffsets[" "
 kisakcod_renderer_enum_slice(cgame/cg_weapons.cpp "double __cdecl GetWeaponAnimRate(" "\n}" weapon_rate_body)
 kisakcod_renderer_enum_slice(cgame/cg_weapons.cpp "void __cdecl WeaponRunXModelAnims(" "\n}" weapon_run_anims_body)
 kisakcod_renderer_enum_slice(xanim/xanim.h "const char* szXAnims[" ";" weapon_animation_slots)
+
+# Entity, turret and geometry names preserve each profile's existing values.
+kisakcod_renderer_enum_slice(bgame/bg_public.h "enum $A1BE347394FC01D8E43F73A65E725CFC" "\n};" turret_flags_enum)
+kisakcod_renderer_enum_slice(qcommon/ent.h "#ifdef KISAK_MP\nenum entityType_t" "\n#endif" entity_type_enums)
+kisakcod_renderer_enum_slice(../deps/ode/objects.h "enum PhysWorld" "\n};" physics_world_enum)
+kisakcod_renderer_enum_slice(../deps/ode/collision.h "enum PhysicsGeomType" "\n};" physics_geom_enum)
+kisakcod_renderer_enum_slice(physics/phys_ode.cpp "int __cdecl Phys_IndexFromODEWorld(" "\n}" physics_world_index_body)
+kisakcod_renderer_enum_slice(game/g_scr_main.cpp "void __cdecl GScr_ValidateLightVis(" "\n}" entity_light_vis_body)
+kisakcod_renderer_enum_slice(game/g_scr_main.cpp "void __cdecl GScr_SetMode(" "\n}" turret_mode_body)
+
+# Compile all three migrated event-bound comparisons, including their signedness.
+set(event_checks "using EventCheck = bool (*)(entityType_t);\nconstexpr EventCheck eventChecks[] = {\n")
+foreach(source IN ITEMS cgame/cg_ents.cpp game/g_utils.cpp)
+    set(source "${SRC_DIR}/${source}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
+    file(READ "${source}" entity_text)
+    string(REGEX MATCHALL "static_cast<uint32_t>\\([A-Za-z>.-]+eType\\) [<>]=? ET_EVENTS" expressions "${entity_text}")
+    foreach(expression IN LISTS expressions)
+        string(REGEX REPLACE "[A-Za-z>.-]+eType" "kind" expression "${expression}")
+        string(APPEND event_checks "+[](entityType_t kind) { return ${expression}; },\n")
+    endforeach()
+endforeach()
+string(APPEND event_checks "};\nstatic_assert(sizeof(eventChecks) / sizeof(eventChecks[0]) == 3);\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/renderer-enums/entity_event_checks.inc" "${event_checks}")
