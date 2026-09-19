@@ -1009,6 +1009,10 @@ void *nb_decoder_init(const SpeexMode *m)
 
    st->lpc_enh_enabled=0;
 
+   /* Deterministic comfort-noise/PLC state (see misc.c speex_rand_seeded):
+      every decoder starts from the same fixed seed. */
+   st->rand_state = 1u;
+
 
    st->inBuf = speex_alloc((st->frameSize)*sizeof(spx_sig_t));
    st->frame = st->inBuf;
@@ -1146,7 +1150,7 @@ static void nb_decode_lost(DecState *st, spx_word16_t *out, char *stack)
 #else
          /*exc[i]=pitch_gain*exc[i-st->last_pitch] +  fact*st->innov[i+offset];*/
          exc[i]=pitch_gain*(exc[i-st->last_pitch]+VERY_SMALL) + 
-         fact*sqrt(1-pitch_gain)*speex_rand(innov_gain);
+         fact*sqrt(1-pitch_gain)*speex_rand_seeded(innov_gain, &st->rand_state);
 #endif
       }
       }
@@ -1324,7 +1328,7 @@ int nb_decode(void *state, SpeexBits *bits, void *vout)
 	 innov_gain = compute_rms(st->innov, st->frameSize);
          for (i=0;i<st->frameSize;i++)
             st->exc[i]=VERY_SMALL;
-         speex_rand_vec(innov_gain, st->exc, st->frameSize);
+         speex_rand_vec_seeded(innov_gain, st->exc, st->frameSize, &st->rand_state);
       }
 
 
@@ -1587,7 +1591,7 @@ int nb_decode(void *state, SpeexBits *bits, void *vout)
          if (SUBMODE(innovation_unquant))
          {
             /*Fixed codebook contribution*/
-            SUBMODE(innovation_unquant)(innov, SUBMODE(innovation_params), st->subframeSize, bits, stack);
+            SUBMODE(innovation_unquant)(innov, SUBMODE(innovation_params), st->subframeSize, bits, stack, &st->rand_state);
          } else {
             speex_error("No fixed codebook");
          }
@@ -1641,7 +1645,7 @@ int nb_decode(void *state, SpeexBits *bits, void *vout)
             ALLOC(innov2, st->subframeSize, spx_sig_t);
             for (i=0;i<st->subframeSize;i++)
                innov2[i]=0;
-            SUBMODE(innovation_unquant)(innov2, SUBMODE(innovation_params), st->subframeSize, bits, stack);
+            SUBMODE(innovation_unquant)(innov2, SUBMODE(innovation_params), st->subframeSize, bits, stack, &st->rand_state);
             signal_mul(innov2, innov2, (spx_word32_t) (ener*(1/2.2)), st->subframeSize);
             for (i=0;i<st->subframeSize;i++)
                exc[i] = ADD32(exc[i],innov2[i]);
@@ -1949,6 +1953,9 @@ int nb_decoder_ctl(void *state, int request, void *ptr)
             st->excBuf[i]=0;
          for (i=0;i<st->frameSize;i++)
             st->inBuf[i] = 0;
+         /* Deterministic noise synthesis restarts from the fixed seed (see
+            misc.c speex_rand_seeded). */
+         st->rand_state = 1u;
       }
       break;
    case SPEEX_SET_SUBMODE_ENCODING:

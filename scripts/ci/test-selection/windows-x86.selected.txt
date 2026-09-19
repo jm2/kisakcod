@@ -1,6 +1,8 @@
 actor-grenade-prediction-cache-contracts
 actor-grenade-safe-target-radius-contracts
 actor-grenade-safe-target-source-invariants
+audio-gate-source-invariants
+cinematic-gate-source-invariants
 database-derived-shader-cache-contracts
 database-derived-shader-cache-source-invariants
 database-referenced-fastfile-format
@@ -80,6 +82,7 @@ missile-layout-sp-compile-contracts
 missile-union-layout-source-invariants
 msg-wire-format-contracts
 net-chan-reassembly-span-contracts
+null-media-source-invariants
 platform-console-invalid-eof-contracts
 platform-console-runtime-contracts
 platform-console-source-invariants
@@ -112,6 +115,8 @@ upstream-reconciliation-source-invariants
 upstream-safe-fixlets-source-invariants
 upstream-sort-contracts
 upstream-sort-source-invariants
+voice-codec-gate-contracts
+voice-framing-source-invariants
 weapon-input-safety-contracts
 weapon-model-safety-contracts
 weapon-model-safety-source-invariants

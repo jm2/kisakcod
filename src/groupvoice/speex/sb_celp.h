@@ -140,6 +140,11 @@ typedef struct SBDecState {
    int    encode_submode;
    const SpeexSubmode * const *submodes;
    int    submodeID;
+
+   /* Caller-owned noise synthesis state (ki-dkeb CWE-327 repair, see misc.c
+      speex_rand_seeded); each decoder draws from its own fixed-seeded
+      sequence. */
+   spx_uint32_t rand_state;
 } SBDecState;
 
 
