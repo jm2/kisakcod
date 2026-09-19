@@ -680,7 +680,7 @@ void __cdecl R_AddBModelSurfacesCamera(
             0,
             "gfxDrawMethod.emissiveTechType doesn't index TECHNIQUE_COUNT\n\t%i not in [0, %i)",
             gfxDrawMethod.emissiveTechType,
-            34);
+            TECHNIQUE_COUNT);
     if (r_drawDecals->current.enabled)
         surfaceCount = bmodel->surfaceCount;
     else
@@ -877,7 +877,7 @@ void __cdecl R_AddXModelSurfacesCamera(
             }
             if (skinnedCachedOffset == -2)
             {
-                surfType = SF_BEGIN_XMODEL;
+                surfType = SF_XMODEL_RIGID;
             }
             else
             {
@@ -1125,7 +1125,7 @@ void __cdecl R_AddDObjSurfacesCamera(
                 reinterpret_cast<GfxModelSkinnedSurface *>(record.data);
             const surfaceType_t surfType =
                 record.kind == model_surface_stream::RecordKind::Rigid
-                ? SF_BEGIN_XMODEL
+                ? SF_XMODEL_RIGID
                 : SF_XMODEL_SKINNED;
             if (!*material || modelSurf->xsurf != &surfaces[surfaceIndex])
                 return;

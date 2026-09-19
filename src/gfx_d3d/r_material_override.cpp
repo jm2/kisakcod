@@ -250,7 +250,7 @@ bool __cdecl Material_ValidateRemappedTechniqueSet(MaterialTechniqueSet *techSet
             candidate->name);
         return false;
     }
-    for (uint32_t techniqueIndex = 0; techniqueIndex < 34; ++techniqueIndex)
+    for (uint32_t techniqueIndex = TECHNIQUE_DEPTH_PREPASS; techniqueIndex < TECHNIQUE_COUNT; ++techniqueIndex)
     {
         const MaterialTechnique *originalTechnique =
             techSet->techniques[techniqueIndex];
@@ -350,7 +350,7 @@ void __cdecl Material_ClearShaderUploadList()
 {
     mtlUploadGlob.get = 0;
     mtlUploadGlob.put = 0;
-    mtlUploadGlob.techTypeIter = 0;
+    mtlUploadGlob.techTypeIter = TECHNIQUE_DEPTH_PREPASS;
 }
 
 bool __cdecl Material_WouldTechniqueSetBeOverridden(const MaterialTechniqueSet *techSet)

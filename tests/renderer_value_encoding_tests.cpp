@@ -7,6 +7,7 @@
 
 void RunRendererEnumContracts();
 void RunRendererImageContracts();
+void RunRendererShaderContracts();
 
 namespace
 {
@@ -97,6 +98,7 @@ int main()
 {
     RunRendererEnumContracts();
     RunRendererImageContracts();
+    RunRendererShaderContracts();
     if (!TestPreTessPacking())
         return Fail("pre-tess packing or failure atomicity");
     if (!TestMipmapResolution())
