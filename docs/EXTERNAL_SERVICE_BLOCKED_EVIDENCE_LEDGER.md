@@ -1,9 +1,9 @@
 # External service blocked-evidence ledger
 
 **Issue:** [#136](https://github.com/jm2/kisakcod/issues/136) (retail-compatible
-multiplayer services and headless operations). This document **references**
-#136 and [#122](https://github.com/jm2/kisakcod/issues/122); it does not close
-or complete either of them.
+multiplayer services and headless operations). This document **references** #136
+and [#122](https://github.com/jm2/kisakcod/issues/122); it does not close or
+complete either of them.
 
 **Recorded source SHA:** `a2ee6e2673388c367fbdf6da8812169ea9ad70d6` (branch
 `polecat/ki-oh65`). All file/line citations below are anchored to this SHA.
@@ -19,7 +19,7 @@ behavior and certifies no compatibility.
 
 ## 1. Purpose
 
-#136 requires unavailable external services to be recorded as explicit blocked
+\#136 requires unavailable external services to be recorded as explicit blocked
 evidence, with LAN/direct-connect validation kept distinct from internet
 service availability. This ledger inventories the master-server, CD-key
 authorization, and autoupdate touchpoints that exist in the source at the
@@ -74,7 +74,7 @@ The autoupdate host list is hardcoded (not dvar-driven) at
 | Master listing (browser) | `getservers` send `src/client_mp/cl_main_pc_mp.cpp:430-459`; `getserversResponse` parse `src/client_mp/cl_main_mp.cpp:1540` | `gameCompleteStatus` `src/server_mp/sv_main_pc_mp.cpp:64-79` | Listing path live |
 | Master heartbeat | — | `SV_MasterHeartbeat` `src/server_mp/sv_main_pc_mp.cpp:77-99` | **Fork-disabled** (body commented out) |
 | CD-key authorize | `CL_RequestAuthorization` body commented `src/client_mp/cl_main_mp.cpp:613-624` | `SV_AuthorizeRequest` `src/server_mp/sv_client_mp.cpp:59-113`; reply handler `SV_AuthorizeIpPacket` `src/server_mp/sv_main_pc_mp.cpp:104` | **Inert both directions** (see section 6) |
-| Autoupdate | `CL_CheckAutoUpdate` `src/client_mp/cl_main_mp.cpp:3515-3581`; reply `CL_UpdateInfoPacket` `src/client_mp/cl_main_mp.cpp:1263-1300` | — | Live client-side; fails silently by design |
+| Autoupdate | `CL_CheckAutoUpdate` `src/client_mp/cl_main_mp.cpp:3514-3580`; reply `CL_UpdateInfoPacket` `src/client_mp/cl_main_mp.cpp:1263-1300` | — | Live client-side; fails silently by design |
 
 ## 4. Master server — server side
 
@@ -144,8 +144,9 @@ out-of-band message at match end.
 - Sets `cls.waitglobalserverresponse = 1` (`:443`); the flag is read by the
   server-browser UI (`src/client_mp/cl_ui_mp.cpp:112`) and cleared at
   `src/client_mp/cl_main_mp.cpp:1399`.
-- Sends `getservers <game> [filter...]` (with a ` demo` suffix when
-  `fs_restrict` is set) as an out-of-band message on `NS_SERVER` (`:459`).
+- Sends `getservers <game> [filter...]` (suffixing it with a literal leading
+  space followed by `demo` when `fs_restrict` is set) as an out-of-band message
+  on `NS_SERVER` (`:459`).
 
 ### 5.2 Response path
 
@@ -202,7 +203,7 @@ retail CoD4 1.7 shipped — that is a #122 reference-evidence question.
 
 ### 7.2 Check flow
 
-`CL_CheckAutoUpdate` (`src/client_mp/cl_main_mp.cpp:3515-3581`), run once per
+`CL_CheckAutoUpdate` (`src/client_mp/cl_main_mp.cpp:3514-3580`), run once per
 client session (`autoupdateChecked`, `:187`):
 
 1. Resolves all five names and keeps the resolvable ones (`:3530-3535`).
