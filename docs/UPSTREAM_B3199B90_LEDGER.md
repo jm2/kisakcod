@@ -70,25 +70,28 @@ upstream commits; the checkpoint does not mean those features are delivered.
 
 ## Regression scope
 
-`upstream-b3199-{mp,sp}-production-contracts` compile the affected production
+MP and SP fixtures linked into the existing
+`upstream-reconciliation-angle-math-contracts` gate compile the affected production
 function bodies, extracted again whenever their source changes. Console and
 score record declarations also come from production headers. Math/engine
 services are doubles; the weapon fixture intentionally uses a different
 native layout to catch a return to fixed offsets. These fixtures prove the
 selected behaviors, not complete engine or commercial gameplay parity.
 
-Both tests are enrolled in portable CTest discovery, the required Windows
-x86 build/selection, and the full portable sanitizer job. The production
+Both fixtures execute from the existing upstream reconciliation test, already
+enrolled in portable CTest discovery, the required Windows x86 build/selection,
+and the full portable sanitizer job. This retains existing test/CI registrations
+and avoids creating dashboard-count conflicts for concurrent PRs. The production
 engine itself remains subject to the existing Windows MP, dedicated, and SP
 build gates. No licensed-content compatibility result is claimed here.
 
 ## Local validation
 
-- GCC Release: **241/241** portable CTest entries passed.
+- GCC Release: **239/239** portable CTest entries passed.
 - Clang ASan + UBSan: both new MP/SP production-function fixtures passed,
   with leak detection and halt-on-error enabled.
-- Portable discovery exactly matches the updated inventory; both new tests
-  are selected by the Windows x86 manifest and workflow expression.
+- Portable discovery exactly matches the unchanged inventory; both new fixtures
+  execute in the test already selected by the Windows x86 manifest and workflow expression.
 - Test-selection checker: **19** regression cases passed; CI aggregate
   checker: **36** cases passed; capability dashboard: **141** tests passed.
 - The generated capability dashboard is current and `git diff --check` is clean.

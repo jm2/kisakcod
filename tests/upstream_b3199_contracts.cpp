@@ -22,6 +22,7 @@ static void Require(bool value, const char *expression, int line)
 #define iassert(value) CHECK(value)
 #define bcassert(value, count) CHECK(static_cast<unsigned>(value) < static_cast<unsigned>(count))
 
+namespace {
 namespace math_tests {
 static float rsqrtInput;
 static void Vec3Sub(const float *a, const float *b, float *out)
@@ -221,7 +222,13 @@ static void Run()
     Case(true,true,true,false,105,22);
 }
 }
-int main()
+} // namespace
+
+#ifdef KISAK_MP
+int RunUpstreamB3199MpContracts()
+#else
+int RunUpstreamB3199SpContracts()
+#endif
 {
     math_tests::Run(); console_tests::Run(); score_tests::Run(); weapon_tests::Run();
     return 0;

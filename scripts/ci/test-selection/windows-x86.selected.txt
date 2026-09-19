@@ -113,5 +113,3 @@ upstream-sort-source-invariants
 weapon-input-safety-contracts
 weapon-model-safety-contracts
 weapon-model-safety-source-invariants
-upstream-b3199-mp-production-contracts
-upstream-b3199-sp-production-contracts
