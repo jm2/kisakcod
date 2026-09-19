@@ -107,7 +107,7 @@ int32_t __cdecl G_MeansOfDeathFromScriptParam(uint32_t scrParam)
     int32_t i; // [esp+4h] [ebp-4h]
 
     modName = Scr_GetConstString(scrParam);
-    for (i = 0; i < 16; ++i)
+    for (i = 0; i < MOD_NUM; ++i)
     {
         if (*modNames[i] == modName)
             return i;
@@ -225,7 +225,7 @@ void __cdecl DeathGrenadeDrop(gentity_s *self, int32_t meansOfDeath)
             1,
             self->client->ps.grenadeTimeLeft);
     }
-    if (meansOfDeath != 12 && (self->client->ps.perks & 0x40) != 0)
+    if (meansOfDeath != MOD_SUICIDE && (self->client->ps.perks & 0x40) != 0)
     {
         grenadeWeaponIndexa = BG_FindWeaponIndexForName(perk_grenadeDeath->current.string);
         if (grenadeWeaponIndexa)
@@ -320,7 +320,7 @@ void __cdecl G_DamageClient(
         }
         if ((uint32_t)hitLoc > HITLOC_GUN)
             MyAssertHandler(".\\game_mp\\g_combat_mp.cpp", 489, 0, "%s", "(hitLoc >= HITLOC_NONE) && (hitLoc < HITLOC_NUM)");
-        if (mod != 7)
+        if (mod != MOD_MELEE)
             damage = (int)(G_GetWeaponHitLocationMultiplier(hitLoc, weapon) * (double)damage);
         if (damage <= 0)
             damage = 1;
@@ -913,7 +913,7 @@ int32_t __cdecl G_RadiusDamage(
                     Vec3Sub(ent->r.currentOrigin, origin, diff);
                     diff[2] = diff[2] + 24.0;
                     v14 = (fInnerDamage - fOuterDamage) * (1.0 - v12 / radius) + fOuterDamage;
-                    G_Damage(ent, inflictor, attacker, diff, origin, (v14 * v23), 5, mod, weapon, HITLOC_NONE, 0, 0, 0);
+                    G_Damage(ent, inflictor, attacker, diff, origin, (v14 * v23), DAMAGE_RADIUS | DAMAGE_NO_KNOCKBACK, mod, weapon, HITLOC_NONE, 0, 0, 0);
                 }
             }
         }

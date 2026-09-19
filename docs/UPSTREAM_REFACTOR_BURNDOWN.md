@@ -328,3 +328,33 @@ encoding checks. No serialized bytes, runtime record layouts or test inventory
 entries change. **244/244 portable Release tests pass**; seven focused Clang
 ASan/UBSan suites pass: value split, native layout, nested read/write stack,
 runtime pointers, save registration, animation fixups and debugger pointers.
+
+## Gameplay slice G1a: perks and combat values
+
+`90b7a52a`, `2a0747b7` and `8b23c310` are implemented on
+`integration/refactor-g1-combat-names`, pending protected integration after S1.
+The final perk declaration lives in the MP section of `bg_public.h`; the shared
+damage flags live in `game_public.h`; the unchanged MP cause-of-death enum moves
+before `modNames`. Consumers use the names without changing values, types,
+serialized fields, table ordering or gameplay decisions.
+
+The SP and MP fall-damage hunks are adapted to the current fork calculation and
+stat access, applying only the flag/death labels. This does not pull in the
+separate N1 stat refactor. Three unrelated trailing-newline hunks are omitted.
+All other upstream runtime hunks are accounted for in the adopted substitutions.
+
+Validation:
+
+- All 23 production files are token-equivalent after frozen enum substitution,
+  constant flag unions and the equivalent explicit `iMOD != MOD_UNKNOWN` test.
+  New declarations, the replaced count macro and the identical moved MP enum are
+  checked separately.
+- The existing weapon-input gate compiles production declarations, perk-name
+  lookup, bullet-impact classification and vehicle immunity dispatch. It freezes
+  all perk/damage/death values for both profiles, all 20 perk names (including
+  case-insensitive/null/unknown lookup), and 32,768 vehicle capability/flag/weapon/
+  cause-of-death combinations. Engine services and small entity views are doubles;
+  this is a dispatch/numeric contract, not retail gameplay acceptance.
+- **244/244 portable Release tests pass**; the focused gameplay gate passes Clang
+  ASan/UBSan. CTest registrations and inventories are unchanged. Hosted MP/SP
+  compilation remains required before merge.

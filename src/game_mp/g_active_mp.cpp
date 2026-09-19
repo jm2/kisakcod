@@ -403,7 +403,7 @@ void __cdecl HandleClientEvent(gclient_s *client, gentity_s *ent, int32_t event,
             if (damage != 0.0)
             {
                 damage = (double)client->ps.stats[2] * damage;
-                G_Damage(ent, 0, 0, 0, 0, (int)damage, 0, 11, 0xFFFFFFFF, HITLOC_NONE, 0, 0, 0);
+                G_Damage(ent, 0, 0, 0, 0, (int)damage, DAMAGE_NOFLAG, MOD_FALLING, 0xFFFFFFFF, HITLOC_NONE, 0, 0, 0);
             }
         }
         break;

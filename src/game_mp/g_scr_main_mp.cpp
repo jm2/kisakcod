@@ -6495,7 +6495,7 @@ void __cdecl Scr_PlayerDamage(
     GScr_AddVector(vPoint);
     WeaponDef = BG_GetWeaponDef(iWeapon);
     Scr_AddString((char *)WeaponDef->szInternalName);
-    if (meansOfDeath < 0x10)
+    if (meansOfDeath < MOD_NUM)
         Scr_AddConstString(*modNames[meansOfDeath]);
     else
         Scr_AddString("badMOD");
@@ -6530,7 +6530,7 @@ void __cdecl Scr_PlayerKilled(
     GScr_AddVector(vDir);
     WeaponDef = BG_GetWeaponDef(iWeapon);
     Scr_AddString((char *)WeaponDef->szInternalName);
-    if (meansOfDeath < 0x10)
+    if (meansOfDeath < MOD_NUM)
         Scr_AddConstString(*modNames[meansOfDeath]);
     else
         Scr_AddString("badMOD");
@@ -6563,7 +6563,7 @@ void __cdecl Scr_PlayerLastStand(
     GScr_AddVector(vDir);
     WeaponDef = BG_GetWeaponDef(iWeapon);
     Scr_AddString((char *)WeaponDef->szInternalName);
-    if (meansOfDeath < 0x10)
+    if (meansOfDeath < MOD_NUM)
         Scr_AddConstString(*modNames[meansOfDeath]);
     else
         Scr_AddString("badMOD");

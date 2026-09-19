@@ -14,7 +14,7 @@ unsigned char *bulletPriorityMap;
 unsigned char *riflePriorityMap;
 float g_fHitLocDamageMult[19]{ 0.0f };
 
-unsigned __int16 *modNames[16] =
+unsigned __int16 *modNames[MOD_NUM] =
 {
     &scr_const.mod_unknown,
     &scr_const.mod_pistol_bullet,
@@ -368,12 +368,12 @@ void __cdecl handleDeathInvulnerability(gentity_s *targ, int prevHealth, int mod
     health = targ->health;
     if (prevHealth != health && health <= 0 && prevHealth > 0)
     {
-        if (mod == 1 || mod == 2 || (v8 = 0, mod == 8))
+        if (mod == MOD_PISTOL_BULLET || mod == MOD_RIFLE_BULLET || (v8 = 0, mod == MOD_HEAD_SHOT))
             v8 = 1;
         v9 = v8;
-        v10 = player_deathInvulnerableToProjectile->current.enabled && (mod == 5 || mod == 6);
+        v10 = player_deathInvulnerableToProjectile->current.enabled && (mod == MOD_PROJECTILE || mod == MOD_PROJECTILE_SPLASH);
         v11 = v10;
-        v12 = player_deathInvulnerableToMelee->current.enabled && mod == 7;
+        v12 = player_deathInvulnerableToMelee->current.enabled && mod == MOD_MELEE;
         if (v9 || v11 || v12)
         {
             p_invulnerableActivated = &client->invulnerableActivated;
@@ -507,7 +507,7 @@ static void __cdecl G_DamageKnockback(
     if (dir)
         Vec3NormalizeTo(dir, scaledDir);
     else
-        flags |= 4;
+        flags |= DAMAGE_NO_KNOCKBACK;
 
     client = targ->client;
     if (client)
@@ -530,13 +530,13 @@ static void __cdecl G_DamageKnockback(
     if ((targ->flags & 0x20) != 0)
         dmg = 0;
 
-    if ((flags & 4) == 0 && dmg && client && (client->ps.eFlags & 0x300) == 0)
+    if ((flags & DAMAGE_NO_KNOCKBACK) == 0 && dmg && client && (client->ps.eFlags & 0x300) == 0)
     {
         client->ps.velocity[0] += (scaledDir[0] * ((g_knockback->current.value * dmg) * 0.004f));
         client->ps.velocity[1] += (scaledDir[1] * ((g_knockback->current.value * dmg) * 0.004f));
         client->ps.velocity[2] += (scaledDir[2] * ((g_knockback->current.value * dmg) * 0.004f));
 
-        if (targ == attacker && (mod == 5 || mod == 6 || mod == 3 || mod == 4))
+        if (targ == attacker && (mod == MOD_PROJECTILE || mod == MOD_PROJECTILE_SPLASH || mod == MOD_GRENADE || mod == MOD_GRENADE_SPLASH))
             client->ps.velocity[2] = client->ps.velocity[2] * 0.25;
 
         if (!client->ps.pm_time)
@@ -674,15 +674,15 @@ void __cdecl G_Damage(
             {
                 return;
             }
-            if (mod != 11)
+            if (mod != MOD_FALLING)
             {
-                if ((dflags & 1) != 0)
+                if ((dflags & DAMAGE_RADIUS) != 0)
                 {
                     dmgDvar = player_radiusDamageMultiplier;
                 }
                 else
                 {
-                    if (mod == 7)
+                    if (mod == MOD_MELEE)
                         dmgDvar = player_meleeDamageMultiplier;
                     else
                         dmgDvar = player_damageMultiplier;
@@ -698,7 +698,7 @@ void __cdecl G_Damage(
         if (!G_ShouldTakeBulletDamage(targ, attacker))
             return;
 
-        if (targ->actor && mod != 7)
+        if (targ->actor && mod != MOD_MELEE)
         {
             iassert(hitLoc >= HITLOC_NONE && hitLoc < HITLOC_NUM);
             WeaponHitLocationMultiplier = G_GetWeaponHitLocationMultiplier(hitLoc, weapon);
@@ -1510,7 +1510,7 @@ int __cdecl G_RadiusDamage(
                             dir,
                             origin,
                             (int)damage,
-                            5, // dflags
+                            DAMAGE_RADIUS | DAMAGE_NO_KNOCKBACK, // dflags
                             mod,
                             weapon,
                             HITLOC_NONE,

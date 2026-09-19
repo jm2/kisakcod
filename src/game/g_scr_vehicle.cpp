@@ -1639,7 +1639,7 @@ void __cdecl VEH_PushEntity(gentity_s *ent, gentity_s *target, float *pushDir, f
                 && (!target->actor || !Actor_InScriptedState(target->actor)))
             {
                 G_Damage(target, ent, ent, pushDir, target->r.currentOrigin,
-                         999999, 0, MOD_CRUSH, -1, HITLOC_NONE, 0, 0);
+                         999999, DAMAGE_NOFLAG, MOD_CRUSH, -1, HITLOC_NONE, 0, 0);
             }
         }
 #endif
@@ -3631,14 +3631,14 @@ bool G_IsVehicleImmune(gentity_s *ent, int mod, char damageFlags, uint32_t weapo
 
     switch (mod)
     {
-    case 1:
-    case 2:
-        if (v4->bulletDamage || ((damageFlags & 2) != 0 && v4->armorPiercingDamage))
+    case MOD_PISTOL_BULLET:
+    case MOD_RIFLE_BULLET:
+        if (v4->bulletDamage || ((damageFlags & DAMAGE_NO_ARMOR) != 0 && v4->armorPiercingDamage))
             goto LABEL_3;
         goto LABEL_6;
 
-    case 3:
-    case 4:
+    case MOD_GRENADE:
+    case MOD_GRENADE_SPLASH:
     {
 
         if (BG_GetWeaponDef(weapon)->projExplosion == WEAPPROJEXP_HEAVY)
@@ -3650,15 +3650,15 @@ bool G_IsVehicleImmune(gentity_s *ent, int mod, char damageFlags, uint32_t weapo
         break;
     }
 
-    case 5:
+    case MOD_PROJECTILE:
         result = (v4->projectileDamage == 0);
         break;
 
-    case 6:
+    case MOD_PROJECTILE_SPLASH:
         result = (v4->projectileSplashDamage == 0);
         break;
 
-    case 14:
+    case MOD_EXPLOSIVE:
     LABEL_3:
         result = 0;
         break;
@@ -5971,8 +5971,8 @@ void Scr_Vehicle_Touch(gentity_s *pSelf, gentity_s *pOther, int bTouched)
                 moveDir,
                 pOther->r.currentOrigin,
                 999999,
-                0,
-                9,
+                DAMAGE_NOFLAG,
+                MOD_CRUSH,
                 -1,
                 HITLOC_NONE,
                 0,
@@ -5995,8 +5995,8 @@ void Scr_Vehicle_Touch(gentity_s *pSelf, gentity_s *pOther, int bTouched)
                     moveDir,
                     pOther->r.currentOrigin,
                     999999,
-                    0,
-                    9,
+                    DAMAGE_NOFLAG,
+                    MOD_CRUSH,
                     -1,
                     HITLOC_NONE,
                     0,
@@ -6022,8 +6022,8 @@ void Scr_Vehicle_Touch(gentity_s *pSelf, gentity_s *pOther, int bTouched)
                             moveDir,
                             pOther->r.currentOrigin,
                             damage,
-                            0,
-                            9,
+                            DAMAGE_NOFLAG,
+                            MOD_CRUSH,
                             -1,
                             HITLOC_NONE,
                             0,

@@ -3982,8 +3982,8 @@ void __cdecl ScrCmd_DoDamage(scr_entref_t entref)
         dir,
         source,
         (int)damage,
-        0, //dflags
-        0, // mod
+        DAMAGE_NOFLAG, //dflags
+        MOD_UNKNOWN, // mod
         0xFFFFFFFF, // weapon
         HITLOC_HEAD, // weird but accurate
         0,

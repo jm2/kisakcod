@@ -167,8 +167,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Moves perk identifiers into a shared enum and rewrites script/server consumers. Perk indices cross gameplay and script boundaries; require exact numeric and profile-specific coverage.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1a-perks-and-combat-values",
+      "hunk_disposition": "Final MP perk enum added to bg_public.h, old PERK_COUNT macro removed, all lookup/script/server consumers adopted. The only excluded hunks normalize end-of-file newlines in unrelated header tails."
     },
     {
       "commit": "2f4eb59ec34e9df72730d451f5cbedbd1312eff0",
@@ -187,8 +189,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Renames gameplay damage-mask bits across SP and MP. Preserve exact bit values and mixed-mask behavior through focused damage tests before adoption.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1a-perks-and-combat-values",
+      "hunk_disposition": "Shared SP/MP damage flags and all surviving consumers adopted, including radius/no-knockback unions. Keep each fork ClientEvents/HandleClientEvent fall-damage calculation and stat access; only the flags argument is renamed. Unrelated final-newline normalization is omitted."
     },
     {
       "commit": "8b23c3105bc33988c6e3b38085c239f42a0610b2",
@@ -197,8 +201,10 @@
       "historical_disposition": "Deferred",
       "remaining_boundary": "Broadly renames means-of-death values crossing scripts, gameplay, and network state. It is behavior-neutral only if every numeric value remains exact; no such local oracle accompanies the upstream change.",
       "workstream": "G1",
-      "status": "planned",
-      "refactor_goal_scope": "explicit-refactor"
+      "status": "implemented-pending-merge",
+      "refactor_goal_scope": "explicit-refactor",
+      "completion_evidence": "UPSTREAM_REFACTOR_BURNDOWN.md#gameplay-slice-g1a-perks-and-combat-values",
+      "hunk_disposition": "All SP/MP cause-of-death consumers and modNames extents adopted. Move the identical MP enum before its table. Adapt both fork fall-damage call sites without importing the separately deferred stat-name migration. Preserve fork validation and numeric gameplay semantics."
     },
     {
       "commit": "0f139a7f6f5ed43d027869ed8cabd1461090e467",
