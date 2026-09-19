@@ -16,7 +16,8 @@
 
 netFieldOrderInfo_t orderInfo;
 
-huffman_t msgHuff;
+// huffman_t msgHuff moved to qcommon/msg_bits_mp.cpp (ki-pyb5 verbatim code
+// motion); the extern declaration stays in sv_msg_write_mp.h.
 
 #define	NETF(s) NETF_BASE(entityState_s, s)
 
