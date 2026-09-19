@@ -55,7 +55,7 @@ void __cdecl Image_Generate2D(GfxImage *image, uint8_t *pixels, int width, int h
             "%s\n\t(height) = %i",
             "(height > 0 && (((height) & ((height) - 1)) == 0))",
             height);
-    Image_Setup(image, width, height, 1, 3, imageFormat);
+    Image_Setup(image, width, height, 1, IMG_FLAG_NOPICMIP | IMG_FLAG_NOMIPMAPS, imageFormat);
     iassert( image->cardMemory.platform[PICMIP_PLATFORM_USED] > 0 );
     Image_UploadData(image, imageFormat, D3DCUBEMAP_FACE_POSITIVE_X, 0, pixels);
 }
@@ -146,7 +146,7 @@ uint32_t __cdecl Image_GetCardMemoryAmount(
     uint32_t memory; // [esp+18h] [ebp-4h]
 
     memory = Image_GetCardMemoryAmountForMipLevel(format, width, height, depth);
-    if ((imageFlags & 2) == 0)
+    if ((imageFlags & IMG_FLAG_NOMIPMAPS) == 0)
     {
         while (depth + height + width > 3)
         {
@@ -168,7 +168,7 @@ uint32_t __cdecl Image_GetCardMemoryAmount(
             memory += Image_GetCardMemoryAmountForMipLevel(format, v8, v7, v6);
         }
     }
-    if ((imageFlags & 4) != 0)
+    if ((imageFlags & IMG_FLAG_CUBEMAP) != 0)
         memory *= 6;
     return memory;
 }
@@ -190,7 +190,7 @@ void __cdecl Image_TrackTexture(GfxImage *image, char imageFlags, _D3DFORMAT for
 
     for (platform = 0; platform < 2; ++platform)
     {
-        if ((imageFlags & 1) != 0)
+        if ((imageFlags & IMG_FLAG_NOPICMIP) != 0)
         {
             CardMemoryAmount = Image_GetCardMemoryAmount(imageFlags, format, width, height, depth);
         }
@@ -303,7 +303,7 @@ void __cdecl Image_Generate3D(
             "%s\n\t(depth) = %i",
             "(depth > 0 && (((depth) & ((depth) - 1)) == 0))",
             depth);
-    Image_Setup(image, width, height, depth, 11, imageFormat);
+    Image_Setup(image, width, height, depth, IMG_FLAG_NOPICMIP | IMG_FLAG_NOMIPMAPS | IMG_FLAG_VOLMAP, imageFormat);
     iassert( image->cardMemory.platform[PICMIP_PLATFORM_USED] > 0 );
     Image_UploadData(image, imageFormat, D3DCUBEMAP_FACE_POSITIVE_X, 0, pixels);
 }
@@ -324,9 +324,9 @@ void __cdecl Image_GenerateCube(
     iassert( edgeLen > 0 );
     iassert( IsPowerOf2( edgeLen ) );
     iassert( mipCount <= 15 );
-    imageFlags = 5;
+    imageFlags = IMG_FLAG_NOPICMIP | IMG_FLAG_CUBEMAP;
     if (mipCount == 1)
-        imageFlags = 7;
+        imageFlags = IMG_FLAG_NOPICMIP | IMG_FLAG_NOMIPMAPS | IMG_FLAG_CUBEMAP;
     Image_Setup(image, edgeLen, edgeLen, 1, imageFlags, imageFormat);
     iassert( image->cardMemory.platform[PICMIP_PLATFORM_USED] > 0 );
     for (faceIndex = 0; faceIndex < 6; ++faceIndex)
@@ -340,7 +340,7 @@ void __cdecl Image_GenerateCube(
 void __cdecl Image_BuildWaterMap(GfxImage *image)
 {
     iassert( image );
-    Image_SetupAndLoad(image, image->width, image->height, 1, 65537, D3DFMT_L8);
+    Image_SetupAndLoad(image, image->width, image->height, 1, IMG_FLAG_NOPICMIP | IMG_FLAG_DYNAMIC, D3DFMT_L8);
 }
 
 void __cdecl Image_LoadDxtc(
@@ -403,7 +403,7 @@ static GfxImage *__cdecl Image_Load(char *name, uint8_t semantic, uint8_t imageT
 
     if (*name == 36)
         return Image_LoadBuiltin(name, semantic, imageTrack);
-    image = Image_Alloc(name, 3u, semantic, imageTrack);
+    image = Image_Alloc(name, IMG_CATEGORY_LOAD_FROM_FILE, semantic, imageTrack);
     iassert( image );
     iassert( image->texture.basemap == NULL );
     if (Image_LoadFromFile(image))
@@ -449,7 +449,7 @@ char __cdecl Image_LoadFromFileWithReader(GfxImage *image, int(__cdecl *OpenFile
             {
                 if (Image_ValidateHeader(&fileHeader, filepath))
                 {
-                    if ((fileHeader.flags & 3) != 0
+                    if ((fileHeader.flags & (IMG_FLAG_NOPICMIP | IMG_FLAG_NOMIPMAPS)) != 0
                         || (fileHeader.dimensions[1] < fileHeader.dimensions[0]
                             ? (v4 = fileHeader.dimensions[1])
                             : (v4 = fileHeader.dimensions[0]),
@@ -580,43 +580,43 @@ void __cdecl Image_LoadFromData(GfxImage *image, GfxImageFileHeader *fileHeader,
     image->texture.basemap = 0;
     switch (fileHeader->format)
     {
-    case 1u:
+    case IMG_FORMAT_BITMAP_RGBA:
         Image_LoadBitmap(image, fileHeader, srcData, D3DFMT_A8R8G8B8, 4);
         break;
-    case 2u:
+    case IMG_FORMAT_BITMAP_RGB:
         Image_LoadBitmap(image, fileHeader, srcData, D3DFMT_X8R8G8B8, 3);
         break;
-    case 3u:
+    case IMG_FORMAT_BITMAP_LUMINANCE_ALPHA:
         Image_LoadBitmap(image, fileHeader, srcData, D3DFMT_A8L8, 2);
         break;
-    case 4u:
+    case IMG_FORMAT_BITMAP_LUMINANCE:
         Image_LoadBitmap(image, fileHeader, srcData, D3DFMT_L8, 1);
         break;
-    case 5u:
+    case IMG_FORMAT_BITMAP_ALPHA:
         Image_LoadBitmap(image, fileHeader, srcData, D3DFMT_A8, 1);
         break;
-    case 6u:
+    case IMG_FORMAT_WAVELET_RGBA:
         Image_LoadWavelet(image, fileHeader, srcData, D3DFMT_A8R8G8B8, 4);
         break;
-    case 7u:
+    case IMG_FORMAT_WAVELET_RGB:
         Image_LoadWavelet(image, fileHeader, srcData, D3DFMT_X8R8G8B8, 3);
         break;
-    case 8u:
+    case IMG_FORMAT_WAVELET_LUMINANCE_ALPHA:
         Image_LoadWavelet(image, fileHeader, srcData, D3DFMT_A8L8, 2);
         break;
-    case 9u:
+    case IMG_FORMAT_WAVELET_LUMINANCE:
         Image_LoadWavelet(image, fileHeader, srcData, D3DFMT_L8, 1);
         break;
-    case 10u:
+    case IMG_FORMAT_WAVELET_ALPHA:
         Image_LoadWavelet(image, fileHeader, srcData, D3DFMT_A8, 1);
         break;
-    case 11u:
+    case IMG_FORMAT_DXT1:
         Image_LoadDxtc(image, fileHeader, srcData, D3DFMT_DXT1, 8);
         break;
-    case 12u:
+    case IMG_FORMAT_DXT3:
         Image_LoadDxtc(image, fileHeader, srcData, D3DFMT_DXT3, 16);
         break;
-    case 13u:
+    case IMG_FORMAT_DXT5:
         Image_LoadDxtc(image, fileHeader, srcData, D3DFMT_DXT5, 16);
         break;
     default:

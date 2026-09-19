@@ -1020,7 +1020,7 @@ void __cdecl Material_PreventOverrideTechniqueGeneration()
 void __cdecl Material_UpdatePicmipForTexdef(const MaterialTextureDef *texdef)
 {
     iassert( texdef );
-    if (texdef->semantic != 11)
+    if (texdef->semantic != TS_WATER_MAP)
     {
         if (texdef->u.image)
             Image_UpdatePicmip(texdef->u.image);
@@ -1083,7 +1083,7 @@ void __cdecl Material_ReloadTextures(const Material *material)
         for (textureIter = 0; textureIter != textureCount; ++textureIter)
         {
             texture = &material->textureTable[textureIter];
-            if (texture->semantic != 11)
+            if (texture->semantic != TS_WATER_MAP)
             {
                 image = texture->u.image;
                 if (image > maxConvert && (!lastConverted || image < lastConverted))
