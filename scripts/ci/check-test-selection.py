@@ -380,6 +380,13 @@ def check_run_evidence(args: argparse.Namespace, inventory: Set[str],
         # Same vacuity rule: the exemption only ever subtracts from
         # discovery comparisons.
         raise ValueError("--reference-absent requires --discovered")
+    if (args.reference_absent
+            and args.discovered_scope != "exact"):
+        # The exemption and its stale-entry check are only ever consulted
+        # in exact scope; a subset run would silently ignore the flag
+        # entirely, so this vacuous combination fails closed too.
+        raise ValueError(
+            "--reference-absent requires --discovered-scope exact")
     if not args.discovered:
         return 0
     discovered = set(read_discovery(args.discovered))
