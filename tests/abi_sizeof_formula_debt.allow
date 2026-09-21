@@ -11,3 +11,8 @@ _platform/win32/sys_filesystem.cpp|offsetof(KisakObjectAttributes,SecurityQualit
 bgame/bg_local.h|(sizeof(structloadAnim_t)*512)==36864|1
 game/actor_aim.cpp|sizeof(_QWORD[1030])==sizeof(char[8240])|1
 gfx_d3d/r_fog.cpp|sizeof(GfxFog)*FOG_COUNT==100|1
+# ki-oh65 rework: NET_StringToAdr's bounded octet copy asserts equal widths
+# between the netadr_t::ip and SysSocketAddress::address wire-address arrays
+# (both in-memory, four octets; no on-disk layout rides on it). The
+# assertion stays until a shared octet-width definition covers both types.
+qcommon/net_chan_mp.cpp|sizeof(a->ip)==sizeof(socketAddress.address),|1

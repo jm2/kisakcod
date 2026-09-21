@@ -1280,7 +1280,10 @@ renderer items below belong to the client track; they are not prerequisites for 
 - **Entry/window/input:** replace `WinMain` with `main()`; replace the hand-rolled Win32 window class
   + message pump and DirectInput with **SDL2/3** (window, events, relative mouse, clipboard,
   message-box). The `HWND` is the linchpin threading windowing→D3D device→sound→input, so these move
-  together.
+  together. The user-visible behavior, retail-usercmd invariants and clean-install acceptance for
+  this migration are specified in
+  [DESKTOP_PLATFORM_ACCEPTANCE.md](DESKTOP_PLATFORM_ACCEPTANCE.md); the SDL path must feed the
+  existing `CL_Input`/`CL_CreateCmd` command generation unchanged.
 - **Threading:** `CreateThread`/Events/`Interlocked*` (209 sites) → `pthread`/`std::thread`, a POSIX
   auto/manual-reset event class, and `std::atomic<int32_t>`/`__atomic` (use fixed-width types, not
   `long`). **`SuspendThread`/`ResumeThread` have no POSIX equivalent** — the render/database suspend

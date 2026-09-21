@@ -168,6 +168,12 @@ typedef struct DecState {
    int    voc_offset;
 
    int    dtx_enabled;
+
+   /* Comfort-noise/PLC pseudo-random state (ki-dkeb CWE-327 repair): each
+      decoder owns its state, so receiver-local synthesis is a deterministic
+      function of the bitstream alone, independent of interleaving and of any
+      global PRNG. */
+   spx_uint32_t rand_state;
 } DecState;
 
 /** Initializes encoder state*/

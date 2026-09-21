@@ -15,10 +15,12 @@
 # pins in tests/runtime_scalar_determinism_tests.cpp — both architectures
 # must pass the same contracts, which is the layer's whole point.
 #
-# The three pre-existing base failures (abi-sizeof-debt-tripwire,
-# abi-sizeof-scanner-fixture, security-source-regressions) are excluded:
-# they reproduce on an untouched checkout and are tracked in ki-9b13 and
-# ki-ya3t. Remove the -E filter when those beads close.
+# The historical base failures (abi-sizeof-debt-tripwire,
+# abi-sizeof-scanner-fixture, security-source-regressions) were healed on
+# master and their tracking beads are closed, so this gate no longer filters
+# any test out by name: the whole portable suite must pass in every cell.
+# Reintroduce an exclusion only against an open, tracked defect, and cite the
+# bead next to it.
 #
 # Usage:
 #   scripts/ci/run-arm64-determinism.sh
@@ -90,11 +92,11 @@ for entry in "${COMPILERS[@]}"; do
         # same flags, so a cell is only honest when BOTH runtimes work.
         if [ "$cell" = "asan-ubsan" ]; then
             # Trailing X-run templates only (portable across GNU and BSD
-            # mktemp), rooted at ${TMPDIR:-/tmp} instead of a hardcoded
+            # mktemp), rooted at ${TMPDIR:-/var/tmp} instead of a hardcoded
             # per-session directory; -x c/-x c++ keep the probe language
             # explicit without relying on a file-name suffix.
-            probe_src="$(mktemp "${TMPDIR:-/tmp}/asan-probe-src-XXXXXX")"
-            probe_bin="$(mktemp "${TMPDIR:-/tmp}/asan-probe-bin-XXXXXX")"
+            probe_src="$(mktemp "${TMPDIR:-/var/tmp}/asan-probe-src-XXXXXX")"
+            probe_bin="$(mktemp "${TMPDIR:-/var/tmp}/asan-probe-bin-XXXXXX")"
             printf 'int main() { return 0; }\n' > "$probe_src"
             probe_ok=1
             "$cxx_compiler" -x c++ -fsanitize=address,undefined "$probe_src" \
@@ -132,7 +134,7 @@ for entry in "${COMPILERS[@]}"; do
         fi
 
         if ! ctest --test-dir "$build_dir" --output-on-failure \
-                -E "abi-sizeof|security-source-regressions"; then
+                --no-tests=error; then
             FAILED_CELLS+=("${compiler}/${cell} (test)")
         fi
     done

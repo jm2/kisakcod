@@ -1,0 +1,9 @@
+# Tests the Win32 (MSVC) backend never registers, so the ILP32 profile can
+# neither discover nor run them. Format: <test-name><TAB><reason>. Every
+# inventory test not in windows-x86.selected.txt or windows-x86.excluded.tsv
+# must appear here; check-test-selection.py enforces both the reason and the
+# invariant that an absent test is not discovered.
+effectscore-effect-table-stack-usage	Not registered on MSVC/Win32: the static stack-report contract only builds for non-sanitizer, non-MSVC objects, so the Win32 backend never discovers it; it is exercised by the POSIX portable legs.
+platform-console-sigpipe-default-contracts	POSIX-only console contract: registered only when KISAK_PLATFORM is not win32, so the Win32 backend never discovers it; it is exercised by the POSIX portable legs.
+platform-console-sigpipe-ignore-contracts	POSIX-only console contract: registered only when KISAK_PLATFORM is not win32, so the Win32 backend never discovers it; it is exercised by the POSIX portable legs.
+retail-fastfile-parity-driver-gates	POSIX-only bash driver: registered only under `if(UNIX)`; the Windows legs mint references and run the C++ self-test instead, so the Win32 backend never registers this test.

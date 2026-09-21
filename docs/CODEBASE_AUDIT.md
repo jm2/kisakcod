@@ -41,7 +41,8 @@ Fixed in the initial porting implementation:
   restricts in-band server downloads to exact published active-mod `.iwd`/`.ff`
   names with protocol-length, server-only, path-namespace, pre-open
   revalidation, and resource-cleanup guards. HTTP/www redirect transport remains
-  nonfunctional and is still tracked under H4.
+  nonfunctional and is still tracked under H4 (a reimplementation is in
+  progress on the current branch; see the H4 status note).
 - PR #55, merged as `f39e0e4a` from final implementation head `e9051955`, extends the script-string ownership foundation:
   opaque `RefString` mutation
   authority is private, character folding is defined for every byte value, complete batch admission validates debug
@@ -446,6 +447,26 @@ through Steam.
 **Impact:** clients cannot www-download missing custom maps/mods; joining modded servers without
 pre-installed content fails at the download step. **Fix:** reimplement against libcurl/WinHTTP (the
 original libwww is gone), or document that only in-band UDP downloads + pre-installed content work.
+
+**Status: fixed.** `dl_main.cpp` now runs a real HTTP/1.1 client built on the portable
+`Sys_Socket*` stream service (`sys_socket.h`) and a dependency-free protocol unit
+(`dl_http.cpp`: redirect-URL parsing with Basic credentials, GET request formatting,
+response-head parsing). Follows retail behavior: `http://` only (https/ftp and chunked
+responses fail into the retail `wwwdl fail` → in-band UDP fallback path), absolute or
+path-absolute redirects (max 8), 30 s stall timeout, content-length or EOF framing, and
+progress fed to the legacy `legacyHacks` meter (`DL_BytesRead`) with URL credentials
+masked out of the display name (`cl_parse_mp.cpp`). Pinned by
+`tests/dl_http_tests.cpp`, `tests/platform_socket_stream_tests.cpp`, and
+`tests/dl_download_source_test.cmake`.
+
+Review rework hardening: credentials are masked in every surfaced URL form — the meter
+composition (retail `http://*:*authority/path` scheme) and the dev/failure log lines,
+through one bounded sanitizer — and the display path never parses unbounded user input
+into fixed buffers. `SIGPIPE` is suppressed at stream-socket creation (`SO_NOSIGPIPE`
+where defined) and per-send (`MSG_NOSIGNAL` where defined), so a mid-download peer reset
+surfaces as a `Disconnected` status instead of process death. Response-head bytes
+pipelined with the body are drained into the file before the body loop, so no early
+payload bytes are dropped on fast servers.
 
 ### H5. `set(WIN32 …)` clobbers CMake's built-in `WIN32`, defeating every `if(WIN32)` guard
 `scripts/common_files.cmake:558`

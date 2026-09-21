@@ -69,7 +69,10 @@ typedef void (*innovation_quant_func)(spx_sig_t *, spx_coef_t *, spx_coef_t *, s
                                       spx_sig_t *, spx_word16_t *, SpeexBits *, char *, int, int);
 
 /** Innovation unquantization function */
-typedef void (*innovation_unquant_func)(spx_sig_t *, const void *, int, SpeexBits*, char *);
+/* ki-dkeb CWE-327 repair: the trailing spx_uint32_t* is the caller-owned
+   pseudo-random state for noise synthesis implementations (see misc.c
+   speex_rand_seeded). Deterministic dequantizers ignore it. */
+typedef void (*innovation_unquant_func)(spx_sig_t *, const void *, int, SpeexBits*, char *, spx_uint32_t *);
 
 /** Description of a Speex sub-mode (wither narrowband or wideband */
 typedef struct SpeexSubmode {

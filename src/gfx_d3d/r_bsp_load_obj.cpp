@@ -168,7 +168,7 @@ void __cdecl R_SetUpSunLight(const float *sunColor, const float *sunDirection, G
 {
     iassert( light );
     memset(&light->type, 0, sizeof(GfxLight));
-    light->type = 1;
+    light->type = GFX_LIGHT_TYPE_DIR;
     light->dir[0] = *sunDirection;
     light->dir[1] = sunDirection[1];
     light->dir[2] = sunDirection[2];
@@ -448,7 +448,7 @@ void __cdecl R_LoadPrimaryLights(uint32_t bspVersion)
     {
         iassert( comWorld.isInUse );
         s_world.primaryLightCount = comWorld.primaryLightCount;
-        s_world.sunPrimaryLightIndex = comWorld.primaryLightCount > 1 && Com_GetPrimaryLight(1)->type == 1;
+        s_world.sunPrimaryLightIndex = comWorld.primaryLightCount > 1 && Com_GetPrimaryLight(1)->type == GFX_LIGHT_TYPE_DIR;
         for (lightIndex = 0; lightIndex < s_world.primaryLightCount; ++lightIndex)
         {
             primaryLight = Com_GetPrimaryLight(lightIndex);
@@ -1015,14 +1015,14 @@ void __cdecl R_LoadLightmaps(GfxBspLoad *load)
             defCopyCfg.zoom = groupInfo[newLmapIndex].wideCount;
             R_EnumLightDefs((void(*)(GfxLightDef*, void*))R_CopyLightDefAttenuationImage, &defCopyCfg);
             v1 = va("*lightmap%i_primary", newLmapIndex);
-            v2 = Image_Alloc(v1, 2u, 1u, 4u);
+            v2 = Image_Alloc(v1, IMG_CATEGORY_LIGHTMAP, TS_FUNCTION, 4u);
             s_world.lightmaps[newLmapIndex].primary = v2;
             iassert( s_world.lightmaps[newLmapIndex].primary );
             width = groupInfo[newLmapIndex].wideCount << 10;
             height = groupInfo[newLmapIndex].highCount << 10;
             Image_Generate2D(s_world.lightmaps[newLmapIndex].primary, primaryImage, width, height, D3DFMT_L8);
             v3 = va("*lightmap%i_secondary", newLmapIndex);
-            v4 = Image_Alloc(v3, 2u, 1u, 4u);
+            v4 = Image_Alloc(v3, IMG_CATEGORY_LIGHTMAP, TS_FUNCTION, 4u);
             s_world.lightmaps[newLmapIndex].secondary = v4;
             iassert( s_world.lightmaps[newLmapIndex].secondary );
             width = groupInfo[newLmapIndex].wideCount << 9;
