@@ -125,6 +125,13 @@ int __cdecl MSG_ReadDeltaKeyShort(msg_t *msg, __int16 key, int oldV);
 void __cdecl MSG_SetDefaultUserCmd(playerState_s *ps, usercmd_s *cmd);
 void __cdecl MSG_WriteDeltaUsercmdKey(msg_t *msg, int key, const usercmd_s *from, const usercmd_s *to);
 void __cdecl MSG_ReadDeltaUsercmdKey(msg_t *msg, int key, const usercmd_s *from, usercmd_s *to);
+// Retail horizontal-move quantizer pair (msg_bits_usercmd_mp.cpp): reduces
+// any forward/right magnitude to the reconstruction values {+127, 0, -127}.
+// Declared for the capture contract tests, which express the wire-visible
+// movement expectation through the production functions instead of
+// restating the host-char signedness in test comparisons.
+int __cdecl MSG_HorMoveTo(int iForwardMove, int iRightMove);
+void __cdecl MSG_HorMoveFrom(char iFlags, char *pForwardMove, char *pRightMove);
 void __cdecl MSG_ClearLastReferencedEntity(msg_t *msg);
 int __cdecl MSG_ReadEntityIndex(msg_t *msg, uint32_t indexBits);
 void __cdecl MSG_ReadDeltaField(

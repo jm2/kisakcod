@@ -363,12 +363,23 @@ void test_usercmd_delta_sequence_fidelity()
     MSG_BeginReading(&run1.msg);
 
     // Fidelity: decoding the stream frame by frame reconstructs each exact
-    // command state.
+    // command state. The horizontal-move fields are NOT identity fields in
+    // the retail contract: MSG_HorMoveTo/MSG_HorMoveFrom quantize any
+    // magnitude to {+127, 0, -127} (see the arm flags). Build the expected
+    // command by applying that production reconstruction before the
+    // byte-exact compare — comparing raw scripted values would pin the
+    // host's plain-char signedness instead (on unsigned-char hosts, e.g.
+    // Linux arm64, a scripted -127 promotes to +129, which retail correctly
+    // reconstructs as +127; on signed-char hosts the scripted values are
+    // fixpoints and the expectation is unchanged).
     for (std::size_t i = 1; i < script.size(); ++i)
     {
         usercmd_s decoded{};
         MSG_ReadDeltaUsercmdKey(&run1.msg, key, &script[i - 1], &decoded);
-        CHECK(std::memcmp(&decoded, &script[i], sizeof(usercmd_s)) == 0);
+        usercmd_s expected = script[i];
+        MSG_HorMoveFrom(static_cast<char>(MSG_HorMoveTo(expected.forwardmove, expected.rightmove)),
+                        &expected.forwardmove, &expected.rightmove);
+        CHECK(std::memcmp(&decoded, &expected, sizeof(usercmd_s)) == 0);
     }
 }
 

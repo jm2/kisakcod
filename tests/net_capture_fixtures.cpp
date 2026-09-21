@@ -282,7 +282,17 @@ CaptureManifest parseManifest(const std::string &profile, const std::string &tex
 
 bool fixturesRoot(std::string &outRoot)
 {
+    // MSVC /W4 deprecates the plain CRT name (C4996); there is no portable
+    // getenv replacement, and the _dupenv_s allocation protocol is not worth
+    // diverging from the other platforms for one read-only lookup.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: read-only portable env lookup
+#endif
     const char *override = std::getenv("KISAKCOD_NETCAPTURES_DIR");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
     if (override && *override)
     {
         outRoot = override;
