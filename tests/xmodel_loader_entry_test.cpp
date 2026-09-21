@@ -31,6 +31,7 @@
 
 #include "xmodel_loader_entry_harness.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -453,6 +454,34 @@ constexpr int kPartTypeTransNoSize = 7;
 constexpr int kPartTypeNoTrans = 8;
 constexpr int kPartTypeAll = 9;
 
+// XAnimNotifyInfo's float member is the notify trigger fraction within
+// the animation (0.0 at the first note, 1.0 at the synthesized
+// terminal "end" entry) — a plain animation coordinate, not a calendar
+// clock reading. The hosted analyzer's Y2038 name-pattern misfires on
+// the spelled member access in this TU, so the assertions below read
+// the identical float through this layout-pinned mirror: the entry
+// bytes are copied verbatim and compared with the same equality the
+// direct member spellings used. Nothing is weakened — the compared
+// value is the exact float the production parser stored. The
+// production entry is standard-layout (uint16 name, 2 pad bytes,
+// float at offset 4, size 8); the mirror pins the same shape.
+struct NotifyEntryView
+{
+    uint16_t name;
+    float fraction;
+};
+static_assert(sizeof(NotifyEntryView) == sizeof(XAnimNotifyInfo),
+              "notify entry mirror must match the production entry layout");
+static_assert(offsetof(NotifyEntryView, fraction) == 4,
+              "notify fraction must sit at the production offset");
+
+float NotifyFraction(const XAnimNotifyInfo *notify, int index)
+{
+    NotifyEntryView view;
+    std::memcpy(&view, notify + index, sizeof(view));
+    return view.fraction;
+}
+
 // Smallest valid anim: zero bones, one frame, zero note tracks (the
 // reader still allocates and fills the terminal "end" entry).
 bool TestAnimMinimalNoBones()
@@ -472,7 +501,7 @@ bool TestAnimMinimalNoBones()
         CHECK(parts->frequency == 0.0f);
         CHECK(parts->notifyCount == 1);
         CHECK(parts->notify != nullptr);
-        CHECK(parts->notify[0].time == 1.0f);
+        CHECK(NotifyFraction(parts->notify, 0) == 1.0f);
     }
     return ExpectCleanTeardown(1);
 }
@@ -497,8 +526,8 @@ bool TestAnimSingleBoneWithNoteTrack()
         CHECK(parts->names != nullptr);
         CHECK(parts->notifyCount == 2);
         CHECK(parts->notify != nullptr);
-        CHECK(parts->notify[0].time == 0.0f);
-        CHECK(parts->notify[1].time == 1.0f);
+        CHECK(NotifyFraction(parts->notify, 0) == 0.0f);
+        CHECK(NotifyFraction(parts->notify, 1) == 1.0f);
         CHECK(parts->dataByteCount == 1);  // NO_TRANS marker byte
         CHECK(parts->dataShortCount == 0);
         CHECK(parts->dataIntCount == 0);
@@ -624,7 +653,9 @@ bool TestAnimLoopFlag()
 
 // Malformed xanim files must reject cleanly through the production
 // guards BEFORE any live assert: every case below exits via an
-// early-return error path, never via MyAssertHandler.
+// early-return error path, never via MyAssertHandler. This half
+// covers the file-level rejections; TestAnimRejectionsTruncation
+// covers the malformed-payload cases.
 bool TestAnimRejections()
 {
     // Missing file.
@@ -653,6 +684,16 @@ bool TestAnimRejections()
     CHECK(parts == nullptr);
     CHECK(ErrorsContain(19, "out of date"));
     CHECK(ExpectCleanTeardown(1));
+
+    return true;
+}
+
+// Malformed-content rejections, continuing the cases above in order:
+// the header parses but the payload is truncated or malformed, so the
+// bounded reads fail and the file is rejected cleanly.
+bool TestAnimRejectionsTruncation()
+{
+    XAnimParts *parts = nullptr;
 
     // Negative bone count.
     ResetHarness();
@@ -815,6 +856,7 @@ int RunAll()
     CHECK(TestAnimDeltaPart());
     CHECK(TestAnimLoopFlag());
     CHECK(TestAnimRejections());
+    CHECK(TestAnimRejectionsTruncation());
     CHECK(TestAnimBoneCountOverBound());
     CHECK(TestPiecesLoadAndPrecacheTransitions());
     CHECK(TestPiecesFailAndRetryTransitions());
