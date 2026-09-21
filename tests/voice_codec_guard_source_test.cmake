@@ -30,9 +30,10 @@ cmake_minimum_required(VERSION 3.16)
 #     with their consumption in scripts/mp/CMakeLists.txt, and
 #   - the per-file SHA-256 of every vendored snapshot file and of the whole
 #     deps/speex public surface (content-only drift trips the guard).
-# Eight CONTRACT_MUTATION negative controls cover wrapper substitution, list
+# Nine CONTRACT_MUTATION negative controls cover wrapper substitution, list
 # removal, same-directory entry replacement in both the test and production
-# lists, LCG/version drift and snapshot content mutation.
+# lists, LCG/version drift, snapshot content mutation and a deps/speex
+# surface file-set addition.
 
 if(NOT DEFINED SOURCE_ROOT OR SOURCE_ROOT STREQUAL "")
     message(FATAL_ERROR "SOURCE_ROOT must identify the KisakCOD source tree")
@@ -529,6 +530,16 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
         # on-disk bytes (review r4053096015).
         set(_SNAPSHOT_SHA256_bits_c
             "0000000000000000000000000000000000000000000000000000000000000000")
+    elseif(CONTRACT_MUTATION STREQUAL "deps_surface_file_added")
+        # An ADDED file in the deps/speex public surface: the per-file
+        # digests only iterate the pinned names, so they cannot see extra
+        # bytes. The regression is modeled in-memory by dropping one real
+        # surface file from the pinned list — the on-disk file then becomes
+        # an unrecognized extra that the file-set check must reject
+        # (review r4062880244). This stays a pure in-memory mutation like
+        # every other control: the mutation subprocess shares the real
+        # SOURCE_ROOT and must never write into it.
+        list(REMOVE_ITEM _SPEEX_DEPS_SURFACE_FILES "speex_types.h")
     else()
         message(FATAL_ERROR
             "Unknown voice codec guard contract mutation: '${CONTRACT_MUTATION}'")
@@ -599,6 +610,29 @@ require_pinned_sha256("src/groupvoice/speex" _SPEEX_SNAPSHOT_FILES
 require_pinned_sha256("deps/speex" _SPEEX_DEPS_SURFACE_FILES
     "_SPEEX_DEPS_SHA256_" "deps/speex public surface (DEP-3)")
 
+# File-set identity for the deps/speex public surface: the per-file digests
+# above iterate the pinned names only, so they cannot detect an ADDED file —
+# and DEP-3 pins the whole surface, not just the known names. Mirror the
+# vendored snapshot file-set check: the directory must contain exactly the
+# pinned set, no more and no less (review r4062880244).
+file(GLOB _deps_surface_entries LIST_DIRECTORIES FALSE
+    "${SOURCE_ROOT}/deps/speex/*")
+list(LENGTH _deps_surface_entries _deps_surface_count)
+list(LENGTH _SPEEX_DEPS_SURFACE_FILES _deps_pinned_count)
+if(NOT _deps_surface_count EQUAL _deps_pinned_count)
+    message(FATAL_ERROR
+        "deps/speex public surface file count drifted (DEP-3): "
+        "expected ${_deps_pinned_count}, found ${_deps_surface_count}")
+endif()
+foreach(_deps_entry IN LISTS _deps_surface_entries)
+    get_filename_component(_deps_name "${_deps_entry}" NAME)
+    if(NOT _deps_name IN_LIST _SPEEX_DEPS_SURFACE_FILES)
+        message(FATAL_ERROR
+            "Unrecognized file in the deps/speex public surface (DEP-3): "
+            "${_deps_name}")
+    endif()
+endforeach()
+
 if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
     foreach(_mutation IN ITEMS
         opus_wrapper_include
@@ -608,7 +642,8 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         production_source_entry_replaced
         snapshot_content_mutated
         lcg_body_libc_rand
-        version_drift)
+        version_drift
+        deps_surface_file_added)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"
