@@ -70,6 +70,7 @@ fuzz-sys-filesystem-seeds	Portable platform-service subject registered on every 
 huffman-bounds-and-pointer-width	ILP32/ABI contract that must ultimately run on the Win32 x86 leg; currently exercised on the portable-tests and arm64 determinism matrices. Enrollment assessment tracked under #134.
 identity-format-and-overflow	ILP32/ABI contract that must ultimately run on the Win32 x86 leg; currently exercised on the portable-tests and arm64 determinism matrices. Enrollment assessment tracked under #134.
 msvc-printf-shim-contracts	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
+net-capture-certification	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
 net-wire-format-contracts	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
 phys-obj-id-owner-bound-source-invariants	Source-invariant scan covered by the portable-tests matrix; not enrolled in the ILP32 runtime selection (assessment tracked under #134).
 phys-obj-id-sidecar-contracts	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).

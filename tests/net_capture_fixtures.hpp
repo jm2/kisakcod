@@ -72,15 +72,13 @@ struct CaptureManifest
 
 // The explicit per-kind rule table. `requiredVars` names the variable
 // capture fields every capture of this kind MUST declare (mirrored in
-// tests/fixtures/netcaptures/README.md); `engineOnly` kinds are enforced
-// only where the production netchan TUs link (Win32 ILP32 engine target).
+// tests/fixtures/netcaptures/README.md).
 struct KindRule
 {
     const char *kind;
-    const char *verify;                  // expected verify mode
-    const char *const *requiredVars;     // mandated variable declarations
+    const char *verify;              // expected verify mode
+    const char *const *requiredVars; // mandated variable declarations
     std::size_t requiredVarCount;
-    bool engineOnly;
 };
 
 // Variable capture fields of the codec-level capture kinds. The captures
@@ -91,9 +89,9 @@ constexpr const char *kScalarSequenceVars[] = {"sequence", "acknowledge"};
 constexpr const char *kUsercmdDeltaVars[] = {"key", "from_hex"};
 
 constexpr KindRule kKindRules[] = {
-    {"scalar-sequence", "encode", kScalarSequenceVars, 2, false},
-    {"huffman-block", "encode", nullptr, 0, false},
-    {"usercmd-delta", "decode-reencode", kUsercmdDeltaVars, 2, false},
+    {"scalar-sequence", "encode", kScalarSequenceVars, 2},
+    {"huffman-block", "encode", nullptr, 0},
+    {"usercmd-delta", "decode-reencode", kUsercmdDeltaVars, 2},
 };
 
 constexpr std::size_t kKindRuleCount = sizeof(kKindRules) / sizeof(kKindRules[0]);
@@ -116,6 +114,14 @@ bool parseVariableField(const std::string &spec, VariableField &out);
 
 // Hex text (even length, 0..N) to bytes. Returns false on bad syntax.
 bool parseHexBytes(const std::string &hex, std::vector<std::uint8_t> &out);
+
+// Exact output capacity, in bytes, that MSG_WriteBitsCompress requires for
+// `payload` under the production Huff_Compress maxsize contract
+// (qcommon/huffman.cpp): the call fails unless toSize*8 covers the sum of
+// the per-symbol code lengths of the fixed retail codebook. Requires the
+// production huffman tree to be initialized (the certification entry point
+// and any lazily-initializing MSG entry point both establish that).
+std::size_t huffmanCompressedCapacityFor(const std::vector<std::uint8_t> &payload);
 
 struct MaskedDiff
 {

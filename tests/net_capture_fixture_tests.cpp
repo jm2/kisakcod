@@ -88,14 +88,19 @@ namespace
 
 constexpr int kMsgCapacity = 0x20000;
 
+// Heap-backed encode buffer: 128 KiB of inline storage per instance, with
+// several live in one frame, overflowed the Windows x86 ILP32 default stack
+// (review r4059217206). Only the vector handle and the msg_t stay on the
+// stack; the capacity is allocated on first init().
 struct EncodeBuffer
 {
-    std::uint8_t storage[kMsgCapacity];
-    msg_t msg;
+    std::vector<std::uint8_t> storage;
+    msg_t msg{};
 
     void init()
     {
-        MSG_Init(&msg, storage, kMsgCapacity);
+        storage.assign(kMsgCapacity, 0);
+        MSG_Init(&msg, storage.data(), kMsgCapacity);
     }
 };
 
@@ -256,14 +261,26 @@ void test_huffman_end_to_end_payloads()
     {
         for (const std::vector<std::uint8_t> *payload : payloads)
         {
-            std::vector<std::uint8_t> compressed(payload->size() + 64, 0);
+            // Production maxsize contract (Huff_Compress): the call fails
+            // unless the output buffer covers the exact codebook bit cost
+            // of the payload; the retail tree is static, so the exact
+            // capacity is computable and the compressor must consume all of
+            // it (review r4059217217).
+            const std::size_t compressedCapacity = netcapture::huffmanCompressedCapacityFor(*payload);
+            std::vector<std::uint8_t> compressed(compressedCapacity, 0);
             const int compressedSize = MSG_WriteBitsCompress(trainHuffman, payload->data(),
                                                              static_cast<int>(payload->size()),
                                                              compressed.data(),
                                                              static_cast<int>(compressed.size()));
             CHECK(compressedSize > 0);
+            CHECK(static_cast<std::size_t>(compressedSize) == compressedCapacity);
 
-            std::vector<std::uint8_t> decompressed(payload->size() + 64, 0);
+            // Decoder contract: every symbol consumes at least one input
+            // bit, so 8*compressedSize is a rigorous bound on producible
+            // bytes; retail consumers pass an oversized buffer for the same
+            // reason and the compressor's trailing pad-bit junk (up to 7
+            // extra bits of symbols) cannot overflow it.
+            std::vector<std::uint8_t> decompressed(compressed.size() * 8, 0);
             const int decompressedSize = MSG_ReadBitsCompress(compressed.data(), compressedSize,
                                                               decompressed.data(),
                                                               static_cast<int>(decompressed.size()));

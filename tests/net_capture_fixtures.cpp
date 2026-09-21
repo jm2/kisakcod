@@ -4,11 +4,29 @@
 
 #include "net_capture_fixtures.hpp"
 
+#include <qcommon/huffman.h>
+
 #include <cstdlib>
 #include <utility>
 
+// Production global (defined in qcommon/msg_bits_mp.cpp; declared for engine
+// TUs by qcommon/sv_msg_write_mp.h): the fixed retail huffman codebook.
+extern huffman_t msgHuff;
+
 namespace netcapture
 {
+
+std::size_t huffmanCompressedCapacityFor(const std::vector<std::uint8_t> &payload)
+{
+    // Same computation Huff_Compress performs in its maxsize pre-check, so
+    // a buffer of exactly this size always satisfies the production
+    // contract for this payload (and the compressor writes exactly this
+    // many bytes: every symbol transmits Huff_bitCount bits).
+    std::uint64_t requiredBits = 0;
+    for (const std::uint8_t byte : payload)
+        requiredBits += static_cast<std::uint64_t>(Huff_bitCount(&msgHuff.compressDecompress, byte));
+    return static_cast<std::size_t>((requiredBits + 7) / 8);
+}
 
 const KindRule *ruleForKind(const std::string &kind)
 {

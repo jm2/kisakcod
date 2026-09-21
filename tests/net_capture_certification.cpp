@@ -150,7 +150,10 @@ bool verifyHuffmanBlock(const CaptureSpec &spec, const std::vector<std::uint8_t>
         return false;
     }
 
-    std::vector<std::uint8_t> encoded(payload.size() + 64, 0);
+    // Size per the production maxsize contract (Huff_Compress fails unless
+    // the output buffer covers the exact codebook bit cost); an input+64
+    // guess rejects worst-case incompressible payloads.
+    std::vector<std::uint8_t> encoded(huffmanCompressedCapacityFor(payload), 0);
     const int encodedSize = MSG_WriteBitsCompress(true, payload.data(), static_cast<int>(payload.size()),
                                                   encoded.data(), static_cast<int>(encoded.size()));
     if (encodedSize <= 0)
@@ -357,6 +360,12 @@ void run_capture_subsystem_selftests()
 
 int run_capture_certification()
 {
+    // Certification runs as a standalone `capture-certification` invocation,
+    // before any lazily-initializing MSG entry point has built the retail
+    // huffman codebook; MSG_WriteBitsCompress (and the exact-capacity
+    // sizing below) require it. Deterministic rebuild from static data.
+    MSG_InitHuffman();
+
     std::string root;
     std::vector<Blocker> blockers;
 
@@ -373,6 +382,10 @@ int run_capture_certification()
     for (const char *profileName : kRequiredProfiles)
     {
         const std::string profile = profileName;
+        // Blockers are scoped PER PROFILE: a structural failure against one
+        // commercial reference must never suppress capture verification
+        // (and its diagnostics) for the other reference.
+        const std::size_t blockerCountBeforeProfile = blockers.size();
         const std::string manifestPath = root + "/" + profile + "/MANIFEST.txt";
 
         std::vector<std::uint8_t> manifestBytes;
@@ -412,7 +425,7 @@ int run_capture_certification()
                 blockers.push_back(b);
             }
         }
-        if (!blockers.empty())
+        if (blockers.size() != blockerCountBeforeProfile)
             continue;
 
         for (const CaptureSpec &spec : manifest.captures)
