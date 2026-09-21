@@ -499,11 +499,55 @@ function(check_incremental_stamp_schedules_consumer)
     # main.cpp must relink the consumer with B.
     string(FIND "${_run_output_b}" "${_head_b}" _b_position)
     if(_b_position EQUAL -1)
+        # Failure-path forensics only: everything below augments the failure
+        # message; the assertions here and below are untouched. Hosted macOS
+        # CI has seen this leg link revision A while Linux passes; these
+        # diagnostics record whether the always-run stamp target and the
+        # publish edge executed in leg B and what make considered current.
+        set(_diag_stamped "${_build}/stamped-src/buildnumber.h")
+        set(_diag_staged "${_build}/buildnumber-stamp/buildnumber.h")
+        set(_diag_marker "${_build}/buildnumber-stamp/buildnumber.h.superseded")
+        set(_diag_objects "")
+        file(GLOB_RECURSE _diag_object_candidates
+            "${_build}/CMakeFiles/identity-consumer.dir/*buildnumber*")
+        if(_diag_object_candidates)
+            set(_diag_objects "${_diag_object_candidates}")
+        endif()
+        set(_diag "head a=${_head_a} head b=${_head_b}
+--- leg B build stdout ---
+${_build_stdout}
+--- leg B build stderr ---
+${_build_stderr}
+")
+        foreach(_diag_path IN ITEMS "${_diag_stamped}" "${_diag_staged}"
+                "${_diag_marker}" ${_diag_objects})
+            if(EXISTS "${_diag_path}")
+                file(TIMESTAMP "${_diag_path}" _diag_mtime "%s")
+                string(APPEND _diag "exists ${_diag_path} mtime=${_diag_mtime}
+")
+            else()
+                string(APPEND _diag "MISSING ${_diag_path}
+")
+            endif()
+        endforeach()
+        if(EXISTS "${_diag_stamped}")
+            file(READ "${_diag_stamped}" _diag_published_content)
+            string(APPEND _diag "--- published header ---
+${_diag_published_content}
+")
+        endif()
+        if(EXISTS "${_diag_staged}")
+            file(READ "${_diag_staged}" _diag_staged_content)
+            string(APPEND _diag "--- staged header ---
+${_diag_staged_content}
+")
+        endif()
         message(FATAL_ERROR
             "One ordinary build after a commit that changed only main.cpp "
             "still linked the previous revision: expected '${_head_b}' from "
             "the consumer, got '${_run_output_b}' (the published header did "
-            "not reschedule its compiled consumer in the same build)")
+            "not reschedule its compiled consumer in the same build). "
+            "Forensics: ${_diag}")
     endif()
     string(FIND "${_run_output_b}" "${_head_a}" _stale_position)
     if(NOT _stale_position EQUAL -1)

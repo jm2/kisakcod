@@ -94,7 +94,7 @@ Commercial reference gate is **not satisfied**, so no requested target can be de
 |---|---|
 | Configure presets | 6 |
 | `add_executable` registrations | 133 |
-| `add_test` registrations | 225 |
+| `add_test` registrations | 227 |
 | `*_tests.cpp` source files | 124 |
 | `*_source_test.cmake` contract files | 60 |
 

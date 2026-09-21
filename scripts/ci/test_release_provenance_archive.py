@@ -21,17 +21,6 @@ from release_provenance_testlib import (
 )
 
 
-def archive_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
-    """Enumerate an archive's members for tarfile.extractall(members=...).
-
-    getmembers() is exactly what the implicit members=None default resolves
-    to, so naming it changes nothing about what is extracted; it makes the
-    member set explicit for static analysis instead of relying on a
-    suppression comment.
-    """
-    return archive.getmembers()
-
-
 class SourceArchiveIdentityTests(ReleaseProvenanceTestBase):
     """Archive member identity, carrier grammar and manifest binding cases."""
 
@@ -208,12 +197,25 @@ class SourceArchiveIdentityTests(ReleaseProvenanceTestBase):
                 archive.extractall(tree, filter="data")
             else:
                 # Old interpreters reject filter="data" with TypeError, so
-                # enumerate the extracted members explicitly instead. The
-                # archive is synthesized by build_source_archive() above from
-                # a literal member list, and archive_members() returns the
-                # same set the implicit default would, so no assertion below
-                # is weakened.
-                archive.extractall(tree, members=archive_members(archive))
+                # extract exactly the members the build_source_archive()
+                # call above wrote (the literal arcname list below) and
+                # discard anything else. That closed set is the genuine
+                # repair for the unfiltered-extraction finding: behavior on
+                # this self-synthesized archive is identical, unexpected
+                # members are dropped, and no assertion below is weakened.
+                declared_members = {
+                    "CMakeLists.txt",
+                    "release-identity.json",
+                    "src\\source_identity.txt",
+                }
+                archive.extractall(
+                    tree,
+                    members=[
+                        member
+                        for member in archive.getmembers()
+                        if member.name in declared_members
+                    ],
+                )
         literal = tree / "src\\source_identity.txt"
         self.assertTrue(literal.is_file())
         self.assertEqual(literal.read_text(encoding="utf-8"), f"commit={COMMIT}\n")
