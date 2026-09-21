@@ -1,0 +1,565 @@
+// xmodel_nested_cursor_test: production-call-graph contracts for the
+// scoped nested cursor ownership and the checked second-pass seek.
+//
+// The production loaders nest cursor scopes: XModelLoadFile activates a
+// cursor over the xmodel buffer and then calls XModelPartsPrecache /
+// XModelSurfsPrecache, which activate their own cursors over different
+// file buffers. Before the scoped save/restore landed (ki-okmr / #124),
+// the nested Activate overwrote the parent's position, limits, failure
+// state and anchored *pos, and the nested Deactivate cleared them
+// entirely — the outer parse resumed unbounded (or, on the material
+// second pass, at the wrong offset entirely).
+//
+// These tests drive the real buf_cursor entry points (Activate /
+// AnchorPos / Tell / SeekTo / Advance / ReadString / ReadBytes /
+// ReadWeight / ReadBone / Buf_Read<T> / Deactivate) in the exact
+// sequence the production loaders issue them, over controlled fixtures
+// built to the real xmodel / xmodelparts / xmodelsurfs layouts. The
+// loader TUs themselves cannot link in a portable test binary
+// (DirectX / Miles / ODE header web; engine targets are win32-only in
+// this checkout), so full production-harness enrollment of
+// XModelLoadFile stays scoped to the corpus stage (#125 / ki-458h).
+// tests/xmodel_cursor_source_invariants_test.cmake pins the production
+// call sites so the loader-side contract cannot silently regress.
+//
+// The save-stack overflow (fail-closed) contracts live in their own
+// translation unit, tests/xmodel_cursor_overflow_test.cpp. The two
+// suites share only the support header,
+// tests/xmodel_cursor_test_support.hpp (the controlled fixtures and the
+// CHECK harness, defined once for both binaries); no contract state is
+// shared, and the split keeps each TU within the file-size budget with
+// every helper individually readable — the suite's reusable
+// production-walk helpers additionally live in
+// tests/xmodel_nested_cursor_walks.hpp, and the checkpoint
+// activation-scoping contracts (the PR #140 rework) in
+// tests/xmodel_cursor_activation_scope_tests.hpp, each included here as
+// a pure organizational split with every assertion retained verbatim.
+
+#include <xanim/buf_cursor.hpp>
+
+#include "xmodel_cursor_test_support.hpp"
+
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+namespace xmodel_nested_cursor_test
+{
+using xmodel_cursor_test_support::BuildModelFile;
+using xmodel_cursor_test_support::BuildPartsFile;
+using xmodel_cursor_test_support::BuildSurfsHeaderFile;
+using xmodel_cursor_test_support::ByteWriter;
+
+namespace
+{
+xmodel_cursor_test_support::Checker g_checker = {"xmodel_nested_cursor_test"};
+}  // namespace
+}  // namespace xmodel_nested_cursor_test
+
+// The production-walk helpers (config/collision/LOD walks, the nested
+// parts window, checkpoint resolution) live in the organizational
+// split header below; they evaluate their CHECK assertions through the
+// suite's Checker, verbatim.
+#define CHECK(expr) xmodel_nested_cursor_test::g_checker.Evaluate((expr), #expr, __FILE__, __LINE__)
+#include "xmodel_nested_cursor_walks.hpp"
+#include "xmodel_cursor_activation_scope_tests.hpp"
+
+namespace xmodel_nested_cursor_test
+{
+// The suite's contract functions call the walk helpers unqualified.
+using namespace xmodel_nested_cursor_walks;
+
+// ---------------------------------------------------------------------------
+// Contract: a nested parts load must not destroy the parent cursor.
+// Position, anchored *pos, domain limits and failure state must all be
+// restored exactly when the nested window deactivates — cold (first
+// nested window) and warm (a second window on the same thread).
+// ---------------------------------------------------------------------------
+bool TestNestedPartsLoadRestoresParent()
+{
+    ByteWriter modelFile = BuildModelFile();
+    ByteWriter partsFile = BuildPartsFile();
+
+    for (int pass = 0; pass < 2; ++pass)  // cold, then warm
+    {
+        unsigned char *pos = modelFile.bytes.data();
+        buf_cursor::Activate(modelFile.bytes.data(), modelFile.bytes.size());
+        buf_cursor::AnchorPos(&pos);
+        buf_cursor::SetStringLimit(64);
+        buf_cursor::SetBoneLimit(4);  // parent-level bone bound
+
+        RunConfigAndCollisionHeader(pos);
+        RunLodTableWalk(pos);
+
+        // Checkpoint the bone-info start exactly like the production
+        // loader does around the nested parts load.
+        const buf_cursor::Checkpoint meshCheckpoint = buf_cursor::Tell();
+        CHECK(meshCheckpoint.valid);
+        CHECK(ResolveCheckpoint(meshCheckpoint, modelFile.bytes.data()) == pos);
+        const uint32_t parentBoneLimit = buf_cursor::Current()->maxBoneIdx;
+        CHECK(parentBoneLimit == 4);
+
+        // Nested window: the production XModelPartsPrecache call.
+        bool useBones = false;
+        CHECK(RunNestedPartsWindow(partsFile, useBones));
+
+        // Parent scope restored exactly: active, positioned at the
+        // checkpoint, un-failed, parent limits back (the nested window
+        // ran on default limits; nothing leaked in either direction).
+        const buf_cursor::BufCursor *parent = buf_cursor::Current();
+        CHECK(parent != nullptr);
+        CHECK(parent->current == ResolveCheckpoint(meshCheckpoint, modelFile.bytes.data()));
+        CHECK(pos == ResolveCheckpoint(meshCheckpoint, modelFile.bytes.data()));
+        CHECK(!buf_cursor::Failed());
+        CHECK(parent->maxBoneIdx == parentBoneLimit);
+        CHECK(parent->maxStringLen == 64);
+
+        // Parent continues bounded: the bone-info floats read through
+        // the restored cursor.
+        const float expectedBoneInfo[6] = {0.25f, 0.5f, 0.75f, 1.25f, 1.5f, 1.75f};
+        for (int f = 0; f < 6; ++f)
+        {
+            float value = Buf_Read<float>(&pos);
+            CHECK(value == expectedBoneInfo[f]);
+        }
+        CHECK(!buf_cursor::Failed());
+
+        // The restored parent bone limit is live: the trailing probe
+        // encodes bone index 6 >= 4, so ReadBone must latch failed even
+        // though the nested window raised its own limit to 128.
+        (void)buf_cursor::ReadBone();
+        CHECK(buf_cursor::Failed());
+        CHECK(pos == modelFile.bytes.data() + modelFile.bytes.size());
+
+        buf_cursor::Deactivate();
+
+        // Cleanup contract: nothing active, nothing failed.
+        CHECK(buf_cursor::Current() == nullptr);
+        CHECK(!buf_cursor::Failed());
+    }
+    return true;
+}
+
+// Direction 1: nested parse fails (truncated parts body), parent must
+// come back clean.
+void ExpectNestedFailureLeavesParentClean(const ByteWriter &modelFile)
+{
+    unsigned char *pos = const_cast<unsigned char *>(modelFile.bytes.data());
+    buf_cursor::Activate(modelFile.bytes.data(), modelFile.bytes.size());
+    buf_cursor::AnchorPos(&pos);
+    RunConfigAndCollisionHeader(pos);
+    RunLodTableWalk(pos);
+    const buf_cursor::Checkpoint checkpoint = buf_cursor::Tell();
+
+    // Truncated parts fixture: version+counts only, no body.
+    ByteWriter truncated;
+    truncated.Push16(25);
+    truncated.Push16(1);
+    truncated.Push16(1);
+    unsigned char *truncPos = truncated.bytes.data();
+    buf_cursor::Activate(truncated.bytes.data(), truncated.bytes.size());
+    buf_cursor::AnchorPos(&truncPos);
+    (void)Buf_Read<unsigned short>(&truncPos);
+    (void)Buf_Read<unsigned short>(&truncPos);
+    (void)Buf_Read<unsigned short>(&truncPos);
+    // Body reads now overrun: the bone-name scan hits the end.
+    char nameBuf[128];
+    CHECK(!buf_cursor::ReadString(nameBuf, sizeof(nameBuf)));
+    CHECK(buf_cursor::Failed());
+    buf_cursor::Deactivate();
+
+    // Parent restored: clean, positioned, readable.
+    CHECK(buf_cursor::Current() != nullptr);
+    CHECK(!buf_cursor::Failed());
+    CHECK(buf_cursor::Tell().valid);
+    CHECK(buf_cursor::Tell().offset == checkpoint.offset);
+    CHECK(pos == ResolveCheckpoint(checkpoint, modelFile.bytes.data()));
+    float value = Buf_Read<float>(&pos);
+    CHECK(value == 0.25f);
+    buf_cursor::Deactivate();
+    CHECK(buf_cursor::Current() == nullptr);
+}
+
+// Direction 2: parent fails BEFORE the nested window; the failure must
+// survive the nested window's Deactivate.
+void ExpectNestedFailureLatchedParent()
+{
+    // 4-byte buffer: exactly one float read fits; the second read
+    // overruns and latches failure, and the third is a second overrun
+    // that stays latched (returns zero, moves nothing).
+    unsigned char tiny[4] = {0, 0, 0, 0};
+    unsigned char *pos = tiny;
+    buf_cursor::Activate(tiny, sizeof(tiny));
+    buf_cursor::AnchorPos(&pos);
+    (void)Buf_Read<float>(&pos);
+    CHECK(!buf_cursor::Failed());
+    (void)Buf_Read<float>(&pos);
+    (void)Buf_Read<float>(&pos);  // overruns: parent fails
+    CHECK(buf_cursor::Failed());
+
+    ByteWriter partsFile = BuildPartsFile();
+    bool useBones = false;
+    CHECK(RunNestedPartsWindow(partsFile, useBones));
+
+    // The nested window succeeded on its own buffer; the parent
+    // must come back exactly as it was: failed.
+    CHECK(buf_cursor::Current() != nullptr);
+    CHECK(buf_cursor::Failed());
+    CHECK(pos == tiny + sizeof(tiny));
+
+    // A failed parent's reads stay latched at zero (no unbounded
+    // fallback after restore).
+    (void)Buf_Read<float>(&pos);
+    CHECK(buf_cursor::Failed());
+    CHECK(pos == tiny + sizeof(tiny));
+    buf_cursor::Deactivate();
+    CHECK(buf_cursor::Current() == nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// Contract: a nested load that FAILS must not poison the parent scope,
+// and a parent that already failed must stay failed across a nested
+// window (failure state restores in both directions).
+// ---------------------------------------------------------------------------
+bool TestNestedFailureStateIsolation()
+{
+    ByteWriter modelFile = BuildModelFile();
+    ExpectNestedFailureLeavesParentClean(modelFile);
+    ExpectNestedFailureLatchedParent();
+    return true;
+}
+
+// The material second pass: per-LOD Advance(2) past numsurfs (surfaces
+// come from the separate xmodelsurfs file), then the surface names
+// re-read at the rewound offset.
+void RunSecondPassLodNameReread()
+{
+    static const char *const kExpectedSecondPass[] = {
+        "mat_first_a", "mat_first_b", "mat_first_c"};
+    int nameIndex = 0;
+    for (int lod = 0; lod < 2; ++lod)
+    {
+        buf_cursor::Advance(2);  // skip numsurfs; surfaces come from the
+                                 // separate xmodelsurfs file
+        CHECK(!buf_cursor::Failed());
+        const uint16_t numsurfs = (lod == 0 ? 2 : 1);
+        for (uint16_t s = 0; s < numsurfs; ++s)
+        {
+            char materialName[128];
+            CHECK(buf_cursor::ReadString(materialName, sizeof(materialName)));
+            CHECK(std::strcmp(materialName, kExpectedSecondPass[nameIndex]) == 0);
+            ++nameIndex;
+        }
+    }
+    CHECK(!buf_cursor::Failed());
+}
+
+// Checked-seek rejection: an invalid (no-cursor) checkpoint, an
+// out-of-range offset and an inactive cursor all fail closed without
+// moving the position.
+void ExpectSeekRejectsBadCheckpoints()
+{
+    // Spare storage: eight active bytes plus one trailing byte, so the
+    // out-of-range offset refers to a real element of this array (its
+    // valid one-past pointer) instead of pointer arithmetic past the end
+    // of the activated window — which would be undefined behavior.
+    unsigned char storage[9] = {};
+    unsigned char *probe = storage;
+
+    // An invalid checkpoint (no active cursor at Tell() time) must be
+    // rejected — and because it is invalid, it latches failed.
+    buf_cursor::Activate(storage, 8);
+    buf_cursor::AnchorPos(&probe);
+    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, 0, false}));
+    CHECK(buf_cursor::Failed());
+    CHECK(buf_cursor::Tell().valid);
+    CHECK(buf_cursor::Tell().offset == 0);  // did not move
+    CHECK(probe == storage);
+    buf_cursor::Deactivate();
+
+    // Out-of-range offset: rejected, latched, position unmoved; a failed
+    // cursor rejects further seeks. The offset points one past the
+    // active eight-byte window but is still the valid one-past of the
+    // nine-byte spare storage, so the rejected target never leaves the
+    // array's permitted pointer domain. The checkpoints carry the live
+    // activation generation (captured through Tell), so these rejects
+    // turn on validity/range/failure state alone.
+    buf_cursor::Activate(storage, 8);
+    buf_cursor::AnchorPos(&probe);
+    const uint64_t liveActivation = buf_cursor::Tell().activation;
+    CHECK(liveActivation != 0);
+    CHECK(!buf_cursor::SeekTo(
+        buf_cursor::Checkpoint{sizeof(storage), liveActivation, true}));
+    CHECK(buf_cursor::Failed());
+    CHECK(buf_cursor::Tell().offset == 0);
+    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, liveActivation, true}));
+    CHECK(buf_cursor::Failed());
+    buf_cursor::Deactivate();
+
+    // Inactive cursor: rejected without touching anything.
+    CHECK(!buf_cursor::SeekTo(buf_cursor::Checkpoint{0, 0, true}));
+    CHECK(buf_cursor::Current() == nullptr);
+}
+
+// Boundary checkpoints are legal (offset 0 and offset size), and a
+// successful seek re-syncs the anchor. The hand-built checkpoints carry
+// the live activation generation so the accepts are identity-matched.
+void ExpectSeekAcceptsBoundaryCheckpoints()
+{
+    unsigned char buffer[8] = {};
+    unsigned char *probe = buffer;
+    buf_cursor::Activate(buffer, sizeof(buffer));
+    buf_cursor::AnchorPos(&probe);
+    const uint64_t liveActivation = buf_cursor::Tell().activation;
+    CHECK(liveActivation != 0);
+    buf_cursor::Advance(4);
+    CHECK(probe == buffer + 4);
+    CHECK(buf_cursor::SeekTo(
+        buf_cursor::Checkpoint{sizeof(buffer), liveActivation, true}));
+    CHECK(probe == buffer + sizeof(buffer));
+    CHECK(!buf_cursor::Failed());
+    CHECK(buf_cursor::SeekTo(buf_cursor::Checkpoint{0, liveActivation, true}));
+    CHECK(probe == buffer);
+    CHECK(!buf_cursor::Failed());
+    buf_cursor::Deactivate();
+}
+
+// ---------------------------------------------------------------------------
+// Contract: the material second pass must rewind through the checked
+// cursor seek — the cursor, the bounded reads and the anchored *pos
+// move together, names re-read at the right offset, and bad checkpoints
+// fail closed without moving the position.
+// ---------------------------------------------------------------------------
+bool TestSecondPassCheckedSeek()
+{
+    ByteWriter modelFile = BuildModelFile();
+    unsigned char *pos = modelFile.bytes.data();
+    buf_cursor::Activate(modelFile.bytes.data(), modelFile.bytes.size());
+    buf_cursor::AnchorPos(&pos);
+    buf_cursor::SetStringLimit(64);
+
+    RunConfigAndCollisionHeader(pos);
+
+    // Production checkpoint: v36 = Tell() right after the collision
+    // header, BEFORE the first LOD walk.
+    const buf_cursor::Checkpoint lodTableStart = buf_cursor::Tell();
+    CHECK(lodTableStart.valid);
+    CHECK(ResolveCheckpoint(lodTableStart, modelFile.bytes.data()) == pos);
+
+    // First pass walks the LOD table.
+    RunLodTableWalk(pos);
+    CHECK(pos != ResolveCheckpoint(lodTableStart, modelFile.bytes.data()));
+
+    // Second pass: checked rewind, then per-LOD Advance(2) + names.
+    CHECK(buf_cursor::SeekTo(lodTableStart));
+    CHECK(buf_cursor::Tell().offset == lodTableStart.offset);
+    CHECK(pos == ResolveCheckpoint(lodTableStart, modelFile.bytes.data()));  // anchored *pos followed the cursor
+    RunSecondPassLodNameReread();
+
+    // A third pass rewinds and re-reads identically (warm-cache repeat
+    // of the second pass on the same window).
+    CHECK(buf_cursor::SeekTo(lodTableStart));
+    buf_cursor::Advance(2);
+    char repeatName[128];
+    CHECK(buf_cursor::ReadString(repeatName, sizeof(repeatName)));
+    CHECK(std::strcmp(repeatName, "mat_first_a") == 0);
+    CHECK(!buf_cursor::Failed());
+
+    buf_cursor::Deactivate();
+    CHECK(buf_cursor::Current() == nullptr);
+    CHECK(!buf_cursor::Tell().valid);
+
+    // Checked-seek rejection contracts.
+    ExpectSeekRejectsBadCheckpoints();
+    ExpectSeekAcceptsBoundaryCheckpoints();
+    return true;
+}
+
+// Stage: config header truncated mid phys-preset string. The read
+// fails through the bounded path and the Deactivate cleanup leaves a
+// clean slate.
+void ExpectTruncatedConfigHeaderFailsBounded()
+{
+    ByteWriter truncated;
+    truncated.Push16(25);
+    truncated.Push8(0x00);
+    for (int i = 0; i < 6; ++i)
+        truncated.PushFloat(0.0f);
+    truncated.Push8('p');  // unterminated string
+    unsigned char *pos = truncated.bytes.data();
+    buf_cursor::Activate(truncated.bytes.data(), truncated.bytes.size());
+    buf_cursor::AnchorPos(&pos);
+    (void)Buf_Read<unsigned short>(&pos);
+    (void)Buf_Read<unsigned char>(&pos);
+    for (int i = 0; i < 6; ++i)
+        (void)Buf_Read<float>(&pos);
+    char physPreset[64];
+    CHECK(!buf_cursor::ReadString(physPreset, sizeof(physPreset)));
+    CHECK(buf_cursor::Failed());
+    buf_cursor::Deactivate();
+    CHECK(buf_cursor::Current() == nullptr);
+    CHECK(!buf_cursor::Failed());
+}
+
+// Stage: parts body truncated inside the classification bulk read —
+// the zero-fill contract keeps the destination free of
+// uninitialized bytes (the production loader keeps parsing with
+// zero-valued reads instead of unwinding).
+void ExpectTruncatedClassificationZeroFills()
+{
+    ByteWriter truncated;
+    truncated.Push16(25);
+    truncated.Push16(1);
+    truncated.Push16(1);
+    truncated.Push8(1);
+    for (int f = 0; f < 3; ++f)
+        truncated.PushFloat(0.0f);
+    for (int q = 0; q < 4; ++q)
+        truncated.Push16(0);
+    truncated.PushString("tag_root");
+    truncated.PushString("tag_child");
+    truncated.Push8(0);  // one classification byte, need two
+    unsigned char *pos = truncated.bytes.data();
+    buf_cursor::Activate(truncated.bytes.data(), truncated.bytes.size());
+    buf_cursor::AnchorPos(&pos);
+    (void)Buf_Read<unsigned short>(&pos);
+    (void)Buf_Read<unsigned short>(&pos);
+    (void)Buf_Read<unsigned short>(&pos);
+    (void)buf_cursor::ReadWeight();
+    buf_cursor::AnchorPos(&pos);
+    for (int f = 0; f < 3; ++f)
+        (void)Buf_Read<float>(&pos);
+    for (int q = 0; q < 4; ++q)
+        (void)Buf_Read<unsigned short>(&pos);
+    char nameBuf[128];
+    CHECK(buf_cursor::ReadString(nameBuf, sizeof(nameBuf)));
+    CHECK(std::strcmp(nameBuf, "tag_root") == 0);
+    CHECK(buf_cursor::ReadString(nameBuf, sizeof(nameBuf)));
+    CHECK(std::strcmp(nameBuf, "tag_child") == 0);
+    CHECK(!buf_cursor::Failed());
+    unsigned char classification[2] = {0xAB, 0xCD};
+    CHECK(!buf_cursor::ReadBytes(classification, sizeof(classification), 2));
+    CHECK(buf_cursor::Failed());
+    CHECK(classification[0] == 0 && classification[1] == 0);  // zero-filled
+    buf_cursor::Deactivate();
+    CHECK(buf_cursor::Current() == nullptr);
+    CHECK(!buf_cursor::Failed());
+}
+
+// Cleanup leak check: after all the failure windows above, a fresh
+// load must see default limits (a leaked nested limit of 128 would
+// wrongly accept bone index 6 here).
+void ExpectFreshLoadSeesDefaultLimits()
+{
+    unsigned char boneBytes[2] = {0x06, 0x00};
+    unsigned char *pos = boneBytes;
+    buf_cursor::Activate(boneBytes, sizeof(boneBytes));
+    buf_cursor::AnchorPos(&pos);
+    (void)buf_cursor::ReadBone();
+    CHECK(!buf_cursor::Failed());  // default limit accepts 6
+    buf_cursor::Deactivate();
+    CHECK(buf_cursor::Current() == nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// Contract: truncated input at each production stage fails through the
+// bounded path and the Deactivate cleanup leaves a clean slate — the
+// next load on the thread starts from an inactive, un-failed cursor
+// with default limits (no leaked failure, no leaked limits, no leaked
+// checkpoint).
+// ---------------------------------------------------------------------------
+bool TestTruncatedInputCleanupContract()
+{
+    ExpectTruncatedConfigHeaderFailsBounded();
+    ExpectTruncatedClassificationZeroFills();
+    ExpectFreshLoadSeesDefaultLimits();
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Contract: three-level nesting restores strictly LIFO with interleaved
+// anchors — the pieces-inside-surfs-inside-model shape. Each level's
+// own *pos slot must receive its own restored position.
+// ---------------------------------------------------------------------------
+bool TestDeepNestedLifoRestoration()
+{
+    ByteWriter modelFile = BuildModelFile();
+    ByteWriter surfsFile = BuildSurfsHeaderFile(1);
+    ByteWriter pieceFile;
+    pieceFile.Push16(1);   // XModelPieces version
+    pieceFile.Push16(0);   // numpieces
+    pieceFile.PushString("tag_root");
+
+    unsigned char *modelPos = modelFile.bytes.data();
+    buf_cursor::Activate(modelFile.bytes.data(), modelFile.bytes.size());
+    buf_cursor::AnchorPos(&modelPos);
+    (void)Buf_Read<unsigned short>(&modelPos);  // config version
+    const buf_cursor::Checkpoint modelCheckpoint = buf_cursor::Tell();
+    CHECK(modelCheckpoint.valid);
+
+    unsigned char *surfsPos = surfsFile.bytes.data();
+    buf_cursor::Activate(surfsFile.bytes.data(), surfsFile.bytes.size());
+    buf_cursor::AnchorPos(&surfsPos);
+    // Production R_XModelSurfsLoadFile sets these domain bounds on its
+    // own scope right after activation.
+    buf_cursor::SetBoneLimit(128);
+    buf_cursor::SetWeightLimit(4);
+    (void)Buf_Read<unsigned short>(&surfsPos);  // surfs version
+    const buf_cursor::Checkpoint surfsCheckpoint = buf_cursor::Tell();
+    CHECK(surfsCheckpoint.valid);
+
+    unsigned char *piecePos = pieceFile.bytes.data();
+    buf_cursor::Activate(pieceFile.bytes.data(), pieceFile.bytes.size());
+    buf_cursor::AnchorPos(&piecePos);
+    (void)Buf_Read<unsigned short>(&piecePos);  // pieces version
+    (void)Buf_Read<unsigned short>(&piecePos);  // numpieces
+    char pieceName[64];
+    CHECK(buf_cursor::ReadString(pieceName, sizeof(pieceName)));
+    CHECK(std::strcmp(pieceName, "tag_root") == 0);
+    CHECK(!buf_cursor::Failed());
+
+    // Unwind: pieces -> surfs -> model, each restoring its own parent.
+    buf_cursor::Deactivate();
+    CHECK(buf_cursor::Current() != nullptr);
+    CHECK(buf_cursor::Tell().offset == surfsCheckpoint.offset);
+    CHECK(surfsPos == ResolveCheckpoint(surfsCheckpoint, surfsFile.bytes.data()));
+    CHECK(!buf_cursor::Failed());
+
+    buf_cursor::Deactivate();
+    CHECK(buf_cursor::Current() != nullptr);
+    CHECK(buf_cursor::Tell().offset == modelCheckpoint.offset);
+    CHECK(modelPos == ResolveCheckpoint(modelCheckpoint, modelFile.bytes.data()));
+    CHECK(!buf_cursor::Failed());
+    // The surfs scope's tightened limits did not leak into the model
+    // scope: the restored parent is back on the cursor defaults.
+    CHECK(buf_cursor::Current()->maxBoneIdx == 0xFFFFFFFFu);
+    CHECK(buf_cursor::Current()->maxWeightIdx == 0xFFFFFFFFu);
+
+    // The model window continues bounded after two nested round trips.
+    (void)Buf_Read<unsigned char>(&modelPos);  // config flags
+    CHECK(!buf_cursor::Failed());
+
+    buf_cursor::Deactivate();
+    CHECK(buf_cursor::Current() == nullptr);
+    return true;
+}
+
+int RunAll()
+{
+    CHECK(TestNestedPartsLoadRestoresParent());
+    CHECK(TestNestedFailureStateIsolation());
+    CHECK(TestSecondPassCheckedSeek());
+    CHECK(TestSeekRejectsStaleActivationCheckpoints());
+    CHECK(TestSeekRejectsNestedChildCheckpoint());
+    CHECK(TestTruncatedInputCleanupContract());
+    CHECK(TestDeepNestedLifoRestoration());
+
+    return g_checker.Report();
+}
+}  // namespace xmodel_nested_cursor_test
+
+int main()
+{
+    return xmodel_nested_cursor_test::RunAll();
+}

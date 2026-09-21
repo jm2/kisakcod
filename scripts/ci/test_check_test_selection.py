@@ -302,6 +302,33 @@ CASES: List[Case] = [
         discovered="A\nB\n",
         scope="exact",
     ),
+    # --reference-absent under the default subset discovery scope is
+    # silently vacuous: check_discovery consults the exemption (and its
+    # stale-entry check) only in exact scope, so the combination must be
+    # rejected up front instead of exiting 0 while proving nothing. The
+    # manifest itself would pass subset validation without the guard.
+    Case(
+        "reference_absent_subset_scope_fails",
+        1,
+        inventory="A\nB\n",
+        selected="A\n",
+        excluded="B\treason-b\n",
+        discovered="A\nB\n",
+        reference_absent="B\n",
+    ),
+    # Control for the vacuity guard: the same exemption in exact scope,
+    # with the reference-absent test genuinely undiscovered, keeps its
+    # full force and passes.
+    Case(
+        "reference_absent_exact_scope_passes",
+        0,
+        inventory="A\nB\n",
+        selected="A\n",
+        excluded="B\treason-b\n",
+        discovered="A\n",
+        reference_absent="B\n",
+        scope="exact",
+    ),
 ]
 
 
@@ -322,7 +349,7 @@ def run_case(case: Case) -> Optional[str]:
     with tempfile.TemporaryDirectory(prefix="check-selection-") as tmp:
         paths = {}
         for key in ("inventory", "selected", "excluded", "absent",
-                    "discovered", "executed"):
+                    "discovered", "executed", "reference_absent"):
             value = case.files.get(key)
             if value is None:
                 continue
@@ -346,6 +373,8 @@ def run_case(case: Case) -> Optional[str]:
         if "discovered" in paths:
             argv += ["--discovered", paths["discovered"],
                      "--discovered-scope", case.files.get("scope", "subset")]
+        if "reference_absent" in paths:
+            argv += ["--reference-absent", paths["reference_absent"]]
         if "executed" in paths:
             argv += ["--executed", paths["executed"]]
         if case.files.get("enforce"):

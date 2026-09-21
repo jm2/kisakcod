@@ -747,7 +747,7 @@ set(PLATFORM_WIN32_DEDI_HEADLESS
 
 set(XANIM
     "${SRC_DIR}/xanim/buf_cursor.cpp"
-    "${SRC_DIR}/xanim/buf_cursor.h"
+    "${SRC_DIR}/xanim/buf_cursor.hpp"
     "${SRC_DIR}/xanim/dobj.cpp"
     "${SRC_DIR}/xanim/dobj.h"
     "${SRC_DIR}/xanim/dobj_skel.cpp"

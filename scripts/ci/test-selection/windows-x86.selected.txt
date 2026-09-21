@@ -121,3 +121,4 @@ voice-framing-source-invariants
 weapon-input-safety-contracts
 weapon-model-safety-contracts
 weapon-model-safety-source-invariants
+xmodel-loader-entry-native

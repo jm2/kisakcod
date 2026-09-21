@@ -32,7 +32,7 @@
 //      through the same routing that Buf_Read<T> uses so the bounds
 //      check is enforced for every byte the loader consumes.
 
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
 #include <cstdint>
 #include <cstdio>

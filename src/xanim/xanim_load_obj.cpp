@@ -6,7 +6,7 @@
 #include <universal/com_files.h>
 #include <universal/com_memory.h>
 #include <qcommon/qcommon.h>
-#include <xanim/buf_cursor.h>
+#include <xanim/buf_cursor.hpp>
 
 enum $69AF8E44C9D6025F282D494F15F1F016 : __int32
 {
@@ -1655,6 +1655,13 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     iassert(g_animUser);
     Hunk_UserDestroy(g_animUser);
     g_animUser = 0;
-    buf_cursor::Deactivate();
+    // The cursor scope was already torn down at the end of the buffer
+    // read (before FS_FreeFile above). Everything between there and
+    // here is straight-line hunk post-processing: no buffer reads, no
+    // returns or gotos. Deactivating again here would pop the NEXT
+    // scope frame — beneath a nested load that destroys the
+    // still-running caller's cursor and drops its remaining bounded
+    // reads to the unbounded fallback (codex P2, PR #140 review at
+    // 03178b6f). The success path therefore deactivates exactly once.
     return parts;
 }

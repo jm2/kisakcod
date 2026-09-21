@@ -34,6 +34,54 @@
 // also walks both back together so any subsequent Buf_Read<T> cannot
 // read past the checkpoint.
 //
+// Nested cursor ownership (scoped save/restore).
+//
+// Production loaders nest: XModelLoadFile activates a cursor over the
+// xmodel buffer and then calls XModelPartsPrecache / XModelSurfsPrecache,
+// which each Activate their own cursor over a different file buffer.
+// A naive Activate would overwrite the parent's position, limits, failure
+// state and anchored *pos, and a naive Deactivate would clear them
+// entirely — the outer parse would resume unbounded or at the wrong
+// position. Instead, Activate explicitly saves the parent scope (full
+// cursor state including the anchored *pos slot) and Deactivate restores
+// it exactly: position, anchor, domain limits and failure flag. The
+// saves are LIFO because every loader Activates at entry and Deactivates
+// on every exit (audited: XModelLoadFile, XModelPartsLoadFile,
+// R_XModelSurfsLoadFile, XModelPiecesLoadFile, XAnimLoadFile). A loader
+// that returns without Deactivating breaks the LIFO contract and would
+// restore a parent anchor into a dead frame — the per-exit Deactivate
+// discipline is mandatory, not stylistic. The save stack is bounded;
+// overflowing it installs the nested cursor pre-failed so the nested
+// parse rejects through the ordinary malformed-input path instead of
+// corrupting the parent. When an overflowed scope unwinds, the
+// overflowed caller's own state is gone, so its Deactivate leaves a
+// pre-failed, empty-but-active cursor: Failed() stays latched and
+// reads return zeros until the caller's own Deactivate restores the
+// nearest pushed ancestor — the failure remains latched through every
+// affected scope instead of decaying into an unbounded fallback.
+//
+// Checked checkpoint/seek.
+//
+// The material second pass in XModelLoadFile rewinds to the LOD table
+// and re-reads the surface names for material registration. The rewind
+// must move the CURSOR (and the anchored *pos with it) — not just the
+// raw pointer — so the subsequent reads stay bounded and in position.
+// Tell() captures a cursor-owned offset checkpoint; SeekTo(checkpoint)
+// validates that offset against the active buffer window, forms the
+// destination pointer only after the check, moves current there and
+// re-syncs the anchor. The checkpoint also carries the activation
+// identity (a per-thread generation bumped by every Activate) it was
+// captured under, and SeekTo() compares it against the active cursor
+// BEFORE applying the offset: a checkpoint from an earlier activation
+// (a Deactivate/Activate cycle, even over the same buffer) or from a
+// nested child's window is stale and must never move the current
+// activation's cursor. A SeekTo of an invalid, out-of-range or
+// activation-mismatched checkpoint, on an inactive cursor or on a
+// failed cursor moves nothing and returns false (and latches failed
+// when the checkpoint is invalid, out of range, or activation-
+// mismatched) so the second pass fails closed instead of parsing
+// valid content at the wrong position.
+//
 // UBSan alignment hazard.
 //
 // The original Buf_Read<T> uses *reinterpret_cast<const T *>(*pos) which
@@ -55,6 +103,13 @@ struct BufCursor
     uint32_t maxTriIdx;
     uint32_t maxStringLen;
     bool failed;
+    // Activation identity of this cursor (the per-thread generation
+    // minted by the Activate that installed it, restored with the rest
+    // of the saved parent scope on a nested pop). Tell() captures it
+    // into the Checkpoint and SeekTo() compares it before applying the
+    // offset, which is what scopes a checkpoint to the activation that
+    // produced it.
+    uint64_t activation;
 };
 
 // Activate a fresh cursor over [buf, buf + size) and make it the active
@@ -66,7 +121,9 @@ BufCursor *Activate(const unsigned char *buf, size_t size);
 
 // Tear down the active cursor and clear the thread-local. After this
 // returns Buf_Read<T> falls back to the original unbounded read until
-// another Activate call re-establishes the cursor.
+// another Activate call re-establishes the cursor. (Nested scopes
+// restore their parent instead; an overflowed scope's caller is left
+// active and pre-failed — see the ownership notes above.)
 void Deactivate();
 
 // True when the current active cursor has failed a bounds check. Loaders
@@ -102,6 +159,94 @@ void SetStringLimit(uint32_t maxStringLen);
 // failed instead of silently walking off the end. Compares against end
 // before updating so the cursor cannot Advance past the buffer.
 void Advance(ptrdiff_t delta);
+
+// Cursor-owned checkpoint: a byte offset from the active buffer's begin
+// plus a validity flag, rather than a raw pointer. Representing the
+// position as an offset lets SeekTo validate it before any pointer is
+// formed, so a null, unrelated or stale checkpoint can never take part
+// in a pointer comparison with unspecified ordering. `valid` is false
+// when no cursor was active at Tell() time; callers must treat an
+// invalid checkpoint as a failed load, not seek to it. A checkpoint is
+// scoped to the activation that produced it — `activation` records the
+// cursor's generation at Tell() time, and SeekTo() rejects a checkpoint
+// whose generation does not match the active cursor BEFORE applying the
+// offset, so a checkpoint captured before a Deactivate/Activate cycle
+// or inside a nested child window can never move a later or foreign
+// activation's cursor.
+struct Checkpoint
+{
+    size_t offset;
+    // Activation generation of the cursor this checkpoint was captured
+    // on (0 is never a live generation — the counter is pre-incremented).
+    uint64_t activation;
+    bool valid;
+};
+
+// Internal bridge to the cursor's thread-local active state. Declared
+// here and defined in buf_cursor.cpp so Tell()/SeekTo() can be defined
+// inline in this header: a header TU then sees every Checkpoint member
+// read and written, instead of analyzing the struct standalone where
+// its members look unused (a false positive the standalone scan
+// reported on Checkpoint::offset / Checkpoint::valid / Checkpoint::activation).
+namespace detail
+{
+// Out-param query of the active cursor. Returns true with *out set to
+// the active cursor only when a valid activation is installed; returns
+// false (with *out nulled) when no cursor is active. This preserves the
+// distinction between "no activation" (Tell's invalid checkpoint,
+// SeekTo's side-effect-free false) and "activation present".
+bool QueryActive(BufCursor **out);
+// Re-syncs the anchored caller *pos after a cursor move (forwards to
+// the translation unit's SyncAnchoredPos).
+void SyncAnchored();
+}  // namespace detail
+
+// Capture the active cursor's current position as a cursor-owned
+// checkpoint so a caller can SeekTo it later (the material second pass).
+// Returns an invalid checkpoint when no cursor is active.
+inline Checkpoint Tell()
+{
+    BufCursor *active = nullptr;
+    Checkpoint checkpoint{0, 0, false};
+    if (detail::QueryActive(&active))
+    {
+        checkpoint.offset = static_cast<size_t>(active->current - active->begin);
+        checkpoint.activation = active->activation;
+        checkpoint.valid = true;
+    }
+    return checkpoint;
+}
+
+// Checked absolute seek to a cursor-owned checkpoint: validates the
+// checkpoint against the active buffer window and only then forms the
+// destination pointer (begin + offset) and re-syncs the anchored *pos.
+// The offset must lie within [0, size] of the active buffer — the check
+// is what makes the rewind safe against a corrupted or stale checkpoint.
+// Returns false and moves nothing when no cursor is active, the cursor
+// has already failed, the checkpoint is invalid, its offset is out of
+// range, or its activation does not match the active cursor; an
+// invalid, out-of-range or activation-mismatched checkpoint
+// additionally latches Failed() so the caller's ordinary malformed-input
+// cleanup runs.
+inline bool SeekTo(const Checkpoint &checkpoint)
+{
+    BufCursor *active = nullptr;
+    if (!detail::QueryActive(&active) || active->failed)
+    {
+        return false;
+    }
+    const size_t size = static_cast<size_t>(active->end - active->begin);
+    if (!checkpoint.valid || checkpoint.activation != active->activation
+        || checkpoint.offset > size)
+    {
+        active->failed = true;
+        detail::SyncAnchored();
+        return false;
+    }
+    active->current = active->begin + checkpoint.offset;
+    detail::SyncAnchored();
+    return true;
+}
 
 // String read: scan from current until a NUL is observed, copy
 // (including NUL) into out, and advance. Returns false and marks the

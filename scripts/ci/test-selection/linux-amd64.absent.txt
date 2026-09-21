@@ -1,0 +1,12 @@
+# Inventory tests the Linux amd64 reference leg never registers, so the
+# exact inventory verification on that leg cannot discover them. Format:
+# one test name per line (read_name_file); the justification lives here
+# in comments. check-test-selection.py fails closed on a stale entry
+# (one the reference registers after all) and on an entry missing from
+# the inventory.
+xmodel-loader-entry-native
+# Win32-x86-only subject: the production loader TUs' DirectX/Miles/ODE
+# header web and MSVC decompiled dialect compile only under the win32-x86
+# platform (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4), so the Linux amd64
+# reference never registers it; enrolled in and executed by the Windows
+# x86 (ILP32) selection.
