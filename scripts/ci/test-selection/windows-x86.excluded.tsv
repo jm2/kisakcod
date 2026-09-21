@@ -122,4 +122,7 @@ worker-queue-atomic-protocols	Portable production/utility contract covered by th
 worker-thread-lifecycle-shutdown-reinit	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
 xanim-load-bounded-cursor	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
 xanim-parts-split-contracts	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
+xmodel-cursor-overflow-fail-closed	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
+xmodel-cursor-source-invariants	Source-invariant scan covered by the portable-tests matrix; not enrolled in the ILP32 runtime selection (assessment tracked under #134).
 xmodel-load-bounded-cursor	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
+xmodel-nested-cursor-ownership	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
