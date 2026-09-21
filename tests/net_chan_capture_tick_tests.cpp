@@ -75,7 +75,6 @@ struct CaptureFidelityState
     uint8_t small[64];
     uint8_t large[3000];
     ChannelSide replay; // clean-replay channel (contract 2)
-    uint8_t replayScratch[kMaxMsgLen]; // shared replay scratch (contracts 2-3)
     CaptureStore lossy;    // lossy capture (contract 3)
     ChannelSide lossyChan; // lossy-replay channel (contract 3)
 };
@@ -172,9 +171,8 @@ int CleanReplayContract()
 {
     fidelity.replay.Setup(NS_CLIENT1, 28961);
     const DrainStats replayStats =
-        ReplayFrames(&fidelity.replay.chan, fidelity.capture.frames,
-                     fidelity.capture.count, fidelity.replayScratch,
-                     kMaxMsgLen);
+        ReplayFrames(fidelity.replay, fidelity.capture.frames,
+                     fidelity.capture.count);
     if (replayStats.delivered != 2 || replayStats.incomplete != 2
         || fidelity.replay.chan.incomingSequence != 2
         || fidelity.replay.chan.dropped != 0)
@@ -199,9 +197,8 @@ int LossyReplayContract()
     }
     fidelity.lossyChan.Setup(NS_CLIENT1, 28961);
     const DrainStats lossyStats =
-        ReplayFrames(&fidelity.lossyChan.chan, fidelity.lossy.frames,
-                     fidelity.lossy.count, fidelity.replayScratch,
-                     kMaxMsgLen);
+        ReplayFrames(fidelity.lossyChan, fidelity.lossy.frames,
+                     fidelity.lossy.count);
     // f1 pending plus the gapped f3 both return 0.
     if (lossyStats.delivered != 1 || lossyStats.incomplete != 2
         || fidelity.lossyChan.chan.incomingSequence != 1
@@ -216,8 +213,7 @@ int LossyReplayContract()
 int LossyRecoveryContract()
 {
     const DrainStats recoveryStats =
-        ReplayFrames(&fidelity.lossyChan.chan, &fidelity.capture.frames[2], 2,
-                     fidelity.replayScratch, kMaxMsgLen);
+        ReplayFrames(fidelity.lossyChan, &fidelity.capture.frames[2], 2);
     if (recoveryStats.delivered != 1 || recoveryStats.incomplete != 1
         || fidelity.lossyChan.chan.incomingSequence != 2
         || fidelity.lossyChan.chan.fragmentLength != 0

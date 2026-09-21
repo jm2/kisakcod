@@ -180,31 +180,35 @@ struct ChannelSide
 };
 
 // Replays recorded wire frames through Netchan_Process on a channel that
-// never touched the live queues: the capture-replay shape.
-inline DrainStats ReplayFrames(netchan_t *chan, const CapturedFrame *frames,
-                               int count, uint8_t *scratch, int scratchSize)
+// never touched the live queues: the capture-replay shape. The frames land
+// in the side's own MSG buffer exactly as NET_GetLoopPacket_Real delivers
+// them -- frame bytes copied into net_message->data, cursize set, reader
+// reset -- so a completed fragment reassembly rebuilds the message in place
+// and the delivered body is readable at recv[4] exactly as on the live
+// drain path. (An earlier draft copied frames into a private scratch buffer
+// instead; the engine's state checks all passed but the delivered body was
+// never observable, so contract 2's payload pin compared stale bytes on the
+// real Win32 leg.)
+inline DrainStats ReplayFrames(ChannelSide &side, const CapturedFrame *frames,
+                               int count)
 {
     DrainStats stats{};
-    msg_t message{};
     for (int i = 0; i < count; ++i)
     {
-        if (frames[i].length > scratchSize)
+        if (frames[i].length > kMaxMsgLen)
         {
             ++stats.incomplete;
             continue;
         }
-        // Mirror NET_GetLoopPacket_Real's shape: frame bytes land in a
-        // writable MAX_MSGLEN-sized buffer, cursize carries the frame
-        // length, and Netchan_Process's MSG_BeginReading resets the reader.
-        MSG_Init(&message, scratch, scratchSize);
+        MSG_Init(&side.drainMessage, side.recv, kMaxMsgLen);
         // std::copy instead of memcpy (Codacy CWE-120): byte-wise identical for
         // memcpy's non-overlapping contract, without the analyzer-untrackable
         // raw length copy.
         std::copy(frames[i].data,
                   frames[i].data + static_cast<size_t>(frames[i].length),
-                  scratch);
-        message.cursize = frames[i].length;
-        if (Netchan_Process(chan, &message))
+                  side.recv);
+        side.drainMessage.cursize = frames[i].length;
+        if (Netchan_Process(&side.chan, &side.drainMessage))
             ++stats.delivered;
         else
             ++stats.incomplete;
