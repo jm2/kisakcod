@@ -572,7 +572,17 @@ int FS_ReadFile(const char *qpath, void **buffer)
     auto &state = xmodel_loader_entry_harness::State();
     const auto fileIt = state.files.find(qpath);
     if (fileIt == state.files.end())
+    {
+        // Production FS service contract (universal/com_files.cpp
+        // FS_ReadFile): a failed lookup still writes *buffer — clearing
+        // it to null — alongside the -1 return. XAnimLoadFile's
+        // not-found path asserts !buf on exactly this contract, so
+        // leaving *buffer untouched hands the assert uninitialized
+        // stack (0xCC fill) on the MSVC Debug leg.
+        if (buffer)
+            *buffer = nullptr;
         return -1;
+    }
     const std::vector<unsigned char> &bytes = fileIt->second;
     unsigned char *copy = new unsigned char[bytes.size() + 1];
     // Bounded, iterator-based copy: same bytes, same terminator, with

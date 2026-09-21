@@ -556,7 +556,14 @@ bool TestAnimQuatTransPart()
         CHECK(parts->boneCount[kPartTypeAll] == 1);
         CHECK(parts->numframes == 1);
         CHECK(parts->dataShortCount == 2);  // quat + trans index tables
-        CHECK(parts->dataByteCount == 4);
+        // Emitted data-byte derivation (production loops at
+        // xanim_load_obj.cpp dataByteCount accumulation, useSmallIndices
+        // true): half-quat part emits tableSize+1 bytes with
+        // tableSize = quat->size = numQuatIndices-1 = 1 -> 2 bytes; the
+        // SMALL_TRANS bucket adds one marker byte per bone -> 1; the
+        // small-trans loop emits tableSize+1 with tableSize =
+        // trans->size = numTransIndices-1 = 1 -> 2. Total 2+1+2 = 5.
+        CHECK(parts->dataByteCount == 5);
         CHECK(parts->dataIntCount == 6);
         CHECK(parts->randomDataShortCount == 4);
         CHECK(parts->randomDataByteCount == 6);
@@ -595,7 +602,15 @@ bool TestAnimMixedBoneTypes()
         CHECK(parts->dataShortCount == 3);
         CHECK(parts->dataByteCount == 9);
         CHECK(parts->dataIntCount == 9);
-        CHECK(parts->randomDataShortCount == 10);
+        // Emitted random-data derivation (production loops at
+        // xanim_load_obj.cpp randomDataShortCount accumulation): the
+        // half-quat part contributes 2*tableSize+2 with tableSize =
+        // quat->size = 1 -> 4; the full-quat part contributes
+        // 4*tableSize+4 with tableSize = 1 -> 8. The trans buckets
+        // feed randomDataByteCount / nothing respectively — the
+        // small-trans loop accumulates randomDataByteCount only, and
+        // TRANS_NO_SIZE accumulates no random data. Total 4+8 = 12.
+        CHECK(parts->randomDataShortCount == 12);
         CHECK(parts->randomDataByteCount == 6);
     }
     return ExpectCleanTeardown(1);
