@@ -53,8 +53,6 @@ kind    = scalar-sequence
 verify  = encode
 input   = sequence = 0x1A2B3C4D
 input   = acknowledge = 517
-var     = sequence@0:4
-var     = acknowledge@4:4
 notes   = netchan message-front longs
 ```
 
@@ -63,19 +61,27 @@ Header keys: `format_version` (must be `1`), `source_build` and
 record; the following `kind`, `verify`, `input`, `var`, `notes` lines belong
 to it.
 
-`var` syntax is `name@byte:len` (decimal offsets). `input` values are
-decimal or `0x` hex integers, or hex byte strings for `*_hex` names.
+`input` values are decimal or `0x` hex integers, or hex byte strings for
+`*_hex` names.
+
+`var` (`name@byte:len`, decimal offsets) declares a masked span that is
+exempt from the byte comparison. Every current kind is deterministic — the
+recorded inputs fully determine the expected bytes — so none permits `var`
+declarations and the gate rejects any that appear. A kind may only declare
+variables it mandates in `kKindRules`, reserved for genuinely capture-
+dependent future kinds.
 
 ## Capture kinds and their mandated variable fields
 
 The authoritative table is `kKindRules` in `tests/net_capture_fixtures.hpp`;
-the gate rejects any capture that omits a mandated declaration.
+the gate rejects any capture that omits a mandated declaration, and rejects
+any `var` declaration a kind does not mandate.
 
-| kind             | verify           | mandated `var` declarations | recorded `input`s |
-|------------------|------------------|-----------------------------|-------------------|
-| `scalar-sequence`| `encode`         | `sequence`, `acknowledge`   | `sequence`, `acknowledge` |
-| `huffman-block`  | `encode`         | (none)                      | `payload_hex` |
-| `usercmd-delta`  | `decode-reencode`| `key`, `from_hex`           | `key`, `from_hex` (32-byte `usercmd_s` image, little-endian, the ILP32 wire layout pinned by the net-wire contracts) |
+| kind             | verify           | permitted `var` declarations | recorded `input`s |
+|------------------|------------------|------------------------------|-------------------|
+| `scalar-sequence`| `encode`         | (none)                       | `sequence`, `acknowledge` |
+| `huffman-block`  | `encode`         | (none)                       | `payload_hex` |
+| `usercmd-delta`  | `decode-reencode`| (none)                       | `key`, `from_hex` (32-byte `usercmd_s` image, little-endian, the ILP32 wire layout pinned by the net-wire contracts) |
 
 ### How to record each kind
 
@@ -98,7 +104,8 @@ the gate rejects any capture that omits a mandated declaration.
 Strip operator-identifying metadata (player names, GUIDs, IPs) from TEXT
 capture kinds before committing; codec-level captures carry none. Record in
 `sanitized_by` what was removed. Variable fields like challenge/qport stay —
-they are exactly what the `var` declarations exist to document.
+their recorded values are part of the deterministic expected bytes, not
+masked spans.
 
 ## Certification protocol
 

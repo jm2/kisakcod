@@ -267,8 +267,6 @@ void selftestManifestParsing()
         "verify = encode\n"
         "input = sequence = 0x1A2B3C4D\n"
         "input = acknowledge = 517\n"
-        "var = sequence@0:4\n"
-        "var = acknowledge@4:4\n"
         "notes = netchan message front longs\n";
 
     CaptureManifest manifest = parseManifest("commercial-1.7", good);
@@ -277,7 +275,7 @@ void selftestManifestParsing()
     CHECK(manifest.captures.size() == 1);
     CHECK(manifest.captures[0].kind == "scalar-sequence");
     CHECK(manifest.captures[0].inputs.size() == 2);
-    CHECK(manifest.captures[0].variables.size() == 2);
+    CHECK(manifest.captures[0].variables.empty());
 
     struct Mutation
     {
@@ -285,8 +283,8 @@ void selftestManifestParsing()
         std::string text;
     };
     std::vector<Mutation> bad;
-    bad.push_back({"missing format_version", "source_build = x\nsanitized_by = y\ncapture = f\nkind = scalar-sequence\nverify = encode\nvar = sequence@0:4\nvar = acknowledge@4:4\n"});
-    bad.push_back({"missing provenance", "format_version = 1\nsanitize = y\ncapture = f\nkind = scalar-sequence\nverify = encode\nvar = sequence@0:4\nvar = acknowledge@4:4\n"});
+    bad.push_back({"missing format_version", "source_build = x\nsanitized_by = y\ncapture = f\nkind = scalar-sequence\nverify = encode\n"});
+    bad.push_back({"missing provenance", "format_version = 1\nsanitize = y\ncapture = f\nkind = scalar-sequence\nverify = encode\n"});
     {
         std::string text = good;
         text.replace(text.find("kind = scalar-sequence"), 21, "kind = mystery-kind");
@@ -298,13 +296,16 @@ void selftestManifestParsing()
         bad.push_back({"wrong verify mode", text});
     }
     {
+        // The deterministic kinds compute the expected bytes from the
+        // recorded inputs, so no masked span may exempt bytes from the
+        // comparison — even a 1-byte var must be rejected.
         std::string text = good;
-        text.replace(text.find("var = acknowledge@4:4"), 21, "var = other@4:4");
-        bad.push_back({"missing mandated variable", text});
+        text.insert(text.find("notes ="), "var = sequence@0:4\n");
+        bad.push_back({"var not permitted for kind", text});
     }
     {
         std::string text = good;
-        text.append("capture = 01-scalar.bin\nkind = scalar-sequence\nverify = encode\nvar = sequence@0:4\nvar = acknowledge@4:4\n");
+        text.append("capture = 01-scalar.bin\nkind = scalar-sequence\nverify = encode\n");
         bad.push_back({"duplicate capture file", text});
     }
     bad.push_back({"unknown key", "format_version = 1\nmystery_key = 3\n"});
@@ -314,6 +315,14 @@ void selftestManifestParsing()
         CaptureManifest broken = parseManifest("commercial-1.7", m.text);
         CHECK(!broken.error.empty());
         (void)m.what;
+    }
+
+    // The var rejection must be a precise failure, not a structural accident.
+    {
+        std::string text = good;
+        text.insert(text.find("notes ="), "var = sequence@0:4\n");
+        CaptureManifest broken = parseManifest("commercial-1.7", text);
+        CHECK(broken.error.find("mandates no variable declarations") != std::string::npos);
     }
 }
 

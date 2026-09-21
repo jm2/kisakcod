@@ -267,6 +267,33 @@ CaptureManifest parseManifest(const std::string &profile, const std::string &tex
                 return manifest;
             }
         }
+        // Masked spans are a certification hole: a `var` declaration hides
+        // real output bytes from the comparison. Only names the kind rule
+        // explicitly permits may be declared; every current kind is
+        // deterministic, so none may.
+        for (const VariableField &v : spec.variables)
+        {
+            bool permitted = false;
+            for (std::size_t i = 0; i < rule->requiredVarCount; ++i)
+            {
+                if (v.name == rule->requiredVars[i])
+                {
+                    permitted = true;
+                    break;
+                }
+            }
+            if (!permitted)
+            {
+                if (rule->requiredVarCount == 0)
+                    manifest.error = "capture '" + spec.file + "': kind '" + spec.kind
+                                     + "' mandates no variable declarations (comparison is byte-exact); var '"
+                                     + v.name + "' is not allowed";
+                else
+                    manifest.error = "capture '" + spec.file + "': kind '" + spec.kind
+                                     + "' does not permit variable '" + v.name + "'";
+                return manifest;
+            }
+        }
         for (std::size_t i = 0; i < manifest.captures.size(); ++i)
         {
             if (&manifest.captures[i] != &spec && manifest.captures[i].file == spec.file)

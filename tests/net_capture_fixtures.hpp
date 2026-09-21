@@ -70,28 +70,24 @@ struct CaptureManifest
     std::string error; // non-empty <=> malformed
 };
 
-// The explicit per-kind rule table. `requiredVars` names the variable
-// capture fields every capture of this kind MUST declare (mirrored in
-// tests/fixtures/netcaptures/README.md).
+// The explicit per-kind rule table (mirrored in
+// tests/fixtures/netcaptures/README.md). `requiredVars` names the variable
+// capture fields a capture of this kind MAY declare as masked spans; any
+// `var` declaration outside the mandated set is rejected. All current kinds
+// are deterministic — the recorded inputs fully determine the expected
+// bytes — so they mandate no variables and their comparison is byte-exact.
 struct KindRule
 {
     const char *kind;
     const char *verify;              // expected verify mode
-    const char *const *requiredVars; // mandated variable declarations
+    const char *const *requiredVars; // permitted variable declarations
     std::size_t requiredVarCount;
 };
 
-// Variable capture fields of the codec-level capture kinds. The captures
-// pin the production codec over operator-recorded fixed inputs, so the
-// spans below document WHERE capture-dependent values sit in the bytes
-// even though the recorded inputs make the encoding deterministic.
-constexpr const char *kScalarSequenceVars[] = {"sequence", "acknowledge"};
-constexpr const char *kUsercmdDeltaVars[] = {"key", "from_hex"};
-
 constexpr KindRule kKindRules[] = {
-    {"scalar-sequence", "encode", kScalarSequenceVars, 2},
+    {"scalar-sequence", "encode", nullptr, 0},
     {"huffman-block", "encode", nullptr, 0},
-    {"usercmd-delta", "decode-reencode", kUsercmdDeltaVars, 2},
+    {"usercmd-delta", "decode-reencode", nullptr, 0},
 };
 
 constexpr std::size_t kKindRuleCount = sizeof(kKindRules) / sizeof(kKindRules[0]);
@@ -100,8 +96,9 @@ const KindRule *ruleForKind(const std::string &kind);
 
 // Parse the manifest text. Any structural defect (unknown key, malformed
 // span, missing kind, unknown kind, verify/kind mismatch, missing mandated
-// variable declarations, duplicate capture file) yields ok==false with a
-// precise error; the caller reports it as a certification blocker.
+// variable declarations, `var` declaration a kind does not permit, duplicate
+// capture file) yields ok==false with a precise error; the caller reports it
+// as a certification blocker.
 CaptureManifest parseManifest(const std::string &profile, const std::string &text);
 
 // Reference-evidence root: $KISAKCOD_NETCAPTURES_DIR if set (and non-empty),
