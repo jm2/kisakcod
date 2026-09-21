@@ -275,41 +275,55 @@ bool RequireFrameHeader(const CapturedFrame &frame, uint32_t sequence,
 
 namespace
 {
-int CaptureFidelityContracts()
+// Shared fixtures for the capture-fidelity contracts, at TU-scope static
+// storage instead of as function-local statics (Codacy local-static finding;
+// the va_buffers remediation in net_chan_process_test_stubs.cpp documents
+// the idiom): the ILP32 stack is small, and the capture store is ~90 KB with
+// MAX_MSGLEN-sized scratch, so these objects cannot live on the stack. One
+// named field per original function-local static keeps every object distinct
+// exactly as before -- hoisting distinct same-named statics under one shared
+// name would merge test state -- and each contract re-initializes what it
+// consumes exactly as it did at its old call site.
+struct CaptureFidelityState
 {
-    static ChannelSide client;
-    static ChannelSide server;
-    static uint8_t replayScratch[kMaxMsgLen];
-    static CaptureStore lossy;
-    static CaptureStore capture; // ~90 KB: static storage, ILP32 stack is small
-    static uint8_t small[64];
-    static uint8_t large[3000];
+    ChannelSide client;    // live drain endpoint (contract 1)
+    ChannelSide server;    // scripted send session (contract 1)
+    CaptureStore capture;  // ~90 KB: static storage, ILP32 stack is small
+    uint8_t small[64];
+    uint8_t large[3000];
+    ChannelSide replay; // clean-replay channel (contract 2)
+    uint8_t replayScratch[kMaxMsgLen]; // shared replay scratch (contracts 2-3)
+    CaptureStore lossy;    // lossy capture (contract 3)
+    ChannelSide lossyChan; // lossy-replay channel (contract 3)
+};
 
-    InstallInertDvars();
-    FillPattern(small, static_cast<int>(sizeof(small)), 0x40);
-    FillPattern(large, static_cast<int>(sizeof(large)), 0x80);
+static CaptureFidelityState fidelity;
 
-    client.Setup(NS_CLIENT1, 28961); // client sends route to the server queue
-    server.Setup(NS_SERVER, NS_CLIENT1); // to.port 0 == the client queue
-
-    // Contract 1: the production send path emits the exact wire shape.
-    Netchan_Transmit(&server.chan, static_cast<int>(sizeof(small)),
-                     reinterpret_cast<char *>(small));
-    Netchan_Transmit(&server.chan, static_cast<int>(sizeof(large)),
-                     reinterpret_cast<char *>(large));
-    while (server.chan.unsentFragments)
-        Netchan_TransmitNextFragment(&server.chan);
-    if (server.chan.outgoingSequence != 3)
+// Drives the production send path over the scripted session: one
+// unfragmented small message plus one 3000-byte fragmented message, then
+// pins the resulting outgoingSequence.
+int SendCapturedSession()
+{
+    Netchan_Transmit(&fidelity.server.chan,
+                     static_cast<int>(sizeof(fidelity.small)),
+                     reinterpret_cast<char *>(fidelity.small));
+    Netchan_Transmit(&fidelity.server.chan,
+                     static_cast<int>(sizeof(fidelity.large)),
+                     reinterpret_cast<char *>(fidelity.large));
+    while (fidelity.server.chan.unsentFragments)
+        Netchan_TransmitNextFragment(&fidelity.server.chan);
+    if (fidelity.server.chan.outgoingSequence != 3)
         return fail("fragmented session left the wrong outgoingSequence");
+    return 0;
+}
 
-    const DrainStats liveStats = client.Drain(&capture, nullptr);
-    if (capture.overflowed || capture.count != 4)
-        return fail("capture frame count deviates from the scripted session");
-    // The two pending mid-message fragments return 0 as well.
-    if (liveStats.delivered != 2 || liveStats.incomplete != 2)
-        return fail("live drain outcome deviates from the scripted session");
-    if (!RequireFrameHeader(capture.frames[0], 1, 0, 0, small,
-                            static_cast<int>(sizeof(small))))
+// Pins the captured wire shape: the unfragmented small frame and the three
+// fragment frames of the large message.
+int CaptureFrameShapesMatch()
+{
+    if (!RequireFrameHeader(fidelity.capture.frames[0], 1, 0, 0,
+                            fidelity.small,
+                            static_cast<int>(sizeof(fidelity.small))))
         return fail("unfragmented capture frame deviates from the wire shape");
     struct FragmentShape
     {
@@ -319,66 +333,131 @@ int CaptureFidelityContracts()
     const FragmentShape shapes[3] = {{0, 1300}, {1300, 1300}, {2600, 400}};
     for (int i = 0; i < 3; ++i)
     {
-        if (!RequireFrameHeader(capture.frames[1 + i],
+        if (!RequireFrameHeader(fidelity.capture.frames[1 + i],
                                 FragmentSequence(2u), shapes[i].start,
-                                shapes[i].length, large + shapes[i].start,
+                                shapes[i].length,
+                                fidelity.large + shapes[i].start,
                                 shapes[i].length))
             return fail("fragment capture frame deviates from the wire shape");
     }
-    if (client.chan.incomingSequence != 2 || client.chan.dropped != 0)
-        return fail("live channel state deviates after the session");
-    // The completing fragment rebuilds the message in the drain buffer:
-    // sequence prefix + byte-exact reassembled payload.
-    if (client.drainMessage.cursize != 3004
-        || !LittleEndianPrefixMatches(client.recv, 2u)
-        || !PatternMatches(client.recv + 4, 3000, 0x80))
+    return 0;
+}
+
+// The completing fragment rebuilds the message in the drain buffer:
+// sequence prefix + byte-exact reassembled payload.
+int LiveReassemblyMatches()
+{
+    if (fidelity.client.drainMessage.cursize != 3004
+        || !LittleEndianPrefixMatches(fidelity.client.recv, 2u)
+        || !PatternMatches(fidelity.client.recv + 4, 3000, 0x80))
         return fail("live reassembly payload deviates from the sent body");
+    return 0;
+}
 
-    // Contract 2: replaying the capture into a fresh channel reproduces the
-    // identical delivery outcome.
-    static ChannelSide replay; // static storage: ILP32 stack is 1 MiB
-    replay.Setup(NS_CLIENT1, 28961);
+// Contract 1: the production send path emits the exact wire shape.
+int CaptureWireShapeContract()
+{
+    fidelity.client.Setup(NS_CLIENT1, 28961); // client sends route to the server queue
+    fidelity.server.Setup(NS_SERVER, NS_CLIENT1); // to.port 0 == the client queue
+
+    const int sent = SendCapturedSession();
+    if (sent != 0)
+        return sent;
+
+    const DrainStats liveStats =
+        fidelity.client.Drain(&fidelity.capture, nullptr);
+    if (fidelity.capture.overflowed || fidelity.capture.count != 4)
+        return fail("capture frame count deviates from the scripted session");
+    // The two pending mid-message fragments return 0 as well.
+    if (liveStats.delivered != 2 || liveStats.incomplete != 2)
+        return fail("live drain outcome deviates from the scripted session");
+
+    const int shapes = CaptureFrameShapesMatch();
+    if (shapes != 0)
+        return shapes;
+
+    if (fidelity.client.chan.incomingSequence != 2
+        || fidelity.client.chan.dropped != 0)
+        return fail("live channel state deviates after the session");
+
+    return LiveReassemblyMatches();
+}
+
+// Contract 2: replaying the capture into a fresh channel reproduces the
+// identical delivery outcome.
+int CleanReplayContract()
+{
+    fidelity.replay.Setup(NS_CLIENT1, 28961);
     const DrainStats replayStats =
-        ReplayFrames(&replay.chan, capture.frames, capture.count,
-                     replayScratch, kMaxMsgLen);
+        ReplayFrames(&fidelity.replay.chan, fidelity.capture.frames,
+                     fidelity.capture.count, fidelity.replayScratch,
+                     kMaxMsgLen);
     if (replayStats.delivered != 2 || replayStats.incomplete != 2
-        || replay.chan.incomingSequence != 2 || replay.chan.dropped != 0)
+        || fidelity.replay.chan.incomingSequence != 2
+        || fidelity.replay.chan.dropped != 0)
         return fail("capture replay outcome deviates from the live drain");
-    if (!PatternMatches(replay.recv + 4, 3000, 0x80))
+    if (!PatternMatches(fidelity.replay.recv + 4, 3000, 0x80))
         return fail("replayed reassembly payload deviates from the sent body");
+    return 0;
+}
 
-    // Contract 3: a capture missing the second fragment must reject the
-    // tail, hold exact reassembly state, and complete when the
-    // retransmission frames (a real capture's duplicate run) are replayed.
-    lossy = CaptureStore{};
-    for (int i = 0; i < capture.count; ++i)
+// Contract 3, lossy leg: a capture missing the second fragment must reject
+// the tail and hold exact reassembly state.
+int LossyReplayContract()
+{
+    fidelity.lossy = CaptureStore{};
+    for (int i = 0; i < fidelity.capture.count; ++i)
     {
         if (i == 2) // the fragment covering bytes [1300, 2600)
             continue;
-        lossy.Record(capture.frames[i].sock, capture.frames[i].data,
-                     capture.frames[i].length);
+        fidelity.lossy.Record(fidelity.capture.frames[i].sock,
+                              fidelity.capture.frames[i].data,
+                              fidelity.capture.frames[i].length);
     }
-    static ChannelSide lossyChan; // static storage: ILP32 stack is 1 MiB
-    lossyChan.Setup(NS_CLIENT1, 28961);
+    fidelity.lossyChan.Setup(NS_CLIENT1, 28961);
     const DrainStats lossyStats =
-        ReplayFrames(&lossyChan.chan, lossy.frames, lossy.count,
-                     replayScratch, kMaxMsgLen);
+        ReplayFrames(&fidelity.lossyChan.chan, fidelity.lossy.frames,
+                     fidelity.lossy.count, fidelity.replayScratch,
+                     kMaxMsgLen);
     // f1 pending plus the gapped f3 both return 0.
     if (lossyStats.delivered != 1 || lossyStats.incomplete != 2
-        || lossyChan.chan.incomingSequence != 1
-        || lossyChan.chan.fragmentSequence != 2
-        || lossyChan.chan.fragmentLength != 1300)
+        || fidelity.lossyChan.chan.incomingSequence != 1
+        || fidelity.lossyChan.chan.fragmentSequence != 2
+        || fidelity.lossyChan.chan.fragmentLength != 1300)
         return fail("lossy capture replay state deviates from wire semantics");
-    const DrainStats recoveryStats =
-        ReplayFrames(&lossyChan.chan, &capture.frames[2], 2, replayScratch,
-                     kMaxMsgLen);
-    if (recoveryStats.delivered != 1 || recoveryStats.incomplete != 1
-        || lossyChan.chan.incomingSequence != 2
-        || lossyChan.chan.fragmentLength != 0
-        || !PatternMatches(lossyChan.recv + 4, 3000, 0x80))
-        return fail("retransmission replay did not complete the message");
-
     return 0;
+}
+
+// Contract 3, recovery leg: replaying the retransmission frames (as they
+// appear on a real wire capture) completes the message byte-exactly.
+int LossyRecoveryContract()
+{
+    const DrainStats recoveryStats =
+        ReplayFrames(&fidelity.lossyChan.chan, &fidelity.capture.frames[2], 2,
+                     fidelity.replayScratch, kMaxMsgLen);
+    if (recoveryStats.delivered != 1 || recoveryStats.incomplete != 1
+        || fidelity.lossyChan.chan.incomingSequence != 2
+        || fidelity.lossyChan.chan.fragmentLength != 0
+        || !PatternMatches(fidelity.lossyChan.recv + 4, 3000, 0x80))
+        return fail("retransmission replay did not complete the message");
+    return 0;
+}
+
+int CaptureFidelityContracts()
+{
+    InstallInertDvars();
+    FillPattern(fidelity.small, static_cast<int>(sizeof(fidelity.small)),
+                0x40);
+    FillPattern(fidelity.large, static_cast<int>(sizeof(fidelity.large)),
+                0x80);
+
+    if (CaptureWireShapeContract() != 0)
+        return 1;
+    if (CleanReplayContract() != 0)
+        return 1;
+    if (LossyReplayContract() != 0)
+        return 1;
+    return LossyRecoveryContract();
 }
 } // namespace
 
@@ -441,11 +520,18 @@ uint8_t TickSeed(bool fromServer, int tick)
     return static_cast<uint8_t>((fromServer ? 0x10 : 0xB0) + tick * 7);
 }
 
+// Netchan_Transmit's documented maximum payload, at TU-scope static storage
+// instead of as a function-local static (Codacy local-static finding; the
+// va_buffers remediation in net_chan_process_test_stubs.cpp documents the
+// idiom). One shared scratch object refilled per send, identical behavior --
+// only the declaration location moved.
+static uint8_t sendPayload[0x20000];
+
 void SendPatterned(ChannelSide &side, int length, uint8_t seed)
 {
-    static uint8_t payload[0x20000]; // Netchan_Transmit's documented maximum
-    FillPattern(payload, length, seed);
-    Netchan_Transmit(&side.chan, length, reinterpret_cast<char *>(payload));
+    FillPattern(sendPayload, length, seed);
+    Netchan_Transmit(&side.chan, length,
+                     reinterpret_cast<char *>(sendPayload));
 }
 
 // One engine frame's sends: fragments in flight get exactly one
@@ -500,36 +586,59 @@ bool PayloadLogsMatch(const PayloadLog &actual, const PayloadLog::Entry *expecte
     return true;
 }
 
-int FixedTickContracts()
+// The two independent simulation runs of the fixed-tick contracts, at
+// TU-scope static storage instead of as function-local statics (Codacy
+// local-static finding; the va_buffers remediation in
+// net_chan_process_test_stubs.cpp documents the idiom -- SimulationState
+// embeds MAX_MSGLEN-sized channel buffers that cannot live on the ILP32
+// stack). Distinct objects; RunSimulation's SetupPair re-initializes each
+// exactly as before.
+static SimulationState fixedTickRunA;
+static SimulationState fixedTickRunB;
+
+// Per-tick drain outcomes and the captured frame count pinned by the
+// scripted workload.
+int FixedTickDrainStatsContract()
 {
-    static SimulationState runA;
-    static SimulationState runB;
-
-    InstallInertDvars();
-    RunSimulation(runA);
-    RunSimulation(runB);
-
     for (int tick = 0; tick < kSimTicks; ++tick)
     {
-        if (runA.toClient[tick].delivered != kToClientDelivered[tick]
-            || runA.toClient[tick].incomplete != kToClientIncomplete[tick]
-            || runA.toServer[tick].delivered != kToServerDelivered[tick]
-            || runA.toServer[tick].incomplete != kToServerIncomplete[tick])
+        if (fixedTickRunA.toClient[tick].delivered != kToClientDelivered[tick]
+            || fixedTickRunA.toClient[tick].incomplete
+                   != kToClientIncomplete[tick]
+            || fixedTickRunA.toServer[tick].delivered
+                   != kToServerDelivered[tick]
+            || fixedTickRunA.toServer[tick].incomplete
+                   != kToServerIncomplete[tick])
             return fail("fixed-tick drain stats deviate from the workload");
     }
-    if (runA.capture.overflowed || runA.capture.count != 19)
-        return fail("fixed-tick capture frame count deviates from the workload");
-    if (runA.client.chan.incomingSequence != 5
-        || runA.server.chan.incomingSequence != 8
-        || runA.client.chan.dropped != 0 || runA.server.chan.dropped != 0
-        || runA.client.chan.unsentFragments
-        || runA.server.chan.unsentFragments)
-        return fail("fixed-tick final channel state deviates from the workload");
+    if (fixedTickRunA.capture.overflowed
+        || fixedTickRunA.capture.count != 19)
+        return fail(
+            "fixed-tick capture frame count deviates from the workload");
+    return 0;
+}
 
-    // Every delivered body must be byte-identical to the scripted pattern,
-    // in delivery order: server smalls at ticks 1/2/5, the first large
-    // completing at tick 4, the second at tick 8; the client's smalls, its
-    // large completing at tick 7, and its final small at tick 8.
+// Final channel state after the 8-tick run: every message delivered, no
+// drops, no fragments left in flight.
+int FixedTickChannelStateContract()
+{
+    if (fixedTickRunA.client.chan.incomingSequence != 5
+        || fixedTickRunA.server.chan.incomingSequence != 8
+        || fixedTickRunA.client.chan.dropped != 0
+        || fixedTickRunA.server.chan.dropped != 0
+        || fixedTickRunA.client.chan.unsentFragments
+        || fixedTickRunA.server.chan.unsentFragments)
+        return fail(
+            "fixed-tick final channel state deviates from the workload");
+    return 0;
+}
+
+// Every delivered body must be byte-identical to the scripted pattern, in
+// delivery order: server smalls at ticks 1/2/5, the first large completing
+// at tick 4, the second at tick 8; the client's smalls, its large completing
+// at tick 7, and its final small at tick 8.
+int FixedTickPayloadContract()
+{
     const PayloadLog::Entry expectedToClient[5] = {
         {24, DigestPattern(TickSeed(true, 0), 24)},
         {56, DigestPattern(TickSeed(true, 1), 56)},
@@ -547,17 +656,33 @@ int FixedTickContracts()
         {1500, DigestPattern(static_cast<uint8_t>(TickSeed(false, 5) ^ 0x5A), 1500)},
         {152, DigestPattern(TickSeed(false, 7), 152)},
     };
-    if (!PayloadLogsMatch(runA.toClientPayloads, expectedToClient, 5)
-        || !PayloadLogsMatch(runA.toServerPayloads, expectedToServer, 8))
+    if (!PayloadLogsMatch(fixedTickRunA.toClientPayloads, expectedToClient, 5)
+        || !PayloadLogsMatch(fixedTickRunA.toServerPayloads, expectedToServer,
+                             8))
         return fail("a delivered payload deviates from the scripted body");
 
     // Determinism: two independent runs must produce byte-identical traces.
-    if (runA.capture.digest != runB.capture.digest
-        || !PayloadLogsMatch(runB.toClientPayloads, expectedToClient, 5)
-        || !PayloadLogsMatch(runB.toServerPayloads, expectedToServer, 8))
+    if (fixedTickRunA.capture.digest != fixedTickRunB.capture.digest
+        || !PayloadLogsMatch(fixedTickRunB.toClientPayloads, expectedToClient,
+                             5)
+        || !PayloadLogsMatch(fixedTickRunB.toServerPayloads, expectedToServer,
+                             8))
         return fail("fixed-tick simulation traces are not deterministic");
 
     return 0;
+}
+
+int FixedTickContracts()
+{
+    InstallInertDvars();
+    RunSimulation(fixedTickRunA);
+    RunSimulation(fixedTickRunB);
+
+    if (FixedTickDrainStatsContract() != 0)
+        return 1;
+    if (FixedTickChannelStateContract() != 0)
+        return 1;
+    return FixedTickPayloadContract();
 }
 } // namespace
 
