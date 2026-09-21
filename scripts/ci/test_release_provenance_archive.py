@@ -220,9 +220,19 @@ class SourceArchiveIdentityTests(ReleaseProvenanceTestBase):
                             "unexpected or non-regular archive member: "
                             f"{member.name!r}"
                         )
-                    with archive.extractfile(member) as member_stream:
+                    # extractfile() is typed Optional for every member kind;
+                    # the isfile() guard above makes None unreachable for this
+                    # self-synthesized archive, but using the stream as a
+                    # context manager requires the explicit None branch.
+                    member_stream = archive.extractfile(member)
+                    if member_stream is None:
+                        raise AssertionError(
+                            "unexpected or non-regular archive member: "
+                            f"{member.name!r}"
+                        )
+                    with member_stream as validated_stream:
                         with open(tree / member.name, "wb") as extracted:
-                            extracted.write(member_stream.read())
+                            extracted.write(validated_stream.read())
         literal = tree / "src\\source_identity.txt"
         self.assertTrue(literal.is_file())
         self.assertEqual(literal.read_text(encoding="utf-8"), f"commit={COMMIT}\n")
