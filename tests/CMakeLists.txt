@@ -3876,6 +3876,14 @@ set_tests_properties(fuzz-fastfile-corpus-rejects-missing PROPERTIES
 add_test(
     NAME fuzz-fastfile-corpus-gate
     COMMAND fuzz_fastfile corpus-gate ${CMAKE_CURRENT_BINARY_DIR}/fuzz_corpus_gate)
+# Deterministic setup-failure regression: a failed negative-case setup
+# (copy under a regular-file path) must be recorded as a gate failure
+# instead of silently skipping the case and exiting green. Positive
+# polarity: the probe exits 0 only when the failure is propagated.
+add_test(
+    NAME fuzz-fastfile-corpus-gate-setup-failure
+    COMMAND fuzz_fastfile corpus-gate-failing-setup
+            ${CMAKE_CURRENT_BINARY_DIR}/fuzz_corpus_gate_setup_failure)
 
 # tagInfo_s <-> tagInfoDisk32_s save-record converter. The header is header
 # only so the test compiles standalone against the production wire image;
