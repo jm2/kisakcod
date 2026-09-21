@@ -165,6 +165,18 @@ bool IsSafeEntryName(const std::string &name)
 // Parsing rejects signs, trailing garbage, partial conversions and
 // overflow so a mutated manifest cannot slip past the checked corpus gate.
 
+// Digit class predicates shared by the manifest field parsers. Hand-rolled
+// ASCII checks keep the classification locale-independent.
+bool IsHexDigit(char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+bool IsDecimalDigit(char c)
+{
+    return c >= '0' && c <= '9';
+}
+
 // Strict fixed-width hex parse for the 64-bit FNV-1a hash field. Requires
 // exactly 16 hex digits (the generator always emits `%016llx`), rejects a
 // sign or `0x` prefix, and verifies the whole token was consumed.
@@ -174,9 +186,7 @@ bool ParseManifestHash(const std::string &token, uint64_t &out)
         return false;
     for (const char c : token)
     {
-        const bool hexDigit = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
-                              (c >= 'A' && c <= 'F');
-        if (!hexDigit)
+        if (!IsHexDigit(c))
             return false;
     }
 
@@ -198,7 +208,7 @@ bool ParseManifestSize(const std::string &token, uint64_t &out)
         return false;
     for (const char c : token)
     {
-        if (c < '0' || c > '9')
+        if (!IsDecimalDigit(c))
             return false;
     }
 
@@ -217,9 +227,51 @@ bool IsValidCorpusKind(const std::string &kind)
     return kind == "valid" || kind == "malformed";
 }
 
+// Parse one manifest data line into `entry`, reporting the specific
+// violation. Returns false on any grammar or field-value failure; the
+// caller fails closed. Every field is validated strictly and a line
+// carrying extra tokens is rejected.
+bool ParseManifestLine(const std::string &line, CorpusEntry &entry)
+{
+    std::istringstream ls(line);
+    std::string hashHex;
+    std::string sizeStr;
+    std::string kind;
+    std::string name;
+    std::string extra;
+    if (!(ls >> hashHex >> sizeStr >> kind >> name))
+    {
+        std::fprintf(stderr, "fuzz_fastfile: malformed manifest line: %s\n", line.c_str());
+        return false;
+    }
+    if (ls >> extra)
+    {
+        std::fprintf(stderr, "fuzz_fastfile: manifest line has trailing fields: %s\n",
+                     line.c_str());
+        return false;
+    }
+    if (!ParseManifestHash(hashHex, entry.hash))
+    {
+        std::fprintf(stderr, "fuzz_fastfile: malformed manifest hash: %s\n", hashHex.c_str());
+        return false;
+    }
+    if (!ParseManifestSize(sizeStr, entry.size))
+    {
+        std::fprintf(stderr, "fuzz_fastfile: malformed manifest size: %s\n", sizeStr.c_str());
+        return false;
+    }
+    if (!IsValidCorpusKind(kind))
+    {
+        std::fprintf(stderr, "fuzz_fastfile: unknown corpus kind: %s\n", kind.c_str());
+        return false;
+    }
+    entry.kind = kind;
+    entry.name = name;
+    return true;
+}
+
 // Load and parse the corpus manifest. Returns false on a missing,
-// unreadable, or malformed manifest; the caller fails closed. Every field
-// is validated strictly and a line carrying extra tokens is rejected.
+// unreadable, or malformed manifest; the caller fails closed.
 bool LoadCorpusManifest(const std::string &dir, std::vector<CorpusEntry> &entries)
 {
     const std::string path = dir + "/" + kCorpusManifestName;
@@ -236,42 +288,9 @@ bool LoadCorpusManifest(const std::string &dir, std::vector<CorpusEntry> &entrie
         if (line.empty() || line[0] == '#')
             continue;
 
-        std::istringstream ls(line);
-        std::string hashHex;
-        std::string sizeStr;
-        std::string kind;
-        std::string name;
-        std::string extra;
-        if (!(ls >> hashHex >> sizeStr >> kind >> name))
-        {
-            std::fprintf(stderr, "fuzz_fastfile: malformed manifest line: %s\n", line.c_str());
-            return false;
-        }
-        if (ls >> extra)
-        {
-            std::fprintf(stderr, "fuzz_fastfile: manifest line has trailing fields: %s\n",
-                         line.c_str());
-            return false;
-        }
-
         CorpusEntry entry;
-        if (!ParseManifestHash(hashHex, entry.hash))
-        {
-            std::fprintf(stderr, "fuzz_fastfile: malformed manifest hash: %s\n", hashHex.c_str());
+        if (!ParseManifestLine(line, entry))
             return false;
-        }
-        if (!ParseManifestSize(sizeStr, entry.size))
-        {
-            std::fprintf(stderr, "fuzz_fastfile: malformed manifest size: %s\n", sizeStr.c_str());
-            return false;
-        }
-        if (!IsValidCorpusKind(kind))
-        {
-            std::fprintf(stderr, "fuzz_fastfile: unknown corpus kind: %s\n", kind.c_str());
-            return false;
-        }
-        entry.kind = kind;
-        entry.name = name;
         entries.push_back(entry);
     }
 
@@ -981,6 +1000,60 @@ std::vector<SeedSpec> BuildCorpusSeeds()
     return seeds;
 }
 
+// The corpus path must be an existing, readable directory.
+bool IsUsableCorpusDir(const std::string &corpusDir)
+{
+    std::error_code ec;
+    const std::filesystem::path dir(corpusDir);
+    if (std::filesystem::is_directory(dir, ec) && !ec)
+        return true;
+    const std::string detail = ec ? (" (" + ec.message() + ")") : std::string();
+    std::fprintf(stderr, "fuzz_fastfile: corpus directory missing or unreadable: %s%s\n",
+                 corpusDir.c_str(), detail.c_str());
+    return false;
+}
+
+// Validate every entry against the manifest and load its payload BEFORE
+// any of them is exercised, so a mismatched corpus fails without a
+// partial sweep. Returns false (with the violation logged) on any
+// mismatch.
+bool LoadCorpusPayloads(const std::string &corpusDir, const std::vector<CorpusEntry> &entries,
+                        std::vector<std::vector<unsigned char>> &payloads)
+{
+    payloads.reserve(entries.size());
+    for (const CorpusEntry &entry : entries)
+    {
+        if (!IsSafeEntryName(entry.name))
+        {
+            std::fprintf(stderr, "fuzz_fastfile: unsafe corpus entry name: %s\n", entry.name.c_str());
+            return false;
+        }
+
+        std::vector<unsigned char> bytes;
+        if (!ReadFileChecked(corpusDir + "/" + entry.name, bytes))
+        {
+            std::fprintf(stderr, "fuzz_fastfile: corpus entry missing or unreadable: %s\n",
+                         entry.name.c_str());
+            return false;
+        }
+        if (bytes.size() != entry.size)
+        {
+            std::fprintf(stderr,
+                         "fuzz_fastfile: corpus entry size mismatch for %s (manifest=%llu actual=%zu)\n",
+                         entry.name.c_str(), static_cast<unsigned long long>(entry.size), bytes.size());
+            return false;
+        }
+        if (Fnv1a64(bytes) != entry.hash)
+        {
+            std::fprintf(stderr, "fuzz_fastfile: corpus entry hash mismatch for %s\n",
+                         entry.name.c_str());
+            return false;
+        }
+        payloads.push_back(std::move(bytes));
+    }
+    return true;
+}
+
 // Strict corpus mode. Every failure (absent, non-directory, unreadable,
 // missing / malformed manifest, missing / size-mismatched / hash-
 // mismatched entry, empty manifest) is terminal: this never falls back
@@ -993,15 +1066,8 @@ int RunCorpusDir(const std::string &corpusDir)
         return 1;
     }
 
-    std::error_code ec;
-    const std::filesystem::path dir(corpusDir);
-    if (!std::filesystem::is_directory(dir, ec) || ec)
-    {
-        const std::string detail = ec ? (" (" + ec.message() + ")") : std::string();
-        std::fprintf(stderr, "fuzz_fastfile: corpus directory missing or unreadable: %s%s\n",
-                     corpusDir.c_str(), detail.c_str());
+    if (!IsUsableCorpusDir(corpusDir))
         return 1;
-    }
 
     std::vector<CorpusEntry> entries;
     if (!LoadCorpusManifest(corpusDir, entries))
@@ -1013,40 +1079,9 @@ int RunCorpusDir(const std::string &corpusDir)
         return 1;
     }
 
-    // Validate every entry against the manifest BEFORE exercising any of
-    // them, so a mismatched corpus fails without a partial sweep.
     std::vector<std::vector<unsigned char>> payloads;
-    payloads.reserve(entries.size());
-    for (const CorpusEntry &entry : entries)
-    {
-        if (!IsSafeEntryName(entry.name))
-        {
-            std::fprintf(stderr, "fuzz_fastfile: unsafe corpus entry name: %s\n", entry.name.c_str());
-            return 1;
-        }
-
-        std::vector<unsigned char> bytes;
-        if (!ReadFileChecked(corpusDir + "/" + entry.name, bytes))
-        {
-            std::fprintf(stderr, "fuzz_fastfile: corpus entry missing or unreadable: %s\n",
-                         entry.name.c_str());
-            return 1;
-        }
-        if (bytes.size() != entry.size)
-        {
-            std::fprintf(stderr,
-                         "fuzz_fastfile: corpus entry size mismatch for %s (manifest=%llu actual=%zu)\n",
-                         entry.name.c_str(), static_cast<unsigned long long>(entry.size), bytes.size());
-            return 1;
-        }
-        if (Fnv1a64(bytes) != entry.hash)
-        {
-            std::fprintf(stderr, "fuzz_fastfile: corpus entry hash mismatch for %s\n",
-                         entry.name.c_str());
-            return 1;
-        }
-        payloads.push_back(std::move(bytes));
-    }
+    if (!LoadCorpusPayloads(corpusDir, entries, payloads))
+        return 1;
 
     std::size_t malformed = 0;
     for (size_t i = 0; i < entries.size(); ++i)
@@ -1090,6 +1125,18 @@ bool WriteTextFile(const std::filesystem::path &file, const std::string &text)
     return static_cast<bool>(out);
 }
 
+// Create a regular file holding a single byte at `path`; returns whether
+// the file landed. Used both as a gate case (a corpus path that is not a
+// directory) and as the deterministic copy blocker in the setup-failure
+// probe.
+bool CreateBlockerFile(const std::string &path)
+{
+    std::ofstream blocker(path, std::ios::binary);
+    blocker << 'x';
+    blocker.flush();
+    return static_cast<bool>(blocker);
+}
+
 std::string UniqueNonce()
 {
     std::random_device rd;
@@ -1121,6 +1168,43 @@ struct CallerScratch
             std::filesystem::remove_all(sentinel, ignore);
     }
 
+    // Write the preservation sentinel the gate re-checks after running.
+    bool WriteCallerSentinel()
+    {
+        const std::string nonce = UniqueNonce();
+        sentinel = parent / ("corpus-gate-sentinel-" + nonce);
+        if (!EnsureDirectory(sentinel, "caller sentinel") ||
+            !WriteTextFile(sentinel / "keep.txt", sentinelText))
+        {
+            std::fprintf(stderr, "fuzz_fastfile: could not write caller sentinel %s\n",
+                         sentinel.string().c_str());
+            return false;
+        }
+        return true;
+    }
+
+    // Allocate an exclusively owned child directory under the caller's
+    // parent. Pre-existing content is never touched; allocation gives up
+    // after 64 deterministic name collisions or a hard filesystem error.
+    bool AllocateOwned()
+    {
+        const std::string nonce = UniqueNonce();
+        for (unsigned int attempt = 0; attempt < 64; ++attempt)
+        {
+            const std::filesystem::path candidate =
+                parent / ("corpus-gate-" + nonce + "-" + std::to_string(attempt));
+            std::error_code ec;
+            if (std::filesystem::create_directory(candidate, ec))
+            {
+                owned = candidate;
+                return true;
+            }
+            if (ec)
+                return false;
+        }
+        return false;
+    }
+
     bool Prepare(const char *scratchRoot)
     {
         if (scratchRoot == nullptr || scratchRoot[0] == 0)
@@ -1132,27 +1216,9 @@ struct CallerScratch
         if (!EnsureDirectory(parent, "scratch parent"))
             return false;
 
-        const std::string nonce = UniqueNonce();
-        sentinel = parent / ("corpus-gate-sentinel-" + nonce);
-        if (!EnsureDirectory(sentinel, "caller sentinel") ||
-            !WriteTextFile(sentinel / "keep.txt", sentinelText))
-        {
-            std::fprintf(stderr, "fuzz_fastfile: could not write caller sentinel %s\n",
-                         sentinel.string().c_str());
+        if (!WriteCallerSentinel())
             return false;
-        }
-
-        for (unsigned int attempt = 0; attempt < 64 && owned.empty(); ++attempt)
-        {
-            const std::filesystem::path candidate =
-                parent / ("corpus-gate-" + nonce + "-" + std::to_string(attempt));
-            std::error_code ec;
-            if (std::filesystem::create_directory(candidate, ec))
-                owned = candidate;
-            else if (ec)
-                break;
-        }
-        if (owned.empty())
+        if (!AllocateOwned())
         {
             std::fprintf(stderr, "fuzz_fastfile: could not allocate owned scratch under %s\n",
                          parent.string().c_str());
@@ -1232,6 +1298,20 @@ bool MutateCorpusManifest(const std::string &valid, const std::string &dest, Tra
     return true;
 }
 
+// Expect the corpus runner to reject `dir` as-is (no setup can fail).
+void ExpectRejectNoSetup(int &failures, const std::string &label, const std::string &dir)
+{
+    if (RunCorpusDir(dir) == 0)
+    {
+        std::fprintf(stderr,
+                     "fuzz_fastfile: gate: expected rejection but corpus passed: %s\n",
+                     label.c_str());
+        ++failures;
+        return;
+    }
+    std::fprintf(stdout, "fuzz_fastfile: gate: %s rejected\n", label.c_str());
+}
+
 // Run one negative corpus case: `setup` materializes the malformed corpus
 // at `dir`, then the corpus runner must reject it. A setup failure is
 // recorded as a gate failure in its own right — the previous pattern
@@ -1251,15 +1331,7 @@ void ExpectFailAfterSetup(int &failures, const std::string &label,
         ++failures;
         return;
     }
-    if (RunCorpusDir(dir) == 0)
-    {
-        std::fprintf(stderr,
-                     "fuzz_fastfile: gate: expected rejection but corpus passed: %s\n",
-                     label.c_str());
-        ++failures;
-        return;
-    }
-    std::fprintf(stdout, "fuzz_fastfile: gate: %s rejected\n", label.c_str());
+    ExpectRejectNoSetup(failures, label, dir);
 }
 
 // Deterministic setup-failure regression: a failed negative-case setup
@@ -1285,17 +1357,12 @@ int RunGateSetupFailureProbe(const char *scratchRoot)
 
     // A regular file where the negative case's corpus directory would be
     // created; any copy beneath it fails deterministically.
-    {
-        std::ofstream blocker(root + "/blocker", std::ios::binary);
-        blocker << 'x';
-        blocker.flush();
-        if (!blocker)
-        {
-            std::fprintf(stderr, "fuzz_fastfile: probe: could not create blocker file\n");
-            return 1;
-        }
-    }
     const std::string dest = root + "/blocker/manifest_size_garbage";
+    if (!CreateBlockerFile(root + "/blocker"))
+    {
+        std::fprintf(stderr, "fuzz_fastfile: probe: could not create blocker file\n");
+        return 1;
+    }
 
     // Premise check: the copy must actually fail. If it ever succeeds the
     // probe cannot assert propagation and must fail loudly instead of
@@ -1333,6 +1400,233 @@ int RunGateSetupFailureProbe(const char *scratchRoot)
     return 0;
 }
 
+// Expect the corpus runner to accept `dir` (the positive gate case).
+void ExpectAccept(int &failures, const std::string &label, const std::string &dir)
+{
+    if (RunCorpusDir(dir) != 0)
+    {
+        std::fprintf(stderr,
+                     "fuzz_fastfile: gate: expected acceptance but corpus failed: %s\n",
+                     label.c_str());
+        ++failures;
+        return;
+    }
+    std::fprintf(stdout, "fuzz_fastfile: gate: %s accepted\n", label.c_str());
+}
+
+// Negative-case setup: materialize a corpus directory whose manifest
+// lists no entries.
+bool SetupEmptyManifest(const std::string &dest)
+{
+    if (!EnsureDirectory(std::filesystem::path(dest), "empty-manifest corpus"))
+        return false;
+    std::ofstream m(dest + "/" + kCorpusManifestName);
+    m << "# no entries\n";
+    m.flush();
+    return static_cast<bool>(m);
+}
+
+// Negative-case setup: copy the accepted corpus and remove a listed
+// entry from disk. A failed removal would leave a valid corpus behind
+// and exercise the wrong condition, so it is reported instead of
+// ignored.
+bool SetupMissingEntry(const std::string &valid, const std::string &dest)
+{
+    if (!CopyCorpusTree(valid, dest))
+        return false;
+    std::error_code rmEc;
+    std::filesystem::remove(std::filesystem::path(dest + "/xanim_parts_valid.bin"), rmEc);
+    if (rmEc)
+    {
+        std::fprintf(stderr, "fuzz_fastfile: gate: could not remove corpus entry: %s\n",
+                     rmEc.message().c_str());
+        return false;
+    }
+    return true;
+}
+
+// Negative-case setup: copy the accepted corpus and append a byte to a
+// listed entry. The append stream is scoped so it is flushed to disk
+// before the corpus re-reads it.
+bool SetupSizeMismatch(const std::string &valid, const std::string &dest)
+{
+    if (!CopyCorpusTree(valid, dest))
+        return false;
+    std::ofstream append(dest + "/xmodel_pieces_valid.bin", std::ios::binary | std::ios::app);
+    append << 'X';
+    append.flush();
+    return static_cast<bool>(append);
+}
+
+// Negative-case setup: copy the accepted corpus and flip a byte of a
+// listed entry without changing its size.
+bool SetupHashMismatch(const std::string &valid, const std::string &dest)
+{
+    if (!CopyCorpusTree(valid, dest))
+        return false;
+    const std::string target = dest + "/xmodel_pieces_valid.bin";
+    std::vector<unsigned char> bytes;
+    if (!ReadFileChecked(target, bytes) || bytes.empty())
+    {
+        std::fprintf(stderr,
+                     "fuzz_fastfile: gate: could not read corpus entry for hash mutation: %s\n",
+                     target.c_str());
+        return false;
+    }
+    bytes[0] = static_cast<unsigned char>(bytes[0] ^ 0xFFu);
+    std::ofstream out(target, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char *>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+    out.flush();
+    return static_cast<bool>(out);
+}
+
+// The four grammar tokens of a manifest data line.
+struct ManifestTokens
+{
+    std::string hash;
+    std::string size;
+    std::string kind;
+    std::string name;
+};
+
+// Split a manifest data line into its grammar tokens. The generator only
+// writes four-token data lines, so a short read leaves the missing
+// fields empty and the rebuilt line is rejected downstream like any
+// malformed line.
+void TokenizeManifestLine(const std::string &line, ManifestTokens &tokens)
+{
+    std::istringstream ls(line);
+    ls >> tokens.hash;
+    ls >> tokens.size;
+    ls >> tokens.kind;
+    ls >> tokens.name;
+}
+
+// Rewrite one manifest line through `mutate`, leaving comments and blank
+// lines untouched. Data lines are rebuilt from their four grammar tokens
+// so the mutation targets a single field.
+template <typename Mutate>
+std::string RewriteManifestLine(const std::string &line, Mutate mutate)
+{
+    if (line.empty() || line[0] == '#')
+        return line;
+    ManifestTokens tokens;
+    TokenizeManifestLine(line, tokens);
+    mutate(tokens);
+    return tokens.hash + " " + tokens.size + " " + tokens.kind + " " + tokens.name;
+}
+
+// Negative-case setup factory: copy the accepted corpus to `dest` and
+// rewrite every manifest line through `mutate` (comments pass through).
+// The payload files are left untouched so only the manifest field under
+// test differs.
+template <typename Mutate>
+auto ManifestGrammarCase(const std::string &valid, const std::string &dest, Mutate mutate)
+{
+    return [valid, dest, mutate]() -> bool {
+        return MutateCorpusManifest(valid, dest, [&mutate](const std::string &line) {
+            return RewriteManifestLine(line, mutate);
+        });
+    };
+}
+
+// Structural rejections that need no generated corpus: an absent
+// directory, a directory without a manifest, a regular file where a
+// corpus directory is expected, and a manifest that lists no entries.
+// Every directory/file creation is part of the case setup, so a failure
+// there is recorded instead of silently skipping the case.
+void RunGateStructuralCases(int &failures, const std::string &root)
+{
+    // Absent corpus directory. No setup to fail: the absence is the case.
+    ExpectRejectNoSetup(failures, "absent corpus", root + "/absent");
+
+    const std::string noManifest = root + "/no_manifest";
+    ExpectFailAfterSetup(
+        failures, "directory without manifest", noManifest,
+        [&]() -> bool {
+            return EnsureDirectory(std::filesystem::path(noManifest), "no-manifest corpus");
+        });
+
+    // Corpus path is a regular file, not a directory.
+    const std::string notADir = root + "/not_a_dir";
+    ExpectFailAfterSetup(failures, "corpus path is a regular file", notADir,
+                         [&]() -> bool { return CreateBlockerFile(notADir); });
+
+    // Manifest present but lists no entries.
+    const std::string emptyManifest = root + "/empty_manifest";
+    ExpectFailAfterSetup(failures, "manifest with no entries", emptyManifest,
+                         [&]() -> bool { return SetupEmptyManifest(emptyManifest); });
+}
+
+// Entry-level mutations of a copied valid corpus: a removed entry, an
+// entry whose size no longer matches the manifest, and an entry whose
+// bytes changed without changing size.
+void RunGateEntryCases(int &failures, const std::string &root, const std::string &valid)
+{
+    const std::string missingEntry = root + "/missing_entry";
+    ExpectFailAfterSetup(failures, "removed manifest entry", missingEntry,
+                         [&]() -> bool { return SetupMissingEntry(valid, missingEntry); });
+
+    const std::string sizeMismatch = root + "/size_mismatch";
+    ExpectFailAfterSetup(failures, "size-mismatched entry", sizeMismatch,
+                         [&]() -> bool { return SetupSizeMismatch(valid, sizeMismatch); });
+
+    const std::string hashMismatch = root + "/hash_mismatch";
+    ExpectFailAfterSetup(failures, "hash-mismatched entry", hashMismatch,
+                         [&]() -> bool { return SetupHashMismatch(valid, hashMismatch); });
+}
+
+// Strict-manifest regressions: a mutated manifest must be rejected
+// instead of silently accepting clamped, signed, or trailing fields.
+// Each case copies the accepted corpus and rewrites the manifest in
+// place. These cover the previously lenient strtoull/kind/field-count
+// paths; a copy or manifest rewrite failure is recorded, never skipped.
+void RunGateManifestGrammarCases(int &failures, const std::string &root,
+                                 const std::string &valid)
+{
+    const std::string sizeGarbage = root + "/manifest_size_garbage";
+    ExpectFailAfterSetup(failures, "size token with garbage suffix", sizeGarbage,
+                         ManifestGrammarCase(valid, sizeGarbage,
+                                             [](ManifestTokens &t) { t.size += "x"; }));
+
+    // A size that overflows uint64_t: strtoull clamps to ULLONG_MAX, so
+    // without the ERANGE check the old parser silently accepted it.
+    const std::string sizeOverflow = root + "/manifest_size_overflow";
+    ExpectFailAfterSetup(failures, "overflowing size token", sizeOverflow,
+                         ManifestGrammarCase(valid, sizeOverflow, [](ManifestTokens &t) {
+                             t.size = "99999999999999999999999999";
+                         }));
+
+    // A signed size: strtoull accepts a leading '-' and wraps the value.
+    const std::string sizeSigned = root + "/manifest_size_signed";
+    ExpectFailAfterSetup(failures, "signed size token", sizeSigned,
+                         ManifestGrammarCase(valid, sizeSigned,
+                                             [](ManifestTokens &t) { t.size = "-" + t.size; }));
+
+    // A hash whose token is not exactly 16 hex digits.
+    const std::string hashGarbage = root + "/manifest_hash_garbage";
+    ExpectFailAfterSetup(failures, "non-hex hash token", hashGarbage,
+                         ManifestGrammarCase(valid, hashGarbage,
+                                             [](ManifestTokens &t) { t.hash = "zz" + t.hash; }));
+
+    // An unknown classification outside the valid/malformed enum.
+    const std::string bogusKind = root + "/manifest_bogus_kind";
+    ExpectFailAfterSetup(failures, "unknown corpus kind", bogusKind,
+                         ManifestGrammarCase(valid, bogusKind,
+                                             [](ManifestTokens &t) { t.kind = "bogus"; }));
+
+    // A fifth token beyond the four grammar fields.
+    const std::string extraToken = root + "/manifest_extra_token";
+    ExpectFailAfterSetup(failures, "manifest line with trailing token", extraToken,
+                         [&]() -> bool {
+                             return MutateCorpusManifest(valid, extraToken,
+                                                         [](const std::string &line) {
+                                                             return line + " UNPARSED";
+                                                         });
+                         });
+}
+
 // Negative gate: prove the corpus contract rejects every malformed
 // corpus condition and accepts only the generated manifest corpus.
 //
@@ -1350,67 +1644,10 @@ int RunCorpusGate(const char *scratchRoot)
     if (!scratch.Prepare(scratchRoot))
         return 1;
 
+    const std::string root = scratch.owned.string();
     int failures = 0;
 
-    auto expectOk = [&](const std::string &label, const std::string &dir) {
-        if (RunCorpusDir(dir) != 0)
-        {
-            std::fprintf(stderr,
-                         "fuzz_fastfile: gate: expected acceptance but corpus failed: %s\n",
-                         label.c_str());
-            ++failures;
-        }
-        else
-        {
-            std::fprintf(stdout, "fuzz_fastfile: gate: %s accepted\n", label.c_str());
-        }
-    };
-
-    const std::string root = scratch.owned.string();
-
-    // Absent corpus directory. No setup to fail: the absence is the case.
-    if (RunCorpusDir(root + "/absent") == 0)
-    {
-        std::fprintf(stderr,
-                     "fuzz_fastfile: gate: expected rejection but corpus passed: absent corpus\n");
-        ++failures;
-    }
-    else
-    {
-        std::fprintf(stdout, "fuzz_fastfile: gate: absent corpus rejected\n");
-    }
-
-    // Existing directory with no manifest at all. The directory creation
-    // is part of the case setup: a failure here must be recorded instead
-    // of silently skipping the case.
-    const std::string noManifest = root + "/no_manifest";
-    ExpectFailAfterSetup(
-        failures, "directory without manifest", noManifest,
-        [&]() -> bool { return EnsureDirectory(std::filesystem::path(noManifest), "no-manifest corpus"); });
-
-    // Corpus path is a regular file, not a directory.
-    const std::string notADir = root + "/not_a_dir";
-    ExpectFailAfterSetup(
-        failures, "corpus path is a regular file", notADir,
-        [&]() -> bool {
-            std::ofstream f(notADir, std::ios::binary);
-            f << 'x';
-            f.flush();
-            return static_cast<bool>(f);
-        });
-
-    // Manifest present but lists no entries.
-    const std::string emptyManifest = root + "/empty_manifest";
-    ExpectFailAfterSetup(
-        failures, "manifest with no entries", emptyManifest,
-        [&]() -> bool {
-            if (!EnsureDirectory(std::filesystem::path(emptyManifest), "empty-manifest corpus"))
-                return false;
-            std::ofstream m(emptyManifest + "/" + kCorpusManifestName);
-            m << "# no entries\n";
-            m.flush();
-            return static_cast<bool>(m);
-        });
+    RunGateStructuralCases(failures, root);
 
     // Valid generated corpus is accepted.
     const std::string valid = root + "/valid";
@@ -1419,159 +1656,10 @@ int RunCorpusGate(const char *scratchRoot)
         std::fprintf(stderr, "fuzz_fastfile: gate: could not generate the valid corpus\n");
         return 1;
     }
-    expectOk("generated corpus", valid);
+    ExpectAccept(failures, "generated corpus", valid);
 
-    // A listed entry removed from disk. Removing the entry is part of the
-    // case setup: if the removal fails the corpus would be valid and the
-    // case would exercise the wrong condition, so a failed removal is
-    // recorded rather than ignored.
-    const std::string missingEntry = root + "/missing_entry";
-    ExpectFailAfterSetup(
-        failures, "removed manifest entry", missingEntry,
-        [&]() -> bool {
-            if (!CopyCorpusTree(valid, missingEntry))
-                return false;
-            std::error_code rmEc;
-            std::filesystem::remove(std::filesystem::path(missingEntry + "/xanim_parts_valid.bin"),
-                                    rmEc);
-            if (rmEc)
-            {
-                std::fprintf(stderr, "fuzz_fastfile: gate: could not remove corpus entry: %s\n",
-                             rmEc.message().c_str());
-                return false;
-            }
-            return true;
-        });
-
-    // A listed entry whose size no longer matches the manifest. Scope the
-    // append stream so it is flushed to disk before the corpus re-reads it.
-    const std::string sizeMismatch = root + "/size_mismatch";
-    ExpectFailAfterSetup(
-        failures, "size-mismatched entry", sizeMismatch,
-        [&]() -> bool {
-            if (!CopyCorpusTree(valid, sizeMismatch))
-                return false;
-            std::ofstream append(sizeMismatch + "/xmodel_pieces_valid.bin",
-                                 std::ios::binary | std::ios::app);
-            append << 'X';
-            append.flush();
-            return static_cast<bool>(append);
-        });
-
-    // A listed entry whose bytes changed without changing size.
-    const std::string hashMismatch = root + "/hash_mismatch";
-    ExpectFailAfterSetup(
-        failures, "hash-mismatched entry", hashMismatch,
-        [&]() -> bool {
-            if (!CopyCorpusTree(valid, hashMismatch))
-                return false;
-            const std::string target = hashMismatch + "/xmodel_pieces_valid.bin";
-            std::vector<unsigned char> bytes;
-            if (!ReadFileChecked(target, bytes) || bytes.empty())
-            {
-                std::fprintf(stderr, "fuzz_fastfile: gate: could not read corpus entry for hash mutation: %s\n",
-                             target.c_str());
-                return false;
-            }
-            bytes[0] = static_cast<unsigned char>(bytes[0] ^ 0xFFu);
-            std::ofstream out(target, std::ios::binary | std::ios::trunc);
-            out.write(reinterpret_cast<const char *>(bytes.data()),
-                      static_cast<std::streamsize>(bytes.size()));
-            out.flush();
-            return static_cast<bool>(out);
-        });
-
-    // Strict-manifest regressions: a mutated manifest must be rejected
-    // instead of silently accepting clamped or trailing fields. Each case
-    // copies the accepted corpus and rewrites the manifest in place. These
-    // cover the previously lenient strtoull/kind/field-count paths; a copy
-    // or manifest rewrite failure is recorded, never skipped.
-    const std::string sizeGarbage = root + "/manifest_size_garbage";
-    ExpectFailAfterSetup(
-        failures, "size token with garbage suffix", sizeGarbage,
-        [&]() -> bool {
-            return MutateCorpusManifest(valid, sizeGarbage, [](const std::string &line) {
-                if (line.empty() || line[0] == '#')
-                    return line;
-                std::istringstream ls(line);
-                std::string hash, size, kind, name;
-                ls >> hash >> size >> kind >> name;
-                return hash + " " + size + "x " + kind + " " + name;
-            });
-        });
-
-    // A size that overflows uint64_t: strtoull clamps to ULLONG_MAX, so
-    // without the ERANGE check the old parser silently accepted it.
-    const std::string sizeOverflow = root + "/manifest_size_overflow";
-    ExpectFailAfterSetup(
-        failures, "overflowing size token", sizeOverflow,
-        [&]() -> bool {
-            return MutateCorpusManifest(valid, sizeOverflow, [](const std::string &line) {
-                if (line.empty() || line[0] == '#')
-                    return line;
-                std::istringstream ls(line);
-                std::string hash, size, kind, name;
-                ls >> hash >> size >> kind >> name;
-                return hash + " 99999999999999999999999999 " + kind + " " + name;
-            });
-        });
-
-    // A signed size: strtoull accepts a leading '-' and wraps the value.
-    const std::string sizeSigned = root + "/manifest_size_signed";
-    ExpectFailAfterSetup(
-        failures, "signed size token", sizeSigned,
-        [&]() -> bool {
-            return MutateCorpusManifest(valid, sizeSigned, [](const std::string &line) {
-                if (line.empty() || line[0] == '#')
-                    return line;
-                std::istringstream ls(line);
-                std::string hash, size, kind, name;
-                ls >> hash >> size >> kind >> name;
-                return hash + " -" + size + " " + kind + " " + name;
-            });
-        });
-
-    // A hash whose token is not exactly 16 hex digits.
-    const std::string hashGarbage = root + "/manifest_hash_garbage";
-    ExpectFailAfterSetup(
-        failures, "non-hex hash token", hashGarbage,
-        [&]() -> bool {
-            return MutateCorpusManifest(valid, hashGarbage, [](const std::string &line) {
-                if (line.empty() || line[0] == '#')
-                    return line;
-                std::istringstream ls(line);
-                std::string hash, size, kind, name;
-                ls >> hash >> size >> kind >> name;
-                return "zz" + hash + " " + size + " " + kind + " " + name;
-            });
-        });
-
-    // An unknown classification outside the valid/malformed enum.
-    const std::string bogusKind = root + "/manifest_bogus_kind";
-    ExpectFailAfterSetup(
-        failures, "unknown corpus kind", bogusKind,
-        [&]() -> bool {
-            return MutateCorpusManifest(valid, bogusKind, [](const std::string &line) {
-                if (line.empty() || line[0] == '#')
-                    return line;
-                std::istringstream ls(line);
-                std::string hash, size, kind, name;
-                ls >> hash >> size >> kind >> name;
-                return hash + " " + size + " bogus " + name;
-            });
-        });
-
-    // A fifth token beyond the four grammar fields.
-    const std::string extraToken = root + "/manifest_extra_token";
-    ExpectFailAfterSetup(
-        failures, "manifest line with trailing token", extraToken,
-        [&]() -> bool {
-            return MutateCorpusManifest(valid, extraToken, [](const std::string &line) {
-                if (line.empty() || line[0] == '#')
-                    return line;
-                return line + " UNPARSED";
-            });
-        });
+    RunGateEntryCases(failures, root, valid);
+    RunGateManifestGrammarCases(failures, root, valid);
 
     // Sentinel preservation: caller content under the supplied parent must
     // survive the gate untouched.
@@ -1650,6 +1738,58 @@ int RunRandom(const char *corpusDir, unsigned long iterations)
     std::fprintf(stdout, "fuzz_fastfile: random sweep ok (iter=%lu, runs=%d)\n", iterations, g_runs);
     return 0;
 }
+// Write one seed payload and append its manifest record. Returns false
+// (with the failure logged) when the payload cannot be written.
+bool WriteSeedPayload(const std::string &outDir, const SeedSpec &seed,
+                      std::ostringstream &manifest)
+{
+    const std::string path = outDir + "/" + seed.name;
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out.is_open())
+    {
+        std::fprintf(stderr, "fuzz_fastfile: could not write %s\n", path.c_str());
+        return false;
+    }
+    if (!seed.bytes.empty())
+    {
+        out.write(reinterpret_cast<const char *>(seed.bytes.data()),
+                  static_cast<std::streamsize>(seed.bytes.size()));
+    }
+    out.flush();
+    if (!out)
+    {
+        std::fprintf(stderr, "fuzz_fastfile: write failed for %s\n", path.c_str());
+        return false;
+    }
+
+    char hashHex[17];
+    std::snprintf(hashHex, sizeof(hashHex), "%016llx",
+                  static_cast<unsigned long long>(Fnv1a64(seed.bytes)));
+    manifest << hashHex << " " << seed.bytes.size() << " " << seed.kind << " " << seed.name
+             << "\n";
+    return true;
+}
+
+// Write the accumulated manifest text next to the corpus payloads.
+bool WriteCorpusManifestFile(const std::string &outDir, const std::string &manifestText)
+{
+    const std::string manifestPath = outDir + "/" + kCorpusManifestName;
+    std::ofstream mout(manifestPath, std::ios::binary | std::ios::trunc);
+    if (!mout.is_open())
+    {
+        std::fprintf(stderr, "fuzz_fastfile: could not write manifest %s\n", manifestPath.c_str());
+        return false;
+    }
+    mout.write(manifestText.data(), static_cast<std::streamsize>(manifestText.size()));
+    mout.flush();
+    if (!mout)
+    {
+        std::fprintf(stderr, "fuzz_fastfile: manifest write failed for %s\n",
+                     manifestPath.c_str());
+        return false;
+    }
+    return true;
+}
 
 int GenerateSeeds(const char *outDir)
 {
@@ -1672,49 +1812,14 @@ int GenerateSeeds(const char *outDir)
     std::ostringstream manifest;
     manifest << "# fuzz_fastfile corpus manifest v1\n";
     manifest << "# fields: fnv1a64-hex size kind name\n";
-
-    for (const SeedSpec &s : seeds)
+    for (const SeedSpec &seed : seeds)
     {
-        const std::string path = std::string(outDir) + "/" + s.name;
-        std::ofstream out(path, std::ios::binary | std::ios::trunc);
-        if (!out.is_open())
-        {
-            std::fprintf(stderr, "fuzz_fastfile: could not write %s\n", path.c_str());
+        if (!WriteSeedPayload(outDir, seed, manifest))
             return 1;
-        }
-        if (!s.bytes.empty())
-        {
-            out.write(reinterpret_cast<const char *>(s.bytes.data()),
-                      static_cast<std::streamsize>(s.bytes.size()));
-        }
-        out.flush();
-        if (!out)
-        {
-            std::fprintf(stderr, "fuzz_fastfile: write failed for %s\n", path.c_str());
-            return 1;
-        }
-
-        char hashHex[17];
-        std::snprintf(hashHex, sizeof(hashHex), "%016llx",
-                      static_cast<unsigned long long>(Fnv1a64(s.bytes)));
-        manifest << hashHex << " " << s.bytes.size() << " " << s.kind << " " << s.name << "\n";
     }
 
-    const std::string manifestPath = std::string(outDir) + "/" + kCorpusManifestName;
-    std::ofstream mout(manifestPath, std::ios::binary | std::ios::trunc);
-    if (!mout.is_open())
-    {
-        std::fprintf(stderr, "fuzz_fastfile: could not write manifest %s\n", manifestPath.c_str());
+    if (!WriteCorpusManifestFile(outDir, manifest.str()))
         return 1;
-    }
-    const std::string manifestText = manifest.str();
-    mout.write(manifestText.data(), static_cast<std::streamsize>(manifestText.size()));
-    mout.flush();
-    if (!mout)
-    {
-        std::fprintf(stderr, "fuzz_fastfile: manifest write failed for %s\n", manifestPath.c_str());
-        return 1;
-    }
 
     std::fprintf(stdout, "fuzz_fastfile: genseeds wrote %zu seeds + manifest to %s\n",
                  seeds.size(), outDir);
