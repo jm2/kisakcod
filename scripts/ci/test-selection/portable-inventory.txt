@@ -184,6 +184,7 @@ pointer-truncation-tripwire
 pool-native-pointer-freelist
 pool-native-pointer-source-invariants
 qcommon-server-file-compare
+release-provenance-contract
 renderer-bounded-reservation-protocols
 renderer-model-surface-stream-contracts
 renderer-value-encoding-contracts
@@ -211,6 +212,7 @@ script-widening-value-contracts
 security-source-regressions
 skeleton-memory-atomic-protocols
 sound-dry-send-source-invariants
+source-archive-identity-contracts
 target-client-source-invariants
 target-table-parse-and-layout-contracts
 target-table-source-invariants

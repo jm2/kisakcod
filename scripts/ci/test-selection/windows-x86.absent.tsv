@@ -6,4 +6,5 @@
 effectscore-effect-table-stack-usage	Not registered on MSVC/Win32: the static stack-report contract only builds for non-sanitizer, non-MSVC objects, so the Win32 backend never discovers it; it is exercised by the POSIX portable legs.
 platform-console-sigpipe-default-contracts	POSIX-only console contract: registered only when KISAK_PLATFORM is not win32, so the Win32 backend never discovers it; it is exercised by the POSIX portable legs.
 platform-console-sigpipe-ignore-contracts	POSIX-only console contract: registered only when KISAK_PLATFORM is not win32, so the Win32 backend never discovers it; it is exercised by the POSIX portable legs.
+release-provenance-contract	POSIX-only release-assembly contract: registered only under `if(UNIX)` with a Python 3 interpreter, so the Win32 backend never discovers it; it is exercised by the POSIX portable legs.
 retail-fastfile-parity-driver-gates	POSIX-only bash driver: registered only under `if(UNIX)`; the Windows legs mint references and run the C++ self-test instead, so the Win32 backend never registers this test.

@@ -197,25 +197,32 @@ class SourceArchiveIdentityTests(ReleaseProvenanceTestBase):
                 archive.extractall(tree, filter="data")
             else:
                 # Old interpreters reject filter="data" with TypeError, so
-                # extract exactly the members the build_source_archive()
-                # call above wrote (the literal arcname list below) and
-                # discard anything else. That closed set is the genuine
-                # repair for the unfiltered-extraction finding: behavior on
-                # this self-synthesized archive is identical, unexpected
-                # members are dropped, and no assertion below is weakened.
+                # extract member-by-member instead of through a bulk
+                # extraction API with a computed member list: every member
+                # is validated against the literal arcname set
+                # build_source_archive() wrote above, and anything else —
+                # or any non-regular member — is refused outright. That
+                # closed set is the genuine repair for the
+                # unfiltered-extraction finding: behavior on this
+                # self-synthesized archive is identical, unexpected members
+                # cannot reach the tree, and no assertion below is weakened.
                 declared_members = {
                     "CMakeLists.txt",
                     "release-identity.json",
                     "src\\source_identity.txt",
                 }
-                archive.extractall(
-                    tree,
-                    members=[
-                        member
-                        for member in archive.getmembers()
-                        if member.name in declared_members
-                    ],
-                )
+                for member in archive.getmembers():
+                    if (
+                        not member.isfile()
+                        or member.name not in declared_members
+                    ):
+                        raise AssertionError(
+                            "unexpected or non-regular archive member: "
+                            f"{member.name!r}"
+                        )
+                    with archive.extractfile(member) as member_stream:
+                        with open(tree / member.name, "wb") as extracted:
+                            extracted.write(member_stream.read())
         literal = tree / "src\\source_identity.txt"
         self.assertTrue(literal.is_file())
         self.assertEqual(literal.read_text(encoding="utf-8"), f"commit={COMMIT}\n")

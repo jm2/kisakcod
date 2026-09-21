@@ -487,6 +487,25 @@ function(check_incremental_stamp_schedules_consumer)
                 "The incremental stamp fixture did not run at ${_leg}: "
                 "${_run_output_${_leg}}")
         endif()
+        if(_leg STREQUAL "a")
+            # Coarse-clock make implementations (Apple ships GNU Make 3.81,
+            # which compares whole seconds) tie the fixture's freshly
+            # compiled leg B objects against leg A's linked binary when both
+            # land inside the same wall-clock second; make then skips the
+            # relink and the artifact keeps revision A even though the aged
+            # publication correctly rescheduled its compiled consumer. That
+            # tie is a clock-granularity artifact of a fixture this fast,
+            # not the stamp mechanism under test, and nothing in the stamp
+            # system may touch consumer artifacts to break it. Removing leg
+            # A's binary after its sanity run makes leg B's relink
+            # unconditional while keeping the defect surface fully armed:
+            # the discriminator remains whether the aged publication
+            # rescheduled the COMPILED consumer in the same ordinary build.
+            # If the compile edge is skipped (the original defect), the
+            # relink runs against stale objects and the artifact still
+            # carries A, failing exactly as before.
+            file(REMOVE_RECURSE "${_consumer_exe}")
+        endif()
     endforeach()
     # Leg A sanity: the first ordinary build carries its own revision.
     string(FIND "${_run_output_a}" "${_head_a}" _a_position)

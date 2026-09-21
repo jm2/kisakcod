@@ -114,6 +114,7 @@ script-widening-source-invariants	Source-invariant scan covered by the portable-
 script-widening-value-contracts	Script production-path contract enrolled in the required 'Script production paths / ASan + UBSan' hosted job; not enrolled in the ILP32 selection (assessment tracked under #134).
 security-source-regressions	ILP32/ABI contract that must ultimately run on the Win32 x86 leg; currently exercised on the portable-tests and arm64 determinism matrices. Enrollment assessment tracked under #134.
 skeleton-memory-atomic-protocols	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
+source-archive-identity-contracts	Portable release-identity contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
 universal-memfile-bounded-read	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
 upstream-correctness-source-invariants	Source-invariant scan covered by the portable-tests matrix; not enrolled in the ILP32 runtime selection (assessment tracked under #134).
 vehicle-material-time-contracts	Portable production/utility contract covered by the portable-tests matrix (Windows amd64/arm64, Linux, macOS); not enrolled in the ILP32 selection (assessment tracked under #134).
