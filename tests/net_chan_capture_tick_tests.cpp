@@ -106,6 +106,11 @@ struct CaptureStore
             overflowed = true;
             return;
         }
+        if (length > static_cast<int>(sizeof(frames[0].data)))
+        {
+            overflowed = true;
+            return;
+        }
         CapturedFrame &frame = frames[count++];
         frame.sock = source;
         frame.length = length;
@@ -213,6 +218,11 @@ DrainStats ReplayFrames(netchan_t *chan, const CapturedFrame *frames,
     msg_t message{};
     for (int i = 0; i < count; ++i)
     {
+        if (frames[i].length > scratchSize)
+        {
+            ++stats.incomplete;
+            continue;
+        }
         // Mirror NET_GetLoopPacket_Real's shape: frame bytes land in a
         // writable MAX_MSGLEN-sized buffer, cursize carries the frame
         // length, and Netchan_Process's MSG_BeginReading resets the reader.
