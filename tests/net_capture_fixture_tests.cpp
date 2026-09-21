@@ -367,11 +367,18 @@ void test_usercmd_delta_sequence_fidelity()
     // the retail contract: MSG_HorMoveTo/MSG_HorMoveFrom quantize any
     // magnitude to {+127, 0, -127} (see the arm flags). Build the expected
     // command by applying that production reconstruction before the
-    // byte-exact compare — comparing raw scripted values would pin the
+    // field-exact compare — comparing raw scripted values would pin the
     // host's plain-char signedness instead (on unsigned-char hosts, e.g.
     // Linux arm64, a scripted -127 promotes to +129, which retail correctly
     // reconstructs as +127; on signed-char hosts the scripted values are
     // fixpoints and the expectation is unchanged).
+    //
+    // Compare declared fields, not the object representation: usercmd_s has
+    // one trailing padding byte (31 declared bytes in a 32-byte object) that
+    // is never transmitted, and the production decode copies field-wise by
+    // documented contract (see the struct-assignment note in
+    // msg_bits_usercmd_mp.cpp) — padding equality is not part of the wire
+    // contract and is unspecified for struct assignment.
     for (std::size_t i = 1; i < script.size(); ++i)
     {
         usercmd_s decoded{};
@@ -379,7 +386,16 @@ void test_usercmd_delta_sequence_fidelity()
         usercmd_s expected = script[i];
         MSG_HorMoveFrom(static_cast<char>(MSG_HorMoveTo(expected.forwardmove, expected.rightmove)),
                         &expected.forwardmove, &expected.rightmove);
-        CHECK(std::memcmp(&decoded, &expected, sizeof(usercmd_s)) == 0);
+        CHECK(decoded.serverTime == expected.serverTime);
+        CHECK(decoded.buttons == expected.buttons);
+        CHECK(std::memcmp(decoded.angles, expected.angles, sizeof(decoded.angles)) == 0);
+        CHECK(decoded.weapon == expected.weapon);
+        CHECK(decoded.offHandIndex == expected.offHandIndex);
+        CHECK(decoded.forwardmove == expected.forwardmove);
+        CHECK(decoded.rightmove == expected.rightmove);
+        CHECK(decoded.meleeChargeYaw == expected.meleeChargeYaw);
+        CHECK(decoded.meleeChargeDist == expected.meleeChargeDist);
+        CHECK(std::memcmp(decoded.selectedLocation, expected.selectedLocation, sizeof(decoded.selectedLocation)) == 0);
     }
 }
 
