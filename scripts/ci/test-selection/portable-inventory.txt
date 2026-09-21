@@ -247,4 +247,8 @@ worker-queue-atomic-protocols
 worker-thread-lifecycle-shutdown-reinit
 xanim-load-bounded-cursor
 xanim-parts-split-contracts
+xmodel-cursor-overflow-fail-closed
+xmodel-cursor-source-invariants
 xmodel-load-bounded-cursor
+xmodel-loader-entry-native
+xmodel-nested-cursor-ownership
