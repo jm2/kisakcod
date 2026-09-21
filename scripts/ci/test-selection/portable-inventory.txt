@@ -137,6 +137,10 @@ effectscore-runtime-blob-layout
 effectscore-snapshot-publication-coherence
 effectscore-visibility-publication
 fuzz-fastfile-corpus
+fuzz-fastfile-corpus-gate
+fuzz-fastfile-corpus-gate-setup-failure
+fuzz-fastfile-corpus-rejects-missing
+fuzz-fastfile-corpus-setup
 fuzz-fastfile-cursor
 fuzz-sys-filesystem-random
 fuzz-sys-filesystem-seeds
