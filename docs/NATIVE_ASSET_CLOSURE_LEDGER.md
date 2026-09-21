@@ -190,10 +190,27 @@ fail-closed iterators (`src/database/db_xasset_disk32.h/.cpp`; tests
 |---|---|---|
 | Frozen Disk32 schema | Partial: model pieces/stringtable/string extents frozen in `db_disk32.h` (`kXModelPieceBytes`…); surfaces/collision via `kXSurfaceCollision*Bytes`; **no full portable XModel/XAnim body schema module** — bodies are read by the decompiled fixup readers | `db_disk32.h`; `db_load.cpp` `Load_XAnim*`/`Load_XSurface*` |
 | Native runtime owner | XAnim/DObj/model-surface streams widened (merged M1/M4 work); **MP pose, BreakablePiece, DynEntity physics ownership still raw-width** — `sizeof(BreakablePiece)==0xC` sits at the top of the sizeof-debt ledger; **XAnimParts/XAnimIndices payload consumers still raw-width on native64**: production has not adopted `XAnimPartsNative` — `XAnimClone` allocates a hardcoded 88 bytes (`src/xanim/xanim.cpp:152`), the load-object path asserts `sizeof(XAnimParts)==88` (`src/xanim/xanim_load_obj.cpp:998`), and `xanim_native.h:37-43` records consumer migration as follow-up (64-bit runtime view is 0x88) | `docs/task.md` M4; `tests/abi_sizeof_debt.allow`; **owner: PR #99 / `ki-v4m` (open)**; XAnim payload consumer migration: no separate owner bead — tracked in §6.3 per `docs/task.md` |
-| Reader/converter | Load-object route bounded via `buf_cursor` with nested cursor ownership + checked second-pass rewind **in flight** (PR #140 / `ki-okmr`, production stage of #124); fast-file route is the decompiled reader; `fuzz_fastfile` is a primitive harness, not production-parser coverage | `src/xanim/xmodel_load_obj.cpp`, `src/xanim/buf_cursor.*`; **#124/`ki-ym2r`, #125 (A03) owners** |
+| Reader/converter | Load-object route bounded via `buf_cursor` with nested cursor ownership + checked second-pass rewind (merged, PR #140 / `ki-okmr`, production stage of #124); fast-file route is the decompiled reader; `fuzz_fastfile` is a primitive harness, not production-parser coverage | `src/xanim/xmodel_load_obj.cpp`, `src/xanim/buf_cursor.*`; **#124/`ki-ym2r`, #125 (A03) owners** |
 | Publication/unload | `Load_XModelAsset`/`Mark_XModelAsset` registration; DObj create/clone/unarchive failure-atomic transaction (merged P2 work); unload = zone free + DObj pool accounting | `db_registry.cpp`; `dobj_management.cpp` |
-| Test evidence | `xmodel_load_test.cpp`, `xanim_load_test.cpp`, `xanim_parts_split_test.cpp`, `model_surface_stream_tests.cpp`, `skel_memory_atomic_tests.cpp`, nested-cursor suite on #140 | tests/ |
+| Test evidence | `xmodel_load_test.cpp`, `xanim_load_test.cpp`, `xanim_parts_split_test.cpp`, `model_surface_stream_tests.cpp`, `skel_memory_atomic_tests.cpp`, nested-cursor suite on #140; win32-x86 entry tier: `xmodel_loader_entry_test.cpp` drives the real `XModelLoadFile` (ki-okmr) and, since #125 stage 2, the real `XAnimLoadFile` / `XModelPiecesLoadFile` / `XModelPiecesPrecache` (see 4.2.1) | tests/ |
 | Requirement | Headless MP: required (skeleton/anim closure); rendering consumers client-only | — |
+
+#### 4.2.1 Parser entry-point enrollment tracking (#125 stage 2, ki-458h)
+
+Bounded production harness `tests/xmodel_loader_entry_test.cpp` (target
+`kisakcod-xmodel-loader-entry-tests`, win32-x86 only). Controlled providers
+only — this tier does not certify retail content acceptance; the #122
+commercial-reference evidence remains pending and blocks certification.
+
+| Aspect | State |
+|---|---|
+| Linked production functions driven | `XAnimLoadFile`, `XModelPiecesLoadFile`, `XModelPiecesPrecache` (entry points), `XModelLoadFile` (ki-okmr); internally the full parse paths: `GetQuaternions`/`GetTranslations`/`GetDelta*`/`LoadTrans`/`ConsumeQuat`/`ConsumeQuat2`, `ReadNoteTracks`, `XAnimGetPartQuatType`/`XAnimGetPartTransType`, the quat/trans sort + per-type emit loops, `R_RegisterModel` piece resolution — all real code from `xanim_load_obj.cpp` + `buf_cursor.cpp` + real `Vec3Scale` (`com_math.cpp`) |
+| Valid corpus (byte-exact) | 6 xanim shapes: 0-bone minimal, 1-bone no-quat/no-trans + note track, half-quat + small-trans (identity self-generated indices, real `Vec3Scale` payload), 3-bone mixed (no-quat/half/full quat × no-trans/small-trans/trans-no-size through the sorts), delta part (quat+trans), loop flag (frequency math); 1 xmodelpieces shape (1 piece, offsets round-trip) |
+| Malformed corpus | Missing file, zero length, stale version (xanim 16, pieces 2), negative bone count, truncated bone bitmaps, unterminated part/piece name — all rejecting through production guards before any live assert; plus the `numBones > DOBJ_MAX_PARTS` guard exercised on the Release leg (the same-condition iassert is live and fatal on the Debug leg) |
+| Load/fail/retry/unload transitions | xmodelpieces: cold load → hunk-cache warm hit (no second file read), failure NOT cached → retry succeeds; xanim: fresh load per call, failure returns null without caching. No unload endpoint exists on this TU (unload is zone free upstream) — recorded as not-covered here rather than claimed |
+| Sanitizer mapping | Entry tier: MSVC Debug (live production asserts as oracles) + Release legs of the win32-x86 CI. Portable ASan/UBSan coverage remains at the cursor/corpus tier (`fuzz-fastfile-corpus` legs); the parser TUs are not portable-compilable (DirectX/Miles/ODE header web) |
+| Minimized regression inputs | Fixture builders are byte-exact in-code sequences (≤ 94 bytes, no binary blobs) in `tests/xmodel_loader_entry_harness.hpp` (`BuildEntryAnim*`, `BuildEntryPieces*`); each malformed case is the minimal cut of a valid shape |
+| Original-content semantics (#122) | Untouched: no production byte changed in this stage; fixtures are controlled providers, not synthetic replacements for retail acceptance, and valid-content/wire behavior stays under #122 |
 
 ### 4.3 Effects (Fx 0x19, ImpactFx 0x1A) — most-complete Disk32 family
 
