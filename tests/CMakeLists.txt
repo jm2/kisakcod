@@ -2786,8 +2786,12 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         # ki-zv15h: netchan-level capture validation (production
         # Netchan_Transmit into the engine loopback queues, captured frames
         # replayed through Netchan_Process) and the fixed-tick paired-channel
-        # simulation harness.
+        # simulation harness. The harness lives in its own TU
+        # (net_chan_fixed_tick_tests.cpp, shared machinery in
+        # net_chan_capture_tick_support.h); the original single-TU layout
+        # tripped Codacy's per-file length limit.
         net_chan_capture_tick_tests.cpp
+        net_chan_fixed_tick_tests.cpp
     )
     target_link_libraries(kisakcod-net-chan-reassembly-tests PRIVATE
         kisakcod-net-chan-production-objects
