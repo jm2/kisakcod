@@ -12,6 +12,10 @@ snapshots. Local macOS ARM64 Release utility validation passed **211/211** tests
 but does not certify the newer remote tree or any production engine. A checked
 parent means its stated exit criteria are complete. Historical effort estimates
 and CI counts below are dated evidence, not current delivery percentages.
+Current delivery state and derived CI/test counts live in the generated
+[capability dashboard](CAPABILITY_DASHBOARD.md) (source:
+[`docs/capability/manifest.json`](capability/manifest.json)); it is
+reconciled by `scripts/ci/capability-dashboard.py` and checked in CI.
 
 - [ ] Complete the full five-target MP client/headless-server plan — strict
   production-target delivery remains **0/5**; native SP is deferred.
@@ -69,14 +73,14 @@ reserve shared source areas before assigning implementation work.
 | Immediate / A03 | [#125](https://github.com/jm2/kisakcod/issues/125) | Strict nonempty corpus setup and real production parser/loader coverage; existing cursor tests remain useful. |
 | Evidence / A04 | [#126](https://github.com/jm2/kisakcod/issues/126) | Capability/evidence manifest and durable dashboard; extend `ki-yvj` rather than duplicate its workflows. |
 | Early oracle / A05 | [#127](https://github.com/jm2/kisakcod/issues/127) | Actual MSG reference fixtures and fixed-tick command-driven simulation; build on merged `ki-jgz` (#116). |
-| Valid-peer policy / A06 | [#128](https://github.com/jm2/kisakcod/issues/128) | Dvar flag/command audit preserving all legitimate retail behavior; no unverified broad allowlist. Initial source inventory and reference test matrix: [DVAR_SERVER_COMMAND_AUDIT.md](DVAR_SERVER_COMMAND_AUDIT.md). |
+| Valid-peer policy / A06 | [#128](https://github.com/jm2/kisakcod/issues/128) | Dvar flag/command audit preserving all legitimate retail behavior; no unverified broad allowlist. Initial source inventory and reference test matrix: [DVAR_SERVER_COMMAND_AUDIT.md](DVAR_SERVER_COMMAND_AUDIT.md). Hardening design and tradeoff register (docs only, no production change): [DVAR_SERVER_INPUT_HARDENING_DESIGN.md](DVAR_SERVER_INPUT_HARDENING_DESIGN.md). |
 | Native closure / A07 | [#129](https://github.com/jm2/kisakcod/issues/129) | Asset/subobject/native ABI and production-caller ledger; coordinate `ki-v4m`, `ki-n1et`, `ki-msb`. |
 | First engine / A08 | [#130](https://github.com/jm2/kisakcod/issues/130) | Real Win64/Linux amd64 headless MP integration and original-client sessions; consume `ki-eudd`/`ki-vuj`. |
 | Early client experiment / A09 | [#131](https://github.com/jm2/kisakcod/issues/131) | Retail shader/cache and Vulkan/MoltenVK feasibility before broad RHI edits; preserve native Vulkan destination. |
 | Client media / A10 | [#132](https://github.com/jm2/kisakcod/issues/132) | Audio/cinematic semantics and separate voice capture/playback; retain commercial codec/framing. |
-| Content/modes / A11 | [#133](https://github.com/jm2/kisakcod/issues/133) | Retail-content and MP mod regression matrix, commercial movement/behavior and pure checksums. |
+| Content/modes / A11 | [#133](https://github.com/jm2/kisakcod/issues/133) | Retail-content and MP mod regression matrix, commercial movement/behavior and pure checksums. Named case catalog, reference manifest schema and upstream #89/#40 dispositions: [RETAIL_CONTENT_MATRIX.md](RETAIL_CONTENT_MATRIX.md). |
 | Required CI / A12 | [#134](https://github.com/jm2/kisakcod/issues/134) | Hosted sanitizers, complete applicable Win32 runtime tests, exact-head exclusions and later protected retail gates. |
-| Client platform / A13 | [#135](https://github.com/jm2/kisakcod/issues/135) | Paths, input/window/focus and clean-install behavior with unchanged retail usercmd semantics. |
+| Client platform / A13 | [#135](https://github.com/jm2/kisakcod/issues/135) | Paths, input/window/focus and clean-install behavior with unchanged retail usercmd semantics. Acceptance definition: [DESKTOP_PLATFORM_ACCEPTANCE.md](DESKTOP_PLATFORM_ACCEPTANCE.md). |
 | Operations / A14 | [#136](https://github.com/jm2/kisakcod/issues/136) | Retail-compatible multiplayer services/downloads/auth and headless lifecycle; extend `ki-eudd`/`ki-vuj`. |
 | Release / A15 | [#137](https://github.com/jm2/kisakcod/issues/137) | Exact production artifacts/provenance, clean-machine commercial interop and runtime budgets; downstream of `ki-yvj`. |
 
@@ -2154,7 +2158,11 @@ oracles, and record each production capability's exact evidence in #126.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **84% complete by current engineering effort**. PR #62 merged the production-neutral
+- Historical effort narrative (superseded; retained for audit only). The former
+  **84%** engineering-effort estimate and the per-platform percentages below had
+  no reproducible denominator and are no longer current evidence; the generated
+  [capability dashboard](CAPABILITY_DASHBOARD.md) is the authoritative delivery
+  source. PR #62 merged the production-neutral
   pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
   registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
   tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy PMem
@@ -2197,11 +2205,10 @@ oracles, and record each production capability's exact evidence in #126.
   checkpoint `6e0e6107` and exact upstream ancestry; all 11 exact-head and
   post-merge jobs passed in runs **30387093520** and **30388420989**,
   respectively.
-  Windows x86 is about
-  **93%**, shared
-  foundations/security about **91%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
-  **40%**, and macOS arm64 about **31%**. None of the five requested 64-bit/non-Windows engine targets builds end to end
-  yet, so strict target delivery remains **0/5**.
+  None of the five requested 64-bit/non-Windows engine targets builds end to end
+  yet, so strict target delivery remains **0/5**; the generated
+  [capability dashboard](CAPABILITY_DASHBOARD.md) replaces the former
+  per-platform percentage estimates with per-capability evidence rows.
 - Initial upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
   security changes. It restores several primarily SP features plus real shared renderer, XAnim, and

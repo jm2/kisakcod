@@ -204,6 +204,10 @@ set(DATABASE
     "${SRC_DIR}/database/db_stream.cpp"
     "${SRC_DIR}/database/db_stream_load.cpp"
     "${SRC_DIR}/database/db_stringtable_load.cpp"
+    "${SRC_DIR}/database/db_graph_hash.cpp"
+    "${SRC_DIR}/database/db_graph_hash.h"
+    "${SRC_DIR}/database/shader_cache.cpp"
+    "${SRC_DIR}/database/shader_cache.h"
 )
 
 set(DEVGUI
@@ -509,8 +513,15 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/com_playerprofile.cpp"
     "${SRC_DIR}/qcommon/com_playerprofile.h"
     "${SRC_DIR}/qcommon/com_profilemapload.cpp"
+    "${SRC_DIR}/qcommon/dl_http.cpp"
+    "${SRC_DIR}/qcommon/dl_http.h"
+    "${SRC_DIR}/qcommon/dl_http_internal.h"
+    "${SRC_DIR}/qcommon/dl_http_parse.cpp"
+    "${SRC_DIR}/qcommon/dl_http_url.cpp"
     "${SRC_DIR}/qcommon/dl_main.cpp"
     "${SRC_DIR}/qcommon/dl_main.h"
+    "${SRC_DIR}/qcommon/dl_main_internal.h"
+    "${SRC_DIR}/qcommon/dl_main_pump.cpp"
     "${SRC_DIR}/qcommon/dobj_management.cpp"
     "${SRC_DIR}/qcommon/ent.h"
     "${SRC_DIR}/qcommon/files.cpp"
@@ -736,7 +747,7 @@ set(PLATFORM_WIN32_DEDI_HEADLESS
 
 set(XANIM
     "${SRC_DIR}/xanim/buf_cursor.cpp"
-    "${SRC_DIR}/xanim/buf_cursor.h"
+    "${SRC_DIR}/xanim/buf_cursor.hpp"
     "${SRC_DIR}/xanim/dobj.cpp"
     "${SRC_DIR}/xanim/dobj.h"
     "${SRC_DIR}/xanim/dobj_skel.cpp"

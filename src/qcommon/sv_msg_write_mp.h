@@ -211,3 +211,7 @@ void __cdecl MSG_WriteDeltaHudElems(
 
 extern huffman_t msgHuff;
 extern netFieldOrderInfo_t orderInfo;
+
+// Defined in msg_bits_mp.cpp; also declared by server_mp/server_mp.h for the
+// snapshot profiler (sv_snapshot_profile_mp.cpp).
+extern uint32_t huffBytesSeen[256];

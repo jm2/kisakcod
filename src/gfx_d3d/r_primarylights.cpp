@@ -297,7 +297,7 @@ void __cdecl R_LinkSphereEntityToPrimaryLights(
         ++primaryLightIndex)
     {
         light = Com_GetPrimaryLight(primaryLightIndex);
-        if (light->type != 2 && light->type != 3)
+        if (light->type != GFX_LIGHT_TYPE_SPOT && light->type != GFX_LIGHT_TYPE_OMNI)
             MyAssertHandler(
                 ".\\r_primarylights.cpp",
                 303,
@@ -309,7 +309,7 @@ void __cdecl R_LinkSphereEntityToPrimaryLights(
         v5 = Vec3LengthSq(diff);
         v4 = (light->radius + radius) * (light->radius + radius);
         if (v5 < (double)v4
-            && (light->type != 2
+            && (light->type != GFX_LIGHT_TYPE_SPOT
                 || light->cosHalfFovExpanded < 0.0
                 || !CullSphereFromCone(light->origin, light->dir, light->cosHalfFovExpanded, origin, radius)))
         {
@@ -373,7 +373,7 @@ void __cdecl R_LinkBoxEntityToPrimaryLights(
         ++primaryLightIndex)
     {
         light = Com_GetPrimaryLight(primaryLightIndex);
-        if (light->type != 2 && light->type != 3)
+        if (light->type != GFX_LIGHT_TYPE_SPOT && light->type != GFX_LIGHT_TYPE_OMNI)
             MyAssertHandler(
                 ".\\r_primarylights.cpp",
                 332,
@@ -384,7 +384,7 @@ void __cdecl R_LinkBoxEntityToPrimaryLights(
         v4 = PointToBoxDistSq(light->origin, mins, maxs);
         v5 = light->radius * light->radius;
         if (v5 > v4
-            && (light->type != 2
+            && (light->type != GFX_LIGHT_TYPE_SPOT
                 || light->cosHalfFovExpanded < 0.0
                 || !CullBoxFromCone(light->origin, light->dir, light->cosHalfFovExpanded, boxMidPoint, boxHalfSize)))
         {
@@ -562,7 +562,7 @@ void __cdecl R_LinkDynEntToPrimaryLights(
         ++primaryLightIndex)
     {
         light = Com_GetPrimaryLight(primaryLightIndex);
-        if (light->type != 2 && light->type != 3)
+        if (light->type != GFX_LIGHT_TYPE_SPOT && light->type != GFX_LIGHT_TYPE_OMNI)
             MyAssertHandler(
                 ".\\r_primarylights.cpp",
                 369,
@@ -624,7 +624,7 @@ bool __cdecl Com_CullBoxFromPrimaryLight(
     const float *boxMidPoint,
     const float *boxHalfSize)
 {
-    if (light->type == 2 && light->cosHalfFovExpanded >= 0.0)
+    if (light->type == GFX_LIGHT_TYPE_SPOT && light->cosHalfFovExpanded >= 0.0)
         return CullBoxFromConicSectionOfSphere(
             light->origin,
             light->dir,
@@ -850,7 +850,7 @@ uint32_t __cdecl R_GetNonSunPrimaryLightForSphere(const GfxViewInfo *viewInfo, c
         ++primaryLightIndex)
     {
         light = Com_GetPrimaryLight(primaryLightIndex);
-        if (light->type != 2 && light->type != 3)
+        if (light->type != GFX_LIGHT_TYPE_SPOT && light->type != GFX_LIGHT_TYPE_OMNI)
             MyAssertHandler(
                 ".\\r_primarylights.cpp",
                 539,
@@ -1001,7 +1001,7 @@ bool __cdecl Com_CullSphereFromPrimaryLight(const ComPrimaryLight *light, const 
     v4 = Vec3LengthSq(diff);
     if (v4 >= (radius + light->radius) * (radius + light->radius))
         return 1;
-    if (light->type == 2 && light->cosHalfFovExpanded >= 0.0)
+    if (light->type == GFX_LIGHT_TYPE_SPOT && light->cosHalfFovExpanded >= 0.0)
         return CullSphereFromCone(light->origin, light->dir, light->cosHalfFovExpanded, origin, radius);
     return 0;
 }

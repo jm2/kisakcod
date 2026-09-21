@@ -265,7 +265,7 @@ void __cdecl R_InitRenderTargetImage(
             "renderTargetId doesn't index R_RENDERTARGET_COUNT\n\t%i not in [0, %i)",
             renderTargetId,
             15);
-    renderTarget->image = Image_AllocProg(imageProgType, 6u, 0);
+    renderTarget->image = Image_AllocProg(imageProgType, IMG_CATEGORY_RENDERTARGET, TS_2D);
     iassert( renderTarget->image );
     Image_SetupRenderTarget(renderTarget->image, width, height, format);
     if (usage)
@@ -365,7 +365,7 @@ void __cdecl R_InitAndTrackRenderTargetImage(
     GfxRenderTarget *renderTarget)
 {
     R_InitRenderTargetImage(imageProgType, width, height, format, usage, renderTarget);
-    Image_TrackTexture(renderTarget->image, 3, format, width, height, 1);
+    Image_TrackTexture(renderTarget->image, IMG_FLAG_NOPICMIP | IMG_FLAG_NOMIPMAPS, format, width, height, 1);
 }
 
 void __cdecl R_InitShadowCookieBlurRenderTarget(GfxRenderTarget *renderTarget)

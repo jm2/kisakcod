@@ -1,4 +1,4 @@
-#include "buf_cursor.h"
+#include "buf_cursor.hpp"
 
 #include <stdint.h>
 #include <string.h>
@@ -12,12 +12,78 @@ namespace
 thread_local BufCursor g_active{};
 thread_local bool g_activeValid = false;
 
+// Monotonic activation identity for the thread. Every Activate mints
+// the next generation into the cursor it installs (the overflow paths
+// included — their synthetic installs are fresh activations too);
+// Deactivate's parent restore puts the saved parent generation back,
+// and the top-level teardown drops to generation 0, which is never a
+// live generation. Checkpoints carry the generation they were captured
+// under and SeekTo() rejects a mismatch, so a checkpoint captured
+// before a Deactivate/Activate cycle (over the same buffer or not) or
+// inside a nested child window can never move a later or foreign
+// activation's cursor.
+thread_local uint64_t g_activationGeneration = 0;
+
 // The caller's *pos pointer that the cursor keeps in sync. Anchored
 // by AnchorPos immediately after Activate so future Buf_Read<T> can
 // write *pos back to the cursor's current without the caller having
 // to remember to do it. Rolling back a transaction walks both back
 // together so the cursor and the caller's *pos cannot disagree.
 thread_local unsigned char **g_anchoredPos = nullptr;
+
+// Nested-activation save stack. Production loaders nest (XModelLoadFile
+// -> XModelPartsPrecache / XModelSurfsPrecache, XModelPiecesLoadFile ->
+// nested model registration), and each nesting level Activates its own
+// cursor. Activate pushes the live scope so the nested parse cannot
+// destroy the parent's position, anchor, limits or failure state, and
+// Deactivate pops it back. The depth bound covers any real call graph
+// many times over (deepest audited production nesting is 3); on
+// overflow the nested cursor is installed pre-failed so the nested
+// parse rejects through the ordinary malformed-input path instead of
+// silently corrupting the parent scope. When that scope unwinds, the
+// overflowed caller's own cursor state is gone, so its Deactivate
+// leaves a pre-failed active cursor: the caller stays fail-closed
+// (Failed() latched, bounded zero reads) until its own Deactivate
+// pops the nearest pushed ancestor.
+//
+// Only scopes that pushed a parent save occupy a stack slot, so the
+// slots are a strict prefix of the open-scope chain: while an overflow
+// scope is open its 16 save-pushing ancestors are open too, which pins
+// the depth at kMaxSavedScopes and forces every deeper activation to
+// overflow as well. Deactivate exploits that shape to identify the
+// innermost scope's kind exactly — a scope pops its own frame or
+// touches nothing, so LIFO push/pop accounting is exact by
+// construction.
+struct SavedCursorScope
+{
+    BufCursor state;
+    unsigned char **anchoredPos;
+};
+
+constexpr size_t kMaxSavedScopes = 16;
+thread_local SavedCursorScope g_scopeStack[kMaxSavedScopes] = {};
+thread_local size_t g_scopeDepth = 0;
+
+// Open scopes that could NOT push a parent save because the stack was
+// full at their Activate (all other open scopes either pushed a save or
+// are the top-level scope). The innermost scope is one of these exactly
+// when the count is nonzero, so its Deactivate pops nothing. The
+// overwritten parent state is unrecoverable, but the parent must not
+// fall back to an unbounded cursor either: Deactivate leaves a
+// pre-failed cursor active so the parent's remaining reads return
+// zeros, Failed() stays true, and the parent unwinds through the
+// ordinary malformed-input path while every pushed ancestor still pops
+// exactly its own frame.
+thread_local size_t g_deepOverflow = 0;
+
+// Degenerate non-null buffer domain for the pre-failed cursor left
+// active after an overflow scope unwinds. The overflowed caller's real
+// cursor state is unrecoverable, but keeping the replacement on a
+// valid, empty, addressable window keeps every remaining bounds check
+// and anchored *pos write-back on a real (never null) pointer — no
+// code path can end up doing pointer arithmetic on null, and no
+// caller's *pos is ever handed nullptr while it keeps parsing.
+constexpr unsigned char kOverflowParentDomain[1] = {0};
 
 // Internal: scan from current for a NUL terminator, bounded by end.
 // Returns the string length (excluding NUL) on success, or SIZE_MAX
@@ -50,6 +116,41 @@ inline void SyncAnchoredPos()
 
 BufCursor *Activate(const unsigned char *buf, size_t size)
 {
+    if (g_activeValid)
+    {
+        // Nested activation: explicitly preserve the parent scope so the
+        // nested parse cannot destroy the outer cursor's anchored *pos,
+        // position, domain limits or failure state. The matching
+        // Deactivate restores exactly this state (LIFO — every loader
+        // Activates at entry and Deactivates on every exit).
+        if (g_scopeDepth >= kMaxSavedScopes)
+        {
+            // Fail closed on pathological nesting depth: install the new
+            // cursor but pre-fail it so every read returns zeros and the
+            // nested parse unwinds through its ordinary malformed-input
+            // path. The scope does not push a parent save (tracked in
+            // g_deepOverflow so the matching Deactivate keeps LIFO
+            // accounting exact and leaves the overflowed caller a
+            // pre-failed ACTIVE cursor — see Deactivate).
+            ++g_deepOverflow;
+            g_active.begin = buf;
+            g_active.current = buf;
+            g_active.end = buf + size;
+            g_active.txnCheckpoint = nullptr;
+            g_active.maxBoneIdx = 0xFFFFFFFFu;
+            g_active.maxWeightIdx = 0xFFFFFFFFu;
+            g_active.maxTriIdx = 0xFFFFFFFFu;
+            g_active.maxStringLen = 0xFFFFFFFFu;
+            g_active.failed = true;
+            g_active.activation = ++g_activationGeneration;
+            g_activeValid = true;
+            g_anchoredPos = nullptr;
+            return &g_active;
+        }
+        g_scopeStack[g_scopeDepth].state = g_active;
+        g_scopeStack[g_scopeDepth].anchoredPos = g_anchoredPos;
+        ++g_scopeDepth;
+    }
     g_active.begin = buf;
     g_active.current = buf;
     g_active.end = buf + size;
@@ -59,6 +160,7 @@ BufCursor *Activate(const unsigned char *buf, size_t size)
     g_active.maxTriIdx = 0xFFFFFFFFu;
     g_active.maxStringLen = 0xFFFFFFFFu;
     g_active.failed = false;
+    g_active.activation = ++g_activationGeneration;
     g_activeValid = true;
     g_anchoredPos = nullptr;
     return &g_active;
@@ -66,6 +168,52 @@ BufCursor *Activate(const unsigned char *buf, size_t size)
 
 void Deactivate()
 {
+    if (g_deepOverflow > 0)
+    {
+        // This scope never pushed a parent save (the save stack was
+        // full at its Activate), so there is nothing to pop — and the
+        // overflowed caller's live cursor state was destroyed by the
+        // overflow install, so it cannot be restored either. Dropping
+        // the thread-local to inactive here would hand the still-
+        // running caller back to the unbounded legacy read with
+        // Failed() reporting false, defeating the overflow path's
+        // fail-closed purpose. Instead leave a pre-failed, empty-but-
+        // ACTIVE cursor: the caller's remaining reads return zeros,
+        // Failed() stays latched, and the caller unwinds through its
+        // ordinary malformed-input path; every pushed ancestor still
+        // pops exactly its own frame below.
+        --g_deepOverflow;
+        g_active.begin = kOverflowParentDomain;
+        g_active.current = kOverflowParentDomain;
+        g_active.end = kOverflowParentDomain;
+        g_active.txnCheckpoint = nullptr;
+        g_active.maxBoneIdx = 0xFFFFFFFFu;
+        g_active.maxWeightIdx = 0xFFFFFFFFu;
+        g_active.maxTriIdx = 0xFFFFFFFFu;
+        g_active.maxStringLen = 0xFFFFFFFFu;
+        g_active.failed = true;
+        // The synthetic reinstall is a fresh activation, not the
+        // overflowed caller's: mint a new generation so checkpoints
+        // captured by the destroyed scope are stale here too.
+        g_active.activation = ++g_activationGeneration;
+        g_activeValid = true;
+        g_anchoredPos = nullptr;
+        return;
+    }
+    if (g_scopeDepth > 0)
+    {
+        // Restore the parent scope exactly: position, anchor, limits and
+        // failure flag. Re-asserting the anchor writes the restored
+        // position back through the parent's *pos so the two views
+        // continue in lockstep (and heals any transient raw-pointer
+        // desync the parent picked up before the nested activation).
+        --g_scopeDepth;
+        g_active = g_scopeStack[g_scopeDepth].state;
+        g_anchoredPos = g_scopeStack[g_scopeDepth].anchoredPos;
+        g_activeValid = true;
+        SyncAnchoredPos();
+        return;
+    }
     g_activeValid = false;
     g_anchoredPos = nullptr;
     g_active = BufCursor{};
@@ -178,6 +326,28 @@ void AnchorPos(unsigned char **pos)
         *pos = const_cast<unsigned char *>(g_active.current);
     }
 }
+
+// Tell() and SeekTo() are defined inline in buf_cursor.hpp over the
+// detail:: bridge below, so a header TU sees the Checkpoint members in
+// use and the rewind contract stays auditable next to the struct.
+namespace detail
+{
+bool QueryActive(BufCursor **out)
+{
+    *out = nullptr;
+    if (!g_activeValid)
+    {
+        return false;
+    }
+    *out = &g_active;
+    return true;
+}
+
+void SyncAnchored()
+{
+    SyncAnchoredPos();
+}
+}  // namespace detail
 
 bool ReadString(char *out, size_t outSize)
 {

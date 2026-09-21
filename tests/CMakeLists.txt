@@ -2598,6 +2598,7 @@ add_executable(kisakcod-platform-socket-tests
 )
 target_include_directories(kisakcod-platform-socket-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-platform-socket-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-platform-socket-tests PRIVATE KISAK_SOCKET_TEST_HOOKS=1)
 target_link_libraries(kisakcod-platform-socket-tests PRIVATE Threads::Threads)
 if (KISAK_PLATFORM STREQUAL "win32")
     target_link_libraries(kisakcod-platform-socket-tests PRIVATE ws2_32)
@@ -2611,6 +2612,46 @@ add_test(
     COMMAND kisakcod-platform-socket-tests
 )
 set_tests_properties(platform-socket-contracts PROPERTIES TIMEOUT 30)
+
+add_executable(kisakcod-platform-socket-stream-tests
+    platform_socket_stream_harness.cpp
+    platform_socket_stream_tests.cpp
+    ${_platform_socket_sources}
+)
+target_include_directories(kisakcod-platform-socket-stream-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-socket-stream-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-platform-socket-stream-tests PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(kisakcod-platform-socket-stream-tests PRIVATE ws2_32)
+endif()
+kisakcod_test_warnings(kisakcod-platform-socket-stream-tests)
+set_target_properties(kisakcod-platform-socket-stream-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-socket-stream-contracts
+    COMMAND kisakcod-platform-socket-stream-tests
+)
+set_tests_properties(platform-socket-stream-contracts PROPERTIES TIMEOUT 30)
+
+add_executable(kisakcod-dl-http-tests
+    dl_http_tests.cpp
+    dl_http_head_parse_tests.cpp
+    ${SRC_DIR}/qcommon/dl_http.cpp
+    ${SRC_DIR}/qcommon/dl_http_parse.cpp
+    ${SRC_DIR}/qcommon/dl_http_url.cpp
+)
+target_include_directories(kisakcod-dl-http-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-dl-http-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-dl-http-tests)
+set_target_properties(kisakcod-dl-http-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME dl-http-protocol-contracts
+    COMMAND kisakcod-dl-http-tests
+)
+set_tests_properties(dl-http-protocol-contracts PROPERTIES TIMEOUT 30)
 
 add_executable(kisakcod-platform-crash-tests
     platform_crash_tests.cpp
@@ -2677,6 +2718,139 @@ add_test(
     COMMAND kisakcod-net-chan-reassembly-tests
 )
 
+# Stage 2 (issue #123): on the engine's actual ILP32 Win32 target, link the
+# production netchan layer into the test and drive Netchan_Process itself
+# over wire-format packets (net_chan_process_tests.cpp), with inert stubs for
+# the engine environment it does not need (net_chan_process_test_stubs.cpp).
+# The engine's game/server header chain carries ILP32 layout assertions
+# (EntHandleInfo, pml_t), so these production TUs can only compile where the
+# engine itself compiles; portable legs keep the predicate-only shape above.
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    # The production TUs are decompiled engine code and are not -W4 clean, so
+    # they compile in a dedicated object library at the engine target's own
+    # warning level (/W3 on MSVC). A directory-scoped
+    # set_source_files_properties /W3 is applied AFTER each consuming
+    # target's own options and therefore leaks into every target compiling
+    # these files -- it silently dropped the huffman-wire contract target's
+    # /W4 coverage of huffman.cpp (refinery review, Codex finding).
+    # Target-level options on the object library keep the downgrade scoped to
+    # exactly these seven sources. Scoped to MSVC: msg_mp, huffman and the
+    # msg_bits_* TUs also compile under GCC/Clang in the portable
+    # huffman-wire/msg-wire-contract targets, where /W3 is not a valid flag.
+    # The four msg_bits_*_mp.cpp TUs are build-list enrollments only: the MSG
+    # bit primitives (MSG_Init/Write*/Read*/ReadAngle16,
+    # GetMinBitCountForNum) live there since the codec was split out of
+    # msg_mp.cpp, and net_chan_mp.cpp plus the Netchan_Process driver tests
+    # reference them -- without them this Win32-ILP32 link fails with
+    # unresolved externals. This mirrors the engine link set, where the split
+    # left msg_mp.cpp and msg_bits_*_mp.cpp with disjoint symbol sets.
+    add_library(kisakcod-net-chan-production-objects OBJECT
+        ${SRC_DIR}/qcommon/net_chan_mp.cpp
+        ${SRC_DIR}/qcommon/msg_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_write_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_read_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_usercmd_mp.cpp
+        ${SRC_DIR}/qcommon/huffman.cpp
+        # NET_StringToAdr resolves non-legacy platform-shaped addresses
+        # through the portable socket service, so the selected platform
+        # sys_socket.cpp must compile alongside net_chan_mp.obj; without it
+        # the Win32 ILP32 leg fails to link (LNK2019 on Sys_SocketResolveHost).
+        # The single-platform selection filter above already guarantees
+        # exactly one backend per configure.
+        ${_platform_socket_sources}
+    )
+    # Same treatment as the wire-contract tests: the decompiled engine headers
+    # are not warning-clean, so SYSTEM keeps the strict warning set on the
+    # consumers' own code. PUBLIC so the usage requirements reach the test
+    # target through target_link_libraries, mirroring the compilation
+    # environment these TUs had when they lived on the shared test target.
+    target_include_directories(kisakcod-net-chan-production-objects SYSTEM PUBLIC ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-net-chan-production-objects PUBLIC cxx_std_20)
+    target_compile_definitions(kisakcod-net-chan-production-objects PUBLIC
+        KISAK_MP
+        KISAK_DEDI_HEADLESS
+    )
+    target_compile_options(kisakcod-net-chan-production-objects PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/W3>
+    )
+    # The enrolled platform socket backend speaks Winsock on this platform;
+    # the import library must reach the test executable that links this
+    # object library (PUBLIC propagates link dependencies to consumers).
+    target_link_libraries(kisakcod-net-chan-production-objects PUBLIC ws2_32)
+
+    target_sources(kisakcod-net-chan-reassembly-tests PRIVATE
+        net_chan_process_tests.cpp
+        net_chan_process_span_tests.cpp
+        net_chan_process_test_stubs.cpp
+    )
+    target_link_libraries(kisakcod-net-chan-reassembly-tests PRIVATE
+        kisakcod-net-chan-production-objects
+    )
+    target_compile_definitions(kisakcod-net-chan-reassembly-tests PRIVATE
+        KISAKCOD_NET_CHAN_PROCESS_TESTS_AVAILABLE
+        KISAK_DEDI_HEADLESS
+    )
+endif()
+
+add_executable(kisakcod-huffman-wire-contract-tests
+    huffman_wire_contract_tests.cpp
+    ${SRC_DIR}/qcommon/huffman.cpp
+)
+# Links the production Huffman codec (huffman.cpp) and the shared retail
+# msg_hData table, then pins the derived codebook and fixed-input byte output.
+# huffman.cpp is decompiled engine code, so SYSTEM keeps the strict warning set
+# on the test's own code without failing the build on decompiled headers.
+target_include_directories(kisakcod-huffman-wire-contract-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-huffman-wire-contract-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-huffman-wire-contract-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-huffman-wire-contract-tests)
+set_target_properties(kisakcod-huffman-wire-contract-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME huffman-wire-format-contracts
+    COMMAND kisakcod-huffman-wire-contract-tests
+)
+
+add_executable(kisakcod-msg-wire-contract-tests
+    msg_wire_contract_tests.cpp
+    msg_wire_delta_framing_tests.cpp
+    ${SRC_DIR}/qcommon/msg_bits_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_write_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_read_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_usercmd_mp.cpp
+    ${SRC_DIR}/qcommon/huffman.cpp
+)
+# Links the production MP bit-codec (the msg_bits_*_mp.cpp TUs, the code
+# motion of the MSG bit primitives out of msg_mp.cpp, split by function
+# family for the static-analysis file-size budget) together with the Huffman
+# codec, so
+# every wire golden is checked against the real retail encoder/decoder rather
+# than a reimplementation. The two test TUs share the harness and link stubs
+# in msg_wire_test_harness.hpp. The engine headers AND the decompiled
+# production TUs are not -Wall -Wextra clean (the engine build does not enable
+# those flags), so the strict warning set applies to the test's own code only.
+target_include_directories(kisakcod-msg-wire-contract-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-msg-wire-contract-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-msg-wire-contract-tests PRIVATE KISAK_MP)
+if (MSVC)
+    set_source_files_properties(msg_wire_contract_tests.cpp
+        msg_wire_delta_framing_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "/W4;/WX")
+else()
+    set_source_files_properties(msg_wire_contract_tests.cpp
+        msg_wire_delta_framing_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+endif()
+set_target_properties(kisakcod-msg-wire-contract-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME msg-wire-format-contracts
+    COMMAND kisakcod-msg-wire-contract-tests
+)
+
 add_executable(kisakcod-vehicle-material-time-tests
     vehicle_material_time_tests.cpp
 )
@@ -2693,9 +2867,15 @@ add_test(
     COMMAND kisakcod-vehicle-material-time-tests
 )
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/renderer_enum_contracts.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/renderer_image_contracts.cmake")
 add_executable(kisakcod-renderer-value-encoding-tests
     renderer_value_encoding_tests.cpp
+    renderer_enum_contracts.cpp
+    renderer_image_contracts.cpp
 )
+target_include_directories(kisakcod-renderer-value-encoding-tests PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/renderer-enums")
 target_include_directories(
     kisakcod-renderer-value-encoding-tests PRIVATE ${SRC_DIR})
 target_compile_features(
@@ -2741,6 +2921,20 @@ add_test(
     NAME upstream-reconciliation-angle-math-contracts
     COMMAND kisakcod-upstream-angle-math-tests
 )
+
+
+# Run both profiles of the curated production regressions in the existing
+# upstream reconciliation gate, including its portable/sanitizer/Win32 legs.
+include("${CMAKE_CURRENT_SOURCE_DIR}/upstream_b3199_tests.cmake")
+foreach(profile IN ITEMS mp sp)
+    string(TOUPPER "${profile}" profile_upper)
+    add_library(kisakcod-upstream-b3199-${profile}-contracts OBJECT upstream_b3199_contracts.cpp)
+    target_include_directories(kisakcod-upstream-b3199-${profile}-contracts PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/upstream-b3199")
+    target_compile_definitions(kisakcod-upstream-b3199-${profile}-contracts PRIVATE KISAK_${profile_upper})
+    target_compile_features(kisakcod-upstream-b3199-${profile}-contracts PRIVATE cxx_std_20)
+    kisakcod_test_warnings(kisakcod-upstream-b3199-${profile}-contracts)
+    target_sources(kisakcod-upstream-angle-math-tests PRIVATE $<TARGET_OBJECTS:kisakcod-upstream-b3199-${profile}-contracts>)
+endforeach()
 
 add_executable(kisakcod-upstream-aim-safety-tests
     upstream_aim_safety_tests.cpp
@@ -2861,6 +3055,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_socket_source_test.cmake
+)
+
+add_test(
+    NAME dl-download-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/dl_download_source_test.cmake
 )
 
 add_test(
@@ -3226,6 +3427,34 @@ add_test(
 )
 
 add_test(
+    NAME voice-framing-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/voice_framing_source_test.cmake
+)
+
+add_test(
+    NAME audio-gate-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/audio_gate_source_test.cmake
+)
+
+add_test(
+    NAME cinematic-gate-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cinematic_gate_source_test.cmake
+)
+
+add_test(
+    NAME null-media-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/null_media_gate_source_test.cmake
+)
+
+add_test(
     NAME pool-native-pointer-source-invariants
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
@@ -3288,6 +3517,150 @@ set_target_properties(
 add_test(
     NAME xmodel-load-bounded-cursor
     COMMAND kisakcod-xmodel-load-tests)
+
+# xmodel_nested_cursor_test: production-call-graph contracts for the
+# scoped nested cursor ownership and the checked second-pass seek
+# (ki-okmr / #124). Drives the real buf_cursor entry points in the
+# exact sequence the production loaders issue (XModelLoadFile ->
+# nested XModelPartsPrecache / XModelSurfsPrecache windows, material
+# second-pass rewind) over controlled xmodel/xmodelparts fixtures:
+# cold/warm nested loads, parent position/limit/failure restoration,
+# truncated-input cleanup, and three-level LIFO nesting. The
+# save-stack overflow fail-closed contracts run in their own TU,
+# kisakcod-xmodel-cursor-overflow-tests below; both suites share the
+# fixtures and CHECK harness via xmodel_cursor_test_support.hpp.
+# The loader TUs cannot link in this portable binary (win32-only engine
+# headers); xmodel_cursor_source_invariants_test.cmake pins the
+# production call sites instead. CTest entries match the 'xmodel'
+# regex so the bead's build/test command resolves to this target.
+add_executable(kisakcod-xmodel-nested-cursor-tests
+    xmodel_nested_cursor_test.cpp
+    xmodel_nested_cursor_walks.hpp
+    xmodel_cursor_activation_scope_tests.hpp
+    xmodel_cursor_test_support.hpp
+    ${SRC_DIR}/xanim/buf_cursor.cpp)
+target_include_directories(
+    kisakcod-xmodel-nested-cursor-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-xmodel-nested-cursor-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-xmodel-nested-cursor-tests)
+set_target_properties(
+    kisakcod-xmodel-nested-cursor-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME xmodel-nested-cursor-ownership
+    COMMAND kisakcod-xmodel-nested-cursor-tests)
+
+# xmodel_cursor_overflow_test: fail-closed contracts for the buf_cursor
+# save-stack bound (ki-okmr / #124). Activation past the 16-slot save
+# stack installs a pre-failed scope whose reads fail closed; while an
+# overflow scope is open the depth is pinned at the bound, an overflow
+# scope's Deactivate pops nothing but leaves the overflowed caller
+# active and pre-failed (no unbounded legacy fallback), a sibling
+# re-activation in the overflowed frame overflows again, and the scopes
+# below unwind strictly LIFO. Split from xmodel_nested_cursor_test.cpp
+# so each contract suite stays within the file-size budget; same
+# production buf_cursor entry points, no fixtures of its own (the two
+# suites share fixtures/harness via xmodel_cursor_test_support.hpp).
+add_executable(kisakcod-xmodel-cursor-overflow-tests
+    xmodel_cursor_overflow_test.cpp
+    xmodel_cursor_test_support.hpp
+    ${SRC_DIR}/xanim/buf_cursor.cpp)
+target_include_directories(
+    kisakcod-xmodel-cursor-overflow-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-xmodel-cursor-overflow-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-xmodel-cursor-overflow-tests)
+set_target_properties(
+    kisakcod-xmodel-cursor-overflow-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME xmodel-cursor-overflow-fail-closed
+    COMMAND kisakcod-xmodel-cursor-overflow-tests)
+
+# Source-contract gate for the same stage: the loader TUs are not
+# compilable on portable hosts, so the second-pass correction is pinned
+# textually — checked SeekTo positioning, cursor-owned checkpoint, no
+# raw pos rewind, and paired Activate/Deactivate teardown counts.
+add_test(
+    NAME xmodel-cursor-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/xmodel_cursor_source_invariants_test.cmake)
+
+# xmodel_loader_entry_test: production-loader entry-point contracts
+# (ki-okmr / #124). Links and executes the REAL XModelLoadFile
+# (src/xanim/xmodel_load_obj.cpp) — its config/collision/LOD parsing,
+# its real nested parts parse (xanim_load_obj.cpp is enrolled for its
+# ConsumeQuatNoSwap), its real nested surfs windows and its checked
+# material second pass — over controlled fixtures served by the
+# harness file system (xmodel_loader_entry_harness.hpp: in-memory FS
+# and hunk cache, capture stubs; neither nested loader needs a
+# stand-in). The loader TUs' DirectX/Miles/ODE header web and MSVC
+# decompiled dialect (raw __declspec(align(16)), `const struct`
+# definitions) compile only under the win32-x86 platform, so this
+# target is gated to the Windows x86 CI leg and never configured on
+# the portable 64-bit legs; the portable suites above plus
+# xmodel_cursor_source_invariants cover the cursor contracts
+# everywhere else.
+if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    add_executable(kisakcod-xmodel-loader-entry-tests
+        xmodel_loader_entry_test.cpp
+        xmodel_loader_entry_harness.hpp
+        xmodel_cursor_test_support.hpp
+        ${SRC_DIR}/xanim/xmodel_load_obj.cpp
+        ${SRC_DIR}/xanim/xanim_load_obj.cpp
+        ${SRC_DIR}/xanim/buf_cursor.cpp
+        ${SRC_DIR}/universal/com_math.cpp
+        ${SRC_DIR}/qcommon/com_pack.cpp)
+    # The vendored SDK include root: the loader TU's transitive header
+    # web pulls in <ode/ode.h> (via dobj.h) and <msslib/mss.h> (via
+    # snd_public.h), exactly as the game target's DEPS_DIR include does.
+    target_include_directories(
+        kisakcod-xmodel-loader-entry-tests PRIVATE
+            ${SRC_DIR}
+            ${CMAKE_SOURCE_DIR}/deps)
+    target_compile_features(
+        kisakcod-xmodel-loader-entry-tests PRIVATE cxx_std_20)
+    # The SP flavor: XModelAllowLoadMesh()'s body is #elif KISAK_SP (an
+    # unconditional true) and both branches compile out without a KISAK_*
+    # define, leaving the function without a return (C4716). KISAK_SP is
+    # the SP game target's own definition for these TUs (scripts/sp), and
+    # it keeps KISAK_DEDI_HEADLESS undefined so XModelLoadFile runs its
+    # real parse instead of the headless abort.
+    target_compile_definitions(
+        kisakcod-xmodel-loader-entry-tests PRIVATE KISAK_SP)
+    # Warning policy: the test TU compiles at exactly the game target's
+    # own warning surface (/W3, platform.cmake — no /WX). The
+    # surface-content assertions need the full production header web
+    # (xmodel.h plus xanim.h for the real XSurface definition, through
+    # r_material/r_gfx/r_bsp/bg_weapons/bg_local/actor) — exactly the
+    # web game TUs compile at /W3 with warnings tolerated (that web
+    # emits benign decompiled-dialect diagnostics across levels, e.g.
+    # C4091 unnamed-enum typedefs and C4369 enumerators, hundreds of
+    # times across game TUs; no game target builds /WX). /WX here would
+    # mean an open-ended suppression list peeled one CI cycle at a
+    # time, so the MSVC gates this target relies on are compile, link
+    # and run on Debug/Release, plus the ctest contracts and the code
+    # analyzers. _CRT_SECURE_NO_WARNINGS covers the deliberate
+    # _vsnprintf truncation contract in the Com_* printf wrappers (the
+    # native CRT spelling on the win32-x86 leg; POSIX hosts route
+    # through universal/msvc_printf_shim.h).
+    if (MSVC)
+        set_source_files_properties(xmodel_loader_entry_test.cpp PROPERTIES
+            COMPILE_OPTIONS "/W3"
+            COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS")
+    else()
+        set_source_files_properties(xmodel_loader_entry_test.cpp PROPERTIES
+            COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+    endif()
+    set_target_properties(
+        kisakcod-xmodel-loader-entry-tests PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(
+        NAME xmodel-loader-entry-native
+        COMMAND kisakcod-xmodel-loader-entry-tests)
+endif ()
 
 # xanim_parts_split_test: contract tests for the XAnimParts disk mirror
 # vs native runtime split (M4 + Priority 7). The retail x86 layout is
@@ -3999,6 +4372,34 @@ add_test(
     COMMAND kisakcod-db-graph-hash-tests)
 set_tests_properties(database-graph-hash-canonical PROPERTIES TIMEOUT 20)
 
+# A09 / #131 (ki-y49k): content-addressed derived shader cache/sidecar core.
+# Original retail bytecode is identified by content hash, the sidecar is
+# versioned by format and converter identity, and stale or corrupt evidence is
+# regenerated from the untouched original inputs. The portable core is
+# exercised on the Linux host. Build enrollment is the database/engine source
+# manifest; wiring it into the D3D9 shader creation boundary is future
+# renderer integration.
+add_executable(kisakcod-shader-cache-tests
+    shader_cache_tests.cpp
+    ${SRC_DIR}/database/shader_cache.cpp
+    ${SRC_DIR}/database/db_graph_hash.cpp)
+target_include_directories(
+    kisakcod-shader-cache-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-shader-cache-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-shader-cache-tests)
+set_target_properties(kisakcod-shader-cache-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-derived-shader-cache-contracts
+    COMMAND kisakcod-shader-cache-tests)
+set_tests_properties(database-derived-shader-cache-contracts PROPERTIES TIMEOUT 20)
+add_test(
+    NAME database-derived-shader-cache-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/shader_cache_source_test.cmake)
+
 # M5 exit (ki-msb): retail fast-file parity harness. Runs on the native64
 # host against an unmodified retail fast-file and emits the capture digest
 # consumed by scripts/ci/run-retail-fastfile-parity.sh; --self-test exercises
@@ -4035,3 +4436,123 @@ if(UNIX)
     set_tests_properties(retail-fastfile-parity-driver-gates PROPERTIES
         TIMEOUT 120 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
+
+# A11 (ki-ubw0): retail-content and MP mod compatibility regression matrix.
+# docs/RETAIL_CONTENT_MATRIX.md carries a machine-readable axis/case/
+# disposition index; this source test fails closed if a required production
+# target, commercial profile, configuration mode, case family, the §5
+# lifecycle-stage vocabulary and per-case assignments (across §11, §5 and the
+# §6.2 stage cells), the §4 catalog Targets cells, the §6.2 displayed Modes
+# applicability or per-case stage cells, the commercial-to-commercial baseline
+# records and the §6.4 baseline ledger, or the upstream #89/#40 index or §4.5
+# visible disposition is dropped, narrowed or promoted, and negative-tests its
+# own gates so a silently weakened contract cannot pass. Portable: CMake-only,
+# no shell.
+add_test(
+    NAME retail-content-matrix-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/retail_content_matrix_source_test.cmake
+)
+set_tests_properties(retail-content-matrix-source-invariants PROPERTIES
+    TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+# ---------------------------------------------------------------------------
+# Voice codec parity gates (VOX-1a / VOX-1b,
+# docs/AUDIO_VOICE_CINEMATIC_PARITY_GATES.md Section 4.2).
+#
+# Drives the in-tree Speex 1.1.9 build (src/groupvoice/speex/*.c) through the
+# exact production ctl sequences from src/groupvoice/encode.cpp / decode.cpp
+# and pins encoder bitstreams byte-exactly (VOX-1a) plus decoder PCM within a
+# recorded tolerance (VOX-1b). The production wrappers themselves are pinned
+# statement-for-statement by tests/voice_framing_source_test.cmake because
+# directsound.h statically asserts the 32-bit Win32 ABI and the wrappers
+# cannot run on portable CI targets.
+set(SPEEX_CODEC_SOURCES
+    "${SRC_DIR}/groupvoice/speex/bits.c"
+    "${SRC_DIR}/groupvoice/speex/cb_search.c"
+    "${SRC_DIR}/groupvoice/speex/exc_10_16_table.c"
+    "${SRC_DIR}/groupvoice/speex/exc_10_32_table.c"
+    "${SRC_DIR}/groupvoice/speex/exc_20_32_table.c"
+    "${SRC_DIR}/groupvoice/speex/exc_5_256_table.c"
+    "${SRC_DIR}/groupvoice/speex/exc_5_64_table.c"
+    "${SRC_DIR}/groupvoice/speex/exc_8_128_table.c"
+    "${SRC_DIR}/groupvoice/speex/filters.c"
+    "${SRC_DIR}/groupvoice/speex/gain_table.c"
+    "${SRC_DIR}/groupvoice/speex/gain_table_lbr.c"
+    "${SRC_DIR}/groupvoice/speex/hexc_10_32_table.c"
+    "${SRC_DIR}/groupvoice/speex/hexc_table.c"
+    "${SRC_DIR}/groupvoice/speex/high_lsp_tables.c"
+    "${SRC_DIR}/groupvoice/speex/jitter.c"
+    "${SRC_DIR}/groupvoice/speex/lbr_48k_tables.c"
+    "${SRC_DIR}/groupvoice/speex/lpc.c"
+    "${SRC_DIR}/groupvoice/speex/lsp.c"
+    "${SRC_DIR}/groupvoice/speex/lsp_tables_nb.c"
+    "${SRC_DIR}/groupvoice/speex/ltp.c"
+    "${SRC_DIR}/groupvoice/speex/math_approx.c"
+    "${SRC_DIR}/groupvoice/speex/mdf.c"
+    "${SRC_DIR}/groupvoice/speex/misc.c"
+    "${SRC_DIR}/groupvoice/speex/modes.c"
+    "${SRC_DIR}/groupvoice/speex/nb_celp.c"
+    "${SRC_DIR}/groupvoice/speex/preprocess.c"
+    "${SRC_DIR}/groupvoice/speex/quant_lsp.c"
+    "${SRC_DIR}/groupvoice/speex/sb_celp.c"
+    "${SRC_DIR}/groupvoice/speex/smallft.c"
+    "${SRC_DIR}/groupvoice/speex/speex.c"
+    "${SRC_DIR}/groupvoice/speex/speex_callbacks.c"
+    "${SRC_DIR}/groupvoice/speex/speex_header.c"
+    "${SRC_DIR}/groupvoice/speex/stereo.c"
+    "${SRC_DIR}/groupvoice/speex/vbr.c"
+    "${SRC_DIR}/groupvoice/speex/vq.c"
+)
+
+# Third-party Speex 1.1.9 is not warning-clean; silence warnings on the codec
+# C sources while keeping the strict warning set on the gate's own code.
+# speex_config_types.h is generated (autotools substitution) for non-Win32
+# targets; the _WIN32 branch of speex_types.h carries its own typedefs.
+set(SPEEX_CONFIG_TYPES_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/speex-config-types")
+file(MAKE_DIRECTORY "${SPEEX_CONFIG_TYPES_DIR}/speex")
+set(SIZE16 short)
+set(SIZE32 int)
+configure_file(
+    "${DEPS_DIR}/speex/speex_config_types.h.in"
+    "${SPEEX_CONFIG_TYPES_DIR}/speex/speex_config_types.h"
+    @ONLY
+)
+
+add_executable(kisakcod-voice-gate-tests
+    voice_gate_tests.cpp
+    voice_gate_decode_test.cpp
+    ${SPEEX_CODEC_SOURCES}
+)
+target_include_directories(kisakcod-voice-gate-tests PRIVATE
+    "${SPEEX_CONFIG_TYPES_DIR}")
+target_include_directories(kisakcod-voice-gate-tests SYSTEM PRIVATE
+    ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-voice-gate-tests PRIVATE cxx_std_20)
+if(MSVC)
+    set_source_files_properties(${SPEEX_CODEC_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "/w")
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/voice_gate_tests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/voice_gate_decode_test.cpp" PROPERTIES
+        COMPILE_OPTIONS "/W4;/WX")
+else()
+    set_source_files_properties(${SPEEX_CODEC_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "-w")
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/voice_gate_tests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/voice_gate_decode_test.cpp" PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+endif()
+if(UNIX AND NOT APPLE)
+    target_link_libraries(kisakcod-voice-gate-tests PRIVATE m)
+endif()
+set_target_properties(kisakcod-voice-gate-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME voice-codec-gate-contracts
+    COMMAND kisakcod-voice-gate-tests
+)
+set_tests_properties(voice-codec-gate-contracts PROPERTIES TIMEOUT 120)

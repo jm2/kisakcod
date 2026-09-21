@@ -13,8 +13,10 @@
 #define NOMINMAX
 #endif
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <Windows.h>
 #else
+#include <netdb.h>
 #include <sys/mman.h>
 #endif
 
@@ -26,6 +28,17 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+// Test-only resolver seam installed by the backend when the suite is built
+// with KISAK_SOCKET_TEST_HOOKS (see tests/CMakeLists.txt). It lets the
+// failure contract force a resolver outcome instead of borrowing the host's
+// resolver configuration.
+void KISAK_CDECL Kisak_SocketSetResolveTestHook(int (*hook)(const char *,
+    const char *,
+    const addrinfo *,
+    addrinfo **));
+#endif
 
 namespace
 {
@@ -521,6 +534,205 @@ bool StageExclusiveInterfaceBind(SocketFixture &fixture)
 }
 #endif
 
+bool IsLoopbackAddress(const SysSocketAddress &address)
+{
+    const std::uint8_t loopback[4] = {127, 0, 0, 1};
+    return std::memcmp(address.address, loopback, sizeof(loopback)) == 0;
+}
+
+bool IsUntouchedEndpoint(const SysSocketAddress &address)
+{
+    const std::uint8_t expected[4] = {203, 0, 113, 9};
+    return std::memcmp(address.address, expected, sizeof(expected)) == 0
+        && address.port == 65000;
+}
+
+SysSocketAddress UntouchedEndpoint()
+{
+    SysSocketAddress endpoint{};
+    endpoint.address[0] = 203;
+    endpoint.address[1] = 0;
+    endpoint.address[2] = 113;
+    endpoint.address[3] = 9;
+    endpoint.port = 65000;
+    return endpoint;
+}
+
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+// Resolver error the forced query reports. The same hook covers both mapped
+// outcomes so the failure path is driven by the seam, not the host resolver.
+thread_local int forcedResolveError = EAI_NONAME;
+
+int FailResolveQuery(const char *,
+    const char *,
+    const addrinfo *,
+    addrinfo **outResults)
+{
+    if (outResults)
+        *outResults = nullptr;
+    return forcedResolveError;
+}
+#endif
+
+// Argument validation: null or empty names and a null out-pointer are
+// rejected before any resolver work.
+bool CheckResolveArgumentValidation()
+{
+    SysSocketAddress address{};
+    return Check(Sys_SocketResolveHost(nullptr, 28960, &address) ==
+                   SysSocketResolveStatus::InvalidArgument,
+               "resolve null host")
+        && Check(Sys_SocketResolveHost("", 28960, &address) ==
+                   SysSocketResolveStatus::InvalidArgument,
+               "resolve empty host")
+        && Check(Sys_SocketResolveHost("127.0.0.1", 28960, nullptr) ==
+                   SysSocketResolveStatus::InvalidArgument,
+               "resolve null out pointer");
+}
+
+// Resolver-independent literals resolve end to end without a resolver round
+// trip: a dotted quad carries its bytes, and the exact name "localhost" maps
+// to loopback. Both carry the requested port.
+bool CheckDottedQuadLiteral()
+{
+    SysSocketAddress address{};
+    return Check(Sys_SocketResolveHost("127.0.0.1", 28960, &address) ==
+                   SysSocketResolveStatus::Resolved,
+               "resolve dotted quad")
+        && Check(IsLoopbackAddress(address), "dotted quad maps to its bytes")
+        && Check(address.port == 28960, "resolved port is carried");
+}
+
+bool CheckLocalhostLiteral()
+{
+    SysSocketAddress address{};
+    return Check(Sys_SocketResolveHost("localhost", 1234, &address) ==
+                   SysSocketResolveStatus::Resolved,
+               "resolve localhost")
+        && Check(IsLoopbackAddress(address), "localhost maps to loopback")
+        && Check(address.port == 1234, "localhost port is carried");
+}
+
+// Deterministic coverage of the resolver-independent status mapping: an
+// unknown name, the platform's distinct no-address code, and the
+// requested-family no-address code all map to NotFound. EAI_NODATA and
+// EAI_ADDRFAMILY are absent or aliased on some platforms, so each case is
+// guarded exactly like the production classifier.
+bool CheckResolveNotFoundCodes()
+{
+    if (!Check(Sys_SocketResolveErrorStatus(EAI_NONAME) ==
+                   SysSocketResolveStatus::NotFound,
+            "unknown hostname maps to NotFound"))
+        return false;
+#if defined(EAI_NODATA) && (EAI_NODATA != EAI_NONAME)
+    if (!Check(Sys_SocketResolveErrorStatus(EAI_NODATA) ==
+                   SysSocketResolveStatus::NotFound,
+            "addressless hostname maps to NotFound"))
+        return false;
+#endif
+#if defined(EAI_ADDRFAMILY) && (EAI_ADDRFAMILY != EAI_NONAME) \
+    && (EAI_ADDRFAMILY != EAI_NODATA)
+    if (!Check(Sys_SocketResolveErrorStatus(EAI_ADDRFAMILY) ==
+                   SysSocketResolveStatus::NotFound,
+            "address-family no-address maps to NotFound"))
+        return false;
+#endif
+    return true;
+}
+
+// Every genuine resolver error -- temporary, unrecoverable, or a misuse of
+// the classifier -- stays SystemFailure.
+bool CheckResolveSystemFailureCodes()
+{
+    return Check(Sys_SocketResolveErrorStatus(EAI_AGAIN) ==
+                     SysSocketResolveStatus::SystemFailure,
+               "temporary resolver failure stays SystemFailure")
+        && Check(Sys_SocketResolveErrorStatus(EAI_FAIL) ==
+                     SysSocketResolveStatus::SystemFailure,
+               "unrecoverable resolver failure stays SystemFailure")
+        && Check(Sys_SocketResolveErrorStatus(0) ==
+                     SysSocketResolveStatus::SystemFailure,
+               "non-failure code fails closed");
+}
+
+// The failed-resolution contract must not depend on the host's resolver:
+// `.invalid` is reserved by RFC 6761, but a hosts entry or resolver override
+// could still answer it, so the test seam forces the outcome. EAI_NONAME pins
+// the NotFound half and EAI_AGAIN the SystemFailure half, both end to end
+// through Sys_SocketResolveHost; the endpoint must stay untouched either way,
+// because a failure never publishes a partially populated address.
+bool CheckResolveFailureContract()
+{
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+    SysSocketAddress missingEndpoint = UntouchedEndpoint();
+    forcedResolveError = EAI_NONAME;
+    Kisak_SocketSetResolveTestHook(FailResolveQuery);
+    const SysSocketResolveStatus missing =
+        Sys_SocketResolveHost("invalid.invalid", 28960, &missingEndpoint);
+    Kisak_SocketSetResolveTestHook(nullptr);
+    bool passed = Check(missing == SysSocketResolveStatus::NotFound,
+                       "unresolvable host does not resolve")
+        && Check(IsUntouchedEndpoint(missingEndpoint),
+            "failed resolve leaves the endpoint untouched");
+
+    SysSocketAddress failedEndpoint = UntouchedEndpoint();
+    forcedResolveError = EAI_AGAIN;
+    Kisak_SocketSetResolveTestHook(FailResolveQuery);
+    const SysSocketResolveStatus failed =
+        Sys_SocketResolveHost("invalid.invalid", 28960, &failedEndpoint);
+    Kisak_SocketSetResolveTestHook(nullptr);
+    forcedResolveError = EAI_NONAME;
+    passed = Check(failed == SysSocketResolveStatus::SystemFailure,
+               "forced system resolver failure does not resolve")
+        && passed;
+    passed = Check(IsUntouchedEndpoint(failedEndpoint),
+               "forced system failure leaves the endpoint untouched")
+        && passed;
+
+    // The address-family no-address result is the other resolver code that
+    // means "no IPv4 address for this name": it must propagate end to end as
+    // NotFound and leave the endpoint untouched, exactly like EAI_NONAME.
+#if defined(EAI_ADDRFAMILY) && (EAI_ADDRFAMILY != EAI_NONAME) \
+    && (EAI_ADDRFAMILY != EAI_NODATA)
+    SysSocketAddress noAddressEndpoint = UntouchedEndpoint();
+    forcedResolveError = EAI_ADDRFAMILY;
+    Kisak_SocketSetResolveTestHook(FailResolveQuery);
+    const SysSocketResolveStatus noAddress = Sys_SocketResolveHost(
+        "invalid.invalid", 28960, &noAddressEndpoint);
+    Kisak_SocketSetResolveTestHook(nullptr);
+    forcedResolveError = EAI_NONAME;
+    passed = Check(noAddress == SysSocketResolveStatus::NotFound,
+               "forced address-family no-address does not resolve")
+        && passed;
+    passed = Check(IsUntouchedEndpoint(noAddressEndpoint),
+               "forced address-family no-address leaves the endpoint untouched")
+        && passed;
+#endif
+    return passed;
+#else
+    SysSocketAddress untouched = UntouchedEndpoint();
+    const SysSocketResolveStatus missing =
+        Sys_SocketResolveHost("invalid.invalid", 28960, &untouched);
+    return Check(missing != SysSocketResolveStatus::Resolved,
+               "unresolvable host does not resolve")
+        && Check(IsUntouchedEndpoint(untouched),
+            "failed resolve leaves the endpoint untouched");
+#endif
+}
+
+// Host resolution contract: argument validation, resolver-independent
+// literals, deterministic status mapping, and fail-closed failure behavior.
+// A name the host resolver cannot map must not publish a partial endpoint.
+bool StageHostResolution(SocketFixture &)
+{
+    return CheckResolveArgumentValidation()
+        && CheckDottedQuadLiteral()
+        && CheckLocalhostLiteral()
+        && CheckResolveNotFoundCodes()
+        && CheckResolveSystemFailureCodes()
+        && CheckResolveFailureContract();
+}
+
 // Teardown: close is unconditional, nulls the caller's handle, and a
 // second close is a no-op.
 bool StageTeardown(SocketFixture &fixture)
@@ -553,7 +765,8 @@ int main()
         return ReportFailure();
 
     const StageFn stages[] = {&StageArgumentValidation,
-        &StageEndpointContract, &StageReceiveContract, &StageSendContract,
+        &StageEndpointContract, &StageHostResolution, &StageReceiveContract,
+        &StageSendContract,
         &StageLoopbackSend, &StageLoopbackReply, &StageTruncationContract,
         &StageOversizeCapacityBoundary, &StageBroadcastOption,
         &StageExplicitBind, &StageExclusiveBind,

@@ -203,7 +203,11 @@ endfunction()
 string(ASCII 92 _runtime_storage_backslash)
 string(ASCII 13 _runtime_storage_carriage_return)
 string(ASCII 10 _runtime_storage_line_feed)
-set(_runtime_storage_block_comment "/\\*([^*]|\\*+[^*/])*\\*+/")
+# Deterministic block-comment matcher: the classic (a|ab)* style
+# alternation makes cmake's regex engine blow its stack (SIGSEGV) on
+# comment-heavy files; this unrolled form accepts the identical language
+# in linear time.
+set(_runtime_storage_block_comment "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/")
 set(_runtime_storage_comment_atom
     "([ \t\r\n]|${_runtime_storage_block_comment}|//[^\r\n]*)")
 set(_runtime_storage_comment_gap "${_runtime_storage_comment_atom}*")

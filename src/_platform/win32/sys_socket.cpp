@@ -28,6 +28,29 @@ struct SysSocket
     SOCKET handle{INVALID_SOCKET};
 };
 
+// Test seam (test builds only). When KISAK_SOCKET_TEST_HOOKS is defined the
+// suite can install a query that replaces the native getaddrinfo call, so the
+// failed-resolution contract is exercised deterministically instead of
+// depending on the host's resolver configuration. Production builds do not
+// define the macro, so neither the hook nor the setter exists in the shipped
+// service.
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+using SocketResolveQuery = int (*)(const char *node,
+    const char *service,
+    const addrinfo *hints,
+    addrinfo **results);
+
+namespace
+{
+thread_local SocketResolveQuery resolveHostTestHook = nullptr;
+} // namespace
+
+void KISAK_CDECL Kisak_SocketSetResolveTestHook(SocketResolveQuery hook)
+{
+    resolveHostTestHook = hook;
+}
+#endif
+
 namespace
 {
 // Winsock is initialized once per process on the first open and stays
@@ -348,4 +371,340 @@ bool KISAK_CDECL Sys_SocketAddressIsEqual(
         equal = (first->port == second->port);
     }
     return equal;
+}
+
+namespace
+{
+// Resolves the literal host forms that must never touch the OS resolver:
+// the exact name "localhost" and numeric dotted-quad addresses. Returns
+// true and fills `outAddress` on a match; false leaves it untouched so the
+// caller can fall through to getaddrinfo(AF_INET).
+bool TryResolveLiteralHost(
+    const char *const hostname,
+    SysSocketAddress *const outAddress) noexcept
+{
+    if (std::strcmp(hostname, "localhost") == 0)
+    {
+        outAddress->address[0] = 127;
+        outAddress->address[1] = 0;
+        outAddress->address[2] = 0;
+        outAddress->address[3] = 1;
+        outAddress->port = 0;
+        return true;
+    }
+
+    in_addr literal{};
+    if (inet_pton(AF_INET, hostname, &literal) == 1)
+    {
+        const unsigned long host = ntohl(literal.s_addr);
+        outAddress->address[0] =
+            static_cast<std::uint8_t>((host >> 24) & 0xFFUL);
+        outAddress->address[1] =
+            static_cast<std::uint8_t>((host >> 16) & 0xFFUL);
+        outAddress->address[2] =
+            static_cast<std::uint8_t>((host >> 8) & 0xFFUL);
+        outAddress->address[3] = static_cast<std::uint8_t>(host & 0xFFUL);
+        outAddress->port = 0;
+        return true;
+    }
+
+    return false;
+}
+
+// Maps `hostname` to an IPv4 endpoint with a zero port. Literal forms are
+// resolved by TryResolveLiteralHost without host resolver configuration or
+// an available network; every other value is delegated to
+// getaddrinfo(AF_INET), which requires Winsock to be initialized first. The
+// endpoint is written only on Resolved: a caller-visible failure never
+// carries a half-populated address.
+SysSocketResolveStatus ResolveHostAddress(
+    const char *const hostname,
+    SysSocketAddress *const outAddress) noexcept
+{
+    if (TryResolveLiteralHost(hostname, outAddress))
+        return SysSocketResolveStatus::Resolved;
+
+    if (!EnsureWinsockStarted())
+        return SysSocketResolveStatus::SystemFailure;
+
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_protocol = IPPROTO_UDP;
+    addrinfo *results = nullptr;
+#if defined(KISAK_SOCKET_TEST_HOOKS)
+    const SocketResolveQuery query = resolveHostTestHook;
+    const int failure = query
+        ? query(hostname, nullptr, &hints, &results)
+        : getaddrinfo(hostname, nullptr, &hints, &results);
+#else
+    const int failure = getaddrinfo(hostname, nullptr, &hints, &results);
+#endif
+    if (failure != 0 || !results)
+        return Sys_SocketResolveErrorStatus(failure);
+
+    SysSocketAddress resolved{};
+    const bool mapped = ToSocketAddress(
+        *reinterpret_cast<const sockaddr_in *>(results->ai_addr), &resolved);
+    freeaddrinfo(results);
+    if (!mapped)
+        return SysSocketResolveStatus::SystemFailure;
+    resolved.port = 0;
+    *outAddress = resolved;
+    return SysSocketResolveStatus::Resolved;
+}
+} // namespace
+
+SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveErrorStatus(
+    const int resolverError)
+{
+    // EAI_NODATA is the Winsock no-address code (WSANO_DATA) and differs from
+    // EAI_NONAME (WSAHOST_NOT_FOUND); an existing name with no IPv4 address
+    // is reported as addressless there, and the public contract folds both
+    // into NotFound. EAI_ADDRFAMILY, where Winsock defines it, is the same
+    // "no address in the requested family" outcome for an AF_INET request and
+    // folds in too. The guards keep genuine resolver errors -- temporary,
+    // unrecoverable, resource -- as SystemFailure and tolerate platforms that
+    // omit the code or alias it to one already classified.
+#if defined(EAI_NODATA) && (EAI_NODATA != EAI_NONAME)
+    if (resolverError == EAI_NODATA)
+        return SysSocketResolveStatus::NotFound;
+#endif
+#if defined(EAI_ADDRFAMILY) && (EAI_ADDRFAMILY != EAI_NONAME) \
+    && (EAI_ADDRFAMILY != EAI_NODATA)
+    if (resolverError == EAI_ADDRFAMILY)
+        return SysSocketResolveStatus::NotFound;
+#endif
+    if (resolverError == EAI_NONAME)
+        return SysSocketResolveStatus::NotFound;
+    return SysSocketResolveStatus::SystemFailure;
+}
+
+SysSocketResolveStatus KISAK_CDECL Sys_SocketResolveHost(
+    const char *const hostname,
+    const std::uint16_t port,
+    SysSocketAddress *const outAddress)
+{
+    if (!hostname || hostname[0] == '\0' || !outAddress)
+        return SysSocketResolveStatus::InvalidArgument;
+
+    SysSocketAddress resolved{};
+    const SysSocketResolveStatus status =
+        ResolveHostAddress(hostname, &resolved);
+    if (status != SysSocketResolveStatus::Resolved)
+        return status;
+    resolved.port = port;
+    *outAddress = resolved;
+    return SysSocketResolveStatus::Resolved;
+}
+
+// ---- TCP stream client extension (Win32) ------------------------------------
+
+namespace
+{
+bool StreamArgumentsValid(SysSocketHandle const handle,
+    const void *const buffer,
+    const std::uint32_t byteCount) noexcept
+{
+    return handle && handle->handle != INVALID_SOCKET && buffer
+        && byteCount != 0;
+}
+
+// One nonblocking stream send; split out so the status-mapping contract
+// stays at the same complexity as the receive path. The public length is
+// the caller's uint32 request, but Winsock's send takes a signed int
+// length: clamp to the fixed socket bound BEFORE the signed conversion
+// so a length of 2^31 or more cannot wrap negative; a stream send simply
+// continues from the reported partial progress when the request was
+// clamped.
+int StreamSend(SOCKET const descriptor,
+    const void *const data,
+    const std::uint32_t byteCount) noexcept
+{
+    std::uint32_t sendLength = byteCount;
+    if (sendLength > SysSocketMaxDatagramBytes)
+        sendLength = SysSocketMaxDatagramBytes;
+    return send(descriptor,
+        static_cast<const char *>(data),
+        static_cast<int>(sendLength),
+        0);
+}
+
+// One nonblocking stream receive with the same clamp-before-convert
+// discipline for the caller's uint32 receive window.
+int StreamRecv(SOCKET const descriptor,
+    void *const buffer,
+    const std::uint32_t bufferCapacity) noexcept
+{
+    std::uint32_t recvLength = bufferCapacity;
+    if (recvLength > SysSocketMaxDatagramBytes)
+        recvLength = SysSocketMaxDatagramBytes;
+    return recv(descriptor,
+        static_cast<char *>(buffer),
+        static_cast<int>(recvLength),
+        0);
+}
+
+// Maps a failed send's WSA error to the portable stream status; keeping
+// the branch table separate holds Sys_SocketSendStream to the same
+// complexity as the receive path.
+SysSocketStreamSendStatus SendStreamErrorStatus() noexcept
+{
+    const int error = WSAGetLastError();
+    if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS)
+        return SysSocketStreamSendStatus::WouldBlock;
+    if (error == WSAECONNRESET || error == WSAECONNABORTED
+        || error == WSAESHUTDOWN)
+        return SysSocketStreamSendStatus::Disconnected;
+    return SysSocketStreamSendStatus::SystemFailure;
+}
+} // namespace
+
+SysSocketStreamOpenStatus KISAK_CDECL Sys_SocketOpenStream(
+    const bool nonBlocking,
+    SysSocketHandle *const outHandle)
+{
+    if (!outHandle || *outHandle)
+        return SysSocketStreamOpenStatus::InvalidArgument;
+    if (!EnsureWinsockStarted())
+        return SysSocketStreamOpenStatus::SystemFailure;
+
+    const SOCKET raw = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (raw == INVALID_SOCKET)
+        return SysSocketStreamOpenStatus::SystemFailure;
+
+    if (nonBlocking)
+    {
+        u_long mode = 1;
+        if (ioctlsocket(raw, FIONBIO, &mode) != 0)
+        {
+            closesocket(raw);
+            return SysSocketStreamOpenStatus::SystemFailure;
+        }
+    }
+
+    // Allocation is non-throwing so a failure cannot bypass the status
+    // contract and leak the already-open socket.
+    SysSocket *socket = new (std::nothrow) SysSocket();
+    if (!socket)
+    {
+        closesocket(raw);
+        return SysSocketStreamOpenStatus::SystemFailure;
+    }
+    socket->handle = raw;
+    *outHandle = socket;
+    return SysSocketStreamOpenStatus::Opened;
+}
+
+SysSocketStreamConnectStatus KISAK_CDECL Sys_SocketConnectStream(
+    SysSocketHandle const handle,
+    const SysSocketAddress *const destination)
+{
+    if (!handle || handle->handle == INVALID_SOCKET || !destination)
+        return SysSocketStreamConnectStatus::InvalidArgument;
+
+    const sockaddr_in to = ToSockaddrIn(*destination);
+    const int failure = connect(handle->handle,
+        reinterpret_cast<const sockaddr *>(&to), sizeof(to));
+    if (failure == 0)
+        return SysSocketStreamConnectStatus::Connected;
+    // WSAEWOULDBLOCK marks a non-blocking handshake in flight (and an
+    // interrupted one stays pending rather than restarting); WSAEALREADY
+    // and WSAEISCONN fold into their caller-observable outcomes. All of
+    // the in-flight forms report InProgress, which the caller resolves
+    // through Sys_SocketPollConnected.
+    const int error = WSAGetLastError();
+    if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS
+        || error == WSAEALREADY)
+        return SysSocketStreamConnectStatus::InProgress;
+    if (error == WSAEISCONN)
+        return SysSocketStreamConnectStatus::Connected;
+    return SysSocketStreamConnectStatus::SystemFailure;
+}
+
+SysSocketStreamPollStatus KISAK_CDECL Sys_SocketPollConnected(
+    SysSocketHandle const handle)
+{
+    if (!handle || handle->handle == INVALID_SOCKET)
+        return SysSocketStreamPollStatus::InvalidArgument;
+
+    // WSAPoll with a zero timeout observes connect completion on Windows
+    // the same way poll(POLLOUT) does on the POSIX backend. The previous
+    // select() form carried a struct timeval whose seconds member is a
+    // time_t even though the zero timeout is a pure duration; the poll
+    // keeps the identical wait semantics with no wall-clock year in the
+    // path, and failure flags arrive in the same single call.
+    WSAPOLLFD descriptor{};
+    descriptor.fd = handle->handle;
+    descriptor.events = POLLOUT;
+    const int ready = ::WSAPoll(&descriptor, 1, 0);
+    if (ready == SOCKET_ERROR)
+        return SysSocketStreamPollStatus::SystemFailure;
+    if (ready == 0)
+        return SysSocketStreamPollStatus::InProgress;
+
+    // Writability (or an error/hangup flag) ends the handshake; SO_ERROR
+    // names the outcome. Zero is established, anything else is the real
+    // refusal -- poll artifacts are never reported as Failed.
+    int socketError = 0;
+    int errorLength = sizeof(socketError);
+    if (getsockopt(handle->handle, SOL_SOCKET, SO_ERROR,
+            reinterpret_cast<char *>(&socketError), &errorLength)
+        != 0)
+        return SysSocketStreamPollStatus::SystemFailure;
+    if (socketError == 0)
+        return SysSocketStreamPollStatus::Ready;
+    return SysSocketStreamPollStatus::Failed;
+}
+
+SysSocketStreamSendStatus KISAK_CDECL Sys_SocketSendStream(
+    SysSocketHandle const handle,
+    const void *const data,
+    const std::uint32_t byteCount,
+    std::uint32_t *const outSentBytes)
+{
+    if (outSentBytes)
+        *outSentBytes = 0;
+    if (!StreamArgumentsValid(handle, data, byteCount) || !outSentBytes)
+        return SysSocketStreamSendStatus::InvalidArgument;
+
+    const int sent = StreamSend(handle->handle, data, byteCount);
+    if (sent == SOCKET_ERROR)
+        return SendStreamErrorStatus();
+    // A stream send of zero cannot occur for a nonzero length, but the
+    // guard keeps the contract honest on exotic platforms.
+    if (sent == 0)
+        return SysSocketStreamSendStatus::WouldBlock;
+    *outSentBytes = static_cast<std::uint32_t>(sent);
+    return SysSocketStreamSendStatus::Sent;
+}
+
+SysSocketStreamRecvStatus KISAK_CDECL Sys_SocketRecvStream(
+    SysSocketHandle const handle,
+    void *const buffer,
+    const std::uint32_t bufferCapacity,
+    std::uint32_t *const outByteCount)
+{
+    if (outByteCount)
+        *outByteCount = 0;
+    if (!StreamArgumentsValid(handle, buffer, bufferCapacity) || !outByteCount)
+        return SysSocketStreamRecvStatus::InvalidArgument;
+
+    const int received = StreamRecv(handle->handle, buffer, bufferCapacity);
+    if (received == SOCKET_ERROR)
+    {
+        const int error = WSAGetLastError();
+        if (error == WSAEWOULDBLOCK)
+            return SysSocketStreamRecvStatus::WouldBlock;
+        if (error == WSAECONNRESET || error == WSAECONNABORTED
+            || error == WSAESHUTDOWN)
+            return SysSocketStreamRecvStatus::Disconnected;
+        return SysSocketStreamRecvStatus::SystemFailure;
+    }
+    // Zero bytes on a stream is the peer's orderly shutdown: the stream
+    // is finished and will never yield more data.
+    if (received == 0)
+        return SysSocketStreamRecvStatus::Disconnected;
+    *outByteCount = static_cast<std::uint32_t>(received);
+    return SysSocketStreamRecvStatus::Received;
 }
