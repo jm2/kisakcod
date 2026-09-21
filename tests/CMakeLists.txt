@@ -2783,6 +2783,11 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         net_chan_process_tests.cpp
         net_chan_process_span_tests.cpp
         net_chan_process_test_stubs.cpp
+        # ki-zv15h: netchan-level capture validation (production
+        # Netchan_Transmit into the engine loopback queues, captured frames
+        # replayed through Netchan_Process) and the fixed-tick paired-channel
+        # simulation harness.
+        net_chan_capture_tick_tests.cpp
     )
     target_link_libraries(kisakcod-net-chan-reassembly-tests PRIVATE
         kisakcod-net-chan-production-objects
