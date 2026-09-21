@@ -193,7 +193,11 @@ void StageConnectPollContract(const SysSocketHandle socket)
 // length, null out pointers.
 void StageStreamIoContract(const SysSocketHandle socket)
 {
-    char buffer[8];
+    // Zero-initialized: every call below hands the buffer to a
+    // contract-rejection path that never reads it, but GCC's
+    // -Wmaybe-uninitialized at -O0 cannot see through the call boundary
+    // and flags the un-initialized pass-by-pointer as a read.
+    char buffer[8]{};
     std::uint32_t count = 0;
     Check(Sys_SocketSendStream(nullptr, buffer, sizeof(buffer), &count)
             == SysSocketStreamSendStatus::InvalidArgument,

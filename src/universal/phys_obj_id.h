@@ -152,7 +152,10 @@ class BodySidecar
     BodySidecar(BodySidecar &&) = delete;
     BodySidecar &operator=(BodySidecar &&) = delete;
 
-    [[nodiscard]] constexpr std::size_t CapacityValue() const noexcept
+    // Capacity is a compile-time constant and no instance state is read, so
+    // the accessor is a static member; instance-expression calls such as
+    // `sidecar.CapacityValue()` remain valid.
+    [[nodiscard]] static constexpr std::size_t CapacityValue() noexcept
     {
         return Capacity;
     }
@@ -334,6 +337,7 @@ template <std::size_t Capacity>
     return bind;
 }
 
+// cppcheck-suppress misra-c2012-12.3 -- C++ template parameter-list separator, not the comma operator.
 template <class Body, std::size_t Capacity>
 [[nodiscard]] inline Body *ReadResolve(
     const BodySidecar<Capacity> &sidecar,
@@ -345,6 +349,7 @@ template <class Body, std::size_t Capacity>
     return r ? static_cast<Body *>(r.body) : nullptr;
 }
 
+// cppcheck-suppress misra-c2012-12.3 -- C++ template parameter-list separator, not the comma operator.
 template <class Body, std::size_t Capacity>
 [[nodiscard]] inline bool ConsumeRelease(
     BodySidecar<Capacity> &sidecar,

@@ -284,19 +284,33 @@ def check_execution(selected: Set[str], discovered: Set[str],
 def check_discovery(scope: str, inventory: Set[str], selected: Set[str],
                     excluded: Set[str], absent: Set[str],
                     discovered: Set[str], executed: Optional[Set[str]],
-                    enforce_absence: bool) -> int:
+                    enforce_absence: bool,
+                    reference_absent: Optional[Set[str]] = None) -> int:
     """Check discovery/execution against the classification."""
     failures = report_violation(
         discovered - inventory,
         "discovered tests missing from the inventory (classify them as "
         "selected, excluded, or platform-absent)",
     )
+    # --reference-absent names inventory tests the reference leg itself
+    # never registers (e.g. a test only the Win32 x86 backend builds), so
+    # they can never appear in the reference's discovery evidence. The
+    # exemption is checked both ways: a stale entry (one the reference
+    # registers after all) must fail, and the inventory-vs-discovery
+    # equality otherwise keeps its exact force.
+    exempt = reference_absent or set()
     if scope == "exact":
         failures += report_violation(
-            inventory - discovered,
+            inventory - exempt - discovered,
             "inventory tests not discovered by ctest (remove them from the "
             "inventory or restore the test)",
         )
+        if reference_absent is not None:
+            failures += report_violation(
+                exempt & discovered,
+                "reference-absent tests discovered by the reference after "
+                "all (stale exemption; fix the reference-absent manifest)",
+            )
     if enforce_absence:
         failures += check_platform_profile(selected, excluded, absent,
                                            discovered)
@@ -346,7 +360,8 @@ def check_entry_quality(inventory_list: List[str], selected_list: List[str],
 
 def check_run_evidence(args: argparse.Namespace, inventory: Set[str],
                        selected: Set[str], excluded: Set[str],
-                       absent: Set[str]) -> int:
+                       absent: Set[str],
+                       reference_absent: Optional[Set[str]] = None) -> int:
     """Validate flag combinations and check discovery/execution evidence."""
     # Raises when the flags are mutually inconsistent (--executed without
     # --discovered, platform enforcement without an --absent manifest or
@@ -361,13 +376,25 @@ def check_run_evidence(args: argparse.Namespace, inventory: Set[str],
         # exists to prove; letting enforcement pass on zero discovery
         # evidence would silently make the mode vacuous.
         raise ValueError("--enforce-platform-absence requires --discovered")
+    if args.reference_absent and not args.discovered:
+        # Same vacuity rule: the exemption only ever subtracts from
+        # discovery comparisons.
+        raise ValueError("--reference-absent requires --discovered")
+    if (args.reference_absent
+            and args.discovered_scope != "exact"):
+        # The exemption and its stale-entry check are only ever consulted
+        # in exact scope; a subset run would silently ignore the flag
+        # entirely, so this vacuous combination fails closed too.
+        raise ValueError(
+            "--reference-absent requires --discovered-scope exact")
     if not args.discovered:
         return 0
     discovered = set(read_discovery(args.discovered))
     executed = set(read_execution(args.executed)) if args.executed else None
     return check_discovery(
         args.discovered_scope, inventory, selected, excluded, absent,
-        discovered, executed, args.enforce_platform_absence)
+        discovered, executed, args.enforce_platform_absence,
+        reference_absent)
 
 
 def check_run(args: argparse.Namespace) -> int:
@@ -386,6 +413,17 @@ def check_run(args: argparse.Namespace) -> int:
     absent = set(absent_list)
     failures += check_manifests(inventory, selected, excluded, absent)
 
+    reference_absent = None
+    if args.reference_absent:
+        reference_absent_list = read_name_file(args.reference_absent)
+        reference_absent = set(reference_absent_list)
+        failures += report_violation(
+            duplicates(reference_absent_list),
+            "duplicate reference-absent entries")
+        failures += report_violation(
+            reference_absent - inventory,
+            "reference-absent tests missing from the inventory")
+
     if not selected_list:
         print(
             "FAIL: the selection is empty; a run that selects nothing "
@@ -395,7 +433,7 @@ def check_run(args: argparse.Namespace) -> int:
         failures += 1
 
     failures += check_run_evidence(args, inventory, selected, excluded,
-                                   absent)
+                                   absent, reference_absent)
 
     if args.emit_regex:
         with open(args.emit_regex, "w", encoding="utf-8") as handle:
@@ -425,6 +463,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="require every selected test to be discovered/executed and every "
         "absent test to be undiscovered (platform profile validation).",
+    )
+    parser.add_argument(
+        "--reference-absent",
+        default=None,
+        help="inventory tests the reference leg itself never registers, so "
+        "they can never appear in discovery evidence; exact scope exempts "
+        "them from the inventory==discovery comparison but fails closed on "
+        "a stale entry the reference discovers after all.",
     )
     parser.add_argument("--emit-regex", default=None)
     return parser.parse_args(argv)
