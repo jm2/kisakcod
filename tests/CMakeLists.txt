@@ -3745,6 +3745,171 @@ if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         COMMAND kisakcod-xmodel-loader-entry-tests)
 endif ()
 
+# db_load_entry_test + fx_restore_entry_test: production database
+# admission/relocation/registration and FX archive save/restore
+# entry-point contracts (ki-458h / #125). Like the xmodel-loader
+# target above, these binaries link and execute the REAL production
+# entry points — db_registry.cpp's DB_Init / DB_AddXAsset /
+# DB_FindXAssetHeader / DB_EnumXAsset* / DB_RemoveXAsset chain,
+# db_stream_load.cpp's Load_Stream family over the real db_stream
+# block machinery and db_relocation resolver, and the FX Disk32
+# archive writer/reader stack (FX_Save / FX_Restore through
+# fx_archive.cpp, the effect-table save/restore machinery and the
+# restore control sequence) — over controlled providers served by the
+# two harness headers (in-memory fast-file byte source, real stream
+# blocks, capture stubs). The enrolled production TUs compile in the
+# test binary exactly as the engine targets build them — same MSVC
+# decompiled dialect and DirectX/Miles/ODE header-web constraints as
+# the xmodel target above — so both targets are gated to the Windows
+# x86 CI leg and never configured on the portable 64-bit legs.
+if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    # The DB-tier production slice both binaries share. The two
+    # fx_fastfile TUs carry KISAK_MP per-source, exactly as the MP
+    # engine target's flavor definition builds them.
+    set(_kisakcod_db_entry_production_sources
+        ${SRC_DIR}/database/db_registry.cpp
+        ${SRC_DIR}/database/db_stream_load.cpp
+        ${SRC_DIR}/database/db_stream.cpp
+        ${SRC_DIR}/database/db_relocation.cpp
+        ${SRC_DIR}/database/db_assetnames.cpp
+        ${SRC_DIR}/database/db_load_legacy_bridge.cpp
+        ${SRC_DIR}/database/db_zone_runtime_facade.cpp
+        ${SRC_DIR}/database/db_registry_ownership_coordinator.cpp
+        ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
+        ${SRC_DIR}/database/db_zone_runtime_table.cpp
+        ${SRC_DIR}/database/db_fx_zone_adapter_wiring.cpp
+        ${SRC_DIR}/database/db_zone_runtime_storage.cpp
+        ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+        ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
+        ${SRC_DIR}/database/db_zone_script_string_ownership.cpp
+        ${SRC_DIR}/database/db_script_string_adapter.cpp
+        ${SRC_DIR}/database/db_script_string_journal.cpp
+        ${SRC_DIR}/database/db_script_string_transaction.cpp
+        ${SRC_DIR}/database/db_zone_load_context.cpp
+        ${SRC_DIR}/script/scr_stringlist.cpp
+        ${SRC_DIR}/script/scr_memorytree.cpp
+        ${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp
+        ${SRC_DIR}/EffectsCore/fx_fastfile_native_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_fastfile_impact_native_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_fastfile_native_arena.cpp
+        ${SRC_DIR}/EffectsCore/fx_fastfile_zone_adapter_disk32.cpp
+        ${SRC_DIR}/universal/com_shared.cpp
+        ${SRC_DIR}/universal/com_memory.cpp
+        ${SRC_DIR}/universal/physicalmemory.cpp
+        ${SRC_DIR}/universal/physicalmemory_checked.cpp
+        ${SRC_DIR}/qcommon/sys_sync.cpp
+        ${SRC_DIR}/universal/q_shared.cpp)
+    set_source_files_properties(
+        ${SRC_DIR}/EffectsCore/fx_fastfile_native_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_fastfile_impact_native_disk32.cpp
+        PROPERTIES COMPILE_DEFINITIONS "KISAK_MP")
+
+    add_executable(kisakcod-db-load-entry-tests
+        db_load_entry_test.cpp
+        db_load_entry_harness.hpp
+        db_load_entry_stubs.cpp
+        ${_kisakcod_db_entry_production_sources})
+    # memfile.cpp + the vendored zlib the production stream path
+    # links, already compiled as the shared test subject above.
+    target_link_libraries(kisakcod-db-load-entry-tests PRIVATE
+        kisakcod-memfile-test-subject
+        Threads::Threads)
+    set_target_properties(kisakcod-db-load-entry-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_features(kisakcod-db-load-entry-tests PRIVATE cxx_std_20)
+    # The SP flavor, matching the engine target's own definition for
+    # these TUs (see the xmodel target's KISAK_SP rationale above).
+    target_compile_definitions(kisakcod-db-load-entry-tests PRIVATE KISAK_SP)
+    target_include_directories(kisakcod-db-load-entry-tests PRIVATE
+        ${SRC_DIR}
+        ${CMAKE_SOURCE_DIR}/deps)
+    if (MSVC)
+        set_source_files_properties(db_load_entry_test.cpp
+            db_load_entry_stubs.cpp PROPERTIES
+            COMPILE_OPTIONS "/W3"
+            COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS")
+    else()
+        set_source_files_properties(db_load_entry_test.cpp
+            db_load_entry_stubs.cpp PROPERTIES
+            COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+    endif()
+    add_test(
+        NAME db-load-entry-native
+        COMMAND kisakcod-db-load-entry-tests)
+    set_tests_properties(db-load-entry-native PROPERTIES TIMEOUT 120)
+
+    # The FX archive slice: the DB tier above plus the Disk32
+    # archive writer/reader stack. The archive TUs marked KISAK_MP
+    # mirror the MP engine target's flavor for those files (the same
+    # per-TU definitions scripts/mp applies), on top of the
+    # target-wide KISAK_SP the preflight rig built them with.
+    set(_kisakcod_fx_entry_extra_sources
+        ${SRC_DIR}/EffectsCore/fx_archive.cpp
+        ${SRC_DIR}/EffectsCore/fx_effect_table_restore.cpp
+        ${SRC_DIR}/EffectsCore/fx_effect_table_save.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_reader_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_restore_candidate_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_restore_control.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_physics_batch_control.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_native_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_semantics.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_gate_control.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_system_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_buffers_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_body_state_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_load_obj.cpp
+        ${SRC_DIR}/EffectsCore/fx_random.cpp
+        ${SRC_DIR}/universal/com_math.cpp
+        ${SRC_DIR}/universal/com_math_anglevectors.cpp
+        ${SRC_DIR}/universal/com_angle.cpp
+        ${SRC_DIR}/universal/q_parse.cpp)
+    set_source_files_properties(
+        ${SRC_DIR}/EffectsCore/fx_archive_native_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_semantics.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_system_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_buffers_disk32.cpp
+        ${SRC_DIR}/EffectsCore/fx_archive_body_state_disk32.cpp
+        PROPERTIES COMPILE_DEFINITIONS "KISAK_MP")
+
+    add_executable(kisakcod-fx-restore-entry-tests
+        fx_restore_entry_test.cpp
+        fx_restore_entry_harness.hpp
+        fx_restore_entry_stubs.cpp
+        # Sys_Error and the shared DB service stubs live in the DB
+        # slice's stub TU; KISAK_FX_RESTORE_RIG below suppresses its
+        # hand-rolled math helpers because com_math.cpp provides the
+        # production definitions in this binary.
+        db_load_entry_stubs.cpp
+        ${_kisakcod_db_entry_production_sources}
+        ${_kisakcod_fx_entry_extra_sources})
+    target_link_libraries(kisakcod-fx-restore-entry-tests PRIVATE
+        kisakcod-memfile-test-subject
+        Threads::Threads)
+    set_target_properties(kisakcod-fx-restore-entry-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_features(kisakcod-fx-restore-entry-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fx-restore-entry-tests PRIVATE
+        KISAK_SP KISAK_FX_RESTORE_RIG)
+    target_include_directories(kisakcod-fx-restore-entry-tests PRIVATE
+        ${SRC_DIR}
+        ${CMAKE_SOURCE_DIR}/deps)
+    if (MSVC)
+        set_source_files_properties(fx_restore_entry_test.cpp
+            fx_restore_entry_stubs.cpp db_load_entry_stubs.cpp PROPERTIES
+            COMPILE_OPTIONS "/W3"
+            COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS")
+    else()
+        set_source_files_properties(fx_restore_entry_test.cpp
+            fx_restore_entry_stubs.cpp db_load_entry_stubs.cpp PROPERTIES
+            COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+    endif()
+    add_test(
+        NAME fx-restore-entry-native
+        COMMAND kisakcod-fx-restore-entry-tests)
+    set_tests_properties(fx-restore-entry-native PROPERTIES TIMEOUT 120)
+endif ()
+
 # xanim_parts_split_test: contract tests for the XAnimParts disk mirror
 # vs native runtime split (M4 + Priority 7). The retail x86 layout is
 # frozen at exactly 88 bytes per XAnimParts instance via ONDISK_SIZE; the
