@@ -3523,6 +3523,20 @@ add_test(
 )
 
 add_test(
+    NAME audio-playback-gate-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/audio_playback_gate_source_test.cmake
+)
+
+add_test(
+    NAME voice-device-gate-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/voice_device_gate_source_test.cmake
+)
+
+add_test(
     NAME pool-native-pointer-source-invariants
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}

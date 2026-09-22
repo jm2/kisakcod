@@ -61,6 +61,9 @@ endfunction()
 
 read_normalized("src/qcommon/common.cpp" _common)
 read_normalized("scripts/dedi/dedi_sources.cmake" _dedi)
+read_normalized("src/database/db_load.cpp" _dbload)
+read_normalized("src/sound/snd.cpp" _snd)
+read_normalized("src/sound/snd_public.h" _sndpublic)
 
 # --- Headless sound init guards (common.cpp) ---------------------------------
 require_contains(_common
@@ -118,6 +121,46 @@ require_contains(_dedi
     "KISAK_DEDI_HEADLESS source list contains proprietary media dependency"
     "the proprietary dependency failure message stays actionable")
 
+# --- Headless sound asset load no-op (db_load.cpp, NUL-1) ----------------------
+require_contains(_dbload
+    "void __cdecl Load_SetSoundData(uint8_t **data, MssSoundCOD4 *mssSound)"
+    "sound asset load has the retail entry point")
+require_count(_dbload
+    "#ifndef KISAK_DEDI_HEADLESS SND_SetData(mssSound, *data); #else (void)data; (void)mssSound; #endif" 1
+    "headless builds never hand zone sound payloads to SND_SetData")
+require_contains(_dbload
+    "void DB_ClearHeadlessSoundRuntimeData(MssSoundCOD4 *sound)"
+    "headless LoadedSound runtime data has the retail clear entry")
+require_contains(_dbload
+    "DB_ClearHeadlessSoundRuntimeData(varMssSound);"
+    "headless MssSound loads clear playback allocations after the raw read")
+
+# --- Null sound short-circuit (snd.cpp / snd_public.h, NUL-2) -------------------
+require_contains(_sndpublic
+    "bool __cdecl SND_IsNullSoundFile(const SoundFile *soundFile);"
+    "the null sound predicate is part of the sound public surface")
+require_contains(_snd
+    "bool __cdecl SND_IsNullSoundFile(const SoundFile *soundFile)"
+    "the null sound predicate is implemented for the full client")
+require_contains(_snd
+    "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+    "alias playback short-circuits null sound files before channel start")
+# Ordered assertion: the short-circuit must precede BOTH channel-start
+# calls, not merely exist somewhere in the file (review thread
+# r4070007432). extract_slice fails closed when the end marker is missing
+# or ordered before the start, so moving the check after a channel start
+# empties these slices and rejects the regression.
+extract_slice(_snd
+    "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+    "SND_StartAliasSample(&startAliasInfo, pChannel);"
+    _null_before_sample
+    "null check before sample channel start")
+extract_slice(_snd
+    "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+    "SND_StartAliasStream(&startAliasInfo, pChannel);"
+    _null_before_stream
+    "null check before stream channel start")
+
 # Contract mutation self-verification: each mutation below is a plausible
 # regression and must be rejected by the checks above.
 if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
@@ -138,6 +181,31 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
         string(REPLACE
             "gfx_d3d|sound|ui" "gfx_d3d|ui"
             _dedi "${_dedi}")
+    elseif(CONTRACT_MUTATION STREQUAL "headless_setdata_unguarded")
+        string(REPLACE
+            "#ifndef KISAK_DEDI_HEADLESS SND_SetData(mssSound, *data); #else (void)data; (void)mssSound; #endif"
+            "SND_SetData(mssSound, *data);"
+            _dbload "${_dbload}")
+    elseif(CONTRACT_MUTATION STREQUAL "clear_runtime_dropped")
+        string(REPLACE
+            "DB_ClearHeadlessSoundRuntimeData(varMssSound);"
+            "" _dbload "${_dbload}")
+    elseif(CONTRACT_MUTATION STREQUAL "null_short_circuit_removed")
+        string(REPLACE
+            "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+            "" _snd "${_snd}")
+    elseif(CONTRACT_MUTATION STREQUAL "null_check_after_channel_start")
+        # Reviewer scenario: the check still exists but runs after the
+        # channel-start calls, so a null file reaches the driver first.
+        # The file-wide pin above still matches; only the ordered slices
+        # reject this.
+        string(REPLACE
+            "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+            "" _snd "${_snd}")
+        string(REPLACE
+            "playbackId = SND_StartAliasStream(&startAliasInfo, pChannel);"
+            "playbackId = SND_StartAliasStream(&startAliasInfo, pChannel); if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+            _snd "${_snd}")
     else()
         message(FATAL_ERROR
             "Unknown null media contract mutation: '${CONTRACT_MUTATION}'")
@@ -158,12 +226,48 @@ require_contains(_dedi
     "if (_rel MATCHES \"^\\\\.\\\\./deps/(binklib|msslib)/\")"
     "proprietary dependency exclusion survives mutations")
 
+# Survival checks for the stage-4 pins. Pins repeated after the mutation
+# block are the rejection mechanism: each registered mutation must break at
+# least one of them.
+require_count(_dbload
+    "#ifndef KISAK_DEDI_HEADLESS SND_SetData(mssSound, *data); #else (void)data; (void)mssSound; #endif" 1
+    "headless sound-load no-op survives mutations")
+require_contains(_dbload
+    "DB_ClearHeadlessSoundRuntimeData(varMssSound);"
+    "headless runtime-data clear call survives mutations")
+require_contains(_snd
+    "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+    "null sound short-circuit survives mutations")
+extract_slice(_snd
+    "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+    "SND_StartAliasSample(&startAliasInfo, pChannel);"
+    _null_before_sample_mut
+    "null check before sample start (mutation check)")
+extract_slice(_snd
+    "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+    "SND_StartAliasStream(&startAliasInfo, pChannel);"
+    _null_before_stream_mut
+    "null check before stream start (mutation check)")
+require_contains(_dbload
+    "void DB_ClearHeadlessSoundRuntimeData(MssSoundCOD4 *sound)"
+    "headless runtime-data clear entry survives mutations")
+require_contains(_sndpublic
+    "bool __cdecl SND_IsNullSoundFile(const SoundFile *soundFile);"
+    "null sound declaration survives mutations")
+require_contains(_snd
+    "bool __cdecl SND_IsNullSoundFile(const SoundFile *soundFile)"
+    "null sound implementation survives mutations")
+
 if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
     foreach(_mutation IN ITEMS
         init_unguarded
         groupvoice_allowed_in_dedi
         bink_allowed_in_dedi
-        sound_allowed_in_dedi)
+        sound_allowed_in_dedi
+        headless_setdata_unguarded
+        clear_runtime_dropped
+        null_short_circuit_removed
+        null_check_after_channel_start)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"
