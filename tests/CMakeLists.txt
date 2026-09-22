@@ -3589,20 +3589,21 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/xmodel_cursor_source_invariants_test.cmake)
 
 # xmodel_loader_entry_test: production-loader entry-point contracts
-# (ki-okmr / #124). Links and executes the REAL XModelLoadFile
-# (src/xanim/xmodel_load_obj.cpp) — its config/collision/LOD parsing,
-# its real nested parts parse (xanim_load_obj.cpp is enrolled for its
-# ConsumeQuatNoSwap), its real nested surfs windows and its checked
-# material second pass — over controlled fixtures served by the
-# harness file system (xmodel_loader_entry_harness.hpp: in-memory FS
-# and hunk cache, capture stubs; neither nested loader needs a
-# stand-in). The loader TUs' DirectX/Miles/ODE header web and MSVC
-# decompiled dialect (raw __declspec(align(16)), `const struct`
-# definitions) compile only under the win32-x86 platform, so this
-# target is gated to the Windows x86 CI leg and never configured on
-# the portable 64-bit legs; the portable suites above plus
-# xmodel_cursor_source_invariants cover the cursor contracts
-# everywhere else.
+# (ki-okmr / #124; XAnim entries enrolled in ki-458h stage 2). Links
+# and executes the REAL production entry points from
+# src/xanim/xmodel_load_obj.cpp + src/xanim/xanim_load_obj.cpp —
+# XModelLoadFile (config/collision/LOD parsing, the real nested parts
+# parse, real nested surfs windows, the checked material second pass)
+# and XAnimLoadFile / XModelPiecesLoadFile / XModelPiecesPrecache —
+# over controlled fixtures served by the harness file system
+# (xmodel_loader_entry_harness.hpp: in-memory FS and hunk cache,
+# capture stubs; none of the entry points needs a stand-in). The
+# loader TUs' DirectX/Miles/ODE header web and MSVC decompiled dialect
+# (raw __declspec(align(16)), `const struct` definitions) compile only
+# under the win32-x86 platform, so this target is gated to the Windows
+# x86 CI leg and never configured on the portable 64-bit legs; the
+# portable suites above plus xmodel_cursor_source_invariants cover the
+# cursor contracts everywhere else.
 if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     add_executable(kisakcod-xmodel-loader-entry-tests
         xmodel_loader_entry_test.cpp

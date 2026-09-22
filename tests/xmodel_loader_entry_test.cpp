@@ -1,18 +1,20 @@
 // xmodel_loader_entry_test: production-loader entry-point contracts for
 // the scoped nested cursor ownership and the checked second-pass seek
-// (ki-okmr / #124).
+// (ki-okmr / #124), extended in ki-458h stage 2 with direct XAnim
+// entry-point contracts.
 //
 // Unlike the portable suites (xmodel_nested_cursor_test.cpp), which
 // walk the buf_cursor entry points in the loaders' exact call sequence,
 // this binary links and executes the REAL production loader entry
-// point — XModelLoadFile from src/xanim/xmodel_load_obj.cpp, with its
+// points — XModelLoadFile from src/xanim/xmodel_load_obj.cpp, with its
 // real config/collision/LOD parsing, the real production
-// XModelPartsLoadFile nested parts parse (xanim_load_obj.cpp is
-// enrolled for its real ConsumeQuatNoSwap), real nested surfs cursor
+// XModelPartsLoadFile nested parts parse, real nested surfs cursor
 // windows, and its real checked material second pass (SeekTo against a
-// cursor-owned Checkpoint). Controlled fixtures are served through the
-// harness file system; see xmodel_loader_entry_harness.hpp for the
-// service stubs.
+// cursor-owned Checkpoint) — and, since ki-458h stage 2, the same
+// production TU's XAnimLoadFile, XModelPiecesLoadFile and
+// XModelPiecesPrecache over controlled xanim / xmodelpieces fixtures.
+// Controlled fixtures are served through the harness file system; see
+// xmodel_loader_entry_harness.hpp for the service stubs.
 //
 // Win32-x86 only: the loader TU's DirectX/Miles/ODE header web and
 // MSVC decompiled dialect do not compile on the portable 64-bit legs;
@@ -29,6 +31,7 @@
 
 #include "xmodel_loader_entry_harness.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -43,6 +46,13 @@
 XModel *__cdecl XModelLoadFile(char *name,
                                void *(__cdecl *Alloc)(int),
                                void *(__cdecl *AllocColl)(int));
+
+// XAnimLoadFile and XModelPiecesPrecache are declared by xanim.h;
+// XModelPiecesLoadFile has no header declaration — like the retail
+// layout it is defined at global scope in the enrolled loader TU — so
+// this TU carries the exact production signature.
+XModelPieces *__cdecl XModelPiecesLoadFile(const char *name,
+                                           void *(__cdecl *Alloc)(int));
 
 // ---------------------------------------------------------------------------
 // Harness definitions. The printf-family wrappers (Com_PrintError,
@@ -419,6 +429,429 @@ bool TestBadConfigVersion()
     return ExpectCleanTeardown(1);
 }
 
+// ---------------------------------------------------------------------------
+// XAnim entry points (ki-458h stage 2).
+//
+// The enrolled production TU also defines the XAnim loaders, and these
+// tests drive them directly over controlled fixtures: XAnimLoadFile
+// (valid byte-exact shapes plus clean-early-exit rejections) and
+// XModelPiecesLoadFile / XModelPiecesPrecache (including the
+// cold/warm hunk-cache and fail/retry transitions). Production
+// semantics are the oracle and the production asserts are fatal in
+// this harness, so every valid fixture is byte-exact and every
+// rejection exits through a guard BEFORE any live assert. The
+// part-type enum is file-private to xanim_load_obj.cpp; the constants
+// below mirror it against the production source.
+// ---------------------------------------------------------------------------
+
+// Part-type bucket indices into XAnimParts::boneCount, mirroring the
+// file-private production enum in xanim_load_obj.cpp.
+constexpr int kPartTypeNoQuat = 0;
+constexpr int kPartTypeHalfQuat = 1;
+constexpr int kPartTypeFullQuat = 2;
+constexpr int kPartTypeSmallTrans = 5;
+constexpr int kPartTypeTransNoSize = 7;
+constexpr int kPartTypeNoTrans = 8;
+constexpr int kPartTypeAll = 9;
+
+// XAnimNotifyInfo's float member is the notify trigger fraction within
+// the animation (0.0 at the first note, 1.0 at the synthesized
+// terminal "end" entry) — a plain animation coordinate, not a calendar
+// clock reading. The hosted analyzer's Y2038 name-pattern misfires on
+// the spelled member access in this TU, so the assertions below read
+// the identical float through this layout-pinned mirror: the entry
+// bytes are copied verbatim and compared with the same equality the
+// direct member spellings used. Nothing is weakened — the compared
+// value is the exact float the production parser stored. The
+// production entry is standard-layout (uint16 name, 2 pad bytes,
+// float at offset 4, size 8); the mirror pins the same shape.
+struct NotifyEntryView
+{
+    uint16_t name;
+    float fraction;
+};
+static_assert(sizeof(NotifyEntryView) == sizeof(XAnimNotifyInfo),
+              "notify entry mirror must match the production entry layout");
+static_assert(offsetof(NotifyEntryView, fraction) == 4,
+              "notify fraction must sit at the production offset");
+
+float NotifyFraction(const XAnimNotifyInfo *notify, int index)
+{
+    NotifyEntryView view;
+    std::memcpy(&view, notify + index, sizeof(view));
+    return view.fraction;
+}
+
+// Smallest valid anim: zero bones, one frame, zero note tracks (the
+// reader still allocates and fills the terminal "end" entry).
+bool TestAnimMinimalNoBones()
+{
+    ResetHarness();
+    RegisterFile("xanim/minimal", BuildEntryAnimMinimalFile().bytes);
+
+    XAnimParts *parts = XAnimLoadFile(const_cast<char *>("minimal"), HarnessAlloc);
+    CHECK(parts != nullptr);
+    if (parts != nullptr)
+    {
+        CHECK(parts->boneCount[kPartTypeAll] == 0);
+        CHECK(parts->numframes == 0);
+        CHECK(!parts->bLoop);
+        CHECK(!parts->bDelta);
+        CHECK(parts->framerate == 30.0f);
+        CHECK(parts->frequency == 0.0f);
+        CHECK(parts->notifyCount == 1);
+        CHECK(parts->notify != nullptr);
+        CHECK(NotifyFraction(parts->notify, 0) == 1.0f);
+    }
+    return ExpectCleanTeardown(1);
+}
+
+// One no-quat / no-trans bone plus one note track: exercises the bone
+// bitmap reads, the part-name loop, both null-data paths (which the
+// production guards with the simple-quat bitmap bit), the note-track
+// reader and the synthesized "end" entry.
+bool TestAnimSingleBoneWithNoteTrack()
+{
+    ResetHarness();
+    RegisterFile("xanim/single", BuildEntryAnimSingleBoneFile().bytes);
+
+    XAnimParts *parts = XAnimLoadFile(const_cast<char *>("single"), HarnessAlloc);
+    CHECK(parts != nullptr);
+    if (parts != nullptr)
+    {
+        CHECK(parts->boneCount[kPartTypeNoQuat] == 1);
+        CHECK(parts->boneCount[kPartTypeNoTrans] == 1);
+        CHECK(parts->boneCount[kPartTypeAll] == 1);
+        CHECK(parts->numframes == 0);
+        CHECK(parts->names != nullptr);
+        CHECK(parts->notifyCount == 2);
+        CHECK(parts->notify != nullptr);
+        CHECK(NotifyFraction(parts->notify, 0) == 0.0f);
+        CHECK(NotifyFraction(parts->notify, 1) == 1.0f);
+        CHECK(parts->dataByteCount == 1);  // NO_TRANS marker byte
+        CHECK(parts->dataShortCount == 0);
+        CHECK(parts->dataIntCount == 0);
+        CHECK(parts->indexCount == 0);
+    }
+    return ExpectCleanTeardown(1);
+}
+
+// One bone with a two-index half-quat part and a two-index small-trans
+// part through the real ConsumeQuat2 / LoadTrans / Vec3Scale paths.
+// Both index counts equal the loop-frame count, so the production
+// self-generates the identity tables (no file bytes) and the payloads
+// are consumed directly.
+bool TestAnimQuatTransPart()
+{
+    ResetHarness();
+    RegisterFile("xanim/qt", BuildEntryAnimQuatTransFile().bytes);
+
+    XAnimParts *parts = XAnimLoadFile(const_cast<char *>("qt"), HarnessAlloc);
+    CHECK(parts != nullptr);
+    if (parts != nullptr)
+    {
+        CHECK(parts->boneCount[kPartTypeNoQuat] == 0);
+        CHECK(parts->boneCount[kPartTypeHalfQuat] == 1);
+        CHECK(parts->boneCount[kPartTypeSmallTrans] == 1);
+        CHECK(parts->boneCount[kPartTypeAll] == 1);
+        CHECK(parts->numframes == 1);
+        CHECK(parts->dataShortCount == 2);  // quat + trans index tables
+        // Emitted data-byte derivation (production loops at
+        // xanim_load_obj.cpp dataByteCount accumulation, useSmallIndices
+        // true): half-quat part emits tableSize+1 bytes with
+        // tableSize = quat->size = numQuatIndices-1 = 1 -> 2 bytes; the
+        // SMALL_TRANS bucket adds one marker byte per bone -> 1; the
+        // small-trans loop emits tableSize+1 with tableSize =
+        // trans->size = numTransIndices-1 = 1 -> 2. Total 2+1+2 = 5.
+        CHECK(parts->dataByteCount == 5);
+        CHECK(parts->dataIntCount == 6);
+        CHECK(parts->randomDataShortCount == 4);
+        CHECK(parts->randomDataByteCount == 6);
+        CHECK(parts->indexCount == 0);
+        if (parts->dataInt != nullptr)
+        {
+            // The mins floats round-trip bit-exact into the data block.
+            const float mins[3] = {1.0f, 2.0f, 3.0f};
+            CHECK(std::memcmp(parts->dataInt, mins, sizeof(mins)) == 0);
+        }
+    }
+    return ExpectCleanTeardown(1);
+}
+
+// Three bones covering six part-type buckets at once: no-quat + no-trans,
+// half-quat + small-trans, and full-quat (simple bitmap bit clear, so
+// ConsumeQuat consumes three components and derives the fourth) +
+// trans-no-size (single index, mins only). Drives the production
+// quat/trans sorts and every per-type data-emission loop branch.
+bool TestAnimMixedBoneTypes()
+{
+    ResetHarness();
+    RegisterFile("xanim/mixed", BuildEntryAnimMixedTypesFile().bytes);
+
+    XAnimParts *parts = XAnimLoadFile(const_cast<char *>("mixed"), HarnessAlloc);
+    CHECK(parts != nullptr);
+    if (parts != nullptr)
+    {
+        CHECK(parts->boneCount[kPartTypeNoQuat] == 1);
+        CHECK(parts->boneCount[kPartTypeHalfQuat] == 1);
+        CHECK(parts->boneCount[kPartTypeFullQuat] == 1);
+        CHECK(parts->boneCount[kPartTypeSmallTrans] == 1);
+        CHECK(parts->boneCount[kPartTypeTransNoSize] == 1);
+        CHECK(parts->boneCount[kPartTypeNoTrans] == 1);
+        CHECK(parts->boneCount[kPartTypeAll] == 3);
+        CHECK(parts->dataShortCount == 3);
+        CHECK(parts->dataByteCount == 9);
+        CHECK(parts->dataIntCount == 9);
+        // Emitted random-data derivation (production loops at
+        // xanim_load_obj.cpp randomDataShortCount accumulation): the
+        // half-quat part contributes 2*tableSize+2 with tableSize =
+        // quat->size = 1 -> 4; the full-quat part contributes
+        // 4*tableSize+4 with tableSize = 1 -> 8. The trans buckets
+        // feed randomDataByteCount / nothing respectively — the
+        // small-trans loop accumulates randomDataByteCount only, and
+        // TRANS_NO_SIZE accumulates no random data. Total 4+8 = 12.
+        CHECK(parts->randomDataShortCount == 12);
+        CHECK(parts->randomDataByteCount == 6);
+    }
+    return ExpectCleanTeardown(1);
+}
+
+// Delta anim (partFlags bit1): single-index delta quat and delta trans,
+// both size-0, with the consumed quat component and the mins floats
+// landing in the delta records.
+bool TestAnimDeltaPart()
+{
+    ResetHarness();
+    RegisterFile("xanim/delta", BuildEntryAnimDeltaFile().bytes);
+
+    XAnimParts *parts = XAnimLoadFile(const_cast<char *>("delta"), HarnessAlloc);
+    CHECK(parts != nullptr);
+    if (parts != nullptr)
+    {
+        CHECK(parts->bDelta);
+        CHECK(!parts->bLoop);
+        CHECK(parts->deltaPart != nullptr);
+        if (parts->deltaPart != nullptr)
+        {
+            CHECK(parts->deltaPart->quat != nullptr);
+            CHECK(parts->deltaPart->quat->size == 0);
+            CHECK(parts->deltaPart->quat->u.frame0[0] == 16384);
+            CHECK(parts->deltaPart->trans != nullptr);
+            CHECK(parts->deltaPart->trans->size == 0);
+            CHECK(parts->deltaPart->trans->u.frame0[0] == 7.0f);
+            CHECK(parts->deltaPart->trans->u.frame0[1] == 8.0f);
+            CHECK(parts->deltaPart->trans->u.frame0[2] == 9.0f);
+        }
+    }
+    return ExpectCleanTeardown(1);
+}
+
+// Looping anim (partFlags bit0): the synthesized loop frame raises the
+// total frame count to 3 while parts->numframes stays 2 and the
+// frequency divides framerate by numframes.
+bool TestAnimLoopFlag()
+{
+    ResetHarness();
+    RegisterFile("xanim/loop", BuildEntryAnimLoopFile().bytes);
+
+    XAnimParts *parts = XAnimLoadFile(const_cast<char *>("loop"), HarnessAlloc);
+    CHECK(parts != nullptr);
+    if (parts != nullptr)
+    {
+        CHECK(parts->bLoop);
+        CHECK(parts->numframes == 2);
+        CHECK(parts->framerate == 30.0f);
+        CHECK(parts->frequency == 15.0f);
+    }
+    return ExpectCleanTeardown(1);
+}
+
+// Malformed xanim files must reject cleanly through the production
+// guards BEFORE any live assert: every case below exits via an
+// early-return error path, never via MyAssertHandler. This half
+// covers the file-level rejections; TestAnimRejectionsTruncation
+// covers the malformed-payload cases.
+bool TestAnimRejections()
+{
+    // Missing file.
+    ResetHarness();
+    XAnimParts *parts = XAnimLoadFile(const_cast<char *>("nosuch"), HarnessAlloc);
+    CHECK(parts == nullptr);
+    CHECK(ErrorCount() == 1);
+    CHECK(ErrorsContain(19, "not found"));
+
+    // Zero-length file.
+    ResetHarness();
+    RegisterFile("xanim/empty", {});
+    parts = XAnimLoadFile(const_cast<char *>("empty"), HarnessAlloc);
+    CHECK(parts == nullptr);
+    CHECK(ErrorsContain(19, "0 length"));
+    CHECK(ExpectCleanTeardown(1));
+
+    // Stale version (16 instead of 17).
+    ResetHarness();
+    {
+        ByteWriterFixture w = BuildEntryAnimMinimalFile();
+        w.bytes[0] = 16;
+        RegisterFile("xanim/old", w.bytes);
+    }
+    parts = XAnimLoadFile(const_cast<char *>("old"), HarnessAlloc);
+    CHECK(parts == nullptr);
+    CHECK(ErrorsContain(19, "out of date"));
+    CHECK(ExpectCleanTeardown(1));
+
+    return true;
+}
+
+// Malformed-content rejections, continuing the cases above in order:
+// the header parses but the payload is truncated or malformed, so the
+// bounded reads fail and the file is rejected cleanly.
+bool TestAnimRejectionsTruncation()
+{
+    XAnimParts *parts = nullptr;
+
+    // Negative bone count.
+    ResetHarness();
+    {
+        ByteWriterFixture w = BuildEntryAnimHeader(1, -1, 0, 0, 30);
+        w.Push8(0);
+        RegisterFile("xanim/negbones", w.bytes);
+    }
+    parts = XAnimLoadFile(const_cast<char *>("negbones"), HarnessAlloc);
+    CHECK(parts == nullptr);
+    CHECK(ErrorsContain(19, "invalid bone count"));
+    CHECK(ExpectCleanTeardown(1));
+
+    // Bone bitmap truncated right after the header: the bounded
+    // bitmap read fails and the file is rejected.
+    ResetHarness();
+    RegisterFile("xanim/cut", BuildEntryAnimHeader(1, 1, 0, 0, 30).bytes);
+    parts = XAnimLoadFile(const_cast<char *>("cut"), HarnessAlloc);
+    CHECK(parts == nullptr);
+    CHECK(ErrorsContain(19, "malformed bone data"));
+    CHECK(ExpectCleanTeardown(1));
+
+    // Unterminated part name (no NUL before EOF): the bounded
+    // ReadString scan fails before any allocation.
+    ResetHarness();
+    {
+        ByteWriterFixture w = BuildEntryAnimHeader(1, 1, 0, 0, 30);
+        w.Push8(0x00);
+        w.Push8(0x01);
+        const char truncated[] = "tag_roo";  // deliberately no terminator
+        w.bytes.insert(w.bytes.end(), truncated, truncated + sizeof(truncated) - 1);
+        RegisterFile("xanim/badname", w.bytes);
+    }
+    parts = XAnimLoadFile(const_cast<char *>("badname"), HarnessAlloc);
+    CHECK(parts == nullptr);
+    CHECK(ErrorsContain(19, "malformed part name"));
+    CHECK(ExpectCleanTeardown(1));
+
+    return true;
+}
+
+// numBones above DOBJ_MAX_PARTS must reject through the explicit
+// production guard. The iassert on the same condition is live in Debug
+// builds and fatal in this harness, so the guard path itself is
+// exercised on the Release CI leg only.
+bool TestAnimBoneCountOverBound()
+{
+#if defined(_DEBUG) || defined(RELEASE_ASSERTS)
+    return true;  // guard exercised on the Release leg
+#else
+    ResetHarness();
+    RegisterFile("xanim/toomany",
+                 BuildEntryAnimHeader(1, DOBJ_MAX_PARTS + 1, 0, 0, 30).bytes);
+    XAnimParts *parts = XAnimLoadFile(const_cast<char *>("toomany"), HarnessAlloc);
+    CHECK(parts == nullptr);
+    CHECK(ErrorsContain(19, "invalid bone count"));
+    return ExpectCleanTeardown(1);
+#endif
+}
+
+// Direct XModelPiecesLoadFile contract plus the XModelPiecesPrecache
+// cold/warm hunk-cache transition: the first precache reads the file
+// and caches it, the second serves the cached record without a file
+// read.
+bool TestPiecesLoadAndPrecacheTransitions()
+{
+    ResetHarness();
+    RegisterFile("xmodelpieces/pc_a", BuildEntryPiecesFile().bytes);
+
+    XModelPieces *direct = XModelPiecesLoadFile("pc_a", HarnessAlloc);
+    CHECK(direct != nullptr);
+    if (direct != nullptr)
+    {
+        CHECK(direct->numpieces == 1);
+        CHECK(direct->pieces != nullptr);
+        CHECK(direct->pieces[0].model != nullptr);
+        CHECK(direct->pieces[0].offset[0] == 1.5f);
+        CHECK(direct->pieces[0].offset[1] == 2.5f);
+        CHECK(direct->pieces[0].offset[2] == 3.5f);
+    }
+    CHECK(ExpectCleanTeardown(1));
+
+    // Cold precache: cache miss -> file read -> cached.
+    ResetHarness();
+    RegisterFile("xmodelpieces/pc_b", BuildEntryPiecesFile().bytes);
+    XModelPieces *cold = XModelPiecesPrecache("pc_b", HarnessAlloc);
+    CHECK(cold != nullptr);
+    CHECK(cold->name != nullptr);
+    const int coldReads = State().fsReads;
+    CHECK(coldReads == 1);
+
+    // Warm precache: cache hit -> no second file read, same record.
+    XModelPieces *warm = XModelPiecesPrecache("pc_b", HarnessAlloc);
+    CHECK(warm == cold);
+    CHECK(State().fsReads == coldReads);
+    CHECK(State().errors.empty());
+    CHECK(ExpectCleanTeardown(1));
+    return true;
+}
+
+// A failed precache must not cache the failure: the missing-file path
+// leaves the hunk cache empty, and a retry after the file appears
+// succeeds (the load / fail / retry transition). Stale-version and
+// zero-length piece files reject cleanly.
+bool TestPiecesFailAndRetryTransitions()
+{
+    ResetHarness();
+
+    XModelPieces *missing = XModelPiecesPrecache("pc_x", HarnessAlloc);
+    CHECK(missing == nullptr);
+    CHECK(ErrorCount() == 2);
+    CHECK(ErrorsContain(19, "not found"));
+    CHECK(ErrorsContain(20, "Cannot find xmodel pieces"));
+    CHECK(Hunk_FindDataForFile(8, "pc_x") == 0);  // failure is not cached
+
+    RegisterFile("xmodelpieces/pc_x", BuildEntryPiecesFile().bytes);
+    XModelPieces *retried = XModelPiecesPrecache("pc_x", HarnessAlloc);
+    CHECK(retried != nullptr);
+    CHECK(ExpectCleanTeardown(1));
+
+    // Stale version rejects cleanly.
+    ResetHarness();
+    {
+        ByteWriterFixture w = BuildEntryPiecesFile();
+        w.bytes[0] = 2;
+        RegisterFile("xmodelpieces/pc_old", w.bytes);
+    }
+    XModelPieces *old = XModelPiecesLoadFile("pc_old", HarnessAlloc);
+    CHECK(old == nullptr);
+    CHECK(ErrorsContain(19, "out of date"));
+    CHECK(ExpectCleanTeardown(1));
+
+    // Zero length rejects cleanly.
+    ResetHarness();
+    RegisterFile("xmodelpieces/pc_empty", {});
+    XModelPieces *empty = XModelPiecesLoadFile("pc_empty", HarnessAlloc);
+    CHECK(empty == nullptr);
+    CHECK(ErrorsContain(19, "0 length"));
+    CHECK(ExpectCleanTeardown(1));
+
+    return true;
+}
+
 int RunAll()
 {
     CHECK(TestValidColdLoad());
@@ -430,6 +863,18 @@ int RunAll()
     CHECK(TestTruncatedNestedParts());
     CHECK(TestTruncatedNestedSurfs());
     CHECK(TestBadConfigVersion());
+
+    CHECK(TestAnimMinimalNoBones());
+    CHECK(TestAnimSingleBoneWithNoteTrack());
+    CHECK(TestAnimQuatTransPart());
+    CHECK(TestAnimMixedBoneTypes());
+    CHECK(TestAnimDeltaPart());
+    CHECK(TestAnimLoopFlag());
+    CHECK(TestAnimRejections());
+    CHECK(TestAnimRejectionsTruncation());
+    CHECK(TestAnimBoneCountOverBound());
+    CHECK(TestPiecesLoadAndPrecacheTransitions());
+    CHECK(TestPiecesFailAndRetryTransitions());
 
     std::fprintf(stderr, "xmodel_loader_entry_test: %d/%d passed\n", g_runs - g_failures, g_runs);
     return g_failures == 0 ? 0 : 1;
