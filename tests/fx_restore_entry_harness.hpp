@@ -77,11 +77,38 @@ namespace fx_restore_entry_harness
 {
 struct RecordedError
 {
-    int channel;
     std::string text;
 };
 
 using RecordedErrorList = std::vector<RecordedError>;
+
+// Single-argument spellings of the production handle queries
+// (fx_pool.h): binding the production template parameters once inside
+// plain functions keeps every declaration initializer in this harness
+// a simple call. The analyzer's comma-operator heuristic (MISRA 12.3)
+// misreads a multi-argument template list inside a declaration
+// initializer as a comma operator, so the constant tables below go
+// through these helpers instead.
+inline constexpr std::size_t FxEffectHandleAdmissionStride() noexcept
+{
+    return FxHandleStride<FxEffect, FX_EFFECT_LIMIT,
+                          FxEffect::HANDLE_SCALE>();
+}
+
+inline std::uint16_t EncodePristineEffectHandle(FxSystem &system,
+                                                std::size_t slot) noexcept
+{
+    return FxEncodeHandle<FxEffect, FX_EFFECT_LIMIT,
+                          FxEffect::HANDLE_SCALE>(system.effects,
+                                                  &system.effects[slot]);
+}
+
+inline std::uint16_t EncodeHarnessEffectHandle(
+    const FxSystem &system, const FxEffect *effect) noexcept
+{
+    return FxEncodeHandle<FxEffect, FX_EFFECT_LIMIT,
+                          FxEffect::HANDLE_SCALE>(system.effects, effect);
+}
 
 // Mirrors the file-scope FxPoolAllocationStates of fx_system.cpp
 // (the per-slot pool allocation sidecar state); the mangled link
@@ -113,11 +140,9 @@ struct HarnessState
     volatile std::int32_t effectKillGate;
     // Per-effect owner-admission words behind
     // FX_GetEffectOwnerAdmissionState (production layout: one word
-    // per FxHandleStride<FxEffect, FX_EFFECT_LIMIT,
-    // FxEffect::HANDLE_SCALE>() handles).
+    // per FxEffectHandleAdmissionStride() handles).
     static constexpr std::size_t kEffectAdmissionStride =
-        FxHandleStride<FxEffect, FX_EFFECT_LIMIT,
-                       FxEffect::HANDLE_SCALE>();
+        FxEffectHandleAdmissionStride();
     static constexpr std::size_t kEffectAdmissionWordCount =
         FX_EFFECT_LIMIT / kEffectAdmissionStride;
     std::int32_t effectOwnerAdmissionBlocked[kEffectAdmissionWordCount];
@@ -151,15 +176,13 @@ inline HarnessState &State()
 // ownership: linked buffer views, exclusive iterator, zeroed live
 // counts, fully chained free pools (the classic production free-list
 // encoding: firstFree* = 0 head, per-slot nextFree = index + 1, tail
-// = -1), and the camera marked invalid.
-inline void InitPristineFxSystem()
-{
-    HarnessState &state = State();
-    memset(&state.system, 0, sizeof(state.system));
-    memset(&state.buffers, 0, sizeof(state.buffers));
+// = -1), and the camera marked invalid. The setup phases below are
+// behavior-preserving extractions; InitPristineFxSystem runs them in
+// the original order.
 
-    FxSystem &system = state.system;
-    FxSystemBuffers &buffers = state.buffers;
+inline void LinkPristineSystemBuffers(FxSystem &system,
+                                      FxSystemBuffers &buffers)
+{
     system.elems = buffers.elems;
     system.effects = buffers.effects;
     system.trails = buffers.trails;
@@ -168,7 +191,11 @@ inline void InitPristineFxSystem()
     system.deferredElems = buffers.deferredElems;
     system.visStateBufferRead = &buffers.visState[0];
     system.visStateBufferWrite = &buffers.visState[1];
+}
 
+inline void ChainPristineFreeLists(FxSystem &system,
+                                   FxSystemBuffers &buffers)
+{
     system.firstFreeElem = 0;
     for (std::size_t i = 0; i < MAX_ELEMS; ++i)
         buffers.elems[i].nextFree = static_cast<std::int32_t>(i) + 1;
@@ -183,7 +210,10 @@ inline void InitPristineFxSystem()
     for (std::size_t i = 0; i < MAX_TRAIL_ELEMS; ++i)
         buffers.trailElems[i].nextFree = static_cast<std::int32_t>(i) + 1;
     buffers.trailElems[MAX_TRAIL_ELEMS - 1].nextFree = -1;
+}
 
+inline void InitPristineSystemRuntimeState(FxSystem &system)
+{
     system.iteratorCount = -1;
     system.isArchiving = 0;
     system.isInitialized = 1;
@@ -195,16 +225,22 @@ inline void InitPristineFxSystem()
     // (FX_AreArchiveCamerasReady / ValidateArchiveSystemState).
     system.msecNow = 0;
     system.msecDraw = -1;
-    // Production initialization encodes the identity handle
-    // permutation (the free-slot inventory doubles as active-ring
-    // storage); the archive graph validator decodes every entry.
+}
+
+// Production initialization encodes the identity handle permutation
+// (the free-slot inventory doubles as active-ring storage); the
+// archive graph validator decodes every entry.
+inline void InitPristineEffectHandles(FxSystem &system)
+{
     for (std::size_t i = 0; i < FX_EFFECT_LIMIT; ++i)
     {
-        system.allEffectHandles[i] = FxEncodeHandle<
-            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
-                system.effects, &system.effects[i]);
+        system.allEffectHandles[i] =
+            EncodePristineEffectHandle(system, i);
     }
+}
 
+inline void InitPristineArchiveGates(HarnessState &state)
+{
     state.archiveGate = static_cast<std::int32_t>(
         fx::archive::ArchiveGateValue::Open);
     state.iteratorGeneration = 0;
@@ -220,6 +256,10 @@ inline void InitPristineFxSystem()
     FxPoolResetAllocationState(&state.poolStates.elems);
     FxPoolResetAllocationState(&state.poolStates.trails);
     FxPoolResetAllocationState(&state.poolStates.trailElems);
+}
+
+inline void InitPristineSpotLightState(FxSystem &system)
+{
     Sys_AtomicStore(&system.activeSpotLightEffectCount, 0);
     Sys_AtomicStore(&system.activeSpotLightElemCount, 0);
     system.activeSpotLightEffectHandle = FX_INVALID_HANDLE;
@@ -227,11 +267,15 @@ inline void InitPristineFxSystem()
     Sys_AtomicStore(&system.gfxCloudCount, 0);
     Sys_AtomicStore(&system.visState[0].blockerCount, 0);
     Sys_AtomicStore(&system.visState[1].blockerCount, 0);
-    // The production runtime initializes each system slot's physics
-    // sidecar as initialized-and-empty; ResetEmpty on a default
-    // (uninitialized) sidecar is exactly that state. Reconstruct the
-    // sidecar through its default constructor + production ResetEmpty
-    // rather than memset: BodySidecar is a real class.
+}
+
+// The production runtime initializes each system slot's physics
+// sidecar as initialized-and-empty; ResetEmpty on a default
+// (uninitialized) sidecar is exactly that state. Reconstruct the
+// sidecar through its default constructor + production ResetEmpty
+// rather than memset: BodySidecar is a real class.
+inline void InitPristinePhysicsSidecar(HarnessState &state)
+{
     state.physicsSidecar.~BodySidecar();
     new (&state.physicsSidecar) fx::physics::BodySidecar();
     if (fx::physics::ResetEmpty(&state.physicsSidecar)
@@ -241,6 +285,21 @@ inline void InitPristineFxSystem()
         std::abort();
     }
     state.physicsRejectionCalls = 0;
+}
+
+inline void InitPristineFxSystem()
+{
+    HarnessState &state = State();
+    memset(&state.system, 0, sizeof(state.system));
+    memset(&state.buffers, 0, sizeof(state.buffers));
+
+    LinkPristineSystemBuffers(state.system, state.buffers);
+    ChainPristineFreeLists(state.system, state.buffers);
+    InitPristineSystemRuntimeState(state.system);
+    InitPristineEffectHandles(state.system);
+    InitPristineArchiveGates(state);
+    InitPristineSpotLightState(state.system);
+    InitPristinePhysicsSidecar(state);
 }
 
 inline void ResetHarness()
@@ -333,5 +392,18 @@ inline void DisarmErrDrop()
     ErrDrop().armed = false;
 }
 } // namespace fx_restore_entry_harness
+
+// Shared harness accessors defined at global scope in
+// fx_restore_entry_stubs.cpp and consumed by
+// fx_restore_entry_graph_stubs.cpp: mirrors of the production
+// fx_system.cpp slot lookups, all reducing to the single harness
+// slot.
+FxPoolAllocationStates *FX_GetPoolAllocationStates(
+    const FxSystem *const system) noexcept;
+volatile std::int32_t *FX_GetArchiveGate(
+    const FxSystem *const system) noexcept;
+volatile std::int32_t *FX_GetEffectOwnerAdmissionState(
+    const FxSystem *const system,
+    const FxEffect *const effect) noexcept;
 
 #endif // FX_RESTORE_ENTRY_HARNESS_HPP

@@ -10,3 +10,15 @@ xmodel-loader-entry-native
 # platform (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4), so the Linux amd64
 # reference never registers it; enrolled in and executed by the Windows
 # x86 (ILP32) selection.
+db-load-entry-native
+# Win32-x86-only subject: the enrolled DB admission/relocation TUs compile
+# exactly as the engine targets build them (win32-x86 platform gate, WIN32
+# AND CMAKE_SIZEOF_VOID_P EQUAL 4), so the Linux amd64 reference never
+# registers it; enrolled in and executed by the Windows x86 (ILP32)
+# selection.
+fx-restore-entry-native
+# Win32-x86-only subject: the enrolled FX Disk32 archive stack compiles
+# under the same win32-x86 platform gate (WIN32 AND CMAKE_SIZEOF_VOID_P
+# EQUAL 4) as the DB slice above, so the Linux amd64 reference never
+# registers it; enrolled in and executed by the Windows x86 (ILP32)
+# selection.

@@ -42,6 +42,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <universal/msvc_printf_shim.h>
+
 #include "db_load_entry_harness.hpp"
 
 // ---------------------------------------------------------------------------
@@ -161,7 +163,7 @@ void Sys_Error(const char *fmt, ...)
     char buffer[1024];
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(buffer, sizeof(buffer), fmt, args);
+    _vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
     std::printf("Sys_Error: %s\n", buffer);
     std::_Exit(4);
@@ -386,10 +388,9 @@ void Com_PrintWarning(int channel, const char *fmt, ...)
     char buffer[1024];
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(buffer, sizeof(buffer), fmt, args);
+    _vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
     db_load_entry_harness::RecordedError record;
-    record.channel = channel;
     record.text = buffer;
     db_load_entry_harness::State().printErrors.push_back(record);
     std::printf("printWarning(%d): %s\n", channel, buffer);

@@ -102,7 +102,6 @@ struct ByteWriter
 
 struct RecordedError
 {
-    int channel;
     std::string text;
 };
 
@@ -237,12 +236,10 @@ inline uint32_t OffsetToken(uint32_t block, uint32_t offset)
 // DB_CloneXAssetInternal copies DB_GetXAssetTypeSize(type) bytes out
 // of the caller's header into the pool slot, so the payload must
 // outlive every admission case; the tests keep these as statics.
-struct RawFilePayload
-{
-    const char *name;
-    int len;
-    const char *buffer;
-};
+// The payload IS the production RawFile record (xanim.h): the
+// registry clones it verbatim and HeaderBytesEqual reads it back
+// through the same type before every assertion.
+using RawFilePayload = RawFile;
 
 // The useFastFile dvar instance the harness configuration points at:
 // fast-file mode enabled, the only mode the enrolled entry points

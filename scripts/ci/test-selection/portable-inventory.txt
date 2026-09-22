@@ -91,6 +91,7 @@ database-zone-slot-range-source-invariants
 database-zone-stream-ownership-production-test-access-sealed
 database-zone-stream-ownership-runtime-contracts
 database-zone-stream-ownership-source-invariants
+db-load-entry-native
 dedi-headless-client-media-include-debt
 dedi-headless-source-profile
 disk32-pointer-token-bounds
@@ -145,6 +146,7 @@ fuzz-fastfile-corpus-setup
 fuzz-fastfile-cursor
 fuzz-sys-filesystem-random
 fuzz-sys-filesystem-seeds
+fx-restore-entry-native
 hudelem-sort-mp-contracts
 hudelem-sort-source-invariants
 hudelem-sort-sp-contracts

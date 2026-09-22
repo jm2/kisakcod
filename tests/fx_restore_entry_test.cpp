@@ -24,7 +24,10 @@
 
 #include <database/database.h>
 
+#include <universal/msvc_printf_shim.h>
+
 #include <csetjmp>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -37,11 +40,10 @@ void Com_PrintError(int channel, const char *fmt, ...)
     char buffer[4096];
     va_list args;
     va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    _vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
 
     fx_restore_entry_harness::RecordedError record;
-    record.channel = channel;
     record.text = buffer;
     fx_restore_entry_harness::State().printErrors.push_back(record);
     std::printf("print-err[%d]: %s\n", channel, buffer);
@@ -54,11 +56,10 @@ void Com_Error(errorParm_t code, const char *fmt, ...)
     char buffer[4096];
     va_list args;
     va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    _vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
 
     fx_restore_entry_harness::RecordedError record;
-    record.channel = static_cast<int>(code);
     record.text = buffer;
     fx_restore_entry_harness::State().errors.push_back(record);
     // Visible triage: every recorded drop names itself on stdout.
@@ -89,13 +90,16 @@ void MyAssertHandler(const char *filename, int line, int type,
                      const char *fmt, ...)
 {
     (void)type;
-    std::printf("PRODUCTION ASSERT - terminating: %s:%d: ", filename,
-                line);
+    // The variable message is formatted once into a fixed buffer and
+    // printed as a single string: the format string never reaches a
+    // variadic printf pass-through unanalyzed.
+    char message[4096];
     va_list args;
     va_start(args, fmt);
-    std::vprintf(fmt, args);
+    _vsnprintf(message, sizeof(message), fmt, args);
     va_end(args);
-    std::printf("\n");
+    std::printf("PRODUCTION ASSERT - terminating: %s:%d: %s\n", filename,
+                line, message);
     std::fflush(stdout);
     std::_Exit(3);
 }
@@ -121,7 +125,7 @@ void Com_Printf(int channel, const char *fmt, ...)
     char buffer[4096];
     va_list args;
     va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    _vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
     std::printf("print[%d]: %s\n", channel, buffer);
 }

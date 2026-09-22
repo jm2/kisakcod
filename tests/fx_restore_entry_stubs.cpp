@@ -31,6 +31,13 @@
 // which fast-file mode never takes - the stub records the call so a
 // routing regression is observable. FX_ErrorCleanup mirrors the
 // production lease-abandonment cleanup as a counted no-op.
+//
+// The pool-graph rebuild / validation machinery and the fail-closed
+// Phys_* boundary live in fx_restore_entry_graph_stubs.cpp: a
+// behavior-preserving file split (mirroring the fuzz-fastfile gate
+// split) that keeps both TUs inside the analyzer's file-length
+// budget. No definition moved across the binary boundary - every
+// moved symbol keeps its production signature and linkage.
 
 #include "fx_restore_entry_harness.hpp"
 
@@ -118,11 +125,13 @@ volatile std::int32_t *FX_GetEffectOwnerAdmissionState(
 {
     if (!system || !effect || system != &State().system)
         return nullptr;
-    constexpr std::size_t effectHandleStride = FxHandleStride<
-        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>();
-    const std::uint16_t effectHandle = FxEncodeHandle<
-        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
-            system->effects, effect);
+    // Both production handle queries are spelled through the shared
+    // harness helpers so every declaration initializer stays a plain
+    // call (the comma-operator heuristic misreads a multi-argument
+    // template list inside an initializer as MISRA 12.3).
+    const std::size_t effectHandleStride = FxEffectHandleAdmissionStride();
+    const std::uint16_t effectHandle =
+        EncodeHarnessEffectHandle(*system, effect);
     if (effectHandle == FX_INVALID_HANDLE)
         return nullptr;
     return &State().effectOwnerAdmissionBlocked
@@ -238,95 +247,6 @@ void FX_ErrorCleanup()
     ++State().errorCleanupCalls;
 }
 
-#ifdef KISAK_FX_RESTORE_RIG
-// --- production fx_load_obj.cpp LoadObj-path fail-closed stubs -----
-// The production FX_Register (fx_load_obj.cpp) is enrolled and takes
-// its FastFile branch (useFastFile=true in this rig). The LoadObj
-// branch and its transitive asset-conversion dependencies are
-// unreachable in this configuration, but the linker still needs their
-// symbols. Each stub aborts loudly through the production assert
-// channel: reaching one means the fast-file routing invariant broke.
-void __cdecl FS_FreeFile(char *buffer)
-{
-    (void)buffer;
-    MyAssertHandler(".\\tests\\fx_restore_entry_stubs.cpp", 0, 0,
-                    "%s", "LoadObj-path FS_FreeFile reached in fast-file rig");
-}
-
-int __cdecl FS_ReadFile(const char *qpath, void **buffer)
-{
-    (void)qpath;
-    (void)buffer;
-    MyAssertHandler(".\\tests\\fx_restore_entry_stubs.cpp", 0, 0,
-                    "%s", "LoadObj-path FS_ReadFile reached in fast-file rig");
-    return 0;
-}
-
-const FxEffectDef *__cdecl FX_Convert(const FxEditorEffectDef *editorEffect,
-                                      void *(*Alloc)(unsigned int))
-{
-    (void)editorEffect;
-    (void)Alloc;
-    MyAssertHandler(".\\tests\\fx_restore_entry_stubs.cpp", 0, 0,
-                    "%s", "LoadObj-path FX_Convert reached in fast-file rig");
-    return nullptr;
-}
-
-XModel *__cdecl FX_RegisterModel(const char *modelName)
-{
-    (void)modelName;
-    MyAssertHandler(".\\tests\\fx_restore_entry_stubs.cpp", 0, 0,
-                    "%s", "LoadObj-path FX_RegisterModel reached in fast-file rig");
-    return nullptr;
-}
-
-const FxCurve *__cdecl FxCurve_AllocAndCreateWithKeys(float *keyArray,
-                                                      int dimensionCount,
-                                                      int keyCount)
-{
-    (void)keyArray;
-    (void)dimensionCount;
-    (void)keyCount;
-    MyAssertHandler(".\\tests\\fx_restore_entry_stubs.cpp", 0, 0,
-                    "%s", "LoadObj-path FxCurve_AllocAndCreateWithKeys reached in fast-file rig");
-    return nullptr;
-}
-
-PhysPreset *__cdecl PhysPresetPrecache(const char *name, void *(*Alloc)(int))
-{
-    (void)name;
-    (void)Alloc;
-    MyAssertHandler(".\\tests\\fx_restore_entry_stubs.cpp", 0, 0,
-                    "%s", "LoadObj-path PhysPresetPrecache reached in fast-file rig");
-    return nullptr;
-}
-#endif
-
-// --- production fx_system.cpp gate-aware critical section ----------
-// Verbatim semantics (fx_system.cpp FX_EnterArchiveAwarePool-
-// CriticalSection) against the single harness gate cell.
-
-void FX_EnterArchiveAwarePoolCriticalSection()
-{
-    for (;;)
-    {
-        while (fx::archive::ArchiveGateBlocksAllocatorAdmission(
-            static_cast<fx::archive::ArchiveGateValue>(
-                Sys_AtomicLoad(&State().archiveGate))))
-        {
-            std::this_thread::yield();
-        }
-        Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-        if (!fx::archive::ArchiveGateBlocksAllocatorAdmission(
-                static_cast<fx::archive::ArchiveGateValue>(
-                    Sys_AtomicLoad(&State().archiveGate))))
-        {
-            return;
-        }
-        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-    }
-}
-
 // --- production fx_system.cpp reset / publication helpers ----------
 
 bool FX_CanResetSystemGraphUnderExclusiveClaim(
@@ -348,22 +268,25 @@ bool FX_CanResetSystemGraphUnderExclusiveClaim(
         && Sys_AtomicLoad(&system->iteratorCount) == -1;
 }
 
-fx::physics::SidecarStatus FX_ResetSystemGraphUnderExclusiveClaim(
-    FxSystem *const system) noexcept
-{
-    if (!FX_CanResetSystemGraphUnderExclusiveClaim(system))
-        return fx::physics::SidecarStatus::InvalidArgument;
-    FxPoolAllocationStates *const states =
-        FX_GetPoolAllocationStates(system);
+// Behavior-preserving extraction of FX_ResetSystemGraphUnderExclusive-
+// Claim: the reset runs as the same three ordered phases the original
+// single body spelled (effect graph, free lists, slot observables).
 
+namespace
+{
+// Phase 1: the effect graph - every handle re-encoded to the identity
+// permutation, every owner-admission word cleared, the active/new/
+// free heads reset, the cooperative iterator generation bumped (the
+// publication fence) and the deferred queue emptied.
+void ResetEffectGraphUnderExclusiveClaim(FxSystem *const system)
+{
     system->effects->def = nullptr;
     for (std::int32_t effectIndex = 0;
          effectIndex < FX_EFFECT_LIMIT;
          ++effectIndex)
     {
-        system->allEffectHandles[effectIndex] = FxEncodeHandle<
-            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
-                system->effects, &system->effects[effectIndex]);
+        system->allEffectHandles[effectIndex] =
+            EncodePristineEffectHandle(*system, effectIndex);
         volatile std::int32_t *const admissionState =
             FX_GetEffectOwnerAdmissionState(
                 system, &system->effects[effectIndex]);
@@ -379,7 +302,12 @@ fx::physics::SidecarStatus FX_ResetSystemGraphUnderExclusiveClaim(
         Sys_AtomicIncrement(iteratorGeneration);
     FxClearGarbageCollectionRequest(&system->needsGarbageCollection);
     system->deferredElemCount = 0;
+}
 
+// Phase 2: the elem / trail / trail-elem free lists re-chained to the
+// production free-list encoding with the live counts zeroed.
+void ResetElemAndTrailFreeLists(FxSystem *const system)
+{
     system->firstFreeElem = 0;
     for (std::size_t index = 0; index < MAX_ELEMS - 1; ++index)
     {
@@ -406,7 +334,14 @@ fx::physics::SidecarStatus FX_ResetSystemGraphUnderExclusiveClaim(
     }
     system->trails[MAX_TRAILS - 1].nextFree = -1;
     Sys_AtomicStore(&system->activeTrailCount, 0);
+}
 
+// Phase 3: the per-slot sidecars and observables - pool allocation
+// states reset, spotlight/cloud/visState counters zeroed and the
+// double-buffer read/write views restored to the canonical pairing.
+void ResetSystemSlotObservables(FxSystem *const system,
+                                FxPoolAllocationStates *const states)
+{
     FxPoolResetAllocationState(&states->elems);
     FxPoolResetAllocationState(&states->trails);
     FxPoolResetAllocationState(&states->trailElems);
@@ -420,6 +355,20 @@ fx::physics::SidecarStatus FX_ResetSystemGraphUnderExclusiveClaim(
     Sys_AtomicStore(&system->visState[1].blockerCount, 0);
     system->visStateBufferRead = system->visState;
     system->visStateBufferWrite = system->visState + 1;
+}
+} // namespace
+
+fx::physics::SidecarStatus FX_ResetSystemGraphUnderExclusiveClaim(
+    FxSystem *const system) noexcept
+{
+    if (!FX_CanResetSystemGraphUnderExclusiveClaim(system))
+        return fx::physics::SidecarStatus::InvalidArgument;
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+
+    ResetEffectGraphUnderExclusiveClaim(system);
+    ResetElemAndTrailFreeLists(system);
+    ResetSystemSlotObservables(system, states);
     return fx::physics::SidecarStatus::Success;
 }
 
@@ -551,276 +500,4 @@ fx::physics::SidecarStatus FX_DrainPhysicsBodySidecarLocked(
     if (sidecar->ActiveCount() != 0)
         return fx::physics::SidecarStatus::ActiveCountCorrupt;
     return fx::physics::ResetEmpty(sidecar);
-}
-
-// --- production fx_system.cpp pool-state rebuild --------------------
-
-namespace
-{
-bool FX_RebuildPoolAllocationStatesInternal(
-    FxSystem *const system,
-    const bool reportFailure) noexcept
-{
-    FxPoolAllocationStates *const states =
-        FX_GetPoolAllocationStates(system);
-    if (!system || !states || !system->effects || !system->elems
-        || !system->trails
-        || !system->trailElems)
-    {
-        if (reportFailure)
-        {
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_system.cpp",
-                180,
-                0,
-                "%s",
-                "system and FX pool sidecars are linked");
-        }
-        return false;
-    }
-
-    FxPoolAllocationStates rebuilt{};
-    alignas(4) volatile std::int32_t rebuiltElemCount = 0;
-    alignas(4) volatile std::int32_t rebuiltTrailCount = 0;
-    alignas(4) volatile std::int32_t rebuiltTrailElemCount = 0;
-
-    volatile std::int32_t *const archiveGate =
-        FX_GetArchiveGate(system);
-    if (!archiveGate)
-        return false;
-    const fx::archive::ArchiveGateValue archiveGateState =
-        static_cast<fx::archive::ArchiveGateValue>(
-            Sys_AtomicLoad(archiveGate));
-    const bool ownsArchive = FX_ValidateArchiveExclusiveState(system);
-    if (fx::archive::ArchiveGateBlocksAllocatorAdmission(
-            archiveGateState)
-        && !ownsArchive)
-    {
-        return false;
-    }
-    if (ownsArchive)
-        Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    else
-        FX_EnterArchiveAwarePoolCriticalSection();
-    const FxPoolMutationStatus elemStatus =
-        FxPoolRebuildAllocationStateLocked<FxElem, MAX_ELEMS>(
-            &system->firstFreeElem,
-            system->elems,
-            &rebuiltElemCount,
-            &rebuilt.elems);
-    const FxPoolMutationStatus trailStatus =
-        FxPoolRebuildAllocationStateLocked<FxTrail, MAX_TRAILS>(
-            &system->firstFreeTrail,
-            system->trails,
-            &rebuiltTrailCount,
-            &rebuilt.trails);
-    const FxPoolMutationStatus trailElemStatus =
-        FxPoolRebuildAllocationStateLocked<FxTrailElem, MAX_TRAIL_ELEMS>(
-            &system->firstFreeTrailElem,
-            system->trailElems,
-            &rebuiltTrailElemCount,
-            &rebuilt.trailElems);
-
-    const bool valid = elemStatus == FxPoolMutationStatus::Success
-        && trailStatus == FxPoolMutationStatus::Success
-        && trailElemStatus == FxPoolMutationStatus::Success
-        && Sys_AtomicLoad(&system->activeElemCount)
-            == Sys_AtomicLoad(&rebuiltElemCount)
-        && Sys_AtomicLoad(&system->activeTrailCount)
-            == Sys_AtomicLoad(&rebuiltTrailCount)
-        && Sys_AtomicLoad(&system->activeTrailElemCount)
-            == Sys_AtomicLoad(&rebuiltTrailElemCount);
-    if (valid)
-    {
-        *states = rebuilt;
-        for (std::size_t effectIndex = 0;
-             effectIndex < FX_EFFECT_LIMIT;
-             ++effectIndex)
-        {
-            volatile std::int32_t *const admissionState =
-                FX_GetEffectOwnerAdmissionState(
-                    system, &system->effects[effectIndex]);
-            if (admissionState)
-            {
-                const std::uint32_t effectStatus =
-                    static_cast<std::uint32_t>(Sys_AtomicLoad(
-                        &system->effects[effectIndex].status));
-                Sys_AtomicStore(
-                    admissionState,
-                    (effectStatus
-                        & FX_STATUS_OWNER_ADMISSION_BLOCKED) != 0
-                        ? 1
-                        : 0);
-            }
-        }
-    }
-    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-
-    if (!valid && reportFailure)
-    {
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_system.cpp",
-            220,
-            0,
-            "FX pool state rebuild failed (%u, %u, %u)",
-            static_cast<unsigned>(elemStatus),
-            static_cast<unsigned>(trailStatus),
-            static_cast<unsigned>(trailElemStatus));
-    }
-    return valid;
-}
-} // namespace
-
-bool __cdecl FX_RebuildPoolAllocationStates(FxSystem *const system)
-{
-    return FX_RebuildPoolAllocationStatesInternal(system, true);
-}
-
-bool __cdecl FX_RebuildPoolAllocationStatesNoReport(
-    FxSystem *const system) noexcept
-{
-    return FX_RebuildPoolAllocationStatesInternal(system, false);
-}
-
-bool __cdecl FX_ValidatePoolAllocationGraphStateWithScratch(
-    FxSystem *const system,
-    FxPoolAllocationGraphScratch *const scratch) noexcept
-{
-    FxPoolAllocationStates *const states =
-        FX_GetPoolAllocationStates(system);
-    if (!system || !states || !scratch)
-        return false;
-
-    volatile std::int32_t *const archiveGate =
-        FX_GetArchiveGate(system);
-    if (!archiveGate)
-        return false;
-    const fx::archive::ArchiveGateValue archiveGateState =
-        static_cast<fx::archive::ArchiveGateValue>(
-            Sys_AtomicLoad(archiveGate));
-    const bool ownsArchive = FX_ValidateArchiveExclusiveState(system);
-    if (fx::archive::ArchiveGateBlocksAllocatorAdmission(
-            archiveGateState)
-        && !ownsArchive)
-    {
-        return false;
-    }
-    if (ownsArchive)
-        Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    else
-        FX_EnterArchiveAwarePoolCriticalSection();
-    const bool valid = FxValidatePoolAllocationGraphWithScratch(
-        system,
-        states->elems,
-        states->trails,
-        states->trailElems,
-        scratch);
-    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-    return valid;
-}
-
-// --- production physics globals + fail-closed Phys_* boundary -------
-// The enrolled fx_archive.cpp reads physGlob.worldData[PHYS_WORLD_FX]
-// .timeLastUpdate for token staleness math; the harness world has no
-// physics time, so the zero-initialized world data reads as "stale"
-// (the honest state for a world with no live simulation).
-
-PhysGlob physGlob;
-
-namespace
-{
-void HarnessRefusePhysicsTransaction()
-{
-    ++State().physicsRejectionCalls;
-}
-} // namespace
-
-PhysBodyModelCreateStatus __cdecl
-Phys_TryCreateBodyFromStateAndXModelLockedNoReport(
-    PhysWorld worldIndex,
-    const BodyState *state,
-    const XModel *model,
-    dxBody **outBody) noexcept
-{
-    (void)worldIndex;
-    (void)state;
-    (void)model;
-    if (outBody)
-        *outBody = nullptr;
-    HarnessRefusePhysicsTransaction();
-    return PhysBodyModelCreateStatus::InvalidArgument;
-}
-
-PhysBodyRollbackStatus __cdecl Phys_TryGetBodyModelResourceDemand(
-    const XModel *model,
-    PhysBodyResourceDemand *outDemand) noexcept
-{
-    (void)model;
-    (void)outDemand;
-    HarnessRefusePhysicsTransaction();
-    return PhysBodyRollbackStatus::InvalidArgument;
-}
-
-PhysBodyRollbackStatus __cdecl
-Phys_TryGetFreeResourceCapacityLockedNoReport(
-    PhysBodyResourceDemand *outCapacity) noexcept
-{
-    (void)outCapacity;
-    HarnessRefusePhysicsTransaction();
-    return PhysBodyRollbackStatus::InvalidArgument;
-}
-
-PhysBodyRollbackStatus __cdecl Phys_TryCaptureBodyStateLocked(
-    PhysWorld worldIndex,
-    dxBody *body,
-    BodyState *outState) noexcept
-{
-    (void)worldIndex;
-    (void)body;
-    if (outState)
-        memset(outState, 0, sizeof(*outState));
-    HarnessRefusePhysicsTransaction();
-    return PhysBodyRollbackStatus::InvalidArgument;
-}
-
-PhysBodyRollbackStatus __cdecl Phys_TryBuildBodyRollbackRecipeLocked(
-    PhysWorld worldIndex,
-    dxBody *body,
-    const XModel *model,
-    PhysBodyRollbackRecipe *outRecipe) noexcept
-{
-    (void)worldIndex;
-    (void)body;
-    (void)model;
-    (void)outRecipe;
-    HarnessRefusePhysicsTransaction();
-    return PhysBodyRollbackStatus::InvalidArgument;
-}
-
-PhysBodyRollbackStatus __cdecl
-Phys_TryValidateBodyDestroyLockedNoReport(
-    PhysWorld worldIndex,
-    dxBody *body) noexcept
-{
-    (void)worldIndex;
-    (void)body;
-    HarnessRefusePhysicsTransaction();
-    return PhysBodyRollbackStatus::InvalidArgument;
-}
-
-PhysBodyRollbackStatus __cdecl Phys_TryDestroyBodyLockedNoReport(
-    PhysWorld worldIndex,
-    dxBody *body) noexcept
-{
-    (void)worldIndex;
-    (void)body;
-    HarnessRefusePhysicsTransaction();
-    return PhysBodyRollbackStatus::InvalidArgument;
-}
-
-void __cdecl Phys_ObjDestroy(PhysWorld worldIndex, dxBody *id)
-{
-    (void)worldIndex;
-    (void)id;
-    HarnessRefusePhysicsTransaction();
 }

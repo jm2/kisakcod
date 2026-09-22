@@ -3806,7 +3806,9 @@ if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
 
     add_executable(kisakcod-db-load-entry-tests
         db_load_entry_test.cpp
+        db_load_entry_checks.hpp
         db_load_entry_harness.hpp
+        db_load_entry_stream_test.cpp
         db_load_entry_stubs.cpp
         ${_kisakcod_db_entry_production_sources})
     # memfile.cpp + the vendored zlib the production stream path
@@ -3825,11 +3827,13 @@ if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         ${CMAKE_SOURCE_DIR}/deps)
     if (MSVC)
         set_source_files_properties(db_load_entry_test.cpp
+            db_load_entry_stream_test.cpp
             db_load_entry_stubs.cpp PROPERTIES
             COMPILE_OPTIONS "/W3"
             COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS")
     else()
         set_source_files_properties(db_load_entry_test.cpp
+            db_load_entry_stream_test.cpp
             db_load_entry_stubs.cpp PROPERTIES
             COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
     endif()
@@ -3876,6 +3880,7 @@ if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         fx_restore_entry_test.cpp
         fx_restore_entry_harness.hpp
         fx_restore_entry_stubs.cpp
+        fx_restore_entry_graph_stubs.cpp
         # Sys_Error and the shared DB service stubs live in the DB
         # slice's stub TU; KISAK_FX_RESTORE_RIG below suppresses its
         # hand-rolled math helpers because com_math.cpp provides the
@@ -3896,12 +3901,14 @@ if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         ${CMAKE_SOURCE_DIR}/deps)
     if (MSVC)
         set_source_files_properties(fx_restore_entry_test.cpp
-            fx_restore_entry_stubs.cpp db_load_entry_stubs.cpp PROPERTIES
+            fx_restore_entry_stubs.cpp fx_restore_entry_graph_stubs.cpp
+            db_load_entry_stubs.cpp PROPERTIES
             COMPILE_OPTIONS "/W3"
             COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS")
     else()
         set_source_files_properties(fx_restore_entry_test.cpp
-            fx_restore_entry_stubs.cpp db_load_entry_stubs.cpp PROPERTIES
+            fx_restore_entry_stubs.cpp fx_restore_entry_graph_stubs.cpp
+            db_load_entry_stubs.cpp PROPERTIES
             COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
     endif()
     add_test(

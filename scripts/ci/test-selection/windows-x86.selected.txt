@@ -59,6 +59,7 @@ database-zone-script-string-ownership-source-invariants
 database-zone-stream-ownership-production-test-access-sealed
 database-zone-stream-ownership-runtime-contracts
 database-zone-stream-ownership-source-invariants
+db-load-entry-native
 effectscore-archive-body-state-disk32-codec
 effectscore-archive-buffers-disk32-codec
 effectscore-archive-disk32-codec
@@ -74,6 +75,7 @@ effectscore-fastfile-native-arena
 effectscore-fastfile-native-disk32-conversion
 effectscore-fastfile-zone-adapter-disk32
 effectscore-physics-sidecar-production-test-access-sealed
+fx-restore-entry-native
 hudelem-sort-mp-contracts
 hudelem-sort-source-invariants
 hudelem-sort-sp-contracts

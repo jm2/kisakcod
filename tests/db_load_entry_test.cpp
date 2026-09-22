@@ -37,13 +37,17 @@
 // TU is already built by an engine target.
 
 #include "db_load_entry_harness.hpp"
+#include "db_load_entry_checks.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
 #include <cstdlib>
 #include <string>
 #include <vector>
+
+#include <universal/msvc_printf_shim.h>
 
 // The useFastFile dvar the production IsFastFileLoad check reads:
 // fast-file mode enabled.
@@ -60,11 +64,10 @@ void Com_Error(errorParm_t code, const char *fmt, ...)
     char buffer[1024];
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(buffer, sizeof(buffer), fmt, args);
+    _vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
 
     db_load_entry_harness::RecordedError record;
-    record.channel = static_cast<int>(code);
     record.text = buffer;
     db_load_entry_harness::State().errors.push_back(record);
     // Visible triage: every recorded drop names itself on stdout.
@@ -88,11 +91,10 @@ void Com_PrintError(int channel, const char *fmt, ...)
     char buffer[1024];
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(buffer, sizeof(buffer), fmt, args);
+    _vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
 
     db_load_entry_harness::RecordedError record;
-    record.channel = channel;
     record.text = buffer;
     db_load_entry_harness::State().printErrors.push_back(record);
     std::printf("printError(%d): %s\n", channel, buffer);
@@ -181,7 +183,13 @@ void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size)
                   size, remaining);
         return;
     }
-    std::memcpy(pos, state.fileBytes.data() + state.fileCursor, size);
+    // Iterator-bounded copy over the checked [cursor, cursor + size)
+    // range the guard above validated: the range check stays
+    // structural (and MSVC debug iterators harden it) instead of a
+    // raw pointer-arithmetic memcpy.
+    std::copy(state.fileBytes.begin() + state.fileCursor,
+              state.fileBytes.begin() + state.fileCursor + size,
+              pos);
     state.fileCursor += size;
     state.servedBytes += size;
 }
@@ -189,42 +197,11 @@ void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size)
 // ---------------------------------------------------------------------------
 // The cases.
 // ---------------------------------------------------------------------------
-namespace
-{
-uint32_t g_failures = 0;
-uint32_t g_checks = 0;
-
-void ExpectTrue(bool condition, const char *what, int line)
-{
-    ++g_checks;
-    if (!condition)
-    {
-        std::printf("FAIL line %d: %s\n", line, what);
-        ++g_failures;
-    }
-}
-
-void ExpectU32(uint32_t actual, uint32_t expected, const char *what,
-               int line)
-{
-    ++g_checks;
-    if (actual != expected)
-    {
-        std::printf("FAIL line %d: %s (actual 0x%08X expected 0x%08X)\n",
-                    line, what, actual, expected);
-        ++g_failures;
-    }
-}
-
-void ClearErrors()
-{
-    db_load_entry_harness::State().errors.clear();
-}
-} // namespace
-
-#define EXPECT(cond) ExpectTrue((cond), #cond, __LINE__)
-#define EXPECT_U32(actual, expected) \
-    ExpectU32((actual), (expected), #actual " == " #expected, __LINE__)
+// The shared EXPECT / check-tally framework lives in
+// db_load_entry_checks.hpp; the stream-relocation cases live in
+// db_load_entry_stream_test.cpp and report through the same
+// binary-wide counters.
+void RunStreamLoadCases();
 
 namespace
 {
@@ -413,373 +390,10 @@ void CaseRegistryStubAsset()
     EXPECT(Errors().empty());
 }
 
-// C4: stream init + valid pointer relocation (block 1 zero-fill
-// materialization).
-void CaseStreamPointerRelocation()
-{
-    std::printf("case: stream pointer relocation valid\n");
-    ClearErrors();
-    ResetHarness();
-
-    StreamBlockFixture fixture;
-    fixture.Configure();
-    DB_InitStreams(&fixture.zoneMemory);
-
-    DB_PushStreamPos(1);
-    EXPECT(DB_GetStreamPos() == fixture.zoneMemory.blocks[1].data);
-    // Load_Stream at stream start materializes the range zero-filled.
-    Load_Stream(true, DB_GetStreamPos(), 64);
-    for (unsigned int i = 0; i < 64; ++i)
-    {
-        if (fixture.data[1][i] != 0)
-        {
-            EXPECT(false);
-            break;
-        }
-    }
-    DB_PopStreamPos();
-
-    // The token (block 1, offset 0) resolves to the block base and
-    // the production writer narrows it into the caller's field.
-    uint32_t field = OffsetToken(1, 0);
-    DB_ConvertOffsetToPointer(&field, 64, 4, db::relocation::BlockBit(1));
-    EXPECT_U32(field,
-               static_cast<uint32_t>(
-                   reinterpret_cast<uintptr_t>(
-                       fixture.zoneMemory.blocks[1].data)));
-
-    // A second range further in resolves to base + offset.
-    DB_PushStreamPos(1);
-    Load_Stream(true, DB_GetStreamPos(), 128);
-    DB_PopStreamPos();
-    uint32_t field2 = OffsetToken(1, 64);
-    DB_ConvertOffsetToPointer(&field2, 64, 4, db::relocation::BlockBit(1));
-    EXPECT_U32(field2,
-               static_cast<uint32_t>(
-                   reinterpret_cast<uintptr_t>(
-                       fixture.zoneMemory.blocks[1].data + 64)));
-    EXPECT(Errors().empty());
-}
-
-// C5: pointer relocation rejections - every malformed shape must
-// record an error and leave the output field untouched.
-void CaseStreamPointerRelocationMalformed()
-{
-    std::printf("case: stream pointer relocation malformed\n");
-    ClearErrors();
-    ResetHarness();
-
-    StreamBlockFixture fixture;
-    fixture.Configure();
-    DB_InitStreams(&fixture.zoneMemory);
-    DB_PushStreamPos(1);
-    Load_Stream(true, DB_GetStreamPos(), 64);
-    DB_PopStreamPos();
-
-    // Null token: the writer rejects it and does not touch the field.
-    uint32_t field = 0x12345678;
-    ClearErrors();
-    DB_ConvertOffsetToPointer(&field, 64, 4, db::relocation::BlockBit(1));
-    EXPECT_U32(field, 0x12345678u);
-    EXPECT(HasErrorContaining("offset"));
-
-    // Inline token (0xFFFFFFFF) is not an offset token.
-    ClearErrors();
-    field = 0xFFFFFFFFu;
-    DB_ConvertOffsetToPointer(&field, 64, 4, db::relocation::BlockBit(1));
-    EXPECT_U32(field, 0xFFFFFFFFu);
-    EXPECT(HasErrorContaining("offset"));
-
-    // Wrong-block requirement: block 2's range is not materialized in
-    // block 1, and the mask allows only block 1.
-    ClearErrors();
-    field = OffsetToken(2, 0);
-    DB_ConvertOffsetToPointer(&field, 64, 4, db::relocation::BlockBit(1));
-    EXPECT_U32(field, OffsetToken(2, 0));
-    EXPECT(HasErrorContaining("offset"));
-
-    // Wrong block mask: the range is materialized in block 1 only.
-    ClearErrors();
-    field = OffsetToken(1, 0);
-    DB_ConvertOffsetToPointer(&field, 64, 4, db::relocation::BlockBit(2));
-    EXPECT_U32(field, OffsetToken(1, 0));
-    EXPECT(HasErrorContaining("offset"));
-
-    // Range beyond the materialized extent: offset 0 with 128
-    // required bytes exceeds the 64 materialized.
-    ClearErrors();
-    field = OffsetToken(1, 0);
-    DB_ConvertOffsetToPointer(&field, 128, 4, db::relocation::BlockBit(1));
-    EXPECT_U32(field, OffsetToken(1, 0));
-    EXPECT(HasErrorContaining("offset"));
-
-    // Misaligned requirement: the range start is not 16-byte aligned.
-    ClearErrors();
-    field = OffsetToken(1, 4);
-    DB_ConvertOffsetToPointer(&field, 16, 16, db::relocation::BlockBit(1));
-    EXPECT_U32(field, OffsetToken(1, 4));
-    EXPECT(HasErrorContaining("offset"));
-
-    // The stream context itself is untouched by every rejection.
-    EXPECT(DB_GetStreamPos()
-           == fixture.zoneMemory.blocks[0].data);
-}
-
-// C6: alias registration + kind/metadata enforcement.
-void CaseStreamAliasRelocation()
-{
-    std::printf("case: stream alias relocation\n");
-    ClearErrors();
-    ResetHarness();
-
-    StreamBlockFixture fixture;
-    fixture.Configure();
-    DB_InitStreams(&fixture.zoneMemory);
-
-    // DB_InsertPointer allocates the 4-byte slot in block 4 and
-    // registers it at offset 0.
-    DBAliasHandle handle = DB_InsertPointer(DBAliasKind::RawFile);
-    EXPECT(static_cast<bool>(handle));
-
-    static unsigned char aliasPayload[16];
-    for (unsigned int i = 0; i < sizeof(aliasPayload); ++i)
-        aliasPayload[i] = static_cast<unsigned char>(i * 3u);
-    DB_SetInsertedPointer(handle, DBAliasKind::RawFile, aliasPayload, 0);
-
-    // The production writer resolves the token to the registered
-    // native payload and narrows it into the field.
-    uint32_t field = AliasToken(0);
-    DB_ConvertOffsetToAlias(&field, DBAliasKind::RawFile, 0);
-    EXPECT_U32(field,
-               static_cast<uint32_t>(
-                   reinterpret_cast<uintptr_t>(aliasPayload)));
-
-    // Kind mismatch: the field is untouched and the error recorded.
-    ClearErrors();
-    field = AliasToken(0);
-    DB_ConvertOffsetToAlias(&field, DBAliasKind::XModel, 0);
-    EXPECT_U32(field, AliasToken(0));
-    EXPECT(HasErrorContaining("alias"));
-
-    // Metadata mismatch: same enforcement.
-    ClearErrors();
-    field = AliasToken(0);
-    DB_ConvertOffsetToAlias(&field, DBAliasKind::RawFile, 7);
-    EXPECT_U32(field, AliasToken(0));
-    EXPECT(HasErrorContaining("alias"));
-
-    // Unregistered slot offset: rejected.
-    ClearErrors();
-    field = AliasToken(4);
-    DB_ConvertOffsetToAlias(&field, DBAliasKind::RawFile, 0);
-    EXPECT_U32(field, AliasToken(4));
-    EXPECT(HasErrorContaining("alias"));
-
-    // Metadata flows: a slot published with metadata 7 resolves only
-    // under the matching expectation.
-    DBAliasHandle handle7 = DB_InsertPointer(DBAliasKind::XModel);
-    EXPECT(static_cast<bool>(handle7));
-    static unsigned char aliasPayload7[32];
-    DB_SetInsertedPointer(handle7, DBAliasKind::XModel, aliasPayload7, 7);
-    field = AliasToken(4);
-    DB_ConvertOffsetToAlias(&field, DBAliasKind::XModel, 7);
-    EXPECT_U32(field,
-               static_cast<uint32_t>(
-                   reinterpret_cast<uintptr_t>(aliasPayload7)));
-}
-
-// C7: the production C-string pipeline. The production producers are
-// Load_XStringCustom (the inline -1 token route: AllocLoad_raw_byte
-// storage, provider-streamed bytes, DB_RegisterStreamCString
-// registration) and DB_ConvertOffsetToCString / DB_ConvertOffsetToTempString
-// (the block-token route over registered extents). The case drives
-// all three plus the unregistered-extent rejection.
-void CaseStreamCStringRelocation()
-{
-    std::printf("case: stream cstring / tempstring relocation\n");
-    ClearErrors();
-    ResetHarness();
-
-    StreamBlockFixture fixture;
-    fixture.Configure();
-    DB_InitStreams(&fixture.zoneMemory);
-
-    // (a) A block token over an extent that was never registered:
-    // the production writer rejects it and leaves the field.
-    DB_PushStreamPos(1);
-    Load_Stream(true, DB_GetStreamPos(), 16);
-    uint32_t unregistered = OffsetToken(1, 0);
-    DB_ConvertOffsetToCString(&unregistered, db::relocation::BlockBit(1));
-    EXPECT_U32(unregistered, OffsetToken(1, 0));
-    EXPECT(HasErrorContaining("Invalid fast-file string offset"));
-    ClearErrors();
-
-    // (b) The production inline-string route. AllocLoad_raw_byte is
-    // DB_AllocStreamPos(0): the string storage comes from the stream
-    // position. The storage range is materialized by Load_Stream
-    // (zero-filled and registered), then Load_XStringCustom streams
-    // the NUL-terminated bytes from the controlled provider and
-    // registers the extent.
-    DB_PushStreamPos(1);
-    char *storage = reinterpret_cast<char *>(DB_AllocStreamPos(0));
-    EXPECT(storage != nullptr);
-    EXPECT(storage == reinterpret_cast<char *>(DB_GetStreamPos()));
-    Load_Stream(true, reinterpret_cast<uint8_t *>(storage), 64);
-
-    const uint32_t cursor = ServedBytes();
-    if (static_cast<size_t>(cursor) + 13 > State().fileBytes.size())
-    {
-        State().fileBytes.resize(cursor + 13, 0);
-    }
-    std::memcpy(State().fileBytes.data() + cursor, "inlinestring", 13);
-
-    char *field = storage;
-    Load_XStringCustom(&field);
-    EXPECT(field == storage);
-    EXPECT(std::strcmp(storage, "inlinestring") == 0);
-    EXPECT(ServedBytes() == cursor + 13);
-
-    // The production registration is queryable: the extent resolves
-    // with its exact byte count (12 chars + terminator).
-    uint32_t registeredBytes = 0;
-    EXPECT(DB_ValidateStreamCString(storage, &registeredBytes)
-           == db::relocation::Status::Ok);
-    EXPECT_U32(registeredBytes, 13);
-    EXPECT(Errors().empty());
-
-    // (c) The block-token route over the SAME registered extent: the
-    // production writer resolves the token to the storage address.
-    const uint32_t storageOffset = static_cast<uint32_t>(
-        reinterpret_cast<uint8_t *>(storage)
-        - fixture.zoneMemory.blocks[1].data);
-    uint32_t stringField = OffsetToken(1, storageOffset);
-    DB_ConvertOffsetToCString(&stringField, db::relocation::BlockBit(1));
-    EXPECT_U32(stringField,
-               static_cast<uint32_t>(reinterpret_cast<uintptr_t>(storage)));
-    EXPECT(Errors().empty());
-
-    // (d) The production temp-string route. The user-4 stream intern
-    // is receipt-lifecycle-bound: the standalone registry-ownership
-    // admission validates the zone-runtime table composition, and a
-    // table without a facade-bound stream generation (the
-    // validateSharedComposition Bound branch) refuses the intern.
-    // Driven outside that lifecycle the production writer fails
-    // closed: the recorded drop names the intern and the field keeps
-    // the source token exactly.
-    DB_PopStreamPos();
-    DB_PopStreamPos();
-    ClearErrors();
-    uint32_t tempField = OffsetToken(1, storageOffset);
-    DB_ConvertOffsetToTempString(&tempField, db::relocation::BlockBit(1));
-    EXPECT_U32(tempField, OffsetToken(1, storageOffset));
-    EXPECT(HasErrorContaining("Database user-4 stream intern failed"));
-
-    // (e) Offset-token rejection stays exact after the positive
-    // paths: an extent that was never materialized is not a
-    // registered string.
-    ClearErrors();
-    uint32_t foreign = OffsetToken(1, 200);
-    DB_ConvertOffsetToCString(&foreign, db::relocation::BlockBit(1));
-    EXPECT_U32(foreign, OffsetToken(1, 200));
-    EXPECT(HasErrorContaining("Invalid fast-file string offset"));
-}
-
-// C8: delayed stream admission (blocks 2/3) drains through the
-// controlled provider.
-void CaseStreamDelayedLoad()
-{
-    std::printf("case: stream delayed load\n");
-    ClearErrors();
-    ResetHarness();
-
-    StreamBlockFixture fixture;
-    fixture.Configure();
-    DB_InitStreams(&fixture.zoneMemory);
-
-    // Provider bytes for the delayed read: they land in the block
-    // when Load_DelayStream drains the queue. The provider serves
-    // sequential bytes, so the image is padded with everything the
-    // earlier cases already consumed and the payload sits exactly at
-    // the current cursor.
-    const uint32_t servedBeforeImage = ServedBytes();
-    ByteWriter image;
-    image.Zeros(servedBeforeImage);
-    for (uint32_t i = 0; i < 32; ++i)
-        image.PushU8(static_cast<unsigned char>(0xA0u + i));
-    SetFastFileBytes(image.bytes);
-
-    DB_PushStreamPos(2);
-    Load_Stream(true, DB_GetStreamPos(), 32);
-    // The delay queue holds the read; the block bytes are untouched
-    // until Load_DelayStream drains it.
-    EXPECT(State().loadXFileDataCalls == 0);
-    for (unsigned int i = 0; i < 32; ++i)
-    {
-        if (fixture.data[2][i] != 0)
-        {
-            EXPECT(false);
-            break;
-        }
-    }
-    DB_PopStreamPos();
-
-    Load_DelayStream();
-    EXPECT(State().loadXFileDataCalls == 1);
-    EXPECT(ServedBytes() == servedBeforeImage + 32);
-    EXPECT(std::memcmp(fixture.zoneMemory.blocks[2].data,
-                       image.bytes.data() + servedBeforeImage, 32)
-           == 0);
-    EXPECT(Errors().empty());
-}
-
-// C9: provider-block reads bypass the delay queue and stream
-// directly from the fixture image.
-void CaseStreamProviderBlocks()
-{
-    std::printf("case: stream provider blocks\n");
-    ClearErrors();
-    ResetHarness();
-
-    StreamBlockFixture fixture;
-    fixture.Configure();
-    DB_InitStreams(&fixture.zoneMemory);
-
-    ByteWriter image;
-    for (uint32_t i = 0; i < 48; ++i)
-        image.PushU8(static_cast<unsigned char>(i + 1));
-    SetFastFileBytes(image.bytes);
-
-    // Block 5 is a provider block: Load_Stream pulls DB_LoadXFileData
-    // immediately.
-    DB_PushStreamPos(5);
-    Load_Stream(true, DB_GetStreamPos(), 48);
-    DB_PopStreamPos();
-    EXPECT(State().loadXFileDataCalls == 1);
-    EXPECT(State().fileCursor == 48);
-    EXPECT(std::memcmp(fixture.zoneMemory.blocks[5].data,
-                       image.bytes.data(), 48)
-           == 0);
-    EXPECT(Errors().empty());
-}
-
-// C10: stream-array overflow enforcement.
-void CaseStreamArrayOverflow()
-{
-    std::printf("case: stream array overflow\n");
-    ClearErrors();
-    ResetHarness();
-
-    StreamBlockFixture fixture;
-    fixture.Configure();
-    DB_InitStreams(&fixture.zoneMemory);
-
-    DB_PushStreamPos(1);
-    // count * stride overflows the 32-bit checked product: the
-    // production CheckedArrayBytes guard rejects before any read.
-    Load_StreamArray(true, DB_GetStreamPos(), 0x40000000u, 8u);
-    EXPECT(HasErrorContaining("Invalid fast-file array size"));
-    DB_PopStreamPos();
-}
+// C4-C10, the stream init / pointer, alias and C-string relocation,
+// delayed-load, provider-block and array-overflow cases, live in
+// db_load_entry_stream_test.cpp (RunStreamLoadCases, called from
+// main() below in the original case order).
 
 // C11: registry resilience - after every recorded rejection above the
 // registry still admits and finds fresh assets (fail-closed, not
@@ -819,17 +433,13 @@ int main()
     CaseRegistryAdmissionRoundtrip();
     CaseRegistryRemoveReadmit();
     CaseRegistryStubAsset();
-    CaseStreamPointerRelocation();
-    CaseStreamPointerRelocationMalformed();
-    CaseStreamAliasRelocation();
-    CaseStreamCStringRelocation();
-    CaseStreamDelayedLoad();
-    CaseStreamProviderBlocks();
-    CaseStreamArrayOverflow();
+    RunStreamLoadCases();
     CaseRegistryResilienceAfterRejections();
 
-    std::printf("checks=%u failures=%u\n", g_checks, g_failures);
-    if (g_failures != 0)
+    std::printf("checks=%u failures=%u\n",
+                db_load_entry_checks::g_checks,
+                db_load_entry_checks::g_failures);
+    if (db_load_entry_checks::g_failures != 0)
         return 1;
     std::printf("db_load_entry_test: ALL PASS\n");
     return 0;
