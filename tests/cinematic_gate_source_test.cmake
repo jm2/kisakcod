@@ -85,6 +85,72 @@ require_contains(_binktextures
     "static const char StrYCrCbAToRGBA[] ="
     "the YCrCb-alpha-to-RGBA shader path stays present")
 
+# --- Decode scheduling (r_cinematic.cpp, CIN-1) -------------------------------
+require_contains(_cinematic
+    "BinkGetFrameBuffersInfo(cinematicGlob.bink, &cinematicGlob.binkTextureSet.bink_buffers);"
+    "frame-buffer layout is queried through BinkGetFrameBuffersInfo")
+require_contains(_cinematic
+    "BinkRegisterFrameBuffers(cinematicGlob.bink, &cinematicGlob.binkTextureSet.bink_buffers);"
+    "decoded frames land in the registered retail texture buffers")
+require_contains(_cinematic
+    "wait = BinkWait(cinematicGlob.bink);"
+    "frame pacing waits through BinkWait")
+require_contains(_cinematic
+    "skipped = BinkDoFrame(cinematicGlob.bink);"
+    "frame decode runs through BinkDoFrame with the retail skip result")
+require_contains(_cinematic
+    "BinkNextFrame(cinematicGlob.bink);"
+    "playback advances through BinkNextFrame")
+
+# --- Seek / advance (r_cinematic.cpp, CIN-2) -----------------------------------
+require_contains(_cinematic
+    "char __cdecl R_Cinematic_Advance()"
+    "cinematic advancement has the retail entry")
+require_contains(_cinematic
+    "if (!R_Cinematic_Advance())"
+    "the host loop reacts to a failed advance")
+
+# --- EOF / cancel (r_cinematic.cpp, CIN-3) -------------------------------------
+require_contains(_cinematic
+    "void R_Cinematic_StopPlayback_Now()"
+    "immediate stop has the retail entry")
+require_contains(_cinematic
+    "R_Cinematic_StopPlayback_Now();"
+    "target changes cancel the running cinematic immediately")
+require_contains(_cinematic
+    "bool R_CinematicThread_EndBinkAsync()"
+    "the async decode thread has the retail end entry")
+require_contains(_cinematic
+    "R_CinematicThread_EndBinkAsync();"
+    "shutdown ends the async Bink thread")
+
+# --- A/V synchronization (r_cinematic.cpp, CIN-4) -------------------------------
+require_count(_cinematic "BinkGetRealtime(cinematicGlob.bink, &binkRealtime, 0);" 2
+    "Bink realtime is sampled at frame advance and texture update")
+require_contains(_cinematic
+    "void __cdecl R_Cinematic_UpdateTimeInMsec(const BINKREALTIME *binkRealtime)"
+    "cinematic time follows the retail Bink realtime conversion")
+
+# --- Cleanup (r_cinematic.cpp, CIN-5) -------------------------------------------
+require_contains(_cinematic
+    "void __cdecl CinematicHunk_Close(CinematicHunk *hunk)"
+    "cinematic hunks close through the retail entry")
+require_contains(_cinematic
+    "void __cdecl CinematicHunk_Reset(CinematicHunk *hunk)"
+    "cinematic hunks reset through the retail entry")
+require_contains(_cinematic
+    "BinkClose(cinematicGlob.bink);"
+    "stop path closes the Bink handle")
+require_contains(_cinematic
+    "static void __cdecl R_Cinematic_ReleaseImages(CinematicTextureSet *textureSet)"
+    "texture images release through the retail entry")
+require_contains(_cinematic
+    "R_Cinematic_ReleaseImages(textureSet);"
+    "the unbind path releases texture images")
+require_contains(_cinematic
+    "void __cdecl R_Cinematic_Shutdown()"
+    "cinematics shut down through the retail entry")
+
 # --- Guard rails --------------------------------------------------------------
 forbid_contains(_cinematic "Opus" "cinematic audio is not a voice-codec surface")
 forbid_contains(_cinematic "license" "cinematic path records no license text (proprietary deps)")
@@ -112,6 +178,22 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "static const char StrYCrCbAToRGBA[] ="
             "static const char StrYCrCbAToRGBA_UNUSED[] ="
             _binktextures "${_binktextures}")
+    elseif(CONTRACT_MUTATION STREQUAL "bink_do_frame_dropped")
+        string(REPLACE
+            "skipped = BinkDoFrame(cinematicGlob.bink);"
+            "" _cinematic "${_cinematic}")
+    elseif(CONTRACT_MUTATION STREQUAL "stop_playback_dropped")
+        string(REPLACE
+            "R_Cinematic_StopPlayback_Now();"
+            ";" _cinematic "${_cinematic}")
+    elseif(CONTRACT_MUTATION STREQUAL "frame_buffers_dropped")
+        string(REPLACE
+            "BinkRegisterFrameBuffers(cinematicGlob.bink, &cinematicGlob.binkTextureSet.bink_buffers);"
+            "" _cinematic "${_cinematic}")
+    elseif(CONTRACT_MUTATION STREQUAL "release_images_dropped")
+        string(REPLACE
+            "R_Cinematic_ReleaseImages(textureSet);"
+            "" _cinematic "${_cinematic}")
     else()
         message(FATAL_ERROR
             "Unknown cinematic gate contract mutation: '${CONTRACT_MUTATION}'")
@@ -131,12 +213,50 @@ require_contains(_binktextures
     "static const char StrYCrCbAToRGBA[] ="
     "alpha shader pin survives mutations")
 
+# Survival checks for the stage-4 pins. Pins repeated after the mutation
+# block are the rejection mechanism: each registered mutation must break at
+# least one of them.
+require_contains(_cinematic
+    "skipped = BinkDoFrame(cinematicGlob.bink);"
+    "BinkDoFrame pin survives mutations")
+require_contains(_cinematic
+    "BinkRegisterFrameBuffers(cinematicGlob.bink, &cinematicGlob.binkTextureSet.bink_buffers);"
+    "frame-buffer registration survives mutations")
+require_contains(_cinematic
+    "R_Cinematic_StopPlayback_Now();"
+    "immediate-stop call survives mutations")
+require_contains(_cinematic
+    "R_Cinematic_ReleaseImages(textureSet);"
+    "image-release call survives mutations")
+require_contains(_cinematic
+    "char __cdecl R_Cinematic_Advance()"
+    "advance entry survives mutations")
+require_contains(_cinematic
+    "void R_Cinematic_StopPlayback_Now()"
+    "immediate-stop entry survives mutations")
+require_contains(_cinematic
+    "void __cdecl R_Cinematic_UpdateTimeInMsec(const BINKREALTIME *binkRealtime)"
+    "A/V sync entry survives mutations")
+require_contains(_cinematic
+    "BinkClose(cinematicGlob.bink);"
+    "Bink close pin survives mutations")
+require_contains(_cinematic
+    "static void __cdecl R_Cinematic_ReleaseImages(CinematicTextureSet *textureSet)"
+    "image-release entry survives mutations")
+require_contains(_cinematic
+    "void __cdecl R_Cinematic_Shutdown()"
+    "shutdown entry survives mutations")
+
 if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
     foreach(_mutation IN ITEMS
         background_io_off
         error_swallowed
         volume_count_changed
-        alpha_shader_dropped)
+        alpha_shader_dropped
+        bink_do_frame_dropped
+        stop_playback_dropped
+        frame_buffers_dropped
+        release_images_dropped)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"
