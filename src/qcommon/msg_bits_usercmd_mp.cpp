@@ -32,7 +32,10 @@ static_assert(false, "This File is MultiPlayer Only");
 #include "sys_time.h"
 #include "sv_msg_write_mp.h"
 
-static int __cdecl MSG_HorMoveTo(int iForwardMove, int iRightMove)
+// Declared in msg_mp.h: the capture contract tests express the wire-visible
+// movement expectation through this quantizer (the retail decompiled body is
+// unchanged; linkage only was static).
+int __cdecl MSG_HorMoveTo(int iForwardMove, int iRightMove)
 {
     int iFlags; // [esp+0h] [ebp-4h]
 

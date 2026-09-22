@@ -21,8 +21,11 @@
 // namespaced definition would mangle differently and strand the
 // win32-x86 link. XModelPartsLoadFile and R_XModelSurfsLoadFile need
 // no stand-in: their production implementations live in the loader TU
-// itself, which drives the REAL nested parts parse (xanim_load_obj.cpp
-// is enrolled in the target for its real ConsumeQuatNoSwap).
+// itself, which drives the REAL nested parts parse. Since ki-458h
+// stage 2 the tests also drive the real XAnim entry points from the
+// same production TU — XAnimLoadFile, XModelPiecesLoadFile and
+// XModelPiecesPrecache — over controlled xanim / xmodelpieces
+// fixtures (BuildEntryAnim* / BuildEntryPieces* below).
 
 #ifndef XMODEL_LOADER_ENTRY_HARNESS_HPP
 #define XMODEL_LOADER_ENTRY_HARNESS_HPP
@@ -362,6 +365,163 @@ inline void RegisterValidModel(const char *name)
     RegisterFile("xmodelsurfs/lod_b", BuildEntrySurfsFile(1).bytes);
 }
 
+// --- XAnim entry fixtures (ki-458h stage 2) ------------------------------
+//
+// XAnimLoadFile (version 17) disk layout, byte-exact because the
+// entry's closing assert (buf + fileSize == pos) is live in Debug
+// builds: i16 version, u16 numframes, i16 numBones, u8 partFlags
+// (bit0 bLoop, bit1 bDelta), u8 assetType, i16 framerate; when bDelta
+// a delta-part body (u16 quat-index count + payload, u16 trans-index
+// count + mins); then ceil(numBones/8) bytes of flip bits, the same
+// count of simple-quat bits, numBones NUL-terminated part names, per
+// bone a u16 quat-index count + payload and a u16 trans-index count +
+// payload (smallTrans byte + 6 floats + data bytes), then the
+// note-track block (u8 track count; per track a NUL-terminated name
+// and a u16 frame). The production part-type enum (PART_TYPE_NO_QUAT
+// .. PART_TYPE_ALL, values 0..9 in xanim_load_obj.cpp) indexes
+// XAnimParts::boneCount; it is file-private, so tests use local
+// constants documented against the production source.
+inline ByteWriterFixture BuildEntryAnimHeader(uint16_t numframes, int16_t numBones,
+                                              uint8_t partFlags, uint8_t assetType,
+                                              int16_t framerate)
+{
+    ByteWriterFixture w;
+    w.Push16(17);                                    // version 17
+    w.Push16(numframes);                             // numframes (loop adds 1)
+    w.Push16(static_cast<uint16_t>(numBones));
+    w.Push8(partFlags);                              // bit0 bLoop, bit1 bDelta
+    w.Push8(assetType);
+    w.Push16(static_cast<uint16_t>(framerate));
+    return w;
+}
+
+// Zero-bone single-frame anim: the smallest fixture that still reaches
+// the note-track reader (one synthesized "end" entry) and the full
+// hunk-user teardown.
+inline ByteWriterFixture BuildEntryAnimMinimalFile()
+{
+    ByteWriterFixture w = BuildEntryAnimHeader(1, 0, 0, 0, 30);
+    w.Push8(0);  // zero note tracks
+    return w;
+}
+
+// One bone with no quat data and no translation data, plus one note
+// track. The simple-quat bitmap bit MUST be set for bone 0: a zero
+// quat-index count with a cleared bitmap bit trips the live
+// MyAssertHandler in XAnimGetPartQuatType.
+inline ByteWriterFixture BuildEntryAnimSingleBoneFile()
+{
+    ByteWriterFixture w = BuildEntryAnimHeader(1, 1, 0, 0, 30);
+    w.Push8(0x00);   // flip bitmap: no flips
+    w.Push8(0x01);   // simple bitmap: bone 0 simple (required for null quat)
+    w.PushString("tag_root");
+    w.Push16(0);     // bone 0: no quat indices
+    w.Push16(0);     // bone 0: no trans indices
+    w.Push8(1);      // one note track
+    w.PushString("fire");
+    w.Push16(0);     // at frame 0 (parts->numframes is 0, so time 0.0)
+    return w;
+}
+
+// One bone with a two-index simple (half) quaternion part and a
+// two-index small translation part. numframes 2 makes the loop-frame
+// count 2, so both index counts self-generate identity tables (no
+// file bytes) and the payloads are consumed directly: two ConsumeQuat2
+// pairs, then the LoadTrans small-trans body (6 floats + 3 bytes per
+// frame through the REAL Vec3Scale).
+inline ByteWriterFixture BuildEntryAnimQuatTransFile()
+{
+    ByteWriterFixture w = BuildEntryAnimHeader(2, 1, 0, 0, 30);
+    w.Push8(0x00);   // flip bitmap: no flips
+    w.Push8(0x01);   // simple bitmap: bone 0 simple -> half quat
+    w.PushString("tag_root");
+    w.Push16(2);     // quat indices == loop frames: identity self-generate
+    w.Push16(16384);
+    w.Push16(8192);  // two ConsumeQuat2 x components (w components derived)
+    w.Push16(2);     // trans indices == loop frames: identity self-generate
+    w.Push8(1);      // smallTrans
+    w.PushFloat(1.0f); w.PushFloat(2.0f); w.PushFloat(3.0f);       // mins
+    w.PushFloat(255.0f); w.PushFloat(255.0f); w.PushFloat(255.0f); // size (Vec3Scale by 1/255)
+    w.Push8(0xAA); w.Push8(0xBB); w.Push8(0xCC);   // frame 0 bytes
+    w.Push8(0x11); w.Push8(0x22); w.Push8(0x33);   // frame 1 bytes
+    w.Push8(0);      // zero note tracks
+    return w;
+}
+
+// Three bones covering four part-type buckets at once: bone 0 no
+// quat + no trans (NO_QUAT / NO_TRANS), bone 1 simple two-index quat
+// + small trans (HALF_QUAT / SMALL_TRANS), bone 2 full two-index quat
+// (simple bit clear: ConsumeQuat with a derived fourth component)
+// + single-index trans (TRANS_NO_SIZE, mins only). Exercises the
+// production quat/trans sort and the per-type data-emission loops.
+inline ByteWriterFixture BuildEntryAnimMixedTypesFile()
+{
+    ByteWriterFixture w = BuildEntryAnimHeader(2, 3, 0, 0, 30);
+    w.Push8(0x00);   // flip bitmap: no flips
+    w.Push8(0x03);   // simple bitmap: bones 0-1 simple, bone 2 full quat
+    w.PushString("b0");
+    w.PushString("b1");
+    w.PushString("b2");
+    // bone 0: null quat, null trans
+    w.Push16(0);
+    w.Push16(0);
+    // bone 1: half quat (2 frames) + small trans (2 frames)
+    w.Push16(2);
+    w.Push16(16384);
+    w.Push16(8192);
+    w.Push16(2);
+    w.Push8(1);      // smallTrans
+    w.PushFloat(1.0f); w.PushFloat(2.0f); w.PushFloat(3.0f);
+    w.PushFloat(255.0f); w.PushFloat(255.0f); w.PushFloat(255.0f);
+    w.Push8(0x0A); w.Push8(0x0B); w.Push8(0x0C);
+    w.Push8(0x1A); w.Push8(0x1B); w.Push8(0x1C);
+    // bone 2: full quat (2 frames, 3 components each) + trans-no-size
+    w.Push16(2);
+    w.Push16(16384); w.Push16(0); w.Push16(0);
+    w.Push16(8192);  w.Push16(0); w.Push16(0);
+    w.Push16(1);     // single trans index: mins only, no frames
+    w.PushFloat(4.0f); w.PushFloat(5.0f); w.PushFloat(6.0f);
+    w.Push8(0);      // zero note tracks
+    return w;
+}
+
+// Delta anim (partFlags bit1): single-loop-frame delta quat (ConsumeQuat2)
+// and delta trans (mins only), no bones.
+inline ByteWriterFixture BuildEntryAnimDeltaFile()
+{
+    ByteWriterFixture w = BuildEntryAnimHeader(1, 0, 2, 0, 30);
+    w.Push16(1);     // delta quat: single index -> size 0
+    w.Push16(16384); // ConsumeQuat2 x component
+    w.Push16(1);     // delta trans: single index -> mins only
+    w.PushFloat(7.0f); w.PushFloat(8.0f); w.PushFloat(9.0f);
+    w.Push8(0);      // zero note tracks
+    return w;
+}
+
+// Looping anim (partFlags bit0): numframes 2 plus the synthesized loop
+// frame makes 3 total frames; parts->numframes stays 2 and the
+// frequency becomes framerate / numframes.
+inline ByteWriterFixture BuildEntryAnimLoopFile()
+{
+    ByteWriterFixture w = BuildEntryAnimHeader(2, 0, 1, 0, 30);
+    w.Push8(0);      // zero note tracks
+    return w;
+}
+
+// XModelPieces version-1 file: u16 version, u16 numpieces, then per
+// piece a NUL-terminated name and 3 offset floats. Piece models
+// resolve through the stubbed R_RegisterModel, so no xmodel file is
+// needed behind the piece name.
+inline ByteWriterFixture BuildEntryPiecesFile()
+{
+    ByteWriterFixture w;
+    w.Push16(1);     // version
+    w.Push16(1);     // numpieces
+    w.PushString("pc_body");
+    w.PushFloat(1.5f); w.PushFloat(2.5f); w.PushFloat(3.5f);
+    return w;
+}
+
 }  // namespace xmodel_loader_entry_harness
 
 // ---------------------------------------------------------------------------
@@ -412,7 +572,17 @@ int FS_ReadFile(const char *qpath, void **buffer)
     auto &state = xmodel_loader_entry_harness::State();
     const auto fileIt = state.files.find(qpath);
     if (fileIt == state.files.end())
+    {
+        // Production FS service contract (universal/com_files.cpp
+        // FS_ReadFile): a failed lookup still writes *buffer — clearing
+        // it to null — alongside the -1 return. XAnimLoadFile's
+        // not-found path asserts !buf on exactly this contract, so
+        // leaving *buffer untouched hands the assert uninitialized
+        // stack (0xCC fill) on the MSVC Debug leg.
+        if (buffer)
+            *buffer = nullptr;
         return -1;
+    }
     const std::vector<unsigned char> &bytes = fileIt->second;
     unsigned char *copy = new unsigned char[bytes.size() + 1];
     // Bounded, iterator-based copy: same bytes, same terminator, with
@@ -622,11 +792,13 @@ const dvar_t *r_modelVertColor = &xmodel_loader_entry_harness::RModelVertColorRe
 //
 // xanim_load_obj.cpp is enrolled in the test target so the real
 // XModelPartsLoadFile parse runs (its ConsumeQuatNoSwap decodes the
-// child-bone quaternions). The TU references the XAnim-side engine
-// endpoints below, but the entry-point tests never drive the XAnim
-// paths, so capture-free stable stubs suffice: Hunk_User* back onto
-// plain zeroed allocations, string/model registries hand out stable
-// opaque records, and I_strnicmp reuses the harness comparator.
+// child-bone quaternions), and since ki-458h stage 2 the entry-point
+// tests also drive the TU's own XAnimLoadFile, XModelPiecesLoadFile
+// and XModelPiecesPrecache over the BuildEntryAnim* / BuildEntryPieces*
+// fixtures. The Hunk_User* endpoints below therefore serve real
+// animation-data allocations; the string/model registries keep handing
+// out stable opaque records and I_strnicmp reuses the harness
+// comparator.
 // ---------------------------------------------------------------------------
 
 HunkUser *Hunk_UserCreate(int maxSize, const char *name, bool fixed,
