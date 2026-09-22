@@ -1,3 +1,13 @@
 # CI helper scripts must keep POSIX line endings or bash on Windows runners
 # fails with '\r: command not found'.
 scripts/ci/*.sh text eol=lf
+
+# The vendored Speex snapshot (src/groupvoice/speex/) and the deps/speex
+# public surface are pinned by raw-byte SHA-256 in the voice codec guard
+# (tests/voice_codec_guard_source_test.cmake, require_pinned_sha256, DEP-3).
+# The pinned files are LF-committed; checkout-time eol rewriting on
+# platforms with autocrlf would change the working-tree bytes the guard
+# hashes, so conversion is disabled for exactly those pinned surfaces.
+# The guard's hash pins and its negative controls are unchanged.
+src/groupvoice/speex/** -text
+deps/speex/** -text

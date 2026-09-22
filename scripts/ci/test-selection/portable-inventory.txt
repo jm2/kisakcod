@@ -242,6 +242,7 @@ upstream-sort-source-invariants
 vehicle-material-time-contracts
 vehicle-material-time-source-invariants
 voice-codec-gate-contracts
+voice-codec-guard-source-invariants
 voice-framing-source-invariants
 weapon-input-safety-contracts
 weapon-model-safety-contracts

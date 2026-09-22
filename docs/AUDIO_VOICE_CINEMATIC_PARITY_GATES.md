@@ -217,7 +217,7 @@ because that active baseline cannot link on targets that lose the 32-bit
 | Subject | Coverage at this SHA |
 |---|---|
 | Sound | One focused CMake test, `tests/sound_dry_send_source_test.cmake`; no sound-loader runtime suite and no playback suite (`NATIVE_ASSET_CLOSURE_LEDGER.md` §4.4) |
-| Voice | Codec-level suite `tests/voice_gate_tests.cpp` + `tests/voice_gate_decode_test.cpp` (ctest `voice-codec-gate-contracts`): golden encode streams (nb/wb), per-frame-wire-length decode vs pinned reference, seed-free decoder determinism (fixed-point comfort-noise LCG in `misc.c`), DTX amplitude-bounded frames, lookahead-aligned round trip with pinned bounds, corrupt-frame rejection. Source contracts `tests/voice_framing_source_test.cmake` and `tests/audio_gate_source_test.cmake`. Still **no runtime device-lifecycle suite** (`AUD-*`/`VOX-*` runtime rows remain `not-implemented`) |
+| Voice | Codec-level suite `tests/voice_gate_tests.cpp` + `tests/voice_gate_decode_test.cpp` (ctest `voice-codec-gate-contracts`): golden encode streams (nb/wb), per-frame-wire-length decode vs pinned reference, seed-free decoder determinism (fixed-point comfort-noise LCG in `misc.c`), DTX amplitude-bounded frames, lookahead-aligned round trip with pinned bounds, corrupt-frame rejection. Source contracts `tests/voice_framing_source_test.cmake`, `tests/audio_gate_source_test.cmake` and the substitution/identity guard `tests/voice_codec_guard_source_test.cmake` (VOX-7 codec-exclusivity tripwire over the voice wrappers and build surface; DEP-3 snapshot identity: version string, 65-file set, per-file SHA-256 content pins, deterministic synthesis LCG; ordered 35-entry codec-gate build-list manifest; ordered production `GROUPVOICE`/`GROUPVOICE_SPEEX` manifests plus their consumption pins in `scripts/mp/CMakeLists.txt`, the whole-`deps/speex` surface file-set identity, and the deterministic synthesis LCG; nine `CONTRACT_MUTATION` negative controls including same-directory entry replacement in both the test and production lists, snapshot content mutation and a `deps/speex` surface file-set addition). Still **no runtime device-lifecycle suite** (`AUD-*` and the `VOX-4/5/6/8` runtime rows remain `not-implemented`/`blocked`) |
 | Cinematics | Source contract `tests/cinematic_gate_source_test.cmake` (Bink IO/error/mix-bin/texture-split pins). **No decode/seek/A-V runtime tests** |
 | Null media | Source contract `tests/null_media_gate_source_test.cmake` (`KISAK_DEDI_HEADLESS` init guards, dedicated source-list media and proprietary-dependency exclusions) |
 
@@ -346,7 +346,7 @@ requirements fully in force.
 | VOX-4 | Capture device lifecycle: init, default-device change, removal, re-open, shutdown without leak or crash | `win_voice.cpp` mixer/waveIn, `record_dsound.cpp`, `Voice_Init`/`Voice_Shutdown` (`win_voice.cpp:588/640`) | Device-present / device-absent / device-swap sequences on each client target | Lifecycle trace + leak report | pending |
 | VOX-5 | Playback/loss/recovery: missing, late and reordered voice packets degrade gracefully and drop cleanly | `Voice_IncomingVoiceData` (`win_voice.cpp:732`), `DSound_HandleBufferUnderrun` (`play_dsound.cpp:178`) | Loss/reorder/late-arrival injection | Recovery trace | pending |
 | VOX-6 | Permission/default-device changes are observed and do not stall the game loop | `win_voice.cpp:100-160` mixer path | Permission-denied and no-device fixtures | Trace + no-hang assertion | pending |
-| VOX-7 | **No codec/protocol substitution**: no Opus or new voice framing; wire bytes for valid voice are unchanged | Entire voice path | Source guard + byte-exact wire fixtures | Guard test + fixtures | not-implemented (guard absent) |
+| VOX-7 | **No codec/protocol substitution**: no Opus or new voice framing; wire bytes for valid voice are unchanged | Entire voice path | Source guard + byte-exact wire fixtures | Guard test + fixtures | pending (substitution guard implemented and CI-executed: `tests/voice_codec_guard_source_test.cmake` tripwire over the voice wrappers, build surface and vendored snapshot; codec-payload wire bytes are runtime-pinned by the VOX-1a goldens; framing bytes remain statement-level pins until a portable framing harness can run them) |
 | VOX-8 | Two-way voice against **both** reference builds (#122) | Full client | Original 1.7 and Steam 1.8 peers, both directions | Session capture + packet trace | **blocked** |
 
 ### 4.3 Cinematic gates
@@ -375,7 +375,7 @@ requirements fully in force.
 |---|---|---|---|---|---|
 | DEP-1 | Miles and Bink proprietary, 32-bit-only blobs are removed from or replaced before portable release | `deps/msslib`, `deps/binklib` | Packaging audit on each release target | Provenance/SBOM + package contents | not-implemented |
 | DEP-2 | Replacement libraries are pinned, license-audited and reproducible (no unpinned downloads) | OpenAL Soft / FFmpeg candidates | Pin source + license review + notices update | Pinned recipe + notices diff | not-implemented |
-| DEP-3 | Voice codec implementation is preserved **conditional on authentic reference evidence**: the observed in-tree Speex 1.1.9 build (`src/groupvoice/speex`, `deps/speex`) is to remain as implemented *until* a recorded original commercial 1.7 / Steam 1.8 reference establishes the required wire codec/profile; mandatory commercial wire behavior governs any evidence-backed correction, not an unverified source-version identity | `src/groupvoice/speex`, `deps/speex` | Guard: codec-version/checksum assertion **plus** a recorded reference-evidence decision before any codec change | Source guard + version check + reference record | not-implemented |
+| DEP-3 | Voice codec implementation is preserved **conditional on authentic reference evidence**: the observed in-tree Speex 1.1.9 build (`src/groupvoice/speex`, `deps/speex`) is to remain as implemented *until* a recorded original commercial 1.7 / Steam 1.8 reference establishes the required wire codec/profile; mandatory commercial wire behavior governs any evidence-backed correction, not an unverified source-version identity | `src/groupvoice/speex`, `deps/speex` | Guard: codec-version/checksum assertion **plus** a recorded reference-evidence decision before any codec change | Source guard + version check + reference record | pending (version/identity guard implemented and CI-executed: `voice-codec-guard-source-invariants` pins the `speex-1.1.9` identity, the 65-file snapshot set, per-file SHA-256 content of every snapshot file and the whole `deps/speex` surface, the ordered test and production build-list manifests with their `scripts/mp/CMakeLists.txt` consumption pins, and the deterministic synthesis LCG, each with mutation negative controls; the recorded reference-evidence decision is still required before any codec change and is not waived) |
 
 ## 5. Relationship to commercial compatibility (#122)
 
@@ -422,7 +422,10 @@ requirements fully in force.
 - **Not implemented:** there is no OpenAL (or other portable) backend, no
   voice device abstraction layer, and no audio/voice/cinematic runtime test
   suite. The stage-2 additions (codec gate + four source contracts, §2.5) are
-  build/CI-verifiable contracts, not runtime device or interop evidence.
+  build/CI-verifiable contracts, not runtime device or interop evidence. The
+  stage-3 substitution/identity guard (`tests/voice_codec_guard_source_test.cmake`,
+  VOX-7/DEP-3) is likewise a source-class tripwire, not runtime device or
+  interop evidence.
 - **Codec findings are characterization, not certification** (§2.6): the
   golden/round-trip/determinism results validate the vendored snapshot
   against itself and against an upstream 1.2.1 build. They do not prove
