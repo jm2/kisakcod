@@ -41,6 +41,8 @@
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <new>
 
 #include <universal/msvc_printf_shim.h>
 
@@ -154,7 +156,12 @@ void *Sys_GetValue(int value)
     return nullptr;
 }
 
-const char *Sys_DefaultInstallPath() { return "."; }
+// Win32 x86: char* __cdecl Sys_DefaultInstallPath() (win_local.h).
+char *Sys_DefaultInstallPath()
+{
+    static char installPath[] = ".";
+    return installPath;
+}
 
 void Sys_Sleep(unsigned int milliseconds) { (void)milliseconds; }
 
@@ -170,18 +177,67 @@ void Sys_Error(const char *fmt, ...)
     std::_Exit(4);
 }
 
-void Sys_VirtualMemoryCommit(void *address, unsigned int size)
+// Virtual-memory seams behind the compiled-in hunk/physical-memory
+// production sources (signatures per qcommon/sys_memory.h, KISAK_CDECL
+// is __cdecl on this target). A reservation is a lazily-backed heap
+// allocation remembered by base address; commit and decommit succeed
+// for any range inside a remembered reservation (the production
+// Z_TryVirtualCommitInternal commits page-aligned subranges), and
+// release frees by the original base exactly once.
+namespace
 {
-    (void)address;
-    (void)size;
+std::map<std::uintptr_t, std::size_t> s_virtualMemoryReservations;
+} // namespace
+
+void *Sys_VirtualMemoryReserve(std::size_t size)
+{
+    if (size == 0)
+        return nullptr;
+    // Production reserves inaccessible pages; the hunk/physical-memory
+    // paths only read after commit, so default-init (untouched pages,
+    // no eager fill) mirrors that without reserving real RAM.
+    auto *const storage = new (std::nothrow) unsigned char[size];
+    if (!storage)
+        return nullptr;
+    s_virtualMemoryReservations[reinterpret_cast<std::uintptr_t>(storage)] =
+        size;
+    return storage;
 }
 
-void Sys_VirtualMemoryRelease(void *address) { (void)address; }
-
-void *Sys_VirtualMemoryReserve(unsigned int size)
+bool Sys_VirtualMemoryCommit(void *address, std::size_t size)
 {
-    (void)size;
-    return nullptr;
+    if (!address || size == 0)
+        return false;
+    const std::uintptr_t begin = reinterpret_cast<std::uintptr_t>(address);
+    const std::uintptr_t end = begin + size;
+    for (const auto &reservation : s_virtualMemoryReservations)
+    {
+        if (begin >= reservation.first
+            && end <= reservation.first + reservation.second)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Sys_VirtualMemoryDecommit(void *address, std::size_t size)
+{
+    return Sys_VirtualMemoryCommit(address, size);
+}
+
+bool Sys_VirtualMemoryRelease(void *address)
+{
+    if (!address)
+        return false;
+    const auto reservation =
+        s_virtualMemoryReservations.find(
+            reinterpret_cast<std::uintptr_t>(address));
+    if (reservation == s_virtualMemoryReservations.end())
+        return false;
+    delete[] reinterpret_cast<unsigned char *>(address);
+    s_virtualMemoryReservations.erase(reservation);
+    return true;
 }
 
 void Com_SyncThreads() {}
@@ -410,7 +466,12 @@ void Profile_Recover(int guard) { (void)guard; }
 // ---------------------------------------------------------------------------
 void NET_Sleep(int milliseconds) { (void)milliseconds; }
 
-const char *Win_GetLanguage() { return "english"; }
+// Win32 x86: char* __cdecl Win_GetLanguage() (win_localize.h).
+char *Win_GetLanguage()
+{
+    static char language[] = "english";
+    return language;
+}
 
 // _copyDWord: the production dword-fill helper (common.cpp). The
 // harness's registry paths do hit this through Com_Memset's aligned
@@ -473,12 +534,9 @@ void track_z_commit(int a, int b)
 
 int FS_LoadStack() { return 0; }
 
-void Sys_VirtualMemoryDecommit(void *address, unsigned int size)
-{
-    (void)address; (void)size;
-}
-
-unsigned int Sys_VirtualMemoryPageSize() { return 4096u; }
+// Win32 x86: std::size_t == unsigned int, so the page-size stub keeps
+// its type spelled as the sys_memory.h declaration has it.
+std::size_t Sys_VirtualMemoryPageSize() { return 4096u; }
 
 void R_ReflectionProbeRegisterDvars() {}
 
@@ -488,7 +546,11 @@ void XAnimFreeList(XAnim_s *anims) { (void)anims; }
 
 void XModelPartsFree(XModelPartsLoad *load) { (void)load; }
 
-bool r_reflectionProbeGenerate = false;
+// The reflection-probe dvar behind Com_InitHunkMemory's debug branch
+// (r_dvars.h: extern const dvar_t *r_reflectionProbeGenerate). The
+// enrolled DB-load paths never register it; the null dvar is the
+// never-generated state.
+const dvar_t *r_reflectionProbeGenerate = nullptr;
 
 
 // ---------------------------------------------------------------------------
