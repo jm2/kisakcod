@@ -124,6 +124,38 @@ require_contains(_cinematic
     "R_CinematicThread_EndBinkAsync();"
     "shutdown ends the async Bink thread")
 
+# --- Branch binding (r_cinematic.cpp, CIN-2/CIN-3) -----------------------------
+# The stop and advance calls above are checked file-wide; that cannot tell a
+# call inside the retail control flow from one parked anywhere else in the
+# translation unit (review thread r4070007425). These pins bind each call to
+# its retail branch inside R_Cinematic_UpdateFrame_Core.
+function(extract_slice SOURCE_VARIABLE START_MARKER END_MARKER OUT_VARIABLE DESCRIPTION)
+    set(_source "${${SOURCE_VARIABLE}}")
+    string(FIND "${_source}" "${START_MARKER}" _start)
+    if(_start EQUAL -1)
+        message(FATAL_ERROR "Missing start of cinematic slice (${DESCRIPTION}): '${START_MARKER}'")
+    endif()
+    string(SUBSTRING "${_source}" ${_start} -1 _tail)
+    string(FIND "${_tail}" "${END_MARKER}" _relative_end)
+    if(_relative_end LESS_EQUAL 0)
+        message(FATAL_ERROR "Missing ordered end of cinematic slice (${DESCRIPTION}): '${END_MARKER}'")
+    endif()
+    string(SUBSTRING "${_tail}" 0 ${_relative_end} _slice)
+    set(${OUT_VARIABLE} "${_slice}" PARENT_SCOPE)
+endfunction()
+
+extract_slice(_cinematic
+    "void __cdecl R_Cinematic_UpdateFrame_Core("
+    "char __cdecl R_Cinematic_AreHunksOpen()"
+    _frame_core
+    "R_Cinematic_UpdateFrame_Core")
+require_contains(_frame_core
+    "if (localTargetChanged) { if (cinematicGlob.currentCinematicName[0]) R_Cinematic_StopPlayback_Now();"
+    "a running cinematic is cancelled inside the target-changed branch")
+require_contains(_frame_core
+    "if (isCinematicBeingPlayed) { iassert( cinematicGlob.bink ); if (!R_Cinematic_Advance()) cinematicGlob.cinematicFinished = 1;"
+    "a failed advance is consumed inside the is-cinematic-playing branch")
+
 # --- A/V synchronization (r_cinematic.cpp, CIN-4) -------------------------------
 require_count(_cinematic "BinkGetRealtime(cinematicGlob.bink, &binkRealtime, 0);" 2
     "Bink realtime is sampled at frame advance and texture update")
@@ -194,6 +226,25 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
         string(REPLACE
             "R_Cinematic_ReleaseImages(textureSet);"
             "" _cinematic "${_cinematic}")
+    elseif(CONTRACT_MUTATION STREQUAL "stop_call_unbound")
+        # Reviewer scenario: the stop call still exists but is no longer
+        # bound to the target-changed branch, so a target change no longer
+        # cancels the running cinematic.
+        string(REPLACE
+            "if (localTargetChanged) { if (cinematicGlob.currentCinematicName[0]) R_Cinematic_StopPlayback_Now();"
+            "if (localTargetChanged) { if (cinematicGlob.currentCinematicName[0]) ;"
+            _cinematic "${_cinematic}")
+        string(REPLACE
+            "cinematicGlob.underrun = 0;"
+            "cinematicGlob.underrun = 0; R_Cinematic_StopPlayback_Now();"
+            _cinematic "${_cinematic}")
+    elseif(CONTRACT_MUTATION STREQUAL "advance_unbound")
+        # Reviewer scenario: the failed advance is consumed outside the
+        # is-cinematic-playing branch.
+        string(REPLACE
+            "if (isCinematicBeingPlayed) { iassert( cinematicGlob.bink ); if (!R_Cinematic_Advance()) cinematicGlob.cinematicFinished = 1; }"
+            "if (isCinematicBeingPlayed) { iassert( cinematicGlob.bink ); } if (!R_Cinematic_Advance()) cinematicGlob.cinematicFinished = 1; }"
+            _cinematic "${_cinematic}")
     else()
         message(FATAL_ERROR
             "Unknown cinematic gate contract mutation: '${CONTRACT_MUTATION}'")
@@ -247,6 +298,21 @@ require_contains(_cinematic
     "void __cdecl R_Cinematic_Shutdown()"
     "shutdown entry survives mutations")
 
+# The branch-bound pins must also survive every mutation: the unbind
+# mutations above keep the file-wide call pins true and are rejected only
+# here.
+extract_slice(_cinematic
+    "void __cdecl R_Cinematic_UpdateFrame_Core("
+    "char __cdecl R_Cinematic_AreHunksOpen()"
+    _frame_core_mut
+    "R_Cinematic_UpdateFrame_Core (mutation check)")
+require_contains(_frame_core_mut
+    "if (localTargetChanged) { if (cinematicGlob.currentCinematicName[0]) R_Cinematic_StopPlayback_Now();"
+    "target-changed branch binding survives mutations")
+require_contains(_frame_core_mut
+    "if (isCinematicBeingPlayed) { iassert( cinematicGlob.bink ); if (!R_Cinematic_Advance()) cinematicGlob.cinematicFinished = 1;"
+    "is-cinematic-playing branch binding survives mutations")
+
 if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
     foreach(_mutation IN ITEMS
         background_io_off
@@ -256,7 +322,9 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         bink_do_frame_dropped
         stop_playback_dropped
         frame_buffers_dropped
-        release_images_dropped)
+        release_images_dropped
+        stop_call_unbound
+        advance_unbound)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"

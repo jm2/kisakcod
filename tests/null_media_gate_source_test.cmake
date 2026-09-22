@@ -145,6 +145,21 @@ require_contains(_snd
 require_contains(_snd
     "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
     "alias playback short-circuits null sound files before channel start")
+# Ordered assertion: the short-circuit must precede BOTH channel-start
+# calls, not merely exist somewhere in the file (review thread
+# r4070007432). extract_slice fails closed when the end marker is missing
+# or ordered before the start, so moving the check after a channel start
+# empties these slices and rejects the regression.
+extract_slice(_snd
+    "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+    "SND_StartAliasSample(&startAliasInfo, pChannel);"
+    _null_before_sample
+    "null check before sample channel start")
+extract_slice(_snd
+    "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+    "SND_StartAliasStream(&startAliasInfo, pChannel);"
+    _null_before_stream
+    "null check before stream channel start")
 
 # Contract mutation self-verification: each mutation below is a plausible
 # regression and must be rejected by the checks above.
@@ -179,6 +194,18 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
         string(REPLACE
             "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
             "" _snd "${_snd}")
+    elseif(CONTRACT_MUTATION STREQUAL "null_check_after_channel_start")
+        # Reviewer scenario: the check still exists but runs after the
+        # channel-start calls, so a null file reaches the driver first.
+        # The file-wide pin above still matches; only the ordered slices
+        # reject this.
+        string(REPLACE
+            "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+            "" _snd "${_snd}")
+        string(REPLACE
+            "playbackId = SND_StartAliasStream(&startAliasInfo, pChannel);"
+            "playbackId = SND_StartAliasStream(&startAliasInfo, pChannel); if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+            _snd "${_snd}")
     else()
         message(FATAL_ERROR
             "Unknown null media contract mutation: '${CONTRACT_MUTATION}'")
@@ -211,6 +238,16 @@ require_contains(_dbload
 require_contains(_snd
     "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
     "null sound short-circuit survives mutations")
+extract_slice(_snd
+    "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+    "SND_StartAliasSample(&startAliasInfo, pChannel);"
+    _null_before_sample_mut
+    "null check before sample start (mutation check)")
+extract_slice(_snd
+    "if (SND_IsNullSoundFile(alias0->soundFile)) return -1;"
+    "SND_StartAliasStream(&startAliasInfo, pChannel);"
+    _null_before_stream_mut
+    "null check before stream start (mutation check)")
 require_contains(_dbload
     "void DB_ClearHeadlessSoundRuntimeData(MssSoundCOD4 *sound)"
     "headless runtime-data clear entry survives mutations")
@@ -229,7 +266,8 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         sound_allowed_in_dedi
         headless_setdata_unguarded
         clear_runtime_dropped
-        null_short_circuit_removed)
+        null_short_circuit_removed
+        null_check_after_channel_start)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"

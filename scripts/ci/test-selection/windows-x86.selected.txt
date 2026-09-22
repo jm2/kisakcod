@@ -2,6 +2,7 @@ actor-grenade-prediction-cache-contracts
 actor-grenade-safe-target-radius-contracts
 actor-grenade-safe-target-source-invariants
 audio-gate-source-invariants
+audio-playback-gate-source-invariants
 cinematic-gate-source-invariants
 database-derived-shader-cache-contracts
 database-derived-shader-cache-source-invariants
@@ -117,6 +118,7 @@ upstream-sort-contracts
 upstream-sort-source-invariants
 voice-codec-gate-contracts
 voice-codec-guard-source-invariants
+voice-device-gate-source-invariants
 voice-framing-source-invariants
 weapon-input-safety-contracts
 weapon-model-safety-contracts

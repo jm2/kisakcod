@@ -7,6 +7,7 @@ actor-grenade-safe-target-source-invariants
 actor-navigation-geometry
 actor-navigation-source-invariants
 audio-gate-source-invariants
+audio-playback-gate-source-invariants
 cgame-pose-atomic-protocols
 cinematic-gate-source-invariants
 database-build-mode-asset-policy
@@ -243,6 +244,7 @@ vehicle-material-time-contracts
 vehicle-material-time-source-invariants
 voice-codec-gate-contracts
 voice-codec-guard-source-invariants
+voice-device-gate-source-invariants
 voice-framing-source-invariants
 weapon-input-safety-contracts
 weapon-model-safety-contracts
