@@ -20,6 +20,7 @@
 namespace
 {
 using namespace db_load_entry_harness;
+using namespace db_load_entry_checks;
 
 // C4: stream init + valid pointer relocation (block 1 zero-fill
 // materialization).

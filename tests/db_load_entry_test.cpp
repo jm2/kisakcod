@@ -208,6 +208,7 @@ void RunStreamLoadCases();
 namespace
 {
 using namespace db_load_entry_harness;
+using namespace db_load_entry_checks;
 
 // The shared fixture payloads: the registry clones
 // DB_GetXAssetTypeSize(ASSET_TYPE_RAWFILE) bytes out of the caller's
