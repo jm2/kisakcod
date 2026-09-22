@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 # Audio capture/playback device integration source contracts (AUD-1..AUD-8
 # companion). These pins are the production Speex integration boundaries that
 # the portable codec gate (tests/voice_gate_tests.cpp) cannot see because the
-# files are Win32-coupled. Issue #122 / docs/NETWORK_COMPATIBILITY.md govern:
+# files are Win32-coupled. docs/design/NET_STEAM18.md governs:
 # the retail parameter defaults, the VAD/DTX configuration, and the retail
 # Decode_Sample return semantics are compatibility surface.
 #

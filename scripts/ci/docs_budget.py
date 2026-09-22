@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Enforce the doc-set budgets from ADR-0006 (docs/decisions/).
+
+Fails when a live doc exceeds its budget, when docs/ holds a file outside the
+allowed set, or when docs/ exceeds its total budget. A stale NOW.md review
+date is a warning annotation, never a failure. 1 KB = 1024 bytes.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import os
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+KB = 1024
+BUDGETS = {  # path -> max bytes
+    "AGENTS.md": 6 * KB,
+    "CLAUDE.md": 1 * KB,
+    "docs/CHARTER.md": 8 * KB,
+    "docs/ROADMAP.md": 15 * KB,
+    "docs/NOW.md": 6 * KB,
+    "docs/UPSTREAM.md": 3 * KB,
+    "docs/ARCHIVE.md": 1 * KB,
+    "docs/capability/manifest.json": 8 * KB,
+    "docs/design/NATIVE64.md": 15 * KB,
+    "docs/design/FASTFILE_LOADER.md": 12 * KB,
+    "docs/design/NET_STEAM18.md": 12 * KB,
+    "docs/design/PLATFORM_POSIX.md": 8 * KB,
+    "docs/design/DETERMINISM.md": 5 * KB,
+    "docs/design/CLIENT.md": 10 * KB,
+}
+ADR_RE = re.compile(r"^docs/decisions/\d{4}-[a-z0-9-]+\.md$")
+ADR_BUDGET = 2 * KB
+DOCS_TOTAL = 100 * KB
+NOW_MAX_AGE_DAYS = 10
+
+
+def main() -> int:
+    errors, rows = [], []
+    docs = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*") if p.is_file())
+    errors += ["%s is not in the doc set (ADR-0006); fold it into a live doc" % rel
+               for rel in docs if rel not in BUDGETS and not ADR_RE.match(rel)]
+    for rel in sorted(set(BUDGETS) | {d for d in docs if ADR_RE.match(d)}):
+        if not (ROOT / rel).is_file():
+            continue
+        size, limit = (ROOT / rel).stat().st_size, BUDGETS.get(rel, ADR_BUDGET)
+        rows.append((rel, size, limit))
+        if size > limit:
+            errors.append("%s is %d bytes; budget %d" % (rel, size, limit))
+    claude = ROOT / "CLAUDE.md"
+    if claude.is_file() and len(claude.read_text(encoding="utf-8").splitlines()) != 1:
+        errors.append("CLAUDE.md must be the single line @AGENTS.md")
+    total = sum((ROOT / d).stat().st_size for d in docs)
+    if total > DOCS_TOTAL:
+        errors.append("docs/ totals %d bytes; budget %d" % (total, DOCS_TOTAL))
+
+    now = ROOT / "docs/NOW.md"
+    m = re.search(r"^Last reviewed:\s*(\d{4}-\d{2}-\d{2})", now.read_text(encoding="utf-8"), re.M) if now.is_file() else None
+    if not m:
+        print("::warning file=docs/NOW.md::no 'Last reviewed: YYYY-MM-DD' line")
+    else:
+        age = (dt.date.today() - dt.date.fromisoformat(m.group(1))).days
+        if age > NOW_MAX_AGE_DAYS:
+            print("::warning file=docs/NOW.md::last reviewed %d days ago (limit %d); the mayor must re-rank the queue" % (age, NOW_MAX_AGE_DAYS))
+
+    table = ["## Doc-set budgets", "", "| Doc | Bytes | Budget |", "|---|---:|---:|"]
+    table += ["| %s | %d | %d |" % row for row in rows]
+    table.append("| **docs/ total** | %d | %d |" % (total, DOCS_TOTAL))
+    print("\n".join(table))
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as f:
+            f.write("\n".join(table) + "\n\n")
+    for e in errors:
+        print("::error::%s" % e)
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

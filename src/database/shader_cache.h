@@ -2,7 +2,7 @@
 
 // Content-addressed derived shader cache / sidecar (ki-y49k / issue #131).
 //
-// Roadmap A09 and docs/PORTING.md require an explicit shader policy:
+// docs/design/CLIENT.md requires an explicit shader policy:
 //   * load original fast-files unchanged;
 //   * identify bytecode by content hash;
 //   * translate/cache without rewriting the user's retail archive;

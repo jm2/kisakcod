@@ -1,7 +1,6 @@
 // Contract tests for the content-addressed derived shader cache (ki-y49k).
 //
-// These tests pin the policy from docs/ROADMAP_EXPANSION_PROPOSAL.md (A09)
-// and docs/PORTING.md: original bytecode is identified by content hash, the
+// These tests pin the policy from docs/design/CLIENT.md: original bytecode is identified by content hash, the
 // sidecar is versioned by format and converter identity, stale or corrupt
 // evidence regenerates from the original inputs, and unsupported programs are
 // rejected rather than cached.

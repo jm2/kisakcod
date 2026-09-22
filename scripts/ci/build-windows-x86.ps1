@@ -1,6 +1,6 @@
 # Canonical Windows x86 production configure+build, shared by ci.yml and
-# release.yml (CI_RELEASE_WORKFLOW_AUDIT gap 11: CI must validate exactly what
-# release ships, so both workflows call this one script with the same flags).
+# release.yml (CI must validate exactly what release ships, so both workflows
+# call this one script with the same flags).
 #
 # Production profile: MP client + dedicated server, Win32, CICD, DirectX SDK,
 # FX archive stack measurement. Callers may append extra CMake cache args via

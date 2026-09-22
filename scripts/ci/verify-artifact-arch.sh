@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Architecture truth gate for POSIX targets (CI_RELEASE_WORKFLOW_AUDIT gap 16):
+# Architecture truth gate for POSIX targets:
 # a runner that silently fell back to emulation must not upload a binary
 # labeled for another architecture. Fails closed unless EVERY named binary
 # reports the expected architecture token from `file`.

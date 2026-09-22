@@ -1,5 +1,5 @@
 // Voice codec parity gates — decode-side contracts (VOX-1b,
-// docs/AUDIO_VOICE_CINEMATIC_PARITY_GATES.md Section 4.2) against the
+// docs/design/CLIENT.md, Voice) against the
 // in-tree Speex 1.1.9 build that ships with the game
 // (src/groupvoice/speex/*.c, public headers deps/speex/).
 //

@@ -4520,30 +4520,8 @@ if(UNIX)
         TIMEOUT 120 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
 
-# A11 (ki-ubw0): retail-content and MP mod compatibility regression matrix.
-# docs/RETAIL_CONTENT_MATRIX.md carries a machine-readable axis/case/
-# disposition index; this source test fails closed if a required production
-# target, commercial profile, configuration mode, case family, the §5
-# lifecycle-stage vocabulary and per-case assignments (across §11, §5 and the
-# §6.2 stage cells), the §4 catalog Targets cells, the §6.2 displayed Modes
-# applicability or per-case stage cells, the commercial-to-commercial baseline
-# records and the §6.4 baseline ledger, or the upstream #89/#40 index or §4.5
-# visible disposition is dropped, narrowed or promoted, and negative-tests its
-# own gates so a silently weakened contract cannot pass. Portable: CMake-only,
-# no shell.
-add_test(
-    NAME retail-content-matrix-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/retail_content_matrix_source_test.cmake
-)
-set_tests_properties(retail-content-matrix-source-invariants PROPERTIES
-    TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-
 # ---------------------------------------------------------------------------
-# Voice codec parity gates (VOX-1a / VOX-1b,
-# docs/AUDIO_VOICE_CINEMATIC_PARITY_GATES.md Section 4.2).
+# Voice codec parity gates (VOX-1a / VOX-1b; docs/design/CLIENT.md, Voice).
 #
 # Drives the in-tree Speex 1.1.9 build (src/groupvoice/speex/*.c) through the
 # exact production ctl sequences from src/groupvoice/encode.cpp / decode.cpp

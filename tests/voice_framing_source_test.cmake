@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.16)
 # playback; see tests/voice_gate_tests.cpp for the codec-level pins). The wire
 # format between client and server is container framing around opaque Speex
 # frames, and every byte of that framing is part of the retail compatibility
-# surface governed by docs/NETWORK_COMPATIBILITY.md and issue #122. These
+# surface governed by docs/design/NET_STEAM18.md. These
 # contracts pin the framing statements verbatim; any change must go through
 # the compatibility process.
 

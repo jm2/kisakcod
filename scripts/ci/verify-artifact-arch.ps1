@@ -1,8 +1,7 @@
-# Architecture truth gate for Windows targets (CI_RELEASE_WORKFLOW_AUDIT
-# gap 16): parses the PE machine type directly so the check needs no VS dev
-# environment (no dumpbin on PATH) and cannot be fooled by a runner silently
-# falling back to emulation. Fails closed unless EVERY named binary reports
-# the expected machine type.
+# Architecture truth gate for Windows targets: parses the PE machine type
+# directly so the check needs no VS dev environment (no dumpbin on PATH) and
+# cannot be fooled by a runner silently falling back to emulation. Fails
+# closed unless EVERY named binary reports the expected machine type.
 #
 # Usage: verify-artifact-arch.ps1 -Expected <x86|x64|ARM64> <file> [<file>...]
 [CmdletBinding()]

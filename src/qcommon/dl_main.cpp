@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// HTTP/www download transport (CODEBASE_AUDIT.md H4): state machine and
+// HTTP/www download transport: state machine and
 // public DL_* entry points. The per-state pumps live in dl_main_pump.cpp;
 // transport state and tuning constants in dl_main_internal.h.
 //

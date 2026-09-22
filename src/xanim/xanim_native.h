@@ -42,7 +42,7 @@
 //  to XAnimPartsNative is a follow-up; this header only provides the
 //  split infrastructure and the safe round-trip helpers.
 //
-//  See docs/task.md Priority 7 + M4.
+//  See docs/design/NATIVE64.md.
 // ============================================================================
 
 #include <cstddef>

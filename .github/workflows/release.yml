@@ -1,7 +1,6 @@
 # Release gate for KisakCOD.
 #
-# Implements the multi-platform release contract from
-# docs/CI_RELEASE_WORKFLOW_AUDIT.md (bead ki-8px) and docs/task.md Priority 8:
+# Multi-platform release contract (G6 in docs/ROADMAP.md):
 #   - one exact release tag/SHA is resolved and validated before anything
 #     builds; every build job checks out that verified ref
 #   - workflow-level permission is contents: read; only the final code-free

@@ -4,7 +4,7 @@
 // (layout static_asserts + snap rounding). It now links the PRODUCTION MP
 // bit codec (msg_bits_*_mp.cpp + huffman.cpp), and this TU adds the
 // encode->decode round-trip half of the "Production wire contracts" evidence
-// row in docs/NETWORK_COMPATIBILITY.md:
+// row in docs/design/NET_STEAM18.md:
 //
 //   * string framing round-trips over the real writers/readers,
 //   * Angle16 quantization determinism through the real codec,
