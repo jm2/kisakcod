@@ -2681,20 +2681,72 @@ set_tests_properties(platform-crash-signal-park-contracts PROPERTIES TIMEOUT 15)
 
 add_executable(kisakcod-net-wire-contract-tests
     net_wire_contract_tests.cpp
+    # Commercial-reference fixture subsystem (issue #127 / ki-dyqxl):
+    # manifest + explicit variable capture fields + masked byte-compare, the
+    # production-codec round-trip contracts, and the fail-closed
+    # capture-certification gate.
+    net_capture_fixtures.cpp
+    net_capture_fixture_tests.cpp
+    net_capture_certification.cpp
+    # The PRODUCTION MP bit codec (issue #127: this target previously linked
+    # only its own test TU, so no wire behavior was exercised at all). Same
+    # production source set the msg-wire-contract target links; msg_mp.cpp
+    # itself stays out (ILP32-pinned game/server header chain, see the
+    # net-chan production objects below).
+    ${SRC_DIR}/qcommon/msg_bits_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_write_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_read_mp.cpp
+    ${SRC_DIR}/qcommon/msg_bits_usercmd_mp.cpp
+    ${SRC_DIR}/qcommon/huffman.cpp
 )
-# The legacy engine headers (q_shared.h / qcommon.h) are decompiled code and are not
-# -Wall -Wextra clean. SYSTEM keeps the strict warning set on this test's own code while
-# not failing the build on warnings originating inside those headers.
+# The legacy engine headers (q_shared.h / qcommon.h) and the decompiled
+# production TUs are not -Wall -Wextra clean. SYSTEM keeps the strict warning
+# set (applied per-source below, mirroring the msg-wire-contract target) on
+# this test's own code while not failing the build on warnings originating
+# inside those headers or production sources.
 target_include_directories(kisakcod-net-wire-contract-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
 target_compile_features(kisakcod-net-wire-contract-tests PRIVATE cxx_std_20)
-target_compile_definitions(kisakcod-net-wire-contract-tests PRIVATE KISAK_MP)
-kisakcod_test_warnings(kisakcod-net-wire-contract-tests)
+target_compile_definitions(kisakcod-net-wire-contract-tests PRIVATE
+    KISAK_MP
+    # In-tree reference-evidence root for the certification gate; the env
+    # var KISAKCOD_NETCAPTURES_DIR overrides for operator captures.
+    "KISAKCOD_NETCAPTURES_IN_TREE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/netcaptures\""
+)
+if (MSVC)
+    set_source_files_properties(net_wire_contract_tests.cpp
+        net_capture_fixtures.cpp
+        net_capture_fixture_tests.cpp
+        net_capture_certification.cpp PROPERTIES
+        COMPILE_OPTIONS "/W4;/WX")
+else()
+    set_source_files_properties(net_wire_contract_tests.cpp
+        net_capture_fixtures.cpp
+        net_capture_fixture_tests.cpp
+        net_capture_certification.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+endif()
 set_target_properties(kisakcod-net-wire-contract-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 add_test(
     NAME net-wire-format-contracts
     COMMAND kisakcod-net-wire-contract-tests
+)
+set_tests_properties(net-wire-format-contracts PROPERTIES TIMEOUT 60)
+# Fail-closed commercial-reference certification gate (#122/#127). With no
+# reference captures on disk (the default state of a fresh checkout) the
+# binary reports its blockers on stderr and exits 77, which SKIP_RETURN_CODE
+# renders as a named "Not Run" -- missing evidence must never look like a
+# pass or a silent skip. When an operator records the commercial 1.7 / 1.8
+# captures, the same entry byte-verifies them and turns drift into a hard
+# failure. See tests/fixtures/netcaptures/README.md.
+add_test(
+    NAME net-capture-certification
+    COMMAND kisakcod-net-wire-contract-tests capture-certification
+)
+set_tests_properties(net-capture-certification PROPERTIES
+    TIMEOUT 30
+    SKIP_RETURN_CODE 77
 )
 
 add_executable(kisakcod-net-chan-reassembly-tests
@@ -3596,20 +3648,21 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/xmodel_cursor_source_invariants_test.cmake)
 
 # xmodel_loader_entry_test: production-loader entry-point contracts
-# (ki-okmr / #124). Links and executes the REAL XModelLoadFile
-# (src/xanim/xmodel_load_obj.cpp) — its config/collision/LOD parsing,
-# its real nested parts parse (xanim_load_obj.cpp is enrolled for its
-# ConsumeQuatNoSwap), its real nested surfs windows and its checked
-# material second pass — over controlled fixtures served by the
-# harness file system (xmodel_loader_entry_harness.hpp: in-memory FS
-# and hunk cache, capture stubs; neither nested loader needs a
-# stand-in). The loader TUs' DirectX/Miles/ODE header web and MSVC
-# decompiled dialect (raw __declspec(align(16)), `const struct`
-# definitions) compile only under the win32-x86 platform, so this
-# target is gated to the Windows x86 CI leg and never configured on
-# the portable 64-bit legs; the portable suites above plus
-# xmodel_cursor_source_invariants cover the cursor contracts
-# everywhere else.
+# (ki-okmr / #124; XAnim entries enrolled in ki-458h stage 2). Links
+# and executes the REAL production entry points from
+# src/xanim/xmodel_load_obj.cpp + src/xanim/xanim_load_obj.cpp —
+# XModelLoadFile (config/collision/LOD parsing, the real nested parts
+# parse, real nested surfs windows, the checked material second pass)
+# and XAnimLoadFile / XModelPiecesLoadFile / XModelPiecesPrecache —
+# over controlled fixtures served by the harness file system
+# (xmodel_loader_entry_harness.hpp: in-memory FS and hunk cache,
+# capture stubs; none of the entry points needs a stand-in). The
+# loader TUs' DirectX/Miles/ODE header web and MSVC decompiled dialect
+# (raw __declspec(align(16)), `const struct` definitions) compile only
+# under the win32-x86 platform, so this target is gated to the Windows
+# x86 CI leg and never configured on the portable 64-bit legs; the
+# portable suites above plus xmodel_cursor_source_invariants cover the
+# cursor contracts everywhere else.
 if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     add_executable(kisakcod-xmodel-loader-entry-tests
         xmodel_loader_entry_test.cpp

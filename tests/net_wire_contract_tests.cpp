@@ -33,9 +33,13 @@
 #include <qcommon/msg_mp.h>
 #include <qcommon/qcommon.h>
 
+#include "msg_wire_test_harness.hpp"
+#include "net_capture_fixtures.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <climits>
 #include <type_traits>
 #include <utility>
@@ -152,9 +156,20 @@ constexpr SnapCase kSnapCases[] = {
 };
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+    // Certification gate subcommand: verifies commercial-reference capture
+    // evidence (exit 77 = BLOCKED / evidence missing, 1 = retail drift,
+    // 0 = all reference captures match). See net_capture_certification.cpp.
+    if (argc == 2 && std::strcmp(argv[1], "capture-certification") == 0)
+        return run_capture_certification();
+
     bool ok = true;
+
+    run_capture_subsystem_selftests();
+    run_net_capture_roundtrip_contracts();
+    if (g_failed)
+        ok = false;
 
     for (const SnapCase &c : kSnapCases)
     {
@@ -181,7 +196,7 @@ int main()
     }
 
     if (ok)
-        std::printf("net wire contracts OK (%zu snap cases)\n",
+        std::printf("net wire contracts OK (%zu snap cases; capture subsystem + production round-trips clean)\n",
                     sizeof(kSnapCases) / sizeof(kSnapCases[0]));
 
     return ok ? 0 : 1;
