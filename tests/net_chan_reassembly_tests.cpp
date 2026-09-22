@@ -25,6 +25,11 @@
 #ifdef KISAKCOD_NET_CHAN_PROCESS_TESTS_AVAILABLE
 // Defined in net_chan_process_tests.cpp, linked on the ILP32 Win32 leg.
 int RunNetChanProcessContracts();
+// Defined in net_chan_capture_tick_tests.cpp, linked on the same leg:
+// netchan-level capture validation (production Netchan_Transmit through the
+// engine loopback queues, replayed through Netchan_Process) and the
+// fixed-tick paired-channel simulation harness (ki-zv15h).
+int RunNetChanCaptureTickContracts();
 #endif
 
 namespace
@@ -182,6 +187,8 @@ int main()
     // netchan TUs; drive Netchan_Process itself over wire-format packets.
     if (RunNetChanProcessContracts() != 0)
         return fail("production Netchan_Process contract violation");
+    if (RunNetChanCaptureTickContracts() != 0)
+        return fail("production netchan capture/fixed-tick contract violation");
 #endif
 
     return 0;
