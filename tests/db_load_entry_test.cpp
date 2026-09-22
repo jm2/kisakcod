@@ -65,6 +65,7 @@ void Com_Error(errorParm_t code, const char *fmt, ...)
     va_list args;
     va_start(args, fmt);
     _vsnprintf(buffer, sizeof(buffer), fmt, args);
+    buffer[sizeof(buffer) - 1] = '\0';
     va_end(args);
 
     db_load_entry_harness::RecordedError record;
@@ -92,6 +93,7 @@ void Com_PrintError(int channel, const char *fmt, ...)
     va_list args;
     va_start(args, fmt);
     _vsnprintf(buffer, sizeof(buffer), fmt, args);
+    buffer[sizeof(buffer) - 1] = '\0';
     va_end(args);
 
     db_load_entry_harness::RecordedError record;

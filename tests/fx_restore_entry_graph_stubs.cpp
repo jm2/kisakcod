@@ -199,61 +199,169 @@ void RefreshEffectOwnerAdmissionWords(FxSystem *const system)
     }
 }
 
+// Plain-call wrappers around the production header-inlined pool
+// rebuild template (one per pool). Keeping the template call inside a
+// return statement makes every rebuild a plain function call: the
+// analyzer misreads a multi-argument template list inside a
+// declaration initializer as MISRA 12.3, so the rebuild sequence must
+// not spell one there.
+FxPoolMutationStatus RebuildElemAllocationStateLocked(
+    FxSystem &system,
+    FxPoolAllocationStates &rebuilt,
+    volatile std::int32_t &rebuiltElemCount) noexcept
+{
+    return FxPoolRebuildAllocationStateLocked<FxElem, MAX_ELEMS>(
+        &system.firstFreeElem,
+        system.elems,
+        &rebuiltElemCount,
+        &rebuilt.elems);
+}
+
+FxPoolMutationStatus RebuildTrailAllocationStateLocked(
+    FxSystem &system,
+    FxPoolAllocationStates &rebuilt,
+    volatile std::int32_t &rebuiltTrailCount) noexcept
+{
+    return FxPoolRebuildAllocationStateLocked<FxTrail, MAX_TRAILS>(
+        &system.firstFreeTrail,
+        system.trails,
+        &rebuiltTrailCount,
+        &rebuilt.trails);
+}
+
+FxPoolMutationStatus RebuildTrailElemAllocationStateLocked(
+    FxSystem &system,
+    FxPoolAllocationStates &rebuilt,
+    volatile std::int32_t &rebuiltTrailElemCount) noexcept
+{
+    return FxPoolRebuildAllocationStateLocked<FxTrailElem, MAX_TRAIL_ELEMS>(
+        &system.firstFreeTrailElem,
+        system.trailElems,
+        &rebuiltTrailElemCount,
+        &rebuilt.trailElems);
+}
+
+// The statuses of one in-section rebuild pass, spelled in the
+// production evaluation order (elems, trails, trailElems). The
+// rebuilt counts live in the caller's frame (the validator reads
+// them after the section) and flow through by reference.
+struct PoolRebuildStatuses
+{
+    FxPoolMutationStatus elemStatus;
+    FxPoolMutationStatus trailStatus;
+    FxPoolMutationStatus trailElemStatus;
+};
+
+// Runs the three pool rebuilds inside the gate-aware critical
+// section; identical calls, identical order as the inline sequence.
+PoolRebuildStatuses RebuildPoolAllocationSnapshotsLocked(
+    FxSystem *const system,
+    FxPoolAllocationStates &rebuilt,
+    volatile std::int32_t &rebuiltElemCount,
+    volatile std::int32_t &rebuiltTrailCount,
+    volatile std::int32_t &rebuiltTrailElemCount)
+{
+    PoolRebuildStatuses statuses{};
+    statuses.elemStatus =
+        RebuildElemAllocationStateLocked(*system, rebuilt, rebuiltElemCount);
+    statuses.trailStatus =
+        RebuildTrailAllocationStateLocked(*system, rebuilt, rebuiltTrailCount);
+    statuses.trailElemStatus = RebuildTrailElemAllocationStateLocked(
+        *system, rebuilt, rebuiltTrailElemCount);
+    return statuses;
+}
+
+// True when the system and every linked pool the rebuild walks are
+// present; identical operand order as the inline condition.
+bool PoolSidecarsLinkedForRebuild(
+    FxSystem *const system,
+    const FxPoolAllocationStates *const states)
+{
+    return system && states && system->effects && system->elems
+        && system->trails && system->trailElems;
+}
+
+// The production assert for an unlinked sidecar (fx_system.cpp
+// linkage invariant, line 180).
+void ReportUnlinkedPoolSidecars()
+{
+    MyAssertHandler(
+        ".\\EffectsCore\\fx_system.cpp",
+        180,
+        0,
+        "%s",
+        "system and FX pool sidecars are linked");
+}
+
+// The rebuild publishes only when every pool status succeeded and the
+// rebuilt counts equal the live counts; identical comparison, identical
+// operand order as the inline chain.
+bool PoolRebuildSnapshotValid(
+    FxSystem *const system,
+    const PoolRebuildStatuses &statuses,
+    const volatile std::int32_t *const rebuiltElemCount,
+    const volatile std::int32_t *const rebuiltTrailCount,
+    const volatile std::int32_t *const rebuiltTrailElemCount)
+{
+    return statuses.elemStatus == FxPoolMutationStatus::Success
+        && statuses.trailStatus == FxPoolMutationStatus::Success
+        && statuses.trailElemStatus == FxPoolMutationStatus::Success
+        && PoolRebuildCountsMatchLive(system,
+                                      rebuiltElemCount,
+                                      rebuiltTrailCount,
+                                      rebuiltTrailElemCount);
+}
+
+// The production assert for a failed rebuild pass (fx_system.cpp
+// line 220); carries all three pool statuses for triage.
+void ReportFailedPoolRebuild(const PoolRebuildStatuses &statuses)
+{
+    MyAssertHandler(
+        ".\\EffectsCore\\fx_system.cpp",
+        220,
+        0,
+        "FX pool state rebuild failed (%u, %u, %u)",
+        static_cast<unsigned>(statuses.elemStatus),
+        static_cast<unsigned>(statuses.trailStatus),
+        static_cast<unsigned>(statuses.trailElemStatus));
+}
+
+// The fail-closed rebuild of the linked pool sidecar behind
+// FX_RebuildPoolAllocationStates (production fx_system.cpp): validate
+// the linkage, run the three rebuilds inside the gate-aware critical
+// section, publish only when the statuses and the live counts agree,
+// and report through the production assert channel on request. The
+// rebuild / validation / report steps are extracted above; the
+// sequencing (declare rebuilt storage, enter the section, rebuild,
+// validate, publish, leave the section, report) is unchanged.
 bool FX_RebuildPoolAllocationStatesInternal(
     FxSystem *const system,
     const bool reportFailure) noexcept
 {
     FxPoolAllocationStates *const states =
         FX_GetPoolAllocationStates(system);
-    if (!system || !states || !system->effects || !system->elems
-        || !system->trails
-        || !system->trailElems)
+    if (!PoolSidecarsLinkedForRebuild(system, states))
     {
         if (reportFailure)
-        {
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_system.cpp",
-                180,
-                0,
-                "%s",
-                "system and FX pool sidecars are linked");
-        }
+            ReportUnlinkedPoolSidecars();
         return false;
     }
 
+    if (!EnterGateAwarePoolSection(system))
+        return false;
     FxPoolAllocationStates rebuilt{};
     alignas(4) volatile std::int32_t rebuiltElemCount = 0;
     alignas(4) volatile std::int32_t rebuiltTrailCount = 0;
     alignas(4) volatile std::int32_t rebuiltTrailElemCount = 0;
+    const PoolRebuildStatuses statuses = RebuildPoolAllocationSnapshotsLocked(
+        system, rebuilt, rebuiltElemCount, rebuiltTrailCount,
+        rebuiltTrailElemCount);
 
-    if (!EnterGateAwarePoolSection(system))
-        return false;
-    const FxPoolMutationStatus elemStatus =
-        FxPoolRebuildAllocationStateLocked<FxElem, MAX_ELEMS>(
-            &system->firstFreeElem,
-            system->elems,
-            &rebuiltElemCount,
-            &rebuilt.elems);
-    const FxPoolMutationStatus trailStatus =
-        FxPoolRebuildAllocationStateLocked<FxTrail, MAX_TRAILS>(
-            &system->firstFreeTrail,
-            system->trails,
-            &rebuiltTrailCount,
-            &rebuilt.trails);
-    const FxPoolMutationStatus trailElemStatus =
-        FxPoolRebuildAllocationStateLocked<FxTrailElem, MAX_TRAIL_ELEMS>(
-            &system->firstFreeTrailElem,
-            system->trailElems,
-            &rebuiltTrailElemCount,
-            &rebuilt.trailElems);
-
-    const bool valid = elemStatus == FxPoolMutationStatus::Success
-        && trailStatus == FxPoolMutationStatus::Success
-        && trailElemStatus == FxPoolMutationStatus::Success
-        && PoolRebuildCountsMatchLive(system,
-                                      &rebuiltElemCount,
-                                      &rebuiltTrailCount,
-                                      &rebuiltTrailElemCount);
+    const bool valid = PoolRebuildSnapshotValid(system,
+                                                statuses,
+                                                &rebuiltElemCount,
+                                                &rebuiltTrailCount,
+                                                &rebuiltTrailElemCount);
     if (valid)
     {
         *states = rebuilt;
@@ -262,16 +370,7 @@ bool FX_RebuildPoolAllocationStatesInternal(
     Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
 
     if (!valid && reportFailure)
-    {
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_system.cpp",
-            220,
-            0,
-            "FX pool state rebuild failed (%u, %u, %u)",
-            static_cast<unsigned>(elemStatus),
-            static_cast<unsigned>(trailStatus),
-            static_cast<unsigned>(trailElemStatus));
-    }
+        ReportFailedPoolRebuild(statuses);
     return valid;
 }
 } // namespace

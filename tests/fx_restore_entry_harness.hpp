@@ -111,9 +111,10 @@ inline std::uint16_t EncodeHarnessEffectHandle(
 }
 
 // Mirrors the file-scope FxPoolAllocationStates of fx_system.cpp
-// (the per-slot pool allocation sidecar state); the mangled link
-// names of the pool-state helpers depend on this exact global-scope
-// type name and layout.
+// (the per-slot pool allocation sidecar state). The harness type is
+// namespace-scope: the shared accessors declared at the bottom of
+// this header qualify it explicitly, which keeps their declarations
+// well-formed at global scope.
 struct FxPoolAllocationStates
 {
     FxPoolAllocationState<MAX_ELEMS> elems;
@@ -131,7 +132,7 @@ struct HarnessState
     FxSystemBuffers buffers;
     // The archive gate cell behind the FX_GetArchiveGate stub.
     volatile std::int32_t archiveGate;
-    std::uint32_t iteratorGeneration;
+    volatile std::int32_t iteratorGeneration;
     // The pool-allocation sidecar state behind
     // FX_GetPoolAllocationStates (production keeps one per system
     // slot; this harness hosts exactly one slot).
@@ -139,12 +140,13 @@ struct HarnessState
     // The effect-kill gate cell behind FX_GetEffectKillGate.
     volatile std::int32_t effectKillGate;
     // Per-effect owner-admission words behind
-    // FX_GetEffectOwnerAdmissionState (production layout: one word
-    // per FxEffectHandleAdmissionStride() handles).
+    // FX_GetEffectOwnerAdmissionState (production layout:
+    // fx_effectOwnerAdmissionBlocked[FX_EFFECT_LIMIT], one word per
+    // effect slot, indexed by handle / admission stride).
     static constexpr std::size_t kEffectAdmissionStride =
         FxEffectHandleAdmissionStride();
     static constexpr std::size_t kEffectAdmissionWordCount =
-        FX_EFFECT_LIMIT / kEffectAdmissionStride;
+        FX_EFFECT_LIMIT;
     std::int32_t effectOwnerAdmissionBlocked[kEffectAdmissionWordCount];
     // The live physics body sidecar behind FX_GetPhysicsBodySidecar
     // (production: one per system slot).
@@ -398,8 +400,8 @@ inline void DisarmErrDrop()
 // fx_restore_entry_graph_stubs.cpp: mirrors of the production
 // fx_system.cpp slot lookups, all reducing to the single harness
 // slot.
-FxPoolAllocationStates *FX_GetPoolAllocationStates(
-    const FxSystem *const system) noexcept;
+fx_restore_entry_harness::FxPoolAllocationStates *
+FX_GetPoolAllocationStates(const FxSystem *const system) noexcept;
 volatile std::int32_t *FX_GetArchiveGate(
     const FxSystem *const system) noexcept;
 volatile std::int32_t *FX_GetEffectOwnerAdmissionState(

@@ -379,7 +379,15 @@ bool __cdecl FX_CanPublishArchiveSafeEmptyStateLocked(
         && FX_CanResetSystemGraphUnderExclusiveClaim(system);
 }
 
-bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch(
+namespace
+{
+// Pre-publication admission, spelled exactly as the inline block it
+// replaces: scratch providers present, the exclusive-state and reset
+// prechecks pass, and the live sidecar validates clean (scratch and
+// vacant-destination). Extracted to keep the published entry point's
+// complexity within the analyzer gate; the evaluation order and the
+// sidecar lookup count are unchanged.
+bool ArchiveScratchPublicationAdmitted(
     FxSystem *const system,
     fx::physics::BodySidecarValidationScratch *const sidecarScratch,
     FxPoolAllocationGraphScratch *const poolGraphScratch) noexcept
@@ -391,24 +399,24 @@ bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch(
     }
     fx::physics::BodySidecar *const sidecar =
         FX_GetPhysicsBodySidecar(system);
-    if (!sidecar
-        || fx::physics::ValidateWithScratch(sidecar, sidecarScratch)
-            != fx::physics::SidecarStatus::Success
-        || fx::physics::ValidateVacantDestination(sidecar)
-            != fx::physics::SidecarStatus::Success)
-    {
-        return false;
-    }
-    FxPoolAllocationStates *const states =
-        FX_GetPoolAllocationStates(system);
-    if (!states)
-        return false;
+    return sidecar
+        && fx::physics::ValidateWithScratch(sidecar, sidecarScratch)
+            == fx::physics::SidecarStatus::Success
+        && fx::physics::ValidateVacantDestination(sidecar)
+            == fx::physics::SidecarStatus::Success;
+}
 
-    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    const fx::physics::SidecarStatus resetStatus =
-        FX_ResetSystemGraphUnderExclusiveClaim(system);
-    bool published = false;
-    if (resetStatus == fx::physics::SidecarStatus::Success
+// The in-section publication predicate: the exclusive-claim reset
+// succeeds, the reset pool graph validates against the scratch, and
+// the archive gate owner generation refreshes. Extracted from the
+// published entry point; the calls and their order are unchanged.
+bool ArchiveResetGraphAndGatePublishable(
+    FxSystem *const system,
+    const FxPoolAllocationStates *const states,
+    FxPoolAllocationGraphScratch *const poolGraphScratch) noexcept
+{
+    return FX_ResetSystemGraphUnderExclusiveClaim(system)
+            == fx::physics::SidecarStatus::Success
         && FxValidatePoolAllocationGraphWithScratch(
             system,
             states->elems,
@@ -418,7 +426,28 @@ bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch(
         && fx::archive::RefreshArchiveGateOwnerGeneration(
             &fx_archiveThreadState,
             system,
-            FX_GetCooperativeIteratorGeneration(system)))
+            FX_GetCooperativeIteratorGeneration(system));
+}
+} // namespace
+
+bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch(
+    FxSystem *const system,
+    fx::physics::BodySidecarValidationScratch *const sidecarScratch,
+    FxPoolAllocationGraphScratch *const poolGraphScratch) noexcept
+{
+    if (!ArchiveScratchPublicationAdmitted(
+            system, sidecarScratch, poolGraphScratch))
+    {
+        return false;
+    }
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states)
+        return false;
+
+    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
+    bool published = false;
+    if (ArchiveResetGraphAndGatePublishable(system, states, poolGraphScratch))
     {
         system->isInitialized = true;
         system->isArchiving = false;

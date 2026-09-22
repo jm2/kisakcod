@@ -164,6 +164,7 @@ void Sys_Error(const char *fmt, ...)
     va_list args;
     va_start(args, fmt);
     _vsnprintf(buffer, sizeof(buffer), fmt, args);
+    buffer[sizeof(buffer) - 1] = '\0';
     va_end(args);
     std::printf("Sys_Error: %s\n", buffer);
     std::_Exit(4);
@@ -389,6 +390,7 @@ void Com_PrintWarning(int channel, const char *fmt, ...)
     va_list args;
     va_start(args, fmt);
     _vsnprintf(buffer, sizeof(buffer), fmt, args);
+    buffer[sizeof(buffer) - 1] = '\0';
     va_end(args);
     db_load_entry_harness::RecordedError record;
     record.text = buffer;
