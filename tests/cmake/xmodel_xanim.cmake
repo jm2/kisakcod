@@ -49,8 +49,7 @@ add_test(
 # kisakcod-xmodel-cursor-overflow-tests below; both suites share the
 # fixtures and CHECK harness via xmodel_cursor_test_support.hpp.
 # The loader TUs cannot link in this portable binary (win32-only engine
-# headers); xmodel_cursor_source_invariants_test.cmake pins the
-# production call sites instead. CTest entries match the 'xmodel'
+# headers). CTest entries match the 'xmodel'
 # regex so the bead's build/test command resolves to this target.
 add_executable(kisakcod-xmodel-nested-cursor-tests
     xmodel_nested_cursor_test.cpp
@@ -111,8 +110,7 @@ add_test(
 # (raw __declspec(align(16)), `const struct` definitions) compile only
 # under the win32-x86 platform, so this target is gated to the Windows
 # x86 CI leg and never configured on the portable 64-bit legs; the
-# portable suites above plus xmodel_cursor_source_invariants cover the
-# cursor contracts everywhere else.
+# portable suites above cover the cursor contracts everywhere else.
 if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     add_executable(kisakcod-xmodel-loader-entry-tests
         xmodel_loader_entry_test.cpp
