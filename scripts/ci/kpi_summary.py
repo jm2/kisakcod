@@ -67,11 +67,16 @@ def _obj(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _has(value, *keys) -> bool:
+    """True when value is an object that carries every key, so it is a real measurement."""
+    return isinstance(value, dict) and all(value.get(k) is not None for k in keys)
+
+
 def census_values(c: dict) -> dict[str, str]:
     out = {}
     t = _obj(c.get("targets"))
-    k1 = ["%s %s/%s" % (n, _obj(t[n]).get("pass"), _obj(t[n]).get("total"))
-          for n in ("win64", "lin64", "a64") if n in t]
+    k1 = ["%s %s/%s" % (n, t[n]["pass"], t[n]["total"])
+          for n in ("win64", "lin64", "a64") if _has(t.get(n), "pass", "total")]
     if k1:
         out["K1"] = " · ".join(k1)
     link = _obj(_obj(c.get("link")).get("win64"))
@@ -79,9 +84,9 @@ def census_values(c: dict) -> dict[str, str]:
         probe = _obj(link.get("probe"))
         out["K2"] = "win64 real link: %s; probe: %s, %s undefined" % (
             link.get("real", "?"), probe.get("status", "?"), probe.get("undefined", "?"))
-    if "k3" in c:
-        out["K3"] = "%s/%s" % (_obj(c["k3"]).get("compiled"), _obj(c["k3"]).get("total"))
-    if "d3d_stub_tus" in c:
+    if _has(c.get("k3"), "compiled", "total"):
+        out["K3"] = "%s/%s" % (c["k3"]["compiled"], c["k3"]["total"])
+    if isinstance(c.get("d3d_stub_tus"), int):
         out["K5"] = "%s TUs (lin64)" % c["d3d_stub_tus"]
     return out
 
