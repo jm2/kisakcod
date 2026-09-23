@@ -20,7 +20,8 @@ source text.
   `UPSTREAM.md`).
 - [AGENTS.md](../../AGENTS.md) holds the operating rules: dispatch from
   `NOW.md`, done means merged plus a KPI or gate change, WIP 6, PRs about
-  400 lines, 3 rework rounds, no source-text tests.
+  400 lines, 3 rework rounds, no source-text tests (the three debt
+  tripwires in NATIVE64.md are the only permitted text scans).
 - KPIs K1-K6 measure compiled, linked and executed code, and replace the
   text-pattern gauges (dashboard, ledgers, burndowns).
 - Old docs are archived by the tag named in `ARCHIVE.md`, not kept in-tree.

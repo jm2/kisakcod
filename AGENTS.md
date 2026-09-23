@@ -27,7 +27,9 @@ reads this first. The only way to close a bead is to move a KPI or pass a gate
    *Prevents: evidence paperwork replacing code.*
 7. **Tests must compile and execute code:** engine code, or helpers the
    engine calls. No source-text (regex or substring) tests, no tests over CI
-   or markdown files, no mutation tests of checkers.
+   or markdown files, no mutation tests of checkers. The only text scans
+   allowed are the three debt tripwires in `docs/design/NATIVE64.md`; they
+   may shrink, never grow.
    *Prevents: tests that break on refactors and pass on real bugs.*
 8. **Never commit generated files.**
    *Prevents: merge conflicts in derived output.*

@@ -13,13 +13,13 @@ targets is the release gate (G6), not a precondition for testing.
 | **G0 Baseline** | The fork's x86 MP client and headless dedicated server start on Steam 1.8 data and load 3 stock maps; one fork-to-fork round is played. The same binaries run under Wine on Linux amd64. | Windows x86; Wine | - | 1-3 days, owner |
 | **G1 Compiles and links** | The headless set compiles with 0 errors on Win64, Linux amd64 and Linux arm64. Win64 and Linux headless link with no disabled asserts. The loader explicitly refuses 64-bit loads until G2. | Win64, then Linux | K1, K2, K5 | Win64 1-2 weeks; Linux platform work 2-6 weeks in parallel |
 | **G2 Boots** | Loads one stock map from unmodified Steam 1.8 `.ff` under ASan/UBSan, answers `getinfo`/`getstatus`, rotates through 5 stock maps, and runs 30 minutes without faults. | Win64, then Linux amd64 | K3, K4 | 13-22 weeks on the critical path (loader 8-14, hazards 3-4, first run 4-6) |
-| **G3 Fork-peer play** | An x86 fork client joins the native server and plays a full round, a map change and a reconnect, with 8 test clients. | Win64, Linux amd64/arm64, macOS arm64 headless | K6 | 1-2 weeks per target after G2 |
+| **G3 Fork-peer play** | An x86 fork client joins the native server and plays a full round, a map change and a reconnect, with 8 test clients. | Win64, Windows ARM64, Linux amd64/arm64, macOS arm64 headless | K6 | 1-2 weeks per target after G2 |
 | **G4a Steam 1.8 on x86** | An unmodified Steam 1.8 client discovers, connects, plays, changes map and reconnects on the fork's x86 server. | Windows x86 | - | 6-12 weeks (12-20 if in-band formats changed); starts when captures arrive |
 | **G4b Steam 1.8 on native** | The G4a matrix against every G3 server. | 5 headless targets | K6 | Small, once G4a and G3 are done |
 | **G5 Native client** | A Win64 D3D9 interim client plays on a fork server, then on a Steam 1.8 server. Linux and macOS go through dxvk-native as an interim. Vulkan replaces both before G6. | Win64, then Linux, then macOS | K6 | Win64 D3D9 2-4 months after G2; dxvk-native +1-2 months; Vulkan 6-12 months |
 | **G6 Release** | 5 targets x 2 roles packaged; native client joins a Steam 1.8 server and a Steam 1.8 client joins a native server; macOS signed and notarized; provenance recorded. | All | K6 | After G5 |
 
-Windows ARM64 builds the Win64 source set; its first run is at G3.
+Windows ARM64 builds the Win64 source set and is not in G1 or G2; its first run is at G3.
 
 A Win64 process can't load the 32-bit Miles or Bink DLLs. The G5 interim
 client therefore needs OpenAL Soft and FFmpeg, or silent stubs, from its first

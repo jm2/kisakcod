@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 KB = 1024
 BUDGETS = {  # path -> max bytes
     "AGENTS.md": 6 * KB,
-    "CLAUDE.md": 16,  # the single line @AGENTS.md
+    "CLAUDE.md": 1 * KB,
     "docs/CHARTER.md": 8 * KB,
     "docs/ROADMAP.md": 15 * KB,
     "docs/NOW.md": 6 * KB,
@@ -48,12 +48,14 @@ def check_sizes(docs: list[str]) -> tuple[list[str], list[tuple[str, int, int]]]
             rows.append((rel, size, limit))
             if size > limit:
                 errors.append("%s is %d bytes; budget %d" % (rel, size, limit))
+    claude = ROOT / "CLAUDE.md"
+    if claude.is_file() and claude.read_text(encoding="utf-8").strip() != "@AGENTS.md":
+        errors.append("CLAUDE.md must be exactly the line @AGENTS.md")
     return errors, rows
 
 
 def warn_stale_now() -> None:
-    now = ROOT / "docs/NOW.md"
-    text = now.read_text(encoding="utf-8") if now.is_file() else ""
+    text = (ROOT / "docs/NOW.md").read_text(encoding="utf-8") if (ROOT / "docs/NOW.md").is_file() else ""
     m = re.search(r"^Last reviewed:\s*(\d{4}-\d{2}-\d{2})", text, re.M)
     if not m:
         print("::warning file=docs/NOW.md::no 'Last reviewed: YYYY-MM-DD' line")
@@ -71,13 +73,12 @@ def main() -> int:
     if total > DOCS_TOTAL:
         errors.append("docs/ totals %d bytes; budget %d" % (total, DOCS_TOTAL))
     warn_stale_now()
-    table = ["## Doc-set budgets", "", "| Doc | Bytes | Budget |", "|---|---:|---:|"]
-    table += ["| %s | %d | %d |" % row for row in rows]
-    table.append("| **docs/ total** | %d | %d |" % (total, DOCS_TOTAL))
-    print("\n".join(table))
+    table = "\n".join(["## Doc-set budgets", "", "| Doc | Bytes | Budget |", "|---|---:|---:|"]
+                      + ["| %s | %d | %d |" % row for row in rows + [("**docs/ total**", total, DOCS_TOTAL)]])
+    print(table)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
-            f.write("\n".join(table) + "\n\n")
+            f.write(table + "\n\n")
     for e in errors:
         print("::error::%s" % e)
     return 1 if errors else 0

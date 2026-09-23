@@ -30,8 +30,13 @@ def check_manifest(m: dict) -> list[str]:
         errors.append("schema_version must be 2")
     if tuple(m.get("levels", ())) != LEVELS:
         errors.append("levels must be exactly: " + ", ".join(LEVELS))
-    targets = {t.get("id"): t for t in m.get("targets", [])}
+    ids = [t.get("id") for t in m.get("targets", [])]
     roles = m.get("roles", [])
+    if not all(isinstance(i, str) and i for i in ids) or len(set(ids)) != len(ids):
+        errors.append("target ids must be unique, non-empty strings")
+    if len(set(roles)) != len(roles):
+        errors.append("roles must be unique")
+    targets = {t.get("id"): t for t in m.get("targets", [])}
     seen = set()
     for c in m.get("cells", []):
         key = (c.get("target"), c.get("role"))
@@ -123,7 +128,11 @@ def main() -> int:
         return 1
     census = None
     if args.census and args.census.is_file():
-        census = json.loads(args.census.read_text(encoding="utf-8"))
+        try:
+            census = json.loads(args.census.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:  # a bad census never gates
+            print("::warning file=%s::census unreadable, KPIs shown without it: %s" % (args.census, exc),
+                  file=sys.stderr)
     now_text = args.now.read_text(encoding="utf-8") if args.now.is_file() else ""
     sys.stdout.write(render(manifest, now_text, census))
     return 0

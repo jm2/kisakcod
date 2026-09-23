@@ -24,26 +24,26 @@ of the latest [master CI run](https://github.com/jm2/kisakcod/actions/workflows/
 ## Queue
 
 Sizes: S = 1-2 days, M = 3-5 days, L = 1-2 weeks. Headless-scoped unless
-noted. Beads 2-7 start now; feed in 8-14 as slots free up.
+noted. A bead copies its row's done-test into `now.done_test`. Beads 2-7 start now; feed in 8-14 as slots free up.
 
-| # | Bead | Gate | Moves | Size | Status |
-| --- | --- | --- | --- | --- | --- |
-| 1 | Native64 census CI job | G1 | K1, K2 | S | in overhaul PR 2 |
-| 2 | Cut the `xanim.h` -> `r_bsp.h`/`r_gfx.h`/`r_material.h` includes with forward declarations, so headless stops reaching `d3d9.h` | G1 | K5 (~103 TUs) | S-M | ready |
-| 3 | Split `win_local.h` into a portable system header and a Win32-only one | G1 | K1 (first error in 20 of 39 lin64 failures) | M | ready |
-| 4 | MSVC-compat header (`ARRAYSIZE`, `_strlwr`, `_isnan`, `_time64`, `_TRUNCATE`, `basename`); fix the undeclared `IsValidSeed` call in `ui_shared.h` | G1 | K1 | S | ready |
-| 5 | `RUNTIME_SIZE(T, n32, n64)` for the ~34 runtime-only structs | G1 | K1 | S | ready |
-| 6 | The 7 Win64 source fixes ([NATIVE64](design/NATIVE64.md)) | G1 | K1, K2 | S | ready |
-| 7 | Asset-type size asserts become `ONDISK`/`RUNTIME` pairs; the loader fails closed at 64-bit (today the offset converters only drop above 4 GiB) | G1 | K2 | M | ready |
-| 8 | CMake: allow `KISAK_DEDI_HEADLESS` on 64-bit behind an experimental option; add a `windows-amd64-dedi` preset | G1 | K2 | S | ready |
-| 9 | Engine-owned MSVC-compatible RNG behind `rand`/`random`/`G_*rand`; fix the `G_irand` overflow | G2 | K3 | S | queued |
-| 10 | Hazards: `g_spawn_mp` offsets -> `offsetof`; clone size table -> real `sizeof` (incl. ClipMapPvs); the `HIWORD` bug; the 5 `va_list` misuses; the `XAnimClone` size | G2 | K3 | M | queued |
-| 11 | Dvars storing pointers in `int` (15 sites); enum-dvar limits packing | G2 | K3 | M | queued |
-| 12 | Loader design plus a generator spike on RawFile, StringTable and PhysPreset, loading a real `.ff` at 64-bit | G2 | K4 | L | queued |
-| 13 | POSIX headless entry point and termios console; `NET_*` on `Sys_Socket` | G1 (Linux) | K1, K2 | L | queued |
-| 14 | Portable async fast-file reads (`db_file_load.cpp`) | G1 (Linux) | K1 | M | queued |
-| 15 | Steam 1.8 capture decoder and diff report | G4a | gate | M | blocked-owner (captures) |
-| 16 | `steam18` server profile on x86: protocol 7, stock challenge/connect, 1.8 `getinfo` keys | G4a | gate | M | blocked-owner (captures) |
+| # | Bead | Gate | Moves | Done-test | Size | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Native64 census CI job | G1 | K1, K2 | CI `native64-census` job succeeds and its summary shows K1, K2, K3, K5 | S | in overhaul PR 2 |
+| 2 | Cut the `xanim.h` -> `r_bsp.h`/`r_gfx.h`/`r_material.h` includes with forward declarations, so headless stops reaching `d3d9.h` | G1 | K5 (~103 TUs) | census: K5 = 0 | S-M | ready |
+| 3 | Split `win_local.h` into a portable system header and a Win32-only one | G1 | K1 (first error in 20 of 39 lin64 failures) | census: no lin64/a64 TU has its first error in `win_local.h` | M | ready |
+| 4 | MSVC-compat header (`ARRAYSIZE`, `_strlwr`, `_isnan`, `_time64`, `_TRUNCATE`, `basename`); fix the undeclared `IsValidSeed` call in `ui_shared.h` | G1 | K1 | census: no error on these names; `xanim.cpp` compiles without `-fdelayed-template-parsing` | S | ready |
+| 5 | `RUNTIME_SIZE(T, n32, n64)` for the ~34 runtime-only structs | G1 | K1 | census: no win64 assert-only failure from a runtime-only struct | S | ready |
+| 6 | The 7 Win64 source fixes ([NATIVE64](design/NATIVE64.md)) | G1 | K1, K2 | census: win64 "other" failures = 0 | S | ready |
+| 7 | Asset-type size asserts become `ONDISK`/`RUNTIME` pairs; the loader fails closed at 64-bit (today the offset converters only drop above 4 GiB) | G1 | K2 | census: 0 size-assert failures; a test shows a 64-bit load of an unconverted family raises `ERR_DROP` | M | ready |
+| 8 | CMake: allow `KISAK_DEDI_HEADLESS` on 64-bit behind an experimental option; add a `windows-amd64-dedi` preset | G1 | K2 | `cmake --preset windows-amd64-dedi` configures; the census attempts the real Win64 link | S | ready |
+| 9 | Engine-owned MSVC-compatible RNG behind `rand`/`random`/`G_*rand`; fix the `G_irand` overflow | G2 | K3 | a test: engine `rand` matches MSVC for 3 seeds; `G_irand` stays in range on glibc | S | queued |
+| 10 | Hazards: `g_spawn_mp` offsets -> `offsetof`; clone size table -> real `sizeof` (incl. ClipMapPvs); the `HIWORD` bug; the 5 `va_list` misuses; the `XAnimClone` size | G2 | K3 | tests compile each fixed TU and fail on the old behavior; K3 rises | M | queued |
+| 11 | Dvars storing pointers in `int` (15 sites); enum-dvar limits packing | G2 | K3 | a 64-bit test round-trips every pointer-bearing dvar; K3 rises | M | queued |
+| 12 | Loader design plus a generator spike on RawFile, StringTable and PhysPreset, loading a real `.ff` at 64-bit | G2 | K4 | the three families load from a real `.ff` at 64-bit under ASan (K4 >= 3/25) | L | queued |
+| 13 | POSIX headless entry point and termios console; `NET_*` on `Sys_Socket` | G1 (Linux) | K1, K2 | Linux headless links (K2 lin64) and starts to its console prompt | L | queued |
+| 14 | Portable async fast-file reads (`db_file_load.cpp`) | G1 (Linux) | K1 | census: `db_file_load.cpp` compiles on lin64/a64; an async-read test passes | M | queued |
+| 15 | Steam 1.8 capture decoder and diff report | G4a | gate | the diff report decodes every owner capture with no unexplained field | M | blocked-owner (captures) |
+| 16 | `steam18` server profile on x86: protocol 7, stock challenge/connect, 1.8 `getinfo` keys | G4a | gate | replayed Steam 1.8 `getinfo`/`getchallenge`/`connect` captures get retail-shaped replies | M | blocked-owner (captures) |
 
 Open item for a future bead: make the Huffman tie-break a total order and
 make its test fail on host disagreement ([DETERMINISM](design/DETERMINISM.md)).

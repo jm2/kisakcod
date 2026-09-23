@@ -44,7 +44,7 @@ Retail used x87 (`fld`/`fistp`, kept under `KISAK_PURE`). SSE2 differs from x87 
 `SnapFloatToInt` (`qcommon.h`) snaps origins and angles for the wire. It rounds half-to-even:
 
 - x86/x64: `_mm_cvtss_si32`, MXCSR default rounding.
-- Elsewhere: `std::nearbyintf` under `FE_TONEAREST`. Out-of-range values and NaN return `INT_MIN`, which is SSE's "integer indefinite".
+- Elsewhere: `std::nearbyintf` under `FE_TONEAREST`, then an explicit range check on the rounded float before any `int` conversion: NaN and values outside `[-2^31, 2^31-128]` return `INT_MIN` (SSE's "integer indefinite") without an undefined conversion. `net-wire-format-contracts` pins both paths on every portable target.
 
 Nothing may change the FP rounding mode at runtime.
 
