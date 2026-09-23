@@ -1,7 +1,7 @@
 // Commercial-reference capture certification runner (issue #127 / ki-dyqxl).
 //
 // `kisakcod-net-wire-contract-tests capture-certification` runs the
-// fail-closed certification gate of docs/NETWORK_COMPATIBILITY.md over the
+// fail-closed certification gate of docs/design/NET_STEAM18.md over the
 // reference evidence under fixtures/netcaptures/<profile>/:
 //
 //   * every required profile must exist and carry a well-formed manifest,
@@ -40,7 +40,8 @@ namespace
 
 using namespace netcapture;
 
-const char *const kRequiredProfiles[] = {"commercial-1.7", "commercial-1.8"};
+// ADR-0001: the only network reference is the original Steam 1.8 release.
+const char *const kRequiredProfiles[] = {"steam-1.8"};
 
 struct Blocker
 {
@@ -58,7 +59,7 @@ void reportBlockers(const std::vector<Blocker> &blockers)
                  " The wire contracts cannot certify commercial equivalence\n"
                  " without reference evidence. Missing evidence is a blocker\n"
                  " to certification, never a passing or silently skipped\n"
-                 " result (docs/NETWORK_COMPATIBILITY.md).\n\n");
+                 " result (docs/design/NET_STEAM18.md).\n\n");
     for (const Blocker &b : blockers)
         std::fprintf(stderr, " BLOCKER [%s]: %s\n", b.profile.c_str(), b.detail.c_str());
     std::fprintf(stderr,
@@ -259,7 +260,7 @@ void selftestManifestParsing()
     const char *good =
         "# comment\n"
         "format_version = 1\n"
-        "source_build = commercial 1.7 retail (operator recorded)\n"
+        "source_build = Steam 1.8 retail (operator recorded)\n"
         "sanitized_by = operator, 2026-09-20\n"
         "\n"
         "capture = 01-scalar.bin\n"
@@ -269,7 +270,7 @@ void selftestManifestParsing()
         "input = acknowledge = 517\n"
         "notes = netchan message front longs\n";
 
-    CaptureManifest manifest = parseManifest("commercial-1.7", good);
+    CaptureManifest manifest = parseManifest("steam-1.8", good);
     CHECK(manifest.error.empty());
     CHECK(manifest.formatVersion == 1);
     CHECK(manifest.captures.size() == 1);
@@ -312,7 +313,7 @@ void selftestManifestParsing()
 
     for (const Mutation &m : bad)
     {
-        CaptureManifest broken = parseManifest("commercial-1.7", m.text);
+        CaptureManifest broken = parseManifest("steam-1.8", m.text);
         CHECK(!broken.error.empty());
         (void)m.what;
     }
@@ -321,7 +322,7 @@ void selftestManifestParsing()
     {
         std::string text = good;
         text.insert(text.find("notes ="), "var = sequence@0:4\n");
-        CaptureManifest broken = parseManifest("commercial-1.7", text);
+        CaptureManifest broken = parseManifest("steam-1.8", text);
         CHECK(broken.error.find("mandates no variable declarations") != std::string::npos);
     }
 }
@@ -392,8 +393,8 @@ int run_capture_certification()
     {
         const std::string profile = profileName;
         // Blockers are scoped PER PROFILE: a structural failure against one
-        // commercial reference must never suppress capture verification
-        // (and its diagnostics) for the other reference.
+        // profile must never suppress capture verification (and its
+        // diagnostics) for another profile.
         const std::size_t blockerCountBeforeProfile = blockers.size();
         const std::string manifestPath = root + "/" + profile + "/MANIFEST.txt";
 

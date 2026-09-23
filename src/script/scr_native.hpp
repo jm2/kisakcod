@@ -5,7 +5,7 @@
 //  save-image mirror split (M4).
 //
 //  The script VM is the largest remaining 32-bit-layout-bound runtime family
-//  (docs/task.md M4 evidence row). Its value representation is the problem:
+//  (docs/design/NATIVE64.md). Its value representation is the problem:
 //  scr_variable.h's VariableUnion is a 4-byte union that stores LIVE HOST
 //  POINTERS (vectorValue, codePosValue, stackValue) next to scalar ids. On
 //  32-bit that is lossless; on 64-bit every pointer store through those
@@ -48,7 +48,7 @@
 //  portable-test-only mirror that pins the frozen save-image shape against
 //  the widened runtime views.
 //
-//  See docs/task.md M4 and src/xanim/xanim_native.h for the precedent.
+//  See docs/design/NATIVE64.md and src/xanim/xanim_native.h for the precedent.
 // ============================================================================
 
 #include <cstddef>

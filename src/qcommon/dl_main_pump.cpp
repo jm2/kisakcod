@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Per-state pumps of the HTTP download transport (CODEBASE_AUDIT.md H4).
+// Per-state pumps of the HTTP download transport.
 // Each pump advances one DlTransportState and reports whether the
 // DL_DownloadLoop caller should chain into the next pump now (Advance) or
 // wait for the next frame (Continue). Behavior is identical to the

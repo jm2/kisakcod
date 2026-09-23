@@ -1,7 +1,6 @@
 # CI gate for KisakCOD.
 #
-# Implements the multi-platform delivery contract from
-# docs/CI_RELEASE_WORKFLOW_AUDIT.md (bead ki-8px) and docs/task.md Priority 8:
+# Multi-platform CI contract (docs/ROADMAP.md, WS-7):
 #   - every job has a bounded timeout (minutes are generous but finite)
 #   - superseded runs cancel (concurrency + cancel-in-progress)
 #   - every action is pinned to an immutable commit SHA (tag in comment)
@@ -19,9 +18,8 @@
 # Platform honesty note: the engine targets are Win32-x86-only today —
 # CMakeLists.txt fails configuration for any non-win32 engine build and for
 # 64-bit builds without the explicit KISAK_ALLOW_UNSUPPORTED_64BIT escape
-# hatch, and that gate must not be relaxed (docs/task.md, Known release
-# blockers). The windows-x86 leg therefore builds and packages the real
-# engine binaries, while the other five legs are portable test/release
+# hatch until gate G1 (docs/ROADMAP.md). The windows-x86 leg therefore builds
+# and packages the real engine binaries, while the other five legs are portable test/release
 # scaffolding (the same required hosted legs the port has been merging
 # against): every engine option is OFF, so they package test binaries only —
 # their green result is NOT five delivered engines. They still assert
@@ -197,29 +195,22 @@ jobs:
           --no-tests=error --timeout 300
 
   capability-dashboard:
-    # Keeps docs/CAPABILITY_DASHBOARD.md derived rather than hand-maintained.
-    # The generator validates the evidence manifest, re-parses this workflow
-    # set and tests/CMakeLists.txt, and fails when the committed dashboard is
-    # stale.
-    name: Capability evidence dashboard
+    # Renders the KPI table (docs/NOW.md) and the target x role delivery
+    # cells (docs/capability/manifest.json) into the run summary, and holds
+    # the doc set to its ADR-0006 budgets.
+    name: KPI summary and docs budget
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - name: Validate the evidence manifest and dashboard currency
-        run: python3 scripts/ci/capability-dashboard.py --check
+      - name: Check doc-set budgets
+        run: python3 scripts/ci/docs_budget.py
 
-      - name: Run dashboard unit tests
-        run: |
-          python3 scripts/ci/test_capability_dashboard.py
-          python3 scripts/ci/test_capability_dashboard_delivery.py
-          python3 scripts/ci/test_capability_dashboard_inventory.py
-          python3 scripts/ci/test_capability_dashboard_manifest_types.py
-          python3 scripts/ci/test_capability_dashboard_matrix.py
-          python3 scripts/ci/test_capability_dashboard_self_hosted.py
-          python3 scripts/ci/test_capability_dashboard_targets.py
+      - name: Render KPI summary
+        run: python3 scripts/ci/kpi_summary.py >> "$GITHUB_STEP_SUMMARY"
 
   # Sealed surface: source-invariant seal tests pin this job's exact step
   # shapes, names, and ordering, and normalize the file with comments left

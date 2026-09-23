@@ -13,9 +13,9 @@
 // (src/qcommon/huffman.cpp) and pins all three against fixed-input synthetic
 // fixtures. These are sanitized early-work fixtures: they lock the retail-table
 // code the fork emits and catch accidental drift. They are NOT a substitute for
-// the commercial-binary byte-comparison certification gate in
-// docs/NETWORK_COMPATIBILITY.md, which still requires authentic 1.7/Steam-1.8
-// references (#122).
+// the Steam 1.8 byte-comparison certification gate in
+// docs/design/NET_STEAM18.md, which still requires authentic Steam 1.8
+// captures.
 //
 // Tie ordering. The production comparator orders candidate nodes by weight
 // only, exactly like retail. msg_hData contains two duplicate weights --

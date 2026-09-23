@@ -13,9 +13,16 @@ Learn about the Development of KisakCOD here: [https://lwss.github.io/Duty-Of-Ki
 ## Current build support
 
 The engine currently produces Windows x86 multiplayer client and dedicated
-server binaries. Win64, Windows ARM64, Linux amd64/arm64, and macOS arm64 are
-active port targets; they are not yet runnable engine builds. See
-[the porting plan](docs/PORTING.md) and [codebase audit](docs/CODEBASE_AUDIT.md).
+server binaries. Native 64-bit builds for Windows amd64, Windows ARM64, Linux
+amd64/arm64 and macOS arm64 are the port's targets; none of them configures
+yet. The network target is the original **Steam release of Call of Duty 4,
+version 1.8** (`1.8.13620`): native clients must join unmodified Steam 1.8
+servers, and unmodified Steam 1.8 clients must join KisakCOD servers.
+
+- [Charter](docs/CHARTER.md): goals, targets, non-goals and what counts as
+  evidence.
+- [Roadmap](docs/ROADMAP.md): the testing gates G0-G6 and the workstreams.
+- [Now](docs/NOW.md): the KPIs and the ranked work queue.
 
 ## Current Requirements
 - Windows OS
@@ -64,12 +71,11 @@ However, there is a non-zero chance of some type of binary exploitation when pla
 Use the **[fork issues](https://github.com/jm2/kisakcod/issues)** for this fork's
 implementation and delivery backlog; upstream reports remain available in
 [SwagSoftware/KisakCOD](https://github.com/SwagSoftware/KisakCOD/issues).
-[The current roadmap](docs/task.md) maps fork issues to existing Gas City work,
-which runs separately. Current per-capability delivery evidence is summarized in
-the generated [capability dashboard](docs/CAPABILITY_DASHBOARD.md), reconciled
-from [`docs/capability/manifest.json`](docs/capability/manifest.json) by
-`scripts/ci/capability-dashboard.py`. All porting changes must follow the
-[original commercial 1.7 / Steam 1.8 network compatibility contract](docs/NETWORK_COMPATIBILITY.md).
+Each gate in the [roadmap](docs/ROADMAP.md) has a `gate` issue, and the
+current queue and KPIs live in [NOW](docs/NOW.md). Changes that touch the wire
+must keep Steam 1.8 compatibility
+([NET_STEAM18](docs/design/NET_STEAM18.md)). Contributors and agents start
+with [AGENTS.md](AGENTS.md).
 
 ## Troubleshooting
 - ***Can't Connect to Dedicated Server*** :

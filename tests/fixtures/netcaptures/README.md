@@ -1,8 +1,9 @@
-# Commercial-reference network captures
+# Steam 1.8 reference network captures
 
 Reference evidence for the wire-format certification gate
-(`ctest -R net-capture-certification`, issue #127, governed by #122 and
-`docs/NETWORK_COMPATIBILITY.md`).
+(`ctest -R net-capture-certification`). The capture procedure, privacy
+rules and profile policy live in `docs/design/NET_STEAM18.md`; the
+reference itself is fixed by ADR-0001 (`docs/decisions/`).
 
 ## Doctrine
 
@@ -13,9 +14,9 @@ Reference evidence for the wire-format certification gate
    Evidence that is present but divergent is worse: the gate fails hard
    (exit `1`) with the first differing invariant byte and bit.
 2. **No fork baselines.** Only captures recorded from the UNMODIFIED
-   commercial references may live here (commercial 1.7 and Steam commercial
-   1.8, per #122). Bytes produced by KisakCOD or CoD4x are never a baseline;
-   CoD4x is explicitly not a substitute for the commercial 1.8 reference.
+   Steam 1.8 release (`1.8.13620`) may live here. Bytes produced by
+   KisakCOD or CoD4x are never a baseline, and retail 1.7 is not a
+   required profile (it may only be used offline as a diff aid).
 3. **Explicit variable capture fields.** Every capture declares the spans
    that legitimately vary between sessions (challenge values, sequence
    numbers, qport, ...). Undeclared variables make a capture malformed;
@@ -26,18 +27,15 @@ Reference evidence for the wire-format certification gate
 
 ```
 netcaptures/
-  commercial-1.7/           # one directory per commercial profile
+  steam-1.8/                # the one required profile
     MANIFEST.txt
     01-scalar-sequence.bin  # capture files named in the manifest
     ...
-  commercial-1.8/
-    MANIFEST.txt
-    ...
 ```
 
-Both profiles are REQUIRED. A fresh checkout ships neither; that state is
-reported as BLOCKED, which is correct: wire equivalence with the commercial
-references is unproven until an operator records the evidence.
+The `steam-1.8` profile is REQUIRED. A fresh checkout does not ship it; that
+state is reported as BLOCKED, which is correct: wire equivalence with the
+Steam 1.8 reference is unproven until the owner records the evidence.
 
 ## Manifest format
 
@@ -86,23 +84,25 @@ any `var` declaration a kind does not mandate.
 ### How to record each kind
 
 * `scalar-sequence` — the two leading 32-bit sequence/acknowledge longs of a
-  commercial server message front. Record their values as `input`s; the gate
+  Steam 1.8 server message front. Record their values as `input`s; the gate
   re-encodes them with the production `MSG_WriteLong` and byte-compares.
 * `huffman-block` — a contiguous Huffman-compressed block as emitted by the
-  commercial binary's `MSG_WriteBitsCompress` path, together with the
+  Steam 1.8 binary's `MSG_WriteBitsCompress` path, together with the
   plaintext payload (`payload_hex`) it was produced from. Fixed adversarial
   payloads (all-zero, all-FF, alternating, real infostrings) are welcome;
   several captures of this kind may be listed.
 * `usercmd-delta` — one encoded usercmd delta block
-  (`MSG_WriteDeltaUsercmdKey` output) from a commercial session, with the
+  (`MSG_WriteDeltaUsercmdKey` output) from a Steam 1.8 session, with the
   delta `key` and the full 32-byte `from` command state (`from_hex`) it was
   encoded against. The gate decodes with the production reader, re-encodes,
   and byte-compares.
 
 ### Sanitization rules
 
-Strip operator-identifying metadata (player names, GUIDs, IPs) from TEXT
-capture kinds before committing; codec-level captures carry none. Record in
+Raw pcaps never enter the repository. Follow the privacy rules in
+`docs/design/NET_STEAM18.md`: commit only sanitized, decoded fixtures, and
+strip operator-identifying metadata (player names, GUIDs, CD-key hashes,
+SteamIDs, IPs) from TEXT capture kinds; codec-level captures carry none. Record in
 `sanitized_by` what was removed. Variable fields like challenge/qport stay —
 their recorded values are part of the deterministic expected bytes, not
 masked spans.
@@ -116,7 +116,7 @@ KISAKCOD_NETCAPTURES_DIR=/path/to/captures ctest -R net-capture-certification
 
 Exit codes: `0` all reference captures match (wire-format equivalence
 evidenced — **not** a merge approval and not a substitute for the
-session-layer certification in `docs/NETWORK_COMPATIBILITY.md`);
+session-layer gate G4a in `docs/ROADMAP.md`);
 `77` evidence missing/malformed (blockers listed); `1` evidence present but
 the production codec diverges (retail drift — a failure).
 

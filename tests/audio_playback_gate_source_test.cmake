@@ -11,7 +11,7 @@ cmake_minimum_required(VERSION 3.16)
 # retail-reference attenuation equivalence) stays pending/blocked per the
 # gate document section 6: nothing here may be reported as runtime coverage.
 #
-# Issue #122 / docs/NETWORK_COMPATIBILITY.md govern: every pinned statement
+# docs/design/NET_STEAM18.md governs: every pinned statement
 # is behavior the unmodified original commercial client exercises.
 
 if(NOT DEFINED SOURCE_ROOT OR SOURCE_ROOT STREQUAL "")

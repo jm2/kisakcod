@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstring>
 #include <climits>
+#include <limits>
 #include <type_traits>
 #include <utility>
 
@@ -153,6 +154,7 @@ constexpr SnapCase kSnapCases[] = {
     // Out of range / NaN: cvtss2si yields the "integer indefinite" value INT_MIN.
     {2147483648.0f, INT_MIN, "overflow -> integer indefinite"},
     {-2147483904.0f, INT_MIN, "underflow -> integer indefinite"},
+    {std::numeric_limits<float>::quiet_NaN(), INT_MIN, "NaN -> integer indefinite"},
 };
 } // namespace
 

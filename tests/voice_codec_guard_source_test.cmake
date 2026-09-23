@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # Voice codec substitution guard (VOX-7) and conditional codec identity
-# (DEP-3 companion), docs/AUDIO_VOICE_CINEMATIC_PARITY_GATES.md.
+# (DEP-3 companion), docs/design/CLIENT.md.
 #
 # VOX-7 requires that the commercial voice path is never re-coded onto a
 # different codec or framing: no Opus or new voice protocol, wire bytes for

@@ -1,6 +1,5 @@
-// Commercial-reference capture fixtures -- manifest, variable-field spec and
-// masked byte-compare (issue #127 / ki-dyqxl, governed by #122 and
-// docs/NETWORK_COMPATIBILITY.md).
+// Steam 1.8 reference capture fixtures -- manifest, variable-field spec and
+// masked byte-compare (governed by docs/design/NET_STEAM18.md).
 //
 // This subsystem is the certification gate the wire-contract harness was
 // built for: production MSG encoders/decoders are byte-compared against

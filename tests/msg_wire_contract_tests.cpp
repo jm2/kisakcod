@@ -65,9 +65,8 @@
 //
 // These are still sanitized synthetic fixtures. They lock the wire bytes the
 // fork emits and catch accidental drift; they are NOT the commercial-binary
-// byte-comparison certification gate in docs/NETWORK_COMPATIBILITY.md, which
-// requires authentic 1.7/Steam-1.8 references (#122) and remains blocked on
-// #122 evidence.
+// byte-comparison certification gate in docs/design/NET_STEAM18.md, which
+// requires authentic Steam 1.8 captures and remains blocked on them.
 //
 // Link stubs live in the shared harness header (msg_wire_test_harness.hpp)
 // together with their fidelity notes.

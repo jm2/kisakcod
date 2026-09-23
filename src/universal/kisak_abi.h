@@ -15,7 +15,7 @@
 // dependency-free leaf that huffman.h and the portable tests keep including
 // standalone. Ptr32<T> is deliberately NOT defined here - its single source of
 // truth is disk32:: in <database/db_disk32.h> (the packed-mirror seed); on-disk
-// mirror headers include both. See docs/PORTING.md sections 8-9.
+// mirror headers include both. See docs/design/NATIVE64.md.
 
 #include <cstddef>
 #include <cstdint>
@@ -91,7 +91,7 @@
 // Shared ABI / serialization / atomics code uses the <cstdint> exact-width types.
 // C `long` / `unsigned long` are BANNED where width is load-bearing: they are
 // 32-bit on Win32/Win64/WinARM64 (LLP64) but 64-bit on Linux/macOS (LP64). See
-// docs/PORTING.md section 8.
+// docs/design/NATIVE64.md.
 
 // ---- Layout-freeze asserts ----
 // COMPILE-TIME ONLY: each expands to a static_assert, which emits zero

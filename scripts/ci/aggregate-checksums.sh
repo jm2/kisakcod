@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Aggregate SHA256SUMS builder (CI_RELEASE_WORKFLOW_AUDIT gap 8). Walks the
+# Aggregate SHA256SUMS builder. Walks the
 # downloaded artifact tree, hashes every packaged file, and fails closed when
 # two files share a basename but not a SHA-256 (that would silently publish an
 # ambiguous sum). Output is a sorted, flat "sha256  basename" file.

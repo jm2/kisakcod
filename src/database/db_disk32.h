@@ -80,7 +80,7 @@ struct PointerToken
 };
 ONDISK_SIZE(PointerToken, 4);
 
-// The single canonical Ptr32 in the tree (docs/PORTING.md section 8: "do not stand
+// The single canonical Ptr32 in the tree (docs/design/NATIVE64.md: "do not stand
 // up a parallel Ptr32<T>"). A 32-bit packed pointer FIELD for on-disk / wire mirror
 // structs: it carries a phantom pointee type for readability and never dereferences
 // itself - resolution goes through DecodeOffset + the zone block table. Widening to
