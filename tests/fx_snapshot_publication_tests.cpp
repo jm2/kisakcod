@@ -644,6 +644,7 @@ bool TestCooperativeWriterVersusExclusiveSnapshot()
     std::atomic<bool> start{false};
     std::atomic<bool> writerDone{false};
     std::atomic<bool> failed{false};
+    std::atomic<std::uint32_t> snapshotCount{0};
 
     std::thread writer([&]() {
         while (!start.load(std::memory_order_acquire))
@@ -673,6 +674,19 @@ bool TestCooperativeWriterVersusExclusiveSnapshot()
                 failed.store(true, std::memory_order_relaxed);
                 break;
             }
+            if (sequence == 1u)
+            {
+                // Guarantee at least one snapshot completes while the writer
+                // is still running. The cooperative gate is released here, so
+                // the snapshot thread's next exclusive acquisition cannot
+                // starve: a loaded CI runner can no longer skip every
+                // mid-writer snapshot and fail the overlap assertion below.
+                while (snapshotCount.load(std::memory_order_acquire) == 0u
+                    && !failed.load(std::memory_order_acquire))
+                {
+                    std::this_thread::yield();
+                }
+            }
             if ((sequence & 15u) == 0u)
                 std::this_thread::yield();
         }
@@ -680,8 +694,6 @@ bool TestCooperativeWriterVersusExclusiveSnapshot()
     });
 
     bool sawWriterActive = false;
-    std::uint32_t snapshotCount = 0;
-    std::uint32_t lastSequence = 0;
     std::thread snapshot([&]() {
         while (!start.load(std::memory_order_acquire))
             std::this_thread::yield();
@@ -722,19 +734,19 @@ bool TestCooperativeWriterVersusExclusiveSnapshot()
                 failed.store(true, std::memory_order_relaxed);
                 return;
             }
-            ++snapshotCount;
-            lastSequence = sequence;
+            // Record the overlap before publishing the count: the writer's
+            // acquire load of snapshotCount cannot then overtake this store,
+            // so the assertion below can no longer be skipped when the
+            // writer races through its remaining rounds.
             if (!writerDone.load(std::memory_order_relaxed))
                 sawWriterActive = true;
+            snapshotCount.fetch_add(1u, std::memory_order_release);
+            // The final-state validation lives in main after both joins: a
+            // snapshot that observed a pre-final sequence could previously
+            // be preempted past EndExclusive while the writer finished every
+            // remaining round, then fail on its own stale iteration.
             if (writerDone.load(std::memory_order_acquire))
-            {
-                if (failed.load(std::memory_order_relaxed)
-                    || sequence != kStressRounds)
-                {
-                    failed.store(true, std::memory_order_relaxed);
-                }
                 return;
-            }
             std::this_thread::yield();
         }
     });
@@ -742,9 +754,35 @@ bool TestCooperativeWriterVersusExclusiveSnapshot()
     start.store(true, std::memory_order_release);
     writer.join();
     snapshot.join();
-    return !failed.load(std::memory_order_relaxed)
-        && sawWriterActive && snapshotCount != 0
-        && lastSequence == kStressRounds
+    if (failed.load(std::memory_order_relaxed))
+        return false;
+
+    // Both workers are joined and neither owns the gate, so this tail check
+    // is race-free: the writer's final publication (kStressRounds) must be
+    // the coherent state the protocol left behind.
+    bool tailCoherent = false;
+    if (FxIteratorTryBeginExclusive(&fixture.iteratorCount))
+    {
+        std::uint8_t readSelector = UINT8_C(0xFF);
+        std::uint8_t writeSelector = UINT8_C(0xFF);
+        tailCoherent = fixture.camera.pad[0] == kStressRounds
+            && CameraMatchesSequence(fixture.camera, kStressRounds)
+            && FX_TryDeriveVisibilitySelectors(
+                &fixture.visibility[0],
+                &fixture.visibility[1],
+                fixture.readState,
+                fixture.writeState,
+                &readSelector,
+                &writeSelector)
+            && readSelector
+                == static_cast<std::uint8_t>(kStressRounds & 1u)
+            && writeSelector
+                == static_cast<std::uint8_t>(readSelector ^ 1u);
+        if (!FxIteratorEndExclusive(&fixture.iteratorCount))
+            tailCoherent = false;
+    }
+    return tailCoherent
+        && sawWriterActive && snapshotCount.load() != 0u
         && Sys_AtomicLoad(&fixture.iteratorCount) == 0
         && Sys_AtomicLoad(&fixture.cameraIteratorCount) == 0;
 }
