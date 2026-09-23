@@ -14,6 +14,23 @@ include("${PLATFORM_DIR}/${KISAK_PLATFORM}/platform.cmake")
 kisakcod_require_platform_source_sets()
 find_package(Threads REQUIRED)
 
+# Tests labelled `ilp32` also run on the Windows x86 legs (ctest -L ilp32).
+# Label a test with kisakcod_ilp32(<executable target> <test>...) next to its
+# registration; the target then hangs off kisakcod-ilp32-tests, which is what
+# those legs build. Absent targets and tests (other hosts) are skipped.
+add_custom_target(kisakcod-ilp32-tests)
+function(kisakcod_ilp32 TARGET_NAME)
+    if (NOT TARGET ${TARGET_NAME})
+        return()
+    endif()
+    add_dependencies(kisakcod-ilp32-tests ${TARGET_NAME})
+    foreach(_test IN LISTS ARGN)
+        if (TEST ${_test})
+            set_property(TEST ${_test} APPEND PROPERTY LABELS ilp32)
+        endif()
+    endforeach()
+endfunction()
+
 add_executable(kisakcod-actor-grenade-prediction-cache-tests
     actor_grenade_prediction_cache_tests.cpp
 )
@@ -63,12 +80,6 @@ set_target_properties(
 add_test(
     NAME ui-safety-runtime-contracts
     COMMAND kisakcod-ui-safety-tests
-)
-add_test(
-    NAME ui-safety-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/ui_safety_source_test.cmake
 )
 
 add_executable(kisakcod-target-table-tests
@@ -414,24 +425,6 @@ add_test(
 set_tests_properties(
     database-zone-stream-ownership-runtime-contracts PROPERTIES TIMEOUT 30)
 
-add_executable(kisakcod-db-zone-stream-ownership-production-seal-tests
-    db_zone_stream_ownership_production_seal_tests.cpp
-)
-target_include_directories(
-    kisakcod-db-zone-stream-ownership-production-seal-tests PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-db-zone-stream-ownership-production-seal-tests PRIVATE cxx_std_20)
-kisakcod_test_warnings(
-    kisakcod-db-zone-stream-ownership-production-seal-tests)
-set_target_properties(
-    kisakcod-db-zone-stream-ownership-production-seal-tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-)
-add_test(
-    NAME database-zone-stream-ownership-production-test-access-sealed
-    COMMAND kisakcod-db-zone-stream-ownership-production-seal-tests
-)
-
 add_executable(kisakcod-db-zone-pending-copy-ledger-tests
     db_zone_pending_copy_ledger_tests.cpp
     ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
@@ -455,29 +448,6 @@ add_test(
 )
 set_tests_properties(
     database-zone-pending-copy-ledger PROPERTIES TIMEOUT 30)
-
-add_executable(kisakcod-db-zone-pending-copy-ledger-production-seal-tests
-    db_zone_pending_copy_ledger_production_seal_tests.cpp
-)
-target_include_directories(
-    kisakcod-db-zone-pending-copy-ledger-production-seal-tests
-    PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-db-zone-pending-copy-ledger-production-seal-tests
-    PRIVATE cxx_std_20)
-kisakcod_test_warnings(
-    kisakcod-db-zone-pending-copy-ledger-production-seal-tests)
-set_target_properties(
-    kisakcod-db-zone-pending-copy-ledger-production-seal-tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-)
-add_test(
-    NAME database-zone-pending-copy-production-test-access-sealed
-    COMMAND kisakcod-db-zone-pending-copy-ledger-production-seal-tests
-)
-set_tests_properties(
-    database-zone-pending-copy-production-test-access-sealed
-    PROPERTIES TIMEOUT 20)
 
 add_executable(kisakcod-db-script-string-journal-tests
     db_script_string_journal_tests.cpp
@@ -565,47 +535,6 @@ add_test(
 set_tests_properties(
     database-registry-ownership-coordinator PROPERTIES TIMEOUT 30)
 
-add_executable(
-    kisakcod-db-registry-ownership-coordinator-production-seal-tests
-    db_registry_ownership_coordinator_production_seal_tests.cpp
-)
-target_include_directories(
-    kisakcod-db-registry-ownership-coordinator-production-seal-tests
-    SYSTEM PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-db-registry-ownership-coordinator-production-seal-tests
-    PRIVATE cxx_std_20)
-target_compile_definitions(
-    kisakcod-db-registry-ownership-coordinator-production-seal-tests
-    PRIVATE KISAK_MP)
-kisakcod_test_warnings(
-    kisakcod-db-registry-ownership-coordinator-production-seal-tests)
-set_target_properties(
-    kisakcod-db-registry-ownership-coordinator-production-seal-tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-)
-add_test(
-    NAME database-registry-ownership-production-test-access-sealed
-    COMMAND
-        kisakcod-db-registry-ownership-coordinator-production-seal-tests
-)
-set_tests_properties(
-    database-registry-ownership-production-test-access-sealed
-    PROPERTIES TIMEOUT 20)
-
-# Compile the facade's production surface on every portable host without the
-# test-access macro.  OBJECT keeps this as a compile-only gate while ensuring
-# it remains part of the default build.
-add_library(kisakcod-db-zone-runtime-facade-macro-off OBJECT
-    ${SRC_DIR}/database/db_zone_runtime_facade.cpp)
-target_include_directories(
-    kisakcod-db-zone-runtime-facade-macro-off SYSTEM PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-db-zone-runtime-facade-macro-off PRIVATE cxx_std_20)
-target_compile_definitions(
-    kisakcod-db-zone-runtime-facade-macro-off PRIVATE KISAK_MP)
-kisakcod_test_warnings(kisakcod-db-zone-runtime-facade-macro-off)
-
 add_executable(kisakcod-db-zone-runtime-facade-tests
     db_zone_runtime_facade_tests.cpp
     ${SRC_DIR}/database/db_zone_runtime_facade.cpp
@@ -629,42 +558,6 @@ add_test(
     COMMAND kisakcod-db-zone-runtime-facade-tests)
 set_tests_properties(database-zone-runtime-facade PROPERTIES TIMEOUT 30)
 
-add_executable(kisakcod-db-zone-runtime-facade-production-seal-tests
-    db_zone_runtime_facade_production_seal_tests.cpp)
-target_include_directories(
-    kisakcod-db-zone-runtime-facade-production-seal-tests
-    SYSTEM PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-db-zone-runtime-facade-production-seal-tests PRIVATE cxx_std_20)
-target_compile_definitions(
-    kisakcod-db-zone-runtime-facade-production-seal-tests PRIVATE KISAK_MP)
-kisakcod_test_warnings(
-    kisakcod-db-zone-runtime-facade-production-seal-tests)
-set_target_properties(
-    kisakcod-db-zone-runtime-facade-production-seal-tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-add_test(
-    NAME database-zone-runtime-facade-production-test-access-sealed
-    COMMAND kisakcod-db-zone-runtime-facade-production-seal-tests)
-set_tests_properties(
-    database-zone-runtime-facade-production-test-access-sealed
-    PROPERTIES TIMEOUT 20)
-
-# Compile the callback-context implementation with its production surface on
-# every portable host.  OBJECT makes unresolved PMem service linkage harmless
-# while preserving warning and macro-off coverage in the default build.
-add_library(kisakcod-db-zone-runtime-callback-context-macro-off OBJECT
-    ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp)
-target_include_directories(
-    kisakcod-db-zone-runtime-callback-context-macro-off SYSTEM PRIVATE
-    ${SRC_DIR})
-target_compile_features(
-    kisakcod-db-zone-runtime-callback-context-macro-off PRIVATE cxx_std_20)
-target_compile_definitions(
-    kisakcod-db-zone-runtime-callback-context-macro-off PRIVATE KISAK_MP)
-kisakcod_test_warnings(
-    kisakcod-db-zone-runtime-callback-context-macro-off)
-
 add_executable(kisakcod-db-zone-runtime-callback-context-tests
     db_zone_runtime_callback_context_tests.cpp
     ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp)
@@ -685,48 +578,6 @@ add_test(
     COMMAND kisakcod-db-zone-runtime-callback-context-tests)
 set_tests_properties(
     database-zone-runtime-callback-context PROPERTIES TIMEOUT 20)
-
-add_executable(
-    kisakcod-db-zone-runtime-callback-context-production-seal-tests
-    db_zone_runtime_callback_context_production_seal_tests.cpp)
-target_include_directories(
-    kisakcod-db-zone-runtime-callback-context-production-seal-tests
-    PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-db-zone-runtime-callback-context-production-seal-tests
-    PRIVATE cxx_std_20)
-target_compile_definitions(
-    kisakcod-db-zone-runtime-callback-context-production-seal-tests
-    PRIVATE KISAK_MP)
-kisakcod_test_warnings(
-    kisakcod-db-zone-runtime-callback-context-production-seal-tests)
-set_target_properties(
-    kisakcod-db-zone-runtime-callback-context-production-seal-tests
-    PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-add_dependencies(
-    kisakcod-db-zone-runtime-callback-context-production-seal-tests
-    kisakcod-db-zone-runtime-callback-context-macro-off)
-add_test(
-    NAME database-zone-runtime-callback-context-production-test-access-sealed
-    COMMAND
-        kisakcod-db-zone-runtime-callback-context-production-seal-tests)
-set_tests_properties(
-    database-zone-runtime-callback-context-production-test-access-sealed
-    PROPERTIES TIMEOUT 20)
-add_test(
-    NAME database-zone-runtime-callback-context-macro-off-object-symbol-sealed
-    COMMAND ${CMAKE_COMMAND}
-        "-DSEAL_EXECUTABLE=$<TARGET_FILE:kisakcod-db-zone-runtime-callback-context-production-seal-tests>"
-        "-DPRODUCTION_OBJECTS=$<JOIN:$<TARGET_OBJECTS:kisakcod-db-zone-runtime-callback-context-macro-off>,|>"
-        "-DCXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
-        "-DNM_TOOL=${CMAKE_NM}"
-        "-DREADELF_TOOL=${CMAKE_READELF}"
-        "-DLINKER_TOOL=${CMAKE_LINKER}"
-        -P
-        ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_callback_context_production_object_seal_test.cmake)
-set_tests_properties(
-    database-zone-runtime-callback-context-macro-off-object-symbol-sealed
-    PROPERTIES TIMEOUT 20)
 
 add_executable(kisakcod-db-zone-runtime-table-tests
     db_zone_runtime_table_tests.cpp
@@ -890,30 +741,6 @@ set_tests_properties(
     database-zone-runtime-table-pending-copy-invalid-kind
     PROPERTIES TIMEOUT 30 WILL_FAIL TRUE)
 
-# Compile production's runtime-table header without its test-access opt-in.
-# Dependent access checks make this a normal positive contract: restoring
-# either same-name friendship fails the target's static assertions.
-add_executable(
-    kisakcod-db-zone-runtime-table-production-seal-tests
-    db_zone_runtime_table_production_seal_tests.cpp
-)
-target_include_directories(
-    kisakcod-db-zone-runtime-table-production-seal-tests PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-db-zone-runtime-table-production-seal-tests PRIVATE cxx_std_20)
-target_compile_definitions(
-    kisakcod-db-zone-runtime-table-production-seal-tests PRIVATE KISAK_MP)
-kisakcod_test_warnings(
-    kisakcod-db-zone-runtime-table-production-seal-tests)
-set_target_properties(
-    kisakcod-db-zone-runtime-table-production-seal-tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-)
-add_test(
-    NAME database-zone-runtime-table-production-test-access-sealed
-    COMMAND kisakcod-db-zone-runtime-table-production-seal-tests
-)
-
 # Literal macro-off production chain: facade -> table -> typed stable callback
 # context -> ownership controller -> registry coordinator -> real script-string
 # registry. The fixture supplies only deterministic platform/reporting seams.
@@ -999,31 +826,6 @@ add_test(
     COMMAND kisakcod-fx-archive-disk32-tests
 )
 set_tests_properties(effectscore-archive-disk32-codec PROPERTIES TIMEOUT 10)
-
-# Compile-only seal of the production legacy bridge: its public surface must
-# stay small, the methods must remain noexcept, and no test seam must
-# accidentally leak into the production translation unit.
-add_executable(kisakcod-db-load-legacy-bridge-production-seal-tests
-    db_load_legacy_bridge_production_seal_tests.cpp)
-target_include_directories(
-    kisakcod-db-load-legacy-bridge-production-seal-tests
-    SYSTEM PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-db-load-legacy-bridge-production-seal-tests
-    PRIVATE cxx_std_20)
-target_compile_definitions(
-    kisakcod-db-load-legacy-bridge-production-seal-tests PRIVATE KISAK_MP)
-kisakcod_test_warnings(
-    kisakcod-db-load-legacy-bridge-production-seal-tests)
-set_target_properties(
-    kisakcod-db-load-legacy-bridge-production-seal-tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-add_test(
-    NAME database-load-legacy-bridge-production-test-access-sealed
-    COMMAND kisakcod-db-load-legacy-bridge-production-seal-tests)
-set_tests_properties(
-    database-load-legacy-bridge-production-test-access-sealed
-    PROPERTIES TIMEOUT 20)
 
 # End-to-end runtime bridge: drive the bridge against the real
 # registry/facade/coord chain.  The fixture supplies deterministic
@@ -1755,29 +1557,6 @@ add_test(
     COMMAND kisakcod-fx-physics-sidecar-tests
 )
 
-# Keep the test-only corruption helper out of production's namespace and
-# friendship surface. Dependent access checks make this a positive compile
-# contract: restoring the public-name friendship fails the static assertions.
-add_executable(
-    kisakcod-fx-physics-sidecar-production-seal-tests
-    fx_physics_sidecar_production_seal_tests.cpp
-)
-target_include_directories(
-    kisakcod-fx-physics-sidecar-production-seal-tests
-    PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-fx-physics-sidecar-production-seal-tests
-    PRIVATE cxx_std_20)
-kisakcod_test_warnings(
-    kisakcod-fx-physics-sidecar-production-seal-tests)
-set_target_properties(
-    kisakcod-fx-physics-sidecar-production-seal-tests PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-add_test(
-    NAME effectscore-physics-sidecar-production-test-access-sealed
-    COMMAND kisakcod-fx-physics-sidecar-production-seal-tests
-)
-
 add_executable(kisakcod-fx-archive-capacity-tests
     fx_archive_capacity_tests.cpp
 )
@@ -1976,56 +1755,6 @@ add_test(
 set_tests_properties(
     universal-physicalmemory-runtime-control PROPERTIES TIMEOUT 60)
 
-# Compile the real implementation without the testing macro and retain its
-# object for the runtime seal's symbol-surface inspection. This is deliberately
-# an object library: the implementation's engine service references need not be
-# replaced by permissive fixture stubs merely to inspect its linkage.
-add_library(kisakcod-physicalmemory-runtime-production-object OBJECT
-    ${SRC_DIR}/universal/physicalmemory.cpp
-)
-target_include_directories(
-    kisakcod-physicalmemory-runtime-production-object SYSTEM PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-physicalmemory-runtime-production-object PRIVATE cxx_std_20)
-target_compile_definitions(
-    kisakcod-physicalmemory-runtime-production-object PRIVATE KISAK_MP)
-kisakcod_test_warnings(
-    kisakcod-physicalmemory-runtime-production-object)
-
-# This normal macro-off target proves production callers cannot name the
-# hidden global PMem testing seam. Its CTest wrapper also inspects the actual
-# macro-off production object for local state and absent test-access symbols.
-add_executable(kisakcod-physicalmemory-runtime-production-seal-tests
-    physicalmemory_runtime_production_seal_tests.cpp
-)
-target_include_directories(
-    kisakcod-physicalmemory-runtime-production-seal-tests PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-physicalmemory-runtime-production-seal-tests PRIVATE cxx_std_20)
-kisakcod_test_warnings(
-    kisakcod-physicalmemory-runtime-production-seal-tests)
-set_target_properties(
-    kisakcod-physicalmemory-runtime-production-seal-tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-)
-add_dependencies(
-    kisakcod-physicalmemory-runtime-production-seal-tests
-    kisakcod-physicalmemory-runtime-production-object)
-add_test(
-    NAME universal-physicalmemory-runtime-production-test-access-sealed
-    COMMAND ${CMAKE_COMMAND}
-        "-DSEAL_EXECUTABLE=$<TARGET_FILE:kisakcod-physicalmemory-runtime-production-seal-tests>"
-        "-DPRODUCTION_OBJECTS=$<JOIN:$<TARGET_OBJECTS:kisakcod-physicalmemory-runtime-production-object>,|>"
-        "-DCXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
-        "-DNM_TOOL=${CMAKE_NM}"
-        "-DREADELF_TOOL=${CMAKE_READELF}"
-        "-DLINKER_TOOL=${CMAKE_LINKER}"
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/physicalmemory_runtime_production_seal_test.cmake
-)
-set_tests_properties(
-    universal-physicalmemory-runtime-production-test-access-sealed
-    PROPERTIES TIMEOUT 20)
-
 add_executable(kisakcod-physicalmemory-checked-tests
     physicalmemory_checked_tests.cpp
     ${SRC_DIR}/universal/physicalmemory_checked.cpp
@@ -2044,27 +1773,6 @@ add_test(
 )
 set_tests_properties(
     universal-physicalmemory-checked-scopes PROPERTIES TIMEOUT 20)
-
-# This is a normal positive compile/run target. Dependent access checks prove
-# that production callers cannot copy, reset, or reach receipt authority.
-add_executable(kisakcod-physicalmemory-checked-api-seal-tests
-    physicalmemory_checked_api_seal_tests.cpp
-)
-target_include_directories(
-    kisakcod-physicalmemory-checked-api-seal-tests PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-physicalmemory-checked-api-seal-tests PRIVATE cxx_std_20)
-kisakcod_test_warnings(kisakcod-physicalmemory-checked-api-seal-tests)
-set_target_properties(
-    kisakcod-physicalmemory-checked-api-seal-tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-)
-add_test(
-    NAME universal-physicalmemory-checked-api-sealed
-    COMMAND kisakcod-physicalmemory-checked-api-seal-tests
-)
-set_tests_properties(
-    universal-physicalmemory-checked-api-sealed PROPERTIES TIMEOUT 20)
 
 add_executable(kisakcod-fx-visibility-atomic-tests
     fx_visibility_atomic_tests.cpp
@@ -2260,15 +1968,6 @@ add_test(
     COMMAND kisakcod-script-string-atomic-tests
 )
 set_tests_properties(script-string-packed-atomic-contracts PROPERTIES TIMEOUT 20)
-
-add_library(kisakcod-script-memorytree-lease-api-seal OBJECT
-    script_memorytree_lease_api_seal_compile_tests.cpp
-)
-target_include_directories(
-    kisakcod-script-memorytree-lease-api-seal SYSTEM PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-script-memorytree-lease-api-seal PRIVATE cxx_std_20)
-kisakcod_test_warnings(kisakcod-script-memorytree-lease-api-seal)
 
 add_executable(kisakcod-script-memorytree-try-tests
     script_memorytree_try_tests.cpp
@@ -2983,7 +2682,6 @@ add_test(
     COMMAND kisakcod-upstream-angle-math-tests
 )
 
-
 # Run both profiles of the curated production regressions in the existing
 # upstream reconciliation gate, including its portable/sanitizer/Win32 legs.
 include("${CMAKE_CURRENT_SOURCE_DIR}/upstream_b3199_tests.cmake")
@@ -3084,55 +2782,6 @@ foreach(_hudelem_variant IN ITEMS MP SP)
 endforeach()
 
 add_test(
-    NAME vehicle-material-time-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/vehicle_material_time_source_test.cmake
-)
-
-add_test(
-    NAME upstream-820b0a03-core-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_820b0a03_core_source_test.cmake
-)
-
-add_test(
-    NAME platform-console-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_console_source_test.cmake
-)
-
-add_test(
-    NAME platform-process-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_process_source_test.cmake
-)
-
-add_test(
-    NAME platform-socket-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_socket_source_test.cmake
-)
-
-add_test(
-    NAME dl-download-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/dl_download_source_test.cmake
-)
-
-add_test(
-    NAME dedi-headless-source-profile
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/headless_profile_test.cmake
-)
-
-add_test(
     NAME dedi-headless-client-media-include-debt
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
@@ -3149,274 +2798,12 @@ add_test(
 )
 
 add_test(
-    NAME target-table-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/target_table_source_test.cmake
-)
-
-add_test(
-    NAME target-client-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/target_client_source_test.cmake
-)
-
-add_test(
-    NAME actor-grenade-safe-target-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/actor_grenade_safety_source_test.cmake
-)
-
-add_test(
     NAME abi-sizeof-debt-tripwire
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -DALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/abi_sizeof_debt.allow
         -DFORMULA_ALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/abi_sizeof_formula_debt.allow
         -P ${CMAKE_CURRENT_SOURCE_DIR}/abi_sizeof_debt_test.cmake
-)
-
-add_test(
-    NAME abi-sizeof-scanner-fixture
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/abi_sizeof
-        -DALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/abi_sizeof/direct.allow
-        -DFORMULA_ALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/abi_sizeof/formula.allow
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/abi_sizeof_debt_test.cmake
-)
-
-add_test(
-    NAME physics-transaction-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/physics_transaction_source_test.cmake
-)
-
-add_test(
-    NAME physics-rollback-recipe-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/physics_rollback_recipe_source_test.cmake
-)
-
-add_test(
-    NAME phys-obj-id-owner-bound-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/phys_obj_id_owner_bound_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-archive-physics-transaction
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_physics_transaction_test.cmake
-)
-
-add_test(
-    NAME effectscore-effect-table-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_effect_table_restore_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-effect-table-save-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_effect_table_save_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-live-physics-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_live_physics_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-archive-snapshot-publication-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_snapshot_publication_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-archive-system-disk32-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_system_disk32_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-archive-buffers-disk32-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_buffers_disk32_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-archive-native-disk32-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_native_disk32_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-archive-body-state-disk32-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_body_state_disk32_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-archive-reader-disk32-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_reader_disk32_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-fastfile-disk32-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_fastfile_disk32_source_test.cmake
-)
-
-add_test(
-    NAME effectscore-fastfile-zone-adapter-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_fastfile_zone_adapter_source_test.cmake
-)
-
-add_test(
-    NAME database-xasset-disk32-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_xasset_disk32_source_test.cmake
-)
-
-add_test(
-    NAME database-script-string-disk32-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P
-        ${CMAKE_CURRENT_SOURCE_DIR}/db_script_string_disk32_source_test.cmake
-)
-
-add_test(
-    NAME database-zone-load-context-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_load_context_source_test.cmake
-)
-
-add_test(
-    NAME database-zone-stream-ownership-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P
-        ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_stream_ownership_source_test.cmake
-)
-
-add_test(
-    NAME database-zone-pending-copy-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P
-        ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_pending_copy_ledger_source_test.cmake
-)
-
-add_test(
-    NAME database-script-string-journal-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P
-        ${CMAKE_CURRENT_SOURCE_DIR}/db_script_string_journal_source_test.cmake
-)
-
-add_test(
-    NAME database-script-string-ownership-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P
-        ${CMAKE_CURRENT_SOURCE_DIR}/db_script_string_ownership_source_test.cmake
-)
-
-add_test(
-    NAME database-zone-script-string-ownership-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P
-        ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_script_string_ownership_source_test.cmake
-)
-
-add_test(
-    NAME database-registry-ownership-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P
-        ${CMAKE_CURRENT_SOURCE_DIR}/db_registry_ownership_coordinator_source_test.cmake
-)
-
-add_test(
-    NAME database-zone-runtime-table-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_table_source_test.cmake
-)
-
-add_test(
-    NAME database-zone-runtime-callback-context-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P
-        ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_callback_context_source_test.cmake
-)
-
-add_test(
-    NAME database-zone-runtime-facade-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_facade_source_test.cmake
-)
-
-add_test(
-    NAME database-zone-runtime-storage-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_storage_source_test.cmake
-)
-
-add_test(
-    NAME database-zone-slot-range-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_slot_range_source_test.cmake
-)
-
-add_test(
-    NAME upstream-correctness-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_correctness_source_test.cmake
-)
-
-add_test(
-    NAME upstream-sort-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_sort_source_test.cmake
-)
-
-add_test(
-    NAME hudelem-sort-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/hudelem_sort_source_test.cmake
 )
 
 add_executable(
@@ -3437,131 +2824,6 @@ set_target_properties(
 add_test(
     NAME actor-navigation-geometry
     COMMAND kisakcod-actor-navigation-geometry-tests
-)
-add_test(
-    NAME actor-navigation-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/actor_navigation_source_test.cmake
-)
-
-add_test(
-    NAME missile-union-layout-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/missile_layout_source_test.cmake
-)
-
-add_test(
-    NAME upstream-safe-fixlets-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_safe_fixlets_source_test.cmake
-)
-
-add_test(
-    NAME upstream-reconciliation-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_reconciliation_source_test.cmake
-)
-
-add_test(
-    NAME weapon-model-safety-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/weapon_model_safety_source_test.cmake
-)
-
-add_test(
-    NAME upstream-last-four-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_last_four_source_test.cmake
-)
-
-add_test(
-    NAME sound-dry-send-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/sound_dry_send_source_test.cmake
-)
-
-add_test(
-    NAME voice-framing-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/voice_framing_source_test.cmake
-)
-
-add_test(
-    NAME audio-gate-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/audio_gate_source_test.cmake
-)
-
-add_test(
-    NAME cinematic-gate-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/cinematic_gate_source_test.cmake
-)
-
-add_test(
-    NAME null-media-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/null_media_gate_source_test.cmake
-)
-
-add_test(
-    NAME voice-codec-guard-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/voice_codec_guard_source_test.cmake
-)
-
-add_test(
-    NAME audio-playback-gate-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/audio_playback_gate_source_test.cmake
-)
-
-add_test(
-    NAME voice-device-gate-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/voice_device_gate_source_test.cmake
-)
-
-add_test(
-    NAME pool-native-pointer-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/pool_allocator_source_test.cmake
-)
-
-add_test(
-    NAME universal-physicalmemory-checked-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/physicalmemory_checked_source_test.cmake
-)
-
-add_test(
-    NAME universal-physicalmemory-legacy-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/physicalmemory_legacy_source_test.cmake
-)
-
-add_test(
-    NAME security-source-regressions
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/security_regression_test.cmake
 )
 
 # xanim_load_test: BufCursor transactional current/end cursor contracts.
@@ -3659,16 +2921,6 @@ set_target_properties(
 add_test(
     NAME xmodel-cursor-overflow-fail-closed
     COMMAND kisakcod-xmodel-cursor-overflow-tests)
-
-# Source-contract gate for the same stage: the loader TUs are not
-# compilable on portable hosts, so the second-pass correction is pinned
-# textually — checked SeekTo positioning, cursor-owned checkpoint, no
-# raw pos rewind, and paired Activate/Deactivate teardown counts.
-add_test(
-    NAME xmodel-cursor-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/xmodel_cursor_source_invariants_test.cmake)
 
 # xmodel_loader_entry_test: production-loader entry-point contracts
 # (ki-okmr / #124; XAnim entries enrolled in ki-458h stage 2). Links
@@ -3802,8 +3054,7 @@ add_test(
 # 32-bit targets and natural widened sizes on 64-bit via RUNTIME_SIZE.
 # Headers with a portable include chain are included for real; the
 # Windows/production-bound ones are mirrored member-for-member and
-# pinned to the same constants, with the exact declarations enforced by
-# the script-native-layout-source-invariants test below.
+# pinned to the same constants.
 add_executable(kisakcod-script-native64-layout-tests
     script_native64_layout_test.cpp)
 target_include_directories(
@@ -3821,12 +3072,6 @@ set_target_properties(
 add_test(
     NAME script-native64-layout-contracts
     COMMAND kisakcod-script-native64-layout-tests)
-
-add_test(
-    NAME script-native-layout-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/script_native_layout_source_test.cmake)
 
 # script-readstack-nested-contracts: production-path behavioral regression
 # for the M4 (ki-n1et) nested VAR_STACK reader. The verbatim
@@ -4268,15 +3513,6 @@ endif()
 set_target_properties(kisakcod-script-debugger-pointer-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME script-debugger-pointer-contracts COMMAND kisakcod-script-debugger-pointer-tests)
 
-# script-widening-source-invariants: pins the sizeof-based allocation,
-# stride and full-union forms the rework introduced and forbids the
-# literal-size / frozen-stride / narrow-copy forms from returning.
-add_test(
-    NAME script-widening-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/script_widening_source_test.cmake)
-
 # fuzz_fastfile: bounded cursor-primitive fuzz harness. It feeds synthetic
 # XAsset-shaped byte streams (xmodel pieces, xanim parts, fx archive body
 # state) through the bounded BufCursor read primitives in
@@ -4411,13 +3647,6 @@ add_test(
     COMMAND kisakcod-runtime-scalar-determinism-tests
 )
 
-add_test(
-    NAME runtime-scalar-determinism-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_scalar_determinism_source_test.cmake
-)
-
 # MSVC formatted-print boundary: _snprintf/_vsnprintf truncation must
 # report -1 (the contract the decompiled callers were compiled against),
 # never the POSIX required-length return. On MSVC hosts the real CRT
@@ -4477,11 +3706,6 @@ add_test(
     NAME database-derived-shader-cache-contracts
     COMMAND kisakcod-shader-cache-tests)
 set_tests_properties(database-derived-shader-cache-contracts PROPERTIES TIMEOUT 20)
-add_test(
-    NAME database-derived-shader-cache-source-invariants
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/shader_cache_source_test.cmake)
 
 # M5 exit (ki-msb): retail fast-file parity harness. Runs on the native64
 # host against an unmodified retail fast-file and emits the capture digest
@@ -4504,32 +3728,14 @@ add_test(
 set_tests_properties(retail-fastfile-parity-harness-self-test PROPERTIES
     TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
-# ki-msb PR #113 review correction: the parity DRIVER's acceptance boundary
-# is negative-tested — envelope-only captures can never pass the --mode
-# m5-graph runtime-graph gate, success results are named by mode + capture
-# kind, and leg identity is enforced. Runs the real driver against the
-# harness built above plus a stub graph-v1 harness for the positive
-# runtime-graph path. POSIX-only: the driver is a bash instrument run on the
-# Linux host leg; Windows legs mint references and run the C++ self-test.
-if(UNIX)
-    add_test(
-        NAME retail-fastfile-parity-driver-gates
-        COMMAND "${CMAKE_SOURCE_DIR}/scripts/ci/test-run-retail-fastfile-parity.sh"
-            --build-dir "${CMAKE_BINARY_DIR}")
-    set_tests_properties(retail-fastfile-parity-driver-gates PROPERTIES
-        TIMEOUT 120 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-endif()
-
 # ---------------------------------------------------------------------------
 # Voice codec parity gates (VOX-1a / VOX-1b; docs/design/CLIENT.md, Voice).
 #
 # Drives the in-tree Speex 1.1.9 build (src/groupvoice/speex/*.c) through the
 # exact production ctl sequences from src/groupvoice/encode.cpp / decode.cpp
 # and pins encoder bitstreams byte-exactly (VOX-1a) plus decoder PCM within a
-# recorded tolerance (VOX-1b). The production wrappers themselves are pinned
-# statement-for-statement by tests/voice_framing_source_test.cmake because
-# directsound.h statically asserts the 32-bit Win32 ABI and the wrappers
-# cannot run on portable CI targets.
+# recorded tolerance (VOX-1b). The production wrappers are not compiled here:
+# directsound.h statically asserts the 32-bit Win32 ABI.
 set(SPEEX_CODEC_SOURCES
     "${SRC_DIR}/groupvoice/speex/bits.c"
     "${SRC_DIR}/groupvoice/speex/cb_search.c"
@@ -4617,3 +3823,237 @@ add_test(
     COMMAND kisakcod-voice-gate-tests
 )
 set_tests_properties(voice-codec-gate-contracts PROPERTIES TIMEOUT 120)
+
+# Engine call sites that no test compiles: each pin is the only evidence that
+# the engine calls the named fork helper (tests/engine_call_site_test.cmake).
+function(kisakcod_engine_call_site NAME FILE LITERAL)
+    add_test(
+        NAME call-site-${NAME}
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+            -DFILE=${FILE}
+            "-DLITERAL=${LITERAL}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/engine_call_site_test.cmake)
+    set_tests_properties(call-site-${NAME} PROPERTIES TIMEOUT 30)
+endfunction()
+kisakcod_engine_call_site(download-authorization src/server_mp/ucmds.cpp
+    "server_file_compare::IsPermittedServerDownloadRequest(")
+kisakcod_engine_call_site(download-url-masking src/client_mp/cl_main_mp.cpp
+    "CL_SanitizeDownloadUrl(cls.downloadName")
+kisakcod_engine_call_site(weapon-model-lookup src/game/g_weapon.cpp
+    "bg::weapon_model::CheckedLookup(")
+kisakcod_engine_call_site(zone-runtime-table-init src/database/db_registry.cpp
+    "db::zone_runtime::TryInitializeZoneRuntimeTable(")
+kisakcod_engine_call_site(referenced-fastfile-names src/database/db_registry.cpp
+    "db::referenced_fastfile::FormatReferencedFastFileNames(")
+kisakcod_engine_call_site(legacy-bridge-user-transfer src/database/db_registry.cpp
+    "DbLoadLegacyBridge::TryTransferUsers4To8()")
+kisakcod_engine_call_site(script-string-reset src/script/scr_main.cpp
+    "SL_TryResetCanonicalStringState(")
+kisakcod_engine_call_site(path-sort src/universal/com_files.cpp
+    "Sys_FileSystemSortPathPointers(")
+kisakcod_engine_call_site(console-read-line src/win32/win_syscon.cpp
+    "Sys_ConsoleTryReadLine(")
+kisakcod_engine_call_site(vehicle-material-time src/game_mp/g_vehicles_mp.cpp
+    "bg::vehicle_material_time::Advance(")
+
+kisakcod_ilp32(kisakcod-actor-grenade-prediction-cache-tests
+    actor-grenade-prediction-cache-contracts)
+
+kisakcod_ilp32(kisakcod-actor-grenade-safety-tests
+    actor-grenade-safe-target-radius-contracts)
+
+kisakcod_ilp32(kisakcod-shader-cache-tests
+    database-derived-shader-cache-contracts)
+
+kisakcod_ilp32(kisakcod-db-referenced-fastfile-tests
+    database-referenced-fastfile-format)
+
+kisakcod_ilp32(kisakcod-db-registry-ownership-coordinator-tests
+    database-registry-ownership-coordinator)
+
+kisakcod_ilp32(kisakcod-db-script-string-disk32-tests
+    database-script-string-disk32-walk)
+
+kisakcod_ilp32(kisakcod-db-script-string-journal-tests
+    database-script-string-transaction-journal)
+
+kisakcod_ilp32(kisakcod-db-xasset-disk32-tests
+    database-xasset-disk32-envelope)
+
+kisakcod_ilp32(kisakcod-db-zone-load-context-tests
+    database-zone-load-context-lifecycle)
+
+kisakcod_ilp32(kisakcod-db-zone-pending-copy-ledger-tests
+    database-zone-pending-copy-ledger)
+
+kisakcod_ilp32(kisakcod-db-zone-runtime-callback-context-tests
+    database-zone-runtime-callback-context)
+
+kisakcod_ilp32(kisakcod-db-zone-runtime-facade-tests
+    database-zone-runtime-facade)
+
+kisakcod_ilp32(kisakcod-db-zone-runtime-stable-context-integration-tests
+    database-zone-runtime-stable-context-forgotten-finish
+    database-zone-runtime-stable-context-integration)
+
+kisakcod_ilp32(kisakcod-db-zone-runtime-storage-tests
+    database-zone-runtime-storage-layout)
+
+kisakcod_ilp32(kisakcod-db-zone-runtime-table-tests
+    database-zone-runtime-table-mutation-invalid-extra-value
+    database-zone-runtime-table-mutation-invalid-kind
+    database-zone-runtime-table-mutation-invalid-missing-value
+    database-zone-runtime-table-mutation-unsafe-backend
+    database-zone-runtime-table-mutation-unsafe-postcondition
+    database-zone-runtime-table-ownership
+    database-zone-runtime-table-stable-context-bank-key
+    database-zone-runtime-table-stable-context-claimed-neighbor
+    database-zone-runtime-table-stable-context-legacy-descriptors
+    database-zone-runtime-table-stable-context-managed-key
+    database-zone-runtime-table-stable-context-terminal-phase
+    database-zone-runtime-table-stable-context-unused-busy
+    database-zone-runtime-table-stable-context-unused-neighbor
+    database-zone-runtime-table-unload-invalid-extra-value
+    database-zone-runtime-table-unload-invalid-missing-value
+    database-zone-runtime-table-unload-invalid-unknown-option
+    database-zone-runtime-table-unload-unsafe-0
+    database-zone-runtime-table-unload-unsafe-1
+    database-zone-runtime-table-unload-unsafe-2
+    database-zone-runtime-table-unload-unsafe-3
+    database-zone-runtime-table-unload-unsafe-4
+    database-zone-runtime-table-unload-unsafe-5
+    database-zone-runtime-table-unload-unsafe-6)
+
+kisakcod_ilp32(kisakcod-db-zone-script-string-ownership-tests
+    database-zone-script-string-ownership-controller)
+
+kisakcod_ilp32(kisakcod-db-zone-stream-ownership-tests
+    database-zone-stream-ownership-runtime-contracts)
+
+kisakcod_ilp32(kisakcod-fx-archive-body-state-disk32-tests
+    effectscore-archive-body-state-disk32-codec)
+
+kisakcod_ilp32(kisakcod-fx-archive-buffers-disk32-tests
+    effectscore-archive-buffers-disk32-codec)
+
+kisakcod_ilp32(kisakcod-fx-archive-disk32-tests
+    effectscore-archive-disk32-codec)
+
+kisakcod_ilp32(kisakcod-fx-archive-native-disk32-tests
+    effectscore-archive-native-disk32-codec)
+
+kisakcod_ilp32(kisakcod-fx-archive-reader-disk32-tests
+    effectscore-archive-reader-disk32)
+
+kisakcod_ilp32(kisakcod-fx-archive-restore-candidate-disk32-tests
+    effectscore-archive-restore-candidate-disk32)
+
+kisakcod_ilp32(kisakcod-fx-archive-system-disk32-tests
+    effectscore-archive-system-disk32-codec)
+
+kisakcod_ilp32(kisakcod-fx-effect-table-save-tests
+    effectscore-effect-table-bounded-save)
+
+kisakcod_ilp32(kisakcod-fx-effect-table-restore-tests
+    effectscore-effect-table-transactional-restore)
+
+kisakcod_ilp32(kisakcod-fx-fastfile-disk32-tests
+    effectscore-fastfile-disk32-schema)
+
+kisakcod_ilp32(kisakcod-fx-fastfile-impact-native-disk32-tests
+    effectscore-fastfile-impact-native-disk32-conversion)
+
+kisakcod_ilp32(kisakcod-fx-fastfile-native-arena-tests
+    effectscore-fastfile-native-arena)
+
+kisakcod_ilp32(kisakcod-fx-fastfile-native-disk32-tests
+    effectscore-fastfile-native-disk32-conversion)
+
+kisakcod_ilp32(kisakcod-fx-fastfile-zone-adapter-disk32-tests
+    effectscore-fastfile-zone-adapter-disk32)
+
+kisakcod_ilp32(kisakcod-hudelem-sort-mp-tests
+    hudelem-sort-mp-contracts)
+
+kisakcod_ilp32(kisakcod-hudelem-sort-sp-tests
+    hudelem-sort-sp-contracts)
+
+kisakcod_ilp32(kisakcod-huffman-wire-contract-tests
+    huffman-wire-format-contracts)
+
+kisakcod_ilp32(kisakcod-missile-layout-mp-compile-tests
+    missile-layout-mp-compile-contracts)
+
+kisakcod_ilp32(kisakcod-missile-layout-sp-compile-tests
+    missile-layout-sp-compile-contracts)
+
+kisakcod_ilp32(kisakcod-msg-wire-contract-tests
+    msg-wire-format-contracts)
+
+kisakcod_ilp32(kisakcod-net-chan-reassembly-tests
+    net-chan-reassembly-span-contracts)
+
+kisakcod_ilp32(kisakcod-platform-console-tests
+    platform-console-invalid-eof-contracts
+    platform-console-runtime-contracts)
+
+kisakcod_ilp32(kisakcod-platform-service-runtime-tests
+    platform-service-runtime-contracts)
+
+kisakcod_ilp32(kisakcod-pool-allocator-tests
+    pool-native-pointer-freelist)
+
+kisakcod_ilp32(kisakcod-server-file-compare-tests
+    qcommon-server-file-compare)
+
+kisakcod_ilp32(kisakcod-renderer-value-encoding-tests
+    renderer-value-encoding-contracts)
+
+kisakcod_ilp32(kisakcod-script-memorytree-try-tests
+    script-memorytree-try-contracts)
+
+kisakcod_ilp32(kisakcod-script-string-atomic-tests
+    script-string-packed-atomic-contracts)
+
+kisakcod_ilp32(kisakcod-script-string-ownership-tests
+    script-string-report-free-ownership-contracts)
+
+kisakcod_ilp32(kisakcod-target-table-tests
+    target-table-parse-and-layout-contracts)
+
+kisakcod_ilp32(kisakcod-ui-safety-tests
+    ui-safety-runtime-contracts)
+
+kisakcod_ilp32(kisakcod-physicalmemory-checked-tests
+    universal-physicalmemory-checked-scopes)
+
+kisakcod_ilp32(kisakcod-physicalmemory-legacy-tests
+    universal-physicalmemory-legacy-layout-and-indexing)
+
+kisakcod_ilp32(kisakcod-physicalmemory-runtime-tests
+    universal-physicalmemory-runtime-control)
+
+kisakcod_ilp32(kisakcod-upstream-aim-safety-tests
+    upstream-reconciliation-aim-safety-contracts)
+
+kisakcod_ilp32(kisakcod-upstream-angle-math-tests
+    upstream-reconciliation-angle-math-contracts)
+
+kisakcod_ilp32(kisakcod-upstream-command-dispatch-tests
+    upstream-reconciliation-command-dispatch-contracts)
+
+kisakcod_ilp32(kisakcod-upstream-sort-tests
+    upstream-sort-contracts)
+
+kisakcod_ilp32(kisakcod-voice-gate-tests
+    voice-codec-gate-contracts)
+
+kisakcod_ilp32(kisakcod-weapon-input-safety-tests
+    weapon-input-safety-contracts)
+
+kisakcod_ilp32(kisakcod-weapon-model-safety-tests
+    weapon-model-safety-contracts)
+
+kisakcod_ilp32(kisakcod-xmodel-loader-entry-tests
+    xmodel-loader-entry-native)

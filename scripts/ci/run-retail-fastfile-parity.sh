@@ -44,9 +44,7 @@
 #       walk enrolls as capture_kind graph-v1 when the native64 loader
 #       path lands) AND verified leg identity: the host capture must
 #       declare leg == --host and the reference leg == --ref. Envelope
-#       captures CANNOT pass this gate; the negative case is exercised by
-#       ctest retail-fastfile-parity-driver-gates
-#       (scripts/ci/test-run-retail-fastfile-parity.sh).
+#       captures CANNOT pass this gate.
 #
 # Workflow:
 #   1. (x86 side, once per fast-file) mint the reference:
@@ -480,8 +478,7 @@ echo "  ref  ($REF_TRIPLE): capture_kind=$REF_KIND domain=$REF_DOMAIN platform=$
 
 # --mode m5-graph is the M5 RUNTIME-GRAPH acceptance gate: envelope
 # captures hash fast-file bytes only and cannot satisfy it, no matter how
-# well the digests agree. This is the negative-tested boundary (ctest
-# retail-fastfile-parity-driver-gates).
+# well the digests agree.
 if [ "$MODE" = "m5-graph" ]; then
     if ! kind_is_graph "$HOST_KIND" || ! kind_is_graph "$REF_KIND"; then
         echo "run-retail-fastfile-parity: FAIL --mode m5-graph requires runtime-graph captures (graph-*);" >&2

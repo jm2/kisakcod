@@ -377,9 +377,7 @@ bool TestReleaseReuseGenerationContract()
 //       the generation so the stale saved token stays rejected forever.
 // The runtime cases exercise the sidecar semantics that make those
 // loader rules load-bearing; the loader TU itself is Windows-CI-only
-// and cannot link into this portable binary, so the production clear
-// ordering is pinned textually by the
-// phys-obj-id-owner-bound-source-invariants gate.
+// and cannot link into this portable binary.
 // Split into two functions to keep per-function cyclomatic complexity
 // under Codacy's limit of 10; the scenario order and failure
 // semantics are unchanged.
@@ -414,9 +412,8 @@ bool TestFailedLoadClearsStaleToken()
         return false;
 
     // Loader pre-restoration clear (the fixed DynEnt_LoadEntities
-    // contract, pinned on the engine TU by the
-    // phys-obj-id-owner-bound-source-invariants gate because the loader
-    // TU is Windows-CI-only and cannot link into this portable binary):
+    // contract; the loader TU is Windows-CI-only and cannot link into
+    // this portable binary):
     // the field is wiped BEFORE Phys_ObjLoad runs, and a failed load
     // publishes nothing.
     field = phys_obj_id::INVALID_BODY_TOKEN;

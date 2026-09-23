@@ -1,0 +1,21 @@
+# Census-only: prints the headless dedicated server's source list, one path per
+# line, for scripts/ci/native64_census.py.
+#   cmake -DROOT=<repo> -P scripts/ci/native64-tulist.cmake
+set(SRC_DIR ${ROOT}/src)
+set(DEPS_DIR ${ROOT}/deps)
+set(SCRIPTS_DIR ${ROOT}/scripts)
+set(PLATFORM_DIR ${SCRIPTS_DIR}/platform)
+set(KISAK_PLATFORM win32)
+set(WIN32 1)
+set(KISAK_DEDI_HEADLESS ON)
+set(KISAK_ENABLE_X86_MMX_SKINNING OFF)
+set(CMAKE_CURRENT_LIST_DIR ${SCRIPTS_DIR}/dedi)
+include(${SCRIPTS_DIR}/platform_override.cmake)
+include(${SCRIPTS_DIR}/common_files.cmake)
+include(${SCRIPTS_DIR}/mp/mp_files.cmake)
+include(${SCRIPTS_DIR}/dedi/dedi_sources.cmake)
+include(${PLATFORM_DIR}/${KISAK_PLATFORM}/platform.cmake)
+kisakcod_get_dedi_sources(S)
+foreach(s ${S})
+  message("${s}")
+endforeach()

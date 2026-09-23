@@ -1,0 +1,129 @@
+# Nightly Windows x86 checks that are too slow or too rarely broken to run
+# on every push: byte parity across the MP/SP/dedicated builds, and the
+# no-Steam build. Moved out of ci.yml by the 2026-09-22 overhaul
+# (docs/ROADMAP.md, WS-7).
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x86-parity:
+    # M0 exit gate: proves the shared retail reference bytes are byte-identical
+    # across the Windows x86 MP/SP/dedicated baseline. Each preset is configured
+    # with KISAK_REPRODUCIBLE_BUILD=ON so /Brepro pins the __DATE__/__TIME__ and
+    # linker stamp inputs, and scripts/ci/compare-byte-parity.sh then hard-gates
+    # buildnumber agreement and reference-object retail-section equality across
+    # the three build trees (the CodeView .debug$* metadata that names each
+    # target's object path, command line, and PDB is excluded by design).
+    # Without the reproducible flag the wall-clock-stamped reference object
+    # legitimately differs, so this job fails by design. The reference objects
+    # are uploaded on every outcome so a mismatch can be diffed offline.
+    name: Windows x86 (byte parity)
+    runs-on: windows-2022
+    timeout-minutes: 150
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
+      DXSDK_VERSION: 9.29.952.8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore DirectX SDK
+        shell: pwsh
+        run: |
+          dotnet new classlib -o dxsdk-temp
+          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
+          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
+          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
+
+      - name: Build MP / SP / dedicated baselines
+        shell: pwsh
+        run: |
+          foreach ($preset in @('windows-x86-mp', 'windows-x86-sp', 'windows-x86-dedi')) {
+            cmake --preset $preset -DKISAK_REPRODUCIBLE_BUILD=ON -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          cmake --build build-windows-x86-mp --config Release --target KisakCOD-mp --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-windows-x86-sp --config Release --target KisakCOD-sp --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-windows-x86-dedi --config Release --target KisakCOD-dedi --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compare byte parity
+        shell: bash
+        run: scripts/ci/compare-byte-parity.sh build-windows-x86-mp build-windows-x86-sp build-windows-x86-dedi
+
+      - name: Upload reference objects for parity diagnosis
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: KisakCOD-windows-x86-parity-objects
+          path: |
+            build-windows-x86-mp/**/buildnumber.obj
+            build-windows-x86-sp/**/buildnumber.obj
+            build-windows-x86-dedi/**/buildnumber.obj
+          if-no-files-found: warn
+
+  windows-x86-nosteam:
+    # Compile-checks the KISAK_ENABLE_STEAM=OFF fallback path (cl_guid identity,
+    # sv_requireSteam, empty win_steam.cpp TU). Windows x86 is the only target that can
+    # build the engine today, so it stands in for the ARM/no-Steam configuration until
+    # the POSIX/Vulkan platform layers land. Compile only; no artifact.
+    name: Windows x86 (no Steam)
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
+      DXSDK_VERSION: 9.29.952.8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore DirectX SDK
+        shell: pwsh
+        run: |
+          dotnet new classlib -o dxsdk-temp
+          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
+          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
+          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build-nosteam `
+            -G "Visual Studio 17 2022" -A Win32 `
+            -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
+            -DKISAK_BUILD_MP=ON `
+            -DKISAK_BUILD_DEDICATED=ON `
+            -DKISAK_BUILD_SP=OFF `
+            -DKISAK_ENABLE_STEAM=OFF
+
+      - name: Build
+        shell: pwsh
+        run: >
+          cmake --build build-nosteam
+          --config Release
+          --target KisakCOD-mp KisakCOD-dedi
+          --parallel

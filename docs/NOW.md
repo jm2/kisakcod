@@ -8,17 +8,16 @@ The mayor is the only role that edits this file ([AGENTS.md](../AGENTS.md)).
 
 ## KPIs
 
-Values are the review baseline of 2026-09-22 until the first census run.
-The live values are in the `Native64 census` and `KPI summary` job summaries
-of the latest [master CI run](https://github.com/jm2/kisakcod/actions/workflows/ci.yml?query=branch%3Amaster).
+Values are from the first census run (2026-09-22). The live values are in
+the `Native64 census` job summary of the latest [master CI run](https://github.com/jm2/kisakcod/actions/workflows/ci.yml?query=branch%3Amaster).
 
 | KPI | Measures | Value | Target | Source |
 | --- | --- | --- | --- | --- |
 | K1 | 64-bit headless TUs passing syntax-only | win64 112/243 · lin64 103/236 · a64 103/236 | all (G1) | census |
-| K2 | 64-bit headless real link | no target links; Win64 probe link has 0 undefined after 4 TU workarounds | Win64 and Linux amd64 (G1) | census |
+| K2 | 64-bit headless real link | none (131 win64 TUs don't compile); Win64 probe link: 55 undefined, 4 TUs excluded | Win64 and Linux amd64 (G1) | census |
 | K3 | Upstream engine TUs compiled by the Linux test build | 8/475 | rising | census |
 | K4 | Server-closure asset families loading Steam 1.8 `.ff` at 64-bit under ASan | 0/25 | 25/25 (G2) | this file |
-| K5 | Headless TUs reaching `<d3d9.h>` on Linux | 104 | 0 (G1 Linux) | census |
+| K5 | Headless TUs reaching `<d3d9.h>` on Linux | 103 | 0 (G1 Linux) | census |
 | K6 | Required target x role cells at `links` or above | 0/10 | 10 at `packaged` (G6) | manifest |
 
 ## Queue
