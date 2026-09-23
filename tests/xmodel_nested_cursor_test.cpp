@@ -19,8 +19,6 @@
 // (DirectX / Miles / ODE header web; engine targets are win32-only in
 // this checkout), so full production-harness enrollment of
 // XModelLoadFile stays scoped to the corpus stage (#125 / ki-458h).
-// tests/xmodel_cursor_source_invariants_test.cmake pins the production
-// call sites so the loader-side contract cannot silently regress.
 //
 // The save-stack overflow (fail-closed) contracts live in their own
 // translation unit, tests/xmodel_cursor_overflow_test.cpp. The two

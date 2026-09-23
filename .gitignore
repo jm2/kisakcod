@@ -421,6 +421,8 @@ FodyWeavers.xsd
 
 # Build Number
 **/buildnumber.h
+# Census-only stub (scripts/ci/native64_census.py), not a generated header.
+!scripts/ci/ci-stubs/common/buildnumber.h
 **/buildnumber.txt
 
 # Resources

@@ -82,7 +82,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 **K5** is the number of Linux headless TUs that need the census `d3d9.h` stand-in to compile, meaning they reach `<d3d9.h>`.
 
 - **Source:** the `native64-census` job.
-- **Review baseline (2026-09-22):** ≈104 of 236.
+- **Baseline (census, 2026-09-22):** 103 of 236.
 - **Target:** 0, required for G1 on Linux.
 - **Moves it:** NOW bead 2.
 

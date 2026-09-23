@@ -153,11 +153,7 @@ run_test() {
     # never tolerable regardless of the test name; only a plain (Failed)
     # result is even eligible for tolerance.
     #
-    # The tolerated set is EMPTY: the historical environment-sensitive
-    # ki-9b13/ki-ya3t baseline (abi-sizeof-debt-tripwire,
-    # abi-sizeof-scanner-fixture, security-source-regressions) was healed
-    # on master and both tracking beads are closed, so today every
-    # failure is unexpected. Re-add an entry only for an open, tracked
+    # The tolerated set is EMPTY: every failure is unexpected. Re-add an entry only for an open, tracked
     # defect, citing its bead id in the comment next to it.
     local -a tolerated_failures=()
     local -a actual_failures=()

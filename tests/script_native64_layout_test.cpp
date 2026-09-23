@@ -17,9 +17,6 @@
 //      this TU. Each mirror asserts the same RUNTIME_SIZE(n32, n64)
 //      constants as its engine counterpart, so the constants are proven
 //      to be the compiler's natural layout on BOTH widths, not guesses.
-//      tests/script_native_layout_source_test.cmake pins the engine
-//      headers to those same constants, so mirror and header cannot
-//      drift apart silently.
 //
 //   3. The widened structures hold live host pointers (value cells,
 //      stacks, parse nodes, code positions); the frozen ones carry only

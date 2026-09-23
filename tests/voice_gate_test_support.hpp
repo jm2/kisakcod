@@ -16,8 +16,7 @@
 // The production wrappers src/groupvoice/encode.cpp / decode.cpp are pinned to
 // the 32-bit Win32 ABI by directsound.h struct static_asserts and therefore
 // cannot run on portable CI targets. The suite drives the exact production
-// call sequences instead (verified statement-for-statement by
-// tests/voice_framing_source_test.cmake):
+// call sequences instead:
 //
 //   Encode_Init(bandwidth): speex_encoder_init(mode); speex_bits_init();
 //       Encode_SetOptions(8000, 1): SET_SAMPLING_RATE, SET_QUALITY,

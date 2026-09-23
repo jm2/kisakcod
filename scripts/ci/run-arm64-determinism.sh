@@ -15,10 +15,8 @@
 # pins in tests/runtime_scalar_determinism_tests.cpp — both architectures
 # must pass the same contracts, which is the layer's whole point.
 #
-# The historical base failures (abi-sizeof-debt-tripwire,
-# abi-sizeof-scanner-fixture, security-source-regressions) were healed on
-# master and their tracking beads are closed, so this gate no longer filters
-# any test out by name: the whole portable suite must pass in every cell.
+# This gate filters no test out by name: the whole portable suite must pass
+# in every cell.
 # Reintroduce an exclusion only against an open, tracked defect, and cite the
 # bead next to it.
 #

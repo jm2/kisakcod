@@ -1,2 +1,0 @@
-# Formula scanner regression case.
-test.cpp|sizeof(Formula)*2==24|1

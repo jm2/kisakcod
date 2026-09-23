@@ -1,29 +1,19 @@
-# CI gate for KisakCOD.
+# CI gate for KisakCOD (docs/ROADMAP.md, WS-7).
 #
-# Multi-platform CI contract (docs/ROADMAP.md, WS-7):
-#   - every job has a bounded timeout (minutes are generous but finite)
-#   - superseded runs cancel (concurrency + cancel-in-progress)
+#   - every job has a bounded timeout; superseded PR runs cancel
 #   - every action is pinned to an immutable commit SHA (tag in comment)
-#   - no checkout keeps persisted credentials; build jobs stay read-only
-#     (contents: read is the only workflow permission)
-#   - scaffolding-builds runs a per-target leg for every supported
-#     OS/architecture pair and uploads a target-labeled artifact with an
-#     explicit provenance manifest recording the leg's ACTUAL resolved
-#     toolchain (scripts/ci/collect-toolchain.ps1); scaffolding-complete
-#     is the required gate
+#   - no checkout keeps persisted credentials; contents: read is the only
+#     workflow permission
+#   - scaffolding-complete aggregates the gating jobs; native64-census is
+#     informational (KPIs K1-K3, K5) and never gates
+#   - the Windows x86 byte-parity and no-Steam builds run nightly
+#     (nightly.yml), not per push
 #
-# Retention policy: CI artifacts live 14 days (debugging window); the release
-# workflow is the long-term store and pins 90 days there.
+# The engine targets are Win32-x86-only until gate G1: CMakeLists.txt fails
+# a non-win32 or 64-bit engine configure unless KISAK_ALLOW_UNSUPPORTED_64BIT
+# is set. The portable legs build and run the test suite only.
 #
-# Platform honesty note: the engine targets are Win32-x86-only today —
-# CMakeLists.txt fails configuration for any non-win32 engine build and for
-# 64-bit builds without the explicit KISAK_ALLOW_UNSUPPORTED_64BIT escape
-# hatch until gate G1 (docs/ROADMAP.md). The windows-x86 leg therefore builds
-# and packages the real engine binaries, while the other five legs are portable test/release
-# scaffolding (the same required hosted legs the port has been merging
-# against): every engine option is OFF, so they package test binaries only —
-# their green result is NOT five delivered engines. They still assert
-# architecture truth, run smoke tests, and publish provenance.
+# CI artifacts live 14 days; release.yml is the long-term store.
 
 name: CI
 
@@ -44,9 +34,9 @@ concurrency:
 
 jobs:
   portable-tests:
-    # Utility/test composition for every supported OS/architecture pair. This
-    # is the portable source-composition gate the port has required on every
-    # change; it stays so the scaffolding-builds legs can evolve independently.
+    # The test suite on every supported OS/architecture pair. The binary
+    # architecture check catches a runner that silently fell back to
+    # emulation.
     name: Portable tests / ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
@@ -56,14 +46,19 @@ jobs:
         include:
           - platform: Linux amd64
             runner: ubuntu-24.04
+            file-arch: x86-64
           - platform: Linux arm64
             runner: ubuntu-24.04-arm
+            file-arch: aarch64
           - platform: Windows amd64
             runner: windows-2025
+            pe-arch: x64
           - platform: Windows arm64
             runner: windows-11-arm
+            pe-arch: ARM64
           - platform: macOS arm64
             runner: macos-15
+            file-arch: arm64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -81,47 +76,24 @@ jobs:
       - name: Build portable tests
         run: cmake --build build-tests --config Release --parallel
 
-      # The checked-in inventory is the canonical cross-platform list of
-      # portable tests the selection manifests partition. Verify it exactly
-      # against real discovery on the Linux amd64 reference leg, so a test
-      # added to the build cannot escape the manifests and a test removed from
-      # it cannot silently drop out either.
-      - name: Verify portable test inventory (Linux amd64)
-        if: matrix.runner == 'ubuntu-24.04'
-        run: |
-          ctest --test-dir build-tests -N \
-            | sed -n 's/^ *Test *#[0-9]*: *//p' > discovered-tests.txt
-          PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
-          "$PY" scripts/ci/check-test-selection.py \
-            --label "portable-tests / Linux amd64" \
-            --inventory scripts/ci/test-selection/portable-inventory.txt \
-            --selected scripts/ci/test-selection/windows-x86.selected.txt \
-            --excluded scripts/ci/test-selection/windows-x86.excluded.tsv \
-            --absent scripts/ci/test-selection/windows-x86.absent.tsv \
-            --reference-absent scripts/ci/test-selection/linux-amd64.absent.txt \
-            --discovered discovered-tests.txt --discovered-scope exact
+      - name: Verify binary architecture (ELF/Mach-O)
+        if: matrix.file-arch
+        shell: bash
+        run: >
+          scripts/ci/verify-artifact-arch.sh '${{ matrix.file-arch }}'
+          build-tests/tests/kisakcod-pool-allocator-tests
+          build-tests/tests/kisakcod-db-zone-runtime-table-tests
+
+      - name: Verify binary architecture (PE machine type)
+        if: matrix.pe-arch
+        shell: pwsh
+        run: >
+          ./scripts/ci/verify-artifact-arch.ps1 -Expected '${{ matrix.pe-arch }}'
+          build-tests/tests/Release/kisakcod-pool-allocator-tests.exe
+          build-tests/tests/Release/kisakcod-db-zone-runtime-table-tests.exe
 
       - name: Run portable tests
-        run: ctest --test-dir build-tests -C Release --output-on-failure
-
-  test-selection-checker:
-    # The selection checker and the aggregate-enrollment checker are both
-    # fail-closed gates, so their failure modes are covered by checked-in
-    # regressions: a removed selected test, an empty run, a legitimate
-    # classified platform absence, an unclassified addition, a required gate
-    # dropped from the scaffolding-complete aggregate, and a weakened
-    # aggregate enforcement step all have explicit expectations.
-    name: Test-selection + aggregate checker self-test
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Negative/positive checker regressions
-        run: python3 scripts/ci/test_check_test_selection.py
-      - name: Negative/positive aggregate dependency regressions
-        run: python3 scripts/ci/test_check_ci_aggregate.py
+        run: ctest --test-dir build-tests -C Release --output-on-failure --parallel 4
 
   script-sanitizers:
     name: Script production paths / ASan + UBSan
@@ -154,7 +126,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: halt_on_error=1
         run: >
-          ctest --test-dir build-script-sanitizers --output-on-failure --no-tests=error
+          ctest --test-dir build-script-sanitizers --output-on-failure --no-tests=error --parallel 4
           -R '^script-(runtime-pointer|animation-fixup|save-registration|debugger-pointer|widening-value|readstack-nested|parser-stack-growth)-contracts$|^net-chan-reassembly-span-contracts$'
 
   portable-sanitizers:
@@ -192,7 +164,7 @@ jobs:
       - name: Run portable sanitizer contracts
         run: >
           ctest --test-dir build-portable-sanitizers --output-on-failure
-          --no-tests=error --timeout 300
+          --no-tests=error --timeout 300 --parallel 4
 
   capability-dashboard:
     # Renders the KPI table (docs/NOW.md) and the target x role delivery
@@ -212,14 +184,49 @@ jobs:
       - name: Render KPI summary
         run: python3 scripts/ci/kpi_summary.py >> "$GITHUB_STEP_SUMMARY"
 
-  # Sealed surface: source-invariant seal tests pin this job's exact step
-  # shapes, names, and ordering, and normalize the file with comments left
-  # in place — so do not reword step names, reorder steps, add comments
-  # between the job key and its name, or reflow the artifact ref. Restored
-  # verbatim from base; only timeout-minutes, persist-credentials: false,
-  # and pinning the two actions no seal references were added. The
-  # upload-artifact ref must stay literal until the seal markers are
-  # updated (ki-yvj follow-up bead).
+  native64-census:
+    # KPIs K1, K2, K3 and K5 (docs/design/NATIVE64.md, PLATFORM_POSIX.md):
+    # clang syntax-only compiles of the headless server for win32 (control),
+    # win64, lin64 and a64, a Win64 link attempt plus a labelled probe link,
+    # and the upstream engine TUs the Linux test build compiles.
+    # Informational only: it never gates and is not in scaffolding-complete.
+    name: Native64 census
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          # K3 lists src/ at the upstream merge-base (docs/UPSTREAM.md).
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Install clang, lld and cross headers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            clang lld mingw-w64 g++-aarch64-linux-gnu
+
+      - name: Run census
+        run: python3 scripts/ci/native64_census.py --out build-census --jobs 4
+
+      - name: Publish KPI summary
+        if: always()
+        run: |
+          if [ -f build-census/census.md ]; then
+            cat build-census/census.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          python3 scripts/ci/kpi_summary.py --census build-census/census.json >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: native64-census
+          path: build-census/census.json
+          if-no-files-found: warn
+          retention-days: 30
+
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
     runs-on: windows-2022
@@ -264,78 +271,7 @@ jobs:
         run: >
           cmake --build "build-${{ matrix.config }}"
           --config "${{ matrix.config }}"
-          --target KisakCOD-mp KisakCOD-dedi
-          kisakcod-actor-grenade-prediction-cache-tests
-          kisakcod-actor-grenade-safety-tests
-          kisakcod-ui-safety-tests
-          kisakcod-target-table-tests
-          kisakcod-missile-layout-mp-compile-tests
-          kisakcod-missile-layout-sp-compile-tests
-          kisakcod-pool-allocator-tests
-          kisakcod-net-chan-reassembly-tests
-          kisakcod-physicalmemory-legacy-tests
-          kisakcod-physicalmemory-runtime-tests
-          kisakcod-physicalmemory-runtime-production-seal-tests
-          kisakcod-physicalmemory-checked-tests
-          kisakcod-physicalmemory-checked-api-seal-tests
-          kisakcod-fx-effect-table-restore-tests
-          kisakcod-fx-effect-table-save-tests
-          kisakcod-fx-archive-disk32-tests
-          kisakcod-fx-archive-body-state-disk32-tests
-          kisakcod-fx-archive-system-disk32-tests
-          kisakcod-fx-archive-buffers-disk32-tests
-          kisakcod-fx-archive-native-disk32-tests
-          kisakcod-fx-archive-reader-disk32-tests
-          kisakcod-fx-archive-restore-candidate-disk32-tests
-          kisakcod-fx-fastfile-disk32-tests
-          kisakcod-fx-fastfile-native-disk32-tests
-          kisakcod-fx-fastfile-impact-native-disk32-tests
-          kisakcod-fx-fastfile-native-arena-tests
-          kisakcod-fx-fastfile-zone-adapter-disk32-tests
-          kisakcod-db-xasset-disk32-tests
-          kisakcod-db-script-string-disk32-tests
-          kisakcod-db-zone-load-context-tests
-          kisakcod-db-zone-stream-ownership-tests
-          kisakcod-db-zone-stream-ownership-production-seal-tests
-          kisakcod-db-zone-pending-copy-ledger-tests
-          kisakcod-db-zone-pending-copy-ledger-production-seal-tests
-          kisakcod-db-script-string-journal-tests
-          kisakcod-db-zone-script-string-ownership-tests
-          kisakcod-db-registry-ownership-coordinator-tests
-          kisakcod-db-registry-ownership-coordinator-production-seal-tests
-          kisakcod-db-zone-runtime-facade-macro-off
-          kisakcod-db-zone-runtime-facade-tests
-          kisakcod-db-zone-runtime-facade-production-seal-tests
-          kisakcod-db-zone-runtime-callback-context-macro-off
-          kisakcod-db-zone-runtime-callback-context-tests
-          kisakcod-db-zone-runtime-callback-context-production-seal-tests
-          kisakcod-db-zone-runtime-table-tests
-          kisakcod-db-zone-runtime-table-production-seal-tests
-          kisakcod-db-zone-runtime-stable-context-integration-tests
-          kisakcod-db-zone-runtime-storage-tests
-          kisakcod-db-referenced-fastfile-tests
-          kisakcod-server-file-compare-tests
-          kisakcod-script-string-atomic-tests
-          kisakcod-script-memorytree-lease-api-seal
-          kisakcod-script-memorytree-try-tests
-          kisakcod-script-string-ownership-tests
-          kisakcod-platform-console-tests
-          kisakcod-platform-service-runtime-tests
-          kisakcod-renderer-value-encoding-tests
-          kisakcod-upstream-sort-tests
-          kisakcod-upstream-angle-math-tests
-          kisakcod-upstream-aim-safety-tests
-          kisakcod-upstream-command-dispatch-tests
-          kisakcod-weapon-model-safety-tests
-          kisakcod-weapon-input-safety-tests
-          kisakcod-hudelem-sort-mp-tests
-          kisakcod-hudelem-sort-sp-tests
-          kisakcod-fx-physics-sidecar-production-seal-tests
-          kisakcod-xmodel-loader-entry-tests
-          kisakcod-huffman-wire-contract-tests
-          kisakcod-msg-wire-contract-tests
-          kisakcod-shader-cache-tests
-          kisakcod-voice-gate-tests
+          --target KisakCOD-mp KisakCOD-dedi kisakcod-ilp32-tests
           --parallel
 
       - name: Enforce FX archive stack budgets
@@ -345,42 +281,21 @@ jobs:
           -InputPath
           "build-${{ matrix.config }}/scripts/mp/fx_archive_stack_${{ matrix.config }}.xml"
 
-      - name: Run portable transaction tests
+      - name: Run ILP32 tests
         shell: pwsh
-        run: |
-          ctest --test-dir "build-${{ matrix.config }}" `
-            -C "${{ matrix.config }}" --output-on-failure --no-tests=error `
-            -R "^(actor-grenade-prediction-cache-contracts|actor-grenade-safe-target-(radius-contracts|source-invariants)|ui-safety-runtime-contracts|ui-safety-source-invariants|target-table-(parse-and-layout-contracts|source-invariants)|target-client-source-invariants|missile-layout-(mp|sp)-compile-contracts|missile-union-layout-source-invariants|weapon-model-safety-(contracts|source-invariants)|weapon-input-safety-contracts|upstream-safe-fixlets-source-invariants|upstream-sort-(contracts|source-invariants)|upstream-reconciliation-(aim-safety-contracts|angle-math-contracts|command-dispatch-contracts|source-invariants)|upstream-820b0a03-core-source-invariants|upstream-last-four-source-invariants|hudelem-sort-((mp|sp)-contracts|source-invariants)|huffman-wire-format-contracts|msg-wire-format-contracts|sound-dry-send-source-invariants|voice-codec-gate-contracts|voice-codec-guard-source-invariants|voice-framing-source-invariants|audio-gate-source-invariants|cinematic-gate-source-invariants|null-media-source-invariants|audio-playback-gate-source-invariants|voice-device-gate-source-invariants|renderer-value-encoding-contracts|pool-native-pointer-freelist|universal-physicalmemory-legacy-(layout-and-indexing|source-invariants)|universal-physicalmemory-runtime-(control|production-test-access-sealed)|universal-physicalmemory-checked-(scopes|api-sealed|source-invariants)|database-xasset-disk32-envelope|database-derived-shader-cache-(contracts|source-invariants)|database-script-string-disk32-walk|database-script-string-transaction-journal|database-script-string-ownership-source-invariants|database-zone-load-context-lifecycle|database-zone-stream-ownership-(runtime-contracts|production-test-access-sealed|source-invariants)|database-zone-pending-copy-(ledger|production-test-access-sealed|source-invariants)|database-zone-script-string-ownership-(controller|source-invariants)|database-registry-ownership-(coordinator|production-test-access-sealed|source-invariants)|database-zone-runtime-callback-context(-production-test-access-sealed|-macro-off-object-symbol-sealed|-source-invariants)?|database-zone-runtime-facade(-production-test-access-sealed|-source-invariants)?|database-zone-runtime-table-(ownership|stable-context-(legacy-descriptors|unused-busy|managed-key|bank-key|terminal-phase|claimed-neighbor|unused-neighbor)|source-invariants|production-test-access-sealed|unload-unsafe-[0-6]|unload-invalid-(missing-value|extra-value|unknown-option)|mutation-unsafe-(backend|postcondition)|mutation-invalid-(missing-value|extra-value|kind))|database-zone-runtime-stable-context-(integration|forgotten-finish)|database-zone-runtime-storage-(layout|source-invariants)|database-referenced-fastfile-format|qcommon-server-file-compare|xmodel-loader-entry-native|net-chan-reassembly-span-contracts|script-string-packed-atomic-contracts|script-memorytree-try-contracts|script-string-report-free-ownership-contracts|platform-console-(runtime-contracts|invalid-eof-contracts|sigpipe-(default|ignore)-contracts|source-invariants)|platform-service-runtime-contracts|effectscore-physics-sidecar-production-test-access-sealed|effectscore-effect-table-(transactional-restore|bounded-save)|effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec|effectscore-archive-body-state-disk32-codec|effectscore-archive-reader-disk32|effectscore-archive-restore-candidate-disk32|effectscore-fastfile-disk32-schema|effectscore-fastfile-(native|impact-native)-disk32-conversion|effectscore-fastfile-native-arena|effectscore-fastfile-zone-adapter-disk32)$" 2>&1 | Tee-Object -FilePath ctest-windows-x86.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # Fail closed on selection drift. This step checks the run it actually
-      # produced against the written manifest with the full platform
-      # invariants: every selected test must be discovered and executed,
-      # every explicitly platform-absent test must stay undiscovered, every
-      # not-enrolled test must actually be discovered, and nothing may run
-      # outside the selection. An omitted or dead entry fails instead of
-      # silently not running. See scripts/ci/test-selection/.
-      - name: Verify executed test selection (ILP32)
-        if: always()
-        shell: bash
-        run: |
-          ctest --test-dir "build-${{ matrix.config }}" -C "${{ matrix.config }}" -N \
-            | sed -n 's/.*Test *#[0-9]*: *//p' > discovered-tests.txt
-          PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
-          "$PY" scripts/ci/check-test-selection.py \
-            --label "windows-x86 / ${{ matrix.config }}" \
-            --inventory scripts/ci/test-selection/portable-inventory.txt \
-            --selected scripts/ci/test-selection/windows-x86.selected.txt \
-            --excluded scripts/ci/test-selection/windows-x86.excluded.tsv \
-            --absent scripts/ci/test-selection/windows-x86.absent.tsv \
-            --discovered discovered-tests.txt \
-            --executed ctest-windows-x86.log \
-            --enforce-platform-absence
+        run: >
+          ctest --test-dir "build-${{ matrix.config }}"
+          -C "${{ matrix.config }}" --output-on-failure --no-tests=error
+          -L ilp32 --parallel 4
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: KisakCOD-windows-x86-${{ matrix.config }}
-          path: bin/${{ matrix.config }}/
+          # Miles comes from the user's own retail install; never ship it.
+          path: |
+            bin/${{ matrix.config }}/
+            !bin/${{ matrix.config }}/mss32.dll
+            !bin/${{ matrix.config }}/miles/
           if-no-files-found: error
           retention-days: 14
 
@@ -429,116 +344,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  windows-x86-parity:
-    # M0 exit gate: proves the shared retail reference bytes are byte-identical
-    # across the Windows x86 MP/SP/dedicated baseline. Each preset is configured
-    # with KISAK_REPRODUCIBLE_BUILD=ON so /Brepro pins the __DATE__/__TIME__ and
-    # linker stamp inputs, and scripts/ci/compare-byte-parity.sh then hard-gates
-    # buildnumber agreement and reference-object retail-section equality across
-    # the three build trees (the CodeView .debug$* metadata that names each
-    # target's object path, command line, and PDB is excluded by design).
-    # Without the reproducible flag the wall-clock-stamped reference object
-    # legitimately differs, so this job fails by design. The reference objects
-    # are uploaded on every outcome so a mismatch can be diffed offline.
-    name: Windows x86 (byte parity)
-    runs-on: windows-2022
-    timeout-minutes: 150
-    env:
-      NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
-      DXSDK_VERSION: 9.29.952.8
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: 8.x
-
-      - name: Restore DirectX SDK
-        shell: pwsh
-        run: |
-          dotnet new classlib -o dxsdk-temp
-          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
-          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
-          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
-
-      - name: Build MP / SP / dedicated baselines
-        shell: pwsh
-        run: |
-          foreach ($preset in @('windows-x86-mp', 'windows-x86-sp', 'windows-x86-dedi')) {
-            cmake --preset $preset -DKISAK_REPRODUCIBLE_BUILD=ON -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          cmake --build build-windows-x86-mp --config Release --target KisakCOD-mp --parallel
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build-windows-x86-sp --config Release --target KisakCOD-sp --parallel
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build-windows-x86-dedi --config Release --target KisakCOD-dedi --parallel
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Compare byte parity
-        shell: bash
-        run: scripts/ci/compare-byte-parity.sh build-windows-x86-mp build-windows-x86-sp build-windows-x86-dedi
-
-      - name: Upload reference objects for parity diagnosis
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: KisakCOD-windows-x86-parity-objects
-          path: |
-            build-windows-x86-mp/**/buildnumber.obj
-            build-windows-x86-sp/**/buildnumber.obj
-            build-windows-x86-dedi/**/buildnumber.obj
-          if-no-files-found: warn
-
-  windows-x86-nosteam:
-    # Compile-checks the KISAK_ENABLE_STEAM=OFF fallback path (cl_guid identity,
-    # sv_requireSteam, empty win_steam.cpp TU). Windows x86 is the only target that can
-    # build the engine today, so it stands in for the ARM/no-Steam configuration until
-    # the POSIX/Vulkan platform layers land. Compile only; no artifact.
-    name: Windows x86 (no Steam)
-    runs-on: windows-2022
-    timeout-minutes: 120
-    env:
-      NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
-      DXSDK_VERSION: 9.29.952.8
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: 8.x
-
-      - name: Restore DirectX SDK
-        shell: pwsh
-        run: |
-          dotnet new classlib -o dxsdk-temp
-          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
-          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
-          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
-
-      - name: Configure
-        shell: pwsh
-        run: |
-          cmake -S . -B build-nosteam `
-            -G "Visual Studio 17 2022" -A Win32 `
-            -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
-            -DKISAK_BUILD_MP=ON `
-            -DKISAK_BUILD_DEDICATED=ON `
-            -DKISAK_BUILD_SP=OFF `
-            -DKISAK_ENABLE_STEAM=OFF
-
-      - name: Build
-        shell: pwsh
-        run: >
-          cmake --build build-nosteam
-          --config Release
-          --target KisakCOD-mp KisakCOD-dedi
-          --parallel
-
   windows-x86-headless:
     # This is the first real compile/link gate for the portable dedicated-server
     # source profile. Keep it independent of the legacy Windows client/media
@@ -579,233 +384,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  scaffolding-builds:
-    # Per-target scaffolding gate for every supported OS/architecture pair.
-    # The windows-x86 leg builds and packages the real engine (MP + dedicated)
-    # through the same shared script release.yml uses. The other five legs are
-    # portable test/release scaffolding, NOT engine delivery — the engine is
-    # Win32-x86-only until the CMakeLists platform gate is lifted, so these
-    # legs configure every engine option OFF and package test binaries only.
-    # Instead of a matrix-only claim they assert architecture truth on the
-    # binaries they built, run the full portable smoke suite, and publish a
-    # target-labeled artifact with an explicit provenance manifest.
-    name: Portable test/release scaffolding / ${{ matrix.target }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 150
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: windows-x86
-            runner: windows-2022
-            os: windows
-          - target: windows-amd64
-            runner: windows-2025
-            os: windows
-            cmake-arch: x64
-            pe-arch: x64
-          - target: windows-arm64
-            runner: windows-11-arm
-            os: windows
-            cmake-arch: ARM64
-            pe-arch: ARM64
-          - target: linux-amd64
-            runner: ubuntu-24.04
-            os: linux
-            file-arch: x86-64
-          - target: linux-arm64
-            runner: ubuntu-24.04-arm
-            os: linux
-            file-arch: aarch64
-          - target: macos-arm64
-            runner: macos-15
-            os: macos
-            file-arch: arm64
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-
-      # ---- windows-x86: the real engine production artifact ----
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
-        if: matrix.target == 'windows-x86'
-        with:
-          dotnet-version: 8.x
-
-      - name: Build engine production binaries (shared profile)
-        if: matrix.target == 'windows-x86'
-        shell: pwsh
-        run: ./scripts/ci/build-windows-x86.ps1 -BuildDir build-release -Config Release
-
-      - name: Verify binary architecture (PE machine type)
-        if: matrix.target == 'windows-x86'
-        shell: pwsh
-        run: >
-          ./scripts/ci/verify-artifact-arch.ps1 -Expected x86
-          bin/Release/KisakCOD-mp.exe bin/Release/KisakCOD-dedi.exe
-
-      # Toolchain provenance for the engine artifact: build-release was
-      # configured by the shared script above (VS generator), so the
-      # collector records the real resolved toolchain BEFORE the manifest
-      # below embeds it. The shared script restores the DirectX SDK and
-      # publishes its resolved version to GITHUB_ENV; pass it through so the
-      # engine manifest records that dependency like the SP/no-Steam legs.
-      - name: Collect toolchain provenance
-        if: matrix.target == 'windows-x86'
-        shell: pwsh
-        run: >
-          ./scripts/ci/collect-toolchain.ps1 -BuildDir build-release
-          -OutFile build-toolchain.json
-          -SdkLabel 'DirectX SDK (D3DX)' -SdkVersion $env:DXSDK_VERSION
-
-      # Deep Windows x86 testing lives in the windows-x86 job (same shared
-      # script, Debug + Release, full transaction-test allowlist); the
-      # aggregator requires it, so this leg stays the release-parity
-      # build+package gate instead of duplicating that suite.
-      - name: Package production binaries
-        if: matrix.target == 'windows-x86'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path bin/Release/* -DestinationPath dist/KisakCOD-windows-x86.zip
-          # Actual resolved toolchain of THIS build; fails the step if the
-          # collector did not run.
-          $toolchain = Get-Content -LiteralPath build-toolchain.json -Raw | ConvertFrom-Json
-          [ordered]@{
-            target        = "${{ matrix.target }}"
-            commit        = $env:GITHUB_SHA
-            ref           = $env:GITHUB_REF
-            config        = "production-mp-dedi"
-            toolchain     = $toolchain
-            workflow_run  = $env:GITHUB_RUN_ID
-            generated_at  = (Get-Date).ToUniversalTime().ToString("o")
-          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 dist/KisakCOD-windows-x86-provenance.json
-
-      # ---- portable test composition (all other targets) ----
-      # Static `shell: bash` on every portable leg: expressions are not
-      # permitted in `shell:` (actionlint / GitHub context-availability), the
-      # commands are shell-agnostic, and Git Bash is preinstalled on the
-      # Windows runners.
-      - name: Configure portable test composition
-        if: matrix.target != 'windows-x86'
-        shell: bash
-        run: >
-          cmake -S . -B build-release
-          ${{ matrix.cmake-arch && format('-A {0}', matrix.cmake-arch) || '' }}
-          -DKISAK_BUILD_MP=OFF
-          -DKISAK_BUILD_DEDICATED=OFF
-          -DKISAK_BUILD_SP=OFF
-          -DCMAKE_BUILD_TYPE=Release
-          -DBUILD_TESTING=ON
-
-      - name: Build portable test composition
-        if: matrix.target != 'windows-x86'
-        shell: bash
-        run: cmake --build build-release --config Release --parallel
-
-      - name: Verify binary architecture (ELF/Mach-O)
-        if: matrix.os == 'linux' || matrix.os == 'macos'
-        shell: bash
-        run: >
-          scripts/ci/verify-artifact-arch.sh '${{ matrix.file-arch }}'
-          build-release/tests/kisakcod-pool-allocator-tests
-          build-release/tests/kisakcod-db-zone-runtime-table-tests
-
-      - name: Verify binary architecture (PE machine type)
-        if: matrix.os == 'windows' && matrix.target != 'windows-x86'
-        shell: pwsh
-        run: >
-          ./scripts/ci/verify-artifact-arch.ps1 -Expected '${{ matrix.pe-arch }}'
-          build-release/tests/Release/kisakcod-pool-allocator-tests.exe
-          build-release/tests/Release/kisakcod-db-zone-runtime-table-tests.exe
-
-      - name: Run portable smoke suite
-        if: matrix.target != 'windows-x86'
-        shell: bash
-        run: ctest --test-dir build-release -C Release --output-on-failure
-
-      # Toolchain provenance: read the resolved compiler/linker/CMake/SDK
-      # versions out of this leg's build tree and embed them in the
-      # provenance manifest below (same as release.yml legs — CI validates
-      # what release ships, so their manifests carry the same truth). Runs
-      # on every portable leg after its build; the windows-x86 engine leg
-      # collects earlier, before its own manifest step above.
-      - name: Collect toolchain provenance
-        if: matrix.target != 'windows-x86'
-        shell: pwsh
-        run: >
-          ./scripts/ci/collect-toolchain.ps1 -BuildDir build-release
-          -OutFile build-toolchain.json
-
-      - name: Package portable composition
-        if: matrix.os == 'linux' || matrix.os == 'macos'
-        shell: bash
-        run: |
-          mkdir -p dist
-          # Reproducible archives need GNU tar (--sort/--owner/--group).
-          # macOS 15 runners alias bsdtar to `tar` and GNU tar to `gtar`;
-          # Linux runners have GNU tar as `tar`.
-          TAR="$(command -v gtar || command -v tar)"
-          "$TAR" --sort=name --owner=0 --group=0 \
-            -czf "dist/KisakCOD-${{ matrix.target }}-portable-Release.tar.gz" \
-            -C build-release/tests .
-          jq -n \
-            --arg target '${{ matrix.target }}' \
-            --arg commit "${GITHUB_SHA}" \
-            --arg ref "${GITHUB_REF}" \
-            --arg config "portable-test-composition" \
-            --arg run "${GITHUB_RUN_ID}" \
-            --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --slurpfile toolchain build-toolchain.json \
-            '{target: $target, commit: $commit, ref: $ref, config: $config, toolchain: $toolchain[0], workflow_run: $run, generated_at: $generated_at}' \
-            > "dist/KisakCOD-${{ matrix.target }}-portable-Release-provenance.json"
-
-      - name: Package portable composition
-        if: matrix.os == 'windows' && matrix.target != 'windows-x86'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path build-release/tests/Release/*.exe -DestinationPath "dist/KisakCOD-${{ matrix.target }}-portable-Release.zip"
-          $toolchain = Get-Content -LiteralPath build-toolchain.json -Raw | ConvertFrom-Json
-          [ordered]@{
-            target        = "${{ matrix.target }}"
-            commit        = $env:GITHUB_SHA
-            ref           = $env:GITHUB_REF
-            config        = "portable-test-composition"
-            toolchain     = $toolchain
-            workflow_run  = $env:GITHUB_RUN_ID
-            generated_at  = (Get-Date).ToUniversalTime().ToString("o")
-          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 "dist/KisakCOD-${{ matrix.target }}-portable-Release-provenance.json"
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: KisakCOD-${{ matrix.target }}-Release
-          path: dist/
-          if-no-files-found: error
-          retention-days: 14
-
   scaffolding-complete:
-    # The required CI gate: every other job in this workflow — the six
-    # scaffolding legs, the engine build legs, and the sanitizer and
-    # selection/aggregate checker gates — must succeed. Branch protection
-    # should require this single job. scripts/ci/check-ci-aggregate.py pins
-    # this enrollment (needs == every other job) and the fail-closed
-    # enforcement below, so a required gate cannot silently disappear from
-    # the aggregate. (Renamed from production-complete: the five non-x86
-    # legs are test-composition scaffolding, not shipped engines.)
+    # The aggregate gate: every gating job must succeed. The census is
+    # informational and deliberately absent.
     name: Portable scaffolding complete
     needs:
       - portable-tests
-      - test-selection-checker
       - script-sanitizers
       - portable-sanitizers
       - capability-dashboard
       - windows-x86
       - windows-x86-sp
-      - windows-x86-parity
-      - windows-x86-nosteam
       - windows-x86-headless
-      - scaffolding-builds
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10

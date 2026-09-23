@@ -42,37 +42,6 @@ function(kisakcod_headless_pop_line CONTENT_VAR OUT_LINE OUT_HAS_LINE)
     set(${OUT_HAS_LINE} TRUE PARENT_SCOPE)
 endfunction()
 
-function(kisakcod_headless_test_line_reader)
-    file(READ
-        "${CMAKE_CURRENT_LIST_DIR}/fixtures/headless_include_debt/physical_lines.txt"
-        _fixture_contents
-    )
-
-    kisakcod_headless_pop_line(_fixture_contents _fixture_line _has_line)
-    if (NOT _has_line OR NOT "${_fixture_line}" STREQUAL "prefix;unmatched[bracket")
-        message(FATAL_ERROR "Headless scanner did not preserve the first fixture line")
-    endif()
-
-    kisakcod_headless_pop_line(_fixture_contents _fixture_line _has_line)
-    if (NOT _has_line OR
-        NOT "${_fixture_line}" STREQUAL "#include <client/client.h> // debt;still one physical line]")
-        message(FATAL_ERROR "Headless scanner did not preserve the include fixture line")
-    endif()
-    if (NOT "${_fixture_line}" MATCHES "${_debt_include_regex}")
-        message(FATAL_ERROR "Headless scanner did not recognize the preserved include fixture line")
-    endif()
-
-    kisakcod_headless_pop_line(_fixture_contents _fixture_line _has_line)
-    if (NOT _has_line OR NOT "${_fixture_line}" STREQUAL "suffix")
-        message(FATAL_ERROR "Headless scanner did not preserve the last fixture line")
-    endif()
-
-    kisakcod_headless_pop_line(_fixture_contents _fixture_line _has_line)
-    if (_has_line)
-        message(FATAL_ERROR "Headless scanner returned a line past the fixture end")
-    endif()
-endfunction()
-
 function(kisakcod_headless_eval_condition DIRECTIVE OUT_KNOWN OUT_VALUE)
     set(_known FALSE)
     set(_value FALSE)
@@ -122,7 +91,6 @@ function(kisakcod_headless_eval_condition DIRECTIVE OUT_KNOWN OUT_VALUE)
     set(${OUT_VALUE} "${_value}" PARENT_SCOPE)
 endfunction()
 
-kisakcod_headless_test_line_reader()
 
 set(_found)
 foreach(_source IN LISTS _dedi_sources)

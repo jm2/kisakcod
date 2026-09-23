@@ -81,9 +81,10 @@ def census_values(c: dict) -> dict[str, str]:
         out["K1"] = " · ".join(k1)
     link = _obj(_obj(c.get("link")).get("win64"))
     if link:
-        probe = _obj(link.get("probe"))
-        out["K2"] = "win64 real link: %s; probe: %s, %s undefined" % (
-            link.get("real", "?"), probe.get("status", "?"), probe.get("undefined", "?"))
+        real, probe = _obj(link.get("real")), _obj(link.get("probe"))
+        out["K2"] = "win64 real link: %s (%s TUs don't compile); probe: %s, %s undefined, %s TUs excluded" % (
+            real.get("status", "?"), real.get("excluded_tus", "?"), probe.get("status", "?"),
+            probe.get("undefined", "?"), probe.get("excluded_tus", "?"))
     if _has(c.get("k3"), "compiled", "total"):
         out["K3"] = "%s/%s" % (c["k3"]["compiled"], c["k3"]["total"])
     if isinstance(c.get("d3d_stub_tus"), int):

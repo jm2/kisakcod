@@ -12,9 +12,8 @@
 // The production wrappers src/groupvoice/encode.cpp / decode.cpp are pinned to
 // the 32-bit Win32 ABI by directsound.h struct static_asserts and therefore
 // cannot run on portable CI targets. This suite instead drives the exact
-// production call sequences (verified statement-for-statement by
-// tests/voice_framing_source_test.cmake); see voice_gate_test_support.hpp
-// for the pinned init/sample sequences.
+// production call sequences; see voice_gate_test_support.hpp for the
+// pinned init/sample sequences.
 //
 // VOX-1a pins the encoder bitstream byte-exactly. Any byte difference on any
 // target is a real gate failure: fork clients that disagree on encoder bytes
