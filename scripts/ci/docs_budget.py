@@ -60,7 +60,11 @@ def warn_stale_now() -> None:
     if not m:
         print("::warning file=docs/NOW.md::no 'Last reviewed: YYYY-MM-DD' line")
         return
-    age = (dt.date.today() - dt.date.fromisoformat(m.group(1))).days
+    try:
+        age = (dt.date.today() - dt.date.fromisoformat(m.group(1))).days
+    except ValueError:
+        print("::warning file=docs/NOW.md::'Last reviewed: %s' is not a valid date" % m.group(1))
+        return
     if age > NOW_MAX_AGE_DAYS:
         print("::warning file=docs/NOW.md::last reviewed %d days ago (limit %d); "
               "the mayor must re-rank the queue" % (age, NOW_MAX_AGE_DAYS))

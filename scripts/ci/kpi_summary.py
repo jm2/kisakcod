@@ -62,19 +62,25 @@ def now_kpi_rows(text: str) -> tuple[list[str], list[list[str]]]:
     return (rows[0], rows[1:]) if rows else ([], [])
 
 
+def _obj(value) -> dict:
+    """The census is advisory input: treat any non-object field as absent."""
+    return value if isinstance(value, dict) else {}
+
+
 def census_values(c: dict) -> dict[str, str]:
     out = {}
-    t = c.get("targets", {})
-    k1 = ["%s %s/%s" % (n, t[n].get("pass"), t[n].get("total")) for n in ("win64", "lin64", "a64") if n in t]
+    t = _obj(c.get("targets"))
+    k1 = ["%s %s/%s" % (n, _obj(t[n]).get("pass"), _obj(t[n]).get("total"))
+          for n in ("win64", "lin64", "a64") if n in t]
     if k1:
         out["K1"] = " · ".join(k1)
-    link = c.get("link", {}).get("win64")
+    link = _obj(_obj(c.get("link")).get("win64"))
     if link:
-        probe = link.get("probe", {})
+        probe = _obj(link.get("probe"))
         out["K2"] = "win64 real link: %s; probe: %s, %s undefined" % (
             link.get("real", "?"), probe.get("status", "?"), probe.get("undefined", "?"))
     if "k3" in c:
-        out["K3"] = "%s/%s" % (c["k3"].get("compiled"), c["k3"].get("total"))
+        out["K3"] = "%s/%s" % (_obj(c["k3"]).get("compiled"), _obj(c["k3"]).get("total"))
     if "d3d_stub_tus" in c:
         out["K5"] = "%s TUs (lin64)" % c["d3d_stub_tus"]
     return out
@@ -133,6 +139,10 @@ def main() -> int:
         except (OSError, ValueError) as exc:  # a bad census never gates
             print("::warning file=%s::census unreadable, KPIs shown without it: %s" % (args.census, exc),
                   file=sys.stderr)
+        if census is not None and not isinstance(census, dict):
+            print("::warning file=%s::census is not a JSON object; KPIs shown without it" % args.census,
+                  file=sys.stderr)
+            census = None
     now_text = args.now.read_text(encoding="utf-8") if args.now.is_file() else ""
     sys.stdout.write(render(manifest, now_text, census))
     return 0
