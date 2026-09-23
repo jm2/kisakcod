@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 KB = 1024
 BUDGETS = {  # path -> max bytes
     "AGENTS.md": 6 * KB,
-    "CLAUDE.md": 1 * KB,
+    "CLAUDE.md": 16,  # the single line @AGENTS.md
     "docs/CHARTER.md": 8 * KB,
     "docs/ROADMAP.md": 15 * KB,
     "docs/NOW.md": 6 * KB,
@@ -38,41 +38,45 @@ DOCS_TOTAL = 100 * KB
 NOW_MAX_AGE_DAYS = 10
 
 
-def main() -> int:
-    errors, rows = [], []
-    docs = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*") if p.is_file())
-    errors += ["%s is not in the doc set (ADR-0006); fold it into a live doc" % rel
-               for rel in docs if rel not in BUDGETS and not ADR_RE.match(rel)]
+def check_sizes(docs: list[str]) -> tuple[list[str], list[tuple[str, int, int]]]:
+    errors = ["%s is not in the doc set (ADR-0006); fold it into a live doc" % rel
+              for rel in docs if rel not in BUDGETS and not ADR_RE.match(rel)]
+    rows = []
     for rel in sorted(set(BUDGETS) | {d for d in docs if ADR_RE.match(d)}):
-        if not (ROOT / rel).is_file():
-            continue
-        size, limit = (ROOT / rel).stat().st_size, BUDGETS.get(rel, ADR_BUDGET)
-        rows.append((rel, size, limit))
-        if size > limit:
-            errors.append("%s is %d bytes; budget %d" % (rel, size, limit))
-    claude = ROOT / "CLAUDE.md"
-    if claude.is_file() and len(claude.read_text(encoding="utf-8").splitlines()) != 1:
-        errors.append("CLAUDE.md must be the single line @AGENTS.md")
+        if (ROOT / rel).is_file():
+            size, limit = (ROOT / rel).stat().st_size, BUDGETS.get(rel, ADR_BUDGET)
+            rows.append((rel, size, limit))
+            if size > limit:
+                errors.append("%s is %d bytes; budget %d" % (rel, size, limit))
+    return errors, rows
+
+
+def warn_stale_now() -> None:
+    now = ROOT / "docs/NOW.md"
+    text = now.read_text(encoding="utf-8") if now.is_file() else ""
+    m = re.search(r"^Last reviewed:\s*(\d{4}-\d{2}-\d{2})", text, re.M)
+    if not m:
+        print("::warning file=docs/NOW.md::no 'Last reviewed: YYYY-MM-DD' line")
+        return
+    age = (dt.date.today() - dt.date.fromisoformat(m.group(1))).days
+    if age > NOW_MAX_AGE_DAYS:
+        print("::warning file=docs/NOW.md::last reviewed %d days ago (limit %d); "
+              "the mayor must re-rank the queue" % (age, NOW_MAX_AGE_DAYS))
+
+
+def main() -> int:
+    docs = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*") if p.is_file())
+    errors, rows = check_sizes(docs)
     total = sum((ROOT / d).stat().st_size for d in docs)
     if total > DOCS_TOTAL:
         errors.append("docs/ totals %d bytes; budget %d" % (total, DOCS_TOTAL))
-
-    now = ROOT / "docs/NOW.md"
-    m = re.search(r"^Last reviewed:\s*(\d{4}-\d{2}-\d{2})", now.read_text(encoding="utf-8"), re.M) if now.is_file() else None
-    if not m:
-        print("::warning file=docs/NOW.md::no 'Last reviewed: YYYY-MM-DD' line")
-    else:
-        age = (dt.date.today() - dt.date.fromisoformat(m.group(1))).days
-        if age > NOW_MAX_AGE_DAYS:
-            print("::warning file=docs/NOW.md::last reviewed %d days ago (limit %d); the mayor must re-rank the queue" % (age, NOW_MAX_AGE_DAYS))
-
+    warn_stale_now()
     table = ["## Doc-set budgets", "", "| Doc | Bytes | Budget |", "|---|---:|---:|"]
     table += ["| %s | %d | %d |" % row for row in rows]
     table.append("| **docs/ total** | %d | %d |" % (total, DOCS_TOTAL))
     print("\n".join(table))
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        with open(summary, "a", encoding="utf-8") as f:
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
             f.write("\n".join(table) + "\n\n")
     for e in errors:
         print("::error::%s" % e)

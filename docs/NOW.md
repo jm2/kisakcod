@@ -1,4 +1,5 @@
 # NOW
+
 Last reviewed: 2026-09-22 by operator
 Current gate: G1 (owner actions pending for G0 and G4a)
 WIP limit: 6 (at least 4 on the current gate)

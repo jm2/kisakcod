@@ -75,6 +75,7 @@ The other `__asm` blocks in the headless set are dead code: `win_configure.cpp` 
 ## Hazard catalogue
 
 Two kinds of hazard, both fixed by beads 9–11 (WS-3, G2):
+
 - **Silent:** compiles at 64-bit but misbehaves.
 - **Compile error on LP64 only:** passes Win64 but fails on Linux or macOS.
 

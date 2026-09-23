@@ -109,7 +109,7 @@ def render(manifest: dict, now_text: str, census: dict | None) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description="Render the K1-K6 KPI summary as Markdown.")
     ap.add_argument("--manifest", default=ROOT / "docs/capability/manifest.json", type=Path)
     ap.add_argument("--now", default=ROOT / "docs/NOW.md", type=Path)
     ap.add_argument("--census", type=Path)
