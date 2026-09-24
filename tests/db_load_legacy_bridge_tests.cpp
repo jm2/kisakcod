@@ -1,6 +1,9 @@
 #include <database/db_load_legacy_bridge.h>
 #include <database/db_registry_ownership_coordinator.h>
+#include <database/db_stream.h>
+#include <database/db_zone_memory.h>
 #include <database/db_zone_runtime_facade.h>
+#include <database/db_zone_runtime_table.h>
 #include <qcommon/com_error.h>
 #include <qcommon/sys_memory.h>
 #include <qcommon/sys_sync.h>
@@ -46,6 +49,54 @@ int g_failures = 0;
         ++g_failures;
     }
     return condition;
+}
+
+// #191: production order. DB_Init initializes the zone runtime table once,
+// then every zone load runs DB_InitStreams before Load_ScriptStringList
+// interns the zone's script strings through the bridge.
+[[nodiscard]] bool TestInternDuringLegacyZoneLoad() noexcept
+{
+    SL_Init();
+    bool ok = Check(
+        db::zone_runtime::TryInitializeZoneRuntimeTable(
+            &db::zone_runtime::ProductionZoneRuntimeTable())
+            == db::zone_runtime::ZoneRuntimeTableStatus::Success,
+        "production zone runtime table did not initialize");
+
+    alignas(16) static std::uint8_t block0[64]{};
+    XZoneMemory zoneMem{};
+    zoneMem.blocks[0].data = block0;
+    zoneMem.blocks[0].size = sizeof(block0);
+    DB_InitStreams(&zoneMem);
+
+    LegacyBridgeStringId interned{};
+    for (const char *const name : { "zone-load-first", "zone-load-second" })
+    {
+        ok = Check(
+            DbLoadLegacyBridge::TryInternUser4String(name, &interned)
+                == LegacyBridgeStatus::Success,
+            "bridge refused a user-4 intern while a legacy zone load owns the streams")
+            && ok;
+    }
+    // Stringtable loads add user-4 references to interned ids; the registry
+    // then transfers user 4 to user 8 and later shuts user 8 down, all while
+    // the legacy stream state is still live.
+    ok = Check(
+        DbLoadLegacyBridge::TryAddUser4(interned.stringId)
+            == LegacyBridgeStatus::Success,
+        "bridge refused a user-4 reference during a legacy zone load")
+        && ok;
+    ok = Check(
+        DbLoadLegacyBridge::TryTransferUsers4To8()
+            == LegacyBridgeStatus::Success,
+        "bridge refused the user-4 to user-8 transfer after a legacy zone load")
+        && ok;
+    ok = Check(
+        DbLoadLegacyBridge::TryShutdownUser8()
+            == LegacyBridgeStatus::Success,
+        "bridge refused the user-8 shutdown after a legacy zone load")
+        && ok;
+    return ok;
 }
 
 [[nodiscard]] bool TestHappyPathRoundTrip() noexcept
@@ -315,7 +366,9 @@ int main()
 {
     const bool ok = TestInternValidationGuards()
         && TestHappyPathRoundTrip()
-        && TestBackToBackCyclesDoNotPoison();
+        && TestBackToBackCyclesDoNotPoison()
+        // Last: it initializes the process-wide production table.
+        && TestInternDuringLegacyZoneLoad();
     if (g_failures != 0)
         return 1;
     return ok ? 0 : 1;

@@ -84,6 +84,14 @@ class ActiveZoneStreamBinding;
 [[nodiscard]] bool AuthenticatePassiveZoneStreamSingleton(
     const ActiveZoneStreamBinding &binding) noexcept;
 
+// Authenticates that no receipt-owned generation holds the stream singleton:
+// the exact binding object must be pristine and no binding may own the
+// singleton. Legacy stream cursors and relocation contexts may be live,
+// because DB_InitStreams populates them for every zone load and the legacy
+// loader is not enrolled with the zone runtime table (#191).
+[[nodiscard]] bool AuthenticateUnboundZoneStreamSingleton(
+    const ActiveZoneStreamBinding &binding) noexcept;
+
 // Authenticates one exact, externally serialized composition without
 // reporting, allocating, mutating, or exposing any retained authority.
 // Pristine requires a null lifecycle and null key. Every other mode binds the
@@ -207,6 +215,8 @@ private:
         ZoneStreamGenerationReceipt *,
         const zone_load::ZoneLoadContextKey &) noexcept;
     friend bool AuthenticatePassiveZoneStreamSingleton(
+        const ActiveZoneStreamBinding &binding) noexcept;
+    friend bool AuthenticateUnboundZoneStreamSingleton(
         const ActiveZoneStreamBinding &binding) noexcept;
 
     [[nodiscard]] bool isPristine() const noexcept;

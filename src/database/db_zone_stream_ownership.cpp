@@ -745,6 +745,12 @@ bool AuthenticatePassiveZoneStreamSingleton(
         && SingletonIsIdle();
 }
 
+bool AuthenticateUnboundZoneStreamSingleton(
+    const ActiveZoneStreamBinding &binding) noexcept
+{
+    return binding.isPristine() && g_activeOwner == nullptr;
+}
+
 ZoneStreamOwnershipStatus TryBeginZoneStreamGeneration(
     ZoneStreamGenerationReceipt *const receipt,
     zone_load::ZoneLoadContextSlot *const lifecycle,
