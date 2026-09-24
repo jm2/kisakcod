@@ -3738,19 +3738,24 @@ void TestPassiveTableWideSingletonAuthentication()
     expectDirtyStreamRejected();
     g_streamPosStack[9].index = 0;
 
-    // Header reauthentication also detects contamination after successful
-    // table initialization and leaves the caller's output unpublished.
+    // After initialization the legacy loader owns live stream state for every
+    // zone load (DB_InitStreams), so header reauthentication accepts it: only
+    // a receipt-owned generation would conflict with an idle table (#191).
     {
         auto table = std::make_unique<ZoneRuntimeTable>();
         CHECK(TryInitializeZoneRuntimeTable(table.get())
             == ZoneRuntimeTableStatus::Success);
         const ZoneRuntimeEntry *entry = nullptr;
+        g_streamZoneMem = &zone;
         g_streamPos = blockStorage[0].data();
+        g_streamPosArray[4] = blockStorage[4].data();
         CHECK(TryGetZoneRuntimeEntry(table.get(), 1, &entry)
-            == ZoneRuntimeTableStatus::UnsafeFailure);
-        CHECK(entry == nullptr);
-        CHECK(!table->initialized());
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(entry != nullptr);
+        CHECK(table->initialized());
+        g_streamPosArray[4] = nullptr;
         g_streamPos = nullptr;
+        g_streamZoneMem = nullptr;
     }
 
     // A different pristine-looking controller can acquire the one hidden

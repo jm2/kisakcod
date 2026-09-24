@@ -3332,9 +3332,12 @@ ZoneRuntimeTableStatus ZoneRuntimeTable::validateSharedComposition(
     switch (activeZoneStreamBinding_.phase())
     {
     case zone_stream_ownership::ActiveZoneStreamPhase::Idle:
+        // The legacy loader owns live stream state during and after every
+        // zone load, so an idle table only requires that no receipt-owned
+        // generation holds the singleton (#191).
         if (boundStreamCount != 0
             || !zone_stream_ownership::
-                AuthenticatePassiveZoneStreamSingleton(
+                AuthenticateUnboundZoneStreamSingleton(
                     activeZoneStreamBinding_))
         {
             return ZoneRuntimeTableStatus::UnsafeFailure;
