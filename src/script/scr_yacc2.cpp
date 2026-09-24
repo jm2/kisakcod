@@ -13,9 +13,6 @@
 #include "scr_yacc_structs.h"
 #include "scr_vm.h"
 
-#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
-#include <client_mp/client_mp.h>
-#endif
 
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
@@ -391,6 +388,15 @@ int yy_get_next_buffer()
 	}
 
 	return result;
+}
+
+// flex's yywrap(): each script is one buffer, so end of input is final. The
+// decompile showed CL_GetLocalClientActiveCount() here, an identical
+// `return 1` the compiler folded into it; compiling that call out of the
+// headless build made the lexer rescan the same buffer forever (#224).
+static int yywrap()
+{
+	return 1;
 }
 
 int __cdecl yylex()
@@ -990,14 +996,12 @@ int __cdecl yylex()
 					continue;
 				}
 				yy_did_buffer_switch_on_eof = 0;
-#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
-				if (CL_GetLocalClientActiveCount())
+				if (yywrap())
 				{
 					yy_c_buf_p = yytext;
 					yy_act = (yy_start - 1) / 2 + 96;
 					goto do_action;
 				}
-#endif
 				if (!yy_did_buffer_switch_on_eof)
 					yyrestart();
 				break;
