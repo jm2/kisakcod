@@ -262,7 +262,7 @@ void __cdecl Player_UpdateCursorHints(gentity_s *ent)
                                 if (hintString)
                                 {
                                     ps->cursorHintEntIndex = self->s.number;
-                                    self->flags |= ~(FL_CURSOR_HINT);
+                                    self->flags |= FL_CURSOR_HINT;
                                     ps->cursorHint = hintString;
                                     ps->cursorHintString = scale;
                                 }
