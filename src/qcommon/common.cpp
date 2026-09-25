@@ -1000,6 +1000,10 @@ void __cdecl  Com_Quit_f()
         SV_Shutdown("EXE_SERVERQUIT");
 #ifndef KISAK_DEDI_HEADLESS
         CL_ShutdownRef();
+        // The renderer is down and its queues are drained, so the idle worker
+        // threads can be joined. R_Shutdown leaves them running because a
+        // renderer restart reuses them.
+        R_ShutdownWorkerThreads();
 #endif
         Com_Close();
         Com_CloseLogfiles();
