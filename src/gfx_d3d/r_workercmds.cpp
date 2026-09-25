@@ -513,10 +513,10 @@ void R_ShutdownWorkerThreads()
     uint32_t workerThreadIndexa; // [esp+0h] [ebp-4h]
 
     iassert( Sys_IsMainThread() );
-    // Join and release both worker slots regardless of the SMP dvars: a
-    // worker may exist while deactivated (spawned under sys_smp_allowed but
-    // never enabled through r_smp_worker_thread), and every call must leave
-    // the slots empty so a later R_InitWorkerThreads can respawn them.
+    // Called once, from Com_Quit_f. Join and release both worker slots
+    // regardless of the SMP dvars: a worker may exist while deactivated
+    // (spawned under sys_smp_allowed but never enabled through
+    // r_smp_worker_thread).
     for (workerThreadIndexa = 0; workerThreadIndexa < 2; ++workerThreadIndexa)
         Sys_ShutdownWorkerThread(workerThreadIndexa);
 }
