@@ -533,33 +533,42 @@ char g_module[MAX_PATH];
 
 #include <intrin.h>
 
-// KISAKX64
-// this is broken right now
 int __cdecl DoStackTrace(char* msg, int nIgnore)
 {
-    int* v2; // ecx
-    int* reg_ebp; // [esp+4h] [ebp-10h]
-    int i; // [esp+10h] [ebp-4h]
-
     memset((uint8_t*)g_assertAddress, 0, sizeof(g_assertAddress));
     g_assertAddressCount = 0;
-    reg_ebp = 0;
-    __asm {
-        mov reg_ebp, ebp
-    }
-    for (i = 0; i < nIgnore + 32; ++i)
+#if defined(_M_IX86)
     {
-        v2 = reg_ebp;
-        if ((uint32_t)reg_ebp <= 0x400)
-            break;
-        reg_ebp = (int*)*reg_ebp;
-        if (i >= nIgnore)
+        int* v2;
+        int* reg_ebp = 0;
+        int i;
+        __asm {
+            mov reg_ebp, ebp
+        }
+        for (i = 0; i < nIgnore + 32; ++i)
         {
-            g_assertAddress[g_assertAddressCount++].address = v2[1] - 5;
-            if (!reg_ebp)
+            v2 = reg_ebp;
+            if ((uint32_t)reg_ebp <= 0x400)
                 break;
+            reg_ebp = (int*)*reg_ebp;
+            if (i >= nIgnore)
+            {
+                g_assertAddress[g_assertAddressCount++].address = v2[1] - 5;
+                if (!reg_ebp)
+                    break;
+            }
         }
     }
+#else
+    {
+        void* frames[32];
+        USHORT frameCount = RtlCaptureStackBackTrace(0, 32, frames, NULL);
+        for (USHORT i = nIgnore; i < frameCount && g_assertAddressCount < 32; ++i)
+        {
+            g_assertAddress[g_assertAddressCount++].address = (uint32_t)(uintptr_t)frames[i];
+        }
+    }
+#endif
     return LoadMapFiles(msg);
 }
 

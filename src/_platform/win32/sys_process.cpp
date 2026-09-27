@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <cwchar>
 #include <string>
 #include <vector>
