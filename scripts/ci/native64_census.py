@@ -28,7 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 STUBS = ROOT / "scripts/ci/ci-stubs"
-DEFS = ["-DKISAK_MP", "-DKISAK_DEDICATED", "-DDEDICATED", "-DKISAK_DEDI_HEADLESS", "-DNDEBUG", "-D_DEBUG"]
+DEFS = ["-DKISAK_MP", "-DKISAK_DEDICATED", "-DDEDICATED", "-DKISAK_DEDI_HEADLESS", "-D_DEBUG"]
 WIN_DEFS = ["-DWIN32", "-D_WINDOWS", "-D_CONSOLE", "-D_MBCS"]
 TARGETS = {
     "win32": ("i686-w64-mingw32", WIN_DEFS, "windows"),
@@ -36,7 +36,11 @@ TARGETS = {
     "lin64": ("x86_64-linux-gnu", ["-DUNIX"], "d3d"),
     "a64": ("aarch64-linux-gnu", ["-DUNIX"], "d3d"),
 }
-WARN = ["-Wno-everything", "-Werror=c++11-narrowing", "-Wvoid-pointer-to-int-cast",
+# -w is deliberately not used: under -fms-extensions it suppresses even
+# -Werror=c++11-narrowing promotions (and #pragma clang diagnostic error),
+# which would hide the GSC table narrowing errors again. No blanket
+# suppression: DefaultError diagnostics fail a TU as a class (#226).
+WARN = ["-Werror=c++11-narrowing", "-Wvoid-pointer-to-int-cast",
         "-Wpointer-to-int-cast", "-Wint-to-pointer-cast", "-Wshorten-64-to-32", "-W#pragma-messages"]
 WIN_LIBS = ["-lws2_32", "-lwinmm", "-luser32", "-lgdi32", "-ladvapi32", "-lshell32",
             "-lole32", "-loleaut32", "-luuid", "-ldbghelp", "-lpsapi", "-lshlwapi"]
