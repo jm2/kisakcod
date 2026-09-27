@@ -24,7 +24,7 @@
 #include <universal/com_memory.h>
 #include <universal/platform_compat.h>
 #include <universal/q_shared.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 
 #include <algorithm>
 #include <cstdarg>
