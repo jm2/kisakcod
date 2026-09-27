@@ -68,15 +68,23 @@
 
 // buildstring will be incorporated into the version string
 #ifdef NDEBUG
-#ifdef _M_IX86
+#if defined(_M_IX86)
 #define	CPUSTRING	"win-x86"
-#elif defined _M_ALPHA
+#elif defined(_M_X64) || defined(_M_AMD64)
+#define	CPUSTRING	"win-x64"
+#elif defined(_M_ARM64)
+#define	CPUSTRING	"win-arm64"
+#elif defined(_M_ALPHA)
 #define	CPUSTRING	"win-AXP"
 #endif
 #else
-#ifdef _M_IX86
+#if defined(_M_IX86)
 #define	CPUSTRING	"win-x86-debug"
-#elif defined _M_ALPHA
+#elif defined(_M_X64) || defined(_M_AMD64)
+#define	CPUSTRING	"win-x64-debug"
+#elif defined(_M_ARM64)
+#define	CPUSTRING	"win-arm64-debug"
+#elif defined(_M_ALPHA)
 #define	CPUSTRING	"win-AXP-debug"
 #endif
 #endif

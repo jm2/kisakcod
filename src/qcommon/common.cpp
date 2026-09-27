@@ -2679,7 +2679,7 @@ void Com_CheckError()
         FX_ErrorCleanup();
 #endif
         void * value = Sys_GetValue(2);
-        longjmp((int*)value, -1);
+        longjmp(*(jmp_buf*)value, -1);
     }
 }
 
