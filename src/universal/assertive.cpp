@@ -172,20 +172,20 @@ void __cdecl ParseError(const char* msg)
 
 struct AddressInfo
 {
-    uint32_t address;
+    uintptr_t address;
     char moduleName[64];
     char bestFunction[64];
     char bestFunctionFilename[64];
     uint32_t bestFunctionAddress;
     char bestLineFilename[64];
-    uint32_t bestLineAddress;
+    uintptr_t bestLineAddress;
     uint32_t bestLineNumber;
 }; // idb
 
 uint32_t g_assertAddressCount;
 AddressInfo g_assertAddress[0x20];
 
-char __cdecl ParseMapFile(FILE* fp, uint32_t baseAddress, char* mapName)
+char __cdecl ParseMapFile(FILE* fp, uintptr_t baseAddress, char* mapName)
 {
     int v4; // eax
     const char* v5; // eax
@@ -205,11 +205,11 @@ char __cdecl ParseMapFile(FILE* fp, uint32_t baseAddress, char* mapName)
     uint32_t address; // [esp+2Ch] [ebp-860h] BYREF
     const char* filename; // [esp+30h] [ebp-85Ch]
     AddressInfo* addressInfo; // [esp+34h] [ebp-858h]
-    uint32_t relAddress; // [esp+38h] [ebp-854h]
+    uintptr_t relAddress; // [esp+38h] [ebp-854h]
     uint32_t lineOffset[4]; // [esp+3Ch] [ebp-850h] BYREF
     char filenameBuffer[1024]; // [esp+4Ch] [ebp-840h] BYREF
     uint32_t offset; // [esp+44Ch] [ebp-440h] BYREF
-    uint32_t baseEndAddress; // [esp+450h] [ebp-43Ch]
+    uintptr_t baseEndAddress; // [esp+450h] [ebp-43Ch]
     uint32_t group; // [esp+454h] [ebp-438h] BYREF
     const char* funcName; // [esp+458h] [ebp-434h]
     uint32_t lineGroup[4]; // [esp+45Ch] [ebp-430h] BYREF
@@ -438,7 +438,7 @@ void __cdecl LoadMapFilesForDir(const char* dir)
     char* cFileName; // [esp+1Ch] [ebp-115Ch]
     _WIN32_FIND_DATAA FindFileData; // [esp+20h] [ebp-1158h] BYREF
     char file[MAX_PATH]; // [esp+160h] [ebp-1018h] BYREF
-    uint32_t baseAddress; // [esp+964h] [ebp-814h]
+    uintptr_t baseAddress; // [esp+964h] [ebp-814h]
     FILE* fp; // [esp+968h] [ebp-810h]
     HANDLE hFindFile; // [esp+96Ch] [ebp-80Ch]
     char string[2052]; // [esp+970h] [ebp-808h] BYREF
@@ -458,7 +458,7 @@ void __cdecl LoadMapFilesForDir(const char* dir)
     {
         do
         {
-            baseAddress = (uint32_t)GetModuleBase(FindFileData.cFileName);
+            baseAddress = (uintptr_t)GetModuleBase(FindFileData.cFileName);
             if (baseAddress)
             {
                 v3 = Sys_DefaultInstallPath();
@@ -515,12 +515,12 @@ int __cdecl LoadMapFiles(char* msg)
                 if (addressInfo->bestFunction[0])
                     curPosb = &curPosa[sprintf(
                         curPosa,
-                        "%s        ...%s, address %x",
+                        "%s        ...%s, address %p",
                         addressInfo->bestFunction,
                         addressInfo->bestFunctionFilename,
-                        addressInfo->address)];
+                        (void*)addressInfo->address)];
                 else
-                    curPosb = &curPosa[sprintf(curPosa, "%s, address %x", addressInfo->bestFunction, addressInfo->address)];
+                    curPosb = &curPosa[sprintf(curPosa, "%s, address %p", addressInfo->bestFunction, (void*)addressInfo->address)];
                 v1 = sprintf(curPosb, "\n");
             }
             curPos = &curPosb[v1];
@@ -565,7 +565,7 @@ int __cdecl DoStackTrace(char* msg, int nIgnore)
         USHORT frameCount = RtlCaptureStackBackTrace(0, 32, frames, NULL);
         for (USHORT i = nIgnore; i < frameCount && g_assertAddressCount < 32; ++i)
         {
-            g_assertAddress[g_assertAddressCount++].address = (uint32_t)(uintptr_t)frames[i];
+            g_assertAddress[g_assertAddressCount++].address = (uintptr_t)frames[i];
         }
     }
 #endif
