@@ -19,7 +19,7 @@
 
 #include <qcommon/com_bsp.h>
 
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 
 #include <xanim/dobj.h>
 #include <xanim/dobj_utils.h>

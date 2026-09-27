@@ -586,7 +586,7 @@ int __cdecl SV_GameCommand()
 #include <game/g_local.h>
 #include <client/cl_demo.h>
 #include "sv_public.h"
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <client/cl_input.h>
 #include <universal/profile.h>
 // R_BeginRemoteScreenUpdate/R_EndRemoteScreenUpdate are declared in

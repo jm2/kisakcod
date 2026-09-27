@@ -1,5 +1,5 @@
 #include "DynEntity_client.h"
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <gfx_d3d/r_dpvs.h>
 #include <universal/profile.h>
 #include <universal/phys_obj_id.h>

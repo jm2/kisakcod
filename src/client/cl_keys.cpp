@@ -6,7 +6,7 @@
 #include <universal/com_memory.h>
 #include <cgame/cg_local.h>
 #include <stringed/stringed_hooks.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <universal/com_files.h>
 #include <devgui/devgui.h>
 #include <script/scr_debugger.h>

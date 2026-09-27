@@ -2,7 +2,7 @@
 #include "mem_track.h"
 #include <universal/com_memory.h>
 #include <database/database.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include "com_bsp.h"
 #include <qcommon/thread_context.h>
 

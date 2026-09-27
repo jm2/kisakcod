@@ -3,7 +3,7 @@
 #include "threads.h"
 #include <xanim/dobj.h>
 #include <universal/sys_atomic.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 
 #define DOBJ_HANDLE_MAX (MAX_GENTITIES - 128) // 2048
 

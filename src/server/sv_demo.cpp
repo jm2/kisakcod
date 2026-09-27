@@ -7,7 +7,7 @@
 #include <game/g_local.h>
 #include <qcommon/threads.h>
 #include <game/savememory.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <universal/com_files.h>
 #include <client/cl_demo.h>
 #include <game/g_save.h>

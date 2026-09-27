@@ -8,7 +8,7 @@
 #include "cg_actors.h"
 #include <xanim/dobj_utils.h>
 #include <EffectsCore/fx_system.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <physics/phys_local.h>
 #include <game/savememory.h>
 #include <ragdoll/ragdoll.h>

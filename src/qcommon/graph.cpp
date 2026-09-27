@@ -4,7 +4,7 @@
 #include "qcommon.h"
 
 #include <universal/com_files.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <universal/q_parse.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <devgui/devgui.h>

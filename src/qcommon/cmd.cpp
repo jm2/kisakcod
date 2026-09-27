@@ -9,7 +9,7 @@
 #include "threads.h"
 
 #include <database/database.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <universal/com_files.h>
 #include <script/scr_debugger.h>
 #include <server/sv_game.h>

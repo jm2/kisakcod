@@ -11,7 +11,7 @@
 #include <universal/com_files.h>
 #include <universal/q_parse.h>
 #include "r_image.h"
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 
 int s_numColorCorrectionDataEntries;
 ColorCorrectionData s_colorCorrectionDataEntries[1024];

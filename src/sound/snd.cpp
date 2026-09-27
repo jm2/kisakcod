@@ -9,7 +9,13 @@
 #include <universal/q_parse.h>
 #include <client/client.h>
 #include <universal/profile.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
+#if defined(_WIN32)
+// KisakCOD ABI port: this TU uses Win32 API types (BOOL/DWORD/HWND, ...) in its
+// own code. Previously they arrived via win_local.h's winsock include; the
+// portable split takes that reach away, so declare the Win32 dependency directly.
+#include <windows.h>
+#endif
 
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>

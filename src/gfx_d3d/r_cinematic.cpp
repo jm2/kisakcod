@@ -7,7 +7,7 @@
 #include "r_init.h"
 #include <msslib/mss.h>
 #include <sound/snd_local.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include "rb_state.h"
 #include "r_image.h"
 #include <database/database.h>

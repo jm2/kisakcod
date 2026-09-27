@@ -17,7 +17,13 @@
 #include "actor_events.h"
 #include <universal/com_files.h>
 #include <devgui/devgui.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
+#if defined(_WIN32)
+// KisakCOD ABI port: this TU uses Win32 API types (BOOL/DWORD/HWND, ...) in its
+// own code. Previously they arrived via win_local.h's winsock include; the
+// portable split takes that reach away, so declare the Win32 dependency directly.
+#include <windows.h>
+#endif
 #include <universal/profile.h>
 
 #define AI_DEBUG_ACCURACY_MSG_COUNT 8
