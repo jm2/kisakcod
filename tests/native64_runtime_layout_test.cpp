@@ -188,7 +188,7 @@ struct MirCorpseInfo
 {
     XAnimTree_s *tree;
     std::int32_t entnum;
-    std::int32_t time;
+    std::int32_t levelTime; // mirrors corpseInfo_t.time (level-time counter)
     clientInfo_t ci; // real type from bgame/bg_local.h
     bool falling;
     // padding byte
