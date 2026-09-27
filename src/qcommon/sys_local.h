@@ -125,14 +125,14 @@ char **__cdecl Sys_ListFiles(
 	int wantsubs);
 char *__cdecl Sys_Cwd();
 const char *__cdecl Sys_DefaultCDPath();
-const char *__cdecl Sys_DefaultInstallPath();
+char *__cdecl Sys_DefaultInstallPath();
 void __cdecl Sys_QuitAndStartProcess(const char *exeName, const char *parameters);
 
 
 // win_voice
 bool __cdecl Voice_SendVoiceData();
 bool __cdecl Voice_Init();
-bool __cdecl Voice_Shutdown();
+void __cdecl Voice_Shutdown();
 double __cdecl Voice_GetVoiceLevel();
 void __cdecl Voice_Playback();
 int __cdecl Voice_GetLocalVoiceData();

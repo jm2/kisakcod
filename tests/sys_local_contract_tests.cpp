@@ -68,9 +68,9 @@ static_assert(std::is_same_v<decltype(&Sys_CountFileList), int (KISAK_CDECL *)(c
 static_assert(std::is_same_v<decltype(&Sys_ListFiles), char **(KISAK_CDECL *)(const char *, const char *, const char *, int *, int)>);
 static_assert(std::is_same_v<decltype(&Sys_Cwd), char *(KISAK_CDECL *)()>);
 static_assert(std::is_same_v<decltype(&Sys_DefaultCDPath), const char *(KISAK_CDECL *)()>);
-static_assert(std::is_same_v<decltype(&Sys_DefaultInstallPath), const char *(KISAK_CDECL *)()>);
+static_assert(std::is_same_v<decltype(&Sys_DefaultInstallPath), char *(KISAK_CDECL *)()>);
 static_assert(std::is_same_v<decltype(&Voice_Init), bool (KISAK_CDECL *)()>);
-static_assert(std::is_same_v<decltype(&Voice_Shutdown), bool (KISAK_CDECL *)()>);
+static_assert(std::is_same_v<decltype(&Voice_Shutdown), void (KISAK_CDECL *)()>);
 static_assert(std::is_same_v<decltype(&Voice_IsClientTalking), bool (KISAK_CDECL *)(std::uint32_t)>);
 
 // --- 2. Struct contracts ----------------------------------------------------
