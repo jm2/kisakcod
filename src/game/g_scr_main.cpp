@@ -30,6 +30,9 @@
 #include <database/database.h>
 #include "savememory.h"
 #include <gfx_d3d/r_cinematic.h>
+// R_GetDebugReflectionProbeLocs is declared in r_bsp.h; xanim.h holds
+// renderer types by pointer only since the D3D include cut (KPI K5).
+#include <gfx_d3d/r_bsp.h>
 #include "actor_corpse.h"
 #include <cgame/cg_view.h>
 #include <universal/com_files.h>

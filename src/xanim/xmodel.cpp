@@ -3,6 +3,10 @@
 #include "dobj.h"
 #include "dobj_utils.h"
 
+// GfxPackedVertex (the packed vertex records the triangle visitors read) is
+// defined in r_gfx.h; xanim.h holds renderer types by pointer only since the
+// D3D include cut (KPI K5).
+#include <gfx_d3d/r_gfx.h>
 #include <qcommon/qcommon.h>
 #include <qcommon/mem_track.h>
 #include <universal/com_memory.h>

@@ -5,6 +5,9 @@
 #include "ui_mp.h"
 #include <universal/q_parse.h>
 #include <database/database.h>
+// Material_RegisterHandle is declared in r_material.h; xanim.h holds renderer
+// types by pointer only since the D3D include cut (KPI K5).
+#include <gfx_d3d/r_material.h>
 #include <universal/com_files.h>
 
 int ui_numArenas;

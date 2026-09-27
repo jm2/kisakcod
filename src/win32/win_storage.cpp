@@ -1,4 +1,8 @@
 #include "win_storage.h"
+// timeGetTime (the stats-file nonce source) is a Win32 API; this TU used to
+// reach <Windows.h> transitively through xanim.h -> d3d9.h before the D3D
+// include cut (KPI K5).
+#include <Windows.h>
 #include <qcommon/qcommon.h>
 #include <stringed/stringed_hooks.h>
 #include <qcommon/com_playerprofile.h>

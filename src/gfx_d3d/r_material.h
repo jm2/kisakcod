@@ -1,6 +1,6 @@
 #pragma once
 
-#include <d3d9.h>
+#include "r_d3d9types.h"
 
 #include "r_gfx.h"
 #include <universal/fft.h>

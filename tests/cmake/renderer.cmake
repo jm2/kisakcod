@@ -1,6 +1,23 @@
 # Renderer value-encoding and shader cache tests.
 # Included from tests/CMakeLists.txt.
 
+# r_d3d9types.h ABI: the non-Windows D3D9 stand-in the shared asset headers
+# compile against (KPI K5). GfxImageLoadDef.format is a disk field, so the
+# stand-in's enumerator values and 4-byte width are pinned here.
+add_executable(kisakcod-renderer-d3d9types-tests
+    renderer_d3d9types_tests.cpp
+)
+target_include_directories(kisakcod-renderer-d3d9types-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-renderer-d3d9types-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-renderer-d3d9types-tests)
+set_target_properties(kisakcod-renderer-d3d9types-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME renderer-d3d9types-abi
+    COMMAND kisakcod-renderer-d3d9types-tests
+)
+
 add_executable(kisakcod-renderer-reservation-atomic-tests
     renderer_reservation_atomic_tests.cpp
 )

@@ -1922,6 +1922,43 @@ void __cdecl DB_PrintAssetName(XAssetHeader header, void *data)
     Com_Printf(0, "%s\n", XAssetHeaderName);
 }
 
+// The largest asset record, by value over every asset type. Formerly in
+// xanim/xanim.h, where it forced the complete renderer types (and <d3d9.h>)
+// into every TU that needed any xanim declaration; only the registry clones
+// and sizes records, so the union lives with that one consumer and xanim.h
+// holds the asset types by pointer (KPI K5, docs/design/PLATFORM_POSIX.md).
+union XAssetSize // sizeof=0x878
+{                                       // ...
+    XAssetSize()
+    {
+        fx = NULL;
+    }
+    XAnimParts parts;
+    XModel model;
+    Material material;
+    MaterialPixelShader pixelShader;
+    MaterialVertexShader vertexShader;
+    MaterialTechniqueSet techniqueSet;
+    GfxImage image;
+    snd_alias_list_t sound;
+    SndCurve sndCurve;
+    clipMap_t clipMap;
+    ComWorld comWorld;
+    MapEnts mapEnts;
+    GfxWorld gfxWorld;
+    GfxLightDef lightDef;
+    Font_s font;
+    MenuList menuList;
+    menuDef_t menu;
+    LocalizeEntry localize;
+    WeaponDef weapon;
+    SndDriverGlobals sndDriverGlobals;
+    const FxEffectDef *fx;
+    FxImpactTable impactFx;
+    RawFile rawfile;
+    StringTable stringTable;
+};
+
 void __cdecl DB_CloneXAssetInternal(const XAsset *from, XAsset *to)
 {
     uint32_t size; // [esp+0h] [ebp-4h]

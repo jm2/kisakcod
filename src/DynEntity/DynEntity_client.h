@@ -5,6 +5,10 @@
 
 #include <physics/phys_local.h>
 
+// GfxPlacement (the by-value pose members below) is defined in r_gfx.h;
+// xanim.h holds renderer types by pointer only since the D3D include cut
+// (KPI K5).
+#include <gfx_d3d/r_gfx.h>
 #include <xanim/xanim.h>
 #include <xanim/dobj.h>
 

@@ -1,5 +1,8 @@
 #include "r_outdoor.h"
 #include <universal/assertive.h>
+// GfxWorld is defined in r_bsp.h; xanim.h holds renderer types by pointer
+// only since the D3D include cut (KPI K5).
+#include "r_bsp.h"
 #include "r_image.h"
 
 OutdoorGlob outdoorGlob;

@@ -126,6 +126,20 @@ typedef unsigned char 		byte;
 
 typedef const char* LPCSTR;
 
+// Win32 types the decompiled engine declarations use (BOOL in xanim.h and
+// scr_vm.h, DWORD/WORD/HRESULT in the shared webs). <windows.h> and
+// msslib/mss.h define them on Windows; non-Windows builds reached them
+// transitively through the census <d3d9.h> stub until the D3D include cut
+// (KPI K5, docs/design/PLATFORM_POSIX.md), so they live here with the other
+// dialect typedefs. Same sizes as the Win32 spellings: BOOL is int and DWORD
+// is 32-bit everywhere.
+#if !defined(_WIN32)
+typedef int BOOL;
+typedef unsigned int DWORD;
+typedef unsigned short WORD;
+typedef int HRESULT;
+#endif
+
 typedef enum { qfalse, qtrue }	qboolean;
 #define	qboolean	int		//don't want strict type checking on the qboolean
 
