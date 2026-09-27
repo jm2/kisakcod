@@ -544,6 +544,7 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/sys_error.h"
     "${SRC_DIR}/qcommon/sys_event.h"
     "${SRC_DIR}/qcommon/sys_filesystem.h"
+    "${SRC_DIR}/qcommon/sys_local.h"
     "${SRC_DIR}/qcommon/sys_memory.h"
     "${SRC_DIR}/qcommon/sys_process.h"
     "${SRC_DIR}/qcommon/sys_socket.h"
