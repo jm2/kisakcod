@@ -518,9 +518,9 @@ int __cdecl LoadMapFiles(char* msg)
                         "%s        ...%s, address %p",
                         addressInfo->bestFunction,
                         addressInfo->bestFunctionFilename,
-                        (void*)addressInfo->address)];
+                        reinterpret_cast<void*>(addressInfo->address))];
                 else
-                    curPosb = &curPosa[sprintf(curPosa, "%s, address %p", addressInfo->bestFunction, (void*)addressInfo->address)];
+                    curPosb = &curPosa[sprintf(curPosa, "%s, address %p", addressInfo->bestFunction, reinterpret_cast<void*>(addressInfo->address))];
                 v1 = sprintf(curPosb, "\n");
             }
             curPos = &curPosb[v1];
