@@ -1,6 +1,6 @@
 # NOW
 
-Last reviewed: 2026-09-25 by operator
+Last reviewed: 2026-09-27 by gastown.mayor
 Current gate: G1 (owner actions pending for G0 and G4a)
 WIP limit: 6 (at least 4 on the current gate)
 
@@ -25,12 +25,12 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks; headless unless noted. `#n` is a GitHub is
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 17 | Census fidelity: `_DEBUG`, no `-fdelayed-template-parsing`, error-by-default diagnostics on (#291, #226 flags) | G1 | K1 | census shows the new flags and the GSC table errors; K1 re-baselined | S | ready |
-| 2 | Cut `xanim.h` -> renderer includes and the bgame `aim_assist.h` includes (#279) | G1 | K5 | census: K5 = 0 | S-M | ready |
-| 3 | Split `win_local.h` into portable and Win32-only headers | G1 | K1 | no lin64/a64 first error in `win_local.h` | M | ready |
-| 4 | MSVC-compat header (`ARRAYSIZE`, `_strlwr`, `_isnan`, `_time64`, `_TRUNCATE`, `basename`, `_BitScanReverse` #218), `IsValidSeed` in `ui_shared.h`, `BigShort` (#231) | G1 | K1 | no error on these names | S | ready |
-| 5 | `RUNTIME_SIZE(T, n32, n64)` for the ~34 runtime-only structs | G1 | K1 | no win64 assert-only failure from them | S | ready |
-| 6 | The 7 Win64 source fixes ([NATIVE64](design/NATIVE64.md)) | G1 | K1, K2 | win64 "other" failures = 0 | S | ready |
+| 17 | ki-pyjl0 · Census fidelity: `_DEBUG`, no `-fdelayed-template-parsing`, error-by-default diagnostics on (#291, #226 flags) | G1 | K1 | census shows the new flags and the GSC table errors; K1 re-baselined | S | ready |
+| 2 | ki-9wy0m · Cut `xanim.h` -> renderer includes and the bgame `aim_assist.h` includes (#279) | G1 | K5 | census: K5 = 0 | S-M | ready |
+| 3 | ki-0rt87 · Split `win_local.h` into portable and Win32-only headers | G1 | K1 | no lin64/a64 first error in `win_local.h` | M | ready |
+| 4 | ki-i3se6 · MSVC-compat header (`ARRAYSIZE`, `_strlwr`, `_isnan`, `_time64`, `_TRUNCATE`, `basename`, `_BitScanReverse` #218), `IsValidSeed` in `ui_shared.h`, `BigShort` (#231) | G1 | K1 | no error on these names | S | ready |
+| 5 | ki-4omyh · `RUNTIME_SIZE(T, n32, n64)` for the ~34 runtime-only structs | G1 | K1 | no win64 assert-only failure from them | S | ready |
+| 6 | ki-6xc0q · The 7 Win64 source fixes ([NATIVE64](design/NATIVE64.md)) | G1 | K1, K2 | win64 "other" failures = 0 | S | ready |
 | 7 | Asset size asserts become `ONDISK`/`RUNTIME` pairs; 64-bit loads fail closed | G1 | K2 | 0 size-assert failures; a test: unconverted family raises `ERR_DROP` | M | ready |
 | 8 | `windows-amd64-dedi` preset (`KISAK_ALLOW_UNSUPPORTED_64BIT` exists), Steam off (#265) | G1 | K2 | preset configures; census attempts the Win64 link | S | ready |
 | 18 | GSC parser tables narrow 32768 into `short` (#226) | G1 | K1 | no narrowing error in `src/script` | S | ready |
