@@ -124,7 +124,7 @@ struct client_fields_s // sizeof=0x14
     void(__cdecl *setter)(gclient_s *, const client_fields_s *);
     void(__cdecl *getter)(gclient_s *, const client_fields_s *);
 };
-static_assert(sizeof(client_fields_s) == 0x14);
+RUNTIME_SIZE(client_fields_s, 0x14, 0x20);
 
 struct VehicleLocalPhysics // sizeof=0x34
 {                                       // ...
@@ -132,7 +132,7 @@ struct VehicleLocalPhysics // sizeof=0x34
     int32_t hasGround;                      // ...
     int32_t onGround;                       // ...
 };
-static_assert(sizeof(VehicleLocalPhysics) == 0x34);
+RUNTIME_SIZE(VehicleLocalPhysics, 0x34, 0x38);
 
 struct VehiclePhysicsBackup // sizeof=0x1B8
 {                                       // ...
@@ -212,7 +212,7 @@ struct game_hudelem_field_t // sizeof=0x1C  (SP/MP same)
     void(__cdecl *setter)(game_hudelem_s *, int);
     void(__cdecl *getter)(game_hudelem_s *, int);
 };
-static_assert(sizeof(game_hudelem_field_t) == 0x1C);
+RUNTIME_SIZE(game_hudelem_field_t, 0x1C, 0x28);
 
 
 

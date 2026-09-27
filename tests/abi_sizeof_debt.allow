@@ -1,8 +1,6 @@
 # Exact direct-literal sizeof ABI debt. The assertion kind is part of each key.
 # Normal M1/M4 work removes entries; additions require an explicit debt review.
-DynEntity/DynEntity_client.h|static_assert:sizeof(BreakablePiece)==0xC|1
 DynEntity/DynEntity_client.h|static_assert:sizeof(DynEntSortStruct)==0x8|1
-DynEntity/DynEntity_client.h|static_assert:sizeof(DynEntityAreaParms)==0x14|1
 DynEntity/DynEntity_client.h|static_assert:sizeof(DynEntityClient)==0xC|1
 DynEntity/DynEntity_client.h|static_assert:sizeof(DynEntityColl)==0x14|1
 DynEntity/DynEntity_client.h|static_assert:sizeof(DynEntityCollSector)==0x14|1
@@ -12,7 +10,6 @@ DynEntity/DynEntity_client.h|static_assert:sizeof(DynEntityCollWorld)==0x501C|1
 DynEntity/DynEntity_client.h|static_assert:sizeof(DynEntityCreateParams)==0x1C0|1
 DynEntity/DynEntity_client.h|static_assert:sizeof(DynEntityDef)==0x60|1
 DynEntity/DynEntity_client.h|static_assert:sizeof(DynEntityPose)==0x20|1
-DynEntity/DynEntity_client.h|static_assert:sizeof(DynEntityProps)==0x8|1
 EffectsCore/fx_random.cpp|static_assert:sizeof(fx_randomTable)==0x7EC|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxActiveMarkSurf)==0x14|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxBeam)==0x34|1
@@ -39,7 +36,6 @@ EffectsCore/fx_system.h|static_assert:sizeof(MarkInfoCollidedBModel)==0xC|1
 EffectsCore/fx_system.h|static_assert:sizeof(MarkInfoCollidedDObj)==0xC|1
 EffectsCore/fx_system.h|static_assert:sizeof(MarkModelCoreContext)==0x1C|1
 aim_assist/aim_assist.h|static_assert:sizeof(AimAssistGlobals)==0xE34|1
-aim_assist/aim_assist.h|static_assert:sizeof(AimInput)==0x30|1
 aim_assist/aim_assist.h|static_assert:sizeof(AimOutput)==0x10|1
 aim_assist/aim_assist.h|static_assert:sizeof(AimScreenTarget)==0x34|1
 aim_assist/aim_assist.h|static_assert:sizeof(AimTarget)==0x2C|1
@@ -48,9 +44,6 @@ aim_assist/aim_assist.h|static_assert:sizeof(AimTweakables)==0x20|1
 bgame/bg_local.h|static_assert:sizeof(ActionSlotParam)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(ActionSlotParam_SpecifyWeapon)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(BulletFireParams)==0x40|1
-bgame/bg_local.h|static_assert:sizeof(BulletTraceResults)==0x44|1
-bgame/bg_local.h|static_assert:sizeof(CEntFx)==0x8|1
-bgame/bg_local.h|static_assert:sizeof(CEntPlayerInfo)==0xC|1
 bgame/bg_local.h|static_assert:sizeof(CEntTurretAngles)==0x8|1
 bgame/bg_local.h|static_assert:sizeof(CEntTurretInfo)==0x10|1
 bgame/bg_local.h|static_assert:sizeof(CEntVehicleInfo)==0x24|1
@@ -65,25 +58,14 @@ bgame/bg_local.h|static_assert:sizeof(VehicleJitter)==0x3C|1
 bgame/bg_local.h|static_assert:sizeof(VehicleRideSlot_t)==0xC|1
 bgame/bg_local.h|static_assert:sizeof(VehicleTags)==0x60|1
 bgame/bg_local.h|static_assert:sizeof(VehicleTurret)==0x14|1
-bgame/bg_local.h|static_assert:sizeof(animConditionTable_t)==0x8|1
-bgame/bg_local.h|static_assert:sizeof(animScriptCommand_t)==0x10|1
 bgame/bg_local.h|static_assert:sizeof(animScriptCondition_t)==0xC|1
-bgame/bg_local.h|static_assert:sizeof(animScriptData_t)==0x9A9D0|1
-bgame/bg_local.h|static_assert:sizeof(animScriptItem_t)==0x100|1
-bgame/bg_local.h|static_assert:sizeof(animScript_t)==0x204|1
-bgame/bg_local.h|static_assert:sizeof(animStringItem_t)==0x8|1
 bgame/bg_local.h|static_assert:sizeof(animation_s)==0x68|1
-bgame/bg_local.h|static_assert:sizeof(bgs_t)==0xADD08|1
-bgame/bg_local.h|static_assert:sizeof(bgs_t_human)==0x10|1
 bgame/bg_local.h|static_assert:sizeof(clientControllers_t)==0x60|1
-bgame/bg_local.h|static_assert:sizeof(clientInfo_t)==0x4CC|1
 bgame/bg_local.h|static_assert:sizeof(controller_info_t)==0x60|1
 bgame/bg_local.h|static_assert:sizeof(gitem_s)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(hudElemSoundInfo_t)==0x4|1
-bgame/bg_local.h|static_assert:sizeof(lerpFrame_t)==0x30|1
 bgame/bg_local.h|static_assert:sizeof(objective_t)==0x1C|1
 bgame/bg_local.h|static_assert:sizeof(playerState_s)==0x2F64|1
-bgame/bg_local.h|static_assert:sizeof(pml_t)==0x80|1
 bgame/bg_local.h|static_assert:sizeof(scr_vehicle_s)==0x354|1
 bgame/bg_local.h|static_assert:sizeof(shellshock_parms_t)==0x268|1
 bgame/bg_local.h|static_assert:sizeof(shellshock_parms_t_lookcontrol)==0x14|1
@@ -91,7 +73,6 @@ bgame/bg_local.h|static_assert:sizeof(shellshock_parms_t_movement)==0x1|1
 bgame/bg_local.h|static_assert:sizeof(shellshock_parms_t_screenblend)==0x14|1
 bgame/bg_local.h|static_assert:sizeof(shellshock_parms_t_sound)==0x230|1
 bgame/bg_local.h|static_assert:sizeof(shellshock_parms_t_view)==0xC|1
-bgame/bg_local.h|static_assert:sizeof(shellshock_t)==0x20|1
 bgame/bg_local.h|static_assert:sizeof(structscr_anim_s)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(turretInfo_s)==0x48|1
 bgame/bg_local.h|static_assert:sizeof(vehicle_node_t)==0x44|1
@@ -99,8 +80,6 @@ bgame/bg_local.h|static_assert:sizeof(vehicle_pathpos_t)==0xC0|1
 bgame/bg_local.h|static_assert:sizeof(vehicle_physic_t)==0xF8|1
 bgame/bg_local.h|static_assert:sizeof(viewDamage_t)==0xC|1
 bgame/bg_local.h|static_assert:sizeof(viewLerpWaypoint_s)==0xC|1
-bgame/bg_local.h|static_assert:sizeof(viewState_t)==0x24|1
-bgame/bg_local.h|static_assert:sizeof(weaponState_t)==0x54|1
 bgame/bg_public.h|static_assert:sizeof(corpse_ent_t)==0x4|1
 bgame/bg_public.h|static_assert:sizeof(entityShared_t)==0x68|1
 bgame/bg_public.h|static_assert:sizeof(item_ent_t)==0xC|1
@@ -114,26 +93,15 @@ devgui/devgui.h|static_assert:sizeof(devguiGlob_t)==0x5E10|1
 game/actor.h|static_assert:sizeof(actor_s)==0x1e90|1
 game/actor.h|static_assert:sizeof(sentient_info_t)==0x28|1
 game/enthandle.h|static_assert:sizeof(EntHandle)==0x4|1
-game/enthandle.h|static_assert:sizeof(EntHandleInfo)==0x8|1
 game/enthandle.h|static_assert:sizeof(EntHandleList)==0x2|1
-game/game_public.h|static_assert:sizeof(VehicleLocalPhysics)==0x34|1
-game/game_public.h|static_assert:sizeof(client_fields_s)==0x14|1
-game/game_public.h|static_assert:sizeof(game_hudelem_field_t)==0x1C|1
 game/game_public.h|static_assert:sizeof(game_hudelem_s)==0xAC|1
 game/pathnode.h|static_assert:sizeof(pathbasenode_t)==16|1
 game/pathnode.h|static_assert:sizeof(pathlink_s)==12|1
 game/pathnode.h|static_assert:sizeof(pathnode_tree_nodes_t)==8|1
 game_mp/g_main_mp.h|static_assert:sizeof(cached_tag_mat_t)==0x3C|1
-game_mp/g_main_mp.h|static_assert:sizeof(entityHandler_t)==0x28|1
-game_mp/g_main_mp.h|static_assert:sizeof(level_locals_t)==0x2E6C|1
 game_mp/g_main_mp.h|static_assert:sizeof(trigger_info_t)==0xC|1
-game_mp/g_public_mp.h|static_assert:sizeof(BuiltinFunctionDef)==0xC|1
-game_mp/g_public_mp.h|static_assert:sizeof(BuiltinMethodDef)==0xC|1
-game_mp/g_public_mp.h|static_assert:sizeof(corpseInfo_t)==0x4DC|1
 game_mp/g_public_mp.h|static_assert:sizeof(gameTypeScript_t)==0x84|1
-game_mp/g_public_mp.h|static_assert:sizeof(scr_data_t)==0x379C|1
 game_mp/g_public_mp.h|static_assert:sizeof(scr_data_t_s)==0x10A8|1
-game_mp/g_public_mp.h|static_assert:sizeof(useList_t)==0x8|1
 gfx_d3d/r_bsp.h|static_assert:sizeof(GfxWorld)==0x2DC|1
 gfx_d3d/r_font.h|static_assert:sizeof(Font_s)==24|1
 gfx_d3d/r_gfx.h|static_assert:sizeof(GfxImage)==36|1
@@ -158,9 +126,6 @@ sound/snd_public.h|static_assert:sizeof(SndCurve)==72|1
 sound/snd_public.h|static_assert:sizeof(snd_alias_list_t)==12|1
 sound/snd_public.h|static_assert:sizeof(snd_alias_t)==92|1
 universal/fft.h|static_assert:sizeof(complex_s)==8|1
-universal/q_parse.h|static_assert:sizeof(structParseThreadInfo)==0x460C|1
-universal/q_parse.h|static_assert:sizeof(structcom_parse_mark_t)==0x14|1
-universal/q_parse.h|static_assert:sizeof(structparseInfo_t)==0x420|1
 xanim/dobj.h|static_assert:sizeof(DObjAnimMat)==32|1
 xanim/xanim.h|static_assert:sizeof(RawFile)==12|1
 xanim/xanim.h|static_assert:sizeof(ScriptStringList)==8|1

@@ -79,7 +79,7 @@ struct DynEntityAreaParms // sizeof=0x14
     uint16_t maxCount;          // ...
     uint16_t count;             // ...
 };
-static_assert(sizeof(DynEntityAreaParms) == 0x14);
+RUNTIME_SIZE(DynEntityAreaParms, 0x14, 0x28);
 
 struct DynEntSortStruct // sizeof=0x8
 {
@@ -100,7 +100,7 @@ struct BreakablePiece // sizeof=0xC
     bool active;                        // ...
     // padding byte
 };
-static_assert(sizeof(BreakablePiece) == 0xC);
+RUNTIME_SIZE(BreakablePiece, 0xC, 0x10);
 
 struct pointtrace_t;
 struct trace_t;
@@ -254,7 +254,7 @@ struct DynEntityProps // sizeof=0x8
     bool usePhysics;
     bool destroyable;
 };
-static_assert(sizeof(DynEntityProps) == 0x8);
+RUNTIME_SIZE(DynEntityProps, 0x8, 0x10);
 
 struct DynEntityCreateParams // sizeof=0x1C0
 {                                       // ...

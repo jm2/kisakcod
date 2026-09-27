@@ -25,7 +25,7 @@ struct BuiltinFunctionDef // sizeof=0xC
     void(__cdecl *actionFunc)();
     int32_t type;
 };
-static_assert(sizeof(BuiltinFunctionDef) == 0xC);
+RUNTIME_SIZE(BuiltinFunctionDef, 0xC, 0x18);
 
 struct BuiltinMethodDef // sizeof=0xC
 {                                       // ...
@@ -33,7 +33,7 @@ struct BuiltinMethodDef // sizeof=0xC
     void(__cdecl *actionFunc)(scr_entref_t); // ...
     int32_t type;                           // ...
 };
-static_assert(sizeof(BuiltinMethodDef) == 0xC);
+RUNTIME_SIZE(BuiltinMethodDef, 0xC, 0x18);
 
 static uint16_t *modNames[16] =
 {
@@ -90,7 +90,7 @@ struct corpseInfo_t // sizeof=0x4DC
     // padding byte
     // padding byte
 };
-static_assert(sizeof(corpseInfo_t) == 0x4DC);
+RUNTIME_SIZE(corpseInfo_t, 0x4DC, 0x500);
 
 struct scr_data_t // sizeof=0x379C
 {                                       // ...
@@ -102,7 +102,7 @@ struct scr_data_t // sizeof=0x379C
     int32_t createstruct;                   // ...
     corpseInfo_t playerCorpseInfo[8];   // ...
 };
-static_assert(sizeof(scr_data_t) == 0x379C);
+RUNTIME_SIZE(scr_data_t, 0x379C, 0x38C0);
 
 // g_active_mp
 void __cdecl P_DamageFeedback(gentity_s *player);
@@ -1052,7 +1052,7 @@ struct useList_t // sizeof=0x8
     gentity_s *ent;                     // ...
     float score;
 };
-static_assert(sizeof(useList_t) == 0x8);
+RUNTIME_SIZE(useList_t, 0x8, 0x10);
 
 void __cdecl Player_UpdateActivate(gentity_s *ent);
 char __cdecl Player_ActivateCmd(gentity_s *ent);
