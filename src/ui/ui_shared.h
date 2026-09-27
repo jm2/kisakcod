@@ -1388,36 +1388,39 @@ void __cdecl bitwiseOr(Operand *leftSide, Operand *rightSide, Operand *result);
 
 // ui_shared_obj
 // KISAKTODO: Rewrite the functions to actually use these templated versions. (There aren't a ton so they were just pasted in)
-template<typename T, int useless, int HASH_SEED>
+// Entry record only: the method stubs that used to sit here called an
+// undeclared IsValidSeed, which broke every TU including this header under
+// real two-phase lookup (only the census's -fdelayed-template-parsing hid
+// it); ui_shared_obj.cpp has the per-instantiation functions.
+template<typename T, int HASH_COUNT, int HASH_SEED>
 struct KeywordHashEntry
 {
-    bool KeywordHash_IsValidSeed(int count, int seed)
-    {
-
-    }
-    int KeywordHash_PickSeed(int count)
-    {
-        for (int seed = 0; !IsValidSeed(count, HASH_SEED); seed++)
-        {
-            iassert(seed != 65536);
-        }
-    }
-    void KeywordHash_Validate()
-    {
-        if (!KeywordHash_IsValidSeed())
-        {
-            // MyAssertHandler(
-            //     ".\\ui\\ui_shared_obj.cpp",
-            //     685,
-            //     0,
-            //     "%s\n\t(KeywordHash_PickSeed( array, count )) = %i",
-            //     "(KeywordHash_IsValidSeed( array, count, HASH_SEED ))",
-            //     v2);
-        }
-    }
     const char *keyword;
     int(__cdecl *func)(T *, int);
 };
+
+// Seed-probing hash for the keyword tables (defined in ui_shared_obj.cpp).
+int __cdecl KeywordHash_KeySeed(const char *keyword, int hashCount, int seed);
+
+// True when every one of `count` keywords hashes to its own bucket under
+// `seed` — the check KeywordHash_PickSeed_* brute-forces a seed with and
+// KeywordHash_Validate_* asserts against the compiled-in HASH_SEED. Moved
+// here from the per-instantiation copies in ui_shared_obj.cpp, which now
+// delegate to it.
+template<typename T, int HASH_COUNT, int HASH_SEED>
+inline bool IsValidSeed(const KeywordHashEntry<T, HASH_COUNT, HASH_SEED> *array, int count, int seed)
+{
+    unsigned char used[HASH_COUNT] = {};
+    for (int index = 0; index < count; ++index)
+    {
+        const int hash = KeywordHash_KeySeed(array[index].keyword, HASH_COUNT, seed);
+        if (used[hash])
+            return false;
+        used[hash] = 1;
+    }
+    return true;
+}
+
 int __cdecl PC_CheckTokenString(source_s *source, const char *string);
 EvalValue *__cdecl Eval_Solve(EvalValue *result, Eval *eval);
 bool __cdecl Eval_AnyMissingOperands(const Eval *eval);
