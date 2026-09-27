@@ -25,7 +25,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks; headless unless noted. `#n` is a GitHub is
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 17 | ki-pyjl0 · Census fidelity: `_DEBUG`, no `-fdelayed-template-parsing`, error-by-default diagnostics on (#291, #226 flags) | G1 | K1 | census shows the new flags and the GSC table errors; K1 re-baselined | S | ready |
+| 17 | ki-pyjl0 · Census fidelity: `_DEBUG`, no `-fdelayed-template-parsing`, error-by-default diagnostics on (#291, #226 flags) | G1 | K1 | the census runs with the new flags and shows the GSC table errors | S | ready |
 | 2 | ki-9wy0m · Cut `xanim.h` -> renderer includes and the bgame `aim_assist.h` includes (#279) | G1 | K5 | census: K5 = 0 | S-M | ready |
 | 3 | ki-0rt87 · Split `win_local.h` into portable and Win32-only headers | G1 | K1 | no lin64/a64 first error in `win_local.h` | M | ready |
 | 4 | ki-i3se6 · MSVC-compat header (`ARRAYSIZE`, `_strlwr`, `_isnan`, `_time64`, `_TRUNCATE`, `basename`, `_BitScanReverse` #218), `IsValidSeed` in `ui_shared.h`, `BigShort` (#231) | G1 | K1 | no error on these names | S | ready |
