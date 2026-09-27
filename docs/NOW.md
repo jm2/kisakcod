@@ -8,11 +8,11 @@ The mayor is the only role that edits this file ([AGENTS.md](../AGENTS.md)).
 
 ## KPIs
 
-From the master census at 4b2897d0; row 17 re-baselines K1. Live values: the `Native64 census` summary of the latest [master CI run](https://github.com/jm2/kisakcod/actions/workflows/ci.yml?query=branch%3Amaster).
+From the master census at 4b2897d0; row 17 re-baselines K1 (2026-09-27 flags: `_DEBUG`, no `-fdelayed-template-parsing`, `-Werror=c++11-narrowing`). Live values: the `Native64 census` summary of the latest [master CI run](https://github.com/jm2/kisakcod/actions/workflows/ci.yml?query=branch%3Amaster).
 
 | KPI | Measures | Value | Target | Source |
 | --- | --- | --- | --- | --- |
-| K1 | 64-bit headless TUs passing syntax-only | win64 112/243 · lin64 103/236 · a64 103/236 | all (G1) | census |
+| K1 | 64-bit headless TUs passing syntax-only | win64 112/243 · lin64 100/236 · a64 100/236 | all (G1) | census |
 | K2 | 64-bit headless real link | none; Win64 probe: 55 undefined, 4 TUs excluded | Win64, Linux amd64 (G1) | census |
 | K3 | Upstream engine TUs in the Linux test build | 8/475 | rising | census |
 | K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan | 0/25 | 25/25 (G2) | this file |
