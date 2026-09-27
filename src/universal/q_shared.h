@@ -28,6 +28,14 @@
 #pragma warning(disable : 4786)		// identifier was truncated
 #endif // _WIN32
 
+// KisakCOD port: the decompiled sources call the MSVC CRT spellings
+// (ARRAYSIZE, _strlwr, _isnan, _time64, _TRUNCATE, _BitScanReverse) directly.
+// This header must precede the C standard headers below: its glibc basename()
+// rename only works while <string.h> is unparsed. See
+// msvc_crt_compat.h for the per-name rationale and
+// tests/msvc_crt_compat_tests.cpp for the runtime contract.
+#include "msvc_crt_compat.h"
+
 #include "../universal/assertive.h" // LWSS add
 
 #include <assert.h>
@@ -99,12 +107,9 @@
 int __cdecl ShortSwap(__int16 l);
 int __cdecl LongSwap(int l);
 
-static ID_INLINE short BigShort(short l) { return ShortSwap(l); }
-#define LittleShort
-static ID_INLINE int BigLong(int l) { return LongSwap(l); }
-#define LittleLong
-//static ID_INLINE float BigFloat(const float *l) { FloatSwap(l); }
-#define LittleFloat
+// KisakCOD port: the Big*/Little* byte-order helpers used to live here as
+// WIN32-only inlines; they are now defined once for every target below,
+// next to the ShortSwap/LongSwap declarations (issue #231).
 
 #define	PATH_SEP '\\'
 
@@ -682,7 +687,59 @@ void __cdecl Com_AssembleFilepath(char *folder, char *name, char *extension, cha
 const char *__cdecl Com_GetExtensionSubString(const char *filename);
 void __cdecl Com_StripExtension(char *in, char *out);
 void __cdecl Com_DefaultExtension(char *path, uint32_t maxSize, const char *extension);
-__int16 __cdecl BigShort(__int16 l);
+// Byte-order helpers, one definition for every target (issue #231: BigShort
+// was declared for all targets but defined only under WIN32, so the POSIX
+// headless callers — NET_StringToAdr, the master heartbeat — failed to
+// link). Keyed on KISAK_LITTLE_ENDIAN from kisak_abi.h; on little-endian
+// targets the Big* forms swap bytes and the Little* forms are identity,
+// byte-identical to the old WIN32-only inlines.
+constexpr __int16 BigShort(__int16 l)
+{
+#if KISAK_LITTLE_ENDIAN
+    return static_cast<__int16>(
+        static_cast<unsigned short>(
+            ((static_cast<unsigned short>(l) & 0x00FFu) << 8)
+            | ((static_cast<unsigned short>(l) & 0xFF00u) >> 8)));
+#else
+    return l;
+#endif
+}
+
+constexpr int BigLong(int l)
+{
+#if KISAK_LITTLE_ENDIAN
+    const unsigned int u = static_cast<unsigned int>(l);
+    return static_cast<int>(
+        ((u & 0x000000FFu) << 24) | ((u & 0x0000FF00u) << 8)
+        | ((u & 0x00FF0000u) >> 8) | ((u & 0xFF000000u) >> 24));
+#else
+    return l;
+#endif
+}
+
+constexpr __int16 LittleShort(__int16 l)
+{
+#if KISAK_LITTLE_ENDIAN
+    return l;
+#else
+    return BigShort(l);
+#endif
+}
+
+constexpr int LittleLong(int l)
+{
+#if KISAK_LITTLE_ENDIAN
+    return l;
+#else
+    return BigLong(l);
+#endif
+}
+
+constexpr float LittleFloat(float l)
+{
+    return l;
+}
+
 int __cdecl ShortSwap(__int16 l);
 __int16 __cdecl ShortNoSwap(__int16 l);
 int __cdecl LongSwap(int l);
