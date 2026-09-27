@@ -316,25 +316,12 @@ void CheckMirroredStructWidening()
     CHECK(sizeof(MirAimInput) == Width(0x30, 0x38));
 }
 
-// The n32 constants are the retail Windows x86 contract. On a 32-bit target
-// every migrated struct must still match its original frozen size; this is
-// the regression guard for "a change must not alter the Windows x86 build's
-// behaviour". The RUNTIME_SIZE asserts already enforce it at compile time,
-// but re-stating the ILP32 halves here documents the pair in one place.
-void CheckIlp32ContractConstantsAreStated()
-{
-    CHECK(KISAK_PTR_BITS == 32 || KISAK_PTR_BITS == 64);
-    CHECK(Width(0x420, 0x438) == (KISAK_ARCH_64BIT ? 0x438u : 0x420u));
-    CHECK(Width(0x8, 0x10) == (KISAK_ARCH_64BIT ? 0x10u : 0x8u));
-    CHECK(Width(0xADD08, 0xDBDE8) == (KISAK_ARCH_64BIT ? 0xDBDE8u : 0xADD08u));
-}
 }  // namespace
 
 int main()
 {
     CheckPortableHeaderWidening();
     CheckMirroredStructWidening();
-    CheckIlp32ContractConstantsAreStated();
 
     if (native64_runtime_layout_test::g_failures != 0)
     {
