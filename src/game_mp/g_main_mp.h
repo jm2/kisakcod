@@ -25,7 +25,7 @@ struct entityHandler_t // sizeof=0x28
     int32_t methodOfDeath;
     int32_t splashMethodOfDeath;
 };
-static_assert(sizeof(entityHandler_t) == 0x28);
+RUNTIME_SIZE(entityHandler_t, 0x28, 0x48);
 
 struct trigger_info_t // sizeof=0xC
 {                                       // ...
@@ -106,7 +106,7 @@ struct level_locals_t // sizeof=0x2E6C
     float compassNorth[2];              // ...
     scr_vehicle_s *vehicles;            // ...
 };
-static_assert(sizeof(level_locals_t) == 0x2E6C);
+RUNTIME_SIZE(level_locals_t, 0x2E6C, 0x3098);
 
 void __cdecl TRACK_g_main();
 int32_t __cdecl G_GetSavePersist();

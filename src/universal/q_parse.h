@@ -1,4 +1,5 @@
 #pragma once
+#include <universal/kisak_abi.h>
 #include <cstdint>
 
 struct parseInfo_t // sizeof=0x420
@@ -19,7 +20,7 @@ struct parseInfo_t // sizeof=0x420
     const char *backup_text;
     const char *parseFile;
 };
-static_assert(sizeof(struct parseInfo_t) == 0x420);
+RUNTIME_SIZE(parseInfo_t, 0x420, 0x438);
 
 struct ParseThreadInfo // sizeof=0x460C
 {                                       // ...
@@ -29,7 +30,7 @@ struct ParseThreadInfo // sizeof=0x460C
     const char *prevTokenPos;
     char line[1024];
 };
-static_assert(sizeof(struct ParseThreadInfo) == 0x460C);
+RUNTIME_SIZE(ParseThreadInfo, 0x460C, 0x4798);
 
 struct com_parse_mark_t // sizeof=0x14
 {                                       // ...
@@ -39,7 +40,7 @@ struct com_parse_mark_t // sizeof=0x14
     int backup_lines;
     const char *backup_text;
 };
-static_assert(sizeof(struct com_parse_mark_t) == 0x14);
+RUNTIME_SIZE(com_parse_mark_t, 0x14, 0x20);
 
 void __cdecl TRACK_q_parse();
 void __cdecl Com_InitParse();

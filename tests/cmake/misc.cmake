@@ -110,6 +110,29 @@ set_target_properties(kisakcod-abi-atomics-tests PROPERTIES
 )
 add_test(NAME abi-atomics-and-layout-macros COMMAND kisakcod-abi-atomics-tests)
 
+# native64_runtime_layout_test: contract tests for the bead-5 (ki-4omyh)
+# RUNTIME_SIZE migration of the runtime-only structs. The headers included
+# for real here are the ones whose include chain compiles in a portable TU;
+# the production-bound ones (game_mp/g_public_mp.h, game/game_public.h,
+# DynEntity/DynEntity_client.h, aim_assist/aim_assist.h) are mirrored
+# member-for-member in the TU. Engine includes are SYSTEM so the production
+# headers' GNU extensions and unused-parameter warnings do not fight the
+# strict test-warning gate on this target.
+add_executable(kisakcod-native64-runtime-layout-tests
+    native64_runtime_layout_test.cpp)
+target_include_directories(
+    kisakcod-native64-runtime-layout-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-native64-runtime-layout-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-native64-runtime-layout-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-native64-runtime-layout-tests)
+set_target_properties(kisakcod-native64-runtime-layout-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME native64-runtime-layout-contracts
+    COMMAND kisakcod-native64-runtime-layout-tests)
+
 add_executable(kisakcod-cg-pose-atomic-tests
     cg_pose_atomic_tests.cpp
 )
