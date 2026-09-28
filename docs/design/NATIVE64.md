@@ -118,7 +118,7 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 | --- | --- | --- |
 | `tests/abi_sizeof_debt.allow` (+ `abi_sizeof_formula_debt.allow`) | `abi-sizeof-debt-tripwire` | 183 raw sizeof asserts (+ 8 formula asserts) |
 | `tests/pointer_truncation.allow` | `pointer-truncation-tripwire` | 24 `(int)&` and page-mask sites. The regex misses most casts: the census finds ≈240 |
-| `tests/headless_include_debt.allow` | `dedi-headless-client-media-include-debt` | 28 direct client/media includes. Transitive reach is K5 |
+| `tests/headless_include_debt.allow` | `dedi-headless-client-media-include-debt` | 29 direct client/media includes. Transitive reach is K5 |
 
 ## KPIs
 
