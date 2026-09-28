@@ -722,7 +722,13 @@ constexpr __int16 LittleShort(__int16 l)
 #if KISAK_LITTLE_ENDIAN
     return l;
 #else
-    return BigShort(l);
+    // Explicit byte swap: BigShort is identity on a big-endian host, so
+    // delegating to it left LittleShort returning host order where its
+    // contract is little-endian order (CodeRabbit review, PR 307).
+    return static_cast<__int16>(
+        static_cast<unsigned short>(
+            ((static_cast<unsigned short>(l) & 0x00FFu) << 8)
+            | ((static_cast<unsigned short>(l) & 0xFF00u) >> 8)));
 #endif
 }
 
@@ -731,7 +737,13 @@ constexpr int LittleLong(int l)
 #if KISAK_LITTLE_ENDIAN
     return l;
 #else
-    return BigLong(l);
+    // Explicit byte swap, same reason as LittleShort: BigLong is identity
+    // on a big-endian host, which returned host order instead of
+    // little-endian order.
+    const unsigned int u = static_cast<unsigned int>(l);
+    return static_cast<int>(
+        ((u & 0x000000FFu) << 24) | ((u & 0x0000FF00u) << 8)
+        | ((u & 0x00FF0000u) >> 8) | ((u & 0xFF000000u) >> 24));
 #endif
 }
 
