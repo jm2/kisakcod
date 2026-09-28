@@ -538,7 +538,7 @@ int __cdecl Sys_SetClipboardData(const char *text)
 	}
 }
 
-void __cdecl Sys_QueEvent(uint32_t time, sysEventType_t type, int value, int value2, int ptrLength, void *ptr)
+void __cdecl Sys_QueEvent(uint32_t timeMs, sysEventType_t type, int value, int value2, int ptrLength, void *ptr)
 {
 	sysEvent_t *ev; // [esp+0h] [ebp-4h]
 
@@ -552,9 +552,9 @@ void __cdecl Sys_QueEvent(uint32_t time, sysEventType_t type, int value, int val
 		++eventTail;
 	}
 	++eventHead;
-	if (!time)
-		time = Sys_Milliseconds();
-	ev->evTime = time;
+	if (!timeMs)
+		timeMs = Sys_Milliseconds();
+	ev->evTime = timeMs;
 	ev->evType = type;
 	ev->evValue = value;
 	ev->evValue2 = value2;

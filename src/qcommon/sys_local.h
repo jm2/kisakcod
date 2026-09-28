@@ -84,11 +84,16 @@ extern int client_state; // LWSS ADD. This looks similar to signonstate
 
 struct sysEvent_t // sizeof=0x18
 {                                       // ...
+	// cppcheck-suppress unusedStructMember -- cross-TU use: written by Sys_QueEvent (win32/win_main.cpp), read by Com_HandleKeyEvent from Com_EventLoop/Debug_EventLoop (qcommon/common.cpp).
 	int evTime;                         // ...
 	sysEventType_t evType;              // ...
+	// cppcheck-suppress unusedStructMember -- cross-TU use: written by Sys_QueEvent (win32/win_main.cpp), read by Com_HandleCharEvent/Com_HandleKeyEvent (qcommon/common.cpp).
 	int evValue;                        // ...
+	// cppcheck-suppress unusedStructMember -- cross-TU use: written by Sys_QueEvent (win32/win_main.cpp), read by Com_HandleKeyEvent (qcommon/common.cpp).
 	int evValue2;                       // ...
+	// cppcheck-suppress unusedStructMember -- retail layout member of the sizeof=0x18 event record; Sys_QueEvent (win32/win_main.cpp) stores the payload length.
 	int evPtrLength;                    // ...
+	// cppcheck-suppress unusedStructMember -- cross-TU use: payload consumed and freed by Com_EventLoop (qcommon/common.cpp) and Sys_ShutdownEvents (win32/win_main.cpp).
 	void *evPtr;                        // ...
 };
 
@@ -102,7 +107,7 @@ void __cdecl  Sys_Quit();
 void __cdecl Sys_Print(const char *msg);
 char *__cdecl Sys_GetClipboardData();
 int __cdecl Sys_SetClipboardData(const char *text);
-void __cdecl Sys_QueEvent(uint32_t time, sysEventType_t type, int value, int value2, int ptrLength, void *ptr);
+void __cdecl Sys_QueEvent(uint32_t timeMs, sysEventType_t type, int value, int value2, int ptrLength, void *ptr);
 void Sys_ShutdownEvents();
 void __cdecl Sys_LoadingKeepAlive();
 sysEvent_t *__cdecl Sys_GetEvent(sysEvent_t *result);
