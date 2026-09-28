@@ -97,8 +97,10 @@ void TestSeedingIsPerThreadAndRestorable()
     Kisak_SetRandState(before);
     Expect(Kisak_rand() == first, "restoring the RNG state replays the same draw");
 
-    // srand returns the seed, matching MSVC's CRT contract.
-    Expect(Kisak_srand(7u) == 7, "srand returns its seed argument");
+    // MSVC's `void srand(unsigned int)` stores the seed as the new state; the
+    // first draw then advances from it. Pin the stored state, which is the
+    // half of the CRT contract callers can observe.
+    Kisak_srand(7u);
     Expect(Kisak_GetRandState() == 7u, "srand stores the seed as the state");
 }
 

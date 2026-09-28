@@ -2356,16 +2356,17 @@ void __cdecl Rand_Init(int seed)
 // already used as a separate stream. Sharing one state would silently
 // couple two call families that never shared a stream, and would change
 // every existing flrand result. Both streams keep their exact historical
-// step; only the CRT `rand` entry point is redirected here.
+// step; only the CRT `rand` stream is replaced here.
 thread_local uint32_t Kisak_randState = 0;
 
-int __cdecl Kisak_srand(unsigned int seed)
+void __cdecl Kisak_srand(unsigned int seed)
 {
-    // MSVC's srand stores the seed and returns it; the first Kisak_rand() then
-    // advances from that stored value. Mirror both halves so callers that
-    // use srand's return keep working.
+    // MSVC's srand is `void srand(unsigned int)` and stores the seed as the
+    // new state; the first Kisak_rand() then advances from that stored value.
+    // The state half is the CRT contract the parity test pins. The signature
+    // mirrors MSVC exactly (void return), so this is a drop-in stand-in for
+    // the CRT entry point at every engine call site.
     Kisak_randState = static_cast<uint32_t>(seed);
-    return static_cast<int>(seed);
 }
 
 int __cdecl Kisak_rand()

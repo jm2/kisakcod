@@ -1476,9 +1476,10 @@ int __cdecl G_irand(int min, int max)
     // game/ side of the same helper (g_utils.cpp) already widens the
     // product to __int64 and shifts by 15, which is the value the 32-bit
     // multiply was meant to produce. Do the same here so the MP path
-    // matches the SP path and retail's intended range, without changing
-    // any in-range result: the widened product >> 15 equals the original
-    // product / 0x8000 for every input the 32-bit form survived.
+    // matches the SP path and retail's intended range. For every call with
+    // max >= min -- the shape every retail caller passes -- the widened
+    // product >> 15 equals the original product / 0x8000 on the inputs the
+    // 32-bit form survived, so no in-range result changes.
     return min + (int)(((long long)(max - min) * G_rand()) >> 15);
 }
 

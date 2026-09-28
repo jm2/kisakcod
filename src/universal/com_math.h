@@ -176,12 +176,12 @@ void __cdecl Rand_Init(int seed);
 // engine's `rand() / 32768.0` scaling and every downstream `G_*rand` helper
 // produced a different sequence — and a different range — off Windows.
 //
-// One engine RNG now sits behind every engine `rand` and `srand` call
-// (the namespaced macros immediately below redirect those two CRT spellings
-// to Kisak_rand/Kisak_srand on non-MSVC hosts; MSVC keeps its CRT). The LCG is
-// defined here as a header-only primitive so both the engine TU and the
-// parity test compile the exact same state machine; the per-thread state
-// matches MSVC's per-thread CRT state. Vendored Speex keeps its own `rand`.
+// One engine RNG now sits behind every engine `rand` and `srand` call: engine
+// call sites spell Kisak_rand()/Kisak_srand() explicitly (see the ABI-port
+// note below for why the CRT names are not macro-mapped). The LCG is defined
+// here as a header-only primitive so both the engine TU and the parity test
+// compile the exact same state machine; the per-thread state matches MSVC's
+// per-thread CRT state. Vendored Speex keeps its own `rand`.
 //
 // `flrand`/`irand`/`Rand_Init` below are a SEPARATE portable LCG (`>> 17`);
 // retail already ran them as their own stream, so they are left alone.
@@ -196,7 +196,7 @@ inline int Kisak_rand_from_state(uint32_t &state)
     return static_cast<int>((state >> 16) & 0x7FFFu);
 }
 
-int __cdecl Kisak_srand(unsigned int seed);
+void __cdecl Kisak_srand(unsigned int seed);
 int __cdecl Kisak_rand();
 uint32_t __cdecl Kisak_GetRandState();
 void __cdecl Kisak_SetRandState(uint32_t state);
