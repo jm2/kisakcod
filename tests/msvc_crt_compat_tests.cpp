@@ -11,6 +11,25 @@
 // include race when it is included first (universal/q_shared.h does the same).
 #include <universal/msvc_crt_compat.h>
 
+#if defined(_MSC_VER)
+// The compat header is correctly guarded out on MSVC: every name it provides
+// is the real CRT/SDK spelling there, so the assertions below resolve against
+// the real thing. Pull the headers that declare them on MSVC — ARRAYSIZE from
+// winnt.h (reached through <windows.h>), _time64/_localtime64 from the CRT's
+// <time.h>, _isnan from <float.h>, _BitScanReverse from <intrin.h>. The
+// shims themselves stay guarded out.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <time.h>
+#include <float.h>
+#include <intrin.h>
+#endif // _MSC_VER
+
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -46,6 +65,62 @@ int FormatForward(char *const buffer, const size_t count,
     const int written = _vsnprintf_s(buffer, count, _TRUNCATE, format, args);
     va_end(args);
     return written;
+}
+
+// _TRUNCATE + _vsnprintf_s: fill the buffer (terminator included) and
+// report truncation as -1, the MSVC contract the only call site sits on.
+void CheckVsnprintfSContract()
+{
+    char buffer[8];
+    std::memset(buffer, 0x7F, sizeof(buffer));
+    Expect(FormatForward(buffer, sizeof(buffer), "%s", "ab") == 2,
+        "a fitting _vsnprintf_s returns the unterminated length");
+    Expect(std::strcmp(buffer, "ab") == 0,
+        "a fitting _vsnprintf_s writes the full output");
+    std::memset(buffer, 0x7F, sizeof(buffer));
+    Expect(FormatForward(buffer, sizeof(buffer), "%s", "abcdefg") == 7,
+        "an exact-fit _vsnprintf_s returns without truncating");
+    Expect(std::strcmp(buffer, "abcdefg") == 0,
+        "an exact-fit _vsnprintf_s writes every character");
+    std::memset(buffer, 0x7F, sizeof(buffer));
+    Expect(FormatForward(buffer, sizeof(buffer), "%s", "abcdefghij") == -1,
+        "a truncated _vsnprintf_s reports -1");
+    Expect(std::strcmp(buffer, "abcdefg") == 0,
+        "a truncated _vsnprintf_s keeps the terminator inside the buffer");
+}
+
+// _BitScanReverse: most significant set bit, bit 0 least significant,
+// zero mask leaves the index untouched. The index variables use the type
+// MSVC declares the parameter with, so this compiles against the real one.
+void CheckBitScanReverseContract()
+{
+    unsigned long index = 0xDEADBEEFu;
+    Expect(_BitScanReverse(&index, 0x80000001u) != 0 && index == 31,
+        "_BitScanReverse finds the most significant set bit");
+    index = 0xDEADBEEFu;
+    Expect(_BitScanReverse(&index, 0x00010000u) != 0 && index == 16,
+        "_BitScanReverse indexes from the least significant bit");
+    index = 0xDEADBEEFu;
+    Expect(_BitScanReverse(&index, 0x00000001u) != 0 && index == 0,
+        "_BitScanReverse reports bit 0 for a unit mask");
+    index = 0xDEADBEEFu;
+    Expect(_BitScanReverse(&index, 0u) == 0 && index == 0xDEADBEEFu,
+        "_BitScanReverse fails and stores nothing for a zero mask");
+
+    // MSVC's Index is a DWORD*: the write stays 32 bits even where a call
+    // site reaches it through a wider pointer (msg_bits_mp.cpp casts an int*
+    // to unsigned long*), so the neighbouring word must survive.
+    struct Overhang
+    {
+        unsigned int index;
+        unsigned int guard;
+    } overhang = {0xDEADBEEFu, 0xCAFEBABEu};
+    Expect(_BitScanReverse(
+                reinterpret_cast<unsigned long *>(&overhang.index), 4u) != 0
+            && overhang.index == 2,
+        "_BitScanReverse accepts the wider-pointer call shape");
+    Expect(overhang.guard == 0xCAFEBABEu,
+        "_BitScanReverse stores only the 32-bit index");
 }
 } // namespace
 
@@ -88,60 +163,15 @@ int main()
         Expect(broken->tm_year + 1900 >= 2020,
             "_localtime64 agrees with the _time64 epoch");
 
-    // _TRUNCATE + _vsnprintf_s: fill the buffer (terminator included) and
-    // report truncation as -1, the MSVC contract the only call site sits on.
-    char buffer[8];
-    std::memset(buffer, 0x7F, sizeof(buffer));
-    Expect(FormatForward(buffer, sizeof(buffer), "%s", "ab") == 2,
-        "a fitting _vsnprintf_s returns the unterminated length");
-    Expect(std::strcmp(buffer, "ab") == 0,
-        "a fitting _vsnprintf_s writes the full output");
-    std::memset(buffer, 0x7F, sizeof(buffer));
-    Expect(FormatForward(buffer, sizeof(buffer), "%s", "abcdefg") == 7,
-        "an exact-fit _vsnprintf_s returns without truncating");
-    Expect(std::strcmp(buffer, "abcdefg") == 0,
-        "an exact-fit _vsnprintf_s writes every character");
-    std::memset(buffer, 0x7F, sizeof(buffer));
-    Expect(FormatForward(buffer, sizeof(buffer), "%s", "abcdefghij") == -1,
-        "a truncated _vsnprintf_s reports -1");
-    Expect(std::strcmp(buffer, "abcdefg") == 0,
-        "a truncated _vsnprintf_s keeps the terminator inside the buffer");
+    CheckVsnprintfSContract();
 
     // basename: the engine's buffer is the identifier, not glibc's function.
-    std::strcpy(basename, "mp_shipment");
+    // Bounded copy — same content, explicit destination extent.
+    std::snprintf(basename, sizeof(basename), "%s", "mp_shipment");
     Expect(std::strcmp(basename, "mp_shipment") == 0,
         "the engine's basename buffer keeps its name");
 
-    // _BitScanReverse: most significant set bit, bit 0 least significant,
-    // zero mask leaves the index untouched. The index variables use the type
-    // MSVC declares the parameter with, so this compiles against the real one.
-    unsigned long index = 0xDEADBEEFu;
-    Expect(_BitScanReverse(&index, 0x80000001u) != 0 && index == 31,
-        "_BitScanReverse finds the most significant set bit");
-    index = 0xDEADBEEFu;
-    Expect(_BitScanReverse(&index, 0x00010000u) != 0 && index == 16,
-        "_BitScanReverse indexes from the least significant bit");
-    index = 0xDEADBEEFu;
-    Expect(_BitScanReverse(&index, 0x00000001u) != 0 && index == 0,
-        "_BitScanReverse reports bit 0 for a unit mask");
-    index = 0xDEADBEEFu;
-    Expect(_BitScanReverse(&index, 0u) == 0 && index == 0xDEADBEEFu,
-        "_BitScanReverse fails and stores nothing for a zero mask");
-
-    // MSVC's Index is a DWORD*: the write stays 32 bits even where a call
-    // site reaches it through a wider pointer (msg_bits_mp.cpp casts an int*
-    // to unsigned long*), so the neighbouring word must survive.
-    struct Overhang
-    {
-        unsigned int index;
-        unsigned int guard;
-    } overhang = {0xDEADBEEFu, 0xCAFEBABEu};
-    Expect(_BitScanReverse(
-                reinterpret_cast<unsigned long *>(&overhang.index), 4u) != 0
-            && overhang.index == 2,
-        "_BitScanReverse accepts the wider-pointer call shape");
-    Expect(overhang.guard == 0xCAFEBABEu,
-        "_BitScanReverse stores only the 32-bit index");
+    CheckBitScanReverseContract();
 
     if (Failures != 0)
         fprintf(stderr, "%d failure(s)\n", Failures);

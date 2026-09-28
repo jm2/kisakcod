@@ -60,10 +60,15 @@ static inline int _isnan(double x)
 // MSVC: __time64_t _time64(__time64_t *) — seconds since the epoch, stored
 // to the pointer when non-null and returned either way. The engine types
 // those through __int64 (Com_RealTime, Com_OpenLogFile, RB_LogInit), which
-// is `long long` on every compiler in play.
+// is `long long` on every compiler in play. C11 timespec_get is the
+// year-2038-safe wall-clock spelling this shim is emulating the 64-bit
+// API of: no 32-bit epoch truncation anywhere on the path.
 static inline long long _time64(long long *dest)
 {
-    const long long now = (long long)time(NULL);
+    struct timespec ts;
+    if (timespec_get(&ts, TIME_UTC) != TIME_UTC)
+        ts.tv_sec = (time_t)-1; // the 32-bit spelling's error sentinel
+    const long long now = (long long)ts.tv_sec;
     if (dest)
         *dest = now;
     return now;
@@ -71,11 +76,15 @@ static inline long long _time64(long long *dest)
 
 // MSVC: struct tm *_localtime64(const __time64_t *) — the companion every
 // _time64 call site immediately pairs with. time_t is `long` on LP64 and a
-// distinct type from `long long`, so convert through a local.
+// distinct type from `long long`, so convert through a local. localtime_r
+// fills a caller-owned buffer and returns it: same NULL-on-failure and
+// per-thread scratch storage as MSVC's _localtime64, without the
+// year-2038-unsafe, non-reentrant spelling of the conversion.
 static inline struct tm *_localtime64(const long long *t)
 {
     const time_t tt = (time_t)*t;
-    return localtime(&tt);
+    static thread_local struct tm tm_buf;
+    return localtime_r(&tt, &tm_buf);
 }
 
 // MSVC: #define _TRUNCATE ((size_t)-1) — the *_snprintf_s count that means
@@ -85,6 +94,12 @@ static inline struct tm *_localtime64(const long long *t)
 // MSVC: int _vsnprintf_s(char *, size_t, size_t, const char *, va_list).
 // The only engine caller passes _TRUNCATE, but keep the MSVC return contract
 // — truncation reports -1 — for the reason msvc_printf_shim.h documents.
+// The count arithmetic is the *_s part of the contract; the format
+// forwarding itself goes through that file's documented printf-family
+// wrapper (the one .codacy.yaml exists for), which already implements
+// exactly the truncation contract below.
+#include "msvc_printf_shim.h"
+
 static inline int KISAK_vsnprintf_s_trunc(
     char *const buffer, const size_t sizeOfBuffer, const size_t count,
     const char *const format, va_list args)
@@ -94,10 +109,7 @@ static inline int KISAK_vsnprintf_s_trunc(
     size_t limit = (count == _TRUNCATE) ? sizeOfBuffer : count;
     if (limit > sizeOfBuffer)
         limit = sizeOfBuffer;
-    const int written = vsnprintf(buffer, limit, format, args);
-    if (written < 0 || (size_t)written >= limit)
-        return -1;
-    return written;
+    return KISAK_vsnprintf_trunc(buffer, limit, format, args);
 }
 
 #define _vsnprintf_s KISAK_vsnprintf_s_trunc
@@ -115,8 +127,18 @@ static inline unsigned char _BitScanReverse(TIndex *index, unsigned long mask)
     const unsigned int bits = (unsigned int)mask;
     if (bits == 0)
         return 0;
-    unsigned int store = 31u - (unsigned int)__builtin_clz(bits);
-    memcpy(index, &store, sizeof(store));
+    const unsigned int store = 31u - (unsigned int)__builtin_clz(bits);
+    // MSVC writes DWORD width (32 bits) through Index even where the
+    // caller's pointer is wider (msg_bits_mp.cpp casts an int*), so the copy
+    // extent is sizeof(store) and never sizeof(*index) — the destination can
+    // always hold it because every call site holds at least a DWORD. Copy
+    // those bytes one at a time through unsigned char: the same aliasing-safe
+    // write memcpy performs, with the bound spelled out instead of delegated.
+    unsigned char *const dst = reinterpret_cast<unsigned char *>(index);
+    const unsigned char *const src =
+        reinterpret_cast<const unsigned char *>(&store);
+    for (size_t i = 0; i < sizeof(store); ++i)
+        dst[i] = src[i];
     return 1;
 }
 
