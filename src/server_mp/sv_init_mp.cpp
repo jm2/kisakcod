@@ -11,7 +11,7 @@
 #include <gfx_d3d/r_rendercmds.h>
 #endif
 #include <universal/com_files.h>
-#include <win32/win_net.h>
+#include <qcommon/net_local.h>
 #include <universal/com_constantconfigstrings.h>
 #include <qcommon/threads.h>
 #include <qcommon/com_bsp.h>

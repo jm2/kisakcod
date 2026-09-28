@@ -11,7 +11,15 @@ endforeach()
 # configuration gate remains in force. Portable services remain independently
 # buildable and runtime-tested.
 set(PLATFORM_LINUX "")
-set(PLATFORM_LINUX_DEDI_HEADLESS "")
+# The POSIX headless dedicated composition: entry point and frame loop,
+# termios console, language selection and CPU description. The datagram layer
+# and the remote-debug stub are shared with every platform and come from
+# scripts/dedi/dedi_sources.cmake (docs/design/PLATFORM_POSIX.md, NOW row 13).
+set(PLATFORM_LINUX_DEDI_HEADLESS
+    "${SRC_DIR}/_platform/posix/posix_localize.cpp"
+    "${SRC_DIR}/_platform/posix/posix_main.cpp"
+    "${SRC_DIR}/_platform/posix/posix_syscon.cpp"
+)
 set(PLATFORM_LINUX_SERVICES
     "${SRC_DIR}/_platform/posix/sys_console.cpp"
     "${SRC_DIR}/_platform/posix/sys_event.cpp"

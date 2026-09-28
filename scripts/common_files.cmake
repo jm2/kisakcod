@@ -731,6 +731,11 @@ set(PLATFORM_WIN32
     "${SRC_DIR}/win32/win_steam.h"
 )
 
+# The headless dedicated set drops the windowed console, the Winsock datagram
+# layer and the Steam identity layer. The datagram surface is replaced by the
+# portable qcommon/net_local.cpp on every platform (one file for all of them,
+# see docs/design/PLATFORM_POSIX.md); the console and localization halves are
+# supplied per platform through the *_DEDI_HEADLESS source set.
 set(PLATFORM_WIN32_DEDI_HEADLESS
     "${SRC_DIR}/win32/win_configure.cpp"
     "${SRC_DIR}/win32/win_configure.h"
@@ -738,14 +743,9 @@ set(PLATFORM_WIN32_DEDI_HEADLESS
     "${SRC_DIR}/win32/win_localize.cpp"
     "${SRC_DIR}/win32/win_localize.h"
     "${SRC_DIR}/win32/win_main.cpp"
-    "${SRC_DIR}/win32/win_net.cpp"
-    "${SRC_DIR}/win32/win_net.h"
-    "${SRC_DIR}/win32/win_net_debug.cpp"
     "${SRC_DIR}/win32/win_net_debug.h"
     "${SRC_DIR}/win32/win_storage.h"
     "${SRC_DIR}/win32/win_syscon.cpp"
-    "${SRC_DIR}/win32/win_steam.cpp"
-    "${SRC_DIR}/win32/win_steam.h"
 )
 
 set(XANIM

@@ -281,6 +281,45 @@ add_test(
     COMMAND kisakcod-msg-wire-contract-tests
 )
 
+# Portable datagram layer and termios console contracts (NOW row 13). The
+# platform console and socket backends are selected the same way
+# tests/cmake/platform.cmake selects them, so the checks exercise the code the
+# headless dedicated build actually links.
+set(_net_local_platform_console ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _net_local_platform_console INCLUDE REGEX "[/\\\\]sys_console\\.cpp$")
+list(FILTER _net_local_platform_console EXCLUDE REGEX "qcommon")
+set(_net_local_platform_socket ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _net_local_platform_socket INCLUDE REGEX "[/\\\\]sys_socket\\.cpp$")
+
+add_executable(kisakcod-net-local-tests
+    net_local_tests.cpp
+    ${SRC_DIR}/qcommon/net_local.cpp
+    ${SRC_DIR}/qcommon/sys_console.cpp
+    ${_net_local_platform_console}
+    ${_net_local_platform_socket}
+)
+target_include_directories(kisakcod-net-local-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-net-local-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-net-local-tests PRIVATE KISAK_MP)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_sources(kisakcod-net-local-tests PRIVATE
+        ${SRC_DIR}/win32/win_syscon.cpp)
+    target_link_libraries(kisakcod-net-local-tests PRIVATE ws2_32)
+else()
+    target_sources(kisakcod-net-local-tests PRIVATE
+        ${SRC_DIR}/_platform/posix/posix_syscon.cpp)
+    target_link_libraries(kisakcod-net-local-tests PRIVATE Threads::Threads)
+endif()
+kisakcod_test_warnings(kisakcod-net-local-tests)
+set_target_properties(kisakcod-net-local-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME net-local-and-console-contracts
+    COMMAND kisakcod-net-local-tests
+)
+set_tests_properties(net-local-and-console-contracts PROPERTIES TIMEOUT 20)
+
 kisakcod_ilp32(kisakcod-huffman-wire-contract-tests
     huffman-wire-format-contracts)
 
