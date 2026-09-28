@@ -3,7 +3,7 @@
 #include <qcommon/qcommon.h>
 #include "r_dvars.h"
 #include <universal/com_files.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include "r_init.h"
 #include "r_scene.h"
 #include <xanim/xmodel.h>

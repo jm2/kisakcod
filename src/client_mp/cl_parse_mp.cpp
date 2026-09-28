@@ -7,7 +7,7 @@
 #include <qcommon/msg_mp.h>
 #include <cgame_mp/cg_local_mp.h>
 #include <universal/com_files.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <qcommon/cmd.h>
 #include <qcommon/dl_http.h>
 #include <qcommon/dl_main.h>

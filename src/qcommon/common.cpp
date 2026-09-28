@@ -2,7 +2,7 @@
 
 #include "cmd.h"
 #include "threads.h"
-#include "../win32/win_local.h"
+#include <qcommon/sys_local.h>
 
 #include <universal/com_memory.h>
 #include <universal/memfile.h>

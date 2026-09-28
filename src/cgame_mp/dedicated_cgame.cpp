@@ -4,7 +4,7 @@
 
 #include <database/database.h>
 #include <qcommon/qcommon.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 
 void __cdecl CL_InitDedicated()
 {

@@ -13,7 +13,7 @@
 #include "sv_game.h"
 #include <gfx_d3d/r_workercmds.h>
 #include <qcommon/threads.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <universal/profile.h>
 #include <client/cl_scrn.h>
 #include <game/savedevice.h>

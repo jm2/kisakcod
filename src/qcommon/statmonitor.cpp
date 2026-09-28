@@ -1,6 +1,6 @@
 #include "qcommon.h"
 #include "mem_track.h"
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 
 #ifndef KISAK_DEDI_HEADLESS
 #ifdef KISAK_MP

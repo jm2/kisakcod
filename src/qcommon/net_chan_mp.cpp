@@ -7,7 +7,7 @@
 #ifndef KISAK_DEDI_HEADLESS
 #include <client_mp/client_mp.h>
 #endif
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include "cmd.h"
 #include <universal/com_files.h>
 #include <server_mp/server_mp.h>

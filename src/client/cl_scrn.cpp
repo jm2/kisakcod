@@ -12,7 +12,7 @@
 #include <cgame/cg_view.h>
 #include <devgui/devgui.h>
 #include <qcommon/threads.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <qcommon/cmd.h>
 #include <gfx_d3d/r_screenshot.h>
 

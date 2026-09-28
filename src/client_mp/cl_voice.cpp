@@ -4,7 +4,7 @@
 
 #include "client_mp.h"
 #include <cgame_mp/cg_local_mp.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <server_mp/server_mp.h>
 
 uint8_t tempVoicePacketBuf[2048];

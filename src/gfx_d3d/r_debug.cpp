@@ -3,7 +3,7 @@
 
 #include <qcommon/mem_track.h>
 
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
 #include <cgame/cg_public.h>
 #include <universal/profile.h>
 

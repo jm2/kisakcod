@@ -17,7 +17,13 @@
 #include <universal/com_sndalias.h>
 
 #include <gfx_d3d/r_dvars.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_local.h>
+#if defined(_WIN32)
+// KisakCOD ABI port: this TU uses Win32 API types (BOOL/DWORD/HWND, ...) in its
+// own code. Previously they arrived via win_local.h's winsock include; the
+// portable split takes that reach away, so declare the Win32 dependency directly.
+#include <windows.h>
+#endif
 #include <qcommon/com_playerprofile.h>
 #include <cgame/cg_local.h>
 #include <cgame_mp/cg_local_mp.h>
