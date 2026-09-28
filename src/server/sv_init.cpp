@@ -21,6 +21,10 @@
 #include <universal/com_files.h>
 #include <universal/com_sndalias.h>
 #include <universal/sys_atomic.h>
+// R_BeginRemoteScreenUpdate/R_EndRemoteScreenUpdate are declared in
+// r_rendercmds.h; xanim.h holds renderer types by pointer only since the
+// D3D include cut (KPI K5).
+#include <gfx_d3d/r_rendercmds.h>
 
 const dvar_t *sv_clientFrameRateFix;
 const dvar_t *sv_loadMyChanges;

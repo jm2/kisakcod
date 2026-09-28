@@ -589,6 +589,10 @@ int __cdecl SV_GameCommand()
 #include <win32/win_local.h>
 #include <client/cl_input.h>
 #include <universal/profile.h>
+// R_BeginRemoteScreenUpdate/R_EndRemoteScreenUpdate are declared in
+// r_rendercmds.h; xanim.h holds renderer types by pointer only since the
+// D3D include cut (KPI K5).
+#include <gfx_d3d/r_rendercmds.h>
 
 void __cdecl SV_CheckLoadLevel(SaveGame *save)
 {

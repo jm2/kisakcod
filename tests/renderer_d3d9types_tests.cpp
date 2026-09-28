@@ -51,7 +51,10 @@ int RunChecks()
     CHECK(D3DFMT_D24X8 == 77);
     CHECK(D3DFMT_D16 == 80);
     CHECK(D3DFMT_R32F == 114);
-    CHECK(static_cast<uint32_t>(D3DFMT_FORCE_DWORD) == 0xFFFFFFFFu);
+    // The FORCE_DWORD sentinels are 0x7fffffff in the D3D9 SDK (d3d9types.h),
+    // not 0xFFFFFFFF; the stand-in must match or the same checks disagree
+    // between the Windows SDK and the non-Windows header.
+    CHECK(static_cast<uint32_t>(D3DFMT_FORCE_DWORD) == 0x7FFFFFFFu);
 
     // The cubemap face r_image.h signatures take by value.
     CHECK(D3DCUBEMAP_FACE_POSITIVE_X == 0);
@@ -60,7 +63,7 @@ int RunChecks()
     CHECK(D3DCUBEMAP_FACE_NEGATIVE_Y == 3);
     CHECK(D3DCUBEMAP_FACE_POSITIVE_Z == 4);
     CHECK(D3DCUBEMAP_FACE_NEGATIVE_Z == 5);
-    CHECK(static_cast<uint32_t>(D3DCUBEMAP_FACE_FORCE_DWORD) == 0xFFFFFFFFu);
+    CHECK(static_cast<uint32_t>(D3DCUBEMAP_FACE_FORCE_DWORD) == 0x7FFFFFFFu);
 
     static_assert(std::is_enum_v<_D3DFORMAT>);
     static_assert(std::is_enum_v<_D3DCUBEMAP_FACES>);

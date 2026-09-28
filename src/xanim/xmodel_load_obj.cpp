@@ -11,8 +11,9 @@
 #include "xanim.h"
 #include <physics/phys_local.h>
 // GfxPackedVertex (the packed vertex record the loader fills) is defined in
-// r_gfx.h; xanim.h holds renderer types by pointer only since the D3D include
-// cut (KPI K5).
+// r_gfx.h, and R_GetXModelBounds is declared in r_bsp.h; xanim.h holds
+// renderer types by pointer only since the D3D include cut (KPI K5).
+#include <gfx_d3d/r_bsp.h>
 #include <gfx_d3d/r_gfx.h>
 #include <xanim/buf_cursor.hpp>
 
