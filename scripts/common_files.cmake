@@ -158,6 +158,8 @@ set(COMMON
 
 set(DATABASE
     "${SRC_DIR}/database/database.h"
+    "${SRC_DIR}/database/db_asset_layout.cpp"
+    "${SRC_DIR}/database/db_asset_layout.h"
     "${SRC_DIR}/database/db_asset_mode.h"
     "${SRC_DIR}/database/db_disk32.h"
     "${SRC_DIR}/database/db_referenced_fastfile.h"

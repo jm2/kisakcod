@@ -7132,6 +7132,18 @@ void __cdecl Load_FxEffectDef(bool atStreamStart)
         DB_PopStreamPos();
         return;
     }
+    // Fail closed before the legacy walk below: at 64-bit that walk copies a
+    // retail record into the widened runtime struct (docs/design/NATIVE64.md).
+    // The gate in Load_XAssetHeader admitted this family only while an FX zone
+    // adapter was bound; a wire that still cannot convert must not fall back.
+    if (!DB_AdmitAssetFamilyLoad(
+            ASSET_TYPE_FX,
+            DB_GetXAssetTypeName(ASSET_TYPE_FX),
+            KISAK_ARCH_64BIT != 0,
+            /*fxAdapterAvailable=*/false))
+    {
+        return;
+    }
     DB_PushStreamPos(4);
     varXString = &varFxEffectDef->name;
     Load_XString(0);
@@ -8932,6 +8944,18 @@ void __cdecl Load_FxImpactTable(bool atStreamStart)
     {
         varFxImpactTable = wiredFxImpactTable;
         DB_PopStreamPos();
+        return;
+    }
+    // Fail closed before the legacy walk below: at 64-bit that walk copies a
+    // retail record into the widened runtime struct (docs/design/NATIVE64.md).
+    // The gate in Load_XAssetHeader admitted this family only while an FX zone
+    // adapter was bound; a wire that still cannot convert must not fall back.
+    if (!DB_AdmitAssetFamilyLoad(
+            ASSET_TYPE_IMPACT_FX,
+            DB_GetXAssetTypeName(ASSET_TYPE_IMPACT_FX),
+            KISAK_ARCH_64BIT != 0,
+            /*fxAdapterAvailable=*/false))
+    {
         return;
     }
     DB_PushStreamPos(4);
@@ -11334,11 +11358,14 @@ void __cdecl Load_XAssetHeader(bool atStreamStart)
     }
     // Fail closed on layout drift: a family without a complete ONDISK/RUNTIME
     // pair must not load at 64-bit, where the runtime sizeof no longer matches
-    // the retail record (docs/design/NATIVE64.md).
+    // the retail record (docs/design/NATIVE64.md). FX and Impact FX additionally
+    // need the FX zone adapter bound: without it both loaders fall through to
+    // their legacy retail-record walk, which is the same drift hazard.
     if (!DB_AdmitAssetFamilyLoad(
             varXAsset->type,
             DB_GetXAssetTypeName(varXAsset->type),
-            KISAK_ARCH_64BIT != 0))
+            KISAK_ARCH_64BIT != 0,
+            db::fx_zone_adapter_wiring::IsFxZoneAdapterBindingActive()))
     {
         return;
     }
