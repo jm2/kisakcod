@@ -8,6 +8,7 @@
 #include <gfx_d3d/r_font.h>
 #include <gfx_d3d/r_gfx.h>
 #include <gfx_d3d/r_material.h>
+#include <qcommon/qcommon.h>
 
 //int32_t marker_db_assetnames 828ddeec     db_assetnames.obj
 
@@ -151,10 +152,26 @@ int32_t __cdecl DB_SizeofXAsset_FxEffectDef_()
 {
     return sizeof(FxEffectDef);
 }
+int32_t __cdecl DB_SizeofXAsset_PhysPreset_()
+{
+    return sizeof(PhysPreset);
+}
+int32_t __cdecl DB_SizeofXAsset_LoadedSound_()
+{
+    return sizeof(LoadedSound);
+}
+int32_t __cdecl DB_SizeofXAsset_ClipMap_()
+{
+    return sizeof(clipMap_t);
+}
+int32_t __cdecl DB_SizeofXAsset_GfxLightDef_()
+{
+    return sizeof(GfxLightDef);
+}
 int(__cdecl *DB_GetXAssetSizeHandler[33])() =
 {
     DB_SizeofXAsset_RawFile_,
-    DB_SizeofXAsset_GameWorldSp_,
+    DB_SizeofXAsset_PhysPreset_,
     DB_SizeofXAsset_XAnimParts_,
     DB_SizeofXAsset_XModel_,
     DB_SizeofXAsset_Material_,
@@ -162,15 +179,15 @@ int(__cdecl *DB_GetXAssetSizeHandler[33])() =
     DB_SizeofXAsset_GfxImage_,
     DB_SizeofXAsset_RawFile_,
     DB_SizeofXAsset_SndCurve_,
-    DB_SizeofXAsset_GameWorldSp_,
-    DB_SizeofXAsset_menuDef_t_,
-    DB_SizeofXAsset_menuDef_t_,
+    DB_SizeofXAsset_LoadedSound_,
+    DB_SizeofXAsset_ClipMap_,
+    DB_SizeofXAsset_ClipMap_,
     DB_SizeofXAsset_StringTable_,
     DB_SizeofXAsset_GameWorldSp_,
     DB_SizeofXAsset_GameWorldMp_,
     DB_SizeofXAsset_RawFile_,
     DB_SizeofXAsset_GfxWorld_,
-    DB_SizeofXAsset_StringTable_,
+    DB_SizeofXAsset_GfxLightDef_,
     0,
     DB_SizeofXAsset_Font_s_,
     DB_SizeofXAsset_RawFile_,

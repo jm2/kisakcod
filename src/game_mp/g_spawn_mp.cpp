@@ -4,6 +4,8 @@
 
 #include "g_public_mp.h"
 
+#include <cstddef>
+
 #include <game_mp/g_utils_mp.h>
 
 #include <script/scr_const.h>
@@ -147,16 +149,16 @@ struct ent_field_t // sizeof=0x10
 
 const ent_field_t fields_1[11] =
 {
-  { "classname", 368, F_STRING, &Scr_ReadOnlyField },
-  { "origin", 316, F_VECTOR, &Scr_SetOrigin },
-  { "model", 360, F_MODEL, &Scr_ReadOnlyField },
-  { "spawnflags", 380, F_INT, &Scr_ReadOnlyField },
-  { "target", 370, F_STRING, NULL },
-  { "targetname", 372, F_STRING, NULL },
-  { "count", 428, F_INT, NULL },
-  { "health", 416, F_INT, &Scr_SetHealth },
-  { "dmg", 424, F_INT, NULL },
-  { "angles", 328, F_VECTOR, &Scr_SetAngles },
+  { "classname", offsetof(gentity_s, classname), F_STRING, &Scr_ReadOnlyField },
+  { "origin", offsetof(gentity_s, r.currentOrigin), F_VECTOR, &Scr_SetOrigin },
+  { "model", offsetof(gentity_s, model), F_MODEL, &Scr_ReadOnlyField },
+  { "spawnflags", offsetof(gentity_s, spawnflags), F_INT, &Scr_ReadOnlyField },
+  { "target", offsetof(gentity_s, target), F_STRING, NULL },
+  { "targetname", offsetof(gentity_s, targetname), F_STRING, NULL },
+  { "count", offsetof(gentity_s, count), F_INT, NULL },
+  { "health", offsetof(gentity_s, health), F_INT, &Scr_SetHealth },
+  { "dmg", offsetof(gentity_s, damage), F_INT, NULL },
+  { "angles", offsetof(gentity_s, r.currentAngles), F_VECTOR, &Scr_SetAngles },
   { NULL, 0, F_INT, NULL }
 }; // idb
 

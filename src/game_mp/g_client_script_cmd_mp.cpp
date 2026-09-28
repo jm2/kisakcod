@@ -2393,16 +2393,16 @@ void __cdecl PlayerCmd_DeactivateReverb(scr_entref_t e)
     int32_t ConstString; // r10
     const char *v6; // r3
 
-    v1 = HIWORD(entref);
-    if ((_WORD)entref)
+    v1 = e.entnum;
+    if (e.classnum)
     {
         v2 = "not an entity";
     }
     else
     {
-        if (g_entities[HIWORD(entref)].client)
+        if (g_entities[e.entnum].client)
             goto LABEL_6;
-        v2 = va("entity %i is not a player", HIWORD(entref));
+        v2 = va("entity %i is not a player", e.entnum);
     }
     Scr_ObjectError(v2);
 LABEL_6:
@@ -2498,16 +2498,16 @@ void __cdecl PlayerCmd_DeactivateChannelVolumes(scr_entref_t e)
     int32_t ConstString; // r10
     const char *v6; // r3
 
-    v1 = HIWORD(entref);
-    if ((_WORD)entref)
+    v1 = e.entnum;
+    if (e.classnum)
     {
         v2 = "not an entity";
     }
     else
     {
-        if (g_entities[HIWORD(entref)].client)
+        if (g_entities[e.entnum].client)
             goto LABEL_6;
-        v2 = va("entity %i is not a player", HIWORD(entref));
+        v2 = va("entity %i is not a player", e.entnum);
     }
     Scr_ObjectError(v2);
 LABEL_6:

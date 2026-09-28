@@ -133,6 +133,22 @@ set_target_properties(kisakcod-native64-runtime-layout-tests PROPERTIES
 add_test(NAME native64-runtime-layout-contracts
     COMMAND kisakcod-native64-runtime-layout-tests)
 
+# native64_game_mp_hazards_test: done-test for the bead-10 silent 64-bit
+# hazards in the game_mp path (ki-vwteh / #216). Pins the fields_1 offsetof
+# contract, the clone-size table correctness, and the XAnimClone allocation
+# width at the compiler's natural layout. Mirrors are used for structs
+# whose headers are production-bound at 64-bit.
+add_executable(kisakcod-native64-game-mp-hazards-tests
+    native64_game_mp_hazards_test.cpp)
+target_compile_features(
+    kisakcod-native64-game-mp-hazards-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-native64-game-mp-hazards-tests)
+set_target_properties(kisakcod-native64-game-mp-hazards-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME native64-game-mp-hazards
+    COMMAND kisakcod-native64-game-mp-hazards-tests)
+
 add_executable(kisakcod-cg-pose-atomic-tests
     cg_pose_atomic_tests.cpp
 )
