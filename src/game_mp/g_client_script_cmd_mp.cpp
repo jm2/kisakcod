@@ -2384,8 +2384,6 @@ void __cdecl PlayerCmd_SetReverb(scr_entref_t entref)
 //void __cdecl PlayerCmd_DeactivateReverb(scr_entref_t *entref)
 void __cdecl PlayerCmd_DeactivateReverb(scr_entref_t e)
 {
-    scr_entref_t *entref = &e; // HACK
-
     uint16_t v1; // r30
     const char *v2; // r3
     double Float; // fp31
@@ -2489,8 +2487,6 @@ void __cdecl PlayerCmd_SetChannelVolumes(scr_entref_t entref)
 //void __cdecl PlayerCmd_DeactivateChannelVolumes(scr_entref_t *entref)
 void __cdecl PlayerCmd_DeactivateChannelVolumes(scr_entref_t e)
 {
-    scr_entref_t *entref = &e; // HACK
-
     uint16_t v1; // r30
     const char *v2; // r3
     double Float; // fp31

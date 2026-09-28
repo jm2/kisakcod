@@ -137,9 +137,14 @@ add_test(NAME native64-runtime-layout-contracts
 # hazards in the game_mp path (ki-vwteh / #216). Pins the fields_1 offsetof
 # contract, the clone-size table correctness, and the XAnimClone allocation
 # width at the compiler's natural layout. Mirrors are used for structs
-# whose headers are production-bound at 64-bit.
+# whose headers are production-bound at 64-bit; the XAnimParts runtime size
+# is pinned against the real xanim_native.h contract through the portable
+# shim (same pattern as kisakcod-xanim-parts-split-tests).
 add_executable(kisakcod-native64-game-mp-hazards-tests
-    native64_game_mp_hazards_test.cpp)
+    native64_game_mp_hazards_test.cpp
+    xanim_parts_split_test_shim.h)
+target_include_directories(
+    kisakcod-native64-game-mp-hazards-tests PRIVATE ${SRC_DIR})
 target_compile_features(
     kisakcod-native64-game-mp-hazards-tests PRIVATE cxx_std_20)
 kisakcod_test_warnings(kisakcod-native64-game-mp-hazards-tests)
