@@ -5,33 +5,38 @@
 
 void *(__cdecl *physAlloc)(int);
 
+// Parse-side view of the physics preset fields (LWSS). The field table below
+// derives every offset from this struct, so it tracks the real in-memory
+// layout on every target: the old hard-coded 28/32/36 offsets were the ILP32
+// ones, and at 64-bit piecesSpreadFraction landed on the upper half of
+// sndAliasPrefix and shifted every later field.
+struct PhysPresetLite
+{
+    float mass;
+    float bounce;
+    float friction;
+    int isFrictionInfinity;
+    float bulletForceScale;
+    float explosiveForceScale;
+    const char *sndAliasPrefix;
+    float piecesSpreadFraction;
+    float piecesUpwardVelocity;
+    bool tempDefaultToCylinder;
+};
+
 cspField_t physPresetFields[10] =
 {
-  { "mass", 0, 6 },
-  { "bounce", 4, 6 },
-  { "friction", 8, 6 },
-  { "isFrictionInfinity", 12, 5 },
-  { "bulletForceScale", 16, 6 },
-  { "explosiveForceScale", 20, 6 },
-  { "sndAliasPrefix", 24, 0 },
-  { "piecesSpreadFraction", 28, 6 },
-  { "piecesUpwardVelocity", 32, 6 },
-  { "tempDefaultToCylinder", 36, 5 }
+  { "mass", offsetof(PhysPresetLite, mass), 6 },
+  { "bounce", offsetof(PhysPresetLite, bounce), 6 },
+  { "friction", offsetof(PhysPresetLite, friction), 6 },
+  { "isFrictionInfinity", offsetof(PhysPresetLite, isFrictionInfinity), 5 },
+  { "bulletForceScale", offsetof(PhysPresetLite, bulletForceScale), 6 },
+  { "explosiveForceScale", offsetof(PhysPresetLite, explosiveForceScale), 6 },
+  { "sndAliasPrefix", offsetof(PhysPresetLite, sndAliasPrefix), 0 },
+  { "piecesSpreadFraction", offsetof(PhysPresetLite, piecesSpreadFraction), 6 },
+  { "piecesUpwardVelocity", offsetof(PhysPresetLite, piecesUpwardVelocity), 6 },
+  { "tempDefaultToCylinder", offsetof(PhysPresetLite, tempDefaultToCylinder), 5 }
 }; // idb
-
-struct PhysPresetLite // LWSS add custom struct to adhere to the above field offfsets
-{
-    float mass;   // 0
-    float bounce; // 4
-    float friction; // 8
-    int isFrictionInfinity; // 12
-    float bulletForceScale; // 16
-    float explosiveForceScale; // 20
-    const char *sndAliasPrefix; // 24
-    float piecesSpreadFraction; // 28
-    float piecesUpwardVelocity; // 32
-    bool tempDefaultToCylinder; // 36
-};
 
 void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
 {
@@ -39,10 +44,14 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
     char *v3; // [esp+8h] [ebp-20h]
     const char *v4; // [esp+Ch] [ebp-1Ch]
     char *buf; // [esp+20h] [ebp-8h]
+    // The target member is a `const char *` field of PhysPresetLite; store the
+    // pointer at its native width. The old `*(_DWORD *)member = (_DWORD)buf`
+    // truncated it to 32 bits and was a hard error on 64-bit clang/GCC.
+    const char **slot = reinterpret_cast<const char **>(member);
 
     if (*keyValue)
     {
-        buf = (char *)physAlloc(strlen(keyValue) + 1);
+        buf = (char *)physAlloc((int)(strlen(keyValue) + 1));
         v4 = keyValue;
         v3 = buf;
         do
@@ -50,11 +59,11 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
             v2 = *v4;
             *v3++ = *v4++;
         } while (v2);
-        *(_DWORD *)member = (_DWORD)buf;
+        *slot = buf;
     }
     else
     {
-        *(_DWORD *)member = (_DWORD)"";
+        *slot = "";
     }
 }
 
