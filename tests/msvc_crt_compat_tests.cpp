@@ -99,8 +99,8 @@ void CheckVsnprintfSContract()
         "a truncated _vsnprintf_s keeps the terminator inside the buffer");
 }
 
-// _BitScanReverse: most significant set bit, bit 0 least significant,
-// zero mask leaves the index untouched. The index variables use the type
+// _BitScanReverse: most significant set bit, bit 0 least significant;
+// a zero mask reports failure (return 0). The index variables use the type
 // MSVC declares the parameter with, so this compiles against the real one.
 void CheckBitScanReverseContract()
 {
@@ -114,8 +114,20 @@ void CheckBitScanReverseContract()
     Expect(_BitScanReverse(&index, 0x00000001u) != 0 && index == 0,
         "_BitScanReverse reports bit 0 for a unit mask");
     index = 0xDEADBEEFu;
-    Expect(_BitScanReverse(&index, 0u) == 0 && index == 0xDEADBEEFu,
-        "_BitScanReverse fails and stores nothing for a zero mask");
+    Expect(_BitScanReverse(&index, 0u) == 0,
+        "_BitScanReverse reports failure for a zero mask");
+#if !defined(_MSC_VER)
+    // What the real intrinsic leaves in *Index on a zero mask is
+    // architecturally undefined: it compiles to BSR, and Intel's BSR leaves
+    // the destination undefined when the source is 0 (the hosted Windows
+    // legs demonstrably write it), so only the return value is part of the
+    // portable contract. Every engine call site (cg_snapshot.cpp,
+    // r_dpvs*.cpp, r_model_lighting.cpp, r_primarylights.cpp, ...) reads
+    // the index only on success. The POSIX shim is stricter and stores
+    // nothing; that extra guarantee is pinned on the shim side only.
+    Expect(index == 0xDEADBEEFu,
+        "_BitScanReverse (POSIX shim) stores nothing for a zero mask");
+#endif
 
     // MSVC's Index is a DWORD*: the write stays 32 bits even where a call
     // site reaches it through a wider pointer (msg_bits_mp.cpp casts an int*
