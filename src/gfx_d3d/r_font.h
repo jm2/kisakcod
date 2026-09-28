@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <universal/kisak_abi.h>
 //#include "r_material.h"
 
 struct Glyph // sizeof=0x18
@@ -26,7 +27,7 @@ struct Font_s // sizeof=0x18 // (SP/MP same)
     struct Material *glowMaterial;
     Glyph *glyphs;
 };
-static_assert(sizeof(Font_s) == 24);
+RUNTIME_SIZE(Font_s, 0x18, 0x28);
 
 const Glyph *__cdecl R_GetCharacterGlyph(Font_s *font, uint32_t letter);
 uint32_t __cdecl R_FontGetRandomLetter(Font_s *font, int seed);

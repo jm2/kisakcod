@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 
+#include <universal/kisak_abi.h>
 #include <qcommon/qcommon.h>
 
 #include <physics/phys_local.h>
@@ -47,7 +48,7 @@ struct DynEntityDef // sizeof=0x60
     PhysMass mass;
     int32_t contents;
 };
-static_assert(sizeof(DynEntityDef) == 0x60);
+RUNTIME_SIZE(DynEntityDef, 0x60, 0x78);
 
 struct DynEntityPose // sizeof=0x20
 {

@@ -2,6 +2,7 @@
 
 #include "r_d3d9types.h"
 
+#include <universal/kisak_abi.h>
 #include <universal/com_math.h>
 #include <qcommon/com_pack.h>
 #include <cstdint>
@@ -228,7 +229,7 @@ struct GfxImage // sizeof=0x24
     bool delayLoadPixels;
     const char* name;
 };
-static_assert(sizeof(GfxImage) == 36);
+RUNTIME_SIZE(GfxImage, 0x24, 0x30);
 
 struct GfxCodeMatrices // sizeof=0x800
 {                                       // ...
@@ -380,7 +381,7 @@ struct GfxWorldDpvsStatic // sizeof=0x68
     uint32_t* surfaceCastsSunShadow; // ...
     volatile int usageCount;
 };
-static_assert(sizeof(GfxWorldDpvsStatic) == 0x68);
+RUNTIME_SIZE(GfxWorldDpvsStatic, 0x68, 0xA8);
 
 using EntVisData = byte *[3];
 
@@ -698,7 +699,7 @@ struct GfxPixelShaderLoadDef // sizeof=0x8
     uint16_t programSize;
     uint16_t loadForRenderer;
 };
-static_assert(sizeof(GfxPixelShaderLoadDef) == 8);
+RUNTIME_SIZE(GfxPixelShaderLoadDef, 0x8, 0x10);
 
 struct GfxDepthOfField // sizeof=0x20
 {                                       // ...

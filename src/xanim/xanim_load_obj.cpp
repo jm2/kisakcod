@@ -994,8 +994,12 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     int randomDataByteCount; // [esp+14DCh] [ebp-8h]
     int randomDataIntCount; // [esp+14E0h] [ebp-4h]
 
-    iassert(sizeof(XAnimPartTransPtr) == 8);
-    iassert(sizeof(XAnimParts) == 88);
+    // Width-aware twins of the RUNTIME_SIZE contract in xanim.h. These are the
+    // decompiler-inserted sanity pins that the fixed 32-bit stack offsets below
+    // still describe the struct being built, so they must name the runtime
+    // size for the target width rather than the retail 32-bit one.
+    iassert(sizeof(XAnimPartTransPtr) == (KISAK_ARCH_64BIT ? 0x10 : 0x8));
+    iassert(sizeof(XAnimParts) == (KISAK_ARCH_64BIT ? 0x88 : 0x58));
 
 #ifdef _DEBUG
     if (!g_checkBoneOrder)

@@ -1,4 +1,5 @@
 #pragma once
+#include <universal/kisak_abi.h>
 #include <script/scr_variable.h>
 #include <bgame/bg_public.h>
 #include <bgame/bg_local.h>
@@ -184,7 +185,7 @@ struct pathnode_tree_nodes_t // sizeof=0x8
     int nodeCount;
     uint16_t *nodes;
 };
-static_assert(sizeof(pathnode_tree_nodes_t) == 8);
+RUNTIME_SIZE(pathnode_tree_nodes_t, 0x8, 0x10);
 
 struct pathnode_tree_t;
 union pathnode_tree_info_t // sizeof=0x8
