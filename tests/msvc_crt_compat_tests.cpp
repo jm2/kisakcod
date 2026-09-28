@@ -18,6 +18,16 @@
 // winnt.h (reached through <windows.h>), _time64/_localtime64 from the CRT's
 // <time.h>, _isnan from <float.h>, _BitScanReverse from <intrin.h>. The
 // shims themselves stay guarded out.
+//
+// MSVC deprecates the legacy CRT names under test (_strlwr, _localtime64)
+// with C4996, and /WX escalates that warning to C2220 (CI failure on the
+// hosted Windows legs). Suppress the deprecation for this translation unit
+// only — same idiom as tests/msvc_printf_shim_tests.cpp. This does not adopt
+// the spellings anywhere new: the deprecated-but-contractual names ARE the
+// test surface, and the *_s replacements have different contracts and would
+// not exercise what production was built against.
+#pragma warning(push)
+#pragma warning(disable : 4996) // legacy CRT names are the test surface
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -177,3 +187,7 @@ int main()
         fprintf(stderr, "%d failure(s)\n", Failures);
     return Failures == 0 ? 0 : 1;
 }
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
