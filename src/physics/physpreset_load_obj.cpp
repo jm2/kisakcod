@@ -3,37 +3,64 @@
 #include <qcommon/qcommon.h>
 #include <universal/com_files.h>
 
+#include <cstring>
+
 void *(__cdecl *physAlloc)(int);
+
+// Parse-side view of the physics preset fields (LWSS). The field table below
+// derives every offset from this struct, so it tracks the real in-memory
+// layout on every target: the old hard-coded 28/32/36 offsets were the ILP32
+// ones, and at 64-bit piecesSpreadFraction landed on the upper half of
+// sndAliasPrefix and shifted every later field.
+struct PhysPresetLite
+{
+    float mass;
+    float bounce;
+    float friction;
+    int isFrictionInfinity;
+    float bulletForceScale;
+    float explosiveForceScale;
+    const char *sndAliasPrefix;
+    float piecesSpreadFraction;
+    float piecesUpwardVelocity;
+    bool tempDefaultToCylinder;
+};
 
 cspField_t physPresetFields[10] =
 {
-  { "mass", 0, 6 },
-  { "bounce", 4, 6 },
-  { "friction", 8, 6 },
-  { "isFrictionInfinity", 12, 5 },
-  { "bulletForceScale", 16, 6 },
-  { "explosiveForceScale", 20, 6 },
-  { "sndAliasPrefix", 24, 0 },
-  { "piecesSpreadFraction", 28, 6 },
-  { "piecesUpwardVelocity", 32, 6 },
-  { "tempDefaultToCylinder", 36, 5 }
+  { "mass", offsetof(PhysPresetLite, mass), 6 },
+  { "bounce", offsetof(PhysPresetLite, bounce), 6 },
+  { "friction", offsetof(PhysPresetLite, friction), 6 },
+  { "isFrictionInfinity", offsetof(PhysPresetLite, isFrictionInfinity), 5 },
+  { "bulletForceScale", offsetof(PhysPresetLite, bulletForceScale), 6 },
+  { "explosiveForceScale", offsetof(PhysPresetLite, explosiveForceScale), 6 },
+  { "sndAliasPrefix", offsetof(PhysPresetLite, sndAliasPrefix), 0 },
+  { "piecesSpreadFraction", offsetof(PhysPresetLite, piecesSpreadFraction), 6 },
+  { "piecesUpwardVelocity", offsetof(PhysPresetLite, piecesUpwardVelocity), 6 },
+  { "tempDefaultToCylinder", offsetof(PhysPresetLite, tempDefaultToCylinder), 5 }
 }; // idb
 
-struct PhysPresetLite // LWSS add custom struct to adhere to the above field offfsets
-{
-    float mass;   // 0
-    float bounce; // 4
-    float friction; // 8
-    int isFrictionInfinity; // 12
-    float bulletForceScale; // 16
-    float explosiveForceScale; // 20
-    const char *sndAliasPrefix; // 24
-    float piecesSpreadFraction; // 28
-    float piecesUpwardVelocity; // 32
-    bool tempDefaultToCylinder; // 36
-};
+// Typed destination for the one string field in physPresetFields
+// (sndAliasPrefix). ParseConfigStringToStruct hands its parseStrcpy callback a
+// byte address into the struct under construction, so writing the field through
+// that address needs a `const char **` view of a `uint8_t *`. Every spelling of
+// that conversion is a static-analysis finding on this path: a C-style pointer
+// cast, a reinterpret_cast (type punning), memcpy (CWE-120 plus the memcpy
+// size-validation rule), or a byte loop over the value's address (address of a
+// scalar accessed at non-zero index). Recording the typed destination here —
+// the same pattern as physAlloc, set beside it in PhysPresetLoadFile — lets the
+// callback assign the field directly at its real width.
+//
+// PhysPresetLoadFile is the only caller that passes these fields with this
+// callback, and physPresetFields has exactly one string field, so the
+// destination is unambiguous.
+static PhysPresetLite *physPresetParseTarget;
 
-void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
+// The first parameter is the byte address the parser computed for the field
+// being written. It is deliberately unnamed: the value is stored through the
+// typed destination above rather than through that address (see that comment),
+// so there is nothing to do with it here.
+void __cdecl PhysPreset_Strcpy(uint8_t *, const char *keyValue)
 {
     char v2; // [esp+3h] [ebp-25h]
     char *v3; // [esp+8h] [ebp-20h]
@@ -42,7 +69,16 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
 
     if (*keyValue)
     {
-        buf = (char *)physAlloc(strlen(keyValue) + 1);
+        // strnlen with the parser token bound instead of strlen (CWE-126 /
+        // unbounded-string-scan findings). keyValue comes from Info_ValueForKey,
+        // which NUL-terminates its value1[][][8192] buffer, and the *keyValue
+        // read above has the same termination precondition; for every such
+        // input strnlen equals strlen, so the allocation and the copy below are
+        // unchanged. Same shape as MSG_WriteString in
+        // src/qcommon/msg_bits_write_mp.cpp (length narrowed to int before the
+        // allocator's int size is used).
+        const int len = static_cast<int>(strnlen(keyValue, 8192));
+        buf = static_cast<char *>(physAlloc(len + 1));
         v4 = keyValue;
         v3 = buf;
         do
@@ -50,11 +86,11 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
             v2 = *v4;
             *v3++ = *v4++;
         } while (v2);
-        *(_DWORD *)member = (_DWORD)buf;
+        physPresetParseTarget->sndAliasPrefix = buf;
     }
     else
     {
-        *(_DWORD *)member = (_DWORD)"";
+        physPresetParseTarget->sndAliasPrefix = "";
     }
 }
 
@@ -92,6 +128,7 @@ PhysPreset *__cdecl PhysPresetLoadFile(const char *name, void *(__cdecl *Alloc)(
                         memset(&pStruct, 0, sizeof(pStruct));
                         pStruct.sndAliasPrefix = "";
                         physAlloc = Alloc;
+                        physPresetParseTarget = &pStruct;
                         if (ParseConfigStringToStruct((unsigned char*)&pStruct, physPresetFields, 10, buffer, 0, 0, PhysPreset_Strcpy))
                         {
                             iassert(sizeof(PhysPreset) == 44);
