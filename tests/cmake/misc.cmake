@@ -379,6 +379,43 @@ add_test(
     NAME msvc-crt-compat-contracts
     COMMAND kisakcod-msvc-crt-compat-tests
 )
+# Engine-owned MSVC-compatible RNG (docs/design/DETERMINISM.md, bead 9).
+# The done-test is "`rand` matches MSVC output for 3 seeds", so this target
+# compiles the real engine RNG TU (universal/com_math.cpp) and drives its
+# rand/srand entry points against the transcribed MSVC stream. That also
+# enrols com_math.cpp in the Linux test build's K3 count (NATIVE64.md).
+add_executable(kisakcod-msvc-rand-shim-tests
+    msvc_rand_shim_tests.cpp
+    com_math_test_stubs.cpp
+    ${SRC_DIR}/universal/com_math.cpp
+)
+# The production TU is decompiled engine code and is not -Wall -Wextra clean
+# (FinitePerspectiveMatrix's float (*mtx)[4] decay trips -Werror=array-bounds,
+# among others), so it compiles at the engine target's own surface while the
+# strict set is applied to this test's own TU only -- the same split the
+# msg-wire-contract and huffman-wire targets use. SYSTEM keeps that strict
+# set off the legacy engine headers (PackedUnitVec's anonymous struct trips
+# -Wpedantic) and DEPS_DIR resolves com_math.cpp's dobj.h -> ode/ode.h web,
+# exactly as the game target's include path does.
+target_include_directories(kisakcod-msvc-rand-shim-tests SYSTEM PRIVATE
+    ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-msvc-rand-shim-tests PRIVATE cxx_std_20)
+if (MSVC)
+    set_source_files_properties(msvc_rand_shim_tests.cpp
+        com_math_test_stubs.cpp PROPERTIES
+        COMPILE_OPTIONS "/W4;/WX")
+else()
+    set_source_files_properties(msvc_rand_shim_tests.cpp
+        com_math_test_stubs.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+endif()
+set_target_properties(kisakcod-msvc-rand-shim-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME msvc-rand-shim-contracts
+    COMMAND kisakcod-msvc-rand-shim-tests
+)
 # M5 exit (ki-msb): canonical widened-runtime-graph capture. The parity
 # digest is a domain-separated SHA-256 over a framed, typed, little-endian
 # stream; pointer-bearing values never enter it, so a 32-bit reference walk

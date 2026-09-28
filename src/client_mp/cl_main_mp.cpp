@@ -64,15 +64,15 @@ static const char *CL_EnsureGuid()
 
     char guid[33];
     static const char hex[] = "0123456789abcdef";
-    // Mix the uptime clock with the rand() stream (already srand-seeded in
-    // CL_InitOnceForAllClients) and fold a fresh rand() into every nibble, so two fresh
+    // Mix the uptime clock with the Kisak_rand() stream (already Kisak_srand-seeded in
+    // CL_InitOnceForAllClients) and fold a fresh Kisak_rand() into every nibble, so two fresh
     // installs don't collide on a shared Sys_Milliseconds() value and the value isn't
     // trivially enumerable. This GUID is the no-Steam ban key, so per-install uniqueness
     // matters; it is not a cryptographic credential.
-    unsigned int state = Sys_MillisecondsRaw() ^ ((unsigned int)rand() ^ ((unsigned int)rand() << 16));
+    unsigned int state = Sys_MillisecondsRaw() ^ ((unsigned int)Kisak_rand() ^ ((unsigned int)Kisak_rand() << 16));
     for (int i = 0; i < 32; ++i)
     {
-        state = state * 1664525u + 1013904223u + (unsigned int)rand();
+        state = state * 1664525u + 1013904223u + (unsigned int)Kisak_rand();
         guid[i] = hex[(state >> 24) & 0xFu];
     }
     guid[32] = 0;
@@ -3539,7 +3539,7 @@ void __cdecl CL_CheckAutoUpdate()
         }
         if (validServerNum)
         {
-            rnd = rand() % validServerNum;
+            rnd = Kisak_rand() % validServerNum;
             servername = pszGoodServers[rnd];
             Com_DPrintf(14, "Resolving AutoUpdate Server... ");
             if (NET_StringToAdr((char*)servername, &cls.autoupdateServer))
@@ -3673,7 +3673,7 @@ void __cdecl CL_InitOnceForAllClients()
     int32_t i; // [esp+18h] [ebp-4h]
 
     v0 = Sys_MillisecondsRaw();
-    srand(v0);
+    Kisak_srand(v0);
     Con_Init();
     CL_InitInput();
     cl_noprint = Dvar_RegisterBool("cl_noprint", false, DVAR_NOFLAG, "Print nothing to the console");

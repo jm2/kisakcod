@@ -1020,7 +1020,7 @@ uint32_t __cdecl FS_FOpenFileReadForThread(const char *filename, int *file, FsTh
                 if (fsh[*file].handleFiles.file.o)
                 {
                     if (!search->bLocalized && !search->ignorePureCheck && !FS_PureIgnoresExtension(extension))
-                        fs_fakeChkSum = rand() + 1;
+                        fs_fakeChkSum = Kisak_rand() + 1;
                     I_strncpyz(fsh[*file].name, sanitizedName, 256);
                     fsh[*file].zipFile = 0;
                     if (fs_debug->current.integer && thread == FS_THREAD_MAIN)

@@ -1025,7 +1025,7 @@ int32_t __cdecl BG_AnimScriptEvent(playerState_s *ps, scriptAnimEventTypes_t eve
     if (!scriptItem->numCommands)
         return -1;
 
-    int32_t v5 = rand(); // eax
+    int32_t v5 = Kisak_rand(); // eax
 
     return BG_ExecuteCommand(ps, &scriptItem->commands[v5 % scriptItem->numCommands], 1, isContinue, force);
 }

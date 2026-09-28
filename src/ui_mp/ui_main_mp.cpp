@@ -4591,9 +4591,9 @@ void __cdecl CL_SelectStringTableEntryInDvar_f()
             v0 = Cmd_Argv(1);
             StringTable_GetAsset(v0, &table);
             v1 = Sys_Milliseconds();
-            srand(v1);
+            Kisak_srand(v1);
             rowCount = (double)table->rowCount;
-            row = (int)((double)rand() * rowCount / 32767.0);
+            row = (int)((double)Kisak_rand() * rowCount / 32767.0);
             v2 = Cmd_Argv(2);
             v3 = atoi(v2);
             ColumnValueForRow = (char *)StringTable_GetColumnValueForRow(table, row, v3);

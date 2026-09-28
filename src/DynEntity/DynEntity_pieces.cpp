@@ -436,11 +436,11 @@ void __cdecl DynEntPieces_CalcForceDir(const float *hitDir, float spreadFraction
     int32_t v5; // [esp+10h] [ebp-10h]
     float outDir[3]; // [esp+14h] [ebp-Ch] BYREF
 
-    v5 = rand();
+    v5 = Kisak_rand();
     outDir[0] = (double)v5 / 32767.0 + (double)v5 / 32767.0 - 1.0;
-    v4 = rand();
+    v4 = Kisak_rand();
     outDir[1] = (double)v4 / 32767.0 + (double)v4 / 32767.0 - 1.0;
-    v3 = rand();
+    v3 = Kisak_rand();
     outDir[2] = (double)v3 / 32767.0 + (double)v3 / 32767.0 - 1.0;
     Vec3Lerp(hitDir, outDir, spreadFraction, forceDir);
 }

@@ -188,7 +188,7 @@ void __cdecl TRACK_com_math()
 
 float __cdecl random()
 {
-    return (rand() / 32768.0);
+    return (Kisak_rand() / 32768.0);
 }
 
 float __cdecl crandom()
@@ -2339,6 +2339,48 @@ void __cdecl NearestPitchAndYawOnPlane(const float* angles, const float* normal,
 void __cdecl Rand_Init(int seed)
 {
     holdrand = seed;
+}
+
+// Engine-owned MSVC-compatible RNG (docs/design/DETERMINISM.md, bead 9).
+//
+// The state machine (Kisak_rand_advance / Kisak_rand_from_state) lives in
+// com_math.h so the parity test compiles the identical LCG; only the
+// per-thread state lives here. MSVC keeps the state per thread, so the
+// engine RNG does too — this is what makes a `srand` on one thread unable
+// to perturb a `rand` on another, matching the CRT the callers were
+// decompiled against. The zero state is the CRT's own unseeded start, so a
+// TU that never calls `srand` still matches MSVC's first draws.
+//
+// This is deliberately a DIFFERENT state from `holdrand` above: `flrand` /
+// `irand` / `Rand_Init` run their own portable `>> 17` LCG that retail
+// already used as a separate stream. Sharing one state would silently
+// couple two call families that never shared a stream, and would change
+// every existing flrand result. Both streams keep their exact historical
+// step; only the CRT `rand` entry point is redirected here.
+thread_local uint32_t Kisak_randState = 0;
+
+int __cdecl Kisak_srand(unsigned int seed)
+{
+    // MSVC's srand stores the seed and returns it; the first Kisak_rand() then
+    // advances from that stored value. Mirror both halves so callers that
+    // use srand's return keep working.
+    Kisak_randState = static_cast<uint32_t>(seed);
+    return static_cast<int>(seed);
+}
+
+int __cdecl Kisak_rand()
+{
+    return Kisak_rand_from_state(Kisak_randState);
+}
+
+uint32_t __cdecl Kisak_GetRandState()
+{
+    return Kisak_randState;
+}
+
+void __cdecl Kisak_SetRandState(uint32_t state)
+{
+    Kisak_randState = state;
 }
 
 float __cdecl flrand(float min, float max)

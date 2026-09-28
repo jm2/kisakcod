@@ -508,8 +508,8 @@ void __cdecl SV_SpawnServer(char *mapname)
 
     I_strncpyz(sv.gametype, (char *)sv_gametype->current.integer, 64);
 
-    srand(Sys_MillisecondsRaw());
-    sv.checksumFeed = Sys_Milliseconds() ^ (rand() ^ (rand() << 16));
+    Kisak_srand(Sys_MillisecondsRaw());
+    sv.checksumFeed = Sys_Milliseconds() ^ (Kisak_rand() ^ (Kisak_rand() << 16));
     FS_Restart(0, sv.checksumFeed);
 
     if (!IsFastFileLoad())

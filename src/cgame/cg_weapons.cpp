@@ -2660,7 +2660,7 @@ void __cdecl DrawBulletImpacts(
             tracerStart[2] = gunOrient.origin[2];
             AngleVectors(viewang, orient.axis[0], orient.axis[1], orient.axis[2]);
         }
-        drawTracers = cg_firstPersonTracerChance->current.value * 32768.0 > (double)rand();
+        drawTracers = cg_firstPersonTracerChance->current.value * 32768.0 > (double)Kisak_rand();
         goto LABEL_33;
     }
     if (ent->nextState.eType != ET_PLAYER)
@@ -3250,7 +3250,7 @@ void __cdecl CG_SpawnTracer(int32_t localClientNum, const float *pstart, const f
     le->leType = LE_MOVING_TRACER;
     le->tracerClipDist = dist;
     if (cgameGlob->frametime)
-        v3 = rand() % cgameGlob->frametime / 2;
+        v3 = Kisak_rand() % cgameGlob->frametime / 2;
     else
         v3 = 0;
     startTime = cgameGlob->time - v3;
@@ -3856,7 +3856,7 @@ bool __cdecl ShouldSpawnTracer(int32_t localClientNum, int32_t sourceEntityNum)
         return 0;
     }
 
-    return cg_tracerChance->current.value * 32768.0 > (double)rand();
+    return cg_tracerChance->current.value * 32768.0 > (double)Kisak_rand();
 }
 
 void __cdecl CG_BulletHitClientEvent(
