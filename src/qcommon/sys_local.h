@@ -82,6 +82,14 @@ struct SysInfo
 
 extern int client_state; // LWSS ADD. This looks similar to signonstate
 
+// cppcheck's unusedStructMember pairs header members per translation unit,
+// so it reports the five suppressed members below as unused even though
+// Sys_QueEvent (win32/win_main.cpp) writes them and Com_EventLoop and
+// Debug_EventLoop (qcommon/common.cpp) read them; the same blind spot is
+// documented for the net_capture fixtures in .codacy.yaml. Each member keeps
+// its own suppression carrying the call-site evidence, and none is removed:
+// evPtrLength is additionally the retail sizeof=0x18 layout slot. The
+// cross-TU record still round-trips exactly as before the header split.
 struct sysEvent_t // sizeof=0x18
 {                                       // ...
 	// cppcheck-suppress unusedStructMember -- cross-TU use: written by Sys_QueEvent (win32/win_main.cpp), read by Com_HandleKeyEvent from Com_EventLoop/Debug_EventLoop (qcommon/common.cpp).
