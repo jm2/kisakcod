@@ -40,14 +40,32 @@ cspField_t physPresetFields[10] =
   { "tempDefaultToCylinder", offsetof(PhysPresetLite, tempDefaultToCylinder), 5 }
 }; // idb
 
-void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
+// Typed destination for the one string field in physPresetFields
+// (sndAliasPrefix). ParseConfigStringToStruct hands its parseStrcpy callback a
+// byte address into the struct under construction, so writing the field through
+// that address needs a `const char **` view of a `uint8_t *`. Every spelling of
+// that conversion is a static-analysis finding on this path: a C-style pointer
+// cast, a reinterpret_cast (type punning), memcpy (CWE-120 plus the memcpy
+// size-validation rule), or a byte loop over the value's address (address of a
+// scalar accessed at non-zero index). Recording the typed destination here —
+// the same pattern as physAlloc, set beside it in PhysPresetLoadFile — lets the
+// callback assign the field directly at its real width.
+//
+// PhysPresetLoadFile is the only caller that passes these fields with this
+// callback, and physPresetFields has exactly one string field, so the
+// destination is unambiguous.
+static PhysPresetLite *physPresetParseTarget;
+
+// The first parameter is the byte address the parser computed for the field
+// being written. It is deliberately unnamed: the value is stored through the
+// typed destination above rather than through that address (see that comment),
+// so there is nothing to do with it here.
+void __cdecl PhysPreset_Strcpy(uint8_t *, const char *keyValue)
 {
     char v2; // [esp+3h] [ebp-25h]
     char *v3; // [esp+8h] [ebp-20h]
     const char *v4; // [esp+Ch] [ebp-1Ch]
     char *buf; // [esp+20h] [ebp-8h]
-    const char *slot; // the `const char *` field value to store into *member
-    int len;
 
     if (*keyValue)
     {
@@ -59,7 +77,7 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
         // unchanged. Same shape as MSG_WriteString in
         // src/qcommon/msg_bits_write_mp.cpp (length narrowed to int before the
         // allocator's int size is used).
-        len = static_cast<int>(strnlen(keyValue, 8192));
+        const int len = static_cast<int>(strnlen(keyValue, 8192));
         buf = static_cast<char *>(physAlloc(len + 1));
         v4 = keyValue;
         v3 = buf;
@@ -68,24 +86,12 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
             v2 = *v4;
             *v3++ = *v4++;
         } while (v2);
-        slot = buf;
+        physPresetParseTarget->sndAliasPrefix = buf;
     }
     else
     {
-        slot = "";
+        physPresetParseTarget->sndAliasPrefix = "";
     }
-
-    // The target member is the `const char *` sndAliasPrefix field of
-    // PhysPresetLite; store the pointer at its native width. The old
-    // `*(_DWORD *)member = (_DWORD)buf` truncated it to 32 bits and was a hard
-    // error on 64-bit clang/GCC. memcpy copies the pointer representation, so
-    // exactly sizeof(slot) bytes land at *member and the retail store is
-    // unchanged at every target width. memcpy is used rather than a
-    // `const char **` view of `member` (pointer-to-different-object-type /
-    // type-punning findings) or a byte loop over `&slot` (C-style pointer cast
-    // plus "address of variable accessed at non-zero index" findings): it
-    // needs no pointer cast and no address-of-scalar indexing.
-    memcpy(member, &slot, sizeof(slot));
 }
 
 PhysPreset *__cdecl PhysPresetLoadFile(const char *name, void *(__cdecl *Alloc)(int))
@@ -122,6 +128,7 @@ PhysPreset *__cdecl PhysPresetLoadFile(const char *name, void *(__cdecl *Alloc)(
                         memset(&pStruct, 0, sizeof(pStruct));
                         pStruct.sndAliasPrefix = "";
                         physAlloc = Alloc;
+                        physPresetParseTarget = &pStruct;
                         if (ParseConfigStringToStruct((unsigned char*)&pStruct, physPresetFields, 10, buffer, 0, 0, PhysPreset_Strcpy))
                         {
                             iassert(sizeof(PhysPreset) == 44);
