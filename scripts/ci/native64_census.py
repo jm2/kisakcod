@@ -124,7 +124,8 @@ def win64_link(tus: list[str], tracy: Path, out: Path, jobs: int, probe: bool) -
         built = list(ex.map(one, enumerate(tus)))
     objs = [str(o) for _, o in built if o]
     excluded = [tu for tu, o in built if not o]
-    res = run(["clang++", "--target=x86_64-w64-mingw32", "-fuse-ld=lld", "-o", str(out / "KisakCOD-dedi-win64.exe"),
+    exe = out / ("KisakCOD-dedi-win64-probe.exe" if probe else "KisakCOD-dedi-win64.exe")
+    res = run(["clang++", "--target=x86_64-w64-mingw32", "-fuse-ld=lld", "-o", str(exe),
                *objs, *WIN_LIBS, "-Wl,--error-limit=0"])
     undefined = sorted({m.group(1) for m in map(UNDEF.search, res.stderr.splitlines()) if m})
     # A real link only counts when every TU built; the probe reports what links from the objects that did.
@@ -202,10 +203,11 @@ def main() -> int:
     if "lin64" in result["targets"]:
         result["d3d_stub_tus"] = result["targets"]["lin64"]["d3d_stub_tus"]
     if not args.no_link and "win64" in result["targets"]:
-        w = result["targets"]["win64"]
-        # A real link needs every TU to compile; until then only the probe runs.
-        real = (win64_link(lists["win64"], tracy, args.out, args.jobs, probe=False) if w["pass"] == w["total"]
-                else {"status": "not attempted", "excluded_tus": w["total"] - w["pass"]})
+        # The census attempts the real link even while TUs fail to compile, so
+        # K2 reports the attempt (excluded TUs, undefined symbols) instead of
+        # "not attempted". A "linked" verdict still requires every TU to build
+        # (win64_link); the probe reports what links from the objects that did.
+        real = win64_link(lists["win64"], tracy, args.out, args.jobs, probe=False)
         probe = win64_link(lists["win64"], tracy, args.out, args.jobs, probe=True)
         result["link"] = {"win64": {"real": real, "probe": probe}}
     if not args.no_k3:

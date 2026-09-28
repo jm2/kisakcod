@@ -35,6 +35,22 @@
       }
     },
     {
+      "name": "windows-amd64-dedi",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build-windows-amd64-dedi",
+      "cacheVariables": {
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "ON",
+        "KISAK_BUILD_SP": "OFF",
+        "KISAK_DEDI_HEADLESS": "ON",
+        "KISAK_ENABLE_STEAM": "OFF",
+        "KISAK_ENABLE_X86_MMX_SKINNING": "OFF",
+        "KISAK_ALLOW_UNSUPPORTED_64BIT": "ON",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
       "name": "linux-amd64-mp",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build-linux-amd64-mp",
