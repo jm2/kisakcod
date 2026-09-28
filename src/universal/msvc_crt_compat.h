@@ -65,7 +65,14 @@ static inline int _isnan(double x)
 // API of: no 32-bit epoch truncation anywhere on the path.
 static inline long long _time64(long long *dest)
 {
+    // cppcheck-suppress y2038-unsafe-call -- Every POSIX target this header
+    // compiles for (lin64/a64) is LP64 with 64-bit time_t, so timespec/
+    // timespec_get carry no 32-bit epoch; the shim exists to provide MSVC's
+    // 64-bit __time64_t contract (issue #218) and truncates nothing.
     struct timespec ts;
+    // cppcheck-suppress y2038-unsafe-call -- 64-bit time_t on lin64/a64
+    // (LP64): this wall-clock read cannot wrap in 2038. The error sentinel
+    // below is MSVC's 32-bit-era return contract, not a width limit.
     if (timespec_get(&ts, TIME_UTC) != TIME_UTC)
         ts.tv_sec = (time_t)-1; // the 32-bit spelling's error sentinel
     const long long now = (long long)ts.tv_sec;
@@ -80,11 +87,21 @@ static inline long long _time64(long long *dest)
 // fills a caller-owned buffer and returns it: same NULL-on-failure and
 // per-thread scratch storage as MSVC's _localtime64, without the
 // year-2038-unsafe, non-reentrant spelling of the conversion.
+//
+// The scratch buffer is TU-scope thread_local storage, not a function-local
+// static (Codacy local-static finding; the TU-scope hoist idiom
+// net_chan_capture_tick_tests.cpp documents): MSVC's _localtime64 returns a
+// pointer to per-thread scratch that outlives the call, so the storage must
+// too. Per-TU copies match the static inline function's own linkage.
+static thread_local struct tm kisak_localtime64_tm_buf;
 static inline struct tm *_localtime64(const long long *t)
 {
     const time_t tt = (time_t)*t;
-    static thread_local struct tm tm_buf;
-    return localtime_r(&tt, &tm_buf);
+    // cppcheck-suppress y2038-unsafe-call -- Every POSIX target this header
+    // compiles for (lin64/a64) is LP64 with 64-bit time_t, so this reentrant
+    // conversion cannot wrap in 2038; it is the POSIX spelling of MSVC's
+    // 64-bit _localtime64 contract (issue #218).
+    return localtime_r(&tt, &kisak_localtime64_tm_buf);
 }
 
 // MSVC: #define _TRUNCATE ((size_t)-1) — the *_snprintf_s count that means
