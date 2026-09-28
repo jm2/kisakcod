@@ -603,6 +603,21 @@ set_target_properties(kisakcod-db-asset-mode-tests PROPERTIES
 )
 add_test(NAME database-build-mode-asset-policy COMMAND kisakcod-db-asset-mode-tests)
 
+add_executable(kisakcod-db-asset-layout-tests
+    db_asset_layout_tests.cpp
+    ${SRC_DIR}/database/db_asset_layout.cpp
+)
+target_include_directories(kisakcod-db-asset-layout-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-db-asset-layout-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-asset-layout-tests)
+set_target_properties(kisakcod-db-asset-layout-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME database-asset-layout-fail-closed COMMAND kisakcod-db-asset-layout-tests)
+# The gate is width-parameterised, so both the 32-bit pass-through and the
+# 64-bit ERR_DROP refusal are asserted on every host including Win32.
+kisakcod_ilp32(kisakcod-db-asset-layout-tests database-asset-layout-fail-closed)
+
 add_executable(kisakcod-db-referenced-fastfile-tests db_referenced_fastfile_tests.cpp)
 target_include_directories(kisakcod-db-referenced-fastfile-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-db-referenced-fastfile-tests PRIVATE cxx_std_20)

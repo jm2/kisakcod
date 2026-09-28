@@ -11332,6 +11332,16 @@ void __cdecl Load_XAssetHeader(bool atStreamStart)
             DB_GetXAssetTypeName(varXAsset->type));
         return;
     }
+    // Fail closed on layout drift: a family without a complete ONDISK/RUNTIME
+    // pair must not load at 64-bit, where the runtime sizeof no longer matches
+    // the retail record (docs/design/NATIVE64.md).
+    if (!DB_AdmitAssetFamilyLoad(
+            varXAsset->type,
+            DB_GetXAssetTypeName(varXAsset->type),
+            KISAK_ARCH_64BIT != 0))
+    {
+        return;
+    }
 
     switch (varXAsset->type)
     {
