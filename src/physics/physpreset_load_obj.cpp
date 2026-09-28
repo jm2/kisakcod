@@ -44,10 +44,9 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
     char *v3; // [esp+8h] [ebp-20h]
     const char *v4; // [esp+Ch] [ebp-1Ch]
     char *buf; // [esp+20h] [ebp-8h]
-    // The target member is a `const char *` field of PhysPresetLite; store the
-    // pointer at its native width. The old `*(_DWORD *)member = (_DWORD)buf`
-    // truncated it to 32 bits and was a hard error on 64-bit clang/GCC.
-    const char **slot = reinterpret_cast<const char **>(member);
+    const char *slot; // the `const char *` field value to store into *member
+    int slotBytes;
+    int i;
 
     if (*keyValue)
     {
@@ -56,8 +55,11 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
         // which NUL-terminates its value1[][][8192] buffer, and the *keyValue
         // read above has the same termination precondition; for every such
         // input strnlen equals strlen, so the allocation and the copy below are
-        // unchanged.
-        buf = static_cast<char *>(physAlloc(static_cast<int>(strnlen(keyValue, 8192) + 1)));
+        // unchanged. Same shape as MSG_WriteString in
+        // src/qcommon/msg_bits_write_mp.cpp (length narrowed to int before the
+        // allocator's int size is used).
+        slotBytes = static_cast<int>(strnlen(keyValue, 8192));
+        buf = static_cast<char *>(physAlloc(slotBytes + 1));
         v4 = keyValue;
         v3 = buf;
         do
@@ -65,12 +67,26 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
             v2 = *v4;
             *v3++ = *v4++;
         } while (v2);
-        *slot = buf;
+        slot = buf;
     }
     else
     {
-        *slot = "";
+        slot = "";
     }
+
+    // The target member is the `const char *` sndAliasPrefix field of
+    // PhysPresetLite; store the pointer at its native width. The old
+    // `*(_DWORD *)member = (_DWORD)buf` truncated it to 32 bits and was a hard
+    // error on 64-bit clang/GCC. An explicit sizeof-sized byte loop instead of
+    // a `reinterpret_cast<const char **>(member)` view (type-punning /
+    // pointer-to-different-object-type findings) and instead of memcpy
+    // (static-analysis buffer-copy finding): the same idiom as MSG_WriteLong in
+    // src/qcommon/msg_bits_write_mp.cpp. It copies the in-memory representation
+    // of the pointer, so exactly sizeof(slot) bytes land at *member and the
+    // retail store is unchanged at every target width.
+    slotBytes = static_cast<int>(sizeof(slot));
+    for (i = 0; i < slotBytes; ++i)
+        member[i] = ((const uint8_t *)&slot)[i];
 }
 
 PhysPreset *__cdecl PhysPresetLoadFile(const char *name, void *(__cdecl *Alloc)(int))
