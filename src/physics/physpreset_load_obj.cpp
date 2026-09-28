@@ -3,6 +3,8 @@
 #include <qcommon/qcommon.h>
 #include <universal/com_files.h>
 
+#include <cstring>
+
 void *(__cdecl *physAlloc)(int);
 
 // Parse-side view of the physics preset fields (LWSS). The field table below
@@ -45,8 +47,7 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
     const char *v4; // [esp+Ch] [ebp-1Ch]
     char *buf; // [esp+20h] [ebp-8h]
     const char *slot; // the `const char *` field value to store into *member
-    int slotBytes;
-    int i;
+    int len;
 
     if (*keyValue)
     {
@@ -58,8 +59,8 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
         // unchanged. Same shape as MSG_WriteString in
         // src/qcommon/msg_bits_write_mp.cpp (length narrowed to int before the
         // allocator's int size is used).
-        slotBytes = static_cast<int>(strnlen(keyValue, 8192));
-        buf = static_cast<char *>(physAlloc(slotBytes + 1));
+        len = static_cast<int>(strnlen(keyValue, 8192));
+        buf = static_cast<char *>(physAlloc(len + 1));
         v4 = keyValue;
         v3 = buf;
         do
@@ -77,16 +78,14 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
     // The target member is the `const char *` sndAliasPrefix field of
     // PhysPresetLite; store the pointer at its native width. The old
     // `*(_DWORD *)member = (_DWORD)buf` truncated it to 32 bits and was a hard
-    // error on 64-bit clang/GCC. An explicit sizeof-sized byte loop instead of
-    // a `reinterpret_cast<const char **>(member)` view (type-punning /
-    // pointer-to-different-object-type findings) and instead of memcpy
-    // (static-analysis buffer-copy finding): the same idiom as MSG_WriteLong in
-    // src/qcommon/msg_bits_write_mp.cpp. It copies the in-memory representation
-    // of the pointer, so exactly sizeof(slot) bytes land at *member and the
-    // retail store is unchanged at every target width.
-    slotBytes = static_cast<int>(sizeof(slot));
-    for (i = 0; i < slotBytes; ++i)
-        member[i] = ((const uint8_t *)&slot)[i];
+    // error on 64-bit clang/GCC. memcpy copies the pointer representation, so
+    // exactly sizeof(slot) bytes land at *member and the retail store is
+    // unchanged at every target width. memcpy is used rather than a
+    // `const char **` view of `member` (pointer-to-different-object-type /
+    // type-punning findings) or a byte loop over `&slot` (C-style pointer cast
+    // plus "address of variable accessed at non-zero index" findings): it
+    // needs no pointer cast and no address-of-scalar indexing.
+    memcpy(member, &slot, sizeof(slot));
 }
 
 PhysPreset *__cdecl PhysPresetLoadFile(const char *name, void *(__cdecl *Alloc)(int))
