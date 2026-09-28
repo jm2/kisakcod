@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "db_asset_layout.h"
 #include "db_asset_mode.h"
 #include "db_relocation.h"
 #include "db_stream.h"
@@ -24,6 +25,10 @@ static_assert(static_cast<int32_t>(ASSET_TYPE_MPTYPE) == db::asset_mode::kMpType
 static_assert(static_cast<int32_t>(ASSET_TYPE_CHARACTER) == db::asset_mode::kCharacter);
 static_assert(static_cast<int32_t>(ASSET_TYPE_XMODELALIAS) == db::asset_mode::kXModelAlias);
 static_assert(static_cast<int32_t>(ASSET_TYPE_COUNT) == db::asset_mode::kAssetTypeCount);
+
+static_assert(static_cast<int32_t>(ASSET_TYPE_FX) == db::asset_layout::kFx);
+static_assert(static_cast<int32_t>(ASSET_TYPE_IMPACT_FX) == db::asset_layout::kImpactFx);
+static_assert(static_cast<int32_t>(ASSET_TYPE_COUNT) == db::asset_layout::kAssetTypeCount);
 
 #if defined(KISAK_MP) && defined(KISAK_SP)
 #error "KISAK_MP and KISAK_SP cannot both be enabled"

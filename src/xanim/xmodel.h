@@ -1,4 +1,5 @@
 #pragma once
+#include <universal/kisak_abi.h>
 #include <universal/com_math.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_material.h>
@@ -96,14 +97,14 @@ struct XModel // sizeof=0xDC
     struct PhysPreset* physPreset;
     struct PhysGeomList* physGeoms;
 };
-static_assert(sizeof(XModel) == 220);
+RUNTIME_SIZE(XModel, 0xDC, 0x118);
 
 struct XModelPiece // sizeof=0x10
 {
     XModel *model;
     float offset[3];
 };
-static_assert(sizeof(XModelPiece) == 16);
+RUNTIME_SIZE(XModelPiece, 0x10, 0x18);
 
 struct XModelPieces // sizeof=0xC
 {                                       // ...
@@ -111,7 +112,7 @@ struct XModelPieces // sizeof=0xC
     int numpieces;
     XModelPiece *pieces;
 };
-static_assert(sizeof(XModelPieces) == 12);
+RUNTIME_SIZE(XModelPieces, 0xC, 0x18);
 
 struct QueueElement // sizeof=0x8
 {                                       // ...
@@ -147,7 +148,7 @@ struct XModelSurfs // sizeof=0x14
     struct XSurface *surfs;                    // ...
     int partBits[4];                    // ...
 };
-static_assert(sizeof(XModelSurfs) == 20);
+RUNTIME_SIZE(XModelSurfs, 0x14, 0x18);
 
 struct XModelConfigEntry // sizeof=0x404
 {                                       // ...
@@ -179,7 +180,7 @@ struct XModelPartsLoad // sizeof=0x1C
     unsigned __int8 *partClassification;
     DObjAnimMat *baseMat;
 };
-static_assert(sizeof(XModelPartsLoad) == 28);
+RUNTIME_SIZE(XModelPartsLoad, 0x1C, 0x38);
 
 struct XModelDefault // sizeof=0x4C
 {                                       // ...

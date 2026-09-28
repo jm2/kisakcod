@@ -266,7 +266,7 @@ struct MaterialPixelShaderProgram // sizeof=0xC
     IDirect3DPixelShader9 *ps;
     GfxPixelShaderLoadDef loadDef;
 };
-static_assert(sizeof(MaterialPixelShaderProgram) == 12);
+RUNTIME_SIZE(MaterialPixelShaderProgram, 0xC, 0x18);
 
 struct MaterialPixelShader // sizeof=0x10
 {                                       // ...
@@ -452,7 +452,7 @@ struct MaterialTechniqueSet // sizeof=0x94
     MaterialTechniqueSet *remappedTechniqueSet;
     MaterialTechnique *techniques[34];
 };
-static_assert(sizeof(MaterialTechniqueSet) == 148);
+RUNTIME_SIZE(MaterialTechniqueSet, 0x94, 0x128);
 
 struct Material // sizeof=0x50
 {                                       // ...
@@ -469,7 +469,7 @@ struct Material // sizeof=0x50
     MaterialConstantDef *constantTable;
     GfxStateBits *stateBitsTable;
 };
-static_assert(sizeof(Material) == 80);
+RUNTIME_SIZE(Material, 0x50, 0x68);
 
 struct MaterialMemory // sizeof=0x8
 {                                       // ...

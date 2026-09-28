@@ -57,7 +57,7 @@ union XAnimIndices // sizeof=0x4
     void *data;
 };
 #define KISAK_XANIM_INDICES_DECLARED 1
-static_assert(sizeof(XAnimIndices) == 4);
+RUNTIME_SIZE(XAnimIndices, 0x4, 0x8);
 struct XAnimNotifyInfo // sizeof=0x8
 {
     uint16_t name;
@@ -204,7 +204,7 @@ struct XAnimParts // sizeof=0x58
     XAnimDeltaPart *deltaPart;
 };
 #define KISAK_XANIM_PARTS_DECLARED 1
-static_assert(sizeof(XAnimParts) == 88);
+RUNTIME_SIZE(XAnimParts, 0x58, 0x88);
 
 struct XModelNameMap // sizeof=0x4
 {                                       // ...
@@ -871,7 +871,7 @@ struct WeaponDef // sizeof=0x878
     float adsDofStart;
     float adsDofEnd;
 };
-static_assert(sizeof(WeaponDef) == 2168);
+RUNTIME_SIZE(WeaponDef, 0x878, 0xB10);
 
 struct SndDriverGlobals // sizeof=0x4
 {                                       // ...
@@ -884,7 +884,7 @@ struct RawFile // sizeof=0xC
     int len;
     const char* buffer;
 };
-static_assert(sizeof(RawFile) == 12);
+RUNTIME_SIZE(RawFile, 0xC, 0x18);
 
 struct PhysPreset // sizeof=0x2C
 {                                       // ...
@@ -1044,7 +1044,7 @@ struct XAsset // sizeof=0x8
     XAssetType type;                    // ...
     XAssetHeader header;                // ...
 };
-static_assert(sizeof(XAsset) == 8);
+RUNTIME_SIZE(XAsset, 0x8, 0x10);
 
 template <typename T>
 union XAssetPoolEntry // sizeof=0x10
@@ -1108,7 +1108,7 @@ struct ScriptStringList // sizeof=0x8
     int count;
     const char **strings;
 };
-static_assert(sizeof(ScriptStringList) == 8);
+RUNTIME_SIZE(ScriptStringList, 0x8, 0x10);
 
 struct XAssetList // sizeof=0x10
 {                                       // ...
@@ -1116,7 +1116,7 @@ struct XAssetList // sizeof=0x10
     int assetCount;
     XAsset *assets;
 };
-static_assert(sizeof(XAssetList) == 16);
+RUNTIME_SIZE(XAssetList, 0x10, 0x20);
 
 struct XFile // sizeof=0x2C
 {                                       // ...
@@ -1161,14 +1161,14 @@ struct XRigidVertList // sizeof=0xC
     uint16_t triCount;          // ...
     XSurfaceCollisionTree *collisionTree;
 };
-static_assert(sizeof(XRigidVertList) == 12);
+RUNTIME_SIZE(XRigidVertList, 0xC, 0x10);
 
 struct XSurfaceVertexInfo // sizeof=0xC
 {                                       // ...
     __int16 vertCount[4];
     uint16_t *vertsBlend;
 };
-static_assert(sizeof(XSurfaceVertexInfo) == 12);
+RUNTIME_SIZE(XSurfaceVertexInfo, 0xC, 0x10);
 
 struct XSurface // sizeof=0x38
 {
@@ -1187,7 +1187,7 @@ struct XSurface // sizeof=0x38
     XRigidVertList *vertList;
     int partBits[4];
 };
-static_assert(sizeof(XSurface) == 56);
+RUNTIME_SIZE(XSurface, 0x38, 0x50);
 
 struct DObj_s;
 
