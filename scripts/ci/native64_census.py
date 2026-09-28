@@ -124,7 +124,8 @@ def win64_link(tus: list[str], tracy: Path, out: Path, jobs: int, probe: bool) -
         built = list(ex.map(one, enumerate(tus)))
     objs = [str(o) for _, o in built if o]
     excluded = [tu for tu, o in built if not o]
-    res = run(["clang++", "--target=x86_64-w64-mingw32", "-fuse-ld=lld", "-o", str(out / "KisakCOD-dedi-win64.exe"),
+    exe = out / ("KisakCOD-dedi-win64-probe.exe" if probe else "KisakCOD-dedi-win64.exe")
+    res = run(["clang++", "--target=x86_64-w64-mingw32", "-fuse-ld=lld", "-o", str(exe),
                *objs, *WIN_LIBS, "-Wl,--error-limit=0"])
     undefined = sorted({m.group(1) for m in map(UNDEF.search, res.stderr.splitlines()) if m})
     # A real link only counts when every TU built; the probe reports what links from the objects that did.
