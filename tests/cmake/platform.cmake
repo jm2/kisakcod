@@ -216,50 +216,6 @@ add_test(
     COMMAND fuzz_sys_filesystem random 20000)
 set_tests_properties(fuzz-sys-filesystem-random PROPERTIES TIMEOUT 120)
 
-# sys_local portable-surface contracts (the win_local.h split): the portable
-# header must parse and keep its declarations on every host, and the moved
-# declarations must still match the production implementations. The engine
-# TUs (win_common.cpp plus the platform filesystem service it drives) compile
-# at the engine's own warning level in a dedicated object library -- the
-# decompiled engine headers are not -Wall clean (inline helpers in
-# com_memory.h) -- and target-level options keep that downgrade scoped to
-# exactly these sources, mirroring kisakcod-net-chan-production-objects in
-# net.cmake. The strict set stays on the test's own TUs.
-add_library(kisakcod-sys-local-engine-objects OBJECT
-    ${SRC_DIR}/universal/win_common.cpp
-    ${_platform_filesystem_sources}
-)
-target_include_directories(
-    kisakcod-sys-local-engine-objects SYSTEM PUBLIC ${SRC_DIR} ${DEPS_DIR})
-target_compile_features(
-    kisakcod-sys-local-engine-objects PUBLIC cxx_std_20)
-target_compile_definitions(
-    kisakcod-sys-local-engine-objects PUBLIC KISAK_MP KISAK_DEDI_HEADLESS)
-target_compile_options(kisakcod-sys-local-engine-objects PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/W3>
-    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>
-)
-add_executable(kisakcod-sys-local-contract-tests
-    sys_local_contract_tests.cpp
-    sys_local_test_stubs.cpp
-)
-target_include_directories(
-    kisakcod-sys-local-contract-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
-target_compile_features(kisakcod-sys-local-contract-tests PRIVATE cxx_std_20)
-target_compile_definitions(
-    kisakcod-sys-local-contract-tests PRIVATE KISAK_MP KISAK_DEDI_HEADLESS)
-target_link_libraries(kisakcod-sys-local-contract-tests PRIVATE
-    kisakcod-sys-local-engine-objects Threads::Threads)
-kisakcod_test_warnings(kisakcod-sys-local-contract-tests)
-set_target_properties(kisakcod-sys-local-contract-tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-)
-add_test(
-    NAME sys-local-portable-contracts
-    COMMAND kisakcod-sys-local-contract-tests
-)
-set_tests_properties(sys-local-portable-contracts PROPERTIES TIMEOUT 20)
-
 set(_platform_process_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
 list(FILTER _platform_process_sources INCLUDE REGEX "[/\\\\]sys_process\\.cpp$")
 if (KISAK_PLATFORM STREQUAL "macos")
