@@ -51,7 +51,13 @@ void __cdecl PhysPreset_Strcpy(uint8_t *member, const char *keyValue)
 
     if (*keyValue)
     {
-        buf = (char *)physAlloc((int)(strlen(keyValue) + 1));
+        // strnlen with the parser token bound instead of strlen (CWE-126 /
+        // unbounded-string-scan findings). keyValue comes from Info_ValueForKey,
+        // which NUL-terminates its value1[][][8192] buffer, and the *keyValue
+        // read above has the same termination precondition; for every such
+        // input strnlen equals strlen, so the allocation and the copy below are
+        // unchanged.
+        buf = static_cast<char *>(physAlloc(static_cast<int>(strnlen(keyValue, 8192) + 1)));
         v4 = keyValue;
         v3 = buf;
         do
