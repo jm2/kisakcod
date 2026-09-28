@@ -81,12 +81,16 @@ static inline long long _time64(long long *dest)
     return now;
 }
 
-// MSVC: struct tm *_localtime64(const __time64_t *) — the companion every
-// _time64 call site immediately pairs with. time_t is `long` on LP64 and a
-// distinct type from `long long`, so convert through a local. localtime_r
-// fills a caller-owned buffer and returns it: same NULL-on-failure and
-// per-thread scratch storage as MSVC's _localtime64, without the
-// year-2038-unsafe, non-reentrant spelling of the conversion.
+// MSVC: struct tm *_localtime64(const __time64_t *) — the companion the
+// _time64 call sites in qcommon/common.cpp, universal/com_shared.cpp and
+// gfx_d3d/rb_logfile.cpp immediately pair with. (ui_shared_obj.cpp's two
+// sites pair _time64 with _ctime64 instead, which this header does not
+// provide yet — outside this bead's name list, tracked as follow-up work.)
+// time_t is `long` on LP64 and a distinct type from `long long`, so convert
+// through a local. localtime_r fills a caller-owned buffer and returns it:
+// same NULL-on-failure and per-thread scratch storage as MSVC's
+// _localtime64, without the year-2038-unsafe, non-reentrant spelling of
+// the conversion.
 //
 // The scratch buffer is TU-scope thread_local storage, not a function-local
 // static (Codacy local-static finding; the TU-scope hoist idiom
