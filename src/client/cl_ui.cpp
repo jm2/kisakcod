@@ -7,6 +7,10 @@
 #include "client.h"
 #include <ui/ui.h>
 #include <universal/com_sndalias.h>
+// R_PopRemoteScreenUpdate/R_PushRemoteScreenUpdate are declared in
+// r_rendercmds.h; xanim.h holds renderer types by pointer only since the
+// D3D include cut (KPI K5).
+#include <gfx_d3d/r_rendercmds.h>
 
 void __cdecl Key_KeynumToStringBuf(int keynum, char *buf, int buflen)
 {

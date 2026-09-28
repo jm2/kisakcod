@@ -16,7 +16,7 @@ include("${SCRIPTS_DIR}/dedi/dedi_sources.cmake")
 kisakcod_get_dedi_sources(_dedi_sources)
 
 set(_debt_include_regex
-    "^[ \t]*#[ \t]*include[ \t]*[<\\\"](\\.\\./)*(client|client_mp|cgame|cgame_mp|gfx_d3d|sound|ui|ui_mp|EffectsCore|DynEntity|devgui|groupvoice|bink|mss)(/|[>\\\"])"
+    "^[ \t]*#[ \t]*include[ \t]*[<\\\"](\\.\\./)*(client|client_mp|cgame|cgame_mp|gfx_d3d|sound|ui|ui_mp|EffectsCore|DynEntity|devgui|groupvoice|bink|mss|aim_assist|ragdoll)(/|[>\\\"])"
 )
 
 function(kisakcod_headless_pop_line CONTENT_VAR OUT_LINE OUT_HAS_LINE)

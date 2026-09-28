@@ -5,6 +5,10 @@
 // served scr_yacc.cpp's LOBYTE macro, which now carries its own fallback.
 #if defined(_WIN32)
 #include <Windows.h>
+// wingdi.h's GetObject macro shadows the script VM's GetObject(); the script
+// headers undef it before declaring their own (see scr_variable.h), so
+// neutralize the macro again right where this header re-introduces it.
+#undef GetObject
 #else
 // Portability (ki-n1et): the flex allocator declaration below is the only
 // Win32-typedef user; it is never defined or called outside Windows.

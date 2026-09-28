@@ -5,6 +5,11 @@
 #
 # This is an allowlist, not a desired state. CI should fail when new entries are
 # introduced or when an entry is removed but the debt manifest is not updated.
+database/db_assetnames.cpp|#include <gfx_d3d/r_bsp.h>
+database/db_assetnames.cpp|#include <gfx_d3d/r_font.h>
+database/db_assetnames.cpp|#include <gfx_d3d/r_gfx.h>
+database/db_assetnames.cpp|#include <gfx_d3d/r_material.h>
+database/db_file_load.cpp|#include <gfx_d3d/r_gfx.h>
 database/db_load.cpp|#include <DynEntity/DynEntity_client.h>
 database/db_load.cpp|#include <gfx_d3d/fxprimitives.h>
 database/db_load.cpp|#include <gfx_d3d/r_buffers.h>
@@ -18,11 +23,14 @@ database/db_load.cpp|#include <sound/snd_local.h>
 database/db_registry.cpp|#include <gfx_d3d/r_bsp.h>
 database/db_registry.cpp|#include <gfx_d3d/r_image.h>
 database/db_registry.cpp|#include <gfx_d3d/r_init.h>
+qcommon/cm_load_obj.cpp|#include <gfx_d3d/r_bsp.h>
+qcommon/cm_load_obj.cpp|#include <gfx_d3d/r_gfx.h>
+qcommon/com_bsp.cpp|#include <gfx_d3d/r_primarylights.h>
 qcommon/cmd.cpp|#include <sound/snd_local.h>
+qcommon/com_bsp_load_obj.cpp|#include <gfx_d3d/r_primarylights.h>
 universal/com_sndalias.h|#include <sound/snd_public.h>
-xanim/xanim.h|#include <gfx_d3d/r_bsp.h>
-xanim/xanim.h|#include <gfx_d3d/r_font.h>
-xanim/xanim.h|#include <gfx_d3d/r_gfx.h>
-xanim/xanim.h|#include <gfx_d3d/r_material.h>
 xanim/xanim.h|#include <sound/snd_public.h>
 xanim/xanim.h|#include <ui/ui_shared.h>
+xanim/xmodel.cpp|#include <gfx_d3d/r_gfx.h>
+xanim/xmodel_load_obj.cpp|#include <gfx_d3d/r_bsp.h>
+xanim/xmodel_load_obj.cpp|#include <gfx_d3d/r_gfx.h>

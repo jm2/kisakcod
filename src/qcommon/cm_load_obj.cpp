@@ -2,6 +2,11 @@
 #include <xanim/xmodel.h>
 #include <universal/com_memory.h>
 #include "com_bsp.h"
+// DiskBrushModel (r_gfx.h) and DiskLeaf (r_bsp.h) are the collision disk
+// records the loader parses; xanim.h holds renderer types by pointer only
+// since the D3D include cut (KPI K5).
+#include <gfx_d3d/r_bsp.h>
+#include <gfx_d3d/r_gfx.h>
 #include <universal/q_parse.h>
 #include <game/game_public.h>
 #include <universal/profile.h>

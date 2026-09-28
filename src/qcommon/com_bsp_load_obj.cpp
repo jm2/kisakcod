@@ -2,6 +2,9 @@
 #include <universal/com_memory.h>
 #include <universal/com_files.h>
 #include <database/database.h>
+// GfxLightType (GFX_LIGHT_TYPE_*) is defined in r_primarylights.h; xanim.h
+// holds renderer types by pointer only since the D3D include cut (KPI K5).
+#include <gfx_d3d/r_primarylights.h>
 #include <universal/profile.h>
 
 BspGlob comBspGlob;

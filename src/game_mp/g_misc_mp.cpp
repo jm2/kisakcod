@@ -6,6 +6,9 @@
 #include "g_utils_mp.h"
 #include <server/sv_world.h>
 #include <qcommon/com_bsp.h>
+// Byte4PackRgba is declared in com_pack.h; it used to arrive transitively
+// through xanim.h -> r_gfx.h before the D3D include cut (KPI K5).
+#include <qcommon/com_pack.h>
 #include <script/scr_vm.h>
 #include <xanim/dobj.h>
 #include <xanim/dobj_utils.h>

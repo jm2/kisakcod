@@ -167,7 +167,7 @@ void __cdecl Com_VolumeFalloffCurveGraphEventCallback(const DevGraph *graph, Dev
             data);
     if (event == EVENT_ACCEPT)
     {
-        snprintf(string, ARRAYSIZE(string), "Volume Falloff Curve #%02d\nKnot Count: %d\n", data, *graph->knotCount);
+        snprintf(string, sizeof(string), "Volume Falloff Curve #%02d\nKnot Count: %d\n", data, *graph->knotCount);
         for (i = 0; i < *graph->knotCount; ++i)
         {
             Com_sprintf(dest, 0x20u, "%.4f %.4f\n", graph->knots[i][0], graph->knots[i][1]);

@@ -1,6 +1,14 @@
 #include "database.h"
 #include <game/g_bsp.h>
 
+// Asset size/name handlers below take sizeof() of the renderer-held asset
+// records; xanim.h holds them by pointer only since the D3D include cut
+// (KPI K5), so their complete types come from the renderer headers directly.
+#include <gfx_d3d/r_bsp.h>
+#include <gfx_d3d/r_font.h>
+#include <gfx_d3d/r_gfx.h>
+#include <gfx_d3d/r_material.h>
+
 //int32_t marker_db_assetnames 828ddeec     db_assetnames.obj
 
 const char *(__cdecl *DB_XAssetGetNameHandler[33])(const XAssetHeader *) =

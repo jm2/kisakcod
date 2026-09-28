@@ -15,20 +15,31 @@
 #include "xanim_public.h"
 #include <universal/kisak_abi.h>
 #include <script/scr_stringlist.h>
-#include <gfx_d3d/r_font.h>
-#include <gfx_d3d/r_bsp.h>
 #include <universal/com_math.h>
 #include <bgame/bg_weapons.h>
-#include <xanim/xanim.h>
 #include <sound/snd_public.h>
 #include "dobj.h"
 #include "xmodel.h"
-#include <gfx_d3d/r_material.h>
-#include <gfx_d3d/r_gfx.h>
 
 #include <game/pathnode.h>
 
 #include <ui/ui_shared.h>
+
+// The renderer headers (gfx_d3d/r_font.h, r_bsp.h, r_material.h, r_gfx.h) are
+// deliberately not included: this header holds their types by pointer only, so
+// shared and headless TUs that see xanim.h never pull <d3d9.h> (KPI K5,
+// docs/design/PLATFORM_POSIX.md). The one by-value user, XAssetSize, moved to
+// its consumer (database/db_registry.cpp); TUs that need complete renderer
+// records include those headers themselves.
+struct Font_s;
+struct GfxLightDef;
+struct GfxPackedVertex;
+struct GfxWorld;
+struct Material;
+struct MaterialPixelShader;
+struct MaterialTechniqueSet;
+struct MaterialVertexShader;
+struct GfxImage;
 
 #define ANIM_FLAG_COMPLETE 1
 
@@ -1034,38 +1045,6 @@ struct XAsset // sizeof=0x8
     XAssetHeader header;                // ...
 };
 static_assert(sizeof(XAsset) == 8);
-
-union XAssetSize // sizeof=0x878
-{                                       // ...
-    XAssetSize()
-    {
-        fx = NULL;
-    }
-    XAnimParts parts;
-    XModel model;
-    Material material;
-    MaterialPixelShader pixelShader;
-    MaterialVertexShader vertexShader;
-    MaterialTechniqueSet techniqueSet;
-    GfxImage image;
-    snd_alias_list_t sound;
-    SndCurve sndCurve;
-    clipMap_t clipMap;
-    ComWorld comWorld;
-    MapEnts mapEnts;
-    GfxWorld gfxWorld;
-    GfxLightDef lightDef;
-    Font_s font;
-    MenuList menuList;
-    menuDef_t menu;
-    LocalizeEntry localize;
-    WeaponDef weapon;
-    SndDriverGlobals sndDriverGlobals;
-    const FxEffectDef *fx;
-    FxImpactTable impactFx;
-    RawFile rawfile;
-    StringTable stringTable;
-};
 
 template <typename T>
 union XAssetPoolEntry // sizeof=0x10

@@ -4,7 +4,6 @@
 #include <database/database.h>
 #include <qcommon/mem_track.h>
 #include <universal/surfaceflags.h>
-#include <aim_assist/aim_assist.h>
 #include <xanim/xanim.h>
 #include <universal/com_files.h>
 
