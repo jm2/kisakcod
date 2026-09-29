@@ -10,7 +10,11 @@
 #include <qcommon/mem_track.h>
 
 #include <xanim/xmodel.h>
-#include <win32/win_net.h>
+// KisakCOD ABI port: win32/win_net.h is the Winsock-touching net header (it
+// includes winsock.h). This TU only needs the net layer's interruptible wait
+// (DB_Sleep below), so declare it directly instead of pulling Winsock into
+// shared compositions; row 13 moves the NET_* surface onto Sys_Socket.
+void NET_Sleep(int msec);
 #include <qcommon/threads.h>
 #include <qcommon/com_bsp.h>
 #include <gfx_d3d/r_init.h>
@@ -48,6 +52,147 @@
 #include <game/g_bsp.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <cgame/cg_local.h>
+#endif
+
+// KisakCOD ABI port: the fast-file and zone-source file layer below speaks the
+// Win32 file API (CreateFileA/ReadFile/WriteFile/GetFileSize/DeleteFileA) and
+// hands the resulting HANDLE to the async reader in db_file_load.cpp. On POSIX
+// compositions the same operations go through the portable FS_File* seam
+// (qcommon/com_fileaccess.h); row 14's sys_file async-read service replaces
+// this adapter and its call sites wholesale. The Win32 arms keep the original
+// CreateFileA arguments verbatim, including the buffered overlapped zone open
+// (FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN): overlapped reads avoid
+// the sector-alignment contract of unbuffered I/O, and sequential-scan caching
+// is the safe equivalent until the file adapter owns an explicitly aligned
+// allocation.
+#include <qcommon/com_fileaccess.h>
+
+#if defined(_WIN32)
+
+typedef HANDLE DBFileHandle;
+#define DB_FILE_HANDLE_INVALID INVALID_HANDLE_VALUE
+
+static DBFileHandle DB_OpenZoneHandle(const char *path)
+{
+    return CreateFileA(
+        path,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN,
+        nullptr);
+}
+
+static DBFileHandle DB_OpenZoneHandleUnshared(const char *path)
+{
+    return CreateFileA(
+        path,
+        GENERIC_READ,
+        0,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN,
+        nullptr);
+}
+
+static DBFileHandle DB_OpenProbeHandle(const char *path)
+{
+    return CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+}
+
+static DBFileHandle DB_OpenReorderCsvRead(const char *path)
+{
+    return CreateFileA(path, 0x80000000u, 0, 0, 3u, 0, 0);
+}
+
+static DBFileHandle DB_OpenReorderCsvWrite(const char *path)
+{
+    return CreateFileA(path, 0x40000000u, 0, 0, 2u, 0, 0);
+}
+
+static void DB_CloseFileHandle(DBFileHandle file)
+{
+    CloseHandle(file);
+}
+
+static int DB_FileHandleSize(DBFileHandle file)
+{
+    return GetFileSize(file, 0);
+}
+
+static bool DB_WriteFileHandle(DBFileHandle file, const void *data, uint32_t bytes)
+{
+    DWORD written;
+    return WriteFile(file, data, bytes, &written, 0) != 0;
+}
+
+static bool DB_ReadFileHandle(DBFileHandle file, void *data, uint32_t bytes)
+{
+    DWORD read;
+    return ReadFile(file, data, bytes, &read, 0) != 0 && read == bytes;
+}
+
+static void DB_DeleteFileNamed(const char *path)
+{
+    DeleteFileA(path);
+}
+
+#else
+
+typedef FILE *DBFileHandle;
+#define DB_FILE_HANDLE_INVALID nullptr
+
+static DBFileHandle DB_OpenZoneHandle(const char *path)
+{
+    return FS_FileOpenReadBinary(path);
+}
+
+static DBFileHandle DB_OpenZoneHandleUnshared(const char *path)
+{
+    return FS_FileOpenReadBinary(path);
+}
+
+static DBFileHandle DB_OpenProbeHandle(const char *path)
+{
+    return FS_FileOpenReadBinary(path);
+}
+
+static DBFileHandle DB_OpenReorderCsvRead(const char *path)
+{
+    return FS_FileOpenReadBinary(path);
+}
+
+static DBFileHandle DB_OpenReorderCsvWrite(const char *path)
+{
+    return FS_FileOpenWriteBinary(path);
+}
+
+static void DB_CloseFileHandle(DBFileHandle file)
+{
+    FS_FileClose(file);
+}
+
+static int DB_FileHandleSize(DBFileHandle file)
+{
+    return FS_FileGetFileSize(file);
+}
+
+static bool DB_WriteFileHandle(DBFileHandle file, const void *data, uint32_t bytes)
+{
+    return FS_FileWrite(data, bytes, file) == bytes;
+}
+
+static bool DB_ReadFileHandle(DBFileHandle file, void *data, uint32_t bytes)
+{
+    return FS_FileRead(data, bytes, file) == bytes;
+}
+
+static void DB_DeleteFileNamed(const char *path)
+{
+    remove(path);
+}
+
 #endif
 
 GfxWorld s_world;
@@ -812,13 +957,6 @@ static const char *DB_GetFastFileBasePath()
     return Sys_DefaultInstallPath();
 }
 
-// Buffered overlapped reads avoid the sector-alignment contract imposed by
-// unbuffered I/O.  The fast-file ring is only naturally word-aligned;
-// sequential-scan caching is the safe equivalent until the file adapter owns
-// an explicitly aligned allocation.
-static constexpr uint32_t DB_FAST_FILE_ASYNC_FLAGS =
-    FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN;
-
 void __cdecl DB_BuildOSPath_Mod(const char *zoneName, uint32_t size, char *filename)
 {
     const char *string; // [esp-8h] [ebp-8h]
@@ -832,22 +970,15 @@ void __cdecl DB_BuildOSPath_Mod(const char *zoneName, uint32_t size, char *filen
 bool __cdecl DB_ModFileExists()
 {
     char filename[256]; // [esp+0h] [ebp-108h] BYREF
-    void *zoneFile; // [esp+104h] [ebp-4h]
+    DBFileHandle zoneFile; // [esp+104h] [ebp-4h]
 
     if (!*fs_gameDirVar->current.string)
         return 0;
     DB_BuildOSPath_Mod("mod", 0x100u, filename);
-    zoneFile = CreateFileA(
-        filename,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr);
-    if (zoneFile == INVALID_HANDLE_VALUE)
+    zoneFile = DB_OpenProbeHandle(filename);
+    if (zoneFile == DB_FILE_HANDLE_INVALID)
         return 0;
-    CloseHandle(zoneFile);
+    DB_CloseFileHandle(zoneFile);
     return 1;
 }
 
@@ -1662,24 +1793,23 @@ void DB_EndReorderZone()
 {
     DBReorderAssetEntry *entry; // [esp+180h] [ebp-41Ch]
     bool wroteBlank; // [esp+187h] [ebp-415h]
-    DWORD bytesa; // [esp+188h] [ebp-414h]
-    DWORD bytes; // [esp+188h] [ebp-414h]
-    HANDLE file; // [esp+18Ch] [ebp-410h]
-    DWORD written; // [esp+190h] [ebp-40Ch] BYREF
+    uint32_t bytesa; // [esp+188h] [ebp-414h]
+    uint32_t bytes; // [esp+188h] [ebp-414h]
+    DBFileHandle file; // [esp+18Ch] [ebp-410h]
     char csvName[256]; // [esp+194h] [ebp-408h] BYREF
     char line[512]; // [esp+294h] [ebp-308h] BYREF
     char bakName[256]; // [esp+494h] [ebp-108h] BYREF
-    DWORD entryIter; // [esp+598h] [ebp-4h]
+    uint32_t entryIter; // [esp+598h] [ebp-4h]
 
     if (s_dbReorder.entryCount)
     {
         s_dbReorder.alreadyFinished = 1;
         Com_sprintf(csvName, 0x100u, "..\\share\\zone_source\\%s.csv", s_dbReorder.zoneName);
         Com_sprintf(bakName, 0x100u, "%s.bak", csvName);
-        DeleteFileA(bakName);
+        DB_DeleteFileNamed(bakName);
         rename(csvName, bakName);
-        file = CreateFileA(csvName, 0x40000000u, 0, 0, 2u, 0, 0);
-        if (file != (HANDLE)-1)
+        file = DB_OpenReorderCsvWrite(csvName);
+        if (file != DB_FILE_HANDLE_INVALID)
         {
             wroteBlank = 0;
             DB_SetReorderIncludeSequence();
@@ -1704,14 +1834,14 @@ void DB_EndReorderZone()
                         break;
                     default:
                         wroteBlank = 1;
-                        WriteFile(file, "\r\n", 2u, &written, 0);
+                        DB_WriteFileHandle(file, "\r\n", 2u);
                         break;
                     }
                 }
                 if (entry->type == 23)
                 {
                     bytesa = Com_sprintf(line, 0x200u, "%s,%s%s\r\n", entry->typeString, "mp/", entry->assetName);
-                    WriteFile(file, line, bytesa, &written, 0);
+                    DB_WriteFileHandle(file, line, bytesa);
                 }
                 else
                 {
@@ -1726,10 +1856,10 @@ void DB_EndReorderZone()
                             "all_mp");
                     else
                         bytes = Com_sprintf(line, 0x200u, "%s,%s\r\n", entry->typeString, entry->assetName);
-                    WriteFile(file, line, bytes, &written, 0);
+                    DB_WriteFileHandle(file, line, bytes);
                 }
             }
-            CloseHandle(file);
+            DB_CloseFileHandle(file);
         }
     }
 }
@@ -2895,15 +3025,14 @@ void __cdecl DB_BeginReorderZone(const char *zoneName)
     DBReorderAssetEntry *entry; // [esp+14h] [ebp-248h]
     char assetType[32]; // [esp+18h] [ebp-244h] BYREF
     uint32_t size; // [esp+38h] [ebp-224h]
-    void *file; // [esp+3Ch] [ebp-220h]
+    DBFileHandle file; // [esp+3Ch] [ebp-220h]
     int32_t success; // [esp+40h] [ebp-21Ch]
     char assetName[256]; // [esp+44h] [ebp-218h] BYREF
     char csvName[256]; // [esp+144h] [ebp-118h] BYREF
     const char *parse; // [esp+248h] [ebp-14h] BYREF
     char *csv; // [esp+24Ch] [ebp-10h]
     char *to; // [esp+250h] [ebp-Ch]
-    DWORD read; // [esp+254h] [ebp-8h] BYREF
-    DWORD entryIter; // [esp+258h] [ebp-4h]
+    uint32_t entryIter; // [esp+258h] [ebp-4h]
 
     for (entryIter = 0; entryIter < s_dbReorder.entryCount; ++entryIter)
     {
@@ -2928,18 +3057,18 @@ void __cdecl DB_BeginReorderZone(const char *zoneName)
     } while (v1);
     Sys_LockWrite(&s_dbReorder.critSect);
     Com_sprintf(csvName, 0x100u, "..\\share\\zone_source\\%s.csv", zoneName);
-    file = CreateFileA(csvName, 0x80000000, 0, 0, 3u, 0, 0);
-    if (file == INVALID_HANDLE_VALUE)
+    file = DB_OpenReorderCsvRead(csvName);
+    if (file == DB_FILE_HANDLE_INVALID)
     {
         Sys_UnlockWrite(&s_dbReorder.critSect);
     }
     else
     {
-        size = GetFileSize(file, 0);
+        size = DB_FileHandleSize(file);
         csv = (char *)malloc(size + 1);
-        success = ReadFile(file, csv, size, &read, 0);
-        CloseHandle(file);
-        if (success && read == size)
+        success = DB_ReadFileHandle(file, csv, size);
+        DB_CloseFileHandle(file);
+        if (success)
         {
             csv[size] = 0;
             to = csv;
@@ -3014,7 +3143,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
     char filename[256]; // [esp+Ch] [ebp-110h] BYREF
     bool modZone; // [esp+113h] [ebp-9h]
     uint32_t i; // [esp+114h] [ebp-8h]
-    void *zoneFile; // [esp+118h] [ebp-4h]
+    DBFileHandle zoneFile; // [esp+118h] [ebp-4h]
 
     if (!zoneName || !*zoneName)
     {
@@ -3030,63 +3159,35 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         if (*fs_gameDirVar->current.string && DB_ShouldLoadFromModDir(zoneName))
         {
             DB_BuildOSPath_Mod(zoneName, 256, filename);
-            zoneFile = CreateFileA(
-                filename,
-                GENERIC_READ,
-                FILE_SHARE_READ,
-                nullptr,
-                OPEN_EXISTING,
-                DB_FAST_FILE_ASYNC_FLAGS,
-                nullptr);
-            modZone = zoneFile != INVALID_HANDLE_VALUE;
+            zoneFile = DB_OpenZoneHandle(filename);
+            modZone = zoneFile != DB_FILE_HANDLE_INVALID;
         }
         else
         {
-            zoneFile = INVALID_HANDLE_VALUE;
+            zoneFile = DB_FILE_HANDLE_INVALID;
         }
-        if (zoneFile == INVALID_HANDLE_VALUE)
+        if (zoneFile == DB_FILE_HANDLE_INVALID)
         {
             DB_BuildOSPath(zoneName, 256, filename);
-            zoneFile = CreateFileA(
-                filename,
-                GENERIC_READ,
-                FILE_SHARE_READ,
-                nullptr,
-                OPEN_EXISTING,
-                DB_FAST_FILE_ASYNC_FLAGS,
-                nullptr);
+            zoneFile = DB_OpenZoneHandle(filename);
         }
     }
     else
     {
-        zoneFile = CreateFileA(
-            "update:\\mp_patch.ff",
-            GENERIC_READ,
-            0,
-            nullptr,
-            OPEN_EXISTING,
-            DB_FAST_FILE_ASYNC_FLAGS,
-            nullptr);
-        if (zoneFile == INVALID_HANDLE_VALUE)
+        zoneFile = DB_OpenZoneHandleUnshared("update:\\mp_patch.ff");
+        if (zoneFile == DB_FILE_HANDLE_INVALID)
         {
             Com_Printf(16, "Loading mp_patch.ff from disc, not from the update drive\n");
             DB_BuildOSPath(zoneName, 256, filename);
-            zoneFile = CreateFileA(
-                filename,
-                GENERIC_READ,
-                0,
-                nullptr,
-                OPEN_EXISTING,
-                DB_FAST_FILE_ASYNC_FLAGS,
-                nullptr);
-            if (zoneFile == INVALID_HANDLE_VALUE)
+            zoneFile = DB_OpenZoneHandleUnshared(filename);
+            if (zoneFile == DB_FILE_HANDLE_INVALID)
             {
                 Com_PrintWarning(10, "WARNING: Could not find zone '%s'\n", filename);
                 return 0;
             }
         }
     }
-    if (zoneFile == INVALID_HANDLE_VALUE)
+    if (zoneFile == DB_FILE_HANDLE_INVALID)
     {
         v3 = strstr(filename, "_load");
         if (v3)
@@ -3116,7 +3217,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
 
         if (!db::zone_slots::IsUsableZoneSlot(g_zoneIndex))
         {
-            CloseHandle(zoneFile);
+            DB_CloseFileHandle(zoneFile);
             Com_Error(ERR_FATAL, "No free fast-file zone slot");
             return 0;
         }
@@ -3125,7 +3226,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
                 >= static_cast<int32_t>(
                     db::zone_slots::kUsableZoneSlotCount))
         {
-            CloseHandle(zoneFile);
+            DB_CloseFileHandle(zoneFile);
             Com_Error(ERR_FATAL, "Fast-file zone count is out of range");
             return 0;
         }
@@ -3140,7 +3241,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         }
         if (Sys_AtomicCompareExchange(&g_loadingZone, 1u, 0u))
         {
-            CloseHandle(zoneFile);
+            DB_CloseFileHandle(zoneFile);
             Com_Error(ERR_FATAL, "Overlapping fast-file zone loads");
             return 0;
         }
@@ -3160,7 +3261,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         g_zoneHandles[g_zoneCount] = g_zoneIndex;
         I_strncpyz(zone->name, zoneName, 64);
         zone->flags = zoneFlags;
-        zone->fileSize = GetFileSize(zoneFile, 0);
+        zone->fileSize = DB_FileHandleSize(zoneFile);
         zone->modZone = modZone;
         if (!_stricmp(zone_reorder->current.string, zoneName))
             DB_BeginReorderZone(zoneName);
@@ -3657,24 +3758,17 @@ int32_t __cdecl DB_FileSize(const char *zoneName, int32_t isMod)
 {
     char filename[260]; // [esp+0h] [ebp-110h] BYREF
     int32_t size; // [esp+108h] [ebp-8h]
-    void *zoneFile; // [esp+10Ch] [ebp-4h]
+    DBFileHandle zoneFile; // [esp+10Ch] [ebp-4h]
 
     if (isMod)
         DB_BuildOSPath_Mod(zoneName, 0x100u, filename);
     else
         DB_BuildOSPath(zoneName, 0x100u, filename);
-    zoneFile = CreateFileA(
-        filename,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr);
-    if (zoneFile == INVALID_HANDLE_VALUE)
+    zoneFile = DB_OpenProbeHandle(filename);
+    if (zoneFile == DB_FILE_HANDLE_INVALID)
         return 0;
-    size = GetFileSize(zoneFile, 0);
-    CloseHandle(zoneFile);
+    size = DB_FileHandleSize(zoneFile);
+    DB_CloseFileHandle(zoneFile);
     return size;
 }
 
