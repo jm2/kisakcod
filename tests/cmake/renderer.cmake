@@ -19,12 +19,15 @@ add_test(
 )
 
 # Headless seam for the IDirect3D* reach in shared database code (KPI K5).
-# The shader-load failure paths in db_load.cpp call ->Release() on opaque COM
-# pointers; behind KISAK_DEDI_HEADLESS that call is guarded out. This test
-# exercises the seam pattern: null-check + null-assignment cleanup on opaque
-# COM pointers compiles and runs without the D3D9 SDK.
+# The shader-load failure paths in db_load.cpp release and null opaque COM
+# shader pointers through the engine helper DB_ReleaseVertexShader /
+# DB_ReleasePixelShader; behind KISAK_DEDI_HEADLESS the Release() call is
+# compiled out. This test compiles that engine TU and drives it through its
+# production declaration, so a seam regression in the engine's cleanup fails
+# this test instead of a mirror of it.
 add_executable(kisakcod-renderer-headless-seam-tests
     renderer_headless_seam_tests.cpp
+    ${SRC_DIR}/database/db_shader_release.cpp
 )
 target_include_directories(kisakcod-renderer-headless-seam-tests PRIVATE ${SRC_DIR})
 target_compile_definitions(kisakcod-renderer-headless-seam-tests PRIVATE KISAK_DEDI_HEADLESS)

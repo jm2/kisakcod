@@ -1,9 +1,16 @@
 // Headless seam for the IDirect3D* reach in shared database code (KPI K5,
-// docs/design/PLATFORM_POSIX.md). db_load.cpp's shader-load failure paths
-// call ->Release() on opaque COM pointers; behind KISAK_DEDI_HEADLESS that
-// call is guarded out because the headless build never creates COM objects.
-// This test exercises the seam pattern: a null-check + null-assignment
-// cleanup on an opaque COM pointer compiles and runs without the D3D9 SDK.
+// docs/design/NATIVE64.md). The material shader load failure paths in
+// db_load.cpp release and null opaque COM shader pointers; behind
+// KISAK_DEDI_HEADLESS the Release() call is compiled out because the headless
+// build never creates COM objects.
+//
+// This test compiles the engine's seam TU (src/database/db_shader_release.cpp
+// — the helper db_load.cpp's failure paths call) and drives it through its
+// production declaration, so the code under test is the engine's cleanup, not
+// a re-implementation of it. Removing the seam guard makes that TU fail to
+// compile in this KISAK_DEDI_HEADLESS build (Release() on the opaque forward
+// declaration), which fails this test instead of leaving it green.
+#include <database/db_shader_release.h>
 #include <gfx_d3d/r_d3d9types.h>
 
 #include <cstdint>
@@ -24,66 +31,42 @@ void Check(const bool condition, const char *const expression, const int line)
 
 #define CHECK(expression) Check((expression), #expression, __LINE__)
 
-// Mirrors MaterialVertexShaderProgram.prog.vs / MaterialPixelShaderProgram.prog.ps
-// in gfx_d3d/r_material.h: an opaque COM pointer held by a shared asset record.
-struct ShaderProgram
-{
-    IDirect3DVertexShader9 *vs;
-    IDirect3DPixelShader9 *ps;
-};
-
-// The headless cleanup path from db_load.cpp's Load_MaterialVertexShaderPtr
-// and Load_MaterialPixelShaderPtr: when DB_CompleteObject fails, the shader
-// pointer is released and nulled. Behind KISAK_DEDI_HEADLESS the Release()
-// call is guarded out (no COM objects exist headless), but the null-check
-// and null-assignment remain.
-void CleanupShaderProgram(ShaderProgram *prog)
-{
-    if (prog->vs)
-    {
-#ifndef KISAK_DEDI_HEADLESS
-        prog->vs->Release();
-#endif
-        prog->vs = nullptr;
-    }
-    if (prog->ps)
-    {
-#ifndef KISAK_DEDI_HEADLESS
-        prog->ps->Release();
-#endif
-        prog->ps = nullptr;
-    }
-}
-
 int RunChecks()
 {
     // Opaque COM pointers are pointer-sized on every platform.
     CHECK(sizeof(IDirect3DVertexShader9 *) == sizeof(void *));
     CHECK(sizeof(IDirect3DPixelShader9 *) == sizeof(void *));
 
-    // Cleanup nulls both pointers when they are non-null.
-    ShaderProgram prog{};
     // Fabricate non-null opaque pointers without constructing COM objects.
-    prog.vs = reinterpret_cast<IDirect3DVertexShader9 *>(uintptr_t{1});
-    prog.ps = reinterpret_cast<IDirect3DPixelShader9 *>(uintptr_t{1});
-    CHECK(prog.vs != nullptr);
-    CHECK(prog.ps != nullptr);
-    CleanupShaderProgram(&prog);
-    CHECK(prog.vs == nullptr);
-    CHECK(prog.ps == nullptr);
+    // This test target compiles the engine TU with KISAK_DEDI_HEADLESS, where
+    // the seam compiles the Release() call out, so no COM method is invoked
+    // on these sentinels.
+    IDirect3DVertexShader9 *vs =
+        reinterpret_cast<IDirect3DVertexShader9 *>(uintptr_t{1});
+    IDirect3DPixelShader9 *ps =
+        reinterpret_cast<IDirect3DPixelShader9 *>(uintptr_t{1});
+    CHECK(vs != nullptr);
+    CHECK(ps != nullptr);
 
-    // Cleanup is idempotent on already-null pointers.
-    CleanupShaderProgram(&prog);
-    CHECK(prog.vs == nullptr);
-    CHECK(prog.ps == nullptr);
+    // The engine's seam release nulls each slot.
+    DB_ReleaseVertexShader(&vs);
+    DB_ReleasePixelShader(&ps);
+    CHECK(vs == nullptr);
+    CHECK(ps == nullptr);
 
-    // A mixed state cleans each pointer independently.
-    prog.vs = reinterpret_cast<IDirect3DVertexShader9 *>(uintptr_t{1});
-    CHECK(prog.vs != nullptr);
-    CHECK(prog.ps == nullptr);
-    CleanupShaderProgram(&prog);
-    CHECK(prog.vs == nullptr);
-    CHECK(prog.ps == nullptr);
+    // Releasing an already-null slot is a no-op.
+    DB_ReleaseVertexShader(&vs);
+    DB_ReleasePixelShader(&ps);
+    CHECK(vs == nullptr);
+    CHECK(ps == nullptr);
+
+    // A mixed state cleans each slot independently.
+    vs = reinterpret_cast<IDirect3DVertexShader9 *>(uintptr_t{1});
+    CHECK(vs != nullptr);
+    CHECK(ps == nullptr);
+    DB_ReleaseVertexShader(&vs);
+    CHECK(vs == nullptr);
+    CHECK(ps == nullptr);
 
     return failures;
 }
