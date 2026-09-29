@@ -152,22 +152,10 @@ int32_t __cdecl DB_SizeofXAsset_FxEffectDef_()
 {
     return sizeof(FxEffectDef);
 }
-int32_t __cdecl DB_SizeofXAsset_PhysPreset_()
-{
-    return sizeof(PhysPreset);
-}
-int32_t __cdecl DB_SizeofXAsset_LoadedSound_()
-{
-    return sizeof(LoadedSound);
-}
-int32_t __cdecl DB_SizeofXAsset_ClipMap_()
-{
-    return sizeof(clipMap_t);
-}
-int32_t __cdecl DB_SizeofXAsset_GfxLightDef_()
-{
-    return sizeof(GfxLightDef);
-}
+int32_t __cdecl DB_SizeofXAsset_PhysPreset_() { return sizeof(PhysPreset); }
+int32_t __cdecl DB_SizeofXAsset_LoadedSound_() { return sizeof(LoadedSound); }
+int32_t __cdecl DB_SizeofXAsset_ClipMap_() { return sizeof(clipMap_t); }
+int32_t __cdecl DB_SizeofXAsset_GfxLightDef_() { return sizeof(GfxLightDef); }
 int(__cdecl *DB_GetXAssetSizeHandler[33])() =
 {
     DB_SizeofXAsset_RawFile_,

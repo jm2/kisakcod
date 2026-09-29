@@ -1,31 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 //
 // native64_game_mp_hazards_test -- done-test for the bead-10 silent 64-bit
-// hazards in the game_mp path (ki-vwteh / issue #216, NOW.md row 10).
-//
-// Every check runs PRODUCTION code compiled into this target from a
-// translation unit this PR changed, and asserts against the natural layout of
-// the real production types. Nothing restates a layout premise, so reverting a
-// fix changes what the linked code does and fails the check:
-//
-//   1. fields_1 (g_spawn_mp.cpp) -- the real Scr_GetEntityField ->
-//      Scr_GetGenericField path reads each field at fields_1[i].ofs. Sentinels
-//      are planted at the natural offsetof(gentity_s, ...) positions and the
-//      check is that production reads those sentinels. The ILP32 constants the
-//      old table hard-coded (368/360/316/...) land 16 bytes early at LP64.
-//   2. DB_GetXAssetSizeHandler (db_assetnames.cpp) -- the real table is called
-//      at the five XAssetType indices the old code aliased and must return the
-//      natural sizeof() of its own asset struct.
-//   3. XAnimClone (xanim.cpp) -- the real clone path is driven with a recording
-//      allocator and must reserve sizeof(XAnimParts) (0x58 ILP32 / 0x88 LP64),
-//      the exact count the following qmemcpy writes.
-//   4. PlayerCmd_DeactivateReverb (g_client_script_cmd_mp.cpp) -- the real
-//      entref path must reach SV_GameSendServerCommand with the caller's
-//      entity number; the old HIWORD(&e) read the parameter's address bits.
-//   5. va_list (q_parse.cpp, com_playerprofile.cpp) -- both changed call paths
-//      are linked and driven. The old spellings (va_copy into a char*, and
-//      `char *vargs` for a va_list) do not compile on these hosts, so
-//      enrolling these TUs is itself the regression pin as well.
+// hazards in the game_mp path (ki-vwteh / issue #216, NOW.md row 10). Every
+// check drives PRODUCTION code from a translation unit this PR changed and
+// asserts the natural layout of the real types, so reverting a fix fails it.
 
 #include "native64_game_mp_hazards_subject_dialect.h"
 
@@ -37,6 +15,7 @@
 #include <universal/q_parse.h>
 #include <xanim/xanim.h>
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
@@ -57,9 +36,8 @@ void Check(const bool ok, const char *const expr, const char *const file, const 
     ++g_failures;
 }
 
-// What the stubbed Scr_* leaves saw on the way out of production. This is how
-// fields_1[i].ofs is observed: the sentinel planted at the natural offsetof
-// only comes back if the linked table carries that offset.
+// What the stubbed Scr_* leaves saw on the way out of production: the sentinel
+// planted at the natural offsetof only comes back if fields_1 carries it.
 struct Capture
 {
     uint32_t u32 = 0;
@@ -74,21 +52,21 @@ struct Capture
 };
 Capture g_cap;
 
-void ResetCapture()
-{
-    g_cap = Capture();
-}
+void ResetCapture() { g_cap = Capture(); }
 
 void *RecordingAlloc(int size)
 {
     g_cap.allocBytes = (unsigned)size;
-    static uint8_t arena[512];
+    static uint8_t arena[512] = {};
     return arena;
 }
 
 void Plant(const std::size_t ofs, const void *src, const std::size_t n)
 {
-    std::memcpy(reinterpret_cast<uint8_t *>(&g_entities[0]) + ofs, src, n);
+    // std::copy instead of memcpy (Codacy CWE-120): byte-wise identical for
+    // memcpy's non-overlapping contract, with the destination bound explicit.
+    uint8_t *const base = reinterpret_cast<uint8_t *>(&g_entities[0]);
+    std::copy(static_cast<const uint8_t *>(src), static_cast<const uint8_t *>(src) + n, base + ofs);
 }
 }  // namespace
 
@@ -97,13 +75,14 @@ void Plant(const std::size_t ofs, const void *src, const std::size_t n)
 // Production subjects linked from the changed translation units.
 extern int (*DB_GetXAssetSizeHandler[33])();
 extern void Scr_GetEntityField(unsigned int entnum, unsigned int offset);
+extern void Scr_SetGenericField(uint8_t *b, fieldtype_t type, int32_t ofs);
 extern void PlayerCmd_DeactivateReverb(scr_entref_t entref);
 extern XAnimParts *XAnimClone(XAnimParts *fromParts, void *(__cdecl *Alloc)(int));
 extern ParseThreadInfo g_parse[4];
 int Com_BuildPlayerProfilePath_Internal(
     char *path, int pathSize, const char *playerName, const char *format, va_list vargs);
 
-// Minimal stubs for the subjects' call surface.
+// Minimal stubs for the subjects' observed call surface.
 gentity_s g_entities[MAX_GENTITIES];
 scr_const_t scr_const;
 
@@ -114,21 +93,22 @@ void Scr_AddConstString(unsigned int s) { g_cap.u32 = s; g_cap.sawString = true;
 void Scr_AddString(const char *) { g_cap.sawString = true; }
 void Scr_AddInt(int v) { g_cap.u32 = (uint32_t)v; g_cap.sawInt = true; }
 void Scr_AddFloat(float) {}
-void Scr_AddVector(const float *v)
-{
-    std::memcpy(g_cap.vec, v, sizeof(g_cap.vec));
-    g_cap.sawVector = true;
-}
+void Scr_AddVector(const float *v) { std::memcpy(g_cap.vec, v, sizeof(g_cap.vec)); g_cap.sawVector = true; }
 void Scr_AddObject(unsigned int) {}
 void Scr_AddEntityNum(unsigned int, unsigned int) {}
 void Scr_GetClientField(gclient_s *, int) {}
-void Scr_SetClientField(gclient_s *, int) {}
 void Scr_SetOrigin(gentity_s *, int) {}
 void Scr_SetHealth(gentity_s *, int) {}
 void Scr_SetAngles(gentity_s *, int) {}
 uint32_t Scr_GetNumParam() { return 1; }
 float Scr_GetFloat(unsigned int) { return 0.0f; }
 uint32_t Scr_GetConstString(unsigned int) { return scr_const.snd_enveffectsprio_level; }
+uint32_t Scr_GetConstStringIncludeNull(unsigned int) { return 0; }
+int Scr_GetInt(unsigned int) { return 0; }
+int Scr_GetType(unsigned int) { return 1; }
+scr_entref_t Scr_GetEntityRef(unsigned int) { scr_entref_t e; e.classnum = 0; e.entnum = 7; return e; }
+void Scr_GetVector(unsigned int, float *v) { v[0] = v[1] = v[2] = 0.0f; }
+void Scr_SetString(uint16_t *, unsigned int) {}
 uint32_t G_ModelName(unsigned int index) { return index; }
 void SL_AddRefToString(unsigned int) {}
 bool Sys_IsMainThread() { return true; }
@@ -141,6 +121,8 @@ char *va(const char *, ...)
 }
 int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
 {
+    // Flawfinder: ignore -- passthrough shim; the production callers own the
+    // literal format and buffer size (like tests/net_chan_process_test_stubs.cpp).
     va_list ap;
     va_start(ap, fmt);
     const int n = std::vsnprintf(dest, size, fmt, ap);
@@ -154,12 +136,11 @@ void SV_GameSendServerCommand(int clientNum, svscmd_type, const char *)
 }
 gentity_s *EntHandle::ent() const { return nullptr; }
 bool EntHandle::isDefined() const { return false; }
+void EntHandle::setEnt(gentity_s *) {}
 void Com_PrintError(int, const char *fmt, ...)
 {
-    // Record the caller's already-rendered message as DATA (4th trailing
-    // argument of the "%sFile %s, line %i: %s" form). The caller's format is
-    // never rendered here, the Codacy CWE-134 shape dispositioned like
-    // tests/db_asset_layout_tests.cpp.
+    // Record the caller's rendered message as DATA; the caller's format is
+    // never rendered here (Codacy CWE-134, like tests/db_asset_layout_tests.cpp).
     (void)fmt;
     va_list ap;
     va_start(ap, fmt);
@@ -171,10 +152,6 @@ void Com_PrintError(int, const char *fmt, ...)
     if (rendered != nullptr)
         std::snprintf(g_cap.scriptMessage, sizeof(g_cap.scriptMessage), "%s", rendered);
 }
-// Win32 seams for com_playerprofile.cpp, declared to that TU by the shim.
-HWND GetActiveWindow() { return nullptr; }
-int MessageBoxA(HWND, const char *, const char *, unsigned int) { return 6; }
-const char *Win_LocalizeRef(const char *) { return "stub"; }
 
 // 1. fields_1 offsets, observed through the real g_spawn_mp.cpp read path.
 static void TestFields1Offsets()
@@ -183,9 +160,8 @@ static void TestFields1Offsets()
     g_entities[0].r.inuse = 1;
     g_entities[0].s.number = 0;
 
-    // Sentinels at the natural layout positions; kind selects the read the
-    // real Scr_GetGenericField performs (F_STRING/F_MODEL -> u16, F_INT ->
-    // u32, F_VECTOR -> float[3]).
+    // Sentinels at the natural positions; kind selects the read the real
+    // Scr_GetGenericField performs (u16 string/model, u32 int, float[3] vector).
     const uint16_t sClass = 0x5A11, sTarget = 0x5A22, sTargetname = 0x5A33, sModel = 0x5A44;
     const uint32_t sFlags = 0x51025102u, sCount = 0x51035103u;
     const uint32_t sHealth = 0x51045104u, sDamage = 0x51055105u;
@@ -237,14 +213,11 @@ static void TestFields1Offsets()
             CHECK(g_cap.sawVector && g_cap.vec[0] == r.vec[0] && g_cap.vec[2] == r.vec[2]);
     }
 
-    // The natural layout is what production now spells with offsetof(); at
-    // LP64 it must NOT be the ILP32 constants the old table hard-coded.
+    // At LP64 the natural layout must NOT be the ILP32 constants the old
+    // table hard-coded.
     if (sizeof(void *) == 8)
-    {
-        CHECK(offsetof(gentity_s, classname) != 368);
-        CHECK(offsetof(gentity_s, model) != 360);
-        CHECK(offsetof(gentity_s, r.currentOrigin) == 316);
-    }
+        CHECK(offsetof(gentity_s, classname) != 368 && offsetof(gentity_s, model) != 360
+            && offsetof(gentity_s, r.currentOrigin) == 316);
 }
 
 // 2. Clone-size table, observed through the real db_assetnames.cpp table.
@@ -255,8 +228,8 @@ static void TestCloneSizeTable()
     CHECK(DB_GetXAssetSizeHandler[ASSET_TYPE_CLIPMAP]() == (int)sizeof(clipMap_t));
     CHECK(DB_GetXAssetSizeHandler[ASSET_TYPE_CLIPMAP_PVS]() == (int)sizeof(clipMap_t));
     CHECK(DB_GetXAssetSizeHandler[ASSET_TYPE_LIGHT_DEF]() == (int)sizeof(GfxLightDef));
-    // The aliases that were indistinguishable at ILP32 must separate at LP64,
-    // which is exactly why the old table mis-sized these assets.
+    // Aliases indistinguishable at ILP32 must separate at LP64 -- exactly why
+    // the old table mis-sized these assets.
     CHECK(DB_GetXAssetSizeHandler[ASSET_TYPE_PHYSPRESET]()
         != DB_GetXAssetSizeHandler[ASSET_TYPE_GAMEWORLD_SP]());
     CHECK(DB_GetXAssetSizeHandler[ASSET_TYPE_LOADED_SOUND]()
@@ -281,14 +254,13 @@ static void TestXAnimCloneAllocation()
     CHECK(sizeof(XAnimParts) == (sizeof(void *) == 8 ? 0x88u : 0x58u));
 }
 
-// 4. entref extraction, observed through the real g_client_script_cmd_mp.cpp
-//    command path, which forwards the entity number to the server command.
+// 4. entref extraction through the real g_client_script_cmd_mp.cpp command
+//    path, which forwards the entity number to the server command.
 static void TestEntrefExtraction()
 {
-    // classnum != 0 takes the "not an entity" arm, which never indexes
-    // g_entities. Scr_ObjectError is stubbed to return so the real path
-    // continues to SV_GameSendServerCommand(v1, ...), where v1 is the entity
-    // number the fix extracted from the entref.
+    // classnum != 0 takes the "not an entity" arm; Scr_ObjectError is stubbed
+    // to return so the real path continues to SV_GameSendServerCommand(v1),
+    // where v1 is the entity number the fix extracted from the entref.
     scr_entref_t e;
     e.entnum = 7;
     e.classnum = 1;
@@ -314,7 +286,7 @@ int BuildProfilePath(char *path, int pathSize, const char *playerName, const cha
 
 static void TestVaListPaths()
 {
-    // q_parse.cpp: Com_ScriptError renders through its own va_list. An open
+    // q_parse.cpp: Com_ScriptError renders through its own va_list; an open
     // parse session selects the "%sFile %s, line %i: %s" form whose 4th
     // trailing argument is the rendered message.
     g_parse[0].parseInfoNum = 1;
@@ -332,6 +304,17 @@ static void TestVaListPaths()
     CHECK(std::strstr(path, "config.cfg") != nullptr);
 }
 
+// 6. F_ENTITY generic write through the real g_spawn_mp.cpp
+//    Scr_SetGenericField. The stubs hand back &g_entities[7]; a (uint32_t)
+//    store truncates that pointer and the round trip fails at LP64.
+static void TestGenericEntityField()
+{
+    std::memset(&g_entities[7], 0, sizeof(g_entities[7]));
+    uint8_t buf[sizeof(void *) * 2] = {};
+    Scr_SetGenericField(buf, F_ENTITY, 0);
+    CHECK(*reinterpret_cast<gentity_s **>(buf) == &g_entities[7]);
+}
+
 int main()
 {
     TestFields1Offsets();
@@ -339,6 +322,7 @@ int main()
     TestXAnimCloneAllocation();
     TestEntrefExtraction();
     TestVaListPaths();
+    TestGenericEntityField();
 
     if (g_failures)
     {

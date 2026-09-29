@@ -132,23 +132,17 @@ set_target_properties(kisakcod-native64-runtime-layout-tests PROPERTIES
 )
 add_test(NAME native64-runtime-layout-contracts
     COMMAND kisakcod-native64-runtime-layout-tests)
-
 # native64_game_mp_hazards_test: done-test for the bead-10 silent 64-bit
 # hazards in the game_mp path (ki-vwteh / #216). The subjects are the real
-# production translation units this PR changes, compiled into the target and
-# driven by the test: g_spawn_mp.cpp (fields_1 read path), db_assetnames.cpp
-# (DB_GetXAssetSizeHandler), xanim.cpp (XAnimClone),
-# g_client_script_cmd_mp.cpp (entref) and q_parse.cpp / com_playerprofile.cpp
-# (va_list). Each check observes what the linked production code does at the
-# compiler's natural layout, so reverting a fix fails the check; the mirrors
-# this target used before restated the premises and could not do that.
-#
-# The subjects carry the MSVC decompiled dialect, so the target takes the
-# test-side shim prefix instead of the strict test warning set.
-# KISAK_DEDI_HEADLESS keeps them off the game-only cgame header and the
-# ILP32-only scr_debugger size pin; the code under test is unconditional in
-# both profiles. --gc-sections trims each subject to the entry points the test
-# calls, so its unstubbed engine call surface is never linked.
+# production TUs this PR changes; each check asserts the natural layout of
+# the real types, so reverting a fix fails it. COFF resolves every external
+# referenced by a linked object before /OPT:REF discards COMDATs (an LNK2019
+# from a dead function reproduces on `cl /Gy /link /OPT:REF`), so on Windows
+# the link takes /FORCE:UNRESOLVED for the subjects' 209-symbol unobserved
+# engine surface (see PR body); the recorded entry-point chains are stubbed
+# in the test TU and --gc-sections enforces that on ELF/Mach-O. The subjects
+# carry the MSVC decompiled dialect (shim prefix, not the strict warning
+# set); KISAK_DEDI_HEADLESS keeps them off the game-only cgame header.
 add_executable(kisakcod-native64-game-mp-hazards-tests
     native64_game_mp_hazards_test.cpp
     native64_game_mp_hazards_subject_dialect.h
@@ -160,16 +154,28 @@ add_executable(kisakcod-native64-game-mp-hazards-tests
     ${SRC_DIR}/qcommon/com_playerprofile.cpp)
 target_include_directories(kisakcod-native64-game-mp-hazards-tests PRIVATE
     ${SRC_DIR} ${CMAKE_SOURCE_DIR}/deps)
+if (APPLE)
+    # Apple ships no <malloc.h>; see tests/compat/malloc.h.
+    target_include_directories(kisakcod-native64-game-mp-hazards-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+endif()
 target_compile_features(kisakcod-native64-game-mp-hazards-tests PRIVATE cxx_std_20)
 target_compile_definitions(kisakcod-native64-game-mp-hazards-tests PRIVATE
     KISAK_MP KISAK_DEDI_HEADLESS)
 if (MSVC)
     target_compile_options(kisakcod-native64-game-mp-hazards-tests PRIVATE /W3)
-    target_link_options(kisakcod-native64-game-mp-hazards-tests PRIVATE /OPT:REF)
+    target_link_options(kisakcod-native64-game-mp-hazards-tests PRIVATE
+        /OPT:REF /FORCE:UNRESOLVED)
 else()
     target_compile_options(kisakcod-native64-game-mp-hazards-tests PRIVATE
         -include${CMAKE_CURRENT_SOURCE_DIR}/native64_game_mp_hazards_subject_dialect.h
         -fpermissive -ffunction-sections -fdata-sections)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # clang reads __declspec(align(N)) natively; the shim's align(x)
+        # rewrite would collide with libc++'s std::align (__memory/align.h).
+        target_compile_options(kisakcod-native64-game-mp-hazards-tests PRIVATE
+            -fdeclspec)
+    endif()
     target_link_options(kisakcod-native64-game-mp-hazards-tests PRIVATE -Wl,--gc-sections)
 endif()
 set_target_properties(kisakcod-native64-game-mp-hazards-tests PROPERTIES

@@ -209,7 +209,8 @@ void __cdecl Scr_SetGenericField(uint8_t *b, fieldtype_t type, int32_t ofs)
         *(float *)&b[ofs + 8] = vec[2];
         break;
     case F_ENTITY:
-        *(uint32_t *)&b[ofs] = (uint32_t)Scr_GetEntityAllowNull(0);
+        // Pointer-width store: the old (uint32_t) cast truncated on 64-bit.
+        *(gentity_s **)&b[ofs] = Scr_GetEntityAllowNull(0);
         break;
     case F_ENTHANDLE:
         pEnt = (EntHandle *)&b[ofs];
@@ -327,7 +328,7 @@ void __cdecl Scr_GetGenericField(uint8_t *b, fieldtype_t type, int32_t ofs)
         Scr_AddVector((float *)&b[ofs]);
         break;
     case F_ENTITY:
-        if (*(uint32_t *)&b[ofs])
+        if (*(gentity_s **)&b[ofs]) // full-width null test
             Scr_AddEntity(*(gentity_s **)&b[ofs]);
         break;
     case F_ENTHANDLE:
