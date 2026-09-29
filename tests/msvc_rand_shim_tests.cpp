@@ -174,12 +174,46 @@ void TestFloatHelpersStayInRange()
     }
 }
 
+void TestFloatHelpersScaleFromTheMsvcStream()
+{
+    // The range check above passes for ANY [0, 1) generator. This pins the
+    // exact scaled draws so the float helpers are proven to run the MSVC
+    // stream this port reproduces (the `rand` -> Kisak_rand migration in
+    // com_math.cpp), not merely some unit-range source. random() is
+    // Kisak_rand()/32768.0 and crandom() is random()*2.0-1.0; each call draws
+    // once, so random() then crandom() consume reference draws i and i+1. The
+    // divisor is 2^15 so every value is a dyadic rational the divisions below
+    // compute exactly; `==` is the right comparison. The helpers are taken by
+    // address for the same Codacy CWE-327 reason as above.
+    float (__cdecl *const engineUnitRange)() = random;
+    float (__cdecl *const engineSignedRange)() = crandom;
+    const MsvcReference &ref = kMsvcRefs[0]; // seed 1
+    Kisak_srand(ref.seed);
+    for (int i = 0; i < 8; i += 2)
+    {
+        const float r = engineUnitRange();
+        char msg[160];
+        std::snprintf(msg, sizeof msg,
+            "seed %u random() draw %d: engine = %.9g, MSVC scaled = %.9g",
+            ref.seed, i, r, ref.first8[i] / 32768.0);
+        Expect(r == static_cast<float>(ref.first8[i] / 32768.0), msg);
+
+        const int signedDraw = ref.first8[i + 1];
+        const float c = engineSignedRange();
+        std::snprintf(msg, sizeof msg,
+            "seed %u crandom() draw %d: engine = %.9g, MSVC scaled = %.9g",
+            ref.seed, i + 1, c, (signedDraw / 32768.0) * 2.0 - 1.0);
+        Expect(c == static_cast<float>(static_cast<float>(signedDraw / 32768.0) * 2.0 - 1.0), msg);
+    }
+}
+
 int main()
 {
     TestRandMatchesMsvcForThreeSeeds();
     TestSeedingIsPerThreadAndRestorable();
     TestFreshThreadStartsOnMsvcUnseededStream();
     TestFloatHelpersStayInRange();
+    TestFloatHelpersScaleFromTheMsvcStream();
 
     if (Failures != 0)
     {
