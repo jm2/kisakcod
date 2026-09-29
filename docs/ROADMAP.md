@@ -21,6 +21,9 @@ targets is the release gate (G6), not a precondition for testing.
 
 Windows ARM64 builds the Win64 source set and is not in G1 or G2; its first run is at G3.
 
+Retail Steam 1.8 data is used only in manual owner runs, never in CI. Evidence for G0, the real-data half of
+G2 (K4) and G4 comes from those runs; CI and beads prove everything else with synthetic fixtures.
+
 A Win64 process can't load the 32-bit Miles or Bink DLLs. The G5 interim
 client therefore needs OpenAL Soft and FFmpeg, or silent stubs, from its first
 build.

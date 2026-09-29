@@ -167,9 +167,9 @@ A family counts toward K4 when all of these hold:
 |---|---|---|
 | Generator | The emitted mirror passes the `ONDISK_*` asserts. The 32-bit output matches today's `Load_*` behaviour on synthetic streams | Linux test build, every PR |
 | Family | Hand-built disk32 byte fixtures per family, including malformed tokens, unmapped offsets and arena exhaustion | Linux test build, ASan/UBSan leg |
-| Real data | Load the four code and common zones plus the boot map at 64-bit under ASan/UBSan, and compare the graph digest against x86 | Needs owner data: a licensed runner or manual owner runs |
+| Real data | Load the four code and common zones plus the boot map at 64-bit under ASan/UBSan, and compare the graph digest against x86 | Manual owner runs only; retail data never enters CI |
 
-The real-data layer is the only one that moves K4. It needs owner-provided Steam 1.8 files
+The real-data layer is the only one that moves K4. It runs only on the owner's machine, by hand, against owner-provided Steam 1.8 files
 (`blocked-owner` in [NOW.md](../NOW.md)). `tests/retail_fastfile_parity_harness.cpp` today
 hashes only the file envelope. Extending it to hash the loaded graph is part of bead 12.
 Platform file I/O for async reads belongs to [PLATFORM_POSIX.md](PLATFORM_POSIX.md).
