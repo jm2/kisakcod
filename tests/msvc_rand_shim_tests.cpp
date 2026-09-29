@@ -103,6 +103,23 @@ void TestSeedingIsPerThreadAndRestorable()
     // half of the CRT contract callers can observe.
     Kisak_srand(7u);
     Expect(Kisak_GetRandState() == 7u, "srand stores the seed as the state");
+
+    // The state is thread_local, so a srand or rand on a worker must not move
+    // this thread's stream. Every assertion above runs on one thread and would
+    // pass unchanged if the state were process-global; this is the check that
+    // separates the two.
+    Kisak_srand(12345u);
+    const uint32_t mainBefore = Kisak_GetRandState();
+    std::thread worker([]() {
+        Kisak_srand(999u);
+        for (int i = 0; i < 5; ++i)
+        {
+            (void)Kisak_rand();
+        }
+    });
+    worker.join();
+    Expect(Kisak_GetRandState() == mainBefore,
+        "a worker's srand/rand leaves this thread's RNG state untouched");
 }
 
 void TestFreshThreadStartsOnMsvcUnseededStream()
