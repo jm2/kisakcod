@@ -3812,7 +3812,9 @@ bool __cdecl Load_MaterialVertexShaderPtr(bool atStreamStart)
             {
                 if ((*varMaterialVertexShaderPtr)->prog.vs)
                 {
+#ifndef KISAK_DEDI_HEADLESS
                     (*varMaterialVertexShaderPtr)->prog.vs->Release();
+#endif
                     (*varMaterialVertexShaderPtr)->prog.vs = nullptr;
                 }
                 return false;
@@ -3877,7 +3879,9 @@ bool __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart)
             {
                 if ((*varMaterialPixelShaderPtr)->prog.ps)
                 {
+#ifndef KISAK_DEDI_HEADLESS
                     (*varMaterialPixelShaderPtr)->prog.ps->Release();
+#endif
                     (*varMaterialPixelShaderPtr)->prog.ps = nullptr;
                 }
                 return false;

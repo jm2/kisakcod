@@ -18,6 +18,26 @@ add_test(
     COMMAND kisakcod-renderer-d3d9types-tests
 )
 
+# Headless seam for the IDirect3D* reach in shared database code (KPI K5).
+# The shader-load failure paths in db_load.cpp call ->Release() on opaque COM
+# pointers; behind KISAK_DEDI_HEADLESS that call is guarded out. This test
+# exercises the seam pattern: null-check + null-assignment cleanup on opaque
+# COM pointers compiles and runs without the D3D9 SDK.
+add_executable(kisakcod-renderer-headless-seam-tests
+    renderer_headless_seam_tests.cpp
+)
+target_include_directories(kisakcod-renderer-headless-seam-tests PRIVATE ${SRC_DIR})
+target_compile_definitions(kisakcod-renderer-headless-seam-tests PRIVATE KISAK_DEDI_HEADLESS)
+target_compile_features(kisakcod-renderer-headless-seam-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-renderer-headless-seam-tests)
+set_target_properties(kisakcod-renderer-headless-seam-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME renderer-headless-seam-cleanup
+    COMMAND kisakcod-renderer-headless-seam-tests
+)
+
 add_executable(kisakcod-renderer-reservation-atomic-tests
     renderer_reservation_atomic_tests.cpp
 )
