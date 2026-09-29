@@ -154,20 +154,26 @@ void __cdecl Conbuf_AppendTextInMainThread(const char *msg)
     if (!msg || !Sys_IsMainThread())
         return;
 
-    if (Sys_ConsoleWrite(
-            SysConsoleOutputStream::StandardOutput,
-            msg,
-            std::strlen(msg)) != SysConsoleIoStatus::Complete)
+    // A redirected stdout is a log sink: it keeps the exact bytes the engine
+    // produced, and there is no terminal to protect from color codes or CR/LF
+    // pairs. This matches the Win32 path, which writes to stdout only when
+    // the stream is redirected.
+    if (Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardOutput))
     {
-        // The write failed and there is no debugger to fall back on; the
-        // message is dropped rather than retried on a dead descriptor.
+        if (Sys_ConsoleWrite(
+                SysConsoleOutputStream::StandardOutput,
+                msg,
+                std::strlen(msg)) != SysConsoleIoStatus::Complete)
+        {
+            // The write failed and there is no debugger to fall back on; the
+            // message is dropped rather than retried on a dead descriptor.
+        }
+        return;
     }
 
-    if (Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardOutput))
-        return;
-
-    // A live terminal gets the engine's normalized form so a color code or a
-    // CR/LF pair never lands in the user's scrollback.
+    // A live terminal gets only the engine's normalized form (Conbuf_AppendText
+    // strips color codes and normalizes CR/LF), so a color code or a CR/LF pair
+    // never lands in the user's scrollback and no line is printed twice.
     Conbuf_AppendText(msg);
 }
 
