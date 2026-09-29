@@ -19,7 +19,8 @@ targets is the release gate (G6), not a precondition for testing.
 | **G5 Native client** | A Win64 D3D9 interim client plays on a fork server, then on a Steam 1.8 server. Linux and macOS go through dxvk-native as an interim. Vulkan replaces both before G6. | Win64, then Linux, then macOS | K6 | Win64 D3D9 2-4 months after G2; dxvk-native +1-2 months; Vulkan 6-12 months |
 | **G6 Release** | 5 targets x 2 roles packaged; native client joins a Steam 1.8 server and a Steam 1.8 client joins a native server; macOS signed and notarized; provenance recorded. | All | K6 | After G5 |
 
-Windows ARM64 builds the Win64 source set and is not in G1 or G2; its first run is at G3.
+Windows ARM64 builds the Win64 source set and is not in G1 or G2; its first run is at G3. K1's `win64` is x64
+only: G3 prep adds Windows ARM64 and macOS arm64 census legs first ([NATIVE64](design/NATIVE64.md#kpis)).
 
 Retail Steam 1.8 data is used only in manual owner runs, never in CI. Evidence for G0, the real-data half of
 G2 (K4) and G4 comes from those runs; CI and beads prove everything else with synthetic fixtures.

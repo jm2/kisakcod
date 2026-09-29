@@ -129,4 +129,9 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 | **K3** engine code under 64-bit test | Upstream engine TUs that the Linux amd64 test build compiles, either as a TU in `compile_commands.json` or `#include`d as a `.cpp` by a test TU. Denominator: `.c`/`.cpp` under `src/` at the upstream merge-base, excluding `src/radiant/` and vendored ODE and Speex | `native64-census` | 8/475 | rises every G2 bead |
 
 - **K1 control:** clang with mingw-w64 headers passes 235/243 on win32. 3 failures are the `db_load`, `sys_process` and `scr_yacc` fixes above. The other 5 are mingw calling-convention mismatches in `sys_sync`, `sys_thread`, `assertive`, `win_net_debug` and `win_syscon`.
+- **K1 coverage gap (owner 2026-09-29):** `win64` is Windows x64 only (`x86_64-w64-mingw32`). Windows ARM64, which
+  builds the Win64 source set, and macOS arm64 are not measured, so a clean win64 says nothing about them. G3 prep adds
+  two census legs before their first runs: `winarm64` (`aarch64-w64-mingw32`, llvm-mingw in the census image) and
+  `mac64` (Apple clang on the hosted `macos-15` runner). Expect x86-only `__asm`/SSE paths on winarm64 (no Windows
+  ARM64 Steamworks, so Steam off) and the #265 header blockers on mac64 (Miles `mss.h`, ODE `<malloc.h>`, Speex).
 - **K4–K6:** K4 (loader closure) is defined in [FASTFILE_LOADER.md](FASTFILE_LOADER.md), K5 (D3D reach) in [PLATFORM_POSIX.md](PLATFORM_POSIX.md), and K6 (delivery cells) in [CHARTER.md](../CHARTER.md).
