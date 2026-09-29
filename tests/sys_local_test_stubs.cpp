@@ -114,6 +114,12 @@ int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
     // contract, so win_common.cpp's Sys_RemoveDirTree keeps its semantics.
     const int written = vsnprintf(dest, size, fmt, ap);
     va_end(ap);
+    // Production Com_sprintf always writes dest[size - 1] = 0. The standard
+    // leaves the array contents unspecified when the formatting call returns
+    // negative (C99 7.19.6.10), so a size > 0 buffer can be left unterminated
+    // on that path; re-apply the terminator like production does.
+    if (size > 0)
+        dest[size - 1] = 0;
     if (written < 0 || static_cast<size_t>(written) >= static_cast<size_t>(size))
         return -1;
     return written;
