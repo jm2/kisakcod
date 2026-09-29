@@ -190,17 +190,29 @@ bool CheckEngineMkdirSurface()
         cwd);
 
     // Clean slate, then the declaration and definition must agree or this
-    // call never links.
+    // call never links. The removal has to actually leave fullPath absent: a
+    // stale pre-existing directory would otherwise make a no-op Sys_Mkdir look
+    // like a successful create. So the listing must report Error (nothing
+    // there) before the create and Complete after it, and cleanup runs on the
+    // failure paths as well so a failing check does not leak the directory.
     (void)Sys_FileSystemRemoveTree(fullPath);
-    Sys_Mkdir(fullPath);
 
     std::vector<SysFileSystemDirectoryEntry> entries;
-    const SysFileSystemListStatus status = Sys_FileSystemListDirectory(
-        fullPath,
-        16,
-        &entries);
-    if (status != SysFileSystemListStatus::Complete)
+    if (Sys_FileSystemListDirectory(fullPath, 16, &entries)
+        != SysFileSystemListStatus::Error)
+    {
+        (void)Sys_FileSystemRemoveTree(fullPath);
         return false;
+    }
+
+    Sys_Mkdir(fullPath);
+
+    if (Sys_FileSystemListDirectory(fullPath, 16, &entries)
+        != SysFileSystemListStatus::Complete)
+    {
+        (void)Sys_FileSystemRemoveTree(fullPath);
+        return false;
+    }
 
     // Best-effort cleanup: the platform service owns real recursive removal.
     (void)Sys_FileSystemRemoveTree(fullPath);

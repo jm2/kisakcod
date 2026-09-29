@@ -104,11 +104,14 @@ int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    const int written = std::vsnprintf(dest, size, fmt, ap);
+    // _vsnprintf carries the MSVC truncation contract on every host: the
+    // native CRT spelling on the win32-x86 leg, KISAK_vsnprintf_trunc through
+    // universal/msvc_printf_shim.h on POSIX hosts. Production Com_sprintf
+    // (src/universal/q_shared.cpp) renders the caller's format through the
+    // same primitive, so this link-only stand-in keeps the engine's semantics
+    // for win_common.cpp's Windows-only Sys_RemoveDirTree instead of
+    // re-deriving the truncation rule here.
+    const int written = _vsnprintf(dest, size, fmt, ap);
     va_end(ap);
-    // Keep the engine's MSVC truncation contract: -1 when the output does not
-    // fit (see msvc_printf_shim.h).
-    if (size != 0 && written >= 0 && static_cast<uint32_t>(written) >= size)
-        return -1;
     return written;
 }
