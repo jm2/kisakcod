@@ -1,9 +1,6 @@
-// Win32 backend for the fast-file async-read service. Overlapped I/O is
-// preserved: the request is issued with ReadFileEx and its completion routine
-// publishes through the shared FileReadState protocol. Wait pumps delivery with
-// an alertable SleepEx, and on expiry cancels the request and waits for the
-// cancelled completion to be published (the race the loader historically
-// handled inline).
+// Win32 backend for the fast-file async-read service: overlapped I/O via
+// ReadFileEx; Wait pumps delivery with an alertable SleepEx and drains
+// cancellations on expiry (the race the loader historically handled inline).
 
 #include <qcommon/sys_file.h>
 
@@ -17,8 +14,8 @@ static_assert(
     db::load_atomic::kFileReadBytes == 0x40000u,
     "Sys_FileReadBegin documents the fast-file staging slot size");
 
-// overlapped is the first member so the completion routine can recover the
-// request without a container-of calculation.
+// overlapped is first so the completion routine can recover the request
+// without a container-of calculation.
 struct SysFile
 {
     OVERLAPPED overlapped;
@@ -30,35 +27,22 @@ struct SysFile
 
 namespace
 {
-SysFileReadResult Sys_FileMakeResult(
-    const std::uint32_t requested,
-    const std::uint32_t error,
-    const std::uint32_t bytes)
+SysFileReadResult Sys_FileMakeResult(std::uint32_t requested, std::uint32_t error, std::uint32_t bytes)
 {
     if (error == ERROR_HANDLE_EOF)
         return {SysFileReadStatus::Eof, bytes, error};
     if (error != ERROR_SUCCESS)
         return {SysFileReadStatus::Error, bytes, error};
-    return {
-        bytes == requested ? SysFileReadStatus::Complete : SysFileReadStatus::Eof,
-        bytes,
-        0};
+    return {bytes == requested ? SysFileReadStatus::Complete : SysFileReadStatus::Eof, bytes, 0};
 }
 
-VOID CALLBACK Sys_FileReadCompletion(
-    DWORD dwErrorCode,
-    DWORD dwNumberOfBytesTransfered,
-    LPOVERLAPPED lpOverlapped)
+VOID CALLBACK Sys_FileReadCompletion(DWORD error, DWORD bytes, LPOVERLAPPED overlapped)
 {
-    // ReadFileEx delivers exactly the OVERLAPPED that was issued; a null or
-    // foreign completion cannot name a slot and is dropped.
-    if (!lpOverlapped)
+    if (!overlapped)
         return;
-    SysFile *const file = reinterpret_cast<SysFile *>(lpOverlapped);
-    (void)db::load_atomic::PublishFileRead(
-        &file->state,
-        static_cast<std::uint32_t>(dwErrorCode),
-        static_cast<std::uint32_t>(dwNumberOfBytesTransfered),
+    SysFile *const file = reinterpret_cast<SysFile *>(overlapped);
+    (void)db::load_atomic::PublishFileRead(&file->state,
+        static_cast<std::uint32_t>(error), static_cast<std::uint32_t>(bytes),
         static_cast<std::uint32_t>(ERROR_INVALID_DATA));
 }
 }
@@ -68,10 +52,8 @@ SysFileHandle KISAK_CDECL Sys_FileOpenRead(const char *utf8Path)
     if (!utf8Path || !*utf8Path)
         return nullptr;
 
-    // Buffered overlapped reads avoid the sector-alignment contract imposed by
-    // unbuffered I/O. The fast-file ring is only naturally word-aligned;
-    // sequential-scan caching is the safe equivalent until the file adapter
-    // owns an explicitly aligned allocation.
+    // Buffered overlapped reads avoid the sector-alignment contract of
+    // unbuffered I/O; the fast-file ring is only word-aligned.
     HANDLE const handle = CreateFileA(
         utf8Path,
         GENERIC_READ,
@@ -99,11 +81,7 @@ void KISAK_CDECL Sys_FileClose(SysFileHandle *file)
         return;
     SysFile *const handle = *file;
     if (handle->outstanding)
-    {
-        // The contract requires the caller to drain first; cancel and drain
-        // anyway so no completion routine touches a freed slot.
         (void)Sys_FileReadWait(handle, 1000u);
-    }
     CloseHandle(handle->handle);
     delete handle;
     *file = nullptr;
@@ -124,10 +102,7 @@ bool KISAK_CDECL Sys_FileGetSize(SysFileHandle file, std::uint64_t *outSize)
 }
 
 SysFileReadResult KISAK_CDECL Sys_FileReadBegin(
-    SysFileHandle file,
-    std::uint64_t offset,
-    void *buffer,
-    std::uint32_t bytes)
+    SysFileHandle file, std::uint64_t offset, void *buffer, std::uint32_t bytes)
 {
     if (!file || !buffer || bytes == 0 || bytes > db::load_atomic::kFileReadBytes)
         return {SysFileReadStatus::Invalid, 0, ERROR_INVALID_PARAMETER};
@@ -175,8 +150,7 @@ SysFileReadResult KISAK_CDECL Sys_FileReadWait(SysFileHandle file, std::uint32_t
                 if (cancelError == ERROR_NOT_FOUND)
                 {
                     // The request can finish after the completion check but
-                    // before cancellation. Enter another alertable wait so its
-                    // already-queued completion APC can publish the slot.
+                    // before cancellation; wait for its queued APC to publish.
                     cancelRequested = true;
                     continue;
                 }

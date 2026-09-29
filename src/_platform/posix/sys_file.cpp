@@ -1,7 +1,6 @@
-// POSIX backend for the fast-file async-read service. The request is fulfilled
-// with pread on the calling database thread (docs/design/PLATFORM_POSIX.md):
-// Begin performs the transfer and records the outcome, Wait returns it. A
-// helper thread is only justified if profiling ever asks.
+// POSIX backend for the fast-file async-read service: pread on the calling
+// database thread (docs/design/PLATFORM_POSIX.md). Begin performs the transfer
+// and records the outcome; Wait returns it.
 
 #include <qcommon/sys_file.h>
 
@@ -23,31 +22,13 @@ struct SysFile
     bool outstanding;
 };
 
-namespace
-{
-SysFileReadResult Sys_FileMakeResult(
-    const std::uint32_t requested,
-    const int errorWord,
-    const std::uint32_t bytes)
-{
-    if (errorWord != 0)
-        return {SysFileReadStatus::Error, bytes, static_cast<std::uint32_t>(errorWord)};
-    return {
-        bytes == requested ? SysFileReadStatus::Complete : SysFileReadStatus::Eof,
-        bytes,
-        0};
-}
-}
-
 SysFileHandle KISAK_CDECL Sys_FileOpenRead(const char *utf8Path)
 {
     if (!utf8Path || !*utf8Path)
         return nullptr;
-
     const int fd = open(utf8Path, O_RDONLY);
     if (fd < 0)
         return nullptr;
-
     SysFile *const file = new (std::nothrow) SysFile{};
     if (!file)
     {
@@ -84,10 +65,7 @@ bool KISAK_CDECL Sys_FileGetSize(SysFileHandle file, std::uint64_t *outSize)
 }
 
 SysFileReadResult KISAK_CDECL Sys_FileReadBegin(
-    SysFileHandle file,
-    std::uint64_t offset,
-    void *buffer,
-    std::uint32_t bytes)
+    SysFileHandle file, std::uint64_t offset, void *buffer, std::uint32_t bytes)
 {
     if (!file || !buffer || bytes == 0 || bytes > db::load_atomic::kFileReadBytes)
         return {SysFileReadStatus::Invalid, 0, static_cast<std::uint32_t>(EINVAL)};
@@ -118,10 +96,8 @@ SysFileReadResult KISAK_CDECL Sys_FileReadBegin(
         total += static_cast<std::uint32_t>(transferred);
     }
 
-    // A read that starts at or past end of file never becomes a request: the
-    // waiter would only observe a zero-byte completion. Issue-time outcomes
-    // are terminal here, mirroring the Win32 answers for ReadFileEx refusals
-    // so the loader sees one behaviour on both platforms.
+    // Issue-time outcomes are terminal here (mirroring Win32 ReadFileEx
+    // refusals) so the loader sees one behaviour on both platforms.
     if (total == 0)
     {
         if (errorWord == 0)
@@ -129,7 +105,9 @@ SysFileReadResult KISAK_CDECL Sys_FileReadBegin(
         return {SysFileReadStatus::Error, 0, static_cast<std::uint32_t>(errorWord)};
     }
 
-    file->result = Sys_FileMakeResult(bytes, errorWord, total);
+    file->result = errorWord != 0
+        ? SysFileReadResult{SysFileReadStatus::Error, total, static_cast<std::uint32_t>(errorWord)}
+        : SysFileReadResult{total == bytes ? SysFileReadStatus::Complete : SysFileReadStatus::Eof, total, 0};
     file->outstanding = true;
     return {SysFileReadStatus::Pending, 0, 0};
 }

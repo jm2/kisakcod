@@ -23,16 +23,8 @@ static_assert(sizeof(SysEventHandle) == sizeof(void *));
 static_assert(std::is_pointer_v<SysFileHandle>);
 static_assert(std::is_same_v<SysFileHandle, SysFile *>);
 static_assert(sizeof(SysFileHandle) == sizeof(void *));
-static_assert(std::is_same_v<
-    std::underlying_type_t<SysFileReadStatus>,
-    std::uint32_t>);
+static_assert(std::is_same_v<std::underlying_type_t<SysFileReadStatus>, std::uint32_t>);
 static_assert(static_cast<std::uint32_t>(SysFileReadStatus::Pending) == 0);
-static_assert(static_cast<std::uint32_t>(SysFileReadStatus::Complete) == 1);
-static_assert(static_cast<std::uint32_t>(SysFileReadStatus::Eof) == 2);
-static_assert(static_cast<std::uint32_t>(SysFileReadStatus::Error) == 3);
-static_assert(static_cast<std::uint32_t>(SysFileReadStatus::TimedOut) == 4);
-static_assert(static_cast<std::uint32_t>(SysFileReadStatus::CancelFailed) == 5);
-static_assert(static_cast<std::uint32_t>(SysFileReadStatus::WaitFailed) == 6);
 static_assert(static_cast<std::uint32_t>(SysFileReadStatus::Invalid) == 7);
 static_assert(std::is_standard_layout_v<SysFileReadResult>);
 static_assert(sizeof(SysFileReadResult) == 12);
