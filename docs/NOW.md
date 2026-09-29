@@ -21,7 +21,7 @@ From the master census at 4b2897d0; row 17 re-baselines K1. Live values: the `Na
 
 ## Queue
 
-S = 1-2 days, M = 3-5, L = 1-2 weeks; headless unless noted. `#n` is a GitHub issue whose checklist is the bead's scope. Row numbers are stable IDs (design docs cite them); table order is priority. A bead copies its done-test into `now.done_test`. Start 17 and 23-26; feed in the rest in order.
+S = 1-2 days, M = 3-5, L = 1-2 weeks; headless unless noted. `#n` is a GitHub issue whose checklist is the bead's scope. Row numbers are stable IDs (design docs cite them); table order is priority. A bead copies its done-test into `now.done_test`. Start 17 and 23-28; feed in the rest in order.
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -30,6 +30,8 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks; headless unless noted. `#n` is a GitHub is
 | 24 | ki-1h22p · MSVC-compat string and name helpers: `_strlwr`, `basename` | G1 | K1 | no error on these names | S | ready |
 | 25 | ki-jddnx · `IsValidSeed` into `ui_shared.h`; `BigShort` (#231) | G1 | K1 | no error on these names | S | ready |
 | 26 | ki-7xgop · Contract tests for the portable `sys_local` split (rule-4 follow-up to row 3) | G1 | K1 | ctest green including `sys-local-portable-contracts` at the PR head; the declaration pins compile and the runtime round-trips pass | S | ready |
+| 27 | ki-xxg0x · Shared-file Win32 leftovers: `assertive.cpp`, `com_playerprofile.cpp`, `profile.cpp`/`timing.cpp`, `com_files.cpp`, `q_parse.cpp` `va_list` (game_mp stays row 10), `win_input.h`, `db_registry.cpp` | G1 | K1 | no error on these names | M | ready |
+| 28 | ki-ip7mg · Headless seam: `IDirect3D*` in `gfx_d3d/r_init.h`, `database/db_load.cpp` | G1 (Linux) | K1 | no error on these names | M | ready |
 | 18 | ki-pbb7c · GSC parser tables narrow 32768 into `short` (#226) | G1 | K1 | no narrowing error in `src/script` | S | rework (r1) |
 | 9 | ki-l7lly · Engine-owned MSVC-compatible RNG; `G_irand` overflow | G2 | K3 | `rand` matches MSVC for 3 seeds | S | parked (rework r1) |
 | 10 | ki-vwteh · Hazards: `g_spawn_mp` offsets, clone sizes, `HIWORD`, `va_list`, `XAnimClone`; game_mp layout (#216) | G2 | K3 | tests fail on the old behavior | M | rework (r2) |
@@ -38,7 +40,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks; headless unless noted. `#n` is a GitHub is
 | 20 | GSC parser and VM defects (#225, #199) | G2 | K3 | tests drive the real parser and VM | M | queued |
 | 21 | xanim sizes and strides at 64-bit (#218) | G2 | K3 | tests fail on the old sizes | M | queued |
 | 22 | Physics alias write and brush-callback contexts (#242 items 1-2) | G2 | K3 | a test runs a brush contact at 64-bit | M | queued |
-| 13 | ki-tozh2 · POSIX headless entry, termios console, `NET_*` on `Sys_Socket` | G1 (Linux) | K1, K2 | Linux headless links and reaches its prompt | L | in flight |
+| 13 | ki-tozh2 · POSIX headless entry, termios console, `NET_*` on `Sys_Socket` | G1 (Linux) | K1, K2 | Linux headless links and reaches its prompt | L | blocked (23-25, 27, 28, 14) |
 | 14 | ki-3qwla · Portable async fast-file reads (`db_file_load.cpp`) | G1 (Linux) | K1 | compiles on lin64/a64; a read test passes | M | in review |
 | 15 | Steam 1.8 capture decoder; usercmd ground truth (#282) | G4a | gate | every owner capture decodes | M | blocked-owner (captures) |
 | 16 | `steam18` server profile on x86 | G4a | gate | replayed captures get retail replies | M | blocked-owner (captures) |
