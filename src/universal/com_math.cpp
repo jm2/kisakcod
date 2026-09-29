@@ -2348,8 +2348,12 @@ void __cdecl Rand_Init(int seed)
 // per-thread state lives here. MSVC keeps the state per thread, so the
 // engine RNG does too — this is what makes a `srand` on one thread unable
 // to perturb a `rand` on another, matching the CRT the callers were
-// decompiled against. The zero state is the CRT's own unseeded start, so a
-// TU that never calls `srand` still matches MSVC's first draws.
+// decompiled against. MSVC seeds each thread's CRT state to 1, so an
+// unseeded `rand()` runs the `srand(1)` stream; the initializer is 1u for
+// that reason, and a thread that never calls `srand` therefore draws exactly
+// what MSVC would. See
+// learn.microsoft.com/cpp/c-runtime-library/reference/srand for the CRT
+// contract this mirrors.
 //
 // This is deliberately a DIFFERENT state from `holdrand` above: `flrand` /
 // `irand` / `Rand_Init` run their own portable `>> 17` LCG that retail
@@ -2357,7 +2361,7 @@ void __cdecl Rand_Init(int seed)
 // couple two call families that never shared a stream, and would change
 // every existing flrand result. Both streams keep their exact historical
 // step; only the CRT `rand` stream is replaced here.
-thread_local uint32_t Kisak_randState = 0;
+thread_local uint32_t Kisak_randState = 1u;
 
 void __cdecl Kisak_srand(unsigned int seed)
 {
