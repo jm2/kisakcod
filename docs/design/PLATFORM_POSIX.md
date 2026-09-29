@@ -68,7 +68,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 ## macOS notes
 
 - **Services:** the same POSIX files, plus the Mach crash-freeze backend (no engine caller).
-- **Scope before G5:** headless only (G3). CrossOver runs the x86 build for testing only ([ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)).
+- **Scope before G5:** headless only (G3); a `mac64` census leg and the #265 fixes come first ([NATIVE64](NATIVE64.md#kpis)). CrossOver runs the x86 build for testing only ([ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)).
 - **Release:** signing and notarization are G6 owner items ([../NOW.md](../NOW.md)).
 
 ## Steamworks availability
