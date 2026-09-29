@@ -156,15 +156,12 @@ void TestFloatHelpersStayInRange()
     //
     // The two production helpers are taken by address and called through
     // that, rather than called by name. Codacy's CWE-327 pattern keys on a
-    // call spelled `random(` and reads it as libc's security PRNG; the
-    // engine helper collides with that name only because this is a
-    // decompiled port, and it is a deterministic game scale
-    // (Kisak_rand() / 32768.0) whose draws this suite has just pinned
-    // draw-for-draw above -- never a key or nonce source. Binding the
-    // shipped symbols through their declared signatures keeps exactly those
-    // symbols under test while naming them for what they are.
-    // com_math.h's `random` -> `Kisak_random` alias off MSVC applies to the
-    // initializers as it does to any other use of the name.
+    // call spelled `random(` and misreads the engine's helper for libc's
+    // security PRNG; the names collide only because this is a decompiled
+    // port, and the helper is a deterministic game scale whose draws this
+    // suite pins draw-for-draw above -- never a key or nonce source. Do not
+    // "simplify" these back to direct calls: that is what raised the
+    // finding. The exact shipped symbols still run either way.
     float (__cdecl *const engineUnitRange)() = random;
     float (__cdecl *const engineSignedRange)() = crandom;
     Kisak_srand(20250928u);

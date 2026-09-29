@@ -399,13 +399,11 @@ add_executable(kisakcod-msvc-rand-shim-tests
 # exactly as the game target's include path does.
 target_include_directories(kisakcod-msvc-rand-shim-tests SYSTEM PRIVATE
     ${SRC_DIR} ${DEPS_DIR})
-# ode/common.h includes <malloc.h> and <memory.h> unconditionally -- glibc and
-# MSVC names that macOS and the BSDs do not ship (they keep the same
-# declarations in <stdlib.h>/<alloca.h> and <string.h>). This is the first
-# target that compiles a TU reaching that web on those hosts, so supply the
-# two names from tests/compat on hosts that have neither. The configure check
-# gates it: glibc and MSVC keep their real headers and never see the shims.
-# Build-only; no retail translation unit has this path on its include line.
+# ode/common.h includes <malloc.h> and <memory.h> unconditionally -- glibc
+# and MSVC names macOS and the BSDs do not ship. This is the first target
+# compiling a TU that reaches that web on those hosts, so supply the two
+# names from tests/compat there. The check gates it: glibc and MSVC keep
+# their real headers and never see the shims. Build-only.
 include(CheckIncludeFileCXX)
 check_include_file_cxx("malloc.h" KISAK_HAVE_MALLOC_H)
 check_include_file_cxx("memory.h" KISAK_HAVE_MEMORY_H)
