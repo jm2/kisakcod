@@ -28,6 +28,13 @@
 #pragma warning(disable : 4786)		// identifier was truncated
 #endif // _WIN32
 
+// KisakCOD port: the decompiled sources call the MSVC CRT spellings
+// (_strlwr today) directly. This header must precede the C standard headers
+// below: its glibc basename() rename only works while <string.h> is unparsed.
+// See msvc_crt_compat.h for the per-name rationale and
+// tests/msvc_crt_compat_tests.cpp for the runtime contract.
+#include "msvc_crt_compat.h"
+
 #include "../universal/assertive.h" // LWSS add
 
 #include <assert.h>
