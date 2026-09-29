@@ -1,5 +1,6 @@
 #include "assertive.h"
 #include <qcommon/sys_local.h>
+#include <qcommon/sys_filesystem.h>
 #if defined(_WIN32)
 // KisakCOD ABI port: this TU uses Win32 API types (BOOL/DWORD/HWND, ...) in its
 // own code. Previously they arrived via win_local.h's winsock include; the
@@ -7,6 +8,7 @@
 #include <windows.h>
 #endif
 #include <cstdarg>
+#include <cstdio>
 
 enum AssertOccurance : __int32
 {
@@ -21,6 +23,7 @@ int lastAssertType;
 
 void(__cdecl* AssertCallback)(const char*);
 
+#if defined(_WIN32)
 BOOL CopyMessageToClipboard()
 {
     HWND DesktopWindow; // eax
@@ -57,10 +60,19 @@ BOOL CopyMessageToClipboard()
     }
     return result;
 }
+#else
+int CopyMessageToClipboard()
+{
+    // The clipboard write is a Win32 desktop contract (OpenClipboard /
+    // SetClipboardData). Headless POSIX compositions have no clipboard, so
+    // report the not-copied answer the Win32 path returns when OpenClipboard
+    // fails.
+    return 0;
+}
+#endif
 
 char __cdecl AssertNotify(int type, AssertOccurance occurance)
 {
-    HWND ActiveWindow; // eax
     const char* msg; // [esp+8h] [ebp-4h]
 
     if (AssertCallback)
@@ -76,6 +88,9 @@ char __cdecl AssertNotify(int type, AssertOccurance occurance)
     {
         msg = "ASSERTION FAILURE... (this text is on the clipboard)";
     }
+#if defined(_WIN32)
+    HWND ActiveWindow; // eax
+
     ActiveWindow = GetActiveWindow();
     if (MessageBoxA(ActiveWindow, assertMessage, msg, 0x12011u) != 1)
         return 1;
@@ -86,9 +101,19 @@ char __cdecl AssertNotify(int type, AssertOccurance occurance)
     if (occurance != RECURSIVE)
         ExitProcess(0xFFFFFFFF);
  #endif
+#else
+    // The prompt is a Win32 desktop message box (HWND/GetActiveWindow/
+    // MessageBoxA) and the acknowledge path is DebugBreak/ExitProcess. Headless
+    // POSIX compositions have no desktop prompt, so report like the KISAK_PURE
+    // handler's stderr line and take the non-interactive answer: no
+    // acknowledge, no kill, keep going.
+    (void)occurance;
+    fprintf(stderr, "%s\n%s\n", msg, assertMessage);
+#endif
     return 1;
 }
 
+#if defined(_WIN32)
 HINSTANCE__* __cdecl GetModuleBase(char* name)
 {
     const char* v2; // [esp+Ch] [ebp-11Ch]
@@ -115,6 +140,16 @@ HINSTANCE__* __cdecl GetModuleBase(char* name)
     strcpy(&moduleName[nameLength], ".dll");
     return GetModuleHandleA(moduleName);
 }
+#else
+void* __cdecl GetModuleBase(char* name)
+{
+    // The MSVC .map module-base lookup (GetModuleHandleA over .exe/.dll names)
+    // has no POSIX counterpart, and the .map symbolication path that consumes
+    // it is Win32-only below. Report no module base.
+    (void)name;
+    return nullptr;
+}
+#endif
 
 char lineBuffer[0x100];
 uint32_t lineBufferStartPos, lineBufferEndPos;
@@ -170,10 +205,16 @@ char __cdecl SkipLines(int lineCount, FILE* fp)
 
 void __cdecl ParseError(const char* msg)
 {
+#if defined(_WIN32)
     HWND ActiveWindow; // eax
 
     ActiveWindow = GetActiveWindow();
     MessageBoxA(ActiveWindow, msg, ".map parse error", 0x10u);
+#else
+    // The .map parse diagnostic is a Win32 desktop message box; headless POSIX
+    // compositions report it on stderr instead.
+    fprintf(stderr, ".map parse error: %s\n", msg);
+#endif
 }
 
 struct AddressInfo
@@ -434,6 +475,7 @@ LABEL_90:
     return 1;
 }
 
+#if defined(_WIN32)
 void __cdecl LoadMapFilesForDir(const char* dir)
 {
     char* v1; // eax
@@ -488,6 +530,16 @@ void __cdecl LoadMapFilesForDir(const char* dir)
         FindClose(hFindFile);
     }
 }
+#else
+void __cdecl LoadMapFilesForDir(const char* dir)
+{
+    // The MSVC .map enumeration is a Win32 FindFirstFile scan feeding
+    // GetModuleBase/ParseMapFile. POSIX compositions ship no .map files and
+    // have no module-base lookup, so the assert address table stays empty and
+    // LoadMapFiles below emits no stack section.
+    (void)dir;
+}
+#endif
 
 int __cdecl LoadMapFiles(char* msg)
 {
@@ -535,9 +587,13 @@ int __cdecl LoadMapFiles(char* msg)
     return curPos - msg;
 }
 
+#if defined(_WIN32)
 char g_module[MAX_PATH];
 
 #include <intrin.h>
+#else
+char g_module[260]; // MAX_PATH
+#endif
 
 int __cdecl DoStackTrace(char* msg, int nIgnore)
 {
@@ -565,7 +621,7 @@ int __cdecl DoStackTrace(char* msg, int nIgnore)
             }
         }
     }
-#else
+#elif defined(_WIN32)
     {
         void* frames[32];
         USHORT frameCount = RtlCaptureStackBackTrace(0, 32, frames, NULL);
@@ -574,6 +630,13 @@ int __cdecl DoStackTrace(char* msg, int nIgnore)
             g_assertAddress[g_assertAddressCount++].address = (uintptr_t)frames[i];
         }
     }
+#else
+    // Both frame walks are Win32 (the MSVC x86 inline asm above, and
+    // RtlCaptureStackBackTrace elsewhere), and the .map symbolication that
+    // consumes the captured addresses is Win32-only as well. POSIX
+    // compositions keep the empty address table, so LoadMapFiles below emits
+    // no stack section in the assert message.
+    (void)nIgnore;
 #endif
     return LoadMapFiles(msg);
 }
@@ -590,7 +653,13 @@ void __cdecl BuildAssertMessage(const char* expr, const char* filename, int line
         filename = unknown;
     if (!expr)
         expr = unknown;
+#if defined(_WIN32)
     if (!GetModuleFileNameA(0, g_module, sizeof(g_module)))
+#else
+    // Module naming is the Sys_FileSystem executable-path seam on POSIX; the
+    // Win32 body names it through GetModuleFileNameA.
+    if (!Sys_FileSystemGetExecutablePath(g_module, sizeof(g_module)))
+#endif
         strcpy(g_module, "<unknown application>");
     String = Dvar_GetString("version");
     curPos = &message[sprintf(message, "Build: %s\n", String)];
@@ -604,6 +673,7 @@ void __cdecl BuildAssertMessage(const char* expr, const char* filename, int line
     DoStackTrace(&curPos[v7], skipLevels + 1);
 }
 
+#if defined(_WIN32)
 HWND g_hwndGame[4];
 uint32_t g_hiddenCount;
 
@@ -653,6 +723,14 @@ void __cdecl FixWindowsDesktop()
     SetDeviceGammaRamp(hdc, ramp);
     ReleaseDC(hwndDesktop, hdc);
 }
+#else
+void __cdecl FixWindowsDesktop()
+{
+    // Desktop recovery (display-mode reset, game-window enumeration, gamma
+    // ramp) is a Win32 desktop contract. Headless POSIX compositions have no
+    // desktop to restore.
+}
+#endif
 
 bool __cdecl QuitOnError();
 void MyAssertHandler(const char *filename, int line, int type, const char *fmt, ...)
@@ -690,13 +768,21 @@ void MyAssertHandler(const char *filename, int line, int type, const char *fmt, 
     Com_Printf(16, "%s", assertMessage);
     Com_Printf(16, "ASSERTEND ---------------------------------------------------------------------\n");
     if (QuitOnError())
+#if defined(_WIN32)
         ExitProcess(0xFFFFFFFF);
+#else
+        exit(-1);
+#endif
     CopyMessageToClipboard();
     shouldBreak = AssertNotify(type, FIRST_TIME);
     isHandlingAssert = 0;
     Sys_LeaveCriticalSection(CRITSECT_ASSERT);
     if (shouldBreak)
+#if defined(_WIN32)
         DebugBreak();
+#else
+        __debugbreak();
+#endif
 #else
 
 #ifdef USE_ASSERTS

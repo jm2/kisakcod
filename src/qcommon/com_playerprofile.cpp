@@ -568,6 +568,7 @@ void __cdecl Com_SetRecommended(int localClientNum, int restart)
 
 bool __cdecl Sys_ShouldUpdateForInfoChange()
 {
+#if defined(_WIN32)
     HWND ActiveWindow; // eax
     char *v2; // [esp-Ch] [ebp-Ch]
     char *v3; // [esp-8h] [ebp-8h]
@@ -577,10 +578,19 @@ bool __cdecl Sys_ShouldUpdateForInfoChange()
     v2 = Win_LocalizeRef("WIN_COMPUTER_CHANGE_BODY");
     ActiveWindow = GetActiveWindow();
     return MessageBoxA(ActiveWindow, v2, v3, 0x44u) == 6;
+#else
+    // The question is a Win32 desktop message box (HWND/GetActiveWindow/
+    // MessageBoxA). Headless compositions have no interactive desktop, so keep
+    // the info archiving and give the non-interactive answer: do not force the
+    // update, the same as a No click.
+    Sys_ArchiveInfo(0);
+    return false;
+#endif
 }
 
 bool __cdecl Sys_ShouldUpdateForConfigChange()
 {
+#if defined(_WIN32)
     HWND ActiveWindow; // eax
     char *v2; // [esp-Ch] [ebp-Ch]
     char *v3; // [esp-8h] [ebp-8h]
@@ -589,6 +599,10 @@ bool __cdecl Sys_ShouldUpdateForConfigChange()
     v2 = Win_LocalizeRef("WIN_CONFIGURE_UPDATED_BODY");
     ActiveWindow = GetActiveWindow();
     return MessageBoxA(ActiveWindow, v2, v3, 0x44u) == 6;
+#else
+    // Same non-interactive default as Sys_ShouldUpdateForInfoChange.
+    return false;
+#endif
 }
 
 bool __cdecl Sys_HasInfoChanged()
