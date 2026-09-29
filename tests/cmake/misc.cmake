@@ -134,23 +134,46 @@ add_test(NAME native64-runtime-layout-contracts
     COMMAND kisakcod-native64-runtime-layout-tests)
 
 # native64_game_mp_hazards_test: done-test for the bead-10 silent 64-bit
-# hazards in the game_mp path (ki-vwteh / #216). Pins the fields_1 offsetof
-# contract, the clone-size table correctness, and the XAnimClone allocation
-# width at the compiler's natural layout. Mirrors are used for structs
-# whose headers are production-bound at 64-bit; the XAnimParts runtime size
-# is pinned against the real xanim_native.h contract through the portable
-# shim (same pattern as kisakcod-xanim-parts-split-tests).
+# hazards in the game_mp path (ki-vwteh / #216). The subjects are the real
+# production translation units this PR changes, compiled into the target and
+# driven by the test: g_spawn_mp.cpp (fields_1 read path), db_assetnames.cpp
+# (DB_GetXAssetSizeHandler), xanim.cpp (XAnimClone),
+# g_client_script_cmd_mp.cpp (entref) and q_parse.cpp / com_playerprofile.cpp
+# (va_list). Each check observes what the linked production code does at the
+# compiler's natural layout, so reverting a fix fails the check; the mirrors
+# this target used before restated the premises and could not do that.
+#
+# The subjects carry the MSVC decompiled dialect, so the target takes the
+# test-side shim prefix instead of the strict test warning set.
+# KISAK_DEDI_HEADLESS keeps them off the game-only cgame header and the
+# ILP32-only scr_debugger size pin; the code under test is unconditional in
+# both profiles. --gc-sections trims each subject to the entry points the test
+# calls, so its unstubbed engine call surface is never linked.
 add_executable(kisakcod-native64-game-mp-hazards-tests
     native64_game_mp_hazards_test.cpp
-    xanim_parts_split_test_shim.h)
-target_include_directories(
-    kisakcod-native64-game-mp-hazards-tests PRIVATE ${SRC_DIR})
-target_compile_features(
-    kisakcod-native64-game-mp-hazards-tests PRIVATE cxx_std_20)
-kisakcod_test_warnings(kisakcod-native64-game-mp-hazards-tests)
+    native64_game_mp_hazards_subject_dialect.h
+    ${SRC_DIR}/game_mp/g_spawn_mp.cpp
+    ${SRC_DIR}/database/db_assetnames.cpp
+    ${SRC_DIR}/xanim/xanim.cpp
+    ${SRC_DIR}/game_mp/g_client_script_cmd_mp.cpp
+    ${SRC_DIR}/universal/q_parse.cpp
+    ${SRC_DIR}/qcommon/com_playerprofile.cpp)
+target_include_directories(kisakcod-native64-game-mp-hazards-tests PRIVATE
+    ${SRC_DIR} ${CMAKE_SOURCE_DIR}/deps)
+target_compile_features(kisakcod-native64-game-mp-hazards-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-native64-game-mp-hazards-tests PRIVATE
+    KISAK_MP KISAK_DEDI_HEADLESS)
+if (MSVC)
+    target_compile_options(kisakcod-native64-game-mp-hazards-tests PRIVATE /W3)
+    target_link_options(kisakcod-native64-game-mp-hazards-tests PRIVATE /OPT:REF)
+else()
+    target_compile_options(kisakcod-native64-game-mp-hazards-tests PRIVATE
+        -include${CMAKE_CURRENT_SOURCE_DIR}/native64_game_mp_hazards_subject_dialect.h
+        -fpermissive -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-native64-game-mp-hazards-tests PRIVATE -Wl,--gc-sections)
+endif()
 set_target_properties(kisakcod-native64-game-mp-hazards-tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-)
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME native64-game-mp-hazards
     COMMAND kisakcod-native64-game-mp-hazards-tests)
 
