@@ -36,8 +36,9 @@ TARGETS = {
     "lin64": ("x86_64-linux-gnu", ["-DUNIX"], "d3d"),
     "a64": ("aarch64-linux-gnu", ["-DUNIX"], "d3d"),
 }
-WARN = ["-w", "-Wvoid-pointer-to-int-cast", "-Wpointer-to-int-cast",
-        "-Wint-to-pointer-cast", "-Wshorten-64-to-32", "-W#pragma-messages"]
+WARN = ["-Wno-everything", "-Werror=c++11-narrowing", "-Wvoid-pointer-to-int-cast",
+        "-Wpointer-to-int-cast", "-Wint-to-pointer-cast", "-Wshorten-64-to-32",
+        "-W#pragma-messages"]
 WIN_LIBS = ["-lws2_32", "-lwinmm", "-luser32", "-lgdi32", "-ladvapi32", "-lshell32",
             "-lole32", "-loleaut32", "-luuid", "-ldbghelp", "-lpsapi", "-lshlwapi"]
 DIAG = re.compile(r"^(?P<file>[^\s:][^:]*):(?P<line>\d+):\d+: (?:fatal )?error: (?P<msg>.*)$")
