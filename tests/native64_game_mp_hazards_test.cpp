@@ -309,10 +309,18 @@ static void TestVaListPaths()
 //    store truncates that pointer and the round trip fails at LP64.
 static void TestGenericEntityField()
 {
-    std::memset(&g_entities[7], 0, sizeof(g_entities[7]));
-    uint8_t buf[sizeof(void *) * 2] = {};
+    uint8_t buf[sizeof(void *) * 2];
+    std::memset(buf, 0xAB, sizeof(buf));
     Scr_SetGenericField(buf, F_ENTITY, 0);
+    // The store must cover the whole gentity_s *: the old (uint32_t) cast
+    // left the 0xAB sentinel sitting in the high half at LP64 (and truncated
+    // the value wherever &g_entities[7] does not fit in 32 bits).
     CHECK(*reinterpret_cast<gentity_s **>(buf) == &g_entities[7]);
+    if (sizeof(void *) == 8)
+    {
+        const uint8_t sentinel[4] = {0xAB, 0xAB, 0xAB, 0xAB};
+        CHECK(std::memcmp(buf + 4, sentinel, 4) != 0);
+    }
 }
 
 int main()
