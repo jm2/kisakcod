@@ -134,20 +134,11 @@ void CheckBitScanReverseContract()
         "_BitScanReverse (POSIX shim) stores nothing for a zero mask");
 #endif
 
-    // MSVC's Index is a DWORD*: the write stays 32 bits even where a call
-    // site reaches it through a wider pointer (msg_bits_mp.cpp casts an int*
-    // to unsigned long*), so the neighbouring word must survive.
-    struct Overhang
-    {
-        unsigned int index;
-        unsigned int guard;
-    } overhang = {0xDEADBEEFu, 0xCAFEBABEu};
-    Expect(_BitScanReverse(
-                reinterpret_cast<unsigned long *>(&overhang.index), 4u) != 0
-            && overhang.index == 2,
-        "_BitScanReverse accepts the wider-pointer call shape");
-    Expect(overhang.guard == 0xCAFEBABEu,
-        "_BitScanReverse stores only the 32-bit index");
+    // The whole index object is written: on LP64 `unsigned long` is 64 bits,
+    // and a 32-bit store would leave its upper half as it was.
+    unsigned long wide = ~0ul;
+    Expect(_BitScanReverse(&wide, 0x10u) != 0 && wide == 4ul,
+        "_BitScanReverse writes the full width of an unsigned long index");
 }
 } // namespace
 

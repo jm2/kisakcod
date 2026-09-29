@@ -151,27 +151,21 @@ static inline int KISAK_vsnprintf_s_trunc(
 // failure; that extra guarantee is NOT part of the MSVC contract and is
 // pinned as shim-only behavior in tests/msvc_crt_compat_tests.cpp.
 //
-// The template takes whatever pointer the call site holds (DWORD is
-// `unsigned long` in the Windows SDK, `unsigned int` in the census d3d
-// stub) and stores exactly 32 bits, matching MSVC's DWORD-sized write.
+// The template takes whatever index type the call site declares (DWORD is
+// `unsigned long` in the Windows SDK, `unsigned int` in the census d3d stub)
+// and assigns the full object. MSVC's `unsigned long` is 32 bits on every
+// Windows target, but on LP64 (Linux, macOS) it is 64: storing only 32 bits
+// there would leave the upper half of callers' `unsigned long` locals
+// uninitialized (r_dpvs.cpp and friends). No POSIX call site reaches the
+// shim through a pointer wider than its object; msg_bits_mp.cpp's
+// int*-to-unsigned-long* cast is MSVC-only.
 template <typename TIndex>
 static inline unsigned char _BitScanReverse(TIndex *index, unsigned long mask)
 {
     const unsigned int bits = (unsigned int)mask;
     if (bits == 0)
         return 0;
-    const unsigned int store = 31u - (unsigned int)__builtin_clz(bits);
-    // MSVC writes DWORD width (32 bits) through Index even where the
-    // caller's pointer is wider (msg_bits_mp.cpp casts an int*), so the copy
-    // extent is sizeof(store) and never sizeof(*index) — the destination can
-    // always hold it because every call site holds at least a DWORD. Copy
-    // those bytes one at a time through unsigned char: the same aliasing-safe
-    // write memcpy performs, with the bound spelled out instead of delegated.
-    unsigned char *const dst = reinterpret_cast<unsigned char *>(index);
-    const unsigned char *const src =
-        reinterpret_cast<const unsigned char *>(&store);
-    for (size_t i = 0; i < sizeof(store); ++i)
-        dst[i] = src[i];
+    *index = static_cast<TIndex>(31u - (unsigned int)__builtin_clz(bits));
     return 1;
 }
 
