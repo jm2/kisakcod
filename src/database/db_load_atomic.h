@@ -6,6 +6,7 @@
 // file API or changing their layout to std::atomic implementation types.
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <thread>
@@ -15,6 +16,30 @@
 
 namespace db::load_atomic
 {
+// A contended wait yields briefly, then backs off with short sleeps.
+// std::this_thread::yield() alone does not guarantee the partner thread runs:
+// on a 3-core hosted macOS runner a pure yield loop in this protocol stalled
+// for more than 20 s (master CI, 2026-09-29), and the macOS headless server is
+// a G3 target. Uncontended waits never reach the sleep.
+class SpinBackoff
+{
+public:
+    void Pause() noexcept
+    {
+        if (spins_ < kYieldSpins)
+        {
+            ++spins_;
+            std::this_thread::yield();
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+    }
+
+private:
+    static constexpr std::uint32_t kYieldSpins = 64u;
+    std::uint32_t spins_ = 0u;
+};
+
 inline constexpr std::uint32_t kFileReadBytes = 0x40000u;
 inline constexpr std::uint32_t kFileBufferBytes = 0x80000u;
 
@@ -102,8 +127,9 @@ public:
         if (recoveryRequested_.exchange(true, std::memory_order_seq_cst))
             return false;
 
+        SpinBackoff backoff;
         while (!assetsSafe_.load(std::memory_order_seq_cst))
-            std::this_thread::yield();
+            backoff.Pause();
         return true;
     }
 
@@ -119,8 +145,9 @@ public:
         for (;;)
         {
             assetsSafe_.store(true, std::memory_order_seq_cst);
+            SpinBackoff backoff;
             while (recoveryRequested_.load(std::memory_order_seq_cst))
-                std::this_thread::yield();
+                backoff.Pause();
 
             assetsSafe_.store(false, std::memory_order_seq_cst);
             if (!recoveryRequested_.load(std::memory_order_seq_cst))
@@ -185,12 +212,13 @@ namespace detail
 {
 inline std::uint32_t BeginProgressWrite(ProgressState *const state) noexcept
 {
+    SpinBackoff backoff;
     for (;;)
     {
         const std::uint32_t observed = Sys_AtomicLoad(&state->sequence);
         if ((observed & 1u) != 0u)
         {
-            std::this_thread::yield();
+            backoff.Pause();
             continue;
         }
 
@@ -202,7 +230,7 @@ inline std::uint32_t BeginProgressWrite(ProgressState *const state) noexcept
         {
             return owned;
         }
-        std::this_thread::yield();
+        backoff.Pause();
     }
 }
 
@@ -335,12 +363,13 @@ inline ProgressUpdateResult AccumulateProgress(
 inline ProgressSnapshot SnapshotProgress(
     const ProgressState *const state) noexcept
 {
+    SpinBackoff backoff;
     for (;;)
     {
         const std::uint32_t before = Sys_AtomicLoad(&state->sequence);
         if ((before & 1u) != 0u)
         {
-            std::this_thread::yield();
+            backoff.Pause();
             continue;
         }
 
@@ -353,7 +382,7 @@ inline ProgressSnapshot SnapshotProgress(
         const std::uint32_t after = Sys_AtomicLoad(&state->sequence);
         if (before == after && (after & 1u) == 0u)
             return snapshot;
-        std::this_thread::yield();
+        backoff.Pause();
     }
 }
 
