@@ -360,6 +360,25 @@ add_test(
     NAME msvc-printf-shim-contracts
     COMMAND kisakcod-msvc-printf-shim-tests
 )
+
+# MSVC CRT spellings the decompiled engine calls directly: _strlwr and the
+# basename rename (PLATFORM_POSIX.md's "MSVC CRT names" list). On MSVC hosts
+# these are the real CRT names and universal/msvc_crt_compat.h stays guarded
+# out; on POSIX hosts the compat header is asserted. The contracts are
+# identical.
+add_executable(kisakcod-msvc-crt-compat-tests
+    msvc_crt_compat_tests.cpp
+)
+target_include_directories(kisakcod-msvc-crt-compat-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-msvc-crt-compat-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-msvc-crt-compat-tests)
+set_target_properties(kisakcod-msvc-crt-compat-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME msvc-crt-compat-contracts
+    COMMAND kisakcod-msvc-crt-compat-tests
+)
 # M5 exit (ki-msb): canonical widened-runtime-graph capture. The parity
 # digest is a domain-separated SHA-256 over a framed, typed, little-endian
 # stream; pointer-bearing values never enter it, so a 32-bit reference walk
