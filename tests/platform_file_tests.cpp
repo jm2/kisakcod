@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -28,11 +29,11 @@ int Fail(const char *const message)
 
 bool WriteFixture(const std::vector<std::uint8_t> &bytes)
 {
-    FILE *const file = std::fopen(gPath.c_str(), "wb");
-    if (!file)
-        return false;
-    const bool written = std::fwrite(bytes.data(), 1, bytes.size(), file) == bytes.size();
-    return std::fclose(file) == 0 && written;
+    // std::ofstream, not fopen: MSVC's C4996 deprecation is an error in CI.
+    std::ofstream file(gPath, std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    file.close();
+    return static_cast<bool>(file);
 }
 
 // Issues one request and harvests its outcome. A backend may answer at issue

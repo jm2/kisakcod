@@ -83,8 +83,13 @@ void KISAK_CDECL Sys_FileClose(SysFileHandle *file)
     if (handle->outstanding)
         (void)Sys_FileReadWait(handle, 1000u);
     CloseHandle(handle->handle);
-    delete handle;
     *file = nullptr;
+    // A read still in flight after the drain (a caller that closes mid-read, a
+    // contract violation) keeps its completion routine queued, and that routine
+    // writes through the OVERLAPPED at the start of this record. Leak the record
+    // rather than free memory the routine will still touch.
+    if (!handle->outstanding)
+        delete handle;
 }
 
 bool KISAK_CDECL Sys_FileGetSize(SysFileHandle file, std::uint64_t *outSize)
