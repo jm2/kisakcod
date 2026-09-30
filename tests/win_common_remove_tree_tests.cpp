@@ -81,8 +81,13 @@ std::string MakeScratch()
         + "/kisak-remove-tree-XXXXXX";
     if (!mkdtemp(pattern.data()))
         return {};
-    char resolved[PATH_MAX];
-    return realpath(pattern.c_str(), resolved) ? std::string(resolved) : std::string();
+    // realpath allocates the result (POSIX.1-2008), so no fixed buffer bounds it.
+    char *const resolved = realpath(pattern.c_str(), nullptr);
+    if (!resolved)
+        return {};
+    std::string result(resolved);
+    std::free(resolved);
+    return result;
 }
 
 // Teardown only: FTW_PHYS never follows a link, FTW_DEPTH removes children
