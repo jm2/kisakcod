@@ -7,8 +7,9 @@
 #              labelled preview, beta or first-class by the cell's level
 #   source     the release commit's source archive, without the vendor
 #              runtime binaries (Miles, Bink, Steamworks)
-#   build      per leg: build, split and check the debug symbols, package,
-#              then smoke-run the binary unpacked from the package
+#   build      per leg: build, split and check the debug symbols, package
+#              (tar.xz on Linux, zip on Windows), then smoke-run the binary
+#              unpacked from the package
 #   checksums  SHA256SUMS over every packaged file
 #   notes      release notes: packages, tiers, changes since the last release
 #   publish    the only job with contents: write and it checks nothing out:
@@ -201,8 +202,22 @@ jobs:
           -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DCMAKE_EXE_LINKER_FLAGS=-Wl,--build-id=sha1
 
+      # ci.yml's windows-headless configure. RelWithDebInfo puts full debug
+      # info in the PDB; the link is optimised and not incremental.
+      - name: Configure
+        if: matrix.recipe == 'windows-headless'
+        shell: pwsh
+        run: >
+          cmake -S . -B build-release -A "$env:FILE_ARCH"
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF
+          -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF
+          -DKISAK_ENABLE_X86_MMX_SKINNING=OFF -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON
+          -DBUILD_TESTING=OFF
+          "-DCMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO=/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF"
+
+      # --config picks the Visual Studio configuration; Ninja ignores it.
       - name: Build
-        run: cmake --build build-release --target "$BINARY" --parallel
+        run: cmake --build build-release --config RelWithDebInfo --target "$BINARY" --parallel
 
       - name: Split the debug symbols and check both halves
         if: matrix.recipe == 'linux-headless'
@@ -226,6 +241,26 @@ jobs:
           if [ -z "$id" ] || [ "$id" != "$(build_id "$dbg")" ]; then fail "the binary and symbol build IDs differ"; fi
           scripts/ci/verify-artifact-arch.sh "$FILE_ARCH" "$bin"
           echo "BUILD_ID=$id" >> "$GITHUB_ENV"
+
+      - name: Check the debug symbols against the binary
+        if: matrix.recipe == 'windows-headless'
+        run: |
+          mkdir -p "stage/${STEM}" "symbols/${STEM}"
+          cp "bin/RelWithDebInfo/${BINARY}.exe" "stage/${STEM}/"
+          cp "bin/RelWithDebInfo/${BINARY}.pdb" "symbols/${STEM}/"
+          # The exe's CodeView record must name this PDB and carry its GUID and age.
+          python scripts/ci/release_meta.py pdb-id --exe "stage/${STEM}/${BINARY}.exe" \
+            --pdb "symbols/${STEM}/${BINARY}.pdb" | tr -d '\r' >> "$GITHUB_ENV"
+          # The README promises a static C runtime: no VC++ runtime DLL imports.
+          if grep -qaiE '(vcruntime|msvcp)[0-9]+(_[0-9]+)?\.dll' "stage/${STEM}/${BINARY}.exe"; then
+            echo "::error::the binary imports the Visual C++ runtime DLLs" >&2
+            exit 1
+          fi
+
+      - name: Verify binary architecture
+        if: matrix.recipe == 'windows-headless'
+        shell: pwsh
+        run: ./scripts/ci/verify-artifact-arch.ps1 -Expected $env:FILE_ARCH "stage/$env:STEM/$env:BINARY.exe"
 
       - name: Package
         if: matrix.recipe == 'linux-headless'
@@ -263,6 +298,41 @@ jobs:
           mkdir -p "$unpacked"
           tar -xJf "dist/${STEM}.tar.xz" -C "$unpacked"
           python3 scripts/ci/headless_smoke.py "${unpacked}/${STEM}/${BINARY}"
+
+      - name: Package
+        if: matrix.recipe == 'windows-headless'
+        run: |
+          requires="64-bit Windows on x64; the C runtime is linked in, so no Visual C++ redistributable is needed"
+          cp LICENSE "stage/${STEM}/LICENSE"
+          python scripts/ci/release_meta.py readme --leg "$LEG" --version "$VERSION" --commit "$COMMIT" \
+            --requires "$requires" > "stage/${STEM}/README.txt"
+          epoch="$(git log -1 --format=%ct)"
+          mkdir -p dist
+          pack() { python scripts/ci/release_meta.py zip --root "$1" --stem "$STEM" --epoch "$epoch" --out "$2"; }
+          pack stage "dist/${STEM}.zip"
+          pack symbols "dist/${STEM}-debugsymbols.zip"
+          compiler="$(sed -n 's/^set(CMAKE_CXX_COMPILER_VERSION "\(.*\)")$/MSVC \1/p' \
+            build-release/CMakeFiles/*/CMakeCXXCompiler.cmake)"
+          jq -n --arg tag "$TAG" --arg commit "$COMMIT" --argjson leg "$LEG" --arg build_id "$BUILD_ID" \
+            --arg compiler "$compiler" --arg cmake "$(cmake --version | sed -n 1p)" \
+            --arg tracy "$(git -C build-release/_deps/tracy-src rev-parse HEAD)" \
+            --arg image "${ImageOS:-}-${ImageVersion:-}" --arg requires "$requires" --arg run "$GITHUB_RUN_ID" \
+            '{tag: $tag, commit: $commit, target: $leg.target, role: $leg.role, level: $leg.level,
+              tier: $leg.tier, config: "RelWithDebInfo", build_id: $build_id, compiler: $compiler,
+              cmake: $cmake, tracy: $tracy, runner_image: $image, requires: $requires,
+              workflow_run: $run}' > "dist/${STEM}-provenance.json"
+
+      - name: Smoke-run the packaged binary
+        if: matrix.recipe == 'windows-headless'
+        run: |
+          names() {
+            python -c 'import sys, zipfile; print(*zipfile.ZipFile(sys.argv[1]).namelist(), sep="\n")' "$1" | tr -d '\r'
+          }
+          diff <(names "dist/${STEM}.zip") \
+            <(printf '%s\n' "${STEM}/${BINARY}.exe" "${STEM}/LICENSE" "${STEM}/README.txt")
+          diff <(names "dist/${STEM}-debugsymbols.zip") <(printf '%s\n' "${STEM}/${BINARY}.pdb")
+          python -m zipfile -e "dist/${STEM}.zip" unpacked
+          python scripts/ci/headless_smoke.py "unpacked/${STEM}/${BINARY}.exe"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -365,7 +435,9 @@ jobs:
           cd dist
           sha256sum --check --strict SHA256SUMS.txt
           diff <(find . -type f ! -name SHA256SUMS.txt -printf '%P\n' | sort) <(awk '{print $2}' SHA256SUMS.txt | sort)
+          shopt -s nullglob
           for archive in *.tar.xz; do tar -tJf "$archive" > /dev/null; done
+          for archive in *.zip; do unzip -tqq "$archive"; done
           tar -tzf ./*-source.tar.gz > /dev/null
 
       - name: Create or update the draft, then publish unless draft

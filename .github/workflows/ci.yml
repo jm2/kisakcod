@@ -27,9 +27,10 @@ on:
 permissions:
   contents: read
 
-# Superseded PR heads release runners; other events have unique run groups.
+# Superseded PR heads release runners. Pushes group by branch without cancelling a running run:
+# at most one master run runs and one (the newest merge) waits; older pending runs are dropped.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -523,6 +524,13 @@ jobs:
           --config Release
           --target KisakCOD-dedi
           --parallel
+
+      - name: Verify binary architecture
+        shell: pwsh
+        run: ./scripts/ci/verify-artifact-arch.ps1 -Expected x86 bin/Release/KisakCOD-dedi.exe
+
+      - name: Assetless smoke run
+        run: python scripts/ci/headless_smoke.py bin/Release/KisakCOD-dedi.exe
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

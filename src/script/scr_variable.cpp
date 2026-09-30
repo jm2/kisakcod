@@ -2086,17 +2086,19 @@ void  Scr_EvalLessEqual(VariableValue* value1, VariableValue* value2)
 	iassert((value1->type == VAR_INTEGER) || (value1->type == VAR_UNDEFINED));
 	value1->u.intValue = value1->u.intValue == 0;
 }
+// Script shift counts are taken mod 32, as the x86 SHL/SAR instructions do;
+// a count outside [0, 31] is undefined behaviour in C++ (#199).
 void  Scr_EvalShiftLeft(VariableValue* value1, VariableValue* value2)
 {
 	if (value1->type == 6 && value2->type == 6)
-		value1->u.intValue <<= value2->u.intValue;
+		value1->u.intValue = static_cast<int>(static_cast<uint32_t>(value1->u.intValue) << (value2->u.intValue & 31));
 	else
 		Scr_UnmatchingTypesError(value1, value2);
 }
 void  Scr_EvalShiftRight(VariableValue* value1, VariableValue* value2)
 {
 	if (value1->type == 6 && value2->type == 6)
-		value1->u.intValue >>= value2->u.intValue;
+		value1->u.intValue >>= value2->u.intValue & 31;
 	else
 		Scr_UnmatchingTypesError(value1, value2);
 }
@@ -2324,7 +2326,12 @@ void  Scr_EvalMod(VariableValue* value1, VariableValue* value2)
 {
 	if (value1->type == 6 && value2->type == 6)
 	{
-		if (value2->u.intValue)
+		if (value2->u.intValue == -1)
+		{
+			// x % -1 is 0; INT_MIN % -1 traps in the divide instruction (#199).
+			value1->u.intValue = 0;
+		}
+		else if (value2->u.intValue)
 		{
 			value1->u.intValue %= value2->u.intValue;
 		}

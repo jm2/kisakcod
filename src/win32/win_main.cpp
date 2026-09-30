@@ -852,6 +852,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		freopen("CONOUT$", "w", stdout);
 		freopen("CONOUT$", "w", stderr);
 	}
+#else
+	// A console program: started on a console, it reads commands typed there.
+	(void)Sys_ConsoleStartLineEditing();
 #endif
 
 	Sys_InitializeCriticalSections();
