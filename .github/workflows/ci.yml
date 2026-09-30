@@ -96,6 +96,15 @@ jobs:
       - name: Run portable tests
         run: ctest --test-dir build-tests -C Release --output-on-failure --parallel 4
 
+      # Only root can plant a link owned by another user, so the filesystem
+      # contracts run once more as root to reach the planted-link stage
+      # (tests/platform_filesystem_tests.cpp); -V shows its RAN line.
+      - name: Run filesystem contracts as root (planted links)
+        if: matrix.platform == 'Linux amd64'
+        run: >
+          sudo --preserve-env=PATH "$(command -v ctest)" --test-dir build-tests -C Release
+          -R platform-filesystem-path-contracts -V --output-on-failure
+
   script-sanitizers:
     name: Script production paths / ASan + UBSan
     runs-on: ubuntu-24.04

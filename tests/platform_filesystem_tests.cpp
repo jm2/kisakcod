@@ -3137,8 +3137,13 @@ bool TestOperatorRootsBelowLinks(const std::string &workingDirectory)
     }
 
     // Only root can plant a link owned by someone else. Given one, trusting
-    // refuses it, directly and at the end of a chain from a trusted link.
-    if (self == 0)
+    // refuses it, directly and at the end of a chain from a trusted link. CI
+    // runs this test once more as root on Linux amd64 to reach this stage.
+    if (self != 0)
+    {
+        std::fputs("SKIP: operator-roots/shared-directory-planted-link needs root\n", stderr);
+    }
+    else
     {
         SetCheckStage("operator-roots/shared-directory-planted-link");
         const std::string theirs = Join(shared, "theirs");
@@ -3155,6 +3160,7 @@ bool TestOperatorRootsBelowLinks(const std::string &workingDirectory)
         {
             return false;
         }
+        std::fputs("RAN: operator-roots/shared-directory-planted-link as root\n", stderr);
     }
 
     SetCheckStage("operator-roots/cleanup");
