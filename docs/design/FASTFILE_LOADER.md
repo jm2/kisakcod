@@ -49,8 +49,12 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    - the 64-bit `Load_*`, which reads the mirror, allocates the runtime record in a native
      arena, converts it field by field and resolves tokens.
 
-   Generated code is not committed ([AGENTS.md](../../AGENTS.md) rule 8). It is built from the
-   schema at configure or build time.
+   The schema is `src/database/db_disk32.schema`: retail sizes, offsets and field kinds.
+   `scripts/gen_disk32.py` checks it against the ILP32 rules, and CMake runs it at build time
+   for 64-bit targets and the Linux loader tests only, so Windows x86 needs no Python. Generated
+   code is not committed ([AGENTS.md](../../AGENTS.md) rule 8). It emits the mirrors with their
+   `ONDISK_*` asserts plus `RUNTIME_*` asserts on the native structs. The 64-bit loader bodies
+   stay hand-written (`db_disk32_load.cpp`) until the wave-1 families show their shared shape.
 3. **Relocation map.** Every materialized record registers `(block, disk offset, disk stride) →
    (native base, native stride)`. Offset tokens resolve through this map, including interior
    pointers into arrays and to named fields, so no pointer points into raw stream bytes. A
@@ -62,7 +66,10 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    them. Only records that change layout go through the arena.
 5. **Native arenas.** Each zone owns arenas that mirror its block lifetimes: runtime blocks live
    until the zone unloads, and temp blocks are freed after the load. Arena exhaustion is an
-   error, not a fallback.
+   error, not a fallback. Top-level asset headers need none: `DB_AddXAsset` copies the native
+   header into the pool. At 64-bit a header slot holds the zero-extended disk32 token on entry
+   to the family loader and the native pointer on return; the 64-bit `XAsset` envelope must
+   write it so.
 6. **Fail closed per family.** At 64-bit, the `Load_XAssetHeader` dispatch refuses any family
    whose generated loader is not yet enabled. It raises `ERR_DROP` naming the family before it
    reads any of the family's bytes. The whole zone fails, since the stream cannot be skipped.
@@ -178,5 +185,3 @@ Platform file I/O for async reads belongs to [PLATFORM_POSIX.md](PLATFORM_POSIX.
 
 - Which families actually occur in the four zones and the boot map? Measure this on the first
   owner data run. The answer can only reorder waves; N stays 25 while nothing can be skipped.
-- Schema format: a C++ constexpr DSL or an external file plus a Python generator. Decide in
-  bead 12.

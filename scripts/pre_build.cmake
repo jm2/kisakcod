@@ -8,6 +8,11 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     ${DEPS_DIR}
 )
 
+# 64-bit targets read retail records through the generated disk32 mirrors.
+if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+    kisakcod_use_disk32_mirrors(${PROJECT_NAME})
+endif()
+
 if (KISAK_EXTENDED)
     target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_EXTENDED)
 endif()
