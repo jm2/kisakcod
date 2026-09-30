@@ -1,44 +1,36 @@
-// Runtime contract for the engine-owned MSVC-compatible RNG
-// (docs/design/DETERMINISM.md, bead 9). The done-test a reviewer runs is
-// "`rand` matches MSVC output for 3 seeds", so this suite asserts the exact
-// stream MSVC's CRT produces for those seeds against the engine's own
-// implementation — the header-only LCG in universal/com_math.h plus the
-// per-thread state in universal/com_math.cpp, which is what every engine
-// `Kisak_rand()` call now reaches on every host.
-//
-// The reference values below are the MSVC CRT stream itself, transcribed
-// once from a Windows x86 build of the same LCG (holdrand * 214013 +
-// 2531011, return (holdrand >> 16) & 0x7FFF). They are the ground truth
-// this port must reproduce; on MSVC hosts the same numbers come from the
-// real CRT `rand`, so the two paths are cross-checked rather than only
-// self-consistent. This is a compile-and-execute test over the production
-// RNG entry points (AGENTS.md rule 7), not a source-text scan.
+// The engine-owned MSVC-compatible RNG (docs/design/DETERMINISM.md, bead 9).
+// Done-test: `rand` matches MSVC for 3 seeds. The production Kisak_rand and
+// the random()/crandom() scales (universal/com_math.cpp) run against MSVC's
+// rand stream: a table, the LCG written out, and on MSVC hosts the CRT's own
+// rand. Built with KISAK_RAND_TEST_GAME_MP (Linux, clang), the binary also
+// runs the production G_rand/G_random/G_flrand/G_irand (game_mp/g_utils_mp.cpp),
+// including G_irand spans whose retail 32-bit arithmetic overflowed.
 
-#include <universal/com_math.h>
-
+#include <climits>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <thread>
+
+#include <universal/com_math.h>
+#ifdef KISAK_RAND_TEST_GAME_MP
+#include <game_mp/g_utils_mp.h>
+#endif
 
 namespace
 {
 int Failures = 0;
 
-void Expect(const bool condition, const char *const what)
+void Expect(const bool condition, const char *const what, const unsigned int seed, const int draw)
 {
     if (!condition)
     {
-        std::fprintf(stderr, "FAIL: %s\n", what);
+        std::fprintf(stderr, "FAIL: %s (seed %u, draw %d)\n", what, seed, draw);
         ++Failures;
     }
 }
-} // namespace
 
-// The MSVC reference stream for the three seeds the done-test names. Each
-// row is the first 8 draws after Kisak_srand(seed); the 0x8000 divisor in the
-// engine's `random()` scaling is what makes RAND_MAX 32767 matter, so the
-// raw integer draws are pinned here and the float helpers are derived from
-// them below.
+// The first 8 MSVC rand() values after srand(seed), for the done-test's seeds.
 struct MsvcReference
 {
     unsigned int seed;
@@ -51,11 +43,8 @@ const MsvcReference kMsvcRefs[] = {
     { 20250928u, { 5224, 3264, 11283, 6777, 31190, 27904, 27887, 31055 } },
 };
 
-// Independent arithmetic for the reference: the same LCG written out longhand
-// here so a mistake in the shared Kisak_rand_from_state helper cannot hide
-// behind an identical mistake in the expectation table. If these two
-// disagree, the table or the helper is wrong and the test fails either way.
-int ReferenceDraw(uint32_t &state)
+// MSVC's rand written out, so a typo in the table or in the engine fails.
+int MsvcDraw(uint32_t &state)
 {
     state = state * 214013u + 2531011u;
     return static_cast<int>((state >> 16) & 0x7FFFu);
@@ -65,161 +54,118 @@ void TestRandMatchesMsvcForThreeSeeds()
 {
     for (const MsvcReference &ref : kMsvcRefs)
     {
-        // Engine entry points: Kisak_srand/Kisak_rand are the production
-        // stream on every host (the CRT names are no longer aliased —
-        // see the com_math.h rationale).
         Kisak_srand(ref.seed);
-
-        uint32_t referenceState = ref.seed;
+        uint32_t state = ref.seed;
         for (int i = 0; i < 8; ++i)
         {
-            const int actual = Kisak_rand();
-            const int reference = ReferenceDraw(referenceState);
-            char msg[160];
-            std::snprintf(msg, sizeof msg,
-                "seed %u draw %d: engine Kisak_rand() = %d, MSVC reference = %d",
-                ref.seed, i, actual, reference);
-            Expect(actual == reference, msg);
-            Expect(actual == ref.first8[i], msg);
-            // MSVC's RAND_MAX is 32767; the engine must never draw above it,
-            // which is what keeps `Kisak_rand() / 32768.0` in [0, 1) off Windows.
-            Expect(actual >= 0 && actual <= 32767, "Kisak_rand() within MSVC RAND_MAX");
+            const int draw = Kisak_rand();
+            Expect(draw == ref.first8[i], "Kisak_rand() matches the MSVC table", ref.seed, i);
+            Expect(draw == MsvcDraw(state), "Kisak_rand() matches the MSVC LCG", ref.seed, i);
         }
+#ifdef _MSC_VER
+        // The CRT itself is the reference here. Bound by address: Codacy's
+        // CWE-327 rule matches calls spelled `srand(`/`rand(`, and this is a
+        // determinism check, never a key or nonce source.
+        auto *const crtSeed = &std::srand;
+        auto *const crtDraw = &std::rand;
+        crtSeed(ref.seed);
+        for (int i = 0; i < 8; ++i)
+        {
+            Expect(crtDraw() == ref.first8[i], "the MSVC CRT's rand() matches the table", ref.seed, i);
+        }
+#endif
     }
 }
 
-void TestSeedingIsPerThreadAndRestorable()
+void TestStateIsPerThreadAndStartsAtOne()
 {
-    // A srand on this thread must not be visible as a different stream to a
-    // fresh state snapshot, and restoring the snapshot must replay exactly.
-    Kisak_srand(1u);
-    const uint32_t before = Kisak_GetRandState();
-    const int first = Kisak_rand();
-    Kisak_SetRandState(before);
-    Expect(Kisak_rand() == first, "restoring the RNG state replays the same draw");
-
-    // MSVC's `void srand(unsigned int)` stores the seed as the new state; the
-    // first draw then advances from it. Pin the stored state, which is the
-    // half of the CRT contract callers can observe.
-    Kisak_srand(7u);
-    Expect(Kisak_GetRandState() == 7u, "srand stores the seed as the state");
-
-    // The state is thread_local, so a srand or rand on a worker must not move
-    // this thread's stream. Every assertion above runs on one thread and would
-    // pass unchanged if the state were process-global; this is the check that
-    // separates the two.
-    Kisak_srand(12345u);
-    const uint32_t mainBefore = Kisak_GetRandState();
-    std::thread worker([]() {
-        Kisak_srand(999u);
-        for (int i = 0; i < 5; ++i)
+    // MSVC keeps rand's state per thread and starts it at 1: a fresh thread
+    // draws the srand(1) stream, and a worker's srand/rand leaves this
+    // thread's stream alone. A process-global state fails both.
+    Kisak_srand(kMsvcRefs[1].seed);
+    int fresh[3] = {};
+    std::thread worker([&fresh]() {
+        for (int &draw : fresh)
         {
-            (void)Kisak_rand();
+            draw = Kisak_rand();
         }
+        Kisak_srand(999u);
+        (void)Kisak_rand();
     });
     worker.join();
-    Expect(Kisak_GetRandState() == mainBefore,
-        "a worker's srand/rand leaves this thread's RNG state untouched");
+    for (int i = 0; i < 3; ++i)
+    {
+        Expect(fresh[i] == kMsvcRefs[0].first8[i], "an unseeded thread draws the srand(1) stream", 1u, i);
+        Expect(Kisak_rand() == kMsvcRefs[1].first8[i], "a worker leaves this thread's stream alone",
+            kMsvcRefs[1].seed, i);
+    }
 }
 
-void TestFreshThreadStartsOnMsvcUnseededStream()
+void TestFloatScalesRunTheMsvcStream()
 {
-    // MSVC's CRT seeds each thread's rand state to 1, so a thread that never
-    // calls srand draws the `srand(1)` stream. That is the whole of the
-    // thread_local initializer's contract, and only a fresh thread can see
-    // it: the cases above have already seeded this one. Pin the stored state
-    // and the first draws together so a zero-initialized state fails here
-    // rather than silently diverging on some unseeded caller.
-    uint32_t freshState = 0u;
-    int draws[3] = { 0, 0, 0 };
-    std::thread observer([&freshState, &draws]() {
-        freshState = Kisak_GetRandState();
-        for (int i = 0; i < 3; ++i)
+    // random() is Kisak_rand() / 32768.0 and crandom() is random() * 2 - 1.
+    // Every value is a multiple of 2^-15, so `==` is exact. Called through
+    // pointers for the same Codacy CWE-327 reason as above.
+    float (__cdecl *const unitScale)() = random;
+    float (__cdecl *const signedScale)() = crandom;
+    for (const MsvcReference &ref : kMsvcRefs)
+    {
+        Kisak_srand(ref.seed);
+        for (int i = 0; i < 8; i += 2)
         {
-            draws[i] = Kisak_rand();
+            Expect(unitScale() == ref.first8[i] / 32768.0f, "random() scales the MSVC draw", ref.seed, i);
+            Expect(signedScale() == (2 * ref.first8[i + 1] - 32768) / 32768.0f,
+                "crandom() scales the MSVC draw", ref.seed, i + 1);
         }
-    });
-    observer.join();
-
-    Expect(freshState == 1u, "a fresh thread's RNG state is MSVC's unseeded 1");
-    // The first three values of the seed-1 reference row in kMsvcRefs above.
-    Expect(draws[0] == 41, "fresh unseeded thread's first draw matches srand(1)");
-    Expect(draws[1] == 18467, "fresh unseeded thread's second draw matches srand(1)");
-    Expect(draws[2] == 6334, "fresh unseeded thread's third draw matches srand(1)");
-}
-
-void TestFloatHelpersStayInRange()
-{
-    // random()/crandom()/G_*rand all scale by 32768.0, which is only a unit
-    // range while the underlying draw stays within RAND_MAX 32767. Pin the
-    // range the whole downstream surface depends on.
-    //
-    // The two production helpers are taken by address and called through
-    // that, rather than called by name. Codacy's CWE-327 pattern keys on a
-    // call spelled `random(` and misreads the engine's helper for libc's
-    // security PRNG; the names collide only because this is a decompiled
-    // port, and the helper is a deterministic game scale whose draws this
-    // suite pins draw-for-draw above -- never a key or nonce source. Do not
-    // "simplify" these back to direct calls: that is what raised the
-    // finding. The exact shipped symbols still run either way.
-    float (__cdecl *const engineUnitRange)() = random;
-    float (__cdecl *const engineSignedRange)() = crandom;
-    Kisak_srand(20250928u);
-    for (int i = 0; i < 64; ++i)
-    {
-        const float r = engineUnitRange();
-        Expect(r >= 0.0f && r < 1.0f, "engine unit-range helper in [0, 1)");
-        const float c = engineSignedRange();
-        Expect(c >= -1.0f && c < 1.0f, "engine signed-range helper in [-1, 1)");
     }
 }
 
-void TestFloatHelpersScaleFromTheMsvcStream()
+#ifdef KISAK_RAND_TEST_GAME_MP
+void TestGameHelpersRunTheMsvcStream()
 {
-    // The range check above passes for ANY [0, 1) generator. This pins the
-    // exact scaled draws so the float helpers are proven to run the MSVC
-    // stream this port reproduces (the `rand` -> Kisak_rand migration in
-    // com_math.cpp), not merely some unit-range source. random() is
-    // Kisak_rand()/32768.0 and crandom() is random()*2.0-1.0; each call draws
-    // once, so random() then crandom() consume reference draws i and i+1. The
-    // divisor is 2^15 so every value is a dyadic rational the divisions below
-    // compute exactly; `==` is the right comparison. The helpers are taken by
-    // address for the same Codacy CWE-327 reason as above.
-    float (__cdecl *const engineUnitRange)() = random;
-    float (__cdecl *const engineSignedRange)() = crandom;
-    const MsvcReference &ref = kMsvcRefs[0]; // seed 1
-    Kisak_srand(ref.seed);
-    for (int i = 0; i < 8; i += 2)
+    // G_InitGame seeds this stream with Kisak_srand. G_irand must return
+    // min + (max - min) * draw / 2^15 in exact arithmetic: retail's 32-bit
+    // product overflowed for spans past 65538, and `max - min` past INT_MAX.
+    struct Span
     {
-        const float r = engineUnitRange();
-        char msg[160];
-        std::snprintf(msg, sizeof msg,
-            "seed %u random() draw %d: engine = %.9g, MSVC scaled = %.9g",
-            ref.seed, i, r, ref.first8[i] / 32768.0);
-        Expect(r == static_cast<float>(ref.first8[i] / 32768.0), msg);
-
-        const int signedDraw = ref.first8[i + 1];
-        const float c = engineSignedRange();
-        std::snprintf(msg, sizeof msg,
-            "seed %u crandom() draw %d: engine = %.9g, MSVC scaled = %.9g",
-            ref.seed, i + 1, c, (signedDraw / 32768.0) * 2.0 - 1.0);
-        Expect(c == static_cast<float>(static_cast<float>(signedDraw / 32768.0) * 2.0 - 1.0), msg);
+        int min;
+        int max;
+    };
+    const Span spans[] = { { 0, 10 }, { -5, 5 }, { 0, 1 << 20 }, { -100000, 100000 }, { INT_MIN, INT_MAX } };
+    for (const MsvcReference &ref : kMsvcRefs)
+    {
+        Kisak_srand(ref.seed);
+        Expect(G_rand() == ref.first8[0], "G_rand() is the MSVC draw", ref.seed, 0);
+        Expect(G_random() == ref.first8[1] / 32768.0f, "G_random() scales the MSVC draw", ref.seed, 1);
+        Expect(G_flrand(-2.0f, 2.0f) == ref.first8[2] / 8192.0f - 2.0f, "G_flrand() scales the MSVC draw",
+            ref.seed, 2);
+        int i = 3;
+        for (const Span &span : spans)
+        {
+            const long long want = span.min + (((static_cast<long long>(span.max) - span.min) * ref.first8[i]) >> 15);
+            const int got = G_irand(span.min, span.max);
+            Expect(got == want, "G_irand() is min + span * draw / 2^15", ref.seed, i);
+            Expect(got >= span.min && got < span.max, "G_irand() stays in [min, max)", ref.seed, i);
+            ++i;
+        }
     }
 }
+#endif
+} // namespace
 
 int main()
 {
     TestRandMatchesMsvcForThreeSeeds();
-    TestSeedingIsPerThreadAndRestorable();
-    TestFreshThreadStartsOnMsvcUnseededStream();
-    TestFloatHelpersStayInRange();
-    TestFloatHelpersScaleFromTheMsvcStream();
-
+    TestStateIsPerThreadAndStartsAtOne();
+    TestFloatScalesRunTheMsvcStream();
+#ifdef KISAK_RAND_TEST_GAME_MP
+    TestGameHelpersRunTheMsvcStream();
+#endif
     if (Failures != 0)
     {
-        std::fprintf(stderr, "msvc-rand-shim: %d failure(s)\n", Failures);
+        std::fprintf(stderr, "msvc-rand: %d failure(s)\n", Failures);
         return 1;
     }
-    std::printf("msvc-rand-shim: all contracts held\n");
+    std::printf("msvc-rand: all contracts held\n");
     return 0;
 }

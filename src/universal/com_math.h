@@ -173,48 +173,14 @@ void __cdecl TRACK_com_math();
 void __cdecl Rand_Init(int seed);
 
 // Engine-owned MSVC-compatible RNG (docs/design/DETERMINISM.md, bead 9).
-//
-// Retail's `rand`/`srand` are the MSVC CRT: RAND_MAX 32767, and the stream
-// `holdrand = holdrand * 214013 + 2531011; return (holdrand >> 16) & 0x7FFF`.
-// glibc and macOS ship a different generator with RAND_MAX 2^31-1, so the
-// engine's `rand() / 32768.0` scaling and every downstream `G_*rand` helper
-// produced a different sequence — and a different range — off Windows.
-//
-// One engine RNG now sits behind every engine `rand` and `srand` call: engine
-// call sites spell Kisak_rand()/Kisak_srand() explicitly (see the ABI-port
-// note below for why the CRT names are not macro-mapped). The LCG is defined
-// here as a header-only primitive so both the engine TU and the parity test
-// compile the exact same state machine; the per-thread state matches MSVC's
-// per-thread CRT state. Vendored Speex keeps its own `rand`.
-//
-// `flrand`/`irand`/`Rand_Init` below are a SEPARATE portable LCG (`>> 17`);
-// retail already ran them as their own stream, so they are left alone.
-inline void Kisak_rand_advance(uint32_t &state)
-{
-    state = state * 214013u + 2531011u;
-}
-
-inline int Kisak_rand_from_state(uint32_t &state)
-{
-    Kisak_rand_advance(state);
-    return static_cast<int>((state >> 16) & 0x7FFFu);
-}
-
+// Retail's rand/srand are the MSVC CRT (RAND_MAX 32767); glibc and macOS use
+// another generator with RAND_MAX 2^31-1, so every `rand() / 32768.0` scale
+// left its range off Windows. Engine call sites spell Kisak_rand() and
+// Kisak_srand(): a `#define rand` would also rewrite libstdc++'s std::rand()
+// inside std::random_shuffle. Vendored Speex keeps the CRT rand.
+// Rand_Init/flrand/irand are a separate `>> 17` LCG, left as they are.
 void __cdecl Kisak_srand(unsigned int seed);
 int __cdecl Kisak_rand();
-uint32_t __cdecl Kisak_GetRandState();
-void __cdecl Kisak_SetRandState(uint32_t state);
-
-// KisakCOD ABI port: engine call sites use Kisak_rand()/Kisak_srand()
-// explicitly rather than the CRT names. A preprocessor mapping
-// (`#define rand Kisak_rand`) was the first approach and is deliberately
-// NOT used: the C++ standard library's own <bits/stl_algo.h> calls
-// std::rand() inside std::random_shuffle's template body, and any macro
-// on `rand` rewrites that into std::Kisak_rand_alias and hard-errors. The
-// CRT names stay untouched, so vendored Speex and any other non-engine
-// caller keeps the host generator. MSVC builds are likewise unchanged —
-// on Windows the engine's Kisak_rand() is the CRT stream written out, so
-// the sequence matches without any aliasing at all.
 
 // KisakCOD ABI port: <math.h> above pulls in glibc's <stdlib.h>, which declares
 // `long int random(void)` at global scope — the engine's own float random()

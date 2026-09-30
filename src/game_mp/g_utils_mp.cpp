@@ -1469,18 +1469,12 @@ float __cdecl G_flrand(float min, float max)
 
 int __cdecl G_irand(int min, int max)
 {
-    // Retail decompiles to `min + (max - min) * G_rand() / 0x8000`, whose
-    // `(max - min) * G_rand()` product is computed in 32-bit int and
-    // overflows for any span above 0x7FFF / G_rand() -- e.g. G_irand(0,
-    // 32768) with a large draw -- before the divide narrows it back. The
-    // game/ side of the same helper (g_utils.cpp) already widens the
-    // product to __int64 and shifts by 15, which is the value the 32-bit
-    // multiply was meant to produce. Do the same here so the MP path
-    // matches the SP path and retail's intended range. For every call with
-    // max >= min -- the shape every retail caller passes -- the widened
-    // product >> 15 equals the original product / 0x8000 on the inputs the
-    // 32-bit form survived, so no in-range result changes.
-    return min + (int)(((long long)(max - min) * G_rand()) >> 15);
+    // Retail's `min + (max - min) * G_rand() / 0x8000` multiplies in 32-bit
+    // int, which overflows once the span passes INT_MAX / 32767 (65538), and
+    // `max - min` itself overflows past INT_MAX. Widen both, as the SP
+    // G_irand (g_utils.cpp) widens the product. For max > min the result is
+    // in [min, max) and matches every value the 32-bit form got right.
+    return (int)(min + ((((long long)max - min) * G_rand()) >> 15));
 }
 
 float __cdecl G_random()

@@ -379,31 +379,18 @@ add_test(
     NAME msvc-crt-compat-contracts
     COMMAND kisakcod-msvc-crt-compat-tests
 )
-# Engine-owned MSVC-compatible RNG (docs/design/DETERMINISM.md, bead 9).
-# The done-test is "`rand` matches MSVC output for 3 seeds", so this target
-# compiles the real engine RNG TU (universal/com_math.cpp) and drives its
-# rand/srand entry points against the transcribed MSVC stream. That also
-# enrols com_math.cpp in the Linux test build's K3 count (NATIVE64.md).
+# Engine-owned MSVC-compatible RNG (DETERMINISM.md, bead 9): the production
+# universal/com_math.cpp against MSVC's rand stream on every leg. The strict
+# warnings apply to the test's own sources; the decompiled TU keeps the engine
+# surface. com_math.cpp reaches ode/common.h, which includes <malloc.h> and
+# <memory.h>; tests/compat supplies them where the host lacks them (macOS).
 add_executable(kisakcod-msvc-rand-shim-tests
     msvc_rand_shim_tests.cpp
     com_math_test_stubs.cpp
     ${SRC_DIR}/universal/com_math.cpp
 )
-# The production TU is decompiled engine code and is not -Wall -Wextra clean
-# (FinitePerspectiveMatrix's float (*mtx)[4] decay trips -Werror=array-bounds,
-# among others), so it compiles at the engine target's own surface while the
-# strict set is applied to this test's own TU only -- the same split the
-# msg-wire-contract and huffman-wire targets use. SYSTEM keeps that strict
-# set off the legacy engine headers (PackedUnitVec's anonymous struct trips
-# -Wpedantic) and DEPS_DIR resolves com_math.cpp's dobj.h -> ode/ode.h web,
-# exactly as the game target's include path does.
 target_include_directories(kisakcod-msvc-rand-shim-tests SYSTEM PRIVATE
     ${SRC_DIR} ${DEPS_DIR})
-# ode/common.h includes <malloc.h> and <memory.h> unconditionally -- glibc
-# and MSVC names macOS and the BSDs do not ship. This is the first target
-# compiling a TU that reaches that web on those hosts, so supply the two
-# names from tests/compat there. The check gates it: glibc and MSVC keep
-# their real headers and never see the shims. Build-only.
 include(CheckIncludeFileCXX)
 check_include_file_cxx("malloc.h" KISAK_HAVE_MALLOC_H)
 check_include_file_cxx("memory.h" KISAK_HAVE_MEMORY_H)
@@ -412,8 +399,6 @@ if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
         ${CMAKE_CURRENT_SOURCE_DIR}/compat)
 endif()
 target_compile_features(kisakcod-msvc-rand-shim-tests PRIVATE cxx_std_20)
-# The unseeded-thread case pins the thread_local initializer, so the target
-# needs the host threading library on every leg.
 target_link_libraries(kisakcod-msvc-rand-shim-tests PRIVATE Threads::Threads)
 if (MSVC)
     set_source_files_properties(msvc_rand_shim_tests.cpp
@@ -431,6 +416,30 @@ add_test(
     NAME msvc-rand-shim-contracts
     COMMAND kisakcod-msvc-rand-shim-tests
 )
+# The same checks plus the production game_mp G_rand/G_irand helpers
+# (g_utils_mp.cpp). Linux and clang only, like the dvar test below: engine
+# code. --gc-sections drops what the checks never reach, so no stubs.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-g-rand-mp-tests msvc_rand_shim_tests.cpp
+        ${SRC_DIR}/universal/com_math.cpp ${SRC_DIR}/game_mp/g_utils_mp.cpp)
+    target_include_directories(kisakcod-g-rand-mp-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-g-rand-mp-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-g-rand-mp-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS KISAK_RAND_TEST_GAME_MP)
+    target_compile_options(kisakcod-g-rand-mp-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-g-rand-mp-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        # Otherwise ASan's global registration keeps every global alive.
+        target_compile_options(kisakcod-g-rand-mp-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-g-rand-mp-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    target_link_libraries(kisakcod-g-rand-mp-tests PRIVATE Threads::Threads)
+    set_target_properties(kisakcod-g-rand-mp-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME g-rand-mp-contracts COMMAND kisakcod-g-rand-mp-tests)
+    set_tests_properties(g-rand-mp-contracts PROPERTIES TIMEOUT 20)
+endif()
 
 # Byte-order helpers of universal/q_shared.h (issue #231: BigShort was
 # declared for every target but defined only under WIN32, so the POSIX

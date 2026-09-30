@@ -2341,51 +2341,21 @@ void __cdecl Rand_Init(int seed)
     holdrand = seed;
 }
 
-// Engine-owned MSVC-compatible RNG (docs/design/DETERMINISM.md, bead 9).
-//
-// The state machine (Kisak_rand_advance / Kisak_rand_from_state) lives in
-// com_math.h so the parity test compiles the identical LCG; only the
-// per-thread state lives here. MSVC keeps the state per thread, so the
-// engine RNG does too — this is what makes a `srand` on one thread unable
-// to perturb a `rand` on another, matching the CRT the callers were
-// decompiled against. MSVC seeds each thread's CRT state to 1, so an
-// unseeded `rand()` runs the `srand(1)` stream; the initializer is 1u for
-// that reason, and a thread that never calls `srand` therefore draws exactly
-// what MSVC would. See
-// learn.microsoft.com/cpp/c-runtime-library/reference/srand for the CRT
-// contract this mirrors.
-//
-// This is deliberately a DIFFERENT state from `holdrand` above: `flrand` /
-// `irand` / `Rand_Init` run their own portable `>> 17` LCG that retail
-// already used as a separate stream. Sharing one state would silently
-// couple two call families that never shared a stream, and would change
-// every existing flrand result. Both streams keep their exact historical
-// step; only the CRT `rand` stream is replaced here.
-thread_local uint32_t Kisak_randState = 1u;
+// Engine-owned MSVC-compatible RNG (docs/design/DETERMINISM.md, bead 9): the
+// MSVC CRT's rand, whose state is per thread and starts at 1, so an unseeded
+// thread draws the srand(1) stream. Separate from `holdrand` above, which is
+// the flrand/irand stream.
+static thread_local uint32_t Kisak_randState = 1u;
 
 void __cdecl Kisak_srand(unsigned int seed)
 {
-    // MSVC's srand is `void srand(unsigned int)` and stores the seed as the
-    // new state; the first Kisak_rand() then advances from that stored value.
-    // The state half is the CRT contract the parity test pins. The signature
-    // mirrors MSVC exactly (void return), so this is a drop-in stand-in for
-    // the CRT entry point at every engine call site.
-    Kisak_randState = static_cast<uint32_t>(seed);
+    Kisak_randState = seed;
 }
 
 int __cdecl Kisak_rand()
 {
-    return Kisak_rand_from_state(Kisak_randState);
-}
-
-uint32_t __cdecl Kisak_GetRandState()
-{
-    return Kisak_randState;
-}
-
-void __cdecl Kisak_SetRandState(uint32_t state)
-{
-    Kisak_randState = state;
+    Kisak_randState = Kisak_randState * 214013u + 2531011u;
+    return static_cast<int>((Kisak_randState >> 16) & 0x7FFFu);
 }
 
 float __cdecl flrand(float min, float max)
