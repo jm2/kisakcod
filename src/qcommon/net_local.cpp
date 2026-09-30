@@ -115,30 +115,42 @@ bool OpenSockets()
         return false;
     }
 
+    // Retail NET_OpenIP: try net_port and the nine ports above it, and record
+    // the port that bound in net_port.
     const char *const ip = net_ip ? net_ip->current.string : nullptr;
-    SysSocketOpenStatus openStatus;
-    if (IsWildcardInterface(ip))
+    SysSocketOpenStatus openStatus = SysSocketOpenStatus::SystemFailure;
+    int boundPort = port;
+    for (int attempt = 0; attempt < 10 && port + attempt <= 65535; ++attempt)
     {
-        Com_Printf(16, "Opening IP socket: localhost:%i\n", port);
-        openStatus = Sys_SocketOpenUdp(static_cast<std::uint16_t>(port), true, &gameSocket);
-    }
-    else
-    {
-        SysSocketAddress local{};
-        if (Sys_SocketResolveHost(ip, static_cast<std::uint16_t>(port), &local) != SysSocketResolveStatus::Resolved)
+        boundPort = port + attempt;
+        if (IsWildcardInterface(ip))
         {
-            SetError("could not resolve net_ip");
-            return false;
+            Com_Printf(16, "Opening IP socket: localhost:%i\n", boundPort);
+            openStatus = Sys_SocketOpenUdp(static_cast<std::uint16_t>(boundPort), true, &gameSocket);
         }
-        Com_Printf(16, "Opening IP socket: %s:%i\n", ip, port);
-        openStatus = Sys_SocketOpenUdpAt(&local, true, &gameSocket);
+        else
+        {
+            SysSocketAddress local{};
+            if (Sys_SocketResolveHost(ip, static_cast<std::uint16_t>(boundPort), &local) != SysSocketResolveStatus::Resolved)
+            {
+                SetError("could not resolve net_ip");
+                return false;
+            }
+            Com_Printf(16, "Opening IP socket: %s:%i\n", ip, boundPort);
+            openStatus = Sys_SocketOpenUdpAt(&local, true, &gameSocket);
+        }
+        if (openStatus == SysSocketOpenStatus::Opened)
+            break;
+        gameSocket = nullptr;
     }
     if (openStatus != SysSocketOpenStatus::Opened)
     {
         gameSocket = nullptr;
-        SetError("could not bind the game socket");
+        SetError("couldn't allocate IP port");
         return false;
     }
+    if (boundPort != port && net_port)
+        Dvar_SetInt(net_port, boundPort);
 
     // The broadcast socket is best effort: LAN discovery is optional and a
     // host that refuses a second bind still runs the server.
@@ -198,6 +210,7 @@ bool ReceiveInto(SysSocketHandle handle, netadr_t *from, msg_t *message)
     case SysSocketRecvStatus::WouldBlock:
         return false;
     default:
+        SetError("the datagram receive failed");
         Com_PrintError(16, "Sys_GetPacket: %s\n", NET_ErrorString());
         return false;
     }
@@ -294,8 +307,10 @@ char Sys_SendPacket(int length, unsigned __int8 *data, netadr_t to)
         Com_Error(ERR_FATAL, "Sys_SendPacket: bad address type");
         return 0;
     }
+    // Retail reports 1 ("handled") when no socket is open and when the send
+    // would block; callers never retry, so the return only means "not an error".
     if (!gameSocket)
-        return 0;
+        return 1;
     if (length <= 0 || !data)
         return 0;
 
@@ -311,13 +326,12 @@ char Sys_SendPacket(int length, unsigned __int8 *data, netadr_t to)
     case SysSocketSendStatus::Sent:
         return 1;
     case SysSocketSendStatus::WouldBlock:
-        // A full send queue is silent, matching the retail layer: the caller
-        // treats a zero return as "not queued" and retries on the next frame.
-        return 0;
+        return 1;
     case SysSocketSendStatus::MessageTooLarge:
         Com_PrintWarning(16, "Sys_SendPacket: datagram of %d bytes is too large\n", length);
         return 0;
     default:
+        SetError("the datagram send failed");
         Com_PrintWarning(16, "Sys_SendPacket: %s\n", NET_ErrorString());
         return 0;
     }

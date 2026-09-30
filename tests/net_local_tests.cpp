@@ -113,6 +113,11 @@ const dvar_s *__cdecl Dvar_RegisterInt(
     return &g_net_port_latch;
 }
 
+void __cdecl Dvar_SetInt(dvar_s *dvar, int value)
+{
+    dvar->current.integer = value;
+}
+
 void __cdecl Sys_Sleep(uint32_t)
 {
 }
@@ -189,7 +194,7 @@ void CheckNetLayerLifecycle()
     // headless server calls Sys_SendPacket before and after NET_Init.
     netadr_t to = MakeAdr(127, 0, 0, 1);
     unsigned char payload[4] = {1, 2, 3, 4};
-    Check(Sys_SendPacket(4, payload, to) == 0, "send before init is rejected");
+    Check(Sys_SendPacket(4, payload, to) == 1, "send before init is a silent no-op (retail returns 1)");
     Check(NET_ErrorString() != nullptr, "error string is never null");
 
     // NET_Sleep must never be a no-op panic on a zero or negative request.
@@ -245,6 +250,23 @@ void CheckNamedInterfaceBind()
     NET_Shutdown();
     g_net_ip_latch.current.string = nullptr;
 }
+// Retail NET_OpenIP: a busy net_port moves on to the next port (up to nine
+// above it) and records the port it bound in net_port.
+void CheckPortRetry()
+{
+    static char ip[] = "127.0.0.1";
+    g_net_ip_latch.current.string = ip;
+    const SysSocketAddress held{{127, 0, 0, 1}, 28960};
+    SysSocketHandle blocker = nullptr;
+    Check(Sys_SocketOpenUdpAt(&held, true, &blocker) == SysSocketOpenStatus::Opened,
+        "the test holds 127.0.0.1:28960");
+    NET_Init();
+    Check(g_net_port_latch.current.integer == 28961,
+        "a busy net_port moves to the next port and records it");
+    NET_Shutdown();
+    (void)Sys_SocketClose(&blocker);
+    g_net_ip_latch.current.string = nullptr;
+}
 } // namespace
 
 
@@ -254,6 +276,7 @@ int main()
     CheckAddressResolution();
     CheckNetLayerLifecycle();
     CheckNamedInterfaceBind();
+    CheckPortRetry();
 
     if (g_failures == 0)
         std::printf("net_local: %d checks passed\n", g_checks);
