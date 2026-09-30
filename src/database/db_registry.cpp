@@ -10,7 +10,7 @@
 #include <qcommon/mem_track.h>
 
 #include <xanim/xmodel.h>
-#include <win32/win_net.h>
+#include <qcommon/net_local.h>
 #include <qcommon/threads.h>
 #include <qcommon/com_bsp.h>
 #include <gfx_d3d/r_init.h>
