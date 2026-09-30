@@ -125,7 +125,7 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 
 | KPI | Definition | Source | Census baseline 2026-09-30 | Target |
 | --- | --- | --- | --- | --- |
-| **K1** 64-bit headless compile closure | Headless TUs that pass clang `-fsyntax-only` on each target (win64, lin64, a64). win32 is the control | `native64-census` | win64 244/245 (0 assert-only, 1 other); lin64 242/243 (0 assert-only, 1 other); a64 239/243 (0 assert-only, 4 other) | all TUs on all three (G1) |
+| **K1** 64-bit headless compile closure | Headless TUs that pass clang `-fsyntax-only` on each target (win64, lin64, a64). win32 is the control | `native64-census` | win64 244/245 (0 assert-only, 1 other); lin64 242/243 (0 assert-only, 1 other); a64 242/243 (0 assert-only, 1 other) | all TUs on all three (G1) |
 | **K2** 64-bit headless link | Per target: the headless server links with 0 undefined symbols and no neutralised asserts (a *real link*). The census also reports a labelled *probe link*, with size asserts neutralised by a force-included header, and its undefined-symbol count. The probe never gates | `native64-census` | real link: none (1 win64 TU, `phys_ode.cpp`, doesn't compile). Probe: 15 undefined symbols with that TU excluded | Win64 and Linux amd64 real link (G1) |
 | **K3** engine code under 64-bit test | Upstream engine TUs that the Linux amd64 test build compiles, either as a TU in `compile_commands.json` or `#include`d as a `.cpp` by a test TU. Denominator: `.c`/`.cpp` under `src/` at the upstream merge-base, excluding `src/radiant/` and vendored ODE and Speex | `native64-census` | 8/475 | rises every G2 bead |
 
