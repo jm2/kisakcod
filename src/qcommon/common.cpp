@@ -32,7 +32,7 @@
 #include <universal/physicalmemory.h>
 #include <win32/win_storage.h>
 #include <buildnumber.h>
-#include <win32/win_net.h>
+#include <qcommon/net_local.h>
 #include <xanim/dobj.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <sound/snd_local.h>

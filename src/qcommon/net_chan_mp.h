@@ -42,7 +42,10 @@ inline netsrc_t &operator++(netsrc_t &e) {
     e = static_cast<netsrc_t>(static_cast<int>(e) + 1);
     return e;
 }
-inline netsrc_t &operator++(netsrc_t &e, int i)
+// The unnamed postfix parameter is the discard value every postfix increment
+// carries; naming it and leaving it unused trips -Wunused-parameter under the
+// test warning bar, so it stays anonymous like any other ignored argument.
+inline netsrc_t &operator++(netsrc_t &e, int)
 {
     ++e;
     return e;
