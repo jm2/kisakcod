@@ -405,7 +405,8 @@ add_test(
 
 kisakcod_ilp32(kisakcod-platform-console-tests
     platform-console-invalid-eof-contracts
-    platform-console-runtime-contracts)
+    platform-console-runtime-contracts
+    platform-console-line-editing-contracts)
 
 kisakcod_ilp32(kisakcod-platform-file-tests
     platform-file-read-contracts)
