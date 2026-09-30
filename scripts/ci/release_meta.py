@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -127,15 +128,15 @@ def readme(leg: dict, version: str, commit: str, requires: str) -> str:
     paragraphs = [
         f"KisakCOD {version}: {leg['platform']} {description} ({leg['tier']})",
         f"{binary} is the KisakCOD {description} for Call of Duty 4 multiplayer, built for "
-        f"{leg['platform']} from {REPO_URL} commit {commit}.",
+        + f"{leg['platform']} from {REPO_URL} commit {commit}.",
         f"Status: {leg['tier']}. At capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}",
         "No game data: this package contains no Call of Duty 4 content. Retail data is the "
-        "user's own; set fs_basepath to your own copy of the game.",
+        + "user's own; set fs_basepath to your own copy of the game.",
         f"Debug symbols: {leg['stem']}-debugsymbols.tar.xz. Extract it into the same directory; "
-        f"{binary} finds {binary}.debug through its .gnu_debuglink.",
+        + f"{binary} finds {binary}.debug through its .gnu_debuglink.",
         f"Requires: {requires}." if requires else "",
         "License: GNU GPL v3, in LICENSE. The source archive of the same release holds the "
-        "corresponding source.",
+        + "corresponding source.",
     ]
     return "\n\n".join(textwrap.fill(p, 76, break_on_hyphens=False, break_long_words=False)
                         for p in paragraphs if p) + "\n"
@@ -143,18 +144,26 @@ def readme(leg: dict, version: str, commit: str, requires: str) -> str:
 
 def changes(repo: Path, commit: str, tag: str) -> tuple[str | None, list[str]]:
     """(previous vX.Y.Z tag, one line per first-parent commit since it, newest first)."""
+    git_exe = shutil.which("git")
+    if not git_exe:
+        raise ReleaseError("git is not on PATH")
+
     def git(*args: str) -> str:
-        return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
+        return subprocess.run([git_exe, "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
     tags = git("tag", "--merged", commit, "--list", "v*", "--sort=-v:refname").split()
     previous = next((t for t in tags if RELEASE_RE.fullmatch(t) and t != tag), None)
     log = git("log", "--first-parent", "--format=%H%x1f%s%x1f%b%x1e", f"{previous}..{commit}" if previous else commit)
-    lines = []
-    for record in filter(None, (r.strip("\n") for r in log.split("\x1e"))):
-        sha, subject, body = record.split("\x1f", 2)
-        pr = re.fullmatch(r"Merge pull request #(\d+) from \S+", subject)
-        title = next((line.strip() for line in body.splitlines() if line.strip()), subject) if pr else subject
-        lines.append(f"- {title} (#{pr.group(1)})" if pr else f"- {subject} ({sha[:8]})")
-    return previous, lines
+    return previous, [_change_line(r) for r in (r.strip("\n") for r in log.split("\x1e")) if r]
+
+
+def _change_line(record: str) -> str:
+    """One changelog line: a PR merge by its PR title, any other commit by its subject."""
+    sha, subject, body = record.split("\x1f", 2)
+    pr = re.fullmatch(r"Merge pull request #(\d+) from \S+", subject)
+    if not pr:
+        return f"- {subject} ({sha[:8]})"
+    title = next((line.strip() for line in body.splitlines() if line.strip()), subject)
+    return f"- {title} (#{pr.group(1)})"
 
 
 def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, limit: int = 100) -> str:
@@ -165,11 +174,11 @@ def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, lim
     out += [f"| `{leg['stem']}.tar.xz` | {leg['target']} | {leg['role']} | {leg['tier']} | `{leg['level']}` |"
             for leg in legs]
     out += ["", "Each package has a `-debugsymbols.tar.xz` companion (extract it into the same directory) and a "
-            f"`-provenance.json`. `kisakcod-{version}-source.tar.gz` is the commit's source without the vendor "
-            "runtime binaries (Miles, Bink, Steamworks). `SHA256SUMS.txt` covers every file.", "", "## Status", ""]
+            + f"`-provenance.json`. `kisakcod-{version}-source.tar.gz` is the commit's source without the vendor "
+            + "runtime binaries (Miles, Bink, Steamworks). `SHA256SUMS.txt` covers every file.", "", "## Status", ""]
     out += [f"- **{leg['label']}**: at capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}" for leg in legs]
     out += ["", "## No game data", "", "These packages contain no Call of Duty 4 content. Retail data is the "
-            "user's own.", ""]
+            + "user's own.", ""]
     previous, lines = changes(repo, commit, tag)
     out += [f"## Changes since {previous}" if previous else f"## Changes (the latest {limit} on master)", ""]
     out += lines[:limit]
@@ -179,69 +188,88 @@ def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, lim
     return "\n".join(out) + "\n"
 
 
+def run_metadata(args: argparse.Namespace) -> int:
+    meta = parse_version(args.version, args.dry_run)
+    legs, missing = build_matrix(json.loads(args.manifest.read_text()), meta["version"])
+    if missing:
+        raise ReleaseError("cells at links or above with no release recipe: " + ", ".join(missing)
+                           + " (add a RECIPES row and its release.yml steps)")
+    if not legs:
+        raise ReleaseError("no required target x role cell is at links or above")
+    meta["matrix"] = json.dumps({"include": legs}, separators=(",", ":"))
+    meta["prerelease"] = str(all(leg["tier"] != "first-class" for leg in legs)).lower()
+    print("\n".join(f"{k}={v}" for k, v in meta.items()))
+    return 0
+
+
+def run_gate(args: argparse.Namespace) -> int:
+    if not SHA_RE.fullmatch(args.commit) or (args.tag_commit and not SHA_RE.fullmatch(args.tag_commit)):
+        raise ReleaseError("commits must be full 40-hex SHAs")
+    problems = gate_problems(args.commit, args.ref, args.ci_runs, args.tag_commit)
+    for problem in problems:
+        print(f"::{'warning' if args.dry_run else 'error'}::{problem}", file=sys.stderr)
+    if problems and not args.dry_run:
+        return 1
+    print(f"publish={str(not args.dry_run).lower()}")
+    return 0
+
+
+def run_readme(args: argparse.Namespace) -> int:
+    sys.stdout.write(readme(args.leg, args.version, args.commit, args.requires))
+    return 0
+
+
+def run_notes(args: argparse.Namespace) -> int:
+    if not DRY_RUN_RE.fullmatch(args.tag) or not SHA_RE.fullmatch(args.commit):
+        raise ReleaseError("notes need a version tag and a full commit SHA")
+    sys.stdout.write(notes(args.matrix["include"], args.tag, args.commit, args.run_url, args.repo_dir))
+    return 0
+
+
 def _bool(text: str) -> bool:
     if text not in ("true", "false"):
         raise argparse.ArgumentTypeError(f"expected true or false, got {text!r}")
     return text == "true"
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    sub = parser.add_subparsers(dest="command", required=True)
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description="Release metadata for .github/workflows/release.yml.")
+    sub = root.add_subparsers(dest="command", required=True)
     p = sub.add_parser("metadata")
+    p.set_defaults(run=run_metadata)
     p.add_argument("--version", default="")
     p.add_argument("--dry-run", type=_bool, default=True)
     p.add_argument("--manifest", type=Path, default=MANIFEST)
     p = sub.add_parser("gate")
+    p.set_defaults(run=run_gate)
     p.add_argument("--commit", required=True)
     p.add_argument("--ref", required=True)
     p.add_argument("--ci-runs", type=int, required=True)
     p.add_argument("--tag-commit", default="")
     p.add_argument("--dry-run", type=_bool, default=True)
     p = sub.add_parser("readme")
+    p.set_defaults(run=run_readme)
     p.add_argument("--leg", type=json.loads, required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--commit", required=True)
     p.add_argument("--requires", default="")
     p = sub.add_parser("notes")
+    p.set_defaults(run=run_notes)
     p.add_argument("--tag", required=True)
     p.add_argument("--commit", required=True)
     p.add_argument("--matrix", type=json.loads, required=True)
     p.add_argument("--run-url", required=True)
     p.add_argument("--repo-dir", type=Path, default=ROOT)
-    args = parser.parse_args(argv)
+    return root
 
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
     try:
-        if args.command == "metadata":
-            meta = parse_version(args.version, args.dry_run)
-            legs, missing = build_matrix(json.loads(args.manifest.read_text()), meta["version"])
-            if missing:
-                raise ReleaseError("cells at links or above with no release recipe: " + ", ".join(missing)
-                                   + " (add a RECIPES row and its release.yml steps)")
-            if not legs:
-                raise ReleaseError("no required target x role cell is at links or above")
-            meta["matrix"] = json.dumps({"include": legs}, separators=(",", ":"))
-            meta["prerelease"] = str(all(leg["tier"] != "first-class" for leg in legs)).lower()
-            print("\n".join(f"{k}={v}" for k, v in meta.items()))
-        elif args.command == "gate":
-            if not SHA_RE.fullmatch(args.commit) or (args.tag_commit and not SHA_RE.fullmatch(args.tag_commit)):
-                raise ReleaseError("commits must be full 40-hex SHAs")
-            problems = gate_problems(args.commit, args.ref, args.ci_runs, args.tag_commit)
-            for problem in problems:
-                print(f"::{'warning' if args.dry_run else 'error'}::{problem}", file=sys.stderr)
-            if problems and not args.dry_run:
-                return 1
-            print(f"publish={str(not args.dry_run).lower()}")
-        elif args.command == "readme":
-            sys.stdout.write(readme(args.leg, args.version, args.commit, args.requires))
-        else:
-            if not DRY_RUN_RE.fullmatch(args.tag) or not SHA_RE.fullmatch(args.commit):
-                raise ReleaseError("notes need a version tag and a full commit SHA")
-            sys.stdout.write(notes(args.matrix["include"], args.tag, args.commit, args.run_url, args.repo_dir))
+        return args.run(args)
     except ReleaseError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
-    return 0
 
 
 if __name__ == "__main__":
