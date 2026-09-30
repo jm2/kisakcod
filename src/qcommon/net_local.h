@@ -11,6 +11,7 @@
 // for the retail Windows client and non-headless server builds.
 #pragma once
 
+#include <cstddef>
 #include <universal/q_shared.h>
 // Shared TUs (common.cpp, db_registry.cpp, scr_debugger.cpp) include this in
 // the SP build too; pick the netchan header the way win32/win_net.h does.
@@ -71,6 +72,11 @@ qboolean Sys_StringToAdr(const char *s, netadr_t *a);
 // subnet-based variant ignores the local-interface match.
 bool Sys_IsLANAddress(netadr_t adr);
 bool Sys_IsLANAddress_IgnoreSubnet(netadr_t adr);
+
+struct SysSocketAddress;
+// Retail's local-subnet LAN rule: true when an NA_IP `adr` shares its first
+// three octets with one of the `count` host addresses in `locals`.
+bool NET_SharesLocalSubnet(netadr_t adr, const SysSocketAddress *locals, std::size_t count);
 
 // Prints the bound local addresses of the datagram layer.
 void Sys_ShowIP(void);

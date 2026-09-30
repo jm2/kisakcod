@@ -267,12 +267,28 @@ void CheckPortRetry()
     (void)Sys_SocketClose(&blocker);
     g_net_ip_latch.current.string = nullptr;
 }
+// Retail's local-subnet LAN rule: an address in the same /24 as one of the
+// host's addresses is LAN even outside the private ranges.
+void CheckLocalSubnetRule()
+{
+    const SysSocketAddress locals[2] = {{{203, 0, 113, 5}, 0}, {{198, 51, 100, 9}, 0}};
+    Check(NET_SharesLocalSubnet(MakeAdr(203, 0, 113, 77), locals, 2), "same /24 as a local address");
+    Check(NET_SharesLocalSubnet(MakeAdr(198, 51, 100, 200), locals, 2), "same /24 as the second local address");
+    Check(!NET_SharesLocalSubnet(MakeAdr(203, 0, 114, 5), locals, 2), "a different /24 is not LAN");
+    Check(!NET_SharesLocalSubnet(MakeAdr(203, 0, 113, 77), locals, 0), "no local addresses, no match");
+    Check(!NET_SharesLocalSubnet(MakeAdr(203, 0, 113, 77), nullptr, 2), "null list fails closed");
+    netadr_t loopback;
+    std::memset(&loopback, 0, sizeof(loopback));
+    loopback.type = NA_LOOPBACK;
+    Check(!NET_SharesLocalSubnet(loopback, locals, 2), "only NA_IP addresses match a subnet");
+}
 } // namespace
 
 
 int main()
 {
     CheckLanClassification();
+    CheckLocalSubnetRule();
     CheckAddressResolution();
     CheckNetLayerLifecycle();
     CheckNamedInterfaceBind();

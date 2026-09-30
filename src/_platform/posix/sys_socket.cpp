@@ -12,6 +12,8 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <new>
@@ -745,4 +747,31 @@ SysSocketStreamRecvStatus KISAK_CDECL Sys_SocketRecvStream(
         return SysSocketStreamRecvStatus::Disconnected;
     *outByteCount = static_cast<std::uint32_t>(received);
     return SysSocketStreamRecvStatus::Received;
+}
+
+std::size_t KISAK_CDECL Sys_SocketListLocalIPv4(
+    SysSocketAddress *const out,
+    const std::size_t capacity)
+{
+    if (!out || capacity == 0)
+        return 0;
+    ifaddrs *interfaces = nullptr;
+    if (getifaddrs(&interfaces) != 0)
+        return 0;
+    std::size_t count = 0;
+    for (const ifaddrs *entry = interfaces; entry && count < capacity; entry = entry->ifa_next)
+    {
+        if (!entry->ifa_addr || entry->ifa_addr->sa_family != AF_INET || !(entry->ifa_flags & IFF_UP))
+            continue;
+        SysSocketAddress address{};
+        std::memcpy(address.address,
+            &reinterpret_cast<const sockaddr_in *>(entry->ifa_addr)->sin_addr, sizeof(address.address));
+        bool seen = false;
+        for (std::size_t i = 0; i < count && !seen; ++i)
+            seen = std::memcmp(out[i].address, address.address, sizeof(address.address)) == 0;
+        if (!seen)
+            out[count++] = address;
+    }
+    freeifaddrs(interfaces);
+    return count;
 }
