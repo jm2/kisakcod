@@ -10,14 +10,18 @@
 #   build      per leg: build, split and check the debug symbols, package,
 #              then smoke-run the binary unpacked from the package
 #   checksums  SHA256SUMS over every packaged file
+#   notes      release notes: packages, tiers, changes since the last release
+#   publish    the only job with contents: write and it checks nothing out:
+#              verifies the files against SHA256SUMS, then creates or
+#              updates the draft release and publishes it unless draft=true
 #
 # dry_run (the default) builds and packages but never creates a release.
 # Publishing needs dry_run=false, a vX.Y.Z version, a dispatch from master,
 # a successful ci.yml push run on master for the exact commit, and no tag of
 # that version on another commit. The metadata gate fails closed otherwise.
 #
-# Every job holds contents: read only; actions are pinned by commit SHA; no
-# checkout persists credentials. Retail data never enters a package
+# Every other job holds contents: read only; actions are pinned by commit
+# SHA; no checkout persists credentials. Retail data never enters a package
 # (docs/CHARTER.md). Windows x86 is a baseline, not a release target: ci.yml
 # keeps it building. Artifacts live 90 days; a GitHub release is the
 # long-term store.
@@ -32,6 +36,11 @@ on:
         required: false
         default: ""
         type: string
+      draft:
+        description: Leave the release as an unpublished draft
+        required: false
+        default: true
+        type: boolean
       dry_run:
         description: Build and package only; never create a release
         required: false
@@ -291,3 +300,105 @@ jobs:
           path: SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 90
+
+  notes:
+    name: Release notes
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          # History and tags, for the changes since the previous release.
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Generate the release notes
+        env:
+          TAG: ${{ needs.metadata.outputs.tag }}
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+          MATRIX: ${{ needs.metadata.outputs.matrix }}
+        run: |
+          python3 scripts/ci/release_meta.py notes --tag "$TAG" --commit "$COMMIT" --matrix "$MATRIX" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > release-notes.md
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish release
+    needs: [metadata, checksums, notes]
+    if: needs.metadata.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.metadata.outputs.tag }}
+      NAME: ${{ needs.metadata.outputs.name }}
+      COMMIT: ${{ needs.metadata.outputs.commit }}
+      PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+      DRAFT: ${{ inputs.draft }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: kisakcod-${{ needs.metadata.outputs.version }}-*
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-notes
+          path: notes
+
+      - name: Verify every file against SHA256SUMS
+        run: |
+          cd dist
+          sha256sum --check --strict SHA256SUMS.txt
+          diff <(find . -type f ! -name SHA256SUMS.txt -printf '%P\n' | sort) <(awk '{print $2}' SHA256SUMS.txt | sort)
+          for archive in *.tar.xz; do tar -tJf "$archive" > /dev/null; done
+          tar -tzf ./*-source.tar.gz > /dev/null
+
+      - name: Create or update the draft, then publish unless draft
+        run: |
+          fail() { echo "::error::$*" >&2; exit 1; }
+          # The tag must still be absent or on the release commit.
+          ref="$(gh api "repos/${GH_REPO}/git/matching-refs/tags/${TAG}" \
+            --jq ".[] | select(.ref == \"refs/tags/${TAG}\") | .object.type + \" \" + .object.sha")"
+          tag_commit="${ref#* }"
+          if [ "${ref%% *}" = tag ]; then
+            tag_commit="$(gh api "repos/${GH_REPO}/git/tags/${tag_commit}" --jq .object.sha)"
+          fi
+          if [ -n "$tag_commit" ] && [ "$tag_commit" != "$COMMIT" ]; then fail "tag ${TAG} is on ${tag_commit}"; fi
+          # A published release is never rewritten; one draft is updated in place.
+          existing="$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"${TAG}\") | .draft")"
+          notes=(--title "$NAME" --notes-file notes/release-notes.md --prerelease="$PRERELEASE")
+          case "$existing" in
+            "")
+              gh release create "$TAG" dist/* --draft --target "$COMMIT" "${notes[@]}" ;;
+            true)
+              gh release edit "$TAG" --target "$COMMIT" "${notes[@]}"
+              for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name'); do
+                [ -f "dist/${asset}" ] || gh release delete-asset "$TAG" "$asset" --yes
+              done
+              gh release upload "$TAG" dist/* --clobber ;;
+            *)
+              fail "release ${TAG} is already published, or has more than one draft" ;;
+          esac
+          if [ "$DRAFT" = false ]; then
+            gh release edit "$TAG" --draft=false
+            tag_commit="$(gh api "repos/${GH_REPO}/commits/${TAG}" --jq .sha)"
+            [ "$tag_commit" = "$COMMIT" ] || fail "published tag ${TAG} is on ${tag_commit}, not ${COMMIT}"
+          fi
+          gh release view "$TAG" --json url,isDraft,isPrerelease,assets \
+            --jq '"\(.url) draft=\(.isDraft) prerelease=\(.isPrerelease) assets=\(.assets | length)"'

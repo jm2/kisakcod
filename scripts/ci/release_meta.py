@@ -18,6 +18,9 @@ stdout, and reports problems as workflow annotations on stderr.
       commit. A dry run reports the same problems as warnings.
   readme --leg JSON --version V --commit SHA [--requires TEXT]
       Prints the README.txt that ships in a leg's package.
+  notes --tag T --commit SHA --matrix JSON --run-url URL [--repo-dir DIR]
+      Prints the release notes: the packages and their tiers, then the
+      first-parent changes on master since the previous vX.Y.Z tag.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -137,6 +141,44 @@ def readme(leg: dict, version: str, commit: str, requires: str) -> str:
                         for p in paragraphs if p) + "\n"
 
 
+def changes(repo: Path, commit: str, tag: str) -> tuple[str | None, list[str]]:
+    """(previous vX.Y.Z tag, one line per first-parent commit since it, newest first)."""
+    def git(*args: str) -> str:
+        return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
+    tags = git("tag", "--merged", commit, "--list", "v*", "--sort=-v:refname").split()
+    previous = next((t for t in tags if RELEASE_RE.fullmatch(t) and t != tag), None)
+    log = git("log", "--first-parent", "--format=%H%x1f%s%x1f%b%x1e", f"{previous}..{commit}" if previous else commit)
+    lines = []
+    for record in filter(None, (r.strip("\n") for r in log.split("\x1e"))):
+        sha, subject, body = record.split("\x1f", 2)
+        pr = re.fullmatch(r"Merge pull request #(\d+) from \S+", subject)
+        title = next((line.strip() for line in body.splitlines() if line.strip()), subject) if pr else subject
+        lines.append(f"- {title} (#{pr.group(1)})" if pr else f"- {subject} ({sha[:8]})")
+    return previous, lines
+
+
+def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, limit: int = 100) -> str:
+    version = tag[1:]
+    out = [f"# KisakCOD {version}", "",
+           f"Built from [`{commit[:12]}`]({REPO_URL}/commit/{commit}) by [this workflow run]({run_url}).", "",
+           "## Packages", "", "| Package | Target | Role | Tier | Level |", "| --- | --- | --- | --- | --- |"]
+    out += [f"| `{leg['stem']}.tar.xz` | {leg['target']} | {leg['role']} | {leg['tier']} | `{leg['level']}` |"
+            for leg in legs]
+    out += ["", "Each package has a `-debugsymbols.tar.xz` companion (extract it into the same directory) and a "
+            f"`-provenance.json`. `kisakcod-{version}-source.tar.gz` is the commit's source without the vendor "
+            "runtime binaries (Miles, Bink, Steamworks). `SHA256SUMS.txt` covers every file.", "", "## Status", ""]
+    out += [f"- **{leg['label']}**: at capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}" for leg in legs]
+    out += ["", "## No game data", "", "These packages contain no Call of Duty 4 content. Retail data is the "
+            "user's own.", ""]
+    previous, lines = changes(repo, commit, tag)
+    out += [f"## Changes since {previous}" if previous else f"## Changes (the latest {limit} on master)", ""]
+    out += lines[:limit]
+    if len(lines) > limit:
+        more = f"compare/{previous}...{commit}" if previous else f"commits/{commit}"
+        out.append(f"- ...and {len(lines) - limit} more: {REPO_URL}/{more}")
+    return "\n".join(out) + "\n"
+
+
 def _bool(text: str) -> bool:
     if text not in ("true", "false"):
         raise argparse.ArgumentTypeError(f"expected true or false, got {text!r}")
@@ -161,6 +203,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--version", required=True)
     p.add_argument("--commit", required=True)
     p.add_argument("--requires", default="")
+    p = sub.add_parser("notes")
+    p.add_argument("--tag", required=True)
+    p.add_argument("--commit", required=True)
+    p.add_argument("--matrix", type=json.loads, required=True)
+    p.add_argument("--run-url", required=True)
+    p.add_argument("--repo-dir", type=Path, default=ROOT)
     args = parser.parse_args(argv)
 
     try:
@@ -184,8 +232,12 @@ def main(argv: list[str] | None = None) -> int:
             if problems and not args.dry_run:
                 return 1
             print(f"publish={str(not args.dry_run).lower()}")
-        else:
+        elif args.command == "readme":
             sys.stdout.write(readme(args.leg, args.version, args.commit, args.requires))
+        else:
+            if not DRY_RUN_RE.fullmatch(args.tag) or not SHA_RE.fullmatch(args.commit):
+                raise ReleaseError("notes need a version tag and a full commit SHA")
+            sys.stdout.write(notes(args.matrix["include"], args.tag, args.commit, args.run_url, args.repo_dir))
     except ReleaseError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1

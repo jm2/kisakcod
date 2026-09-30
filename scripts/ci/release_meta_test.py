@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -132,6 +133,58 @@ class CliTest(unittest.TestCase):
                      "no Call of Duty 4 content", "kisakcod-1.2.3-linux-x64-headless-preview-debugsymbols.tar.xz",
                      "Requires: glibc 2.39.", "GNU GPL v3"):
             self.assertIn(text, words)
+
+
+class NotesTest(unittest.TestCase):
+    """Runs the notes subcommand over a real git history in a temporary repository."""
+
+    def git(self, *args: str) -> str:
+        env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t",
+               "GIT_COMMITTER_EMAIL": "t@example.com", "HOME": self.repo, "PATH": os.environ["PATH"]}
+        return subprocess.run(["git", "-C", self.repo, *args], check=True, capture_output=True, text=True,
+                              env=env).stdout.strip()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = self.tmp.name
+        self.git("init", "-q", "-b", "master")
+        self.git("commit", "-q", "--allow-empty", "-m", "Initial import")
+        self.git("tag", "v0.1.0")
+        self.git("commit", "-q", "--allow-empty", "-m", "Fix a typo")
+        self.git("tag", "-a", "v0.2.0-rc1", "-m", "not a release")  # only vX.Y.Z tags count
+        self.git("checkout", "-q", "-b", "topic")
+        self.git("commit", "-q", "--allow-empty", "-m", "Topic work that the merge covers")
+        self.git("checkout", "-q", "master")
+        self.git("merge", "-q", "--no-ff", "topic", "-m", "Merge pull request #7 from jm2/topic\n\nAdd a thing")
+        self.commit = self.git("rev-parse", "HEAD")
+        self.legs, _ = rm.build_matrix(REAL_MANIFEST, "0.2.0")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def notes(self, tag: str) -> subprocess.CompletedProcess:
+        return cli("notes", "--tag", tag, "--commit", self.commit, "--matrix", json.dumps({"include": self.legs}),
+                   "--run-url", "https://example.com/run/1", "--repo-dir", self.repo)
+
+    def test_changes_since_the_previous_release(self):
+        run = self.notes("v0.2.0")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        body = run.stdout.split("## Changes since v0.1.0\n\n", 1)[1]
+        fix = self.git("rev-parse", "--short=8", "HEAD~1")
+        self.assertEqual(body, f"- Add a thing (#7)\n- Fix a typo ({fix})\n")
+        for text in ("# KisakCOD 0.2.0", "`kisakcod-0.2.0-linux-x64-headless-preview.tar.xz` | linux-amd64",
+                     "kisakcod-0.2.0-source.tar.gz", "no Call of Duty 4 content", self.commit):
+            self.assertIn(text, run.stdout)
+
+    def test_first_release_lists_the_history(self):
+        self.git("tag", "-d", "v0.1.0")
+        run = self.notes("v0.1.0")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("## Changes (the latest 100 on master)", run.stdout)
+        self.assertTrue(run.stdout.endswith("- Initial import (%s)\n" % self.git("rev-parse", "--short=8", "HEAD~2")))
+
+    def test_bad_tag_fails(self):
+        self.assertEqual(self.notes("latest").returncode, 1)
 
 
 if __name__ == "__main__":
