@@ -42,6 +42,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 
@@ -184,6 +185,23 @@ int main()
     Expect(_strlwr(mixed) == mixed, "_strlwr returns the buffer it lowered");
     Expect(std::strcmp(mixed, "abc-9z") == 0,
         "_strlwr lowers A-Z and leaves the rest alone");
+
+    // _stricmp / _strnicmp: case-insensitive compare (ASCII); callers use the
+    // sign (db_registry.cpp sorts reorder entries with it) and zero.
+    Expect(_stricmp("Zone_Source", "zone_source") == 0, "_stricmp ignores ASCII case");
+    Expect(_stricmp("abc", "ABD") < 0 && _stricmp("ABD", "abc") > 0,
+        "_stricmp orders case-insensitively");
+    Expect(_stricmp("ab", "abc") < 0, "_stricmp orders a prefix first");
+    Expect(_strnicmp("mp_Shipment", "MP_shipyard", 6) == 0,
+        "_strnicmp compares only the first count characters");
+    Expect(_strnicmp("mp_Shipment", "MP_shipyard", 8) != 0,
+        "_strnicmp sees a difference inside count");
+    Expect(_strnicmp("x", "y", 0) == 0, "_strnicmp over zero characters is equal");
+
+    // _strdup: a heap copy the caller frees.
+    char *const copy = _strdup("fastfile");
+    Expect(copy && std::strcmp(copy, "fastfile") == 0, "_strdup copies the string");
+    free(copy);
 
     // basename: the engine's buffer is the identifier, not glibc's function.
     // Bounded copy — same content, explicit destination extent.

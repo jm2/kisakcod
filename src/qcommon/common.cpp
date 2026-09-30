@@ -637,9 +637,11 @@ void Com_Prefetch(const void* s, const uint32_t bytes, e_prefetch type)
 			jnz		loopie
 			skip :
 		}
-#else
+#elif defined(_WIN32)
         // DI: lol
         PreFetchCacheLine(PF_NON_TEMPORAL_LEVEL_ALL, s);
+#else
+        __builtin_prefetch(s, 0, 0); // read, no temporal locality: PF_NON_TEMPORAL_LEVEL_ALL
 #endif
 
 		break;
