@@ -181,7 +181,7 @@ void __cdecl BG_FreeWeaponDefStrings()
 
 void __cdecl BG_ShutdownWeaponDefFiles()
 {
-    if (*(_BYTE *)fs_gameDirVar->current.integer)
+    if (*(const unsigned char *)fs_gameDirVar->current.string)
     {
         BG_ClearSurfaceTypeSounds();
         BG_FreeWeaponDefStrings();
@@ -4512,7 +4512,7 @@ bool __cdecl BG_ThrowingBackGrenade(const playerState_s *ps)
 WeaponDef *__cdecl BG_LoadWeaponDef(const char *name)
 {
 #ifndef DEDICATED
-    if (*(_BYTE *)fs_gameDirVar->current.integer || !IsFastFileLoad())
+    if (*(const unsigned char *)fs_gameDirVar->current.string || !IsFastFileLoad())
         return BG_LoadWeaponDef_LoadObj(name);
     else
         return BG_LoadWeaponDef_FastFile(name);
