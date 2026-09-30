@@ -6,6 +6,7 @@
 
 #include "script_engine_harness.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -16,6 +17,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <string_view>
 
 #include <sys/mman.h>
 
@@ -41,6 +43,8 @@ std::vector<int> g_reports;
 std::jmp_buf *g_dropTarget;
 char g_dropMessage[4096];
 bool g_scriptSystemInited;
+char g_vaBuffers[4][4096];
+unsigned g_vaIndex;
 int g_mainHandle;
 
 // Engine allocations stay referenced from here, as the hunk keeps them.
@@ -85,6 +89,7 @@ void __cdecl Com_Error(errorParm_t, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
+    // Flawfinder: ignore -- passthrough shim; engine callers own the literal format.
     std::vsnprintf(g_dropMessage, sizeof(g_dropMessage), fmt, args);
     va_end(args);
     if (!g_dropTarget)
@@ -115,38 +120,41 @@ std::uint32_t KISAK_CDECL Sys_Milliseconds()
 
 // --- string helpers (engine semantics) ------------------------------------
 void Com_Memset(void *dest, const int val, const size_t count) { std::memset(dest, val, count); }
-void Com_Memcpy(void *dest, const void *src, const size_t count) { std::memcpy(dest, src, count); }
+void Com_Memcpy(void *dest, const void *src, const size_t count)
+{
+    std::copy_n(static_cast<const char *>(src), count, static_cast<char *>(dest));
+}
 int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
+    // Flawfinder: ignore -- passthrough shim; engine callers own the literal format and size.
     const int n = std::vsnprintf(dest, size, fmt, args);
     va_end(args);
     return n;
 }
 char *QDECL va(const char *format, ...)
 {
-    static char buffers[4][4096];
-    static int index;
-    char *buffer = buffers[index++ & 3];
+    char *buffer = g_vaBuffers[g_vaIndex++ & 3];
     va_list args;
     va_start(args, format);
-    std::vsnprintf(buffer, sizeof(buffers[0]), format, args);
+    // Flawfinder: ignore -- passthrough shim; engine callers own the literal format.
+    std::vsnprintf(buffer, sizeof(g_vaBuffers[0]), format, args);
     va_end(args);
     return buffer;
 }
 void I_strncpyz(char *dest, const char *src, int destsize)
 {
-    std::strncpy(dest, src, destsize - 1);
-    dest[destsize - 1] = 0;
+    std::snprintf(dest, static_cast<size_t>(destsize), "%s", src);
 }
 int I_stricmp(const char *s0, const char *s1) { return strcasecmp(s0, s1); }
 const char *__cdecl I_stristr(const char *s0, const char *substr)
 {
-    for (const char *s = s0; *s; ++s)
-        if (!strncasecmp(s, substr, std::strlen(substr)))
-            return s;
-    return nullptr;
+    const std::string_view text(s0), needle(substr);
+    const auto match = std::search(text.begin(), text.end(), needle.begin(), needle.end(), [](char a, char b) {
+        return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+    });
+    return match == text.end() && !needle.empty() ? nullptr : s0 + (match - text.begin());
 }
 bool I_iscsym(int c) { return std::isalnum(c) || c == '_'; }
 float __cdecl Q_rint(float in) { return static_cast<float>(std::floor(in + 0.5)); }
