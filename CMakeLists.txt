@@ -101,6 +101,12 @@ if (NOT MSVC)
             "clang and -fms-extensions (see docs/design/PLATFORM_POSIX.md).")
     endif()
     add_compile_options(-fms-extensions)
+    # Position-independent executables: the distribution default, and every
+    # data address then lies above 4 GiB, so a pointer truncated to 32 bits
+    # faults instead of working by accident (the headless smoke relies on it).
+    include(CheckPIESupported)
+    check_pie_supported()
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
 # Set Address Sanitizer

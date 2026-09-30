@@ -9,6 +9,7 @@
 //
 // Everything here is headless-only. The windowed client keeps win_main.cpp.
 
+#include <chrono>
 #include <qcommon/sys_local.h>
 
 #include <cstdarg>
@@ -72,9 +73,62 @@ void PrintWorkingDir()
 }
 
 // Portable CPU description. The retail Win32 path uses CPUID and a measured
-// GHz benchmark (win32/win_configure.cpp); a headless server only reports the
-// host, so the uname/process-count answer is enough to fill SysInfo and keep
-// the boot banner honest.
+// win32/win_configure.cpp's Sys_BenchmarkGHz on a portable clock: the best of
+// 1000 runs of the same float and LCG loop, scaled by the same constant, so
+// configure_mp.csv's CPU rows compare against the value Windows computes.
+double BenchmarkGHz()
+{
+    double best = 1e30;
+    for (int attempt = 0; attempt < 1000; ++attempt)
+    {
+        volatile float k = 2.5999999f;
+        float x = 0.25f, y = 0.75f;
+        volatile unsigned int holdrand = 0;
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < 1000; ++i)
+        {
+            const float xa = (1.0f - x) * x * k + x;
+            const float ya = (1.0f - y) * y * k + y;
+            x = (1.0f - xa) * xa * k + xa;
+            y = (1.0f - ya) * ya * k + ya;
+            if (i & 1)
+                holdrand = 0x343FD * (0x343FD * (0x343FD * holdrand + 0x269EC3) + 0x269EC3) + 0x269EC3;
+        }
+        volatile float sink = x + y;
+        (void)sink;
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        if (ms > 0.0 && ms < best)
+            best = ms;
+    }
+    return best < 1e30 ? 0.1010328 / best : 0.0;
+}
+
+// The nominal clock from /proc/cpuinfo (x86 Linux reports "cpu MHz"); zero
+// where the kernel does not report one.
+double ReportedCpuGHz()
+{
+#if defined(__linux__)
+    if (FILE *const cpuinfo = std::fopen("/proc/cpuinfo", "r"))
+    {
+        char line[256];
+        double best = 0.0;
+        while (std::fgets(line, sizeof(line), cpuinfo))
+        {
+            double mhz = 0.0;
+            if (std::sscanf(line, "cpu MHz : %lf", &mhz) == 1 && mhz > best)
+                best = mhz;
+        }
+        std::fclose(cpuinfo);
+        return best / 1000.0;
+    }
+#endif
+    return 0.0;
+}
+
+// Fills SysInfo the way win_main.cpp's Sys_FindInfo does: processor counts,
+// memory, the clock and configureGHz (the benchmark times win_configure.cpp's
+// core-count factor), which Com_SetRecommended matches against
+// configure_mp.csv. A headless host has no GPU to describe.
 void DetectCpu()
 {
     std::memset(&sys_info, 0, sizeof(sys_info));
@@ -114,6 +168,12 @@ void DetectCpu()
     sys_info.SSE = false;
 #endif
     std::snprintf(sys_info.gpuDescription, sizeof(sys_info.gpuDescription), "headless");
+
+    const double benchmark = BenchmarkGHz();
+    const double reported = ReportedCpuGHz();
+    sys_info.cpuGHz = reported > 0.0 ? reported : benchmark;
+    const double multiCpuFactor = sys_info.physicalCpuCount == 1 ? 1.0 : sys_info.physicalCpuCount == 2 ? 1.75 : 2.0;
+    sys_info.configureGHz = benchmark * multiCpuFactor;
 }
 
 [[noreturn]] void TerminateOnFatalError(const char *message)
