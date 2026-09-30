@@ -24,7 +24,7 @@ struct File : FileBuilder<File>
 };
 
 // A zone with the two blocks a RawFile touches: temp (0) and virtual (4).
-using Zone = disk32_test::Zone<64, 96>;
+using Zone = disk32_test::Zone<96>;
 
 RawFile *Load(std::uintptr_t slotValue)
 {

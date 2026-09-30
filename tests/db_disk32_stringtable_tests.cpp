@@ -32,11 +32,11 @@ struct File : FileBuilder<File>
     }
 };
 
-// A zone with a temp block and the virtual block (4) a StringTable streams
-// into, with empty native storage.
-struct Zone : disk32_test::Zone<16, 256>
+// A zone with a 16-byte temp block and the virtual block (4) a StringTable
+// streams into, with empty native storage.
+struct Zone : disk32_test::Zone<256>
 {
-    Zone()
+    Zone() : disk32_test::Zone<256>(16)
     {
         g_arenaUsed = 0;
         g_arenaCapacity = kArenaBytes;

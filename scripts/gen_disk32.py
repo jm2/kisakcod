@@ -16,6 +16,7 @@ import re
 import sys
 from pathlib import Path
 from string import Template
+from typing import NoReturn
 
 # kind: (mirror type, native size and alignment at ILP32, at 64-bit)
 KINDS = {
@@ -33,7 +34,7 @@ SCALARS = ('i32', 'u32', 'f32', 'u8', 'bool')
 ASSET_KEYS = {'member', 'pool', 'kind', 'alias', 'label', 'name', 'body'}
 
 
-def fail(where, message):
+def fail(where, message) -> NoReturn:
     sys.exit(f'{where}: {message}')
 
 
