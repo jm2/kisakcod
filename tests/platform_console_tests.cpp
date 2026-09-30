@@ -1068,18 +1068,14 @@ SysConsoleReadResult WaitForLine(std::array<char, SYS_CONSOLE_MAX_LINE_LENGTH + 
     return read;
 }
 
-// Keys typed on a real console read back as the line the console showed:
-// "quiz", Backspace, "t", Enter reads "quit". The console host applied the
-// backspace (the raw event path passes it through as a byte) and echoed the
-// edited line. Runs in a process of its own, on a console of its own: the
-// reader keeps waiting on that console until the process exits.
-bool TestConsoleLineEditing()
+// Types "quiz", Backspace, "t", Enter on a console of this process's own, so
+// no test process sharing the CI console can take the keys, and publishes that
+// console as standard input. Returns its screen buffer, or null.
+HANDLE TypeOnPrivateConsole()
 {
-    if (!TestLineEditingNeedsConsole())
-        return false;
     (void)FreeConsole();
     if (!Check(AllocConsole() != FALSE, "allocate a private console"))
-        return false;
+        return nullptr;
     const HANDLE input = OpenConsoleBuffer(L"CONIN$");
     const HANDLE screen = OpenConsoleBuffer(L"CONOUT$");
     const INPUT_RECORD keys[] = {
@@ -1088,10 +1084,33 @@ bool TestConsoleLineEditing()
     };
     const DWORD keyCount = static_cast<DWORD>(sizeof(keys) / sizeof(keys[0]));
     DWORD typed = 0;
-    if (!Check(input != INVALID_HANDLE_VALUE && screen != INVALID_HANDLE_VALUE
-                && SetStdHandle(STD_INPUT_HANDLE, input)
-                && WriteConsoleInputW(input, keys, keyCount, &typed) && typed == keyCount,
-            "type on the private console")
+    const bool ready = input != INVALID_HANDLE_VALUE && screen != INVALID_HANDLE_VALUE
+        && SetStdHandle(STD_INPUT_HANDLE, input)
+        && WriteConsoleInputW(input, keys, keyCount, &typed) && typed == keyCount;
+    return Check(ready, "type on the private console") ? screen : nullptr;
+}
+
+bool ScreenStartsWith(const HANDLE screen, const std::string_view expected)
+{
+    std::array<char, 16> shown{};
+    DWORD shownLength = 0;
+    return expected.size() <= shown.size()
+        && ReadConsoleOutputCharacterA(screen, shown.data(),
+            static_cast<DWORD>(expected.size()), COORD{0, 0}, &shownLength)
+        && std::string_view(shown.data(), shownLength) == expected;
+}
+
+// Keys typed on a real console read back as the line the console showed:
+// "quiz", Backspace, "t", Enter reads "quit". The console host applied the
+// backspace (the raw event path passes it through as a byte) and echoed the
+// edited line. Runs in a process of its own: the reader keeps waiting on the
+// private console until the process exits.
+bool TestConsoleLineEditing()
+{
+    if (!TestLineEditingNeedsConsole())
+        return false;
+    const HANDLE screen = TypeOnPrivateConsole();
+    if (!screen
         || !Check(Sys_ConsoleStartLineEditing(), "start console line editing")
         || !Check(!Sys_ConsoleStartLineEditing(), "line editing starts once"))
     {
@@ -1100,15 +1119,10 @@ bool TestConsoleLineEditing()
 
     std::array<char, SYS_CONSOLE_MAX_LINE_LENGTH + 1> line{};
     const SysConsoleReadResult read = WaitForLine(line);
-    char shown[5]{};
-    DWORD shownLength = 0;
     return Check(read.status == SysConsoleReadStatus::LineReady
                 && std::string_view(line.data(), read.length) == "quit",
             "the typed line reads back as edited")
-        && Check(ReadConsoleOutputCharacterA(
-                    screen, shown, static_cast<DWORD>(sizeof(shown)), COORD{0, 0}, &shownLength)
-                && std::string_view(shown, shownLength) == "quit ",
-            "the console shows the edited line");
+        && Check(ScreenStartsWith(screen, "quit "), "the console shows the edited line");
 }
 #endif
 #else

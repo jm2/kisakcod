@@ -59,16 +59,21 @@ def pe_subsystem(exe):
     return int.from_bytes(head[pe + 92:pe + 94], 'little')
 
 
-def run_on_console(server, args, cwd):
-    """(exit status, console text) of the server started on a console of its own.
+def is_server(path):
+    """Only ever the server binary this job built: an existing executable file."""
+    return path.name == EXE and path.is_file() and os.access(path, os.X_OK)
 
-    This script runs on a new hidden console (--on-console) and starts the server
-    there with nothing redirected, as cmd does; then it reads the console back.
-    """
+
+def run_on_console(server, args, cwd):
+    """Return (exit status, console text) of the server started on a console of its own, as from cmd."""
+    if sys.platform != 'win32':
+        raise OSError('only Windows gives a process a console of its own')
+    # This script re-runs itself (--on-console) on a new hidden console and starts
+    # the server there with nothing redirected; then it reads that console back.
     screen = Path(cwd) / 'console screen.txt'
     hidden = subprocess.STARTUPINFO(dwFlags=subprocess.STARTF_USESHOWWINDOW, wShowWindow=0)
     subprocess.run([sys.executable, str(Path(__file__).resolve()), '--on-console', str(screen), str(server), *args],
-                   creationflags=subprocess.CREATE_NEW_CONSOLE, startupinfo=hidden, timeout=150, cwd=cwd)
+                   check=False, creationflags=subprocess.CREATE_NEW_CONSOLE, startupinfo=hidden, timeout=150, cwd=cwd)
     text = screen.read_text(encoding='utf-8') if screen.is_file() else 'no console record\n'
     status, _, shown = text.partition('\n')
     return status, shown
@@ -76,6 +81,8 @@ def run_on_console(server, args, cwd):
 
 def on_console(screen, server, *args):
     """--on-console: run the server on this console; save its exit status and the console's text."""
+    if sys.platform != 'win32':
+        return 2
     import ctypes
     from ctypes import wintypes
 
@@ -86,8 +93,12 @@ def on_console(screen, server, *args):
         _fields_ = [('size', Coord), ('cursor', Coord), ('attributes', wintypes.WORD),
                     ('window', wintypes.SMALL_RECT), ('maximum', Coord)]
 
+    server = Path(server).resolve()
+    if not is_server(server):
+        Path(screen).write_text(f'none\nnot the {EXE} executable: {server}\n', encoding='utf-8')
+        return 2
     try:
-        status = subprocess.run([server, *args], timeout=120).returncode
+        status = subprocess.run([str(server), *args], check=False, timeout=120).returncode
         kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel32.GetStdHandle.restype = wintypes.HANDLE
         kernel32.GetConsoleScreenBufferInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(ScreenInfo)]
@@ -103,9 +114,10 @@ def on_console(screen, server, *args):
         if not kernel32.ReadConsoleOutputCharacterW(output, cells, len(cells), Coord(0, 0),
                                                     ctypes.byref(read)):
             raise OSError(ctypes.get_last_error(), 'ReadConsoleOutputCharacterW')
-        rows = [cells[i:i + width].rstrip() for i in range(0, read.value, width)]
+        text = cells.value[:read.value]
+        rows = [text[i:i + width].rstrip() for i in range(0, len(text), width)]
         Path(screen).write_text(f'{status}\n' + '\n'.join(rows), encoding='utf-8')
-    except Exception as exc:  # the hidden console would swallow a traceback
+    except (OSError, subprocess.SubprocessError) as exc:  # the hidden console would swallow a traceback
         Path(screen).write_text(f'none\nconsole probe failed: {exc!r}\n', encoding='utf-8')
     return 0
 
@@ -117,8 +129,7 @@ def main():
         print(__doc__)
         return 2
     server = Path(sys.argv[1]).resolve()
-    # Only ever the server binary this job built: an existing executable file.
-    if server.name != EXE or not server.is_file() or not os.access(server, os.X_OK):
+    if not is_server(server):
         print(f'not the {EXE} executable: {server}')
         return 2
     with tempfile.TemporaryDirectory(prefix='kisak smoke ') as base:
@@ -128,8 +139,8 @@ def main():
         (main_dir / 'configure_mp.csv').write_text(CONFIGURE_CSV)
         try:
             homepath = Path(base) / 'home dir' / 'nested'   # does not exist yet
-            args = ['+set', 'fs_basepath', base, '+set', 'fs_homepath', str(homepath), '+set', 'dedicated', '1']
-            run = subprocess.run([str(server), *args],
+            run = subprocess.run([str(server), '+set', 'fs_basepath', base, '+set', 'fs_homepath', str(homepath),
+                                  '+set', 'dedicated', '1'],
                                  stdin=subprocess.DEVNULL, capture_output=True, text=True, errors='replace',
                                  timeout=120, cwd=base)
         except subprocess.TimeoutExpired as exc:
@@ -152,7 +163,7 @@ def main():
             (run.returncode == 1, f'exits with status 1 on the missing fast file (got {run.returncode})'),
         ]
         if os.name == 'nt':
-            status, screen = run_on_console(server, args, base)
+            status, screen = run_on_console(server, run.args[1:], base)
             log += '\n--- the console it was started on ---\n' + screen
             checks += [
                 (pe_subsystem(server) == CONSOLE_SUBSYSTEM, 'is a console-subsystem program'),
