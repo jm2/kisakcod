@@ -184,6 +184,9 @@ jobs:
       - name: Render KPI summary
         run: python3 scripts/ci/kpi_summary.py >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Test the release script (manifest to release matrix)
+        run: python3 scripts/ci/release_meta_test.py
+
   native64-census:
     # KPIs K1, K2, K3 and K5 (docs/design/NATIVE64.md, PLATFORM_POSIX.md):
     # clang syntax-only compiles of the headless server for win32 (control),
