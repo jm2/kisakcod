@@ -1,14 +1,12 @@
 // db_disk32_stringtable_tests.cpp: the 64-bit StringTable loader (NOW row 12)
 // on hand-built disk32 zone images (disk32_fixture.hpp). Beyond the fixture's
-// seams, only the asset pool (Load_StringTableAsset) and the zone's native
-// storage (DB_AllocZoneNative) are replaced.
+// seams, only the asset pool (Load_StringTableAsset) is replaced.
 
 #include "disk32_fixture.hpp"
 
 #include <database/db_disk32_load.h>
 #include <database/db_disk32_mirrors.h>
 
-#include <algorithm>
 #include <cstring>
 
 namespace
@@ -16,13 +14,6 @@ namespace
 using namespace disk32_test;
 
 StringTable g_pool[4]; // what Load_StringTableAsset published
-
-// The zone's native storage. As a static it lies above 4 GiB, so a pointer
-// narrowed to 32 bits cannot land back on it.
-constexpr std::size_t kArenaBytes = 256;
-alignas(16) std::uint8_t g_arena[kArenaBytes];
-std::size_t g_arenaUsed = 0;
-std::size_t g_arenaCapacity = kArenaBytes;
 
 struct File : FileBuilder<File>
 {
@@ -36,19 +27,8 @@ struct File : FileBuilder<File>
 // streams into, with empty native storage.
 struct Zone : disk32_test::Zone<256>
 {
-    Zone() : disk32_test::Zone<256>(16)
-    {
-        g_arenaUsed = 0;
-        g_arenaCapacity = kArenaBytes;
-    }
+    Zone() : disk32_test::Zone<256>(16) {}
 };
-
-bool InArena(const void *pointer)
-{
-    const auto *bytes = static_cast<const std::uint8_t *>(pointer);
-    return bytes >= g_arena && bytes < g_arena + g_arenaUsed
-        && reinterpret_cast<std::uintptr_t>(pointer) > UINT32_MAX;
-}
 
 StringTable *Load(std::uintptr_t slotValue)
 {
@@ -206,7 +186,7 @@ void TestMalformedFailsClosed()
 }
 } // namespace
 
-// Engine seams beyond the fixture's: the asset pool and the zone's native storage.
+// The asset pool, the one engine seam beyond the fixture's.
 void __cdecl Load_StringTableAsset(XAssetHeader *header)
 {
     // DB_AddXAsset hashes the name, then copies the header into the pool.
@@ -214,16 +194,6 @@ void __cdecl Load_StringTableAsset(XAssetHeader *header)
     entry = *header->stringTable;
     Expect(entry.name && entry.name[0] != '\0', "a published string table has a name");
     header->stringTable = &entry;
-}
-
-std::uint8_t *__cdecl DB_AllocZoneNative(std::size_t size, std::size_t alignment)
-{
-    const std::size_t start = (g_arenaUsed + alignment - 1) & ~(alignment - 1);
-    if (!size || alignment != alignof(StringTable) || start > g_arenaCapacity || size > g_arenaCapacity - start)
-        return nullptr;
-    g_arenaUsed = start + size;
-    std::fill_n(g_arena + start, size, std::uint8_t{0xCD}); // PMem does not zero
-    return g_arena + start;
 }
 
 int main()

@@ -1,6 +1,6 @@
-// disk32_fixture.cpp: the engine seams the 64-bit family loader tests replace
-// (disk32_fixture.hpp): the error handler, the inflater and script-string
-// interning.
+// disk32_fixture.cpp: the engine seams the 64-bit loader tests replace
+// (disk32_fixture.hpp): the error handler, the inflater, script-string
+// interning and the zone's native storage.
 
 #include "disk32_fixture.hpp"
 
@@ -9,10 +9,10 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <string>
+#include <string_view>
 
-using disk32_test::Drop;
-using disk32_test::g_file;
-using disk32_test::g_read;
+using namespace disk32_test;
 
 void __cdecl Com_Error(errorParm_t code, const char *fmt, ...)
 {
@@ -33,14 +33,34 @@ void __cdecl DB_LoadXFileData(std::uint8_t *pos, std::uint32_t size)
         Com_Error(ERR_DROP, "Fast-file ended unexpectedly");
     std::copy_n(g_file.data() + g_read, size, pos);
     g_read += size;
-    if (DB_MarkStreamRangeMaterialized(pos, size) != db::relocation::Status::Ok)
+    const db::relocation::Status status = DB_MarkStreamRangeMaterialized(pos, size);
+    const bool outside = status == db::relocation::Status::InvalidContext
+        || status == db::relocation::Status::OutOfRange;
+    if (status != db::relocation::Status::Ok && !(outside && g_allowReadsOutsideBlocks))
         Com_Error(ERR_DROP, "Cannot record fast-file output range");
 }
 
-// No family under test reaches script-string interning; db_stream_load.cpp links it.
 db::load_legacy_bridge::LegacyBridgeStatus
 db::load_legacy_bridge::DbLoadLegacyBridge::TryInternUser4StringOfSize(
-    const char *, std::uint32_t, LegacyBridgeStringId *) noexcept
+    const char *bytes, std::uint32_t byteCount, LegacyBridgeStringId *outString) noexcept
 {
-    return LegacyBridgeStatus::InvalidState;
+    const std::string_view bytesView(bytes, byteCount); // with its terminator
+    const std::string text(bytesView.substr(0, bytesView.find('\0')));
+    auto found = std::find(g_interned.begin(), g_interned.end(), text);
+    if (found == g_interned.end())
+        found = g_interned.insert(found, text);
+    outString->stringId = static_cast<std::uint32_t>(found - g_interned.begin()) + 1;
+    return LegacyBridgeStatus::Success;
+}
+
+// Pointer-aligned storage from g_arena, filled with junk as PMem does not
+// zero; null past g_arenaCapacity.
+std::uint8_t *__cdecl DB_AllocZoneNative(std::size_t size, std::size_t alignment)
+{
+    const std::size_t start = (g_arenaUsed + alignment - 1) & ~(alignment - 1);
+    if (!size || alignment != alignof(void *) || start > g_arenaCapacity || size > g_arenaCapacity - start)
+        return nullptr;
+    g_arenaUsed = start + size;
+    std::fill_n(g_arena + start, size, std::uint8_t{0xCD});
+    return g_arena + start;
 }

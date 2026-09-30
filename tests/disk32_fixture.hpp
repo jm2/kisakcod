@@ -1,13 +1,14 @@
 #pragma once
 
-// disk32_fixture.hpp: what the 64-bit family loader tests (NOW row 12) share. A
-// test appends a hand-built disk32 zone image to g_file with its File, loads
-// it through the family's DB_Load<Name>PtrDisk32 and the production stream
-// code (db_stream.cpp, db_stream_load.cpp, db_relocation.cpp) on a synthetic
-// Zone, and checks what its pool call published. disk32_fixture.cpp replaces
-// only the engine seams: Com_Error (it throws Drop), the inflater
-// (DB_LoadXFileData reads g_file) and script-string interning. Retail data
-// never enters tests (docs/ROADMAP.md).
+// disk32_fixture.hpp: what the 64-bit loader tests (NOW row 12) share. A test
+// appends a hand-built disk32 zone image to g_file with its File, loads it
+// through the family's DB_Load<Name>PtrDisk32 (or the envelope) and the
+// production stream code (db_stream.cpp, db_stream_load.cpp,
+// db_relocation.cpp) on a synthetic Zone, and checks what its pool call
+// published. disk32_fixture.cpp replaces only the engine seams: Com_Error (it
+// throws Drop), the inflater (DB_LoadXFileData reads g_file), script-string
+// interning (into g_interned) and the zone's native storage (g_arena). Retail
+// data never enters tests (docs/ROADMAP.md).
 
 #include <database/database.h>
 #include <database/db_disk32.h>
@@ -17,6 +18,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -26,6 +28,35 @@ inline int g_failures = 0;
 inline std::vector<std::uint8_t> g_file; // the inflated fast-file bytes
 inline std::size_t g_read = 0;           // how many of them the inflater read
 inline int g_published = 0;              // how many assets the pool call published
+inline std::vector<std::string> g_interned; // script-string id n is entry n - 1
+// Production accepts inflater output outside the zone blocks (the envelope's
+// XAssetList root); the family tests keep every read inside a block.
+inline bool g_allowReadsOutsideBlocks = false;
+
+// The zone's native storage (DB_AllocZoneNative). As a static it lies above
+// 4 GiB, so a pointer narrowed to 32 bits cannot land back on it.
+inline constexpr std::size_t kArenaBytes = 256;
+alignas(16) inline std::uint8_t g_arena[kArenaBytes];
+inline std::size_t g_arenaUsed = 0;
+inline std::size_t g_arenaCapacity = kArenaBytes;
+
+inline bool InArena(const void *pointer)
+{
+    const auto *bytes = static_cast<const std::uint8_t *>(pointer);
+    return bytes >= g_arena && bytes < g_arena + g_arenaUsed
+        && reinterpret_cast<std::uintptr_t>(pointer) > UINT32_MAX;
+}
+
+// Starts a new zone image: no bytes, nothing published, interned or allocated.
+inline void ResetImage()
+{
+    g_file.clear();
+    g_read = 0;
+    g_published = 0;
+    g_interned.clear();
+    g_arenaUsed = 0;
+    g_arenaCapacity = kArenaBytes;
+}
 
 inline void Expect(bool ok, const char *what, const char *detail = "")
 {
@@ -80,9 +111,7 @@ struct Zone
 
     explicit Zone(std::uint32_t tempBytes = sizeof(temp))
     {
-        g_file.clear();
-        g_read = 0;
-        g_published = 0;
+        ResetImage();
         memory.blocks[0] = {temp, tempBytes};
         memory.blocks[4] = {virt, VirtBytes};
         DB_InitStreams(&memory);
