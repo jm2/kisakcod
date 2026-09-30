@@ -87,6 +87,17 @@
 #  error "kisak_abi.h: unexpected pointer width"
 #endif
 
+// ---- Endianness ----
+// Byte-order helpers (q_shared.h Big*/Little*) key on this ABI fact rather
+// than on an arch or OS shorthand. Every target here is little-endian today
+// and MSVC defines no __BYTE_ORDER__, so the default arm is little-endian.
+#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) \
+    && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+#  define KISAK_LITTLE_ENDIAN 0
+#else
+#  define KISAK_LITTLE_ENDIAN 1
+#endif
+
 // ---- Fixed-width integer policy ----
 // Shared ABI / serialization / atomics code uses the <cstdint> exact-width types.
 // C `long` / `unsigned long` are BANNED where width is load-bearing: they are
