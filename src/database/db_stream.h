@@ -30,17 +30,26 @@ void __cdecl DB_SetInsertedPointer(
     DBAliasKind expectedKind,
     const void *pointer,
     std::uint32_t metadata = 0);
+// pointer is the completed object's block-4 disk32 record. A 64-bit loader
+// also passes the native object it converted that record into, so later
+// offset tokens resolve to native storage (DB_ResolveCompletedObjectNative).
 bool __cdecl DB_CompleteObject(
     DBAliasHandle handle,
     DBAliasKind expectedKind,
     const void *pointer,
     std::uint32_t metadata,
-    std::uint32_t materializedBytes);
+    std::uint32_t materializedBytes,
+    const void *native = nullptr);
 db::relocation::Status __cdecl DB_ResolveInsertedPointer(
     disk32::PointerToken token,
     DBAliasKind expectedKind,
     std::uint32_t expectedMetadata,
     std::uintptr_t *pointer);
+db::relocation::Status __cdecl DB_ResolveCompletedObjectNative(
+    disk32::PointerToken token,
+    DBAliasKind expectedKind,
+    std::uint32_t expectedMetadata,
+    std::uintptr_t *native);
 db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
     const void *pointer,
     std::uint32_t size);
