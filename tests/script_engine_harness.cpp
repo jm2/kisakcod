@@ -37,8 +37,13 @@
 
 namespace
 {
-std::map<std::string, std::unique_ptr<RawFile>> g_rawfiles;
-std::map<std::string, std::string> g_sourceText;
+// The fast-file RawFile for each <name>.gsc, and the text it points at.
+struct ScriptSource
+{
+    std::string text;
+    RawFile rawfile;
+};
+std::map<std::string, std::unique_ptr<ScriptSource>> g_sources;
 std::vector<int> g_reports;
 std::jmp_buf *g_dropTarget;
 char g_dropMessage[4096];
@@ -150,7 +155,8 @@ void I_strncpyz(char *dest, const char *src, int destsize)
 int I_stricmp(const char *s0, const char *s1) { return strcasecmp(s0, s1); }
 const char *__cdecl I_stristr(const char *s0, const char *substr)
 {
-    const std::string_view text(s0), needle(substr);
+    const std::string_view text(s0);
+    const std::string_view needle(substr);
     const auto match = std::search(text.begin(), text.end(), needle.begin(), needle.end(), [](char a, char b) {
         return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
     });
@@ -245,9 +251,10 @@ uint32_t __cdecl FS_Read(unsigned char *, uint32_t, int) { return 0; }
 void __cdecl FS_FCloseFile(int) {}
 XAssetHeader __cdecl DB_FindXAssetHeader(XAssetType type, const char *name)
 {
-    if (type != ASSET_TYPE_RAWFILE || !g_rawfiles.count(name))
+    const auto source = g_sources.find(name);
+    if (type != ASSET_TYPE_RAWFILE || source == g_sources.end())
         return XAssetHeader();
-    return XAssetHeader(g_rawfiles[name].get());
+    return XAssetHeader(&source->second->rawfile);
 }
 char *__cdecl XAnimGetAnimDebugName(const XAnim_s *, uint32_t) { return const_cast<char *>(""); }
 
@@ -270,10 +277,10 @@ namespace gsc
 {
 void SetSource(const std::string &name, const std::string &text)
 {
-    const std::string file = name + ".gsc";
-    const std::string &source = g_sourceText[file] = text;
-    g_rawfiles[file] = std::make_unique<RawFile>(
-        RawFile{g_sourceText.find(file)->first.c_str(), static_cast<int>(source.size()), source.c_str()});
+    const auto entry = g_sources.insert_or_assign(name + ".gsc", std::make_unique<ScriptSource>()).first;
+    ScriptSource &source = *entry->second;
+    source.text = text;
+    source.rawfile = RawFile{entry->first.c_str(), static_cast<int>(source.text.size()), source.text.c_str()};
 }
 
 bool Load(const std::string &name, std::string *error)
