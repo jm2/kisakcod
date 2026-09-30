@@ -281,6 +281,32 @@ add_test(
     COMMAND kisakcod-msg-wire-contract-tests
 )
 
+# Portable datagram layer contracts (NOW row 13). The socket backend is
+# selected the way tests/cmake/platform.cmake selects it, so the checks
+# exercise the code the headless dedicated build links.
+set(_net_local_platform_socket ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _net_local_platform_socket INCLUDE REGEX "[/\\\\]sys_socket\\.cpp$")
+
+add_executable(kisakcod-net-local-tests
+    net_local_tests.cpp
+    ${SRC_DIR}/qcommon/net_local.cpp
+    ${_net_local_platform_socket}
+)
+target_include_directories(kisakcod-net-local-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-net-local-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-net-local-tests PRIVATE KISAK_MP)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(kisakcod-net-local-tests PRIVATE ws2_32)
+else()
+    target_link_libraries(kisakcod-net-local-tests PRIVATE Threads::Threads)
+endif()
+kisakcod_test_warnings(kisakcod-net-local-tests)
+set_target_properties(kisakcod-net-local-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME net-local-contracts COMMAND kisakcod-net-local-tests)
+set_tests_properties(net-local-contracts PROPERTIES TIMEOUT 20)
+
 kisakcod_ilp32(kisakcod-huffman-wire-contract-tests
     huffman-wire-format-contracts)
 
