@@ -312,6 +312,7 @@ struct XAnimInfo // sizeof=0x40
     };
     XAnimState state;                   // ...
 };
+RUNTIME_SIZE(XAnimInfo, 0x40, 0x48);
 
 struct XAnimSimpleRotPos // sizeof=0x18
 {                                       // ...

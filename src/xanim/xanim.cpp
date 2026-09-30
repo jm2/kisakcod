@@ -32,25 +32,27 @@ static bool g_anim_developer;
 static XAnimNotify_s g_notifyList[0x80];
 static XAnimInfo g_xAnimInfo[0x1000];
 
+// The retail stats hard-coded sizeof(XAnimInfo) as 64 (<< 6, 0x40000); it is
+// 72 bytes at 64-bit.
 int __cdecl XAnimGetTreeHighMemUsage()
 {
-    return g_info_high_usage << 6;
+    return g_info_high_usage * static_cast<int>(sizeof(XAnimInfo));
 }
 
 int __cdecl XAnimGetTreeMemUsage()
 {
-    return g_info_usage << 6;
+    return g_info_usage * static_cast<int>(sizeof(XAnimInfo));
 }
 
 void __cdecl TRACK_xanim()
 {
-    //track_static_alloc_internal(g_xAnimInfo, 0x40000, "g_xAnimInfo", 11);
-    //track_static_alloc_internal(g_notifyList, 1536, "g_notifyList", 11);
+    //track_static_alloc_internal(g_xAnimInfo, sizeof(g_xAnimInfo), "g_xAnimInfo", 11);
+    //track_static_alloc_internal(g_notifyList, sizeof(g_notifyList), "g_notifyList", 11);
 }
 
 int __cdecl XAnimGetTreeMaxMemUsage()
 {
-    return 0x40000;
+    return static_cast<int>(sizeof(g_xAnimInfo));
 }
 
 XAnimInfo *XAnimAllocInfo(DObj_s *obj, uint32_t animIndex, int after)
@@ -149,7 +151,7 @@ XAnimParts *__cdecl XAnimClone(XAnimParts *fromParts, void *(__cdecl *Alloc)(int
     __int16 notifyInfoIndex; // [esp+18h] [ebp-8h]
     uint16_t *boneNames; // [esp+1Ch] [ebp-4h]
 
-    toParts = (XAnimParts *)Alloc(88);
+    toParts = (XAnimParts *)Alloc(sizeof(XAnimParts)); // retail: 88, the ILP32 size
     qmemcpy(toParts, fromParts, sizeof(XAnimParts));
     boneNames = toParts->names;
     size = toParts->boneCount[9];
