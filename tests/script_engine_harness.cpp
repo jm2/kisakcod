@@ -15,7 +15,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <map>
 #include <memory>
 #include <string_view>
 
@@ -37,13 +36,22 @@
 
 namespace
 {
-// The fast-file RawFile for each <name>.gsc, and the text it points at.
+// The fast-file RawFile for a <name>.gsc, and the text it points at.
 struct ScriptSource
 {
+    std::string file;
     std::string text;
     RawFile rawfile;
 };
-std::map<std::string, std::unique_ptr<ScriptSource>> g_sources;
+std::vector<std::unique_ptr<ScriptSource>> g_sources;
+
+ScriptSource *FindSource(const char *file)
+{
+    for (const auto &source : g_sources)
+        if (source->file == file)
+            return source.get();
+    return nullptr;
+}
 std::vector<int> g_reports;
 std::jmp_buf *g_dropTarget;
 char g_dropMessage[4096];
@@ -251,10 +259,8 @@ uint32_t __cdecl FS_Read(unsigned char *, uint32_t, int) { return 0; }
 void __cdecl FS_FCloseFile(int) {}
 XAssetHeader __cdecl DB_FindXAssetHeader(XAssetType type, const char *name)
 {
-    const auto source = g_sources.find(name);
-    if (type != ASSET_TYPE_RAWFILE || source == g_sources.end())
-        return XAssetHeader();
-    return XAssetHeader(&source->second->rawfile);
+    ScriptSource *source = type == ASSET_TYPE_RAWFILE ? FindSource(name) : nullptr;
+    return source ? XAssetHeader(&source->rawfile) : XAssetHeader();
 }
 char *__cdecl XAnimGetAnimDebugName(const XAnim_s *, uint32_t) { return const_cast<char *>(""); }
 
@@ -277,10 +283,16 @@ namespace gsc
 {
 void SetSource(const std::string &name, const std::string &text)
 {
-    const auto entry = g_sources.insert_or_assign(name + ".gsc", std::make_unique<ScriptSource>()).first;
-    ScriptSource &source = *entry->second;
-    source.text = text;
-    source.rawfile = RawFile{entry->first.c_str(), static_cast<int>(source.text.size()), source.text.c_str()};
+    const std::string file = name + ".gsc";
+    ScriptSource *source = FindSource(file.c_str());
+    if (!source)
+    {
+        g_sources.push_back(std::make_unique<ScriptSource>());
+        source = g_sources.back().get();
+        source->file = file;
+    }
+    source->text = text;
+    source->rawfile = RawFile{source->file.c_str(), static_cast<int>(source->text.size()), source->text.c_str()};
 }
 
 bool Load(const std::string &name, std::string *error)
