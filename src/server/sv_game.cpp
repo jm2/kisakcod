@@ -913,7 +913,7 @@ void __cdecl SV_SetGametype()
     if (com_sv_running->current.enabled && G_GetSavePersist())
         I_strncpyz(gametype, sv.gametype, 64);
     else
-        I_strncpyz(gametype, (char *)sv_gametype->current.integer, 64);
+        I_strncpyz(gametype, (char *)sv_gametype->current.string, 64);
     for (s = gametype; *s; ++s)
         *s = tolower(*s);
     if (!Scr_IsValidGameType(gametype))

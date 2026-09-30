@@ -3712,7 +3712,7 @@ int __cdecl Item_DvarEnum_EnumIndex(itemDef_s *item)
         return enumIndex;
     for (enumIndexa = 0; enumIndexa < enumDvar->domain.enumeration.stringCount; ++enumIndexa)
     {
-        if (!I_stricmp(enumString, *(const char **)(enumDvar->domain.integer.max + 4 * enumIndexa)))
+        if (!I_stricmp(enumString, enumDvar->domain.enumeration.strings[enumIndexa]))
             return enumIndexa;
     }
     return 0;
@@ -4642,7 +4642,7 @@ char __cdecl Menu_Paint(UiContext *dc, menuDef_t *menu)
 
     iassert(menu);
 
-    if (*(_BYTE *)ui_showMenuOnly->current.integer
+    if (*(const unsigned char *)ui_showMenuOnly->current.string
         && menu->window.name
         && I_stricmp(menu->window.name, ui_showMenuOnly->current.string))
     {
@@ -5644,7 +5644,7 @@ const char *__cdecl Item_DvarEnum_Setting(itemDef_s *item)
             "enumIndex >= 0 && enumIndex < enumDvar->domain.enumeration.stringCount",
             v2);
     }
-    return *(const char **)(enumDvar->domain.integer.max + 4 * enumIndex);
+    return enumDvar->domain.enumeration.strings[enumIndex];
 }
 
 void __cdecl Item_Slider_Paint(UiContext *dc, itemDef_s *item)

@@ -1616,7 +1616,7 @@ int __cdecl SND_PlaySoundAlias_Internal(
         Vec3Sub(a->orient.origin, org, diff);
         distListenerSq = Vec3LengthSq(diff);
         outOfRange = distListenerSq > distMax * distMax;
-        if (*(_BYTE *)snd_debugAlias->current.integer)
+        if (*(const unsigned char *)snd_debugAlias->current.string)
         {
             v16 = sqrt(distListenerSq);
             v12 = va("Not playing, out of range: %.1f > %.1f", v16, distMax);
