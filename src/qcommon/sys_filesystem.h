@@ -55,21 +55,13 @@ bool KISAK_CDECL Sys_FileSystemGetExecutablePath(
 #if !defined(_WIN32)
 // Operator-chosen roots (fs_basepath, fs_homepath, fs_cdpath) on POSIX. The
 // services here follow no symbolic link, yet a root may sit below links the
-// host put there (macOS /var and /tmp, /home -> /var/home). A root's
-// canonical form is the realpath of its deepest existing ancestor followed
-// by the rest of the root, which does not exist yet, as spelled. Relative
-// roots resolve from the current directory; the result is absolute. Empty,
-// invalid or ".." paths and insufficient capacity fail and reset output.
-bool KISAK_CDECL Sys_FileSystemCanonicalRoot(
-    const char *utf8Path,
-    char *output,
-    std::size_t outputCapacity);
-
-// Trusts one root: from now on, a path given to the services here whose
-// leading components spell the root's deepest existing ancestor walks from
-// that ancestor's realpath. Links are followed there only, once, here; every
-// component below it still opens without following links. Trusting the same
-// spelling again refreshes its realpath.
+// host put there (macOS /var and /tmp, /home -> /var/home). Trusting a root
+// resolves the realpath of its deepest existing ancestor once, here; from
+// then on a path given to the services here whose leading components spell
+// that ancestor walks from its realpath, and every component below it still
+// opens without following links. Relative roots resolve from the current
+// directory. Empty, invalid or ".." paths fail; trusting the same spelling
+// again refreshes its realpath.
 bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *utf8Path);
 #endif
 

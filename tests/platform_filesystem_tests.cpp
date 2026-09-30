@@ -14,9 +14,6 @@
 #include <winioctl.h>
 #include <thread>
 #else
-#include <cstdlib>
-#include <memory>
-
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -2990,13 +2987,6 @@ int RunWin32RemoveTreeContracts(const std::string &workingDirectory)
 #endif // defined(_WIN32)
 
 #if !defined(_WIN32)
-std::string RealPath(const std::string &path)
-{
-    const std::unique_ptr<char, decltype(&std::free)> real(
-        realpath(path.c_str(), nullptr), &std::free);
-    return real ? std::string(real.get()) : std::string();
-}
-
 bool IsRealDirectory(const std::string &path)
 {
     struct stat status{};
@@ -3040,43 +3030,20 @@ bool TestOperatorRootsBelowLinks(const std::string &workingDirectory)
     {
         return false;
     }
-    const std::string canonicalReal = RealPath(real);
     const std::string base = Join(link, "base");
     const std::string home = Join(Join(link, "home dir"), "nested");
 
     SetCheckStage("operator-roots/untrusted-link-refused");
     std::vector<SysFileSystemDirectoryEntry> entries;
-    if (!Check(!canonicalReal.empty())
-        || !Check(!Sys_FileSystemCreateDirectory(Join(base, "main").c_str()))
+    if (!Check(!Sys_FileSystemCreateDirectory(Join(base, "main").c_str()))
         || !Check(Sys_FileSystemListDirectory(base.c_str(), 16, &entries)
             == SysFileSystemListStatus::Error))
     {
         return false;
     }
 
-    SetCheckStage("operator-roots/canonical-form");
-    std::array<char, 4096> canonical{};
-    if (!Check(Sys_FileSystemCanonicalRoot(base.c_str(), canonical.data(), canonical.size()))
-        || !Check(canonical.data() == canonicalReal + "/base")
-        || !Check(Sys_FileSystemCanonicalRoot(home.c_str(), canonical.data(), canonical.size()))
-        || !Check(canonical.data() == canonicalReal + "/home dir/nested")
-        || !Check(Sys_FileSystemCanonicalRoot("roots-missing/child", canonical.data(), canonical.size()))
-        || !Check(canonical.data() == RealPath(".") + "/roots-missing/child"))
-    {
-        return false;
-    }
-
-    SetCheckStage("operator-roots/canonical-rejections");
-    const std::size_t exact = canonicalReal.size() + std::strlen("/base") + 1;
-    canonical[0] = 'x';
-    if (!Check(!Sys_FileSystemCanonicalRoot(base.c_str(), canonical.data(), exact - 1))
-        || !Check(canonical[0] == '\0')
-        || !Check(Sys_FileSystemCanonicalRoot(base.c_str(), canonical.data(), exact))
-        || !Check(!Sys_FileSystemCanonicalRoot("", canonical.data(), canonical.size()))
-        || !Check(!Sys_FileSystemCanonicalRoot(nullptr, canonical.data(), canonical.size()))
-        || !Check(!Sys_FileSystemCanonicalRoot(base.c_str(), nullptr, 0))
-        || !Check(!Sys_FileSystemCanonicalRoot(
-            Join(link, "x/../base").c_str(), canonical.data(), canonical.size()))
+    SetCheckStage("operator-roots/rejections");
+    if (!Check(!Sys_FileSystemTrustRoot(nullptr))
         || !Check(!Sys_FileSystemTrustRoot(""))
         || !Check(!Sys_FileSystemTrustRoot(Join(link, "x/../base").c_str())))
     {
@@ -3118,6 +3085,21 @@ bool TestOperatorRootsBelowLinks(const std::string &workingDirectory)
         || !Check(contents.size() == 1)
         || !Check(Sys_FileSystemRemoveTree(Join(link, "home dir").c_str()))
         || !Check(!IsRealDirectory(Join(real, "home dir"))))
+    {
+        return false;
+    }
+
+    // A relative root resolves from the current directory, the tests'
+    // working directory; it matches relative paths only.
+    SetCheckStage("operator-roots/relative-root");
+    const std::string relativeHome = Join(link.substr(workingDirectory.size() + 1), "relative home");
+    if (!Check(link.compare(0, workingDirectory.size(), workingDirectory) == 0)
+        || !Check(!Sys_FileSystemCreateDirectory(relativeHome.c_str()))
+        || !Check(Sys_FileSystemTrustRoot(relativeHome.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(relativeHome.c_str()))
+        || !Check(IsRealDirectory(Join(real, "relative home")))
+        || !Check(Sys_FileSystemRemoveTree(relativeHome.c_str()))
+        || !Check(!IsRealDirectory(Join(real, "relative home"))))
     {
         return false;
     }

@@ -497,35 +497,6 @@ bool KISAK_CDECL Sys_FileSystemReadFile(
     return true;
 }
 
-bool KISAK_CDECL Sys_FileSystemCanonicalRoot(
-    const char *const utf8Path,
-    char *const output,
-    const std::size_t outputCapacity)
-{
-    ResetOutput(output, outputCapacity);
-    bool absolute = false;
-    std::vector<std::string> components;
-    std::size_t existingCount = 0;
-    std::string canonical;
-    if (!output
-        || outputCapacity == 0
-        || !ResolveExistingAncestor(
-            utf8Path, &absolute, &components, &existingCount, &canonical))
-    {
-        return false;
-    }
-    for (std::size_t index = existingCount; index < components.size(); ++index)
-    {
-        if (canonical.back() != '/')
-            canonical += '/';
-        canonical += components[index];
-    }
-    if (canonical.size() >= outputCapacity)
-        return false;
-    std::memcpy(output, canonical.c_str(), canonical.size() + 1);
-    return true;
-}
-
 bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *const utf8Path)
 {
     bool absolute = false;
