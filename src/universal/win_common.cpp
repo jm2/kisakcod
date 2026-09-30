@@ -65,9 +65,10 @@ bool __cdecl Sys_RemoveDirTree(const char *path)
     _findclose(handle);
     return !hasError && _rmdir(path) != -1;
 #else
-    // Recursive deletion remains a separate handle-relative platform-service
-    // task. Do not emulate it with path-following POSIX traversal.
-    return false;
+    // True only once the directory and everything under it are gone, as
+    // above. The service walks handle-relative and removes symbolic links
+    // as themselves, never following them (qcommon/sys_filesystem.h).
+    return Sys_FileSystemRemoveTree(path);
 #endif
 }
 

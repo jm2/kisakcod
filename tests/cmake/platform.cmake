@@ -218,6 +218,26 @@ add_test(
 # still bounding a wedged run.
 set_tests_properties(platform-filesystem-path-contracts PROPERTIES TIMEOUT 90)
 
+# Sys_RemoveDirTree, the engine entry point (universal/win_common.cpp) over
+# the service above; Com_DeletePlayerProfile calls it (NOW row 13). Linux and
+# clang only: win_common.cpp is an engine TU (see the dvar test in misc.cmake).
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-win-common-remove-tree-tests
+        win_common_remove_tree_tests.cpp
+        ${SRC_DIR}/universal/win_common.cpp
+        ${_platform_filesystem_sources}
+    )
+    target_include_directories(kisakcod-win-common-remove-tree-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-win-common-remove-tree-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-win-common-remove-tree-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-win-common-remove-tree-tests PRIVATE -fms-extensions)
+    set_target_properties(kisakcod-win-common-remove-tree-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME win-common-remove-tree-contracts COMMAND kisakcod-win-common-remove-tree-tests)
+    set_tests_properties(win-common-remove-tree-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # fuzz_sys_filesystem: production-path fuzz fixture for the no-follow
 # file read service. Links the same selected platform sys_filesystem.cpp
 # as the contract tests above; named 'fuzz|filesystem' so the ctest
