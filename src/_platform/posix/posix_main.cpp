@@ -34,6 +34,8 @@
 
 #if defined(__linux__)
 #include <sys/utsname.h>
+#elif defined(__APPLE__)
+#include <sys/sysctl.h>
 #endif
 
 SysInfo sys_info;
@@ -141,6 +143,11 @@ void DetectCpu()
         std::snprintf(sys_info.cpuName, sizeof(sys_info.cpuName), "%s %s",
             names.machine, names.release);
     }
+#elif defined(__APPLE__)
+    // The marketing name, e.g. "Apple M1 Max"; one that does not fit fails.
+    std::size_t nameSize = sizeof(sys_info.cpuName);
+    if (sysctlbyname("machdep.cpu.brand_string", sys_info.cpuName, &nameSize, nullptr, 0) != 0)
+        std::snprintf(sys_info.cpuName, sizeof(sys_info.cpuName), "unknown");
 #else
     std::snprintf(sys_info.cpuName, sizeof(sys_info.cpuName), "unknown");
 #endif

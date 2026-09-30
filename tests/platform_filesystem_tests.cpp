@@ -14,6 +14,9 @@
 #include <winioctl.h>
 #include <thread>
 #else
+#include <cstdlib>
+#include <memory>
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -2985,6 +2988,146 @@ int RunWin32RemoveTreeContracts(const std::string &workingDirectory)
     return 0;
 }
 #endif // defined(_WIN32)
+
+#if !defined(_WIN32)
+std::string RealPath(const std::string &path)
+{
+    const std::unique_ptr<char, decltype(&std::free)> real(
+        realpath(path.c_str(), nullptr), &std::free);
+    return real ? std::string(real.get()) : std::string();
+}
+
+bool IsRealDirectory(const std::string &path)
+{
+    struct stat status{};
+    return lstat(path.c_str(), &status) == 0 && S_ISDIR(status.st_mode);
+}
+
+bool ListsExactly(const std::string &path, const std::vector<std::string> &names)
+{
+    std::vector<SysFileSystemDirectoryEntry> entries;
+    if (Sys_FileSystemListDirectory(path.c_str(), 16, &entries)
+        != SysFileSystemListStatus::Complete
+        || entries.size() != names.size())
+    {
+        return false;
+    }
+    for (std::size_t index = 0; index < names.size(); ++index)
+    {
+        if (entries[index].name != names[index])
+            return false;
+    }
+    return true;
+}
+
+// Operator-chosen roots below a symbolic link (macOS /var and /tmp, /home ->
+// /var/home). Trusting a root resolves its deepest existing ancestor once;
+// every component below that ancestor is still refused when it is a link.
+bool TestOperatorRootsBelowLinks(const std::string &workingDirectory)
+{
+    SetCheckStage("operator-roots/setup");
+    const std::string real = MakeUniquePath(workingDirectory) + "-roots-real";
+    const std::string link = MakeUniquePath(workingDirectory) + "-roots-link";
+    const std::string outside = MakeUniquePath(workingDirectory) + "-roots-outside";
+    const std::string realBase = Join(real, "base");
+    if (!Check(Sys_FileSystemCreateDirectory(real.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(realBase.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(outside.c_str()))
+        || !Check(WriteFile(Join(realBase, "a.txt")))
+        || !Check(WriteFile(Join(outside, "secret.txt")))
+        || !Check(symlink(real.c_str(), link.c_str()) == 0)
+        || !Check(symlink(outside.c_str(), Join(realBase, "escape").c_str()) == 0))
+    {
+        return false;
+    }
+    const std::string canonicalReal = RealPath(real);
+    const std::string base = Join(link, "base");
+    const std::string home = Join(Join(link, "home dir"), "nested");
+
+    SetCheckStage("operator-roots/untrusted-link-refused");
+    std::vector<SysFileSystemDirectoryEntry> entries;
+    if (!Check(!canonicalReal.empty())
+        || !Check(!Sys_FileSystemCreateDirectory(Join(base, "main").c_str()))
+        || !Check(Sys_FileSystemListDirectory(base.c_str(), 16, &entries)
+            == SysFileSystemListStatus::Error))
+    {
+        return false;
+    }
+
+    SetCheckStage("operator-roots/canonical-form");
+    std::array<char, 4096> canonical{};
+    if (!Check(Sys_FileSystemCanonicalRoot(base.c_str(), canonical.data(), canonical.size()))
+        || !Check(canonical.data() == canonicalReal + "/base")
+        || !Check(Sys_FileSystemCanonicalRoot(home.c_str(), canonical.data(), canonical.size()))
+        || !Check(canonical.data() == canonicalReal + "/home dir/nested")
+        || !Check(Sys_FileSystemCanonicalRoot("roots-missing/child", canonical.data(), canonical.size()))
+        || !Check(canonical.data() == RealPath(".") + "/roots-missing/child"))
+    {
+        return false;
+    }
+
+    SetCheckStage("operator-roots/canonical-rejections");
+    const std::size_t exact = canonicalReal.size() + std::strlen("/base") + 1;
+    canonical[0] = 'x';
+    if (!Check(!Sys_FileSystemCanonicalRoot(base.c_str(), canonical.data(), exact - 1))
+        || !Check(canonical[0] == '\0')
+        || !Check(Sys_FileSystemCanonicalRoot(base.c_str(), canonical.data(), exact))
+        || !Check(!Sys_FileSystemCanonicalRoot("", canonical.data(), canonical.size()))
+        || !Check(!Sys_FileSystemCanonicalRoot(nullptr, canonical.data(), canonical.size()))
+        || !Check(!Sys_FileSystemCanonicalRoot(base.c_str(), nullptr, 0))
+        || !Check(!Sys_FileSystemCanonicalRoot(
+            Join(link, "x/../base").c_str(), canonical.data(), canonical.size()))
+        || !Check(!Sys_FileSystemTrustRoot(""))
+        || !Check(!Sys_FileSystemTrustRoot(Join(link, "x/../base").c_str())))
+    {
+        return false;
+    }
+
+    SetCheckStage("operator-roots/existing-root-create-and-list");
+    if (!Check(Sys_FileSystemTrustRoot(base.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(Join(base, "main").c_str()))
+        || !Check(IsRealDirectory(Join(realBase, "main")))
+        || !Check(ListsExactly(base, {"a.txt", "main"}))
+        || !Check(!Sys_FileSystemCreateDirectory(Join(link, "home dir").c_str())))
+    {
+        return false;
+    }
+
+    SetCheckStage("operator-roots/link-below-root-refused");
+    std::vector<unsigned char> contents;
+    if (!Check(!Sys_FileSystemCreateDirectory(Join(base, "escape/x").c_str()))
+        || !Check(Sys_FileSystemListDirectory(Join(base, "escape").c_str(), 16, &entries)
+            == SysFileSystemListStatus::Error)
+        || !Check(!Sys_FileSystemReadFile(Join(base, "escape/secret.txt").c_str(), 16, &contents))
+        || !Check(!Sys_FileSystemRemoveTree(Join(base, "escape").c_str()))
+        || !Check(!IsRealDirectory(Join(outside, "x")))
+        || !Check(ListsExactly(outside, {"secret.txt"})))
+    {
+        return false;
+    }
+
+    // The engine's FS_CreatePath creates each prefix of the nested homepath
+    // in turn; the root's missing tail is created without following links.
+    SetCheckStage("operator-roots/missing-nested-root");
+    if (!Check(Sys_FileSystemTrustRoot(home.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(Join(link, "home dir").c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(home.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(Join(home, "main").c_str()))
+        || !Check(IsRealDirectory(Join(real, "home dir/nested/main")))
+        || !Check(Sys_FileSystemReadFile(Join(base, "a.txt").c_str(), 16, &contents))
+        || !Check(contents.size() == 1)
+        || !Check(Sys_FileSystemRemoveTree(Join(link, "home dir").c_str()))
+        || !Check(!IsRealDirectory(Join(real, "home dir"))))
+    {
+        return false;
+    }
+
+    SetCheckStage("operator-roots/cleanup");
+    return Check(unlink(link.c_str()) == 0)
+        && Check(Sys_FileSystemRemoveTree(real.c_str()))
+        && Check(Sys_FileSystemRemoveTree(outside.c_str()));
+}
+#endif
 }
 
 int main()
@@ -2994,6 +3137,11 @@ int main()
         return 1;
     if (RunRemoveTreeCoreContracts(workingDirectory) != 0)
         return 1;
+#if !defined(_WIN32)
+    // Last: trusted roots are process-wide.
+    if (!TestOperatorRootsBelowLinks(workingDirectory))
+        return 1;
+#endif
 #if defined(_WIN32)
     if (RunWin32RemoveTreeContracts(workingDirectory) != 0)
         return 1;

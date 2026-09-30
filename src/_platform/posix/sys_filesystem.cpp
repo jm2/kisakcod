@@ -8,6 +8,8 @@
 #include <cstring>
 #include <deque>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <new>
 #include <string>
 #include <utility>
@@ -150,6 +152,99 @@ bool SplitSafePath(
     return true;
 }
 
+// An operator-chosen root (Sys_FileSystemTrustRoot): the leading components
+// of its deepest existing ancestor as the caller spelled them, and the
+// components of that ancestor's realpath.
+struct TrustedRoot
+{
+    bool absolute;
+    std::vector<std::string> spelled;
+    std::vector<std::string> canonical;
+};
+
+constexpr std::size_t kMaximumTrustedRoots = 16;
+
+std::mutex &TrustedRootsMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::vector<TrustedRoot> &TrustedRoots()
+{
+    static std::vector<TrustedRoot> roots;
+    return roots;
+}
+
+// SplitSafePath for a no-follow walk. When the leading components spell a
+// trusted root's existing ancestor, they become that ancestor's canonical
+// components, and the walk starts at "/". *absolute names the walk's start.
+bool SplitWalkPath(
+    const char *const path,
+    std::vector<std::string> *const components,
+    bool *const absolute)
+{
+    if (!SplitSafePath(path, components))
+        return false;
+    *absolute = IsEnginePathSeparator(path[0]);
+
+    const std::lock_guard<std::mutex> lock(TrustedRootsMutex());
+    const TrustedRoot *match = nullptr;
+    for (const TrustedRoot &root : TrustedRoots())
+    {
+        if (root.absolute == *absolute
+            && root.spelled.size() <= components->size()
+            && std::equal(root.spelled.begin(), root.spelled.end(), components->begin())
+            && (!match || root.spelled.size() > match->spelled.size()))
+        {
+            match = &root;
+        }
+    }
+    if (!match)
+        return true;
+    components->erase(
+        components->begin(),
+        components->begin() + static_cast<std::ptrdiff_t>(match->spelled.size()));
+    components->insert(components->begin(), match->canonical.begin(), match->canonical.end());
+    *absolute = true;
+    return components->size() <= kMaximumPathComponents;
+}
+
+// Finds the deepest existing ancestor of path (its first *existingCount
+// components) and that ancestor's realpath. This is the only place the
+// service follows symbolic links.
+bool ResolveExistingAncestor(
+    const char *const path,
+    bool *const absolute,
+    std::vector<std::string> *const components,
+    std::size_t *const existingCount,
+    std::string *const resolved)
+{
+    if (!SplitSafePath(path, components))
+        return false;
+    *absolute = IsEnginePathSeparator(path[0]);
+    for (std::size_t count = components->size();; --count)
+    {
+        std::string prefix = *absolute ? "/" : ".";
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            if (prefix.back() != '/')
+                prefix += '/';
+            prefix += (*components)[index];
+        }
+        const std::unique_ptr<char, decltype(&std::free)> real(
+            realpath(prefix.c_str(), nullptr), &std::free);
+        if (real)
+        {
+            *existingCount = count;
+            *resolved = real.get();
+            return true;
+        }
+        if ((errno != ENOENT && errno != ENOTDIR) || count == 0)
+            return false;
+    }
+}
+
 bool IsDirectoryNoFollow(const int parentFd, const char *const name)
 {
     struct stat status{};
@@ -160,13 +255,14 @@ bool IsDirectoryNoFollow(const int parentFd, const char *const name)
 int OpenDirectoryForEnumeration(const char *const path)
 {
     std::vector<std::string> components;
-    if (!SplitSafePath(path, &components))
+    bool absolute = false;
+    if (!SplitWalkPath(path, &components, &absolute))
         return -1;
 
     constexpr int enumerationFlags =
         O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
     int parentFd = open(
-        IsEnginePathSeparator(path[0]) ? "/" : ".",
+        absolute ? "/" : ".",
         components.empty() ? enumerationFlags : DirectoryOpenFlags());
     if (parentFd < 0)
         return -1;
@@ -247,12 +343,11 @@ void InsertBoundedEntry(
 bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *const path)
 {
     std::vector<std::string> components;
-    if (!SplitSafePath(path, &components))
+    bool absolute = false;
+    if (!SplitWalkPath(path, &components, &absolute))
         return false;
 
-    int parentFd = open(
-        IsEnginePathSeparator(path[0]) ? "/" : ".",
-        DirectoryOpenFlags());
+    int parentFd = open(absolute ? "/" : ".", DirectoryOpenFlags());
     if (parentFd < 0)
         return false;
 
@@ -294,16 +389,15 @@ bool KISAK_CDECL Sys_FileSystemReadFile(
         return false;
 
     std::vector<std::string> components;
-    if (!SplitSafePath(utf8Path, &components))
+    bool absolute = false;
+    if (!SplitWalkPath(utf8Path, &components, &absolute))
         return false;
     if (components.empty())
         return false;
 
     // Walk and validate every directory ancestor without following
     // symbolic links, exactly like the directory services above.
-    int parentFd = open(
-        IsEnginePathSeparator(utf8Path[0]) ? "/" : ".",
-        DirectoryOpenFlags());
+    int parentFd = open(absolute ? "/" : ".", DirectoryOpenFlags());
     if (parentFd < 0)
         return false;
 
@@ -400,6 +494,69 @@ bool KISAK_CDECL Sys_FileSystemReadFile(
         return false;
 
     contents->swap(bytes);
+    return true;
+}
+
+bool KISAK_CDECL Sys_FileSystemCanonicalRoot(
+    const char *const utf8Path,
+    char *const output,
+    const std::size_t outputCapacity)
+{
+    ResetOutput(output, outputCapacity);
+    bool absolute = false;
+    std::vector<std::string> components;
+    std::size_t existingCount = 0;
+    std::string canonical;
+    if (!output
+        || outputCapacity == 0
+        || !ResolveExistingAncestor(
+            utf8Path, &absolute, &components, &existingCount, &canonical))
+    {
+        return false;
+    }
+    for (std::size_t index = existingCount; index < components.size(); ++index)
+    {
+        if (canonical.back() != '/')
+            canonical += '/';
+        canonical += components[index];
+    }
+    if (canonical.size() >= outputCapacity)
+        return false;
+    std::memcpy(output, canonical.c_str(), canonical.size() + 1);
+    return true;
+}
+
+bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *const utf8Path)
+{
+    bool absolute = false;
+    std::vector<std::string> spelled;
+    std::size_t existingCount = 0;
+    std::string resolved;
+    std::vector<std::string> canonical;
+    if (!ResolveExistingAncestor(utf8Path, &absolute, &spelled, &existingCount, &resolved)
+        || !SplitSafePath(resolved.c_str(), &canonical))
+    {
+        return false;
+    }
+    spelled.resize(existingCount);
+    // "/" and "." have nothing above them to resolve: a relative walk starts
+    // at the current directory itself, never at the links that reached it.
+    if (spelled.empty() || (absolute && spelled == canonical))
+        return true;
+
+    const std::lock_guard<std::mutex> lock(TrustedRootsMutex());
+    std::vector<TrustedRoot> &roots = TrustedRoots();
+    for (TrustedRoot &root : roots)
+    {
+        if (root.absolute == absolute && root.spelled == spelled)
+        {
+            root.canonical = std::move(canonical);
+            return true;
+        }
+    }
+    if (roots.size() == kMaximumTrustedRoots)
+        return false;
+    roots.push_back(TrustedRoot{absolute, std::move(spelled), std::move(canonical)});
     return true;
 }
 
@@ -933,12 +1090,13 @@ bool RemoveTreeAt(const int directoryFd)
 
 bool ParseRemoveTreePath(
     const char *const utf8Path,
-    std::vector<std::string> *components)
+    std::vector<std::string> *components,
+    bool *const absolute)
 {
     return utf8Path
         && utf8Path[0] != '\0'
         && IsValidUtf8(utf8Path)
-        && SplitSafePath(utf8Path, components)
+        && SplitWalkPath(utf8Path, components, absolute)
         && !components->empty();
 }
 
@@ -987,7 +1145,8 @@ bool RemoveHeldLeaf(const int parentFd, const int leafFd, const std::string &lea
 bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
 {
     std::vector<std::string> components;
-    if (!ParseRemoveTreePath(utf8Path, &components))
+    bool absolute = false;
+    if (!ParseRemoveTreePath(utf8Path, &components, &absolute))
         return false;
 
     // Open the parent of the leaf handle-relative, refusing any symbolic
@@ -995,8 +1154,7 @@ bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
     // while keeping the parent open so we can call unlinkat(...,leaf, AT_REMOVEDIR).
     constexpr int parentFlags =
         O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
-    int parentFd = open(
-        IsEnginePathSeparator(utf8Path[0]) ? "/" : ".", parentFlags);
+    int parentFd = open(absolute ? "/" : ".", parentFlags);
     if (parentFd < 0)
         return false;
     if (!OpenAncestorOfLeaf(components, &parentFd))
