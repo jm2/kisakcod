@@ -1,6 +1,8 @@
 #include <database/db_load_atomic.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -24,6 +26,7 @@ using db::load_atomic::RebaseProgress;
 using db::load_atomic::ResetFileRead;
 using db::load_atomic::SnapshotFileRead;
 using db::load_atomic::SnapshotProgress;
+using db::load_atomic::SpinBackoff;
 using db::load_atomic::kFileReadBytes;
 
 int Fail(const char *const message)
@@ -106,11 +109,12 @@ bool TestFileReadPublicationContention()
         {
             ResetFileRead(&state);
             resetReady.store(round, std::memory_order_release);
+            SpinBackoff observedBackoff;
             while (resetObserved.load(std::memory_order_acquire) != round)
             {
                 if (!valid.load(std::memory_order_relaxed))
                     return;
-                std::this_thread::yield();
+                observedBackoff.Pause();
             }
 
             const std::uint32_t error = 0xA5000000u | round;
@@ -124,11 +128,12 @@ bool TestFileReadPublicationContention()
                 valid.store(false, std::memory_order_relaxed);
                 return;
             }
+            SpinBackoff consumedBackoff;
             while (consumedRound.load(std::memory_order_acquire) != round)
             {
                 if (!valid.load(std::memory_order_relaxed))
                     return;
-                std::this_thread::yield();
+                consumedBackoff.Pause();
             }
         }
     });
@@ -136,8 +141,13 @@ bool TestFileReadPublicationContention()
     std::thread consumer([&]() {
         for (std::uint32_t round = 1u; round <= kRounds; ++round)
         {
+            SpinBackoff readyBackoff;
             while (resetReady.load(std::memory_order_acquire) != round)
-                std::this_thread::yield();
+            {
+                if (!valid.load(std::memory_order_relaxed))
+                    return;  // the producer failed; do not wait forever
+                readyBackoff.Pause();
+            }
 
             if (SnapshotFileRead(&state).complete)
             {
@@ -147,11 +157,16 @@ bool TestFileReadPublicationContention()
             resetObserved.store(round, std::memory_order_release);
 
             FileReadSnapshot snapshot{};
+            SpinBackoff publishBackoff;
             do
             {
                 snapshot = SnapshotFileRead(&state);
                 if (!snapshot.complete)
-                    std::this_thread::yield();
+                {
+                    if (!valid.load(std::memory_order_relaxed))
+                        return;  // the producer failed; do not wait forever
+                    publishBackoff.Pause();
+                }
             } while (!snapshot.complete);
 
             const std::uint32_t expectedError = 0xA5000000u | round;
@@ -191,10 +206,11 @@ bool TestAssetRecoveryGate()
         recoveryEntered.store(true, std::memory_order_release);
         gate.EndRecovery();
     });
+    SpinBackoff startBackoff;
     while (!recoveryStarted.load(std::memory_order_acquire)
         || !gate.IsRecoveryRequested())
     {
-        std::this_thread::yield();
+        startBackoff.Pause();
     }
     if (recoveryEntered.load(std::memory_order_acquire))
     {
@@ -521,21 +537,67 @@ bool TestProgressRebaseBoundary()
         && snapshot.loadedExternalBytes == kHalfUpdates * 2
         && LoadedFraction(snapshot) == 1.0;
 }
+
+// A protocol that never completes must fail with its name, not as an
+// anonymous ctest timeout (the 2026-09-29 macOS master failure gave no clue
+// which wait was stuck).
+std::atomic<const char *> g_currentTest{"startup"};
+std::atomic<long long> g_testStartMs{0};
+std::atomic<bool> g_allDone{false};
+
+long long NowMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void Watchdog()
+{
+    constexpr long long kLimitMs = 10000;
+    while (!g_allDone.load(std::memory_order_acquire))
+    {
+        if (NowMs() - g_testStartMs.load(std::memory_order_acquire) > kLimitMs)
+        {
+            std::fprintf(stderr,
+                "database load atomic test hung: %s did not finish within %lld ms\n",
+                g_currentTest.load(std::memory_order_acquire), kLimitMs);
+            std::_Exit(3);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
+
+bool Run(const char *const name, bool (*const test)())
+{
+    g_currentTest.store(name, std::memory_order_release);
+    g_testStartMs.store(NowMs(), std::memory_order_release);
+    return test();
+}
+
+int RunAll()
+{
+    if (!Run("TestFileReadBasics", TestFileReadBasics))
+        return Fail("file-read reset, validation, or snapshot contract");
+    if (!Run("TestFileReadPublicationContention", TestFileReadPublicationContention))
+        return Fail("file-read payload publication ordering");
+    if (!Run("TestAssetRecoveryGate", TestAssetRecoveryGate))
+        return Fail("asset recovery gate ordering or mutual exclusion");
+    if (!Run("TestProgressValidationAndFractions", TestProgressValidationAndFractions))
+        return Fail("progress validation, rollover, or fraction contract");
+    if (!Run("TestProgressContention", TestProgressContention))
+        return Fail("progress writer serialization or coherent snapshot");
+    if (!Run("TestProgressRebaseBoundary", TestProgressRebaseBoundary))
+        return Fail("progress header rebase transaction");
+    return 0;
+}
 } // namespace
 
 int main()
 {
-    if (!TestFileReadBasics())
-        return Fail("file-read reset, validation, or snapshot contract");
-    if (!TestFileReadPublicationContention())
-        return Fail("file-read payload publication ordering");
-    if (!TestAssetRecoveryGate())
-        return Fail("asset recovery gate ordering or mutual exclusion");
-    if (!TestProgressValidationAndFractions())
-        return Fail("progress validation, rollover, or fraction contract");
-    if (!TestProgressContention())
-        return Fail("progress writer serialization or coherent snapshot");
-    if (!TestProgressRebaseBoundary())
-        return Fail("progress header rebase transaction");
-    return 0;
+    g_testStartMs.store(NowMs(), std::memory_order_release);
+    std::thread watchdog(Watchdog);
+    const int result = RunAll();
+    g_allDone.store(true, std::memory_order_release);
+    watchdog.join();
+    return result;
 }

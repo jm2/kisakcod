@@ -160,6 +160,31 @@ add_test(
 )
 set_tests_properties(platform-virtual-memory-contracts PROPERTIES TIMEOUT 20)
 
+set(_platform_file_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _platform_file_sources INCLUDE REGEX "[/\\\\]sys_file\\.cpp$")
+list(LENGTH _platform_file_sources _platform_file_source_count)
+if (NOT _platform_file_source_count EQUAL 1)
+    message(FATAL_ERROR
+        "Expected exactly one selected platform sys_file.cpp, found "
+        "${_platform_file_source_count}")
+endif()
+
+add_executable(kisakcod-platform-file-tests
+    platform_file_tests.cpp
+    ${_platform_file_sources}
+)
+target_include_directories(kisakcod-platform-file-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-file-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-platform-file-tests)
+set_target_properties(kisakcod-platform-file-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-file-read-contracts
+    COMMAND kisakcod-platform-file-tests
+)
+set_tests_properties(platform-file-read-contracts PROPERTIES TIMEOUT 20)
+
 set(_platform_filesystem_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
 list(FILTER _platform_filesystem_sources INCLUDE REGEX "[/\\\\]sys_filesystem\\.cpp$")
 list(LENGTH _platform_filesystem_sources _platform_filesystem_source_count)
@@ -353,5 +378,34 @@ kisakcod_ilp32(kisakcod-platform-console-tests
     platform-console-invalid-eof-contracts
     platform-console-runtime-contracts)
 
+kisakcod_ilp32(kisakcod-platform-file-tests
+    platform-file-read-contracts)
+
 kisakcod_ilp32(kisakcod-platform-service-runtime-tests
     platform-service-runtime-contracts)
+
+# POSIX termios console contracts (NOW row 13): the text cleaner and the
+# engine output entry point of _platform/posix/posix_syscon.cpp, linked with
+# the portable console boundary and its POSIX backend, the same set the
+# headless dedicated build links.
+if (NOT KISAK_PLATFORM STREQUAL "win32")
+    set(_posix_syscon_platform_console ${KISAK_PLATFORM_SERVICE_SOURCES})
+    list(FILTER _posix_syscon_platform_console INCLUDE REGEX "[/\\\\]sys_console\\.cpp$")
+    list(FILTER _posix_syscon_platform_console EXCLUDE REGEX "qcommon")
+    add_executable(kisakcod-posix-syscon-tests
+        posix_syscon_tests.cpp
+        ${SRC_DIR}/_platform/posix/posix_syscon.cpp
+        ${SRC_DIR}/qcommon/sys_console.cpp
+        ${_posix_syscon_platform_console}
+    )
+    target_include_directories(kisakcod-posix-syscon-tests PRIVATE ${SRC_DIR})
+    target_compile_features(kisakcod-posix-syscon-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-posix-syscon-tests PRIVATE KISAK_MP)
+    target_link_libraries(kisakcod-posix-syscon-tests PRIVATE Threads::Threads)
+    kisakcod_test_warnings(kisakcod-posix-syscon-tests)
+    set_target_properties(kisakcod-posix-syscon-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME posix-syscon-contracts COMMAND kisakcod-posix-syscon-tests)
+    set_tests_properties(posix-syscon-contracts PROPERTIES TIMEOUT 20)
+endif()

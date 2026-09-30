@@ -220,7 +220,7 @@ void __cdecl Scr_SetMiscScrollPaneComp(UI_LinesComponent *)
 #include <gfx_d3d/r_rendercmds.h>
 #endif
 #include <qcommon/cmd.h>
-#include <win32/win_net.h>
+#include <qcommon/net_local.h>
 #include "scr_compiler.h"
 
 #ifdef KISAK_MP

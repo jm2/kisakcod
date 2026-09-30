@@ -24,7 +24,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 | `sys_filesystem` | Win32 | `opendir`, `/proc/self/exe`, `_NSGetExecutablePath` | `com_files.cpp`, `win_common.cpp` | called; `Sys_FileSystemRemoveTree`, `Sys_FileSystemReadFile` unwired |
 | `Sys_Console*` | `win_syscon.cpp` | stdio service | `win_main.cpp`, `win_syscon.cpp` only | no POSIX caller |
 | Stream sockets, `Sys_SocketResolveHost` | Winsock | BSD | HTTP download (`dl_main*.cpp`), `net_chan_mp.cpp` | called |
-| UDP sockets (`Sys_SocketOpenUdp`, `SendTo`, `RecvFrom`, broadcast) | Winsock | BSD | none: `win_net.cpp` uses raw Winsock | unwired |
+| UDP sockets (`Sys_SocketOpenUdp`, `SendTo`, `RecvFrom`, broadcast) | Winsock | BSD | `qcommon/net_local.cpp` (every headless build; the MP client keeps `win_net.cpp`) | called |
 | `Sys_Process*` launch/wait/park | `CreateProcess` | `posix_spawnp` | none | unwired |
 | `Sys_ProcessFreezeForCrash` | — | Mach backend (`sys_mach_crash.cpp`); Linux returns Unsupported | none | unwired |
 | `src/database/shader_cache.*` | — | — | none (yet in the headless set) | unwired; client item |
@@ -35,8 +35,8 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 | --- | --- | --- |
 | POSIX `main`, frame loop, `Sys_Init`/`Sys_Quit`/`Sys_Print`, event queue | `win_main.cpp` | 13 |
 | termios console on `Sys_Console*` | `win_syscon.cpp` | 13 |
-| `NET_*`/`Sys_SendPacket`/`Sys_GetPacket` on the `Sys_Socket` UDP API, one file for all platforms | `win_net.cpp` | 13 |
-| Remote debug socket: stub for headless | `win_net_debug.cpp` | 13 |
+| `NET_*`/`Sys_SendPacket`/`Sys_GetPacket` on the `Sys_Socket` UDP API, one file for all platforms | `win_net.cpp` | 13 (done: `qcommon/net_local.cpp`) |
+| Remote debug socket: stub for headless | `win_net_debug.cpp` | 13 (done: `qcommon/net_debug_stub.cpp`) |
 | Language selection, CPU detection, Steam-off stub | `win_localize.cpp`, `win_configure.cpp`, `win_steam.cpp` | 13 |
 | `Sys_RemoveDirTree` on `Sys_FileSystemRemoveTree` (returns false on POSIX today) | POSIX branch of `win_common.cpp` | 13 |
 | Relaunch via `Sys_ProcessLaunch` | `Sys_QuitAndStartProcess`, `Sys_Spawn` | later |
