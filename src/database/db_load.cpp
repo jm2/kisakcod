@@ -9671,6 +9671,10 @@ bool __cdecl Load_StringTable(bool atStreamStart)
 
 void __cdecl Load_StringTablePtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadStringTablePtrDisk32(atStreamStart, varStringTablePtr);
+#else
     Load_Stream(atStreamStart, (uint8_t *)varStringTablePtr, 4);
     if (*varStringTablePtr)
     {
@@ -9710,6 +9714,7 @@ void __cdecl Load_StringTablePtr(bool atStreamStart)
                 disk32::kStringTableBytes);
         }
     }
+#endif
 }
 
 void __cdecl Mark_StringTablePtr()
