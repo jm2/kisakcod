@@ -186,8 +186,12 @@ int __cdecl Kisak_rand();
 // `long int random(void)` at global scope — the engine's own float random()
 // cannot be redeclared next to it. On non-MSVC targets, spell the engine
 // function behind a namespaced macro so call sites keep saying `random()`.
-// MSVC never sees the macro, so the Win32 build is unchanged.
+// MSVC never sees the macro, so the Win32 build is unchanged. <stdlib.h> is
+// included here rather than trusted to arrive through <math.h>: libc++ 21
+// (Apple clang 21, macOS 27 SDK) no longer pulls it in, and a later
+// <stdlib.h> would then declare `long Kisak_random(void)` through the macro.
 #if !defined(_MSC_VER)
+#include <stdlib.h>
 #define random Kisak_random
 #endif
 

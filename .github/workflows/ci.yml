@@ -58,7 +58,9 @@ jobs:
             runner: windows-11-arm
             pe-arch: ARM64
           - platform: macOS arm64
-            runner: macos-15
+            # macOS 27 with Xcode 27 (Apple clang 21) is the macOS target; the
+            # xcode-27 image is GitHub's newest (preview) macOS runner.
+            runner: xcode-27
             file-arch: arm64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -238,7 +240,7 @@ jobs:
     # and the macOS SDK, which needs a macOS host. Informational only, like
     # native64-census: it never gates and is not in scaffolding-complete.
     name: Native64 census / mac64
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 20
     continue-on-error: true
     steps:
