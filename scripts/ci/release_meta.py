@@ -233,14 +233,14 @@ def codeview(exe: bytes) -> tuple[bytes, int, str]:
     raise ReleaseError("the executable has no CodeView (RSDS) record")
 
 
-def pdb_signature(pdb: bytes) -> tuple[bytes, int]:
-    """(GUID, age) of an MSF 7.00 PDB: the GUID from the PDB info stream (1), the age
-    from the DBI stream (3), the two values a debugger matches against the PE."""
-    if not pdb.startswith(b"Microsoft C/C++ MSF 7.00\r\n\x1aDS"):
+def pdb_signature(msf: bytes) -> tuple[bytes, int]:
+    """(GUID, age) of an MSF 7.00 PDB, the values a debugger matches against the PE."""
+    # The GUID lives in the PDB info stream (1) and the age in the DBI stream (3).
+    if not msf.startswith(b"Microsoft C/C++ MSF 7.00\r\n\x1aDS"):
         raise ReleaseError("the symbol file is not an MSF 7.00 PDB")
-    block, dir_bytes, map_block = _u32(pdb, 32), _u32(pdb, 44), _u32(pdb, 52)
-    directory = b"".join(pdb[n * block:(n + 1) * block] for n in
-                         (_u32(pdb, map_block * block + 4 * i) for i in range(-(-dir_bytes // block))))
+    block, dir_bytes, map_block = _u32(msf, 32), _u32(msf, 44), _u32(msf, 52)
+    directory = b"".join(msf[n * block:(n + 1) * block] for n in
+                         (_u32(msf, map_block * block + 4 * i) for i in range(-(-dir_bytes // block))))
     sizes = [_u32(directory, 4 + 4 * i) for i in range(_u32(directory, 0))]
 
     def stream(k: int) -> int:
@@ -248,16 +248,16 @@ def pdb_signature(pdb: bytes) -> tuple[bytes, int]:
         skip = sum(-(-n // block) for n in sizes[:k] if n != 0xFFFFFFFF)
         return _u32(directory, 4 + 4 * len(sizes) + 4 * skip) * block
     info, dbi = stream(1), stream(3)
-    return pdb[info + 12:info + 28], _u32(pdb, dbi + 8)
+    return msf[info + 12:info + 28], _u32(msf, dbi + 8)
 
 
-def pdb_id(exe: bytes, pdb: bytes, pdb_name: str) -> str:
+def pdb_id(exe: bytes, msf: bytes, pdb_name: str) -> str:
     """The GUID and age that tie a PE to its PDB, as hex; ReleaseError unless they match."""
     try:
         guid, age, path = codeview(exe)
         if re.split(r"[\\/]", path)[-1].lower() != pdb_name.lower():
             raise ReleaseError(f"the executable names {path}, not {pdb_name}")
-        if pdb_signature(pdb) != (guid, age):
+        if pdb_signature(msf) != (guid, age):
             raise ReleaseError("the PDB's GUID and age do not match the executable's")
     except struct.error as exc:
         raise ReleaseError(f"truncated executable or PDB: {exc}") from exc

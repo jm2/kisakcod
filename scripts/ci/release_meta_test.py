@@ -52,14 +52,14 @@ def fake_pe(guid: bytes, age: int, pdb_path: bytes) -> bytes:
 
 def fake_pdb(guid: bytes, age: int, block: int = 512) -> bytes:
     """A minimal MSF 7.00 file: block map in block 2, directory in 5, info stream in 3, DBI in 4."""
-    pdb = bytearray(6 * block)
+    msf = bytearray(6 * block)
     directory = struct.pack("<5I2I", 4, 0, 28, 0xFFFFFFFF, 64, 3, 4)
-    pdb[:56] = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0" + struct.pack("<6I", block, 1, 6, len(directory), 0, 2)
-    struct.pack_into("<I", pdb, 2 * block, 5)
-    pdb[5 * block:5 * block + len(directory)] = directory
-    struct.pack_into("<III16s", pdb, 3 * block, 20000404, 0, age + 7, guid)  # the info-stream age is not matched
-    struct.pack_into("<iII", pdb, 4 * block, -1, 19990903, age)
-    return bytes(pdb)
+    msf[:56] = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0" + struct.pack("<6I", block, 1, 6, len(directory), 0, 2)
+    struct.pack_into("<I", msf, 2 * block, 5)
+    msf[5 * block:5 * block + len(directory)] = directory
+    struct.pack_into("<III16s", msf, 3 * block, 20000404, 0, age + 7, guid)  # the info-stream age is not matched
+    struct.pack_into("<iII", msf, 4 * block, -1, 19990903, age)
+    return bytes(msf)
 
 
 def manifest_with(levels: dict[tuple[str, str], str]) -> dict:
@@ -196,20 +196,20 @@ class WindowsPackageTest(unittest.TestCase):
     def test_pdb_id_matches_guid_and_age(self):
         exe = fake_pe(self.GUID, 1, b"D:\\a\\bin\\RelWithDebInfo\\KisakCOD-dedi.pdb")
         self.assertEqual(rm.pdb_id(exe, fake_pdb(self.GUID, 1), "KisakCOD-dedi.pdb"), self.KEY + "1")
-        for exe_, pdb, name in ((exe, fake_pdb(self.GUID, 2), "KisakCOD-dedi.pdb"),         # stale age
+        for exe_, msf, name in ((exe, fake_pdb(self.GUID, 2), "KisakCOD-dedi.pdb"),         # stale age
                                 (exe, fake_pdb(bytes(16), 1), "KisakCOD-dedi.pdb"),         # another link
                                 (exe, fake_pdb(self.GUID, 1), "other.pdb"),                 # another name
                                 (exe[:0x300], fake_pdb(self.GUID, 1), "KisakCOD-dedi.pdb"),  # truncated
                                 (exe, b"not a pdb", "KisakCOD-dedi.pdb")):
-            with self.subTest(name=name, exe=len(exe_), pdb=len(pdb)), self.assertRaises(rm.ReleaseError):
-                rm.pdb_id(exe_, pdb, name)
+            with self.subTest(name=name, exe=len(exe_), msf=len(msf)), self.assertRaises(rm.ReleaseError):
+                rm.pdb_id(exe_, msf, name)
 
     def test_pdb_id_cli_prints_the_build_id(self):
         with tempfile.TemporaryDirectory() as tmp:
-            exe, pdb = Path(tmp) / "KisakCOD-dedi.exe", Path(tmp) / "KisakCOD-dedi.pdb"
+            exe, symbols = Path(tmp) / "KisakCOD-dedi.exe", Path(tmp) / "KisakCOD-dedi.pdb"
             exe.write_bytes(fake_pe(self.GUID, 3, b"KisakCOD-dedi.pdb"))
-            pdb.write_bytes(fake_pdb(self.GUID, 3))
-            run = cli("pdb-id", "--exe", str(exe), "--pdb", str(pdb))
+            symbols.write_bytes(fake_pdb(self.GUID, 3))
+            run = cli("pdb-id", "--exe", str(exe), "--pdb", str(symbols))
         self.assertEqual((run.returncode, run.stdout), (0, f"BUILD_ID={self.KEY}3\n"))
 
     def test_zip_is_sorted_and_reproducible(self):
