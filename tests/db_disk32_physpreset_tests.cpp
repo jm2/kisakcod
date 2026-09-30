@@ -55,8 +55,13 @@ constexpr std::uint32_t VirtualOffset(std::uint32_t offset)
 struct Scalars
 {
     std::int32_t type;
-    float mass, bounce, friction, bulletForceScale, explosiveForceScale;
-    float piecesSpreadFraction, piecesUpwardVelocity;
+    float mass;
+    float bounce;
+    float friction;
+    float bulletForceScale;
+    float explosiveForceScale;
+    float piecesSpreadFraction;
+    float piecesUpwardVelocity;
     std::uint8_t cylinder; // the disk byte; any nonzero value is true
 };
 
@@ -134,8 +139,9 @@ PhysPreset *Load(std::uintptr_t slotValue)
 
 bool Matches(const PhysPreset &loaded, const Scalars &s)
 {
-    std::uint8_t cylinderByte = 0xFF; // a converted bool is exactly 0 or 1
-    std::memcpy(&cylinderByte, &loaded.tempDefaultToCylinder, 1);
+    // A converted bool is exactly 0 or 1. Its byte is read as unsigned char,
+    // so an invalid bool value is seen rather than loaded.
+    const unsigned char cylinderByte = *reinterpret_cast<const unsigned char *>(&loaded.tempDefaultToCylinder);
     return loaded.type == s.type && loaded.mass == s.mass && loaded.bounce == s.bounce
         && loaded.friction == s.friction && loaded.bulletForceScale == s.bulletForceScale
         && loaded.explosiveForceScale == s.explosiveForceScale
