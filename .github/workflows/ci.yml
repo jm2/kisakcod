@@ -276,11 +276,11 @@ jobs:
   macos-headless:
     # The POSIX headless dedicated server on macOS arm64 (gate G3): the same
     # configure, architecture check and assetless smoke run as linux-headless.
-    # macOS 27 with Xcode 27 is the macOS target, and xcode-27 is GitHub's
-    # newest macOS image (preview). Ninja bounds the bare --parallel to the
-    # runner's cores.
+    # It gates, so it runs on macos-26, GitHub's newest GA macOS image; the
+    # mac64 census covers the macOS 27 SDK on xcode-27. Ninja bounds the bare
+    # --parallel to the runner's cores.
     name: macOS headless server / arm64
-    runs-on: xcode-27
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
