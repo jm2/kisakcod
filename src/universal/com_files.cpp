@@ -1931,18 +1931,18 @@ int __cdecl Sys_DirectoryHasContents(const char *directory)
 #else
 int __cdecl Sys_DirectoryHasContents(const char *directory)
 {
-    // Portable branch of the Win32 _findfirst64i32 scan above: the directory
-    // has contents when one enumerated entry is not "." / ".." / "CVS". The
-    // Sys_FileSystem seam keeps links and special files out of the listing, so
-    // every retained entry is a real file or directory, which is the same
-    // accept rule the attribute test applies on Windows.
+    // Portable branch of the Win32 _findfirst64i32 scan above, with its accept
+    // rule: any file counts, and a directory counts unless it is "." / ".." /
+    // "CVS". The Sys_FileSystem seam keeps links and special files out of the
+    // listing, so every retained entry is a real file or directory.
     std::vector<SysFileSystemDirectoryEntry> entries;
     const SysFileSystemListStatus status = Sys_FileSystemListDirectory(directory, 64, &entries);
     if (status == SysFileSystemListStatus::Error)
         return 0;
     for (const SysFileSystemDirectoryEntry &entry : entries)
     {
-        if (I_stricmp(entry.name.c_str(), ".")
+        if (entry.kind != SysFileSystemEntryKind::Directory
+            || I_stricmp(entry.name.c_str(), ".")
             && I_stricmp(entry.name.c_str(), "..")
             && I_stricmp(entry.name.c_str(), "CVS"))
         {
