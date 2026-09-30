@@ -2417,10 +2417,16 @@ LABEL_6:
         }
         Float = Scr_GetFloat(1);
     }
+    // The client's CG_DeactivateReverbCmd reads "D <priority> <fadetime>",
+    // with setReverb's priority numbers; the decompiled format had six
+    // conversions for two arguments.
+    int32_t prio = 1;
     ConstString = Scr_GetConstString(0);
-    if (ConstString != scr_const.snd_enveffectsprio_level && ConstString != scr_const.snd_enveffectsprio_shellshock)
+    if (ConstString == scr_const.snd_enveffectsprio_shellshock)
+        prio = 2;
+    else if (ConstString != scr_const.snd_enveffectsprio_level)
         Scr_Error("priority must be 'snd_enveffectsprio_level' or 'snd_enveffectsprio_shellshock'\n");
-    v6 = va("%c %i \"%s\" %g %g %g", 68, Float);
+    v6 = va("%c %i %g", 68, prio, Float);
     SV_GameSendServerCommand(v1, SV_CMD_RELIABLE, v6);
 }
 
@@ -2519,15 +2525,20 @@ LABEL_6:
         }
         Float = Scr_GetFloat(1);
     }
+    // CG_DeactivateChannelVolCmd reads "F <priority> <fadetime>", with
+    // setChannelVolumes' priority numbers.
+    int32_t prio = 1;
     ConstString = Scr_GetConstString(0);
-    if (ConstString != scr_const.snd_channelvolprio_holdbreath
-        && ConstString != scr_const.snd_channelvolprio_pain
-        && ConstString != scr_const.snd_channelvolprio_shellshock)
+    if (ConstString == scr_const.snd_channelvolprio_pain)
+        prio = 2;
+    else if (ConstString == scr_const.snd_channelvolprio_shellshock)
+        prio = 3;
+    else if (ConstString != scr_const.snd_channelvolprio_holdbreath)
     {
         Scr_Error(
             "priority must be 'snd_channelvolprio_holdbreath', 'snd_channelvolprio_pain', or 'snd_channelvolprio_shellshock'\n");
     }
-    v6 = va("%c %i \"%s\" %g %g %g", 70, Float);
+    v6 = va("%c %i %g", 70, prio, Float);
     SV_GameSendServerCommand(v1, SV_CMD_RELIABLE, v6);
 }
 
