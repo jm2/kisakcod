@@ -1111,8 +1111,9 @@ void EmitCanonicalString(uint32_t stringValue)
 	}
 	else if (scrCompilePub.developer_statement == SCR_DEV_EVALUATE)
 	{
-		*(unsigned short*)scrCompileGlob.codePos = Scr_CompileCanonicalString(stringValue);
-		if (!*scrCompileGlob.codePos)
+		const unsigned short canonicalString = Scr_CompileCanonicalString(stringValue);
+		Scr_WriteBytecodeValue(scrCompileGlob.codePos, canonicalString);
+		if (!canonicalString)
 			CompileError(0, "unknown field");
 	}
 	else
@@ -1122,7 +1123,7 @@ void EmitCanonicalString(uint32_t stringValue)
 			SL_AddRefToString(stringValue);
 		}
 
-		*(unsigned short *)scrCompileGlob.codePos = SL_TransferToCanonicalString(stringValue);
+		Scr_WriteBytecodeValue(scrCompileGlob.codePos, static_cast<unsigned short>(SL_TransferToCanonicalString(stringValue)));
 	}
 }
 
@@ -2352,7 +2353,7 @@ void EmitBoolAndExpression(sval_u expr1, sval_u expr2, sval_u expr1sourcePos, sv
 
 	iassert(offset < 65536);
 
-	*(unsigned short *)pos = offset;
+	Scr_WriteBytecodeValue(const_cast<char *>(pos), static_cast<unsigned short>(offset));
 }
 
 /*
@@ -2384,7 +2385,7 @@ void EmitBoolOrExpression(sval_u expr1, sval_u expr2, sval_u expr1sourcePos, sva
 
 	iassert(offset < 65536);
 
-	*(unsigned short *)pos = offset;
+	Scr_WriteBytecodeValue(const_cast<char *>(pos), static_cast<unsigned short>(offset));
 }
 
 /*
@@ -2765,12 +2766,12 @@ void LinkThread(uint32_t threadCountId, VariableValue *pos, bool allowFarCall)
 			CompileError2((char *)value->codePosValue, "unknown function");
 		}
 
-		if (!allowFarCall && *(intptr_t *)value->codePosValue == FUNC_SCOPE_FAR)
+		if (!allowFarCall && Scr_ReadBytecodeValue<intptr_t>(value->codePosValue) == FUNC_SCOPE_FAR)
 		{
 			CompileError2((char *)value->codePosValue, "unknown function");
 		}
 
-		*(const char **)value->codePosValue = pos->u.codePosValue;
+		Scr_WriteBytecodeValue(const_cast<char *>(value->codePosValue), pos->u.codePosValue);
 		
 		RemoveVariable(threadCountId, i + 2);// free the per-reference position temp
 	}
@@ -4643,13 +4644,13 @@ void EmitForStatement(sval_u stmt1, sval_u expr, sval_u stmt2, sval_u stmt, sval
 	offset = TempMalloc(0) - pos1;
 	if (offset >= 0x10000)
 		MyAssertHandler(".\\script\\scr_compiler.cpp", 3658, 0, "%s", "offset < 65536");
-	*(unsigned short*)scrCompileGlob.codePos = offset;
+	Scr_WriteBytecodeValue(scrCompileGlob.codePos, static_cast<unsigned short>(offset));
 	if (pos2)
 	{
 		offset = TempMalloc(0) - nextPos2;
 		if (offset >= 0x10000)
 			MyAssertHandler(".\\script\\scr_compiler.cpp", 3663, 0, "%s", "offset < 65536");
-		*(unsigned short *)pos2 = offset;
+		Scr_WriteBytecodeValue(const_cast<char *>(pos2), static_cast<unsigned short>(offset));
 	}
 	ConnectBreakStatements();
 	scrCompileGlob.bCanBreak = bOldCanBreak;
@@ -4767,13 +4768,13 @@ void EmitWhileStatement(sval_u expr, sval_u stmt, sval_u sourcePos, sval_u while
 	offset = TempMalloc(0) - pos1;
 	if (offset >= 0x10000)
 		MyAssertHandler(".\\script\\scr_compiler.cpp", 3429, 0, "%s", "offset < 65536");
-	*(unsigned short*)scrCompileGlob.codePos = offset;
+	Scr_WriteBytecodeValue(scrCompileGlob.codePos, static_cast<unsigned short>(offset));
 	if (pos2)
 	{
 		offset = TempMalloc(0) - nextPos2;
 		if (offset >= 0x10000)
 			MyAssertHandler(".\\script\\scr_compiler.cpp", 3434, 0, "%s", "offset < 65536");
-		*(unsigned short *)pos2 = offset;
+		Scr_WriteBytecodeValue(const_cast<char *>(pos2), static_cast<unsigned short>(offset));
 	}
 	ConnectBreakStatements();
 	scrCompileGlob.bCanBreak = bOldCanBreak;
@@ -5145,7 +5146,7 @@ void EmitIfStatement(sval_u expr, sval_u stmt, sval_u sourcePos, bool lastStatem
 	//offset = TempMallocAlignStrict(0) - nextPos;
 	offset = (TempMalloc(0) - nextPos);
 	iassert(offset < 65536);
-	*(unsigned short *)pos = offset;
+	Scr_WriteBytecodeValue(const_cast<char *>(pos), static_cast<unsigned short>(offset));
 }
 
 /*

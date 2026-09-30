@@ -164,12 +164,16 @@ uint32_t __cdecl Scr_UsingTreeInternal(const char *filename, uint32_t *index, in
     }
     else
     {
+        // Index 0 means no tree, so a user holds MAX_XANIMTREE_NUM - 1 trees.
+        // The assert-only check let a release build write one past the end
+        // of using_xanim_lookup[user] (#199).
+        if (scrAnimPub.xanim_num[user] >= MAX_XANIMTREE_NUM - 1)
+            Com_Error(ERR_DROP, "MAX_XANIMTREE_NUM exceeded");
+
         ida = GetNewVariable(scrAnimPub.animtrees, name);
         fileId = GetObject(ida);
 
         scrAnimPub.xanim_num[user]++;
-
-        iassert(scrAnimPub.xanim_num[user] < MAX_XANIMTREE_NUM);
 
         scrAnimGlob.using_xanim_lookup[user][scrAnimPub.xanim_num[user]] = ida;
         *index = scrAnimPub.xanim_num[user];

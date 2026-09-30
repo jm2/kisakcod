@@ -213,152 +213,61 @@ add_test(
     NAME script-widening-value-contracts
     COMMAND kisakcod-script-widening-value-tests)
 
-# script-parser-stack-growth-contracts: behavioral regression for the parser
-# state/value stack relocation (ki-pycb). The relocation fragments are
-# extracted verbatim from both parser sources at configure time, so this TU
-# executes the real copy and cursor-restore statements against the real sval_u
-# value cell and short state cell rather than a separate reimplementation.
-# The record declarations, initial stack depth and max-depth limit are also
-# extracted, and configure fails closed if any anchor or declaration drifts.
-function(kisakcod_extract_yacc_between source begin_mark end_mark output)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
-    file(READ "${source}" _slice_text)
-    string(FIND "${_slice_text}" "${begin_mark}" _slice_begin)
-    string(FIND "${_slice_text}" "${end_mark}" _slice_end)
-    if(_slice_begin EQUAL -1 OR _slice_end EQUAL -1 OR _slice_end LESS_EQUAL _slice_begin)
-        message(FATAL_ERROR
-            "Parser anchors '${begin_mark}' missing or misordered in ${source}")
-    endif()
-    string(LENGTH "${begin_mark}" _slice_begin_len)
-    math(EXPR _slice_begin "${_slice_begin} + ${_slice_begin_len}")
-    math(EXPR _slice_len "${_slice_end} - ${_slice_begin}")
-    string(SUBSTRING "${_slice_text}" "${_slice_begin}" "${_slice_len}" _slice_body)
-    string(STRIP "${_slice_body}" _slice_body)
-    file(WRITE "${output}" "${_slice_body}\n")
-endfunction()
+# GSC parser and VM regressions (NOW row 20; #225, #199): real GSC source
+# through every script TU the servers build, loaded, compiled and run as the
+# game does. The boundary those TUs call is script_engine_harness.cpp.
+# Linux and clang only: the script TUs follow the engine's clang +
+# -fms-extensions toolchain policy (PLATFORM_POSIX.md), and the engine
+# compiles off Windows only on Linux so far. --gc-sections drops the engine
+# code no case reaches, so only that boundary needs definitions.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_library(kisakcod-script-engine-objects OBJECT
+        ${SRC_DIR}/script/scr_animtree.cpp
+        ${SRC_DIR}/script/scr_compiler2.cpp
+        ${SRC_DIR}/script/scr_const.cpp
+        ${SRC_DIR}/script/scr_debugger.cpp
+        ${SRC_DIR}/script/scr_evaluate.cpp
+        ${SRC_DIR}/script/scr_main.cpp
+        ${SRC_DIR}/script/scr_memorytree.cpp
+        ${SRC_DIR}/script/scr_parser.cpp
+        ${SRC_DIR}/script/scr_parsetree.cpp
+        ${SRC_DIR}/script/scr_stringlist.cpp
+        ${SRC_DIR}/script/scr_variable.cpp
+        ${SRC_DIR}/script/scr_vm.cpp
+        ${SRC_DIR}/script/scr_yacc2.cpp
+    )
+    # The Linux headless server's defines; SYSTEM keeps the decompiled
+    # headers' warnings off the tests' strict warning set.
+    target_include_directories(kisakcod-script-engine-objects SYSTEM PUBLIC ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-script-engine-objects PUBLIC cxx_std_20)
+    target_compile_definitions(kisakcod-script-engine-objects PUBLIC
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS)
+    target_compile_options(kisakcod-script-engine-objects PUBLIC
+        -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-script-engine-objects PUBLIC -Wl,--gc-sections)
 
-# Extract the max-depth literal (and prove it is a single integer) from the
-# guard predicate the parser actually evaluates, so the test cannot drift from
-# the production limit without a configure-time failure.
-function(kisakcod_yacc_maxdepth source begin_mark end_mark out_var)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
-    file(READ "${source}" _md_text)
-    string(FIND "${_md_text}" "${begin_mark}" _md_begin)
-    string(FIND "${_md_text}" "${end_mark}" _md_end)
-    if(_md_begin EQUAL -1 OR _md_end LESS_EQUAL _md_begin)
-        message(FATAL_ERROR "Max-depth anchors missing in ${source}")
-    endif()
-    string(LENGTH "${begin_mark}" _md_begin_len)
-    math(EXPR _md_begin "${_md_begin} + ${_md_begin_len}")
-    math(EXPR _md_len "${_md_end} - ${_md_begin}")
-    string(SUBSTRING "${_md_text}" "${_md_begin}" "${_md_len}" _md_body)
-    string(REGEX MATCHALL "[0-9]+" _md_numbers "${_md_body}")
-    list(LENGTH _md_numbers _md_count)
-    if(NOT _md_count EQUAL 1)
-        message(FATAL_ERROR
-            "Expected exactly one max-depth literal in ${source}, got '${_md_body}'")
-    endif()
-    set(${out_var} "${_md_numbers}" PARENT_SCOPE)
-endfunction()
-
-set(_yacc_growth_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
-file(MAKE_DIRECTORY "${_yacc_growth_generated_dir}")
-
-# The built parser (client/dedicated/server targets) and the unbuilt generated
-# reference carry the same growth block; both slices are pinned by this test,
-# including the live-count capture, the doubling/clamp and the overflowing
-# predicate, so the test executes the real decision rather than reproducing it.
-kisakcod_extract_yacc_between(
-    "${SRC_DIR}/script/scr_yacc2.cpp"
-    "//SCRIPT_YACC2_GROWTH_SLICE_BEGIN"
-    "//SCRIPT_YACC2_GROWTH_SLICE_END"
-    "${_yacc_growth_generated_dir}/script_yacc2_growth_slice.inc")
-kisakcod_extract_yacc_between(
-    "${SRC_DIR}/script/scr_yacc.cpp"
-    "//SCRIPT_YACC_GROWTH_SLICE_BEGIN"
-    "//SCRIPT_YACC_GROWTH_SLICE_END"
-    "${_yacc_growth_generated_dir}/script_yacc_growth_slice.inc")
-
-# Real record declarations. The production declaration becomes the test's
-# stype_t; the generated declaration is renamed and checked against it.
-kisakcod_extract_yacc_between(
-    "${SRC_DIR}/script/scr_yacc2.cpp"
-    "//SCRIPT_YACC2_STYPE_BEGIN"
-    "//SCRIPT_YACC2_STYPE_END"
-    "${_yacc_growth_generated_dir}/script_stype_production.inc")
-kisakcod_extract_yacc_between(
-    "${SRC_DIR}/script/scr_yacc.cpp"
-    "//SCRIPT_YACC_STYPE_BEGIN"
-    "//SCRIPT_YACC_STYPE_END"
-    "${_yacc_growth_generated_dir}/script_stype_generated_raw.inc")
-file(READ "${_yacc_growth_generated_dir}/script_stype_generated_raw.inc" _gen_stype_text)
-if(NOT _gen_stype_text MATCHES "struct stype_t")
-    message(FATAL_ERROR "Generated parser declaration missing 'struct stype_t'")
+    add_executable(kisakcod-script-parser-stack-growth-tests
+        script_parser_stack_growth_test.cpp script_engine_harness.cpp)
+    add_executable(kisakcod-script-vm-arithmetic-tests
+        script_vm_arithmetic_test.cpp script_engine_harness.cpp)
+    foreach(_target kisakcod-script-parser-stack-growth-tests kisakcod-script-vm-arithmetic-tests)
+        target_link_libraries(${_target} PRIVATE kisakcod-script-engine-objects)
+        kisakcod_test_warnings(${_target})
+        set_target_properties(${_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    endforeach()
+    # One process per case: each leaves the script system as a drop does.
+    foreach(_case stack-growth long-lexeme error-recovery)
+        add_test(NAME script-parser-${_case}-contracts
+            COMMAND kisakcod-script-parser-stack-growth-tests ${_case})
+        set_tests_properties(script-parser-${_case}-contracts PROPERTIES TIMEOUT 120)
+    endforeach()
+    foreach(_case arithmetic animtree-limit)
+        add_test(NAME script-vm-${_case}-contracts
+            COMMAND kisakcod-script-vm-arithmetic-tests ${_case})
+        set_tests_properties(script-vm-${_case}-contracts PROPERTIES TIMEOUT 120)
+    endforeach()
 endif()
-string(REPLACE "stype_t" "generated_stype_t" _gen_stype_text "${_gen_stype_text}")
-file(WRITE "${_yacc_growth_generated_dir}/script_stype_generated.inc" "${_gen_stype_text}")
-
-# Real initial stack depths: the built parser's YYINITDEPTH expression
-# (200 + sizeof(stype_t)) and the generated reference's literal array bound.
-kisakcod_extract_yacc_between(
-    "${SRC_DIR}/script/scr_yacc2.cpp"
-    "//SCRIPT_YACC2_INITDEPTH_BEGIN"
-    "//SCRIPT_YACC2_INITDEPTH_END"
-    "${_yacc_growth_generated_dir}/script_yacc2_initdepth.inc")
-file(READ "${SRC_DIR}/script/scr_yacc.cpp" _gen_yacc_text)
-string(REGEX MATCH "yyssa\\[([0-9]+)\\]" _gen_yyssa "${_gen_yacc_text}")
-set(_gen_depth "${CMAKE_MATCH_1}")
-string(REGEX MATCH "yyvsa\\[([0-9]+)\\]" _gen_yyvsa "${_gen_yacc_text}")
-set(_gen_value_depth "${CMAKE_MATCH_1}")
-if(_gen_depth STREQUAL "" OR _gen_value_depth STREQUAL "" OR NOT _gen_depth EQUAL "${_gen_value_depth}")
-    message(FATAL_ERROR
-        "Generated parser state/value initial depths missing or mismatched")
-endif()
-file(WRITE "${_yacc_growth_generated_dir}/script_yacc_initial_depth.inc"
-    "#define SCRIPT_YACC_INITIAL_CAPACITY ${_gen_depth}\n")
-
-# The max-depth limit is read from the guard predicate both parsers evaluate.
-kisakcod_yacc_maxdepth(
-    "${SRC_DIR}/script/scr_yacc2.cpp"
-    "//SCRIPT_YACC2_MAXDEPTH_BEGIN"
-    "//SCRIPT_YACC2_MAXDEPTH_END"
-    _yacc2_maxdepth)
-kisakcod_yacc_maxdepth(
-    "${SRC_DIR}/script/scr_yacc.cpp"
-    "//SCRIPT_YACC_MAXDEPTH_BEGIN"
-    "//SCRIPT_YACC_MAXDEPTH_END"
-    _yacc_maxdepth)
-if(NOT _yacc2_maxdepth EQUAL _yacc_maxdepth)
-    message(FATAL_ERROR
-        "Max-depth limit differs between parsers: ${_yacc2_maxdepth} != ${_yacc_maxdepth}")
-endif()
-file(WRITE "${_yacc_growth_generated_dir}/script_yacc_maxdepth.inc"
-    "#define SCRIPT_YACC_STACK_LIMIT ${_yacc2_maxdepth}\n")
-
-add_executable(kisakcod-script-parser-stack-growth-tests
-    script_parser_stack_growth_test.cpp)
-target_include_directories(
-    kisakcod-script-parser-stack-growth-tests PRIVATE
-        ${SRC_DIR}
-        ${_yacc_growth_generated_dir})
-target_compile_definitions(
-    kisakcod-script-parser-stack-growth-tests PRIVATE KISAK_DEDI_HEADLESS=1)
-target_compile_features(
-    kisakcod-script-parser-stack-growth-tests PRIVATE cxx_std_20)
-# The verbatim slices keep the decompiled parser's allocation/copy idioms
-# (alloca copies over the parse-value union); isolate their diagnostics.
-if(MSVC)
-    target_compile_options(kisakcod-script-parser-stack-growth-tests PRIVATE /W0)
-else()
-    target_compile_options(kisakcod-script-parser-stack-growth-tests PRIVATE -w)
-endif()
-set_target_properties(
-    kisakcod-script-parser-stack-growth-tests PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-add_test(
-    NAME script-parser-stack-growth-contracts
-    COMMAND kisakcod-script-parser-stack-growth-tests)
-set_tests_properties(script-parser-stack-growth-contracts PROPERTIES TIMEOUT 60)
 
 # Compile selected production bodies against real runtime record headers and
 # service doubles. These regressions exercise allocations and pointer consumers,

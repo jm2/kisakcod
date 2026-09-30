@@ -40,13 +40,11 @@
 #include <client_mp/client_mp.h>
 #include "scr_compiler.h"
 
-//SCRIPT_YACC_STYPE_BEGIN
 struct stype_t // sizeof=0x8
 {                                       // ...
     sval_u val;                         // ...
     unsigned int pos;                   // ...
 };
-//SCRIPT_YACC_STYPE_END
 
 // KISAKTODO ICF'd function that just returns first arg. 
 sval_u __cdecl node1_(unsigned int pool)
@@ -6152,13 +6150,10 @@ int __cdecl yyparse()
         if (yyssp >= &yyss[yystacksize - 1])
         {
             int yy_stack_overflow;
-            //SCRIPT_YACC_GROWTH_SLICE_BEGIN
             yyvs1 = yyvs;
             yyss1 = yyss;
             v37 = yyssp - yyss + 1;
-            //SCRIPT_YACC_MAXDEPTH_BEGIN
             yy_stack_overflow = (yystacksize >= 10000);
-            //SCRIPT_YACC_MAXDEPTH_END
             if (!yy_stack_overflow)
             {
                 yystacksize *= 2;
@@ -6190,7 +6185,6 @@ int __cdecl yyparse()
                 yyssp = &yyss[v37 - 1];
                 yyvsp = &yyvs[v37 - 1];
             }
-            //SCRIPT_YACC_GROWTH_SLICE_END
             if (yy_stack_overflow)
             {
                 v17 = "parser stack overflow";
