@@ -812,13 +812,6 @@ static const char *DB_GetFastFileBasePath()
     return Sys_DefaultInstallPath();
 }
 
-// Buffered overlapped reads avoid the sector-alignment contract imposed by
-// unbuffered I/O.  The fast-file ring is only naturally word-aligned;
-// sequential-scan caching is the safe equivalent until the file adapter owns
-// an explicitly aligned allocation.
-static constexpr uint32_t DB_FAST_FILE_ASYNC_FLAGS =
-    FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN;
-
 void __cdecl DB_BuildOSPath_Mod(const char *zoneName, uint32_t size, char *filename)
 {
     const char *string; // [esp-8h] [ebp-8h]
@@ -832,22 +825,15 @@ void __cdecl DB_BuildOSPath_Mod(const char *zoneName, uint32_t size, char *filen
 bool __cdecl DB_ModFileExists()
 {
     char filename[256]; // [esp+0h] [ebp-108h] BYREF
-    void *zoneFile; // [esp+104h] [ebp-4h]
+    SysFileHandle zoneFile; // [esp+104h] [ebp-4h]
 
     if (!*fs_gameDirVar->current.string)
         return 0;
     DB_BuildOSPath_Mod("mod", 0x100u, filename);
-    zoneFile = CreateFileA(
-        filename,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr);
-    if (zoneFile == INVALID_HANDLE_VALUE)
+    zoneFile = Sys_FileOpenRead(filename);
+    if (!zoneFile)
         return 0;
-    CloseHandle(zoneFile);
+    Sys_FileClose(&zoneFile);
     return 1;
 }
 
@@ -3014,7 +3000,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
     char filename[256]; // [esp+Ch] [ebp-110h] BYREF
     bool modZone; // [esp+113h] [ebp-9h]
     uint32_t i; // [esp+114h] [ebp-8h]
-    void *zoneFile; // [esp+118h] [ebp-4h]
+    SysFileHandle zoneFile; // [esp+118h] [ebp-4h]
 
     if (!zoneName || !*zoneName)
     {
@@ -3030,63 +3016,35 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         if (*fs_gameDirVar->current.string && DB_ShouldLoadFromModDir(zoneName))
         {
             DB_BuildOSPath_Mod(zoneName, 256, filename);
-            zoneFile = CreateFileA(
-                filename,
-                GENERIC_READ,
-                FILE_SHARE_READ,
-                nullptr,
-                OPEN_EXISTING,
-                DB_FAST_FILE_ASYNC_FLAGS,
-                nullptr);
-            modZone = zoneFile != INVALID_HANDLE_VALUE;
+            zoneFile = Sys_FileOpenRead(filename);
+            modZone = zoneFile != nullptr;
         }
         else
         {
-            zoneFile = INVALID_HANDLE_VALUE;
+            zoneFile = nullptr;
         }
-        if (zoneFile == INVALID_HANDLE_VALUE)
+        if (!zoneFile)
         {
             DB_BuildOSPath(zoneName, 256, filename);
-            zoneFile = CreateFileA(
-                filename,
-                GENERIC_READ,
-                FILE_SHARE_READ,
-                nullptr,
-                OPEN_EXISTING,
-                DB_FAST_FILE_ASYNC_FLAGS,
-                nullptr);
+            zoneFile = Sys_FileOpenRead(filename);
         }
     }
     else
     {
-        zoneFile = CreateFileA(
-            "update:\\mp_patch.ff",
-            GENERIC_READ,
-            0,
-            nullptr,
-            OPEN_EXISTING,
-            DB_FAST_FILE_ASYNC_FLAGS,
-            nullptr);
-        if (zoneFile == INVALID_HANDLE_VALUE)
+        zoneFile = Sys_FileOpenRead("update:\\mp_patch.ff");
+        if (!zoneFile)
         {
             Com_Printf(16, "Loading mp_patch.ff from disc, not from the update drive\n");
             DB_BuildOSPath(zoneName, 256, filename);
-            zoneFile = CreateFileA(
-                filename,
-                GENERIC_READ,
-                0,
-                nullptr,
-                OPEN_EXISTING,
-                DB_FAST_FILE_ASYNC_FLAGS,
-                nullptr);
-            if (zoneFile == INVALID_HANDLE_VALUE)
+            zoneFile = Sys_FileOpenRead(filename);
+            if (!zoneFile)
             {
                 Com_PrintWarning(10, "WARNING: Could not find zone '%s'\n", filename);
                 return 0;
             }
         }
     }
-    if (zoneFile == INVALID_HANDLE_VALUE)
+    if (!zoneFile)
     {
         v3 = strstr(filename, "_load");
         if (v3)
@@ -3116,7 +3074,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
 
         if (!db::zone_slots::IsUsableZoneSlot(g_zoneIndex))
         {
-            CloseHandle(zoneFile);
+            Sys_FileClose(&zoneFile);
             Com_Error(ERR_FATAL, "No free fast-file zone slot");
             return 0;
         }
@@ -3125,7 +3083,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
                 >= static_cast<int32_t>(
                     db::zone_slots::kUsableZoneSlotCount))
         {
-            CloseHandle(zoneFile);
+            Sys_FileClose(&zoneFile);
             Com_Error(ERR_FATAL, "Fast-file zone count is out of range");
             return 0;
         }
@@ -3140,7 +3098,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         }
         if (Sys_AtomicCompareExchange(&g_loadingZone, 1u, 0u))
         {
-            CloseHandle(zoneFile);
+            Sys_FileClose(&zoneFile);
             Com_Error(ERR_FATAL, "Overlapping fast-file zone loads");
             return 0;
         }
@@ -3160,7 +3118,12 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         g_zoneHandles[g_zoneCount] = g_zoneIndex;
         I_strncpyz(zone->name, zoneName, 64);
         zone->flags = zoneFlags;
-        zone->fileSize = GetFileSize(zoneFile, 0);
+        {
+            std::uint64_t zoneFileSize = 0;
+            if (!Sys_FileGetSize(zoneFile, &zoneFileSize))
+                zoneFileSize = 0xFFFFFFFFull;
+            zone->fileSize = static_cast<int>(static_cast<uint32_t>(zoneFileSize));
+        }
         zone->modZone = modZone;
         if (!_stricmp(zone_reorder->current.string, zoneName))
             DB_BeginReorderZone(zoneName);
@@ -3656,26 +3619,20 @@ void __cdecl DB_Cleanup()
 int32_t __cdecl DB_FileSize(const char *zoneName, int32_t isMod)
 {
     char filename[260]; // [esp+0h] [ebp-110h] BYREF
-    int32_t size; // [esp+108h] [ebp-8h]
-    void *zoneFile; // [esp+10Ch] [ebp-4h]
+    SysFileHandle zoneFile; // [esp+10Ch] [ebp-4h]
 
     if (isMod)
         DB_BuildOSPath_Mod(zoneName, 0x100u, filename);
     else
         DB_BuildOSPath(zoneName, 0x100u, filename);
-    zoneFile = CreateFileA(
-        filename,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr);
-    if (zoneFile == INVALID_HANDLE_VALUE)
+    zoneFile = Sys_FileOpenRead(filename);
+    if (!zoneFile)
         return 0;
-    size = GetFileSize(zoneFile, 0);
-    CloseHandle(zoneFile);
-    return size;
+    std::uint64_t fileSize = 0;
+    if (!Sys_FileGetSize(zoneFile, &fileSize))
+        fileSize = 0xFFFFFFFFull;
+    Sys_FileClose(&zoneFile);
+    return static_cast<int32_t>(static_cast<uint32_t>(fileSize));
 }
 
 void __cdecl Load_GetCurrentZoneHandle(uint8_t *handle)
