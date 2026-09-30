@@ -8,7 +8,6 @@ import copy
 import io
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,7 +21,6 @@ import release_meta as rm  # noqa: E402
 
 SHA_A, SHA_B = "a" * 40, "b" * 40
 REAL_MANIFEST = json.loads(rm.MANIFEST.read_text())
-GIT = shutil.which("git") or "git"
 
 
 def cli(*args: str) -> SimpleNamespace:
@@ -152,7 +150,7 @@ class NotesTest(unittest.TestCase):
     def git(self, *args: str) -> str:
         env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t",
                "GIT_COMMITTER_EMAIL": "t@example.com", "HOME": self.repo, "PATH": os.environ["PATH"]}
-        return subprocess.run([GIT, "-C", self.repo, *args], check=True, capture_output=True, text=True,
+        return subprocess.run(["git", "-C", self.repo, *args], check=True, capture_output=True, text=True,
                               env=env).stdout.strip()
 
     def setUp(self):
@@ -173,7 +171,7 @@ class NotesTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def notes(self, tag: str) -> subprocess.CompletedProcess:
+    def notes(self, tag: str) -> SimpleNamespace:
         return cli("notes", "--tag", tag, "--commit", self.commit, "--matrix", json.dumps({"include": self.legs}),
                    "--run-url", "https://example.com/run/1", "--repo-dir", self.repo)
 

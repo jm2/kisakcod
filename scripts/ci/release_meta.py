@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import subprocess
 import sys
 import textwrap
@@ -144,12 +143,8 @@ def readme(leg: dict, version: str, commit: str, requires: str) -> str:
 
 def changes(repo: Path, commit: str, tag: str) -> tuple[str | None, list[str]]:
     """(previous vX.Y.Z tag, one line per first-parent commit since it, newest first)."""
-    git_exe = shutil.which("git")
-    if not git_exe:
-        raise ReleaseError("git is not on PATH")
-
     def git(*args: str) -> str:
-        return subprocess.run([git_exe, "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
+        return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
     tags = git("tag", "--merged", commit, "--list", "v*", "--sort=-v:refname").split()
     previous = next((t for t in tags if RELEASE_RE.fullmatch(t) and t != tag), None)
     log = git("log", "--first-parent", "--format=%H%x1f%s%x1f%b%x1e", f"{previous}..{commit}" if previous else commit)
