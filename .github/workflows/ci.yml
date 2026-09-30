@@ -74,7 +74,9 @@ jobs:
           -DBUILD_TESTING=ON
 
       - name: Build portable tests
-        run: cmake --build build-tests --config Release --parallel
+        # A bare --parallel is an unbounded make -j with the Makefiles
+        # generator; on the 7 GB macOS runner that swaps for over an hour.
+        run: cmake --build build-tests --config Release --parallel 4
 
       - name: Verify binary architecture (ELF/Mach-O)
         if: matrix.file-arch
