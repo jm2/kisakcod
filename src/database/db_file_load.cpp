@@ -1,4 +1,5 @@
 #include "database.h"
+#include "db_disk32_load.h"
 #include "db_load_atomic.h"
 #include "db_validation.h"
 
@@ -566,6 +567,10 @@ void __cdecl DB_LoadXFileInternal()
     }
     DB_AllocXZoneMemory(file.blockSize, g_load.filename, g_load.zoneMem, g_load.allocType);
     DB_InitStreams(g_load.zoneMem);
+#if KISAK_ARCH_64BIT
+    // Retail XAssetList and XAsset records keep their 32-bit layout.
+    DB_LoadXAssetListDisk32(&g_varXAssetList);
+#else
     Load_XAssetListCustom();
     DB_PushStreamPos(4);
     if (varXAssetList->assets)
@@ -575,6 +580,7 @@ void __cdecl DB_LoadXFileInternal()
         Load_XAssetArrayCustom(varXAssetList->assetCount);
     }
     DB_PopStreamPos();
+#endif
     DB_FinishGeometryBlocks(g_load.zoneMem);
     DB_CompleteLoadingAsset();
     Load_DelayStream();
@@ -594,6 +600,8 @@ bool __cdecl DB_IsMinimumFastFileLoaded()
     return Sys_AtomicLoad(&g_minimumFastFileLoaded) != 0;
 }
 
+// These read 32-bit records in place; 64-bit builds use DB_LoadXAssetListDisk32.
+#if !KISAK_ARCH_64BIT
 void Load_XAssetListCustom()
 {
     varXAssetList = &g_varXAssetList;
@@ -644,6 +652,7 @@ void __cdecl Load_XAssetArrayCustom(int32_t count)
         ++var;
     }
 }
+#endif
 
 void __cdecl DB_ResetZoneSize(int32_t trackLoadProgress)
 {
