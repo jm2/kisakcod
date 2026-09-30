@@ -29,6 +29,9 @@ namespace
 // Color-code stripping and newline normalization work buffer, sized like the
 // Win32 console buffer so a long engine line cannot overflow the clean step.
 constexpr std::size_t kCleanTextCapacity = 0x8000;
+// Engine messages are NUL-terminated; lengths are still bounded so a message
+// without a terminator cannot run the scan past this many bytes.
+constexpr std::size_t kMaxMessageBytes = 0x10000;
 
 // Original terminal state, captured once at startup and put back at teardown.
 // A null termios pointer means stdin was never a terminal and there is nothing
@@ -132,12 +135,12 @@ void __cdecl Conbuf_AppendText(const char *pMsg)
         return;
 
     char cleaned[kCleanTextCapacity];
-    const size_t messageLength = std::strlen(pMsg);
+    const size_t messageLength = strnlen(pMsg, kMaxMessageBytes);
     const char *source = messageLength <= 0x3FFF ? pMsg : &pMsg[messageLength - 0x3FFF];
-    (void)Conbuf_CleanText(source, cleaned, static_cast<int>(sizeof(cleaned)));
+    const uint32_t cleanedLength = Conbuf_CleanText(source, cleaned, static_cast<int>(sizeof(cleaned)));
 
     (void)Sys_ConsoleWrite(
-        SysConsoleOutputStream::StandardOutput, cleaned, std::strlen(cleaned));
+        SysConsoleOutputStream::StandardOutput, cleaned, cleanedLength);
     (void)Sys_ConsoleFlush(SysConsoleOutputStream::StandardOutput);
 }
 
@@ -163,7 +166,7 @@ void __cdecl Conbuf_AppendTextInMainThread(const char *msg)
         if (Sys_ConsoleWrite(
                 SysConsoleOutputStream::StandardOutput,
                 msg,
-                std::strlen(msg)) != SysConsoleIoStatus::Complete)
+                strnlen(msg, kMaxMessageBytes)) != SysConsoleIoStatus::Complete)
         {
             // The write failed and there is no debugger to fall back on; the
             // message is dropped rather than retried on a dead descriptor.
