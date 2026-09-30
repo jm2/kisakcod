@@ -1459,7 +1459,7 @@ const char *__cdecl G_GetEntityTypeName(const gentity_s *ent)
 
 int __cdecl G_rand()
 {
-    return rand();
+    return Kisak_rand();
 }
 
 float __cdecl G_flrand(float min, float max)
@@ -1469,7 +1469,12 @@ float __cdecl G_flrand(float min, float max)
 
 int __cdecl G_irand(int min, int max)
 {
-    return min + (max - min) * G_rand() / 0x8000;
+    // Retail's `min + (max - min) * G_rand() / 0x8000` multiplies in 32-bit
+    // int, which overflows once the span passes INT_MAX / 32767 (65538), and
+    // `max - min` itself overflows past INT_MAX. Widen both, as the SP
+    // G_irand (g_utils.cpp) widens the product. For max > min the result is
+    // in [min, max) and matches every value the 32-bit form got right.
+    return (int)(min + ((((long long)max - min) * G_rand()) >> 15));
 }
 
 float __cdecl G_random()

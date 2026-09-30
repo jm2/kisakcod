@@ -243,7 +243,7 @@ void __cdecl G_InitGame(int32_t levelTime, int32_t randomSeed, int32_t restart, 
     level.startTime = levelTime;
     level.currentEntityThink = -1;
     level.scriptPrintChannel = 24;
-    srand(randomSeed);
+    Kisak_srand(randomSeed);
     Rand_Init(randomSeed);
     GScr_LoadConsts();
     G_SetupWeaponDef();

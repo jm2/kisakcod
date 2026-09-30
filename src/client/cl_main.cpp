@@ -1748,7 +1748,7 @@ void __cdecl CL_Init(int localClientNum)
     char v29[80]; // [sp+70h] [-90h] BYREF
 
     Com_Printf(14, "----- Client Initialization -----\n");
-    srand(Sys_MillisecondsRaw());
+    Kisak_srand(Sys_MillisecondsRaw());
     Con_Init();
     if (localClientNum)
         MyAssertHandler(

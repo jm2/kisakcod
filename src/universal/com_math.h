@@ -172,6 +172,16 @@ void __cdecl TRACK_com_math();
 // == RANDOM == 
 void __cdecl Rand_Init(int seed);
 
+// Engine-owned MSVC-compatible RNG (docs/design/DETERMINISM.md, bead 9).
+// Retail's rand/srand are the MSVC CRT (RAND_MAX 32767); glibc and macOS use
+// another generator with RAND_MAX 2^31-1, so every `rand() / 32768.0` scale
+// left its range off Windows. Engine call sites spell Kisak_rand() and
+// Kisak_srand(): a `#define rand` would also rewrite libstdc++'s std::rand()
+// inside std::random_shuffle. Vendored Speex keeps the CRT rand.
+// Rand_Init/flrand/irand are a separate `>> 17` LCG, left as they are.
+void __cdecl Kisak_srand(unsigned int seed);
+int __cdecl Kisak_rand();
+
 // KisakCOD ABI port: <math.h> above pulls in glibc's <stdlib.h>, which declares
 // `long int random(void)` at global scope — the engine's own float random()
 // cannot be redeclared next to it. On non-MSVC targets, spell the engine
