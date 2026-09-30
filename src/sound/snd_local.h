@@ -1,6 +1,6 @@
 #pragma once
 
-#include <msslib/mss.h>
+#include <sound/snd_msstypes.h>
 #include "snd_public.h"
 
 static const char *snd_outputConfigurationStrings[6] = { "Windows default", "Mono", "Stereo", "4 speakers", "5.1 speakers", NULL }; // idb
@@ -66,7 +66,7 @@ struct MssEqInfo // sizeof=0xF00
     SndEqParams params[3][64];
 };
 
-typedef struct _SAMPLE FAR *HSAMPLE;           // Handle to sample
+typedef struct _SAMPLE *HSAMPLE;               // Handle to sample
 
 struct MssLocal // sizeof=0x26D0
 {                                       // ...

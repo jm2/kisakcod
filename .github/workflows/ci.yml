@@ -58,7 +58,10 @@ jobs:
             runner: windows-11-arm
             pe-arch: ARM64
           - platform: macOS arm64
-            runner: macos-15
+            # macos-26 is GitHub's newest GA macOS image (Apple clang 21,
+            # macOS 26.5 SDK). The macOS 27 SDK is covered by the mac64
+            # census on the xcode-27 preview image.
+            runner: macos-26
             file-arch: arm64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -237,8 +240,10 @@ jobs:
     # K1's macOS arm64 leg: the headless set syntax-checked with Apple clang
     # and the macOS SDK, which needs a macOS host. Informational only, like
     # native64-census: it never gates and is not in scaffolding-complete.
+    # It runs on xcode-27 (macOS 27, Xcode 27), the macOS target, which is
+    # still a preview image, so the gating macOS jobs use GA macos-26.
     name: Native64 census / mac64
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 20
     continue-on-error: true
     steps:
@@ -267,6 +272,52 @@ jobs:
           path: build-census/census.json
           if-no-files-found: warn
           retention-days: 30
+
+  macos-headless:
+    # The POSIX headless dedicated server on macOS arm64 (gate G3): the same
+    # configure, architecture check and assetless smoke run as linux-headless.
+    # It gates, so it runs on macos-26, GitHub's newest GA macOS image; the
+    # mac64 census covers the macOS 27 SDK on xcode-27. Ninja bounds the bare
+    # --parallel to the runner's cores.
+    name: macOS headless server / arm64
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Show compiler and SDK
+        run: clang --version && xcrun --show-sdk-version
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-headless -G Ninja
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF
+          -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF
+          -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build KisakCOD-dedi
+        run: cmake --build build-headless --target KisakCOD-dedi --parallel
+
+      - name: Verify binary architecture
+        run: scripts/ci/verify-artifact-arch.sh arm64 bin/KisakCOD-dedi
+
+      - name: Assetless smoke run
+        # The POSIX filesystem service follows no symlink in a path, and the
+        # default macOS TMPDIR lies under the /var symlink, so the smoke's
+        # fs_basepath and fs_homepath go in a symlink-free directory.
+        run: |
+          TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)" \
+            python3 scripts/ci/headless_smoke.py bin/KisakCOD-dedi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: KisakCOD-macos-arm64-headless
+          path: bin/KisakCOD-dedi
+          if-no-files-found: error
+          retention-days: 14
 
   linux-headless:
     # The POSIX headless dedicated server (NOW row 13) on Linux amd64 and
@@ -547,6 +598,7 @@ jobs:
       - windows-x86-sp
       - windows-x86-headless
       - linux-headless
+      - macos-headless
       - windows-headless
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04

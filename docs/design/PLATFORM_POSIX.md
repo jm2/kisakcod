@@ -8,7 +8,7 @@ Gate: G1 (Linux compile and link), then G2. KPIs: K1 and K2 ([NATIVE64.md](NATIV
 | --- | --- | --- |
 | Win32 headless (`kisakcod_get_dedi_sources`) | 243 (224 C++, 19 C) | Built by the Windows x86 headless CI job |
 | Linux headless | 236 | Win32 set − 7 `src/win32` − 9 `src/_platform/win32` + 9 `src/_platform/posix` |
-| Linux/macOS engine sets | headless | `PLATFORM_{LINUX,MACOS}_DEDI_HEADLESS` add the `posix_*` entry, console and localization; only `KISAK_DEDI_HEADLESS` configures off Win32. CI `linux-headless` builds and smoke-runs it on amd64 and arm64 |
+| Linux/macOS engine sets | headless | `PLATFORM_{LINUX,MACOS}_DEDI_HEADLESS` add the `posix_*` entry, console and localization; only `KISAK_DEDI_HEADLESS` configures off Win32. CI `linux-headless` builds and smoke-runs it on amd64 and arm64, `macos-headless` on macOS arm64 |
 
 ## Service map
 
@@ -40,6 +40,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 
 - **`win32/win_local.h`** is the de-facto system header. 22 headless TUs include it, and it is the first non-assert error in 20 of the 39 Linux "other" failures. **Split:** a portable `qcommon/sys_local.h` takes `sysEvent_t`, `SysInfo`, `Sys_GetPacket`, `Sys_IsLANAddress*` and `Conbuf_*`. `win_local.h` keeps `WinVars_t`, `MainWndProc`, the `IN_*` DirectInput calls, `HWND`/`HMODULE` and the winsock includes, and only `src/win32` includes it.
 - **D3D include cut.** `xanim.h` now holds the gfx types by pointer (forward declarations) instead of including `gfx_d3d/r_bsp.h`, `r_gfx.h`, `r_material.h` and `r_font.h`, and `gfx_d3d/r_d3d9types.h` stands in for `<d3d9.h>` off Windows: opaque COM interfaces plus the fixed `_D3DFORMAT`/`_D3DCUBEMAP_FACES` values. `tests/headless_include_debt.allow` lists 29 direct includes (the asset and collision loaders that need complete renderer records) and cannot see transitive reach; K5 does.
+- **Miles cut.** Off Windows, `sound/snd_msstypes.h` stands in for `msslib/mss.h` (opaque `_SAMPLE`, `_DIG_DRIVER`, `_STREAM`), so `snd_public.h` and `snd_local.h` no longer reach the Miles SDK, whose `mss.h` has no 64-bit Mac case. `deps/ode/common.h` takes `alloca` from `<alloca.h>` on macOS, which has no `<malloc.h>`.
 - **Win32 APIs in shared files:** overlapped I/O (`db_file_load.cpp`); clipboard and `MessageBoxA` (`assertive.cpp`); `HWND`/`GetActiveWindow` (`com_playerprofile.cpp`); unguarded `<Windows.h>` (`profile.cpp`, `timing.cpp`); `<io.h>` (`com_files.cpp`); `win32/win_net.h` included by `db_registry.cpp` and `sv_init_mp.cpp`.
 - **MSVC CRT names:** `ARRAYSIZE` (~11 error sites), `_strlwr`, `_isnan`, `_time64`, `_TRUNCATE`, and `basename` in `qcommon/files.cpp`, which clashes with glibc. One compat header next to `universal/msvc_printf_shim.h` (NOW bead 4).
 - **Two-phase lookup:** the `KeywordHashEntry` template in `ui/ui_shared.h` called undeclared `IsValidSeed`; `-fdelayed-template-parsing` hides it, and real builds don't use that flag. The seed-collision check now lives in `ui_shared.h` as the free template `IsValidSeed` (moved out of the per-instantiation copies in `ui_shared_obj.cpp`, whose wrappers delegate to it); the half-transcribed method stubs that reached for the undeclared name are gone.
@@ -61,7 +62,8 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 ## macOS notes
 
 - **Services:** the same POSIX files, plus the Mach crash-freeze backend (no engine caller).
-- **Scope before G5:** headless only (G3); a `mac64` census leg and the #265 fixes come first ([NATIVE64](NATIVE64.md#kpis)). CrossOver runs the x86 build for testing only ([ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)).
+- **Scope before G5:** headless only (G3). The target is macOS 27 with Xcode 27 (Apple clang 21). CI builds and smoke-runs it on GA `macos-26`, and the census covers SDK 27 on `xcode-27`. CrossOver runs the x86 build for testing only ([ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)).
+- **Symlinks:** `sys_filesystem` opens every path component with `O_NOFOLLOW`, so under a symlinked root (`/tmp`, `/var`) it cannot create or list directories. The default root, `getcwd`, has no symlink.
 - **Release:** signing and notarization are G6 owner items ([../NOW.md](../NOW.md)).
 
 ## Steamworks availability
