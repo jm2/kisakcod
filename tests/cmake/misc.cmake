@@ -482,11 +482,11 @@ kisakcod_ilp32(kisakcod-weapon-model-safety-tests
 
 # 64-bit dvar pointer round trips (NOW row 11): the production dvar system
 # with strings and enum lists placed above 4 GiB, so a pointer truncated to
-# 32 bits is always a wrong pointer. POSIX only: it maps its test page with
-# mmap, which places it high on 64-bit Linux and macOS. Clang only: dvar.cpp is
-# engine code, which follows the clang + -fms-extensions toolchain policy
-# (docs/design/PLATFORM_POSIX.md); GCC legs skip it.
-if (NOT KISAK_PLATFORM STREQUAL "win32" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+# 32 bits is always a wrong pointer. Linux only: dvar.cpp is engine code, and
+# the engine compiles off Windows only on Linux so far (macOS stops in the
+# Miles and ODE headers until the G3 mac64 work). Clang only: the engine
+# follows the clang + -fms-extensions toolchain policy (PLATFORM_POSIX.md).
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_executable(kisakcod-dvar-pointer-tests
         dvar_pointer_tests.cpp

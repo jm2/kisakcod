@@ -26,24 +26,17 @@
 char info1[1024];
 char info2[8192];
 
+// The failure reports print the engine's format string verbatim rather than
+// formatting with it: a test stub has no reason to trust a caller's format.
 void MyAssertHandler(const char *filename, int line, int, const char *fmt, ...)
 {
-    std::fprintf(stderr, "assert %s:%d: ", filename ? filename : "?", line);
-    va_list va;
-    va_start(va, fmt);
-    std::vfprintf(stderr, fmt ? fmt : "", va);
-    va_end(va);
-    std::fprintf(stderr, "\n");
+    std::fprintf(stderr, "assert %s:%d: %s\n", filename ? filename : "?", line, fmt ? fmt : "");
     std::exit(3);
 }
 
 void __cdecl Com_Error(errorParm_t, const char *fmt, ...)
 {
-    va_list va;
-    va_start(va, fmt);
-    std::vfprintf(stderr, fmt ? fmt : "", va);
-    va_end(va);
-    std::fprintf(stderr, "\nunexpected Com_Error\n");
+    std::fprintf(stderr, "unexpected Com_Error: %s\n", fmt ? fmt : "");
     std::exit(2);
 }
 
@@ -126,7 +119,7 @@ void I_strncpyz(char *dest, const char *src, int destsize)
 
 void I_strncat(char *dest, int size, const char *src)
 {
-    const size_t used = std::strlen(dest);
+    const size_t used = strnlen(dest, static_cast<size_t>(size));
     if (used + 1 < static_cast<size_t>(size))
         std::snprintf(dest + used, static_cast<size_t>(size) - used, "%s", src);
 }
@@ -156,11 +149,14 @@ char *HighPage()
     return page == MAP_FAILED ? nullptr : static_cast<char *>(page);
 }
 
+// Copies a short test string into the high page (every caller passes a
+// literal well under the 64-byte slot).
 char *Place(char **cursor, const char *text)
 {
+    constexpr size_t kSlot = 64;
     char *const at = *cursor;
-    std::strcpy(at, text);
-    *cursor += std::strlen(text) + 1;
+    std::snprintf(at, kSlot, "%s", text);
+    *cursor += kSlot;
     return at;
 }
 } // namespace
