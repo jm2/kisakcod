@@ -14,6 +14,7 @@
 #include <cstring>
 
 #include <strings.h>
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -74,7 +75,7 @@ bool Handled(const int signalNumber)
 
 #if defined(POSIX_QUIT_ENGINE_CBUF)
 int g_quitRuns = 0;
-char g_lastPrint[256];
+const char *g_printedSource = "";
 char g_vaText[1];
 cmd_function_s g_quitCommand;
 
@@ -114,7 +115,7 @@ void RunSignal(const int signalNumber, const char *const name)
     // The first frame queues exactly what a typed quit queues, and only once.
     Check(Cbuf_AddRequestedQuit(), "the first frame queues the quit");
     Check(Queued() == "quit\n", "the queued text is a typed quit");
-    Check(std::strstr(g_lastPrint, name) != nullptr, "the log names the signal");
+    Check(std::strcmp(g_printedSource, name) == 0, "the log names the signal");
     Check(!Cbuf_AddRequestedQuit() && Queued() == "quit\n", "the quit is queued once");
     Cbuf_Execute(0, 0);
     Check(g_quitRuns == 1 && Queued().empty(), "Cbuf_Execute runs the quit command");
@@ -122,38 +123,35 @@ void RunSignal(const int signalNumber, const char *const name)
 }
 
 // A second signal, of either kind, kills: the child survives the first
-// (it reports that through a pipe) and dies of the second.
+// (it records that in a shared page) and dies of the second.
 void RunSecondSignal()
 {
+    void *const page = mmap(nullptr, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED)
+    {
+        Check(false, "mmap");
+        return;
+    }
+    volatile int *const survived = static_cast<volatile int *>(page);
     const int pairs[][2] = {{SIGTERM, SIGTERM}, {SIGINT, SIGINT}, {SIGTERM, SIGINT}};
     for (const auto &pair : pairs)
     {
-        int survived[2];
-        if (pipe(survived) != 0)
-        {
-            Check(false, "pipe");
-            return;
-        }
+        *survived = 0;
         const pid_t child = fork();
         if (child == 0)
         {
-            (void)close(survived[0]);
             Sys_InstallQuitSignalHandlers();
-            (void)raise(pair[0]);
-            if (!Sys_QuitRequested() || write(survived[1], "1", 1) != 1)
+            if (raise(pair[0]) != 0 || !Sys_QuitRequested())
                 _exit(1);
-            (void)raise(pair[1]);
-            _exit(0);
+            *survived = 1;
+            _exit(raise(pair[1]) == 0 ? 0 : 1);
         }
-        (void)close(survived[1]);
-        char byte = 0;
-        const ssize_t got = child > 0 ? read(survived[0], &byte, 1) : -1;
-        (void)close(survived[0]);
         int status = 0;
         Check(child > 0 && waitpid(child, &status, 0) == child, "fork and wait");
-        Check(got == 1, "the first signal only requests a quit");
+        Check(*survived == 1, "the first signal only requests a quit");
         Check(WIFSIGNALED(status) && WTERMSIG(status) == pair[1], "the second signal kills with that signal");
     }
+    (void)munmap(page, sizeof(int));
 }
 
 // A launcher's SIG_IGN (a non-interactive shell's background job) survives.
@@ -163,8 +161,7 @@ void RunIgnoredSigint()
     Sys_InstallQuitSignalHandlers();
     Check(Disposition(SIGINT) == SIG_IGN, "an ignored SIGINT stays ignored");
     Check(Handled(SIGTERM), "SIGTERM is still handled");
-    (void)raise(SIGINT);
-    Check(!Sys_QuitRequested(), "an ignored SIGINT requests nothing");
+    Check(raise(SIGINT) == 0 && !Sys_QuitRequested(), "an ignored SIGINT requests nothing");
 }
 } // namespace
 
@@ -173,11 +170,14 @@ void RunIgnoredSigint()
 // --gc-sections drops the engine code these checks never reach.
 #define WEAK __attribute__((weak))
 WEAK const dvar_t *com_sv_running;
+// Keeps the leading %s argument, which Cbuf_AddRequestedQuit fills with the source.
 WEAK void Com_Printf(int, const char *fmt, ...)
 {
+    if (std::strncmp(fmt, "%s", 2) != 0)
+        return;
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(g_lastPrint, sizeof(g_lastPrint), fmt, args);
+    g_printedSource = va_arg(args, const char *);
     va_end(args);
 }
 WEAK void MyAssertHandler(const char *filename, int line, int, const char *, ...)
