@@ -18,6 +18,29 @@ add_test(
     COMMAND kisakcod-renderer-d3d9types-tests
 )
 
+# Headless seam for the IDirect3D* reach in shared database code (KPI K5).
+# The shader-load failure paths in db_load.cpp release and null opaque COM
+# shader pointers through the engine helper DB_ReleaseVertexShader /
+# DB_ReleasePixelShader; behind KISAK_DEDI_HEADLESS the Release() call is
+# compiled out. This test compiles that engine TU and drives it through its
+# production declaration, so a seam regression in the engine's cleanup fails
+# this test instead of a mirror of it.
+add_executable(kisakcod-renderer-headless-seam-tests
+    renderer_headless_seam_tests.cpp
+    ${SRC_DIR}/database/db_shader_release.cpp
+)
+target_include_directories(kisakcod-renderer-headless-seam-tests PRIVATE ${SRC_DIR})
+target_compile_definitions(kisakcod-renderer-headless-seam-tests PRIVATE KISAK_DEDI_HEADLESS)
+target_compile_features(kisakcod-renderer-headless-seam-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-renderer-headless-seam-tests)
+set_target_properties(kisakcod-renderer-headless-seam-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME renderer-headless-seam-cleanup
+    COMMAND kisakcod-renderer-headless-seam-tests
+)
+
 add_executable(kisakcod-renderer-reservation-atomic-tests
     renderer_reservation_atomic_tests.cpp
 )
