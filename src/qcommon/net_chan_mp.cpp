@@ -11,7 +11,7 @@
 #include "cmd.h"
 #include <universal/com_files.h>
 #include <server_mp/server_mp.h>
-#include <win32/win_net.h>
+#include <qcommon/net_local.h>
 #include "sys_socket.h"
 #ifndef KISAK_DEDI_HEADLESS
 #include <cgame_mp/cg_local_mp.h>

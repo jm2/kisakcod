@@ -32,7 +32,7 @@
 #include <universal/physicalmemory.h>
 #include <win32/win_storage.h>
 #include <buildnumber.h>
-#include <win32/win_net.h>
+#include <qcommon/net_local.h>
 #include <xanim/dobj.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <sound/snd_local.h>
@@ -393,7 +393,11 @@ void QDECL Com_PrintMessage(int channel, const char* msg, int error)
 	//PbCaptureConsoleOutput(msg, 4096);
 
     // always print to stdout console
+    // A headless server already prints every message through Sys_Print; the
+    // mirror would show each line twice on its terminal or log (KisakCOD port).
+#if !defined(KISAK_DEDI_HEADLESS)
     fprintf(stderr, "%s", msg);
+#endif
 
 	if (rd_buffer)
 	{
@@ -637,9 +641,11 @@ void Com_Prefetch(const void* s, const uint32_t bytes, e_prefetch type)
 			jnz		loopie
 			skip :
 		}
-#else
+#elif defined(_WIN32)
         // DI: lol
         PreFetchCacheLine(PF_NON_TEMPORAL_LEVEL_ALL, s);
+#else
+        __builtin_prefetch(s, 0, 0); // read, no temporal locality: PF_NON_TEMPORAL_LEVEL_ALL
 #endif
 
 		break;

@@ -3,13 +3,8 @@
 #include "db_validation.h"
 
 #include <qcommon/threads.h>
+#include <qcommon/sys_file.h>
 #include <qcommon/sys_local.h>
-#if defined(_WIN32)
-// KisakCOD ABI port: this TU uses Win32 API types (BOOL/DWORD/HWND, ...) in its
-// own code. Previously they arrived via win_local.h's winsock include; the
-// portable split takes that reach away, so declare the Win32 dependency directly.
-#include <windows.h>
-#endif
 #include <universal/com_files.h>
 #include <universal/sys_atomic.h>
 
@@ -24,16 +19,16 @@
 
 //int32_t marker_db_file_load  828e3f40     db_file_load.obj
 
-struct DB_LoadData // sizeof=0x68
-{                                       // ...
-    void* f;                            // ...
-    const char* filename;               // ...
-    XZoneMemory* zoneMem;               // ...
-    int32_t outstandingReads;               // ...
-    OVERLAPPED overlapped;             // ...
-    z_stream_s stream;                  // ...
-    uint8_t* compressBufferStart; // ...
-    uint8_t* compressBufferEnd; // ...
+struct DB_LoadData
+{
+    SysFileHandle f;
+    const char *filename;
+    XZoneMemory *zoneMem;
+    int32_t outstandingReads;
+    std::uint64_t fileOffset; // next read position in the fast file
+    z_stream_s stream;
+    uint8_t *compressBufferStart; // ...
+    uint8_t *compressBufferEnd;
     void(__cdecl* interrupt)();        // ...
     int32_t allocType;                      // ...
 };
@@ -43,7 +38,7 @@ static volatile uint32_t g_minimumFastFileLoaded;
 DB_LoadData g_load;
 static db::load_atomic::ProgressState g_loadProgress;
 static volatile uint32_t g_trackLoadProgress;
-static db::load_atomic::FileReadState g_fileRead;
+static SysFileReadResult g_fileRead;
 bool g_fileReadEof;
 bool g_inflateInitialized;
 bool g_inflateStreamEnded;
@@ -51,10 +46,6 @@ bool g_inflateStreamEnded;
 XAssetList g_varXAssetList;
 
 static int32_t DB_WaitXFileStageInternal();
-static VOID CALLBACK DB_FileReadCompletion(
-    DWORD dwErrorCode,
-    DWORD dwNumberOfBytesTransfered,
-    LPOVERLAPPED lpOverlapped);
 
 void __cdecl DB_CancelLoadXFile()
 {
@@ -67,10 +58,7 @@ void __cdecl DB_CancelLoadXFile()
         g_inflateInitialized = false;
     }
     if (g_load.f)
-    {
-        CloseHandle(g_load.f);
-        g_load.f = nullptr;
-    }
+        Sys_FileClose(&g_load.f);
     g_load.compressBufferStart = nullptr;
     g_load.compressBufferEnd = nullptr;
     g_load.stream.next_in = nullptr;
@@ -83,74 +71,50 @@ void __cdecl DB_CancelLoadXFile()
 
 static int32_t DB_WaitXFileStageInternal()
 {
-    if (!g_load.f || g_load.f == INVALID_HANDLE_VALUE || g_load.outstandingReads <= 0)
+    if (!g_load.f || g_load.outstandingReads <= 0)
     {
         g_load.outstandingReads = 0;
         return 0;
     }
 
-    bool cancelRequested = false;
-    while (!db::load_atomic::FileReadComplete(&g_fileRead))
+    // One wait slice is 30 seconds; the service cancels on the first expiry and
+    // drains the cancelled request, mirroring the loader's historical policy.
+    g_fileRead = Sys_FileReadWait(g_load.f, 30000u);
+    switch (g_fileRead.status)
     {
-        const DWORD waitResult = SleepEx(30000u, TRUE);
-        if (db::load_atomic::FileReadComplete(&g_fileRead))
-            break;
-
-        if (waitResult == 0)
-        {
-            if (cancelRequested)
-            {
-                Com_Error(
-                    ERR_FATAL,
-                    "Timed out cancelling fast-file read for '%s' (error %lu)",
-                    g_load.filename,
-                    static_cast<unsigned long>(ERROR_TIMEOUT));
-                return 0;
-            }
-            if (!CancelIo(g_load.f))
-            {
-                const DWORD cancelError = GetLastError();
-                if (cancelError == ERROR_NOT_FOUND)
-                {
-                    // The request can finish after the completion check but
-                    // before cancellation.  Enter another alertable wait so
-                    // its already-queued completion APC can publish the slot.
-                    cancelRequested = true;
-                    continue;
-                }
-                Com_Error(
-                    ERR_FATAL,
-                    "Could not cancel fast-file read for '%s' (error %lu)",
-                    g_load.filename,
-                    cancelError);
-                return 0;
-            }
-            cancelRequested = true;
-        }
-        else if (waitResult == WAIT_FAILED)
-        {
-            const DWORD waitError = GetLastError();
-            Com_Error(
-                ERR_FATAL,
-                "Fast-file read wait failed for '%s' (error %lu)",
-                g_load.filename,
-                waitError);
-            return 0;
-        }
+    case SysFileReadStatus::TimedOut:
+        Com_Error(
+            ERR_FATAL,
+            "Timed out cancelling fast-file read for '%s' (error %lu)",
+            g_load.filename,
+            static_cast<unsigned long>(g_fileRead.error));
+        return 0;
+    case SysFileReadStatus::CancelFailed:
+        Com_Error(
+            ERR_FATAL,
+            "Could not cancel fast-file read for '%s' (error %lu)",
+            g_load.filename,
+            static_cast<unsigned long>(g_fileRead.error));
+        return 0;
+    case SysFileReadStatus::WaitFailed:
+        Com_Error(
+            ERR_FATAL,
+            "Fast-file read wait failed for '%s' (error %lu)",
+            g_load.filename,
+            static_cast<unsigned long>(g_fileRead.error));
+        return 0;
+    default:
+        break;
     }
 
     --g_load.outstandingReads;
-    const db::load_atomic::FileReadSnapshot readResult =
-        db::load_atomic::SnapshotFileRead(&g_fileRead);
-    iassert(readResult.complete);
-    const uint32_t readError = readResult.error;
-    const uint32_t readBytes = readResult.bytes;
-    if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
-    {
-        g_fileReadEof = true;
-        return 0;
-    }
-    if (readBytes > db::load_atomic::kFileReadBytes
+    iassert(
+        g_fileRead.status == SysFileReadStatus::Complete
+        || g_fileRead.status == SysFileReadStatus::Eof
+        || g_fileRead.status == SysFileReadStatus::Error);
+    const uint32_t readBytes = g_fileRead.bytes;
+    if (g_fileRead.status == SysFileReadStatus::Error
+        || readBytes > db::load_atomic::kFileReadBytes
         || !db::validation::CanAppendBytes(
             g_load.stream.avail_in,
             readBytes,
@@ -170,20 +134,10 @@ static int32_t DB_WaitXFileStageInternal()
     }
     g_load.stream.avail_in += readBytes;
 
-    if (readError == ERROR_HANDLE_EOF
-        || readBytes < db::load_atomic::kFileReadBytes)
-    {
+    if (g_fileRead.status == SysFileReadStatus::Eof)
         g_fileReadEof = true;
-    }
     else
-    {
-        ULARGE_INTEGER fileOffset;
-        fileOffset.LowPart = g_load.overlapped.Offset;
-        fileOffset.HighPart = g_load.overlapped.OffsetHigh;
-        fileOffset.QuadPart += db::load_atomic::kFileReadBytes;
-        g_load.overlapped.Offset = fileOffset.LowPart;
-        g_load.overlapped.OffsetHigh = fileOffset.HighPart;
-    }
+        g_load.fileOffset += db::load_atomic::kFileReadBytes;
     return static_cast<int32_t>(readBytes);
 }
 
@@ -192,14 +146,12 @@ int32_t DB_WaitXFileStage()
     const int32_t readBytes = DB_WaitXFileStageInternal();
     if (readBytes <= 0)
     {
-        const uint32_t readError =
-            db::load_atomic::SnapshotFileRead(&g_fileRead).error;
         DB_CancelLoadXFile();
-        if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
+        if (g_fileRead.status == SysFileReadStatus::Error)
             Com_Error(
                 ERR_DROP,
                 "Read error %lu for fast-file '%s'",
-                static_cast<unsigned long>(readError),
+                static_cast<unsigned long>(g_fileRead.error),
                 g_load.filename);
         else
             Com_Error(ERR_DROP, "Fast-file '%s' ended unexpectedly", g_load.filename);
@@ -251,14 +203,12 @@ void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size)
         {
             if (g_load.outstandingReads <= 0 || DB_WaitXFileStageInternal() <= 0)
             {
-                const uint32_t readError =
-                    db::load_atomic::SnapshotFileRead(&g_fileRead).error;
                 DB_CancelLoadXFile();
-                if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
+                if (g_fileRead.status == SysFileReadStatus::Error)
                     Com_Error(
                         ERR_DROP,
                         "Read error %lu for fast-file '%s'",
-                        static_cast<unsigned long>(readError),
+                        static_cast<unsigned long>(g_fileRead.error),
                         g_load.filename);
                 else
                     Com_Error(ERR_DROP, "Fastfile for zone '%s' ended unexpectedly.", g_load.filename);
@@ -358,14 +308,17 @@ void DB_ReadXFileStage()
         }
         if (!DB_ReadData())
         {
-            const DWORD readError = GetLastError();
-            if (readError == ERROR_HANDLE_EOF)
+            if (g_fileRead.status == SysFileReadStatus::Eof)
             {
                 g_fileReadEof = true;
                 return;
             }
             DB_CancelLoadXFile();
-            Com_Error(ERR_DROP, "Read error %lu of file '%s'", readError, g_load.filename);
+            Com_Error(
+                ERR_DROP,
+                "Read error %lu of file '%s'",
+                static_cast<unsigned long>(g_fileRead.error),
+                g_load.filename);
             return;
         }
     }
@@ -373,51 +326,30 @@ void DB_ReadXFileStage()
 
 int32_t __cdecl DB_ReadData()
 {
-    uint8_t *fileBuffer; // [esp+0h] [ebp-4h]
-
-    if (!g_load.compressBufferStart || !g_load.compressBufferEnd
-        || !g_load.f || g_load.f == INVALID_HANDLE_VALUE)
+    if (!g_load.compressBufferStart || !g_load.compressBufferEnd || !g_load.f)
     {
-        SetLastError(ERROR_INVALID_PARAMETER);
+        g_fileRead = SysFileReadResult{SysFileReadStatus::Invalid, 0, 0};
         return 0;
     }
     if (g_load.interrupt)
         g_load.interrupt();
     if (!g_load.f)
     {
-        SetLastError(ERROR_INVALID_HANDLE);
+        g_fileRead = SysFileReadResult{SysFileReadStatus::Invalid, 0, 0};
         return 0;
     }
-    fileBuffer = &g_load.compressBufferStart[
-        g_load.overlapped.Offset % db::load_atomic::kFileBufferBytes];
+    uint8_t *const fileBuffer = &g_load.compressBufferStart[
+        g_load.fileOffset % db::load_atomic::kFileBufferBytes];
     Sys_WaitDatabaseThread();
-    db::load_atomic::ResetFileRead(&g_fileRead);
-    if (!ReadFileEx(
-            g_load.f,
-            fileBuffer,
-            db::load_atomic::kFileReadBytes,
-            &g_load.overlapped,
-            DB_FileReadCompletion))
+    g_fileRead = Sys_FileReadBegin(
+        g_load.f,
+        g_load.fileOffset,
+        fileBuffer,
+        db::load_atomic::kFileReadBytes);
+    if (g_fileRead.status != SysFileReadStatus::Pending)
         return 0;
     ++g_load.outstandingReads;
     return 1;
-}
-
-static VOID CALLBACK DB_FileReadCompletion(
-    DWORD dwErrorCode,
-    DWORD dwNumberOfBytesTransfered,
-    LPOVERLAPPED lpOverlapped)
-{
-    const bool validOverlapped = lpOverlapped == &g_load.overlapped;
-    (void)db::load_atomic::PublishFileRead(
-        &g_fileRead,
-        validOverlapped
-            ? static_cast<uint32_t>(dwErrorCode)
-            : static_cast<uint32_t>(ERROR_INVALID_DATA),
-        validOverlapped
-            ? static_cast<uint32_t>(dwNumberOfBytesTransfered)
-            : 0u,
-        static_cast<uint32_t>(ERROR_INVALID_DATA));
 }
 
 #ifdef KISAK_DEDI_HEADLESS
@@ -527,7 +459,7 @@ void __cdecl DB_LoadXFileInternal()
     const char *failureReason; // [esp+44h] [ebp-10h]
     char magic[8]; // [esp+48h] [ebp-Ch] BYREF
 
-    if (!g_load.f || g_load.f == INVALID_HANDLE_VALUE || !g_load.filename)
+    if (!g_load.f || !g_load.filename)
     {
         Com_Error(ERR_DROP, "Fast-file loader was not initialized");
         return;
@@ -542,14 +474,12 @@ void __cdecl DB_LoadXFileInternal()
     const int32_t initialReadSize = DB_WaitXFileStageInternal();
     if (initialReadSize < 12)
     {
-        const uint32_t readError =
-            db::load_atomic::SnapshotFileRead(&g_fileRead).error;
         DB_CancelLoadXFile();
-        if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
+        if (g_fileRead.status == SysFileReadStatus::Error)
             Com_Error(
                 ERR_DROP,
                 "Read error %lu for fast-file '%s'",
-                static_cast<unsigned long>(readError),
+                static_cast<unsigned long>(g_fileRead.error),
                 g_load.filename);
         else
             Com_Error(ERR_DROP, "Fastfile for zone '%s' has a truncated header.", g_load.filename);
@@ -611,10 +541,9 @@ void __cdecl DB_LoadXFileInternal()
     DB_LoadXFileData((uint8_t *)&file, sizeof(XFile));
     if (Sys_AtomicLoad(&g_trackLoadProgress))
     {
-        LARGE_INTEGER nativeFileSize{};
-        if (GetFileSizeEx(g_load.f, &nativeFileSize) && nativeFileSize.QuadPart >= 0)
+        std::uint64_t fileSize = 0;
+        if (Sys_FileGetSize(g_load.f, &fileSize))
         {
-            const uint64_t fileSize = static_cast<uint64_t>(nativeFileSize.QuadPart);
             const uint64_t totalSize = fileSize + file.externalSize;
             const uint64_t fileChunks =
                 (fileSize + db::load_atomic::kFileReadBytes - 1u)
@@ -726,7 +655,7 @@ void __cdecl DB_ResetZoneSize(int32_t trackLoadProgress)
 
 void __cdecl DB_LoadXFile(
     const char *path,
-    void *f,
+    SysFileHandle f,
     const char *filename,
     XZoneMemory *zoneMem,
     void(__cdecl *interrupt)(),
@@ -734,7 +663,7 @@ void __cdecl DB_LoadXFile(
     int32_t allocType)
 {
     (void)path;
-    if (!f || f == INVALID_HANDLE_VALUE || !filename || !*filename || !zoneMem || !buf
+    if (!f || !filename || !*filename || !zoneMem || !buf
         || (reinterpret_cast<uintptr_t>(buf) & 3) != 0
         || (allocType != 0 && allocType != 1))
     {
@@ -751,7 +680,7 @@ void __cdecl DB_LoadXFile(
     g_fileReadEof = false;
     g_inflateInitialized = false;
     g_inflateStreamEnded = false;
-    db::load_atomic::ResetFileRead(&g_fileRead);
+    g_fileRead = SysFileReadResult{SysFileReadStatus::Invalid, 0, 0};
     g_load.f = f;
     g_load.filename = filename;
     g_load.zoneMem = zoneMem;

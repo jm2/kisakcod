@@ -11,6 +11,7 @@
 
 #include <xanim/xanim.h>
 #include <xanim/xmodel.h>
+#include <qcommon/sys_file.h>
 #include <qcommon/sys_sync.h>
 #
 
@@ -262,7 +263,7 @@ void __cdecl Load_XAssetArrayCustom(int32_t count);
 void __cdecl DB_ResetZoneSize(int32_t trackLoadProgress);
 void __cdecl DB_LoadXFile(
     const char *path,
-    void *f,
+    SysFileHandle f,
     const char *filename,
     XZoneMemory *zoneMem,
     void(__cdecl *interrupt)(),

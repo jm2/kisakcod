@@ -835,7 +835,7 @@ void __cdecl CL_FirstSnapshot(int32_t localClientNum)
         LocalClientGlobals->serverTime = LocalClientGlobals->snap.serverTime;
         clc->timeDemoBaseTime = LocalClientGlobals->snap.serverTime;
         Con_TimeJumped(localClientNum, LocalClientGlobals->serverTime);
-        if (*(_BYTE *)cl_activeAction->current.integer)
+        if (*(const unsigned char *)cl_activeAction->current.string)
         {
             Cbuf_AddText(localClientNum, cl_activeAction->current.string);
             Cbuf_AddText(localClientNum, "\n");
@@ -909,7 +909,7 @@ void __cdecl CL_NextDemo(int32_t localClientNum)
 {
     char v[1028]; // [esp+0h] [ebp-408h] BYREF
 
-    I_strncpyz(v, (char *)nextdemo->current.integer, 1024);
+    I_strncpyz(v, (char *)nextdemo->current.string, 1024);
     Com_DPrintf(14, "CL_NextDemo: %s\n", v);
     if (v[0])
     {

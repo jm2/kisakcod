@@ -110,6 +110,15 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     bool nonBlocking,
     SysSocketHandle *outHandle);
 
+// Sys_SocketOpenUdp bound to one local interface: `local->address` selects
+// the interface (0.0.0.0 is every interface, as above) and `local->port` the
+// port. Same ownership, blocking and handle contract as Sys_SocketOpenUdp;
+// a null `local` reports InvalidArgument. The engine's net_ip uses it.
+SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdpAt(
+    const SysSocketAddress *local,
+    bool nonBlocking,
+    SysSocketHandle *outHandle);
+
 // Closes *handle and resets the caller's pointer to null. Close is
 // unconditional: a null pointer, a null handle, and an already closed
 // handle are all no-ops that report Closed, so callers may close
