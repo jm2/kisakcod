@@ -114,10 +114,8 @@ void BuildWorld()
     phys_drawCollisionWorld = &g_off;
     phys_drawCollisionObj = &g_off;
 
-    std::strcpy(g_materials[0].material, "floor");
     g_materials[0].surfaceFlags = kFloorFlags;
     g_materials[0].contentFlags = kSolid;
-    std::strcpy(g_materials[1].material, "terrain");
     g_materials[1].surfaceFlags = kTerrainFlags;
     g_materials[1].contentFlags = kSolid;
 
@@ -256,20 +254,26 @@ WEAK void dGeomMoved(dGeomID) { NoBodies(); }
 WEAK dGeomID dGeomTransformGetGeom(dGeomID) { NoBodies(); }
 WEAK dxWorld *ODE_BodyGetWorld(dxBody *) { NoBodies(); }
 
+namespace
+{
+dxWorld g_worlds[PHYS_WORLD_COUNT];
+Jitter g_regions[PHYS_WORLD_COUNT][5];
+}  // namespace
+
 // dxPostProcessIslands ends each world's step: explosion jitter regions
 // (Phys_AddJitterRegion) last exactly one step, and the regions themselves
 // and the other worlds' state are left alone.
 int main()
 {
-    static dxWorld worlds[PHYS_WORLD_COUNT];
-    static Jitter regions[PHYS_WORLD_COUNT][5];
     for (int w = 0; w < PHYS_WORLD_COUNT; ++w)
     {
-        for (Jitter &jitter : regions[w])
-            jitter = {{1.0f * w, 2.0f, 3.0f}, 4.0f, 9.0f, 2.0f, 3.0f, 0.5f, 1.5f};
-        physGlob.world[w] = &worlds[w];
+        for (int i = 0; i < 5; ++i)
+        {
+            g_regions[w][i] = {{1.0f * w, 2.0f, 1.0f * i}, 4.0f, 9.0f, 2.0f, 3.0f, 0.5f, 1.5f};
+            physGlob.worldData[w].jitterRegions[i] = g_regions[w][i];
+        }
+        physGlob.world[w] = &g_worlds[w];
         physGlob.worldData[w].numJitterRegions = 3;
-        std::memcpy(physGlob.worldData[w].jitterRegions, regions[w], sizeof(regions[w]));
     }
     for (int w = 0; w < PHYS_WORLD_COUNT; ++w)
     {
@@ -277,7 +281,7 @@ int main()
         CHECK(physGlob.worldData[w].numJitterRegions == 0);
     }
     for (int w = 0; w < PHYS_WORLD_COUNT; ++w)
-        CHECK(std::memcmp(physGlob.worldData[w].jitterRegions, regions[w], sizeof(regions[w])) == 0);
+        CHECK(std::memcmp(physGlob.worldData[w].jitterRegions, g_regions[w], sizeof(g_regions[w])) == 0);
     if (g_failures)
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
     return g_failures ? 1 : 0;
