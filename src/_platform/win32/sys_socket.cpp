@@ -142,7 +142,12 @@ SysSocketRecvStatus ClassifyRecvError(const int error) noexcept
 }
 } // namespace
 
-SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
+namespace
+{
+// Opens and binds one UDP socket; `networkOrderAddress` is the local
+// interface in network byte order (INADDR_ANY for every interface).
+SysSocketOpenStatus OpenUdpBound(
+    const std::uint32_t networkOrderAddress,
     const std::uint16_t port,
     const bool nonBlocking,
     SysSocketHandle *const outHandle)
@@ -171,7 +176,7 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     sockaddr_in local{};
     local.sin_family = AF_INET;
     local.sin_port = htons(port);
-    local.sin_addr.s_addr = INADDR_ANY;
+    local.sin_addr.s_addr = networkOrderAddress;
 
     // SO_EXCLUSIVEADDRUSE covers wildcard and specific-interface competitors.
     if (bind(raw, reinterpret_cast<const sockaddr *>(&local),
@@ -203,6 +208,27 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     socket->handle = raw;
     *outHandle = socket;
     return SysSocketOpenStatus::Opened;
+}
+} // namespace
+
+SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
+    const std::uint16_t port,
+    const bool nonBlocking,
+    SysSocketHandle *const outHandle)
+{
+    return OpenUdpBound(INADDR_ANY, port, nonBlocking, outHandle);
+}
+
+SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdpAt(
+    const SysSocketAddress *const local,
+    const bool nonBlocking,
+    SysSocketHandle *const outHandle)
+{
+    if (!local)
+        return SysSocketOpenStatus::InvalidArgument;
+    std::uint32_t networkOrderAddress = 0;
+    std::memcpy(&networkOrderAddress, local->address, sizeof(networkOrderAddress));
+    return OpenUdpBound(networkOrderAddress, local->port, nonBlocking, outHandle);
 }
 
 SysSocketCloseStatus KISAK_CDECL Sys_SocketClose(SysSocketHandle *const handle)

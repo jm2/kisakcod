@@ -2,6 +2,7 @@
 // ReadFileEx; Wait pumps delivery with an alertable SleepEx and drains
 // cancellations on expiry (the race the loader historically handled inline).
 
+#include <string>
 #include <qcommon/sys_file.h>
 
 #include <database/db_load_atomic.h>
@@ -36,6 +37,20 @@ SysFileReadResult Sys_FileMakeResult(std::uint32_t requested, std::uint32_t erro
     return {bytes == requested ? SysFileReadStatus::Complete : SysFileReadStatus::Eof, bytes, 0};
 }
 
+// The sys_file contract takes UTF-8 paths (like sys_filesystem); CreateFileA
+// would read them in the ANSI code page, so open through the wide API.
+bool Sys_FileUtf8ToWide(const char *input, std::wstring *output)
+{
+    const int required = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, input, -1, nullptr, 0);
+    if (required <= 0)
+        return false;
+    output->assign(static_cast<std::size_t>(required), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, input, -1, output->data(), required) != required)
+        return false;
+    output->resize(static_cast<std::size_t>(required - 1));
+    return true;
+}
+
 VOID CALLBACK Sys_FileReadCompletion(DWORD error, DWORD bytes, LPOVERLAPPED overlapped)
 {
     if (!overlapped)
@@ -54,8 +69,11 @@ SysFileHandle KISAK_CDECL Sys_FileOpenRead(const char *utf8Path)
 
     // Buffered overlapped reads avoid the sector-alignment contract of
     // unbuffered I/O; the fast-file ring is only word-aligned.
-    HANDLE const handle = CreateFileA(
-        utf8Path,
+    std::wstring widePath;
+    if (!Sys_FileUtf8ToWide(utf8Path, &widePath))
+        return nullptr;
+    HANDLE const handle = CreateFileW(
+        widePath.c_str(),
         GENERIC_READ,
         FILE_SHARE_READ,
         nullptr,

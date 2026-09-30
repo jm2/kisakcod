@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -123,6 +124,25 @@ int main()
     Sys_FileClose(&gFile);
     if (gFile)
         return Fail("close did not reset the caller's handle");
+
+    // Paths are UTF-8 (the sys_file contract): U+00E9 is two bytes that an
+    // ANSI-code-page open on Windows would misread.
+    const std::string utf8Name = gPath + "-\xC3\xA9";
+    const std::filesystem::path utf8Path(
+        std::u8string(reinterpret_cast<const char8_t *>(utf8Name.data()), utf8Name.size()));
+    {
+        std::ofstream named(utf8Path, std::ios::binary | std::ios::trunc);
+        named.write(reinterpret_cast<const char *>(fixture.data()), 16);
+    }
+    SysFileHandle namedFile = Sys_FileOpenRead(utf8Name.c_str());
+    std::uint64_t namedSize = 0;
+    const bool namedOpened = namedFile && Sys_FileGetSize(namedFile, &namedSize) && namedSize == 16;
+    Sys_FileClose(&namedFile);
+    std::error_code ignored;
+    std::filesystem::remove(utf8Path, ignored);
+    if (!namedOpened)
+        return Fail("open failed for a UTF-8 file name");
+
     std::remove(gPath.c_str());
     gPath.clear();
     return 0;
