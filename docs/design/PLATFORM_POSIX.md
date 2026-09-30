@@ -8,7 +8,7 @@ Gate: G1 (Linux compile and link), then G2. KPIs: K1 and K2 ([NATIVE64.md](NATIV
 | --- | --- | --- |
 | Win32 headless (`kisakcod_get_dedi_sources`) | 243 (224 C++, 19 C) | Built by the Windows x86 headless CI job |
 | Linux headless | 236 | Win32 set − 7 `src/win32` − 9 `src/_platform/win32` + 9 `src/_platform/posix` |
-| Linux/macOS engine sets | headless | `PLATFORM_{LINUX,MACOS}_DEDI_HEADLESS` add the `posix_*` entry, console and localization; only `KISAK_DEDI_HEADLESS` configures off Win32. CI `linux-headless` builds and smoke-runs it on amd64 and arm64 |
+| Linux/macOS engine sets | headless | `PLATFORM_{LINUX,MACOS}_DEDI_HEADLESS` add the `posix_*` entry, console and localization; only `KISAK_DEDI_HEADLESS` configures off Win32. CI `linux-headless` builds and smoke-runs it on amd64 and arm64, `macos-headless` on macOS arm64 |
 
 ## Service map
 
@@ -62,7 +62,8 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 ## macOS notes
 
 - **Services:** the same POSIX files, plus the Mach crash-freeze backend (no engine caller).
-- **Scope before G5:** headless only (G3); a `mac64` census leg and the #265 fixes come first ([NATIVE64](NATIVE64.md#kpis)). CrossOver runs the x86 build for testing only ([ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)).
+- **Scope before G5:** headless only (G3). The target is macOS 27 with Xcode 27 (Apple clang 21); CI builds and smoke-runs it on `xcode-27`. CrossOver runs the x86 build for testing only ([ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)).
+- **Symlinks:** `sys_filesystem` opens every path component with `O_NOFOLLOW`, so under a symlinked root (`/tmp`, `/var`) it cannot create or list directories. The default root, `getcwd`, has no symlink.
 - **Release:** signing and notarization are G6 owner items ([../NOW.md](../NOW.md)).
 
 ## Steamworks availability

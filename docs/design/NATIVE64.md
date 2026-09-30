@@ -133,7 +133,7 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 - **K1 ARM64 legs (owner 2026-09-29):** `win64` is Windows x64 only, so a clean win64 says nothing about Windows
   ARM64 or macOS arm64. `winarm64` checks the Win64 set for `aarch64-w64-mingw32` with the runner's clang 18 and the
   headers and libc++ of a sha256-pinned llvm-mingw (LLVM 18.1.8). `mac64` checks the POSIX set plus
-  `src/_platform/macos` with Apple clang on the hosted `macos-15` runner. Both measure and never gate. First run
+  `src/_platform/macos` with Apple clang on the hosted `xcode-27` runner (macOS 27, clang 21). Both measure and never gate. First run
   (2026-09-30): winarm64 244/245, blocked only by x86 `__cpuidex`/`__rdtsc` in `win_configure.cpp` (Steam stays off: no
   Windows ARM64 Steamworks); mac64 120/244 with Apple clang 17, where the #265 headers stop the rest: Miles `mss.h`
   (`#error`, no arm64 Mac case, 93 TUs) and ODE `<malloc.h>` (31). Since then `win_configure.cpp` reads
