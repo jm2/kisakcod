@@ -18,3 +18,13 @@ struct RawFile;
 // raises Com_Error(ERR_DROP) before anything reads past a checked extent.
 void __cdecl DB_LoadRawFilePtrDisk32(bool atStreamStart, RawFile **slot);
 #endif
+
+struct MapEnts;
+
+#if KISAK_ARCH_64BIT
+// Loads one MapEnts (db_disk32_mapents.cpp) under the same slot contract: the
+// slot holds the zero-extended disk32 token on entry and the native MapEnts
+// published through Load_MapEntsAsset on return. The slot nested in clipMap_t
+// takes the same contract once that family converts (wave 4).
+void __cdecl DB_LoadMapEntsPtrDisk32(bool atStreamStart, MapEnts **slot);
+#endif

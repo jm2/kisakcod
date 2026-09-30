@@ -7382,6 +7382,10 @@ void __cdecl Load_MapEnts(bool atStreamStart)
 
 void __cdecl Load_MapEntsPtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadMapEntsPtrDisk32(atStreamStart, varMapEntsPtr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -7414,6 +7418,7 @@ void __cdecl Load_MapEntsPtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Mark_MapEntsPtr()

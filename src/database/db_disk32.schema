@@ -37,3 +37,8 @@ record PhysPreset 0x2C runtime=PhysPreset header=xanim/xanim.h
     0x20 piecesSpreadFraction  f32
     0x24 piecesUpwardVelocity  f32
     0x28 tempDefaultToCylinder bool
+
+record MapEnts 0x0C runtime=MapEnts header=xanim/xanim.h
+    0x00 name           xstring
+    0x04 entityString   bytes      count=numEntityChars
+    0x08 numEntityChars i32
