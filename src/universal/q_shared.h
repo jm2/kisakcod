@@ -37,6 +37,7 @@
 
 #include "../universal/assertive.h" // LWSS add
 
+#include <bit>
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -706,13 +707,29 @@ void __cdecl Com_DefaultExtension(char *path, uint32_t maxSize, const char *exte
 // link). Keyed on KISAK_LITTLE_ENDIAN from kisak_abi.h; on little-endian
 // targets the Big* forms swap bytes and the Little* forms are identity,
 // byte-identical to the old WIN32-only inlines.
-constexpr __int16 BigShort(__int16 l)
+constexpr __int16 KisakSwap16(__int16 l)
 {
-#if KISAK_LITTLE_ENDIAN
     return static_cast<__int16>(
         static_cast<unsigned short>(
             ((static_cast<unsigned short>(l) & 0x00FFu) << 8)
             | ((static_cast<unsigned short>(l) & 0xFF00u) >> 8)));
+}
+
+constexpr int KisakSwap32(int l)
+{
+    const unsigned int u = static_cast<unsigned int>(l);
+    return static_cast<int>(
+        ((u & 0x000000FFu) << 24) | ((u & 0x0000FF00u) << 8)
+        | ((u & 0x00FF0000u) >> 8) | ((u & 0xFF000000u) >> 24));
+}
+
+// Big* swap on a little-endian host and are identity on a big-endian one;
+// Little* are the reverse. Each branch swaps directly rather than through the
+// other family, which is identity in exactly the branch that must swap.
+constexpr __int16 BigShort(__int16 l)
+{
+#if KISAK_LITTLE_ENDIAN
+    return KisakSwap16(l);
 #else
     return l;
 #endif
@@ -721,10 +738,7 @@ constexpr __int16 BigShort(__int16 l)
 constexpr int BigLong(int l)
 {
 #if KISAK_LITTLE_ENDIAN
-    const unsigned int u = static_cast<unsigned int>(l);
-    return static_cast<int>(
-        ((u & 0x000000FFu) << 24) | ((u & 0x0000FF00u) << 8)
-        | ((u & 0x00FF0000u) >> 8) | ((u & 0xFF000000u) >> 24));
+    return KisakSwap32(l);
 #else
     return l;
 #endif
@@ -735,7 +749,7 @@ constexpr __int16 LittleShort(__int16 l)
 #if KISAK_LITTLE_ENDIAN
     return l;
 #else
-    return BigShort(l);
+    return KisakSwap16(l);
 #endif
 }
 
@@ -744,13 +758,17 @@ constexpr int LittleLong(int l)
 #if KISAK_LITTLE_ENDIAN
     return l;
 #else
-    return BigLong(l);
+    return KisakSwap32(l);
 #endif
 }
 
 constexpr float LittleFloat(float l)
 {
+#if KISAK_LITTLE_ENDIAN
     return l;
+#else
+    return std::bit_cast<float>(KisakSwap32(std::bit_cast<int>(l)));
+#endif
 }
 
 int __cdecl ShortSwap(__int16 l);
