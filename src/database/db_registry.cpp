@@ -86,6 +86,13 @@ static void DB_WriteReorderCsv(DBReorderFile file, const void *data, uint32_t by
 static void DB_DeleteReorderBackup(const char *path) { remove(path); }
 #endif
 
+// Fast-file OS paths: the engine's '\\' on Windows, '/' elsewhere (KisakCOD port).
+#ifdef _WIN32
+#define DB_PATH_SEP "\\"
+#else
+#define DB_PATH_SEP "/"
+#endif
+
 GfxWorld s_world;
 MaterialGlobals materialGlobals;
 ImgGlobals imageGlobals;
@@ -855,7 +862,7 @@ void __cdecl DB_BuildOSPath_Mod(const char *zoneName, uint32_t size, char *filen
     if (!*fs_gameDirVar->current.string)
         MyAssertHandler(".\\database\\db_registry.cpp", 3204, 0, "%s", "IsUsingMods()");
     string = fs_gameDirVar->current.string;
-    Com_sprintf(filename, size, "%s\\%s\\%s.ff", DB_GetFastFileBasePath(), string, zoneName);
+    Com_sprintf(filename, size, "%s" DB_PATH_SEP "%s" DB_PATH_SEP "%s.ff", DB_GetFastFileBasePath(), string, zoneName);
 }
 
 bool __cdecl DB_ModFileExists()
@@ -2754,10 +2761,15 @@ void __cdecl  DB_Thread(uint32_t threadContext)
     if (setjmp(*Value))
     {
         Profile_Recover(1);
+        // A headless server reports the error and goes on like retail; the
+        // debugger trap is a development aid that kills a server running
+        // without a debugger (SIGTRAP), so it is left out of headless builds.
+#if !defined(KISAK_DEDI_HEADLESS)
 #ifdef __llvm__ 
         __builtin_debugtrap();
 #else
         __debugbreak();
+#endif
 #endif
         Com_ErrorAbort();
     }
@@ -3197,7 +3209,7 @@ void __cdecl DB_BuildOSPath(const char *zoneName, uint32_t size, char *filename)
     char *Language; // [esp-8h] [ebp-8h]
 
     Language = Win_GetLanguage();
-    Com_sprintf(filename, size, "%s\\zone\\%s\\%s.ff", DB_GetFastFileBasePath(), Language, zoneName);
+    Com_sprintf(filename, size, "%s" DB_PATH_SEP "zone" DB_PATH_SEP "%s" DB_PATH_SEP "%s.ff", DB_GetFastFileBasePath(), Language, zoneName);
 }
 
 int32_t __cdecl DB_GetZoneAllocType(int32_t zoneFlags)

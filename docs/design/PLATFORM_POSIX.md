@@ -8,7 +8,7 @@ Gate: G1 (Linux compile and link), then G2. KPIs: K1 and K2 ([NATIVE64.md](NATIV
 | --- | --- | --- |
 | Win32 headless (`kisakcod_get_dedi_sources`) | 243 (224 C++, 19 C) | Built by the Windows x86 headless CI job |
 | Linux headless | 236 | Win32 set − 7 `src/win32` − 9 `src/_platform/win32` + 9 `src/_platform/posix` |
-| Linux/macOS engine sets | 0 | `scripts/platform/{linux,macos}/platform.cmake` leave them empty; `CMakeLists.txt` refuses non-win32 engine targets |
+| Linux/macOS engine sets | headless only | `PLATFORM_{LINUX,MACOS}_DEDI_HEADLESS` add `posix_main.cpp`, `posix_syscon.cpp`, `posix_localize.cpp`; `CMakeLists.txt` allows only `KISAK_DEDI_HEADLESS` off Win32 (clang, `-fms-extensions`). CI job `linux-headless` builds it and runs `scripts/ci/headless_smoke.py` |
 
 ## Service map
 
@@ -33,11 +33,11 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 
 | Item | Replaces | NOW bead |
 | --- | --- | --- |
-| POSIX `main`, frame loop, `Sys_Init`/`Sys_Quit`/`Sys_Print`, event queue | `win_main.cpp` | 13 |
-| termios console on `Sys_Console*` | `win_syscon.cpp` | 13 |
+| POSIX `main`, frame loop, `Sys_Init`/`Sys_Quit`/`Sys_Print`, event queue | `win_main.cpp` | 13 (done: `_platform/posix/posix_main.cpp`) |
+| termios console on `Sys_Console*` | `win_syscon.cpp` | 13 (done: `_platform/posix/posix_syscon.cpp`) |
 | `NET_*`/`Sys_SendPacket`/`Sys_GetPacket` on the `Sys_Socket` UDP API, one file for all platforms | `win_net.cpp` | 13 (done: `qcommon/net_local.cpp`) |
 | Remote debug socket: stub for headless | `win_net_debug.cpp` | 13 (done: `qcommon/net_debug_stub.cpp`) |
-| Language selection, CPU detection, Steam-off stub | `win_localize.cpp`, `win_configure.cpp`, `win_steam.cpp` | 13 |
+| Language selection, CPU detection, Steam-off stub | `win_localize.cpp`, `win_configure.cpp`, `win_steam.cpp` | 13 (done: `posix_localize.cpp`, `posix_main.cpp`) |
 | `Sys_RemoveDirTree` on `Sys_FileSystemRemoveTree` (returns false on POSIX today) | POSIX branch of `win_common.cpp` | 13 |
 | Relaunch via `Sys_ProcessLaunch` | `Sys_QuitAndStartProcess`, `Sys_Spawn` | later |
 | Portable async fast-file reads | `db_file_load.cpp` | 14 |

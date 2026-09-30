@@ -569,7 +569,11 @@ void __cdecl FS_ReplaceSeparators(char *path)
             if (!wasSep)
             {
                 wasSep = 1;
-                *dst++ = 92;
+#ifdef _WIN32
+                *dst++ = '\\';
+#else
+                *dst++ = '/'; // KisakCOD port: POSIX paths use '/'
+#endif
             }
         }
         else

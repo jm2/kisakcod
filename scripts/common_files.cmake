@@ -829,7 +829,6 @@ set(ZLIB
     "${DEPS_DIR}/zlib/inftrees.h"
     "${DEPS_DIR}/zlib/infutil.c"
     "${DEPS_DIR}/zlib/infutil.h"
-    "${DEPS_DIR}/zlib/maketree.c"
     "${DEPS_DIR}/zlib/trees.c"
     "${DEPS_DIR}/zlib/trees.h"
     "${DEPS_DIR}/zlib/uncompr.c"
