@@ -302,7 +302,7 @@ jobs:
       - name: Package
         if: matrix.recipe == 'windows-headless'
         run: |
-          requires="64-bit Windows on x64; the C runtime is linked in, so no Visual C++ redistributable is needed"
+          requires="64-bit Windows on ${FILE_ARCH}; the C runtime is linked in, so no Visual C++ redistributable is needed"
           cp LICENSE "stage/${STEM}/LICENSE"
           python scripts/ci/release_meta.py readme --leg "$LEG" --version "$VERSION" --commit "$COMMIT" \
             --requires "$requires" > "stage/${STEM}/README.txt"

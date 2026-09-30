@@ -94,12 +94,16 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual((leg["role"], leg["recipe"], leg["runner"], leg["binary"]),
                          ("headless-server", "linux-headless", "ubuntu-24.04", "KisakCOD-dedi"))
 
-    def test_windows_leg_ships_a_zip(self):
-        legs, missing = rm.build_matrix(manifest_with({("windows-amd64", "headless-server"): "links"}), "1.2.3")
+    def test_windows_legs_ship_zips(self):
+        legs, missing = rm.build_matrix(manifest_with({("windows-amd64", "headless-server"): "links",
+                                                       ("windows-arm64", "headless-server"): "links"}), "1.2.3")
         self.assertEqual(missing, [])
         self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["archive"], leg["exe"], leg["file_arch"])
-                          for leg in legs], [("kisakcod-1.2.3-windows-x64-headless-preview", "windows-headless",
-                                              "windows-2025", "zip", ".exe", "x64")])
+                          for leg in legs], [
+            ("kisakcod-1.2.3-windows-arm64-headless-preview", "windows-headless", "windows-11-arm", "zip", ".exe",
+             "ARM64"),
+            ("kisakcod-1.2.3-windows-x64-headless-preview", "windows-headless", "windows-2025", "zip", ".exe", "x64"),
+        ])
 
     def test_levels_pick_legs_tiers_and_names(self):
         legs, missing = rm.build_matrix(manifest_with({

@@ -59,15 +59,17 @@ SHA_RE = re.compile(r"[0-9a-f]{40}", re.ASCII)
 # in release.yml; `recipe` selects them. `archive` is the package format and
 # `exe` the executable suffix.
 LINUX = {"recipe": "linux-headless", "archive": "tar.xz", "exe": ""}
+WINDOWS = {"recipe": "windows-headless", "archive": "zip", "exe": ".exe"}
 RECIPES = {
     ("linux-amd64", "headless-server"): {**LINUX, "runner": "ubuntu-24.04", "platform": "linux-x64",
                                          "file_arch": "x86-64"},
     ("linux-arm64", "headless-server"): {**LINUX, "runner": "ubuntu-24.04-arm", "platform": "linux-arm64",
                                          "file_arch": "aarch64"},
     # file_arch is both the Visual Studio platform and the PE machine name.
-    ("windows-amd64", "headless-server"): {"recipe": "windows-headless", "archive": "zip", "exe": ".exe",
-                                           "runner": "windows-2025", "platform": "windows-x64",
+    ("windows-amd64", "headless-server"): {**WINDOWS, "runner": "windows-2025", "platform": "windows-x64",
                                            "file_arch": "x64"},
+    ("windows-arm64", "headless-server"): {**WINDOWS, "runner": "windows-11-arm", "platform": "windows-arm64",
+                                           "file_arch": "ARM64"},
 }
 # role -> (asset name part, binary, description)
 ROLES = {
