@@ -552,6 +552,16 @@ void __cdecl Com_SetRecommended(int localClientNum, int restart)
     text = csv;
     Com_BeginParseSession("configure_mp.csv");
     Com_SetCSV(1);
+#ifdef KISAK_DEDI_HEADLESS
+    // configure_mp.csv recommends client graphics and sound settings; a
+    // headless server keeps its defaults when no row fits the host instead of
+    // refusing to start (KisakCOD port).
+    if (!Com_SetRecommendedCpu(localClientNum, &info, &text))
+        Com_PrintWarning(16, "configure_mp.csv: no CPU row fits %.2f GHz %d MB; keeping defaults\n",
+            static_cast<double>(info.configureGHz), info.sysMB);
+    if (!Com_SetRecommendedGpu(&info, &text))
+        Com_PrintWarning(16, "configure_mp.csv: no GPU row fits \"%s\"; keeping defaults\n", info.gpuDescription);
+#else
     if (!Com_SetRecommendedCpu(localClientNum, &info, &text))
     {
         Sys_GetInfo(&info);
@@ -559,6 +569,7 @@ void __cdecl Com_SetRecommended(int localClientNum, int restart)
     }
     if (!Com_SetRecommendedGpu(&info, &text))
         Com_Error(ERR_FATAL, "KISAK GPU %s", info.gpuDescription);
+#endif
     Com_EndParseSession();
     checksum = Com_ConfigureChecksum(csv, filesize);
     FS_FreeFile(csv);

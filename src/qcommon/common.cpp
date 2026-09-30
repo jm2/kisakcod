@@ -393,7 +393,11 @@ void QDECL Com_PrintMessage(int channel, const char* msg, int error)
 	//PbCaptureConsoleOutput(msg, 4096);
 
     // always print to stdout console
+    // A headless server already prints every message through Sys_Print; the
+    // mirror would show each line twice on its terminal or log (KisakCOD port).
+#if !defined(KISAK_DEDI_HEADLESS)
     fprintf(stderr, "%s", msg);
+#endif
 
 	if (rd_buffer)
 	{

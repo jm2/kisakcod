@@ -227,6 +227,44 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  linux-headless:
+    # The POSIX headless dedicated server (NOW row 13): the bead's done-test
+    # configure, an assetless smoke run against synthetic stand-ins (retail
+    # data never reaches CI), and the binary as a per-push artifact.
+    name: Linux headless server / amd64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install clang, lld and Ninja
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends clang lld ninja-build
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-headless -G Ninja
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF
+          -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF
+          -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build KisakCOD-dedi
+        run: cmake --build build-headless --target KisakCOD-dedi --parallel
+
+      - name: Assetless smoke run
+        run: python3 scripts/ci/headless_smoke.py bin/KisakCOD-dedi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: KisakCOD-linux-amd64-headless
+          path: bin/KisakCOD-dedi
+          if-no-files-found: error
+          retention-days: 14
+
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
     runs-on: windows-2022
@@ -396,6 +434,7 @@ jobs:
       - windows-x86
       - windows-x86-sp
       - windows-x86-headless
+      - linux-headless
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10

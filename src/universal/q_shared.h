@@ -115,6 +115,25 @@ int __cdecl LongSwap(int l);
 
 #endif // WIN32
 
+// Build target string for the non-Windows platforms. It was Windows-only, so
+// every shared TU that prints a build banner (qcommon/common.cpp) failed on
+// Linux/macOS before the headless dedicated build could link; see
+// docs/design/PLATFORM_POSIX.md. The spellings mirror the win-* names above so
+// the version string reads the same on every target.
+#if !defined(WIN32)
+#if defined(__APPLE__)
+#if defined(__aarch64__)
+#define	CPUSTRING	"macos-arm64"
+#else
+#define	CPUSTRING	"macos-x64"
+#endif
+#elif defined(__aarch64__)
+#define	CPUSTRING	"linux-arm64"
+#else
+#define	CPUSTRING	"linux-x64"
+#endif
+#endif
+
 #define PI_DIV_180		0.017453292519943295769236907684886
 #define INV_PI_DIV_180	57.295779513082320876798154814105
 

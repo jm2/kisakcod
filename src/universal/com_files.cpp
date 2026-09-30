@@ -569,7 +569,11 @@ void __cdecl FS_ReplaceSeparators(char *path)
             if (!wasSep)
             {
                 wasSep = 1;
-                *dst++ = 92;
+#ifdef _WIN32
+                *dst++ = '\\';
+#else
+                *dst++ = '/'; // KisakCOD port: POSIX paths use '/'
+#endif
             }
         }
         else
@@ -635,13 +639,18 @@ int __cdecl FS_CreatePath(char *OSPath)
     }
     else
     {
+#ifdef _WIN32
+        const char osPathSep = '\\';
+#else
+        const char osPathSep = '/'; // KisakCOD port: FS_ReplaceSeparators' POSIX separator
+#endif
         for (ofs = OSPath + 1; *ofs; ++ofs)
         {
-            if (*ofs == 92)
+            if (*ofs == osPathSep)
             {
                 *ofs = 0;
                 Sys_Mkdir(OSPath);
-                *ofs = 92;
+                *ofs = osPathSep;
             }
         }
         return 0;

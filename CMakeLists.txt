@@ -48,13 +48,21 @@ if (NOT KISAK_PLATFORM STREQUAL _KISAK_DEFAULT_PLATFORM)
         "CMAKE_SYSTEM_NAME consistently.")
 endif()
 
+# The headless dedicated build is the one engine target a non-Win32 platform
+# may compose: its source set is the portable engine plus the POSIX platform
+# services and the POSIX entry/console/localization files (NOW row 13,
+# docs/design/PLATFORM_POSIX.md). Every other engine target still requires the
+# Win32 backend until the client renderer and the remaining POSIX services land.
 if (NOT KISAK_PLATFORM STREQUAL "win32"
-    AND (KISAK_BUILD_MP OR KISAK_BUILD_DEDICATED OR KISAK_BUILD_SP))
+    AND (KISAK_BUILD_MP OR KISAK_BUILD_SP
+         OR (KISAK_BUILD_DEDICATED AND NOT KISAK_DEDI_HEADLESS)))
     message(FATAL_ERROR
         "The ${KISAK_PLATFORM} backend is not buildable yet. The platform selection "
         "and native time/synchronization services are present, but 64-bit runtime/fast-file "
         "widening, the remaining POSIX services, portable headless source composition, and "
-        "the client Vulkan renderer must land before engine targets can compile.")
+        "the client Vulkan renderer must land before engine targets can compile. "
+        "Configure -DKISAK_BUILD_DEDICATED=ON -DKISAK_DEDI_HEADLESS=ON for the "
+        "POSIX headless dedicated server.")
 endif()
 
 if (CMAKE_SIZEOF_VOID_P EQUAL 8
@@ -79,6 +87,30 @@ if (KISAK_ENABLE_STEAM AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|arm|aarch|AARCH
         "KISAK_ENABLE_STEAM is set but Valve ships no aarch64 Steamworks library. "
         "Configure with -DKISAK_ENABLE_STEAM=OFF on ARM targets; the engine falls "
         "back to a self-generated persistent cl_guid identity.")
+endif()
+
+# Toolchain policy (docs/design/PLATFORM_POSIX.md): every non-MSVC target is
+# clang with -fms-extensions, because the decompiled engine still spells MSVC
+# dialect (__cdecl, __int32, __declspec). GCC is out until those spellings are
+# gone. Without the flag the non-Windows engine targets fail on the first
+# __cdecl, so it is applied here rather than left to each build invocation.
+# Test-only configurations (every KISAK_BUILD_* off) compile no engine target
+# and keep their own compilers, GCC included.
+if (NOT MSVC AND (KISAK_BUILD_MP OR KISAK_BUILD_DEDICATED OR KISAK_BUILD_SP))
+    if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "The ${CMAKE_CXX_COMPILER_ID} compiler is not supported: build with "
+            "clang and -fms-extensions (see docs/design/PLATFORM_POSIX.md).")
+    endif()
+    add_compile_options(-fms-extensions)
+endif()
+if (NOT MSVC)
+    # Position-independent executables: the distribution default, and every
+    # data address then lies above 4 GiB, so a pointer truncated to 32 bits
+    # faults instead of working by accident (the headless smoke relies on it).
+    include(CheckPIESupported)
+    check_pie_supported()
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
 # Set Address Sanitizer
