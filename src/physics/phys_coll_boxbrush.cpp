@@ -2131,19 +2131,15 @@ void __cdecl Phys_CollideOrientedBrushModelWithBrush(const cbrush_t *fixedBrush,
         &data);
 }
 
+// userData is the BrushBrushData built above (the decompile read it as ILP32 words).
 void __cdecl Phys_CollideOrientedBrushWithBrush_Wrapper(const cbrush_t *orientedBrush, void *userData)
 {
-    Results *results; // [esp+4h] [ebp-4h]
-
     if (!userData)
         MyAssertHandler(".\\physics\\phys_coll_boxbrush.cpp", 1673, 0, "%s", "userData");
-    results = (Results *)*((uint32_t *)userData + 2);
+    const BrushBrushData *data = static_cast<const BrushBrushData *>(userData);
+    Results *results = data->results;
     if (results->contactCount < results->maxContacts)
-        Phys_CollideOrientedBrushWithBrush(
-            orientedBrush,
-            *(const cbrush_t **)userData,
-            *((const objInfo **)userData + 1),
-            results);
+        Phys_CollideOrientedBrushWithBrush(orientedBrush, data->fixedBrush, data->input, results);
 }
 
 void __cdecl Phys_CollideOrientedBrushWithTriangleList(
@@ -2646,18 +2642,20 @@ void __cdecl Phys_CollideOrientedBrushModelWithTriangleList(
     }
 }
 
+// userData is the BrushTrimeshData built above (the decompile read it as ILP32 words).
 void __cdecl Phys_CollideOrientedBrushWithTriangleList_Wrapper(const cbrush_t *orientedBrush, void *userData)
 {
     if (!userData)
         MyAssertHandler(".\\physics\\phys_coll_boxbrush.cpp", 1855, 0, "%s", "userData");
+    const BrushTrimeshData *data = static_cast<const BrushTrimeshData *>(userData);
     Phys_CollideOrientedBrushWithTriangleList(
         orientedBrush,
-        *(const unsigned __int16 **)userData,
-        *((const float (**)[3])userData + 1),
-        *((uint32_t *)userData + 2),
-        *((const objInfo **)userData + 3),
-        *((uint32_t *)userData + 4),
-        *((Results **)userData + 5));
+        data->indices,
+        data->verts,
+        data->triCount,
+        data->input,
+        data->surfaceFlags,
+        data->results);
 }
 
 void __cdecl Phys_CollideBoxWithTriangleList(

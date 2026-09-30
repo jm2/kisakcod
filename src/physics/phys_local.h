@@ -148,6 +148,10 @@ struct InputOutput // sizeof=0x8
     const objInfo *Input;               // ...
     Results *Output;                    // ...
 };
+// The x86 arms are the byte offsets the decompiled brush callbacks hard-coded.
+RUNTIME_OFFSET(objInfo, type, 0x34, 0x44);
+RUNTIME_OFFSET(objInfo, u, 0x8C, 0xA0);
+RUNTIME_OFFSET(InputOutput, Output, 0x4, 0x8);
 
 struct BrushWrapper // sizeof=0x50
 {
@@ -327,6 +331,10 @@ struct PhysGlob // sizeof=0x26508
     uint32_t performanceMintime;    // ...
     uint32_t performanceMaxtime;    // ...
 };
+// x86: the decompiled physGlob.space[51 * w - 149] (space[] at 0x270, after
+// worldData[] at 0xC) is byte 0xC + 0xCC * w + 0x10: worldData[w].numJitterRegions.
+RUNTIME_SIZE(PhysWorldData, 0xCC, 0xD8);
+RUNTIME_OFFSET(PhysWorldData, numJitterRegions, 0x10, 0x18);
 
 struct dContactGeomExt // sizeof=0x30
 {                                       // ...
@@ -681,7 +689,7 @@ void __cdecl CM_PositionGeomTestInAabbTree_r(CollisionAabbTree *aabbTree, const 
 bool __cdecl CM_CullBox2(const objInfo *input, const float *origin, const float *halfSize);
 void __cdecl CM_TestGeomInLeaf(cLeaf_t *leaf, const objInfo *input, Results *results);
 void __cdecl CM_TestGeomInLeafBrushNode(cLeaf_t *leaf, const objInfo *input, Results *results);
-void __cdecl Phys_TestGeomInBrush(const cbrush_t *brush, uint32_t *userData);
+void __cdecl Phys_TestGeomInBrush(const cbrush_t *brush, void *userData);
 void __cdecl Phys_TestAgainstEntities(const objInfo *input, Results *results);
 void __cdecl Phys_InitWorldCollision();
 void __cdecl Phys_InitBrushmodelGeomClass();
@@ -730,6 +738,9 @@ struct BrushBrushData // sizeof=0xC
     const objInfo *input;               // ...
     Results *results;                   // ...
 };
+RUNTIME_OFFSET(BrushBrushData, results, 0x8, 0x10);
+RUNTIME_OFFSET(BrushTrimeshData, triCount, 0x8, 0x10);
+RUNTIME_OFFSET(BrushTrimeshData, surfaceFlags, 0x10, 0x20);
 void __cdecl Phys_DrawPoly(const Poly *poly, const float *color);
 dContactGeomExt *__cdecl AddContact(Results *results);
 bool __cdecl Phys_AddContactData(Results *results, float depth, float *normal, float *pos, int surfaceFlags);
