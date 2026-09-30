@@ -70,11 +70,17 @@ def tu_lists() -> dict[str, list[str]]:
 
 
 def fetch_tracy(out: Path) -> Path:
-    tag = re.search(r"GIT_TAG\s+(\S+)", (ROOT / "scripts/extern/tracy.cmake").read_text()).group(1)
-    dest = out / ("tracy-" + tag)
-    if not dest.is_dir():
-        run(["git", "clone", "-q", "--depth", "1", "--branch", tag,
-             "https://github.com/wolfpld/tracy.git", str(dest)], check=True)
+    """Fetch exactly the Tracy commit tracy.cmake pins."""
+    pin = re.search(r"GIT_TAG\s+([0-9a-f]{40})\b", (ROOT / "scripts/extern/tracy.cmake").read_text())
+    if not pin:
+        sys.exit("scripts/extern/tracy.cmake must pin GIT_TAG to a full commit SHA")
+    dest = out / ("tracy-" + pin.group(1))
+    if not (dest / "public").is_dir():
+        for cmd in (["git", "init", "-q", str(dest)],
+                    ["git", "-C", str(dest), "fetch", "-q", "--depth", "1",
+                     "https://github.com/wolfpld/tracy.git", pin.group(1)],
+                    ["git", "-C", str(dest), "checkout", "-q", "FETCH_HEAD"]):
+            run(cmd, check=True)
     return dest / "public"
 
 

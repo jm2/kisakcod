@@ -104,9 +104,24 @@ bool IsWildcardInterface(const char *ip)
 // Binds the game socket to the latched net_ip/net_port, and a broadcast socket when
 // the address is a wildcard bind so LAN discovery can hear replies. A failure
 // leaves both handles null rather than half-configured.
+// Retail NET_GetLocalAddress: the host's IPv4 addresses, listed each time
+// the sockets open and kept for the local-subnet LAN rule and showip.
+constexpr std::size_t kMaxLocalIPs = 16;
+SysSocketAddress localIPs[kMaxLocalIPs];
+std::size_t numLocalIPs = 0;
+
+void RefreshLocalAddresses()
+{
+    numLocalIPs = Sys_SocketListLocalIPv4(localIPs, kMaxLocalIPs);
+    for (std::size_t i = 0; i < numLocalIPs; ++i)
+        Com_Printf(16, "IP: %u.%u.%u.%u\n", localIPs[i].address[0], localIPs[i].address[1],
+            localIPs[i].address[2], localIPs[i].address[3]);
+}
+
 bool OpenSockets()
 {
     CloseSockets();
+    RefreshLocalAddresses();
 
     const int port = net_port ? net_port->current.integer : 0;
     if (port < 0 || port > 65535)
@@ -257,33 +272,34 @@ bool Sys_IsLANAddress_IgnoreSubnet(netadr_t adr)
     return adr.ip[0] == 192 && adr.ip[1] == 168;
 }
 
+bool NET_SharesLocalSubnet(netadr_t adr, const SysSocketAddress *locals, std::size_t count)
+{
+    if (adr.type != NA_IP || !locals)
+        return false;
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (adr.ip[0] == locals[i].address[0] && adr.ip[1] == locals[i].address[1]
+            && adr.ip[2] == locals[i].address[2])
+            return true;
+    }
+    return false;
+}
+
 bool Sys_IsLANAddress(netadr_t adr)
 {
-    // The local-interface match the retail layer applies is a Winsock
-    // enumeration; on a portable layer the RFC1918/link-local classification
-    // already covers every address a LAN client can present, so the subnet
-    // rule is the whole answer here.
-    return Sys_IsLANAddress_IgnoreSubnet(adr);
+    // Retail: the private/loopback/link-local ranges, or the same /24 as one
+    // of the host's own addresses.
+    return Sys_IsLANAddress_IgnoreSubnet(adr) || NET_SharesLocalSubnet(adr, localIPs, numLocalIPs);
 }
 
 void Sys_ShowIP(void)
 {
-    SysSocketAddress bound{};
-    if (gameSocket && Sys_SocketGetLocalAddress(gameSocket, &bound))
-    {
-        Com_Printf(
-            16,
-            "IP: %u.%u.%u.%u:%u\n",
-            bound.address[0],
-            bound.address[1],
-            bound.address[2],
-            bound.address[3],
-            bound.port);
-    }
-    else
-    {
-        Com_Printf(16, "IP: no bound interface\n");
-    }
+    // Retail prints each of the host's addresses.
+    if (numLocalIPs == 0)
+        Com_Printf(16, "IP: no local IPv4 address\n");
+    for (std::size_t i = 0; i < numLocalIPs; ++i)
+        Com_Printf(16, "IP: %u.%u.%u.%u\n", localIPs[i].address[0], localIPs[i].address[1],
+            localIPs[i].address[2], localIPs[i].address[3]);
 }
 
 qboolean Sys_StringToAdr(const char *s, netadr_t *a)

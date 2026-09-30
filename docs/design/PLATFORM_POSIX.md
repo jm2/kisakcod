@@ -8,7 +8,7 @@ Gate: G1 (Linux compile and link), then G2. KPIs: K1 and K2 ([NATIVE64.md](NATIV
 | --- | --- | --- |
 | Win32 headless (`kisakcod_get_dedi_sources`) | 245 (227 C++, 18 C) | Built by the Windows x86 headless CI job |
 | Linux headless | 243 | Win32 set − 5 `src/win32` − 10 `src/_platform/win32` + 13 `src/_platform/posix` |
-| Linux/macOS engine sets | headless | `PLATFORM_{LINUX,MACOS}_DEDI_HEADLESS` add the `posix_*` entry, console and localization; only `KISAK_DEDI_HEADLESS` configures off Win32. CI `linux-headless` builds and smoke-runs it |
+| Linux/macOS engine sets | headless | `PLATFORM_{LINUX,MACOS}_DEDI_HEADLESS` add the `posix_*` entry, console and localization; only `KISAK_DEDI_HEADLESS` configures off Win32. CI `linux-headless` builds and smoke-runs it on amd64 and arm64 |
 
 ## Service map
 
@@ -48,7 +48,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 - **Two-phase lookup:** the `KeywordHashEntry` template in `ui/ui_shared.h` called undeclared `IsValidSeed`; `-fdelayed-template-parsing` hid it from the census, which no longer uses that flag (real builds never did). The seed-collision check now lives in `ui_shared.h` as the free template `IsValidSeed` (moved out of the per-instantiation copies in `ui_shared_obj.cpp`, whose wrappers delegate to it); the half-transcribed method stubs that reached for the undeclared name are gone.
 - **Byte-order helpers:** `BigShort` was declared for every target but defined only inside `q_shared.h`'s `WIN32` block, so every POSIX caller compiled and then failed to link (#231). The `Big*`/`Little*` forms are now one `constexpr` set defined for every target and keyed on `KISAK_LITTLE_ENDIAN` in `kisak_abi.h`.
 - **`va_list` misuse:** 2 sites in `q_parse.cpp` and 3 in `com_playerprofile.cpp`.
-- **arm64 only:** `__rdtsc`, with 8 sites in `scr_vm.cpp` and 2 in `sv_main_mp.cpp`. `common.cpp` (the `Netchan_Init` seed), `profile.cpp` and `timing.cpp` also use it, but fail earlier today. Route all of them through one `Sys_CycleCounter`.
+- **arm64 only (fixed):** the `__rdtsc` sites in `scr_vm.cpp`, `sv_main_mp.cpp`, `common.cpp`, `profile.cpp`, `timing.cpp` and `com_profilemapload.cpp` read `Sys_CycleCounter` (`qcommon/sys_time.h`): the TSC on x86 (MSVC keeps `__rdtsc()`), `CNTVCT_EL0` on AArch64.
 
 ## Portable async fast-file reads
 

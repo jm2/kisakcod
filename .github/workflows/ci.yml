@@ -184,6 +184,9 @@ jobs:
       - name: Render KPI summary
         run: python3 scripts/ci/kpi_summary.py >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Test the release script (manifest to release matrix)
+        run: python3 scripts/ci/release_meta_test.py
+
   native64-census:
     # KPIs K1, K2, K3 and K5 (docs/design/NATIVE64.md, PLATFORM_POSIX.md):
     # clang syntax-only compiles of the headless server for win32 (control),
@@ -228,12 +231,24 @@ jobs:
           retention-days: 30
 
   linux-headless:
-    # The POSIX headless dedicated server (NOW row 13): the bead's done-test
-    # configure, an assetless smoke run against synthetic stand-ins (retail
-    # data never reaches CI), and the binary as a per-push artifact.
-    name: Linux headless server / amd64
-    runs-on: ubuntu-24.04
+    # The POSIX headless dedicated server (NOW row 13) on Linux amd64 and
+    # arm64: the bead's done-test configure, an assetless smoke run against
+    # synthetic stand-ins (retail data never reaches CI), and the binary as a
+    # per-push artifact. Keep the rendered names: "Linux headless server /
+    # amd64" is a required status check.
+    name: Linux headless server / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            file-arch: x86-64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            file-arch: aarch64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -255,12 +270,15 @@ jobs:
       - name: Build KisakCOD-dedi
         run: cmake --build build-headless --target KisakCOD-dedi --parallel
 
+      - name: Verify binary architecture
+        run: scripts/ci/verify-artifact-arch.sh '${{ matrix.file-arch }}' bin/KisakCOD-dedi
+
       - name: Assetless smoke run
         run: python3 scripts/ci/headless_smoke.py bin/KisakCOD-dedi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: KisakCOD-linux-amd64-headless
+          name: KisakCOD-linux-${{ matrix.arch }}-headless
           path: bin/KisakCOD-dedi
           if-no-files-found: error
           retention-days: 14

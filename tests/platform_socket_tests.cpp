@@ -494,6 +494,31 @@ bool StageInterfaceBind(SocketFixture &)
         "wildcard bind closed");
 }
 
+// Local address list (retail NET_GetLocalAddress, the LAN rule's input):
+// bounded, duplicate-free, and on POSIX it includes the up loopback interface.
+bool StageLocalAddresses(SocketFixture &)
+{
+    SysSocketAddress list[16] = {};
+    if (!Check(Sys_SocketListLocalIPv4(nullptr, 16) == 0, "local list rejects a null buffer")
+        || !Check(Sys_SocketListLocalIPv4(list, 0) == 0, "local list rejects zero capacity"))
+        return false;
+    const std::size_t count = Sys_SocketListLocalIPv4(list, 16);
+    if (!Check(count <= 16, "local list stays within capacity"))
+        return false;
+    for (std::size_t i = 0; i < count; ++i)
+        for (std::size_t j = i + 1; j < count; ++j)
+            if (!Check(std::memcmp(list[i].address, list[j].address, 4) != 0, "local list has no duplicates"))
+                return false;
+#if !defined(_WIN32)
+    bool loopback = false;
+    for (std::size_t i = 0; i < count; ++i)
+        loopback = loopback || (list[i].address[0] == 127 && list[i].address[3] == 1);
+    if (!Check(loopback, "local list includes 127.0.0.1"))
+        return false;
+#endif
+    return true;
+}
+
 // Exclusive bind ownership: while a nonzero port is held open, a second
 // open of the same endpoint reports SystemFailure and publishes no
 // handle, so datagrams for the held port cannot be diverted to a
@@ -807,7 +832,7 @@ int main()
         &StageSendContract,
         &StageLoopbackSend, &StageLoopbackReply, &StageTruncationContract,
         &StageOversizeCapacityBoundary, &StageBroadcastOption,
-        &StageExplicitBind, &StageInterfaceBind, &StageExclusiveBind,
+        &StageExplicitBind, &StageInterfaceBind, &StageLocalAddresses, &StageExclusiveBind,
 #if defined(_WIN32)
         &StageExclusiveInterfaceBind,
 #endif

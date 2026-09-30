@@ -1476,6 +1476,49 @@ bool TestTimeServices()
     return true;
 }
 
+bool TestCycleCounter()
+{
+    // Sys_CycleCounter replaces the retail __rdtsc sites and is what
+    // universal/timing.cpp calibrates into msecPerRawTimerTick. On one thread
+    // it never steps back, and it ticks at 1 MHz or faster: the TSC,
+    // CNTVCT_EL0 and the steady-clock fallback all clear that floor, while a
+    // millisecond clock or a stuck counter does not.
+    static_assert(std::is_same_v<decltype(Sys_CycleCounter()), unsigned long long>);
+
+    constexpr auto busyWindow = std::chrono::milliseconds(20);
+    const unsigned long long start = Sys_CycleCounter();
+    const auto steadyStart = std::chrono::steady_clock::now();
+    auto steadyNow = steadyStart;
+    unsigned long long previous = start;
+    while (steadyNow - steadyStart < busyWindow)
+    {
+        const unsigned long long current = Sys_CycleCounter();
+        if (current < previous)
+        {
+            std::fputs("Sys_CycleCounter moved backwards\n", stderr);
+            return false;
+        }
+        previous = current;
+        steadyNow = std::chrono::steady_clock::now();
+    }
+    const unsigned long long end = Sys_CycleCounter();
+
+    const auto elapsedMicroseconds =
+        std::chrono::duration_cast<std::chrono::microseconds>(steadyNow - steadyStart).count();
+    if (end < previous || end <= start)
+    {
+        std::fputs("Sys_CycleCounter did not advance across a busy loop\n", stderr);
+        return false;
+    }
+    if (end - start < static_cast<unsigned long long>(elapsedMicroseconds))
+    {
+        std::fprintf(stderr, "Sys_CycleCounter advanced %llu ticks in %lld us (< 1 MHz)\n",
+            end - start, static_cast<long long>(elapsedMicroseconds));
+        return false;
+    }
+    return true;
+}
+
 template <typename LockFunction, typename UnlockFunction>
 bool TestContendedExclusion(
     const char *const serviceName,
@@ -1796,6 +1839,8 @@ int main()
     if (!TestConcurrentInitialization())
         return 1;
     if (!TestTimeServices())
+        return 1;
+    if (!TestCycleCounter())
         return 1;
     if (!TestCriticalSections())
         return 1;

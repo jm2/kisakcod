@@ -734,3 +734,36 @@ SysSocketStreamRecvStatus KISAK_CDECL Sys_SocketRecvStream(
     *outByteCount = static_cast<std::uint32_t>(received);
     return SysSocketStreamRecvStatus::Received;
 }
+
+std::size_t KISAK_CDECL Sys_SocketListLocalIPv4(
+    SysSocketAddress *const out,
+    const std::size_t capacity)
+{
+    if (!out || capacity == 0 || !EnsureWinsockStarted())
+        return 0;
+    // Retail NET_GetLocalAddress: the addresses the host name resolves to.
+    char hostname[256] = {};
+    if (gethostname(hostname, sizeof(hostname) - 1) != 0)
+        return 0;
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    addrinfo *results = nullptr;
+    if (getaddrinfo(hostname, nullptr, &hints, &results) != 0)
+        return 0;
+    std::size_t count = 0;
+    for (const addrinfo *entry = results; entry && count < capacity; entry = entry->ai_next)
+    {
+        if (entry->ai_family != AF_INET || !entry->ai_addr)
+            continue;
+        SysSocketAddress address{};
+        std::memcpy(address.address,
+            &reinterpret_cast<const sockaddr_in *>(entry->ai_addr)->sin_addr, sizeof(address.address));
+        bool seen = false;
+        for (std::size_t i = 0; i < count && !seen; ++i)
+            seen = std::memcmp(out[i].address, address.address, sizeof(address.address)) == 0;
+        if (!seen)
+            out[count++] = address;
+    }
+    freeaddrinfo(results);
+    return count;
+}
