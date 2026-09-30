@@ -68,16 +68,17 @@ struct FileBuilder
     }
 };
 
-// A zone with a temp block (0) and the virtual block (4), positioned as
-// DB_LoadXFile leaves it for the asset array. Each zone starts a new image.
-template <std::uint32_t TempBytes, std::uint32_t VirtBytes>
+// A zone with a temp block (0) of up to 64 bytes and the virtual block (4),
+// positioned as DB_LoadXFile leaves it for the asset array. Each zone starts
+// a new image.
+template <std::uint32_t VirtBytes>
 struct Zone
 {
-    alignas(16) std::uint8_t temp[TempBytes]{};
+    alignas(16) std::uint8_t temp[64]{};
     alignas(16) std::uint8_t virt[VirtBytes]{};
     XZoneMemory memory{};
 
-    explicit Zone(std::uint32_t tempBytes = TempBytes)
+    explicit Zone(std::uint32_t tempBytes = sizeof(temp))
     {
         g_file.clear();
         g_read = 0;
