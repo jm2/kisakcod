@@ -165,6 +165,7 @@ set(DATABASE
     "${SRC_DIR}/database/db_disk32_load.cpp"
     "${SRC_DIR}/database/db_disk32_load.h"
     "${SRC_DIR}/database/db_disk32_load_internal.h"
+    "${SRC_DIR}/database/db_disk32_stringtable.cpp"
     "${SRC_DIR}/database/db_referenced_fastfile.h"
     "${SRC_DIR}/database/db_stream.h"
     "${SRC_DIR}/database/db_stream_state.h"

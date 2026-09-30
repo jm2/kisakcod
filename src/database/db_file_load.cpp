@@ -1,4 +1,5 @@
 #include "database.h"
+#include "db_disk32_load.h"
 #include "db_load_atomic.h"
 #include "db_validation.h"
 
@@ -6,6 +7,7 @@
 #include <qcommon/sys_file.h>
 #include <qcommon/sys_local.h>
 #include <universal/com_files.h>
+#include <universal/physicalmemory.h>
 #include <universal/sys_atomic.h>
 
 // GfxImage (whose texture/size fields the headless delayed-image finalize
@@ -295,6 +297,22 @@ void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size)
             db::relocation::StatusName(materialized));
     }
 }
+
+#if KISAK_ARCH_64BIT
+std::uint8_t *__cdecl DB_AllocZoneNative(std::size_t size, std::size_t alignment)
+{
+    // DB_LoadXZone brackets the whole load in PMem_BeginAlloc(zone name), so
+    // this extent joins the zone's blocks and PMem_Free releases it with them.
+    // Type 4 is the read-write type DB_MemAlloc passes for virtual blocks.
+    if (!g_load.f || !g_load.zoneMem || size > UINT32_MAX || alignment > UINT32_MAX)
+        return nullptr;
+    return PMem_TryAlloc(
+        static_cast<std::uint32_t>(size),
+        static_cast<std::uint32_t>(alignment),
+        4,
+        static_cast<std::uint32_t>(g_load.allocType));
+}
+#endif
 
 void DB_ReadXFileStage()
 {

@@ -7,7 +7,11 @@
 
 #include <universal/kisak_abi.h>
 
+#include <cstddef>
+#include <cstdint>
+
 struct RawFile;
+struct StringTable;
 
 #if KISAK_ARCH_64BIT
 // Loads one RawFile asset header. slot is the native XAssetHeader slot: on
@@ -17,4 +21,19 @@ struct RawFile;
 // streams them, so every block offset stays the retail one. Malformed input
 // raises Com_Error(ERR_DROP) before anything reads past a checked extent.
 void __cdecl DB_LoadRawFilePtrDisk32(bool atStreamStart, RawFile **slot);
+
+// Loads one StringTable asset header under the same slot contract. The disk32
+// record, its name and its value tokens stream into the current block (4), as
+// the 32-bit loader streams them. The native table and its 8-byte value
+// pointers live in DB_AllocZoneNative storage, and the record is published as
+// a completed object whose offset tokens resolve to that native table.
+void __cdecl DB_LoadStringTablePtrDisk32(bool atStreamStart, StringTable **slot);
+
+// Native storage for loader output whose layout differs from its disk32
+// bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
+// the loading zone's physical-memory allocation, so it lives exactly as long as
+// the zone's runtime blocks. Null when that memory is exhausted or no zone is
+// loading, or when the request does not fit the allocator; the caller raises
+// ERR_DROP, since exhaustion is not a fallback.
+std::uint8_t *__cdecl DB_AllocZoneNative(std::size_t size, std::size_t alignment);
 #endif
