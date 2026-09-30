@@ -9,6 +9,8 @@
 // The engine boundary is weak: the engine TUs replace the stubs they define,
 // and --gc-sections drops the engine code no check reaches.
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -46,11 +48,14 @@ char *MapAt4GiBBoundary()
     return nullptr;
 }
 
-// Writes text so that text[at] lands on the boundary; returns the string.
-const char *PlaceAcross(char *boundary, const char *text, size_t at)
+// Copies a literal, terminator included, so that text[at] lands on the
+// boundary; returns the copy. It stays inside the two mapped pages.
+template <size_t N>
+const char *PlaceAcross(char *boundary, const char (&text)[N], size_t at)
 {
-    char *const start = boundary - at;
-    std::memcpy(start, text, std::strlen(text) + 1);
+    static_assert(N <= 256, "keep test strings well inside one page");
+    char *const start = boundary - (at < N ? at : 0);
+    std::copy_n(text, N, start);
     return start;
 }
 } // namespace
