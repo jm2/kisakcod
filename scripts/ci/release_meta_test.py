@@ -11,6 +11,7 @@ import os
 import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -105,19 +106,26 @@ class MatrixTest(unittest.TestCase):
             ("kisakcod-1.2.3-windows-x64-headless-preview", "windows-headless", "windows-2025", "zip", ".exe", "x64"),
         ])
 
+    def test_macos_leg_ships_a_tar_xz(self):
+        legs, missing = rm.build_matrix(manifest_with({("macos-arm64", "headless-server"): "links"}), "1.2.3")
+        self.assertEqual(missing, [])
+        self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["archive"], leg["exe"], leg["file_arch"])
+                          for leg in legs], [("kisakcod-1.2.3-macos-arm64-headless-preview", "macos-headless",
+                                              "macos-26", "tar.xz", "", "arm64")])
+
     def test_levels_pick_legs_tiers_and_names(self):
         legs, missing = rm.build_matrix(manifest_with({
             ("linux-amd64", "headless-server"): "fork_peer",
             ("linux-arm64", "headless-server"): "steam18_peer",
             ("linux-amd64", "mp-client"): "compiles",       # below links: no leg
             ("windows-x86", "headless-server"): "packaged",  # not required: no leg
-            ("macos-arm64", "headless-server"): "links",     # no recipe yet
+            ("macos-arm64", "mp-client"): "links",           # no recipe yet
         }), "2.0.0")
         self.assertEqual([(leg["stem"], leg["tier"]) for leg in legs], [
             ("kisakcod-2.0.0-linux-arm64-headless", "first-class"),
             ("kisakcod-2.0.0-linux-x64-headless-beta", "beta"),
         ])
-        self.assertEqual(missing, ["macos-arm64/headless-server"])
+        self.assertEqual(missing, ["macos-arm64/mp-client"])
 
     def test_every_level_maps_to_a_tier(self):
         self.assertEqual([rm.tier(level) for level in rm.LEVELS[2:]],
@@ -191,6 +199,59 @@ class CliTest(unittest.TestCase):
                      "kisakcod-1.2.3-windows-x64-headless-preview-debugsymbols.zip",
                      "debuggers find KisakCOD-dedi.pdb next to KisakCOD-dedi.exe"):
             self.assertIn(text, words)
+
+
+    def test_macos_readme_points_at_the_dsym(self):
+        legs, _ = rm.build_matrix(manifest_with({("macos-arm64", "headless-server"): "links"}), "1.2.3")
+        run = cli("readme", "--leg", json.dumps(legs[0]), "--version", "1.2.3", "--commit", SHA_A)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        words = " ".join(run.stdout.split())
+        for text in ("macos-arm64 headless dedicated server (preview)",
+                     "kisakcod-1.2.3-macos-arm64-headless-preview-debugsymbols.tar.xz",
+                     "lldb finds KisakCOD-dedi.dSYM next to KisakCOD-dedi by its UUID"):
+            self.assertIn(text, words)
+
+
+class TarXzTest(unittest.TestCase):
+    def test_tar_xz_is_sorted_and_reproducible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = Path(tmp) / "stage" / "pkg"
+            dwarf = stage / "KisakCOD-dedi.dSYM" / "Contents" / "Resources" / "DWARF"
+            dwarf.mkdir(parents=True)
+            for path in (stage / "README.txt", stage / "KisakCOD-dedi", dwarf / "KisakCOD-dedi"):
+                path.write_text(path.name)
+            (stage / "KisakCOD-dedi").chmod(0o775)
+            archives = []
+            for i, mtime in enumerate((1_000_000_000, 1_700_000_000)):
+                for path in stage.rglob("*"):
+                    os.utime(path, (mtime, mtime))
+                out = Path(tmp) / f"{i}.tar.xz"
+                self.assertEqual(cli("tarxz", "--root", str(stage.parent), "--stem", "pkg", "--epoch", "1759000000",
+                                     "--out", str(out)).returncode, 0)
+                archives.append(out.read_bytes())
+            self.assertEqual(archives[0], archives[1])
+            with tarfile.open(Path(tmp) / "0.tar.xz") as tf:
+                members = tf.getmembers()
+                self.assertEqual([m.name for m in members], [
+                    "pkg", "pkg/KisakCOD-dedi", "pkg/KisakCOD-dedi.dSYM", "pkg/KisakCOD-dedi.dSYM/Contents",
+                    "pkg/KisakCOD-dedi.dSYM/Contents/Resources", "pkg/KisakCOD-dedi.dSYM/Contents/Resources/DWARF",
+                    "pkg/KisakCOD-dedi.dSYM/Contents/Resources/DWARF/KisakCOD-dedi", "pkg/README.txt"])
+                self.assertEqual({(m.mtime, m.uid, m.gid, m.uname, m.gname) for m in members},
+                                 {(1759000000, 0, 0, "", "")})
+                modes = {m.name: m.mode for m in members}
+                self.assertEqual((modes["pkg"], modes["pkg/KisakCOD-dedi"], modes["pkg/README.txt"]),
+                                 (0o755, 0o755, 0o644))
+                self.assertEqual(tf.extractfile("pkg/README.txt").read(), b"README.txt")
+
+    def test_tar_xz_refuses_a_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = Path(tmp) / "stage" / "pkg"
+            stage.mkdir(parents=True)
+            (stage / "link").symlink_to(tmp)
+            run = cli("tarxz", "--root", str(stage.parent), "--stem", "pkg", "--epoch", "0",
+                      "--out", str(Path(tmp) / "out.tar.xz"))
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("::error::", run.stderr)
 
 
 class WindowsPackageTest(unittest.TestCase):

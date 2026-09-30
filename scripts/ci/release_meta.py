@@ -25,6 +25,10 @@ stdout, and reports problems as workflow annotations on stderr.
   zip --root DIR --stem STEM --epoch SECONDS --out FILE
       Writes DIR/STEM as a zip with sorted names and fixed timestamps, so a
       Windows package is reproducible like the Linux tarballs.
+  tarxz --root DIR --stem STEM --epoch SECONDS --out FILE
+      Writes DIR/STEM as a tar.xz the way the Linux legs' GNU tar does
+      (sorted names, one mtime, owner 0), for the macOS leg, whose runner
+      image has no xz for GNU tar to call.
   notes --tag T --commit SHA --matrix JSON --run-url URL [--repo-dir DIR]
       Prints the release notes: the packages and their tiers, then the
       first-parent changes on master since the previous vX.Y.Z tag.
@@ -38,6 +42,7 @@ import re
 import struct
 import subprocess
 import sys
+import tarfile
 import textwrap
 import time
 import uuid
@@ -70,6 +75,9 @@ RECIPES = {
                                            "file_arch": "x64"},
     ("windows-arm64", "headless-server"): {**WINDOWS, "runner": "windows-11-arm", "platform": "windows-arm64",
                                            "file_arch": "ARM64"},
+    # file_arch is the Mach-O architecture; the symbols ship as a dSYM bundle.
+    ("macos-arm64", "headless-server"): {"recipe": "macos-headless", "archive": "tar.xz", "exe": "",
+                                         "runner": "macos-26", "platform": "macos-arm64", "file_arch": "arm64"},
 }
 # role -> (asset name part, binary, description)
 ROLES = {
@@ -152,6 +160,7 @@ def readme(leg: dict, version: str, commit: str, requires: str) -> str:
         + "user's own; set fs_basepath to your own copy of the game.",
         f"Debug symbols: {leg['stem']}-debugsymbols.{leg['archive']}. Extract it into the same directory; "
         + (f"debuggers find {binary}.pdb next to {binary}.exe." if leg["exe"] == ".exe"
+           else f"lldb finds {binary}.dSYM next to {binary} by its UUID." if leg["recipe"] == "macos-headless"
            else f"{binary} finds {binary}.debug through its .gnu_debuglink."),
         f"Requires: {requires}." if requires else "",
         "License: GNU GPL v3, in LICENSE. The source archive of the same release holds the "
@@ -276,6 +285,20 @@ def write_zip(root: Path, stem: str, epoch: int, out: Path) -> None:
             zf.writestr(info, path.read_bytes())
 
 
+def write_tar_xz(root: Path, stem: str, epoch: int, out: Path) -> None:
+    """root/stem as a tar.xz: sorted names, one mtime, owner 0, no host metadata (GNU tar's
+    --sort=name --owner=0 --group=0 --numeric-owner --mtime); modes are 0755 or 0644."""
+    def normalise(info: tarfile.TarInfo) -> tarfile.TarInfo:
+        info.mtime, info.uid, info.gid, info.uname, info.gname = epoch, 0, 0, "", ""
+        info.mode = 0o755 if info.isdir() or info.mode & 0o111 else 0o644
+        return info
+    with tarfile.open(out, "w:xz", format=tarfile.GNU_FORMAT) as tf:
+        for path in [root / stem, *sorted((root / stem).rglob("*"))]:
+            if path.is_symlink() or not (path.is_dir() or path.is_file()):
+                raise ReleaseError(f"{path} is not a regular file or directory")
+            tf.add(path, path.relative_to(root).as_posix(), recursive=False, filter=normalise)
+
+
 def run_metadata(args: argparse.Namespace) -> int:
     meta = parse_version(args.version, args.dry_run)
     legs, missing = build_matrix(json.loads(args.manifest.read_text()), meta["version"])
@@ -314,6 +337,11 @@ def run_pdb_id(args: argparse.Namespace) -> int:
 
 def run_zip(args: argparse.Namespace) -> int:
     write_zip(args.root, args.stem, args.epoch, args.out)
+    return 0
+
+
+def run_tar_xz(args: argparse.Namespace) -> int:
+    write_tar_xz(args.root, args.stem, args.epoch, args.out)
     return 0
 
 
@@ -357,6 +385,12 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--pdb", type=Path, required=True)
     p = sub.add_parser("zip")
     p.set_defaults(run=run_zip)
+    p.add_argument("--root", type=Path, required=True)
+    p.add_argument("--stem", required=True)
+    p.add_argument("--epoch", type=int, required=True)
+    p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("tarxz")
+    p.set_defaults(run=run_tar_xz)
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--stem", required=True)
     p.add_argument("--epoch", type=int, required=True)
