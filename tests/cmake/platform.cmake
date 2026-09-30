@@ -355,3 +355,29 @@ kisakcod_ilp32(kisakcod-platform-console-tests
 
 kisakcod_ilp32(kisakcod-platform-service-runtime-tests
     platform-service-runtime-contracts)
+
+# POSIX termios console contracts (NOW row 13): the text cleaner and the
+# engine output entry point of _platform/posix/posix_syscon.cpp, linked with
+# the portable console boundary and its POSIX backend, the same set the
+# headless dedicated build links.
+if (NOT KISAK_PLATFORM STREQUAL "win32")
+    set(_posix_syscon_platform_console ${KISAK_PLATFORM_SERVICE_SOURCES})
+    list(FILTER _posix_syscon_platform_console INCLUDE REGEX "[/\\\\]sys_console\\.cpp$")
+    list(FILTER _posix_syscon_platform_console EXCLUDE REGEX "qcommon")
+    add_executable(kisakcod-posix-syscon-tests
+        posix_syscon_tests.cpp
+        ${SRC_DIR}/_platform/posix/posix_syscon.cpp
+        ${SRC_DIR}/qcommon/sys_console.cpp
+        ${_posix_syscon_platform_console}
+    )
+    target_include_directories(kisakcod-posix-syscon-tests PRIVATE ${SRC_DIR})
+    target_compile_features(kisakcod-posix-syscon-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-posix-syscon-tests PRIVATE KISAK_MP)
+    target_link_libraries(kisakcod-posix-syscon-tests PRIVATE Threads::Threads)
+    kisakcod_test_warnings(kisakcod-posix-syscon-tests)
+    set_target_properties(kisakcod-posix-syscon-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME posix-syscon-contracts COMMAND kisakcod-posix-syscon-tests)
+    set_tests_properties(posix-syscon-contracts PROPERTIES TIMEOUT 20)
+endif()
