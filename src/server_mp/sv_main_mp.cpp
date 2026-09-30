@@ -966,7 +966,7 @@ void __cdecl SV_RunFrame()
     PROF_SCOPED("SV_RunFrame");
 
     if (Win_GetThreadLock() == THREAD_LOCK_ALL)
-        start = __rdtsc();
+        start = Sys_CycleCounter();
     else
         start = (int)Sys_MillisecondsRaw();
     SV_ResetSkeletonCache();
@@ -984,7 +984,7 @@ void __cdecl SV_RunFrame()
 #endif
 
     if (Win_GetThreadLock() == THREAD_LOCK_ALL)
-        v0 = __rdtsc();
+        v0 = Sys_CycleCounter();
     else
         v0 = (int)Sys_MillisecondsRaw();
     ticks = v0 - start;

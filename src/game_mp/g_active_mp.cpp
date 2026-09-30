@@ -177,7 +177,7 @@ void __cdecl G_TouchTriggers(gentity_s *ent)
     int32_t entityList[1025]; // [esp+30h] [ebp-1030h] BYREF
     float diff[3]; // [esp+1034h] [ebp-2Ch] BYREF
     void(__cdecl * touch)(gentity_s *, gentity_s *, int); // [esp+1040h] [ebp-20h]
-    entityState_s *item; // [esp+1044h] [ebp-1Ch]
+    gentity_s *hit; // [esp+1044h] [ebp-1Ch]
     float sum[3]; // [esp+1048h] [ebp-18h] BYREF
     void(__cdecl * v6)(gentity_s *, gentity_s *, int); // [esp+1054h] [ebp-Ch]
     int32_t v7; // [esp+1058h] [ebp-8h]
@@ -199,32 +199,32 @@ void __cdecl G_TouchTriggers(gentity_s *ent)
     touch = entityHandlers[ent->handler].touch;
     for (i = 0; i < v7; ++i)
     {
-        item = &g_entities[entityList[i]].s;
-        if ((LODWORD(item[1].lerp.pos.trDelta[2]) & 0x405C0008) == 0)
+        hit = &g_entities[entityList[i]];
+        if ((hit->r.contents & 0x405C0008) == 0)
             MyAssertHandler(".\\game_mp\\g_active_mp.cpp", 215, 0, "%s", "hit->r.contents & MASK_TRIGGER");
-        if (item->eType == ET_MISSILE)
+        if (hit->s.eType == ET_MISSILE)
             MyAssertHandler(".\\game_mp\\g_active_mp.cpp", 216, 0, "%s", "hit->s.eType != ET_MISSILE");
-        v6 = entityHandlers[BYTE2(item[1].attackerEntityNum)].touch;
+        v6 = entityHandlers[hit->handler].touch;
         if (v6 || touch)
         {
-            if (item->eType == ET_ITEM)
+            if (hit->s.eType == ET_ITEM)
             {
-                if (!BG_PlayerTouchesItem(&ent->client->ps, item, level.time))
+                if (!BG_PlayerTouchesItem(&ent->client->ps, &hit->s, level.time))
                     continue;
             }
-            else if (!SV_EntityContact(diff, sum, (const gentity_s *)item))
+            else if (!SV_EntityContact(diff, sum, hit))
             {
                 continue;
             }
             if (Scr_IsSystemActive())
             {
                 Scr_AddEntity(ent);
-                Scr_Notify((gentity_s *)item, scr_const.touch, 1u);
-                Scr_AddEntity((gentity_s *)item);
+                Scr_Notify(hit, scr_const.touch, 1u);
+                Scr_AddEntity(hit);
                 Scr_Notify(ent, scr_const.touch, 1u);
             }
             if (v6)
-                v6((gentity_s *)item, ent, 1);
+                v6(hit, ent, 1);
         }
     }
 }

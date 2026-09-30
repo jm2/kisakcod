@@ -188,7 +188,7 @@ void __cdecl TRACK_com_math()
 
 float __cdecl random()
 {
-    return (rand() / 32768.0);
+    return (Kisak_rand() / 32768.0);
 }
 
 float __cdecl crandom()
@@ -2339,6 +2339,23 @@ void __cdecl NearestPitchAndYawOnPlane(const float* angles, const float* normal,
 void __cdecl Rand_Init(int seed)
 {
     holdrand = seed;
+}
+
+// Engine-owned MSVC-compatible RNG (docs/design/DETERMINISM.md, bead 9): the
+// MSVC CRT's rand, whose state is per thread and starts at 1, so an unseeded
+// thread draws the srand(1) stream. Separate from `holdrand` above, which is
+// the flrand/irand stream.
+static thread_local uint32_t Kisak_randState = 1u;
+
+void __cdecl Kisak_srand(unsigned int seed)
+{
+    Kisak_randState = seed;
+}
+
+int __cdecl Kisak_rand()
+{
+    Kisak_randState = Kisak_randState * 214013u + 2531011u;
+    return static_cast<int>((Kisak_randState >> 16) & 0x7FFFu);
 }
 
 float __cdecl flrand(float min, float max)

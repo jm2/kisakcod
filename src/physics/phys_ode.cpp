@@ -1857,10 +1857,12 @@ bool Phys_TryQuaternionToAxisNoReport(
     const float yz = scaledY * quaternion[2];
     const float yw = scaledY * quaternion[3];
     const float zw = scale * quaternion[2] * quaternion[3];
+    // The diagonal keeps QuatToAxis's double subtraction; the cast spells
+    // out the narrowing to float that braced initialisation rejects.
     const float values[9]{
-        1.0 - (scaledYY + scaledZZ), xy + zw, xz - yw,
-        xy - zw, 1.0 - (scaledXX + scaledZZ), yz + xw,
-        xz + yw, yz - xw, 1.0 - (scaledXX + scaledYY),
+        static_cast<float>(1.0 - (scaledYY + scaledZZ)), xy + zw, xz - yw,
+        xy - zw, static_cast<float>(1.0 - (scaledXX + scaledZZ)), yz + xw,
+        xz + yw, yz - xw, static_cast<float>(1.0 - (scaledXX + scaledYY)),
     };
     for (std::size_t row = 0; row < 3; ++row)
     {
@@ -5298,7 +5300,7 @@ int __cdecl Phys_DrawDebugTextForWorld(
     v6 = va("   Awake: %i", physGlob.debugActiveObjCount);
     CG_DrawStringExt(scrPlace, *x, *y, v6, colorGreen, 0, 1, charHeight);
     *y = *y + charHeight;
-    text = va("   Asleep: %i", (char *)bodyCount - physGlob.debugActiveObjCount);
+    text = va("   Asleep: %i", bodyCount - physGlob.debugActiveObjCount);
     CG_DrawStringExt(scrPlace, *x, *y, text, colorGreen, 0, 1, charHeight);
     *y = *y + charHeight;
     return physGlob.debugActiveObjCount;

@@ -196,3 +196,37 @@ add_test(
 
 kisakcod_ilp32(kisakcod-xmodel-loader-entry-tests
     xmodel-loader-entry-native)
+
+# xanim_native64_size_tests: the xanim sizes and strides at 64-bit and the
+# asset clone sizes (NOW row 21, #218), driven through the production TUs,
+# compiled with the Linux headless server's own definitions. Linux + clang
+# only, like dvar-pointer-round-trips: the engine TUs follow the clang +
+# -fms-extensions toolchain policy (PLATFORM_POSIX.md) and compile off Windows
+# only on Linux so far. Section GC keeps the link to the functions the checks
+# reach, so the test stubs only their boundary.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-xanim-native64-size-tests
+        xanim_native64_size_tests.cpp
+        ${SRC_DIR}/xanim/xanim.cpp
+        ${SRC_DIR}/xanim/xmodel_utils.cpp
+        ${SRC_DIR}/xanim/dobj_skel.cpp
+        ${SRC_DIR}/database/db_assetnames.cpp)
+    target_include_directories(kisakcod-xanim-native64-size-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-xanim-native64-size-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-xanim-native64-size-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-xanim-native64-size-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-xanim-native64-size-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        # Otherwise ASan's global registration keeps every global alive.
+        target_compile_options(kisakcod-xanim-native64-size-tests PRIVATE
+            -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-xanim-native64-size-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-xanim-native64-size-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME xanim-native64-sizes COMMAND kisakcod-xanim-native64-size-tests)
+    set_tests_properties(xanim-native64-sizes PROPERTIES TIMEOUT 20)
+endif()

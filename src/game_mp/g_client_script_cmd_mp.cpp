@@ -2381,11 +2381,8 @@ void __cdecl PlayerCmd_SetReverb(scr_entref_t entref)
     }
 }
 
-//void __cdecl PlayerCmd_DeactivateReverb(scr_entref_t *entref)
-void __cdecl PlayerCmd_DeactivateReverb(scr_entref_t e)
+void __cdecl PlayerCmd_DeactivateReverb(scr_entref_t entref)
 {
-    scr_entref_t *entref = &e; // HACK
-
     uint16_t v1; // r30
     const char *v2; // r3
     double Float; // fp31
@@ -2393,16 +2390,16 @@ void __cdecl PlayerCmd_DeactivateReverb(scr_entref_t e)
     int32_t ConstString; // r10
     const char *v6; // r3
 
-    v1 = HIWORD(entref);
-    if ((_WORD)entref)
+    v1 = entref.entnum;
+    if (entref.classnum)
     {
         v2 = "not an entity";
     }
     else
     {
-        if (g_entities[HIWORD(entref)].client)
+        if (g_entities[entref.entnum].client)
             goto LABEL_6;
-        v2 = va("entity %i is not a player", HIWORD(entref));
+        v2 = va("entity %i is not a player", entref.entnum);
     }
     Scr_ObjectError(v2);
 LABEL_6:
@@ -2486,11 +2483,8 @@ void __cdecl PlayerCmd_SetChannelVolumes(scr_entref_t entref)
     SV_GameSendServerCommand(entref.entnum, SV_CMD_RELIABLE, va("%c %i %i %g", 69, prio, shockIndex, fadetime));
 }
 
-//void __cdecl PlayerCmd_DeactivateChannelVolumes(scr_entref_t *entref)
-void __cdecl PlayerCmd_DeactivateChannelVolumes(scr_entref_t e)
+void __cdecl PlayerCmd_DeactivateChannelVolumes(scr_entref_t entref)
 {
-    scr_entref_t *entref = &e; // HACK
-
     uint16_t v1; // r30
     const char *v2; // r3
     double Float; // fp31
@@ -2498,16 +2492,16 @@ void __cdecl PlayerCmd_DeactivateChannelVolumes(scr_entref_t e)
     int32_t ConstString; // r10
     const char *v6; // r3
 
-    v1 = HIWORD(entref);
-    if ((_WORD)entref)
+    v1 = entref.entnum;
+    if (entref.classnum)
     {
         v2 = "not an entity";
     }
     else
     {
-        if (g_entities[HIWORD(entref)].client)
+        if (g_entities[entref.entnum].client)
             goto LABEL_6;
-        v2 = va("entity %i is not a player", HIWORD(entref));
+        v2 = va("entity %i is not a player", entref.entnum);
     }
     Scr_ObjectError(v2);
 LABEL_6:

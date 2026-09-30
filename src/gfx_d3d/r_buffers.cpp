@@ -266,9 +266,9 @@ void __cdecl R_CreateParticleCloudBuffer()
             for (zIter = 0; zIter != 16; ++zIter)
             {
                 particleId = zIter + (xIter << 7) + 16 * yIter;
-                pos[0] = ((double)rand() / 32767.0 + (double)xIter) * 0.25 + -1.0;
-                pos[1] = ((double)rand() / 32767.0 + (double)yIter) * 0.25 + -1.0;
-                pos[2] = ((double)rand() / 32767.0 + (double)zIter) * 0.125 + -1.0;
+                pos[0] = ((double)Kisak_rand() / 32767.0 + (double)xIter) * 0.25 + -1.0;
+                pos[1] = ((double)Kisak_rand() / 32767.0 + (double)yIter) * 0.25 + -1.0;
+                pos[2] = ((double)Kisak_rand() / 32767.0 + (double)zIter) * 0.125 + -1.0;
                 for (cornerIter = 0; cornerIter != 4; ++cornerIter)
                 {
                     particleVertsIter->xyz[0] = pos[0];

@@ -27,12 +27,9 @@
 //                  grows to 0x88 (136 bytes) but the disk mirror is
 //                  still 88 bytes.
 //
-//  XAnimClone now allocates sizeof(xanim::XAnimPartsNative) bytes and
-//  copies (memcpy) the on-disk 88 bytes into the head of that buffer,
-//  then zeroes the trailing bytes that a widened native view would
-//  expose but the on-disk source does not carry. The result is that
-//  XAnimClone never under-allocates the runtime view on 64-bit and the
-//  copy is byte-identical on 32-bit.
+//  XAnimClone (xanim.cpp) clones the engine's runtime XAnimParts: it
+//  allocates and copies sizeof(XAnimParts), which is 88 bytes on 32-bit
+//  and 0x88 on 64-bit (tests/xanim_native64_size_tests.cpp).
 //
 //  The engine XAnimParts still stores raw host pointers. Until that type
 //  migrates to a 32-bit disk mirror, engine translation units must not include

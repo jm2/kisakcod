@@ -743,6 +743,7 @@ struct gentity_s // sizeof=0x274
     int32_t useCount;
     gentity_s *nextFree;
 };
+RUNTIME_SIZE(gentity_s, 0x274, 0x298);
 #elif KISAK_SP
 
 struct missile_ent_t // sizeof=0x54
