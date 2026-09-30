@@ -11,6 +11,10 @@
 #include <math.h>
 #include <cstdint>
 
+// KisakCOD port: IS_NAN expands to _isnan, an MSVC CRT spelling. The
+// compat header provides it on POSIX; MSVC has it from <float.h>.
+#include "msvc_crt_compat.h"
+
 #define EQUAL_EPSILON 0.001f
 #define ZERO_EPSILON 0.000001f
 #define WEIGHT_EPSILON EQUAL_EPSILON
