@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Generate the disk32 mirror structs from src/database/db_disk32.schema.
+"""
+Generate the disk32 mirror structs from src/database/db_disk32.schema.
 
 A retail fast-file stores each record in its 32-bit (ILP32) layout
 (docs/design/FASTFILE_LOADER.md). For every schema record this emits the
@@ -35,25 +36,31 @@ def fail(where, message):
     sys.exit(f'{where}: {message}')
 
 
+def parse_record(words, where):
+    attrs = dict(word.split('=', 1) for word in words[3:] if '=' in word)
+    if len(words) < 3 or len(attrs) != len(words) - 3 \
+            or not {'runtime', 'header'} <= attrs.keys() <= {'runtime', 'header', 'same'}:
+        fail(where, 'expected: record <Name> <size> runtime=<type> header=<path> [same=<constant>]')
+    return {'name': words[1], 'size': int(words[2], 0), 'fields': [], 'where': where, **attrs}
+
+
+def parse_field(words, where):
+    count = words[3] if len(words) == 4 else ''
+    if len(words) not in (3, 4) or words[2] not in KINDS or (words[2] in COUNTED) != count.startswith('count='):
+        fail(where, f'expected: <offset> <field> <kind> [count=<expression> for {COUNTED}]; kinds {sorted(KINDS)}')
+    return int(words[0], 0), words[1], words[2], count[len('count='):]
+
+
 def parse(path):
     records = []
     for number, raw in enumerate(path.read_text().splitlines(), 1):
         where, words = f'{path}:{number}', raw.split('#', 1)[0].split()
-        if not words:
-            continue
-        if words[0] == 'record':
-            attrs = dict(word.split('=', 1) for word in words[3:] if '=' in word)
-            if len(words) < 3 or len(attrs) != len(words) - 3 \
-                    or not {'runtime', 'header'} <= attrs.keys() <= {'runtime', 'header', 'same'}:
-                fail(where, 'expected: record <Name> <size> runtime=<type> header=<path> [same=<constant>]')
-            records.append({'name': words[1], 'size': int(words[2], 0), 'fields': [], 'where': where, **attrs})
-            continue
-        count = words[3] if len(words) == 4 else ''
-        if not records or len(words) not in (3, 4) or words[2] not in KINDS \
-                or (words[2] in COUNTED) != count.startswith('count='):
-            fail(where, f'expected: <offset> <field> <kind> [count=<expression> for {COUNTED}]; '
-                        f'kinds {sorted(KINDS)}')
-        records[-1]['fields'].append((int(words[0], 0), words[1], words[2], count[len('count='):]))
+        if words and words[0] == 'record':
+            records.append(parse_record(words, where))
+        elif words and not records:
+            fail(where, 'a field must follow a record line')
+        elif words:
+            records[-1]['fields'].append(parse_field(words, where))
     return records
 
 

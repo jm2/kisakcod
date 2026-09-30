@@ -11,7 +11,9 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -53,9 +55,10 @@ struct File
             g_file.push_back(static_cast<std::uint8_t>(value >> shift));
         return *this;
     }
-    File &Text(const char *text)
+    File &Text(std::string_view text)
     {
-        g_file.insert(g_file.end(), text, text + std::strlen(text) + 1);
+        g_file.insert(g_file.end(), text.begin(), text.end());
+        g_file.push_back(0);
         return *this;
     }
     File &Record(std::uint32_t name, std::int32_t len, std::uint32_t buffer)
@@ -84,7 +87,7 @@ struct Zone
     bool Holds(const char *text) const
     {
         const auto *bytes = reinterpret_cast<const std::uint8_t *>(text);
-        return bytes >= virt && bytes + std::strlen(text) < virt + sizeof(virt);
+        return bytes >= virt && bytes + std::string_view(text).size() < virt + sizeof(virt);
     }
 };
 
@@ -191,6 +194,7 @@ void __cdecl Com_Error(errorParm_t code, const char *fmt, ...)
     Drop drop{};
     va_list args;
     va_start(args, fmt);
+    // Flawfinder: ignore -- the engine's literal formats into a bounded, terminated buffer.
     std::vsnprintf(drop.message, sizeof(drop.message), fmt, args);
     va_end(args);
     if (code != ERR_DROP)
@@ -202,7 +206,7 @@ void __cdecl DB_LoadXFileData(std::uint8_t *pos, std::uint32_t size)
 {
     if (!pos || !size || size > g_file.size() - g_read)
         Com_Error(ERR_DROP, "Fast-file ended unexpectedly");
-    std::memcpy(pos, g_file.data() + g_read, size);
+    std::copy_n(g_file.data() + g_read, size, pos);
     g_read += size;
     if (DB_MarkStreamRangeMaterialized(pos, size) != db::relocation::Status::Ok)
         Com_Error(ERR_DROP, "Cannot record fast-file output range");
@@ -213,7 +217,7 @@ void __cdecl Load_RawFileAsset(XAssetHeader *header)
     // DB_AddXAsset hashes the name, then copies the header into the pool.
     RawFile &entry = g_pool[g_published++];
     entry = *header->rawfile;
-    Expect(std::strlen(entry.name) > 0, "a published raw file has a name");
+    Expect(entry.name && entry.name[0] != '\0', "a published raw file has a name");
     header->rawfile = &entry;
 }
 
