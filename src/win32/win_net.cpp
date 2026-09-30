@@ -638,7 +638,7 @@ void __cdecl NET_OpenSocks(u_short port)
 		Com_PrintError(16, "NET_OpenSocks: connect: %s\n", v3);
 		return;
 	}
-	rfc1929 = net_socksUsername->current.string || net_socksPassword->current.string;
+	rfc1929 = *net_socksUsername->current.string || *net_socksPassword->current.string;
 	buf[0] = 5;
 	if (rfc1929)
 	{
