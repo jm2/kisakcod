@@ -1623,7 +1623,7 @@ void __cdecl Com_Init_Try_Block_Function(char* commandLine)
     shortversion = Dvar_RegisterString("shortversion", "1.0", DVAR_ROM | DVAR_SERVERINFO, "Short game version");
     Sys_Init();
 #ifdef KISAK_MP
-    Netchan_Init(__rdtsc());
+    Netchan_Init(Sys_CycleCounter());
 #endif
     Scr_InitVariables();
     Scr_Init();

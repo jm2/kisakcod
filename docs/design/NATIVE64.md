@@ -91,7 +91,7 @@ Two kinds of hazard, both fixed by beads 9–11 (WS-3, G2):
 | `RAND_MAX` hardcoded as 32768 | `random` in `universal/com_math.cpp`; `G_random`, `G_flrand`, `G_irand` in `game_mp/g_utils_mp.cpp` | glibc and macOS `rand()` reach 2³¹−1, so results leave their range and `G_irand` overflows | Engine-owned MSVC LCG ([DETERMINISM.md](DETERMINISM.md)) | 9 | open |
 | 4-byte pointer slots and `(T*)-1` markers | `database/db_load.cpp`, `db_stream_load.cpp` | Loader writes half-pointers | Two-layout loader ([FASTFILE_LOADER.md](FASTFILE_LOADER.md)) | 7, 12 | fails closed after 7 |
 | Pointer↔int casts | ≈240 in 37 headless files: `com_files.cpp` 57, `xanim_load_obj.cpp` 42, `dvar.cpp` 30, `db_load.cpp` 25 | Truncation | Policy below | per file | open |
-| `__rdtsc` | `scr_vm.cpp`, `sv_main_mp.cpp` | Doesn't exist on arm64 | See [PLATFORM_POSIX.md](PLATFORM_POSIX.md) | 13 | open |
+| `__rdtsc` | `scr_vm.cpp`, `sv_main_mp.cpp` | Doesn't exist on arm64 | `Sys_CycleCounter` ([PLATFORM_POSIX.md](PLATFORM_POSIX.md)) | 13 | fixed |
 | Huffman tie-break uses the host `qsort` | `qcommon/huffman.cpp` | The code book may differ per host | Total order ([DETERMINISM.md](DETERMINISM.md)) | open item | open |
 | Parser tables initialise `short` arrays with 32768 as YYPACT_NINF sentinel | `yypact`/`yypgoto` in `script/scr_yacc_structs.h`, `yypact` in `script/scr_yacc.cpp` | Ill-formed narrowing in C++11; 99 + 83 errors on GCC/clang. MSVC/clang-cl only warn, so Windows builds hide it. The census `-Wno-everything` also silenced the default-error diagnostic | Write sentinel as −32768; census keeps `-Wno-everything` for the cast-warning flood but adds `-Werror=c++11-narrowing`, so default-error narrowing still fails a TU | ki-pbb7c | open |
 

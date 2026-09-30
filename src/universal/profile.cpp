@@ -827,7 +827,7 @@ void __cdecl Profile_EndScript(int profileIndex)
     ProfileScriptWritable *write; // [esp+8h] [ebp-8h]
     uint32_t endTime; // [esp+Ch] [ebp-4h]
 
-    endTime = __rdtsc();
+    endTime = Sys_CycleCounter();
     if (profileIndex >= 40)
         MyAssertHandler(
             "c:\\trees\\cod3\\src\\script\\../universal/profile.h",
@@ -936,7 +936,7 @@ void __cdecl Profile_BeginScript(int profileIndex)
             "profileIndex < PROF_SCRIPT_COUNT");
     write = &profileScript.write[profileIndex];
     if (!write->refCount)
-        write->startTime = __rdtsc();
+        write->startTime = Sys_CycleCounter();
     ++write->refCount;
 #endif
 }
