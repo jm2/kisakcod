@@ -8,6 +8,7 @@
 #include <universal/kisak_abi.h>
 
 struct RawFile;
+struct XAssetList;
 
 #if KISAK_ARCH_64BIT
 // Loads one RawFile asset header. slot is the native XAssetHeader slot: on
@@ -17,4 +18,12 @@ struct RawFile;
 // streams them, so every block offset stays the retail one. Malformed input
 // raises Com_Error(ERR_DROP) before anything reads past a checked extent.
 void __cdecl DB_LoadRawFilePtrDisk32(bool atStreamStart, RawFile **slot);
+
+// Loads a zone's retail XAssetList (db_disk32_envelope.cpp) in place of
+// Load_XAssetListCustom and Load_XAssetArrayCustom: the 16-byte root, its
+// script strings, then the 8-byte XAsset records, each dispatched through
+// Load_XAsset. list receives the native root, with each header slot as
+// DB_LoadRawFilePtrDisk32 describes. A malformed root, script string or asset
+// type raises ERR_DROP before any asset loads.
+void __cdecl DB_LoadXAssetListDisk32(XAssetList *list);
 #endif

@@ -821,4 +821,30 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     )
     add_test(NAME database-disk32-rawfile-load COMMAND kisakcod-db-disk32-load-tests)
     set_tests_properties(database-disk32-rawfile-load PROPERTIES TIMEOUT 20)
+
+    # The 64-bit XAssetList/XAsset envelope over a synthetic zone, dispatching
+    # to the RawFile loader above; Load_XAsset's family switch is replaced.
+    add_executable(kisakcod-db-disk32-envelope-tests
+        db_disk32_envelope_tests.cpp
+        ${SRC_DIR}/database/db_disk32_envelope.cpp
+        ${SRC_DIR}/database/db_disk32_load.cpp
+        ${SRC_DIR}/database/db_xasset_disk32.cpp
+        ${SRC_DIR}/database/db_stringtable_load.cpp
+        ${SRC_DIR}/database/db_asset_layout.cpp
+        ${SRC_DIR}/database/db_stream_load.cpp
+        ${SRC_DIR}/database/db_stream.cpp
+        ${SRC_DIR}/database/db_relocation.cpp
+        ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+        ${SRC_DIR}/database/db_zone_load_context.cpp
+    )
+    kisakcod_use_disk32_mirrors(kisakcod-db-disk32-envelope-tests)
+    target_include_directories(kisakcod-db-disk32-envelope-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-db-disk32-envelope-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-db-disk32-envelope-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-db-disk32-envelope-tests PRIVATE -fms-extensions -Wall -Wextra -Werror)
+    set_target_properties(kisakcod-db-disk32-envelope-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME database-disk32-envelope-load COMMAND kisakcod-db-disk32-envelope-tests)
+    set_tests_properties(database-disk32-envelope-load PROPERTIES TIMEOUT 20)
 endif()
