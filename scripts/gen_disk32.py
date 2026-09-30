@@ -70,12 +70,14 @@ def parse_field(words, where):
     if len(words) < 3 or words[2] not in KINDS:
         fail(where, f'expected: <offset> <field> <kind> [attributes]; kinds {sorted(KINDS)}')
     kind = words[2]
-    allowed = {'count', 'terminated', 'label'} if kind == 'bytes' else {'count'} if kind in COUNTED else set()
-    attrs = attributes(words[3:], where, allowed, flags=('terminated',))
+    allowed = ({'count', 'terminated', 'paired', 'label'} if kind == 'bytes'
+               else {'count'} if kind in COUNTED else set())
+    attrs = attributes(words[3:], where, allowed, flags=('terminated', 'paired'))
     if (kind in COUNTED) != ('count' in attrs):
         fail(where, f'count=<expression> is required for {COUNTED} and only for them')
     return {'offset': int(words[0], 0), 'name': words[1], 'kind': kind, 'count': attrs.get('count', ''),
-            'terminated': 'terminated' in attrs, 'label': attrs.get('label'), 'where': where}
+            'terminated': 'terminated' in attrs, 'paired': 'paired' in attrs, 'label': attrs.get('label'),
+            'where': where}
 
 
 def parse(path):
@@ -270,6 +272,12 @@ NAME_CHECK = Template('''\
         return Drop("Fast-file $noun has no name"); // the asset pool hashes it
 ''')
 
+# paired: the bytes are present exactly when their count field is nonzero.
+PAIRED = Template('''\
+    if (disk.$field.token.isNull() && disk.$count != 0)
+        return Drop("Fast-file $owner has a count but no $noun");
+''')
+
 # As in the 32-bit loader, any non-null token means the bytes follow inline.
 TERMINATED_BYTES = Template('''\
     if (!disk.$field.token.isNull())
@@ -310,8 +318,9 @@ def body_step(record, field):
             or kinds.get(count.group(1)) not in ('i32', 'u32'):
         fail(field['where'], 'a generated body loads scalars, xstrings and terminated bytes '
                              f'(count=<i32 field>[+<n>] terminated label=<noun>), not this {field["kind"]} field')
-    return TERMINATED_BYTES.substitute(field=field['name'], count=count.group(1), extra=count.group(2) or '0',
-                                       label=field['label'], noun=noun(field['label']))
+    facts = dict(field=field['name'], count=count.group(1), extra=count.group(2) or '0', label=field['label'],
+                 noun=noun(field['label']), owner=noun(record['asset']['label']))
+    return (PAIRED.substitute(facts) if field['paired'] else '') + TERMINATED_BYTES.substitute(facts)
 
 
 def emit_body(record):

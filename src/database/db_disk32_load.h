@@ -11,6 +11,7 @@
 #include <cstdint>
 
 struct LocalizeEntry;
+struct MapEnts;
 struct PhysPreset;
 struct RawFile;
 struct StringTable;
@@ -42,6 +43,12 @@ void __cdecl DB_LoadPhysPresetPtrDisk32(bool atStreamStart, PhysPreset **slot);
 // contract: the slot holds the zero-extended disk32 token on entry and the
 // native LocalizeEntry published through Load_LocalizeEntryAsset on return.
 void __cdecl DB_LoadLocalizeEntryPtrDisk32(bool atStreamStart, LocalizeEntry **slot);
+
+// Loads one MapEnts (db_disk32_mapents.cpp) under the same slot contract: the
+// slot holds the zero-extended disk32 token on entry and the native MapEnts
+// published through Load_MapEntsAsset on return. The slot nested in clipMap_t
+// takes the same contract once that family converts (wave 4).
+void __cdecl DB_LoadMapEntsPtrDisk32(bool atStreamStart, MapEnts **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
