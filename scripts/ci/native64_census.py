@@ -190,9 +190,8 @@ def markdown(c: dict) -> str:
     if t:
         out += ["", "**Failing 64-bit size/offset asserts (win64): %d sites**" % t["size_assert_sites"], ""]
         out += ["- `%s`: %d" % kv for kv in t["size_asserts_by_header"]]
-    for cfg in ("win64", "lin64"):
-        t = c["targets"].get(cfg)
-        if t and t.get("narrowing_sites"):
+    for cfg, t in c["targets"].items():
+        if t.get("narrowing_sites"):
             out += ["", "**%s: narrowing errors (error-by-default diagnostics): %d sites**" % (cfg, t["narrowing_sites"]), ""]
             out += ["- `%s`: %d" % kv for kv in t.get("narrowing_by_header", [])]
     for kind in ("real", "probe"):
