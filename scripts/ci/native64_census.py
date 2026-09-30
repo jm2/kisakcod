@@ -147,8 +147,11 @@ def k3(out: Path) -> dict:
     upstream = run(["git", "ls-tree", "-r", "--name-only", sha, "--", "src"], check=True).stdout.split()
     engine = {f for f in upstream if f.endswith((".c", ".cpp")) and not f.startswith(K3_EXCLUDE)}
     build = out / "k3-build"
+    # Clang, like the CI leg that runs the engine-TU tests (Portable tests / ASan + UBSan): those targets are
+    # clang-only by the toolchain policy (PLATFORM_POSIX.md), so a GCC configure would not count them.
     run(["cmake", "-S", ".", "-B", str(build), "-DKISAK_BUILD_MP=OFF", "-DKISAK_BUILD_DEDICATED=OFF",
-         "-DKISAK_BUILD_SP=OFF", "-DBUILD_TESTING=ON", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"], check=True)
+         "-DKISAK_BUILD_SP=OFF", "-DBUILD_TESTING=ON", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+         "-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++"], check=True)
     compiled = {os.path.relpath(os.path.realpath(e["file"]), ROOT)
                 for e in json.loads((build / "compile_commands.json").read_text())}
     # Tests that #include an engine .c/.cpp compile it too.
