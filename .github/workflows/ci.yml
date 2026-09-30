@@ -214,8 +214,8 @@ jobs:
         run: |
           apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o DPkg::Lock::Timeout=120)
           for attempt in 1 2 3; do
-            if timeout 120 sudo apt-get "${apt_opts[@]}" update -qq \
-              && timeout 240 sudo apt-get "${apt_opts[@]}" install -y -qq --no-install-recommends \
+            if sudo timeout -k 30 120 apt-get "${apt_opts[@]}" update -qq \
+              && sudo timeout -k 30 240 apt-get "${apt_opts[@]}" install -y -qq --no-install-recommends \
                 clang lld mingw-w64 g++-aarch64-linux-gnu; then
               exit 0
             fi
