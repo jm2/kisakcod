@@ -7,6 +7,7 @@
 
 #include <universal/kisak_abi.h>
 
+struct PhysPreset;
 struct RawFile;
 
 #if KISAK_ARCH_64BIT
@@ -17,4 +18,10 @@ struct RawFile;
 // streams them, so every block offset stays the retail one. Malformed input
 // raises Com_Error(ERR_DROP) before anything reads past a checked extent.
 void __cdecl DB_LoadRawFilePtrDisk32(bool atStreamStart, RawFile **slot);
+
+// Loads one PhysPreset (db_disk32_physpreset.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native PhysPreset published through Load_PhysPresetAsset on return. The
+// retail bool byte converts as nonzero = true.
+void __cdecl DB_LoadPhysPresetPtrDisk32(bool atStreamStart, PhysPreset **slot);
 #endif

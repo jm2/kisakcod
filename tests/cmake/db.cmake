@@ -822,3 +822,29 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME database-disk32-rawfile-load COMMAND kisakcod-db-disk32-load-tests)
     set_tests_properties(database-disk32-rawfile-load PROPERTIES TIMEOUT 20)
 endif()
+
+# 64-bit PhysPreset loads from hand-built disk32 zone images (NOW row 12),
+# gated and seamed like the RawFile test above.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-db-disk32-physpreset-tests
+        db_disk32_physpreset_tests.cpp
+        ${SRC_DIR}/database/db_disk32_physpreset.cpp
+        ${SRC_DIR}/database/db_stream_load.cpp
+        ${SRC_DIR}/database/db_stream.cpp
+        ${SRC_DIR}/database/db_relocation.cpp
+        ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+        ${SRC_DIR}/database/db_zone_load_context.cpp
+    )
+    kisakcod_use_disk32_mirrors(kisakcod-db-disk32-physpreset-tests)
+    target_include_directories(kisakcod-db-disk32-physpreset-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-db-disk32-physpreset-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-db-disk32-physpreset-tests PRIVATE KISAK_MP)
+    # No -Wpedantic: the engine headers spell MSVC extensions.
+    target_compile_options(kisakcod-db-disk32-physpreset-tests PRIVATE -fms-extensions -Wall -Wextra -Werror)
+    set_target_properties(kisakcod-db-disk32-physpreset-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME database-disk32-physpreset-load COMMAND kisakcod-db-disk32-physpreset-tests)
+    set_tests_properties(database-disk32-physpreset-load PROPERTIES TIMEOUT 20)
+endif()
