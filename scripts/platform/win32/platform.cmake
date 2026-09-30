@@ -15,6 +15,7 @@ endforeach()
 set(PLATFORM_WIN32_SERVICES
     "${SRC_DIR}/_platform/win32/sys_console.cpp"
     "${SRC_DIR}/_platform/win32/sys_event.cpp"
+    "${SRC_DIR}/_platform/win32/sys_file.cpp"
     "${SRC_DIR}/_platform/win32/sys_filesystem.cpp"
     "${SRC_DIR}/_platform/win32/sys_memory.cpp"
     "${SRC_DIR}/_platform/win32/sys_process.cpp"
