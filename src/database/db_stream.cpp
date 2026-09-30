@@ -413,7 +413,8 @@ bool __cdecl DB_CompleteObject(
     DBAliasKind expectedKind,
     const void *pointer,
     uint32_t metadata,
-    uint32_t materializedBytes)
+    uint32_t materializedBytes,
+    const void *native)
 {
     if (!db::relocation::RequiresExactStartPublication(expectedKind)
         || expectedKind == DBAliasKind::XStringPointerSlot)
@@ -558,7 +559,8 @@ bool __cdecl DB_CompleteObject(
         handle,
         expectedKind,
         reinterpret_cast<uintptr_t>(pointer),
-        metadata);
+        metadata,
+        reinterpret_cast<uintptr_t>(native));
     if (completionStatus != db::relocation::Status::Ok)
     {
         Com_Error(
@@ -578,6 +580,16 @@ db::relocation::Status __cdecl DB_ResolveInsertedPointer(
 {
     return DB_AliasRegistry().Resolve(
         token, expectedKind, expectedMetadata, pointer);
+}
+
+db::relocation::Status __cdecl DB_ResolveCompletedObjectNative(
+    disk32::PointerToken token,
+    DBAliasKind expectedKind,
+    uint32_t expectedMetadata,
+    uintptr_t *native)
+{
+    return DB_AliasRegistry().ResolveNative(
+        token, expectedKind, expectedMetadata, native);
 }
 
 db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(

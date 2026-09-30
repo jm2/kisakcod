@@ -625,10 +625,58 @@ void TestDirectCString()
 }
 }
 
+// A 64-bit loader publishes a completed object with the native object it
+// converted the disk32 record into. ResolveNative returns only that object,
+// never the record's disk bytes.
+void TestCompletedObjectNative()
+{
+    BlockView blocks[db::relocation::kBlockCount];
+    FillBlocks(blocks);
+    AliasRegistry registry;
+    registry.Reset(blocks, db::relocation::kBlockCount);
+    AliasHandle bare;
+    AliasHandle twinned;
+    AliasHandle plain;
+    ExpectStatus(registry.RegisterSlot(blocks[4].base, AliasKind::StringTable, &bare),
+                 Status::Ok, "register a completed table");
+    ExpectStatus(registry.RegisterSlot(blocks[4].base + 16, AliasKind::StringTable, &twinned),
+                 Status::Ok, "register a second completed table");
+    ExpectStatus(registry.RegisterSlot(blocks[4].base + 32, AliasKind::RawFile, &plain),
+                 Status::Ok, "register a plain alias slot");
+
+    const std::uintptr_t native = Address(sizeof(std::uintptr_t) > 4 ? 0x7FFF12345678u : 0x87654320u);
+    ExpectStatus(registry.Publish(plain, AliasKind::RawFile, native, 0, native),
+                 Status::InvalidArgument, "only a completed object takes a native object");
+    ExpectStatus(registry.Publish(bare, AliasKind::StringTable, blocks[4].base, 16),
+                 Status::Ok, "publish a completed object without a native object");
+    ExpectStatus(registry.Publish(twinned, AliasKind::StringTable, blocks[4].base + 16, 16, native),
+                 Status::Ok, "publish a completed object with its native object");
+
+    std::uintptr_t resolved = Address(0x55);
+    ExpectStatus(registry.ResolveNative(Token(4, 0), AliasKind::StringTable, 16, &resolved),
+                 Status::MissingNativeObject, "no native object never falls back to disk bytes");
+    Expect(resolved == 0, "a failed native resolve clears its output");
+    ExpectStatus(registry.ResolveNative(Token(4, 16), AliasKind::StringTable, 15, &resolved),
+                 Status::MetadataMismatch, "a native resolve checks the metadata");
+    ExpectStatus(registry.ResolveNative(Token(4, 16), AliasKind::StringTable, 16, &resolved),
+                 Status::Ok, "resolve the native object");
+    Expect(resolved == native, "the native object resolves at full width");
+    ExpectStatus(registry.Resolve(Token(4, 16), AliasKind::StringTable, 16, &resolved),
+                 Status::Ok, "the disk32 identity still resolves");
+    Expect(resolved == blocks[4].base + 16, "Resolve keeps the disk32 record address");
+    ExpectStatus(registry.ResolveNative(Token(4, 32), AliasKind::RawFile, 0, &resolved),
+                 Status::InvalidArgument, "a plain alias has no native object");
+
+    registry.Invalidate();
+    ExpectStatus(registry.ResolveNative(Token(4, 16), AliasKind::StringTable, 16, &resolved),
+                 Status::InvalidContext, "an invalidated registry forgets native objects");
+}
+
 int main()
 {
     TestDirectResolver();
     TestDirectCString();
+    TestCompletedObjectNative();
 
     Expect(
         db::relocation::RequiresExactStartPublication(

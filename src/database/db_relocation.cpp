@@ -531,11 +531,13 @@ void AliasRegistry::Invalidate() noexcept
         // optimizing compiler from deleting the scrub as dead memory writes.
         volatile std::uintptr_t *const resolvedAddress =
             &record.resolvedAddress;
+        volatile std::uintptr_t *const nativeAddress = &record.nativeAddress;
         volatile std::uint32_t *const metadata = &record.metadata;
         volatile bool *const published = &record.published;
         volatile std::uint32_t *const offset = &record.offset;
         volatile AliasKind *const kind = &record.kind;
         *resolvedAddress = 0;
+        *nativeAddress = 0;
         *metadata = 0;
         *published = false;
         *offset = 0;
@@ -627,7 +629,7 @@ Status AliasRegistry::RegisterSlot(
 
     try
     {
-        records_.push_back({offset, kind, 0, 0, false});
+        records_.push_back({offset, kind, 0, 0, 0, false});
     }
     catch (const std::bad_alloc &)
     {
@@ -647,11 +649,13 @@ Status AliasRegistry::Publish(
     AliasHandle handle,
     AliasKind expectedKind,
     std::uintptr_t resolvedAddress,
-    std::uint32_t metadata)
+    std::uint32_t metadata,
+    std::uintptr_t nativeAddress)
 {
     if (!contextValid_)
         return Status::InvalidContext;
-    if (expectedKind == AliasKind::Invalid || expectedKind >= AliasKind::Count)
+    if (expectedKind == AliasKind::Invalid || expectedKind >= AliasKind::Count
+        || (nativeAddress && !RequiresExactStartPublication(expectedKind)))
         return Status::InvalidArgument;
     if (!handle)
         return Status::InvalidHandle;
@@ -677,20 +681,20 @@ Status AliasRegistry::Publish(
     }
 
     record.resolvedAddress = resolvedAddress;
+    record.nativeAddress = nativeAddress;
     record.metadata = metadata;
     record.published = true;
     return Status::Ok;
 }
 
-Status AliasRegistry::Resolve(
+Status AliasRegistry::FindPublished(
     disk32::PointerToken token,
     AliasKind expectedKind,
     std::uint32_t expectedMetadata,
-    std::uintptr_t *resolvedAddress) const
+    const Record **record) const
 {
-    if (resolvedAddress)
-        *resolvedAddress = 0;
-    if (!resolvedAddress || expectedKind == AliasKind::Invalid || expectedKind >= AliasKind::Count)
+    *record = nullptr;
+    if (expectedKind == AliasKind::Invalid || expectedKind >= AliasKind::Count)
         return Status::InvalidArgument;
     if (!contextValid_)
         return Status::InvalidContext;
@@ -744,7 +748,44 @@ Status AliasRegistry::Resolve(
     if (found->metadata != expectedMetadata)
         return Status::MetadataMismatch;
 
-    *resolvedAddress = found->resolvedAddress;
+    *record = &*found;
+    return Status::Ok;
+}
+
+Status AliasRegistry::Resolve(
+    disk32::PointerToken token,
+    AliasKind expectedKind,
+    std::uint32_t expectedMetadata,
+    std::uintptr_t *resolvedAddress) const
+{
+    if (!resolvedAddress)
+        return Status::InvalidArgument;
+    *resolvedAddress = 0;
+    const Record *record = nullptr;
+    const Status status = FindPublished(token, expectedKind, expectedMetadata, &record);
+    if (status == Status::Ok)
+        *resolvedAddress = record->resolvedAddress;
+    return status;
+}
+
+Status AliasRegistry::ResolveNative(
+    disk32::PointerToken token,
+    AliasKind expectedKind,
+    std::uint32_t expectedMetadata,
+    std::uintptr_t *nativeAddress) const
+{
+    if (!nativeAddress)
+        return Status::InvalidArgument;
+    *nativeAddress = 0;
+    if (!RequiresExactStartPublication(expectedKind))
+        return Status::InvalidArgument;
+    const Record *record = nullptr;
+    const Status status = FindPublished(token, expectedKind, expectedMetadata, &record);
+    if (status != Status::Ok)
+        return status;
+    if (!record->nativeAddress)
+        return Status::MissingNativeObject;
+    *nativeAddress = record->nativeAddress;
     return Status::Ok;
 }
 
@@ -779,6 +820,7 @@ const char *StatusName(Status status)
     case Status::InvalidStringExtent: return "invalid string extent";
     case Status::UnregisteredString: return "unregistered string";
     case Status::GenerationExhausted: return "generation exhausted";
+    case Status::MissingNativeObject: return "missing native object";
     }
     return "unknown";
 }
