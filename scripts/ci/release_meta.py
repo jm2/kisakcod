@@ -123,18 +123,49 @@ def readme(leg: dict, version: str, commit: str, requires: str) -> str:
     paragraphs = [
         f"KisakCOD {version}: {leg['platform']} {description} ({leg['tier']})",
         f"{binary} is the KisakCOD {description} for Call of Duty 4 multiplayer, built for "
-        f"{leg['platform']} from {REPO_URL} commit {commit}.",
+        + f"{leg['platform']} from {REPO_URL} commit {commit}.",
         f"Status: {leg['tier']}. At capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}",
         "No game data: this package contains no Call of Duty 4 content. Retail data is the "
-        "user's own; set fs_basepath to your own copy of the game.",
+        + "user's own; set fs_basepath to your own copy of the game.",
         f"Debug symbols: {leg['stem']}-debugsymbols.tar.xz. Extract it into the same directory; "
-        f"{binary} finds {binary}.debug through its .gnu_debuglink.",
+        + f"{binary} finds {binary}.debug through its .gnu_debuglink.",
         f"Requires: {requires}." if requires else "",
         "License: GNU GPL v3, in LICENSE. The source archive of the same release holds the "
-        "corresponding source.",
+        + "corresponding source.",
     ]
     return "\n\n".join(textwrap.fill(p, 76, break_on_hyphens=False, break_long_words=False)
                         for p in paragraphs if p) + "\n"
+
+
+def run_metadata(args: argparse.Namespace) -> int:
+    meta = parse_version(args.version, args.dry_run)
+    legs, missing = build_matrix(json.loads(args.manifest.read_text()), meta["version"])
+    if missing:
+        raise ReleaseError("cells at links or above with no release recipe: " + ", ".join(missing)
+                           + " (add a RECIPES row and its release.yml steps)")
+    if not legs:
+        raise ReleaseError("no required target x role cell is at links or above")
+    meta["matrix"] = json.dumps({"include": legs}, separators=(",", ":"))
+    meta["prerelease"] = str(all(leg["tier"] != "first-class" for leg in legs)).lower()
+    print("\n".join(f"{k}={v}" for k, v in meta.items()))
+    return 0
+
+
+def run_gate(args: argparse.Namespace) -> int:
+    if not SHA_RE.fullmatch(args.commit) or (args.tag_commit and not SHA_RE.fullmatch(args.tag_commit)):
+        raise ReleaseError("commits must be full 40-hex SHAs")
+    problems = gate_problems(args.commit, args.ref, args.ci_runs, args.tag_commit)
+    for problem in problems:
+        print(f"::{'warning' if args.dry_run else 'error'}::{problem}", file=sys.stderr)
+    if problems and not args.dry_run:
+        return 1
+    print(f"publish={str(not args.dry_run).lower()}")
+    return 0
+
+
+def run_readme(args: argparse.Namespace) -> int:
+    sys.stdout.write(readme(args.leg, args.version, args.commit, args.requires))
+    return 0
 
 
 def _bool(text: str) -> bool:
@@ -143,53 +174,37 @@ def _bool(text: str) -> bool:
     return text == "true"
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    sub = parser.add_subparsers(dest="command", required=True)
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description="Release metadata for .github/workflows/release.yml.")
+    sub = root.add_subparsers(dest="command", required=True)
     p = sub.add_parser("metadata")
+    p.set_defaults(run=run_metadata)
     p.add_argument("--version", default="")
     p.add_argument("--dry-run", type=_bool, default=True)
     p.add_argument("--manifest", type=Path, default=MANIFEST)
     p = sub.add_parser("gate")
+    p.set_defaults(run=run_gate)
     p.add_argument("--commit", required=True)
     p.add_argument("--ref", required=True)
     p.add_argument("--ci-runs", type=int, required=True)
     p.add_argument("--tag-commit", default="")
     p.add_argument("--dry-run", type=_bool, default=True)
     p = sub.add_parser("readme")
+    p.set_defaults(run=run_readme)
     p.add_argument("--leg", type=json.loads, required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--commit", required=True)
     p.add_argument("--requires", default="")
-    args = parser.parse_args(argv)
+    return root
 
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
     try:
-        if args.command == "metadata":
-            meta = parse_version(args.version, args.dry_run)
-            legs, missing = build_matrix(json.loads(args.manifest.read_text()), meta["version"])
-            if missing:
-                raise ReleaseError("cells at links or above with no release recipe: " + ", ".join(missing)
-                                   + " (add a RECIPES row and its release.yml steps)")
-            if not legs:
-                raise ReleaseError("no required target x role cell is at links or above")
-            meta["matrix"] = json.dumps({"include": legs}, separators=(",", ":"))
-            meta["prerelease"] = str(all(leg["tier"] != "first-class" for leg in legs)).lower()
-            print("\n".join(f"{k}={v}" for k, v in meta.items()))
-        elif args.command == "gate":
-            if not SHA_RE.fullmatch(args.commit) or (args.tag_commit and not SHA_RE.fullmatch(args.tag_commit)):
-                raise ReleaseError("commits must be full 40-hex SHAs")
-            problems = gate_problems(args.commit, args.ref, args.ci_runs, args.tag_commit)
-            for problem in problems:
-                print(f"::{'warning' if args.dry_run else 'error'}::{problem}", file=sys.stderr)
-            if problems and not args.dry_run:
-                return 1
-            print(f"publish={str(not args.dry_run).lower()}")
-        else:
-            sys.stdout.write(readme(args.leg, args.version, args.commit, args.requires))
+        return args.run(args)
     except ReleaseError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
-    return 0
 
 
 if __name__ == "__main__":
