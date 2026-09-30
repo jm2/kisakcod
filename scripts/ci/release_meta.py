@@ -18,6 +18,13 @@ stdout, and reports problems as workflow annotations on stderr.
       commit. A dry run reports the same problems as warnings.
   readme --leg JSON --version V --commit SHA [--requires TEXT]
       Prints the README.txt that ships in a leg's package.
+  pdb-id --exe EXE --pdb PDB
+      Prints BUILD_ID=<GUID><age>, the symbol-server key, when the PE's
+      CodeView record names the PDB and matches its GUID and age: the two
+      halves of a Windows leg belong together (the Linux build-ID check).
+  zip --root DIR --stem STEM --epoch SECONDS --out FILE
+      Writes DIR/STEM as a zip with sorted names and fixed timestamps, so a
+      Windows package is reproducible like the Linux tarballs.
   notes --tag T --commit SHA --matrix JSON --run-url URL [--repo-dir DIR]
       Prints the release notes: the packages and their tiers, then the
       first-parent changes on master since the previous vX.Y.Z tag.
@@ -28,9 +35,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import struct
 import subprocess
 import sys
 import textwrap
+import time
+import uuid
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -45,12 +56,18 @@ DRY_RUN_DEFAULT = "v0.0.0-dryrun"
 SHA_RE = re.compile(r"[0-9a-f]{40}", re.ASCII)
 
 # (target, role) -> how release.yml builds the leg. A new row needs its steps
-# in release.yml; `recipe` selects them.
+# in release.yml; `recipe` selects them. `archive` is the package format and
+# `exe` the executable suffix.
+LINUX = {"recipe": "linux-headless", "archive": "tar.xz", "exe": ""}
 RECIPES = {
-    ("linux-amd64", "headless-server"): {"recipe": "linux-headless", "runner": "ubuntu-24.04",
-                                         "platform": "linux-x64", "file_arch": "x86-64"},
-    ("linux-arm64", "headless-server"): {"recipe": "linux-headless", "runner": "ubuntu-24.04-arm",
-                                         "platform": "linux-arm64", "file_arch": "aarch64"},
+    ("linux-amd64", "headless-server"): {**LINUX, "runner": "ubuntu-24.04", "platform": "linux-x64",
+                                         "file_arch": "x86-64"},
+    ("linux-arm64", "headless-server"): {**LINUX, "runner": "ubuntu-24.04-arm", "platform": "linux-arm64",
+                                         "file_arch": "aarch64"},
+    # file_arch is both the Visual Studio platform and the PE machine name.
+    ("windows-amd64", "headless-server"): {"recipe": "windows-headless", "archive": "zip", "exe": ".exe",
+                                           "runner": "windows-2025", "platform": "windows-x64",
+                                           "file_arch": "x64"},
 }
 # role -> (asset name part, binary, description)
 ROLES = {
@@ -131,8 +148,9 @@ def readme(leg: dict, version: str, commit: str, requires: str) -> str:
         f"Status: {leg['tier']}. At capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}",
         "No game data: this package contains no Call of Duty 4 content. Retail data is the "
         + "user's own; set fs_basepath to your own copy of the game.",
-        f"Debug symbols: {leg['stem']}-debugsymbols.tar.xz. Extract it into the same directory; "
-        + f"{binary} finds {binary}.debug through its .gnu_debuglink.",
+        f"Debug symbols: {leg['stem']}-debugsymbols.{leg['archive']}. Extract it into the same directory; "
+        + (f"debuggers find {binary}.pdb next to {binary}.exe." if leg["exe"] == ".exe"
+           else f"{binary} finds {binary}.debug through its .gnu_debuglink."),
         f"Requires: {requires}." if requires else "",
         "License: GNU GPL v3, in LICENSE. The source archive of the same release holds the "
         + "corresponding source.",
@@ -166,9 +184,10 @@ def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, lim
     out = [f"# KisakCOD {version}", "",
            f"Built from [`{commit[:12]}`]({REPO_URL}/commit/{commit}) by [this workflow run]({run_url}).", "",
            "## Packages", "", "| Package | Target | Role | Tier | Level |", "| --- | --- | --- | --- | --- |"]
-    out += [f"| `{leg['stem']}.tar.xz` | {leg['target']} | {leg['role']} | {leg['tier']} | `{leg['level']}` |"
+    out += [f"| `{leg['stem']}.{leg['archive']}` | {leg['target']} | {leg['role']} | {leg['tier']} | `{leg['level']}` |"
             for leg in legs]
-    out += ["", "Each package has a `-debugsymbols.tar.xz` companion (extract it into the same directory) and a "
+    out += ["", "Each package has a `-debugsymbols` companion in the same format (extract it into the same "
+            + "directory) and a "
             + f"`-provenance.json`. `kisakcod-{version}-source.tar.gz` is the commit's source without the vendor "
             + "runtime binaries (Miles, Bink, Steamworks). `SHA256SUMS.txt` covers every file.", "", "## Status", ""]
     out += [f"- **{leg['label']}**: at capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}" for leg in legs]
@@ -181,6 +200,78 @@ def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, lim
         more = f"compare/{previous}...{commit}" if previous else f"commits/{commit}"
         out.append(f"- ...and {len(lines) - limit} more: {REPO_URL}/{more}")
     return "\n".join(out) + "\n"
+
+
+def _u16(data: bytes, offset: int) -> int:
+    return struct.unpack_from("<H", data, offset)[0]
+
+
+def _u32(data: bytes, offset: int) -> int:
+    return struct.unpack_from("<I", data, offset)[0]
+
+
+def codeview(exe: bytes) -> tuple[bytes, int, str]:
+    """(GUID, age, PDB path) from a PE32+ image's CodeView (RSDS) debug record."""
+    pe = _u32(exe, 0x3C)
+    opt = pe + 24
+    if exe[pe:pe + 4] != b"PE\0\0" or _u16(exe, opt) != 0x20B or _u32(exe, opt + 108) <= 6:
+        raise ReleaseError("the executable is not a PE32+ image with a debug directory")
+    table = opt + _u16(exe, pe + 20)
+    rva, size = struct.unpack_from("<II", exe, opt + 112 + 6 * 8)  # data directory 6: debug
+    for i in range(_u16(exe, pe + 6)):
+        _, va, raw_size, raw = struct.unpack_from("<IIII", exe, table + 40 * i + 8)
+        if va <= rva < va + raw_size:
+            break
+    else:
+        raise ReleaseError("the debug directory lies outside every section")
+    for entry in range(rva - va + raw, rva - va + raw + size, 28):
+        if _u32(exe, entry + 12) == 2:  # IMAGE_DEBUG_TYPE_CODEVIEW
+            start = _u32(exe, entry + 24)
+            record = exe[start:start + _u32(exe, entry + 16)]
+            if record[:4] == b"RSDS":
+                return record[4:20], _u32(record, 20), record[24:].split(b"\0")[0].decode("utf-8", "replace")
+    raise ReleaseError("the executable has no CodeView (RSDS) record")
+
+
+def pdb_signature(pdb: bytes) -> tuple[bytes, int]:
+    """(GUID, age) of an MSF 7.00 PDB: the GUID from the PDB info stream (1), the age
+    from the DBI stream (3), the two values a debugger matches against the PE."""
+    if not pdb.startswith(b"Microsoft C/C++ MSF 7.00\r\n\x1aDS"):
+        raise ReleaseError("the symbol file is not an MSF 7.00 PDB")
+    block, dir_bytes, map_block = _u32(pdb, 32), _u32(pdb, 44), _u32(pdb, 52)
+    directory = b"".join(pdb[n * block:(n + 1) * block] for n in
+                         (_u32(pdb, map_block * block + 4 * i) for i in range(-(-dir_bytes // block))))
+    sizes = [_u32(directory, 4 + 4 * i) for i in range(_u32(directory, 0))]
+
+    def stream(k: int) -> int:
+        """Offset of stream k's first block."""
+        skip = sum(-(-n // block) for n in sizes[:k] if n != 0xFFFFFFFF)
+        return _u32(directory, 4 + 4 * len(sizes) + 4 * skip) * block
+    info, dbi = stream(1), stream(3)
+    return pdb[info + 12:info + 28], _u32(pdb, dbi + 8)
+
+
+def pdb_id(exe: bytes, pdb: bytes, pdb_name: str) -> str:
+    """The GUID and age that tie a PE to its PDB, as hex; ReleaseError unless they match."""
+    try:
+        guid, age, path = codeview(exe)
+        if re.split(r"[\\/]", path)[-1].lower() != pdb_name.lower():
+            raise ReleaseError(f"the executable names {path}, not {pdb_name}")
+        if pdb_signature(pdb) != (guid, age):
+            raise ReleaseError("the PDB's GUID and age do not match the executable's")
+    except struct.error as exc:
+        raise ReleaseError(f"truncated executable or PDB: {exc}") from exc
+    return uuid.UUID(bytes_le=guid).hex.upper() + f"{age:X}"  # the symbol-server key
+
+
+def write_zip(root: Path, stem: str, epoch: int, out: Path) -> None:
+    """root/stem as a zip: sorted names, one fixed timestamp, no host metadata."""
+    stamp = time.gmtime(max(epoch, 315532800))[:6]  # zip dates start in 1980
+    with zipfile.ZipFile(out, "w") as zf:
+        for path in sorted(p for p in (root / stem).rglob("*") if p.is_file()):
+            info = zipfile.ZipInfo(path.relative_to(root).as_posix(), stamp)
+            info.compress_type, info.external_attr, info.create_system = zipfile.ZIP_DEFLATED, 0o644 << 16, 3
+            zf.writestr(info, path.read_bytes())
 
 
 def run_metadata(args: argparse.Namespace) -> int:
@@ -211,6 +302,16 @@ def run_gate(args: argparse.Namespace) -> int:
 
 def run_readme(args: argparse.Namespace) -> int:
     sys.stdout.write(readme(args.leg, args.version, args.commit, args.requires))
+    return 0
+
+
+def run_pdb_id(args: argparse.Namespace) -> int:
+    print("BUILD_ID=" + pdb_id(args.exe.read_bytes(), args.pdb.read_bytes(), args.pdb.name))
+    return 0
+
+
+def run_zip(args: argparse.Namespace) -> int:
+    write_zip(args.root, args.stem, args.epoch, args.out)
     return 0
 
 
@@ -248,6 +349,16 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--version", required=True)
     p.add_argument("--commit", required=True)
     p.add_argument("--requires", default="")
+    p = sub.add_parser("pdb-id")
+    p.set_defaults(run=run_pdb_id)
+    p.add_argument("--exe", type=Path, required=True)
+    p.add_argument("--pdb", type=Path, required=True)
+    p = sub.add_parser("zip")
+    p.set_defaults(run=run_zip)
+    p.add_argument("--root", type=Path, required=True)
+    p.add_argument("--stem", required=True)
+    p.add_argument("--epoch", type=int, required=True)
+    p.add_argument("--out", type=Path, required=True)
     p = sub.add_parser("notes")
     p.set_defaults(run=run_notes)
     p.add_argument("--tag", required=True)

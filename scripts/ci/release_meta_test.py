@@ -8,10 +8,12 @@ import copy
 import io
 import json
 import os
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,6 +34,32 @@ def cli(*args: str) -> SimpleNamespace:
         except SystemExit as exc:  # argparse rejects bad arguments this way
             code = exc.code
     return SimpleNamespace(returncode=code, stdout=out.getvalue(), stderr=err.getvalue())
+
+
+def fake_pe(guid: bytes, age: int, pdb_path: bytes) -> bytes:
+    """A minimal PE32+ image whose one section holds a CodeView debug record."""
+    exe = bytearray(0x600)
+    struct.pack_into("<I", exe, 0x3C, 0x40)
+    exe[0x40:0x44] = b"PE\0\0"
+    struct.pack_into("<HH12xH", exe, 0x44, 0x8664, 1, 240)  # machine, sections, optional header size
+    struct.pack_into("<H106xI48xII", exe, 0x58, 0x20B, 16, 0x1010, 28)  # PE32+, 16 directories, debug
+    struct.pack_into("<8sIIII", exe, 0x58 + 240, b".rdata", 0x200, 0x1000, 0x200, 0x400)
+    record = b"RSDS" + guid + struct.pack("<I", age) + pdb_path + b"\0"
+    struct.pack_into("<12xIIII", exe, 0x410, 2, len(record), 0x1080, 0x480)
+    exe[0x480:0x480 + len(record)] = record
+    return bytes(exe)
+
+
+def fake_pdb(guid: bytes, age: int, block: int = 512) -> bytes:
+    """A minimal MSF 7.00 file: block map in block 2, directory in 5, info stream in 3, DBI in 4."""
+    pdb = bytearray(6 * block)
+    directory = struct.pack("<5I2I", 4, 0, 28, 0xFFFFFFFF, 64, 3, 4)
+    pdb[:56] = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0" + struct.pack("<6I", block, 1, 6, len(directory), 0, 2)
+    struct.pack_into("<I", pdb, 2 * block, 5)
+    pdb[5 * block:5 * block + len(directory)] = directory
+    struct.pack_into("<III16s", pdb, 3 * block, 20000404, 0, age + 7, guid)  # the info-stream age is not matched
+    struct.pack_into("<iII", pdb, 4 * block, -1, 19990903, age)
+    return bytes(pdb)
 
 
 def manifest_with(levels: dict[tuple[str, str], str]) -> dict:
@@ -65,6 +93,13 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(leg["stem"], "kisakcod-1.2.3-linux-x64-headless-preview")
         self.assertEqual((leg["role"], leg["recipe"], leg["runner"], leg["binary"]),
                          ("headless-server", "linux-headless", "ubuntu-24.04", "KisakCOD-dedi"))
+
+    def test_windows_leg_ships_a_zip(self):
+        legs, missing = rm.build_matrix(manifest_with({("windows-amd64", "headless-server"): "links"}), "1.2.3")
+        self.assertEqual(missing, [])
+        self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["archive"], leg["exe"], leg["file_arch"])
+                          for leg in legs], [("kisakcod-1.2.3-windows-x64-headless-preview", "windows-headless",
+                                              "windows-2025", "zip", ".exe", "x64")])
 
     def test_levels_pick_legs_tiers_and_names(self):
         legs, missing = rm.build_matrix(manifest_with({
@@ -142,6 +177,60 @@ class CliTest(unittest.TestCase):
                      "no Call of Duty 4 content", "kisakcod-1.2.3-linux-x64-headless-preview-debugsymbols.tar.xz",
                      "Requires: glibc 2.39.", "GNU GPL v3"):
             self.assertIn(text, words)
+
+
+    def test_windows_readme_points_at_the_pdb(self):
+        legs, _ = rm.build_matrix(manifest_with({("windows-amd64", "headless-server"): "links"}), "1.2.3")
+        run = cli("readme", "--leg", json.dumps(legs[0]), "--version", "1.2.3", "--commit", SHA_A)
+        words = " ".join(run.stdout.split())
+        for text in ("windows-x64 headless dedicated server (preview)",
+                     "kisakcod-1.2.3-windows-x64-headless-preview-debugsymbols.zip",
+                     "debuggers find KisakCOD-dedi.pdb next to KisakCOD-dedi.exe"):
+            self.assertIn(text, words)
+
+
+class WindowsPackageTest(unittest.TestCase):
+    GUID = bytes(range(16))
+    KEY = "030201000504070608090A0B0C0D0E0F"  # the GUID as a symbol server spells it
+
+    def test_pdb_id_matches_guid_and_age(self):
+        exe = fake_pe(self.GUID, 1, b"D:\\a\\bin\\RelWithDebInfo\\KisakCOD-dedi.pdb")
+        self.assertEqual(rm.pdb_id(exe, fake_pdb(self.GUID, 1), "KisakCOD-dedi.pdb"), self.KEY + "1")
+        for exe_, pdb, name in ((exe, fake_pdb(self.GUID, 2), "KisakCOD-dedi.pdb"),         # stale age
+                                (exe, fake_pdb(bytes(16), 1), "KisakCOD-dedi.pdb"),         # another link
+                                (exe, fake_pdb(self.GUID, 1), "other.pdb"),                 # another name
+                                (exe[:0x300], fake_pdb(self.GUID, 1), "KisakCOD-dedi.pdb"),  # truncated
+                                (exe, b"not a pdb", "KisakCOD-dedi.pdb")):
+            with self.subTest(name=name, exe=len(exe_), pdb=len(pdb)), self.assertRaises(rm.ReleaseError):
+                rm.pdb_id(exe_, pdb, name)
+
+    def test_pdb_id_cli_prints_the_build_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe, pdb = Path(tmp) / "KisakCOD-dedi.exe", Path(tmp) / "KisakCOD-dedi.pdb"
+            exe.write_bytes(fake_pe(self.GUID, 3, b"KisakCOD-dedi.pdb"))
+            pdb.write_bytes(fake_pdb(self.GUID, 3))
+            run = cli("pdb-id", "--exe", str(exe), "--pdb", str(pdb))
+        self.assertEqual((run.returncode, run.stdout), (0, f"BUILD_ID={self.KEY}3\n"))
+
+    def test_zip_is_sorted_and_reproducible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = Path(tmp) / "stage" / "pkg"
+            stage.mkdir(parents=True)
+            for name in ("README.txt", "KisakCOD-dedi.exe", "LICENSE"):
+                (stage / name).write_text(name)
+            archives = []
+            for i, mtime in enumerate((1_000_000_000, 1_700_000_000)):
+                for f in stage.iterdir():
+                    os.utime(f, (mtime, mtime))
+                out = Path(tmp) / f"{i}.zip"
+                self.assertEqual(cli("zip", "--root", str(stage.parent), "--stem", "pkg", "--epoch", "1759000000",
+                                     "--out", str(out)).returncode, 0)
+                archives.append(out.read_bytes())
+            self.assertEqual(archives[0], archives[1])
+            with zipfile.ZipFile(Path(tmp) / "0.zip") as zf:
+                self.assertEqual(zf.namelist(), ["pkg/KisakCOD-dedi.exe", "pkg/LICENSE", "pkg/README.txt"])
+                self.assertEqual(zf.read("pkg/LICENSE"), b"LICENSE")
+                self.assertIsNone(zf.testzip())
 
 
 class NotesTest(unittest.TestCase):
