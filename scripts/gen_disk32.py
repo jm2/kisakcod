@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
-"""
-Generate the disk32 mirror structs from src/database/db_disk32.schema.
+"""Generate the disk32 mirror structs from src/database/db_disk32.schema."""
 
-A retail fast-file stores each record in its 32-bit (ILP32) layout
-(docs/design/FASTFILE_LOADER.md). For every schema record this emits the
-disk32 mirror struct (pointer fields are 4-byte disk32::Ptr32 tokens) with
-ONDISK_SIZE/ONDISK_OFFSET asserts on the declared retail values, and
-RUNTIME_SIZE/RUNTIME_OFFSET asserts on the native struct the mirror converts
-into, computed from the same field list, so a native struct that drifts from
-its schema stops the build. Declared offsets that break the ILP32 layout
-rules fail here. The output is a build artifact, never committed (AGENTS.md
-rule 8).
-
-usage: gen_disk32.py <schema> <output header>
-"""
+# A retail fast-file stores each record in its 32-bit (ILP32) layout
+# (docs/design/FASTFILE_LOADER.md). For every schema record this emits the
+# disk32 mirror struct (pointer fields are 4-byte disk32::Ptr32 tokens) with
+# ONDISK_SIZE/ONDISK_OFFSET asserts on the declared retail values, and
+# RUNTIME_SIZE/RUNTIME_OFFSET asserts on the native struct the mirror converts
+# into, computed from the same field list, so a native struct that drifts from
+# its schema stops the build. Declared offsets that break the ILP32 layout
+# rules fail here. The output is a build artifact, never committed (AGENTS.md
+# rule 8).
 
 import sys
 from pathlib import Path
@@ -105,7 +101,7 @@ def emit(records, schema_name):
 
 def main():
     if len(sys.argv) != 3:
-        sys.exit(__doc__)
+        sys.exit('usage: gen_disk32.py <schema> <output header>')
     schema, output = Path(sys.argv[1]), Path(sys.argv[2])
     records = parse(schema)
     if not records:
