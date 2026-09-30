@@ -3,7 +3,13 @@
 #include <qcommon/threads.h>
 #include "timing.h"
 
+#if defined(_WIN32)
+// KisakCOD ABI port: the dormant profiler bodies below read the Win32
+// performance counter (LARGE_INTEGER / QueryPerformanceCounter). The portable
+// split keeps windows.h out of POSIX compositions; those targets never reach
+// the dormant bodies (they sit past the KISAKTODO early returns).
 #include <Windows.h>
+#endif
 
 ProfileScript profileScript;
 int g_profileStack[256];
@@ -840,6 +846,10 @@ int __cdecl Profile_EndInternal(long double *duration)
     // KISAKTODO: Profiler
     return 0;
 
+#if defined(_WIN32)
+    // Dormant profiler body (unreachable past the early return). Its
+    // reference clock is the Win32 performance counter; POSIX compositions
+    // exclude it with the windows.h guard so the shared TU stays portable.
     LARGE_INTEGER qpc;
 
     ProfileAtom end;
@@ -878,6 +888,7 @@ int __cdecl Profile_EndInternal(long double *duration)
         *duration = deltaa.value[0] * qpc2msec;
 
     return p - prof_stack->prof_array;
+#endif
 }
 
 void __cdecl Profile_BeginScripts(uint32_t profileFlags)
@@ -935,6 +946,9 @@ void __cdecl Profile_Begin(int index)
     // KISAKTODO: Profiler
 
     return;
+#if defined(_WIN32)
+    // Dormant profiler body (unreachable past the early return), kept on the
+    // Win32 performance counter like Profile_EndInternal's tail above.
     LARGE_INTEGER qpc;
 
     ProfileStack* prof_stack = (ProfileStack*)Sys_GetValue(0);
@@ -948,6 +962,7 @@ void __cdecl Profile_Begin(int index)
 
     QueryPerformanceCounter(&qpc);
     p->write.start[p->write.nesting].value[0] = qpc.QuadPart;
+#endif
 }
 
 int __cdecl Profile_AddScriptName(char *profileName)

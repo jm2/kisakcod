@@ -50,6 +50,42 @@
 #include <cgame/cg_local.h>
 #endif
 
+// KisakCOD ABI port: the zone-reorder tool (DB_BeginReorderZone and
+// DB_EndReorderZone) reads and writes its CSV with the Win32 file API. The
+// Win32 arm keeps the original CreateFileA arguments; other targets use the
+// portable FS_File seam.
+#include <qcommon/com_fileaccess.h>
+
+#if defined(_WIN32)
+typedef HANDLE DBReorderFile;
+#define DB_REORDER_FILE_INVALID INVALID_HANDLE_VALUE
+static DBReorderFile DB_OpenReorderCsvRead(const char *path) { return CreateFileA(path, 0x80000000, 0, 0, 3u, 0, 0); }
+static DBReorderFile DB_OpenReorderCsvWrite(const char *path) { return CreateFileA(path, 0x40000000u, 0, 0, 2u, 0, 0); }
+static void DB_CloseReorderCsv(DBReorderFile file) { CloseHandle(file); }
+static uint32_t DB_ReorderCsvSize(DBReorderFile file) { return GetFileSize(file, 0); }
+static uint32_t DB_ReadReorderCsv(DBReorderFile file, void *data, uint32_t bytes)
+{
+    DWORD read = 0;
+    return ReadFile(file, data, bytes, &read, 0) ? read : 0;
+}
+static void DB_WriteReorderCsv(DBReorderFile file, const void *data, uint32_t bytes)
+{
+    DWORD written;
+    WriteFile(file, data, bytes, &written, 0);
+}
+static void DB_DeleteReorderBackup(const char *path) { DeleteFileA(path); }
+#else
+typedef FILE *DBReorderFile;
+#define DB_REORDER_FILE_INVALID nullptr
+static DBReorderFile DB_OpenReorderCsvRead(const char *path) { return FS_FileOpenReadBinary(path); }
+static DBReorderFile DB_OpenReorderCsvWrite(const char *path) { return FS_FileOpenWriteBinary(path); }
+static void DB_CloseReorderCsv(DBReorderFile file) { FS_FileClose(file); }
+static uint32_t DB_ReorderCsvSize(DBReorderFile file) { return (uint32_t)FS_FileGetFileSize(file); }
+static uint32_t DB_ReadReorderCsv(DBReorderFile file, void *data, uint32_t bytes) { return FS_FileRead(data, bytes, file); }
+static void DB_WriteReorderCsv(DBReorderFile file, const void *data, uint32_t bytes) { FS_FileWrite(data, bytes, file); }
+static void DB_DeleteReorderBackup(const char *path) { remove(path); }
+#endif
+
 GfxWorld s_world;
 MaterialGlobals materialGlobals;
 ImgGlobals imageGlobals;
@@ -1648,10 +1684,9 @@ void DB_EndReorderZone()
 {
     DBReorderAssetEntry *entry; // [esp+180h] [ebp-41Ch]
     bool wroteBlank; // [esp+187h] [ebp-415h]
-    DWORD bytesa; // [esp+188h] [ebp-414h]
-    DWORD bytes; // [esp+188h] [ebp-414h]
-    HANDLE file; // [esp+18Ch] [ebp-410h]
-    DWORD written; // [esp+190h] [ebp-40Ch] BYREF
+    uint32_t bytesa; // [esp+188h] [ebp-414h]
+    uint32_t bytes; // [esp+188h] [ebp-414h]
+    DBReorderFile file; // [esp+18Ch] [ebp-410h]
     char csvName[256]; // [esp+194h] [ebp-408h] BYREF
     char line[512]; // [esp+294h] [ebp-308h] BYREF
     char bakName[256]; // [esp+494h] [ebp-108h] BYREF
@@ -1662,10 +1697,10 @@ void DB_EndReorderZone()
         s_dbReorder.alreadyFinished = 1;
         Com_sprintf(csvName, 0x100u, "..\\share\\zone_source\\%s.csv", s_dbReorder.zoneName);
         Com_sprintf(bakName, 0x100u, "%s.bak", csvName);
-        DeleteFileA(bakName);
+        DB_DeleteReorderBackup(bakName);
         rename(csvName, bakName);
-        file = CreateFileA(csvName, 0x40000000u, 0, 0, 2u, 0, 0);
-        if (file != (HANDLE)-1)
+        file = DB_OpenReorderCsvWrite(csvName);
+        if (file != DB_REORDER_FILE_INVALID)
         {
             wroteBlank = 0;
             DB_SetReorderIncludeSequence();
@@ -1690,14 +1725,14 @@ void DB_EndReorderZone()
                         break;
                     default:
                         wroteBlank = 1;
-                        WriteFile(file, "\r\n", 2u, &written, 0);
+                        DB_WriteReorderCsv(file, "\r\n", 2u);
                         break;
                     }
                 }
                 if (entry->type == 23)
                 {
                     bytesa = Com_sprintf(line, 0x200u, "%s,%s%s\r\n", entry->typeString, "mp/", entry->assetName);
-                    WriteFile(file, line, bytesa, &written, 0);
+                    DB_WriteReorderCsv(file, line, bytesa);
                 }
                 else
                 {
@@ -1712,10 +1747,10 @@ void DB_EndReorderZone()
                             "all_mp");
                     else
                         bytes = Com_sprintf(line, 0x200u, "%s,%s\r\n", entry->typeString, entry->assetName);
-                    WriteFile(file, line, bytes, &written, 0);
+                    DB_WriteReorderCsv(file, line, bytes);
                 }
             }
-            CloseHandle(file);
+            DB_CloseReorderCsv(file);
         }
     }
 }
@@ -2881,15 +2916,15 @@ void __cdecl DB_BeginReorderZone(const char *zoneName)
     DBReorderAssetEntry *entry; // [esp+14h] [ebp-248h]
     char assetType[32]; // [esp+18h] [ebp-244h] BYREF
     uint32_t size; // [esp+38h] [ebp-224h]
-    void *file; // [esp+3Ch] [ebp-220h]
+    DBReorderFile file; // [esp+3Ch] [ebp-220h]
     int32_t success; // [esp+40h] [ebp-21Ch]
     char assetName[256]; // [esp+44h] [ebp-218h] BYREF
     char csvName[256]; // [esp+144h] [ebp-118h] BYREF
     const char *parse; // [esp+248h] [ebp-14h] BYREF
     char *csv; // [esp+24Ch] [ebp-10h]
     char *to; // [esp+250h] [ebp-Ch]
-    DWORD read; // [esp+254h] [ebp-8h] BYREF
-    DWORD entryIter; // [esp+258h] [ebp-4h]
+    uint32_t read; // [esp+254h] [ebp-8h] BYREF
+    uint32_t entryIter; // [esp+258h] [ebp-4h]
 
     for (entryIter = 0; entryIter < s_dbReorder.entryCount; ++entryIter)
     {
@@ -2914,17 +2949,18 @@ void __cdecl DB_BeginReorderZone(const char *zoneName)
     } while (v1);
     Sys_LockWrite(&s_dbReorder.critSect);
     Com_sprintf(csvName, 0x100u, "..\\share\\zone_source\\%s.csv", zoneName);
-    file = CreateFileA(csvName, 0x80000000, 0, 0, 3u, 0, 0);
-    if (file == INVALID_HANDLE_VALUE)
+    file = DB_OpenReorderCsvRead(csvName);
+    if (file == DB_REORDER_FILE_INVALID)
     {
         Sys_UnlockWrite(&s_dbReorder.critSect);
     }
     else
     {
-        size = GetFileSize(file, 0);
+        size = DB_ReorderCsvSize(file);
         csv = (char *)malloc(size + 1);
-        success = ReadFile(file, csv, size, &read, 0);
-        CloseHandle(file);
+        read = DB_ReadReorderCsv(file, csv, size);
+        success = 1;
+        DB_CloseReorderCsv(file);
         if (success && read == size)
         {
             csv[size] = 0;

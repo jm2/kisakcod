@@ -27,7 +27,12 @@
 #include <cstring>
 #include <limits>
 #include <system_error>
+#if defined(_WIN32)
+// KisakCOD ABI port: <io.h> is the MSVC file-attributes/find-first surface used
+// by the Win32-only Sys_DirectoryHasContents scan below. The portable split
+// keeps it out of POSIX compositions.
 #include <io.h>
+#endif
 
 const dvar_t *fs_remotePCDirectory;
 const dvar_t *fs_remotePCName;
@@ -457,9 +462,7 @@ int __cdecl FS_GetFileOsPath(const char *filename, char *ospath)
 
 int __cdecl FS_OpenFileOverwrite(char *qpath)
 {
-    DWORD oldAttributes; // [esp+0h] [ebp-10Ch]
     char ospath[256]; // [esp+4h] [ebp-108h] BYREF
-    uint32_t attributes; // [esp+108h] [ebp-4h]
 
     FS_CheckFileSystemStarted();
     if (!qpath)
@@ -468,10 +471,17 @@ int __cdecl FS_OpenFileOverwrite(char *qpath)
     {
         if (fs_debug->current.integer)
             Com_Printf(10, "FS_FOpenFileOverWrite: %s\n", ospath);
+#if defined(_WIN32)
+        // Read-only bit clearing is a Win32 file-attribute contract; POSIX
+        // opens truncate without it. Kept verbatim on Windows.
+        DWORD oldAttributes; // [esp+0h] [ebp-10Ch]
+        uint32_t attributes; // [esp+108h] [ebp-4h]
+
         oldAttributes = GetFileAttributesA(ospath);
         attributes = oldAttributes & 0xFFFFFFFE;
         if ((oldAttributes & 0xFFFFFFFE) != oldAttributes)
             SetFileAttributesA(ospath, attributes);
+#endif
         return FS_GetHandleAndOpenFile(qpath, ospath, FS_THREAD_MAIN);
     }
     else
@@ -1886,7 +1896,7 @@ void __cdecl FS_AddIwdFilesForGameDirectory(char *path, char *pszGameFolder)
     FS_FreeFileList((const char **)list);
 }
 
-#ifdef WIN32
+#if defined(_WIN32)
 int __cdecl Sys_DirectoryHasContents(const char *directory)
 {
     _finddata64i32_t findinfo; // [esp+0h] [ebp-238h] BYREF
@@ -1908,6 +1918,31 @@ int __cdecl Sys_DirectoryHasContents(const char *directory)
     } while (_findnext64i32(findhandle, &findinfo) != -1);
     _findclose(findhandle);
     return 0;
+}
+#else
+int __cdecl Sys_DirectoryHasContents(const char *directory)
+{
+    // Portable branch of the Win32 _findfirst64i32 scan above: the directory
+    // has contents when one enumerated entry is not "." / ".." / "CVS". The
+    // Sys_FileSystem seam keeps links and special files out of the listing, so
+    // every retained entry is a real file or directory, which is the same
+    // accept rule the attribute test applies on Windows.
+    std::vector<SysFileSystemDirectoryEntry> entries;
+    const SysFileSystemListStatus status = Sys_FileSystemListDirectory(directory, 64, &entries);
+    if (status == SysFileSystemListStatus::Error)
+        return 0;
+    for (const SysFileSystemDirectoryEntry &entry : entries)
+    {
+        if (I_stricmp(entry.name.c_str(), ".")
+            && I_stricmp(entry.name.c_str(), "..")
+            && I_stricmp(entry.name.c_str(), "CVS"))
+        {
+            return 1;
+        }
+    }
+    // Truncated listings omitted at least one entry; directory entry names are
+    // unique, so an omitted name cannot be a second "CVS" copy.
+    return status == SysFileSystemListStatus::Truncated;
 }
 #endif
 
