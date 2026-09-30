@@ -50,6 +50,7 @@ record StringTable 0x10 runtime=StringTable header=universal/q_shared.h same=kSt
     0x0C values      xstrings   count=columnCount*rowCount
 
 record PhysPreset 0x2C runtime=PhysPreset header=xanim/xanim.h
+    asset member=physPreset pool=Load_PhysPresetAsset kind=PhysPreset alias=inserted name=name label=physics-preset
     0x00 name                  xstring
     0x04 type                  i32
     0x08 mass                  f32

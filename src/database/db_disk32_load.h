@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 
+struct PhysPreset;
 struct RawFile;
 struct StringTable;
 struct XAssetList;
@@ -29,6 +30,12 @@ void __cdecl DB_LoadRawFilePtrDisk32(bool atStreamStart, RawFile **slot);
 // pointers live in DB_AllocZoneNative storage, and the record is published as
 // a completed object whose offset tokens resolve to that native table.
 void __cdecl DB_LoadStringTablePtrDisk32(bool atStreamStart, StringTable **slot);
+
+// Loads one PhysPreset (db_disk32_physpreset.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native PhysPreset published through Load_PhysPresetAsset on return. The
+// retail bool byte converts as nonzero = true.
+void __cdecl DB_LoadPhysPresetPtrDisk32(bool atStreamStart, PhysPreset **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
