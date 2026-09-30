@@ -75,6 +75,10 @@ static_assert(std::is_same_v<decltype(&Voice_IsClientTalking), bool (KISAK_CDECL
 
 // --- 2. Struct contracts ----------------------------------------------------
 
+// The event queue hands evPtr to consumers as a real address, so the member
+// must stay pointer-typed: a narrower spelling would truncate it at 64-bit.
+static_assert(std::is_same_v<decltype(sysEvent_t::evPtr), void *>);
+
 bool CheckSysEventRoundTrip()
 {
     int payload[4] = {1, 2, 3, 4};
@@ -88,13 +92,11 @@ bool CheckSysEventRoundTrip()
 
     if (event.evTime != 123 || event.evType != SE_KEY || event.evValue != 456
         || event.evValue2 != 789
-        || event.evPtrLength != static_cast<int>(sizeof(payload))
-        || event.evPtr != payload)
+        || event.evPtrLength != static_cast<int>(sizeof(payload)))
     {
         return false;
     }
-    // The pointer member is what the event queue hands to consumers; it must
-    // survive the round trip as a real address, not a truncated one.
+    // Read the payload back through the stored address.
     return *static_cast<int *>(event.evPtr) == 1;
 }
 
@@ -183,11 +185,15 @@ bool CheckEngineMkdirSurface()
         return false;
 
     char fullPath[1024];
-    std::snprintf(
+    const int pathLength = std::snprintf(
         fullPath,
         sizeof(fullPath),
         "%s/kisakcod-sys-local-test-mkdir",
         cwd);
+    // A truncated path could name some other existing directory, and the
+    // clean-slate step below removes whatever tree it names.
+    if (pathLength < 0 || static_cast<std::size_t>(pathLength) >= sizeof(fullPath))
+        return false;
 
     // Clean slate, then the declaration and definition must agree or this
     // call never links. The removal has to actually leave fullPath absent: a

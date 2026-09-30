@@ -112,6 +112,7 @@ int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
     // fit, terminator included, returns -1. Production Com_sprintf
     // (src/universal/q_shared.cpp) callers were compiled against that return
     // contract, so win_common.cpp's Sys_RemoveDirTree keeps its semantics.
+    // Flawfinder: ignore -- passthrough shim; production callers own the literal format and buffer size.
     const int written = vsnprintf(dest, size, fmt, ap);
     va_end(ap);
     // Production Com_sprintf always writes dest[size - 1] = 0. The standard
