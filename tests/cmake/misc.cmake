@@ -563,3 +563,43 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME dvar-pointer-round-trips COMMAND kisakcod-dvar-pointer-tests)
     set_tests_properties(dvar-pointer-round-trips PROPERTIES TIMEOUT 20)
 endif()
+
+# game_mp 64-bit layout hazards (NOW row 10, #216): the production game_mp
+# TUs at 64-bit, one executable per subject group (see the test's header).
+# Linux and clang only, for the reasons the dvar test above gives; the
+# defines are the Linux headless server's. --gc-sections drops the engine
+# code no check reaches, so only its boundary needs stubs.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    function(kisakcod_game_mp_hazard_test TEST_NAME SUBJECT)
+        set(_target kisakcod-${TEST_NAME}-tests)
+        add_executable(${_target} game_mp_hazard_tests.cpp ${SRC_DIR}/universal/com_math.cpp ${ARGN})
+        target_include_directories(${_target} SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+        target_compile_features(${_target} PRIVATE cxx_std_20)
+        target_compile_definitions(${_target} PRIVATE
+            KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS GAME_MP_HAZARD_SUBJECT=${SUBJECT})
+        target_compile_options(${_target} PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+        target_link_options(${_target} PRIVATE -Wl,--gc-sections)
+        if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+            # Otherwise ASan's global registration keeps every global alive.
+            target_compile_options(${_target} PRIVATE -fsanitize-address-globals-dead-stripping)
+            target_link_options(${_target} PRIVATE -Wl,-z,start-stop-gc)
+        endif()
+        set_target_properties(${_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        add_test(NAME ${TEST_NAME} COMMAND ${_target})
+        set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 20)
+    endfunction()
+    kisakcod_game_mp_hazard_test(game-mp-layout-hazards 1
+        ${SRC_DIR}/game_mp/g_spawn_mp.cpp
+        ${SRC_DIR}/game_mp/g_client_script_cmd_mp.cpp
+        ${SRC_DIR}/game_mp/g_combat_mp.cpp
+        ${SRC_DIR}/game_mp/g_player_corpse_mp.cpp
+        ${SRC_DIR}/game_mp/g_vehicles_mp.cpp
+        ${SRC_DIR}/game/g_scr_vehicle.cpp)
+    kisakcod_game_mp_hazard_test(game-mp-trigger-dispatch 2
+        ${SRC_DIR}/game_mp/g_active_mp.cpp)
+    kisakcod_game_mp_hazard_test(game-mp-game-data-strides 3
+        ${SRC_DIR}/game_mp/g_utils_mp.cpp
+        ${SRC_DIR}/game_mp/g_main_mp.cpp
+        ${SRC_DIR}/server/sv_game.cpp)
+endif()
