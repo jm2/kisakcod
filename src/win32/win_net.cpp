@@ -638,7 +638,7 @@ void __cdecl NET_OpenSocks(u_short port)
 		Com_PrintError(16, "NET_OpenSocks: connect: %s\n", v3);
 		return;
 	}
-	rfc1929 = net_socksUsername->current.integer || net_socksPassword->current.integer;
+	rfc1929 = net_socksUsername->current.string || net_socksPassword->current.string;
 	buf[0] = 5;
 	if (rfc1929)
 	{
@@ -672,10 +672,10 @@ void __cdecl NET_OpenSocks(u_short port)
 		buf[0] = 1;
 		buf[1] = v8;
 		if (v8)
-			memcpy(&buf[2], (const void*)net_socksUsername->current.integer, v8);
+			memcpy(&buf[2], net_socksUsername->current.string, v8);
 		buf[v8 + 2] = v7;
 		if (v7)
-			memcpy(&buf[v8 + 3], (const void*)net_socksPassword->current.integer, v7);
+			memcpy(&buf[v8 + 3], net_socksPassword->current.string, v7);
 		if (send(socks_socket, (const char*)buf, v8 + v7 + 3, 0) == SOCKET_ERROR)
 		{
 		LABEL_19:

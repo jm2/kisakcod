@@ -78,7 +78,7 @@ void __cdecl SV_AuthorizeRequest(netadr_t from, int challenge, const char *cdkey
     {
         game[0] = 0;
         v8 = Dvar_RegisterString("fs_game", "", DVAR_SERVERINFO | DVAR_SYSTEMINFO | DVAR_INIT, "File sysytem base game name");
-        if (v8 && v8->current.integer)
+        if (v8 && v8->current.string)
         {
             integer = (char*)v8->current.string;
             v6 = game;

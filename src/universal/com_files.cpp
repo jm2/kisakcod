@@ -2268,7 +2268,7 @@ void __cdecl FS_Startup(char *gameName)
 
     Com_Printf(10, "----- FS_Startup -----\n");
     FS_RegisterDvars();
-    if (*(_BYTE *)fs_basepath->current.integer)
+    if (*(const unsigned char *)fs_basepath->current.string)
     {
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"devraw_shared");
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"devraw");
@@ -2276,14 +2276,14 @@ void __cdecl FS_Startup(char *gameName)
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"raw");
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"players");
     }
-    if (*(_BYTE *)fs_homepath->current.integer && I_stricmp(fs_basepath->current.string, fs_homepath->current.string))
+    if (*(const unsigned char *)fs_homepath->current.string && I_stricmp(fs_basepath->current.string, fs_homepath->current.string))
     {
         FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"devraw_shared");
         FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"devraw");
         FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"raw_shared");
         FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"raw");
     }
-    if (*(_BYTE *)fs_cdpath->current.integer && I_stricmp(fs_basepath->current.string, fs_cdpath->current.string))
+    if (*(const unsigned char *)fs_cdpath->current.string && I_stricmp(fs_basepath->current.string, fs_cdpath->current.string))
     {
         FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char*)"devraw_shared");
         FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char*)"devraw");
@@ -2291,38 +2291,38 @@ void __cdecl FS_Startup(char *gameName)
         FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char*)"raw");
         FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, gameName);
     }
-    if (*(_BYTE *)fs_basepath->current.integer)
+    if (*(const unsigned char *)fs_basepath->current.string)
     {
         v2 = va("%s_shared", gameName);
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, v2);
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, gameName);
     }
-    if (*(_BYTE *)fs_basepath->current.integer && I_stricmp(fs_homepath->current.string, fs_basepath->current.string))
+    if (*(const unsigned char *)fs_basepath->current.string && I_stricmp(fs_homepath->current.string, fs_basepath->current.string))
     {
         v3 = va("%s_shared", gameName);
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, v3);
         FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, gameName);
     }
-    if (*(_BYTE *)fs_basegame->current.integer
+    if (*(const unsigned char *)fs_basegame->current.string
         && !I_stricmp(gameName, "main")
         && I_stricmp(fs_basegame->current.string, gameName))
     {
-        if (*(_BYTE *)fs_cdpath->current.integer)
+        if (*(const unsigned char *)fs_cdpath->current.string)
             FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char *)fs_basegame->current.string);
-        if (*(_BYTE *)fs_basepath->current.integer)
+        if (*(const unsigned char *)fs_basepath->current.string)
             FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char *)fs_basegame->current.string);
-        if (*(_BYTE *)fs_homepath->current.integer && I_stricmp(fs_homepath->current.string, fs_basepath->current.string))
+        if (*(const unsigned char *)fs_homepath->current.string && I_stricmp(fs_homepath->current.string, fs_basepath->current.string))
             FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char *)fs_basegame->current.string);
     }
-    if (*(_BYTE *)fs_gameDirVar->current.integer
+    if (*(const unsigned char *)fs_gameDirVar->current.string
         && !I_stricmp(gameName, "main")
         && I_stricmp(fs_gameDirVar->current.string, gameName))
     {
-        if (*(_BYTE *)fs_cdpath->current.integer)
+        if (*(const unsigned char *)fs_cdpath->current.string)
             FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char *)fs_gameDirVar->current.string);
-        if (*(_BYTE *)fs_basepath->current.integer)
+        if (*(const unsigned char *)fs_basepath->current.string)
             FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char *)fs_gameDirVar->current.string);
-        if (*(_BYTE *)fs_homepath->current.integer && I_stricmp(fs_homepath->current.string, fs_basepath->current.string))
+        if (*(const unsigned char *)fs_homepath->current.string && I_stricmp(fs_homepath->current.string, fs_basepath->current.string))
             FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char *)fs_gameDirVar->current.string);
     }
     Com_ReadCDKey();
