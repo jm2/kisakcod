@@ -17,13 +17,11 @@
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
 
-//SCRIPT_YACC2_STYPE_BEGIN
 struct stype_t // sizeof=0x8
 {                                       // ...
 	sval_u val;                         // ...
 	uint32_t pos;                   // ...
 };
-//SCRIPT_YACC2_STYPE_END
 
 #define YY_BUF_SIZE 0x4000 //16384
 
@@ -40,7 +38,7 @@ unsigned char *yytext;
 FILE *yyin = 0;
 FILE *yyout = 0;
 char yy_hold_char;
-unsigned char ch_buf[YY_BUF_SIZE];
+unsigned char ch_buf[YY_BUF_SIZE + 2]; // flex's two end-of-buffer NULs
 sval_u yaccResult;
 int yynerrs;
 int yy_last_accepting_state;
@@ -226,8 +224,11 @@ LPVOID __cdecl yy_flex_alloc(uint32_t size)
 
 void yy_fatal_error(const char *msg)
 {
-	fprintf(stderr, "%s\n", msg);
-	exit(2);
+	// flex exits the process here (a lexeme longer than the buffer, #225).
+	// Fail the script compile instead; CompileError returns only in evaluate
+	// mode, and the scanner cannot continue there either.
+	CompileError(g_sourcePos, "%s", msg);
+	Com_Error(ERR_DROP, "%s", msg);
 }
 
 void *yy_flex_realloc(void *ptr, uint32_t size)
@@ -1017,9 +1018,20 @@ int __cdecl yylex()
 	}
 }
 
-//SCRIPT_YACC2_INITDEPTH_BEGIN
+// The engine's untyped pair node (the decompile shows node1 with the first
+// value's Enum_t slot): both cells hold a whole parse value. Passing a node
+// pointer through node1's Enum_t kept only its low 32 bits at 64-bit.
+static sval_u node2_(sval_u val1, sval_u val2)
+{
+	sval_u result;
+
+	result.node = Scr_AllocNode(2);
+	result.node[0] = val1;
+	result.node[1] = val2;
+	return result;
+}
+
 #define YYINITDEPTH 200 + sizeof(stype_t)
-//SCRIPT_YACC2_INITDEPTH_END
 int yyparse()
 {
 	/*-------------------------.
@@ -1089,7 +1101,11 @@ int yyparse()
 	yyssp = yyss;
 	yyvsp = yyvs;
 
-//	goto yysetstate;
+	// The first state goes in yyss[0], level with the wasted yyvs[0], so both
+	// cursors share an index. The port pre-incremented here instead, leaving
+	// yyss[0] unwritten and the value cursor one slot behind, which the growth
+	// relocation and the error-recovery pop then got wrong (#225).
+	goto yysetstate;
 
 	while (1)
 	{
@@ -1099,15 +1115,14 @@ int yyparse()
 yynewstate:
 		/* In all cases, when you get here, the value and location stacks
 		have just been pushed.  So pushing a state here evens the stacks.  */
-		//yyssp++; // LWSS CHANGE - move ++ below
+		++yyssp;
 
-//	yysetstate:
-		*++yyssp = yystate;
+yysetstate:
+		*yyssp = yystate;
 
 		if (yyssp >= &yyss[yystacksize - 1])
 		{
 			int yy_stack_overflow;
-			//SCRIPT_YACC2_GROWTH_SLICE_BEGIN
 			yyvs1 = yyvs;
 			yyss1 = yyss;
 
@@ -1115,9 +1130,7 @@ yynewstate:
 			yysize = yyssp - yyss + 1;
 
 			/* Extend the stack our own way.  */
-			//SCRIPT_YACC2_MAXDEPTH_BEGIN
 			yy_stack_overflow = (yystacksize >= 10000); // YYMAXDEPTH
-			//SCRIPT_YACC2_MAXDEPTH_END
 			if (!yy_stack_overflow)
 			{
 				yystacksize *= 2;
@@ -1155,7 +1168,6 @@ yynewstate:
 				yyvsp = &yyvs[yysize - 1];
 				yyssp = &yyss[yysize - 1];
 			}
-			//SCRIPT_YACC2_GROWTH_SLICE_END
 
 			if (yy_stack_overflow)
 			{
@@ -1309,7 +1321,7 @@ yynewstate:
 			switch (yyn)
 			{
 			case 1:
-				yaccResult = node1(yyvsp[-1].val.type, yyvsp->val);// node2_
+				yaccResult = node2_(yyvsp[-1].val, yyvsp->val);
 				break;
 			case 2:
 				yaccResult = node1(ENUM_expression, yyvsp->val);// node1
@@ -1846,13 +1858,13 @@ yynewstate:
 				break;
 			case 111:
 				valstack[4].sourcePosValue = yyvsp->pos;
-				valstack[5] = node1(yyvsp->val.type, valstack[4]);
+				valstack[5] = node2_(yyvsp->val, valstack[4]);
 				yyval.val = prepend_node(valstack[5], yyvsp[-2].val);
 				break;
 			case 112:
 				valstack[3].sourcePosValue = yyvsp->pos;
 				valstack[5] = node0(ENUM_NOP);
-				valstack[4] = node1(yyvsp->val.type, valstack[3]);
+				valstack[4] = node2_(yyvsp->val, valstack[3]);
 				yyval.val = prepend_node(valstack[4], valstack[5]);
 				break;
 			case 114:
@@ -1862,13 +1874,13 @@ yynewstate:
 				valstack[5].sourcePosValue = yyvsp->pos;
 				valstack[4].stringValue = LowerCase(yyvsp->val.stringValue);
 				yyvsp->val = valstack[4];
-				valstack[3] = node1(valstack[4].type, valstack[5]);
+				valstack[3] = node2_(valstack[4], valstack[5]);
 				yyval.val = append_node(yyvsp[-2].val, valstack[3]);
 				break;
 			case 116:
 				yyvsp->val.stringValue = LowerCase(yyvsp->val.stringValue);
 				valstack[5].sourcePosValue = yyvsp->pos;
-				valstack[4] = node1(yyvsp->val.type, valstack[5]);
+				valstack[4] = node2_(yyvsp->val, valstack[5]);
 				valstack[3] = node0(ENUM_NOP);
 				valstack[2] = linked_list_end(valstack[3]);
 				yyval.val = append_node(valstack[2], valstack[4]);
@@ -1881,13 +1893,13 @@ yynewstate:
 				valstack[5].sourcePosValue = yyvsp->pos;
 				valstack[4].stringValue = LowerCase(yyvsp->val.stringValue);
 				yyvsp->val = valstack[4];
-				valstack[3] = node1(valstack[4].type, valstack[5]);
+				valstack[3] = node2_(valstack[4], valstack[5]);
 				yyval.val = append_node(yyvsp[-2].val, valstack[3]);
 				break;
 			case 120:
 				valstack[5].sourcePosValue = yyvsp->pos;
 				valstack[4] = yyvsp->val;
-				valstack[3] = node1(valstack[4].type, valstack[5]);
+				valstack[3] = node2_(valstack[4], valstack[5]);
 				valstack[2] = node0(ENUM_NOP);
 				valstack[1] = linked_list_end(valstack[2]);
 				yyval.val = append_node(valstack[1], valstack[3]);
@@ -1895,26 +1907,26 @@ yynewstate:
 			case 121:
 				valstack[5].sourcePosValue = yyvsp->pos;
 				valstack[4] = yyvsp->val;
-				valstack[3] = node1(valstack[4].type, valstack[5]);
+				valstack[3] = node2_(valstack[4], valstack[5]);
 				yyval.val = append_node(yyvsp[-2].val, valstack[3]);
 				break;
 			case 122:
 				valstack[5].sourcePosValue = yyvsp->pos;
 				valstack[4] = yyvsp->val;
-				valstack[3] = node1(valstack[4].type, valstack[5]);
+				valstack[3] = node2_(valstack[4], valstack[5]);
 				valstack[2] = node0(ENUM_NOP);
 				valstack[1] = linked_list_end(valstack[2]);
 				yyval.val = append_node(valstack[1], valstack[3]);
 				break;
 			case 123:
 				valstack[4].sourcePosValue = yyvsp->pos;
-				valstack[5] = node1(yyvsp->val.type, valstack[4]);
+				valstack[5] = node2_(yyvsp->val, valstack[4]);
 				yyval.val = prepend_node(valstack[5], yyvsp[-2].val);
 				break;
 			case 124:
 				valstack[3].sourcePosValue = yyvsp->pos;
 				valstack[5] = node0(ENUM_NOP);
-				valstack[4] = node1(yyvsp->val.type, valstack[3]);
+				valstack[4] = node2_(yyvsp->val, valstack[3]);
 				yyval.val = prepend_node(valstack[4], valstack[5]);
 				break;
 			case 125:
@@ -2076,8 +2088,8 @@ yyerrlab1:
 			goto yyerrpop;
 		}
 
-		//if (++yyn < 0 || yyn > 0x543 || yycheck[yyn] != 1) // 0x59B on t5
-		if (++yyn >= 0x544 || yycheck[yyn] != 1) // LWSS CHANGE
+		// yypact goes down to -50: keep bison's lower bound (0x59B on t5).
+		if (++yyn < 0 || yyn >= 0x544 || yycheck[yyn] != 1)
 		{
 			goto yyerrpop;
 		}
