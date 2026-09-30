@@ -283,6 +283,55 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows-headless:
+    # The Win64 headless dedicated server (gate G1) built with MSVC: the
+    # windows-amd64-dedi preset's cache variables on the runner's own Visual
+    # Studio (the preset names VS 2022, which windows-2025 lacks), the same
+    # assetless smoke run as linux-headless, and the binary with its PDB as a
+    # per-push artifact.
+    name: Windows headless server / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: windows-2025
+            platform: x64
+            pe-arch: x64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-headless -A ${{ matrix.platform }}
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF
+          -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF
+          -DKISAK_ENABLE_X86_MMX_SKINNING=OFF -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON
+          -DBUILD_TESTING=OFF
+
+      - name: Build KisakCOD-dedi
+        run: cmake --build build-headless --config Release --target KisakCOD-dedi --parallel
+
+      - name: Verify binary architecture
+        shell: pwsh
+        run: ./scripts/ci/verify-artifact-arch.ps1 -Expected '${{ matrix.pe-arch }}' bin/Release/KisakCOD-dedi.exe
+
+      - name: Assetless smoke run
+        run: python scripts/ci/headless_smoke.py bin/Release/KisakCOD-dedi.exe
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: KisakCOD-windows-${{ matrix.arch }}-headless
+          path: |
+            bin/Release/KisakCOD-dedi.exe
+            bin/Release/KisakCOD-dedi.pdb
+          if-no-files-found: error
+          retention-days: 14
+
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
     runs-on: windows-2022
@@ -453,6 +502,7 @@ jobs:
       - windows-x86-sp
       - windows-x86-headless
       - linux-headless
+      - windows-headless
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
