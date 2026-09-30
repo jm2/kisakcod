@@ -1181,7 +1181,7 @@ gentity_s *__cdecl G_Spawn()
             Com_Error(ERR_DROP, "G_Spawn: no free entities");
         }
         e = &level.gentities[level.num_entities++];
-        SV_LocateGameData(level.gentities, level.num_entities, 628, &level.clients->ps, 12676);
+        SV_LocateGameData(level.gentities, level.num_entities, sizeof(gentity_s), &level.clients->ps, sizeof(gclient_s));
     }
     G_InitGentity(e);
     return e;

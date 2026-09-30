@@ -1948,7 +1948,7 @@ void __cdecl VEH_GroundTrace(gentity_s *ent)
     point[1] = veh->phys.origin[1];
     point[2] = veh->phys.origin[2] - 0.25f;
     G_TraceCapsule(&trace, start, veh->phys.mins, veh->phys.maxs, point, ent->s.number, ent->clipmask);
-    memcpy(&s_phys_0, &trace, 0x2Cu);
+    s_phys_0.groundTrace = trace;
     s_phys_0.hasGround = 0;
     s_phys_0.onGround = 0;
     if ((!trace.allsolid || VEH_CorrectAllSolid(ent, &trace))
