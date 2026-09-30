@@ -122,16 +122,10 @@ void BuildZone()
         .Word(kInline).Word(0).Word(0).Text("b.cfg");                 // slot 64; temp; 68
 }
 
-void TestZoneLoads()
+// Script strings: each id sits in a native 8-byte slot that the production
+// Load_ScriptStringCustom reads.
+void CheckScriptStrings(const XAssetList &list)
 {
-    Zone zone;
-    BuildZone();
-    DB_LoadXAssetListDisk32(&zone.list);
-    const XAssetList &list = zone.list;
-    Expect(varXAssetList == &list && varScriptStringList == &list.stringList, "the loader globals name the list");
-    Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.temp,
-           "every disk byte is consumed and the stream stack unwinds");
-
     Expect(list.stringList.count == 4 && g_interned == std::vector<std::string>{"alpha", "beta"},
            "inline script strings are interned once each");
     const std::uint16_t ids[] = {1, 1, 0, 2};
@@ -141,15 +135,13 @@ void TestZoneLoads()
         Load_ScriptStringCustom(&value);
         Expect(value == ids[index], "a script-string index resolves to its interned id");
     }
+}
 
-    Expect(list.assetCount == 3 && list.assets && !zone.Holds(list.assets),
-           "the native XAsset array lives beside the zone");
-    Expect(!std::memcmp(zone.virt + 28, g_file.data() + kRecordsInFile, 3 * 8),
-           "the disk32 records stay at their retail block-4 offset");
+// Header slots: the zero-extended token on entry, the full pointer on return.
+void CheckHeaderSlots(const XAssetList &list)
+{
     Expect(g_entrySlots == std::vector<std::uintptr_t>{kInline, kShared, VirtualOffset(64)},
            "each header slot holds its zero-extended disk32 token on entry");
-    if (list.assetCount != 3 || !list.assets || g_published != 2)
-        return Expect(false, "two raw files publish");
     Expect(reinterpret_cast<std::uintptr_t>(&g_pool[0]) > UINT32_MAX,
            "the pool lies above 4 GiB, so a narrowed header would differ");
     const RawFile *const expected[] = {&g_pool[0], &g_pool[1], &g_pool[1]};
@@ -158,9 +150,31 @@ void TestZoneLoads()
         Expect(list.assets[index].type == ASSET_TYPE_RAWFILE && list.assets[index].header.rawfile == expected[index],
                "each header slot holds the full native pointer on return");
     }
+}
+
+void CheckRawFiles(const Zone &zone)
+{
     Expect(!std::strcmp(g_pool[0].name, "a.gsc") && !std::strcmp(g_pool[0].buffer, "hi") && zone.Holds(g_pool[0].name),
            "the inline raw file points at its block-4 bytes");
     Expect(!std::strcmp(g_pool[1].name, "b.cfg") && !g_pool[1].buffer, "the shared raw file loads after its slot");
+}
+
+void TestZoneLoads()
+{
+    Zone zone;
+    BuildZone();
+    DB_LoadXAssetListDisk32(&zone.list);
+    const XAssetList &list = zone.list;
+    Expect(varXAssetList == &list && varScriptStringList == &list.stringList, "the loader globals name the list");
+    Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.temp,
+           "every disk byte is consumed and the stream stack unwinds");
+    Expect(!std::memcmp(zone.virt + 28, g_file.data() + kRecordsInFile, 3 * 8),
+           "the disk32 records stay at their retail block-4 offset");
+    CheckScriptStrings(list);
+    if (list.assetCount != 3 || !list.assets || zone.Holds(list.assets) || g_published != 2)
+        return Expect(false, "three assets load beside the zone and two raw files publish");
+    CheckHeaderSlots(list);
+    CheckRawFiles(zone);
 }
 
 void TestEmptyList()
