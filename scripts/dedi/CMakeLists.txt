@@ -39,5 +39,14 @@ endif()
 include(${SCRIPTS_DIR}/pre_build.cmake)
 include(${SCRIPTS_DIR}/post_build.cmake)
 
+# The headless server is a console program, so it runs in the cmd or PowerShell
+# window that starts it; WinMain stays its entry point.
+if (WIN32 AND KISAK_DEDI_HEADLESS)
+    set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE FALSE)
+    if (MSVC)
+        target_link_options(${PROJECT_NAME} PRIVATE /ENTRY:WinMainCRTStartup)
+    endif()
+endif()
+
 # Tracey
 include(${SCRIPTS_DIR}/extern/tracy.cmake)

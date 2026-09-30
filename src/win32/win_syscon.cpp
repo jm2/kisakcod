@@ -179,12 +179,8 @@ uint32_t __cdecl Conbuf_CleanText(const char *source, char *target, int sizeofTa
 }
 
 #ifdef KISAK_DEDI_HEADLESS
-static void Conbuf_AppendHeadlessHistory(const char *msg)
+static void Conbuf_AppendHeadlessHistory(const char *cleaned, const size_t cleanedLength)
 {
-	char cleaned[0x8004];
-	const size_t messageLength = std::strlen(msg);
-	const char *source = messageLength <= 0x3FFF ? msg : &msg[messageLength - 0x3FFF];
-	const size_t cleanedLength = Conbuf_CleanText(source, cleaned, static_cast<int>(sizeof(cleaned)));
 	constexpr size_t capacity = sizeof(s_headlessConsoleHistory) - 1;
 	const size_t copyLength = cleanedLength < capacity ? cleanedLength : capacity;
 	const char *copyStart = &cleaned[cleanedLength - copyLength];
@@ -440,14 +436,21 @@ void __cdecl Conbuf_AppendTextInMainThread(const char* msg)
 		return;
 
 #ifdef KISAK_DEDI_HEADLESS
+	char cleaned[0x8004];
+	const size_t messageLength = std::strlen(msg);
+	const char *source = messageLength <= 0x3FFF ? msg : &msg[messageLength - 0x3FFF];
+	const size_t cleanedLength = Conbuf_CleanText(source, cleaned, static_cast<int>(sizeof(cleaned)));
+	// As on a POSIX terminal: a redirected stdout (CI, a service, "> log") is a
+	// log and keeps the engine's exact bytes; a console gets the cleaned text.
+	const bool redirected = Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardOutput);
 	if (Sys_ConsoleWrite(
 			SysConsoleOutputStream::StandardOutput,
-			msg,
-			std::strlen(msg)) != SysConsoleIoStatus::Complete)
+			redirected ? msg : cleaned,
+			redirected ? messageLength : cleanedLength) != SysConsoleIoStatus::Complete)
 	{
 		OutputDebugStringA(msg);
 	}
-	Conbuf_AppendHeadlessHistory(msg);
+	Conbuf_AppendHeadlessHistory(cleaned, cleanedLength);
 #else
 	if (Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardOutput))
 	{

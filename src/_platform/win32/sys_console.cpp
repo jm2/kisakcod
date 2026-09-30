@@ -4,6 +4,9 @@
 #include <Windows.h>
 
 #include <qcommon/sys_console_internal.h>
+#ifdef KISAK_DEDI_HEADLESS
+#include <qcommon/sys_thread.h>
+#endif
 
 #include <cstddef>
 #include <limits>
@@ -283,9 +286,9 @@ SysConsoleRawReadResult Sys_ConsoleBackendTryReadByte() noexcept
         // Native character-console input. The windowed GUI console owns
         // interactive line editing through its edit control and never
         // reaches this path; Sys_ConsoleInput returns its edit-control
-        // buffer directly under !KISAK_DEDI_HEADLESS. Headless profile
-        // owns this stdin handle and drains console events one byte at
-        // a time without disturbing the windowed edit-control owner.
+        // buffer directly under !KISAK_DEDI_HEADLESS. The headless profile
+        // reads its console through Sys_ConsoleStartLineEditing and lands
+        // here, draining raw events without echo, only if that cannot start.
         return TryReadConsoleByte(input);
     }
     if (type == FILE_TYPE_PIPE)
@@ -329,3 +332,81 @@ SysConsoleRawReadResult Sys_ConsoleBackendTryReadByte() noexcept
         ? SysConsoleRawReadResult{SysConsoleRawReadStatus::NoData, 0}
         : SysConsoleRawReadResult{SysConsoleRawReadStatus::EndOfFile, 0};
 }
+
+#ifdef KISAK_DEDI_HEADLESS
+namespace
+{
+// The console the line-editing reader reads, the write end of the pipe it
+// forwards the edited lines into, and the reader. Set once; the reader runs
+// for the rest of the process.
+HANDLE lineEditingConsole = nullptr;
+HANDLE lineEditingSink = nullptr;
+SysThreadHandle lineEditingReader = nullptr;
+
+bool WriteToLineParser(const char *bytes, DWORD byteCount) noexcept
+{
+    while (byteCount != 0)
+    {
+        DWORD written = 0;
+        if (!WriteFile(lineEditingSink, bytes, byteCount, &written, nullptr) || written == 0)
+            return false;
+        bytes += written;
+        byteCount -= written;
+    }
+    return true;
+}
+
+// Blocks in the console host's cooked read, which echoes and edits the line
+// (backspace, cursor keys, history) until Enter, then forwards the finished
+// line, CR-LF included, to the line parser. A dead console closes the pipe,
+// which the parser reports as end of file.
+void KISAK_CDECL ForwardEditedConsoleLines(void *)
+{
+    char line[SYS_CONSOLE_MAX_LINE_LENGTH + 1];
+    for (;;)
+    {
+        DWORD length = 0;
+        if (!ReadConsoleA(lineEditingConsole, line, static_cast<DWORD>(sizeof(line)), &length, nullptr))
+        {
+            // Ctrl+C and Ctrl+Break abandon the line being typed.
+            if (GetLastError() == ERROR_OPERATION_ABORTED)
+                continue;
+            break;
+        }
+        if (!WriteToLineParser(line, length))
+            break;
+    }
+    (void)CloseHandle(lineEditingSink);
+}
+} // namespace
+
+bool KISAK_CDECL Sys_ConsoleStartLineEditing() noexcept
+{
+    const HANDLE console = StandardHandle(STD_INPUT_HANDLE);
+    DWORD mode = 0;
+    // GetConsoleMode fails for pipes, files and NUL: only a real console.
+    if (lineEditingConsole || !console || !GetConsoleMode(console, &mode))
+        return false;
+    constexpr DWORD cooked = ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT;
+    if ((mode & cooked) != cooked && !SetConsoleMode(console, mode | cooked))
+        return false;
+
+    HANDLE lines = nullptr;
+    if (!CreatePipe(&lines, &lineEditingSink, nullptr, 0))
+        return false;
+    lineEditingConsole = console;
+    if (!SetStdHandle(STD_INPUT_HANDLE, lines)
+        || !Sys_ThreadCreateSuspended(
+            ForwardEditedConsoleLines, nullptr, "console input", &lineEditingReader))
+    {
+        (void)SetStdHandle(STD_INPUT_HANDLE, console);
+        (void)CloseHandle(lines);
+        (void)CloseHandle(lineEditingSink);
+        lineEditingSink = nullptr;
+        lineEditingConsole = nullptr;
+        return false;
+    }
+    Sys_ThreadStart(lineEditingReader);
+    return true;
+}
+#endif
