@@ -2,7 +2,7 @@
 
 #include <universal/kisak_abi.h>
 #include <qcommon/qcommon.h>
-#include <msslib/mss.h>
+#include <sound/snd_msstypes.h>
 #include <gfx_d3d/fxprimitives.h>
 #include <universal/memfile.h>
 
