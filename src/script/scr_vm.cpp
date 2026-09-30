@@ -2672,9 +2672,9 @@ CallBuiltIn:
             }
             scrVmPub.top = fs.top;
             builtInTime = scrVmDebugPub.builtInTime;
-            time = __rdtsc();
+            time = Sys_CycleCounter();
             reinterpret_cast<void (*)(void)>(scrCompilePub.func_table[builtinIndex])();
-            timeSpent = __rdtsc() - time;
+            timeSpent = Sys_CycleCounter() - time;
             scrVmDebugPub.builtInTime = timeSpent + builtInTime;
             scrVmDebugPub.func_table[builtinIndex].prof += timeSpent;
             ++scrVmDebugPub.func_table[builtinIndex].usage;
@@ -2720,9 +2720,9 @@ CallBuiltinMethod:
                     scrVmPub.top = fs.top - 1;
                 }
                 builtInTime = scrVmDebugPub.builtInTime;
-                time = __rdtsc();
+                time = Sys_CycleCounter();
                 reinterpret_cast<void (*)(scr_entref_t)>(scrCompilePub.func_table[builtinIndex])(entref);
-                timeSpent = __rdtsc() - time;
+                timeSpent = Sys_CycleCounter() - time;
                 scrVmDebugPub.builtInTime = timeSpent + builtInTime;
                 scrVmDebugPub.func_table[builtinIndex].prof += timeSpent;
                 ++scrVmDebugPub.func_table[builtinIndex].usage;
@@ -3580,10 +3580,10 @@ uint32_t __cdecl VM_Execute(uint32_t localId, const char *pos, uint32_t paramcou
         if (scrVarPub.bScriptProfile)
         {
             scrVmDebugPub.builtInTime = 0;
-            time = __rdtsc();
+            time = Sys_CycleCounter();
             localIda = VM_ExecuteInternal();
             if (!scrVmPub.function_count)
-                Scr_AddProfileTime(pos, __rdtsc() - time, scrVmDebugPub.builtInTime);
+                Scr_AddProfileTime(pos, Sys_CycleCounter() - time, scrVmDebugPub.builtInTime);
         }
         else
         {
@@ -4716,14 +4716,14 @@ void __cdecl VM_Resume(uint32_t timeId)
         if (scrVarPub.bScriptProfile)
         {
             scrVmDebugPub.builtInTime = 0;
-            time = __rdtsc();
+            time = Sys_CycleCounter();
             pos = fs.pos;
             //v2 = VM_Execute_0();
             //v2 = VM_ExecuteInternal(stack.pos, stack.localId, stack.localVarCount, stack.top, stack.startTop);
             v2 = VM_ExecuteInternal();
             RemoveRefToObject(v2);
             RemoveRefToValue(scrVmPub.stack[1].type, scrVmPub.stack[1].u);
-            Scr_AddProfileTime(pos, __rdtsc() - time, scrVmDebugPub.builtInTime);
+            Scr_AddProfileTime(pos, Sys_CycleCounter() - time, scrVmDebugPub.builtInTime);
         }
         else
         {

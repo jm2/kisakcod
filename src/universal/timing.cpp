@@ -34,10 +34,10 @@ double __cdecl SecondsPerTick()
     QueryPerformanceFrequency(&qpcFrequency);
     qpc2msec = 1000.0 / qpcFrequency.QuadPart;
     QueryPerformanceCounter(&qpcStart);
-    tscStart.QuadPart = __rdtsc();
+    tscStart.QuadPart = Sys_CycleCounter();
     QueryPerformanceCounter(&qpcStart);
     Sleep(0xFAu);
-    tscStop.QuadPart = __rdtsc();
+    tscStop.QuadPart = Sys_CycleCounter();
     QueryPerformanceCounter(&qpcStop);
     secPerTick = (double)(qpcStop.QuadPart - qpcStart.QuadPart)
         / ((double)(tscStop.QuadPart - tscStart.QuadPart)
@@ -48,22 +48,12 @@ double __cdecl SecondsPerTick()
 
 #else
 
-// Same raw tick counter the profiler samples (see the KISAK_PROFILE_TICKS
-// portability shim in qcommon/com_profilemapload.cpp): the MSVC __rdtsc
-// intrinsic on x86 compilers, the equivalent builtin on x86 targets, and
-// monotonic-clock counts on architectures without a cycle counter.
-#if defined(__i386__) || defined(__x86_64__)
-#define KISAK_TIMING_RAW_TICKS() static_cast<std::uint64_t>(__builtin_ia32_rdtsc())
-#else
-#define KISAK_TIMING_RAW_TICKS() \
-    static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count())
-#endif
-
 double __cdecl SecondsPerTick()
 {
     // Portable arm of the TSC-vs-QPC calibration above: measure the raw tick
-    // counter (the profiler's cycle counter) over a monotonic-clock interval,
-    // and keep qpc2msec coherent as milliseconds per reference-clock tick.
+    // counter (Sys_CycleCounter, which the profilers sample) over a
+    // monotonic-clock interval, and keep qpc2msec coherent as milliseconds
+    // per reference-clock tick.
     // Sleep becomes Sys_Sleep (the sys_time service); the thread lock and the
     // settle/delay shape of the Win32 body are preserved.
     std::uint64_t tscStart;
@@ -76,10 +66,10 @@ double __cdecl SecondsPerTick()
     Sys_Sleep(0);
     qpc2msec = 1000.0 * (double)std::chrono::steady_clock::period::num
         / (double)std::chrono::steady_clock::period::den;
-    tscStart = KISAK_TIMING_RAW_TICKS();
+    tscStart = Sys_CycleCounter();
     refStart = std::chrono::steady_clock::now();
     Sys_Sleep(0xFAu);
-    tscStop = KISAK_TIMING_RAW_TICKS();
+    tscStop = Sys_CycleCounter();
     refStop = std::chrono::steady_clock::now();
     secPerTick = std::chrono::duration<double>(refStop - refStart).count()
         / (double)(tscStop - tscStart);
