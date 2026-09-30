@@ -441,7 +441,12 @@ int main(int argc, char **argv)
         const size_t length = strnlen(argv[i], sizeof(sys_cmdline));
         const bool quote = std::strpbrk(argv[i], " \t") != nullptr;
         if (offset + length + (quote ? 2 : 0) + 2 >= sizeof(sys_cmdline))
+        {
+            std::fprintf(stderr,
+                "WARNING: the command line exceeds %zu bytes; ignoring \"%s\" and the %d argument(s) after it\n",
+                sizeof(sys_cmdline) - 1, argv[i], argc - i - 1);
             break;
+        }
         if (offset > 0)
             sys_cmdline[offset++] = ' ';
         if (quote)
