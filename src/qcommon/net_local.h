@@ -12,7 +12,13 @@
 #pragma once
 
 #include <universal/q_shared.h>
+// Shared TUs (common.cpp, db_registry.cpp, scr_debugger.cpp) include this in
+// the SP build too; pick the netchan header the way win32/win_net.h does.
+#ifdef KISAK_MP
 #include <qcommon/net_chan_mp.h>
+#else
+#include <qcommon/net_chan.h>
+#endif
 
 struct msg_t;
 

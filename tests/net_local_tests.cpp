@@ -7,6 +7,8 @@
 // PLATFORM_POSIX.md, NOW row 13), and each check here fails if the
 // corresponding behaviour is broken.
 
+#include <chrono>
+#include <thread>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -111,6 +113,11 @@ const dvar_s *__cdecl Dvar_RegisterInt(
     return &g_net_port_latch;
 }
 
+void __cdecl Dvar_SetInt(dvar_s *dvar, int value)
+{
+    dvar->current.integer = value;
+}
+
 void __cdecl Sys_Sleep(uint32_t)
 {
 }
@@ -187,7 +194,7 @@ void CheckNetLayerLifecycle()
     // headless server calls Sys_SendPacket before and after NET_Init.
     netadr_t to = MakeAdr(127, 0, 0, 1);
     unsigned char payload[4] = {1, 2, 3, 4};
-    Check(Sys_SendPacket(4, payload, to) == 0, "send before init is rejected");
+    Check(Sys_SendPacket(4, payload, to) == 1, "send before init is a silent no-op (retail returns 1)");
     Check(NET_ErrorString() != nullptr, "error string is never null");
 
     // NET_Sleep must never be a no-op panic on a zero or negative request.
@@ -198,6 +205,68 @@ void CheckNetLayerLifecycle()
     NET_Shutdown();
     Check(true, "shutdown before init is safe");
 }
+// net_ip names an interface: NET_Init binds the game socket to it (retail
+// NET_IPSocket) instead of every interface, and a datagram sent there comes
+// back out of Sys_GetPacket.
+void CheckNamedInterfaceBind()
+{
+    static char ip[] = "127.0.0.1";
+    g_net_ip_latch.current.string = ip;
+    g_log.clear();
+    NET_Init();
+
+    bool named = false;
+    bool wildcard = false;
+    for (const std::string &line : g_log)
+    {
+        named = named || line == "Opening IP socket: %s:%i\n";
+        wildcard = wildcard || line == "Opening IP socket: localhost:%i\n";
+    }
+    Check(named && !wildcard, "a named net_ip binds that interface");
+
+    SysSocketHandle sender = nullptr;
+    Check(Sys_SocketOpenUdp(0, true, &sender) == SysSocketOpenStatus::Opened, "sender opens");
+    const SysSocketAddress target{{127, 0, 0, 1}, static_cast<uint16_t>(g_net_port_latch.current.integer)};
+    const unsigned char payload[5] = {'p', 'i', 'n', 'g', 0};
+    Check(Sys_SocketSendTo(sender, payload, sizeof(payload), &target) == SysSocketSendStatus::Sent,
+        "datagram sent to the named interface");
+
+    unsigned char buffer[64] = {};
+    msg_t message{};
+    message.data = buffer;
+    message.maxsize = sizeof(buffer);
+    netadr_t from{};
+    bool received = false;
+    for (int attempt = 0; attempt < 200 && !received; ++attempt)
+    {
+        received = Sys_GetPacket(&from, &message) == qtrue;
+        if (!received)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    Check(received && message.cursize == 5 && std::memcmp(buffer, payload, 5) == 0,
+        "the datagram arrives through Sys_GetPacket");
+
+    (void)Sys_SocketClose(&sender);
+    NET_Shutdown();
+    g_net_ip_latch.current.string = nullptr;
+}
+// Retail NET_OpenIP: a busy net_port moves on to the next port (up to nine
+// above it) and records the port it bound in net_port.
+void CheckPortRetry()
+{
+    static char ip[] = "127.0.0.1";
+    g_net_ip_latch.current.string = ip;
+    const SysSocketAddress held{{127, 0, 0, 1}, 28960};
+    SysSocketHandle blocker = nullptr;
+    Check(Sys_SocketOpenUdpAt(&held, true, &blocker) == SysSocketOpenStatus::Opened,
+        "the test holds 127.0.0.1:28960");
+    NET_Init();
+    Check(g_net_port_latch.current.integer == 28961,
+        "a busy net_port moves to the next port and records it");
+    NET_Shutdown();
+    (void)Sys_SocketClose(&blocker);
+    g_net_ip_latch.current.string = nullptr;
+}
 } // namespace
 
 
@@ -206,6 +275,8 @@ int main()
     CheckLanClassification();
     CheckAddressResolution();
     CheckNetLayerLifecycle();
+    CheckNamedInterfaceBind();
+    CheckPortRetry();
 
     if (g_failures == 0)
         std::printf("net_local: %d checks passed\n", g_checks);
