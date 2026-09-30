@@ -8,6 +8,10 @@
 
 #include <universal/platform_compat.h>
 
+#if !defined(_WIN32)
+#include <sys/types.h>
+#endif
+
 // Creates one directory without traversing symbolic-link/reparse ancestors.
 // Existing real directories are accepted. Empty paths, parent components,
 // invalid encodings, and symbolic-link/reparse targets are rejected.
@@ -61,8 +65,20 @@ bool KISAK_CDECL Sys_FileSystemGetExecutablePath(
 // that ancestor walks from its realpath, and every component below it still
 // opens without following links. Relative roots resolve from the current
 // directory. Empty, invalid or ".." paths fail; trusting the same spelling
-// again refreshes its realpath.
+// again refreshes its realpath. A root whose resolution passes through a link
+// that Sys_FileSystemLinkIsTrusted refuses is not trusted, so the services
+// keep refusing it.
 bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *utf8Path);
+
+// The rule Sys_FileSystemTrustRoot applies to every symbolic link it follows,
+// on every POSIX host (Linux's fs.protected_symlinks, made stricter): a link
+// in a sticky or group/world-writable directory is followed only when root or
+// effectiveUid owns it, so a link another user planted in a shared directory
+// such as /tmp is not.
+bool KISAK_CDECL Sys_FileSystemLinkIsTrusted(
+    mode_t directoryMode,
+    uid_t linkOwner,
+    uid_t effectiveUid);
 #endif
 
 enum class SysFileSystemEntryKind : std::uint8_t

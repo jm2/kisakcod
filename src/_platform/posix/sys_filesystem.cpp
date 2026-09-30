@@ -1,6 +1,7 @@
 #include <qcommon/sys_filesystem.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -210,9 +211,112 @@ bool SplitWalkPath(
     return components->size() <= kMaximumPathComponents;
 }
 
+enum class ProtectedResolution
+{
+    Resolved,
+    Missing, // a component does not exist: a shallower prefix may
+    Refused, // an untrusted or looping link, or another error
+};
+
+// Puts the '/'-separated components of text in front of *pending, in order.
+// Unlike SplitSafePath it keeps "..": a link target may use it, and the
+// resolver applies it to the prefix it has already resolved.
+void PushComponents(const std::string &text, std::deque<std::string> *const pending)
+{
+    std::vector<std::string> parts;
+    std::size_t begin = 0;
+    for (std::size_t end = text.find('/'); ; end = text.find('/', begin))
+    {
+        const std::size_t stop = end == std::string::npos ? text.size() : end;
+        if (stop > begin)
+            parts.emplace_back(text, begin, stop - begin);
+        if (end == std::string::npos)
+            break;
+        begin = end + 1;
+    }
+    pending->insert(pending->begin(), parts.begin(), parts.end());
+}
+
+std::string JoinAbsolute(const std::vector<std::string> &components)
+{
+    std::string joined;
+    for (const std::string &component : components)
+        joined += '/' + component;
+    return joined.empty() ? std::string("/") : joined;
+}
+
+// realpath, except that every symbolic link it follows must pass
+// Sys_FileSystemLinkIsTrusted in the directory that holds it. realpath alone
+// would also follow a planted link reached through a trusted one.
+ProtectedResolution ResolveProtected(const std::string &path, std::string *const resolved)
+{
+    constexpr int kMaximumLinks = 40; // Linux's own limit
+    std::vector<std::string> done;
+    std::deque<std::string> pending;
+    if (path.empty() || path[0] != '/')
+    {
+        // getcwd reports the physical directory: nothing in it is a link.
+        const std::unique_ptr<char, decltype(&std::free)> current(getcwd(nullptr, 0), &std::free);
+        if (!current)
+            return ProtectedResolution::Refused;
+        PushComponents(current.get(), &pending);
+        while (!pending.empty())
+        {
+            done.push_back(std::move(pending.front()));
+            pending.pop_front();
+        }
+    }
+    PushComponents(path, &pending);
+
+    int links = 0;
+    while (!pending.empty())
+    {
+        const std::string component = std::move(pending.front());
+        pending.pop_front();
+        if (component == ".")
+            continue;
+        if (component == "..")
+        {
+            if (!done.empty())
+                done.pop_back();
+            continue;
+        }
+        const std::string parent = JoinAbsolute(done);
+        const std::string candidate = parent == "/" ? "/" + component : parent + "/" + component;
+        struct stat entry{};
+        if (lstat(candidate.c_str(), &entry) != 0)
+            return errno == ENOENT || errno == ENOTDIR
+                ? ProtectedResolution::Missing : ProtectedResolution::Refused;
+        if (!S_ISLNK(entry.st_mode))
+        {
+            if (!pending.empty() && !S_ISDIR(entry.st_mode))
+                return ProtectedResolution::Missing;
+            done.push_back(component);
+            continue;
+        }
+        struct stat holder{};
+        if (++links > kMaximumLinks
+            || lstat(parent.c_str(), &holder) != 0
+            || !Sys_FileSystemLinkIsTrusted(holder.st_mode, entry.st_uid, geteuid()))
+        {
+            return ProtectedResolution::Refused;
+        }
+        std::array<char, 4096> target{};
+        const ssize_t length = readlink(candidate.c_str(), target.data(), target.size());
+        if (length <= 0 || static_cast<std::size_t>(length) >= target.size())
+            return ProtectedResolution::Refused;
+        if (target[0] == '/')
+            done.clear();
+        PushComponents(std::string(target.data(), static_cast<std::size_t>(length)), &pending);
+    }
+    *resolved = JoinAbsolute(done);
+    return ProtectedResolution::Resolved;
+}
+
 // Finds the deepest existing ancestor of path (its first *existingCount
-// components) and that ancestor's realpath. This is the only place the
-// service follows symbolic links.
+// components) and its resolved form (ResolveProtected). This is the only
+// place the service follows symbolic links; a refused link fails the whole
+// root rather than trusting a shallower ancestor.
 bool ResolveExistingAncestor(
     const char *const path,
     bool *const absolute,
@@ -232,15 +336,13 @@ bool ResolveExistingAncestor(
                 prefix += '/';
             prefix += (*components)[index];
         }
-        const std::unique_ptr<char, decltype(&std::free)> real(
-            realpath(prefix.c_str(), nullptr), &std::free);
-        if (real)
+        const ProtectedResolution result = ResolveProtected(prefix, resolved);
+        if (result == ProtectedResolution::Resolved)
         {
             *existingCount = count;
-            *resolved = real.get();
             return true;
         }
-        if ((errno != ENOENT && errno != ENOTDIR) || count == 0)
+        if (result == ProtectedResolution::Refused || count == 0)
             return false;
     }
 }
@@ -529,6 +631,15 @@ bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *const utf8Path)
         return false;
     roots.push_back(TrustedRoot{absolute, std::move(spelled), std::move(canonical)});
     return true;
+}
+
+bool KISAK_CDECL Sys_FileSystemLinkIsTrusted(
+    const mode_t directoryMode,
+    const uid_t linkOwner,
+    const uid_t effectiveUid)
+{
+    const bool shared = (directoryMode & (S_ISVTX | S_IWGRP | S_IWOTH)) != 0;
+    return !shared || linkOwner == 0 || linkOwner == effectiveUid;
 }
 
 bool KISAK_CDECL Sys_FileSystemGetCurrentDirectory(

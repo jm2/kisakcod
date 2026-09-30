@@ -3104,8 +3104,62 @@ bool TestOperatorRootsBelowLinks(const std::string &workingDirectory)
         return false;
     }
 
+    // Links trusting a root follows (Linux fs.protected_symlinks, stricter):
+    // one in a sticky or group/world-writable directory only when root or we
+    // own it. Another owner is synthesised here, since only root can chown.
+    SetCheckStage("operator-roots/link-rule");
+    const uid_t self = geteuid();
+    const uid_t other = self == 1 ? 2 : 1;
+    if (!Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 0755, other, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, other, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 01755, other, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 0775, other, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 0757, other, self))
+        || !Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, self, self))
+        || !Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, 0, self)))
+    {
+        return false;
+    }
+
+    // Our own link in a shared sticky directory is followed.
+    SetCheckStage("operator-roots/shared-directory-own-link");
+    const std::string shared = MakeUniquePath(workingDirectory) + "-roots-shared";
+    const std::string ours = Join(shared, "ours");
+    if (!Check(Sys_FileSystemCreateDirectory(shared.c_str()))
+        || !Check(chmod(shared.c_str(), 01777) == 0)
+        || !Check(symlink(real.c_str(), ours.c_str()) == 0)
+        || !Check(!Sys_FileSystemCreateDirectory(Join(ours, "base/shared").c_str()))
+        || !Check(Sys_FileSystemTrustRoot(Join(ours, "base").c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(Join(ours, "base/shared").c_str()))
+        || !Check(IsRealDirectory(Join(realBase, "shared"))))
+    {
+        return false;
+    }
+
+    // Only root can plant a link owned by someone else. Given one, trusting
+    // refuses it, directly and at the end of a chain from a trusted link.
+    if (self == 0)
+    {
+        SetCheckStage("operator-roots/shared-directory-planted-link");
+        const std::string theirs = Join(shared, "theirs");
+        const std::string chain = MakeUniquePath(workingDirectory) + "-roots-chain";
+        if (!Check(symlink(real.c_str(), theirs.c_str()) == 0)
+            || !Check(lchown(theirs.c_str(), other, other) == 0)
+            || !Check(symlink(theirs.c_str(), chain.c_str()) == 0)
+            || !Check(!Sys_FileSystemTrustRoot(Join(theirs, "base").c_str()))
+            || !Check(!Sys_FileSystemTrustRoot(Join(chain, "base").c_str()))
+            || !Check(!Sys_FileSystemCreateDirectory(Join(theirs, "base/planted").c_str()))
+            || !Check(!Sys_FileSystemCreateDirectory(Join(chain, "base/planted").c_str()))
+            || !Check(!IsRealDirectory(Join(realBase, "planted")))
+            || !Check(unlink(chain.c_str()) == 0))
+        {
+            return false;
+        }
+    }
+
     SetCheckStage("operator-roots/cleanup");
     return Check(unlink(link.c_str()) == 0)
+        && Check(Sys_FileSystemRemoveTree(shared.c_str()))
         && Check(Sys_FileSystemRemoveTree(real.c_str()))
         && Check(Sys_FileSystemRemoveTree(outside.c_str()));
 }
