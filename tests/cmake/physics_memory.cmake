@@ -229,3 +229,49 @@ kisakcod_ilp32(kisakcod-physicalmemory-legacy-tests
 
 kisakcod_ilp32(kisakcod-physicalmemory-runtime-tests
     universal-physicalmemory-runtime-control)
+
+# Physics bodies touching world geometry at 64-bit (NOW row 22, #242 items
+# 1-2): the production collision and step TUs, one executable per subject
+# (see the test's header). Linux and clang only, like the dvar test in
+# misc.cmake; the defines are the Linux headless server's. --gc-sections
+# drops the engine code no check reaches, so only its boundary needs stubs.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    function(kisakcod_phys_contact_test TEST_NAME SUBJECT)
+        set(_target kisakcod-${TEST_NAME}-tests)
+        add_executable(${_target} phys_brush_contact_tests.cpp ${SRC_DIR}/universal/com_math.cpp ${ARGN})
+        target_include_directories(${_target} SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+        target_compile_features(${_target} PRIVATE cxx_std_20)
+        target_compile_definitions(${_target} PRIVATE
+            KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS PHYS_TEST_SUBJECT=${SUBJECT})
+        target_compile_options(${_target} PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+        target_link_options(${_target} PRIVATE -Wl,--gc-sections)
+        if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+            # Otherwise ASan's global registration keeps every global alive.
+            target_compile_options(${_target} PRIVATE -fsanitize-address-globals-dead-stripping)
+            target_link_options(${_target} PRIVATE -Wl,-z,start-stop-gc)
+        endif()
+        set_target_properties(${_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        add_test(NAME ${TEST_NAME} COMMAND ${_target})
+        set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 20)
+    endfunction()
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*undefined")
+        # The decompiled brush colliders index float[N][3] rows flat, e.g.
+        # (*triangle)[6] for triangle[2][0]: in-object, so ASan passes it,
+        # but the array-bounds check rejects it (48 sites on this path).
+        set_source_files_properties(${SRC_DIR}/physics/phys_coll_boxbrush.cpp
+            PROPERTIES COMPILE_OPTIONS -fno-sanitize=array-bounds)
+        # clang 18's vptr checks on phys_ode's ODE geom casts need ODE's
+        # typeinfo, which this link leaves out.
+        set_source_files_properties(${SRC_DIR}/physics/phys_ode.cpp
+            PROPERTIES COMPILE_OPTIONS -fno-sanitize=vptr)
+    endif()
+    kisakcod_phys_contact_test(physics-brush-contacts 1
+        ${SRC_DIR}/physics/phys_world_collision.cpp
+        ${SRC_DIR}/physics/phys_coll_boxbrush.cpp
+        ${SRC_DIR}/physics/phys_coll_cylinderbrush.cpp
+        ${SRC_DIR}/physics/phys_coll_capsulebrush.cpp
+        ${SRC_DIR}/qcommon/cm_showcollision.cpp)
+    kisakcod_phys_contact_test(physics-post-step-jitter-reset 2
+        ${SRC_DIR}/physics/phys_ode.cpp)
+endif()

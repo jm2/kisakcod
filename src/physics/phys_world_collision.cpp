@@ -275,51 +275,49 @@ void __cdecl CM_TestGeomInLeafBrushNode(cLeaf_t *leaf, const objInfo *input, Res
         input->bounds[1],
         1,
         input->clipMask,
-        (void(__cdecl *)(const cbrush_t *, void *))Phys_TestGeomInBrush,
+        Phys_TestGeomInBrush,
         &io);
 }
 
-void __cdecl Phys_TestGeomInBrush(const cbrush_t *brush, uint32_t *userData)
+// userData is the InputOutput built above. The decompile read it as ILP32
+// words and byte offsets, which misread every field at 64-bit (#242).
+void __cdecl Phys_TestGeomInBrush(const cbrush_t *brush, void *userData)
 {
-    Results *results; // [esp+68h] [ebp-8h]
+    const InputOutput *io = static_cast<const InputOutput *>(userData);
+    Results *results = io->Output;
 
-    results = (Results *)userData[1];
     if (results->contactCount < results->maxContacts)
     {
-        switch (*(uint32_t *)(*userData + 52))
+        switch (io->Input->type)
         {
-        case 1:
+        case PHYS_GEOM_BOX:
         {
             PROF_SCOPED("Phys_BoxBrushColl");
-            Phys_CollideBoxWithBrush(brush, (const objInfo *)*userData, results);
+            Phys_CollideBoxWithBrush(brush, io->Input, results);
             break;
         }
-        case 2:
+        case PHYS_GEOM_BRUSHMODEL:
         {
             PROF_SCOPED("Phys_BrushBrushColl");
-            Phys_CollideOrientedBrushModelWithBrush(brush, (const objInfo *)*userData, results);
+            Phys_CollideOrientedBrushModelWithBrush(brush, io->Input, results);
             break;
         }
-        case 3:
+        case PHYS_GEOM_BRUSH:
         {
             PROF_SCOPED("Phys_BrushBrushColl");
-            Phys_CollideOrientedBrushWithBrush(
-                *(const cbrush_t **)(*userData + 140),
-                brush,
-                (const objInfo *)*userData,
-                results);
+            Phys_CollideOrientedBrushWithBrush(io->Input->u.brush, brush, io->Input, results);
             break;
         }
-        case 4:
+        case PHYS_GEOM_CYLINDER:
         {
             PROF_SCOPED("Phys_CylinderBrushColl");
-            Phys_CollideCylinderWithBrush(brush, (const objInfo *)*userData, results);
+            Phys_CollideCylinderWithBrush(brush, io->Input, results);
             break;
         }
-        case 5:
+        case PHYS_GEOM_CAPSULE:
         {
             PROF_SCOPED("Phys_CapsuleBrushColl");
-            Phys_CollideCapsuleWithBrush(brush, (const objInfo *)*userData, results);
+            Phys_CollideCapsuleWithBrush(brush, io->Input, results);
             break;
         }
         default:

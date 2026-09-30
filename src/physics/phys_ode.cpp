@@ -5344,7 +5344,9 @@ void __cdecl dxPostProcessIslands(PhysWorld worldIndex)
         }
     }
     dJointGroupEmpty(physGlob.contactgroup[worldIndex]);
-    physGlob.space[51 * worldIndex - 149] = 0;
+    // Jitter regions last one step. The decompile wrote this as
+    // physGlob.space[51 * worldIndex - 149], the ILP32 alias of this field.
+    physGlob.worldData[worldIndex].numJitterRegions = 0;
     seconds = world->seconds;
     bodyEnableCount = 0;
     for (bodyIter = world->firstbody; bodyIter; bodyIter = (dxBody *)bodyIter->next)
