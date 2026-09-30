@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assetless smoke run of the POSIX headless dedicated server (NOW row 13).
+"""Assetless smoke run of the headless dedicated server (NOW row 13, gate G1).
 
 Retail Steam 1.8 data never reaches CI (docs/ROADMAP.md). The server is started
 against two synthetic stand-in files, the ones Com_Init reads before any fast
@@ -14,7 +14,12 @@ The base path contains a space, so the command-line quoting is exercised too.
 Exit status 0 means every expectation held; otherwise each broken one is
 printed together with the server's output.
 
-usage: headless_smoke.py path/to/KisakCOD-dedi
+The same checks run on Windows against KisakCOD-dedi.exe, where the build
+banner, the GPU description and the fast-file path separator are the Windows
+ones. The Windows headless server writes its console to the inherited standard
+handles, so the redirected output is the whole log there too.
+
+usage: headless_smoke.py path/to/KisakCOD-dedi[.exe]
 """
 
 import os
@@ -29,6 +34,13 @@ from pathlib import Path
 CONFIGURE_CSV = ('cpu ghz,sys mb,kisak_smoke_cpu\n1.0,256,1\n100.0,4096,2\n'
                  'gpu,kisak_smoke_gpu\n*GeForce 8800*,1\n')
 
+# What differs per OS: the binary's name, the CPUSTRING in the build banner, the
+# GPU description Sys_FindInfo reports, and the fast-file path separator.
+if os.name == 'nt':
+    EXE, BANNER, GPU, SEP = 'KisakCOD-dedi.exe', r'build win-(x64|arm64)\b', 'Headless dedicated server', '\\'
+else:
+    EXE, BANNER, GPU, SEP = 'KisakCOD-dedi', r'build (linux|macos)-(x64|arm64)\b', 'headless', '/'
+
 
 def main():
     if len(sys.argv) != 2:
@@ -36,8 +48,8 @@ def main():
         return 2
     server = Path(sys.argv[1]).resolve()
     # Only ever the server binary this job built: an existing executable file.
-    if server.name != 'KisakCOD-dedi' or not server.is_file() or not os.access(server, os.X_OK):
-        print(f'not the KisakCOD-dedi executable: {server}')
+    if server.name != EXE or not server.is_file() or not os.access(server, os.X_OK):
+        print(f'not the {EXE} executable: {server}')
         return 2
     with tempfile.TemporaryDirectory(prefix='kisak smoke ') as base:
         main_dir = Path(base) / 'main'
@@ -56,16 +68,17 @@ def main():
         log = run.stdout + run.stderr
         zone = re.search(r"Could not find zone '([^']*)'", log)
         checks = [
-            (re.search(r'build (linux|macos)-(x64|arm64)', log), 'prints a POSIX build banner'),
+            (re.search(BANNER, log), 'prints a 64-bit build banner for this OS'),
             (log.count('begin $init') == 1, 'prints each line once'),
             (base + '/main' in log, 'roots the filesystem at the (spaced) fs_basepath'),
             ('configure_mp.csv: using CPU configuration 1 GHz 256 MB' in log, 'picks the CPU row that fits the host'),
-            ('no GPU row fits "headless"' in log, 'keeps defaults when no GPU row fits'),
+            (f'no GPU row fits "{GPU}"' in log, 'keeps defaults when no GPU row fits'),
             ((homepath / 'main' / 'console_mp.log').is_file(), 'creates the nested fs_homepath for its log'),
             ('Unknown command' not in log, 'runs no stray command-line token'),
             ('Loading fastfile code_post_gfx_mp' in log, 'starts the first fast-file load'),
-            (zone and '\\' not in zone.group(1) and zone.group(1).startswith(base + '/zone/'),
-             'looks for fast files under <basepath>/zone/ with / separators'),
+            (zone and ('/' if SEP == '\\' else '\\') not in zone.group(1)
+             and zone.group(1).startswith(base + SEP + 'zone' + SEP),
+             f'looks for fast files under <basepath>{SEP}zone{SEP} with {SEP} separators'),
             (run.returncode == 1, f'exits with status 1 on the missing fast file (got {run.returncode})'),
         ]
         failed = [name for ok, name in checks if not ok]
