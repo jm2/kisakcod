@@ -105,6 +105,11 @@ void __cdecl Sys_GetPhysicalCpuCount(SysInfo* sysInfo)
     v15 = -v1 - (v1 - 1);
 LABEL_8:
     v14[4] = v15;
+    // CPUID exists only on x86 and x64. Elsewhere (Windows ARM64) the count
+    // stays at logicalCpuCount, set above: current Windows ARM64 parts have no
+    // SMT, so each logical processor is a core. The Windows cpuVendor is never
+    // "GenuineIntel" (Sys_DetectCpuVendorAndName), so x86 gives that answer too.
+#if KISAK_ARCH_X86 || KISAK_ARCH_X64
     if (!v15)
     {
         int cpuinfo[4]{};
@@ -170,6 +175,7 @@ LABEL_8:
             }
         }
     }
+#endif
 }
 
 long double __cdecl Sys_BenchmarkGHz()
@@ -196,7 +202,7 @@ long double __cdecl Sys_BenchmarkGHz()
     for (attempt = 0; attempt < 0x3E8; ++attempt)
     {
         Sleep(0);
-        start = __rdtsc();
+        start = Sys_CycleCounter();
         holdrand = 0;
         x = 0.25;
         y = 0.75;
@@ -209,7 +215,7 @@ long double __cdecl Sys_BenchmarkGHz()
             if ((i & 1) != 0)
                 holdrand = 0x343FD * (0x343FD * (0x343FD * holdrand + 0x269EC3) + 0x269EC3) + 0x269EC3;
         }
-        v1 = __rdtsc() - start;
+        v1 = Sys_CycleCounter() - start;
         if (minTime > v1)
             minTime = v1;
     }

@@ -4,8 +4,8 @@
 #   - every action is pinned to an immutable commit SHA (tag in comment)
 #   - no checkout keeps persisted credentials; contents: read is the only
 #     workflow permission
-#   - scaffolding-complete aggregates the gating jobs; native64-census is
-#     informational (KPIs K1-K3, K5) and never gates
+#   - scaffolding-complete aggregates the gating jobs; the native64-census
+#     jobs are informational (KPIs K1-K3, K5) and never gate
 #   - the Windows x86 byte-parity and no-Steam builds run nightly
 #     (nightly.yml), not per push
 #
@@ -190,9 +190,11 @@ jobs:
   native64-census:
     # KPIs K1, K2, K3 and K5 (docs/design/NATIVE64.md, PLATFORM_POSIX.md):
     # clang syntax-only compiles of the headless server for win32 (control),
-    # win64, lin64 and a64, a Win64 link attempt plus a labelled probe link,
-    # and the upstream engine TUs the Linux test build compiles.
-    # Informational only: it never gates and is not in scaffolding-complete.
+    # win64, winarm64, lin64 and a64, a Win64 link attempt plus a labelled
+    # probe link, and the upstream engine TUs the Linux test build compiles.
+    # winarm64's headers come from an llvm-mingw release the script pins by
+    # sha256. Informational only: it never gates and is not in
+    # scaffolding-complete.
     name: Native64 census
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -226,6 +228,41 @@ jobs:
         if: always()
         with:
           name: native64-census
+          path: build-census/census.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  native64-census-mac64:
+    # K1's macOS arm64 leg: the headless set syntax-checked with Apple clang
+    # and the macOS SDK, which needs a macOS host. Informational only, like
+    # native64-census: it never gates and is not in scaffolding-complete.
+    name: Native64 census / mac64
+    runs-on: macos-15
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Show compiler and SDK
+        run: clang --version && xcrun --show-sdk-version
+
+      - name: Run census
+        run: python3 scripts/ci/native64_census.py --out build-census --targets mac64 --no-link --no-k3
+
+      - name: Publish KPI summary
+        if: always()
+        run: |
+          if [ -f build-census/census.md ]; then
+            cat build-census/census.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          python3 scripts/ci/kpi_summary.py --census build-census/census.json >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: native64-census-mac64
           path: build-census/census.json
           if-no-files-found: warn
           retention-days: 30
@@ -280,6 +317,55 @@ jobs:
         with:
           name: KisakCOD-linux-${{ matrix.arch }}-headless
           path: bin/KisakCOD-dedi
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-headless:
+    # The Win64 headless dedicated server (gate G1) built with MSVC: the
+    # windows-amd64-dedi preset's cache variables on the runner's own Visual
+    # Studio (the preset names VS 2022, which windows-2025 lacks), the same
+    # assetless smoke run as linux-headless, and the binary with its PDB as a
+    # per-push artifact.
+    name: Windows headless server / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: windows-2025
+            platform: x64
+            pe-arch: x64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-headless -A ${{ matrix.platform }}
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF
+          -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF
+          -DKISAK_ENABLE_X86_MMX_SKINNING=OFF -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON
+          -DBUILD_TESTING=OFF
+
+      - name: Build KisakCOD-dedi
+        run: cmake --build build-headless --config Release --target KisakCOD-dedi --parallel
+
+      - name: Verify binary architecture
+        shell: pwsh
+        run: ./scripts/ci/verify-artifact-arch.ps1 -Expected '${{ matrix.pe-arch }}' bin/Release/KisakCOD-dedi.exe
+
+      - name: Assetless smoke run
+        run: python scripts/ci/headless_smoke.py bin/Release/KisakCOD-dedi.exe
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: KisakCOD-windows-${{ matrix.arch }}-headless
+          path: |
+            bin/Release/KisakCOD-dedi.exe
+            bin/Release/KisakCOD-dedi.pdb
           if-no-files-found: error
           retention-days: 14
 
@@ -441,8 +527,8 @@ jobs:
           retention-days: 14
 
   scaffolding-complete:
-    # The aggregate gate: every gating job must succeed. The census is
-    # informational and deliberately absent.
+    # The aggregate gate: every gating job must succeed. The census jobs
+    # are informational and deliberately absent.
     name: Portable scaffolding complete
     needs:
       - portable-tests
@@ -453,6 +539,7 @@ jobs:
       - windows-x86-sp
       - windows-x86-headless
       - linux-headless
+      - windows-headless
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10

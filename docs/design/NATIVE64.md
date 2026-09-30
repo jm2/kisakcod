@@ -125,15 +125,18 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 
 | KPI | Definition | Source | Census baseline 2026-09-30 | Target |
 | --- | --- | --- | --- | --- |
-| **K1** 64-bit headless compile closure | Headless TUs that pass clang `-fsyntax-only` on each target (win64, lin64, a64). win32 is the control | `native64-census` | win64 245/245; lin64 243/243; a64 243/243 (0 assert-only, 0 other on each) | all TUs on all three (G1) |
+| **K1** 64-bit headless compile closure | Headless TUs that pass clang `-fsyntax-only` on each leg: win64, winarm64, lin64, a64, mac64. win32 is the control | `native64-census`; mac64 from `Native64 census / mac64` | win64 246/246; winarm64 246/246; lin64 244/244; a64 244/244 (0 assert-only, 0 other on each) | all TUs on win64, lin64, a64 (G1); winarm64 and mac64 before G3 |
 | **K2** 64-bit headless link | Per target: the headless server links with 0 undefined symbols and no neutralised asserts (a *real link*). The census also reports a labelled *probe link*, with size asserts neutralised by a force-included header, and its undefined-symbol count. The probe never gates | `native64-census` | win64 real link: linked, 0 undefined symbols, 0 TUs excluded; the probe links too | Win64 and Linux amd64 real link (G1) |
-| **K3** engine code under 64-bit test | Upstream engine TUs that the Linux amd64 test build compiles, either as a TU in `compile_commands.json` or `#include`d as a `.cpp` by a test TU. Denominator: `.c`/`.cpp` under `src/` at the upstream merge-base, excluding `src/radiant/` and vendored ODE and Speex | `native64-census` | 9/475 | rises every G2 bead |
+| **K3** engine code under 64-bit test | Upstream engine TUs that the Linux amd64 test build compiles, either as a TU in `compile_commands.json` or `#include`d as a `.cpp` by a test TU. Denominator: `.c`/`.cpp` under `src/` at the upstream merge-base, excluding `src/radiant/` and vendored ODE and Speex | `native64-census` | 26/475 | rises every G2 bead |
 
-- **K1 control:** clang with mingw-w64 headers passes 243/245 on win32. The 2 failures are mingw calling-convention mismatches in `sys_sync` and `sys_thread`.
-- **K1 coverage gap (owner 2026-09-29):** `win64` is Windows x64 only (`x86_64-w64-mingw32`). Windows ARM64, which
-  builds the Win64 source set, and macOS arm64 are not measured, so a clean win64 says nothing about them. G3 prep adds
-  two census legs before their first runs: `winarm64` (`aarch64-w64-mingw32`, llvm-mingw in the census image) and
-  `mac64` (Apple clang on the hosted `macos-15` runner). Expect x86-only `__asm`/SSE paths on winarm64 (no Windows
-  ARM64 Steamworks, so Steam off) and the #265 header blockers on mac64 (Miles `mss.h`, ODE `<malloc.h>`, Speex).
+- **K1 control:** clang with mingw-w64 headers passes 244/246 on win32. The 2 failures are mingw calling-convention mismatches in `sys_sync` and `sys_thread`.
+- **K1 ARM64 legs (owner 2026-09-29):** `win64` is Windows x64 only, so a clean win64 says nothing about Windows
+  ARM64 or macOS arm64. `winarm64` checks the Win64 set for `aarch64-w64-mingw32` with the runner's clang 18 and the
+  headers and libc++ of a sha256-pinned llvm-mingw (LLVM 18.1.8). `mac64` checks the POSIX set plus
+  `src/_platform/macos` with Apple clang on the hosted `macos-15` runner. Both measure and never gate. First run
+  (2026-09-30): winarm64 244/245, blocked only by x86 `__cpuidex`/`__rdtsc` in `win_configure.cpp` (Steam stays off: no
+  Windows ARM64 Steamworks); mac64 120/244 with Apple clang 17, where the #265 headers stop the rest: Miles `mss.h`
+  (`#error`, no arm64 Mac case, 93 TUs) and ODE `<malloc.h>` (31). Since then `win_configure.cpp` reads
+  `Sys_CycleCounter` and probes CPUID only on x86/x64: winarm64 245/245.
 - **Census flags:** `-D_DEBUG` so asserts compile, no `-fdelayed-template-parsing` so two-phase lookup errors surface, and no `-Wno-everything` so DefaultError diagnostics fail a TU; `-Werror=c++11-narrowing` re-promotes the one group `-fms-extensions` demotes. `census.md` prints the flag set and the narrowing sites per header.
 - **K4–K6:** K4 (loader closure) is defined in [FASTFILE_LOADER.md](FASTFILE_LOADER.md), K5 (D3D reach) in [PLATFORM_POSIX.md](PLATFORM_POSIX.md), and K6 (delivery cells) in [CHARTER.md](../CHARTER.md).

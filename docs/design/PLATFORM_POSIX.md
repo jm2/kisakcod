@@ -6,8 +6,8 @@ Gate: G1 (Linux compile and link), then G2. KPIs: K1 and K2 ([NATIVE64.md](NATIV
 
 | Set | TUs | Notes |
 | --- | --- | --- |
-| Win32 headless (`kisakcod_get_dedi_sources`) | 245 (227 C++, 18 C) | Built by the Windows x86 headless CI job |
-| Linux headless | 243 | Win32 set − 5 `src/win32` − 10 `src/_platform/win32` + 13 `src/_platform/posix` |
+| Win32 headless (`kisakcod_get_dedi_sources`) | 246 (228 C++, 18 C) | Built by the Windows x86 headless CI job |
+| Linux headless | 244 | Win32 set − 5 `src/win32` − 10 `src/_platform/win32` + 13 `src/_platform/posix` |
 | Linux/macOS engine sets | headless | `PLATFORM_{LINUX,MACOS}_DEDI_HEADLESS` add the `posix_*` entry, console and localization; only `KISAK_DEDI_HEADLESS` configures off Win32. CI `linux-headless` builds and smoke-runs it on amd64 and arm64 |
 
 ## Service map

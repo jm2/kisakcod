@@ -23,6 +23,7 @@
 #include <game/g_bsp.h>
 
 #include "db_fx_zone_adapter_wiring.h"
+#include "db_disk32_load.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -9582,6 +9583,10 @@ void __cdecl Load_RawFile(bool atStreamStart)
 
 void __cdecl Load_RawFilePtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadRawFilePtrDisk32(atStreamStart, varRawFilePtr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -9614,6 +9619,7 @@ void __cdecl Load_RawFilePtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Mark_RawFilePtr()
