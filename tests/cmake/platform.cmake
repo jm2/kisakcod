@@ -478,3 +478,36 @@ if (NOT KISAK_PLATFORM STREQUAL "win32")
         set_tests_properties(posix-quit-${_mode}-contracts PROPERTIES TIMEOUT 20)
     endforeach()
 endif()
+
+# The Win32 headless server's orderly quit on Ctrl+C, Ctrl+Break and console
+# close (qcommon/sys_quit.h): the real handler of _platform/win32/sys_console.cpp,
+# driven by real console control events in children on consoles of their own.
+if (KISAK_PLATFORM STREQUAL "win32")
+    add_executable(kisakcod-win-quit-ctrl-tests
+        win_quit_ctrl_tests.cpp
+        ${SRC_DIR}/qcommon/sys_console.cpp
+        ${_platform_console_sources}
+        ${SRC_DIR}/_platform/win32/sys_thread.cpp
+    )
+    target_include_directories(kisakcod-win-quit-ctrl-tests PRIVATE ${SRC_DIR})
+    target_compile_features(kisakcod-win-quit-ctrl-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-win-quit-ctrl-tests PRIVATE KISAK_DEDI_HEADLESS)
+    target_link_libraries(kisakcod-win-quit-ctrl-tests PRIVATE Threads::Threads)
+    kisakcod_test_warnings(kisakcod-win-quit-ctrl-tests)
+    # The frame step feeds the real command buffer. cmd.cpp is decompiled
+    # engine code and not /W4 clean, so it compiles at the engine's /W3 in an
+    # object library of its own, as in net.cmake.
+    add_library(kisakcod-win-quit-cbuf-objects OBJECT ${SRC_DIR}/qcommon/cmd.cpp)
+    target_include_directories(kisakcod-win-quit-cbuf-objects SYSTEM PUBLIC ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-win-quit-cbuf-objects PUBLIC cxx_std_20)
+    target_compile_definitions(kisakcod-win-quit-cbuf-objects PUBLIC
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS)
+    target_compile_options(kisakcod-win-quit-cbuf-objects PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W3>)
+    target_link_libraries(kisakcod-win-quit-ctrl-tests PRIVATE kisakcod-win-quit-cbuf-objects)
+    set_target_properties(kisakcod-win-quit-ctrl-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME win-quit-ctrl-contracts COMMAND kisakcod-win-quit-ctrl-tests)
+    set_tests_properties(win-quit-ctrl-contracts PROPERTIES TIMEOUT 120)
+    kisakcod_ilp32(kisakcod-win-quit-ctrl-tests win-quit-ctrl-contracts)
+endif()

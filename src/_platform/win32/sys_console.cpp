@@ -5,6 +5,7 @@
 
 #include <qcommon/sys_console_internal.h>
 #ifdef KISAK_DEDI_HEADLESS
+#include <qcommon/sys_quit.h>
 #include <qcommon/sys_thread.h>
 #endif
 
@@ -408,5 +409,40 @@ bool KISAK_CDECL Sys_ConsoleStartLineEditing() noexcept
     }
     Sys_ThreadStart(lineEditingReader);
     return true;
+}
+
+namespace
+{
+// Runs on a thread the system starts for each console control event, so it
+// only records the request (lock-free atomics); the main thread's frame loop
+// runs the quit.
+BOOL WINAPI Win_QuitCtrlHandler(const DWORD ctrlType)
+{
+    switch (ctrlType)
+    {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+        // FALSE on a second request passes the event on to the default
+        // handler, which ends the process.
+        return Sys_RequestQuit(ctrlType == CTRL_C_EVENT ? "CTRL_C_EVENT" : "CTRL_BREAK_EVENT") == 1;
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+        // The process ends as soon as this returns, so it never does: the
+        // quit's exit ends the process, or the system does when its grace
+        // period runs out.
+        (void)Sys_RequestQuit(ctrlType == CTRL_CLOSE_EVENT ? "CTRL_CLOSE_EVENT"
+            : ctrlType == CTRL_LOGOFF_EVENT ? "CTRL_LOGOFF_EVENT" : "CTRL_SHUTDOWN_EVENT");
+        Sleep(INFINITE);
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+} // namespace
+
+bool KISAK_CDECL Sys_ConsoleInstallQuitHandler() noexcept
+{
+    return SetConsoleCtrlHandler(Win_QuitCtrlHandler, TRUE) != FALSE;
 }
 #endif
