@@ -54,6 +54,9 @@ int g_numTraces = 0;
 int g_traceCalls = 0;
 
 constexpr int kTrigger = 9;
+[[maybe_unused]] gclient_s g_client;      // the player the entity checks use
+[[maybe_unused]] scr_vehicle_s g_vehicle; // the vehicle VEH_GroundTrace moves
+char g_vaText[1] = "";
 
 [[maybe_unused]] gentity_s *Ent(int n)
 {
@@ -113,7 +116,7 @@ WEAK void Scr_SetHealth(gentity_s *, int) {}
 WEAK void Scr_SetAngles(gentity_s *, int) {}
 WEAK BOOL Scr_IsSystemActive() { return 0; }
 WEAK const char *SL_ConvertToString(uint32_t) { return ""; }
-WEAK char *va(const char *, ...) { static char text[1]; return text; }
+WEAK char *va(const char *, ...) { return g_vaText; }
 WEAK gentity_s *EntHandle::ent() const { return nullptr; }
 WEAK bool EntHandle::isDefined() const { return false; }
 WEAK void EntHandle::setEnt(gentity_s *) {}
@@ -216,8 +219,7 @@ static void EntityFieldStoresTheWholePointer()
 // the address of a local copy (the old HIWORD(&entref)).
 static void ReverbCommandsTargetTheEntref()
 {
-    static gclient_s client;
-    Ent(5)->client = &client;
+    Ent(5)->client = &g_client;
     scr_entref_t entref;
     entref.entnum = 5;
     void (*const commands[2])(scr_entref_t) = {PlayerCmd_DeactivateReverb, PlayerCmd_DeactivateChannelVolumes};
@@ -266,10 +268,9 @@ static void CorpseReuseFindsThePlayer()
 // the MP ground state holds the whole trace, including after an all-solid correction.
 static void GroundTraceKeepsTheWholeTrace()
 {
-    static scr_vehicle_s vehicle;
     gentity_s *const ent = Ent(20);
-    ent->scr_vehicle = &vehicle;
-    vehicle.phys.vel[2] = -1.0f;
+    ent->scr_vehicle = &g_vehicle;
+    g_vehicle.phys.vel[2] = -1.0f;
     trace_t ground;
     ground.fraction = 0.5f;
     ground.normal[2] = 1.0f;
@@ -299,9 +300,8 @@ static void GroundTraceKeepsTheWholeTrace()
 // g_active_mp.cpp G_TouchTriggers: the touched trigger's own handler runs.
 static void TriggersDispatchTheirOwnHandler()
 {
-    static gclient_s client;
     gentity_s *const player = Ent(0);
-    player->client = &client;
+    player->client = &g_client;
     gentity_s *const trigger = Ent(kTrigger);
     trigger->r.contents = 0x40000000; // CONTENTS_TRIGGER, part of MASK_TRIGGER
     trigger->handler = ENT_HANDLER_TRIGGER_MULTIPLE;
