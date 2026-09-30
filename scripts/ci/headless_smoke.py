@@ -11,6 +11,8 @@ G2. The database thread's fatal error races the rest of Com_Init (network,
 checked.
 
 The base path contains a space, so the command-line quoting is exercised too.
+A non-empty main/english folder makes the filesystem probe it
+(Sys_DirectoryHasContents) and add it as the localized folder.
 Exit status 0 means every expectation held; otherwise each broken one is
 printed together with the server's output.
 
@@ -56,6 +58,8 @@ def main():
         main_dir.mkdir()
         (main_dir / 'fileSysCheck.cfg').write_text('// synthetic stand-in (CI never sees retail data)\n')
         (main_dir / 'configure_mp.csv').write_text(CONFIGURE_CSV)
+        (main_dir / 'english').mkdir()
+        (main_dir / 'english' / 'localized_stand_in.txt').write_text('synthetic\n')
         try:
             homepath = Path(base) / 'home dir' / 'nested'   # does not exist yet
             run = subprocess.run([str(server), '+set', 'fs_basepath', base, '+set', 'fs_homepath', str(homepath),
@@ -71,6 +75,8 @@ def main():
             (re.search(BANNER, log), 'prints a 64-bit build banner for this OS'),
             (log.count('begin $init') == 1, 'prints each line once'),
             (base + '/main' in log, 'roots the filesystem at the (spaced) fs_basepath'),
+            (base + '/main/english' in log and 'localized assets game folder for english' in log,
+             'adds the non-empty main/english folder as the localized folder'),
             ('configure_mp.csv: using CPU configuration 1 GHz 256 MB' in log, 'picks the CPU row that fits the host'),
             (f'no GPU row fits "{GPU}"' in log, 'keeps defaults when no GPU row fits'),
             ((homepath / 'main' / 'console_mp.log').is_file(), 'creates the nested fs_homepath for its log'),
