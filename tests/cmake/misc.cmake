@@ -603,3 +603,31 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         ${SRC_DIR}/game_mp/g_main_mp.cpp
         ${SRC_DIR}/server/sv_game.cpp)
 endif()
+
+# 64-bit pointer truncations on headless server paths (WS-3 silent hazards):
+# the production TUs at 64-bit, one executable per subject (see the test's
+# header). Linux, clang and 64-bit only, for the reasons the dvar test gives;
+# the defines are the Linux headless server's.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    function(kisakcod_pointer_truncation_test TEST_NAME SUBJECT)
+        set(_target kisakcod-${TEST_NAME}-tests)
+        add_executable(${_target} pointer_truncation_hazard_tests.cpp ${ARGN})
+        target_include_directories(${_target} SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+        target_compile_features(${_target} PRIVATE cxx_std_20)
+        target_compile_definitions(${_target} PRIVATE
+            KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS POINTER_TRUNCATION_SUBJECT=${SUBJECT})
+        target_compile_options(${_target} PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+        target_link_options(${_target} PRIVATE -Wl,--gc-sections)
+        if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+            # Otherwise ASan's global registration keeps every global alive.
+            target_compile_options(${_target} PRIVATE -fsanitize-address-globals-dead-stripping)
+            target_link_options(${_target} PRIVATE -Wl,-z,start-stop-gc)
+        endif()
+        set_target_properties(${_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        add_test(NAME ${TEST_NAME} COMMAND ${_target})
+        set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 20)
+    endfunction()
+    kisakcod_pointer_truncation_test(truncation-info-validate 1
+        ${SRC_DIR}/universal/q_shared.cpp)
+endif()

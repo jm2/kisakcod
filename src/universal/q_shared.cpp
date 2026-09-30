@@ -778,17 +778,7 @@ void __cdecl Info_RemoveKey_Big(char *s, const char *key)
 
 bool __cdecl Info_Validate(const char *s)
 {
-    int v1; // eax
-    int v3; // eax
-
-    v1 = (int)strchr(s, 0x22u);
-
-    if (v1)
-        return 0;
-
-    v3 = (int)strchr(s, 0x3Bu);
-
-    return v3 == 0;
+    return !strchr(s, '"') && !strchr(s, ';');
 }
 
 bool __cdecl Info_TrySetValueForKey(
