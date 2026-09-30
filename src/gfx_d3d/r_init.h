@@ -12,9 +12,11 @@
 #include "r_image.h"
 #include "r_fog.h"
 
-// KisakCOD ABI port: Windows.h/d3d9.h are Win32-renderer headers; the only
-// dependent declaration is the GfxAssets query-pointer member below, which is
-// guarded with them so shared compositions can include this header.
+// KisakCOD ABI port: Windows.h/d3d9.h are Win32-renderer headers; the
+// D3D/Win32-dependent declarations below (GfxAssets query-pointer member,
+// GfxWindowTarget, DxGlobals, and the device-creation entry points) are
+// guarded with them so shared compositions can include this header without
+// the Direct3D SDK (KPI K5, docs/design/PLATFORM_POSIX.md).
 #if defined(_WIN32)
 #include <Windows.h>
 #include <d3d9.h>
@@ -80,7 +82,11 @@ struct GfxMetrics // sizeof=0x28
 
 struct GfxWindowParms // sizeof=0x28
 {                                       // ...
+#if defined(_WIN32)
     HWND__ *hwnd;                       // ...
+#else
+    void *hwnd;                         // opaque handle off Windows
+#endif
     int hz;                             // ...
     bool fullscreen;                    // ...
     // padding byte
@@ -262,6 +268,7 @@ struct __declspec(align(8)) r_globals_t // sizeof=0x8310
     // padding byte
 };
 
+#if defined(_WIN32)
 struct GfxWindowTarget // sizeof=0x10
 {                                       // ...
     HWND__ *hwnd;                       // ...
@@ -330,6 +337,7 @@ struct __declspec(align(8)) DxGlobals // sizeof=0x2CE0
     // padding byte
     // padding byte
 };
+#endif // _WIN32 — GfxWindowTarget / DxGlobals are Win32-renderer records
 
 struct GfxGlobals // sizeof=0x10
 {                                       // ...
@@ -366,7 +374,6 @@ void R_InitGraphicsApi();
 void R_InitSystems();
 char __cdecl R_PreCreateWindow();
 void __cdecl R_StoreDirect3DCaps(uint32_t adapterIndex);
-void __cdecl R_GetDirect3DCaps(uint32_t adapterIndex, _D3DCAPS9 *caps);
 void __cdecl R_SetShadowmapFormats_DX(uint32_t adapterIndex);
 uint32_t __cdecl R_ChooseAdapter();
 void __cdecl Sys_HideSplashWindow();
@@ -378,11 +385,14 @@ void R_InitGamma();
 char __cdecl R_CreateForInitOrReset();
 IDirect3DQuery9 *__cdecl RB_HW_AllocOcclusionQuery();
 char __cdecl R_CreateDevice(const GfxWindowParms *wndParms);
-void __cdecl R_SetD3DPresentParameters(_D3DPRESENT_PARAMETERS_ *d3dpp, const GfxWindowParms *wndParms);
 void __cdecl R_SetupAntiAliasing(const GfxWindowParms *wndParms);
-HRESULT __cdecl R_CreateDeviceInternal(HWND__ *hwnd, uint32_t behavior, _D3DPRESENT_PARAMETERS_ *d3dpp);
 int __cdecl R_GetDeviceType();
 void __cdecl R_SetWndParms(GfxWindowParms *wndParms);
+#if defined(_WIN32)
+void __cdecl R_GetDirect3DCaps(uint32_t adapterIndex, _D3DCAPS9 *caps);
+void __cdecl R_SetD3DPresentParameters(_D3DPRESENT_PARAMETERS_ *d3dpp, const GfxWindowParms *wndParms);
+HRESULT __cdecl R_CreateDeviceInternal(HWND__ *hwnd, uint32_t behavior, _D3DPRESENT_PARAMETERS_ *d3dpp);
+#endif
 void R_Register();
 void R_InitGlobalStructs();
 void __cdecl R_EndRegistration();
@@ -397,7 +407,9 @@ void __cdecl R_UpdateGpuSyncType();
 
 int R_IsHiDef();
 
+#if defined(_WIN32)
 extern DxGlobals dx;
+#endif
 extern r_global_permanent_t rgp;
 extern int g_disableRendering;
 extern r_globals_t rg;

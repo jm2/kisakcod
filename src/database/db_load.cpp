@@ -1,4 +1,5 @@
 #include "database.h"
+#include "db_shader_release.h"
 #include "db_validation.h"
 
 #include <xanim/xanim.h>
@@ -3810,11 +3811,7 @@ bool __cdecl Load_MaterialVertexShaderPtr(bool atStreamStart)
                     disk32::kMaterialVertexShaderBytes,
                     disk32::kMaterialVertexShaderBytes))
             {
-                if ((*varMaterialVertexShaderPtr)->prog.vs)
-                {
-                    (*varMaterialVertexShaderPtr)->prog.vs->Release();
-                    (*varMaterialVertexShaderPtr)->prog.vs = nullptr;
-                }
+                DB_ReleaseVertexShader(&(*varMaterialVertexShaderPtr)->prog.vs);
                 return false;
             }
         }
@@ -3875,11 +3872,7 @@ bool __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart)
                     disk32::kMaterialPixelShaderBytes,
                     disk32::kMaterialPixelShaderBytes))
             {
-                if ((*varMaterialPixelShaderPtr)->prog.ps)
-                {
-                    (*varMaterialPixelShaderPtr)->prog.ps->Release();
-                    (*varMaterialPixelShaderPtr)->prog.ps = nullptr;
-                }
+                DB_ReleasePixelShader(&(*varMaterialPixelShaderPtr)->prog.ps);
                 return false;
             }
         }
