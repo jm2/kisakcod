@@ -2363,7 +2363,7 @@ void __cdecl CG_DrawTalkerNum(
                     if (cgameGlob->nextSnap->ps.pm_type != PM_INTERMISSION && isEnemy && (cgameGlob->nextSnap->ps.perks & 0x200) != 0)
                     {
                         CG_RelativeTeamColor(client, "g_TeamColor", textColor, localClientNum);
-                        material = Material_RegisterHandle((const char*)perk_parabolicIcon->current.integer, 7);
+                        material = Material_RegisterHandle((const char*)perk_parabolicIcon->current.string, 7);
                     }
                     else
                     {
