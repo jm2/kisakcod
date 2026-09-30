@@ -17,27 +17,14 @@
 // docs/design/NET_STEAM18.md, which still requires authentic Steam 1.8
 // captures.
 //
-// Tie ordering. The production comparator orders candidate nodes by weight
-// only, exactly like retail. msg_hData contains two duplicate weights --
-// 3889 at symbols 155/205 and 4683 at symbols 228/231 -- so weight alone is not
-// a total order and the tree the builder derives from those equal-weight nodes
-// is defined by the host qsort's implementation-defined handling of equal
-// elements. Different C libraries choose different orders, which changes the
-// compressed bytes of any input containing an affected symbol. This test
-// therefore:
-//
-//   - pins the platform-INDEPENDENT contracts on every host (the weight table,
-//     the code-length histogram, per-symbol emitted bit counts, the exact pair
-//     of code words each equal-weight pair may take, round trips and decoder
-//     boundaries), and
-//   - pins byte-exact output only for fixtures whose bytes this host's
-//     equal-weight ordering can produce, and reports the ordering it did derive
-//     otherwise.
-//
-// Neither ordering of either pair is certified as retail-correct. Selecting one
-// requires the authentic reference evidence tracked by #122, so the test
-// reports what it found instead of silently normalizing it or changing the
-// production comparator to force one code book.
+// Tie ordering. msg_hData repeats two weights (3889 at symbols 155/205, 4683
+// at 228/231), so the code book depends on how the builder's qsort orders
+// equal nodes. Retail used the MSVC CRT qsort; nodeCmp is a total order that
+// reproduces it on any qsort. Every host must derive the reference code book
+// in huffman_reference_codebook.h exactly, and all byte goldens are
+// unconditional. huffman_tie_order_tests covers other sort algorithms.
+
+#include "huffman_reference_codebook.h"
 
 #include <qcommon/huffman.h>
 #include <qcommon/msg_huffman_data.h>
@@ -65,20 +52,6 @@ void MyAssertHandler(const char *filename, int line, int type, const char *fmt, 
 namespace
 {
 bool g_failed = false;
-
-// How a host's qsort ordered one equal-weight pair. kReference is the ordering
-// the recorded goldens were captured with (lower symbol gets the lower code
-// word); kAlternate is the mirror image. Both are valid Huffman codes for the
-// retail table; neither is certified as retail without #122 evidence.
-enum class PairOrder
-{
-    kUnknown,
-    kReference,
-    kAlternate,
-};
-
-PairOrder g_pair155 = PairOrder::kUnknown;
-PairOrder g_pair228 = PairOrder::kUnknown;
 
 #define CHECK(cond)                                                               \
     do {                                                                          \
@@ -129,25 +102,6 @@ int decompress(const std::vector<std::uint8_t> &compressed,
                            static_cast<int>(out.size()));
 }
 
-// Emit the exact bit sequence Huff_Compress would write for one symbol,
-// trimmed to whole bytes (the trailing pad bits are not part of the code).
-std::vector<std::uint8_t> emitCode(int symbol)
-{
-    std::vector<std::uint8_t> code(16, 0);
-    int offset = 0;
-    Huff_offsetTransmit(&g_huff.compressDecompress, symbol, code.data(), &offset);
-    code.resize(static_cast<std::size_t>((offset + 7) / 8));
-    return code;
-}
-
-// Reference code words for the two equal-weight pairs, recorded on a host whose
-// qsort ordered the lower symbol first. Each pair must always take exactly
-// these two code words; only the assignment may differ between hosts.
-const std::uint8_t kCode155Reference[] = {0xe6, 0x01};
-const std::uint8_t kCode205Reference[] = {0x16, 0x00};
-const std::uint8_t kCode228Reference[] = {0x7d, 0x00};
-const std::uint8_t kCode231Reference[] = {0x7d, 0x01};
-
 // ---------------------------------------------------------------------------
 // Fixed inputs. All are synthetic and redistributable; none is a commercial
 // capture.
@@ -183,8 +137,7 @@ std::vector<std::uint8_t> fixtureFullAlphabet()
 }
 
 // F1 = 0x00..0x1F. Explicit golden bytes: a small, reviewable fixture that
-// contains none of the equal-weight symbols, so its bytes are tie-order
-// independent and identical on every host observed so far.
+// contains none of the equal-weight symbols.
 const std::uint8_t kF1Compressed[] = {
     0x29, 0xdb, 0xfa, 0x4d, 0x80, 0xab, 0x1b, 0x61, 0xa7, 0x43,
     0x4b, 0xdd, 0x5a, 0xa2, 0xc4, 0x54, 0xee, 0xef, 0x75, 0xa4,
@@ -192,8 +145,7 @@ const std::uint8_t kF1Compressed[] = {
 };
 
 // F2 = (i * 37) & 0xFF for i in [0, 64). It contains the 228/231 pair but not
-// the 155/205 pair, so its bytes depend only on the 228/231 ordering. Golden
-// bytes recorded with the reference ordering.
+// the 155/205 pair.
 const std::uint8_t kF2Compressed[] = {
     0x69, 0x71, 0xfc, 0x49, 0x1b, 0x82, 0x8f, 0xd7, 0x63, 0xff,
     0xff, 0xc1, 0xbb, 0x56, 0x1b, 0x88, 0xc3, 0xf9, 0xa1, 0x06,
@@ -204,73 +156,24 @@ const std::uint8_t kF2Compressed[] = {
     0x3c, 0x3a, 0xda, 0x4b, 0x14, 0x9b, 0x85, 0x70,
 };
 
-// Size pins. Huffman code lengths do not depend on the tie order (the choice
-// only reassigns code words of equal length), so these hold on every host.
+// F3: both equal-weight pairs, forwards then backwards. A code book that swaps
+// either pair changes these bytes.
+const std::uint8_t kF3Input[] = {155, 205, 228, 231, 231, 228, 205, 155};
+const std::uint8_t kF3Compressed[] = {
+    0x16, 0xcc, 0xf7, 0xe9, 0xdb, 0xb7, 0x8f, 0x79, 0x0b,
+};
+
 const std::size_t kZerosCompressedSize = 1536;
 const std::size_t kAlphabetCompressedSize = 273;
 
-// Content pins recorded with both pairs in the reference ordering. The zeros
-// fixture uses only symbol 0 (tie-order independent); the alphabet fixture
-// contains both equal-weight pairs, so its exact bytes depend on both.
+// Content pins. The zeros fixture uses only symbol 0; the alphabet fixture
+// contains both equal-weight pairs.
 const std::uint64_t kZerosFnv = 2387247832005793061ULL;
-const std::uint64_t kAlphabetFnvReference = 1399084440640432086ULL;
-
-// FNV-1a over the whole derived code book (for each symbol in order: its bit
-// length, then its code bytes), recorded with both pairs in the reference
-// ordering. The alphabet fixture's bytes are only comparable to the reference
-// golden when this whole code book matches, so gate that assertion on it.
-const std::uint64_t kReferenceCodebookFnv = 9186525495699572604ULL;
+const std::uint64_t kAlphabetFnv = 4288123388600995920ULL;
 
 // Pinned code-length histogram over the 256 symbols (index = bit length).
 // min length 3, max length 11; counts sum to 256.
 const int kLengthHistogram[12] = {0, 0, 0, 1, 0, 2, 8, 15, 69, 147, 13, 1};
-
-PairOrder classifyPair(int lowSymbol, int highSymbol,
-                       const std::uint8_t *referenceLow,
-                       const std::uint8_t *referenceHigh)
-{
-    const std::vector<std::uint8_t> codeLow = emitCode(lowSymbol);
-    const std::vector<std::uint8_t> codeHigh = emitCode(highSymbol);
-    const std::vector<std::uint8_t> refLow(referenceLow, referenceLow + 2);
-    const std::vector<std::uint8_t> refHigh(referenceHigh, referenceHigh + 2);
-
-    if (codeLow == refLow && codeHigh == refHigh)
-        return PairOrder::kReference;
-    if (codeLow == refHigh && codeHigh == refLow)
-        return PairOrder::kAlternate;
-
-    // Fail closed: a pair that takes anything other than its two known code
-    // words is an equal-weight-ordering change this test does not characterize.
-    std::fprintf(stderr,
-                 "FAIL: equal-weight symbols %d/%d did not take the expected "
-                 "complementary code words\n",
-                 lowSymbol, highSymbol);
-    g_failed = true;
-    return PairOrder::kUnknown;
-}
-
-// Fingerprint every derived code word so a host whose whole code book matches
-// the reference capture can be distinguished from one that only matches on the
-// symbols a given fixture happens to use.
-std::uint64_t codebookFingerprint()
-{
-    std::uint64_t hash = 14695981039346656037ULL;
-    for (int symbol = 0; symbol < 256; ++symbol)
-    {
-        const std::vector<std::uint8_t> code = emitCode(symbol);
-        const std::uint8_t bits =
-            static_cast<std::uint8_t>(Huff_bitCount(&g_huff.compressDecompress,
-                                                    symbol));
-        hash ^= bits;
-        hash *= 1099511628211ULL;
-        for (std::size_t i = 0; i < code.size(); ++i)
-        {
-            hash ^= code[i];
-            hash *= 1099511628211ULL;
-        }
-    }
-    return hash;
-}
 } // namespace
 
 // Compare a compressed stream with a golden only after the sizes match, so a
@@ -338,18 +241,15 @@ void checkTableIntegrity()
     CHECK(tableFnv == 7312978016625600390ULL);
 }
 
-// --- 2. Equal-weight code book characterization ----------------------------
-// msg_hData duplicates two weights: 3889 at symbols 155/205 and 4683 at
-// symbols 228/231. Each pair must take the same two complementary code words
-// on every host; only which symbol gets which is implementation-defined.
-// Classify both pairs and fail if either does something uncharacterized.
-void detectTieOrder()
+// --- 2. The reference code book ---------------------------------------------
+// Every symbol's code (bits, length and decode) must match the retail code
+// book on this host's qsort, including the equal-weight pairs.
+void checkReferenceCodebook()
 {
     CHECK(msg_hData[155] == msg_hData[205]);
     CHECK(msg_hData[228] == msg_hData[231]);
-
-    g_pair155 = classifyPair(155, 205, kCode155Reference, kCode205Reference);
-    g_pair228 = classifyPair(228, 231, kCode228Reference, kCode231Reference);
+    CHECK(huffReferenceCodebookMismatches(&g_huff.compressDecompress,
+                                          "host qsort") == 0);
 }
 
 // --- 3. Derived code length distribution -----------------------------------
@@ -367,67 +267,22 @@ void checkLengthHistogram()
         CHECK(histogram[length] == kLengthHistogram[length]);
 }
 
-// --- 4. Code words agree with the reported lengths -------------------------
-// Huff_offsetTransmit is the exact bit emitter used by Huff_Compress, so a
-// disagreement with Huff_bitCount would mean the compressor writes a
-// different number of bits than the codebook advertises.
-void checkEmittedBitsMatchLengths()
-{
-    for (int symbol = 0; symbol < 256; ++symbol)
-    {
-        std::uint8_t code[16];
-        std::memset(code, 0, sizeof(code));
-        int offset = 0;
-        Huff_offsetTransmit(&g_huff.compressDecompress, symbol, code, &offset);
-        CHECK(offset == Huff_bitCount(&g_huff.compressDecompress, symbol));
-    }
-}
-
-// --- 5. Tie-order-independent fixed-input fixtures -------------------------
-void checkInvariantFixtures(const std::vector<std::uint8_t> &cIdentity,
-                            const std::vector<std::uint8_t> &cZeros)
+// --- 4. Fixed-input fixtures ------------------------------------------------
+void checkFixtureBytes(const std::vector<std::uint8_t> &cIdentity,
+                       const std::vector<std::uint8_t> &cStride,
+                       const std::vector<std::uint8_t> &cTies,
+                       const std::vector<std::uint8_t> &cZeros,
+                       const std::vector<std::uint8_t> &cAlphabet)
 {
     checkExactBytes("F1", cIdentity, kF1Compressed, sizeof(kF1Compressed));
+    checkExactBytes("F2", cStride, kF2Compressed, sizeof(kF2Compressed));
+    checkExactBytes("F3", cTies, kF3Compressed, sizeof(kF3Compressed));
     checkPinnedSize("zeros", cZeros, kZerosCompressedSize);
     if (cZeros.size() == kZerosCompressedSize)
         CHECK(fnv1a64(cZeros.data(), cZeros.size()) == kZerosFnv);
-}
-
-// --- 6. Tie-order-dependent fixed-input fixtures ---------------------------
-// F2 depends on the 228/231 ordering only; the alphabet fixture depends on
-// both pairs. Assert byte-exact content exactly when this host derived the
-// ordering the goldens were recorded with; otherwise report the difference.
-void checkTieDependentFixtures(const std::vector<std::uint8_t> &cStride,
-                               const std::vector<std::uint8_t> &cAlphabet)
-{
-    checkPinnedSize("F2", cStride, sizeof(kF2Compressed));
     checkPinnedSize("alphabet", cAlphabet, kAlphabetCompressedSize);
-
-    const bool codebookMatchesReference =
-        codebookFingerprint() == kReferenceCodebookFnv;
-
-    if (codebookMatchesReference)
-    {
-        if (cStride.size() == sizeof(kF2Compressed))
-            CHECK(std::memcmp(cStride.data(), kF2Compressed,
-                              sizeof(kF2Compressed)) == 0);
-        if (cAlphabet.size() == kAlphabetCompressedSize)
-            CHECK(fnv1a64(cAlphabet.data(), cAlphabet.size()) ==
-                  kAlphabetFnvReference);
-        return;
-    }
-
-    // This host derived a different weight-consistent code book from the
-    // reference capture. Neither ordering is certified as retail-correct; the
-    // authentic 1.7/Steam-1.8 references (#122) are required before either byte
-    // stream can be called compatible. Report the ordering this host derived
-    // instead of normalizing it or changing production to force one code book.
-    std::fprintf(stdout,
-                 "note: host derived a different weight-consistent code book "
-                 "(155/205=%s, 228/231=%s); byte-exact F2/alphabet comparison "
-                 "deferred to issue #122\n",
-                 g_pair155 == PairOrder::kReference ? "reference" : "alternate",
-                 g_pair228 == PairOrder::kReference ? "reference" : "alternate");
+    if (cAlphabet.size() == kAlphabetCompressedSize)
+        CHECK(fnv1a64(cAlphabet.data(), cAlphabet.size()) == kAlphabetFnv);
 }
 
 void checkFixedInputFixtures()
@@ -436,6 +291,7 @@ void checkFixedInputFixtures()
     const std::vector<std::uint8_t> stride = fixtureStride64();
     const std::vector<std::uint8_t> zeros = fixtureZeros4096();
     const std::vector<std::uint8_t> alphabet = fixtureFullAlphabet();
+    const std::vector<std::uint8_t> ties(kF3Input, kF3Input + sizeof(kF3Input));
 
     const std::vector<std::uint8_t> cIdentity =
         compress(identity.data(), identity.size());
@@ -445,18 +301,19 @@ void checkFixedInputFixtures()
         compress(zeros.data(), zeros.size());
     const std::vector<std::uint8_t> cAlphabet =
         compress(alphabet.data(), alphabet.size());
+    const std::vector<std::uint8_t> cTies = compress(ties.data(), ties.size());
 
-    checkInvariantFixtures(cIdentity, cZeros);
-    checkTieDependentFixtures(cStride, cAlphabet);
+    checkFixtureBytes(cIdentity, cStride, cTies, cZeros, cAlphabet);
 
-    // --- 7. Round trips through the production decoder ---------------------
+    // --- 5. Round trips through the production decoder ---------------------
     checkRoundTrip(identity, cIdentity);
     checkRoundTrip(stride, cStride);
     checkRoundTrip(zeros, cZeros);
     checkRoundTrip(alphabet, cAlphabet);
+    checkRoundTrip(ties, cTies);
 }
 
-// --- 8. Decoder boundary behavior ------------------------------------------
+// --- 6. Decoder boundary behavior ------------------------------------------
 void checkDecoderBoundaries()
 {
     // A run of zero bits walks left until the code runs out partway through
@@ -482,7 +339,7 @@ void checkDecoderBoundaries()
     CHECK(dummyDecoded == -1);
 }
 
-// --- 9. Primitive read/write agreement -------------------------------------
+// --- 7. Primitive read/write agreement -------------------------------------
 void checkPrimitiveReadWrite()
 {
     std::uint8_t code[16];
@@ -507,7 +364,7 @@ void checkPrimitiveReadWrite()
     CHECK(!truncated);
 }
 
-// --- 10. Argument and capacity guards --------------------------------------
+// --- 8. Argument and capacity guards ---------------------------------------
 void checkArgumentAndCapacityGuards()
 {
     std::vector<std::uint8_t> input = fixtureStride64();
@@ -552,9 +409,8 @@ int main()
 
     buildTree();
 
-    detectTieOrder();
+    checkReferenceCodebook();
     checkLengthHistogram();
-    checkEmittedBitsMatchLengths();
     checkFixedInputFixtures();
     checkDecoderBoundaries();
     checkPrimitiveReadWrite();
@@ -566,9 +422,6 @@ int main()
         return 1;
     }
 
-    std::fprintf(stdout,
-                 "huffman wire contracts OK (155/205=%s, 228/231=%s)\n",
-                 g_pair155 == PairOrder::kReference ? "reference" : "alternate",
-                 g_pair228 == PairOrder::kReference ? "reference" : "alternate");
+    std::fprintf(stdout, "huffman wire contracts OK\n");
     return 0;
 }

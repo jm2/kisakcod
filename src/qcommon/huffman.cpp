@@ -3,6 +3,7 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 
 int bloc;
 
@@ -153,16 +154,43 @@ nodetype *__cdecl Huff_initNode(huff_t *huff, int ch, int weight)
     return tnode;
 }
 
+// Retail compared weights only and left equal weights to the MSVC CRT qsort,
+// an unstable median-of-three quicksort. msg_hData has two equal-weight pairs,
+// so other C libraries derived a different code book. nodeCmp now breaks ties
+// on a fixed rank, which makes it a strict total order: every qsort sorts the
+// heap the same way, and the ranks reproduce the retail tie outcomes. Leaves
+// rank by symbol, except that 155 and 205 (weight 3889) trade places because
+// retail merges 205 first; 228 and 231 (weight 4683) keep symbol order.
+// Internal nodes rank after leaves, oldest first. For msg_hData no tie
+// involving an internal node reaches the two merge slots.
+static int Huff_LeafTieRank(int symbol)
+{
+    if (symbol == 155)
+        return 205;
+    if (symbol == 205)
+        return 155;
+    return symbol;
+}
+
 int __cdecl nodeCmp(const void *left, const void *right)
 {
     const nodetype *leftNode = *static_cast<nodetype *const *>(left);
     const nodetype *rightNode = *static_cast<nodetype *const *>(right);
 
-    if (leftNode->weight < rightNode->weight)
-        return -1;
-    if (leftNode->weight > rightNode->weight)
-        return 1;
-    return 0;
+    if (leftNode->weight != rightNode->weight)
+        return leftNode->weight < rightNode->weight ? -1 : 1;
+
+    const bool leftLeaf = leftNode->symbol < 256;
+    const bool rightLeaf = rightNode->symbol < 256;
+    if (leftLeaf != rightLeaf)
+        return leftLeaf ? -1 : 1;
+    if (leftLeaf && leftNode->symbol != rightNode->symbol)
+        return Huff_LeafTieRank(leftNode->symbol) < Huff_LeafTieRank(rightNode->symbol) ? -1 : 1;
+
+    // Internal nodes sit in nodeList in creation order.
+    if (leftNode == rightNode)
+        return 0;
+    return std::less<const nodetype *>()(leftNode, rightNode) ? -1 : 1;
 }
 
 void __cdecl Huff_BuildFromData(huff_t *huff, const int *msg_hData)

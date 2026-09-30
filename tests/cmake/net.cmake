@@ -243,6 +243,22 @@ add_test(
     COMMAND kisakcod-huffman-wire-contract-tests
 )
 
+# Includes huffman.cpp with its qsort calls routed to test sorts (stable,
+# ties reversed, an MSVC CRT qsort clone), so the builder runs under each and
+# must still derive the reference code book.
+add_executable(kisakcod-huffman-tie-order-tests huffman_tie_order_tests.cpp)
+target_include_directories(kisakcod-huffman-tie-order-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-huffman-tie-order-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-huffman-tie-order-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-huffman-tie-order-tests)
+set_target_properties(kisakcod-huffman-tie-order-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME huffman-tie-order-independence
+    COMMAND kisakcod-huffman-tie-order-tests
+)
+
 add_executable(kisakcod-msg-wire-contract-tests
     msg_wire_contract_tests.cpp
     msg_wire_delta_framing_tests.cpp
@@ -309,6 +325,9 @@ set_tests_properties(net-local-contracts PROPERTIES TIMEOUT 20)
 
 kisakcod_ilp32(kisakcod-huffman-wire-contract-tests
     huffman-wire-format-contracts)
+
+kisakcod_ilp32(kisakcod-huffman-tie-order-tests
+    huffman-tie-order-independence)
 
 kisakcod_ilp32(kisakcod-msg-wire-contract-tests
     msg-wire-format-contracts)
