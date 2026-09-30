@@ -28,6 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 STUBS = ROOT / "scripts/ci/ci-stubs"
+GENERATED = ROOT / "build-census/generated"  # generated headers; main() puts them under --out
 DEFS = ["-DKISAK_MP", "-DKISAK_DEDICATED", "-DDEDICATED", "-DKISAK_DEDI_HEADLESS", "-DNDEBUG"]
 WIN_DEFS = ["-DWIN32", "-D_WINDOWS", "-D_CONSOLE", "-D_MBCS"]
 TARGETS = {
@@ -81,7 +82,7 @@ def compile_cmd(cfg: str, tu: str, tracy: Path, extra: list[str]) -> list[str]:
     triple, defs, stub = TARGETS[cfg]
     lang = ["clang", "-x", "c", "-std=gnu11"] if tu.endswith(".c") else ["clang++", "-x", "c++", "-std=c++20"]
     return lang + ["--target=" + triple, "-fms-extensions", "-fdelayed-template-parsing", *DEFS, *defs,
-                   "-I", "src", "-I", "deps", "-I", str(tracy), "-I", str(STUBS / "common"),
+                   "-I", "src", "-I", "deps", "-I", str(tracy), "-I", str(GENERATED), "-I", str(STUBS / "common"),
                    "-I", str(STUBS / stub), *WARN, "-ferror-limit=0", "-fno-color-diagnostics",
                    "-fno-caret-diagnostics", *extra, tu]
 
@@ -200,6 +201,11 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     start = time.time()
     tracy = fetch_tracy(args.out)
+    # The disk32 mirrors 64-bit TUs include, generated as the CMake build does.
+    global GENERATED
+    GENERATED = args.out.resolve() / "generated"
+    run([sys.executable, "scripts/gen_disk32.py", "src/database/db_disk32.schema",
+         str(GENERATED / "database/db_disk32_mirrors.h")], check=True)
     lists = tu_lists()
     result = {"schema": 1, "commit": os.environ.get("GITHUB_SHA") or run(["git", "rev-parse", "HEAD"]).stdout.strip(),
               "targets": {}}

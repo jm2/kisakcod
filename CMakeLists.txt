@@ -145,6 +145,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
 
 # Include global scripts/tricks
 include(${SCRIPTS_DIR}/extern/increment_build.cmake)
+include(${SCRIPTS_DIR}/disk32_codegen.cmake)
 
 # Include platform overrides
 include(${SCRIPTS_DIR}/platform_override.cmake)
