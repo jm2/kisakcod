@@ -184,7 +184,7 @@ void DetectCpu()
     (void)Sys_ConsoleWrite(
         SysConsoleOutputStream::StandardError, prefix, sizeof(prefix) - 1);
     (void)Sys_ConsoleWrite(
-        SysConsoleOutputStream::StandardError, safeMessage, std::strlen(safeMessage));
+        SysConsoleOutputStream::StandardError, safeMessage, strnlen(safeMessage, 4096));
     (void)Sys_ConsoleWrite(
         SysConsoleOutputStream::StandardError, newline, sizeof(newline) - 1);
     (void)Sys_ConsoleFlush(SysConsoleOutputStream::StandardError);
@@ -249,7 +249,7 @@ static sysEvent_t *Posix_GetEvent(sysEvent_t *result)
         const char *line = Sys_ConsoleInput();
         if (line)
         {
-            const size_t length = std::strlen(line);
+            const size_t length = strnlen(line, SYS_CONSOLE_MAX_LINE_LENGTH + 1);
             char *payload = reinterpret_cast<char *>(Com_AllocEvent(static_cast<int>(length) + 1));
             I_strncpyz(payload, line, static_cast<int>(length) + 1);
             Sys_LeaveCriticalSection(CRITSECT_SYS_EVENT_QUEUE);
@@ -438,7 +438,7 @@ int main(int argc, char **argv)
     size_t offset = 0;
     for (int i = 1; i < argc; ++i)
     {
-        const size_t length = std::strlen(argv[i]);
+        const size_t length = strnlen(argv[i], sizeof(sys_cmdline));
         const bool quote = std::strpbrk(argv[i], " \t") != nullptr;
         if (offset + length + (quote ? 2 : 0) + 2 >= sizeof(sys_cmdline))
             break;
@@ -446,7 +446,7 @@ int main(int argc, char **argv)
             sys_cmdline[offset++] = ' ';
         if (quote)
             sys_cmdline[offset++] = '"';
-        std::memcpy(sys_cmdline + offset, argv[i], length);
+        std::snprintf(sys_cmdline + offset, sizeof(sys_cmdline) - offset, "%s", argv[i]);
         offset += length;
         if (quote)
             sys_cmdline[offset++] = '"';

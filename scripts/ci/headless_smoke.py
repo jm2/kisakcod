@@ -17,6 +17,7 @@ printed together with the server's output.
 usage: headless_smoke.py path/to/KisakCOD-dedi
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -34,6 +35,10 @@ def main():
         print(__doc__)
         return 2
     server = Path(sys.argv[1]).resolve()
+    # Only ever the server binary this job built: an existing executable file.
+    if server.name != 'KisakCOD-dedi' or not server.is_file() or not os.access(server, os.X_OK):
+        print(f'not the KisakCOD-dedi executable: {server}')
+        return 2
     with tempfile.TemporaryDirectory(prefix='kisak smoke ') as base:
         main_dir = Path(base) / 'main'
         main_dir.mkdir()

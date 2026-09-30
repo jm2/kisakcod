@@ -6,6 +6,7 @@
 // locale resources to load (docs/design/PLATFORM_POSIX.md, NOW row 13).
 
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 
 // The engine's localization entry points. They are declared in
@@ -30,10 +31,11 @@ char *__cdecl Win_CopyLocalizationString(const char *string)
 {
     if (!string)
         return nullptr;
-    const size_t length = std::strlen(string) + 1;
+    // Localization strings are short; the scan is bounded all the same.
+    const size_t length = strnlen(string, 0x10000) + 1;
     char *copy = static_cast<char *>(malloc(length));
     if (copy)
-        std::memcpy(copy, string, length);
+        std::snprintf(copy, length, "%s", string);
     return copy;
 }
 
