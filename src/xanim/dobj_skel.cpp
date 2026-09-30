@@ -97,9 +97,10 @@ void __cdecl GetControlAndDuplicatePartBits(
     int i; // [esp+10h] [ebp-8h]
     uint32_t boneIndexLow; // [esp+14h] [ebp-4h]
 
+    // The retail null test of &obj->skel compared obj against -0x14, skel's
+    // ILP32 offset (0x18 at 64-bit).
+    iassert(obj);
     skel = (DSkel *)&obj->skel;
-    if (obj == (const DObj_s *)-20)
-        MyAssertHandler(".\\xanim\\dobj_skel.cpp", 86, 0, "%s", "skel");
     for (i = 0; i < 4; ++i)
     {
         skel->partBits.skel[i] |= partBits[i];
@@ -198,16 +199,17 @@ void __cdecl CalcSkelRootBonesNoParentOrDuplicate(
             iassert(bits & boneBit);
             bits &= ~(boneBit);
             calcPartBits[boneIndexHigh] = bits;
+            // transWeight, which the decompile wrote as quat[7].
             v = mat[boneIndex].quat;
             v8 = Vec4LengthSq(v);
             if (v8 == 0.0f)
             {
                 v[3] = 1.0f;
-                v[7] = 2.0f;
+                mat[boneIndex].transWeight = 2.0f;
             }
             else
             {
-                v[7] = 2.0f / v8;
+                mat[boneIndex].transWeight = 2.0f / v8;
             }
             iassert(!IS_NAN(mat[boneIndex].quat[0]) && !IS_NAN(mat[boneIndex].quat[1]) && !IS_NAN(mat[boneIndex].quat[2]) && !IS_NAN(mat[boneIndex].quat[3]));
             iassert(!IS_NAN(mat[boneIndex].trans[0]) && !IS_NAN(mat[boneIndex].trans[1]) && !IS_NAN(mat[boneIndex].trans[2]));

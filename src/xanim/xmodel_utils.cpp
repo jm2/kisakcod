@@ -109,9 +109,12 @@ int __cdecl XModelGetNumLods(const XModel *model)
         : 0;
 }
 
+// The decompiled float stride from &parentList only reached the last LOD's
+// dist in the ILP32 layout.
 double __cdecl XModelGetLodOutDist(const XModel *model)
 {
-    return *((float *)&model->parentList + 7 * XModelGetNumLods(model));
+    const int numLods = XModelGetNumLods(model);
+    return numLods ? model->lodInfo[numLods - 1].dist : 0.0;
 }
 
 int __cdecl XModelNumBones(const XModel *model)

@@ -21,7 +21,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 | `sys_event` | Win32 events | condvar | `threads.cpp`, `sys_worker_gate.cpp` | called |
 | `sys_thread` | `CreateThread` | pthread | `threads.cpp` | called; `Sys_ThreadJoinTimeout` unused |
 | `sys_memory` | `VirtualAlloc` | `mmap` | `com_memory.cpp`, `physicalmemory.cpp` | called |
-| `sys_filesystem` | Win32 | `opendir`, `/proc/self/exe`, `_NSGetExecutablePath` | `com_files.cpp`, `win_common.cpp` | called; `Sys_FileSystemRemoveTree`, `Sys_FileSystemReadFile` unwired |
+| `sys_filesystem` | Win32 | `opendir`, `/proc/self/exe`, `_NSGetExecutablePath` | `com_files.cpp`, `win_common.cpp` | called; `Sys_FileSystemReadFile` unwired |
 | `Sys_Console*` | `win_syscon.cpp` | stdio service | `win_main.cpp`, `win_syscon.cpp` only | no POSIX caller |
 | Stream sockets, `Sys_SocketResolveHost` | Winsock | BSD | HTTP download (`dl_main*.cpp`), `net_chan_mp.cpp` | called |
 | UDP sockets (`Sys_SocketOpenUdp`, `SendTo`, `RecvFrom`, broadcast) | Winsock | BSD | `qcommon/net_local.cpp` (every headless build; the MP client keeps `win_net.cpp`) | called |
@@ -33,11 +33,8 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 
 | Item | Replaces | NOW bead |
 | --- | --- | --- |
-| `Sys_RemoveDirTree` on `Sys_FileSystemRemoveTree` (returns false on POSIX today) | POSIX branch of `win_common.cpp` | 13 |
 | Relaunch via `Sys_ProcessLaunch` | `Sys_QuitAndStartProcess`, `Sys_Spawn` | later |
 | Portable async fast-file reads | `db_file_load.cpp` | 14 |
-
-`universal/win_common.cpp` already compiles on Linux; it needs only the remove-tree wiring.
 
 ## Compile blockers
 

@@ -161,8 +161,8 @@ void __cdecl SV_GetChallenge(netadr_t from)
     if (i == 1024)
     {
         challenge = &svs.challenges[oldest];
-        v1 = rand() << 16;
-        challenge->challenge = svs.time ^ rand() ^ v1;
+        v1 = Kisak_rand() << 16;
+        challenge->challenge = svs.time ^ Kisak_rand() ^ v1;
         challenge->adr = from;
         challenge->firstTime = svs.time;
         challenge->firstPing = 0;

@@ -349,7 +349,11 @@ int32_t __cdecl VEH_CorrectAllSolid(gentity_s *ent, trace_t *trace)
             point[1] = phys->origin[1];
             point[2] = phys->origin[2] - 1.0f;
             G_TraceCapsule(trace, phys->origin, phys->mins, phys->maxs, point, ent->s.number, ent->clipmask);
-            memcpy(&s_phys, trace, 0x2Cu);
+#ifdef KISAK_MP
+            s_phys_0.groundTrace = *trace; // MP's VEH_GroundTrace (g_vehicles_mp.cpp) keeps its ground state in s_phys_0
+#else
+            s_phys.groundTrace = *trace;
+#endif
             Vec3Lerp(phys->origin, point, trace->fraction, phys->origin);
             return 1;
         }

@@ -288,7 +288,7 @@ RUNTIME_OFFSET(PhysObjUserData, savedPos, 0x10, 0x18);
          memset(ptr, 0xAB, sizeof(T));
 
          *(int *)ptr = this->freeEntry;
-         this->freeEntry = ptr - entries;
+         this->freeEntry = static_cast<int>(ptr - entries);
      }
 
 

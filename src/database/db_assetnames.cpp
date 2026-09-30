@@ -9,6 +9,8 @@
 #include <gfx_d3d/r_gfx.h>
 #include <gfx_d3d/r_material.h>
 
+#include <type_traits>
+
 //int32_t marker_db_assetnames 828ddeec     db_assetnames.obj
 
 const char *(__cdecl *DB_XAssetGetNameHandler[33])(const XAssetHeader *) =
@@ -86,106 +88,53 @@ void(__cdecl *DB_XAssetSetNameHandler[33])(XAssetHeader *, const char *) =
     DB_StringTableSetName
 };
 
-// KISAKTODO: make these non-fixed
-int32_t __cdecl DB_SizeofXAsset_RawFile_()
+// One size per asset type, taken from its XAssetHeader member. The retail
+// table inherited the compiler's identical-function folding, so types of equal
+// ILP32 size shared one function; five of those aliases (PhysPreset,
+// LoadedSound, both clip maps, LightDef) are the wrong size at 64-bit
+// (docs/design/FASTFILE_LOADER.md, "Clone size table").
+template <typename T>
+static int32_t __cdecl DB_SizeofXAsset()
 {
-    return sizeof(RawFile);
+    return static_cast<int32_t>(sizeof(T));
 }
-int32_t __cdecl DB_SizeofXAsset_GameWorldSp_()
-{
-    return sizeof(GameWorldSp);
-}
-int32_t __cdecl DB_SizeofXAsset_XAnimParts_()
-{
-    return sizeof(XAnimParts);
-}
-int32_t __cdecl DB_SizeofXAsset_XModel_()
-{
-    return sizeof(XModel);
-}
-int32_t __cdecl DB_SizeofXAsset_Material_()
-{
-    return sizeof(Material);
-}
-int32_t __cdecl DB_SizeofXAsset_MaterialTechniqueSet_()
-{
-    return sizeof(MaterialTechniqueSet);
-}
-int32_t __cdecl DB_SizeofXAsset_GfxImage_()
-{
-    return sizeof(GfxImage);
-}
-int32_t __cdecl DB_SizeofXAsset_SndCurve_()
-{
-    return sizeof(SndCurve);
-}
-int32_t __cdecl DB_SizeofXAsset_menuDef_t_()
-{
-    return sizeof(menuDef_t);
-}
-int32_t __cdecl DB_SizeofXAsset_StringTable_()
-{
-    return sizeof(StringTable);
-}
-int32_t __cdecl DB_SizeofXAsset_GameWorldMp_()
-{
-    return sizeof(GameWorldMp);
-}
-int32_t __cdecl DB_SizeofXAsset_GfxWorld_()
-{
-    return sizeof(GfxWorld);
-}
-int32_t __cdecl DB_SizeofXAsset_Font_s_()
-{
-    return sizeof(Font_s);
-}
-int32_t __cdecl DB_SizeofXAsset_FxImpactTable_()
-{
-    return sizeof(FxImpactTable);
-}
-int32_t __cdecl DB_SizeofXAsset_WeaponDef_()
-{
-    return sizeof(WeaponDef);
-}
-int32_t __cdecl DB_SizeofXAsset_FxEffectDef_()
-{
-    return sizeof(FxEffectDef);
-}
+#define DB_SIZEOF_XASSET(member) DB_SizeofXAsset<std::remove_pointer_t<decltype(XAssetHeader::member)>>
+
 int(__cdecl *DB_GetXAssetSizeHandler[33])() =
 {
-    DB_SizeofXAsset_RawFile_,
-    DB_SizeofXAsset_GameWorldSp_,
-    DB_SizeofXAsset_XAnimParts_,
-    DB_SizeofXAsset_XModel_,
-    DB_SizeofXAsset_Material_,
-    DB_SizeofXAsset_MaterialTechniqueSet_,
-    DB_SizeofXAsset_GfxImage_,
-    DB_SizeofXAsset_RawFile_,
-    DB_SizeofXAsset_SndCurve_,
-    DB_SizeofXAsset_GameWorldSp_,
-    DB_SizeofXAsset_menuDef_t_,
-    DB_SizeofXAsset_menuDef_t_,
-    DB_SizeofXAsset_StringTable_,
-    DB_SizeofXAsset_GameWorldSp_,
-    DB_SizeofXAsset_GameWorldMp_,
-    DB_SizeofXAsset_RawFile_,
-    DB_SizeofXAsset_GfxWorld_,
-    DB_SizeofXAsset_StringTable_,
+    DB_SIZEOF_XASSET(xmodelPieces),
+    DB_SIZEOF_XASSET(physPreset),
+    DB_SIZEOF_XASSET(parts),
+    DB_SIZEOF_XASSET(model),
+    DB_SIZEOF_XASSET(material),
+    DB_SIZEOF_XASSET(techniqueSet),
+    DB_SIZEOF_XASSET(image),
+    DB_SIZEOF_XASSET(sound),
+    DB_SIZEOF_XASSET(sndCurve),
+    DB_SIZEOF_XASSET(loadSnd),
+    DB_SIZEOF_XASSET(clipMap),
+    DB_SIZEOF_XASSET(clipMap), // ASSET_TYPE_CLIPMAP_PVS
+    DB_SIZEOF_XASSET(comWorld),
+    DB_SIZEOF_XASSET(gameWorldSp),
+    DB_SIZEOF_XASSET(gameWorldMp),
+    DB_SIZEOF_XASSET(mapEnts),
+    DB_SIZEOF_XASSET(gfxWorld),
+    DB_SIZEOF_XASSET(lightDef),
     0,
-    DB_SizeofXAsset_Font_s_,
-    DB_SizeofXAsset_RawFile_,
-    DB_SizeofXAsset_menuDef_t_,
-    DB_SizeofXAsset_FxImpactTable_,
-    DB_SizeofXAsset_WeaponDef_,
+    DB_SIZEOF_XASSET(font),
+    DB_SIZEOF_XASSET(menuList),
+    DB_SIZEOF_XASSET(menu),
+    DB_SIZEOF_XASSET(localize),
+    DB_SIZEOF_XASSET(weapon),
     0,
-    DB_SizeofXAsset_FxEffectDef_,
-    DB_SizeofXAsset_FxImpactTable_,
-    0,
-    0,
+    DB_SIZEOF_XASSET(fx),
+    DB_SIZEOF_XASSET(impactFx),
     0,
     0,
-    DB_SizeofXAsset_RawFile_,
-    DB_SizeofXAsset_StringTable_,
+    0,
+    0,
+    DB_SIZEOF_XASSET(rawfile),
+    DB_SIZEOF_XASSET(stringTable),
 };
 
 void __cdecl DB_StringTableSetName(XAssetHeader *header, const char *name)

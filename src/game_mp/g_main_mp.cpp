@@ -177,7 +177,7 @@ gclient_s *__cdecl G_GetPlayerState(int32_t clientNum)
 
 int32_t __cdecl G_GetClientSize()
 {
-    return 12676;
+    return sizeof(gclient_s);
 }
 
 void __cdecl G_FreeEntities()
@@ -243,7 +243,7 @@ void __cdecl G_InitGame(int32_t levelTime, int32_t randomSeed, int32_t restart, 
     level.startTime = levelTime;
     level.currentEntityThink = -1;
     level.scriptPrintChannel = 24;
-    srand(randomSeed);
+    Kisak_srand(randomSeed);
     Rand_Init(randomSeed);
     GScr_LoadConsts();
     G_SetupWeaponDef();
@@ -321,7 +321,7 @@ void __cdecl G_InitGame(int32_t levelTime, int32_t randomSeed, int32_t restart, 
     level.num_entities = 72;
     level.firstFreeEnt = 0;
     level.lastFreeEnt = 0;
-    SV_LocateGameData(level.gentities, level.num_entities, 628, &level.clients->ps, 12676);
+    SV_LocateGameData(level.gentities, level.num_entities, sizeof(gentity_s), &level.clients->ps, sizeof(gclient_s));
 
     G_ParseHitLocDmgTable();
     BG_LoadPenetrationDepthTable();
@@ -986,18 +986,17 @@ void __cdecl ExitLevel()
 void G_LogPrintf(const char *fmt, ...)
 {
     char string[1024]; // [esp+10h] [ebp-818h] BYREF
-    char *argptr; // [esp+410h] [ebp-418h]
     int32_t tens; // [esp+414h] [ebp-414h]
     char string2[1028]; // [esp+418h] [ebp-410h] BYREF
     int32_t min; // [esp+820h] [ebp-8h]
     int32_t sec; // [esp+824h] [ebp-4h]
     va_list va; // [esp+834h] [ebp+Ch] BYREF
 
-    va_start(va, fmt);
     if (level.logFile)
     {
+        va_start(va, fmt);
         _vsnprintf(string2, 0x400u, fmt, va);
-        argptr = 0;
+        va_end(va);
         min = level.time / 1000 / 60;
         tens = level.time / 1000 % 60 / 10;
         sec = level.time / 1000 % 60 % 10;
