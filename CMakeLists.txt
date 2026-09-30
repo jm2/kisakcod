@@ -94,13 +94,17 @@ endif()
 # dialect (__cdecl, __int32, __declspec). GCC is out until those spellings are
 # gone. Without the flag the non-Windows engine targets fail on the first
 # __cdecl, so it is applied here rather than left to each build invocation.
-if (NOT MSVC)
+# Test-only configurations (every KISAK_BUILD_* off) compile no engine target
+# and keep their own compilers, GCC included.
+if (NOT MSVC AND (KISAK_BUILD_MP OR KISAK_BUILD_DEDICATED OR KISAK_BUILD_SP))
     if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR
             "The ${CMAKE_CXX_COMPILER_ID} compiler is not supported: build with "
             "clang and -fms-extensions (see docs/design/PLATFORM_POSIX.md).")
     endif()
     add_compile_options(-fms-extensions)
+endif()
+if (NOT MSVC)
     # Position-independent executables: the distribution default, and every
     # data address then lies above 4 GiB, so a pointer truncated to 32 bits
     # faults instead of working by accident (the headless smoke relies on it).
