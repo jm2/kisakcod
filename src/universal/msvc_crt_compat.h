@@ -43,6 +43,45 @@
 // redefining them would collide. They are missing outright on POSIX.
 #if !defined(_WIN32)
 
+// MSVC: int _stricmp(const char *, const char *) — compares as if both strings
+// were lowercased (ASCII in the "C" locale); only the sign of the result matters.
+static inline int _stricmp(const char *a, const char *b)
+{
+    for (;; ++a, ++b)
+    {
+        int ca = (unsigned char)*a, cb = (unsigned char)*b;
+        if (ca >= 'A' && ca <= 'Z')
+            ca += 'a' - 'A';
+        if (cb >= 'A' && cb <= 'Z')
+            cb += 'a' - 'A';
+        if (ca != cb || !ca)
+            return ca - cb;
+    }
+}
+
+// MSVC: int _strnicmp(const char *, const char *, size_t) — _stricmp over at
+// most `count` characters.
+static inline int _strnicmp(const char *a, const char *b, size_t count)
+{
+    for (; count; --count, ++a, ++b)
+    {
+        int ca = (unsigned char)*a, cb = (unsigned char)*b;
+        if (ca >= 'A' && ca <= 'Z')
+            ca += 'a' - 'A';
+        if (cb >= 'A' && cb <= 'Z')
+            cb += 'a' - 'A';
+        if (ca != cb || !ca)
+            return ca - cb;
+    }
+    return 0;
+}
+
+// MSVC: char *_strdup(const char *) — POSIX strdup under its CRT name.
+static inline char *_strdup(const char *s)
+{
+    return strdup(s);
+}
+
 // MSVC: char *_strlwr(char *) — in-place lowercase, returns the buffer. The
 // engine's I_strlwr is the same ASCII-only walk every call site wants.
 static inline char *_strlwr(char *s)

@@ -31,7 +31,7 @@ int __cdecl Com_BuildPlayerProfilePath_Internal(
     int pathSize,
     const char *playerName,
     const char *format,
-    char *vargs)
+    va_list vargs)
 {
     int totalLength; // [esp+0h] [ebp-Ch]
     int totalLengtha; // [esp+0h] [ebp-Ch]
@@ -90,7 +90,9 @@ int Com_BuildPlayerProfilePath(char *path, int pathSize, const char *format, ...
     iassert( com_playerProfile );
     if (!Com_HasPlayerProfile())
         Com_Error(ERR_FATAL, "Tried to use a player profile before it was set.  This is probably a menu bug.\n");
-    return Com_BuildPlayerProfilePath_Internal(path, pathSize, com_playerProfile->current.string, format, va);
+    const int result = Com_BuildPlayerProfilePath_Internal(path, pathSize, com_playerProfile->current.string, format, va);
+    va_end(va);
+    return result;
 }
 
 int Com_BuildPlayerProfilePathForPlayer(char *path, int pathSize, const char *playerName, const char *format, ...)
@@ -98,7 +100,9 @@ int Com_BuildPlayerProfilePathForPlayer(char *path, int pathSize, const char *pl
     va_list va; // [esp+20h] [ebp+18h] BYREF
 
     va_start(va, format);
-    return Com_BuildPlayerProfilePath_Internal(path, pathSize, playerName, format, va);
+    const int result = Com_BuildPlayerProfilePath_Internal(path, pathSize, playerName, format, va);
+    va_end(va);
+    return result;
 }
 
 bool __cdecl Com_IsValidPlayerProfileDir(const char *profileName)
@@ -568,6 +572,7 @@ void __cdecl Com_SetRecommended(int localClientNum, int restart)
 
 bool __cdecl Sys_ShouldUpdateForInfoChange()
 {
+#if defined(_WIN32)
     HWND ActiveWindow; // eax
     char *v2; // [esp-Ch] [ebp-Ch]
     char *v3; // [esp-8h] [ebp-8h]
@@ -577,10 +582,19 @@ bool __cdecl Sys_ShouldUpdateForInfoChange()
     v2 = Win_LocalizeRef("WIN_COMPUTER_CHANGE_BODY");
     ActiveWindow = GetActiveWindow();
     return MessageBoxA(ActiveWindow, v2, v3, 0x44u) == 6;
+#else
+    // The question is a Win32 desktop message box (HWND/GetActiveWindow/
+    // MessageBoxA). Headless compositions have no interactive desktop, so keep
+    // the info archiving and give the non-interactive answer: do not force the
+    // update, the same as a No click.
+    Sys_ArchiveInfo(0);
+    return false;
+#endif
 }
 
 bool __cdecl Sys_ShouldUpdateForConfigChange()
 {
+#if defined(_WIN32)
     HWND ActiveWindow; // eax
     char *v2; // [esp-Ch] [ebp-Ch]
     char *v3; // [esp-8h] [ebp-8h]
@@ -589,6 +603,10 @@ bool __cdecl Sys_ShouldUpdateForConfigChange()
     v2 = Win_LocalizeRef("WIN_CONFIGURE_UPDATED_BODY");
     ActiveWindow = GetActiveWindow();
     return MessageBoxA(ActiveWindow, v2, v3, 0x44u) == 6;
+#else
+    // Same non-interactive default as Sys_ShouldUpdateForInfoChange.
+    return false;
+#endif
 }
 
 bool __cdecl Sys_HasInfoChanged()
