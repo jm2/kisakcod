@@ -136,5 +136,6 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
   `src/_platform/macos` with Apple clang on the hosted `macos-15` runner. Both measure and never gate. First run
   (2026-09-30): winarm64 244/245, blocked only by x86 `__cpuidex`/`__rdtsc` in `win_configure.cpp` (Steam stays off: no
   Windows ARM64 Steamworks); mac64 120/244 with Apple clang 17, where the #265 headers stop the rest: Miles `mss.h`
-  (`#error`, no arm64 Mac case, 93 TUs) and ODE `<malloc.h>` (31).
+  (`#error`, no arm64 Mac case, 93 TUs) and ODE `<malloc.h>` (31). Since then `win_configure.cpp` reads
+  `Sys_CycleCounter` and probes CPUID only on x86/x64: winarm64 245/245.
 - **K4–K6:** K4 (loader closure) is defined in [FASTFILE_LOADER.md](FASTFILE_LOADER.md), K5 (D3D reach) in [PLATFORM_POSIX.md](PLATFORM_POSIX.md), and K6 (delivery cells) in [CHARTER.md](../CHARTER.md).
