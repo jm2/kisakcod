@@ -10,6 +10,7 @@
 //      g_main_mp, server/sv_game.
 // The engine boundary is weak: the engine TUs replace the stubs they define.
 
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -46,6 +47,7 @@ struct Seen
     gentity_s *freed = nullptr;
     gentity_s *touchSelf = nullptr;
     gentity_s *touchOther = nullptr;
+    char command[64] = {};
 };
 Seen seen;
 
@@ -56,7 +58,11 @@ int g_traceCalls = 0;
 constexpr int kTrigger = 9;
 [[maybe_unused]] gclient_s g_client;      // the player the entity checks use
 [[maybe_unused]] scr_vehicle_s g_vehicle; // the vehicle VEH_GroundTrace moves
-char g_vaText[1] = "";
+char g_vaText[256] = "";
+// What the script passes the command under test.
+uint32_t g_numParam = 1;
+uint32_t g_constString = 0;
+float g_float = 0.0f;
 
 [[maybe_unused]] gentity_s *Ent(int n)
 {
@@ -101,10 +107,10 @@ WEAK void Scr_AddEntityNum(uint32_t, uint32_t) {}
 WEAK void Scr_Notify(gentity_s *, uint16_t, uint32_t) {}
 WEAK void Scr_NotifyNum(uint32_t, uint32_t, uint32_t, uint32_t) {}
 WEAK void Scr_Error(const char *) {}
-WEAK uint32_t Scr_GetNumParam() { return 1; }
-WEAK uint32_t Scr_GetConstString(uint32_t) { return 0; }
+WEAK uint32_t Scr_GetNumParam() { return g_numParam; }
+WEAK uint32_t Scr_GetConstString(uint32_t) { return g_constString; }
 WEAK uint32_t Scr_GetConstStringIncludeNull(uint32_t) { return 0; }
-WEAK float Scr_GetFloat(uint32_t) { return 0.0f; }
+WEAK float Scr_GetFloat(uint32_t) { return g_float; }
 WEAK int Scr_GetInt(uint32_t) { return 0; }
 WEAK int Scr_GetType(uint32_t) { return 1; }
 WEAK void Scr_GetVector(uint32_t, float *value) { value[0] = value[1] = value[2] = 0.0f; }
@@ -116,14 +122,26 @@ WEAK void Scr_SetHealth(gentity_s *, int) {}
 WEAK void Scr_SetAngles(gentity_s *, int) {}
 WEAK BOOL Scr_IsSystemActive() { return 0; }
 WEAK const char *SL_ConvertToString(uint32_t) { return ""; }
-WEAK char *va(const char *, ...) { return g_vaText; }
+WEAK char *va(const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    // Flawfinder: ignore -- passthrough shim; engine callers own the literal format.
+    std::vsnprintf(g_vaText, sizeof(g_vaText), format, args);
+    va_end(args);
+    return g_vaText;
+}
 WEAK gentity_s *EntHandle::ent() const { return nullptr; }
 WEAK bool EntHandle::isDefined() const { return false; }
 WEAK void EntHandle::setEnt(gentity_s *) {}
 
 WEAK uint32_t G_ModelName(uint32_t index) { return index; }
 WEAK uint32_t SV_GetConfigstringConst(uint32_t index) { seen.configstring = index; return 0x333; }
-WEAK void SV_GameSendServerCommand(int clientNum, svscmd_type, const char *) { seen.commandClient = clientNum; }
+WEAK void SV_GameSendServerCommand(int clientNum, svscmd_type, const char *text)
+{
+    seen.commandClient = clientNum;
+    std::snprintf(seen.command, sizeof(seen.command), "%s", text);
+}
 WEAK void G_FreeEntity(gentity_s *ed) { seen.freed = ed; }
 // G_Find's contract (g_utils_mp.cpp): the first in-use entity whose uint16_t
 // at fieldofs is match.
@@ -216,20 +234,40 @@ static void EntityFieldStoresTheWholePointer()
 }
 
 // g_client_script_cmd_mp.cpp: the entref is the script's entity, not bits of
-// the address of a local copy (the old HIWORD(&entref)).
+// the address of a local copy (the old HIWORD(&entref)), and the command is
+// "<D|F> <priority> <fadetime>", the three arguments the client's
+// CG_DeactivateReverbCmd and CG_DeactivateChannelVolCmd parse. The format
+// had six conversions for two arguments.
 static void ReverbCommandsTargetTheEntref()
 {
     Ent(5)->client = &g_client;
     scr_entref_t entref;
     entref.entnum = 5;
-    void (*const commands[2])(scr_entref_t) = {PlayerCmd_DeactivateReverb, PlayerCmd_DeactivateChannelVolumes};
-    for (auto command : commands)
+    scr_const.snd_enveffectsprio_shellshock = 0x61;
+    scr_const.snd_channelvolprio_pain = 0x62;
+    struct
+    {
+        void (*command)(scr_entref_t);
+        uint16_t priority;
+        const char *sent;
+    } const cases[2] = {
+        {PlayerCmd_DeactivateReverb, scr_const.snd_enveffectsprio_shellshock, "D 2 1.5"},
+        {PlayerCmd_DeactivateChannelVolumes, scr_const.snd_channelvolprio_pain, "F 2 1.5"},
+    };
+    g_numParam = 2;
+    g_float = 1.5f;
+    for (const auto &c : cases)
     {
         seen = Seen();
-        command(entref);
+        g_constString = c.priority;
+        c.command(entref);
         CHECK(seen.objectError == nullptr);
         CHECK(seen.commandClient == 5);
+        CHECK(!std::strcmp(seen.command, c.sent));
     }
+    g_numParam = 1;
+    g_constString = 0;
+    g_float = 0.0f;
 }
 
 // g_combat_mp.cpp DamageNotify: attachment slot modelIndex - 1 names the model and tag.
