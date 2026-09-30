@@ -325,7 +325,8 @@ jobs:
     # windows-amd64-dedi preset's cache variables on the runner's own Visual
     # Studio (the preset names VS 2022, which windows-2025 lacks), the same
     # assetless smoke run as linux-headless, and the binary with its PDB as a
-    # per-push artifact.
+    # per-push artifact. The arm64 leg (G3 prep) builds natively for ARM64 on
+    # the hosted Windows ARM runner with the same cache variables.
     name: Windows headless server / ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -337,6 +338,10 @@ jobs:
             runner: windows-2025
             platform: x64
             pe-arch: x64
+          - arch: arm64
+            runner: windows-11-arm
+            platform: ARM64
+            pe-arch: ARM64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
