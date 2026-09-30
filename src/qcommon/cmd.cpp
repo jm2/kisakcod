@@ -10,6 +10,7 @@
 
 #include <database/database.h>
 #include <qcommon/sys_local.h>
+#include <qcommon/sys_quit.h>
 #include <universal/com_files.h>
 #include <script/scr_debugger.h>
 #include <server/sv_game.h>
@@ -571,6 +572,25 @@ void __cdecl Cbuf_AddText(int32_t  localClientNum, const char *text)
         Com_Printf(16, "Cbuf_AddText: overflow\n");
     }
     Sys_LeaveCriticalSection(CRITSECT_CBUF);
+}
+
+// The headless frame loop's step, once per frame on the main thread (see
+// qcommon/sys_quit.h): the first pending host request becomes the line
+// "quit", queued exactly as a typed quit is (Com_EventLoop's SE_CONSOLE), so
+// Com_Frame's Cbuf_Execute runs Com_Quit_f under the frame's error guard.
+// A request that arrived during Com_Init is queued on the first frame.
+// Returns true on the one frame that queued it.
+static bool cmd_requestedQuitQueued = false;
+
+bool Cbuf_AddRequestedQuit()
+{
+    if (cmd_requestedQuitQueued || !Sys_QuitRequested())
+        return false;
+    cmd_requestedQuitQueued = true;
+    const char *const source = Sys_QuitRequestSource();
+    Com_Printf(16, "%s received; shutting down.\n", source ? source : "Quit request");
+    Cbuf_AddText(0, "quit\n");
+    return true;
 }
 
 void __cdecl memcpy_noncrt(void *dst, const void *src, uint32_t length)
