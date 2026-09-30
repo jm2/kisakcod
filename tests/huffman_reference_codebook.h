@@ -13,11 +13,12 @@
 
 #include <qcommon/huffman.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
+#include <string_view>
 
-inline constexpr const char *kHuffReferenceCodes[257] = {
+inline constexpr std::string_view kHuffReferenceCodes[257] = {
     /*   0 */ "100", "10100", "110110", "110101", "111110", "110010",
     /*   6 */ "00000", "001110", "1010111", "0110001", "0000110", "11100101",
     /*  12 */ "11000010", "11010010", "10111011", "0101101", "0010001", "0100100",
@@ -76,10 +77,10 @@ inline int huffReferenceCodebookMismatches(huff_t *huff, const char *label)
         int bits = 0;
         Huff_offsetTransmit(huff, symbol, code, &bits);
 
-        const char *expected = kHuffReferenceCodes[symbol];
-        bool same = bits == static_cast<int>(std::strlen(expected));
+        const std::string_view expected = kHuffReferenceCodes[symbol];
+        bool same = bits == static_cast<int>(expected.size());
         for (int i = 0; same && i < bits; ++i)
-            same = ((code[i >> 3] >> (i & 7)) & 1) == expected[i] - '0';
+            same = ((code[i >> 3] >> (i & 7)) & 1) == expected[static_cast<std::size_t>(i)] - '0';
         if (same && symbol < 256)
             same = Huff_bitCount(huff, static_cast<std::uint32_t>(symbol)) == bits;
         if (same)
@@ -91,8 +92,8 @@ inline int huffReferenceCodebookMismatches(huff_t *huff, const char *label)
         }
         if (!same)
         {
-            std::fprintf(stderr, "FAIL %s: symbol %d does not have the reference code %s\n",
-                         label, symbol, expected);
+            std::fprintf(stderr, "FAIL %s: symbol %d does not have the reference code %.*s\n",
+                         label, symbol, static_cast<int>(expected.size()), expected.data());
             ++mismatches;
         }
     }

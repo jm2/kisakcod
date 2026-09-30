@@ -63,6 +63,7 @@ enum class Sort
 
 Sort g_sort = Sort::kHost;
 Compare g_compareOverride = nullptr;
+huffman_t g_huff;
 
 // Retail's comparator: weight only.
 int retailNodeCmp(const void *left, const void *right)
@@ -214,12 +215,11 @@ int buildAndCompare(Sort sort, Compare compareOverride, const char *label)
 {
     g_sort = sort;
     g_compareOverride = compareOverride;
-    static huffman_t huff;
-    Huff_Init(&huff);
-    Huff_BuildFromData(&huff.compressDecompress, msg_hData);
+    Huff_Init(&g_huff);
+    Huff_BuildFromData(&g_huff.compressDecompress, msg_hData);
     g_sort = Sort::kHost;
     g_compareOverride = nullptr;
-    return huffReferenceCodebookMismatches(&huff.compressDecompress, label);
+    return huffReferenceCodebookMismatches(&g_huff.compressDecompress, label);
 }
 
 #if defined(_MSC_VER)
@@ -233,12 +233,12 @@ int crtCloneMismatches()
     {
         const std::size_t count = 1 + static_cast<std::size_t>(round) * 5;
         std::vector<nodetype> nodes(count);
-        std::vector<nodetype *> crt(count);
-        for (std::size_t i = 0; i < count; ++i)
+        std::vector<nodetype *> crt;
+        for (nodetype &node : nodes)
         {
             seed = seed * 214013u + 2531011u;
-            nodes[i].weight = static_cast<int>((seed >> 16) % 7);
-            crt[i] = &nodes[i];
+            node.weight = static_cast<int>((seed >> 16) % 7);
+            crt.push_back(&node);
         }
         std::vector<nodetype *> clone = crt;
         std::qsort(crt.data(), count, sizeof(nodetype *), retailNodeCmp);
