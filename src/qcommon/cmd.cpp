@@ -578,18 +578,26 @@ void __cdecl Cbuf_AddText(int32_t  localClientNum, const char *text)
 // qcommon/sys_quit.h): the first pending host request becomes the line
 // "quit", queued exactly as a typed quit is (Com_EventLoop's SE_CONSOLE), so
 // Com_Frame's Cbuf_Execute runs Com_Quit_f under the frame's error guard.
-// A request that arrived during Com_Init is queued on the first frame.
-// Returns true on the one frame that queued it.
+// A request that arrived during Com_Init is queued on the first frame, and one
+// that finds the buffer full (Cbuf_AddText drops what does not fit) stays
+// pending for a later frame. Returns true on the one frame that queued it.
 static bool cmd_requestedQuitQueued = false;
 
 bool Cbuf_AddRequestedQuit()
 {
     if (cmd_requestedQuitQueued || !Sys_QuitRequested())
         return false;
-    cmd_requestedQuitQueued = true;
+    // The lock is recursive, and holding it across the append means only
+    // this append can change cmdsize.
+    Sys_EnterCriticalSection(CRITSECT_CBUF);
+    const int32_t queuedBefore = cmd_textArray[0].cmdsize;
+    Cbuf_AddText(0, "quit\n");
+    cmd_requestedQuitQueued = cmd_textArray[0].cmdsize != queuedBefore;
+    Sys_LeaveCriticalSection(CRITSECT_CBUF);
+    if (!cmd_requestedQuitQueued)
+        return false;
     const char *const source = Sys_QuitRequestSource();
     Com_Printf(16, "%s received; shutting down.\n", source ? source : "Quit request");
-    Cbuf_AddText(0, "quit\n");
     return true;
 }
 

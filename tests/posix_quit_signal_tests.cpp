@@ -21,6 +21,7 @@
 #include <qcommon/sys_quit.h>
 
 #if defined(POSIX_QUIT_ENGINE_CBUF)
+#include <string>
 #include <string_view>
 
 #include <qcommon/cmd.h>
@@ -112,7 +113,16 @@ void RunSignal(const int signalNumber, const char *const name)
     Check(source && std::strcmp(source, name) == 0, "the request names the signal");
 
 #if defined(POSIX_QUIT_ENGINE_CBUF)
-    // The first frame queues exactly what a typed quit queues, and only once.
+    // A buffer without room for the quit leaves the request pending; the frame
+    // after Cbuf_Execute drains it queues the quit.
+    const std::string filler(static_cast<size_t>(cmd_textArray[0].maxsize - 3), 'x');
+    Cbuf_AddText(0, filler.c_str());
+    Check(!Cbuf_AddRequestedQuit() && Queued() == filler, "a full buffer leaves the request pending");
+    Check(*g_printedSource == '\0', "nothing is logged until the quit is queued");
+    Cbuf_Execute(0, 0);
+    Check(g_quitRuns == 0 && Queued().empty(), "Cbuf_Execute drains the buffer");
+
+    // The first frame with room queues exactly what a typed quit queues, once.
     Check(Cbuf_AddRequestedQuit(), "the first frame queues the quit");
     Check(Queued() == "quit\n", "the queued text is a typed quit");
     Check(std::strcmp(g_printedSource, name) == 0, "the log names the signal");
