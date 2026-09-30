@@ -853,8 +853,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		freopen("CONOUT$", "w", stderr);
 	}
 #else
-	// A console program: started on a console, it reads commands typed there.
+	// A console program: started on a console, it reads commands typed there,
+	// and Ctrl+C, Ctrl+Break or closing the console quit it in order.
 	(void)Sys_ConsoleStartLineEditing();
+	(void)Sys_ConsoleInstallQuitHandler();
 #endif
 
 	Sys_InitializeCriticalSections();
@@ -931,6 +933,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 					Sleep(5);
 				}
 
+#ifdef KISAK_DEDI_HEADLESS
+				// A pending Ctrl+C, Ctrl+Break or console close, even one from
+				// Com_Init, becomes the quit this frame runs.
+				Cbuf_AddRequestedQuit();
+#endif
 				// run the game
 				Com_Frame();
 

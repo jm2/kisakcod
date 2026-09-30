@@ -81,4 +81,13 @@ inline constexpr std::size_t SYS_CONSOLE_MAX_LINE_LENGTH = 511;
 // is not a console (a pipe, a file, NUL, none), when the reader already runs, or
 // when it cannot start; standard input is then left as it was.
 [[nodiscard]] bool KISAK_CDECL Sys_ConsoleStartLineEditing() noexcept;
+
+// Ctrl+C, Ctrl+Break and closing the console ask the Win32 headless server for
+// the orderly quit a typed quit runs (qcommon/sys_quit.h), as SIGINT and
+// SIGTERM do on POSIX. The first Ctrl+C or Ctrl+Break only records the request,
+// which the frame loop turns into "quit"; a second one ends the process as the
+// default handler would. On a console close (or logoff, shutdown) the handler
+// holds the system's grace period, about 5 s, for the quit to finish. Returns
+// false when the handler cannot be installed.
+[[nodiscard]] bool KISAK_CDECL Sys_ConsoleInstallQuitHandler() noexcept;
 #endif
