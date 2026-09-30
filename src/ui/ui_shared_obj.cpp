@@ -6095,19 +6095,9 @@ char __cdecl KeywordHash_IsValidSeed_itemDef_s_256_3855_(
     int count,
     int seed)
 {
-    uint8_t used[260]; // [esp+0h] [ebp-110h] BYREF
-    int hash; // [esp+108h] [ebp-8h]
-    int index; // [esp+10Ch] [ebp-4h]
-
-    memset(used, 0, 0x100u);
-    for (index = 0; index < count; ++index)
-    {
-        hash = KeywordHash_KeySeed(array[index].keyword, 256, seed);
-        if (used[hash])
-            return 0;
-        used[hash] = 1;
-    }
-    return 1;
+    // Collision walk moved to ui_shared.h (IsValidSeed); this stays the
+    // instantiation point the call sites already use.
+    return IsValidSeed(array, count, seed);
 }
 
 void __cdecl KeywordHash_Add_itemDef_s_256_3855_(
@@ -6164,19 +6154,9 @@ char __cdecl KeywordHash_IsValidSeed_menuDef_t_128_128_(
     int count,
     int seed)
 {
-    uint8_t used[132]; // [esp+0h] [ebp-90h] BYREF
-    int hash; // [esp+88h] [ebp-8h]
-    int index; // [esp+8Ch] [ebp-4h]
-
-    memset(used, 0, 0x80u);
-    for (index = 0; index < count; ++index)
-    {
-        hash = KeywordHash_KeySeed(array[index].keyword, 128, seed);
-        if (used[hash])
-            return 0;
-        used[hash] = 1;
-    }
-    return 1;
+    // Collision walk moved to ui_shared.h (IsValidSeed); this stays the
+    // instantiation point the call sites already use.
+    return IsValidSeed(array, count, seed);
 }
 
 int __cdecl KeywordHash_PickSeed_menuDef_t_128_128_(const KeywordHashEntry<menuDef_t, 128, 128> *array, int count)
