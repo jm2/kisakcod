@@ -11,6 +11,10 @@ G2. The database thread's fatal error races the rest of Com_Init (network,
 checked.
 
 The base path contains a space, so the command-line quoting is exercised too.
+A second run claims an archived machine profile that no longer matches the
+host (com_recommendedSet 1, sys_configureGHz 999): a headless server must give
+the non-interactive answer and keep starting, not wait on a question nobody can
+see.
 Exit status 0 means every expectation held; otherwise each broken one is
 printed together with the server's output.
 
@@ -162,6 +166,21 @@ def main():
              f'looks for fast files under <basepath>{SEP}zone{SEP} with {SEP} separators'),
             (run.returncode == 1, f'exits with status 1 on the missing fast file (got {run.returncode})'),
         ]
+        # Fresh fs_homepath: an archived config from the first run would override
+        # the +set values before the check reads them.
+        changed_home = Path(base) / 'changed home'
+        try:
+            changed = subprocess.run([str(server), '+set', 'fs_basepath', base, '+set', 'fs_homepath',
+                                      str(changed_home), '+set', 'dedicated', '1', '+set', 'com_recommendedSet', '1',
+                                      '+set', 'sys_configureGHz', '999'],
+                                     stdin=subprocess.DEVNULL, capture_output=True, text=True, errors='replace',
+                                     timeout=120, cwd=base)
+            changed_status = changed.returncode
+            log += '\n--- the changed-machine run ---\n' + changed.stdout + changed.stderr
+        except subprocess.TimeoutExpired:
+            changed_status = 'no exit within 120 s'
+        checks.append((changed_status == 1,
+                       f'starts on a changed machine without asking, then exits with status 1 (got {changed_status})'))
         if os.name == 'nt':
             status, screen = run_on_console(server, run.args[1:], base)
             log += '\n--- the console it was started on ---\n' + screen
