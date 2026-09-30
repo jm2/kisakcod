@@ -2,32 +2,25 @@
 
 #if KISAK_ARCH_64BIT
 
-#include <database/database.h>
-#include <database/db_disk32_load_internal.h>
-#include <database/db_disk32_mirrors.h> // generated from db_disk32.schema
-#include <database/db_validation.h>
-#include <qcommon/com_error.h>
+#include <database/db_disk32_loaders.h> // generated from db_disk32.schema
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 
-// The second wave-1 family (docs/design/FASTFILE_LOADER.md). Each step mirrors
-// Load_StringTablePtr/Load_StringTable in db_load.cpp: no stream push, so the
+// The second wave-1 family (docs/design/FASTFILE_LOADER.md). Its header slot
+// and completed-object pointer step are generated from its schema entry; the
+// record body below is custom. It mirrors Load_StringTable in db_load.cpp: the
 // 16-byte record, its name, its value tokens and their strings stream at the
 // current position of block 4 in the retail order and alignment. The disk
 // array holds 4-byte string tokens and the native one 8-byte pointers, so the
 // native table and its values are converted into zone-lifetime native storage
-// (DB_AllocZoneNative). String bytes stay in block 4. The disk record stays
-// the completed-object identity that later offset tokens name; the alias
-// registry maps it to the native table, so no alias points at disk bytes.
-// Frames hold no destructors, since a production ERR_DROP longjmps out.
+// (DB_AllocZoneNative). String bytes stay in block 4. Frames hold no
+// destructors, since a production ERR_DROP longjmps out.
+namespace db::disk32_load
+{
 namespace
 {
-using db::disk32_load::Drop;
-using db::disk32_load::LoadXString;
-using db::disk32_load::StreamBytes;
-
 constexpr auto kRecordBytes = static_cast<std::uint32_t>(sizeof(disk32::StringTableDisk32));
 constexpr auto kTokenBytes = static_cast<std::uint32_t>(sizeof(disk32::PointerToken));
 
@@ -80,6 +73,7 @@ bool LoadValues(const std::uint8_t *tokens, std::int32_t count, const char **val
     }
     return true;
 }
+} // namespace
 
 // Streams the record at `record` and converts it; *out is the native table.
 // The count checks precede every string read.
@@ -112,65 +106,11 @@ bool LoadStringTable(std::uint8_t *record, StringTable **out)
     return true;
 }
 
-void LoadStringTablePtr(disk32::PointerToken token, StringTable **slot)
-{
-    if (token.isNull())
-        return;
-    if (!token.isInline())
-    {
-        // The 32-bit loader sends every other token, -2 included, to the
-        // alias registry; it must name a completed table in block 4.
-        std::uintptr_t native = 0;
-        const db::relocation::Status status = DB_ResolveCompletedObjectNative(
-            token, DBAliasKind::StringTable, kRecordBytes, &native);
-        if (status != db::relocation::Status::Ok)
-        {
-            Com_Error(ERR_DROP, "Invalid fast-file alias offset: %s", db::relocation::StatusName(status));
-            return;
-        }
-        *slot = reinterpret_cast<StringTable *>(native);
-        return;
-    }
-    std::uint8_t *const record = DB_AllocStreamPos(3);
-    if (!record)
-        return;
-    const DBAliasHandle completed = DB_RegisterPointerSlot(record, DBAliasKind::StringTable);
-    StringTable *table = nullptr;
-    if (!completed || !LoadStringTable(record, &table)
-        || !DB_CompleteObject(completed, DBAliasKind::StringTable, record, kRecordBytes, kRecordBytes, table))
-    {
-        return;
-    }
-    XAssetHeader header;
-    header.stringTable = table;
-    Load_StringTableAsset(&header);
-    if (!header.stringTable)
-    {
-        Drop("Fast-file string table was not registered");
-        return;
-    }
-    *slot = header.stringTable;
-}
-} // namespace
+} // namespace db::disk32_load
 
 void __cdecl DB_LoadStringTablePtrDisk32(bool atStreamStart, StringTable **slot)
 {
-    // Asset headers arrive inside the already-streamed XAsset array; a native
-    // slot is never the 4-byte disk slot at the stream position.
-    if (atStreamStart || !slot)
-    {
-        Drop("Invalid 64-bit fast-file string-table header request");
-        return;
-    }
-    std::uintptr_t raw = 0;
-    std::memcpy(&raw, slot, sizeof(raw));
-    *slot = nullptr;
-    if (raw > UINT32_MAX)
-    {
-        Drop("Fast-file string-table header slot holds no disk32 token");
-        return;
-    }
-    LoadStringTablePtr(disk32::PointerToken{static_cast<std::uint32_t>(raw)}, slot);
+    db::disk32_load::LoadStringTableHeaderSlot(atStreamStart, slot);
 }
 
 #endif // KISAK_ARCH_64BIT

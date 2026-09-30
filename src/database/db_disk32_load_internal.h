@@ -1,7 +1,8 @@
 #pragma once
 
-// Steps shared by the hand-written 64-bit family loaders (db_disk32_load.cpp,
-// db_disk32_stringtable.cpp). Internal to those translation units. See
+// Steps shared by the generated 64-bit family loaders (db_disk32_loaders.h,
+// from db_disk32.schema) and the hand-written parts of custom families
+// (db_disk32_stringtable.cpp). Internal to the family translation units. See
 // docs/design/FASTFILE_LOADER.md.
 
 #include <universal/kisak_abi.h>
