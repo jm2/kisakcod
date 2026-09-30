@@ -71,3 +71,14 @@ inline constexpr std::size_t SYS_CONSOLE_MAX_LINE_LENGTH = 511;
 [[nodiscard]] SysConsoleReadResult KISAK_CDECL Sys_ConsoleTryReadLine(
     char *output,
     std::size_t outputCapacity) noexcept;
+
+#if defined(_WIN32) && defined(KISAK_DEDI_HEADLESS)
+// Interactive console input for the Win32 headless server. When standard input
+// is a console, puts it in the console host's line-editing mode (echo,
+// backspace, history) and reads it on a thread that forwards each finished
+// line through a pipe published as standard input, so Sys_ConsoleTryReadLine
+// returns the lines the user typed and saw. Returns false when standard input
+// is not a console (a pipe, a file, NUL, none), when the reader already runs, or
+// when it cannot start; standard input is then left as it was.
+[[nodiscard]] bool KISAK_CDECL Sys_ConsoleStartLineEditing() noexcept;
+#endif

@@ -80,6 +80,15 @@ if (NOT KISAK_PLATFORM STREQUAL "win32")
         platform-console-sigpipe-default-contracts
         platform-console-sigpipe-ignore-contracts
     )
+else()
+    # Console line editing is the Win32 headless server's (Sys_ConsoleStartLineEditing).
+    target_compile_definitions(kisakcod-platform-console-tests PRIVATE KISAK_DEDI_HEADLESS)
+    target_sources(kisakcod-platform-console-tests PRIVATE ${SRC_DIR}/_platform/win32/sys_thread.cpp)
+    add_test(
+        NAME platform-console-line-editing-contracts
+        COMMAND kisakcod-platform-console-tests --line-editing
+    )
+    list(APPEND _platform_console_runtime_tests platform-console-line-editing-contracts)
 endif()
 set_tests_properties(${_platform_console_runtime_tests} PROPERTIES TIMEOUT 20)
 

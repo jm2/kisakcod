@@ -1024,6 +1024,93 @@ bool TestConsoleInput()
         && TestConsoleUnicodeKeyDrained(input)
         && TestConsolePendingStateContracts(input);
 }
+
+#if defined(KISAK_DEDI_HEADLESS)
+INPUT_RECORD TypedKey(const WORD virtualKey, const wchar_t character)
+{
+    INPUT_RECORD record{};
+    record.EventType = KEY_EVENT;
+    record.Event.KeyEvent.bKeyDown = TRUE;
+    record.Event.KeyEvent.wRepeatCount = 1;
+    record.Event.KeyEvent.wVirtualKeyCode = virtualKey;
+    record.Event.KeyEvent.uChar.UnicodeChar = character;
+    return record;
+}
+
+HANDLE OpenConsoleBuffer(const wchar_t *const name)
+{
+    return CreateFileW(name, GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+}
+
+// Standard input that is not a console (here NUL, as in the CI smoke run)
+// keeps the redirected-input path: nothing starts and nothing is swapped.
+bool TestLineEditingNeedsConsole()
+{
+    const HANDLE nul = OpenConsoleBuffer(L"NUL");
+    return Check(nul != INVALID_HANDLE_VALUE
+            && SetStdHandle(STD_INPUT_HANDLE, nul)
+            && !Sys_ConsoleStartLineEditing()
+            && GetStdHandle(STD_INPUT_HANDLE) == nul,
+        "no line editing without a console");
+}
+
+SysConsoleReadResult WaitForLine(std::array<char, SYS_CONSOLE_MAX_LINE_LENGTH + 1> &line)
+{
+    SysConsoleReadResult read{};
+    for (int attempt = 0; attempt < 1000; ++attempt)
+    {
+        read = Sys_ConsoleTryReadLine(line.data(), line.size());
+        if (read.status != SysConsoleReadStatus::NoData)
+            break;
+        Sleep(10);
+    }
+    return read;
+}
+
+// Keys typed on a real console read back as the line the console showed:
+// "quiz", Backspace, "t", Enter reads "quit". The console host applied the
+// backspace (the raw event path passes it through as a byte) and echoed the
+// edited line. Runs in a process of its own, on a console of its own: the
+// reader keeps waiting on that console until the process exits.
+bool TestConsoleLineEditing()
+{
+    if (!TestLineEditingNeedsConsole())
+        return false;
+    (void)FreeConsole();
+    if (!Check(AllocConsole() != FALSE, "allocate a private console"))
+        return false;
+    const HANDLE input = OpenConsoleBuffer(L"CONIN$");
+    const HANDLE screen = OpenConsoleBuffer(L"CONOUT$");
+    const INPUT_RECORD keys[] = {
+        TypedKey('Q', L'q'), TypedKey('U', L'u'), TypedKey('I', L'i'), TypedKey('Z', L'z'),
+        TypedKey(VK_BACK, L'\b'), TypedKey('T', L't'), TypedKey(VK_RETURN, L'\r'),
+    };
+    const DWORD keyCount = static_cast<DWORD>(sizeof(keys) / sizeof(keys[0]));
+    DWORD typed = 0;
+    if (!Check(input != INVALID_HANDLE_VALUE && screen != INVALID_HANDLE_VALUE
+                && SetStdHandle(STD_INPUT_HANDLE, input)
+                && WriteConsoleInputW(input, keys, keyCount, &typed) && typed == keyCount,
+            "type on the private console")
+        || !Check(Sys_ConsoleStartLineEditing(), "start console line editing")
+        || !Check(!Sys_ConsoleStartLineEditing(), "line editing starts once"))
+    {
+        return false;
+    }
+
+    std::array<char, SYS_CONSOLE_MAX_LINE_LENGTH + 1> line{};
+    const SysConsoleReadResult read = WaitForLine(line);
+    char shown[5]{};
+    DWORD shownLength = 0;
+    return Check(read.status == SysConsoleReadStatus::LineReady
+                && std::string_view(line.data(), read.length) == "quit",
+            "the typed line reads back as edited")
+        && Check(ReadConsoleOutputCharacterA(
+                    screen, shown, static_cast<DWORD>(sizeof(shown)), COORD{0, 0}, &shownLength)
+                && std::string_view(shown, shownLength) == "quit ",
+            "the console shows the edited line");
+}
+#endif
 #else
 int OutputDescriptor(const SysConsoleOutputStream stream)
 {
@@ -1535,6 +1622,15 @@ int main(const int argc, char **const argv)
 {
     if (argc == 2 && std::strcmp(argv[1], "--invalid-eof") == 0)
         return TestInvalidAtEndOfFile() ? 0 : 1;
+#if defined(_WIN32) && defined(KISAK_DEDI_HEADLESS)
+    if (argc == 2 && std::strcmp(argv[1], "--line-editing") == 0)
+    {
+        if (TestConsoleLineEditing())
+            return 0;
+        std::fprintf(stderr, "FAIL: platform console stage: %s\n", checkStage);
+        return 1;
+    }
+#endif
 #if !defined(_WIN32)
     if (argc == 2 && std::strcmp(argv[1], "--sigpipe-default") == 0)
         return TestSigpipeDisposition(SIG_DFL, true) ? 0 : 1;

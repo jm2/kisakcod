@@ -482,6 +482,13 @@ jobs:
           --target KisakCOD-dedi
           --parallel
 
+      - name: Verify binary architecture
+        shell: pwsh
+        run: ./scripts/ci/verify-artifact-arch.ps1 -Expected x86 bin/Release/KisakCOD-dedi.exe
+
+      - name: Assetless smoke run
+        run: python scripts/ci/headless_smoke.py bin/Release/KisakCOD-dedi.exe
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: KisakCOD-windows-x86-headless-Release
