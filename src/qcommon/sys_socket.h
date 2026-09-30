@@ -172,6 +172,15 @@ bool KISAK_CDECL Sys_SocketGetLocalAddress(
     SysSocketHandle handle,
     SysSocketAddress *outAddress);
 
+// Lists this host's IPv4 addresses (port 0) into out[0 .. capacity), without
+// duplicates, and returns how many it wrote (0 when none can be listed or the
+// arguments are null/zero). Retail's NET_GetLocalAddress list, which the
+// engine's LAN rule compares client addresses against: Win32 resolves the
+// host name as retail does; POSIX lists the up interfaces (getifaddrs).
+std::size_t KISAK_CDECL Sys_SocketListLocalIPv4(
+    SysSocketAddress *out,
+    std::size_t capacity);
+
 // Endpoint helpers. Sys_SocketMakeLoopbackAddress builds the IPv4 loopback
 // endpoint for `port`; Sys_SocketMakeAnyAddress builds the wildcard
 // (0.0.0.0) endpoint. Sys_SocketAddressIsEqual compares two endpoints for
