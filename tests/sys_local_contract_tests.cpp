@@ -130,15 +130,15 @@ bool CheckSysInfoRoundTrip()
 bool CheckEventQueueConstants()
 {
     // Sys_QueEvent's ring buffer (win32/win_main.cpp) indexes with
-    // eventHead & MASK_QUED_EVENTS; the mask contract is what makes that
-    // wraparound correct.
+    // eventHead & MASK_QUED_EVENTS; that wraparound is only correct when
+    // masking equals the modulo, i.e. MAX_QUED_EVENTS is a power of two.
     if (MAX_QUED_EVENTS <= 0)
         return false;
     if (MASK_QUED_EVENTS != MAX_QUED_EVENTS - 1)
         return false;
     for (int i = 0; i < MAX_QUED_EVENTS * 2; ++i)
     {
-        if (((i & MASK_QUED_EVENTS) & ~MASK_QUED_EVENTS) != 0)
+        if ((i & MASK_QUED_EVENTS) != i % MAX_QUED_EVENTS)
             return false;
     }
     return true;
