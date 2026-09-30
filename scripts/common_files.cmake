@@ -714,6 +714,8 @@ set(UNIVERSAL
 )
 
 set(PLATFORM_WIN32
+    "${SRC_DIR}/win32/win_benchmark.cpp"
+    "${SRC_DIR}/win32/win_benchmark.h"
     "${SRC_DIR}/win32/win_configure.cpp"
     "${SRC_DIR}/win32/win_configure.h"
     "${SRC_DIR}/win32/win_input.cpp"
@@ -740,6 +742,8 @@ set(PLATFORM_WIN32
 # datagram layer: the datagram surface is the portable qcommon/net_local.cpp on
 # every platform (see docs/design/PLATFORM_POSIX.md, NOW row 13).
 set(PLATFORM_WIN32_DEDI_HEADLESS
+    "${SRC_DIR}/win32/win_benchmark.cpp"
+    "${SRC_DIR}/win32/win_benchmark.h"
     "${SRC_DIR}/win32/win_configure.cpp"
     "${SRC_DIR}/win32/win_configure.h"
     "${SRC_DIR}/win32/win_local.h"

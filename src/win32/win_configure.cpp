@@ -4,8 +4,8 @@
 
 #include <qcommon/qcommon.h>
 
+#include "win_benchmark.h"
 #include "win_local.h"
-#include <universal/timing.h>
 
 void Sys_DetectVideoCard(int descLimit, char* description)
 {
@@ -176,66 +176,6 @@ LABEL_8:
         }
     }
 #endif
-}
-
-long double __cdecl Sys_BenchmarkGHz()
-{
-    uint32_t i; // ecx
-    unsigned __int64 v1; // kr00_8
-#if KISAK_ARCH_ARM64
-    // Nothing reads the loop's results, so MSVC deletes the loop and times two
-    // back-to-back counter reads. The TSC still advances between them; the
-    // 100 ns steady_clock that MSVC ARM64 reads (qcommon/sys_time.h) does not,
-    // so minTime is 0 and configureGHz inf. sys_configureGHz rejects inf, and
-    // Sys_HasInfoChanged's message box then blocks the headless server.
-    // volatile keeps the work, as in posix_main.cpp's BenchmarkGHz.
-    volatile int holdrand;
-    volatile float k;
-#else
-    int holdrand; // [esp+10h] [ebp-68h]
-    float k; // [esp+2Ch] [ebp-4Ch]
-#endif
-    uint64 start; // [esp+30h] [ebp-48h]
-    int priority; // [esp+44h] [ebp-34h]
-    unsigned __int64 minTime; // [esp+48h] [ebp-30h]
-    uint32_t attempt; // [esp+54h] [ebp-24h]
-    float x; // [esp+68h] [ebp-10h]
-    float xa; // [esp+68h] [ebp-10h]
-    float y; // [esp+6Ch] [ebp-Ch]
-    float ya; // [esp+6Ch] [ebp-Ch]
-    HANDLE thread; // [esp+70h] [ebp-8h]
-
-    k = 2.5999999f;
-    thread = GetCurrentThread();
-    priority = GetThreadPriority(thread);
-    SetThreadPriority(thread, 15);
-    minTime = -1;
-    for (attempt = 0; attempt < 0x3E8; ++attempt)
-    {
-        Sleep(0);
-        start = Sys_CycleCounter();
-        holdrand = 0;
-        x = 0.25;
-        y = 0.75;
-        for (i = 0; i < 0x3E8; ++i)
-        {
-            xa = (1.0 - x) * x * k + x;
-            ya = (1.0 - y) * y * k + y;
-            x = (1.0 - xa) * xa * k + xa;
-            y = (1.0 - ya) * ya * k + ya;
-            if ((i & 1) != 0)
-                holdrand = 0x343FD * (0x343FD * (0x343FD * holdrand + 0x269EC3) + 0x269EC3) + 0x269EC3;
-        }
-#if KISAK_ARCH_ARM64
-        const volatile float sink = x + y;
-        (void)sink;
-#endif
-        v1 = Sys_CycleCounter() - start;
-        if (minTime > v1)
-            minTime = v1;
-    }
-    SetThreadPriority(thread, priority);
-    return 0.1010328 / ((double)minTime * msecPerRawTimerTick);
 }
 
 void Sys_SetAutoConfigureGHz(SysInfo* sysInfo)
