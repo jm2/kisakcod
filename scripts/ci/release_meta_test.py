@@ -178,10 +178,10 @@ class CliTest(unittest.TestCase):
                      "Requires: glibc 2.39.", "GNU GPL v3"):
             self.assertIn(text, words)
 
-
     def test_windows_readme_points_at_the_pdb(self):
         legs, _ = rm.build_matrix(manifest_with({("windows-amd64", "headless-server"): "links"}), "1.2.3")
         run = cli("readme", "--leg", json.dumps(legs[0]), "--version", "1.2.3", "--commit", SHA_A)
+        self.assertEqual(run.returncode, 0, run.stderr)
         words = " ".join(run.stdout.split())
         for text in ("windows-x64 headless dedicated server (preview)",
                      "kisakcod-1.2.3-windows-x64-headless-preview-debugsymbols.zip",
