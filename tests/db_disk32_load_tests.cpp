@@ -1,66 +1,22 @@
 // db_disk32_load_tests.cpp: the 64-bit RawFile loader (NOW row 12) on
-// hand-built disk32 zone images. The production stream code (db_stream.cpp,
-// db_stream_load.cpp, db_relocation.cpp) runs against a synthetic zone; only
-// the inflater (DB_LoadXFileData) and the asset pool (Load_RawFileAsset) are
-// replaced. Retail data never enters tests (docs/ROADMAP.md).
+// hand-built disk32 zone images (disk32_fixture.hpp). Beyond the fixture's
+// seams, only the asset pool (Load_RawFileAsset) is replaced.
 
-#include <database/database.h>
+#include "disk32_fixture.hpp"
+
 #include <database/db_disk32_load.h>
 #include <database/db_disk32_mirrors.h>
-#include <database/db_load_legacy_bridge.h>
 
-#include <cstdarg>
-#include <cstdio>
-#include <algorithm>
 #include <cstring>
-#include <string_view>
-#include <vector>
 
 namespace
 {
-int g_failures = 0;
+using namespace disk32_test;
 
-void Expect(bool ok, const char *what, const char *detail = "")
+RawFile g_pool[4]; // what Load_RawFileAsset published
+
+struct File : FileBuilder<File>
 {
-    if (!ok)
-    {
-        std::fprintf(stderr, "FAIL: %s %s\n", what, detail);
-        ++g_failures;
-    }
-}
-
-// A production ERR_DROP longjmps and never returns; this seam throws instead.
-struct Drop
-{
-    char message[256];
-};
-
-std::vector<std::uint8_t> g_file; // the inflated fast-file bytes
-std::size_t g_read = 0;
-RawFile g_pool[4];                // what Load_RawFileAsset published
-int g_published = 0;
-
-constexpr std::uint32_t kInline = disk32::kInline;
-
-constexpr std::uint32_t VirtualOffset(std::uint32_t offset)
-{
-    return ((4u << 28) | offset) + 1;
-}
-
-struct File
-{
-    File &Word(std::uint32_t value)
-    {
-        for (int shift = 0; shift < 32; shift += 8)
-            g_file.push_back(static_cast<std::uint8_t>(value >> shift));
-        return *this;
-    }
-    File &Text(std::string_view text)
-    {
-        g_file.insert(g_file.end(), text.begin(), text.end());
-        g_file.push_back(0);
-        return *this;
-    }
     File &Record(std::uint32_t name, std::int32_t len, std::uint32_t buffer)
     {
         return Word(name).Word(static_cast<std::uint32_t>(len)).Word(buffer);
@@ -68,36 +24,11 @@ struct File
 };
 
 // A zone with the two blocks a RawFile touches: temp (0) and virtual (4).
-struct Zone
-{
-    alignas(16) std::uint8_t temp[64]{};
-    alignas(16) std::uint8_t virt[96]{};
-    XZoneMemory memory{};
+using Zone = disk32_test::Zone<64, 96>;
 
-    Zone()
-    {
-        g_file.clear();
-        g_read = 0;
-        g_published = 0;
-        memory.blocks[0] = {temp, sizeof(temp)};
-        memory.blocks[4] = {virt, sizeof(virt)};
-        DB_InitStreams(&memory);
-        DB_PushStreamPos(4); // DB_LoadXFile walks the asset array in block 4
-    }
-    bool Holds(const char *text) const
-    {
-        const auto *bytes = reinterpret_cast<const std::uint8_t *>(text);
-        return bytes >= virt && bytes + std::string_view(text).size() < virt + sizeof(virt);
-    }
-};
-
-// Load_XAssetHeader's 64-bit call: the header slot holds the disk32 token.
 RawFile *Load(std::uintptr_t slotValue)
 {
-    RawFile *slot = nullptr;
-    std::memcpy(&slot, &slotValue, sizeof(slot));
-    DB_LoadRawFilePtrDisk32(false, &slot);
-    return slot;
+    return LoadHeader(DB_LoadRawFilePtrDisk32, slotValue);
 }
 
 void TestInlineRawFile()
@@ -173,44 +104,10 @@ void TestMalformedFailsClosed()
     {
         Zone zone;
         test.build();
-        Drop drop{"(none)"};
-        try
-        {
-            Load(test.slot);
-        }
-        catch (const Drop &caught)
-        {
-            drop = caught;
-        }
-        Expect(std::strstr(drop.message, test.error) && g_published == 0 && g_read <= g_file.size(),
-               test.what, drop.message);
+        ExpectDrop(test.what, test.error, [&] { Load(test.slot); });
     }
 }
 } // namespace
-
-// Engine seams: the error handler, the inflater and the asset pool.
-void __cdecl Com_Error(errorParm_t code, const char *fmt, ...)
-{
-    Drop drop{};
-    va_list args;
-    va_start(args, fmt);
-    // Flawfinder: ignore -- the engine's literal formats into a bounded, terminated buffer.
-    std::vsnprintf(drop.message, sizeof(drop.message), fmt, args);
-    va_end(args);
-    if (code != ERR_DROP)
-        std::snprintf(drop.message, sizeof(drop.message), "unexpected error code %d", code);
-    throw drop;
-}
-
-void __cdecl DB_LoadXFileData(std::uint8_t *pos, std::uint32_t size)
-{
-    if (!pos || !size || size > g_file.size() - g_read)
-        Com_Error(ERR_DROP, "Fast-file ended unexpectedly");
-    std::copy_n(g_file.data() + g_read, size, pos);
-    g_read += size;
-    if (DB_MarkStreamRangeMaterialized(pos, size) != db::relocation::Status::Ok)
-        Com_Error(ERR_DROP, "Cannot record fast-file output range");
-}
 
 void __cdecl Load_RawFileAsset(XAssetHeader *header)
 {
@@ -221,26 +118,7 @@ void __cdecl Load_RawFileAsset(XAssetHeader *header)
     header->rawfile = &entry;
 }
 
-// Script-string interning is not reached by RawFile; db_stream_load.cpp links it.
-db::load_legacy_bridge::LegacyBridgeStatus
-db::load_legacy_bridge::DbLoadLegacyBridge::TryInternUser4StringOfSize(
-    const char *, std::uint32_t, LegacyBridgeStringId *) noexcept
-{
-    return LegacyBridgeStatus::InvalidState;
-}
-
 int main()
 {
-    for (void (*test)() : {TestInlineRawFile, TestSharedInlineAndOffsets, TestMalformedFailsClosed})
-    {
-        try
-        {
-            test();
-        }
-        catch (const Drop &drop)
-        {
-            Expect(false, "a well-formed image raised ERR_DROP:", drop.message);
-        }
-    }
-    return g_failures ? 1 : 0;
+    return Run({TestInlineRawFile, TestSharedInlineAndOffsets, TestMalformedFailsClosed});
 }

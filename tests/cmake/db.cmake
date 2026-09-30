@@ -794,34 +794,39 @@ kisakcod_ilp32(kisakcod-db-zone-script-string-ownership-tests
 kisakcod_ilp32(kisakcod-db-zone-stream-ownership-tests
     database-zone-stream-ownership-runtime-contracts)
 
-# 64-bit RawFile and StringTable loads from hand-built disk32 zone images (NOW
-# row 12): the generated mirrors, the loader and the production stream code,
-# with only the inflater, the asset pool and the zone's native storage
-# replaced. Linux and clang only, like the dvar test in misc.cmake: database.h
-# is engine code, and the engine compiles off Windows only with clang and
-# -fms-extensions (PLATFORM_POSIX.md).
+# 64-bit family loads from hand-built disk32 zone images (NOW row 12): the
+# generated loaders, the family's TU and the production stream code, with only
+# the seams in disk32_fixture.cpp and the test's own pool call (and native
+# storage, where the family uses it) replaced. Linux and clang only, like the
+# dvar test in misc.cmake: database.h is engine code, and the engine compiles
+# off Windows only with clang and -fms-extensions (PLATFORM_POSIX.md).
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    add_executable(kisakcod-db-disk32-load-tests
-        db_disk32_load_tests.cpp
-        ${SRC_DIR}/database/db_disk32_load.cpp
-        ${SRC_DIR}/database/db_stream_load.cpp
-        ${SRC_DIR}/database/db_stream.cpp
-        ${SRC_DIR}/database/db_relocation.cpp
-        ${SRC_DIR}/database/db_zone_stream_ownership.cpp
-        ${SRC_DIR}/database/db_zone_load_context.cpp
-    )
-    kisakcod_use_disk32_mirrors(kisakcod-db-disk32-load-tests)
-    target_include_directories(kisakcod-db-disk32-load-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
-    target_compile_features(kisakcod-db-disk32-load-tests PRIVATE cxx_std_20)
-    target_compile_definitions(kisakcod-db-disk32-load-tests PRIVATE KISAK_MP)
-    # No -Wpedantic: the engine headers spell MSVC extensions.
-    target_compile_options(kisakcod-db-disk32-load-tests PRIVATE -fms-extensions -Wall -Wextra -Werror)
-    set_target_properties(kisakcod-db-disk32-load-tests PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    add_test(NAME database-disk32-rawfile-load COMMAND kisakcod-db-disk32-load-tests)
-    set_tests_properties(database-disk32-rawfile-load PROPERTIES TIMEOUT 20)
+    function(kisakcod_disk32_load_test FAMILY TEST_SOURCE LOADER_SOURCE)
+        set(_target kisakcod-db-disk32-${FAMILY}-tests)
+        add_executable(${_target}
+            ${TEST_SOURCE}
+            disk32_fixture.cpp
+            ${SRC_DIR}/database/${LOADER_SOURCE}
+            ${SRC_DIR}/database/db_stream_load.cpp
+            ${SRC_DIR}/database/db_stream.cpp
+            ${SRC_DIR}/database/db_relocation.cpp
+            ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+            ${SRC_DIR}/database/db_zone_load_context.cpp
+        )
+        kisakcod_use_disk32_mirrors(${_target})
+        target_include_directories(${_target} SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+        target_compile_features(${_target} PRIVATE cxx_std_20)
+        target_compile_definitions(${_target} PRIVATE KISAK_MP)
+        # No -Wpedantic: the engine headers spell MSVC extensions.
+        target_compile_options(${_target} PRIVATE -fms-extensions -Wall -Wextra -Werror)
+        set_target_properties(${_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        add_test(NAME database-disk32-${FAMILY}-load COMMAND ${_target})
+        set_tests_properties(database-disk32-${FAMILY}-load PROPERTIES TIMEOUT 20)
+    endfunction()
+
+    kisakcod_disk32_load_test(rawfile db_disk32_load_tests.cpp db_disk32_load.cpp)
+    kisakcod_disk32_load_test(stringtable db_disk32_stringtable_tests.cpp db_disk32_stringtable.cpp)
 
     # The 64-bit XAssetList/XAsset envelope over a synthetic zone, dispatching
     # to the RawFile loader above; Load_XAsset's family switch is replaced.
@@ -848,24 +853,4 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     )
     add_test(NAME database-disk32-envelope-load COMMAND kisakcod-db-disk32-envelope-tests)
     set_tests_properties(database-disk32-envelope-load PROPERTIES TIMEOUT 20)
-
-    add_executable(kisakcod-db-disk32-stringtable-tests
-        db_disk32_stringtable_tests.cpp
-        ${SRC_DIR}/database/db_disk32_stringtable.cpp
-        ${SRC_DIR}/database/db_stream_load.cpp
-        ${SRC_DIR}/database/db_stream.cpp
-        ${SRC_DIR}/database/db_relocation.cpp
-        ${SRC_DIR}/database/db_zone_stream_ownership.cpp
-        ${SRC_DIR}/database/db_zone_load_context.cpp
-    )
-    kisakcod_use_disk32_mirrors(kisakcod-db-disk32-stringtable-tests)
-    target_include_directories(kisakcod-db-disk32-stringtable-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
-    target_compile_features(kisakcod-db-disk32-stringtable-tests PRIVATE cxx_std_20)
-    target_compile_definitions(kisakcod-db-disk32-stringtable-tests PRIVATE KISAK_MP)
-    target_compile_options(kisakcod-db-disk32-stringtable-tests PRIVATE -fms-extensions -Wall -Wextra -Werror)
-    set_target_properties(kisakcod-db-disk32-stringtable-tests PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    add_test(NAME database-disk32-stringtable-load COMMAND kisakcod-db-disk32-stringtable-tests)
-    set_tests_properties(database-disk32-stringtable-load PROPERTIES TIMEOUT 20)
 endif()
