@@ -31,40 +31,69 @@ using db::disk32_load::StreamBytes;
 constexpr auto kRecordBytes = static_cast<std::uint32_t>(sizeof(disk32::StringTableDisk32));
 constexpr auto kTokenBytes = static_cast<std::uint32_t>(sizeof(disk32::PointerToken));
 
+// columnCount * rowCount, checked. As in the 32-bit loader, any non-null
+// values token means the tokens follow inline, and they must be present
+// exactly when the table has cells.
+bool CheckedValueCount(const disk32::StringTableDisk32 &disk, std::int32_t *count)
+{
+    if (!db::validation::CheckedCountProduct(disk.rowCount, disk.columnCount, count))
+        return Drop("Invalid fast-file string-table size");
+    if ((*count != 0) == disk.values.token.isNull())
+        return Drop("Invalid fast-file string-table values");
+    return true;
+}
+
+bool LoadName(disk32::Ptr32<const char> field, const char **name)
+{
+    if (!LoadXString(field, name))
+        return false;
+    if (!*name || !**name)
+        return Drop("Fast-file string table has no name"); // the asset pool hashes it
+    return true;
+}
+
+// Streams the 4-aligned array of count disk32 string tokens.
+bool StreamValueTokens(std::int32_t count, const std::uint8_t **tokens)
+{
+    *tokens = nullptr;
+    if (!count)
+        return true;
+    std::int32_t tokenBytes = 0;
+    if (!db::validation::CheckedArrayBytes(count, kTokenBytes, &tokenBytes))
+        return Drop("Invalid fast-file string-table size");
+    std::uint8_t *const at = DB_AllocStreamPos(3);
+    if (!StreamBytes(at, tokenBytes))
+        return false;
+    *tokens = at;
+    return true;
+}
+
+// Resolves each disk32 token into its native 8-byte pointer.
+bool LoadValues(const std::uint8_t *tokens, std::int32_t count, const char **values)
+{
+    for (std::int32_t index = 0; index < count; ++index)
+    {
+        disk32::Ptr32<const char> token{};
+        std::memcpy(&token, tokens + static_cast<std::size_t>(index) * kTokenBytes, sizeof(token));
+        if (!LoadXString(token, &values[index]))
+            return false;
+    }
+    return true;
+}
+
 // Streams the record at `record` and converts it; *out is the native table.
+// The count checks precede every string read.
 bool LoadStringTable(std::uint8_t *record, StringTable **out)
 {
     disk32::StringTableDisk32 disk{};
     if (!StreamBytes(record, static_cast<std::int32_t>(kRecordBytes)))
         return false;
     std::memcpy(&disk, record, sizeof(disk));
-
-    // As in the 32-bit loader, any non-null values token means the tokens
-    // follow inline, and they must be present exactly when the table has
-    // cells. Both checks precede every other read.
     std::int32_t count = 0;
-    if (!db::validation::CheckedCountProduct(disk.rowCount, disk.columnCount, &count))
-        return Drop("Invalid fast-file string-table size");
-    if ((count != 0) == disk.values.token.isNull())
-        return Drop("Invalid fast-file string-table values");
-
     const char *name = nullptr;
-    if (!LoadXString(disk.name, &name))
-        return false;
-    if (!name || !*name)
-        return Drop("Fast-file string table has no name"); // the asset pool hashes it
-
     const std::uint8_t *tokens = nullptr;
-    if (count)
-    {
-        std::int32_t tokenBytes = 0;
-        if (!db::validation::CheckedArrayBytes(count, kTokenBytes, &tokenBytes))
-            return Drop("Invalid fast-file string-table size");
-        std::uint8_t *const at = DB_AllocStreamPos(3);
-        if (!StreamBytes(at, tokenBytes))
-            return false;
-        tokens = at;
-    }
+    if (!CheckedValueCount(disk, &count) || !LoadName(disk.name, &name) || !StreamValueTokens(count, &tokens))
+        return false;
 
     // count <= INT32_MAX / 4, so this cannot overflow a 64-bit size_t.
     const std::size_t nativeBytes = sizeof(StringTable) + static_cast<std::size_t>(count) * sizeof(const char *);
@@ -73,13 +102,8 @@ bool LoadStringTable(std::uint8_t *record, StringTable **out)
         return Drop("Fast-file native storage is exhausted");
     auto *const table = reinterpret_cast<StringTable *>(storage);
     auto *const values = count ? reinterpret_cast<const char **>(storage + sizeof(StringTable)) : nullptr;
-    for (std::int32_t index = 0; index < count; ++index)
-    {
-        disk32::Ptr32<const char> token{};
-        std::memcpy(&token, tokens + static_cast<std::size_t>(index) * kTokenBytes, sizeof(token));
-        if (!LoadXString(token, &values[index]))
-            return false;
-    }
+    if (!LoadValues(tokens, count, values))
+        return false;
     table->name = name;
     table->columnCount = disk.columnCount;
     table->rowCount = disk.rowCount;

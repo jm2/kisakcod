@@ -9,6 +9,11 @@ namespace db::relocation
 {
 namespace
 {
+bool KnownKind(AliasKind kind)
+{
+    return kind != AliasKind::Invalid && kind < AliasKind::Count;
+}
+
 bool SpanContains(const BlockView &block, std::uintptr_t address, std::uint32_t size)
 {
     if (!block.base || address < block.base
@@ -687,17 +692,10 @@ Status AliasRegistry::Publish(
     return Status::Ok;
 }
 
-Status AliasRegistry::FindPublished(
+Status AliasRegistry::DecodeSlotToken(
     disk32::PointerToken token,
-    AliasKind expectedKind,
-    std::uint32_t expectedMetadata,
-    const Record **record) const
+    std::uint32_t *offset) const
 {
-    *record = nullptr;
-    if (expectedKind == AliasKind::Invalid || expectedKind >= AliasKind::Count)
-        return Status::InvalidArgument;
-    if (!contextValid_)
-        return Status::InvalidContext;
     if (!token.isOffset())
         return Status::InvalidToken;
 
@@ -731,15 +729,35 @@ Status AliasRegistry::FindPublished(
     if (slotAddress & (alignof(std::uint32_t) - 1))
         return Status::MisalignedSlot;
 
+    *offset = decoded.offset;
+    return Status::Ok;
+}
+
+Status AliasRegistry::FindPublished(
+    disk32::PointerToken token,
+    AliasKind expectedKind,
+    std::uint32_t expectedMetadata,
+    const Record **record) const
+{
+    *record = nullptr;
+    if (!KnownKind(expectedKind))
+        return Status::InvalidArgument;
+    if (!contextValid_)
+        return Status::InvalidContext;
+    std::uint32_t offset = 0;
+    const Status decoded = DecodeSlotToken(token, &offset);
+    if (decoded != Status::Ok)
+        return decoded;
+
     const auto found = std::lower_bound(
         records_.begin(),
         records_.end(),
-        decoded.offset,
-        [](const Record &record, std::uint32_t offset)
+        offset,
+        [](const Record &candidate, std::uint32_t wanted)
         {
-            return record.offset < offset;
+            return candidate.offset < wanted;
         });
-    if (found == records_.end() || found->offset != decoded.offset)
+    if (found == records_.end() || found->offset != offset)
         return Status::UnregisteredSlot;
     if (!found->published)
         return Status::PendingSlot;
