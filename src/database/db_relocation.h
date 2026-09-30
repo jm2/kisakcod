@@ -390,12 +390,14 @@ private:
         std::uint32_t offset;
         AliasKind kind;
         std::uintptr_t resolvedAddress;
+        // cppcheck-suppress unusedStructMember -- Publish writes it and ResolveNative reads it.
         std::uintptr_t nativeAddress;
         std::uint32_t metadata;
         bool published;
     };
 
     Status FindSlot(std::uintptr_t slotAddress, std::uint32_t *offset) const;
+    Status DecodeSlotToken(disk32::PointerToken token, std::uint32_t *offset) const;
     Status FindPublished(
         disk32::PointerToken token,
         AliasKind expectedKind,

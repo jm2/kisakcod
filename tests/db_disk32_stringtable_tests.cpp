@@ -113,6 +113,15 @@ StringTable *Load(std::uintptr_t slotValue)
     return slot;
 }
 
+// TestInlineTable's four values: each points at its string in block 4.
+void ExpectInlineValues(const Zone &zone, const char *const *values)
+{
+    const char *const expected[] = {"a", "b", "c", "d"};
+    for (int i = 0; i < 4; ++i)
+        Expect(values[i] == zone.At(48 + 2 * i) && !std::strcmp(values[i], expected[i]),
+               "each value points at its inline string in block 4");
+}
+
 void TestInlineTable()
 {
     Zone zone;
@@ -129,16 +138,38 @@ void TestInlineTable()
     Expect(table->columnCount == 2 && table->rowCount == 2, "counts convert from the mirror");
     Expect(InArena(table->values) && g_arenaUsed == sizeof(StringTable) + 4 * sizeof(const char *),
            "the 8-byte value pointers live in native storage above 4 GiB");
-    if (!InArena(table->values))
-        return;
-    const char *const expected[] = {"a", "b", "c", "d"};
-    for (int i = 0; i < 4; ++i)
-        Expect(table->values[i] == zone.At(48 + 2 * i) && !std::strcmp(table->values[i], expected[i]),
-               "each value points at its inline string in block 4");
+    if (InArena(table->values))
+        ExpectInlineValues(zone, table->values);
     Expect(!std::memcmp(zone.virt, g_file.data(), 16) && !std::memcmp(zone.virt + 32, g_file.data() + 29, 16),
            "the record and the token array stay at their retail offsets");
     Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 56,
            "every disk byte is consumed and block 4 advances by the retail extent");
+}
+
+// An alias token names the first table's record: it must resolve to that
+// table's native twin, never to the disk32 bytes or the pool entry.
+void ExpectAliasOf(const StringTable *first)
+{
+    const StringTable *const alias = Load(VirtualOffset(0));
+    Expect(InArena(alias) && alias != first && g_published == 1,
+           "an alias token resolves to the native table, above 4 GiB, and publishes nothing");
+    if (InArena(alias))
+        Expect(alias->name == first->name && alias->values == first->values
+                   && alias->rowCount == 3 && alias->columnCount == 1,
+               "the aliased native table holds the converted fields");
+}
+
+void ExpectSecondTable(const Zone &zone, const StringTable *first)
+{
+    const StringTable *const second = Load(kInline);
+    Expect(second == &g_pool[1], "the second table publishes the second pool entry");
+    if (second != &g_pool[1] || !InArena(second->values))
+        return;
+    Expect(second->name == first->values[0] && second->values[0] == first->name,
+           "name and value offset tokens resolve to strings of the first table");
+    Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 64,
+           "the second table streams after the first");
+    Expect(!Load(0) && g_published == 2, "a null token loads nothing");
 }
 
 void TestOffsetsAndAlias()
@@ -157,24 +188,8 @@ void TestOffsetsAndAlias()
     Expect(first->values[0] == zone.At(40) && first->values[2] == zone.At(42),
            "inline values point at their strings");
     Expect(first->values[1] == first->name, "a value offset token resolves to the earlier name");
-
-    const StringTable *const alias = Load(VirtualOffset(0));
-    Expect(InArena(alias) && alias != first && g_published == 1,
-           "an alias token resolves to the native table, above 4 GiB, and publishes nothing");
-    if (InArena(alias))
-        Expect(alias->name == first->name && alias->values == first->values
-                   && alias->rowCount == 3 && alias->columnCount == 1,
-               "the aliased native table holds the converted fields");
-
-    const StringTable *const second = Load(kInline);
-    Expect(second == &g_pool[1], "the second table publishes the second pool entry");
-    if (second != &g_pool[1] || !InArena(second->values))
-        return;
-    Expect(second->name == first->values[0] && second->values[0] == first->name,
-           "name and value offset tokens resolve to strings of the first table");
-    Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 64,
-           "the second table streams after the first");
-    Expect(!Load(0) && g_published == 2, "a null token loads nothing");
+    ExpectAliasOf(first);
+    ExpectSecondTable(zone, first);
 }
 
 void TestEmptyTables()
