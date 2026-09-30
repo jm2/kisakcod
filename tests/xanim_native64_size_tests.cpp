@@ -74,8 +74,8 @@ void DObjDumpInfo(const DObj_s *)
 
 char *__cdecl va(const char *, ...)
 {
-    static char empty[1];
-    return empty;
+    std::fprintf(stderr, "unexpected va\n");
+    std::exit(4);
 }
 
 // ---------------------------------------------------------------------------

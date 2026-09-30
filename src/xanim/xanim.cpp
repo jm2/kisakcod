@@ -151,7 +151,7 @@ XAnimParts *__cdecl XAnimClone(XAnimParts *fromParts, void *(__cdecl *Alloc)(int
     __int16 notifyInfoIndex; // [esp+18h] [ebp-8h]
     uint16_t *boneNames; // [esp+1Ch] [ebp-4h]
 
-    toParts = (XAnimParts *)Alloc(sizeof(XAnimParts)); // retail: 88, the ILP32 size
+    toParts = static_cast<XAnimParts *>(Alloc(sizeof(XAnimParts))); // retail: 88, the ILP32 size
     qmemcpy(toParts, fromParts, sizeof(XAnimParts));
     boneNames = toParts->names;
     size = toParts->boneCount[9];
