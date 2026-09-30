@@ -201,11 +201,12 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     start = time.time()
     tracy = fetch_tracy(args.out)
-    # The disk32 mirrors 64-bit TUs include, generated as the CMake build does.
+    # The disk32 mirrors and loaders 64-bit TUs include, generated as the CMake build does.
     global GENERATED
     GENERATED = args.out.resolve() / "generated"
     run([sys.executable, "scripts/gen_disk32.py", "src/database/db_disk32.schema",
-         str(GENERATED / "database/db_disk32_mirrors.h")], check=True)
+         str(GENERATED / "database/db_disk32_mirrors.h"), str(GENERATED / "database/db_disk32_loaders.h")],
+        check=True)
     lists = tu_lists()
     result = {"schema": 1, "commit": os.environ.get("GITHUB_SHA") or run(["git", "rev-parse", "HEAD"]).stdout.strip(),
               "targets": {}}

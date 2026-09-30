@@ -53,8 +53,15 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    `scripts/gen_disk32.py` checks it against the ILP32 rules, and CMake runs it at build time
    for 64-bit targets and the Linux loader tests only, so Windows x86 needs no Python. Generated
    code is not committed ([AGENTS.md](../../AGENTS.md) rule 8). It emits the mirrors with their
-   `ONDISK_*` asserts plus `RUNTIME_*` asserts on the native structs. The 64-bit loader bodies
-   stay hand-written (`db_disk32_load.cpp`) until the wave-1 families show their shared shape.
+   `ONDISK_*` asserts plus `RUNTIME_*` asserts on the native structs, and `db_disk32_loaders.h`.
+   A record's `asset` line gives its family's loader facts: the `XAssetHeader` member, the pool
+   call, the alias kind and protocol, the name field and a noun for errors. From them the
+   generator emits the header-slot entry and the pointer step. `inserted` streams the record
+   into the temp block for the pool to copy. `completed` keeps the block-4 record as the alias
+   identity and resolves aliases to its native twin. For a flat family it also emits the record
+   body from the field kinds: scalars, `bool` as `!= 0`, xstrings, and terminated byte arrays
+   with a checked count. A `body=custom` family hand-writes only the body, such as StringTable's
+   value array. Each family's TU forwards `DB_Load<Family>PtrDisk32` to the generated entry.
 3. **Relocation map.** Every materialized record registers `(block, disk offset, disk stride) →
    (native base, native stride)`. Offset tokens resolve through this map, including interior
    pointers into arrays and to named fields, so no pointer points into raw stream bytes. A
