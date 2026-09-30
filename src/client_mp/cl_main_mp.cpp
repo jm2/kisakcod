@@ -617,7 +617,7 @@ void __cdecl CL_RequestAuthorization(netsrc_t localClientNum)
     //if (!cls.authorizeServer.port)
     //{
     //    Com_Printf(14, "Resolving %s\n", com_authServerName->current.string);
-    //    if (!NET_StringToAdr((char *)com_authServerName->current.integer, &cls.authorizeServer))
+    //    if (!NET_StringToAdr((char *)com_authServerName->current.string, &cls.authorizeServer))
     //    {
     //        Com_Printf(14, "Couldn't resolve address\n");
     //        return;
@@ -2071,7 +2071,7 @@ void __cdecl CL_WWWDownload()
         else if (ret == DL_DONE)
         {
             cls.download = 0;
-            FS_BuildOSPath((char*)fs_homepath->current.integer, cls.originalDownloadName, (char*)"", to_ospath);
+            FS_BuildOSPath((char*)fs_homepath->current.string, cls.originalDownloadName, (char*)"", to_ospath);
             to_ospath[&to_ospath[strlen(to_ospath) + 1] - &to_ospath[1] - 1] = 0;
             if (rename(cls.downloadTempName, to_ospath))
             {
@@ -3469,7 +3469,7 @@ void __cdecl Com_WriteLocalizedSoundAliasFiles()
     int32_t fileCount; // [esp+224h] [ebp-4h] BYREF
 
     FS_BuildOSPath(
-        (char*)fs_homepath->current.integer,
+        (char*)fs_homepath->current.string,
         (char*)"../source_data/string_resources/subtitle.st",
         (char*)"",
         stringEdExternalFileName);
@@ -3480,7 +3480,7 @@ void __cdecl Com_WriteLocalizedSoundAliasFiles()
     if (f)
     {
         fclose(f);
-        FS_BuildOSPath((char*)fs_basepath->current.integer, fs_gamedir, (char*)"soundaliases/subtitle.st", stringEdFileName);
+        FS_BuildOSPath((char*)fs_basepath->current.string, fs_gamedir, (char*)"soundaliases/subtitle.st", stringEdFileName);
         FS_CopyFile(stringEdExternalFileName, stringEdFileName);
         if (FS_FileExists((char*)"soundaliases/subtitle.st"))
         {

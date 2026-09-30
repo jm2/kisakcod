@@ -9,8 +9,9 @@ option ( TRACY_ONLY_LOCALHOST "" ON )
 FetchContent_Declare (
 	tracy
 	GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-	GIT_TAG v0.12.2
-	GIT_SHALLOW TRUE
+	# v0.12.2, pinned by commit because a tag can move. A commit cannot be
+	# cloned shallow, so there is no GIT_SHALLOW.
+	GIT_TAG c556831ddc6fe26d2fce01c14c97205a9dad46d5
 	GIT_PROGRESS TRUE
 )
 FetchContent_MakeAvailable ( tracy )

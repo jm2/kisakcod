@@ -10,7 +10,7 @@
 #include <qcommon/mem_track.h>
 
 #include <xanim/xmodel.h>
-#include <win32/win_net.h>
+#include <qcommon/net_local.h>
 #include <qcommon/threads.h>
 #include <qcommon/com_bsp.h>
 #include <gfx_d3d/r_init.h>
@@ -48,6 +48,49 @@
 #include <game/g_bsp.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <cgame/cg_local.h>
+#endif
+
+// KisakCOD ABI port: the zone-reorder tool (DB_BeginReorderZone and
+// DB_EndReorderZone) reads and writes its CSV with the Win32 file API. The
+// Win32 arm keeps the original CreateFileA arguments; other targets use the
+// portable FS_File seam.
+#include <qcommon/com_fileaccess.h>
+
+#if defined(_WIN32)
+typedef HANDLE DBReorderFile;
+#define DB_REORDER_FILE_INVALID INVALID_HANDLE_VALUE
+static DBReorderFile DB_OpenReorderCsvRead(const char *path) { return CreateFileA(path, 0x80000000, 0, 0, 3u, 0, 0); }
+static DBReorderFile DB_OpenReorderCsvWrite(const char *path) { return CreateFileA(path, 0x40000000u, 0, 0, 2u, 0, 0); }
+static void DB_CloseReorderCsv(DBReorderFile file) { CloseHandle(file); }
+static uint32_t DB_ReorderCsvSize(DBReorderFile file) { return GetFileSize(file, 0); }
+static uint32_t DB_ReadReorderCsv(DBReorderFile file, void *data, uint32_t bytes)
+{
+    DWORD read = 0;
+    return ReadFile(file, data, bytes, &read, 0) ? read : 0;
+}
+static void DB_WriteReorderCsv(DBReorderFile file, const void *data, uint32_t bytes)
+{
+    DWORD written;
+    WriteFile(file, data, bytes, &written, 0);
+}
+static void DB_DeleteReorderBackup(const char *path) { DeleteFileA(path); }
+#else
+typedef FILE *DBReorderFile;
+#define DB_REORDER_FILE_INVALID nullptr
+static DBReorderFile DB_OpenReorderCsvRead(const char *path) { return FS_FileOpenReadBinary(path); }
+static DBReorderFile DB_OpenReorderCsvWrite(const char *path) { return FS_FileOpenWriteBinary(path); }
+static void DB_CloseReorderCsv(DBReorderFile file) { FS_FileClose(file); }
+static uint32_t DB_ReorderCsvSize(DBReorderFile file) { return (uint32_t)FS_FileGetFileSize(file); }
+static uint32_t DB_ReadReorderCsv(DBReorderFile file, void *data, uint32_t bytes) { return FS_FileRead(data, bytes, file); }
+static void DB_WriteReorderCsv(DBReorderFile file, const void *data, uint32_t bytes) { FS_FileWrite(data, bytes, file); }
+static void DB_DeleteReorderBackup(const char *path) { remove(path); }
+#endif
+
+// Fast-file OS paths: the engine's '\\' on Windows, '/' elsewhere (KisakCOD port).
+#ifdef _WIN32
+#define DB_PATH_SEP "\\"
+#else
+#define DB_PATH_SEP "/"
 #endif
 
 GfxWorld s_world;
@@ -812,13 +855,6 @@ static const char *DB_GetFastFileBasePath()
     return Sys_DefaultInstallPath();
 }
 
-// Buffered overlapped reads avoid the sector-alignment contract imposed by
-// unbuffered I/O.  The fast-file ring is only naturally word-aligned;
-// sequential-scan caching is the safe equivalent until the file adapter owns
-// an explicitly aligned allocation.
-static constexpr uint32_t DB_FAST_FILE_ASYNC_FLAGS =
-    FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN;
-
 void __cdecl DB_BuildOSPath_Mod(const char *zoneName, uint32_t size, char *filename)
 {
     const char *string; // [esp-8h] [ebp-8h]
@@ -826,28 +862,21 @@ void __cdecl DB_BuildOSPath_Mod(const char *zoneName, uint32_t size, char *filen
     if (!*fs_gameDirVar->current.string)
         MyAssertHandler(".\\database\\db_registry.cpp", 3204, 0, "%s", "IsUsingMods()");
     string = fs_gameDirVar->current.string;
-    Com_sprintf(filename, size, "%s\\%s\\%s.ff", DB_GetFastFileBasePath(), string, zoneName);
+    Com_sprintf(filename, size, "%s" DB_PATH_SEP "%s" DB_PATH_SEP "%s.ff", DB_GetFastFileBasePath(), string, zoneName);
 }
 
 bool __cdecl DB_ModFileExists()
 {
     char filename[256]; // [esp+0h] [ebp-108h] BYREF
-    void *zoneFile; // [esp+104h] [ebp-4h]
+    SysFileHandle zoneFile; // [esp+104h] [ebp-4h]
 
     if (!*fs_gameDirVar->current.string)
         return 0;
     DB_BuildOSPath_Mod("mod", 0x100u, filename);
-    zoneFile = CreateFileA(
-        filename,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr);
-    if (zoneFile == INVALID_HANDLE_VALUE)
+    zoneFile = Sys_FileOpenRead(filename);
+    if (!zoneFile)
         return 0;
-    CloseHandle(zoneFile);
+    Sys_FileClose(&zoneFile);
     return 1;
 }
 
@@ -1662,10 +1691,9 @@ void DB_EndReorderZone()
 {
     DBReorderAssetEntry *entry; // [esp+180h] [ebp-41Ch]
     bool wroteBlank; // [esp+187h] [ebp-415h]
-    DWORD bytesa; // [esp+188h] [ebp-414h]
-    DWORD bytes; // [esp+188h] [ebp-414h]
-    HANDLE file; // [esp+18Ch] [ebp-410h]
-    DWORD written; // [esp+190h] [ebp-40Ch] BYREF
+    uint32_t bytesa; // [esp+188h] [ebp-414h]
+    uint32_t bytes; // [esp+188h] [ebp-414h]
+    DBReorderFile file; // [esp+18Ch] [ebp-410h]
     char csvName[256]; // [esp+194h] [ebp-408h] BYREF
     char line[512]; // [esp+294h] [ebp-308h] BYREF
     char bakName[256]; // [esp+494h] [ebp-108h] BYREF
@@ -1676,10 +1704,10 @@ void DB_EndReorderZone()
         s_dbReorder.alreadyFinished = 1;
         Com_sprintf(csvName, 0x100u, "..\\share\\zone_source\\%s.csv", s_dbReorder.zoneName);
         Com_sprintf(bakName, 0x100u, "%s.bak", csvName);
-        DeleteFileA(bakName);
+        DB_DeleteReorderBackup(bakName);
         rename(csvName, bakName);
-        file = CreateFileA(csvName, 0x40000000u, 0, 0, 2u, 0, 0);
-        if (file != (HANDLE)-1)
+        file = DB_OpenReorderCsvWrite(csvName);
+        if (file != DB_REORDER_FILE_INVALID)
         {
             wroteBlank = 0;
             DB_SetReorderIncludeSequence();
@@ -1704,14 +1732,14 @@ void DB_EndReorderZone()
                         break;
                     default:
                         wroteBlank = 1;
-                        WriteFile(file, "\r\n", 2u, &written, 0);
+                        DB_WriteReorderCsv(file, "\r\n", 2u);
                         break;
                     }
                 }
                 if (entry->type == 23)
                 {
                     bytesa = Com_sprintf(line, 0x200u, "%s,%s%s\r\n", entry->typeString, "mp/", entry->assetName);
-                    WriteFile(file, line, bytesa, &written, 0);
+                    DB_WriteReorderCsv(file, line, bytesa);
                 }
                 else
                 {
@@ -1726,10 +1754,10 @@ void DB_EndReorderZone()
                             "all_mp");
                     else
                         bytes = Com_sprintf(line, 0x200u, "%s,%s\r\n", entry->typeString, entry->assetName);
-                    WriteFile(file, line, bytes, &written, 0);
+                    DB_WriteReorderCsv(file, line, bytes);
                 }
             }
-            CloseHandle(file);
+            DB_CloseReorderCsv(file);
         }
     }
 }
@@ -2733,10 +2761,15 @@ void __cdecl  DB_Thread(uint32_t threadContext)
     if (setjmp(*Value))
     {
         Profile_Recover(1);
+        // A headless server reports the error and goes on like retail; the
+        // debugger trap is a development aid that kills a server running
+        // without a debugger (SIGTRAP), so it is left out of headless builds.
+#if !defined(KISAK_DEDI_HEADLESS)
 #ifdef __llvm__ 
         __builtin_debugtrap();
 #else
         __debugbreak();
+#endif
 #endif
         Com_ErrorAbort();
     }
@@ -2895,15 +2928,15 @@ void __cdecl DB_BeginReorderZone(const char *zoneName)
     DBReorderAssetEntry *entry; // [esp+14h] [ebp-248h]
     char assetType[32]; // [esp+18h] [ebp-244h] BYREF
     uint32_t size; // [esp+38h] [ebp-224h]
-    void *file; // [esp+3Ch] [ebp-220h]
+    DBReorderFile file; // [esp+3Ch] [ebp-220h]
     int32_t success; // [esp+40h] [ebp-21Ch]
     char assetName[256]; // [esp+44h] [ebp-218h] BYREF
     char csvName[256]; // [esp+144h] [ebp-118h] BYREF
     const char *parse; // [esp+248h] [ebp-14h] BYREF
     char *csv; // [esp+24Ch] [ebp-10h]
     char *to; // [esp+250h] [ebp-Ch]
-    DWORD read; // [esp+254h] [ebp-8h] BYREF
-    DWORD entryIter; // [esp+258h] [ebp-4h]
+    uint32_t read; // [esp+254h] [ebp-8h] BYREF
+    uint32_t entryIter; // [esp+258h] [ebp-4h]
 
     for (entryIter = 0; entryIter < s_dbReorder.entryCount; ++entryIter)
     {
@@ -2928,17 +2961,18 @@ void __cdecl DB_BeginReorderZone(const char *zoneName)
     } while (v1);
     Sys_LockWrite(&s_dbReorder.critSect);
     Com_sprintf(csvName, 0x100u, "..\\share\\zone_source\\%s.csv", zoneName);
-    file = CreateFileA(csvName, 0x80000000, 0, 0, 3u, 0, 0);
-    if (file == INVALID_HANDLE_VALUE)
+    file = DB_OpenReorderCsvRead(csvName);
+    if (file == DB_REORDER_FILE_INVALID)
     {
         Sys_UnlockWrite(&s_dbReorder.critSect);
     }
     else
     {
-        size = GetFileSize(file, 0);
+        size = DB_ReorderCsvSize(file);
         csv = (char *)malloc(size + 1);
-        success = ReadFile(file, csv, size, &read, 0);
-        CloseHandle(file);
+        read = DB_ReadReorderCsv(file, csv, size);
+        success = 1;
+        DB_CloseReorderCsv(file);
         if (success && read == size)
         {
             csv[size] = 0;
@@ -3014,7 +3048,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
     char filename[256]; // [esp+Ch] [ebp-110h] BYREF
     bool modZone; // [esp+113h] [ebp-9h]
     uint32_t i; // [esp+114h] [ebp-8h]
-    void *zoneFile; // [esp+118h] [ebp-4h]
+    SysFileHandle zoneFile; // [esp+118h] [ebp-4h]
 
     if (!zoneName || !*zoneName)
     {
@@ -3030,63 +3064,35 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         if (*fs_gameDirVar->current.string && DB_ShouldLoadFromModDir(zoneName))
         {
             DB_BuildOSPath_Mod(zoneName, 256, filename);
-            zoneFile = CreateFileA(
-                filename,
-                GENERIC_READ,
-                FILE_SHARE_READ,
-                nullptr,
-                OPEN_EXISTING,
-                DB_FAST_FILE_ASYNC_FLAGS,
-                nullptr);
-            modZone = zoneFile != INVALID_HANDLE_VALUE;
+            zoneFile = Sys_FileOpenRead(filename);
+            modZone = zoneFile != nullptr;
         }
         else
         {
-            zoneFile = INVALID_HANDLE_VALUE;
+            zoneFile = nullptr;
         }
-        if (zoneFile == INVALID_HANDLE_VALUE)
+        if (!zoneFile)
         {
             DB_BuildOSPath(zoneName, 256, filename);
-            zoneFile = CreateFileA(
-                filename,
-                GENERIC_READ,
-                FILE_SHARE_READ,
-                nullptr,
-                OPEN_EXISTING,
-                DB_FAST_FILE_ASYNC_FLAGS,
-                nullptr);
+            zoneFile = Sys_FileOpenRead(filename);
         }
     }
     else
     {
-        zoneFile = CreateFileA(
-            "update:\\mp_patch.ff",
-            GENERIC_READ,
-            0,
-            nullptr,
-            OPEN_EXISTING,
-            DB_FAST_FILE_ASYNC_FLAGS,
-            nullptr);
-        if (zoneFile == INVALID_HANDLE_VALUE)
+        zoneFile = Sys_FileOpenRead("update:\\mp_patch.ff");
+        if (!zoneFile)
         {
             Com_Printf(16, "Loading mp_patch.ff from disc, not from the update drive\n");
             DB_BuildOSPath(zoneName, 256, filename);
-            zoneFile = CreateFileA(
-                filename,
-                GENERIC_READ,
-                0,
-                nullptr,
-                OPEN_EXISTING,
-                DB_FAST_FILE_ASYNC_FLAGS,
-                nullptr);
-            if (zoneFile == INVALID_HANDLE_VALUE)
+            zoneFile = Sys_FileOpenRead(filename);
+            if (!zoneFile)
             {
                 Com_PrintWarning(10, "WARNING: Could not find zone '%s'\n", filename);
                 return 0;
             }
         }
     }
-    if (zoneFile == INVALID_HANDLE_VALUE)
+    if (!zoneFile)
     {
         v3 = strstr(filename, "_load");
         if (v3)
@@ -3116,7 +3122,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
 
         if (!db::zone_slots::IsUsableZoneSlot(g_zoneIndex))
         {
-            CloseHandle(zoneFile);
+            Sys_FileClose(&zoneFile);
             Com_Error(ERR_FATAL, "No free fast-file zone slot");
             return 0;
         }
@@ -3125,7 +3131,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
                 >= static_cast<int32_t>(
                     db::zone_slots::kUsableZoneSlotCount))
         {
-            CloseHandle(zoneFile);
+            Sys_FileClose(&zoneFile);
             Com_Error(ERR_FATAL, "Fast-file zone count is out of range");
             return 0;
         }
@@ -3140,7 +3146,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         }
         if (Sys_AtomicCompareExchange(&g_loadingZone, 1u, 0u))
         {
-            CloseHandle(zoneFile);
+            Sys_FileClose(&zoneFile);
             Com_Error(ERR_FATAL, "Overlapping fast-file zone loads");
             return 0;
         }
@@ -3160,7 +3166,12 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         g_zoneHandles[g_zoneCount] = g_zoneIndex;
         I_strncpyz(zone->name, zoneName, 64);
         zone->flags = zoneFlags;
-        zone->fileSize = GetFileSize(zoneFile, 0);
+        {
+            std::uint64_t zoneFileSize = 0;
+            if (!Sys_FileGetSize(zoneFile, &zoneFileSize))
+                zoneFileSize = 0xFFFFFFFFull;
+            zone->fileSize = static_cast<int>(static_cast<uint32_t>(zoneFileSize));
+        }
         zone->modZone = modZone;
         if (!_stricmp(zone_reorder->current.string, zoneName))
             DB_BeginReorderZone(zoneName);
@@ -3198,7 +3209,7 @@ void __cdecl DB_BuildOSPath(const char *zoneName, uint32_t size, char *filename)
     char *Language; // [esp-8h] [ebp-8h]
 
     Language = Win_GetLanguage();
-    Com_sprintf(filename, size, "%s\\zone\\%s\\%s.ff", DB_GetFastFileBasePath(), Language, zoneName);
+    Com_sprintf(filename, size, "%s" DB_PATH_SEP "zone" DB_PATH_SEP "%s" DB_PATH_SEP "%s.ff", DB_GetFastFileBasePath(), Language, zoneName);
 }
 
 int32_t __cdecl DB_GetZoneAllocType(int32_t zoneFlags)
@@ -3656,26 +3667,20 @@ void __cdecl DB_Cleanup()
 int32_t __cdecl DB_FileSize(const char *zoneName, int32_t isMod)
 {
     char filename[260]; // [esp+0h] [ebp-110h] BYREF
-    int32_t size; // [esp+108h] [ebp-8h]
-    void *zoneFile; // [esp+10Ch] [ebp-4h]
+    SysFileHandle zoneFile; // [esp+10Ch] [ebp-4h]
 
     if (isMod)
         DB_BuildOSPath_Mod(zoneName, 0x100u, filename);
     else
         DB_BuildOSPath(zoneName, 0x100u, filename);
-    zoneFile = CreateFileA(
-        filename,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr);
-    if (zoneFile == INVALID_HANDLE_VALUE)
+    zoneFile = Sys_FileOpenRead(filename);
+    if (!zoneFile)
         return 0;
-    size = GetFileSize(zoneFile, 0);
-    CloseHandle(zoneFile);
-    return size;
+    std::uint64_t fileSize = 0;
+    if (!Sys_FileGetSize(zoneFile, &fileSize))
+        fileSize = 0xFFFFFFFFull;
+    Sys_FileClose(&zoneFile);
+    return static_cast<int32_t>(static_cast<uint32_t>(fileSize));
 }
 
 void __cdecl Load_GetCurrentZoneHandle(uint8_t *handle)

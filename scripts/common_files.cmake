@@ -199,6 +199,8 @@ set(DATABASE
     "${SRC_DIR}/database/db_auth.cpp"
     "${SRC_DIR}/database/db_file_load.cpp"
     "${SRC_DIR}/database/db_load.cpp"
+    "${SRC_DIR}/database/db_shader_release.cpp"
+    "${SRC_DIR}/database/db_shader_release.h"
     "${SRC_DIR}/database/db_memory.cpp"
     "${SRC_DIR}/database/db_relocation.cpp"
     "${SRC_DIR}/database/db_relocation.h"
@@ -545,6 +547,7 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/sys_console_internal.h"
     "${SRC_DIR}/qcommon/sys_error.h"
     "${SRC_DIR}/qcommon/sys_event.h"
+    "${SRC_DIR}/qcommon/sys_file.h"
     "${SRC_DIR}/qcommon/sys_filesystem.h"
     "${SRC_DIR}/qcommon/sys_local.h"
     "${SRC_DIR}/qcommon/sys_memory.h"
@@ -731,6 +734,9 @@ set(PLATFORM_WIN32
     "${SRC_DIR}/win32/win_steam.h"
 )
 
+# The headless dedicated set drops the windowed console and the Winsock
+# datagram layer: the datagram surface is the portable qcommon/net_local.cpp on
+# every platform (see docs/design/PLATFORM_POSIX.md, NOW row 13).
 set(PLATFORM_WIN32_DEDI_HEADLESS
     "${SRC_DIR}/win32/win_configure.cpp"
     "${SRC_DIR}/win32/win_configure.h"
@@ -738,9 +744,6 @@ set(PLATFORM_WIN32_DEDI_HEADLESS
     "${SRC_DIR}/win32/win_localize.cpp"
     "${SRC_DIR}/win32/win_localize.h"
     "${SRC_DIR}/win32/win_main.cpp"
-    "${SRC_DIR}/win32/win_net.cpp"
-    "${SRC_DIR}/win32/win_net.h"
-    "${SRC_DIR}/win32/win_net_debug.cpp"
     "${SRC_DIR}/win32/win_net_debug.h"
     "${SRC_DIR}/win32/win_storage.h"
     "${SRC_DIR}/win32/win_syscon.cpp"
@@ -826,7 +829,6 @@ set(ZLIB
     "${DEPS_DIR}/zlib/inftrees.h"
     "${DEPS_DIR}/zlib/infutil.c"
     "${DEPS_DIR}/zlib/infutil.h"
-    "${DEPS_DIR}/zlib/maketree.c"
     "${DEPS_DIR}/zlib/trees.c"
     "${DEPS_DIR}/zlib/trees.h"
     "${DEPS_DIR}/zlib/uncompr.c"

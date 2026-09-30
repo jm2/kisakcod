@@ -40,6 +40,14 @@ function(kisakcod_get_dedi_sources OUT_VAR)
             "${SRC_DIR}/database/db_zone_runtime_storage.cpp"
             "${SRC_DIR}/database/db_zone_runtime_storage_fx_bridge_headless.cpp"
             "${SRC_DIR}/database/db_fx_zone_adapter_wiring_headless.cpp"
+            # Portable datagram layer: one file for every platform's headless
+            # build, replacing the Winsock implementation in win32/win_net.cpp
+            # (docs/design/PLATFORM_POSIX.md, NOW row 13).
+            "${SRC_DIR}/qcommon/net_local.cpp"
+            # The remote debug socket is a development channel with no caller
+            # on a headless server, so headless links the no-op stub instead of
+            # the Win32 listener in win32/win_net_debug.cpp.
+            "${SRC_DIR}/qcommon/net_debug_stub.cpp"
         )
     else()
         list(APPEND _sources

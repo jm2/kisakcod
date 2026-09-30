@@ -11,7 +11,7 @@
 #include <gfx_d3d/r_rendercmds.h>
 #endif
 #include <universal/com_files.h>
-#include <win32/win_net.h>
+#include <qcommon/net_local.h>
 #include <universal/com_constantconfigstrings.h>
 #include <qcommon/threads.h>
 #include <qcommon/com_bsp.h>
@@ -79,7 +79,7 @@ void __cdecl SV_SetConfigstring(int index, const char *val)
             if (SV_Loaded() || sv.restarting)
             {
                 len = strlen(val);
-                snprintf(buf, ARRAYSIZE(buf), "%i", index);
+                snprintf(buf, sizeof(buf), "%i", index);
                 overhead = &buf[strlen(buf) + 1] - &buf[1] + 4;
                 maxChunk = 1024 - overhead;
                 i = 0;
@@ -506,7 +506,7 @@ void __cdecl SV_SpawnServer(char *mapname)
     }
 
 
-    I_strncpyz(sv.gametype, (char *)sv_gametype->current.integer, 64);
+    I_strncpyz(sv.gametype, (char *)sv_gametype->current.string, 64);
 
     Kisak_srand(Sys_MillisecondsRaw());
     sv.checksumFeed = Sys_Milliseconds() ^ (Kisak_rand() ^ (Kisak_rand() << 16));

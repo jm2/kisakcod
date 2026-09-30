@@ -110,6 +110,15 @@ SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdp(
     bool nonBlocking,
     SysSocketHandle *outHandle);
 
+// Sys_SocketOpenUdp bound to one local interface: `local->address` selects
+// the interface (0.0.0.0 is every interface, as above) and `local->port` the
+// port. Same ownership, blocking and handle contract as Sys_SocketOpenUdp;
+// a null `local` reports InvalidArgument. The engine's net_ip uses it.
+SysSocketOpenStatus KISAK_CDECL Sys_SocketOpenUdpAt(
+    const SysSocketAddress *local,
+    bool nonBlocking,
+    SysSocketHandle *outHandle);
+
 // Closes *handle and resets the caller's pointer to null. Close is
 // unconditional: a null pointer, a null handle, and an already closed
 // handle are all no-ops that report Closed, so callers may close
@@ -162,6 +171,15 @@ SysSocketOptionStatus KISAK_CDECL Sys_SocketEnableBroadcast(
 bool KISAK_CDECL Sys_SocketGetLocalAddress(
     SysSocketHandle handle,
     SysSocketAddress *outAddress);
+
+// Lists this host's IPv4 addresses (port 0) into out[0 .. capacity), without
+// duplicates, and returns how many it wrote (0 when none can be listed or the
+// arguments are null/zero). Retail's NET_GetLocalAddress list, which the
+// engine's LAN rule compares client addresses against: Win32 resolves the
+// host name as retail does; POSIX lists the up interfaces (getifaddrs).
+std::size_t KISAK_CDECL Sys_SocketListLocalIPv4(
+    SysSocketAddress *out,
+    std::size_t capacity);
 
 // Endpoint helpers. Sys_SocketMakeLoopbackAddress builds the IPv4 loopback
 // endpoint for `port`; Sys_SocketMakeAnyAddress builds the wildcard

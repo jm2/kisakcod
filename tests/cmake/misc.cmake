@@ -431,6 +431,25 @@ add_test(
     NAME msvc-rand-shim-contracts
     COMMAND kisakcod-msvc-rand-shim-tests
 )
+
+# Byte-order helpers of universal/q_shared.h (issue #231: BigShort was
+# declared for every target but defined only under WIN32, so the POSIX
+# headless server could not link). The constexpr Big*/Little* forms are
+# pinned to the retail ShortSwap/LongSwap values on the little-endian
+# targets the ABI header accepts.
+add_executable(kisakcod-q-shared-byteorder-tests
+    q_shared_byteorder_tests.cpp
+)
+target_include_directories(kisakcod-q-shared-byteorder-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-q-shared-byteorder-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-q-shared-byteorder-tests)
+set_target_properties(kisakcod-q-shared-byteorder-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME q-shared-byteorder-contracts
+    COMMAND kisakcod-q-shared-byteorder-tests
+)
 # M5 exit (ki-msb): canonical widened-runtime-graph capture. The parity
 # digest is a domain-separated SHA-256 over a framed, typed, little-endian
 # stream; pointer-bearing values never enter it, so a 32-bit reference walk
@@ -512,3 +531,26 @@ kisakcod_ilp32(kisakcod-weapon-input-safety-tests
 
 kisakcod_ilp32(kisakcod-weapon-model-safety-tests
     weapon-model-safety-contracts)
+
+# 64-bit dvar pointer round trips (NOW row 11): the production dvar system
+# with strings and enum lists placed above 4 GiB, so a pointer truncated to
+# 32 bits is always a wrong pointer. Linux only: dvar.cpp is engine code, and
+# the engine compiles off Windows only on Linux so far (macOS stops in the
+# Miles and ODE headers until the G3 mac64 work). Clang only: the engine
+# follows the clang + -fms-extensions toolchain policy (PLATFORM_POSIX.md).
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-dvar-pointer-tests
+        dvar_pointer_tests.cpp
+        ${SRC_DIR}/universal/dvar.cpp
+    )
+    target_include_directories(kisakcod-dvar-pointer-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-dvar-pointer-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-dvar-pointer-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-dvar-pointer-tests PRIVATE -fms-extensions)
+    set_target_properties(kisakcod-dvar-pointer-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME dvar-pointer-round-trips COMMAND kisakcod-dvar-pointer-tests)
+    set_tests_properties(dvar-pointer-round-trips PROPERTIES TIMEOUT 20)
+endif()
