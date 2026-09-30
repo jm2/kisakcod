@@ -7,6 +7,8 @@
 // PLATFORM_POSIX.md, NOW row 13), and each check here fails if the
 // corresponding behaviour is broken.
 
+#include <chrono>
+#include <thread>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -198,6 +200,51 @@ void CheckNetLayerLifecycle()
     NET_Shutdown();
     Check(true, "shutdown before init is safe");
 }
+// net_ip names an interface: NET_Init binds the game socket to it (retail
+// NET_IPSocket) instead of every interface, and a datagram sent there comes
+// back out of Sys_GetPacket.
+void CheckNamedInterfaceBind()
+{
+    static char ip[] = "127.0.0.1";
+    g_net_ip_latch.current.string = ip;
+    g_log.clear();
+    NET_Init();
+
+    bool named = false;
+    bool wildcard = false;
+    for (const std::string &line : g_log)
+    {
+        named = named || line == "Opening IP socket: %s:%i\n";
+        wildcard = wildcard || line == "Opening IP socket: localhost:%i\n";
+    }
+    Check(named && !wildcard, "a named net_ip binds that interface");
+
+    SysSocketHandle sender = nullptr;
+    Check(Sys_SocketOpenUdp(0, true, &sender) == SysSocketOpenStatus::Opened, "sender opens");
+    const SysSocketAddress target{{127, 0, 0, 1}, static_cast<uint16_t>(g_net_port_latch.current.integer)};
+    const unsigned char payload[5] = {'p', 'i', 'n', 'g', 0};
+    Check(Sys_SocketSendTo(sender, payload, sizeof(payload), &target) == SysSocketSendStatus::Sent,
+        "datagram sent to the named interface");
+
+    unsigned char buffer[64] = {};
+    msg_t message{};
+    message.data = buffer;
+    message.maxsize = sizeof(buffer);
+    netadr_t from{};
+    bool received = false;
+    for (int attempt = 0; attempt < 200 && !received; ++attempt)
+    {
+        received = Sys_GetPacket(&from, &message) == qtrue;
+        if (!received)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    Check(received && message.cursize == 5 && std::memcmp(buffer, payload, 5) == 0,
+        "the datagram arrives through Sys_GetPacket");
+
+    (void)Sys_SocketClose(&sender);
+    NET_Shutdown();
+    g_net_ip_latch.current.string = nullptr;
+}
 } // namespace
 
 
@@ -206,6 +253,7 @@ int main()
     CheckLanClassification();
     CheckAddressResolution();
     CheckNetLayerLifecycle();
+    CheckNamedInterfaceBind();
 
     if (g_failures == 0)
         std::printf("net_local: %d checks passed\n", g_checks);

@@ -83,7 +83,25 @@ void CloseSockets()
     (void)Sys_SocketClose(&broadcastSocket);
 }
 
-// Binds the game socket to the latched net_port, and a broadcast socket when
+// Retail NET_IPSocket binds every interface when net_ip is empty or
+// "localhost" (any case), and only the named interface otherwise.
+bool IsWildcardInterface(const char *ip)
+{
+    if (!ip || !*ip)
+        return true;
+    static const char localhost[] = "localhost";
+    for (std::size_t i = 0; i < sizeof(localhost); ++i)
+    {
+        char c = ip[i];
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+        if (c != localhost[i])
+            return false;
+    }
+    return true;
+}
+
+// Binds the game socket to the latched net_ip/net_port, and a broadcast socket when
 // the address is a wildcard bind so LAN discovery can hear replies. A failure
 // leaves both handles null rather than half-configured.
 bool OpenSockets()
@@ -97,8 +115,24 @@ bool OpenSockets()
         return false;
     }
 
-    SysSocketOpenStatus openStatus =
-        Sys_SocketOpenUdp(static_cast<std::uint16_t>(port), true, &gameSocket);
+    const char *const ip = net_ip ? net_ip->current.string : nullptr;
+    SysSocketOpenStatus openStatus;
+    if (IsWildcardInterface(ip))
+    {
+        Com_Printf(16, "Opening IP socket: localhost:%i\n", port);
+        openStatus = Sys_SocketOpenUdp(static_cast<std::uint16_t>(port), true, &gameSocket);
+    }
+    else
+    {
+        SysSocketAddress local{};
+        if (Sys_SocketResolveHost(ip, static_cast<std::uint16_t>(port), &local) != SysSocketResolveStatus::Resolved)
+        {
+            SetError("could not resolve net_ip");
+            return false;
+        }
+        Com_Printf(16, "Opening IP socket: %s:%i\n", ip, port);
+        openStatus = Sys_SocketOpenUdpAt(&local, true, &gameSocket);
+    }
     if (openStatus != SysSocketOpenStatus::Opened)
     {
         gameSocket = nullptr;
@@ -331,6 +365,9 @@ void NET_Restart(void)
     // point of the command is to pick up a changed net_ip/net_port latch.
     if (!initialized)
         return;
+    // Re-registering a latched dvar makes its pending value current, which is
+    // how retail's NET_Config (NET_GetDvars) applies net_ip/net_port/net_noudp.
+    (void)RegisterLatches();
 
     const bool blocked = net_noudp && net_noudp->current.enabled;
     networkingEnabled = !blocked;
