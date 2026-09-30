@@ -37,3 +37,7 @@ record PhysPreset 0x2C runtime=PhysPreset header=xanim/xanim.h
     0x20 piecesSpreadFraction  f32
     0x24 piecesUpwardVelocity  f32
     0x28 tempDefaultToCylinder bool
+
+record LocalizeEntry 0x08 runtime=LocalizeEntry header=ui/ui_shared.h
+    0x00 value       xstring
+    0x04 name        xstring

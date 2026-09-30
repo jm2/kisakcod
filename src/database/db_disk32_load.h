@@ -18,3 +18,12 @@ struct RawFile;
 // raises Com_Error(ERR_DROP) before anything reads past a checked extent.
 void __cdecl DB_LoadRawFilePtrDisk32(bool atStreamStart, RawFile **slot);
 #endif
+
+struct LocalizeEntry;
+
+#if KISAK_ARCH_64BIT
+// Loads one LocalizeEntry (db_disk32_localize.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native LocalizeEntry published through Load_LocalizeEntryAsset on return.
+void __cdecl DB_LoadLocalizeEntryPtrDisk32(bool atStreamStart, LocalizeEntry **slot);
+#endif
