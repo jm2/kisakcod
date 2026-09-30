@@ -909,7 +909,7 @@ void __cdecl CL_NextDemo(int32_t localClientNum)
 {
     char v[1028]; // [esp+0h] [ebp-408h] BYREF
 
-    I_strncpyz(v, (char *)nextdemo->current.integer, 1024);
+    I_strncpyz(v, (char *)nextdemo->current.string, 1024);
     Com_DPrintf(14, "CL_NextDemo: %s\n", v);
     if (v[0])
     {

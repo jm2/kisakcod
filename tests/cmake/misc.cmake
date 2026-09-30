@@ -479,3 +479,23 @@ kisakcod_ilp32(kisakcod-weapon-input-safety-tests
 
 kisakcod_ilp32(kisakcod-weapon-model-safety-tests
     weapon-model-safety-contracts)
+
+# 64-bit dvar pointer round trips (NOW row 11): the production dvar system
+# with strings and enum lists placed above 4 GiB, so a pointer truncated to
+# 32 bits is always a wrong pointer. POSIX only: it maps its test page with
+# mmap, which places it high on 64-bit Linux and macOS.
+if (NOT KISAK_PLATFORM STREQUAL "win32" AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    add_executable(kisakcod-dvar-pointer-tests
+        dvar_pointer_tests.cpp
+        ${SRC_DIR}/universal/dvar.cpp
+    )
+    target_include_directories(kisakcod-dvar-pointer-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-dvar-pointer-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-dvar-pointer-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-dvar-pointer-tests PRIVATE -fms-extensions)
+    set_target_properties(kisakcod-dvar-pointer-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME dvar-pointer-round-trips COMMAND kisakcod-dvar-pointer-tests)
+    set_tests_properties(dvar-pointer-round-trips PROPERTIES TIMEOUT 20)
+endif()
