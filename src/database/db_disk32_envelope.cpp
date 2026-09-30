@@ -3,9 +3,11 @@
 #if KISAK_ARCH_64BIT
 
 #include <database/database.h>
+#include <database/db_disk32_load_internal.h>
 #include <database/db_xasset_disk32.h>
 #include <qcommon/com_error.h>
 
+#include <cstddef>
 #include <cstdint>
 
 // The 64-bit XAssetList/XAsset envelope (docs/design/FASTFILE_LOADER.md). A
@@ -13,34 +15,28 @@
 // XAssetDisk32; the native records are 32 and 16 bytes. The disk bytes are
 // streamed where the 32-bit Load_XAssetListCustom, Load_ScriptStringList and
 // Load_XAssetArrayCustom stream them, so every block offset stays the retail
-// one, and the native script-string table and XAsset array live beside the
-// zone. As in db_disk32_load.cpp, frames hold no destructors, since a
-// production Com_Error(ERR_DROP) longjmps out of them.
+// one. The native script-string table and XAsset array live in zone-lifetime
+// native storage (DB_AllocZoneNative), as the 32-bit arrays live in block 4.
+// As in db_disk32_load.cpp, frames hold no destructors, since a production
+// Com_Error(ERR_DROP) longjmps out of them.
 namespace db::xasset
 {
 namespace
 {
-constexpr std::uint32_t kVirtualBlock = 4;
+using db::disk32_load::Drop;
+using db::disk32_load::kVirtualBlock;
+using db::disk32_load::StreamBytes;
 
-// The loaders read these while the zone loads, as they read the 32-bit arrays
-// in block 4; zone loads are serialized (DB_LoadXFile refuses a second one).
-const char *g_scriptStrings[kMaxScriptStringListStrings];
-XAsset g_assets[kMaxXAssetListAssets];
-
-bool Drop(const char *message)
+// count native elements of T in zone-lifetime storage; exhaustion is an error,
+// not a fallback. count is at most the validated list maximum.
+template <typename T>
+T *AllocNative(std::int32_t count)
 {
-    Com_Error(ERR_DROP, "%s", message);
-    return false;
-}
-
-// Streams size disk bytes to at, the current stream position, as Load_Stream
-// does for the 32-bit loader, and reports whether they arrived.
-bool StreamBytes(std::uint8_t *at, std::uint32_t size)
-{
-    if (!at)
-        return false;
-    Load_Stream(true, at, static_cast<std::int32_t>(size));
-    return DB_GetStreamPos() == at + size;
+    auto *const storage = reinterpret_cast<T *>(
+        DB_AllocZoneNative(static_cast<std::size_t>(count) * sizeof(T), alignof(T)));
+    if (!storage)
+        Drop("Fast-file native storage is exhausted");
+    return storage;
 }
 
 // Load_XAssetListCustom: the root is read outside the zone blocks.
@@ -81,16 +77,19 @@ bool LoadScriptStrings(const ScriptStringListDisk32 &disk, ScriptStringList *nat
     const std::uint32_t bytes = static_cast<std::uint32_t>(disk.count) * sizeof(ScriptStringTokenDisk32);
     std::uint8_t *const tokens = DB_AllocStreamPos(3);
     ScriptStringListDisk32Iterator strings{};
-    if (!StreamBytes(tokens, bytes))
+    if (!StreamBytes(tokens, static_cast<std::int32_t>(bytes)))
         return false;
     if (TryBeginScriptStringListDisk32(&disk, tokens, bytes, &strings) != ScriptStringListDisk32Status::Success)
         return Drop("Fast-file script string is shared-inline");
-    native->strings = g_scriptStrings;
+    const char **const scriptStrings = AllocNative<const char *>(disk.count);
+    if (!scriptStrings)
+        return false;
+    native->strings = scriptStrings;
     ScriptStringTokenDisk32 token{};
     ScriptStringListDisk32Status status{};
     while ((status = TryNextScriptStringTokenDisk32(&strings, &token)) == ScriptStringListDisk32Status::Success)
     {
-        const char **const slot = &g_scriptStrings[strings.nextIndex() - 1];
+        const char **const slot = &scriptStrings[strings.nextIndex() - 1];
         *slot = nullptr;
         if (token.token.isInline())
         {
@@ -125,7 +124,7 @@ bool LoadAssets(const XAssetListDisk32 &root, XAssetList *native)
     std::uint8_t *const records = DB_AllocStreamPos(3);
     const XAssetTypeDisk32Policy policy{ASSET_TYPE_COUNT, nullptr, AdmitType};
     XAssetListDisk32Iterator assets{};
-    if (!StreamBytes(records, bytes))
+    if (!StreamBytes(records, static_cast<std::int32_t>(bytes)))
         return false;
     switch (TryBeginXAssetListDisk32(&root, records, bytes, policy, &assets))
     {
@@ -136,11 +135,14 @@ bool LoadAssets(const XAssetListDisk32 &root, XAssetList *native)
     default:
         return Drop("Invalid fast-file asset type in the asset list");
     }
+    XAsset *const nativeAssets = AllocNative<XAsset>(root.assetCount);
+    if (!nativeAssets)
+        return false;
     XAssetDisk32 disk{};
     XAssetListDisk32Status status{};
     while ((status = TryNextXAssetDisk32(&assets, &disk)) == XAssetListDisk32Status::Success)
     {
-        XAsset &asset = g_assets[assets.nextIndex() - 1];
+        XAsset &asset = nativeAssets[assets.nextIndex() - 1];
         asset.type = static_cast<XAssetType>(disk.type);
         // The header slot contract: the zero-extended disk32 token on entry
         // to the family loader, the native pointer on return.
@@ -148,10 +150,10 @@ bool LoadAssets(const XAssetListDisk32 &root, XAssetList *native)
     }
     if (status != XAssetListDisk32Status::End)
         return Drop("Invalid fast-file asset record");
-    native->assets = g_assets;
+    native->assets = nativeAssets;
     for (std::int32_t index = 0; index < root.assetCount; ++index)
     {
-        varXAsset = &g_assets[index];
+        varXAsset = &nativeAssets[index];
         Load_XAsset(false);
     }
     return true;
