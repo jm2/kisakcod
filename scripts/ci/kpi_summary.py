@@ -6,7 +6,8 @@ Inputs:
   docs/capability/manifest.json  target x role delivery cells (K6)
   --census PATH                optional native64-census JSON; its measured
                                values replace the NOW.md values for K1, K2,
-                               K3 and K5
+                               K3 and K5. K1 lists each leg the JSON holds
+                               (the mac64 leg comes from its own macOS job)
 
 Exits 1 only when the manifest is malformed. Everything else is reported,
 never gated: the KPIs are trend numbers, not pass/fail checks.
@@ -76,7 +77,7 @@ def census_values(c: dict) -> dict[str, str]:
     out = {}
     t = _obj(c.get("targets"))
     k1 = ["%s %s/%s" % (n, t[n]["pass"], t[n]["total"])
-          for n in ("win64", "lin64", "a64") if _has(t.get(n), "pass", "total")]
+          for n in ("win64", "winarm64", "lin64", "a64", "mac64") if _has(t.get(n), "pass", "total")]
     if k1:
         out["K1"] = " · ".join(k1)
     link = _obj(_obj(c.get("link")).get("win64"))

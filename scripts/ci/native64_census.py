@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Native 64-bit census: KPIs K1, K2, K3 and K5 (docs/design/NATIVE64.md).
 
-For each target (win32 control, win64, lin64, a64) every headless dedicated
-server TU is compiled with clang -fsyntax-only. Failures are split into
-"assert-only" (only static_assert size/offset failures) and "other". Win64
-then gets a real link attempt and a clearly labelled probe link that
-neutralises static asserts; the probe never gates anything. K3 counts the
-upstream engine TUs the Linux test build compiles.
+For each target (win32 control, win64, winarm64, lin64, a64, and mac64 on a
+macOS host) every headless dedicated server TU is compiled with clang
+-fsyntax-only. Failures are split into "assert-only" (only static_assert
+size/offset failures) and "other". Win64 then gets a real link attempt and
+a clearly labelled probe link that neutralises static asserts; the probe
+never gates anything. K3 counts the upstream engine TUs the Linux test build
+compiles.
 
 Writes <out>/census.json and <out>/census.md. Never fails on a low KPI; it
 exits non-zero only when the census itself cannot run.
@@ -17,13 +18,17 @@ from __future__ import annotations
 import argparse
 import collections
 import concurrent.futures
+import hashlib
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,9 +38,20 @@ WIN_DEFS = ["-DWIN32", "-D_WINDOWS", "-D_CONSOLE", "-D_MBCS"]
 TARGETS = {
     "win32": ("i686-w64-mingw32", WIN_DEFS, "windows"),
     "win64": ("x86_64-w64-mingw32", WIN_DEFS, "windows"),
+    # Windows ARM64 checks the win64 set; main() adds the llvm-mingw sysroot. The force-include works
+    # around a clang 18 builtin bug (ci-stubs/winarm64/prefetch.h).
+    "winarm64": ("aarch64-w64-mingw32",
+                 WIN_DEFS + ["-stdlib=libc++", "-include", str(STUBS / "winarm64/prefetch.h")], "windows"),
     "lin64": ("x86_64-linux-gnu", ["-DUNIX"], "d3d"),
     "a64": ("aarch64-linux-gnu", ["-DUNIX"], "d3d"),
+    # Apple clang and the macOS SDK, so only on a macOS host (the "Native64 census / mac64" CI job).
+    "mac64": ("arm64-apple-macos", ["-DUNIX"], "d3d"),
 }
+# winarm64's Windows ARM64 headers and libc++: this llvm-mingw release's sysroot. Its LLVM 18.1.8 matches
+# the runner's clang 18, so winarm64 and win64 differ by target and headers, not by compiler.
+LLVM_MINGW = ("https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/"
+              "llvm-mingw-20240619-ucrt-ubuntu-20.04-x86_64.tar.xz",
+              "27d33157cc252c29ad6f777a96a0d94176fea1b534ff09b5071485def143b90e")
 WARN = ["-Wno-everything", "-Werror=c++11-narrowing", "-Wvoid-pointer-to-int-cast",
         "-Wpointer-to-int-cast", "-Wint-to-pointer-cast", "-Wshorten-64-to-32",
         "-W#pragma-messages"]
@@ -59,7 +75,8 @@ def tu_lists() -> dict[str, list[str]]:
     win = [os.path.relpath(p, ROOT) for p in res.stderr.split() if p.endswith((".c", ".cpp"))]
     posix = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "src/_platform/posix").glob("*.c*"))
     lin = [t for t in win if not t.startswith(("src/win32/", "src/_platform/win32/"))] + posix
-    return {"win32": win, "win64": win, "lin64": lin, "a64": lin}
+    mac = lin + sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "src/_platform/macos").glob("*.c*"))
+    return {"win32": win, "win64": win, "winarm64": win, "lin64": lin, "a64": lin, "mac64": mac}
 
 
 def fetch_tracy(out: Path) -> Path:
@@ -75,6 +92,23 @@ def fetch_tracy(out: Path) -> Path:
                     ["git", "-C", str(dest), "checkout", "-q", "FETCH_HEAD"]):
             run(cmd, check=True)
     return dest / "public"
+
+
+def fetch_llvm_mingw(out: Path) -> Path:
+    """Fetch the pinned llvm-mingw release, check its digest, and unpack only the ARM64 sysroot headers."""
+    url, digest = LLVM_MINGW
+    dest = out / Path(url).name.removesuffix(".tar.xz")
+    if not (dest / "aarch64-w64-mingw32/include/windows.h").is_file():
+        with urllib.request.urlopen(url, timeout=300) as res:
+            data = res.read()
+        if hashlib.sha256(data).hexdigest() != digest:
+            sys.exit("llvm-mingw download does not match its pinned sha256: " + url)
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r|xz") as tar:
+            for member in tar:
+                if member.name.split("/", 1)[-1].startswith(("generic-w64-mingw32/include",
+                                                              "aarch64-w64-mingw32/include")):
+                    tar.extract(member, out, filter="data")
+    return dest
 
 
 def compile_cmd(cfg: str, tu: str, tracy: Path, extra: list[str]) -> list[str]:
@@ -163,7 +197,7 @@ def markdown(c: dict) -> str:
     for cfg, t in c["targets"].items():
         out.append("| %s | %d/%d | %d | %d | %s |" % (cfg, t["pass"], t["total"], t["assert_only"], t["other"],
                                                       t["d3d_stub_tus"] if TARGETS[cfg][2] == "d3d" else "-"))
-    for cfg in ("win64", "lin64"):
+    for cfg in ("win64", "winarm64", "lin64", "mac64"):
         t = c["targets"].get(cfg)
         if t:
             out += ["", "**%s: top files with the first non-assert error**" % cfg, ""]
@@ -193,17 +227,23 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, default=ROOT / "build-census")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
-    ap.add_argument("--targets", default="win32,win64,lin64,a64")
+    ap.add_argument("--targets", default="win32,win64,winarm64,lin64,a64")
     ap.add_argument("--no-link", action="store_true")
     ap.add_argument("--no-k3", action="store_true")
     args = ap.parse_args()
+    targets = args.targets.split(",")
+    if "mac64" in targets and sys.platform != "darwin":
+        sys.exit("mac64 needs Apple clang and the macOS SDK: run it on a macOS host")
     args.out.mkdir(parents=True, exist_ok=True)
     start = time.time()
     tracy = fetch_tracy(args.out)
     lists = tu_lists()
     result = {"schema": 1, "commit": os.environ.get("GITHUB_SHA") or run(["git", "rev-parse", "HEAD"]).stdout.strip(),
               "targets": {}}
-    for cfg in args.targets.split(","):
+    if "winarm64" in targets:
+        triple, defs, stub = TARGETS["winarm64"]
+        TARGETS["winarm64"] = (triple, defs + ["--sysroot=%s" % fetch_llvm_mingw(args.out)], stub)
+    for cfg in targets:
         result["targets"][cfg] = census(cfg, lists[cfg], tracy, args.jobs)
         t = result["targets"][cfg]
         print("%s: %d/%d pass, %d assert-only, %d other" % (cfg, t["pass"], t["total"], t["assert_only"], t["other"]))
