@@ -219,7 +219,8 @@ def main() -> int:
     tracy = fetch_tracy(args.out)
     lists = tu_lists()
     result = {"schema": 1, "commit": os.environ.get("GITHUB_SHA") or run(["git", "rev-parse", "HEAD"]).stdout.strip(),
-              "flags": {"defs": DEFS, "warn": WARN, "delayed_template_parsing": False},
+              "flags": {"defs": DEFS, "warn": WARN, "delayed_template_parsing":
+                        "-fdelayed-template-parsing" in compile_cmd("win64", "tu.cpp", tracy, [])},
               "targets": {}}
     for cfg in args.targets.split(","):
         result["targets"][cfg] = census(cfg, lists[cfg], tracy, args.jobs)

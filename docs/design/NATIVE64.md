@@ -59,7 +59,7 @@ That's about 30 asset types (bead 7: `ONDISK`/`RUNTIME` pairs, and the loader fa
 
 ## Win64 source fixes (bead 6)
 
-Under the 2026-09-22 census flags, with the asserts neutralised, win64 fails in only 4 TUs. The 2026-09-29 flags surface 103 win64 TUs that do not compile (K2 row); that 4-TU figure is scoped to the earlier measurement regime. The 7 real fixes are:
+With the asserts neutralised, win64 fails in only 4 TUs. The 7 real fixes are:
 
 | Fix | Where |
 | --- | --- |
@@ -123,17 +123,17 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 
 ## KPIs
 
-| KPI | Definition | Source | Census baseline 2026-09-29 | Target |
+| KPI | Definition | Source | Census baseline 2026-09-30 | Target |
 | --- | --- | --- | --- | --- |
-| **K1** 64-bit headless compile closure | Headless TUs that pass clang `-fsyntax-only` on each target (win64, lin64, a64). win32 is the control | `native64-census` | win64 141/244 (0 assert-only, 103 other); lin64 125/237 (0 assert-only, 112 other); a64 125/237 (0 assert-only, 112 other) | all TUs on all three (G1) |
-| **K2** 64-bit headless link | Per target: the headless server links with 0 undefined symbols and no neutralised asserts (a *real link*). The census also reports a labelled *probe link*, with size asserts neutralised by a force-included header, and its undefined-symbol count. The probe never gates | `native64-census` | real link: none (103 win64 TUs don't compile). Probe: 141 undefined symbols with the 103 non-assert TUs excluded | Win64 and Linux amd64 real link (G1) |
+| **K1** 64-bit headless compile closure | Headless TUs that pass clang `-fsyntax-only` on each target (win64, lin64, a64). win32 is the control | `native64-census` | win64 244/245 (0 assert-only, 1 other); lin64 242/243 (0 assert-only, 1 other); a64 239/243 (0 assert-only, 4 other) | all TUs on all three (G1) |
+| **K2** 64-bit headless link | Per target: the headless server links with 0 undefined symbols and no neutralised asserts (a *real link*). The census also reports a labelled *probe link*, with size asserts neutralised by a force-included header, and its undefined-symbol count. The probe never gates | `native64-census` | real link: none (1 win64 TU, `phys_ode.cpp`, doesn't compile). Probe: 15 undefined symbols with that TU excluded | Win64 and Linux amd64 real link (G1) |
 | **K3** engine code under 64-bit test | Upstream engine TUs that the Linux amd64 test build compiles, either as a TU in `compile_commands.json` or `#include`d as a `.cpp` by a test TU. Denominator: `.c`/`.cpp` under `src/` at the upstream merge-base, excluding `src/radiant/` and vendored ODE and Speex | `native64-census` | 8/475 | rises every G2 bead |
 
-- **K1 control:** clang with mingw-w64 headers passes 139/244 on win32 (2026-09-29 flags; from the CI artifact, this host lacks the i686 cross toolchain). Under the 2026-09-22 flags it passed 235/243: 3 failures were the `db_load`, `sys_process` and `scr_yacc` fixes above, and the other 5 were mingw calling-convention mismatches in `sys_sync`, `sys_thread`, `assertive`, `win_net_debug` and `win_syscon`.
+- **K1 control:** clang with mingw-w64 headers passes 242/245 on win32. The 3 failures are `phys_ode.cpp` (row 29) and mingw calling-convention mismatches in `sys_sync` and `sys_thread`.
 - **K1 coverage gap (owner 2026-09-29):** `win64` is Windows x64 only (`x86_64-w64-mingw32`). Windows ARM64, which
   builds the Win64 source set, and macOS arm64 are not measured, so a clean win64 says nothing about them. G3 prep adds
   two census legs before their first runs: `winarm64` (`aarch64-w64-mingw32`, llvm-mingw in the census image) and
   `mac64` (Apple clang on the hosted `macos-15` runner). Expect x86-only `__asm`/SSE paths on winarm64 (no Windows
   ARM64 Steamworks, so Steam off) and the #265 header blockers on mac64 (Miles `mss.h`, ODE `<malloc.h>`, Speex).
-- **Toolchain note:** the K1 figures match the CI `native64-census` artifact (run 36518328294) and a local clang 22 re-run at this head (win64 141/244, lin64 125/237), except the local win64 probe link counts 145 undefined symbols rather than CI's 141. The host aarch64 toolchain cannot compile (`__float128` unsupported, `cfloat` missing) and the host lacks the i686 cross toolchain, so a64 and win32 come from that artifact. The flags print the compile flag set in `census.md` and report narrowing sites per header — `phys_ode.cpp` 3 at this head. The 99 `scr_yacc_structs.h` sites these flags first surfaced are since fixed in the base (`b300f9bf`); the class still fails a TU: a 32768-into-`short` probe errors under the 2026-09-29 flags and passes under the earlier set.
+- **Census flags (row 17):** `-D_DEBUG` so asserts compile, no `-fdelayed-template-parsing` so two-phase lookup errors surface, and no `-Wno-everything` so DefaultError diagnostics fail a TU. `census.md` prints the flag set and the narrowing sites per header (`phys_ode.cpp` 3). On this tree they change no TU's verdict, but one probe per class (a member access inside `iassert`, an undeclared name in a template, a C int-to-pointer initialisation) fails under them and passes under the old set.
 - **K4–K6:** K4 (loader closure) is defined in [FASTFILE_LOADER.md](FASTFILE_LOADER.md), K5 (D3D reach) in [PLATFORM_POSIX.md](PLATFORM_POSIX.md), and K6 (delivery cells) in [CHARTER.md](../CHARTER.md).
