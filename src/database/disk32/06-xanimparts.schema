@@ -1,0 +1,37 @@
+# XAnimParts, asset type 0x02. The format is described in ../db_disk32.schema.
+# The ptr32 fields are inline arrays that db_disk32_xanimparts.cpp streams.
+
+record XAnimParts 0x58 runtime=XAnimParts header=xanim/xanim.h
+    asset member=parts pool=Load_XAnimPartsAsset kind=XAnimParts alias=inserted body=custom label=xanim
+    0x00 name                 xstring
+    0x04 dataByteCount        u16
+    0x06 dataShortCount       u16
+    0x08 dataIntCount         u16
+    0x0A randomDataByteCount  u16
+    0x0C randomDataIntCount   u16
+    0x0E numframes            u16
+    0x10 bLoop                bool
+    0x11 bDelta               bool
+    0x12 boneCount            u8[10]
+    0x1C notifyCount          u8
+    0x1D assetType            u8
+    0x1E isDefault            bool
+    0x20 randomDataShortCount u32
+    0x24 indexCount           u32
+    0x28 framerate            f32
+    0x2C frequency            f32
+    0x30 names                ptr32   # boneCount[9] script strings
+    0x34 dataByte             ptr32
+    0x38 dataShort            ptr32
+    0x3C dataInt              ptr32
+    0x40 randomDataShort      ptr32
+    0x44 randomDataByte       ptr32
+    0x48 randomDataInt        ptr32
+    0x4C indices              ptr32   # 16-bit when numframes >= 256, else 8-bit
+    0x50 notify               ptr32   # notifyCount XAnimNotifyInfo
+    0x54 deltaPart            ptr32
+
+# Notetracks keep their layout at 64-bit, so they stay in block 4.
+record XAnimNotifyInfo 0x08 runtime=XAnimNotifyInfo header=xanim/xanim.h
+    0x00 name                 u16     # a script string
+    0x04 time                 f32

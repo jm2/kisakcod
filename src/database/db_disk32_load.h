@@ -15,6 +15,7 @@ struct MapEnts;
 struct PhysPreset;
 struct RawFile;
 struct StringTable;
+struct XAnimParts;
 struct XAssetList;
 
 #if KISAK_ARCH_64BIT
@@ -49,6 +50,13 @@ void __cdecl DB_LoadLocalizeEntryPtrDisk32(bool atStreamStart, LocalizeEntry **s
 // published through Load_MapEntsAsset on return. The slot nested in clipMap_t
 // takes the same contract once that family converts (wave 4).
 void __cdecl DB_LoadMapEntsPtrDisk32(bool atStreamStart, MapEnts **slot);
+
+// Loads one XAnimParts (db_disk32_xanimparts.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native XAnimParts published through Load_XAnimPartsAsset on return. Its
+// arrays stay in block 4, and its bone and notetrack names hold interned
+// script-string ids.
+void __cdecl DB_LoadXAnimPartsPtrDisk32(bool atStreamStart, XAnimParts **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from

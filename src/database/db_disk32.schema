@@ -13,11 +13,13 @@
 #   record <Name> <retail size> runtime=<native struct> header=<its header> [same=<disk32:: constant>]
 #       [asset member=<XAssetHeader member> pool=<publish call> kind=<DBAliasKind>
 #              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom]]
-#       <retail offset> <field> <kind> [count=<expression>] [terminated] [paired] [label=<noun>]
+#       <retail offset> <field> <kind>[[<length>]] [count=<expression>] [terminated] [paired] [label=<noun>]
 #
-# Kinds: i32 u32 f32 u8 (scalars), bool (one byte; nonzero is true),
+# Kinds: i32 u16 u32 f32 u8 (scalars), bool (one byte; nonzero is true),
 # xstring (a C string: inline or an offset token), bytes (inline bytes, count
-# given), xstrings (a pointer array of C strings, count given).
+# given), xstrings (a pointer array of C strings, count given), ptr32 (any
+# other pointer token; only a custom body resolves it). <kind>[<length>] is a
+# fixed array of a scalar kind other than bool.
 # The offsets and sizes are the retail facts: the generator checks them
 # against the ILP32 rules, and the compiler checks the emitted mirror against
 # them (ONDISK_*) and the native struct against the same field list (RUNTIME_*).
@@ -29,7 +31,9 @@
 #   alias=inserted   as the 32-bit Load_<Name>Ptr with DB_InsertPointer: the
 #                    record streams into the temp block, the native header is
 #                    a temporary the pool call copies, -2 registers the pooled
-#                    pointer and an offset token resolves to it.
+#                    pointer and an offset token resolves to it. With
+#                    body=custom the TU defines Load<Name>(<runtime> *out),
+#                    which may call the generated Copy<Name>Scalars.
 #   alias=completed  as with DB_RegisterPointerSlot and DB_CompleteObject: the
 #                    record streams at the current position, the hand-written
 #                    body converts it into zone-lifetime native storage, and an

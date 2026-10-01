@@ -2408,6 +2408,10 @@ void __cdecl Load_XAnimParts(bool atStreamStart)
 
 void __cdecl Load_XAnimPartsPtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadXAnimPartsPtrDisk32(atStreamStart, varXAnimPartsPtr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -2440,6 +2444,7 @@ void __cdecl Load_XAnimPartsPtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Mark_XAnimNotifyInfo()

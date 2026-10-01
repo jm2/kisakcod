@@ -21,6 +21,7 @@ from typing import NoReturn
 # kind: (mirror type, native size and alignment at ILP32, at 64-bit)
 KINDS = {
     'i32': ('std::int32_t', 4, 4),
+    'u16': ('std::uint16_t', 2, 2),
     'u32': ('std::uint32_t', 4, 4),
     'f32': ('float', 4, 4),
     'u8': ('std::uint8_t', 1, 1),
@@ -28,9 +29,10 @@ KINDS = {
     'xstring': ('Ptr32<const char>', 4, 8),
     'bytes': ('Ptr32<const char>', 4, 8),
     'xstrings': ('Ptr32<Ptr32<const char>>', 4, 8),
+    'ptr32': ('Ptr32<const void>', 4, 8),  # a token only a custom body resolves
 }
 COUNTED = ('bytes', 'xstrings')
-SCALARS = ('i32', 'u32', 'f32', 'u8', 'bool')
+SCALARS = ('i32', 'u16', 'u32', 'f32', 'u8', 'bool')
 ASSET_KEYS = {'member', 'pool', 'kind', 'alias', 'label', 'name', 'body'}
 
 
@@ -67,15 +69,18 @@ def parse_asset(record, words, where):
 
 
 def parse_field(words, where):
-    if len(words) < 3 or words[2] not in KINDS:
-        fail(where, f'expected: <offset> <field> <kind> [attributes]; kinds {sorted(KINDS)}')
-    kind = words[2]
+    # A scalar kind but bool may be a fixed array: <kind>[<length>].
+    array = re.fullmatch(r'(\w+)\[([1-9]\d*)\]', words[2]) if len(words) >= 3 else None
+    kind = array.group(1) if array else words[2] if len(words) >= 3 else None
+    if kind not in KINDS or (array and (kind not in SCALARS or kind == 'bool')):
+        fail(where, f'expected: <offset> <field> <kind>[[<length>]] [attributes]; kinds {sorted(KINDS)}')
     allowed = ({'count', 'terminated', 'paired', 'label'} if kind == 'bytes'
                else {'count'} if kind in COUNTED else set())
     attrs = attributes(words[3:], where, allowed, flags=('terminated', 'paired'))
     if (kind in COUNTED) != ('count' in attrs):
         fail(where, f'count=<expression> is required for {COUNTED} and only for them')
     return {'offset': int(words[0], 0), 'name': words[1], 'kind': kind, 'count': attrs.get('count', ''),
+            'length': int(array.group(2)) if array else None,
             'terminated': 'terminated' in attrs, 'paired': 'paired' in attrs, 'label': attrs.get('label'),
             'where': where}
 
@@ -112,7 +117,7 @@ def layout(fields, width):
         size = KINDS[field['kind']][width]
         offset = (offset + size - 1) // size * size
         offsets.append(offset)
-        offset += size
+        offset += size * (field['length'] or 1)
         biggest = max(biggest, size)
     return offsets, (offset + biggest - 1) // biggest * biggest
 
@@ -128,7 +133,8 @@ def emit(records, schema_name):
         out += [f'// Retail {record["name"]}: 0x{record["size"]:02X} bytes.', f'struct {mirror}', '{']
         for field in record['fields']:
             count = f' // count: {field["count"]}' if field['count'] else ''
-            out.append(f'    {KINDS[field["kind"]][0]} {field["name"]};{count}')
+            length = f'[{field["length"]}]' if field['length'] else ''
+            out.append(f'    {KINDS[field["kind"]][0]} {field["name"]}{length};{count}')
         out += ['};', f'ONDISK_SIZE({mirror}, 0x{record["size"]:02X});']
         out += [f'ONDISK_OFFSET({mirror}, {field["name"]}, 0x{field["offset"]:02X});'
                 for field in record['fields']]
@@ -169,6 +175,17 @@ inline void Load${Name}HeaderSlot(bool atStreamStart, $Runtime **slot)
     }
 $enter    Load${Name}Ptr(disk32::PointerToken{static_cast<std::uint32_t>(raw)}, slot);
 $leave}
+''')
+
+CUSTOM_INSERTED = Template('''\
+// $Name's scalar fields, from its mirror into the native record.
+inline void Copy${Name}Scalars(const disk32::${Name}Disk32 &disk, $Runtime *out)
+{
+${scalars}}
+
+// $Name's record body, hand-written in its TU: streams the record at the
+// stream position and converts it into the native temporary *out.
+bool Load$Name($Runtime *out);
 ''')
 
 INSERTED_PTR = Template('''\
@@ -310,9 +327,17 @@ def noun(label):
 
 
 def scalar_copy(field):
-    """A bool converts as != 0, so no disk byte lands in a C++ bool."""
+    """A bool converts as != 0, so no disk byte lands in a C++ bool; a fixed array copies whole."""
+    name = field['name']
+    if field['length']:
+        return (f'    static_assert(sizeof(out->{name}) == sizeof(disk.{name}));\n'
+                f'    std::memcpy(out->{name}, disk.{name}, sizeof(disk.{name}));\n')
     test = ' != 0' if field['kind'] == 'bool' else ''
-    return f'    out->{field["name"]} = disk.{field["name"]}{test};\n'
+    return f'    out->{name} = disk.{name}{test};\n'
+
+
+def scalar_copies(record):
+    return ''.join(scalar_copy(field) for field in record['fields'] if field['kind'] in SCALARS)
 
 
 def bytes_count(record, field):
@@ -343,23 +368,26 @@ def emit_body(record):
     asset = record['asset']
     if {field['name']: field['kind'] for field in record['fields']}.get(asset.get('name')) != 'xstring':
         fail(asset['where'], 'a generated body needs name=<the xstring the pool hashes>')
-    scalars = ''.join(scalar_copy(field) for field in record['fields'] if field['kind'] in SCALARS)
     pointers = ''.join(body_step(record, field) for field in record['fields'] if field['kind'] not in SCALARS)
-    return FLAT_BODY.substitute(Name=record['name'], Runtime=record['runtime'], scalars=scalars, pointers=pointers)
+    return FLAT_BODY.substitute(Name=record['name'], Runtime=record['runtime'], scalars=scalar_copies(record),
+                                pointers=pointers)
 
 
 def emit_family(record):
     asset = record['asset']
     inserted, custom = asset['alias'] == 'inserted', 'body' in asset
-    if custom == inserted:
-        fail(asset['where'], 'alias=inserted takes a generated body and alias=completed a custom one, '
-                             'whose native storage is family-specific')
+    if not custom and not inserted:
+        fail(asset['where'], 'alias=completed takes a custom body, whose native storage is family-specific')
     if custom and 'name' in asset:
         fail(asset['where'], 'name= applies to a generated body; a custom body checks its own name')
     facts = dict(Name=record['name'], Runtime=record['runtime'], kind=asset['kind'], member=asset['member'],
                  pool=asset['pool'], label=asset['label'], noun=noun(asset['label']))
+    if not custom:
+        body = [emit_body(record)]
+    else:  # the family's TU defines it; COMPLETED_PTR declares its own
+        body = [CUSTOM_INSERTED.substitute(facts, scalars=scalar_copies(record))] if inserted else []
     # Only the inserted protocol streams the record into the temp block.
-    return ([] if custom else [emit_body(record)]) + [
+    return body + [
         (INSERTED_PTR if inserted else COMPLETED_PTR).substitute(facts),
         HEADER_SLOT.substitute(facts, enter='    DB_PushStreamPos(kTempBlock);\n' if inserted else '',
                                leave='    DB_PopStreamPos();\n' if inserted else '')]
