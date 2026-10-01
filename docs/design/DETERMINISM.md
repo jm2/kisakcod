@@ -58,12 +58,16 @@ Nothing may change the FP rounding mode at runtime.
 
 The prediction check in [NET_STEAM18.md](NET_STEAM18.md) uses the simulation rule.
 
-## Open item: Huffman tie-break (needs a bead)
+## Huffman tie-break
 
-`Huff_BuildFromData` (`huffman.cpp`) sorts with the host `qsort`, and `nodeCmp` compares weights only. `msg_hData` repeats two weights (symbols 155/205 and 228/231), and internal nodes can tie as well. The C library chooses the order of equal elements, so the code book depends on the host. glibc matches the reference; MSVC-ARM64 and macOS are unverified. `huffman_wire_contract_tests` prints a note and *passes* when a host disagrees.
+`Huff_BuildFromData` (`huffman.cpp`) sorts with `qsort`, and `msg_hData` repeats two weights (symbols 155/205 and 228/231). Retail compared weights only and took its order of equal elements from the MSVC CRT `qsort`, an unstable median-of-three quicksort. glibc's stable sort swaps the 155/205 codes and macOS's `qsort` swaps 228/231, so Linux and macOS builds emitted non-retail bytes.
 
-Bead scope:
+The reference is the MSVC CRT order:
 
-1. Make `nodeCmp` a total order (e.g. break ties on node index) that reproduces the reference code book on any `qsort`.
-2. Make the test fail on any host whose code book differs.
-3. Confirm the reference against Steam 1.8 captures at G4a.
+- The 1.7 Linux dedicated server calls `ms_qsort`, IW's copy of that `qsort` (disassembly in CoD4x_Server `tools/cod4_dasm`).
+- The tree that CoD4x_Server hardcodes has the same 257 codes.
+- On the Windows legs, the CRT itself derives the same code book.
+
+`nodeCmp` is now a total order: weight first, then leaves by symbol with 155 and 205 swapped (retail merges 205 first), then internal nodes oldest first. Every `qsort` builds the retail code book. `huffman-wire-format-contracts` pins all 257 codes and byte goldens on the host `qsort`. `huffman-tie-order-independence` rebuilds under a stable sort, a ties-reversed sort and a clone of the CRT `qsort`; on MSVC it also runs the CRT with the weight-only comparator. The weight-only comparator fails both tests on Linux.
+
+Owner action (G4a): confirm the code book against Steam 1.8 captures.

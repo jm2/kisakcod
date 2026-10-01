@@ -56,8 +56,7 @@
 // command-driven simulation-parity stage (#127) reuses it to report the first
 // differing field and tick.
 //
-// Tie handling. Unlike the Huffman codebook (see
-// huffman_wire_contract_tests.cpp), every fixture here is chosen to be free of
+// Tie handling. Every fixture here is chosen to be free of
 // implementation-defined float ties: the angle quantization literals multiply
 // exactly representable floats and truncate unambiguous doubles on every IEEE
 // host, so byte-exact goldens are pinned unconditionally. No new fork

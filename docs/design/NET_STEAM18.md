@@ -37,7 +37,7 @@ We compared the in-tree tables against two 1.7-derived server sources (CoD4X17a_
 
 Only `archivedEntityFields` (69) differs, and that table is server-internal. This comparison is against 1.7 sources, not 1.8 bytes. Whether protocol 7 changed any in-band format is unknown until capture.
 
-**Huffman tie-break.** `nodeCmp` in `huffman.cpp` orders by weight only. `msg_hData` has two equal-weight pairs (symbols 155/205 and 228/231), so the host `qsort` picks the code book. glibc matches the reference; MSVC-ARM64 and macOS are unverified. `huffman_wire_contract_tests` prints a note and **passes** when a host derives the other code book. The fix (a total order, and a test that fails on disagreement) belongs to [DETERMINISM](DETERMINISM.md). The Steam 1.8 captures decide which order is correct.
+**Huffman tie-break.** `msg_hData` has two equal-weight pairs (symbols 155/205 and 228/231). Retail resolves them with the MSVC CRT `qsort`; `nodeCmp` is a total order that reproduces that code book on every host ([DETERMINISM](DETERMINISM.md)). The Steam 1.8 captures confirm it at G4a.
 
 **`getinfo` keys.**
 
