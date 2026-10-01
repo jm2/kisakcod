@@ -19,7 +19,7 @@ plays (the KPIs in [NOW.md](NOW.md)) and by the testing gates in
 | Windows ARM64 | required | required | Same sources as Win64 |
 | Linux amd64 | required | required | First POSIX target |
 | Linux arm64 | required | required | Same sources as Linux amd64 |
-| macOS arm64 | required | required | Signed and notarized at G6 |
+| macOS arm64 | required | required | Ad-hoc signed, not notarized ([ADR-0007](decisions/0007-macos-notarization-deferred.md)) |
 | Windows x86 | baseline | baseline | Keeps building; not a release target |
 
 Single-player is deferred. The cell levels live in

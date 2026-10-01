@@ -17,7 +17,7 @@ targets is the release gate (G6), not a precondition for testing.
 | **G4a Steam 1.8 on x86** | An unmodified Steam 1.8 client discovers, connects, plays, changes map and reconnects on the fork's x86 server. | Windows x86 | - | 6-12 weeks (12-20 if in-band formats changed); starts when captures arrive |
 | **G4b Steam 1.8 on native** | The G4a matrix against every G3 server. | 5 headless targets | K6 | Small, once G4a and G3 are done |
 | **G5 Native client** | A Win64 D3D9 interim client plays on a fork server, then on a Steam 1.8 server. Linux and macOS go through dxvk-native as an interim. Vulkan replaces both before G6. | Win64, then Linux, then macOS | K6 | Win64 D3D9 2-4 months after G2; dxvk-native +1-2 months; Vulkan 6-12 months |
-| **G6 Release** | 5 targets x 2 roles packaged; native client joins a Steam 1.8 server and a Steam 1.8 client joins a native server; macOS signed and notarized; provenance recorded. | All | K6 | After G5 |
+| **G6 Release** | 5 targets x 2 roles packaged; native client joins a Steam 1.8 server and a Steam 1.8 client joins a native server; macOS ad-hoc signed, not notarized ([ADR-0007](decisions/0007-macos-notarization-deferred.md)); provenance recorded. | All | K6 | After G5 |
 
 Windows ARM64 builds the Win64 source set and is not in G1 or G2; its first run is at G3. K1's `win64` is x64
 only: G3 prep adds Windows ARM64 and macOS arm64 census legs first ([NATIVE64](design/NATIVE64.md#kpis)).
