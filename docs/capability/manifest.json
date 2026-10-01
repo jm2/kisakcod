@@ -24,6 +24,6 @@
     {"target": "linux-arm64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "Engine source set is empty."},
     {"target": "linux-arm64", "role": "headless-server", "level": "links", "next": "G3", "evidence": "CI Linux headless server / arm64 builds and links KisakCOD-dedi on ubuntu-24.04-arm and passes scripts/ci/headless_smoke.py on every push; green on master at 8b897ce3 (run 36733167279)."},
     {"target": "macos-arm64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "Engine source set is empty."},
-    {"target": "macos-arm64", "role": "headless-server", "level": "none", "next": "G3", "evidence": "Engine source set is empty; follows Linux."}
+    {"target": "macos-arm64", "role": "headless-server", "level": "links", "next": "G3", "evidence": "CI macOS headless server / arm64 builds and links KisakCOD-dedi with Apple clang 21 on macos-26 and passes scripts/ci/headless_smoke.py; green on master at fcc6d843 (run 36799698478)."}
   ]
 }
