@@ -87,28 +87,39 @@ def parse_field(words, where):
             'where': where}
 
 
+def parse_include(path, words, where, records, root):
+    """Append the records of the files an include line names, in name order."""
+    included = sorted(path.parent.glob(words[1])) if root and len(words) == 2 else []
+    if not included:
+        fail(where, 'expected, in the root schema only: include <glob matching schema files>')
+    for schema in included:
+        parse(schema, records, root=False)
+
+
+def parse_line(file_records, words, where):
+    """Add one record, asset or field line to the records of the file being read."""
+    if words[0] == 'record':
+        file_records.append(parse_record(words, where))
+    elif not file_records:
+        fail(where, 'a field must follow a record line in the same file')
+    elif words[0] == 'asset':
+        parse_asset(file_records[-1], words, where)
+    else:
+        file_records[-1]['fields'].append(parse_field(words, where))
+
+
 def parse(path, records, root=True):
-    """Appends path's records. The root schema may include files by a glob
-    relative to itself; they are read in name order, each in full."""
-    record = None
+    """Append path's records; only the root schema may include other files, each read in full."""
+    file_records = []  # this file's records since its last include line
     for number, raw in enumerate(path.read_text().splitlines(), 1):
         where, words = f'{path}:{number}', raw.split('#', 1)[0].split()
         if words and words[0] == 'include':
-            included = sorted(path.parent.glob(words[1])) if root and len(words) == 2 else []
-            if not included:
-                fail(where, 'expected, in the root schema only: include <glob matching schema files>')
-            for schema in included:
-                parse(schema, records, root=False)
-            record = None
-        elif words and words[0] == 'record':
-            record = parse_record(words, where)
-            records.append(record)
-        elif words and not record:
-            fail(where, 'a field must follow a record line in the same file')
-        elif words and words[0] == 'asset':
-            parse_asset(record, words, where)
+            records += file_records
+            file_records = []
+            parse_include(path, words, where, records, root)
         elif words:
-            record['fields'].append(parse_field(words, where))
+            parse_line(file_records, words, where)
+    records += file_records
     return records
 
 
