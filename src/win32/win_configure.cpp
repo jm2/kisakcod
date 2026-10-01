@@ -182,8 +182,19 @@ long double __cdecl Sys_BenchmarkGHz()
 {
     uint32_t i; // ecx
     unsigned __int64 v1; // kr00_8
+#if KISAK_ARCH_ARM64
+    // Nothing reads the loop's results, so MSVC deletes the loop and times two
+    // back-to-back counter reads. The TSC still advances between them; the
+    // 100 ns steady_clock that MSVC ARM64 reads (qcommon/sys_time.h) does not,
+    // so minTime is 0 and configureGHz inf. sys_configureGHz rejects inf, and
+    // Sys_HasInfoChanged's message box then blocks the headless server.
+    // volatile keeps the work, as in posix_main.cpp's BenchmarkGHz.
+    volatile int holdrand;
+    volatile float k;
+#else
     int holdrand; // [esp+10h] [ebp-68h]
     float k; // [esp+2Ch] [ebp-4Ch]
+#endif
     uint64 start; // [esp+30h] [ebp-48h]
     int priority; // [esp+44h] [ebp-34h]
     unsigned __int64 minTime; // [esp+48h] [ebp-30h]
@@ -215,6 +226,10 @@ long double __cdecl Sys_BenchmarkGHz()
             if ((i & 1) != 0)
                 holdrand = 0x343FD * (0x343FD * (0x343FD * holdrand + 0x269EC3) + 0x269EC3) + 0x269EC3;
         }
+#if KISAK_ARCH_ARM64
+        const volatile float sink = x + y;
+        (void)sink;
+#endif
         v1 = Sys_CycleCounter() - start;
         if (minTime > v1)
             minTime = v1;
