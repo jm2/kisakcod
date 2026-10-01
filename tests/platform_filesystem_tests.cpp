@@ -3116,18 +3116,38 @@ bool TestOperatorRootsBelowLinks(const std::string &workingDirectory)
     }
 
     // Links trusting a root follows (Linux fs.protected_symlinks, stricter):
-    // one in a sticky or group/world-writable directory only when root or we
-    // own it. Another owner is synthesised here, since only root can chown.
+    // none in a writable directory without the sticky bit, and in a sticky one
+    // only when root or we own both the link and the directory. Other owners
+    // are synthesised here (directory mode, directory owner, link owner, us),
+    // since only root can chown.
     SetCheckStage("operator-roots/link-rule");
     const uid_t self = geteuid();
     const uid_t other = self == 1 ? 2 : 1;
-    if (!Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 0755, other, self))
-        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, other, self))
-        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 01755, other, self))
-        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 0775, other, self))
-        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 0757, other, self))
-        || !Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, self, self))
-        || !Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, 0, self)))
+    if (!Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 0755, other, other, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 0777, 0, 0, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 0775, 0, 0, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 0757, self, self, self))
+        || !Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, 0, 0, self))
+        || !Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, 0, self, self))
+        || !Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, self, self, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, 0, other, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, other, self, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 01755, 0, other, self)))
+    {
+        return false;
+    }
+
+    // Even our own link is refused in a writable directory without the sticky
+    // bit: anyone who can write there could swap it for theirs.
+    SetCheckStage("operator-roots/non-sticky-shared-link-refused");
+    const std::string writable = MakeUniquePath(workingDirectory) + "-roots-writable";
+    const std::string writableLink = Join(writable, "ours");
+    if (!Check(Sys_FileSystemCreateDirectory(writable.c_str()))
+        || !Check(SetDirectoryMode(writable, 0777))
+        || !Check(symlink(real.c_str(), writableLink.c_str()) == 0)
+        || !Check(!Sys_FileSystemTrustRoot(Join(writableLink, "base").c_str()))
+        || !Check(!Sys_FileSystemCreateDirectory(Join(writableLink, "base/writable").c_str()))
+        || !Check(!IsRealDirectory(Join(realBase, "writable"))))
     {
         return false;
     }
@@ -3176,6 +3196,7 @@ bool TestOperatorRootsBelowLinks(const std::string &workingDirectory)
 
     SetCheckStage("operator-roots/cleanup");
     return Check(unlink(link.c_str()) == 0)
+        && Check(Sys_FileSystemRemoveTree(writable.c_str()))
         && Check(Sys_FileSystemRemoveTree(shared.c_str()))
         && Check(Sys_FileSystemRemoveTree(real.c_str()))
         && Check(Sys_FileSystemRemoveTree(outside.c_str()));

@@ -71,12 +71,18 @@ bool KISAK_CDECL Sys_FileSystemGetExecutablePath(
 bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *utf8Path);
 
 // The rule Sys_FileSystemTrustRoot applies to every symbolic link it follows,
-// on every POSIX host (Linux's fs.protected_symlinks, made stricter): a link
-// in a sticky or group/world-writable directory is followed only when root or
-// effectiveUid owns it, so a link another user planted in a shared directory
-// such as /tmp is not.
+// on every POSIX host (Linux's fs.protected_symlinks, made stricter). Its point
+// is that no other user can replace the link between the check and the
+// read of its target:
+// - in a directory nobody but its owner can write, any link is followed;
+// - in a group/world-writable directory without the sticky bit, no link is,
+//   whoever owns it, since anyone who can write there can swap it;
+// - in a sticky directory, a link is followed only when root or effectiveUid
+//   owns both the link and the directory, the only users who can then
+//   rename or remove it. A link another user planted in /tmp is not.
 bool KISAK_CDECL Sys_FileSystemLinkIsTrusted(
     mode_t directoryMode,
+    uid_t directoryOwner,
     uid_t linkOwner,
     uid_t effectiveUid);
 #endif

@@ -297,7 +297,7 @@ std::optional<ProtectedResolution> FollowLink(
     struct stat holder{};
     // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
     if (++walk->links > kMaximumLinks || fstat(walk->directory.Get(), &holder) != 0
-        || !Sys_FileSystemLinkIsTrusted(holder.st_mode, link.st_uid, geteuid()))
+        || !Sys_FileSystemLinkIsTrusted(holder.st_mode, holder.st_uid, link.st_uid, geteuid()))
     {
         return ProtectedResolution::Refused;
     }
@@ -705,11 +705,15 @@ bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *const utf8Path)
 
 bool KISAK_CDECL Sys_FileSystemLinkIsTrusted(
     const mode_t directoryMode,
+    const uid_t directoryOwner,
     const uid_t linkOwner,
     const uid_t effectiveUid)
 {
-    const bool shared = (directoryMode & (S_ISVTX | S_IWGRP | S_IWOTH)) != 0;
-    return !shared || linkOwner == 0 || linkOwner == effectiveUid;
+    const bool sticky = (directoryMode & S_ISVTX) != 0;
+    if (!sticky)
+        return (directoryMode & (S_IWGRP | S_IWOTH)) == 0;
+    const auto ours = [effectiveUid](const uid_t owner) { return owner == 0 || owner == effectiveUid; };
+    return ours(directoryOwner) && ours(linkOwner);
 }
 
 bool KISAK_CDECL Sys_FileSystemGetCurrentDirectory(
