@@ -500,8 +500,6 @@ kisakcod_engine_call_site(zone-runtime-table-init src/database/db_registry.cpp
     "db::zone_runtime::TryInitializeZoneRuntimeTable(")
 kisakcod_engine_call_site(referenced-fastfile-names src/database/db_registry.cpp
     "db::referenced_fastfile::FormatReferencedFastFileNames(")
-kisakcod_engine_call_site(legacy-bridge-user-transfer src/database/db_registry.cpp
-    "DbLoadLegacyBridge::TryTransferUsers4To8()")
 kisakcod_engine_call_site(script-string-reset src/script/scr_main.cpp
     "SL_TryResetCanonicalStringState(")
 kisakcod_engine_call_site(path-sort src/universal/com_files.cpp
