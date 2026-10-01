@@ -75,7 +75,7 @@ G1's compile blockers are fixed; these rules keep them fixed.
 **K5** is the number of Linux headless TUs that need the census `d3d9.h` stand-in to compile, meaning they reach `<d3d9.h>`.
 
 - **Source:** the `native64-census` job.
-- **Baseline (census, 2026-09-22):** 103 of 236.
+- **Baseline (census, 2026-10-01):** 0 of 249 (met).
 - **Target:** 0, required for G1 on Linux.
 - **Moves it:** NOW bead 2.
 
