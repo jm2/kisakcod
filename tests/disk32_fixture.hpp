@@ -13,6 +13,7 @@
 #include <database/database.h>
 #include <database/db_disk32.h>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -90,6 +91,10 @@ struct FileBuilder
         for (int shift = 0; shift < 32; shift += 8)
             g_file.push_back(static_cast<std::uint8_t>(value >> shift));
         return static_cast<Self &>(*this);
+    }
+    Self &Float(float value)
+    {
+        return Word(std::bit_cast<std::uint32_t>(value));
     }
     Self &Text(std::string_view text)
     {
