@@ -2591,6 +2591,10 @@ void __cdecl Load_LoadedSound(bool atStreamStart)
 
 void __cdecl Load_LoadedSoundPtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadLoadedSoundPtrDisk32(atStreamStart, varLoadedSoundPtr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -2623,6 +2627,7 @@ void __cdecl Load_LoadedSoundPtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Load_StreamedSound(bool atStreamStart)
