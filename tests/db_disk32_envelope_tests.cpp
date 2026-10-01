@@ -319,6 +319,11 @@ db::load_legacy_bridge::DbLoadLegacyBridge::TryAddUser4(std::uint32_t) noexcept
     return LegacyBridgeStatus::InvalidState;
 }
 
+bool db::load_legacy_bridge::DbLoadLegacyBridge::InSession() noexcept
+{
+    return false;
+}
+
 int main()
 {
     // The zone loads twice: the second load reuses native slots that still

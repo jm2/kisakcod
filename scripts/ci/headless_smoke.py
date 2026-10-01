@@ -30,7 +30,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
+
+from synthetic_zones import write_init_zones
 
 # Shaped like retail's: CPU rows with real thresholds (the 100 GHz row must not
 # fit), and a GPU table with no row for a headless host.
@@ -122,6 +125,54 @@ def on_console(screen, server, *args):
     return 0
 
 
+INIT_COMPLETE = '--- Common Initialization Complete ---'
+
+
+def quit_run(server, base, zone_dir):
+    """Return (checks, log) of a `quit` typed once Com_Init completes with empty init zones.
+
+    The database's shutdown used to raise an error while holding its hash lock, and
+    the error's localized-message lookup waited on that lock: every orderly quit hung.
+    """
+    write_init_zones(zone_dir)
+    home = Path(base) / 'quit home'  # fresh: nothing the first run archived
+    server_run = subprocess.Popen([str(server), '+set', 'fs_basepath', base, '+set', 'fs_homepath', str(home),
+                                   '+set', 'dedicated', '1'],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  text=True, errors='replace', cwd=base)
+    lines, settled = [], threading.Event()
+
+    def read():
+        for line in server_run.stdout:
+            lines.append(line)
+            if INIT_COMPLETE in line:
+                settled.set()
+        settled.set()
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    settled.wait(120)
+    started = any(INIT_COMPLETE in line for line in lines)
+    status = 'no quit sent'
+    if started and server_run.poll() is None:
+        try:
+            server_run.stdin.write('quit\n')
+            server_run.stdin.flush()
+            status = server_run.wait(timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            status = f'no exit ({type(exc).__name__})'
+    if server_run.poll() is None:
+        server_run.kill()
+    server_run.wait()
+    reader.join(10)
+    log = ''.join(lines)
+    return [
+        (started, 'completes Com_Init with empty init zones'),
+        ('Unloaded fastfile code_post_gfx_mp' in log, 'unloads its zones on a typed quit'),
+        (status == 0, f'exits with status 0 within 30 s of a typed quit (got {status})'),
+    ], log
+
+
 def main():
     if len(sys.argv) > 3 and sys.argv[1] == '--on-console':
         return on_console(*sys.argv[2:])
@@ -170,6 +221,11 @@ def main():
                 (re.search(BANNER, screen), 'prints to the console it is started on'),
                 (status == '1', f'exits with status 1 there too (got {status})'),
             ]
+        # The zones go where the first run looked for them.
+        zone_dir = Path(zone.group(1)).parent if zone else Path(base) / 'zone' / 'english'
+        quit_checks, quit_log = quit_run(server, base, zone_dir)
+        checks += quit_checks
+        log += '\n--- the quit run ---\n' + quit_log
         failed = [name for ok, name in checks if not ok]
         for ok, name in checks:
             print(f"{'PASS' if ok else 'FAIL'}  {name}")

@@ -2,8 +2,12 @@
 
 #include <database/db_registry_ownership_coordinator.h>
 #include <database/db_zone_runtime_facade.h>
+#include <qcommon/sys_sync.h>
+#include <qcommon/sys_time.h>
 
 #include <cstring>
+
+extern FastCriticalSection db_hashCritSect;
 
 namespace db::load_legacy_bridge
 {
@@ -68,115 +72,71 @@ void PublishStringId(
     }
 }
 
-[[nodiscard]] LegacyBridgeStatus CleanupFailed(
-    const ZoneRuntimeFacadeStatus accessStatus,
-    const RegistryOwnershipStatus finishStatus) noexcept
+// This thread's registry session (DbLoadLegacyBridge::BeginSession).
+enum class SessionState : std::uint8_t
 {
-    static_cast<void>(accessStatus);
-    static_cast<void>(finishStatus);
-    return LegacyBridgeStatus::UnsafeFailure;
+    None,
+    Window,
+    HashOnly,
+};
+thread_local SessionState t_session = SessionState::None;
+thread_local std::uint32_t t_sessionDepth = 0;
+thread_local LegacyBridgeStatus t_sessionStatus = LegacyBridgeStatus::Success;
+
+// Opens a standalone registry window: facade access, then registry ownership,
+// which takes db_hashCritSect. Busy means another holder; nothing is kept.
+[[nodiscard]] LegacyBridgeStatus TryOpenWindow() noexcept
+{
+    const ZoneRuntimeFacadeStatus access = ZoneRuntimeFacade::TryBeginAccess();
+    if (access != ZoneRuntimeFacadeStatus::Success)
+    {
+        return access == ZoneRuntimeFacadeStatus::Busy
+            ? LegacyBridgeStatus::Busy
+            : LegacyBridgeStatus::UnsafeFailure;
+    }
+    const RegistryOwnershipStatus ownership =
+        ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership();
+    if (ownership == RegistryOwnershipStatus::Success)
+        return LegacyBridgeStatus::Success;
+    if (ZoneRuntimeFacade::FinishAccess() != ZoneRuntimeFacadeStatus::Success)
+        return LegacyBridgeStatus::UnsafeFailure;
+    return ownership == RegistryOwnershipStatus::Busy
+        ? LegacyBridgeStatus::Busy
+        : LegacyBridgeStatus::UnsafeFailure;
 }
 
-[[nodiscard]] LegacyBridgeStatus RunWithStandaloneOwnership(
-    const std::uint32_t stringId,
-    const char *const bytes,
-    const std::uint32_t byteCount,
-    LegacyBridgeStringId *const outString,
-    const bool writeOutput) noexcept
+[[nodiscard]] LegacyBridgeStatus CloseWindow() noexcept
 {
-    ResetStringId(outString);
-
-    if (ZoneRuntimeFacade::TryBeginAccess()
-        != ZoneRuntimeFacadeStatus::Success)
-    {
-        return LegacyBridgeStatus::UnsafeFailure;
-    }
-
-    if (ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership()
-        != RegistryOwnershipStatus::Success)
-    {
-        const ZoneRuntimeFacadeStatus abandoned =
-            ZoneRuntimeFacade::FinishAccess();
-        return CleanupFailed(abandoned, RegistryOwnershipStatus::UnsafeFailure);
-    }
-
-    RegistryOwnershipStatus opStatus = RegistryOwnershipStatus::UnsafeFailure;
-    if (writeOutput)
-    {
-        if (!bytes || !ByteCountIsRepresentable(byteCount))
-        {
-            (void)ZoneRuntimeFacade::FinishRegistryOwnership();
-            (void)ZoneRuntimeFacade::FinishAccess();
-            return LegacyBridgeStatus::InvalidArgument;
-        }
-        if (bytes[byteCount - 1u] != '\0')
-        {
-            (void)ZoneRuntimeFacade::FinishRegistryOwnership();
-            (void)ZoneRuntimeFacade::FinishAccess();
-            return LegacyBridgeStatus::InvalidArgument;
-        }
-        db::registry_ownership::RegistryOwnershipName interned{};
-        opStatus = ZoneRuntimeFacade::TryInternBoundedName(
-            bytes, byteCount, &interned);
-        if (opStatus == RegistryOwnershipStatus::Success)
-            PublishStringId(outString, interned);
-    }
-    else
-    {
-        opStatus = ZoneRuntimeFacade::TryAddDatabaseUser4(stringId);
-    }
-
     const RegistryOwnershipStatus finishStatus =
         ZoneRuntimeFacade::FinishRegistryOwnership();
     const ZoneRuntimeFacadeStatus accessStatus =
         ZoneRuntimeFacade::FinishAccess();
-
-    if (finishStatus != RegistryOwnershipStatus::Success
-        || accessStatus != ZoneRuntimeFacadeStatus::Success)
-    {
-        return CleanupFailed(accessStatus, finishStatus);
-    }
-
-    const LegacyBridgeStatus mapped = MapRegistryStatus(opStatus);
-    if (mapped == LegacyBridgeStatus::UnsafeFailure
-        && opStatus != RegistryOwnershipStatus::UnsafeFailure)
-    {
-        return LegacyBridgeStatus::InvalidState;
-    }
-    return mapped;
+    return finishStatus == RegistryOwnershipStatus::Success
+            && accessStatus == ZoneRuntimeFacadeStatus::Success
+        ? LegacyBridgeStatus::Success
+        : LegacyBridgeStatus::UnsafeFailure;
 }
 
-[[nodiscard]] LegacyBridgeStatus RunTransferOrShutdown(
-    const bool isTransfer) noexcept
+// Runs one registry operation in this thread's session window, keeping the
+// session's first failure, or else in a window of its own.
+template <typename Operation>
+[[nodiscard]] LegacyBridgeStatus RunInWindow(const Operation &operation) noexcept
 {
-    if (ZoneRuntimeFacade::TryBeginAccess()
-        != ZoneRuntimeFacadeStatus::Success)
+    if (t_sessionDepth != 0)
     {
+        const LegacyBridgeStatus status = t_session == SessionState::Window
+            ? MapRegistryStatus(operation())
+            : t_sessionStatus;
+        if (t_sessionStatus == LegacyBridgeStatus::Success)
+            t_sessionStatus = status;
+        return status;
+    }
+    if (TryOpenWindow() != LegacyBridgeStatus::Success)
         return LegacyBridgeStatus::UnsafeFailure;
-    }
-    if (ZoneRuntimeFacade::TryBeginStandaloneRegistryOwnership()
-        != RegistryOwnershipStatus::Success)
-    {
-        const ZoneRuntimeFacadeStatus abandoned =
-            ZoneRuntimeFacade::FinishAccess();
-        return CleanupFailed(abandoned, RegistryOwnershipStatus::UnsafeFailure);
-    }
-
-    const RegistryOwnershipStatus opStatus = isTransfer
-        ? ZoneRuntimeFacade::TryTransferDatabaseUsers4To8()
-        : ZoneRuntimeFacade::TryShutdownDatabaseUser8();
-
-    const RegistryOwnershipStatus finishStatus =
-        ZoneRuntimeFacade::FinishRegistryOwnership();
-    const ZoneRuntimeFacadeStatus accessStatus =
-        ZoneRuntimeFacade::FinishAccess();
-
-    if (finishStatus != RegistryOwnershipStatus::Success
-        || accessStatus != ZoneRuntimeFacadeStatus::Success)
-    {
-        return CleanupFailed(accessStatus, finishStatus);
-    }
-    return MapRegistryStatus(opStatus);
+    const RegistryOwnershipStatus status = operation();
+    if (CloseWindow() != LegacyBridgeStatus::Success)
+        return LegacyBridgeStatus::UnsafeFailure;
+    return MapRegistryStatus(status);
 }
 } // namespace
 
@@ -199,8 +159,20 @@ LegacyBridgeStatus DbLoadLegacyBridge::TryInternUser4StringOfSize(
 {
     if (!outString)
         return LegacyBridgeStatus::InvalidArgument;
-    return RunWithStandaloneOwnership(
-        0u, bytes, byteCount, outString, true);
+    ResetStringId(outString);
+    return RunInWindow([&]() noexcept {
+        if (!bytes || !ByteCountIsRepresentable(byteCount)
+            || bytes[byteCount - 1u] != '\0')
+        {
+            return RegistryOwnershipStatus::InvalidArgument;
+        }
+        db::registry_ownership::RegistryOwnershipName interned{};
+        const RegistryOwnershipStatus status =
+            ZoneRuntimeFacade::TryInternBoundedName(bytes, byteCount, &interned);
+        if (status == RegistryOwnershipStatus::Success)
+            PublishStringId(outString, interned);
+        return status;
+    });
 }
 
 LegacyBridgeStatus DbLoadLegacyBridge::TryAddUser4(
@@ -208,17 +180,84 @@ LegacyBridgeStatus DbLoadLegacyBridge::TryAddUser4(
 {
     if (stringId == 0u || stringId > 0xFFFFu)
         return LegacyBridgeStatus::InvalidArgument;
-    return RunWithStandaloneOwnership(
-        stringId, nullptr, 0u, nullptr, false);
+    return RunInWindow([stringId]() noexcept {
+        return ZoneRuntimeFacade::TryAddDatabaseUser4(stringId);
+    });
 }
 
 LegacyBridgeStatus DbLoadLegacyBridge::TryTransferUsers4To8() noexcept
 {
-    return RunTransferOrShutdown(true);
+    return RunInWindow([]() noexcept {
+        return ZoneRuntimeFacade::TryTransferDatabaseUsers4To8();
+    });
 }
 
 LegacyBridgeStatus DbLoadLegacyBridge::TryShutdownUser8() noexcept
 {
-    return RunTransferOrShutdown(false);
+    return RunInWindow([]() noexcept {
+        return ZoneRuntimeFacade::TryShutdownDatabaseUser8();
+    });
+}
+
+void DbLoadLegacyBridge::BeginSession() noexcept
+{
+    if (t_sessionDepth++ != 0)
+    {
+        // Sessions do not nest: the outer one keeps the hash and the window.
+        if (t_sessionStatus == LegacyBridgeStatus::Success)
+            t_sessionStatus = LegacyBridgeStatus::InvalidState;
+        return;
+    }
+    // Wait out other holders, as Sys_LockWrite does; nothing is held between
+    // attempts, so waiting cannot invert the lock order.
+    LegacyBridgeStatus status = TryOpenWindow();
+    while (status == LegacyBridgeStatus::Busy)
+    {
+        Sys_Sleep(0);
+        status = TryOpenWindow();
+    }
+    t_sessionStatus = status;
+    if (status == LegacyBridgeStatus::Success)
+    {
+        t_session = SessionState::Window;
+        return;
+    }
+    Sys_LockWrite(&db_hashCritSect);
+    t_session = SessionState::HashOnly;
+}
+
+bool DbLoadLegacyBridge::InSession() noexcept
+{
+    return t_sessionDepth != 0;
+}
+
+LegacyBridgeStatus DbLoadLegacyBridge::SessionStatus() noexcept
+{
+    return t_sessionDepth != 0 ? t_sessionStatus : LegacyBridgeStatus::Success;
+}
+
+LegacyBridgeStatus DbLoadLegacyBridge::FinishSession() noexcept
+{
+    if (t_sessionDepth == 0)
+        return LegacyBridgeStatus::InvalidState;
+    if (--t_sessionDepth != 0)
+        return t_sessionStatus;
+    LegacyBridgeStatus status = t_sessionStatus;
+    if (t_session == SessionState::Window)
+    {
+        // A poisoned window keeps db_hashCritSect, failing closed.
+        if (CloseWindow() != LegacyBridgeStatus::Success
+            && status == LegacyBridgeStatus::Success)
+        {
+            status = LegacyBridgeStatus::UnsafeFailure;
+        }
+    }
+    else
+    {
+        Sys_UnlockWrite(&db_hashCritSect);
+    }
+    t_session = SessionState::None;
+    t_sessionStatus = LegacyBridgeStatus::Success;
+    return status;
 }
 } // namespace db::load_legacy_bridge

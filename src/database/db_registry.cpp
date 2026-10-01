@@ -2530,6 +2530,31 @@ void __cdecl DB_SyncXAssets()
     DB_PostLoadXZone();
 }
 
+// The unload sequences (DB_ShutdownXAssets, DB_LoadXAssets) hold db_hashCritSect
+// through a registry session, not Sys_LockWrite: their user-4/user-8 calls need
+// the registry window to own the hash (db_load_legacy_bridge.h).
+static void DB_BeginRegistrySession()
+{
+    iassert(!db::load_legacy_bridge::DbLoadLegacyBridge::InSession());
+    db::load_legacy_bridge::DbLoadLegacyBridge::BeginSession();
+}
+
+// Reports a failure only once db_hashCritSect is released. An error raised
+// under it never returns: Com_ErrorCleanup's localization lookup waits for the
+// hash this thread holds. The failure leaked names; nothing was freed early.
+static void DB_EndRegistrySession()
+{
+    const db::load_legacy_bridge::LegacyBridgeStatus status =
+        db::load_legacy_bridge::DbLoadLegacyBridge::FinishSession();
+    if (status != db::load_legacy_bridge::LegacyBridgeStatus::Success)
+    {
+        Com_PrintError(
+            CON_CHANNEL_SYSTEM,
+            "Database script-string cleanup failed (status %d); unused names stay allocated\n",
+            static_cast<int32_t>(status));
+    }
+}
+
 cmd_function_s DB_LoadZone_f_VAR;
 void __cdecl DB_LoadXAssets(XZoneInfo *zoneInfo, uint32_t zoneCount, int32_t sync)
 {
@@ -2579,7 +2604,7 @@ void __cdecl DB_LoadXAssets(XZoneInfo *zoneInfo, uint32_t zoneCount, int32_t syn
                     unloadedZone = 1;
                     DB_SyncExternalAssets();
                     DB_ArchiveAssets();
-                    Sys_LockWrite(&db_hashCritSect);
+                    DB_BeginRegistrySession();
                 }
                 DB_UnloadXZone(zoneIndex, 1);
             }
@@ -2597,7 +2622,7 @@ void __cdecl DB_LoadXAssets(XZoneInfo *zoneInfo, uint32_t zoneCount, int32_t syn
             DB_UnloadXAssetsMemoryForZone(zoneInfo[ja].freeFlags, 4);
             DB_UnloadXAssetsMemoryForZone(zoneInfo[ja].freeFlags, 1);
         }
-        Sys_UnlockWrite(&db_hashCritSect);
+        DB_EndRegistrySession();
         DB_UnarchiveAssets();
     }
     if (sync)
@@ -3427,7 +3452,7 @@ void __cdecl DB_ShutdownXAssets()
     DB_SyncXAssets();
     DB_SyncExternalAssets();
     iassert(!Sys_IsWriteLocked(&db_hashCritSect));
-    Sys_LockWrite(&db_hashCritSect);
+    DB_BeginRegistrySession();
     for (i = g_zoneCount - 1; i >= 0; --i)
         DB_UnloadXZone(g_zoneHandles[i], 0);
     DB_FreeDefaultEntries();
@@ -3435,7 +3460,7 @@ void __cdecl DB_ShutdownXAssets()
     for (ia = g_zoneCount - 1; ia >= 0; --ia)
         DB_UnloadXZoneMemory(&g_zones[g_zoneHandles[ia]]);
     g_zoneCount = 0;
-    Sys_UnlockWrite(&db_hashCritSect);
+    DB_EndRegistrySession();
 }
 
 void __cdecl DB_FreeXZoneMemory(XZoneMemory *zoneMem)
@@ -3575,11 +3600,16 @@ void DB_FreeUnusedResources()
     char *name; // [esp+10h] [ebp-8h]
     XAssetEntryPoolEntry *assetEntry; // [esp+14h] [ebp-4h]
 
-    if (db::load_legacy_bridge::DbLoadLegacyBridge::TryTransferUsers4To8()
-        != db::load_legacy_bridge::LegacyBridgeStatus::Success)
-    {
-        Com_Error(ERR_DROP, "Database user-4 -> user-8 transfer failed");
-    }
+    using db::load_legacy_bridge::DbLoadLegacyBridge;
+    using db::load_legacy_bridge::LegacyBridgeStatus;
+
+    // Runs in the unload sequence's registry session, which holds
+    // db_hashCritSect and keeps the first failed registry call, so nothing here
+    // raises an error. After a failure the walk goes on but user 8 is not shut
+    // down: the unloaded zones' names leak rather than risk freeing one that a
+    // loaded asset still uses.
+    iassert(DbLoadLegacyBridge::InSession());
+    (void)DbLoadLegacyBridge::TryTransferUsers4To8();
     for (hash = 0; hash < 0x8000; ++hash)
     {
         for (assetEntryIndex = db_hashTable[hash];
@@ -3608,16 +3638,11 @@ void DB_FreeUnusedResources()
             {
                 name = (char *)DB_GetXAssetName(&assetEntry->entry.asset);
                 db::load_legacy_bridge::LegacyBridgeStringId internedName{};
-                if (db::load_legacy_bridge::DbLoadLegacyBridge::
-                        TryInternUser4String(name, &internedName)
-                    != db::load_legacy_bridge::LegacyBridgeStatus::Success)
+                if (DbLoadLegacyBridge::TryInternUser4String(name, &internedName)
+                    == LegacyBridgeStatus::Success)
                 {
-                    Com_Error(
-                        ERR_DROP,
-                        "Database user-4 re-intern failed for '%s'",
-                        name);
+                    DB_SetXAssetName(&assetEntry->entry.asset, internedName.canonicalName);
                 }
-                DB_SetXAssetName(&assetEntry->entry.asset, internedName.canonicalName);
                 pAssetEntryIndex = &assetEntry->entry.nextHash;
             }
             else
@@ -3632,11 +3657,8 @@ void DB_FreeUnusedResources()
             }
         }
     }
-    if (db::load_legacy_bridge::DbLoadLegacyBridge::TryShutdownUser8()
-        != db::load_legacy_bridge::LegacyBridgeStatus::Success)
-    {
-        Com_Error(ERR_DROP, "Database user-8 shutdown failed");
-    }
+    if (DbLoadLegacyBridge::SessionStatus() == LegacyBridgeStatus::Success)
+        (void)DbLoadLegacyBridge::TryShutdownUser8();
 }
 
 void DB_ExternalInitAssets()

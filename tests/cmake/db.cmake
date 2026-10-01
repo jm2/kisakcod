@@ -848,3 +848,56 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME database-disk32-envelope-load COMMAND kisakcod-db-disk32-envelope-tests)
     set_tests_properties(database-disk32-envelope-load PROPERTIES TIMEOUT 20)
 endif()
+
+# The db_registry unload sequence (quit, a map change's zone unload) against the
+# real bridge, facade, coordinator and script-string registry. As in misc.cmake's
+# game_mp hazard tests: the production TUs at 64-bit with the Linux headless
+# server's defines, a weak engine boundary, and --gc-sections.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-db-registry-unload-tests
+        db_registry_unload_tests.cpp
+        ${SRC_DIR}/database/db_registry.cpp
+        ${SRC_DIR}/database/db_stringtable_load.cpp
+        ${SRC_DIR}/database/db_load_legacy_bridge.cpp
+        ${SRC_DIR}/database/db_zone_runtime_facade.cpp
+        ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
+        ${SRC_DIR}/database/db_zone_runtime_table.cpp
+        ${SRC_DIR}/database/db_zone_runtime_storage.cpp
+        ${SRC_DIR}/database/db_zone_runtime_storage_fx_bridge_headless.cpp
+        ${SRC_DIR}/database/db_fx_zone_adapter_wiring_headless.cpp
+        ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+        ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
+        ${SRC_DIR}/database/db_zone_script_string_ownership.cpp
+        ${SRC_DIR}/database/db_script_string_adapter.cpp
+        ${SRC_DIR}/database/db_script_string_journal.cpp
+        ${SRC_DIR}/database/db_script_string_transaction.cpp
+        ${SRC_DIR}/database/db_zone_load_context.cpp
+        ${SRC_DIR}/database/db_relocation.cpp
+        ${SRC_DIR}/database/db_stream.cpp
+        ${SRC_DIR}/database/db_registry_ownership_coordinator.cpp
+        ${SRC_DIR}/qcommon/sys_sync.cpp
+        ${SRC_DIR}/script/scr_stringlist.cpp
+        ${SRC_DIR}/script/scr_memorytree.cpp
+        ${SRC_DIR}/universal/physicalmemory.cpp
+        ${SRC_DIR}/universal/physicalmemory_checked.cpp
+    )
+    target_include_directories(kisakcod-db-registry-unload-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-db-registry-unload-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-db-registry-unload-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS
+        KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1)
+    target_compile_options(kisakcod-db-registry-unload-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-db-registry-unload-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        # Otherwise ASan's global registration keeps every global alive.
+        target_compile_options(kisakcod-db-registry-unload-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-db-registry-unload-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    target_link_libraries(kisakcod-db-registry-unload-tests PRIVATE Threads::Threads)
+    set_target_properties(kisakcod-db-registry-unload-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME database-registry-unload COMMAND kisakcod-db-registry-unload-tests)
+    set_tests_properties(database-registry-unload PROPERTIES TIMEOUT 20)
+endif()
