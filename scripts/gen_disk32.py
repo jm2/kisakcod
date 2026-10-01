@@ -305,6 +305,17 @@ def scalar_copy(field):
     return f'    out->{field["name"]} = disk.{field["name"]}{test};\n'
 
 
+def bytes_count(record, field):
+    """A generated body's terminated bytes field: its count field and the constant added to it."""
+    kinds = {other['name']: other['kind'] for other in record['fields']}
+    count = re.fullmatch(r'(\w+)(?:\+(\d+))?', field['count'])
+    if field['kind'] != 'bytes' or not field['terminated'] or not field['label'] or not count \
+            or kinds.get(count.group(1)) not in ('i32', 'u32'):
+        fail(field['where'], 'a generated body loads scalars, xstrings and terminated bytes '
+                             f'(count=<i32 field>[+<n>] terminated label=<noun>), not this {field["kind"]} field')
+    return count.group(1), count.group(2) or '0'
+
+
 def body_step(record, field):
     """The generated body's statements for one pointer field."""
     if field['kind'] == 'xstring':
@@ -312,13 +323,8 @@ def body_step(record, field):
         if field['name'] == record['asset'].get('name'):
             step += NAME_CHECK.substitute(field=field['name'], noun=noun(record['asset']['label']))
         return step
-    kinds = {other['name']: other['kind'] for other in record['fields']}
-    count = re.fullmatch(r'(\w+)(?:\+(\d+))?', field['count'])
-    if field['kind'] != 'bytes' or not field['terminated'] or not field['label'] or not count \
-            or kinds.get(count.group(1)) not in ('i32', 'u32'):
-        fail(field['where'], 'a generated body loads scalars, xstrings and terminated bytes '
-                             f'(count=<i32 field>[+<n>] terminated label=<noun>), not this {field["kind"]} field')
-    facts = dict(field=field['name'], count=count.group(1), extra=count.group(2) or '0', label=field['label'],
+    count, extra = bytes_count(record, field)
+    facts = dict(field=field['name'], count=count, extra=extra, label=field['label'],
                  noun=noun(field['label']), owner=noun(record['asset']['label']))
     return (PAIRED.substitute(facts) if field['paired'] else '') + TERMINATED_BYTES.substitute(facts)
 
