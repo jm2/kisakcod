@@ -241,7 +241,10 @@ class TarXzTest(unittest.TestCase):
                 modes = {m.name: m.mode for m in members}
                 self.assertEqual((modes["pkg"], modes["pkg/KisakCOD-dedi"], modes["pkg/README.txt"]),
                                  (0o755, 0o755, 0o644))
-                self.assertEqual(tf.extractfile("pkg/README.txt").read(), b"README.txt")
+                readme = tf.extractfile("pkg/README.txt")
+                self.assertIsNotNone(readme)
+                assert readme is not None  # for the type checker
+                self.assertEqual(readme.read(), b"README.txt")
 
     def test_tar_xz_refuses_a_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:

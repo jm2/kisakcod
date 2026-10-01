@@ -286,8 +286,8 @@ def write_zip(root: Path, stem: str, epoch: int, out: Path) -> None:
 
 
 def write_tar_xz(root: Path, stem: str, epoch: int, out: Path) -> None:
-    """root/stem as a tar.xz: sorted names, one mtime, owner 0, no host metadata (GNU tar's
-    --sort=name --owner=0 --group=0 --numeric-owner --mtime); modes are 0755 or 0644."""
+    """Write root/stem as a tar.xz: sorted names, one mtime, owner 0, no host metadata."""
+    # GNU tar's --sort=name --owner=0 --group=0 --numeric-owner --mtime; modes are 0755 or 0644.
     def normalise(info: tarfile.TarInfo) -> tarfile.TarInfo:
         info.mtime, info.uid, info.gid, info.uname, info.gname = epoch, 0, 0, "", ""
         info.mode = 0o755 if info.isdir() or info.mode & 0o111 else 0o644
