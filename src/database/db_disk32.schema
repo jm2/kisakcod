@@ -11,6 +11,7 @@
 # share a number sort by name, and order has no other meaning.
 #
 #   record <Name> <retail size> runtime=<native struct> header=<its header> [same=<disk32:: constant>]
+#          [copy=scalars]
 #       [asset member=<XAssetHeader member> pool=<publish call> kind=<DBAliasKind>
 #              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom] [check=custom]]
 #       <retail offset> <field> <kind>[<n>]... [count=<expression>] [of=<record>] [terminated] [paired]
@@ -19,9 +20,15 @@
 # Kinds: i32 u32 f32 i16 u16 u8 (scalars), bool (one byte; nonzero is true),
 # xstring (a C string: inline or an offset token), bytes (inline bytes, count
 # given), xstrings (a pointer array of C strings, count given), pointer (a
-# token only a custom body loads), array (count elements of=<an earlier
-# record without an asset line>, label=<noun>). A scalar other than bool may
-# be a fixed array, as knots f32[8][2]; a generated body copies it whole.
+# token only a custom body loads), rawptr (pointer bytes that are no token;
+# the loader nulls them), array (count elements of=<an earlier record without
+# an asset line>, label=<noun>), struct (that record inline, of=<record>; only
+# a custom body loads it). A scalar other than bool may be a fixed array, as
+# knots f32[8][2]; a generated body copies it whole. A dotted field
+# (sound.info.rate) is a member of a nested native struct: its mirror member
+# takes the last name, and only a custom body or copy=scalars loads it.
+# copy=scalars emits Copy<Name>Scalars for a custom body: every scalar and
+# fixed array, and null for every rawptr.
 # The offsets and sizes are the retail facts: the generator checks them
 # against the ILP32 rules, and the compiler checks the emitted mirror against
 # them (ONDISK_*) and the native struct against the same field list (RUNTIME_*).

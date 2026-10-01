@@ -32,7 +32,9 @@ KINDS = {
     'bytes': ('Ptr32<const char>', 4, 8),
     'xstrings': ('Ptr32<Ptr32<const char>>', 4, 8),
     'pointer': ('Ptr32<void>', 4, 8),  # a token only a custom body loads
+    'rawptr': ('std::uint32_t', 4, 8),  # pointer bytes that are no token; the loader nulls them
     'array': ('Ptr32<{of}Disk32>', 4, 8),  # count records of=<a nested record>
+    'struct': ('{of}Disk32', 0, 0),  # a nested record inline; its layout gives size and alignment
 }
 COUNTED = ('bytes', 'xstrings', 'array')
 SCALARS = ('i32', 'u32', 'f32', 'i16', 'u16', 'u8', 'bool')
@@ -58,8 +60,10 @@ def attributes(words, where, allowed, flags=()):
 def parse_record(words, where):
     attrs = dict(word.split('=', 1) for word in words[3:] if '=' in word)
     if len(words) < 3 or len(attrs) != len(words) - 3 \
-            or not {'runtime', 'header'} <= attrs.keys() <= {'runtime', 'header', 'same'}:
-        fail(where, 'expected: record <Name> <size> runtime=<type> header=<path> [same=<constant>]')
+            or not {'runtime', 'header'} <= attrs.keys() <= {'runtime', 'header', 'same', 'copy'} \
+            or attrs.get('copy', 'scalars') != 'scalars':
+        fail(where, 'expected: record <Name> <size> runtime=<type> header=<path> [same=<constant>] '
+                    '[copy=scalars]')
     return {'name': words[1], 'size': int(words[2], 0), 'fields': [], 'asset': None, 'where': where, **attrs}
 
 
@@ -84,15 +88,17 @@ def field_shape(words, where):
 
 # The attributes each kind takes after it; the others take none.
 FIELD_ATTRIBUTES = {'bytes': {'count', 'terminated', 'paired', 'label'}, 'xstrings': {'count'},
-                    'array': {'count', 'of', 'label'}}
+                    'array': {'count', 'of', 'label'}, 'struct': {'of'}}
 
 
 def parse_field(words, where):
     kind, dims = field_shape(words, where)
     attrs = attributes(words[3:], where, FIELD_ATTRIBUTES.get(kind, set()), flags=('terminated', 'paired'))
-    if (kind in COUNTED) != ('count' in attrs) or (kind == 'array') != ('of' in attrs):
+    if (kind in COUNTED) != ('count' in attrs) or (kind in ('array', 'struct')) != ('of' in attrs):
         fail(where, f'count=<expression> is required for {COUNTED} and only for them, and of=<record> '
-                    'for array and only for it')
+                    'for array and struct and only for them')
+    if not re.fullmatch(r'[A-Za-z_]\w*(\.[A-Za-z_]\w*)*', words[1]):
+        fail(where, 'a field is a member name, or a dotted path to a member of a nested native struct')
     return {'offset': int(words[0], 0), 'name': words[1], 'kind': kind, 'dims': dims,
             'count': attrs.get('count', ''), 'of': attrs.get('of'),
             'terminated': 'terminated' in attrs, 'paired': 'paired' in attrs, 'label': attrs.get('label'),
@@ -135,16 +141,30 @@ def parse(path, records, root=True):
     return records
 
 
+def field_layout(field, width):
+    """Return a field's size and alignment; width 1 is ILP32, 2 is 64-bit."""
+    if field['kind'] == 'struct':
+        nested = field['record']['fields']
+        return layout(nested, width)[1], max((field_layout(f, width)[1] for f in nested), default=1)
+    align = KINDS[field['kind']][width]
+    return align * math.prod(field['dims']), align
+
+
 def layout(fields, width):
     """Natural-alignment offsets and size; width 1 is ILP32, 2 is 64-bit."""
     offsets, offset, biggest = [], 0, 1
     for field in fields:
-        align = KINDS[field['kind']][width]
+        size, align = field_layout(field, width)
         offset = (offset + align - 1) // align * align
         offsets.append(offset)
-        offset += align * math.prod(field['dims'])
+        offset += size
         biggest = max(biggest, align)
     return offsets, (offset + biggest - 1) // biggest * biggest
+
+
+def member(field):
+    """Return the mirror member of a field: the last name of a dotted native path."""
+    return field['name'].rsplit('.', 1)[-1]
 
 
 def emit_mirror(record):
@@ -155,9 +175,9 @@ def emit_mirror(record):
         count = f' // count: {field["count"]}' if field['count'] else ''
         dims = ''.join(f'[{n}]' for n in field['dims'])
         mirror_type = KINDS[field['kind']][0].format(of=field['of'])
-        out.append(f'    {mirror_type} {field["name"]}{dims};{count}')
+        out.append(f'    {mirror_type} {member(field)}{dims};{count}')
     out += ['};', f'ONDISK_SIZE({mirror}, 0x{record["size"]:02X});']
-    out += [f'ONDISK_OFFSET({mirror}, {field["name"]}, 0x{field["offset"]:02X});' for field in record['fields']]
+    out += [f'ONDISK_OFFSET({mirror}, {member(field)}, 0x{field["offset"]:02X});' for field in record['fields']]
     out += [f'static_assert(alignof({mirror}) == 4 && std::is_trivially_copyable_v<{mirror}>',
             f'    && std::is_standard_layout_v<{mirror}>);']
     if 'same' in record:
@@ -322,10 +342,19 @@ ${pointers}${check}    DB_PopStreamPos();
 ''')
 
 FIXED_ARRAY = Template('''\
-    static_assert(sizeof(out->$field) == sizeof(disk.$field)
+    static_assert(sizeof(out->$field) == sizeof(disk.$member)
         && std::is_same_v<std::remove_all_extents_t<decltype(out->$field)>,
-                          std::remove_all_extents_t<decltype(disk.$field)>>);
-    std::memcpy(out->$field, disk.$field, sizeof(disk.$field));
+                          std::remove_all_extents_t<decltype(disk.$member)>>);
+    std::memcpy(out->$field, disk.$member, sizeof(disk.$member));
+''')
+
+# copy=scalars: a record's scalars for a hand-written body to call.
+COPY_SCALARS = Template('''\
+// $Name's scalars from its mirror into the native record: each scalar (a bool
+// as != 0) and fixed array, and null for each rawptr, whose bytes are no token.
+inline void Copy${Name}Scalars(const disk32::${Name}Disk32 &disk, $Runtime *out)
+{
+${copies}}
 ''')
 
 # check=custom: the 32-bit loader's acceptance rules beyond the layout.
@@ -418,11 +447,11 @@ def noun(label):
 
 def scalar_copy(field):
     """Copy a scalar (a bool as != 0) or a fixed array, after checking its native type matches the mirror's."""
-    name = field['name']
+    name, mirror = field['name'], member(field)
     if field['dims']:
-        return FIXED_ARRAY.substitute(field=name)
+        return FIXED_ARRAY.substitute(field=name, member=mirror)
     test = ' != 0' if field['kind'] == 'bool' else ''
-    return f'    out->{name} = disk.{name}{test};\n'
+    return f'    out->{name} = disk.{mirror}{test};\n'
 
 
 def bytes_count(record, field):
@@ -458,7 +487,7 @@ def element_record(records, record, field):
     earlier = {other['name']: other for other in records[:records.index(record)]}
     element = earlier.get(field['of'])
     if not element or element['asset'] or not field['label'] \
-            or any(f['kind'] not in SCALARS + ('xstring',) for f in element['fields']):
+            or any(f['kind'] not in SCALARS + ('xstring',) or '.' in f['name'] for f in element['fields']):
         fail(field['where'], f'of={field["of"]} must name an earlier record without an asset line whose fields '
                              'are scalars, fixed arrays and xstrings, and the array needs label=<noun>')
     return element
@@ -478,10 +507,25 @@ def emit_element(element):
     return ELEMENT.substitute(Of=element['name'], Element=element['runtime'], scalars=scalars, pointers=pointers)
 
 
-def emit_body(record, records):
+def emit_copy_scalars(record):
+    copies = ''.join(scalar_copy(field) for field in record['fields'] if field['kind'] in SCALARS)
+    copies += ''.join(f'    out->{field["name"]} = nullptr;\n'
+                      for field in record['fields'] if field['kind'] == 'rawptr')
+    return COPY_SCALARS.substitute(Name=record['name'], Runtime=record['runtime'], copies=copies)
+
+
+def check_generated_body(record):
+    """Fail unless a generated body can load the record: a name= xstring and no dotted field."""
     asset = record['asset']
     if {field['name']: field['kind'] for field in record['fields']}.get(asset.get('name')) != 'xstring':
         fail(asset['where'], 'a generated body needs name=<the xstring the pool hashes>')
+    if any('.' in field['name'] for field in record['fields']):
+        fail(asset['where'], 'a generated body loads top-level members; a dotted field needs body=custom')
+
+
+def emit_body(record, records):
+    asset = record['asset']
+    check_generated_body(record)
     scalars = ''.join(scalar_copy(field) for field in record['fields'] if field['kind'] in SCALARS)
     pointers = ''.join(body_step(record, field, records) for field in record['fields']
                        if field['kind'] not in SCALARS)
@@ -526,6 +570,8 @@ def emit_loaders(records, schema_name):
     for record in records:
         if record['name'] in elements:
             out.append(emit_element(record))
+        if 'copy' in record:
+            out.append(emit_copy_scalars(record))
         if record['asset']:
             out += emit_family(record, records)
     out += ['} // namespace db::disk32_load', '', '#endif // KISAK_ARCH_64BIT']
@@ -538,6 +584,16 @@ def write(output, text):
         output.write_text(text)
 
 
+def resolve_structs(records):
+    """Link each struct field to the earlier, asset-free record its of= names."""
+    for index, record in enumerate(records):
+        earlier = {other['name']: other for other in records[:index] if not other['asset']}
+        for field in record['fields']:
+            if field['kind'] == 'struct' and field['of'] not in earlier:
+                fail(field['where'], f'of={field["of"]} must name an earlier record without an asset line')
+            field['record'] = earlier.get(field['of'])
+
+
 def main():
     if len(sys.argv) != 4:
         sys.exit('usage: gen_disk32.py <schema> <mirrors header> <loaders header>')
@@ -546,6 +602,7 @@ def main():
     if not records:
         fail(schema, 'no records')
     names = [record['name'] for record in records]
+    resolve_structs(records)
     for record in records:
         if names.count(record['name']) > 1:
             fail(record['where'], f'record {record["name"]} is declared more than once')

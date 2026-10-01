@@ -59,6 +59,9 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    32-bit loader's further rules as a hand-written `Check<Family>`, such as SoundCurve's knot
    checks. A `body=custom` family hand-writes only the body, such as StringTable's value
    array. Each family's TU forwards `DB_Load<Family>PtrDisk32` to the generated entry.
+   For custom bodies the schema also has `pointer` and `rawptr` (token and non-token pointer
+   bytes), `struct of=` (a nested record inline), dotted fields naming members of nested native
+   structs, and `copy=scalars`, which emits the record's scalar copies for the body to call.
 
    **Asset references** (planned with LightDef → Image, Font → Material, ImpactFx → Fx and Sound
    → LoadedSound/SoundCurve). A field `asset=<Family>` holds a token to another family's
