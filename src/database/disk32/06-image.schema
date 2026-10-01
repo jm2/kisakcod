@@ -6,10 +6,10 @@
 record GfxImageLoadDef 0x14 runtime=GfxImageLoadDef header=gfx_d3d/r_gfx.h
     0x00 levelCount      u8
     0x01 flags           u8
-    0x02 dimensions      i16      count=3
+    0x02 dimensions      i16[3]
     0x08 format          i32
     0x0C resourceSize    i32
-    0x10 data            u8       count=4
+    0x10 data            u8[4]
 
 # The body is custom (db_disk32_image.cpp): the name streams before the
 # texture, and the texture is a GfxImageLoadDef token.
@@ -17,11 +17,11 @@ record GfxImage 0x24 runtime=GfxImage header=gfx_d3d/r_gfx.h
     asset member=image pool=Load_GfxImageAsset kind=GfxImage alias=inserted body=custom label=image
     0x00 mapType         i32
     0x04 texture         pointer
-    0x08 picmip          u8       count=2
+    0x08 picmip          u8[2]
     0x0A noPicmip        bool
     0x0B semantic        u8
     0x0C track           u8
-    0x10 cardMemory      i32      count=2
+    0x10 cardMemory      i32[2]
     0x18 width           u16
     0x1A height          u16
     0x1C depth           u16

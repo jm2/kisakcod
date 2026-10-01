@@ -2686,6 +2686,10 @@ bool __cdecl Load_SndCurve(bool atStreamStart)
 
 void __cdecl Load_SndCurvePtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadSndCurvePtrDisk32(atStreamStart, varSndCurvePtr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -2722,6 +2726,7 @@ void __cdecl Load_SndCurvePtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 bool __cdecl Load_SpeakerMap(bool atStreamStart)

@@ -12,6 +12,7 @@
 # family's 64-bit loader steps, as the schema's header describes. The output
 # is a build artifact, never committed (AGENTS.md rule 8).
 
+import math
 import re
 import sys
 from pathlib import Path
@@ -34,7 +35,8 @@ KINDS = {
 }
 COUNTED = ('bytes', 'xstrings')
 SCALARS = ('i32', 'u32', 'f32', 'i16', 'u16', 'u8', 'bool')
-ASSET_KEYS = {'member', 'pool', 'kind', 'alias', 'label', 'name', 'body'}
+ARRAYABLE = ('i32', 'u32', 'f32', 'i16', 'u16', 'u8')  # fixed arrays copy as bytes; a bool needs != 0
+ASSET_KEYS = {'member', 'pool', 'kind', 'alias', 'label', 'name', 'body', 'check'}
 
 
 def fail(where, message) -> NoReturn:
@@ -63,26 +65,33 @@ def parse_record(words, where):
 def parse_asset(record, words, where):
     asset = attributes(words[1:], where, ASSET_KEYS)
     if record['asset'] or not {'member', 'pool', 'kind', 'alias', 'label'} <= asset.keys() \
-            or asset['alias'] not in ('inserted', 'completed') or asset.get('body', 'custom') != 'custom':
+            or asset['alias'] not in ('inserted', 'completed') or asset.get('body', 'custom') != 'custom' \
+            or asset.get('check', 'custom') != 'custom':
         fail(where, 'expected one line: asset member= pool= kind= alias=<inserted|completed> label= '
-                    '[name=] [body=custom]')
+                    '[name=] [body=custom] [check=custom]')
     record['asset'] = {**asset, 'where': where}
 
 
+def field_shape(words, where):
+    """Return a field line's kind and its fixed-array dimensions, if any."""
+    shape = re.fullmatch(r'(\w+)((?:\[[1-9]\d*\])*)', words[2]) if len(words) >= 3 else None
+    if not shape or shape.group(1) not in KINDS or (shape.group(2) and shape.group(1) not in ARRAYABLE):
+        fail(where, f'expected: <offset> <field> <kind>[<n>]... [attributes]; kinds {sorted(KINDS)}, '
+                    f'fixed arrays of {ARRAYABLE}')
+    return shape.group(1), [int(n) for n in re.findall(r'\d+', shape.group(2))]
+
+
+# The attributes each kind takes after it; the others take none.
+FIELD_ATTRIBUTES = {'bytes': {'count', 'terminated', 'paired', 'label'}, 'xstrings': {'count'}}
+
+
 def parse_field(words, where):
-    if len(words) < 3 or words[2] not in KINDS:
-        fail(where, f'expected: <offset> <field> <kind> [attributes]; kinds {sorted(KINDS)}')
-    kind = words[2]
-    allowed = ({'count', 'terminated', 'paired', 'label'} if kind == 'bytes'
-               else {'count'} if kind in COUNTED + SCALARS else set())
-    attrs = attributes(words[3:], where, allowed, flags=('terminated', 'paired'))
-    count = attrs.get('count', '')
-    if kind in COUNTED and not count:
-        fail(where, f'count=<expression> is required for {COUNTED}')
-    if kind in SCALARS and count and not (count.isdigit() and int(count) > 1):
-        fail(where, 'a scalar takes count=<n>, n > 1, as a fixed array of n')
-    return {'offset': int(words[0], 0), 'name': words[1], 'kind': kind,
-            'count': count if kind in COUNTED else '', 'length': int(count) if kind in SCALARS and count else 1,
+    kind, dims = field_shape(words, where)
+    attrs = attributes(words[3:], where, FIELD_ATTRIBUTES.get(kind, set()), flags=('terminated', 'paired'))
+    if (kind in COUNTED) != ('count' in attrs):
+        fail(where, f'count=<expression> is required for {COUNTED} and only for them')
+    return {'offset': int(words[0], 0), 'name': words[1], 'kind': kind, 'dims': dims,
+            'count': attrs.get('count', ''),
             'terminated': 'terminated' in attrs, 'paired': 'paired' in attrs, 'label': attrs.get('label'),
             'where': where}
 
@@ -127,12 +136,29 @@ def layout(fields, width):
     """Natural-alignment offsets and size; width 1 is ILP32, 2 is 64-bit."""
     offsets, offset, biggest = [], 0, 1
     for field in fields:
-        size = KINDS[field['kind']][width]
-        offset = (offset + size - 1) // size * size
+        align = KINDS[field['kind']][width]
+        offset = (offset + align - 1) // align * align
         offsets.append(offset)
-        offset += size * field['length']
-        biggest = max(biggest, size)
+        offset += align * math.prod(field['dims'])
+        biggest = max(biggest, align)
     return offsets, (offset + biggest - 1) // biggest * biggest
+
+
+def emit_mirror(record):
+    """Return the lines of one record's disk32 mirror struct and its ONDISK_* asserts."""
+    mirror = record['name'] + 'Disk32'
+    out = [f'// Retail {record["name"]}: 0x{record["size"]:02X} bytes.', f'struct {mirror}', '{']
+    for field in record['fields']:
+        count = f' // count: {field["count"]}' if field['count'] else ''
+        dims = ''.join(f'[{n}]' for n in field['dims'])
+        out.append(f'    {KINDS[field["kind"]][0]} {field["name"]}{dims};{count}')
+    out += ['};', f'ONDISK_SIZE({mirror}, 0x{record["size"]:02X});']
+    out += [f'ONDISK_OFFSET({mirror}, {field["name"]}, 0x{field["offset"]:02X});' for field in record['fields']]
+    out += [f'static_assert(alignof({mirror}) == 4 && std::is_trivially_copyable_v<{mirror}>',
+            f'    && std::is_standard_layout_v<{mirror}>);']
+    if 'same' in record:
+        out.append(f'static_assert(sizeof({mirror}) == {record["same"]});')
+    return out + ['']
 
 
 def emit(records, schema_name):
@@ -142,20 +168,7 @@ def emit(records, schema_name):
     out += [f'#include <{header}>' for header in sorted({record['header'] for record in records})]
     out += ['', '#include <cstddef>', '#include <cstdint>', '#include <type_traits>', '', 'namespace disk32', '{']
     for record in records:
-        mirror = record['name'] + 'Disk32'
-        out += [f'// Retail {record["name"]}: 0x{record["size"]:02X} bytes.', f'struct {mirror}', '{']
-        for field in record['fields']:
-            count = f' // count: {field["count"]}' if field['count'] else ''
-            length = f'[{field["length"]}]' if field['length'] > 1 else ''
-            out.append(f'    {KINDS[field["kind"]][0]} {field["name"]}{length};{count}')
-        out += ['};', f'ONDISK_SIZE({mirror}, 0x{record["size"]:02X});']
-        out += [f'ONDISK_OFFSET({mirror}, {field["name"]}, 0x{field["offset"]:02X});'
-                for field in record['fields']]
-        out += [f'static_assert(alignof({mirror}) == 4 && std::is_trivially_copyable_v<{mirror}>',
-                f'    && std::is_standard_layout_v<{mirror}>);']
-        if 'same' in record:
-            out.append(f'static_assert(sizeof({mirror}) == {record["same"]});')
-        out.append('')
+        out += emit_mirror(record)
     out += ['} // namespace disk32', '', '// The native struct each mirror converts into, from the same field list.']
     for record in records:
         (off32, size32), (off64, size64) = layout(record['fields'], 1), layout(record['fields'], 2)
@@ -299,9 +312,29 @@ inline bool Load$Name($Runtime *out)
         return false;
     std::memcpy(&disk, record, sizeof(disk));
 ${scalars}    DB_PushStreamPos(kVirtualBlock);
-${pointers}    DB_PopStreamPos();
+${pointers}${check}    DB_PopStreamPos();
     return true;
 }
+''')
+
+FIXED_ARRAY = Template('''\
+    static_assert(sizeof(out->$field) == sizeof(disk.$field)
+        && std::is_same_v<std::remove_all_extents_t<decltype(out->$field)>,
+                          std::remove_all_extents_t<decltype(disk.$field)>>);
+    std::memcpy(out->$field, disk.$field, sizeof(disk.$field));
+''')
+
+# check=custom: the 32-bit loader's acceptance rules beyond the layout.
+CHECK_DECL = Template('''\
+// $Name's check, hand-written in its TU: the 32-bit loader's rules for the
+// converted record beyond its layout.
+bool Check$Name(const $Runtime &record);
+
+''')
+
+CHECK_CALL = Template('''\
+    if (!Check$Name(*out))
+        return Drop("Invalid fast-file $noun");
 ''')
 
 XSTRING = Template('''\
@@ -342,11 +375,12 @@ def noun(label):
 
 
 def scalar_copy(field):
-    """A bool converts as != 0, so no disk byte lands in a C++ bool."""
-    if field['length'] > 1:
-        fail(field['where'], 'a generated body copies single scalars; a fixed array needs body=custom')
+    """Copy a scalar (a bool as != 0) or a fixed array, after checking its native type matches the mirror's."""
+    name = field['name']
+    if field['dims']:
+        return FIXED_ARRAY.substitute(field=name)
     test = ' != 0' if field['kind'] == 'bool' else ''
-    return f'    out->{field["name"]} = disk.{field["name"]}{test};\n'
+    return f'    out->{name} = disk.{name}{test};\n'
 
 
 def bytes_count(record, field):
@@ -379,7 +413,10 @@ def emit_body(record):
         fail(asset['where'], 'a generated body needs name=<the xstring the pool hashes>')
     scalars = ''.join(scalar_copy(field) for field in record['fields'] if field['kind'] in SCALARS)
     pointers = ''.join(body_step(record, field) for field in record['fields'] if field['kind'] not in SCALARS)
-    return FLAT_BODY.substitute(Name=record['name'], Runtime=record['runtime'], scalars=scalars, pointers=pointers)
+    facts = dict(Name=record['name'], Runtime=record['runtime'], noun=noun(asset['label']))
+    check = CHECK_CALL.substitute(facts) if 'check' in asset else ''
+    body = FLAT_BODY.substitute(facts, scalars=scalars, pointers=pointers, check=check)
+    return (CHECK_DECL.substitute(facts) if 'check' in asset else '') + body
 
 
 def emit_family(record):
@@ -387,8 +424,8 @@ def emit_family(record):
     inserted, custom = asset['alias'] == 'inserted', 'body' in asset
     if not (custom or inserted):
         fail(asset['where'], 'alias=completed takes body=custom: its native storage is family-specific')
-    if custom and 'name' in asset:
-        fail(asset['where'], 'name= applies to a generated body; a custom body checks its own name')
+    if custom and ('name' in asset or 'check' in asset):
+        fail(asset['where'], 'name= and check= apply to a generated body; a custom body does its own checks')
     facts = dict(Name=record['name'], Runtime=record['runtime'], kind=asset['kind'], member=asset['member'],
                  pool=asset['pool'], label=asset['label'], noun=noun(asset['label']))
     # COMPLETED_PTR declares its own custom body.
@@ -410,7 +447,8 @@ def emit_loaders(records, schema_name):
            '// DB_InitStreams resets the stack for the next zone.', '',
            '#include <universal/kisak_abi.h>', '', '#if KISAK_ARCH_64BIT', '',
            '#include <database/db_disk32_load_internal.h>', '#include <database/db_disk32_mirrors.h>',
-           '#include <database/db_validation.h>', '', '#include <cstdint>', '#include <cstring>', '',
+           '#include <database/db_validation.h>', '', '#include <cstdint>', '#include <cstring>',
+           '#include <type_traits>', '',
            'namespace db::disk32_load', '{']
     for record in records:
         if record['asset']:

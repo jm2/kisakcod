@@ -53,9 +53,19 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    generator emits the header-slot entry and the pointer step. `inserted` streams the record
    into the temp block for the pool to copy. `completed` keeps the block-4 record as the alias
    identity and resolves aliases to its native twin. For a flat family it also emits the record
-   body from the field kinds: scalars, `bool` as `!= 0`, xstrings, and terminated byte arrays
-   with a checked count. A `body=custom` family hand-writes only the body, such as StringTable's
-   value array. Each family's TU forwards `DB_Load<Family>PtrDisk32` to the generated entry.
+   body from the field kinds: scalars, `bool` as `!= 0`, fixed scalar arrays, xstrings, and
+   terminated byte arrays with a checked count. `check=custom` adds the 32-bit loader's further
+   rules as a hand-written `Check<Family>`, such as SoundCurve's knot checks. A `body=custom`
+   family hand-writes only the body, such as StringTable's value array. Each family's TU
+   forwards `DB_Load<Family>PtrDisk32` to the generated entry.
+
+   **Asset references** (planned with LightDef → Image, Font → Material, ImpactFx → Fx and Sound
+   → LoadedSound/SoundCurve). A field `asset=<Family>` holds a token to another family's
+   header. The body calls that family's generated pointer step, `Load<Family>Ptr`, which
+   pushes the temp block itself as its 32-bit `Load_<Family>Ptr` does, so the child streams
+   where x86 streams it and the slot ends with the native pointer. While the child has no
+   `asset` line, a non-null token raises `ERR_DROP` naming it. Forward declarations of every
+   pointer step keep schema order free.
 3. **Relocation map.** Every materialized record registers `(block, disk offset, disk stride) →
    (native base, native stride)`. Offset tokens resolve through this map, including interior
    pointers into arrays and to named fields, so no pointer points into raw stream bytes. A

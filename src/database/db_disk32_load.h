@@ -16,6 +16,7 @@ struct LocalizeEntry;
 struct MapEnts;
 struct PhysPreset;
 struct RawFile;
+struct SndCurve;
 struct StringTable;
 struct XAssetList;
 
@@ -63,6 +64,11 @@ void __cdecl DB_LoadGfxImagePtrDisk32(bool atStreamStart, GfxImage **slot);
 // contract: the slot holds the zero-extended disk32 token on entry and the
 // native GameWorldMp published through Load_GameWorldMpAsset on return.
 void __cdecl DB_LoadGameWorldMpPtrDisk32(bool atStreamStart, GameWorldMp **slot);
+
+// Loads one SndCurve (db_disk32_soundcurve.cpp) under the same slot contract:
+// the slot holds the zero-extended disk32 token on entry and the native
+// SndCurve published through Load_SndCurveAsset on return.
+void __cdecl DB_LoadSndCurvePtrDisk32(bool atStreamStart, SndCurve **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from

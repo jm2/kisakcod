@@ -1,0 +1,7 @@
+# SoundCurve, asset type 0x08. The format is described in ../db_disk32.schema.
+
+record SndCurve 0x48 runtime=SndCurve header=sound/snd_public.h
+    asset member=sndCurve pool=Load_SndCurveAsset kind=SndCurve alias=inserted name=filename label=sound-curve check=custom
+    0x00 filename  xstring
+    0x04 knotCount i32
+    0x08 knots     f32[8][2]
