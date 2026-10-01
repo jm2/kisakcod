@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 
+struct LocalizeEntry;
 struct PhysPreset;
 struct RawFile;
 struct StringTable;
@@ -36,6 +37,11 @@ void __cdecl DB_LoadStringTablePtrDisk32(bool atStreamStart, StringTable **slot)
 // native PhysPreset published through Load_PhysPresetAsset on return. The
 // retail bool byte converts as nonzero = true.
 void __cdecl DB_LoadPhysPresetPtrDisk32(bool atStreamStart, PhysPreset **slot);
+
+// Loads one LocalizeEntry (db_disk32_localize.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native LocalizeEntry published through Load_LocalizeEntryAsset on return.
+void __cdecl DB_LoadLocalizeEntryPtrDisk32(bool atStreamStart, LocalizeEntry **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
