@@ -136,14 +136,19 @@ def quit_run(server, base, zone_dir):
     """
     write_init_zones(zone_dir)
     home = Path(base) / 'quit home'  # fresh: nothing the first run archived
-    server_run = subprocess.Popen([str(server), '+set', 'fs_basepath', base, '+set', 'fs_homepath', str(home),
-                                   '+set', 'dedicated', '1'],
+    # An argument list with no shell; main() admits only the server this job built.
+    # nosemgrep
+    server_run = subprocess.Popen([str(server), '+set', 'fs_basepath', base,  # nosec B603
+                                   '+set', 'fs_homepath', str(home), '+set', 'dedicated', '1'],
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   text=True, errors='replace', cwd=base)
+    commands, output = server_run.stdin, server_run.stdout
+    if commands is None or output is None:
+        raise OSError('the server has no stdin or stdout pipe')
     lines, settled = [], threading.Event()
 
     def read():
-        for line in server_run.stdout:
+        for line in output:
             lines.append(line)
             if INIT_COMPLETE in line:
                 settled.set()
@@ -156,8 +161,8 @@ def quit_run(server, base, zone_dir):
     status = 'no quit sent'
     if started and server_run.poll() is None:
         try:
-            server_run.stdin.write('quit\n')
-            server_run.stdin.flush()
+            commands.write('quit\n')
+            commands.flush()
             status = server_run.wait(timeout=30)
         except (OSError, subprocess.TimeoutExpired) as exc:
             status = f'no exit ({type(exc).__name__})'
