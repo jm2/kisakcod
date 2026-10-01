@@ -508,7 +508,7 @@ unsigned __int8 *__cdecl GetDeltaQuaternions(
         if (numQuatIndices == 1)
         {
             ConsumeQuat2(&pos, quat);
-            deltaPart->quat = (XAnimDeltaPartQuat *)Alloc(kDeltaQuatFrame0Bytes);
+            deltaPart->quat = static_cast<XAnimDeltaPartQuat *>(Alloc(kDeltaQuatFrame0Bytes));
             deltaPart->quat->size = 0;
             deltaPart->quat->u.frame0[0] = quat[0];
             deltaPart->quat->u.frame0[1] = quat[1];
@@ -519,7 +519,7 @@ unsigned __int8 *__cdecl GetDeltaQuaternions(
 
             if (useSmallIndices)
             {
-                deltaPart->quat = (XAnimDeltaPartQuat *)Alloc(kDeltaQuatIndices + numQuatIndices);
+                deltaPart->quat = static_cast<XAnimDeltaPartQuat *>(Alloc(kDeltaQuatIndices + numQuatIndices));
                 if (numQuatIndices >= numloopframes)
                 {
                     for (i = 0; i < numQuatIndices; ++i)
@@ -534,7 +534,7 @@ unsigned __int8 *__cdecl GetDeltaQuaternions(
             }
             else
             {
-                deltaPart->quat = (XAnimDeltaPartQuat *)Alloc(kDeltaQuatIndices + 2 * numQuatIndices);
+                deltaPart->quat = static_cast<XAnimDeltaPartQuat *>(Alloc(kDeltaQuatIndices + 2 * numQuatIndices));
                 if (numQuatIndices >= numloopframes)
                 {
                     for (j = 0; j < numQuatIndices; ++j)
@@ -597,7 +597,7 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
             mins[1] = Buf_Read<float>(&pos);
             mins[2] = Buf_Read<float>(&pos);
 
-            deltaPart->trans = (XAnimPartTrans *)Alloc(kDeltaTransFrame0Bytes);
+            deltaPart->trans = static_cast<XAnimPartTrans *>(Alloc(kDeltaTransFrame0Bytes));
             deltaPart->trans->size = 0;
             p_u = &deltaPart->trans->u;
             p_u->frames.mins[0] = mins[0];
@@ -610,7 +610,7 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
 
             if (useSmallIndices)
             {
-                deltaPart->trans = (XAnimPartTrans *)Alloc(kDeltaTransIndices + numTransIndices);
+                deltaPart->trans = static_cast<XAnimPartTrans *>(Alloc(kDeltaTransIndices + numTransIndices));
                 if (numTransIndices >= numloopframes)
                 {
                     for (i = 0; i < numTransIndices; ++i)
@@ -624,7 +624,7 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
             }
             else
             {
-                deltaPart->trans = (XAnimPartTrans *)Alloc(kDeltaTransIndices + 2 * numTransIndices);
+                deltaPart->trans = static_cast<XAnimPartTrans *>(Alloc(kDeltaTransIndices + 2 * numTransIndices));
                 if (numTransIndices >= numloopframes)
                 {
                     for (j = 0; j < numTransIndices; ++j)
