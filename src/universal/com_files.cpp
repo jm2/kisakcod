@@ -2273,6 +2273,18 @@ void __cdecl FS_Startup(char *gameName)
 
     Com_Printf(10, "----- FS_Startup -----\n");
     FS_RegisterDvars();
+#if !defined(_WIN32)
+    // KisakCOD port: the POSIX filesystem service follows no symbolic link,
+    // so a root the operator put below one (macOS /var and /tmp, /home ->
+    // /var/home) could neither create nor list directories. The roots are the
+    // operator's choice: links above each are resolved once here, and every
+    // component below a root still opens without following links.
+    for (const dvar_s *const root : { fs_basepath, fs_homepath, fs_cdpath })
+    {
+        if (*root->current.string)
+            (void)Sys_FileSystemTrustRoot(root->current.string);
+    }
+#endif
     if (*(const unsigned char *)fs_basepath->current.string)
     {
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"devraw_shared");

@@ -2985,6 +2985,223 @@ int RunWin32RemoveTreeContracts(const std::string &workingDirectory)
     return 0;
 }
 #endif // defined(_WIN32)
+
+#if !defined(_WIN32)
+// A real directory, not a link to one, opened rather than stat'ed.
+bool IsRealDirectory(const std::string &path)
+{
+    const int fd = openat(AT_FDCWD, path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    return fd >= 0 && close(fd) == 0;
+}
+
+// chmod through a handle on the directory itself.
+bool SetDirectoryMode(const std::string &path, const mode_t mode)
+{
+    const int fd = openat(AT_FDCWD, path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+    const bool changed = fchmod(fd, mode) == 0;
+    return close(fd) == 0 && changed;
+}
+
+bool ListsExactly(const std::string &path, const std::vector<std::string> &names)
+{
+    std::vector<SysFileSystemDirectoryEntry> entries;
+    if (Sys_FileSystemListDirectory(path.c_str(), 16, &entries)
+        != SysFileSystemListStatus::Complete
+        || entries.size() != names.size())
+    {
+        return false;
+    }
+    for (std::size_t index = 0; index < names.size(); ++index)
+    {
+        if (entries[index].name != names[index])
+            return false;
+    }
+    return true;
+}
+
+// Operator-chosen roots below a symbolic link (macOS /var and /tmp, /home ->
+// /var/home). Trusting a root resolves its deepest existing ancestor once;
+// every component below that ancestor is still refused when it is a link.
+bool TestOperatorRootsBelowLinks(const std::string &workingDirectory)
+{
+    SetCheckStage("operator-roots/setup");
+    const std::string real = MakeUniquePath(workingDirectory) + "-roots-real";
+    const std::string link = MakeUniquePath(workingDirectory) + "-roots-link";
+    const std::string outside = MakeUniquePath(workingDirectory) + "-roots-outside";
+    const std::string realBase = Join(real, "base");
+    if (!Check(Sys_FileSystemCreateDirectory(real.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(realBase.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(outside.c_str()))
+        || !Check(WriteFile(Join(realBase, "a.txt")))
+        || !Check(WriteFile(Join(outside, "secret.txt")))
+        || !Check(symlink(real.c_str(), link.c_str()) == 0)
+        || !Check(symlink(outside.c_str(), Join(realBase, "escape").c_str()) == 0))
+    {
+        return false;
+    }
+    const std::string base = Join(link, "base");
+    const std::string home = Join(Join(link, "home dir"), "nested");
+
+    SetCheckStage("operator-roots/untrusted-link-refused");
+    std::vector<SysFileSystemDirectoryEntry> entries;
+    if (!Check(!Sys_FileSystemCreateDirectory(Join(base, "main").c_str()))
+        || !Check(Sys_FileSystemListDirectory(base.c_str(), 16, &entries)
+            == SysFileSystemListStatus::Error))
+    {
+        return false;
+    }
+
+    SetCheckStage("operator-roots/rejections");
+    if (!Check(!Sys_FileSystemTrustRoot(nullptr))
+        || !Check(!Sys_FileSystemTrustRoot(""))
+        || !Check(!Sys_FileSystemTrustRoot(Join(link, "x/../base").c_str())))
+    {
+        return false;
+    }
+
+    SetCheckStage("operator-roots/existing-root-create-and-list");
+    if (!Check(Sys_FileSystemTrustRoot(base.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(Join(base, "main").c_str()))
+        || !Check(IsRealDirectory(Join(realBase, "main")))
+        || !Check(ListsExactly(base, {"a.txt", "main"}))
+        || !Check(!Sys_FileSystemCreateDirectory(Join(link, "home dir").c_str())))
+    {
+        return false;
+    }
+
+    SetCheckStage("operator-roots/link-below-root-refused");
+    std::vector<unsigned char> contents;
+    if (!Check(!Sys_FileSystemCreateDirectory(Join(base, "escape/x").c_str()))
+        || !Check(Sys_FileSystemListDirectory(Join(base, "escape").c_str(), 16, &entries)
+            == SysFileSystemListStatus::Error)
+        || !Check(!Sys_FileSystemReadFile(Join(base, "escape/secret.txt").c_str(), 16, &contents))
+        || !Check(!Sys_FileSystemRemoveTree(Join(base, "escape").c_str()))
+        || !Check(!IsRealDirectory(Join(outside, "x")))
+        || !Check(ListsExactly(outside, {"secret.txt"})))
+    {
+        return false;
+    }
+
+    // The engine's FS_CreatePath creates each prefix of the nested homepath
+    // in turn; the root's missing tail is created without following links.
+    SetCheckStage("operator-roots/missing-nested-root");
+    if (!Check(Sys_FileSystemTrustRoot(home.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(Join(link, "home dir").c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(home.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(Join(home, "main").c_str()))
+        || !Check(IsRealDirectory(Join(real, "home dir/nested/main")))
+        || !Check(Sys_FileSystemReadFile(Join(base, "a.txt").c_str(), 16, &contents))
+        || !Check(contents.size() == 1)
+        || !Check(Sys_FileSystemRemoveTree(Join(link, "home dir").c_str()))
+        || !Check(!IsRealDirectory(Join(real, "home dir"))))
+    {
+        return false;
+    }
+
+    // A relative root resolves from the current directory, the tests'
+    // working directory; it matches relative paths only.
+    SetCheckStage("operator-roots/relative-root");
+    const std::string relativeHome = Join(link.substr(workingDirectory.size() + 1), "relative home");
+    if (!Check(link.compare(0, workingDirectory.size(), workingDirectory) == 0)
+        || !Check(!Sys_FileSystemCreateDirectory(relativeHome.c_str()))
+        || !Check(Sys_FileSystemTrustRoot(relativeHome.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(relativeHome.c_str()))
+        || !Check(IsRealDirectory(Join(real, "relative home")))
+        || !Check(Sys_FileSystemRemoveTree(relativeHome.c_str()))
+        || !Check(!IsRealDirectory(Join(real, "relative home"))))
+    {
+        return false;
+    }
+
+    // Links trusting a root follows (Linux fs.protected_symlinks, stricter):
+    // none in a writable directory without the sticky bit, and in a sticky one
+    // only when root or we own both the link and the directory. Other owners
+    // are synthesised here (directory mode, directory owner, link owner, us),
+    // since only root can chown.
+    SetCheckStage("operator-roots/link-rule");
+    const uid_t self = geteuid();
+    const uid_t other = self == 1 ? 2 : 1;
+    if (!Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 0755, other, other, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 0777, 0, 0, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 0775, 0, 0, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 0757, self, self, self))
+        || !Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, 0, 0, self))
+        || !Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, 0, self, self))
+        || !Check(Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, self, self, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, 0, other, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 01777, other, self, self))
+        || !Check(!Sys_FileSystemLinkIsTrusted(S_IFDIR | 01755, 0, other, self)))
+    {
+        return false;
+    }
+
+    // Even our own link is refused in a writable directory without the sticky
+    // bit: anyone who can write there could swap it for theirs.
+    SetCheckStage("operator-roots/non-sticky-shared-link-refused");
+    const std::string writable = MakeUniquePath(workingDirectory) + "-roots-writable";
+    const std::string writableLink = Join(writable, "ours");
+    if (!Check(Sys_FileSystemCreateDirectory(writable.c_str()))
+        || !Check(SetDirectoryMode(writable, 0777))
+        || !Check(symlink(real.c_str(), writableLink.c_str()) == 0)
+        || !Check(!Sys_FileSystemTrustRoot(Join(writableLink, "base").c_str()))
+        || !Check(!Sys_FileSystemCreateDirectory(Join(writableLink, "base/writable").c_str()))
+        || !Check(!IsRealDirectory(Join(realBase, "writable"))))
+    {
+        return false;
+    }
+
+    // Our own link in a shared sticky directory is followed.
+    SetCheckStage("operator-roots/shared-directory-own-link");
+    const std::string shared = MakeUniquePath(workingDirectory) + "-roots-shared";
+    const std::string ours = Join(shared, "ours");
+    if (!Check(Sys_FileSystemCreateDirectory(shared.c_str()))
+        || !Check(SetDirectoryMode(shared, 01777))
+        || !Check(symlink(real.c_str(), ours.c_str()) == 0)
+        || !Check(!Sys_FileSystemCreateDirectory(Join(ours, "base/shared").c_str()))
+        || !Check(Sys_FileSystemTrustRoot(Join(ours, "base").c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(Join(ours, "base/shared").c_str()))
+        || !Check(IsRealDirectory(Join(realBase, "shared"))))
+    {
+        return false;
+    }
+
+    // Only root can plant a link owned by someone else. Given one, trusting
+    // refuses it, directly and at the end of a chain from a trusted link. CI
+    // runs this test once more as root on Linux amd64 to reach this stage.
+    if (self != 0)
+    {
+        std::fputs("SKIP: operator-roots/shared-directory-planted-link needs root\n", stderr);
+    }
+    else
+    {
+        SetCheckStage("operator-roots/shared-directory-planted-link");
+        const std::string theirs = Join(shared, "theirs");
+        const std::string chain = MakeUniquePath(workingDirectory) + "-roots-chain";
+        if (!Check(symlink(real.c_str(), theirs.c_str()) == 0)
+            || !Check(lchown(theirs.c_str(), other, other) == 0)
+            || !Check(symlink(theirs.c_str(), chain.c_str()) == 0)
+            || !Check(!Sys_FileSystemTrustRoot(Join(theirs, "base").c_str()))
+            || !Check(!Sys_FileSystemTrustRoot(Join(chain, "base").c_str()))
+            || !Check(!Sys_FileSystemCreateDirectory(Join(theirs, "base/planted").c_str()))
+            || !Check(!Sys_FileSystemCreateDirectory(Join(chain, "base/planted").c_str()))
+            || !Check(!IsRealDirectory(Join(realBase, "planted")))
+            || !Check(unlink(chain.c_str()) == 0))
+        {
+            return false;
+        }
+        std::fputs("RAN: operator-roots/shared-directory-planted-link as root\n", stderr);
+    }
+
+    SetCheckStage("operator-roots/cleanup");
+    return Check(unlink(link.c_str()) == 0)
+        && Check(Sys_FileSystemRemoveTree(writable.c_str()))
+        && Check(Sys_FileSystemRemoveTree(shared.c_str()))
+        && Check(Sys_FileSystemRemoveTree(real.c_str()))
+        && Check(Sys_FileSystemRemoveTree(outside.c_str()));
+}
+#endif
 }
 
 int main()
@@ -2994,6 +3211,11 @@ int main()
         return 1;
     if (RunRemoveTreeCoreContracts(workingDirectory) != 0)
         return 1;
+#if !defined(_WIN32)
+    // Last: trusted roots are process-wide.
+    if (!TestOperatorRootsBelowLinks(workingDirectory))
+        return 1;
+#endif
 #if defined(_WIN32)
     if (RunWin32RemoveTreeContracts(workingDirectory) != 0)
         return 1;

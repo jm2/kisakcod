@@ -8,7 +8,10 @@
 #include <cstring>
 #include <deque>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <new>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -150,6 +153,266 @@ bool SplitSafePath(
     return true;
 }
 
+// An operator-chosen root (Sys_FileSystemTrustRoot): the leading components
+// of its deepest existing ancestor as the caller spelled them, and the
+// components of that ancestor's realpath.
+struct TrustedRoot
+{
+    bool absolute;
+    std::vector<std::string> spelled;
+    std::vector<std::string> canonical;
+};
+
+constexpr std::size_t kMaximumTrustedRoots = 16;
+
+std::mutex &TrustedRootsMutex()
+{
+    // cppcheck-suppress threadsafety-threadsafety -- function-local static; C++11 guarantees thread-safe initialisation.
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::vector<TrustedRoot> &TrustedRoots()
+{
+    // cppcheck-suppress threadsafety-threadsafety -- function-local static; C++11 guarantees thread-safe initialisation.
+    static std::vector<TrustedRoot> roots;
+    return roots;
+}
+
+// SplitSafePath for a no-follow walk. When the leading components spell a
+// trusted root's existing ancestor, they become that ancestor's canonical
+// components, and the walk starts at "/". *absolute names the walk's start.
+bool SplitWalkPath(
+    const char *const path,
+    std::vector<std::string> *const components,
+    bool *const absolute)
+{
+    if (!SplitSafePath(path, components))
+        return false;
+    *absolute = IsEnginePathSeparator(path[0]);
+
+    const std::lock_guard<std::mutex> lock(TrustedRootsMutex());
+    const TrustedRoot *match = nullptr;
+    for (const TrustedRoot &root : TrustedRoots())
+    {
+        if (root.absolute == *absolute
+            && root.spelled.size() <= components->size()
+            && std::equal(root.spelled.begin(), root.spelled.end(),
+                components->begin(), components->begin() + static_cast<std::ptrdiff_t>(root.spelled.size()))
+            && (!match || root.spelled.size() > match->spelled.size()))
+        {
+            match = &root;
+        }
+    }
+    if (!match)
+        return true;
+    components->erase(
+        components->begin(),
+        components->begin() + static_cast<std::ptrdiff_t>(match->spelled.size()));
+    components->insert(components->begin(), match->canonical.begin(), match->canonical.end());
+    *absolute = true;
+    return components->size() <= kMaximumPathComponents;
+}
+
+enum class ProtectedResolution
+{
+    Resolved,
+    Missing, // a component does not exist: a shallower prefix may
+    Refused, // an untrusted or looping link, or another error
+};
+
+// Puts the '/'-separated components of text in front of *pending, in order.
+// Unlike SplitSafePath it keeps "..": a link target may use it, and the
+// resolver applies it to the prefix it has already resolved.
+void PushComponents(const std::string &text, std::deque<std::string> *const pending)
+{
+    std::vector<std::string> parts;
+    std::size_t begin = 0;
+    for (std::size_t end = text.find('/'); ; end = text.find('/', begin))
+    {
+        const std::size_t stop = end == std::string::npos ? text.size() : end;
+        if (stop > begin)
+            parts.emplace_back(text, begin, stop - begin);
+        if (end == std::string::npos)
+            break;
+        begin = end + 1;
+    }
+    pending->insert(pending->begin(), parts.begin(), parts.end());
+}
+
+std::string JoinAbsolute(const std::vector<std::string> &components)
+{
+    std::string joined;
+    for (const std::string &component : components)
+        joined += '/' + component;
+    return joined.empty() ? std::string("/") : joined;
+}
+
+// An open file descriptor that closes itself.
+class OwnedFd
+{
+public:
+    explicit OwnedFd(const int fd) : fd_(fd) {}
+    OwnedFd(const OwnedFd &) = delete;
+    OwnedFd &operator=(const OwnedFd &) = delete;
+    ~OwnedFd() { Reset(-1); }
+    int Get() const { return fd_; }
+    void Reset(const int fd)
+    {
+        if (fd_ >= 0)
+            (void)close(fd_);
+        fd_ = fd;
+    }
+
+private:
+    int fd_;
+};
+
+// ResolveProtected's walk: the resolved components, a handle on the directory
+// they name, the components still to resolve and the links followed so far.
+struct ProtectedWalk
+{
+    std::vector<std::string> done;
+    OwnedFd directory{openat(AT_FDCWD, "/", DirectoryOpenFlags())};
+    std::deque<std::string> pending;
+    int links = 0;
+};
+
+ProtectedResolution FailedLookup()
+{
+    return errno == ENOENT || errno == ENOTDIR ? ProtectedResolution::Missing : ProtectedResolution::Refused;
+}
+
+// Follows the link `name` in walk->directory: it must pass
+// Sys_FileSystemLinkIsTrusted there, and its target goes in front of the
+// components still to resolve. Empty means the walk goes on.
+std::optional<ProtectedResolution> FollowLink(
+    ProtectedWalk *const walk,
+    const std::string &name,
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
+    const struct stat &link)
+{
+    constexpr int kMaximumLinks = 40; // Linux's own limit
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
+    struct stat holder{};
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
+    if (++walk->links > kMaximumLinks || fstat(walk->directory.Get(), &holder) != 0
+        || !Sys_FileSystemLinkIsTrusted(holder.st_mode, holder.st_uid, link.st_uid, geteuid()))
+    {
+        return ProtectedResolution::Refused;
+    }
+    std::string target(4096, '\0');
+    const ssize_t length = readlinkat(walk->directory.Get(), name.c_str(), target.data(), target.size());
+    if (length <= 0 || static_cast<std::size_t>(length) >= target.size())
+        return ProtectedResolution::Refused;
+    target.resize(static_cast<std::size_t>(length));
+    if (target[0] == '/')
+    {
+        walk->done.clear();
+        walk->directory.Reset(openat(AT_FDCWD, "/", DirectoryOpenFlags()));
+    }
+    PushComponents(target, &walk->pending);
+    return std::nullopt;
+}
+
+// Resolves one component through the handle on the directory that holds it,
+// so what is examined is what is followed or entered. Empty means the walk
+// goes on.
+std::optional<ProtectedResolution> StepComponent(ProtectedWalk *const walk, const std::string &component)
+{
+    if (component == "." || (component == ".." && walk->done.empty()))
+        return std::nullopt;
+    if (component == "..")
+    {
+        walk->done.pop_back();
+        walk->directory.Reset(openat(walk->directory.Get(), "..", DirectoryOpenFlags()));
+        return std::nullopt;
+    }
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
+    struct stat entry{};
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
+    if (fstatat(walk->directory.Get(), component.c_str(), &entry, AT_SYMLINK_NOFOLLOW) != 0)
+        return FailedLookup();
+    if (S_ISLNK(entry.st_mode))
+        return FollowLink(walk, component, entry);
+    if (!walk->pending.empty())
+    {
+        if (!S_ISDIR(entry.st_mode))
+            return ProtectedResolution::Missing;
+        const int next = openat(walk->directory.Get(), component.c_str(), DirectoryOpenFlags());
+        if (next < 0)
+            return FailedLookup();
+        walk->directory.Reset(next);
+    }
+    walk->done.push_back(component);
+    return std::nullopt;
+}
+
+// realpath, except that every symbolic link it follows must pass
+// Sys_FileSystemLinkIsTrusted in the directory that holds it. realpath alone
+// would also follow a planted link reached through a trusted one. The walk
+// goes from "/" through directory handles; a relative path starts with the
+// components of the current directory.
+ProtectedResolution ResolveProtected(const std::string &path, std::string *const resolved)
+{
+    ProtectedWalk walk;
+    PushComponents(path, &walk.pending);
+    if (path.empty() || path[0] != '/')
+    {
+        const std::unique_ptr<char, decltype(&std::free)> current(getcwd(nullptr, 0), &std::free);
+        if (!current)
+            return ProtectedResolution::Refused;
+        PushComponents(current.get(), &walk.pending);
+    }
+    while (!walk.pending.empty())
+    {
+        if (walk.directory.Get() < 0)
+            return ProtectedResolution::Refused;
+        const std::string component = std::move(walk.pending.front());
+        walk.pending.pop_front();
+        if (const std::optional<ProtectedResolution> stop = StepComponent(&walk, component))
+            return *stop;
+    }
+    if (walk.directory.Get() < 0)
+        return ProtectedResolution::Refused;
+    *resolved = JoinAbsolute(walk.done);
+    return ProtectedResolution::Resolved;
+}
+
+// Finds the deepest existing ancestor of path (its first *existingCount
+// components) and its resolved form (ResolveProtected). This is the only
+// place the service follows symbolic links; a refused link fails the whole
+// root rather than trusting a shallower ancestor.
+bool ResolveExistingAncestor(
+    const char *const path,
+    bool *const absolute,
+    std::vector<std::string> *const components,
+    std::size_t *const existingCount,
+    std::string *const resolved)
+{
+    if (!SplitSafePath(path, components))
+        return false;
+    *absolute = IsEnginePathSeparator(path[0]);
+    for (std::size_t count = components->size();; --count)
+    {
+        std::string prefix = *absolute ? "/" : ".";
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            if (prefix.back() != '/')
+                prefix += '/';
+            prefix += (*components)[index];
+        }
+        const ProtectedResolution result = ResolveProtected(prefix, resolved);
+        if (result == ProtectedResolution::Resolved)
+        {
+            *existingCount = count;
+            return true;
+        }
+        if (result == ProtectedResolution::Refused || count == 0)
+            return false;
+    }
+}
+
 bool IsDirectoryNoFollow(const int parentFd, const char *const name)
 {
     struct stat status{};
@@ -160,13 +423,14 @@ bool IsDirectoryNoFollow(const int parentFd, const char *const name)
 int OpenDirectoryForEnumeration(const char *const path)
 {
     std::vector<std::string> components;
-    if (!SplitSafePath(path, &components))
+    bool absolute = false;
+    if (!SplitWalkPath(path, &components, &absolute))
         return -1;
 
     constexpr int enumerationFlags =
         O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
     int parentFd = open(
-        IsEnginePathSeparator(path[0]) ? "/" : ".",
+        absolute ? "/" : ".",
         components.empty() ? enumerationFlags : DirectoryOpenFlags());
     if (parentFd < 0)
         return -1;
@@ -247,11 +511,12 @@ void InsertBoundedEntry(
 bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *const path)
 {
     std::vector<std::string> components;
-    if (!SplitSafePath(path, &components))
+    bool absolute = false;
+    if (!SplitWalkPath(path, &components, &absolute))
         return false;
 
     int parentFd = open(
-        IsEnginePathSeparator(path[0]) ? "/" : ".",
+        absolute ? "/" : ".",
         DirectoryOpenFlags());
     if (parentFd < 0)
         return false;
@@ -294,7 +559,8 @@ bool KISAK_CDECL Sys_FileSystemReadFile(
         return false;
 
     std::vector<std::string> components;
-    if (!SplitSafePath(utf8Path, &components))
+    bool absolute = false;
+    if (!SplitWalkPath(utf8Path, &components, &absolute))
         return false;
     if (components.empty())
         return false;
@@ -302,7 +568,7 @@ bool KISAK_CDECL Sys_FileSystemReadFile(
     // Walk and validate every directory ancestor without following
     // symbolic links, exactly like the directory services above.
     int parentFd = open(
-        IsEnginePathSeparator(utf8Path[0]) ? "/" : ".",
+        absolute ? "/" : ".",
         DirectoryOpenFlags());
     if (parentFd < 0)
         return false;
@@ -401,6 +667,53 @@ bool KISAK_CDECL Sys_FileSystemReadFile(
 
     contents->swap(bytes);
     return true;
+}
+
+bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *const utf8Path)
+{
+    bool absolute = false;
+    std::vector<std::string> spelled;
+    std::size_t existingCount = 0;
+    std::string resolved;
+    std::vector<std::string> canonical;
+    if (!ResolveExistingAncestor(utf8Path, &absolute, &spelled, &existingCount, &resolved)
+        || !SplitSafePath(resolved.c_str(), &canonical))
+    {
+        return false;
+    }
+    spelled.resize(existingCount);
+    // "/" and "." have nothing above them to resolve: a relative walk starts
+    // at the current directory itself, never at the links that reached it.
+    if (spelled.empty() || (absolute && spelled == canonical))
+        return true;
+
+    const std::lock_guard<std::mutex> lock(TrustedRootsMutex());
+    std::vector<TrustedRoot> &roots = TrustedRoots();
+    for (TrustedRoot &root : roots)
+    {
+        if (root.absolute == absolute && root.spelled == spelled)
+        {
+            root.canonical = std::move(canonical);
+            return true;
+        }
+    }
+    if (roots.size() == kMaximumTrustedRoots)
+        return false;
+    roots.push_back(TrustedRoot{absolute, std::move(spelled), std::move(canonical)});
+    return true;
+}
+
+bool KISAK_CDECL Sys_FileSystemLinkIsTrusted(
+    const mode_t directoryMode,
+    const uid_t directoryOwner,
+    const uid_t linkOwner,
+    const uid_t effectiveUid)
+{
+    const bool sticky = (directoryMode & S_ISVTX) != 0;
+    if (!sticky)
+        return (directoryMode & (S_IWGRP | S_IWOTH)) == 0;
+    const auto ours = [effectiveUid](const uid_t owner) { return owner == 0 || owner == effectiveUid; };
+    return ours(directoryOwner) && ours(linkOwner);
 }
 
 bool KISAK_CDECL Sys_FileSystemGetCurrentDirectory(
@@ -933,12 +1246,13 @@ bool RemoveTreeAt(const int directoryFd)
 
 bool ParseRemoveTreePath(
     const char *const utf8Path,
-    std::vector<std::string> *components)
+    std::vector<std::string> *components,
+    bool *const absolute)
 {
     return utf8Path
         && utf8Path[0] != '\0'
         && IsValidUtf8(utf8Path)
-        && SplitSafePath(utf8Path, components)
+        && SplitWalkPath(utf8Path, components, absolute)
         && !components->empty();
 }
 
@@ -987,7 +1301,8 @@ bool RemoveHeldLeaf(const int parentFd, const int leafFd, const std::string &lea
 bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
 {
     std::vector<std::string> components;
-    if (!ParseRemoveTreePath(utf8Path, &components))
+    bool absolute = false;
+    if (!ParseRemoveTreePath(utf8Path, &components, &absolute))
         return false;
 
     // Open the parent of the leaf handle-relative, refusing any symbolic
@@ -996,7 +1311,7 @@ bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
     constexpr int parentFlags =
         O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
     int parentFd = open(
-        IsEnginePathSeparator(utf8Path[0]) ? "/" : ".", parentFlags);
+        absolute ? "/" : ".", parentFlags);
     if (parentFd < 0)
         return false;
     if (!OpenAncestorOfLeaf(components, &parentFd))
