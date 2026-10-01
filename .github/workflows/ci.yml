@@ -271,12 +271,16 @@ jobs:
 
       - name: Install clang, lld and cross headers
         # apt usually takes under a minute here but has stalled until the job
-        # timeout; bound each attempt and retry instead.
+        # timeout; bound each attempt and retry instead. The install stays
+        # verbose so a stalled attempt shows the package or trigger it hung on.
+        # man-db's trigger rebuilds its index after each install and is slow on
+        # these runners; nothing here reads man pages.
         run: |
+          sudo rm -f /var/lib/man-db/auto-update
           apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o DPkg::Lock::Timeout=120)
           for attempt in 1 2 3; do
             if sudo timeout -k 30 120 apt-get "${apt_opts[@]}" update -qq \
-              && sudo timeout -k 30 240 apt-get "${apt_opts[@]}" install -y -qq --no-install-recommends \
+              && sudo timeout -k 30 240 apt-get "${apt_opts[@]}" install -y --no-install-recommends \
                 clang lld mingw-w64 g++-aarch64-linux-gnu; then
               exit 0
             fi
