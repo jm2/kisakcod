@@ -23,7 +23,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 | `sys_memory` | `VirtualAlloc` | `mmap` | `com_memory.cpp`, `physicalmemory.cpp` | called |
 | `sys_filesystem` | Win32 | `opendir`, `/proc/self/exe`, `_NSGetExecutablePath` | `com_files.cpp`, `win_common.cpp` | called; `Sys_FileSystemReadFile` unwired |
 | `Sys_Console*` | `win_syscon.cpp` | stdio service | `win_main.cpp`, `win_syscon.cpp` only | no POSIX caller |
-| Quit requests (`qcommon/sys_quit.h`) | console control handler (to do) | SIGINT, SIGTERM (`posix_syscon.cpp`) | headless frame loop (`Cbuf_AddRequestedQuit`) | called on POSIX |
+| Quit requests (`qcommon/sys_quit.h`) | `SetConsoleCtrlHandler` (`Sys_ConsoleInstallQuitHandler`) | SIGINT, SIGTERM (`posix_syscon.cpp`) | headless frame loop (`Cbuf_AddRequestedQuit`) | called |
 | Stream sockets, `Sys_SocketResolveHost` | Winsock | BSD | HTTP download (`dl_main*.cpp`), `net_chan_mp.cpp` | called |
 | UDP sockets (`Sys_SocketOpenUdp`, `SendTo`, `RecvFrom`, broadcast) | Winsock | BSD | `qcommon/net_local.cpp` (every headless build; the MP client keeps `win_net.cpp`) | called |
 | `Sys_Process*` launch/wait/park | `CreateProcess` | `posix_spawnp` | none | unwired |
