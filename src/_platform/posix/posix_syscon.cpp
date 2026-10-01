@@ -10,10 +10,15 @@
 // caller's original mode on every exit path (including Sys_Quit and a fatal
 // error). Without that restore an aborted server leaves the user's shell in
 // raw mode.
+//
+// Ctrl+C at the terminal (SIGINT) and kill or systemctl stop (SIGTERM) ask for
+// the same orderly quit a typed quit runs (qcommon/sys_quit.h); a second one
+// kills the server as the default action would.
 
 #include <qcommon/sys_local.h>
 
 #include <cerrno>
+#include <csignal>
 #include <cstddef>
 #include <cstring>
 
@@ -22,6 +27,7 @@
 
 #include <qcommon/qcommon.h>
 #include <qcommon/sys_console.h>
+#include <qcommon/sys_quit.h>
 #include <qcommon/threads.h>
 
 namespace
@@ -65,6 +71,25 @@ void EnterTerminalMode()
     raw.c_cc[VTIME] = 0;
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0)
         terminalModeActive = true;
+}
+
+// Async-signal-safe: an atomic request, then sigaction and raise. The first
+// signal only records the request, which the frame loop turns into quit. A
+// second one, of either kind, restores the default action and re-raises; the
+// signal is blocked while this handler runs, so it lands on return and the
+// process dies of it.
+void OnQuitSignal(int signalNumber)
+{
+    const int savedErrno = errno;
+    if (Sys_RequestQuit(signalNumber == SIGINT ? "SIGINT" : "SIGTERM") > 1)
+    {
+        struct sigaction defaultAction{};
+        defaultAction.sa_handler = SIG_DFL;
+        sigemptyset(&defaultAction.sa_mask);
+        (void)sigaction(signalNumber, &defaultAction, nullptr);
+        (void)raise(signalNumber);
+    }
+    errno = savedErrno;
 }
 } // namespace
 
@@ -225,4 +250,25 @@ void Sys_ConsoleInitTerminal()
 void Sys_ConsoleShutdownTerminal()
 {
     RestoreTerminalMode();
+}
+
+// Installs OnQuitSignal for SIGINT and SIGTERM. SA_RESTART stays off, so a
+// blocking read or sleep wakes with EINTR. A signal the launcher ignores (a
+// non-interactive shell's background job ignores SIGINT) stays ignored.
+// SIGPIPE is the console backend's (qcommon/sys_console.h) and is untouched.
+void Sys_InstallQuitSignalHandlers()
+{
+    struct sigaction action{};
+    action.sa_handler = OnQuitSignal;
+    sigemptyset(&action.sa_mask);
+    sigaddset(&action.sa_mask, SIGINT);
+    sigaddset(&action.sa_mask, SIGTERM);
+    const int quitSignals[] = {SIGINT, SIGTERM};
+    for (const int signalNumber : quitSignals)
+    {
+        struct sigaction inherited{};
+        if (sigaction(signalNumber, nullptr, &inherited) == 0 && inherited.sa_handler == SIG_IGN)
+            continue;
+        (void)sigaction(signalNumber, &action, nullptr);
+    }
 }

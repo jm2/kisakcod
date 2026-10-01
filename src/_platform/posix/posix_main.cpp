@@ -41,10 +41,11 @@
 SysInfo sys_info;
 int client_state;
 
-// Terminal mode hooks owned by posix_syscon.cpp. They are POSIX-only, so they
-// stay out of the portable qcommon/sys_local.h surface.
+// Terminal mode and quit-signal hooks owned by posix_syscon.cpp. They are
+// POSIX-only, so they stay out of the portable qcommon/sys_local.h surface.
 void Sys_ConsoleInitTerminal();
 void Sys_ConsoleShutdownTerminal();
+void Sys_InstallQuitSignalHandlers();
 
 // Command registration nodes for the Sys_* console commands. They must outlive
 // the registration call, so they sit at file scope exactly as in win_main.cpp.
@@ -429,11 +430,13 @@ main
 
 The headless dedicated entry point: bring up the engine, then run Com_Frame
 until Sys_Quit terminates the process. The frame loop yields like the Win32
-dedicated path so an idle server does not spin a core.
+dedicated path so an idle server does not spin a core. SIGINT and SIGTERM
+request the quit a typed quit runs, from the start of main on.
 ==================
 */
 int main(int argc, char **argv)
 {
+    Sys_InstallQuitSignalHandlers();
     Sys_InitializeCriticalSections();
     Sys_InitMainThread();
     DetectCpu();
@@ -481,6 +484,9 @@ int main(int argc, char **argv)
         // A dedicated server has no frame budget to hit, so yield exactly like
         // the Win32 dedicated path and let Com_Frame drive the tick.
         Sys_Sleep(5);
+        // A pending SIGINT or SIGTERM, even one from Com_Init, becomes the
+        // quit this frame runs.
+        Cbuf_AddRequestedQuit();
         Com_Frame();
     }
 }

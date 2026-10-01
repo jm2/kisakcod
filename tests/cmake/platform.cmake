@@ -482,6 +482,46 @@ if (NOT KISAK_PLATFORM STREQUAL "win32")
     )
     add_test(NAME posix-syscon-contracts COMMAND kisakcod-posix-syscon-tests)
     set_tests_properties(posix-syscon-contracts PROPERTIES TIMEOUT 20)
+
+    # The headless server's orderly quit on SIGINT and SIGTERM
+    # (qcommon/sys_quit.h): the real handlers of posix_syscon.cpp. Where the
+    # engine compiles (Linux clang; the dvar test in misc.cmake says why), the
+    # frame step also feeds the real command buffer of qcommon/cmd.cpp, and
+    # --gc-sections keeps only the engine code the checks reach.
+    add_executable(kisakcod-posix-quit-signal-tests
+        posix_quit_signal_tests.cpp
+        ${SRC_DIR}/_platform/posix/posix_syscon.cpp
+        ${SRC_DIR}/qcommon/sys_console.cpp
+        ${_posix_syscon_platform_console}
+    )
+    target_include_directories(kisakcod-posix-quit-signal-tests PRIVATE ${SRC_DIR})
+    target_compile_features(kisakcod-posix-quit-signal-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-posix-quit-signal-tests PRIVATE KISAK_MP)
+    target_link_libraries(kisakcod-posix-quit-signal-tests PRIVATE Threads::Threads)
+    kisakcod_test_warnings(kisakcod-posix-quit-signal-tests)
+    if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+        AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_sources(kisakcod-posix-quit-signal-tests PRIVATE ${SRC_DIR}/qcommon/cmd.cpp)
+        set_source_files_properties(${SRC_DIR}/qcommon/cmd.cpp PROPERTIES COMPILE_OPTIONS -w)
+        target_include_directories(kisakcod-posix-quit-signal-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+        target_compile_definitions(kisakcod-posix-quit-signal-tests PRIVATE
+            POSIX_QUIT_ENGINE_CBUF KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS)
+        target_compile_options(kisakcod-posix-quit-signal-tests PRIVATE
+            -fms-extensions -ffunction-sections -fdata-sections)
+        target_link_options(kisakcod-posix-quit-signal-tests PRIVATE -Wl,--gc-sections)
+        if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+            target_compile_options(kisakcod-posix-quit-signal-tests PRIVATE
+                -fsanitize-address-globals-dead-stripping)
+            target_link_options(kisakcod-posix-quit-signal-tests PRIVATE -Wl,-z,start-stop-gc)
+        endif()
+    endif()
+    set_target_properties(kisakcod-posix-quit-signal-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    foreach(_mode sigterm sigint second-signal ignored-sigint)
+        add_test(NAME posix-quit-${_mode}-contracts COMMAND kisakcod-posix-quit-signal-tests ${_mode})
+        set_tests_properties(posix-quit-${_mode}-contracts PROPERTIES TIMEOUT 20)
+    endforeach()
 endif()
 
 # The Win32 autoconfigure CPU benchmark after the real timer calibration: the
