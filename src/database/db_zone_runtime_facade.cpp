@@ -3,6 +3,7 @@
 
 #include <qcommon/sys_sync.h>
 
+#include <atomic>
 #include <cstddef>
 #include <limits>
 
@@ -29,6 +30,10 @@ enum class ThreadBoundaryClassification : std::uint8_t
 };
 
 FastCriticalSection s_runtimeSerializer{};
+// Set by the first poison and never cleared (tests aside). A poisoned access
+// keeps s_runtimeSerializer, so every other thread would see Busy forever;
+// TryBeginAccess reports the poison instead, and no caller waits on it.
+std::atomic<bool> s_accessPoisoned{false};
 RuntimeBoundaryState s_runtimeState{};
 RuntimeBoundaryState s_runtimeStateMirror{};
 std::uintptr_t s_activeThreadIdentity{};
@@ -133,6 +138,7 @@ template <typename Hidden>
     return output && outputSize != 0 && outputAlignment != 0
         && reinterpret_cast<std::uintptr_t>(output) % outputAlignment == 0
         && IsSeparateFrom(output, outputSize, s_runtimeSerializer)
+        && IsSeparateFrom(output, outputSize, s_accessPoisoned)
         && IsSeparateFrom(output, outputSize, s_runtimeState)
         && IsSeparateFrom(output, outputSize, s_runtimeStateMirror)
         && IsSeparateFrom(output, outputSize, s_activeThreadIdentity)
@@ -153,6 +159,7 @@ template <typename Hidden>
 
 void PoisonAccessInternal() noexcept
 {
+    s_accessPoisoned.store(true, std::memory_order_release);
     s_runtimeState = RuntimeBoundaryState::Poisoned;
     s_runtimeStateMirror = RuntimeBoundaryState::Poisoned;
     s_retainedThreadState = RuntimeBoundaryState::Poisoned;
@@ -479,7 +486,11 @@ ZoneRuntimeFacadeStatus ZoneRuntimeFacade::TryBeginAccess() noexcept
     if (thread != ThreadBoundaryClassification::Idle)
         return ZoneRuntimeFacadeStatus::UnsafeFailure;
     if (!Sys_TryLockWrite(&s_runtimeSerializer))
-        return ZoneRuntimeFacadeStatus::Busy;
+    {
+        return s_accessPoisoned.load(std::memory_order_acquire)
+            ? ZoneRuntimeFacadeStatus::UnsafeFailure
+            : ZoneRuntimeFacadeStatus::Busy;
+    }
     if (!GlobalBoundaryIsIdle()
         || s_nextSerial == (std::numeric_limits<std::uint64_t>::max)())
     {
@@ -1442,6 +1453,7 @@ void ZoneRuntimeFacadeTestAccess::ResetForTesting() noexcept
 {
     s_runtimeSerializer.readCount = 0;
     s_runtimeSerializer.writeCount = 0;
+    s_accessPoisoned.store(false, std::memory_order_relaxed);
     s_runtimeState = RuntimeBoundaryState::Idle;
     s_runtimeStateMirror = RuntimeBoundaryState::Idle;
     s_activeThreadIdentity = 0;
