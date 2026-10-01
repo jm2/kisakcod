@@ -32,6 +32,8 @@
 #include <strings.h>
 
 extern FastCriticalSection db_hashCritSect;
+extern int32_t g_zoneCount;
+extern uint8_t g_zoneHandles[];
 
 namespace
 {
@@ -92,6 +94,21 @@ void TestUnloadReportsAfterRelease()
     CHECK(!Sys_IsWriteLocked(&db_hashCritSect));
 }
 
+// Run alone (ctest passes poisoned-window): the registry poisons while the quit's
+// window is open, here as a zone's memory is released. The window keeps
+// db_hashCritSect (fail closed), so the quit must stop in Sys_Error rather than
+// return to a database no lookup can enter. The Sys_Error stub ends the check.
+bool g_poisonInWindow = false;
+void TestPoisonedWindowIsFatal()
+{
+    g_zoneCount = 1;
+    g_zoneHandles[0] = 1;
+    g_poisonInWindow = true;
+    DB_ShutdownXAssets();
+    std::fprintf(stderr, "the quit returned with its registry window poisoned\n");
+    ++g_failures;
+}
+
 std::array<std::recursive_mutex, CRITSECT_COUNT> g_criticalSections;
 }  // namespace
 
@@ -112,11 +129,19 @@ WEAK void Com_PrintError(int, const char *, ...)
 WEAK void Com_Printf(int, const char *, ...) {}
 WEAK void MyAssertHandler(const char *file, int line, int, const char *fmt, ...)
 {
+    // No physical-memory runtime here: freeing the zone's name only reports.
+    if (g_poisonInWindow && std::strstr(file, "physicalmemory"))
+        return;
     std::fprintf(stderr, "assert %s:%d %s\n", file, line, fmt);
     std::exit(1);
 }
 WEAK void Sys_Error(const char *fmt, ...)
 {
+    if (g_poisonInWindow)
+    {
+        CHECK(Sys_IsWriteLocked(&db_hashCritSect));
+        std::exit(g_failures == 0 ? 0 : 1);
+    }
     std::fprintf(stderr, "Sys_Error: %s\n", fmt);
     std::exit(1);
 }
@@ -142,19 +167,28 @@ WEAK void BG_FillInAllWeaponItems() {}
 WEAK void Mark_XAsset() {}
 WEAK void DB_SaveDObjs() {}
 WEAK void DB_LoadDObjs() {}
-WEAK void DB_ReleaseGeometryBuffers(XZoneMemory *) {}
+WEAK void DB_ReleaseGeometryBuffers(XZoneMemory *)
+{
+    if (g_poisonInWindow)
+        db::registry_ownership::SetRegistryOwnershipCoordinatorBoundaryForTesting(0, 0, 0, 0, 2, 2);
+}
 WEAK const char *DB_GetXAssetHeaderName(int32_t, const XAssetHeader *) { return ""; }
 WEAK const char *DB_GetXAssetName(const XAsset *) { return ""; }
 WEAK void DB_SetXAssetName(XAsset *, const char *) {}
 WEAK int32_t DB_GetXAssetTypeSize(int32_t) { return 0; }
 WEAK const char *DB_GetXAssetTypeName(uint32_t) { return ""; }
 
-int main()
+int main(int argc, char **argv)
 {
     SL_Init();
     // DB_Init's order: the zone runtime table exists before the first zone.
     CHECK(db::zone_runtime::TryInitializeZoneRuntimeTable(&db::zone_runtime::ProductionZoneRuntimeTable())
           == db::zone_runtime::ZoneRuntimeTableStatus::Success);
+    if (argc > 1 && std::strcmp(argv[1], "poisoned-window") == 0)
+    {
+        TestPoisonedWindowIsFatal();
+        return 1;
+    }
     TestQuitFreesZoneNames();
     TestFailureInSessionKeepsNames();
     TestUnloadReportsAfterRelease(); // last: the poison is process-wide

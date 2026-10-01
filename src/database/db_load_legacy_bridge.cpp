@@ -216,12 +216,12 @@ void DbLoadLegacyBridge::BeginSession() noexcept
         Sys_Sleep(0);
         status = TryOpenWindow();
     }
-    t_sessionStatus = status;
     if (status == LegacyBridgeStatus::Success)
     {
         t_session = SessionState::Window;
         return;
     }
+    t_sessionStatus = LegacyBridgeStatus::InvalidState;
     Sys_LockWrite(&db_hashCritSect);
     t_session = SessionState::HashOnly;
 }

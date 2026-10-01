@@ -899,5 +899,8 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_target_properties(kisakcod-db-registry-unload-tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME database-registry-unload COMMAND kisakcod-db-registry-unload-tests)
-    set_tests_properties(database-registry-unload PROPERTIES TIMEOUT 20)
+    add_test(NAME database-registry-unload-poisoned-window
+        COMMAND kisakcod-db-registry-unload-tests poisoned-window)
+    set_tests_properties(database-registry-unload database-registry-unload-poisoned-window
+        PROPERTIES TIMEOUT 20)
 endif()

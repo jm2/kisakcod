@@ -2546,6 +2546,10 @@ static void DB_EndRegistrySession()
 {
     const db::load_legacy_bridge::LegacyBridgeStatus status =
         db::load_legacy_bridge::DbLoadLegacyBridge::FinishSession();
+    // A registry poisoned inside the window keeps the hash, so no lookup can
+    // enter the database again: stop rather than hang (Sys_Error reads no asset).
+    if (status == db::load_legacy_bridge::LegacyBridgeStatus::UnsafeFailure)
+        Sys_Error("Database registry failed closed during a zone unload");
     if (status != db::load_legacy_bridge::LegacyBridgeStatus::Success)
     {
         Com_PrintError(
