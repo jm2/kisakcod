@@ -217,6 +217,7 @@ enum class Status : std::uint8_t
     InvalidStringExtent,
     UnregisteredString,
     GenerationExhausted,
+    MissingNativeObject,
 };
 
 class DirectResolver
@@ -357,16 +358,28 @@ public:
         std::uintptr_t slotAddress,
         AliasKind kind,
         AliasHandle *handle);
+    // A completed object (RequiresExactStartPublication) publishes its block-4
+    // start. A 64-bit loader converts that disk32 record into native storage
+    // and passes it as nativeAddress; other kinds already publish a native
+    // pointer and must pass zero.
     Status Publish(
         AliasHandle handle,
         AliasKind expectedKind,
         std::uintptr_t resolvedAddress,
-        std::uint32_t metadata);
+        std::uint32_t metadata,
+        std::uintptr_t nativeAddress = 0);
     Status Resolve(
         disk32::PointerToken token,
         AliasKind expectedKind,
         std::uint32_t expectedMetadata,
         std::uintptr_t *resolvedAddress) const;
+    // Resolves a completed object to the native object its loader published,
+    // never to its disk32 bytes; MissingNativeObject when none was published.
+    Status ResolveNative(
+        disk32::PointerToken token,
+        AliasKind expectedKind,
+        std::uint32_t expectedMetadata,
+        std::uintptr_t *nativeAddress) const;
 
     std::size_t recordCount() const noexcept { return records_.size(); }
     std::uint64_t generation() const noexcept { return generation_; }
@@ -377,11 +390,19 @@ private:
         std::uint32_t offset;
         AliasKind kind;
         std::uintptr_t resolvedAddress;
+        // cppcheck-suppress unusedStructMember -- Publish writes it and ResolveNative reads it.
+        std::uintptr_t nativeAddress;
         std::uint32_t metadata;
         bool published;
     };
 
     Status FindSlot(std::uintptr_t slotAddress, std::uint32_t *offset) const;
+    Status DecodeSlotToken(disk32::PointerToken token, std::uint32_t *offset) const;
+    Status FindPublished(
+        disk32::PointerToken token,
+        AliasKind expectedKind,
+        std::uint32_t expectedMetadata,
+        const Record **record) const;
 
     BlockView blocks_[kBlockCount]{};
     std::vector<Record> records_;

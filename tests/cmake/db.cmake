@@ -794,11 +794,12 @@ kisakcod_ilp32(kisakcod-db-zone-script-string-ownership-tests
 kisakcod_ilp32(kisakcod-db-zone-stream-ownership-tests
     database-zone-stream-ownership-runtime-contracts)
 
-# 64-bit RawFile loads from hand-built disk32 zone images (NOW row 12): the
-# generated mirrors, the loader and the production stream code, with only the
-# inflater and the asset pool replaced. Linux and clang only, like the dvar
-# test in misc.cmake: database.h is engine code, and the engine compiles off
-# Windows only with clang and -fms-extensions (PLATFORM_POSIX.md).
+# 64-bit RawFile and StringTable loads from hand-built disk32 zone images (NOW
+# row 12): the generated mirrors, the loader and the production stream code,
+# with only the inflater, the asset pool and the zone's native storage
+# replaced. Linux and clang only, like the dvar test in misc.cmake: database.h
+# is engine code, and the engine compiles off Windows only with clang and
+# -fms-extensions (PLATFORM_POSIX.md).
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_executable(kisakcod-db-disk32-load-tests
@@ -847,4 +848,24 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     )
     add_test(NAME database-disk32-envelope-load COMMAND kisakcod-db-disk32-envelope-tests)
     set_tests_properties(database-disk32-envelope-load PROPERTIES TIMEOUT 20)
+
+    add_executable(kisakcod-db-disk32-stringtable-tests
+        db_disk32_stringtable_tests.cpp
+        ${SRC_DIR}/database/db_disk32_stringtable.cpp
+        ${SRC_DIR}/database/db_stream_load.cpp
+        ${SRC_DIR}/database/db_stream.cpp
+        ${SRC_DIR}/database/db_relocation.cpp
+        ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+        ${SRC_DIR}/database/db_zone_load_context.cpp
+    )
+    kisakcod_use_disk32_mirrors(kisakcod-db-disk32-stringtable-tests)
+    target_include_directories(kisakcod-db-disk32-stringtable-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-db-disk32-stringtable-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-db-disk32-stringtable-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-db-disk32-stringtable-tests PRIVATE -fms-extensions -Wall -Wextra -Werror)
+    set_target_properties(kisakcod-db-disk32-stringtable-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME database-disk32-stringtable-load COMMAND kisakcod-db-disk32-stringtable-tests)
+    set_tests_properties(database-disk32-stringtable-load PROPERTIES TIMEOUT 20)
 endif()

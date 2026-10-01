@@ -71,8 +71,8 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    to the family loader and the native pointer on return. The 64-bit envelope
    (`db_disk32_envelope.cpp`) writes it so: it streams the retail `XAssetList` root, script
    strings and 8-byte `XAsset` records through the `db_xasset_disk32.h` iterators at their
-   retail offsets, checks every asset type first, builds the native 16-byte array beside the
-   zone and dispatches each asset through `Load_XAsset`.
+   retail offsets, checks every asset type first, builds the native 16-byte array in the zone's
+   native storage (`DB_AllocZoneNative`) and dispatches each asset through `Load_XAsset`.
 6. **Fail closed per family.** At 64-bit, the `Load_XAssetHeader` dispatch refuses any family
    whose generated loader is not yet enabled. It raises `ERR_DROP` naming the family before it
    reads any of the family's bytes. The whole zone fails, since the stream cannot be skipped.

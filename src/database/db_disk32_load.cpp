@@ -3,6 +3,7 @@
 #if KISAK_ARCH_64BIT
 
 #include <database/database.h>
+#include <database/db_disk32_load_internal.h>
 #include <database/db_disk32_mirrors.h> // generated from db_disk32.schema
 #include <database/db_validation.h>
 #include <qcommon/com_error.h>
@@ -22,53 +23,11 @@
 // stack for the next zone.
 namespace
 {
-constexpr std::uint32_t kTempBlock = 0;
-constexpr std::uint32_t kVirtualBlock = 4;
-
-bool Drop(const char *message)
-{
-    Com_Error(ERR_DROP, "%s", message);
-    return false;
-}
-
-// Streams size disk bytes at the current position of the current block, as
-// Load_Stream does for the 32-bit loader, and reports whether they arrived.
-bool StreamBytes(std::uint8_t *at, std::int32_t size)
-{
-    if (!at)
-        return false;
-    Load_Stream(true, at, size);
-    return DB_GetStreamPos() == at + size;
-}
-
-// Load_XString: a null token, an inline string streamed here, or an offset
-// token naming a string an earlier record streamed.
-bool LoadXString(disk32::Ptr32<const char> field, const char **out)
-{
-    *out = nullptr;
-    if (field.token.isNull())
-        return true;
-    if (field.token.isInline())
-    {
-        char *const text = reinterpret_cast<char *>(DB_AllocStreamPos(0));
-        char *cursor = text;
-        if (!text || !Load_XStringCustom(&cursor))
-            return false;
-        *out = text;
-        return true;
-    }
-    std::uintptr_t address = 0;
-    std::uint32_t byteCount = 0;
-    const db::relocation::Status status = DB_ResolveOffsetCString(
-        field.token, db::relocation::BlockBit(kVirtualBlock), &address, &byteCount);
-    if (status != db::relocation::Status::Ok)
-    {
-        Com_Error(ERR_DROP, "Invalid fast-file string offset: %s", db::relocation::StatusName(status));
-        return false;
-    }
-    *out = reinterpret_cast<const char *>(address);
-    return true;
-}
+using db::disk32_load::Drop;
+using db::disk32_load::kTempBlock;
+using db::disk32_load::kVirtualBlock;
+using db::disk32_load::LoadXString;
+using db::disk32_load::StreamBytes;
 
 bool LoadRawFile(RawFile *out)
 {
