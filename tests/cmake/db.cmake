@@ -894,3 +894,54 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(database-registry-unload database-registry-unload-poisoned-window
         PROPERTIES TIMEOUT 20)
 endif()
+
+# The database thread's stream interns (db_stream_load.cpp) against the same
+# real bridge chain while another thread holds db_hashCritSect or a registry
+# session, and with the hold on the intern's own thread.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-db-stream-intern-wait-tests
+        db_stream_intern_wait_tests.cpp
+        ${SRC_DIR}/database/db_stream_load.cpp
+        ${SRC_DIR}/database/db_stream.cpp
+        ${SRC_DIR}/database/db_relocation.cpp
+        ${SRC_DIR}/database/db_load_legacy_bridge.cpp
+        ${SRC_DIR}/database/db_zone_runtime_facade.cpp
+        ${SRC_DIR}/database/db_zone_runtime_callback_context.cpp
+        ${SRC_DIR}/database/db_zone_runtime_table.cpp
+        ${SRC_DIR}/database/db_zone_runtime_storage.cpp
+        ${SRC_DIR}/database/db_zone_runtime_storage_fx_bridge_headless.cpp
+        ${SRC_DIR}/database/db_fx_zone_adapter_wiring_headless.cpp
+        ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+        ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
+        ${SRC_DIR}/database/db_zone_script_string_ownership.cpp
+        ${SRC_DIR}/database/db_script_string_adapter.cpp
+        ${SRC_DIR}/database/db_script_string_journal.cpp
+        ${SRC_DIR}/database/db_script_string_transaction.cpp
+        ${SRC_DIR}/database/db_zone_load_context.cpp
+        ${SRC_DIR}/database/db_registry_ownership_coordinator.cpp
+        ${SRC_DIR}/qcommon/sys_sync.cpp
+        ${SRC_DIR}/script/scr_stringlist.cpp
+        ${SRC_DIR}/script/scr_memorytree.cpp
+        ${SRC_DIR}/universal/physicalmemory.cpp
+        ${SRC_DIR}/universal/physicalmemory_checked.cpp
+    )
+    target_include_directories(kisakcod-db-stream-intern-wait-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-db-stream-intern-wait-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-db-stream-intern-wait-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS)
+    target_compile_options(kisakcod-db-stream-intern-wait-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-db-stream-intern-wait-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-db-stream-intern-wait-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-db-stream-intern-wait-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    target_link_libraries(kisakcod-db-stream-intern-wait-tests PRIVATE Threads::Threads)
+    set_target_properties(kisakcod-db-stream-intern-wait-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME database-stream-intern-contention COMMAND kisakcod-db-stream-intern-wait-tests)
+    add_test(NAME database-stream-intern-self-hold COMMAND kisakcod-db-stream-intern-wait-tests self-hold)
+    set_tests_properties(database-stream-intern-contention database-stream-intern-self-hold
+        PROPERTIES TIMEOUT 20)
+endif()

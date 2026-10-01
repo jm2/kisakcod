@@ -23,6 +23,10 @@ struct LegacyBridgeStringId final
     const char *canonicalName = nullptr;
 };
 
+// Outside a session, each call below opens its own registry window. It waits
+// out another thread's window or db_hashCritSect hold, as Sys_LockWrite does.
+// A thread that holds a FastCriticalSection (the hash itself, say) does not
+// wait, since the holder may be itself; its call fails with UnsafeFailure.
 class DbLoadLegacyBridge final
 {
 public:

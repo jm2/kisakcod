@@ -97,3 +97,8 @@ bool KISAK_CDECL Sys_TryLockWrite(FastCriticalSection *critSect);
 void KISAK_CDECL Sys_LockWrite(FastCriticalSection *critSect);
 void KISAK_CDECL Sys_UnlockWrite(FastCriticalSection *critSect);
 bool KISAK_CDECL Sys_IsWriteLocked(const FastCriticalSection *critSect);
+// Whether this thread holds any FastCriticalSection, for read or write. The
+// shared counts cannot tell this thread's hold from another thread's, so a
+// caller that waits for a busy section checks this first: a thread holding
+// none cannot be waiting on itself.
+bool KISAK_CDECL Sys_HoldsFastCriticalSection();

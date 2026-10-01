@@ -20,6 +20,15 @@ void Sys_ValidateFastCriticalSection(const FastCriticalSection *critSect)
     if (!critSect)
         std::abort();
 }
+
+// The fast critical sections this thread holds. Each section is released on
+// the thread that took it, so the count is exact for every thread.
+thread_local std::uint32_t t_heldFastCriticalSections = 0;
+}
+
+bool KISAK_CDECL Sys_HoldsFastCriticalSection()
+{
+    return t_heldFastCriticalSections != 0;
 }
 
 bool KISAK_CDECL Sys_IsWriteLocked(const FastCriticalSection *critSect)
@@ -35,6 +44,7 @@ void KISAK_CDECL Sys_LockRead(FastCriticalSection *critSect)
     Sys_AtomicIncrement(&critSect->readCount);
     while (Sys_IsWriteLocked(critSect))
         Sys_Sleep(0);
+    ++t_heldFastCriticalSections;
 }
 
 void KISAK_CDECL Sys_UnlockRead(FastCriticalSection *critSect)
@@ -48,6 +58,7 @@ void KISAK_CDECL Sys_UnlockRead(FastCriticalSection *critSect)
         std::abort();
 
     Sys_AtomicDecrement(&critSect->readCount);
+    --t_heldFastCriticalSections;
 }
 
 bool KISAK_CDECL Sys_TryLockWrite(FastCriticalSection *critSect)
@@ -63,7 +74,10 @@ bool KISAK_CDECL Sys_TryLockWrite(FastCriticalSection *critSect)
         return false;
     }
     if (Sys_ReadFastCriticalSectionCount(&critSect->readCount) == 0)
+    {
+        ++t_heldFastCriticalSections;
         return true;
+    }
 
     Sys_AtomicDecrement(&critSect->writeCount);
     return false;
@@ -86,4 +100,5 @@ void KISAK_CDECL Sys_UnlockWrite(FastCriticalSection *critSect)
         std::abort();
 
     Sys_AtomicDecrement(&critSect->writeCount);
+    --t_heldFastCriticalSections;
 }
