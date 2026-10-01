@@ -95,13 +95,17 @@ unsigned char Byte(const bool &value)
     return *reinterpret_cast<const unsigned char *>(&value);
 }
 
+bool SamePicmip(const GfxImage &image, const Scalars &s)
+{
+    return image.picmip.platform[0] == s.picmip[0] && image.picmip.platform[1] == s.picmip[1]
+        && Byte(image.noPicmip) == (s.noPicmip != 0);
+}
+
 bool Matches(const GfxImage &image, const Scalars &s)
 {
-    return image.mapType == s.mapType && image.picmip.platform[0] == s.picmip[0]
-        && image.picmip.platform[1] == s.picmip[1] && Byte(image.noPicmip) == (s.noPicmip != 0)
-        && image.semantic == s.semantic && image.track == s.track && image.width == s.width
-        && image.height == s.height && image.depth == s.depth && image.category == s.category
-        && !image.texture.basemap;
+    return image.mapType == s.mapType && SamePicmip(image, s) && image.semantic == s.semantic
+        && image.track == s.track && image.width == s.width && image.height == s.height && image.depth == s.depth
+        && image.category == s.category && !image.texture.basemap;
 }
 
 // What the texture step leaves of the delay flag and the external byte count.
