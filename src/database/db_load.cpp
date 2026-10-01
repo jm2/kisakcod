@@ -3544,6 +3544,10 @@ void __cdecl Load_GfxImage(bool atStreamStart)
 
 void __cdecl Load_GfxImagePtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadGfxImagePtrDisk32(atStreamStart, varGfxImagePtr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -3576,6 +3580,7 @@ void __cdecl Load_GfxImagePtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Mark_GfxImagePtr()

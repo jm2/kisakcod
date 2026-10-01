@@ -23,14 +23,17 @@ KINDS = {
     'i32': ('std::int32_t', 4, 4),
     'u32': ('std::uint32_t', 4, 4),
     'f32': ('float', 4, 4),
+    'i16': ('std::int16_t', 2, 2),
+    'u16': ('std::uint16_t', 2, 2),
     'u8': ('std::uint8_t', 1, 1),
     'bool': ('std::uint8_t', 1, 1),  # any disk byte; the loader tests != 0
     'xstring': ('Ptr32<const char>', 4, 8),
     'bytes': ('Ptr32<const char>', 4, 8),
     'xstrings': ('Ptr32<Ptr32<const char>>', 4, 8),
+    'pointer': ('Ptr32<void>', 4, 8),  # a token only a custom body loads
 }
 COUNTED = ('bytes', 'xstrings')
-SCALARS = ('i32', 'u32', 'f32', 'u8', 'bool')
+SCALARS = ('i32', 'u32', 'f32', 'i16', 'u16', 'u8', 'bool')
 ASSET_KEYS = {'member', 'pool', 'kind', 'alias', 'label', 'name', 'body'}
 
 
@@ -71,11 +74,15 @@ def parse_field(words, where):
         fail(where, f'expected: <offset> <field> <kind> [attributes]; kinds {sorted(KINDS)}')
     kind = words[2]
     allowed = ({'count', 'terminated', 'paired', 'label'} if kind == 'bytes'
-               else {'count'} if kind in COUNTED else set())
+               else {'count'} if kind in COUNTED + SCALARS else set())
     attrs = attributes(words[3:], where, allowed, flags=('terminated', 'paired'))
-    if (kind in COUNTED) != ('count' in attrs):
-        fail(where, f'count=<expression> is required for {COUNTED} and only for them')
-    return {'offset': int(words[0], 0), 'name': words[1], 'kind': kind, 'count': attrs.get('count', ''),
+    count = attrs.get('count', '')
+    if kind in COUNTED and not count:
+        fail(where, f'count=<expression> is required for {COUNTED}')
+    if kind in SCALARS and count and not (count.isdigit() and int(count) > 1):
+        fail(where, 'a scalar takes count=<n>, n > 1, as a fixed array of n')
+    return {'offset': int(words[0], 0), 'name': words[1], 'kind': kind,
+            'count': count if kind in COUNTED else '', 'length': int(count) if kind in SCALARS and count else 1,
             'terminated': 'terminated' in attrs, 'paired': 'paired' in attrs, 'label': attrs.get('label'),
             'where': where}
 
@@ -112,7 +119,7 @@ def layout(fields, width):
         size = KINDS[field['kind']][width]
         offset = (offset + size - 1) // size * size
         offsets.append(offset)
-        offset += size
+        offset += size * field['length']
         biggest = max(biggest, size)
     return offsets, (offset + biggest - 1) // biggest * biggest
 
@@ -128,7 +135,8 @@ def emit(records, schema_name):
         out += [f'// Retail {record["name"]}: 0x{record["size"]:02X} bytes.', f'struct {mirror}', '{']
         for field in record['fields']:
             count = f' // count: {field["count"]}' if field['count'] else ''
-            out.append(f'    {KINDS[field["kind"]][0]} {field["name"]};{count}')
+            length = f'[{field["length"]}]' if field['length'] > 1 else ''
+            out.append(f'    {KINDS[field["kind"]][0]} {field["name"]}{length};{count}')
         out += ['};', f'ONDISK_SIZE({mirror}, 0x{record["size"]:02X});']
         out += [f'ONDISK_OFFSET({mirror}, {field["name"]}, 0x{field["offset"]:02X});'
                 for field in record['fields']]
@@ -167,14 +175,16 @@ inline void Load${Name}HeaderSlot(bool atStreamStart, $Runtime **slot)
         Drop("Fast-file $label header slot holds no disk32 token");
         return;
     }
-$enter    Load${Name}Ptr(disk32::PointerToken{static_cast<std::uint32_t>(raw)}, slot);
-$leave}
+    Load${Name}Ptr(disk32::PointerToken{static_cast<std::uint32_t>(raw)}, slot);
+}
 ''')
 
 INSERTED_PTR = Template('''\
 // $Name's pointer step (alias=inserted): an offset token names a pooled
 // alias; -1 and -2 convert the record into a native temporary that the pool
-// call copies, and -2 registers the pooled pointer.
+// call copies, and -2 registers the pooled pointer. As in the 32-bit step,
+// the record streams into the temp block whichever block the referrer is in,
+// so a header slot and a reference nested in another record call it alike.
 inline void Load${Name}Ptr(disk32::PointerToken token, $Runtime **slot)
 {
     if (token.isOffset())
@@ -190,7 +200,10 @@ inline void Load${Name}Ptr(disk32::PointerToken token, $Runtime **slot)
         *slot = reinterpret_cast<$Runtime *>(pointer);
         return;
     }
-    if (token.isNull() || !DB_AllocStreamPos(3))
+    if (token.isNull())
+        return;
+    DB_PushStreamPos(kTempBlock);
+    if (!DB_AllocStreamPos(3))
         return;
     const DBAliasHandle inserted =
         token.isSharedInline() ? DB_InsertPointer(DBAliasKind::$kind) : DBAliasHandle{};
@@ -203,7 +216,15 @@ inline void Load${Name}Ptr(disk32::PointerToken token, $Runtime **slot)
     *slot = header.$member;
     if (inserted)
         DB_SetInsertedPointer(inserted, DBAliasKind::$kind, header.$member);
+    DB_PopStreamPos();
 }
+''')
+
+INSERTED_BODY = Template('''\
+// $Name's record body, hand-written in its TU: streams the record at the
+// temp block's position and converts it into *out, the native temporary the
+// pool call copies.
+bool Load$Name($Runtime *out);
 ''')
 
 COMPLETED_PTR = Template('''\
@@ -311,6 +332,8 @@ def noun(label):
 
 def scalar_copy(field):
     """A bool converts as != 0, so no disk byte lands in a C++ bool."""
+    if field['length'] > 1:
+        fail(field['where'], 'a generated body copies single scalars; a fixed array needs body=custom')
     test = ' != 0' if field['kind'] == 'bool' else ''
     return f'    out->{field["name"]} = disk.{field["name"]}{test};\n'
 
@@ -351,18 +374,15 @@ def emit_body(record):
 def emit_family(record):
     asset = record['asset']
     inserted, custom = asset['alias'] == 'inserted', 'body' in asset
-    if custom == inserted:
-        fail(asset['where'], 'alias=inserted takes a generated body and alias=completed a custom one, '
-                             'whose native storage is family-specific')
+    if not (custom or inserted):
+        fail(asset['where'], 'alias=completed takes body=custom: its native storage is family-specific')
     if custom and 'name' in asset:
         fail(asset['where'], 'name= applies to a generated body; a custom body checks its own name')
     facts = dict(Name=record['name'], Runtime=record['runtime'], kind=asset['kind'], member=asset['member'],
                  pool=asset['pool'], label=asset['label'], noun=noun(asset['label']))
-    # Only the inserted protocol streams the record into the temp block.
-    return ([] if custom else [emit_body(record)]) + [
-        (INSERTED_PTR if inserted else COMPLETED_PTR).substitute(facts),
-        HEADER_SLOT.substitute(facts, enter='    DB_PushStreamPos(kTempBlock);\n' if inserted else '',
-                               leave='    DB_PopStreamPos();\n' if inserted else '')]
+    # COMPLETED_PTR declares its own custom body.
+    body = [INSERTED_BODY.substitute(facts) if custom else emit_body(record)] if inserted else []
+    return body + [(INSERTED_PTR if inserted else COMPLETED_PTR).substitute(facts), HEADER_SLOT.substitute(facts)]
 
 
 def emit_loaders(records, schema_name):
