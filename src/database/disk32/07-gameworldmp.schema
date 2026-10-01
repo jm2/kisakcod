@@ -1,0 +1,5 @@
+# GameWorldMp, asset type 0x0E. The format is described in ../db_disk32.schema.
+
+record GameWorldMp 0x04 runtime=GameWorldMp header=game/g_bsp.h
+    asset member=gameWorldMp pool=Load_GameWorldMpAsset kind=GameWorldMp alias=inserted name=name label=game-world
+    0x00 name xstring

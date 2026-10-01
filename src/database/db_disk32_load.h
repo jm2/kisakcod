@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 
+struct GameWorldMp;
 struct GfxImage;
 struct LocalizeEntry;
 struct MapEnts;
@@ -57,6 +58,11 @@ void __cdecl DB_LoadMapEntsPtrDisk32(bool atStreamStart, MapEnts **slot);
 // and pixels are streamed and checked in the temp block but never kept, so the
 // native texture is null on every 64-bit target, as on the headless server.
 void __cdecl DB_LoadGfxImagePtrDisk32(bool atStreamStart, GfxImage **slot);
+
+// Loads one GameWorldMp (db_disk32_gameworldmp.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native GameWorldMp published through Load_GameWorldMpAsset on return.
+void __cdecl DB_LoadGameWorldMpPtrDisk32(bool atStreamStart, GameWorldMp **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
