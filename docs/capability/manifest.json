@@ -18,7 +18,7 @@
     {"target": "windows-amd64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "No engine configure at 64-bit."},
     {"target": "windows-amd64", "role": "headless-server", "level": "links", "next": "G2", "evidence": "CI Windows headless server / amd64 builds and links KisakCOD-dedi with MSVC for x64 on windows-2025 and passes scripts/ci/headless_smoke.py; green at e6c565cb on PR #342 (run 36740984304)."},
     {"target": "windows-arm64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "No engine configure at 64-bit."},
-    {"target": "windows-arm64", "role": "headless-server", "level": "none", "next": "G3", "evidence": "No engine configure at 64-bit; follows Win64."},
+    {"target": "windows-arm64", "role": "headless-server", "level": "links", "next": "G3", "evidence": "CI Windows headless server / arm64 builds and links KisakCOD-dedi with MSVC for ARM64 on windows-11-arm (PE machine ARM64) and passes scripts/ci/headless_smoke.py natively; green at 702ca0b4 on PR #360 (run 36777629902)."},
     {"target": "linux-amd64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "Engine source set is empty."},
     {"target": "linux-amd64", "role": "headless-server", "level": "links", "next": "G2", "evidence": "CI Linux headless server / amd64 builds and links KisakCOD-dedi and passes scripts/ci/headless_smoke.py on every push; green on master at cd0122be (run 36689132952)."},
     {"target": "linux-arm64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "Engine source set is empty."},
