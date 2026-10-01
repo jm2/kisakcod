@@ -49,25 +49,22 @@ public:
 
     [[nodiscard]] static LegacyBridgeStatus TryShutdownUser8() noexcept;
 
-    // A registry session for the db_registry unload sequence (DB_ShutdownXAssets,
-    // and DB_LoadXAssets when it unloads zones), which walks the asset hash under
-    // db_hashCritSect and moves user-4 references through this bridge. Each call
-    // above runs in a standalone registry window, and a window takes
-    // db_hashCritSect itself, after the script-string transaction (the
-    // coordinator's lock order), so it refuses a caller that already holds the
-    // hash. A session opens one window in place of the sequence's Sys_LockWrite:
-    // the window holds db_hashCritSect until FinishSession, and the calls above,
-    // made on the session's thread, run inside it.
+    // A registry session for the db_registry unload sequences (DB_ShutdownXAssets,
+    // DB_LoadXAssets), which walk the asset hash under db_hashCritSect and move
+    // user-4 names through the calls above. Each call opens a registry window
+    // that takes db_hashCritSect itself, after the script-string transaction
+    // (the coordinator's lock order), so it refuses a caller holding the hash.
+    // A session opens one window in place of the sequence's Sys_LockWrite, and
+    // the calls above made on its thread run inside that window.
     //
-    // BeginSession waits as Sys_LockWrite does and returns with db_hashCritSect
-    // write-locked; the caller must not hold it, and sessions do not nest. If
-    // the window cannot open, the session takes the hash directly and every call
-    // in it fails with InvalidState. The session keeps its first failure
-    // (SessionStatus), and FinishSession releases the hash and returns it, so the
-    // sequence reports it only once the hash is free: an error raised under the
-    // hash self-deadlocks when Com_ErrorCleanup looks up the localized message.
-    // UnsafeFailure means the registry poisoned inside the window, which then
-    // keeps db_hashCritSect (fail closed).
+    // BeginSession waits as Sys_LockWrite does and returns with the hash held;
+    // the caller must not hold it, and sessions do not nest. If no window opens,
+    // the session takes the hash itself and every call in it fails with
+    // InvalidState. FinishSession releases the hash and returns the session's
+    // first failure, so the sequence reports it with the hash free (an error
+    // raised under the hash self-deadlocks in Com_ErrorCleanup's localization).
+    // UnsafeFailure: the registry poisoned inside the window, which keeps the
+    // hash (fail closed).
     static void BeginSession() noexcept;
     [[nodiscard]] static bool InSession() noexcept;
     [[nodiscard]] static LegacyBridgeStatus SessionStatus() noexcept;

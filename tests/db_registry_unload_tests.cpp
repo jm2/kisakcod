@@ -1,17 +1,9 @@
-// db_registry_unload_tests.cpp: the db_registry unload sequence (quit, and the
-// zone unload of a map change) against the real bridge, facade, coordinator
-// and script-string registry.
-//
-// DB_ShutdownXAssets moved user-4 names through bridge calls while it held
-// db_hashCritSect. Each call's registry window takes that hash itself, so it
-// refused with Busy, and the ERR_DROP then raised under the hash never
-// returned: Com_ErrorCleanup's localized-message lookup waits for the hash.
-// Every orderly quit of a server past Com_Init hung there. On that code the
-// quit checks fail: its Com_Error reaches the stub below with the hash held.
-//
-// The production TUs at 64-bit with the Linux headless server's defines, as in
-// game_mp_hazard_tests.cpp: the engine boundary is weak stubs, and
-// --gc-sections drops the code no check reaches.
+// db_registry_unload_tests.cpp: the db_registry unload sequence against the real
+// bridge, facade, coordinator and script-string registry. On the code that held
+// db_hashCritSect around the bridge calls, the quit checks reach the Com_Error
+// stub with the hash held (in production that error never returns). The
+// production TUs at 64-bit with the headless defines, as in
+// game_mp_hazard_tests.cpp: weak engine boundary, --gc-sections.
 
 #include <database/database.h>
 #include <database/db_load_legacy_bridge.h>
@@ -24,7 +16,6 @@
 #include <script/scr_stringlist.h>
 
 #include <array>
-#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
