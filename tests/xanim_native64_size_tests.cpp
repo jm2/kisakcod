@@ -1,6 +1,7 @@
 // xanim_native64_size_tests.cpp: the xanim sizes and strides at 64-bit and
 // the asset clone sizes (NOW row 21, #218), driven through the production
-// TUs xanim.cpp, xmodel_utils.cpp, dobj_skel.cpp and db_assetnames.cpp.
+// TUs xanim.cpp, xmodel_utils.cpp, dobj_skel.cpp and db_assetnames.cpp, and
+// the raw-xanim delta part (xanim_load_obj.cpp) read back by xanim_calc.cpp.
 //
 // The decompile baked ILP32 sizes into these paths: XAnimClone allocated 88
 // bytes and copied sizeof(XAnimParts) (136 at 64-bit), the XAnimInfo stats
@@ -9,10 +10,14 @@
 // types another type's size. Every check but the dobj_skel ones fails on
 // those old sizes; the old dobj_skel statements happened to work at 64-bit.
 
+#include <bit>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
+#include <vector>
 
 #include <database/database.h>
 #include <game/g_bsp.h>
@@ -20,12 +25,16 @@
 #include <gfx_d3d/r_font.h>
 #include <gfx_d3d/r_gfx.h>
 #include <gfx_d3d/r_material.h>
+#include <xanim/buf_cursor.hpp>
 #include <xanim/dobj.h>
 #include <xanim/xanim.h>
+#include <xanim/xanim_calc.h>
 #include <xanim/xmodel.h>
 
 // Engine functions the checks drive that no header declares.
 XAnimParts *XAnimClone(XAnimParts *fromParts, void *(*Alloc)(int));
+unsigned char *GetDeltaPart(XAnimDeltaPart **deltaPart, void *(*Alloc)(int), unsigned char *pos,
+    uint16_t numloopframes, bool useSmallIndices);
 void GetControlAndDuplicatePartBits(const DObj_s *obj, const int *partBits, const int *ignorePartBits,
     const int *savedDuplicatePartBits, int *calcPartBits, int *controlPartBits);
 void CalcSkelRootBonesNoParentOrDuplicate(const XModel *model, DSkel *skel, int minBoneIndex, int *calcPartBits);
@@ -63,6 +72,13 @@ uint32_t SL_GetString_(const char *, uint32_t, int)
 float __cdecl Vec4LengthSq(const float *v)
 {
     return v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + v[3] * v[3];
+}
+
+void __cdecl Vec3Scale(const float *v, float scale, float *result)
+{
+    result[0] = v[0] * scale;
+    result[1] = v[1] * scale;
+    result[2] = v[2] * scale;
 }
 
 // Reached only on a control/meld part-bit conflict, which no check sets up.
@@ -240,6 +256,160 @@ void CheckSkel()
         "the requested part bits reach the object's own skel");
     Check(control[0] == 0x0F && calc[0] == -1, "control and calc part bits");
 }
+// xanim_load_obj.cpp's raw delta part. Each allocation gets exactly the size
+// it asks for, so under ASan a record sized for ILP32 is overrun where the
+// wider native record is written; every build checks the sizes asked for.
+std::vector<int> g_deltaRequests;
+std::vector<void *> g_deltaBlocks;
+
+void *__cdecl ExactAlloc(int size)
+{
+    g_deltaRequests.push_back(size);
+    g_deltaBlocks.push_back(std::calloc(1, static_cast<size_t>(size)));
+    return g_deltaBlocks.back();
+}
+
+// A raw xanim's delta part, as XAnimLoadFile reads it.
+struct RawDelta
+{
+    std::vector<unsigned char> bytes;
+    RawDelta &U8(unsigned value)
+    {
+        bytes.push_back(static_cast<unsigned char>(value));
+        return *this;
+    }
+    RawDelta &U16(unsigned value)
+    {
+        return U8(value & 0xFF).U8(value >> 8);
+    }
+    RawDelta &F32(float value)
+    {
+        const auto bits = std::bit_cast<uint32_t>(value);
+        return U16(bits & 0xFFFF).U16(bits >> 16);
+    }
+};
+
+XAnimDeltaPart *LoadRawDelta(RawDelta &raw, uint16_t loopFrames, const std::vector<int> &sizes, const char *stage)
+{
+    for (void *block : g_deltaBlocks)
+        std::free(block);
+    g_deltaBlocks.clear();
+    g_deltaRequests.clear();
+    unsigned char *pos = raw.bytes.data();
+    buf_cursor::Activate(raw.bytes.data(), raw.bytes.size());
+    buf_cursor::AnchorPos(&pos);
+    XAnimDeltaPart *delta = nullptr;
+    const unsigned char *const end = GetDeltaPart(&delta, ExactAlloc, pos, loopFrames, loopFrames <= 0x100);
+    Check(end == raw.bytes.data() + raw.bytes.size() && !buf_cursor::Failed(), stage);
+    buf_cursor::Deactivate();
+    Check(g_deltaRequests == sizes, "each delta record is allocated at its native extent");
+    return delta;
+}
+
+// ConsumeQuat2's second component of a unit 2D rotation.
+float Quat2W(int x)
+{
+    const double rest = 32767.0 * 32767.0 - static_cast<double>(x) * x;
+    return rest <= 0 ? 0.0f : static_cast<float>(std::floor(std::sqrt(rest) + 0.5));
+}
+
+bool Near(float value, double expected)
+{
+    return std::fabs(value - expected) <= 1e-4 * std::fmax(1.0, std::fabs(expected));
+}
+
+// Each value near its expected one, in order.
+bool NearAll(const float *values, std::initializer_list<double> expected)
+{
+    for (double each : expected)
+    {
+        if (!Near(*values++, each))
+            return false;
+    }
+    return true;
+}
+
+constexpr int kQuatIndices = static_cast<int>(offsetof(XAnimDeltaPartQuat, u.frames.indices));
+constexpr int kTransIndices = static_cast<int>(offsetof(XAnimPartTrans, u.frames.indices));
+constexpr int kDelta = static_cast<int>(sizeof(XAnimDeltaPart));
+
+// 11 loop frames: 8-bit indices {0, 4, 10}, rotation frames and 8-bit
+// translation vectors (sizes scaled by 1/255), then the delta reader at the
+// end and at frame 5, between key frames 1 and 2 (1/6 of the way).
+void CheckRawDeltaSmall()
+{
+    RawDelta raw;
+    raw.U16(3).U8(0).U8(4).U8(10).U16(0).U16(19660).U16(32767)
+        .U16(3).U8(0).U8(4).U8(10).U8(1).F32(1).F32(2).F32(3).F32(255).F32(510).F32(765)
+        .U8(0).U8(0).U8(0).U8(10).U8(20).U8(30).U8(100).U8(200).U8(250);
+    XAnimDeltaPart *const delta =
+        LoadRawDelta(raw, 11, {kDelta, kQuatIndices + 3, 4 * 3, kTransIndices + 3, 3 * 3}, "8-bit raw delta part loads");
+    if (!delta || !delta->quat || !delta->trans)
+        return Check(false, "8-bit raw delta part has a rotation and a translation");
+    XAnimParts parts{};
+    parts.numframes = 10;
+    parts.deltaPart = delta;
+    float rot[2] = {};
+    float4 pos{};
+    XAnim_CalcDeltaForTime(&parts, 1.0f, rot, &pos);
+    Check(NearAll(rot, {32767, 0}) && NearAll(pos.v, {101, 402, 753}),
+        "the delta reader reads the raw delta part's last frames");
+    XAnim_CalcDeltaForTime(&parts, 0.5f, rot, &pos);
+    const double frac = 1.0 / 6;
+    Check(NearAll(rot, {19660 + frac * (32767 - 19660), Quat2W(19660) * (1 - frac)})
+            && NearAll(pos.v, {10 + frac * 90 + 1, 2 * (20 + frac * 180) + 2, 3 * (30 + frac * 220) + 3}),
+        "the delta reader finds the raw delta part's key frames through its 8-bit indices");
+}
+
+// 300 loop frames: 16-bit indices and 16-bit translation vectors.
+void CheckRawDeltaWide()
+{
+    RawDelta raw;
+    raw.U16(3).U16(0).U16(100).U16(299).U16(0).U16(0).U16(32767)
+        .U16(3).U16(0).U16(100).U16(299).U8(0).F32(1).F32(2).F32(3).F32(65535).F32(65535).F32(65535)
+        .U16(0).U16(0).U16(0).U16(1000).U16(2000).U16(3000).U16(65535).U16(0).U16(30000);
+    XAnimDeltaPart *const delta = LoadRawDelta(raw, 300,
+        {kDelta, kQuatIndices + 2 * 3, 4 * 3, kTransIndices + 2 * 3, 6 * 3}, "16-bit raw delta part loads");
+    if (!delta || !delta->quat || !delta->trans)
+        return Check(false, "16-bit raw delta part has a rotation and a translation");
+    XAnimParts parts{};
+    parts.numframes = 299;
+    parts.deltaPart = delta;
+    float rot[2] = {};
+    float4 pos{};
+    XAnim_CalcDeltaForTime(&parts, 0.5f, rot, &pos); // frame 149.5, between indices 100 and 299
+    const double frac = 49.5 / 199;
+    Check(NearAll(rot, {32767 * frac, 32767 * (1 - frac)})
+            && NearAll(pos.v, {1000 + frac * 64535 + 1, 2000 * (1 - frac) + 2, 3000 + frac * 27000 + 3}),
+        "the delta reader finds the raw delta part's key frames through its 16-bit indices");
+}
+
+// One rotation and one translation frame: frame0 records; then no delta at all.
+void CheckRawDeltaFrame0()
+{
+    RawDelta raw;
+    raw.U16(1).U16(19660).U16(1).F32(4).F32(5).F32(6);
+    const int quat0 = static_cast<int>(offsetof(XAnimDeltaPartQuat, u) + sizeof(XAnimDeltaPartQuatData::frame0));
+    const int trans0 = static_cast<int>(offsetof(XAnimPartTrans, u) + sizeof(XAnimPartTransData::frame0));
+    XAnimDeltaPart *const delta = LoadRawDelta(raw, 11, {kDelta, quat0, trans0}, "frame0 raw delta part loads");
+    if (!delta || !delta->quat || !delta->trans)
+        return Check(false, "frame0 raw delta part has a rotation and a translation");
+    XAnimParts parts{};
+    parts.numframes = 10;
+    parts.deltaPart = delta;
+    float rot[2] = {};
+    float4 pos{};
+    XAnim_CalcDeltaForTime(&parts, 0.5f, rot, &pos);
+    Check(NearAll(rot, {19660, Quat2W(19660)}) && NearAll(pos.v, {4, 5, 6}), "the delta reader reads the raw frame0 records");
+
+    RawDelta none;
+    none.U16(0).U16(0);
+    XAnimDeltaPart *const empty = LoadRawDelta(none, 11, {kDelta}, "an empty raw delta part loads");
+    Check(empty && !empty->quat && !empty->trans, "an empty raw delta part has no rotation or translation");
+    for (void *block : g_deltaBlocks)
+        std::free(block);
+    g_deltaBlocks.clear();
+}
 } // namespace
 
 int main()
@@ -249,6 +419,9 @@ int main()
     CheckLodOutDist();
     CheckCloneSizes();
     CheckSkel();
+    CheckRawDeltaSmall();
+    CheckRawDeltaWide();
+    CheckRawDeltaFrame0();
     if (g_failures == 0)
         std::printf("xanim native64 sizes: all checks passed\n");
     return g_failures == 0 ? 0 : 1;

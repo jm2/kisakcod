@@ -197,8 +197,9 @@ add_test(
 kisakcod_ilp32(kisakcod-xmodel-loader-entry-tests
     xmodel-loader-entry-native)
 
-# xanim_native64_size_tests: the xanim sizes and strides at 64-bit and the
-# asset clone sizes (NOW row 21, #218), driven through the production TUs,
+# xanim_native64_size_tests: the xanim sizes and strides at 64-bit, the
+# asset clone sizes (NOW row 21, #218) and the raw-xanim delta part read back
+# by the delta reader, driven through the production TUs,
 # compiled with the Linux headless server's own definitions. Linux + clang
 # only, like dvar-pointer-round-trips: the engine TUs follow the clang +
 # -fms-extensions toolchain policy (PLATFORM_POSIX.md) and compile off Windows
@@ -211,6 +212,9 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         ${SRC_DIR}/xanim/xanim.cpp
         ${SRC_DIR}/xanim/xmodel_utils.cpp
         ${SRC_DIR}/xanim/dobj_skel.cpp
+        ${SRC_DIR}/xanim/xanim_load_obj.cpp
+        ${SRC_DIR}/xanim/xanim_calc.cpp
+        ${SRC_DIR}/xanim/buf_cursor.cpp
         ${SRC_DIR}/database/db_assetnames.cpp)
     target_include_directories(kisakcod-xanim-native64-size-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
     target_compile_features(kisakcod-xanim-native64-size-tests PRIVATE cxx_std_20)

@@ -471,6 +471,20 @@ void __cdecl ConsumeQuatNoSwap(unsigned __int8 **pos, __int16 *out)
     out[3] = v2;
 }
 
+// The delta records' extents, from their native layout: the retail literals at
+// 32-bit (the n32 arms below), wide enough for the native records and their
+// trailing indices at 64-bit.
+RUNTIME_OFFSET(XAnimDeltaPartQuat, u, 0x4, 0x8);
+RUNTIME_OFFSET(XAnimDeltaPartQuat, u.frames.indices, 0x8, 0x10);
+RUNTIME_OFFSET(XAnimPartTrans, u, 0x4, 0x8);
+RUNTIME_OFFSET(XAnimPartTrans, u.frames.indices, 0x20, 0x28);
+constexpr int kDeltaQuatFrame0Bytes =
+    static_cast<int>(offsetof(XAnimDeltaPartQuat, u) + sizeof(XAnimDeltaPartQuatData::frame0));
+constexpr int kDeltaQuatIndices = static_cast<int>(offsetof(XAnimDeltaPartQuat, u.frames.indices));
+constexpr int kDeltaTransFrame0Bytes =
+    static_cast<int>(offsetof(XAnimPartTrans, u) + sizeof(XAnimPartTransData::frame0));
+constexpr int kDeltaTransIndices = static_cast<int>(offsetof(XAnimPartTrans, u.frames.indices));
+
 unsigned __int8 *__cdecl GetDeltaQuaternions(
     XAnimDeltaPart *deltaPart,
     void *(__cdecl *Alloc)(int),
@@ -494,7 +508,7 @@ unsigned __int8 *__cdecl GetDeltaQuaternions(
         if (numQuatIndices == 1)
         {
             ConsumeQuat2(&pos, quat);
-            deltaPart->quat = (XAnimDeltaPartQuat *)Alloc(8);
+            deltaPart->quat = static_cast<XAnimDeltaPartQuat *>(Alloc(kDeltaQuatFrame0Bytes));
             deltaPart->quat->size = 0;
             deltaPart->quat->u.frame0[0] = quat[0];
             deltaPart->quat->u.frame0[1] = quat[1];
@@ -505,7 +519,7 @@ unsigned __int8 *__cdecl GetDeltaQuaternions(
 
             if (useSmallIndices)
             {
-                deltaPart->quat = (XAnimDeltaPartQuat *)Alloc(numQuatIndices + 8);
+                deltaPart->quat = static_cast<XAnimDeltaPartQuat *>(Alloc(kDeltaQuatIndices + numQuatIndices));
                 if (numQuatIndices >= numloopframes)
                 {
                     for (i = 0; i < numQuatIndices; ++i)
@@ -520,7 +534,7 @@ unsigned __int8 *__cdecl GetDeltaQuaternions(
             }
             else
             {
-                deltaPart->quat = (XAnimDeltaPartQuat *)Alloc(2 * numQuatIndices + 8);
+                deltaPart->quat = static_cast<XAnimDeltaPartQuat *>(Alloc(kDeltaQuatIndices + 2 * numQuatIndices));
                 if (numQuatIndices >= numloopframes)
                 {
                     for (j = 0; j < numQuatIndices; ++j)
@@ -583,7 +597,7 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
             mins[1] = Buf_Read<float>(&pos);
             mins[2] = Buf_Read<float>(&pos);
 
-            deltaPart->trans = (XAnimPartTrans*)Alloc(16);
+            deltaPart->trans = static_cast<XAnimPartTrans *>(Alloc(kDeltaTransFrame0Bytes));
             deltaPart->trans->size = 0;
             p_u = &deltaPart->trans->u;
             p_u->frames.mins[0] = mins[0];
@@ -596,7 +610,7 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
 
             if (useSmallIndices)
             {
-                deltaPart->trans = (XAnimPartTrans *)Alloc(numTransIndices + 32);
+                deltaPart->trans = static_cast<XAnimPartTrans *>(Alloc(kDeltaTransIndices + numTransIndices));
                 if (numTransIndices >= numloopframes)
                 {
                     for (i = 0; i < numTransIndices; ++i)
@@ -610,7 +624,7 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
             }
             else
             {
-                deltaPart->trans = (XAnimPartTrans *)Alloc(2 * numTransIndices + 32);
+                deltaPart->trans = static_cast<XAnimPartTrans *>(Alloc(kDeltaTransIndices + 2 * numTransIndices));
                 if (numTransIndices >= numloopframes)
                 {
                     for (j = 0; j < numTransIndices; ++j)
@@ -630,6 +644,19 @@ unsigned __int8 *__cdecl GetDeltaTranslations(
         deltaPart->trans = 0;
     }
     return pos;
+}
+
+// The delta part: its rotation, then its translation.
+unsigned __int8 *__cdecl GetDeltaPart(
+    XAnimDeltaPart **deltaPart,
+    void *(__cdecl *Alloc)(int),
+    unsigned __int8 *pos,
+    uint16_t numloopframes,
+    bool useSmallIndices)
+{
+    *deltaPart = static_cast<XAnimDeltaPart *>(Alloc(sizeof(XAnimDeltaPart)));
+    pos = GetDeltaQuaternions(*deltaPart, Alloc, pos, numloopframes, useSmallIndices);
+    return GetDeltaTranslations(*deltaPart, Alloc, pos, numloopframes, useSmallIndices);
 }
 
 unsigned __int8 *__cdecl GetQuaternions(
@@ -1096,11 +1123,7 @@ XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int))
     iassert(parts->frequency >= 0);
 
     if (parts->bDelta)
-    {
-        parts->deltaPart = (XAnimDeltaPart *)Alloc(8);
-        pos = GetDeltaQuaternions(parts->deltaPart, Alloc, pos, numLoopFrames, useSmallIndices);
-        pos = GetDeltaTranslations(parts->deltaPart, Alloc, pos, numLoopFrames, useSmallIndices);
-    }
+        pos = GetDeltaPart(&parts->deltaPart, Alloc, pos, numLoopFrames, useSmallIndices);
     if (numBones)
     {
         count = ((uint32_t)(numBones - 1) >> 3) + 1;
