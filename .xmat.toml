@@ -1,0 +1,44 @@
+# xmat (https://github.com/jm2/xmat): build and test one commit on the owner's
+# machines at once. The machines are listed in each user's fleet file, not here.
+#   xmat run [<commit>]           portable tests on every target
+#   xmat run --with headless      also build KisakCOD-dedi and run the smoke
+# Mirrors the portable-tests and headless-server jobs in .github/workflows/ci.yml.
+# Linux and macOS use clang (engine-TU tests are clang-only); Windows uses the
+# Visual Studio generator, which finds MSVC without vcvars.
+
+name = "kisakcod"
+
+[step.configure]
+run = "cmake -S . -B build-xmat -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON"
+
+[step.configure.os.windows]
+run = "cmake -S . -B build-xmat -A x64 -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF -DBUILD_TESTING=ON"
+
+[step.build]
+run = "cmake --build build-xmat --config Release --parallel"
+timeout = "30m"
+
+[step.test]
+run = "ctest --test-dir build-xmat -C Release --output-on-failure --parallel 8"
+timeout = "15m"
+
+[step.headless]
+default = false
+timeout = "30m"
+shell = "bash"
+run = '''
+cmake -S . -B build-xmat-headless -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+  -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF -DKISAK_DEDI_HEADLESS=ON \
+  -DKISAK_ENABLE_STEAM=OFF -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-xmat-headless --target KisakCOD-dedi --parallel
+# Canonical temp dir: the filesystem layer refuses symlinked roots (macOS /var).
+TMPDIR="$(cd "${TMPDIR:-/tmp}" && pwd -P)" python3 scripts/ci/headless_smoke.py bin/KisakCOD-dedi
+'''
+
+[step.headless.os.windows]
+shell = "cmd"
+run = '''
+cmake -S . -B build-xmat-headless -A x64 -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF -DKISAK_ENABLE_X86_MMX_SKINNING=OFF -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DBUILD_TESTING=OFF || exit /b 1
+cmake --build build-xmat-headless --config Release --target KisakCOD-dedi --parallel || exit /b 1
+python scripts\ci\headless_smoke.py bin\Release\KisakCOD-dedi.exe
+'''
