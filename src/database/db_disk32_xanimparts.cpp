@@ -4,6 +4,8 @@
 
 #include <database/db_disk32_loaders.h> // generated from db_disk32.schema
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -16,7 +18,10 @@
 // bytes on both widths), so the native record points straight at them. Bone
 // and notetrack names are zone script-string indices, remapped in place
 // through Load_ScriptStringCustom as the 32-bit Load_ScriptString remaps them.
-// Frames hold no destructors, since a production ERR_DROP longjmps out.
+// The delta part's records widen, so they convert into zone-lifetime native
+// storage (DB_AllocZoneNative) with their trailing frame indices; their frame
+// vectors stay in block 4. Frames hold no destructors, since a production
+// ERR_DROP longjmps out.
 namespace db::disk32_load
 {
 namespace
@@ -68,17 +73,140 @@ bool LoadNotify(const disk32::XAnimPartsDisk32 &disk, XAnimNotifyInfo **notify)
     return true;
 }
 
-bool LoadDeltaPart(const disk32::XAnimPartsDisk32 &disk, XAnimDeltaPart **deltaPart)
+// XAnimPartTrans and XAnimDeltaPartQuat open with a 4-byte head (size, then
+// smallTrans or a pad byte) and their union u, which moves from 4 to 8. Until
+// the generator has struct-typed fields, these two are described here.
+constexpr std::int32_t kHeadBytes = 4;
+RUNTIME_OFFSET(XAnimPartTrans, u, 0x4, 0x8);
+RUNTIME_OFFSET(XAnimDeltaPartQuat, u, 0x4, 0x8);
+constexpr std::size_t kTransIndices = offsetof(XAnimPartTrans, u.frames.indices);
+constexpr std::size_t kQuatIndices = offsetof(XAnimDeltaPartQuat, u.frames.indices);
+
+// Frame indices are 16-bit once the animation has 256 frames, as in
+// Load_XAnimIndices and Load_XAnimDynamicIndices*.
+bool WideIndices(const disk32::XAnimPartsDisk32 &disk)
 {
-    *deltaPart = nullptr;
-    return disk.deltaPart.token.isNull() || Drop("Fast-file xanim delta parts are not converted yet");
+    return disk.numframes >= 0x100;
 }
 
-// Load_XAnimIndices: 16-bit frame indices once the animation has 256 frames.
+// Zeroed native storage for T, and past sizeof(T) the rest of its trailing
+// indices, which start at indicesOffset.
+template <typename T>
+T *AllocNative(std::size_t indicesOffset, std::int32_t indexBytes)
+{
+    const std::size_t bytes = std::max(sizeof(T), indicesOffset + static_cast<std::size_t>(indexBytes));
+    std::uint8_t *const storage = DB_AllocZoneNative(bytes, alignof(T));
+    if (!storage)
+    {
+        Drop("Fast-file native storage is exhausted");
+        return nullptr;
+    }
+    std::memset(storage, 0, bytes);
+    return reinterpret_cast<T *>(storage);
+}
+
+// A translation's or rotation's 4-aligned head, then the body that follows it
+// at the record's position: frame0 when size is 0, else the frames head up to
+// its indices and size + 1 indices. *indexBytes is 0 without frames.
+std::uint8_t *StreamHeadAndBody(std::int32_t frame0Bytes, std::int32_t framesHeadBytes, std::int32_t indexWidth,
+                                std::int32_t *indexBytes)
+{
+    std::uint8_t *const head = DB_AllocStreamPos(kAlign4);
+    if (!StreamBytes(head, kHeadBytes))
+        return nullptr;
+    std::uint16_t size = 0;
+    std::memcpy(&size, head, sizeof(size));
+    *indexBytes = size ? (size + 1) * indexWidth : 0;
+    return StreamBytes(head + kHeadBytes, size ? framesHeadBytes + *indexBytes : frame0Bytes) ? head : nullptr;
+}
+
+// Load_XAnimPartTrans: frame0 is a vec3; frames are the bounds, the indices
+// and 3-component vectors, 8-bit when smallTrans and else 16-bit, 4-aligned.
+bool LoadTrans(disk32::Ptr32<const void> field, std::int32_t indexWidth, XAnimPartTrans **out)
+{
+    using FramesDisk = disk32::XAnimPartTransFramesDisk32;
+    constexpr auto framesHeadBytes = static_cast<std::int32_t>(offsetof(FramesDisk, indices));
+    if (field.token.isNull())
+        return true;
+    std::int32_t indexBytes = 0;
+    std::uint8_t *const head = StreamHeadAndBody(sizeof(XAnimPartTransData::frame0), framesHeadBytes, indexWidth,
+                                                 &indexBytes);
+    XAnimPartTrans *const trans = head ? AllocNative<XAnimPartTrans>(kTransIndices, indexBytes) : nullptr;
+    if (!trans)
+        return false;
+    *out = trans;
+    std::memcpy(&trans->size, head, sizeof(trans->size));
+    trans->smallTrans = head[2];
+    const std::uint8_t *const body = head + kHeadBytes;
+    if (!trans->size)
+    {
+        std::memcpy(trans->u.frame0, body, sizeof(trans->u.frame0));
+        return true;
+    }
+    FramesDisk frames{};
+    std::memcpy(&frames, body, framesHeadBytes);
+    std::memcpy(trans->u.frames.mins, frames.mins, sizeof(frames.mins));
+    std::memcpy(trans->u.frames.size, frames.size, sizeof(frames.size));
+    std::memcpy(reinterpret_cast<std::uint8_t *>(trans) + kTransIndices, body + framesHeadBytes,
+                static_cast<std::size_t>(indexBytes));
+    if (trans->smallTrans)
+        return LoadArray(frames.frames, trans->size + 1, kAlign1, &trans->u.frames.frames._1);
+    return LoadArray(frames.frames, trans->size + 1, kAlign4, &trans->u.frames.frames._2);
+}
+
+// Load_XAnimDeltaPartQuat: frame0 and each 4-aligned frame are two 16-bit
+// components.
+bool LoadQuat(disk32::Ptr32<const void> field, std::int32_t indexWidth, XAnimDeltaPartQuat **out)
+{
+    using FramesDisk = disk32::XAnimDeltaPartQuatDataFramesDisk32;
+    constexpr auto framesHeadBytes = static_cast<std::int32_t>(offsetof(FramesDisk, indices));
+    if (field.token.isNull())
+        return true;
+    std::int32_t indexBytes = 0;
+    std::uint8_t *const head = StreamHeadAndBody(sizeof(XAnimDeltaPartQuatData::frame0), framesHeadBytes,
+                                                 indexWidth, &indexBytes);
+    XAnimDeltaPartQuat *const quat = head ? AllocNative<XAnimDeltaPartQuat>(kQuatIndices, indexBytes) : nullptr;
+    if (!quat)
+        return false;
+    *out = quat;
+    std::memcpy(&quat->size, head, sizeof(quat->size));
+    const std::uint8_t *const body = head + kHeadBytes;
+    if (!quat->size)
+    {
+        std::memcpy(quat->u.frame0, body, sizeof(quat->u.frame0));
+        return true;
+    }
+    FramesDisk frames{};
+    std::memcpy(&frames, body, framesHeadBytes);
+    std::memcpy(reinterpret_cast<std::uint8_t *>(quat) + kQuatIndices, body + framesHeadBytes,
+                static_cast<std::size_t>(indexBytes));
+    return LoadArray(frames.frames, quat->size + 1, kAlign4, &quat->u.frames.frames);
+}
+
+// Load_XAnimDeltaPart: the 4-aligned record, then its translation and rotation.
+bool LoadDeltaPart(const disk32::XAnimPartsDisk32 &parts, XAnimDeltaPart **out)
+{
+    *out = nullptr;
+    if (parts.deltaPart.token.isNull())
+        return true;
+    disk32::XAnimDeltaPartDisk32 disk{};
+    std::uint8_t *const record = DB_AllocStreamPos(kAlign4);
+    if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
+        return false;
+    std::memcpy(&disk, record, sizeof(disk));
+    XAnimDeltaPart *const delta = AllocNative<XAnimDeltaPart>(0, 0);
+    if (!delta)
+        return false;
+    *out = delta;
+    const std::int32_t indexWidth = WideIndices(parts) ? 2 : 1;
+    return LoadTrans(disk.trans, indexWidth, &delta->trans) && LoadQuat(disk.quat, indexWidth, &delta->quat);
+}
+
+// Load_XAnimIndices.
 bool LoadIndices(const disk32::XAnimPartsDisk32 &disk, XAnimIndices *indices)
 {
     const auto count = static_cast<std::int32_t>(disk.indexCount);
-    if (disk.numframes >= 0x100)
+    if (WideIndices(disk))
         return LoadArray(disk.indices, count, kAlign2, &indices->_2);
     return LoadArray(disk.indices, count, kAlign1, &indices->_1);
 }

@@ -35,3 +35,20 @@ record XAnimParts 0x58 runtime=XAnimParts header=xanim/xanim.h
 record XAnimNotifyInfo 0x08 runtime=XAnimNotifyInfo header=xanim/xanim.h
     0x00 name                 u16     # a script string
     0x04 time                 f32
+
+# The delta part and the frames heads of its translation and rotation. Each
+# head is followed inline by size + 1 indices, 16-bit from 256 frames, which
+# the native record keeps at its own indices offset.
+record XAnimDeltaPart 0x08 runtime=XAnimDeltaPart header=xanim/xanim.h
+    0x00 trans                ptr32   # XAnimPartTrans
+    0x04 quat                 ptr32   # XAnimDeltaPartQuat
+
+record XAnimPartTransFrames 0x20 runtime=XAnimPartTransFrames header=xanim/xanim.h
+    0x00 mins                 f32[3]
+    0x0C size                 f32[3]
+    0x18 frames               ptr32   # 8-bit vectors when smallTrans, else 16-bit
+    0x1C indices              u16[1]
+
+record XAnimDeltaPartQuatDataFrames 0x08 runtime=XAnimDeltaPartQuatDataFrames header=xanim/xanim.h
+    0x00 frames               ptr32   # two 16-bit components a frame
+    0x04 indices              u16[1]
