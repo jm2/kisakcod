@@ -53,11 +53,12 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    generator emits the header-slot entry and the pointer step. `inserted` streams the record
    into the temp block for the pool to copy. `completed` keeps the block-4 record as the alias
    identity and resolves aliases to its native twin. For a flat family it also emits the record
-   body from the field kinds: scalars, `bool` as `!= 0`, fixed scalar arrays, xstrings, and
-   terminated byte arrays with a checked count. `check=custom` adds the 32-bit loader's further
-   rules as a hand-written `Check<Family>`, such as SoundCurve's knot checks. A `body=custom`
-   family hand-writes only the body, such as StringTable's value array. Each family's TU
-   forwards `DB_Load<Family>PtrDisk32` to the generated entry.
+   body from the field kinds: scalars, `bool` as `!= 0`, fixed scalar arrays, xstrings,
+   terminated byte arrays with a checked count, and arrays of nested records (`array of=`),
+   converted into native storage, such as ComWorld's primary lights. `check=custom` adds the
+   32-bit loader's further rules as a hand-written `Check<Family>`, such as SoundCurve's knot
+   checks. A `body=custom` family hand-writes only the body, such as StringTable's value
+   array. Each family's TU forwards `DB_Load<Family>PtrDisk32` to the generated entry.
 
    **Asset references** (planned with LightDef → Image, Font → Material, ImpactFx → Fx and Sound
    → LoadedSound/SoundCurve). A field `asset=<Family>` holds a token to another family's

@@ -23,21 +23,10 @@ namespace db::xasset
 {
 namespace
 {
+using db::disk32_load::AllocNative;
 using db::disk32_load::Drop;
 using db::disk32_load::kVirtualBlock;
 using db::disk32_load::StreamBytes;
-
-// count native elements of T in zone-lifetime storage; exhaustion is an error,
-// not a fallback. count is at most the validated list maximum.
-template <typename T>
-T *AllocNative(std::int32_t count)
-{
-    auto *const storage = reinterpret_cast<T *>(
-        DB_AllocZoneNative(static_cast<std::size_t>(count) * sizeof(T), alignof(T)));
-    if (!storage)
-        Drop("Fast-file native storage is exhausted");
-    return storage;
-}
 
 // Load_XAssetListCustom: the root is read outside the zone blocks.
 bool LoadRoot(XAssetListDisk32 *root)
