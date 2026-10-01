@@ -233,7 +233,13 @@ jobs:
             printf 'linux=true\nmac64=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          files="$(git diff --name-only "$BASE"...HEAD)"
+          # --no-renames: names only, so the blobless clone never fetches contents.
+          # If the diff fails anyway, measure everything rather than skip.
+          if ! files="$(git diff --no-renames --name-only "$BASE"...HEAD)"; then
+            echo "::warning::could not list the changed files; running both censuses"
+            printf 'linux=true\nmac64=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           tool='^(scripts/ci/native64_census\.py|scripts/ci/native64-tulist\.cmake|scripts/ci/ci-stubs/|scripts/extern/)'
           inputs='^(src/|deps/|tests/|cmake/|scripts/.*\.cmake$|scripts/.*/CMakeLists\.txt$|CMakeLists\.txt$|CMakePresets\.json$|\.github/workflows/ci\.yml$)'
           linux=false; mac64=false
