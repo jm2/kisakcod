@@ -6,11 +6,13 @@
 // succeed. On the code that reported that contention as a failure, it raised
 // ERR_DROP and the zone load failed on timing alone. With the hold on the
 // intern's own thread it must fail at once, not wait on itself; a watchdog turns
-// such a spin into a failure. Production TUs at 64-bit with the headless
-// defines, as in db_registry_unload_tests.cpp.
+// such a spin into a failure. So it must when a window poisoned elsewhere keeps
+// its locks for good. Production TUs at 64-bit with the headless defines, as in
+// db_registry_unload_tests.cpp.
 
 #include <database/database.h>
 #include <database/db_load_legacy_bridge.h>
+#include <database/db_registry_ownership_coordinator.h>
 #include <database/db_zone_runtime_table.h>
 #include <qcommon/qcommon.h>
 #include <qcommon/sys_sync.h>
@@ -159,6 +161,42 @@ void RunWhileHeldHere(const char *what, Hold hold, Intern intern)
     CHECK(g_waits == 0);
 }
 
+// Run alone (the poison is process-wide). A standalone window poisons on a
+// thread that survives its ERR_DROP, as the main thread does, and keeps the
+// facade serializer for good. The database thread's next intern must fail at
+// once, not wait for a holder that never lets go.
+void TestPoisonedWindowIsTerminal()
+{
+    db::registry_ownership::SetRegistryOwnershipCoordinatorBoundaryForTesting(0, 0, 0, 0, 2, 2);
+    Drop drop{"(none)"};
+    try
+    {
+        StreamIntern("poisoned-here");
+    }
+    catch (const Drop &caught)
+    {
+        drop = caught;
+    }
+    CHECK(std::strcmp(drop.message, "Database user-4 stream intern failed") == 0);
+    CHECK(Sys_HoldsFastCriticalSection()); // the poisoned window kept the serializer
+
+    g_waits = 0;
+    Drop databaseDrop{"(none)"};
+    std::thread database([&] {
+        try
+        {
+            StreamIntern("after-poison");
+        }
+        catch (const Drop &caught)
+        {
+            databaseDrop = caught;
+        }
+    });
+    database.join();
+    CHECK(std::strcmp(databaseDrop.message, "Database user-4 stream intern failed") == 0);
+    CHECK(g_waits == 0);
+}
+
 std::array<std::recursive_mutex, CRITSECT_COUNT> g_criticalSections;
 } // namespace
 
@@ -216,7 +254,9 @@ int main(int argc, char **argv)
     DB_PushStreamPos(4); // as DB_LoadXFile leaves it for the asset list
     CHECK(StreamIntern("first-name") == SL_FindString("first-name")); // nothing held
 
-    if (argc > 1 && std::strcmp(argv[1], "self-hold") == 0)
+    if (argc > 1 && std::strcmp(argv[1], "poisoned-window") == 0)
+        TestPoisonedWindowIsTerminal();
+    else if (argc > 1 && std::strcmp(argv[1], "self-hold") == 0)
     {
         RunWhileHeldHere("write hold on this thread", Hold::Write, [] { StreamIntern("self-write"); });
         RunWhileHeldHere("read hold on this thread", Hold::Read, [] { OffsetIntern(); });

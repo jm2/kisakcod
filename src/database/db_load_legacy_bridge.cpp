@@ -109,7 +109,8 @@ thread_local LegacyBridgeStatus t_sessionStatus = LegacyBridgeStatus::Success;
 // hold, as Sys_LockWrite does, holding nothing between attempts. Busy is that
 // contention, unless this thread holds a fast critical section: the hash, say,
 // whose counts cannot name its holder. Such a caller fails instead of waiting
-// on itself.
+// on itself. A poisoned window keeps its locks for good, so the facade reports
+// it as UnsafeFailure, never Busy, and nothing waits on it.
 [[nodiscard]] LegacyBridgeStatus OpenWindowWaiting() noexcept
 {
     LegacyBridgeStatus status = TryOpenWindow();
