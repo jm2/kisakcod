@@ -13,6 +13,7 @@
 struct ComWorld;
 struct GameWorldMp;
 struct GfxImage;
+struct LoadedSound;
 struct LocalizeEntry;
 struct MapEnts;
 struct PhysPreset;
@@ -76,6 +77,13 @@ void __cdecl DB_LoadSndCurvePtrDisk32(bool atStreamStart, SndCurve **slot);
 // ComWorld published through Load_ComWorldAsset on return. Its primary lights
 // live in DB_AllocZoneNative storage.
 void __cdecl DB_LoadComWorldPtrDisk32(bool atStreamStart, ComWorld **slot);
+
+// Loads one LoadedSound (db_disk32_loadedsound.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native LoadedSound published through Load_LoadedSoundAsset on return. As
+// the 32-bit headless load, the sound data is streamed and its aliases are
+// checked, but the native record owns no playback buffer.
+void __cdecl DB_LoadLoadedSoundPtrDisk32(bool atStreamStart, LoadedSound **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from

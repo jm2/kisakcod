@@ -169,6 +169,7 @@ set(DATABASE
     "${SRC_DIR}/database/db_disk32_load.cpp"
     "${SRC_DIR}/database/db_disk32_load.h"
     "${SRC_DIR}/database/db_disk32_load_internal.h"
+    "${SRC_DIR}/database/db_disk32_loadedsound.cpp"
     "${SRC_DIR}/database/db_disk32_localize.cpp"
     "${SRC_DIR}/database/db_disk32_mapents.cpp"
     "${SRC_DIR}/database/db_disk32_physpreset.cpp"
