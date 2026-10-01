@@ -583,7 +583,7 @@ void __cdecl Com_SetRecommended(int localClientNum, int restart)
 
 bool __cdecl Sys_ShouldUpdateForInfoChange()
 {
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(KISAK_DEDI_HEADLESS)
     HWND ActiveWindow; // eax
     char *v2; // [esp-Ch] [ebp-Ch]
     char *v3; // [esp-8h] [ebp-8h]
@@ -595,9 +595,9 @@ bool __cdecl Sys_ShouldUpdateForInfoChange()
     return MessageBoxA(ActiveWindow, v2, v3, 0x44u) == 6;
 #else
     // The question is a Win32 desktop message box (HWND/GetActiveWindow/
-    // MessageBoxA). Headless compositions have no interactive desktop, so keep
-    // the info archiving and give the non-interactive answer: do not force the
-    // update, the same as a No click.
+    // MessageBoxA). Headless compositions, Windows ones included, have no
+    // interactive desktop to answer it, so keep the info archiving and give the
+    // non-interactive answer: do not force the update, the same as a No click.
     Sys_ArchiveInfo(0);
     return false;
 #endif
@@ -605,7 +605,7 @@ bool __cdecl Sys_ShouldUpdateForInfoChange()
 
 bool __cdecl Sys_ShouldUpdateForConfigChange()
 {
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(KISAK_DEDI_HEADLESS)
     HWND ActiveWindow; // eax
     char *v2; // [esp-Ch] [ebp-Ch]
     char *v3; // [esp-8h] [ebp-8h]
