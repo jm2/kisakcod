@@ -49,7 +49,9 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    - the 64-bit `Load_*`, which reads the mirror, allocates the runtime record in a native
      arena, converts it field by field and resolves tokens.
 
-   The schema is `src/database/db_disk32.schema`: retail sizes, offsets and field kinds.
+   The schema is `src/database/db_disk32.schema`, which documents the format and includes one
+   file per family (`src/database/disk32/<NN>-<family>.schema`): retail sizes, offsets and
+   field kinds. Each loader test registers in its own `tests/cmake/disk32/<family>.cmake`.
    `scripts/gen_disk32.py` checks it against the ILP32 rules, and CMake runs it at build time
    for 64-bit targets and the Linux loader tests only, so Windows x86 needs no Python. Generated
    code is not committed ([AGENTS.md](../../AGENTS.md) rule 8). It emits the mirrors with their

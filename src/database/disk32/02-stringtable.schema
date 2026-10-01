@@ -1,0 +1,8 @@
+# StringTable, asset type 0x20. The format is described in ../db_disk32.schema.
+
+record StringTable 0x10 runtime=StringTable header=universal/q_shared.h same=kStringTableBytes
+    asset member=stringTable pool=Load_StringTableAsset kind=StringTable alias=completed body=custom label=string-table
+    0x00 name        xstring
+    0x04 columnCount i32
+    0x08 rowCount    i32
+    0x0C values      xstrings   count=columnCount*rowCount

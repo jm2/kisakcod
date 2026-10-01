@@ -1,0 +1,7 @@
+# MapEnts, asset type 0x0F. The format is described in ../db_disk32.schema.
+
+record MapEnts 0x0C runtime=MapEnts header=xanim/xanim.h
+    asset member=mapEnts pool=Load_MapEntsAsset kind=MapEnts alias=inserted name=name label=map-entities
+    0x00 name           xstring
+    0x04 entityString   bytes      count=numEntityChars terminated paired label=entity-string
+    0x08 numEntityChars i32
