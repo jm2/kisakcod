@@ -34,7 +34,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 STUBS = ROOT / "scripts/ci/ci-stubs"
 GENERATED = ROOT / "build-census/generated"  # generated headers; main() puts them under --out
-DEFS = ["-DKISAK_MP", "-DKISAK_DEDICATED", "-DDEDICATED", "-DKISAK_DEDI_HEADLESS", "-DNDEBUG"]
+DEFS = ["-DKISAK_MP", "-DKISAK_DEDICATED", "-DDEDICATED", "-DKISAK_DEDI_HEADLESS", "-D_DEBUG"]
 WIN_DEFS = ["-DWIN32", "-D_WINDOWS", "-D_CONSOLE", "-D_MBCS"]
 TARGETS = {
     "win32": ("i686-w64-mingw32", WIN_DEFS, "windows"),
@@ -53,9 +53,16 @@ TARGETS = {
 LLVM_MINGW = ("https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/"
               "llvm-mingw-20240619-ucrt-ubuntu-20.04-x86_64.tar.xz",
               "27d33157cc252c29ad6f777a96a0d94176fea1b534ff09b5071485def143b90e")
-WARN = ["-Wno-everything", "-Werror=c++11-narrowing", "-Wvoid-pointer-to-int-cast",
-        "-Wpointer-to-int-cast", "-Wint-to-pointer-cast", "-Wshorten-64-to-32",
-        "-W#pragma-messages"]
+# No blanket suppression: DefaultError diagnostics fail a TU as a class (#226).
+# -w is deliberately not used: under the census's -fms-extensions it suppresses
+# even -Werror=c++11-narrowing promotions (and #pragma clang diagnostic error),
+# which would hide the GSC table narrowing errors again. -fms-extensions itself
+# downgrades -Wc++11-narrowing to a warning (MSVC-compatible), so the class is
+# restored by dropping -Wno-everything and that one demoted group is promoted
+# back with -Werror=c++11-narrowing (#226). Do not list further groups
+# piecemeal; leave the rest of the DefaultError class alone.
+WARN = ["-Werror=c++11-narrowing", "-Wvoid-pointer-to-int-cast",
+        "-Wpointer-to-int-cast", "-Wint-to-pointer-cast", "-Wshorten-64-to-32", "-W#pragma-messages"]
 WIN_LIBS = ["-lws2_32", "-lwinmm", "-luser32", "-lgdi32", "-ladvapi32", "-lshell32",
             "-lole32", "-loleaut32", "-luuid", "-ldbghelp", "-lpsapi", "-lshlwapi"]
 DIAG = re.compile(r"^(?P<file>[^\s:][^:]*):(?P<line>\d+):\d+: (?:fatal )?error: (?P<msg>.*)$")
@@ -115,7 +122,7 @@ def fetch_llvm_mingw(out: Path) -> Path:
 def compile_cmd(cfg: str, tu: str, tracy: Path, extra: list[str]) -> list[str]:
     triple, defs, stub = TARGETS[cfg]
     lang = ["clang", "-x", "c", "-std=gnu11"] if tu.endswith(".c") else ["clang++", "-x", "c++", "-std=c++20"]
-    return lang + ["--target=" + triple, "-fms-extensions", "-fdelayed-template-parsing", *DEFS, *defs,
+    return lang + ["--target=" + triple, "-fms-extensions", *DEFS, *defs,
                    "-I", "src", "-I", "deps", "-I", str(tracy), "-I", str(GENERATED), "-I", str(STUBS / "common"),
                    "-I", str(STUBS / stub), *WARN, "-ferror-limit=0", "-fno-color-diagnostics",
                    "-fno-caret-diagnostics", *extra, tu]
@@ -126,10 +133,11 @@ def classify(stderr: str, rc: int) -> dict:
     asserts = [e for e in errors if e["msg"].startswith(("static assertion failed", "static_assert failed"))
                and re.search(r"sizeof|offsetof|alignof", e["msg"])]
     other = [e for e in errors if e not in asserts]
+    narrowing = [e for e in errors if "cannot be narrowed" in e["msg"]]
     kind = "pass" if rc == 0 else ("assert-only" if asserts and not other else "other")
     if rc and not errors:
         other = [{"file": "?", "line": "0", "msg": stderr.strip().splitlines()[-1] if stderr.strip() else "rc=%d" % rc}]
-    return {"kind": kind, "asserts": asserts, "other": other, "d3d": D3D_MARK in stderr}
+    return {"kind": kind, "asserts": asserts, "other": other, "narrowing": narrowing, "d3d": D3D_MARK in stderr}
 
 
 def census(cfg: str, tus: list[str], tracy: Path, jobs: int) -> dict:
@@ -142,11 +150,14 @@ def census(cfg: str, tus: list[str], tracy: Path, jobs: int) -> dict:
     first_other = collections.Counter(r["other"][0]["file"] for r in results.values() if r["other"])
     assert_sites = {(e["file"], e["line"]) for r in results.values() for e in r["asserts"]}
     by_header = collections.Counter(Path(f).name for f, _ in assert_sites)
+    narrowing_sites = {(e["file"], e["line"]) for r in results.values() for e in r.get("narrowing", [])}
+    narrowing_by_header = collections.Counter(Path(f).name for f, _ in narrowing_sites)
     return {
         "total": len(tus), "pass": kinds["pass"], "assert_only": kinds["assert-only"], "other": kinds["other"],
         "d3d_stub_tus": sum(r["d3d"] for r in results.values()),
         "top_first_error_files": first_other.most_common(10),
         "size_assert_sites": len(assert_sites), "size_asserts_by_header": by_header.most_common(),
+        "narrowing_sites": len(narrowing_sites), "narrowing_by_header": narrowing_by_header.most_common(),
         "failing": {tu: r["kind"] for tu, r in sorted(results.items()) if r["kind"] != "pass"},
     }
 
@@ -196,7 +207,14 @@ def k3(out: Path) -> dict:
 
 
 def markdown(c: dict) -> str:
-    out = ["## Native64 census", "", "| Target | Pass | Assert-only | Other | Reaches d3d9.h stub |",
+    out = ["## Native64 census", ""]
+    flags = c.get("flags", {})
+    if flags:
+        out.append("Compile flags: `%s` · `%s` · `%s`" % (
+            " ".join(flags.get("defs", [])), " ".join(flags.get("warn", [])),
+            "-fdelayed-template-parsing" if flags.get("delayed_template_parsing") else "no -fdelayed-template-parsing"))
+        out.append("")
+    out += ["| Target | Pass | Assert-only | Other | Reaches d3d9.h stub |",
            "|---|---:|---:|---:|---:|"]
     for cfg, t in c["targets"].items():
         out.append("| %s | %d/%d | %d | %d | %s |" % (cfg, t["pass"], t["total"], t["assert_only"], t["other"],
@@ -210,6 +228,10 @@ def markdown(c: dict) -> str:
     if t:
         out += ["", "**Failing 64-bit size/offset asserts (win64): %d sites**" % t["size_assert_sites"], ""]
         out += ["- `%s`: %d" % kv for kv in t["size_asserts_by_header"]]
+    for cfg, t in c["targets"].items():
+        if t.get("narrowing_sites"):
+            out += ["", "**%s: narrowing errors (error-by-default diagnostics): %d sites**" % (cfg, t["narrowing_sites"]), ""]
+            out += ["- `%s`: %d" % kv for kv in t.get("narrowing_by_header", [])]
     for kind in ("real", "probe"):
         link = c.get("link", {}).get("win64", {}).get(kind)
         if link:
@@ -249,6 +271,8 @@ def main() -> int:
         check=True)
     lists = tu_lists()
     result = {"schema": 1, "commit": os.environ.get("GITHUB_SHA") or run(["git", "rev-parse", "HEAD"]).stdout.strip(),
+              "flags": {"defs": DEFS, "warn": WARN, "delayed_template_parsing":
+                        "-fdelayed-template-parsing" in compile_cmd("win64", "tu.cpp", tracy, [])},
               "targets": {}}
     if "winarm64" in targets:
         triple, defs, stub = TARGETS["winarm64"]

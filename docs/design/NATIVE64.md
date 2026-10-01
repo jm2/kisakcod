@@ -93,7 +93,7 @@ Two kinds of hazard, both fixed by beads 9–11 (WS-3, G2):
 | Pointer↔int casts | 103 in 17 headless files (MSVC x64 and clang, 2026-09-30): `xanim_load_obj.cpp` 42 (raw-asset path), `db_load.cpp` 24 (32-bit loader), script 17 (row 20) | Truncation | Policy below | per file | open |
 | `__rdtsc` | `scr_vm.cpp`, `sv_main_mp.cpp` | Doesn't exist on arm64 | `Sys_CycleCounter` ([PLATFORM_POSIX.md](PLATFORM_POSIX.md)) | 13 | fixed |
 | Huffman tie-break uses the host `qsort` | `qcommon/huffman.cpp` | The code book differs per C library (glibc swaps 155/205, macOS 228/231) | Total-order `nodeCmp` reproducing the MSVC CRT order ([DETERMINISM.md](DETERMINISM.md)) | WS-3 | fixed |
-| Parser tables initialise `short` arrays with 32768 as YYPACT_NINF sentinel | `yypact`/`yypgoto` in `script/scr_yacc_structs.h`, `yypact` in `script/scr_yacc.cpp` | Ill-formed narrowing in C++11; 99 + 83 errors on GCC/clang. MSVC/clang-cl only warn, so Windows builds hide it. The census `-Wno-everything` also silenced the default-error diagnostic | Write sentinel as −32768; census keeps `-Wno-everything` for the cast-warning flood but adds `-Werror=c++11-narrowing`, so default-error narrowing still fails a TU | ki-pbb7c | open |
+| Parser tables initialise `short` arrays with 32768 as YYPACT_NINF sentinel | `yypact`/`yypgoto` in `script/scr_yacc_structs.h`, `yypact` in `script/scr_yacc.cpp` | Ill-formed narrowing in C++11; 99 + 83 errors on GCC/clang. MSVC/clang-cl only warn, so Windows builds hide it. The census `-Wno-everything` also silenced the default-error diagnostic | Write sentinel as −32768; the census restores the DefaultError class (no blanket suppression) and keeps `-Werror=c++11-narrowing` for the `-fms-extensions` demotion, so default-error narrowing fails a TU | ki-pbb7c | open |
 
 A row reaches **fixed** only when the fix is merged *and* a test executes the fixed code at 64-bit.
 
@@ -123,13 +123,13 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 
 ## KPIs
 
-| KPI | Definition | Source | Census baseline 2026-09-22 | Target |
+| KPI | Definition | Source | Census baseline 2026-10-01 | Target |
 | --- | --- | --- | --- | --- |
-| **K1** 64-bit headless compile closure | Headless TUs that pass clang `-fsyntax-only` on each leg: win64, winarm64, lin64, a64, mac64. win32 is the control | `native64-census`; mac64 from `Native64 census / mac64` | win64 112/243 (127 assert-only, 4 other); lin64 103/236 (94 assert-only, 39 other); a64 103/236 (93 assert-only, 40 other) | all TUs on win64, lin64, a64 (G1); winarm64 and mac64 before G3 |
-| **K2** 64-bit headless link | Per target: the headless server links with 0 undefined symbols and no neutralised asserts (a *real link*). The census also reports a labelled *probe link*, with size asserts neutralised by a force-included header, and its undefined-symbol count. The probe never gates | `native64-census` | real link: none (131 win64 TUs don't compile). Probe: 55 undefined symbols with the 4 non-assert TUs excluded; the review's manual probe, with those 4 worked around, linked with 0 | Win64 and Linux amd64 real link (G1) |
-| **K3** engine code under 64-bit test | Upstream engine TUs that the Linux amd64 test build compiles, either as a TU in `compile_commands.json` or `#include`d as a `.cpp` by a test TU. Denominator: `.c`/`.cpp` under `src/` at the upstream merge-base, excluding `src/radiant/` and vendored ODE and Speex | `native64-census` | 8/475 | rises every G2 bead |
+| **K1** 64-bit headless compile closure | Headless TUs that pass clang `-fsyntax-only` on each leg: win64, winarm64, lin64, a64, mac64. win32 is the control | `native64-census`; mac64 from `Native64 census / mac64` | win64 252/252; winarm64 252/252; lin64 249/249; a64 249/249; mac64 250/250 (`Native64 census / mac64`, xcode-27) (0 assert-only, 0 other on each) | all TUs on win64, lin64, a64 (G1); winarm64 and mac64 before G3 |
+| **K2** 64-bit headless link | Per target: the headless server links with 0 undefined symbols and no neutralised asserts (a *real link*). The census also reports a labelled *probe link*, with size asserts neutralised by a force-included header, and its undefined-symbol count. The probe never gates | `native64-census` | win64 real link: linked, 0 undefined symbols, 0 TUs excluded; the probe links too | Win64 and Linux amd64 real link (G1) |
+| **K3** engine code under 64-bit test | Upstream engine TUs that the Linux amd64 test build compiles, either as a TU in `compile_commands.json` or `#include`d as a `.cpp` by a test TU. Denominator: `.c`/`.cpp` under `src/` at the upstream merge-base, excluding `src/radiant/` and vendored ODE and Speex | `native64-census` | 47/475 | rises every G2 bead |
 
-- **K1 control:** clang with mingw-w64 headers passes 235/243 on win32. 3 failures are the `db_load`, `sys_process` and `scr_yacc` fixes above. The other 5 are mingw calling-convention mismatches in `sys_sync`, `sys_thread`, `assertive`, `win_net_debug` and `win_syscon`.
+- **K1 control:** clang with mingw-w64 headers passes 249/252 on win32. The 3 failures are mingw calling-convention mismatches in `sys_sync`, `sys_thread` and `sys_console` (its console control handler); MSVC x86 builds all three.
 - **K1 ARM64 legs (owner 2026-09-29):** `win64` is Windows x64 only, so a clean win64 says nothing about Windows
   ARM64 or macOS arm64. `winarm64` checks the Win64 set for `aarch64-w64-mingw32` with the runner's clang 18 and the
   headers and libc++ of a sha256-pinned llvm-mingw (LLVM 18.1.8). `mac64` checks the POSIX set plus
@@ -139,4 +139,5 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
   (`#error`, no arm64 Mac case, 93 TUs) and ODE `<malloc.h>` (31). Since then `win_configure.cpp` reads
   `Sys_CycleCounter` and probes CPUID only on x86/x64: winarm64 245/245. Off Windows, `sound/snd_msstypes.h` stands
   in for `mss.h`, and ODE takes `alloca` from `<alloca.h>` on macOS: mac64 244/244.
+- **Census flags:** `-D_DEBUG` so asserts compile, no `-fdelayed-template-parsing` so two-phase lookup errors surface, and no `-Wno-everything` so DefaultError diagnostics fail a TU; `-Werror=c++11-narrowing` re-promotes the one group `-fms-extensions` demotes. `census.md` prints the flag set and the narrowing sites per header.
 - **K4–K6:** K4 (loader closure) is defined in [FASTFILE_LOADER.md](FASTFILE_LOADER.md), K5 (D3D reach) in [PLATFORM_POSIX.md](PLATFORM_POSIX.md), and K6 (delivery cells) in [CHARTER.md](../CHARTER.md).

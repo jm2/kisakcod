@@ -6,8 +6,8 @@ Gate: G1 (Linux compile and link), then G2. KPIs: K1 and K2 ([NATIVE64.md](NATIV
 
 | Set | TUs | Notes |
 | --- | --- | --- |
-| Win32 headless (`kisakcod_get_dedi_sources`) | 243 (224 C++, 19 C) | Built by the Windows x86 headless CI job |
-| Linux headless | 236 | Win32 set − 7 `src/win32` − 9 `src/_platform/win32` + 9 `src/_platform/posix` |
+| Win32 headless (`kisakcod_get_dedi_sources`) | 252 (234 C++, 18 C) | Built by the Windows x86 headless CI job |
+| Linux headless | 249 | Win32 set − 6 `src/win32` − 10 `src/_platform/win32` + 13 `src/_platform/posix` |
 | Linux/macOS engine sets | headless | `PLATFORM_{LINUX,MACOS}_DEDI_HEADLESS` add the `posix_*` entry, console and localization; only `KISAK_DEDI_HEADLESS` configures off Win32. CI `linux-headless` builds and smoke-runs it on amd64 and arm64, `macos-headless` on macOS arm64 |
 
 ## Service map
@@ -54,7 +54,7 @@ G1's compile blockers are fixed; these rules keep them fixed.
 
 - **Compiler:** clang ≥ 18 with `-fms-extensions` on every non-MSVC target, and Apple clang on macOS.
 - **GCC:** out until `__int32` (262 uses) and non-trivial `__declspec` (36 uses) are gone.
-- **Real builds:** they don't use `-fdelayed-template-parsing`, which is for the census only.
+- **Real builds and the census:** neither uses `-fdelayed-template-parsing`, so two-phase lookup errors surface.
 - **Warnings:** pointer-cast warnings follow [NATIVE64.md](NATIVE64.md).
 
 ## macOS notes
@@ -75,7 +75,7 @@ G1's compile blockers are fixed; these rules keep them fixed.
 **K5** is the number of Linux headless TUs that need the census `d3d9.h` stand-in to compile, meaning they reach `<d3d9.h>`.
 
 - **Source:** the `native64-census` job.
-- **Baseline (census, 2026-09-22):** 103 of 236.
+- **Baseline (census, 2026-10-01):** 0 of 249 (met).
 - **Target:** 0, required for G1 on Linux.
 - **Moves it:** NOW bead 2.
 
