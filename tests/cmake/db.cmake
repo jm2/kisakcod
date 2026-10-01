@@ -836,4 +836,5 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         db_disk32_envelope.cpp db_disk32_load.cpp db_xasset_disk32.cpp db_stringtable_load.cpp db_asset_layout.cpp)
     kisakcod_disk32_load_test(physpreset db_disk32_physpreset_tests.cpp db_disk32_physpreset.cpp)
     kisakcod_disk32_load_test(localize db_disk32_localize_tests.cpp db_disk32_localize.cpp)
+    kisakcod_disk32_load_test(mapents db_disk32_mapents_tests.cpp db_disk32_mapents.cpp)
 endif()

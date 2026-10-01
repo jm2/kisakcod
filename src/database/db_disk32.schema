@@ -7,7 +7,7 @@
 #   record <Name> <retail size> runtime=<native struct> header=<its header> [same=<disk32:: constant>]
 #       [asset member=<XAssetHeader member> pool=<publish call> kind=<DBAliasKind>
 #              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom]]
-#       <retail offset> <field> <kind> [count=<expression>] [terminated] [label=<noun>]
+#       <retail offset> <field> <kind> [count=<expression>] [terminated] [paired] [label=<noun>]
 #
 # Kinds: i32 u32 f32 u8 (scalars), bool (one byte; nonzero is true),
 # xstring (a C string: inline or an offset token), bytes (inline bytes, count
@@ -34,7 +34,8 @@
 # A generated body streams the record into its mirror and copies the scalars
 # (bool as != 0). It then pushes block 4 and loads each xstring and bytes
 # field in schema order. A bytes field there must be terminated: count is
-# <field> or <field>+<n>, checked, and the last byte must be 0.
+# <field> or <field>+<n>, checked, and the last byte must be 0. A paired one
+# is present exactly when its count field is nonzero.
 
 record RawFile 0x0C runtime=RawFile header=xanim/xanim.h
     asset member=rawfile pool=Load_RawFileAsset kind=RawFile alias=inserted name=name label=raw-file
@@ -67,3 +68,9 @@ record LocalizeEntry 0x08 runtime=LocalizeEntry header=ui/ui_shared.h
     asset member=localize pool=Load_LocalizeEntryAsset kind=LocalizeEntry alias=inserted name=name label=localized-string
     0x00 value       xstring
     0x04 name        xstring
+
+record MapEnts 0x0C runtime=MapEnts header=xanim/xanim.h
+    asset member=mapEnts pool=Load_MapEntsAsset kind=MapEnts alias=inserted name=name label=map-entities
+    0x00 name           xstring
+    0x04 entityString   bytes      count=numEntityChars terminated paired label=entity-string
+    0x08 numEntityChars i32
