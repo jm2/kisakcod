@@ -250,10 +250,10 @@ void Scr_MonitorCommand(const char *) {}
 void Sys_EnterCriticalSection(int) {}
 void Sys_LeaveCriticalSection(int) {}
 int I_stricmp(const char *s0, const char *s1) { return _stricmp(s0, s1); }
+char g_vaText[1] = {};
 char *va(const char *, ...)
 {
-    static char text[1];
-    return text;
+    return g_vaText;
 }
 // MSVC has no --gc-sections: every function of cmd.obj must link, so the
 // exec, list and autocomplete commands' externals are stubbed as well.
