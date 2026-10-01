@@ -35,7 +35,16 @@ int __cdecl Win_InitLocalization()
 
     if (!fp)
     {
+#ifdef KISAK_DEDI_HEADLESS
+        // localization.txt sits in the install root and is read from the
+        // working directory. A headless server started anywhere else has none;
+        // like the POSIX server it then loads the English zones, instead of
+        // looking for them under zone\(null)\.
+        I_strncpyz(language_buffer, "english", LANGUAGE_BUF_SIZE);
+        localization.language = language_buffer;
+#else
         iassert(0); // LWSS ADD: you probably need to change the working dir!
+#endif
         return 0;
     }
 

@@ -8,7 +8,8 @@ must get through the filesystem, console, dvar and autoconfigure stages and
 then stop on the first fast file, which the 64-bit loader cannot load before
 G2. The database thread's fatal error races the rest of Com_Init (network,
 "Common Initialization Complete"), so only the deterministic stages are
-checked.
+checked. There is no localization.txt either, as for a server started outside
+its install directory, so the fast files are looked for in the English zones.
 
 The base path contains a space, so the command-line quoting is exercised too.
 A second run claims an archived machine profile that no longer matches the
@@ -162,8 +163,8 @@ def main():
             ('Unknown command' not in log, 'runs no stray command-line token'),
             ('Loading fastfile code_post_gfx_mp' in log, 'starts the first fast-file load'),
             (zone and ('/' if SEP == '\\' else '\\') not in zone.group(1)
-             and zone.group(1).startswith(base + SEP + 'zone' + SEP),
-             f'looks for fast files under <basepath>{SEP}zone{SEP} with {SEP} separators'),
+             and zone.group(1).startswith(SEP.join((base, 'zone', 'english', ''))),
+             f'looks for fast files under <basepath>{SEP}zone{SEP}english{SEP} with {SEP} separators'),
             (run.returncode == 1, f'exits with status 1 on the missing fast file (got {run.returncode})'),
         ]
         # Fresh fs_homepath: an archived config from the first run would override
