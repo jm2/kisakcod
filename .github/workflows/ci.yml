@@ -202,6 +202,51 @@ jobs:
       - name: Test the release script (manifest to release matrix)
         run: python3 scripts/ci/release_meta_test.py
 
+  census-scope:
+    # Decides which measure-only census jobs a pull request needs, to save
+    # runner slots (GitHub Free: 20 concurrent jobs, 5 of them macOS).
+    # Master pushes and manual runs always run both. A PR runs the Linux
+    # census when it changes engine, test or build inputs, and the mac64 one
+    # only when it changes the census tool itself (its script, TU-list generator,
+    # stubs or pinned extern deps): the gating macOS headless job already
+    # compiles every headless TU on each PR.
+    name: Census scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      linux: ${{ steps.scope.outputs.linux }}
+      mac64: ${{ steps.scope.outputs.mac64 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Classify changed files
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            printf 'linux=true\nmac64=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # --no-renames: names only, so the blobless clone never fetches contents.
+          # If the diff fails anyway, measure everything rather than skip.
+          if ! files="$(git diff --no-renames --name-only "$BASE"...HEAD)"; then
+            echo "::warning::could not list the changed files; running both censuses"
+            printf 'linux=true\nmac64=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tool='^(scripts/ci/native64_census\.py|scripts/ci/native64-tulist\.cmake|scripts/ci/ci-stubs/|scripts/extern/)'
+          inputs='^(src/|deps/|tests/|cmake/|scripts/.*\.cmake$|scripts/.*/CMakeLists\.txt$|CMakeLists\.txt$|CMakePresets\.json$|\.github/workflows/ci\.yml$)'
+          linux=false; mac64=false
+          if grep -qE "$tool" <<<"$files"; then linux=true; mac64=true; fi
+          if grep -qE "$inputs" <<<"$files"; then linux=true; fi
+          printf 'linux=%s\nmac64=%s\n' "$linux" "$mac64" | tee -a "$GITHUB_OUTPUT"
+
   native64-census:
     # KPIs K1, K2, K3 and K5 (docs/design/NATIVE64.md, PLATFORM_POSIX.md):
     # clang syntax-only compiles of the headless server for win32 (control),
@@ -214,6 +259,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     continue-on-error: true
+    needs: census-scope
+    if: needs.census-scope.outputs.linux == 'true'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -266,6 +313,8 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 20
     continue-on-error: true
+    needs: census-scope
+    if: needs.census-scope.outputs.mac64 == 'true'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
