@@ -207,8 +207,9 @@ jobs:
     # runner slots (GitHub Free: 20 concurrent jobs, 5 of them macOS).
     # Master pushes and manual runs always run both. A PR runs the Linux
     # census when it changes engine, test or build inputs, and the mac64 one
-    # only when it changes the census tool itself: the gating macOS headless
-    # job already compiles every headless TU on each PR.
+    # only when it changes the census tool itself (its script, TU-list generator,
+    # stubs or pinned extern deps): the gating macOS headless job already
+    # compiles every headless TU on each PR.
     name: Census scope
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -233,8 +234,8 @@ jobs:
             exit 0
           fi
           files="$(git diff --name-only "$BASE"...HEAD)"
-          tool='^(scripts/ci/native64_census\.py|scripts/ci/ci-stubs/)'
-          inputs='^(src/|deps/|tests/|cmake/|scripts/[^/]+\.cmake$|CMakeLists\.txt$|CMakePresets\.json$|\.github/workflows/ci\.yml$)'
+          tool='^(scripts/ci/native64_census\.py|scripts/ci/native64-tulist\.cmake|scripts/ci/ci-stubs/|scripts/extern/)'
+          inputs='^(src/|deps/|tests/|cmake/|scripts/.*\.cmake$|scripts/.*/CMakeLists\.txt$|CMakeLists\.txt$|CMakePresets\.json$|\.github/workflows/ci\.yml$)'
           linux=false; mac64=false
           if grep -qE "$tool" <<<"$files"; then linux=true; mac64=true; fi
           if grep -qE "$inputs" <<<"$files"; then linux=true; fi
