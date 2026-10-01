@@ -212,7 +212,7 @@ jobs:
     # scaffolding-complete.
     name: Native64 census
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -223,10 +223,19 @@ jobs:
           filter: blob:none
 
       - name: Install clang, lld and cross headers
+        # apt usually takes under a minute here but has stalled until the job
+        # timeout; bound each attempt and retry instead.
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            clang lld mingw-w64 g++-aarch64-linux-gnu
+          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o DPkg::Lock::Timeout=120)
+          for attempt in 1 2 3; do
+            if sudo timeout -k 30 120 apt-get "${apt_opts[@]}" update -qq \
+              && sudo timeout -k 30 240 apt-get "${apt_opts[@]}" install -y -qq --no-install-recommends \
+                clang lld mingw-w64 g++-aarch64-linux-gnu; then
+              exit 0
+            fi
+            echo "::warning::apt attempt $attempt failed or stalled"
+          done
+          exit 1
 
       - name: Run census
         run: python3 scripts/ci/native64_census.py --out build-census --jobs 4
