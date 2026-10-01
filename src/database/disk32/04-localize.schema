@@ -1,0 +1,6 @@
+# LocalizeEntry, asset type 0x16. The format is described in ../db_disk32.schema.
+
+record LocalizeEntry 0x08 runtime=LocalizeEntry header=ui/ui_shared.h
+    asset member=localize pool=Load_LocalizeEntryAsset kind=LocalizeEntry alias=inserted name=name label=localized-string
+    0x00 value       xstring
+    0x04 name        xstring

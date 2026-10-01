@@ -1,0 +1,15 @@
+# PhysPreset, asset type 0x01. The format is described in ../db_disk32.schema.
+
+record PhysPreset 0x2C runtime=PhysPreset header=xanim/xanim.h
+    asset member=physPreset pool=Load_PhysPresetAsset kind=PhysPreset alias=inserted name=name label=physics-preset
+    0x00 name                  xstring
+    0x04 type                  i32
+    0x08 mass                  f32
+    0x0C bounce                f32
+    0x10 friction              f32
+    0x14 bulletForceScale      f32
+    0x18 explosiveForceScale   f32
+    0x1C sndAliasPrefix        xstring
+    0x20 piecesSpreadFraction  f32
+    0x24 piecesUpwardVelocity  f32
+    0x28 tempDefaultToCylinder bool

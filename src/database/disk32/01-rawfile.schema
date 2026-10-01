@@ -1,0 +1,7 @@
+# RawFile, asset type 0x1F. The format is described in ../db_disk32.schema.
+
+record RawFile 0x0C runtime=RawFile header=xanim/xanim.h
+    asset member=rawfile pool=Load_RawFileAsset kind=RawFile alias=inserted name=name label=raw-file
+    0x00 name        xstring
+    0x04 len         i32
+    0x08 buffer      bytes      count=len+1 terminated label=raw-file

@@ -827,16 +827,11 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         set_tests_properties(database-disk32-${FAMILY}-load PROPERTIES TIMEOUT 20)
     endfunction()
 
-    kisakcod_disk32_load_test(rawfile db_disk32_load_tests.cpp db_disk32_load.cpp)
-    kisakcod_disk32_load_test(stringtable db_disk32_stringtable_tests.cpp db_disk32_stringtable.cpp)
-
-    # The XAssetList/XAsset envelope, dispatching to the RawFile loader;
-    # Load_XAsset's family switch is replaced.
-    kisakcod_disk32_load_test(envelope db_disk32_envelope_tests.cpp
-        db_disk32_envelope.cpp db_disk32_load.cpp db_xasset_disk32.cpp db_stringtable_load.cpp db_asset_layout.cpp)
-    kisakcod_disk32_load_test(physpreset db_disk32_physpreset_tests.cpp db_disk32_physpreset.cpp)
-    kisakcod_disk32_load_test(localize db_disk32_localize_tests.cpp db_disk32_localize.cpp)
-    kisakcod_disk32_load_test(mapents db_disk32_mapents_tests.cpp db_disk32_mapents.cpp)
+    # One file per loader test under disk32/, so each family adds its own file.
+    file(GLOB _disk32_load_tests CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/disk32/*.cmake")
+    foreach(_disk32_load_test IN LISTS _disk32_load_tests)
+        include("${_disk32_load_test}")
+    endforeach()
 endif()
 
 # The db_registry unload sequence (quit, a map change's zone unload) against the

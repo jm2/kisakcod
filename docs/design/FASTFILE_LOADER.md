@@ -26,12 +26,8 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
   cursors change size between i686 and x86_64. 92 of those 129 have no size assert of any kind.
   Examples: `WeaponDef` 2168→2832, `clipMap_t` 284→480, `GfxWorld` 732→1032, `XAnimParts` 88→136,
   `MaterialTechniqueSet` 148→296.
-- **Few disk32 mirrors exist.** Mirror structs exist only for `XAsset`, `XAssetList` and
-  `ScriptStringList` (`db_xasset_disk32.h`, with fail-closed iterators) and for FX
-  (`fx_fastfile_disk32.h` with a native converter and arena). The FX path has zero production
-  callers. Headless excludes `EffectsCore`, and `db_fx_zone_adapter_wiring_headless.cpp`
-  returns null, so FX is **not wired for headless**. `db_disk32.h` otherwise has only the token
-  grammar (`PointerToken`, `Ptr32`, `DecodeOffset`) and named byte extents.
+- **FX is not wired for headless.** FX has a hand-written mirror, converter and arena
+  (`fx_fastfile_disk32.h`) with no production caller, and headless excludes `EffectsCore`.
 - **Nothing can be skipped.** An `XAssetList` stream has no per-asset lengths. To reach byte
   *n* the loader must walk every asset before it, so a zone loads only if every family in it
   parses.
@@ -42,14 +38,12 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    schema: records, field offsets, scalars, fixed arrays, counted pointers (count expression),
    inline strings, script strings, asset references (alias kind), discriminated unions, stream
    block push/pop and delayed streams (`Load_DelayStream`).
-2. **Generate both loaders.** From the schema, the generator emits:
-   - the disk32 mirror struct, with `ONDISK_SIZE` and `ONDISK_OFFSET` asserts;
-   - the 32-bit `Load_*`, which keeps today's in-place semantics so Windows x86 behaviour does
-     not change;
-   - the 64-bit `Load_*`, which reads the mirror, allocates the runtime record in a native
-     arena, converts it field by field and resolves tokens.
-
-   The schema is `src/database/db_disk32.schema`: retail sizes, offsets and field kinds.
+2. **Generate the 64-bit loader.** The 32-bit `Load_*` in `db_load.cpp` stay as they are, so
+   Windows x86 does not change; each converted `Load_<F>Ptr` calls its 64-bit loader under
+   `#if KISAK_ARCH_64BIT`. The schema is `src/database/db_disk32.schema`, which documents the
+   format and includes one file per family (`src/database/disk32/<NN>-<family>.schema`):
+   retail sizes, offsets and field kinds. Each loader test registers in its own
+   `tests/cmake/disk32/<family>.cmake`.
    `scripts/gen_disk32.py` checks it against the ILP32 rules, and CMake runs it at build time
    for 64-bit targets and the Linux loader tests only, so Windows x86 needs no Python. Generated
    code is not committed ([AGENTS.md](../../AGENTS.md) rule 8). It emits the mirrors with their
@@ -83,7 +77,6 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
 6. **Fail closed per family.** At 64-bit, the `Load_XAssetHeader` dispatch refuses any family
    whose generated loader is not yet enabled. It raises `ERR_DROP` naming the family before it
    reads any of the family's bytes. The whole zone fails, since the stream cannot be skipped.
-   Bead 7 in [NOW.md](../NOW.md) installs this guard before any family converts.
 7. **FX.** The hand-written FX converter becomes the oracle for the generated FX loader. Diff
    the two on the same bytes, then keep one.
 
@@ -132,9 +125,8 @@ top-level dispatch; `Load_DynEntityDef` reaches it.
 
 ## Order
 
-- **Wave 1 (bead 12 spike): RawFile, StringTable, PhysPreset.** Together they cover inline
-  strings, a pointer array of strings, invariant byte buffers and aliases. The spike converts
-  all three and loads them from a real `.ff` at 64-bit.
+- **Wave 1:** RawFile, StringTable, PhysPreset: inline strings, a pointer array of strings,
+  invariant byte buffers and aliases.
 - **Wave 2:** flat records with a few pointers.
 - **Wave 3:** medium graphs: the sound chain, the material chain, FX, and Weapon (large but
   flat, with many asset references).
@@ -144,25 +136,10 @@ top-level dispatch; `Load_DynEntityDef` reaches it.
 G2 needs all 25 families, because the boot map zone plus the four code and common zones touch
 most of them.
 
-## Clone size table
+## Clone sizes
 
-`DB_CloneXAssetInternal` in `db_registry.cpp` does
-`memcpy(to, from, DB_GetXAssetTypeSize(type))`. The size comes from `DB_GetXAssetSizeHandler`
-in `db_assetnames.cpp`. That table inherited the original compiler's identical-function folding,
-so 11 entries call another type's size function. The sizes match at 32-bit, but five of them
-diverge at 64-bit:
-
-| Family | Table uses | Size at 64-bit | Effect |
-|---|---|---|---|
-| PhysPreset | `sizeof(GameWorldSp)` | 88, real 56 | over-read and over-write |
-| LoadedSound | `sizeof(GameWorldSp)` | 88, real 64 | over-read and over-write |
-| ClipMap | `sizeof(menuDef_t)` | 360, real 480 | partial copy |
-| ClipMapPvs | `sizeof(menuDef_t)` | 360, real 480 | partial copy (MP) |
-| LightDef | `sizeof(StringTable)` | 24, real 32 | partial copy |
-
-**Fix:** one `sizeof` per asset type, taken from the `XAssetHeader` member type, with a
-`static_assert` per entry. Add the missing header types to `XAssetSize` so its assert covers
-the largest. This fix is independent of the generator, so do it first (bead 10).
+`DB_GetXAssetSizeHandler` takes one `sizeof` per header type (row 21), so
+`DB_CloneXAssetInternal` copies native sizes at 64-bit.
 
 ## K4: loader closure
 
@@ -182,7 +159,7 @@ A family counts toward K4 when all of these hold:
 
 | Layer | What runs | Where |
 |---|---|---|
-| Generator | The emitted mirror passes the `ONDISK_*` asserts. The 32-bit output matches today's `Load_*` behaviour on synthetic streams | Linux test build, every PR |
+| Generator | The emitted mirrors pass the `ONDISK_*`/`RUNTIME_*` asserts; a broken generator fails the family tests | Linux test build, every PR |
 | Family | Hand-built disk32 byte fixtures per family, including malformed tokens, unmapped offsets and arena exhaustion | Linux test build, ASan/UBSan leg |
 | Real data | Load the four code and common zones plus the boot map at 64-bit under ASan/UBSan, and compare the graph digest against x86 | Manual owner runs only; retail data never enters CI |
 

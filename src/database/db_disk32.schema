@@ -1,8 +1,14 @@
 # Retail fast-file record layouts (docs/design/FASTFILE_LOADER.md, "Design").
 # A retail .ff stores every record in its 32-bit (ILP32) layout. Each record is
-# described here once; scripts/gen_disk32.py turns this file into the disk32
-# mirror structs and the 64-bit loaders at build time. Generated code is never
-# committed (AGENTS.md rule 8).
+# described once, in its family's file under disk32/, which this file
+# includes; scripts/gen_disk32.py turns them into the disk32 mirror structs and
+# the 64-bit loaders at build time. Generated code is never committed
+# (AGENTS.md rule 8).
+#
+# The included files are read in name order, and the generated headers follow
+# that order. A family's file is <NN>-<family>.schema: NN is the order the
+# family converted in, so a new family takes the next number. Families that
+# share a number sort by name, and order has no other meaning.
 #
 #   record <Name> <retail size> runtime=<native struct> header=<its header> [same=<disk32:: constant>]
 #       [asset member=<XAssetHeader member> pool=<publish call> kind=<DBAliasKind>
@@ -37,40 +43,4 @@
 # <field> or <field>+<n>, checked, and the last byte must be 0. A paired one
 # is present exactly when its count field is nonzero.
 
-record RawFile 0x0C runtime=RawFile header=xanim/xanim.h
-    asset member=rawfile pool=Load_RawFileAsset kind=RawFile alias=inserted name=name label=raw-file
-    0x00 name        xstring
-    0x04 len         i32
-    0x08 buffer      bytes      count=len+1 terminated label=raw-file
-
-record StringTable 0x10 runtime=StringTable header=universal/q_shared.h same=kStringTableBytes
-    asset member=stringTable pool=Load_StringTableAsset kind=StringTable alias=completed body=custom label=string-table
-    0x00 name        xstring
-    0x04 columnCount i32
-    0x08 rowCount    i32
-    0x0C values      xstrings   count=columnCount*rowCount
-
-record PhysPreset 0x2C runtime=PhysPreset header=xanim/xanim.h
-    asset member=physPreset pool=Load_PhysPresetAsset kind=PhysPreset alias=inserted name=name label=physics-preset
-    0x00 name                  xstring
-    0x04 type                  i32
-    0x08 mass                  f32
-    0x0C bounce                f32
-    0x10 friction              f32
-    0x14 bulletForceScale      f32
-    0x18 explosiveForceScale   f32
-    0x1C sndAliasPrefix        xstring
-    0x20 piecesSpreadFraction  f32
-    0x24 piecesUpwardVelocity  f32
-    0x28 tempDefaultToCylinder bool
-
-record LocalizeEntry 0x08 runtime=LocalizeEntry header=ui/ui_shared.h
-    asset member=localize pool=Load_LocalizeEntryAsset kind=LocalizeEntry alias=inserted name=name label=localized-string
-    0x00 value       xstring
-    0x04 name        xstring
-
-record MapEnts 0x0C runtime=MapEnts header=xanim/xanim.h
-    asset member=mapEnts pool=Load_MapEntsAsset kind=MapEnts alias=inserted name=name label=map-entities
-    0x00 name           xstring
-    0x04 entityString   bytes      count=numEntityChars terminated paired label=entity-string
-    0x08 numEntityChars i32
+include disk32/*.schema

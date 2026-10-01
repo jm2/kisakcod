@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the disk32 mirrors and 64-bit loaders from src/database/db_disk32.schema."""
+"""Generate the disk32 mirrors and 64-bit loaders from src/database/db_disk32.schema and its includes."""
 
 # A retail fast-file stores each record in its 32-bit (ILP32) layout
 # (docs/design/FASTFILE_LOADER.md). For every schema record this emits the
@@ -80,18 +80,28 @@ def parse_field(words, where):
             'where': where}
 
 
-def parse(path):
-    records = []
+def parse(path, records, root=True):
+    """Appends path's records. The root schema may include files by a glob
+    relative to itself; they are read in name order, each in full."""
+    record = None
     for number, raw in enumerate(path.read_text().splitlines(), 1):
         where, words = f'{path}:{number}', raw.split('#', 1)[0].split()
-        if words and words[0] == 'record':
-            records.append(parse_record(words, where))
-        elif words and not records:
-            fail(where, 'a field must follow a record line')
+        if words and words[0] == 'include':
+            included = sorted(path.parent.glob(words[1])) if root and len(words) == 2 else []
+            if not included:
+                fail(where, 'expected, in the root schema only: include <glob matching schema files>')
+            for schema in included:
+                parse(schema, records, root=False)
+            record = None
+        elif words and words[0] == 'record':
+            record = parse_record(words, where)
+            records.append(record)
+        elif words and not record:
+            fail(where, 'a field must follow a record line in the same file')
         elif words and words[0] == 'asset':
-            parse_asset(records[-1], words, where)
+            parse_asset(record, words, where)
         elif words:
-            records[-1]['fields'].append(parse_field(words, where))
+            record['fields'].append(parse_field(words, where))
     return records
 
 
@@ -388,10 +398,13 @@ def main():
     if len(sys.argv) != 4:
         sys.exit('usage: gen_disk32.py <schema> <mirrors header> <loaders header>')
     schema, mirrors, loaders = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
-    records = parse(schema)
+    records = parse(schema, [])
     if not records:
         fail(schema, 'no records')
+    names = [record['name'] for record in records]
     for record in records:
+        if names.count(record['name']) > 1:
+            fail(record['where'], f'record {record["name"]} is declared more than once')
         offsets, size = layout(record['fields'], 1)
         declared = [field['offset'] for field in record['fields']]
         if offsets != declared or size != record['size']:
