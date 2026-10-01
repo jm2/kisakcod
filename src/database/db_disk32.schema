@@ -13,13 +13,15 @@
 #   record <Name> <retail size> runtime=<native struct> header=<its header> [same=<disk32:: constant>]
 #       [asset member=<XAssetHeader member> pool=<publish call> kind=<DBAliasKind>
 #              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom] [check=custom]]
-#       <retail offset> <field> <kind>[<n>]... [count=<expression>] [terminated] [paired] [label=<noun>]
+#       <retail offset> <field> <kind>[<n>]... [count=<expression>] [of=<record>] [terminated] [paired]
+#               [label=<noun>]
 #
 # Kinds: i32 u32 f32 i16 u16 u8 (scalars), bool (one byte; nonzero is true),
 # xstring (a C string: inline or an offset token), bytes (inline bytes, count
 # given), xstrings (a pointer array of C strings, count given), pointer (a
-# token only a custom body loads). A scalar other than bool may be a fixed
-# array, as knots f32[8][2]; a generated body copies it whole.
+# token only a custom body loads), array (count elements of=<an earlier
+# record without an asset line>, label=<noun>). A scalar other than bool may
+# be a fixed array, as knots f32[8][2]; a generated body copies it whole.
 # The offsets and sizes are the retail facts: the generator checks them
 # against the ILP32 rules, and the compiler checks the emitted mirror against
 # them (ONDISK_*) and the native struct against the same field list (RUNTIME_*).
@@ -45,9 +47,11 @@
 #                    after every field loads; false drops.
 #   label=<noun>     names the family, or a bytes field, in error messages.
 # A generated body streams the record into its mirror and copies the scalars
-# (bool as != 0). It then pushes block 4 and loads each xstring and bytes
-# field in schema order. A bytes field there must be terminated: count is
-# <field> or <field>+<n>, checked, and the last byte must be 0. A paired one
-# is present exactly when its count field is nonzero.
+# (bool as != 0). It then pushes block 4 and loads each xstring, bytes and
+# array field in schema order. An array streams its retail elements, then
+# converts each into zone-lifetime native storage, loading its strings. A
+# bytes field there must be terminated: count is <field> or <field>+<n>,
+# checked, and the last byte must be 0. A paired one is present exactly when
+# its count field is nonzero.
 
 include disk32/*.schema

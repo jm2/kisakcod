@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 
+struct ComWorld;
 struct GameWorldMp;
 struct GfxImage;
 struct LocalizeEntry;
@@ -69,6 +70,12 @@ void __cdecl DB_LoadGameWorldMpPtrDisk32(bool atStreamStart, GameWorldMp **slot)
 // the slot holds the zero-extended disk32 token on entry and the native
 // SndCurve published through Load_SndCurveAsset on return.
 void __cdecl DB_LoadSndCurvePtrDisk32(bool atStreamStart, SndCurve **slot);
+
+// Loads one ComWorld (db_disk32_comworld.cpp) under the same slot contract:
+// the slot holds the zero-extended disk32 token on entry and the native
+// ComWorld published through Load_ComWorldAsset on return. Its primary lights
+// live in DB_AllocZoneNative storage.
+void __cdecl DB_LoadComWorldPtrDisk32(bool atStreamStart, ComWorld **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from

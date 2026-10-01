@@ -32,8 +32,9 @@ KINDS = {
     'bytes': ('Ptr32<const char>', 4, 8),
     'xstrings': ('Ptr32<Ptr32<const char>>', 4, 8),
     'pointer': ('Ptr32<void>', 4, 8),  # a token only a custom body loads
+    'array': ('Ptr32<{of}Disk32>', 4, 8),  # count records of=<a nested record>
 }
-COUNTED = ('bytes', 'xstrings')
+COUNTED = ('bytes', 'xstrings', 'array')
 SCALARS = ('i32', 'u32', 'f32', 'i16', 'u16', 'u8', 'bool')
 ARRAYABLE = ('i32', 'u32', 'f32', 'i16', 'u16', 'u8')  # fixed arrays copy as bytes; a bool needs != 0
 ASSET_KEYS = {'member', 'pool', 'kind', 'alias', 'label', 'name', 'body', 'check'}
@@ -82,16 +83,18 @@ def field_shape(words, where):
 
 
 # The attributes each kind takes after it; the others take none.
-FIELD_ATTRIBUTES = {'bytes': {'count', 'terminated', 'paired', 'label'}, 'xstrings': {'count'}}
+FIELD_ATTRIBUTES = {'bytes': {'count', 'terminated', 'paired', 'label'}, 'xstrings': {'count'},
+                    'array': {'count', 'of', 'label'}}
 
 
 def parse_field(words, where):
     kind, dims = field_shape(words, where)
     attrs = attributes(words[3:], where, FIELD_ATTRIBUTES.get(kind, set()), flags=('terminated', 'paired'))
-    if (kind in COUNTED) != ('count' in attrs):
-        fail(where, f'count=<expression> is required for {COUNTED} and only for them')
+    if (kind in COUNTED) != ('count' in attrs) or (kind == 'array') != ('of' in attrs):
+        fail(where, f'count=<expression> is required for {COUNTED} and only for them, and of=<record> '
+                    'for array and only for it')
     return {'offset': int(words[0], 0), 'name': words[1], 'kind': kind, 'dims': dims,
-            'count': attrs.get('count', ''),
+            'count': attrs.get('count', ''), 'of': attrs.get('of'),
             'terminated': 'terminated' in attrs, 'paired': 'paired' in attrs, 'label': attrs.get('label'),
             'where': where}
 
@@ -151,7 +154,8 @@ def emit_mirror(record):
     for field in record['fields']:
         count = f' // count: {field["count"]}' if field['count'] else ''
         dims = ''.join(f'[{n}]' for n in field['dims'])
-        out.append(f'    {KINDS[field["kind"]][0]} {field["name"]}{dims};{count}')
+        mirror_type = KINDS[field['kind']][0].format(of=field['of'])
+        out.append(f'    {mirror_type} {field["name"]}{dims};{count}')
     out += ['};', f'ONDISK_SIZE({mirror}, 0x{record["size"]:02X});']
     out += [f'ONDISK_OFFSET({mirror}, {field["name"]}, 0x{field["offset"]:02X});' for field in record['fields']]
     out += [f'static_assert(alignof({mirror}) == 4 && std::is_trivially_copyable_v<{mirror}>',
@@ -347,6 +351,44 @@ NAME_CHECK = Template('''\
         return Drop("Fast-file $noun has no name"); // the asset pool hashes it
 ''')
 
+# As in the 32-bit loader, any non-null token means count elements follow
+# inline; each element's strings follow all the elements.
+ARRAY = Template('''\
+    if (!disk.$field.token.isNull())
+    {
+        static_assert(std::is_same_v<decltype(out->$field), $Element *>);
+        const auto count = static_cast<std::int32_t>(disk.$count);
+        std::int32_t bytes = 0;
+        std::uint8_t *const elements = DB_AllocStreamPos(3);
+        if (!db::validation::CheckedArrayBytes(count, sizeof(disk32::${Of}Disk32), &bytes))
+            return Drop("Invalid fast-file $label count");
+        if (!StreamBytes(elements, bytes))
+            return false;
+        // An empty array still points at its stream position, as on x86.
+        out->$field = count ? AllocNative<$Element>(count)
+                            : reinterpret_cast<$Element *>(elements);
+        if (!out->$field)
+            return false;
+        for (std::int32_t index = 0; index < count; ++index)
+        {
+            disk32::${Of}Disk32 element{};
+            const std::size_t offset = static_cast<std::size_t>(index) * sizeof(element);
+            std::memcpy(&element, elements + offset, sizeof(element));
+            if (!Load${Of}Element(element, &out->$field[index]))
+                return false;
+        }
+    }
+''')
+
+ELEMENT = Template('''\
+// $Of's element conversion: one retail element of an array into its native
+// twin, its strings loaded at the current stream position.
+inline bool Load${Of}Element(const disk32::${Of}Disk32 &disk, $Element *out)
+{
+${scalars}${pointers}    return true;
+}
+''')
+
 # paired: the bytes are present exactly when their count field is nonzero.
 PAIRED = Template('''\
     if (disk.$field.token.isNull() && disk.$count != 0)
@@ -394,8 +436,12 @@ def bytes_count(record, field):
     return count.group(1), count.group(2) or '0'
 
 
-def body_step(record, field):
+def body_step(record, field, records):
     """The generated body's statements for one pointer field."""
+    if field['kind'] == 'array':
+        element = element_record(records, record, field)
+        return ARRAY.substitute(field=field['name'], count=array_count(record, field), Of=element['name'],
+                                Element=element['runtime'], label=field['label'])
     if field['kind'] == 'xstring':
         step = XSTRING.substitute(field=field['name'])
         if field['name'] == record['asset'].get('name'):
@@ -407,19 +453,45 @@ def body_step(record, field):
     return (PAIRED.substitute(facts) if field['paired'] else '') + TERMINATED_BYTES.substitute(facts)
 
 
-def emit_body(record):
+def element_record(records, record, field):
+    """Return the earlier, asset-free record of scalars, fixed arrays and xstrings an array's of= names."""
+    earlier = {other['name']: other for other in records[:records.index(record)]}
+    element = earlier.get(field['of'])
+    if not element or element['asset'] or not field['label'] \
+            or any(f['kind'] not in SCALARS + ('xstring',) for f in element['fields']):
+        fail(field['where'], f'of={field["of"]} must name an earlier record without an asset line whose fields '
+                             'are scalars, fixed arrays and xstrings, and the array needs label=<noun>')
+    return element
+
+
+def array_count(record, field):
+    kinds = {other['name']: other['kind'] for other in record['fields']}
+    if kinds.get(field['count']) not in ('i32', 'u32'):
+        fail(field['where'], f'count={field["count"]} must name an i32 or u32 field of {record["name"]}')
+    return field['count']
+
+
+def emit_element(element):
+    scalars = ''.join(scalar_copy(field) for field in element['fields'] if field['kind'] in SCALARS)
+    pointers = ''.join(XSTRING.substitute(field=field['name']) for field in element['fields']
+                       if field['kind'] == 'xstring')
+    return ELEMENT.substitute(Of=element['name'], Element=element['runtime'], scalars=scalars, pointers=pointers)
+
+
+def emit_body(record, records):
     asset = record['asset']
     if {field['name']: field['kind'] for field in record['fields']}.get(asset.get('name')) != 'xstring':
         fail(asset['where'], 'a generated body needs name=<the xstring the pool hashes>')
     scalars = ''.join(scalar_copy(field) for field in record['fields'] if field['kind'] in SCALARS)
-    pointers = ''.join(body_step(record, field) for field in record['fields'] if field['kind'] not in SCALARS)
+    pointers = ''.join(body_step(record, field, records) for field in record['fields']
+                       if field['kind'] not in SCALARS)
     facts = dict(Name=record['name'], Runtime=record['runtime'], noun=noun(asset['label']))
     check = CHECK_CALL.substitute(facts) if 'check' in asset else ''
     body = FLAT_BODY.substitute(facts, scalars=scalars, pointers=pointers, check=check)
     return (CHECK_DECL.substitute(facts) if 'check' in asset else '') + body
 
 
-def emit_family(record):
+def emit_family(record, records):
     asset = record['asset']
     inserted, custom = asset['alias'] == 'inserted', 'body' in asset
     if not (custom or inserted):
@@ -429,7 +501,7 @@ def emit_family(record):
     facts = dict(Name=record['name'], Runtime=record['runtime'], kind=asset['kind'], member=asset['member'],
                  pool=asset['pool'], label=asset['label'], noun=noun(asset['label']))
     # COMPLETED_PTR declares its own custom body.
-    body = [INSERTED_BODY.substitute(facts) if custom else emit_body(record)] if inserted else []
+    body = [INSERTED_BODY.substitute(facts) if custom else emit_body(record, records)] if inserted else []
     return body + [(INSERTED_PTR if inserted else COMPLETED_PTR).substitute(facts), HEADER_SLOT.substitute(facts)]
 
 
@@ -450,9 +522,12 @@ def emit_loaders(records, schema_name):
            '#include <database/db_validation.h>', '', '#include <cstdint>', '#include <cstring>',
            '#include <type_traits>', '',
            'namespace db::disk32_load', '{']
+    elements = {field['of'] for record in records for field in record['fields'] if field['kind'] == 'array'}
     for record in records:
+        if record['name'] in elements:
+            out.append(emit_element(record))
         if record['asset']:
-            out += emit_family(record)
+            out += emit_family(record, records)
     out += ['} // namespace db::disk32_load', '', '#endif // KISAK_ARCH_64BIT']
     return '\n'.join(out) + '\n'
 

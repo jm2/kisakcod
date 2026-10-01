@@ -11,8 +11,10 @@
 
 #include <database/database.h>
 #include <database/db_disk32.h>
+#include <database/db_disk32_load.h>
 #include <qcommon/com_error.h>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace db::disk32_load
@@ -34,6 +36,18 @@ inline bool StreamBytes(std::uint8_t *at, std::int32_t size)
         return false;
     Load_Stream(true, at, size);
     return DB_GetStreamPos() == at + size;
+}
+
+// count native elements of T in zone-lifetime storage (DB_AllocZoneNative);
+// exhaustion is an error, not a fallback. count is checked by the caller.
+template <typename T>
+T *AllocNative(std::int32_t count)
+{
+    auto *const storage = reinterpret_cast<T *>(
+        DB_AllocZoneNative(static_cast<std::size_t>(count) * sizeof(T), alignof(T)));
+    if (!storage)
+        Drop("Fast-file native storage is exhausted");
+    return storage;
 }
 
 // Load_XString: a null token, an inline string streamed here, or an offset
