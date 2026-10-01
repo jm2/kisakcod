@@ -1,21 +1,17 @@
 // db_disk32_envelope_tests.cpp: the 64-bit XAssetList/XAsset envelope (NOW
-// row 12) on hand-built disk32 zone images. The envelope, the 64-bit RawFile
-// loader, Load_ScriptStringCustom, the family guard and the production stream
-// code run against a synthetic zone. Only the inflater (DB_LoadXFileData), the
-// string interner, the asset pool (Load_RawFileAsset), the zone's native
-// storage (DB_AllocZoneNative) and Load_XAsset's family switch (db_load.cpp)
-// are replaced. Retail data never enters tests.
+// row 12) on hand-built disk32 zone images (disk32_fixture.hpp). The envelope,
+// the 64-bit RawFile loader, Load_ScriptStringCustom, the family guard and the
+// production stream code run against a synthetic zone. Beyond the fixture's
+// seams, only the asset pool (Load_RawFileAsset) and Load_XAsset's family
+// switch (db_load.cpp) are replaced.
 
-#include <database/database.h>
+#include "disk32_fixture.hpp"
+
 #include <database/db_disk32_load.h>
 #include <database/db_load_legacy_bridge.h>
 
-#include <algorithm>
-#include <cstdarg>
-#include <cstdio>
 #include <cstring>
 #include <string>
-#include <string_view>
 #include <vector>
 
 // The loader globals db_load.cpp defines.
@@ -25,60 +21,16 @@ ScriptStringList *varScriptStringList;
 
 namespace
 {
-int g_failures = 0;
+using namespace disk32_test;
 
-void Expect(bool ok, const char *what, const char *detail = "")
-{
-    if (!ok)
-    {
-        std::fprintf(stderr, "FAIL: %s %s\n", what, detail);
-        ++g_failures;
-    }
-}
-
-// A production ERR_DROP longjmps and never returns; this seam throws instead.
-struct Drop
-{
-    char message[256];
-};
-
-std::vector<std::uint8_t> g_file; // the inflated fast-file bytes
-std::size_t g_read = 0;
-RawFile g_pool[4];                // what Load_RawFileAsset published
-int g_published = 0;
-std::vector<std::string> g_interned;      // script-string id n is entry n - 1
+RawFile g_pool[4];                        // what Load_RawFileAsset published
 std::vector<std::uintptr_t> g_entrySlots; // each dispatched header slot on entry
 
-// The zone's native storage. As a static it lies above 4 GiB. Each zone reuses
-// it from the start without clearing it, as PMem does not zero.
-constexpr std::size_t kArenaBytes = 256;
-alignas(16) std::uint8_t g_arena[kArenaBytes];
-std::size_t g_arenaUsed = 0;
-std::size_t g_arenaCapacity = kArenaBytes;
-
-constexpr std::uint32_t kInline = disk32::kInline;
 constexpr std::uint32_t kShared = disk32::kSharedInline;
 constexpr std::uint32_t kRawFile = ASSET_TYPE_RAWFILE;
 
-constexpr std::uint32_t VirtualOffset(std::uint32_t offset)
+struct File : FileBuilder<File>
 {
-    return ((4u << 28) | offset) + 1;
-}
-
-struct File
-{
-    File &Word(std::uint32_t value)
-    {
-        for (int shift = 0; shift < 32; shift += 8)
-            g_file.push_back(static_cast<std::uint8_t>(value >> shift));
-        return *this;
-    }
-    File &Text(std::string_view text)
-    {
-        g_file.insert(g_file.end(), text.begin(), text.end());
-        g_file.push_back(0);
-        return *this;
-    }
     // The 16-byte XAssetListDisk32: script strings, then assets.
     File &Root(std::int32_t strings, std::uint32_t stringArray, std::int32_t assets, std::uint32_t assetArray)
     {
@@ -88,6 +40,8 @@ struct File
 };
 
 // A zone with the blocks the envelope and a RawFile touch: temp and virtual.
+// DB_LoadXFileInternal calls the envelope with no stream pushed, and reads the
+// root outside the blocks.
 struct Zone
 {
     alignas(16) std::uint8_t temp[64]{};
@@ -97,13 +51,9 @@ struct Zone
 
     Zone()
     {
-        g_file.clear();
-        g_read = 0;
-        g_published = 0;
-        g_interned.clear();
+        ResetImage();
         g_entrySlots.clear();
-        g_arenaUsed = 0;
-        g_arenaCapacity = kArenaBytes;
+        g_allowReadsOutsideBlocks = true;
         memory.blocks[0] = {temp, sizeof(temp)};
         memory.blocks[4] = {virt, sizeof(virt)};
         DB_InitStreams(&memory);
@@ -181,8 +131,7 @@ void TestZoneLoads()
     Expect(!std::memcmp(zone.virt + 28, g_file.data() + kRecordsInFile, 3 * 8),
            "the disk32 records stay at their retail block-4 offset");
     CheckScriptStrings(list);
-    const auto *const assets = reinterpret_cast<const std::uint8_t *>(list.assets);
-    if (list.assetCount != 3 || assets < g_arena || assets >= g_arena + g_arenaUsed || g_published != 2)
+    if (list.assetCount != 3 || !InArena(list.assets) || g_published != 2)
         return Expect(false, "three assets load into native storage and two raw files publish");
     Expect(g_arenaUsed == 4 * sizeof(const char *) + 3 * sizeof(XAsset),
            "native storage holds exactly the 8-byte string slots and the 16-byte assets");
@@ -251,15 +200,7 @@ void TestMalformedFailsClosed()
         Zone zone;
         g_arenaCapacity = test.arena;
         test.build();
-        Drop drop{"(none)"};
-        try
-        {
-            DB_LoadXAssetListDisk32(&zone.list);
-        }
-        catch (const Drop &caught)
-        {
-            drop = caught;
-        }
+        const Drop drop = Catch([&] { DB_LoadXAssetListDisk32(&zone.list); });
         const int published = test.dispatched ? 1 : 0;
         Expect(std::strstr(drop.message, test.error) && g_published == published
                    && g_entrySlots.size() == test.dispatched && g_read <= g_file.size(),
@@ -268,44 +209,7 @@ void TestMalformedFailsClosed()
 }
 } // namespace
 
-// Engine seams: the error handler, the inflater, the interner and the pool.
-void __cdecl Com_Error(errorParm_t code, const char *fmt, ...)
-{
-    Drop drop{};
-    va_list args;
-    va_start(args, fmt);
-    // Flawfinder: ignore -- the engine's literal formats into a bounded, terminated buffer.
-    std::vsnprintf(drop.message, sizeof(drop.message), fmt, args);
-    va_end(args);
-    if (code != ERR_DROP)
-        std::snprintf(drop.message, sizeof(drop.message), "unexpected error code %d", code);
-    throw drop;
-}
-
-void __cdecl DB_LoadXFileData(std::uint8_t *pos, std::uint32_t size)
-{
-    if (!pos || !size || size > g_file.size() - g_read)
-        Com_Error(ERR_DROP, "Fast-file ended unexpectedly");
-    std::copy_n(g_file.data() + g_read, size, pos);
-    g_read += size;
-    // As in production: the root lies outside the zone blocks.
-    const db::relocation::Status status = DB_MarkStreamRangeMaterialized(pos, size);
-    if (status != db::relocation::Status::Ok && status != db::relocation::Status::InvalidContext
-        && status != db::relocation::Status::OutOfRange)
-    {
-        Com_Error(ERR_DROP, "Cannot record fast-file output range");
-    }
-}
-
-std::uint8_t *__cdecl DB_AllocZoneNative(std::size_t size, std::size_t alignment)
-{
-    const std::size_t start = (g_arenaUsed + alignment - 1) & ~(alignment - 1);
-    if (!size || alignment != alignof(void *) || start > g_arenaCapacity || size > g_arenaCapacity - start)
-        return nullptr;
-    g_arenaUsed = start + size;
-    return g_arena + start;
-}
-
+// Engine seams beyond the fixture's: the pool and the family switch.
 void __cdecl Load_RawFileAsset(XAssetHeader *header)
 {
     // DB_AddXAsset hashes the name, then copies the header into the pool.
@@ -327,19 +231,6 @@ void __cdecl Load_XAsset(bool atStreamStart)
         Com_Error(ERR_DROP, "the test routes no other family");
 }
 
-db::load_legacy_bridge::LegacyBridgeStatus
-db::load_legacy_bridge::DbLoadLegacyBridge::TryInternUser4StringOfSize(
-    const char *bytes, std::uint32_t byteCount, LegacyBridgeStringId *outString) noexcept
-{
-    const std::string_view bytesView(bytes, byteCount); // with its terminator
-    const std::string text(bytesView.substr(0, bytesView.find('\0')));
-    auto found = std::find(g_interned.begin(), g_interned.end(), text);
-    if (found == g_interned.end())
-        found = g_interned.insert(found, text);
-    outString->stringId = static_cast<std::uint32_t>(found - g_interned.begin()) + 1;
-    return LegacyBridgeStatus::Success;
-}
-
 // Mark_ScriptStringCustom's reference count; the envelope never marks.
 db::load_legacy_bridge::LegacyBridgeStatus
 db::load_legacy_bridge::DbLoadLegacyBridge::TryAddUser4(std::uint32_t) noexcept
@@ -350,17 +241,6 @@ db::load_legacy_bridge::DbLoadLegacyBridge::TryAddUser4(std::uint32_t) noexcept
 int main()
 {
     // The zone loads twice: the second load reuses native storage that still
-    // holds the first load's pointers.
-    for (void (*test)() : {TestZoneLoads, TestZoneLoads, TestEmptyList, TestMalformedFailsClosed})
-    {
-        try
-        {
-            test();
-        }
-        catch (const Drop &drop)
-        {
-            Expect(false, "a well-formed image raised ERR_DROP:", drop.message);
-        }
-    }
-    return g_failures ? 1 : 0;
+    // holds the first load's data.
+    return Run({TestZoneLoads, TestZoneLoads, TestEmptyList, TestMalformedFailsClosed});
 }

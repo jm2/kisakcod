@@ -1,11 +1,13 @@
 # Retail fast-file record layouts (docs/design/FASTFILE_LOADER.md, "Design").
 # A retail .ff stores every record in its 32-bit (ILP32) layout. Each record is
 # described here once; scripts/gen_disk32.py turns this file into the disk32
-# mirror structs at build time. Generated code is never committed (AGENTS.md
-# rule 8).
+# mirror structs and the 64-bit loaders at build time. Generated code is never
+# committed (AGENTS.md rule 8).
 #
 #   record <Name> <retail size> runtime=<native struct> header=<its header> [same=<disk32:: constant>]
-#       <retail offset> <field> <kind> [count=<expression>]
+#       [asset member=<XAssetHeader member> pool=<publish call> kind=<DBAliasKind>
+#              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom]]
+#       <retail offset> <field> <kind> [count=<expression>] [terminated] [label=<noun>]
 #
 # Kinds: i32 u32 f32 u8 (scalars), bool (one byte; nonzero is true),
 # xstring (a C string: inline or an offset token), bytes (inline bytes, count
@@ -13,13 +15,35 @@
 # The offsets and sizes are the retail facts: the generator checks them
 # against the ILP32 rules, and the compiler checks the emitted mirror against
 # them (ONDISK_*) and the native struct against the same field list (RUNTIME_*).
+#
+# An asset line makes the record a top-level asset family with a generated
+# 64-bit loader: the header-slot entry, the pointer step and, unless
+# body=custom, the record body. The family's TU defines DB_Load<Name>PtrDisk32
+# by forwarding to db::disk32_load::Load<Name>HeaderSlot.
+#   alias=inserted   as the 32-bit Load_<Name>Ptr with DB_InsertPointer: the
+#                    record streams into the temp block, the native header is
+#                    a temporary the pool call copies, -2 registers the pooled
+#                    pointer and an offset token resolves to it.
+#   alias=completed  as with DB_RegisterPointerSlot and DB_CompleteObject: the
+#                    record streams at the current position, the hand-written
+#                    body converts it into zone-lifetime native storage, and an
+#                    offset token resolves to that native object.
+#   name=<field>     the xstring the pool hashes; the generated body drops a
+#                    null one.
+#   label=<noun>     names the family, or a bytes field, in error messages.
+# A generated body streams the record into its mirror and copies the scalars
+# (bool as != 0). It then pushes block 4 and loads each xstring and bytes
+# field in schema order. A bytes field there must be terminated: count is
+# <field> or <field>+<n>, checked, and the last byte must be 0.
 
 record RawFile 0x0C runtime=RawFile header=xanim/xanim.h
+    asset member=rawfile pool=Load_RawFileAsset kind=RawFile alias=inserted name=name label=raw-file
     0x00 name        xstring
     0x04 len         i32
-    0x08 buffer      bytes      count=len+1
+    0x08 buffer      bytes      count=len+1 terminated label=raw-file
 
 record StringTable 0x10 runtime=StringTable header=universal/q_shared.h same=kStringTableBytes
+    asset member=stringTable pool=Load_StringTableAsset kind=StringTable alias=completed body=custom label=string-table
     0x00 name        xstring
     0x04 columnCount i32
     0x08 rowCount    i32
