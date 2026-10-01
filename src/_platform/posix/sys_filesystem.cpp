@@ -1,7 +1,6 @@
 #include <qcommon/sys_filesystem.h>
 
 #include <algorithm>
-#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -12,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -167,12 +167,14 @@ constexpr std::size_t kMaximumTrustedRoots = 16;
 
 std::mutex &TrustedRootsMutex()
 {
+    // cppcheck-suppress threadsafety-threadsafety -- function-local static; C++11 guarantees thread-safe initialisation.
     static std::mutex mutex;
     return mutex;
 }
 
 std::vector<TrustedRoot> &TrustedRoots()
 {
+    // cppcheck-suppress threadsafety-threadsafety -- function-local static; C++11 guarantees thread-safe initialisation.
     static std::vector<TrustedRoot> roots;
     return roots;
 }
@@ -195,7 +197,8 @@ bool SplitWalkPath(
     {
         if (root.absolute == *absolute
             && root.spelled.size() <= components->size()
-            && std::equal(root.spelled.begin(), root.spelled.end(), components->begin())
+            && std::equal(root.spelled.begin(), root.spelled.end(),
+                components->begin(), components->begin() + static_cast<std::ptrdiff_t>(root.spelled.size()))
             && (!match || root.spelled.size() > match->spelled.size()))
         {
             match = &root;
@@ -245,71 +248,134 @@ std::string JoinAbsolute(const std::vector<std::string> &components)
     return joined.empty() ? std::string("/") : joined;
 }
 
-// realpath, except that every symbolic link it follows must pass
-// Sys_FileSystemLinkIsTrusted in the directory that holds it. realpath alone
-// would also follow a planted link reached through a trusted one.
-ProtectedResolution ResolveProtected(const std::string &path, std::string *const resolved)
+// An open file descriptor that closes itself.
+class OwnedFd
+{
+public:
+    explicit OwnedFd(const int fd) : fd_(fd) {}
+    OwnedFd(const OwnedFd &) = delete;
+    OwnedFd &operator=(const OwnedFd &) = delete;
+    ~OwnedFd() { Reset(-1); }
+    int Get() const { return fd_; }
+    void Reset(const int fd)
+    {
+        if (fd_ >= 0)
+            (void)close(fd_);
+        fd_ = fd;
+    }
+
+private:
+    int fd_;
+};
+
+// ResolveProtected's walk: the resolved components, a handle on the directory
+// they name, the components still to resolve and the links followed so far.
+struct ProtectedWalk
+{
+    std::vector<std::string> done;
+    OwnedFd directory{openat(AT_FDCWD, "/", DirectoryOpenFlags())};
+    std::deque<std::string> pending;
+    int links = 0;
+};
+
+ProtectedResolution FailedLookup()
+{
+    return errno == ENOENT || errno == ENOTDIR ? ProtectedResolution::Missing : ProtectedResolution::Refused;
+}
+
+// Follows the link `name` in walk->directory: it must pass
+// Sys_FileSystemLinkIsTrusted there, and its target goes in front of the
+// components still to resolve. Empty means the walk goes on.
+std::optional<ProtectedResolution> FollowLink(
+    ProtectedWalk *const walk,
+    const std::string &name,
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
+    const struct stat &link)
 {
     constexpr int kMaximumLinks = 40; // Linux's own limit
-    std::vector<std::string> done;
-    std::deque<std::string> pending;
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
+    struct stat holder{};
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
+    if (++walk->links > kMaximumLinks || fstat(walk->directory.Get(), &holder) != 0
+        || !Sys_FileSystemLinkIsTrusted(holder.st_mode, link.st_uid, geteuid()))
+    {
+        return ProtectedResolution::Refused;
+    }
+    std::string target(4096, '\0');
+    const ssize_t length = readlinkat(walk->directory.Get(), name.c_str(), target.data(), target.size());
+    if (length <= 0 || static_cast<std::size_t>(length) >= target.size())
+        return ProtectedResolution::Refused;
+    target.resize(static_cast<std::size_t>(length));
+    if (target[0] == '/')
+    {
+        walk->done.clear();
+        walk->directory.Reset(openat(AT_FDCWD, "/", DirectoryOpenFlags()));
+    }
+    PushComponents(target, &walk->pending);
+    return std::nullopt;
+}
+
+// Resolves one component through the handle on the directory that holds it,
+// so what is examined is what is followed or entered. Empty means the walk
+// goes on.
+std::optional<ProtectedResolution> StepComponent(ProtectedWalk *const walk, const std::string &component)
+{
+    if (component == "." || (component == ".." && walk->done.empty()))
+        return std::nullopt;
+    if (component == "..")
+    {
+        walk->done.pop_back();
+        walk->directory.Reset(openat(walk->directory.Get(), "..", DirectoryOpenFlags()));
+        return std::nullopt;
+    }
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
+    struct stat entry{};
+    // cppcheck-suppress y2038-unsafe-call -- Only mode/uid are used; timestamps are never read.
+    if (fstatat(walk->directory.Get(), component.c_str(), &entry, AT_SYMLINK_NOFOLLOW) != 0)
+        return FailedLookup();
+    if (S_ISLNK(entry.st_mode))
+        return FollowLink(walk, component, entry);
+    if (!walk->pending.empty())
+    {
+        if (!S_ISDIR(entry.st_mode))
+            return ProtectedResolution::Missing;
+        const int next = openat(walk->directory.Get(), component.c_str(), DirectoryOpenFlags());
+        if (next < 0)
+            return FailedLookup();
+        walk->directory.Reset(next);
+    }
+    walk->done.push_back(component);
+    return std::nullopt;
+}
+
+// realpath, except that every symbolic link it follows must pass
+// Sys_FileSystemLinkIsTrusted in the directory that holds it. realpath alone
+// would also follow a planted link reached through a trusted one. The walk
+// goes from "/" through directory handles; a relative path starts with the
+// components of the current directory.
+ProtectedResolution ResolveProtected(const std::string &path, std::string *const resolved)
+{
+    ProtectedWalk walk;
+    PushComponents(path, &walk.pending);
     if (path.empty() || path[0] != '/')
     {
-        // getcwd reports the physical directory: nothing in it is a link.
         const std::unique_ptr<char, decltype(&std::free)> current(getcwd(nullptr, 0), &std::free);
         if (!current)
             return ProtectedResolution::Refused;
-        PushComponents(current.get(), &pending);
-        while (!pending.empty())
-        {
-            done.push_back(std::move(pending.front()));
-            pending.pop_front();
-        }
+        PushComponents(current.get(), &walk.pending);
     }
-    PushComponents(path, &pending);
-
-    int links = 0;
-    while (!pending.empty())
+    while (!walk.pending.empty())
     {
-        const std::string component = std::move(pending.front());
-        pending.pop_front();
-        if (component == ".")
-            continue;
-        if (component == "..")
-        {
-            if (!done.empty())
-                done.pop_back();
-            continue;
-        }
-        const std::string parent = JoinAbsolute(done);
-        const std::string candidate = parent == "/" ? "/" + component : parent + "/" + component;
-        struct stat entry{};
-        if (lstat(candidate.c_str(), &entry) != 0)
-            return errno == ENOENT || errno == ENOTDIR
-                ? ProtectedResolution::Missing : ProtectedResolution::Refused;
-        if (!S_ISLNK(entry.st_mode))
-        {
-            if (!pending.empty() && !S_ISDIR(entry.st_mode))
-                return ProtectedResolution::Missing;
-            done.push_back(component);
-            continue;
-        }
-        struct stat holder{};
-        if (++links > kMaximumLinks
-            || lstat(parent.c_str(), &holder) != 0
-            || !Sys_FileSystemLinkIsTrusted(holder.st_mode, entry.st_uid, geteuid()))
-        {
+        if (walk.directory.Get() < 0)
             return ProtectedResolution::Refused;
-        }
-        std::array<char, 4096> target{};
-        const ssize_t length = readlink(candidate.c_str(), target.data(), target.size());
-        if (length <= 0 || static_cast<std::size_t>(length) >= target.size())
-            return ProtectedResolution::Refused;
-        if (target[0] == '/')
-            done.clear();
-        PushComponents(std::string(target.data(), static_cast<std::size_t>(length)), &pending);
+        const std::string component = std::move(walk.pending.front());
+        walk.pending.pop_front();
+        if (const std::optional<ProtectedResolution> stop = StepComponent(&walk, component))
+            return *stop;
     }
-    *resolved = JoinAbsolute(done);
+    if (walk.directory.Get() < 0)
+        return ProtectedResolution::Refused;
+    *resolved = JoinAbsolute(walk.done);
     return ProtectedResolution::Resolved;
 }
 
@@ -449,7 +515,9 @@ bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *const path)
     if (!SplitWalkPath(path, &components, &absolute))
         return false;
 
-    int parentFd = open(absolute ? "/" : ".", DirectoryOpenFlags());
+    int parentFd = open(
+        absolute ? "/" : ".",
+        DirectoryOpenFlags());
     if (parentFd < 0)
         return false;
 
@@ -499,7 +567,9 @@ bool KISAK_CDECL Sys_FileSystemReadFile(
 
     // Walk and validate every directory ancestor without following
     // symbolic links, exactly like the directory services above.
-    int parentFd = open(absolute ? "/" : ".", DirectoryOpenFlags());
+    int parentFd = open(
+        absolute ? "/" : ".",
+        DirectoryOpenFlags());
     if (parentFd < 0)
         return false;
 
@@ -1236,7 +1306,8 @@ bool KISAK_CDECL Sys_FileSystemRemoveTree(const char *const utf8Path)
     // while keeping the parent open so we can call unlinkat(...,leaf, AT_REMOVEDIR).
     constexpr int parentFlags =
         O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
-    int parentFd = open(absolute ? "/" : ".", parentFlags);
+    int parentFd = open(
+        absolute ? "/" : ".", parentFlags);
     if (parentFd < 0)
         return false;
     if (!OpenAncestorOfLeaf(components, &parentFd))

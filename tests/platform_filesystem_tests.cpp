@@ -2987,10 +2987,21 @@ int RunWin32RemoveTreeContracts(const std::string &workingDirectory)
 #endif // defined(_WIN32)
 
 #if !defined(_WIN32)
+// A real directory, not a link to one, opened rather than stat'ed.
 bool IsRealDirectory(const std::string &path)
 {
-    struct stat status{};
-    return lstat(path.c_str(), &status) == 0 && S_ISDIR(status.st_mode);
+    const int fd = openat(AT_FDCWD, path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    return fd >= 0 && close(fd) == 0;
+}
+
+// chmod through a handle on the directory itself.
+bool SetDirectoryMode(const std::string &path, const mode_t mode)
+{
+    const int fd = openat(AT_FDCWD, path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+    const bool changed = fchmod(fd, mode) == 0;
+    return close(fd) == 0 && changed;
 }
 
 bool ListsExactly(const std::string &path, const std::vector<std::string> &names)
@@ -3126,7 +3137,7 @@ bool TestOperatorRootsBelowLinks(const std::string &workingDirectory)
     const std::string shared = MakeUniquePath(workingDirectory) + "-roots-shared";
     const std::string ours = Join(shared, "ours");
     if (!Check(Sys_FileSystemCreateDirectory(shared.c_str()))
-        || !Check(chmod(shared.c_str(), 01777) == 0)
+        || !Check(SetDirectoryMode(shared, 01777))
         || !Check(symlink(real.c_str(), ours.c_str()) == 0)
         || !Check(!Sys_FileSystemCreateDirectory(Join(ours, "base/shared").c_str()))
         || !Check(Sys_FileSystemTrustRoot(Join(ours, "base").c_str()))
