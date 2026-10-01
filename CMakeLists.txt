@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
+# The oldest macOS the macOS builds run on (owner, 2026-09-30). It must be set
+# before project(); other platforms ignore it. CI builds against it, so an API
+# newer than this fails there rather than on a user's older Mac.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS version")
+
 project(KisakCOD LANGUAGES C CXX)
 
 # Set the default C++ standard

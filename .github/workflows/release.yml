@@ -8,8 +8,8 @@
 #   source     the release commit's source archive, without the vendor
 #              runtime binaries (Miles, Bink, Steamworks)
 #   build      per leg: build, split and check the debug symbols, package
-#              (tar.xz on Linux, zip on Windows), then smoke-run the binary
-#              unpacked from the package
+#              (tar.xz on Linux and macOS, zip on Windows), then smoke-run
+#              the binary unpacked from the package
 #   checksums  SHA256SUMS over every packaged file
 #   notes      release notes: packages, tiers, changes since the last release
 #   publish    the only job with contents: write and it checks nothing out:
@@ -215,6 +215,17 @@ jobs:
           -DBUILD_TESTING=OFF
           "-DCMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO=/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF"
 
+      # ci.yml's macos-headless configure, with debug info. The DWARF stays in
+      # the object files until dsymutil gathers it into the dSYM.
+      - name: Configure
+        if: matrix.recipe == 'macos-headless'
+        run: >
+          cmake -S . -B build-release -G Ninja
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF
+          -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF
+          -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
       # --config picks the Visual Studio configuration; Ninja ignores it.
       - name: Build
         run: cmake --build build-release --config RelWithDebInfo --target "$BINARY" --parallel
@@ -256,6 +267,34 @@ jobs:
             echo "::error::the binary imports the Visual C++ runtime DLLs" >&2
             exit 1
           fi
+
+      - name: Split the debug symbols into a dSYM and check both halves
+        if: matrix.recipe == 'macos-headless'
+        run: |
+          bin="stage/${STEM}/${BINARY}"
+          dsym="symbols/${STEM}/${BINARY}.dSYM"
+          mkdir -p "stage/${STEM}" "symbols/${STEM}"
+          cp "bin/${BINARY}" "$bin"
+          dsymutil "$bin" -o "$dsym"
+          strip -S -x "$bin"
+          # Stripping voids the linker's ad-hoc signature, and arm64 macOS
+          # kills a binary whose signature does not match; sign it again.
+          codesign --force --sign - "$bin"
+          codesign --verify --strict "$bin"
+          fail() { echo "::error::$*" >&2; exit 1; }
+          uuid() { dwarfdump --uuid "$1" | awk -v arch="($FILE_ARCH)" '$3 == arch {print $2}'; }
+          # Captured, not piped into grep -q: under pipefail an early grep exit fails the producer.
+          symbols="$(nm -ap "$bin")"
+          dwarf_sections="$(otool -l "${dsym}/Contents/Resources/DWARF/${BINARY}")"
+          # strip leaves one OPT stab (radr://5614542) as its own marker; the debug map must go.
+          if grep -qE ' - [0-9a-f]{2} [0-9a-f]{4} +(SO|OSO|FUN) ' <<<"$symbols"; then
+            fail "the stripped binary keeps its debug map (SO/OSO/FUN stabs)"
+          fi
+          grep -q 'sectname __debug_info' <<<"$dwarf_sections" || fail "the dSYM has no __debug_info"
+          id="$(uuid "$bin")"
+          if [ -z "$id" ] || [ "$id" != "$(uuid "$dsym")" ]; then fail "the binary and dSYM UUIDs differ"; fi
+          scripts/ci/verify-artifact-arch.sh "$FILE_ARCH" "$bin"
+          echo "BUILD_ID=$id" >> "$GITHUB_ENV"
 
       - name: Verify binary architecture
         if: matrix.recipe == 'windows-headless'
@@ -333,6 +372,47 @@ jobs:
           diff <(names "dist/${STEM}-debugsymbols.zip") <(printf '%s\n' "${STEM}/${BINARY}.pdb")
           python -m zipfile -e "dist/${STEM}.zip" unpacked
           python scripts/ci/headless_smoke.py "unpacked/${STEM}/${BINARY}.exe"
+
+      - name: Package
+        if: matrix.recipe == 'macos-headless'
+        run: |
+          # awk reads to the end: an early exit would fail otool under pipefail.
+          minos="$(otool -l "stage/${STEM}/${BINARY}" \
+            | awk '/LC_BUILD_VERSION/ {b = 1} b && $1 == "minos" && !found {print $2; found = 1}')"
+          requires="macOS ${minos} or newer on Apple silicon. The binary is ad-hoc signed, not notarized:"
+          requires+=" run xattr -d com.apple.quarantine on a downloaded copy"
+          cp LICENSE "stage/${STEM}/LICENSE"
+          python3 scripts/ci/release_meta.py readme --leg "$LEG" --version "$VERSION" --commit "$COMMIT" \
+            --requires "$requires" > "stage/${STEM}/README.txt"
+          epoch="$(git log -1 --format=%ct)"
+          mkdir -p dist
+          # The image has GNU tar but no xz for it to call.
+          pack() { python3 scripts/ci/release_meta.py tarxz --root "$1" --stem "$STEM" --epoch "$epoch" --out "$2"; }
+          pack stage "dist/${STEM}.tar.xz"
+          pack symbols "dist/${STEM}-debugsymbols.tar.xz"
+          jq -n --arg tag "$TAG" --arg commit "$COMMIT" --argjson leg "$LEG" --arg build_id "$BUILD_ID" \
+            --arg compiler "$(clang --version | sed -n 1p)" --arg cmake "$(cmake --version | sed -n 1p)" \
+            --arg sdk "macOS SDK $(xcrun --show-sdk-version)" \
+            --arg tracy "$(git -C build-release/_deps/tracy-src rev-parse HEAD)" \
+            --arg image "${ImageOS:-}-${ImageVersion:-}" --arg requires "$requires" --arg run "$GITHUB_RUN_ID" \
+            '{tag: $tag, commit: $commit, target: $leg.target, role: $leg.role, level: $leg.level,
+              tier: $leg.tier, config: "RelWithDebInfo", build_id: $build_id, compiler: $compiler,
+              sdk: $sdk, cmake: $cmake, tracy: $tracy, runner_image: $image, requires: $requires,
+              workflow_run: $run}' > "dist/${STEM}-provenance.json"
+
+      - name: Smoke-run the packaged binary
+        if: matrix.recipe == 'macos-headless'
+        run: |
+          diff <(tar -tJf "dist/${STEM}.tar.xz") \
+            <(printf '%s\n' "${STEM}/" "${STEM}/${BINARY}" "${STEM}/LICENSE" "${STEM}/README.txt")
+          listing="$(tar -tJf "dist/${STEM}-debugsymbols.tar.xz")"
+          grep -qx "${STEM}/${BINARY}.dSYM/Contents/Resources/DWARF/${BINARY}" <<<"$listing" \
+            || { echo "::error::the symbols package has no dSYM DWARF file" >&2; exit 1; }
+          unpacked="${RUNNER_TEMP}/unpacked"
+          mkdir -p "$unpacked"
+          tar -xJf "dist/${STEM}.tar.xz" -C "$unpacked"
+          codesign --verify --strict "${unpacked}/${STEM}/${BINARY}"
+          python3 scripts/ci/headless_smoke.py "${unpacked}/${STEM}/${BINARY}"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
