@@ -184,17 +184,11 @@ void DetectCpu()
     sys_info.configureGHz = benchmark * multiCpuFactor;
 }
 
+// One write for the whole line: written in pieces, other threads' output
+// could land between the prefix and the message.
 [[noreturn]] void TerminateOnFatalError(const char *message)
 {
-    const char prefix[] = "\nKisakCOD fatal error: ";
-    const char newline[] = "\n";
-    const char *const safeMessage = message ? message : "Unknown fatal error";
-    (void)Sys_ConsoleWrite(
-        SysConsoleOutputStream::StandardError, prefix, sizeof(prefix) - 1);
-    (void)Sys_ConsoleWrite(
-        SysConsoleOutputStream::StandardError, safeMessage, strnlen(safeMessage, 4096));
-    (void)Sys_ConsoleWrite(
-        SysConsoleOutputStream::StandardError, newline, sizeof(newline) - 1);
+    (void)Sys_ConsoleWriteFatalError(message);
     (void)Sys_ConsoleFlush(SysConsoleOutputStream::StandardError);
     std::exit(EXIT_FAILURE);
 }

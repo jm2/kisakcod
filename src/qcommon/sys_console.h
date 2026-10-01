@@ -52,6 +52,18 @@ inline constexpr std::size_t SYS_CONSOLE_MAX_LINE_LENGTH = 511;
 [[nodiscard]] SysConsoleIoStatus KISAK_CDECL Sys_ConsoleFlush(
     SysConsoleOutputStream stream) noexcept;
 
+// The longest message Sys_ConsoleWriteFatalError writes; Sys_Error formats
+// into 4096 bytes.
+inline constexpr std::size_t SYS_CONSOLE_MAX_FATAL_MESSAGE = 4095;
+
+// Writes "\nKisakCOD fatal error: <message>\n" to standard error in ONE write,
+// so output other threads print at the same moment cannot land inside the
+// line. A null message reads "Unknown fatal error"; a longer one is cut to
+// SYS_CONSOLE_MAX_FATAL_MESSAGE bytes. Nothing is allocated: the out-of-memory
+// path reports through it.
+[[nodiscard]] SysConsoleIoStatus KISAK_CDECL Sys_ConsoleWriteFatalError(
+    const char *message) noexcept;
+
 // True means the selected output is a valid non-terminal file or pipe. An
 // unavailable stream is not reported as redirected.
 [[nodiscard]] bool KISAK_CDECL Sys_ConsoleIsRedirected(
