@@ -64,7 +64,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 - **Services:** the same POSIX files, plus the Mach crash-freeze backend (no engine caller).
 - **Scope before G5:** headless only (G3). The target is macOS 27 with Xcode 27 (Apple clang 21). CI builds and smoke-runs it on GA `macos-26`, and the census covers SDK 27 on `xcode-27`. CrossOver runs the x86 build for testing only ([ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)).
 - **Symlinks:** `sys_filesystem` opens every path component with `O_NOFOLLOW`, so under a symlinked root (`/tmp`, `/var`) it cannot create or list directories. The default root, `getcwd`, has no symlink.
-- **Release:** signing and notarization are G6 owner items ([../NOW.md](../NOW.md)).
+- **Release:** ad-hoc signed, not notarized ([ADR-0007](../decisions/0007-macos-notarization-deferred.md)).
 
 ## Steamworks availability
 

@@ -97,6 +97,7 @@ The CI `native64-census` and `KPI summary` jobs render the current values.
 | [0004](decisions/0004-reverse-engineering-scope.md) | Reverse engineering only for Steam 1.8 wire gaps | accepted |
 | [0005](decisions/0005-cod4x-compatibility.md) | CoD4x compatibility | proposed |
 | [0006](decisions/0006-docs-and-process-policy.md) | Doc set, budgets and agent rules | accepted |
+| [0007](decisions/0007-macos-notarization-deferred.md) | macOS releases ad-hoc signed; notarization deferred | accepted |
 
 ## Doc map
 
