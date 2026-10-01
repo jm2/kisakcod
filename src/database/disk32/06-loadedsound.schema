@@ -1,0 +1,19 @@
+# LoadedSound, asset type 0x09. The format is described in ../db_disk32.schema.
+# Its MssSound (the Miles sound info and the data pointer) is laid out flat in
+# the retail record; the dotted fields name the nested native members. The
+# body is custom: the sound data streams into the temp block, and its token
+# names a SoundData alias.
+
+record LoadedSound 0x2C runtime=LoadedSound header=sound/snd_public.h
+    asset member=loadSnd pool=Load_LoadedSoundAsset kind=LoadedSound alias=inserted body=custom label=loaded-sound
+    0x00 name                   xstring
+    0x04 sound.info.format      i32
+    0x08 sound.info.data_ptr    ptr
+    0x0C sound.info.data_len    u32
+    0x10 sound.info.rate        u32
+    0x14 sound.info.bits        i32
+    0x18 sound.info.channels    i32
+    0x1C sound.info.samples     u32
+    0x20 sound.info.block_size  u32
+    0x24 sound.info.initial_ptr ptr
+    0x28 sound.data             bytes      count=sound.info.data_len

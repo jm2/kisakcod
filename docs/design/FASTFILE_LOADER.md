@@ -51,11 +51,14 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    A record's `asset` line gives its family's loader facts: the `XAssetHeader` member, the pool
    call, the alias kind and protocol, the name field and a noun for errors. From them the
    generator emits the header-slot entry and the pointer step. `inserted` streams the record
-   into the temp block for the pool to copy. `completed` keeps the block-4 record as the alias
+   into the temp block for the pool to copy; like the 32-bit `Load_*Ptr`, its pointer step
+   pushes that block itself, so a reference nested in a parent record (LoadedSound under a
+   SoundFile) loads as a header slot does. `completed` keeps the block-4 record as the alias
    identity and resolves aliases to its native twin. For a flat family it also emits the record
    body from the field kinds: scalars, `bool` as `!= 0`, xstrings, and terminated byte arrays
    with a checked count. A `body=custom` family hand-writes only the body, such as StringTable's
-   value array. Each family's TU forwards `DB_Load<Family>PtrDisk32` to the generated entry.
+   value array or LoadedSound's sound data. Each family's TU forwards `DB_Load<Family>PtrDisk32`
+   to the generated entry.
 3. **Relocation map.** Every materialized record registers `(block, disk offset, disk stride) →
    (native base, native stride)`. Offset tokens resolve through this map, including interior
    pointers into arrays and to named fields, so no pointer points into raw stream bytes. A

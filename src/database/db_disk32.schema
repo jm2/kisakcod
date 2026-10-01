@@ -17,7 +17,10 @@
 #
 # Kinds: i32 u32 f32 u8 (scalars), bool (one byte; nonzero is true),
 # xstring (a C string: inline or an offset token), bytes (inline bytes, count
-# given), xstrings (a pointer array of C strings, count given).
+# given), xstrings (a pointer array of C strings, count given), ptr (a native
+# pointer the loader sets itself; its disk bytes are not a token).
+# A dotted field (sound.info.rate) is a member of a nested native struct; its
+# mirror member takes the last name, and only a custom body loads it.
 # The offsets and sizes are the retail facts: the generator checks them
 # against the ILP32 rules, and the compiler checks the emitted mirror against
 # them (ONDISK_*) and the native struct against the same field list (RUNTIME_*).
@@ -27,9 +30,10 @@
 # body=custom, the record body. The family's TU defines DB_Load<Name>PtrDisk32
 # by forwarding to db::disk32_load::Load<Name>HeaderSlot.
 #   alias=inserted   as the 32-bit Load_<Name>Ptr with DB_InsertPointer: the
-#                    record streams into the temp block, the native header is
-#                    a temporary the pool call copies, -2 registers the pooled
-#                    pointer and an offset token resolves to it.
+#                    pointer step pushes the temp block, the record streams
+#                    there, the native header is a temporary the pool call
+#                    copies, -2 registers the pooled pointer and an offset
+#                    token resolves to it. Its body is generated or custom.
 #   alias=completed  as with DB_RegisterPointerSlot and DB_CompleteObject: the
 #                    record streams at the current position, the hand-written
 #                    body converts it into zone-lifetime native storage, and an
