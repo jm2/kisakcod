@@ -41,7 +41,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 G1's compile blockers are fixed; these rules keep them fixed.
 
 - **System headers:** only `src/win32` includes `win32/win_local.h`. Portable declarations (`sysEvent_t`, `SysInfo`, `Sys_GetPacket`, `Sys_IsLANAddress*`, `Conbuf_*`) live in `qcommon/sys_local.h`.
-- **Stand-ins off Windows:** `gfx_d3d/r_d3d9types.h` for `<d3d9.h>`, `sound/snd_msstypes.h` for `msslib/mss.h`, and `<alloca.h>` for `<malloc.h>` in `deps/ode` on macOS. `xanim.h` holds gfx types by pointer. `tests/headless_include_debt.allow` lists the direct renderer includes; K5 measures transitive reach.
+- **Stand-ins off Windows:** `gfx_d3d/r_d3d9types.h` for `<d3d9.h>`, `sound/snd_msstypes.h` for `msslib/mss.h`, and `<alloca.h>` for `<malloc.h>` in `deps/ode` on macOS. `xanim.h` holds gfx types by pointer. `tests/headless_include_debt.allow` lists the direct client/media includes; K5 measures transitive reach.
 - **Compat:** MSVC CRT names come from `universal/msvc_crt_compat.h`, byte order from `KISAK_LITTLE_ENDIAN` (`universal/kisak_abi.h`), and the cycle counter from `Sys_CycleCounter` (`qcommon/sys_time.h`). Shared files call Win32 APIs only inside `#if defined(_WIN32)` arms with a portable arm, or through a platform service.
 - **Templates:** names a template uses must be declared before it, because real builds don't use `-fdelayed-template-parsing`.
 
