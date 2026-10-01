@@ -20,6 +20,7 @@ struct PhysPreset;
 struct RawFile;
 struct SndCurve;
 struct StringTable;
+struct XAnimParts;
 struct XAssetList;
 
 #if KISAK_ARCH_64BIT
@@ -84,6 +85,13 @@ void __cdecl DB_LoadComWorldPtrDisk32(bool atStreamStart, ComWorld **slot);
 // the 32-bit headless load, the sound data is streamed and its aliases are
 // checked, but the native record owns no playback buffer.
 void __cdecl DB_LoadLoadedSoundPtrDisk32(bool atStreamStart, LoadedSound **slot);
+
+// Loads one XAnimParts (db_disk32_xanimparts.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native XAnimParts published through Load_XAnimPartsAsset on return. Its
+// arrays stay in block 4, and its bone and notetrack names hold interned
+// script-string ids.
+void __cdecl DB_LoadXAnimPartsPtrDisk32(bool atStreamStart, XAnimParts **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
