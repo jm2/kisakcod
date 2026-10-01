@@ -483,3 +483,28 @@ if (NOT KISAK_PLATFORM STREQUAL "win32")
     add_test(NAME posix-syscon-contracts COMMAND kisakcod-posix-syscon-tests)
     set_tests_properties(posix-syscon-contracts PROPERTIES TIMEOUT 20)
 endif()
+
+# The Win32 autoconfigure CPU benchmark after the real timer calibration: the
+# timed loop must survive the optimizer on every Windows target (amd64 and
+# arm64 on the portable legs, x86 on the ilp32 legs).
+if (KISAK_PLATFORM STREQUAL "win32")
+    add_executable(kisakcod-win-benchmark-tests
+        win_benchmark_tests.cpp
+        ${SRC_DIR}/win32/win_benchmark.cpp
+        ${SRC_DIR}/universal/timing.cpp
+        ${SRC_DIR}/qcommon/threads.cpp
+        ${SRC_DIR}/qcommon/sys_worker_gate.cpp
+        ${KISAK_PLATFORM_SERVICE_SOURCES}
+    )
+    target_include_directories(kisakcod-win-benchmark-tests PRIVATE ${SRC_DIR})
+    target_compile_features(kisakcod-win-benchmark-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-win-benchmark-tests PRIVATE KISAK_MP KISAK_DEDI_HEADLESS)
+    target_link_libraries(kisakcod-win-benchmark-tests PRIVATE Threads::Threads winmm ws2_32)
+    kisakcod_test_warnings(kisakcod-win-benchmark-tests)
+    set_target_properties(kisakcod-win-benchmark-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME win-benchmark-ghz-contracts COMMAND kisakcod-win-benchmark-tests)
+    set_tests_properties(win-benchmark-ghz-contracts PROPERTIES TIMEOUT 60)
+    kisakcod_ilp32(kisakcod-win-benchmark-tests win-benchmark-ghz-contracts)
+endif()
