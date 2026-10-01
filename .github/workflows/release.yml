@@ -408,12 +408,11 @@ jobs:
           listing="$(tar -tJf "dist/${STEM}-debugsymbols.tar.xz")"
           grep -qx "${STEM}/${BINARY}.dSYM/Contents/Resources/DWARF/${BINARY}" <<<"$listing" \
             || { echo "::error::the symbols package has no dSYM DWARF file" >&2; exit 1; }
-          unpacked="$(cd "$RUNNER_TEMP" && pwd -P)/unpacked"
+          unpacked="${RUNNER_TEMP}/unpacked"
           mkdir -p "$unpacked"
           tar -xJf "dist/${STEM}.tar.xz" -C "$unpacked"
           codesign --verify --strict "${unpacked}/${STEM}/${BINARY}"
-          # As in ci.yml's macos-headless: a symlink-free TMPDIR for the smoke's roots.
-          TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)" python3 scripts/ci/headless_smoke.py "${unpacked}/${STEM}/${BINARY}"
+          python3 scripts/ci/headless_smoke.py "${unpacked}/${STEM}/${BINARY}"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

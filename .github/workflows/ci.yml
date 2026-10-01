@@ -316,12 +316,7 @@ jobs:
         run: scripts/ci/verify-artifact-arch.sh arm64 bin/KisakCOD-dedi
 
       - name: Assetless smoke run
-        # The POSIX filesystem service follows no symlink in a path, and the
-        # default macOS TMPDIR lies under the /var symlink, so the smoke's
-        # fs_basepath and fs_homepath go in a symlink-free directory.
-        run: |
-          TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)" \
-            python3 scripts/ci/headless_smoke.py bin/KisakCOD-dedi
+        run: python3 scripts/ci/headless_smoke.py bin/KisakCOD-dedi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
