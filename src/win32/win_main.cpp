@@ -72,12 +72,7 @@ static char sys_processSemaphoreFile[0x20];
 	const char prefix[] = "\nKisakCOD fatal error: ";
 	const char newline[] = "\n";
 	const char *const safeMessage = message ? message : "Unknown fatal error";
-	(void)Sys_ConsoleWrite(
-		SysConsoleOutputStream::StandardError, prefix, sizeof(prefix) - 1);
-	(void)Sys_ConsoleWrite(
-		SysConsoleOutputStream::StandardError, safeMessage, strlen(safeMessage));
-	(void)Sys_ConsoleWrite(
-		SysConsoleOutputStream::StandardError, newline, sizeof(newline) - 1);
+	(void)Sys_ConsoleWriteFatalError(safeMessage);
 	(void)Sys_ConsoleFlush(SysConsoleOutputStream::StandardError);
 
 	OutputDebugStringA(prefix);

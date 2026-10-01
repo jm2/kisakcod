@@ -110,6 +110,23 @@ SysConsoleIoStatus KISAK_CDECL Sys_ConsoleFlush(
     return Sys_ConsoleBackendFlush(stream);
 }
 
+SysConsoleIoStatus KISAK_CDECL Sys_ConsoleWriteFatalError(
+    const char *const message) noexcept
+{
+    static constexpr char prefix[] = "\nKisakCOD fatal error: ";
+    constexpr std::size_t prefixLength = sizeof(prefix) - 1;
+    std::array<char, prefixLength + SYS_CONSOLE_MAX_FATAL_MESSAGE + 1> line;
+    const char *const text = message ? message : "Unknown fatal error";
+    std::size_t length = 0;
+    while (length < SYS_CONSOLE_MAX_FATAL_MESSAGE && text[length] != '\0')
+        ++length;
+    std::memcpy(line.data(), prefix, prefixLength);
+    std::memcpy(line.data() + prefixLength, text, length);
+    line[prefixLength + length] = '\n';
+    return Sys_ConsoleWrite(
+        SysConsoleOutputStream::StandardError, line.data(), prefixLength + length + 1);
+}
+
 bool KISAK_CDECL Sys_ConsoleIsRedirected(
     const SysConsoleOutputStream stream) noexcept
 {

@@ -43,6 +43,21 @@ if (NOT _platform_console_source_count EQUAL 1)
         "${_platform_console_source_count}")
 endif()
 
+# The fatal-error line both terminate paths write (Sys_ConsoleWriteFatalError):
+# the portable console boundary over a backend the test provides, which
+# records each write.
+add_executable(kisakcod-console-fatal-error-tests
+    console_fatal_error_tests.cpp
+    ${SRC_DIR}/qcommon/sys_console.cpp
+)
+target_include_directories(kisakcod-console-fatal-error-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-console-fatal-error-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-console-fatal-error-tests)
+set_target_properties(kisakcod-console-fatal-error-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME console-fatal-error-contracts COMMAND kisakcod-console-fatal-error-tests)
+
 add_executable(kisakcod-platform-console-tests
     platform_console_tests.cpp
     ${SRC_DIR}/qcommon/sys_console.cpp
@@ -446,6 +461,9 @@ add_test(
         -DALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/headless_include_debt.allow
         -P ${CMAKE_CURRENT_SOURCE_DIR}/headless_include_debt_test.cmake
 )
+
+kisakcod_ilp32(kisakcod-console-fatal-error-tests
+    console-fatal-error-contracts)
 
 kisakcod_ilp32(kisakcod-platform-console-tests
     platform-console-invalid-eof-contracts
