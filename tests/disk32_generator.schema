@@ -1,0 +1,20 @@
+# The generator test's records (db_disk32_generator_tests.cpp): the kinds the
+# families in flight need before any merged family uses them. The format is
+# described in ../src/database/db_disk32.schema.
+
+record GenFrames 0x14 runtime=GenFrames header=disk32_generator_test_types.hpp
+    0x00 mins      f32[3]
+    0x0C frames    pointer
+    0x10 indices   u16[1]
+
+record GenHead 0x18 runtime=GenHead header=disk32_generator_test_types.hpp
+    0x00 size      u16
+    0x02 small     u8
+    0x04 u         struct of=GenFrames
+
+record GenRecord 0x14 runtime=GenRecord header=disk32_generator_test_types.hpp copy=scalars
+    0x00 info.rate i32
+    0x04 info.data rawptr
+    0x08 values    i16[3]
+    0x0E loop      bool
+    0x10 scale     f32
