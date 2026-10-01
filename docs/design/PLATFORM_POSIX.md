@@ -36,17 +36,14 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 | Relaunch via `Sys_ProcessLaunch` | `Sys_QuitAndStartProcess`, `Sys_Spawn` | later |
 | Portable async fast-file reads | `db_file_load.cpp` | 14 |
 
-## Compile blockers
+## Header rules (headless set)
 
-- **`win32/win_local.h`** is the de-facto system header. 22 headless TUs include it, and it is the first non-assert error in 20 of the 39 Linux "other" failures. **Split:** a portable `qcommon/sys_local.h` takes `sysEvent_t`, `SysInfo`, `Sys_GetPacket`, `Sys_IsLANAddress*` and `Conbuf_*`. `win_local.h` keeps `WinVars_t`, `MainWndProc`, the `IN_*` DirectInput calls, `HWND`/`HMODULE` and the winsock includes, and only `src/win32` includes it.
-- **D3D include cut.** `xanim.h` now holds the gfx types by pointer (forward declarations) instead of including `gfx_d3d/r_bsp.h`, `r_gfx.h`, `r_material.h` and `r_font.h`, and `gfx_d3d/r_d3d9types.h` stands in for `<d3d9.h>` off Windows: opaque COM interfaces plus the fixed `_D3DFORMAT`/`_D3DCUBEMAP_FACES` values. `tests/headless_include_debt.allow` lists 29 direct includes (the asset and collision loaders that need complete renderer records) and cannot see transitive reach; K5 does.
-- **Miles cut.** Off Windows, `sound/snd_msstypes.h` stands in for `msslib/mss.h` (opaque `_SAMPLE`, `_DIG_DRIVER`, `_STREAM`), so `snd_public.h` and `snd_local.h` no longer reach the Miles SDK, whose `mss.h` has no 64-bit Mac case. `deps/ode/common.h` takes `alloca` from `<alloca.h>` on macOS, which has no `<malloc.h>`.
-- **Win32 APIs in shared files:** overlapped I/O (`db_file_load.cpp`); clipboard and `MessageBoxA` (`assertive.cpp`); `HWND`/`GetActiveWindow` (`com_playerprofile.cpp`); unguarded `<Windows.h>` (`profile.cpp`, `timing.cpp`); `<io.h>` (`com_files.cpp`); `win32/win_net.h` included by `db_registry.cpp` and `sv_init_mp.cpp`.
-- **MSVC CRT names:** `ARRAYSIZE` (~11 error sites), `_strlwr`, `_isnan`, `_time64`, `_TRUNCATE`, and `basename` in `qcommon/files.cpp`, which clashes with glibc. One compat header next to `universal/msvc_printf_shim.h` (NOW bead 4).
-- **Two-phase lookup:** the `KeywordHashEntry` template in `ui/ui_shared.h` called undeclared `IsValidSeed`; `-fdelayed-template-parsing` hides it, and real builds don't use that flag. The seed-collision check now lives in `ui_shared.h` as the free template `IsValidSeed` (moved out of the per-instantiation copies in `ui_shared_obj.cpp`, whose wrappers delegate to it); the half-transcribed method stubs that reached for the undeclared name are gone.
-- **Byte-order helpers:** `BigShort` was declared for every target but defined only inside `q_shared.h`'s `WIN32` block, so every POSIX caller compiled and then failed to link (#231). The `Big*`/`Little*` forms are now one `constexpr` set defined for every target and keyed on `KISAK_LITTLE_ENDIAN` in `kisak_abi.h`.
-- **`va_list` misuse:** 2 sites in `q_parse.cpp` and 3 in `com_playerprofile.cpp`.
-- **arm64 only (fixed):** the `__rdtsc` sites in `scr_vm.cpp`, `sv_main_mp.cpp`, `common.cpp`, `profile.cpp`, `timing.cpp` and `com_profilemapload.cpp` read `Sys_CycleCounter` (`qcommon/sys_time.h`): the TSC on x86 (MSVC keeps `__rdtsc()`), `CNTVCT_EL0` on AArch64.
+G1's compile blockers are fixed; these rules keep them fixed.
+
+- **System headers:** only `src/win32` includes `win32/win_local.h`. Portable declarations (`sysEvent_t`, `SysInfo`, `Sys_GetPacket`, `Sys_IsLANAddress*`, `Conbuf_*`) live in `qcommon/sys_local.h`.
+- **Stand-ins off Windows:** `gfx_d3d/r_d3d9types.h` for `<d3d9.h>`, `sound/snd_msstypes.h` for `msslib/mss.h`, and `<alloca.h>` for `<malloc.h>` in `deps/ode` on macOS. `xanim.h` holds gfx types by pointer. `tests/headless_include_debt.allow` lists the direct client/media includes; K5 measures transitive reach.
+- **Compat:** MSVC CRT names come from `universal/msvc_crt_compat.h`, byte order from `KISAK_LITTLE_ENDIAN` (`universal/kisak_abi.h`), and the cycle counter from `Sys_CycleCounter` (`qcommon/sys_time.h`). Shared files call Win32 APIs only inside `#if defined(_WIN32)` arms with a portable arm, or through a platform service.
+- **Templates:** names a template uses must be declared before it, because real builds don't use `-fdelayed-template-parsing`.
 
 ## Portable async fast-file reads
 
