@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 
+struct LoadedSound;
 struct LocalizeEntry;
 struct MapEnts;
 struct PhysPreset;
@@ -49,6 +50,13 @@ void __cdecl DB_LoadLocalizeEntryPtrDisk32(bool atStreamStart, LocalizeEntry **s
 // published through Load_MapEntsAsset on return. The slot nested in clipMap_t
 // takes the same contract once that family converts (wave 4).
 void __cdecl DB_LoadMapEntsPtrDisk32(bool atStreamStart, MapEnts **slot);
+
+// Loads one LoadedSound (db_disk32_loadedsound.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native LoadedSound published through Load_LoadedSoundAsset on return. As
+// the 32-bit headless load, the sound data is streamed and its aliases are
+// checked, but the native record owns no playback buffer.
+void __cdecl DB_LoadLoadedSoundPtrDisk32(bool atStreamStart, LoadedSound **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
