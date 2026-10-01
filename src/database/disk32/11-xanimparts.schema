@@ -1,0 +1,64 @@
+# XAnimParts, asset type 0x02. The format is described in ../db_disk32.schema.
+# The pointer fields are inline arrays that db_disk32_xanimparts.cpp streams.
+
+record XAnimParts 0x58 runtime=XAnimParts header=xanim/xanim.h copy=scalars
+    asset member=parts pool=Load_XAnimPartsAsset kind=XAnimParts alias=inserted body=custom label=xanim
+    0x00 name                 xstring
+    0x04 dataByteCount        u16
+    0x06 dataShortCount       u16
+    0x08 dataIntCount         u16
+    0x0A randomDataByteCount  u16
+    0x0C randomDataIntCount   u16
+    0x0E numframes            u16
+    0x10 bLoop                bool
+    0x11 bDelta               bool
+    0x12 boneCount            u8[10]
+    0x1C notifyCount          u8
+    0x1D assetType            u8
+    0x1E isDefault            bool
+    0x20 randomDataShortCount u32
+    0x24 indexCount           u32
+    0x28 framerate            f32
+    0x2C frequency            f32
+    0x30 names                pointer  # boneCount[9] script strings
+    0x34 dataByte             pointer
+    0x38 dataShort            pointer
+    0x3C dataInt              pointer
+    0x40 randomDataShort      pointer
+    0x44 randomDataByte       pointer
+    0x48 randomDataInt        pointer
+    0x4C indices              pointer  # 16-bit when numframes >= 256, else 8-bit
+    0x50 notify               pointer  # notifyCount XAnimNotifyInfo
+    0x54 deltaPart            pointer
+
+# Notetracks keep their layout at 64-bit, so they stay in block 4.
+record XAnimNotifyInfo 0x08 runtime=XAnimNotifyInfo header=xanim/xanim.h
+    0x00 name                 u16     # a script string
+    0x04 time                 f32
+
+# The delta part. Its translation and rotation open with their size (and
+# smallTrans) and hold the union u: frame0 when size is 0, else the frames
+# member described here, whose size + 1 indices (16-bit from 256 frames)
+# follow it inline and move to the native record's own indices offset.
+record XAnimDeltaPart 0x08 runtime=XAnimDeltaPart header=xanim/xanim.h
+    0x00 trans                pointer  # XAnimPartTrans
+    0x04 quat                 pointer  # XAnimDeltaPartQuat
+
+record XAnimPartTransFrames 0x20 runtime=XAnimPartTransFrames header=xanim/xanim.h
+    0x00 mins                 f32[3]
+    0x0C size                 f32[3]
+    0x18 frames               pointer  # 8-bit vectors when smallTrans, else 16-bit
+    0x1C indices              u16[1]
+
+record XAnimPartTrans 0x24 runtime=XAnimPartTrans header=xanim/xanim.h copy=scalars
+    0x00 size                 u16
+    0x02 smallTrans           u8
+    0x04 u.frames             struct   of=XAnimPartTransFrames
+
+record XAnimDeltaPartQuatDataFrames 0x08 runtime=XAnimDeltaPartQuatDataFrames header=xanim/xanim.h
+    0x00 frames               pointer  # two 16-bit components a frame
+    0x04 indices              u16[1]
+
+record XAnimDeltaPartQuat 0x0C runtime=XAnimDeltaPartQuat header=xanim/xanim.h copy=scalars
+    0x00 size                 u16
+    0x04 u.frames             struct   of=XAnimDeltaPartQuatDataFrames
