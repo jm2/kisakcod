@@ -171,6 +171,7 @@ set(DATABASE
     "${SRC_DIR}/database/db_disk32_localize.cpp"
     "${SRC_DIR}/database/db_disk32_mapents.cpp"
     "${SRC_DIR}/database/db_disk32_physpreset.cpp"
+    "${SRC_DIR}/database/db_disk32_soundcurve.cpp"
     "${SRC_DIR}/database/db_disk32_stringtable.cpp"
     "${SRC_DIR}/database/db_referenced_fastfile.h"
     "${SRC_DIR}/database/db_stream.h"

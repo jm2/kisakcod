@@ -12,13 +12,14 @@
 #
 #   record <Name> <retail size> runtime=<native struct> header=<its header> [same=<disk32:: constant>]
 #       [asset member=<XAssetHeader member> pool=<publish call> kind=<DBAliasKind>
-#              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom]]
-#       <retail offset> <field> <kind> [count=<expression>] [terminated] [paired] [label=<noun>]
+#              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom] [check=custom]]
+#       <retail offset> <field> <kind>[<n>]... [count=<expression>] [terminated] [paired] [label=<noun>]
 #
 # Kinds: i32 u32 f32 i16 u16 u8 (scalars), bool (one byte; nonzero is true),
 # xstring (a C string: inline or an offset token), bytes (inline bytes, count
 # given), xstrings (a pointer array of C strings, count given), pointer (a
-# token only a custom body loads). A scalar with count=<n> is a fixed array.
+# token only a custom body loads). A scalar other than bool may be a fixed
+# array, as knots f32[8][2]; a generated body copies it whole.
 # The offsets and sizes are the retail facts: the generator checks them
 # against the ILP32 rules, and the compiler checks the emitted mirror against
 # them (ONDISK_*) and the native struct against the same field list (RUNTIME_*).
@@ -39,6 +40,9 @@
 #                    is custom.
 #   name=<field>     the xstring the pool hashes; the generated body drops a
 #                    null one.
+#   check=custom     the 32-bit loader's further rules on the converted record:
+#                    a hand-written Check<Name> in the family's TU, called
+#                    after every field loads; false drops.
 #   label=<noun>     names the family, or a bytes field, in error messages.
 # A generated body streams the record into its mirror and copies the scalars
 # (bool as != 0). It then pushes block 4 and loads each xstring and bytes
