@@ -13,6 +13,7 @@
 struct ComWorld;
 struct GameWorldMp;
 struct GfxImage;
+struct GfxLightDef;
 struct LoadedSound;
 struct LocalizeEntry;
 struct MapEnts;
@@ -92,6 +93,12 @@ void __cdecl DB_LoadLoadedSoundPtrDisk32(bool atStreamStart, LoadedSound **slot)
 // arrays stay in block 4, and its bone and notetrack names hold interned
 // script-string ids.
 void __cdecl DB_LoadXAnimPartsPtrDisk32(bool atStreamStart, XAnimParts **slot);
+
+// Loads one GfxLightDef (db_disk32_lightdef.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native GfxLightDef published through Load_LightDefAsset on return. Its
+// attenuation image loads as DB_LoadGfxImagePtrDisk32 loads a header.
+void __cdecl DB_LoadGfxLightDefPtrDisk32(bool atStreamStart, GfxLightDef **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
