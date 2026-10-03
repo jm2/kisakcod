@@ -11,6 +11,7 @@
 #include <cstdint>
 
 struct ComWorld;
+struct Font_s;
 struct GameWorldMp;
 struct GfxImage;
 struct LoadedSound;
@@ -92,6 +93,13 @@ void __cdecl DB_LoadLoadedSoundPtrDisk32(bool atStreamStart, LoadedSound **slot)
 // arrays stay in block 4, and its bone and notetrack names hold interned
 // script-string ids.
 void __cdecl DB_LoadXAnimPartsPtrDisk32(bool atStreamStart, XAnimParts **slot);
+
+// Loads one Font_s (db_disk32_font.cpp) under the same slot contract: the
+// slot holds the zero-extended disk32 token on entry and the native Font_s
+// published through Load_FontAsset on return. Its glyphs keep their layout and
+// stay in block 4. Material has no 64-bit loader yet, so a non-null material
+// token raises ERR_DROP.
+void __cdecl DB_LoadFontPtrDisk32(bool atStreamStart, Font_s **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
