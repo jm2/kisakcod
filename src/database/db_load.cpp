@@ -11348,6 +11348,10 @@ void __cdecl Load_Font(bool atStreamStart)
 
 void __cdecl Load_FontHandle(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadFontPtrDisk32(atStreamStart, varFontHandle);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -11380,6 +11384,7 @@ void __cdecl Load_FontHandle(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Mark_Font()
