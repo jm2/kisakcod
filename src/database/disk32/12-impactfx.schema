@@ -1,0 +1,13 @@
+# ImpactFx (FxImpactTable), asset type 0x1A, and the impact entries it holds.
+# The format is described in ../db_disk32.schema. The body is custom
+# (db_disk32_impactfx.cpp): a non-null table token means the 12 entries
+# follow inline, and each entry's tokens name FX effects (FxEffectDef).
+
+record FxImpactEntry 0x84 runtime=FxImpactEntry header=EffectsCore/fx_runtime.h
+    0x00 nonflesh        pointer[29]
+    0x74 flesh           pointer[4]
+
+record FxImpactTable 0x08 runtime=FxImpactTable header=EffectsCore/fx_runtime.h
+    asset member=impactFx pool=Load_FxImpactTableAsset kind=FxImpactTable alias=inserted body=custom label=impact-effects
+    0x00 name            xstring
+    0x04 table           pointer  # 12 FxImpactEntry, inline

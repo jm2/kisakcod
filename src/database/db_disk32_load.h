@@ -11,6 +11,7 @@
 #include <cstdint>
 
 struct ComWorld;
+struct FxImpactTable;
 struct GameWorldMp;
 struct GfxImage;
 struct LoadedSound;
@@ -92,6 +93,13 @@ void __cdecl DB_LoadLoadedSoundPtrDisk32(bool atStreamStart, LoadedSound **slot)
 // arrays stay in block 4, and its bone and notetrack names hold interned
 // script-string ids.
 void __cdecl DB_LoadXAnimPartsPtrDisk32(bool atStreamStart, XAnimParts **slot);
+
+// Loads one FxImpactTable (db_disk32_impactfx.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native FxImpactTable published through Load_FxImpactTableAsset on return.
+// Its 12 entries live in DB_AllocZoneNative storage. FX has no 64-bit loader
+// yet, so a non-null effect token raises ERR_DROP.
+void __cdecl DB_LoadFxImpactTablePtrDisk32(bool atStreamStart, FxImpactTable **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from

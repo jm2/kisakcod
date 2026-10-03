@@ -24,7 +24,8 @@
 # the loader nulls them), array (count elements of=<an earlier record without
 # an asset line>, label=<noun>), struct (that record inline, of=<record>; only
 # a custom body loads it). A scalar other than bool may be a fixed array, as
-# knots f32[8][2]; a generated body copies it whole. A dotted field
+# knots f32[8][2]; a generated body copies it whole. So may a pointer, for a
+# custom body, as an impact entry's effects pointer[29]. A dotted field
 # (sound.info.rate) is a member of a nested native struct: its mirror member
 # takes the last name, and only a custom body or copy=scalars loads it.
 # copy=scalars emits Copy<Name>Scalars for a custom body: every scalar and

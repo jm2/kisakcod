@@ -80,9 +80,10 @@ def parse_asset(record, words, where):
 def field_shape(words, where):
     """Return a field line's kind and its fixed-array dimensions, if any."""
     shape = re.fullmatch(r'(\w+)((?:\[[1-9]\d*\])*)', words[2]) if len(words) >= 3 else None
-    if not shape or shape.group(1) not in KINDS or (shape.group(2) and shape.group(1) not in ARRAYABLE):
+    fixed = ARRAYABLE + ('pointer',)  # a custom body loads a fixed array of tokens
+    if not shape or shape.group(1) not in KINDS or (shape.group(2) and shape.group(1) not in fixed):
         fail(where, f'expected: <offset> <field> <kind>[<n>]... [attributes]; kinds {sorted(KINDS)}, '
-                    f'fixed arrays of {ARRAYABLE}')
+                    f'fixed arrays of {fixed}')
     return shape.group(1), [int(n) for n in re.findall(r'\d+', shape.group(2))]
 
 

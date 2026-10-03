@@ -36,7 +36,7 @@ inline bool g_allowReadsOutsideBlocks = false;
 
 // The zone's native storage (DB_AllocZoneNative). As a static it lies above
 // 4 GiB, so a pointer narrowed to 32 bits cannot land back on it.
-inline constexpr std::size_t kArenaBytes = 256;
+inline constexpr std::size_t kArenaBytes = 4096;
 alignas(16) inline std::uint8_t g_arena[kArenaBytes];
 inline std::size_t g_arenaUsed = 0;
 inline std::size_t g_arenaCapacity = kArenaBytes;
