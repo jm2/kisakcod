@@ -8735,6 +8735,10 @@ void __cdecl Load_MenuList(bool atStreamStart)
 
 void __cdecl Load_MenuListPtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadMenuListPtrDisk32(atStreamStart, varMenuListPtr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -8767,6 +8771,7 @@ void __cdecl Load_MenuListPtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Mark_listBoxDef_t()
