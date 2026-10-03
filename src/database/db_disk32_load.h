@@ -16,6 +16,7 @@ struct GfxImage;
 struct LoadedSound;
 struct LocalizeEntry;
 struct MapEnts;
+struct MenuList;
 struct PhysPreset;
 struct RawFile;
 struct SndCurve;
@@ -92,6 +93,13 @@ void __cdecl DB_LoadLoadedSoundPtrDisk32(bool atStreamStart, LoadedSound **slot)
 // arrays stay in block 4, and its bone and notetrack names hold interned
 // script-string ids.
 void __cdecl DB_LoadXAnimPartsPtrDisk32(bool atStreamStart, XAnimParts **slot);
+
+// Loads one MenuList (db_disk32_menulist.cpp) under the same slot contract:
+// the slot holds the zero-extended disk32 token on entry and the native
+// MenuList published through Load_MenuListAsset on return. Its menu pointers
+// live in DB_AllocZoneNative storage. Menu has no 64-bit loader yet, so a
+// non-null menu token raises ERR_DROP.
+void __cdecl DB_LoadMenuListPtrDisk32(bool atStreamStart, MenuList **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
