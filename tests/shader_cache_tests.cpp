@@ -330,8 +330,7 @@ void TestCorruptSidecarRegeneration()
             == LookupResult::NeedsRegeneration,
         "a wrong artifact hash forces regeneration");
 
-    std::vector<std::uint8_t> truncated = sidecar;
-    truncated.pop_back();
+    const std::vector<std::uint8_t> truncated(sidecar.begin(), sidecar.end() - 1);
     Expect(LookupWithSidecar(truncated, kVertexSm2, 5, Stage::Vertex, 0, artifact)
             == LookupResult::NeedsRegeneration,
         "a truncated payload forces regeneration");

@@ -2,6 +2,7 @@
 #include <EffectsCore/fx_archive_restore_workspace.h>
 #include <EffectsCore/fx_archive_semantics.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -124,10 +125,12 @@ void StoreFreeLink(
 {
     static_assert(SIZE >= sizeof(std::uint32_t));
     const std::uint32_t value = static_cast<std::uint32_t>(nextFree);
-    bytes[0] = static_cast<std::uint8_t>(value);
-    bytes[1] = static_cast<std::uint8_t>(value >> 8u);
-    bytes[2] = static_cast<std::uint8_t>(value >> 16u);
-    bytes[3] = static_cast<std::uint8_t>(value >> 24u);
+    const std::array<std::uint8_t, sizeof(value)> link{
+        static_cast<std::uint8_t>(value),
+        static_cast<std::uint8_t>(value >> 8u),
+        static_cast<std::uint8_t>(value >> 16u),
+        static_cast<std::uint8_t>(value >> 24u)};
+    std::copy(link.begin(), link.end(), bytes);
 }
 
 template <typename RECORD, std::size_t SIZE>
