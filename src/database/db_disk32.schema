@@ -18,6 +18,7 @@
 #               [label=<noun>] [asset=<record>]
 #
 # Kinds: i32 u32 f32 i16 u16 u8 (scalars), bool (one byte; nonzero is true),
+# u64 (8 bytes, 8-aligned at both widths; only a custom body loads it),
 # xstring (a C string: inline or an offset token), bytes (inline bytes, count
 # given), xstrings (a pointer array of C strings, count given), pointer (a
 # token a custom body loads; with asset=<a record with an asset line>, a

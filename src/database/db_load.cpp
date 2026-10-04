@@ -4267,6 +4267,10 @@ bool __cdecl Load_Material(bool atStreamStart)
 
 void __cdecl Load_MaterialHandle(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadMaterialPtrDisk32(atStreamStart, varMaterialHandle);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -4303,6 +4307,7 @@ void __cdecl Load_MaterialHandle(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Load_MaterialHandleArray(bool atStreamStart, int32_t count)

@@ -24,6 +24,7 @@ KINDS = {
     'i32': ('std::int32_t', 4, 4),
     'u32': ('std::uint32_t', 4, 4),
     'f32': ('float', 4, 4),
+    'u64': ('Packed64', 8, 8),  # 8-aligned at both widths; only a custom body loads it
     'i16': ('std::int16_t', 2, 2),
     'u16': ('std::uint16_t', 2, 2),
     'u8': ('std::uint8_t', 1, 1),

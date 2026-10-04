@@ -69,6 +69,14 @@ constexpr uint32_t kCBrushBytes = 80;
 constexpr uint32_t kCBrushSideBytes = 12;
 constexpr uint32_t kCPlaneBytes = 20;
 
+// A 64-bit scalar as a disk32 mirror holds it: two 4-byte words, so the mirror
+// keeps 4-byte alignment (the generator's u64 kind).
+struct Packed64
+{
+    uint32_t words[2];
+};
+ONDISK_SIZE(Packed64, 8);
+
 struct PointerToken
 {
     uint32_t value;
