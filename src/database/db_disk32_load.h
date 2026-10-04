@@ -12,6 +12,7 @@
 
 struct ComWorld;
 struct Font_s;
+struct FxEffectDef;
 struct FxImpactTable;
 struct GameWorldMp;
 struct GfxImage;
@@ -153,6 +154,12 @@ void __cdecl DB_LoadMaterialPtrDisk32(bool atStreamStart, Material **slot);
 // published through Load_XModelAsset on return. Its bone arrays stay in
 // block 4, bone names as interned script-string ids.
 void __cdecl DB_LoadXModelPtrDisk32(bool atStreamStart, XModel **slot);
+
+// Loads one FX effect (db_disk32_fx.cpp) under the same slot contract: the
+// slot holds the zero-extended disk32 token on entry and the native
+// FxEffectDef published through Load_FxEffectDefAsset on return. Its elements
+// live in DB_AllocZoneNative storage; their samples stay in block 4.
+void __cdecl DB_LoadFxEffectDefHandleDisk32(bool atStreamStart, const FxEffectDef **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from

@@ -13,7 +13,8 @@
 #   record <Name> <retail size> runtime=<native struct> header=<its header> [same=<disk32:: constant>]
 #          [copy=scalars]
 #       [asset member=<XAssetHeader member> pool=<publish call> kind=<DBAliasKind>
-#              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom] [check=custom]]
+#              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom] [check=custom]
+#              [slot=const]]
 #       <retail offset> <field> <kind>[<n>]... [count=<expression>] [of=<record>] [terminated] [paired]
 #               [label=<noun>] [asset=<record>]
 #
@@ -59,6 +60,8 @@
 #                    a hand-written Check<Name> in the family's TU, called
 #                    after every field loads; false drops.
 #   label=<noun>     names the family, or a bytes field, in error messages.
+#   slot=const       the XAssetHeader member points to const, as fx does, so
+#                    the pointer steps fill a const slot.
 # A generated body streams the record into its mirror and copies the scalars
 # (bool as != 0). It then pushes block 4 and loads each xstring, bytes, array
 # and asset pointer in schema order; the pointer step pushes the temp block

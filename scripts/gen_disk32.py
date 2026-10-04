@@ -41,7 +41,7 @@ KINDS = {
 COUNTED = ('bytes', 'xstrings', 'array')
 SCALARS = ('i32', 'u32', 'f32', 'i16', 'u16', 'u8', 'bool')
 ARRAYABLE = ('i32', 'u32', 'f32', 'i16', 'u16', 'u8')  # fixed arrays copy as bytes; a bool needs != 0
-ASSET_KEYS = {'member', 'pool', 'kind', 'alias', 'label', 'name', 'body', 'check'}
+ASSET_KEYS = {'member', 'pool', 'kind', 'alias', 'label', 'name', 'body', 'check', 'slot'}
 
 
 def fail(where, message) -> NoReturn:
@@ -73,9 +73,9 @@ def parse_asset(record, words, where):
     asset = attributes(words[1:], where, ASSET_KEYS)
     if record['asset'] or not {'member', 'pool', 'kind', 'alias', 'label'} <= asset.keys() \
             or asset['alias'] not in ('inserted', 'completed') or asset.get('body', 'custom') != 'custom' \
-            or asset.get('check', 'custom') != 'custom':
+            or asset.get('check', 'custom') != 'custom' or asset.get('slot', 'const') != 'const':
         fail(where, 'expected one line: asset member= pool= kind= alias=<inserted|completed> label= '
-                    '[name=] [body=custom] [check=custom]')
+                    '[name=] [body=custom] [check=custom] [slot=const]')
     record['asset'] = {**asset, 'where': where}
 
 
@@ -210,7 +210,7 @@ def emit(records, schema_name):
 HEADER_SLOT = Template('''\
 // $Name's header slot: the zero-extended disk32 token on entry, the native
 // pointer on return.
-inline void Load${Name}HeaderSlot(bool atStreamStart, $Runtime **slot)
+inline void Load${Name}HeaderSlot(bool atStreamStart, $Slot **slot)
 {
     // Asset headers arrive inside the already-streamed XAsset array; a native
     // slot is never the 4-byte disk slot at the stream position.
@@ -237,7 +237,7 @@ INSERTED_PTR = Template('''\
 // call copies, and -2 registers the pooled pointer. As in the 32-bit step,
 // the record streams into the temp block whichever block the referrer is in,
 // so a header slot and a reference nested in another record call it alike.
-inline void Load${Name}Ptr(disk32::PointerToken token, $Runtime **slot)
+inline void Load${Name}Ptr(disk32::PointerToken token, $Slot **slot)
 {
     if (token.isOffset())
     {
@@ -287,7 +287,7 @@ bool Load$Name(std::uint8_t *record, $Runtime **out);
 // $Name's pointer step (alias=completed): the disk32 record stays the
 // completed-object identity that later offset tokens name, and the alias
 // registry maps it to the native object, so no alias points at disk bytes.
-inline void Load${Name}Ptr(disk32::PointerToken token, $Runtime **slot)
+inline void Load${Name}Ptr(disk32::PointerToken token, $Slot **slot)
 {
     constexpr auto kRecordBytes = static_cast<std::uint32_t>(sizeof(disk32::${Name}Disk32));
     if (token.isNull())
@@ -386,7 +386,7 @@ ASSET_POINTER = Template('''\
 ''')
 
 POINTER_DECL = Template('''\
-inline void Load${Name}Ptr(disk32::PointerToken token, $Runtime **slot);
+inline void Load${Name}Ptr(disk32::PointerToken token, $Slot **slot);
 ''')
 
 NAME_CHECK = Template('''\
@@ -579,8 +579,8 @@ def emit_family(record, records):
         fail(asset['where'], 'alias=completed takes body=custom: its native storage is family-specific')
     if custom and ('name' in asset or 'check' in asset):
         fail(asset['where'], 'name= and check= apply to a generated body; a custom body does its own checks')
-    facts = dict(Name=record['name'], Runtime=record['runtime'], kind=asset['kind'], member=asset['member'],
-                 pool=asset['pool'], label=asset['label'], noun=noun(asset['label']))
+    facts = dict(Name=record['name'], Runtime=record['runtime'], Slot=slot_type(record), kind=asset['kind'],
+                 member=asset['member'], pool=asset['pool'], label=asset['label'], noun=noun(asset['label']))
     # COMPLETED_PTR declares its own custom body.
     body = [INSERTED_BODY.substitute(facts) if custom else emit_body(record, records)] if inserted else []
     return body + [(INSERTED_PTR if inserted else COMPLETED_PTR).substitute(facts), HEADER_SLOT.substitute(facts)]
@@ -620,7 +620,12 @@ def pointer_declarations(records):
     """Declare each pointer step an asset= field names, so schema order stays free."""
     named = {asset_record(records, field)['name'] for record in records for field in record['fields']
              if field['asset']}
-    return [POINTER_DECL.substitute(Name=r['name'], Runtime=r['runtime']) for r in records if r['name'] in named]
+    return [POINTER_DECL.substitute(Name=r['name'], Slot=slot_type(r)) for r in records if r['name'] in named]
+
+
+def slot_type(record):
+    """The pointee of a family's header slot: its native struct, const with slot=const."""
+    return ('const ' if 'slot' in record['asset'] else '') + record['runtime']
 
 
 def write(output, text):
