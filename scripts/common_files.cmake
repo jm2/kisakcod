@@ -221,6 +221,7 @@ set(DATABASE
     "${SRC_DIR}/database/db_file_load.cpp"
     "${SRC_DIR}/database/db_load.cpp"
     "${SRC_DIR}/database/db_material_validation.h"
+    "${SRC_DIR}/database/db_xmodel_validation.h"
     "${SRC_DIR}/database/db_shader_release.cpp"
     "${SRC_DIR}/database/db_shader_release.h"
     "${SRC_DIR}/database/db_memory.cpp"
