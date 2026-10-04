@@ -25,6 +25,7 @@
 #include "db_fx_zone_adapter_wiring.h"
 #include "db_disk32_load.h"
 #include "db_material_validation.h"
+#include "db_xmodel_validation.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,12 @@ using db::material_validation::DB_ValidateMaterialShaderLoadDef;
 using db::material_validation::DB_ValidateMaterialShaderProgram;
 using db::material_validation::DB_ValidateMaterialVertexDeclaration;
 using db::material_validation::DB_ValidateWaterHeader;
+using db::xmodel_validation::DB_GetXSurfaceCollisionTreeExtents;
+using db::xmodel_validation::DB_ValidateMaterializedBlock4Span;
+using db::xmodel_validation::DB_ValidateMaterializedSpan;
+using db::xmodel_validation::DB_ValidateXModelGraph;
+using db::xmodel_validation::DB_ValidateXSurfaceCollisionTreeGraph;
+using db::xmodel_validation::DB_ValidateXSurfaceGraph;
 
 namespace
 {
@@ -147,46 +154,6 @@ bool DB_ResolveDirectPointer(
     return true;
 }
 
-bool DB_ValidateMaterializedSpan(
-    const void *pointer,
-    uint32_t bytes,
-    size_t alignment,
-    db::relocation::BlockMask allowedBlocks,
-    const char *description)
-{
-    if (!bytes)
-        return true;
-    const db::relocation::Status status = DB_ValidateStreamAddress(
-        pointer,
-        bytes,
-        alignment,
-        allowedBlocks);
-    if (status != db::relocation::Status::Ok)
-    {
-        Com_Error(
-            ERR_DROP,
-            "Invalid completed fast-file span for %s: %s",
-            description,
-            db::relocation::StatusName(status));
-        return false;
-    }
-    return true;
-}
-
-bool DB_ValidateMaterializedBlock4Span(
-    const void *pointer,
-    uint32_t bytes,
-    size_t alignment,
-    const char *description)
-{
-    return DB_ValidateMaterializedSpan(
-        pointer,
-        bytes,
-        alignment,
-        kDirectBlock4,
-        description);
-}
-
 bool DB_GetClipBrushAdjacencyBytes(
     const cbrush_t *brush,
     uint32_t *adjacencyBytes)
@@ -263,39 +230,6 @@ bool DB_ValidateXModelPieces(const XModelPieces *pieces, uint32_t pieceBytes)
     return true;
 }
 
-bool DB_GetXSurfaceCollisionTreeExtents(
-    const XSurfaceCollisionTree *tree,
-    uint32_t *nodeBytes,
-    uint32_t *leafBytes)
-{
-    if (nodeBytes)
-        *nodeBytes = 0;
-    if (leafBytes)
-        *leafBytes = 0;
-    if (!tree
-        || !nodeBytes
-        || !leafBytes
-        || !tree->nodes
-        || !tree->leafs
-        || !tree->nodeCount
-        || !tree->leafCount
-        || tree->nodeCount > db::validation::kMaxXSurfaceCollisionEntries
-        || tree->leafCount > db::validation::kMaxXSurfaceCollisionEntries
-        || !db::validation::CheckedSpanBytes(
-            tree->nodeCount,
-            disk32::kXSurfaceCollisionNodeBytes,
-            nodeBytes)
-        || !db::validation::CheckedSpanBytes(
-            tree->leafCount,
-            disk32::kXSurfaceCollisionLeafBytes,
-            leafBytes))
-    {
-        Com_Error(ERR_DROP, "Invalid fast-file surface collision-tree layout");
-        return false;
-    }
-    return true;
-}
-
 bool DB_GetXSurfaceLayout(
     const XSurface *surface,
     uint8_t *deformed,
@@ -344,240 +278,41 @@ bool DB_GetXSurfaceLayout(
     return true;
 }
 
-bool DB_ValidateXSurfaceCollisionTreeGraph(
-    const XSurfaceCollisionTree *tree,
-    uint32_t nodeBytes,
-    uint32_t leafBytes)
-{
-    if (!tree)
-        return false;
-    for (uint32_t axis = 0; axis < 3; ++axis)
-    {
-        if (!std::isfinite(tree->trans[axis])
-            || std::isnan(tree->scale[axis])
-            || tree->scale[axis] <= 0.0f)
-        {
-            Com_Error(ERR_DROP, "Invalid fast-file surface collision transform");
-            return false;
-        }
-    }
-
-    const db::relocation::Status nodeSpan = DB_ValidateStreamAddress(
-        tree->nodes,
-        nodeBytes,
-        16,
-        kDirectBlock4);
-    const db::relocation::Status leafSpan = DB_ValidateStreamAddress(
-        tree->leafs,
-        leafBytes,
-        2,
-        kDirectBlock4);
-    if (nodeSpan != db::relocation::Status::Ok
-        || leafSpan != db::relocation::Status::Ok)
-    {
-        Com_Error(
-            ERR_DROP,
-            "Invalid fast-file surface collision child span: %s / %s",
-            db::relocation::StatusName(nodeSpan),
-            db::relocation::StatusName(leafSpan));
-        return false;
-    }
-
-    const db::validation::XSurfaceCollisionTopologyStatus topology =
-        db::validation::ValidateXSurfaceCollisionTopology(
-            tree->nodes,
-            tree->nodeCount,
-            tree->leafs,
-            tree->leafCount,
-            0,
-            UINT16_MAX,
-            UINT16_MAX);
-    if (topology != db::validation::XSurfaceCollisionTopologyStatus::Ok)
-    {
-        Com_Error(
-            ERR_DROP,
-            "Invalid fast-file surface collision topology: %s",
-            db::validation::XSurfaceCollisionTopologyStatusName(topology));
-        return false;
-    }
-    return true;
-}
-
 bool DB_ValidateLoadedXSurface(
     const XSurface *surface,
     uint8_t deformed,
     uint32_t modelBoneCount)
 {
-    if (!surface || deformed > 1u || surface->deformed != (deformed != 0u)
-        || !modelBoneCount || modelBoneCount > 128u)
-        return false;
-
-    uint32_t vertexBytes = 0;
-    uint32_t indexBytes = 0;
+    // The in-place rigid-vertex lists and their collision-tree headers are
+    // disk records in block 4; the rest is DB_ValidateXSurfaceGraph.
     uint32_t rigidListBytes = 0;
-    uint32_t blendElementCount = 0;
-    uint32_t blendBytes = 0;
-    if (!db::validation::XSurfaceTriangleCountValid(surface->triCount)
-        || !db::validation::CheckedSpanBytes(
-            surface->vertCount,
-            32,
-            &vertexBytes)
-        || !db::validation::CheckedSpanBytes(
-            surface->triCount,
-            6,
-            &indexBytes)
-        || !db::validation::CheckedSpanBytes(
-            surface->vertListCount,
-            disk32::kXRigidVertListBytes,
-            &rigidListBytes)
-        || !db::validation::XSurfaceSkinningLayoutValid(
-            surface->vertInfo.vertCount,
-            surface->vertInfo.vertsBlend != nullptr,
-            surface->vertCount,
-            deformed != 0u,
-            &blendElementCount)
-        || !db::validation::CheckedSpanBytes(
-            blendElementCount,
-            static_cast<uint32_t>(sizeof(uint16_t)),
-            &blendBytes))
-    {
-        Com_Error(ERR_DROP, "Invalid completed fast-file surface extent");
-        return false;
-    }
-
-    const db::relocation::Status vertexSpan = DB_ValidateStreamAddress(
-        surface->verts0,
-        vertexBytes,
-        16,
-        kDirectBlock7);
-    const db::relocation::Status indexSpan = DB_ValidateStreamAddress(
-        surface->triIndices,
-        indexBytes,
-        16,
-        kDirectBlock8);
-    if (vertexSpan != db::relocation::Status::Ok
-        || indexSpan != db::relocation::Status::Ok
-        || !db::validation::XSurfaceVertexPayloadValid(
-            surface->verts0,
-            surface->vertCount)
-        || !db::validation::XSurfaceTriangleIndicesValid(
-            surface->triIndices,
-            surface->triCount,
-            surface->vertCount))
-    {
-        Com_Error(ERR_DROP, "Invalid completed fast-file surface geometry");
-        return false;
-    }
-    uint32_t surfacePartBits[4] = {};
-    std::memcpy(
-        surfacePartBits,
-        surface->partBits,
-        sizeof(surfacePartBits));
-    if (deformed)
-    {
-        const db::relocation::Status blendSpan = DB_ValidateStreamAddress(
-            surface->vertInfo.vertsBlend,
-            blendBytes,
-            2,
-            kDirectBlock4);
-        if (blendSpan != db::relocation::Status::Ok
-            || !db::validation::XSurfaceBlendRecordsValid(
-                surface->vertInfo.vertsBlend,
-                surface->vertInfo.vertCount,
-                modelBoneCount,
-                surfacePartBits))
-        {
-            Com_Error(ERR_DROP, "Invalid completed fast-file skin weights");
-            return false;
-        }
-        return true;
-    }
-
-    const db::relocation::Status rigidSpan = DB_ValidateStreamAddress(
-        surface->vertList,
-        rigidListBytes,
-        4,
-        kDirectBlock4);
-    if (rigidSpan != db::relocation::Status::Ok
-        || !db::validation::XSurfaceRigidPartitionValid(
-            surface->vertList,
-            surface->vertListCount,
-            surface->vertCount,
-            surface->triCount,
-            surface->triIndices)
-        || !db::validation::XSurfaceRigidSkinningValid(
-            surface->vertList,
-            surface->vertListCount,
-            surface->vertCount,
-            modelBoneCount,
-            surfacePartBits))
+    if (surface && !deformed && surface->vertList
+        && (!db::validation::CheckedSpanBytes(
+                surface->vertListCount,
+                disk32::kXRigidVertListBytes,
+                &rigidListBytes)
+            || DB_ValidateStreamAddress(
+                surface->vertList,
+                rigidListBytes,
+                4,
+                kDirectBlock4) != db::relocation::Status::Ok))
     {
         Com_Error(ERR_DROP, "Invalid completed fast-file rigid surface partition");
         return false;
     }
-
-    for (uint32_t index = 0; index < surface->vertListCount; ++index)
+    for (uint32_t index = 0; surface && !deformed && surface->vertList && index < surface->vertListCount; ++index)
     {
-        const XRigidVertList &rigid = surface->vertList[index];
-        if ((rigid.boneOffset & 63u) != 0
-            || (rigid.boneOffset >> 6) >= modelBoneCount)
-        {
-            Com_Error(ERR_DROP, "Invalid fast-file rigid-surface bone offset");
-            return false;
-        }
-
-        const db::relocation::Status treeHeader = DB_ValidateStreamAddress(
-            rigid.collisionTree,
-            disk32::kXSurfaceCollisionTreeBytes,
-            4,
-            kDirectBlock4);
-        uint32_t nodeBytes = 0;
-        uint32_t leafBytes = 0;
-        if (treeHeader != db::relocation::Status::Ok
-            || !DB_GetXSurfaceCollisionTreeExtents(
-                rigid.collisionTree,
-                &nodeBytes,
-                &leafBytes))
+        if (DB_ValidateStreamAddress(
+                surface->vertList[index].collisionTree,
+                disk32::kXSurfaceCollisionTreeBytes,
+                4,
+                kDirectBlock4) != db::relocation::Status::Ok)
         {
             Com_Error(ERR_DROP, "Invalid completed surface collision-tree header");
             return false;
         }
-        const db::relocation::Status nodeSpan = DB_ValidateStreamAddress(
-            rigid.collisionTree->nodes,
-            nodeBytes,
-            16,
-            kDirectBlock4);
-        const db::relocation::Status leafSpan = DB_ValidateStreamAddress(
-            rigid.collisionTree->leafs,
-            leafBytes,
-            2,
-            kDirectBlock4);
-        if (nodeSpan != db::relocation::Status::Ok
-            || leafSpan != db::relocation::Status::Ok)
-        {
-            Com_Error(ERR_DROP, "Invalid completed surface collision-tree children");
-            return false;
-        }
-
-        const db::validation::XSurfaceCollisionTopologyStatus topology =
-            db::validation::ValidateXSurfaceCollisionTopology(
-                rigid.collisionTree->nodes,
-                rigid.collisionTree->nodeCount,
-                rigid.collisionTree->leafs,
-                rigid.collisionTree->leafCount,
-                rigid.triOffset,
-                rigid.triCount,
-                surface->triCount);
-        if (topology != db::validation::XSurfaceCollisionTopologyStatus::Ok)
-        {
-            Com_Error(
-                ERR_DROP,
-                "Invalid rigid surface collision relationship: %s",
-                db::validation::XSurfaceCollisionTopologyStatusName(topology));
-            return false;
-        }
     }
-    return true;
+    return DB_ValidateXSurfaceGraph(surface, deformed, modelBoneCount);
 }
 
 bool DB_ValidateSpeakerMap(const SpeakerMap *speakerMap)
@@ -5125,282 +4860,46 @@ bool DB_ValidateLoadedXModel(
     const uint32_t classificationBytes,
     const uint32_t baseMatrixBytes)
 {
-    if (!model || !model->name || !*model->name
-        || !db::validation::CountInRange(
-            model->numCollSurfs,
-            0,
-            UINT16_MAX)
-        || (model->numCollSurfs != 0) != (model->collSurfs != nullptr)
-        || (model->numCollSurfs != 0
-            && (model->collLod < 0 || model->collLod >= model->numLods)))
-        return false;
-
-    const db::validation::XModelPointerPresence pointers = {
-        model->name != nullptr,
-        model->boneNames != nullptr,
-        model->parentList != nullptr,
-        model->quats != nullptr,
-        model->trans != nullptr,
-        model->partClassification != nullptr,
-        model->baseMat != nullptr,
-        model->surfs != nullptr,
-        model->materialHandles != nullptr,
-        model->boneInfo != nullptr,
-    };
-    if (!db::validation::XModelHeaderLayoutValid(
-            model->numBones,
-            model->numRootBones,
-            model->numsurfs,
-            model->numLods,
-            model->lodRampType,
-            pointers))
-    {
-        Com_Error(ERR_DROP, "Invalid completed fast-file model header");
-        return false;
-    }
-
-    const uint32_t nonRootBoneCount =
-        model->numBones - model->numRootBones;
+    // The in-place surfaces, material handles and collision surfaces are disk
+    // records in block 4; the rest is DB_ValidateXModelGraph.
     uint32_t surfaceBytes = 0u;
     uint32_t materialBytes = 0u;
-    uint32_t boneInfoBytes = 0u;
-    if (!db::validation::CheckedSpanBytes(
-            model->numsurfs,
-            56u,
-            &surfaceBytes)
-        || !db::validation::CheckedSpanBytes(
-            model->numsurfs,
-            4u,
-            &materialBytes)
-        || !db::validation::CheckedSpanBytes(
-            model->numBones,
-            40u,
-            &boneInfoBytes)
-        || !DB_ValidateMaterializedBlock4Span(
-            model->boneNames,
-            boneNameBytes,
-            2,
-            "model bone names")
-        || !DB_ValidateMaterializedBlock4Span(
-            model->parentList,
-            parentListBytes,
-            1,
-            "model parent list")
-        || !DB_ValidateMaterializedBlock4Span(
-            model->quats,
-            quaternionBytes,
-            2,
-            "model quaternions")
-        || !DB_ValidateMaterializedBlock4Span(
-            model->trans,
-            translationBytes,
-            4,
-            "model translations")
-        || !DB_ValidateMaterializedBlock4Span(
-            model->partClassification,
-            classificationBytes,
-            1,
-            "model part classifications")
-        || !DB_ValidateMaterializedBlock4Span(
-            model->baseMat,
-            baseMatrixBytes,
-            4,
-            "model base matrices")
-        || !DB_ValidateMaterializedBlock4Span(
-            model->surfs,
-            surfaceBytes,
-            4,
-            "model surfaces")
-        || !DB_ValidateMaterializedBlock4Span(
-            model->materialHandles,
-            materialBytes,
-            4,
-            "model materials")
-        || !DB_ValidateMaterializedBlock4Span(
-            model->boneInfo,
-            boneInfoBytes,
-            4,
-            "model bone info")
-        || !DB_ValidateMaterializedBlock4Span(
-            model->collSurfs,
-            collisionSurfaceBytes,
-            4,
-            "model collision surfaces")
-        || !db::validation::XModelPartClassificationsValid(
-            model->partClassification,
-            model->numBones)
-        || !db::validation::FiniteFloatArray(
-            model->trans,
-            3u * nonRootBoneCount)
-        || !db::validation::XModelBasePoseValid(
-            model->baseMat,
-            model->numBones)
-        || !db::validation::XModelBoneInfoValid(
-            model->boneInfo,
-            model->numBones)
-        || !db::validation::XModelBoundsValid(
-            model->mins,
-            model->maxs,
-            model->radius))
+    if (model
+        && (!db::validation::CheckedSpanBytes(
+                model->numsurfs,
+                56u,
+                &surfaceBytes)
+            || !db::validation::CheckedSpanBytes(
+                model->numsurfs,
+                4u,
+                &materialBytes)
+            || !DB_ValidateMaterializedBlock4Span(
+                model->surfs,
+                surfaceBytes,
+                4,
+                "model surfaces")
+            || !DB_ValidateMaterializedBlock4Span(
+                model->materialHandles,
+                materialBytes,
+                4,
+                "model materials")
+            || !DB_ValidateMaterializedBlock4Span(
+                model->collSurfs,
+                collisionSurfaceBytes,
+                4,
+                "model collision surfaces")))
     {
         Com_Error(ERR_DROP, "Invalid completed fast-file model array span");
         return false;
     }
-
-    for (uint32_t child = 0u; child < nonRootBoneCount; ++child)
-    {
-        const uint32_t boneIndex = model->numRootBones + child;
-        const uint32_t parentOffset = model->parentList[child];
-        if (!parentOffset || parentOffset > boneIndex)
-        {
-            Com_Error(ERR_DROP, "Invalid fast-file model parent relationship");
-            return false;
-        }
-    }
-
-    uint32_t expectedSurfaceIndex = 0u;
-    for (uint32_t lod = 0u;
-         lod < static_cast<uint32_t>(model->numLods);
-         ++lod)
-    {
-        const XModelLodInfo &lodInfo = model->lodInfo[lod];
-        uint32_t lodPartBits[4] = {};
-        std::memcpy(lodPartBits, lodInfo.partBits, sizeof(lodPartBits));
-        if (lodInfo.surfIndex != expectedSurfaceIndex
-            || !db::validation::XModelLodLayoutValid(
-                lod,
-                lodInfo.surfIndex,
-                lodInfo.numsurfs,
-                model->numsurfs,
-                lodInfo.lod,
-                lodInfo.dist,
-                model->numBones,
-                lodPartBits)
-            || lodInfo.numsurfs > model->numsurfs - expectedSurfaceIndex)
-        {
-            Com_Error(ERR_DROP, "Invalid completed fast-file model LOD");
-            return false;
-        }
-        const float previousLodDistance = lod > 0u
-            ? model->lodInfo[lod - 1u].dist
-            : 0.0f;
-        if (!db::validation::XModelLodDistanceFollows(
-                previousLodDistance,
-                lodInfo.dist))
-        {
-            Com_Error(ERR_DROP, "Fast-file model LOD distances are not monotonic");
-            return false;
-        }
-
-        uint32_t lodVertexCount = 0u;
-        uint32_t lodTriangleCount = 0u;
-        if (!db::validation::XModelLodSurfaceCacheLayoutValid(
-                &model->surfs[lodInfo.surfIndex],
-                lodInfo.numsurfs,
-                &lodVertexCount,
-                &lodTriangleCount)
-            || !db::validation::XModelStaticCacheLayoutValid(
-                lodInfo.smcIndexPlusOne,
-                lodInfo.smcAllocBits,
-                lodVertexCount,
-                lodTriangleCount))
-        {
-            Com_Error(ERR_DROP, "Invalid completed fast-file model cache layout");
-            return false;
-        }
-        for (uint32_t surface = 0u;
-             surface < lodInfo.numsurfs;
-             ++surface)
-        {
-            const XSurface &xsurface =
-                model->surfs[lodInfo.surfIndex + surface];
-            for (uint32_t word = 0u; word < 4u; ++word)
-            {
-                if ((static_cast<uint32_t>(xsurface.partBits[word])
-                        & ~lodPartBits[word]) != 0u)
-                {
-                    Com_Error(
-                        ERR_DROP,
-                        "Model surface bones escape its LOD part bits");
-                    return false;
-                }
-            }
-        }
-        expectedSurfaceIndex += lodInfo.numsurfs;
-    }
-    if (expectedSurfaceIndex != model->numsurfs)
-    {
-        Com_Error(ERR_DROP, "Fast-file model LODs do not cover its surfaces");
-        return false;
-    }
-    for (uint32_t surface = 0u; surface < model->numsurfs; ++surface)
-    {
-        if (!model->materialHandles[surface])
-        {
-            Com_Error(ERR_DROP, "Fast-file model surface has no material");
-            return false;
-        }
-    }
-    uint32_t aggregateCollisionContents = 0u;
-    for (int32_t surface = 0;
-         surface < model->numCollSurfs;
-         ++surface)
-    {
-        const XModelCollSurf_s &collision = model->collSurfs[surface];
-        uint32_t triangleBytes = 0u;
-        if (!db::validation::CountInRange(
-                collision.numCollTris,
-                1,
-                UINT16_MAX)
-            || !collision.collTris
-            || !db::validation::CheckedSpanBytes(
-                static_cast<uint32_t>(collision.numCollTris),
-                48u,
-                &triangleBytes)
-            || !DB_ValidateMaterializedBlock4Span(
-                collision.collTris,
-                triangleBytes,
-                4,
-                "model collision triangles")
-            || !db::validation::FiniteFloatArray(collision.mins, 3)
-            || !db::validation::FiniteFloatArray(collision.maxs, 3)
-            || (collision.contents != 0
-                && (collision.boneIdx < 0
-                    || collision.boneIdx >= model->numBones)))
-        {
-            Com_Error(ERR_DROP, "Invalid completed model collision graph");
-            return false;
-        }
-        aggregateCollisionContents |= static_cast<uint32_t>(
-            collision.contents);
-        for (uint32_t axis = 0u; axis < 3u; ++axis)
-        {
-            if (collision.mins[axis] > collision.maxs[axis])
-            {
-                Com_Error(ERR_DROP, "Invalid completed model collision bounds");
-                return false;
-            }
-        }
-        for (int32_t triangle = 0;
-             triangle < collision.numCollTris;
-             ++triangle)
-        {
-            if (!db::validation::FiniteFloatArray(
-                    collision.collTris[triangle].plane,
-                    12))
-            {
-                Com_Error(ERR_DROP, "Invalid completed model collision triangle");
-                return false;
-            }
-        }
-    }
-    if (static_cast<uint32_t>(model->contents)
-        != aggregateCollisionContents)
-    {
-        Com_Error(ERR_DROP, "Fast-file model collision contents are inconsistent");
-        return false;
-    }
-    return true;
+    return DB_ValidateXModelGraph(
+        model,
+        boneNameBytes,
+        parentListBytes,
+        quaternionBytes,
+        translationBytes,
+        classificationBytes,
+        baseMatrixBytes);
 }
 
 bool __cdecl Load_XModel(bool atStreamStart)
