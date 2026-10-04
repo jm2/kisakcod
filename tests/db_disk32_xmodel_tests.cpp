@@ -10,6 +10,7 @@
 #include <database/db_disk32_mirrors.h>
 #include <database/db_load_legacy_bridge.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 
@@ -306,6 +307,18 @@ const Malformed kMalformed[] = {
     {"unmapped model alias", [] {}, "alias offset"},
 };
 
+// A body that fails without raising must still drop: the pointer step raises
+// for it. A model with no name fails DB_ValidateXModelGraph's first check,
+// which returns false without raising.
+void TestSilentBodyFailureDrops()
+{
+    Zone zone;
+    File().Whole();
+    std::fill_n(g_file.begin(), 4, std::uint8_t{0});           // a null name token
+    g_file.erase(g_file.begin() + 220, g_file.begin() + 224); // and no name text
+    ExpectDrop("a model whose body fails without raising", "fast-file model", [] { Load(kInline); });
+}
+
 void TestMalformedFailsClosed()
 {
     for (const Malformed &test : kMalformed)
@@ -377,5 +390,6 @@ void __cdecl DB_LoadedExternalData(std::int32_t)
 
 int main()
 {
-    return Run({TestWholeModel, TestTwoSurfaces, TestNamedArraysAndPreset, TestMalformedFailsClosed});
+    return Run({TestWholeModel, TestTwoSurfaces, TestNamedArraysAndPreset, TestSilentBodyFailureDrops,
+                TestMalformedFailsClosed});
 }
