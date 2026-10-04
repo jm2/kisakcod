@@ -27,7 +27,7 @@
     exactly as build-win.bat. Other available targets include KisakCOD-sp.
 
 .PARAMETER Generator
-    CMake generator. Defaults to "Visual Studio 17 2022".
+    CMake generator. Defaults to "Visual Studio 18 2026".
 
 .PARAMETER BuildDir
     Out-of-source build directory. Defaults to ".\build".
@@ -75,7 +75,7 @@ param(
 
     [string[]]$Targets = @('KisakCOD-mp', 'KisakCOD-dedi'),
 
-    [string]$Generator = 'Visual Studio 17 2022',
+    [string]$Generator = 'Visual Studio 18 2026',
 
     [string]$BuildDir = 'build',
 

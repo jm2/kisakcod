@@ -26,8 +26,8 @@ servers, and unmodified Steam 1.8 clients must join KisakCOD servers.
 
 ## Current Requirements
 - Windows OS
-- Visual Studio 2022
-- CMake >= 3.16
+- Visual Studio 2026
+- CMake >= 4.2
 - [DirectX SDK 2010](https://www.microsoft.com/en-us/download/details.aspx?id=6812)
 - Steam with a copy of [Call of Duty 4](https://store.steampowered.com/app/7940/Call_of_Duty_4_Modern_Warfare_2007/)
 
