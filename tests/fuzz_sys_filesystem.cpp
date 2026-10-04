@@ -42,6 +42,7 @@
 #include <filesystem>
 #include <random>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #if defined(_WIN32)
@@ -204,13 +205,30 @@ bool CreateSymlink(const std::string &link, const std::string &target, const boo
 #endif
 }
 
+std::uint64_t ProcessId()
+{
+#if defined(_WIN32)
+    return GetCurrentProcessId();
+#else
+    return static_cast<std::uint64_t>(getpid());
+#endif
+}
+
+// Says which setup step failed and why, so a CI failure explains itself.
+bool SetupFailed(const char *const step, const std::error_code &ec)
+{
+    std::fprintf(stderr, "fuzz_sys_filesystem: sandbox %s failed: %s\n",
+        step, ec ? ec.message().c_str() : "no error code");
+    return false;
+}
+
 bool SetupSandbox(Sandbox *const sandbox)
 {
     std::error_code ec;
     std::filesystem::path base =
         std::filesystem::temp_directory_path(ec);
     if (ec)
-        return false;
+        return SetupFailed("temp directory", ec);
     // The no-follow service rejects any path behind a symlinked
     // ancestor by design, and on macOS temp_directory_path() returns a
     // /var/... path where /var is a symlink to private/var — so a
@@ -225,11 +243,24 @@ bool SetupSandbox(Sandbox *const sandbox)
         if (!resolveEc && !resolved.empty())
             base = resolved;
     }
-    const auto tick = std::chrono::steady_clock::now()
-        .time_since_epoch().count();
-    const std::string unique = "kisakcod-fuzz-fs-"
-        + std::to_string(tick);
-    sandbox->root = (base / unique).string();
+    // The seeds and random runs start together under ctest -j: the name
+    // carries the PID as well as the clock, and the root is created
+    // exclusively, so two runs never share (or tear down) one sandbox.
+    bool created = false;
+    for (int attempt = 0; attempt < 16 && !created; ++attempt)
+    {
+        const auto tick = std::chrono::steady_clock::now()
+            .time_since_epoch().count();
+        const std::filesystem::path root = base / ("kisakcod-fuzz-fs-"
+            + std::to_string(ProcessId()) + "-" + std::to_string(tick)
+            + "-" + std::to_string(attempt));
+        ec.clear();
+        created = std::filesystem::create_directory(root, ec) && !ec;
+        if (created)
+            sandbox->root = root.string();
+    }
+    if (!created)
+        return SetupFailed("root creation", ec);
     sandbox->nested = Join(sandbox->root, "nested");
     sandbox->outside = Join(sandbox->root, "outside");
     sandbox->payloadPath = Join(sandbox->nested, "payload.bin");
@@ -240,23 +271,23 @@ bool SetupSandbox(Sandbox *const sandbox)
     for (std::size_t i = 0; i < sandbox->payload.size(); ++i)
         sandbox->payload[i] = static_cast<unsigned char>(i * 31u + (i >> 9));
 
-    if (!std::filesystem::create_directories(
+    if (!std::filesystem::create_directory(
             std::filesystem::path(sandbox->nested), ec)
         || ec)
-        return false;
+        return SetupFailed("nested directory", ec);
     ec.clear();
-    if (!std::filesystem::create_directories(
+    if (!std::filesystem::create_directory(
             std::filesystem::path(sandbox->outside), ec)
         || ec)
-        return false;
+        return SetupFailed("outside directory", ec);
     if (!WriteBytesNative(sandbox->payloadPath, sandbox->payload))
-        return false;
+        return SetupFailed("payload write", ec);
     if (!WriteBytesNative(sandbox->emptyPath, {}))
-        return false;
+        return SetupFailed("empty-file write", ec);
     if (!WriteBytesNative(sandbox->secretPath, {
             g_secretBytes.begin(), g_secretBytes.end()}))
     {
-        return false;
+        return SetupFailed("secret write", ec);
     }
 
     sandbox->leafLink = Join(sandbox->nested, "leaf-link.bin");
