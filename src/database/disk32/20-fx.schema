@@ -1,5 +1,66 @@
-# FX (FxEffectDef), asset type 0x19. The format is described in
-# ../db_disk32.schema. The body is custom (db_disk32_fx.cpp).
+# FX (FxEffectDef), asset type 0x19, and the element records it holds inline.
+# The format is described in ../db_disk32.schema. The body is custom
+# (db_disk32_fx.cpp): as in the 32-bit loader, any non-null element, sample,
+# visual or trail token means its records follow inline. Samples hold no
+# pointer and stay in block 4.
+
+record FxFloatRange 0x08 runtime=FxFloatRange header=EffectsCore/fx_effect_def.h copy=scalars
+    0x00 base                    f32
+    0x04 amplitude               f32
+
+record FxIntRange 0x08 runtime=FxIntRange header=EffectsCore/fx_effect_def.h copy=scalars
+    0x00 base                    i32
+    0x04 amplitude               i32
+
+# Looping elements read it as an interval and a count, one-shot elements as a
+# count range; both views share the two words.
+record FxSpawnDefLooping 0x08 runtime=FxSpawnDefLooping header=EffectsCore/fx_effect_def.h copy=scalars
+    0x00 intervalMsec            i32
+    0x04 count                   i32
+
+record FxElemDef 0xFC runtime=FxElemDef header=EffectsCore/fx_effect_def.h copy=scalars
+    0x00 flags                   i32
+    0x04 spawn                   struct    of=FxSpawnDefLooping
+    0x0C spawnRange              struct    of=FxFloatRange
+    0x14 fadeInRange             struct    of=FxFloatRange
+    0x1C fadeOutRange            struct    of=FxFloatRange
+    0x24 spawnFrustumCullRadius  f32
+    0x28 spawnDelayMsec          struct    of=FxIntRange
+    0x30 lifeSpanMsec            struct    of=FxIntRange
+    0x38 spawnOrigin             struct[3] of=FxFloatRange
+    0x50 spawnOffsetRadius       struct    of=FxFloatRange
+    0x58 spawnOffsetHeight       struct    of=FxFloatRange
+    0x60 spawnAngles             struct[3] of=FxFloatRange
+    0x78 angularVelocity         struct[3] of=FxFloatRange
+    0x90 initialRotation         struct    of=FxFloatRange
+    0x98 gravity                 struct    of=FxFloatRange
+    0xA0 reflectionFactor        struct    of=FxFloatRange
+    0xA8 atlas.behavior          u8
+    0xA9 atlas.index             u8
+    0xAA atlas.fps               u8
+    0xAB atlas.loopCount         u8
+    0xAC atlas.colIndexBits      u8
+    0xAD atlas.rowIndexBits      u8
+    0xAE atlas.entryCount        i16
+    0xB0 elemType                u8
+    0xB1 visualCount             u8
+    0xB2 velIntervalCount        u8
+    0xB3 visStateIntervalCount   u8
+    0xB4 velSamples              pointer   # velIntervalCount + 1 96-byte samples
+    0xB8 visSamples              pointer   # visStateIntervalCount + 1 48-byte samples
+    0xBC visuals                 pointer   # one visual, or visualCount of them, by elemType
+    0xC0 collMins                f32[3]
+    0xCC collMaxs                f32[3]
+    0xD8 effectOnImpact          pointer   # an effect name
+    0xDC effectOnDeath           pointer   # an effect name
+    0xE0 effectEmitted           pointer   # an effect name
+    0xE4 emitDist                struct    of=FxFloatRange
+    0xEC emitDistVariance        struct    of=FxFloatRange
+    0xF4 trailDef                pointer
+    0xF8 sortOrder               u8
+    0xF9 lightingFrac            u8
+    0xFA useItemClip             u8
+    0xFB unused                  u8[1]
 
 record FxEffectDef 0x20 runtime=FxEffectDef header=EffectsCore/fx_effect_def.h copy=scalars
     asset member=fx pool=Load_FxEffectDefAsset kind=FxEffectDef alias=inserted body=custom label=effect slot=const
