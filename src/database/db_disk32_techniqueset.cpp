@@ -9,14 +9,18 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 
 // TechniqueSet, a wave-3 parse family (docs/design/FASTFILE_LOADER.md). The
-// body mirrors Load_MaterialTechniqueSet, Load_MaterialTechnique and
-// Load_MaterialPass: the set streams into the temp block, then with block 4
-// pushed its name and each technique, a completed object streamed 4-aligned
-// in block 4 and converted into native storage with its passes. Offset tokens
-// naming a technique, and the passes' vertex declarations, shaders and
-// arguments, are not converted yet and fail closed; so does every technique.
+// body mirrors Load_MaterialTechniqueSet, Load_MaterialTechnique,
+// Load_MaterialPass, Load_MaterialVertexDeclaration and the shader loads as
+// the headless server runs them: the set streams into the temp block, then
+// with block 4 pushed its name and each technique. A technique, a vertex
+// declaration and a shader are completed objects streamed 4-aligned in block 4
+// and converted into native storage; no 64-bit target builds renderer
+// declarations or shaders, so their handles stay null. Offset tokens naming a
+// completed object, and shader arguments, are not converted yet and fail
+// closed; so does every technique, as a pass needs arguments.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -53,6 +57,90 @@ bool LoadCompleted(disk32::PointerToken token, DBAliasKind kind, std::uint32_t m
     return true;
 }
 
+// Load_MaterialVertexDeclaration, as headless: the routing table converts and
+// the runtime handles are null.
+bool ConvertVertexDecl(std::uint8_t *record, MaterialVertexDeclaration **out, std::uint32_t *bytes)
+{
+    disk32::MaterialVertexDeclarationDisk32 disk{};
+    if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
+        return false;
+    std::memcpy(&disk, record, sizeof(disk));
+    MaterialVertexDeclaration *const decl = AllocNative<MaterialVertexDeclaration>(1);
+    if (!decl)
+        return false;
+    *decl = {};
+    decl->streamCount = disk.streamCount;
+    std::memcpy(decl->routing.data, disk.routing.data, sizeof(decl->routing.data));
+    if (!DB_ValidateMaterialVertexDeclaration(decl))
+        return false;
+    decl->isLoaded = true;
+    for (std::uint32_t index = 0; index < decl->streamCount; ++index)
+        decl->hasOptionalSource = decl->hasOptionalSource || decl->routing.data[index].source >= 5;
+    *out = decl;
+    *bytes = sizeof(disk);
+    return true;
+}
+
+// Load_GfxVertexShaderLoadDef or its pixel twin: the load definition's rule,
+// then the program DWORDs 4-aligned in block 4 and their bytecode check.
+template <typename Disk, typename LoadDef>
+bool LoadProgram(const Disk &disk, LoadDef *out, db::validation::D3D9ShaderStage stage, const char *description)
+{
+    out->programSize = disk.programSize;
+    out->loadForRenderer = disk.loadForRenderer;
+    // The rule checks only whether a program token is present.
+    if (!DB_ValidateMaterialShaderLoadDef(disk.program.token.isNull() ? nullptr : &disk, disk.programSize,
+                                          disk.loadForRenderer, description))
+    {
+        return false;
+    }
+    std::uint8_t *const program = DB_AllocStreamPos(3);
+    if (!StreamBytes(program, static_cast<std::int32_t>(disk.programSize * sizeof(std::uint32_t))))
+        return false;
+    out->program = program;
+    return DB_ValidateMaterialShaderProgram(program, disk.programSize, stage, disk.loadForRenderer, description);
+}
+
+// A shader's name rules: a token before it loads, and text after.
+bool LoadShaderName(disk32::Ptr32<const char> token, const char **out, bool vertex)
+{
+    if (token.token.isNull())
+        return Drop(vertex ? "Fast-file vertex shader has no name" : "Fast-file pixel shader has no name");
+    if (!LoadXString(token, out))
+        return false;
+    if (!*out || !**out)
+        return Drop("Fast-file shader has no completed name");
+    return true;
+}
+
+// Load_MaterialVertexShader or Load_MaterialPixelShader, as headless: the name
+// rules, then the program; the runtime handle stays null.
+template <typename Native, typename Disk>
+bool ConvertShader(std::uint8_t *record, Native **out, std::uint32_t *bytes)
+{
+    constexpr bool kVertex = std::is_same_v<Native, MaterialVertexShader>;
+    const char *const description = kVertex ? "vertex shader" : "pixel shader";
+    Disk disk{};
+    if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
+        return false;
+    std::memcpy(&disk, record, sizeof(disk));
+    Native *const shader = AllocNative<Native>(1);
+    if (!shader)
+        return false;
+    *shader = {};
+    if (!LoadShaderName(disk.name, &shader->name, kVertex))
+        return false;
+    if (!LoadProgram(disk, &shader->prog.loadDef,
+                     kVertex ? db::validation::D3D9ShaderStage::Vertex : db::validation::D3D9ShaderStage::Pixel,
+                     description))
+    {
+        return false;
+    }
+    *out = shader;
+    *bytes = sizeof(disk);
+    return true;
+}
+
 // Load_MaterialPass on one retail pass: its header rule, then its objects.
 bool LoadPass(const disk32::MaterialPassDisk32 &disk, MaterialPass *out)
 {
@@ -63,7 +151,19 @@ bool LoadPass(const disk32::MaterialPassDisk32 &disk, MaterialPass *out)
     {
         return Drop("Invalid fast-file material pass header");
     }
-    return Drop("Fast-file material vertex declarations are not converted yet");
+    out->args = nullptr;
+    if (!LoadCompleted(disk.vertexDecl.token, DBAliasKind::MaterialVertexDeclaration,
+                       disk32::kMaterialVertexDeclarationBytes, &out->vertexDecl, ConvertVertexDecl)
+        || !LoadCompleted(disk.vertexShader.token, DBAliasKind::MaterialVertexShader, disk32::kMaterialVertexShaderBytes,
+                          &out->vertexShader, ConvertShader<MaterialVertexShader, disk32::MaterialVertexShaderDisk32>)
+        || !LoadCompleted(disk.pixelShader.token, DBAliasKind::MaterialPixelShader, disk32::kMaterialPixelShaderBytes,
+                          &out->pixelShader, ConvertShader<MaterialPixelShader, disk32::MaterialPixelShaderDisk32>))
+    {
+        return false;
+    }
+    if (out->vertexShader->prog.loadDef.loadForRenderer != out->pixelShader->prog.loadDef.loadForRenderer)
+        return Drop("Fast-file material pass mixes renderer shader variants");
+    return Drop("Fast-file material shader arguments are not converted yet");
 }
 
 // Load_MaterialPassArray: the passes already streamed after the header.
