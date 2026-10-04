@@ -1,7 +1,7 @@
 // db_disk32_material_tests.cpp: the 64-bit Material loader (NOW row 12) on
 // hand-built disk32 zone images (disk32_fixture.hpp), with TechniqueSet's real
-// steps for the technique sets. Beyond the fixture's seams, only the two asset
-// pools are replaced. Texture tables are not converted yet.
+// and Image's steps for the references. Beyond the fixture's seams, only the
+// three asset pools and the external-data count are replaced.
 
 #include "disk32_fixture.hpp"
 
@@ -17,6 +17,8 @@ using namespace disk32_test;
 
 Material g_pool[4];
 MaterialTechniqueSet g_sets[2];
+GfxImage g_images[4];
+int g_imageCount = 0;
 int g_materials = 0;
 int g_setCount = 0;
 
@@ -46,6 +48,33 @@ struct File : FileBuilder<File>
             Word(0);
         return *this;
     }
+    File &Texture(std::uint32_t hash, std::uint32_t semantic, std::uint32_t token, std::uint32_t sampler = 1)
+    {
+        return Word(hash).Word(0x0201u | sampler << 16 | semantic << 24).Word(token);
+    }
+    // A 36-byte image with no texture: a water image of `size` squared unless
+    // `semantic` says otherwise.
+    File &Image(std::uint32_t size, std::uint32_t semantic = 11)
+    {
+        Word(3).Word(0).Word(semantic << 24).Word(0).Word(0).Word(0).Word(size | size << 16).Word(0x00050001u);
+        return Word(kInline).Text("img");
+    }
+    // A 68-byte water of `size` squared samples, then its samples, then its
+    // image; a bad amplitude or frequency is non-finite or negative.
+    File &Water(std::uint32_t size, std::uint32_t h0 = kInline, bool badAmplitude = false, bool badFrequency = false,
+                std::uint32_t imageSize = 0)
+    {
+        Word(0).Word(h0).Word(kInline).Word(size).Word(size).Float(64).Float(64).Float(9.8f).Float(2).Float(1).Float(0);
+        Float(0.5f).Float(1).Float(2).Float(3).Float(4).Word(kInline);
+        if (!h0)
+            return *this;
+        const float first = badAmplitude ? (std::numeric_limits<float>::infinity)() : 0.5f;
+        for (std::uint32_t n = 0; n < size * size; ++n)
+            Float(n ? 0.25f : first).Float(0);
+        for (std::uint32_t n = 0; n < size * size; ++n)
+            Float(badFrequency && n == 3 ? -1.f : static_cast<float>(n));
+        return Image(imageSize ? imageSize : size);
+    }
     File &Constant(std::uint32_t hash, float value)
     {
         Word(hash).Word(0x6162'6300).Word(0).Word(0);
@@ -67,7 +96,7 @@ bool Is(const Zone &zone, const char *text, const char *expected)
 
 void Reset()
 {
-    g_materials = g_setCount = 0;
+    g_materials = g_setCount = g_imageCount = 0;
 }
 
 void ExpectScalars(const ::Material &material)
@@ -124,6 +153,50 @@ void ExpectNamed(const ::Material &a, const ::Material &b, const ::Material &c)
            "present but empty tables become null");
 }
 
+void ExpectWater(const Zone &zone, const water_t *water);
+
+// The texture table TestTextures builds: an image, then a water.
+void ExpectTextures(const Zone &zone, const MaterialTextureDef *textures)
+{
+    const MaterialTextureDef &image = textures[0];
+    Expect(image.nameHash == 5 && image.nameStart == 1 && image.nameEnd == 2 && image.samplerState == 1
+               && image.semantic == 2 && image.u.image == &g_images[0],
+           "an image texture converts, its image loading through Image's step");
+    ExpectWater(zone, textures[1].u.water);
+}
+
+// The water TestTextures builds: 4 x 4 samples.
+void ExpectWater(const Zone &zone, const water_t *water)
+{
+    if (!InArena(water))
+        return Expect(false, "a water converts into native storage");
+    Expect(water->M == 4 && water->N == 4 && water->amplitude == 0.5f && water->codeConstant[3] == 4.f
+               && water->writable.floatTime == -3.402823466e+38F,
+           "a water's scalars convert, its clock reset");
+    Expect(water->H0 == reinterpret_cast<const complex_s *>(zone.virt + 100) && water->H0[0].real == 0.5f
+               && water->wTerm == reinterpret_cast<const float *>(zone.virt + 228) && water->wTerm[15] == 15.f
+               && water->image == &g_images[1],
+           "its samples stay in block 4 after it, and its image loads");
+}
+
+void TestTextures()
+{
+    Zone zone;
+    Reset();
+    // Block 4: "m" (0..2), "s" (2..4), the table (4..28), the first image's
+    // name (28..32), the water (32..100), its amplitudes (100..228) and
+    // frequencies (228..292), then its image's name. Records use the temp block.
+    File().Material(kInline, kInline, 0, 0, 0, 0, 7, kInline, 2).Text("m").Set(kInline).Text("s");
+    File().Texture(5, 2, kInline).Texture(9, 11, kInline).Image(8, 2).Water(4);
+    File().Material(kInline, kInline, 0, 0, 0, 0, 7, VirtualOffset(4), 2).Text("n").Set(kInline).Text("t");
+    const ::Material *const material = Load(kInline);
+    Expect(material == &g_pool[0] && g_imageCount == 2 && InArena(material->textureTable), "a textured material publishes");
+    if (material == &g_pool[0] && InArena(material->textureTable))
+        ExpectTextures(zone, material->textureTable);
+    Expect(Load(kInline) == &g_pool[1] && g_pool[1].textureTable == material->textureTable && g_read == g_file.size(),
+           "a texture-table offset resolves to the earlier native table");
+}
+
 void TestSharedAndOffsets()
 {
     Zone zone;
@@ -155,13 +228,34 @@ struct Malformed
     const char *error;
 };
 
+// A material with `count` textures, up to its texture table.
+File Textured(std::uint32_t count = 1)
+{
+    File().Material(kInline, kInline, 0, 0, 0, 0, 7, kInline, count).Text("m").Set(kInline).Text("s");
+    return File();
+}
+
 const Malformed kMalformed[] = {
     {"truncated record", [] { File().Word(kInline).Word(0); }, "ended unexpectedly"},
     {"constants without a table", [] { File().Material(kInline, kInline, 0, 1, 0, 0); }, "material tables"},
     {"states without a table", [] { File().Material(kInline, kInline, 0, 0, 0, 2); }, "material tables"},
     {"textures without a table", [] { File().Material(kInline, kInline, 0, 0, 0, 0, 7, 0, 1); }, "material tables"},
-    {"a texture table", [] { File().Material(kInline, kInline, 0, 0, 0, 0, 7, kInline, 1).Text("m").Set(kInline)
-                                 .Text("s"); }, "texture tables are not converted"},
+    {"texture without a payload", [] { Textured().Texture(5, 2, 0); }, "texture header"},
+    {"texture semantic 12", [] { Textured().Texture(5, 12, kInline); }, "texture header"},
+    {"texture without a filter", [] { Textured().Texture(5, 2, kInline, 0x08); }, "texture header"},
+    {"unordered textures", [] { Textured(2).Texture(9, 2, kInline).Texture(5, 2, kInline).Image(4, 2).Image(4, 2); },
+     "Unordered"},
+    {"unmapped image offset", [] { Textured().Texture(5, 2, VirtualOffset(512)); }, "alias offset"},
+    {"water grid of 3", [] { Textured().Texture(5, 11, kInline).Water(3, kInline); }, "water header"},
+    {"water without amplitudes", [] { Textured().Texture(5, 11, kInline).Water(4, 0); }, "water header"},
+    {"non-finite amplitude", [] { Textured().Texture(5, 11, kInline).Water(4, kInline, true); }, "frequency data"},
+    {"negative frequency", [] { Textured().Texture(5, 11, kInline).Water(4, kInline, false, true); }, "frequency data"},
+    {"water image of another size", [] { Textured().Texture(5, 11, kInline).Water(4, kInline, false, false, 8); }, "image contract"},
+    {"unmapped water offset", [] { Textured().Texture(5, 11, VirtualOffset(512)); }, "alias offset"},
+    {"texture table offset of another length", [] { Textured().Texture(5, 2, kInline).Image(4, 2);
+         File().Material(kInline, kInline, 0, 0, 0, 0, 7, VirtualOffset(4), 2).Text("n").Set(kInline).Text("t");
+         Load(kInline); g_published = 0; },
+     "alias offset"},
     {"null name", [] { File().Material(0, kInline, 0, 0, 0, 0).Set(kInline).Text("s"); }, "semantics"},
     {"sort key 64", [] { File().Material(kInline, kInline, 0, 0, 0, 0, 64).Text("m").Set(kInline).Text("s"); },
      "semantics"},
@@ -209,6 +303,17 @@ void __cdecl Load_MaterialAsset(XAssetHeader *header)
     header->material = &entry;
 }
 
+void __cdecl Load_GfxImageAsset(XAssetHeader *header)
+{
+    g_images[g_imageCount] = *header->image;
+    header->image = &g_images[g_imageCount++];
+}
+
+void __cdecl DB_LoadedExternalData(std::int32_t)
+{
+    Expect(false, "an image with no texture accounts no external data");
+}
+
 void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *header)
 {
     // DB_MediaRemapTechniqueSet leaves an unremapped set naming itself.
@@ -220,5 +325,5 @@ void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestInlineMaterial, TestSharedAndOffsets, TestMalformedFailsClosed});
+    return Run({TestInlineMaterial, TestTextures, TestSharedAndOffsets, TestMalformedFailsClosed});
 }

@@ -1,7 +1,8 @@
 # Material, asset type 0x04, and its info record. The format is described in
 # ../db_disk32.schema. The body is custom (db_disk32_material.cpp): the
-# technique set loads through TechniqueSet's pointer step, and the constant and
-# state-bit tables keep their layout and stay in block 4.
+# technique set loads through TechniqueSet's pointer step, the texture table
+# and each water are completed objects, and the constant and state-bit tables
+# keep their layout and stay in block 4.
 
 record MaterialInfo 0x18 runtime=MaterialInfo header=gfx_d3d/r_material.h copy=scalars
     0x00 name                    xstring
@@ -12,6 +13,33 @@ record MaterialInfo 0x18 runtime=MaterialInfo header=gfx_d3d/r_material.h copy=s
     0x08 drawSurf                u64
     0x10 surfaceTypeBits         u32
     0x14 hashIndex               u16
+
+# A texture: its name hash and bounds, sampler state and semantic, then an
+# image token, or a water token when the semantic is TS_WATER_MAP (11).
+record MaterialTextureDef 0x0C runtime=MaterialTextureDef header=gfx_d3d/r_material.h copy=scalars
+    0x00 nameHash                u32
+    0x04 nameStart               u8
+    0x05 nameEnd                 u8
+    0x06 samplerState            u8
+    0x07 semantic                u8
+    0x08 u.image                 pointer  asset=GfxImage  # or u.water
+
+# Water: its M x N amplitudes and frequencies follow it in block 4, and keep
+# their layout; its image loads through Image's pointer step.
+record water_t 0x44 runtime=water_t header=gfx_d3d/r_water.h copy=scalars
+    0x00 writable.floatTime      f32
+    0x04 H0                      pointer
+    0x08 wTerm                   pointer
+    0x0C M                       i32
+    0x10 N                       i32
+    0x14 Lx                      f32
+    0x18 Lz                      f32
+    0x1C gravity                 f32
+    0x20 windvel                 f32
+    0x24 winddir                 f32[2]
+    0x2C amplitude               f32
+    0x30 codeConstant            f32[4]
+    0x40 image                   pointer  asset=GfxImage
 
 record Material 0x50 runtime=Material header=gfx_d3d/r_material.h copy=scalars
     asset member=material pool=Load_MaterialAsset kind=Material alias=inserted body=custom label=material
