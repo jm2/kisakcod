@@ -18,10 +18,10 @@
 // their layout: -1 streams them at their retail alignment (vertices in block
 // 7, indices in block 8) and any other token names bytes already there; bone
 // names become interned script-string ids. Surfaces, material handles,
-// rigid-vertex lists and collision trees convert into native storage (the
-// lists and trees as completed objects); materials and the preset load
-// through their families' pointer steps. Collision surfaces and physics
-// geometry are not converted yet and fail closed.
+// rigid-vertex lists, collision trees and collision surfaces convert into
+// native storage (the lists and trees as completed objects); materials and
+// the preset load through their families' pointer steps. Physics geometry
+// is not converted yet and fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -299,12 +299,49 @@ bool LoadMaterials(const disk32::XModelDisk32 &disk, XModel *out)
     return true;
 }
 
+// Load_XModelCollSurf on one retail surface: its count rule, then its
+// triangles 4-aligned in block 4, which keep their layout. The rest of its
+// rules are DB_ValidateXModelGraph's.
+bool LoadCollisionSurface(const disk32::XModelCollSurfDisk32 &disk, XModelCollSurf_s *out)
+{
+    if (!db::validation::CountInRange(disk.numCollTris, 1, UINT16_MAX) || disk.collTris.token.isNull())
+        return Drop("Invalid fast-file model collision surface");
+    CopyXModelCollSurfScalars(disk, out);
+    const disk32::PointerToken inlineToken{disk32::kInline};
+    return LoadSpan(inlineToken, static_cast<std::uint32_t>(disk.numCollTris) * sizeof(XModelCollTri_s), 4,
+                    &out->collTris);
+}
+
+// Load_XModelCollSurfArray: any non-null token means numCollSurfs retail
+// surfaces follow, 4-aligned in block 4; each converts into native storage.
+bool LoadCollisionSurfaces(const disk32::XModelDisk32 &disk, XModel *out)
+{
+    if (disk.collSurfs.token.isNull())
+        return true;
+    constexpr auto kSurfaceBytes = sizeof(disk32::XModelCollSurfDisk32);
+    const auto count = static_cast<std::uint32_t>(disk.numCollSurfs);
+    std::uint8_t *const record = DB_AllocStreamPos(3);
+    if (!StreamBytes(record, static_cast<std::int32_t>(count * kSurfaceBytes)))
+        return false;
+    out->collSurfs = AllocNative<XModelCollSurf_s>(static_cast<std::int32_t>(count));
+    if (!out->collSurfs)
+        return false;
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        disk32::XModelCollSurfDisk32 surface{};
+        std::memcpy(&surface, record + index * kSurfaceBytes, sizeof(surface));
+        if (!LoadCollisionSurface(surface, &out->collSurfs[index]))
+            return false;
+    }
+    return true;
+}
+
 // Load_XModel after the materials: collision surfaces, bone info (any
 // non-null token means it follows inline), the preset and physics geometry.
 bool LoadTail(const disk32::XModelDisk32 &disk, XModel *out)
 {
-    if (!disk.collSurfs.token.isNull())
-        return Drop("Fast-file model collision surfaces are not converted yet");
+    if (!LoadCollisionSurfaces(disk, out))
+        return false;
     const disk32::PointerToken boneInfo{disk.boneInfo.token.isNull() ? 0u : disk32::kInline};
     if (!LoadSpan(boneInfo, disk.numBones * static_cast<std::uint32_t>(sizeof(XBoneInfo)), 4, &out->boneInfo))
         return false;
