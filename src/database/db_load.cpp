@@ -35,9 +35,6 @@ using db::material_validation::DB_ValidateMaterialShaderLoadDef;
 using db::material_validation::DB_ValidateMaterialShaderProgram;
 using db::material_validation::DB_ValidateMaterialVertexDeclaration;
 using db::material_validation::DB_ValidateWaterHeader;
-#ifdef KISAK_DEDI_HEADLESS
-using db::material_validation::DB_ValidateHeadlessWaterContract;
-#endif
 
 namespace
 {
@@ -671,6 +668,26 @@ bool DB_ValidateSunLight(const GfxLight *light)
 }
 
 #ifdef KISAK_DEDI_HEADLESS
+bool DB_ValidateHeadlessWaterContract(const water_t *water)
+{
+    if (!water
+        || !db::validation::WaterGridValid(water->M, water->N)
+        || !water->H0
+        || !water->wTerm
+        || !water->image
+        || water->image->mapType != MAPTYPE_2D
+        || water->image->semantic != TS_WATER_MAP
+        || water->image->category != IMG_CATEGORY_WATER
+        || water->image->depth != 1
+        || water->image->width != water->M
+        || water->image->height != water->N)
+    {
+        Com_Error(ERR_DROP, "Invalid headless material water image contract");
+        return false;
+    }
+    return true;
+}
+
 void DB_ClearHeadlessSoundRuntimeData(MssSoundCOD4 *sound)
 {
     if (!sound)

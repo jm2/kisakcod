@@ -2,9 +2,10 @@
 
 // The Material and TechniqueSet load validators, shared by the 32-bit loader
 // (db_load.cpp) and the 64-bit family loaders; moved verbatim from db_load.cpp.
-// An including TU must already have the gfx_d3d material, image and water
-// types: db_load.cpp includes them, and a 64-bit family TU gets them through
-// the generated disk32 mirrors. This header includes no client header, so
+// An including TU must already have the gfx_d3d material and water types:
+// db_load.cpp includes them, and a 64-bit family TU gets them through the
+// generated disk32 mirrors. (DB_ValidateHeadlessWaterContract stays in
+// db_load.cpp: it needs gfx_d3d/r_image.h's enums, which no mirror brings.) This header includes no client header, so
 // headless TUs stay off the client-media include tripwire.
 
 #include <database/db_stream.h>
@@ -103,28 +104,6 @@ inline bool DB_ValidateWaterHeader(const water_t *water, int32_t *sampleCount)
     *sampleCount = water->M * water->N;
     return true;
 }
-
-#ifdef KISAK_DEDI_HEADLESS
-inline bool DB_ValidateHeadlessWaterContract(const water_t *water)
-{
-    if (!water
-        || !db::validation::WaterGridValid(water->M, water->N)
-        || !water->H0
-        || !water->wTerm
-        || !water->image
-        || water->image->mapType != MAPTYPE_2D
-        || water->image->semantic != TS_WATER_MAP
-        || water->image->category != IMG_CATEGORY_WATER
-        || water->image->depth != 1
-        || water->image->width != water->M
-        || water->image->height != water->N)
-    {
-        Com_Error(ERR_DROP, "Invalid headless material water image contract");
-        return false;
-    }
-    return true;
-}
-#endif
 
 inline bool DB_ValidateMaterialNamedInputs(
     const Material *material,
