@@ -61,6 +61,42 @@ record XModelCollSurf 0x2C runtime=XModelCollSurf_s header=xanim/xmodel.h copy=s
     0x24 contents             i32
     0x28 surfFlags            i32
 
+# Physics geometry: a list of geoms, each a box, cylinder or brush. A brush's
+# planes and adjacency hold no pointer and stay in block 4; its sides name
+# their planes, which follow the sides.
+record CBrushSide 0x0C runtime=cbrushside_t header=xanim/xanim.h copy=scalars
+    0x00 plane                    pointer  # a plane token, resolved after the planes load
+    0x04 materialNum              u32
+    0x08 firstAdjacentSideOffset  i16
+    0x0A edgeCount                u8
+
+record BrushWrapper 0x50 runtime=BrushWrapper header=physics/phys_local.h copy=scalars
+    0x00 mins                     f32[3]
+    0x0C contents                 i32
+    0x10 maxs                     f32[3]
+    0x1C numsides                 u32
+    0x20 sides                    pointer
+    0x24 axialMaterialNum         i16[2][3]
+    0x30 baseAdjacentSide         pointer
+    0x34 firstAdjacentSideOffsets i16[2][3]
+    0x40 edgeCount                u8[2][3]
+    0x48 totalEdgeCount           i32
+    0x4C planes                   pointer
+
+record PhysGeomInfo 0x44 runtime=PhysGeomInfo header=physics/phys_local.h copy=scalars
+    0x00 brush                    pointer  # BrushWrapper, a completed object
+    0x04 type                     i32
+    0x08 orientation              f32[3][3]
+    0x2C offset                   f32[3]
+    0x38 halfLengths              f32[3]
+
+record PhysGeomList 0x2C runtime=PhysGeomList header=physics/phys_local.h copy=scalars
+    0x00 count                    u32
+    0x04 geoms                    pointer
+    0x08 mass.centerOfMass        f32[3]
+    0x14 mass.momentsOfInertia    f32[3]
+    0x20 mass.productsOfInertia   f32[3]
+
 record XModel 0xDC runtime=XModel header=xanim/xmodel.h copy=scalars
     asset member=model pool=Load_XModelAsset kind=XModel alias=inserted body=custom label=model
     0x00 name                 xstring

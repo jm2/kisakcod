@@ -96,6 +96,20 @@ Options Collided()
     return o;
 }
 
+// What a test changes in the physics geometry Physics() writes.
+struct Phys
+{
+    std::uint32_t count = 2;
+    std::int32_t boxType = 1;
+    float boxHalf = 1.f;
+    std::uint32_t brush = kInline;
+    std::uint32_t sides = 1;
+    std::uint32_t sidePlane = VirtualOffset(536); // the brush's planes after Whole()
+    std::uint8_t adjacency = 1;
+    std::uint32_t adjacencyToken = VirtualOffset(4); // any non-null token means inline
+    float mass = 0.f;
+};
+
 struct File : FileBuilder<File>
 {
     File &Byte(std::uint8_t value)
@@ -224,6 +238,31 @@ struct File : FileBuilder<File>
         return *this;
     }
     // A whole model: record, arrays, surface, material and bone info.
+    // A geometry list of a box and a brush, then the brush: its sides, its
+    // two adjacency entries and its plane.
+    File &Physics(const Phys &p = {})
+    {
+        Word(p.count).Word(kInline);
+        for (int value = 0; value < 9; ++value)
+            Float(value == 4 ? p.mass : static_cast<float>(value));
+        Geom(0, p.boxType, p.boxHalf).Geom(p.brush, 0, 0.f);
+        if (p.brush != kInline)
+            return *this;
+        Float(-1).Float(-1).Float(-1).Word(1).Float(1).Float(1).Float(1).Word(p.sides).Word(kInline);
+        Word(0).Word(0).Word(0).Word(p.adjacencyToken).Word(0).Word(0).Word(0).Word(0).Word(0).Word(2).Word(kInline);
+        for (std::uint32_t side = 0; side < p.sides; ++side)
+            Word(p.sidePlane).Word(0).Word(0 | 2u << 16);
+        return Byte(0).Byte(p.adjacency).Float(0).Float(0).Float(1).Float(1).Word(0);
+    }
+    // A 68-byte geom: its brush token, type, identity orientation, offset and
+    // half lengths.
+    File &Geom(std::uint32_t brush, std::int32_t type, float half)
+    {
+        Word(brush).Word(static_cast<std::uint32_t>(type));
+        for (int value = 0; value < 9; ++value)
+            Float(value % 4 == 0 ? 1.f : 0.f);
+        return Float(0).Float(0).Float(0).Float(half).Float(half).Float(half);
+    }
     File &Whole(const Options &o = {}, std::uint8_t parent = 1, float weight = 2.f)
     {
         return Model(o).Arrays(parent, weight).Surface().MaterialTail().BoneInfo();
@@ -408,6 +447,50 @@ void TestCollisionSurfaces()
     ExpectCollision(zone, *model);
 }
 
+void ExpectBrush(const Zone &zone, const BrushWrapper *brush);
+
+// The physics geometry TestPhysics builds.
+void ExpectPhysics(const Zone &zone, const PhysGeomList &list)
+{
+    Expect(list.count == 2 && list.mass.productsOfInertia[2] == 8.f && InArena(list.geoms)
+               && list.geoms[0].type == 1 && !list.geoms[0].brush && list.geoms[0].halfLengths[2] == 1.f,
+           "the list and its box convert into native storage");
+    ExpectBrush(zone, InArena(list.geoms) ? list.geoms[1].brush : nullptr);
+}
+
+// The brush TestPhysics builds.
+void ExpectBrush(const Zone &zone, const BrushWrapper *brush)
+{
+    if (!InArena(brush) || !InArena(brush->sides))
+        return Expect(false, "the brush and its sides convert into native storage");
+    Expect(brush->numsides == 1 && brush->totalEdgeCount == 2 && brush->contents == 1 && brush->maxs[2] == 1.f
+               && brush->sides[0].edgeCount == 2,
+           "the brush's scalars convert from their retail offsets");
+    Expect(brush->planes == reinterpret_cast<const cplane_s *>(zone.virt + 536) && brush->sides[0].plane == brush->planes
+               && zone.InVirt(brush->baseAdjacentSide) && brush->baseAdjacentSide[1] == 1,
+           "its planes and adjacency stay in block 4, and its side's deferred plane resolves to them");
+}
+
+void TestPhysics()
+{
+    Zone zone;
+    Options o;
+    o.physGeoms = kInline;
+    File().Whole(o).Physics();
+    Options named;
+    named.physGeoms = VirtualOffset(260); // the first model's list
+    File().Whole(named);
+    const XModel *const first = Load(kInline);
+    const XModel *const second = Load(kInline);
+    Expect(first == &g_models[0] && second == &g_models[1] && g_read == g_file.size(),
+           "two models with physics geometry publish");
+    if (first != &g_models[0] || !InArena(first->physGeoms))
+        return;
+    ExpectPhysics(zone, *first->physGeoms);
+    Expect(second == &g_models[1] && second->physGeoms == first->physGeoms,
+           "a geometry-list offset resolves to the earlier native list");
+}
+
 void TestNamedArraysAndPreset()
 {
     Zone zone;
@@ -446,6 +529,14 @@ struct Malformed
 File Head(const Options &o = {})
 {
     return File().Model(o).Arrays();
+}
+
+// A whole model with physics geometry.
+void Physical(const Phys &p)
+{
+    Options o;
+    o.physGeoms = kInline;
+    File().Whole(o).Physics(p);
 }
 
 const Malformed kMalformed[] = {
@@ -490,7 +581,19 @@ const Malformed kMalformed[] = {
      "collision contents"},
     {"a collision LOD past the LODs", [] { Options o = Collided(); o.collLod = 1;
                                            Head(o).Surface().MaterialTail().CollSurf().BoneInfo(); }, "fast-file model"},
-    {"physics geometry", [] { Options o; o.physGeoms = kInline; File().Whole(o); }, "physics geometry is not"},
+    {"a geometry list of no geoms", [] { Phys p; p.count = 0; Physical(p); }, "geometry-list header"},
+    {"a non-finite mass", [] { Phys p; p.mass = (std::numeric_limits<float>::infinity)(); Physical(p); },
+     "physics geometry list"},
+    {"a geom of type 2", [] { Phys p; p.boxType = 2; Physical(p); }, "physics geometry"},
+    {"a box of no size", [] { Phys p; p.boxHalf = 0.f; Physical(p); }, "physics geometry"},
+    {"a brush side with no plane", [] { Phys p; p.sidePlane = 0; Physical(p); }, "brush-side plane token"},
+    {"a brush of 27 sides", [] { Phys p; p.sides = 27; Physical(p); }, "brush header"},
+    {"a side naming another plane", [] { Phys p; p.sidePlane = VirtualOffset(440); Physical(p); }, "brush graph"},
+    {"an adjacency entry past the sides", [] { Phys p; p.adjacency = 7; Physical(p); }, "brush graph"},
+    {"an unmapped side plane", [] { Phys p; p.sidePlane = VirtualOffset(900); Physical(p); }, "deferred"},
+    {"an unmapped brush offset", [] { Phys p; p.brush = VirtualOffset(900); Physical(p); }, "alias offset"},
+    {"an unmapped geometry-list offset", [] { Options o; o.physGeoms = VirtualOffset(900); File().Whole(o); },
+     "alias offset"},
     {"a non-unit base pose", [] { File().Whole({}, 1, 1.f); }, "array span"},
     {"a wrong bone radius", [] { Head().Surface().MaterialTail().BoneInfo(2.f); }, "array span"},
     {"a surface bone outside its LOD", [] { Options o; o.lodBits = 0x8000'0000u; File().Whole(o); }, "escape its LOD"},
@@ -574,5 +677,6 @@ void __cdecl DB_LoadedExternalData(std::int32_t)
 
 int main()
 {
-    return Run({TestCollisionSurfaces, TestWholeModel, TestTwoSurfaces, TestRigidSurfaces, TestTwoRigidLists, TestNamedArraysAndPreset, TestMalformedFailsClosed});
+    return Run({TestCollisionSurfaces, TestPhysics, TestWholeModel, TestTwoSurfaces, TestRigidSurfaces, TestTwoRigidLists,
+                TestNamedArraysAndPreset, TestMalformedFailsClosed});
 }
