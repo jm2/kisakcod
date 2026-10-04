@@ -13,6 +13,26 @@ record XModelLodInfo 0x1C runtime=XModelLodInfo header=xanim/xmodel.h copy=scala
     0x1A smcAllocBits         u8
     0x1B unused               u8
 
+# A surface's skinning: vertex counts by influence, then a blend-weight token.
+record XSurfaceVertexInfo 0x0C runtime=XSurfaceVertexInfo header=xanim/xanim.h copy=scalars
+    0x00 vertCount            i16[4]
+    0x08 vertsBlend           pointer  # blend records, 16-bit, in block 4
+
+record XSurface 0x38 runtime=XSurface header=xanim/xanim.h copy=scalars
+    0x00 tileMode             u8
+    0x01 deformed             bool
+    0x02 vertCount            u16
+    0x04 triCount             u16
+    0x06 zoneHandle           u8
+    0x08 baseTriIndex         u16
+    0x0A baseVertIndex        u16
+    0x0C triIndices           pointer  # 3 x triCount 16-bit indices in block 8
+    0x10 vertInfo             struct   of=XSurfaceVertexInfo
+    0x1C verts0               pointer  # vertCount 32-byte vertices in block 7
+    0x20 vertListCount        u32
+    0x24 vertList             pointer  # XRigidVertList, a completed array
+    0x28 partBits             i32[4]
+
 record XModel 0xDC runtime=XModel header=xanim/xmodel.h copy=scalars
     asset member=model pool=Load_XModelAsset kind=XModel alias=inserted body=custom label=model
     0x00 name                 xstring
