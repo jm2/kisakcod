@@ -28,6 +28,7 @@ struct SndCurve;
 struct snd_alias_list_t;
 struct StringTable;
 struct XAnimParts;
+struct XModel;
 struct XAssetList;
 
 #if KISAK_ARCH_64BIT
@@ -146,6 +147,12 @@ void __cdecl DB_LoadMaterialTechniqueSetPtrDisk32(bool atStreamStart, MaterialTe
 // loads through TechniqueSet's step; its constants and state bits stay in
 // block 4.
 void __cdecl DB_LoadMaterialPtrDisk32(bool atStreamStart, Material **slot);
+
+// Loads one XModel (db_disk32_xmodel.cpp) under the same slot contract: the
+// slot holds the zero-extended disk32 token on entry and the native XModel
+// published through Load_XModelAsset on return. Its bone arrays stay in
+// block 4, bone names as interned script-string ids.
+void __cdecl DB_LoadXModelPtrDisk32(bool atStreamStart, XModel **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from

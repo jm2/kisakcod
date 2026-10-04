@@ -5157,6 +5157,10 @@ bool __cdecl Load_XModel(bool atStreamStart)
 
 void __cdecl Load_XModelPtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadXModelPtrDisk32(atStreamStart, varXModelPtr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -5194,6 +5198,7 @@ void __cdecl Load_XModelPtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Load_XModelPtrArray(bool atStreamStart, int32_t count)
