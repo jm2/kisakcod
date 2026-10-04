@@ -19,6 +19,7 @@ struct GfxLightDef;
 struct LoadedSound;
 struct LocalizeEntry;
 struct MapEnts;
+struct MaterialTechniqueSet;
 struct MenuList;
 struct PhysPreset;
 struct RawFile;
@@ -131,6 +132,12 @@ void __cdecl DB_LoadMenuListPtrDisk32(bool atStreamStart, MenuList **slot);
 // aliases, sound files and speaker maps live in DB_AllocZoneNative storage,
 // and their offset tokens resolve to those native objects.
 void __cdecl DB_LoadSndAliasListPtrDisk32(bool atStreamStart, snd_alias_list_t **slot);
+
+// Loads one MaterialTechniqueSet (db_disk32_techniqueset.cpp) under the same
+// slot contract: the slot holds the zero-extended disk32 token on entry and
+// the native set published through Load_MaterialTechniqueSetAsset on return.
+// Its techniques and vertex declarations live in DB_AllocZoneNative storage.
+void __cdecl DB_LoadMaterialTechniqueSetPtrDisk32(bool atStreamStart, MaterialTechniqueSet **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from

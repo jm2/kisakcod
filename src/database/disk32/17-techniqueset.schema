@@ -1,0 +1,30 @@
+# TechniqueSet (MaterialTechniqueSet), asset type 0x05, and the records its
+# techniques hold. The format is described in ../db_disk32.schema. The body
+# is custom (db_disk32_techniqueset.cpp): techniques are completed objects,
+# and a technique's passes follow its 8-byte header.
+
+record MaterialPass 0x14 runtime=MaterialPass header=gfx_d3d/r_material.h copy=scalars
+    0x00 vertexDecl             pointer  # MaterialVertexDeclaration
+    0x04 vertexShader           pointer  # MaterialVertexShader
+    0x08 pixelShader            pointer  # MaterialPixelShader
+    0x0C perPrimArgCount        u8
+    0x0D perObjArgCount         u8
+    0x0E stableArgCount         u8
+    0x0F customSamplerFlags     u8
+    0x10 args                   pointer  # MaterialShaderArgument
+
+# The header, then passCount passes (1 to 4) where passArray[0] sits.
+record MaterialTechnique 0x1C runtime=MaterialTechnique header=gfx_d3d/r_material.h
+    0x00 name                   xstring
+    0x04 flags                  u16
+    0x06 passCount              u16
+    0x08 passArray              struct   of=MaterialPass
+
+record MaterialTechniqueSet 0x94 runtime=MaterialTechniqueSet header=gfx_d3d/r_material.h copy=scalars
+    asset member=techniqueSet pool=Load_MaterialTechniqueSetAsset kind=MaterialTechniqueSet alias=inserted body=custom label=technique-set
+    0x00 name                   xstring
+    0x04 worldVertFormat        u8
+    0x05 hasBeenUploaded        bool
+    0x06 unused                 u8[1]
+    0x08 remappedTechniqueSet   rawptr
+    0x0C techniques             pointer[34]  # MaterialTechnique

@@ -4008,6 +4008,11 @@ bool __cdecl Load_MaterialTechniqueSet(bool atStreamStart)
 
 bool __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadMaterialTechniqueSetPtrDisk32(atStreamStart, varMaterialTechniqueSetPtr);
+    return true;
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -4045,6 +4050,7 @@ bool __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
     }
     DB_PopStreamPos();
     return true;
+#endif
 }
 
 bool __cdecl Load_Material(bool atStreamStart)
