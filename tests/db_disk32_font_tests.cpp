@@ -6,7 +6,6 @@
 
 #include <database/db_disk32_load.h>
 #include <database/db_disk32_mirrors.h>
-#include <gfx_d3d/r_font.h>
 
 #include <cstring>
 
