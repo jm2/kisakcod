@@ -30,7 +30,6 @@ namespace
 // The extents of a model's bone arrays, from its counts.
 struct BoneSpans
 {
-    std::uint32_t nonRootBones;
     std::uint32_t names;
     std::uint32_t parents;
     std::uint32_t quats;
@@ -42,8 +41,7 @@ struct BoneSpans
 BoneSpans SpansOf(const disk32::XModelDisk32 &disk)
 {
     const std::uint32_t nonRoot = disk.numBones - disk.numRootBones;
-    return {nonRoot,          disk.numBones * 2u, nonRoot,
-            nonRoot * 4u * 2u, nonRoot * 4u * 4u, disk.numBones,
+    return {disk.numBones * 2u, nonRoot, nonRoot * 4u * 2u, nonRoot * 4u * 4u, disk.numBones,
             disk.numBones * static_cast<std::uint32_t>(sizeof(DObjAnimMat))};
 }
 
