@@ -794,13 +794,21 @@ kisakcod_ilp32(kisakcod-db-zone-script-string-ownership-tests
 kisakcod_ilp32(kisakcod-db-zone-stream-ownership-tests
     database-zone-stream-ownership-runtime-contracts)
 
+# Section GC for the tests below that link production TUs: GNU ld and lld spell
+# it --gc-sections, Apple's ld -dead_strip.
+if (APPLE)
+    set(KISAK_TEST_GC_SECTIONS -Wl,-dead_strip)
+else()
+    set(KISAK_TEST_GC_SECTIONS -Wl,--gc-sections)
+endif()
+
 # 64-bit family loads from hand-built disk32 zone images (NOW row 12): the
 # generated loaders, the family's TU and the production stream code, with only
 # the seams in disk32_fixture.cpp and the test's own pool call (and native
 # storage, where the family uses it) replaced. Linux and clang only, like the
 # dvar test in misc.cmake: database.h is engine code, and the engine compiles
 # off Windows only with clang and -fms-extensions (PLATFORM_POSIX.md).
-if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+if ((KISAK_PLATFORM STREQUAL "linux" OR KISAK_PLATFORM STREQUAL "macos") AND CMAKE_SIZEOF_VOID_P EQUAL 8
     AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # The loader sources (under src/database) follow the test source.
     function(kisakcod_disk32_load_test FAMILY TEST_SOURCE)
@@ -838,7 +846,7 @@ endif()
 # real bridge, facade, coordinator and script-string registry. As in misc.cmake's
 # game_mp hazard tests: the production TUs at 64-bit with the Linux headless
 # server's defines, a weak engine boundary, and --gc-sections.
-if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+if ((KISAK_PLATFORM STREQUAL "linux" OR KISAK_PLATFORM STREQUAL "macos") AND CMAKE_SIZEOF_VOID_P EQUAL 8
     AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_executable(kisakcod-db-registry-unload-tests
         db_registry_unload_tests.cpp
@@ -874,8 +882,8 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1)
     target_compile_options(kisakcod-db-registry-unload-tests PRIVATE
         -fms-extensions -ffunction-sections -fdata-sections)
-    target_link_options(kisakcod-db-registry-unload-tests PRIVATE -Wl,--gc-sections)
-    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+    target_link_options(kisakcod-db-registry-unload-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address" AND NOT APPLE)
         # Otherwise ASan's global registration keeps every global alive.
         target_compile_options(kisakcod-db-registry-unload-tests PRIVATE -fsanitize-address-globals-dead-stripping)
         target_link_options(kisakcod-db-registry-unload-tests PRIVATE -Wl,-z,start-stop-gc)
@@ -894,7 +902,7 @@ endif()
 # real bridge chain while another thread holds db_hashCritSect or a registry
 # session, with the hold on the intern's own thread, and after a window poisoned
 # on another thread.
-if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+if ((KISAK_PLATFORM STREQUAL "linux" OR KISAK_PLATFORM STREQUAL "macos") AND CMAKE_SIZEOF_VOID_P EQUAL 8
     AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_executable(kisakcod-db-stream-intern-wait-tests
         db_stream_intern_wait_tests.cpp
@@ -929,8 +937,8 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1)
     target_compile_options(kisakcod-db-stream-intern-wait-tests PRIVATE
         -fms-extensions -ffunction-sections -fdata-sections)
-    target_link_options(kisakcod-db-stream-intern-wait-tests PRIVATE -Wl,--gc-sections)
-    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+    target_link_options(kisakcod-db-stream-intern-wait-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address" AND NOT APPLE)
         target_compile_options(kisakcod-db-stream-intern-wait-tests PRIVATE -fsanitize-address-globals-dead-stripping)
         target_link_options(kisakcod-db-stream-intern-wait-tests PRIVATE -Wl,-z,start-stop-gc)
     endif()

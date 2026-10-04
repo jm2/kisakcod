@@ -14,4 +14,4 @@ target_compile_options(kisakcod-db-disk32-xanimparts-readers PRIVATE
     -fms-extensions -ffunction-sections -fdata-sections)
 target_sources(kisakcod-db-disk32-xanimparts-tests PRIVATE $<TARGET_OBJECTS:kisakcod-db-disk32-xanimparts-readers>)
 target_compile_options(kisakcod-db-disk32-xanimparts-tests PRIVATE -ffunction-sections -fdata-sections)
-target_link_options(kisakcod-db-disk32-xanimparts-tests PRIVATE -Wl,--gc-sections)
+target_link_options(kisakcod-db-disk32-xanimparts-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
