@@ -56,7 +56,30 @@ struct SurfaceOptions
     std::uint32_t blendCount = 3;
     std::uint32_t vertList = 0;
     std::uint32_t vertCount = 3;
+    std::uint32_t listCount = 1;
 };
+
+// What a test changes in the one rigid list and tree RigidData() writes.
+struct Rigid
+{
+    std::uint32_t tree = kInline;
+    std::uint32_t listVerts = 3;
+    std::uint32_t boneOffset = 0;
+    std::uint32_t nodeCount = 1;
+    float scale = 1.f;
+    std::uint32_t leaf = 0x8000; // triangles 0 and 1
+    std::uint32_t children = 0x8001; // one leaf
+};
+
+// A rigid surface: no skinning, one rigid list.
+SurfaceOptions RigidSurface(std::uint32_t list = kInline)
+{
+    SurfaceOptions surface;
+    surface.deformed = 0;
+    surface.blendCount = 0;
+    surface.vertList = list;
+    return surface;
+}
 
 struct File : FileBuilder<File>
 {
@@ -96,16 +119,44 @@ struct File : FileBuilder<File>
     {
         Word(o.deformed << 8 | o.vertCount << 16).Word(o.triCount | 0xEE0000u).Word(baseTriangle | baseVertex << 16);
         Word(kInline).Word(o.blendCount).Word(0).Word(o.blendCount ? kInline : 0).Word(kInline);
-        return Word(o.vertList ? 1 : 0).Word(o.vertList).Word(0xC000'0000u).Word(0).Word(0).Word(0);
+        return Word(o.vertList ? o.listCount : 0).Word(o.vertList).Word(0xC000'0000u).Word(0).Word(0).Word(0);
     }
     // A surface's blend records, vertices and indices.
     File &SurfaceData(const SurfaceOptions &o = {}, float sign = 1.f, std::uint32_t lastIndex = 2)
     {
         for (std::uint32_t record = 0; record < o.blendCount; ++record)
             Byte(record == 1 ? 64 : 0).Byte(0);
-        for (std::uint32_t vertex = 0; vertex < o.vertCount; ++vertex)
+        return Vertices(o.vertCount, sign).Indices(lastIndex);
+    }
+    File &Vertices(std::uint32_t count, float sign = 1.f)
+    {
+        for (std::uint32_t vertex = 0; vertex < count; ++vertex)
             Float(static_cast<float>(vertex)).Float(1).Float(2).Float(sign).Word(0).Word(0).Word(0).Word(0);
+        return *this;
+    }
+    File &Indices(std::uint32_t lastIndex = 2)
+    {
         return Word(0 | 1u << 16).Word(2 | 1u << 16).Word(0 | lastIndex << 16);
+    }
+    // One rigid list, then its tree: one node holding one two-triangle leaf.
+    File &RigidData(const Rigid &r = {})
+    {
+        Word(r.boneOffset | r.listVerts << 16).Word(0 | 2u << 16).Word(r.tree);
+        return r.tree == kInline ? Tree(r) : *this;
+    }
+    // A tree: one node holding one leaf.
+    File &Tree(const Rigid &r = {})
+    {
+        Float(0).Float(0).Float(0).Float(r.scale).Float(r.scale).Float(r.scale).Word(r.nodeCount).Word(kInline);
+        Word(1).Word(kInline).Word(0).Word(0 | 1u << 16).Word(1 | 1u << 16).Word(0 | r.children << 16);
+        return Byte(static_cast<std::uint8_t>(r.leaf)).Byte(static_cast<std::uint8_t>(r.leaf >> 8));
+    }
+    // A rigid surface's record, vertices, rigid data (none when its list is
+    // named by offset) and indices.
+    File &RigidSurface(const Rigid &r = {}, std::uint32_t list = kInline)
+    {
+        SurfaceRecord(::RigidSurface(list)).Vertices(3);
+        return (list == kInline ? RigidData(r) : *this).Indices();
     }
     File &Surface(const SurfaceOptions &o = {}, float sign = 1.f, std::uint32_t lastIndex = 2)
     {
@@ -237,6 +288,63 @@ void TestTwoSurfaces()
            "its vertices and indices follow the first's, 16-aligned, and its material is its own");
 }
 
+void ExpectRigid(const XSurface &surface)
+{
+    const XRigidVertList *const list = surface.vertList;
+    Expect(InArena(list) && list->vertCount == 3 && list->triCount == 2 && InArena(list->collisionTree),
+           "a rigid list converts into native storage, its tree too");
+    if (!InArena(list) || !InArena(list->collisionTree))
+        return;
+    const XSurfaceCollisionTree &tree = *list->collisionTree;
+    Expect(tree.scale[2] == 1.f && tree.nodeCount == 1 && tree.nodes[0].childCount == 0x8001
+               && tree.leafs[0].triangleBeginIndex == 0x8000,
+           "the tree's nodes and leaf stay in block 4");
+}
+
+void TestRigidSurfaces()
+{
+    Zone zone;
+    // Two rigid surfaces; the second names the first's rigid lists by offset.
+    // Block 4: the bone arrays end at 104, the surface records (104..216),
+    // then the first surface's list (216..228), tree (228..268), node
+    // (272..288) and leaf (288..290).
+    Options two;
+    two.surfaces = 2;
+    File().Model(two).Arrays().SurfaceRecord(RigidSurface()).SurfaceRecord(RigidSurface(VirtualOffset(216)), 3, 2);
+    File().Vertices(3).RigidData().Indices().Vertices(3).Indices().MaterialTail(2).BoneInfo();
+    const XModel *const model = Load(kInline);
+    Expect(model == &g_models[0] && g_read == g_file.size(), "a model with rigid surfaces publishes");
+    if (model != &g_models[0] || !InArena(model->surfs))
+        return;
+    ExpectRigid(model->surfs[0]);
+    Expect(model->surfs[1].vertList == model->surfs[0].vertList && !model->surfs[1].deformed,
+           "a rigid-list offset resolves to the earlier native lists");
+}
+
+void TestTwoRigidLists()
+{
+    Zone zone;
+    // One surface split into two rigid lists: bone 0 owns vertices 0..1 and
+    // triangle 0, bone 1 vertex 2 and triangle 1, each with its own tree.
+    SurfaceOptions split = RigidSurface();
+    split.listCount = 2;
+    Rigid first;
+    first.leaf = 0;
+    Rigid second;
+    second.leaf = 1;
+    File().Model().Arrays().SurfaceRecord(split).Vertices(3);
+    File().Word(0 | 2u << 16).Word(0 | 1u << 16).Word(kInline).Word(64 | 1u << 16).Word(1 | 1u << 16).Word(kInline);
+    File().Tree(first).Tree(second).Indices().MaterialTail().BoneInfo();
+    const XModel *const model = Load(kInline);
+    Expect(model == &g_models[0] && g_read == g_file.size(), "a surface with two rigid lists publishes");
+    if (model != &g_models[0] || !InArena(model->surfs) || !InArena(model->surfs[0].vertList))
+        return;
+    const XRigidVertList *const lists = model->surfs[0].vertList;
+    Expect(lists[1].boneOffset == 64 && lists[1].vertCount == 1 && lists[1].triOffset == 1
+               && lists[1].collisionTree != lists[0].collisionTree && lists[1].collisionTree->leafs[0].triangleBeginIndex == 1,
+           "the second list converts from its own retail element, with its own tree");
+}
+
 void TestNamedArraysAndPreset()
 {
     Zone zone;
@@ -288,8 +396,16 @@ const Malformed kMalformed[] = {
     {"deformed byte 2", [] { SurfaceOptions s; s.deformed = 2; Head().Surface(s); }, "surface pointer/count layout"},
     {"one triangle", [] { SurfaceOptions s; s.triCount = 1; Head().Surface(s); }, "layout"},
     {"skinning that misses a vertex", [] { SurfaceOptions s; s.blendCount = 2; Head().Surface(s); }, "layout"},
-    {"rigid surface", [] { SurfaceOptions s; s.deformed = 0; s.blendCount = 0; s.vertList = kInline;
-                           Head().Surface(s); }, "rigid-vertex lists are not converted"},
+    {"a tree with no nodes", [] { Rigid r; r.nodeCount = 0; Head().RigidSurface(r); }, "collision-tree layout"},
+    {"a tree of scale 0", [] { Rigid r; r.scale = 0.f; Head().RigidSurface(r); }, "collision transform"},
+    {"a node without children", [] { Rigid r; r.children = 0x8000; Head().RigidSurface(r); }, "collision topology"},
+    {"a leaf past its list", [] { Rigid r; r.leaf = 0x8002; Head().RigidSurface(r); }, "collision relationship"},
+    {"a list missing a vertex", [] { Rigid r; r.listVerts = 2; Head().RigidSurface(r).MaterialTail().BoneInfo(); },
+     "rigid surface partition"},
+    {"a list bone offset of 1", [] { Rigid r; r.boneOffset = 1; Head().RigidSurface(r).MaterialTail().BoneInfo(); },
+     "rigid surface partition"},
+    {"an unmapped tree offset", [] { Rigid r; r.tree = VirtualOffset(512); Head().RigidSurface(r); }, "alias offset"},
+    {"an unmapped list offset", [] { Head().RigidSurface({}, VirtualOffset(512)); }, "alias offset"},
     {"vertices past block 7", [] { SurfaceOptions s; s.vertCount = 9; s.blendCount = 9; Head().Surface(s); },
      "exceeds stream block"},
     {"binormal sign 0", [] { Head().Surface({}, 0.f); }, "surface geometry"},
@@ -377,5 +493,5 @@ void __cdecl DB_LoadedExternalData(std::int32_t)
 
 int main()
 {
-    return Run({TestWholeModel, TestTwoSurfaces, TestNamedArraysAndPreset, TestMalformedFailsClosed});
+    return Run({TestWholeModel, TestTwoSurfaces, TestRigidSurfaces, TestTwoRigidLists, TestNamedArraysAndPreset, TestMalformedFailsClosed});
 }

@@ -17,9 +17,10 @@
 // DB_ValidateXModelGraph checks the result. Arrays that hold no pointer keep
 // their layout: -1 streams them at their retail alignment (vertices in block
 // 7, indices in block 8) and any other token names bytes already there; bone
-// names become interned script-string ids. Surfaces and material handles
-// convert into native storage; materials and the preset load through their
-// families' pointer steps. Rigid-vertex lists, collision surfaces and physics
+// names become interned script-string ids. Surfaces, material handles,
+// rigid-vertex lists and collision trees convert into native storage (the
+// lists and trees as completed objects); materials and the preset load
+// through their families' pointer steps. Collision surfaces and physics
 // geometry are not converted yet and fail closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
@@ -100,6 +101,105 @@ bool LoadSpanIn(std::uint32_t block, disk32::PointerToken token, std::uint32_t b
     return true;
 }
 
+// A registered completed object its caller completes later.
+struct Pending
+{
+    DBAliasHandle handle{};
+    std::uint8_t *record = nullptr;
+};
+
+// A completed object at `token`: null, an earlier object's native twin, or
+// (-1) a record streamed 4-aligned here that `convert` turns into native
+// storage. With `pending`, completing it is left to the caller.
+template <typename Native, typename Convert>
+bool LoadCompleted(disk32::PointerToken token, DBAliasKind kind, std::uint32_t bytes, Native **out, Convert convert,
+                   Pending *pending = nullptr)
+{
+    *out = nullptr;
+    if (token.isNull())
+        return true;
+    if (!token.isInline())
+    {
+        std::uintptr_t native = 0;
+        const db::relocation::Status status = DB_ResolveCompletedObjectNative(token, kind, bytes, &native);
+        if (status != db::relocation::Status::Ok)
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file alias offset: %s", db::relocation::StatusName(status));
+            return false;
+        }
+        *out = reinterpret_cast<Native *>(native);
+        return true;
+    }
+    std::uint8_t *const record = DB_AllocStreamPos(3);
+    if (!record)
+        return false;
+    const DBAliasHandle completed = DB_RegisterPointerSlot(record, kind);
+    Native *object = nullptr;
+    if (!completed || !convert(record, &object))
+        return false;
+    *out = object;
+    if (pending)
+    {
+        *pending = {completed, record};
+        return true;
+    }
+    return DB_CompleteObject(completed, kind, record, bytes, bytes, object);
+}
+
+// Load_XSurfaceCollisionTree: the extents rule (which tests only that the
+// node and leaf pointers are present), the nodes 16-aligned and the leaves
+// 2-aligned in block 4, then the transform and topology rules.
+bool ConvertTree(std::uint8_t *record, XSurfaceCollisionTree **out)
+{
+    disk32::XSurfaceCollisionTreeDisk32 disk{};
+    if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
+        return false;
+    std::memcpy(&disk, record, sizeof(disk));
+    XSurfaceCollisionTree *const tree = AllocNative<XSurfaceCollisionTree>(1);
+    if (!tree)
+        return false;
+    CopyXSurfaceCollisionTreeScalars(disk, tree);
+    tree->nodes = disk.nodes.token.isNull() ? nullptr : reinterpret_cast<XSurfaceCollisionNode *>(record);
+    tree->leafs = disk.leafs.token.isNull() ? nullptr : reinterpret_cast<XSurfaceCollisionLeaf *>(record);
+    std::uint32_t nodeBytes = 0;
+    std::uint32_t leafBytes = 0;
+    if (!db::xmodel_validation::DB_GetXSurfaceCollisionTreeExtents(tree, &nodeBytes, &leafBytes))
+        return false;
+    const disk32::PointerToken inlineToken{disk32::kInline};
+    if (!LoadSpan(inlineToken, nodeBytes, 16, &tree->nodes) || !LoadSpan(inlineToken, leafBytes, 2, &tree->leafs))
+        return false;
+    *out = tree;
+    return db::xmodel_validation::DB_ValidateXSurfaceCollisionTreeGraph(tree, nodeBytes, leafBytes);
+}
+
+// Load_XRigidVertListArray: every retail list streams, then each converts,
+// its collision tree a completed object.
+bool ConvertRigidLists(std::uint8_t *record, std::uint32_t count, XRigidVertList **out)
+{
+    constexpr auto kListBytes = sizeof(disk32::XRigidVertListDisk32);
+    if (!StreamBytes(record, static_cast<std::int32_t>(count * kListBytes)))
+        return false;
+    XRigidVertList *const lists = AllocNative<XRigidVertList>(static_cast<std::int32_t>(count));
+    if (!lists)
+        return false;
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        disk32::XRigidVertListDisk32 list{};
+        std::memcpy(&list, record + index * kListBytes, sizeof(list));
+        CopyXRigidVertListScalars(list, &lists[index]);
+        if (!LoadCompleted(list.collisionTree.token, DBAliasKind::XSurfaceCollisionTree,
+                           disk32::kXSurfaceCollisionTreeBytes, &lists[index].collisionTree,
+                           [](std::uint8_t *tree, XSurfaceCollisionTree **converted) {
+                               return ConvertTree(tree, converted);
+                           }))
+        {
+            return false;
+        }
+    }
+    *out = lists;
+    return true;
+}
+
 // DB_GetXSurfaceLayout on the retail surface: its skinning, counts and
 // pointer presence before anything streams.
 bool RigidLayoutValid(const disk32::XSurfaceDisk32 &disk)
@@ -136,10 +236,22 @@ bool LoadSurface(const disk32::XSurfaceDisk32 &disk, std::uint32_t boneCount, XS
     {
         return false;
     }
-    if (!disk.vertList.token.isNull())
-        return Drop("Fast-file rigid-vertex lists are not converted yet");
-    return LoadSpanIn(8, disk.triIndices.token, disk.triCount * 6u, &out->triIndices)
-        && db::xmodel_validation::DB_ValidateXSurfaceGraph(out, disk.deformed, boneCount);
+    // The rigid lists complete only once their surface is valid, as on x86.
+    const std::uint32_t listBytes = disk.vertListCount * static_cast<std::uint32_t>(sizeof(disk32::XRigidVertListDisk32));
+    Pending pending;
+    if (!LoadCompleted(disk.vertList.token, DBAliasKind::XRigidVertListArray, listBytes, &out->vertList,
+                       [&disk](std::uint8_t *record, XRigidVertList **converted) {
+                           return ConvertRigidLists(record, disk.vertListCount, converted);
+                       },
+                       &pending)
+        || !LoadSpanIn(8, disk.triIndices.token, disk.triCount * 6u, &out->triIndices)
+        || !db::xmodel_validation::DB_ValidateXSurfaceGraph(out, disk.deformed, boneCount))
+    {
+        return false;
+    }
+    return !pending.handle
+        || DB_CompleteObject(pending.handle, DBAliasKind::XRigidVertListArray, pending.record, listBytes, listBytes,
+                             out->vertList);
 }
 
 // Load_XSurfaceArray: any non-null token means the retail surfaces follow,
