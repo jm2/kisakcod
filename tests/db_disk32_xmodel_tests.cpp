@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cstring>
+#include <limits>
 
 XAssetList *varXAssetList; // the envelope's native list (db_disk32_envelope.cpp)
 
@@ -42,6 +43,8 @@ struct Options
     std::uint32_t roots = 1;
     std::uint32_t bones = 2;
     std::uint32_t name = kInline;
+    std::uint32_t contents = 0;
+    std::uint32_t collLod = 0;
     std::uint32_t lodBits = 0xC000'0000u; // bones 0 and 1
     float lodDist = 0.f;
     std::uint32_t preset = 0;
@@ -83,6 +86,16 @@ SurfaceOptions RigidSurface(std::uint32_t list = kInline)
     return surface;
 }
 
+// A model with one collision surface whose contents are 1.
+Options Collided()
+{
+    Options o;
+    o.collSurfs = kInline;
+    o.collCount = 1;
+    o.contents = 1;
+    return o;
+}
+
 struct File : FileBuilder<File>
 {
     File &Byte(std::uint8_t value)
@@ -99,8 +112,8 @@ struct File : FileBuilder<File>
         Float(o.lodDist).Word(o.surfaces).Word(o.lodBits).Word(0).Word(0).Word(0).Word(0x00CC0000u);
         for (std::uint32_t lod = 1; lod < 4; ++lod)
             Float(9).Word(0).Word(0).Word(0).Word(0).Word(0).Word(0x00CC0000u | lod);
-        Word(o.collSurfs).Word(o.collCount).Word(0).Word(o.boneInfo).Float(5).Float(-1).Float(-2).Float(-3);
-        Float(1).Float(2).Float(3).Word(1).Word(0xDEADBEEF).Word(0x1234).Word(0x0201).Word(o.preset).Word(o.physGeoms);
+        Word(o.collSurfs).Word(o.collCount).Word(o.contents).Word(o.boneInfo).Float(5).Float(-1).Float(-2).Float(-3);
+        Float(1).Float(2).Float(3).Word(1 | o.collLod << 16).Word(0xDEADBEEF).Word(0x1234).Word(0x0201).Word(o.preset).Word(o.physGeoms);
         return o.name == kInline ? Text("mdl") : *this;
     }
     // Quaternions, translations, classifications and base matrices.
@@ -183,6 +196,27 @@ struct File : FileBuilder<File>
         return *this;
     }
     // Two bone infos: unit boxes about the origin.
+    // A collision surface's 44-byte record, its bounds inverted if asked.
+    File &CollRecord(std::uint32_t tris = 1, std::uint32_t contents = 1, std::int32_t bone = 0, bool inverted = false,
+                     std::uint32_t token = kInline)
+    {
+        Word(token).Word(tris).Float(-1).Float(-1).Float(-1).Float(inverted ? -2.f : 1.f).Float(1).Float(1);
+        return Word(static_cast<std::uint32_t>(bone)).Word(contents).Word(0x20);
+    }
+    // `count` 48-byte triangles counting up from `base`, finite unless `bad`.
+    File &Tris(std::uint32_t count, float base = 0.f, bool bad = false)
+    {
+        for (std::uint32_t tri = 0; tri < count; ++tri)
+            for (int value = 0; value < 12; ++value)
+                Float(bad && value == 5 ? (std::numeric_limits<float>::infinity)() : base + static_cast<float>(value));
+        return *this;
+    }
+    File &CollSurf(std::uint32_t tris = 1, std::uint32_t contents = 1, std::int32_t bone = 0, bool bad = false,
+                   bool inverted = false, std::uint32_t token = kInline)
+    {
+        CollRecord(tris, contents, bone, inverted, token);
+        return token ? Tris(tris, 0.f, bad) : *this;
+    }
     File &BoneInfo(float radiusSquared = 3.f)
     {
         for (int bone = 0; bone < 2; ++bone)
@@ -347,6 +381,33 @@ void TestTwoRigidLists()
            "the second list converts from its own retail element, with its own tree");
 }
 
+// The two collision surfaces TestCollisionSurfaces builds.
+void ExpectCollision(const Zone &zone, const XModel &model)
+{
+    const XModelCollSurf_s &second = model.collSurfs[1];
+    Expect(model.numCollSurfs == 2 && second.numCollTris == 2 && second.boneIdx == 1 && second.contents == 2
+               && second.surfFlags == 0x20 && second.maxs[2] == 1.f,
+           "each collision surface converts from its own retail element");
+    Expect(zone.InVirt(model.collSurfs[0].collTris) && model.collSurfs[0].collTris[0].plane[0] == 0.5f
+               && zone.InVirt(second.collTris) && second.collTris[1].tvec[3] == 11.f,
+           "the triangles stay in block 4 after the surfaces, the first surface's first");
+}
+
+void TestCollisionSurfaces()
+{
+    Zone zone;
+    Options o = Collided();
+    o.collCount = 2;
+    o.contents = 3;
+    File().Model(o).Arrays().Surface().MaterialTail().CollRecord(1, 1, 0).CollRecord(2, 2, 1).Tris(1, 0.5f).Tris(2);
+    File().BoneInfo();
+    const XModel *const model = Load(kInline);
+    Expect(model == &g_models[0] && g_read == g_file.size(), "a model with two collision surfaces publishes");
+    if (model != &g_models[0] || !InArena(model->collSurfs))
+        return;
+    ExpectCollision(zone, *model);
+}
+
 void TestNamedArraysAndPreset()
 {
     Zone zone;
@@ -413,8 +474,22 @@ const Malformed kMalformed[] = {
     {"binormal sign 0", [] { Head().Surface({}, 0.f); }, "surface geometry"},
     {"index past the vertices", [] { Head().Surface({}, 1.f, 3); }, "surface geometry"},
     {"no material handles", [] { Options o; o.materials = 0; Head(o).Surface().BoneInfo(); }, "model header"},
-    {"collision surfaces", [] { Options o; o.collSurfs = kInline; o.collCount = 1; Head(o).Surface().MaterialTail(); },
-     "collision surfaces are not"},
+    {"a collision surface with no triangles", [] { Head(Collided()).Surface().MaterialTail().CollSurf(0); },
+     "model collision surface"},
+    {"a collision surface without triangles", [] { Head(Collided()).Surface().MaterialTail().CollSurf(1, 1, 0, false,
+                                                       false, 0); }, "model collision surface"},
+    {"truncated collision triangles", [] { Head(Collided()).Surface().MaterialTail().CollSurf(2); g_file.resize(g_file.size() - 4); },
+     "ended unexpectedly"},
+    {"a non-finite collision triangle", [] { Head(Collided()).Surface().MaterialTail().CollSurf(1, 1, 0, true)
+                                                 .BoneInfo(); }, "collision triangle"},
+    {"inverted collision bounds", [] { Head(Collided()).Surface().MaterialTail().CollSurf(1, 1, 0, false, true)
+                                           .BoneInfo(); }, "collision bounds"},
+    {"a collision bone past the model", [] { Head(Collided()).Surface().MaterialTail().CollSurf(1, 1, 2).BoneInfo(); },
+     "collision graph"},
+    {"inconsistent collision contents", [] { Head(Collided()).Surface().MaterialTail().CollSurf(1, 3).BoneInfo(); },
+     "collision contents"},
+    {"a collision LOD past the LODs", [] { Options o = Collided(); o.collLod = 1;
+                                           Head(o).Surface().MaterialTail().CollSurf().BoneInfo(); }, "fast-file model"},
     {"physics geometry", [] { Options o; o.physGeoms = kInline; File().Whole(o); }, "physics geometry is not"},
     {"a non-unit base pose", [] { File().Whole({}, 1, 1.f); }, "array span"},
     {"a wrong bone radius", [] { Head().Surface().MaterialTail().BoneInfo(2.f); }, "array span"},
@@ -499,5 +574,5 @@ void __cdecl DB_LoadedExternalData(std::int32_t)
 
 int main()
 {
-    return Run({TestWholeModel, TestTwoSurfaces, TestRigidSurfaces, TestTwoRigidLists, TestNamedArraysAndPreset, TestMalformedFailsClosed});
+    return Run({TestCollisionSurfaces, TestWholeModel, TestTwoSurfaces, TestRigidSurfaces, TestTwoRigidLists, TestNamedArraysAndPreset, TestMalformedFailsClosed});
 }

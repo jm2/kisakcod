@@ -50,6 +50,17 @@ record XSurface 0x38 runtime=XSurface header=xanim/xanim.h copy=scalars
     0x24 vertList             pointer  # XRigidVertList, a completed array
     0x28 partBits             i32[4]
 
+# A collision surface: its triangles (48 bytes each, no pointer) follow the
+# surfaces 4-aligned in block 4 and keep their layout.
+record XModelCollSurf 0x2C runtime=XModelCollSurf_s header=xanim/xmodel.h copy=scalars
+    0x00 collTris             pointer
+    0x04 numCollTris          i32
+    0x08 mins                 f32[3]
+    0x14 maxs                 f32[3]
+    0x20 boneIdx              i32
+    0x24 contents             i32
+    0x28 surfFlags            i32
+
 record XModel 0xDC runtime=XModel header=xanim/xmodel.h copy=scalars
     asset member=model pool=Load_XModelAsset kind=XModel alias=inserted body=custom label=model
     0x00 name                 xstring
