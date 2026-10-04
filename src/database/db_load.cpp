@@ -2927,6 +2927,10 @@ void __cdecl Load_snd_alias_list_t(bool atStreamStart)
 
 void __cdecl Load_snd_alias_list_ptr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadSndAliasListPtrDisk32(atStreamStart, varsnd_alias_list_ptr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -2959,6 +2963,7 @@ void __cdecl Load_snd_alias_list_ptr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Load_SndAliasCustom(snd_alias_list_t **var)

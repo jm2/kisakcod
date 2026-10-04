@@ -23,6 +23,7 @@ struct MenuList;
 struct PhysPreset;
 struct RawFile;
 struct SndCurve;
+struct snd_alias_list_t;
 struct StringTable;
 struct XAnimParts;
 struct XAssetList;
@@ -123,6 +124,13 @@ void __cdecl DB_LoadFontPtrDisk32(bool atStreamStart, Font_s **slot);
 // live in DB_AllocZoneNative storage. Menu has no 64-bit loader yet, so a
 // non-null menu token raises ERR_DROP.
 void __cdecl DB_LoadMenuListPtrDisk32(bool atStreamStart, MenuList **slot);
+
+// Loads one snd_alias_list_t (db_disk32_sound.cpp) under the same slot
+// contract: the slot holds the zero-extended disk32 token on entry and the
+// native list published through Load_snd_alias_list_Asset on return. Its
+// aliases, sound files and speaker maps live in DB_AllocZoneNative storage,
+// and their offset tokens resolve to those native objects.
+void __cdecl DB_LoadSndAliasListPtrDisk32(bool atStreamStart, snd_alias_list_t **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
