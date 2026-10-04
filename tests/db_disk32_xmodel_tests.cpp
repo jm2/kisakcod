@@ -40,6 +40,8 @@ struct Options
     std::uint32_t collSurfs = 0;
     std::uint32_t collCount = 0;
     std::uint32_t roots = 1;
+    std::uint32_t bones = 2;
+    std::uint32_t name = kInline;
     std::uint32_t lodBits = 0xC000'0000u; // bones 0 and 1
     float lodDist = 0.f;
     std::uint32_t preset = 0;
@@ -92,14 +94,14 @@ struct File : FileBuilder<File>
     // the unused LODs, bounds and flags hold distinct values), then its name.
     File &Model(const Options &o = {})
     {
-        Word(kInline).Word(2 | o.roots << 8 | o.surfaces << 16).Word(o.names).Word(o.parents).Word(kInline).Word(kInline);
+        Word(o.name).Word(o.bones | o.roots << 8 | o.surfaces << 16).Word(o.names).Word(o.parents).Word(kInline).Word(kInline);
         Word(kInline).Word(kInline).Word(kInline).Word(o.materials);
         Float(o.lodDist).Word(o.surfaces).Word(o.lodBits).Word(0).Word(0).Word(0).Word(0x00CC0000u);
         for (std::uint32_t lod = 1; lod < 4; ++lod)
             Float(9).Word(0).Word(0).Word(0).Word(0).Word(0).Word(0x00CC0000u | lod);
         Word(o.collSurfs).Word(o.collCount).Word(0).Word(o.boneInfo).Float(5).Float(-1).Float(-2).Float(-3);
         Float(1).Float(2).Float(3).Word(1).Word(0xDEADBEEF).Word(0x1234).Word(0x0201).Word(o.preset).Word(o.physGeoms);
-        return Text("mdl");
+        return o.name == kInline ? Text("mdl") : *this;
     }
     // Quaternions, translations, classifications and base matrices.
     File &Pose(float weight = 2.f)
@@ -419,6 +421,10 @@ const Malformed kMalformed[] = {
     {"a surface bone outside its LOD", [] { Options o; o.lodBits = 0x8000'0000u; File().Whole(o); }, "escape its LOD"},
     {"a negative LOD distance", [] { Options o; o.lodDist = -1.f; File().Whole(o); }, "model LOD"},
     {"a parent offset of 0", [] { File().Whole({}, 0); }, "parent"},
+    {"a model with a null name", [] { Options o; o.name = 0; File().Model(o).Arrays().Surface().MaterialTail()
+                                          .BoneInfo(); }, "Invalid completed fast-file model"},
+    {"a model with no bones", [] { Options o; o.bones = 0; o.roots = 0; File().Model(o).Surface(); },
+     "Invalid completed fast-file surface"},
     {"unmapped model alias", [] {}, "alias offset"},
 };
 

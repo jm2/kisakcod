@@ -242,11 +242,13 @@ bool LoadSurface(const disk32::XSurfaceDisk32 &disk, std::uint32_t boneCount, XS
                            return ConvertRigidLists(record, disk.vertListCount, converted);
                        },
                        &pending)
-        || !LoadSpanIn(8, disk.triIndices.token, disk.triCount * 6u, &out->triIndices)
-        || !db::xmodel_validation::DB_ValidateXSurfaceGraph(out, disk.deformed, boneCount))
+        || !LoadSpanIn(8, disk.triIndices.token, disk.triCount * 6u, &out->triIndices))
     {
         return false;
     }
+    // The rule's first checks return false without raising; drop for them.
+    if (!db::xmodel_validation::DB_ValidateXSurfaceGraph(out, disk.deformed, boneCount))
+        return Drop("Invalid completed fast-file surface");
     return !pending.handle
         || DB_CompleteObject(pending.handle, DBAliasKind::XRigidVertListArray, pending.record, listBytes, listBytes,
                              out->vertList);
@@ -340,10 +342,11 @@ bool LoadXModel(XModel *out)
         return false;
     if (!LoadSurfaces(disk, out) || !LoadMaterials(disk, out) || !LoadTail(disk, out))
         return false;
+    // The rule's first checks return false without raising; drop for them.
     if (!db::xmodel_validation::DB_ValidateXModelGraph(out, spans.names, spans.parents, spans.quats, spans.trans,
                                                        spans.classes, spans.baseMats))
     {
-        return false;
+        return Drop("Invalid completed fast-file model");
     }
     DB_PopStreamPos();
     return true;
