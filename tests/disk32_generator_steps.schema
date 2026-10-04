@@ -1,0 +1,16 @@
+# Test-only families for the generated pointer steps (db_disk32_steps_tests.cpp):
+# one inserted and one completed, each with a custom body the test defines.
+# The format is described in ../src/database/db_disk32.schema.
+
+record StepRawFile 0x0C runtime=RawFile header=xanim/xanim.h
+    asset member=rawfile pool=Load_RawFileAsset kind=RawFile alias=inserted body=custom label=step-raw-file
+    0x00 name        xstring
+    0x04 len         i32
+    0x08 buffer      bytes      count=len+1 terminated label=step-buffer
+
+record StepTable 0x10 runtime=StringTable header=universal/q_shared.h
+    asset member=stringTable pool=Load_StringTableAsset kind=StringTable alias=completed body=custom label=step-table
+    0x00 name        xstring
+    0x04 columnCount i32
+    0x08 rowCount    i32
+    0x0C values      xstrings   count=columnCount*rowCount

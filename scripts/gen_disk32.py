@@ -261,7 +261,10 @@ inline void Load${Name}Ptr(disk32::PointerToken token, $Runtime **slot)
         token.isSharedInline() ? DB_InsertPointer(DBAliasKind::$kind) : DBAliasHandle{};
     $Runtime native{};
     if ((token.isSharedInline() && !inserted) || !Load$Name(&native))
+    {
+        Drop("Failed to load fast-file $noun");
         return;
+    }
     XAssetHeader header;
     header.$member = &native;
     $pool(&header);
@@ -315,6 +318,7 @@ inline void Load${Name}Ptr(disk32::PointerToken token, $Runtime **slot)
     if (!completed || !Load$Name(record, &object)
         || !DB_CompleteObject(completed, DBAliasKind::$kind, record, kRecordBytes, kRecordBytes, object))
     {
+        Drop("Failed to load fast-file $noun");
         return;
     }
     XAssetHeader header;
