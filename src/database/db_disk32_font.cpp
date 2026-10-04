@@ -4,7 +4,6 @@
 
 #include <database/db_disk32_loaders.h> // generated from disk32/14-font.schema
 #include <database/db_validation.h>
-#include <gfx_d3d/r_font.h>
 
 #include <cstdint>
 #include <cstring>
@@ -14,16 +13,15 @@
 // generated from its schema entry; the record body below is custom. It
 // mirrors Load_Font in db_load.cpp: the 24-byte record streams into the temp
 // block, its glyph table is checked, then its name, materials and glyphs load
-// with block 4 pushed. A Glyph holds no pointer, so the glyphs stay where they
-// stream and the native pointer points at them. Material has no 64-bit loader
-// yet, so a non-null material token fails closed.
+// with block 4 pushed. A Glyph holds no pointer (its schema entry asserts
+// both widths share its 24 bytes), so the glyphs stay where they stream and
+// the native pointer points at them. Material has no 64-bit loader yet, so a
+// non-null material token fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
 namespace
 {
-static_assert(sizeof(Glyph) == 24, "a Glyph keeps its retail layout");
-
 bool LoadMaterial(disk32::Ptr32<void> field, Material **out)
 {
     *out = nullptr;
@@ -37,7 +35,7 @@ bool LoadMaterial(disk32::Ptr32<void> field, Material **out)
 bool LoadGlyphs(disk32::PointerToken token, std::int32_t count, Glyph **out)
 {
     std::int32_t bytes = 0;
-    if (!db::validation::CheckedArrayBytes(count, sizeof(Glyph), &bytes))
+    if (!db::validation::CheckedArrayBytes(count, sizeof(disk32::GlyphDisk32), &bytes))
         return Drop("Invalid fast-file font glyph table");
     if (token.isInline())
     {
