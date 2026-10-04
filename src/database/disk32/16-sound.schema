@@ -1,0 +1,43 @@
+# Sound (snd_alias_list_t), asset type 0x07, and the records its aliases
+# hold. The format is described in ../db_disk32.schema. The body is custom
+# (db_disk32_sound.cpp): the alias array and each sound file are completed
+# objects, and speaker maps have no 64-bit loader yet.
+
+# The sound file's union: a LoadedSound token (type 1) or a streamed file's
+# directory and name (type 2), laid out flat.
+record SoundFile 0x0C runtime=SoundFile header=sound/snd_public.h
+    0x00 type                          u8
+    0x01 exists                        u8
+    0x04 u.streamSnd.filename.info.raw.dir  xstring  # or u.loadSnd's token
+    0x08 u.streamSnd.filename.info.raw.name xstring
+
+record SndAlias 0x5C runtime=snd_alias_t header=sound/snd_public.h copy=scalars
+    0x00 aliasName                     xstring
+    0x04 subtitle                      xstring
+    0x08 secondaryAliasName            xstring
+    0x0C chainAliasName                xstring
+    0x10 soundFile                     pointer  # SoundFile
+    0x14 sequence                      i32
+    0x18 volMin                        f32
+    0x1C volMax                        f32
+    0x20 pitchMin                      f32
+    0x24 pitchMax                      f32
+    0x28 distMin                       f32
+    0x2C distMax                       f32
+    0x30 flags                         i32
+    0x34 slavePercentage               f32
+    0x38 probability                   f32
+    0x3C lfePercentage                 f32
+    0x40 centerPercentage              f32
+    0x44 startDelay                    i32
+    0x48 volumeFalloffCurve            pointer  asset=SndCurve
+    0x4C envelopMin                    f32
+    0x50 envelopMax                    f32
+    0x54 envelopPercentage             f32
+    0x58 speakerMap                    pointer  # SpeakerMap, not converted yet
+
+record SndAliasList 0x0C runtime=snd_alias_list_t header=sound/snd_public.h
+    asset member=sound pool=Load_snd_alias_list_Asset kind=SndAliasList alias=inserted body=custom label=sound-alias-list
+    0x00 aliasName                     xstring
+    0x04 head                          pointer  # count SndAlias, inline
+    0x08 count                         i32
