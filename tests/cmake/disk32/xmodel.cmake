@@ -1,3 +1,5 @@
 # XModel's 64-bit load: the generated steps and its custom record body, with
-# the production Load_ScriptStringCustom for the bone names.
-kisakcod_disk32_load_test(xmodel db_disk32_xmodel_tests.cpp db_disk32_xmodel.cpp db_stringtable_load.cpp)
+# the production Load_ScriptStringCustom for the bone names and Material's,
+# TechniqueSet's and PhysPreset's real steps for the references.
+kisakcod_disk32_load_test(xmodel db_disk32_xmodel_tests.cpp db_disk32_xmodel.cpp db_stringtable_load.cpp
+    db_disk32_material.cpp db_disk32_techniqueset.cpp db_disk32_image.cpp)

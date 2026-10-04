@@ -104,7 +104,8 @@ struct FileBuilder
     }
 };
 
-// A zone with a temp block (0) of up to 512 bytes and the virtual block (4),
+// A zone with a temp block (0) of up to 512 bytes, the virtual block (4) and
+// the vertex (7) and index (8) blocks,
 // positioned as DB_LoadXFile leaves it for the asset array. Each zone starts
 // a new image.
 template <std::uint32_t VirtBytes>
@@ -112,6 +113,8 @@ struct Zone
 {
     alignas(16) std::uint8_t temp[512]{};
     alignas(16) std::uint8_t virt[VirtBytes]{};
+    alignas(16) std::uint8_t vertex[256]{};
+    alignas(16) std::uint8_t index[256]{};
     XZoneMemory memory{};
 
     explicit Zone(std::uint32_t tempBytes = sizeof(temp))
@@ -119,6 +122,8 @@ struct Zone
         ResetImage();
         memory.blocks[0] = {temp, tempBytes};
         memory.blocks[4] = {virt, VirtBytes};
+        memory.blocks[7] = {vertex, sizeof(vertex)};
+        memory.blocks[8] = {index, sizeof(index)};
         DB_InitStreams(&memory);
         DB_PushStreamPos(4); // DB_LoadXFile walks the asset array in block 4
     }
