@@ -1,0 +1,28 @@
+# Font (Font_s), asset type 0x13. The format is described in
+# ../db_disk32.schema. The body is custom (db_disk32_font.cpp): the glyph
+# table is checked before anything streams, its 24-byte glyphs keep their
+# layout and stay in block 4, and the materials name a family with no 64-bit
+# loader yet.
+
+# A glyph holds no pointer: its RUNTIME_SIZE asserts that both widths share
+# its 24 bytes, so the glyphs stay in block 4.
+record Glyph 0x18 runtime=Glyph header=gfx_d3d/r_font.h
+    0x00 letter          u16
+    0x02 x0              u8
+    0x03 y0              u8
+    0x04 dx              u8
+    0x05 pixelWidth      u8
+    0x06 pixelHeight     u8
+    0x08 s0              f32
+    0x0C t0              f32
+    0x10 s1              f32
+    0x14 t1              f32
+
+record Font 0x18 runtime=Font_s header=gfx_d3d/r_font.h copy=scalars
+    asset member=font pool=Load_FontAsset kind=Font alias=inserted body=custom label=font
+    0x00 fontName        xstring
+    0x04 pixelHeight     i32
+    0x08 glyphCount      i32
+    0x0C material        pointer  # Material
+    0x10 glowMaterial    pointer  # Material
+    0x14 glyphs          pointer  # glyphCount Glyphs: inline, or an offset into block 4
