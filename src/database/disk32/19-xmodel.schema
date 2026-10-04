@@ -13,6 +13,23 @@ record XModelLodInfo 0x1C runtime=XModelLodInfo header=xanim/xmodel.h copy=scala
     0x1A smcAllocBits         u8
     0x1B unused               u8
 
+# A rigid-vertex list's collision tree: its nodes (16-aligned) and leaves
+# keep their layout and follow it in block 4.
+record XSurfaceCollisionTree 0x28 runtime=XSurfaceCollisionTree header=xanim/xanim.h copy=scalars
+    0x00 trans                f32[3]
+    0x0C scale                f32[3]
+    0x18 nodeCount            u32
+    0x1C nodes                pointer
+    0x20 leafCount            u32
+    0x24 leafs                pointer
+
+record XRigidVertList 0x0C runtime=XRigidVertList header=xanim/xanim.h copy=scalars
+    0x00 boneOffset           u16
+    0x02 vertCount            u16
+    0x04 triOffset            u16
+    0x06 triCount             u16
+    0x08 collisionTree        pointer  # XSurfaceCollisionTree, a completed object
+
 # A surface's skinning: vertex counts by influence, then a blend-weight token.
 record XSurfaceVertexInfo 0x0C runtime=XSurfaceVertexInfo header=xanim/xanim.h copy=scalars
     0x00 vertCount            i16[4]
