@@ -18,10 +18,10 @@
 // their layout: -1 streams them at their retail alignment (vertices in block
 // 7, indices in block 8) and any other token names bytes already there; bone
 // names become interned script-string ids. Surfaces, material handles,
-// rigid-vertex lists, collision trees and collision surfaces convert into
-// native storage (the lists and trees as completed objects); materials and
-// the preset load through their families' pointer steps. Physics geometry
-// is not converted yet and fails closed.
+// rigid-vertex lists, collision trees, collision surfaces and physics
+// geometry (its list, geoms and brushes) convert into native storage, the
+// completed objects among them registered as on x86; materials and the
+// preset load through their families' pointer steps.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -336,6 +336,151 @@ bool LoadCollisionSurfaces(const disk32::XModelDisk32 &disk, XModel *out)
     return true;
 }
 
+// A plane named by offset: its 20 bytes, 4-aligned in block 4.
+bool ResolvePlane(disk32::PointerToken token, cplane_s **out)
+{
+    std::uintptr_t address = 0;
+    const db::relocation::Status status = DB_ResolveOffsetBytes(
+        token, sizeof(cplane_s), 4, db::relocation::BlockBit(kVirtualBlock), &address);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(ERR_DROP, "Invalid deferred fast-file brush-side plane: %s", db::relocation::StatusName(status));
+        return false;
+    }
+    *out = reinterpret_cast<cplane_s *>(address);
+    return true;
+}
+
+// Load_BrushWrapper's sides: every retail side streams 4-aligned in block 4,
+// then each converts; an inline plane streams after it, and an offset waits
+// for the planes (kept in `deferred`).
+bool LoadSides(const disk32::BrushWrapperDisk32 &disk, BrushWrapper *brush, disk32::PointerToken *deferred)
+{
+    constexpr auto kSideBytes = sizeof(disk32::CBrushSideDisk32);
+    std::uint8_t *const record = DB_AllocStreamPos(3);
+    if (!StreamBytes(record, static_cast<std::int32_t>(disk.numsides * kSideBytes)))
+        return false;
+    brush->sides = disk.numsides ? AllocNative<cbrushside_t>(static_cast<std::int32_t>(disk.numsides))
+                                 : reinterpret_cast<cbrushside_t *>(record);
+    if (!brush->sides)
+        return false;
+    for (std::uint32_t index = 0; index < disk.numsides; ++index)
+    {
+        disk32::CBrushSideDisk32 side{};
+        std::memcpy(&side, record + index * kSideBytes, sizeof(side));
+        CopyCBrushSideScalars(side, &brush->sides[index]);
+        brush->sides[index].plane = nullptr;
+        const disk32::PointerToken token = side.plane.token;
+        if (token.isNull() || token.isSharedInline())
+            return Drop("Invalid fast-file physics brush-side plane token");
+        if (token.isOffset())
+            deferred[index] = token;
+        else if (!LoadSpan(token, sizeof(cplane_s), 4, &brush->sides[index].plane))
+            return false;
+    }
+    return true;
+}
+
+// The side planes named by offset, once the planes have loaded.
+bool ResolveDeferredPlanes(std::uint32_t sideCount, const disk32::PointerToken *deferred, BrushWrapper *brush)
+{
+    for (std::uint32_t index = 0; index < sideCount; ++index)
+    {
+        if (deferred[index].isOffset() && !ResolvePlane(deferred[index], &brush->sides[index].plane))
+            return false;
+    }
+    return true;
+}
+
+// The brush's sides, adjacency (any non-null token means it follows inline)
+// and planes, then the side planes named by offset.
+bool LoadBrushBody(const disk32::BrushWrapperDisk32 &disk, std::int32_t adjacencyBytes, std::int32_t planeBytes,
+                   BrushWrapper *brush)
+{
+    disk32::PointerToken deferred[db::validation::kMaxBrushNonaxialSides] = {};
+    const disk32::PointerToken adjacency{disk.baseAdjacentSide.token.isNull() ? 0u : disk32::kInline};
+    return (disk.sides.token.isNull() || LoadSides(disk, brush, deferred))
+        && LoadSpan(adjacency, static_cast<std::uint32_t>(adjacencyBytes), 1, &brush->baseAdjacentSide)
+        && LoadSpan(disk.planes.token, static_cast<std::uint32_t>(planeBytes), 4, &brush->planes)
+        && ResolveDeferredPlanes(disk.numsides, deferred, brush);
+}
+
+// Load_BrushWrapper: the header rule, LoadBrushBody, then
+// BrushWrapperRuntimeValid.
+bool ConvertBrush(std::uint8_t *record, BrushWrapper **out)
+{
+    disk32::BrushWrapperDisk32 disk{};
+    if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
+        return false;
+    std::memcpy(&disk, record, sizeof(disk));
+    std::int32_t sideBytes = 0;
+    std::int32_t planeBytes = 0;
+    std::int32_t adjacencyBytes = 0;
+    if (!db::validation::BrushWrapperLayoutValid(!disk.sides.token.isNull(), !disk.planes.token.isNull(), disk.numsides,
+                                                 !disk.baseAdjacentSide.token.isNull(), disk.totalEdgeCount,
+                                                 &sideBytes, &planeBytes, &adjacencyBytes))
+    {
+        return Drop("Invalid fast-file physics brush header");
+    }
+    BrushWrapper *const brush = AllocNative<BrushWrapper>(1);
+    if (!brush)
+        return false;
+    *brush = {};
+    CopyBrushWrapperScalars(disk, brush);
+    if (!LoadBrushBody(disk, adjacencyBytes, planeBytes, brush))
+        return false;
+    if (!db::validation::BrushWrapperRuntimeValid(*brush))
+        return Drop("Invalid completed fast-file physics brush graph");
+    *out = brush;
+    return true;
+}
+
+// Load_PhysGeomInfo: its brush (a completed object), then its rule.
+bool LoadGeom(const disk32::PhysGeomInfoDisk32 &disk, PhysGeomInfo *out)
+{
+    CopyPhysGeomInfoScalars(disk, out);
+    if (!LoadCompleted(disk.brush.token, DBAliasKind::BrushWrapper, disk32::kBrushWrapperBytes, &out->brush,
+                       [](std::uint8_t *record, BrushWrapper **brush) { return ConvertBrush(record, brush); }))
+    {
+        return false;
+    }
+    return db::validation::PhysGeomInfoRuntimeValid(*out) || Drop("Invalid completed fast-file physics geometry");
+}
+
+// Load_PhysGeomList: the header rule, then any non-null geoms token means
+// count retail geoms follow 4-aligned in block 4, each converting into
+// native storage; then PhysGeomListRuntimeValid.
+bool ConvertGeomList(std::uint8_t *record, PhysGeomList **out)
+{
+    disk32::PhysGeomListDisk32 disk{};
+    if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
+        return false;
+    std::memcpy(&disk, record, sizeof(disk));
+    std::int32_t geomBytes = 0;
+    if (!db::validation::PhysGeomListLayoutValid(!disk.geoms.token.isNull(), disk.count, &geomBytes))
+        return Drop("Invalid fast-file physics geometry-list header");
+    PhysGeomList *const list = AllocNative<PhysGeomList>(1);
+    std::uint8_t *const geoms = DB_AllocStreamPos(3);
+    if (!list || !StreamBytes(geoms, geomBytes))
+        return false;
+    CopyPhysGeomListScalars(disk, list);
+    list->geoms = AllocNative<PhysGeomInfo>(static_cast<std::int32_t>(disk.count));
+    if (!list->geoms)
+        return false;
+    constexpr auto kGeomBytes = sizeof(disk32::PhysGeomInfoDisk32);
+    for (std::uint32_t index = 0; index < disk.count; ++index)
+    {
+        disk32::PhysGeomInfoDisk32 geom{};
+        std::memcpy(&geom, geoms + index * kGeomBytes, sizeof(geom));
+        if (!LoadGeom(geom, &list->geoms[index]))
+            return false;
+    }
+    if (!db::validation::PhysGeomListRuntimeValid(*list))
+        return Drop("Invalid completed fast-file physics geometry list");
+    *out = list;
+    return true;
+}
+
 // Load_XModel after the materials: collision surfaces, bone info (any
 // non-null token means it follows inline), the preset and physics geometry.
 bool LoadTail(const disk32::XModelDisk32 &disk, XModel *out)
@@ -346,9 +491,8 @@ bool LoadTail(const disk32::XModelDisk32 &disk, XModel *out)
     if (!LoadSpan(boneInfo, disk.numBones * static_cast<std::uint32_t>(sizeof(XBoneInfo)), 4, &out->boneInfo))
         return false;
     LoadPhysPresetPtr(disk.physPreset.token, &out->physPreset);
-    if (!disk.physGeoms.token.isNull())
-        return Drop("Fast-file model physics geometry is not converted yet");
-    return true;
+    return LoadCompleted(disk.physGeoms.token, DBAliasKind::PhysGeomList, disk32::kPhysGeomListBytes, &out->physGeoms,
+                         [](std::uint8_t *record, PhysGeomList **list) { return ConvertGeomList(record, list); });
 }
 
 // Load_XModel's checks before anything else streams.
