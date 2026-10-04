@@ -1,0 +1,28 @@
+# Material, asset type 0x04, and its info record. The format is described in
+# ../db_disk32.schema. The body is custom (db_disk32_material.cpp): the
+# technique set loads through TechniqueSet's pointer step, and the constant and
+# state-bit tables keep their layout and stay in block 4.
+
+record MaterialInfo 0x18 runtime=MaterialInfo header=gfx_d3d/r_material.h copy=scalars
+    0x00 name                    xstring
+    0x04 gameFlags               u8
+    0x05 sortKey                 u8
+    0x06 textureAtlasRowCount    u8
+    0x07 textureAtlasColumnCount u8
+    0x08 drawSurf                u64
+    0x10 surfaceTypeBits         u32
+    0x14 hashIndex               u16
+
+record Material 0x50 runtime=Material header=gfx_d3d/r_material.h copy=scalars
+    asset member=material pool=Load_MaterialAsset kind=Material alias=inserted body=custom label=material
+    0x00 info                    struct   of=MaterialInfo
+    0x18 stateBitsEntry          u8[34]
+    0x3A textureCount            u8
+    0x3B constantCount           u8
+    0x3C stateBitsCount          u8
+    0x3D stateFlags              u8
+    0x3E cameraRegion            u8
+    0x40 techniqueSet            pointer  asset=MaterialTechniqueSet
+    0x44 textureTable            pointer  # textureCount MaterialTextureDef, a completed object
+    0x48 constantTable           pointer  # constantCount 32-byte constants, 16-aligned in block 4
+    0x4C stateBitsTable          pointer  # stateBitsCount 8-byte state bits in block 4
