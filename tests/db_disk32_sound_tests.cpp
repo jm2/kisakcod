@@ -1,7 +1,6 @@
 // db_disk32_sound_tests.cpp: the 64-bit Sound loader (NOW row 12) on hand-built
-// disk32 zone images (disk32_fixture.hpp), with SoundCurve's real steps. Speaker
-// maps are not converted yet, so every alias fails closed at its speaker map,
-// after everything before it loaded into the fixture's native storage.
+// disk32 zone images (disk32_fixture.hpp), with SoundCurve's real steps.
+// Aliases, sound files and speaker maps live in the fixture's native storage.
 
 #include "disk32_fixture.hpp"
 
@@ -28,16 +27,36 @@ struct File : FileBuilder<File>
     {
         return Word(name).Word(head).Word(static_cast<std::uint32_t>(count));
     }
-    // A 92-byte retail alias whose float scalars count up from 3.
-    File &Alias(std::uint32_t name, std::uint32_t file, std::uint32_t flags, std::uint32_t curve, std::uint32_t map)
+    // A 92-byte retail alias whose float scalars count up from `base`.
+    File &Alias(std::uint32_t name, std::uint32_t file, std::uint32_t flags, std::uint32_t curve, std::uint32_t map,
+                float base = 3.f)
     {
         Word(name).Word(0).Word(0).Word(0).Word(file).Word(0x51);
         for (int i = 0; i < 6; ++i)
-            Float(3.f + static_cast<float>(i)); // volMin .. distMax
+            Float(base + static_cast<float>(i)); // volMin .. distMax
         Word(flags);
         for (int i = 0; i < 4; ++i)
-            Float(13.f + static_cast<float>(i)); // slavePercentage .. centerPercentage
-        return Word(0x77).Word(curve).Float(23.f).Float(24.f).Float(25.f).Word(map);
+            Float(base + 10.f + static_cast<float>(i)); // slavePercentage .. centerPercentage
+        return Word(0x77).Word(curve).Float(base + 20.f).Float(base + 21.f).Float(base + 22.f).Word(map);
+    }
+    // One 100-byte channel map, valid unless `badCount` or `badLevel`.
+    File &Channels(std::uint32_t source, std::uint32_t speakers, bool badCount, bool badLevel)
+    {
+        Word(speakers + (badCount ? 1 : 0));
+        for (std::uint32_t speaker = 0; speaker < 6; ++speaker)
+        {
+            const bool used = speaker < speakers;
+            Word(used ? speaker : 0).Word(used ? source + 1 : 0);
+            Float(badLevel && used ? 2.f : 0.25f * static_cast<float>(speaker % 4)).Float(0.5f);
+        }
+        return *this;
+    }
+    // A 408-byte speaker map; its last channel map is bad if asked.
+    File &Map(std::uint32_t isDefault, std::uint32_t name, bool badCount = false, bool badLevel = false)
+    {
+        Word(0xCDCDCD00u | isDefault).Word(name);
+        Channels(0, 2, false, false).Channels(0, 6, false, false).Channels(1, 2, false, false);
+        return Channels(1, 6, badCount, badLevel);
     }
     File &SoundFile(std::uint32_t type, std::uint32_t exists, std::uint32_t dir, std::uint32_t name)
     {
@@ -52,7 +71,7 @@ struct File : FileBuilder<File>
     }
 };
 
-using Zone = disk32_test::Zone<1024>;
+using Zone = disk32_test::Zone<2048>;
 
 snd_alias_list_t *Load(std::uintptr_t slotValue)
 {
@@ -64,34 +83,25 @@ bool Is(const Zone &zone, const char *text, const char *expected)
     return zone.Holds(text) && !std::strcmp(text, expected);
 }
 
-// The native alias, then its sound file, are the first native storage.
-const snd_alias_t &FirstAlias()
+bool ScalarsMatch(const snd_alias_t &alias, std::uint32_t flags, float base)
 {
-    return *reinterpret_cast<const snd_alias_t *>(g_arena);
+    return alias.sequence == 0x51 && alias.volMin == base && alias.distMax == base + 5.f
+        && alias.flags == static_cast<std::int32_t>(flags) && alias.slavePercentage == base + 10.f
+        && alias.centerPercentage == base + 13.f && alias.startDelay == 0x77 && alias.envelopMin == base + 20.f
+        && alias.envelopPercentage == base + 22.f;
 }
 
-bool ScalarsMatch(const snd_alias_t &alias, std::uint32_t flags)
+bool MapMatches(const SpeakerMap *map)
 {
-    return alias.sequence == 0x51 && alias.volMin == 3.f && alias.distMax == 8.f
-        && alias.flags == static_cast<std::int32_t>(flags) && alias.slavePercentage == 13.f
-        && alias.centerPercentage == 16.f && alias.startDelay == 0x77 && alias.envelopMin == 23.f
-        && alias.envelopPercentage == 25.f;
+    return InArena(map) && !map->isDefault && map->channelMaps[1][1].speakerCount == 6
+        && map->channelMaps[1][1].speakers[5].speaker == 5 && map->channelMaps[1][1].speakers[5].numLevels == 2
+        && map->channelMaps[0][0].speakers[1].levels[0] == 0.25f;
 }
 
-void TestStreamedAlias()
+// The first alias TestStreamedAliases builds: its fields, sound file, curve and map.
+void ExpectStreamedAlias(const Zone &zone, const snd_alias_t &alias)
 {
-    Zone zone;
-    g_listCount = g_curveCount = 0;
-    // Block 4: name (0..6), aliases (8..100), "a1" (100..103), the sound file
-    // (104..116) and its strings (116..127), then "falloff" (127..135). The
-    // curve record uses the temp block.
-    File().List(kInline, kInline, 1).Text("snd_a").Alias(kInline, kInline, kStreamed, kInline, kInline);
-    File().Text("a1").SoundFile(2, 1, kInline, kInline).Text("snd/").Text("x.wav").Curve(kInline).Text("falloff");
-    ExpectDrop("an alias with a speaker map", "speaker map", [] { Load(kInline); });
-    const snd_alias_t &alias = FirstAlias();
-    Expect(g_arenaUsed == sizeof(snd_alias_t) + sizeof(SoundFile) && InArena(alias.soundFile),
-           "the alias and its sound file convert into native storage");
-    Expect(Is(zone, alias.aliasName, "a1") && !alias.subtitle && ScalarsMatch(alias, kStreamed),
+    Expect(Is(zone, alias.aliasName, "a1") && !alias.subtitle && ScalarsMatch(alias, kStreamed, 3.f),
            "the alias's strings and scalars convert from their retail offsets");
     const SoundFile *const file = alias.soundFile;
     Expect(InArena(file) && file->type == 2 && file->exists == 1
@@ -100,8 +110,41 @@ void TestStreamedAlias()
            "a streamed sound file converts with its two strings");
     Expect(alias.volumeFalloffCurve == &g_curves[0] && Is(zone, g_curves[0].filename, "falloff"),
            "the falloff curve loads through SoundCurve's step");
-    Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 135,
-           "every disk byte up to the speaker map is consumed at its retail offset");
+    Expect(MapMatches(alias.speakerMap) && Is(zone, alias.speakerMap->name, "map")
+               && !std::memcmp(alias.speakerMap->channelMaps, zone.virt + 236, 400),
+           "the speaker map converts, its channel maps copied from their retail bytes");
+}
+
+void ExpectSecondAlias(const Zone &zone, const snd_alias_t &second, const snd_alias_t &first)
+{
+    Expect(Is(zone, second.aliasName, "a2") && ScalarsMatch(second, kStreamed, 40.f) && InArena(second.soundFile)
+               && second.soundFile != first.soundFile,
+           "the second alias converts from its own retail element");
+    Expect(InArena(second.speakerMap) && second.speakerMap->isDefault && Is(zone, second.speakerMap->name, ""),
+           "a default speaker map may have an empty name");
+}
+
+void TestStreamedAliases()
+{
+    Zone zone;
+    g_listCount = g_curveCount = 0;
+    // Block 4: name (0..6), two aliases (8..192), "a1" (192..195), the sound
+    // file (196..208) and its strings (208..219), "falloff" (219..227), the
+    // speaker map (228..636) and "map" (636..640); then the second alias's
+    // name, file, curve name and map. Curve records use the temp block.
+    File().List(kInline, kInline, 2).Text("snd_a").Alias(kInline, kInline, kStreamed, kInline, kInline, 3.f);
+    File().Alias(kInline, kInline, kStreamed, kInline, kInline, 40.f).Text("a1").SoundFile(2, 1, kInline, kInline);
+    File().Text("snd/").Text("x.wav").Curve(kInline).Text("falloff").Map(0, kInline).Text("map");
+    File().Text("a2").SoundFile(2, 0, 0, 0).Curve(kInline).Text("c2").Map(1, kInline).Text("");
+    const snd_alias_list_t *const list = Load(kInline);
+    Expect(list == &g_lists[0] && g_curveCount == 2, "a list of two aliases publishes, with two curves");
+    if (list != &g_lists[0] || !InArena(list->head))
+        return;
+    Expect(Is(zone, list->aliasName, "snd_a") && list->count == 2, "the list converts");
+    ExpectStreamedAlias(zone, list->head[0]);
+    ExpectSecondAlias(zone, list->head[1], list->head[0]);
+    Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 1069,
+           "every disk byte is consumed and block 4 advances by the retail extent");
 }
 
 void TestEmptyLists()
@@ -135,6 +178,12 @@ File Prefix(std::uint32_t file = kInline, std::uint32_t flags = kStreamed, std::
     return File();
 }
 
+// Prefix, then a streamed sound file and the curve: everything up to the map.
+File WithFile()
+{
+    return Prefix().SoundFile(2, 0, 0, 0).Curve(kInline).Text("c");
+}
+
 const Malformed kMalformed[] = {
     {"truncated list", [] { File().Word(kInline).Word(kInline); }, "ended unexpectedly"},
     {"negative count", [] { File().List(kInline, kInline, -1).Text("s"); }, "direct span"},
@@ -151,8 +200,19 @@ const Malformed kMalformed[] = {
     {"bad falloff curve", [] { Prefix().SoundFile(2, 0, 0, 0).Curve(kInline, 1).Text("c"); }, "sound curve"},
     {"alias without a sound file", [] { Prefix(0, kStreamed, 0).Curve(kInline).Text("c"); },
      "completed fast-file sound alias"},
-    {"native storage exhausted", [] { Prefix().SoundFile(2, 0, 0, 0).Curve(kInline).Text("c"); }, "exhausted",
-     sizeof(snd_alias_t)},
+    {"speaker map with a null name", [] { WithFile().Map(0, 0); }, "identity"},
+    {"speaker map default flag 2", [] { WithFile().Map(2, kInline).Text("m"); }, "default flag"},
+    {"non-default speaker map with an empty name", [] { WithFile().Map(0, kInline).Text(""); }, "default flag or name"},
+    {"speaker map channel count", [] { WithFile().Map(0, kInline, true).Text("m"); }, "channel count"},
+    {"speaker map level above 1", [] { WithFile().Map(0, kInline, false, true).Text("m"); }, "levels"},
+    {"a speaker map named by offset", [] { Prefix(kInline, kStreamed, VirtualOffset(4)).SoundFile(2, 0, 0, 0)
+                                               .Curve(kInline).Text("c"); }, "by offset"},
+    {"type the flags do not name", [] { Prefix(kInline, kLoaded).SoundFile(2, 0, 0, 0).Curve(kInline).Text("c")
+                                            .Map(0, kInline).Text("m"); }, "completed fast-file sound alias"},
+    {"alias without a speaker map", [] { Prefix(kInline, kStreamed, 0).SoundFile(2, 0, 0, 0).Curve(kInline).Text("c"); },
+     "completed fast-file sound alias"},
+    {"native storage exhausted", [] { WithFile().Map(0, kInline).Text("m"); }, "exhausted",
+     sizeof(snd_alias_t) + sizeof(SoundFile)},
     {"unmapped list alias", [] {}, "alias offset"},
 };
 
@@ -190,5 +250,5 @@ void __cdecl Load_SndCurveAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestStreamedAlias, TestEmptyLists, TestMalformedFailsClosed});
+    return Run({TestStreamedAliases, TestEmptyLists, TestMalformedFailsClosed});
 }

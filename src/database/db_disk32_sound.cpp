@@ -13,9 +13,9 @@
 // mirrors Load_snd_alias_list_t and Load_snd_alias_t: the list streams into the
 // temp block, then with block 4 pushed its name, alias array and each alias's
 // strings, sound file, curve (through SoundCurve's step) and speaker map. The
-// alias array and sound files are completed objects streamed 4-aligned in
-// block 4. Offset tokens naming one, loaded-sound files and speaker maps are
-// not converted yet and fail closed; so does every alias, needing a speaker map.
+// alias array, sound files and speaker maps are completed objects streamed
+// 4-aligned in block 4. Offset tokens naming one, and loaded-sound files, are
+// not converted yet and fail closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -66,6 +66,52 @@ bool ConvertSoundFile(std::uint8_t *record, SoundFile **out)
     return LoadXString(disk.dir, &raw.dir) && LoadXString(disk.name, &raw.name);
 }
 
+// DB_ValidateSpeakerMap's rules on the converted map.
+bool CheckSpeakerMap(const SpeakerMap &map, std::uint8_t isDefault)
+{
+    if (!map.name)
+        return Drop("Invalid fast-file speaker-map identity");
+    if (isDefault > 1 || (!isDefault && !*map.name))
+        return Drop("Invalid fast-file speaker-map default flag or name");
+    for (std::uint32_t source = 0; source < 2; ++source)
+    {
+        for (std::uint32_t output = 0; output < 2; ++output)
+        {
+            const MSSChannelMap &channels = map.channelMaps[source][output];
+            const std::uint32_t expected = db::validation::SpeakerMapExpectedSpeakerCount(output);
+            if (channels.speakerCount != static_cast<std::int32_t>(expected))
+                return Drop("Invalid fast-file speaker-map channel count");
+            for (std::uint32_t speaker = 0; speaker < expected; ++speaker)
+            {
+                const MSSSpeakerLevels &levels = channels.speakers[speaker];
+                if (!db::validation::SpeakerMapEntryValid(speaker, levels.speaker, levels.numLevels, source + 1,
+                                                          levels.levels[0], levels.levels[1]))
+                    return Drop("Invalid fast-file speaker-map levels");
+            }
+        }
+    }
+    return true;
+}
+
+// Load_SpeakerMap: the record, its name, and the channel maps as their bytes.
+bool ConvertSpeakerMap(std::uint8_t *record, SpeakerMap **out)
+{
+    disk32::SpeakerMapDisk32 disk{};
+    if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
+        return false;
+    std::memcpy(&disk, record, sizeof(disk));
+    SpeakerMap *const map = AllocNative<SpeakerMap>(1);
+    if (!map)
+        return false;
+    map->isDefault = disk.isDefault != 0;
+    // The schema's RUNTIME_SIZE/RUNTIME_OFFSET pin both to 400 bytes.
+    std::memcpy(map->channelMaps, disk.channelMaps, sizeof(map->channelMaps));
+    if (!LoadXString(disk.name, &map->name) || !CheckSpeakerMap(*map, disk.isDefault))
+        return false;
+    *out = map;
+    return true;
+}
+
 bool LoadAliasStrings(const disk32::SndAliasDisk32 &disk, snd_alias_t *out)
 {
     return LoadXString(disk.aliasName, &out->aliasName) && LoadXString(disk.subtitle, &out->subtitle)
@@ -85,9 +131,11 @@ bool LoadAlias(const disk32::SndAliasDisk32 &disk, snd_alias_t *out)
     }
     out->volumeFalloffCurve = nullptr;
     LoadSndCurvePtr(disk.volumeFalloffCurve.token, &out->volumeFalloffCurve);
-    out->speakerMap = nullptr;
-    if (!disk.speakerMap.token.isNull())
-        return Drop("Fast-file sound alias names a speaker map, which has no 64-bit loader yet");
+    if (!LoadCompleted(disk.speakerMap.token, DBAliasKind::SpeakerMap, disk32::kSpeakerMapBytes, &out->speakerMap,
+                       ConvertSpeakerMap))
+    {
+        return false;
+    }
     if (!out->aliasName || !*out->aliasName || !out->soundFile || !out->volumeFalloffCurve || !out->speakerMap
         || out->soundFile->type != (static_cast<std::uint32_t>(out->flags) >> 6 & 3u))
     {

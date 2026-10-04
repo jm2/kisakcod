@@ -1,7 +1,7 @@
 # Sound (snd_alias_list_t), asset type 0x07, and the records its aliases
 # hold. The format is described in ../db_disk32.schema. The body is custom
-# (db_disk32_sound.cpp): the alias array and each sound file are completed
-# objects, and speaker maps have no 64-bit loader yet.
+# (db_disk32_sound.cpp): the alias array, each sound file and each speaker map
+# are completed objects.
 
 # The sound file's union: a LoadedSound token (type 1) or a streamed file's
 # directory and name (type 2), laid out flat.
@@ -10,6 +10,12 @@ record SoundFile 0x0C runtime=SoundFile header=sound/snd_public.h
     0x01 exists                        u8
     0x04 u.streamSnd.filename.info.raw.dir  xstring  # or u.loadSnd's token
     0x08 u.streamSnd.filename.info.raw.name xstring
+
+# The four channel maps hold no pointer, so they copy as their 400 bytes.
+record SpeakerMap 0x198 runtime=SpeakerMap header=sound/snd_public.h
+    0x00 isDefault                     u8
+    0x04 name                          xstring
+    0x08 channelMaps                   u8[400]
 
 record SndAlias 0x5C runtime=snd_alias_t header=sound/snd_public.h copy=scalars
     0x00 aliasName                     xstring
@@ -34,7 +40,7 @@ record SndAlias 0x5C runtime=snd_alias_t header=sound/snd_public.h copy=scalars
     0x4C envelopMin                    f32
     0x50 envelopMax                    f32
     0x54 envelopPercentage             f32
-    0x58 speakerMap                    pointer  # SpeakerMap, not converted yet
+    0x58 speakerMap                    pointer  # SpeakerMap
 
 record SndAliasList 0x0C runtime=snd_alias_list_t header=sound/snd_public.h
     asset member=sound pool=Load_snd_alias_list_Asset kind=SndAliasList alias=inserted body=custom label=sound-alias-list
