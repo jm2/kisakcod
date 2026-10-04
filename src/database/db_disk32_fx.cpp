@@ -4,8 +4,11 @@
 
 #include <database/db_disk32_loaders.h> // generated from disk32/20-fx.schema
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 // FX, a wave-3 family (docs/design/FASTFILE_LOADER.md). The body mirrors
@@ -13,14 +16,138 @@
 // streams into the temp block, then with block 4 pushed its name and, for any
 // non-null token, its elements 4-aligned (Load_FxElemDefArray), converted
 // into native storage. Each element's samples follow it 4-aligned and stay in
-// block 4, since they hold no pointer. Visuals, effect references and trails
-// do not load yet, so an element that names one fails closed.
+// block 4, since they hold no pointer. The rules are the FX converter's
+// (fx_fastfile_native_disk32.cpp), the oracle this loader replaces: counts,
+// timing, atlas, samples, visual counts by element type, the looping life
+// and the converted size. Visuals, effect references and trails do not load
+// yet, so an element that names one fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
 namespace
 {
 constexpr std::uint32_t kMaxElements = 256;
+constexpr std::int64_t kElemPoolSize = 2048; // MAX_ELEMS, the runtime's element pool
+constexpr std::uint32_t kMaxVisuals = 32;
+constexpr std::uint32_t kMaxDecalVisuals = 16;
+// Bounds the runtime's signed sums of delay, lifespan and last spawn time.
+constexpr std::int64_t kDurationLimitMsec = std::int64_t{24} * 60 * 60 * 1000;
+// The largest amplitude whose (amplitude + 1) * random16 fits 32 bits.
+constexpr std::int32_t kRandomRangeAmplitudeMax = 32767;
+
+// FxElemTypeDisk32's values, a fast-file fact.
+enum ElemType : std::uint8_t
+{
+    kTrail = 3,
+    kOmniLight = 6,
+    kSpotLight = 7,
+    kDecal = 9,
+    kRunner = 10,
+    kTypeCount = 11,
+};
+
+bool IsLight(std::uint8_t type)
+{
+    return type == kOmniLight || type == kSpotLight;
+}
+
+bool UsesMaterial(std::uint8_t type)
+{
+    return type <= kTrail + 1 || type == kDecal; // sprites, tails, trails, clouds, decals
+}
+
+bool TimeRangeValid(const disk32::FxIntRangeDisk32 &range, bool positive)
+{
+    const std::int64_t low = range.base;
+    const std::int64_t high = low + range.amplitude;
+    return range.amplitude >= 0 && range.amplitude <= kRandomRangeAmplitudeMax && (!positive || low > 0)
+        && low >= -kDurationLimitMsec && high <= kDurationLimitMsec;
+}
+
+// A one-shot element reads spawn as a count range.
+bool OneShotCountValid(const disk32::FxSpawnDefLoopingDisk32 &spawn)
+{
+    return spawn.intervalMsec >= 0 && spawn.count >= 0 && spawn.count <= kRandomRangeAmplitudeMax
+        && std::int64_t{spawn.intervalMsec} + spawn.count <= kElemPoolSize;
+}
+
+// An inactive atlas is all zero; an active one has 2^bits entries and a
+// time-based frame rate whose product with any lifespan fits 32 bits.
+bool AtlasValid(const disk32::FxElemDefDisk32 &elem)
+{
+    if (!UsesMaterial(elem.elemType) || !elem.visualCount)
+    {
+        return !(elem.behavior | elem.index | elem.fps | elem.loopCount | elem.colIndexBits | elem.rowIndexBits
+                 | elem.entryCount);
+    }
+    const std::uint32_t bits = std::uint32_t{elem.colIndexBits} + elem.rowIndexBits;
+    if (bits > 8 || elem.entryCount != (1 << bits) || (elem.behavior & 3u) == 3u)
+        return false;
+    const std::int64_t life = std::int64_t{elem.lifeSpanMsec.base} + elem.lifeSpanMsec.amplitude;
+    return (elem.behavior & 4u) || !elem.fps || life <= (std::numeric_limits<std::int32_t>::max)() / elem.fps;
+}
+
+// What the record states of its elements: the latest last-spawn time of the
+// looping ones (or infinite), and the size FX_Convert gave the whole effect.
+struct Totals
+{
+    std::int64_t msec = 0;
+    bool infinite = false;
+    std::uint64_t bytes = 0;
+};
+
+bool SpawnValid(bool looping, const disk32::FxSpawnDefLoopingDisk32 &spawn, Totals *totals)
+{
+    if (!looping)
+        return OneShotCountValid(spawn);
+    if (spawn.intervalMsec <= 0 || spawn.intervalMsec > kDurationLimitMsec || spawn.count <= 0)
+        return false;
+    if (spawn.count == (std::numeric_limits<std::int32_t>::max)())
+    {
+        totals->infinite = true;
+        return true;
+    }
+    const std::int64_t last = std::int64_t{spawn.intervalMsec} * (spawn.count - 1);
+    totals->msec = (std::max)(totals->msec, last);
+    return last <= kDurationLimitMsec;
+}
+
+// Every element but a runner samples its visual state; a runner has none.
+bool SamplesValid(const disk32::FxElemDefDisk32 &elem)
+{
+    const bool visible = elem.elemType != kRunner;
+    return !elem.velSamples.token.isNull() && elem.velIntervalCount
+        && visible == !elem.visSamples.token.isNull() && visible == (elem.visStateIntervalCount != 0);
+}
+
+// A light has one implicit visual; a decal names 1..16 mark pairs; the rest
+// name up to 32 visuals, a runner at least one, inline past one.
+bool VisualCountValid(const disk32::FxElemDefDisk32 &elem)
+{
+    const bool named = !elem.visuals.token.isNull();
+    if (IsLight(elem.elemType))
+        return elem.visualCount == 1 && !named;
+    if (elem.elemType == kDecal)
+        return elem.visualCount && elem.visualCount <= kMaxDecalVisuals && named;
+    return elem.visualCount <= kMaxVisuals && (elem.elemType != kRunner || elem.visualCount)
+        && named == (elem.visualCount != 0);
+}
+
+// Only a looping trail element has a trail.
+bool TrailPresenceValid(bool looping, const disk32::FxElemDefDisk32 &elem)
+{
+    const bool named = !elem.trailDef.token.isNull();
+    return elem.elemType == kTrail ? looping && named : !named;
+}
+
+bool ElementValid(const disk32::FxEffectDefDisk32 &effect, std::uint32_t index, const disk32::FxElemDefDisk32 &elem,
+                  Totals *totals)
+{
+    const bool looping = index < static_cast<std::uint32_t>(effect.elemDefCountLooping);
+    return elem.elemType < kTypeCount && TimeRangeValid(elem.spawnDelayMsec, false)
+        && TimeRangeValid(elem.lifeSpanMsec, true) && SpawnValid(looping, elem.spawn, totals) && AtlasValid(elem)
+        && SamplesValid(elem) && VisualCountValid(elem) && TrailPresenceValid(looping, elem);
+}
 
 // The three counts' sum is at most 256, so none is negative, and its token
 // agrees with it.
@@ -31,6 +158,17 @@ bool HeaderValid(const disk32::FxEffectDefDisk32 &effect, std::uint32_t *count)
         + static_cast<std::uint32_t>(effect.elemDefCountEmission);
     *count = static_cast<std::uint32_t>(sum);
     return sum <= kMaxElements && (sum == 0) == effect.elemDefs.token.isNull();
+}
+
+// An element's share of FX_Convert's effect size: its samples and visual arrays.
+std::uint64_t ElementBytes(const disk32::FxElemDefDisk32 &elem)
+{
+    std::uint64_t bytes = (elem.velIntervalCount + 1u) * sizeof(FxElemVelStateSample);
+    if (!elem.visSamples.token.isNull())
+        bytes += (elem.visStateIntervalCount + 1u) * sizeof(FxElemVisStateSample);
+    if (elem.elemType == kDecal)
+        return bytes + elem.visualCount * 2 * sizeof(disk32::PointerToken);
+    return bytes + (IsLight(elem.elemType) || elem.visualCount < 2 ? 0 : elem.visualCount * sizeof(disk32::PointerToken));
 }
 
 // Load_FxElemVelStateSampleArray or its visual twin: any non-null token means
@@ -95,8 +233,9 @@ bool LoadElement(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
     return true;
 }
 
-// Load_FxElemDefArray: count records 4-aligned, then each element's parts.
-bool LoadElements(std::uint32_t count, const FxElemDef **out)
+// Load_FxElemDefArray: count records 4-aligned, each checked, then loaded.
+bool LoadElements(const disk32::FxEffectDefDisk32 &effect, std::uint32_t count, Totals *totals,
+                  const FxElemDef **out)
 {
     std::uint8_t *const records = DB_AllocStreamPos(3);
     if (!StreamBytes(records, static_cast<std::int32_t>(count * sizeof(disk32::FxElemDefDisk32))))
@@ -108,6 +247,9 @@ bool LoadElements(std::uint32_t count, const FxElemDef **out)
     {
         disk32::FxElemDefDisk32 disk{};
         std::memcpy(&disk, records + index * sizeof(disk), sizeof(disk));
+        if (!ElementValid(effect, index, disk, totals))
+            return Drop("Invalid fast-file effect element");
+        totals->bytes += ElementBytes(disk);
         if (!LoadElement(disk, &native[index]))
             return false;
     }
@@ -135,8 +277,16 @@ bool LoadFxEffectDef(FxEffectDef *out)
     if (!out->name)
         return Drop("Fast-file effect has no name"); // the asset pool hashes it
     out->elemDefs = nullptr;
-    if (count && !LoadElements(count, &out->elemDefs))
+    // LoadXString found the name's terminator inside block 4.
+    const std::size_t nameBytes = std::strlen(out->name) + 1; // Flawfinder: ignore
+    Totals totals{0, false, sizeof(disk) + count * sizeof(disk32::FxElemDefDisk32) + nameBytes};
+    if (count && !LoadElements(disk, count, &totals, &out->elemDefs))
         return false;
+    // Its longest looping spawn and its size, as FX_Convert computes them.
+    if (disk.msecLoopingLife != (totals.infinite ? (std::numeric_limits<std::int32_t>::max)() : totals.msec))
+        return Drop("Invalid fast-file effect looping life");
+    if (static_cast<std::uint64_t>(disk.totalSize) != totals.bytes)
+        return Drop("Invalid fast-file effect size");
     DB_PopStreamPos();
     return true;
 }
