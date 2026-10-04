@@ -19,6 +19,7 @@
 #
 # Kinds: i32 u32 f32 i16 u16 u8 (scalars), bool (one byte; nonzero is true),
 # u64 (8 bytes, 8-aligned at both widths; only a custom body loads it),
+# pad (bytes with no native member, never loaded or offset-checked),
 # xstring (a C string: inline or an offset token), bytes (inline bytes, count
 # given), xstrings (a pointer array of C strings, count given), pointer (a
 # token a custom body loads; with asset=<a record with an asset line>, a
@@ -28,7 +29,8 @@
 # (that record inline, of=<record>; a generated body loads its scalars,
 # xstrings and asset pointers). A scalar other than bool may be a fixed array, as
 # knots f32[8][2]; a generated body copies it whole. So may a pointer, for a
-# custom body, as an impact entry's effects pointer[29]. A dotted field
+# custom body, as an impact entry's effects pointer[29], and so may a struct,
+# as a model's lodInfo struct[4]. A dotted field
 # (sound.info.rate) is a member of a nested native struct: its mirror member
 # takes the last name, and only a custom body or copy=scalars loads it.
 # copy=scalars emits Copy<Name>Scalars for a custom body: every scalar and

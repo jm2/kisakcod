@@ -1,0 +1,46 @@
+# XModel, asset type 0x03, and the LOD records it holds inline. The format is
+# described in ../db_disk32.schema. The body is custom (db_disk32_xmodel.cpp):
+# the bone arrays keep their layout and stay in block 4, and the model's rules
+# are DB_ValidateXModelGraph's (db_xmodel_validation.h).
+
+record XModelLodInfo 0x1C runtime=XModelLodInfo header=xanim/xmodel.h copy=scalars
+    0x00 dist                 f32
+    0x04 numsurfs             u16
+    0x06 surfIndex            u16
+    0x08 partBits             i32[4]
+    0x18 lod                  u8
+    0x19 smcIndexPlusOne      u8
+    0x1A smcAllocBits         u8
+    0x1B unused               u8
+
+record XModel 0xDC runtime=XModel header=xanim/xmodel.h copy=scalars
+    asset member=model pool=Load_XModelAsset kind=XModel alias=inserted body=custom label=model
+    0x00 name                 xstring
+    0x04 numBones             u8
+    0x05 numRootBones         u8
+    0x06 numsurfs             u8
+    0x07 lodRampType          u8
+    0x08 boneNames            pointer  # numBones script strings
+    0x0C parentList           pointer  # one byte per non-root bone
+    0x10 quats                pointer  # four 16-bit values per non-root bone
+    0x14 trans                pointer  # four floats per non-root bone
+    0x18 partClassification   pointer  # one byte per bone
+    0x1C baseMat              pointer  # one DObjAnimMat per bone
+    0x20 surfs                pointer  # numsurfs XSurface
+    0x24 materialHandles      pointer  # numsurfs Material tokens
+    0x28 lodInfo              struct[4] of=XModelLodInfo
+    0x98 collSurfs            pointer  # numCollSurfs XModelCollSurf_s
+    0x9C numCollSurfs         i32
+    0xA0 contents             i32
+    0xA4 boneInfo             pointer  # one XBoneInfo per bone
+    0xA8 radius               f32
+    0xAC mins                 f32[3]
+    0xB8 maxs                 f32[3]
+    0xC4 numLods              i16
+    0xC6 collLod              i16
+    0xC8 streamInfo           pad[4]  # an empty struct and its padding
+    0xCC memUsage             i32
+    0xD0 flags                u8
+    0xD1 bad                  bool
+    0xD4 physPreset           pointer  asset=PhysPreset
+    0xD8 physGeoms            pointer  # PhysGeomList, a completed object

@@ -36,6 +36,7 @@ KINDS = {
     'rawptr': ('std::uint32_t', 4, 8),  # pointer bytes that are no token; the loader nulls them
     'array': ('Ptr32<{of}Disk32>', 4, 8),  # count records of=<a nested record>
     'struct': ('{of}Disk32', 0, 0),  # a nested record inline; its layout gives size and alignment
+    'pad': ('std::uint8_t', 1, 1),  # bytes with no native member: no RUNTIME_OFFSET, never loaded
 }
 COUNTED = ('bytes', 'xstrings', 'array')
 SCALARS = ('i32', 'u32', 'f32', 'i16', 'u16', 'u8', 'bool')
@@ -81,7 +82,7 @@ def parse_asset(record, words, where):
 def field_shape(words, where):
     """Return a field line's kind and its fixed-array dimensions, if any."""
     shape = re.fullmatch(r'(\w+)((?:\[[1-9]\d*\])*)', words[2]) if len(words) >= 3 else None
-    fixed = ARRAYABLE + ('pointer',)  # a custom body loads a fixed array of tokens
+    fixed = ARRAYABLE + ('pointer', 'struct', 'pad')  # a custom body loads a fixed array of tokens or records
     if not shape or shape.group(1) not in KINDS or (shape.group(2) and shape.group(1) not in fixed):
         fail(where, f'expected: <offset> <field> <kind>[<n>]... [attributes]; kinds {sorted(KINDS)}, '
                     f'fixed arrays of {fixed}')
@@ -147,7 +148,8 @@ def field_layout(field, width):
     """Return a field's size and alignment; width 1 is ILP32, 2 is 64-bit."""
     if field['kind'] == 'struct':
         nested = field['record']['fields']
-        return layout(nested, width)[1], max((field_layout(f, width)[1] for f in nested), default=1)
+        return (layout(nested, width)[1] * math.prod(field['dims']),
+                max((field_layout(f, width)[1] for f in nested), default=1))
     align = KINDS[field['kind']][width]
     return align * math.prod(field['dims']), align
 
@@ -200,7 +202,7 @@ def emit(records, schema_name):
         (off32, size32), (off64, size64) = layout(record['fields'], 1), layout(record['fields'], 2)
         out.append(f'RUNTIME_SIZE({record["runtime"]}, 0x{size32:02X}, 0x{size64:02X});')
         out += [f'RUNTIME_OFFSET({record["runtime"]}, {field["name"]}, 0x{a:02X}, 0x{b:02X});'
-                for field, a, b in zip(record['fields'], off32, off64)]
+                for field, a, b in zip(record['fields'], off32, off64) if field['kind'] != 'pad']
     return '\n'.join(out) + '\n'
 
 
