@@ -1,8 +1,8 @@
 // db_disk32_techniqueset_tests.cpp: the 64-bit TechniqueSet loader (NOW row 12)
 // on hand-built disk32 zone images (disk32_fixture.hpp). Beyond the fixture's
 // seams, only the asset pool (Load_MaterialTechniqueSetAsset) is replaced.
-// Vertex declarations are not converted yet, so every technique fails closed at
-// its first pass's declaration, after its header and passes load.
+// Shader arguments are not converted yet, so every technique fails closed at its
+// first pass's arguments, after its header, passes, declaration and shaders.
 
 #include "disk32_fixture.hpp"
 
@@ -39,6 +39,33 @@ struct File : FileBuilder<File>
     {
         return Word(decl).Word(shaders).Word(shaders).Word(stable << 16 | 0x01000000u).Word(args);
     }
+    // A 100-byte declaration routing `count` streams (source n to dest n + 1),
+    // its flags and handles junk.
+    File &Decl(std::uint32_t count, std::uint32_t firstSource = 0)
+    {
+        Word(0x00FFFF00u | count);
+        for (std::uint32_t stream = 0; stream < 16; stream += 2)
+        {
+            const auto pair = [&](std::uint32_t n) { return n < count ? (firstSource + n) | (n + 1) << 8 : 0u; };
+            Word(pair(stream) | pair(stream + 1) << 16);
+        }
+        for (int handle = 0; handle < 16; ++handle)
+            Word(0xBAD00000u + static_cast<std::uint32_t>(handle));
+        return *this;
+    }
+    // A 16-byte shader record, its name, then a two-DWORD program whose
+    // version token is `version` (vs_2_0 0xFFFE0200, ps_2_0 0xFFFF0200).
+    File &Shader(std::uint32_t name, const char *text, std::uint32_t version, std::uint32_t size = 2,
+                 std::uint32_t program = kInline)
+    {
+        Word(name).Word(0xBADC0DE5).Word(program).Word(size | (((version >> 8 & 0xFF) - 2) << 16));
+        if (name == kInline)
+            Text(text);
+        Word(version);
+        for (std::uint32_t dword = 1; dword < size; ++dword)
+            Word(0x0000FFFF);
+        return *this;
+    }
 };
 
 using Zone = disk32_test::Zone<512>;
@@ -72,21 +99,47 @@ void TestEmptySets()
     Expect(g_read == g_file.size() && !g_arenaUsed, "every disk byte is consumed and no native storage is used");
 }
 
-void TestTechniqueUpToDeclaration()
+// The declaration TestPassUpToArguments builds: three routed streams.
+void ExpectDecl(const MaterialVertexDeclaration &decl)
+{
+    Expect(decl.streamCount == 3 && decl.routing.data[2].source == 7 && decl.routing.data[2].dest == 3
+               && decl.hasOptionalSource && decl.isLoaded,
+           "the declaration's routing converts, and a source of 5 or more is optional");
+    Expect(!*std::max_element(std::begin(decl.routing.decl), std::end(decl.routing.decl)),
+           "the declaration's runtime handles are null, never their disk bytes");
+}
+
+// A converted shader: its name, a null handle and a program in block 4.
+template <typename Shader>
+bool ShaderIs(const Zone &zone, const Shader *shader, const char *name, std::size_t program)
+{
+    return InArena(shader) && Is(zone, shader->name, name) && !shader->prog.loadDef.loadForRenderer
+        && shader->prog.loadDef.program == zone.virt + program && shader->prog.loadDef.programSize == 2;
+}
+
+void TestPassUpToArguments()
 {
     Zone zone;
-    // Block 4: name (0..3), the technique (4..12) and its two passes (12..52).
-    File().Set(kInline, 2, 5, kInline).Text("ts").Technique(kInline, 0x8021, 2).Pass(kInline).Pass(kInline, kInline, 3);
-    ExpectDrop("a technique with a declaration", "declarations are not converted", [] { Load(kInline); });
+    // Block 4: name (0..3), the technique (4..12) and its pass (12..32), the
+    // declaration (32..132), the vertex shader (132..148), "vs" (148..151) and
+    // its program (152..160), then the pixel shader (160..176), "ps" and its
+    // program (180..188).
+    File().Set(kInline, 2, 5, kInline).Text("ts").Technique(kInline, 0x8021, 1).Pass(kInline).Decl(3, 5);
+    File().Shader(kInline, "vs", 0xFFFE0200).Shader(kInline, "ps", 0xFFFF0200);
+    ExpectDrop("a pass with arguments", "arguments are not converted", [] { Load(kInline); });
     const auto *const technique = reinterpret_cast<const MaterialTechnique *>(g_arena);
-    Expect(g_arenaUsed == offsetof(MaterialTechnique, passArray) + 2 * sizeof(MaterialPass)
-               && technique->flags == 0x21 && technique->passCount == 2,
-           "the technique converts into native storage, its flags losing bit 15");
     const MaterialPass &pass = technique->passArray[0];
-    Expect(pass.stableArgCount == 1 && pass.customSamplerFlags == 1 && !pass.perPrimArgCount && !pass.perObjArgCount,
-           "the first pass's scalars convert");
-    Expect(!std::memcmp(zone.virt + 4, g_file.data() + 148 + 3, 48) && g_read == g_file.size(),
-           "the retail technique and passes stay at their 4-aligned block-4 offset");
+    Expect(technique->flags == 0x21 && pass.stableArgCount == 1 && pass.customSamplerFlags == 1
+               && InArena(pass.vertexDecl),
+           "the technique and its pass convert, its flags losing bit 15");
+    if (InArena(pass.vertexDecl))
+        ExpectDecl(*pass.vertexDecl);
+    Expect(ShaderIs(zone, pass.vertexShader, "vs", 152) && !pass.vertexShader->prog.vs,
+           "the vertex shader converts, its program in block 4 and its handle null");
+    Expect(ShaderIs(zone, pass.pixelShader, "ps", 180) && !pass.pixelShader->prog.ps,
+           "the pixel shader converts, its program in block 4 and its handle null");
+    Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 188,
+           "every disk byte is consumed at its retail block-4 offset");
 }
 
 struct Malformed
@@ -102,6 +155,12 @@ File Prefix(std::uint32_t flags = 0, std::uint32_t passes = 1, std::uint32_t nam
 {
     File().Set(kInline, 0, 0, kInline).Text("s").Technique(name, flags, passes);
     return File();
+}
+
+// Prefix, then one pass and its declaration: everything up to the shaders.
+File WithDecl(std::uint32_t pixel = kInline)
+{
+    return Prefix().Word(kInline).Word(kInline).Word(pixel).Word(0x01010000u).Word(kInline).Decl(1);
 }
 
 const Malformed kMalformed[] = {
@@ -120,8 +179,24 @@ const Malformed kMalformed[] = {
     {"pass without arguments", [] { Prefix().Pass(kInline, kInline, 0, 0); }, "pass header"},
     {"pass with a count but no arguments", [] { Prefix().Pass(kInline, kInline, 1, 0); }, "pass header"},
     {"pass with 65 arguments", [] { Prefix().Pass(kInline, kInline, 65); }, "pass header"},
-    {"native storage exhausted", [] { Prefix().Pass(kInline); }, "exhausted",
-     offsetof(MaterialTechnique, passArray) + sizeof(MaterialPass) - 8},
+    {"declaration named by offset", [] { Prefix().Pass(VirtualOffset(4)); }, "by offset"},
+    {"declaration with no streams", [] { Prefix().Pass(kInline).Decl(0); }, "declaration count"},
+    {"declaration with 13 streams", [] { Prefix().Pass(kInline).Decl(13); }, "declaration count"},
+    {"declaration source 9", [] { Prefix().Pass(kInline).Decl(1, 9); }, "declaration routing"},
+    {"truncated declaration", [] { Prefix().Pass(kInline).Word(1); }, "ended unexpectedly"},
+    {"vertex shader without a name", [] { WithDecl().Shader(0, "", 0xFFFE0200); }, "vertex shader has no name"},
+    {"shader with an empty name", [] { WithDecl().Shader(kInline, "", 0xFFFE0200); }, "no completed name"},
+    {"one-DWORD program", [] { WithDecl().Shader(kInline, "v", 0xFFFE0200, 1); }, "load definition"},
+    {"renderer 2", [] { WithDecl().Shader(kInline, "v", 0xFFFE0400); }, "load definition"},
+    {"shader without a program", [] { WithDecl().Shader(kInline, "v", 0xFFFE0200, 2, 0); }, "load definition"},
+    {"pixel bytecode in a vertex shader", [] { WithDecl().Shader(kInline, "v", 0xFFFF0200); }, "bytecode"},
+    {"truncated program", [] { WithDecl().Shader(kInline, "v", 0xFFFE0200, 3); g_file.resize(g_file.size() - 4); },
+     "ended unexpectedly"},
+    {"pixel shader named by offset", [] { WithDecl(VirtualOffset(8)).Shader(kInline, "v", 0xFFFE0200); }, "by offset"},
+    {"mixed renderer variants", [] { WithDecl().Shader(kInline, "v", 0xFFFE0200).Shader(kInline, "p", 0xFFFF0300); },
+     "mixes renderer"},
+    {"native storage exhausted", [] { WithDecl().Shader(kInline, "v", 0xFFFE0200); }, "exhausted",
+     offsetof(MaterialTechnique, passArray) + sizeof(MaterialPass) + sizeof(MaterialVertexDeclaration)},
     {"unmapped set alias", [] {}, "alias offset"},
 };
 
@@ -151,5 +226,5 @@ void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestEmptySets, TestTechniqueUpToDeclaration, TestMalformedFailsClosed});
+    return Run({TestEmptySets, TestPassUpToArguments, TestMalformedFailsClosed});
 }
