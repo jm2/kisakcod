@@ -18,9 +18,9 @@
 // with block 4 pushed its name and each technique. A technique, a vertex
 // declaration and a shader are completed objects streamed 4-aligned in block 4
 // and converted into native storage; no 64-bit target builds renderer
-// declarations or shaders, so their handles stay null. Offset tokens naming a
-// completed object, and shader arguments, are not converted yet and fail
-// closed; so does every technique, as a pass needs arguments.
+// declarations or shaders, so their handles stay null. A pass's arguments
+// convert into native storage, a literal's floats staying in block 4. Offset
+// tokens naming a completed object are not converted yet and fail closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -141,6 +141,62 @@ bool ConvertShader(std::uint8_t *record, Native **out, std::uint32_t *bytes)
     return true;
 }
 
+// Load_MaterialArgumentDef: a literal's four floats, inline or by offset into
+// block 4 (they keep their layout); any other value fills the union's first
+// four bytes, which every non-pointer member shares.
+bool LoadArgument(const disk32::MaterialShaderArgumentDisk32 &disk, MaterialShaderArgument *out)
+{
+    CopyMaterialShaderArgumentScalars(disk, out);
+    out->u.literalConst = nullptr;
+    const disk32::PointerToken token = disk.literalConst.token;
+    if (out->type != 1 && out->type != 7)
+    {
+        out->u.nameHash = token.value;
+        return true;
+    }
+    if (token.isNull())
+        return Drop("Fast-file literal shader constant has no value");
+    std::uintptr_t address = 0;
+    if (token.isInline())
+    {
+        std::uint8_t *const floats = DB_AllocStreamPos(3);
+        if (!StreamBytes(floats, 4 * static_cast<std::int32_t>(sizeof(float))))
+            return false;
+        address = reinterpret_cast<std::uintptr_t>(floats);
+    }
+    else if (const db::relocation::Status status = DB_ResolveOffsetBytes(
+                 token, 4 * sizeof(float), alignof(float), db::relocation::BlockBit(kVirtualBlock), &address);
+             status != db::relocation::Status::Ok)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file pointer offset: %s", db::relocation::StatusName(status));
+        return false;
+    }
+    out->u.literalConst = reinterpret_cast<const float *>(address);
+    return true;
+}
+
+// Load_MaterialShaderArgumentArray: every retail argument streams 4-aligned in
+// block 4, then each converts; DB_ValidateMaterialPassArguments checks them.
+bool LoadArguments(MaterialPass *pass)
+{
+    const auto count = static_cast<std::uint32_t>(pass->perPrimArgCount) + pass->perObjArgCount + pass->stableArgCount;
+    constexpr auto kArgumentBytes = sizeof(disk32::MaterialShaderArgumentDisk32);
+    std::uint8_t *const arguments = DB_AllocStreamPos(3);
+    if (!StreamBytes(arguments, static_cast<std::int32_t>(count * kArgumentBytes)))
+        return false;
+    pass->args = AllocNative<MaterialShaderArgument>(static_cast<std::int32_t>(count));
+    if (!pass->args)
+        return false;
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        disk32::MaterialShaderArgumentDisk32 argument{};
+        std::memcpy(&argument, arguments + index * kArgumentBytes, sizeof(argument));
+        if (!LoadArgument(argument, &pass->args[index]))
+            return false;
+    }
+    return DB_ValidateMaterialPassArguments(pass, count);
+}
+
 // Load_MaterialPass on one retail pass: its header rule, then its objects.
 bool LoadPass(const disk32::MaterialPassDisk32 &disk, MaterialPass *out)
 {
@@ -163,10 +219,16 @@ bool LoadPass(const disk32::MaterialPassDisk32 &disk, MaterialPass *out)
     }
     if (out->vertexShader->prog.loadDef.loadForRenderer != out->pixelShader->prog.loadDef.loadForRenderer)
         return Drop("Fast-file material pass mixes renderer shader variants");
-    return Drop("Fast-file material shader arguments are not converted yet");
+    return LoadArguments(out);
 }
 
-// Load_MaterialPassArray: the passes already streamed after the header.
+std::uint32_t Renderer(const MaterialTechnique *technique)
+{
+    return technique->passArray[0].pixelShader->prog.loadDef.loadForRenderer;
+}
+
+// Load_MaterialPassArray: the passes already streamed after the header, each
+// on its first pass's renderer variant.
 bool LoadPasses(const std::uint8_t *passes, MaterialTechnique *technique)
 {
     for (std::uint32_t index = 0; index < technique->passCount; ++index)
@@ -175,6 +237,8 @@ bool LoadPasses(const std::uint8_t *passes, MaterialTechnique *technique)
         std::memcpy(&pass, passes + index * kPassBytes, sizeof(pass));
         if (!LoadPass(pass, &technique->passArray[index]))
             return false;
+        if (Renderer(technique) != technique->passArray[index].pixelShader->prog.loadDef.loadForRenderer)
+            return Drop("Fast-file material technique mixes renderer shader variants");
     }
     return true;
 }
@@ -212,6 +276,24 @@ bool ConvertTechnique(std::uint8_t *record, MaterialTechnique **out, std::uint32
     *out = technique;
     return true;
 }
+// The 34 technique tokens, every technique on the first one's renderer variant.
+bool LoadTechniques(const disk32::MaterialTechniqueSetDisk32 &disk, MaterialTechniqueSet *out)
+{
+    const MaterialTechnique *first = nullptr;
+    for (std::uint32_t index = 0; index < kTechniqueCount; ++index)
+    {
+        MaterialTechnique *&technique = out->techniques[index];
+        if (!LoadCompleted(disk.techniques[index].token, DBAliasKind::MaterialTechnique,
+                           disk32::kMaterialTechniqueSchema, &technique, ConvertTechnique))
+        {
+            return false;
+        }
+        first = first ? first : technique;
+        if (technique && Renderer(technique) != Renderer(first))
+            return Drop("Fast-file material technique set mixes renderer variants");
+    }
+    return true;
+}
 } // namespace
 
 // The set at the temp block's position and Load_MaterialTechniqueSet's header
@@ -230,14 +312,8 @@ bool LoadMaterialTechniqueSet(MaterialTechniqueSet *out)
     DB_PushStreamPos(kVirtualBlock);
     if (!LoadXString(disk.name, &out->name))
         return false;
-    for (std::uint32_t index = 0; index < kTechniqueCount; ++index)
-    {
-        if (!LoadCompleted(disk.techniques[index].token, DBAliasKind::MaterialTechnique,
-                           disk32::kMaterialTechniqueSchema, &out->techniques[index], ConvertTechnique))
-        {
-            return false;
-        }
-    }
+    if (!LoadTechniques(disk, out))
+        return false;
     DB_PopStreamPos();
     if (!out->name || !*out->name)
         return Drop("Fast-file material technique set has no name");

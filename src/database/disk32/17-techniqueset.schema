@@ -31,6 +31,13 @@ record MaterialPixelShader 0x10 runtime=MaterialPixelShader header=gfx_d3d/r_mat
     0x0C prog.loadDef.programSize     u16
     0x0E prog.loadDef.loadForRenderer u16
 
+# A shader argument: a literal constant's token (types 1 and 7), else the code
+# constant, code sampler or name hash in the union's first four bytes.
+record MaterialShaderArgument 0x08 runtime=MaterialShaderArgument header=gfx_d3d/r_material.h copy=scalars
+    0x00 type                   u16
+    0x02 dest                   u16
+    0x04 u.literalConst         pointer
+
 record MaterialPass 0x14 runtime=MaterialPass header=gfx_d3d/r_material.h copy=scalars
     0x00 vertexDecl             pointer  # MaterialVertexDeclaration
     0x04 vertexShader           pointer  # MaterialVertexShader
