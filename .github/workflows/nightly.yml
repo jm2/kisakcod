@@ -30,7 +30,7 @@ jobs:
     # legitimately differs, so this job fails by design. The reference objects
     # are uploaded on every outcome so a mismatch can be diffed offline.
     name: Windows x86 (byte parity)
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 150
     env:
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
@@ -87,7 +87,7 @@ jobs:
     # build the engine today, so it stands in for the ARM/no-Steam configuration until
     # the POSIX/Vulkan platform layers land. Compile only; no artifact.
     name: Windows x86 (no Steam)
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 120
     env:
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
@@ -113,7 +113,7 @@ jobs:
         shell: pwsh
         run: |
           cmake -S . -B build-nosteam `
-            -G "Visual Studio 17 2022" -A Win32 `
+            -G "Visual Studio 18 2026" -A Win32 `
             -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
             -DKISAK_BUILD_MP=ON `
             -DKISAK_BUILD_DEDICATED=ON `

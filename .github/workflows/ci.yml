@@ -443,7 +443,7 @@ jobs:
   windows-headless:
     # The Win64 headless dedicated server (gate G1) built with MSVC: the
     # windows-amd64-dedi preset's cache variables on the runner's own Visual
-    # Studio (the preset names VS 2022, which windows-2025 lacks), the same
+    # Studio (VS 2026, as the preset names), the same
     # assetless smoke run as linux-headless, and the binary with its PDB as a
     # per-push artifact. The arm64 leg (G3 prep) builds natively for ARM64 on
     # the hosted Windows ARM runner with the same cache variables.
@@ -496,7 +496,7 @@ jobs:
 
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 150
     strategy:
       fail-fast: false
@@ -526,7 +526,7 @@ jobs:
         shell: pwsh
         run: |
           cmake -S . -B "build-${{ matrix.config }}" `
-            -G "Visual Studio 17 2022" -A Win32 `
+            -G "Visual Studio 18 2026" -A Win32 `
             -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
             -DKISAK_BUILD_MP=ON `
             -DKISAK_BUILD_DEDICATED=ON `
@@ -568,7 +568,7 @@ jobs:
 
   windows-x86-sp:
     name: Windows x86 SP / ${{ matrix.config }}
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 150
     strategy:
       fail-fast: false
@@ -616,7 +616,7 @@ jobs:
     # source profile. Keep it independent of the legacy Windows client/media
     # build so headless cannot silently regain DirectX, Miles, Bink, or Steam.
     name: Windows x86 (headless dedicated)
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -627,7 +627,7 @@ jobs:
         shell: pwsh
         run: |
           cmake -S . -B build-headless `
-            -G "Visual Studio 17 2022" -A Win32 `
+            -G "Visual Studio 18 2026" -A Win32 `
             -DKISAK_BUILD_MP=OFF `
             -DKISAK_BUILD_DEDICATED=ON `
             -DKISAK_BUILD_SP=OFF `

@@ -39,7 +39,7 @@ if ($env:GITHUB_ENV) {
 }
 
 cmake -S . -B $BuildDir `
-  -G "Visual Studio 17 2022" -A Win32 `
+  -G "Visual Studio 18 2026" -A Win32 `
   -DCICD=ON "-DDXSDK_DIR=$dxsdkNative" `
   -DKISAK_BUILD_MP=ON `
   -DKISAK_BUILD_DEDICATED=ON `
