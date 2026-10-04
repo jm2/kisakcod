@@ -3,7 +3,7 @@
   "configurePresets": [
     {
       "name": "windows-x86-mp",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "architecture": "Win32",
       "binaryDir": "${sourceDir}/build-windows-x86-mp",
       "cacheVariables": {
@@ -14,7 +14,7 @@
     },
     {
       "name": "windows-x86-sp",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "architecture": "Win32",
       "binaryDir": "${sourceDir}/build-windows-x86-sp",
       "cacheVariables": {
@@ -25,7 +25,7 @@
     },
     {
       "name": "windows-x86-dedi",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "architecture": "Win32",
       "binaryDir": "${sourceDir}/build-windows-x86-dedi",
       "cacheVariables": {
@@ -36,7 +36,7 @@
     },
     {
       "name": "windows-amd64-dedi",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build-windows-amd64-dedi",
       "cacheVariables": {
