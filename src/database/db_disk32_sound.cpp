@@ -14,8 +14,8 @@
 // temp block, then with block 4 pushed its name, alias array and each alias's
 // strings, sound file, curve (through SoundCurve's step) and speaker map. The
 // alias array, sound files and speaker maps are completed objects streamed
-// 4-aligned in block 4. Offset tokens naming one, and loaded-sound files, are
-// not converted yet and fail closed.
+// 4-aligned in block 4; an offset token names an earlier one and resolves to
+// its native twin. A loaded-sound file loads through LoadedSound's step.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -23,8 +23,8 @@ namespace
 {
 constexpr auto kAliasBytes = static_cast<std::uint32_t>(sizeof(disk32::SndAliasDisk32));
 
-// A completed object at `token`: null, or (-1) a record streamed here that
-// `convert` turns into native storage.
+// A completed object at `token`: null, an earlier object's native twin, or
+// (-1) a record streamed here that `convert` turns into native storage.
 template <typename Native, typename Convert>
 bool LoadCompleted(disk32::PointerToken token, DBAliasKind kind, std::uint32_t bytes, Native **out, Convert convert)
 {
@@ -32,7 +32,17 @@ bool LoadCompleted(disk32::PointerToken token, DBAliasKind kind, std::uint32_t b
     if (token.isNull())
         return true;
     if (!token.isInline())
-        return Drop("Fast-file sound objects named by offset have no 64-bit loader yet");
+    {
+        std::uintptr_t native = 0;
+        const db::relocation::Status status = DB_ResolveCompletedObjectNative(token, kind, bytes, &native);
+        if (status != db::relocation::Status::Ok)
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file alias offset: %s", db::relocation::StatusName(status));
+            return false;
+        }
+        *out = reinterpret_cast<Native *>(native);
+        return true;
+    }
     std::uint8_t *const record = DB_AllocStreamPos(3);
     if (!record)
         return false;
@@ -44,7 +54,7 @@ bool LoadCompleted(disk32::PointerToken token, DBAliasKind kind, std::uint32_t b
     return true;
 }
 
-// Load_SoundFile: a streamed file's two strings.
+// Load_SoundFile: a loaded sound's token, or a streamed file's two strings.
 bool ConvertSoundFile(std::uint8_t *record, SoundFile **out)
 {
     disk32::SoundFileDisk32 disk{};
@@ -61,7 +71,10 @@ bool ConvertSoundFile(std::uint8_t *record, SoundFile **out)
     std::memset(&file->u, 0, sizeof(file->u));
     *out = file;
     if (disk.type == 1)
-        return Drop("Fast-file loaded-sound files are not converted yet");
+    {
+        LoadLoadedSoundPtr(disk.dir.token, &file->u.loadSnd);
+        return true;
+    }
     StreamFileNameRaw &raw = file->u.streamSnd.filename.info.raw;
     return LoadXString(disk.dir, &raw.dir) && LoadXString(disk.name, &raw.name);
 }
