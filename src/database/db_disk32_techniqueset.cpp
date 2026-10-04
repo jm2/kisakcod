@@ -19,8 +19,9 @@
 // declaration and a shader are completed objects streamed 4-aligned in block 4
 // and converted into native storage; no 64-bit target builds renderer
 // declarations or shaders, so their handles stay null. A pass's arguments
-// convert into native storage, a literal's floats staying in block 4. Offset
-// tokens naming a completed object are not converted yet and fail closed.
+// convert into native storage, a literal's floats staying in block 4. An
+// offset token names an earlier completed object and resolves to its native
+// twin, as DB_ConvertOffsetToAlias does on x86.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -32,8 +33,9 @@ constexpr std::uint32_t kTechniqueCount = 34;
 constexpr auto kPassBytes = sizeof(disk32::MaterialPassDisk32);
 constexpr auto kTechniqueHeaderBytes = offsetof(disk32::MaterialTechniqueDisk32, passArray);
 
-// A completed object at `token`: null, or (-1) a record streamed here that
-// `convert` turns into native storage, reporting its extent in `bytes`.
+// A completed object at `token`: null, an earlier object's native twin, or
+// (-1) a record streamed here that `convert` turns into native storage,
+// reporting its extent in `bytes`.
 template <typename Native, typename Convert>
 bool LoadCompleted(disk32::PointerToken token, DBAliasKind kind, std::uint32_t metadata, Native **out, Convert convert)
 {
@@ -41,7 +43,17 @@ bool LoadCompleted(disk32::PointerToken token, DBAliasKind kind, std::uint32_t m
     if (token.isNull())
         return true;
     if (!token.isInline())
-        return Drop("Fast-file technique objects named by offset have no 64-bit loader yet");
+    {
+        std::uintptr_t native = 0;
+        const db::relocation::Status status = DB_ResolveCompletedObjectNative(token, kind, metadata, &native);
+        if (status != db::relocation::Status::Ok)
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file alias offset: %s", db::relocation::StatusName(status));
+            return false;
+        }
+        *out = reinterpret_cast<Native *>(native);
+        return true;
+    }
     std::uint8_t *const record = DB_AllocStreamPos(3);
     if (!record)
         return false;

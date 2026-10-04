@@ -1,7 +1,6 @@
 // db_disk32_techniqueset_tests.cpp: the 64-bit TechniqueSet loader (NOW row 12)
 // on hand-built disk32 zone images (disk32_fixture.hpp). Beyond the fixture's
 // seams, only the asset pool (Load_MaterialTechniqueSetAsset) is replaced.
-// Techniques, declarations and shaders named by offset are not converted yet.
 
 #include "disk32_fixture.hpp"
 
@@ -23,11 +22,11 @@ struct File : FileBuilder<File>
     // The 148-byte retail set: technique slot `at` holds `token`, every other
     // is null. The flag bytes and the remapped pointer hold junk.
     File &Set(std::uint32_t name, std::uint32_t format, std::uint32_t at = 34, std::uint32_t token = 0,
-              std::uint32_t at2 = 34)
+              std::uint32_t at2 = 34, std::uint32_t at3 = 34, std::uint32_t token3 = 0)
     {
         Word(name).Word(0x00CD0100u | format).Word(0xDEADBEEF);
         for (std::uint32_t slot = 0; slot < 34; ++slot)
-            Word(slot == at || slot == at2 ? token : 0);
+            Word(slot == at || slot == at2 ? token : slot == at3 ? token3 : 0);
         return *this;
     }
     File &Technique(std::uint32_t name, std::uint32_t flags, std::uint32_t passes)
@@ -229,7 +228,7 @@ const Malformed kMalformed[] = {
     {"null set name", [] { File().Set(0, 0); }, "technique set header"},
     {"vertex format 12", [] { File().Set(kInline, 12).Text("s"); }, "technique set header"},
     {"empty set name", [] { File().Set(kInline, 0).Text(""); }, "set has no name"},
-    {"technique named by offset", [] { File().Set(kInline, 0, 3, VirtualOffset(8)).Text("s"); }, "by offset"},
+    {"unmapped technique offset", [] { File().Set(kInline, 0, 3, VirtualOffset(8)).Text("s"); }, "alias offset"},
     {"technique without a name", [] { Prefix(0, 1, 0).Pass(kInline); }, "technique header"},
     {"technique with no passes", [] { Prefix(0, 0); }, "technique header"},
     {"technique with five passes", [] { Prefix(0, 5); }, "technique header"},
@@ -240,7 +239,7 @@ const Malformed kMalformed[] = {
     {"pass without arguments", [] { Prefix().Pass(kInline, kInline, 0, 0); }, "pass header"},
     {"pass with a count but no arguments", [] { Prefix().Pass(kInline, kInline, 1, 0); }, "pass header"},
     {"pass with 65 arguments", [] { Prefix().Pass(kInline, kInline, 65); }, "pass header"},
-    {"declaration named by offset", [] { Prefix().Pass(VirtualOffset(4)); }, "by offset"},
+    {"declaration naming its pending technique", [] { Prefix().Pass(VirtualOffset(4)); }, "alias offset"},
     {"declaration with no streams", [] { Prefix().Pass(kInline).Decl(0); }, "declaration count"},
     {"declaration with 13 streams", [] { Prefix().Pass(kInline).Decl(13); }, "declaration count"},
     {"declaration source 9", [] { Prefix().Pass(kInline).Decl(1, 9); }, "declaration routing"},
@@ -253,7 +252,14 @@ const Malformed kMalformed[] = {
     {"pixel bytecode in a vertex shader", [] { WithDecl().Shader(kInline, "v", 0xFFFF0200); }, "bytecode"},
     {"truncated program", [] { WithDecl().Shader(kInline, "v", 0xFFFE0200, 3); g_file.resize(g_file.size() - 4); },
      "ended unexpectedly"},
-    {"pixel shader named by offset", [] { WithDecl(VirtualOffset(8)).Shader(kInline, "v", 0xFFFE0200); }, "by offset"},
+    {"pixel shader naming a declaration", [] { WithDecl(VirtualOffset(32)).Shader(kInline, "v", 0xFFFE0200); },
+     "alias offset"},
+    {"vertex shader naming a pixel shader", [] { File().Set(kInline, 0, 3, kInline, 10).Text("s").Technique(kInline, 0, 1)
+                                                     .Pass(kInline).Objects().Text("a").Technique(kInline, 0, 1)
+                                                     .Pass(VirtualOffset(32), VirtualOffset(160)); }, "alias offset"},
+    {"technique offset naming a declaration", [] { File().Set(kInline, 0, 3, kInline, 34, 30, VirtualOffset(32))
+                                                       .Text("s").Technique(kInline, 0, 1).Pass(kInline).Objects()
+                                                       .Text("a"); }, "alias offset"},
     {"mixed renderer variants", [] { WithDecl().Shader(kInline, "v", 0xFFFE0200).Shader(kInline, "p", 0xFFFF0300); },
      "mixes renderer"},
     {"literal without a value", [] { WithShaders().Argument(1, 0, 0); }, "has no value"},
@@ -279,6 +285,28 @@ const Malformed kMalformed[] = {
      offsetof(MaterialTechnique, passArray) + sizeof(MaterialPass) + sizeof(MaterialVertexDeclaration)},
     {"unmapped set alias", [] {}, "alias offset"},
 };
+
+void TestSharedObjects()
+{
+    Zone zone;
+    // Block 4: "s" (0..2), technique A (4..12), its pass (12..32), declaration
+    // (32..132), vertex shader (132..148), pixel shader (160..176), argument
+    // (188..196) and "a"; then technique B (200..208), whose pass names A's
+    // declaration and shaders by offset, its argument and "b". Slot 30 names A.
+    File().Set(kInline, 0, 3, kInline, 10, 30, VirtualOffset(4)).Text("s").Technique(kInline, 0, 1).Pass(kInline);
+    File().Objects().Text("a").Technique(kInline, 0, 1).Word(VirtualOffset(32)).Word(VirtualOffset(132));
+    File().Word(VirtualOffset(160)).Word(0x01010000u).Word(kInline).Argument(5, 0, 1u << 24).Text("b");
+    const MaterialTechniqueSet *const set = Load(kInline);
+    Expect(set == &g_pool[0] && g_read == g_file.size(), "a set sharing objects by offset publishes");
+    if (set != &g_pool[0] || !InArena(set->techniques[3]) || !InArena(set->techniques[10]))
+        return;
+    const MaterialPass &a = set->techniques[3]->passArray[0];
+    const MaterialPass &b = set->techniques[10]->passArray[0];
+    Expect(set->techniques[30] == set->techniques[3], "a technique offset resolves to the native technique");
+    Expect(b.vertexDecl == a.vertexDecl && b.vertexShader == a.vertexShader && b.pixelShader == a.pixelShader
+               && InArena(b.vertexDecl) && b.args != a.args,
+           "declaration and shader offsets resolve to the earlier native objects");
+}
 
 void TestMalformedFailsClosed()
 {
@@ -306,5 +334,5 @@ void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestEmptySets, TestFullTechnique, TestTwoTechniques, TestMalformedFailsClosed});
+    return Run({TestEmptySets, TestFullTechnique, TestTwoTechniques, TestSharedObjects, TestMalformedFailsClosed});
 }
