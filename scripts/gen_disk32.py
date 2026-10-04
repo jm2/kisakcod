@@ -31,7 +31,7 @@ KINDS = {
     'xstring': ('Ptr32<const char>', 4, 8),
     'bytes': ('Ptr32<const char>', 4, 8),
     'xstrings': ('Ptr32<Ptr32<const char>>', 4, 8),
-    'pointer': ('Ptr32<void>', 4, 8),  # a token only a custom body loads
+    'pointer': ('Ptr32<void>', 4, 8),  # a token a custom body loads, or asset=<family> a generated one
     'rawptr': ('std::uint32_t', 4, 8),  # pointer bytes that are no token; the loader nulls them
     'array': ('Ptr32<{of}Disk32>', 4, 8),  # count records of=<a nested record>
     'struct': ('{of}Disk32', 0, 0),  # a nested record inline; its layout gives size and alignment
@@ -88,7 +88,7 @@ def field_shape(words, where):
 
 # The attributes each kind takes after it; the others take none.
 FIELD_ATTRIBUTES = {'bytes': {'count', 'terminated', 'paired', 'label'}, 'xstrings': {'count'},
-                    'array': {'count', 'of', 'label'}, 'struct': {'of'}}
+                    'array': {'count', 'of', 'label'}, 'struct': {'of'}, 'pointer': {'asset'}}
 
 
 def parse_field(words, where):
@@ -102,7 +102,7 @@ def parse_field(words, where):
     return {'offset': int(words[0], 0), 'name': words[1], 'kind': kind, 'dims': dims,
             'count': attrs.get('count', ''), 'of': attrs.get('of'),
             'terminated': 'terminated' in attrs, 'paired': 'paired' in attrs, 'label': attrs.get('label'),
-            'where': where}
+            'asset': attrs.get('asset'), 'where': where}
 
 
 def parse_include(path, words, where, records, root):
@@ -371,8 +371,18 @@ CHECK_CALL = Template('''\
 ''')
 
 XSTRING = Template('''\
-    if (!LoadXString(disk.$field, &out->$field))
+    if (!LoadXString(disk.$disk, &out->$field))
         return false;
+''')
+
+# asset=<family>: the referenced family's pointer step pushes the temp block
+# itself, so the child streams where the 32-bit loader streams it.
+ASSET_POINTER = Template('''\
+    Load${Of}Ptr(disk.$disk.token, &out->$field);
+''')
+
+POINTER_DECL = Template('''\
+inline void Load${Name}Ptr(disk32::PointerToken token, $Runtime **slot);
 ''')
 
 NAME_CHECK = Template('''\
@@ -447,7 +457,7 @@ def noun(label):
 
 def scalar_copy(field):
     """Copy a scalar (a bool as != 0) or a fixed array, after checking its native type matches the mirror's."""
-    name, mirror = field['name'], member(field)
+    name, mirror = field['name'], field.get('disk', member(field))
     if field['dims']:
         return FIXED_ARRAY.substitute(field=name, member=mirror)
     test = ' != 0' if field['kind'] == 'bool' else ''
@@ -471,8 +481,11 @@ def body_step(record, field, records):
         element = element_record(records, record, field)
         return ARRAY.substitute(field=field['name'], count=array_count(record, field), Of=element['name'],
                                 Element=element['runtime'], label=field['label'])
+    if field['kind'] == 'pointer':
+        return ASSET_POINTER.substitute(Of=asset_record(records, field)['name'], disk=field['disk'],
+                                        field=field['name'])
     if field['kind'] == 'xstring':
-        step = XSTRING.substitute(field=field['name'])
+        step = XSTRING.substitute(field=field['name'], disk=field['disk'])
         if field['name'] == record['asset'].get('name'):
             step += NAME_CHECK.substitute(field=field['name'], noun=noun(record['asset']['label']))
         return step
@@ -480,6 +493,14 @@ def body_step(record, field, records):
     facts = dict(field=field['name'], count=count, extra=extra, label=field['label'],
                  noun=noun(field['label']), owner=noun(record['asset']['label']))
     return (PAIRED.substitute(facts) if field['paired'] else '') + TERMINATED_BYTES.substitute(facts)
+
+
+def asset_record(records, field):
+    """Return the record with an asset line that a pointer field's asset= names."""
+    target = next((other for other in records if other['name'] == field['asset'] and other['asset']), None)
+    if not target:
+        fail(field['where'], 'a generated body loads a pointer only with asset=<a record with an asset line>')
+    return target
 
 
 def element_record(records, record, field):
@@ -502,7 +523,7 @@ def array_count(record, field):
 
 def emit_element(element):
     scalars = ''.join(scalar_copy(field) for field in element['fields'] if field['kind'] in SCALARS)
-    pointers = ''.join(XSTRING.substitute(field=field['name']) for field in element['fields']
+    pointers = ''.join(XSTRING.substitute(field=field['name'], disk=field['name']) for field in element['fields']
                        if field['kind'] == 'xstring')
     return ELEMENT.substitute(Of=element['name'], Element=element['runtime'], scalars=scalars, pointers=pointers)
 
@@ -514,6 +535,15 @@ def emit_copy_scalars(record):
     return COPY_SCALARS.substitute(Name=record['name'], Runtime=record['runtime'], copies=copies)
 
 
+def flat_fields(fields, native='', disk=''):
+    """Each field with its native and mirror paths; a struct field yields its record's fields under it."""
+    for field in fields:
+        if field['kind'] == 'struct':
+            yield from flat_fields(field['record']['fields'], f'{native}{field["name"]}.', f'{disk}{member(field)}.')
+        else:
+            yield {**field, 'name': native + field['name'], 'disk': disk + member(field)}
+
+
 def check_generated_body(record):
     """Fail unless a generated body can load the record: a name= xstring and no dotted field."""
     asset = record['asset']
@@ -521,14 +551,17 @@ def check_generated_body(record):
         fail(asset['where'], 'a generated body needs name=<the xstring the pool hashes>')
     if any('.' in field['name'] for field in record['fields']):
         fail(asset['where'], 'a generated body loads top-level members; a dotted field needs body=custom')
+    if any(field['kind'] not in SCALARS + ('xstring', 'pointer', 'struct') for field in flat_fields(record['fields'])
+           if '.' in field['name']):
+        fail(asset['where'], 'a generated body loads scalars, xstrings and asset pointers from a struct field')
 
 
 def emit_body(record, records):
     asset = record['asset']
     check_generated_body(record)
-    scalars = ''.join(scalar_copy(field) for field in record['fields'] if field['kind'] in SCALARS)
-    pointers = ''.join(body_step(record, field, records) for field in record['fields']
-                       if field['kind'] not in SCALARS)
+    fields = list(flat_fields(record['fields']))
+    scalars = ''.join(scalar_copy(field) for field in fields if field['kind'] in SCALARS)
+    pointers = ''.join(body_step(record, field, records) for field in fields if field['kind'] not in SCALARS)
     facts = dict(Name=record['name'], Runtime=record['runtime'], noun=noun(asset['label']))
     check = CHECK_CALL.substitute(facts) if 'check' in asset else ''
     body = FLAT_BODY.substitute(facts, scalars=scalars, pointers=pointers, check=check)
@@ -567,6 +600,7 @@ def emit_loaders(records, schema_name):
            '#include <type_traits>', '',
            'namespace db::disk32_load', '{']
     elements = {field['of'] for record in records for field in record['fields'] if field['kind'] == 'array'}
+    out += pointer_declarations(records)
     for record in records:
         if record['name'] in elements:
             out.append(emit_element(record))
@@ -576,6 +610,13 @@ def emit_loaders(records, schema_name):
             out += emit_family(record, records)
     out += ['} // namespace db::disk32_load', '', '#endif // KISAK_ARCH_64BIT']
     return '\n'.join(out) + '\n'
+
+
+def pointer_declarations(records):
+    """Declare each pointer step an asset= field names, so schema order stays free."""
+    named = {asset_record(records, field)['name'] for record in records for field in record['fields']
+             if field['asset']}
+    return [POINTER_DECL.substitute(Name=r['name'], Runtime=r['runtime']) for r in records if r['name'] in named]
 
 
 def write(output, text):

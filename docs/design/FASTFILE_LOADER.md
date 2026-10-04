@@ -63,13 +63,13 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
    bytes), `struct of=` (a nested record inline), dotted fields naming members of nested native
    structs, and `copy=scalars`, which emits the record's scalar copies for the body to call.
 
-   **Asset references** (planned with LightDef → Image, Font → Material, ImpactFx → Fx and Sound
-   → LoadedSound/SoundCurve). A field `asset=<Family>` holds a token to another family's
-   header. The body calls that family's generated pointer step, `Load<Family>Ptr`, which
+   **Asset references**, such as LightDef → Image (planned: Font → Material, ImpactFx → Fx,
+   Sound → LoadedSound/SoundCurve). A `pointer` field `asset=<Family>` holds a token to another
+   family's header. The body calls that family's generated pointer step, `Load<Family>Ptr`, which
    pushes the temp block itself as its 32-bit `Load_<Family>Ptr` does, so the child streams
    where x86 streams it and the slot ends with the native pointer. While the child has no
    `asset` line, a non-null token raises `ERR_DROP` naming it. Forward declarations of every
-   pointer step keep schema order free.
+   referenced pointer step keep schema order free.
 3. **Relocation map.** Every materialized record registers `(block, disk offset, disk stride) →
    (native base, native stride)`. Offset tokens resolve through this map, including interior
    pointers into arrays and to named fields, so no pointer points into raw stream bytes. A

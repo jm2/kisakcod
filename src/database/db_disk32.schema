@@ -15,15 +15,17 @@
 #       [asset member=<XAssetHeader member> pool=<publish call> kind=<DBAliasKind>
 #              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom] [check=custom]]
 #       <retail offset> <field> <kind>[<n>]... [count=<expression>] [of=<record>] [terminated] [paired]
-#               [label=<noun>]
+#               [label=<noun>] [asset=<record>]
 #
 # Kinds: i32 u32 f32 i16 u16 u8 (scalars), bool (one byte; nonzero is true),
 # xstring (a C string: inline or an offset token), bytes (inline bytes, count
 # given), xstrings (a pointer array of C strings, count given), pointer (a
-# token only a custom body loads), rawptr (pointer bytes that are no token;
-# the loader nulls them), array (count elements of=<an earlier record without
-# an asset line>, label=<noun>), struct (that record inline, of=<record>; only
-# a custom body loads it). A scalar other than bool may be a fixed array, as
+# token a custom body loads; with asset=<a record with an asset line>, a
+# token to that family's header, which its pointer step loads), rawptr
+# (pointer bytes that are no token; the loader nulls them), array (count
+# elements of=<an earlier record without an asset line>, label=<noun>), struct
+# (that record inline, of=<record>; a generated body loads its scalars,
+# xstrings and asset pointers). A scalar other than bool may be a fixed array, as
 # knots f32[8][2]; a generated body copies it whole. A dotted field
 # (sound.info.rate) is a member of a nested native struct: its mirror member
 # takes the last name, and only a custom body or copy=scalars loads it.
@@ -54,8 +56,9 @@
 #                    after every field loads; false drops.
 #   label=<noun>     names the family, or a bytes field, in error messages.
 # A generated body streams the record into its mirror and copies the scalars
-# (bool as != 0). It then pushes block 4 and loads each xstring, bytes and
-# array field in schema order. An array streams its retail elements, then
+# (bool as != 0). It then pushes block 4 and loads each xstring, bytes, array
+# and asset pointer in schema order; the pointer step pushes the temp block
+# itself, as the 32-bit Load_<Family>Ptr does. An array streams its retail elements, then
 # converts each into zone-lifetime native storage, loading its strings. A
 # bytes field there must be terminated: count is <field> or <field>+<n>,
 # checked, and the last byte must be 0. A paired one is present exactly when

@@ -1,0 +1,13 @@
+# LightDef (GfxLightDef), asset type 0x11, and the attenuation image it holds
+# inline. The format is described in ../db_disk32.schema. The image token loads
+# through Image's pointer step, as Load_GfxLightImage does.
+
+record GfxLightImage 0x08 runtime=GfxLightImage header=gfx_d3d/r_gfx.h
+    0x00 image           pointer  asset=GfxImage
+    0x04 samplerState    u8
+
+record GfxLightDef 0x10 runtime=GfxLightDef header=gfx_d3d/r_gfx.h
+    asset member=lightDef pool=Load_LightDefAsset kind=GfxLightDef alias=inserted name=name label=light-def
+    0x00 name            xstring
+    0x04 attenuation     struct   of=GfxLightImage
+    0x0C lmapLookupStart i32
