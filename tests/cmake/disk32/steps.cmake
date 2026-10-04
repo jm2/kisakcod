@@ -1,6 +1,7 @@
 # The generated pointer steps on test-only families (tests/disk32_generator_steps.schema),
 # with the production stream code, so a record body that fails without raising
 # shows what the step itself does.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(_disk32_steps_dir "${CMAKE_CURRENT_BINARY_DIR}/disk32_steps")
 set(_disk32_steps_headers
     "${_disk32_steps_dir}/database/db_disk32_mirrors.h" "${_disk32_steps_dir}/database/db_disk32_loaders.h")
