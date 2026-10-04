@@ -4,12 +4,15 @@
 // converter (fx_fastfile_native_disk32.cpp), the oracle the loader replaces
 // (docs/design/FASTFILE_LOADER.md, "FX"): both must convert a well-formed
 // effect alike and both must reject one that breaks a rule. Beyond the
-// fixture's seams, only the asset pool (Load_FxEffectDefAsset) is replaced.
+// fixture's seams, only the asset pools and the effect lookup by name
+// (Load_FxEffectDefFromName) are replaced; materials load through Material's
+// real step, and models resolve through XModel's.
 
 #include "disk32_fixture.hpp"
 
 #include <database/db_disk32_load.h>
 #include <database/db_disk32_mirrors.h>
+#include <database/db_load_legacy_bridge.h>
 
 #include <EffectsCore/fx_fastfile_native_disk32.h>
 
@@ -17,6 +20,9 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace
@@ -25,6 +31,14 @@ using namespace disk32_test;
 namespace ff = fx::fastfile;
 
 FxEffectDef g_effects[4]; // what Load_FxEffectDefAsset published
+FxEffectDef g_named;      // what every effect name resolves to
+std::vector<std::string> g_lookups; // the names Load_FxEffectDefFromName looked up
+Material g_materials[2];  // what Load_MaterialAsset published
+int g_materialCount = 0;
+MaterialTechniqueSet g_sets[2];
+int g_setCount = 0;
+Material g_aliasMaterial; // the earlier zone assets RegisterAliases names
+XModel g_model;
 
 using Zone = disk32_test::Zone<2048>;
 
@@ -36,6 +50,11 @@ struct Effect
     std::vector<ff::FxElemDefDisk32> elems;
     std::vector<std::vector<ff::FxElemVelStateSampleDisk32>> vel;
     std::vector<std::vector<ff::FxElemVisStateSampleDisk32>> vis;
+    // Each element's mark pairs or visual tokens past one, then the bytes its
+    // visuals and effect names stream (materials, names).
+    std::vector<std::vector<ff::FxElemMarkVisualsDisk32>> marks;
+    std::vector<std::vector<ff::FxElemVisualsDisk32>> visuals;
+    std::vector<std::vector<std::uint8_t>> tails;
 };
 
 // A visible element with two samples of each kind; ranges and bounds hold
@@ -118,10 +137,83 @@ struct File : FileBuilder<File>
                 All(e.vel[index]);
             if (!e.elems[index].visSamples.token.isNull())
                 All(e.vis[index]);
+            if (index < e.tails.size())
+                All(e.marks[index]).All(e.visuals[index]).All(e.tails[index]);
         }
         return *this;
     }
 };
+
+// Block 4 starts with two aliases, as earlier assets of the zone leave them:
+// a material at offset 0 and a model at 4. Nothing is published or looked up.
+void RegisterAliases()
+{
+    g_materialCount = g_setCount = 0;
+    g_lookups.clear();
+    DB_SetInsertedPointer(DB_InsertPointer(DBAliasKind::Material), DBAliasKind::Material, &g_aliasMaterial);
+    DB_SetInsertedPointer(DB_InsertPointer(DBAliasKind::XModel), DBAliasKind::XModel, &g_model);
+}
+
+// A minimal material, inline: no textures, constants or state bits, and an
+// empty technique set.
+std::vector<std::uint8_t> MaterialBytes()
+{
+    const std::size_t start = g_file.size();
+    File file;
+    file.Word(kInline).Word(0x07).Word(0).Word(0).Word(0).Word(0);
+    for (int i = 0; i < 34; ++i)
+        file.Bytes(std::uint8_t{0xFF});
+    file.Word(0).Bytes(std::uint16_t{0}).Word(kInline).Word(0).Word(0).Word(0).Text("mat").Word(kInline).Word(0).Word(0);
+    for (int i = 0; i < 34; ++i)
+        file.Word(0);
+    file.Text("ts");
+    std::vector<std::uint8_t> bytes(g_file.begin() + static_cast<std::ptrdiff_t>(start), g_file.end());
+    g_file.resize(start);
+    return bytes;
+}
+
+std::vector<std::uint8_t> TextBytes(std::string_view text)
+{
+    std::vector<std::uint8_t> bytes(text.begin(), text.end());
+    bytes.push_back(0);
+    return bytes;
+}
+
+// Five one-shot elements, one of each kind of visual: a sprite with an
+// inline material and an effect on impact, a decal whose marks name the
+// material alias, a model element of two visuals naming the model alias, a
+// runner and a sound element, each naming theirs inline.
+Effect VisualEffect()
+{
+    using T = ff::FxElemTypeDisk32;
+    Effect effect;
+    effect.name = "fx_vis";
+    effect.record = {{kInline}, 0, 32 + 5 * 252 + 5 * 192 + 4 * 96 + 8 + 8 + 7, 0, 0, 5, 0, {kInline}};
+    effect.elems = {Element(T::SpriteBillboard, 1), Element(T::Decal, 1), Element(T::Model, 2),
+                    Element(T::Runner, 1), Element(T::Sound, 1)};
+    std::vector<std::uint8_t> sprite = MaterialBytes();
+    const std::vector<std::uint8_t> hit = TextBytes("fx_hit");
+    sprite.insert(sprite.end(), hit.begin(), hit.end());
+    effect.tails = {sprite, {}, {}, TextBytes("fx_child"), TextBytes("snd_x")};
+    ff::FxElemMarkVisualsDisk32 mark{};
+    mark.materials[0].token = mark.materials[1].token = {VirtualOffset(0)};
+    const ff::FxElemVisualsDisk32 model{{VirtualOffset(4)}};
+    effect.marks = {{}, {mark}, {}, {}, {}};
+    effect.visuals = {{}, {}, {model, model}, {}, {}};
+    for (std::size_t index = 0; index < effect.elems.size(); ++index)
+    {
+        ff::FxElemDefDisk32 &elem = effect.elems[index];
+        elem.spawn = {1, 0};
+        elem.visuals.token = {kInline};
+        effect.vel.emplace_back(2);
+        effect.vis.emplace_back(elem.elemType == T::Runner ? 0 : 2);
+    }
+    effect.elems[0].atlas.entryCount = effect.elems[1].atlas.entryCount = 1;
+    effect.elems[0].effectOnImpact.token = {kInline};
+    effect.elems[3].visStateIntervalCount = 0;
+    effect.elems[3].visSamples.token = {0};
+    return effect;
+}
 
 const FxEffectDef *Load(std::uintptr_t slotValue)
 {
@@ -156,21 +248,64 @@ void TestRecord()
 
 // The oracle: the FX converter on the same records, resolving the name to
 // its own copy.
+// Each element's resolved references in the converter's order: its visuals
+// (mark pairs, one visual, or the array), then the effects it names.
+std::vector<const void *> References(const FxEffectDef &effect)
+{
+    std::vector<const void *> references;
+    const int count = effect.elemDefCountLooping + effect.elemDefCountOneShot + effect.elemDefCountEmission;
+    for (int index = 0; index < count; ++index)
+    {
+        const FxElemDef &elem = effect.elemDefs[index];
+        const bool light = elem.elemType == 6 || elem.elemType == 7;
+        for (int visual = 0; visual < elem.visualCount && !light; ++visual)
+        {
+            if (elem.elemType == 9)
+                references.insert(references.end(), elem.visuals.markArray[visual].materials,
+                                  elem.visuals.markArray[visual].materials + 2);
+            else
+                references.push_back(elem.visualCount == 1 ? elem.visuals.instance.anonymous
+                                                           : elem.visuals.array[visual].anonymous);
+        }
+        for (const FxEffectDefRef &ref : {elem.effectOnImpact, elem.effectOnDeath, elem.effectEmitted})
+            if (ref.handle)
+                references.push_back(ref.handle);
+    }
+    return references;
+}
+
+// The oracle: the FX converter on the same records. Its resolver hands back
+// the effect's name, then the given references in order, or stand-ins.
 struct Oracle
 {
     std::unique_ptr<ff::FxFastFileNativeDisk32Workspace> workspace =
         std::make_unique<ff::FxFastFileNativeDisk32Workspace>();
     std::vector<std::uint64_t> storage;
     FxEffectDef *effect = nullptr;
+    const std::string *name;
+    std::vector<const void *> references;
+    std::size_t next = 0;
 
-    static bool Resolve(void *context, ff::FxFastFileDisk32ReferenceKind, const disk32::PointerToken *,
+    static bool Resolve(void *context, ff::FxFastFileDisk32ReferenceKind kind, const disk32::PointerToken *,
                         disk32::PointerToken, ff::FxFastFileDisk32ResolvedReference *out) noexcept
     {
-        const auto *const name = static_cast<const std::string *>(context);
+        using K = ff::FxFastFileDisk32ReferenceKind;
+        alignas(8) static const std::uint8_t opaque[sizeof(FxEffectDef)]{};
+        auto *const oracle = static_cast<Oracle *>(context);
+        const void *pointer = opaque;
+        if (kind == K::SoundName)
+            pointer = "snd";
+        else if (kind == K::EffectNameReference)
+            pointer = &g_named;
+        if (kind == K::EffectName)
+            pointer = oracle->name->c_str();
+        else if (oracle->next < oracle->references.size())
+            pointer = oracle->references[oracle->next++];
         *out = {};
-        out->pointer = name->c_str();
-        out->retainedByteCount = name->size() + 1;
-        out->retainedAlignment = 1;
+        out->pointer = pointer;
+        const bool text = kind == K::EffectName || kind == K::SoundName;
+        out->retainedByteCount = text ? std::string_view(static_cast<const char *>(pointer)).size() + 1 : sizeof(FxEffectDef);
+        out->retainedAlignment = text ? 1 : alignof(FxEffectDef);
         return true;
     }
     static bool Attest(void *, ff::FxFastFileDisk32SourceSpanKind, const disk32::PointerToken *,
@@ -179,20 +314,16 @@ struct Oracle
         return true;
     }
 
-    explicit Oracle(const Effect &e)
+    explicit Oracle(const Effect &e, std::vector<const void *> resolved = {})
+        : name(&e.name), references(std::move(resolved))
     {
         std::vector<ff::FxFastFileElemDefDisk32View> views(e.elems.size());
         for (std::size_t index = 0; index < e.elems.size(); ++index)
-        {
-            const auto count = [](const auto &values) { return static_cast<std::uint32_t>(values.size()); };
-            views[index].velocitySamples = {e.vel[index].empty() ? nullptr : e.vel[index].data(), count(e.vel[index])};
-            views[index].visibilitySamples = {e.vis[index].empty() ? nullptr : e.vis[index].data(),
-                                              count(e.vis[index])};
-        }
+            views[index] = View(e, index);
         const auto elements = static_cast<std::uint32_t>(e.elems.size());
         ff::FxFastFileEffectDefDisk32View view{&e.record, {elements ? e.elems.data() : nullptr, elements},
                                                {elements ? views.data() : nullptr, elements}, {nullptr, Attest}};
-        const ff::FxFastFileDisk32Resolvers resolvers{const_cast<std::string *>(&e.name), Resolve};
+        const ff::FxFastFileDisk32Resolvers resolvers{this, Resolve};
         ff::FxFastFileNativeDisk32Plan plan;
         if (ff::TryPlanFxEffectDefDisk32(workspace.get(), view, resolvers, &plan)
             != ff::FxFastFileNativeDisk32Status::Success)
@@ -202,6 +333,23 @@ struct Oracle
                                                 storage.size() * sizeof(std::uint64_t), &effect)
             != ff::FxFastFileNativeDisk32Status::Success)
             effect = nullptr;
+    }
+
+    // An element's spans: its samples, mark pairs and visual array.
+    static ff::FxFastFileElemDefDisk32View View(const Effect &e, std::size_t index)
+    {
+        const auto span = [](const auto &values) {
+            using T = typename std::decay_t<decltype(values)>::value_type;
+            return ff::FxFastFileDisk32Span<T>{values.empty() ? nullptr : values.data(),
+                                               static_cast<std::uint32_t>(values.size())};
+        };
+        ff::FxFastFileElemDefDisk32View view{span(e.vel[index]), span(e.vis[index])};
+        if (index < e.tails.size())
+        {
+            view.visuals = span(e.visuals[index]);
+            view.markVisuals = span(e.marks[index]);
+        }
+        return view;
     }
 };
 
@@ -243,11 +391,11 @@ bool MatchesOracle(const FxEffectDef &loaded, const Oracle &oracle)
         const FxElemDef &theirs = expected->elemDefs[index];
         if (Scalars(mine) != Scalars(theirs)
             || std::memcmp(mine.velSamples, theirs.velSamples, (mine.velIntervalCount + 1u) * sizeof(*mine.velSamples))
-            || std::memcmp(mine.visSamples, theirs.visSamples,
-                           (mine.visStateIntervalCount + 1u) * sizeof(*mine.visSamples)))
+            || (mine.visSamples && std::memcmp(mine.visSamples, theirs.visSamples,
+                                               (mine.visStateIntervalCount + 1u) * sizeof(*mine.visSamples))))
             return false;
     }
-    return true;
+    return References(loaded) == References(*expected);
 }
 
 // Each native scalar run holds the bytes at its retail offset: flags through
@@ -301,6 +449,43 @@ void TestElementsAndSamples()
     Expect(MatchesOracle(*loaded, Oracle(effect)), "the effect matches the FX converter's on the same records");
     Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 1088,
            "every disk byte is consumed and block 4 advances by the retail extent");
+}
+
+using BigZone = disk32_test::Zone<4096>;
+
+// The visuals VisualEffect writes.
+void ExpectVisuals(const BigZone &zone, const FxElemDef *elems)
+{
+    Expect(elems[0].visuals.instance.material == &g_materials[0] && g_materialCount == 1
+               && !std::strcmp(g_materials[0].info.name, "mat"),
+           "an inline material loads through Material's step");
+    Expect(InArena(elems[1].visuals.markArray) && elems[1].visuals.markArray[0].materials[0] == &g_aliasMaterial
+               && elems[1].visuals.markArray[0].materials[1] == &g_aliasMaterial,
+           "a decal's mark pair converts into native storage and names the material alias");
+    Expect(InArena(elems[2].visuals.array) && elems[2].visuals.array[0].model == &g_model
+               && elems[2].visuals.array[1].model == &g_model,
+           "two visuals convert into native storage and resolve through XModel's step");
+    Expect(elems[3].visuals.instance.effectDef.handle == &g_named && elems[0].effectOnImpact.handle == &g_named
+               && g_lookups == std::vector<std::string>{"fx_hit", "fx_child"},
+           "effect names resolve by name, in stream order");
+    Expect(zone.Holds(elems[4].visuals.instance.soundName) && !std::strcmp(elems[4].visuals.instance.soundName, "snd_x"),
+           "a sound name points at its bytes in block 4");
+}
+
+void TestVisuals()
+{
+    BigZone zone;
+    RegisterAliases();
+    const Effect effect = VisualEffect();
+    File().Write(effect);
+    const FxEffectDef *const loaded = Load(kInline);
+    Expect(loaded == &g_effects[0] && InArena(loaded->elemDefs), "an effect of five visuals publishes");
+    if (loaded != &g_effects[0] || !InArena(loaded->elemDefs))
+        return;
+    ExpectVisuals(zone, loaded->elemDefs);
+    Expect(MatchesOracle(*loaded, Oracle(effect, References(*loaded))),
+           "the effect matches the FX converter's, each reference in its place");
+    Expect(g_read == g_file.size(), "every disk byte is consumed");
 }
 
 void TestSharedInlineAndOffsets()
@@ -381,11 +566,21 @@ const Malformed kRuleBreaks[] = {
     {"a wrong size", [](Effect &e) { e.record.totalSize += 4; }, "effect size"},
 };
 
+// Rule breaks in VisualEffect, which the converter must reject too.
+const Malformed kVisualRuleBreaks[] = {
+    {"a mark naming no material", [](Effect &e) { e.marks[1][0].materials[1].token = {0}; }, "effect visual"},
+    {"a visual array naming none", [](Effect &e) { e.visuals[2][1].token = {0}; }, "effect visual"},
+};
+
+const Malformed kVisualFaults[] = {
+    {"an unmapped model alias", [](Effect &e) { e.visuals[2][0].token = {VirtualOffset(64)}; }, "alias offset"},
+    {"an unmapped sound name", [](Effect &e) { e.elems[4].visuals.token = {VirtualOffset(4000)}; }, "string offset"},
+    {"an unmapped effect name", [](Effect &e) { e.elems[2].effectOnDeath.token = {VirtualOffset(4000)}; },
+     "string offset"},
+    {"visual tokens past their block", [](Effect &e) { e.name.assign(1932, 'n'); }, "exceeds stream block"},
+};
+
 const Malformed kMalformed[] = {
-    {"a visual", [](Effect &e) { Visible(e); }, kNotYet},
-    {"an effect on impact", [](Effect &e) { e.elems[0].effectOnImpact.token = {kInline}; }, kNotYet},
-    {"an effect on death", [](Effect &e) { e.elems[1].effectOnDeath.token = {VirtualOffset(0)}; }, kNotYet},
-    {"an emitted effect", [](Effect &e) { e.elems[0].effectEmitted.token = {kInline}; }, kNotYet},
     {"a trail", [](Effect &e) { e.elems[0].elemType = ff::FxElemTypeDisk32::Trail;
                                 e.elems[0].visualCount = 0;
                                 e.elems[0].trailDef.token = {kInline}; }, kNotYet},
@@ -408,6 +603,26 @@ void TestRuleBreaksFailClosed()
         ExpectDrop(test.what, test.error, [] { Load(kInline); });
         Expect(!Oracle(effect).effect, test.what, "is accepted by the FX converter");
     }
+}
+
+// VisualEffect broken as test says; the converter must reject a rule break too.
+void ExpectVisualBreak(const Malformed &test, bool rule)
+{
+    BigZone zone;
+    RegisterAliases();
+    Effect effect = VisualEffect();
+    test.edit(effect);
+    File().Write(effect);
+    ExpectDrop(test.what, test.error, [] { Load(kInline); });
+    Expect(!rule || !Oracle(effect).effect, test.what, "is accepted by the FX converter");
+}
+
+void TestVisualBreaksFailClosed()
+{
+    for (const Malformed &test : kVisualRuleBreaks)
+        ExpectVisualBreak(test, true);
+    for (const Malformed &test : kVisualFaults)
+        ExpectVisualBreak(test, false);
 }
 
 void TestMalformedFailsClosed()
@@ -435,6 +650,71 @@ void TestMalformedFailsClosed()
 }
 } // namespace
 
+void __cdecl Load_FxEffectDefFromName(const char **name)
+{
+    // DB_FindXAssetHeader: the effect a name names, here always g_named.
+    if (*name)
+    {
+        g_lookups.emplace_back(*name);
+        *reinterpret_cast<const FxEffectDef **>(name) = &g_named;
+    }
+}
+
+void __cdecl Load_MaterialAsset(XAssetHeader *header)
+{
+    g_materials[g_materialCount] = *header->material;
+    header->material = &g_materials[g_materialCount++];
+}
+
+void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *header)
+{
+    MaterialTechniqueSet &entry = g_sets[g_setCount++];
+    entry = *header->techniqueSet;
+    entry.remappedTechniqueSet = &entry; // as DB_MediaRemapTechniqueSet leaves an unremapped set
+    header->techniqueSet = &entry;
+}
+
+// Models only resolve by alias here, and no material has textures, so no
+// model, preset or image loads; db_disk32_xmodel.cpp and db_disk32_image.cpp
+// link for the steps the loader calls.
+XAssetList *varXAssetList;
+
+void __cdecl Load_XModelAsset(XAssetHeader *)
+{
+    Expect(false, "no model loads");
+}
+
+void __cdecl Load_PhysPresetAsset(XAssetHeader *)
+{
+    Expect(false, "no preset loads");
+}
+
+void __cdecl Load_GfxImageAsset(XAssetHeader *)
+{
+    Expect(false, "no image loads");
+}
+
+void __cdecl DB_LoadedExternalData(std::int32_t)
+{
+    Expect(false, "no image loads");
+}
+
+void __cdecl Load_GetCurrentZoneHandle(uint8_t *handle)
+{
+    *handle = 7;
+}
+
+db::load_legacy_bridge::LegacyBridgeStatus db::load_legacy_bridge::DbLoadLegacyBridge::TryAddUser4(std::uint32_t) noexcept
+{
+    Expect(false, "loading marks no script string");
+    return LegacyBridgeStatus::Success;
+}
+
+bool db::load_legacy_bridge::DbLoadLegacyBridge::InSession() noexcept
+{
+    return false;
+}
+
 void __cdecl Load_FxEffectDefAsset(XAssetHeader *header)
 {
     // DB_AddXAsset hashes the name, then copies the header into the pool.
@@ -446,6 +726,6 @@ void __cdecl Load_FxEffectDefAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestRecord, TestElementsAndSamples, TestSharedInlineAndOffsets, TestRuleBreaksFailClosed,
-                TestMalformedFailsClosed});
+    return Run({TestRecord, TestElementsAndSamples, TestVisuals, TestSharedInlineAndOffsets, TestRuleBreaksFailClosed,
+                TestVisualBreaksFailClosed, TestMalformedFailsClosed});
 }
