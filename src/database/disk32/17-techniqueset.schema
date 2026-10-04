@@ -1,7 +1,35 @@
 # TechniqueSet (MaterialTechniqueSet), asset type 0x05, and the records its
 # techniques hold. The format is described in ../db_disk32.schema. The body
-# is custom (db_disk32_techniqueset.cpp): techniques are completed objects,
-# and a technique's passes follow its 8-byte header.
+# is custom (db_disk32_techniqueset.cpp): techniques, vertex declarations and
+# shaders are completed objects, and a technique's passes follow its header.
+
+# The routing table: 16 source/dest byte pairs, then 16 runtime declaration
+# handles whose disk bytes are no tokens.
+record MaterialVertexStreamRouting 0x60 runtime=MaterialVertexStreamRouting header=gfx_d3d/r_material.h
+    0x00 data                   u8[32]
+    0x20 decl                   pointer[16]
+
+record MaterialVertexDeclaration 0x64 runtime=MaterialVertexDeclaration header=gfx_d3d/r_material.h
+    0x00 streamCount            u8
+    0x01 hasOptionalSource      bool
+    0x02 isLoaded               bool
+    0x04 routing                struct   of=MaterialVertexStreamRouting
+
+# A shader: its name, the runtime handle (no token) and its load definition,
+# whose program DWORDs follow it in block 4.
+record MaterialVertexShader 0x10 runtime=MaterialVertexShader header=gfx_d3d/r_material.h
+    0x00 name                   xstring
+    0x04 prog.vs                rawptr
+    0x08 prog.loadDef.program   pointer
+    0x0C prog.loadDef.programSize     u16
+    0x0E prog.loadDef.loadForRenderer u16
+
+record MaterialPixelShader 0x10 runtime=MaterialPixelShader header=gfx_d3d/r_material.h
+    0x00 name                   xstring
+    0x04 prog.ps                rawptr
+    0x08 prog.loadDef.program   pointer
+    0x0C prog.loadDef.programSize     u16
+    0x0E prog.loadDef.loadForRenderer u16
 
 record MaterialPass 0x14 runtime=MaterialPass header=gfx_d3d/r_material.h copy=scalars
     0x00 vertexDecl             pointer  # MaterialVertexDeclaration
