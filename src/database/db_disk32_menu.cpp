@@ -8,15 +8,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 
 // Menu (menuDef_t), a wave-4 parse family (docs/design/FASTFILE_LOADER.md):
 // only the client's UI reads menus. The header slot and the inserted pointer
 // step are generated from its schema entry; the record body below is custom.
 // It mirrors Load_menuDef_t in db_load.cpp: the 284-byte record streams into
 // the temp block, then with block 4 pushed its window (name, group,
-// background material), its strings, its key-handler chain, and its
+// background material), its strings, its key-handler chain, its
 // statements, whose expression entries convert into zone-lifetime native
-// storage. Items do not load yet, so a menu that names any fails closed.
+// storage, and its items, which load the same way. Item type data does not
+// load yet, so an item that names any fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -80,9 +82,9 @@ bool LoadKeyHandlers(disk32::PointerToken token, ItemKeyHandler **out)
     return true;
 }
 
-// Load_expressionEntry: a 12-byte entry 4-aligned. An operator (type 0)
-// must name one the evaluator defines; an operand's string loads, and its
-// int or float bits copy.
+// Load_expressionEntry: a 12-byte entry 4-aligned. An operator (type 0) is
+// within the build's operator range; an operand's string loads, and its int
+// or float bits copy.
 bool LoadEntry(expressionEntry **out)
 {
     disk32::ExpressionEntryDisk32 disk{};
@@ -123,8 +125,8 @@ bool LoadEntries(const std::uint8_t *tokens, std::int32_t count, expressionEntry
 }
 
 // Load_statement: any non-null entries token means numEntries entry tokens
-// follow 4-aligned, each non-null, each entry following in turn. The
-// evaluator reads every entry, so a statement with entries has the tokens.
+// follow 4-aligned, each non-null, each entry following in turn. A statement
+// with entries has the tokens.
 bool LoadStatement(const disk32::StatementDisk32 &disk, statement_s *out)
 {
     CopyStatementScalars(disk, out);
@@ -150,11 +152,91 @@ bool LoadStatement(const disk32::StatementDisk32 &disk, statement_s *out)
     return LoadEntries(tokens, count, entries);
 }
 
-// The items, which do not load yet.
-bool LoadItems(disk32::PointerToken token, itemDef_s ***out)
+// Load_itemDefData_t's types that hold data: a list box (6), an edit field
+// (0, 4, 9, 10, 11, 14, 16, 17 and 18), a multi-value (12) or an enum dvar
+// (13). Any other type's data is no token, and stays null.
+bool TypeHasData(std::int32_t type)
+{
+    constexpr std::uint32_t kTypesWithData = 1u << 0 | 1u << 4 | 1u << 6 | 1u << 9 | 1u << 10 | 1u << 11 | 1u << 12
+        | 1u << 13 | 1u << 14 | 1u << 16 | 1u << 17 | 1u << 18;
+    return type >= 0 && type < 32 && (kTypesWithData >> type & 1u);
+}
+
+// Load_itemDef_t: the scalars and window, the strings, the key handlers, the
+// focus sound (Sound's step), the type data, then the statements.
+bool LoadItem(const disk32::ItemDisk32 &disk, itemDef_s *out)
+{
+    CopyItemScalars(disk, out);
+    const std::pair<disk32::Ptr32<const char>, const char **> strings[] = {
+        {disk.text, &out->text}, {disk.mouseEnterText, &out->mouseEnterText},
+        {disk.mouseExitText, &out->mouseExitText}, {disk.mouseEnter, &out->mouseEnter},
+        {disk.mouseExit, &out->mouseExit}, {disk.action, &out->action}, {disk.onAccept, &out->onAccept},
+        {disk.onFocus, &out->onFocus}, {disk.leaveFocus, &out->leaveFocus}, {disk.dvar, &out->dvar},
+        {disk.dvarTest, &out->dvarTest}};
+    if (!LoadWindow(disk.window, &out->window))
+        return false;
+    for (const auto &[field, slot] : strings)
+    {
+        if (!LoadXString(field, slot))
+            return false;
+    }
+    if (!LoadKeyHandlers(disk.onKey.token, &out->onKey) || !LoadXString(disk.enableDvar, &out->enableDvar))
+        return false;
+    LoadSndAliasListPtr(disk.focusSound.token, &out->focusSound);
+    out->typeData.data = nullptr;
+    if (TypeHasData(disk.type) && !disk.typeData.token.isNull())
+        return Drop("Fast-file menu item type data has no 64-bit loader yet");
+    const std::pair<const disk32::StatementDisk32 *, statement_s *> statements[] = {
+        {&disk.visibleExp, &out->visibleExp}, {&disk.textExp, &out->textExp},
+        {&disk.materialExp, &out->materialExp}, {&disk.rectXExp, &out->rectXExp}, {&disk.rectYExp, &out->rectYExp},
+        {&disk.rectWExp, &out->rectWExp}, {&disk.rectHExp, &out->rectHExp},
+        {&disk.forecolorAExp, &out->forecolorAExp}};
+    for (const auto &[field, statement] : statements)
+    {
+        if (!LoadStatement(*field, statement))
+            return false;
+    }
+    return true;
+}
+
+// The items the tokens name, in order, each non-null, each 372-byte item
+// following 4-aligned in turn, converted into native storage.
+bool LoadItemArray(const std::uint8_t *tokens, std::int32_t count, itemDef_s **items)
+{
+    for (std::int32_t index = 0; index < count; ++index)
+    {
+        disk32::PointerToken token{};
+        std::memcpy(&token, tokens + static_cast<std::size_t>(index) * sizeof(token), sizeof(token));
+        items[index] = nullptr;
+        if (token.isNull())
+            return Drop("Fast-file menu has a null item");
+        disk32::ItemDisk32 disk{};
+        items[index] = StreamRecord(disk) ? AllocZeroed<itemDef_s>() : nullptr;
+        if (!items[index] || !LoadItem(disk, items[index]))
+            return false;
+    }
+    return true;
+}
+
+// Load_itemDef_ptrArray: any non-null items token means itemCount item
+// tokens follow 4-aligned.
+bool LoadItems(disk32::PointerToken token, std::int32_t count, itemDef_s ***out)
 {
     *out = nullptr;
-    return token.isNull() || Drop("Fast-file menu items have no 64-bit loader yet");
+    if (token.isNull())
+        return true;
+    std::int32_t bytes = 0;
+    if (!db::validation::CheckedArrayBytes(count, sizeof(disk32::PointerToken), &bytes))
+        return Drop("Invalid fast-file menu item count");
+    std::uint8_t *const tokens = DB_AllocStreamPos(3);
+    if (!StreamBytes(tokens, bytes))
+        return false;
+    // An empty array still points at its stream position, as on x86.
+    itemDef_s **const items = count ? AllocNative<itemDef_s *>(count) : reinterpret_cast<itemDef_s **>(tokens);
+    if (!items)
+        return false;
+    *out = items;
+    return LoadItemArray(tokens, count, items);
 }
 
 // Load_menuDef_t's first half: the window, font, open, close and escape
@@ -177,13 +259,12 @@ bool LoadMenuTail(const Disk &disk, menuDef_t *out)
     return LoadStatement(disk.visibleExp, &out->visibleExp)
         && LoadXString(disk.allowedBinding, &out->allowedBinding) && LoadXString(disk.soundName, &out->soundName)
         && LoadStatement(disk.rectXExp, &out->rectXExp) && LoadStatement(disk.rectYExp, &out->rectYExp)
-        && LoadItems(disk.items.token, &out->items);
+        && LoadItems(disk.items.token, disk.itemCount, &out->items);
 }
 } // namespace
 
 // The record at the temp block's position, its item count, then its parts
-// with block 4 pushed. Load_MenuAsset reads every item, so a menu with items
-// has the token.
+// with block 4 pushed. A menu with items has the token.
 bool LoadMenuDef(menuDef_t *out)
 {
     Disk disk{};
