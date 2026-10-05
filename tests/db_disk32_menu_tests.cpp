@@ -1,6 +1,6 @@
 // db_disk32_menu_tests.cpp: the 64-bit Menu loader (NOW row 12) on hand-built
-// disk32 zone images (disk32_fixture.hpp), with Material's real steps for the
-// background. The retail offsets here are written out by hand, apart from the
+// disk32 zone images (disk32_fixture.hpp), with Material's and Sound's real
+// steps for the backgrounds and focus sounds. The retail offsets here are written out by hand, apart from the
 // schema. Beyond the fixture's seams, only the asset pools are replaced.
 
 #include "disk32_fixture.hpp"
@@ -187,6 +187,120 @@ void TestSharedInlineAndAlias()
     Expect(!Load(0) && g_published == 1, "a null token loads nothing");
 }
 
+// A 372-byte item: named, of type 1 (no type data, junk in its slot), with
+// a text, a test dvar naming the menu's name by offset, a key handler, and a
+// one-entry visibility statement.
+struct Item
+{
+    std::vector<std::uint8_t> bytes = std::vector<std::uint8_t>(372);
+
+    Item()
+    {
+        Set(0x000, kInline).Set(0x0B4, 1).Set(0x0D0, std::bit_cast<std::uint32_t>(0.5f)).Set(0x0E0, kInline);
+        Set(0x0E8, 0xDEADBEEF).Set(0x110, VirtualOffset(4)).Set(0x114, kInline);
+        Set(0x124, std::bit_cast<std::uint32_t>(2.f)).Set(0x12C, 0x12345678).Set(0x134, 1).Set(0x138, kInline);
+    }
+    Item &Set(std::uint32_t at, std::uint32_t value)
+    {
+        for (std::uint32_t byte = 0; byte < 4; ++byte)
+            bytes[at + byte] = static_cast<std::uint8_t>(value >> (8 * byte));
+        return *this;
+    }
+};
+
+// A bare menu named "b" at 4 with two items: their tokens at 8, the first at
+// 16 (its name at 388, text at 391, key handler at 396, statement token at 408
+// and entry at 412, the entry's string at 424), then a bare list box with no
+// type data 4-aligned at 428 (its name at 800).
+void WriteItems(const Item &first, std::uint32_t secondToken = kInline)
+{
+    const Record menu = Bare().Set(0x0A4, 2).Set(0x118, kInline);
+    Item second;
+    second.bytes.assign(372, 0);
+    second.Set(0x000, kInline).Set(0x0B4, 6);
+    g_file.insert(g_file.end(), menu.bytes.begin(), menu.bytes.end());
+    File().Text("b").Word(kInline).Word(secondToken);
+    g_file.insert(g_file.end(), first.bytes.begin(), first.bytes.end());
+    File().Text("i0").Text("t").Word(32).Word(0).Word(0).Word(kInline).Entry(1, 2, kInline).Text("v");
+    g_file.insert(g_file.end(), second.bytes.begin(), second.bytes.end());
+    File().Text("i1");
+}
+
+// The first item, past the item pointers in native storage, then its key
+// handler, its entry pointer and entry.
+bool FirstItemScalars(const itemDef_s *item)
+{
+    return item == reinterpret_cast<const itemDef_s *>(g_arena + 16) && item->type == 1 && item->textscale == 0.5f
+        && !item->parent && item->special == 2.f && !item->typeData.data;
+}
+
+bool FirstItemConverted(const Zone &zone, const itemDef_s *item)
+{
+    const statement_s &visible = item->visibleExp;
+    return FirstItemScalars(item) && item->window.name == zone.At(388) && item->text == zone.At(391)
+        && item->dvarTest == zone.At(4) && item->onKey == reinterpret_cast<const ItemKeyHandler *>(g_arena + 544)
+        && item->onKey->key == 32 && visible.numEntries == 1
+        && visible.entries[0]->data.operand.internals.string == zone.At(424) && !item->forecolorAExp.entries;
+}
+
+void TestItems()
+{
+    Zone zone;
+    WriteItems(Item());
+    const menuDef_t *const menu = Load(kInline);
+    Expect(menu == &g_pool[0] && menu->itemCount == 2 && menu->items == reinterpret_cast<itemDef_s **>(g_arena),
+           "a menu's two items publish, their pointers in native storage");
+    Expect(!zone.virt[7] && zone.virt[8] == 0xFF, "the item tokens stream 4-aligned past the menu's name");
+    if (menu != &g_pool[0])
+        return;
+    Expect(FirstItemConverted(zone, menu->items[0]), "the first item converts, its parent and type data null");
+    const itemDef_s *const second = menu->items[1];
+    Expect(second == reinterpret_cast<const itemDef_s *>(g_arena + 600) && second->window.name == zone.At(800)
+               && second->type == 6 && !second->typeData.data,
+           "the second item follows 4-aligned, a list box without type data");
+    Expect(g_arenaUsed == 1128 && g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 803,
+           "block 4 holds exactly the menu and its items");
+}
+
+struct ItemBreak
+{
+    const char *what;
+    std::uint32_t at;
+    std::uint32_t value;
+    const char *error;
+};
+
+const ItemBreak kItemBreaks[] = {
+    {"a list box's type data", 0x0B4, 6, "type data has no 64-bit loader yet"},
+    {"an enum dvar's type data", 0x0B4, 13, "type data has no 64-bit loader yet"},
+    {"an edit field's type data", 0x0B4, 18, "type data has no 64-bit loader yet"},
+    {"an unmapped focus sound", 0x120, VirtualOffset(64), "alias offset"},
+    {"an unmapped mouse-enter text", 0x0EC, VirtualOffset(900), "string offset"},
+    {"an unmapped leave-focus script", 0x108, VirtualOffset(900), "string offset"},
+    {"an unmapped enable dvar", 0x118, VirtualOffset(900), "string offset"},
+    {"an item statement without a token", 0x16C, 1, "statement entry count"},
+};
+
+void TestItemBreaksFailClosed()
+{
+    for (const ItemBreak &test : kItemBreaks)
+    {
+        Zone zone;
+        WriteItems(Item().Set(test.at, test.value));
+        ExpectDrop(test.what, test.error, [] { Load(kInline); });
+    }
+    {
+        Zone zone;
+        WriteItems(Item(), 0);
+        ExpectDrop("a null item", "null item", [] { Load(kInline); });
+    }
+    Zone zone;
+    const Record menu = Bare().Set(0x0A4, 0x40000000).Set(0x118, kInline);
+    g_file.insert(g_file.end(), menu.bytes.begin(), menu.bytes.end());
+    File().Text("b");
+    ExpectDrop("item bytes past 32 bits", "menu item count", [] { Load(kInline); });
+}
+
 struct Malformed
 {
     const char *what;
@@ -201,7 +315,6 @@ constexpr const char *kEntries = "statement entry count";
 const Malformed kMalformed[] = {
     {"a negative item count", 0x0A4, 0xFFFFFFFF, kItems},
     {"items without a token", 0x0A4, 1, kItems},
-    {"items", 0x118, kInline, "items have no 64-bit loader yet"},
     {"a null name", 0x000, 0, "has no name"},
     {"an unmapped background", 0x098, VirtualOffset(64), "alias offset"},
     {"an unmapped escape script", 0x0CC, VirtualOffset(900), "string offset"},
@@ -279,6 +392,22 @@ void __cdecl Load_GfxImageAsset(XAssetHeader *)
     Expect(false, "no image loads");
 }
 
+// Focus sounds resolve only by alias.
+void __cdecl Load_snd_alias_list_Asset(XAssetHeader *)
+{
+    Expect(false, "no sound loads");
+}
+
+void __cdecl Load_LoadedSoundAsset(XAssetHeader *)
+{
+    Expect(false, "no loaded sound loads");
+}
+
+void __cdecl Load_SndCurveAsset(XAssetHeader *)
+{
+    Expect(false, "no sound curve loads");
+}
+
 void __cdecl DB_LoadedExternalData(std::int32_t)
 {
     Expect(false, "no image loads");
@@ -286,5 +415,6 @@ void __cdecl DB_LoadedExternalData(std::int32_t)
 
 int main()
 {
-    return Run({TestInlineMenu, TestSharedInlineAndAlias, TestMalformedFailsClosed});
+    return Run({TestInlineMenu, TestSharedInlineAndAlias, TestItems, TestItemBreaksFailClosed,
+                TestMalformedFailsClosed});
 }

@@ -1,6 +1,6 @@
 # Menu (menuDef_t), asset type 0x15: a 284-byte record that grows to 360
 # bytes natively. The format is described in ../db_disk32.schema. The body is
-# custom (db_disk32_menu.cpp): the key handlers, statements and their
+# custom (db_disk32_menu.cpp): the items, key handlers, statements and their
 # expression entries convert into zone-lifetime native storage.
 
 # A window: its name, group and background load by the body.
@@ -32,6 +32,42 @@ record ExpressionEntry 0x0C runtime=expressionEntry header=ui/ui_shared.h
 record Statement 0x08 runtime=statement_s header=ui/ui_shared.h copy=scalars
     0x00 numEntries               i32
     0x04 entries                  pointer
+
+# An item: its window, scripts and statements load as a menu's do; its type
+# says what its type data holds. The menu sets parent when it publishes.
+record Item 0x174 runtime=itemDef_s header=ui/ui_shared.h copy=scalars
+    0x000 window                  struct    of=Window
+    0x09C textRect                run[6]    to=textRect
+    0x0B4 type                    i32
+    0x0B8 dataType                run[10]   to=gameMsgWindowMode
+    0x0E0 text                    xstring
+    0x0E4 itemFlags               i32
+    0x0E8 parent                  rawptr
+    0x0EC mouseEnterText          xstring
+    0x0F0 mouseExitText           xstring
+    0x0F4 mouseEnter              xstring
+    0x0F8 mouseExit               xstring
+    0x0FC action                  xstring
+    0x100 onAccept                xstring
+    0x104 onFocus                 xstring
+    0x108 leaveFocus              xstring
+    0x10C dvar                    xstring
+    0x110 dvarTest                xstring
+    0x114 onKey                   pointer   # an ItemKeyHandler chain
+    0x118 enableDvar              xstring
+    0x11C dvarFlags               i32
+    0x120 focusSound              pointer   asset=SndAliasList
+    0x124 special                 run[2]    to=cursorPos
+    0x12C typeData                pointer   # by type: list box, edit field, multi-value or enum dvar
+    0x130 imageTrack              i32
+    0x134 visibleExp              struct    of=Statement
+    0x13C textExp                 struct    of=Statement
+    0x144 materialExp             struct    of=Statement
+    0x14C rectXExp                struct    of=Statement
+    0x154 rectYExp                struct    of=Statement
+    0x15C rectWExp                struct    of=Statement
+    0x164 rectHExp                struct    of=Statement
+    0x16C forecolorAExp           struct    of=Statement
 
 record MenuDef 0x11C runtime=menuDef_t header=ui/ui_shared.h copy=scalars
     asset member=menu pool=Load_MenuAsset kind=MenuDef alias=inserted body=custom label=menu

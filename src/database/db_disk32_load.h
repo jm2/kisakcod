@@ -134,9 +134,10 @@ void __cdecl DB_LoadMenuListPtrDisk32(bool atStreamStart, MenuList **slot);
 
 // Loads one menuDef_t (db_disk32_menu.cpp) under the same slot contract: the
 // slot holds the zero-extended disk32 token on entry and the native menu
-// published through Load_MenuAsset on return. Its key handlers, statements
-// and expression entries live in DB_AllocZoneNative storage. Items have no
-// 64-bit loader yet, so a menu that names any raises ERR_DROP.
+// published through Load_MenuAsset on return. Its items, key handlers,
+// statements and expression entries live in DB_AllocZoneNative storage. Item
+// type data has no 64-bit loader yet, so an item that names any raises
+// ERR_DROP.
 void __cdecl DB_LoadMenuDefPtrDisk32(bool atStreamStart, menuDef_t **slot);
 
 // Loads one snd_alias_list_t (db_disk32_sound.cpp) under the same slot

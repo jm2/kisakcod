@@ -185,8 +185,8 @@ void __cdecl Load_MenuAsset(XAssetHeader *header)
     header->menu = &entry;
 }
 
-// The menus name no background, so no material loads; Material's TUs link
-// all the same.
+// The menus name no background or focus sound, so no material or sound
+// loads; their families' TUs link all the same.
 void __cdecl Load_MaterialAsset(XAssetHeader *)
 {
     Expect(false, "no material loads");
@@ -200,6 +200,21 @@ void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *)
 void __cdecl Load_GfxImageAsset(XAssetHeader *)
 {
     Expect(false, "no image loads");
+}
+
+void __cdecl Load_snd_alias_list_Asset(XAssetHeader *)
+{
+    Expect(false, "no sound loads");
+}
+
+void __cdecl Load_LoadedSoundAsset(XAssetHeader *)
+{
+    Expect(false, "no loaded sound loads");
+}
+
+void __cdecl Load_SndCurveAsset(XAssetHeader *)
+{
+    Expect(false, "no sound curve loads");
 }
 
 void __cdecl DB_LoadedExternalData(std::int32_t)
