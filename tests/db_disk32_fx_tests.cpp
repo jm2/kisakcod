@@ -55,6 +55,10 @@ struct Effect
     std::vector<std::vector<ff::FxElemMarkVisualsDisk32>> marks;
     std::vector<std::vector<ff::FxElemVisualsDisk32>> visuals;
     std::vector<std::vector<std::uint8_t>> tails;
+    // The first element's trail, if it names one: its record, vertices and indices.
+    ff::FxTrailDefDisk32 trail{};
+    std::vector<ff::FxTrailVertexDisk32> trailVerts;
+    std::vector<std::uint16_t> trailInds;
 };
 
 // A visible element with two samples of each kind; ranges and bounds hold
@@ -139,6 +143,8 @@ struct File : FileBuilder<File>
                 All(e.vis[index]);
             if (index < e.tails.size())
                 All(e.marks[index]).All(e.visuals[index]).All(e.tails[index]);
+            if (!index && !e.elems[0].trailDef.token.isNull())
+                Bytes(e.trail).All(e.trailVerts).All(e.trailInds);
         }
         return *this;
     }
@@ -349,6 +355,12 @@ struct Oracle
             view.visuals = span(e.visuals[index]);
             view.markVisuals = span(e.marks[index]);
         }
+        if (!index && !e.elems[0].trailDef.token.isNull())
+        {
+            view.trail = &e.trail;
+            view.trailVertices = span(e.trailVerts);
+            view.trailIndices = span(e.trailInds);
+        }
         return view;
     }
 };
@@ -377,8 +389,20 @@ bool SameRecord(const FxEffectDef &loaded, const FxEffectDef &expected)
         && loaded.elemDefCountEmission == expected.elemDefCountEmission && !loaded.elemDefs == !expected.elemDefs;
 }
 
+// Two trails alike: their scalars, vertices and indices.
+bool SameTrail(const FxTrailDef *mine, const FxTrailDef *theirs)
+{
+    if (!mine || !theirs)
+        return mine == theirs;
+    return mine->scrollTimeMsec == theirs->scrollTimeMsec && mine->repeatDist == theirs->repeatDist
+        && mine->splitDist == theirs->splitDist && mine->vertCount == theirs->vertCount
+        && mine->indCount == theirs->indCount
+        && !std::memcmp(mine->verts, theirs->verts, static_cast<std::size_t>(mine->vertCount) * sizeof(FxTrailVertex))
+        && !std::memcmp(mine->inds, theirs->inds, static_cast<std::size_t>(mine->indCount) * 2);
+}
+
 // The loader's effect matches the converter's: its fields, each element's
-// scalars and samples.
+// scalars, samples and trail.
 bool MatchesOracle(const FxEffectDef &loaded, const Oracle &oracle)
 {
     const FxEffectDef *const expected = oracle.effect;
@@ -392,7 +416,8 @@ bool MatchesOracle(const FxEffectDef &loaded, const Oracle &oracle)
         if (Scalars(mine) != Scalars(theirs)
             || std::memcmp(mine.velSamples, theirs.velSamples, (mine.velIntervalCount + 1u) * sizeof(*mine.velSamples))
             || (mine.visSamples && std::memcmp(mine.visSamples, theirs.visSamples,
-                                               (mine.visStateIntervalCount + 1u) * sizeof(*mine.visSamples))))
+                                               (mine.visStateIntervalCount + 1u) * sizeof(*mine.visSamples)))
+            || !SameTrail(mine.trailDef, theirs.trailDef))
             return false;
     }
     return References(loaded) == References(*expected);
@@ -515,7 +540,7 @@ struct Malformed
     std::size_t arena = kArenaBytes;
 };
 
-constexpr const char *kNotYet = "no 64-bit loader yet";
+constexpr const char *kTrail = "effect trail";
 constexpr const char *kElement = "effect element";
 
 // The sprite, given one visual and the one-entry atlas that needs.
@@ -581,9 +606,6 @@ const Malformed kVisualFaults[] = {
 };
 
 const Malformed kMalformed[] = {
-    {"a trail", [](Effect &e) { e.elems[0].elemType = ff::FxElemTypeDisk32::Trail;
-                                e.elems[0].visualCount = 0;
-                                e.elems[0].trailDef.token = {kInline}; }, kNotYet},
     {"an unmapped name offset", [](Effect &e) { e.record.name.token = {VirtualOffset(40)}; }, "string offset"},
     {"a name past its block", [](Effect &e) { e.name.assign(2100, 'n'); }, "Unterminated"},
     {"elements past their block", [](Effect &e) { e.name.assign(1700, 'n'); }, "exceeds stream block"},
@@ -623,6 +645,97 @@ void TestVisualBreaksFailClosed()
         ExpectVisualBreak(test, true);
     for (const Malformed &test : kVisualFaults)
         ExpectVisualBreak(test, false);
+}
+
+// TwoElements with a looping trail first: two vertices, four indices.
+Effect TrailEffect()
+{
+    Effect effect = TwoElements();
+    effect.elems[0] = Element(ff::FxElemTypeDisk32::Trail, 0);
+    effect.elems[0].spawn = {100, 3};
+    effect.elems[0].trailDef.token = {kInline};
+    effect.trail = {10, 5, 2, 2, {{kInline}}, 4, {{kInline}}};
+    effect.trailVerts = {{{1, 2}, {3, 4}, 5}, {{6, 7}, {8, 9}, 10}};
+    effect.trailInds = {0, 1, 1, 0};
+    // An effect on impact whose 7-byte name leaves the trail record a pad byte.
+    effect.elems[0].effectOnImpact.token = {kInline};
+    effect.tails = {TextBytes("fx_hit"), {}};
+    effect.marks.resize(2);
+    effect.visuals.resize(2);
+    effect.record.totalSize += 28 + 4 * (20 + 2); // FX_Convert sizes vertices by the index count
+    return effect;
+}
+
+// Where TrailEffect's trail streams: its record after the effect name, then
+// its vertices and indices.
+void ExpectTrailPlaced(const Zone &zone, const FxTrailDef &trail, const ff::FxTrailDefDisk32 &disk)
+{
+    Expect(!std::memcmp(zone.virt + 808, &disk, sizeof(disk)),
+           "the disk32 trail record stays 4-aligned after the effect name");
+    Expect(reinterpret_cast<const std::uint8_t *>(trail.verts) == zone.virt + 836 && trail.verts[1].texCoord == 10
+               && reinterpret_cast<const std::uint8_t *>(trail.inds) == zone.virt + 876 && trail.inds[1] == 1,
+           "its vertices and indices stay at their retail block-4 offsets, after its record");
+}
+
+void TestTrail()
+{
+    Zone zone;
+    const Effect effect = TrailEffect();
+    File().Write(effect);
+    const FxEffectDef *const loaded = Load(kInline);
+    const FxTrailDef *const trail = loaded && InArena(loaded->elemDefs) ? loaded->elemDefs[0].trailDef : nullptr;
+    Expect(InArena(trail) && trail->scrollTimeMsec == 10 && trail->repeatDist == 5 && trail->splitDist == 2,
+           "the trail converts into native storage");
+    if (!InArena(trail))
+        return;
+    ExpectTrailPlaced(zone, *trail, effect.trail);
+    Expect(MatchesOracle(*loaded, Oracle(effect, References(*loaded))),
+           "the effect matches the FX converter's, trail included");
+    Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 1172,
+           "every disk byte is consumed and block 4 advances by the retail extent");
+}
+
+// Trail breaks, which the converter must reject too.
+const Malformed kTrailBreaks[] = {
+    {"a repeat distance of 0", [](Effect &e) { e.trail.repeatDist = 0; }, kTrail},
+    {"a split distance of 0", [](Effect &e) { e.trail.splitDist = 0; }, kTrail},
+    {"65 trail vertices", [](Effect &e) { e.trail.vertCount = 65; }, kTrail},
+    {"130 trail indices", [](Effect &e) { e.trail.indCount = 130; e.trailInds.resize(130); }, kTrail},
+    {"an odd index count", [](Effect &e) { e.trail.indCount = 3; e.trailInds.pop_back(); }, kTrail},
+    {"more vertices than indices", [](Effect &e) { e.trail.indCount = 2; e.trail.vertCount = 3;
+                                                   e.trailInds.resize(2); e.trailVerts.resize(3); }, kTrail},
+    {"an index past the vertices", [](Effect &e) { e.trailInds[3] = 2; }, kTrail},
+    {"no vertex token", [](Effect &e) { e.trail.verts.token = {0}; e.trailVerts.clear(); }, kTrail},
+    {"no index token", [](Effect &e) { e.trail.inds.token = {0}; e.trailInds.clear(); }, kTrail},
+};
+
+void TestTrailBreaksFailClosed()
+{
+    for (const Malformed &test : kTrailBreaks)
+    {
+        Zone zone;
+        Effect effect = TrailEffect();
+        test.edit(effect);
+        File().Write(effect);
+        ExpectDrop(test.what, test.error, [] { Load(kInline); });
+        Expect(!Oracle(effect).effect, test.what, "is accepted by the FX converter");
+    }
+    // The trail element alone, so its 8 index bytes end the file; cut 4.
+    Effect effect = TrailEffect();
+    effect.elems.pop_back();
+    effect.vel.pop_back();
+    effect.vis.pop_back();
+    effect.record.elemDefCountOneShot = 0;
+    effect.record.totalSize -= 252 + 2 * 96 + 2 * 48;
+    {
+        Zone zone;
+        File().Write(effect);
+        Expect(Load(kInline) == &g_effects[0], "the trail element alone loads whole");
+    }
+    Zone zone;
+    File().Write(effect);
+    g_file.resize(g_file.size() - 4);
+    ExpectDrop("a trail whose indices end short", "ended unexpectedly", [] { Load(kInline); });
 }
 
 void TestMalformedFailsClosed()
@@ -726,6 +839,7 @@ void __cdecl Load_FxEffectDefAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestRecord, TestElementsAndSamples, TestVisuals, TestSharedInlineAndOffsets, TestRuleBreaksFailClosed,
+    return Run({TestRecord, TestElementsAndSamples, TestVisuals, TestTrail, TestSharedInlineAndOffsets,
+                TestRuleBreaksFailClosed, TestTrailBreaksFailClosed,
                 TestVisualBreaksFailClosed, TestMalformedFailsClosed});
 }

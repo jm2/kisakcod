@@ -1,8 +1,8 @@
 # FX (FxEffectDef), asset type 0x19, and the element records it holds inline.
 # The format is described in ../db_disk32.schema. The body is custom
 # (db_disk32_fx.cpp): as in the 32-bit loader, any non-null element, sample,
-# visual or trail token means its records follow inline. Samples hold no
-# pointer and stay in block 4.
+# visual or trail token means its records follow inline. Samples and a
+# trail's vertices and indices hold no pointer and stay in block 4.
 
 record FxFloatRange 0x08 runtime=FxFloatRange header=EffectsCore/fx_effect_def.h copy=scalars
     0x00 base                    f32
@@ -17,6 +17,15 @@ record FxIntRange 0x08 runtime=FxIntRange header=EffectsCore/fx_effect_def.h cop
 record FxSpawnDefLooping 0x08 runtime=FxSpawnDefLooping header=EffectsCore/fx_effect_def.h copy=scalars
     0x00 intervalMsec            i32
     0x04 count                   i32
+
+record FxTrailDef 0x1C runtime=FxTrailDef header=EffectsCore/fx_effect_def.h copy=scalars
+    0x00 scrollTimeMsec          i32
+    0x04 repeatDist              i32
+    0x08 splitDist               i32
+    0x0C vertCount               i32
+    0x10 verts                   pointer   # vertCount 20-byte vertices
+    0x14 indCount                i32
+    0x18 inds                    pointer   # indCount 16-bit indices
 
 record FxElemDef 0xFC runtime=FxElemDef header=EffectsCore/fx_effect_def.h copy=scalars
     0x00 flags                   i32
