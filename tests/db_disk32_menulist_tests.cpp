@@ -1,7 +1,8 @@
 // db_disk32_menulist_tests.cpp: the 64-bit MenuList loader (NOW row 12) on
-// hand-built disk32 zone images (disk32_fixture.hpp). Beyond the fixture's
-// seams, only the asset pool (Load_MenuListAsset) is replaced; the menu
-// pointers live in the fixture's native storage.
+// hand-built disk32 zone images (disk32_fixture.hpp), with Menu's real steps
+// for the menus. Beyond the fixture's seams, only the asset pools
+// (Load_MenuListAsset, Load_MenuAsset) are replaced; the menu pointers live in
+// the fixture's native storage.
 
 #include "disk32_fixture.hpp"
 
@@ -9,12 +10,15 @@
 #include <database/db_disk32_mirrors.h>
 
 #include <cstring>
+#include <vector>
 
 namespace
 {
 using namespace disk32_test;
 
 MenuList g_pool[4]; // what Load_MenuListAsset published
+menuDef_t g_menus[2]; // what Load_MenuAsset published
+int g_menuCount = 0;
 
 struct File : FileBuilder<File>
 {
@@ -102,6 +106,28 @@ void TestSharedInlineAndOffsets()
     Expect(!Load(0) && g_published == 2, "a null token loads nothing");
 }
 
+// A list of two menus: an inline one, through Menu's step, then the same
+// menu again by its alias.
+void TestMenus()
+{
+    Zone zone;
+    g_menuCount = 0;
+    // Block 4: the name (0..5), two tokens at 8, the menu's alias slot at 16
+    // and its name at 20.
+    File().Record(kInline, 2, kInline).Text("list").Word(disk32::kSharedInline).Word(VirtualOffset(16));
+    std::vector<std::uint8_t> menu(284); // every member null or zero
+    std::memset(menu.data(), 0xFF, 4);   // but the window's name, inline
+    g_file.insert(g_file.end(), menu.begin(), menu.end());
+    File().Text("m");
+    const MenuList *const list = Load(kInline);
+    Expect(list == &g_pool[0] && g_menuCount == 1, "the list and its one menu publish");
+    if (list != &g_pool[0])
+        return;
+    Expect(list->menus[0] == &g_menus[0] && list->menus[1] == &g_menus[0] && g_menus[0].window.name == zone.At(20),
+           "the inline menu loads through Menu's step, and the alias names the pooled menu");
+    Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 22, "block 4 holds the list and its menu");
+}
+
 struct Malformed
 {
     const char *what;
@@ -130,12 +156,10 @@ const Malformed kMalformed[] = {
     {"menus past their block", [] { File().Record(kInline, 100, kInline).Text("a"); RunOff(); }, kInline,
      "exceeds stream block"},
     {"truncated menus", [] { File().Record(kInline, 3, kInline).Text("a").Menus(2); }, kInline, "ended unexpectedly"},
-    {"an inline menu", [] { File().Record(kInline, 3, kInline).Text("a").Menus(3, 0, kInline); }, kInline,
-     "names a menu"},
-    {"a shared-inline menu", [] { File().Record(kInline, 3, kInline).Text("a").Menus(3, 1, disk32::kSharedInline); },
-     kInline, "names a menu"},
-    {"a menu offset last", [] { File().Record(kInline, 3, kInline).Text("a").Menus(3, 2, VirtualOffset(0)); },
-     kInline, "names a menu"},
+    {"a truncated inline menu", [] { File().Record(kInline, 3, kInline).Text("a").Menus(3, 0, kInline); }, kInline,
+     "ended unexpectedly", kArenaBytes, 512},
+    {"a menu offset naming no menu", [] { File().Record(kInline, 3, kInline).Text("a").Menus(3, 2, VirtualOffset(0)); },
+     kInline, "alias offset"},
     {"native storage exhausted", [] { File().Record(kInline, 3, kInline).Text("a").Menus(3); }, kInline,
      "exhausted", 3 * sizeof(menuDef_t *) - 1},
     {"unmapped alias", [] {}, VirtualOffset(16), "alias offset"},
@@ -154,6 +178,35 @@ void TestMalformedFailsClosed()
 }
 } // namespace
 
+void __cdecl Load_MenuAsset(XAssetHeader *header)
+{
+    menuDef_t &entry = g_menus[g_menuCount++];
+    entry = *header->menu;
+    header->menu = &entry;
+}
+
+// The menus name no background, so no material loads; Material's TUs link
+// all the same.
+void __cdecl Load_MaterialAsset(XAssetHeader *)
+{
+    Expect(false, "no material loads");
+}
+
+void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *)
+{
+    Expect(false, "no technique set loads");
+}
+
+void __cdecl Load_GfxImageAsset(XAssetHeader *)
+{
+    Expect(false, "no image loads");
+}
+
+void __cdecl DB_LoadedExternalData(std::int32_t)
+{
+    Expect(false, "no image loads");
+}
+
 void __cdecl Load_MenuListAsset(XAssetHeader *header)
 {
     // DB_AddXAsset hashes the name, then copies the header into the pool.
@@ -165,5 +218,6 @@ void __cdecl Load_MenuListAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestInlineList, TestEmptyAndAbsentMenus, TestSharedInlineAndOffsets, TestMalformedFailsClosed});
+    return Run({TestInlineList, TestEmptyAndAbsentMenus, TestSharedInlineAndOffsets, TestMenus,
+                TestMalformedFailsClosed});
 }

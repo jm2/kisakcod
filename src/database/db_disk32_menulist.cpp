@@ -15,14 +15,15 @@
 // mirrors Load_MenuList and Load_menuDef_ptrArray in db_load.cpp: the 12-byte
 // record streams into the temp block, its name into block 4, then, for any
 // non-null menus token, menuCount 4-byte menu tokens 4-aligned in block 4,
-// converted into zone-lifetime native pointers. Menu has no 64-bit loader
-// yet, so a non-null menu token fails closed; a list of null menus loads.
+// converted into zone-lifetime native pointers, each menu loading through
+// Menu's pointer step (db_disk32_menu.cpp).
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
 namespace
 {
-// The menu tokens at the 4-aligned block-4 position, each into a native slot.
+// The menu tokens at the 4-aligned block-4 position, each into a native slot
+// through Menu's step, in order.
 bool LoadMenus(std::int32_t count, menuDef_t ***out)
 {
     std::int32_t bytes = 0;
@@ -39,9 +40,8 @@ bool LoadMenus(std::int32_t count, menuDef_t ***out)
     {
         disk32::PointerToken token{};
         std::memcpy(&token, tokens + static_cast<std::size_t>(index) * sizeof(token), sizeof(token));
-        if (!token.isNull())
-            return Drop("Fast-file menu list names a menu, which has no 64-bit loader yet");
         menus[index] = nullptr;
+        LoadMenuDefPtr(token, &menus[index]);
     }
     *out = menus;
     return true;

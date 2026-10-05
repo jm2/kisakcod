@@ -1,0 +1,42 @@
+# Menu (menuDef_t), asset type 0x15: a 284-byte record that grows to 360
+# bytes natively. The format is described in ../db_disk32.schema. The body is
+# custom (db_disk32_menu.cpp): the key handlers convert into zone-lifetime
+# native storage.
+
+# A window: its name, group and background load by the body.
+record Window 0x9C runtime=windowDef_t header=ui/ui_shared.h copy=scalars
+    0x00 name                     xstring
+    0x04 rect                     run[12]   to=rectClient
+    0x34 group                    xstring
+    0x38 style                    run[24]   to=outlineColor
+    0x98 background               pointer   asset=Material
+
+# A key handler: next is -1 for the next handler, which follows its action.
+record ItemKeyHandler 0x0C runtime=ItemKeyHandler header=ui/ui_shared.h copy=scalars
+    0x00 key                      i32
+    0x04 action                   xstring
+    0x08 next                     pointer
+
+# A statement: numEntries entry tokens.
+record Statement 0x08 runtime=statement_s header=ui/ui_shared.h copy=scalars
+    0x00 numEntries               i32
+    0x04 entries                  pointer
+
+record MenuDef 0x11C runtime=menuDef_t header=ui/ui_shared.h copy=scalars
+    asset member=menu pool=Load_MenuAsset kind=MenuDef alias=inserted body=custom label=menu
+    0x000 window                  struct    of=Window
+    0x09C font                    xstring
+    0x0A0 fullScreen              i32
+    0x0A4 itemCount               i32
+    0x0A8 fontIndex               run[7]    to=blurRadius
+    0x0C4 onOpen                  xstring
+    0x0C8 onClose                 xstring
+    0x0CC onESC                   xstring
+    0x0D0 onKey                   pointer   # an ItemKeyHandler chain
+    0x0D4 visibleExp              struct    of=Statement
+    0x0DC allowedBinding          xstring
+    0x0E0 soundName               xstring
+    0x0E4 imageTrack              run[9]    to=disableColor
+    0x108 rectXExp                struct    of=Statement
+    0x110 rectYExp                struct    of=Statement
+    0x118 items                   pointer   # itemCount itemDef_s tokens
