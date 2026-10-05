@@ -19,8 +19,10 @@
 // reflection probes and their runtime textures, its DPVS planes, and its
 // cells: AABB trees (children offsets at the native stride), portals (each
 // naming a native cell) and index arrays, under the 32-bit loader's cell,
-// topology and portal rules. The lightmaps and later parts do not load yet,
-// so a world that names one fails closed.
+// topology and portal rules; then its lightmaps, light grid, brush models,
+// material memory, vertex data and sun flare, and its runtime arrays in
+// block 1. The shadow geometry, light regions and DPVS do not load yet, so
+// every world still fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -141,11 +143,6 @@ bool LoadOrResolve(disk32::PointerToken token, std::uint32_t bytes, std::uint32_
     return true;
 }
 
-// The parts after the cells, which do not load yet.
-bool NotYet(disk32::PointerToken token)
-{
-    return token.isNull() || Drop("Fast-file world lightmaps and later parts have no 64-bit loader yet");
-}
 
 // An array of records that hold pointers: any non-null token means count
 // records follow 4-aligned; each converts into native storage, then loads
@@ -409,6 +406,101 @@ bool LoadDpvsPlanes(const Disk &disk, GfxWorldDpvsPlanes *out)
     DB_PopStreamPos();
     return true;
 }
+bool ConvertLightmap(const disk32::GfxLightmapArrayDisk32 &disk, GfxLightmapArray *out)
+{
+    LoadGfxImagePtr(disk.primary.token, &out->primary);
+    LoadGfxImagePtr(disk.secondary.token, &out->secondary);
+    return true;
+}
+
+bool ConvertMaterialMemory(const disk32::MaterialMemoryDisk32 &disk, MaterialMemory *out)
+{
+    CopyMaterialMemoryScalars(disk, out);
+    LoadMaterialPtr(disk.material.token, &out->material);
+    return true;
+}
+
+// Load_GfxLightGrid: its axes (each below 3), then its row starts (one per
+// row along the row axis), raw row data, entries and colors, which keep
+// their layout in block 4.
+bool LoadLightGrid(const disk32::GfxLightGridDisk32 &disk, GfxLightGrid *out)
+{
+    if (disk.rowAxis >= 3 || disk.colAxis >= 3)
+        return Drop("Invalid fast-file light-grid axes");
+    std::int32_t range = 0;
+    std::int32_t rows = 0;
+    if (!disk.rowDataStart.token.isNull()
+        && (!db::validation::CheckedCountDifference(disk.maxs[disk.rowAxis], disk.mins[disk.rowAxis], &range)
+            || !CheckedCountSum(range, 1, &rows)))
+    {
+        return Drop("Invalid fast-file derived count for light-grid rows");
+    }
+    return LoadArray(disk.rowDataStart.token, rows, 2, 2, &out->rowDataStart)
+        && LoadArray(disk.rawRowData.token, disk.rawRowDataSize, 1, 1, &out->rawRowData)
+        && LoadArray(disk.entries.token, disk.entryCount, 4, 4, &out->entries)
+        && LoadArray(disk.colors.token, disk.colorCount, sizeof(GfxLightGridColors), 4, &out->colors);
+}
+
+// An array the renderer fills: block 1, zero-filled.
+template <typename T>
+bool LoadRuntime(disk32::PointerToken token, std::int64_t count, std::uint32_t elementBytes, std::uint32_t alignment,
+                 T **out)
+{
+    DB_PushStreamPos(1);
+    if (!LoadArray(token, count, elementBytes, alignment, out))
+        return false;
+    DB_PopStreamPos();
+    return true;
+}
+
+// Load_GfxWorld's middle: lightmaps (naming images), the light grid, the
+// lightmaps' runtime textures, the brush models, material memory (naming
+// materials), the vertex and layer data (headless keeps no D3D buffers, as on
+// x86), the sun flare's materials and the outdoor image.
+bool LoadMiddle(const Disk &disk, GfxWorld *out)
+{
+    std::int32_t vertexBytes = 0;
+    if (!CheckedCountProduct(disk.vertexCount, 44, &vertexBytes))
+        return Drop("Invalid fast-file derived count for world vertex-buffer bytes");
+    if (!LoadRecords<disk32::GfxLightmapArrayDisk32>(disk.lightmaps.token, disk.lightmapCount, &out->lightmaps,
+                                                      ConvertLightmap)
+        || !LoadLightGrid(disk.lightGrid, &out->lightGrid)
+        || !LoadTextures(disk.lightmapPrimaryTextures.token, disk.lightmapCount, &out->lightmapPrimaryTextures)
+        || !LoadTextures(disk.lightmapSecondaryTextures.token, disk.lightmapCount, &out->lightmapSecondaryTextures)
+        || !LoadArray(disk.models.token, disk.modelCount, disk32::kGfxBrushModelBytes, 4, &out->models)
+        || !LoadRecords<disk32::MaterialMemoryDisk32>(disk.materialMemory.token, disk.materialMemoryCount,
+                                                       &out->materialMemory, ConvertMaterialMemory)
+        || !LoadArray(disk.vd.vertices.token, disk.vertexCount, 44, 4, &out->vd.vertices)
+        || !LoadArray(disk.vld.data.token, disk.vertexLayerDataSize, 1, 1, &out->vld.data))
+    {
+        return false;
+    }
+    LoadMaterialPtr(disk.sun.spriteMaterial.token, &out->sun.spriteMaterial);
+    LoadMaterialPtr(disk.sun.flareMaterial.token, &out->sun.flareMaterial);
+    LoadGfxImagePtr(disk.outdoorImage.token, &out->outdoorImage);
+    return true;
+}
+
+// The runtime arrays in block 1: the cell-caster bits, the scene's dynamic
+// models and brushes, the shadow visibility, and the primary light of each
+// dynamic model.
+bool LoadRuntimeArrays(const Disk &disk, const Extents &extents, GfxWorld *out)
+{
+    const std::int64_t dynamicModels = disk.dpvsDyn.dynEntClientCount[0];
+    return LoadRuntime(disk.cellCasterBits.token, extents.cellCasterCount, 4, 4, &out->cellCasterBits)
+        && LoadRuntime(disk.sceneDynModel.token, dynamicModels, sizeof(GfxSceneDynModel), 4, &out->sceneDynModel)
+        && LoadRuntime(disk.sceneDynBrush.token, disk.dpvsDyn.dynEntClientCount[1], sizeof(GfxSceneDynBrush), 4,
+                       &out->sceneDynBrush)
+        && LoadRuntime(disk.primaryLightEntityShadowVis.token, extents.entityShadowVisCount, 4, 4,
+                       &out->primaryLightEntityShadowVis)
+        && LoadRuntime(disk.primaryLightDynEntShadowVis[0].token, extents.modelShadowVisCount, 4, 4,
+                       &out->primaryLightDynEntShadowVis[0])
+        && LoadRuntime(disk.primaryLightDynEntShadowVis[1].token, extents.brushShadowVisCount, 4, 4,
+                       &out->primaryLightDynEntShadowVis[1])
+        && LoadRuntime(disk.nonSunPrimaryLightForModelDynEnt.token, dynamicModels, 1, 1,
+                       &out->nonSunPrimaryLightForModelDynEnt);
+}
+
 // The record's scalars and its nested records'.
 void CopyScalars(const Disk &disk, GfxWorld *out)
 {
@@ -446,6 +538,15 @@ bool LoadLights(const Disk &disk, GfxWorld *out)
         && LoadTextures(disk.reflectionProbeTextures.token, disk.reflectionProbeCount, &out->reflectionProbeTextures)
         && LoadDpvsPlanes(disk, &out->dpvsPlanes);
 }
+
+// The parts in block 4, in Load_GfxWorld's order. The shadow geometry, light
+// regions and DPVS do not load yet, and no world publishes before they do.
+bool LoadParts(const Disk &disk, const Extents &extents, GfxWorld *out)
+{
+    return LoadSky(disk, out) && LoadLights(disk, out) && LoadCells(disk, out) && LoadMiddle(disk, out)
+        && LoadRuntimeArrays(disk, extents, out)
+        && Drop("Fast-file world shadow geometry, light regions and DPVS have no 64-bit loader yet");
+}
 } // namespace
 
 // The record at the temp block's position, its counts, then its parts with
@@ -466,7 +567,7 @@ bool LoadGfxWorld(GfxWorld *out)
         return Drop("Invalid fast-file world visibility counts");
     CopyScalars(disk, out);
     DB_PushStreamPos(kVirtualBlock);
-    if (!LoadSky(disk, out) || !LoadLights(disk, out) || !LoadCells(disk, out) || !NotYet(disk.models.token))
+    if (!LoadParts(disk, extents, out))
         return false;
     DB_PopStreamPos();
     return true;
