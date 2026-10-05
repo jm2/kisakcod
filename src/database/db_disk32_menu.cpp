@@ -14,9 +14,9 @@
 // step are generated from its schema entry; the record body below is custom.
 // It mirrors Load_menuDef_t in db_load.cpp: the 284-byte record streams into
 // the temp block, then with block 4 pushed its window (name, group,
-// background material), its strings and its key-handler chain, which
-// converts into zone-lifetime native storage. Statement entries and items do
-// not load yet, so a menu that names any fails closed.
+// background material), its strings, its key-handler chain, and its
+// statements, whose expression entries convert into zone-lifetime native
+// storage. Items do not load yet, so a menu that names any fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -80,16 +80,74 @@ bool LoadKeyHandlers(disk32::PointerToken token, ItemKeyHandler **out)
     return true;
 }
 
-// The statements' entries, which do not load yet: the evaluator reads every
-// entry, so a statement with entries has the token, and one that names
-// entries fails closed.
+// Load_expressionEntry: a 12-byte entry 4-aligned. An operator (type 0)
+// must name one the evaluator defines; an operand's string loads, and its
+// int or float bits copy.
+bool LoadEntry(expressionEntry **out)
+{
+    disk32::ExpressionEntryDisk32 disk{};
+    expressionEntry *const entry = StreamRecord(disk) ? AllocZeroed<expressionEntry>() : nullptr;
+    if (!entry)
+        return false;
+    entry->type = disk.type;
+    *out = entry;
+    if (!disk.type)
+    {
+        if (disk.data.dataType < 0 || disk.data.dataType >= NUM_OPERATORS)
+            return Drop("Invalid fast-file menu expression operator");
+        entry->data.op = static_cast<operationEnum>(disk.data.dataType);
+        return true;
+    }
+    Operand &operand = entry->data.operand;
+    operand.dataType = static_cast<expDataType>(disk.data.dataType);
+    if (operand.dataType == VAL_STRING)
+        return LoadXString(disk.data.string, &operand.internals.string);
+    std::memcpy(&operand.internals.intVal, &disk.data.string, sizeof(operand.internals.intVal));
+    return true;
+}
+
+// The entries the tokens name, in order, each non-null and following in turn.
+bool LoadEntries(const std::uint8_t *tokens, std::int32_t count, expressionEntry **entries)
+{
+    for (std::int32_t index = 0; index < count; ++index)
+    {
+        disk32::PointerToken token{};
+        std::memcpy(&token, tokens + static_cast<std::size_t>(index) * sizeof(token), sizeof(token));
+        entries[index] = nullptr;
+        if (token.isNull())
+            return Drop("Fast-file menu statement has a null entry");
+        if (!LoadEntry(&entries[index]))
+            return false;
+    }
+    return true;
+}
+
+// Load_statement: any non-null entries token means numEntries entry tokens
+// follow 4-aligned, each non-null, each entry following in turn. The
+// evaluator reads every entry, so a statement with entries has the tokens.
 bool LoadStatement(const disk32::StatementDisk32 &disk, statement_s *out)
 {
     CopyStatementScalars(disk, out);
     out->entries = nullptr;
-    if (disk.numEntries < 0 || (disk.numEntries > 0 && disk.entries.token.isNull()))
+    const std::int32_t count = disk.numEntries;
+    std::int32_t bytes = 0;
+    if ((count > 0 && disk.entries.token.isNull())
+        || !db::validation::CheckedArrayBytes(count, sizeof(disk32::PointerToken), &bytes))
+    {
         return Drop("Invalid fast-file menu statement entry count");
-    return disk.entries.token.isNull() || Drop("Fast-file menu statements have no 64-bit loader yet");
+    }
+    if (disk.entries.token.isNull())
+        return true;
+    std::uint8_t *const tokens = DB_AllocStreamPos(3);
+    if (!StreamBytes(tokens, bytes))
+        return false;
+    // An empty statement still points at its stream position, as on x86.
+    expressionEntry **const entries =
+        count ? AllocNative<expressionEntry *>(count) : reinterpret_cast<expressionEntry **>(tokens);
+    if (!entries)
+        return false;
+    out->entries = entries;
+    return LoadEntries(tokens, count, entries);
 }
 
 // The items, which do not load yet.
