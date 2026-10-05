@@ -720,10 +720,22 @@ void TestTrailBreaksFailClosed()
         ExpectDrop(test.what, test.error, [] { Load(kInline); });
         Expect(!Oracle(effect).effect, test.what, "is accepted by the FX converter");
     }
+    // The trail element alone, so its 8 index bytes end the file; cut 4.
+    Effect effect = TrailEffect();
+    effect.elems.pop_back();
+    effect.vel.pop_back();
+    effect.vis.pop_back();
+    effect.record.elemDefCountOneShot = 0;
+    effect.record.totalSize -= 252 + 2 * 96 + 2 * 48;
+    {
+        Zone zone;
+        File().Write(effect);
+        Expect(Load(kInline) == &g_effects[0], "the trail element alone loads whole");
+    }
     Zone zone;
-    File().Write(TrailEffect());
-    g_file.resize(g_file.size() - 300); // in the indices
-    ExpectDrop("a truncated trail", "ended unexpectedly", [] { Load(kInline); });
+    File().Write(effect);
+    g_file.resize(g_file.size() - 4);
+    ExpectDrop("a trail whose indices end short", "ended unexpectedly", [] { Load(kInline); });
 }
 
 void TestMalformedFailsClosed()
