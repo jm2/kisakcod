@@ -553,6 +553,8 @@ def emit_copy_scalars(record):
                       for field in record['fields'] if field['kind'] == 'run')
     copies += ''.join(f'    out->{field["name"]} = nullptr;\n'
                       for field in record['fields'] if field['kind'] == 'rawptr')
+    if 'disk.' not in copies:
+        copies = '    static_cast<void>(disk); // a record of no scalars\n' + copies
     return COPY_SCALARS.substitute(Name=record['name'], Runtime=record['runtime'], copies=copies)
 
 

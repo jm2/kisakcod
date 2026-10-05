@@ -1,0 +1,123 @@
+# GfxWorld, asset type 0x10: the renderer's world, a 732-byte record that
+# grows to 1032 bytes natively. The format is described in
+# ../db_disk32.schema. The body is custom (db_disk32_gfxworld.cpp): arrays
+# that hold no pointer keep their layout and stay in their zone blocks, and
+# runtime buffers take block 1 (zero-filled). The nested records below are
+# its members; the server loads the world only to parse past it.
+
+record GfxWorldVertexData 0x08 runtime=GfxWorldVertexData header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 vertices                 pointer   # vertexCount 44-byte vertices
+    0x04 worldVb                  rawptr    # a D3D buffer the renderer creates
+
+record GfxWorldVertexLayerData 0x08 runtime=GfxWorldVertexLayerData header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 data                     pointer   # vertexLayerDataSize bytes
+    0x04 layerVb                  rawptr    # a D3D buffer the renderer creates
+
+record GfxWorldDpvsPlanes 0x10 runtime=GfxWorldDpvsPlanes header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 cellCount                i32
+    0x04 planes                   pointer   # planeCount 20-byte planes
+    0x08 nodes                    pointer   # nodeCount 16-bit nodes
+    0x0C sceneEntCellBits         pointer   # cellCount x 256 words, block 1
+
+record GfxLightGrid 0x38 runtime=GfxLightGrid header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 hasLightRegions          bool
+    0x01 hasLightRegionsPad       pad[3]
+    0x04 sunPrimaryLightIndex     u32
+    0x08 mins                     u16[3]
+    0x0E maxs                     u16[3]
+    0x14 rowAxis                  u32
+    0x18 colAxis                  u32
+    0x1C rowDataStart             pointer   # a 16-bit start per row
+    0x20 rawRowDataSize           u32
+    0x24 rawRowData               pointer
+    0x28 entryCount               u32
+    0x2C entries                  pointer   # 4-byte entries
+    0x30 colorCount               u32
+    0x34 colors                   pointer   # 168-byte colors
+
+record sunflare_t 0x60 runtime=sunflare_t header=gfx_d3d/r_sky.h copy=scalars
+    0x00 hasValidData             bool
+    0x01 hasValidDataPad          pad[3]
+    0x04 spriteMaterial           pointer   asset=Material
+    0x08 flareMaterial            pointer   asset=Material
+    0x0C spriteSize               run[21]   to=sunFxPosition
+
+record GfxWorldDpvsStatic 0x68 runtime=GfxWorldDpvsStatic header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 smodelCount              u32
+    0x04 staticSurfaceCount       u32
+    0x08 staticSurfaceCountNoDecal u32
+    0x0C litSurfsBegin            run[8]    to=surfaceVisDataCount
+    0x2C smodelVisData            pointer[3]  # smodelCount bytes each, block 1
+    0x38 surfaceVisData           pointer[3]  # staticSurfaceCount bytes each, block 1
+    0x44 lodData                  pointer   # 2 x smodelVisDataCount words, block 1
+    0x48 sortedSurfIndex          pointer   # 16-bit surface indices
+    0x4C smodelInsts              pointer   # 28-byte instances
+    0x50 surfaces                 pointer   # 48-byte surfaces, each naming a material
+    0x54 cullGroups               pointer   # 32-byte cull groups
+    0x58 smodelDrawInsts          pointer   # 76-byte draw instances, each naming a model
+    0x5C surfaceMaterials         pointer   # 8-byte draw keys, block 1
+    0x60 surfaceCastsSunShadow    pointer   # words, block 1
+    0x64 usageCount               i32
+
+record GfxWorldDpvsDynamic 0x30 runtime=GfxWorldDpvsDynamic header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 dynEntClientWordCount    u32[2]
+    0x08 dynEntClientCount        u32[2]
+    0x10 dynEntCellBits           pointer[2]  # cellCount x word count words, block 1
+    0x18 dynEntVisData            pointer[2][3]  # 32 x word count bytes, block 1
+
+record GfxWorld 0x2DC runtime=GfxWorld header=gfx_d3d/r_bsp.h copy=scalars
+    asset member=gfxWorld pool=Load_GfxWorldAsset kind=GfxWorld alias=inserted body=custom label=world
+    0x000 name                    xstring
+    0x004 baseName                xstring
+    0x008 planeCount              i32
+    0x00C nodeCount               i32
+    0x010 indexCount              i32
+    0x014 indices                 pointer   # 16-bit indices
+    0x018 surfaceCount            i32
+    0x01C streamInfo              pad[4]    # an empty struct and its padding
+    0x020 skySurfCount            i32
+    0x024 skyStartSurfs           pointer   # 32-bit surface indices
+    0x028 skyImage                pointer   asset=GfxImage
+    0x02C skySamplerState         u8
+    0x02D skySamplerStatePad      pad[3]
+    0x030 vertexCount             u32
+    0x034 vd                      struct    of=GfxWorldVertexData
+    0x03C vertexLayerDataSize     u32
+    0x040 vld                     struct    of=GfxWorldVertexLayerData
+    0x048 sunParse                run[32]   to=sunParse
+    0x0C8 sunLight                pointer   # a GfxLight, a completed object
+    0x0CC sunColorFromBsp         f32[3]
+    0x0D8 sunPrimaryLightIndex    u32
+    0x0DC primaryLightCount       u32
+    0x0E0 cullGroupCount          i32
+    0x0E4 reflectionProbeCount    u32
+    0x0E8 reflectionProbes        pointer   # 16-byte probes, each naming an image
+    0x0EC reflectionProbeTextures pointer   # 4-byte textures, block 1
+    0x0F0 dpvsPlanes              struct    of=GfxWorldDpvsPlanes
+    0x100 cellBitsCount           i32
+    0x104 cells                   pointer   # 56-byte cells
+    0x108 lightmapCount           i32
+    0x10C lightmaps               pointer   # 8-byte pairs of images
+    0x110 lightGrid               struct    of=GfxLightGrid
+    0x148 lightmapPrimaryTextures pointer   # 4-byte textures, block 1
+    0x14C lightmapSecondaryTextures pointer # 4-byte textures, block 1
+    0x150 modelCount              i32
+    0x154 models                  pointer   # 56-byte brush models
+    0x158 mins                    f32[3]
+    0x164 maxs                    f32[3]
+    0x170 checksum                u32
+    0x174 materialMemoryCount     i32
+    0x178 materialMemory          pointer   # 8-byte entries, each naming a material
+    0x17C sun                     struct    of=sunflare_t
+    0x1DC outdoorLookupMatrix     f32[4][4]
+    0x21C outdoorImage            pointer   asset=GfxImage
+    0x220 cellCasterBits          pointer   # block 1
+    0x224 sceneDynModel           pointer   # block 1
+    0x228 sceneDynBrush           pointer   # block 1
+    0x22C primaryLightEntityShadowVis pointer  # block 1
+    0x230 primaryLightDynEntShadowVis pointer[2]  # block 1
+    0x238 nonSunPrimaryLightForModelDynEnt pointer  # block 1
+    0x23C shadowGeom              pointer   # 12-byte geometry, one per primary light
+    0x240 lightRegion             pointer   # 8-byte regions, one per primary light
+    0x244 dpvs                    struct    of=GfxWorldDpvsStatic
+    0x2AC dpvsDyn                 struct    of=GfxWorldDpvsDynamic
