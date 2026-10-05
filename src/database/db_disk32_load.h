@@ -24,6 +24,7 @@ struct MapEnts;
 struct Material;
 struct MaterialTechniqueSet;
 struct MenuList;
+struct menuDef_t;
 struct PhysPreset;
 struct RawFile;
 struct SndCurve;
@@ -128,9 +129,15 @@ void __cdecl DB_LoadFontPtrDisk32(bool atStreamStart, Font_s **slot);
 // Loads one MenuList (db_disk32_menulist.cpp) under the same slot contract:
 // the slot holds the zero-extended disk32 token on entry and the native
 // MenuList published through Load_MenuListAsset on return. Its menu pointers
-// live in DB_AllocZoneNative storage. Menu has no 64-bit loader yet, so a
-// non-null menu token raises ERR_DROP.
+// live in DB_AllocZoneNative storage, and each menu loads through Menu's step.
 void __cdecl DB_LoadMenuListPtrDisk32(bool atStreamStart, MenuList **slot);
+
+// Loads one menuDef_t (db_disk32_menu.cpp) under the same slot contract: the
+// slot holds the zero-extended disk32 token on entry and the native menu
+// published through Load_MenuAsset on return. Its key handlers live in
+// DB_AllocZoneNative storage. Statement entries and items have no 64-bit
+// loader yet, so a menu that names any raises ERR_DROP.
+void __cdecl DB_LoadMenuDefPtrDisk32(bool atStreamStart, menuDef_t **slot);
 
 // Loads one snd_alias_list_t (db_disk32_sound.cpp) under the same slot
 // contract: the slot holds the zero-extended disk32 token on entry and the

@@ -1,7 +1,7 @@
 # MenuList, asset type 0x14. The format is described in ../db_disk32.schema.
 # The body is custom (db_disk32_menulist.cpp): a non-null menus token means
-# menuCount menu tokens (menuDef_t) follow inline, and Menu has no 64-bit
-# loader yet.
+# menuCount menu tokens (menuDef_t) follow inline, each loading through
+# Menu's step.
 
 record MenuList 0x0C runtime=MenuList header=ui/ui_shared.h
     asset member=menuList pool=Load_MenuListAsset kind=MenuList alias=inserted body=custom label=menu-list
