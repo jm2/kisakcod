@@ -20,8 +20,9 @@
 // and brushes convert into native storage; the planes, brush indices,
 // borders and brush edges they name stay in block 4. The box brush is a
 // completed object, completed once the brush graph passes Load_clipMap_t's
-// rules. Dynamic-entity defs do not load yet, so a clip map that names one
-// fails closed.
+// rules. Dynamic-entity defs convert too, naming models, effects and
+// physics presets through their families' steps, and model pieces, a
+// completed object, under DB_ValidateXModelPieces' rules.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -97,12 +98,6 @@ bool LoadPlanes(const Disk &disk, std::int32_t planeBytes, cplane_s **out)
     }
     *out = reinterpret_cast<cplane_s *>(address);
     return true;
-}
-
-// The parts that hold pointers, which do not load yet.
-bool NotYet(disk32::PointerToken token)
-{
-    return token.isNull() || Drop("Fast-file clipmap dynamic entities have no 64-bit loader yet");
 }
 
 // A span an element names: -1 streams it here, any other token names one
@@ -257,14 +252,17 @@ bool ConvertPartition(const disk32::CollisionPartitionDisk32 &disk, CollisionPar
 bool LoadFirstArrays(const Disk &disk, const Extents &extents, clipMap_t *out, Sides *sides)
 {
     std::uint8_t *diskSides = nullptr;
-    return LoadPlanes(disk, extents.brushes.planeBytes, &out->planes)
-        && LoadRecords<disk32::cStaticModel_sDisk32>(disk.staticModelList.token, disk.numStaticModels,
-                                                      &out->staticModelList, ConvertStaticModel)
-        && LoadArray(disk.materials.token, disk.numMaterials, 72, 4, &out->materials)
-        && LoadRecords<disk32::CBrushSideDisk32>(disk.brushsides.token, disk.numBrushSides, &out->brushsides,
-                                                  ConvertBrushSide, &diskSides)
-        && ((*sides = {diskSides, disk.numBrushSides, out->brushsides}), true)
-        && LoadArray(disk.brushEdges.token, disk.numBrushEdges, 1, 1, &out->brushEdges)
+    if (!LoadPlanes(disk, extents.brushes.planeBytes, &out->planes)
+        || !LoadRecords<disk32::cStaticModel_sDisk32>(disk.staticModelList.token, disk.numStaticModels,
+                                                       &out->staticModelList, ConvertStaticModel)
+        || !LoadArray(disk.materials.token, disk.numMaterials, 72, 4, &out->materials)
+        || !LoadRecords<disk32::CBrushSideDisk32>(disk.brushsides.token, disk.numBrushSides, &out->brushsides,
+                                                   ConvertBrushSide, &diskSides))
+    {
+        return false;
+    }
+    *sides = {diskSides, disk.numBrushSides, out->brushsides};
+    return LoadArray(disk.brushEdges.token, disk.numBrushEdges, 1, 1, &out->brushEdges)
         && LoadRecords<disk32::cNode_tDisk32>(disk.nodes.token, disk.numNodes, &out->nodes, ConvertNode)
         && LoadArray(disk.leafs.token, disk.numLeafs, 44, 4, &out->leafs)
         && LoadArray(disk.leafbrushes.token, disk.numLeafBrushes, 2, 2, &out->leafbrushes)
@@ -292,6 +290,7 @@ bool LoadLastArrays(const Disk &disk, const Extents &extents, clipMap_t *out, co
 }
 
 constexpr std::uint32_t kBrushBytes = sizeof(disk32::cbrush_tDisk32);
+constexpr std::uint32_t kPiecesBytes = sizeof(disk32::XModelPiecesDisk32);
 
 // The box brush's completed-object registration, when it streams here.
 struct BoxBrush
@@ -354,11 +353,110 @@ bool LoadCheckedBoxBrush(const Disk &disk, const Sides &sides, clipMap_t *out)
                                  out->box_brush));
 }
 
-// Load_clipMap_t's tail: each dynamic-entity array of each kind in block 1.
+bool ConvertPiece(const disk32::XModelPieceDisk32 &disk, XModelPiece *out)
+{
+    CopyXModelPieceScalars(disk, out);
+    LoadXModelPtr(disk.model.token, &out->model);
+    return true;
+}
+
+// DB_ValidateXModelPieces on the converted pieces: a nonempty name, and each
+// piece a model at a finite offset.
+bool PiecesValid(const XModelPieces &pieces)
+{
+    if (!pieces.name || !*pieces.name)
+        return Drop("Invalid completed fast-file model-pieces identity");
+    for (std::int32_t index = 0; index < pieces.numpieces; ++index)
+    {
+        if (!db::validation::XModelPieceRuntimeValid(pieces.pieces[index].model != nullptr, pieces.pieces[index].offset))
+            return Drop("Invalid completed fast-file model piece");
+    }
+    return true;
+}
+
+// An earlier completed object's native twin, by its offset token.
+template <typename T>
+bool ResolveCompleted(disk32::PointerToken token, DBAliasKind kind, std::uint32_t bytes, T **out)
+{
+    std::uintptr_t native = 0;
+    const db::relocation::Status status = DB_ResolveCompletedObjectNative(token, kind, bytes, &native);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file alias offset: %s", db::relocation::StatusName(status));
+        return false;
+    }
+    *out = reinterpret_cast<T *>(native);
+    return true;
+}
+
+// DB_ValidateXModelPiecesHeader: a name, and a token exactly when there are
+// pieces, at most 65535.
+bool PiecesHeaderValid(const disk32::XModelPiecesDisk32 &disk)
+{
+    std::int32_t pieceBytes = 0;
+    return db::validation::XModelPiecesLayoutValid(!disk.name.token.isNull(), !disk.pieces.token.isNull(),
+                                                   disk.numpieces, &pieceBytes)
+        || Drop("Invalid fast-file model-pieces header");
+}
+
+// Load_XModelPieces past its header: the name, the pieces, then
+// DB_ValidateXModelPieces' rules.
+bool LoadPiecesBody(const disk32::XModelPiecesDisk32 &disk, XModelPieces *pieces)
+{
+    std::memset(pieces, 0, sizeof(*pieces));
+    CopyXModelPiecesScalars(disk, pieces);
+    return LoadXString(disk.name, &pieces->name)
+        && LoadRecords<disk32::XModelPieceDisk32>(disk.pieces.token, disk.numpieces, &pieces->pieces, ConvertPiece)
+        && PiecesValid(*pieces);
+}
+
+// Load_XModelPiecesPtr: -1 streams the record 4-aligned here as a completed
+// object, then its name and pieces; any other token names an earlier one's
+// native twin.
+bool LoadPieces(disk32::PointerToken token, XModelPieces **out)
+{
+    *out = nullptr;
+    if (token.isNull())
+        return true;
+    if (!token.isInline())
+        return ResolveCompleted(token, DBAliasKind::XModelPieces, kPiecesBytes, out);
+    std::uint8_t *const record = DB_AllocStreamPos(3);
+    const DBAliasHandle completed = record ? DB_RegisterPointerSlot(record, DBAliasKind::XModelPieces) : DBAliasHandle{};
+    disk32::XModelPiecesDisk32 disk{};
+    if (!completed || !StreamBytes(record, kPiecesBytes))
+        return false;
+    std::memcpy(&disk, record, sizeof(disk));
+    XModelPieces *const pieces = PiecesHeaderValid(disk) ? AllocNative<XModelPieces>(1) : nullptr;
+    *out = pieces;
+    return pieces && LoadPiecesBody(disk, pieces)
+        && DB_CompleteObject(completed, DBAliasKind::XModelPieces, record, kPiecesBytes, kPiecesBytes, pieces);
+}
+
+// Load_DynEntityDef: its model, destroy effect, destroy pieces and physics
+// preset, in that order.
+bool ConvertDynEntity(const disk32::DynEntityDefDisk32 &disk, DynEntityDef *out)
+{
+    CopyDynEntityDefScalars(disk, out);
+    LoadXModelPtr(disk.xModel.token, &out->xModel);
+    LoadFxEffectDefPtr(disk.destroyFx.token, &out->destroyFx);
+    if (!LoadPieces(disk.destroyPieces.token, &out->destroyPieces))
+        return false;
+    LoadPhysPresetPtr(disk.physPreset.token, &out->physPreset);
+    return true;
+}
+
+// Load_clipMap_t's tail: both dynamic-entity def lists in block 4, then each
+// dynamic-entity array of each kind in block 1.
 bool LoadDynEntities(const Disk &disk, clipMap_t *out)
 {
-    if (!NotYet(disk.dynEntDefList[0].token) || !NotYet(disk.dynEntDefList[1].token))
-        return false;
+    for (int index = 0; index < 2; ++index)
+    {
+        if (!LoadRecords<disk32::DynEntityDefDisk32>(disk.dynEntDefList[index].token, disk.dynEntCount[index],
+                                                     &out->dynEntDefList[index], ConvertDynEntity))
+        {
+            return false;
+        }
+    }
     for (int list = 0; list < 6; ++list)
     {
         const int kind = list / 2;
