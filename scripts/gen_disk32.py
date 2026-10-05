@@ -37,6 +37,7 @@ KINDS = {
     'array': ('Ptr32<{of}Disk32>', 4, 8),  # count records of=<a nested record>
     'struct': ('{of}Disk32', 0, 0),  # a nested record inline; its layout gives size and alignment
     'pad': ('std::uint8_t', 1, 1),  # bytes with no native member: no RUNTIME_OFFSET, never loaded
+    'run': ('std::uint32_t', 4, 4),  # run[<n words>] to=<last member>: native members laid out alike at both widths
 }
 COUNTED = ('bytes', 'xstrings', 'array')
 SCALARS = ('i32', 'u32', 'f32', 'i16', 'u16', 'u8', 'bool')
@@ -82,7 +83,7 @@ def parse_asset(record, words, where):
 def field_shape(words, where):
     """Return a field line's kind and its fixed-array dimensions, if any."""
     shape = re.fullmatch(r'(\w+)((?:\[[1-9]\d*\])*)', words[2]) if len(words) >= 3 else None
-    fixed = ARRAYABLE + ('pointer', 'struct', 'pad')  # a custom body loads a fixed array of tokens or records
+    fixed = ARRAYABLE + ('pointer', 'struct', 'pad', 'run')  # a custom body loads a fixed array of tokens or records
     if not shape or shape.group(1) not in KINDS or (shape.group(2) and shape.group(1) not in fixed):
         fail(where, f'expected: <offset> <field> <kind>[<n>]... [attributes]; kinds {sorted(KINDS)}, '
                     f'fixed arrays of {fixed}')
@@ -91,7 +92,7 @@ def field_shape(words, where):
 
 # The attributes each kind takes after it; the others take none.
 FIELD_ATTRIBUTES = {'bytes': {'count', 'terminated', 'paired', 'label'}, 'xstrings': {'count'},
-                    'array': {'count', 'of', 'label'}, 'struct': {'of'}, 'pointer': {'asset'}}
+                    'array': {'count', 'of', 'label'}, 'struct': {'of'}, 'pointer': {'asset'}, 'run': {'to'}}
 
 
 def parse_field(words, where):
@@ -100,12 +101,14 @@ def parse_field(words, where):
     if (kind in COUNTED) != ('count' in attrs) or (kind in ('array', 'struct')) != ('of' in attrs):
         fail(where, f'count=<expression> is required for {COUNTED} and only for them, and of=<record> '
                     'for array and struct and only for them')
+    if (kind == 'run') != ('to' in attrs) or (kind == 'run' and len(dims) != 1):
+        fail(where, 'a run is run[<words>] to=<its last native member>, and to= is only for a run')
     if not re.fullmatch(r'[A-Za-z_]\w*(\.[A-Za-z_]\w*)*', words[1]):
         fail(where, 'a field is a member name, or a dotted path to a member of a nested native struct')
     return {'offset': int(words[0], 0), 'name': words[1], 'kind': kind, 'dims': dims,
             'count': attrs.get('count', ''), 'of': attrs.get('of'),
             'terminated': 'terminated' in attrs, 'paired': 'paired' in attrs, 'label': attrs.get('label'),
-            'asset': attrs.get('asset'), 'where': where}
+            'asset': attrs.get('asset'), 'to': attrs.get('to'), 'where': where}
 
 
 def parse_include(path, words, where, records, root):
@@ -356,6 +359,14 @@ FIXED_ARRAY = Template('''\
     std::memcpy(out->$field, disk.$member, sizeof(disk.$member));
 ''')
 
+# A run: the native members from its first through `to` sit together and
+# hold no pointer, so they copy as one block of the retail words.
+RUN = Template('''\
+    static_assert(offsetof($Runtime, $to) + sizeof(out->$to) - offsetof($Runtime, $field) == sizeof(disk.$field));
+    std::memcpy(reinterpret_cast<std::uint8_t *>(out) + offsetof($Runtime, $field), disk.$field,
+                sizeof(disk.$field)); // Flawfinder: ignore (the assert sizes the native run)
+''')
+
 # copy=scalars: a record's scalars for a hand-written body to call.
 COPY_SCALARS = Template('''\
 // $Name's scalars from its mirror into the native record: each scalar (a bool
@@ -538,6 +549,8 @@ def emit_element(element):
 
 def emit_copy_scalars(record):
     copies = ''.join(scalar_copy(field) for field in record['fields'] if field['kind'] in SCALARS)
+    copies += ''.join(RUN.substitute(Runtime=record['runtime'], field=field['name'], to=field['to'])
+                      for field in record['fields'] if field['kind'] == 'run')
     copies += ''.join(f'    out->{field["name"]} = nullptr;\n'
                       for field in record['fields'] if field['kind'] == 'rawptr')
     return COPY_SCALARS.substitute(Name=record['name'], Runtime=record['runtime'], copies=copies)
@@ -557,8 +570,8 @@ def check_generated_body(record):
     asset = record['asset']
     if {field['name']: field['kind'] for field in record['fields']}.get(asset.get('name')) != 'xstring':
         fail(asset['where'], 'a generated body needs name=<the xstring the pool hashes>')
-    if any('.' in field['name'] for field in record['fields']):
-        fail(asset['where'], 'a generated body loads top-level members; a dotted field needs body=custom')
+    if any('.' in field['name'] or field['kind'] == 'run' for field in record['fields']):
+        fail(asset['where'], 'a generated body loads top-level members; a dotted field or run needs body=custom')
     if any(field['kind'] not in SCALARS + ('xstring', 'pointer', 'struct') for field in flat_fields(record['fields'])
            if '.' in field['name']):
         fail(asset['where'], 'a generated body loads scalars, xstrings and asset pointers from a struct field')

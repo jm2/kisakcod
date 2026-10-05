@@ -28,6 +28,7 @@ struct RawFile;
 struct SndCurve;
 struct snd_alias_list_t;
 struct StringTable;
+struct WeaponDef;
 struct XAnimParts;
 struct XModel;
 struct XAssetList;
@@ -160,6 +161,11 @@ void __cdecl DB_LoadXModelPtrDisk32(bool atStreamStart, XModel **slot);
 // FxEffectDef published through Load_FxEffectDefAsset on return. Its elements
 // live in DB_AllocZoneNative storage; their samples stay in block 4.
 void __cdecl DB_LoadFxEffectDefHandleDisk32(bool atStreamStart, const FxEffectDef **slot);
+
+// Loads one weapon (db_disk32_weapon.cpp) under the same slot contract: the
+// slot holds the zero-extended disk32 token on entry and the native
+// WeaponDef published through Load_WeaponDefAsset on return.
+void __cdecl DB_LoadWeaponDefPtrDisk32(bool atStreamStart, WeaponDef **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from

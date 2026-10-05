@@ -1,0 +1,79 @@
+# Weapon (WeaponDef), asset type 0x17: a 2168-byte record that grows to
+# 2832 bytes natively. The format is described in ../db_disk32.schema. The
+# body is custom (db_disk32_weapon.cpp). Runs of 4-byte scalars and enums sit
+# alike at both widths, so each copies as one block; the pointers between
+# them load in the 32-bit loader's order.
+
+record WeaponDef 0x878 runtime=WeaponDef header=xanim/xanim.h copy=scalars
+    asset member=weapon pool=Load_WeaponDefAsset kind=WeaponDef alias=inserted body=custom label=weapon
+    0x000 szInternalName                 xstring
+    0x004 szDisplayName                  xstring
+    0x008 szOverlayName                  xstring
+    0x00C gunXModel                      pointer[16]  # models
+    0x04C handXModel                     pointer
+    0x050 szXAnims                       pointer[33]  # 33 animation names
+    0x0D4 szModeName                     xstring
+    0x0D8 hideTags                       u16[8]  # script strings
+    0x0E8 notetrackSoundMapKeys          u16[16]  # script strings
+    0x108 notetrackSoundMapValues        u16[16]  # script strings
+    0x128 playerAnimType                 run[9]       to=stance
+    0x14C viewFlashEffect                pointer
+    0x150 worldFlashEffect               pointer
+    0x154 pickupSound                    pointer[45]  # pickupSound..putawaySoundPlayer: 45 sound names
+    0x208 bounceSound                    pointer  # 29 sound names, a completed object
+    0x20C viewShellEjectEffect           pointer
+    0x210 worldShellEjectEffect          pointer
+    0x214 viewLastShotEjectEffect        pointer
+    0x218 worldLastShotEjectEffect       pointer
+    0x21C reticleCenter                  pointer
+    0x220 reticleSide                    pointer
+    0x224 iReticleCenterSize             run[38]      to=fProneRotMinSpeed
+    0x2BC worldModel                     pointer[16]  # models
+    0x2FC worldClipModel                 pointer
+    0x300 rocketModel                    pointer
+    0x304 knifeModel                     pointer
+    0x308 worldKnifeModel                pointer
+    0x30C hudIcon                        pointer
+    0x310 hudIconRatio                   run[1]       to=hudIconRatio
+    0x314 ammoCounterIcon                pointer
+    0x318 ammoCounterIconRatio           run[3]       to=iStartAmmo
+    0x324 szAmmoName                     xstring
+    0x328 iAmmoIndex                     run[1]       to=iAmmoIndex
+    0x32C szClipName                     xstring
+    0x330 iClipIndex                     run[4]       to=shotCount
+    0x340 szSharedAmmoCapName            xstring
+    0x344 iSharedAmmoCapIndex            run[59]      to=fAdsZoomOutFrac
+    0x430 overlayMaterial                pointer
+    0x434 overlayMaterialLowRes          pointer
+    0x438 overlayReticle                 run[56]      to=laserSightDuringNightvision
+    0x518 killIcon                       pointer
+    0x51C killIconRatio                  run[2]       to=flipKillIcon
+    0x524 dpadIcon                       pointer
+    0x528 dpadIconRatio                  run[5]       to=iReloadStartAdd
+    0x53C szAltWeaponName                xstring
+    0x540 altWeaponIndex                 run[17]      to=projectileCurvature
+    0x584 projectileModel                pointer
+    0x588 projExplosion                  run[1]       to=projExplosion
+    0x58C projExplosionEffect            pointer
+    0x590 projExplosionEffectForceNormalUp run[1]       to=projExplosionEffectForceNormalUp
+    0x594 projDudEffect                  pointer
+    0x598 projExplosionSound             pointer
+    0x59C projDudSound                   pointer
+    0x5A0 bProjImpactExplode             run[66]      to=perpendicularBounce
+    0x6A8 projTrailEffect                pointer
+    0x6AC vProjectileColor               run[6]       to=projIgnitionDelay
+    0x6C4 projIgnitionEffect             pointer
+    0x6C8 projIgnitionSound              pointer
+    0x6CC fAdsAimPitch                   run[40]      to=maxDist
+    0x76C accuracyGraphName              pointer[2]  # two graph names
+    0x774 accuracyGraphKnots             pointer[2]  # each count knots, 8 bytes, in block 4
+    0x77C originalAccuracyGraphKnots     pointer[2]  # each count knots, 8 bytes, in block 4
+    0x784 accuracyGraphKnotCount         run[22]      to=fPlayerPositionDist
+    0x7DC szUseHintString                xstring
+    0x7E0 dropHintString                 xstring
+    0x7E4 iUseHintStringIndex            run[4]       to=vertViewJitter
+    0x7F4 szScript                       xstring
+    0x7F8 fOOPosAnimLength               run[28]      to=locationDamageMultipliers
+    0x868 fireRumble                     xstring
+    0x86C meleeImpactRumble              xstring
+    0x870 adsDofStart                    run[2]       to=adsDofEnd
