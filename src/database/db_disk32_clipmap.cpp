@@ -16,10 +16,12 @@
 // pushed its dynamic entities' poses, clients and collision links. Arrays
 // that hold no pointer keep their layout: any non-null token streams them
 // at their retail alignment, and the planes may also name planes already
-// streamed. Static models, brush sides, nodes, leaf-brush nodes and
-// partitions convert into native storage; the planes, brush indices and
-// borders they name stay in block 4. Brushes and dynamic-entity defs do not
-// load yet, so a clip map that names one fails closed.
+// streamed. Static models, brush sides, nodes, leaf-brush nodes, partitions
+// and brushes convert into native storage; the planes, brush indices,
+// borders and brush edges they name stay in block 4. The box brush is a
+// completed object, completed once the brush graph passes Load_clipMap_t's
+// rules. Dynamic-entity defs do not load yet, so a clip map that names one
+// fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -100,7 +102,7 @@ bool LoadPlanes(const Disk &disk, std::int32_t planeBytes, cplane_s **out)
 // The parts that hold pointers, which do not load yet.
 bool NotYet(disk32::PointerToken token)
 {
-    return token.isNull() || Drop("Fast-file clipmap brushes and dynamic entities have no 64-bit loader yet");
+    return token.isNull() || Drop("Fast-file clipmap dynamic entities have no 64-bit loader yet");
 }
 
 // A span an element names: -1 streams it here, any other token names one
@@ -126,12 +128,15 @@ bool LoadOrResolve(disk32::PointerToken token, std::uint32_t bytes, std::uint32_
 // records follow 4-aligned; each converts into native storage, then loads
 // what it names, in order.
 template <typename Disk32, typename Native, typename Convert>
-bool LoadRecords(disk32::PointerToken token, std::int64_t count, Native **out, Convert convert)
+bool LoadRecords(disk32::PointerToken token, std::int64_t count, Native **out, Convert convert,
+                 std::uint8_t **diskRecords = nullptr, std::uint32_t alignment = 4)
 {
     std::uint8_t *records = nullptr;
     *out = nullptr;
-    if (!LoadArray(token, count, sizeof(Disk32), 4, &records))
+    if (!LoadArray(token, count, sizeof(Disk32), alignment, &records))
         return false;
+    if (diskRecords)
+        *diskRecords = records;
     if (!records)
         return true;
     Native *const native = AllocNative<Native>(static_cast<std::int32_t>(count));
@@ -182,6 +187,66 @@ bool ConvertLeafBrushNode(const disk32::cLeafBrushNode_sDisk32 &disk, cLeafBrush
     return true;
 }
 
+// What a brush's offsets name: the brush sides, at their disk and native
+// addresses.
+struct Sides
+{
+    const std::uint8_t *disk = nullptr;
+    std::uint32_t count = 0;
+    cbrushside_t *native = nullptr;
+};
+
+// Load_cbrush_t's sides: an offset to whole disk records of the clip map's
+// brush sides, which name their native twins.
+bool LoadBrushSides(const disk32::cbrush_tDisk32 &disk, const Sides &sides, cbrushside_t **out)
+{
+    if (!disk.sides.token.isOffset())
+        return Drop("Invalid inline fast-file clipmap brush sides");
+    const std::uint8_t *named = nullptr;
+    if (!LoadOrResolve(disk.sides.token, disk.numsides * 12u, 4, &named))
+        return false;
+    const std::uintptr_t offset = reinterpret_cast<std::uintptr_t>(named) - reinterpret_cast<std::uintptr_t>(sides.disk);
+    if (!sides.disk || named < sides.disk || offset % 12 || offset / 12 + disk.numsides > sides.count)
+        return Drop("Invalid fast-file clipmap brush sides");
+    *out = sides.native + offset / 12;
+    return true;
+}
+
+bool LoadAdjacency(const disk32::cbrush_tDisk32 &disk, cbrush_t *out);
+
+// Load_cbrush_t: the side count, the sides, then the adjacency they imply,
+// an offset into the brush edges.
+bool ConvertBrush(const disk32::cbrush_tDisk32 &disk, cbrush_t *out, const Sides &sides)
+{
+    Copycbrush_tScalars(disk, out);
+    if (disk.numsides > db::validation::kMaxClipMapBrushNonaxialSides
+        || (disk.numsides != 0) == disk.sides.token.isNull())
+    {
+        return Drop("Invalid fast-file clipmap brush side count");
+    }
+    return (!disk.numsides || LoadBrushSides(disk, sides, &out->sides)) && LoadAdjacency(disk, out);
+}
+
+// The adjacency a brush's sides imply: an offset into the brush edges.
+bool LoadAdjacency(const disk32::cbrush_tDisk32 &disk, cbrush_t *out)
+{
+    std::uint32_t adjacency = 0;
+    if (!db::validation::ClipMapBrushAdjacencyPrefixExtent(*out, &adjacency))
+        return Drop("Invalid fast-file clipmap brush adjacency layout");
+    if (adjacency && disk.baseAdjacentSide.token.isNull())
+        return Drop("Missing fast-file clipmap brush adjacency");
+    if (!disk.baseAdjacentSide.token.isNull() && !disk.baseAdjacentSide.token.isOffset())
+        return Drop("Invalid inline fast-file clipmap brush adjacency");
+    std::uint32_t validated = 0;
+    if (!disk.baseAdjacentSide.token.isNull()
+        && !LoadOrResolve(disk.baseAdjacentSide.token, adjacency, 1, &out->baseAdjacentSide))
+    {
+        return false;
+    }
+    return (db::validation::ClipMapBrushAdjacencyExtentValid(*out, &validated) && validated == adjacency)
+        || Drop("Invalid fast-file clipmap brush adjacency data");
+}
+
 bool ConvertPartition(const disk32::CollisionPartitionDisk32 &disk, CollisionPartition *out)
 {
     CopyCollisionPartitionScalars(disk, out);
@@ -189,14 +254,16 @@ bool ConvertPartition(const disk32::CollisionPartitionDisk32 &disk, CollisionPar
 }
 
 // Load_clipMap_t's block-4 arrays, in its order, through the brush edges.
-bool LoadFirstArrays(const Disk &disk, const Extents &extents, clipMap_t *out)
+bool LoadFirstArrays(const Disk &disk, const Extents &extents, clipMap_t *out, Sides *sides)
 {
+    std::uint8_t *diskSides = nullptr;
     return LoadPlanes(disk, extents.brushes.planeBytes, &out->planes)
         && LoadRecords<disk32::cStaticModel_sDisk32>(disk.staticModelList.token, disk.numStaticModels,
                                                       &out->staticModelList, ConvertStaticModel)
         && LoadArray(disk.materials.token, disk.numMaterials, 72, 4, &out->materials)
         && LoadRecords<disk32::CBrushSideDisk32>(disk.brushsides.token, disk.numBrushSides, &out->brushsides,
-                                                  ConvertBrushSide)
+                                                  ConvertBrushSide, &diskSides)
+        && ((*sides = {diskSides, disk.numBrushSides, out->brushsides}), true)
         && LoadArray(disk.brushEdges.token, disk.numBrushEdges, 1, 1, &out->brushEdges)
         && LoadRecords<disk32::cNode_tDisk32>(disk.nodes.token, disk.numNodes, &out->nodes, ConvertNode)
         && LoadArray(disk.leafs.token, disk.numLeafs, 44, 4, &out->leafs)
@@ -206,8 +273,11 @@ bool LoadFirstArrays(const Disk &disk, const Extents &extents, clipMap_t *out)
 }
 
 // The rest of them, in its order, and the map entities.
-bool LoadLastArrays(const Disk &disk, const Extents &extents, clipMap_t *out)
+bool LoadLastArrays(const Disk &disk, const Extents &extents, clipMap_t *out, const Sides &sides)
 {
+    const auto brush = [&sides](const disk32::cbrush_tDisk32 &record, cbrush_t *native) {
+        return ConvertBrush(record, native, sides);
+    };
     return LoadArray(disk.leafsurfaces.token, disk.numLeafSurfaces, 4, 4, &out->leafsurfaces)
         && LoadArray(disk.verts.token, disk.vertCount, 12, 4, &out->verts)
         && LoadArray(disk.triIndices.token, extents.triangleIndices, 2, 2, &out->triIndices)
@@ -216,8 +286,72 @@ bool LoadLastArrays(const Disk &disk, const Extents &extents, clipMap_t *out)
         && LoadRecords<disk32::CollisionPartitionDisk32>(disk.partitions.token, disk.partitionCount, &out->partitions,
                                                           ConvertPartition)
         && LoadArray(disk.aabbTrees.token, disk.aabbTreeCount, 32, 4, &out->aabbTrees)
-        && LoadArray(disk.cmodels.token, disk.numSubModels, 72, 4, &out->cmodels) && NotYet(disk.brushes.token)
+        && LoadArray(disk.cmodels.token, disk.numSubModels, 72, 4, &out->cmodels)
+        && LoadRecords<disk32::cbrush_tDisk32>(disk.brushes.token, disk.numBrushes, &out->brushes, brush, nullptr, 16)
         && LoadArray(disk.visibility.token, extents.visibilityBytes, 1, 1, &out->visibility);
+}
+
+constexpr std::uint32_t kBrushBytes = sizeof(disk32::cbrush_tDisk32);
+
+// The box brush's completed-object registration, when it streams here.
+struct BoxBrush
+{
+    DBAliasHandle completed{};
+    std::uint8_t *record = nullptr;
+};
+
+// The box brush: -1 streams it 16-aligned here as a completed object (whose
+// completion waits for the graph rules); any other token names an earlier
+// one's native twin.
+bool LoadBoxBrush(disk32::PointerToken token, const Sides &sides, BoxBrush *box, cbrush_t **out)
+{
+    *out = nullptr;
+    std::uintptr_t native = 0;
+    if (token.isNull())
+        return true;
+    if (!token.isInline())
+    {
+        const db::relocation::Status status =
+            DB_ResolveCompletedObjectNative(token, DBAliasKind::ClipMapBoxBrush, kBrushBytes, &native);
+        if (status != db::relocation::Status::Ok)
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file alias offset: %s", db::relocation::StatusName(status));
+            return false;
+        }
+        *out = reinterpret_cast<cbrush_t *>(native);
+        return true;
+    }
+    box->record = DB_AllocStreamPos(15);
+    box->completed = box->record ? DB_RegisterPointerSlot(box->record, DBAliasKind::ClipMapBoxBrush) : DBAliasHandle{};
+    cbrush_t *const brush = AllocNative<cbrush_t>(1);
+    if (!box->completed || !StreamBytes(box->record, kBrushBytes) || !brush)
+        return false;
+    disk32::cbrush_tDisk32 disk{};
+    std::memcpy(&disk, box->record, sizeof(disk));
+    std::memset(brush, 0, sizeof(*brush));
+    *out = brush;
+    return ConvertBrush(disk, brush, sides);
+}
+
+// Load_clipMap_t's brush rules on the converted graph: ClipMapBrushGraphValid,
+// a box brush that is one, and none of the ordinary brushes.
+bool BrushGraphValid(const clipMap_t &map)
+{
+    std::uint64_t index = 0;
+    return (db::validation::ClipMapBrushGraphValid(map) && map.box_brush
+            && db::validation::ClipMapBoxBrushValid(*map.box_brush)
+            && !db::validation::ExactArrayElementIndex(map.brushes, map.numBrushes, map.box_brush, &index))
+        || Drop("Invalid completed fast-file clipmap brush graph");
+}
+
+// The box brush, the brush graph's rules, then the box brush's completion.
+bool LoadCheckedBoxBrush(const Disk &disk, const Sides &sides, clipMap_t *out)
+{
+    BoxBrush box;
+    return LoadBoxBrush(disk.box_brush.token, sides, &box, &out->box_brush) && BrushGraphValid(*out)
+        && (!box.completed
+            || DB_CompleteObject(box.completed, DBAliasKind::ClipMapBoxBrush, box.record, kBrushBytes, kBrushBytes,
+                                 out->box_brush));
 }
 
 // Load_clipMap_t's tail: each dynamic-entity array of each kind in block 1.
@@ -261,10 +395,11 @@ bool LoadclipMap_t(clipMap_t *out)
         return false;
     if (!out->name)
         return Drop("Fast-file clipmap has no name"); // the asset pool hashes it
-    if (!LoadFirstArrays(disk, extents, out) || !LoadLastArrays(disk, extents, out))
+    Sides sides;
+    if (!LoadFirstArrays(disk, extents, out, &sides) || !LoadLastArrays(disk, extents, out, sides))
         return false;
     LoadMapEntsPtr(disk.mapEnts.token, &out->mapEnts);
-    if (!NotYet(disk.box_brush.token) || !LoadDynEntities(disk, out))
+    if (!LoadCheckedBoxBrush(disk, sides, out) || !LoadDynEntities(disk, out))
         return false;
     DB_PopStreamPos();
     return true;
