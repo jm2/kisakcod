@@ -60,6 +60,14 @@ record GfxCell 0x38 runtime=GfxCell header=gfx_d3d/r_gfx.h copy=scalars
     0x31 reflectionProbeCountPad  pad[3]
     0x34 reflectionProbes         pointer   # 8-bit probe indices
 
+record GfxLightmapArray 0x08 runtime=GfxLightmapArray header=gfx_d3d/r_gfx.h
+    0x00 primary                  pointer   asset=GfxImage
+    0x04 secondary                pointer   asset=GfxImage
+
+record MaterialMemory 0x08 runtime=MaterialMemory header=gfx_d3d/r_material.h copy=scalars
+    0x00 material                 pointer   asset=Material
+    0x04 memory                   i32
+
 record GfxWorldVertexData 0x08 runtime=GfxWorldVertexData header=gfx_d3d/r_gfx.h copy=scalars
     0x00 vertices                 pointer   # vertexCount 44-byte vertices
     0x04 worldVb                  rawptr    # a D3D buffer the renderer creates
