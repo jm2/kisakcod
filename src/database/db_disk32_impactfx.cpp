@@ -15,8 +15,8 @@
 // Load_FxImpactEntryArray in db_load.cpp: the 8-byte record streams into the
 // temp block, its name into block 4, then, for any non-null table token, the
 // 12 retail entries 4-aligned in block 4, converted into zone-lifetime native
-// storage. Every entry slot is an FxEffectDef token. FX has no 64-bit loader
-// yet, so a non-null one fails closed; a table whose slots are all null loads.
+// storage. Every entry slot is an FxEffectDef token, loaded through FX's
+// pointer step (db_disk32_fx.cpp).
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -24,17 +24,16 @@ namespace
 {
 constexpr std::int32_t kSurfaceCount = 12; // Load_FxImpactTable's fixed count
 
-// Load_FxEffectDefHandleArray over one slot array: each token must be null.
+// Load_FxEffectDefHandleArray over one slot array: each token loads through
+// FX's pointer step, which pushes the temp block itself.
 template <std::size_t Count>
-bool LoadEffects(const disk32::Ptr32<void> (&tokens)[Count], const FxEffectDef *(&out)[Count])
+void LoadEffects(const disk32::Ptr32<void> (&tokens)[Count], const FxEffectDef *(&out)[Count])
 {
     for (std::size_t index = 0; index < Count; ++index)
     {
-        if (!tokens[index].token.isNull())
-            return Drop("Fast-file impact effects name an FX effect, which has no 64-bit loader yet");
         out[index] = nullptr;
+        LoadFxEffectDefPtr(tokens[index].token, &out[index]);
     }
-    return true;
 }
 
 // The entries at the 4-aligned block-4 position, converted into native storage.
@@ -51,8 +50,8 @@ bool LoadEntries(FxImpactEntry **out)
     {
         disk32::FxImpactEntryDisk32 entry{};
         std::memcpy(&entry, entries + static_cast<std::size_t>(index) * sizeof(entry), sizeof(entry));
-        if (!LoadEffects(entry.nonflesh, native[index].nonflesh) || !LoadEffects(entry.flesh, native[index].flesh))
-            return false;
+        LoadEffects(entry.nonflesh, native[index].nonflesh);
+        LoadEffects(entry.flesh, native[index].flesh);
     }
     *out = native;
     return true;

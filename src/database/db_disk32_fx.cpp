@@ -18,11 +18,11 @@
 // into native storage. Each element's samples follow it 4-aligned and stay in
 // block 4, since they hold no pointer; then its visuals: materials and models
 // through their families' pointer steps, sound names, and effects named
-// as Load_FxEffectDefRef names them. The rules are the FX converter's
+// as Load_FxEffectDefRef names them; then its trail, whose vertices and
+// indices also stay in block 4. The rules are the FX converter's
 // (fx_fastfile_native_disk32.cpp), the oracle this loader replaces: counts,
 // timing, atlas, samples, visual counts by element type, the looping life
-// and the converted size, and every visual token it resolves. Trails do not
-// load yet, so an element that names one fails closed.
+// and the converted size, every visual token it resolves, and the trails.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -32,6 +32,8 @@ constexpr std::uint32_t kMaxElements = 256;
 constexpr std::int64_t kElemPoolSize = 2048; // MAX_ELEMS, the runtime's element pool
 constexpr std::uint32_t kMaxVisuals = 32;
 constexpr std::uint32_t kMaxDecalVisuals = 16;
+constexpr std::int32_t kMaxTrailVertices = 64;
+constexpr std::int32_t kMaxTrailIndices = 128;
 // Bounds the runtime's signed sums of delay, lifespan and last spawn time.
 constexpr std::int64_t kDurationLimitMsec = std::int64_t{24} * 60 * 60 * 1000;
 // The largest amplitude whose (amplitude + 1) * random16 fits 32 bits.
@@ -310,8 +312,58 @@ bool LoadVisuals(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
                  : LoadVisualArray(disk.elemType, tokens, disk.visualCount, &out->visuals.array);
 }
 
-// Load_FxElemDef: the scalars, the samples, the visuals, then the effects it
-// names.
+// The converter's trail rules past its counts: positive distances, an even
+// index count of at least one per vertex, each index naming a vertex.
+bool TrailValid(const FxTrailDef &trail)
+{
+    if (trail.repeatDist <= 0 || trail.splitDist <= 0 || trail.vertCount > trail.indCount || (trail.indCount & 1))
+        return false;
+    for (std::int32_t index = 0; index < trail.indCount; ++index)
+    {
+        if (trail.inds[index] >= trail.vertCount)
+            return false;
+    }
+    return true;
+}
+
+// The converter's trail counts, before they stream: 1..64 vertices and
+// 1..128 indices, both present.
+bool TrailCountsValid(const disk32::FxTrailDefDisk32 &disk)
+{
+    return disk.vertCount > 0 && disk.vertCount <= kMaxTrailVertices && disk.indCount > 0
+        && disk.indCount <= kMaxTrailIndices && !disk.verts.token.isNull() && !disk.inds.token.isNull();
+}
+
+// Load_FxTrailDef: the record 4-aligned, converted into native storage, then
+// its vertices (4-aligned) and indices (2-aligned), which keep their layout
+// in block 4. The converter requires both.
+bool LoadTrail(FxTrailDef **out)
+{
+    disk32::FxTrailDefDisk32 disk{};
+    std::uint8_t *const record = DB_AllocStreamPos(3);
+    if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
+        return false;
+    std::memcpy(&disk, record, sizeof(disk));
+    FxTrailDef *const trail = AllocNative<FxTrailDef>(1);
+    if (!trail)
+        return false;
+    *trail = {};
+    CopyFxTrailDefScalars(disk, trail);
+    if (!TrailCountsValid(disk))
+        return Drop("Invalid fast-file effect trail");
+    if (!LoadSamples(disk.verts.token, static_cast<std::uint32_t>(disk.vertCount), &trail->verts))
+        return false;
+    trail->inds = reinterpret_cast<std::uint16_t *>(DB_AllocStreamPos(1));
+    if (!StreamBytes(reinterpret_cast<std::uint8_t *>(trail->inds), disk.indCount * 2))
+        return false;
+    if (!TrailValid(*trail))
+        return Drop("Invalid fast-file effect trail");
+    *out = trail;
+    return true;
+}
+
+// Load_FxElemDef: the scalars, the samples, the visuals, the effects it
+// names, then its trail.
 bool LoadElement(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
 {
     std::memset(out, 0, sizeof(*out)); // padding too: native storage starts as junk
@@ -327,9 +379,7 @@ bool LoadElement(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
     {
         return false;
     }
-    if (!disk.trailDef.token.isNull())
-        return Drop("Fast-file effect trails have no 64-bit loader yet");
-    return true;
+    return disk.trailDef.token.isNull() || LoadTrail(&out->trailDef);
 }
 
 // Load_FxElemDefArray: count records 4-aligned, each checked, then loaded.
@@ -351,6 +401,9 @@ bool LoadElements(const disk32::FxEffectDefDisk32 &effect, std::uint32_t count, 
         totals->bytes += ElementBytes(disk);
         if (!LoadElement(disk, &native[index]))
             return false;
+        // FX_Convert sizes a trail's vertices by its index count.
+        if (const FxTrailDef *const trail = native[index].trailDef)
+            totals->bytes += sizeof(disk32::FxTrailDefDisk32) + trail->indCount * (sizeof(FxTrailVertex) + 2u);
     }
     *out = native;
     return true;
