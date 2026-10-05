@@ -22,9 +22,9 @@ menuDef_t g_pool[4]; // what Load_MenuAsset published
 constexpr std::uint32_t kRecordBytes = 284;
 
 // Every zone starts block 4 with a material alias, as earlier assets leave it.
-struct Zone : disk32_test::Zone<1024>
+struct Zone : disk32_test::Zone<2048>
 {
-    explicit Zone(std::uint32_t tempBytes = 512) : disk32_test::Zone<1024>(tempBytes)
+    explicit Zone(std::uint32_t tempBytes = 512) : disk32_test::Zone<2048>(tempBytes)
     {
         DB_SetInsertedPointer(DB_InsertPointer(DBAliasKind::Material), DBAliasKind::Material, &g_material);
     }
@@ -167,7 +167,8 @@ void TestInlineMenu()
 Record Bare()
 {
     Record bare;
-    bare.Set(0x034, 0).Set(0x09C, 0).Set(0x0C4, 0).Set(0x0CC, 0).Set(0x0D0, 0).Set(0x0D4, 0).Set(0x0D8, 0).Set(0x0E0, 0);
+    bare.Set(0x034, 0).Set(0x09C, 0).Set(0x0C4, 0).Set(0x0CC, 0).Set(0x0D0, 0).Set(0x0D4, 0).Set(0x0D8, 0);
+    bare.Set(0x0E0, 0);
     return bare.Set(0x108, 0).Set(0x10C, 0).Set(0x114, 0);
 }
 
@@ -212,7 +213,9 @@ struct Item
 // 16 (its name at 388, text at 391, key handler at 396, statement token at 408
 // and entry at 412, the entry's string at 424), then a bare list box with no
 // type data 4-aligned at 428 (its name at 800).
-void WriteItems(const Item &first, std::uint32_t secondToken = kInline)
+// typeData, when given, writes the first item's type data after its key
+// handler (at 408), or after its text when it has none.
+void WriteItems(const Item &first, std::uint32_t secondToken = kInline, void (*typeData)() = nullptr)
 {
     const Record menu = Bare().Set(0x0A4, 2).Set(0x118, kInline);
     Item second;
@@ -221,7 +224,12 @@ void WriteItems(const Item &first, std::uint32_t secondToken = kInline)
     g_file.insert(g_file.end(), menu.bytes.begin(), menu.bytes.end());
     File().Text("b").Word(kInline).Word(secondToken);
     g_file.insert(g_file.end(), first.bytes.begin(), first.bytes.end());
-    File().Text("i0").Text("t").Word(32).Word(0).Word(0).Word(kInline).Entry(1, 2, kInline).Text("v");
+    File().Text("i0").Text("t");
+    if (first.bytes[0x114])
+        File().Word(32).Word(0).Word(0);
+    if (typeData)
+        typeData();
+    File().Word(kInline).Entry(1, 2, kInline).Text("v");
     g_file.insert(g_file.end(), second.bytes.begin(), second.bytes.end());
     File().Text("i1");
 }
@@ -271,15 +279,123 @@ struct ItemBreak
 };
 
 const ItemBreak kItemBreaks[] = {
-    {"a list box's type data", 0x0B4, 6, "type data has no 64-bit loader yet"},
-    {"an enum dvar's type data", 0x0B4, 13, "type data has no 64-bit loader yet"},
-    {"an edit field's type data", 0x0B4, 18, "type data has no 64-bit loader yet"},
+    {"an unmapped enum dvar", 0x0B4, 13, "string offset"}, // its token is the junk 0x12345678
     {"an unmapped focus sound", 0x120, VirtualOffset(64), "alias offset"},
     {"an unmapped mouse-enter text", 0x0EC, VirtualOffset(900), "string offset"},
     {"an unmapped leave-focus script", 0x108, VirtualOffset(900), "string offset"},
     {"an unmapped enable dvar", 0x118, VirtualOffset(900), "string offset"},
     {"an item statement without a token", 0x16C, 1, "statement entry count"},
 };
+
+// A 340-byte list box: two columns (the second 33 wide), a double-click
+// script and the material alias for its select icon.
+void WriteListBox(std::uint32_t columns, std::uint32_t icon)
+{
+    File file;
+    for (std::uint32_t word = 0; word < 85; ++word)
+    {
+        const std::uint32_t values[] = {0, 0, 0, 0, std::bit_cast<std::uint32_t>(1.25f), 0, 0, columns, 0, 0, 0, 0, 0,
+                                        33};
+        file.Word(word == 72 ? kInline : word == 84 ? icon : word < 14 ? values[word] : 0);
+    }
+    file.Text("dc");
+}
+
+// A 392-byte multi-value: its first dvar name and string inline, its last
+// dvar name the menu's name by offset, three values (the third 1.5), strings.
+void WriteMulti(std::uint32_t count, std::uint32_t lastString)
+{
+    File file;
+    for (std::uint32_t word = 0; word < 98; ++word)
+    {
+        const bool inlineToken = word == 0 || word == 32;
+        file.Word(inlineToken ? kInline
+                  : word == 31 ? VirtualOffset(4)
+                  : word == 63 ? lastString
+                  : word == 66 ? std::bit_cast<std::uint32_t>(1.5f)
+                  : word == 96 ? count
+                  : word == 97 ? 1
+                               : 0);
+    }
+    file.Text("l0").Text("s0");
+}
+
+const itemDef_s *LoadFirstItem()
+{
+    const menuDef_t *const menu = Load(kInline);
+    return menu == &g_pool[0] && g_read == g_file.size() ? menu->items[0] : nullptr;
+}
+
+// The first item's type data follows its key handler 4-aligned at 408, or
+// its text at 396, and converts into native storage after the item (at 544)
+// or its handler (at 568).
+void TestListBox()
+{
+    Zone zone;
+    // No key handler: the list box follows the text 4-aligned at 396.
+    WriteItems(Item().Set(0x0B4, 6).Set(0x12C, kInline).Set(0x114, 0), kInline,
+               [] { WriteListBox(2, VirtualOffset(0)); });
+    const itemDef_s *const item = LoadFirstItem();
+    const listBoxDef_s *const listBox = item ? item->typeData.listBox : nullptr;
+    Expect(listBox == reinterpret_cast<const listBoxDef_s *>(g_arena + 544) && listBox->numColumns == 2
+               && listBox->columnInfo[1].width == 33 && listBox->elementWidth == 1.25f
+               && listBox->doubleClick == zone.At(736) && listBox->selectIcon == &g_material,
+           "a list box converts, its double-click script past it and its icon the alias");
+}
+
+void TestEditField()
+{
+    Zone zone;
+    // No key handler: the edit field follows the text 4-aligned at 396.
+    WriteItems(Item().Set(0x0B4, 18).Set(0x12C, kInline).Set(0x114, 0), kInline,
+               [] { File().Float(0).Float(10).Float(0).Float(0).Word(12).Word(0).Word(0).Word(0); });
+    const itemDef_s *const item = LoadFirstItem();
+    const editFieldDef_s *const field = item ? item->typeData.editField : nullptr;
+    Expect(field == reinterpret_cast<const editFieldDef_s *>(g_arena + 544) && field->maxVal == 10.f
+               && field->maxChars == 12 && zone.virt[396 + 16] == 12,
+           "an edit field converts, streaming 4-aligned past the text");
+}
+
+void TestMulti()
+{
+    Zone zone;
+    WriteItems(Item().Set(0x0B4, 12).Set(0x12C, kInline), kInline, [] { WriteMulti(3, 0); });
+    const itemDef_s *const item = LoadFirstItem();
+    const multiDef_s *const multi = item ? item->typeData.multi : nullptr;
+    Expect(multi == reinterpret_cast<const multiDef_s *>(g_arena + 568) && multi->dvarList[0] == zone.At(800)
+               && multi->dvarStr[0] == zone.At(803) && multi->dvarList[31] == zone.At(4) && !multi->dvarList[1]
+               && multi->dvarValue[2] == 1.5f && multi->count == 3 && multi->strDef == 1,
+           "a multi-value converts, its names before its strings");
+}
+
+void TestEnumDvar()
+{
+    Zone zone;
+    WriteItems(Item().Set(0x0B4, 13).Set(0x12C, kInline), kInline, [] { File().Text("ed"); });
+    const itemDef_s *const item = LoadFirstItem();
+    Expect(item && item->typeData.enumDvarName == zone.At(408), "an enum dvar's name streams after the key handler");
+}
+
+// Type data that breaks a rule.
+void TestTypeDataBreaksFailClosed()
+{
+    const std::pair<void (*)(), const char *> breaks[] = {
+        {[] { WriteListBox(17, VirtualOffset(0)); }, "list-box column count"},
+        {[] { WriteListBox(2, VirtualOffset(64)); }, "alias offset"},
+        {[] { WriteMulti(33, 0); }, "multi-value count"},
+        {[] { WriteMulti(3, VirtualOffset(1900)); }, "string offset"},
+        {[] { WriteListBox(17, VirtualOffset(0)); }, "alias offset"}, // the focus sound loads first
+    };
+    for (const auto &[write, error] : breaks)
+    {
+        Zone zone;
+        const bool multi = write == breaks[2].first || write == breaks[3].first;
+        const bool soundFirst = write == breaks[4].first;
+        WriteItems(Item().Set(0x0B4, multi ? 12 : 6).Set(0x12C, kInline).Set(0x120, soundFirst ? VirtualOffset(64) : 0),
+                   kInline, write);
+        ExpectDrop("malformed type data", error, [] { Load(kInline); });
+    }
+}
 
 void TestItemBreaksFailClosed()
 {
@@ -321,7 +437,7 @@ const Malformed kMalformed[] = {
     {"a negative entry count", 0x0D4, 0xFFFFFFFF, kEntries},
     {"entries without a token", 0x10C, 0, kEntries},
     {"entry bytes past 32 bits", 0x0D4, 0x40000000, kEntries},
-    {"tokens past the block", 0x0D4, 300, "exceeds stream block"},
+    {"tokens past the block", 0x0D4, 600, "exceeds stream block"},
 };
 
 const std::pair<Stream, const char *> kStreamBreaks[] = {
@@ -415,6 +531,6 @@ void __cdecl DB_LoadedExternalData(std::int32_t)
 
 int main()
 {
-    return Run({TestInlineMenu, TestSharedInlineAndAlias, TestItems, TestItemBreaksFailClosed,
-                TestMalformedFailsClosed});
+    return Run({TestInlineMenu, TestSharedInlineAndAlias, TestItems, TestListBox, TestEditField, TestMulti,
+                TestEnumDvar, TestTypeDataBreaksFailClosed, TestItemBreaksFailClosed, TestMalformedFailsClosed});
 }

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 #include <utility>
 
 // Menu (menuDef_t), a wave-4 parse family (docs/design/FASTFILE_LOADER.md):
@@ -17,8 +18,7 @@
 // the temp block, then with block 4 pushed its window (name, group,
 // background material), its strings, its key-handler chain, its
 // statements, whose expression entries convert into zone-lifetime native
-// storage, and its items, which load the same way. Item type data does not
-// load yet, so an item that names any fails closed.
+// storage, and its items, which load the same way, with their type data.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -154,12 +154,96 @@ bool LoadStatement(const disk32::StatementDisk32 &disk, statement_s *out)
 
 // Load_itemDefData_t's types that hold data: a list box (6), an edit field
 // (0, 4, 9, 10, 11, 14, 16, 17 and 18), a multi-value (12) or an enum dvar
-// (13). Any other type's data is no token, and stays null.
+// (13).
+constexpr std::int32_t kMaxListBoxColumns = std::extent_v<decltype(listBoxDef_s::columnInfo)>;
+constexpr std::int32_t kMaxMultiValues = std::extent_v<decltype(multiDef_s::dvarList)>;
+constexpr std::int32_t kItemTypeListBox = 6;
+constexpr std::int32_t kItemTypeMulti = 12;
+constexpr std::int32_t kItemTypeEnumDvar = 13;
+
 bool TypeHasData(std::int32_t type)
 {
     constexpr std::uint32_t kTypesWithData = 1u << 0 | 1u << 4 | 1u << 6 | 1u << 9 | 1u << 10 | 1u << 11 | 1u << 12
         | 1u << 13 | 1u << 14 | 1u << 16 | 1u << 17 | 1u << 18;
     return type >= 0 && type < 32 && (kTypesWithData >> type & 1u);
+}
+
+// Load_listBoxDef_t: a 340-byte list box 4-aligned, then its double-click
+// script and select icon. Its columns number at most 16, columnInfo's size.
+bool LoadListBox(listBoxDef_s **out)
+{
+    disk32::ListBoxDisk32 disk{};
+    listBoxDef_s *const listBox = StreamRecord(disk) ? AllocZeroed<listBoxDef_s>() : nullptr;
+    if (!listBox)
+        return false;
+    *out = listBox;
+    CopyListBoxScalars(disk, listBox);
+    if (disk.numColumns > kMaxListBoxColumns)
+        return Drop("Invalid fast-file menu list-box column count");
+    if (!LoadXString(disk.doubleClick, &listBox->doubleClick))
+        return false;
+    LoadMaterialPtr(disk.selectIcon.token, &listBox->selectIcon);
+    return true;
+}
+
+// Load_editFieldDef_t: a 32-byte edit field 4-aligned, which holds no pointer.
+bool LoadEditField(editFieldDef_s **out)
+{
+    disk32::EditFieldDisk32 disk{};
+    editFieldDef_s *const editField = StreamRecord(disk) ? AllocZeroed<editFieldDef_s>() : nullptr;
+    if (!editField)
+        return false;
+    *out = editField;
+    CopyEditFieldScalars(disk, editField);
+    return true;
+}
+
+// Load_multiDef_t: a 392-byte multi-value 4-aligned, then its 32 dvar names
+// and its 32 strings, in order. Its values number at most 32, its arrays'
+// size.
+bool LoadMulti(multiDef_s **out)
+{
+    disk32::MultiDefDisk32 disk{};
+    multiDef_s *const multi = StreamRecord(disk) ? AllocZeroed<multiDef_s>() : nullptr;
+    if (!multi)
+        return false;
+    *out = multi;
+    CopyMultiDefScalars(disk, multi);
+    if (disk.count > kMaxMultiValues)
+        return Drop("Invalid fast-file menu multi-value count");
+    for (int index = 0; index < kMaxMultiValues; ++index)
+    {
+        if (!LoadXString(disk32::Ptr32<const char>{disk.dvarList[index].token}, &multi->dvarList[index]))
+            return false;
+    }
+    for (int index = 0; index < kMaxMultiValues; ++index)
+    {
+        if (!LoadXString(disk32::Ptr32<const char>{disk.dvarStr[index].token}, &multi->dvarStr[index]))
+            return false;
+    }
+    return true;
+}
+
+// Load_itemDefData_t: by the item's type, any non-null token means a list
+// box, edit field or multi-value follows; an enum dvar's name is a string
+// token. Any other type's data is no token, and stays null.
+bool LoadTypeData(const disk32::ItemDisk32 &disk, itemDef_s *out)
+{
+    const disk32::PointerToken token = disk.typeData.token;
+    out->typeData.data = nullptr;
+    if (!TypeHasData(disk.type) || token.isNull())
+        return true;
+    switch (disk.type)
+    {
+    case kItemTypeListBox:
+        return LoadListBox(&out->typeData.listBox);
+    case kItemTypeMulti:
+        return LoadMulti(&out->typeData.multi);
+    case kItemTypeEnumDvar:
+        return LoadXString(disk32::Ptr32<const char>{token}, &out->typeData.enumDvarName);
+    default:
+        return LoadEditField(&out->typeData.editField);
+    }
 }
 
 // Load_itemDef_t: the scalars and window, the strings, the key handlers, the
@@ -183,9 +267,8 @@ bool LoadItem(const disk32::ItemDisk32 &disk, itemDef_s *out)
     if (!LoadKeyHandlers(disk.onKey.token, &out->onKey) || !LoadXString(disk.enableDvar, &out->enableDvar))
         return false;
     LoadSndAliasListPtr(disk.focusSound.token, &out->focusSound);
-    out->typeData.data = nullptr;
-    if (TypeHasData(disk.type) && !disk.typeData.token.isNull())
-        return Drop("Fast-file menu item type data has no 64-bit loader yet");
+    if (!LoadTypeData(disk, out))
+        return false;
     const std::pair<const disk32::StatementDisk32 *, statement_s *> statements[] = {
         {&disk.visibleExp, &out->visibleExp}, {&disk.textExp, &out->textExp},
         {&disk.materialExp, &out->materialExp}, {&disk.rectXExp, &out->rectXExp}, {&disk.rectYExp, &out->rectYExp},
