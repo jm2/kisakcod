@@ -1,9 +1,9 @@
 // db_disk32_weapon_tests.cpp: the 64-bit weapon loader (NOW row 12) on
 // hand-built disk32 zone images (disk32_fixture.hpp). The retail offsets here
 // are written out by hand, apart from the schema. Script strings go through
-// the production Load_ScriptStringCustom. Beyond the fixture's seams, only the
-// asset pool (Load_WeaponDefAsset) and the sound lookup by name
-// (DB_FindXAssetHeader) are replaced.
+// the production Load_ScriptStringCustom, and materials, effects and models
+// through their families' real steps. Beyond the fixture's seams, only the
+// asset pools and the sound lookup by name (DB_FindXAssetHeader) are replaced.
 
 #include "disk32_fixture.hpp"
 
@@ -31,10 +31,22 @@ XAssetList g_list{{6, g_strings.data()}, 0, nullptr};
 
 constexpr std::uint32_t kRecordBytes = 2168;
 
-struct Zone : disk32_test::Zone<256, 2304>
+Material g_materials[2]; // what Load_MaterialAsset published
+int g_materialCount = 0;
+MaterialTechniqueSet g_sets[2];
+int g_setCount = 0;
+FxEffectDef g_effects[2]; // what Load_FxEffectDefAsset published
+int g_effectCount = 0;
+Material g_aliasMaterial; // the earlier zone assets Aliases() names
+XModel g_model;
+FxEffectDef g_aliasEffect;
+
+// The weapon record, then a nested effect, or a material and its technique set.
+struct Zone : disk32_test::Zone<256, 2560>
 {
-    explicit Zone(std::uint32_t tempBytes = 2304) : disk32_test::Zone<256, 2304>(tempBytes)
+    explicit Zone(std::uint32_t tempBytes = 2560) : disk32_test::Zone<256, 2560>(tempBytes)
     {
+        g_materialCount = g_setCount = g_effectCount = 0;
         for (std::uintptr_t index = 1; index < g_strings.size(); ++index)
             g_strings[index] = reinterpret_cast<const char *>(100 + index);
         varXAssetList = &g_list;
@@ -103,6 +115,11 @@ struct Record
 
 struct File : FileBuilder<File>
 {
+    File &Byte(std::uint8_t value)
+    {
+        g_file.push_back(value);
+        return *this;
+    }
     File &Write(const Record &record, bool strings = true)
     {
         g_file.insert(g_file.end(), record.bytes.begin(), record.bytes.end());
@@ -274,14 +291,88 @@ struct Malformed
 constexpr const char *kNotYet = "no 64-bit loader yet";
 
 const Malformed kMalformed[] = {
-    {"a gun model", 0x00C + 15 * 4, kInline, kNotYet},
-    {"a flash effect", 0x150, kInline, kNotYet},
-    {"a reticle", 0x220, kInline, kNotYet},
-    {"the knife model", 0x308, kInline, kNotYet},
     {"accuracy knots", 0x77C + 4, kInline, kNotYet},
     {"a null name", 0x000, 0, "has no name"},
     {"an unmapped string offset", 0x7F4, VirtualOffset(400), "string offset"},
 };
+
+// Block 4 starts with three aliases, as earlier assets of the zone leave
+// them: a material at offset 0, a model at 4 and an effect at 8.
+void Aliases()
+{
+    DB_SetInsertedPointer(DB_InsertPointer(DBAliasKind::Material), DBAliasKind::Material, &g_aliasMaterial);
+    DB_SetInsertedPointer(DB_InsertPointer(DBAliasKind::XModel), DBAliasKind::XModel, &g_model);
+    DB_SetInsertedPointer(DB_InsertPointer(DBAliasKind::FxEffectDef), DBAliasKind::FxEffectDef, &g_aliasEffect);
+}
+
+// The name and an inline flash effect and reticle; the first gun model, the
+// world knife model, the kill icon and the explosion effect name aliases.
+Record &Referenced(Record &record)
+{
+    record.Set(0x000, kInline).Set(0x00C, VirtualOffset(4)).Set(0x14C, kInline).Set(0x21C, kInline);
+    return record.Set(0x308, VirtualOffset(4)).Set(0x518, VirtualOffset(0)).Set(0x58C, VirtualOffset(8));
+}
+
+// The bytes Referenced() streams after its record: the name, the effect (its
+// record, then its name), then a minimal material with an empty technique set.
+void WriteReferenced(const Record &record, std::int32_t effectCount = 0)
+{
+    File file;
+    g_file.insert(g_file.end(), record.bytes.begin(), record.bytes.end());
+    file.Text("wpn").Word(kInline).Word(0).Word(32 + 5).Word(0).Word(0).Word(static_cast<std::uint32_t>(effectCount));
+    file.Word(0).Word(0).Text("fx_f");
+    file.Word(kInline).Word(0x07).Word(0).Word(0).Word(0).Word(0);
+    for (int i = 0; i < 34; ++i)
+        file.Byte(0xFF); // no state-bit entries
+    file.Word(0).Byte(0).Byte(0).Word(kInline).Word(0).Word(0).Word(0).Text("mat").Word(kInline).Word(0).Word(0);
+    for (int i = 0; i < 34; ++i)
+        file.Word(0);
+    file.Text("ts");
+}
+
+void TestReferences()
+{
+    Zone zone;
+    Aliases();
+    Record record;
+    WriteReferenced(Referenced(record));
+    const WeaponDef *const weapon = Load(kInline);
+    Expect(weapon == &g_weapons[0], "a weapon with references publishes");
+    if (!weapon)
+        return;
+    Expect(weapon->gunXModel[0] == &g_model && weapon->worldKnifeModel == &g_model && !weapon->gunXModel[1],
+           "models resolve through XModel's step");
+    Expect(weapon->viewFlashEffect == &g_effects[0] && g_effectCount == 1 && !std::strcmp(g_effects[0].name, "fx_f")
+               && weapon->projExplosionEffect == &g_aliasEffect,
+           "an inline effect loads through FX's step, and an alias resolves");
+    Expect(weapon->reticleCenter == &g_materials[0] && g_materialCount == 1 && weapon->killIcon == &g_aliasMaterial
+               && !weapon->reticleSide,
+           "an inline material loads through Material's step, and an alias resolves");
+    Expect(g_read == g_file.size(), "every disk byte is consumed");
+}
+
+const Malformed kReferenceBreaks[] = {
+    {"an unmapped model alias", 0x00C, VirtualOffset(64), "alias offset"},
+    {"a material alias naming a model", 0x518, VirtualOffset(4), "alias offset"},
+    {"an effect alias naming a material", 0x58C, VirtualOffset(0), "alias offset"},
+};
+
+void TestReferenceBreaksFailClosed()
+{
+    for (const Malformed &test : kReferenceBreaks)
+    {
+        Zone zone;
+        Aliases();
+        Record record;
+        WriteReferenced(Referenced(record).Set(test.at, test.value));
+        ExpectDrop(test.what, test.error, [] { Load(kInline); });
+    }
+    Zone zone;
+    Aliases();
+    Record record;
+    WriteReferenced(Referenced(record), -1);
+    ExpectDrop("a malformed flash effect", "effect header", [] { Load(kInline); });
+}
 
 void TestMalformedFailsClosed()
 {
@@ -306,6 +397,58 @@ void TestMalformedFailsClosed()
 } // namespace
 
 XAssetList *varXAssetList; // the envelope's native list (db_disk32_envelope.cpp)
+
+void __cdecl Load_MaterialAsset(XAssetHeader *header)
+{
+    g_materials[g_materialCount] = *header->material;
+    header->material = &g_materials[g_materialCount++];
+}
+
+void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *header)
+{
+    MaterialTechniqueSet &entry = g_sets[g_setCount++];
+    entry = *header->techniqueSet;
+    entry.remappedTechniqueSet = &entry; // as DB_MediaRemapTechniqueSet leaves an unremapped set
+    header->techniqueSet = &entry;
+}
+
+void __cdecl Load_FxEffectDefAsset(XAssetHeader *header)
+{
+    g_effects[g_effectCount] = *header->fx;
+    header->fx = &g_effects[g_effectCount++];
+}
+
+// Models resolve only by alias, and the effect and material name nothing
+// more, so nothing else loads; their families' TUs link all the same.
+void __cdecl Load_FxEffectDefFromName(const char **)
+{
+    Expect(false, "no effect is named");
+}
+
+void __cdecl Load_XModelAsset(XAssetHeader *)
+{
+    Expect(false, "no model loads");
+}
+
+void __cdecl Load_PhysPresetAsset(XAssetHeader *)
+{
+    Expect(false, "no preset loads");
+}
+
+void __cdecl Load_GfxImageAsset(XAssetHeader *)
+{
+    Expect(false, "no image loads");
+}
+
+void __cdecl DB_LoadedExternalData(std::int32_t)
+{
+    Expect(false, "no image loads");
+}
+
+void __cdecl Load_GetCurrentZoneHandle(uint8_t *handle)
+{
+    *handle = 7;
+}
 
 XAssetHeader __cdecl DB_FindXAssetHeader(XAssetType type, const char *name)
 {
@@ -338,6 +481,6 @@ void __cdecl Load_WeaponDefAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestRecord, TestSoundsAndScriptStrings, TestSharedInlineAndOffsets, TestSoundBreaksFailClosed,
-                TestMalformedFailsClosed});
+    return Run({TestRecord, TestSoundsAndScriptStrings, TestReferences, TestSharedInlineAndOffsets,
+                TestSoundBreaksFailClosed, TestReferenceBreaksFailClosed, TestMalformedFailsClosed});
 }

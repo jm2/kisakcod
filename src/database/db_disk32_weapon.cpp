@@ -13,8 +13,9 @@
 // scalar runs copy into the native 2832-byte record, then with block 4
 // pushed each pointer loads in the 32-bit loader's order (kParts). Strings,
 // script strings (interned), sounds by name through their string holders,
-// and the bounce-sound table load here; models, effects, materials and the
-// accuracy graphs do not yet, so a weapon that names one fails closed.
+// the bounce-sound table, and models, effects and materials through their
+// families' pointer steps load here; the accuracy graphs do not yet, so a
+// weapon that names one fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -216,8 +217,14 @@ bool LoadPart(const Disk &disk, const Part &part, WeaponDef *out)
             loaded = LoadSoundName(token, SlotAt<snd_alias_list_t>(out, part, index));
         else if (part.kind == Kind::BounceSounds)
             loaded = LoadBounceSounds(token, SlotAt<snd_alias_list_t *>(out, part, index));
+        else if (part.kind == Kind::Model)
+            LoadXModelPtr(token, SlotAt<XModel>(out, part, index));
+        else if (part.kind == Kind::Effect)
+            LoadFxEffectDefPtr(token, SlotAt<const FxEffectDef>(out, part, index));
+        else if (part.kind == Kind::Material)
+            LoadMaterialPtr(token, SlotAt<Material>(out, part, index));
         else if (!token.isNull())
-            return Drop("Fast-file weapon models, effects, materials and graphs have no 64-bit loader yet");
+            return Drop("Fast-file weapon accuracy graphs have no 64-bit loader yet");
         if (!loaded)
             return false;
     }
