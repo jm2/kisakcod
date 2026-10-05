@@ -252,14 +252,17 @@ bool ConvertPartition(const disk32::CollisionPartitionDisk32 &disk, CollisionPar
 bool LoadFirstArrays(const Disk &disk, const Extents &extents, clipMap_t *out, Sides *sides)
 {
     std::uint8_t *diskSides = nullptr;
-    return LoadPlanes(disk, extents.brushes.planeBytes, &out->planes)
-        && LoadRecords<disk32::cStaticModel_sDisk32>(disk.staticModelList.token, disk.numStaticModels,
-                                                      &out->staticModelList, ConvertStaticModel)
-        && LoadArray(disk.materials.token, disk.numMaterials, 72, 4, &out->materials)
-        && LoadRecords<disk32::CBrushSideDisk32>(disk.brushsides.token, disk.numBrushSides, &out->brushsides,
-                                                  ConvertBrushSide, &diskSides)
-        && ((*sides = {diskSides, disk.numBrushSides, out->brushsides}), true)
-        && LoadArray(disk.brushEdges.token, disk.numBrushEdges, 1, 1, &out->brushEdges)
+    if (!LoadPlanes(disk, extents.brushes.planeBytes, &out->planes)
+        || !LoadRecords<disk32::cStaticModel_sDisk32>(disk.staticModelList.token, disk.numStaticModels,
+                                                       &out->staticModelList, ConvertStaticModel)
+        || !LoadArray(disk.materials.token, disk.numMaterials, 72, 4, &out->materials)
+        || !LoadRecords<disk32::CBrushSideDisk32>(disk.brushsides.token, disk.numBrushSides, &out->brushsides,
+                                                   ConvertBrushSide, &diskSides))
+    {
+        return false;
+    }
+    *sides = {diskSides, disk.numBrushSides, out->brushsides};
+    return LoadArray(disk.brushEdges.token, disk.numBrushEdges, 1, 1, &out->brushEdges)
         && LoadRecords<disk32::cNode_tDisk32>(disk.nodes.token, disk.numNodes, &out->nodes, ConvertNode)
         && LoadArray(disk.leafs.token, disk.numLeafs, 44, 4, &out->leafs)
         && LoadArray(disk.leafbrushes.token, disk.numLeafBrushes, 2, 2, &out->leafbrushes)
