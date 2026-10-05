@@ -1,7 +1,8 @@
 # Menu (menuDef_t), asset type 0x15: a 284-byte record that grows to 360
 # bytes natively. The format is described in ../db_disk32.schema. The body is
-# custom (db_disk32_menu.cpp): the items, key handlers, statements and their
-# expression entries convert into zone-lifetime native storage.
+# custom (db_disk32_menu.cpp): the items and their type data, key handlers,
+# statements and their expression entries convert into zone-lifetime native
+# storage.
 
 # A window: its name, group and background load by the body.
 record Window 0x9C runtime=windowDef_t header=ui/ui_shared.h copy=scalars
@@ -32,6 +33,27 @@ record ExpressionEntry 0x0C runtime=expressionEntry header=ui/ui_shared.h
 record Statement 0x08 runtime=statement_s header=ui/ui_shared.h copy=scalars
     0x00 numEntries               i32
     0x04 entries                  pointer
+
+# A list box: its columns hold no pointer.
+record ListBox 0x154 runtime=listBoxDef_s header=ui/ui_shared.h copy=scalars
+    0x000 mousePos                run[7]    to=elementStyle
+    0x01C numColumns              i32
+    0x020 columnInfo              run[64]   to=columnInfo
+    0x120 doubleClick             xstring
+    0x124 notselectable           run[11]   to=disableColor
+    0x150 selectIcon              pointer   asset=Material
+
+# An edit field holds no pointer.
+record EditField 0x20 runtime=editFieldDef_s header=ui/ui_shared.h copy=scalars
+    0x00 minVal                   run[8]    to=paintOffset
+
+# A multi-value: 32 dvar names and 32 strings, each a string token.
+record MultiDef 0x188 runtime=multiDef_s header=ui/ui_shared.h copy=scalars
+    0x000 dvarList                pointer[32]
+    0x080 dvarStr                 pointer[32]
+    0x100 dvarValue               f32[32]
+    0x180 count                   i32
+    0x184 strDef                  i32
 
 # An item: its window, scripts and statements load as a menu's do; its type
 # says what its type data holds. The menu sets parent when it publishes.
