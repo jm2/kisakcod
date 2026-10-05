@@ -17,6 +17,49 @@ record GfxReflectionProbe 0x10 runtime=GfxReflectionProbe header=gfx_d3d/r_gfx.h
     0x00 origin                   f32[3]
     0x0C reflectionImage          pointer   asset=GfxImage
 
+# A cell's AABB tree node: its children follow it childrenOffset bytes on,
+# which converts to the native stride; its static-model indices keep their
+# layout.
+record GfxAabbTree 0x2C runtime=GfxAabbTree header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 mins                     f32[3]
+    0x0C maxs                     f32[3]
+    0x18 childCount               u16
+    0x1A surfaceCount             u16
+    0x1C startSurfIndex           u16
+    0x1E surfaceCountNoDecal      u16
+    0x20 startSurfIndexNoDecal    u16
+    0x22 smodelIndexCount         u16
+    0x24 smodelIndexes            pointer
+    0x28 childrenOffset           i32
+
+# A portal: its writable state is the renderer's; its cell is an offset to
+# one of the world's cells.
+record GfxPortal 0x44 runtime=GfxPortal header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 writableFlags            pad[4]
+    0x04 writable.hullPoints      rawptr
+    0x08 writable.queuedParent    rawptr
+    0x0C plane.coeffs             f32[4]
+    0x1C plane.side               u8[3]
+    0x1F plane.pad                u8
+    0x20 cell                     pointer
+    0x24 vertices                 pointer   # vertexCount 12-byte vertices
+    0x28 vertexCount              u8
+    0x29 vertexCountPad           pad[3]
+    0x2C hullAxis                 f32[2][3]
+
+record GfxCell 0x38 runtime=GfxCell header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 mins                     f32[3]
+    0x0C maxs                     f32[3]
+    0x18 aabbTreeCount            i32
+    0x1C aabbTree                 pointer
+    0x20 portalCount              i32
+    0x24 portals                  pointer
+    0x28 cullGroupCount           i32
+    0x2C cullGroups               pointer   # 32-bit cull-group indices
+    0x30 reflectionProbeCount     u8
+    0x31 reflectionProbeCountPad  pad[3]
+    0x34 reflectionProbes         pointer   # 8-bit probe indices
+
 record GfxWorldVertexData 0x08 runtime=GfxWorldVertexData header=gfx_d3d/r_gfx.h copy=scalars
     0x00 vertices                 pointer   # vertexCount 44-byte vertices
     0x04 worldVb                  rawptr    # a D3D buffer the renderer creates

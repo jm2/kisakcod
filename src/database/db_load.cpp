@@ -26,6 +26,7 @@
 #include "db_disk32_load.h"
 #include "db_material_validation.h"
 #include "db_xmodel_validation.h"
+#include "db_gfxworld_validation.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -42,6 +43,8 @@ using db::xmodel_validation::DB_ValidateMaterializedSpan;
 using db::xmodel_validation::DB_ValidateXModelGraph;
 using db::xmodel_validation::DB_ValidateXSurfaceCollisionTreeGraph;
 using db::xmodel_validation::DB_ValidateXSurfaceGraph;
+using db::gfxworld_validation::DB_ValidateWorldAabbCell;
+using db::gfxworld_validation::DB_ValidateWorldAabbTrees;
 
 namespace
 {
@@ -562,189 +565,6 @@ int32_t DB_CheckedCountCeilDiv(int64_t value, int64_t divisor, const char *descr
     return result;
 }
 
-bool DB_ValidateWorldAabbCell(
-    const GfxWorld *world,
-    const GfxCell *cell)
-{
-    if (!world || !cell
-        || !db::validation::WorldAabbTreePresenceValid(
-            cell->aabbTree != nullptr,
-            cell->aabbTreeCount))
-    {
-        Com_Error(ERR_DROP, "Invalid fast-file world AABB pointer/count");
-        return false;
-    }
-
-    std::uint8_t *nodeDepths = cell->aabbTreeCount
-        ? static_cast<std::uint8_t *>(
-            std::malloc(static_cast<std::size_t>(cell->aabbTreeCount)))
-        : nullptr;
-    if (cell->aabbTreeCount && !nodeDepths)
-    {
-        Com_Error(ERR_DROP, "Could not allocate world AABB validation state");
-        return false;
-    }
-    const db::validation::WorldAabbTopologyStatus status =
-        db::validation::ValidateWorldAabbTopology(
-            cell->aabbTree,
-            cell->aabbTreeCount,
-            world->dpvs.staticSurfaceCount,
-            world->dpvs.staticSurfaceCountNoDecal,
-            nodeDepths,
-            static_cast<std::uint64_t>(cell->aabbTreeCount));
-    std::free(nodeDepths);
-    if (status != db::validation::WorldAabbTopologyStatus::Ok)
-    {
-        Com_Error(
-            ERR_DROP,
-            "Invalid fast-file world AABB topology: %s",
-            db::validation::WorldAabbTopologyStatusName(status));
-        return false;
-    }
-    return true;
-}
-
-bool DB_ValidateWorldAabbTrees(const GfxWorld *world)
-{
-    if (!world
-        || !db::validation::PointerCountConsistent(
-            world->cells != nullptr,
-            world->dpvsPlanes.cellCount))
-    {
-        Com_Error(ERR_DROP, "Invalid fast-file world cell pointer/count");
-        return false;
-    }
-    if (world->surfaceCount < 0
-        || !db::validation::WorldAabbSurfacePartitionsValid(
-            world->dpvs.staticSurfaceCount,
-            world->dpvs.staticSurfaceCountNoDecal,
-            static_cast<std::uint32_t>(world->surfaceCount))
-        || world->modelCount <= 0
-        || !world->models
-        || world->models[0].startSurfIndex != 0
-        || world->models[0].surfaceCount
-            != world->dpvs.staticSurfaceCount
-        || world->models[0].surfaceCountNoDecal
-            != world->dpvs.staticSurfaceCountNoDecal
-        || world->dpvs.smodelCount
-            > db::validation::kMaxWorldAabbStaticModels)
-    {
-        Com_Error(ERR_DROP, "Invalid fast-file world static-surface counts");
-        return false;
-    }
-
-    std::int32_t totalNodeCount = 0;
-    std::int32_t maximumCellNodeCount = 0;
-    for (std::int32_t cellIndex = 0;
-        cellIndex < world->dpvsPlanes.cellCount;
-        ++cellIndex)
-    {
-        const GfxCell &cell = world->cells[cellIndex];
-        if (!db::validation::WorldAabbTreePresenceValid(
-                cell.aabbTree != nullptr,
-                cell.aabbTreeCount))
-        {
-            Com_Error(
-                ERR_DROP,
-                "Invalid fast-file world AABB pointer/count in cell %d",
-                cellIndex);
-            return false;
-        }
-
-        std::int32_t nextTotal = 0;
-        if (!db::validation::CheckedCountSum(
-                totalNodeCount,
-                cell.aabbTreeCount,
-                &nextTotal))
-        {
-            Com_Error(ERR_DROP, "Invalid fast-file aggregate world AABB count");
-            return false;
-        }
-        totalNodeCount = nextTotal;
-        if (cell.aabbTreeCount > maximumCellNodeCount)
-            maximumCellNodeCount = cell.aabbTreeCount;
-    }
-
-    std::uint8_t *nodeDepths = maximumCellNodeCount
-        ? static_cast<std::uint8_t *>(
-            std::malloc(static_cast<std::size_t>(maximumCellNodeCount)))
-        : nullptr;
-    if (maximumCellNodeCount && !nodeDepths)
-    {
-        Com_Error(ERR_DROP, "Could not allocate world AABB validation state");
-        return false;
-    }
-    const std::uint64_t sortedSurfaceCount =
-        static_cast<std::uint64_t>(world->dpvs.staticSurfaceCount)
-        + world->dpvs.staticSurfaceCountNoDecal;
-    std::uint8_t *surfaceCoverage = sortedSurfaceCount
-        ? static_cast<std::uint8_t *>(
-            std::calloc(static_cast<std::size_t>(sortedSurfaceCount), 1))
-        : nullptr;
-    if (sortedSurfaceCount && !surfaceCoverage)
-    {
-        std::free(nodeDepths);
-        Com_Error(ERR_DROP, "Could not allocate world AABB surface coverage");
-        return false;
-    }
-
-    for (std::int32_t cellIndex = 0;
-        cellIndex < world->dpvsPlanes.cellCount;
-        ++cellIndex)
-    {
-        const GfxCell &cell = world->cells[cellIndex];
-        const db::validation::WorldAabbTopologyStatus status =
-            db::validation::ValidateWorldAabbTopology(
-                cell.aabbTree,
-                cell.aabbTreeCount,
-                world->dpvs.staticSurfaceCount,
-                world->dpvs.staticSurfaceCountNoDecal,
-                nodeDepths,
-                static_cast<std::uint64_t>(maximumCellNodeCount));
-        if (status != db::validation::WorldAabbTopologyStatus::Ok)
-        {
-            std::free(nodeDepths);
-            std::free(surfaceCoverage);
-            Com_Error(
-                ERR_DROP,
-                "Invalid fast-file world AABB topology in cell %d: %s",
-                cellIndex,
-                db::validation::WorldAabbTopologyStatusName(status));
-            return false;
-        }
-        if (cell.aabbTreeCount)
-        {
-            const GfxAabbTree &root = cell.aabbTree[0];
-            if (!db::validation::MarkUniqueCoverageSpan(
-                    surfaceCoverage,
-                    sortedSurfaceCount,
-                    root.startSurfIndex,
-                    root.surfaceCount)
-                || !db::validation::MarkUniqueCoverageSpan(
-                    surfaceCoverage,
-                    sortedSurfaceCount,
-                    root.startSurfIndexNoDecal,
-                    root.surfaceCountNoDecal))
-            {
-                std::free(nodeDepths);
-                std::free(surfaceCoverage);
-                Com_Error(ERR_DROP, "Overlapping fast-file world AABB root surfaces");
-                return false;
-            }
-        }
-    }
-    std::free(nodeDepths);
-    if (!db::validation::CoverageComplete(
-            surfaceCoverage,
-            sortedSurfaceCount))
-    {
-        std::free(surfaceCoverage);
-        Com_Error(ERR_DROP, "Fast-file world AABB roots leave uncovered surfaces");
-        return false;
-    }
-    std::free(surfaceCoverage);
-    return true;
-}
 }
 
 struct DynEntityServer // sizeof=0x24
