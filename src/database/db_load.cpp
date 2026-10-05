@@ -10313,6 +10313,10 @@ bool __cdecl Load_GfxWorld(bool atStreamStart)
 
 void __cdecl Load_GfxWorldPtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadGfxWorldPtrDisk32(atStreamStart, varGfxWorldPtr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -10368,6 +10372,7 @@ void __cdecl Load_GfxWorldPtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Mark_MaterialMemory()

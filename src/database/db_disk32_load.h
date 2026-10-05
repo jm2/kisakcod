@@ -17,6 +17,7 @@ struct FxImpactTable;
 struct GameWorldMp;
 struct GfxImage;
 struct GfxLightDef;
+struct GfxWorld;
 struct LoadedSound;
 struct LocalizeEntry;
 struct MapEnts;
@@ -173,6 +174,11 @@ void __cdecl DB_LoadWeaponDefPtrDisk32(bool atStreamStart, WeaponDef **slot);
 // clipMap_t published through Load_ClipMapAsset on return. Arrays that hold
 // no pointer stay in their zone blocks.
 void __cdecl DB_LoadClipMapPtrDisk32(bool atStreamStart, clipMap_t **slot);
+
+// Loads one world (db_disk32_gfxworld.cpp) under the same slot contract:
+// the slot holds the zero-extended disk32 token on entry and the native
+// GfxWorld published through Load_GfxWorldAsset on return.
+void __cdecl DB_LoadGfxWorldPtrDisk32(bool atStreamStart, GfxWorld **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from
