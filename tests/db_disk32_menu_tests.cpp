@@ -32,7 +32,8 @@ struct Zone : disk32_test::Zone<1024>
 
 // The record: a named and grouped window on the material alias, a font,
 // an open script, an escape script naming the window's name by offset, two
-// key handlers, a sound name, empty statements and no items.
+// key handlers, a three-entry visibility statement, a sound name, a one-entry
+// x statement and an empty y statement, and no items.
 struct Record
 {
     std::vector<std::uint8_t> bytes = std::vector<std::uint8_t>(kRecordBytes);
@@ -41,8 +42,8 @@ struct Record
     {
         Set(0x000, kInline).Float(0x004, 1.5f).Set(0x034, kInline).Set(0x038, 7).Set(0x050, 0x10).Float(0x094, 0.75f);
         Set(0x098, VirtualOffset(0)).Set(0x09C, kInline).Set(0x0A0, 1).Set(0x0A8, 2).Float(0x0C0, 0.5f);
-        Set(0x0C4, kInline).Set(0x0CC, VirtualOffset(4)).Set(0x0D0, kInline).Set(0x0E0, kInline).Set(0x0E4, 5);
-        Float(0x104, 0.25f);
+        Set(0x0C4, kInline).Set(0x0CC, VirtualOffset(4)).Set(0x0D0, kInline).Set(0x0D4, 3).Set(0x0D8, kInline);
+        Set(0x0E0, kInline).Set(0x0E4, 5).Float(0x104, 0.25f).Set(0x108, 1).Set(0x10C, kInline).Set(0x114, kInline);
     }
     Record &Set(std::uint32_t at, std::uint32_t value)
     {
@@ -56,16 +57,35 @@ struct Record
     }
 };
 
+// What a test breaks in the stream.
+struct Stream
+{
+    std::uint32_t firstEntry = kInline; // the visibility statement's first token
+    std::uint32_t op = 5;               // its operator, OP_ADD
+};
+
 struct File : FileBuilder<File>
 {
+    // A 12-byte expression entry: type, then the operator or operand.
+    File &Entry(std::uint32_t type, std::uint32_t dataType, std::uint32_t value)
+    {
+        return Word(type).Word(dataType).Word(value);
+    }
     // The record, then block 4 from 4: the name at 4, group at 9, font at 11,
     // open script at 14; the key handlers 4-aligned at 20 (its action at 32)
-    // and 36; the sound name at 48.
-    File &Write(const Record &record)
+    // and 36; the visibility tokens at 48 and entries at 60 (its string at
+    // 72), 76 and 88; the sound name at 100; the x token at 104 and entry at
+    // 108; the empty y statement at 120.
+    File &Write(const Record &record, const Stream &s = {})
     {
         g_file.insert(g_file.end(), record.bytes.begin(), record.bytes.end());
         Text("main").Text("g").Text("fo").Text("open");
-        return Word(13).Word(kInline).Word(kInline).Text("a1").Word(27).Word(0).Word(0).Text("sn");
+        Word(13).Word(kInline).Word(kInline).Text("a1").Word(27).Word(0).Word(0);
+        Word(s.firstEntry).Word(kInline).Word(kInline);
+        if (s.firstEntry)
+            Entry(1, 2, kInline).Text("x");
+        Entry(0, s.op, 0).Entry(1, 0, 42).Text("sn");
+        return Word(kInline).Entry(1, 1, std::bit_cast<std::uint32_t>(2.5f));
     }
 };
 
@@ -74,13 +94,35 @@ menuDef_t *Load(std::uintptr_t slotValue)
     return LoadHeader(DB_LoadMenuDefPtrDisk32, slotValue);
 }
 
-// The two key handlers, in native storage's order.
+// The native records in native storage's order: the two key handlers, the
+// visibility entry pointers and entries, then the x statement's.
 bool KeyHandlersConverted(const Zone &zone, const menuDef_t &menu)
 {
     const ItemKeyHandler *const first = menu.onKey;
     return first == reinterpret_cast<const ItemKeyHandler *>(g_arena) && first->key == 13
         && first->action == zone.At(32) && first->next == first + 1 && first->next->key == 27
         && !first->next->action && !first->next->next;
+}
+
+// The visibility statement: a string operand, an operator and an int
+// operand, in native storage past the key handlers.
+bool VisibilityConverted(const Zone &zone, const statement_s &visible)
+{
+    const auto *const entries = reinterpret_cast<expressionEntry *const *>(g_arena + 48);
+    return visible.numEntries == 3 && visible.entries == entries && entries[0]->type == 1
+        && entries[0]->data.operand.dataType == VAL_STRING && entries[0]->data.operand.internals.string == zone.At(72)
+        && entries[1]->type == 0 && entries[1]->data.op == OP_ADD && entries[2]->data.operand.dataType == VAL_INT
+        && entries[2]->data.operand.internals.intVal == 42 && zone.virt[76 + 4] == 5; // the operator, 4-aligned
+}
+
+// The x statement's float operand, last in native storage, and the empty y
+// statement at its stream position.
+bool RectsConverted(const Zone &zone, const menuDef_t &menu)
+{
+    const expressionEntry *const x = menu.rectXExp.entries ? menu.rectXExp.entries[0] : nullptr;
+    return x == reinterpret_cast<const expressionEntry *>(g_arena + 152) && x->data.operand.dataType == VAL_FLOAT
+        && x->data.operand.internals.floatVal == 2.5f && !menu.rectYExp.numEntries
+        && reinterpret_cast<const std::uint8_t *>(menu.rectYExp.entries) == zone.virt + 120;
 }
 
 bool WindowConverted(const windowDef_t &window)
@@ -100,7 +142,7 @@ bool StringsLoaded(const Zone &zone, const menuDef_t &menu)
 {
     return menu.window.name == zone.At(4) && !std::strcmp(zone.At(4), "main") && menu.window.group == zone.At(9)
         && menu.font == zone.At(11) && menu.onOpen == zone.At(14) && !menu.onClose && menu.onESC == zone.At(4)
-        && menu.soundName == zone.At(48) && !menu.allowedBinding;
+        && menu.soundName == zone.At(100) && !menu.allowedBinding;
 }
 
 void TestInlineMenu()
@@ -114,9 +156,9 @@ void TestInlineMenu()
     Expect(StringsLoaded(zone, *menu), "the strings stream into block 4, and an offset token names an earlier one");
     Expect(ScalarsConverted(*menu), "the window and menu scalars convert, and the background names the alias");
     Expect(KeyHandlersConverted(zone, *menu), "the key handlers chain in native storage");
-    Expect(!menu->visibleExp.entries && !menu->rectXExp.entries && !menu->rectYExp.entries,
-           "the empty statements name no entries");
-    Expect(g_arenaUsed == 48 && g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 51
+    Expect(VisibilityConverted(zone, menu->visibleExp) && RectsConverted(zone, *menu),
+           "the statements' entries convert into native storage");
+    Expect(g_arenaUsed == 176 && g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 120 && zone.virt[103] == 0
                && !std::memcmp(zone.temp, g_file.data(), kRecordBytes),
            "the record streams into the temp block, and block 4 holds exactly the menu");
 }
@@ -125,7 +167,8 @@ void TestInlineMenu()
 Record Bare()
 {
     Record bare;
-    return bare.Set(0x034, 0).Set(0x09C, 0).Set(0x0C4, 0).Set(0x0CC, 0).Set(0x0D0, 0).Set(0x0E0, 0);
+    bare.Set(0x034, 0).Set(0x09C, 0).Set(0x0C4, 0).Set(0x0CC, 0).Set(0x0D0, 0).Set(0x0D4, 0).Set(0x0D8, 0).Set(0x0E0, 0);
+    return bare.Set(0x108, 0).Set(0x10C, 0).Set(0x114, 0);
 }
 
 // A shared-inline menu registers its alias at block-4 offset 4, so a later
@@ -163,10 +206,17 @@ const Malformed kMalformed[] = {
     {"an unmapped background", 0x098, VirtualOffset(64), "alias offset"},
     {"an unmapped escape script", 0x0CC, VirtualOffset(900), "string offset"},
     {"a negative entry count", 0x0D4, 0xFFFFFFFF, kEntries},
-    {"entries without a token", 0x108, 1, kEntries},
-    {"statement entries", 0x10C, kInline, "statements have no 64-bit loader yet"},
-    {"y statement entries", 0x114, kInline, "statements have no 64-bit loader yet"},
+    {"entries without a token", 0x10C, 0, kEntries},
+    {"entry bytes past 32 bits", 0x0D4, 0x40000000, kEntries},
+    {"tokens past the block", 0x0D4, 300, "exceeds stream block"},
 };
+
+const std::pair<Stream, const char *> kStreamBreaks[] = {
+    {{0}, "null entry"},
+    {{kInline, static_cast<std::uint32_t>(NUM_OPERATORS)}, "expression operator"},
+    {{kInline, 0xFFFFFFFF}, "expression operator"},
+};
+
 
 void TestMalformedFailsClosed()
 {
@@ -175,6 +225,12 @@ void TestMalformedFailsClosed()
         Zone zone;
         File().Write(Record().Set(test.at, test.value));
         ExpectDrop(test.what, test.error, [] { Load(kInline); });
+    }
+    for (const auto &[stream, error] : kStreamBreaks)
+    {
+        Zone zone;
+        File().Write(Record(), stream);
+        ExpectDrop("a malformed stream", error, [] { Load(kInline); });
     }
     {
         Zone zone;
@@ -191,7 +247,7 @@ void TestMalformedFailsClosed()
     }
     Zone zone;
     File().Write(Record());
-    g_arenaCapacity = 47;
+    g_arenaCapacity = 175;
     ExpectDrop("native storage exhausted", "exhausted", [] { Load(kInline); });
     ExpectDrop("an unmapped alias", "alias offset", [] { Load(VirtualOffset(16)); });
 }

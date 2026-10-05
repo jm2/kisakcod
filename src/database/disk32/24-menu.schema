@@ -1,7 +1,7 @@
 # Menu (menuDef_t), asset type 0x15: a 284-byte record that grows to 360
 # bytes natively. The format is described in ../db_disk32.schema. The body is
-# custom (db_disk32_menu.cpp): the key handlers convert into zone-lifetime
-# native storage.
+# custom (db_disk32_menu.cpp): the key handlers, statements and their
+# expression entries convert into zone-lifetime native storage.
 
 # A window: its name, group and background load by the body.
 record Window 0x9C runtime=windowDef_t header=ui/ui_shared.h copy=scalars
@@ -17,7 +17,18 @@ record ItemKeyHandler 0x0C runtime=ItemKeyHandler header=ui/ui_shared.h copy=sca
     0x04 action                   xstring
     0x08 next                     pointer
 
-# A statement: numEntries entry tokens.
+# An operand: a string (data type 2) or a 4-byte int or float.
+record Operand 0x08 runtime=Operand header=ui/ui_shared.h
+    0x00 dataType                 i32
+    0x04 internals.string         xstring
+
+# An expression entry: an operator (type 0, its number in dataType) or an
+# operand.
+record ExpressionEntry 0x0C runtime=expressionEntry header=ui/ui_shared.h
+    0x00 type                     i32
+    0x04 data                     struct    of=Operand
+
+# A statement: numEntries entry tokens, each naming an entry that follows.
 record Statement 0x08 runtime=statement_s header=ui/ui_shared.h copy=scalars
     0x00 numEntries               i32
     0x04 entries                  pointer
