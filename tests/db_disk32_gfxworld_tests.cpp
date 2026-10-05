@@ -12,6 +12,7 @@
 #include <database/db_load_legacy_bridge.h>
 
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -23,12 +24,13 @@ using namespace disk32_test;
 GfxImage g_image; // the aliases Zone registers at block-4 offsets 0, 4 and 8
 GfxLightDef g_lightDef;
 Material g_material;
+GfxWorld g_world; // what Load_GfxWorldAsset published
 
 constexpr std::uint32_t kRecordBytes = 732;
 
 // Every zone starts block 4 with an image, a light-def and a material alias,
 // as earlier assets leave them.
-struct Zone : disk32_test::Zone<2048, 1024, 4096>
+struct Zone : disk32_test::Zone<2048, 1536, 4096>
 {
     Zone()
     {
@@ -48,8 +50,9 @@ struct Zone : disk32_test::Zone<2048, 1024, 4096>
 // memory naming the material, a vertex and three layer bytes, the sun's
 // sprite material and the outdoor image, one dynamic model and brush with
 // their runtime arrays, both primary lights' shadow geometry and light
-// regions, and the static DPVS: one cull group, three sorted surfaces (one
-// decal-free), each array present.
+// regions, the static DPVS (one cull group, three sorted surfaces, one of
+// them decal-free, each array present) and the dynamic DPVS (a client word
+// for each type, each array present).
 struct Record
 {
     std::vector<std::uint8_t> bytes = std::vector<std::uint8_t>(kRecordBytes);
@@ -69,6 +72,9 @@ struct Record
         Set(0x234, kInline).Set(0x23C, kInline).Set(0x240, kInline).Set(0x0E0, 1).Set(0x24C, 1).Set(0x268, 1);
         Set(0x26C, 1);
         for (std::uint32_t at = 0x270; at <= 0x2A4; at += 4)
+            Set(at, kInline);
+        Set(0x2AC, 1).Set(0x2B0, 1);
+        for (std::uint32_t at = 0x2BC; at <= 0x2D8; at += 4)
             Set(at, kInline);
     }
     Record &Set(std::uint32_t at, std::uint32_t value)
@@ -90,6 +96,7 @@ struct CellOptions
     std::uint8_t portalVertices = 3;
     std::uint8_t portalSideX = 12;     // the first portal plane's x side
     std::uint8_t secondProbeCount = 1; // the second cell's probe indices
+    std::uint16_t secondSurfaces = 0;  // the second cell's tree surfaces, from 0
 };
 
 // What a test breaks in the sun light.
@@ -107,6 +114,7 @@ struct Dpvs
     std::uint16_t sorted = 1;                   // the last sorted surface's index
     std::uint32_t material = VirtualOffset(8); // the first surface's material
     std::uint32_t model = 0;                    // the draw instance's model
+    std::uint32_t cullSurfaces = 1;             // the cull group's surfaces, from 0
 };
 
 // What a test breaks in the primary lights' shadow geometry and regions.
@@ -155,10 +163,10 @@ struct File : FileBuilder<File>
     }
     // A tree node: unit bounds, then its counts, indices token and children.
     File &Tree(std::uint16_t children, std::uint16_t surfaces, std::uint16_t start, std::uint16_t smodels,
-               std::int32_t childrenOffset)
+               std::int32_t childrenOffset, std::uint16_t noDecal = 0)
     {
         Float(0).Float(0).Float(0).Float(1).Float(1).Float(1).Short(children).Short(surfaces).Short(start);
-        Short(0).Short(0).Short(smodels).Word(smodels ? kInline : 0);
+        Short(noDecal).Short(noDecal ? 2 : 0).Short(smodels).Word(smodels ? kInline : 0);
         return Word(static_cast<std::uint32_t>(childrenOffset));
     }
     // A portal naming cell, its plane facing +x, then its vertices.
@@ -180,10 +188,11 @@ struct File : FileBuilder<File>
     File &Cells(const CellOptions &o)
     {
         Cell(o.firstMinX, 3, 1, 1).Cell(0, o.secondTreeCount, 0, o.secondProbeCount);
-        Tree(2, 2, 0, 1, o.childrenOffset).Tree(0, 1, 0, 0, 0).Tree(0, 1, 1, 0, 0).Short(o.smodelIndex);
+        // The root covers the two static surfaces and the decal-free one (2).
+        Tree(2, 2, 0, 1, o.childrenOffset, 1).Tree(0, 1, 0, 0, 0, 1).Tree(0, 1, 1, 0, 0).Short(o.smodelIndex);
         Portal(o.portalCell ? o.portalCell : VirtualOffset(156 + 56), o.portalVertices, o.portalSideX);
         Word(0).Text("");
-        Tree(0, 0, 0, 0, 0).Portal(VirtualOffset(156), 3, 12);
+        Tree(0, o.secondSurfaces, 0, 0, 0).Portal(VirtualOffset(156), 3, 12);
         return Text("");
     }
     // Past the cells, 4-aligned: the lightmap at 668; the light grid's row
@@ -199,8 +208,9 @@ struct File : FileBuilder<File>
         Text("ab").Word(9);
         for (int value = 0; value < 42; ++value)
             Word(static_cast<std::uint32_t>(value));
-        for (int value = 0; value < 14; ++value)
+        for (int value = 0; value < 12; ++value)
             Float(static_cast<float>(value));
+        Short(2).Short(0).Short(1).Short(0); // the world model's surfaces: both static ones, one decal-free
         Word(VirtualOffset(8)).Word(77);
         for (int value = 0; value < 11; ++value)
             Float(static_cast<float>(value));
@@ -244,7 +254,7 @@ struct File : FileBuilder<File>
         }
         for (int value = 0; value < 6; ++value)
             Float(static_cast<float>(value));
-        Word(1).Word(0).Float(500);
+        Word(o.cullSurfaces).Word(0).Float(500);
         for (int value = 0; value < 13; ++value)
             Float(1);
         return Word(o.model).Short(4).Short(5).Short(6).Short(7).Word(0x01020304).Word(1);
@@ -326,7 +336,19 @@ bool DpvsRuntimeZeroed(const std::uint8_t *runtime)
         if (runtime[at] != (at >= 2098 && at < 2112 ? 0xAA : 0))
             return false;
     }
-    return runtime[2176] == 0xAA;
+    return true;
+}
+
+// Then the dynamic DPVS's: two cells' words of bits for each type, then six
+// 32-byte visibility arrays, 16-aligned, ending at 2384.
+bool DynamicRuntimeZeroed(const std::uint8_t *runtime)
+{
+    for (std::size_t at = 2176; at < 2384; ++at)
+    {
+        if (runtime[at])
+            return false;
+    }
+    return runtime[2384] == 0xAA;
 }
 
 // The light grid, brush model, material memory and vertex data in block 4.
@@ -334,12 +356,13 @@ bool MiddleStreamed(const Zone &zone)
 {
     std::uint16_t rows[2] = {};
     std::memcpy(rows, zone.virt + 676, sizeof(rows));
-    float model[14] = {};
-    std::memcpy(model, zone.virt + 856, sizeof(model));
+    std::uint16_t model[3] = {};
+    std::memcpy(model, zone.virt + 856 + 48, sizeof(model));
     float vertex[11] = {};
     std::memcpy(vertex, zone.virt + 920, sizeof(vertex));
     return rows[1] == 8 && !std::strcmp(zone.At(680), "ab") && zone.virt[684] == 9 && zone.virt[688 + 164] == 41
-        && model[13] == 13.f && zone.virt[912 + 4] == 77 && vertex[10] == 10.f && !std::strcmp(zone.At(964), "xy");
+        && model[0] == 2 && model[2] == 1 && zone.virt[912 + 4] == 77 && vertex[10] == 10.f
+        && !std::strcmp(zone.At(964), "xy");
 }
 
 // The two shadow geometries in native storage past the material memory,
@@ -403,16 +426,68 @@ bool StaticDpvsConverted(const Zone &zone)
         && zone.virt[1120] == 1 && zone.virt[1124] == 20 && zone.virt[1248 + 24] == 1;
 }
 
-// The dynamic DPVS, which does not load yet, ends the load: what streamed before it
-// sits at its aligned retail offsets, and what converted sits in native
-// storage.
-void TestPrefix()
+// Whether each pointer is the one expected.
+bool Point(std::initializer_list<std::pair<const void *, const void *>> pointers)
+{
+    for (const auto &[actual, expected] : pointers)
+    {
+        if (actual != expected)
+            return false;
+    }
+    return true;
+}
+
+// The published world's pointers into native storage: the sun light, the
+// probes and their textures, the cells, the lightmaps and their textures,
+// the material memory, the shadow geometry, regions, surfaces, draw
+// instances and draw keys.
+bool PublishedNative(const GfxWorld &world)
+{
+    return Point({{world.sunLight, g_arena}, {world.reflectionProbes, g_arena + 72},
+                  {world.reflectionProbeTextures, g_arena + 96}, {world.cells, g_arena + 104},
+                  {world.lightmaps, g_arena + 696}, {world.lightmapSecondaryTextures, g_arena + 720},
+                  {world.materialMemory, g_arena + 728}, {world.shadowGeom, g_arena + 744},
+                  {world.lightRegion, g_arena + 792}, {world.dpvs.surfaces, g_arena + 912},
+                  {world.dpvs.smodelDrawInsts, g_arena + 1024}, {world.dpvs.surfaceMaterials, g_arena + 1104}});
+}
+
+// Its pointers into block 4 and its aliases.
+bool PublishedStreamed(const Zone &zone, const GfxWorld &world)
+{
+    const std::uint8_t *const virt = zone.virt;
+    return Point({{world.name, virt + 12}, {world.indices, virt + 18}, {world.skyImage, &g_image},
+                  {world.models, virt + 856}, {world.vd.vertices, virt + 920}, {world.vd.worldVb, nullptr},
+                  {world.vld.data, virt + 964}, {world.sun.spriteMaterial, &g_material},
+                  {world.sun.flareMaterial, nullptr}, {world.outdoorImage, &g_image},
+                  {world.dpvs.sortedSurfIndex, virt + 1116}, {world.dpvs.cullGroups, virt + 1248}});
+}
+
+// Its pointers into block 1.
+bool PublishedRuntime(const Zone &zone, const GfxWorld &world)
+{
+    const std::uint8_t *const runtime = zone.runtime;
+    const GfxWorldDpvsDynamic &dyn = world.dpvsDyn;
+    return Point({{world.dpvsPlanes.sceneEntCellBits, runtime + 4}, {world.cellCasterBits, runtime + 2060},
+                  {world.sceneDynModel, runtime + 2068}, {world.primaryLightDynEntShadowVis[1], runtime + 2084},
+                  {world.nonSunPrimaryLightForModelDynEnt, runtime + 2088}, {world.dpvs.lodData, runtime + 2112},
+                  {world.dpvs.surfaceCastsSunShadow, runtime + 2160}, {dyn.dynEntCellBits[1], runtime + 2184},
+                  {dyn.dynEntVisData[0][0], runtime + 2192}, {dyn.dynEntVisData[1][0], runtime + 2224},
+                  {dyn.dynEntVisData[1][2], runtime + 2352}});
+}
+
+// A world loads whole and publishes: what streamed sits at its aligned
+// retail offsets, what converted sits in native storage, and the published
+// world points at each.
+void TestWorld()
 {
     Zone zone;
     File().Write(Record());
-    const Drop drop = Catch([] { Load(kInline); });
-    Expect(std::strstr(drop.message, "dynamic DPVS has no 64-bit loader yet") && g_published == 0,
-           "the load stops past the static DPVS", drop.message);
+    const GfxWorld *const world = Load(kInline);
+    Expect(world == &g_world && g_published == 1, "a whole world publishes one pool entry");
+    if (world != &g_world)
+        return;
+    Expect(PublishedNative(*world) && PublishedStreamed(zone, *world) && PublishedRuntime(zone, *world),
+           "the published world points at its native records, its block-4 arrays, its aliases and block 1");
     Expect(StartStreamed(zone), "the names, indices, sky surfaces, sun light, probe and nodes stream into block 4 "
                                 "at their 4- and 2-aligned retail offsets");
     Expect(NativePrefixConverted(), "the sun light, the probe and its texture convert into native storage");
@@ -428,6 +503,8 @@ void TestPrefix()
     Expect(StaticDpvsConverted(zone), "the static DPVS's surfaces and draw instance convert into native storage");
     Expect(DpvsRuntimeZeroed(zone.runtime), "the static DPVS's runtime arrays zero-fill block 1, the LOD data and "
                                             "sun-shadow bits 16-aligned");
+    Expect(DynamicRuntimeZeroed(zone.runtime), "the dynamic DPVS's runtime arrays zero-fill block 1, the visibility "
+                                               "16-aligned");
     Expect(DB_GetStreamPos() == zone.virt + 1356 && g_read == g_file.size()
                && !std::memcmp(zone.temp, g_file.data(), kRecordBytes),
            "the record streams into the temp block, and block 4 holds exactly what loaded");
@@ -489,6 +566,10 @@ const Malformed kMalformed[] = {
     {"65537 static models", 0x244, 65537, "static-model counts"},
     {"LOD data past 32 bits", 0x268, 0x40000000, "static-model counts"},
     {"static-model instances without a token", 0x290, 0, "world draw arrays"},
+    {"a client word short", 0x2AC, 0, "dynamic-entity counts"},
+    {"a client word over", 0x2B0, 2, "dynamic-entity counts"},
+    {"model cell bits without a token", 0x2BC, 0, "dynamic-entity counts"},
+    {"brush visibility without a token", 0x2D8, 0, "dynamic-entity counts"},
     {"model visibility without a token", 0x278, 0, "world draw arrays"},
     {"surface visibility without a token", 0x284, 0, "world draw arrays"},
     {"LOD data without a token", 0x288, 0, "world draw arrays"},
@@ -566,6 +647,7 @@ void TestCellBreaksFailClosed()
         {{1, 0, 0, 44, 0, 2}, "portal vertex layout"},
         {{1, 0, 0, 44, 0, 3, 0}, "completed fast-file world portal"},
         {{1, 0, 0, 44, 0, 3, 12, 0}, "world cell layout"},
+        {{1, 0, 0, 44, 0, 3, 12, 1, 1}, "Overlapping fast-file world AABB root surfaces"},
     };
     for (const auto &[cells, error] : breaks)
     {
@@ -582,15 +664,52 @@ void TestDpvsAligned()
     Zone zone;
     File().Write(Record().Set(0x288, 0).Set(0x268, 0));
     Catch([] { Load(kInline); });
-    bool aligned = zone.runtime[2099] == 0xAA && zone.runtime[2100] == 0 && zone.runtime[2144] == 0xAA;
+    bool aligned = zone.runtime[2099] == 0xAA && zone.runtime[2100] == 0;
     for (std::size_t at = 2116; at < 2144; ++at)
         aligned = aligned && zone.runtime[at] == (at < 2128 ? 0xAA : 0);
     Expect(aligned, "the draw keys follow 4-aligned, and the sun-shadow bits 16-aligned");
 }
 
+// A later world naming the first world's sun light by its retail offset (32)
+// resolves to the completed native light: past its sun, it fails on the
+// probes, which its stream lacks.
+void TestSunAlias()
+{
+    Zone zone;
+    File().Write(Record());
+    const GfxWorld *const first = Load(kInline);
+    Record second;
+    second.Set(0x004, 0).Set(0x010, 0).Set(0x014, 0).Set(0x020, 0).Set(0x024, 0).Set(0x028, 0);
+    second.Set(0x0C8, VirtualOffset(32));
+    g_file.insert(g_file.end(), second.bytes.begin(), second.bytes.end());
+    File().Text("b");
+    const Drop drop = Catch([] { Load(kInline); });
+    Expect(std::strstr(drop.message, "ended unexpectedly") != nullptr, "the second world resolves the sun light",
+           drop.message);
+    Expect(first == &g_world && g_published == 1 && first->sunLight == reinterpret_cast<const GfxLight *>(g_arena),
+           "the first world publishes with its native sun light");
+}
+
+// Without dynamic brushes, the model visibility follows the model cell bits
+// 16-aligned, past a gap.
+void TestDynamicAligned()
+{
+    Zone zone;
+    Record record;
+    record.Set(0x2B0, 0).Set(0x2B8, 0).Set(0x2C0, 0).Set(0x2D0, 0).Set(0x2D4, 0).Set(0x2D8, 0);
+    File().Write(record);
+    const GfxWorld *const world = Load(kInline);
+    const auto *const bits = world ? reinterpret_cast<const std::uint8_t *>(world->dpvsDyn.dynEntCellBits[0]) : nullptr;
+    const std::uint8_t *const visibility = world ? world->dpvsDyn.dynEntVisData[0][0] : nullptr;
+    Expect(bits && (bits + 8 - zone.runtime) % 16 && (visibility - zone.runtime) % 16 == 0 && visibility > bits + 8
+               && visibility < bits + 24 && !world->dpvsDyn.dynEntCellBits[1],
+           "the model visibility follows its cell bits 16-aligned");
+}
+
 void TestDpvsBreaksFailClosed()
 {
     const std::pair<Dpvs, const char *> breaks[] = {
+        {{1, VirtualOffset(8), 0, 4}, "world cell graph"}, // past the three sorted surfaces
         {{2}, "invalid sorted surface index"}, // the static surfaces number 2
         {{1, VirtualOffset(64)}, "alias offset"},
         {{1, VirtualOffset(8), VirtualOffset(64)}, "alias offset"},
@@ -636,9 +755,13 @@ void TestMalformedFailsClosed()
 }
 } // namespace
 
-void __cdecl Load_GfxWorldAsset(XAssetHeader *)
+void __cdecl Load_GfxWorldAsset(XAssetHeader *header)
 {
-    ++g_published; // nothing publishes until every part loads
+    // DB_AddXAsset hashes the name, then copies the header into the pool.
+    Expect(header->gfxWorld->name != nullptr, "a published world has a name");
+    g_world = *header->gfxWorld;
+    header->gfxWorld = &g_world;
+    ++g_published;
 }
 
 // The sky names its image by alias, so no image loads; Image's TU links all the same.
@@ -701,6 +824,7 @@ void __cdecl DB_LoadedExternalData(std::int32_t)
 
 int main()
 {
-    return Run({TestPrefix, TestGridAligned, TestSunAligned, TestSunBreaksFailClosed, TestCellBreaksFailClosed,
-                TestShadowBreaksFailClosed, TestDpvsAligned, TestDpvsBreaksFailClosed, TestMalformedFailsClosed});
+    return Run({TestWorld, TestGridAligned, TestSunAligned, TestSunBreaksFailClosed, TestCellBreaksFailClosed,
+                TestShadowBreaksFailClosed, TestDpvsAligned, TestDynamicAligned, TestSunAlias, TestDpvsBreaksFailClosed,
+                TestMalformedFailsClosed});
 }
