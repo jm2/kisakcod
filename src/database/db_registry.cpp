@@ -1159,22 +1159,22 @@ void __cdecl Mark_MenuAsset(menuDef_t *menu)
     DB_GetXAsset(ASSET_TYPE_MENU, (XAssetHeader)menu);
 }
 
+// A dynamic clone keeps the source menu's dynamic flags, and each item's
+// whose name matches an item in the source, then clears every item's focus.
 void __cdecl DB_DynamicCloneMenu(XAssetHeader from, XAssetHeader to, int32_t swag)
 {
-    windowDef_t *toWindow; // [esp+14h] [ebp-18h]
-    int32_t toIndex; // [esp+18h] [ebp-14h]
-    int32_t fromIndex; // [esp+1Ch] [ebp-10h]
-    windowDef_t *fromWindow; // [esp+24h] [ebp-8h]
+    const menuDef_t *const fromMenu = from.menu;
+    menuDef_t *const toMenu = to.menu;
 
-    to.xmodelPieces[6].pieces = from.xmodelPieces[6].pieces;
-    for (toIndex = 0; toIndex < (int)to.xmodelPieces[13].pieces; ++toIndex)
+    toMenu->window.dynamicFlags[0] = fromMenu->window.dynamicFlags[0];
+    for (int32_t toIndex = 0; toIndex < toMenu->itemCount; ++toIndex)
     {
-        toWindow = *(windowDef_t **)(to.xmodelPieces[23].numpieces + 4 * toIndex);
+        windowDef_t *const toWindow = &toMenu->items[toIndex]->window;
         if (toWindow->name)
         {
-            for (fromIndex = 0; fromIndex < (int)from.xmodelPieces[13].pieces; ++fromIndex)
+            for (int32_t fromIndex = 0; fromIndex < fromMenu->itemCount; ++fromIndex)
             {
-                fromWindow = *(windowDef_t **)(from.xmodelPieces[23].numpieces + 4 * fromIndex);
+                const windowDef_t *const fromWindow = &fromMenu->items[fromIndex]->window;
                 if (fromWindow->name && !strcmp(fromWindow->name, toWindow->name))
                 {
                     toWindow->dynamicFlags[0] = fromWindow->dynamicFlags[0];

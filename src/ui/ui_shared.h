@@ -4,6 +4,9 @@
 
 #include <gfx_d3d/r_font.h>
 #include "keycodes.h"
+#include <universal/kisak_abi.h>
+
+#include <cstddef>
 
 #undef DrawText
 
@@ -532,6 +535,14 @@ struct menuDef_t // sizeof=0x11C
     statement_s rectYExp;
     itemDef_s **items;
 };
+// The members DB_DynamicCloneMenu reads, at the ILP32 offsets the retail
+// code reached them at.
+RUNTIME_OFFSET(windowDef_t, name, 0x00, 0x00);
+RUNTIME_OFFSET(windowDef_t, dynamicFlags, 0x50, 0x58);
+RUNTIME_OFFSET(itemDef_s, window, 0x00, 0x00);
+RUNTIME_OFFSET(menuDef_t, window, 0x00, 0x00);
+RUNTIME_OFFSET(menuDef_t, itemCount, 0xA4, 0xB4);
+RUNTIME_OFFSET(menuDef_t, items, 0x118, 0x160);
 
 union UILocalVar_u // sizeof=0x4
 {                                       // ...

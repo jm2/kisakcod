@@ -3,7 +3,8 @@
 // db_hashCritSect around the bridge calls, the quit checks reach the Com_Error
 // stub with the hash held (in production that error never returns). The
 // production TUs at 64-bit with the headless defines, as in
-// game_mp_hazard_tests.cpp: weak engine boundary, --gc-sections.
+// game_mp_hazard_tests.cpp: weak engine boundary, --gc-sections. Also the
+// menu asset's dynamic clone, which db_registry.cpp holds.
 
 #include <database/database.h>
 #include <database/db_load_legacy_bridge.h>
@@ -14,6 +15,7 @@
 #include <qcommon/qcommon.h>
 #include <qcommon/sys_sync.h>
 #include <script/scr_stringlist.h>
+#include <ui/ui_shared.h>
 
 #include <array>
 #include <cstdio>
@@ -100,6 +102,43 @@ void TestPoisonedWindowIsFatal()
     ++g_failures;
 }
 
+// A dynamic clone of a two-item menu at 64-bit: the menu's dynamic flags
+// copy, a named item's copy from the source item of the same name (not the
+// same index; unnamed items match nothing), and every item loses focus
+// (flag 2). The source is unchanged.
+void TestDynamicCloneMenu()
+{
+    char buttonName[] = "button";
+    char cloneName[] = "button"; // equal text, another pointer
+    std::array<itemDef_s, 2> fromItems{};
+    std::array<itemDef_s, 2> toItems{};
+    fromItems[0].window.dynamicFlags[0] = 0x10; // unnamed: matches nothing
+    fromItems[1].window.name = buttonName;
+    fromItems[1].window.dynamicFlags[0] = 0x6;
+    toItems[0].window.name = cloneName;
+    toItems[0].window.dynamicFlags[0] = 0x1;
+    toItems[1].window.dynamicFlags[0] = 0x3; // unnamed: keeps its flags but focus
+    std::array<itemDef_s *, 2> fromList{&fromItems[0], &fromItems[1]};
+    std::array<itemDef_s *, 2> toList{&toItems[0], &toItems[1]};
+    menuDef_t fromMenu{};
+    menuDef_t toMenu{};
+    fromMenu.window.dynamicFlags[0] = 0x20;
+    fromMenu.itemCount = 2;
+    fromMenu.items = fromList.data();
+    toMenu.itemCount = 2;
+    toMenu.items = toList.data();
+    XAssetHeader from{};
+    XAssetHeader to{};
+    from.menu = &fromMenu;
+    to.menu = &toMenu;
+    DB_DynamicCloneMenu(from, to);
+    CHECK(toMenu.window.dynamicFlags[0] == 0x20);
+    CHECK(toItems[0].window.dynamicFlags[0] == 0x4);
+    CHECK(toItems[1].window.dynamicFlags[0] == 0x1);
+    CHECK(toMenu.items == toList.data() && toMenu.itemCount == 2);
+    CHECK(fromItems[1].window.dynamicFlags[0] == 0x6 && fromItems[0].window.dynamicFlags[0] == 0x10);
+}
+
 std::array<std::recursive_mutex, CRITSECT_COUNT> g_criticalSections;
 }  // namespace
 
@@ -180,6 +219,7 @@ int main(int argc, char **argv)
         TestPoisonedWindowIsFatal();
         return 1;
     }
+    TestDynamicCloneMenu();
     TestQuitFreesZoneNames();
     TestFailureInSessionKeepsNames();
     TestUnloadReportsAfterRelease(); // last: the poison is process-wide
