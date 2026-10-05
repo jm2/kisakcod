@@ -21,8 +21,9 @@
 // naming a native cell) and index arrays, under the 32-bit loader's cell,
 // topology and portal rules; then its lightmaps, light grid, brush models,
 // material memory, vertex data and sun flare, its runtime arrays in block 1,
-// and each primary light's shadow geometry and light region. The DPVS does
-// not load yet, so every world still fails closed.
+// each primary light's shadow geometry and light region, and the static
+// DPVS. The dynamic DPVS does not load yet, so every world still fails
+// closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -561,6 +562,125 @@ bool LoadPrimaryLights(const Disk &disk, GfxWorld *out)
                                                      ConvertRegion);
 }
 
+// The static DPVS's runtime arrays in block 1: three static-model and three
+// surface visibility arrays, one byte per model or surface, then the LOD
+// data, 16-aligned.
+bool LoadStaticVisibility(const disk32::GfxWorldDpvsStaticDisk32 &disk, std::int32_t lodDataCount,
+                          GfxWorldDpvsStatic *out)
+{
+    for (int index = 0; index < 3; ++index)
+    {
+        if (!LoadRuntime(disk.smodelVisData[index].token, disk.smodelCount, 1, 1, &out->smodelVisData[index]))
+            return false;
+    }
+    for (int index = 0; index < 3; ++index)
+    {
+        if (!LoadRuntime(disk.surfaceVisData[index].token, disk.staticSurfaceCount, 1, 1, &out->surfaceVisData[index]))
+            return false;
+    }
+    return LoadRuntime(disk.lodData.token, lodDataCount, 16, 16, &out->lodData);
+}
+
+bool ConvertSurface(const disk32::GfxSurfaceDisk32 &disk, GfxSurface *out)
+{
+    CopyGfxSurfaceScalars(disk, out);
+    LoadMaterialPtr(disk.material.token, &out->material);
+    return true;
+}
+
+bool ConvertDrawInst(const disk32::GfxStaticModelDrawInstDisk32 &disk, GfxStaticModelDrawInst *out)
+{
+    CopyGfxStaticModelDrawInstScalars(disk, out);
+    LoadXModelPtr(disk.model.token, &out->model);
+    return true;
+}
+
+// Draw keys the renderer fills: as on x86 any non-null token zero-fills
+// count 8-byte keys 4-aligned in block 1, but a key is a 64-bit word, so the
+// native array is zeroed, 8-aligned native storage.
+bool LoadDrawKeys(disk32::PointerToken token, std::int64_t count, GfxDrawSurf **out)
+{
+    std::uint8_t *slots = nullptr;
+    *out = nullptr;
+    if (!LoadRuntime(token, count, sizeof(GfxDrawSurf), 4, &slots))
+        return false;
+    if (!slots || !count)
+        return true;
+    GfxDrawSurf *const keys = AllocNative<GfxDrawSurf>(static_cast<std::int32_t>(count));
+    if (!keys)
+        return false;
+    std::memset(keys, 0, static_cast<std::size_t>(count) * sizeof(GfxDrawSurf));
+    *out = keys;
+    return true;
+}
+
+// The static DPVS's per-model and per-surface arrays: the renderer reads an
+// element of each for every model or surface its counts cover, so each such
+// array has its token.
+bool DrawArraysPresent(const Disk &disk)
+{
+    const disk32::GfxWorldDpvsStaticDisk32 &dpvs = disk.dpvs;
+    const auto present = [](bool hasCount, disk32::PointerToken token) { return !hasCount || !token.isNull(); };
+    bool ok = present(dpvs.smodelCount, dpvs.smodelInsts.token) && present(dpvs.smodelCount, dpvs.smodelDrawInsts.token)
+        && present(disk.surfaceCount > 0, dpvs.surfaces.token)
+        && present(dpvs.staticSurfaceCount, dpvs.surfaceMaterials.token)
+        && present(dpvs.smodelVisDataCount, dpvs.lodData.token)
+        && present(dpvs.surfaceVisDataCount, dpvs.surfaceCastsSunShadow.token);
+    for (int index = 0; index < 3; ++index)
+    {
+        ok = ok && present(dpvs.smodelCount, dpvs.smodelVisData[index].token)
+            && present(dpvs.staticSurfaceCount, dpvs.surfaceVisData[index].token);
+    }
+    return ok;
+}
+
+// The sorted surfaces, 2-aligned in block 4, each below the static surface
+// count.
+bool LoadSortedSurfaces(const disk32::GfxWorldDpvsStaticDisk32 &dpvs, std::int32_t count, GfxWorldDpvsStatic *out)
+{
+    if (!LoadArray(dpvs.sortedSurfIndex.token, count, 2, 2, &out->sortedSurfIndex))
+        return false;
+    return db::validation::AllU16Below(out->sortedSurfIndex, static_cast<std::uint32_t>(count),
+                                       dpvs.staticSurfaceCount)
+        || Drop("Fast-file world has an invalid sorted surface index");
+}
+
+// The static-model instances, surfaces (naming materials), cull groups and
+// draw instances (naming models), in block 4.
+bool LoadDrawRecords(const Disk &disk, GfxWorldDpvsStatic *out)
+{
+    const disk32::GfxWorldDpvsStaticDisk32 &dpvs = disk.dpvs;
+    return LoadArray(dpvs.smodelInsts.token, dpvs.smodelCount, sizeof(GfxStaticModelInst), 4, &out->smodelInsts)
+        && LoadRecords<disk32::GfxSurfaceDisk32>(dpvs.surfaces.token, disk.surfaceCount, &out->surfaces,
+                                                 ConvertSurface)
+        && LoadArray(dpvs.cullGroups.token, disk.cullGroupCount, sizeof(GfxCullGroup), 4, &out->cullGroups)
+        && LoadRecords<disk32::GfxStaticModelDrawInstDisk32>(dpvs.smodelDrawInsts.token, dpvs.smodelCount,
+                                                             &out->smodelDrawInsts, ConvertDrawInst);
+}
+
+// Load_GfxWorldDpvsStatic: its static-model count (each model a 16-bit
+// index) and arrays, then the visibility and LOD data; the sorted surfaces;
+// the static-model instances; the surfaces (naming materials), cull groups
+// and draw instances (naming models); then the draw keys and sun-shadow bits
+// in block 1, the bits 16-aligned.
+bool LoadDpvsStatic(const Disk &disk, const Extents &extents, GfxWorldDpvsStatic *out)
+{
+    const disk32::GfxWorldDpvsStaticDisk32 &dpvs = disk.dpvs;
+    std::int32_t lodDataCount = 0;
+    if (dpvs.smodelCount > db::validation::kMaxWorldAabbStaticModels
+        || !CheckedCountProduct(2, dpvs.smodelVisDataCount, &lodDataCount))
+    {
+        return Drop("Invalid fast-file world static-model counts");
+    }
+    if (!DrawArraysPresent(disk))
+        return Drop("Invalid fast-file pointer/count for world draw arrays");
+    return LoadStaticVisibility(dpvs, lodDataCount, out) && LoadSortedSurfaces(dpvs, extents.sortedSurfaceCount, out)
+        && LoadDrawRecords(disk, out)
+        && LoadDrawKeys(dpvs.surfaceMaterials.token, dpvs.staticSurfaceCount, &out->surfaceMaterials)
+        && LoadRuntime(dpvs.surfaceCastsSunShadow.token, dpvs.surfaceVisDataCount, 16, 16,
+                       &out->surfaceCastsSunShadow);
+}
+
 // The record's scalars and its nested records'.
 void CopyScalars(const Disk &disk, GfxWorld *out)
 {
@@ -599,13 +719,13 @@ bool LoadLights(const Disk &disk, GfxWorld *out)
         && LoadDpvsPlanes(disk, &out->dpvsPlanes);
 }
 
-// The parts in block 4, in Load_GfxWorld's order. The DPVS does not load
-// yet, and no world publishes before it does.
+// The parts in block 4, in Load_GfxWorld's order. The dynamic DPVS does not
+// load yet, and no world publishes before it does.
 bool LoadParts(const Disk &disk, const Extents &extents, GfxWorld *out)
 {
     return LoadSky(disk, out) && LoadLights(disk, out) && LoadCells(disk, out) && LoadMiddle(disk, out)
         && LoadRuntimeArrays(disk, extents, out) && LoadPrimaryLights(disk, out)
-        && Drop("Fast-file world DPVS has no 64-bit loader yet");
+        && LoadDpvsStatic(disk, extents, &out->dpvs) && Drop("Fast-file world dynamic DPVS has no 64-bit loader yet");
 }
 } // namespace
 

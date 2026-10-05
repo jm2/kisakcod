@@ -9,6 +9,7 @@
 
 #include <database/db_disk32_load.h>
 #include <database/db_disk32_mirrors.h>
+#include <database/db_load_legacy_bridge.h>
 
 #include <cstring>
 #include <limits>
@@ -46,8 +47,9 @@ struct Zone : disk32_test::Zone<2048, 1024, 4096>
 // a light grid of two rows, the lightmap textures, the brush model, material
 // memory naming the material, a vertex and three layer bytes, the sun's
 // sprite material and the outdoor image, one dynamic model and brush with
-// their runtime arrays, and both primary lights' shadow geometry and light
-// regions.
+// their runtime arrays, both primary lights' shadow geometry and light
+// regions, and the static DPVS: one cull group, three sorted surfaces (one
+// decal-free), each array present.
 struct Record
 {
     std::vector<std::uint8_t> bytes = std::vector<std::uint8_t>(kRecordBytes);
@@ -64,7 +66,10 @@ struct Record
         Set(0x148, kInline).Set(0x14C, kInline).Set(0x174, 1).Set(0x178, kInline).Set(0x180, VirtualOffset(8));
         Set(0x030, 1).Set(0x034, kInline).Set(0x03C, 3).Set(0x040, kInline).Set(0x21C, VirtualOffset(0));
         Set(0x224, kInline).Set(0x228, kInline).Set(0x230, kInline).Set(0x238, kInline).Set(0x2B4, 1).Set(0x2B8, 1);
-        Set(0x234, kInline).Set(0x23C, kInline).Set(0x240, kInline);
+        Set(0x234, kInline).Set(0x23C, kInline).Set(0x240, kInline).Set(0x0E0, 1).Set(0x24C, 1).Set(0x268, 1);
+        Set(0x26C, 1);
+        for (std::uint32_t at = 0x270; at <= 0x2A4; at += 4)
+            Set(at, kInline);
     }
     Record &Set(std::uint32_t at, std::uint32_t value)
     {
@@ -96,6 +101,14 @@ struct Sun
     std::uint32_t def = VirtualOffset(4);
 };
 
+// What a test breaks in the static DPVS.
+struct Dpvs
+{
+    std::uint16_t sorted = 1;                   // the last sorted surface's index
+    std::uint32_t material = VirtualOffset(8); // the first surface's material
+    std::uint32_t model = 0;                    // the draw instance's model
+};
+
 // What a test breaks in the primary lights' shadow geometry and regions.
 struct Shadows
 {
@@ -119,7 +132,7 @@ struct File : FileBuilder<File>
     // the planes at 112 and the nodes at 152; block 1 holds the probe's
     // texture and then the scene-entity bits.
     File &Write(const Record &record, const Sun &sun = {}, const CellOptions &cells = {}, bool lightmap = true,
-                bool rows = true, const Shadows &shadows = {})
+                bool rows = true, const Shadows &shadows = {}, const Dpvs &dpvs = {})
     {
         g_file.insert(g_file.end(), record.bytes.begin(), record.bytes.end());
         Text("w").Text("ba").Short(1).Short(2).Short(3).Word(7).Word(8);
@@ -131,7 +144,7 @@ struct File : FileBuilder<File>
         for (int value = 0; value < 10; ++value)
             Float(static_cast<float>(value));
         Short(5).Short(6);
-        return Cells(cells).Middle(lightmap, rows).PrimaryLights(shadows);
+        return Cells(cells).Middle(lightmap, rows).PrimaryLights(shadows).StaticDpvs(dpvs);
     }
     // A cell: unit bounds from minX, its tree, portal, cull-group and probe counts.
     File &Cell(float minX, std::int32_t trees, std::uint32_t cullGroups, std::uint8_t probes)
@@ -213,6 +226,29 @@ struct File : FileBuilder<File>
             Float(0).Float(0).Float(1).Float(2).Float(3);
         return *this;
     }
+    // Past the axis: the sorted surfaces at 1116, then 4-aligned the
+    // static-model instance at 1124, the two surfaces at 1152, the cull group
+    // at 1248 and the draw instance at 1280. Block 1 holds the visibility
+    // bytes from 2089, the LOD data 16-aligned at 2112, the draw keys at 2144
+    // and the sun-shadow bits at 2160.
+    File &StaticDpvs(const Dpvs &o)
+    {
+        Short(0).Short(1).Short(o.sorted);
+        for (int value = 0; value < 7; ++value)
+            Word(static_cast<std::uint32_t>(value + 20));
+        for (std::uint32_t surface = 0; surface < 2; ++surface)
+        {
+            Word(surface).Word(0).Word(3).Word(0).Word(surface ? 0 : o.material).Word(surface);
+            for (int value = 0; value < 6; ++value)
+                Float(static_cast<float>(value));
+        }
+        for (int value = 0; value < 6; ++value)
+            Float(static_cast<float>(value));
+        Word(1).Word(0).Float(500);
+        for (int value = 0; value < 13; ++value)
+            Float(1);
+        return Word(o.model).Short(4).Short(5).Short(6).Short(7).Word(0x01020304).Word(1);
+    }
 };
 
 GfxWorld *Load(std::uintptr_t slotValue)
@@ -277,7 +313,20 @@ bool RuntimeArraysZeroed(const std::uint8_t *runtime)
         if (runtime[at] != (at == 2074 || at == 2075 ? 0xAA : 0))
             return false;
     }
-    return runtime[2089] == 0xAA;
+    return true;
+}
+
+// Then the static DPVS's: three static-model and three two-surface
+// visibility arrays, the LOD data 16-aligned at 2112, the draw keys and the
+// sun-shadow bits 16-aligned at 2160.
+bool DpvsRuntimeZeroed(const std::uint8_t *runtime)
+{
+    for (std::size_t at = 2089; at < 2176; ++at)
+    {
+        if (runtime[at] != (at >= 2098 && at < 2112 ? 0xAA : 0))
+            return false;
+    }
+    return runtime[2176] == 0xAA;
 }
 
 // The light grid, brush model, material memory and vertex data in block 4.
@@ -310,7 +359,7 @@ bool RegionsConverted(const Zone &zone)
 {
     const auto *const regions = reinterpret_cast<const GfxLightRegion *>(g_arena + 792);
     const GfxLightRegionHull *const hull = regions[0].hulls;
-    return g_arenaUsed == 912 && regions[0].hullCount == 1
+    return regions[0].hullCount == 1
         && hull == reinterpret_cast<const GfxLightRegionHull *>(g_arena + 824) && hull->kdopHalfSize[8] == 17.f
         && hull->axisCount == 1 && hull->axis == reinterpret_cast<const GfxLightRegionAxis *>(zone.virt + 1096)
         && hull->axis->halfSize == 3.f && !regions[1].hullCount && !regions[1].hulls;
@@ -328,7 +377,33 @@ bool StartStreamed(const Zone &zone)
         && zone.virt[32] == 1 && zone.virt[96 + 12] == 1 && zone.virt[152] == 5;
 }
 
-// The DPVS, which does not load yet, ends the load: what streamed before it
+// The static DPVS: the two surfaces (the first naming the material) in
+// native storage past the hull.
+bool SurfacesConverted()
+{
+    const auto *const surfaces = reinterpret_cast<const GfxSurface *>(g_arena + 912);
+    return surfaces[0].material == &g_material && !surfaces[1].material && surfaces[1].tris.vertexLayerData == 1
+        && surfaces[1].lightmapIndex == 1 && surfaces[1].bounds[1][2] == 5.f;
+}
+
+// Then the draw instance and the zeroed draw keys; the sorted surfaces,
+// instance and cull group in block 4.
+bool DrawInstConverted()
+{
+    const auto *const draw = reinterpret_cast<const GfxStaticModelDrawInst *>(g_arena + 1024);
+    return draw->cullDist == 500.f && draw->placement.scale == 1.f && !draw->model && draw->smodelCacheIndex[3] == 7
+        && draw->lightingHandle == 0x0102 && draw->flags == 1;
+}
+
+bool StaticDpvsConverted(const Zone &zone)
+{
+    GfxDrawSurf keys[2]{};
+    std::memcpy(keys, g_arena + 1104, sizeof(keys));
+    return g_arenaUsed == 1120 && SurfacesConverted() && DrawInstConverted() && !keys[0].packed && !keys[1].packed
+        && zone.virt[1120] == 1 && zone.virt[1124] == 20 && zone.virt[1248 + 24] == 1;
+}
+
+// The dynamic DPVS, which does not load yet, ends the load: what streamed before it
 // sits at its aligned retail offsets, and what converted sits in native
 // storage.
 void TestPrefix()
@@ -336,8 +411,8 @@ void TestPrefix()
     Zone zone;
     File().Write(Record());
     const Drop drop = Catch([] { Load(kInline); });
-    Expect(std::strstr(drop.message, "DPVS has no 64-bit loader yet") && g_published == 0,
-           "the load stops past the primary lights", drop.message);
+    Expect(std::strstr(drop.message, "dynamic DPVS has no 64-bit loader yet") && g_published == 0,
+           "the load stops past the static DPVS", drop.message);
     Expect(StartStreamed(zone), "the names, indices, sky surfaces, sun light, probe and nodes stream into block 4 "
                                 "at their 4- and 2-aligned retail offsets");
     Expect(NativePrefixConverted(), "the sun light, the probe and its texture convert into native storage");
@@ -350,7 +425,10 @@ void TestPrefix()
     Expect(RuntimeArraysZeroed(zone.runtime), "the runtime arrays zero-fill block 1 at their 4- and 1-aligned extents");
     Expect(ShadowsConverted(zone) && RegionsConverted(zone),
            "the shadow geometry and light regions convert into native storage");
-    Expect(DB_GetStreamPos() == zone.virt + 1116 && g_read == g_file.size()
+    Expect(StaticDpvsConverted(zone), "the static DPVS's surfaces and draw instance convert into native storage");
+    Expect(DpvsRuntimeZeroed(zone.runtime), "the static DPVS's runtime arrays zero-fill block 1, the LOD data and "
+                                            "sun-shadow bits 16-aligned");
+    Expect(DB_GetStreamPos() == zone.virt + 1356 && g_read == g_file.size()
                && !std::memcmp(zone.temp, g_file.data(), kRecordBytes),
            "the record streams into the temp block, and block 4 holds exactly what loaded");
 }
@@ -379,7 +457,7 @@ const Malformed kMalformed[] = {
     {"255 reflection probes", 0x0E4, 255, kLookups},
     {"probes without a token", 0x0E8, 0, kLookups},
     {"probe textures without a token", 0x0EC, 0, kLookups},
-    {"cull groups without a token", 0x0E0, 1, kLookups},
+    {"cull groups without a token", 0x298, 0, kLookups},
     {"a negative cull-group count", 0x0E0, 0xFFFFFFFF, kLookups},
     {"no brush models", 0x150, 0, kLookups},
     {"brush models without a token", 0x154, 0, kLookups},
@@ -408,6 +486,16 @@ const Malformed kMalformed[] = {
     {"dynamic brushes past block 1", 0x2B8, 1000, "exceeds stream block 1"},
     {"primary lights without shadow geometry", 0x23C, 0, "world primary lights"},
     {"primary lights without light regions", 0x240, 0, "world primary lights"},
+    {"65537 static models", 0x244, 65537, "static-model counts"},
+    {"LOD data past 32 bits", 0x268, 0x40000000, "static-model counts"},
+    {"static-model instances without a token", 0x290, 0, "world draw arrays"},
+    {"model visibility without a token", 0x278, 0, "world draw arrays"},
+    {"surface visibility without a token", 0x284, 0, "world draw arrays"},
+    {"LOD data without a token", 0x288, 0, "world draw arrays"},
+    {"surfaces without a token", 0x294, 0, "world draw arrays"},
+    {"draw instances without a token", 0x29C, 0, "world draw arrays"},
+    {"draw keys without a token", 0x2A0, 0, "world draw arrays"},
+    {"sun-shadow bits without a token", 0x2A4, 0, "world draw arrays"},
 };
 
 // With two indices and no sky surfaces the sun light's record starts
@@ -426,7 +514,7 @@ void TestGridAligned()
         Catch([] { Load(kInline); });
         Expect(zone.virt[666] == 7 && !std::strcmp(zone.At(670), "ab") && zone.virt[676] == 9,
                "the row starts follow the cells 2-aligned");
-        Expect(zone.runtime[2066] == 0 && zone.runtime[2067] == 0xAA,
+        Expect(zone.runtime[2066] == 0 && zone.runtime[2067] == 0,
                "the light bytes follow the dynamic model 1-aligned");
     }
     Zone zone;
@@ -487,6 +575,34 @@ void TestCellBreaksFailClosed()
     }
 }
 
+// Without LOD data, the draw keys follow the visibility bytes 4-aligned
+// at 2100, and the sun-shadow bits 16-aligned at 2128.
+void TestDpvsAligned()
+{
+    Zone zone;
+    File().Write(Record().Set(0x288, 0).Set(0x268, 0));
+    Catch([] { Load(kInline); });
+    bool aligned = zone.runtime[2099] == 0xAA && zone.runtime[2100] == 0 && zone.runtime[2144] == 0xAA;
+    for (std::size_t at = 2116; at < 2144; ++at)
+        aligned = aligned && zone.runtime[at] == (at < 2128 ? 0xAA : 0);
+    Expect(aligned, "the draw keys follow 4-aligned, and the sun-shadow bits 16-aligned");
+}
+
+void TestDpvsBreaksFailClosed()
+{
+    const std::pair<Dpvs, const char *> breaks[] = {
+        {{2}, "invalid sorted surface index"}, // the static surfaces number 2
+        {{1, VirtualOffset(64)}, "alias offset"},
+        {{1, VirtualOffset(8), VirtualOffset(64)}, "alias offset"},
+    };
+    for (const auto &[dpvs, error] : breaks)
+    {
+        Zone zone;
+        File().Write(Record(), Sun{}, CellOptions{}, true, true, Shadows{}, dpvs);
+        ExpectDrop("a malformed static DPVS", error, [] { Load(kInline); });
+    }
+}
+
 void TestShadowBreaksFailClosed()
 {
     const std::pair<Shadows, const char *> breaks[] = {
@@ -542,6 +658,37 @@ void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *)
     Expect(false, "no technique set loads");
 }
 
+// Draw instances name no model, or an unmapped one; XModel's TU links all
+// the same.
+void __cdecl Load_XModelAsset(XAssetHeader *)
+{
+    Expect(false, "no model loads");
+}
+
+void __cdecl Load_PhysPresetAsset(XAssetHeader *)
+{
+    Expect(false, "no physics preset loads");
+}
+
+XAssetList *varXAssetList; // the envelope's native list (db_disk32_envelope.cpp)
+
+void __cdecl Load_GetCurrentZoneHandle(uint8_t *handle)
+{
+    *handle = 7;
+}
+
+// db_stringtable_load.cpp's marking path, which no load reaches.
+db::load_legacy_bridge::LegacyBridgeStatus db::load_legacy_bridge::DbLoadLegacyBridge::TryAddUser4(std::uint32_t) noexcept
+{
+    Expect(false, "loading marks no script string");
+    return LegacyBridgeStatus::Success;
+}
+
+bool db::load_legacy_bridge::DbLoadLegacyBridge::InSession() noexcept
+{
+    return false;
+}
+
 void __cdecl Load_LightDefAsset(XAssetHeader *)
 {
     Expect(false, "no light def loads");
@@ -555,5 +702,5 @@ void __cdecl DB_LoadedExternalData(std::int32_t)
 int main()
 {
     return Run({TestPrefix, TestGridAligned, TestSunAligned, TestSunBreaksFailClosed, TestCellBreaksFailClosed,
-                TestShadowBreaksFailClosed, TestMalformedFailsClosed});
+                TestShadowBreaksFailClosed, TestDpvsAligned, TestDpvsBreaksFailClosed, TestMalformedFailsClosed});
 }

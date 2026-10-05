@@ -123,11 +123,31 @@ record GfxLightRegion 0x08 runtime=GfxLightRegion header=gfx_d3d/r_primarylights
     0x00 hullCount                u32
     0x04 hulls                    pointer
 
+# A static surface: its triangles and bounds hold no pointer; its material
+# loads through Material's step.
+record GfxSurface 0x30 runtime=GfxSurface header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 tris                     run[4]    to=tris
+    0x10 material                 pointer   asset=Material
+    0x14 lightmapIndex            run[7]    to=bounds
+
+# A static model's draw instance: its model loads through XModel's step.
+record GfxStaticModelDrawInst 0x4C runtime=GfxStaticModelDrawInst header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 cullDist                 run[14]   to=placement
+    0x38 model                    pointer   asset=XModel
+    0x3C smodelCacheIndex         u16[4]
+    0x44 reflectionProbeIndex     u8
+    0x45 primaryLightIndex        u8
+    0x46 lightingHandle           u16
+    0x48 flags                    u8
+    0x49 flagsPad                 pad[3]
+
 record GfxWorldDpvsStatic 0x68 runtime=GfxWorldDpvsStatic header=gfx_d3d/r_gfx.h copy=scalars
     0x00 smodelCount              u32
     0x04 staticSurfaceCount       u32
     0x08 staticSurfaceCountNoDecal u32
-    0x0C litSurfsBegin            run[8]    to=surfaceVisDataCount
+    0x0C litSurfsBegin            run[6]    to=emissiveSurfsEnd
+    0x24 smodelVisDataCount       u32
+    0x28 surfaceVisDataCount      u32
     0x2C smodelVisData            pointer[3]  # smodelCount bytes each, block 1
     0x38 surfaceVisData           pointer[3]  # staticSurfaceCount bytes each, block 1
     0x44 lodData                  pointer   # 2 x smodelVisDataCount words, block 1
