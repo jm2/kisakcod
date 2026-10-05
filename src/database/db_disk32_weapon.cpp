@@ -3,7 +3,9 @@
 #if KISAK_ARCH_64BIT
 
 #include <database/db_disk32_loaders.h> // generated from disk32/21-weapon.schema
+#include <database/db_validation.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -13,9 +15,10 @@
 // scalar runs copy into the native 2832-byte record, then with block 4
 // pushed each pointer loads in the 32-bit loader's order (kParts). Strings,
 // script strings (interned), sounds by name through their string holders,
-// the bounce-sound table, and models, effects and materials through their
-// families' pointer steps load here; the accuracy graphs do not yet, so a
-// weapon that names one fails closed.
+// the bounce-sound table, models, effects and materials through their
+// families' pointer steps, and the accuracy graphs, whose knots keep their
+// layout in block 4. The graph rules are the 32-bit loader's
+// (DB_ValidateWeaponAccuracyGraph and DB_ValidateWeaponAccuracyGraphKnots).
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -32,6 +35,7 @@ enum class Kind : std::uint8_t
     Material,
     BounceSounds,
     Knots,
+    OriginalKnots, // then the graph's knot rule
 };
 
 // count pointers at a retail offset and at their native offset.
@@ -82,10 +86,11 @@ constexpr Part kParts[] = {
     P(Kind::Sound, offsetof(Disk, projIgnitionSound), offsetof(WeaponDef, projIgnitionSound)),
     P(Kind::String, offsetof(Disk, accuracyGraphName), offsetof(WeaponDef, accuracyGraphName)),
     P(Kind::Knots, offsetof(Disk, accuracyGraphKnots), offsetof(WeaponDef, accuracyGraphKnots)),
-    P(Kind::Knots, offsetof(Disk, originalAccuracyGraphKnots), offsetof(WeaponDef, originalAccuracyGraphKnots)),
+    P(Kind::OriginalKnots, offsetof(Disk, originalAccuracyGraphKnots), offsetof(WeaponDef, originalAccuracyGraphKnots)),
     P(Kind::String, offsetof(Disk, accuracyGraphName) + 4, offsetof(WeaponDef, accuracyGraphName[1])),
     P(Kind::Knots, offsetof(Disk, accuracyGraphKnots) + 4, offsetof(WeaponDef, accuracyGraphKnots[1])),
-    P(Kind::Knots, offsetof(Disk, originalAccuracyGraphKnots) + 4, offsetof(WeaponDef, originalAccuracyGraphKnots[1])),
+    P(Kind::OriginalKnots, offsetof(Disk, originalAccuracyGraphKnots) + 4,
+      offsetof(WeaponDef, originalAccuracyGraphKnots[1])),
     P(Kind::String, offsetof(Disk, szUseHintString), offsetof(WeaponDef, szUseHintString)),
     P(Kind::String, offsetof(Disk, dropHintString), offsetof(WeaponDef, dropHintString)),
     P(Kind::String, offsetof(Disk, szScript), offsetof(WeaponDef, szScript)),
@@ -205,6 +210,74 @@ bool LoadBounceSounds(disk32::PointerToken token, snd_alias_list_t ***out)
                              disk32::kWeaponBounceSoundTableBytes, disk32::kWeaponBounceSoundTableBytes, sounds);
 }
 
+// DB_ValidateWeaponAccuracyGraph, before anything loads: each graph has no
+// knots or 2..16, its backup as many, and a token wherever it has knots.
+bool GraphsValid(const Disk &disk, const WeaponDef &weapon)
+{
+    for (std::uint32_t graph = 0; graph < WEAP_ACCURACY_COUNT; ++graph)
+    {
+        const std::int32_t count = weapon.accuracyGraphKnotCount[graph];
+        if (!db::validation::OptionalMirroredCountInRange(count, weapon.originalAccuracyGraphKnotCount[graph], 2, 16)
+            || !db::validation::PointerCountConsistent(!disk.accuracyGraphKnots[graph].token.isNull(), count)
+            || !db::validation::PointerCountConsistent(!disk.originalAccuracyGraphKnots[graph].token.isNull(), count))
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file weapon accuracy graph %u", graph);
+            return false;
+        }
+    }
+    return true;
+}
+
+// A graph's knots: -1 streams count of them 4-aligned here, any other token
+// names knots in block 4; either way they keep their layout. Both knot
+// arrays of a graph resolve by the graph's count, as on x86.
+bool LoadKnots(disk32::PointerToken token, std::uint32_t count, float (**out)[2])
+{
+    constexpr std::uint32_t kKnotBytes = 2 * sizeof(float);
+    *out = nullptr;
+    if (token.isNull())
+        return true;
+    std::uintptr_t address = 0;
+    if (token.isInline())
+    {
+        std::uint8_t *const knots = DB_AllocStreamPos(3);
+        if (!StreamBytes(knots, static_cast<std::int32_t>(count * kKnotBytes)))
+            return false;
+        address = reinterpret_cast<std::uintptr_t>(knots);
+    }
+    else if (const db::relocation::Status status = DB_ResolveOffsetBytes(
+                 token, (std::max)(count * kKnotBytes, std::uint32_t{1}), 4, db::relocation::BlockBit(kVirtualBlock),
+                 &address);
+             status != db::relocation::Status::Ok)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file pointer offset: %s", db::relocation::StatusName(status));
+        return false;
+    }
+    *out = reinterpret_cast<float (*)[2]>(address);
+    return true;
+}
+
+// A graph's knots, then (after its backup) DB_ValidateWeaponAccuracyGraphKnots.
+bool LoadGraphPart(const Part &part, disk32::PointerToken token, WeaponDef *out)
+{
+    const bool original = part.kind == Kind::OriginalKnots;
+    const std::size_t graph = (part.native
+                               - (original ? offsetof(WeaponDef, originalAccuracyGraphKnots)
+                                           : offsetof(WeaponDef, accuracyGraphKnots)))
+        / sizeof(void *);
+    const auto count = static_cast<std::uint32_t>(out->accuracyGraphKnotCount[graph]);
+    if (!LoadKnots(token, count, SlotAt<float[2]>(out, part, 0)))
+        return false;
+    if (!original || !count
+        || (db::validation::NormalizedGraphKnots(out->accuracyGraphKnots[graph], count)
+            && db::validation::NormalizedGraphKnots(out->originalAccuracyGraphKnots[graph], count)))
+    {
+        return true;
+    }
+    Com_Error(ERR_DROP, "Invalid fast-file weapon accuracy graph knots %zu", graph);
+    return false;
+}
+
 bool LoadPart(const Disk &disk, const Part &part, WeaponDef *out)
 {
     for (std::uint32_t index = 0; index < part.count; ++index)
@@ -223,8 +296,8 @@ bool LoadPart(const Disk &disk, const Part &part, WeaponDef *out)
             LoadFxEffectDefPtr(token, SlotAt<const FxEffectDef>(out, part, index));
         else if (part.kind == Kind::Material)
             LoadMaterialPtr(token, SlotAt<Material>(out, part, index));
-        else if (!token.isNull())
-            return Drop("Fast-file weapon accuracy graphs have no 64-bit loader yet");
+        else
+            loaded = LoadGraphPart(part, token, out);
         if (!loaded)
             return false;
     }
@@ -254,6 +327,8 @@ bool LoadWeaponDef(WeaponDef *out)
         return false;
     std::memcpy(&disk, record, sizeof(disk));
     CopyWeaponDefScalars(disk, out);
+    if (!GraphsValid(disk, *out))
+        return false;
     if (disk.szInternalName.token.isNull())
         return Drop("Fast-file weapon has no name"); // the asset pool hashes it
     LoadScriptStrings(out);
