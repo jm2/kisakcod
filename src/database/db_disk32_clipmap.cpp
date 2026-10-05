@@ -16,9 +16,10 @@
 // pushed its dynamic entities' poses, clients and collision links. Arrays
 // that hold no pointer keep their layout: any non-null token streams them
 // at their retail alignment, and the planes may also name planes already
-// streamed. Static models, brush sides, nodes, leaf-brush nodes,
-// partitions, brushes and dynamic-entity defs do not load yet, so a clip
-// map that names one fails closed.
+// streamed. Static models, brush sides, nodes, leaf-brush nodes and
+// partitions convert into native storage; the planes, brush indices and
+// borders they name stay in block 4. Brushes and dynamic-entity defs do not
+// load yet, so a clip map that names one fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -33,6 +34,7 @@ RUNTIME_SIZE(cLeaf_t, 0x2C, 0x2C);
 RUNTIME_SIZE(CollisionBorder, 0x1C, 0x1C);
 RUNTIME_SIZE(CollisionAabbTree, 0x20, 0x20);
 RUNTIME_SIZE(cmodel_t, 0x48, 0x48);
+RUNTIME_SIZE(cLeafBrushNodeChildren_t, 0x0C, 0x0C); // a leaf-brush node's children copy whole
 
 // The extents Load_clipMap_t derives from the record's counts.
 struct Extents
@@ -98,18 +100,109 @@ bool LoadPlanes(const Disk &disk, std::int32_t planeBytes, cplane_s **out)
 // The parts that hold pointers, which do not load yet.
 bool NotYet(disk32::PointerToken token)
 {
-    return token.isNull() || Drop("Fast-file clipmap models, brushes, nodes and dynamic entities have no 64-bit loader yet");
+    return token.isNull() || Drop("Fast-file clipmap brushes and dynamic entities have no 64-bit loader yet");
+}
+
+// A span an element names: -1 streams it here, any other token names one
+// already in block 4; either way it keeps its layout.
+template <typename T>
+bool LoadOrResolve(disk32::PointerToken token, std::uint32_t bytes, std::uint32_t alignment, T **out)
+{
+    if (token.isInline() || token.isNull())
+        return LoadArray(token, bytes, 1, alignment, out);
+    std::uintptr_t address = 0;
+    if (const db::relocation::Status status = DB_ResolveOffsetBytes(
+            token, bytes ? bytes : 1, alignment, db::relocation::BlockBit(kVirtualBlock), &address);
+        status != db::relocation::Status::Ok)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file clipmap pointer offset: %s", db::relocation::StatusName(status));
+        return false;
+    }
+    *out = reinterpret_cast<T *>(address);
+    return true;
+}
+
+// An array of records that hold pointers: any non-null token means count
+// records follow 4-aligned; each converts into native storage, then loads
+// what it names, in order.
+template <typename Disk32, typename Native, typename Convert>
+bool LoadRecords(disk32::PointerToken token, std::int64_t count, Native **out, Convert convert)
+{
+    std::uint8_t *records = nullptr;
+    *out = nullptr;
+    if (!LoadArray(token, count, sizeof(Disk32), 4, &records))
+        return false;
+    if (!records)
+        return true;
+    Native *const native = AllocNative<Native>(static_cast<std::int32_t>(count));
+    if (count && !native)
+        return false;
+    for (std::int64_t index = 0; index < count; ++index)
+    {
+        Disk32 disk{};
+        std::memcpy(&disk, records + index * sizeof(disk), sizeof(disk));
+        std::memset(&native[index], 0, sizeof(Native)); // padding too: native storage starts as junk
+        if (!convert(disk, &native[index]))
+            return false;
+    }
+    *out = native;
+    return true;
+}
+
+bool ConvertStaticModel(const disk32::cStaticModel_sDisk32 &disk, cStaticModel_s *out)
+{
+    CopycStaticModel_sScalars(disk, out);
+    LoadXModelPtr(disk.xmodel.token, &out->xmodel);
+    return true;
+}
+
+// Load_cbrushside_t: the plane is an offset to a plane in block 4.
+bool ConvertBrushSide(const disk32::CBrushSideDisk32 &disk, cbrushside_t *out)
+{
+    CopyCBrushSideScalars(disk, out);
+    if (!disk.plane.token.isOffset())
+        return Drop("Invalid fast-file clipmap brush-side plane token");
+    return LoadOrResolve(disk.plane.token, 20, 4, &out->plane);
+}
+
+bool ConvertNode(const disk32::cNode_tDisk32 &disk, cNode_t *out)
+{
+    CopycNode_tScalars(disk, out);
+    return LoadOrResolve(disk.plane.token, 20, 4, &out->plane);
+}
+
+// Load_cLeafBrushNodeData_t: a node with brushes names its brush indices;
+// one without holds children, which keep their 12 bytes.
+bool ConvertLeafBrushNode(const disk32::cLeafBrushNode_sDisk32 &disk, cLeafBrushNode_s *out)
+{
+    CopycLeafBrushNode_sScalars(disk, out);
+    if (disk.leafBrushCount > 0)
+        return LoadOrResolve(disk.brushes.token, disk.leafBrushCount * 2u, 2, &out->data.leaf.brushes);
+    std::memcpy(&out->data.children, reinterpret_cast<const std::uint8_t *>(&disk) + 8, sizeof(out->data.children));
+    return true;
+}
+
+bool ConvertPartition(const disk32::CollisionPartitionDisk32 &disk, CollisionPartition *out)
+{
+    CopyCollisionPartitionScalars(disk, out);
+    return LoadOrResolve(disk.borders.token, disk.borderCount * 28u, 4, &out->borders);
 }
 
 // Load_clipMap_t's block-4 arrays, in its order, through the brush edges.
 bool LoadFirstArrays(const Disk &disk, const Extents &extents, clipMap_t *out)
 {
-    return LoadPlanes(disk, extents.brushes.planeBytes, &out->planes) && NotYet(disk.staticModelList.token)
+    return LoadPlanes(disk, extents.brushes.planeBytes, &out->planes)
+        && LoadRecords<disk32::cStaticModel_sDisk32>(disk.staticModelList.token, disk.numStaticModels,
+                                                      &out->staticModelList, ConvertStaticModel)
         && LoadArray(disk.materials.token, disk.numMaterials, 72, 4, &out->materials)
-        && NotYet(disk.brushsides.token) && LoadArray(disk.brushEdges.token, disk.numBrushEdges, 1, 1, &out->brushEdges)
-        && NotYet(disk.nodes.token) && LoadArray(disk.leafs.token, disk.numLeafs, 44, 4, &out->leafs)
+        && LoadRecords<disk32::CBrushSideDisk32>(disk.brushsides.token, disk.numBrushSides, &out->brushsides,
+                                                  ConvertBrushSide)
+        && LoadArray(disk.brushEdges.token, disk.numBrushEdges, 1, 1, &out->brushEdges)
+        && LoadRecords<disk32::cNode_tDisk32>(disk.nodes.token, disk.numNodes, &out->nodes, ConvertNode)
+        && LoadArray(disk.leafs.token, disk.numLeafs, 44, 4, &out->leafs)
         && LoadArray(disk.leafbrushes.token, disk.numLeafBrushes, 2, 2, &out->leafbrushes)
-        && NotYet(disk.leafbrushNodes.token);
+        && LoadRecords<disk32::cLeafBrushNode_sDisk32>(disk.leafbrushNodes.token, disk.leafbrushNodesCount,
+                                                        &out->leafbrushNodes, ConvertLeafBrushNode);
 }
 
 // The rest of them, in its order, and the map entities.
@@ -119,7 +212,9 @@ bool LoadLastArrays(const Disk &disk, const Extents &extents, clipMap_t *out)
         && LoadArray(disk.verts.token, disk.vertCount, 12, 4, &out->verts)
         && LoadArray(disk.triIndices.token, extents.triangleIndices, 2, 2, &out->triIndices)
         && LoadArray(disk.triEdgeIsWalkable.token, extents.walkableBytes, 1, 1, &out->triEdgeIsWalkable)
-        && LoadArray(disk.borders.token, disk.borderCount, 28, 4, &out->borders) && NotYet(disk.partitions.token)
+        && LoadArray(disk.borders.token, disk.borderCount, 28, 4, &out->borders)
+        && LoadRecords<disk32::CollisionPartitionDisk32>(disk.partitions.token, disk.partitionCount, &out->partitions,
+                                                          ConvertPartition)
         && LoadArray(disk.aabbTrees.token, disk.aabbTreeCount, 32, 4, &out->aabbTrees)
         && LoadArray(disk.cmodels.token, disk.numSubModels, 72, 4, &out->cmodels) && NotYet(disk.brushes.token)
         && LoadArray(disk.visibility.token, extents.visibilityBytes, 1, 1, &out->visibility);

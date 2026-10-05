@@ -1,15 +1,17 @@
 // db_disk32_clipmap_tests.cpp: the 64-bit clip-map loader (NOW row 12) on
 // hand-built disk32 zone images (disk32_fixture.hpp), with MapEnts' real step
-// for the map entities. The retail offsets here are written out by hand,
-// apart from the schema. Beyond the fixture's seams, only the asset pools are
-// replaced.
+// for the map entities and XModel's for static models. The retail offsets
+// here are written out by hand, apart from the schema. Beyond the fixture's
+// seams, only the asset pools are replaced.
 
 #include "disk32_fixture.hpp"
 
 #include <database/db_disk32_load.h>
 #include <database/db_disk32_mirrors.h>
+#include <database/db_load_legacy_bridge.h>
 
 #include <cstring>
+#include <utility>
 #include <vector>
 
 namespace
@@ -19,6 +21,7 @@ using namespace disk32_test;
 clipMap_t g_maps[2]; // what Load_ClipMapAsset published
 MapEnts g_ents[2];   // what Load_MapEntsAsset published
 int g_entCount = 0;
+XModel g_model;      // the model alias RecordWithPointers' static model names
 
 constexpr std::uint32_t kRecordBytes = 284;
 
@@ -156,6 +159,142 @@ void TestArrays()
            "the record streams into the temp block and every disk byte is consumed");
 }
 
+// Two planes, a static model naming the model alias, a material, a brush
+// side naming the second plane, three brush edges, two nodes (the first
+// naming the first plane, the second its own plane inline), three leaf-brush
+// nodes (the first two with a brush index inline each, the third children),
+// and two partitions (the first with a border inline, the second naming it).
+Record RecordWithPointers()
+{
+    Record record(false);
+    record.Set(0x000, kInline).Array(0x008, 2).Array(0x010, 1).Array(0x018, 1).Array(0x020, 1).Array(0x028, 3);
+    return std::move(record.Array(0x030, 2).Array(0x040, 3).Array(0x074, 2));
+}
+
+struct Bytes : FileBuilder<Bytes>
+{
+    Bytes &Short(std::uint16_t value)
+    {
+        g_file.push_back(static_cast<std::uint8_t>(value));
+        g_file.push_back(static_cast<std::uint8_t>(value >> 8));
+        return *this;
+    }
+};
+
+// Block 4: the model alias (0..4), the name, the planes at 8, the static
+// model at 48, the material at 128, the side at 200, the edges at 212, the
+// nodes 4-aligned at 216 and the second's plane at 232, the leaf-brush nodes
+// at 252 and their indices 2-aligned at 312 and 314, the partitions
+// 4-aligned at 316 and the first's border at 340.
+void WritePointerArrays(std::uint32_t sidePlane = VirtualOffset(28), std::uint32_t border = VirtualOffset(340))
+{
+    File().Write(RecordWithPointers(), false);
+    g_file.resize(g_file.size() - 72); // Write(false) adds a material; it comes later here
+    Bytes file;
+    file.Text("cm");
+    for (int value = 0; value < 10; ++value)
+        file.Float(static_cast<float>(value));
+    file.Short(5).Short(0).Word(VirtualOffset(0));
+    for (int value = 0; value < 18; ++value)
+        file.Float(static_cast<float>(value) + 0.5f);
+    g_file.insert(g_file.end(), 72, 0x22);
+    file.Word(sidePlane).Word(1).Short(4).Short(3).Short(0x3333).Text("");
+    file.Word(VirtualOffset(8)).Short(1).Short(2).Word(kInline).Short(3).Short(4).Float(9).Float(8).Float(7).Float(6).Float(5);
+    file.Word(1 | 1u << 16).Word(7).Word(kInline).Word(0).Word(0);
+    file.Word(2 | 1u << 16).Word(9).Word(kInline).Word(0).Word(0);
+    file.Word(0 | 0u << 16).Word(8).Float(1.5f).Float(2.5f).Short(3).Short(4);
+    file.Short(1).Short(6);
+    file.Word(3 | 1u << 8).Word(5).Word(kInline).Word(4 | 1u << 8).Word(6).Word(border);
+    for (int value = 0; value < 7; ++value)
+        file.Float(static_cast<float>(value));
+}
+
+void Aliases()
+{
+    DB_SetInsertedPointer(DB_InsertPointer(DBAliasKind::XModel), DBAliasKind::XModel, &g_model);
+}
+
+// The first node's disk record, its plane token first, sits at offset.
+bool FirstNodeAt(const Zone &zone, std::uint32_t offset)
+{
+    const std::uint32_t token = VirtualOffset(8);
+    return !std::memcmp(zone.virt + offset, &token, sizeof(token));
+}
+
+bool PlanesNamed(const Zone &zone, const clipMap_t &map)
+{
+    return map.brushsides[0].plane == reinterpret_cast<const cplane_s *>(zone.virt + 28)
+        && map.brushsides[0].materialNum == 1 && map.brushsides[0].firstAdjacentSideOffset == 4
+        && map.brushsides[0].edgeCount == 3 && map.nodes[0].plane == reinterpret_cast<const cplane_s *>(zone.virt + 8)
+        && map.nodes[1].plane == reinterpret_cast<const cplane_s *>(zone.virt + 232) && map.nodes[1].children[1] == 4
+        && map.brushEdges == zone.virt + 212 && FirstNodeAt(zone, 216);
+}
+
+// A leaf-brush node's single brush index, at its 2-aligned block-4 offset.
+bool BrushIndexAt(const Zone &zone, const cLeafBrushNode_s &node, std::uint32_t offset, std::uint16_t value)
+{
+    return node.leafBrushCount == 1 && node.data.leaf.brushes == reinterpret_cast<const std::uint16_t *>(zone.virt + offset)
+        && node.data.leaf.brushes[0] == value;
+}
+
+bool LeafBrushNodesConverted(const Zone &zone, const clipMap_t &map)
+{
+    const cLeafBrushNode_s &children = map.leafbrushNodes[2];
+    return map.leafbrushNodes[0].axis == 1 && map.leafbrushNodes[0].contents == 7
+        && BrushIndexAt(zone, map.leafbrushNodes[0], 312, 1) && BrushIndexAt(zone, map.leafbrushNodes[1], 314, 6)
+        && children.contents == 8 && children.data.children.dist == 1.5f
+        && children.data.children.range == 2.5f && children.data.children.childOffset[1] == 4;
+}
+
+bool PartitionsConverted(const Zone &zone, const clipMap_t &map)
+{
+    const auto *const border = reinterpret_cast<const CollisionBorder *>(zone.virt + 340);
+    return map.partitions[0].triCount == 3 && map.partitions[0].borderCount == 1 && map.partitions[0].firstTri == 5
+        && map.partitions[0].borders == border && map.partitions[1].borders == border && border->length == 6.f;
+}
+
+bool AllNative(const clipMap_t &map)
+{
+    return InArena(map.staticModelList) && InArena(map.brushsides) && InArena(map.nodes)
+        && InArena(map.leafbrushNodes) && InArena(map.partitions);
+}
+
+void TestPointerArrays()
+{
+    Zone zone;
+    Aliases();
+    WritePointerArrays();
+    const clipMap_t *const map = Load(kInline);
+    Expect(map == &g_maps[0] && AllNative(*map), "the arrays with pointers convert into native storage");
+    if (!map || !InArena(map->staticModelList))
+        return;
+    const cStaticModel_s &model = map->staticModelList[0];
+    Expect(model.writable.nextModelInWorldSector == 5 && model.xmodel == &g_model && model.origin[0] == 0.5f
+               && model.absmax[2] == 17.5f,
+           "a static model converts and names its model");
+    Expect(PlanesNamed(zone, *map), "brush sides and nodes name planes, by offset or inline");
+    Expect(LeafBrushNodesConverted(zone, *map), "leaf-brush nodes name brush indices or keep their children");
+    Expect(PartitionsConverted(zone, *map), "partitions name their borders, inline or by offset");
+    Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 368, "every disk byte is consumed");
+}
+
+void TestPointerArraysFailClosed()
+{
+    const std::pair<std::uint32_t, const char *> sides[] = {
+        {kInline, "brush-side plane token"}, {0, "brush-side plane token"}, {VirtualOffset(900), "pointer offset"}};
+    for (const auto &[plane, error] : sides)
+    {
+        Zone zone;
+        Aliases();
+        WritePointerArrays(plane);
+        ExpectDrop("a malformed brush-side plane", error, [] { Load(kInline); });
+    }
+    Zone zone;
+    Aliases();
+    WritePointerArrays(VirtualOffset(28), VirtualOffset(900));
+    ExpectDrop("an unmapped border offset", "pointer offset", [] { Load(kInline); });
+}
+
 void TestPlaneOffsetAndAlias()
 {
     Zone zone;
@@ -196,10 +335,7 @@ const Malformed kMalformed[] = {
     {"triangle indices past 32 bits", 0x060, 0x40000000, kLayout},
     {"visibility past 32 bits", 0x098, 0x40000000, kLayout},
     {"a negative border count", 0x06C, 0xFFFFFFFF, "array count"},
-    {"static models", 0x014, kInline, kNotYet},
-    {"nodes", 0x034, kInline, kNotYet},
-    {"leaf-brush nodes", 0x044, kInline, kNotYet},
-    {"partitions", 0x078, kInline, kNotYet},
+    {"brushes", 0x090, kInline, kNotYet},
     {"a box brush", 0x0A8, kInline, kNotYet},
     {"dynamic-entity defs", 0x0FC, kInline, kNotYet},
     {"an unmapped plane offset", 0x00C, VirtualOffset(900), "clipmap planes"},
@@ -232,6 +368,56 @@ void __cdecl Load_ClipMapAsset(XAssetHeader *header)
     header->clipMap = &entry;
 }
 
+XAssetList *varXAssetList; // the envelope's native list (db_disk32_envelope.cpp)
+
+// Static models name their model by alias here, so no model or material
+// loads; XModel's TU and its families' link all the same.
+void __cdecl Load_XModelAsset(XAssetHeader *)
+{
+    Expect(false, "no model loads");
+}
+
+void __cdecl Load_MaterialAsset(XAssetHeader *)
+{
+    Expect(false, "no material loads");
+}
+
+void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *)
+{
+    Expect(false, "no technique set loads");
+}
+
+void __cdecl Load_PhysPresetAsset(XAssetHeader *)
+{
+    Expect(false, "no preset loads");
+}
+
+void __cdecl Load_GfxImageAsset(XAssetHeader *)
+{
+    Expect(false, "no image loads");
+}
+
+void __cdecl DB_LoadedExternalData(std::int32_t)
+{
+    Expect(false, "no image loads");
+}
+
+void __cdecl Load_GetCurrentZoneHandle(uint8_t *handle)
+{
+    *handle = 7;
+}
+
+db::load_legacy_bridge::LegacyBridgeStatus db::load_legacy_bridge::DbLoadLegacyBridge::TryAddUser4(std::uint32_t) noexcept
+{
+    Expect(false, "loading marks no script string");
+    return LegacyBridgeStatus::Success;
+}
+
+bool db::load_legacy_bridge::DbLoadLegacyBridge::InSession() noexcept
+{
+    return false;
+}
+
 void __cdecl Load_MapEntsAsset(XAssetHeader *header)
 {
     g_ents[g_entCount] = *header->mapEnts;
@@ -240,5 +426,6 @@ void __cdecl Load_MapEntsAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestArrays, TestPlaneOffsetAndAlias, TestMalformedFailsClosed});
+    return Run({TestArrays, TestPointerArrays, TestPlaneOffsetAndAlias, TestPointerArraysFailClosed,
+                TestMalformedFailsClosed});
 }

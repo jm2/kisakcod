@@ -4,6 +4,36 @@
 # that hold no pointer keep their layout and stay in block 4, and the dynamic
 # entities' poses, clients and collision links take block 1 (zero-filled).
 
+# A static model: its model loads through XModel's step.
+record cStaticModel_s 0x50 runtime=cStaticModel_s header=xanim/xanim.h copy=scalars
+    0x00 writable.nextModelInWorldSector  u16
+    0x02 xmodelPad                pad[2]
+    0x04 xmodel                   pointer
+    0x08 origin                   run[18]   to=absmax
+
+# A node: its plane is a token, -1 streaming it here.
+record cNode_t 0x08 runtime=cNode_t header=xanim/xanim.h copy=scalars
+    0x00 plane                    pointer
+    0x04 children                 i16[2]
+
+# A leaf-brush node: with brushes, data is a leaf naming leafBrushCount
+# brush indices; without, it is children, copied whole.
+record cLeafBrushNode_s 0x14 runtime=cLeafBrushNode_s header=xanim/xanim.h copy=scalars
+    0x00 axis                     u8
+    0x01 axisPad                  pad[1]
+    0x02 leafBrushCount           i16
+    0x04 contents                 i32
+    0x08 data.leaf.brushes        pointer
+    0x0C dataTail                 pad[8]
+
+# A partition: its borders hold no pointer.
+record CollisionPartition 0x0C runtime=CollisionPartition header=xanim/xanim.h copy=scalars
+    0x00 triCount                 u8
+    0x01 borderCount              u8
+    0x02 firstTriPad              pad[2]
+    0x04 firstTri                 i32
+    0x08 borders                  pointer
+
 record clipMap_t 0x11C runtime=clipMap_t header=qcommon/qcommon.h copy=scalars
     asset member=clipMap pool=Load_ClipMapAsset kind=ClipMap alias=inserted body=custom label=clipmap
     0x000 name                   xstring
