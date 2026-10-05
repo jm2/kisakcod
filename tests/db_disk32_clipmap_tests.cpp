@@ -22,24 +22,29 @@ using namespace disk32_test;
 clipMap_t g_maps[2]; // what Load_ClipMapAsset published
 MapEnts g_ents[2];   // what Load_MapEntsAsset published
 int g_entCount = 0;
-XModel g_model;      // the model alias at block-4 offset 0 that static models name
+XModel g_model;      // the aliases Zone registers at block-4 offsets 0, 4 and 8
+FxEffectDef g_effect;
+PhysPreset g_preset;
 
 constexpr std::uint32_t kRecordBytes = 284;
 
-// Every zone starts block 4 with the model alias, as an earlier asset leaves it.
+// Every zone starts block 4 with a model, an effect and a physics preset
+// alias, as earlier assets leave them.
 struct Zone : disk32_test::Zone<2048>
 {
     Zone()
     {
         g_entCount = 0;
         DB_SetInsertedPointer(DB_InsertPointer(DBAliasKind::XModel), DBAliasKind::XModel, &g_model);
+        DB_SetInsertedPointer(DB_InsertPointer(DBAliasKind::FxEffectDef), DBAliasKind::FxEffectDef, &g_effect);
+        DB_SetInsertedPointer(DB_InsertPointer(DBAliasKind::PhysPreset), DBAliasKind::PhysPreset, &g_preset);
     }
 };
 
 // Where each part lands in block 4, as the loader allocates it.
 struct Placer
 {
-    std::uint32_t at = 4; // past the model alias
+    std::uint32_t at = 12; // past the aliases
     std::uint32_t Place(std::uint32_t alignment, std::uint32_t bytes)
     {
         at = (at + alignment - 1) / alignment * alignment;
@@ -77,7 +82,7 @@ Record WholeRecord()
     record.Array(0x038, 1).Array(0x040, 3).Array(0x048, 2).Array(0x050, 1).Array(0x058, 1).Array(0x060, 11);
     record.Set(0x068, kInline).Array(0x06C, 1).Array(0x074, 2).Array(0x07C, 1).Array(0x084, 1).Array(0x08C, 2);
     record.Set(0x094, 2).Set(0x098, 1).Set(0x09C, kInline).Set(0x0A4, kInline).Set(0x0A8, kInline);
-    return std::move(record.Set(0x0F4, 2 | 1u << 16).Set(0x100, kInline).Set(0x10C, kInline).Set(0x110, kInline));
+    return std::move(record.Set(0x0F4, 2 | 1u << 16).Set(0x0F8, kInline).Set(0x0FC, kInline).Set(0x100, kInline).Set(0x10C, kInline).Set(0x110, kInline));
 }
 
 // What a test breaks in the stream after the record.
@@ -91,13 +96,17 @@ struct Options
     std::uint8_t planeType = 0;       // the first plane's type
     std::int32_t boxContents = -1;
     std::int16_t firstAxialOffset = 0; // the first brush's first axial adjacency slot
+    std::uint32_t piecesName = kInline;
+    const char *piecesText = "pc";
+    std::uint32_t pieceCount = 1;
+    std::uint32_t pieceModel = VirtualOffset(0);
 };
 
 struct File : FileBuilder<File>
 {
     Placer placer;
     std::uint32_t planes = 0, staticModel = 0, side = 0, edges = 0, nodes = 0, nodePlane = 0, leafNodes = 0;
-    std::uint32_t indices = 0, partitions = 0, border = 0, brush = 0, box = 0;
+    std::uint32_t indices = 0, partitions = 0, border = 0, brush = 0, box = 0, defs = 0, pieces = 0;
 
     File &Byte(std::uint8_t value)
     {
@@ -192,7 +201,34 @@ struct File : FileBuilder<File>
         Word(kInline).Word(kInline).Word(2).Text("me").Text("e");
         placer.Place(1, 5);
         box = placer.Place(16, 80);
-        return Brush(true, 0, 0, 0, o.boxContents);
+        return Brush(true, 0, 0, 0, o.boxContents).WriteDynEntities(o);
+    }
+    // A dynamic-entity def naming the aliases and pieces.
+    File &Def(std::uint32_t pieces)
+    {
+        Word(1);
+        for (int value = 0; value < 7; ++value)
+            Float(static_cast<float>(value));
+        Word(VirtualOffset(0)).Short(2).Short(3).Word(VirtualOffset(4)).Word(pieces).Word(VirtualOffset(8)).Word(100);
+        for (int value = 0; value < 9; ++value)
+            Float(static_cast<float>(value) + 0.25f);
+        return Word(5);
+    }
+    // Two defs in the first list (the first with model pieces inline, the
+    // second naming them), then one in the second, with no pieces.
+    File &WriteDynEntities(const Options &o)
+    {
+        defs = placer.Place(4, 192);
+        Def(kInline).Def(VirtualOffset(defs + 192));
+        pieces = placer.Place(4, 12);
+        Word(o.piecesName).Word(o.pieceCount).Word(kInline);
+        if (o.piecesName == kInline)
+            Text(o.piecesText);
+        placer.Place(1, 3);
+        placer.Place(4, 16);
+        Word(o.pieceModel).Float(1).Float(2).Float(3);
+        placer.Place(4, 96);
+        return Def(0);
     }
 };
 
@@ -293,6 +329,25 @@ bool BoxConverted(const clipMap_t &map, const File &file, const Zone &zone)
         && At<std::uint8_t>(zone, file.box)[12] == 0xFF; // the box brush's record, contents -1, stays in block 4
 }
 
+// A def's scalars and the aliases it names.
+bool DefConverted(const DynEntityDef &def)
+{
+    return def.xModel == &g_model && def.destroyFx == &g_effect && def.physPreset == &g_preset && def.brushModel == 2
+        && def.physicsBrushModel == 3 && def.health == 100 && def.contents == 5
+        && def.mass.productsOfInertia[2] == 8.25f && def.pose.origin[2] == 6.f;
+}
+
+// The first list's defs convert, naming the aliases and sharing their model
+// pieces; the second list's def has none.
+bool DynEntityDefsConverted(const clipMap_t &map)
+{
+    const DynEntityDef *const defs = map.dynEntDefList[0];
+    const XModelPieces *const pieces = InArena(defs) ? defs[0].destroyPieces : nullptr;
+    return InArena(pieces) && DefConverted(defs[0]) && defs[1].destroyPieces == pieces && !std::strcmp(pieces->name, "pc")
+        && pieces->numpieces == 1 && pieces->pieces[0].model == &g_model && pieces->pieces[0].offset[2] == 3.f
+        && InArena(map.dynEntDefList[1]) && !map.dynEntDefList[1][0].destroyPieces;
+}
+
 void TestWholeMap()
 {
     Zone zone;
@@ -302,19 +357,20 @@ void TestWholeMap()
     Expect(map == &g_maps[0] && g_published == 1, "an inline clip map publishes one pool entry");
     if (map != &g_maps[0] || !InArena(map->leafbrushNodes))
         return;
-    Expect(map->name == zone.At(4) && !std::strcmp(map->name, "cm"), "the name points at its bytes in block 4");
+    Expect(map->name == zone.At(12) && !std::strcmp(map->name, "cm"), "the name points at its bytes in block 4");
     Expect(ScalarsConverted(*map), "the counts, the box model and the checksum convert");
     Expect(FlatArraysPlaced(zone, *map, file), "each flat array stays at its aligned retail block-4 offset");
     Expect(NodesConverted(zone, *map, file), "nodes and leaf-brush nodes convert and name what they name");
     Expect(PartitionsAndModelConverted(*map, file, zone), "partitions and static models convert");
     Expect(BrushesConverted(*map, file, zone), "the brush names its side and edges; the box brush converts");
     Expect(map->mapEnts == &g_ents[0] && !std::strcmp(map->mapEnts->name, "me"), "the map entities load");
+    Expect(DynEntityDefsConverted(*map), "dynamic-entity defs and their model pieces convert");
     Expect(map->dynEntPoseList[0] == reinterpret_cast<DynEntityPose *>(zone.runtime)
                && map->dynEntClientList[1] == reinterpret_cast<DynEntityClient *>(zone.runtime + 64)
                && map->dynEntCollList[0] == reinterpret_cast<DynEntityColl *>(zone.runtime + 76),
            "the dynamic entities' arrays take block 1");
     Expect(!std::memcmp(zone.temp, g_file.data(), kRecordBytes) && g_read == g_file.size()
-               && DB_GetStreamPos() == zone.virt + file.box + 80,
+               && DB_GetStreamPos() == zone.virt + file.placer.at,
            "the record streams into the temp block and every disk byte is consumed");
 }
 
@@ -322,10 +378,10 @@ void TestOffsetsAndAliases()
 {
     Zone zone;
     File file;
-    file.placer.at = 8; // past the model alias and the clip map's own alias slot
+    file.placer.at = 16; // past the aliases and the clip map's own alias slot
     file.Write(WholeRecord());
     Record second; // its name, planes and box brush by offset, one material of its own
-    second.Set(0x000, VirtualOffset(8)).Set(0x008, 2).Set(0x00C, VirtualOffset(file.planes)).Array(0x018, 1);
+    second.Set(0x000, VirtualOffset(16)).Set(0x008, 2).Set(0x00C, VirtualOffset(file.planes)).Array(0x018, 1);
     second.Set(0x0A8, VirtualOffset(file.box));
     g_file.insert(g_file.end(), second.bytes.begin(), second.bytes.end());
     g_file.insert(g_file.end(), 72, 0x23);
@@ -334,10 +390,10 @@ void TestOffsetsAndAliases()
     Expect(first && other && other->planes == first->planes && other->name == first->name
                && other->box_brush == first->box_brush,
            "a later clip map names the planes, the name and the box brush by offset");
-    Expect(first && Load(VirtualOffset(4)) == first, "an alias token resolves to the full native pointer");
+    Expect(first && Load(VirtualOffset(12)) == first, "an alias token resolves to the full native pointer");
     // Planes named 20 bytes before the end of what block 4 holds: the two
     // planes run past it.
-    second.Set(0x00C, VirtualOffset(file.box + 80 + 72 - 20)); // past the second map's material
+    second.Set(0x00C, VirtualOffset(file.placer.at + 72 - 20)); // past the second map's material
     g_file.insert(g_file.end(), second.bytes.begin(), second.bytes.end());
     const Drop drop = Catch([] { Load(kInline); });
     Expect(std::strstr(drop.message, "unmaterialized") && g_published == 2,
@@ -363,7 +419,6 @@ const Malformed kMalformed[] = {
     {"triangle indices past 32 bits", 0x060, 0x40000000, kLayout},
     {"visibility past 32 bits", 0x098, 0x40000000, kLayout},
     {"a negative border count", 0x06C, 0xFFFFFFFF, "array count"},
-    {"dynamic-entity defs", 0x0FC, kInline, "no 64-bit loader yet"},
     {"an unmapped plane offset", 0x00C, VirtualOffset(900), "clipmap planes"},
     {"a null name", 0x000, 0, "has no name"},
     {"an unmapped box-brush alias", 0x0A8, VirtualOffset(40), "alias offset"},
@@ -372,12 +427,16 @@ const Malformed kMalformed[] = {
     {"an unmapped side plane", 0x004, 1, "pointer offset", {VirtualOffset(900)}},
     {"an edge naming no side", 0x004, 1, "adjacency data", {0, 7}},
     {"inline brush sides", 0x004, 1, "inline fast-file clipmap brush sides", {0, 0, kInline}},
-    {"brush sides outside the side array", 0x004, 1, "clipmap brush sides", {0, 0, VirtualOffset(8)}},
+    {"brush sides outside the side array", 0x004, 1, "clipmap brush sides", {0, 0, VirtualOffset(16)}}, // the planes
     {"251 brush sides", 0x004, 1, "side count", {0, 0, 0, 0, 251}},
     {"inline adjacency", 0x004, 1, "inline fast-file clipmap brush adjacency", {0, 0, 0, kInline}},
     {"a plane of the wrong type", 0x004, 1, kGraph, {0, 0, 0, 0, 1, 1}},
     {"a box brush that is solid", 0x004, 1, kGraph, {0, 0, 0, 0, 1, 0, 1}},
     {"an adjacency slot out of order", 0x004, 1, "adjacency layout", {0, 0, 0, 0, 1, 0, -1, 1}},
+    {"model pieces without a name", 0x004, 1, "model-pieces header", {0, 0, 0, 0, 1, 0, -1, 0, 0}},
+    {"model pieces named nothing", 0x004, 1, "model-pieces identity", {0, 0, 0, 0, 1, 0, -1, 0, kInline, ""}},
+    {"65536 model pieces", 0x004, 1, "model-pieces header", {0, 0, 0, 0, 1, 0, -1, 0, kInline, "pc", 65536}},
+    {"a piece naming no model", 0x004, 1, "model piece", {0, 0, 0, 0, 1, 0, -1, 0, kInline, "pc", 1, 0}},
 };
 
 void TestMalformedFailsClosed()
@@ -456,6 +515,17 @@ db::load_legacy_bridge::LegacyBridgeStatus db::load_legacy_bridge::DbLoadLegacyB
 bool db::load_legacy_bridge::DbLoadLegacyBridge::InSession() noexcept
 {
     return false;
+}
+
+// Effects resolve only by alias here, and the defs name none by name.
+void __cdecl Load_FxEffectDefAsset(XAssetHeader *)
+{
+    Expect(false, "no effect loads");
+}
+
+void __cdecl Load_FxEffectDefFromName(const char **)
+{
+    Expect(false, "no effect is named");
 }
 
 void __cdecl Load_MapEntsAsset(XAssetHeader *header)

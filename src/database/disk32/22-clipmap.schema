@@ -48,6 +48,29 @@ record cbrush_t 0x50 runtime=cbrush_t header=xanim/xanim.h copy=scalars
     0x40 edgeCount                u8[2][3]
     0x46 edgeCountPad             pad[10]
 
+# A model piece: its model loads through XModel's step.
+record XModelPiece 0x10 runtime=XModelPiece header=xanim/xmodel.h copy=scalars
+    0x00 model                    pointer
+    0x04 offset                   f32[3]
+
+# Model pieces, a completed object only dynamic-entity defs name.
+record XModelPieces 0x0C runtime=XModelPieces header=xanim/xmodel.h copy=scalars
+    0x00 name                     xstring
+    0x04 numpieces                i32
+    0x08 pieces                   pointer  # numpieces pieces, inline
+
+# A dynamic-entity def: its model, effect and physics preset load through
+# their families' steps; its destroy pieces are model pieces.
+record DynEntityDef 0x60 runtime=DynEntityDef header=DynEntity/DynEntity_client.h copy=scalars
+    0x00 type                     run[8]    to=pose
+    0x20 xModel                   pointer
+    0x24 brushModel               u16
+    0x26 physicsBrushModel        u16
+    0x28 destroyFx                pointer
+    0x2C destroyPieces            pointer
+    0x30 physPreset               pointer
+    0x34 health                   run[11]   to=contents
+
 record clipMap_t 0x11C runtime=clipMap_t header=qcommon/qcommon.h copy=scalars
     asset member=clipMap pool=Load_ClipMapAsset kind=ClipMap alias=inserted body=custom label=clipmap
     0x000 name                   xstring
