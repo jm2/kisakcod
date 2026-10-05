@@ -8545,6 +8545,10 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
 
 void __cdecl Load_WeaponDefPtr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadWeaponDefPtrDisk32(atStreamStart, varWeaponDefPtr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -8577,6 +8581,7 @@ void __cdecl Load_WeaponDefPtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Mark_WeaponDef()

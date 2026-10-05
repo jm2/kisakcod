@@ -71,7 +71,7 @@ inline void Expect(bool ok, const char *what, const char *detail = "")
 // A production ERR_DROP longjmps and never returns; the seam throws this instead.
 struct Drop
 {
-    char message[256];
+    char message[256]; // Flawfinder: ignore (Com_Error fills it with a bounded vsnprintf)
 };
 
 constexpr std::uint32_t kInline = disk32::kInline;
@@ -104,14 +104,14 @@ struct FileBuilder
     }
 };
 
-// A zone with a temp block (0) of up to 512 bytes, the virtual block (4) and
+// A zone with a temp block (0) of up to TempBytes, the virtual block (4) and
 // the vertex (7) and index (8) blocks,
 // positioned as DB_LoadXFile leaves it for the asset array. Each zone starts
 // a new image.
-template <std::uint32_t VirtBytes>
+template <std::uint32_t VirtBytes, std::uint32_t TempBytes = 512>
 struct Zone
 {
-    alignas(16) std::uint8_t temp[512]{};
+    alignas(16) std::uint8_t temp[TempBytes]{};
     alignas(16) std::uint8_t virt[VirtBytes]{};
     alignas(16) std::uint8_t vertex[256]{};
     alignas(16) std::uint8_t index[256]{};

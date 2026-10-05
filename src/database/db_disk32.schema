@@ -16,7 +16,7 @@
 #              alias=<inserted|completed> label=<noun> [name=<field>] [body=custom] [check=custom]
 #              [slot=const]]
 #       <retail offset> <field> <kind>[<n>]... [count=<expression>] [of=<record>] [terminated] [paired]
-#               [label=<noun>] [asset=<record>]
+#               [label=<noun>] [asset=<record>] [to=<member>]
 #
 # Kinds: i32 u32 f32 i16 u16 u8 (scalars), bool (one byte; nonzero is true),
 # u64 (8 bytes, 8-aligned at both widths; only a custom body loads it),
@@ -35,7 +35,10 @@
 # (sound.info.rate) is a member of a nested native struct: its mirror member
 # takes the last name, and only a custom body or copy=scalars loads it.
 # copy=scalars emits Copy<Name>Scalars for a custom body: every scalar and
-# fixed array, and null for every rawptr.
+# fixed array, every run, and null for every rawptr. A run[<n>] to=<member>
+# is n words of native members, from the field through to=, that hold no
+# pointer and so sit alike at both widths (a weapon's scalars and enums); it
+# copies as one block, and the compiler checks the native span.
 # The offsets and sizes are the retail facts: the generator checks them
 # against the ILP32 rules, and the compiler checks the emitted mirror against
 # them (ONDISK_*) and the native struct against the same field list (RUNTIME_*).

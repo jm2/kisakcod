@@ -183,6 +183,7 @@ set(DATABASE
     "${SRC_DIR}/database/db_disk32_soundcurve.cpp"
     "${SRC_DIR}/database/db_disk32_stringtable.cpp"
     "${SRC_DIR}/database/db_disk32_techniqueset.cpp"
+    "${SRC_DIR}/database/db_disk32_weapon.cpp"
     "${SRC_DIR}/database/db_disk32_xanimparts.cpp"
     "${SRC_DIR}/database/db_disk32_xmodel.cpp"
     "${SRC_DIR}/database/db_referenced_fastfile.h"
