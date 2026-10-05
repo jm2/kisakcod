@@ -20,9 +20,9 @@
 // cells: AABB trees (children offsets at the native stride), portals (each
 // naming a native cell) and index arrays, under the 32-bit loader's cell,
 // topology and portal rules; then its lightmaps, light grid, brush models,
-// material memory, vertex data and sun flare, and its runtime arrays in
-// block 1. The shadow geometry, light regions and DPVS do not load yet, so
-// every world still fails closed.
+// material memory, vertex data and sun flare, its runtime arrays in block 1,
+// and each primary light's shadow geometry and light region. The DPVS does
+// not load yet, so every world still fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -501,6 +501,66 @@ bool LoadRuntimeArrays(const Disk &disk, const Extents &extents, GfxWorld *out)
                        &out->nonSunPrimaryLightForModelDynEnt);
 }
 
+// Load_GfxShadowGeometry: the sorted-surface indices, then the static-model
+// indices, each 2-aligned in block 4. The renderer reads every index the
+// counts cover, the first into the static surfaces' draw keys and the second
+// into the static models' draw instances, so each has its token and is below
+// that count.
+bool ConvertShadowGeometry(const disk32::GfxShadowGeometryDisk32 &disk, const disk32::GfxWorldDpvsStaticDisk32 &dpvs,
+                           GfxShadowGeometry *out)
+{
+    CopyGfxShadowGeometryScalars(disk, out);
+    if (!db::validation::PointerCountConsistent(!disk.sortedSurfIndex.token.isNull(), disk.surfaceCount)
+        || !db::validation::PointerCountConsistent(!disk.smodelIndex.token.isNull(), disk.smodelCount))
+    {
+        return Drop("Invalid fast-file pointer/count for world shadow geometry");
+    }
+    if (!LoadArray(disk.sortedSurfIndex.token, disk.surfaceCount, 2, 2, &out->sortedSurfIndex)
+        || !LoadArray(disk.smodelIndex.token, disk.smodelCount, 2, 2, &out->smodelIndex))
+    {
+        return false;
+    }
+    return (db::validation::AllU16Below(out->sortedSurfIndex, disk.surfaceCount, dpvs.staticSurfaceCount)
+            && db::validation::AllU16Below(out->smodelIndex, disk.smodelCount, dpvs.smodelCount))
+        || Drop("Fast-file world shadow geometry has an invalid index");
+}
+
+// Load_GfxLightRegionHull: its axes, 4-aligned in block 4. The renderer
+// reads every axis the count covers, so a hull with axes has the token.
+bool ConvertHull(const disk32::GfxLightRegionHullDisk32 &disk, GfxLightRegionHull *out)
+{
+    CopyGfxLightRegionHullScalars(disk, out);
+    if (disk.axisCount && disk.axis.token.isNull())
+        return Drop("Invalid fast-file pointer/count for world light-region axes");
+    return LoadArray(disk.axis.token, disk.axisCount, sizeof(GfxLightRegionAxis), 4, &out->axis);
+}
+
+// Load_GfxLightRegion: its hulls, converted into native storage, each then
+// loading its axes. A region with hulls has the token.
+bool ConvertRegion(const disk32::GfxLightRegionDisk32 &disk, GfxLightRegion *out)
+{
+    CopyGfxLightRegionScalars(disk, out);
+    if (disk.hullCount && disk.hulls.token.isNull())
+        return Drop("Invalid fast-file pointer/count for world light-region hulls");
+    return LoadRecords<disk32::GfxLightRegionHullDisk32>(disk.hulls.token, disk.hullCount, &out->hulls, ConvertHull);
+}
+
+// Each primary light's shadow geometry and light region, converted into
+// native storage. The renderer indexes both by primary light, so a world
+// with primary lights has both tokens.
+bool LoadPrimaryLights(const Disk &disk, GfxWorld *out)
+{
+    const auto lights = static_cast<std::int64_t>(disk.primaryLightCount);
+    if (lights && (disk.shadowGeom.token.isNull() || disk.lightRegion.token.isNull()))
+        return Drop("Invalid fast-file pointer/count for world primary lights");
+    const auto shadows = [&disk](const disk32::GfxShadowGeometryDisk32 &geometry, GfxShadowGeometry *native) {
+        return ConvertShadowGeometry(geometry, disk.dpvs, native);
+    };
+    return LoadRecords<disk32::GfxShadowGeometryDisk32>(disk.shadowGeom.token, lights, &out->shadowGeom, shadows)
+        && LoadRecords<disk32::GfxLightRegionDisk32>(disk.lightRegion.token, lights, &out->lightRegion,
+                                                     ConvertRegion);
+}
+
 // The record's scalars and its nested records'.
 void CopyScalars(const Disk &disk, GfxWorld *out)
 {
@@ -539,13 +599,13 @@ bool LoadLights(const Disk &disk, GfxWorld *out)
         && LoadDpvsPlanes(disk, &out->dpvsPlanes);
 }
 
-// The parts in block 4, in Load_GfxWorld's order. The shadow geometry, light
-// regions and DPVS do not load yet, and no world publishes before they do.
+// The parts in block 4, in Load_GfxWorld's order. The DPVS does not load
+// yet, and no world publishes before it does.
 bool LoadParts(const Disk &disk, const Extents &extents, GfxWorld *out)
 {
     return LoadSky(disk, out) && LoadLights(disk, out) && LoadCells(disk, out) && LoadMiddle(disk, out)
-        && LoadRuntimeArrays(disk, extents, out)
-        && Drop("Fast-file world shadow geometry, light regions and DPVS have no 64-bit loader yet");
+        && LoadRuntimeArrays(disk, extents, out) && LoadPrimaryLights(disk, out)
+        && Drop("Fast-file world DPVS has no 64-bit loader yet");
 }
 } // namespace
 
