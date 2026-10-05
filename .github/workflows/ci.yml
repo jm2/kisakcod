@@ -174,7 +174,10 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
 
       - name: Build portable sanitizer contracts
-        run: cmake --build build-portable-sanitizers --parallel
+        # Bounded like the portable build (#354): a bare --parallel is an unbounded
+        # make -j, and the ASan objects outgrow the runner's memory, so the runner
+        # loses the job ("received a shutdown signal").
+        run: cmake --build build-portable-sanitizers --parallel 4
 
       - name: Run portable sanitizer contracts
         run: >
