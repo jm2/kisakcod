@@ -11,10 +11,10 @@
 // Weapon, a wave-3 family (docs/design/FASTFILE_LOADER.md). The body mirrors
 // Load_WeaponDef: the 2168-byte record streams into the temp block and its
 // scalar runs copy into the native 2832-byte record, then with block 4
-// pushed each pointer loads in the 32-bit loader's order (kParts). Names
-// and other strings load here; models, effects, sounds, materials, script
-// strings, the bounce-sound table and the accuracy graphs do not yet, so a
-// weapon that names one fails closed.
+// pushed each pointer loads in the 32-bit loader's order (kParts). Strings,
+// script strings (interned), sounds by name through their string holders,
+// and the bounce-sound table load here; models, effects, materials and the
+// accuracy graphs do not yet, so a weapon that names one fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -119,37 +119,121 @@ T **SlotAt(WeaponDef *out, const Part &part, std::uint32_t index)
     return reinterpret_cast<T **>(reinterpret_cast<std::uint8_t *>(out) + part.native + index * sizeof(void *));
 }
 
-bool LoadStrings(const Disk &disk, const Part &part, WeaponDef *out)
+// Load_XStringPtr's -1: a 4-byte holder 4-aligned here, registered as the
+// alias identity, then its string. Its native twin holds the string.
+bool LoadHolder(const char *const **out)
+{
+    std::uint8_t *const holder = DB_AllocStreamPos(3);
+    const DBAliasHandle completed =
+        holder ? DB_RegisterPointerSlot(holder, DBAliasKind::XStringPointerSlot) : DBAliasHandle{};
+    if (!completed || !StreamBytes(holder, sizeof(disk32::PointerToken)))
+        return false;
+    disk32::Ptr32<const char> token{};
+    std::memcpy(&token, holder, sizeof(token));
+    const char **const native = AllocNative<const char *>(1);
+    if (!native || !LoadXString(token, native) || !DB_CompleteStringHolder(completed, holder, native))
+        return false;
+    *out = native;
+    return true;
+}
+
+// Load_SndAliasCustom's lookup of a sound by its name.
+bool FindSound(const char *name, snd_alias_list_t **out)
+{
+    *out = DB_FindXAssetHeader(ASSET_TYPE_SOUND, name).sound;
+    return true;
+}
+
+// Load_snd_alias_list_name: a string holder, -1 here or an earlier one by
+// offset, whose nonempty name DB_FindXAssetHeader looks up.
+bool LoadSoundName(disk32::PointerToken token, snd_alias_list_t **out)
+{
+    *out = nullptr;
+    if (token.isNull())
+        return true;
+    const char *const *holder = nullptr;
+    if (token.isInline())
+        return LoadHolder(&holder) && FindSound(*holder, out);
+    std::uintptr_t native = 0;
+    const db::relocation::Status status =
+        DB_ResolveCompletedObjectNative(token, DBAliasKind::XStringPointerSlot, 0, &native);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file alias offset: %s", db::relocation::StatusName(status));
+        return false;
+    }
+    return FindSound(*reinterpret_cast<const char *const *>(native), out);
+}
+
+// The bounce-sound table: -1 streams its 29 name tokens 4-aligned here as a
+// completed object whose native twin holds the sounds; any other token
+// names an earlier table.
+bool LoadBounceSounds(disk32::PointerToken token, snd_alias_list_t ***out)
+{
+    *out = nullptr;
+    std::uintptr_t native = 0;
+    if (token.isNull())
+        return true;
+    if (!token.isInline())
+    {
+        const db::relocation::Status status = DB_ResolveCompletedObjectNative(
+            token, DBAliasKind::WeaponBounceSoundTable, disk32::kWeaponBounceSoundTableBytes, &native);
+        if (status != db::relocation::Status::Ok)
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file alias offset: %s", db::relocation::StatusName(status));
+            return false;
+        }
+        *out = reinterpret_cast<snd_alias_list_t **>(native);
+        return true;
+    }
+    std::uint8_t *const table = DB_AllocStreamPos(3);
+    const DBAliasHandle completed =
+        table ? DB_RegisterPointerSlot(table, DBAliasKind::WeaponBounceSoundTable) : DBAliasHandle{};
+    snd_alias_list_t **const sounds = AllocNative<snd_alias_list_t *>(disk32::kWeaponBounceSoundCount);
+    if (!completed || !StreamBytes(table, disk32::kWeaponBounceSoundTableBytes) || !sounds)
+        return false;
+    for (std::uint32_t index = 0; index < disk32::kWeaponBounceSoundCount; ++index)
+    {
+        disk32::PointerToken name{};
+        std::memcpy(&name, table + index * sizeof(name), sizeof(name));
+        if (!LoadSoundName(name, &sounds[index]))
+            return false;
+    }
+    *out = sounds;
+    return DB_CompleteObject(completed, DBAliasKind::WeaponBounceSoundTable, table,
+                             disk32::kWeaponBounceSoundTableBytes, disk32::kWeaponBounceSoundTableBytes, sounds);
+}
+
+bool LoadPart(const Disk &disk, const Part &part, WeaponDef *out)
 {
     for (std::uint32_t index = 0; index < part.count; ++index)
     {
-        if (!LoadXString(disk32::Ptr32<const char>{TokenAt(disk, part, index)}, SlotAt<const char>(out, part, index)))
+        const disk32::PointerToken token = TokenAt(disk, part, index);
+        bool loaded = true;
+        if (part.kind == Kind::String)
+            loaded = LoadXString(disk32::Ptr32<const char>{token}, SlotAt<const char>(out, part, index));
+        else if (part.kind == Kind::Sound)
+            loaded = LoadSoundName(token, SlotAt<snd_alias_list_t>(out, part, index));
+        else if (part.kind == Kind::BounceSounds)
+            loaded = LoadBounceSounds(token, SlotAt<snd_alias_list_t *>(out, part, index));
+        else if (!token.isNull())
+            return Drop("Fast-file weapon models, effects, materials and graphs have no 64-bit loader yet");
+        if (!loaded)
             return false;
     }
     return true;
 }
 
-bool LoadPart(const Disk &disk, const Part &part, WeaponDef *out)
+// Load_ScriptStringArray over the tags and notetrack maps: each zone index
+// becomes its interned id.
+void LoadScriptStrings(WeaponDef *out)
 {
-    if (part.kind == Kind::String)
-        return LoadStrings(disk, part, out);
-    for (std::uint32_t index = 0; index < part.count; ++index)
-    {
-        if (!TokenAt(disk, part, index).isNull())
-            return Drop("Fast-file weapon models, effects, sounds, materials and graphs have no 64-bit loader yet");
-    }
-    return true;
-}
-
-// The script strings the 32-bit loader interns: none yet.
-bool ScriptStringsAbsent(const Disk &disk)
-{
-    std::uint16_t any = 0;
-    for (const std::uint16_t value : disk.hideTags)
-        any |= value;
-    for (std::size_t index = 0; index < 16; ++index)
-        any |= disk.notetrackSoundMapKeys[index] | disk.notetrackSoundMapValues[index];
-    return !any || Drop("Fast-file weapon script strings have no 64-bit loader yet");
+    for (std::uint16_t &tag : out->hideTags)
+        Load_ScriptStringCustom(&tag);
+    for (std::uint16_t &key : out->notetrackSoundMapKeys)
+        Load_ScriptStringCustom(&key);
+    for (std::uint16_t &value : out->notetrackSoundMapValues)
+        Load_ScriptStringCustom(&value);
 }
 } // namespace
 
@@ -165,8 +249,7 @@ bool LoadWeaponDef(WeaponDef *out)
     CopyWeaponDefScalars(disk, out);
     if (disk.szInternalName.token.isNull())
         return Drop("Fast-file weapon has no name"); // the asset pool hashes it
-    if (!ScriptStringsAbsent(disk))
-        return false;
+    LoadScriptStrings(out);
     DB_PushStreamPos(kVirtualBlock);
     for (const Part &part : kParts)
     {

@@ -40,6 +40,11 @@ bool __cdecl DB_CompleteObject(
     std::uint32_t metadata,
     std::uint32_t materializedBytes,
     const void *native = nullptr);
+// A 64-bit loader's string holder (Load_XStringPtr): holder is its 4-byte
+// block-4 slot, the alias identity later offset tokens name; native holds
+// the converted string, which must be a nonempty C string in the stream.
+// Later tokens resolve to native through DB_ResolveCompletedObjectNative.
+bool __cdecl DB_CompleteStringHolder(DBAliasHandle handle, const void *holder, const char *const *native);
 db::relocation::Status __cdecl DB_ResolveInsertedPointer(
     disk32::PointerToken token,
     DBAliasKind expectedKind,
