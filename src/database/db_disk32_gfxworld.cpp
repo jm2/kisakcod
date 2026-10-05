@@ -3,6 +3,7 @@
 #if KISAK_ARCH_64BIT
 
 #include <database/db_disk32_loaders.h> // generated from disk32/23-gfxworld.schema
+#include <database/db_gfxworld_validation.h>
 #include <database/db_validation.h>
 
 #include <cstdint>
@@ -15,9 +16,11 @@
 // counts its runtime trusts are checked, then with block 4 pushed its names,
 // its indices and sky surfaces (which keep their layout in block 4), its sky
 // image through Image's step, its sun light (a completed object), its
-// reflection probes and their runtime textures, and its DPVS planes. The
-// cells and later parts do not load yet, so a world that names one fails
-// closed.
+// reflection probes and their runtime textures, its DPVS planes, and its
+// cells: AABB trees (children offsets at the native stride), portals (each
+// naming a native cell) and index arrays, under the 32-bit loader's cell,
+// topology and portal rules. The lightmaps and later parts do not load yet,
+// so a world that names one fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -138,10 +141,156 @@ bool LoadOrResolve(disk32::PointerToken token, std::uint32_t bytes, std::uint32_
     return true;
 }
 
-// The parts after the DPVS planes, which do not load yet.
+// The parts after the cells, which do not load yet.
 bool NotYet(disk32::PointerToken token)
 {
-    return token.isNull() || Drop("Fast-file world cells and later parts have no 64-bit loader yet");
+    return token.isNull() || Drop("Fast-file world lightmaps and later parts have no 64-bit loader yet");
+}
+
+// An array of records that hold pointers: any non-null token means count
+// records follow 4-aligned; each converts into native storage, then loads
+// what it names, in order.
+template <typename Disk32, typename Native, typename Convert>
+bool LoadRecords(disk32::PointerToken token, std::int64_t count, Native **out, Convert convert)
+{
+    std::uint8_t *records = nullptr;
+    *out = nullptr;
+    if (!LoadArray(token, count, sizeof(Disk32), 4, &records))
+        return false;
+    if (!records || !count)
+        return true;
+    Native *const native = AllocNative<Native>(static_cast<std::int32_t>(count));
+    if (!native)
+        return false;
+    *out = native;
+    for (std::int64_t index = 0; index < count; ++index)
+    {
+        Disk32 disk{};
+        std::memcpy(&disk, records + index * sizeof(disk), sizeof(disk));
+        std::memset(&native[index], 0, sizeof(Native)); // padding too: native storage starts as junk
+        if (!convert(disk, &native[index]))
+            return false;
+    }
+    return true;
+}
+
+// A node's children offset at the native stride: the disk offset counts
+// 44-byte nodes; one that does not stays unusable (-1), and the topology
+// rules reject it wherever it matters.
+std::int32_t NativeChildrenOffset(std::int32_t offset)
+{
+    constexpr std::int32_t kDiskStride = sizeof(disk32::GfxAabbTreeDisk32);
+    constexpr std::int32_t kNativeStride = sizeof(GfxAabbTree);
+    if (offset <= 0)
+        return offset;
+    if (offset % kDiskStride || offset / kDiskStride > (std::numeric_limits<std::int32_t>::max)() / kNativeStride)
+        return -1;
+    return offset / kDiskStride * kNativeStride;
+}
+
+// Load_GfxAabbTree: the node, its children offset at the native stride, and
+// its static-model indices (-1 here, or named in block 4), each below the
+// world's static-model count.
+bool ConvertTree(const disk32::GfxAabbTreeDisk32 &disk, GfxAabbTree *out, std::uint32_t smodelCount)
+{
+    CopyGfxAabbTreeScalars(disk, out);
+    out->childrenOffset = NativeChildrenOffset(disk.childrenOffset);
+    if (!db::validation::PointerCountConsistent(!disk.smodelIndexes.token.isNull(), disk.smodelIndexCount))
+        return Drop("Invalid fast-file pointer/count for world AABB static-model indices");
+    return LoadOrResolve(disk.smodelIndexes.token, disk.smodelIndexCount * 2u, 2, &out->smodelIndexes)
+        && (db::validation::AllU16Below(out->smodelIndexes, disk.smodelIndexCount, smodelCount)
+            || Drop("Fast-file world AABB has an invalid static-model index"));
+}
+
+// What a portal's cell offset names: the world's cells, at their disk and
+// native addresses.
+struct Cells
+{
+    const std::uint8_t *disk = nullptr;
+    std::uint32_t count = 0;
+    GfxCell *native = nullptr;
+};
+
+// The cell a portal names: an offset to a whole disk cell, which names its
+// native twin.
+bool LoadPortalCell(disk32::PointerToken token, const Cells &cells, GfxCell **out)
+{
+    if (!token.isOffset())
+        return Drop("Invalid fast-file world portal cell token");
+    const std::uint8_t *named = nullptr;
+    if (!LoadOrResolve(token, disk32::kGfxCellBytes, 4, &named))
+        return false;
+    const std::uintptr_t offset = reinterpret_cast<std::uintptr_t>(named) - reinterpret_cast<std::uintptr_t>(cells.disk);
+    if (named < cells.disk || offset % disk32::kGfxCellBytes || offset / disk32::kGfxCellBytes >= cells.count)
+        return Drop("Fast-file world portal target is not a cell");
+    *out = cells.native + offset / disk32::kGfxCellBytes;
+    return true;
+}
+
+// Load_GfxPortal: the writable state zeroed, the cell, then 3..64 vertices
+// and GfxPortalRuntimeValid's rule.
+bool ConvertPortal(const disk32::GfxPortalDisk32 &disk, GfxPortal *out, const Cells &cells)
+{
+    CopyGfxPortalScalars(disk, out);
+    if (!LoadPortalCell(disk.cell.token, cells, &out->cell))
+        return false;
+    if (disk.vertices.token.isNull() || disk.vertexCount < db::validation::kMinGfxPortalVertices
+        || disk.vertexCount > db::validation::kMaxGfxPortalVertices)
+    {
+        return Drop("Invalid fast-file world portal vertex layout");
+    }
+    return LoadArray(disk.vertices.token, disk.vertexCount, disk32::kVec3Bytes, 4, &out->vertices)
+        && (db::validation::GfxPortalRuntimeValid(*out) || Drop("Invalid completed fast-file world portal"));
+}
+
+// Load_GfxCell: its layout rule, its AABB trees and their topology, its
+// portals, cull-group indices and probe indices.
+bool ConvertCell(const disk32::GfxCellDisk32 &disk, GfxCell *out, const Cells &cells, const GfxWorld &world)
+{
+    CopyGfxCellScalars(disk, out);
+    db::validation::GfxCellLayoutExtents extents;
+    if (!db::validation::GfxCellLayoutValid(disk.mins, disk.maxs, !disk.aabbTree.token.isNull(), disk.aabbTreeCount,
+                                            !disk.portals.token.isNull(), disk.portalCount,
+                                            !disk.cullGroups.token.isNull(), disk.cullGroupCount,
+                                            !disk.reflectionProbes.token.isNull(), disk.reflectionProbeCount,
+                                            &extents))
+    {
+        return Drop("Invalid fast-file world cell layout");
+    }
+    const auto tree = [&world](const disk32::GfxAabbTreeDisk32 &record, GfxAabbTree *native) {
+        return ConvertTree(record, native, world.dpvs.smodelCount);
+    };
+    const auto portal = [&cells](const disk32::GfxPortalDisk32 &record, GfxPortal *native) {
+        return ConvertPortal(record, native, cells);
+    };
+    return LoadRecords<disk32::GfxAabbTreeDisk32>(disk.aabbTree.token, disk.aabbTreeCount, &out->aabbTree, tree)
+        && db::gfxworld_validation::DB_ValidateWorldAabbCell(&world, out)
+        && LoadRecords<disk32::GfxPortalDisk32>(disk.portals.token, disk.portalCount, &out->portals, portal)
+        && LoadArray(disk.cullGroups.token, disk.cullGroupCount, 4, 4, &out->cullGroups)
+        && LoadArray(disk.reflectionProbes.token, disk.reflectionProbeCount, 1, 1, &out->reflectionProbes);
+}
+
+// Load_GfxCellArray: the cells 4-aligned, then each one's parts.
+bool LoadCells(const Disk &disk, GfxWorld *out)
+{
+    const std::int32_t count = disk.dpvsPlanes.cellCount;
+    std::uint8_t *records = nullptr;
+    if (!LoadArray(disk.cells.token, count, disk32::kGfxCellBytes, 4, &records))
+        return false;
+    GfxCell *const cells = AllocNative<GfxCell>(count);
+    if (!cells)
+        return false;
+    out->cells = cells;
+    const Cells named{records, static_cast<std::uint32_t>(count), cells};
+    for (std::int32_t index = 0; index < count; ++index)
+    {
+        disk32::GfxCellDisk32 cell{};
+        std::memcpy(&cell, records + index * sizeof(cell), sizeof(cell));
+        std::memset(&cells[index], 0, sizeof(cells[index]));
+        if (!ConvertCell(cell, &cells[index], named, *out))
+            return false;
+    }
+    return true;
 }
 
 constexpr std::uint32_t kLightBytes = sizeof(disk32::GfxLightDisk32);
@@ -260,6 +409,18 @@ bool LoadDpvsPlanes(const Disk &disk, GfxWorldDpvsPlanes *out)
     DB_PopStreamPos();
     return true;
 }
+// The record's scalars and its nested records'.
+void CopyScalars(const Disk &disk, GfxWorld *out)
+{
+    CopyGfxWorldScalars(disk, out);
+    CopyGfxWorldVertexDataScalars(disk.vd, &out->vd);
+    CopyGfxWorldVertexLayerDataScalars(disk.vld, &out->vld);
+    CopyGfxLightGridScalars(disk.lightGrid, &out->lightGrid);
+    Copysunflare_tScalars(disk.sun, &out->sun);
+    CopyGfxWorldDpvsStaticScalars(disk.dpvs, &out->dpvs);
+    CopyGfxWorldDpvsDynamicScalars(disk.dpvsDyn, &out->dpvsDyn);
+}
+
 // Load_GfxWorld's start: the names, the indices, the sky surfaces and image.
 bool LoadSky(const Disk &disk, GfxWorld *out)
 {
@@ -303,9 +464,9 @@ bool LoadGfxWorld(GfxWorld *out)
         return Drop("Invalid fast-file world cell lookup arrays");
     if (!VisibilityValid(disk, &extents) || !ShadowVisValid(disk, &extents))
         return Drop("Invalid fast-file world visibility counts");
-    CopyGfxWorldScalars(disk, out);
+    CopyScalars(disk, out);
     DB_PushStreamPos(kVirtualBlock);
-    if (!LoadSky(disk, out) || !LoadLights(disk, out) || !NotYet(disk.cells.token))
+    if (!LoadSky(disk, out) || !LoadLights(disk, out) || !LoadCells(disk, out) || !NotYet(disk.models.token))
         return false;
     DB_PopStreamPos();
     return true;
