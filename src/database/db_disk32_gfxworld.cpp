@@ -21,9 +21,9 @@
 // naming a native cell) and index arrays, under the 32-bit loader's cell,
 // topology and portal rules; then its lightmaps, light grid, brush models,
 // material memory, vertex data and sun flare, its runtime arrays in block 1,
-// each primary light's shadow geometry and light region, and the static
-// DPVS. The dynamic DPVS does not load yet, so every world still fails
-// closed.
+// each primary light's shadow geometry and light region, and the static and
+// dynamic DPVS. A world then passes the 32-bit loader's cell-graph and
+// AABB-tree rules on its native records before it publishes.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 // The arrays that keep their layout, with the element sizes their 32-bit
 // Load_*Array steps stream; the native types the runtime reads them through
@@ -702,6 +702,54 @@ bool LoadDpvsStatic(const Disk &disk, const Extents &extents, GfxWorldDpvsStatic
                        kRawUint128Alignment, &out->surfaceCastsSunShadow);
 }
 
+// The dynamic DPVS's counts for dynamic models (0) or brushes (1): the
+// renderer sizes a client word per 32 clients and reads every array, so the
+// word count is the clients' and a type with words has its arrays. Then the
+// cell bits (a word per cell and client word) and visibility bytes (32 per
+// client word).
+bool DynamicCountsValid(const Disk &disk, int type, std::int32_t *cellBits, std::int32_t *visBytes)
+{
+    const disk32::GfxWorldDpvsDynamicDisk32 &dyn = disk.dpvsDyn;
+    const std::uint32_t clients = dyn.dynEntClientCount[type];
+    const std::uint32_t words = dyn.dynEntClientWordCount[type];
+    bool arrays = !dyn.dynEntCellBits[type].token.isNull();
+    for (int partition = 0; partition < 3; ++partition)
+        arrays = arrays && !dyn.dynEntVisData[type][partition].token.isNull();
+    return words == clients / 32 + (clients % 32 != 0) && (!words || arrays)
+        && CheckedCountProduct(disk.dpvsPlanes.cellCount, words, cellBits) && CheckedCountProduct(32, words, visBytes);
+}
+
+// Load_GfxWorldDpvsDynamic: the cell bits for dynamic models then brushes,
+// then the three visibility arrays of each in turn, 16-aligned, all
+// zero-filled in block 1.
+bool LoadDpvsDynamic(const Disk &disk, GfxWorldDpvsDynamic *out)
+{
+    const disk32::GfxWorldDpvsDynamicDisk32 &dyn = disk.dpvsDyn;
+    std::int32_t cellBits[2] = {};
+    std::int32_t visBytes[2] = {};
+    if (!DynamicCountsValid(disk, 0, &cellBits[0], &visBytes[0])
+        || !DynamicCountsValid(disk, 1, &cellBits[1], &visBytes[1]))
+    {
+        return Drop("Invalid fast-file world dynamic-entity counts");
+    }
+    for (int type = 0; type < 2; ++type)
+    {
+        if (!LoadRuntime(dyn.dynEntCellBits[type].token, cellBits[type], 4, 4, &out->dynEntCellBits[type]))
+            return false;
+    }
+    for (int index = 0; index < 6; ++index)
+    {
+        const int type = index % 2;
+        const int partition = index / 2;
+        if (!LoadRuntime(dyn.dynEntVisData[type][partition].token, visBytes[type], 1, 16,
+                         &out->dynEntVisData[type][partition]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 // The record's scalars and its nested records'.
 void CopyScalars(const Disk &disk, GfxWorld *out)
 {
@@ -740,13 +788,23 @@ bool LoadLights(const Disk &disk, GfxWorld *out)
         && LoadDpvsPlanes(disk, &out->dpvsPlanes);
 }
 
-// The parts in block 4, in Load_GfxWorld's order. The dynamic DPVS does not
-// load yet, and no world publishes before it does.
+// The parts in block 4, in Load_GfxWorld's order.
 bool LoadParts(const Disk &disk, const Extents &extents, GfxWorld *out)
 {
     return LoadSky(disk, out) && LoadLights(disk, out) && LoadCells(disk, out) && LoadMiddle(disk, out)
         && LoadRuntimeArrays(disk, extents, out) && LoadPrimaryLights(disk, out)
-        && LoadDpvsStatic(disk, extents, &out->dpvs) && Drop("Fast-file world dynamic DPVS has no 64-bit loader yet");
+        && LoadDpvsStatic(disk, extents, &out->dpvs) && LoadDpvsDynamic(disk, &out->dpvsDyn);
+}
+
+// Load_GfxWorld's last rules, on the native world: its cell graph (cells,
+// probes, cull groups, portals naming native cells at the native stride) and
+// its AABB trees. The arrays the 32-bit loader checks are materialized
+// streamed here, by construction.
+bool WorldValid(const GfxWorld &world)
+{
+    if (!db::validation::GfxWorldCellGraphValid(world, sizeof(GfxCell)))
+        return Drop("Invalid completed fast-file world cell graph");
+    return db::gfxworld_validation::DB_ValidateWorldAabbTrees(&world);
 }
 } // namespace
 
@@ -768,7 +826,7 @@ bool LoadGfxWorld(GfxWorld *out)
         return Drop("Invalid fast-file world visibility counts");
     CopyScalars(disk, out);
     DB_PushStreamPos(kVirtualBlock);
-    if (!LoadParts(disk, extents, out))
+    if (!LoadParts(disk, extents, out) || !WorldValid(*out))
         return false;
     DB_PopStreamPos();
     return true;
