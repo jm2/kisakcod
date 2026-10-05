@@ -5,6 +5,18 @@
 # runtime buffers take block 1 (zero-filled). The nested records below are
 # its members; the server loads the world only to parse past it.
 
+# The sun light, a completed object: its def loads through LightDef's step.
+record GfxLight 0x40 runtime=GfxLight header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 type                     u8
+    0x01 canUseShadowMap          u8
+    0x02 unused                   u8[2]
+    0x04 color                    run[14]   to=spotShadowIndex
+    0x3C def                      pointer   asset=GfxLightDef
+
+record GfxReflectionProbe 0x10 runtime=GfxReflectionProbe header=gfx_d3d/r_gfx.h copy=scalars
+    0x00 origin                   f32[3]
+    0x0C reflectionImage          pointer   asset=GfxImage
+
 record GfxWorldVertexData 0x08 runtime=GfxWorldVertexData header=gfx_d3d/r_gfx.h copy=scalars
     0x00 vertices                 pointer   # vertexCount 44-byte vertices
     0x04 worldVb                  rawptr    # a D3D buffer the renderer creates
