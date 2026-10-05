@@ -53,12 +53,13 @@ db::load_legacy_bridge::DbLoadLegacyBridge::TryInternUser4StringOfSize(
     return LegacyBridgeStatus::Success;
 }
 
-// Pointer-aligned storage from g_arena, filled with junk as PMem does not
-// zero; null past g_arenaCapacity.
+// Pointer- or 16-aligned storage from g_arena, filled with junk as PMem
+// does not zero; null past g_arenaCapacity.
 std::uint8_t *__cdecl DB_AllocZoneNative(std::size_t size, std::size_t alignment)
 {
     const std::size_t start = (g_arenaUsed + alignment - 1) & ~(alignment - 1);
-    if (!size || alignment != alignof(void *) || start > g_arenaCapacity || size > g_arenaCapacity - start)
+    if (!size || (alignment != alignof(void *) && alignment != 16) || start > g_arenaCapacity
+        || size > g_arenaCapacity - start)
         return nullptr;
     g_arenaUsed = start + size;
     std::fill_n(g_arena + start, size, std::uint8_t{0xCD});

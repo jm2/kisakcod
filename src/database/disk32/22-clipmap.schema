@@ -34,6 +34,20 @@ record CollisionPartition 0x0C runtime=CollisionPartition header=xanim/xanim.h c
     0x04 firstTri                 i32
     0x08 borders                  pointer
 
+# A brush: its sides and adjacency name the clip map's brush sides and brush
+# edges by offset.
+record cbrush_t 0x50 runtime=cbrush_t header=xanim/xanim.h copy=scalars
+    0x00 mins                     f32[3]
+    0x0C contents                 i32
+    0x10 maxs                     f32[3]
+    0x1C numsides                 u32
+    0x20 sides                    pointer
+    0x24 axialMaterialNum         i16[2][3]
+    0x30 baseAdjacentSide         pointer
+    0x34 firstAdjacentSideOffsets i16[2][3]
+    0x40 edgeCount                u8[2][3]
+    0x46 edgeCountPad             pad[10]
+
 record clipMap_t 0x11C runtime=clipMap_t header=qcommon/qcommon.h copy=scalars
     asset member=clipMap pool=Load_ClipMapAsset kind=ClipMap alias=inserted body=custom label=clipmap
     0x000 name                   xstring
