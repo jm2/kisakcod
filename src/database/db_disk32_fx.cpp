@@ -16,11 +16,13 @@
 // streams into the temp block, then with block 4 pushed its name and, for any
 // non-null token, its elements 4-aligned (Load_FxElemDefArray), converted
 // into native storage. Each element's samples follow it 4-aligned and stay in
-// block 4, since they hold no pointer. The rules are the FX converter's
+// block 4, since they hold no pointer; then its visuals: materials and models
+// through their families' pointer steps, sound names, and effects named
+// as Load_FxEffectDefRef names them. The rules are the FX converter's
 // (fx_fastfile_native_disk32.cpp), the oracle this loader replaces: counts,
 // timing, atlas, samples, visual counts by element type, the looping life
-// and the converted size. Visuals, effect references and trails do not load
-// yet, so an element that names one fails closed.
+// and the converted size, and every visual token it resolves. Trails do not
+// load yet, so an element that names one fails closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -39,8 +41,10 @@ constexpr std::int32_t kRandomRangeAmplitudeMax = 32767;
 enum ElemType : std::uint8_t
 {
     kTrail = 3,
+    kModel = 5,
     kOmniLight = 6,
     kSpotLight = 7,
+    kSound = 8,
     kDecal = 9,
     kRunner = 10,
     kTypeCount = 11,
@@ -215,7 +219,99 @@ void CopyElement(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
     }
 }
 
-// Load_FxElemDef: the scalars, then the samples.
+// Load_FxEffectDefRef: a name, inline or by offset, that
+// Load_FxEffectDefFromName turns into the effect it names.
+bool LoadEffectRef(disk32::PointerToken token, FxEffectDefRef *out)
+{
+    if (!LoadXString(disk32::Ptr32<const char>{token}, &out->name))
+        return false;
+    Load_FxEffectDefFromName(&out->name);
+    return true;
+}
+
+// Load_MaterialHandle, for a token the converter requires.
+bool LoadMaterial(disk32::PointerToken token, Material **out)
+{
+    *out = nullptr;
+    if (token.isNull())
+        return Drop("Invalid fast-file effect visual");
+    LoadMaterialPtr(token, out);
+    return true;
+}
+
+// Load_FxElemVisuals: one visual, read as its element's type names it.
+bool LoadVisual(std::uint8_t type, disk32::PointerToken token, FxElemVisuals *out)
+{
+    out->anonymous = nullptr;
+    if (token.isNull())
+        return Drop("Invalid fast-file effect visual"); // the converter resolves every one
+    if (type == kModel)
+        LoadXModelPtr(token, &out->model);
+    else if (type == kRunner)
+        return LoadEffectRef(token, &out->effectDef);
+    else if (type == kSound)
+        return LoadXString(disk32::Ptr32<const char>{token}, &out->soundName);
+    else
+        return LoadMaterial(token, &out->material);
+    return true;
+}
+
+disk32::PointerToken TokenAt(const std::uint8_t *tokens, std::uint32_t index)
+{
+    disk32::PointerToken token{};
+    std::memcpy(&token, tokens + index * sizeof(token), sizeof(token));
+    return token;
+}
+
+// A decal's mark pairs: two material tokens each.
+bool LoadMarks(const std::uint8_t *tokens, std::uint32_t count, FxElemMarkVisuals **out)
+{
+    FxElemMarkVisuals *const marks = AllocNative<FxElemMarkVisuals>(static_cast<std::int32_t>(count));
+    if (!marks)
+        return false;
+    *out = marks;
+    for (std::uint32_t index = 0; index < count * 2; ++index)
+    {
+        if (!LoadMaterial(TokenAt(tokens, index), &marks[index / 2].materials[index % 2]))
+            return false;
+    }
+    return true;
+}
+
+bool LoadVisualArray(std::uint8_t type, const std::uint8_t *tokens, std::uint32_t count, FxElemVisuals **out)
+{
+    FxElemVisuals *const visuals = AllocNative<FxElemVisuals>(static_cast<std::int32_t>(count));
+    if (!visuals)
+        return false;
+    *out = visuals;
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        if (!LoadVisual(type, TokenAt(tokens, index), &visuals[index]))
+            return false;
+    }
+    return true;
+}
+
+// Load_FxElemDefVisuals: past one visual, or for a decal's mark pairs, the
+// tokens follow 4-aligned and convert into native storage; one visual sits
+// in the record. A light has none.
+bool LoadVisuals(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
+{
+    const bool decal = disk.elemType == kDecal;
+    if (IsLight(disk.elemType) || !disk.visualCount)
+        return true;
+    if (!decal && disk.visualCount == 1)
+        return LoadVisual(disk.elemType, disk.visuals.token, &out->visuals.instance);
+    const std::uint32_t count = disk.visualCount * (decal ? 2u : 1u);
+    std::uint8_t *const tokens = DB_AllocStreamPos(3);
+    if (!StreamBytes(tokens, static_cast<std::int32_t>(count * sizeof(disk32::PointerToken))))
+        return false;
+    return decal ? LoadMarks(tokens, disk.visualCount, &out->visuals.markArray)
+                 : LoadVisualArray(disk.elemType, tokens, disk.visualCount, &out->visuals.array);
+}
+
+// Load_FxElemDef: the scalars, the samples, the visuals, then the effects it
+// names.
 bool LoadElement(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
 {
     std::memset(out, 0, sizeof(*out)); // padding too: native storage starts as junk
@@ -225,11 +321,14 @@ bool LoadElement(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
     {
         return false;
     }
-    if (!disk.visuals.token.isNull() || !disk.effectOnImpact.token.isNull() || !disk.effectOnDeath.token.isNull()
-        || !disk.effectEmitted.token.isNull() || !disk.trailDef.token.isNull())
+    if (!LoadVisuals(disk, out) || !LoadEffectRef(disk.effectOnImpact.token, &out->effectOnImpact)
+        || !LoadEffectRef(disk.effectOnDeath.token, &out->effectOnDeath)
+        || !LoadEffectRef(disk.effectEmitted.token, &out->effectEmitted))
     {
-        return Drop("Fast-file effect visuals, effect names and trails have no 64-bit loader yet");
+        return false;
     }
+    if (!disk.trailDef.token.isNull())
+        return Drop("Fast-file effect trails have no 64-bit loader yet");
     return true;
 }
 
