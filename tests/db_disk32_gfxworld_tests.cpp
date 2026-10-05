@@ -45,8 +45,9 @@ struct Zone : disk32_test::Zone<2048, 1024, 4096>
 // the scene-entity bits, and the cells; then a lightmap naming the image,
 // a light grid of two rows, the lightmap textures, the brush model, material
 // memory naming the material, a vertex and three layer bytes, the sun's
-// sprite material and the outdoor image, and one dynamic model and brush
-// with their runtime arrays.
+// sprite material and the outdoor image, one dynamic model and brush with
+// their runtime arrays, and both primary lights' shadow geometry and light
+// regions.
 struct Record
 {
     std::vector<std::uint8_t> bytes = std::vector<std::uint8_t>(kRecordBytes);
@@ -63,7 +64,7 @@ struct Record
         Set(0x148, kInline).Set(0x14C, kInline).Set(0x174, 1).Set(0x178, kInline).Set(0x180, VirtualOffset(8));
         Set(0x030, 1).Set(0x034, kInline).Set(0x03C, 3).Set(0x040, kInline).Set(0x21C, VirtualOffset(0));
         Set(0x224, kInline).Set(0x228, kInline).Set(0x230, kInline).Set(0x238, kInline).Set(0x2B4, 1).Set(0x2B8, 1);
-        Set(0x234, kInline);
+        Set(0x234, kInline).Set(0x23C, kInline).Set(0x240, kInline);
     }
     Record &Set(std::uint32_t at, std::uint32_t value)
     {
@@ -95,6 +96,16 @@ struct Sun
     std::uint32_t def = VirtualOffset(4);
 };
 
+// What a test breaks in the primary lights' shadow geometry and regions.
+struct Shadows
+{
+    std::uint16_t firstSurface = 1;        // the first light's sorted-surface index
+    std::uint16_t smodel = 0;              // the second light's static-model index
+    std::uint32_t secondSurfaces = kInline; // the second light's sorted-surface token
+    std::uint32_t hulls = kInline;         // the first region's hull token
+    std::uint32_t axes = kInline;          // its hull's axis token
+};
+
 struct File : FileBuilder<File>
 {
     File &Short(std::uint16_t value)
@@ -108,7 +119,7 @@ struct File : FileBuilder<File>
     // the planes at 112 and the nodes at 152; block 1 holds the probe's
     // texture and then the scene-entity bits.
     File &Write(const Record &record, const Sun &sun = {}, const CellOptions &cells = {}, bool lightmap = true,
-                bool rows = true)
+                bool rows = true, const Shadows &shadows = {})
     {
         g_file.insert(g_file.end(), record.bytes.begin(), record.bytes.end());
         Text("w").Text("ba").Short(1).Short(2).Short(3).Word(7).Word(8);
@@ -120,7 +131,7 @@ struct File : FileBuilder<File>
         for (int value = 0; value < 10; ++value)
             Float(static_cast<float>(value));
         Short(5).Short(6);
-        return Cells(cells).Middle(lightmap, rows);
+        return Cells(cells).Middle(lightmap, rows).PrimaryLights(shadows);
     }
     // A cell: unit bounds from minX, its tree, portal, cull-group and probe counts.
     File &Cell(float minX, std::int32_t trees, std::uint32_t cullGroups, std::uint8_t probes)
@@ -182,6 +193,26 @@ struct File : FileBuilder<File>
             Float(static_cast<float>(value));
         return Text("xy");
     }
+    // Past the layer bytes, 4-aligned: the two shadow geometries at 968, the
+    // first's surface index at 992, the second's two at 994 and its
+    // static-model index at 998 (each only 2-aligned); the two regions at
+    // 1000, the first's hull at 1016 and the hull's axis at 1096.
+    File &PrimaryLights(const Shadows &o)
+    {
+        Word(1).Word(kInline).Word(0).Word(2 | 1u << 16).Word(o.secondSurfaces).Word(kInline);
+        Short(o.firstSurface);
+        if (o.secondSurfaces)
+            Short(0).Short(1);
+        Short(o.smodel).Word(1).Word(o.hulls).Word(0).Word(0);
+        if (!o.hulls)
+            return *this;
+        for (int value = 0; value < 18; ++value)
+            Float(static_cast<float>(value));
+        Word(1).Word(o.axes);
+        if (o.axes)
+            Float(0).Float(0).Float(1).Float(2).Float(3);
+        return *this;
+    }
 };
 
 GfxWorld *Load(std::uintptr_t slotValue)
@@ -231,7 +262,7 @@ bool MiddleConverted()
     const auto *memory = reinterpret_cast<const MaterialMemory *>(g_arena + 728);
     GfxTexture textures[2]{};
     std::memcpy(textures, g_arena + 712, sizeof(textures));
-    return g_arenaUsed == 744 && lightmap->primary == &g_image && !lightmap->secondary && !textures[0].basemap
+    return lightmap->primary == &g_image && !lightmap->secondary && !textures[0].basemap
         && !textures[1].basemap && memory->material == &g_material && memory->memory == 77;
 }
 
@@ -262,32 +293,64 @@ bool MiddleStreamed(const Zone &zone)
         && model[13] == 13.f && zone.virt[912 + 4] == 77 && vertex[10] == 10.f && !std::strcmp(zone.At(964), "xy");
 }
 
-// The shadow geometry and later parts, which do not load yet, end the load:
-// what streamed before them sits at its aligned retail offsets, and what
-// converted sits in native storage.
+// The two shadow geometries in native storage past the material memory,
+// their indices in block 4.
+bool ShadowsConverted(const Zone &zone)
+{
+    const auto *const shadows = reinterpret_cast<const GfxShadowGeometry *>(g_arena + 744);
+    return shadows[0].surfaceCount == 1
+        && shadows[0].sortedSurfIndex == reinterpret_cast<const std::uint16_t *>(zone.virt + 992)
+        && !shadows[0].smodelIndex && shadows[1].smodelCount == 1
+        && shadows[1].sortedSurfIndex == reinterpret_cast<const std::uint16_t *>(zone.virt + 994)
+        && shadows[1].smodelIndex == reinterpret_cast<const std::uint16_t *>(zone.virt + 998);
+}
+
+// Then the two regions and the first's hull, its axis in block 4.
+bool RegionsConverted(const Zone &zone)
+{
+    const auto *const regions = reinterpret_cast<const GfxLightRegion *>(g_arena + 792);
+    const GfxLightRegionHull *const hull = regions[0].hulls;
+    return g_arenaUsed == 912 && regions[0].hullCount == 1
+        && hull == reinterpret_cast<const GfxLightRegionHull *>(g_arena + 824) && hull->kdopHalfSize[8] == 17.f
+        && hull->axisCount == 1 && hull->axis == reinterpret_cast<const GfxLightRegionAxis *>(zone.virt + 1096)
+        && hull->axis->halfSize == 3.f && !regions[1].hullCount && !regions[1].hulls;
+}
+
+// The names, indices and sky surfaces, then the sun light, the probe (naming
+// alias 0: 0x40000001) and the nodes, at their aligned retail offsets.
+bool StartStreamed(const Zone &zone)
+{
+    std::uint16_t indices[3] = {};
+    std::memcpy(indices, zone.virt + 18, sizeof(indices));
+    std::int32_t sky[2] = {};
+    std::memcpy(sky, zone.virt + 24, sizeof(sky));
+    return !std::strcmp(zone.At(12), "w") && !std::strcmp(zone.At(14), "ba") && indices[2] == 3 && sky[1] == 8
+        && zone.virt[32] == 1 && zone.virt[96 + 12] == 1 && zone.virt[152] == 5;
+}
+
+// The DPVS, which does not load yet, ends the load: what streamed before it
+// sits at its aligned retail offsets, and what converted sits in native
+// storage.
 void TestPrefix()
 {
     Zone zone;
     File().Write(Record());
     const Drop drop = Catch([] { Load(kInline); });
-    std::uint16_t indices[3] = {};
-    std::memcpy(indices, zone.virt + 18, sizeof(indices));
-    std::int32_t sky[2] = {};
-    std::memcpy(sky, zone.virt + 24, sizeof(sky));
-    Expect(std::strstr(drop.message, "shadow geometry, light regions and DPVS") && g_published == 0,
-           "the load stops past the runtime arrays", drop.message);
-    Expect(!std::strcmp(zone.At(12), "w") && !std::strcmp(zone.At(14), "ba") && indices[2] == 3 && sky[1] == 8,
-           "the names, indices and sky surfaces stream into block 4 at their aligned retail offsets");
-    Expect(zone.virt[32] == 1 && zone.virt[96 + 12] == 1 && zone.virt[152] == 5, // the probe names alias 0: 0x40000001
-           "the sun light, the probe and the nodes stream at their 4- and 2-aligned retail offsets");
+    Expect(std::strstr(drop.message, "DPVS has no 64-bit loader yet") && g_published == 0,
+           "the load stops past the primary lights", drop.message);
+    Expect(StartStreamed(zone), "the names, indices, sky surfaces, sun light, probe and nodes stream into block 4 "
+                                "at their 4- and 2-aligned retail offsets");
     Expect(NativePrefixConverted(), "the sun light, the probe and its texture convert into native storage");
     const auto *const cells = reinterpret_cast<const GfxCell *>(g_arena + 104);
     Expect(FirstCellConverted(zone, cells) && PortalsConverted(zone, cells),
            "the cells convert, with their trees at the native stride and portals naming native cells");
-    Expect(MiddleStreamed(zone), "the light grid, brush model, material memory and vertex data stream at their aligned retail offsets");
+    Expect(MiddleStreamed(zone),
+           "the light grid, brush model, material memory and vertex data stream at their aligned retail offsets");
     Expect(MiddleConverted(), "the lightmap, its textures and the material memory convert into native storage");
     Expect(RuntimeArraysZeroed(zone.runtime), "the runtime arrays zero-fill block 1 at their 4- and 1-aligned extents");
-    Expect(DB_GetStreamPos() == zone.virt + 967 && g_read == g_file.size()
+    Expect(ShadowsConverted(zone) && RegionsConverted(zone),
+           "the shadow geometry and light regions convert into native storage");
+    Expect(DB_GetStreamPos() == zone.virt + 1116 && g_read == g_file.size()
                && !std::memcmp(zone.temp, g_file.data(), kRecordBytes),
            "the record streams into the temp block, and block 4 holds exactly what loaded");
 }
@@ -343,6 +406,8 @@ const Malformed kMalformed[] = {
     {"an unmapped outdoor image", 0x21C, VirtualOffset(64), "alias offset"},
     {"dynamic models past block 1", 0x2B4, 1000, "exceeds stream block 1"},
     {"dynamic brushes past block 1", 0x2B8, 1000, "exceeds stream block 1"},
+    {"primary lights without shadow geometry", 0x23C, 0, "world primary lights"},
+    {"primary lights without light regions", 0x240, 0, "world primary lights"},
 };
 
 // With two indices and no sky surfaces the sun light's record starts
@@ -422,6 +487,23 @@ void TestCellBreaksFailClosed()
     }
 }
 
+void TestShadowBreaksFailClosed()
+{
+    const std::pair<Shadows, const char *> breaks[] = {
+        {{2}, "shadow geometry has an invalid index"}, // the static surfaces number 2
+        {{1, 1}, "shadow geometry has an invalid index"}, // the static models number 1
+        {{1, 0, 0}, "pointer/count for world shadow geometry"},
+        {{1, 0, kInline, 0}, "light-region hulls"},
+        {{1, 0, kInline, kInline, 0}, "light-region axes"},
+    };
+    for (const auto &[shadows, error] : breaks)
+    {
+        Zone zone;
+        File().Write(Record(), Sun{}, CellOptions{}, true, true, shadows);
+        ExpectDrop("a malformed primary light", error, [] { Load(kInline); });
+    }
+}
+
 void TestMalformedFailsClosed()
 {
     for (const Malformed &test : kMalformed)
@@ -473,5 +555,5 @@ void __cdecl DB_LoadedExternalData(std::int32_t)
 int main()
 {
     return Run({TestPrefix, TestGridAligned, TestSunAligned, TestSunBreaksFailClosed, TestCellBreaksFailClosed,
-                TestMalformedFailsClosed});
+                TestShadowBreaksFailClosed, TestMalformedFailsClosed});
 }

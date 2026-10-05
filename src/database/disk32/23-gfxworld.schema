@@ -105,6 +105,24 @@ record sunflare_t 0x60 runtime=sunflare_t header=gfx_d3d/r_sky.h copy=scalars
     0x08 flareMaterial            pointer   asset=Material
     0x0C spriteSize               run[21]   to=sunFxPosition
 
+# A primary light's shadow casters: sorted static-surface and static-model
+# indices, each keeping its layout in block 4.
+record GfxShadowGeometry 0x0C runtime=GfxShadowGeometry header=gfx_d3d/r_primarylights.h copy=scalars
+    0x00 surfaceCount             u16
+    0x02 smodelCount              u16
+    0x04 sortedSurfIndex          pointer   # 16-bit sorted-surface indices
+    0x08 smodelIndex              pointer   # 16-bit static-model indices
+
+# A light region's hull: its axes hold no pointer and keep their layout.
+record GfxLightRegionHull 0x50 runtime=GfxLightRegionHull header=gfx_d3d/r_primarylights.h copy=scalars
+    0x00 kdopMidPoint             run[18]   to=kdopHalfSize
+    0x48 axisCount                u32
+    0x4C axis                     pointer   # 20-byte axes
+
+record GfxLightRegion 0x08 runtime=GfxLightRegion header=gfx_d3d/r_primarylights.h copy=scalars
+    0x00 hullCount                u32
+    0x04 hulls                    pointer
+
 record GfxWorldDpvsStatic 0x68 runtime=GfxWorldDpvsStatic header=gfx_d3d/r_gfx.h copy=scalars
     0x00 smodelCount              u32
     0x04 staticSurfaceCount       u32
