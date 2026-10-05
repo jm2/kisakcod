@@ -104,6 +104,8 @@ struct FileBuilder
     }
 };
 
+// Each block is 128-aligned, as DB_LoadXFile's are (a page or more), so the
+// widest stream alignment (AllocLoad_raw_uint128's) is the retail one.
 // A zone with a temp block (0) of up to TempBytes, a runtime block (1) of
 // RuntimeBytes, the virtual block (4) and
 // the vertex (7) and index (8) blocks,
@@ -112,11 +114,11 @@ struct FileBuilder
 template <std::uint32_t VirtBytes, std::uint32_t TempBytes = 512, std::uint32_t RuntimeBytes = 256>
 struct Zone
 {
-    alignas(16) std::uint8_t temp[TempBytes]{};
-    alignas(16) std::uint8_t runtime[RuntimeBytes]{};
-    alignas(16) std::uint8_t virt[VirtBytes]{};
-    alignas(16) std::uint8_t vertex[256]{};
-    alignas(16) std::uint8_t index[256]{};
+    alignas(128) std::uint8_t temp[TempBytes]{};
+    alignas(128) std::uint8_t runtime[RuntimeBytes]{};
+    alignas(128) std::uint8_t virt[VirtBytes]{};
+    alignas(128) std::uint8_t vertex[256]{};
+    alignas(128) std::uint8_t index[256]{};
     XZoneMemory memory{};
 
     explicit Zone(std::uint32_t tempBytes = sizeof(temp))

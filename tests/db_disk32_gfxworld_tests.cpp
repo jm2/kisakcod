@@ -239,8 +239,8 @@ struct File : FileBuilder<File>
     // Past the axis: the sorted surfaces at 1116, then 4-aligned the
     // static-model instance at 1124, the two surfaces at 1152, the cull group
     // at 1248 and the draw instance at 1280. Block 1 holds the visibility
-    // bytes from 2089, the LOD data 16-aligned at 2112, the draw keys at 2144
-    // and the sun-shadow bits at 2160.
+    // bytes from 2089, the two LOD dwords 128-aligned at 2176, the draw keys
+    // at 2184 and the sun-shadow dword 128-aligned at 2304.
     File &StaticDpvs(const Dpvs &o)
     {
         Short(0).Short(1).Short(o.sorted);
@@ -327,28 +327,31 @@ bool RuntimeArraysZeroed(const std::uint8_t *runtime)
 }
 
 // Then the static DPVS's: three static-model and three two-surface
-// visibility arrays, the LOD data 16-aligned at 2112, the draw keys and the
-// sun-shadow bits 16-aligned at 2160.
+// visibility arrays, the two LOD dwords 128-aligned at 2176, the draw keys,
+// and the sun-shadow dword 128-aligned at 2304, as Load_raw_uint128Array
+// streams them.
 bool DpvsRuntimeZeroed(const std::uint8_t *runtime)
 {
-    for (std::size_t at = 2089; at < 2176; ++at)
+    for (std::size_t at = 2089; at < 2308; ++at)
     {
-        if (runtime[at] != (at >= 2098 && at < 2112 ? 0xAA : 0))
+        const bool gap = (at >= 2098 && at < 2176) || (at >= 2200 && at < 2304);
+        if (runtime[at] != (gap ? 0xAA : 0))
             return false;
     }
     return true;
 }
 
-// Then the dynamic DPVS's: two cells' words of bits for each type, then six
-// 32-byte visibility arrays, 16-aligned, ending at 2384.
+// Then the dynamic DPVS's: two cells' words of bits for each type, 4-aligned
+// past the sun-shadow dword at 2308, then six 32-byte visibility arrays,
+// 16-aligned from 2336, ending at 2528.
 bool DynamicRuntimeZeroed(const std::uint8_t *runtime)
 {
-    for (std::size_t at = 2176; at < 2384; ++at)
+    for (std::size_t at = 2308; at < 2528; ++at)
     {
-        if (runtime[at])
+        if (runtime[at] != (at >= 2324 && at < 2336 ? 0xAA : 0))
             return false;
     }
-    return runtime[2384] == 0xAA;
+    return runtime[2528] == 0xAA;
 }
 
 // The light grid, brush model, material memory and vertex data in block 4.
@@ -469,10 +472,10 @@ bool PublishedRuntime(const Zone &zone, const GfxWorld &world)
     const GfxWorldDpvsDynamic &dyn = world.dpvsDyn;
     return Point({{world.dpvsPlanes.sceneEntCellBits, runtime + 4}, {world.cellCasterBits, runtime + 2060},
                   {world.sceneDynModel, runtime + 2068}, {world.primaryLightDynEntShadowVis[1], runtime + 2084},
-                  {world.nonSunPrimaryLightForModelDynEnt, runtime + 2088}, {world.dpvs.lodData, runtime + 2112},
-                  {world.dpvs.surfaceCastsSunShadow, runtime + 2160}, {dyn.dynEntCellBits[1], runtime + 2184},
-                  {dyn.dynEntVisData[0][0], runtime + 2192}, {dyn.dynEntVisData[1][0], runtime + 2224},
-                  {dyn.dynEntVisData[1][2], runtime + 2352}});
+                  {world.nonSunPrimaryLightForModelDynEnt, runtime + 2088}, {world.dpvs.lodData, runtime + 2176},
+                  {world.dpvs.surfaceCastsSunShadow, runtime + 2304}, {dyn.dynEntCellBits[1], runtime + 2316},
+                  {dyn.dynEntVisData[0][0], runtime + 2336}, {dyn.dynEntVisData[1][0], runtime + 2368},
+                  {dyn.dynEntVisData[1][2], runtime + 2496}});
 }
 
 // A world loads whole and publishes: what streamed sits at its aligned
@@ -502,7 +505,7 @@ void TestWorld()
            "the shadow geometry and light regions convert into native storage");
     Expect(StaticDpvsConverted(zone), "the static DPVS's surfaces and draw instance convert into native storage");
     Expect(DpvsRuntimeZeroed(zone.runtime), "the static DPVS's runtime arrays zero-fill block 1, the LOD data and "
-                                            "sun-shadow bits 16-aligned");
+                                            "sun-shadow bits as dwords 128-aligned");
     Expect(DynamicRuntimeZeroed(zone.runtime), "the dynamic DPVS's runtime arrays zero-fill block 1, the visibility "
                                                "16-aligned");
     Expect(DB_GetStreamPos() == zone.virt + 1356 && g_read == g_file.size()
@@ -658,16 +661,16 @@ void TestCellBreaksFailClosed()
 }
 
 // Without LOD data, the draw keys follow the visibility bytes 4-aligned
-// at 2100, and the sun-shadow bits 16-aligned at 2128.
+// at 2100, and the sun-shadow dword 128-aligned at 2176.
 void TestDpvsAligned()
 {
     Zone zone;
     File().Write(Record().Set(0x288, 0).Set(0x268, 0));
     Catch([] { Load(kInline); });
     bool aligned = zone.runtime[2099] == 0xAA && zone.runtime[2100] == 0;
-    for (std::size_t at = 2116; at < 2144; ++at)
-        aligned = aligned && zone.runtime[at] == (at < 2128 ? 0xAA : 0);
-    Expect(aligned, "the draw keys follow 4-aligned, and the sun-shadow bits 16-aligned");
+    for (std::size_t at = 2116; at < 2180; ++at)
+        aligned = aligned && zone.runtime[at] == (at < 2176 ? 0xAA : 0);
+    Expect(aligned, "the draw keys follow 4-aligned, and the sun-shadow dword 128-aligned");
 }
 
 // A later world naming the first world's sun light by its retail offset (32)
