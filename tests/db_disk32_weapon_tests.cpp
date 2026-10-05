@@ -86,8 +86,8 @@ const ScalarRun kRuns[] = {
     {0x870, offsetof(WeaponDef, adsDofStart), 2},
 };
 
-// The record: every run word holds its own retail offset, every pointer is
-// null but the strings Strings() names.
+// The record: every run word holds its own retail offset but the graph
+// counts (no graphs), every pointer is null but the strings Strings() names.
 struct Record
 {
     std::vector<std::uint8_t> bytes = std::vector<std::uint8_t>(kRecordBytes);
@@ -97,6 +97,12 @@ struct Record
         for (const ScalarRun &run : kRuns)
             for (std::uint32_t word = 0; word < run.words; ++word)
                 Set(run.disk + word * 4, run.disk + word * 4);
+        Graphs(0).Graphs(0, 0, 1);
+    }
+    // A graph's count and its backup's.
+    Record &Graphs(std::uint32_t count, std::uint32_t original = ~0u, std::uint32_t graph = 0)
+    {
+        return Set(0x784 + graph * 4, count).Set(0x78C + graph * 4, original == ~0u ? count : original);
     }
     Record &Set(std::uint32_t at, std::uint32_t value)
     {
@@ -141,7 +147,7 @@ bool RunsConverted(const WeaponDef &weapon)
         {
             std::uint32_t value = 0;
             std::memcpy(&value, reinterpret_cast<const std::uint8_t *>(&weapon) + run.native + word * 4, sizeof(value));
-            if (value != run.disk + word * 4)
+            if (value != (run.disk + word * 4 < 0x784 || run.disk + word * 4 > 0x790 ? run.disk + word * 4 : 0))
                 return false;
         }
     }
@@ -288,10 +294,8 @@ struct Malformed
     const char *error;
 };
 
-constexpr const char *kNotYet = "no 64-bit loader yet";
 
 const Malformed kMalformed[] = {
-    {"accuracy knots", 0x77C + 4, kInline, kNotYet},
     {"a null name", 0x000, 0, "has no name"},
     {"an unmapped string offset", 0x7F4, VirtualOffset(400), "string offset"},
 };
@@ -372,6 +376,85 @@ void TestReferenceBreaksFailClosed()
     Record record;
     WriteReferenced(Referenced(record), -1);
     ExpectDrop("a malformed flash effect", "effect header", [] { Load(kInline); });
+}
+
+// A three-knot graph, its knots and backup inline, then a two-knot graph,
+// its knots inline and its backup naming them by offset.
+Record &Graphed(Record &record)
+{
+    return record.Graphs(3).Graphs(2, 2, 1).Set(0x774, kInline).Set(0x77C, kInline).Set(0x778, kInline)
+        .Set(0x780, VirtualOffset(64));
+}
+
+// The graphs' inline knots, after the first three strings.
+void WriteGraphed(const Record &record, float lastX = 1.f, float backupMiddleX = 0.4f)
+{
+    File file;
+    g_file.insert(g_file.end(), record.bytes.begin(), record.bytes.end());
+    file.Text("wpn").Text("WPN").Text("anim");
+    file.Float(0).Float(0.2f).Float(0.5f).Float(0.5f).Float(lastX).Float(1);
+    file.Float(0).Float(0.1f).Float(backupMiddleX).Float(0.3f).Float(1).Float(0.8f);
+    file.Float(0).Float(0.3f).Float(1).Float(0.6f).Text("scr").Text("rmb");
+}
+
+void TestGraphs()
+{
+    Zone zone;
+    Record record;
+    WriteGraphed(Graphed(record.Strings()));
+    const WeaponDef *const weapon = Load(kInline);
+    Expect(weapon == &g_weapons[0], "a weapon with accuracy graphs publishes");
+    if (!weapon)
+        return;
+    const auto at = [&](std::size_t offset) { return reinterpret_cast<float (*)[2]>(zone.virt + offset); };
+    Expect(weapon->accuracyGraphKnots[0] == at(16) && weapon->originalAccuracyGraphKnots[0] == at(40)
+               && weapon->accuracyGraphKnots[1] == at(64) && weapon->originalAccuracyGraphKnots[1] == at(64),
+           "the knots stay at their 4-aligned retail block-4 offsets, and offsets name them");
+    Expect(weapon->accuracyGraphKnots[0][2][0] == 1.f && weapon->originalAccuracyGraphKnots[0][1][0] == 0.4f
+               && weapon->szScript == zone.At(80) && g_read == g_file.size(),
+           "the knots keep their layout, and the strings after them stream in order");
+}
+
+struct GraphBreak
+{
+    const char *what;
+    std::uint32_t count;
+    std::uint32_t original;
+    float lastX;
+    float backupMiddleX;
+    const char *error;
+};
+
+const GraphBreak kGraphBreaks[] = {
+    {"a graph of one knot", 1, 1, 1.f, 0.4f, "accuracy graph 0"},
+    {"a graph of 17 knots", 17, 17, 1.f, 0.4f, "accuracy graph 0"},
+    {"a backup of another count", 3, 2, 1.f, 0.4f, "accuracy graph 0"},
+    {"knots that end short of 1", 3, 3, 0.9f, 0.4f, "graph knots 0"},
+    {"a backup that turns back", 3, 3, 1.f, 0.f, "graph knots 0"},
+};
+
+void ExpectGraphBreak(const char *what, Record &record, const char *error, float lastX = 1.f, float middleX = 0.4f)
+{
+    Zone zone;
+    WriteGraphed(record, lastX, middleX);
+    ExpectDrop(what, error, [] { Load(kInline); });
+}
+
+void TestGraphBreaksFailClosed()
+{
+    for (const GraphBreak &test : kGraphBreaks)
+    {
+        Record record;
+        ExpectGraphBreak(test.what, Graphed(record.Strings()).Graphs(test.count, test.original), test.error,
+                         test.lastX, test.backupMiddleX);
+    }
+    Record second;
+    ExpectGraphBreak("a second graph of 17 knots", Graphed(second.Strings()).Graphs(17, 17, 1), "accuracy graph 1");
+    Record tokenless;
+    ExpectGraphBreak("knots without a token", Graphed(tokenless.Strings()).Set(0x774, 0), "accuracy graph 0");
+    Record unmapped;
+    ExpectGraphBreak("an unmapped backup offset", Graphed(unmapped.Strings()).Set(0x780, VirtualOffset(2000)),
+                     "pointer offset");
 }
 
 void TestMalformedFailsClosed()
@@ -482,5 +565,6 @@ void __cdecl Load_WeaponDefAsset(XAssetHeader *header)
 int main()
 {
     return Run({TestRecord, TestSoundsAndScriptStrings, TestReferences, TestSharedInlineAndOffsets,
-                TestSoundBreaksFailClosed, TestReferenceBreaksFailClosed, TestMalformedFailsClosed});
+                TestGraphs, TestSoundBreaksFailClosed, TestReferenceBreaksFailClosed, TestGraphBreaksFailClosed,
+                TestMalformedFailsClosed});
 }
