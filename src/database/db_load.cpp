@@ -6044,6 +6044,11 @@ void __cdecl Mark_GameWorldMpPtr()
 
 void __cdecl Load_FxEffectDefHandle(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror,
+    // never the FX zone adapter Load_FxEffectDef tries first.
+    DB_LoadFxEffectDefHandleDisk32(atStreamStart, varFxEffectDefHandle);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -6076,6 +6081,7 @@ void __cdecl Load_FxEffectDefHandle(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Load_FxEffectDefHandleArray(bool atStreamStart, int32_t count)

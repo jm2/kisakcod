@@ -1,0 +1,13 @@
+# FX (FxEffectDef), asset type 0x19. The format is described in
+# ../db_disk32.schema. The body is custom (db_disk32_fx.cpp).
+
+record FxEffectDef 0x20 runtime=FxEffectDef header=EffectsCore/fx_effect_def.h copy=scalars
+    asset member=fx pool=Load_FxEffectDefAsset kind=FxEffectDef alias=inserted body=custom label=effect slot=const
+    0x00 name                    xstring
+    0x04 flags                   i32
+    0x08 totalSize               i32
+    0x0C msecLoopingLife         i32
+    0x10 elemDefCountLooping     i32
+    0x14 elemDefCountOneShot     i32
+    0x18 elemDefCountEmission    i32
+    0x1C elemDefs                pointer   # the three counts' sum of elements

@@ -165,6 +165,7 @@ set(DATABASE
     "${SRC_DIR}/database/db_disk32_comworld.cpp"
     "${SRC_DIR}/database/db_disk32_envelope.cpp"
     "${SRC_DIR}/database/db_disk32_font.cpp"
+    "${SRC_DIR}/database/db_disk32_fx.cpp"
     "${SRC_DIR}/database/db_disk32_gameworldmp.cpp"
     "${SRC_DIR}/database/db_disk32_image.cpp"
     "${SRC_DIR}/database/db_disk32_impactfx.cpp"
