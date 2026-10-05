@@ -83,13 +83,24 @@ bool KeyHandlersConverted(const Zone &zone, const menuDef_t &menu)
         && !first->next->action && !first->next->next;
 }
 
+bool WindowConverted(const windowDef_t &window)
+{
+    return window.rect.x == 1.5f && window.style == 7 && window.dynamicFlags[0] == 0x10
+        && window.outlineColor[3] == 0.75f && window.background == &g_material;
+}
+
 bool ScalarsConverted(const menuDef_t &menu)
 {
-    const windowDef_t &window = menu.window;
-    return window.rect.x == 1.5f && window.style == 7 && window.dynamicFlags[0] == 0x10
-        && window.outlineColor[3] == 0.75f && window.background == &g_material
-        && menu.fullScreen == 1 && menu.fontIndex == 2 && menu.blurRadius == 0.5f && menu.imageTrack == 5
-        && menu.disableColor[3] == 0.25f && !menu.itemCount && !menu.items;
+    return WindowConverted(menu.window) && menu.fullScreen == 1 && menu.fontIndex == 2 && menu.blurRadius == 0.5f
+        && menu.imageTrack == 5 && menu.disableColor[3] == 0.25f && !menu.itemCount && !menu.items;
+}
+
+// The strings, in block 4; the escape script names the window's name.
+bool StringsLoaded(const Zone &zone, const menuDef_t &menu)
+{
+    return menu.window.name == zone.At(4) && !std::strcmp(zone.At(4), "main") && menu.window.group == zone.At(9)
+        && menu.font == zone.At(11) && menu.onOpen == zone.At(14) && !menu.onClose && menu.onESC == zone.At(4)
+        && menu.soundName == zone.At(48) && !menu.allowedBinding;
 }
 
 void TestInlineMenu()
@@ -100,10 +111,7 @@ void TestInlineMenu()
     Expect(menu == &g_pool[0] && g_published == 1, "an inline menu publishes one pool entry");
     if (menu != &g_pool[0])
         return;
-    Expect(menu->window.name == zone.At(4) && !std::strcmp(zone.At(4), "main") && menu->window.group == zone.At(9)
-               && menu->font == zone.At(11) && menu->onOpen == zone.At(14) && !menu->onClose
-               && menu->onESC == zone.At(4) && menu->soundName == zone.At(48) && !menu->allowedBinding,
-           "the strings stream into block 4, and an offset token names an earlier one");
+    Expect(StringsLoaded(zone, *menu), "the strings stream into block 4, and an offset token names an earlier one");
     Expect(ScalarsConverted(*menu), "the window and menu scalars convert, and the background names the alias");
     Expect(KeyHandlersConverted(zone, *menu), "the key handlers chain in native storage");
     Expect(!menu->visibleExp.entries && !menu->rectXExp.entries && !menu->rectYExp.entries,

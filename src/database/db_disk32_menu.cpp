@@ -37,12 +37,12 @@ bool LoadWindow(const disk32::WindowDisk32 &disk, windowDef_t *out)
 
 // The next 4-aligned record at the current position, into its mirror.
 template <typename Disk32>
-bool StreamRecord(Disk32 *disk)
+bool StreamRecord(Disk32 &disk)
 {
     std::uint8_t *const record = DB_AllocStreamPos(3);
-    if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(*disk))))
+    if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
         return false;
-    std::memcpy(disk, record, sizeof(*disk));
+    std::memcpy(&disk, record, sizeof(disk));
     return true;
 }
 
@@ -67,7 +67,7 @@ bool LoadKeyHandlers(disk32::PointerToken token, ItemKeyHandler **out)
     while (!token.isNull())
     {
         disk32::ItemKeyHandlerDisk32 disk{};
-        ItemKeyHandler *const handler = StreamRecord(&disk) ? AllocZeroed<ItemKeyHandler>() : nullptr;
+        ItemKeyHandler *const handler = StreamRecord(disk) ? AllocZeroed<ItemKeyHandler>() : nullptr;
         if (!handler)
             return false;
         CopyItemKeyHandlerScalars(disk, handler);
