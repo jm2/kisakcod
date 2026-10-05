@@ -572,6 +572,45 @@ bool __cdecl DB_CompleteObject(
     return true;
 }
 
+bool __cdecl DB_CompleteStringHolder(DBAliasHandle handle, const void *holder, const char *const *native)
+{
+    uint32_t stringBytes = 0;
+    db::relocation::Status status = native
+        ? DB_ValidateStreamCString(*native, &stringBytes)
+        : db::relocation::Status::InvalidArgument;
+    if (status == db::relocation::Status::Ok && stringBytes <= 1)
+    {
+        Com_Error(ERR_DROP, "Fast-file completed string holder has no value");
+        return false;
+    }
+    if (status == db::relocation::Status::Ok)
+    {
+        status = DB_DirectResolver().ValidateAddress(
+            reinterpret_cast<uintptr_t>(holder),
+            sizeof(uint32_t),
+            4,
+            db::relocation::BlockBit(db::relocation::kAliasBlock));
+    }
+    if (status == db::relocation::Status::Ok)
+    {
+        status = DB_AliasRegistry().Publish(
+            handle,
+            DBAliasKind::XStringPointerSlot,
+            reinterpret_cast<uintptr_t>(holder),
+            0,
+            reinterpret_cast<uintptr_t>(native));
+    }
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Fast-file completed string holder is invalid: %s",
+            db::relocation::StatusName(status));
+        return false;
+    }
+    return true;
+}
+
 db::relocation::Status __cdecl DB_ResolveInsertedPointer(
     disk32::PointerToken token,
     DBAliasKind expectedKind,

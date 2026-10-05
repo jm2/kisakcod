@@ -1,15 +1,21 @@
 // db_disk32_weapon_tests.cpp: the 64-bit weapon loader (NOW row 12) on
 // hand-built disk32 zone images (disk32_fixture.hpp). The retail offsets here
-// are written out by hand, apart from the schema. Beyond the fixture's seams,
-// only the asset pool (Load_WeaponDefAsset) is replaced.
+// are written out by hand, apart from the schema. Script strings go through
+// the production Load_ScriptStringCustom. Beyond the fixture's seams, only the
+// asset pool (Load_WeaponDefAsset) and the sound lookup by name
+// (DB_FindXAssetHeader) are replaced.
 
 #include "disk32_fixture.hpp"
 
 #include <database/db_disk32_load.h>
 #include <database/db_disk32_mirrors.h>
+#include <database/db_load_legacy_bridge.h>
 
 #include <cstddef>
+#include <array>
 #include <cstring>
+#include <map>
+#include <string>
 #include <vector>
 
 namespace
@@ -17,9 +23,24 @@ namespace
 using namespace disk32_test;
 
 WeaponDef g_weapons[2]; // what Load_WeaponDefAsset published
+std::map<std::string, snd_alias_list_t> g_sounds; // what DB_FindXAssetHeader found, by name
+
+// Zone script-string index n holds interned id 100 + n, as the envelope leaves it.
+std::array<const char *, 6> g_strings{};
+XAssetList g_list{{6, g_strings.data()}, 0, nullptr};
 
 constexpr std::uint32_t kRecordBytes = 2168;
-using Zone = disk32_test::Zone<256, 2304>;
+
+struct Zone : disk32_test::Zone<256, 2304>
+{
+    explicit Zone(std::uint32_t tempBytes = 2304) : disk32_test::Zone<256, 2304>(tempBytes)
+    {
+        for (std::uintptr_t index = 1; index < g_strings.size(); ++index)
+            g_strings[index] = reinterpret_cast<const char *>(100 + index);
+        varXAssetList = &g_list;
+        g_sounds.clear();
+    }
+};
 
 // A retail run of scalar words: its offset, its first native member's, and
 // its length in words.
@@ -137,6 +158,100 @@ void TestRecord()
            "every disk byte is consumed and block 4 advances by the strings");
 }
 
+// The tags and notetrack maps, and the sounds: the first named sound and the
+// bounce table's first and last slots, with the last named sound and the
+// projectile ignition sound naming their holders by offset.
+Record &Sounded(Record &record)
+{
+    record.Set(0x0D8, 3).Set(0x0E8 + 28, 5u << 16).Set(0x108, 1);
+    return record.Set(0x154, kInline).Set(0x154 + 44 * 4, VirtualOffset(16)).Set(0x208, kInline)
+        .Set(0x6C8, VirtualOffset(144));
+}
+
+// Block 4: the first three strings (0..13), the holder at 16 and its name,
+// the bounce table at 28, the second holder at 144 and its name, then the
+// script and rumble.
+void WriteSounded(const Record &record, const char *firstName = "snd_a")
+{
+    File file;
+    g_file.insert(g_file.end(), record.bytes.begin(), record.bytes.end());
+    file.Text("wpn").Text("WPN").Text("anim").Word(kInline).Text(firstName);
+    for (std::uint32_t slot = 0; slot < disk32::kWeaponBounceSoundCount; ++slot)
+        file.Word(slot == 0 ? VirtualOffset(16) : slot == 28 ? kInline : 0);
+    file.Word(kInline).Text("snd_b").Text("scr").Text("rmb");
+}
+
+const snd_alias_list_t *Sound(const char *name)
+{
+    const auto found = g_sounds.find(name);
+    return found == g_sounds.end() ? nullptr : &found->second;
+}
+
+// The sounds Sounded() names.
+bool SoundsLoaded(const WeaponDef &weapon)
+{
+    const snd_alias_list_t *const first = Sound("snd_a");
+    const snd_alias_list_t *const second = Sound("snd_b");
+    return first && second && weapon.pickupSound == first && weapon.putawaySoundPlayer == first
+        && weapon.projIgnitionSound == second && InArena(weapon.bounceSound) && weapon.bounceSound[0] == first
+        && weapon.bounceSound[28] == second && !weapon.bounceSound[1] && !weapon.fireSound;
+}
+
+void TestSoundsAndScriptStrings()
+{
+    Zone zone;
+    Record record;
+    WriteSounded(Sounded(record.Strings()));
+    Record second;
+    second.Set(0x000, kInline).Set(0x154, VirtualOffset(144)).Set(0x208, VirtualOffset(28));
+    File().Write(second, false).Text("w2");
+    const WeaponDef *const weapon = Load(kInline);
+    const WeaponDef *const other = Load(kInline);
+    Expect(weapon == &g_weapons[0] && other == &g_weapons[1], "two weapons with sounds publish");
+    if (!weapon || !other)
+        return;
+    Expect(weapon->hideTags[0] == 103 && weapon->notetrackSoundMapKeys[15] == 105 && weapon->notetrackSoundMapValues[0] == 101
+               && !weapon->hideTags[1],
+           "the tags and notetrack maps become interned ids");
+    Expect(SoundsLoaded(*weapon) && g_sounds.size() == 2, "sounds load by name, through holders and their offsets");
+    Expect(other->pickupSound == Sound("snd_b") && other->bounceSound == weapon->bounceSound,
+           "a later weapon names a holder and the bounce table by offset");
+    Expect(weapon->szScript == zone.At(154) && g_read == g_file.size(),
+           "the strings after the sounds stream in order, and every disk byte is consumed");
+}
+
+// Sounded() broken at a word of the record, or by its first name.
+struct SoundBreak
+{
+    const char *what;
+    std::uint32_t at;
+    std::uint32_t value;
+    const char *error;
+    const char *firstName = "snd_a";
+};
+
+const SoundBreak kSoundBreaks[] = {
+    {"an empty sound name", 0, 0, "has no value", ""},
+    {"an unmapped holder offset", 0x154 + 44 * 4, VirtualOffset(20), "alias offset"},
+    {"a shared-inline holder", 0x154 + 44 * 4, disk32::kSharedInline, "alias offset"},
+    {"an unmapped bounce-table offset", 0x208, VirtualOffset(16), "alias offset"},
+    {"a script string past the list", 0x0D8, 9, "script-string index"},
+};
+
+void TestSoundBreaksFailClosed()
+{
+    for (const SoundBreak &test : kSoundBreaks)
+    {
+        Zone zone;
+        Record record;
+        Sounded(record.Strings());
+        if (test.at)
+            record.Set(test.at, test.value);
+        WriteSounded(record, test.firstName);
+        ExpectDrop(test.what, test.error, [] { Load(kInline); });
+    }
+}
+
 void TestSharedInlineAndOffsets()
 {
     Zone zone;
@@ -161,14 +276,9 @@ constexpr const char *kNotYet = "no 64-bit loader yet";
 const Malformed kMalformed[] = {
     {"a gun model", 0x00C + 15 * 4, kInline, kNotYet},
     {"a flash effect", 0x150, kInline, kNotYet},
-    {"the last named sound", 0x154 + 44 * 4, kInline, kNotYet},
-    {"a bounce-sound table", 0x208, kInline, kNotYet},
     {"a reticle", 0x220, kInline, kNotYet},
     {"the knife model", 0x308, kInline, kNotYet},
-    {"a projectile sound", 0x59C, kInline, kNotYet},
     {"accuracy knots", 0x77C + 4, kInline, kNotYet},
-    {"a hide tag", 0x0D8, 3, "script strings"},
-    {"the last notetrack sound value", 0x108 + 28, 2u << 16, "script strings"},
     {"a null name", 0x000, 0, "has no name"},
     {"an unmapped string offset", 0x7F4, VirtualOffset(400), "string offset"},
 };
@@ -195,6 +305,28 @@ void TestMalformedFailsClosed()
 }
 } // namespace
 
+XAssetList *varXAssetList; // the envelope's native list (db_disk32_envelope.cpp)
+
+XAssetHeader __cdecl DB_FindXAssetHeader(XAssetType type, const char *name)
+{
+    Expect(type == ASSET_TYPE_SOUND && name && name[0], "only sounds are looked up, by a nonempty name");
+    XAssetHeader header;
+    header.sound = &g_sounds[name];
+    return header;
+}
+
+// db_stringtable_load.cpp's marking path, which no load reaches.
+db::load_legacy_bridge::LegacyBridgeStatus db::load_legacy_bridge::DbLoadLegacyBridge::TryAddUser4(std::uint32_t) noexcept
+{
+    Expect(false, "loading marks no script string");
+    return LegacyBridgeStatus::Success;
+}
+
+bool db::load_legacy_bridge::DbLoadLegacyBridge::InSession() noexcept
+{
+    return false;
+}
+
 void __cdecl Load_WeaponDefAsset(XAssetHeader *header)
 {
     // DB_AddXAsset hashes the name, then copies the header into the pool.
@@ -206,5 +338,6 @@ void __cdecl Load_WeaponDefAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestRecord, TestSharedInlineAndOffsets, TestMalformedFailsClosed});
+    return Run({TestRecord, TestSoundsAndScriptStrings, TestSharedInlineAndOffsets, TestSoundBreaksFailClosed,
+                TestMalformedFailsClosed});
 }
