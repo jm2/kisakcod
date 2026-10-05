@@ -7272,6 +7272,10 @@ bool __cdecl Load_clipMap_t(bool atStreamStart)
 
 void __cdecl Load_clipMap_ptr(bool atStreamStart)
 {
+#if KISAK_ARCH_64BIT
+    // Retail records keep their 32-bit layout: convert through the mirror.
+    DB_LoadClipMapPtrDisk32(atStreamStart, varclipMap_ptr);
+#else
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
@@ -7315,6 +7319,7 @@ void __cdecl Load_clipMap_ptr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#endif
 }
 
 void __cdecl Mark_cStaticModel_t()

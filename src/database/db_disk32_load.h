@@ -30,6 +30,7 @@ struct snd_alias_list_t;
 struct StringTable;
 struct WeaponDef;
 struct XAnimParts;
+struct clipMap_t;
 struct XModel;
 struct XAssetList;
 
@@ -166,6 +167,12 @@ void __cdecl DB_LoadFxEffectDefHandleDisk32(bool atStreamStart, const FxEffectDe
 // slot holds the zero-extended disk32 token on entry and the native
 // WeaponDef published through Load_WeaponDefAsset on return.
 void __cdecl DB_LoadWeaponDefPtrDisk32(bool atStreamStart, WeaponDef **slot);
+
+// Loads one clip map (db_disk32_clipmap.cpp) under the same slot contract:
+// the slot holds the zero-extended disk32 token on entry and the native
+// clipMap_t published through Load_ClipMapAsset on return. Arrays that hold
+// no pointer stay in their zone blocks.
+void __cdecl DB_LoadClipMapPtrDisk32(bool atStreamStart, clipMap_t **slot);
 
 // Native storage for loader output whose layout differs from its disk32
 // bytes (docs/design/FASTFILE_LOADER.md, "Native arenas"). It is carved from

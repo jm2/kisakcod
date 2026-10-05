@@ -1,0 +1,59 @@
+# ClipMap (clipMap_t), asset types 0x0A and 0x0B (ClipMapPvs): a 284-byte
+# record that grows to 480 bytes natively. The format is described in
+# ../db_disk32.schema. The body is custom (db_disk32_clipmap.cpp): arrays
+# that hold no pointer keep their layout and stay in block 4, and the dynamic
+# entities' poses, clients and collision links take block 1 (zero-filled).
+
+record clipMap_t 0x11C runtime=clipMap_t header=qcommon/qcommon.h copy=scalars
+    asset member=clipMap pool=Load_ClipMapAsset kind=ClipMap alias=inserted body=custom label=clipmap
+    0x000 name                   xstring
+    0x004 isInUse                i32
+    0x008 planeCount             i32
+    0x00C planes                 pointer   # planeCount 20-byte planes
+    0x010 numStaticModels        u32
+    0x014 staticModelList        pointer   # 80-byte static models, each naming a model
+    0x018 numMaterials           u32
+    0x01C materials              pointer   # 72-byte materials
+    0x020 numBrushSides          u32
+    0x024 brushsides             pointer   # 12-byte sides, each naming a plane
+    0x028 numBrushEdges          u32
+    0x02C brushEdges             pointer   # bytes
+    0x030 numNodes               u32
+    0x034 nodes                  pointer   # 8-byte nodes, each naming a plane
+    0x038 numLeafs               u32
+    0x03C leafs                  pointer   # 44-byte leafs
+    0x040 leafbrushNodesCount    u32
+    0x044 leafbrushNodes         pointer   # 20-byte nodes, a leaf naming its brush indices
+    0x048 numLeafBrushes         u32
+    0x04C leafbrushes            pointer   # 16-bit brush indices
+    0x050 numLeafSurfaces        u32
+    0x054 leafsurfaces           pointer   # 32-bit surface indices
+    0x058 vertCount              u32
+    0x05C verts                  pointer   # 12-byte vertices
+    0x060 triCount               i32
+    0x064 triIndices             pointer   # 3 x triCount 16-bit indices
+    0x068 triEdgeIsWalkable      pointer   # a bit per index, in 32-bit words
+    0x06C borderCount            i32
+    0x070 borders                pointer   # 28-byte borders
+    0x074 partitionCount         i32
+    0x078 partitions             pointer   # 12-byte partitions, each naming borders
+    0x07C aabbTreeCount          i32
+    0x080 aabbTrees              pointer   # 32-byte trees
+    0x084 numSubModels           u32
+    0x088 cmodels                pointer   # 72-byte models
+    0x08C numBrushes             u16
+    0x08E numBrushesPad          pad[2]
+    0x090 brushes                pointer   # 80-byte brushes, 16-aligned
+    0x094 numClusters            i32
+    0x098 clusterBytes           i32
+    0x09C visibility             pointer   # numClusters x clusterBytes bytes
+    0x0A0 vised                  i32
+    0x0A4 mapEnts                pointer   # MapEnts
+    0x0A8 box_brush              pointer   # a brush, a completed object
+    0x0AC box_model              run[18]   to=box_model
+    0x0F4 dynEntCount            u16[2]
+    0x0F8 dynEntDefList          pointer[2]  # 96-byte entity defs
+    0x100 dynEntPoseList         pointer[2]  # 32-byte poses, block 1
+    0x108 dynEntClientList       pointer[2]  # 12-byte clients, block 1
+    0x110 dynEntCollList         pointer[2]  # 20-byte collision links, block 1
+    0x118 checksum               u32
