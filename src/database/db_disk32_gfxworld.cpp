@@ -25,10 +25,31 @@
 // DPVS. The dynamic DPVS does not load yet, so every world still fails
 // closed.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
+// The arrays that keep their layout, with the element sizes their 32-bit
+// Load_*Array steps stream; the native types the runtime reads them through
+// must match.
+RUNTIME_SIZE(GfxLightGridColors, 168, 168);
+RUNTIME_SIZE(GfxSceneDynModel, 6, 6);
+RUNTIME_SIZE(GfxSceneDynBrush, 4, 4);
+RUNTIME_SIZE(GfxLightRegionAxis, 20, 20);
+RUNTIME_SIZE(GfxStaticModelInst, 28, 28);
+RUNTIME_SIZE(GfxCullGroup, 32, 32);
+
 namespace db::disk32_load
 {
 namespace
 {
+// Retail element sizes and alignments, from the 32-bit Load_*Array steps
+// (Load_StreamArray's element size) and their AllocLoad_* (the
+// DB_AllocStreamPos mask plus one).
+constexpr std::uint32_t kLightGridColorsBytes = 168; // Load_GfxLightGridColorsArray
+constexpr std::uint32_t kSceneDynModelBytes = 6;     // Load_GfxSceneDynModelArray
+constexpr std::uint32_t kSceneDynBrushBytes = 4;     // Load_GfxSceneDynBrushArray
+constexpr std::uint32_t kLightRegionAxisBytes = 20;  // Load_GfxLightRegionAxisArray
+constexpr std::uint32_t kStaticModelInstBytes = 28;  // Load_GfxStaticModelInstArray
+constexpr std::uint32_t kDrawSurfBytes = 8;          // Load_GfxDrawSurfArray
+constexpr std::uint32_t kRawUint128Bytes = 4;        // Load_raw_uint128Array streams dwords...
+constexpr std::uint32_t kRawUint128Alignment = 128;  // ...at AllocLoad_raw_uint128's DB_AllocStreamPos(127)
 using Disk = disk32::GfxWorldDisk32;
 using db::validation::CheckedArrayBytes;
 using db::validation::CheckedCountProduct;
@@ -439,7 +460,7 @@ bool LoadLightGrid(const disk32::GfxLightGridDisk32 &disk, GfxLightGrid *out)
     return LoadArray(disk.rowDataStart.token, rows, 2, 2, &out->rowDataStart)
         && LoadArray(disk.rawRowData.token, disk.rawRowDataSize, 1, 1, &out->rawRowData)
         && LoadArray(disk.entries.token, disk.entryCount, 4, 4, &out->entries)
-        && LoadArray(disk.colors.token, disk.colorCount, sizeof(GfxLightGridColors), 4, &out->colors);
+        && LoadArray(disk.colors.token, disk.colorCount, kLightGridColorsBytes, 4, &out->colors);
 }
 
 // An array the renderer fills: block 1, zero-filled.
@@ -489,8 +510,8 @@ bool LoadRuntimeArrays(const Disk &disk, const Extents &extents, GfxWorld *out)
 {
     const std::int64_t dynamicModels = disk.dpvsDyn.dynEntClientCount[0];
     return LoadRuntime(disk.cellCasterBits.token, extents.cellCasterCount, 4, 4, &out->cellCasterBits)
-        && LoadRuntime(disk.sceneDynModel.token, dynamicModels, sizeof(GfxSceneDynModel), 4, &out->sceneDynModel)
-        && LoadRuntime(disk.sceneDynBrush.token, disk.dpvsDyn.dynEntClientCount[1], sizeof(GfxSceneDynBrush), 4,
+        && LoadRuntime(disk.sceneDynModel.token, dynamicModels, kSceneDynModelBytes, 4, &out->sceneDynModel)
+        && LoadRuntime(disk.sceneDynBrush.token, disk.dpvsDyn.dynEntClientCount[1], kSceneDynBrushBytes, 4,
                        &out->sceneDynBrush)
         && LoadRuntime(disk.primaryLightEntityShadowVis.token, extents.entityShadowVisCount, 4, 4,
                        &out->primaryLightEntityShadowVis)
@@ -533,7 +554,7 @@ bool ConvertHull(const disk32::GfxLightRegionHullDisk32 &disk, GfxLightRegionHul
     CopyGfxLightRegionHullScalars(disk, out);
     if (disk.axisCount && disk.axis.token.isNull())
         return Drop("Invalid fast-file pointer/count for world light-region axes");
-    return LoadArray(disk.axis.token, disk.axisCount, sizeof(GfxLightRegionAxis), 4, &out->axis);
+    return LoadArray(disk.axis.token, disk.axisCount, kLightRegionAxisBytes, 4, &out->axis);
 }
 
 // Load_GfxLightRegion: its hulls, converted into native storage, each then
@@ -564,7 +585,7 @@ bool LoadPrimaryLights(const Disk &disk, GfxWorld *out)
 
 // The static DPVS's runtime arrays in block 1: three static-model and three
 // surface visibility arrays, one byte per model or surface, then the LOD
-// data, 16-aligned.
+// data (dwords, 128-aligned).
 bool LoadStaticVisibility(const disk32::GfxWorldDpvsStaticDisk32 &disk, std::int32_t lodDataCount,
                           GfxWorldDpvsStatic *out)
 {
@@ -578,7 +599,7 @@ bool LoadStaticVisibility(const disk32::GfxWorldDpvsStaticDisk32 &disk, std::int
         if (!LoadRuntime(disk.surfaceVisData[index].token, disk.staticSurfaceCount, 1, 1, &out->surfaceVisData[index]))
             return false;
     }
-    return LoadRuntime(disk.lodData.token, lodDataCount, 16, 16, &out->lodData);
+    return LoadRuntime(disk.lodData.token, lodDataCount, kRawUint128Bytes, kRawUint128Alignment, &out->lodData);
 }
 
 bool ConvertSurface(const disk32::GfxSurfaceDisk32 &disk, GfxSurface *out)
@@ -602,7 +623,7 @@ bool LoadDrawKeys(disk32::PointerToken token, std::int64_t count, GfxDrawSurf **
 {
     std::uint8_t *slots = nullptr;
     *out = nullptr;
-    if (!LoadRuntime(token, count, sizeof(GfxDrawSurf), 4, &slots))
+    if (!LoadRuntime(token, count, kDrawSurfBytes, 4, &slots))
         return false;
     if (!slots || !count)
         return true;
@@ -650,10 +671,10 @@ bool LoadSortedSurfaces(const disk32::GfxWorldDpvsStaticDisk32 &dpvs, std::int32
 bool LoadDrawRecords(const Disk &disk, GfxWorldDpvsStatic *out)
 {
     const disk32::GfxWorldDpvsStaticDisk32 &dpvs = disk.dpvs;
-    return LoadArray(dpvs.smodelInsts.token, dpvs.smodelCount, sizeof(GfxStaticModelInst), 4, &out->smodelInsts)
+    return LoadArray(dpvs.smodelInsts.token, dpvs.smodelCount, kStaticModelInstBytes, 4, &out->smodelInsts)
         && LoadRecords<disk32::GfxSurfaceDisk32>(dpvs.surfaces.token, disk.surfaceCount, &out->surfaces,
                                                  ConvertSurface)
-        && LoadArray(dpvs.cullGroups.token, disk.cullGroupCount, sizeof(GfxCullGroup), 4, &out->cullGroups)
+        && LoadArray(dpvs.cullGroups.token, disk.cullGroupCount, disk32::kGfxCullGroupBytes, 4, &out->cullGroups)
         && LoadRecords<disk32::GfxStaticModelDrawInstDisk32>(dpvs.smodelDrawInsts.token, dpvs.smodelCount,
                                                              &out->smodelDrawInsts, ConvertDrawInst);
 }
@@ -662,7 +683,7 @@ bool LoadDrawRecords(const Disk &disk, GfxWorldDpvsStatic *out)
 // index) and arrays, then the visibility and LOD data; the sorted surfaces;
 // the static-model instances; the surfaces (naming materials), cull groups
 // and draw instances (naming models); then the draw keys and sun-shadow bits
-// in block 1, the bits 16-aligned.
+// in block 1, the bits dwords 128-aligned.
 bool LoadDpvsStatic(const Disk &disk, const Extents &extents, GfxWorldDpvsStatic *out)
 {
     const disk32::GfxWorldDpvsStaticDisk32 &dpvs = disk.dpvs;
@@ -677,8 +698,8 @@ bool LoadDpvsStatic(const Disk &disk, const Extents &extents, GfxWorldDpvsStatic
     return LoadStaticVisibility(dpvs, lodDataCount, out) && LoadSortedSurfaces(dpvs, extents.sortedSurfaceCount, out)
         && LoadDrawRecords(disk, out)
         && LoadDrawKeys(dpvs.surfaceMaterials.token, dpvs.staticSurfaceCount, &out->surfaceMaterials)
-        && LoadRuntime(dpvs.surfaceCastsSunShadow.token, dpvs.surfaceVisDataCount, 16, 16,
-                       &out->surfaceCastsSunShadow);
+        && LoadRuntime(dpvs.surfaceCastsSunShadow.token, dpvs.surfaceVisDataCount, kRawUint128Bytes,
+                       kRawUint128Alignment, &out->surfaceCastsSunShadow);
 }
 
 // The record's scalars and its nested records'.
