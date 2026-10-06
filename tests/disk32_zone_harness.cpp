@@ -31,6 +31,7 @@
 #include <mutex>
 #include <string>
 #include <strings.h>
+#include <unistd.h> // mkdtemp on macOS
 
 extern XAssetList g_varXAssetList;
 extern int32_t g_zoneCount;
