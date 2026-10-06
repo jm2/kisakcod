@@ -43,7 +43,8 @@ struct Image
         return *this;
     }
     // A size-byte record, zero but for each {retail offset, word}.
-    Image &Record(std::uint32_t size, std::initializer_list<std::pair<std::uint32_t, std::uint32_t>> words)
+    template <typename Words = std::initializer_list<std::pair<std::uint32_t, std::uint32_t>>>
+    Image &Record(std::uint32_t size, const Words &words)
     {
         const std::size_t at = bytes.size();
         Fill(size);

@@ -48,7 +48,7 @@ add_test(NAME database-disk32-zone-load COMMAND kisakcod-db-disk32-zone-tests)
 # With one family's guard left on, the zone fails closed naming it.
 foreach(_family IN ITEMS rawfile stringtable physpreset localize map_ents game_map_mp com_map
         sndcurve loaded_sound sound image lightdef techset material font fx impactfx menu menufile
-        xmodel xanim weapon)
+        xmodel xanim weapon col_map_mp gfx_map)
     add_test(NAME database-disk32-zone-guard-${_family} COMMAND kisakcod-db-disk32-zone-tests guard ${_family})
     set_tests_properties(database-disk32-zone-guard-${_family} PROPERTIES TIMEOUT 60)
 endforeach()

@@ -175,6 +175,7 @@ A family counts toward K4 when all of these hold:
 |---|---|---|
 | Generator | The emitted mirrors pass the `ONDISK_*`/`RUNTIME_*` asserts; a broken generator fails the family tests | Linux test build, every PR |
 | Family | Hand-built disk32 byte fixtures per family, including malformed tokens, unmapped offsets and arena exhaustion | Linux test build, ASan/UBSan leg |
+| Zone | One synthetic `.ff` holding all 25 families, loaded through `DB_LoadXAssets` and the real dispatch, pools and unload, its cross-family references checked; each family's guard, left on, fails it closed (`db_disk32_zone_tests.cpp`) | Linux and macOS test builds, ASan/UBSan leg |
 | Real data | Load the four code and common zones plus the boot map at 64-bit under ASan/UBSan, and compare the graph digest against x86 | Manual owner runs only; retail data never enters CI |
 
 The real-data layer is the only one that moves K4. It runs only on the owner's machine, by hand, against owner-provided Steam 1.8 files
