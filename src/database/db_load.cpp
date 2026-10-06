@@ -10400,10 +10400,16 @@ void __cdecl Load_XAssetHeader(bool atStreamStart)
     // the retail record (docs/design/NATIVE64.md). FX and Impact FX additionally
     // need the FX zone adapter bound: without it both loaders fall through to
     // their legacy retail-record walk, which is the same drift hazard.
+    bool guardTarget64 = KISAK_ARCH_64BIT != 0;
+#if defined(KISAK_DB_ASSET_FAMILY_ADMISSION_TESTING)
+    // Test builds only (db_asset_layout.h): the end-to-end zone test admits
+    // the families it loads; any other family still meets the guard.
+    guardTarget64 = guardTarget64 && !DB_TestAdmitsAssetFamily(varXAsset->type);
+#endif
     if (!DB_AdmitAssetFamilyLoad(
             varXAsset->type,
             DB_GetXAssetTypeName(varXAsset->type),
-            KISAK_ARCH_64BIT != 0,
+            guardTarget64,
             db::fx_zone_adapter_wiring::IsFxZoneAdapterBindingActive()))
     {
         return;
