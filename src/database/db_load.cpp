@@ -10380,11 +10380,34 @@ void __cdecl Mark_FontHandle()
     }
 }
 
+// A listed-only asset (db::asset_mode::IsSkippedByLoader): the PC loader streams
+// nothing for it and publishes nothing. Its header slot holds a stale build-tool
+// value; an inline token (-1/-2) would mean record bytes this loader cannot
+// consume, so that fails closed instead of desynchronising the stream.
+static void DB_SkipListedOnlyXAsset()
+{
+    const auto token = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(varXAssetHeader->data));
+    if (!db::asset_mode::IsSkippableListedOnlyToken(token))
+    {
+        Com_Error(
+            ERR_DROP,
+            "Fast-file asset type '%s' carries an inline record this build cannot load",
+            DB_GetXAssetTypeName(varXAsset->type));
+        return;
+    }
+    varXAssetHeader->data = nullptr;
+}
+
 void __cdecl Load_XAssetHeader(bool atStreamStart)
 {
     if (varXAsset->type < 0 || varXAsset->type >= ASSET_TYPE_COUNT)
     {
         Com_Error(ERR_DROP, "Invalid fast-file asset type %d", varXAsset->type);
+        return;
+    }
+    if (db::asset_mode::IsSkippedByLoader(varXAsset->type))
+    {
+        DB_SkipListedOnlyXAsset();
         return;
     }
     if (!DB_IsXAssetTypeSupportedForBuild(varXAsset->type))
@@ -10532,6 +10555,8 @@ void __cdecl Mark_XAssetHeader()
         Com_Error(ERR_DROP, "Invalid fast-file asset type %d", varXAsset->type);
         return;
     }
+    if (db::asset_mode::IsSkippedByLoader(varXAsset->type))
+        return; // nothing was loaded or published
     if (!DB_IsXAssetTypeSupportedForBuild(varXAsset->type))
     {
         Com_Error(
