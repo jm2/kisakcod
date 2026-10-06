@@ -115,15 +115,15 @@ void __cdecl DB_LoadGfxLightDefPtrDisk32(bool atStreamStart, GfxLightDef **slot)
 // Loads one FxImpactTable (db_disk32_impactfx.cpp) under the same slot
 // contract: the slot holds the zero-extended disk32 token on entry and the
 // native FxImpactTable published through Load_FxImpactTableAsset on return.
-// Its 12 entries live in DB_AllocZoneNative storage. FX has no 64-bit loader
-// yet, so a non-null effect token raises ERR_DROP.
+// Its 12 entries live in DB_AllocZoneNative storage, and each effect token
+// loads through FX's pointer step.
 void __cdecl DB_LoadFxImpactTablePtrDisk32(bool atStreamStart, FxImpactTable **slot);
 
 // Loads one Font_s (db_disk32_font.cpp) under the same slot contract: the
 // slot holds the zero-extended disk32 token on entry and the native Font_s
 // published through Load_FontAsset on return. Its glyphs keep their layout and
-// stay in block 4. Material has no 64-bit loader yet, so a non-null material
-// token raises ERR_DROP.
+// stay in block 4. Its materials load as DB_LoadMaterialPtrDisk32 loads a
+// header.
 void __cdecl DB_LoadFontPtrDisk32(bool atStreamStart, Font_s **slot);
 
 // Loads one MenuList (db_disk32_menulist.cpp) under the same slot contract:

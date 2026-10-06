@@ -15,8 +15,8 @@
 // block, its glyph table is checked, then its name, materials and glyphs load
 // with block 4 pushed. A Glyph holds no pointer (its schema entry asserts
 // both widths share its 24 bytes), so the glyphs stay where they stream and
-// the native pointer points at them. Material has no 64-bit loader yet, so a
-// non-null material token fails closed.
+// the native pointer points at them. The materials load through Material's
+// pointer step, as Load_MaterialHandle loads them.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -25,8 +25,7 @@ namespace
 bool LoadMaterial(disk32::Ptr32<void> field, Material **out)
 {
     *out = nullptr;
-    if (!field.token.isNull())
-        return Drop("Fast-file font names a material, which has no 64-bit loader yet");
+    LoadMaterialPtr(field.token, out);
     return true;
 }
 
