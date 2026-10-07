@@ -2,6 +2,7 @@
 
 #include <qcommon/com_error.h>
 
+#include <initializer_list>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -237,8 +238,24 @@ void __cdecl Com_Error(errorParm_t code, const char *fmt, ...)
     std::snprintf(g_lastNamed, sizeof g_lastNamed, "%s", named != nullptr ? named : "");
 }
 
+// The developer opt-in admits exactly the 25 MP server-closure families that
+// have a 64-bit disk32 loader, and never the SP-only, MP-unavailable or
+// listed-only types.
+void TestDisk32LoaderFamilies()
+{
+    int admitted = 0;
+    for (std::int32_t type = -1; type <= db::asset_layout::kAssetTypeCount; ++type)
+        admitted += db::asset_layout::HasDisk32Loader(type) ? 1 : 0;
+    Expect(admitted == 25, "25 families have a disk32 loader");
+    for (const std::int32_t excluded : {0x0A, 0x0D, 0x12, 0x18, 0x1B, 0x1C, 0x1D, 0x1E, -1, db::asset_layout::kAssetTypeCount})
+        Expect(!db::asset_layout::HasDisk32Loader(excluded), "excluded type has no disk32 loader");
+    for (const std::int32_t included : {0x00, 0x05, 0x0B, 0x10, 0x15, 0x17, 0x19, 0x1A, 0x20})
+        Expect(db::asset_layout::HasDisk32Loader(included), "server-closure type has a disk32 loader");
+}
+
 int main()
 {
+    TestDisk32LoaderFamilies();
     TestConversionTable();
     TestFailClosedPolicy();
     TestGateRefusals();

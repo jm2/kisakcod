@@ -60,6 +60,24 @@ constexpr bool IsFamilyConverted(const std::int32_t assetType) noexcept
     return ConversionForAssetType(assetType) == Conversion::OndiskRuntimePair;
 }
 
+// The 25 MP server-closure families that have a 64-bit disk32 loader
+// (docs/design/FASTFILE_LOADER.md): every type but the SP-only (ClipMap 0x0A,
+// GameWorldSp 0x0D), MP-unavailable (UiMap 0x12, AiType 0x1B, MpType 0x1C,
+// Character 0x1D, XModelAlias 0x1E) and listed-only (SndDriverGlobals 0x18)
+// ones. A loader alone does not lift the guard: K4 also needs graph-hash parity
+// with the x86 load. Only the developer opt-in below admits these early.
+constexpr bool HasDisk32Loader(const std::int32_t assetType) noexcept
+{
+    switch (assetType)
+    {
+    case 0x0A: case 0x0D: case 0x12: case 0x18:
+    case 0x1B: case 0x1C: case 0x1D: case 0x1E:
+        return false;
+    default:
+        return assetType >= 0 && assetType < kAssetTypeCount;
+    }
+}
+
 // The only families whose pair is materialised through the FX zone adapter
 // rather than a loader-side RUNTIME_SIZE walk.
 constexpr bool IsFxConversionFamily(const std::int32_t assetType) noexcept
@@ -108,6 +126,11 @@ constexpr bool IsLoadPermitted(
     const char *familyName,
     bool targetIs64Bit,
     bool fxAdapterAvailable);
+
+// Developer opt-in (`+set db_unverified64 1` at startup): a 64-bit build then
+// admits every family with a disk32 loader (HasDisk32Loader) before K4 counts
+// it, logging one warning. Off by default, so shipped builds keep every guard.
+[[nodiscard]] bool DB_UnverifiedFamiliesAdmitted();
 
 #if defined(KISAK_DB_ASSET_FAMILY_ADMISSION_TESTING)
 // Test-only seam at the Load_XAssetHeader dispatch: true admits assetType

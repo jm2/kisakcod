@@ -121,6 +121,7 @@ void WriteFastFile()
 }
 
 XAssetType g_guarded = ASSET_TYPE_COUNT; // the family whose guard stays on
+bool g_unverifiedMode = false; // "unverified": the seam admits nothing; db_unverified64 is on
 
 // Queues the zone as the main thread does, then runs the database thread's
 // load in line; returns the ERR_DROP it raised, or "(none)".
@@ -231,7 +232,7 @@ const char *zone_test::Variant()
 
 bool DB_TestAdmitsAssetFamily(std::int32_t assetType) noexcept
 {
-    return assetType != g_guarded;
+    return !g_unverifiedMode && assetType != g_guarded;
 }
 
 int main(int argc, char **argv)
@@ -244,6 +245,7 @@ int main(int argc, char **argv)
     g_emptyDvar.current.string = "";
     const char *guarded = argc == 3 && !std::strcmp(argv[1], "guard") ? argv[2] : nullptr;
     g_variant = argc == 3 && !std::strcmp(argv[1], "expect-drop") ? argv[2] : nullptr;
+    g_unverifiedMode = argc == 2 && !std::strcmp(argv[1], "unverified");
     for (std::int32_t type = 0; guarded && type < ASSET_TYPE_COUNT; ++type)
         g_guarded = std::strcmp(DB_GetXAssetTypeName(type), guarded) ? g_guarded : static_cast<XAssetType>(type);
     Expect(!guarded || g_guarded != ASSET_TYPE_COUNT, "the guarded family is named", guarded ? guarded : "");
@@ -276,6 +278,8 @@ void MyAssertHandler(const char *file, int line, int, const char *fmt, ...)
 }
 void Com_Printf(int, const char *, ...) {}
 void Com_PrintWarning(int, const char *, ...) {}
+// db_unverified64: off, except in the "unverified" mode, where only it admits the families.
+bool Dvar_GetBool(const char *name) { return g_unverifiedMode && name && !std::strcmp(name, "db_unverified64"); }
 void Com_PrintError(int, const char *, ...) {}
 int Com_sprintf(char *dest, unsigned int size, const char *fmt, ...)
 {
