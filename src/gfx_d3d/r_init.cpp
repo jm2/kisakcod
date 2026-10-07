@@ -4086,9 +4086,9 @@ bool __cdecl R_SetCustomResolution(GfxWindowParms *wndParms)
         || wndParms->displayWidth <= monitorWidth && wndParms->displayHeight <= monitorHeight;
 }
 
-const char *__cdecl R_ClosestRefreshRateForMode(uint32_t width, uint32_t height, int refreshRate)
+int __cdecl R_ClosestRefreshRateForMode(uint32_t width, uint32_t height, int refreshRate)
 {
-    return (const char *)(intptr_t)R_FindDisplayModeRefreshRate(dx.displayModes, dx.displayModeCount, width, height, refreshRate);
+    return R_FindDisplayModeRefreshRate(dx.displayModes, dx.displayModeCount, width, height, refreshRate);
 }
 
 void __cdecl R_SetWndParms(GfxWindowParms *wndParms)
@@ -4109,7 +4109,7 @@ void __cdecl R_SetWndParms(GfxWindowParms *wndParms)
     {
         refreshRateString = Dvar_EnumToString(r_displayRefresh);
         sscanf(refreshRateString, "%i Hz", &refreshRate);
-        wndParms->hz = (int)R_ClosestRefreshRateForMode(wndParms->displayWidth, wndParms->displayHeight, refreshRate);
+        wndParms->hz = R_ClosestRefreshRateForMode(wndParms->displayWidth, wndParms->displayHeight, refreshRate);
     }
     else
     {
