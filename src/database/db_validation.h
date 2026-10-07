@@ -389,6 +389,26 @@ constexpr bool MaterialShaderLoadDefValid(
         && loadForRenderer < 2;
 }
 
+// The D3D9 versions each renderer's programs use. Renderer 1 (shader model
+// 3) runs 3.0. Renderer 0 (shader model 2) runs 2.0 and 2.x, plus the 1.x
+// programs retail ships for it: vertex 1.1, pixel 1.1-1.4.
+constexpr bool D3D9ShaderVersionForRenderer(
+    D3D9ShaderStage stage,
+    std::uint32_t major,
+    std::uint32_t minor,
+    std::uint32_t loadForRenderer)
+{
+    if (loadForRenderer == 1)
+        return major == 3 && minor == 0;
+    if (loadForRenderer != 0)
+        return false;
+    if (major == 2)
+        return minor <= 1; // 2.0, and 2.x (vs_2_x, ps_2_a, ps_2_b encode 2.1)
+    if (major == 1)
+        return stage == D3D9ShaderStage::Vertex ? minor == 1 : minor >= 1 && minor <= 4;
+    return false;
+}
+
 inline bool D3D9ShaderBytecodeValid(
     const std::uint32_t *program,
     std::uint32_t dwordCount,
@@ -426,13 +446,29 @@ inline bool D3D9ShaderBytecodeValid(
     const std::uint32_t major = (version >> 8) & UINT32_C(0xFF);
     const std::uint32_t minor = version & UINT32_C(0xFF);
     if ((version & kVersionTypeMask) != expectedVersionType
-        || major != loadForRenderer + 2
-        || minor != 0)
+        || !D3D9ShaderVersionForRenderer(expectedStage, major, minor, loadForRenderer))
     {
         return false;
     }
 
     std::uint32_t cursor = 1;
+    if (major == 1)
+    {
+        // Shader model 1 instruction tokens carry no length (bits 24-27 are
+        // reserved), so the program cannot be walked token by token. What
+        // can be checked: the comment blocks after the version token, and an
+        // END token in the last dword.
+        while (cursor < dwordCount && program[cursor] != kEndToken
+            && (program[cursor] & kOpcodeMask) == kCommentOpcode)
+        {
+            const std::uint32_t token = program[cursor];
+            const std::uint32_t payloadDwords = (token & kCommentLengthMask) >> kCommentLengthShift;
+            if ((token & kCommentReservedMask) || payloadDwords > dwordCount - cursor - 1)
+                return false;
+            cursor += payloadDwords + 1;
+        }
+        return cursor < dwordCount && program[dwordCount - 1] == kEndToken;
+    }
     while (cursor < dwordCount)
     {
         const std::uint32_t token = program[cursor];
