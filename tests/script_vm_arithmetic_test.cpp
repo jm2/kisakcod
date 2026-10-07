@@ -8,6 +8,9 @@
 //                   counts are taken mod 32 (x86 semantics), not undefined.
 //   animtree-limit  the 127th distinct #using_animtree loads; the 128th
 //                   fails the load instead of writing past the lookup table.
+//   locals          branches and loop bodies that create locals in their
+//                   own order merge into the enclosing block's order, and
+//                   every local keeps its own value.
 
 #include <climits>
 #include <cstdio>
@@ -88,6 +91,112 @@ void Animtrees()
     GSC_CHECK(!gsc::Load("trees128", &error));
     GSC_CHECK(error.find("MAX_XANIMTREE_NUM exceeded") != std::string::npos);
 }
+// Branches, loops with breaks and switch cases create the same locals in
+// different orders: merging and transferring the blocks lines each block's
+// locals up with its parent's or break block's, shifting slots.
+void Locals()
+{
+    gsc::SetSource("locals", R"(pick(flag)
+{
+	if (flag)
+	{
+		a = 1;
+		b = 2;
+	}
+	else
+	{
+		b = 3;
+		a = 4;
+	}
+	return a * 10 + b;
+}
+
+reorder(flag)
+{
+	a = 1;
+	b = 2;
+	if (flag)
+	{
+		b = b + 10;
+		a = a + 20;
+	}
+	return a * 100 + b;
+}
+
+cand1(n)
+{
+	x = 0;
+	while (1)
+	{
+		y = n;
+		x = x + y;
+		if (x > 5)
+			break;
+	}
+	return x;
+}
+
+cand2(n)
+{
+	for (i = 0; i < n; i++)
+	{
+		if (i == 2)
+		{
+			q = i;
+			break;
+		}
+		p = i;
+	}
+	return n;
+}
+
+cand3(n)
+{
+	switch (n)
+	{
+	case 1:
+		u = 1;
+		v = 2;
+		break;
+	default:
+		v = 3;
+		u = 4;
+		break;
+	}
+	return u + v;
+}
+
+loop(n)
+{
+	total = 0;
+	for (i = 0; i < n; i++)
+	{
+		step = i + 1;
+		total = total + step;
+	}
+	return total;
+}
+
+main()
+{
+	report(pick(1));
+	report(pick(0));
+	report(loop(4));
+	report(reorder(1));
+	report(reorder(0));
+	report(cand1(2));
+	report(cand2(4));
+	report(cand3(1));
+}
+)");
+    std::string error;
+    GSC_CHECK(gsc::Load("locals", &error));
+    const std::vector<int> values = gsc::RunMain();
+    GSC_CHECK((values == std::vector<int>{12, 43, 10, 2112, 102, 6, 4, 3}));
+    for (int value : values)
+        std::fprintf(stderr, "report %d\n", value);
+    gsc::Unload();
+}
 }  // namespace
 
 int main(int argc, char **argv)
@@ -97,9 +206,11 @@ int main(int argc, char **argv)
         Arithmetic();
     else if (!std::strcmp(which, "animtree-limit"))
         Animtrees();
+    else if (!std::strcmp(which, "locals"))
+        Locals();
     else
     {
-        std::fprintf(stderr, "usage: %s arithmetic|animtree-limit\n", argv[0]);
+        std::fprintf(stderr, "usage: %s arithmetic|animtree-limit|locals\n", argv[0]);
         return 2;
     }
     std::printf("%s: %d failure(s)\n", which, gsc_failures);

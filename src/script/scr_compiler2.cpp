@@ -911,11 +911,12 @@ void Scr_TransferBlock(scr_block_s *from, scr_block_s *to)
 			to->localVarsPublicCount++;
 		}
 
+		// Shift the higher locals up one to open slot i. The decompiled form
+		// read localVars[j - 1] through localVarsInitBits, which precedes the
+		// array in scr_block_s.
 		while (j > i)
 		{
-			//to->localVars[j] = *(scr_localVar_t *)&to->localVarsInitBits[sizeof(scr_localVar_t) * j + sizeof(uint32_t)];
-			to->localVars[j].name = *(uint32_t*)&to->localVarsInitBits[8 * j];
-			to->localVars[j].sourcePos = *(uint32_t*)&to->localVarsInitBits[8 * j + 4];
+			to->localVars[j] = to->localVars[j - 1];
 			j--;
 		}
 
@@ -977,11 +978,10 @@ void Scr_MergeChildBlocks(scr_block_s **childBlocks, int childCount, scr_block_s
 				childBlock->localVarsCount++;
 			}
 
+			// Open slot i, as above.
 			while (j > i)
 			{
-				//childBlock->localVars[j] = *(scr_localVar_t *)&childBlock->localVarsInitBits[sizeof(scr_localVar_t) * j + sizeof(uint32_t)];
-				childBlock->localVars[j].name = *(uint32_t *)&childBlock->localVarsInitBits[8 * j];
-				childBlock->localVars[j].sourcePos = *(uint32_t *)&childBlock->localVarsInitBits[8 * j + 4];
+				childBlock->localVars[j] = childBlock->localVars[j - 1];
 				j--;
 			}
 
