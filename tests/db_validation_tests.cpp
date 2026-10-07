@@ -1648,9 +1648,8 @@ int main()
                 0,
                 64,
                 64)
-                == db::validation::XSurfaceCollisionTopologyStatus::
-                    NodeRangeQueueCapacityExceeded,
-            "surface collision topology rejects 64 pending node ranges");
+                == db::validation::XSurfaceCollisionTopologyStatus::Ok,
+            "surface collision topology accepts 64 pending node ranges (the runtime bounds its own queue)");
     }
 
     Expect(

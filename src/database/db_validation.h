@@ -1250,7 +1250,6 @@ inline bool XSurfaceRigidPartitionValid(
 
 // A 16-bit begin plus the 15-bit decoded count can address [0, 98,302).
 constexpr std::uint32_t kMaxXSurfaceCollisionEntries = UINT32_C(98302);
-constexpr std::uint32_t kXSurfaceCollisionNodeRangeQueueCapacity = 64;
 
 enum class XSurfaceCollisionTopologyStatus : std::uint8_t
 {
@@ -1260,7 +1259,6 @@ enum class XSurfaceCollisionTopologyStatus : std::uint8_t
     InvalidChildSpan,
     InvalidTopology,
     InvalidTriangleSpan,
-    NodeRangeQueueCapacityExceeded,
     AllocationFailure,
 };
 
@@ -1281,8 +1279,6 @@ constexpr const char *XSurfaceCollisionTopologyStatusName(
         return "disconnected or multiply-owned tree entry";
     case XSurfaceCollisionTopologyStatus::InvalidTriangleSpan:
         return "leaf triangle outside its rigid partition";
-    case XSurfaceCollisionTopologyStatus::NodeRangeQueueCapacityExceeded:
-        return "node range queue capacity exceeded";
     case XSurfaceCollisionTopologyStatus::AllocationFailure:
         return "topology work allocation failed";
     }
@@ -1398,14 +1394,11 @@ inline XSurfaceCollisionTopologyStatus ValidateXSurfaceCollisionTopology(
                         nodeOwners[childIndex] = 1;
                     }
 
-                    const std::size_t pendingRangeCount =
-                        ranges.size() - rangeIndex;
-                    if (pendingRangeCount
-                        >= kXSurfaceCollisionNodeRangeQueueCapacity - 1u)
-                    {
-                        return XSurfaceCollisionTopologyStatus::
-                            NodeRangeQueueCapacityExceeded;
-                    }
+                    // No bound on the pending ranges: a whole-tree walk
+                    // is not what the runtime does. XSurfaceVisitTrianglesInAabb
+                    // queues only the nodes its box touches, in a 64-entry
+                    // ring that stops the visit when full, and retail trees
+                    // exceed 64 pending ranges in a whole-tree walk.
                     ranges.push_back({childBegin, childCount});
                     continue;
                 }
