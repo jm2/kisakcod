@@ -5,7 +5,8 @@
 // - MSS_Startup tests AIL_startup() != 0.
 // - The driver code prints AIL_last_error() with %s.
 // - Sample and stream polling waits until the status reports SMP_DONE.
-// - R_Cinematic_BinkOpen fails on a null HBINK and prints BinkGetError().
+// - R_Cinematic_BinkOpen fails on a null HBINK, and R_Cinematic_CheckBinkError,
+//   run before every playback, asserts that BinkGetError() is null or empty.
 
 #include <cstdio>
 #include <cstring>
@@ -43,7 +44,7 @@ int main()
     Check(BinkSetSoundSystem(BinkOpenMiles, 0) == 0, "BinkSetSoundSystem installs no sound system");
     Check(BinkOpen("video/default.bik", 0) == nullptr, "BinkOpen opens no movie");
     const char *binkError = BinkGetError();
-    Check(binkError && std::strlen(binkError) > 0, "BinkGetError returns a printable message");
+    Check(!binkError || binkError[0] == '\0', "BinkGetError reports no error");
 
     if (g_failures)
         return 1;

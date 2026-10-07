@@ -6,7 +6,8 @@
 // as a no-op or reports failure, so sound and cinematics stay off.
 // - AIL_startup() fails, so MSS_Startup() takes its existing "Miles
 //   initialization failed" path.
-// - BinkOpen() fails, so R_Cinematic_StartPlayback falls back and gives up.
+// - BinkOpen() fails, so R_Cinematic_StartPlayback falls back and gives up;
+//   BinkGetError() stays empty, as R_Cinematic_CheckBinkError requires.
 // The Win32 build links the real libraries and never compiles this file.
 
 // Declare the functions without dllimport, so this file can define them.
@@ -20,7 +21,8 @@
 namespace
 {
 char s_milesError[] = "Miles is not available in this build";
-char s_binkError[] = "Bink is not available in this build";
+// R_Cinematic_CheckBinkError asserts that BinkGetError() is null or empty.
+char s_binkNoError[] = "";
 }
 
 // Miles: no driver, no streams, no samples.
@@ -83,7 +85,7 @@ void AILCALL AIL_set_stream_ms_position(HSTREAM, S32) { }
 
 // Bink: no movie ever opens.
 HBINK RADEXPLINK BinkOpen(const char *, U32) { return nullptr; }
-char *RADEXPLINK BinkGetError(void) { return s_binkError; }
+char *RADEXPLINK BinkGetError(void) { return s_binkNoError; }
 BINKSNDOPEN RADEXPLINK BinkOpenMiles(UINTa) { return nullptr; }
 S32 RADEXPLINK BinkSetSoundSystem(BINKSNDSYSOPEN, UINTa) { return 0; }
 void RADEXPLINK BinkSetSoundTrack(U32, U32 *) { }
