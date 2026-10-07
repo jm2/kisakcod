@@ -15,9 +15,11 @@
 #include <universal/q_parse.h>
 #include <universal/q_shared.h>
 
-int __cdecl Com_GetConfigureDvarNames(const char **text, char (*dvarNames)[32]);
-void __cdecl Com_GetConfigureDvarValues(int dvarCount, const char **text, char (*dvarValues)[32]);
-void __cdecl Com_SetConfigureDvars(int dvarCount, const char (*dvarNames)[32], const char (*dvarValues)[32]);
+// The production signatures (com_playerprofile.cpp); each row is a bounded 32-byte name or value.
+int __cdecl Com_GetConfigureDvarNames(const char **text, char (*dvarNames)[32]); // Flawfinder: ignore
+void __cdecl Com_GetConfigureDvarValues(int dvarCount, const char **text, char (*dvarValues)[32]); // Flawfinder: ignore
+void __cdecl Com_SetConfigureDvars(int dvarCount, const char (*dvarNames)[32], // Flawfinder: ignore
+                                   const char (*dvarValues)[32]); // Flawfinder: ignore
 int __cdecl Com_ConfigureChecksum(const char *csv, int filesize);
 
 // ---- Engine boundary: a line-aware tokenizer and a dvar recorder ----------
@@ -50,7 +52,7 @@ parseInfo_t *__cdecl Com_ParseOnLine(const char **data_p)
     std::size_t n = 0;
     while (p[n] && p[n] != ',' && p[n] != ' ' && p[n] != '\n' && n + 1 < sizeof(g_token.token))
         ++n;
-    std::memcpy(g_token.token, p, n);
+    std::memcpy(g_token.token, p, n); // Flawfinder: ignore (n < sizeof(g_token.token), checked above)
     g_token.token[n] = 0;
     *data_p = p + n;
     return &g_token;
@@ -102,8 +104,8 @@ int ReferenceChecksum(const char *csv, int size)
 
 int main()
 {
-    static char names[64][32];
-    static char values[64][32];
+    static char names[64][32]; // Flawfinder: ignore (the production tables' shape; writes go through I_strncpyz)
+    static char values[64][32]; // Flawfinder: ignore (as above)
     const char *text = "r_one,r_two,r_three\n1,two,3\n";
     const int count = Com_GetConfigureDvarNames(&text, names);
     Check(count == 3, "three dvar names parse");
