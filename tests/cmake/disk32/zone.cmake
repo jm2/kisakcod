@@ -66,3 +66,6 @@ set_tests_properties(database-disk32-zone-load PROPERTIES TIMEOUT 60)
 # A SndDriverGlobals record with an inline token holds bytes no PC loader reads.
 add_test(NAME database-disk32-zone-drop-sndinline COMMAND kisakcod-db-disk32-zone-tests expect-drop sndinline)
 set_tests_properties(database-disk32-zone-drop-sndinline PROPERTIES TIMEOUT 60)
+# A stub's default entry that finds its pool full drops with the hash free.
+add_test(NAME database-disk32-zone-drop-curvepool COMMAND kisakcod-db-disk32-zone-tests expect-drop curvepool)
+set_tests_properties(database-disk32-zone-drop-curvepool PROPERTIES TIMEOUT 60)

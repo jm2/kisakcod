@@ -183,12 +183,14 @@ inline bool DB_ValidateMaterialNamedInputs(
 
 inline bool DB_ValidateMaterialSemantics(const Material *material)
 {
+    // A stub carries no technique set; whatever it does carry is checked.
+    const bool stub = material && db::validation::IsStubAssetName(material->info.name);
     if (!material
         || !material->info.name
         || !*material->info.name
         || material->info.sortKey >= 64
-        || !material->techniqueSet
-        || !material->techniqueSet->remappedTechniqueSet
+        || (!stub && !material->techniqueSet)
+        || (material->techniqueSet && !material->techniqueSet->remappedTechniqueSet)
         || !db::validation::StrictlyIncreasingNameHashes(
             material->textureTable,
             material->textureCount)
@@ -225,6 +227,8 @@ inline bool DB_ValidateMaterialSemantics(const Material *material)
         }
     }
 
+    if (!material->techniqueSet)
+        return true; // a stub
     const MaterialTechniqueSet *original = material->techniqueSet;
     const MaterialTechniqueSet *candidate = original->remappedTechniqueSet;
     if (candidate->worldVertFormat != original->worldVertFormat)

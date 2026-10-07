@@ -332,6 +332,8 @@ inline bool DB_ValidateXModelGraph(
     const uint32_t classificationBytes,
     const uint32_t baseMatrixBytes)
 {
+    if (model && db::validation::IsStubAssetName(model->name))
+        return true; // a stub holds only its name: no bones, surfaces or LODs
     if (!model || !model->name || !*model->name
         || !db::validation::CountInRange(
             model->numCollSurfs,

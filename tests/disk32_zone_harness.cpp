@@ -17,6 +17,8 @@
 
 #include "disk32_zone_harness.hpp"
 
+#include <database/db_load_legacy_bridge.h>
+
 #include <game/g_bsp.h>
 #include <qcommon/cmd.h>
 #include <qcommon/sys_time.h>
@@ -39,6 +41,7 @@
 
 extern XAssetList g_varXAssetList;
 extern int32_t g_zoneCount;
+extern int32_t g_poolSize[ASSET_TYPE_COUNT];
 
 namespace zone_test
 {
@@ -137,6 +140,12 @@ Drop LoadZone()
     return drop;
 }
 
+// The name the pool hashes: a stub (",name") publishes under its name.
+const char *PoolName(const char *name)
+{
+    return name[0] == ',' ? name + 1 : name;
+}
+
 // Every asset publishes, and the envelope's header slot holds the pool's pointer.
 void CheckPublished()
 {
@@ -149,7 +158,7 @@ void CheckPublished()
             Expect(asset.type == assets[i].type && !asset.header.data, "a listed-only asset loads nothing:",
                    assets[i].name);
         else
-            Expect(asset.type == assets[i].type && Is(asset.header.data, assets[i].type, assets[i].name),
+            Expect(asset.type == assets[i].type && Is(asset.header.data, assets[i].type, PoolName(assets[i].name)),
                    "an asset publishes and its header slot is the pool's:", assets[i].name);
     }
     for (const char *text : ZoneScriptStrings())
@@ -162,8 +171,17 @@ void CheckUnload(std::uint32_t freeBefore)
     DB_ShutdownXAssets();
     Expect(g_zoneCount == 0, "the zone unloads");
     for (const Asset &asset : ZoneAssets())
-        Expect(asset.skipped || !DB_FindXAssetEntry(asset.type, asset.name), "an asset outlives its zone:",
+        Expect(asset.skipped || !DB_FindXAssetEntry(asset.type, PoolName(asset.name)), "an asset outlives its zone:",
                asset.name);
+    // Nor does a default entry a stub or a lookup made.
+    for (std::int32_t type = 0; type < ASSET_TYPE_COUNT; ++type)
+    {
+        int count = 0;
+        if (g_poolSize[type] > 0)
+            DB_EnumXAssets(static_cast<XAssetType>(type), [](XAssetHeader, void *data) { ++*static_cast<int *>(data); },
+                           &count, true);
+        Expect(count == 0, "an entry outlives the zone in pool", DB_GetXAssetTypeName(type));
+    }
     Expect(PMem_GetFreeAmount() == freeBefore, "the zone's memory is freed");
 }
 
@@ -187,6 +205,8 @@ int Run(const char *guarded)
     {
         const char *const expected = VariantDrop();
         Expect(expected && std::strstr(drop.message, expected), "the variant's zone fails closed:", drop.message);
+        // The drop left no registry session holding the hash.
+        Expect(!db::load_legacy_bridge::DbLoadLegacyBridge::InSession(), "the drop leaves a registry session open");
     }
     else if (std::strcmp(drop.message, "(none)"))
         Expect(false, "the zone raised ERR_DROP:", drop.message);
