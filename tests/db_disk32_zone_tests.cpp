@@ -455,6 +455,35 @@ void WriteGfxWorld(Image &z)
     z.Word(0x01020304).Word(1);
 }
 
+// Stubs (",name") hold only a name: retail lists them for assets another
+// zone provides. Each links the asset the pool already holds, or a copy of
+// its family's default when none is loaded.
+void WriteDefaultMaterial(Image &z) // the material default: the shared technique set, no textures
+{
+    z.Word(kInline).Word(1u << 8).Fill(16).Fill(34, 0xFF).Fill(1, 0).Fill(5);
+    z.Word(Virt(g_at.techniqueSet)).Word(0).Word(0).Word(0).V("$default");
+}
+void WriteStubMaterial(Image &z)
+{
+    z.Record(80, {{0x00, kInline}}).V(",e2e/material");
+}
+void WriteAbsentMaterial(Image &z)
+{
+    z.Record(80, {{0x00, kInline}}).V(",e2e/absent");
+}
+void WriteStubCurve(Image &z) // no knots
+{
+    z.Record(72, {{0x00, kInline}}).V(",e2e/curve");
+}
+void WriteStubModel(Image &z) // no bones, surfaces or LODs
+{
+    z.Record(0xDC, {{0x00, kInline}}).V(",e2e/model");
+}
+void WriteStubFx(Image &z) // no elements, size or looping life
+{
+    z.Record(0x20, {{0x00, kInline}}).V(",e2e/fx");
+}
+
 const Asset kZone[] = {
     {ASSET_TYPE_RAWFILE, kInline, "e2e/a.gsc", WriteRawFile},
     // Retail MP zones list a SndDriverGlobals record that holds a stale
@@ -488,6 +517,12 @@ const Asset kZone[] = {
     {ASSET_TYPE_CLIPMAP_PVS, kInline, "e2e/clipmap", WriteClipMap},
     {ASSET_TYPE_RAWFILE, kInline, "e2e/pad", WritePadding},
     {ASSET_TYPE_GFXWORLD, kInline, "w", WriteGfxWorld},
+    {ASSET_TYPE_MATERIAL, kInline, "$default", WriteDefaultMaterial},
+    {ASSET_TYPE_MATERIAL, kInline, ",e2e/material", WriteStubMaterial},
+    {ASSET_TYPE_MATERIAL, kInline, ",e2e/absent", WriteAbsentMaterial},
+    {ASSET_TYPE_SOUND_CURVE, kInline, ",e2e/curve", WriteStubCurve},
+    {ASSET_TYPE_XMODEL, kInline, ",e2e/model", WriteStubModel},
+    {ASSET_TYPE_FX, kInline, ",e2e/fx", WriteStubFx},
 };
 const char *const kScriptStrings[] = {"e2e_tag", "bone_root", "bone_child"};
 } // namespace
@@ -518,6 +553,20 @@ std::span<const char *const> zone_test::ZoneScriptStrings()
 // published asset the pool lookup finds.
 void zone_test::CheckZone()
 {
+    // A stub whose asset is absent links a copy of the family default under
+    // its own name (the harness checks each other stub's header is the
+    // published asset's).
+    const Material *absent = Find(ASSET_TYPE_MATERIAL, "e2e/absent").material;
+    const Material *fallback = Find(ASSET_TYPE_MATERIAL, "$default").material;
+    Expect(absent && fallback && absent != fallback && !std::strcmp(absent->info.name, "e2e/absent")
+               && absent->techniqueSet == fallback->techniqueSet,
+           "a stub with no asset links a copy of the default");
+    // The engine's lookup of an asset no zone holds makes the same default.
+    const Material *missing = DB_FindXAssetHeader(ASSET_TYPE_MATERIAL, "e2e/never").material;
+    Expect(missing && fallback && missing != fallback && missing->techniqueSet == fallback->techniqueSet
+               && Find(ASSET_TYPE_MATERIAL, "e2e/never").material == missing,
+           "a lookup of a missing asset makes a default under its name");
+
     const RawFile *raw = Find(ASSET_TYPE_RAWFILE, "e2e/a.gsc").rawfile;
     Expect(raw && raw->len == 2 && !std::strcmp(raw->buffer, "hi"), "the raw file's bytes load");
     const StringTable *table = Find(ASSET_TYPE_STRINGTABLE, "e2e/table").stringTable;

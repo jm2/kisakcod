@@ -1481,6 +1481,25 @@ void __cdecl DB_EnumXAssetsFor(
     }
 }
 
+// A lookup or publish that may make a default entry holds db_hashCritSect
+// through a registry session, so DB_CreateDefaultEntry can intern the name.
+// The end returns false when the session failed; the caller then raises.
+static void DB_BeginDefaultEntrySession()
+{
+    db::load_legacy_bridge::DbLoadLegacyBridge::BeginSession();
+}
+
+static bool DB_EndDefaultEntrySession()
+{
+    const db::load_legacy_bridge::LegacyBridgeStatus status =
+        db::load_legacy_bridge::DbLoadLegacyBridge::FinishSession();
+    if (status == db::load_legacy_bridge::LegacyBridgeStatus::UnsafeFailure)
+        Sys_Error("Database registry failed closed while making a default asset");
+    return status == db::load_legacy_bridge::LegacyBridgeStatus::Success;
+}
+
+static void DB_DefaultEntryFailed(XAssetType type, const char *name);
+
 XAssetHeader __cdecl DB_FindXAssetHeader(XAssetType type, const char *name)
 {
     const char *v5; // [esp-4h] [ebp-24h]
@@ -1497,7 +1516,10 @@ XAssetHeader __cdecl DB_FindXAssetHeader(XAssetType type, const char *name)
         while (1)
         {
             Sys_LockRead(&db_hashCritSect);
-            assetEntry = &DB_FindXAssetEntry(type, name)->entry;
+            {
+        XAssetEntryPoolEntry *const found = DB_FindXAssetEntry(type, name);
+        assetEntry = found ? &found->entry : nullptr;
+    }
             Sys_UnlockRead(&db_hashCritSect);
             DB_RegisteredReorderAsset(type, name, assetEntry);
             if (assetEntry && (assetEntry->zoneIndex || Sys_IsDatabaseReady2()))
@@ -1549,13 +1571,16 @@ LABEL_39:
         }
         return assetEntry->asset.header;
     }
-    Sys_LockWrite(&db_hashCritSect);
-    assetEntry = &DB_FindXAssetEntry(type, name)->entry;
+    DB_BeginDefaultEntrySession();
+    {
+        XAssetEntryPoolEntry *const found = DB_FindXAssetEntry(type, name);
+        assetEntry = found ? &found->entry : nullptr;
+    }
     if (assetEntry)
     {
         if (!assetEntry->asset.header.xmodelPieces)
             MyAssertHandler(".\\database\\db_registry.cpp", 2774, 0, "%s", "assetEntry->asset.header.data");
-        Sys_UnlockWrite(&db_hashCritSect);
+        DB_EndDefaultEntrySession();
         goto returnAsset;
     }
     DB_LogMissingAsset(type, name);
@@ -1565,13 +1590,17 @@ LABEL_39:
     }
     if (type == ASSET_TYPE_LOCALIZE_ENTRY || type == ASSET_TYPE_RAWFILE)
     {
-        Sys_UnlockWrite(&db_hashCritSect);
+        DB_EndDefaultEntrySession();
         return 0;
     }
     else
     {
         newEntry = DB_CreateDefaultEntry(type, (char*)name);
-        Sys_UnlockWrite(&db_hashCritSect);
+        if (!DB_EndDefaultEntrySession() || !newEntry)
+        {
+            DB_DefaultEntryFailed(type, name);
+            return {};
+        }
         return newEntry->asset.header;
     }
 }
@@ -1856,6 +1885,11 @@ uint32_t __cdecl DB_HashForName(const char *name, XAssetType type)
 }
 
 int32_t g_defaultAssetCount;
+// Runs inside a registry session (DB_BeginDefaultEntrySession): interning the
+// name takes the registry window, which owns db_hashCritSect, so a caller
+// holding the hash through Sys_LockWrite could never intern it. Returns null
+// when the type has no default or the name does not intern; the caller
+// reports it once the session has released the hash.
 XAssetEntry *__cdecl DB_CreateDefaultEntry(XAssetType type, char *name)
 {
     XAsset asset; // [esp+Ch] [ebp-Ch] BYREF
@@ -1863,42 +1897,48 @@ XAssetEntry *__cdecl DB_CreateDefaultEntry(XAssetType type, char *name)
 
     asset.header = DB_FindXAssetDefaultHeaderInternal(type);
     if (!asset.header.data)
+        return nullptr;
+    db::load_legacy_bridge::LegacyBridgeStringId internedName{};
+    if (db::load_legacy_bridge::DbLoadLegacyBridge::TryInternUser4String(
+            name, &internedName)
+        != db::load_legacy_bridge::LegacyBridgeStatus::Success)
     {
-        Sys_UnlockWrite(&db_hashCritSect);
-        if (type == ASSET_TYPE_CLIPMAP || type == ASSET_TYPE_CLIPMAP_PVS)
-            Com_Error(
-                ERR_DROP,
-                "Couldn't find the bsp for this map.  Please build the fast file associated with %s and try again.",
-                name);
-        else
-            Com_Error(
-                ERR_DROP,
-                "Could not load default asset '%s' for asset type '%s'.\nTried to load asset '%s'.",
-                g_defaultAssetName[type],
-                g_assetNames[type],
-                name);
+        return nullptr;
     }
     asset.type = type;
     ++g_defaultAssetCount;
-    newEntry = (XAssetEntry *)DB_AllocXAssetEntry(type, 0);
+    XAssetEntryPoolEntry *const poolEntry = DB_AllocXAssetEntry(type, 0);
+    newEntry = &poolEntry->entry;
     DB_CloneXAssetInternal(&asset, &newEntry->asset);
     if (type == ASSET_TYPE_SOUND)
     {
         newEntry->asset.header.sound->count = 0;
         newEntry->asset.header.sound->head = NULL;
     }
-    newEntry->nextHash = db_hashTable[DB_HashForName(name, type)];
-    db_hashTable[DB_HashForName(name, type)] = ((char *)newEntry - (char *)g_assetEntryPool) >> 4;
-    db::load_legacy_bridge::LegacyBridgeStringId internedName{};
-    if (db::load_legacy_bridge::DbLoadLegacyBridge::TryInternUser4String(
-            name, &internedName)
-        != db::load_legacy_bridge::LegacyBridgeStatus::Success)
-    {
-        Com_Error(ERR_DROP, "Default asset user-4 intern failed for '%s'", name);
-    }
+    const uint32_t hash = DB_HashForName(name, type);
+    newEntry->nextHash = db_hashTable[hash];
+    db_hashTable[hash] = static_cast<uint16_t>(poolEntry - g_assetEntryPool);
     DB_SetXAssetName(&newEntry->asset, internedName.canonicalName);
     newEntry->inuse = 1;
     return newEntry;
+}
+
+// A default entry could not be made (DB_CreateDefaultEntry returned null);
+// raised with db_hashCritSect free.
+static void DB_DefaultEntryFailed(XAssetType type, const char *name)
+{
+    if (type == ASSET_TYPE_CLIPMAP || type == ASSET_TYPE_CLIPMAP_PVS)
+        Com_Error(
+            ERR_DROP,
+            "Couldn't find the bsp for this map.  Please build the fast file associated with %s and try again.",
+            name);
+    else
+        Com_Error(
+            ERR_DROP,
+            "Could not load default asset '%s' for asset type '%s'.\nTried to load asset '%s'.",
+            g_defaultAssetName[type],
+            g_assetNames[type],
+            name);
 }
 
 XAssetEntryPoolEntry *__cdecl DB_AllocXAssetEntry(XAssetType type, uint8_t zoneIndex)
@@ -2183,9 +2223,27 @@ XAssetHeader __cdecl DB_AddXAsset(XAssetType type, XAssetHeader header)
     }
     newEntry.entry.asset.type = type;
     newEntry.entry.asset.header = header;
-    Sys_LockWrite(&db_hashCritSect);
-    existingEntry = DB_LinkXAssetEntry(&newEntry, 0);
-    Sys_UnlockWrite(&db_hashCritSect);
+    // A stub (",name") names an asset another zone provides, and links to a
+    // default entry while that zone is absent.
+    const char *const name = DB_GetXAssetName(&newEntry.entry.asset);
+    const bool stub = name && *name == ',';
+    if (!stub)
+    {
+        Sys_LockWrite(&db_hashCritSect);
+        existingEntry = DB_LinkXAssetEntry(&newEntry, 0);
+        Sys_UnlockWrite(&db_hashCritSect);
+    }
+    else
+    {
+        DB_BeginDefaultEntrySession();
+        existingEntry = DB_LinkXAssetEntry(&newEntry, 0);
+        if (!DB_EndDefaultEntrySession() || !existingEntry)
+        {
+            DB_DefaultEntryFailed(type, name + 1);
+            header.data = nullptr;
+            return header;
+        }
+    }
     DB_SyncLostDevice();
     return existingEntry->entry.asset.header;
 }

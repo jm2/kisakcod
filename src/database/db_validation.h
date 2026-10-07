@@ -372,6 +372,14 @@ inline bool DownsampleWaterGridInPlace(
     return true;
 }
 
+// A stub asset (",name") only names an asset another zone provides:
+// DB_LinkXAssetEntry keeps its name and links the existing or a default
+// entry, dropping the rest, so its family's content rules do not apply.
+constexpr bool IsStubAssetName(const char *name)
+{
+    return name && name[0] == ',';
+}
+
 enum class D3D9ShaderStage : std::uint8_t
 {
     Vertex,

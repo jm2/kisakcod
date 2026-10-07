@@ -137,6 +137,12 @@ Drop LoadZone()
     return drop;
 }
 
+// The name the pool hashes: a stub (",name") publishes under its name.
+const char *PoolName(const char *name)
+{
+    return name[0] == ',' ? name + 1 : name;
+}
+
 // Every asset publishes, and the envelope's header slot holds the pool's pointer.
 void CheckPublished()
 {
@@ -149,7 +155,7 @@ void CheckPublished()
             Expect(asset.type == assets[i].type && !asset.header.data, "a listed-only asset loads nothing:",
                    assets[i].name);
         else
-            Expect(asset.type == assets[i].type && Is(asset.header.data, assets[i].type, assets[i].name),
+            Expect(asset.type == assets[i].type && Is(asset.header.data, assets[i].type, PoolName(assets[i].name)),
                    "an asset publishes and its header slot is the pool's:", assets[i].name);
     }
     for (const char *text : ZoneScriptStrings())
