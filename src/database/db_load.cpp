@@ -10398,6 +10398,19 @@ static void DB_SkipListedOnlyXAsset()
     varXAssetHeader->data = nullptr;
 }
 
+bool DB_UnverifiedFamiliesAdmitted()
+{
+    static bool warned = false;
+    if (!Dvar_GetBool("db_unverified64"))
+        return false;
+    if (!warned)
+    {
+        warned = true;
+        Com_PrintWarning(10, "db_unverified64: admitting 64-bit asset families K4 has not verified yet\n");
+    }
+    return true;
+}
+
 void __cdecl Load_XAssetHeader(bool atStreamStart)
 {
     if (varXAsset->type < 0 || varXAsset->type >= ASSET_TYPE_COUNT)
@@ -10424,6 +10437,10 @@ void __cdecl Load_XAssetHeader(bool atStreamStart)
     // need the FX zone adapter bound: without it both loaders fall through to
     // their legacy retail-record walk, which is the same drift hazard.
     bool guardTarget64 = KISAK_ARCH_64BIT != 0;
+    // Developer opt-in only (db_asset_layout.h): admits families that have a
+    // 64-bit loader before K4 counts them. Off by default.
+    guardTarget64 = guardTarget64
+        && !(db::asset_layout::HasDisk32Loader(varXAsset->type) && DB_UnverifiedFamiliesAdmitted());
 #if defined(KISAK_DB_ASSET_FAMILY_ADMISSION_TESTING)
     // Test builds only (db_asset_layout.h): the end-to-end zone test admits
     // the families it loads; any other family still meets the guard.

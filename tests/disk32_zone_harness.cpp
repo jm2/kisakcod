@@ -256,6 +256,7 @@ void MyAssertHandler(const char *file, int line, int, const char *fmt, ...)
 }
 void Com_Printf(int, const char *, ...) {}
 void Com_PrintWarning(int, const char *, ...) {}
+bool Dvar_GetBool(const char *) { return false; } // db_unverified64 stays off
 void Com_PrintError(int, const char *, ...) {}
 int Com_sprintf(char *dest, unsigned int size, const char *fmt, ...)
 {
