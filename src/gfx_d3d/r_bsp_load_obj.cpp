@@ -831,7 +831,15 @@ void __cdecl R_CopyLightmap(
     }
 }
 
-void __cdecl R_CopyLightDefAttenuationImage(GfxLightDef *def, _DWORD *anonymousConfig)
+// The lightmap-lookup copy target: the decompile passed it as a _DWORD array
+// (dest pointer in slot 0, zoom in slot 1).
+struct LightDefAttenuationCopy
+{
+    uint8_t *dest;
+    uint32_t zoom;
+};
+
+void __cdecl R_CopyLightDefAttenuationImage(GfxLightDef *def, const LightDefAttenuationCopy *cfg)
 {
     int endCount; // [esp+30h] [ebp-7Ch]
     uint8_t *dstPixel; // [esp+38h] [ebp-74h]
@@ -844,9 +852,9 @@ void __cdecl R_CopyLightDefAttenuationImage(GfxLightDef *def, _DWORD *anonymousC
 
     Image_GetRawPixels((char*)def->attenuation.image->name, &rawImage);
     iassert( rawImage.width == def->attenuation.image->width );
-    dstPixel = (unsigned char*)(*anonymousConfig + anonymousConfig[1] * (4 * def->lmapLookupStart - 4));
+    dstPixel = cfg->dest + cfg->zoom * (4 * def->lmapLookupStart - 4);
     srcPixel = rawImage.pixels;
-    if (anonymousConfig[1] == 1)
+    if (cfg->zoom == 1)
     {
         *dstPixel = (rawImage.pixels->a << 24) | rawImage.pixels->b | (rawImage.pixels->g << 8) | (rawImage.pixels->r << 16);
         dstPixela = dstPixel + 4;
@@ -863,52 +871,52 @@ void __cdecl R_CopyLightDefAttenuationImage(GfxLightDef *def, _DWORD *anonymousC
     }
     else
     {
-        endCount = anonymousConfig[1] + (anonymousConfig[1] >> 1);
+        endCount = cfg->zoom + (cfg->zoom >> 1);
         for (iter = 0; iter < endCount; ++iter)
         {
             *dstPixel = (srcPixel->a << 24) | srcPixel->b | (srcPixel->g << 8) | (srcPixel->r << 16);
             dstPixel += 4;
         }
-        if ((anonymousConfig[1] & (anonymousConfig[1] - 1)) != 0)
+        if ((cfg->zoom & (cfg->zoom - 1)) != 0)
             MyAssertHandler(
                 ".\\r_light_load_obj.cpp",
                 172,
                 0,
                 "%s\n\t(cfg->zoom) = %i",
                 "((((cfg->zoom) & ((cfg->zoom) - 1)) == 0))",
-                anonymousConfig[1]);
+                cfg->zoom);
         lerp = 1;
         do
         {
             do
             {
-                lerpedPixel.r = (anonymousConfig[1] + lerp * srcPixel[1].r + (2 * anonymousConfig[1] - lerp) * srcPixel->r)
+                lerpedPixel.r = (cfg->zoom + lerp * srcPixel[1].r + (2 * cfg->zoom - lerp) * srcPixel->r)
                     / (2
-                        * anonymousConfig[1]);
-                lerpedPixel.g = (anonymousConfig[1] + lerp * srcPixel[1].g + (2 * anonymousConfig[1] - lerp) * srcPixel->g)
+                        * cfg->zoom);
+                lerpedPixel.g = (cfg->zoom + lerp * srcPixel[1].g + (2 * cfg->zoom - lerp) * srcPixel->g)
                     / (2
-                        * anonymousConfig[1]);
-                lerpedPixel.b = (anonymousConfig[1] + lerp * srcPixel[1].b + (2 * anonymousConfig[1] - lerp) * srcPixel->b)
+                        * cfg->zoom);
+                lerpedPixel.b = (cfg->zoom + lerp * srcPixel[1].b + (2 * cfg->zoom - lerp) * srcPixel->b)
                     / (2
-                        * anonymousConfig[1]);
-                lerpedPixel.a = (anonymousConfig[1] + lerp * srcPixel[1].a + (2 * anonymousConfig[1] - lerp) * srcPixel->a)
+                        * cfg->zoom);
+                lerpedPixel.a = (cfg->zoom + lerp * srcPixel[1].a + (2 * cfg->zoom - lerp) * srcPixel->a)
                     / (2
-                        * anonymousConfig[1]);
+                        * cfg->zoom);
                 *dstPixel = (lerpedPixel.a << 24) | lerpedPixel.b | (lerpedPixel.g << 8) | (lerpedPixel.r << 16);
                 dstPixel += 4;
                 lerp += 2;
-            } while (lerp <= 2 * anonymousConfig[1]);
+            } while (lerp <= 2 * cfg->zoom);
             lerp = 1;
             ++srcPixel;
         } while (srcPixel != &rawImage.pixels[rawImage.width - 1]);
-        if ((int)((int)&dstPixel[-(int)*anonymousConfig] >> 2) != ((int)(anonymousConfig[1] * (def->lmapLookupStart + rawImage.width + 1) - endCount)))
+        if ((int)((dstPixel - cfg->dest) >> 2) != ((int)(cfg->zoom * (def->lmapLookupStart + rawImage.width + 1) - endCount)))
             MyAssertHandler(
                 ".\\r_light_load_obj.cpp",
                 193,
                 1,
                 "(dstPixel - cfg->dest) / 4u == (def->lmapLookupStart + rawImage.width + 1) * cfg->zoom - endCount\n\t%i, %i",
-                (int)&dstPixel[-(int)*anonymousConfig] >> 2,
-                anonymousConfig[1] * (def->lmapLookupStart + rawImage.width + 1) - endCount);
+                (int)((dstPixel - cfg->dest) >> 2),
+                cfg->zoom * (def->lmapLookupStart + rawImage.width + 1) - endCount);
         for (iter = 0; iter < endCount; ++iter)
         {
             *dstPixel = (srcPixel->a << 24) | srcPixel->b | (srcPixel->g << 8) | (srcPixel->r << 16);
@@ -968,14 +976,14 @@ void __cdecl R_LoadLightmaps(GfxBspLoad *load)
         oldLmapBaseIndex = 0;
         while (oldLmapBaseIndex < oldLmapCount)
         {
-            if (newLmapIndex && groupInfo[newLmapIndex].wideCount > *(&height + 2 * newLmapIndex))
+            if (newLmapIndex && groupInfo[newLmapIndex].wideCount > groupInfo[newLmapIndex - 1].wideCount)
                 MyAssertHandler(
                     ".\\r_bsp_load_obj.cpp",
                     722,
                     0,
                     "%s",
                     "newLmapIndex == 0 || groupInfo[newLmapIndex].wideCount <= groupInfo[newLmapIndex - 1].wideCount");
-            if (newLmapIndex && groupInfo[newLmapIndex].highCount > (int)(&buf_p)[2 * newLmapIndex])
+            if (newLmapIndex && groupInfo[newLmapIndex].highCount > groupInfo[newLmapIndex - 1].highCount)
                 MyAssertHandler(
                     ".\\r_bsp_load_obj.cpp",
                     723,
@@ -1269,7 +1277,6 @@ MaterialUsage *__cdecl R_GetMaterialUsageData(Material *material)
 
 void __cdecl R_MaterialUsage(Material *material, uint32_t firstVertex, int vertexCount, int surfPlusIndexSize)
 {
-    uint32_t *v4; // eax
     VertUsage *vertUsage; // [esp+0h] [ebp-8h]
     MaterialUsage *materialUsage; // [esp+4h] [ebp-4h]
 
@@ -1282,10 +1289,10 @@ void __cdecl R_MaterialUsage(Material *material, uint32_t firstVertex, int verte
             if (firstVertex == vertUsage->index)
                 return;
         }
-        v4 = (uint32_t *)Z_Malloc(8, "R_MaterialUsage", 0);
-        *v4 = firstVertex;
-        v4[1] = (uint32_t)materialUsage->verts;
-        materialUsage->verts = (VertUsage*)v4;
+        VertUsage *usage = (VertUsage *)Z_Malloc(sizeof(VertUsage), "R_MaterialUsage", 0);
+        usage->index = firstVertex;
+        usage->next = materialUsage->verts;
+        materialUsage->verts = usage;
         materialUsage->memory += 44 * vertexCount;
     }
 }
@@ -1925,7 +1932,10 @@ void __cdecl R_LoadCells(uint32_t bspVersion, TrisType trisType)
         }
         s_aabbTreeRootFlags[aabbTreeIndex] = 2;
         out->aabbTree = &rgl.aabbTrees[aabbTreeIndex];
-        out->portals = (GfxPortal *)(68 * *((_DWORD *)in + 7));
+        // Holds the cell's first portal index until R_LoadPortals turns it
+        // into a pointer. The decompile stored 68 * index (the x86
+        // sizeof(GfxPortal)) as the pointer value.
+        out->portals = (GfxPortal *)(uintptr_t)*((_DWORD *)in + 7);
         out->portalCount = *((_DWORD *)in + 8);
         cullGroupCount = *((_DWORD *)in + 10);
         if (cullGroupCount)
@@ -2023,7 +2033,7 @@ uint32_t R_LoadPortals()
     for (cellIndex = 0; cellIndex < s_world.dpvsPlanes.cellCount; ++cellIndex)
     {
         if (s_world.cells[cellIndex].portalCount)
-            v1 = &out[(int)s_world.cells[cellIndex].portals / 68];
+            v1 = &out[(uintptr_t)s_world.cells[cellIndex].portals];
         else
             v1 = 0;
         s_world.cells[cellIndex].portals = v1;
@@ -2248,7 +2258,6 @@ BOOL __cdecl R_CompareSurfaces(const GfxSurface &surf0, const GfxSurface &surf1)
 
 uint32_t R_SortSurfaces()
 {
-    uint32_t result; // eax
     int origSurfIndex; // [esp+68h] [ebp-14h]
     int surfIndex; // [esp+6Ch] [ebp-10h]
     int surfIndexa; // [esp+6Ch] [ebp-10h]
@@ -2314,18 +2323,14 @@ uint32_t R_SortSurfaces()
         && s_world.dpvs.surfaces[surfIndexb].material->info.sortKey < 0x18u)
         ++surfIndexb;
     s_world.dpvs.litSurfsEnd = surfIndexb;
-    result = surfIndexb;
     s_world.dpvs.decalSurfsBegin = surfIndexb;
     while (surfIndexb < surfaceCounta)
     {
-        result = 48 * surfIndexb;
         if (!s_world.dpvs.surfaces[surfIndexb].material->techniqueSet)
             break;
-        result = (uint)Material_GetTechnique(s_world.dpvs.surfaces[surfIndexb].material, TECHNIQUE_LIT_BEGIN);
-        if (!result)
+        if (!Material_GetTechnique(s_world.dpvs.surfaces[surfIndexb].material, TECHNIQUE_LIT_BEGIN))
             break;
-        result = s_world.dpvs.surfaces[surfIndexb].material->info.sortKey;
-        if (result < 0x18)
+        if (s_world.dpvs.surfaces[surfIndexb].material->info.sortKey < 0x18)
             MyAssertHandler(
                 ".\\r_bsp_load_obj.cpp",
                 2378,
@@ -2338,106 +2343,35 @@ uint32_t R_SortSurfaces()
     s_world.dpvs.emissiveSurfsBegin = surfIndexb;
     while (surfIndexb < surfaceCounta)
     {
-        result = (uint)s_world.dpvs.surfaces;
         if (!s_world.dpvs.surfaces[surfIndexb].material->techniqueSet)
             break;
-        result = (uint)Material_GetTechnique(s_world.dpvs.surfaces[surfIndexb].material, TECHNIQUE_EMISSIVE);
-        if (!result)
+        if (!Material_GetTechnique(s_world.dpvs.surfaces[surfIndexb].material, TECHNIQUE_EMISSIVE))
             break;
-        result = ++surfIndexb;
+        ++surfIndexb;
     }
     s_world.dpvs.emissiveSurfsEnd = surfIndexb;
-    return result;
+    return surfIndexb;
 }
 
+static bool R_WorldVertsEqual(const float *a, const float *b)
+{
+    return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
+}
+
+// Whether triangle xyz1 has xyz0's vertices in the same winding, starting at
+// any of its three corners. The decompile read the first vertex's
+// coordinates through pointers cast to int.
 char __cdecl R_DoWorldTrisCoincide(const float **xyz0, const float **xyz1)
 {
-    char v3; // [esp+0h] [ebp-78h]
-    BOOL v5; // [esp+8h] [ebp-70h]
-    char v7; // [esp+10h] [ebp-68h]
-    BOOL v9; // [esp+18h] [ebp-60h]
-    char v11; // [esp+20h] [ebp-58h]
-    BOOL v13; // [esp+28h] [ebp-50h]
-    const float *v15; // [esp+30h] [ebp-48h]
-    const float *v16; // [esp+34h] [ebp-44h]
-    int v17; // [esp+38h] [ebp-40h]
-    const float *v18; // [esp+3Ch] [ebp-3Ch]
-    const float *v19; // [esp+40h] [ebp-38h]
-    int v20; // [esp+44h] [ebp-34h]
-    int v21; // [esp+48h] [ebp-30h]
-    const float *v22; // [esp+4Ch] [ebp-2Ch]
-    const float *v23; // [esp+50h] [ebp-28h]
-    const float *v24; // [esp+54h] [ebp-24h]
-    const float *v25; // [esp+58h] [ebp-20h]
-    int v26; // [esp+5Ch] [ebp-1Ch]
-    const float *v27; // [esp+60h] [ebp-18h]
-    const float *v28; // [esp+64h] [ebp-14h]
-    const float *v29; // [esp+68h] [ebp-10h]
-    const float *v30; // [esp+6Ch] [ebp-Ch]
-    int v31; // [esp+70h] [ebp-8h]
-    int v32; // [esp+74h] [ebp-4h]
-
-    v31 = *(int *)xyz1;
-    v32 = *(int *)xyz0;
-    if (**xyz1 == **xyz0 && *(int*)(v31 + 4) == *(int*)(v32 + 4) && *(int *)(v31 + 8) == *(int *)(v32 + 8))
+    for (int start = 0; start < 3; ++start)
     {
-        v29 = xyz1[1];
-        v30 = xyz0[1];
-        v13 = *v29 == *v30 && v29[1] == v30[1] && v29[2] == v30[2];
-        v11 = 0;
-        if (v13)
+        if (R_WorldVertsEqual(xyz1[start], xyz0[0]))
         {
-            v27 = xyz1[2];
-            v28 = xyz0[2];
-            if (*v27 == *v28 && v27[1] == v28[1] && v27[2] == v28[2])
-                return 1;
-        }
-        return v11;
-    }
-    else
-    {
-        v25 = xyz1[1];
-        v26 = *(int *)xyz0;
-        if (*v25 == **xyz0 && v25[1] == *(int *)(v26 + 4) && v25[2] == *(int *)(v26 + 8))
-        {
-            v23 = xyz1[2];
-            v24 = xyz0[1];
-            v9 = *v23 == *v24 && v23[1] == v24[1] && v23[2] == v24[2];
-            v7 = 0;
-            if (v9)
-            {
-                v21 = *(int *)xyz1;
-                v22 = xyz0[2];
-                if (**xyz1 == *v22 && *(int *)(v21 + 4) == v22[1] && *(int *)(v21 + 8) == v22[2])
-                    return 1;
-            }
-            return v7;
-        }
-        else
-        {
-            v19 = xyz1[2];
-            v20 = *(int *)xyz0;
-            if (*v19 == **xyz0 && v19[1] == *(int *)(v20 + 4) && v19[2] == *(int *)(v20 + 8))
-            {
-                v17 = *(int *)xyz1;
-                v18 = xyz0[1];
-                v5 = **xyz1 == *v18 && *(int *)(v17 + 4) == v18[1] && *(int *)(v17 + 8) == v18[2];
-                v3 = 0;
-                if (v5)
-                {
-                    v15 = xyz1[1];
-                    v16 = xyz0[2];
-                    if (*v15 == *v16 && v15[1] == v16[1] && v15[2] == v16[2])
-                        return 1;
-                }
-                return v3;
-            }
-            else
-            {
-                return 0;
-            }
+            return R_WorldVertsEqual(xyz1[(start + 1) % 3], xyz0[1])
+                && R_WorldVertsEqual(xyz1[(start + 2) % 3], xyz0[2]);
         }
     }
+    return 0;
 }
 
 char __cdecl R_DoesTriCoverAnyOtherTri(
