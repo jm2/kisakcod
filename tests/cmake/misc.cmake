@@ -562,6 +562,22 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(dvar-pointer-round-trips PROPERTIES TIMEOUT 20)
 endif()
 
+# FS_Shutdown's handle rule (com_files.h), which FS_Restart applies on every
+# map load. Linux and clang only, as above: com_files.h is engine code.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-fs-shutdown-handle-tests fs_shutdown_handle_tests.cpp)
+    target_include_directories(kisakcod-fs-shutdown-handle-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-fs-shutdown-handle-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fs-shutdown-handle-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-fs-shutdown-handle-tests PRIVATE -fms-extensions)
+    set_target_properties(kisakcod-fs-shutdown-handle-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME fs-shutdown-handle-rule COMMAND kisakcod-fs-shutdown-handle-tests)
+    set_tests_properties(fs-shutdown-handle-rule PROPERTIES TIMEOUT 20)
+endif()
+
 # game_mp 64-bit layout hazards (NOW row 10, #216): the production game_mp
 # TUs at 64-bit, one executable per subject group (see the test's header).
 # Linux and clang only, for the reasons the dvar test above gives; the
