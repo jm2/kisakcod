@@ -262,7 +262,7 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
             COMMAND kisakcod-script-parser-stack-growth-tests ${_case})
         set_tests_properties(script-parser-${_case}-contracts PROPERTIES TIMEOUT 120)
     endforeach()
-    foreach(_case arithmetic animtree-limit thread-params locals vectors)
+    foreach(_case arithmetic animtree-limit thread-params locals vectors fields)
         add_test(NAME script-vm-${_case}-contracts
             COMMAND kisakcod-script-vm-arithmetic-tests ${_case})
         set_tests_properties(script-vm-${_case}-contracts PROPERTIES TIMEOUT 120)

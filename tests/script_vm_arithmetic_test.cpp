@@ -16,6 +16,8 @@
 //                   every local keeps its own value.
 //   vectors         vector constants, after operands of every width, load
 //                   float-aligned from the code and keep their values.
+//   fields          the entity field keys load into the packed field buffer
+//                   (name, 16-bit index, type) and each looks up again.
 
 #include <climits>
 #include <cstdio>
@@ -23,6 +25,9 @@
 #include <string>
 
 #include "script_engine_harness.hpp"
+
+#include <script/scr_stringlist.h>
+#include <script/scr_variable.h>
 
 namespace
 {
@@ -251,6 +256,38 @@ void Vectors()
         std::fprintf(stderr, "report %d\n", value);
     gsc::Unload();
 }
+// Names of varying length put each packed 16-bit index at a different
+// alignment.
+void Fields()
+{
+    gsc::SetLoadFields("int a\nstring bb\nvector ccc\nfloat dddd\nint eeeee\n");
+    gsc::SetSource("fields", R"(main()
+{
+	report(1);
+}
+)");
+    std::string error;
+    GSC_CHECK(gsc::Load("fields", &error));
+    const struct
+    {
+        const char *name;
+        int type;
+    } keys[] = {{"a", VAR_INTEGER}, {"bb", VAR_STRING}, {"ccc", VAR_VECTOR}, {"dddd", VAR_FLOAT}, {"eeeee", VAR_INTEGER}};
+    std::vector<uint32_t> indices;
+    for (const auto &key : keys)
+    {
+        int type = -1;
+        const uint32_t index = Scr_FindField(key.name, &type);
+        GSC_CHECK(index != 0 && type == key.type);
+        for (uint32_t earlier : indices)
+            GSC_CHECK(index != earlier);
+        indices.push_back(index);
+    }
+    int type = -1;
+    GSC_CHECK(Scr_FindField("missing", &type) == 0);
+    gsc::Unload();
+    gsc::SetLoadFields("");
+}
 }  // namespace
 
 int main(int argc, char **argv)
@@ -266,9 +303,11 @@ int main(int argc, char **argv)
         Locals();
     else if (!std::strcmp(which, "vectors"))
         Vectors();
+    else if (!std::strcmp(which, "fields"))
+        Fields();
     else
     {
-        std::fprintf(stderr, "usage: %s arithmetic|animtree-limit|thread-params|locals|vectors\n", argv[0]);
+        std::fprintf(stderr, "usage: %s arithmetic|animtree-limit|thread-params|locals|vectors|fields\n", argv[0]);
         return 2;
     }
     std::printf("%s: %d failure(s)\n", which, gsc_failures);

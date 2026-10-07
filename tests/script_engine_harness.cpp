@@ -6,6 +6,8 @@
 
 #include "script_engine_harness.hpp"
 
+#include <universal/q_parse.h>
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -264,6 +266,32 @@ XAssetHeader __cdecl DB_FindXAssetHeader(XAssetType type, const char *name)
 }
 char *__cdecl XAnimGetAnimDebugName(const XAnim_s *, uint32_t) { return const_cast<char *>(""); }
 
+// Com_Parse for the field keys file (Scr_AddFieldsForFile): the next
+// whitespace-separated token; *data_p becomes null at the end of the text.
+parseInfo_t g_parseToken;
+void __cdecl Com_BeginParseSession(const char *) {}
+void __cdecl Com_EndParseSession() {}
+parseInfo_t *__cdecl Com_Parse(const char **data_p)
+{
+    g_parseToken.token[0] = 0;
+    const char *p = *data_p;
+    while (p && *p && std::isspace(static_cast<unsigned char>(*p)))
+        ++p;
+    if (!p || !*p)
+    {
+        *data_p = nullptr;
+        return &g_parseToken;
+    }
+    std::size_t n = 0;
+    while (p[n] && !std::isspace(static_cast<unsigned char>(p[n])) && n + 1 < sizeof(g_parseToken.token))
+        ++n;
+    // Flawfinder: ignore (n < sizeof(token), checked above)
+    std::memcpy(g_parseToken.token, p, n); // Flawfinder: ignore
+    g_parseToken.token[n] = 0;
+    *data_p = p + n;
+    return &g_parseToken;
+}
+
 // --- the game's side of the script interface ------------------------------
 void(__cdecl *__cdecl Scr_GetFunction(const char **pName, int *type))()
 {
@@ -295,6 +323,19 @@ void SetSource(const std::string &name, const std::string &text)
     source->rawfile = RawFile{source->file.c_str(), static_cast<int>(source->text.size()), source->text.c_str()};
 }
 
+void SetLoadFields(const std::string &keys)
+{
+    ScriptSource *source = FindSource("radiant/keys.txt");
+    if (!source)
+    {
+        g_sources.push_back(std::make_unique<ScriptSource>());
+        source = g_sources.back().get();
+        source->file = "radiant/keys.txt";
+    }
+    source->text = keys;
+    source->rawfile = RawFile{source->file.c_str(), static_cast<int>(source->text.size()), source->text.c_str()};
+}
+
 bool Load(const std::string &name, std::string *error)
 {
     if (!g_scriptSystemInited)
@@ -316,6 +357,8 @@ bool Load(const std::string &name, std::string *error)
     }
     // GScr_LoadScripts, then BG_LoadAnim and G_InitGame's system start.
     Scr_BeginLoadScripts();
+    if (ScriptSource *fields = FindSource("radiant/keys.txt"); fields && !fields->text.empty())
+        Scr_AddFields("radiant", "txt");
     g_mainHandle = Scr_LoadScript(name.c_str()) ? Scr_GetFunctionHandle(name.c_str(), "main") : 0;
     Scr_PostCompileScripts();
     Scr_EndLoadScripts();

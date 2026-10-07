@@ -1,3 +1,4 @@
+#include <cstring>
 #include "scr_main.h"
 #include <algorithm>
 #include "scr_animtree.h"
@@ -1096,7 +1097,11 @@ uint32_t  Scr_FindField(char const* name, int* type)
 
 		if (!I_stricmp(name, pos))
 		{
-			index = *(uint16_t *)&pos[len];
+			// Each entry packs its name, a 16-bit index and a type byte, so
+			// the index is unaligned.
+			uint16_t packedIndex = 0;
+			std::memcpy(&packedIndex, &pos[len], sizeof(packedIndex));
+			index = packedIndex;
 			*type = pos[len + 2];
 			return index;
 		}
@@ -3835,7 +3840,8 @@ void  Scr_AddFieldsForFile(char const* filename)
 		} while (v4);
 
 		targetPos += len;
-		*(_WORD*)targetPos = index;
+		const uint16_t packedIndex = static_cast<uint16_t>(index); // unaligned, as Scr_FindField reads it
+		std::memcpy(targetPos, &packedIndex, sizeof(packedIndex)); // Flawfinder: ignore (TempMalloc(len + 4) reserved it)
 		targetPos += 2;
 		*targetPos++ = type;
 	}

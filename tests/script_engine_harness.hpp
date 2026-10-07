@@ -18,6 +18,9 @@ void SetSource(const std::string &name, const std::string &text);
 // script system is then unusable for the rest of the process, as it is in
 // the engine until the drop is handled.
 bool Load(const std::string &name, std::string *error);
+// The entity field keys Load adds before compiling, as G_InitGame's
+// Scr_AddFields("radiant", "txt") does: "type name" pairs. Empty adds none.
+void SetLoadFields(const std::string &keys);
 
 // Runs main() of the loaded script as a level thread and returns the values
 // it passed to the test builtin report(value).
