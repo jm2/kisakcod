@@ -118,6 +118,7 @@ void __cdecl G_SetClientArchiveTime(int32_t clientNum, int32_t time);
 clientState_s *__cdecl G_GetClientState(int32_t clientNum);
 struct gclient_s *__cdecl G_GetPlayerState(int32_t clientNum);
 int32_t __cdecl G_GetClientSize();
+void *__cdecl G_AllocXAnimServer(int size);
 void __cdecl G_FreeEntities();
 bool __cdecl G_ExitAfterConnectPaths();
 int32_t __cdecl G_IsServerGameSystem(int32_t clientNum);
