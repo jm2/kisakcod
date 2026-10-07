@@ -121,16 +121,16 @@ constexpr bool IsLoadPermitted(
 // when the load may proceed. Returns false after raising `Com_Error(ERR_DROP,
 // ...)`, naming familyName, so a 64-bit fast-file cannot load a family whose
 // record layout would drift under the runtime sizeof.
-// Developer opt-in (`+set db_unverified64 1` at startup): a 64-bit build then
-// admits every family with a disk32 loader (HasDisk32Loader) before K4 counts
-// it, logging one warning. Off by default, so shipped builds keep every guard.
-[[nodiscard]] bool DB_UnverifiedFamiliesAdmitted();
-
 [[nodiscard]] bool DB_AdmitAssetFamilyLoad(
     std::int32_t assetType,
     const char *familyName,
     bool targetIs64Bit,
     bool fxAdapterAvailable);
+
+// Developer opt-in (`+set db_unverified64 1` at startup): a 64-bit build then
+// admits every family with a disk32 loader (HasDisk32Loader) before K4 counts
+// it, logging one warning. Off by default, so shipped builds keep every guard.
+[[nodiscard]] bool DB_UnverifiedFamiliesAdmitted();
 
 #if defined(KISAK_DB_ASSET_FAMILY_ADMISSION_TESTING)
 // Test-only seam at the Load_XAssetHeader dispatch: true admits assetType

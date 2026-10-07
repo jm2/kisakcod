@@ -64,5 +64,8 @@ foreach(_family IN ITEMS rawfile stringtable physpreset localize map_ents game_m
 endforeach()
 set_tests_properties(database-disk32-zone-load PROPERTIES TIMEOUT 60)
 # A SndDriverGlobals record with an inline token holds bytes no PC loader reads.
+# With the test seam admitting nothing, the developer opt-in alone (db_unverified64) loads the zone.
+add_test(NAME database-disk32-zone-unverified-opt-in COMMAND kisakcod-db-disk32-zone-tests unverified)
+set_tests_properties(database-disk32-zone-unverified-opt-in PROPERTIES TIMEOUT 60)
 add_test(NAME database-disk32-zone-drop-sndinline COMMAND kisakcod-db-disk32-zone-tests expect-drop sndinline)
 set_tests_properties(database-disk32-zone-drop-sndinline PROPERTIES TIMEOUT 60)
