@@ -3316,7 +3316,7 @@ void __cdecl FS_Shutdown()
     SEH_Shutdown_StringEd();
     for (i = 1; i < 65; ++i)
     {
-        if (fsh[i].handleFiles.file.o)
+        if (FS_ShutdownClosesHandle(fsh[i]))
             FS_FCloseFile(i);
     }
     FS_ShutdownSearchPaths(fs_searchpaths);
