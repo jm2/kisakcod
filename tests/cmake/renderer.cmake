@@ -41,6 +41,26 @@ add_test(
     COMMAND kisakcod-renderer-headless-seam-tests
 )
 
+# The window setup's refresh-rate lookup over the sorted D3D9 display modes
+# (gfx_d3d/r_display_modes.cpp), which R_ClosestRefreshRateForMode calls.
+# The decompiled lookup indexed past dx.displayModes into a pointer table and
+# crashed the Win64 client in R_EnumDisplayModes. _D3DDISPLAYMODE comes from
+# the Windows SDK.
+if (WIN32)
+    add_executable(kisakcod-renderer-display-modes-tests
+        renderer_display_modes_tests.cpp
+        ${SRC_DIR}/gfx_d3d/r_display_modes.cpp
+    )
+    target_include_directories(kisakcod-renderer-display-modes-tests PRIVATE ${SRC_DIR})
+    target_compile_features(kisakcod-renderer-display-modes-tests PRIVATE cxx_std_20)
+    kisakcod_test_warnings(kisakcod-renderer-display-modes-tests)
+    set_target_properties(kisakcod-renderer-display-modes-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME renderer-display-modes COMMAND kisakcod-renderer-display-modes-tests)
+    kisakcod_ilp32(kisakcod-renderer-display-modes-tests renderer-display-modes)
+endif()
+
 add_executable(kisakcod-renderer-reservation-atomic-tests
     renderer_reservation_atomic_tests.cpp
 )
