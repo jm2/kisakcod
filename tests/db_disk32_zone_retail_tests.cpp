@@ -55,6 +55,11 @@ std::span<const char *const> zone_test::ZoneScriptStrings()
     return {};
 }
 
+const char *zone_test::VariantDrop()
+{
+    return nullptr; // this zone has no expect-drop variants
+}
+
 void zone_test::CheckZone()
 {
     const Material *material = Find(ASSET_TYPE_MATERIAL, "retail/material").material;
