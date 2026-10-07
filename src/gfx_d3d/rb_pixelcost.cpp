@@ -3,11 +3,7 @@
 #include <universal/timing.h>
 #include "r_state.h"
 
-struct GfxPixelCostKey_s // sizeof=0x8
-{                                       // ...
-    const Material *material;
-    MaterialTechniqueType techType;
-};
+
 union GfxPixelCostKey // sizeof=0x8
 {                                       // ...
     GfxPixelCostKey_s mtl;
@@ -109,23 +105,22 @@ const Material *__cdecl R_PixelCost_GetAccumulationMaterial(const Material *mate
 void __cdecl R_PixelCost_BeginSurface(GfxCmdBufContext context)
 {
     int cost; // [esp+4h] [ebp-Ch]
-    unsigned __int64 packedKey; // [esp+8h] [ebp-8h]
-    unsigned __int64 packedKeya; // [esp+8h] [ebp-8h]
+    GfxPixelCostKey_s key;
 
     if (pixelCostMode == GFX_PIXEL_COST_MODE_MEASURE_COST)
     {
-        packedKey = R_PixelCost_PackedKeyForMaterial(*(_QWORD *)&context.state->material);
-        if (!RB_PixelCost_DoesPrimMatch(packedKey))
-            RB_PixelCost_ResetPrim(packedKey);
+        key = R_PixelCost_KeyForState(context.state);
+        if (!RB_PixelCost_DoesPrimMatch(key))
+            RB_PixelCost_ResetPrim(key);
         ++pixelCostGlob.expectedCount;
         RB_PixelCost_BeginTiming();
         RB_HW_BeginOcclusionQuery(gfxAssets.pixelCountQuery);
     }
     else if (pixelCostMode == GFX_PIXEL_COST_MODE_MEASURE_MSEC)
     {
-        packedKeya = R_PixelCost_PackedKeyForMaterial(*(_QWORD *)&context.state->material);
-        if (!RB_PixelCost_DoesPrimMatch(packedKeya))
-            RB_PixelCost_ResetPrim(packedKeya);
+        key = R_PixelCost_KeyForState(context.state);
+        if (!RB_PixelCost_DoesPrimMatch(key))
+            RB_PixelCost_ResetPrim(key);
         ++pixelCostGlob.expectedCount;
         RB_PixelCost_BeginTiming();
     }
@@ -225,25 +220,27 @@ int __cdecl RB_PixelCost_GetCostForRecordIndex(int recordIndex)
     }
 }
 
-unsigned __int64 __cdecl R_PixelCost_PackedKeyForMaterial(__int64 material)
+// The decompile read the key as *(_QWORD *)&state->material: the material
+// pointer and the techType after it, which fit in 64 bits only while pointers
+// are 4 bytes.
+GfxPixelCostKey_s __cdecl R_PixelCost_KeyForState(const GfxCmdBufState *state)
 {
-    iassert( material );
-    return material;
+    iassert( state->material );
+    return { state->material, state->techType };
 }
 
-bool __cdecl RB_PixelCost_DoesPrimMatch(unsigned __int64 packedKey)
+bool __cdecl RB_PixelCost_DoesPrimMatch(const GfxPixelCostKey_s &key)
 {
-    return __PAIR64__(
-        pixelCostGlob.records[pixelCostGlob.recordCount].key.mtl.techType,
-        pixelCostGlob.records[pixelCostGlob.recordCount].key.mtl.material) == packedKey;
+    const GfxPixelCostKey_s &recordKey = pixelCostGlob.records[pixelCostGlob.recordCount].key.mtl;
+    return recordKey.material == key.material && recordKey.techType == key.techType;
 }
 
-void __cdecl RB_PixelCost_ResetPrim(unsigned __int64 packedKey)
+void __cdecl RB_PixelCost_ResetPrim(const GfxPixelCostKey_s &key)
 {
     GfxPixelCostRecord *record; // [esp+0h] [ebp-4h]
 
     record = &pixelCostGlob.records[pixelCostGlob.expectedCount];
-    record->key.packed = packedKey;
+    record->key.mtl = key;
     *(uint32_t *)record->costHistory = 0;
     *(uint32_t *)&record->costHistory[2] = 0;
     *(uint32_t *)&record->costHistory[4] = 0;

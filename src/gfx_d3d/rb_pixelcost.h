@@ -16,13 +16,20 @@ enum GfxPixelCostMode : __int32
 
 extern GfxPixelCostMode pixelCostMode;
 
+// The material and technique a pixel-cost record measures.
+struct GfxPixelCostKey_s // sizeof=0x8
+{                                       // ...
+    const Material *material;
+    MaterialTechniqueType techType;
+};
+
 const Material *__cdecl R_PixelCost_GetAccumulationMaterial(const Material *material);
 void __cdecl R_PixelCost_BeginSurface(GfxCmdBufContext context);
 void __cdecl R_PixelCost_SetConstant(GfxCmdBufSourceState *source, int cost);
 int __cdecl RB_PixelCost_GetCostForRecordIndex(int recordIndex);
-unsigned __int64 __cdecl R_PixelCost_PackedKeyForMaterial(__int64 material);
-bool __cdecl RB_PixelCost_DoesPrimMatch(unsigned __int64 packedKey);
-void __cdecl RB_PixelCost_ResetPrim(unsigned __int64 packedKey);
+GfxPixelCostKey_s __cdecl R_PixelCost_KeyForState(const GfxCmdBufState *state);
+bool __cdecl RB_PixelCost_DoesPrimMatch(const GfxPixelCostKey_s &key);
+void __cdecl RB_PixelCost_ResetPrim(const GfxPixelCostKey_s &key);
 unsigned __int64 RB_PixelCost_BeginTiming();
 void __cdecl R_HW_FinishGpu();
 void __cdecl R_PixelCost_EndSurface(GfxCmdBufContext context);
