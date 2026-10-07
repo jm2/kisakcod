@@ -108,3 +108,11 @@ constexpr bool IsLoadPermitted(
     const char *familyName,
     bool targetIs64Bit,
     bool fxAdapterAvailable);
+
+#if defined(KISAK_DB_ASSET_FAMILY_ADMISSION_TESTING)
+// Test-only seam at the Load_XAssetHeader dispatch: true admits assetType
+// there as if its guard were lifted. Only a test target sets the define, and
+// only the test defines this function, so an engine build that set it would
+// not link. Nested loads and the FX legacy-walk guards are unaffected.
+[[nodiscard]] bool DB_TestAdmitsAssetFamily(std::int32_t assetType) noexcept;
+#endif

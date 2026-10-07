@@ -1839,7 +1839,8 @@ void __cdecl DB_RegisteredReorderAsset(int32_t type, const char *assetName, XAss
 uint32_t __cdecl DB_HashForName(const char *name, XAssetType type)
 {
     int32_t c; // [esp+8h] [ebp-4h]
-    int32_t out_val = (int)type;
+    // Unsigned, so the hash wraps as the x86 build's does, without signed overflow.
+    uint32_t out_val = static_cast<uint32_t>(type);
 
     while (1)
     {
@@ -1848,7 +1849,7 @@ uint32_t __cdecl DB_HashForName(const char *name, XAssetType type)
             c = '/';
         if (!c)
             break;
-        out_val = c + 31 * out_val;
+        out_val = static_cast<uint32_t>(c) + 31u * out_val;
         ++name;
     }
     return out_val % 0x8000u;
