@@ -15,11 +15,11 @@
 #include <universal/q_parse.h>
 #include <universal/q_shared.h>
 
-// The production signatures (com_playerprofile.cpp); each row is a bounded 32-byte name or value.
-int __cdecl Com_GetConfigureDvarNames(const char **text, char (*dvarNames)[32]); // Flawfinder: ignore
-void __cdecl Com_GetConfigureDvarValues(int dvarCount, const char **text, char (*dvarValues)[32]); // Flawfinder: ignore
-void __cdecl Com_SetConfigureDvars(int dvarCount, const char (*dvarNames)[32], // Flawfinder: ignore
-                                   const char (*dvarValues)[32]); // Flawfinder: ignore
+// The production signatures (com_playerprofile.cpp); a row is one bounded name or value.
+using Row = char[32]; // Flawfinder: ignore (the production tables' row; writes go through I_strncpyz)
+int __cdecl Com_GetConfigureDvarNames(const char **text, Row *dvarNames);
+void __cdecl Com_GetConfigureDvarValues(int dvarCount, const char **text, Row *dvarValues);
+void __cdecl Com_SetConfigureDvars(int dvarCount, const Row *dvarNames, const Row *dvarValues);
 int __cdecl Com_ConfigureChecksum(const char *csv, int filesize);
 
 // ---- Engine boundary: a line-aware tokenizer and a dvar recorder ----------
