@@ -41,6 +41,7 @@
 
 extern XAssetList g_varXAssetList;
 extern int32_t g_zoneCount;
+extern int32_t g_poolSize[ASSET_TYPE_COUNT];
 
 namespace zone_test
 {
@@ -170,8 +171,17 @@ void CheckUnload(std::uint32_t freeBefore)
     DB_ShutdownXAssets();
     Expect(g_zoneCount == 0, "the zone unloads");
     for (const Asset &asset : ZoneAssets())
-        Expect(asset.skipped || !DB_FindXAssetEntry(asset.type, asset.name), "an asset outlives its zone:",
+        Expect(asset.skipped || !DB_FindXAssetEntry(asset.type, PoolName(asset.name)), "an asset outlives its zone:",
                asset.name);
+    // Nor does a default entry a stub or a lookup made.
+    for (std::int32_t type = 0; type < ASSET_TYPE_COUNT; ++type)
+    {
+        int count = 0;
+        if (g_poolSize[type] > 0)
+            DB_EnumXAssets(static_cast<XAssetType>(type), [](XAssetHeader, void *data) { ++*static_cast<int *>(data); },
+                           &count, true);
+        Expect(count == 0, "an entry outlives the zone in pool", DB_GetXAssetTypeName(type));
+    }
     Expect(PMem_GetFreeAmount() == freeBefore, "the zone's memory is freed");
 }
 
