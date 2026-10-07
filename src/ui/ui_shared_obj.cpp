@@ -1823,32 +1823,23 @@ int __cdecl PC_AddDefine(source_s *source, char *string)
 
 define_s *__cdecl PC_CopyDefine(source_s *source, define_s *define)
 {
-    char v2; // dl
-    _BYTE *v4; // [esp+8h] [ebp-28h]
-    char *name; // [esp+Ch] [ebp-24h]
-    uint32_t *newdefine; // [esp+20h] [ebp-10h]
-    token_s *newtoken; // [esp+24h] [ebp-Ch]
-    token_s *newtokena; // [esp+24h] [ebp-Ch]
-    token_s *token; // [esp+28h] [ebp-8h]
-    token_s *tokena; // [esp+28h] [ebp-8h]
-    token_s *lasttoken; // [esp+2Ch] [ebp-4h]
-    token_s *lasttokena; // [esp+2Ch] [ebp-4h]
+    define_s *newdefine;
+    token_s *newtoken;
+    token_s *token;
+    token_s *lasttoken;
+    const size_t nameSize = strlen(define->name) + 1;
 
-    newdefine = GetMemory(strlen(define->name) + 33);
-    *newdefine = (uint32_t)(newdefine + 8);
-    name = define->name;
-    v4 = (_BYTE *)*newdefine;
-    do
-    {
-        v2 = *name;
-        *v4++ = *name++;
-    } while (v2);
-    newdefine[1] = define->flags;
-    newdefine[2] = define->builtin;
-    newdefine[3] = define->numparms;
-    newdefine[6] = 0;
-    newdefine[7] = 0;
-    newdefine[5] = 0;
+    // The name is stored right after the define, as in botlib's PC_CopyDefine.
+    // The decompile wrote these fields as uint32_t slots of an x86 define_s.
+    newdefine = (define_s *)GetMemory(sizeof(define_s) + nameSize);
+    newdefine->name = (char *)newdefine + sizeof(define_s);
+    memcpy(newdefine->name, define->name, nameSize);
+    newdefine->flags = define->flags;
+    newdefine->builtin = define->builtin;
+    newdefine->numparms = define->numparms;
+    newdefine->next = 0;
+    newdefine->hashnext = 0;
+    newdefine->tokens = 0;
     lasttoken = 0;
     for (token = define->tokens; token; token = token->next)
     {
@@ -1857,22 +1848,22 @@ define_s *__cdecl PC_CopyDefine(source_s *source, define_s *define)
         if (lasttoken)
             lasttoken->next = newtoken;
         else
-            newdefine[5] = (uint32_t)newtoken;
+            newdefine->tokens = newtoken;
         lasttoken = newtoken;
     }
-    newdefine[4] = 0;
-    lasttokena = 0;
-    for (tokena = define->parms; tokena; tokena = tokena->next)
+    newdefine->parms = 0;
+    lasttoken = 0;
+    for (token = define->parms; token; token = token->next)
     {
-        newtokena = PC_CopyToken(tokena);
-        newtokena->next = 0;
-        if (lasttokena)
-            lasttokena->next = newtokena;
+        newtoken = PC_CopyToken(token);
+        newtoken->next = 0;
+        if (lasttoken)
+            lasttoken->next = newtoken;
         else
-            newdefine[4] = (uint32_t)newtokena;
-        lasttokena = newtokena;
+            newdefine->parms = newtoken;
+        lasttoken = newtoken;
     }
-    return (define_s *)newdefine;
+    return newdefine;
 }
 
 define_s *globaldefines;
@@ -4435,7 +4426,7 @@ void __cdecl free_expression(statement_s *statement)
         {
             entry = statement->entries[entryNum];
             if (entry->type == 1 && entry->data.op == OP_MULTIPLY)
-                Z_Free((char *)entry->data.operand.internals.intVal, 34);
+                Z_Free((char *)entry->data.operand.internals.string, 34);
             Z_Free((char *)entry, 34);
             statement->entries[entryNum] = 0;
         }
@@ -4497,50 +4488,54 @@ void __cdecl Statement_AddEntry(statement_s *statement, expressionEntry *entry)
     statement->entries[statement->numEntries++] = entry;
 }
 
+// The decompile allocated entries as Z_Malloc(12), the x86 sizeof
+// (expressionEntry), and filled them through uint32_t slots.
+static expressionEntry *Statement_NewEntry(const char *name)
+{
+    return (expressionEntry *)Z_Malloc(sizeof(expressionEntry), name, 34);
+}
+
 void __cdecl Statement_AddOperator(statement_s *statement, operationEnum op)
 {
-    uint32_t *v2; // eax
+    expressionEntry *entry = Statement_NewEntry("Statement_AddOperator");
 
-    v2 = (uint32_t*)Z_Malloc(12, "Statement_AddOperator", 34);
-    *v2 = 0;
-    v2[1] = op;
-    Statement_AddEntry(statement, (expressionEntry *)v2);
+    entry->type = 0;
+    entry->data.op = op;
+    Statement_AddEntry(statement, entry);
 }
 
 void __cdecl Statement_AddIntOperand(statement_s *statement, int val)
 {
-    uint32_t *v2; // eax
+    expressionEntry *entry = Statement_NewEntry("Statement_AddIntOperand");
 
-    v2 = (uint32_t*)Z_Malloc(12, "Statement_AddIntOperand", 34);
-    *v2 = 1;
-    v2[1] = 0;
-    v2[2] = val;
-    Statement_AddEntry(statement, (expressionEntry *)v2);
+    entry->type = 1;
+    entry->data.operand.dataType = VAL_INT;
+    entry->data.operand.internals.intVal = val;
+    Statement_AddEntry(statement, entry);
 }
 
 void __cdecl Statement_AddFloatOperand(statement_s *statement, float val)
 {
-    uint32_t *v2; // eax
+    expressionEntry *entry = Statement_NewEntry("Statement_AddFloatOperand");
 
-    v2 = (uint32_t*)Z_Malloc(12, "Statement_AddFloatOperand", 34);
-    *v2 = 1;
-    v2[1] = 1;
-    *((float *)v2 + 2) = val;
-    Statement_AddEntry(statement, (expressionEntry *)v2);
+    entry->type = 1;
+    entry->data.operand.dataType = VAL_FLOAT;
+    entry->data.operand.internals.floatVal = val;
+    Statement_AddEntry(statement, entry);
 }
 
 void __cdecl Statement_AddStringOperand(statement_s *statement, char *str)
 {
-    expressionEntry *entry; // [esp+20h] [ebp-4h]
+    expressionEntry *entry = Statement_NewEntry("Statement_AddStringOperand");
+    const size_t size = strlen(str) + 1;
+    char *copy = (char *)Z_Malloc(size, "Statement_AddStringOperand", 34);
 
-    entry = (expressionEntry *)Z_Malloc(12, "Statement_AddStringOperand", 34);
+    I_strncpyz(copy, str, size);
     entry->type = 1;
-    entry->data.op = OP_MULTIPLY;
-    entry->data.operand.internals.intVal = (int)Z_Malloc(strlen(str) + 1, "Statement_AddStringOperand", 34);
-    I_strncpyz((char *)entry->data.operand.internals.intVal, str, strlen(str) + 1);
+    entry->data.operand.dataType = VAL_STRING;
+    entry->data.operand.internals.string = copy;
     Statement_AddEntry(statement, entry);
 }
-
 char __cdecl parse_expression_internal(int handle, statement_s *statement, int maxEntries)
 {
     expressionEntry *v4; // edx
@@ -4598,7 +4593,7 @@ char __cdecl parse_expression_internal(int handle, statement_s *statement, int m
                 if (type == 1)
                 {
                     v4 = statement->entries[statement->numEntries - 1];
-                    v5.intVal = (int)v4->data.operand.internals;
+                    v5 = v4->data.operand.internals;
                     lastOperand.dataType = v4->data.operand.dataType;
                     lastOperand.internals = v5;
                     //ValueAsString = GetValueAsString((Operand)__PAIR64__(v5.intVal, lastOperand.dataType));
