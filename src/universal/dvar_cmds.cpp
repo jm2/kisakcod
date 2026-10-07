@@ -354,21 +354,23 @@ void __cdecl Dvar_List_f()
 
     if (Cmd_Argc() <= 1)
     {
-        Dvar_ForEach((void(__cdecl *)(const dvar_s *, void *))Dvar_ListSingle, 0);
+        Dvar_ForEach(Dvar_ListSingle, nullptr);
     }
     else
     {
         match = (char *)Cmd_Argv(1);
-        Dvar_ForEach((void(__cdecl *)(const dvar_s *, void *))Dvar_ListSingle, match);
+        Dvar_ForEach(Dvar_ListSingle, match);
     }
     Com_Printf(0, "\n%i total dvars\n", dvarCount);
 }
 
-void __cdecl Dvar_ListSingle(const dvar_s *dvar, const char *userData)
+// userData: the name filter, or null for every dvar.
+void __cdecl Dvar_ListSingle(const dvar_s *dvar, void *userData)
 {
     const char *v2; // eax
+    const char *const match = static_cast<const char *>(userData);
 
-    if (!userData || Com_Filter(userData, (char *)dvar->name, 0))
+    if (!match || Com_Filter(match, const_cast<char *>(dvar->name), 0))
     {
         if ((dvar->flags & 0x404) != 0)
             Com_Printf(0, "S");
@@ -472,17 +474,18 @@ void __cdecl SV_SetConfig(int start, int max, int bit)
     info.start = start;
     info.max = max;
     info.bit = bit;
-    Dvar_ForEach((void(__cdecl *)(const dvar_s *, void *))SV_SetConfigDvar, &info);
+    Dvar_ForEach(SV_SetConfigDvar, &info);
 }
 
-void __cdecl SV_SetConfigDvar(const dvar_s *dvar, int *userData)
+void __cdecl SV_SetConfigDvar(const dvar_s *dvar, void *userData)
 {
     char *v2; // eax
+    const DvarSetConfigInfo &info = *static_cast<const DvarSetConfigInfo *>(userData);
 
-    if ((userData[2] & dvar->flags) != 0)
+    if ((info.bit & dvar->flags) != 0)
     {
         v2 = (char *)Dvar_DisplayableValue(dvar);
-        SV_SetConfigValueForKey(*userData, userData[1], (char *)dvar->name, v2);
+        SV_SetConfigValueForKey(info.start, info.max, const_cast<char *>(dvar->name), v2);
     }
 }
 #endif
