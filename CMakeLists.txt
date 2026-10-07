@@ -32,6 +32,17 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|arm|aarch|AARCH)")
     set(_KISAK_DEFAULT_STEAM OFF)
 endif()
 option(KISAK_ENABLE_STEAM "Link the Steamworks SDK for client<->server identity/auth" ${_KISAK_DEFAULT_STEAM})
+# Miles (mss32) and Bink (binkw32) ship 32-bit libraries only. 64-bit Windows
+# client targets link silent stubs instead (no sound, no cinematics) until the
+# OpenAL Soft / FFmpeg backends land; Win32 always links the real libraries.
+set(_KISAK_DEFAULT_MEDIA_STUBS OFF)
+if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(_KISAK_DEFAULT_MEDIA_STUBS ON)
+endif()
+option(KISAK_MEDIA_STUBS "Link silent Miles/Bink stubs instead of the 32-bit-only libraries" ${_KISAK_DEFAULT_MEDIA_STUBS})
+if (KISAK_MEDIA_STUBS AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR "KISAK_MEDIA_STUBS is for 64-bit targets; Win32 links the real Miles and Bink libraries.")
+endif()
 include(CTest)
 
 if (WIN32)
