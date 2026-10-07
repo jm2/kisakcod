@@ -8673,11 +8673,7 @@ bool __cdecl Load_StringTable(bool atStreamStart)
     {
         return false;
     }
-    if (valueCount == 0 && varStringTable->values)
-    {
-        Com_Error(ERR_DROP, "Invalid present-empty fast-file string table");
-        return false;
-    }
+    // A present empty table (retail ships one) aligns and streams no strings.
     varXString = &varStringTable->name;
     Load_XString(0);
     if (!varStringTable->name || !*varStringTable->name)

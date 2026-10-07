@@ -25,13 +25,13 @@ constexpr auto kRecordBytes = static_cast<std::uint32_t>(sizeof(disk32::StringTa
 constexpr auto kTokenBytes = static_cast<std::uint32_t>(sizeof(disk32::PointerToken));
 
 // columnCount * rowCount, checked. As in the 32-bit loader, any non-null
-// values token means the tokens follow inline, and they must be present
-// exactly when the table has cells.
+// values token means the tokens follow inline, and a table with cells has
+// them. A table without cells may still have the token (retail ships one).
 bool CheckedValueCount(const disk32::StringTableDisk32 &disk, std::int32_t *count)
 {
     if (!db::validation::CheckedCountProduct(disk.rowCount, disk.columnCount, count))
         return Drop("Invalid fast-file string-table size");
-    if ((*count != 0) == disk.values.token.isNull())
+    if (*count != 0 && disk.values.token.isNull())
         return Drop("Invalid fast-file string-table values");
     return true;
 }
@@ -45,12 +45,15 @@ bool LoadName(disk32::Ptr32<const char> field, const char **name)
     return true;
 }
 
-// Streams the 4-aligned array of count disk32 string tokens.
-bool StreamValueTokens(std::int32_t count, const std::uint8_t **tokens)
+// Streams the 4-aligned array of count disk32 string tokens. A present empty
+// array still aligns the stream, as the 32-bit AllocLoad does.
+bool StreamValueTokens(disk32::PointerToken values, std::int32_t count, const std::uint8_t **tokens)
 {
     *tokens = nullptr;
-    if (!count)
+    if (values.isNull())
         return true;
+    if (!count)
+        return DB_AllocStreamPos(3) != nullptr;
     std::int32_t tokenBytes = 0;
     if (!db::validation::CheckedArrayBytes(count, kTokenBytes, &tokenBytes))
         return Drop("Invalid fast-file string-table size");
@@ -86,7 +89,7 @@ bool LoadStringTable(std::uint8_t *record, StringTable **out)
     std::int32_t count = 0;
     const char *name = nullptr;
     const std::uint8_t *tokens = nullptr;
-    if (!CheckedValueCount(disk, &count) || !LoadName(disk.name, &name) || !StreamValueTokens(count, &tokens))
+    if (!CheckedValueCount(disk, &count) || !LoadName(disk.name, &name) || !StreamValueTokens(disk.values.token, count, &tokens))
         return false;
 
     // count <= INT32_MAX / 4, so this cannot overflow a 64-bit size_t.

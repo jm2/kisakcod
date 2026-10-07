@@ -131,6 +131,21 @@ void TestEmptyTables()
            "an empty table takes only its native header");
 }
 
+// A table with no cells but a values token (retail ships one): no strings
+// follow, and it loads like a table without the token.
+void TestPresentEmptyTable()
+{
+    Zone zone;
+    File().Record(kInline, 0, 1, kInline).Text("present.csv"); // record 0..16, name 16..28
+    const StringTable *const table = Load(kInline);
+    Expect(table == &g_pool[0] && g_published == 1, "a present empty table publishes");
+    if (table != &g_pool[0])
+        return;
+    Expect(!table->values && table->rowCount == 1 && !table->columnCount && table->name == zone.At(16)
+               && g_arenaUsed == sizeof(StringTable) && g_read == g_file.size(),
+           "a present empty table has no values array and streams no strings");
+}
+
 struct Malformed
 {
     const char *what;
@@ -147,8 +162,6 @@ const Malformed kMalformed[] = {
     {"negative rows", [] { File().Record(kInline, 2, -1, kInline); }, kInline, "string-table size"},
     {"negative columns, no rows", [] { File().Record(kInline, -3, 0, 0); }, kInline, "string-table size"},
     {"cells without values", [] { File().Record(kInline, 1, 1, 0).Text("t"); }, kInline, "string-table values"},
-    {"values without cells", [] { File().Record(kInline, 0, 1, kInline).Text("t"); },
-     kInline, "string-table values"},
     {"null name", [] { File().Record(0, 0, 0, 0); }, kInline, "no name"},
     {"empty name", [] { File().Record(kInline, 0, 0, 0).Text(""); }, kInline, "no name"},
     {"truncated array", [] { File().Record(kInline, 1, 4, kInline).Text("t").Word(kInline).Word(kInline); },
@@ -198,5 +211,5 @@ void __cdecl Load_StringTableAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestInlineTable, TestOffsetsAndAlias, TestEmptyTables, TestMalformedFailsClosed});
+    return Run({TestInlineTable, TestOffsetsAndAlias, TestEmptyTables, TestPresentEmptyTable, TestMalformedFailsClosed});
 }
