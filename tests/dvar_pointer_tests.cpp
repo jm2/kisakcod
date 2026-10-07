@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include <sys/mman.h>
 
@@ -44,7 +45,15 @@ void __cdecl Com_Error(errorParm_t, const char *fmt, ...)
 void Com_Printf(int, const char *, ...) {}
 void Com_PrintWarning(int, const char *, ...) {}
 void Com_PrintError(int, const char *, ...) {}
-void FS_Printf(int, const char *, ...) {}
+// What the dvar callbacks handed across the boundary.
+int g_printedHandle = 0;
+int g_printedCount = 0;
+std::string g_infoKeys;
+void FS_Printf(int f, const char *, ...)
+{
+    g_printedHandle = f;
+    ++g_printedCount;
+}
 bool __cdecl Com_LogFileOpen() { return false; }
 void __cdecl Dvar_AddCommands() {}
 void __cdecl Sys_Sleep(uint32_t) {}
@@ -59,7 +68,11 @@ void __cdecl Com_EndParseSession() {}
 void __cdecl Com_SkipRestOfLine(const char **) {}
 parseInfo_t *__cdecl Com_Parse(const char **) { static parseInfo_t empty{}; return &empty; }
 parseInfo_t *__cdecl Com_ParseOnLine(const char **) { static parseInfo_t empty{}; return &empty; }
-void __cdecl Info_SetValueForKey(char *, const char *, const char *) {}
+void __cdecl Info_SetValueForKey(char *, const char *key, const char *)
+{
+    g_infoKeys += key;
+    g_infoKeys += ' ';
+}
 bool __cdecl Info_SetValueForKey_Big(char *, const char *, const char *) { return true; }
 // Every name here is a literal, which the engine may keep by pointer.
 bool __cdecl CanKeepStringPointer(const char *) { return true; }
@@ -220,6 +233,19 @@ int main()
     Check(com_dedicated && Com_IsDedicatedServer(), "dedicated 1 is a dedicated server");
     Dvar_SetFromStringByName("dedicated", "0");
     Check(com_dedicated && !Com_IsDedicatedServer(), "dedicated 0 is a listen server");
+
+    // Dvar_ForEach's callbacks, called through their own type: the info
+    // string takes exactly the dvars carrying its flag (bit 0x4, server info),
+    // and the config writer prints archived dvars to the handle it was given.
+    Dvar_RegisterString("kisak_test_info", "a", DVAR_SERVERINFO, "test");
+    Dvar_RegisterString("kisak_test_saved", "b", DVAR_ARCHIVE, "test");
+    g_infoKeys.clear();
+    Dvar_InfoString(0, DVAR_SERVERINFO);
+    Check(g_infoKeys.find("kisak_test_info ") != std::string::npos
+              && g_infoKeys.find("kisak_test_saved") == std::string::npos,
+          "the info string takes exactly the flagged dvars");
+    Dvar_WriteVariables(7);
+    Check(g_printedCount >= 1 && g_printedHandle == 7, "archived dvars print to the given handle");
 
     if (g_failures == 0)
         std::printf("dvar pointers: all checks passed\n");
