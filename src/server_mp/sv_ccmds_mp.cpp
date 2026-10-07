@@ -384,7 +384,7 @@ void __cdecl SV_Map_f()
     if (*map)
     {
         com_errorPrintsCount = 0;
-        if (!Com_HasPlayerProfile() && !com_dedicated->current.enabled)
+        if (!Com_HasPlayerProfile() && !Com_IsDedicatedServer())
         {
             Com_Error(ERR_DROP, "PLATFORM_NOTSIGNEDINTOPROFILE");
             return;
@@ -430,7 +430,7 @@ void __cdecl ShowLoadErrorsSummary(const char *mapName, uint32_t count)
 {
     if (com_errorPrintsCount)
     {
-        if (com_dedicated->current.enabled)
+        if (Com_IsDedicatedServer())
         {
             if (count == 1)
                 Com_PrintError(16, (char *)ERRMSG_SINGLE, mapName, com_errorPrintsCount);

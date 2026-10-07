@@ -25,6 +25,7 @@
 // ---------------------------------------------------------------------------
 char info1[1024];
 char info2[8192];
+const dvar_t *com_dedicated; // common.cpp's; registered below
 
 // The failure reports print the engine's format string verbatim rather than
 // formatting with it: a test stub has no reason to trust a caller's format.
@@ -206,6 +207,19 @@ int main()
     Dvar_SetFromStringByName("kisak_test_enum", "0");
     Check(en && en->current.integer == 0 && std::strcmp(Dvar_EnumToString(en), "alpha") == 0,
         "enum set by index");
+
+    // The server's "dedicated" enum: a dedicated build registers it as 2
+    // (internet server). Com_IsDedicatedServer must treat every non-zero
+    // value as dedicated; reading it as a bool made 2 refuse "+map".
+    static const char *dedicatedNames[] = {
+        "listen server", "dedicated LAN server", "dedicated internet server", nullptr};
+    com_dedicated = Dvar_RegisterEnum("dedicated", dedicatedNames, 2, 0, "test");
+    Check(com_dedicated && com_dedicated->current.integer == 2, "dedicated registers as 2");
+    Check(com_dedicated && Com_IsDedicatedServer(), "dedicated 2 is a dedicated server");
+    Dvar_SetFromStringByName("dedicated", "1");
+    Check(com_dedicated && Com_IsDedicatedServer(), "dedicated 1 is a dedicated server");
+    Dvar_SetFromStringByName("dedicated", "0");
+    Check(com_dedicated && !Com_IsDedicatedServer(), "dedicated 0 is a listen server");
 
     if (g_failures == 0)
         std::printf("dvar pointers: all checks passed\n");

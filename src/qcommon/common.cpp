@@ -1403,7 +1403,7 @@ void Com_ErrorCleanup()
     Com_PopRemoteScreenUpdate();
     Com_SyncThreads();
 #ifdef KISAK_MP
-    if (!com_dedicated->current.enabled)
+    if (!Com_IsDedicatedServer())
 #endif
     {
         Com_RendererErrorCleanup();
