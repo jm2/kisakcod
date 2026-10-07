@@ -1320,6 +1320,11 @@ void EmitGetVector(const float *value, sval_u sourcePos)
 	EmitOpcode(OP_GetVector, 1, CALL_NONE);
 	AddOpcodePos(sourcePos.sourcePosValue, SOURCE_TYPE_BREAKPOINT);
 
+	// Pad to the 4-aligned start Scr_VectorConstantPos finds.
+	const char *const end = TempMalloc(0);
+	for (const char *pad = end; pad != Scr_VectorConstantPos(end); ++pad)
+		EmitByte(kScrVectorConstantPad);
+
 	for (int i = 0; i < 3; i++)
 	{
 		EmitFloat(value[i]);

@@ -541,8 +541,8 @@ char* __cdecl Scr_GetNextCodepos(VariableValue* top, const char* pos, int opcode
             case 132:
                 pos += 2;
                 goto LABEL_67;
-            case 12:
-                pos += 12;
+            case 12: // OP_GetVector
+                pos = Scr_VectorConstantPos(pos) + 12;
                 goto LABEL_67;
             case 68:
             case 75:
@@ -1723,6 +1723,7 @@ float Scr_ReadFloat(const char **pos)
 
 const float *Scr_ReadVector(const char **pos)
 {
+    *pos = Scr_VectorConstantPos(*pos);
     const float *value = reinterpret_cast<const float *>(*pos);
     *pos += (sizeof(float) * 3);
     return value;
