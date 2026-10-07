@@ -175,6 +175,14 @@ gclient_s *__cdecl G_GetPlayerState(int32_t clientNum)
     return &level.clients[clientNum];
 }
 
+// The allocator the XAnim code takes (XAnimCreateTree, Mantle_CreateAnims,
+// bgs_t::AllocXAnim) is void *(int). Hunk_AllocXAnimServer is
+// uint8_t *(uint32_t): calling it through the other type is undefined.
+void *__cdecl G_AllocXAnimServer(int size)
+{
+    return Hunk_AllocXAnimServer(static_cast<uint32_t>(size));
+}
+
 int32_t __cdecl G_GetClientSize()
 {
     return sizeof(gclient_s);
@@ -257,7 +265,7 @@ void __cdecl G_InitGame(int32_t levelTime, int32_t randomSeed, int32_t restart, 
     level_bgs.AttachWeapon = 0;
     level_bgs.GetDObj = G_GetDObj;
     level_bgs.SafeDObjFree = G_SafeDObjFree;
-    level_bgs.AllocXAnim = (void *(__cdecl *)(int))Hunk_AllocXAnimServer;
+    level_bgs.AllocXAnim = G_AllocXAnimServer;
     level_bgs.anim_user = 1;
     if (*(const unsigned char *)g_log->current.string)
     {
@@ -291,7 +299,7 @@ void __cdecl G_InitGame(int32_t levelTime, int32_t randomSeed, int32_t restart, 
         v4->backup_lines = 0;
         v4->backup_text = 0;
     }
-    Mantle_CreateAnims((void *(__cdecl *)(int))Hunk_AllocXAnimServer);
+    Mantle_CreateAnims(G_AllocXAnimServer);
 
     iassert(bgs == NULL);
     bgs = &level_bgs;
@@ -785,9 +793,9 @@ DObj_s *__cdecl G_GetDObj(uint32_t handle, int32_t unusedLocalClientNum)
 void G_LoadAnimTreeInstances()
 {
     for (int i = 0; i < 64; ++i)
-        level_bgs.clientinfo[i].pXAnimTree = XAnimCreateTree(level_bgs.generic_human.tree.anims, (void *(__cdecl *)(int))Hunk_AllocXAnimServer);
+        level_bgs.clientinfo[i].pXAnimTree = XAnimCreateTree(level_bgs.generic_human.tree.anims, G_AllocXAnimServer);
     for (int i = 0; i < 8; ++i)
-        g_scr_data.playerCorpseInfo[i].tree = XAnimCreateTree(level_bgs.generic_human.tree.anims, (void *(__cdecl *)(int))Hunk_AllocXAnimServer);
+        g_scr_data.playerCorpseInfo[i].tree = XAnimCreateTree(level_bgs.generic_human.tree.anims, G_AllocXAnimServer);
 }
 
 void G_PrintAllFastFileErrors()

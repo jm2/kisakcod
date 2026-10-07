@@ -362,6 +362,23 @@ static void GameDataStridesMatchTheStructs()
     CHECK(SV_GameClientNum(1) == &g_clients[1].ps);
     CHECK(G_GetClientSize() == static_cast<int>(sizeof(gclient_s)));
 }
+
+// g_main_mp.cpp G_AllocXAnimServer: the XAnim allocator the game hands to
+// bgs_t::AllocXAnim and XAnimCreateTree has their void *(int) type and
+// forwards the size to the hunk (called as AllocXAnim calls it).
+uint32_t g_xanimRequested = 0;
+uint8_t g_xanimBlock[64];
+uint8_t *__cdecl Hunk_AllocXAnimServer(uint32_t size)
+{
+    g_xanimRequested = size;
+    return g_xanimBlock;
+}
+static void XAnimAllocatorHasItsCallersType()
+{
+    void *(__cdecl *const alloc)(int32_t) = G_AllocXAnimServer;
+    CHECK(alloc(48) == g_xanimBlock);
+    CHECK(g_xanimRequested == 48u);
+}
 #endif
 
 int main()
@@ -377,6 +394,7 @@ int main()
     TriggersDispatchTheirOwnHandler();
 #elif GAME_MP_HAZARD_SUBJECT == 3
     GameDataStridesMatchTheStructs();
+    XAnimAllocatorHasItsCallersType();
 #endif
     std::printf("game_mp_hazard_tests: %d check(s) failed\n", g_failures);
     return g_failures ? 1 : 0;
