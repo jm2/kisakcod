@@ -18,17 +18,12 @@
 #include <msslib/mss.h>
 #include <binklib/bink.h>
 
-namespace
-{
-char s_milesError[] = "Miles is not available in this build";
-// R_Cinematic_CheckBinkError asserts that BinkGetError() is null or empty.
-char s_binkNoError[] = "";
-}
 
 // Miles: no driver, no streams, no samples.
 S32 AILCALL AIL_startup(void) { return 0; }
 void AILCALL AIL_shutdown(void) { }
-char *AILCALL AIL_last_error(void) { return s_milesError; }
+// The headers return char *; callers only print the text.
+char *AILCALL AIL_last_error(void) { return const_cast<char *>("Miles is not available in this build"); }
 char *AILCALL AIL_set_redist_directory(char const *) { return nullptr; }
 SINTa AILCALL AIL_set_preference(U32, SINTa) { return 0; }
 void AILCALL AIL_set_file_callbacks(AIL_file_open_callback, AIL_file_close_callback, AIL_file_seek_callback, AIL_file_read_callback) { }
@@ -85,7 +80,8 @@ void AILCALL AIL_set_stream_ms_position(HSTREAM, S32) { }
 
 // Bink: no movie ever opens.
 HBINK RADEXPLINK BinkOpen(const char *, U32) { return nullptr; }
-char *RADEXPLINK BinkGetError(void) { return s_binkNoError; }
+// R_Cinematic_CheckBinkError asserts that BinkGetError() is null or empty.
+char *RADEXPLINK BinkGetError(void) { return const_cast<char *>(""); }
 BINKSNDOPEN RADEXPLINK BinkOpenMiles(UINTa) { return nullptr; }
 S32 RADEXPLINK BinkSetSoundSystem(BINKSNDSYSOPEN, UINTa) { return 0; }
 void RADEXPLINK BinkSetSoundTrack(U32, U32 *) { }

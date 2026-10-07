@@ -9,7 +9,6 @@
 //   run before every playback, asserts that BinkGetError() is null or empty.
 
 #include <cstdio>
-#include <cstring>
 
 #include <msslib/mss.h>
 #include <binklib/bink.h>
@@ -32,7 +31,7 @@ int main()
 {
     Check(AIL_startup() == 0, "AIL_startup reports failure");
     const char *milesError = AIL_last_error();
-    Check(milesError && std::strlen(milesError) > 0, "AIL_last_error returns a printable message");
+    Check(milesError && milesError[0] != '\0', "AIL_last_error returns a printable message");
     Check(AIL_open_digital_driver(44100, 16, 2, 0) == nullptr, "AIL_open_digital_driver opens no driver");
     Check(AIL_allocate_sample_handle(nullptr) == nullptr, "AIL_allocate_sample_handle allocates nothing");
     Check(AIL_open_stream(nullptr, "sound/music.mp3", 0) == nullptr, "AIL_open_stream opens no stream");
