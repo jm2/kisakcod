@@ -25,6 +25,25 @@ struct BuiltinFunctionDef // sizeof=0xC
     void(__cdecl *actionFunc)();
     int32_t type;
 };
+
+void __cdecl Scr_AddInt(int value);
+
+// The VM calls every builtin through actionFunc's void (*)() type
+// (Scr_GetFunction). A builtin that returns a value the VM ignores goes in
+// the table through this adapter, so no call goes through a pointer of
+// another type.
+template <auto Builtin>
+void __cdecl GScr_IgnoreResult()
+{
+    Builtin();
+}
+
+// getassignedteam and issplitscreen: the retail table folds both into the
+// dev-only button query, which returns 0 and reads no entity.
+inline void __cdecl GScr_ReturnZero()
+{
+    Scr_AddInt(0);
+}
 RUNTIME_SIZE(BuiltinFunctionDef, 0xC, 0x18);
 
 struct BuiltinMethodDef // sizeof=0xC
