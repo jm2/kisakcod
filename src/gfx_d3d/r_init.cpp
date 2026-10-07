@@ -3482,17 +3482,14 @@ struct GfxEnumMonitors // sizeof=0x8
     HMONITOR__ *foundMonitor;           // ...
 };
 
-int __stdcall R_MonitorEnumCallback(HMONITOR__ *monitorHandle, HDC__ *hdc, tagRECT *rect, _DWORD *userData)
+BOOL __stdcall R_MonitorEnumCallback(HMONITOR__ *monitorHandle, HDC__ *hdc, tagRECT *rect, LPARAM userData)
 {
-    if (--*userData)
-    {
+    GfxEnumMonitors *enumData = (GfxEnumMonitors *)userData;
+
+    if (--enumData->monitorIndex)
         return 1;
-    }
-    else
-    {
-        userData[1] = (DWORD)monitorHandle;
-        return 0;
-    }
+    enumData->foundMonitor = monitorHandle;
+    return 0;
 }
 
 HMONITOR__ *__cdecl R_ChooseMonitor()
@@ -3504,7 +3501,7 @@ HMONITOR__ *__cdecl R_ChooseMonitor()
     {
         enumData.monitorIndex = r_monitor->current.integer;
         enumData.foundMonitor = 0;
-        EnumDisplayMonitors(0, 0, (MONITORENUMPROC)R_MonitorEnumCallback, (LPARAM)&enumData);
+        EnumDisplayMonitors(0, 0, R_MonitorEnumCallback, (LPARAM)&enumData);
         if (enumData.foundMonitor)
             return enumData.foundMonitor;
     }
