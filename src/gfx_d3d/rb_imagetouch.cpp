@@ -7,8 +7,8 @@
 
 int __cdecl RB_CompareTouchImages(const void *e0, const void *e1)
 {
-    const GfxImage *image0 = *(const GfxImage *const *)e0;
-    const GfxImage *image1 = *(const GfxImage *const *)e1;
+    const GfxImage *image0 = *static_cast<const GfxImage *const *>(e0);
+    const GfxImage *image1 = *static_cast<const GfxImage *const *>(e1);
 
     if (!image1->semantic)
         return -1;

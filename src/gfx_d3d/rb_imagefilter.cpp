@@ -175,7 +175,8 @@ void __cdecl RB_GenerateGaussianFilter1D(float radius, int *res, int axis, GfxIm
 
 int __cdecl RB_PickSymmetricFilterMaterial(int halfTapCount, const Material **material)
 {
-    if (halfTapCount <= 0 || halfTapCount > 8)
+    if (halfTapCount <= 0 || halfTapCount > (int)ARRAY_COUNT(rgp.symmetricFilterMaterial))
+    {
         MyAssertHandler(
             ".\\rb_imagefilter.cpp",
             76,
@@ -183,6 +184,11 @@ int __cdecl RB_PickSymmetricFilterMaterial(int halfTapCount, const Material **ma
             "%s\n\t(halfTapCount) = %i",
             "(halfTapCount > 0 && halfTapCount <= 8)",
             halfTapCount);
+        // Past the assert, stay inside the array (x86 read the neighbouring
+        // rgp members here).
+        *material = nullptr;
+        return halfTapCount;
+    }
     *material = rgp.symmetricFilterMaterial[halfTapCount - 1];
     return halfTapCount;
 }
