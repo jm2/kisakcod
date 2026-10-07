@@ -562,6 +562,21 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(dvar-pointer-round-trips PROPERTIES TIMEOUT 20)
 endif()
 
+# The adapters the MP GSC builtin table uses (g_public_mp.h). Linux and
+# clang only, as above: the game headers are engine code.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-gsc-function-table-tests gsc_function_table_tests.cpp)
+    target_include_directories(kisakcod-gsc-function-table-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-gsc-function-table-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-gsc-function-table-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-gsc-function-table-tests PRIVATE -fms-extensions)
+    set_target_properties(kisakcod-gsc-function-table-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME gsc-function-table-types COMMAND kisakcod-gsc-function-table-tests)
+    set_tests_properties(gsc-function-table-types PROPERTIES TIMEOUT 20)
+endif()
+
 # configure_mp.csv parsing and checksum: the production com_playerprofile.cpp
 # with the Linux headless server's defines. Linux and clang only, as above;
 # --gc-sections drops the profile code no check reaches, so only the
