@@ -310,7 +310,11 @@ template <typename T>
 {
     if (!maximumLoopingLife || !hasInfiniteLoop
         || !ValidateTimeRange(elem.spawnDelayMsec, false)
-        || !ValidateTimeRange(elem.lifeSpanMsec, true))
+        || !(ValidateTimeRange(elem.lifeSpanMsec, true)
+             // A runner only spawns its effect and ends: retail ships
+             // runners with a lifespan of exactly [0, 0].
+             || (elem.elemType == FxElemTypeDisk32::Runner && !elem.lifeSpanMsec.base
+                 && !elem.lifeSpanMsec.amplitude)))
     {
         return Status::InvalidCount;
     }

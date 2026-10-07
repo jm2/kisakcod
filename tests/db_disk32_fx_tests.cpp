@@ -527,6 +527,22 @@ void TestVisuals()
     Expect(g_read == g_file.size(), "every disk byte is consumed");
 }
 
+// A runner only spawns its effect: retail ships runners with a lifespan of
+// exactly [0, 0], which the converter takes (other types still need one).
+void TestZeroLifeRunner()
+{
+    BigZone zone;
+    RegisterAliases();
+    Effect effect = VisualEffect();
+    effect.elems[3].lifeSpanMsec = {0, 0};
+    File().Write(effect);
+    const FxEffectDef *const loaded = Load(kInline);
+    Expect(loaded == &g_effects[0] && InArena(loaded->elemDefs) && !loaded->elemDefs[3].lifeSpanMsec.base
+               && !loaded->elemDefs[3].lifeSpanMsec.amplitude
+               && MatchesOracle(*loaded, Oracle(effect, References(*loaded))),
+           "a runner with a [0, 0] lifespan loads and matches the FX converter");
+}
+
 void TestSharedInlineAndOffsets()
 {
     Zone zone;
@@ -854,7 +870,7 @@ void __cdecl Load_FxEffectDefAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestRecord, TestElementsAndSamples, TestLifespanFromZero, TestVisuals, TestTrail, TestSharedInlineAndOffsets,
+    return Run({TestRecord, TestElementsAndSamples, TestLifespanFromZero, TestZeroLifeRunner, TestVisuals, TestTrail, TestSharedInlineAndOffsets,
                 TestRuleBreaksFailClosed, TestTrailBreaksFailClosed,
                 TestVisualBreaksFailClosed, TestMalformedFailsClosed});
 }
