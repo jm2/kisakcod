@@ -26,13 +26,15 @@ constexpr std::int32_t kSurfaceCount = 12; // Load_FxImpactTable's fixed count
 
 // Load_FxEffectDefHandleArray over one slot array: each token loads through
 // FX's pointer step, which pushes the temp block itself.
+// slots: where the tokens streamed in block 4.
 template <std::size_t Count>
-void LoadEffects(const disk32::Ptr32<void> (&tokens)[Count], const FxEffectDef *(&out)[Count])
+void LoadEffects(const disk32::Ptr32<void> (&tokens)[Count], const std::uint8_t *slots,
+                 const FxEffectDef *(&out)[Count])
 {
     for (std::size_t index = 0; index < Count; ++index)
     {
         out[index] = nullptr;
-        LoadFxEffectDefPtr(tokens[index].token, &out[index]);
+        LoadFxEffectDefPtr(tokens[index].token, &out[index], slots + index * sizeof(tokens[index]));
     }
 }
 
@@ -49,9 +51,10 @@ bool LoadEntries(FxImpactEntry **out)
     for (std::int32_t index = 0; index < kSurfaceCount; ++index)
     {
         disk32::FxImpactEntryDisk32 entry{};
-        std::memcpy(&entry, entries + static_cast<std::size_t>(index) * sizeof(entry), sizeof(entry));
-        LoadEffects(entry.nonflesh, native[index].nonflesh);
-        LoadEffects(entry.flesh, native[index].flesh);
+        const std::uint8_t *const at = entries + static_cast<std::size_t>(index) * sizeof(entry);
+        std::memcpy(&entry, at, sizeof(entry));
+        LoadEffects(entry.nonflesh, SlotOf(at, entry, entry.nonflesh), native[index].nonflesh);
+        LoadEffects(entry.flesh, SlotOf(at, entry, entry.flesh), native[index].flesh);
     }
     *out = native;
     return true;
