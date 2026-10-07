@@ -41,7 +41,7 @@ bool LoadMenus(std::int32_t count, menuDef_t ***out)
         disk32::PointerToken token{};
         std::memcpy(&token, tokens + static_cast<std::size_t>(index) * sizeof(token), sizeof(token));
         menus[index] = nullptr;
-        LoadMenuDefPtr(token, &menus[index]);
+        LoadMenuDefPtr(token, &menus[index], tokens + static_cast<std::size_t>(index) * sizeof(token));
     }
     *out = menus;
     return true;

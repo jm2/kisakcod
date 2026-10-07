@@ -276,6 +276,14 @@ inline void Load${Name}Ptr(disk32::PointerToken token, $Slot **slot)
         DB_SetInsertedPointer(inserted, DBAliasKind::$kind, header.$member);
     DB_PopStreamPos();
 }
+
+// $Name's pointer step for a token streamed into block 4 at diskSlot: a later
+// offset token may name that slot (RecordDiskSlot).
+inline void Load${Name}Ptr(disk32::PointerToken token, $Slot **slot, const void *diskSlot)
+{
+    Load${Name}Ptr(token, slot);
+    RecordDiskSlot(diskSlot, DBAliasKind::$kind, *slot);
+}
 ''')
 
 INSERTED_BODY = Template('''\

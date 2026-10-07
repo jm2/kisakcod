@@ -294,7 +294,7 @@ bool LoadMaterials(const disk32::XModelDisk32 &disk, XModel *out)
         disk32::PointerToken token{};
         std::memcpy(&token, tokens + index * sizeof(token), sizeof(token));
         out->materialHandles[index] = nullptr;
-        LoadMaterialPtr(token, &out->materialHandles[index]);
+        LoadMaterialPtr(token, &out->materialHandles[index], tokens + index * sizeof(token));
     }
     return true;
 }

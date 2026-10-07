@@ -157,7 +157,7 @@ bool ConvertWater(std::uint8_t *record, water_t **out)
 
 // Load_MaterialTextureDef: the header rule, then a water (a completed object)
 // or an image, which must load.
-bool LoadTexture(const disk32::MaterialTextureDefDisk32 &disk, MaterialTextureDef *out)
+bool LoadTexture(const disk32::MaterialTextureDefDisk32 &disk, const std::uint8_t *diskRecord, MaterialTextureDef *out)
 {
     CopyMaterialTextureDefScalars(disk, out);
     out->u.image = nullptr;
@@ -169,7 +169,7 @@ bool LoadTexture(const disk32::MaterialTextureDefDisk32 &disk, MaterialTextureDe
     }
     if (disk.semantic == kWaterSemantic)
         return LoadCompleted(token, DBAliasKind::MaterialWater, disk32::kMaterialWaterBytes, &out->u.water, ConvertWater);
-    LoadGfxImagePtr(token, &out->u.image);
+    LoadGfxImagePtr(token, &out->u.image, diskRecord + offsetof(disk32::MaterialTextureDefDisk32, image));
     return out->u.image || Drop("Fast-file material texture has no image");
 }
 
@@ -187,7 +187,7 @@ bool ConvertTextures(std::uint8_t *record, std::uint32_t count, MaterialTextureD
     {
         disk32::MaterialTextureDefDisk32 texture{};
         std::memcpy(&texture, record + index * kTextureBytes, sizeof(texture));
-        if (!LoadTexture(texture, &textures[index]))
+        if (!LoadTexture(texture, record + index * kTextureBytes, &textures[index]))
             return false;
         if (index && textures[index - 1].nameHash >= textures[index].nameHash)
             return Drop("Unordered fast-file material texture table");
