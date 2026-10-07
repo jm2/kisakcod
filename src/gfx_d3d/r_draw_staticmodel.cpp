@@ -1,4 +1,5 @@
 #include "r_draw_staticmodel.h"
+#include "r_prim_draw_surf_stream.h"
 #include "rb_stats.h"
 #include <database/database.h>
 #include "r_state.h"
@@ -72,15 +73,10 @@ void __cdecl R_DrawStaticModelSurfLit(const uint32_t *primDrawSurfPos, GfxCmdBuf
 int __cdecl R_GetNextStaticModelSurf(GfxStaticModelDrawStream *drawStream, XSurface **outSurf)
 {
     XSurface *xsurf; // [esp+0h] [ebp-Ch]
-    const uint32_t *primDrawSurfPos; // [esp+4h] [ebp-8h]
 
-    drawStream->smodelCount = *drawStream->primDrawSurfPos++;
-    if (!drawStream->smodelCount)
+    xsurf = R_ReadStaticModelGroup(drawStream->primDrawSurfPos, &drawStream->smodelCount, &drawStream->smodelList);
+    if (!xsurf)
         return 0;
-    primDrawSurfPos = drawStream->primDrawSurfPos;
-    drawStream->primDrawSurfPos += ((drawStream->smodelCount + 1) >> 1) + 1;
-    xsurf = (XSurface *)*primDrawSurfPos;
-    drawStream->smodelList = (const uint16_t *)(primDrawSurfPos + 1);
     drawStream->localSurf = xsurf;
     g_frameStatsCur.geoIndexCount += 3 * drawStream->smodelCount * xsurf->triCount;
 
@@ -178,12 +174,9 @@ int __cdecl R_GetNextStaticModelCachedSurf(GfxStaticModelDrawStream *drawStream)
     const GfxStaticModelDrawInst *smodelDrawInst; // [esp+0h] [ebp-Ch]
     XSurface *xsurf; // [esp+8h] [ebp-4h]
 
-    drawStream->smodelCount = *drawStream->primDrawSurfPos++;
-    if (!drawStream->smodelCount)
+    xsurf = R_ReadStaticModelGroup(drawStream->primDrawSurfPos, &drawStream->smodelCount, &drawStream->smodelList);
+    if (!xsurf)
         return 0;
-    xsurf = (XSurface *)*drawStream->primDrawSurfPos++;
-    drawStream->smodelList = (const unsigned short*)drawStream->primDrawSurfPos;
-    drawStream->primDrawSurfPos += (drawStream->smodelCount + 1) >> 1;
     smodelDrawInst = &rgp.world->dpvs.smodelDrawInsts[R_GetCachedSModelSurf(*drawStream->smodelList)->smodelIndex];
     drawStream->localSurf = xsurf;
     drawStream->reflectionProbeIndex = smodelDrawInst->reflectionProbeIndex;

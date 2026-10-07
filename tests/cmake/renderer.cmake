@@ -107,3 +107,26 @@ kisakcod_ilp32(kisakcod-shader-cache-tests
 
 kisakcod_ilp32(kisakcod-renderer-value-encoding-tests
     renderer-value-encoding-contracts)
+
+# Static-model groups in the prim draw-surf stream: written through the
+# engine's R_AllocDrawSurf / R_AddDelayedStaticModelDrawSurf
+# (gfx_d3d/r_add_cmdbuf.cpp) and read back through R_ReadStaticModelGroup,
+# which both static-model draw readers use. On 64-bit the XSurface pointer
+# takes two dwords. The renderer headers need the Windows SDK's D3D9 types.
+if (WIN32)
+    # r_add_cmdbuf.cpp is decompiled engine code and not /W4 clean, so it
+    # compiles at the engine's /W3 in an object library of its own.
+    add_library(kisakcod-renderer-smodel-draw-stream-objects OBJECT ${SRC_DIR}/gfx_d3d/r_add_cmdbuf.cpp)
+    target_include_directories(kisakcod-renderer-smodel-draw-stream-objects SYSTEM PUBLIC ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-renderer-smodel-draw-stream-objects PUBLIC cxx_std_20)
+    target_compile_definitions(kisakcod-renderer-smodel-draw-stream-objects PUBLIC KISAK_MP)
+    target_compile_options(kisakcod-renderer-smodel-draw-stream-objects PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W3>)
+    add_executable(kisakcod-renderer-smodel-draw-stream-tests renderer_smodel_draw_stream_tests.cpp)
+    target_link_libraries(kisakcod-renderer-smodel-draw-stream-tests PRIVATE kisakcod-renderer-smodel-draw-stream-objects)
+    kisakcod_test_warnings(kisakcod-renderer-smodel-draw-stream-tests)
+    set_target_properties(kisakcod-renderer-smodel-draw-stream-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME renderer-smodel-draw-stream COMMAND kisakcod-renderer-smodel-draw-stream-tests)
+    kisakcod_ilp32(kisakcod-renderer-smodel-draw-stream-tests renderer-smodel-draw-stream)
+endif()

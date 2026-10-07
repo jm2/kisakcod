@@ -324,6 +324,7 @@ set(GFX_D3D
     "${SRC_DIR}/gfx_d3d/r_add_staticmodel.cpp"
     "${SRC_DIR}/gfx_d3d/r_add_staticmodel.h"
     "${SRC_DIR}/gfx_d3d/r_pretess_encoding.h"
+    "${SRC_DIR}/gfx_d3d/r_prim_draw_surf_stream.h"
     "${SRC_DIR}/gfx_d3d/r_bsp.cpp"
     "${SRC_DIR}/gfx_d3d/r_bsp.h"
     "${SRC_DIR}/gfx_d3d/r_bsp_load_obj.cpp"
