@@ -2434,23 +2434,23 @@ void __cdecl ConvertQuatToInverseMat(const DObjAnimMat *mat, float (*axis)[3])
     inverseAxis[2][1] = yz + xw;
     inverseAxis[2][2] = 1.0 - (xx + yy);
 
-    (*axis)[0] = (float)inverseAxis[0][0];
-    (*axis)[1] = (float)inverseAxis[0][1];
-    (*axis)[2] = (float)inverseAxis[0][2];
-    (*axis)[3] = (float)inverseAxis[1][0];
-    (*axis)[4] = (float)inverseAxis[1][1];
-    (*axis)[5] = (float)inverseAxis[1][2];
-    (*axis)[6] = (float)inverseAxis[2][0];
-    (*axis)[7] = (float)inverseAxis[2][1];
-    (*axis)[8] = (float)inverseAxis[2][2];
+    axis[0][0] = static_cast<float>(inverseAxis[0][0]);
+    axis[0][1] = static_cast<float>(inverseAxis[0][1]);
+    axis[0][2] = static_cast<float>(inverseAxis[0][2]);
+    axis[1][0] = static_cast<float>(inverseAxis[1][0]);
+    axis[1][1] = static_cast<float>(inverseAxis[1][1]);
+    axis[1][2] = static_cast<float>(inverseAxis[1][2]);
+    axis[2][0] = static_cast<float>(inverseAxis[2][0]);
+    axis[2][1] = static_cast<float>(inverseAxis[2][1]);
+    axis[2][2] = static_cast<float>(inverseAxis[2][2]);
 
-    (*axis)[9] = (float)(-((double)mat->trans[0] * inverseAxis[0][0]
+    axis[3][0] = static_cast<float>(-(static_cast<double>(mat->trans[0]) * inverseAxis[0][0]
         + (double)mat->trans[1] * inverseAxis[1][0]
         + (double)mat->trans[2] * inverseAxis[2][0]));
-    (*axis)[10] = (float)(-((double)mat->trans[0] * inverseAxis[0][1]
+    axis[3][1] = static_cast<float>(-(static_cast<double>(mat->trans[0]) * inverseAxis[0][1]
         + (double)mat->trans[1] * inverseAxis[1][1]
         + (double)mat->trans[2] * inverseAxis[2][1]));
-    (*axis)[11] = (float)(-((double)mat->trans[0] * inverseAxis[0][2]
+    axis[3][2] = static_cast<float>(-(static_cast<double>(mat->trans[0]) * inverseAxis[0][2]
         + (double)mat->trans[1] * inverseAxis[1][2]
         + (double)mat->trans[2] * inverseAxis[2][2]));
 }
@@ -2486,15 +2486,15 @@ void __cdecl ConvertQuatToMat(const DObjAnimMat *mat, float (*axis)[3])
     yw = scaledQuat[1] * mat->quat[3];
     zz = scaledQuat[2] * mat->quat[2];
     zw = scaledQuat[2] * mat->quat[3];
-    (*axis)[0] = 1.0 - (float)(yy + zz);
-    (*axis)[1] = xy + zw;
-    (*axis)[2] = xz - yw;
-    (*axis)[3] = xy - zw;
-    (*axis)[4] = 1.0 - (float)(xx + zz);
-    (*axis)[5] = yz + xw;
-    (*axis)[6] = xz + yw;
-    (*axis)[7] = yz - xw;
-    (*axis)[8] = 1.0 - (float)(xx + yy);
+    axis[0][0] = 1.0 - static_cast<float>(yy + zz);
+    axis[0][1] = xy + zw;
+    axis[0][2] = xz - yw;
+    axis[1][0] = xy - zw;
+    axis[1][1] = 1.0 - static_cast<float>(xx + zz);
+    axis[1][2] = yz + xw;
+    axis[2][0] = xz + yw;
+    axis[2][1] = yz - xw;
+    axis[2][2] = 1.0 - static_cast<float>(xx + yy);
 }
 
 void __cdecl MatrixTransformVectorQuatTrans(const vec3r in, const DObjAnimMat *mat, vec3r out)

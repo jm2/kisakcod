@@ -416,6 +416,24 @@ add_test(
     NAME msvc-rand-shim-contracts
     COMMAND kisakcod-msvc-rand-shim-tests
 )
+# ConvertQuatToMat and ConvertQuatToInverseMat in the production
+# universal/com_math.cpp, set up as the rand shim test above.
+add_executable(kisakcod-com-math-quat-mat-tests
+    com_math_quat_mat_tests.cpp
+    com_math_test_stubs.cpp
+    ${SRC_DIR}/universal/com_math.cpp
+)
+target_include_directories(kisakcod-com-math-quat-mat-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+    target_include_directories(kisakcod-com-math-quat-mat-tests SYSTEM PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+endif()
+target_compile_features(kisakcod-com-math-quat-mat-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-com-math-quat-mat-tests PRIVATE Threads::Threads)
+set_target_properties(kisakcod-com-math-quat-mat-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME com-math-quat-mat COMMAND kisakcod-com-math-quat-mat-tests)
 # The same checks plus the production game_mp G_rand/G_irand helpers
 # (g_utils_mp.cpp). Linux and clang only, like the dvar test below: engine
 # code. --gc-sections drops what the checks never reach, so no stubs.
