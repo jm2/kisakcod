@@ -4209,15 +4209,16 @@ void __cdecl Scr_SetFxAngles(uint32_t  givenAxisCount, float (*axis)[3], float *
     }
     else if (givenAxisCount == 2)
     {
-        dot = Vec3Dot((const float *)axis, &(*axis)[6]);
+        // axis[0] is forward and axis[2] up; axis[1] is derived from them.
+        dot = Vec3Dot(axis[0], axis[2]);
         scale = -dot;
-        Vec3Mad(&(*axis)[6], scale, (const float *)axis, &(*axis)[6]);
-        if (Vec3Normalize(&(*axis)[6]) == 0.0)
+        Vec3Mad(axis[2], scale, axis[0], axis[2]);
+        if (Vec3Normalize(axis[2]) == 0.0)
         {
             v3 = va("forward and up vectors are the same direction or exact opposite directions");
             Scr_Error(v3);
         }
-        Vec3Cross(&(*axis)[6], (const float *)axis, &(*axis)[3]);
+        Vec3Cross(axis[2], axis[0], axis[1]);
         AxisToAngles(*(const mat3x3*)axis, angles);
     }
     else
