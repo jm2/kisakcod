@@ -1,6 +1,6 @@
 // db_disk32_zone_retail_tests.cpp: asset-list shapes retail zones use that the
 // main synthetic zone (db_disk32_zone_tests.cpp) does not, loaded through the
-// real 64-bit path by disk32_zone_harness.cpp.
+// real load path by disk32_zone_harness.cpp.
 //
 // A retail zone names an earlier top-level asset through that asset's header
 // slot in the XAsset record array: retail code_post_gfx_mp lists a technique

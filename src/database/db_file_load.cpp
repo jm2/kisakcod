@@ -665,8 +665,7 @@ void __cdecl Load_XAssetArrayCustom(int32_t count)
     for (i = 0; i < count; ++i)
     {
         varXAsset = var;
-        Load_XAsset(0);
-        DB_RecordXAssetHeaderSlot(&var->header, var->type, var->header.data);
+        Load_XAsset(0); // its Load_*Ptr step records the header slot
         ++var;
     }
 }

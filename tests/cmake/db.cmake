@@ -842,6 +842,14 @@ if ((KISAK_PLATFORM STREQUAL "linux" OR KISAK_PLATFORM STREQUAL "macos") AND CMA
     endforeach()
 endif()
 
+# The disk32 zones through the x86 load path (db_load.cpp's 32-bit steps): a
+# Linux i386 build, the linux-x86-tests preset.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 4 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    include("${CMAKE_CURRENT_LIST_DIR}/disk32/zone.cmake")
+    kisakcod_ilp32(kisakcod-db-disk32-zone-tests database-disk32-zone-load)
+    kisakcod_ilp32(kisakcod-db-disk32-zone-retail-tests database-disk32-zone-retail-shapes)
+endif()
+
 # The db_registry unload sequence (quit, a map change's zone unload) against the
 # real bridge, facade, coordinator and script-string registry. As in misc.cmake's
 # game_mp hazard tests: the production TUs at 64-bit with the Linux headless

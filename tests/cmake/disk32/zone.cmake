@@ -1,6 +1,7 @@
-# One synthetic zone through the real 64-bit load path: DB_TryLoadXFileInternal
-# opens and inflates the .ff the test writes, the envelope dispatches every
-# asset through Load_XAssetHeader to its family's loader, the pools publish
+# One synthetic zone through the real load path (64-bit, or x86 in an i386
+# build): DB_TryLoadXFileInternal opens and inflates the .ff the test writes,
+# the envelope dispatches every asset through Load_XAssetHeader to its
+# family's loader, the pools publish
 # them, and DB_ShutdownXAssets unloads the zone. Every database TU the Linux
 # headless server builds is linked as it is; only the engine boundary is
 # stubbed, and section GC drops what the load never reaches. The admission
@@ -55,13 +56,16 @@ endforeach()
 add_test(NAME database-disk32-zone-load COMMAND kisakcod-db-disk32-zone-tests)
 add_test(NAME database-disk32-zone-retail-shapes COMMAND kisakcod-db-disk32-zone-retail-tests)
 set_tests_properties(database-disk32-zone-retail-shapes PROPERTIES TIMEOUT 60)
-# With one family's guard left on, the zone fails closed naming it.
-foreach(_family IN ITEMS rawfile stringtable physpreset localize map_ents game_map_mp com_map
-        sndcurve loaded_sound sound image lightdef techset material font fx impactfx menu menufile
-        xmodel xanim weapon col_map_mp gfx_map)
-    add_test(NAME database-disk32-zone-guard-${_family} COMMAND kisakcod-db-disk32-zone-tests guard ${_family})
-    set_tests_properties(database-disk32-zone-guard-${_family} PROPERTIES TIMEOUT 60)
-endforeach()
+# With one family's guard left on, the zone fails closed naming it. The
+# layout guards exist only at 64-bit.
+if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+    foreach(_family IN ITEMS rawfile stringtable physpreset localize map_ents game_map_mp com_map
+            sndcurve loaded_sound sound image lightdef techset material font fx impactfx menu menufile
+            xmodel xanim weapon col_map_mp gfx_map)
+        add_test(NAME database-disk32-zone-guard-${_family} COMMAND kisakcod-db-disk32-zone-tests guard ${_family})
+        set_tests_properties(database-disk32-zone-guard-${_family} PROPERTIES TIMEOUT 60)
+    endforeach()
+endif()
 set_tests_properties(database-disk32-zone-load PROPERTIES TIMEOUT 60)
 # A SndDriverGlobals record with an inline token holds bytes no PC loader reads.
 add_test(NAME database-disk32-zone-drop-sndinline COMMAND kisakcod-db-disk32-zone-tests expect-drop sndinline)
