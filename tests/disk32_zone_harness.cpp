@@ -17,6 +17,8 @@
 
 #include "disk32_zone_harness.hpp"
 
+#include <database/db_load_legacy_bridge.h>
+
 #include <game/g_bsp.h>
 #include <qcommon/cmd.h>
 #include <qcommon/sys_time.h>
@@ -193,6 +195,8 @@ int Run(const char *guarded)
     {
         const char *const expected = VariantDrop();
         Expect(expected && std::strstr(drop.message, expected), "the variant's zone fails closed:", drop.message);
+        // The drop left no registry session holding the hash.
+        Expect(!db::load_legacy_bridge::DbLoadLegacyBridge::InSession(), "the drop leaves a registry session open");
     }
     else if (std::strcmp(drop.message, "(none)"))
         Expect(false, "the zone raised ERR_DROP:", drop.message);

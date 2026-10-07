@@ -525,6 +525,37 @@ const Asset kZone[] = {
     {ASSET_TYPE_FX, kInline, ",e2e/fx", WriteStubFx},
 };
 const char *const kScriptStrings[] = {"e2e_tag", "bone_root", "bone_child"};
+
+// expect-drop curvepool: the curve default and fillers take the pool's last
+// slots, so the absent stub's default entry finds it full.
+constexpr int kCurveFillers = 62;
+const std::vector<std::string> &CurveFillerNames()
+{
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> out;
+        for (int i = 0; i < kCurveFillers; ++i)
+            out.push_back("e2e/fill" + std::to_string(i));
+        return out;
+    }();
+    return names;
+}
+void WriteInlineCurve(Image &z, const char *name)
+{
+    z.Word(kInline).Word(2).Float(0).Float(1).Float(1).Float(0).Fill(48).V(name);
+}
+void WriteDefaultCurve(Image &z)
+{
+    WriteInlineCurve(z, "default");
+}
+void WriteFillerCurve(Image &z) // each zone build writes the fillers in order
+{
+    static int next = 0;
+    WriteInlineCurve(z, CurveFillerNames()[static_cast<std::size_t>(next++ % kCurveFillers)].c_str());
+}
+void WriteAbsentCurve(Image &z)
+{
+    z.Record(72, {{0x00, kInline}}).V(",e2e/nocurve");
+}
 } // namespace
 
 std::span<const Asset> zone_test::ZoneAssets()
@@ -534,6 +565,13 @@ std::span<const Asset> zone_test::ZoneAssets()
         const bool inlineDriver = Variant() && !std::strcmp(Variant(), "sndinline");
         for (Asset &asset : assets)
             asset.token = inlineDriver && asset.type == ASSET_TYPE_SNDDRIVER_GLOBALS ? kInline : asset.token;
+        if (Variant() && !std::strcmp(Variant(), "curvepool"))
+        {
+            assets.push_back({ASSET_TYPE_SOUND_CURVE, kInline, "default", WriteDefaultCurve});
+            for (const std::string &name : CurveFillerNames())
+                assets.push_back({ASSET_TYPE_SOUND_CURVE, kInline, name.c_str(), WriteFillerCurve});
+            assets.push_back({ASSET_TYPE_SOUND_CURVE, kInline, ",e2e/nocurve", WriteAbsentCurve});
+        }
         return assets;
     }();
     return zone;
@@ -541,7 +579,11 @@ std::span<const Asset> zone_test::ZoneAssets()
 
 const char *zone_test::VariantDrop()
 {
-    return Variant() && !std::strcmp(Variant(), "sndinline") ? "carries an inline record" : nullptr;
+    if (Variant() && !std::strcmp(Variant(), "sndinline"))
+        return "carries an inline record";
+    if (Variant() && !std::strcmp(Variant(), "curvepool"))
+        return "Exceeded limit of 64";
+    return nullptr;
 }
 
 std::span<const char *const> zone_test::ZoneScriptStrings()

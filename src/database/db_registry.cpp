@@ -1941,6 +1941,17 @@ static void DB_DefaultEntryFailed(XAssetType type, const char *name)
             name);
 }
 
+// Pool exhaustion raises with db_hashCritSect free. A caller in a registry
+// session (a default entry's lookup or stub link) holds the hash through the
+// session, which must finish rather than be unlocked under it.
+static void DB_ReleaseHashBeforeDrop()
+{
+    if (db::load_legacy_bridge::DbLoadLegacyBridge::InSession())
+        (void)DB_EndDefaultEntrySession();
+    else
+        Sys_UnlockWrite(&db_hashCritSect);
+}
+
 XAssetEntryPoolEntry *__cdecl DB_AllocXAssetEntry(XAssetType type, uint8_t zoneIndex)
 {
     XAssetEntryPoolEntry *freeHead; // [esp+4h] [ebp-8h]
@@ -1948,7 +1959,7 @@ XAssetEntryPoolEntry *__cdecl DB_AllocXAssetEntry(XAssetType type, uint8_t zoneI
     freeHead = g_freeAssetEntryHead;
     if (!g_freeAssetEntryHead)
     {
-        Sys_UnlockWrite(&db_hashCritSect);
+        DB_ReleaseHashBeforeDrop();
         Com_Error(ERR_DROP, "Could not allocate asset - increase XASSET_ENTRY_POOL_SIZE");
     }
     g_freeAssetEntryHead = freeHead->next;
@@ -1967,7 +1978,7 @@ XAssetHeader __cdecl DB_AllocXAssetHeader(XAssetType type)
 
     if (!DB_IsXAssetTypeSupportedForBuild(type))
     {
-        Sys_UnlockWrite(&db_hashCritSect);
+        DB_ReleaseHashBeforeDrop();
         Com_Error(
             ERR_DROP,
             "Cannot allocate asset type %d in this build",
@@ -1978,7 +1989,7 @@ XAssetHeader __cdecl DB_AllocXAssetHeader(XAssetType type)
     header.data = DB_AllocXAssetHeaderHandler[type](DB_XAssetPool[type]).data;
     if (!header.data)
     {
-        Sys_UnlockWrite(&db_hashCritSect);
+        DB_ReleaseHashBeforeDrop();
         Com_PrintError(1, "Exceeded limit of %d '%s' assets.\n", g_poolSize[type], g_assetNames[type]);
         DB_EnumXAssets(type, DB_PrintAssetName, &type, 1);
         Com_Error(ERR_DROP, "Exceeded limit of %d '%s' assets.\n", g_poolSize[type], g_assetNames[type]);
