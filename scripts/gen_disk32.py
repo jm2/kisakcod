@@ -384,8 +384,9 @@ bool Check$Name(const $Runtime &record);
 
 ''')
 
+# A stub (",name") keeps only its name, so its family's check does not apply.
 CHECK_CALL = Template('''\
-    if (!Check$Name(*out))
+    if (!db::validation::IsStubAssetName(out->$nameField) && !Check$Name(*out))
         return Drop("Invalid fast-file $noun");
 ''')
 
@@ -586,7 +587,7 @@ def emit_body(record, records):
     scalars = ''.join(scalar_copy(field) for field in fields if field['kind'] in SCALARS)
     pointers = ''.join(body_step(record, field, records) for field in fields if field['kind'] not in SCALARS)
     facts = dict(Name=record['name'], Runtime=record['runtime'], noun=noun(asset['label']))
-    check = CHECK_CALL.substitute(facts) if 'check' in asset else ''
+    check = CHECK_CALL.substitute(facts, nameField=asset['name']) if 'check' in asset else ''
     body = FLAT_BODY.substitute(facts, scalars=scalars, pointers=pointers, check=check)
     return (CHECK_DECL.substitute(facts) if 'check' in asset else '') + body
 

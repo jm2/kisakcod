@@ -434,7 +434,13 @@ bool LoadFxEffectDef(FxEffectDef *out)
     Totals totals{0, false, sizeof(disk) + count * sizeof(disk32::FxElemDefDisk32) + nameBytes};
     if (count && !LoadElements(disk, count, &totals, &out->elemDefs))
         return false;
-    // Its longest looping spawn and its size, as FX_Convert computes them.
+    // Its longest looping spawn and its size, as FX_Convert computes them. A
+    // stub has no elements and records neither.
+    if (db::validation::IsStubAssetName(out->name))
+    {
+        DB_PopStreamPos();
+        return true;
+    }
     if (disk.msecLoopingLife != (totals.infinite ? (std::numeric_limits<std::int32_t>::max)() : totals.msec))
         return Drop("Invalid fast-file effect looping life");
     if (static_cast<std::uint64_t>(disk.totalSize) != totals.bytes)
