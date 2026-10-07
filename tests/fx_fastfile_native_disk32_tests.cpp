@@ -2607,7 +2607,10 @@ void TestSemanticValidation()
         fixture.elems()[0].spawnDelayMsec.base = 86'400'001;
     });
     expectInvalidCount([](EffectFixture &fixture) {
-        fixture.elems()[0].lifeSpanMsec.base = 0;
+        fixture.elems()[0].lifeSpanMsec = {0, 0};
+    });
+    expectInvalidCount([](EffectFixture &fixture) {
+        fixture.elems()[0].lifeSpanMsec = {-1, 400};
     });
     expectInvalidCount([](EffectFixture &fixture) {
         fixture.elems()[0].lifeSpanMsec = {86'400'000, 1};

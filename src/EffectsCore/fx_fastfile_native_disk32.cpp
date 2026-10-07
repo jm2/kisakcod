@@ -236,7 +236,9 @@ template <typename T>
     const std::int64_t minimum = range.base;
     const std::int64_t maximum =
         static_cast<std::int64_t>(range.base) + range.amplitude;
-    return (!requirePositiveMinimum || minimum > 0)
+    // A lifespan may start at 0 (retail has [0, 400]) but must be able to
+    // exceed it.
+    return (!requirePositiveMinimum || (minimum >= 0 && maximum > 0))
         && minimum >= -kDurationLimitMsec
         && minimum <= kDurationLimitMsec
         && maximum >= -kDurationLimitMsec
