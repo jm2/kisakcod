@@ -562,6 +562,33 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(dvar-pointer-round-trips PROPERTIES TIMEOUT 20)
 endif()
 
+# configure_mp.csv parsing and checksum: the production com_playerprofile.cpp
+# with the Linux headless server's defines. Linux and clang only, as above;
+# --gc-sections drops the profile code no check reaches, so only the
+# tokenizer, dvar and error boundary is stubbed.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-configure-csv-tests
+        configure_csv_tests.cpp
+        ${SRC_DIR}/qcommon/com_playerprofile.cpp
+    )
+    target_include_directories(kisakcod-configure-csv-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-configure-csv-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-configure-csv-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-configure-csv-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-configure-csv-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-configure-csv-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-configure-csv-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-configure-csv-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME configure-csv-parse-and-checksum COMMAND kisakcod-configure-csv-tests)
+    set_tests_properties(configure-csv-parse-and-checksum PROPERTIES TIMEOUT 20)
+endif()
+
 # game_mp 64-bit layout hazards (NOW row 10, #216): the production game_mp
 # TUs at 64-bit, one executable per subject group (see the test's header).
 # Linux and clang only, for the reasons the dvar test above gives; the
