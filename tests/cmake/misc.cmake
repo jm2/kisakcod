@@ -562,6 +562,26 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(dvar-pointer-round-trips PROPERTIES TIMEOUT 20)
 endif()
 
+# World-sector link lists: the production cm_world.cpp with the Linux headless
+# server's defines; --gc-sections drops what the two link calls never reach.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cm-world-link-tests cm_world_link_tests.cpp ${SRC_DIR}/qcommon/cm_world.cpp)
+    target_include_directories(kisakcod-cm-world-link-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-cm-world-link-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-cm-world-link-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-cm-world-link-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cm-world-link-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-cm-world-link-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-cm-world-link-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-cm-world-link-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cm-world-sector-links COMMAND kisakcod-cm-world-link-tests)
+    set_tests_properties(cm-world-sector-links PROPERTIES TIMEOUT 20)
+endif()
+
 # configure_mp.csv parsing and checksum: the production com_playerprofile.cpp
 # with the Linux headless server's defines. Linux and clang only, as above;
 # --gc-sections drops the profile code no check reaches, so only the
