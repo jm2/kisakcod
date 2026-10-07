@@ -12,8 +12,11 @@
 #include <gfx_d3d/r_font.h>
 #include <gfx_d3d/r_gfx.h>
 #include <gfx_d3d/r_material.h>
+#include <script/scr_stringlist.h>
 #include <ui/ui_shared.h>
+#include <database/db_disk32_mirrors.h>
 
+#include <cstddef>
 #include <cstring>
 #include <iterator>
 
@@ -24,7 +27,7 @@ using namespace zone_test;
 // Block-4 offsets the writers record for later tokens.
 struct Offsets
 {
-    std::uint32_t rawFile, physPreset, curve, loaded, sound, image, techniqueSet, material, fx, menu;
+    std::uint32_t rawFile, physPreset, curve, loaded, sound, image, techniqueSet, material, fx, menu, model;
 } g_at{};
 
 void WriteRawFile(Image &z)
@@ -188,6 +191,60 @@ void WriteMenuList(Image &z) // names the shared menu by offset
     z.Word(Virt(g_at.menu));
 }
 
+// Nothing after the model names anything in block 4 by offset, so the
+// writers below need not follow block 4 byte for byte.
+
+// Two bones (one root, named by zone script strings 1 and 2), one deformed
+// surface (vertices in block 7, indices in block 8) drawing the shared
+// material, and one LOD.
+void WriteXModel(Image &z)
+{
+    g_at.model = z.VAlloc(4);
+    z.Word(kInline).Word(2 | 1u << 8 | 1u << 16);
+    for (int pointer = 0; pointer < 8; ++pointer)
+        z.Word(kInline); // bone names, parents, quats, trans, classes, base matrices, surfaces, materials
+    z.Float(0).Word(1).Word(0xC000'0000u).Fill(12).Word(0x00CC0000u);
+    for (std::uint32_t lod = 1; lod < 4; ++lod)
+        z.Float(9).Fill(20).Word(0x00CC0000u | lod);
+    z.Word(0).Word(0).Word(0).Word(kInline).Float(5).Float(-1).Float(-2).Float(-3).Float(1).Float(2).Float(3);
+    z.Word(1).Word(0xDEADBEEF).Word(0x1234).Word(0x0201).Word(0).Word(0).V("e2e/model");
+    z.Word(1 | 2u << 16).Fill(1, 1).Word(0x4000).Word(0).Float(1).Float(2).Float(3).Float(0).Fill(2);
+    for (int bone = 0; bone < 2; ++bone)
+        z.Float(0).Float(0).Float(0).Float(1).Float(0).Float(0).Float(static_cast<float>(bone)).Float(2);
+    z.Word(1u << 8 | 3u << 16).Word(2 | 0xEE0000u).Word(0).Word(kInline).Word(3).Word(0).Word(kInline);
+    z.Word(kInline).Word(0).Word(0).Word(0xC000'0000u).Fill(12);
+    z.Fill(1).Fill(1).Fill(1, 64).Fill(3); // blend records
+    for (int vertex = 0; vertex < 3; ++vertex)
+        z.Float(static_cast<float>(vertex)).Float(1).Float(2).Float(1).Fill(16);
+    z.Word(1u << 16).Word(2 | 1u << 16).Word(2u << 16).Word(Virt(g_at.material));
+    for (int bone = 0; bone < 2; ++bone)
+        z.Float(-1).Float(-1).Float(-1).Float(1).Float(1).Float(1).Float(0).Float(0).Float(0).Float(3);
+}
+// One one-shot model element showing the shared model.
+void WriteFxModel(Image &z)
+{
+    z.Word(kInline).Word(0).Word(32 + 252 + 12 + 2 * 96 + 2 * 48).Word(0).Word(0).Word(1).Word(0).Word(kInline);
+    z.V("e2e/fxmodel").Record(252, {{0x08, 1}, {0x30, 100}, {0xB0, 0x01010105}, {0xB4, kInline}, {0xB8, kInline},
+                                     {0xBC, Virt(g_at.model)}});
+    z.Fill(2 * 96 + 2 * 48);
+}
+// One bone, named by zone script string 1; no frames data.
+void WriteXAnimParts(Image &z)
+{
+    z.Word(kInline).Fill(10).Word(255 | 2u << 16).Fill(9).Fill(1, 1).Word(1u << 8);
+    z.Word(0).Word(0).Float(30).Float(1.5f).Word(kInline).Fill(9 * 4).V("e2e/anim").Fill(1, 1).Fill(1);
+}
+// A gun model, flash effect and reticle by offset, and a pickup sound by
+// name through its string holder.
+void WriteWeapon(Image &z)
+{
+    using W = disk32::WeaponDefDisk32;
+    z.Record(sizeof(W), {{offsetof(W, szInternalName), kInline}, {offsetof(W, gunXModel), Virt(g_at.model)},
+                         {offsetof(W, viewFlashEffect), Virt(g_at.fx)}, {offsetof(W, pickupSound), kInline},
+                         {offsetof(W, reticleCenter), Virt(g_at.material)}});
+    z.V("e2e/weapon").Word(kInline).V("e2e/snd");
+}
+
 const Asset kZone[] = {
     {ASSET_TYPE_RAWFILE, kInline, "e2e/a.gsc", WriteRawFile},
     {ASSET_TYPE_RAWFILE, kShared, "e2e/b.cfg", WriteSharedRawFile},
@@ -210,8 +267,12 @@ const Asset kZone[] = {
     {ASSET_TYPE_IMPACT_FX, kInline, "e2e/impacts", WriteImpactFx},
     {ASSET_TYPE_MENU, kShared, "e2e/menu", WriteMenu},
     {ASSET_TYPE_MENULIST, kInline, "e2e/menus", WriteMenuList},
+    {ASSET_TYPE_XMODEL, kShared, "e2e/model", WriteXModel},
+    {ASSET_TYPE_FX, kInline, "e2e/fxmodel", WriteFxModel},
+    {ASSET_TYPE_XANIMPARTS, kInline, "e2e/anim", WriteXAnimParts},
+    {ASSET_TYPE_WEAPON, kInline, "e2e/weapon", WriteWeapon},
 };
-const char *const kScriptStrings[] = {"e2e_tag"};
+const char *const kScriptStrings[] = {"e2e_tag", "bone_root", "bone_child"};
 } // namespace
 
 std::span<const Asset> zone_test::ZoneAssets()
@@ -273,4 +334,20 @@ void zone_test::CheckZone()
     const MenuList *menus = Find(ASSET_TYPE_MENULIST, "e2e/menus").menuList;
     Expect(menus && menus->menuCount == 1 && Is(menus->menus[0], ASSET_TYPE_MENU, "e2e/menu"),
            "a menu list names the shared menu");
+    const XModel *model = Find(ASSET_TYPE_XMODEL, "e2e/model").model;
+    Expect(model && model->numBones == 2 && model->boneNames[1] == SL_FindString("bone_child")
+               && Is(model->materialHandles[0], ASSET_TYPE_MATERIAL, "e2e/material"),
+           "a model's bones name zone script strings, and its surface draws the shared material");
+    const FxEffectDef *fxModel = Find(ASSET_TYPE_FX, "e2e/fxmodel").fx;
+    Expect(fxModel && Is(fxModel->elemDefs[0].visuals.instance.model, ASSET_TYPE_XMODEL, "e2e/model"),
+           "an effect's model element shows the shared model");
+    const XAnimParts *anim = Find(ASSET_TYPE_XANIMPARTS, "e2e/anim").parts;
+    Expect(anim && anim->boneCount[9] == 1 && anim->names[0] == SL_FindString("bone_root"),
+           "an animation's bone names a zone script string");
+    const WeaponDef *weapon = Find(ASSET_TYPE_WEAPON, "e2e/weapon").weapon;
+    Expect(weapon && Is(weapon->gunXModel[0], ASSET_TYPE_XMODEL, "e2e/model")
+               && Is(weapon->viewFlashEffect, ASSET_TYPE_FX, "e2e/fx")
+               && Is(weapon->reticleCenter, ASSET_TYPE_MATERIAL, "e2e/material")
+               && Is(weapon->pickupSound, ASSET_TYPE_SOUND, "e2e/snd"),
+           "a weapon reaches its model, effect, material and sound");
 }
