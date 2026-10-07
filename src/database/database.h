@@ -683,6 +683,9 @@ void __cdecl Mark_Font();
 void __cdecl Mark_FontHandle();
 void __cdecl Load_XAssetHeader(bool atStreamStart);
 void __cdecl Load_XAsset(bool atStreamStart);
+// slot: an XAsset record's 4-byte header slot in block 4, once its asset has
+// loaded; later offset tokens naming the slot resolve to asset.
+void __cdecl DB_RecordXAssetHeaderSlot(const void *slot, int32_t type, const void *asset);
 void __cdecl Mark_XAssetHeader();
 void __cdecl Mark_XAsset();
 void __cdecl Mark_SndAliasCustom(snd_alias_list_t **var);

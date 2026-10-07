@@ -321,6 +321,21 @@ DBAliasHandle __cdecl DB_RegisterPointerSlot(
     return handle;
 }
 
+void __cdecl DB_RecordPointerSlot(const void *slot, DBAliasKind kind, const void *pointer)
+{
+    const db::relocation::Status status = DB_AliasRegistry().RecordSlot(
+        reinterpret_cast<uintptr_t>(slot),
+        kind,
+        reinterpret_cast<uintptr_t>(pointer));
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot record fast-file pointer slot: %s",
+            db::relocation::StatusName(status));
+    }
+}
+
 DBAliasHandle __cdecl DB_InsertPointer(DBAliasKind kind)
 {
     uint32_t *slot = nullptr;

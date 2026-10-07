@@ -521,6 +521,7 @@ Status AliasRegistry::Reset(
         return Status::GenerationExhausted;
 
     records_.clear();
+    recorded_.clear();
     ++generation_;
     std::copy_n(blocks, kBlockCount, blocks_);
     contextValid_ = true;
@@ -529,7 +530,8 @@ Status AliasRegistry::Reset(
 
 void AliasRegistry::Invalidate() noexcept
 {
-    for (Record &record : records_)
+    for (std::vector<Record> *list : {&records_, &recorded_})
+    for (Record &record : *list)
     {
         // These native addresses and publication records must be overwritten
         // before their allocation is released. Volatile stores keep an
@@ -549,6 +551,7 @@ void AliasRegistry::Invalidate() noexcept
         *kind = AliasKind::Invalid;
     }
     std::vector<Record>{}.swap(records_);
+    std::vector<Record>{}.swap(recorded_);
     for (BlockView &block : blocks_)
         block = {};
     contextValid_ = false;
@@ -629,8 +632,10 @@ Status AliasRegistry::RegisterSlot(
         if (offset < records_.back().offset)
             return Status::NonMonotonicSlot;
     }
-    if (records_.size() >= maxRecords_)
+    if (records_.size() + recorded_.size() >= maxRecords_)
         return Status::CapacityExceeded;
+    if (FindOffset(recorded_, offset))
+        return Status::DuplicateSlot;
 
     try
     {
@@ -647,6 +652,57 @@ Status AliasRegistry::RegisterSlot(
 
     handle->recordIndex_ = static_cast<std::uint32_t>(records_.size() - 1);
     handle->generation_ = generation_;
+    return Status::Ok;
+}
+
+const AliasRegistry::Record *AliasRegistry::FindOffset(const std::vector<Record> &records, std::uint32_t offset)
+{
+    const auto found = std::lower_bound(
+        records.begin(),
+        records.end(),
+        offset,
+        [](const Record &candidate, std::uint32_t wanted)
+        {
+            return candidate.offset < wanted;
+        });
+    return found == records.end() || found->offset != offset ? nullptr : &*found;
+}
+
+Status AliasRegistry::RecordSlot(
+    std::uintptr_t slotAddress,
+    AliasKind kind,
+    std::uintptr_t resolvedAddress)
+{
+    if (!KnownKind(kind) || RequiresExactStartPublication(kind) || !resolvedAddress)
+        return Status::InvalidArgument;
+    std::uint32_t offset = 0;
+    const Status slotStatus = FindSlot(slotAddress, &offset);
+    if (slotStatus != Status::Ok)
+        return slotStatus;
+    if (FindOffset(records_, offset) || FindOffset(recorded_, offset))
+        return Status::DuplicateSlot;
+    if (records_.size() + recorded_.size() >= maxRecords_)
+        return Status::CapacityExceeded;
+    const auto at = std::lower_bound(
+        recorded_.begin(),
+        recorded_.end(),
+        offset,
+        [](const Record &candidate, std::uint32_t wanted)
+        {
+            return candidate.offset < wanted;
+        });
+    try
+    {
+        recorded_.insert(at, {offset, kind, resolvedAddress, 0, 0, true});
+    }
+    catch (const std::bad_alloc &)
+    {
+        return Status::CapacityExceeded;
+    }
+    catch (const std::length_error &)
+    {
+        return Status::CapacityExceeded;
+    }
     return Status::Ok;
 }
 
@@ -749,15 +805,10 @@ Status AliasRegistry::FindPublished(
     if (decoded != Status::Ok)
         return decoded;
 
-    const auto found = std::lower_bound(
-        records_.begin(),
-        records_.end(),
-        offset,
-        [](const Record &candidate, std::uint32_t wanted)
-        {
-            return candidate.offset < wanted;
-        });
-    if (found == records_.end() || found->offset != offset)
+    const Record *found = FindOffset(records_, offset);
+    if (!found)
+        found = FindOffset(recorded_, offset);
+    if (!found)
         return Status::UnregisteredSlot;
     if (!found->published)
         return Status::PendingSlot;
@@ -766,7 +817,7 @@ Status AliasRegistry::FindPublished(
     if (found->metadata != expectedMetadata)
         return Status::MetadataMismatch;
 
-    *record = &*found;
+    *record = found;
     return Status::Ok;
 }
 

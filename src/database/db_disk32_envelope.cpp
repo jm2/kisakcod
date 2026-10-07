@@ -144,6 +144,8 @@ bool LoadAssets(const XAssetListDisk32 &root, XAssetList *native)
     {
         varXAsset = &nativeAssets[index];
         Load_XAsset(false);
+        DB_RecordXAssetHeaderSlot(records + sizeof(XAssetDisk32) * index + 4, nativeAssets[index].type,
+                                  nativeAssets[index].header.data);
     }
     return true;
 }

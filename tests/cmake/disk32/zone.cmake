@@ -23,7 +23,11 @@ add_library(kisakcod-db-disk32-zone-engine OBJECT
 )
 add_executable(kisakcod-db-disk32-zone-tests db_disk32_zone_tests.cpp disk32_zone_harness.cpp
     $<TARGET_OBJECTS:kisakcod-db-disk32-zone-engine>)
-foreach(_target kisakcod-db-disk32-zone-engine kisakcod-db-disk32-zone-tests)
+# Retail asset-list shapes the main zone does not use, in a zone of their own.
+add_executable(kisakcod-db-disk32-zone-retail-tests db_disk32_zone_retail_tests.cpp disk32_zone_harness.cpp
+    $<TARGET_OBJECTS:kisakcod-db-disk32-zone-engine>)
+set(_zone_tests kisakcod-db-disk32-zone-tests kisakcod-db-disk32-zone-retail-tests)
+foreach(_target kisakcod-db-disk32-zone-engine ${_zone_tests})
     kisakcod_use_disk32_mirrors(${_target})
     target_include_directories(${_target} SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
     target_compile_features(${_target} PRIVATE cxx_std_20)
@@ -34,17 +38,23 @@ foreach(_target kisakcod-db-disk32-zone-engine kisakcod-db-disk32-zone-tests)
         $<$<COMPILE_LANGUAGE:CXX>:-fms-extensions> -ffunction-sections -fdata-sections)
 endforeach()
 target_compile_options(kisakcod-db-disk32-zone-engine PRIVATE -w)
-target_compile_options(kisakcod-db-disk32-zone-tests PRIVATE -Wall -Wextra -Werror)
-target_link_options(kisakcod-db-disk32-zone-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
 if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address" AND NOT APPLE)
     # Otherwise ASan's global registration keeps every global alive.
     target_compile_options(kisakcod-db-disk32-zone-engine PRIVATE -fsanitize-address-globals-dead-stripping)
-    target_compile_options(kisakcod-db-disk32-zone-tests PRIVATE -fsanitize-address-globals-dead-stripping)
-    target_link_options(kisakcod-db-disk32-zone-tests PRIVATE -Wl,-z,start-stop-gc)
 endif()
-target_link_libraries(kisakcod-db-disk32-zone-tests PRIVATE Threads::Threads)
-set_target_properties(kisakcod-db-disk32-zone-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+foreach(_target ${_zone_tests})
+    target_compile_options(${_target} PRIVATE -Wall -Wextra -Werror)
+    target_link_options(${_target} PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address" AND NOT APPLE)
+        target_compile_options(${_target} PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(${_target} PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    target_link_libraries(${_target} PRIVATE Threads::Threads)
+    set_target_properties(${_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+endforeach()
 add_test(NAME database-disk32-zone-load COMMAND kisakcod-db-disk32-zone-tests)
+add_test(NAME database-disk32-zone-retail-shapes COMMAND kisakcod-db-disk32-zone-retail-tests)
+set_tests_properties(database-disk32-zone-retail-shapes PROPERTIES TIMEOUT 60)
 # With one family's guard left on, the zone fails closed naming it.
 foreach(_family IN ITEMS rawfile stringtable physpreset localize map_ents game_map_mp com_map
         sndcurve loaded_sound sound image lightdef techset material font fx impactfx menu menufile

@@ -25,6 +25,9 @@ DBAliasHandle __cdecl DB_RegisterPointerSlot(
     const void *slot,
     DBAliasKind kind);
 DBAliasHandle __cdecl DB_InsertPointer(DBAliasKind kind);
+// A block-4 pointer slot the loader has filled with pointer: a later offset
+// token naming the slot resolves to pointer (AliasRegistry::RecordSlot).
+void __cdecl DB_RecordPointerSlot(const void *slot, DBAliasKind kind, const void *pointer);
 void __cdecl DB_SetInsertedPointer(
     DBAliasHandle handle,
     DBAliasKind expectedKind,
