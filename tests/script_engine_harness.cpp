@@ -337,6 +337,17 @@ std::vector<int> RunMain()
     return g_reports;
 }
 
+std::vector<int> RunMain(const std::vector<int> &args)
+{
+    if (!g_mainHandle)
+        Fail("RunMain", "no script loaded");
+    g_reports.clear();
+    for (auto arg = args.rbegin(); arg != args.rend(); ++arg)
+        Scr_AddInt(*arg);
+    Scr_FreeThread(Scr_ExecThread(g_mainHandle, static_cast<uint32_t>(args.size())));
+    return g_reports;
+}
+
 void Unload()
 {
     Scr_ShutdownSystem(1, 1);
