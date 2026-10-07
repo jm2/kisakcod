@@ -343,9 +343,11 @@ void __cdecl R_GetBspOmniLightSurfs(const GfxLight *light, int lightIndex, GfxBs
 
 int __cdecl R_AllowBspOmniLight(int surfIndex, void *bspLightCallbackAsVoid)
 {
-    return *(_BYTE *)(*(uint32_t *)bspLightCallbackAsVoid + surfIndex)
-        && *((float *)bspLightCallbackAsVoid + 4) >= PointToBoxDistSq(
-            (const float *)bspLightCallbackAsVoid + 1,
+    const BspOmniLightCallback *callback = static_cast<const BspOmniLightCallback *>(bspLightCallbackAsVoid);
+
+    return callback->surfaceVisData[surfIndex]
+        && callback->radiusSq >= PointToBoxDistSq(
+            callback->position,
             rgp.world->dpvs.surfaces[surfIndex].bounds[0],
             rgp.world->dpvs.surfaces[surfIndex].bounds[1]);
 }
@@ -454,9 +456,11 @@ void __cdecl R_GetBspSpotLightSurfs(const GfxLight *light, int lightIndex, GfxBs
 
 int __cdecl R_AllowBspSpotLightShadows(int surfIndex, void *bspLightCallbackAsVoid)
 {
+    const BspSpotLightCallback *callback = static_cast<const BspSpotLightCallback *>(bspLightCallbackAsVoid);
+
     if (r_spotLightShadows->current.enabled)
         return R_BoxInPlanes(
-            (const float (*)[4])((uint32_t)bspLightCallbackAsVoid + 4),
+            callback->planes,
             rgp.world->dpvs.surfaces[surfIndex].bounds[0],
             rgp.world->dpvs.surfaces[surfIndex].bounds[1]);
     else
@@ -551,9 +555,11 @@ int __cdecl R_BoxInPlanes(const float (*planes)[4], const float *mins, const flo
 
 int __cdecl R_AllowBspSpotLight(int surfIndex, void *bspLightCallbackAsVoid)
 {
-    if (*(_BYTE *)(*(uint32_t *)bspLightCallbackAsVoid + surfIndex))
+    const BspSpotLightCallback *callback = static_cast<const BspSpotLightCallback *>(bspLightCallbackAsVoid);
+
+    if (callback->surfaceVisData[surfIndex])
         return R_BoxInPlanes(
-            (const float (*)[4])((uint32_t)bspLightCallbackAsVoid + 4),
+            callback->planes,
             rgp.world->dpvs.surfaces[surfIndex].bounds[0],
             rgp.world->dpvs.surfaces[surfIndex].bounds[1]);
     else
