@@ -2905,7 +2905,7 @@ ScriptFunctionCall:
                 scrVmPub.function_frame->fs.pos = fs.pos;
                 scrVmPub.function_frame->fs.startTop = fs.startTop;
                 fs.pos = Scr_ReadCodePos(&scrVmPub.function_frame->fs.pos);
-                fs.startTop = &fs.top[-Scr_ReadUnsigned(&scrVmPub.function_frame->fs.pos)];
+                fs.startTop = fs.top - static_cast<ptrdiff_t>(Scr_ReadUnsigned(&scrVmPub.function_frame->fs.pos));
                 goto thread_call;
             }
             scrVarPub.error_index = 1;
@@ -2924,7 +2924,7 @@ ScriptFunctionCall:
                     scrVmPub.function_frame->fs.pos = fs.pos;
                     scrVmPub.function_frame->fs.startTop = fs.startTop;
                     fs.pos = tempCodePos;
-                    fs.startTop = &fs.top[-Scr_ReadUnsigned(&scrVmPub.function_frame->fs.pos)];
+                    fs.startTop = fs.top - static_cast<ptrdiff_t>(Scr_ReadUnsigned(&scrVmPub.function_frame->fs.pos));
                     goto thread_call;
                 }
                 scrVarPub.error_index = 1;
@@ -2948,7 +2948,7 @@ ScriptFunctionCall:
             scrVmPub.function_frame->fs.pos = fs.pos;
             scrVmPub.function_frame->fs.startTop = fs.startTop;
             fs.pos = Scr_ReadCodePos(&scrVmPub.function_frame->fs.pos);
-            fs.startTop = &fs.top[-Scr_ReadUnsigned(&scrVmPub.function_frame->fs.pos)];
+            fs.startTop = fs.top - static_cast<ptrdiff_t>(Scr_ReadUnsigned(&scrVmPub.function_frame->fs.pos));
             goto thread_call;
 
         case OP_ScriptMethodThreadCallPointer:
@@ -2975,7 +2975,7 @@ ScriptFunctionCall:
             scrVmPub.function_frame->fs.pos = fs.pos;
             scrVmPub.function_frame->fs.startTop = fs.startTop;
             fs.pos = tempCodePos;
-            fs.startTop = &fs.top[-Scr_ReadUnsigned(&scrVmPub.function_frame->fs.pos)];
+            fs.startTop = fs.top - static_cast<ptrdiff_t>(Scr_ReadUnsigned(&scrVmPub.function_frame->fs.pos));
 thread_call:
             scrVmPub.function_frame->fs.top = fs.startTop;
             scrVmPub.function_frame->topType = fs.startTop->type;
@@ -3535,7 +3535,9 @@ uint32_t __cdecl VM_Execute(uint32_t localId, const char *pos, uint32_t paramcou
 
     iassert(paramcount <= scrVmPub.inparamcount);
     Scr_ClearOutParams();
-    startTop = &scrVmPub.top[-paramcount];
+    // The parameters sit below the top. paramcount is unsigned: negating it
+    // as an index wrapped mod 2^32, far past the stack at 64-bit.
+    startTop = scrVmPub.top - static_cast<ptrdiff_t>(paramcount);
     paramcounta = scrVmPub.inparamcount - paramcount;
     if (scrVmPub.function_count >= 30)
     {
