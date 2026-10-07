@@ -23,18 +23,17 @@ void Check(bool ok, const char *what)
 
 int main()
 {
-    FILE *const os = std::tmpfile();
-    if (!os)
-        return 1;
-    iwd_t *const iwd = reinterpret_cast<iwd_t *>(&g_failures); // never dereferenced
+    // The rule reads only the pointers' presence; neither is dereferenced.
+    FILE *const os = reinterpret_cast<FILE *>(&g_failures);
+    iwd_t *const iwd = reinterpret_cast<iwd_t *>(&g_failures);
 
     fileHandleData_t log{};
     log.handleFiles.file.o = os; // FS_FOpenFileByMode(FS_WRITE / FS_APPEND): size 0, no IWD
     Check(!FS_ShutdownClosesHandle(log), "a written OS file stays open (the log file)");
 
-    fileHandleData_t read = log;
-    read.fileSize = 42; // FS_FOpenFileByMode(FS_READ): the file's length
-    Check(FS_ShutdownClosesHandle(read), "a read OS file closes");
+    fileHandleData_t reading = log;
+    reading.fileSize = 42; // FS_FOpenFileByMode(FS_READ): the file's length
+    Check(FS_ShutdownClosesHandle(reading), "a read OS file closes");
 
     fileHandleData_t inIwd = log;
     inIwd.zipFile = iwd; // inside an IWD, even an empty one
@@ -44,7 +43,6 @@ int main()
     closed.fileSize = 42;
     Check(!FS_ShutdownClosesHandle(closed), "a free handle is left alone");
 
-    std::fclose(os);
     if (!g_failures)
         std::printf("fs shutdown handles: all checks passed\n");
     return g_failures ? 1 : 0;
