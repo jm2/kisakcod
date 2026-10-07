@@ -74,6 +74,19 @@ int main()
         Expect(!IsAssetTypeSupported(sp, type), "SP must reject unavailable asset types");
     }
 
+    // Retail PC zones list SndDriverGlobals with no record: the loader skips it,
+    // but it stays Unavailable (no pool), and an inline token fails closed.
+    for (std::int32_t type = -1; type <= db::asset_mode::kAssetTypeCount; ++type)
+    {
+        Expect(
+            db::asset_mode::IsSkippedByLoader(type) == (type == db::asset_mode::kSndDriverGlobals),
+            "only SndDriverGlobals is skipped by the loader");
+    }
+    Expect(db::asset_mode::IsSkippableListedOnlyToken(0x0051C354u), "a stale header token is skippable");
+    Expect(db::asset_mode::IsSkippableListedOnlyToken(0u), "a null header token is skippable");
+    Expect(!db::asset_mode::IsSkippableListedOnlyToken(0xFFFFFFFFu), "an inline (-1) record is not skippable");
+    Expect(!db::asset_mode::IsSkippableListedOnlyToken(0xFFFFFFFEu), "an inline (-2) record is not skippable");
+
     constexpr std::int32_t invalidTypes[] = {-1, db::asset_mode::kAssetTypeCount, 0x7FFFFFFF};
     for (const std::int32_t type : invalidTypes)
     {

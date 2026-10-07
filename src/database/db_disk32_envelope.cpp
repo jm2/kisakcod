@@ -100,7 +100,8 @@ bool LoadScriptStrings(const ScriptStringListDisk32 &disk, ScriptStringList *nat
 
 bool AdmitType(void *, std::int32_t type) noexcept
 {
-    return DB_IsXAssetTypeSupportedForBuild(static_cast<XAssetType>(type));
+    return DB_IsXAssetTypeSupportedForBuild(static_cast<XAssetType>(type))
+        || db::asset_mode::IsSkippedByLoader(type);
 }
 
 // Load_XAssetArrayCustom: count 8-byte records, then each asset. Every type

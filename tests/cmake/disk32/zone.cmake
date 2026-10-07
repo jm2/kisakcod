@@ -53,3 +53,6 @@ foreach(_family IN ITEMS rawfile stringtable physpreset localize map_ents game_m
     set_tests_properties(database-disk32-zone-guard-${_family} PROPERTIES TIMEOUT 60)
 endforeach()
 set_tests_properties(database-disk32-zone-load PROPERTIES TIMEOUT 60)
+# A SndDriverGlobals record with an inline token holds bytes no PC loader reads.
+add_test(NAME database-disk32-zone-drop-sndinline COMMAND kisakcod-db-disk32-zone-tests expect-drop sndinline)
+set_tests_properties(database-disk32-zone-drop-sndinline PROPERTIES TIMEOUT 60)
