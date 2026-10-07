@@ -10547,6 +10547,52 @@ void __cdecl Load_XAssetHeader(bool atStreamStart)
     }
 }
 
+// The alias kind a pointer step resolves for a top-level asset of this type;
+// Invalid for completed objects (StringTable, XModelPieces) and for types
+// with no PC loader.
+static DBAliasKind DB_XAssetHeaderAliasKind(int32_t type)
+{
+    switch (type)
+    {
+    case ASSET_TYPE_PHYSPRESET: return DBAliasKind::PhysPreset;
+    case ASSET_TYPE_XANIMPARTS: return DBAliasKind::XAnimParts;
+    case ASSET_TYPE_XMODEL: return DBAliasKind::XModel;
+    case ASSET_TYPE_MATERIAL: return DBAliasKind::Material;
+    case ASSET_TYPE_TECHNIQUE_SET: return DBAliasKind::MaterialTechniqueSet;
+    case ASSET_TYPE_IMAGE: return DBAliasKind::GfxImage;
+    case ASSET_TYPE_SOUND: return DBAliasKind::SndAliasList;
+    case ASSET_TYPE_SOUND_CURVE: return DBAliasKind::SndCurve;
+    case ASSET_TYPE_LOADED_SOUND: return DBAliasKind::LoadedSound;
+    case ASSET_TYPE_CLIPMAP:
+    case ASSET_TYPE_CLIPMAP_PVS: return DBAliasKind::ClipMap;
+    case ASSET_TYPE_COMWORLD: return DBAliasKind::ComWorld;
+    case ASSET_TYPE_GAMEWORLD_SP: return DBAliasKind::GameWorldSp;
+    case ASSET_TYPE_GAMEWORLD_MP: return DBAliasKind::GameWorldMp;
+    case ASSET_TYPE_MAP_ENTS: return DBAliasKind::MapEnts;
+    case ASSET_TYPE_GFXWORLD: return DBAliasKind::GfxWorld;
+    case ASSET_TYPE_LIGHT_DEF: return DBAliasKind::GfxLightDef;
+    case ASSET_TYPE_FONT: return DBAliasKind::Font;
+    case ASSET_TYPE_MENULIST: return DBAliasKind::MenuList;
+    case ASSET_TYPE_MENU: return DBAliasKind::MenuDef;
+    case ASSET_TYPE_LOCALIZE_ENTRY: return DBAliasKind::LocalizeEntry;
+    case ASSET_TYPE_WEAPON: return DBAliasKind::WeaponDef;
+    case ASSET_TYPE_FX: return DBAliasKind::FxEffectDef;
+    case ASSET_TYPE_IMPACT_FX: return DBAliasKind::FxImpactTable;
+    case ASSET_TYPE_RAWFILE: return DBAliasKind::RawFile;
+    default: return DBAliasKind::Invalid;
+    }
+}
+
+// A retail zone can name an earlier top-level asset through that asset's
+// header slot in the XAsset record array (block 4), as it names a -2 alias
+// slot: the 32-bit loader reads the pooled pointer back out of the slot.
+void __cdecl DB_RecordXAssetHeaderSlot(const void *slot, int32_t type, const void *asset)
+{
+    const DBAliasKind kind = DB_XAssetHeaderAliasKind(type);
+    if (kind != DBAliasKind::Invalid && asset)
+        DB_RecordPointerSlot(slot, kind, asset);
+}
+
 void __cdecl Load_XAsset(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varXAsset, 8);

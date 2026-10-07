@@ -672,11 +672,63 @@ void TestCompletedObjectNative()
                  Status::InvalidContext, "an invalidated registry forgets native objects");
 }
 
+// A recorded slot is one the loader has already filled (an XAsset header, a
+// pointer in a block-4 record): published as recorded, in any block-4 order.
+void TestRecordedSlots()
+{
+    BlockView blocks[db::relocation::kBlockCount];
+    FillBlocks(blocks);
+    AliasRegistry registry;
+    registry.Reset(blocks, db::relocation::kBlockCount);
+    AliasHandle registered;
+    ExpectStatus(registry.RegisterSlot(blocks[4].base + 16, AliasKind::Material, &registered),
+                 Status::Ok, "register a cursor slot");
+    ExpectStatus(registry.RecordSlot(blocks[4].base + 8, AliasKind::MaterialTechniqueSet, Address(0x5000)),
+                 Status::Ok, "record a slot below the cursor's");
+    ExpectStatus(registry.RecordSlot(blocks[4].base + 4, AliasKind::GfxImage, Address(0x6000)),
+                 Status::Ok, "record a lower slot after a higher one");
+    ExpectStatus(registry.RecordSlot(blocks[4].base + 8, AliasKind::MaterialTechniqueSet, Address(0x7000)),
+                 Status::DuplicateSlot, "a recorded slot records once");
+    ExpectStatus(registry.RecordSlot(blocks[4].base + 16, AliasKind::Material, Address(0x7000)),
+                 Status::DuplicateSlot, "a registered slot is not recorded");
+    ExpectStatus(registry.RegisterSlot(blocks[4].base + 20, AliasKind::Material, &registered),
+                 Status::Ok, "cursor registration continues past recorded slots");
+    ExpectStatus(registry.RecordSlot(blocks[4].base + 24, AliasKind::StringTable, Address(0x7000)),
+                 Status::InvalidArgument, "a completed object is not recorded");
+    ExpectStatus(registry.RecordSlot(blocks[4].base + 24, AliasKind::Material, 0),
+                 Status::InvalidArgument, "a recorded slot holds a pointer");
+    ExpectStatus(registry.RecordSlot(blocks[0].base, AliasKind::Material, Address(0x7000)),
+                 Status::WrongBlock, "only block 4 records slots");
+
+    std::uintptr_t resolved = 0;
+    ExpectStatus(registry.Resolve(Token(4, 8), AliasKind::MaterialTechniqueSet, 0, &resolved),
+                 Status::Ok, "resolve a recorded slot");
+    Expect(resolved == Address(0x5000), "a recorded slot resolves to its pointer");
+    ExpectStatus(registry.Resolve(Token(4, 4), AliasKind::GfxImage, 0, &resolved),
+                 Status::Ok, "resolve the lower recorded slot");
+    Expect(resolved == Address(0x6000), "the lower recorded slot resolves to its pointer");
+    ExpectStatus(registry.Resolve(Token(4, 4), AliasKind::Material, 0, &resolved),
+                 Status::KindMismatch, "a recorded slot checks its kind");
+    ExpectStatus(registry.Resolve(Token(4, 16), AliasKind::Material, 0, &resolved),
+                 Status::PendingSlot, "cursor slots still resolve through their records");
+
+    registry.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(registry.Resolve(Token(4, 8), AliasKind::MaterialTechniqueSet, 0, &resolved),
+                 Status::UnregisteredSlot, "a reset forgets recorded slots");
+    AliasRegistry limited(1);
+    limited.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(limited.RecordSlot(blocks[4].base, AliasKind::Material, Address(0x5000)),
+                 Status::Ok, "a recorded slot counts toward capacity");
+    ExpectStatus(limited.RegisterSlot(blocks[4].base + 4, AliasKind::Material, &registered),
+                 Status::CapacityExceeded, "capacity counts recorded slots");
+}
+
 int main()
 {
     TestDirectResolver();
     TestDirectCString();
     TestCompletedObjectNative();
+    TestRecordedSlots();
 
     Expect(
         db::relocation::RequiresExactStartPublication(

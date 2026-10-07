@@ -250,6 +250,10 @@ void __cdecl Load_XAsset(bool atStreamStart)
         Com_Error(ERR_DROP, "the test routes no other family");
 }
 
+// db_load.cpp's header-slot alias; the zone test (database-disk32-zone-*)
+// runs the real ones.
+void __cdecl DB_RecordXAssetHeaderSlot(const void *, int32_t, const void *) {}
+
 // Mark_ScriptStringCustom's reference count; the envelope never marks.
 db::load_legacy_bridge::LegacyBridgeStatus
 db::load_legacy_bridge::DbLoadLegacyBridge::TryAddUser4(std::uint32_t) noexcept

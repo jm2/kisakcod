@@ -362,6 +362,14 @@ public:
     // start. A 64-bit loader converts that disk32 record into native storage
     // and passes it as nativeAddress; other kinds already publish a native
     // pointer and must pass zero.
+    // A pointer slot the loader has already filled: a later offset token may
+    // name it, as the 32-bit loader reads the pointer back out of the slot.
+    // It is published as it is recorded, so unlike RegisterSlot it may come in
+    // any block-4 order. Completed objects are not recorded this way.
+    Status RecordSlot(
+        std::uintptr_t slotAddress,
+        AliasKind kind,
+        std::uintptr_t resolvedAddress);
     Status Publish(
         AliasHandle handle,
         AliasKind expectedKind,
@@ -396,6 +404,7 @@ private:
         bool published;
     };
 
+    static const Record *FindOffset(const std::vector<Record> &records, std::uint32_t offset);
     Status FindSlot(std::uintptr_t slotAddress, std::uint32_t *offset) const;
     Status DecodeSlotToken(disk32::PointerToken token, std::uint32_t *offset) const;
     Status FindPublished(
@@ -406,6 +415,7 @@ private:
 
     BlockView blocks_[kBlockCount]{};
     std::vector<Record> records_;
+    std::vector<Record> recorded_; // RecordSlot's, sorted by offset
     std::size_t maxRecords_;
     std::uint64_t generation_ = 0;
     bool contextValid_ = false;

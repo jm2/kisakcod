@@ -666,6 +666,7 @@ void __cdecl Load_XAssetArrayCustom(int32_t count)
     {
         varXAsset = var;
         Load_XAsset(0);
+        DB_RecordXAssetHeaderSlot(&var->header, var->type, var->header.data);
         ++var;
     }
 }
