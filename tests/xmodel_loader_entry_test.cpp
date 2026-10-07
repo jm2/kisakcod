@@ -16,9 +16,10 @@
 // Controlled fixtures are served through the harness file system; see
 // xmodel_loader_entry_harness.hpp for the service stubs.
 //
-// Win32-x86 only: the loader TU's DirectX/Miles/ODE header web and
-// MSVC decompiled dialect do not compile on the portable 64-bit legs;
-// tests/CMakeLists.txt gates this target to the Windows x86 CI leg.
+// Windows only: the loader TU's DirectX/Miles/ODE header web and MSVC
+// decompiled dialect do not compile on the POSIX legs. Win32 builds the
+// TUs in their SP flavour; Win64 in their MP flavour, because the SP
+// header web is not 64-bit ready (tests/cmake/xmodel_xanim.cmake).
 
 #include <xanim/xmodel.h>
 // Full XSurface definition for the surface-content assertions below:
@@ -54,6 +55,16 @@ XModel *__cdecl XModelLoadFile(char *name,
 XModelPieces *__cdecl XModelPiecesLoadFile(const char *name,
                                            void *(__cdecl *Alloc)(int));
 
+#ifdef KISAK_MP
+// The 64-bit legs build the loader TUs in their MP flavour (the SP header
+// web is not 64-bit ready). XModelAllowLoadMesh then reads com_dedicated;
+// a zero-initialised dvar is a client, which loads meshes like SP.
+namespace
+{
+dvar_t g_comDedicatedClient{};
+}
+const dvar_t *com_dedicated = &g_comDedicatedClient;
+#endif
 // ---------------------------------------------------------------------------
 // Harness definitions. The printf-family wrappers (Com_PrintError,
 // Com_sprintf, Com_Error) and the production assert handler

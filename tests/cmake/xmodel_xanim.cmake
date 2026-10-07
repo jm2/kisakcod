@@ -108,10 +108,11 @@ add_test(
 # capture stubs; none of the entry points needs a stand-in). The
 # loader TUs' DirectX/Miles/ODE header web and MSVC decompiled dialect
 # (raw __declspec(align(16)), `const struct` definitions) compile only
-# under the win32-x86 platform, so this target is gated to the Windows
-# x86 CI leg and never configured on the portable 64-bit legs; the
-# portable suites above cover the cursor contracts everywhere else.
-if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+# with MSVC on Windows, so this target is gated to the Windows legs: the
+# Win32 x86 leg and the Win64 portable leg, where it checks the raw
+# loaders' 64-bit layouts. The portable suites above cover the cursor
+# contracts everywhere else.
+if (WIN32)
     add_executable(kisakcod-xmodel-loader-entry-tests
         xmodel_loader_entry_test.cpp
         xmodel_loader_entry_harness.hpp
@@ -135,9 +136,15 @@ if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     # define, leaving the function without a return (C4716). KISAK_SP is
     # the SP game target's own definition for these TUs (scripts/sp), and
     # it keeps KISAK_DEDI_HEADLESS undefined so XModelLoadFile runs its
-    # real parse instead of the headless abort.
-    target_compile_definitions(
-        kisakcod-xmodel-loader-entry-tests PRIVATE KISAK_SP)
+    # real parse instead of the headless abort. The SP header web (actor.h
+    # and friends) is not 64-bit ready, so Win64 builds the MP flavour,
+    # whose XModelAllowLoadMesh reads com_dedicated (the test defines it
+    # as a client).
+    if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+        target_compile_definitions(kisakcod-xmodel-loader-entry-tests PRIVATE KISAK_MP)
+    else()
+        target_compile_definitions(kisakcod-xmodel-loader-entry-tests PRIVATE KISAK_SP)
+    endif()
     # Warning policy: the test TU compiles at exactly the game target's
     # own warning surface (/W3, platform.cmake — no /WX). The
     # surface-content assertions need the full production header web
