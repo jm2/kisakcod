@@ -115,6 +115,14 @@ extern int dvar_modifiedFlags;
 
 #ifdef KISAK_MP
 extern const dvar_t *com_dedicated;
+
+// "dedicated" is an enum dvar (0 listen server, 1 LAN, 2 internet). Read its
+// integer: DvarValue::enabled is a bool view of the first byte, and a bool
+// holding 2 is undefined, so "dedicated 2" can read as false.
+inline bool Com_IsDedicatedServer()
+{
+    return com_dedicated->current.integer != 0;
+}
 #endif
 extern const dvar_t *com_hiDef;
 extern const dvar_t *com_animCheck;
