@@ -9,6 +9,8 @@
 
 #include <bit>
 #include <cstdint>
+#include <initializer_list>
+#include <utility>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -38,6 +40,16 @@ struct Image
     Image &Fill(std::size_t count, std::uint8_t value = 0)
     {
         bytes.insert(bytes.end(), count, value);
+        return *this;
+    }
+    // A size-byte record, zero but for each {retail offset, word}.
+    Image &Record(std::uint32_t size, std::initializer_list<std::pair<std::uint32_t, std::uint32_t>> words)
+    {
+        const std::size_t at = bytes.size();
+        Fill(size);
+        for (const auto &[offset, value] : words)
+            for (int shift = 0; shift < 32; shift += 8)
+                bytes[at + offset + static_cast<std::uint32_t>(shift / 8)] = static_cast<std::uint8_t>(value >> shift);
         return *this;
     }
     // A string streamed into block 4.

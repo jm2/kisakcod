@@ -131,10 +131,12 @@ const Malformed kMalformed[] = {
      "string offset"},
     {"name runs off its block", [] { File().Record(kInline, 1, kGlyphs, 0, 0, kInline); RunOff(); }, kInline,
      "Unterminated"},
-    {"an inline material", [] { File().Record(kInline, 1, kGlyphs, kInline, 0, kInline).Text("a"); }, kInline,
-     "material"},
-    {"a glow material offset", [] { File().Record(kInline, 1, kGlyphs, 0, VirtualOffset(0), kInline).Text("a"); },
-     kInline, "material"},
+    {"an unmapped material alias", [] { File().Record(kInline, 1, kGlyphs, VirtualOffset(0), 0, kInline).Text("a"); },
+     kInline, "alias offset"},
+    {"an unmapped glow material alias",
+     [] { File().Record(kInline, 1, kGlyphs, 0, VirtualOffset(0), kInline).Text("a"); }, kInline, "alias offset"},
+    {"a truncated inline material", [] { File().Record(kInline, 1, kGlyphs, kInline, 0, kInline).Text("a"); },
+     kInline, "ended unexpectedly"},
     {"truncated glyphs", [] { File().Record(kInline, 1, kGlyphs, 0, 0, kInline).Text("a").Glyphs(kGlyphs - 1); },
      kInline, "ended unexpectedly"},
     {"glyphs past their block", [] { File().Record(kInline, 1, 200, 0, 0, kInline).Text("a").Glyphs(200); },
@@ -173,6 +175,24 @@ void __cdecl Load_FontAsset(XAssetHeader *header)
     entry = *header->font;
     Expect(entry.fontName && entry.fontName[0] != '\0', "a published font has a name");
     header->font = &entry;
+}
+
+// The materials load through Material's real step; no test here publishes one.
+void __cdecl Load_MaterialAsset(XAssetHeader *)
+{
+    Expect(false, "no material publishes");
+}
+void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *)
+{
+    Expect(false, "no technique set publishes");
+}
+void __cdecl Load_GfxImageAsset(XAssetHeader *)
+{
+    Expect(false, "no image publishes");
+}
+void __cdecl DB_LoadedExternalData(std::int32_t)
+{
+    Expect(false, "no image publishes");
 }
 
 int main()
