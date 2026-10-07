@@ -457,6 +457,10 @@ void WriteGfxWorld(Image &z)
 
 const Asset kZone[] = {
     {ASSET_TYPE_RAWFILE, kInline, "e2e/a.gsc", WriteRawFile},
+    // Retail MP zones list a SndDriverGlobals record that holds a stale
+    // build-tool header value and streams nothing (expect-drop sndinline makes
+    // it an inline token, which must fail closed).
+    {ASSET_TYPE_SNDDRIVER_GLOBALS, 0x0051C354u, "e2e/snddriver", WriteNothing, nullptr, true},
     {ASSET_TYPE_RAWFILE, kShared, "e2e/b.cfg", WriteSharedRawFile},
     {ASSET_TYPE_RAWFILE, 0, "e2e/b.cfg", WriteNothing, &g_at.rawFile},
     {ASSET_TYPE_STRINGTABLE, kInline, "e2e/table", WriteStringTable},
@@ -490,7 +494,19 @@ const char *const kScriptStrings[] = {"e2e_tag", "bone_root", "bone_child"};
 
 std::span<const Asset> zone_test::ZoneAssets()
 {
-    return kZone;
+    static const std::vector<Asset> zone = [] {
+        std::vector<Asset> assets(std::begin(kZone), std::end(kZone));
+        const bool inlineDriver = Variant() && !std::strcmp(Variant(), "sndinline");
+        for (Asset &asset : assets)
+            asset.token = inlineDriver && asset.type == ASSET_TYPE_SNDDRIVER_GLOBALS ? kInline : asset.token;
+        return assets;
+    }();
+    return zone;
+}
+
+const char *zone_test::VariantDrop()
+{
+    return Variant() && !std::strcmp(Variant(), "sndinline") ? "carries an inline record" : nullptr;
 }
 
 std::span<const char *const> zone_test::ZoneScriptStrings()

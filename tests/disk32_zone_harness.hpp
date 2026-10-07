@@ -80,15 +80,22 @@ struct Asset
     const char *name;
     void (*write)(Image &);
     const std::uint32_t *alias = nullptr;
+    bool skipped = false; // listed only: the loader streams and publishes nothing
 
     std::uint32_t Token() const { return alias ? Virt(*alias) : token; }
 };
+
+// The variant `expect-drop <variant>` names, or null for the plain load.
+const char *Variant();
 
 // What db_disk32_zone_tests.cpp defines: the assets, the zone's script
 // strings and the checks after the load.
 std::span<const Asset> ZoneAssets();
 std::span<const char *const> ZoneScriptStrings();
 void CheckZone();
+// The ERR_DROP text the active variant's zone must raise, or null when the
+// variant is unknown.
+const char *VariantDrop();
 
 // The pool lookup the engine makes; null when the zone published no such asset.
 XAssetHeader Find(XAssetType type, const char *name);

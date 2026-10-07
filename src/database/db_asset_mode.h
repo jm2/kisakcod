@@ -58,6 +58,23 @@ constexpr Requirement RequirementForAssetType(const std::int32_t assetType) noex
     }
 }
 
+// Retail PC zones list a SndDriverGlobals asset (code_post_gfx_mp holds one) but
+// store no record for it: its header slot holds a stale build-tool address, not
+// an inline (-1/-2) or offset token, and the PC loader's dispatch has no case for
+// it. It has no PC pool either, so it stays Unavailable for allocation and
+// publishing; the asset-list admission and the load/mark dispatch skip it.
+constexpr bool IsSkippedByLoader(const std::int32_t assetType) noexcept
+{
+    return assetType == kSndDriverGlobals;
+}
+
+// A skipped asset's header token: any stale value is skippable, but an inline
+// record (-1/-2) holds bytes the loader would have to consume, so it is not.
+constexpr bool IsSkippableListedOnlyToken(const std::uint32_t token) noexcept
+{
+    return token != 0xFFFFFFFFu && token != 0xFFFFFFFEu;
+}
+
 constexpr bool IsAssetTypeSupported(
     const BuildMode buildMode,
     const std::int32_t assetType) noexcept

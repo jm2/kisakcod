@@ -10,6 +10,10 @@
 // `guard <family>` loads the same zone with that family's guard left on
 // (db_asset_layout.h's test seam admits every other family): the load must
 // fail closed naming it.
+//
+// `expect-drop <variant>` loads the zone the test file builds for that
+// variant (zone_test::Variant): the load must raise the ERR_DROP its
+// VariantDrop names.
 
 #include "disk32_zone_harness.hpp"
 
@@ -141,8 +145,12 @@ void CheckPublished()
     for (std::size_t i = 0; i < assets.size() && g_varXAssetList.assets; ++i)
     {
         const XAsset &asset = g_varXAssetList.assets[i];
-        Expect(asset.type == assets[i].type && Is(asset.header.data, assets[i].type, assets[i].name),
-               "an asset publishes and its header slot is the pool's:", assets[i].name);
+        if (assets[i].skipped)
+            Expect(asset.type == assets[i].type && !asset.header.data, "a listed-only asset loads nothing:",
+                   assets[i].name);
+        else
+            Expect(asset.type == assets[i].type && Is(asset.header.data, assets[i].type, assets[i].name),
+                   "an asset publishes and its header slot is the pool's:", assets[i].name);
     }
     for (const char *text : ZoneScriptStrings())
         Expect(SL_FindString(text) != 0, "a script string is interned:", text);
@@ -154,9 +162,12 @@ void CheckUnload(std::uint32_t freeBefore)
     DB_ShutdownXAssets();
     Expect(g_zoneCount == 0, "the zone unloads");
     for (const Asset &asset : ZoneAssets())
-        Expect(!DB_FindXAssetEntry(asset.type, asset.name), "an asset outlives its zone:", asset.name);
+        Expect(asset.skipped || !DB_FindXAssetEntry(asset.type, asset.name), "an asset outlives its zone:",
+               asset.name);
     Expect(PMem_GetFreeAmount() == freeBefore, "the zone's memory is freed");
 }
+
+const char *g_variant = nullptr; // expect-drop's variant
 
 int Run(const char *guarded)
 {
@@ -171,6 +182,11 @@ int Run(const char *guarded)
         std::snprintf(quoted, sizeof(quoted), "'%s'", guarded);
         Expect(std::strstr(drop.message, quoted) && std::strstr(drop.message, "refusing to load"),
                "the guarded family fails closed naming itself:", drop.message);
+    }
+    else if (g_variant)
+    {
+        const char *const expected = VariantDrop();
+        Expect(expected && std::strstr(drop.message, expected), "the variant's zone fails closed:", drop.message);
     }
     else if (std::strcmp(drop.message, "(none)"))
         Expect(false, "the zone raised ERR_DROP:", drop.message);
@@ -188,6 +204,11 @@ dvar_s g_basePath{};
 dvar_s g_emptyDvar{};
 } // namespace
 
+const char *zone_test::Variant()
+{
+    return g_variant;
+}
+
 bool DB_TestAdmitsAssetFamily(std::int32_t assetType) noexcept
 {
     return assetType != g_guarded;
@@ -202,6 +223,7 @@ int main(int argc, char **argv)
     g_basePath.current.string = root.c_str();
     g_emptyDvar.current.string = "";
     const char *guarded = argc == 3 && !std::strcmp(argv[1], "guard") ? argv[2] : nullptr;
+    g_variant = argc == 3 && !std::strcmp(argv[1], "expect-drop") ? argv[2] : nullptr;
     for (std::int32_t type = 0; guarded && type < ASSET_TYPE_COUNT; ++type)
         g_guarded = std::strcmp(DB_GetXAssetTypeName(type), guarded) ? g_guarded : static_cast<XAssetType>(type);
     Expect(!guarded || g_guarded != ASSET_TYPE_COUNT, "the guarded family is named", guarded ? guarded : "");

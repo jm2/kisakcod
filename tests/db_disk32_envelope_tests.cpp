@@ -193,6 +193,23 @@ const Malformed kMalformed[] = {
      "exhausted", 0, 8},
 };
 
+// Retail code_post_gfx_mp lists a SndDriverGlobals asset whose header slot holds
+// a stale build-tool value and no record: the list admits it, and the RawFile
+// after it still loads, so nothing was consumed for it.
+void TestListedOnlyAssetSkipped()
+{
+    Zone zone;
+    File()
+        .Root(0, 0, 2, kInline)
+        .Word(ASSET_TYPE_SNDDRIVER_GLOBALS).Word(0x0051C354u)
+        .Word(kRawFile).Word(kInline)
+        .Word(kInline).Word(2).Word(kInline).Text("a.gsc").Text("hi");
+    const Drop drop = Catch([&] { DB_LoadXAssetListDisk32(&zone.list); });
+    Expect(!std::strcmp(drop.message, "(none)") && g_published == 1 && g_entrySlots.size() == 2 && g_entrySlots[0] == 0x0051C354u
+               && !zone.list.assets[0].header.data,
+           "a listed-only SndDriverGlobals is admitted and skipped", drop.message);
+}
+
 void TestMalformedFailsClosed()
 {
     for (const Malformed &test : kMalformed)
@@ -227,6 +244,8 @@ void __cdecl Load_XAsset(bool atStreamStart)
     Expect(!atStreamStart, "the header record is already streamed");
     if (varXAsset->type == ASSET_TYPE_RAWFILE)
         DB_LoadRawFilePtrDisk32(atStreamStart, &varXAsset->header.rawfile);
+    else if (db::asset_mode::IsSkippedByLoader(varXAsset->type)) // as Load_XAssetHeader skips it
+        varXAsset->header.data = nullptr;
     else if (DB_AdmitAssetFamilyLoad(varXAsset->type, "unported", true, false))
         Com_Error(ERR_DROP, "the test routes no other family");
 }
@@ -247,5 +266,5 @@ int main()
 {
     // The zone loads twice: the second load reuses native storage that still
     // holds the first load's data.
-    return Run({TestZoneLoads, TestZoneLoads, TestEmptyList, TestMalformedFailsClosed});
+    return Run({TestZoneLoads, TestZoneLoads, TestEmptyList, TestListedOnlyAssetSkipped, TestMalformedFailsClosed});
 }
