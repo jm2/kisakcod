@@ -146,7 +146,7 @@ char *__cdecl UILocalVar_GetString(const UILocalVar *var, char *stringBuf, uint3
         {
             if (var->type != UILOCALVAR_STRING)
                 MyAssertHandler(".\\ui\\ui_localvars.cpp", 184, 0, "var->type == UILOCALVAR_STRING\n\t%i, %i", var->type, 2);
-            return (char *)var->u.integer;
+            return (char *)var->u.string;
         }
     }
     else
@@ -185,6 +185,6 @@ void __cdecl UILocalVar_SetString(UILocalVar *var, char *s)
     if (var->type == UILOCALVAR_STRING)
         FreeString(var->u.string);
     var->type = UILOCALVAR_STRING;
-    var->u.integer = (int)CopyString(s);
+    var->u.string = CopyString(s);
 }
 
