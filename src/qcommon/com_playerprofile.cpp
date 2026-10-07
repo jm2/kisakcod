@@ -251,7 +251,7 @@ int __cdecl Com_GetConfigureDvarNames(const char **text, char (*dvarNames)[32])
             Com_Error(ERR_FATAL, "configure_mp.csv: dvar name %s longer than %i", token, 31);
         if (dvarCount >= 64)
             Com_Error(ERR_FATAL, "configure_mp.csv: more than %i dvars", 64);
-        I_strncpyz(&(*dvarNames)[32 * dvarCount], token->token, 32);
+        I_strncpyz(dvarNames[dvarCount], token->token, 32);
     }
     return dvarCount;
 }
@@ -272,7 +272,7 @@ void __cdecl Com_GetConfigureDvarValues(int dvarCount, const char **text, char (
         if (strlen(token->token) > 0x1F)
             Com_Error(ERR_FATAL, "configure_mp.csv: entry % s in dvar value column %i is longer than %i", token, dvarIndex, 31);
         if (dvarValues)
-            I_strncpyz(&(*dvarValues)[32 * dvarIndex], token->token, 32);
+            I_strncpyz(dvarValues[dvarIndex], token->token, 32);
     }
     tokena = Com_ParseOnLine(text);
     if (tokena->token[0])
@@ -287,10 +287,10 @@ void __cdecl Com_SetConfigureDvars(int dvarCount, const char (*dvarNames)[32], c
     for (dvarIndex = 0; dvarIndex < dvarCount; ++dvarIndex)
     {
         Dvar_SetFromStringByNameFromSource(
-            &(*dvarNames)[32 * dvarIndex],
-            &(*dvarValues)[32 * dvarIndex],
+            dvarNames[dvarIndex],
+            dvarValues[dvarIndex],
             DVAR_SOURCE_EXTERNAL);
-        dvar = Dvar_FindVar(&(*dvarNames)[32 * dvarIndex]);
+        dvar = Dvar_FindVar(dvarNames[dvarIndex]);
         iassert( dvar );
         Dvar_AddFlags(dvar, 1);
     }
@@ -485,13 +485,12 @@ char __cdecl Com_SetRecommendedGpu(const SysInfo *info, char **text)
 
 int __cdecl Com_ConfigureChecksum(const char *csv, int filesize)
 {
-    int checksum; // [esp+0h] [ebp-8h]
-    int i; // [esp+4h] [ebp-4h]
-
-    checksum = 0;
-    for (i = 0; i < filesize; ++i)
-        checksum = csv[i] + 0x7A69 * checksum;
-    return (checksum & 0xFFFFFFF) + 1;
+    // Unsigned, so the hash wraps as the x86 build's int arithmetic does
+    // (each char still sign-extends first); signed overflow is undefined.
+    uint32_t checksum = 0;
+    for (int i = 0; i < filesize; ++i)
+        checksum = static_cast<uint32_t>(static_cast<int>(csv[i])) + 0x7A69u * checksum;
+    return static_cast<int>(checksum & 0xFFFFFFFu) + 1;
 }
 
 void Sys_RegisterInfoDvars()
