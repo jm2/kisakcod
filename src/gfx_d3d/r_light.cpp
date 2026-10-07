@@ -36,6 +36,12 @@ StaticModelLightCallback g_staticModelLightCallback;
 int(__cdecl *allowSurf_0[1])(int, void *) = { R_AllowBspOmniLight };
 int(__cdecl *allowSurf_1[2])(int, void *) = { R_AllowBspSpotLight, R_AllowBspSpotLightShadows };
 
+// The BSP surface lists borrow the back half of a visible light's draw surfs;
+// the draw surfs emitted from them fill the front half. That half holds 1024
+// surface pointers on x86 and 512 on x64.
+static constexpr uint32_t kVisLightSurfListCapacity
+    = (sizeof(GfxVisibleLight::drawSurfs) - 512 * sizeof(GfxDrawSurf)) / sizeof(GfxSurface *);
+
 void __cdecl R_EnumLightDefs(void(__cdecl *func)(GfxLightDef *, void *), void *data)
 {
     GfxLightDef *def; // [esp+0h] [ebp-8h]
@@ -304,7 +310,7 @@ void __cdecl R_GetBspOmniLightSurfs(const GfxLight *light, int lightIndex, GfxBs
         allowSurf_0,
         &bspLightCallback,
         surfaces,
-        0x400u,
+        kVisLightSurfListCapacity,
         &visLightDrawSurfCount,
         1u);
     if (visLightDrawSurfCount)
@@ -385,7 +391,7 @@ void __cdecl R_GetBspSpotLightSurfs(const GfxLight *light, int lightIndex, GfxBs
     surfaces[1] = (GfxSurface **)&drawSurfs[1][512];
     bspLightCallback.surfaceVisData = surfaceVisData;
     R_CalcSpotLightPlanes(light, bspLightCallback.planes);
-    R_BoxSurfaces(mins, maxs, allowSurf_1, &bspLightCallback, surfaces, 0x400u, surfCounts, 2u);
+    R_BoxSurfaces(mins, maxs, allowSurf_1, &bspLightCallback, surfaces, kVisLightSurfListCapacity, surfCounts, 2u);
     if (surfCounts[0])
     {
         scene.visLightShadow[lightIndex - 4].drawSurfCount = surfCounts[0];
