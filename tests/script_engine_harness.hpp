@@ -22,6 +22,9 @@ bool Load(const std::string &name, std::string *error);
 // Runs main() of the loaded script as a level thread and returns the values
 // it passed to the test builtin report(value).
 std::vector<int> RunMain();
+// main(args...) as the engine starts a callback thread: each argument pushed,
+// the last first, then Scr_ExecThread with their count.
+std::vector<int> RunMain(const std::vector<int> &args);
 
 // G_ShutdownGame: frees the scripts loaded by Load.
 void Unload();

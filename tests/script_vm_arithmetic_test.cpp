@@ -8,6 +8,9 @@
 //                   counts are taken mod 32 (x86 semantics), not undefined.
 //   animtree-limit  the 127th distinct #using_animtree loads; the 128th
 //                   fails the load instead of writing past the lookup table.
+//   thread-params   a thread started with parameters, from the engine (as a
+//                   player callback is) and from script, finds them below
+//                   the stack top.
 
 #include <climits>
 #include <cstdio>
@@ -88,6 +91,29 @@ void Animtrees()
     GSC_CHECK(!gsc::Load("trees128", &error));
     GSC_CHECK(error.find("MAX_XANIMTREE_NUM exceeded") != std::string::npos);
 }
+void ThreadParams()
+{
+    gsc::SetSource("threadparams", R"(worker(x, y)
+{
+	report(x * 10 + y);
+}
+
+main(a, b)
+{
+	report(a);
+	report(b);
+	thread worker(a + b, 7);
+	worker(b, a);
+}
+)");
+    std::string error;
+    GSC_CHECK(gsc::Load("threadparams", &error));
+    const std::vector<int> values = gsc::RunMain({3, 4});
+    GSC_CHECK((values == std::vector<int>{3, 4, 77, 43}));
+    for (int value : values)
+        std::fprintf(stderr, "report %d\n", value);
+    gsc::Unload();
+}
 }  // namespace
 
 int main(int argc, char **argv)
@@ -97,9 +123,11 @@ int main(int argc, char **argv)
         Arithmetic();
     else if (!std::strcmp(which, "animtree-limit"))
         Animtrees();
+    else if (!std::strcmp(which, "thread-params"))
+        ThreadParams();
     else
     {
-        std::fprintf(stderr, "usage: %s arithmetic|animtree-limit\n", argv[0]);
+        std::fprintf(stderr, "usage: %s arithmetic|animtree-limit|thread-params\n", argv[0]);
         return 2;
     }
     std::printf("%s: %d failure(s)\n", which, gsc_failures);
