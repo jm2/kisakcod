@@ -303,7 +303,12 @@ void(__cdecl *__cdecl Scr_GetMethod(const char **, int *type))(scr_entref_t)
     *type = 0;
     return nullptr;
 }
-void __cdecl Scr_GetObjectField(uint32_t, int, int) { Fail("Scr_GetObjectField", "no entities"); }
+// No entities: a field read pushes a value naming the class, entity and
+// field, so GetEntityFieldValue's caller can see what it read.
+void __cdecl Scr_GetObjectField(uint32_t classnum, int entnum, int offset)
+{
+    Scr_AddInt(static_cast<int>(classnum) * 1000 + entnum * 10 + offset);
+}
 int32_t __cdecl Scr_SetObjectField(uint32_t, uint32_t, uint32_t) { Fail("Scr_SetObjectField", "no entities"); }
 
 // --- the harness ----------------------------------------------------------
