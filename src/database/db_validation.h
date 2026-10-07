@@ -456,8 +456,8 @@ inline bool D3D9ShaderBytecodeValid(
     {
         // Shader model 1 instruction tokens carry no length (bits 24-27 are
         // reserved), so the program cannot be walked token by token. What
-        // can be checked: the comment blocks after the version token, and an
-        // END token in the last dword.
+        // can be checked: the comment blocks after the version token, then
+        // an instruction before the END token in the last dword.
         while (cursor < dwordCount && program[cursor] != kEndToken
             && (program[cursor] & kOpcodeMask) == kCommentOpcode)
         {
@@ -467,7 +467,10 @@ inline bool D3D9ShaderBytecodeValid(
                 return false;
             cursor += payloadDwords + 1;
         }
-        return cursor < dwordCount && program[dwordCount - 1] == kEndToken;
+        // The program after the comments is at least one instruction: an
+        // END here ends it early, before the last dword.
+        return cursor < dwordCount - 1 && program[cursor] != kEndToken
+            && program[dwordCount - 1] == kEndToken;
     }
     while (cursor < dwordCount)
     {

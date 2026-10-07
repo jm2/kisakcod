@@ -2839,6 +2839,9 @@ int main()
         UINT32_C(0xFFFE0101), UINT32_C(0x00000001), UINT32_C(0xC00F0000), UINT32_C(0x90E40000)};
     const std::uint32_t vertex11LongComment[] = {
         UINT32_C(0xFFFE0101), UINT32_C(0x0003FFFE), UINT32_C(0), UINT32_C(0x0000FFFF)};
+    const std::uint32_t vertex11EarlyEnd[] = {UINT32_C(0xFFFE0101), UINT32_C(0x0000FFFF), UINT32_C(0x0000FFFF)};
+    const std::uint32_t vertex11CommentThenEarlyEnd[] = {
+        UINT32_C(0xFFFE0101), UINT32_C(0x0001FFFE), UINT32_C(0), UINT32_C(0x0000FFFF), UINT32_C(0x0000FFFF)};
     const std::uint32_t vertex11ReservedComment[] = {
         UINT32_C(0xFFFE0101), UINT32_C(0x8001FFFE), UINT32_C(0), UINT32_C(0x0000FFFF)};
     Expect(db::validation::D3D9ShaderBytecodeValid(vertex11, 8, D3D9ShaderStage::Vertex, 0),
@@ -2857,6 +2860,10 @@ int main()
            "shader-model-1 bytecode without a final END rejected");
     Expect(!db::validation::D3D9ShaderBytecodeValid(vertex11LongComment, 4, D3D9ShaderStage::Vertex, 0),
            "shader-model-1 comment past the program rejected");
+    Expect(!db::validation::D3D9ShaderBytecodeValid(vertex11EarlyEnd, 3, D3D9ShaderStage::Vertex, 0),
+           "shader-model-1 END before the last dword rejected");
+    Expect(!db::validation::D3D9ShaderBytecodeValid(vertex11CommentThenEarlyEnd, 5, D3D9ShaderStage::Vertex, 0),
+           "shader-model-1 END after its comments but before the last dword rejected");
     Expect(!db::validation::D3D9ShaderBytecodeValid(vertex11ReservedComment, 4, D3D9ShaderStage::Vertex, 0),
            "shader-model-1 reserved comment bit rejected");
     Expect(db::validation::MaterialVertexRoutingFollows(0, 1, 0, 2), "ordered material vertex destination accepted");
