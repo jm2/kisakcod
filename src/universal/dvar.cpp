@@ -109,10 +109,13 @@ void __cdecl Dvar_GetCombinedString(char *combined, int first)
 
 void __cdecl Dvar_WriteVariables(int f)
 {
-    Dvar_ForEach((void(__cdecl *)(const dvar_s *, void *))Dvar_WriteSingleVariable, &f);
+    Dvar_ForEach(Dvar_WriteSingleVariable, &f);
 }
 
-void __cdecl Dvar_WriteSingleVariable(const dvar_s *dvar, int *userData)
+// Dvar_ForEach's callbacks take its void * user data at their declared type,
+// so each is called through the type it has; userData is what its caller
+// passed (here the file handle).
+void __cdecl Dvar_WriteSingleVariable(const dvar_s *dvar, void *userData)
 {
     const char *v2; // eax
     int f; // [esp+0h] [ebp-4h]
@@ -121,7 +124,7 @@ void __cdecl Dvar_WriteSingleVariable(const dvar_s *dvar, int *userData)
     {
         if ((dvar->flags & 1) != 0)
         {
-            f = *userData;
+            f = *static_cast<const int *>(userData);
             v2 = Dvar_DisplayableLatchedValue(dvar);
             FS_Printf(f, "seta %s \"%s\"\n", dvar->name, v2);
         }
@@ -130,10 +133,10 @@ void __cdecl Dvar_WriteSingleVariable(const dvar_s *dvar, int *userData)
 
 void __cdecl Dvar_WriteDefaults(int f)
 {
-    Dvar_ForEach((void(__cdecl *)(const dvar_s *, void *))Dvar_WriteSingleDefault, &f);
+    Dvar_ForEach(Dvar_WriteSingleDefault, &f);
 }
 
-void __cdecl Dvar_WriteSingleDefault(const dvar_s *dvar, int *userData)
+void __cdecl Dvar_WriteSingleDefault(const dvar_s *dvar, void *userData)
 {
     const char *v2; // eax
     int f; // [esp+0h] [ebp-4h]
@@ -142,7 +145,7 @@ void __cdecl Dvar_WriteSingleDefault(const dvar_s *dvar, int *userData)
     {
         if ((dvar->flags & 0x40C0) == 0)
         {
-            f = *userData;
+            f = *static_cast<const int *>(userData);
             v2 = Dvar_DisplayableResetValue(dvar);
             FS_Printf(f, "set %s \"%s\"\n", dvar->name, v2);
         }
@@ -158,7 +161,9 @@ void __cdecl PBdvar_set(const char *var_name, char *value)
 char *__cdecl Dvar_InfoString(int localClientNum, char bit)
 {
     info1[0] = 0;
-    Dvar_ForEach((void(__cdecl *)(const dvar_s *, void *))Dvar_InfoStringSingle, &bit);
+    // The flag mask, widened: the callback reads 32 bits, and a char holds 8.
+    uint32_t mask = static_cast<uint8_t>(bit);
+    Dvar_ForEach(Dvar_InfoStringSingle, &mask);
 #if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
     if ((bit & 2) != 0)
     {
@@ -169,11 +174,11 @@ char *__cdecl Dvar_InfoString(int localClientNum, char bit)
     return info1;
 }
 
-void __cdecl Dvar_InfoStringSingle(const dvar_s *dvar, uint32_t *userData)
+void __cdecl Dvar_InfoStringSingle(const dvar_s *dvar, void *userData)
 {
     const char *v2; // eax
 
-    if ((*userData & dvar->flags) != 0)
+    if ((*static_cast<const uint32_t *>(userData) & dvar->flags) != 0)
     {
         v2 = Dvar_DisplayableValue(dvar);
         Info_SetValueForKey(info1, (char *)dvar->name, v2);
