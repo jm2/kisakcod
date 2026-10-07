@@ -83,6 +83,15 @@ void CM_ClearWorld()
     iassert( !cm_world.sectors[SECTOR_HEAD].tree.child[1] );
 }
 
+// An entity's linked xy bounds, two floats each.
+static void CM_CopyLinkBounds(svEntity_s *ent, const float *absmin, const float *absmax)
+{
+    ent->linkmin[0] = absmin[0];
+    ent->linkmin[1] = absmin[1];
+    ent->linkmax[0] = absmax[0];
+    ent->linkmax[1] = absmax[1];
+}
+
 void __cdecl CM_UnlinkEntity(svEntity_s *ent)
 {
     gentity_s *i; // eax
@@ -222,8 +231,7 @@ void __cdecl CM_LinkEntity(svEntity_s *ent, float *absmin, float *absmax, uint32
             if (nodeIndex == ent->worldSector && (ent->linkcontents & ~linkcontents) == 0)
             {
                 ent->linkcontents = linkcontents;
-                *(double *)ent->linkmin = *(double *)absmin;
-                *(double *)ent->linkmax = *(double *)absmax;
+                CM_CopyLinkBounds(ent, absmin, absmax);
                 return;
             }
         LABEL_17:
@@ -236,8 +244,7 @@ void __cdecl CM_LinkEntity(svEntity_s *ent, float *absmin, float *absmax, uint32
         CM_AddEntityToNode(ent, nodeIndex);
     LABEL_23:
         ent->linkcontents = linkcontents;
-        *(double *)ent->linkmin = *(double *)absmin;
-        *(double *)ent->linkmax = *(double *)absmax;
+        CM_CopyLinkBounds(ent, absmin, absmax);
         CM_SortNode(nodeIndex, mins, maxs);
     }
 }
@@ -250,12 +257,11 @@ void __cdecl CM_AddEntityToNode(svEntity_s *ent, uint16_t childNodeIndex)
     entnum = ent - sv.svEntities;
     prevEnt = &cm_world.sectors[childNodeIndex].contents.entities;
 #ifdef KISAK_MP
-    for (;
-        (uint32_t)*prevEnt - 1 <= entnum;
-        prevEnt = &sv.configstrings[188 * *prevEnt + 2256])
-    {
-        ;
-    }
+    // The sector's entities in entnum order: walk the 1-based next links. The
+    // decompiled walk reached each link as a configstrings offset that holds
+    // only for the x86 server_t layout.
+    while (static_cast<uint32_t>(*prevEnt) - 1 <= entnum)
+        prevEnt = &sv.svEntities[*prevEnt - 1].nextEntityInWorldSector;
 #elif KISAK_SP // KISAKTODO: hellish previous array abuse here
     for (entnum = ent - sv.svEntities;
         (uint32_t)*prevEnt - 1 <= entnum;
@@ -446,17 +452,16 @@ uint16_t __cdecl CM_AllocWorldSector(float *mins, float *maxs)
 void __cdecl CM_AddStaticModelToNode(cStaticModel_s *staticModel, uint16_t childNodeIndex)
 {
     uint32_t modelnum; // [esp+0h] [ebp-8h]
-    cStaticModel_s *prevStaticModel; // [esp+4h] [ebp-4h]
 
     modelnum = staticModel - cm.staticModelList;
-    for (prevStaticModel = (cStaticModel_s *)&cm_world.sectors[childNodeIndex].contents.staticModels;
-        (uint32_t)prevStaticModel->writable.nextModelInWorldSector - 1 <= modelnum;
-        prevStaticModel = &cm.staticModelList[prevStaticModel->writable.nextModelInWorldSector - 1])
-    {
-        ;
-    }
-    staticModel->writable.nextModelInWorldSector = prevStaticModel->writable.nextModelInWorldSector;
-    prevStaticModel->writable.nextModelInWorldSector = modelnum + 1;
+    // The sector's static models in modelnum order, through their 1-based
+    // next links. The first link is the sector's own field; the decompiled
+    // walk cast it to a cStaticModel_s, which it is not.
+    uint16_t *prevLink = &cm_world.sectors[childNodeIndex].contents.staticModels;
+    while (static_cast<uint32_t>(*prevLink) - 1 <= modelnum)
+        prevLink = &cm.staticModelList[*prevLink - 1].writable.nextModelInWorldSector;
+    staticModel->writable.nextModelInWorldSector = *prevLink;
+    *prevLink = static_cast<uint16_t>(modelnum + 1);
 }
 
 uint32_t CM_LinkAllStaticModels()
