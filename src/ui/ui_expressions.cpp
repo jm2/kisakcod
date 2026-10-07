@@ -2144,7 +2144,7 @@ void __cdecl GetGametypeObjective(int localClientNum, Operand *result)
                 "(localClientNum == 0)",
                 localClientNum);
         result->internals.string = CG_GetGametypeDescription(localClientNum);
-        if (!result->internals.intVal)
+        if (!result->internals.string)
             result->internals.string = "";
     }
     else
@@ -2184,7 +2184,7 @@ void __cdecl GetGametypeName(int localClientNum, Operand *result)
     {
         result->internals.string = "";
     }
-    if (!result->internals.intVal)
+    if (!result->internals.string)
         result->internals.string = "";
 
 #elif KISAK_SP
@@ -2500,7 +2500,7 @@ void __cdecl LocalizeString(OperandList *list, Operand *operandResult)
     string[stringLen] = 0;
     operandResult->dataType = VAL_STRING;
     operandResult->internals.string = SEH_LocalizeTextMessage(string, "ui string", LOCMSG_NOERR);
-    if (!operandResult->internals.intVal)
+    if (!operandResult->internals.string)
         operandResult->internals.string = "";
 }
 
