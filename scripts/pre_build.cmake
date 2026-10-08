@@ -68,6 +68,17 @@ if (WIN32)
             set(D3DX_LIB "$<$<CONFIG:Debug>:d3dx9d.lib>$<$<NOT:$<CONFIG:Debug>>:d3dx9.lib>")
         endif()
 
+        # Only the 32-bit client keeps D3DX, so the Windows x86 baseline is
+        # unchanged. Every 64-bit target compiles and reflects shaders through
+        # d3dcompiler (gfx_d3d/r_shader_compile, r_shader_reflect) and links no
+        # D3DX library: D3DX9 ships none for ARM64. The DirectX SDK headers stay
+        # for the D3DXSHADER_CONSTANTTABLE and D3DXSEMANTIC layouts.
+        if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+            target_compile_definitions(${PROJECT_NAME} PRIVATE KISAK_USE_D3DX)
+        else()
+            set(D3DX_LIB "")
+        endif()
+
         target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC "${DXSDK_INC_DIR}")
         target_link_directories(${PROJECT_NAME} PUBLIC "${DXSDK_LIB_DIR}")
     endif()
@@ -126,6 +137,7 @@ if (WIN32)
             ${_kisak_miles_lib}
             dsound.lib
             ${D3DX_LIB}
+            d3dcompiler.lib
             d3d9.lib
             ddraw.lib
             ${_kisak_bink_lib}

@@ -15,6 +15,18 @@
 #include <d3d9.h>
 #include <d3dx9shader.h>
 
+// The 32-bit Windows client keeps D3DX; every other target compiles and
+// reflects shaders without it (D3DX9 ships no ARM64 or POSIX library).
+#ifdef KISAK_USE_D3DX
+using MaterialShaderBuffer = ID3DXBuffer;
+#define Material_CreateShaderBuffer D3DXCreateBuffer
+#else
+#include "r_shader_compile.h"
+#include "r_shader_reflect.h"
+using MaterialShaderBuffer = ShaderBuffer;
+#define Material_CreateShaderBuffer R_CreateShaderBuffer
+#endif
+
 #include "r_image.h"
 #include <qcommon/sys_local.h>
 #if defined(_WIN32)
@@ -1768,7 +1780,7 @@ static bool Material_FindCachedShader2(uint32_t *shaderLen, void **cachedShader,
     return true;
 }
 
-static bool Material_CopyTextToDXBuffer2(uint32_t shaderHash, ID3DXBuffer **shader, const char *targetprefix)
+static bool Material_CopyTextToDXBuffer2(uint32_t shaderHash, MaterialShaderBuffer **shader, const char *targetprefix)
 {
     const char *v3; // eax
     uint8_t *v5; // eax
@@ -1785,7 +1797,7 @@ static bool Material_CopyTextToDXBuffer2(uint32_t shaderHash, ID3DXBuffer **shad
         return false;
     }
 
-    hr = D3DXCreateBuffer(shaderLen, shader);
+    hr = Material_CreateShaderBuffer(shaderLen, shader);
 
     if (hr < 0)
     {
@@ -1800,13 +1812,13 @@ static bool Material_CopyTextToDXBuffer2(uint32_t shaderHash, ID3DXBuffer **shad
 }
 #endif
 
-char __cdecl Material_CopyTextToDXBuffer(uint8_t *cachedShader, uint32_t shaderLen, ID3DXBuffer **shader)
+char __cdecl Material_CopyTextToDXBuffer(uint8_t *cachedShader, uint32_t shaderLen, MaterialShaderBuffer **shader)
 {
     const char *v3; // eax
     uint8_t *v5; // eax
     int hr; // [esp+0h] [ebp-4h]
 
-    hr = D3DXCreateBuffer(shaderLen, shader);
+    hr = Material_CreateShaderBuffer(shaderLen, shader);
     if (hr >= 0)
     {
         v5 = (unsigned char*)(*shader)->GetBufferPointer();
@@ -1832,7 +1844,7 @@ char __cdecl Material_FindCachedShaderDX(
     uint32_t shaderTextLen,
     const char *entryPoint,
     const char *target,
-    ID3DXBuffer **shader)
+    MaterialShaderBuffer **shader)
 {
     uint32_t shaderLen; // [esp+0h] [ebp-11Ch] BYREF
     char filename[268]; // [esp+4h] [ebp-118h] BYREF
@@ -1929,7 +1941,7 @@ void __cdecl Material_CacheShaderDX(
     uint32_t shaderTextLen,
     const char *entryPoint,
     const char *target,
-    ID3DXBuffer *shader)
+    MaterialShaderBuffer *shader)
 {
     const void *v5; // eax
     char filename[268]; // [esp+0h] [ebp-220h] BYREF
@@ -1943,7 +1955,7 @@ void __cdecl Material_CacheShaderDX(
     Material_CacheShader(shaderText, shaderTextLen, filename, shader->GetBufferPointer(), shader->GetBufferSize());
 }
 
-ID3DXBuffer *__cdecl Material_CompileShader(
+MaterialShaderBuffer *__cdecl Material_CompileShader(
     char *shaderName,
     MaterialShaderType shaderType,
     char *entryPoint,
@@ -1960,12 +1972,14 @@ ID3DXBuffer *__cdecl Material_CompileShader(
     int v13; // [esp+4h] [ebp-8484h] BYREF
     char dest[68]; // [esp+8h] [ebp-8480h] BYREF
     uint32_t shaderTextLen; // [esp+4Ch] [ebp-843Ch]
+#ifdef KISAK_USE_D3DX
     ID3DXConstantTable *v16; // [esp+50h] [ebp-8438h] BYREF
+#endif
     HRESULT hr; // [esp+54h] [ebp-8434h]
     GfxAssembledShaderText prog; // [esp+58h] [ebp-8430h] BYREF
     char *shaderString; // [esp+8478h] [ebp-10h]
-    LPD3DXBUFFER fileName; // [esp+847Ch] [ebp-Ch] BYREF
-    ID3DXBuffer *shader[2]; // [esp+8480h] [ebp-8h] BYREF
+    MaterialShaderBuffer *fileName; // [esp+847Ch] [ebp-Ch] BYREF
+    MaterialShaderBuffer *shader[2]; // [esp+8480h] [ebp-8h] BYREF
 
     Com_sprintf(dest, 0x40u, "shaders/%s", shaderName);
     shaderString = (char*)Hunk_AllocateTempMemory(0x10000, "Material_CompileShader");
@@ -1982,7 +1996,18 @@ ID3DXBuffer *__cdecl Material_CompileShader(
         return shader[0];
     }
     shader[1] = 0;
+#ifdef KISAK_USE_D3DX
     hr = D3DXCompileShader(shaderString, shaderTextLen, 0, 0, entryPoint, target, 0, shader, &fileName, &v16);
+#else
+    // D3DCompile returns no constant-table object: the table is the CTAB in
+    // the program, which must be present just as D3DX's table had to be.
+    hr = R_CompileShader(shaderString, shaderTextLen, entryPoint, target, shader, &fileName);
+    if (fileName)
+        fileName->Release();
+    ShaderConstantTableView compiledTable{};
+    const bool v16 = shader[0] && R_ShaderFindConstantTable(
+        static_cast<const uint32_t *>(shader[0]->GetBufferPointer()), shader[0]->GetBufferSize() / 4, &compiledTable);
+#endif
     // __asm { fnclex }
     // KISAKTODO: cancerous error handle
     //if (fileName)
@@ -2017,12 +2042,16 @@ ID3DXBuffer *__cdecl Material_CompileShader(
             Hunk_FreeTempMemory(shaderString);
             return 0;
         }
+#ifdef KISAK_USE_D3DX
         v16->Release();
+#endif
         Material_CacheShaderDX(shaderString, shaderTextLen, entryPoint, target, shader[0]);
         goto LABEL_15;
     }
+#ifdef KISAK_USE_D3DX
     if (v16)
         v16->Release();
+#endif
     Com_ScriptError("%s compilation failed - NULL shader\n", dest);
     Hunk_FreeTempMemory(shaderString);
     return 0;
@@ -2076,7 +2105,7 @@ MaterialVertexShader *__cdecl Material_LoadVertexShader(char *shaderName, int sh
     char target[16]; // [esp+1Ch] [ebp-28h] BYREF
     uint32_t *program; // [esp+30h] [ebp-14h]
     uint32_t nameSize; // [esp+34h] [ebp-10h]
-    ID3DXBuffer *shader = NULL; // [esp+38h] [ebp-Ch]
+    MaterialShaderBuffer *shader = NULL; // [esp+38h] [ebp-Ch]
     uint32_t totalSize; // [esp+3Ch] [ebp-8h]
     MaterialVertexShader *mtlShader; // [esp+40h] [ebp-4h]
 
@@ -2176,6 +2205,9 @@ char __cdecl Material_LoadPassVertexShader(
         mtlShader->name,
         MTL_VERTEX_SHADER,
         (uint*)&mtlShader[1],
+#ifndef KISAK_USE_D3DX
+        mtlShader->prog.loadDef.programSize,
+#endif
         techFlags,
         paramSet,
         argLimit,
@@ -2274,7 +2306,7 @@ MaterialPixelShader *__cdecl Material_LoadPixelShader(char *shaderName, int shad
     char target[16]; // [esp+1Ch] [ebp-28h] BYREF
     uint32_t *program; // [esp+30h] [ebp-14h]
     uint32_t nameSize; // [esp+34h] [ebp-10h]
-    ID3DXBuffer *shader = NULL; // [esp+38h] [ebp-Ch]
+    MaterialShaderBuffer *shader = NULL; // [esp+38h] [ebp-Ch]
     uint32_t totalSize; // [esp+3Ch] [ebp-8h]
     MaterialPixelShader *mtlShader; // [esp+40h] [ebp-4h]
 
@@ -3630,6 +3662,9 @@ char __cdecl Material_SetPassShaderArguments_DX(
     const char *shaderName,
     MaterialShaderType shaderType,
     uint32_t *program,
+#ifndef KISAK_USE_D3DX
+    uint32_t programDwords,
+#endif
     uint16_t *techFlags,
     ShaderParameterSet *paramSet,
     uint32_t argLimit,
@@ -3640,7 +3675,11 @@ char __cdecl Material_SetPassShaderArguments_DX(
     HRESULT v11; // [esp-4h] [ebp-1A8h]
     _D3DXSHADER_CONSTANTTABLE *constantTable; // [esp+0h] [ebp-1A4h]
     _D3DXSEMANTIC inputSemantics[32]; // [esp+4h] [ebp-1A0h] BYREF
+#ifdef KISAK_USE_D3DX
     ID3DXConstantTable *constants; // [esp+108h] [ebp-9Ch] BYREF
+#else
+    ShaderConstantTableView constants{};
+#endif
     uint32_t inputCount; // [esp+10Ch] [ebp-98h] BYREF
     HRESULT hr; // [esp+110h] [ebp-94h]
     uint32_t outputCount; // [esp+114h] [ebp-90h] BYREF
@@ -3648,11 +3687,21 @@ char __cdecl Material_SetPassShaderArguments_DX(
     _D3DXSEMANTIC outputSemantics[16]; // [esp+11Ch] [ebp-88h] BYREF
     uint32_t semanticIndex; // [esp+1A0h] [ebp-4h]
 
+#ifdef KISAK_USE_D3DX
     hr = D3DXGetShaderConstantTable((const DWORD*)program, &constants);
+#else
+    hr = R_ShaderFindConstantTable(program, programDwords, &constants) ? S_OK : E_FAIL;
+#endif
     if (hr >= 0)
     {
+#ifdef KISAK_USE_D3DX
         iassert( constants );
         constantTable = (_D3DXSHADER_CONSTANTTABLE*)constants->GetBufferPointer();
+#else
+        // The CTAB payload is laid out as D3DXSHADER_CONSTANTTABLE, the bytes
+        // ID3DXConstantTable::GetBufferPointer returned.
+        constantTable = (_D3DXSHADER_CONSTANTTABLE*)constants.data;
+#endif
         paramSet->uniformInputCount = Material_PrepareToParseShaderArguments(constantTable, paramSet->uniformInputs);
         success = Material_ParseShaderArguments(
             text,
@@ -3664,10 +3713,19 @@ char __cdecl Material_SetPassShaderArguments_DX(
             argLimit,
             argCount,
             args);
+#ifdef KISAK_USE_D3DX
         constants->Release();
+#endif
         if (success)
         {
+#ifdef KISAK_USE_D3DX
             hr = D3DXGetShaderInputSemantics((const DWORD*)program, inputSemantics, &inputCount);
+#else
+            // ShaderSemantic is D3DXSEMANTIC's layout; the capacities are the
+            // arrays above, which D3DX filled unchecked.
+            hr = R_ShaderGetInputSemantics(program, programDwords, reinterpret_cast<ShaderSemantic *>(inputSemantics),
+                32, &inputCount) ? S_OK : E_FAIL;
+#endif
             paramSet->varyingInputCount = 0;
             for (semanticIndex = 0; semanticIndex < inputCount; ++semanticIndex)
             {
@@ -3676,7 +3734,12 @@ char __cdecl Material_SetPassShaderArguments_DX(
                     &paramSet->varyingInputs[paramSet->varyingInputCount]);
                 ++paramSet->varyingInputCount;
             }
+#ifdef KISAK_USE_D3DX
             hr = D3DXGetShaderOutputSemantics((const DWORD *)program, outputSemantics, &outputCount);
+#else
+            hr = R_ShaderGetOutputSemantics(program, programDwords, reinterpret_cast<ShaderSemantic *>(outputSemantics),
+                16, &outputCount) ? S_OK : E_FAIL;
+#endif
             paramSet->outputCount = 0;
             for (semanticIndex = 0; semanticIndex < outputCount; ++semanticIndex)
             {
@@ -3733,6 +3796,9 @@ char __cdecl Material_LoadPassPixelShader(
         mtlShader->name,
         MTL_PIXEL_SHADER,
         (uint32_t*)&mtlShader[1],
+#ifndef KISAK_USE_D3DX
+        mtlShader->prog.loadDef.programSize,
+#endif
         techFlags,
         paramSet,
         argLimit,

@@ -690,6 +690,9 @@ char __cdecl Material_SetPassShaderArguments_DX(
     const char *shaderName,
     MaterialShaderType shaderType,
     uint32_t *program,
+#ifndef KISAK_USE_D3DX
+    uint32_t programDwords,
+#endif
     uint16_t *techFlags,
     ShaderParameterSet *paramSet,
     uint32_t argLimit,

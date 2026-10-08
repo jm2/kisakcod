@@ -1,4 +1,8 @@
 #define D3D_OVERLOADS
+#ifndef KISAK_USE_D3DX
+// No D3DX on this target: the Bink shaders compile through d3dcompiler.
+#include <gfx_d3d/r_shader_compile.h>
+#endif
 #include <d3d9.h> // change to your 9.0 or up path
 #include <d3dx9.h>
 #include "binktextures.h"
@@ -227,7 +231,11 @@ void Free_Bink_shaders( void )
 S32 Create_Bink_shaders( LPDIRECT3DDEVICE9 d3d_device )
 {
   HRESULT hr;
+#ifdef KISAK_USE_D3DX
   ID3DXBuffer* buffer = 0;
+#else
+  ShaderBuffer* buffer = 0;
+#endif
 
   //
   // Define the vertex buffer layout
@@ -245,8 +253,13 @@ S32 Create_Bink_shaders( LPDIRECT3DDEVICE9 d3d_device )
 
   if ( YCrCbToRGBNoPixelAlpha == 0 )
   {
+#ifdef KISAK_USE_D3DX
     hr = D3DXCompileShader( StrYCrCbToRGBNoPixelAlpha, sizeof( StrYCrCbToRGBNoPixelAlpha ),
                             0, 0, "main", PIXEL_SHADER_TARGET, 0, &buffer, NULL, NULL );
+#else
+    hr = R_CompileShader( StrYCrCbToRGBNoPixelAlpha, sizeof( StrYCrCbToRGBNoPixelAlpha ),
+                          "main", PIXEL_SHADER_TARGET, &buffer, NULL );
+#endif
     if ( SUCCEEDED( hr ) )
     {
       hr = d3d_device->CreatePixelShader( (DWORD*) buffer->GetBufferPointer(), &YCrCbToRGBNoPixelAlpha );
@@ -266,8 +279,13 @@ S32 Create_Bink_shaders( LPDIRECT3DDEVICE9 d3d_device )
 
   if ( YCrCbAToRGBA == 0 )
   {
+#ifdef KISAK_USE_D3DX
     hr = D3DXCompileShader( StrYCrCbAToRGBA, sizeof( StrYCrCbAToRGBA ),
                             0, 0, "main", PIXEL_SHADER_TARGET, 0, &buffer, NULL, NULL );
+#else
+    hr = R_CompileShader( StrYCrCbAToRGBA, sizeof( StrYCrCbAToRGBA ),
+                          "main", PIXEL_SHADER_TARGET, &buffer, NULL );
+#endif
     if ( SUCCEEDED( hr ) )
     {
       hr = d3d_device->CreatePixelShader( (DWORD*) buffer->GetBufferPointer(), &YCrCbAToRGBA );
