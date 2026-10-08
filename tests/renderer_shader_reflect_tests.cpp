@@ -6,9 +6,10 @@
 
 #include <gfx_d3d/r_shader_reflect.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -35,14 +36,41 @@ struct Constant
     std::uint16_t typeType;
 };
 
+// Writes a fixture field; a field that would not fit fails the test instead.
+template <typename T>
+void Put(std::vector<std::uint8_t> &bytes, std::size_t at, T value)
+{
+    if (at > bytes.size() || sizeof(value) > bytes.size() - at)
+    {
+        Check(false, "fixture field inside its buffer");
+        return;
+    }
+    const auto *source = reinterpret_cast<const std::uint8_t *>(&value);
+    std::copy_n(source, sizeof(value), bytes.begin() + static_cast<std::ptrdiff_t>(at));
+}
+
+// Reads a field of a found table in place; one past its end fails the test.
+template <typename T>
+T Get(const ShaderConstantTableView &table, std::size_t at)
+{
+    T value{};
+    if (at > table.size || sizeof(value) > table.size - at)
+    {
+        Check(false, "in-place read inside the payload");
+        return value;
+    }
+    std::copy_n(table.data + at, sizeof(value), reinterpret_cast<std::uint8_t *>(&value));
+    return value;
+}
+
 void Put32(std::vector<std::uint8_t> &bytes, std::size_t at, std::uint32_t value)
 {
-    std::memcpy(bytes.data() + at, &value, sizeof(value));
+    Put(bytes, at, value);
 }
 
 void Put16(std::vector<std::uint8_t> &bytes, std::size_t at, std::uint16_t value)
 {
-    std::memcpy(bytes.data() + at, &value, sizeof(value));
+    Put(bytes, at, value);
 }
 
 // header (28) | constant infos (20 each) | type infos (16 each) | names, padded to 4.
@@ -87,12 +115,14 @@ std::vector<std::uint32_t> BuildProgram(std::uint32_t version, const std::vector
     std::vector<std::uint32_t> program{ version };
     if (instructionFirst)
         program.insert(program.end(), { kDcl, 0x80000000u, 0x900F0000u });
-    const auto payloadDwords = static_cast<std::uint32_t>(1 + ctab.size() / 4);
+    // The payload is the CTAB bytes zero-padded up to whole dwords.
+    const std::size_t ctabDwords = (ctab.size() + 3) / 4;
+    const auto payloadDwords = static_cast<std::uint32_t>(1 + ctabDwords);
     program.push_back((payloadDwords << 16) | 0xFFFEu);
     program.push_back(0x42415443u);
     const std::size_t at = program.size();
-    program.resize(at + ctab.size() / 4);
-    std::memcpy(&program[at], ctab.data(), ctab.size());
+    program.resize(at + ctabDwords, 0);
+    std::copy_n(ctab.begin(), ctab.size(), reinterpret_cast<std::uint8_t *>(program.data() + at));
     program.insert(program.end(), { kMov, 0xC00F0000u, 0x90E40000u, 0x0000FFFFu });
     return program;
 }
@@ -130,12 +160,10 @@ void TestParsesEveryConstant()
 
         // R_SetParameterDefArray reads the payload in place: ConstantInfo
         // entries 20 bytes apart, then the WORDs at the TypeInfo offset.
-        std::uint32_t infoOffset, typeOffset;
-        std::uint16_t typeWords[2];
-        std::memcpy(&infoOffset, table.data + 16, 4);
-        std::memcpy(&typeOffset, table.data + infoOffset + 20 * i + 12, 4);
-        std::memcpy(typeWords, table.data + typeOffset, 4);
-        Check(typeWords[0] == desc.typeClass && typeWords[1] == desc.typeType, "in-place layout read");
+        const auto infoOffset = Get<std::uint32_t>(table, 16);
+        const auto typeOffset = Get<std::uint32_t>(table, infoOffset + 20 * i + 12);
+        Check(Get<std::uint16_t>(table, typeOffset) == desc.typeClass
+                && Get<std::uint16_t>(table, typeOffset + 2) == desc.typeType, "in-place layout read");
     }
     ShaderConstantDesc desc{};
     Check(!R_ShaderGetConstantDesc(table, table.constantCount, &desc), "index past the end");

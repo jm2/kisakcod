@@ -1,5 +1,6 @@
 #include "r_shader_reflect.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace
@@ -32,18 +33,24 @@ constexpr std::uint32_t kTypeInfoSize = 16;
 constexpr std::uint32_t kTypeClassField = 0;
 constexpr std::uint32_t kTypeTypeField = 2;
 
+// Unaligned little-endian field reads; every caller has bounds-checked the
+// field against the payload first.
+template <typename T>
+T ReadField(const std::uint8_t *bytes, std::uint32_t offset)
+{
+    T value{};
+    std::copy_n(bytes + offset, sizeof(value), reinterpret_cast<std::uint8_t *>(&value));
+    return value;
+}
+
 std::uint32_t ReadU32(const std::uint8_t *bytes, std::uint32_t offset)
 {
-    std::uint32_t value;
-    std::memcpy(&value, bytes + offset, sizeof(value));
-    return value;
+    return ReadField<std::uint32_t>(bytes, offset);
 }
 
 std::uint16_t ReadU16(const std::uint8_t *bytes, std::uint32_t offset)
 {
-    std::uint16_t value;
-    std::memcpy(&value, bytes + offset, sizeof(value));
-    return value;
+    return ReadField<std::uint16_t>(bytes, offset);
 }
 
 // [offset, offset + length) lies inside a payload of `size` bytes.
@@ -79,6 +86,61 @@ bool ConstantTableValid(const std::uint8_t *data, std::uint32_t size, std::uint3
     *constantCount = count;
     return true;
 }
+
+bool VersionSupported(std::uint32_t version)
+{
+    const std::uint32_t major = (version >> 8) & 0xFFu;
+    const std::uint32_t versionType = version & kVersionTypeMask;
+    return (versionType == kVertexVersionType || versionType == kPixelVersionType) && major >= 2 && major <= 3;
+}
+
+// Calls visit(token, payload, payloadDwords) for each comment and instruction
+// of a vs/ps 2.x or 3.x program. True only when every visit returned true and
+// the stream ends in its end token at dwordCount.
+template <typename Visit>
+bool WalkProgram(const std::uint32_t *program, std::uint32_t dwordCount, Visit &&visit)
+{
+    if (!program || dwordCount < 2 || !VersionSupported(program[0]))
+        return false;
+
+    std::uint32_t cursor = 1;
+    while (cursor < dwordCount)
+    {
+        const std::uint32_t token = program[cursor];
+        if (token == kEndToken)
+            return cursor + 1 == dwordCount;
+        if ((token & kOpcodeMask) == kEndToken)
+            return false;
+
+        const std::uint32_t payloadDwords = (token & kOpcodeMask) == kCommentOpcode
+            ? (token & kCommentLengthMask) >> kCommentLengthShift
+            : (token & kInstructionLengthMask) >> kInstructionLengthShift;
+        if (payloadDwords > dwordCount - cursor - 1 || !visit(token, &program[cursor + 1], payloadDwords))
+            return false;
+        cursor += payloadDwords + 1;
+    }
+    return false;
+}
+
+// Takes the first CTAB comment of the stream; false only for a CTAB that does
+// not validate, which fails the whole lookup.
+bool VisitConstantTable(
+    std::uint32_t token,
+    const std::uint32_t *payload,
+    std::uint32_t payloadDwords,
+    ShaderConstantTableView *found)
+{
+    if ((token & kOpcodeMask) != kCommentOpcode || found->data || payloadDwords < 1 || payload[0] != kCtabFourCC)
+        return true;
+
+    const auto *data = reinterpret_cast<const std::uint8_t *>(&payload[1]);
+    const std::uint32_t size = (payloadDwords - 1) * 4;
+    std::uint32_t constantCount = 0;
+    if (!ConstantTableValid(data, size, &constantCount))
+        return false;
+    *found = { data, size, constantCount };
+    return true;
+}
 } // namespace
 
 bool R_ShaderFindConstantTable(
@@ -86,51 +148,18 @@ bool R_ShaderFindConstantTable(
     std::uint32_t dwordCount,
     ShaderConstantTableView *table)
 {
-    if (!program || !table || dwordCount < 2)
-        return false;
-
-    const std::uint32_t version = program[0];
-    const std::uint32_t major = (version >> 8) & 0xFFu;
-    const std::uint32_t versionType = version & kVersionTypeMask;
-    if ((versionType != kVertexVersionType && versionType != kPixelVersionType) || major < 2 || major > 3)
+    if (!table)
         return false;
 
     ShaderConstantTableView found{};
-    bool haveTable = false;
-    std::uint32_t cursor = 1;
-    while (cursor < dwordCount)
-    {
-        const std::uint32_t token = program[cursor];
-        if (token == kEndToken)
-        {
-            if (!haveTable || cursor + 1 != dwordCount)
-                return false;
-            *table = found;
-            return true;
-        }
-
-        if ((token & kOpcodeMask) == kEndToken)
-            return false;
-        const bool comment = (token & kOpcodeMask) == kCommentOpcode;
-        const std::uint32_t payloadDwords = comment
-            ? (token & kCommentLengthMask) >> kCommentLengthShift
-            : (token & kInstructionLengthMask) >> kInstructionLengthShift;
-        if (payloadDwords > dwordCount - cursor - 1)
-            return false;
-
-        if (comment && !haveTable && payloadDwords >= 1 && program[cursor + 1] == kCtabFourCC)
-        {
-            const auto *data = reinterpret_cast<const std::uint8_t *>(&program[cursor + 2]);
-            const std::uint32_t size = (payloadDwords - 1) * 4;
-            std::uint32_t constantCount = 0;
-            if (!ConstantTableValid(data, size, &constantCount))
-                return false;
-            found = { data, size, constantCount };
-            haveTable = true;
-        }
-        cursor += payloadDwords + 1;
-    }
-    return false;
+    const bool walked = WalkProgram(program, dwordCount,
+        [&found](std::uint32_t token, const std::uint32_t *payload, std::uint32_t payloadDwords) {
+            return VisitConstantTable(token, payload, payloadDwords, &found);
+        });
+    if (!walked || !found.data)
+        return false;
+    *table = found;
+    return true;
 }
 
 bool R_ShaderGetConstantDesc(
