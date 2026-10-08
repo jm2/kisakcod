@@ -2696,7 +2696,7 @@ int main()
         UINT32_C(0xFFFE0400),
         UINT32_C(0x0000FFFF)};
     const std::uint32_t invalidMinor[] = {
-        UINT32_C(0xFFFE0201),
+        UINT32_C(0xFFFE0202),
         UINT32_C(0x0000FFFF)};
     const std::uint32_t shaderMissingEnd[] = {
         UINT32_C(0xFFFE0200),
@@ -2822,6 +2822,49 @@ int main()
             D3D9ShaderStage::Vertex,
             2),
         "unknown shader renderer rejected by bytecode validation");
+    // Shader model 1: instruction tokens carry no length, and parameter
+    // tokens set bit 31, which a length walk would read as reserved bits.
+    // A vs_1_1 "mov oPos, v0" after a two-dword comment, then END.
+    const std::uint32_t vertex11[] = {
+        UINT32_C(0xFFFE0101), UINT32_C(0x0002FFFE), UINT32_C(0x42415443), UINT32_C(0x0000001C),
+        UINT32_C(0x00000001), UINT32_C(0xC00F0000), UINT32_C(0x90E40000), UINT32_C(0x0000FFFF)};
+    const std::uint32_t pixel14[] = {
+        UINT32_C(0xFFFF0104), UINT32_C(0x00000001), UINT32_C(0x800F0000), UINT32_C(0xB0E40000),
+        UINT32_C(0x0000FFFF)};
+    const std::uint32_t pixel2x[] = {UINT32_C(0xFFFF0201), UINT32_C(0x0000FFFF)};
+    const std::uint32_t vertex14[] = {UINT32_C(0xFFFE0104), UINT32_C(0x0000FFFF)};
+    const std::uint32_t pixel10[] = {UINT32_C(0xFFFF0100), UINT32_C(0x0000FFFF)};
+    const std::uint32_t vertex11NoEnd[] = {
+        UINT32_C(0xFFFE0101), UINT32_C(0x00000001), UINT32_C(0xC00F0000), UINT32_C(0x90E40000)};
+    const std::uint32_t vertex11LongComment[] = {
+        UINT32_C(0xFFFE0101), UINT32_C(0x0003FFFE), UINT32_C(0), UINT32_C(0x0000FFFF)};
+    const std::uint32_t vertex11EarlyEnd[] = {UINT32_C(0xFFFE0101), UINT32_C(0x0000FFFF), UINT32_C(0x0000FFFF)};
+    const std::uint32_t vertex11CommentThenEarlyEnd[] = {
+        UINT32_C(0xFFFE0101), UINT32_C(0x0001FFFE), UINT32_C(0), UINT32_C(0x0000FFFF), UINT32_C(0x0000FFFF)};
+    const std::uint32_t vertex11ReservedComment[] = {
+        UINT32_C(0xFFFE0101), UINT32_C(0x8001FFFE), UINT32_C(0), UINT32_C(0x0000FFFF)};
+    Expect(db::validation::D3D9ShaderBytecodeValid(vertex11, 8, D3D9ShaderStage::Vertex, 0),
+           "shader-model-1 vertex bytecode accepted for renderer 0");
+    Expect(db::validation::D3D9ShaderBytecodeValid(pixel14, 5, D3D9ShaderStage::Pixel, 0),
+           "pixel 1.4 bytecode accepted for renderer 0");
+    Expect(db::validation::D3D9ShaderBytecodeValid(pixel2x, 2, D3D9ShaderStage::Pixel, 0),
+           "pixel 2.x bytecode accepted for renderer 0");
+    Expect(!db::validation::D3D9ShaderBytecodeValid(vertex11, 8, D3D9ShaderStage::Vertex, 1),
+           "shader-model-1 bytecode rejected for renderer 1");
+    Expect(!db::validation::D3D9ShaderBytecodeValid(vertex14, 2, D3D9ShaderStage::Vertex, 0),
+           "vertex 1.4 rejected: no such vertex shader model");
+    Expect(!db::validation::D3D9ShaderBytecodeValid(pixel10, 2, D3D9ShaderStage::Pixel, 0),
+           "pixel 1.0 rejected");
+    Expect(!db::validation::D3D9ShaderBytecodeValid(vertex11NoEnd, 4, D3D9ShaderStage::Vertex, 0),
+           "shader-model-1 bytecode without a final END rejected");
+    Expect(!db::validation::D3D9ShaderBytecodeValid(vertex11LongComment, 4, D3D9ShaderStage::Vertex, 0),
+           "shader-model-1 comment past the program rejected");
+    Expect(!db::validation::D3D9ShaderBytecodeValid(vertex11EarlyEnd, 3, D3D9ShaderStage::Vertex, 0),
+           "shader-model-1 END before the last dword rejected");
+    Expect(!db::validation::D3D9ShaderBytecodeValid(vertex11CommentThenEarlyEnd, 5, D3D9ShaderStage::Vertex, 0),
+           "shader-model-1 END after its comments but before the last dword rejected");
+    Expect(!db::validation::D3D9ShaderBytecodeValid(vertex11ReservedComment, 4, D3D9ShaderStage::Vertex, 0),
+           "shader-model-1 reserved comment bit rejected");
     Expect(db::validation::MaterialVertexRoutingFollows(0, 1, 0, 2), "ordered material vertex destination accepted");
     Expect(db::validation::MaterialVertexRoutingFollows(0, 11, 1, 0), "ordered material vertex source accepted");
     Expect(!db::validation::MaterialVertexRoutingFollows(1, 0, 0, 11), "decreasing material vertex route rejected");
