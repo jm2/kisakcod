@@ -98,6 +98,7 @@ add_test(
     NAME renderer-shader-compile
     COMMAND kisakcod-renderer-shader-compile-tests
 )
+kisakcod_ilp32(kisakcod-renderer-shader-compile-tests renderer-shader-compile)
 
 add_executable(kisakcod-renderer-reservation-atomic-tests
     renderer_reservation_atomic_tests.cpp

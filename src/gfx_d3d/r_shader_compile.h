@@ -1,7 +1,8 @@
 #pragma once
 
 #include <cstdint>
-#include <vector>
+#include <memory>
+#include <utility>
 
 // The D3DX shader buffer and HLSL compiler the material loader uses, without
 // D3DX (G5): D3DX9 ships no ARM64 library and none for the POSIX targets.
@@ -12,19 +13,29 @@
 class ShaderBuffer final
 {
 public:
-    void *GetBufferPointer() { return bytes.data(); }
-    std::uint32_t GetBufferSize() const { return static_cast<std::uint32_t>(bytes.size()); }
+    void *GetBufferPointer() { return bytes.get(); }
+    std::uint32_t GetBufferSize() const { return size; }
     void Release() { delete this; }
 
 private:
-    explicit ShaderBuffer(std::uint32_t size) : bytes(size) {}
+    ShaderBuffer(std::unique_ptr<std::uint8_t[]> allocated, std::uint32_t allocatedSize)
+        : bytes(std::move(allocated)), size(allocatedSize)
+    {
+    }
     ~ShaderBuffer() = default;
     friend std::int32_t R_CreateShaderBuffer(std::uint32_t size, ShaderBuffer **buffer);
 
-    std::vector<std::uint8_t> bytes;
+    std::unique_ptr<std::uint8_t[]> bytes;
+    std::uint32_t size;
 };
 
-// D3DXCreateBuffer: a zero-filled buffer of `size` bytes, released with Release().
+// A shader buffer never needs more than this; a larger request (a corrupt
+// cached length, say) fails with E_OUTOFMEMORY instead of allocating it.
+constexpr std::uint32_t kShaderBufferMaxBytes = 64u << 20;
+
+// D3DXCreateBuffer: a zero-filled buffer of `size` bytes, released with
+// Release(). Never throws: a size over kShaderBufferMaxBytes or a failed
+// allocation returns E_OUTOFMEMORY with *buffer null.
 std::int32_t R_CreateShaderBuffer(std::uint32_t size, ShaderBuffer **buffer);
 
 // D3DXCompileShader without defines, includes or flags: compiles `entryPoint`

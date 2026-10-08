@@ -35,7 +35,16 @@ std::int32_t R_CreateShaderBuffer(std::uint32_t size, ShaderBuffer **buffer)
 {
     if (!buffer)
         return kInvalidArgument;
-    *buffer = new (std::nothrow) ShaderBuffer(size);
+    *buffer = nullptr;
+    if (size > kShaderBufferMaxBytes)
+        return kOutOfMemory;
+
+    // Both allocations are nothrow: the material loader passes sizes read from
+    // the shader cache, and a failure must reach its E_OUTOFMEMORY path.
+    std::unique_ptr<std::uint8_t[]> bytes(new (std::nothrow) std::uint8_t[size]());
+    if (!bytes)
+        return kOutOfMemory;
+    *buffer = new (std::nothrow) ShaderBuffer(std::move(bytes), size);
     return *buffer ? kOk : kOutOfMemory;
 }
 
