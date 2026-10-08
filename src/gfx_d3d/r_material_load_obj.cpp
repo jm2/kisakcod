@@ -4299,27 +4299,32 @@ MaterialTechnique *__cdecl Material_LoadTechnique(char *name, GfxRenderer render
         }
         else if (passCount)
         {
-            stateMapSize = 4 * passCount;
+            // Layout: the technique with passCount passes, then one state map per
+            // pass (read back as &passArray[passCount]), then the name. The
+            // decompile used the 32-bit sizes (8 + 20 per pass + 4 per pass).
+            stateMapSize = sizeof(MaterialStateMap *) * passCount;
             nameSize = strlen(name) + 1;
-            technique = Material_Alloc(nameSize + 24 * passCount + 8);
-            stateMapForPass = (MaterialStateMap**)&technique[20 * passCount + 8];
-            *(DWORD*)technique = (DWORD)&stateMapForPass[passCount];
-            memcpy(*(unsigned char**)technique, name, nameSize);
-            *((_WORD *)technique + 2) = techFlags;
-            if (!strcmp(*(const char**)technique, "zprepass"))
-                *((_WORD *)technique + 2) |= 4u;
+            const size_t techniqueSize = offsetof(MaterialTechnique, passArray) + sizeof(MaterialPass) * passCount;
+            technique = Material_Alloc(techniqueSize + stateMapSize + nameSize);
+            MaterialTechnique *tech = (MaterialTechnique *)technique;
+            stateMapForPass = (MaterialStateMap **)&technique[techniqueSize];
+            tech->name = (const char *)&stateMapForPass[passCount];
+            memcpy((unsigned char *)tech->name, name, nameSize);
+            tech->flags = techFlags;
+            if (!strcmp(tech->name, "zprepass"))
+                tech->flags |= 4u;
             for (passIndex = 0; passIndex < passCount; ++passIndex)
             {
                 vertexDecl = passes[passIndex].vertexDecl;
                 iassert( vertexDecl );
                 if (vertexDecl->hasOptionalSource)
                 {
-                    *((_WORD *)technique + 2) |= 8u;
+                    tech->flags |= 8u;
                     break;
                 }
             }
-            *((_WORD *)technique + 3) = passCount;
-            memcpy(technique + 8, passes, 20 * passCount);
+            tech->passCount = passCount;
+            memcpy(tech->passArray, passes, sizeof(MaterialPass) * passCount);
             memcpy(stateMapForPass, stateMap, stateMapSize);
             return (MaterialTechnique*)technique;
         }
@@ -4667,7 +4672,6 @@ Material *__cdecl Material_Duplicate(Material *mtlCopy, char *name)
     uint32_t v3; // [esp+8h] [ebp-30h]
     const char *nameBackup; // [esp+18h] [ebp-20h]
     Material *mtlNewa; // [esp+1Ch] [ebp-1Ch]
-    uint8_t *mtlNew; // [esp+1Ch] [ebp-1Ch]
     int constantTableSize; // [esp+24h] [ebp-14h]
     uint16_t hashIndex[3]; // [esp+28h] [ebp-10h] BYREF
     bool exists; // [esp+2Fh] [ebp-9h] BYREF
@@ -4688,28 +4692,31 @@ Material *__cdecl Material_Duplicate(Material *mtlCopy, char *name)
     }
     else
     {
+        // The name is stored right after the copy. The decompile used the 32-bit
+        // sizeof(Material) (0x50) and wrote the name and table pointers as
+        // _DWORD slots 0, 17, 18 and 19.
         v3 = strlen(name);
-        mtlNew = Material_Alloc(v3 + 81);
-        memcpy(mtlNew, mtlCopy, 0x50u);
-        *(_DWORD *)mtlNew = (uint32)mtlNew + 80;
-        memcpy(*(uint8_t **)mtlNew, (uint8_t *)name, v3 + 1);
-        stateBitsTableSize = 8 * mtlCopy->stateBitsCount;
-        *((_DWORD *)mtlNew + 19) = (uint32)Material_Alloc(stateBitsTableSize);
-        memcpy(*((uint8_t **)mtlNew + 19), (uint8_t *)mtlCopy->stateBitsTable, stateBitsTableSize);
+        Material *copy = (Material *)Material_Alloc(sizeof(Material) + v3 + 1);
+        memcpy(copy, mtlCopy, sizeof(Material));
+        copy->info.name = (const char *)(copy + 1);
+        memcpy((uint8_t *)(copy + 1), (uint8_t *)name, v3 + 1);
+        stateBitsTableSize = sizeof(GfxStateBits) * mtlCopy->stateBitsCount;
+        copy->stateBitsTable = (GfxStateBits *)Material_Alloc(stateBitsTableSize);
+        memcpy((uint8_t *)copy->stateBitsTable, (uint8_t *)mtlCopy->stateBitsTable, stateBitsTableSize);
         if (mtlCopy->textureTable)
         {
-            textureTableSize = 12 * mtlCopy->textureCount;
-            *((_DWORD *)mtlNew + 17) = (uint32)Material_Alloc(textureTableSize);
-            memcpy(*((uint8_t **)mtlNew + 17), (uint8_t *)mtlCopy->textureTable, textureTableSize);
+            textureTableSize = sizeof(MaterialTextureDef) * mtlCopy->textureCount;
+            copy->textureTable = (MaterialTextureDef *)Material_Alloc(textureTableSize);
+            memcpy((uint8_t *)copy->textureTable, (uint8_t *)mtlCopy->textureTable, textureTableSize);
         }
         if (mtlCopy->constantTable)
         {
-            constantTableSize = 32 * mtlCopy->constantCount;
-            *((_DWORD *)mtlNew + 18) = (uint32)Material_Alloc(constantTableSize);
-            memcpy(*((uint8_t **)mtlNew + 18), (uint8_t *)mtlCopy->constantTable, constantTableSize);
+            constantTableSize = sizeof(MaterialConstantDef) * mtlCopy->constantCount;
+            copy->constantTable = (MaterialConstantDef *)Material_Alloc(constantTableSize);
+            memcpy((uint8_t *)copy->constantTable, (uint8_t *)mtlCopy->constantTable, constantTableSize);
         }
-        Material_Add((Material *)mtlNew, hashIndex[0]);
-        return (Material *)mtlNew;
+        Material_Add(copy, hashIndex[0]);
+        return copy;
     }
 }
 
