@@ -46,6 +46,23 @@ void TestBuffers()
     if (buffer)
         buffer->Release();
     Check(R_CreateShaderBuffer(4, nullptr) == kInvalidArgument, "null out pointer");
+
+    // A corrupt cached length must come back as E_OUTOFMEMORY, not an
+    // exception: the loader's cache path prints that error and moves on.
+    constexpr std::int32_t kOutOfMemory = static_cast<std::int32_t>(0x8007000Eu);
+    ShaderBuffer *stale = nullptr;
+    Check(R_CreateShaderBuffer(1, &stale) == 0 && stale, "sentinel buffer");
+    for (const std::uint32_t size : { kShaderBufferMaxBytes + 1u, 0xFFFFFFFFu })
+    {
+        buffer = stale; // a failed call must not leave an old pointer behind
+        Check(R_CreateShaderBuffer(size, &buffer) == kOutOfMemory && !buffer, "oversized buffer fails cleanly");
+    }
+    if (stale)
+        stale->Release();
+    Check(R_CreateShaderBuffer(kShaderBufferMaxBytes, &buffer) == 0 && buffer
+            && buffer->GetBufferSize() == kShaderBufferMaxBytes, "largest buffer");
+    if (buffer)
+        buffer->Release();
 }
 
 #ifdef _WIN32
