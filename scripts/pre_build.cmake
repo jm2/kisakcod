@@ -44,12 +44,17 @@ if (WIN32)
     )
 
     if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
+        if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+            set(_kisak_dx_arch x64)
+        else()
+            set(_kisak_dx_arch x86)
+        endif()
         if (CICD)
             if (NOT DXSDK_DIR)
                 message(FATAL_ERROR "DXSDK_DIR must point to Microsoft.DXSDK.D3DX/build/native")
             endif()
             set(DXSDK_INC_DIR "${DXSDK_DIR}/include")
-            set(DXSDK_LIB_DIR "${DXSDK_DIR}/release/lib/x86")
+            set(DXSDK_LIB_DIR "${DXSDK_DIR}/release/lib/${_kisak_dx_arch}")
             set(D3DX_LIB d3dx9.lib)
         else()
             if (NOT DXSDK_DIR)
@@ -59,7 +64,7 @@ if (WIN32)
                 message(FATAL_ERROR "DXSDK_DIR is not set. Install the June 2010 DirectX SDK or pass -DDXSDK_DIR=...")
             endif()
             set(DXSDK_INC_DIR "${DXSDK_DIR}/include")
-            set(DXSDK_LIB_DIR "${DXSDK_DIR}/lib/x86")
+            set(DXSDK_LIB_DIR "${DXSDK_DIR}/lib/${_kisak_dx_arch}")
             set(D3DX_LIB "$<$<CONFIG:Debug>:d3dx9d.lib>$<$<NOT:$<CONFIG:Debug>>:d3dx9.lib>")
         endif()
 
@@ -71,7 +76,7 @@ if (WIN32)
             "${DEPS_DIR}/steamsdk"
         )
     endif()
-    if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
+    if (KISAK_TARGET_NEEDS_CLIENT_MEDIA AND NOT KISAK_MEDIA_STUBS)
         target_link_directories(${PROJECT_NAME} PUBLIC
             "${DEPS_DIR}/msslib"
             "${DEPS_DIR}/binklib"
@@ -105,13 +110,25 @@ if (WIN32)
         target_link_libraries(${PROJECT_NAME} PUBLIC steam_api.lib)
     endif()
     if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
+        if (KISAK_MEDIA_STUBS)
+            # 32-bit-only Miles/Bink: link the silent stubs instead.
+            target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/win32/win_media_stubs.cpp)
+            # Engine code calls Miles/Bink through their dllimport declarations;
+            # the linker binds those calls to the stub definitions (LNK4217/4286).
+            target_link_options(${PROJECT_NAME} PRIVATE /IGNORE:4217,4286)
+            set(_kisak_miles_lib "")
+            set(_kisak_bink_lib "")
+        else()
+            set(_kisak_miles_lib mss32.lib)
+            set(_kisak_bink_lib binkw32.lib)
+        endif()
         target_link_libraries(${PROJECT_NAME} PUBLIC
-            mss32.lib
+            ${_kisak_miles_lib}
             dsound.lib
             ${D3DX_LIB}
             d3d9.lib
             ddraw.lib
-            binkw32.lib
+            ${_kisak_bink_lib}
             dxguid.lib
         )
     endif()

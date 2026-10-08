@@ -567,6 +567,28 @@ if (KISAK_PLATFORM STREQUAL "win32")
     kisakcod_ilp32(kisakcod-win-benchmark-tests win-benchmark-ghz-contracts)
 endif()
 
+# The silent Miles/Bink stubs that 64-bit Windows clients link in place of the
+# 32-bit-only mss32/binkw32 (KISAK_MEDIA_STUBS), called through the engine's
+# own dllimport declarations as KisakCOD-mp calls them.
+if (KISAK_PLATFORM STREQUAL "win32")
+    add_executable(kisakcod-win-media-stubs-tests
+        win_media_stubs_tests.cpp
+        ${SRC_DIR}/win32/win_media_stubs.cpp
+    )
+    target_include_directories(kisakcod-win-media-stubs-tests SYSTEM PRIVATE ${DEPS_DIR})
+    target_compile_features(kisakcod-win-media-stubs-tests PRIVATE cxx_std_20)
+    kisakcod_test_warnings(kisakcod-win-media-stubs-tests)
+    # The test calls the stubs through dllimport declarations, as the engine
+    # does; the linker binds those to the local definitions (LNK4217).
+    target_link_options(kisakcod-win-media-stubs-tests PRIVATE /IGNORE:4217,4286)
+    set_target_properties(kisakcod-win-media-stubs-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME win-media-stubs-contracts COMMAND kisakcod-win-media-stubs-tests)
+    set_tests_properties(win-media-stubs-contracts PROPERTIES TIMEOUT 60)
+    kisakcod_ilp32(kisakcod-win-media-stubs-tests win-media-stubs-contracts)
+endif()
+
 # The Win32 headless server's orderly quit on Ctrl+C, Ctrl+Break and console
 # close (qcommon/sys_quit.h): the real handler of _platform/win32/sys_console.cpp,
 # driven by real console control events in children on consoles of their own.
