@@ -918,3 +918,33 @@ kisakcod_ilp32(kisakcod-fx-fastfile-native-disk32-tests
 
 kisakcod_ilp32(kisakcod-fx-fastfile-zone-adapter-disk32-tests
     effectscore-fastfile-zone-adapter-disk32)
+
+# The production FX curve and random-table code (EffectsCore/fxcurve.cpp,
+# fx_random.cpp) at native width, with universal/com_math.cpp for the vector
+# math. Non-Windows clang, as the engine compiles off Windows (PLATFORM_POSIX.md).
+if (NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-fx-curve-random-tests
+        fx_curve_random_tests.cpp
+        com_math_test_stubs.cpp
+        ${SRC_DIR}/EffectsCore/fxcurve.cpp
+        ${SRC_DIR}/EffectsCore/fx_random.cpp
+        ${SRC_DIR}/universal/com_math.cpp
+    )
+    target_include_directories(kisakcod-fx-curve-random-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    # com_math.cpp reaches ode/common.h's <malloc.h>; tests/compat supplies it on macOS.
+    include(CheckIncludeFileCXX)
+    check_include_file_cxx("malloc.h" KISAK_HAVE_MALLOC_H)
+    check_include_file_cxx("memory.h" KISAK_HAVE_MEMORY_H)
+    if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+        target_include_directories(kisakcod-fx-curve-random-tests SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+    endif()
+    target_compile_features(kisakcod-fx-curve-random-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fx-curve-random-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-fx-curve-random-tests PRIVATE -fms-extensions)
+    set_source_files_properties(fx_curve_random_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+    set_target_properties(kisakcod-fx-curve-random-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME fx-curve-random-contracts COMMAND kisakcod-fx-curve-random-tests)
+endif()

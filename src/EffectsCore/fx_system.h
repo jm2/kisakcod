@@ -361,7 +361,7 @@ struct MarkInfoCollidedDObj // sizeof=0xC
     // padding byte
     // padding byte
 };
-static_assert(sizeof(MarkInfoCollidedDObj) == 0xC);
+RUNTIME_SIZE(MarkInfoCollidedDObj, 0xC, 0x18);
 
 struct MarkInfoCollidedBModel // sizeof=0xC
 {                                       // ...
@@ -371,7 +371,7 @@ struct MarkInfoCollidedBModel // sizeof=0xC
     // padding byte
     // padding byte
 };
-static_assert(sizeof(MarkInfoCollidedBModel) == 0xC);
+RUNTIME_SIZE(MarkInfoCollidedBModel, 0xC, 0x18);
 
 struct MarkInfo // sizeof=0x448
 {                                       // ...
@@ -405,7 +405,7 @@ struct MarkInfo // sizeof=0x448
     void(__cdecl *callback)(void *, int32_t, FxMarkTri *, int32_t, FxMarkPoint *, const float *, const float *);
     void *callbackContext;
 };
-static_assert(sizeof(MarkInfo) == 0x448);
+RUNTIME_SIZE(MarkInfo, 0x448, 0x770);
 
 struct MarkModelCoreContext // sizeof=0x1C
 {                                       // ...
@@ -417,7 +417,7 @@ struct MarkModelCoreContext // sizeof=0x1C
     const float (*transformMatrix)[3];  // ...
     const float (*transformNormalMatrix)[3]; // ...
 };
-static_assert(sizeof(MarkModelCoreContext) == 0x1C);
+RUNTIME_SIZE(MarkModelCoreContext, 0x1C, 0x38);
 
 struct FxMarkDObjUpdateContext // sizeof=0x108
 {                                       // ...
@@ -428,7 +428,7 @@ struct FxMarkDObjUpdateContext // sizeof=0x108
     // padding byte
     uint16_t brushIndex;
 };
-static_assert(sizeof(FxMarkDObjUpdateContext) == 0x108);
+RUNTIME_SIZE(FxMarkDObjUpdateContext, 0x108, 0x208);
 
 struct FxActiveMarkSurf // sizeof=0x14
 {                                       // ...
@@ -439,7 +439,7 @@ struct FxActiveMarkSurf // sizeof=0x14
     int32_t indexCount;
     uint16_t *indices;
 };
-static_assert(sizeof(FxActiveMarkSurf) == 0x14);
+RUNTIME_SIZE(FxActiveMarkSurf, 0x14, 0x20);
 
 void __cdecl TRACK_fx_marks();
 void __cdecl FX_InitMarksSystem(FxMarksSystem *marksSystem);
@@ -723,7 +723,7 @@ struct FxDrawState // sizeof=0xA8
     float physicsLerpFrac;
     int32_t msecDraw;                       // ...
 };
-static_assert(sizeof(FxDrawState) == 0xA8);
+RUNTIME_SIZE(FxDrawState, 0xA8, 0xC8);
 
 struct FxTrailSegmentDrawState // sizeof=0x3C
 {                                       // ...
@@ -735,7 +735,7 @@ struct FxTrailSegmentDrawState // sizeof=0x3C
     float uCoord;                       // ...
     uint8_t color[4];           // ...
 };
-static_assert(sizeof(FxTrailSegmentDrawState) == 0x3C);
+RUNTIME_SIZE(FxTrailSegmentDrawState, 0x3C, 0x40);
 
 struct FxBeam // sizeof=0x34
 {                                       // ...
@@ -749,14 +749,14 @@ struct FxBeam // sizeof=0x34
     int32_t segmentCount;                   // ...
     float wiggleDist;                   // ...
 };
-static_assert(sizeof(FxBeam) == 0x34);
+RUNTIME_SIZE(FxBeam, 0x34, 0x38);
 
 struct FxBeamInfo // sizeof=0x1384
 {                                       // ...
     FxBeam beams[96];
     int32_t beamCount;                      // ...
 };
-static_assert(sizeof(FxBeamInfo) == 0x1384);
+RUNTIME_SIZE(FxBeamInfo, 0x1384, 0x1508);
 
 struct FxPostLight // sizeof=0x24
 {                                       // ...
@@ -766,14 +766,14 @@ struct FxPostLight // sizeof=0x24
     GfxColor color;                     // ...
     Material *material;                 // ...
 };
-static_assert(sizeof(FxPostLight) == 0x24);
+RUNTIME_SIZE(FxPostLight, 0x24, 0x28);
 
 struct FxPostLightInfo // sizeof=0xD84
 {                                       // ...
     FxPostLight postLights[96];
     int32_t postLightCount;                 // ...
 };
-static_assert(sizeof(FxPostLightInfo) == 0xD84);
+RUNTIME_SIZE(FxPostLightInfo, 0xD84, 0xF08);
 
 struct FxGenerateVertsCmd // sizeof=0x44
 {                                       // ...
@@ -1064,7 +1064,7 @@ struct FxSprite // sizeof=0x20
     float minScreenRadius;
     int32_t flags;
 };
-static_assert(sizeof(FxSprite) == 0x20);
+RUNTIME_SIZE(FxSprite, 0x20, 0x28);
 
 void __cdecl FX_SpriteGenerateVerts(FxGenerateVertsCmd *cmd);
 void __cdecl FX_GenerateSpriteCodeMeshVerts(FxSprite *sprite, FxGenerateVertsCmd *cmd);
@@ -1381,7 +1381,7 @@ struct FxCurveIterator // sizeof=0x8
     const FxCurve *master;
     int32_t currentKeyIndex;
 };
-static_assert(sizeof(FxCurveIterator) == 0x8);
+RUNTIME_SIZE(FxCurveIterator, 0x8, 0x10);
 
 double __cdecl FxCurve_Interpolate1d(const float *key, float intermediateTime);
 void __cdecl FxCurve_Interpolate3d(const float *key, float intermediateTime, float *result);
@@ -1474,7 +1474,7 @@ struct FxEditorElemDef // sizeof=0x858
     float trailScrollTime;
     FxEditorTrailDef trailDef;
 };
-static_assert(sizeof(FxEditorElemDef) == 0x858);
+RUNTIME_SIZE(FxEditorElemDef, 0x858, 0x958);
 
 struct FxEditorEffectDef // sizeof=0x10B44
 {                                       // ...
@@ -1482,20 +1482,20 @@ struct FxEditorEffectDef // sizeof=0x10B44
     int32_t elemCount;
     FxEditorElemDef elems[32];
 };
-static_assert(sizeof(FxEditorEffectDef) == 0x10B44);
+RUNTIME_SIZE(FxEditorEffectDef, 0x10B44, 0x12B48);
 
 struct FxElemField // sizeof=0x8
 {                                       // ...
     const char *keyName;                // ...
     bool(__cdecl *handler)(const char **, FxEditorElemDef *); // ...
 };
-static_assert(sizeof(FxElemField) == 0x8);
+RUNTIME_SIZE(FxElemField, 0x8, 0x10);
 
 struct FxFlagOutputSet // sizeof=0xC
 {                                       // ...
     int32_t *flags[3];                      // ...
 };
-static_assert(sizeof(FxFlagOutputSet) == 0xC);
+RUNTIME_SIZE(FxFlagOutputSet, 0xC, 0x18);
 
 struct FxFlagDef // sizeof=0x10
 {
@@ -1504,7 +1504,7 @@ struct FxFlagDef // sizeof=0x10
     int32_t mask;
     int32_t value;
 };
-static_assert(sizeof(FxFlagDef) == 0x10);
+RUNTIME_SIZE(FxFlagDef, 0x10, 0x18);
 
 enum FxSampleChannel : int32_t
 {                                       // ...
