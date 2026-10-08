@@ -90,23 +90,26 @@ void __cdecl UI_LoadArenas()
     UI_LoadArenasFromFile();
     for (n = 0; n < ui_numArenas; ++n)
     {
+        // The decompile filled mapList[mapCount] through negative indexes into
+        // serverHardwareIconList, which follows mapList: the 32-bit dword
+        // offsets of mapLoadName (-5119), imageName (-5118), typeBits (-5115)
+        // and levelShot (-5082). They are wrong on 64-bit.
+        mapInfo &map = sharedUiInfo.mapList[sharedUiInfo.mapCount];
         v0 = Info_ValueForKey(ui_arenaInfos[n], "map");
-        sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5119] = (Material *)String_Alloc(v0);
+        map.mapLoadName = String_Alloc(v0);
         v1 = Info_ValueForKey(ui_arenaInfos[n], "longname");
-        sharedUiInfo.mapList[sharedUiInfo.mapCount].mapName = String_Alloc(v1);
-        sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5082] = 0;
-        v2 = va("loadscreen_%s", (const char *)sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5119]);
-        sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5118] = (Material *)String_Alloc(v2);
-        sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5082] = Material_RegisterHandle(
-            (char *)sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5118],
-            3);
+        map.mapName = String_Alloc(v1);
+        map.levelShot = 0;
+        v2 = va("loadscreen_%s", map.mapLoadName);
+        map.imageName = String_Alloc(v2);
+        map.levelShot = Material_RegisterHandle((char *)map.imageName, 3);
         pszGameTypes = Info_ValueForKey(ui_arenaInfos[n], "gametype");
         if (!pszGameTypes)
             goto LABEL_15;
         if (*pszGameTypes)
         {
-            sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5115] = 0;
-            v3 = va(".arena files : %s", (const char *)sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5119]);
+            map.typeBits = 0;
+            v3 = va(".arena files : %s", map.mapLoadName);
             Com_BeginParseSession(v3);
             pszText = pszGameTypes;
             while (1)
@@ -117,8 +120,7 @@ void __cdecl UI_LoadArenas()
                 for (i = 0; i < sharedUiInfo.numGameTypes; ++i)
                 {
                     if (!I_stricmp(pszToken, sharedUiInfo.gameTypes[i].gameType))
-                        sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5115] = (Material *)((int)sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5115]
-                            | (1 << i));
+                        map.typeBits |= 1 << i;
                 }
             }
             Com_EndParseSession();
@@ -126,7 +128,7 @@ void __cdecl UI_LoadArenas()
         else
         {
         LABEL_15:
-            sharedUiInfo.serverHardwareIconList[40 * sharedUiInfo.mapCount - 5115] = (Material *)-1;
+            map.typeBits = -1;
         }
         if (++sharedUiInfo.mapCount >= 128)
             break;

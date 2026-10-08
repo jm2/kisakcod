@@ -964,8 +964,7 @@ uiInfo_s *UI_BuildFindPlayerList()
     result = &uiInfoArray;
     if (uiInfoArray.nextFindPlayerRefresh)
     {
-        result = (uiInfo_s *)uiInfo->nextFindPlayerRefresh;
-        if ((int)result <= uiInfo->uiDC.realTime)
+        if (uiInfo->nextFindPlayerRefresh <= uiInfo->uiDC.realTime)
         {
             UI_UpdateDisplayServers(uiInfo);
             for (i = 0; i < 16; ++i)
@@ -976,11 +975,13 @@ uiInfo_s *UI_BuildFindPlayerList()
                     ++numFound;
                     for (j = 0; j < info.numLines; ++j)
                     {
-                        if (*(_DWORD *)&info.text[16 * j - 2040])
+                        // info.text[16 * j - 2040] / [- 2036] were the 32-bit byte offsets
+                        // of info.lines[j][2] and [3], which precede text.
+                        if (info.lines[j][2])
                         {
-                            if (**(_BYTE **)&info.text[16 * j - 2040])
+                            if (*info.lines[j][2])
                             {
-                                I_strncpyz(dest, *(char **)&info.text[16 * j - 2036], 34);
+                                I_strncpyz(dest, info.lines[j][3], 34);
                                 I_CleanStr(dest);
                                 if (stristr(dest, uiInfo->findPlayerName))
                                 {
@@ -1053,7 +1054,7 @@ uiInfo_s *UI_BuildFindPlayerList()
                 if (uiInfo->numFoundPlayerServers)
                 {
                     if (uiInfo->numFoundPlayerServers == 2)
-                        result = (uiInfo_s *)Com_sprintf(
+                        Com_sprintf(
                             uiInfo->foundPlayerServerAddresses[uiInfo->numFoundPlayerServers + 15],
                             0x40u,
                             "%d server%s found with player %s",
@@ -1061,7 +1062,7 @@ uiInfo_s *UI_BuildFindPlayerList()
                             "",
                             uiInfo->findPlayerName);
                     else
-                        result = (uiInfo_s *)Com_sprintf(
+                        Com_sprintf(
                             uiInfo->foundPlayerServerAddresses[uiInfo->numFoundPlayerServers + 15],
                             0x40u,
                             "%d server%s found with player %s",
@@ -1071,7 +1072,7 @@ uiInfo_s *UI_BuildFindPlayerList()
                 }
                 else
                 {
-                    result = (uiInfo_s *)Com_sprintf(
+                    Com_sprintf(
                         uiInfo->foundPlayerServerAddresses[uiInfo->numFoundPlayerServers + 15],
                         0x40u,
                         "no servers found");
@@ -1275,7 +1276,7 @@ char *__cdecl UI_GetMapDisplayName(const char *pszMap)
 
     for (i = 0; i < sharedUiInfo.mapCount; ++i)
     {
-        if (!I_stricmp(pszMap, (const char *)sharedUiInfo.serverHardwareIconList[40 * i - 5119]))
+        if (!I_stricmp(pszMap, sharedUiInfo.mapList[i].mapLoadName))
             return UI_SafeTranslateString((char *)sharedUiInfo.mapList[i].mapName);
     }
     return (char *)pszMap;
@@ -1289,8 +1290,8 @@ char *__cdecl UI_GetMapDisplayNameFromPartialLoadNameMatch(const char *mapName, 
         MyAssertHandler(".\\ui_mp\\ui_main_mp.cpp", 1043, 0, "%s", "mapLoadNameLen");
     for (i = 0; i < sharedUiInfo.mapCount; ++i)
     {
-        *mapLoadNameLen = strlen((const char *)sharedUiInfo.serverHardwareIconList[40 * i - 5119]);
-        if (!I_strnicmp(mapName, (const char *)sharedUiInfo.serverHardwareIconList[40 * i - 5119], *mapLoadNameLen))
+        *mapLoadNameLen = strlen(sharedUiInfo.mapList[i].mapLoadName);
+        if (!I_strnicmp(mapName, sharedUiInfo.mapList[i].mapLoadName, *mapLoadNameLen))
             return UI_SafeTranslateString((char *)sharedUiInfo.mapList[i].mapName);
     }
     return 0;
@@ -2168,7 +2169,7 @@ BOOL __cdecl UI_IsMapActive(int mapIndex)
             "%s\n\t(mapIndex) = %i",
             "(mapIndex >= 0 && mapIndex < sharedUiInfo.mapCount)",
             mapIndex);
-    return sharedUiInfo.serverHardwareIconList[40 * mapIndex - 5081] != 0;
+    return sharedUiInfo.mapList[mapIndex].active != 0;
 }
 
 void __cdecl UI_SelectListIndexForMapIndex(int mapIndex)
@@ -2185,7 +2186,7 @@ void UI_SelectFirstActiveMap()
 
     for (mapIndex = 0; mapIndex < sharedUiInfo.mapCount; ++mapIndex)
     {
-        if (sharedUiInfo.serverHardwareIconList[40 * mapIndex - 5081])
+        if (sharedUiInfo.mapList[mapIndex].active)
         {
             Menu_SetFeederSelection(&uiInfoArray.uiDC, 0, 4, 0, "createserver_maps");
             Dvar_SetInt(ui_currentNetMap, mapIndex);
@@ -2215,7 +2216,7 @@ void __cdecl UI_SelectCurrentMap(int localClientNum)
             iCount = 0;
             for (i = 0; i < sharedUiInfo.mapCount; ++i)
             {
-                if (sharedUiInfo.serverHardwareIconList[40 * i - 5081])
+                if (sharedUiInfo.mapList[i].active)
                 {
                     if (!I_stricmp(szMap, sharedUiInfo.mapList[i].mapName))
                     {
@@ -2560,7 +2561,7 @@ int __cdecl UI_GetPlayerProfileListIndexFromName(const char *name)
 
 const char *UI_LoadMods()
 {
-    const char *result; // eax
+    const char *result = nullptr; // eax
     int numdirs; // [esp+20h] [ebp-818h]
     const char *dirptr; // [esp+24h] [ebp-814h]
     char dirlist[2048]; // [esp+28h] [ebp-810h] BYREF
@@ -2574,7 +2575,6 @@ const char *UI_LoadMods()
     dirptr = dirlist;
     for (i = 0; ; ++i)
     {
-        result = (const char *)i;
         if (i >= numdirs)
             break;
         dirlen = strlen(dirptr) + 1;
@@ -3291,8 +3291,7 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                     {
                                         v13 = va(
                                             "callvote map %s\n",
-                                            (const char *)sharedUiInfo.serverHardwareIconList[40 * ui_currentNetMap->current.integer
-                                            - 5119]);
+                                            sharedUiInfo.mapList[ui_currentNetMap->current.integer].mapLoadName);
                                         Cbuf_AddText(localClientNum, v13);
                                     }
                                 }
@@ -3301,8 +3300,7 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                     v12 = va(
                                         "callvote typemap %s %s\n",
                                         sharedUiInfo.gameTypes[ui_netGameType->current.integer].gameType,
-                                        (const char *)sharedUiInfo.serverHardwareIconList[40 * ui_currentNetMap->current.integer
-                                        - 5119]);
+                                        sharedUiInfo.mapList[ui_currentNetMap->current.integer].mapLoadName);
                                     Cbuf_AddText(localClientNum, v12);
                                 }
                             }
@@ -3390,7 +3388,7 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
             Dvar_SetStringByName("g_gametype", (char *)sharedUiInfo.gameTypes[ui_netGameType->current.integer].gameType);
             v4 = va(
                 "wait ; wait ; map %s\n",
-                (const char *)sharedUiInfo.serverHardwareIconList[40 * ui_currentNetMap->current.integer - 5119]);
+                sharedUiInfo.mapList[ui_currentNetMap->current.integer].mapLoadName);
             Cbuf_AddText(localClientNum, v4);
         }
         else
@@ -3908,11 +3906,14 @@ int __cdecl UI_MapCountByGameType()
     c = 0;
     for (i = 0; i < sharedUiInfo.mapCount; ++i)
     {
-        sharedUiInfo.serverHardwareIconList[40 * i - 5081] = 0;
-        if (((int)sharedUiInfo.serverHardwareIconList[40 * i - 5115] & (1 << game)) != 0)
+        // The decompile reached mapList[i].active and .typeBits through negative
+        // indexes into serverHardwareIconList, which follows mapList: the
+        // 32-bit dword offsets of those fields, wrong on 64-bit.
+        sharedUiInfo.mapList[i].active = 0;
+        if ((sharedUiInfo.mapList[i].typeBits & (1 << game)) != 0)
         {
             ++c;
-            sharedUiInfo.serverHardwareIconList[40 * i - 5081] = (Material *)1;
+            sharedUiInfo.mapList[i].active = 1;
         }
     }
     return c;
@@ -4246,11 +4247,11 @@ Material *__cdecl UI_GetLevelShot(int index)
 {
     if (index < 0 || index >= sharedUiInfo.mapCount)
         index = 0;
-    if (!sharedUiInfo.serverHardwareIconList[40 * index - 5082])
-        sharedUiInfo.serverHardwareIconList[40 * index - 5082] = Material_RegisterHandle(
-            (char *)sharedUiInfo.serverHardwareIconList[40 * index - 5118],
+    if (!sharedUiInfo.mapList[index].levelShot)
+        sharedUiInfo.mapList[index].levelShot = Material_RegisterHandle(
+            (char *)sharedUiInfo.mapList[index].imageName,
             3);
-    return sharedUiInfo.serverHardwareIconList[40 * index - 5082];
+    return sharedUiInfo.mapList[index].levelShot;
 }
 
 Material *__cdecl UI_FeederItemImage(float feederID, int index)
@@ -4308,7 +4309,7 @@ int __cdecl UI_GetListIndexFromMapIndex(int testMapIndex)
     listIndex = 0;
     for (mapIndex = 0; mapIndex < sharedUiInfo.mapCount; ++mapIndex)
     {
-        if (sharedUiInfo.serverHardwareIconList[40 * mapIndex - 5081])
+        if (sharedUiInfo.mapList[mapIndex].active)
         {
             if (mapIndex == testMapIndex)
                 return listIndex;
@@ -4370,7 +4371,7 @@ char *__cdecl UI_SelectedMap(int index, int *actual)
     *actual = 0;
     for (i = 0; i < sharedUiInfo.mapCount; ++i)
     {
-        if (sharedUiInfo.serverHardwareIconList[40 * i - 5081])
+        if (sharedUiInfo.mapList[i].active)
         {
             if (c == index)
             {
@@ -5870,7 +5871,7 @@ void __cdecl UI_ReplaceConversions(
     char *outputString,
     int outputStringSize)
 {
-    int v4; // eax
+    const char *v4; // eax
     int v5; // edx
     signed int v6; // [esp+0h] [ebp-38h]
     int argIndex; // [esp+24h] [ebp-14h]
@@ -5881,7 +5882,7 @@ void __cdecl UI_ReplaceConversions(
 
     if (!sourceString)
         MyAssertHandler(".\\ui_mp\\ui_main_mp.cpp", 7349, 0, "%s", "sourceString");
-    v4 = (int)strstr(sourceString, "&&");
+    v4 = strstr(sourceString, "&&");
     if (v4)
     {
         if (!arguments)
