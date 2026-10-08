@@ -2,6 +2,8 @@
 #include "r_rendercmds.h"
 #include "r_drawsurf.h"
 #include "r_reservation_atomic.h"
+#include "r_prim_draw_surf_stream.h"
+#include "r_add_staticmodel.h"
 
 void __cdecl R_InitDelayedCmdBuf(GfxDelayedCmdBuf *delayedCmdBuf)
 {
@@ -119,4 +121,33 @@ void __cdecl R_WritePrimDrawSurfData(GfxDelayedCmdBuf *delayedCmdBuf, uint8_t *d
     delayedCmdBuf->primDrawSurfSize -= count;
     memcpy((uint8_t *)&frontEndDataOut->primDrawSurfsBuf[delayedCmdBuf->primDrawSurfPos], data, 4 * count);
     delayedCmdBuf->primDrawSurfPos += count;
+}
+
+void __cdecl R_WritePrimDrawSurfPtr(GfxDelayedCmdBuf *delayedCmdBuf, const void *ptr)
+{
+    if (delayedCmdBuf->primDrawSurfSize < kPrimDrawSurfPtrDwords)
+        MyAssertHandler(
+            ".\\r_add_cmdbuf.cpp",
+            162,
+            0,
+            "%s\n\t(delayedCmdBuf->primDrawSurfSize) = %i",
+            "(delayedCmdBuf->primDrawSurfSize >= kPrimDrawSurfPtrDwords)",
+            delayedCmdBuf->primDrawSurfSize);
+    iassert( delayedCmdBuf->primDrawSurfPos >= 0 );
+    delayedCmdBuf->primDrawSurfSize -= kPrimDrawSurfPtrDwords;
+    R_StorePrimDrawSurfPtr(&frontEndDataOut->primDrawSurfsBuf[delayedCmdBuf->primDrawSurfPos], ptr);
+    delayedCmdBuf->primDrawSurfPos += kPrimDrawSurfPtrDwords;
+}
+
+// One static-model group (r_prim_draw_surf_stream.h). The caller reserved
+// R_StaticModelGroupDwords(count) dwords with R_AllocDrawSurf.
+void __cdecl R_AddDelayedStaticModelDrawSurf(
+    GfxDelayedCmdBuf *delayedCmdBuf,
+    XSurface *xsurf,
+    uint8_t *list,
+    uint32_t count)
+{
+    R_WritePrimDrawSurfInt(delayedCmdBuf, count);
+    R_WritePrimDrawSurfPtr(delayedCmdBuf, xsurf);
+    R_WritePrimDrawSurfData(delayedCmdBuf, list, (count + 1) >> 1);
 }
