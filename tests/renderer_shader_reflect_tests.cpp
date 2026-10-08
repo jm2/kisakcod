@@ -279,7 +279,7 @@ constexpr std::uint32_t Usage(std::uint32_t usage, std::uint32_t index)
 {
     return 0x80000000u | (index << 16) | usage;
 }
-enum : std::uint32_t { kInput = 1, kConst = 2, kTexture = 3, kRastOut = 4, kAttrOut = 5, kOutput = 6,
+enum : std::uint32_t { kTemp = 0, kInput = 1, kConst = 2, kTexture = 3, kRastOut = 4, kAttrOut = 5, kOutput = 6,
     kColorOut = 8, kDepthOut = 9, kSampler = 10 };
 enum : std::uint32_t { kPosition = 0, kNormal = 3, kPSize = 4, kTexcoord = 5, kColor = 10, kFog = 11, kDepth = 12 };
 
@@ -369,6 +369,45 @@ void TestUndeclaredOutputs()
     CheckSemantics(Semantics(ps, true), "10:0 10:1 12:0", "ps outputs from oC# and oDepth");
 }
 
+void TestShaderModel1Semantics()
+{
+    // ps_1_x has no dcl: t# reads are texture coordinates and v# reads colors,
+    // by register number, texture coordinates first; temporaries are not
+    // inputs. Its output is r0 alone: writing r1 adds nothing.
+    const auto ps = Program(0xFFFF0101u, {
+        0x00000042u, Reg(kTexture, 3),                                    // tex t3
+        0x00000042u, Reg(kTexture, 0),                                    // tex t0
+        0x00000005u, Reg(kTemp, 1), Reg(kInput, 1), Reg(kTexture, 3),    // mul r1, v1, t3
+        0x00000005u, Reg(kTemp, 0), Reg(kInput, 0), Reg(kTexture, 0),    // mul r0, v0, t0
+        0x00000002u, Reg(kTemp, 0), Reg(kTemp, 0), Reg(kTemp, 1) });     // add r0, r0, r1
+    CheckSemantics(Semantics(ps, false), "5:0 5:3 10:0 10:1", "ps_1_1 inputs from t# and v#");
+    CheckSemantics(Semantics(ps, true), "10:0", "ps_1_1 output is r0");
+
+    // ps_1_4: phase has no parameters; texcrd and texld name t# as sources.
+    const auto ps14 = Program(0xFFFF0104u, {
+        0x00000040u, Reg(kTemp, 1), Reg(kTexture, 2),                     // texcrd r1, t2
+        0x00000042u, Reg(kTemp, 0), Reg(kTexture, 0),                     // texld r0, t0
+        0x0000FFFDu,                                                      // phase
+        0x00000005u, Reg(kTemp, 0), Reg(kTemp, 0), Reg(kInput, 1) });    // mul r0, r0, v1
+    CheckSemantics(Semantics(ps14, false), "5:0 5:2 10:1", "ps_1_4 inputs across a phase");
+
+    // vs_1_1: inputs are declared; outputs come from the registers written,
+    // and the instruction lengths are read from the parameter tokens (a def's
+    // -2.0f value looks like an oPos token but is skipped).
+    const auto vs = Program(0xFFFE0101u, {
+        kDcl & 0xFFFFu, Usage(kPosition, 0), Reg(kInput, 0),
+        kDcl & 0xFFFFu, Usage(kTexcoord, 1), Reg(kInput, 2),
+        kDef & 0xFFFFu, Reg(kConst, 4), 0x3F800000u, 0xC0000000u, 0, 0,
+        0x00000001u, Reg(kRastOut, 0), Reg(kInput, 0),
+        0x00000001u, Reg(kAttrOut, 1), Reg(kInput, 0),
+        0x00000001u, Reg(kOutput, 2), Reg(kInput, 2) });
+    CheckSemantics(Semantics(vs, false), "0:0 5:1", "vs_1_1 inputs from dcl");
+    CheckSemantics(Semantics(vs, true), "5:2 10:1 0:0", "vs_1_1 outputs from written registers");
+
+    // A parameter run past the end of the program is malformed.
+    CheckSemantics(Semantics({ 0xFFFF0101u, 0x00000001u, Reg(kTemp, 0) }, true), "fail", "ps_1_1 without its end token");
+}
+
 void TestSemanticsFailClosed()
 {
     const auto vs = Program(kVs30, { kDcl, Usage(kPosition, 0), Reg(kInput, 0),
@@ -376,7 +415,7 @@ void TestSemanticsFailClosed()
     CheckSemantics(Semantics(vs, false, 1), "fail", "more semantics than capacity");
     CheckSemantics(Semantics(std::vector<std::uint32_t>(vs.begin(), vs.end() - 1), false), "fail",
         "no end token");
-    CheckSemantics(Semantics(Program(0xFFFE0101u, {}), true), "fail", "vs_1_1");
+    CheckSemantics(Semantics(Program(0x12340300u, {}), true), "fail", "neither vertex nor pixel");
     std::uint32_t count = 7;
     Check(!R_ShaderGetInputSemantics(vs.data(), static_cast<std::uint32_t>(vs.size()), nullptr, 4, &count)
             && count == 0, "null semantics with a capacity");
@@ -393,6 +432,7 @@ int main()
     TestDeclaredSemantics();
     TestPs20Inputs();
     TestUndeclaredOutputs();
+    TestShaderModel1Semantics();
     TestSemanticsFailClosed();
     if (failures)
         return 1;

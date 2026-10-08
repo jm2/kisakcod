@@ -231,6 +231,7 @@ constexpr std::uint32_t kDclUsageIndexMask = 0xFu;
 // D3DSPR_* register types and D3DDECLUSAGE_* usages.
 enum : std::uint32_t
 {
+    kRegTemp = 0,
     kRegInput = 1,
     kRegTexture = 3,
     kRegRastOut = 4,
@@ -257,6 +258,157 @@ std::uint32_t RegisterType(std::uint32_t parameter)
     return ((parameter >> 28) & 0x7u) | ((parameter >> 8) & 0x18u);
 }
 
+// Collects semantics the way native D3DX9 reports them: declared ones in
+// dcl order, then undeclared ones as texture coordinates, colors, RASTOUT
+// outputs (oPos, oFog, oPts) and depth, each by register number.
+class SemanticCollector
+{
+public:
+    SemanticCollector(std::uint32_t version, bool output, ShaderSemantic *semantics, std::uint32_t capacity)
+        : isPixel((version & kVersionTypeMask) == kPixelVersionType),
+          major(VersionMajor(version)),
+          output(output),
+          semantics(semantics),
+          capacity(capacity)
+    {
+    }
+
+    // dcl gives vertex inputs, vs_3_0 outputs and pixel inputs from 2.x on.
+    bool Declared() const
+    {
+        return output ? !isPixel && major == 3 : !(isPixel && major == 1);
+    }
+
+    bool Visit(std::uint32_t token, const std::uint32_t *payload, std::uint32_t payloadDwords)
+    {
+        const std::uint32_t opcode = token & kOpcodeMask;
+        if (Declared())
+        {
+            if (opcode == kDclOpcode && payloadDwords >= 2)
+                AddDeclared(payload[0], payload[1]);
+            return true;
+        }
+        if (opcode == kCommentOpcode || opcode == kDefOpcode || opcode == kDefiOpcode || opcode == kDefbOpcode)
+            return true;
+        for (std::uint32_t i = 0; i < payloadDwords && (payload[i] & kParameterTokenBit); ++i)
+            AddRegister(RegisterType(payload[i]), payload[i] & kRegisterNumberMask);
+        return true;
+    }
+
+    // Emits the undeclared semantics; returns how many there are in all.
+    std::uint32_t Finish()
+    {
+        // D3DX keeps 16 texture-coordinate bits and 8 color and RASTOUT bits.
+        for (std::uint32_t i = 0; i < 16; ++i)
+            if (texcoords & (1u << i))
+                Emit(kUsageTexcoord, i);
+        for (std::uint32_t i = 0; i < 8; ++i)
+            if (colors & (1u << i))
+                Emit(kUsageColor, i);
+        for (std::uint32_t i = 0; i < 8; ++i)
+            if (rastOut & (1u << i))
+                Emit(i < std::size(kRastOutUsage) ? kRastOutUsage[i] : 0, 0);
+        if (depth)
+            Emit(kUsageDepth, 0);
+        return found;
+    }
+
+private:
+    void Emit(std::uint32_t usage, std::uint32_t usageIndex)
+    {
+        if (found < capacity)
+            semantics[found] = { usage, usageIndex };
+        ++found;
+    }
+
+    void AddDeclared(std::uint32_t usageToken, std::uint32_t reg)
+    {
+        const std::uint32_t type = RegisterType(reg);
+        const std::uint32_t usageIndex = (usageToken >> kDclUsageIndexShift) & kDclUsageIndexMask;
+        if (isPixel && major == 2)
+        {
+            // ps_2_x dcl carries no usage: v# is a color and t# a texture
+            // coordinate. As native D3DX does, a color keeps the dcl's (zero)
+            // usage index and a texture coordinate takes its register number;
+            // sampler dcls name no semantic.
+            if (type == kRegInput)
+                Emit(kUsageColor, usageIndex);
+            else if (type == kRegTexture)
+                Emit(kUsageTexcoord, reg & kRegisterNumberMask);
+        }
+        else if (type == (output ? kRegOutput : kRegInput))
+        {
+            Emit(usageToken & kDclUsageMask, usageIndex);
+        }
+    }
+
+    // An undeclared register: every vs_1_x/2_x output and every pixel output,
+    // and ps_1_x inputs (v# colors, t# texture coordinates). A ps_1_x program's
+    // only output is r0, its COLOR0; native D3DX names no other temporary.
+    void AddRegister(std::uint32_t type, std::uint32_t number)
+    {
+        const std::uint32_t bit = number < 32 ? 1u << number : 0;
+        if (!output)
+        {
+            if (type == kRegInput)
+                colors |= bit;
+            else if (type == kRegTexture)
+                texcoords |= bit;
+            return;
+        }
+        if (type == kRegRastOut)
+            rastOut |= bit;
+        else if (type == kRegDepthOut)
+            depth = true;
+        else if (type == kRegOutput)
+            texcoords |= bit;
+        else if (type == kRegAttrOut || type == kRegColorOut || (type == kRegTemp && isPixel && major == 1 && number == 0))
+            colors |= bit;
+    }
+
+    const bool isPixel;
+    const std::uint32_t major;
+    const bool output;
+    ShaderSemantic *const semantics;
+    const std::uint32_t capacity;
+    std::uint32_t found = 0;
+    std::uint32_t texcoords = 0;
+    std::uint32_t colors = 0;
+    std::uint32_t rastOut = 0;
+    bool depth = false;
+};
+
+// Walks every instruction of a 1.x program. Its instruction tokens carry no
+// length, so an instruction's payload is the parameter tokens (bit 31 set)
+// that follow it, as D3DX reads them; def takes its register and four values.
+template <typename Visit>
+bool WalkShaderModel1(const std::uint32_t *program, std::uint32_t dwordCount, Visit &&visit)
+{
+    if (!program || dwordCount < 2 || VersionMajor(program[0]) != 1)
+        return false;
+
+    std::uint32_t cursor = 1;
+    while (cursor < dwordCount)
+    {
+        const std::uint32_t token = program[cursor];
+        if (token == kEndToken)
+            return cursor + 1 == dwordCount;
+
+        std::uint32_t payloadDwords = 0;
+        if ((token & kOpcodeMask) == kCommentOpcode)
+            payloadDwords = (token & kCommentLengthMask) >> kCommentLengthShift;
+        else if ((token & kOpcodeMask) == kDefOpcode)
+            payloadDwords = 5;
+        else
+            while (cursor + 1 + payloadDwords < dwordCount && (program[cursor + 1 + payloadDwords] & kParameterTokenBit))
+                ++payloadDwords;
+        if (payloadDwords > dwordCount - cursor - 1 || !visit(token, &program[cursor + 1], payloadDwords))
+            return false;
+        cursor += payloadDwords + 1;
+    }
+    return false;
+}
+
 bool GetSemantics(
     const std::uint32_t *program,
     std::uint32_t dwordCount,
@@ -271,81 +423,14 @@ bool GetSemantics(
     if (!program || dwordCount < 2 || (capacity && !semantics))
         return false;
 
-    const bool isPixel = (program[0] & kVersionTypeMask) == kPixelVersionType;
-    const std::uint32_t major = (program[0] >> 8) & 0xFFu;
-    const bool declared = output ? !isPixel && major == 3 : true;
-
-    std::uint32_t found = 0;
-    auto emit = [&](std::uint32_t usage, std::uint32_t usageIndex) {
-        if (found < capacity)
-            semantics[found] = { usage, usageIndex };
-        ++found;
+    SemanticCollector collector(program[0], output, semantics, capacity);
+    auto visit = [&collector](std::uint32_t token, const std::uint32_t *payload, std::uint32_t payloadDwords) {
+        return collector.Visit(token, payload, payloadDwords);
     };
-    std::uint32_t texcoords = 0, colors = 0, rastOut = 0;
-    bool depth = false;
-
-    const bool walked = WalkProgram(program, dwordCount,
-        [&](std::uint32_t token, const std::uint32_t *payload, std::uint32_t payloadDwords) {
-            const std::uint32_t opcode = token & kOpcodeMask;
-            if (declared)
-            {
-                if (opcode != kDclOpcode || payloadDwords < 2)
-                    return true;
-                const std::uint32_t type = RegisterType(payload[1]);
-                const std::uint32_t usageIndex = (payload[0] >> kDclUsageIndexShift) & kDclUsageIndexMask;
-                if (isPixel && major == 2)
-                {
-                    // ps_2_x dcl carries no usage: v# is a color and t# a texture
-                    // coordinate. As native D3DX does, a color keeps the dcl's
-                    // (zero) usage index and a texture coordinate takes its
-                    // register number; sampler dcls name no semantic.
-                    if (type == kRegInput)
-                        emit(kUsageColor, usageIndex);
-                    else if (type == kRegTexture)
-                        emit(kUsageTexcoord, payload[1] & kRegisterNumberMask);
-                }
-                else if (type == (output ? kRegOutput : kRegInput))
-                {
-                    emit(payload[0] & kDclUsageMask, usageIndex);
-                }
-                return true;
-            }
-
-            // Undeclared outputs: every register the instruction names.
-            if (opcode == kCommentOpcode || opcode == kDefOpcode || opcode == kDefiOpcode || opcode == kDefbOpcode)
-                return true;
-            for (std::uint32_t i = 0; i < payloadDwords && (payload[i] & kParameterTokenBit); ++i)
-            {
-                const std::uint32_t type = RegisterType(payload[i]);
-                const std::uint32_t number = payload[i] & kRegisterNumberMask;
-                const std::uint32_t bit = number < 32 ? 1u << number : 0;
-                if (type == kRegRastOut)
-                    rastOut |= bit;
-                else if (type == kRegDepthOut)
-                    depth = true;
-                else if (type == kRegOutput)
-                    texcoords |= bit;
-                else if (type == kRegAttrOut || type == kRegColorOut)
-                    colors |= bit;
-            }
-            return true;
-        });
-
-    if (!declared)
-    {
-        // D3DX keeps 16 texture-coordinate bits and 8 color and RASTOUT bits.
-        for (std::uint32_t i = 0; i < 16; ++i)
-            if (texcoords & (1u << i))
-                emit(kUsageTexcoord, i);
-        for (std::uint32_t i = 0; i < 8; ++i)
-            if (colors & (1u << i))
-                emit(kUsageColor, i);
-        for (std::uint32_t i = 0; i < 8; ++i)
-            if (rastOut & (1u << i))
-                emit(i < std::size(kRastOutUsage) ? kRastOutUsage[i] : 0, 0);
-        if (depth)
-            emit(kUsageDepth, 0);
-    }
+    const bool walked = VersionMajor(program[0]) == 1
+        ? WalkShaderModel1(program, dwordCount, visit)
+        : WalkProgram(program, dwordCount, visit);
+    const std::uint32_t found = collector.Finish();
     if (!walked || found > capacity)
         return false;
     *count = found;

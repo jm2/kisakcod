@@ -57,10 +57,12 @@ struct ShaderSemantic
 };
 
 // The replacements for D3DXGetShaderInputSemantics and
-// D3DXGetShaderOutputSemantics, in their order. Declared semantics come from
-// dcl instructions: vertex inputs, vs_3_0 outputs and pixel inputs (ps_2_x
-// dcl carries no usage, so v# reads as COLOR and t# as TEXCOORD). The other
-// outputs come from the registers the program names: texture coordinates,
+// D3DXGetShaderOutputSemantics, matching native D3DX9 on vs/ps 1.x to 3.x.
+// Declared semantics come from dcl instructions: vertex inputs, vs_3_0
+// outputs and pixel inputs from ps_2_0 on (ps_2_x dcl carries no usage, so
+// v# reads as COLOR and t# as TEXCOORD). The rest come from the registers the
+// program names: ps_1_x inputs (t#, v#), and every other output (oT#, oD#,
+// oC#, ps_1_x's r0, oPos/oFog/oPts, oDepth), listed as texture coordinates,
 // then colors, then rasterizer outputs, then depth. False on a malformed
 // program or more than `capacity` semantics; *count is then 0.
 bool R_ShaderGetInputSemantics(
