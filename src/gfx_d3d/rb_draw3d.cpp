@@ -716,14 +716,12 @@ void __cdecl R_SetResolvedScene(GfxCmdBufContext context)
     R_SetRenderTarget(context, R_RENDERTARGET_SCENE);
 }
 
-GfxCmdBufSourceState *RB_DebugShaderDrawCommandsCommon()
+void RB_DebugShaderDrawCommandsCommon()
 {
-    GfxCmdBufSourceState *result; // eax
     const GfxBackEndData *data; // [esp+10h] [ebp-Ch]
     GfxViewInfo *viewInfo; // [esp+14h] [ebp-8h]
     uint32_t viewInfoIndex; // [esp+18h] [ebp-4h]
 
-    result = gfxCmdBufContext.source;
     data = backEndData;
     for (viewInfoIndex = 0; viewInfoIndex < data->viewInfoCount; ++viewInfoIndex)
     {
@@ -740,9 +738,7 @@ GfxCmdBufSourceState *RB_DebugShaderDrawCommandsCommon()
         if (viewInfo->cmds)
             RB_ExecuteRenderCommandsLoop(viewInfo->cmds);
         memcpy(&gfxCmdBufState, gfxCmdBufContext.state, sizeof(gfxCmdBufState));
-        result = (GfxCmdBufSourceState *)(viewInfoIndex + 1);
     }
-    return result;
 }
 
 void RB_StandardDrawCommandsCommon()

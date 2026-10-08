@@ -601,6 +601,9 @@ void __cdecl R_GenerateBspShadowReceivers(ShadowCookieList *shadowCookieList)
         Vec3Mad(start, 10000.0, cookie->shadowViewParms->axis[0], end);
         radius = DObjGetRadius(sceneEnt->obj);
         drawSurfs = scene.cookie[cookieIndex].drawSurfs;
+        // The surface list borrows the back half of the cookie's draw surfs;
+        // the draw surfs emitted from it fill the front half. That half holds
+        // 256 surface pointers on x86 and 128 on x64.
         surfaces = (GfxSurface **)&drawSurfs[128];
         cookieDrawSurfCount = R_CylinderSurfaces(
             start,
@@ -608,10 +611,10 @@ void __cdecl R_GenerateBspShadowReceivers(ShadowCookieList *shadowCookieList)
             radius,
             scene.cookie[cookieIndex].planes,
             5u,
-            (int(__cdecl *)(int, void *))R_AllowBspShadowReceiver,
+            R_AllowBspShadowReceiver,
             &shadowReceiverCallback,
-            (GfxSurface **)&drawSurfs[128],
-            0x100u);
+            surfaces,
+            (sizeof(scene.cookie[cookieIndex].drawSurfs) - 128 * sizeof(GfxDrawSurf)) / sizeof(GfxSurface *));
         if (cookieDrawSurfCount)
         {
             surfData.drawSurfList.current = drawSurfs;
@@ -642,9 +645,11 @@ void __cdecl R_GenerateBspShadowReceivers(ShadowCookieList *shadowCookieList)
     }
 }
 
-bool __cdecl R_AllowBspShadowReceiver(int surfIndex, uint32_t *shadowReceiverCallbackAsVoid)
+int __cdecl R_AllowBspShadowReceiver(int surfIndex, void *shadowReceiverCallbackAsVoid)
 {
-    return *(_BYTE *)(*shadowReceiverCallbackAsVoid + surfIndex)
+    const ShadowReceiverCallback *callback = static_cast<const ShadowReceiverCallback *>(shadowReceiverCallbackAsVoid);
+
+    return callback->surfaceVisData[surfIndex]
         && Material_GetTechnique(rgp.world->dpvs.surfaces[surfIndex].material, TECHNIQUE_SHADOWCOOKIE_RECEIVER) != 0;
 }
 
