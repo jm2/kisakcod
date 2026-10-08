@@ -114,8 +114,8 @@ bool WalkLeadingComments(const std::uint32_t *program, std::uint32_t dwordCount,
         return false;
 
     std::uint32_t cursor = 1;
-    while (cursor < dwordCount && program[cursor] != kEndToken
-        && (program[cursor] & kOpcodeMask) == kCommentOpcode)
+    // A comment's opcode is never the end token's, so this stops at END too.
+    while (cursor < dwordCount && (program[cursor] & kOpcodeMask) == kCommentOpcode)
     {
         const std::uint32_t payloadDwords = (program[cursor] & kCommentLengthMask) >> kCommentLengthShift;
         if (payloadDwords > dwordCount - cursor - 1 || !visit(program[cursor], &program[cursor + 1], payloadDwords))

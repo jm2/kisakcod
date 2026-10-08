@@ -88,12 +88,12 @@ std::vector<std::uint8_t> BuildCtab(const std::vector<Constant> &constants)
         const Constant &c = constants[i];
         const std::size_t info = infoOffset + 20 * i;
         const std::size_t type = typeOffset + 16 * i;
-        Put32(bytes, info + 0, static_cast<std::uint32_t>(nameOffset));
+        Put32(bytes, info, static_cast<std::uint32_t>(nameOffset));
         Put16(bytes, info + 4, c.registerSet);
         Put16(bytes, info + 6, c.registerIndex);
         Put16(bytes, info + 8, c.registerCount);
         Put32(bytes, info + 12, static_cast<std::uint32_t>(type));
-        Put16(bytes, type + 0, c.typeClass);
+        Put16(bytes, type, c.typeClass);
         Put16(bytes, type + 2, c.typeType);
         bytes.insert(bytes.end(), c.name.begin(), c.name.end());
         bytes.push_back('\0');
@@ -221,7 +221,7 @@ void TestRejectsMalformed()
 {
     ShaderConstantTableView table{};
     const std::vector<std::uint8_t> good = BuildCtab(kConstants);
-    auto rejects = [&](std::vector<std::uint32_t> program, const char *what) {
+    auto rejects = [&](const std::vector<std::uint32_t> &program, const char *what) {
         Check(!Find(program, &table), what);
     };
     auto withCtab = [&](auto edit) {
