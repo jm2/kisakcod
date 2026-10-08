@@ -205,7 +205,7 @@ kisakcod_ilp32(kisakcod-xmodel-loader-entry-tests
 # -fms-extensions toolchain policy (PLATFORM_POSIX.md) and compile off Windows
 # only on Linux so far. Section GC keeps the link to the functions the checks
 # reach, so the test stubs only their boundary.
-if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+if ((KISAK_PLATFORM STREQUAL "linux" OR KISAK_PLATFORM STREQUAL "macos") AND CMAKE_SIZEOF_VOID_P EQUAL 8
     AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_executable(kisakcod-xanim-native64-size-tests
         xanim_native64_size_tests.cpp
@@ -222,8 +222,8 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
     target_compile_options(kisakcod-xanim-native64-size-tests PRIVATE
         -fms-extensions -ffunction-sections -fdata-sections)
-    target_link_options(kisakcod-xanim-native64-size-tests PRIVATE -Wl,--gc-sections)
-    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+    target_link_options(kisakcod-xanim-native64-size-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address" AND NOT APPLE)
         # Otherwise ASan's global registration keeps every global alive.
         target_compile_options(kisakcod-xanim-native64-size-tests PRIVATE
             -fsanitize-address-globals-dead-stripping)
@@ -233,4 +233,39 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME xanim-native64-sizes COMMAND kisakcod-xanim-native64-size-tests)
     set_tests_properties(xanim-native64-sizes PROPERTIES TIMEOUT 20)
+endif()
+
+# The runtime DObj and XModel code (dobj.cpp, dobj_utils.cpp, xmodel.cpp) at
+# native width over the production script string list and memory tree: a body
+# and a weapon model in one DObj, its bone indices, models, hide-part bits and
+# free. Non-Windows clang; the test stubs the engine boundary and section GC
+# keeps the link to what the checks reach.
+if (NOT WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-xanim-dobj-tests
+        xanim_dobj_tests.cpp
+        ${SRC_DIR}/xanim/dobj.cpp
+        ${SRC_DIR}/xanim/dobj_utils.cpp
+        ${SRC_DIR}/xanim/xmodel.cpp
+        ${SRC_DIR}/xanim/xmodel_utils.cpp
+        ${SRC_DIR}/script/scr_stringlist.cpp
+        ${SRC_DIR}/script/scr_memorytree.cpp
+        ${SRC_DIR}/qcommon/sys_sync.cpp
+        ${SRC_DIR}/_platform/posix/sys_sync.cpp)
+    target_include_directories(kisakcod-xanim-dobj-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    include(CheckIncludeFileCXX)
+    check_include_file_cxx("malloc.h" KISAK_HAVE_MALLOC_H)
+    check_include_file_cxx("memory.h" KISAK_HAVE_MEMORY_H)
+    if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+        target_include_directories(kisakcod-xanim-dobj-tests SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+    endif()
+    target_compile_features(kisakcod-xanim-dobj-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-xanim-dobj-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-xanim-dobj-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    set_source_files_properties(xanim_dobj_tests.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+    target_link_options(kisakcod-xanim-dobj-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    target_link_libraries(kisakcod-xanim-dobj-tests PRIVATE Threads::Threads)
+    set_target_properties(kisakcod-xanim-dobj-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME xanim-dobj-contracts COMMAND kisakcod-xanim-dobj-tests)
 endif()
