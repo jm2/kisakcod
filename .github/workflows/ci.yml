@@ -184,6 +184,34 @@ jobs:
           ctest --test-dir build-portable-sanitizers --output-on-failure
           --no-tests=error --timeout 300 --parallel 4
 
+  linux-i386-zones:
+    # The disk32 zone tests through the x86 load path (gate G0): an i386
+    # Linux build of the zone harness (the linux-x86-tests preset), where
+    # db_load.cpp's 32-bit steps load the synthetic zones.
+    name: Portable tests / Linux i386 zones
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install the i386 C++ runtime
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++-multilib
+
+      - name: Configure
+        run: cmake --preset linux-x86-tests
+
+      - name: Build the zone tests
+        run: >
+          cmake --build build-linux-x86-tests --parallel 4
+          --target kisakcod-db-disk32-zone-tests kisakcod-db-disk32-zone-retail-tests
+
+      - name: Run the zone tests
+        run: >
+          ctest --test-dir build-linux-x86-tests --output-on-failure
+          --no-tests=error --timeout 120 -R '^database-disk32-zone-'
+
   capability-dashboard:
     # Renders the KPI table (docs/NOW.md) and the target x role delivery
     # cells (docs/capability/manifest.json) into the run summary, and holds
@@ -669,6 +697,7 @@ jobs:
       - portable-tests
       - script-sanitizers
       - portable-sanitizers
+      - linux-i386-zones
       - capability-dashboard
       - windows-x86
       - windows-x86-sp
