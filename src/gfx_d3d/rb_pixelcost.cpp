@@ -1,4 +1,5 @@
 #include "rb_pixelcost.h"
+#include <qcommon/sys_time.h>
 #include "rb_sky.h"
 #include <universal/timing.h>
 #include "r_state.h"
@@ -254,7 +255,7 @@ unsigned __int64 RB_PixelCost_BeginTiming()
     unsigned __int64 result; // rax
 
     R_HW_FinishGpu();
-    result = __rdtsc();
+    result = Sys_CycleCounter();
     pixelCostGlob.timeBegin = result;
     return result;
 }
@@ -341,7 +342,7 @@ int RB_PixelCost_AccumulateMsec()
 void RB_PixelCost_EndTiming()
 {
     R_HW_FinishGpu();
-    pixelCostGlob.msecElapsed = (float)(__rdtsc() - pixelCostGlob.timeBegin) * msecPerRawTimerTick
+    pixelCostGlob.msecElapsed = (float)(Sys_CycleCounter() - pixelCostGlob.timeBegin) * msecPerRawTimerTick
         - pixelCostGlob.msecOverhead;
     if (pixelCostGlob.msecElapsed < 0.0f)
         pixelCostGlob.msecElapsed = 0.0f;

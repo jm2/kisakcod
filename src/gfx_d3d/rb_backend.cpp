@@ -1,4 +1,5 @@
 #include "rb_backend.h"
+#include <qcommon/sys_time.h>
 #include <qcommon/mem_track.h>
 
 #include "rb_logfile.h"
@@ -89,7 +90,7 @@ int __cdecl R_GpuFenceTimeout()
 {
     if (RB_IsGpuFenceFinished())
         return 1;
-    dx.gpuSyncEnd = __rdtsc();
+    dx.gpuSyncEnd = Sys_CycleCounter();
     return dx.gpuSyncEnd - dx.gpuSyncStart >= dx.gpuSyncDelay;
 }
 
@@ -2674,16 +2675,16 @@ int RB_AdaptiveGpuSyncFinal()
     }
     else
     {
-        startTime = __rdtsc();
+        startTime = Sys_CycleCounter();
         while (!RB_IsGpuFenceFinished())
         {
-            if ((__rdtsc() - startTime) < 0)
+            if ((Sys_CycleCounter() - startTime) < 0)
             {
                 RB_AbandonGpuFence();
                 break;
             }
         }
-        LODWORD(v0) = __rdtsc() - startTime;
+        LODWORD(v0) = Sys_CycleCounter() - startTime;
         waitedTime = v0;
         if ((v0 & 0x80000000) == 0LL)
         {

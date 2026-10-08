@@ -1,4 +1,5 @@
 #include "r_init.h"
+#include <qcommon/sys_time.h>
 #include "r_display_modes.h"
 #include <qcommon/mem_track.h>
 #include <qcommon/threads.h>
@@ -324,7 +325,7 @@ void __cdecl R_SyncGpu(int(__cdecl *WorkCallback)(unsigned __int64))
     {
         PROF_SCOPED("R_SyncGpu");
         useWorkCallback = WorkCallback != 0;
-        dx.gpuSyncStart = __rdtsc();
+        dx.gpuSyncStart = Sys_CycleCounter();
         R_AcquireGpuFenceLock();
         while (!R_GpuFenceTimeout())
         {
