@@ -14,6 +14,8 @@
 //   locals          branches and loop bodies that create locals in their
 //                   own order merge into the enclosing block's order, and
 //                   every local keeps its own value.
+//   vectors         vector constants, after operands of every width, load
+//                   float-aligned from the code and keep their values.
 
 #include <climits>
 #include <cstdio>
@@ -223,6 +225,32 @@ main()
         std::fprintf(stderr, "report %d\n", value);
     gsc::Unload();
 }
+// Each constant follows a different run of operand bytes, so in a packed
+// code stream some would start unaligned.
+void Vectors()
+{
+    gsc::SetSource("vectors", R"(main()
+{
+	a = (1, 2, 3);
+	b = 7;
+	c = (4, 5, 6) + a;
+	d = "s";
+	e = (10, 20, 30) - (1, 1, 1);
+	f = 1000;
+	g = (100, 200, 300);
+	report((c[0] == 5) + (c[1] == 7) * 2 + (c[2] == 9) * 4);
+	report((e[0] == 9) + (e[1] == 19) * 2 + (e[2] == 29) * 4);
+	report((g[0] == 100) + (g[1] == 200) * 2 + (g[2] == 300) * 4 + b + f);
+}
+)");
+    std::string error;
+    GSC_CHECK(gsc::Load("vectors", &error));
+    const std::vector<int> values = gsc::RunMain();
+    GSC_CHECK((values == std::vector<int>{7, 7, 1014}));
+    for (int value : values)
+        std::fprintf(stderr, "report %d\n", value);
+    gsc::Unload();
+}
 }  // namespace
 
 int main(int argc, char **argv)
@@ -236,9 +264,11 @@ int main(int argc, char **argv)
         ThreadParams();
     else if (!std::strcmp(which, "locals"))
         Locals();
+    else if (!std::strcmp(which, "vectors"))
+        Vectors();
     else
     {
-        std::fprintf(stderr, "usage: %s arithmetic|animtree-limit|thread-params|locals\n", argv[0]);
+        std::fprintf(stderr, "usage: %s arithmetic|animtree-limit|thread-params|locals|vectors\n", argv[0]);
         return 2;
     }
     std::printf("%s: %d failure(s)\n", which, gsc_failures);

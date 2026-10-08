@@ -156,6 +156,17 @@ enum Opcode_t : __int32
     OP_manualAndAssignmentBreakpoint = 0x89,
     OP_count = 0x8A,
 };
+
+// OP_GetVector's operand: three floats that start 4-aligned in the code
+// stream, after up to three pad bytes. The VM hands out a pointer to them
+// (Scr_ReadVector), so they must be float-aligned; the byte before them is
+// the constant's RefVector::byteLen, nonzero (the opcode or a pad byte),
+// which marks it as living in the code rather than refcounted.
+inline const char *Scr_VectorConstantPos(const char *pos)
+{
+    return pos + ((0u - reinterpret_cast<uintptr_t>(pos)) & 3u);
+}
+constexpr unsigned char kScrVectorConstantPad = 0xFF;
 //SCRIPT_RUNTIME_OPCODES_END
 inline Opcode_t &operator++(Opcode_t &e) {
     e = static_cast<Opcode_t>(static_cast<int>(e) + 1);
