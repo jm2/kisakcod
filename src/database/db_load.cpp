@@ -1841,11 +1841,14 @@ bool __cdecl Load_SndCurve(bool atStreamStart)
     DB_PushStreamPos(4);
     varXString = &varSndCurve->filename;
     Load_XString(0);
+    // A stub (",name") keeps only its name: DB_AddXAsset links the curve
+    // another zone provides, so the knot rules do not apply.
     if (!varSndCurve->filename
-        || !db::validation::CountInRange(varSndCurve->knotCount, 2, 8)
-        || !db::validation::NormalizedGraphKnots(
-            varSndCurve->knots,
-            static_cast<uint32_t>(varSndCurve->knotCount)))
+        || (!db::validation::IsStubAssetName(varSndCurve->filename)
+            && (!db::validation::CountInRange(varSndCurve->knotCount, 2, 8)
+                || !db::validation::NormalizedGraphKnots(
+                    varSndCurve->knots,
+                    static_cast<uint32_t>(varSndCurve->knotCount)))))
     {
         Com_Error(ERR_DROP, "Invalid fast-file sound falloff curve");
         DB_PopStreamPos();
