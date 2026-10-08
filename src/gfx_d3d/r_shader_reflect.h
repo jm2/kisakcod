@@ -48,3 +48,30 @@ bool R_ShaderGetConstantDesc(
     const ShaderConstantTableView &table,
     std::uint32_t index,
     ShaderConstantDesc *desc);
+
+// One D3DXSEMANTIC: a D3DDECLUSAGE and its usage index, in D3DXSEMANTIC's layout.
+struct ShaderSemantic
+{
+    std::uint32_t usage;
+    std::uint32_t usageIndex;
+};
+
+// The replacements for D3DXGetShaderInputSemantics and
+// D3DXGetShaderOutputSemantics, in their order. Declared semantics come from
+// dcl instructions: vertex inputs, vs_3_0 outputs and pixel inputs (ps_2_x
+// dcl carries no usage, so v# reads as COLOR and t# as TEXCOORD). The other
+// outputs come from the registers the program names: texture coordinates,
+// then colors, then rasterizer outputs, then depth. False on a malformed
+// program or more than `capacity` semantics; *count is then 0.
+bool R_ShaderGetInputSemantics(
+    const std::uint32_t *program,
+    std::uint32_t dwordCount,
+    ShaderSemantic *semantics,
+    std::uint32_t capacity,
+    std::uint32_t *count);
+bool R_ShaderGetOutputSemantics(
+    const std::uint32_t *program,
+    std::uint32_t dwordCount,
+    ShaderSemantic *semantics,
+    std::uint32_t capacity,
+    std::uint32_t *count);
