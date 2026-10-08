@@ -845,7 +845,7 @@ void __cdecl FX_SampleVelocityInFrame(
     if (useVelocity[0])
         velEpsilonSq = Vec3LengthSq((const float *)velScale) + velEpsilonSq;
     if (useVelocity[1])
-        velEpsilonSq = Vec3LengthSq(&(*velScale)[3]) + velEpsilonSq;
+        velEpsilonSq = Vec3LengthSq(velScale[1]) + velEpsilonSq;
     velEpsilonSqa = velEpsilonSq * 0.00000100000011116208;
     anyNonZero = 0;
     velStatePrev = 0;
@@ -869,9 +869,9 @@ void __cdecl FX_SampleVelocityInFrame(
         }
         if (useVelocity[1])
         {
-            velocitySample[0] = FX_SampleCurve1D(edElemDef->velShape[1][0][0], (*velScale)[3], sampleTime);
-            velocitySample[1] = FX_SampleCurve1D(edElemDef->velShape[1][1][0], (*velScale)[4], sampleTime);
-            velocitySample[2] = FX_SampleCurve1D(edElemDef->velShape[1][2][0], (*velScale)[5], sampleTime);
+            velocitySample[0] = FX_SampleCurve1D(edElemDef->velShape[1][0][0], velScale[1][0], sampleTime);
+            velocitySample[1] = FX_SampleCurve1D(edElemDef->velShape[1][1][0], velScale[1][1], sampleTime);
+            velocitySample[2] = FX_SampleCurve1D(edElemDef->velShape[1][2][0], velScale[1][2], sampleTime);
             Vec3Add(velState->velocity.base, velocitySample, velState->velocity.base);
             if (useVelocityRand[!brokenCompatibilityMode])
                 Vec3Sub(velState->velocity.amplitude, velocitySample, velState->velocity.amplitude);
@@ -900,11 +900,11 @@ void __cdecl FX_SampleVelocityInFrame(
         }
         if (useVelocityRand[1])
         {
-            velState->velocity.amplitude[0] = FX_SampleCurve1D(edElemDef->velShape[1][0][1], (*velScale)[3], sampleTime)
+            velState->velocity.amplitude[0] = FX_SampleCurve1D(edElemDef->velShape[1][0][1], velScale[1][0], sampleTime)
                 + velState->velocity.amplitude[0];
-            velState->velocity.amplitude[1] = FX_SampleCurve1D(edElemDef->velShape[1][1][1], (*velScale)[4], sampleTime)
+            velState->velocity.amplitude[1] = FX_SampleCurve1D(edElemDef->velShape[1][1][1], velScale[1][1], sampleTime)
                 + velState->velocity.amplitude[1];
-            velState->velocity.amplitude[2] = FX_SampleCurve1D(edElemDef->velShape[1][2][1], (*velScale)[5], sampleTime)
+            velState->velocity.amplitude[2] = FX_SampleCurve1D(edElemDef->velShape[1][2][1], velScale[1][2], sampleTime)
                 + velState->velocity.amplitude[2];
         }
         if (velStatePrev)
@@ -1170,7 +1170,7 @@ void __cdecl FX_ConvertTrail_CompileVertices(
     FxTrailVertex *emittedVertPtrIter; // [esp+28h] [ebp-68h]
     float secondaryEdgeNorm[2]; // [esp+2Ch] [ebp-64h] BYREF
     float primaryEdgeNorm[2]; // [esp+34h] [ebp-5Ch] BYREF
-    __int64 accumNorm; // [esp+3Ch] [ebp-54h] BYREF
+    float accumNorm[2]; // [esp+3Ch] [ebp-54h] BYREF
     int32_t edgeIter; // [esp+44h] [ebp-4Ch]
     uint16_t *emittedIndPtrBegin; // [esp+48h] [ebp-48h]
     int32_t indCount; // [esp+4Ch] [ebp-44h]
@@ -1214,8 +1214,8 @@ void __cdecl FX_ConvertTrail_CompileVertices(
             primaryEdgeNorm);
         for (edgeIter = 0; edgeIter != 2; ++edgeIter)
         {
-            *(float *)&accumNorm = 0.0;
-            *((float *)&accumNorm + 1) = 0.0;
+            accumNorm[0] = 0.0f;
+            accumNorm[1] = 0.0f;
             for (secondaryEdgeIndPtr = trailDef->inds; secondaryEdgeIndPtr != indPtrEnd; secondaryEdgeIndPtr += 2)
             {
                 v3 = Vec2Distance(trailDef->verts[*secondaryEdgeIndPtr].pos, trailDef->verts[primaryEdgeIndPtr[edgeIter]].pos);
@@ -1234,17 +1234,18 @@ void __cdecl FX_ConvertTrail_CompileVertices(
                 v8 = secondaryEdgeNorm[1] * primaryEdgeNorm[1] + secondaryEdgeNorm[0] * primaryEdgeNorm[0];
                 if (SMOOTH_THRESHOLD < (double)v8)
                 {
-                    *(float *)&accumNorm = secondaryEdgeNorm[0] + *(float *)&accumNorm;
-                    *((float *)&accumNorm + 1) = secondaryEdgeNorm[1] + *((float *)&accumNorm + 1);
+                    accumNorm[0] = secondaryEdgeNorm[0] + accumNorm[0];
+                    accumNorm[1] = secondaryEdgeNorm[1] + accumNorm[1];
                 }
             }
-            Vec2Normalize((float *)&accumNorm);
+            Vec2Normalize(accumNorm);
             v11 = &outVertPtrIter[edgeIter];
             pos = (float*)trailDef->verts[primaryEdgeIndPtr[edgeIter]].pos;
             v11->pos[0] = *pos;
             v11->pos[1] = pos[1];
             normal = outVertPtrIter[edgeIter].normal;
-            *(_QWORD *)normal = accumNorm;
+            normal[0] = accumNorm[0]; // the 20-byte vertex stride leaves normal 4-byte aligned
+            normal[1] = accumNorm[1];
             outVertPtrIter[edgeIter].texCoord = trailDef->verts[primaryEdgeIndPtr[edgeIter]].texCoord;
         }
         outVertPtrIter += 2;
