@@ -61,6 +61,26 @@ if (WIN32)
     kisakcod_ilp32(kisakcod-renderer-display-modes-tests renderer-display-modes)
 endif()
 
+# The D3DX buffer and HLSL compiler replacement (G5): D3DCompile from
+# d3dcompiler_47 on Windows (x86, x64, ARM64), E_NOTIMPL elsewhere.
+add_executable(kisakcod-renderer-shader-compile-tests
+    renderer_shader_compile_tests.cpp
+    ${SRC_DIR}/gfx_d3d/r_shader_compile.cpp
+)
+target_include_directories(kisakcod-renderer-shader-compile-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-renderer-shader-compile-tests PRIVATE cxx_std_20)
+if (WIN32)
+    target_link_libraries(kisakcod-renderer-shader-compile-tests PRIVATE d3dcompiler)
+endif()
+kisakcod_test_warnings(kisakcod-renderer-shader-compile-tests)
+set_target_properties(kisakcod-renderer-shader-compile-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME renderer-shader-compile
+    COMMAND kisakcod-renderer-shader-compile-tests
+)
+
 add_executable(kisakcod-renderer-reservation-atomic-tests
     renderer_reservation_atomic_tests.cpp
 )
