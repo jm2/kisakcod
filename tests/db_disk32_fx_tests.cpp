@@ -476,6 +476,20 @@ void TestElementsAndSamples()
            "every disk byte is consumed and block 4 advances by the retail extent");
 }
 
+// A lifespan starting at 0 with an amplitude (retail ships [0, 400]) loads,
+// as the FX converter takes it.
+void TestLifespanFromZero()
+{
+    Zone zone;
+    Effect effect = TwoElements();
+    effect.elems[1].lifeSpanMsec = {0, 400};
+    File().Write(effect);
+    const FxEffectDef *const loaded = Load(kInline);
+    Expect(loaded == &g_effects[0] && loaded->elemDefs && loaded->elemDefs[1].lifeSpanMsec.base == 0
+               && loaded->elemDefs[1].lifeSpanMsec.amplitude == 400 && MatchesOracle(*loaded, Oracle(effect)),
+           "a lifespan of [0, 400] loads and matches the FX converter");
+}
+
 using BigZone = disk32_test::Zone<4096>;
 
 // The visuals VisualEffect writes.
@@ -511,6 +525,22 @@ void TestVisuals()
     Expect(MatchesOracle(*loaded, Oracle(effect, References(*loaded))),
            "the effect matches the FX converter's, each reference in its place");
     Expect(g_read == g_file.size(), "every disk byte is consumed");
+}
+
+// A runner only spawns its effect: retail ships runners with a lifespan of
+// exactly [0, 0], which the converter takes (other types still need one).
+void TestZeroLifeRunner()
+{
+    BigZone zone;
+    RegisterAliases();
+    Effect effect = VisualEffect();
+    effect.elems[3].lifeSpanMsec = {0, 0};
+    File().Write(effect);
+    const FxEffectDef *const loaded = Load(kInline);
+    Expect(loaded == &g_effects[0] && InArena(loaded->elemDefs) && !loaded->elemDefs[3].lifeSpanMsec.base
+               && !loaded->elemDefs[3].lifeSpanMsec.amplitude
+               && MatchesOracle(*loaded, Oracle(effect, References(*loaded))),
+           "a runner with a [0, 0] lifespan loads and matches the FX converter");
 }
 
 void TestSharedInlineAndOffsets()
@@ -565,6 +595,7 @@ const Malformed kRuleBreaks[] = {
     {"element type 11", [](Effect &e) { e.elems[0].elemType = ff::FxElemTypeDisk32::Count;
                                         e.elems[0].visualCount = 0; }, kElement},
     {"a lifespan of no time", [](Effect &e) { e.elems[0].lifeSpanMsec = {0, 0}; }, kElement},
+    {"a lifespan starting before 0", [](Effect &e) { e.elems[0].lifeSpanMsec = {-1, 400}; }, kElement},
     {"a delay amplitude past 32767", [](Effect &e) { e.elems[0].spawnDelayMsec.amplitude = 32768; }, kElement},
     {"a delay past a day", [](Effect &e) { e.elems[1].spawnDelayMsec = {86'400'000, 1}; }, kElement},
     {"a looping interval of 0", [](Effect &e) { e.elems[0].spawn = {0, 3}; }, kElement},
@@ -839,7 +870,7 @@ void __cdecl Load_FxEffectDefAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestRecord, TestElementsAndSamples, TestVisuals, TestTrail, TestSharedInlineAndOffsets,
+    return Run({TestRecord, TestElementsAndSamples, TestLifespanFromZero, TestZeroLifeRunner, TestVisuals, TestTrail, TestSharedInlineAndOffsets,
                 TestRuleBreaksFailClosed, TestTrailBreaksFailClosed,
                 TestVisualBreaksFailClosed, TestMalformedFailsClosed});
 }

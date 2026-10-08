@@ -66,7 +66,9 @@ bool TimeRangeValid(const disk32::FxIntRangeDisk32 &range, bool positive)
 {
     const std::int64_t low = range.base;
     const std::int64_t high = low + range.amplitude;
-    return range.amplitude >= 0 && range.amplitude <= kRandomRangeAmplitudeMax && (!positive || low > 0)
+    // A lifespan may start at 0 (retail has [0, 400]): FX samples base plus a
+    // random share of amplitude, so it must be able to exceed 0.
+    return range.amplitude >= 0 && range.amplitude <= kRandomRangeAmplitudeMax && (!positive || (low >= 0 && high > 0))
         && low >= -kDurationLimitMsec && high <= kDurationLimitMsec;
 }
 
@@ -146,12 +148,19 @@ bool TrailPresenceValid(bool looping, const disk32::FxElemDefDisk32 &elem)
     return elem.elemType == kTrail ? looping && named : !named;
 }
 
+// A runner only spawns its effect and ends: retail ships runners with a
+// lifespan of exactly [0, 0].
+bool ZeroLifeRunner(const disk32::FxElemDefDisk32 &elem)
+{
+    return elem.elemType == kRunner && !elem.lifeSpanMsec.base && !elem.lifeSpanMsec.amplitude;
+}
+
 bool ElementValid(const disk32::FxEffectDefDisk32 &effect, std::uint32_t index, const disk32::FxElemDefDisk32 &elem,
                   Totals *totals)
 {
     const bool looping = index < static_cast<std::uint32_t>(effect.elemDefCountLooping);
     return elem.elemType < kTypeCount && TimeRangeValid(elem.spawnDelayMsec, false)
-        && TimeRangeValid(elem.lifeSpanMsec, true) && SpawnValid(looping, elem.spawn, totals) && AtlasValid(elem)
+        && (TimeRangeValid(elem.lifeSpanMsec, true) || ZeroLifeRunner(elem)) && SpawnValid(looping, elem.spawn, totals) && AtlasValid(elem)
         && SamplesValid(elem) && VisualCountValid(elem) && TrailPresenceValid(looping, elem);
 }
 
