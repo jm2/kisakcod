@@ -1602,6 +1602,7 @@ void __cdecl Load_XAnimPartsPtr(bool atStreamStart)
                 DBAliasKind::XAnimParts);
         }
     }
+    DB_RecordLoadedPointerSlot(varXAnimPartsPtr, DBAliasKind::XAnimParts, *varXAnimPartsPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -1790,6 +1791,7 @@ void __cdecl Load_LoadedSoundPtr(bool atStreamStart)
                 DBAliasKind::LoadedSound);
         }
     }
+    DB_RecordLoadedPointerSlot(varLoadedSoundPtr, DBAliasKind::LoadedSound, *varLoadedSoundPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -1894,6 +1896,7 @@ void __cdecl Load_SndCurvePtr(bool atStreamStart)
                 DBAliasKind::SndCurve);
         }
     }
+    DB_RecordLoadedPointerSlot(varSndCurvePtr, DBAliasKind::SndCurve, *varSndCurvePtr);
     DB_PopStreamPos();
 #endif
 }
@@ -2121,6 +2124,7 @@ void __cdecl Load_snd_alias_list_ptr(bool atStreamStart)
                 DBAliasKind::SndAliasList);
         }
     }
+    DB_RecordLoadedPointerSlot(varsnd_alias_list_ptr, DBAliasKind::SndAliasList, *varsnd_alias_list_ptr);
     DB_PopStreamPos();
 #endif
 }
@@ -2758,6 +2762,7 @@ void __cdecl Load_GfxImagePtr(bool atStreamStart)
                 DBAliasKind::GfxImage);
         }
     }
+    DB_RecordLoadedPointerSlot(varGfxImagePtr, DBAliasKind::GfxImage, *varGfxImagePtr);
     DB_PopStreamPos();
 #endif
 }
@@ -3603,6 +3608,7 @@ bool __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
                 DBAliasKind::MaterialTechniqueSet);
         }
     }
+    DB_RecordLoadedPointerSlot(varMaterialTechniqueSetPtr, DBAliasKind::MaterialTechniqueSet, *varMaterialTechniqueSetPtr);
     DB_PopStreamPos();
     return true;
 #endif
@@ -3861,6 +3867,7 @@ void __cdecl Load_MaterialHandle(bool atStreamStart)
                 DBAliasKind::Material);
         }
     }
+    DB_RecordLoadedPointerSlot(varMaterialHandle, DBAliasKind::Material, *varMaterialHandle);
     DB_PopStreamPos();
 #endif
 }
@@ -4016,6 +4023,7 @@ void __cdecl Load_GfxLightDefPtr(bool atStreamStart)
                 DBAliasKind::GfxLightDef);
         }
     }
+    DB_RecordLoadedPointerSlot(varGfxLightDefPtr, DBAliasKind::GfxLightDef, *varGfxLightDefPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -4194,6 +4202,7 @@ void __cdecl Load_PhysPresetPtr(bool atStreamStart)
                 DBAliasKind::PhysPreset);
         }
     }
+    DB_RecordLoadedPointerSlot(varPhysPresetPtr, DBAliasKind::PhysPreset, *varPhysPresetPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -5017,6 +5026,7 @@ void __cdecl Load_XModelPtr(bool atStreamStart)
                 DBAliasKind::XModel);
         }
     }
+    DB_RecordLoadedPointerSlot(varXModelPtr, DBAliasKind::XModel, *varXModelPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -5784,6 +5794,7 @@ void __cdecl Load_GameWorldSpPtr(bool atStreamStart)
                 DBAliasKind::GameWorldSp);
         }
     }
+    DB_RecordLoadedPointerSlot(varGameWorldSpPtr, DBAliasKind::GameWorldSp, *varGameWorldSpPtr);
     DB_PopStreamPos();
 }
 
@@ -5824,6 +5835,7 @@ void __cdecl Load_GameWorldMpPtr(bool atStreamStart)
                 DBAliasKind::GameWorldMp);
         }
     }
+    DB_RecordLoadedPointerSlot(varGameWorldMpPtr, DBAliasKind::GameWorldMp, *varGameWorldMpPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -5900,6 +5912,7 @@ void __cdecl Load_FxEffectDefHandle(bool atStreamStart)
                 DBAliasKind::FxEffectDef);
         }
     }
+    DB_RecordLoadedPointerSlot(varFxEffectDefHandle, DBAliasKind::FxEffectDef, *varFxEffectDefHandle);
     DB_PopStreamPos();
 #endif
 }
@@ -6402,6 +6415,7 @@ void __cdecl Load_MapEntsPtr(bool atStreamStart)
                 DBAliasKind::MapEnts);
         }
     }
+    DB_RecordLoadedPointerSlot(varMapEntsPtr, DBAliasKind::MapEnts, *varMapEntsPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -7138,6 +7152,7 @@ void __cdecl Load_clipMap_ptr(bool atStreamStart)
                 DBAliasKind::ClipMap);
         }
     }
+    DB_RecordLoadedPointerSlot(varclipMap_ptr, DBAliasKind::ClipMap, *varclipMap_ptr);
     DB_PopStreamPos();
 #endif
 }
@@ -7267,6 +7282,7 @@ void __cdecl Load_ComWorldPtr(bool atStreamStart)
                 DBAliasKind::ComWorld);
         }
     }
+    DB_RecordLoadedPointerSlot(varComWorldPtr, DBAliasKind::ComWorld, *varComWorldPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -7659,6 +7675,7 @@ void __cdecl Load_menuDef_ptr(bool atStreamStart)
                 DBAliasKind::MenuDef);
         }
     }
+    DB_RecordLoadedPointerSlot(varmenuDef_ptr, DBAliasKind::MenuDef, *varmenuDef_ptr);
     DB_PopStreamPos();
 #endif
 }
@@ -7730,6 +7747,7 @@ void __cdecl Load_MenuListPtr(bool atStreamStart)
                 DBAliasKind::MenuList);
         }
     }
+    DB_RecordLoadedPointerSlot(varMenuListPtr, DBAliasKind::MenuList, *varMenuListPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -7905,6 +7923,7 @@ void __cdecl Load_LocalizeEntryPtr(bool atStreamStart)
                 DBAliasKind::LocalizeEntry);
         }
     }
+    DB_RecordLoadedPointerSlot(varLocalizeEntryPtr, DBAliasKind::LocalizeEntry, *varLocalizeEntryPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -8016,6 +8035,7 @@ void __cdecl Load_FxImpactTablePtr(bool atStreamStart)
                 DBAliasKind::FxImpactTable);
         }
     }
+    DB_RecordLoadedPointerSlot(varFxImpactTablePtr, DBAliasKind::FxImpactTable, *varFxImpactTablePtr);
     DB_PopStreamPos();
 #endif
 }
@@ -8410,6 +8430,7 @@ void __cdecl Load_WeaponDefPtr(bool atStreamStart)
                 DBAliasKind::WeaponDef);
         }
     }
+    DB_RecordLoadedPointerSlot(varWeaponDefPtr, DBAliasKind::WeaponDef, *varWeaponDefPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -8643,6 +8664,7 @@ void __cdecl Load_RawFilePtr(bool atStreamStart)
                 DBAliasKind::RawFile);
         }
     }
+    DB_RecordLoadedPointerSlot(varRawFilePtr, DBAliasKind::RawFile, *varRawFilePtr);
     DB_PopStreamPos();
 #endif
 }
@@ -10196,6 +10218,7 @@ void __cdecl Load_GfxWorldPtr(bool atStreamStart)
                 DBAliasKind::GfxWorld);
         }
     }
+    DB_RecordLoadedPointerSlot(varGfxWorldPtr, DBAliasKind::GfxWorld, *varGfxWorldPtr);
     DB_PopStreamPos();
 #endif
 }
@@ -10358,6 +10381,7 @@ void __cdecl Load_FontHandle(bool atStreamStart)
                 DBAliasKind::Font);
         }
     }
+    DB_RecordLoadedPointerSlot(varFontHandle, DBAliasKind::Font, *varFontHandle);
     DB_PopStreamPos();
 #endif
 }

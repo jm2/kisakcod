@@ -89,6 +89,25 @@
         "KISAK_BUILD_SP": "OFF",
         "BUILD_TESTING": "ON"
       }
+    },
+    {
+      "name": "linux-x86-tests",
+      "description": "i386 build of the disk32 zone tests (database-disk32-zone-*), which run the x86 load path. -malign-double and -mlong-double-64 give MSVC's x86 struct layout.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-linux-x86-tests",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_C_FLAGS": "-m32 -malign-double -mlong-double-64",
+        "CMAKE_CXX_FLAGS": "-m32 -malign-double -mlong-double-64",
+        "CMAKE_EXE_LINKER_FLAGS": "-m32",
+        "KISAK_PLATFORM": "linux",
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "OFF",
+        "KISAK_BUILD_SP": "OFF",
+        "BUILD_TESTING": "ON"
+      }
     }
   ]
 }

@@ -336,6 +336,20 @@ void __cdecl DB_RecordPointerSlot(const void *slot, DBAliasKind kind, const void
     }
 }
 
+void __cdecl DB_RecordLoadedPointerSlot(const void *slot, DBAliasKind kind, const void *pointer)
+{
+    const XBlock *block = nullptr;
+    if (pointer && DB_GetBlock(db::relocation::kAliasBlock, &block)
+        && db::validation::SpanWithinBlock(
+            reinterpret_cast<uintptr_t>(block->data),
+            block->size,
+            reinterpret_cast<uintptr_t>(slot),
+            static_cast<uint32_t>(sizeof(uint32_t))))
+    {
+        DB_RecordPointerSlot(slot, kind, pointer);
+    }
+}
+
 DBAliasHandle __cdecl DB_InsertPointer(DBAliasKind kind)
 {
     uint32_t *slot = nullptr;

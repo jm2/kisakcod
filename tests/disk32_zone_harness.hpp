@@ -2,8 +2,8 @@
 
 // disk32_zone_harness.hpp: what db_disk32_zone_tests.cpp builds its zone with.
 // The harness (disk32_zone_harness.cpp) writes the zone as a .ff, loads it
-// through the real 64-bit path, checks every asset is published, runs the
-// zone file's own checks, then unloads it.
+// through the real load path (x86 in an i386 build), checks every asset is
+// published, runs the zone file's own checks, then unloads it.
 
 #include <database/database.h>
 
