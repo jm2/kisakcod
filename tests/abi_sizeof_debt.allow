@@ -86,9 +86,6 @@ bgame/bg_public.h|static_assert:sizeof(mover_ent_t)==0x60|1
 common/brush.h|static_assert:sizeof(SimplePlaneIntersection)==0x18|1
 common/brush.h|static_assert:sizeof(adjacencyWinding_t)==0x34|1
 devgui/devgui.h|static_assert:sizeof(DevGuiInput)==0x70|1
-devgui/devgui.h|static_assert:sizeof(DevMenuChild)==0x4|1
-devgui/devgui.h|static_assert:sizeof(DevMenuItem)==0x28|1
-devgui/devgui.h|static_assert:sizeof(devguiGlob_t)==0x5E10|1
 game/actor.h|static_assert:sizeof(actor_s)==0x1e90|1
 game/actor.h|static_assert:sizeof(sentient_info_t)==0x28|1
 game/enthandle.h|static_assert:sizeof(EntHandle)==0x4|1
@@ -101,16 +98,12 @@ game_mp/g_main_mp.h|static_assert:sizeof(trigger_info_t)==0xC|1
 game_mp/g_public_mp.h|static_assert:sizeof(gameTypeScript_t)==0x84|1
 game_mp/g_public_mp.h|static_assert:sizeof(scr_data_t_s)==0x10A8|1
 gfx_d3d/r_gfx.h|static_assert:sizeof(GfxPackedVertex)==32|1
-gfx_d3d/r_staticmodelcache.cpp|static_assert:sizeof(s_cache.leafs[0])==256|1
-groupvoice/directsound.h|static_assert:sizeof(audioSample_t)==0x20|1
-groupvoice/directsound.h|static_assert:sizeof(dsound_sample_t)==0x48|1
 physics/physpreset_load_obj.cpp|iassert:sizeof(PhysPreset)==44|1
 qcommon/cm_load_obj.cpp|iassert:sizeof(CollisionPartition)==12|1
 qcommon/cm_load_obj.cpp|iassert:sizeof(DiskBrushModel)==0x30|1
 qcommon/cm_load_obj.cpp|iassert:sizeof(DiskLeaf)==24|1
 qcommon/cm_load_obj.cpp|iassert:sizeof(DiskLeaf_Version14)==0x24|1
 qcommon/msg_mp.h|static_assert:sizeof(usercmd_s)==0x20|1
-script/scr_debugger.h|static_assert:sizeof(scrDebuggerGlob_t)==0x2B8|1
 universal/fft.h|static_assert:sizeof(complex_s)==8|1
 xanim/dobj.h|static_assert:sizeof(DObjAnimMat)==32|1
 xanim/xanim.h|static_assert:sizeof(XFile)==44|1

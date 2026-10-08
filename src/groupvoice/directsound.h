@@ -1,5 +1,5 @@
 #pragma once
-#include <cstdint>
+#include <universal/kisak_abi.h>
 
 // KisakCOD ABI port: Windows.h/dsound.h only feed the DirectSound-typed
 // struct members and prototypes below; guard them together so the shared
@@ -54,7 +54,7 @@ struct dsound_sample_t // sizeof=0x48
     // padding byte
     // padding byte
 };
-static_assert(sizeof(dsound_sample_t) == 0x48);
+RUNTIME_SIZE(dsound_sample_t, 0x48, 0x50);
 
 struct audioSample_t // sizeof=0x20
 {                                       // ...
@@ -70,7 +70,7 @@ struct audioSample_t // sizeof=0x20
     int32_t channels;                       // ...
     int32_t sampleOffset;                   // ...
 };
-static_assert(sizeof(audioSample_t) == 0x20);
+RUNTIME_SIZE(audioSample_t, 0x20, 0x28);
 
 
 // play_dsound

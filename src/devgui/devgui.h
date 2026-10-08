@@ -46,7 +46,7 @@ union DevMenuChild // sizeof=0x4
     DevGraph *graph;
     uint16_t menu;
 };
-static_assert(sizeof(DevMenuChild) == 0x4);
+RUNTIME_SIZE(DevMenuChild, 0x4, 0x8);
 
 struct DevMenuItem // sizeof=0x28
 {                                       // ...
@@ -59,7 +59,7 @@ struct DevMenuItem // sizeof=0x28
     uint16_t parent;            // ...
     DevMenuChild child;                 // ...
 };
-static_assert(sizeof(DevMenuItem) == 0x28);
+RUNTIME_SIZE(DevMenuItem, 0x28, 0x30);
 
 struct devguiGlob_t // sizeof=0x5E10
 {                                       // ...
@@ -84,7 +84,7 @@ struct devguiGlob_t // sizeof=0x5E10
     int32_t right;                          // ...
     int32_t sliderWidth;                    // ...
 };
-static_assert(sizeof(devguiGlob_t) == 0x5E10);
+RUNTIME_SIZE(devguiGlob_t, 0x5E10, 0x70E0);
 
 // devgui
 void __cdecl TRACK_devgui();

@@ -257,7 +257,7 @@ struct scrDebuggerGlob_t // sizeof=0x2B8
     int breakpointCount;                // ...
     int gainFocusTime;                  // ...
 };
-static_assert(sizeof(scrDebuggerGlob_t) == 0x2B8);
+RUNTIME_SIZE(scrDebuggerGlob_t, 0x2B8, 0x368);
 #endif
 
 void __cdecl TRACK_scr_debugger();
