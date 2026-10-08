@@ -61,9 +61,9 @@ if (WIN32)
     kisakcod_ilp32(kisakcod-renderer-display-modes-tests renderer-display-modes)
 endif()
 
-# SM2/SM3 constant-table reflection without D3DX (G5): the CTAB parser the
-# material loader moves to on targets D3DX9 does not ship for (ARM64, POSIX),
-# run against hand-built CTAB payloads and token streams.
+# SM2/SM3 shader reflection without D3DX (G5): the CTAB parser and the
+# input/output semantics the material loader moves to on targets D3DX9 does not
+# ship for (ARM64, POSIX), run against hand-built CTAB payloads and token streams.
 add_executable(kisakcod-renderer-shader-reflect-tests
     renderer_shader_reflect_tests.cpp
     ${SRC_DIR}/gfx_d3d/r_shader_reflect.cpp
@@ -75,7 +75,7 @@ set_target_properties(kisakcod-renderer-shader-reflect-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 add_test(
-    NAME renderer-shader-constant-table
+    NAME renderer-shader-reflection
     COMMAND kisakcod-renderer-shader-reflect-tests
 )
 

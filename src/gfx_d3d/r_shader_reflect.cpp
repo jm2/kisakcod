@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 
 namespace
 {
@@ -180,4 +181,161 @@ bool R_ShaderGetConstantDesc(
     desc->typeClass = ReadU16(data, typeInfo + kTypeClassField);
     desc->typeType = ReadU16(data, typeInfo + kTypeTypeField);
     return true;
+}
+
+namespace
+{
+constexpr std::uint32_t kDclOpcode = 31;
+constexpr std::uint32_t kDefbOpcode = 47;
+constexpr std::uint32_t kDefiOpcode = 48;
+constexpr std::uint32_t kDefOpcode = 81;
+constexpr std::uint32_t kParameterTokenBit = 0x80000000u;
+constexpr std::uint32_t kRegisterNumberMask = 0x000007FFu;
+constexpr std::uint32_t kDclUsageMask = 0x0000001Fu;
+constexpr std::uint32_t kDclUsageIndexShift = 16;
+constexpr std::uint32_t kDclUsageIndexMask = 0xFu;
+
+// D3DSPR_* register types and D3DDECLUSAGE_* usages.
+enum : std::uint32_t
+{
+    kRegInput = 1,
+    kRegTexture = 3,
+    kRegRastOut = 4,
+    kRegAttrOut = 5,
+    kRegOutput = 6,
+    kRegColorOut = 8,
+    kRegDepthOut = 9,
+};
+enum : std::uint32_t
+{
+    kUsagePosition = 0,
+    kUsagePSize = 4,
+    kUsageTexcoord = 5,
+    kUsageColor = 10,
+    kUsageFog = 11,
+    kUsageDepth = 12,
+};
+
+// RASTOUT's usage by register number: oPos, oFog, oPts.
+constexpr std::uint32_t kRastOutUsage[] = { kUsagePosition, kUsageFog, kUsagePSize };
+
+std::uint32_t RegisterType(std::uint32_t parameter)
+{
+    return ((parameter >> 28) & 0x7u) | ((parameter >> 8) & 0x18u);
+}
+
+bool GetSemantics(
+    const std::uint32_t *program,
+    std::uint32_t dwordCount,
+    bool output,
+    ShaderSemantic *semantics,
+    std::uint32_t capacity,
+    std::uint32_t *count)
+{
+    if (!count)
+        return false;
+    *count = 0;
+    if (!program || dwordCount < 2 || (capacity && !semantics))
+        return false;
+
+    const bool isPixel = (program[0] & kVersionTypeMask) == kPixelVersionType;
+    const std::uint32_t major = (program[0] >> 8) & 0xFFu;
+    const bool declared = output ? !isPixel && major == 3 : true;
+
+    std::uint32_t found = 0;
+    auto emit = [&](std::uint32_t usage, std::uint32_t usageIndex) {
+        if (found < capacity)
+            semantics[found] = { usage, usageIndex };
+        ++found;
+    };
+    std::uint32_t texcoords = 0, colors = 0, rastOut = 0;
+    bool depth = false;
+
+    const bool walked = WalkProgram(program, dwordCount,
+        [&](std::uint32_t token, const std::uint32_t *payload, std::uint32_t payloadDwords) {
+            const std::uint32_t opcode = token & kOpcodeMask;
+            if (declared)
+            {
+                if (opcode != kDclOpcode || payloadDwords < 2)
+                    return true;
+                const std::uint32_t type = RegisterType(payload[1]);
+                const std::uint32_t usageIndex = (payload[0] >> kDclUsageIndexShift) & kDclUsageIndexMask;
+                if (isPixel && major == 2)
+                {
+                    // ps_2_x dcl carries no usage: v# is a color and t# a texture
+                    // coordinate. As native D3DX does, a color keeps the dcl's
+                    // (zero) usage index and a texture coordinate takes its
+                    // register number; sampler dcls name no semantic.
+                    if (type == kRegInput)
+                        emit(kUsageColor, usageIndex);
+                    else if (type == kRegTexture)
+                        emit(kUsageTexcoord, payload[1] & kRegisterNumberMask);
+                }
+                else if (type == (output ? kRegOutput : kRegInput))
+                {
+                    emit(payload[0] & kDclUsageMask, usageIndex);
+                }
+                return true;
+            }
+
+            // Undeclared outputs: every register the instruction names.
+            if (opcode == kCommentOpcode || opcode == kDefOpcode || opcode == kDefiOpcode || opcode == kDefbOpcode)
+                return true;
+            for (std::uint32_t i = 0; i < payloadDwords && (payload[i] & kParameterTokenBit); ++i)
+            {
+                const std::uint32_t type = RegisterType(payload[i]);
+                const std::uint32_t number = payload[i] & kRegisterNumberMask;
+                const std::uint32_t bit = number < 32 ? 1u << number : 0;
+                if (type == kRegRastOut)
+                    rastOut |= bit;
+                else if (type == kRegDepthOut)
+                    depth = true;
+                else if (type == kRegOutput)
+                    texcoords |= bit;
+                else if (type == kRegAttrOut || type == kRegColorOut)
+                    colors |= bit;
+            }
+            return true;
+        });
+
+    if (!declared)
+    {
+        // D3DX keeps 16 texture-coordinate bits and 8 color and RASTOUT bits.
+        for (std::uint32_t i = 0; i < 16; ++i)
+            if (texcoords & (1u << i))
+                emit(kUsageTexcoord, i);
+        for (std::uint32_t i = 0; i < 8; ++i)
+            if (colors & (1u << i))
+                emit(kUsageColor, i);
+        for (std::uint32_t i = 0; i < 8; ++i)
+            if (rastOut & (1u << i))
+                emit(i < std::size(kRastOutUsage) ? kRastOutUsage[i] : 0, 0);
+        if (depth)
+            emit(kUsageDepth, 0);
+    }
+    if (!walked || found > capacity)
+        return false;
+    *count = found;
+    return true;
+}
+} // namespace
+
+bool R_ShaderGetInputSemantics(
+    const std::uint32_t *program,
+    std::uint32_t dwordCount,
+    ShaderSemantic *semantics,
+    std::uint32_t capacity,
+    std::uint32_t *count)
+{
+    return GetSemantics(program, dwordCount, false, semantics, capacity, count);
+}
+
+bool R_ShaderGetOutputSemantics(
+    const std::uint32_t *program,
+    std::uint32_t dwordCount,
+    ShaderSemantic *semantics,
+    std::uint32_t capacity,
+    std::uint32_t *count)
+{
+    return GetSemantics(program, dwordCount, true, semantics, capacity, count);
 }
