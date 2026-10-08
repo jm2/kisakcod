@@ -96,6 +96,14 @@ struct fileHandleData_t
 };
 RUNTIME_SIZE(fileHandleData_t, 0x11C, 0x130);
 
+// FS_Shutdown's rule, as retail's: it closes a read handle (one with a size)
+// and any handle inside an IWD, whose search path it frees next. An OS file
+// opened for writing, such as the log file, stays open across FS_Restart.
+inline bool FS_ShutdownClosesHandle(const fileHandleData_t &handle)
+{
+    return handle.handleFiles.file.o && (handle.fileSize || handle.zipFile);
+}
+
 bool __cdecl FS_Initialized();
 
 int __cdecl FS_ConditionalRestart(int localClientNum, int checksumFeed);
