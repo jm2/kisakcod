@@ -72,7 +72,7 @@ bool ConvertSoundFile(std::uint8_t *record, SoundFile **out)
     *out = file;
     if (disk.type == 1)
     {
-        LoadLoadedSoundPtr(disk.dir.token, &file->u.loadSnd);
+        LoadLoadedSoundPtr(disk.dir.token, &file->u.loadSnd, SlotOf(record, disk, disk.dir));
         return true;
     }
     StreamFileNameRaw &raw = file->u.streamSnd.filename.info.raw;
@@ -133,7 +133,7 @@ bool LoadAliasStrings(const disk32::SndAliasDisk32 &disk, snd_alias_t *out)
 }
 
 // Load_snd_alias_t on one retail alias, then DB_ValidateSoundAlias.
-bool LoadAlias(const disk32::SndAliasDisk32 &disk, snd_alias_t *out)
+bool LoadAlias(const disk32::SndAliasDisk32 &disk, const std::uint8_t *record, snd_alias_t *out)
 {
     CopySndAliasScalars(disk, out);
     if (!LoadAliasStrings(disk, out)
@@ -143,7 +143,8 @@ bool LoadAlias(const disk32::SndAliasDisk32 &disk, snd_alias_t *out)
         return false;
     }
     out->volumeFalloffCurve = nullptr;
-    LoadSndCurvePtr(disk.volumeFalloffCurve.token, &out->volumeFalloffCurve);
+    LoadSndCurvePtr(disk.volumeFalloffCurve.token, &out->volumeFalloffCurve,
+                    SlotOf(record, disk, disk.volumeFalloffCurve));
     if (!LoadCompleted(disk.speakerMap.token, DBAliasKind::SpeakerMap, disk32::kSpeakerMapBytes, &out->speakerMap,
                        ConvertSpeakerMap))
     {
@@ -168,8 +169,9 @@ bool ConvertAliases(std::uint8_t *record, std::int32_t count, std::int32_t bytes
     for (std::int32_t index = 0; index < count; ++index)
     {
         disk32::SndAliasDisk32 disk{};
-        std::memcpy(&disk, record + static_cast<std::size_t>(index) * sizeof(disk), sizeof(disk));
-        if (!LoadAlias(disk, &aliases[index]))
+        const std::uint8_t *const at = record + static_cast<std::size_t>(index) * sizeof(disk);
+        std::memcpy(&disk, at, sizeof(disk));
+        if (!LoadAlias(disk, at, &aliases[index]))
             return false;
     }
     *out = aliases;

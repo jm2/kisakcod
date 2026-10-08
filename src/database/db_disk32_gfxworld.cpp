@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <type_traits>
 
 // GfxWorld, a wave-4 family (docs/design/FASTFILE_LOADER.md): the renderer's
 // world, which a headless server only parses past. The body mirrors
@@ -187,7 +188,14 @@ bool LoadRecords(disk32::PointerToken token, std::int64_t count, Native **out, C
         Disk32 disk{};
         std::memcpy(&disk, records + index * sizeof(disk), sizeof(disk));
         std::memset(&native[index], 0, sizeof(Native)); // padding too: native storage starts as junk
-        if (!convert(disk, &native[index]))
+        bool converted = false;
+        // A converter whose pointers a later offset token may name takes the
+        // record's block-4 address.
+        if constexpr (std::is_invocable_v<Convert, const Disk32 &, Native *, const std::uint8_t *>)
+            converted = convert(disk, &native[index], records + index * sizeof(disk));
+        else
+            converted = convert(disk, &native[index]);
+        if (!converted)
             return false;
     }
     return true;
@@ -353,7 +361,7 @@ bool LoadSunLight(disk32::PointerToken token, GfxLight **out)
     std::memcpy(&disk, record, sizeof(disk));
     std::memset(light, 0, sizeof(*light));
     CopyGfxLightScalars(disk, light);
-    LoadGfxLightDefPtr(disk.def.token, &light->def);
+    LoadGfxLightDefPtr(disk.def.token, &light->def, SlotOf(record, disk, disk.def));
     *out = light;
     return SunLightValid(*light)
         && DB_CompleteObject(completed, DBAliasKind::GfxLight, record, kLightBytes, kLightBytes, light);
@@ -375,10 +383,12 @@ bool LoadProbes(disk32::PointerToken token, std::uint32_t count, GfxReflectionPr
     for (std::uint32_t index = 0; index < count; ++index)
     {
         disk32::GfxReflectionProbeDisk32 disk{};
-        std::memcpy(&disk, records + index * sizeof(disk), sizeof(disk));
+        const std::uint8_t *const record = records + index * sizeof(disk);
+        std::memcpy(&disk, record, sizeof(disk));
         std::memset(&probes[index], 0, sizeof(probes[index]));
         CopyGfxReflectionProbeScalars(disk, &probes[index]);
-        LoadGfxImagePtr(disk.reflectionImage.token, &probes[index].reflectionImage);
+        LoadGfxImagePtr(disk.reflectionImage.token, &probes[index].reflectionImage,
+                        SlotOf(record, disk, disk.reflectionImage));
     }
     *out = probes;
     return true;
@@ -428,17 +438,17 @@ bool LoadDpvsPlanes(const Disk &disk, GfxWorldDpvsPlanes *out)
     DB_PopStreamPos();
     return true;
 }
-bool ConvertLightmap(const disk32::GfxLightmapArrayDisk32 &disk, GfxLightmapArray *out)
+bool ConvertLightmap(const disk32::GfxLightmapArrayDisk32 &disk, GfxLightmapArray *out, const std::uint8_t *record)
 {
-    LoadGfxImagePtr(disk.primary.token, &out->primary);
-    LoadGfxImagePtr(disk.secondary.token, &out->secondary);
+    LoadGfxImagePtr(disk.primary.token, &out->primary, SlotOf(record, disk, disk.primary));
+    LoadGfxImagePtr(disk.secondary.token, &out->secondary, SlotOf(record, disk, disk.secondary));
     return true;
 }
 
-bool ConvertMaterialMemory(const disk32::MaterialMemoryDisk32 &disk, MaterialMemory *out)
+bool ConvertMaterialMemory(const disk32::MaterialMemoryDisk32 &disk, MaterialMemory *out, const std::uint8_t *record)
 {
     CopyMaterialMemoryScalars(disk, out);
-    LoadMaterialPtr(disk.material.token, &out->material);
+    LoadMaterialPtr(disk.material.token, &out->material, SlotOf(record, disk, disk.material));
     return true;
 }
 
@@ -602,17 +612,18 @@ bool LoadStaticVisibility(const disk32::GfxWorldDpvsStaticDisk32 &disk, std::int
     return LoadRuntime(disk.lodData.token, lodDataCount, kRawUint128Bytes, kRawUint128Alignment, &out->lodData);
 }
 
-bool ConvertSurface(const disk32::GfxSurfaceDisk32 &disk, GfxSurface *out)
+bool ConvertSurface(const disk32::GfxSurfaceDisk32 &disk, GfxSurface *out, const std::uint8_t *record)
 {
     CopyGfxSurfaceScalars(disk, out);
-    LoadMaterialPtr(disk.material.token, &out->material);
+    LoadMaterialPtr(disk.material.token, &out->material, SlotOf(record, disk, disk.material));
     return true;
 }
 
-bool ConvertDrawInst(const disk32::GfxStaticModelDrawInstDisk32 &disk, GfxStaticModelDrawInst *out)
+bool ConvertDrawInst(const disk32::GfxStaticModelDrawInstDisk32 &disk, GfxStaticModelDrawInst *out,
+                     const std::uint8_t *record)
 {
     CopyGfxStaticModelDrawInstScalars(disk, out);
-    LoadXModelPtr(disk.model.token, &out->model);
+    LoadXModelPtr(disk.model.token, &out->model, SlotOf(record, disk, disk.model));
     return true;
 }
 

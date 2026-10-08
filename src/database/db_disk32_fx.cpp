@@ -231,30 +231,31 @@ bool LoadEffectRef(disk32::PointerToken token, FxEffectDefRef *out)
     return true;
 }
 
-// Load_MaterialHandle, for a token the converter requires.
-bool LoadMaterial(disk32::PointerToken token, Material **out)
+// Load_MaterialHandle, for a token the converter requires; slot is where the
+// token streamed in block 4.
+bool LoadMaterial(disk32::PointerToken token, const std::uint8_t *slot, Material **out)
 {
     *out = nullptr;
     if (token.isNull())
         return Drop("Invalid fast-file effect visual");
-    LoadMaterialPtr(token, out);
+    LoadMaterialPtr(token, out, slot);
     return true;
 }
 
 // Load_FxElemVisuals: one visual, read as its element's type names it.
-bool LoadVisual(std::uint8_t type, disk32::PointerToken token, FxElemVisuals *out)
+bool LoadVisual(std::uint8_t type, disk32::PointerToken token, const std::uint8_t *slot, FxElemVisuals *out)
 {
     out->anonymous = nullptr;
     if (token.isNull())
         return Drop("Invalid fast-file effect visual"); // the converter resolves every one
     if (type == kModel)
-        LoadXModelPtr(token, &out->model);
+        LoadXModelPtr(token, &out->model, slot);
     else if (type == kRunner)
         return LoadEffectRef(token, &out->effectDef);
     else if (type == kSound)
         return LoadXString(disk32::Ptr32<const char>{token}, &out->soundName);
     else
-        return LoadMaterial(token, &out->material);
+        return LoadMaterial(token, slot, &out->material);
     return true;
 }
 
@@ -274,7 +275,8 @@ bool LoadMarks(const std::uint8_t *tokens, std::uint32_t count, FxElemMarkVisual
     *out = marks;
     for (std::uint32_t index = 0; index < count * 2; ++index)
     {
-        if (!LoadMaterial(TokenAt(tokens, index), &marks[index / 2].materials[index % 2]))
+        if (!LoadMaterial(TokenAt(tokens, index), tokens + index * sizeof(disk32::PointerToken),
+                          &marks[index / 2].materials[index % 2]))
             return false;
     }
     return true;
@@ -288,7 +290,7 @@ bool LoadVisualArray(std::uint8_t type, const std::uint8_t *tokens, std::uint32_
     *out = visuals;
     for (std::uint32_t index = 0; index < count; ++index)
     {
-        if (!LoadVisual(type, TokenAt(tokens, index), &visuals[index]))
+        if (!LoadVisual(type, TokenAt(tokens, index), tokens + index * sizeof(disk32::PointerToken), &visuals[index]))
             return false;
     }
     return true;
@@ -297,13 +299,13 @@ bool LoadVisualArray(std::uint8_t type, const std::uint8_t *tokens, std::uint32_
 // Load_FxElemDefVisuals: past one visual, or for a decal's mark pairs, the
 // tokens follow 4-aligned and convert into native storage; one visual sits
 // in the record. A light has none.
-bool LoadVisuals(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
+bool LoadVisuals(const disk32::FxElemDefDisk32 &disk, const std::uint8_t *record, FxElemDef *out)
 {
     const bool decal = disk.elemType == kDecal;
     if (IsLight(disk.elemType) || !disk.visualCount)
         return true;
     if (!decal && disk.visualCount == 1)
-        return LoadVisual(disk.elemType, disk.visuals.token, &out->visuals.instance);
+        return LoadVisual(disk.elemType, disk.visuals.token, SlotOf(record, disk, disk.visuals), &out->visuals.instance);
     const std::uint32_t count = disk.visualCount * (decal ? 2u : 1u);
     std::uint8_t *const tokens = DB_AllocStreamPos(3);
     if (!StreamBytes(tokens, static_cast<std::int32_t>(count * sizeof(disk32::PointerToken))))
@@ -364,7 +366,7 @@ bool LoadTrail(FxTrailDef **out)
 
 // Load_FxElemDef: the scalars, the samples, the visuals, the effects it
 // names, then its trail.
-bool LoadElement(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
+bool LoadElement(const disk32::FxElemDefDisk32 &disk, const std::uint8_t *record, FxElemDef *out)
 {
     std::memset(out, 0, sizeof(*out)); // padding too: native storage starts as junk
     CopyElement(disk, out);
@@ -373,7 +375,7 @@ bool LoadElement(const disk32::FxElemDefDisk32 &disk, FxElemDef *out)
     {
         return false;
     }
-    if (!LoadVisuals(disk, out) || !LoadEffectRef(disk.effectOnImpact.token, &out->effectOnImpact)
+    if (!LoadVisuals(disk, record, out) || !LoadEffectRef(disk.effectOnImpact.token, &out->effectOnImpact)
         || !LoadEffectRef(disk.effectOnDeath.token, &out->effectOnDeath)
         || !LoadEffectRef(disk.effectEmitted.token, &out->effectEmitted))
     {
@@ -399,7 +401,7 @@ bool LoadElements(const disk32::FxEffectDefDisk32 &effect, std::uint32_t count, 
         if (!ElementValid(effect, index, disk, totals))
             return Drop("Invalid fast-file effect element");
         totals->bytes += ElementBytes(disk);
-        if (!LoadElement(disk, &native[index]))
+        if (!LoadElement(disk, records + index * sizeof(disk), &native[index]))
             return false;
         // FX_Convert sizes a trail's vertices by its index count.
         if (const FxTrailDef *const trail = native[index].trailDef)

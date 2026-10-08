@@ -27,24 +27,31 @@ namespace
 using Disk = disk32::MenuDefDisk32;
 
 // Load_windowDef_t: the scalars, then the name, group and background.
-bool LoadWindow(const disk32::WindowDisk32 &disk, windowDef_t *out)
+// record: where the window streamed in block 4, or null for the menu's own
+// window, which streams in the temp block.
+bool LoadWindow(const disk32::WindowDisk32 &disk, const std::uint8_t *record, windowDef_t *out)
 {
     CopyWindowScalars(disk, out);
     if (!LoadXString(disk.name, &out->name) || !LoadXString(disk.group, &out->group))
         return false;
     out->background = nullptr;
-    LoadMaterialPtr(disk.background.token, &out->background);
+    if (record)
+        LoadMaterialPtr(disk.background.token, &out->background, SlotOf(record, disk, disk.background));
+    else
+        LoadMaterialPtr(disk.background.token, &out->background);
     return true;
 }
 
 // The next 4-aligned record at the current position, into its mirror.
 template <typename Disk32>
-bool StreamRecord(Disk32 &disk)
+bool StreamRecord(Disk32 &disk, const std::uint8_t **at = nullptr)
 {
     std::uint8_t *const record = DB_AllocStreamPos(3);
     if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
         return false;
     std::memcpy(&disk, record, sizeof(disk));
+    if (at)
+        *at = record;
     return true;
 }
 
@@ -173,7 +180,8 @@ bool TypeHasData(std::int32_t type)
 bool LoadListBox(listBoxDef_s **out)
 {
     disk32::ListBoxDisk32 disk{};
-    listBoxDef_s *const listBox = StreamRecord(disk) ? AllocZeroed<listBoxDef_s>() : nullptr;
+    const std::uint8_t *record = nullptr;
+    listBoxDef_s *const listBox = StreamRecord(disk, &record) ? AllocZeroed<listBoxDef_s>() : nullptr;
     if (!listBox)
         return false;
     *out = listBox;
@@ -182,7 +190,7 @@ bool LoadListBox(listBoxDef_s **out)
         return Drop("Invalid fast-file menu list-box column count");
     if (!LoadXString(disk.doubleClick, &listBox->doubleClick))
         return false;
-    LoadMaterialPtr(disk.selectIcon.token, &listBox->selectIcon);
+    LoadMaterialPtr(disk.selectIcon.token, &listBox->selectIcon, SlotOf(record, disk, disk.selectIcon));
     return true;
 }
 
@@ -248,7 +256,7 @@ bool LoadTypeData(const disk32::ItemDisk32 &disk, itemDef_s *out)
 
 // Load_itemDef_t: the scalars and window, the strings, the key handlers, the
 // focus sound (Sound's step), the type data, then the statements.
-bool LoadItem(const disk32::ItemDisk32 &disk, itemDef_s *out)
+bool LoadItem(const disk32::ItemDisk32 &disk, const std::uint8_t *record, itemDef_s *out)
 {
     CopyItemScalars(disk, out);
     const std::pair<disk32::Ptr32<const char>, const char **> strings[] = {
@@ -257,7 +265,7 @@ bool LoadItem(const disk32::ItemDisk32 &disk, itemDef_s *out)
         {disk.mouseExit, &out->mouseExit}, {disk.action, &out->action}, {disk.onAccept, &out->onAccept},
         {disk.onFocus, &out->onFocus}, {disk.leaveFocus, &out->leaveFocus}, {disk.dvar, &out->dvar},
         {disk.dvarTest, &out->dvarTest}};
-    if (!LoadWindow(disk.window, &out->window))
+    if (!LoadWindow(disk.window, SlotOf(record, disk, disk.window), &out->window))
         return false;
     for (const auto &[field, slot] : strings)
     {
@@ -266,7 +274,7 @@ bool LoadItem(const disk32::ItemDisk32 &disk, itemDef_s *out)
     }
     if (!LoadKeyHandlers(disk.onKey.token, &out->onKey) || !LoadXString(disk.enableDvar, &out->enableDvar))
         return false;
-    LoadSndAliasListPtr(disk.focusSound.token, &out->focusSound);
+    LoadSndAliasListPtr(disk.focusSound.token, &out->focusSound, SlotOf(record, disk, disk.focusSound));
     if (!LoadTypeData(disk, out))
         return false;
     const std::pair<const disk32::StatementDisk32 *, statement_s *> statements[] = {
@@ -294,8 +302,9 @@ bool LoadItemArray(const std::uint8_t *tokens, std::int32_t count, itemDef_s **i
         if (token.isNull())
             return Drop("Fast-file menu has a null item");
         disk32::ItemDisk32 disk{};
-        items[index] = StreamRecord(disk) ? AllocZeroed<itemDef_s>() : nullptr;
-        if (!items[index] || !LoadItem(disk, items[index]))
+        const std::uint8_t *record = nullptr;
+        items[index] = StreamRecord(disk, &record) ? AllocZeroed<itemDef_s>() : nullptr;
+        if (!items[index] || !LoadItem(disk, record, items[index]))
             return false;
     }
     return true;
@@ -326,7 +335,7 @@ bool LoadItems(disk32::PointerToken token, std::int32_t count, itemDef_s ***out)
 // scripts, then the key handlers. The pool hashes the window's name.
 bool LoadMenuHead(const Disk &disk, menuDef_t *out)
 {
-    if (!LoadWindow(disk.window, &out->window))
+    if (!LoadWindow(disk.window, nullptr, &out->window))
         return false;
     if (!out->window.name)
         return Drop("Fast-file menu has no name");

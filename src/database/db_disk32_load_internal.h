@@ -38,6 +38,23 @@ inline bool StreamBytes(std::uint8_t *at, std::int32_t size)
     return DB_GetStreamPos() == at + size;
 }
 
+// A pointer step's disk32 slot in block 4, once the step has filled the
+// native slot: a later offset token may name the slot, as the 32-bit loader
+// reads the pointer back out of the slot it streamed (DB_RecordPointerSlot).
+inline void RecordDiskSlot(const void *diskSlot, DBAliasKind kind, const void *pointer)
+{
+    if (pointer)
+        DB_RecordPointerSlot(diskSlot, kind, pointer);
+}
+
+// The address field had in the streamed bytes at record, where disk is the
+// mirror they were copied into: the disk32 slot a pointer step records.
+template <typename Disk, typename Field>
+const std::uint8_t *SlotOf(const std::uint8_t *record, const Disk &disk, const Field &field)
+{
+    return record + (reinterpret_cast<const std::uint8_t *>(&field) - reinterpret_cast<const std::uint8_t *>(&disk));
+}
+
 // count native elements of T in zone-lifetime storage (DB_AllocZoneNative);
 // exhaustion is an error, not a fallback. count is checked by the caller.
 template <typename T>
