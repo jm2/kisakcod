@@ -8,6 +8,10 @@
 // protocol 1, so every steam18 check fails on it. "fork" (opt-in, set the way
 // "+set net_wireProfile fork" sets it) keeps the fork's protocol 1.
 //
+// steam18 also takes a stock "getchallenge <n> <md5 cdkey>" (NET_STEAM18 §8,
+// option A): the hash, unchecked, is the client's ban key. fork still needs
+// its third, identity argument. The old code refused every stock request.
+//
 // The engine boundary is weak: the engine TUs replace the stubs they define,
 // and --gc-sections drops the engine code no check reaches.
 
@@ -32,6 +36,7 @@
 #include <script/scr_variable.h>
 #include <server/sv_game.h>
 #include <server_mp/server_mp.h>
+#include <universal/q_parse.h>
 #include <universal/com_files.h>
 #include <universal/com_math.h>
 #include <universal/com_memory.h>
@@ -81,6 +86,29 @@ netadr_t Remote()
     from.ip[3] = 9;
     from.port = 28960;
     return from;
+}
+
+// Runs a stock two-argument getchallenge through SV_GetChallenge.
+std::string StockChallenge(const char *cdkeyHash)
+{
+    g_argv[0] = "getchallenge";
+    g_argv[1] = "0";
+    g_argv[2] = cdkeyHash;
+    g_argc = 3;
+    g_reply.clear();
+    SV_GetChallenge(Remote());
+    return g_reply;
+}
+
+// Whether a challenge slot for the test's client holds this ban key.
+bool ChallengeHolds(const char *cdkeyHash)
+{
+    for (const challenge_t &challenge : svs.challenges)
+    {
+        if (NET_CompareAdr(challenge.adr, Remote()) && std::strcmp(challenge.cdkeyHash, cdkeyHash) == 0)
+            return true;
+    }
+    return false;
 }
 
 // Runs a connect with the given protocol through SV_DirectConnect.
@@ -175,6 +203,12 @@ WEAK uint32_t Scr_AllocArray() { return 0; }
 WEAK void __cdecl Netchan_Setup(netsrc_t, netchan_t *, netadr_t, int, char *, int, char *, int) {}
 WEAK char *__cdecl ClientConnect(uint32_t, uint16_t) { return nullptr; }
 WEAK void __cdecl ClientDisconnect(int32_t) {}
+// The permanent ban list is a file; there is none, so only temporary bans apply.
+WEAK int __cdecl FS_ReadFile(const char *, void **) { return -1; }
+WEAK void __cdecl FS_FreeFile(char *) {}
+WEAK parseInfo_t *__cdecl Com_Parse(const char **) { static parseInfo_t empty{}; return &empty; }
+WEAK void __cdecl Com_SkipRestOfLine(const char **) {}
+WEAK int __cdecl Kisak_rand() { return 4; }
 
 int main(int argc, char **argv)
 {
@@ -210,6 +244,26 @@ int main(int argc, char **argv)
     CHECK(accepted == "error\nEXE_BAD_CHALLENGE");
     const std::string rejected = Connect(fork ? 7 : 1);
     CHECK(rejected == std::string("EXE_SERVER_IS_DIFFERENT_VER ") + (fork ? "1.0" : "1.8"));
+
+    // getchallenge from a stock client: its CD-key hash only.
+    const char *const hash = "0123456789abcdef0123456789abcdef";
+    const std::string stock = StockChallenge(hash);
+    if (fork)
+    {
+        CHECK(stock == "error\n\x15" "A client identity is required");
+        CHECK(!ChallengeHolds(hash));
+    }
+    else
+    {
+        CHECK(stock.rfind("challengeResponse ", 0) == 0);
+        CHECK(ChallengeHolds(hash));
+        // A banned hash is refused like any banned identity.
+        const char *const banned = "fedcba9876543210fedcba9876543210";
+        std::memcpy(svs.tempBans[0].cdkeyHash, banned, sizeof(svs.tempBans[0].cdkeyHash));
+        svs.tempBans[0].banTime = svs.time;
+        CHECK(StockChallenge(banned) == "error\n\x15" "You are temporarily banned from this server");
+        CHECK(!ChallengeHolds(banned));
+    }
 
     // The identity the common and game code register as gamename and shortversion.
     CHECK(std::strcmp(Com_WireGameName(), fork ? "KisakCoD4" : "Call of Duty 4") == 0);

@@ -176,6 +176,13 @@ void __cdecl SV_GetChallenge(netadr_t from)
     // Arg 3 is the client identity: a SteamID64 (Steam clients) or a persistent cl_guid
     // (no-Steam clients). It is both the ban key and the server-side GUID in either case.
     char *clientIdentity = (char *)SV_Cmd_Argv(3);
+    if (!clientIdentity[0] && Com_GetWireProfile() == WIRE_PROFILE_STEAM18)
+    {
+        // A stock client sends only its CD-key hash. NET_STEAM18 §8 option A
+        // takes it unchecked as the client's identity: the ban key and GUID.
+        clientIdentity = clientSteamTicketBase64;
+        clientSteamTicketBase64 = (char *)"";
+    }
     unsigned char decodedSteamTicket[1024 + 128]{ 0 };
     bool haveTicket = clientSteamTicketBase64[0] != 0;
     uint64_t steamID64 = 0;
@@ -184,10 +191,6 @@ void __cdecl SV_GetChallenge(netadr_t from)
 
     if (!clientIdentity[0])
     {
-        // A stock client sends only the CD-key hash; its auth policy is the
-        // owner's open decision (NET_STEAM18 §8), so it is still refused.
-        if (Com_GetWireProfile() == WIRE_PROFILE_STEAM18)
-            Com_Printf(15, "getchallenge from %s has no client identity: stock Steam 1.8 auth is pending\n", NET_AdrToString(from));
         NET_OutOfBandPrint(NS_SERVER, from, "error\xA\x15" "A client identity is required");
         return;
     }
