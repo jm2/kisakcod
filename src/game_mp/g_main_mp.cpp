@@ -8,6 +8,7 @@
 #include "g_utils_mp.h"
 
 #include <bgame/bg_local.h>
+#include <qcommon/wire_profile.h>
 
 #ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
@@ -388,7 +389,7 @@ const dvar_s *G_RegisterDvars()
     DvarLimits minp; // [esp+8h] [ebp-14h]
 
     g_cheats = Dvar_RegisterBool("sv_cheats", true, DVAR_NOFLAG, "Enable cheats");
-    Dvar_RegisterString("gamename", "KisakCoD4", DVAR_SERVERINFO | DVAR_ROM, "The name of the game");
+    Dvar_RegisterString("gamename", Com_WireGameName(), DVAR_SERVERINFO | DVAR_ROM, "The name of the game");
     Dvar_RegisterString("gamedate", __DATE__, DVAR_ROM, "The date compiled");
     Dvar_RegisterString("sv_mapname", (char *)"", DVAR_SERVERINFO | DVAR_ROM, "The current map name");
     g_gametype = Dvar_RegisterString("g_gametype", "war", DVAR_SERVERINFO | DVAR_LATCH, "The current campaign");

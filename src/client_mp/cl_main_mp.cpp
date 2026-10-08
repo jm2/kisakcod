@@ -7,6 +7,7 @@
 #include <xanim/xanim.h>
 #include <universal/assertive.h>
 #include <qcommon/threads.h>
+#include <qcommon/wire_profile.h>
 #include <qcommon/cmd.h>
 #include <qcommon/mem_track.h>
 #include <qcommon/com_fileaccess.h>
@@ -1123,7 +1124,7 @@ void __cdecl CL_CheckForResend(netsrc_t localClientNum)
             case CA_CHALLENGING:
                 v3 = Dvar_InfoString(localClientNum, 2);
                 I_strncpyz(dest, v3, 1024);
-                v4 = va("%i", 1);
+                v4 = va("%i", Com_WireProtocol());
                 Info_SetValueForKey(dest, "protocol", v4);
                 v5 = va("%i", clc->challenge);
                 Info_SetValueForKey(dest, "challenge", v5);

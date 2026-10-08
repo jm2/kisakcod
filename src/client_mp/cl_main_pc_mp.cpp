@@ -6,6 +6,7 @@
 #include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 #include <qcommon/com_playerprofile.h>
+#include <qcommon/wire_profile.h>
 #include <sound/snd_public.h>
 #include <server_mp/server_mp.h>
 #include <client/client.h>
@@ -216,7 +217,7 @@ void __cdecl CL_ServerInfoPacket(netadr_t from, msg_t *msg, int time)
     if (*ptr)
         v8 = atoi(ptr);
     else
-        v8 = 1;
+        v8 = Com_WireProtocol();
     if (prot == v8)
     {
         for (i = 0; i < 16; ++i)

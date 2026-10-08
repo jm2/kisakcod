@@ -597,6 +597,8 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/threads_interlock.h"
     "${SRC_DIR}/qcommon/unzip.cpp"
     "${SRC_DIR}/qcommon/unzip.h"
+    "${SRC_DIR}/qcommon/wire_profile.cpp"
+    "${SRC_DIR}/qcommon/wire_profile.h"
 )
 
 set(RAGDOLL

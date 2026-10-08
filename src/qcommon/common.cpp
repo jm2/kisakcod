@@ -3,6 +3,7 @@
 #include "cmd.h"
 #include "threads.h"
 #include <qcommon/sys_local.h>
+#include <qcommon/wire_profile.h>
 
 #include <universal/com_memory.h>
 #include <universal/memfile.h>
@@ -1620,7 +1621,7 @@ void __cdecl Com_Init_Try_Block_Function(char* commandLine)
 #endif
     version = Dvar_RegisterString("version", "", DVAR_ROM, "Game version");
     Dvar_SetString(version, s);
-    shortversion = Dvar_RegisterString("shortversion", "1.0", DVAR_ROM | DVAR_SERVERINFO, "Short game version");
+    shortversion = Dvar_RegisterString("shortversion", Com_WireShortVersion(), DVAR_ROM | DVAR_SERVERINFO, "Short game version");
     Sys_Init();
 #ifdef KISAK_MP
     Netchan_Init(Sys_CycleCounter());
