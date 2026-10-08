@@ -730,3 +730,22 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     kisakcod_pointer_truncation_test(truncation-info-validate 1
         ${SRC_DIR}/universal/q_shared.cpp)
 endif()
+
+# Menu local variables (ui/ui_localvars.cpp): FindOrCreate/Find must return
+# the hashed table slot itself; the decompiled 12 * hash (x86 sizeof
+# UILocalVar) lands mid-variable on 64-bit. The ui header web compiles with
+# MSVC on the Windows legs.
+if (WIN32)
+    add_executable(kisakcod-ui-localvars-tests
+        ui_localvars_tests.cpp
+        ${SRC_DIR}/ui/ui_localvars.cpp
+    )
+    target_include_directories(kisakcod-ui-localvars-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-ui-localvars-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-ui-localvars-tests PRIVATE KISAK_MP)
+    set_target_properties(kisakcod-ui-localvars-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME ui-localvars COMMAND kisakcod-ui-localvars-tests)
+    kisakcod_ilp32(kisakcod-ui-localvars-tests ui-localvars)
+endif()
