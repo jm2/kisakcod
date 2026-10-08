@@ -730,3 +730,29 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     kisakcod_pointer_truncation_test(truncation-info-validate 1
         ${SRC_DIR}/universal/q_shared.cpp)
 endif()
+
+# The pointer field types (FX, XModel, Material, sound alias) of the production
+# config-string parser (universal/q_shared.cpp), as the headless server compiles
+# it: each must fill the whole pointer member at native width.
+if (NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-q-shared-field-pointer-tests
+        q_shared_field_pointer_tests.cpp
+        ${SRC_DIR}/universal/q_shared.cpp
+    )
+    target_include_directories(kisakcod-q-shared-field-pointer-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+        target_include_directories(kisakcod-q-shared-field-pointer-tests SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+    endif()
+    target_compile_features(kisakcod-q-shared-field-pointer-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-q-shared-field-pointer-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-q-shared-field-pointer-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    set_source_files_properties(q_shared_field_pointer_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+    target_link_options(kisakcod-q-shared-field-pointer-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    set_target_properties(kisakcod-q-shared-field-pointer-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME q-shared-field-pointer-contracts COMMAND kisakcod-q-shared-field-pointer-tests)
+endif()

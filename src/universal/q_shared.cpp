@@ -929,6 +929,18 @@ bool __cdecl ParseConfigStringToStruct(
         parseStrcpy);
 }
 
+namespace
+{
+// KisakCOD port: the FX, XModel, Material and sound-alias field types name
+// pointer members. Retail stored them through a 32-bit int, which truncates
+// the pointer (and leaves half a null) at 64-bit; store them at full width.
+template <typename T>
+void StoreFieldPointer(uint8_t *const pStruct, const int offset, T *const value)
+{
+    *reinterpret_cast<T **>(&pStruct[offset]) = value;
+}
+} // namespace
+
 bool __cdecl ParseConfigStringToStructCustomSize(
     uint8_t *pStruct,
     const cspField_t *pFieldList,
@@ -1016,25 +1028,25 @@ bool __cdecl ParseConfigStringToStructCustomSize(
                 case 8:
 #ifdef KISAK_DEDI_HEADLESS
                     v9 = NULL;
-                    *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v9;
+                    StoreFieldPointer(pStruct, v20->iOffset, v9);
 #else
 #ifdef KISAK_MP
                     if (!com_dedicated->current.integer)
 #endif
                     {
                         v9 = FX_Register(src);
-                        *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v9;
+                        StoreFieldPointer(pStruct, v20->iOffset, v9);
                     }
 #endif
                     break;
                 case 9:
 #ifdef KISAK_DEDI_HEADLESS
                     v22 = NULL;
-                    *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v22;
+                    StoreFieldPointer(pStruct, v20->iOffset, v22);
 #else
                     I_strncpyz(dest, src, 0x2000);
                     v22 = R_RegisterModel(dest);
-                    *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v22;
+                    StoreFieldPointer(pStruct, v20->iOffset, v22);
                     if (!v22)
                         v18 = 1;
 #endif
@@ -1042,20 +1054,20 @@ bool __cdecl ParseConfigStringToStructCustomSize(
                 case 0xA:
 #ifdef KISAK_DEDI_HEADLESS
                     v10 = NULL;
-                    *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v10;
+                    StoreFieldPointer(pStruct, v20->iOffset, v10);
 #else
 #ifdef KISAK_MP
                     if (!com_dedicated->current.integer)
 #endif
                     {
                         v10 = Material_RegisterHandle(src, 0);
-                        *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v10;
+                        StoreFieldPointer(pStruct, v20->iOffset, v10);
                     }
 #endif
                     break;
                 case 0xB:
                     SoundAlias = Com_FindSoundAlias(src);
-                    *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)SoundAlias;
+                    StoreFieldPointer(pStruct, v20->iOffset, SoundAlias);
                     break;
                 default:
                     if (v20->iFieldType >= 0)
