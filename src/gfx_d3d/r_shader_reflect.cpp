@@ -87,11 +87,42 @@ bool ConstantTableValid(const std::uint8_t *data, std::uint32_t size, std::uint3
     return true;
 }
 
+// A vs or ps version token's major version; 0 for any other token.
+std::uint32_t VersionMajor(std::uint32_t version)
+{
+    const std::uint32_t versionType = version & kVersionTypeMask;
+    if (versionType != kVertexVersionType && versionType != kPixelVersionType)
+        return 0;
+    return (version >> 8) & 0xFFu;
+}
+
 bool VersionSupported(std::uint32_t version)
 {
-    const std::uint32_t major = (version >> 8) & 0xFFu;
-    const std::uint32_t versionType = version & kVersionTypeMask;
-    return (versionType == kVertexVersionType || versionType == kPixelVersionType) && major >= 2 && major <= 3;
+    const std::uint32_t major = VersionMajor(version);
+    return major >= 2 && major <= 3;
+}
+
+// Shader model 1 instruction tokens carry no length (bits 24-27 are
+// reserved), so a 1.x program is read as D3D9ShaderBytecodeValid reads it:
+// the comment blocks after the version token, at least one instruction, and
+// the end token as the last dword. Calls visit for those comments only; the
+// compiler puts a 1.x program's constant table there.
+template <typename Visit>
+bool WalkLeadingComments(const std::uint32_t *program, std::uint32_t dwordCount, Visit &&visit)
+{
+    if (!program || dwordCount < 2 || VersionMajor(program[0]) != 1)
+        return false;
+
+    std::uint32_t cursor = 1;
+    while (cursor < dwordCount && program[cursor] != kEndToken
+        && (program[cursor] & kOpcodeMask) == kCommentOpcode)
+    {
+        const std::uint32_t payloadDwords = (program[cursor] & kCommentLengthMask) >> kCommentLengthShift;
+        if (payloadDwords > dwordCount - cursor - 1 || !visit(program[cursor], &program[cursor + 1], payloadDwords))
+            return false;
+        cursor += payloadDwords + 1;
+    }
+    return cursor < dwordCount - 1 && program[cursor] != kEndToken && program[dwordCount - 1] == kEndToken;
 }
 
 // Calls visit(token, payload, payloadDwords) for each comment and instruction
@@ -148,14 +179,16 @@ bool R_ShaderFindConstantTable(
     std::uint32_t dwordCount,
     ShaderConstantTableView *table)
 {
-    if (!table)
+    if (!table || !program || dwordCount < 2)
         return false;
 
     ShaderConstantTableView found{};
-    const bool walked = WalkProgram(program, dwordCount,
-        [&found](std::uint32_t token, const std::uint32_t *payload, std::uint32_t payloadDwords) {
-            return VisitConstantTable(token, payload, payloadDwords, &found);
-        });
+    auto visit = [&found](std::uint32_t token, const std::uint32_t *payload, std::uint32_t payloadDwords) {
+        return VisitConstantTable(token, payload, payloadDwords, &found);
+    };
+    const bool walked = VersionMajor(program[0]) == 1
+        ? WalkLeadingComments(program, dwordCount, visit)
+        : WalkProgram(program, dwordCount, visit);
     if (!walked || !found.data)
         return false;
     *table = found;

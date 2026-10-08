@@ -182,6 +182,41 @@ void TestEmptyTable()
     Check(Find(BuildProgram(kVs30, BuildCtab({})), &table) && table.constantCount == 0, "empty table");
 }
 
+// Shader model 1: instruction tokens carry no length, so only the comments
+// right after the version token are searched, as the compiler emits them.
+std::vector<std::uint32_t> BuildSm1Program(std::uint32_t version, const std::vector<std::uint8_t> &ctab,
+    bool instructionFirst)
+{
+    const std::vector<std::uint32_t> withTable = BuildProgram(version, ctab);
+    // BuildProgram's version, comment and table, minus its SM2 mov and end token.
+    std::vector<std::uint32_t> program(withTable.begin(), withTable.end() - 4);
+    const std::vector<std::uint32_t> mov{ 0x00000001u, 0x800F0000u, 0x90E40000u }; // mov r0, v0
+    program.insert(instructionFirst ? program.begin() + 1 : program.end(), mov.begin(), mov.end());
+    program.push_back(0x0000FFFFu);
+    return program;
+}
+
+void TestShaderModel1()
+{
+    const std::vector<std::uint8_t> ctab = BuildCtab(kConstants);
+    ShaderConstantTableView table{};
+    for (const std::uint32_t version : { 0xFFFE0101u, 0xFFFF0101u, 0xFFFF0104u })
+    {
+        const std::vector<std::uint32_t> program = BuildSm1Program(version, ctab, false);
+        Check(Find(program, &table) && table.constantCount == kConstants.size()
+                && table.data == reinterpret_cast<const std::uint8_t *>(&program[3]), "1.x leading table");
+        ShaderConstantDesc desc{};
+        Check(R_ShaderGetConstantDesc(table, 2, &desc) && desc.registerSet == 3, "1.x constant");
+    }
+    Check(!Find(BuildSm1Program(0xFFFF0104u, ctab, true), &table), "1.x table after an instruction is not searched");
+    std::vector<std::uint32_t> program = BuildSm1Program(0xFFFE0101u, ctab, false);
+    program.back() = 0;
+    Check(!Find(program, &table), "1.x without its end token");
+    program = BuildSm1Program(0xFFFE0101u, ctab, false);
+    program.erase(program.end() - 4, program.end() - 1);
+    Check(!Find(program, &table), "1.x with no instruction");
+}
+
 void TestRejectsMalformed()
 {
     ShaderConstantTableView table{};
@@ -224,7 +259,6 @@ void TestRejectsMalformed()
     std::vector<std::uint32_t> badOpcode = program;
     badOpcode.insert(badOpcode.end() - 1, 0x0100FFFFu);
     rejects(badOpcode, "opcode 0xFFFF that is not the end token");
-    rejects(BuildProgram(0xFFFF0101u, good), "ps_1_1");
     rejects(BuildProgram(0x12340300u, good), "neither vertex nor pixel");
     Check(!R_ShaderFindConstantTable(nullptr, 4, &table), "null program");
     Check(!R_ShaderFindConstantTable(program.data(), static_cast<std::uint32_t>(program.size()), nullptr),
@@ -237,6 +271,7 @@ int main()
     TestParsesEveryConstant();
     TestFindsTableAfterAnInstruction();
     TestEmptyTable();
+    TestShaderModel1();
     TestRejectsMalformed();
     if (failures)
         return 1;

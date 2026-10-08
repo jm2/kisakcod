@@ -31,10 +31,12 @@ struct ShaderConstantDesc
     std::uint16_t typeType;      // D3DXPARAMETER_TYPE
 };
 
-// Finds the first CTAB block in a well-formed vs/ps 2.x or 3.x program of
+// Finds the first CTAB block in a well-formed vs/ps 1.x, 2.x or 3.x program of
 // dwordCount tokens. True only when the stream ends in its end token and the
 // whole table validates: the header size, the constant array, every type
-// record and every NUL-terminated name lie inside the payload.
+// record and every NUL-terminated name lie inside the payload. 1.x
+// instructions carry no length, so there only the comments right after the
+// version token are searched, which is where the compiler puts the table.
 bool R_ShaderFindConstantTable(
     const std::uint32_t *program,
     std::uint32_t dwordCount,
