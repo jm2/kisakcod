@@ -259,6 +259,14 @@ uint32_t __cdecl FS_FOpenFileByMode(char *, int *file, fsMode_t)
 }
 uint32_t __cdecl FS_Read(unsigned char *, uint32_t, int) { return 0; }
 void __cdecl FS_FCloseFile(int) {}
+// Scr_AddFields' loose-file branch; the harness loads from fast files, so it
+// lists nothing.
+const char **__cdecl FS_ListFiles(const char *, const char *, FsListBehavior_e, int *numfiles)
+{
+    *numfiles = 0;
+    return nullptr;
+}
+void __cdecl FS_FreeFileList(const char **) {}
 XAssetHeader __cdecl DB_FindXAssetHeader(XAssetType type, const char *name)
 {
     ScriptSource *source = type == ASSET_TYPE_RAWFILE ? FindSource(name) : nullptr;
