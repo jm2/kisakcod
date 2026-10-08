@@ -19,7 +19,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -145,7 +147,7 @@ void TestConvert(const FxEffectDef *const emitted)
     }
     trail->trailDef.vertCount = 3;
     const uint16_t inds[] = {0, 1, 1, 2};
-    std::memcpy(trail->trailDef.inds, inds, sizeof(inds));
+    std::copy(std::begin(inds), std::end(inds), trail->trailDef.inds);
     trail->trailDef.indCount = 4;
     trail->trailSplitDist = 8;
     trail->trailRepeatDist = 16;
@@ -173,8 +175,9 @@ void TestConvert(const FxEffectDef *const emitted)
     Check(g_printedErrors == errorsBefore, "no validation errors");
     Check(effect->elemDefCountLooping == 1 && effect->elemDefCountOneShot == 3 && effect->elemDefCountEmission == 1,
         "element counts");
-    Check(std::strcmp(effect->name, editor->name) == 0 && Inside(effect->name, effect)
-            && effect->name + std::strlen(effect->name) + 1 == reinterpret_cast<const char *>(effect) + effect->totalSize,
+    const std::string_view name(effect->name);
+    Check(name == editor->name && Inside(name.data(), effect)
+            && name.data() + name.size() + 1 == reinterpret_cast<const char *>(effect) + effect->totalSize,
         "name is the blob's last bytes");
     Check(reinterpret_cast<const uint8_t *>(effect->elemDefs) == reinterpret_cast<const uint8_t *>(effect) + sizeof(FxEffectDef),
         "element defs follow the effect");
