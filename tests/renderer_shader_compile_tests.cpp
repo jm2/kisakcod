@@ -46,7 +46,11 @@ void TestBuffers()
     if (buffer)
         buffer->Release();
     Check(R_CreateShaderBuffer(4, nullptr) == kInvalidArgument, "null out pointer");
+}
 
+void TestOversizedBuffers()
+{
+    ShaderBuffer *buffer = nullptr;
     // A corrupt cached length must come back as E_OUTOFMEMORY, not an
     // exception: the loader's cache path prints that error and moves on.
     constexpr std::int32_t kOutOfMemory = static_cast<std::int32_t>(0x8007000Eu);
@@ -100,7 +104,9 @@ void TestCompiles()
 {
     const struct
     {
-        const char *source, *entry, *target;
+        const char *source;
+        const char *entry;
+        const char *target;
         std::uint32_t version;
     } cases[] = {
         { kVertexSource, "vs_main", "vs_2_0", 0xFFFE0200u },
@@ -154,6 +160,7 @@ void TestNoCompiler()
 int main()
 {
     TestBuffers();
+    TestOversizedBuffers();
 #ifdef _WIN32
     TestCompiles();
     TestCompileFailures();

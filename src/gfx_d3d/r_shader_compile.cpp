@@ -15,9 +15,17 @@ constexpr std::int32_t kOutOfMemory = static_cast<std::int32_t>(0x8007000Eu);
 constexpr std::int32_t kInvalidArgument = static_cast<std::int32_t>(0x80070057u);
 
 #ifdef _WIN32
-// Copies a compiler blob into a ShaderBuffer and releases the blob.
+// Copies a compiler blob into *buffer (when buffer is not null) and releases
+// the blob; a null blob is left alone.
 std::int32_t TakeBlob(ID3DBlob *blob, ShaderBuffer **buffer)
 {
+    if (!blob)
+        return kOk;
+    if (!buffer)
+    {
+        blob->Release();
+        return kOk;
+    }
     const auto size = static_cast<std::uint32_t>(blob->GetBufferSize());
     const std::int32_t result = R_CreateShaderBuffer(size, buffer);
     if (result == kOk)
@@ -69,21 +77,9 @@ std::int32_t R_CompileShader(
     ID3DBlob *errors = nullptr;
     HRESULT result = D3DCompile(source, sourceLength, nullptr, nullptr, nullptr, entryPoint, target, 0, 0,
         &code, &errors);
-    if (errors)
-    {
-        if (messages)
-            TakeBlob(errors, messages);
-        else
-            errors->Release();
-    }
-    if (code)
-    {
-        if (SUCCEEDED(result))
-            result = TakeBlob(code, program);
-        else
-            code->Release();
-    }
-    return static_cast<std::int32_t>(result);
+    TakeBlob(errors, messages);
+    const std::int32_t taken = TakeBlob(code, SUCCEEDED(result) ? program : nullptr);
+    return SUCCEEDED(result) ? taken : static_cast<std::int32_t>(result);
 #else
     (void)sourceLength;
     return kNotImplemented;
