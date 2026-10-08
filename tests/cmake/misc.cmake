@@ -801,3 +801,36 @@ if (NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME q-shared-field-pointer-contracts COMMAND kisakcod-q-shared-field-pointer-tests)
 endif()
+
+# Menu local variables (ui/ui_localvars.cpp): FindOrCreate/Find must return
+# the hashed table slot itself. The decompiled 12 * hash (the x86
+# sizeof(UILocalVar)) lands mid-variable at 64-bit, so the test has to run
+# at LP64: on the Linux clang legs, compiled as the headless server compiles
+# its TUs (as the weapon-field test above), and on the Windows legs with
+# MSVC, where the Win32 ilp32 run checks the 12-byte stride.
+if (WIN32 OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-ui-localvars-tests
+        ui_localvars_tests.cpp
+        ${SRC_DIR}/ui/ui_localvars.cpp
+    )
+    target_include_directories(kisakcod-ui-localvars-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-ui-localvars-tests PRIVATE cxx_std_20)
+    if (WIN32)
+        target_compile_definitions(kisakcod-ui-localvars-tests PRIVATE KISAK_MP)
+    else()
+        if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+            target_include_directories(kisakcod-ui-localvars-tests SYSTEM PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+        endif()
+        target_compile_definitions(kisakcod-ui-localvars-tests PRIVATE
+            KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+        target_compile_options(kisakcod-ui-localvars-tests PRIVATE
+            -fms-extensions -ffunction-sections -fdata-sections)
+        target_link_options(kisakcod-ui-localvars-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    endif()
+    set_target_properties(kisakcod-ui-localvars-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME ui-localvars COMMAND kisakcod-ui-localvars-tests)
+    kisakcod_ilp32(kisakcod-ui-localvars-tests ui-localvars)
+endif()
