@@ -13,10 +13,19 @@ void KISAK_CDECL Sys_Sleep(std::uint32_t msec);
 // counter into msecPerRawTimerTick. x86 reads the TSC, AArch64 the virtual
 // counter CNTVCT_EL0, anything else the monotonic clock. MSVC x86 expands to
 // the retail __rdtsc() tokens, so the Windows x86 baseline codegen is
-// unchanged even at /Od.
+// unchanged even at /Od. MSVC on ARM64 defines _M_ARM64 but not __aarch64__,
+// so it gets its own CNTVCT_EL0 read through the system-register intrinsic.
 #if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
 #include <intrin.h>
 #define Sys_CycleCounter() __rdtsc()
+#elif defined(_MSC_VER) && defined(_M_ARM64)
+#include <intrin.h>
+inline unsigned long long Sys_CycleCounter()
+{
+    // ARM64_SYSREG(3, 3, 14, 0, 2) is CNTVCT_EL0; winnt.h names it ARM64_CNTVCT,
+    // which this header does not include.
+    return static_cast<unsigned long long>(_ReadStatusReg(0x5F02));
+}
 #elif defined(__i386__) || defined(__x86_64__)
 inline unsigned long long Sys_CycleCounter()
 {

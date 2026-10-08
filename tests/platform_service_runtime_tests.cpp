@@ -9,6 +9,10 @@
 #include <type_traits>
 #include <vector>
 
+#if defined(_MSC_VER) && defined(_M_ARM64)
+#include <intrin.h>
+#endif
+
 #include <database/db_script_string_transaction.h>
 #include <qcommon/sys_event.h>
 #include <qcommon/sys_sync.h>
@@ -1476,6 +1480,43 @@ bool TestTimeServices()
     return true;
 }
 
+#if defined(_M_ARM64) || defined(__aarch64__)
+unsigned long long ReadVirtualCounter()
+{
+#if defined(_MSC_VER)
+    // ARM64_SYSREG(3, 3, 14, 0, 2), CNTVCT_EL0, spelled out so the test does not
+    // pull in winnt.h for the ARM64_CNTVCT name.
+    return static_cast<unsigned long long>(_ReadStatusReg(0x5F02));
+#else
+    unsigned long long ticks;
+    __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(ticks));
+    return ticks;
+#endif
+}
+#endif
+
+bool TestCycleCounterReadsVirtualCounter()
+{
+#if defined(_M_ARM64) || defined(__aarch64__)
+    // On AArch64 Sys_CycleCounter is CNTVCT_EL0 itself, on every compiler:
+    // a read lands between two direct reads of the register. The steady-clock
+    // fallback counts nanoseconds from another origin and never lands there.
+    for (int attempt = 0; attempt < 8; ++attempt)
+    {
+        const unsigned long long before = ReadVirtualCounter();
+        const unsigned long long counter = Sys_CycleCounter();
+        const unsigned long long after = ReadVirtualCounter();
+        if (counter < before || counter > after)
+        {
+            std::fprintf(stderr, "Sys_CycleCounter %llu is not CNTVCT_EL0 (read %llu..%llu)\n",
+                counter, before, after);
+            return false;
+        }
+    }
+#endif
+    return true;
+}
+
 bool TestCycleCounter()
 {
     // Sys_CycleCounter replaces the retail __rdtsc sites and is what
@@ -1516,7 +1557,7 @@ bool TestCycleCounter()
             end - start, static_cast<long long>(elapsedMicroseconds));
         return false;
     }
-    return true;
+    return TestCycleCounterReadsVirtualCounter();
 }
 
 template <typename LockFunction, typename UnlockFunction>
