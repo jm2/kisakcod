@@ -26,3 +26,7 @@ int32_t CL_SdlMapMouseButtons(uint32_t sdlButtons);
 // A Unicode code point from SDL text input -> the CP1252 byte an ANSI window's
 // WM_CHAR would carry, or 0 when CP1252 has no printable character for it.
 uint32_t CL_SdlCodepointToCp1252(uint32_t codepoint);
+
+// The reverse, for text the engine hands back (the clipboard): a CP1252 byte
+// -> its Unicode code point, or 0 for a control or unassigned byte.
+uint32_t CL_SdlCp1252ToCodepoint(uint8_t byte);
