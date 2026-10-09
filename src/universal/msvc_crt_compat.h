@@ -254,6 +254,9 @@ static inline int fopen_s(FILE **const stream, const char *const name, const cha
 {
     if (stream == NULL)
         return EINVAL;
+    *stream = NULL;
+    if (name == NULL || mode == NULL)
+        return EINVAL;
     *stream = fopen(name, mode);
     return *stream ? 0 : errno;
 }
@@ -303,13 +306,20 @@ static inline char *_itoa(const int value, char *const buffer, const int radix)
 }
 
 // MSVC: char *_ctime64(const __time64_t *): "Www Mmm dd hh:mm:ss yyyy\n" in
-// local time, in per-thread storage, or NULL. The day is space-padded, as
-// asctime's "%3d" is.
+// local time, in per-thread storage, or NULL. It uses C's asctime layout with
+// English names whatever LC_TIME says, so callers' fixed offsets hold.
 static thread_local char kisak_ctime64_buf[32];
 static inline char *_ctime64(const long long *t)
 {
+    static const char kDays[7][4] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    static const char kMonths[12][4] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
     struct tm *const local = t ? _localtime64(t) : NULL;
-    if (local == NULL || strftime(kisak_ctime64_buf, sizeof(kisak_ctime64_buf), "%a %b %e %H:%M:%S %Y\n", local) == 0)
+    if (local == NULL || local->tm_wday < 0 || local->tm_wday > 6 || local->tm_mon < 0 || local->tm_mon > 11)
+        return NULL;
+    if (KISAK_snprintf_trunc(kisak_ctime64_buf, sizeof(kisak_ctime64_buf), "%.3s %.3s%3d %.2d:%.2d:%.2d %d\n",
+            kDays[local->tm_wday], kMonths[local->tm_mon], local->tm_mday, local->tm_hour, local->tm_min,
+            local->tm_sec, 1900 + local->tm_year) < 0)
         return NULL;
     return kisak_ctime64_buf;
 }

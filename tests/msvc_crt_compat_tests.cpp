@@ -40,6 +40,7 @@
 #include <intrin.h>
 #endif // _MSC_VER
 
+#include <cerrno>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -221,6 +222,13 @@ int main()
     FILE *missing = stdout;
     Expect(fopen_s(&missing, "kisak_no_such_dir/never/here.txt", "rb") != 0 && missing == nullptr,
         "fopen_s reports a failed open and nulls the stream");
+#if !defined(_MSC_VER)
+    // MSVC's CRT routes a null argument to its invalid-parameter handler (which
+    // aborts by default); the shim returns the EINVAL the handler would report.
+    missing = stdout;
+    Expect(fopen_s(&missing, nullptr, "rb") == EINVAL && missing == nullptr, "fopen_s rejects a null name");
+    Expect(fopen_s(&missing, "x", nullptr) == EINVAL, "fopen_s rejects a null mode");
+#endif
 
     // _putenv: cl_main_mp's setenv command passes "NAME=value" from a stack
     // buffer, so the value must survive the buffer; an empty value removes.
@@ -252,6 +260,9 @@ int main()
     if (when)
         Expect(std::strncmp(when + 20, "2000", 4) == 0 || std::strncmp(when + 20, "1999", 4) == 0,
             "_ctime64 puts the year at offset 20");
+    if (when)
+        Expect(std::strncmp(when + 4, "Jan", 3) == 0 || std::strncmp(when + 4, "Dec", 3) == 0,
+            "_ctime64 puts the English month at offset 4");
 
     if (Failures != 0)
         fprintf(stderr, "%d failure(s)\n", Failures);
