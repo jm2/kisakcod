@@ -84,6 +84,14 @@ endif()
 
 # Add multiplayer flag
 target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_MP CINEMA USE_SEPARATE_BLIT_TEXTURE)
+
+# The macOS client renders on KosmicKrisp, which needs macOS 26+, so the
+# client targets 26.0; the server keeps the global CMAKE_OSX_DEPLOYMENT_TARGET
+# (13.0). The later -mmacosx-version-min wins on clang's command line.
+if (APPLE)
+    target_compile_options(${PROJECT_NAME} PRIVATE -mmacosx-version-min=26.0)
+    target_link_options(${PROJECT_NAME} PRIVATE -mmacosx-version-min=26.0)
+endif()
 set(KISAK_TARGET_NEEDS_CLIENT_MEDIA ON)
 
 if (KISAK_CLIENT_SDL3)
