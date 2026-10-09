@@ -1,8 +1,9 @@
-// Silent Miles and Bink for Win64 builds (KISAK_MEDIA_STUBS).
+// Silent Miles and Bink for 64-bit and POSIX clients (KISAK_MEDIA_STUBS on
+// Win64; every POSIX client).
 //
-// mss32.lib and binkw32.lib are 32-bit only, so a Win64 process cannot link
-// or load them. Until the OpenAL Soft and FFmpeg backends land, x64 links
-// these definitions in their place: every call that the engine makes succeeds
+// mss32.lib and binkw32.lib are 32-bit Windows only, so no 64-bit or POSIX
+// process can link or load them. Until the OpenAL Soft and FFmpeg backends
+// land, those builds link these definitions: every call the engine makes succeeds
 // as a no-op or reports failure, so sound and cinematics stay off.
 // - AIL_startup() fails, so MSS_Startup() takes its existing "Miles
 //   initialization failed" path.
@@ -28,7 +29,10 @@ char *AILCALL AIL_set_redist_directory(char const *) { return nullptr; }
 SINTa AILCALL AIL_set_preference(U32, SINTa) { return 0; }
 void AILCALL AIL_set_file_callbacks(AIL_file_open_callback, AIL_file_close_callback, AIL_file_seek_callback, AIL_file_read_callback) { }
 HDIGDRIVER AILCALL AIL_open_digital_driver(U32, S32, S32, U32) { return nullptr; }
+#if defined(_WIN32)
+// Miles declares this only in its Win32 API (DirectSound output).
 S32 AILCALL AIL_set_DirectSound_HWND(HDIGDRIVER, HWND) { return 0; }
+#endif
 S32 AILCALL AIL_digital_CPU_percent(HDIGDRIVER) { return 0; }
 void AILCALL AIL_set_speaker_configuration(HDIGDRIVER, MSSVECTOR3D *, S32, F32) { }
 MSSVECTOR3D *AILCALL AIL_speaker_configuration(HDIGDRIVER, S32 *, S32 *, F32 *, MSS_MC_SPEC *) { return nullptr; }

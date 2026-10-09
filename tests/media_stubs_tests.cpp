@@ -1,6 +1,6 @@
-// Calls the silent Miles/Bink stubs (win32/win_media_stubs.cpp) through the
-// same mss.h/bink.h declarations that the engine compiles against, so the
-// test links the way KisakCOD-mp links on Win64. Each check is the result an
+// Calls the silent Miles/Bink stubs (sound/media_stubs.cpp) through the same
+// mss.h/bink.h declarations that the engine compiles against, so the test
+// links the way KisakCOD-mp links on Win64 and on POSIX. Each check is the result an
 // engine caller relies on to switch sound or cinematics off cleanly:
 // - MSS_Startup tests AIL_startup() != 0.
 // - The driver code prints AIL_last_error() with %s.
@@ -47,6 +47,6 @@ int main()
 
     if (g_failures)
         return 1;
-    std::printf("win-media-stubs: all checks passed\n");
+    std::printf("media-stubs: all checks passed\n");
     return 0;
 }
