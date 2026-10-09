@@ -4017,7 +4017,7 @@ bool __cdecl R_GetMonitorDimensions(int *width, int *height)
     }
 }
 
-HRESULT __cdecl R_CreateDeviceInternal(HWND__ *hwnd, uint32_t behavior, _D3DPRESENT_PARAMETERS_ *d3dpp)
+HRESULT __cdecl R_CreateDeviceInternal(HWND hwnd, uint32_t behavior, _D3DPRESENT_PARAMETERS_ *d3dpp)
 {
     _D3DDEVTYPE DeviceType; // eax
     _D3DDISPLAYMODE getModeResult; // [esp+4h] [ebp-18h] BYREF
