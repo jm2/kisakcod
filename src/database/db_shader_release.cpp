@@ -5,7 +5,7 @@
 // guarded by the same seam as the call itself. See gfx_d3d/r_d3d9types.h for
 // the opaque declarations the headless side compiles against.
 #ifndef KISAK_DEDI_HEADLESS
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
 #include <d3d9.h>
 #endif
 #endif

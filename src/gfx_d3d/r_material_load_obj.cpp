@@ -13,7 +13,7 @@
 #include <universal/q_parse.h>
 
 #include <d3d9.h>
-#include <d3dx9shader.h>
+#include "r_d3dx9.h"
 
 // The 32-bit Windows client keeps D3DX; every other target compiles and
 // reflects shaders without it (D3DX9 ships no ARM64 or POSIX library).

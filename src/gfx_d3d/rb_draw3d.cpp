@@ -214,7 +214,7 @@ void __cdecl R_DrawDebugShaderLitCallback(const void *data, GfxCmdBufContext con
     int width; // [esp+8h] [ebp-24h]
     int y; // [esp+Ch] [ebp-20h]
     IDirect3DDevice9 *device; // [esp+14h] [ebp-18h]
-    tagRECT v6; // [esp+18h] [ebp-14h] BYREF
+    RECT v6; // [esp+18h] [ebp-14h] BYREF
     const GfxViewInfo *viewInfo; // [esp+28h] [ebp-4h]
 
     viewInfo = (const GfxViewInfo * )data;
@@ -246,7 +246,7 @@ void __cdecl R_DrawFullbrightDecalCallback(const void *data, GfxCmdBufContext co
     int width; // [esp+8h] [ebp-24h]
     int y; // [esp+Ch] [ebp-20h]
     IDirect3DDevice9 *device; // [esp+14h] [ebp-18h]
-    tagRECT v6; // [esp+18h] [ebp-14h] BYREF
+    RECT v6; // [esp+18h] [ebp-14h] BYREF
     const GfxViewInfo *viewInfo; // [esp+28h] [ebp-4h]
 
     viewInfo = (const GfxViewInfo*)data;
@@ -277,7 +277,7 @@ void __cdecl R_DrawDebugShaderEmissiveCallback(const void *data, GfxCmdBufContex
     int width; // [esp+8h] [ebp-24h]
     int y; // [esp+Ch] [ebp-20h]
     IDirect3DDevice9 *device; // [esp+14h] [ebp-18h]
-    tagRECT v6; // [esp+18h] [ebp-14h] BYREF
+    RECT v6; // [esp+18h] [ebp-14h] BYREF
     const GfxViewInfo *viewInfo; // [esp+28h] [ebp-4h]
 
     viewInfo = (const GfxViewInfo * )data;
@@ -616,7 +616,7 @@ void __cdecl R_DrawPointLitSurfsCallback(const void *userData, GfxCmdBufContext 
     uint32_t w; // [esp+8h] [ebp-24h]
     uint32_t y; // [esp+Ch] [ebp-20h]
     IDirect3DDevice9 *device; // [esp+14h] [ebp-18h]
-    tagRECT rect; // [esp+18h] [ebp-14h] BYREF
+    RECT rect; // [esp+18h] [ebp-14h] BYREF
     const GfxPointLitSurfsInfo *info; // [esp+28h] [ebp-4h]
 
     info = (const GfxPointLitSurfsInfo * )userData;
@@ -649,7 +649,7 @@ void __cdecl R_DrawEmissiveCallback(const void *userData, GfxCmdBufContext conte
     int width; // [esp+8h] [ebp-24h]
     int y; // [esp+Ch] [ebp-20h]
     IDirect3DDevice9 *device; // [esp+14h] [ebp-18h]
-    tagRECT v6; // [esp+18h] [ebp-14h] BYREF
+    RECT v6; // [esp+18h] [ebp-14h] BYREF
     const GfxViewInfo *viewInfo; // [esp+28h] [ebp-4h]
 
     viewInfo = (const GfxViewInfo * )userData;

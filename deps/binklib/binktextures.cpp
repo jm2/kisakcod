@@ -4,7 +4,7 @@
 #include <gfx_d3d/r_shader_compile.h>
 #endif
 #include <d3d9.h> // change to your 9.0 or up path
-#include <d3dx9.h>
+#include <gfx_d3d/r_d3dx9.h>
 #include "binktextures.h"
 
 

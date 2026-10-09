@@ -12,7 +12,7 @@ void R_DepthPrepassCallback(const void *userData, GfxCmdBufContext context, GfxC
     int width; // [esp+14h] [ebp-50h]
     int y; // [esp+18h] [ebp-4Ch]
     IDirect3DDevice9 *device; // [esp+20h] [ebp-44h]
-    tagRECT v6; // [esp+24h] [ebp-40h] BYREF
+    RECT v6; // [esp+24h] [ebp-40h] BYREF
     GfxDrawSurfListInfo info; // [esp+34h] [ebp-30h] BYREF
     MaterialTechniqueType baseTechType; // [esp+5Ch] [ebp-8h]
     const GfxViewInfo *viewInfo; // [esp+60h] [ebp-4h]
