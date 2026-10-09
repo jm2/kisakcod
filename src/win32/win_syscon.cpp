@@ -85,7 +85,15 @@ LRESULT __stdcall ConWndProc(HWND__ *hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 		else
 #endif
 		{
+#ifdef KISAK_CLIENT_SDL3
+			// SDL's pump drains this thread's queue, WM_QUIT included, so it
+			// would never reach Win_GetEvent; queue the quit command instead.
+			cmdString = (char*)Com_AllocEvent(5);
+			strcpy(cmdString, "quit");
+			Sys_QueEvent(0, SE_CONSOLE, 0, 0, strlen(cmdString) + 1, cmdString);
+#else
 			PostQuitMessage(0);
+#endif
 		}
 		return 0;
 	default:
