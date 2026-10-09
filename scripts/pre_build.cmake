@@ -159,6 +159,8 @@ else()
         pkg_check_modules(KISAK_DXVK_D3D9 REQUIRED IMPORTED_TARGET dxvk-d3d9)
         target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::KISAK_DXVK_D3D9)
         target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_DXVK_NATIVE)
+        # The D3DX9 subset the renderer uses (gfx_d3d/r_d3dx9.h).
+        target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/_platform/posix/d3dx9_native.cpp)
     endif()
     if (KISAK_TARGET_ENABLE_STEAM)
         message(FATAL_ERROR
