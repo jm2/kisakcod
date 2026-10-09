@@ -17,6 +17,14 @@ include (${PLATFORM_DIR}/${KISAK_PLATFORM}/platform.cmake)
 include(${SCRIPTS_DIR}/source_groups.cmake)
 kisakcod_require_platform_source_sets()
 
+# Off Win32 the client takes the portable datagram layer and the remote-debug
+# stub, as the headless server does (scripts/dedi/dedi_sources.cmake).
+if (NOT KISAK_PLATFORM STREQUAL "win32")
+    list(APPEND QCOMMON
+        "${SRC_DIR}/qcommon/net_local.cpp"
+        "${SRC_DIR}/qcommon/net_debug_stub.cpp")
+endif()
+
 # Add the new executable
 add_executable(${PROJECT_NAME} 
     ${SRCROOT} 

@@ -621,3 +621,24 @@ if (KISAK_PLATFORM STREQUAL "win32")
     set_tests_properties(win-quit-ctrl-contracts PROPERTIES TIMEOUT 120)
     kisakcod_ilp32(kisakcod-win-quit-ctrl-tests win-quit-ctrl-contracts)
 endif()
+
+# The POSIX system layer every POSIX entry point shares
+# (_platform/posix/posix_sys.cpp): the event queue and the command line.
+# Linux and clang only, as the other engine-TU tests; --gc-sections drops the
+# engine code the checks never reach.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-posix-sys-tests posix_sys_tests.cpp ${SRC_DIR}/_platform/posix/posix_sys.cpp)
+    target_include_directories(kisakcod-posix-sys-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-posix-sys-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-posix-sys-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-posix-sys-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-posix-sys-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-posix-sys-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-posix-sys-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-posix-sys-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME posix-sys-contracts COMMAND kisakcod-posix-sys-tests)
+    set_tests_properties(posix-sys-contracts PROPERTIES TIMEOUT 20)
+endif()
