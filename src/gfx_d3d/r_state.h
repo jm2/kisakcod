@@ -34,9 +34,7 @@ enum $5D1712DF4D603403B9E48E83EDF32C0E : __int32
     GFXS0_COLORWRITE_RGB = 0x8000000,
     GFXS0_COLORWRITE_ALPHA = 0x10000000,
     GFXS0_COLORWRITE_MASK = 0x18000000,
-    // The masks above INT_MAX are the 32-bit values MSVC folds them to: an
-    // int-typed enumerator may not be initialized with an unsigned value off Windows.
-    GFXS0_POLYMODE_LINE = static_cast<__int32>(0x80000000u),
+    GFXS0_POLYMODE_LINE = static_cast<__int32>(0x80000000u), // high masks: the int32 values MSVC folds them to
     GFXS1_DEPTHWRITE = 0x1,
     GFXS1_DEPTHTEST_DISABLE = 0x2,
     GFXS1_DEPTHTEST_SHIFT = 0x2,
