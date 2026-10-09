@@ -19,3 +19,13 @@ void CL_SdlDestroyWindow(void *nativeWindow);
 // Returns false while there is no game window, when SDL pumps nothing and the
 // caller must run the platform's own message loop.
 bool CL_SdlPumpEvents();
+
+// Mouse state for cl_sdl3_input.cpp's IN_* layer.
+bool CL_SdlHasFocus();
+void CL_SdlRaiseWindow();
+// Window-relative cursor position and the whole-pixel motion since the last
+// call. In captured (relative) mode the cursor is hidden and confined, as the
+// Win32 build's recentring does.
+void CL_SdlTakeMouseMotion(int *x, int *y, int *dx, int *dy);
+void CL_SdlSetMouseCaptured(bool captured);
+void CL_SdlWarpMouse(int x, int y);

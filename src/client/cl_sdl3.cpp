@@ -36,6 +36,9 @@ namespace
 SDL_Window *s_window;
 SDL_MouseButtonFlags s_buttons;
 bool s_focused;
+// Motion since the last CL_SdlTakeMouseMotion; fractions carry over.
+float s_motionX;
+float s_motionY;
 
 void *NativeHandle(SDL_Window *window)
 {
@@ -169,6 +172,10 @@ void HandleEvent(const SDL_Event &ev)
             s_buttons &= ~SDL_BUTTON_MASK(ev.button.button);
         IN_MouseEvent(CL_SdlMapMouseButtons(s_buttons));
         break;
+    case SDL_EVENT_MOUSE_MOTION:
+        s_motionX += ev.motion.xrel;
+        s_motionY += ev.motion.yrel;
+        break;
     case SDL_EVENT_MOUSE_WHEEL:
         WheelEvent(ev.wheel);
         break;
@@ -210,6 +217,9 @@ bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless)
         return false;
     }
 
+    // The Win32 build reads cursor deltas, which carry the OS pointer speed
+    // and acceleration; keep them in relative mode so sensitivity matches.
+    SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE, "1");
     const SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Call of Duty 4");
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, wndParms->x);
@@ -232,6 +242,7 @@ bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless)
 
     wndParms->hwnd = static_cast<decltype(wndParms->hwnd)>(NativeHandle(s_window));
     s_buttons = 0;
+    s_motionX = s_motionY = 0.0f;
     s_focused = (SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
     SDL_StartTextInput(s_window);
 
@@ -276,4 +287,40 @@ bool CL_SdlPumpEvents()
     while (SDL_PollEvent(&ev))
         HandleEvent(ev);
     return true;
+}
+
+bool CL_SdlHasFocus()
+{
+    return s_window && (SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+}
+
+void CL_SdlRaiseWindow()
+{
+    if (s_window)
+        SDL_RaiseWindow(s_window);
+}
+
+void CL_SdlTakeMouseMotion(int *x, int *y, int *dx, int *dy)
+{
+    float fx = 0.0f;
+    float fy = 0.0f;
+    SDL_GetMouseState(&fx, &fy);
+    *x = static_cast<int>(fx);
+    *y = static_cast<int>(fy);
+    *dx = static_cast<int>(s_motionX);
+    *dy = static_cast<int>(s_motionY);
+    s_motionX -= static_cast<float>(*dx);
+    s_motionY -= static_cast<float>(*dy);
+}
+
+void CL_SdlSetMouseCaptured(bool captured)
+{
+    if (s_window && SDL_GetWindowRelativeMouseMode(s_window) != captured)
+        SDL_SetWindowRelativeMouseMode(s_window, captured);
+}
+
+void CL_SdlWarpMouse(int x, int y)
+{
+    if (s_window)
+        SDL_WarpMouseInWindow(s_window, static_cast<float>(x), static_cast<float>(y));
 }

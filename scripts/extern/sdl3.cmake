@@ -20,8 +20,11 @@ endif()
 target_sources(${PROJECT_NAME} PRIVATE
 	${SRC_DIR}/client/cl_sdl3.cpp
 	${SRC_DIR}/client/cl_sdl3.h
+	${SRC_DIR}/client/cl_sdl3_input.cpp
 	${SRC_DIR}/client/cl_sdl3_keys.cpp
 	${SRC_DIR}/client/cl_sdl3_keys.h
 )
+# cl_sdl3_input.cpp provides the IN_* layer instead.
+set_source_files_properties(${SRC_DIR}/win32/win_input.cpp PROPERTIES HEADER_FILE_ONLY ON)
 target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_CLIENT_SDL3)
 target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3-static)
