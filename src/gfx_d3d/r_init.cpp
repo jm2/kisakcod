@@ -1,4 +1,7 @@
 #include "r_init.h"
+#ifdef KISAK_CLIENT_SDL3
+#include <client/cl_sdl3.h>
+#endif
 #include <qcommon/sys_time.h>
 #include "r_display_modes.h"
 #include <qcommon/mem_track.h>
@@ -2908,8 +2911,12 @@ void R_ShutdownDirect3D()
     {
         if (!dx.windows[--dx.windowCount].hwnd)
             MyAssertHandler(".\\r_init.cpp", 2205, 0, "%s", "dx.windows[dx.windowCount].hwnd");
+#ifdef KISAK_CLIENT_SDL3
+        CL_SdlDestroyWindow(dx.windows[dx.windowCount].hwnd);
+#else
         if (IsWindow(dx.windows[dx.windowCount].hwnd))
             DestroyWindow(dx.windows[dx.windowCount].hwnd);
+#endif
         dx.windows[dx.windowCount].hwnd = 0;
     }
     if (dx.device)
@@ -3549,6 +3556,19 @@ char __cdecl R_CreateWindow(GfxWindowParms *wndParms)
 
     iassert( wndParms );
     iassert( wndParms->hwnd == NULL );
+#ifdef KISAK_CLIENT_SDL3
+#ifndef KISAK_PURE
+    if (!CL_SdlCreateWindow(wndParms, r_noborder->current.enabled))
+#else
+    if (!CL_SdlCreateWindow(wndParms, false))
+#endif
+    {
+        Com_Printf(8, "Couldn't create a window.\n");
+        return 0;
+    }
+    Com_Printf(8, "Game window successfully created.\n");
+    return 1;
+#endif
     if (wndParms->fullscreen)
     {
         Com_Printf(
@@ -3637,7 +3657,11 @@ char __cdecl R_CreateGameWindow(GfxWindowParms *wndParms)
     if (!R_InitHardware(wndParms))
         return 0;
     dx.targetWindowIndex = 0;
+#ifdef KISAK_CLIENT_SDL3
+    CL_SdlShowWindow(wndParms->hwnd);
+#else
     ShowWindow(wndParms->hwnd, 5);
+#endif
     Sys_HideSplashWindow();
     return 1;
 }
