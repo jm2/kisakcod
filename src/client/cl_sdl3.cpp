@@ -260,8 +260,8 @@ bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless)
     // MainWndProc's WM_CREATE work.
 #ifdef _WIN32
     g_wv.hWnd = wndParms->hwnd;
-#endif
     SND_SetHWND(wndParms->hwnd);
+#endif
     iassert(r_reflectionProbeGenerate);
     if (r_reflectionProbeGenerate->current.enabled && r_fullscreen->current.enabled)
     {
