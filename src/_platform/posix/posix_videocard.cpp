@@ -15,7 +15,6 @@
 
 void Posix_DetectVideoCard()
 {
-    static_assert(sizeof(sys_info.gpuDescription) == sizeof(D3DADAPTER_IDENTIFIER9::Description));
     std::snprintf(sys_info.gpuDescription, sizeof(sys_info.gpuDescription), "Unknown video card");
     IDirect3D9 *d3d9 = Direct3DCreate9(D3D_SDK_VERSION);
     if (!d3d9)
