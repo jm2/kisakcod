@@ -131,3 +131,23 @@ int32_t CL_SdlMapMouseButtons(uint32_t sdlButtons)
         buttons |= 0x10;
     return buttons;
 }
+
+uint32_t CL_SdlCodepointToCp1252(uint32_t codepoint)
+{
+    // Printable ASCII and Latin-1 are the same bytes in CP1252.
+    if ((codepoint >= 0x20 && codepoint < 0x7F) || (codepoint >= 0xA0 && codepoint <= 0xFF))
+        return codepoint;
+    // CP1252's 0x80-0x9F block; 0x81, 0x8D, 0x8F, 0x90 and 0x9D are unassigned.
+    static constexpr uint16_t kHighBlock[32] = {
+        0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017D, 0,
+        0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+        0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178,
+    };
+    for (uint32_t i = 0; i < 32; ++i)
+    {
+        if (kHighBlock[i] && kHighBlock[i] == codepoint)
+            return 0x80 + i;
+    }
+    return 0;
+}
