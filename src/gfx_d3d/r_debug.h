@@ -218,7 +218,7 @@ void __cdecl R_DebugFree(void **dataPtr);
 
 
 // r_warn
-void R_WarnOncePerFrame(GfxWarningType warnType, ...);
+void R_WarnOncePerFrame(int warnType, ...); // a GfxWarningType; int is va_start-safe
 double __cdecl R_UpdateFrameRate();
 void __cdecl R_WarnInitDvars();
 

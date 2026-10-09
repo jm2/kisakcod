@@ -6,7 +6,7 @@ const dvar_s *r_warningRepeatDelay;
 uint32_t s_warnCount[41];
 
 
-void R_WarnOncePerFrame(GfxWarningType warnType, ...)
+void R_WarnOncePerFrame(int warnType, ...) // a GfxWarningType: va_start takes a non-enum
 {
     char message[1028]; // [esp+0h] [ebp-410h] BYREF
     float frameRate; // [esp+408h] [ebp-8h]
