@@ -478,7 +478,7 @@ double __cdecl PM_PermuteRestrictiveClipPlanes(
 
     for (planeIndex = 0; planeIndex < planeCount; ++planeIndex)
     {
-        parallel[planeIndex] = Vec3Dot(velocity, &(*planes)[3 * planeIndex]);
+        parallel[planeIndex] = Vec3Dot(velocity, planes[planeIndex]);
         for (permutedIndex = planeIndex;
             permutedIndex && parallel[planeIndex] <= (double)parallel[permutation[permutedIndex - 1]];
             --permutedIndex)

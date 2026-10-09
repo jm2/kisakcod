@@ -825,6 +825,33 @@ if (NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_target_properties(kisakcod-bg-jump-perks-tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME bg-jump-perks-contracts COMMAND kisakcod-bg-jump-perks-tests)
+
+    # Player slide and step moves (bgame/bg_slidemove.cpp) over the production
+    # pmove trace/clip helpers and jump state, against a stubbed box world.
+    add_executable(kisakcod-bg-slidemove-tests
+        bg_slidemove_tests.cpp
+        com_math_test_stubs.cpp
+        ${SRC_DIR}/bgame/bg_slidemove.cpp
+        ${SRC_DIR}/bgame/bg_pmove.cpp
+        ${SRC_DIR}/bgame/bg_jump.cpp
+        ${SRC_DIR}/universal/com_math.cpp
+    )
+    target_include_directories(kisakcod-bg-slidemove-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+        target_include_directories(kisakcod-bg-slidemove-tests SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+    endif()
+    target_compile_features(kisakcod-bg-slidemove-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-bg-slidemove-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-bg-slidemove-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    set_source_files_properties(bg_slidemove_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+    target_link_options(kisakcod-bg-slidemove-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    set_target_properties(kisakcod-bg-slidemove-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME bg-slidemove-contracts COMMAND kisakcod-bg-slidemove-tests)
 endif()
 
 # The pointer field types (FX, XModel, Material, sound alias) of the production
