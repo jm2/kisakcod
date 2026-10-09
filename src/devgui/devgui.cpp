@@ -125,7 +125,7 @@ uint16_t __cdecl DevGui_CreateMenu(uint16_t parentHandle, const char *label, __i
     do
     {
         v4 = *label;
-        v5->label[0] = *label++;
+        *(char *)v5 = *label++; // a byte walk: past its first byte, v5 is no DevMenuItem
         v5 = (DevMenuItem *)((char *)v5 + 1);
     } while (v4);
     menu->childType = 0;
