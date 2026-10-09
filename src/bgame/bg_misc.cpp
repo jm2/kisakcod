@@ -1988,9 +1988,22 @@ void __cdecl BG_LerpHudColors(const hudelem_s *elem, int32_t time, hudelem_color
 // The headless server has no sound entity channels, so it registers no
 // bg_shock_volume_<channel> dvars (BG_RegisterShockVolumeDvars). Blank those
 // lines of a shock file so Com_LoadDvarsFromBuffer does not warn about each one.
-static void BG_StripShockVolumeLines(char *filebuf)
+static bool BG_IsShockVolumeKey(const char *key)
 {
     static constexpr char kPrefix[] = "bg_shock_volume_";
+    for (size_t i = 0; i + 1 < sizeof(kPrefix); ++i)
+    {
+        char c = key[i];
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+        if (c != kPrefix[i])
+            return false;
+    }
+    return true;
+}
+
+static void BG_StripShockVolumeLines(char *filebuf)
+{
     for (char *line = filebuf; *line;)
     {
         char *key = line;
@@ -1999,15 +2012,7 @@ static void BG_StripShockVolumeLines(char *filebuf)
         char *end = key;
         while (*end && *end != '\n')
             ++end;
-        bool matches = true;
-        for (size_t i = 0; i + 1 < sizeof(kPrefix) && matches; ++i)
-        {
-            char c = key[i];
-            if (c >= 'A' && c <= 'Z')
-                c = static_cast<char>(c - 'A' + 'a');
-            matches = c == kPrefix[i];
-        }
-        if (matches)
+        if (BG_IsShockVolumeKey(key))
         {
             for (char *c = key; c != end; ++c)
                 *c = ' ';

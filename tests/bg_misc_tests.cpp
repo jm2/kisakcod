@@ -11,13 +11,13 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -192,6 +192,7 @@ void TestHudColors()
 }
 
 std::string g_shockFile;
+std::vector<char> g_loadedShock;
 std::string g_parsedShock;
 uint32_t g_parsedShockCount = 0;
 
@@ -226,13 +227,16 @@ void Com_Printf(int, const char *, ...)
 {
 }
 
-int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
+// BG_LoadShellShockDvars only builds the shock file's path here; the stubbed
+// raw-file loader ignores it, so a fixed, bounded copy is enough.
+int Com_sprintf(char *dest, uint32_t size, const char *, ...)
 {
-    va_list args;
-    va_start(args, fmt);
-    const int written = std::vsnprintf(dest, size, fmt, args);
-    va_end(args);
-    return written;
+    const std::string_view path = "shock/test.shock";
+    if (size == 0)
+        return 0;
+    const size_t length = path.copy(dest, size - 1);
+    dest[length] = '\0';
+    return static_cast<int>(length);
 }
 
 void Com_PrintError(int, const char *, ...)
@@ -240,16 +244,16 @@ void Com_PrintError(int, const char *, ...)
     std::abort(); // the test shock file always opens
 }
 
+// The loaded file is a mutable copy, as the engine's loader returns.
 char *__cdecl Com_LoadRawTextFile(const char *)
 {
-    char *copy = static_cast<char *>(std::malloc(g_shockFile.size() + 1));
-    std::memcpy(copy, g_shockFile.c_str(), g_shockFile.size() + 1);
-    return copy;
+    g_loadedShock.assign(g_shockFile.begin(), g_shockFile.end());
+    g_loadedShock.push_back('\0');
+    return g_loadedShock.data();
 }
 
-void __cdecl Com_UnloadRawTextFile(char *filebuf)
+void __cdecl Com_UnloadRawTextFile(char *)
 {
-    std::free(filebuf);
 }
 
 int __cdecl Com_LoadDvarsFromBuffer(const char **, uint32_t numDvars, char *buffer, char *)
