@@ -9,7 +9,8 @@ if (NOT WIN32)
 	# Linux has the shared POSIX system sources in its client set so far;
 	# macOS adds itself here once its set does.
 	if (KISAK_PLATFORM STREQUAL "linux")
-		target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/_platform/posix/posix_client_main.cpp)
+		target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/_platform/posix/posix_client_main.cpp
+			${SRC_DIR}/_platform/posix/posix_videocard.cpp)
 	endif()
 else()
 include(FetchContent)

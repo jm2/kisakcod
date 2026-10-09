@@ -5,6 +5,7 @@
 // Com_Frame loop are unchanged (docs/design/CLIENT.md).
 
 #include "posix_sys.h"
+#include "posix_videocard.h"
 
 #include <SDL3/SDL.h>
 
@@ -153,6 +154,7 @@ int main(int argc, char **argv)
     Sys_InitializeCriticalSections();
     Sys_InitMainThread();
     Posix_DetectCpu();
+    Posix_DetectVideoCard();
 
     Posix_BuildCommandLine(argc, argv, sys_cmdline, sizeof(sys_cmdline));
 
