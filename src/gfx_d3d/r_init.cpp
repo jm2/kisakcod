@@ -3064,15 +3064,15 @@ int __cdecl R_AddValidResolution(int width, int height, int resolutionCount, int
 {
     iassert( (resolutionCount >= 0) );
     if (resolutionCount > 0
-        && (*availableResolutions)[2 * resolutionCount - 2] == width
-        && (*availableResolutions)[2 * resolutionCount - 1] == height)
+        && availableResolutions[resolutionCount - 1][0] == width
+        && availableResolutions[resolutionCount - 1][1] == height)
     {
         return resolutionCount;
     }
     if (width < 640 || height < 480)
         return resolutionCount;
-    (*availableResolutions)[2 * resolutionCount] = width;
-    (*availableResolutions)[2 * resolutionCount + 1] = height;
+    availableResolutions[resolutionCount][0] = width;
+    availableResolutions[resolutionCount][1] = height;
     return resolutionCount + 1;
 }
 

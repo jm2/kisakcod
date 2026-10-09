@@ -1,4 +1,6 @@
 #include "r_image.h"
+
+#include <cstring>
 #include <qcommon/mem_track.h>
 #include <universal/assertive.h>
 #include <universal/com_memory.h>
@@ -14490,7 +14492,9 @@ void __cdecl Wavelet_DecompressLevel(uint8_t *src, uint8_t *dst, WaveletDecode *
     {
         if (!decode->dataInitialized)
         {
-            decode->value = *(WORD*)decode->data;
+            uint16_t firstBits;
+            memcpy(&firstBits, decode->data, sizeof(firstBits)); // the stream is byte-aligned
+            decode->value = firstBits;
             decode->bit = 0;
             decode->data += 2;
             decode->dataInitialized = 1;
@@ -14603,10 +14607,12 @@ void __cdecl Wavelet_ConsumeBits(uint16_t bitCount, WaveletDecode *decode)
 {
     iassert( bitCount > 0 && bitCount <= 16 );
     iassert( decode->bit < 8 );
+    uint16_t lowBits;
+    memcpy(&lowBits, decode->data, sizeof(lowBits)); // the stream is byte-aligned
     decode->value >>= bitCount;
     decode->value |= ((*((uint8_t *)decode->data + 3) << 24)
         | (*((uint8_t *)decode->data + 2) << 16)
-        | (uint32_t)*(uint16_t *)decode->data) >> decode->bit << (16 - bitCount);
+        | (uint32_t)lowBits) >> decode->bit << (16 - bitCount);
     decode->bit += bitCount;
     decode->data += (int)decode->bit >> 3;
     decode->bit &= 7u;

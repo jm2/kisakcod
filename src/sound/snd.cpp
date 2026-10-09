@@ -3817,7 +3817,6 @@ void SND_InitEntChannels()
 void __cdecl SND_ParseEntChannelFile(const char *buffer)
 {
     char v1; // [esp+3h] [ebp-7Dh]
-    snd_entchannel_info_t *v2; // [esp+8h] [ebp-78h]
     char *v3; // [esp+Ch] [ebp-74h]
     char v4; // [esp+13h] [ebp-6Dh]
     char *v5; // [esp+18h] [ebp-68h]
@@ -3901,13 +3900,13 @@ void __cdecl SND_ParseEntChannelFile(const char *buffer)
             {
                 maxVoices = 53;
             }
+            // Copy the name with its terminator into the entry's bytes (strcpy).
             v3 = channelName;
-            v2 = &g_snd.entchaninfo[g_snd.entchannel_count];
+            char *dst = reinterpret_cast<char *>(&g_snd.entchaninfo[g_snd.entchannel_count]);
             do
             {
                 v1 = *v3;
-                v2->name[0] = *v3++;
-                v2 = (snd_entchannel_info_t *)((char *)v2 + 1);
+                *dst++ = *v3++;
             } while (v1);
             g_snd.entchaninfo[g_snd.entchannel_count].maxVoices = maxVoices;
             g_snd.entchaninfo[g_snd.entchannel_count++].voiceCount = 0;
