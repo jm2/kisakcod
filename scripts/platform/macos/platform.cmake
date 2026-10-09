@@ -17,6 +17,8 @@ set(PLATFORM_MACOS "")
 set(PLATFORM_MACOS_DEDI_HEADLESS
     "${SRC_DIR}/_platform/posix/posix_localize.cpp"
     "${SRC_DIR}/_platform/posix/posix_main.cpp"
+    "${SRC_DIR}/_platform/posix/posix_sys.cpp"
+    "${SRC_DIR}/_platform/posix/posix_sys.h"
     "${SRC_DIR}/_platform/posix/posix_syscon.cpp"
 )
 set(PLATFORM_MACOS_SERVICES
