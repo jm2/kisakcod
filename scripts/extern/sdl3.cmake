@@ -1,0 +1,27 @@
+include(FetchContent)
+
+##### SDL3: client window and input (KISAK_CLIENT_SDL3) #####
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare (
+	SDL3
+	# 3.4.18; the release tarball is pinned by hash because a URL can change.
+	URL https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz
+	URL_HASH SHA256=9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3
+)
+FetchContent_MakeAvailable ( SDL3 )
+
+if (MSVC)
+	set_property(TARGET SDL3-static PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+target_sources(${PROJECT_NAME} PRIVATE
+	${SRC_DIR}/client/cl_sdl3.cpp
+	${SRC_DIR}/client/cl_sdl3.h
+	${SRC_DIR}/client/cl_sdl3_keys.cpp
+	${SRC_DIR}/client/cl_sdl3_keys.h
+)
+target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_CLIENT_SDL3)
+target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3-static)

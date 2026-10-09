@@ -38,6 +38,9 @@
 
 #ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_init.h>
+#ifdef KISAK_CLIENT_SDL3
+#include <client/cl_sdl3.h>
+#endif
 #endif
 #include <universal/profile.h>
 
@@ -123,6 +126,9 @@ sysEvent_t* __cdecl Win_GetEvent(sysEvent_t* result)
 		{
 			PROF_SCOPED("Message Pump");
 
+#ifdef KISAK_CLIENT_SDL3
+			if (!CL_SdlPumpEvents())
+#endif
 			while (PeekMessageA(&msg, 0, 0, 0, 0))
 			{
 				if (!GetMessageA(&msg, 0, 0, 0))
