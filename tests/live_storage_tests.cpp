@@ -9,6 +9,7 @@
 // encrypt/check path never reaches.
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 
@@ -34,7 +35,12 @@ std::unique_ptr<StatsFile> Encrypted(const char *dir)
 }
 } // namespace
 
-// Engine boundary.
+// Engine boundary. An engine assert (live in debug builds) fails the test.
+WEAK void MyAssertHandler(const char *file, int line, int, const char *, ...)
+{
+    std::fprintf(stderr, "engine assert at %s:%d\n", file ? file : "?", line);
+    std::exit(3);
+}
 WEAK char cl_cdkey[34] = "ABCDEFGHIJKLMNOPQRST0123456789ab";
 WEAK uint32_t Sys_Milliseconds() { return 0x12345678u; }
 WEAK int I_stricmp(const char *a, const char *b) { return strcasecmp(a, b); }
