@@ -187,7 +187,7 @@ void __cdecl FX_SortEffects(FxSystem *system)
     PROF_SCOPED("FX_Sort");
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_sort.cpp", 98, 0, "%s", "system");
-    a = (float *)system;
+    a = system->camera.origin;
     FX_WaitBeginIteratingOverEffects_Exclusive(system);
     const std::int32_t firstActiveEffect =
         Sys_AtomicLoad(&system->firstActiveEffect);

@@ -994,4 +994,33 @@ if (NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_target_properties(kisakcod-fx-update-util-tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME fx-update-util-contracts COMMAND kisakcod-fx-update-util-tests)
+
+    # The per-frame effect sort (EffectsCore/fx_sort.cpp, FX_SortEffects) over a
+    # stubbed effect-handle table; section GC drops the element-sort paths.
+    add_executable(kisakcod-fx-sort-effects-tests
+        fx_sort_effects_tests.cpp
+        com_math_test_stubs.cpp
+        ${SRC_DIR}/EffectsCore/fx_sort.cpp
+        ${SRC_DIR}/universal/com_math.cpp
+    )
+    target_include_directories(kisakcod-fx-sort-effects-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+        target_include_directories(kisakcod-fx-sort-effects-tests SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+    endif()
+    target_compile_features(kisakcod-fx-sort-effects-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fx-sort-effects-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-fx-sort-effects-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    set_source_files_properties(fx_sort_effects_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+    # fx.cmake is included before db.cmake sets KISAK_TEST_GC_SECTIONS.
+    if (APPLE)
+        target_link_options(kisakcod-fx-sort-effects-tests PRIVATE -Wl,-dead_strip)
+    else()
+        target_link_options(kisakcod-fx-sort-effects-tests PRIVATE -Wl,--gc-sections)
+    endif()
+    set_target_properties(kisakcod-fx-sort-effects-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME fx-sort-effects-contracts COMMAND kisakcod-fx-sort-effects-tests)
 endif()
