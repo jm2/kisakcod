@@ -962,3 +962,22 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME configure-gpu-fallback-posix-client COMMAND kisakcod-configure-fallback-tests)
     set_tests_properties(configure-gpu-fallback-posix-client PROPERTIES TIMEOUT 20)
 endif()
+
+# String_Alloc (ui/ui_utils.cpp) at 64-bit: its list node is a stringDef_s,
+# not 8 bytes. Linux and clang only, as above; the client's defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-ui-string-alloc-tests ui_string_alloc_tests.cpp ${SRC_DIR}/ui/ui_utils.cpp)
+    target_include_directories(kisakcod-ui-string-alloc-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-ui-string-alloc-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-ui-string-alloc-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-ui-string-alloc-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-ui-string-alloc-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-ui-string-alloc-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-ui-string-alloc-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-ui-string-alloc-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui-string-alloc-contracts COMMAND kisakcod-ui-string-alloc-tests)
+    set_tests_properties(ui-string-alloc-contracts PROPERTIES TIMEOUT 20)
+endif()
