@@ -1400,7 +1400,7 @@ void Com_ErrorCleanup()
     char finalmsg[4100]; // [esp+1Ch] [ebp-1008h] BYREF
 
     iassert( Sys_IsMainThread() );
-    LargeLocalReset();
+    LargeLocalReset(); DB_ReleaseLocksAfterError(); // before anything waits on the asset DB
     Com_PopRemoteScreenUpdate();
     Com_SyncThreads();
 #ifdef KISAK_MP

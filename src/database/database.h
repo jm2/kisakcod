@@ -176,6 +176,9 @@ void DB_PostLoadXZone();
 // The end reports a failure once the hash is released.
 void DB_BeginRegistrySession();
 void DB_EndRegistrySession();
+// ERR_DROP recovery (Com_ErrorCleanup): a drop raised while this thread held
+// the asset hash, in a registry session or by Sys_LockWrite, releases it.
+void DB_ReleaseLocksAfterError();
 void __cdecl DB_UpdateDebugZone();
 void __cdecl DB_SyncXAssets();
 void __cdecl DB_LoadXAssets(XZoneInfo *zoneInfo, uint32_t zoneCount, int32_t sync);

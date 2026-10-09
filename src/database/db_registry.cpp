@@ -3795,3 +3795,12 @@ void __cdecl Load_GetCurrentZoneHandle(uint8_t *handle)
     //        g_zoneIndex);
     *handle = g_zoneIndex;
 }
+
+void DB_ReleaseLocksAfterError()
+{
+    // A session's end releases its window and hash and reports what failed.
+    while (db::load_legacy_bridge::DbLoadLegacyBridge::InSession())
+        DB_EndRegistrySession();
+    if (Sys_HoldsWriteLock(&db_hashCritSect))
+        Sys_UnlockWrite(&db_hashCritSect);
+}
