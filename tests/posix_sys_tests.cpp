@@ -1,11 +1,14 @@
 // posix_sys_tests.cpp: the POSIX system layer every POSIX entry point shares
 // (_platform/posix/posix_sys.cpp): the sysEvent_t queue the headless server's
 // and the client's Sys_GetEvent read through Posix_DequeueEvent, and the
-// command line Posix_BuildCommandLine hands Com_Init.
+// command line Posix_BuildCommandLine hands Com_Init, and Sys_Error's
+// fatal exit, which ends the process as Windows' ExitProcess does: no static
+// destructors or atexit handlers run while worker threads may be live.
 //
 // The engine boundary is weak: --gc-sections drops the engine code no check
 // reaches, so only what the queue and the builder call needs a stub.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,8 +16,13 @@
 #include <string>
 #include <vector>
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <_platform/posix/posix_sys.h>
 #include <qcommon/qcommon.h>
+#include <qcommon/sys_console.h>
+#include <qcommon/sys_local.h>
 #include <qcommon/sys_sync.h>
 #include <qcommon/sys_time.h>
 #include <qcommon/threads.h>
@@ -45,6 +53,53 @@ std::string BuildLine(std::initializer_list<const char *> args, std::size_t size
     Posix_BuildCommandLine(static_cast<int>(argv.size()), argv.data(), out.data(), out.size());
     return std::string(out.data());
 }
+
+// The fatal-exit child reports on this pipe: "M<message>" from the console,
+// "D" from a static destructor and "A" from an atexit handler.
+int g_reportFd = -1;
+constexpr std::size_t kMaxReport = 256; // the longest report a child sends
+void Report(const char *text)
+{
+    if (g_reportFd >= 0 && text)
+        (void)::write(g_reportFd, text, ::strnlen(text, kMaxReport));
+}
+struct DestructorReport
+{
+    ~DestructorReport() { Report("D"); }
+};
+
+// Runs Sys_Error in a child; returns what it reported and its wait status.
+std::string FatalChild(int *status)
+{
+    int fds[2];
+    if (::pipe(fds) != 0)
+        return "pipe failed";
+    const pid_t child = ::fork();
+    if (child == 0)
+    {
+        ::close(fds[0]);
+        g_reportFd = fds[1];
+        static DestructorReport report; // registered with __cxa_atexit
+        std::atexit([] { Report("A"); });
+        Sys_Error("fatal %d", 7);
+    }
+    ::close(fds[1]);
+    // Read at most kMaxReport bytes, each read bounded by the buffer and
+    // stopping at end of file or an error.
+    std::string reported;
+    char buffer[64];
+    while (reported.size() < kMaxReport)
+    {
+        const std::size_t want = std::min(sizeof(buffer), kMaxReport - reported.size());
+        const ssize_t n = ::read(fds[0], buffer, want);
+        if (n <= 0 || static_cast<std::size_t>(n) > want)
+            break;
+        reported.append(buffer, static_cast<std::size_t>(n));
+    }
+    ::close(fds[0]);
+    ::waitpid(child, status, 0);
+    return reported;
+}
 } // namespace
 
 // Engine boundary.
@@ -58,6 +113,17 @@ WEAK uint32_t KISAK_CDECL Sys_Milliseconds() { return 1234; }
 WEAK void KISAK_CDECL Sys_EnterCriticalSection(int) {}
 WEAK void KISAK_CDECL Sys_LeaveCriticalSection(int) {}
 WEAK void Com_Printf(int, const char *, ...) {}
+WEAK SysConsoleIoStatus KISAK_CDECL Sys_ConsoleWriteFatalError(const char *message) noexcept
+{
+    Report("M");
+    Report(message);
+    return SysConsoleIoStatus::Complete;
+}
+WEAK SysConsoleIoStatus KISAK_CDECL Sys_ConsoleFlush(SysConsoleOutputStream) noexcept
+{
+    return SysConsoleIoStatus::Complete;
+}
+WEAK void Conbuf_AppendTextInMainThread(const char *) {}
 
 int main()
 {
@@ -89,6 +155,12 @@ int main()
     CHECK(BuildLine({"KisakCOD"}, 16).empty());
     // An argument that does not fit is dropped with everything after it.
     CHECK(BuildLine({"KisakCOD", "+set", "a_very_long_argument", "+x"}, 16) == "+set");
+
+    // A fatal error reports its message and exits with EXIT_FAILURE, running
+    // no static destructor or atexit handler.
+    int status = 0;
+    CHECK(FatalChild(&status) == "Mfatal 7");
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == EXIT_FAILURE);
 
     if (g_failures == 0)
         std::printf("posix sys: all checks passed\n");
