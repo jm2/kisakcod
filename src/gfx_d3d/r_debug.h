@@ -223,3 +223,14 @@ double __cdecl R_UpdateFrameRate();
 void __cdecl R_WarnInitDvars();
 
 extern DebugGlobals debugGlobals;
+
+// va_start after a fixed `: __int32` enum parameter: no default promotion
+// happens, but clang's -Wvarargs flags any enum there. A macro, so the
+// caller keeps its line numbers (MSVC sees plain va_start).
+#if defined(__clang__)
+#define KISAK_VA_START_ENUM(va, last) \
+    _Pragma("clang diagnostic push") _Pragma("clang diagnostic ignored \"-Wvarargs\"") \
+    va_start(va, last) _Pragma("clang diagnostic pop")
+#else
+#define KISAK_VA_START_ENUM(va, last) va_start(va, last)
+#endif

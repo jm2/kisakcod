@@ -13,7 +13,7 @@ void R_WarnOncePerFrame(GfxWarningType warnType, ...)
     char *vargs; // [esp+40Ch] [ebp-4h]
     va_list va; // [esp+41Ch] [ebp+Ch] BYREF
 
-    va_start(va, warnType);
+    KISAK_VA_START_ENUM(va, warnType); // GfxWarningType is `: __int32`: no default promotion
     iassert( r_warningRepeatDelay );
     frameRate = R_UpdateFrameRate();
     if (s_warnCount[warnType] < rg.frontEndFrameCount)
