@@ -28,7 +28,7 @@
 #include "r_meshdata.h"
 #include <qcommon/com_bsp.h>
 #include "r_cinematic.h"
-#include <win32/win_net.h>
+#include <qcommon/net_local.h>
 #include <universal/profile.h>
 #include <universal/sys_atomic.h>
 #include "rb_state.h"
