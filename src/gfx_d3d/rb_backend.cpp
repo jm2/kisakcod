@@ -28,7 +28,7 @@
 #include "rb_draw3d.h"
 #include "r_dvars.h"
 #include "r_pixelcost_load_obj.h"
-#include <win32/win_net.h>
+#include <qcommon/net_local.h>
 #include <qcommon/threads.h>
 #include "r_workercmds.h"
 #include "rb_tess.h"
