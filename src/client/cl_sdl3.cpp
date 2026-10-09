@@ -77,7 +77,7 @@ int32_t ControlChar(const SDL_KeyboardEvent &key)
 
 void KeyEvent(const SDL_KeyboardEvent &key)
 {
-    const uint32_t time = EventTime(key.timestamp);
+    const uint32_t eventTime = EventTime(key.timestamp);
     // MainWndProc's WM_SYSKEYDOWN: Alt+Enter toggles fullscreen in developer mode.
     if (key.down && key.scancode == SDL_SCANCODE_RETURN && (key.mod & SDL_KMOD_ALT))
     {
@@ -92,12 +92,12 @@ void KeyEvent(const SDL_KeyboardEvent &key)
     const bool keypadAsText = (clientUIActives[0].keyCatchers & 0x11) != 0;
     const int32_t code = CL_SdlMapKey(key.scancode, key.key, keypadAsText, (key.mod & SDL_KMOD_NUM) != 0);
     if (code)
-        Sys_QueEvent(time, SE_KEY, code, key.down, 0, nullptr);
+        Sys_QueEvent(eventTime, SE_KEY, code, key.down, 0, nullptr);
     if (key.down)
     {
         const int32_t ch = ControlChar(key);
         if (ch)
-            Sys_QueEvent(time, SE_CHAR, ch, 0, 0, nullptr);
+            Sys_QueEvent(eventTime, SE_CHAR, ch, 0, 0, nullptr);
     }
 }
 
@@ -105,12 +105,12 @@ void KeyEvent(const SDL_KeyboardEvent &key)
 // same bytes, and anything wider has no engine key.
 void TextEvent(const SDL_TextInputEvent &text)
 {
-    const uint32_t time = EventTime(text.timestamp);
+    const uint32_t eventTime = EventTime(text.timestamp);
     const char *cursor = text.text;
     for (Uint32 cp = SDL_StepUTF8(&cursor, nullptr); cp; cp = SDL_StepUTF8(&cursor, nullptr))
     {
         if (cp >= 0x20 && cp <= 0xFF && cp != 0x7F)
-            Sys_QueEvent(time, SE_CHAR, static_cast<int>(cp), 0, 0, nullptr);
+            Sys_QueEvent(eventTime, SE_CHAR, static_cast<int>(cp), 0, 0, nullptr);
     }
 }
 
@@ -121,10 +121,10 @@ void WheelEvent(const SDL_MouseWheelEvent &wheel)
         steps = -steps;
     if (!steps)
         return;
-    const uint32_t time = EventTime(wheel.timestamp);
+    const uint32_t eventTime = EventTime(wheel.timestamp);
     const int key = steps > 0 ? K_MWHEELUP : K_MWHEELDOWN;
-    Sys_QueEvent(time, SE_KEY, key, 1, 0, nullptr);
-    Sys_QueEvent(time, SE_KEY, key, 0, 0, nullptr);
+    Sys_QueEvent(eventTime, SE_KEY, key, 1, 0, nullptr);
+    Sys_QueEvent(eventTime, SE_KEY, key, 0, 0, nullptr);
 }
 
 void WindowMoved(const SDL_WindowEvent &window)
@@ -137,8 +137,8 @@ void WindowMoved(const SDL_WindowEvent &window)
     }
     Dvar_SetInt(vid_xpos, window.data1);
     Dvar_SetInt(vid_ypos, window.data2);
-    Dvar_ClearModified((dvar_s *)vid_xpos);
-    Dvar_ClearModified((dvar_s *)vid_ypos);
+    Dvar_ClearModified(const_cast<dvar_s *>(vid_xpos));
+    Dvar_ClearModified(const_cast<dvar_s *>(vid_ypos));
     if (s_focused)
         IN_Activate(1);
 }
