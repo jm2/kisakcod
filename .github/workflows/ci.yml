@@ -525,6 +525,66 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows-client-64:
+    # The 64-bit Windows MP client (G4b/G5): KisakCOD-mp compiled and linked
+    # for x64 and natively for ARM64. No D3DX library (D3DX9 has none for
+    # ARM64; gfx_d3d/r_shader_compile and r_shader_reflect stand in), silent
+    # Miles/Bink stubs, no Steam. The DirectX SDK package still supplies the
+    # D3DX headers for the D3DXSHADER_CONSTANTTABLE and D3DXSEMANTIC layouts.
+    # Advisory while the 64-bit client settles: a failing leg shows on the run
+    # but does not fail it, and the job is not in scaffolding-complete.
+    name: Windows client / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: windows-2025
+            platform: x64
+            pe-arch: x64
+          - arch: arm64
+            runner: windows-11-arm
+            platform: ARM64
+            pe-arch: ARM64
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
+      DXSDK_VERSION: 9.29.952.8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore DirectX SDK headers
+        shell: pwsh
+        run: |
+          dotnet new classlib -o dxsdk-temp
+          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
+          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
+          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build-client -A ${{ matrix.platform }} `
+            -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
+            -DKISAK_BUILD_MP=ON -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF `
+            -DKISAK_ENABLE_STEAM=OFF -DKISAK_ENABLE_X86_MMX_SKINNING=OFF `
+            -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DBUILD_TESTING=OFF
+
+      - name: Build KisakCOD-mp
+        run: cmake --build build-client --config Release --target KisakCOD-mp --parallel
+
+      - name: Verify binary architecture
+        shell: pwsh
+        run: ./scripts/ci/verify-artifact-arch.ps1 -Expected '${{ matrix.pe-arch }}' bin/Release/KisakCOD-mp.exe
+
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
     runs-on: windows-2025
