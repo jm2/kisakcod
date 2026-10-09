@@ -852,6 +852,32 @@ if (NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_target_properties(kisakcod-bg-slidemove-tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME bg-slidemove-contracts COMMAND kisakcod-bg-slidemove-tests)
+
+    # Mantling (bgame/bg_mantle.cpp) over the production pmove trace and angle
+    # math, with stub mantle animations and a stubbed box world.
+    add_executable(kisakcod-bg-mantle-tests
+        bg_mantle_tests.cpp
+        ${SRC_DIR}/bgame/bg_mantle.cpp
+        ${SRC_DIR}/bgame/bg_pmove.cpp
+        ${SRC_DIR}/universal/com_math.cpp
+        ${SRC_DIR}/universal/com_angle.cpp
+    )
+    target_include_directories(kisakcod-bg-mantle-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+        target_include_directories(kisakcod-bg-mantle-tests SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+    endif()
+    target_compile_features(kisakcod-bg-mantle-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-bg-mantle-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-bg-mantle-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    set_source_files_properties(bg_mantle_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+    target_link_options(kisakcod-bg-mantle-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    set_target_properties(kisakcod-bg-mantle-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME bg-mantle-contracts COMMAND kisakcod-bg-mantle-tests)
 endif()
 
 # The pointer field types (FX, XModel, Material, sound alias) of the production
