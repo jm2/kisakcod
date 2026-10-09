@@ -1,10 +1,11 @@
 // disk32_fixture.cpp: the engine seams the 64-bit loader tests replace
 // (disk32_fixture.hpp): the error handler, the inflater, script-string
-// interning and the zone's native storage.
+// interning, the zone's native storage and the renderer's creation hooks.
 
 #include "disk32_fixture.hpp"
 
 #include <database/db_load_legacy_bridge.h>
+#include <gfx_d3d/r_material.h>
 
 #include <algorithm>
 #include <cstdarg>
@@ -64,4 +65,21 @@ std::uint8_t *__cdecl DB_AllocZoneNative(std::size_t size, std::size_t alignment
     g_arenaUsed = start + size;
     std::fill_n(g_arena + start, size, std::uint8_t{0xCD});
     return g_arena + start;
+}
+
+// A client's TechniqueSet converter builds declarations and creates shaders
+// through r_material.cpp. Families that only reach it through a material keep
+// the handles null; db_disk32_techniqueset_tests.cpp counts the calls.
+__attribute__((weak)) void __cdecl Load_BuildVertexDecl(MaterialVertexDeclaration **)
+{
+}
+
+__attribute__((weak)) bool __cdecl Load_CreateMaterialVertexShader(GfxVertexShaderLoadDef *, MaterialVertexShader *)
+{
+    return true;
+}
+
+__attribute__((weak)) bool __cdecl Load_CreateMaterialPixelShader(GfxPixelShaderLoadDef *, MaterialPixelShader *)
+{
+    return true;
 }

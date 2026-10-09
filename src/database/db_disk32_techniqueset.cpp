@@ -3,6 +3,7 @@
 #if KISAK_ARCH_64BIT
 
 #include <database/db_disk32_loaders.h> // generated from disk32/17-techniqueset.schema
+#include <database/db_disk32_renderer_hooks.h>
 #include <database/db_material_validation.h>
 #include <database/db_validation.h>
 
@@ -14,11 +15,12 @@
 // TechniqueSet, a wave-3 parse family (docs/design/FASTFILE_LOADER.md). The
 // body mirrors Load_MaterialTechniqueSet, Load_MaterialTechnique,
 // Load_MaterialPass, Load_MaterialVertexDeclaration and the shader loads as
-// the headless server runs them: the set streams into the temp block, then
-// with block 4 pushed its name and each technique. A technique, a vertex
+// the x86 loader runs them: the set streams into the temp block, then with
+// block 4 pushed its name and each technique. A technique, a vertex
 // declaration and a shader are completed objects streamed 4-aligned in block 4
-// and converted into native storage; no 64-bit target builds renderer
-// declarations or shaders, so their handles stay null. A pass's arguments
+// and converted into native storage. A client then builds the declaration and
+// creates the shaders as db_load.cpp does (db_disk32_renderer_hooks.h); a
+// headless server keeps their handles null. A pass's arguments
 // convert into native storage, a literal's floats staying in block 4. An
 // offset token names an earlier completed object and resolves to its native
 // twin, as DB_ConvertOffsetToAlias does on x86.
@@ -69,8 +71,8 @@ bool LoadCompleted(disk32::PointerToken token, DBAliasKind kind, std::uint32_t m
     return true;
 }
 
-// Load_MaterialVertexDeclaration, as headless: the routing table converts and
-// the runtime handles are null.
+// Load_MaterialVertexDeclaration: the routing table converts, then a client
+// builds the runtime handles; a headless server leaves them null.
 bool ConvertVertexDecl(std::uint8_t *record, MaterialVertexDeclaration **out, std::uint32_t *bytes)
 {
     disk32::MaterialVertexDeclarationDisk32 disk{};
@@ -88,6 +90,7 @@ bool ConvertVertexDecl(std::uint8_t *record, MaterialVertexDeclaration **out, st
     decl->isLoaded = true;
     for (std::uint32_t index = 0; index < decl->streamCount; ++index)
         decl->hasOptionalSource = decl->hasOptionalSource || decl->routing.data[index].source >= 5;
+    BuildVertexDecl(decl);
     *out = decl;
     *bytes = sizeof(disk);
     return true;
@@ -125,8 +128,9 @@ bool LoadShaderName(disk32::Ptr32<const char> token, const char **out, bool vert
     return true;
 }
 
-// Load_MaterialVertexShader or Load_MaterialPixelShader, as headless: the name
-// rules, then the program; the runtime handle stays null.
+// Load_MaterialVertexShader or Load_MaterialPixelShader: the name rules, then
+// the program, then a client creates the runtime handle; a headless server
+// leaves it null.
 template <typename Native, typename Disk>
 bool ConvertShader(std::uint8_t *record, Native **out, std::uint32_t *bytes)
 {
@@ -148,6 +152,8 @@ bool ConvertShader(std::uint8_t *record, Native **out, std::uint32_t *bytes)
     {
         return false;
     }
+    if (!CreateShader(shader))
+        return false;
     *out = shader;
     *bytes = sizeof(disk);
     return true;

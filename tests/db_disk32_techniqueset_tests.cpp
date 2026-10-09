@@ -1,6 +1,9 @@
 // db_disk32_techniqueset_tests.cpp: the 64-bit TechniqueSet loader (NOW row 12)
 // on hand-built disk32 zone images (disk32_fixture.hpp). Beyond the fixture's
-// seams, only the asset pool (Load_MaterialTechniqueSetAsset) is replaced.
+// seams, only the asset pool (Load_MaterialTechniqueSetAsset) and the
+// renderer's creation hooks (r_material.cpp) are replaced. It builds twice: as
+// a client, which creates each declaration and shader once, and headless
+// (KISAK_DEDI_HEADLESS), which never does.
 
 #include "disk32_fixture.hpp"
 
@@ -16,6 +19,26 @@ namespace
 using namespace disk32_test;
 
 MaterialTechniqueSet g_pool[4]; // what Load_MaterialTechniqueSetAsset published
+
+#ifdef KISAK_DEDI_HEADLESS
+constexpr bool kClient = false;
+#else
+constexpr bool kClient = true;
+#endif
+
+// The handles the creation hooks below hand out, and how often each ran.
+const auto kDeclHandle = reinterpret_cast<IDirect3DVertexDeclaration9 *>(std::uintptr_t{0xDEC1000});
+const auto kVertexHandle = reinterpret_cast<IDirect3DVertexShader9 *>(std::uintptr_t{0x5E7000});
+const auto kPixelHandle = reinterpret_cast<IDirect3DPixelShader9 *>(std::uintptr_t{0x5E8000});
+int g_declBuilds = 0;
+int g_vertexCreates = 0;
+int g_pixelCreates = 0;
+
+bool Created(int decls, int vertex, int pixel)
+{
+    return kClient ? g_declBuilds == decls && g_vertexCreates == vertex && g_pixelCreates == pixel
+                   : !g_declBuilds && !g_vertexCreates && !g_pixelCreates;
+}
 
 struct File : FileBuilder<File>
 {
@@ -117,8 +140,9 @@ void ExpectDecl(const MaterialVertexDeclaration &decl)
     Expect(decl.streamCount == 3 && decl.routing.data[2].source == 7 && decl.routing.data[2].dest == 3
                && decl.hasOptionalSource && decl.isLoaded,
            "the declaration's routing converts, and a source of 5 or more is optional");
-    Expect(!*std::max_element(std::begin(decl.routing.decl), std::end(decl.routing.decl)),
-           "the declaration's runtime handles are null, never their disk bytes");
+    Expect(decl.routing.decl[0] == (kClient ? kDeclHandle : nullptr)
+               && !*std::max_element(std::begin(decl.routing.decl) + 1, std::end(decl.routing.decl)),
+           "a client builds the declaration's runtime handles, a server leaves them null; never their disk bytes");
 }
 
 // A converted shader: its name, a null handle and a program in block 4.
@@ -137,10 +161,10 @@ void ExpectPass(const Zone &zone, const MaterialPass &pass)
     Expect(pass.perPrimArgCount == 1 && pass.stableArgCount == 3 && InArena(pass.vertexDecl), "the pass converts");
     if (InArena(pass.vertexDecl))
         ExpectDecl(*pass.vertexDecl);
-    Expect(ShaderIs(zone, pass.vertexShader, "vs", 152) && !pass.vertexShader->prog.vs,
-           "the vertex shader converts, its program in block 4 and its handle null");
-    Expect(ShaderIs(zone, pass.pixelShader, "ps", 180) && !pass.pixelShader->prog.ps,
-           "the pixel shader converts, its program in block 4 and its handle null");
+    Expect(ShaderIs(zone, pass.vertexShader, "vs", 152) && pass.vertexShader->prog.vs == (kClient ? kVertexHandle : nullptr),
+           "the vertex shader converts, its program in block 4, and only a client creates its handle");
+    Expect(ShaderIs(zone, pass.pixelShader, "ps", 180) && pass.pixelShader->prog.ps == (kClient ? kPixelHandle : nullptr),
+           "the pixel shader converts, its program in block 4, and only a client creates its handle");
     if (InArena(pass.args))
         ExpectArguments(zone, pass.args);
 }
@@ -159,6 +183,7 @@ void ExpectArguments(const Zone &zone, const MaterialShaderArgument *args)
 void TestFullTechnique()
 {
     Zone zone;
+    g_declBuilds = g_vertexCreates = g_pixelCreates = 0;
     // Block 4: name (0..3), the technique (4..12) and its pass (12..32), the
     // declaration (32..132), the vertex shader (132..148), "vs" and its program
     // (152..160), the pixel shader (160..176), "ps" and its program (180..188),
@@ -176,6 +201,7 @@ void TestFullTechnique()
     Expect(Is(zone, technique.name, "tech") && technique.flags == 0x21 && technique.passCount == 1,
            "the technique converts, its name after its passes and its flags losing bit 15");
     ExpectPass(zone, technique.passArray[0]);
+    Expect(Created(1, 1, 1), "a client builds the declaration and creates both shaders once; a server none");
     Expect(g_read == g_file.size() && DB_GetStreamPos() == zone.virt + 241,
            "every disk byte is consumed at its retail block-4 offset");
 }
@@ -289,6 +315,7 @@ const Malformed kMalformed[] = {
 void TestSharedObjects()
 {
     Zone zone;
+    g_declBuilds = g_vertexCreates = g_pixelCreates = 0;
     // Block 4: "s" (0..2), technique A (4..12), its pass (12..32), declaration
     // (32..132), vertex shader (132..148), pixel shader (160..176), argument
     // (188..196) and "a"; then technique B (200..208), whose pass names A's
@@ -306,6 +333,7 @@ void TestSharedObjects()
     Expect(b.vertexDecl == a.vertexDecl && b.vertexShader == a.vertexShader && b.pixelShader == a.pixelShader
                && InArena(b.vertexDecl) && b.args != a.args,
            "declaration and shader offsets resolve to the earlier native objects");
+    Expect(Created(1, 1, 1), "objects shared by offset are created once");
 }
 
 void TestMalformedFailsClosed()
@@ -330,6 +358,30 @@ void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *header)
     entry = *header->techniqueSet;
     Expect(entry.name && entry.name[0] != '\0', "a published set has a name");
     header->techniqueSet = &entry;
+}
+
+// The renderer's creation hooks (r_material.cpp): each records the call and
+// hands out a marker handle.
+void __cdecl Load_BuildVertexDecl(MaterialVertexDeclaration **mtlVertDecl)
+{
+    ++g_declBuilds;
+    (*mtlVertDecl)->routing.decl[0] = kDeclHandle;
+}
+
+bool __cdecl Load_CreateMaterialVertexShader(GfxVertexShaderLoadDef *loadDef, MaterialVertexShader *mtlShader)
+{
+    ++g_vertexCreates;
+    Expect(loadDef == &mtlShader->prog.loadDef && !mtlShader->prog.vs, "a vertex shader is created from its own program once");
+    mtlShader->prog.vs = kVertexHandle;
+    return true;
+}
+
+bool __cdecl Load_CreateMaterialPixelShader(GfxPixelShaderLoadDef *loadDef, MaterialPixelShader *mtlShader)
+{
+    ++g_pixelCreates;
+    Expect(loadDef == &mtlShader->prog.loadDef && !mtlShader->prog.ps, "a pixel shader is created from its own program once");
+    mtlShader->prog.ps = kPixelHandle;
+    return true;
 }
 
 int main()
