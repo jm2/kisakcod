@@ -947,4 +947,28 @@ if (NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_target_properties(kisakcod-fx-curve-random-tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME fx-curve-random-contracts COMMAND kisakcod-fx-curve-random-tests)
+
+    # The production editor-to-runtime effect conversion (EffectsCore/fx_convert.cpp)
+    # over the curve code above; materials and physics presets are stubbed.
+    add_executable(kisakcod-fx-convert-tests
+        fx_convert_tests.cpp
+        com_math_test_stubs.cpp
+        ${SRC_DIR}/EffectsCore/fx_convert.cpp
+        ${SRC_DIR}/qcommon/com_pack.cpp
+        ${SRC_DIR}/EffectsCore/fxcurve.cpp
+        ${SRC_DIR}/universal/com_math.cpp
+    )
+    target_include_directories(kisakcod-fx-convert-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+        target_include_directories(kisakcod-fx-convert-tests SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+    endif()
+    target_compile_features(kisakcod-fx-convert-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fx-convert-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-fx-convert-tests PRIVATE -fms-extensions)
+    set_source_files_properties(fx_convert_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+    set_target_properties(kisakcod-fx-convert-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME fx-convert-contracts COMMAND kisakcod-fx-convert-tests)
 endif()
