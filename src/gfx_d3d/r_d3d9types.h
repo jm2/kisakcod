@@ -17,6 +17,10 @@
 
 #else
 
+// What <d3d9.h> brings in through <windows.h> (rpcndr.h) and the shared
+// renderer headers use without including q_shared.h.
+typedef unsigned char byte;
+
 // Opaque COM interfaces: shared headers only ever hold these by pointer.
 struct IDirect3D9;
 struct IDirect3DDevice9;
