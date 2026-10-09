@@ -551,10 +551,10 @@ void __cdecl Com_SetRecommended(int localClientNum, int restart)
     text = csv;
     Com_BeginParseSession("configure_mp.csv");
     Com_SetCSV(1);
-#ifdef KISAK_DEDI_HEADLESS
-    // configure_mp.csv recommends client graphics and sound settings; a
-    // headless server keeps its defaults when no row fits the host instead of
-    // refusing to start (KisakCOD port).
+#if defined(KISAK_DEDI_HEADLESS) || !defined(_WIN32)
+    // configure_mp.csv recommends client graphics and sound settings; a headless
+    // server, and a client off Windows (dxvk-native names unlisted GPUs), keep
+    // their defaults when no row fits the host instead of refusing to start.
     if (!Com_SetRecommendedCpu(localClientNum, &info, &text))
         Com_PrintWarning(16, "configure_mp.csv: no CPU row fits %.2f GHz %d MB; keeping defaults\n",
             static_cast<double>(info.configureGHz), info.sysMB);
