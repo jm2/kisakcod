@@ -56,28 +56,9 @@ Other `burndown` issues are off these gates or wait on the owner. Future bead: a
 
 ## Done since last review
 
-G1 queue:
+Merge SHAs are in `git log`.
 
-- 17, census fidelity (ki-iv549): #386 (f6e12422).
-- 23, MSVC-compat macros and intrinsics (ki-afvhu): #320 (a7b9f972).
-- 25, `IsValidSeed`, `BigShort` (ki-jddnx): #321 (72696c23).
-- 26, portable `sys_local` contract tests (ki-7xgop): #318 (c208c8a5).
-- 27, shared-file Win32 leftovers (ki-xxg0x): #328 (de4784a7).
-- 28, headless seam in `r_init.h`/`db_load.cpp` (ki-ip7mg): #324 (ce109830).
-- 29, `phys_ode.cpp` 64-bit casts (ki-p1t3u): #333 (1ba9c0aa).
-- 13, POSIX headless entry (ki-tozh2): #330 (cd0122be).
-- 14, portable async fast-file reads (ki-3qwla): #316 (260a6c09).
-
-G2 queue:
-
-- 9, MSVC-compatible RNG (ki-l7lly): #313 (a595a883).
-- 10, `game_mp` hazards (ki-tsj1q): #338 (008861fc).
-- 11, dvars storing pointers: #329 (f8004e4a); the enum-limit reads are behaviour-neutral at 64-bit.
-- 12, loader design and generator: #341 (187477c1), #372 (3cadb962); all 25 server families now have disk32 loaders.
-- 20, GSC parser and VM defects (#225, #199): #345 (b6726248).
-- 21, xanim sizes and strides (ki-brzcp): #340 (7b321f18).
-- 22, physics alias write and brush callbacks (#242 items 1-2): #344 (15f95feb).
-
-Retail-data load stops (64-bit and x86): #475, #478, #479, #497, #498, #512, #513, #518. Steam 1.8 wire identity (G4a): #531 (a671ea57), #532 (950f8f91). D3DX replaced on 64-bit Windows: #520, #537, #539, #541 (7efa5b31). x86 load path in CI: #522.
-
-G5 client launch: #543-#550, #551/#552/#555/#559 (SDL3), #553/#554, #556, #557, #562, #568/#569, #571-#573, #576.
+- 2026-09-29 queue: rows 9-14, 17 and 20-29 (#313, #316, #318, #320, #321, #324, #328-#330, #333, #338, #340, #341, #344, #345, #372, #386).
+- Retail load stops: #475, #478, #479, #497, #498, #512, #513, #518. x86 load path in CI: #522.
+- G4a wire identity: #531, #532. 64-bit D3DX replacement: #520, #537, #539, #541.
+- G5 client launch: #543-#557, #559, #562, #567-#569, #571-#573, #576.
