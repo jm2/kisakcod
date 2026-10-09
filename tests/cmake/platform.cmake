@@ -621,3 +621,15 @@ if (KISAK_PLATFORM STREQUAL "win32")
     set_tests_properties(win-quit-ctrl-contracts PROPERTIES TIMEOUT 120)
     kisakcod_ilp32(kisakcod-win-quit-ctrl-tests win-quit-ctrl-contracts)
 endif()
+
+add_executable(kisakcod-client-sdl3-keys-tests
+    client_sdl3_keys_tests.cpp
+    ${SRC_DIR}/client/cl_sdl3_keys.cpp
+)
+target_include_directories(kisakcod-client-sdl3-keys-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-client-sdl3-keys-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-client-sdl3-keys-tests)
+set_target_properties(kisakcod-client-sdl3-keys-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME client-sdl3-key-mapping COMMAND kisakcod-client-sdl3-keys-tests)
