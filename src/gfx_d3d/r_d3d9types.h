@@ -11,15 +11,21 @@
 // (d3d9types.h) because GfxImageLoadDef stores them on disk and r_image.h
 // compares them; changing a number here breaks image loads.
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
 
+// Windows, or a POSIX client on dxvk-native's <d3d9.h> (with its Windows
+// type shim), which the build finds through pkg-config.
 #include <d3d9.h>
 
-#else
+#endif
 
-// What <d3d9.h> brings in through <windows.h> (rpcndr.h) and the shared
-// renderer headers use without including q_shared.h.
+#if !defined(_WIN32)
+// What <d3d9.h> brings in through <windows.h> (rpcndr.h) on Windows and the
+// shared renderer headers use without including q_shared.h.
 typedef unsigned char byte;
+#endif
+
+#if !defined(_WIN32) && !defined(KISAK_DXVK_NATIVE)
 
 // Opaque COM interfaces: shared headers only ever hold these by pointer.
 struct IDirect3D9;
