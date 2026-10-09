@@ -234,7 +234,7 @@
             #define IS_LE
             #define IS_X86
           #else
-            #if (defined(__MWERKS__) && !defined(__INTEL__)) || defined(__MRC__) || defined(THINK_C) || defined(powerc) || defined(macintosh) || defined(__powerc) || defined(__APPLE__) || defined(__MACH__)
+            #if ((defined(__MWERKS__) && !defined(__INTEL__)) || defined(__MRC__) || defined(THINK_C) || defined(powerc) || defined(macintosh) || defined(__powerc) || defined(__APPLE__) || defined(__MACH__)) && !(defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__)))
               #define IS_MAC
               #if TARGET_API_MAC_CARBON
                 #define IS_CARBON
@@ -272,7 +272,7 @@
               // Detect via the standard predefined macros instead; the
               // resulting IS_LINUX profile is the branch this header already
               // ships for Linux.
-              #if defined(linux) || defined(__linux__) || defined(__linux)
+              #if defined(linux) || defined(__linux__) || defined(__linux) || (defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__)))
                 #define IS_LINUX
                 #define IS_32
                 #define IS_LE
