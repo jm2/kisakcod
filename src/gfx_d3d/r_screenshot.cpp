@@ -818,7 +818,7 @@ char __cdecl R_GetFrontBufferData(int x, int y, int width, int height, int bytes
     const uint8_t *srcPixel; // [esp+A4h] [ebp-34h]
     HMONITOR__ *monitor; // [esp+A8h] [ebp-30h]
     int surfHeight; // [esp+ACh] [ebp-2Ch]
-    tagRECT sourceRect; // [esp+B0h] [ebp-28h] BYREF
+    RECT sourceRect; // [esp+B0h] [ebp-28h] BYREF
     int surfWidth; // [esp+C0h] [ebp-18h]
     int row; // [esp+C4h] [ebp-14h]
     tagPOINT pt; // [esp+C8h] [ebp-10h] BYREF
@@ -1371,7 +1371,7 @@ char __cdecl R_GetBackBufferData(int x, int y, int width, int height, int bytesP
     uint8_t *dstPixel; // [esp+74h] [ebp-48h]
     IDirect3DSurface9 *surfaceBackBuffer; // [esp+78h] [ebp-44h] BYREF
     const uint8_t *srcPixel; // [esp+7Ch] [ebp-40h]
-    tagRECT sourceRect; // [esp+80h] [ebp-3Ch] BYREF
+    RECT sourceRect; // [esp+80h] [ebp-3Ch] BYREF
     int row; // [esp+90h] [ebp-2Ch]
     IDirect3DSurface9 *surface; // [esp+94h] [ebp-28h] BYREF
     _D3DSURFACE_DESC desc; // [esp+98h] [ebp-24h] BYREF

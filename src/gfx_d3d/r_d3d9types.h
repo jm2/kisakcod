@@ -19,6 +19,15 @@
 
 #endif
 
+#if defined(KISAK_DXVK_NATIVE)
+#include <qcommon/sys_time.h>
+// The renderer's Win32 Sleep, which dxvk-native's shim does not declare.
+inline void Sleep(DWORD milliseconds)
+{
+    Sys_Sleep(milliseconds);
+}
+#endif
+
 #if !defined(_WIN32)
 // What <d3d9.h> brings in through <windows.h> (rpcndr.h) on Windows and the
 // shared renderer headers use without including q_shared.h.

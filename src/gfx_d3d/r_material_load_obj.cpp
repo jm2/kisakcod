@@ -13,7 +13,7 @@
 #include <universal/q_parse.h>
 
 #include <d3d9.h>
-#include <d3dx9shader.h>
+#include "r_d3dx9.h"
 
 #include "r_image.h"
 #include <qcommon/sys_local.h>

@@ -12,7 +12,7 @@ void __cdecl R_DrawLitCallback(const void *userData, GfxCmdBufContext context, G
     int width; // [esp+8h] [ebp-24h]
     int y; // [esp+Ch] [ebp-20h]
     IDirect3DDevice9 *device; // [esp+14h] [ebp-18h]
-    tagRECT v7; // [esp+18h] [ebp-14h] BYREF
+    RECT v7; // [esp+18h] [ebp-14h] BYREF
     const GfxViewInfo *viewInfo; // [esp+28h] [ebp-4h]
 
     viewInfo = (const GfxViewInfo * )userData;
@@ -57,7 +57,7 @@ void __cdecl R_DrawDecalCallback(const void *userdata, GfxCmdBufContext context,
     int width; // [esp+8h] [ebp-24h]
     int y; // [esp+Ch] [ebp-20h]
     IDirect3DDevice9 *device; // [esp+14h] [ebp-18h]
-    tagRECT v7; // [esp+18h] [ebp-14h] BYREF
+    RECT v7; // [esp+18h] [ebp-14h] BYREF
 
     const GfxViewInfo* viewInfo = (const GfxViewInfo*)userdata;
 

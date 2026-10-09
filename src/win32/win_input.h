@@ -31,14 +31,14 @@ bool __cdecl IN_IsForegroundWindow();
 
 void IN_ActivateMouse(qboolean force);
 void __cdecl IN_RecenterMouse();
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
 // tagPOINT is a Win32 type (windows.h). Shared translation units include this
 // header for the portable declarations above and never call the cursor-pos
 // entry point; only src/win32/win_input.cpp and the Windows-only UI pass
 // points through it. The declaration stays Windows-only so the shared
 // compositions keep Win32 types out of their include surface (the row 3
 // sys_local split rule).
-void __cdecl IN_SetCursorPos(tagPOINT x);
+void __cdecl IN_SetCursorPos(POINT x);
 #endif
 // LWSS end
 

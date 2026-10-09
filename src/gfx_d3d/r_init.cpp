@@ -317,7 +317,7 @@ const dvar_t *r_mode;
 const dvar_t *r_displayRefresh;
 const dvar_t* r_noborder;
 
-void __cdecl R_SyncGpu(int(__cdecl *WorkCallback)(unsigned __int64))
+void __cdecl R_SyncGpu(int(__cdecl *WorkCallback)(uint64_t))
 {
     int useWorkCallback; // [esp+30h] [ebp-4h]
 
@@ -3545,7 +3545,7 @@ char __cdecl R_CreateWindow(GfxWindowParms *wndParms)
     DWORD exStyle; // [esp+0h] [ebp-1Ch]
     DWORD style; // [esp+4h] [ebp-18h]
     HINSTANCE__ *hinst; // [esp+8h] [ebp-14h]
-    tagRECT rc; // [esp+Ch] [ebp-10h] BYREF
+    RECT rc; // [esp+Ch] [ebp-10h] BYREF
 
     iassert( wndParms );
     iassert( wndParms->hwnd == NULL );

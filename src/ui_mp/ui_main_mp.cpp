@@ -5997,14 +5997,14 @@ int __cdecl UI_Popup(int localClientNum, const char *menu)
     return 1;
 }
 
-void __cdecl CL_SetCursorPos(tagPOINT x)
+void __cdecl CL_SetCursorPos(POINT x)
 {
     IN_SetCursorPos(x);
 }
 
 void __cdecl UI_SetSystemCursorPos(UiContext *dc, float x, float y)
 {
-    tagPOINT X; // [esp+0h] [ebp-28h]
+    POINT X; // [esp+0h] [ebp-28h]
     float v4; // [esp+8h] [ebp-20h]
     float v5; // [esp+Ch] [ebp-1Ch]
     float v6; // [esp+10h] [ebp-18h]

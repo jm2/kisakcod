@@ -355,7 +355,7 @@ struct GfxGlobals // sizeof=0x10
 
 void __cdecl TRACK_r_init();
 const char *__stdcall DXGetErrorDescription9A(int a1);
-void __cdecl R_SyncGpu(int(__cdecl *WorkCallback)(unsigned __int64));
+void __cdecl R_SyncGpu(int(__cdecl *WorkCallback)(uint64_t));
 bool __cdecl R_IsUsingAdaptiveGpuSync();
 void __cdecl  R_FatalInitError(const char *msg);
 void __cdecl  R_FatalLockError(HRESULT hr);

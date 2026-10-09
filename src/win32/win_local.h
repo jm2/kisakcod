@@ -29,6 +29,9 @@
 #include <wsipx.h>
 #endif
 
+// The Win32 engine surface below exists only on Windows; a POSIX client gets
+// the portable part through qcommon/sys_local.h above.
+#if defined(_WIN32)
 void __cdecl Sys_CreateConsole(HMODULE hInstance);
 
 // Input subsystem (Win32/DirectInput era)
@@ -72,3 +75,4 @@ extern WinVars_t	g_wv;
 #endif
 
 extern HWND g_splashWnd;
+#endif // _WIN32
