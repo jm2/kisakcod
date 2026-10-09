@@ -4,7 +4,7 @@
 // playerState-to-entityState conversion the server snapshots (including the
 // event routing through pmoveHandlers), and HUD colour fades. The engine
 // boundary is stubbed; section GC drops the paths the checks never reach, and
-// the stubs that should stay unreached abort.
+// the stubs that should stay unreached abort, as does any engine assert.
 
 #include <bgame/bg_local.h>
 #include <bgame/bg_public.h>
@@ -100,11 +100,9 @@ void TestTrajectory()
     Check(NearVec(vel, 0, 0, 0), "decelerate stops after the duration");
 }
 
-void TestPlayerStateToEntityState()
+std::unique_ptr<playerState_s> MakeDeadAimingPlayer()
 {
     auto ps = std::make_unique<playerState_s>();
-    auto es = std::make_unique<entityState_s>();
-    es->number = 5;
     ps->clientNum = 5;
     ps->origin[0] = 1.6f;
     ps->origin[1] = -2.4f;
@@ -119,6 +117,27 @@ void TestPlayerStateToEntityState()
     ps->groundEntityNum = 1022;
     ps->legsAnim = 17;
     ps->torsoAnim = 18;
+    return ps;
+}
+
+void TestProneConversion(playerState_s *const ps, entityState_s *const es)
+{
+    // Prone: the torso pitch is wrapped to [-180, 180).
+    g_effectiveStance = 1;
+    ps->fTorsoPitch = 370.0f;
+    ps->fWaistPitch = -200.0f;
+    BG_PlayerStateToEntityState(ps, es, 0, 0);
+    Check(Near(es->fTorsoPitch, 10.0) && Near(es->fWaistPitch, 160.0), "prone pitches wrapped");
+    Check(Near(es->lerp.pos.trBase[0], 1.6), "no snap keeps the fraction");
+    Check(es->eType == ET_PLAYER && g_playerEvents.size() == 4, "handler 0 reports no events");
+    g_effectiveStance = 0;
+}
+
+void TestPlayerStateToEntityState()
+{
+    const auto ps = MakeDeadAimingPlayer();
+    auto es = std::make_unique<entityState_s>();
+    es->number = 5;
 
     // Four events: 5 and 10 reach the entity; 31 is server-only, 6 single-client.
     const struct
@@ -147,16 +166,7 @@ void TestPlayerStateToEntityState()
             && es->eventParms[1] == 3,
         "only broadcast events reach the entity");
     Check(ps->oldEventSequence == 4, "events consumed");
-
-    // Prone: the torso pitch is wrapped to [-180, 180).
-    g_effectiveStance = 1;
-    ps->fTorsoPitch = 370.0f;
-    ps->fWaistPitch = -200.0f;
-    BG_PlayerStateToEntityState(ps.get(), es.get(), 0, 0);
-    Check(Near(es->fTorsoPitch, 10.0) && Near(es->fWaistPitch, 160.0), "prone pitches wrapped");
-    Check(Near(es->lerp.pos.trBase[0], 1.6), "no snap keeps the fraction");
-    Check(es->eType == ET_PLAYER && g_playerEvents.size() == 4, "handler 0 reports no events");
-    g_effectiveStance = 0;
+    TestProneConversion(ps.get(), es.get());
 }
 
 void TestHudColors()
@@ -178,13 +188,8 @@ void TestHudColors()
 }
 } // namespace
 
-// The engine boundary bg_misc.cpp's tested paths reach.
-void MyAssertHandler(const char *file, int line, int, const char *fmt, ...)
-{
-    std::fprintf(stderr, "engine assert %s:%d %s\n", file, line, fmt);
-    std::abort();
-}
-
+// The engine boundary bg_misc.cpp's tested paths reach. MyAssertHandler comes
+// from com_math_test_stubs.cpp and aborts.
 void Com_Error(errorParm_t, const char *fmt, ...)
 {
     std::fprintf(stderr, "Com_Error %s\n", fmt);
