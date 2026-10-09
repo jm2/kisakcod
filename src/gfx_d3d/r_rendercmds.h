@@ -180,6 +180,7 @@ struct GfxCmdStretchPic // sizeof=0x2C
     float t1;
     GfxColor color;
 };
+RUNTIME_SIZE(GfxCmdStretchPic, 0x2C, 0x38);
 
 struct GfxCmdClearScreen // sizeof=0x1C
 {
@@ -274,6 +275,8 @@ struct GfxCmdDrawText2D // sizeof=0x54
     char text[3];
     // padding byte
 };
+RUNTIME_SIZE(GfxCmdDrawText2D, 0x54, 0x60);
+RUNTIME_OFFSET(GfxCmdDrawText2D, text, 0x50, 0x5C);
 
 struct FxCodeMeshData // sizeof=0x10
 {                                       // ...

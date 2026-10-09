@@ -73,6 +73,7 @@ struct GfxCmdDrawQuadPic // sizeof=0x2C
     float verts[4][2];
     GfxColor color;
 };
+RUNTIME_SIZE(GfxCmdDrawQuadPic, 0x2C, 0x38);
 
 struct GfxCmdStretchPicRotateST // sizeof=0x34
 {
@@ -90,6 +91,7 @@ struct GfxCmdStretchPicRotateST // sizeof=0x34
     GfxColor color;
     float rotation;
 };
+RUNTIME_SIZE(GfxCmdStretchPicRotateST, 0x34, 0x40);
 
 struct GfxCmdStretchPicRotateXY // sizeof=0x30
 {
@@ -106,6 +108,7 @@ struct GfxCmdStretchPicRotateXY // sizeof=0x30
     GfxColor color;
     float rotation;
 };
+RUNTIME_SIZE(GfxCmdStretchPicRotateXY, 0x30, 0x38);
 
 struct GfxCmdSetViewport // sizeof=0x14
 {
