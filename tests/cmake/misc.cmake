@@ -885,3 +885,27 @@ if (WIN32 OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_test(NAME ui-localvars COMMAND kisakcod-ui-localvars-tests)
     kisakcod_ilp32(kisakcod-ui-localvars-tests ui-localvars)
 endif()
+
+# Com_SetRecommended as a client off Windows: a configure_mp.csv with no GPU
+# row for the card keeps the defaults (com_playerprofile.cpp). Linux and clang
+# only, as above; the client's defines (no KISAK_DEDI_HEADLESS).
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-configure-fallback-tests
+        configure_fallback_tests.cpp
+        ${SRC_DIR}/qcommon/com_playerprofile.cpp
+        ${SRC_DIR}/universal/q_parse.cpp
+    )
+    target_include_directories(kisakcod-configure-fallback-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-configure-fallback-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-configure-fallback-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-configure-fallback-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-configure-fallback-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-configure-fallback-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-configure-fallback-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-configure-fallback-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME configure-gpu-fallback-posix-client COMMAND kisakcod-configure-fallback-tests)
+    set_tests_properties(configure-gpu-fallback-posix-client PROPERTIES TIMEOUT 20)
+endif()
