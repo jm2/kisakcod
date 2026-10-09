@@ -16,9 +16,12 @@
 // D3D/Win32-dependent declarations below (GfxAssets query-pointer member,
 // GfxWindowTarget, DxGlobals, and the device-creation entry points) are
 // guarded with them so shared compositions can include this header without
-// the Direct3D SDK (KPI K5, docs/design/PLATFORM_POSIX.md).
+// the Direct3D SDK (KPI K5, docs/design/PLATFORM_POSIX.md). A POSIX client
+// has them from dxvk-native's <d3d9.h> (KISAK_DXVK_NATIVE).
 #if defined(_WIN32)
 #include <Windows.h>
+#endif
+#if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
 #include <d3d9.h>
 #endif
 
@@ -32,7 +35,7 @@ enum GfxRenderer : __int32
 
 struct GfxAssets // sizeof=0x4
 {                                       // ...
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
     IDirect3DQuery9 *pixelCountQuery;   // ...
 #endif
 };
@@ -268,10 +271,10 @@ struct __declspec(align(8)) r_globals_t // sizeof=0x8310
     // padding byte
 };
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
 struct GfxWindowTarget // sizeof=0x10
 {                                       // ...
-    HWND__ *hwnd;                       // ...
+    HWND hwnd;                          // ...
     IDirect3DSwapChain9 *swapChain;     // ...
     int width;                          // ...
     int height;                         // ...
@@ -279,7 +282,7 @@ struct GfxWindowTarget // sizeof=0x10
 
 struct __declspec(align(8)) DxGlobals // sizeof=0x2CE0
 {                                       // ...
-    HINSTANCE__ *hinst;
+    HINSTANCE hinst;
     IDirect3D9 *d3d9;                   // ...
     IDirect3DDevice9 *device;           // ...
     uint32_t adapterIndex;          // ...
@@ -337,7 +340,7 @@ struct __declspec(align(8)) DxGlobals // sizeof=0x2CE0
     // padding byte
     // padding byte
 };
-#endif // _WIN32 — GfxWindowTarget / DxGlobals are Win32-renderer records
+#endif // _WIN32 || KISAK_DXVK_NATIVE: GfxWindowTarget / DxGlobals are D3D9-renderer records
 
 struct GfxGlobals // sizeof=0x10
 {                                       // ...
@@ -388,10 +391,10 @@ char __cdecl R_CreateDevice(const GfxWindowParms *wndParms);
 void __cdecl R_SetupAntiAliasing(const GfxWindowParms *wndParms);
 int __cdecl R_GetDeviceType();
 void __cdecl R_SetWndParms(GfxWindowParms *wndParms);
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
 void __cdecl R_GetDirect3DCaps(uint32_t adapterIndex, _D3DCAPS9 *caps);
 void __cdecl R_SetD3DPresentParameters(_D3DPRESENT_PARAMETERS_ *d3dpp, const GfxWindowParms *wndParms);
-HRESULT __cdecl R_CreateDeviceInternal(HWND__ *hwnd, uint32_t behavior, _D3DPRESENT_PARAMETERS_ *d3dpp);
+HRESULT __cdecl R_CreateDeviceInternal(HWND hwnd, uint32_t behavior, _D3DPRESENT_PARAMETERS_ *d3dpp);
 #endif
 void R_Register();
 void R_InitGlobalStructs();
@@ -407,7 +410,7 @@ void __cdecl R_UpdateGpuSyncType();
 
 int R_IsHiDef();
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
 extern DxGlobals dx;
 #endif
 extern r_global_permanent_t rgp;
