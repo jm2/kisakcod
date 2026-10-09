@@ -8,6 +8,7 @@
 // The engine boundary is weak: --gc-sections drops the engine code no check
 // reaches, so only what the queue and the builder call needs a stub.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -56,10 +57,11 @@ std::string BuildLine(std::initializer_list<const char *> args, std::size_t size
 // The fatal-exit child reports on this pipe: "M<message>" from the console,
 // "D" from a static destructor and "A" from an atexit handler.
 int g_reportFd = -1;
+constexpr std::size_t kMaxReport = 256; // the longest report a child sends
 void Report(const char *text)
 {
-    if (g_reportFd >= 0)
-        (void)::write(g_reportFd, text, std::strlen(text));
+    if (g_reportFd >= 0 && text)
+        (void)::write(g_reportFd, text, ::strnlen(text, kMaxReport));
 }
 struct DestructorReport
 {
@@ -82,10 +84,18 @@ std::string FatalChild(int *status)
         Sys_Error("fatal %d", 7);
     }
     ::close(fds[1]);
+    // Read at most kMaxReport bytes, each read bounded by the buffer and
+    // stopping at end of file or an error.
     std::string reported;
     char buffer[64];
-    for (ssize_t n; (n = ::read(fds[0], buffer, sizeof(buffer))) > 0;)
+    while (reported.size() < kMaxReport)
+    {
+        const std::size_t want = std::min(sizeof(buffer), kMaxReport - reported.size());
+        const ssize_t n = ::read(fds[0], buffer, want);
+        if (n <= 0 || static_cast<std::size_t>(n) > want)
+            break;
         reported.append(buffer, static_cast<std::size_t>(n));
+    }
     ::close(fds[0]);
     ::waitpid(child, status, 0);
     return reported;
