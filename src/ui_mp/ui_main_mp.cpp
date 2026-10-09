@@ -232,6 +232,18 @@ static int ui_serverFilterType;
 static bool g_ingameMenusLoaded[1];
 
 uiInfo_s uiInfoArray; // On PC this array is just [1].
+
+// The decompiler reached uiInfo_s members past uiDC as dc[1].<UiContext member>,
+// i.e. by x86 offsets that move once UiContext widens at 64-bit. They are named
+// members now; on x86 each lands on the same bytes as before.
+static_assert(sizeof(void *) != 4
+    || offsetof(uiInfo_s, playerIndex) == sizeof(UiContext) + offsetof(UiContext, realTime));
+static_assert(sizeof(void *) != 4
+    || offsetof(uiInfo_s, nextFindPlayerRefresh)
+        == sizeof(UiContext) + offsetof(UiContext, localVars) + 79 * sizeof(UILocalVar) + offsetof(UILocalVar, u));
+static_assert(sizeof(void *) != 4
+    || offsetof(uiInfo_s, playerProfileStatus) + offsetof(PlayerProfileStatus, sortDir)
+        == sizeof(UiContext) + offsetof(UiContext, Menus) + 56 * sizeof(menuDef_t *));
 sharedUiInfo_t sharedUiInfo;
 
 const char *MonthAbbrev[12] =
@@ -2949,10 +2961,10 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                                                                                                                                                         testValue);
                                                                                                                                                                                 }
                                                                                                                                                                             }
-                                                                                                                                                                            else if (dc[1].realTime >= 0
-                                                                                                                                                                                && dc[1].realTime < sharedUiInfo.playerCount)
+                                                                                                                                                                            else if (uiInfoArray.playerIndex >= 0
+                                                                                                                                                                                && uiInfoArray.playerIndex < sharedUiInfo.playerCount)
                                                                                                                                                                             {
-                                                                                                                                                                                ClientNumForPlayerListNum = UI_GetClientNumForPlayerListNum(dc[1].realTime);
+                                                                                                                                                                                ClientNumForPlayerListNum = UI_GetClientNumForPlayerListNum(uiInfoArray.playerIndex);
                                                                                                                                                                                 CL_MutePlayer(
                                                                                                                                                                                     localClientNum,
                                                                                                                                                                                     ClientNumForPlayerListNum);
@@ -3053,21 +3065,21 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                                                                                                             UI_AddServerToFavoritesList(pszName, pszAddress);
                                                                                                                                         }
                                                                                                                                     }
-                                                                                                                                    else if (dc[1].realTime >= 0
-                                                                                                                                        && dc[1].realTime < sharedUiInfo.playerCount)
+                                                                                                                                    else if (uiInfoArray.playerIndex >= 0
+                                                                                                                                        && uiInfoArray.playerIndex < sharedUiInfo.playerCount)
                                                                                                                                     {
                                                                                                                                         v19 = va(
                                                                                                                                             "callvote tempBanUser \"%s\"\n",
-                                                                                                                                            sharedUiInfo.playerNames[dc[1].realTime]);
+                                                                                                                                            sharedUiInfo.playerNames[uiInfoArray.playerIndex]);
                                                                                                                                         Cbuf_AddText(localClientNum, v19);
                                                                                                                                     }
                                                                                                                                 }
-                                                                                                                                else if (dc[1].realTime >= 0
-                                                                                                                                    && dc[1].realTime < sharedUiInfo.playerCount)
+                                                                                                                                else if (uiInfoArray.playerIndex >= 0
+                                                                                                                                    && uiInfoArray.playerIndex < sharedUiInfo.playerCount)
                                                                                                                                 {
                                                                                                                                     v18 = va(
                                                                                                                                         "callvote kick \"%s\"\n",
-                                                                                                                                        sharedUiInfo.playerNames[dc[1].realTime]);
+                                                                                                                                        sharedUiInfo.playerNames[uiInfoArray.playerIndex]);
                                                                                                                                     Cbuf_AddText(localClientNum, v18);
                                                                                                                                 }
                                                                                                                             }
@@ -3168,7 +3180,7 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                                                                 UI_StopServerRefresh();
                                                                                                 *(_DWORD *)&sharedUiInfo.gap8EB4[72912] = 0;
                                                                                                 sharedUiInfo.nextServerStatusRefresh = 0;
-                                                                                                dc[1].localVars.table[79].u.integer = 0;
+                                                                                                uiInfoArray.nextFindPlayerRefresh = 0;
                                                                                             }
                                                                                         }
                                                                                         else if (*(_DWORD *)&sharedUiInfo.serverStatus.string[1124])
@@ -3176,7 +3188,7 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                                                             UI_StopServerRefresh();
                                                                                             *(_DWORD *)&sharedUiInfo.gap8EB4[72912] = 0;
                                                                                             sharedUiInfo.nextServerStatusRefresh = 0;
-                                                                                            dc[1].localVars.table[79].u.integer = 0;
+                                                                                            uiInfoArray.nextFindPlayerRefresh = 0;
                                                                                             UI_BuildServerDisplayList((uiInfo_s *)dc, 1);
                                                                                         }
                                                                                         else
@@ -3241,7 +3253,7 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                             }
                                                             else
                                                             {
-                                                                dc[1].Menus[56] = (menuDef_t *)(dc[1].Menus[56] == 0);
+                                                                uiInfoArray.playerProfileStatus.sortDir = uiInfoArray.playerProfileStatus.sortDir == 0;
                                                                 UI_SortPlayerProfiles(0);
                                                             }
                                                         }
