@@ -6,6 +6,7 @@
 #include <gfx_d3d/r_screenshot_rect.h>
 
 #include <climits>
+#include <cstdint>
 #include <cstdio>
 
 namespace
@@ -63,6 +64,33 @@ int main()
     Expect(Rejects(0, 0, 10, 10, 0, 480), "a backbuffer without width fails");
     Expect(Rejects(INT_MAX, 0, 10, 10, 640, 480), "a huge x fails without overflowing");
     Expect(Rejects(0, 0, INT_MAX, 10, 640, 480), "a huge width fails without overflowing");
+
+    // R_PackScreenshotTga: a 2x2 BGRX surface whose rows are 12 bytes apart
+    // (4 bytes of padding) packs into an 18-byte header and 12 BGR bytes.
+    const std::uint8_t surface[24] = {
+        1, 2, 3, 0xFF, 4, 5, 6, 0xFF, 0xEE, 0xEE, 0xEE, 0xEE,     // row 0, then padding
+        7, 8, 9, 0xFF, 10, 11, 12, 0xFF, 0xEE, 0xEE, 0xEE, 0xEE, // row 1, then padding
+    };
+    std::uint8_t tga[30] = {};
+    Expect(R_ScreenshotTgaBytes(2, 2) == 30 && R_ScreenshotTgaBytes(0, 2) == 0, "a 2x2 TGA is 18 + 12 bytes");
+    Expect(R_PackScreenshotTga(surface, 12, 2, 2, tga, sizeof(tga)), "a padded 2x2 surface packs");
+    Expect(tga[2] == 2 && tga[12] == 2 && tga[13] == 0 && tga[14] == 2 && tga[15] == 0 && tga[16] == 24 && tga[17] == 32,
+           "the header says uncompressed 24-bit 2x2, top row first");
+    const std::uint8_t pixels[12] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+    bool same = true;
+    for (int i = 0; i < 12; ++i)
+        same = same && tga[18 + i] == pixels[i];
+    Expect(same, "each pixel keeps its B, G, R bytes in row order; alpha and row padding are dropped");
+
+    std::uint8_t one[21] = {};
+    const std::uint8_t magenta[4] = { 0xFF, 0x00, 0xFF, 0xFF };
+    Expect(R_PackScreenshotTga(magenta, 4, 1, 1, one, sizeof(one)) && one[18] == 0xFF && one[19] == 0 && one[20] == 0xFF,
+           "a 1x1 surface fills exactly 21 bytes");
+    Expect(!R_PackScreenshotTga(magenta, 4, 1, 1, one, sizeof(one) - 1), "an output one byte short fails");
+    Expect(!R_PackScreenshotTga(surface, 7, 2, 2, tga, sizeof(tga)), "a pitch shorter than a row fails");
+    Expect(!R_PackScreenshotTga(nullptr, 12, 2, 2, tga, sizeof(tga)), "a null surface fails");
+    Expect(!R_PackScreenshotTga(surface, 12, 0, 2, tga, sizeof(tga)), "an empty image fails");
+    Expect(!R_PackScreenshotTga(surface, 4 * 0x10000, 0x10000, 1, tga, sizeof(tga)), "a width TGA can't hold fails");
 
     if (g_failures)
         return 1;

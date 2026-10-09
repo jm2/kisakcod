@@ -41,6 +41,9 @@
 #include "rb_uploadshaders.h"
 #include <universal/timing.h>
 #include <universal/sys_atomic.h>
+#ifdef KISAK_DXVK_NATIVE
+#include "r_screenshot.h"
+#endif
 
 #include <setjmp.h>
 #ifdef KISAK_SP
@@ -2575,6 +2578,9 @@ GfxIndexBufferState *RB_SwapBuffers()
 
     iassert(dx.targetWindowIndex >= 0 && dx.targetWindowIndex < dx.windowCount);
 
+#ifdef KISAK_DXVK_NATIVE
+    RB_CaptureSwapchainScreenshot(); // the finished frame, before Present discards it
+#endif
     {
         PROF_SCOPED("Present");
         hr = dx.windows[dx.targetWindowIndex].swapChain->Present(0, 0, 0, 0, 0);
