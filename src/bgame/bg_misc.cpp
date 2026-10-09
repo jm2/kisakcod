@@ -1120,7 +1120,7 @@ bool __cdecl BG_CanItemBeGrabbed(const entityState_s *ent, const playerState_s *
 
     if (ent->index.brushmodel < 1 || ent->index.brushmodel >= 2048)
     {
-        Com_Error(ERR_DROP, va("BG_CanItemBeGrabbed: index out of range (index is %i, eType is %i)", ent->index.brushmodel, ent->eType));
+        Com_Error(ERR_DROP, "BG_CanItemBeGrabbed: index out of range (index is %i, eType is %i)", ent->index.brushmodel, ent->eType);
     }
 
 #ifdef KISAK_MP
@@ -1202,7 +1202,6 @@ bool __cdecl HaveRoomForAmmo(const playerState_s *ps, uint32_t weaponIndex)
 
 bool __cdecl BG_PlayerHasRoomForEntAllAmmoTypes(const entityState_s *ent, const playerState_s *ps)
 {
-    const char *v2; // eax
     int v3; // ecx
     uint32_t weapIdx; // [esp+0h] [ebp-8h]
     const WeaponDef *weapDef; // [esp+4h] [ebp-4h]
@@ -1212,8 +1211,11 @@ bool __cdecl BG_PlayerHasRoomForEntAllAmmoTypes(const entityState_s *ent, const 
 
     if (ent->index.brushmodel < 1 || ent->index.brushmodel >= 2048)
     {
-        v2 = va("BG_PlayerHasRoomForAllAmmoTypesOfEnt: index out of range (index is %i, eType is %i)", ent->index.brushmodel, ent->eType);
-        Com_Error(ERR_DROP, v2);
+        Com_Error(
+            ERR_DROP,
+            "BG_PlayerHasRoomForAllAmmoTypesOfEnt: index out of range (index is %i, eType is %i)",
+            ent->index.brushmodel,
+            ent->eType);
     }
 
     v3 = ent->index.brushmodel % 128;
@@ -1249,8 +1251,8 @@ void __cdecl BG_EvaluateTrajectory(const trajectory_t *tr, int32_t atTime, float
 
     iassert(tr);
 
-    iassert(!IS_NAN((tr->trBase)[0] && !IS_NAN((tr->trBase)[1] && !IS_NAN((tr->trBase)[2]))));
-    iassert(!IS_NAN((tr->trDelta)[0] && !IS_NAN((tr->trDelta)[1] && !IS_NAN((tr->trDelta)[2]))));
+    iassert(!IS_NAN((tr->trBase)[0]) && !IS_NAN((tr->trBase)[1]) && !IS_NAN((tr->trBase)[2]));
+    iassert(!IS_NAN((tr->trDelta)[0]) && !IS_NAN((tr->trDelta)[1]) && !IS_NAN((tr->trDelta)[2]));
 
     switch (tr->trType)
     {
