@@ -6,6 +6,7 @@
 
 #include <database/db_load_legacy_bridge.h>
 #include <database/db_disk32_renderer_hooks.h>
+#include <gfx_d3d/r_buffers.h>
 #include <gfx_d3d/r_image.h>
 #include <gfx_d3d/r_material.h>
 #include <gfx_d3d/r_water.h>
@@ -101,4 +102,9 @@ __attribute__((weak)) void db::disk32_load::ShareTexture(GfxImage *image, std::u
 __attribute__((weak)) bool __cdecl Load_PicmipWater(water_t **)
 {
     return true;
+}
+
+__attribute__((weak)) void __cdecl Load_VertexBuffer(IDirect3DVertexBuffer9 **vb, std::uint8_t *, int)
+{
+    *vb = nullptr;
 }

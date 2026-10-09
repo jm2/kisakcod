@@ -3,6 +3,7 @@
 #if KISAK_ARCH_64BIT
 
 #include <database/db_disk32_loaders.h> // generated from disk32/23-gfxworld.schema
+#include <database/db_disk32_renderer_hooks.h>
 #include <database/db_gfxworld_validation.h>
 #include <database/db_validation.h>
 
@@ -487,8 +488,9 @@ bool LoadRuntime(disk32::PointerToken token, std::int64_t count, std::uint32_t e
 
 // Load_GfxWorld's middle: lightmaps (naming images), the light grid, the
 // lightmaps' runtime textures, the brush models, material memory (naming
-// materials), the vertex and layer data (headless keeps no D3D buffers, as on
-// x86), the sun flare's materials and the outdoor image.
+// materials), the vertex and layer data and, on a client, their D3D vertex
+// buffers (a headless server keeps none, as on x86), the sun flare's
+// materials and the outdoor image.
 bool LoadMiddle(const Disk &disk, GfxWorld *out)
 {
     std::int32_t vertexBytes = 0;
@@ -507,6 +509,8 @@ bool LoadMiddle(const Disk &disk, GfxWorld *out)
     {
         return false;
     }
+    CreateVertexBuffer(&out->vd.worldVb, reinterpret_cast<std::uint8_t *>(out->vd.vertices), vertexBytes);
+    CreateVertexBuffer(&out->vld.layerVb, out->vld.data, disk.vertexLayerDataSize);
     LoadMaterialPtr(disk.sun.spriteMaterial.token, &out->sun.spriteMaterial);
     LoadMaterialPtr(disk.sun.flareMaterial.token, &out->sun.flareMaterial);
     LoadGfxImagePtr(disk.outdoorImage.token, &out->outdoorImage);

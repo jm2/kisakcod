@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #ifndef KISAK_DEDI_HEADLESS
+#include <gfx_d3d/r_buffers.h>
 #include <gfx_d3d/r_image.h>
 #include <gfx_d3d/r_material.h>
 #include <gfx_d3d/r_water.h>
@@ -16,6 +17,7 @@
 // (tests/headless_include_debt.allow).
 struct GfxImage;
 struct GfxImageLoadDef;
+struct IDirect3DVertexBuffer9;
 struct MaterialVertexDeclaration;
 struct MaterialVertexShader;
 struct MaterialPixelShader;
@@ -92,6 +94,19 @@ inline bool PicmipWater(water_t **water)
 #else
     (void)water;
     return true;
+#endif
+}
+
+// Load_VertexBuffer: a static D3D9 vertex buffer holding `bytes` bytes from
+// `data` (none for null data). A headless server keeps no buffer.
+inline void CreateVertexBuffer(IDirect3DVertexBuffer9 **vb, std::uint8_t *data, std::int32_t bytes)
+{
+#ifndef KISAK_DEDI_HEADLESS
+    Load_VertexBuffer(vb, data, bytes);
+#else
+    (void)data;
+    (void)bytes;
+    *vb = nullptr;
 #endif
 }
 } // namespace db::disk32_load

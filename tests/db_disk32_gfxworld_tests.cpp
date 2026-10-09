@@ -2,14 +2,16 @@
 // hand-built disk32 zone images (disk32_fixture.hpp), with Image's,
 // LightDef's and Material's real steps for the images, light defs and
 // materials it names. The retail offsets here are written out by hand, apart
-// from the schema. Beyond the fixture's seams, only the asset pools
-// are replaced.
+// from the schema. Beyond the fixture's seams, only the asset pools and the
+// renderer's vertex-buffer hook are replaced. It builds headless, which keeps
+// no vertex buffers, and as a client (gfxworld-client), which makes both.
 
 #include "disk32_fixture.hpp"
 
 #include <database/db_disk32_load.h>
 #include <database/db_disk32_mirrors.h>
 #include <database/db_load_legacy_bridge.h>
+#include <gfx_d3d/r_buffers.h>
 
 #include <cstring>
 #include <initializer_list>
@@ -25,6 +27,25 @@ GfxImage g_image; // the aliases Zone registers at block-4 offsets 0, 4 and 8
 GfxLightDef g_lightDef;
 Material g_material;
 GfxWorld g_world; // what Load_GfxWorldAsset published
+
+#ifdef KISAK_DEDI_HEADLESS
+constexpr bool kClient = false;
+#else
+constexpr bool kClient = true;
+#endif
+
+// What Load_VertexBuffer was handed, in call order; each call's buffer is
+// the marker for its index.
+struct BufferCall
+{
+    const std::uint8_t *data;
+    int bytes;
+};
+std::vector<BufferCall> g_buffers;
+IDirect3DVertexBuffer9 *BufferMarker(std::size_t index)
+{
+    return reinterpret_cast<IDirect3DVertexBuffer9 *>(std::uintptr_t{0x7B0000} + index * 0x100);
+}
 
 constexpr std::uint32_t kRecordBytes = 732;
 
@@ -459,7 +480,9 @@ bool PublishedStreamed(const Zone &zone, const GfxWorld &world)
 {
     const std::uint8_t *const virt = zone.virt;
     return Point({{world.name, virt + 12}, {world.indices, virt + 18}, {world.skyImage, &g_image},
-                  {world.models, virt + 856}, {world.vd.vertices, virt + 920}, {world.vd.worldVb, nullptr},
+                  {world.models, virt + 856}, {world.vd.vertices, virt + 920},
+                  {world.vd.worldVb, kClient ? BufferMarker(0) : nullptr},
+                  {world.vld.layerVb, kClient ? BufferMarker(1) : nullptr},
                   {world.vld.data, virt + 964}, {world.sun.spriteMaterial, &g_material},
                   {world.sun.flareMaterial, nullptr}, {world.outdoorImage, &g_image},
                   {world.dpvs.sortedSurfIndex, virt + 1116}, {world.dpvs.cullGroups, virt + 1248}});
@@ -484,11 +507,17 @@ bool PublishedRuntime(const Zone &zone, const GfxWorld &world)
 void TestWorld()
 {
     Zone zone;
+    g_buffers.clear();
     File().Write(Record());
     const GfxWorld *const world = Load(kInline);
     Expect(world == &g_world && g_published == 1, "a whole world publishes one pool entry");
     if (world != &g_world)
         return;
+    Expect(kClient ? g_buffers.size() == 2 && g_buffers[0].data == zone.virt + 920
+                         && g_buffers[0].bytes == static_cast<int>(world->vertexCount * 44) && g_buffers[1].data == zone.virt + 964
+                         && g_buffers[1].bytes == static_cast<int>(world->vertexLayerDataSize)
+                   : g_buffers.empty(),
+           "a client makes the world and layer vertex buffers from the streamed data; a server none");
     Expect(PublishedNative(*world) && PublishedStreamed(zone, *world) && PublishedRuntime(zone, *world),
            "the published world points at its native records, its block-4 arrays, its aliases and block 1");
     Expect(StartStreamed(zone), "the names, indices, sky surfaces, sun light, probe and nodes stream into block 4 "
@@ -823,6 +852,14 @@ void __cdecl Load_LightDefAsset(XAssetHeader *)
 void __cdecl DB_LoadedExternalData(std::int32_t)
 {
     Expect(false, "no image loads");
+}
+
+// The renderer's vertex-buffer hook: it records the data and hands out the
+// next marker.
+void __cdecl Load_VertexBuffer(IDirect3DVertexBuffer9 **vb, std::uint8_t *bufferData, int sizeInBytes)
+{
+    *vb = BufferMarker(g_buffers.size());
+    g_buffers.push_back({bufferData, sizeInBytes});
 }
 
 int main()

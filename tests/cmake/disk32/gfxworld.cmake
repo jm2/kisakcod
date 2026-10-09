@@ -5,3 +5,7 @@
 kisakcod_disk32_load_test(gfxworld db_disk32_gfxworld_tests.cpp db_disk32_gfxworld.cpp db_disk32_image.cpp
     db_disk32_lightdef.cpp db_disk32_material.cpp db_disk32_techniqueset.cpp db_disk32_xmodel.cpp
     db_stringtable_load.cpp)
+# The same load as a client: it makes the world's vertex buffers.
+kisakcod_disk32_load_test(gfxworld-client db_disk32_gfxworld_tests.cpp db_disk32_gfxworld.cpp db_disk32_image.cpp
+    db_disk32_lightdef.cpp db_disk32_material.cpp db_disk32_techniqueset.cpp db_disk32_xmodel.cpp
+    db_stringtable_load.cpp)
