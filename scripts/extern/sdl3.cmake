@@ -5,6 +5,8 @@ if (NOT WIN32)
 	# state (and the fetched build needs the X11 development packages).
 	find_package(SDL3 3.4 CONFIG REQUIRED)
 	set(KISAK_SDL3_TARGET SDL3::SDL3)
+	# The windowed POSIX entry point; posix_main.cpp is the headless one.
+	target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/_platform/posix/posix_client_main.cpp)
 else()
 include(FetchContent)
 
