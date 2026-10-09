@@ -2,3 +2,6 @@
 # TechniqueSet's and Image's real steps for the references.
 kisakcod_disk32_load_test(material db_disk32_material_tests.cpp db_disk32_material.cpp db_disk32_techniqueset.cpp
     db_disk32_image.cpp)
+# The same load as a client: it picmips each water once.
+kisakcod_disk32_load_test(material-client db_disk32_material_tests.cpp db_disk32_material.cpp
+    db_disk32_techniqueset.cpp db_disk32_image.cpp)
