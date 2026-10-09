@@ -549,6 +549,13 @@ jobs:
             runner: windows-11-arm
             platform: ARM64
             pe-arch: ARM64
+          # The SDL3 window/input path (fetches pinned SDL 3.4.18): the only
+          # CI that compiles the shared SDL client code on Windows.
+          - arch: amd64-sdl3
+            runner: windows-2025
+            platform: x64
+            pe-arch: x64
+            extra-cmake: -DKISAK_CLIENT_SDL3=ON
     env:
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
       DXSDK_VERSION: 9.29.952.8
@@ -576,7 +583,7 @@ jobs:
             -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
             -DKISAK_BUILD_MP=ON -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF `
             -DKISAK_ENABLE_STEAM=OFF -DKISAK_ENABLE_X86_MMX_SKINNING=OFF `
-            -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DBUILD_TESTING=OFF
+            -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DBUILD_TESTING=OFF ${{ matrix.extra-cmake }}
 
       - name: Build KisakCOD-mp
         run: cmake --build build-client --config Release --target KisakCOD-mp --parallel
