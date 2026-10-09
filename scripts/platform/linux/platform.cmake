@@ -6,11 +6,19 @@ foreach(_source_set CLIENT_MP SOUND GFX_D3D GROUPVOICE)
     apply_platform_overrides(${_source_set} "${PLATFORM_OVERRIDE_DIR}")
 endforeach()
 
-# The Linux engine backend is intentionally incomplete.  Empty, explicit
-# source sets prevent it from inheriting Win32 files while the top-level engine
-# configuration gate remains in force. Portable services remain independently
+# The Linux engine backend is incomplete: explicit source sets keep it from
+# inheriting Win32 files, and the MP client configures only with
+# KISAK_EXPERIMENTAL_POSIX_CLIENT. Portable services remain independently
 # buildable and runtime-tested.
-set(PLATFORM_LINUX "")
+# The engine (client) set: the system layer, console and language selection
+# shared with the headless server. The client's entry point, event pump,
+# window and input come with the SDL3 client layer (KISAK_CLIENT_SDL3).
+set(PLATFORM_LINUX
+    "${SRC_DIR}/_platform/posix/posix_localize.cpp"
+    "${SRC_DIR}/_platform/posix/posix_sys.cpp"
+    "${SRC_DIR}/_platform/posix/posix_sys.h"
+    "${SRC_DIR}/_platform/posix/posix_syscon.cpp"
+)
 # The POSIX headless dedicated composition: entry point and frame loop,
 # termios console, language selection and CPU description. The datagram layer
 # and the remote-debug stub are shared with every platform and come from
@@ -18,6 +26,8 @@ set(PLATFORM_LINUX "")
 set(PLATFORM_LINUX_DEDI_HEADLESS
     "${SRC_DIR}/_platform/posix/posix_localize.cpp"
     "${SRC_DIR}/_platform/posix/posix_main.cpp"
+    "${SRC_DIR}/_platform/posix/posix_sys.cpp"
+    "${SRC_DIR}/_platform/posix/posix_sys.h"
     "${SRC_DIR}/_platform/posix/posix_syscon.cpp"
 )
 set(PLATFORM_LINUX_SERVICES
