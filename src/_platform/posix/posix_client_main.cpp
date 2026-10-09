@@ -50,7 +50,7 @@ sysEvent_t *Posix_ClientGetEvent(sysEvent_t *result)
         if (line)
         {
             const size_t length = strnlen(line, SYS_CONSOLE_MAX_LINE_LENGTH + 1);
-            char *payload = static_cast<char *>(Com_AllocEvent(static_cast<int>(length) + 1));
+            char *payload = reinterpret_cast<char *>(Com_AllocEvent(static_cast<int>(length) + 1));
             I_strncpyz(payload, line, static_cast<int>(length) + 1);
             Sys_QueEvent(0, SE_CONSOLE, 0, 0, static_cast<int>(length) + 1, payload);
         }
@@ -128,6 +128,10 @@ readStats, then run Com_Frame, sleeping while the window is minimised.
 */
 int main(int argc, char **argv)
 {
+    // dxvk-native picks its window-system backend from the environment and
+    // aborts in Direct3DCreate9 when it is unset; the client window is SDL3.
+    // A value the user set wins.
+    setenv("DXVK_WSI_DRIVER", "SDL3", 0);
     Sys_InstallQuitSignalHandlers();
     Sys_InitializeCriticalSections();
     Sys_InitMainThread();
