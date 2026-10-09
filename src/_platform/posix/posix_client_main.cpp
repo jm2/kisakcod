@@ -10,8 +10,10 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include <client/cl_sdl3.h>
+#include <client/cl_sdl3_keys.h>
 #include <gfx_d3d/r_init.h>
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
@@ -96,20 +98,26 @@ void Sys_In_Restart_f()
 //=============================================================================
 
 // Like win_main.cpp: a Z_Malloc'd copy (tag 10) cut at the first line break,
-// or null when the clipboard holds no text.
+// or null when the clipboard holds no text. SDL hands back UTF-8; the engine
+// edits CP1252 bytes, which is what CF_TEXT gives the Win32 build.
 char *__cdecl Sys_GetClipboardData()
 {
     char *text = SDL_GetClipboardText();
-    if (!text || !*text)
+    std::string bytes;
+    const char *cursor = text;
+    for (Uint32 cp = cursor ? SDL_StepUTF8(&cursor, nullptr) : 0; cp; cp = SDL_StepUTF8(&cursor, nullptr))
     {
-        SDL_free(text);
-        return nullptr;
+        if (cp == '\n' || cp == '\r' || cp == '\b')
+            break;
+        const uint32_t ch = CL_SdlCodepointToCp1252(cp);
+        if (ch)
+            bytes.push_back(static_cast<char>(ch));
     }
-    const size_t size = std::strlen(text) + 1;
-    char *data = static_cast<char *>(Z_Malloc(static_cast<int>(size), "Sys_GetClipboardData", kClipboardTag));
-    I_strncpyz(data, text, static_cast<int>(size));
     SDL_free(text);
-    data[std::strcspn(data, "\n\r\b")] = '\0';
+    if (bytes.empty())
+        return nullptr;
+    char *data = static_cast<char *>(Z_Malloc(static_cast<int>(bytes.size() + 1), "Sys_GetClipboardData", kClipboardTag));
+    std::memcpy(data, bytes.c_str(), bytes.size() + 1);
     return data;
 }
 
@@ -148,6 +156,10 @@ int main(int argc, char **argv)
     Sys_Milliseconds();
 
     Com_Init(sys_cmdline);
+    // win_main.cpp's Sys_Init ends with IN_Init for every windowed build; the
+    // shared POSIX Sys_Init also serves the headless server, so the client
+    // entry point starts input here, before the first frame.
+    IN_Init();
     if (!com_dedicated->current.integer)
         Cbuf_AddText(0, "readStats\n");
     Posix_PrintWorkingDir();
