@@ -670,3 +670,18 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME posix-sys-contracts COMMAND kisakcod-posix-sys-tests)
     set_tests_properties(posix-sys-contracts PROPERTIES TIMEOUT 20)
 endif()
+
+# The silent POSIX voice backend (_platform/posix/posix_voice.cpp) through the
+# Voice_* declarations of qcommon/sys_local.h. Linux and clang only: the
+# engine header spells MSVC dialect (__cdecl, __int8).
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-posix-voice-tests posix_voice_tests.cpp ${SRC_DIR}/_platform/posix/posix_voice.cpp)
+    target_include_directories(kisakcod-posix-voice-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-posix-voice-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-posix-voice-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-posix-voice-tests PRIVATE -fms-extensions)
+    set_target_properties(kisakcod-posix-voice-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME posix-voice-contracts COMMAND kisakcod-posix-voice-tests)
+    set_tests_properties(posix-voice-contracts PROPERTIES TIMEOUT 20)
+endif()
