@@ -406,6 +406,16 @@ void TestShaderModel1Semantics()
 
     // A parameter run past the end of the program is malformed.
     CheckSemantics(Semantics({ 0xFFFF0101u, 0x00000001u, Reg(kTemp, 0) }, true), "fail", "ps_1_1 without its end token");
+
+    // Native D3DX reads lengths without checking operand counts: a mov with no
+    // parameter tokens is accepted (structure is D3D9ShaderBytecodeValid's job),
+    // and a ps_1_x program reports its r0 COLOR0 output whether or not it
+    // names r0. A vs_1_1 program reports only what it writes.
+    const std::vector<std::uint32_t> bareMov{ 0xFFFF0101u, 0x00000001u, 0x0000FFFFu };
+    CheckSemantics(Semantics(bareMov, false), "", "ps_1_1 bare mov: no inputs");
+    CheckSemantics(Semantics(bareMov, true), "10:0", "ps_1_1 output is COLOR0 without naming r0");
+    const std::vector<std::uint32_t> bareVsMov{ 0xFFFE0101u, 0x00000001u, 0x0000FFFFu };
+    CheckSemantics(Semantics(bareVsMov, true), "", "vs_1_1 bare mov: no outputs");
 }
 
 void TestSemanticsFailClosed()

@@ -231,7 +231,6 @@ constexpr std::uint32_t kDclUsageIndexMask = 0xFu;
 // D3DSPR_* register types and D3DDECLUSAGE_* usages.
 enum : std::uint32_t
 {
-    kRegTemp = 0,
     kRegInput = 1,
     kRegTexture = 3,
     kRegRastOut = 4,
@@ -298,6 +297,10 @@ public:
     // Emits the undeclared semantics; returns how many there are in all.
     std::uint32_t Finish()
     {
+        // A ps_1_x program's output is always r0, its COLOR0: native D3DX
+        // reports it even for a program that never names r0.
+        if (output && isPixel && major == 1)
+            colors |= 1u;
         // D3DX keeps 16 texture-coordinate bits and 8 color and RASTOUT bits.
         for (std::uint32_t i = 0; i < 16; ++i)
             if (texcoords & (1u << i))
@@ -343,8 +346,8 @@ private:
     }
 
     // An undeclared register: every vs_1_x/2_x output and every pixel output,
-    // and ps_1_x inputs (v# colors, t# texture coordinates). A ps_1_x program's
-    // only output is r0, its COLOR0; native D3DX names no other temporary.
+    // and ps_1_x inputs (v# colors, t# texture coordinates). Temporaries are
+    // never semantics; a ps_1_x program's r0 output is added in Finish.
     void AddRegister(std::uint32_t type, std::uint32_t number)
     {
         const std::uint32_t bit = number < 32 ? 1u << number : 0;
@@ -362,7 +365,7 @@ private:
             depth = true;
         else if (type == kRegOutput)
             texcoords |= bit;
-        else if (type == kRegAttrOut || type == kRegColorOut || (type == kRegTemp && isPixel && major == 1 && number == 0))
+        else if (type == kRegAttrOut || type == kRegColorOut)
             colors |= bit;
     }
 
