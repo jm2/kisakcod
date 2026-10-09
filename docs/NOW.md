@@ -25,10 +25,11 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 30 | POSIX client SDL3 entry point (`main`, `Sys_GetEvent`, clipboard) | G5 | gate | the Linux client builds with `KISAK_EXPERIMENTAL_POSIX_CLIENT` and `KISAK_CLIENT_SDL3` and starts | S | in review (#567) |
-| 31 | POSIX client GPU detection; `r_init`/`r_screenshot` SDL paths | G5 | gate | every renderer TU compiles in the Linux client build; the client creates a dxvk-native device | M | in progress (linux-arm64) |
+| 30 | POSIX client SDL3 entry point (`main`, `Sys_GetEvent`, clipboard) | G5 | gate | the Linux client builds with `KISAK_EXPERIMENTAL_POSIX_CLIENT` and `KISAK_CLIENT_SDL3` and starts | S | done (#567, d0322d4c) |
+| 31 | POSIX client GPU detection; `r_init`/`r_screenshot` SDL paths | G5 | gate | every renderer TU compiles in the Linux client build; the client creates a dxvk-native device | M | in progress (linux-arm64): on Linux arm64 under headless mutter (M1, Honeykrisp) the window and the dxvk device work, and the retail run loads code_post_gfx_mp |
 | 32 | POSIX client line-neutral renderer/UI fixes; D3DX9 subset definitions | G5 | gate | the Linux client links | M | in review (#565, #566) |
 | 33 | Linux amd64 windowed client run to the main menu on Steam 1.8 data | G5 | gate | the owner's manual run (agent on the owner's machine) reaches the main menu; evidence as text | M | in progress (antec) |
+| 38 | disk32 renderer hooks for client builds: the 64-bit converters call `Load_BuildVertexDecl`, `Load_CreateMaterialVertexShader`/`PixelShader`, `Load_Texture` and `Load_VertexBuffer`/`IndexBuffer` (today the Linux client stops in localized_code_post_gfx_mp: "Vertex type 0 doesn't have the information used by shader vertcol_simple_tools.hlsl") | G5 | gate | the client loads the code_post_gfx and localized zones to the main menu on Steam 1.8 data | M | in progress (linux-arm64, techniqueset half first) |
 | 34 | macOS client: jm2/dxvk MoltenVK fork (upstream doitsujin/dxvk#5962, #5963) | G5 | gate | the macOS client creates a device | L | in progress (mac) |
 | 35 | Win64 client main-menu run on Steam 1.8 data | G4b | gate | the owner's manual run reaches the main menu; evidence as text | M | blocked (needs an active console session on antec-win) |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects to the fork's x86 server under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | queued |
@@ -56,6 +57,7 @@ Other `burndown` issues are off these gates or wait on the owner. Future bead: a
 ## Done since last review
 
 G1 queue:
+
 - 17, census fidelity (ki-iv549): #386 (f6e12422).
 - 23, MSVC-compat macros and intrinsics (ki-afvhu): #320 (a7b9f972).
 - 25, `IsValidSeed`, `BigShort` (ki-jddnx): #321 (72696c23).
@@ -67,6 +69,7 @@ G1 queue:
 - 14, portable async fast-file reads (ki-3qwla): #316 (260a6c09).
 
 G2 queue:
+
 - 9, MSVC-compatible RNG (ki-l7lly): #313 (a595a883).
 - 10, `game_mp` hazards (ki-tsj1q): #338 (008861fc).
 - 11, dvars storing pointers: #329 (f8004e4a); the enum-limit reads are behaviour-neutral at 64-bit.
