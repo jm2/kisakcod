@@ -25,10 +25,11 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 30 | POSIX client SDL3 entry point (`main`, `Sys_GetEvent`, clipboard) | G5 | gate | the Linux client builds with `KISAK_EXPERIMENTAL_POSIX_CLIENT` and `KISAK_CLIENT_SDL3` and starts | S | in review (#567) |
-| 31 | POSIX client GPU detection; `r_init`/`r_screenshot` SDL paths | G5 | gate | every renderer TU compiles in the Linux client build; the client creates a dxvk-native device | M | in progress (linux-arm64) |
-| 32 | POSIX client line-neutral renderer/UI fixes; D3DX9 subset definitions | G5 | gate | the Linux client links | M | in review (#565, #566) |
-| 33 | Linux amd64 windowed client run to the main menu on Steam 1.8 data | G5 | gate | the owner's manual run (agent on the owner's machine) reaches the main menu; evidence as text | M | in progress (antec) |
+| 30 | POSIX client SDL3 entry point (`main`, `Sys_GetEvent`, clipboard) | G5 | gate | the Linux client builds with `KISAK_EXPERIMENTAL_POSIX_CLIENT` and `KISAK_CLIENT_SDL3` and starts | S | done (#567, d0322d4c) |
+| 31 | POSIX client GPU detection; `r_init`/`r_screenshot` SDL paths | G5 | gate | every renderer TU compiles in the Linux client build; the client creates a dxvk-native device | M | in progress (linux-arm64): window, dxvk device and GPU detection work; the arm64 client reaches the main menu on Steam 1.8 data (300 menus, about 190 fps) |
+| 32 | POSIX client line-neutral renderer/UI fixes; D3DX9 subset definitions | G5 | gate | the Linux client links | M | done (#565, #582) |
+| 33 | Linux amd64 windowed client run to the main menu on Steam 1.8 data | G5 | gate | the owner's manual run (agent on the owner's machine) reaches the main menu; evidence as text | M | in progress (antec): all five base zones load and the client idles cleanly; menu not yet seen |
+| 38 | disk32 renderer hooks for client builds: the 64-bit converters don't call `Load_BuildVertexDecl`, the shader creates, `Load_Texture`, `Load_PicmipWater` or `Load_VertexBuffer`; add them | G5 | gate | the client loads the code_post_gfx and localized zones to the main menu on Steam 1.8 data | M | in progress (linux-arm64): techniqueset #586 merged; image and water #590 in review; GfxWorld VBs next |
 | 34 | macOS client: jm2/dxvk MoltenVK fork (upstream doitsujin/dxvk#5962, #5963) | G5 | gate | the macOS client creates a device | L | in progress (mac) |
 | 35 | Win64 client main-menu run on Steam 1.8 data | G4b | gate | the owner's manual run reaches the main menu; evidence as text | M | blocked (needs an active console session on antec-win) |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects to the fork's x86 server under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | queued |
@@ -55,26 +56,9 @@ Other `burndown` issues are off these gates or wait on the owner. Future bead: a
 
 ## Done since last review
 
-G1 queue:
-- 17, census fidelity (ki-iv549): #386 (f6e12422).
-- 23, MSVC-compat macros and intrinsics (ki-afvhu): #320 (a7b9f972).
-- 25, `IsValidSeed`, `BigShort` (ki-jddnx): #321 (72696c23).
-- 26, portable `sys_local` contract tests (ki-7xgop): #318 (c208c8a5).
-- 27, shared-file Win32 leftovers (ki-xxg0x): #328 (de4784a7).
-- 28, headless seam in `r_init.h`/`db_load.cpp` (ki-ip7mg): #324 (ce109830).
-- 29, `phys_ode.cpp` 64-bit casts (ki-p1t3u): #333 (1ba9c0aa).
-- 13, POSIX headless entry (ki-tozh2): #330 (cd0122be).
-- 14, portable async fast-file reads (ki-3qwla): #316 (260a6c09).
+Merge SHAs are in `git log`.
 
-G2 queue:
-- 9, MSVC-compatible RNG (ki-l7lly): #313 (a595a883).
-- 10, `game_mp` hazards (ki-tsj1q): #338 (008861fc).
-- 11, dvars storing pointers: #329 (f8004e4a); the enum-limit reads are behaviour-neutral at 64-bit.
-- 12, loader design and generator: #341 (187477c1), #372 (3cadb962); all 25 server families now have disk32 loaders.
-- 20, GSC parser and VM defects (#225, #199): #345 (b6726248).
-- 21, xanim sizes and strides (ki-brzcp): #340 (7b321f18).
-- 22, physics alias write and brush callbacks (#242 items 1-2): #344 (15f95feb).
-
-Retail-data load stops (64-bit and x86): #475, #478, #479, #497, #498, #512, #513, #518. Steam 1.8 wire identity (G4a): #531 (a671ea57), #532 (950f8f91). D3DX replaced on 64-bit Windows: #520, #537, #539, #541 (7efa5b31). x86 load path in CI: #522.
-
-G5 client launch: #543-#550, #551/#552/#555/#559 (SDL3), #553/#554, #556, #557, #562, #568/#569, #571-#573, #576.
+- 2026-09-29 queue: rows 9-14, 17 and 20-29 (#313, #316, #318, #320, #321, #324, #328-#330, #333, #338, #340, #341, #344, #345, #372, #386).
+- Retail load stops: #475, #478, #479, #497, #498, #512, #513, #518. x86 load path in CI: #522.
+- G4a wire identity: #531, #532. 64-bit D3DX replacement: #520, #537, #539, #541.
+- G5 client launch: #543-#557, #559, #562, #567-#569, #571-#573, #576.
