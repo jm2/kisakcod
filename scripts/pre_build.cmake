@@ -152,6 +152,14 @@ else()
     configure_file(${DEPS_DIR}/speex/speex_config_types.h.in
         ${CMAKE_BINARY_DIR}/generated/speex/speex_config_types.h @ONLY)
     target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/generated)
+    # A POSIX client renders through dxvk-native's D3D9 (docs/design/CLIENT.md).
+    # Point PKG_CONFIG_PATH at its install (lib*/pkgconfig/dxvk-d3d9.pc).
+    if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(KISAK_DXVK_D3D9 REQUIRED IMPORTED_TARGET dxvk-d3d9)
+        target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::KISAK_DXVK_D3D9)
+        target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_DXVK_NATIVE)
+    endif()
     if (KISAK_TARGET_ENABLE_STEAM)
         message(FATAL_ERROR
             "POSIX engine targets build with the cl_guid identity backend; "
