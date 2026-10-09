@@ -4833,8 +4833,13 @@ double __cdecl SND_GetVolumeNormalized()
 
 void __cdecl SND_SetHWND(HWND hwnd)
 {
+#if defined(_WIN32)
+    // Miles declares this only in its Win32 API (DirectSound output).
     if (g_snd.Initialized2d)
         AIL_set_DirectSound_HWND(milesGlob.driver, hwnd);
+#else
+    (void)hwnd;
+#endif
 }
 
 void __cdecl SND_SetData(MssSoundCOD4 *mssSound, void *srcData)

@@ -159,6 +159,9 @@ else()
         pkg_check_modules(KISAK_DXVK_D3D9 REQUIRED IMPORTED_TARGET dxvk-d3d9)
         target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::KISAK_DXVK_D3D9)
         target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_DXVK_NATIVE)
+        # Miles and Bink exist here only as headers: the client compiles
+        # against msslib/binklib and links silent stubs (KISAK_MEDIA_STUBS).
+        target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_POSIX_CLIENT_MEDIA)
     endif()
     if (KISAK_TARGET_ENABLE_STEAM)
         message(FATAL_ERROR

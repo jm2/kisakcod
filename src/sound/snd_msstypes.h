@@ -7,8 +7,9 @@
 // platform these declarations keep snd_public.h and snd_local.h free of the
 // Miles SDK, the way gfx_d3d/r_d3d9types.h stands in for <d3d9.h>.
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(KISAK_POSIX_CLIENT_MEDIA)
 
+// A POSIX client compiles against the Miles headers and links silent stubs.
 #include <msslib/mss.h>
 
 #else

@@ -192,12 +192,23 @@
         #endif
       #endif
 
-  #elif defined(linux)
+  #elif defined(linux) || defined(__linux__) || defined(__linux)
 
+      // KisakCOD port: strict -std=c++XX does not define the GNU `linux`
+      // macro (as in msslib/mss.h), and this branch assumed 32-bit x86.
+      // __RAD32__ means "at least 32-bit", as the _WIN64 branch uses it.
       #define __RADLINUX__
-      #define __RADX86__
-      #define __RADMMX__
       #define __RAD32__
+      #if defined(__LP64__)
+        #define __RAD64__
+      #endif
+      #if defined(__i386__) || defined(__x86_64__)
+        #define __RADX86__
+        #define __RADMMX__
+      #endif
+      #if defined(__x86_64__)
+        #define __RADX64__
+      #endif
       #define __RADLITTLEENDIAN__
       #define RADINLINE inline
       #define RADRESTRICT __restrict
@@ -486,7 +497,8 @@
     #if defined(__RAD64__)
       // Remember that __RAD32__ will also be defined!
       // This can be either an X64, or maybe a Cell/PS3
-      #if defined(__RADX64__)
+      // KisakCOD port: AArch64 has x64's model (32-bit ints, 64-bit pointers).
+      #if defined(__RADX64__) || defined(__aarch64__)
         // x64 still has 32-bit ints!
         #define U32 unsigned int
         #define S32 signed int
