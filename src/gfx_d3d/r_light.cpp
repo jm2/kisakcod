@@ -270,7 +270,9 @@ void __cdecl R_GetBspLightSurfs(const GfxLight **visibleLights, int visibleCount
     }
 }
 
-BOOL __cdecl R_SortBspShadowReceiverSurfaces(GfxSurface *surface0, GfxSurface *surface1)
+// File-local: r_shadowcookie.cpp exports a bool-returning function of this
+// name. MSVC mangles the return type, which hid the clash; Itanium does not.
+static BOOL __cdecl R_SortBspShadowReceiverSurfaces(GfxSurface *surface0, GfxSurface *surface1)
 {
     return surface0 < surface1;
 }
