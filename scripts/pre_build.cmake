@@ -165,4 +165,9 @@ else()
             "POSIX engine targets build with the cl_guid identity backend; "
             "the desktop Steam client API is not linked.")
     endif()
+    # The Win32 window and monitor calls the renderer makes, answered over
+    # SDL3 (_platform/posix/posix_win32_window.h).
+    if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
+        target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/_platform/posix/posix_win32_window.cpp)
+    endif()
 endif()

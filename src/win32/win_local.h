@@ -29,6 +29,10 @@
 #include <wsipx.h>
 #endif
 
+// The system cursor: win_input.cpp on Win32, cl_sdl3_input.cpp with SDL3
+// (BOOL is int on Windows).
+void __cdecl IN_ShowSystemCursor(int show);
+
 // The Win32 engine surface below exists only on Windows; a POSIX client gets
 // the portable part through qcommon/sys_local.h above.
 #if defined(_WIN32)
@@ -38,7 +42,6 @@ void __cdecl Sys_CreateConsole(HMODULE hInstance);
 
 void	IN_JoystickCommands (void);
 
-void __cdecl IN_ShowSystemCursor(BOOL show);
 
 void	IN_DeactivateWin32Mouse( void);
 
@@ -75,4 +78,14 @@ extern WinVars_t	g_wv;
 #endif
 
 extern HWND g_splashWnd;
+#else
+// Off Windows, the one Win32 window call shared code makes (the script
+// debugger raising the game window, ui_component.cpp) goes to the SDL3 layer.
+void __cdecl IN_SetForegroundWindow();
+struct WinVarsPosix
+{
+    void *hWnd;
+};
+inline WinVarsPosix g_wv{};
+inline void SetForegroundWindow(void *) { IN_SetForegroundWindow(); }
 #endif // _WIN32
