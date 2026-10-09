@@ -60,6 +60,8 @@ struct DevMenuItem // sizeof=0x28
     DevMenuChild child;                 // ...
 };
 RUNTIME_SIZE(DevMenuItem, 0x28, 0x30);
+// The menu handle stride (devgui.cpp): 40 bytes on x86, 48 at 64-bit.
+constexpr int kDevMenuItemBytes = sizeof(DevMenuItem);
 
 struct devguiGlob_t // sizeof=0x5E10
 {                                       // ...

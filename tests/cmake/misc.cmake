@@ -962,3 +962,22 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME configure-gpu-fallback-posix-client COMMAND kisakcod-configure-fallback-tests)
     set_tests_properties(configure-gpu-fallback-posix-client PROPERTIES TIMEOUT 20)
 endif()
+
+# The developer GUI's menu table (devgui/devgui.cpp) at 64-bit: its free
+# chain and handle stride. Linux and clang only, as above; the client's defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-devgui-menu-tests devgui_menu_tests.cpp ${SRC_DIR}/devgui/devgui.cpp)
+    target_include_directories(kisakcod-devgui-menu-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-devgui-menu-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-devgui-menu-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-devgui-menu-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-devgui-menu-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-devgui-menu-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-devgui-menu-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-devgui-menu-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME devgui-menu-table-contracts COMMAND kisakcod-devgui-menu-tests)
+    set_tests_properties(devgui-menu-table-contracts PROPERTIES TIMEOUT 20)
+endif()
