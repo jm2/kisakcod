@@ -121,9 +121,18 @@ char *__cdecl Sys_GetClipboardData()
     return data;
 }
 
+// The engine's text is CP1252; SDL wants UTF-8.
 int __cdecl Sys_SetClipboardData(const char *text)
 {
-    return SDL_SetClipboardText(text) ? 1 : 0;
+    std::string utf8;
+    for (const unsigned char *p = reinterpret_cast<const unsigned char *>(text); p && *p; ++p)
+    {
+        const uint32_t cp = CL_SdlCp1252ToCodepoint(*p);
+        char encoded[4];
+        if (cp)
+            utf8.append(encoded, static_cast<size_t>(SDL_UCS4ToUTF8(cp, encoded) - encoded));
+    }
+    return SDL_SetClipboardText(utf8.c_str()) ? 1 : 0;
 }
 
 /*

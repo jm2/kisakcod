@@ -83,6 +83,19 @@ int main()
     Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(0x7F)), 0, "DEL has no character");
     Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(0x1F600)), 0, "an emoji has no CP1252 byte");
 
+    Expect(static_cast<int32_t>(CL_SdlCp1252ToCodepoint('a')), 'a', "ASCII back is unchanged");
+    Expect(static_cast<int32_t>(CL_SdlCp1252ToCodepoint(0xE9)), 0xE9, "Latin-1 back is unchanged");
+    Expect(static_cast<int32_t>(CL_SdlCp1252ToCodepoint(0x80)), 0x20AC, "CP1252 0x80 is the euro sign");
+    Expect(static_cast<int32_t>(CL_SdlCp1252ToCodepoint(0x92)), 0x2019, "CP1252 0x92 is the right single quote");
+    Expect(static_cast<int32_t>(CL_SdlCp1252ToCodepoint(0x81)), 0, "an unassigned byte has no code point");
+    Expect(static_cast<int32_t>(CL_SdlCp1252ToCodepoint(0x09)), 0, "a control byte has no code point");
+    for (uint32_t byte = 0x20; byte < 0x100; ++byte)
+    {
+        const uint32_t cp = CL_SdlCp1252ToCodepoint(static_cast<uint8_t>(byte));
+        if (cp && CL_SdlCodepointToCp1252(cp) != byte)
+            Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(cp)), static_cast<int32_t>(byte), "CP1252 round trip");
+    }
+
     if (failures)
         return 1;
     std::puts("client-sdl3-keys: all checks passed");
