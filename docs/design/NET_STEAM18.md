@@ -11,7 +11,7 @@ The only network reference is the original Steam release `1.8.13620`. The releas
 | Code base | CoD4 **v1.0** PC decompile. `version` is `CoD4 MP 1.0 build …`, `shortversion` is `1.0`; the original build 13620 is noted in `buildnumber.cpp` | `common.cpp`, `buildnumber.cpp` |
 | Protocol | The `net_wireProfile` dvar picks it (§7): `7` under `steam18`, the default; `1` under `fork`. `gamename` and `shortversion` follow the profile too | `qcommon/wire_profile.cpp`; the `protocol` dvar, `SVC_Info`, `SV_DirectConnect`, `CL_CheckForResend` and `CL_ServerInfoPacket` read it |
 | Challenge request | `getchallenge 0 "<base64 Steam ticket>" "<SteamID64>"`, or without Steam `getchallenge 0 "" "<cl_guid>"` | `CL_CheckForResend` |
-| Challenge handling | `SV_GetChallenge` requires the third argument. A stock request carries only the CD-key MD5, so it is refused with "A client identity is required". It replies `challengeResponse <challenge>` at once | `sv_client_mp.cpp` |
+| Challenge handling | Under `steam18`, a stock request's CD-key MD5 is the client's identity and ban key (§8, option A). `fork` requires the third argument. It replies `challengeResponse <challenge>` at once | `sv_client_mp.cpp` |
 | Authorize / master | The `SV_AuthorizeRequest` call in the challenge path and `SV_MasterHeartbeat` are commented out. `masterServerName` still defaults to `cod4master.activision.com` | `sv_client_mp.cpp`, `sv_main_pc_mp.cpp`, `common.cpp` |
 | PunkBuster | Every `Pb*` hook is commented out and stays dead ([ADR-0002](../decisions/0002-punkbuster-out.md)). `getinfo` still sends a `pb` key from `sv_punkbuster` | `sv_main_mp.cpp` and others |
 
@@ -104,14 +104,14 @@ The protocol is a per-instance profile, chosen at startup by one latched dvar.
 
 **CoD4x auto-update refusal (every profile):** when a `challengeResponse` carries `xproto`, abort the connect with a message. Download nothing and run nothing. The retail updater also stays unreachable from any server-supplied address: `CL_UpdateInfoPacket` sets `cl_updatefiles`, and `CL_DownloadsComplete` calls `Sys_QuitAndStartProcess` on `autoupdateFilename`.
 
-## 8. Auth policy (open, owner)
+## 8. Auth policy
 
 | Option | Meaning |
 | --- | --- |
 | A | Accept the CD-key hash unchecked; it serves only as the ban key |
 | B | Try Activision's authorize service first; fall back to A on timeout |
 
-The choice is listed under "Blocked on owner" in [NOW](../NOW.md).
+Decided 2026-10-07: option A (owner). Under `steam18`, `SV_GetChallenge` takes a stock request's CD-key hash as the client's identity.
 
 ## 9. Prediction check
 
