@@ -93,6 +93,7 @@ static void PrintWorkingDir()
 }
 
 #ifndef KISAK_DEDI_HEADLESS
+#ifndef KISAK_CLIENT_SDL3
 static void Win_RegisterClass()
 {
 	tagWNDCLASSEXA wce{};
@@ -108,6 +109,7 @@ static void Win_RegisterClass()
 	if (!RegisterClassExA(&wce))
 		Com_Error(ERR_FATAL, "EXE_ERR_COULDNT_REGISTER_WINDOW");
 }
+#endif // !KISAK_CLIENT_SDL3
 #endif
 
 sysEvent_t* __cdecl Win_GetEvent(sysEvent_t* result)
@@ -884,7 +886,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 #ifndef KISAK_DEDI_HEADLESS
 			Sys_CreateSplashWindow();
 			Sys_ShowSplashWindow();
+#ifndef KISAK_CLIENT_SDL3
 			Win_RegisterClass();
+#endif
 #endif
 			SetErrorMode(1);
 			Sys_Milliseconds();

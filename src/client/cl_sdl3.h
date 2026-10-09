@@ -29,3 +29,6 @@ void CL_SdlRaiseWindow();
 void CL_SdlTakeMouseMotion(int *x, int *y, int *dx, int *dy);
 void CL_SdlSetMouseCaptured(bool captured);
 void CL_SdlWarpMouse(int x, int y);
+
+// What WinMain's loop reads from g_wv.isMinimized, for platforms without it.
+bool CL_SdlIsMinimized();

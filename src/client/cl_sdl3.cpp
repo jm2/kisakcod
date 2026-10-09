@@ -12,6 +12,7 @@
 #include <qcommon/sys_time.h>
 #include <sound/snd_public.h>
 #include <ui/keycodes.h>
+#include <universal/com_memory.h>
 
 #ifdef _WIN32
 #include <win32/win_local.h>
@@ -25,15 +26,17 @@ static_assert(SDL_SCANCODE_KP_EQUALS == 103 && SDL_SCANCODE_LCTRL == 224 && SDL_
 static_assert(SDL_BUTTON_LMASK == 1 && SDL_BUTTON_MMASK == 2 && SDL_BUTTON_RMASK == 4);
 static_assert(SDL_BUTTON_X1MASK == 8 && SDL_BUTTON_X2MASK == 16);
 
-extern const dvar_t *vid_xpos;
-extern const dvar_t *vid_ypos;
-extern const dvar_t *r_fullscreen;
-void __cdecl VID_AppActivate(uint32_t activeState, int minimize);
+// win32/win_wndproc.cpp is not built with KISAK_CLIENT_SDL3; these are its
+// definitions. r_dvars.cpp registers the dvars.
+const dvar_t *vid_xpos;
+const dvar_t *vid_ypos;
+const dvar_t *r_fullscreen;
 void __cdecl IN_ActivateMouse(int force);
 
 namespace
 {
 SDL_Window *s_window;
+bool s_minimized;
 SDL_MouseButtonFlags s_buttons;
 bool s_focused;
 // Motion since the last CL_SdlTakeMouseMotion; fractions carry over.
@@ -143,6 +146,26 @@ void WindowMoved(const SDL_WindowEvent &window)
         IN_Activate(1);
 }
 
+} // namespace
+
+// MainWndProc's activation handling, unchanged: focus or minimise clears key
+// state and (de)activates the mouse.
+void __cdecl VID_AppActivate(uint32_t activeState, int minimize)
+{
+    s_minimized = minimize != 0;
+    Key_ClearStates(0);
+    const bool active = activeState && !s_minimized;
+#ifdef _WIN32
+    g_wv.isMinimized = minimize;
+    g_wv.activeApp = active;
+#endif
+    if (active)
+        Com_TouchMemory();
+    IN_Activate(active);
+}
+
+namespace
+{
 void HandleEvent(const SDL_Event &ev)
 {
     switch (ev.type)
@@ -311,4 +334,9 @@ void CL_SdlWarpMouse(int x, int y)
 {
     if (s_window)
         SDL_WarpMouseInWindow(s_window, static_cast<float>(x), static_cast<float>(y));
+}
+
+bool CL_SdlIsMinimized()
+{
+    return s_minimized;
 }
