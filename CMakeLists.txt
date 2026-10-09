@@ -127,6 +127,11 @@ if (NOT MSVC AND (KISAK_BUILD_MP OR KISAK_BUILD_DEDICATED OR KISAK_BUILD_SP))
     add_compile_options(-fms-extensions)
 endif()
 if (NOT MSVC)
+    # Plain char is signed under MSVC, and the decompiled engine relies on it
+    # (usercmd_s forwardmove/rightmove hold negative moves in a char). AArch64
+    # and other ABIs make char unsigned, so every non-MSVC target, tests
+    # included, uses MSVC's signed char; x86 and x64 already do.
+    add_compile_options(-fsigned-char)
     # Position-independent executables: the distribution default, and every
     # data address then lies above 4 GiB, so a pointer truncated to 32 bits
     # faults instead of working by accident (the headless smoke relies on it).
