@@ -24,6 +24,9 @@
 #if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
 #include <d3d9.h>
 #endif
+#if !defined(_WIN32) && defined(KISAK_DXVK_NATIVE)
+#include <_platform/posix/posix_win32_window.h>
+#endif
 
 enum GfxRenderer : __int32
 {                                       // ...
