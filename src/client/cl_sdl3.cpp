@@ -335,7 +335,7 @@ void CL_SdlWarpMouse(int x, int y)
     if (s_window)
         SDL_WarpMouseInWindow(s_window, static_cast<float>(x), static_cast<float>(y));
 }
-
+
 bool CL_SdlIsMinimized()
 {
     return s_minimized;
