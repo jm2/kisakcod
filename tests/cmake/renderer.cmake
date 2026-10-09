@@ -18,6 +18,23 @@ add_test(
     COMMAND kisakcod-renderer-d3d9types-tests
 )
 
+# Where a screenshot sits in the surface dxvk-native's GetFrontBufferData
+# fills (gfx_d3d/r_screenshot_rect.h): the swapchain image at its origin.
+add_executable(kisakcod-renderer-screenshot-rect-tests
+    renderer_screenshot_rect_tests.cpp
+)
+target_include_directories(kisakcod-renderer-screenshot-rect-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-renderer-screenshot-rect-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-renderer-screenshot-rect-tests)
+set_target_properties(kisakcod-renderer-screenshot-rect-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME renderer-screenshot-rect
+    COMMAND kisakcod-renderer-screenshot-rect-tests
+)
+kisakcod_ilp32(kisakcod-renderer-screenshot-rect-tests renderer-screenshot-rect)
+
 # Headless seam for the IDirect3D* reach in shared database code (KPI K5).
 # The shader-load failure paths in db_load.cpp release and null opaque COM
 # shader pointers through the engine helper DB_ReleaseVertexShader /

@@ -9,6 +9,7 @@
 #include "rb_state.h"
 #include <qcommon/cmd.h>
 #include "r_reflection_probe.h"
+#include "r_screenshot_rect.h"
 
 #define ratio 4
 
@@ -828,6 +829,20 @@ char __cdecl R_GetFrontBufferData(int x, int y, int width, int height, int bytes
     surface = 0;
     pt.x = x;
     pt.y = y;
+#ifdef KISAK_DXVK_NATIVE
+    // GetFrontBufferData copies the swapchain image to the surface's
+    // top-left, so the window's place on screen doesn't matter
+    // (r_screenshot_rect.h).
+    ScreenshotSourceRect swapchainRect{};
+    if (!R_SwapchainScreenshotRect(
+            x, y, width, height, vidConfig.displayWidth, vidConfig.displayHeight, &swapchainRect))
+    {
+        Com_PrintError(8, "ERROR: cannot take screenshot: the area is outside the frame\n");
+        return 0;
+    }
+    surfWidth = swapchainRect.surfaceWidth;
+    surfHeight = swapchainRect.surfaceHeight;
+#else
     if (vidConfig.isFullscreen)
     {
         surfWidth = vidConfig.displayWidth;
@@ -856,6 +871,7 @@ char __cdecl R_GetFrontBufferData(int x, int y, int width, int height, int bytes
         pt.x -= monitorInfo.rcMonitor.left;
         pt.y -= monitorInfo.rcMonitor.top;
     }
+#endif
     //hr = ((int(__thiscall *)(IDirect3DDevice9 *, IDirect3DDevice9 *, int, int, int, int, IDirect3DSurface9 **, _DWORD))dx.device->CreateOffscreenPlainSurface)(
     //    dx.device,
     //    dx.device,
@@ -1186,7 +1202,7 @@ void __cdecl R_LevelShot()
     }
 }
 
-void __cdecl R_SaveJpg(
+bool __cdecl R_SaveJpg(
     char *filename,
     int quality,
     uint32_t image_width,
@@ -1223,6 +1239,12 @@ void __cdecl R_SaveJpg(
     Hunk_FreeTempMemory((char *)out);
     jpeg_destroy_compress((jpeg_common_struct *)&cinfo);
 #endif
+    (void)filename;
+    (void)quality;
+    (void)image_width;
+    (void)image_height;
+    (void)image_buffer;
+    return false; // no JPEG encoder in this build
 }
 
 void __cdecl R_SaveGameShot(const char *saveName)
@@ -1894,19 +1916,26 @@ void __cdecl R_ScreenshotFilename(uint32_t lastNumber, const char *extension, ch
         Com_sprintf(fileName, 0x100u, "screenshots/shot9999.%s", extension);
 }
 
-void __cdecl R_TakeScreenshotJpg(int x, int y, int width, int height, const char *filename)
+bool __cdecl R_TakeScreenshotJpg(int x, int y, int width, int height, const char *filename)
 {
     uint8_t *buffer; // [esp+0h] [ebp-4h]
+    bool written = false;
 
     buffer = (uint8_t *)Z_Malloc(3 * height * width, "R_TakeScreenshotJpg", 22);
     if (R_GetFrontBufferData(x, y, width, height, 3, buffer))
-        R_SaveJpg((char*)filename, 90, width, height, buffer);
+    {
+        written = R_SaveJpg((char*)filename, 90, width, height, buffer);
+        if (!written)
+            Com_PrintError(8, "ERROR: screenshotJPEG isn't implemented in this build; use screenshot (TGA)\n");
+    }
     Z_Free((char *)buffer, 22);
+    return written;
 }
 
-void __cdecl R_TakeScreenshotTga(int x, int y, int width, int height, char *filename)
+bool __cdecl R_TakeScreenshotTga(int x, int y, int width, int height, char *filename)
 {
     uint8_t *buffer; // [esp+0h] [ebp-8h]
+    bool written = false;
 
     buffer = (uint8_t *)Z_Malloc(3 * height * width + 18, "R_TakeScreenshotTga", 22);
     *(_DWORD *)buffer = 0;
@@ -1920,8 +1949,9 @@ void __cdecl R_TakeScreenshotTga(int x, int y, int width, int height, char *file
     buffer[16] = 24;
     buffer[17] = 32;
     if (R_GetFrontBufferData(x, y, width, height, 3, buffer + 18))
-        FS_WriteFile(filename, (char *)buffer, 3 * height * width + 18);
+        written = FS_WriteFile(filename, (char *)buffer, 3 * height * width + 18) != 0;
     Z_Free((char *)buffer, 22);
+    return written;
 }
 
 int lastNumber;
@@ -1980,10 +2010,9 @@ void __cdecl R_ScreenshotCommand(GfxScreenshotType type)
         v2 = Cmd_Argv(1);
         Com_sprintf(filename, 0x100u, "screenshots/%s.%s", v2, extension);
     }
-    if (type)
-        R_TakeScreenshotTga(0, 0, vidConfig.displayWidth, vidConfig.displayHeight, filename);
-    else
-        R_TakeScreenshotJpg(0, 0, vidConfig.displayWidth, vidConfig.displayHeight, filename);
-    if (!silent)
+    const bool written = type
+        ? R_TakeScreenshotTga(0, 0, vidConfig.displayWidth, vidConfig.displayHeight, filename)
+        : R_TakeScreenshotJpg(0, 0, vidConfig.displayWidth, vidConfig.displayHeight, filename);
+    if (written && !silent)
         Com_Printf(8, "Wrote %s\n", filename);
 }
