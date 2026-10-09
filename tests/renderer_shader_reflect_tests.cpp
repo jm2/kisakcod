@@ -256,8 +256,9 @@ void TestRejectsMalformed()
     rejects(shortComment, "CTAB comment shorter than its header");
     std::vector<std::uint32_t> noCtab = { kVs30, kMov, 0xC00F0000u, 0x90E40000u, 0x0000FFFFu };
     rejects(noCtab, "no CTAB comment");
-    std::vector<std::uint32_t> badOpcode = program;
-    badOpcode.insert(badOpcode.end() - 1, 0x0100FFFFu);
+    std::vector<std::uint32_t> badOpcode(program.begin(), program.end() - 1);
+    badOpcode.push_back(0x0100FFFFu);
+    badOpcode.push_back(program.back());
     rejects(badOpcode, "opcode 0xFFFF that is not the end token");
     rejects(BuildProgram(0x12340300u, good), "neither vertex nor pixel");
     Check(!R_ShaderFindConstantTable(nullptr, 4, &table), "null program");
