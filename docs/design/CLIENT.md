@@ -7,7 +7,7 @@ WS-6 · Gate G5 (Vulkan: G6) · Cap 10 KB · Related: [CHARTER](../CHARTER.md), 
 | Step | Renderer | Targets | Status |
 |---|---|---|---|
 | 1 | Existing D3D9 renderer, 64-bit | Windows amd64 | Interim vehicle |
-| 2 | D3D9 via dxvk-native | Linux amd64/arm64; macOS arm64 over MoltenVK (unverified) | Interim vehicle |
+| 2 | D3D9 via dxvk-native | Linux amd64/arm64; macOS arm64 on KosmicKrisp (Homebrew mesa; client macOS 26+, server 13+), jm2/dxvk fork via `KISAK_DXVK_MACOS` | Interim vehicle |
 | 3 | Native Vulkan; MoltenVK on macOS | All five | Release (G6) |
 
 Interim vehicles are test milestones, not deliverables.

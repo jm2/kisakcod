@@ -165,11 +165,17 @@ else()
         ${CMAKE_BINARY_DIR}/generated/speex/speex_config_types.h @ONLY)
     target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/generated)
     # A POSIX client renders through dxvk-native's D3D9 (docs/design/CLIENT.md).
-    # Point PKG_CONFIG_PATH at its install (lib*/pkgconfig/dxvk-d3d9.pc).
+    # Point PKG_CONFIG_PATH at its install (lib*/pkgconfig/dxvk-d3d9.pc), or on
+    # macOS set KISAK_DXVK_MACOS to build the pinned fork for KosmicKrisp.
     if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(KISAK_DXVK_D3D9 REQUIRED IMPORTED_TARGET dxvk-d3d9)
-        target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::KISAK_DXVK_D3D9)
+        if (APPLE AND KISAK_DXVK_MACOS)
+            include(${SCRIPTS_DIR}/extern/dxvk_macos.cmake)
+            target_link_libraries(${PROJECT_NAME} PUBLIC kisak_dxvk_d3d9)
+        else()
+            find_package(PkgConfig REQUIRED)
+            pkg_check_modules(KISAK_DXVK_D3D9 REQUIRED IMPORTED_TARGET dxvk-d3d9)
+            target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::KISAK_DXVK_D3D9)
+        endif()
         target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_DXVK_NATIVE)
         # Miles and Bink exist here only as headers: the client compiles
         # against msslib/binklib and links silent stubs (KISAK_MEDIA_STUBS).
