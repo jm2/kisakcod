@@ -18,6 +18,8 @@
 //                   float-aligned from the code and keep their values.
 //   fields          the entity field keys load into the packed field buffer
 //                   (name, 16-bit index, type) and each looks up again.
+//   entity-field    GetEntityFieldValue reads a field through the VM's
+//                   two-slot evaluation stack, from its floor, repeatedly.
 
 #include <climits>
 #include <cstdio>
@@ -28,6 +30,7 @@
 
 #include <script/scr_stringlist.h>
 #include <script/scr_variable.h>
+#include <script/scr_vm.h>
 
 namespace
 {
@@ -288,6 +291,25 @@ void Fields()
     gsc::Unload();
     gsc::SetLoadFields("");
 }
+void EntityField()
+{
+    gsc::SetSource("entityfield", R"(main()
+{
+	report(1);
+}
+)");
+    std::string error;
+    GSC_CHECK(gsc::Load("entityfield", &error));
+    // As the VM does around a field read, the caller keeps its own top.
+    VariableValue *const top = scrVmPub.top;
+    for (int round = 0; round < 2; ++round)
+    {
+        const VariableValue value = GetEntityFieldValue(1, 2, 3);
+        GSC_CHECK(value.type == VAR_INTEGER && value.u.intValue == 1023);
+    }
+    scrVmPub.top = top;
+    gsc::Unload();
+}
 }  // namespace
 
 int main(int argc, char **argv)
@@ -305,9 +327,11 @@ int main(int argc, char **argv)
         Vectors();
     else if (!std::strcmp(which, "fields"))
         Fields();
+    else if (!std::strcmp(which, "entity-field"))
+        EntityField();
     else
     {
-        std::fprintf(stderr, "usage: %s arithmetic|animtree-limit|thread-params|locals|vectors|fields\n", argv[0]);
+        std::fprintf(stderr, "usage: %s arithmetic|animtree-limit|thread-params|locals|vectors|fields|entity-field\n", argv[0]);
         return 2;
     }
     std::printf("%s: %d failure(s)\n", which, gsc_failures);

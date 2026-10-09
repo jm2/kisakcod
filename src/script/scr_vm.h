@@ -264,9 +264,11 @@ struct scrVmDebugPub_t // sizeof=0x24210
 // Runtime-only profiling/debug storage, never serialized.
 RUNTIME_SIZE(scrVmDebugPub_t, 0x24210, 0x26410);
 
-struct scrVmGlob_t // sizeof=0x2028
+struct scrVmGlob_t // sizeof=0x2028 in retail; 0x2030 here (eval_stack's floor slot)
 {                                       // ...
-    VariableValue eval_stack[2];        // ...
+    // GetEntityFieldValue's two-value stack. Slot 0 is the floor the empty
+    // stack's top points at; retail pointed one before a two-slot array.
+    VariableValue eval_stack[3];        // ...
     const char *dialog_error_message;   // ...
     int loading;                        // ...
     int starttime;                      // ...
@@ -281,7 +283,7 @@ struct scrVmGlob_t // sizeof=0x2028
 // M4 (ki-n1et): widened VariableValue eval_stack plus host pointers
 // (dialog_error_message / lastFileName); widens 0x2028 -> 0x2048 on
 // 64-bit. localVarsStack stays a scalar dword array.
-RUNTIME_SIZE(scrVmGlob_t, 0x2028, 0x2048);
+RUNTIME_SIZE(scrVmGlob_t, 0x2030, 0x2058);
 
 void Scr_Error(const char* error);
 void Scr_ErrorWithDialogMessage(const char *error, const char *dialog_error);
