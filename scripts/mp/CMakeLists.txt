@@ -17,6 +17,13 @@ include (${PLATFORM_DIR}/${KISAK_PLATFORM}/platform.cmake)
 include(${SCRIPTS_DIR}/source_groups.cmake)
 kisakcod_require_platform_source_sets()
 
+# The DirectSound voice backend is Win32's: only win32/win_voice.cpp calls it.
+if (NOT KISAK_PLATFORM STREQUAL "win32")
+    list(REMOVE_ITEM GROUPVOICE
+        "${SRC_DIR}/groupvoice/play_dsound.cpp"
+        "${SRC_DIR}/groupvoice/record_dsound.cpp")
+endif()
+
 # Add the new executable
 add_executable(${PROJECT_NAME} 
     ${SRCROOT} 
