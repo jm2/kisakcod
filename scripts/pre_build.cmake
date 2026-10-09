@@ -145,6 +145,13 @@ else()
         Threads::Threads
         ${CMAKE_DL_LIBS}
     )
+    # Speex's integer types: off Windows, speex_types.h includes the
+    # configure-generated <speex/speex_config_types.h>.
+    set(SIZE16 short)
+    set(SIZE32 int)
+    configure_file(${DEPS_DIR}/speex/speex_config_types.h.in
+        ${CMAKE_BINARY_DIR}/generated/speex/speex_config_types.h @ONLY)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/generated)
     if (KISAK_TARGET_ENABLE_STEAM)
         message(FATAL_ERROR
             "POSIX engine targets build with the cl_guid identity backend; "
