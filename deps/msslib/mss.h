@@ -1265,7 +1265,9 @@ typedef void VOIDFUNC(void);
 #define S32 signed int
 #endif
 
-#ifdef _WIN64
+// KisakCOD port: pointer-sized on every LP64 target, as radbase.h has it;
+// otherwise LP64 POSIX TUs disagree on SINTa/UINTa (and on mangled names).
+#if defined(_WIN64) || defined(__LP64__)
 
 #ifndef UINTa
 #define UINTa unsigned __int64

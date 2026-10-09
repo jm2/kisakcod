@@ -123,7 +123,7 @@ if (WIN32)
     if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
         if (KISAK_MEDIA_STUBS)
             # 32-bit-only Miles/Bink: link the silent stubs instead.
-            target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/win32/win_media_stubs.cpp)
+            target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/sound/media_stubs.cpp)
             # Engine code calls Miles/Bink through their dllimport declarations;
             # the linker binds those calls to the stub definitions (LNK4217/4286).
             target_link_options(${PROJECT_NAME} PRIVATE /IGNORE:4217,4286)
@@ -174,6 +174,7 @@ else()
         # Miles and Bink exist here only as headers: the client compiles
         # against msslib/binklib and links silent stubs (KISAK_MEDIA_STUBS).
         target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_POSIX_CLIENT_MEDIA)
+        target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/sound/media_stubs.cpp)
     endif()
     if (KISAK_TARGET_ENABLE_STEAM)
         message(FATAL_ERROR
