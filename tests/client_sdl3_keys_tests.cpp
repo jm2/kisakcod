@@ -74,6 +74,15 @@ int main()
     Expect(CL_SdlMapMouseButtons(0x08 | 0x10), 0x18, "X1 and X2");
     Expect(CL_SdlMapMouseButtons(0x1F), 0x1F, "all five");
 
+    Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252('a')), 'a', "ASCII is unchanged");
+    Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(0xE9)), 0xE9, "Latin-1 e-acute is unchanged");
+    Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(0x20AC)), 0x80, "euro sign is CP1252 0x80");
+    Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(0x2019)), 0x92, "right single quote is CP1252 0x92");
+    Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(0x0178)), 0x9F, "Y-diaeresis is CP1252 0x9F");
+    Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(0x81)), 0, "C1 control has no character");
+    Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(0x7F)), 0, "DEL has no character");
+    Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(0x1F600)), 0, "an emoji has no CP1252 byte");
+
     if (failures)
         return 1;
     std::puts("client-sdl3-keys: all checks passed");

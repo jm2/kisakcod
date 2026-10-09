@@ -104,16 +104,17 @@ void KeyEvent(const SDL_KeyboardEvent &key)
     }
 }
 
-// WM_CHAR delivers one CP1252 byte per character; Latin-1 code points are the
-// same bytes, and anything wider has no engine key.
+// WM_CHAR delivers one CP1252 byte per character; anything CP1252 can't
+// represent has no engine character.
 void TextEvent(const SDL_TextInputEvent &text)
 {
     const uint32_t eventTime = EventTime(text.timestamp);
     const char *cursor = text.text;
     for (Uint32 cp = SDL_StepUTF8(&cursor, nullptr); cp; cp = SDL_StepUTF8(&cursor, nullptr))
     {
-        if (cp >= 0x20 && cp <= 0xFF && cp != 0x7F)
-            Sys_QueEvent(eventTime, SE_CHAR, static_cast<int>(cp), 0, 0, nullptr);
+        const uint32_t ch = CL_SdlCodepointToCp1252(cp);
+        if (ch)
+            Sys_QueEvent(eventTime, SE_CHAR, static_cast<int>(ch), 0, 0, nullptr);
     }
 }
 
@@ -126,8 +127,12 @@ void WheelEvent(const SDL_MouseWheelEvent &wheel)
         return;
     const uint32_t eventTime = EventTime(wheel.timestamp);
     const int key = steps > 0 ? K_MWHEELUP : K_MWHEELDOWN;
-    Sys_QueEvent(eventTime, SE_KEY, key, 1, 0, nullptr);
-    Sys_QueEvent(eventTime, SE_KEY, key, 0, 0, nullptr);
+    // One press and release per whole notch, so a fast flick isn't merged.
+    for (int32_t step = steps > 0 ? steps : -steps; step > 0; --step)
+    {
+        Sys_QueEvent(eventTime, SE_KEY, key, 1, 0, nullptr);
+        Sys_QueEvent(eventTime, SE_KEY, key, 0, 0, nullptr);
+    }
 }
 
 void WindowMoved(const SDL_WindowEvent &window)
@@ -200,6 +205,13 @@ void HandleEvent(const SDL_Event &ev)
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         s_focused = ev.type == SDL_EVENT_WINDOW_FOCUS_GAINED;
+        // A button released while another application had focus never
+        // reaches us, so release them all on the way out.
+        if (!s_focused && s_buttons)
+        {
+            s_buttons = 0;
+            IN_MouseEvent(0);
+        }
         VID_AppActivate(s_focused, (SDL_GetWindowFlags(s_window) & SDL_WINDOW_MINIMIZED) != 0);
         break;
     case SDL_EVENT_WINDOW_MINIMIZED:

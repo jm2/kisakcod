@@ -22,3 +22,7 @@ int32_t CL_SdlMapKey(uint32_t scancode, uint32_t keycode, bool keypadAsText, boo
 // IN_MouseEvent takes from WM_*BUTTON* wParam: 1 left, 2 right, 4 middle,
 // 8 X1, 16 X2.
 int32_t CL_SdlMapMouseButtons(uint32_t sdlButtons);
+
+// A Unicode code point from SDL text input -> the CP1252 byte an ANSI window's
+// WM_CHAR would carry, or 0 when CP1252 has no printable character for it.
+uint32_t CL_SdlCodepointToCp1252(uint32_t codepoint);
