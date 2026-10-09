@@ -981,3 +981,23 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME ui-string-alloc-contracts COMMAND kisakcod-ui-string-alloc-tests)
     set_tests_properties(ui-string-alloc-contracts PROPERTIES TIMEOUT 20)
 endif()
+
+# CG_SetupWeaponDef (cgame/cg_weapons.cpp) at 64-bit: the weapon-file names it
+# hands ParseWeaponDefFiles. Linux and clang only, as above; the client's
+# defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cg-weapon-files-tests cg_weapon_files_tests.cpp ${SRC_DIR}/cgame/cg_weapons.cpp)
+    target_include_directories(kisakcod-cg-weapon-files-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-cg-weapon-files-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-cg-weapon-files-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-cg-weapon-files-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cg-weapon-files-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-cg-weapon-files-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-cg-weapon-files-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-cg-weapon-files-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cg-weapon-files-contracts COMMAND kisakcod-cg-weapon-files-tests)
+    set_tests_properties(cg-weapon-files-contracts PROPERTIES TIMEOUT 20)
+endif()

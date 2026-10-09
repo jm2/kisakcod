@@ -3935,13 +3935,13 @@ void __cdecl CG_SetupWeaponDef(int32_t localClientNum)
     char v1; // [esp+3h] [ebp-2225h]
     _BYTE *v2; // [esp+8h] [ebp-2220h]
     const char *v3; // [esp+Ch] [ebp-221Ch]
-    _DWORD dst[129]; // [esp+10h] [ebp-2218h] BYREF
+    const char *dst[129]; // [esp+10h] [ebp-2218h] BYREF
     const char *ConfigString; // [esp+214h] [ebp-2014h]
     int32_t iNumFiles; // [esp+218h] [ebp-2010h]
     _BYTE *v7; // [esp+21Ch] [ebp-200Ch]
     _BYTE v8[8196]; // [esp+220h] [ebp-2008h] BYREF
 
-    memset((uint8_t *)dst, 0, 0x1FCu);
+    memset((uint8_t *)dst, 0, 127 * sizeof(dst[0])); // 0x1FC on x86
     iNumFiles = 0;
     ConfigString = CL_GetConfigString(localClientNum, CS_WEAPONFILES);
     v3 = ConfigString;
@@ -3952,7 +3952,7 @@ void __cdecl CG_SetupWeaponDef(int32_t localClientNum)
         *v2++ = *v3++;
     } while (v1);
     v7 = v8;
-    dst[iNumFiles++] = (_DWORD)v8;
+    dst[iNumFiles++] = (const char *)v8;
     while (*v7)
     {
         if (*v7 == 32)
@@ -3962,7 +3962,7 @@ void __cdecl CG_SetupWeaponDef(int32_t localClientNum)
             {
                 if (iNumFiles >= 127)
                     break;
-                dst[iNumFiles++] = (_DWORD)v7;
+                dst[iNumFiles++] = (const char *)v7;
             }
         }
         else
@@ -3970,7 +3970,7 @@ void __cdecl CG_SetupWeaponDef(int32_t localClientNum)
             ++v7;
         }
     }
-    ParseWeaponDefFiles((const char **)dst, iNumFiles);
+    ParseWeaponDefFiles(dst, iNumFiles);
 #elif KISAK_SP
     iassert(bg_lastParsedWeaponIndex > 0);
 #endif
