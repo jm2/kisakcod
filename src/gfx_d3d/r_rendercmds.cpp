@@ -662,7 +662,7 @@ void __cdecl R_AddCmdDrawStretchPic(
         actualMaterial = rgp.defaultMaterial;
     }
     iassert( !Material_UsesDepthBuffer( actualMaterial ) );
-    cmd = (GfxCmdStretchPic *)R_GetCommandBuffer(RC_FIRST_NONCRITICAL, R_RenderCmdSize<GfxCmdStretchPic>());
+    cmd = reinterpret_cast<GfxCmdStretchPic *>(R_GetCommandBuffer(RC_FIRST_NONCRITICAL, R_RenderCmdSize<GfxCmdStretchPic>()));
     if (cmd)
     {
         cmd->material = actualMaterial;
@@ -764,7 +764,7 @@ void __cdecl R_AddCmdDrawStretchPicFlipST(
         actualMaterial = rgp.defaultMaterial;
     }
     iassert( !Material_UsesDepthBuffer( actualMaterial ) );
-    cmd = (GfxCmdStretchPic *)R_GetCommandBuffer(RC_STRETCH_PIC_FLIP_ST, R_RenderCmdSize<GfxCmdStretchPic>());
+    cmd = reinterpret_cast<GfxCmdStretchPic *>(R_GetCommandBuffer(RC_STRETCH_PIC_FLIP_ST, R_RenderCmdSize<GfxCmdStretchPic>()));
     if (cmd)
     {
         cmd->material = actualMaterial;
@@ -796,7 +796,7 @@ void __cdecl R_AddCmdDrawStretchPicRotateXY(
     Material *defaultMaterial; // [esp+4h] [ebp-8h]
     GfxCmdStretchPicRotateXY *cmd; // [esp+8h] [ebp-4h]
 
-    cmd = (GfxCmdStretchPicRotateXY *)R_GetCommandBuffer(RC_STRETCH_PIC_ROTATE_XY, R_RenderCmdSize<GfxCmdStretchPicRotateXY>());
+    cmd = reinterpret_cast<GfxCmdStretchPicRotateXY *>(R_GetCommandBuffer(RC_STRETCH_PIC_ROTATE_XY, R_RenderCmdSize<GfxCmdStretchPicRotateXY>()));
     if (cmd)
     {
         if (material)
@@ -834,7 +834,7 @@ void __cdecl R_AddCmdDrawStretchPicRotateST(
     Material *defaultMaterial; // [esp+4h] [ebp-8h]
     GfxCmdStretchPicRotateST *cmd; // [esp+8h] [ebp-4h]
 
-    cmd = (GfxCmdStretchPicRotateST *)R_GetCommandBuffer(RC_STRETCH_PIC_ROTATE_ST, R_RenderCmdSize<GfxCmdStretchPicRotateST>());
+    cmd = reinterpret_cast<GfxCmdStretchPicRotateST *>(R_GetCommandBuffer(RC_STRETCH_PIC_ROTATE_ST, R_RenderCmdSize<GfxCmdStretchPicRotateST>()));
     if (cmd)
     {
         if (material)
@@ -895,7 +895,7 @@ GfxCmdDrawText2D *__cdecl AddBaseDrawTextCmd(
     if (!*text && cursorPos < 0)
         return 0;
     v13 = strlen(text);
-    cmd = (GfxCmdDrawText2D *)R_GetCommandBuffer(RC_DRAW_TEXT_2D, R_DrawText2DCmdSize(v13));
+    cmd = reinterpret_cast<GfxCmdDrawText2D *>(R_GetCommandBuffer(RC_DRAW_TEXT_2D, R_DrawText2DCmdSize(v13)));
     if (!cmd)
         return 0;
     cmd->x = x;
@@ -1105,7 +1105,7 @@ GfxCmdDrawText2D *__cdecl AddBaseDrawConsoleTextCmd(
     iassert( textPool );
     if (!charCount)
         return 0;
-    cmd = (GfxCmdDrawText2D *)R_GetCommandBuffer(RC_DRAW_TEXT_2D, R_DrawText2DCmdSize(charCount));
+    cmd = reinterpret_cast<GfxCmdDrawText2D *>(R_GetCommandBuffer(RC_DRAW_TEXT_2D, R_DrawText2DCmdSize(charCount)));
     if (!cmd)
         return 0;
     cmd->x = x;
@@ -1239,7 +1239,7 @@ void __cdecl R_AddCmdDrawQuadPic(const float (*verts)[2], const float *color, Ma
     int cornerIndex; // [esp+Ch] [ebp-8h]
     GfxCmdDrawQuadPic *cmd; // [esp+10h] [ebp-4h]
 
-    cmd = (GfxCmdDrawQuadPic *)R_GetCommandBuffer(RC_DRAW_QUAD_PIC, R_RenderCmdSize<GfxCmdDrawQuadPic>());
+    cmd = reinterpret_cast<GfxCmdDrawQuadPic *>(R_GetCommandBuffer(RC_DRAW_QUAD_PIC, R_RenderCmdSize<GfxCmdDrawQuadPic>()));
     if (cmd)
     {
         if (material)
@@ -1531,7 +1531,7 @@ void __cdecl R_AddCmdClearScreen(int whichToClear, const float *color, float dep
             whichToClear);
     iassert( color );
     iassert( (depth >= 0.0f && depth <= 1.0f) );
-    cmd = (GfxCmdClearScreen *)R_GetCommandBuffer(RC_CLEAR_SCREEN, R_RenderCmdSize<GfxCmdClearScreen>());
+    cmd = reinterpret_cast<GfxCmdClearScreen *>(R_GetCommandBuffer(RC_CLEAR_SCREEN, R_RenderCmdSize<GfxCmdClearScreen>()));
     iassert( cmd );
     cmd->whichToClear = whichToClear;
     iassert( cmd->whichToClear == whichToClear );
@@ -1556,7 +1556,7 @@ void __cdecl R_AddCmdSaveScreen(uint32_t screenTimerId)
             screenTimerId,
             0,
             3);
-    cmd = (GfxCmdSaveScreen *)R_GetCommandBuffer(RC_SAVE_SCREEN, R_RenderCmdSize<GfxCmdSaveScreen>());
+    cmd = reinterpret_cast<GfxCmdSaveScreen *>(R_GetCommandBuffer(RC_SAVE_SCREEN, R_RenderCmdSize<GfxCmdSaveScreen>()));
     iassert( cmd );
     cmd->screenTimerId = screenTimerId;
 }
@@ -1579,7 +1579,7 @@ void __cdecl R_AddCmdSaveScreenSection(
             screenTimerId,
             0,
             3);
-    cmd = (GfxCmdSaveScreenSection *)R_GetCommandBuffer(RC_SAVE_SCREEN_SECTION, R_RenderCmdSize<GfxCmdSaveScreenSection>());
+    cmd = reinterpret_cast<GfxCmdSaveScreenSection *>(R_GetCommandBuffer(RC_SAVE_SCREEN_SECTION, R_RenderCmdSize<GfxCmdSaveScreenSection>()));
     iassert( cmd );
     cmd->s0 = viewX;
     cmd->t0 = viewY;
@@ -1609,7 +1609,7 @@ void __cdecl R_AddCmdBlendSavedScreenShockBlurred(
             3);
     if (fadeMsec > 0)
     {
-        cmd = (GfxCmdBlendSavedScreenBlurred *)R_GetCommandBuffer(RC_BLEND_SAVED_SCREEN_BLURRED, R_RenderCmdSize<GfxCmdBlendSavedScreenBlurred>());
+        cmd = reinterpret_cast<GfxCmdBlendSavedScreenBlurred *>(R_GetCommandBuffer(RC_BLEND_SAVED_SCREEN_BLURRED, R_RenderCmdSize<GfxCmdBlendSavedScreenBlurred>()));
         if (cmd)
         {
             cmd->fadeMsec = fadeMsec;
@@ -1632,7 +1632,7 @@ void __cdecl R_AddCmdBlendSavedScreenShockFlashed(
 {
     GfxCmdBlendSavedScreenFlashed *cmd; // [esp+0h] [ebp-4h]
 
-    cmd = (GfxCmdBlendSavedScreenFlashed *)R_GetCommandBuffer(RC_BLEND_SAVED_SCREEN_FLASHED, R_RenderCmdSize<GfxCmdBlendSavedScreenFlashed>());
+    cmd = reinterpret_cast<GfxCmdBlendSavedScreenFlashed *>(R_GetCommandBuffer(RC_BLEND_SAVED_SCREEN_FLASHED, R_RenderCmdSize<GfxCmdBlendSavedScreenFlashed>()));
     if (cmd)
     {
         cmd->intensityWhiteout = intensityWhiteout;
@@ -1663,7 +1663,7 @@ void __cdecl R_AddCmdProjectionSet(GfxProjectionTypes projection)
 {
     GfxCmdProjectionSet *cmd; // [esp+0h] [ebp-4h]
 
-    cmd = (GfxCmdProjectionSet *)R_GetCommandBuffer(RC_PROJECTION_SET, R_RenderCmdSize<GfxCmdProjectionSet>());
+    cmd = reinterpret_cast<GfxCmdProjectionSet *>(R_GetCommandBuffer(RC_PROJECTION_SET, R_RenderCmdSize<GfxCmdProjectionSet>()));
     if (cmd)
         cmd->projection = projection;
 }
