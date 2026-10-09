@@ -264,6 +264,172 @@ void TestRejectsMalformed()
     Check(!R_ShaderFindConstantTable(program.data(), static_cast<std::uint32_t>(program.size()), nullptr),
         "null out");
 }
+// Semantics. The expected lists are what native D3DX9_43 returns for
+// compiler output of the same shape (checked once by hand; not in CI).
+constexpr std::uint32_t kVs20 = 0xFFFE0200u;
+constexpr std::uint32_t kPs30 = 0xFFFF0300u;
+constexpr std::uint32_t kDef = 0x05000051u; // def, a register and four floats
+
+// D3DSPR_* parameter tokens: the type's low bits at 28, its high bits at 11.
+constexpr std::uint32_t Reg(std::uint32_t type, std::uint32_t number)
+{
+    return 0x800F0000u | ((type & 7u) << 28) | ((type & 0x18u) << 8) | number;
+}
+constexpr std::uint32_t Usage(std::uint32_t usage, std::uint32_t index)
+{
+    return 0x80000000u | (index << 16) | usage;
+}
+enum : std::uint32_t { kTemp = 0, kInput = 1, kConst = 2, kTexture = 3, kRastOut = 4, kAttrOut = 5, kOutput = 6,
+    kColorOut = 8, kDepthOut = 9, kSampler = 10 };
+enum : std::uint32_t { kPosition = 0, kNormal = 3, kPSize = 4, kTexcoord = 5, kColor = 10, kFog = 11, kDepth = 12 };
+
+std::vector<std::uint32_t> Program(std::uint32_t version, std::vector<std::uint32_t> body)
+{
+    body.insert(body.begin(), version);
+    body.push_back(0x0000FFFFu);
+    return body;
+}
+
+std::string Semantics(const std::vector<std::uint32_t> &program, bool output, std::uint32_t capacity = 16)
+{
+    ShaderSemantic semantics[16]{};
+    std::uint32_t count = 99;
+    const auto dwords = static_cast<std::uint32_t>(program.size());
+    const bool ok = output ? R_ShaderGetOutputSemantics(program.data(), dwords, semantics, capacity, &count)
+                           : R_ShaderGetInputSemantics(program.data(), dwords, semantics, capacity, &count);
+    if (!ok)
+        return count == 0 ? "fail" : "fail with a count";
+    std::string text;
+    for (std::uint32_t i = 0; i < count; ++i)
+        text += (i ? " " : "") + std::to_string(semantics[i].usage) + ":" + std::to_string(semantics[i].usageIndex);
+    return text;
+}
+
+void CheckSemantics(const std::string &got, const char *expected, const char *what)
+{
+    if (got != expected)
+        std::fprintf(stderr, "  %s: got '%s', expected '%s'\n", what, got.c_str(), expected);
+    Check(got == expected, what);
+}
+
+void TestDeclaredSemantics()
+{
+    // vs_3_0 declares both sides; dcl usage tokens carry usage and index.
+    const auto vs = Program(kVs30, {
+        kDcl, Usage(kPosition, 0), Reg(kInput, 0),
+        kDcl, Usage(kNormal, 0), Reg(kInput, 1),
+        kDcl, Usage(kTexcoord, 1), Reg(kInput, 2),
+        kDcl, Usage(kPosition, 0), Reg(kOutput, 0),
+        kDcl, Usage(kColor, 1), Reg(kOutput, 1),
+        kDcl, Usage(kTexcoord, 3), Reg(kOutput, 2),
+        kMov, Reg(kOutput, 0), Reg(kInput, 0) | 0x00E40000u });
+    CheckSemantics(Semantics(vs, false), "0:0 3:0 5:1", "vs_3_0 inputs from dcl");
+    CheckSemantics(Semantics(vs, true), "0:0 10:1 5:3", "vs_3_0 outputs from dcl");
+
+    // ps_3_0 inputs are declared with usages; samplers name no semantic.
+    const auto ps = Program(kPs30, {
+        kDcl, Usage(kColor, 1), Reg(kInput, 0),
+        kDcl, Usage(kTexcoord, 5), Reg(kInput, 2),
+        kDcl, 0x90000000u, Reg(kSampler, 0) });
+    CheckSemantics(Semantics(ps, false), "10:1 5:5", "ps_3_0 inputs from dcl");
+}
+
+void TestPs20Inputs()
+{
+    // ps_2_0 dcl has no usage: v1 is COLOR with the dcl's zero index (native
+    // D3DX reports COLOR0, not COLOR1), t2 is TEXCOORD2, s0 is skipped.
+    const auto ps = Program(kPs20, {
+        kDcl, 0x80000000u, Reg(kInput, 1),
+        kDcl, 0x80000000u, Reg(kTexture, 2),
+        kDcl, 0x90000000u, Reg(kSampler, 0) });
+    CheckSemantics(Semantics(ps, false), "10:0 5:2", "ps_2_0 inputs from register type");
+}
+
+void TestUndeclaredOutputs()
+{
+    // vs_2_0 outputs come from the registers written, texcoords first, then
+    // colors, then oPos/oFog/oPts. A def's floats are skipped even when one
+    // (-2.0f, 0xC0000000) looks like an oPos parameter token.
+    const auto vs = Program(kVs20, {
+        kDcl, Usage(kPosition, 0), Reg(kInput, 0),
+        kDef, Reg(kConst, 0), 0xC0000000u, 0, 0, 0,
+        kMov, Reg(kRastOut, 1), Reg(kInput, 0),
+        kMov, Reg(kOutput, 3), Reg(kInput, 0),
+        kMov, Reg(kAttrOut, 1), Reg(kInput, 0),
+        kMov, Reg(kRastOut, 2), Reg(kInput, 0),
+        kMov, Reg(kOutput, 0), Reg(kInput, 0) });
+    CheckSemantics(Semantics(vs, false), "0:0", "vs_2_0 inputs from dcl");
+    CheckSemantics(Semantics(vs, true), "5:0 5:3 10:1 11:0 4:0", "vs_2_0 outputs from written registers");
+
+    // Pixel outputs are the oC# and oDepth writes; reading v# is not an output.
+    const auto ps = Program(kPs30, {
+        kMov, Reg(kColorOut, 1), Reg(kInput, 0),
+        kMov, Reg(kDepthOut, 0), Reg(kInput, 2),
+        kMov, Reg(kColorOut, 0), Reg(kInput, 1) });
+    CheckSemantics(Semantics(ps, true), "10:0 10:1 12:0", "ps outputs from oC# and oDepth");
+}
+
+void TestShaderModel1Semantics()
+{
+    // ps_1_x has no dcl: t# reads are texture coordinates and v# reads colors,
+    // by register number, texture coordinates first; temporaries are not
+    // inputs. Its output is r0 alone: writing r1 adds nothing.
+    const auto ps = Program(0xFFFF0101u, {
+        0x00000042u, Reg(kTexture, 3),                                    // tex t3
+        0x00000042u, Reg(kTexture, 0),                                    // tex t0
+        0x00000005u, Reg(kTemp, 1), Reg(kInput, 1), Reg(kTexture, 3),    // mul r1, v1, t3
+        0x00000005u, Reg(kTemp, 0), Reg(kInput, 0), Reg(kTexture, 0),    // mul r0, v0, t0
+        0x00000002u, Reg(kTemp, 0), Reg(kTemp, 0), Reg(kTemp, 1) });     // add r0, r0, r1
+    CheckSemantics(Semantics(ps, false), "5:0 5:3 10:0 10:1", "ps_1_1 inputs from t# and v#");
+    CheckSemantics(Semantics(ps, true), "10:0", "ps_1_1 output is r0");
+
+    // ps_1_4: phase has no parameters; texcrd and texld name t# as sources.
+    const auto ps14 = Program(0xFFFF0104u, {
+        0x00000040u, Reg(kTemp, 1), Reg(kTexture, 2),                     // texcrd r1, t2
+        0x00000042u, Reg(kTemp, 0), Reg(kTexture, 0),                     // texld r0, t0
+        0x0000FFFDu,                                                      // phase
+        0x00000005u, Reg(kTemp, 0), Reg(kTemp, 0), Reg(kInput, 1) });    // mul r0, r0, v1
+    CheckSemantics(Semantics(ps14, false), "5:0 5:2 10:1", "ps_1_4 inputs across a phase");
+
+    // vs_1_1: inputs are declared; outputs come from the registers written,
+    // and the instruction lengths are read from the parameter tokens (a def's
+    // -2.0f value looks like an oPos token but is skipped).
+    const auto vs = Program(0xFFFE0101u, {
+        kDcl & 0xFFFFu, Usage(kPosition, 0), Reg(kInput, 0),
+        kDcl & 0xFFFFu, Usage(kTexcoord, 1), Reg(kInput, 2),
+        kDef & 0xFFFFu, Reg(kConst, 4), 0x3F800000u, 0xC0000000u, 0, 0,
+        0x00000001u, Reg(kRastOut, 0), Reg(kInput, 0),
+        0x00000001u, Reg(kAttrOut, 1), Reg(kInput, 0),
+        0x00000001u, Reg(kOutput, 2), Reg(kInput, 2) });
+    CheckSemantics(Semantics(vs, false), "0:0 5:1", "vs_1_1 inputs from dcl");
+    CheckSemantics(Semantics(vs, true), "5:2 10:1 0:0", "vs_1_1 outputs from written registers");
+
+    // A parameter run past the end of the program is malformed.
+    CheckSemantics(Semantics({ 0xFFFF0101u, 0x00000001u, Reg(kTemp, 0) }, true), "fail", "ps_1_1 without its end token");
+
+    // Native D3DX reads lengths without checking operand counts: a mov with no
+    // parameter tokens is accepted (structure is D3D9ShaderBytecodeValid's job),
+    // and a ps_1_x program reports its r0 COLOR0 output whether or not it
+    // names r0. A vs_1_1 program reports only what it writes.
+    const std::vector<std::uint32_t> bareMov{ 0xFFFF0101u, 0x00000001u, 0x0000FFFFu };
+    CheckSemantics(Semantics(bareMov, false), "", "ps_1_1 bare mov: no inputs");
+    CheckSemantics(Semantics(bareMov, true), "10:0", "ps_1_1 output is COLOR0 without naming r0");
+    const std::vector<std::uint32_t> bareVsMov{ 0xFFFE0101u, 0x00000001u, 0x0000FFFFu };
+    CheckSemantics(Semantics(bareVsMov, true), "", "vs_1_1 bare mov: no outputs");
+}
+
+void TestSemanticsFailClosed()
+{
+    const auto vs = Program(kVs30, { kDcl, Usage(kPosition, 0), Reg(kInput, 0),
+        kDcl, Usage(kNormal, 0), Reg(kInput, 1) });
+    CheckSemantics(Semantics(vs, false, 1), "fail", "more semantics than capacity");
+    CheckSemantics(Semantics(std::vector<std::uint32_t>(vs.begin(), vs.end() - 1), false), "fail",
+        "no end token");
+    CheckSemantics(Semantics(Program(0x12340300u, {}), true), "fail", "neither vertex nor pixel");
+    std::uint32_t count = 7;
+    Check(!R_ShaderGetInputSemantics(vs.data(), static_cast<std::uint32_t>(vs.size()), nullptr, 4, &count)
+            && count == 0, "null semantics with a capacity");
+}
 } // namespace
 
 int main()
@@ -273,8 +439,13 @@ int main()
     TestEmptyTable();
     TestShaderModel1();
     TestRejectsMalformed();
+    TestDeclaredSemantics();
+    TestPs20Inputs();
+    TestUndeclaredOutputs();
+    TestShaderModel1Semantics();
+    TestSemanticsFailClosed();
     if (failures)
         return 1;
-    std::puts("shader constant table reflection passed");
+    std::puts("shader reflection passed");
     return 0;
 }
