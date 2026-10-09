@@ -36,12 +36,8 @@ int R_DrawText2DCmdSize(size_t charCount)
 }
 } // namespace
 
-// On x86 every command size matches the original literal.
-static_assert(sizeof(void *) != 4 || R_RenderCmdSize<GfxCmdStretchPic>() == 44);
-static_assert(sizeof(void *) != 4 || R_RenderCmdSize<GfxCmdStretchPicRotateXY>() == 48);
-static_assert(sizeof(void *) != 4 || R_RenderCmdSize<GfxCmdStretchPicRotateST>() == 52);
-static_assert(sizeof(void *) != 4 || R_RenderCmdSize<GfxCmdDrawQuadPic>() == 44);
-static_assert(sizeof(void *) != 4 || offsetof(GfxCmdDrawText2D, text) == 0x50);
+// Command sizes are pinned per layout by RUNTIME_SIZE next to each struct;
+// on x86 they equal the historical literals.
 #include "r_buffers.h"
 #include "r_model.h"
 #include "r_state.h"
