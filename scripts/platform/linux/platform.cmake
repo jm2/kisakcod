@@ -18,6 +18,7 @@ set(PLATFORM_LINUX
     "${SRC_DIR}/_platform/posix/posix_sys.cpp"
     "${SRC_DIR}/_platform/posix/posix_sys.h"
     "${SRC_DIR}/_platform/posix/posix_syscon.cpp"
+    "${SRC_DIR}/_platform/posix/posix_voice.cpp"
 )
 # The POSIX headless dedicated composition: entry point and frame loop,
 # termios console, language selection and CPU description. The datagram layer
