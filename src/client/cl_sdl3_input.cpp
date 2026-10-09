@@ -64,7 +64,7 @@ void IN_Init()
 {
     in_mouse = Dvar_RegisterBool("in_mouse", 1, DVAR_ARCHIVE | DVAR_LATCH, "Initialize the mouse drivers");
     IN_StartupMouse();
-    Dvar_ClearModified((dvar_s *)in_mouse);
+    Dvar_ClearModified(const_cast<dvar_s *>(in_mouse));
 }
 
 void IN_DeactivateMouse()
@@ -155,8 +155,9 @@ void IN_RecenterMouse()
     // already keeps the cursor still.
 }
 
-#ifdef _WIN32
-void IN_SetCursorPos(tagPOINT pos)
+#if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
+// dxvk-native's windows_base.h supplies POINT off Windows.
+void IN_SetCursorPos(POINT pos)
 {
     CL_SdlWarpMouse(pos.x, pos.y);
 }
