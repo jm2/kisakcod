@@ -9,11 +9,15 @@
 #include <bgame/bg_local.h>
 #include <bgame/bg_public.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace
@@ -186,6 +190,28 @@ void TestHudColors()
     BG_LerpHudColors(&elem, 1400, &color);
     Check(color.r == 200 && color.a == 255, "fade complete");
 }
+
+std::string g_shockFile;
+std::string g_parsedShock;
+uint32_t g_parsedShockCount = 0;
+
+// The headless server registers no bg_shock_volume_* dvars, so their lines are
+// blanked before the shock file is parsed; every other line reaches the parser.
+void TestHeadlessShockVolumeLines()
+{
+    g_shockFile = "bg_shock_screenType blurred\n"
+                  "  bg_shock_volume_weapon 0.5\n"
+                  "BG_SHOCK_VOLUME_voice 0.25\n"
+                  "bg_shock_lookControl 1\n";
+    Check(BG_LoadShellShockDvars("test") == 1, "shock file loads");
+    Check(g_parsedShockCount == 27, "only the 27 shock dvars are expected headless");
+    Check(g_parsedShock.find("volume") == std::string::npos && g_parsedShock.find("VOLUME") == std::string::npos,
+        "volume lines blanked");
+    Check(g_parsedShock.find("bg_shock_screenType blurred\n") == 0
+            && g_parsedShock.find("bg_shock_lookControl 1\n") != std::string::npos
+            && std::count(g_parsedShock.begin(), g_parsedShock.end(), '\n') == 4,
+        "other lines and line breaks kept");
+}
 } // namespace
 
 // The engine boundary bg_misc.cpp's tested paths reach. MyAssertHandler comes
@@ -198,6 +224,39 @@ void Com_Error(errorParm_t, const char *fmt, ...)
 
 void Com_Printf(int, const char *, ...)
 {
+}
+
+int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    const int written = std::vsnprintf(dest, size, fmt, args);
+    va_end(args);
+    return written;
+}
+
+void Com_PrintError(int, const char *, ...)
+{
+    std::abort(); // the test shock file always opens
+}
+
+char *__cdecl Com_LoadRawTextFile(const char *)
+{
+    char *copy = static_cast<char *>(std::malloc(g_shockFile.size() + 1));
+    std::memcpy(copy, g_shockFile.c_str(), g_shockFile.size() + 1);
+    return copy;
+}
+
+void __cdecl Com_UnloadRawTextFile(char *filebuf)
+{
+    std::free(filebuf);
+}
+
+int __cdecl Com_LoadDvarsFromBuffer(const char **, uint32_t numDvars, char *buffer, char *)
+{
+    g_parsedShock = buffer;
+    g_parsedShockCount = numDvars;
+    return 1;
 }
 
 bool __cdecl Dvar_GetBool(const char *)
@@ -230,6 +289,7 @@ int main()
     TestTrajectory();
     TestPlayerStateToEntityState();
     TestHudColors();
+    TestHeadlessShockVolumeLines();
     if (g_failures == 0)
         std::puts("bg_misc contracts passed");
     return g_failures == 0 ? 0 : 1;
