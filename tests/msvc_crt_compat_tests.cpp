@@ -248,7 +248,7 @@ int main()
     // +20 of the asctime layout.
     const long long y2k = 946728000LL; // 2000-01-01 12:00:00 UTC
     const char *const when = _ctime64(&y2k);
-    Expect(when && std::strlen(when) == 25 && when[24] == '\n', "_ctime64 uses the 25-character asctime layout");
+    Expect(when && strnlen(when, 32) == 25 && when[24] == '\n', "_ctime64 uses the 25-character asctime layout");
     if (when)
         Expect(std::strncmp(when + 20, "2000", 4) == 0 || std::strncmp(when + 20, "1999", 4) == 0,
             "_ctime64 puts the year at offset 20");
