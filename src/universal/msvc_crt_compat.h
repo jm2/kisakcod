@@ -208,6 +208,112 @@ static inline unsigned char _BitScanReverse(TIndex *index, unsigned long mask)
     return 1;
 }
 
+// ---- POSIX client: the remaining CRT names (sprintf_s, fopen_s, _putenv,
+// _itoa, _ctime64). Each keeps the MSVC contract its call sites rely on.
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+// MSVC: int sprintf_s(char *, size_t, const char *, ...) and its array
+// template. Output that doesn't fit leaves an empty string and returns -1
+// (MSVC also raises its invalid-parameter handler, which the engine never
+// installs). Formatting goes through msvc_printf_shim.h's wrapper.
+static inline int KISAK_vsprintf_s(char *const buffer, const size_t size, const char *const format, va_list args)
+{
+    if (buffer == NULL || format == NULL || size == 0)
+        return -1;
+    const int written = KISAK_vsnprintf_trunc(buffer, size, format, args);
+    if (written < 0)
+        buffer[0] = '\0';
+    return written;
+}
+
+static inline int sprintf_s(char *const buffer, const size_t size, const char *const format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    const int written = KISAK_vsprintf_s(buffer, size, format, args);
+    va_end(args);
+    return written;
+}
+
+template <size_t Size>
+static inline int sprintf_s(char (&buffer)[Size], const char *const format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    const int written = KISAK_vsprintf_s(buffer, Size, format, args);
+    va_end(args);
+    return written;
+}
+
+// MSVC: errno_t fopen_s(FILE **, const char *, const char *): 0 and the
+// stream, or the errno value and a null stream.
+static inline int fopen_s(FILE **const stream, const char *const name, const char *const mode)
+{
+    if (stream == NULL)
+        return EINVAL;
+    *stream = fopen(name, mode);
+    return *stream ? 0 : errno;
+}
+
+// MSVC: int _putenv(const char *) takes "NAME=value", copies it, and treats
+// an empty value as a removal; 0 on success, -1 on error. POSIX putenv would
+// keep the caller's (stack) buffer, so split it for setenv/unsetenv instead.
+static inline int _putenv(const char *const envstring)
+{
+    const char *const equals = envstring ? strchr(envstring, '=') : NULL;
+    if (equals == NULL || equals == envstring)
+        return -1;
+    char *const name = strndup(envstring, (size_t)(equals - envstring));
+    if (name == NULL)
+        return -1;
+    const int result = equals[1] ? setenv(name, equals + 1, 1) : unsetenv(name);
+    free(name);
+    return result == 0 ? 0 : -1;
+}
+
+// MSVC: char *_itoa(int, char *, int radix): radix 2..36; only radix 10
+// writes a minus sign, other radixes print the two's-complement bits.
+static inline char *_itoa(const int value, char *const buffer, const int radix)
+{
+    if (radix < 2 || radix > 36)
+    {
+        buffer[0] = '\0';
+        return buffer;
+    }
+    const bool negative = radix == 10 && value < 0;
+    unsigned int magnitude = negative ? 0u - (unsigned int)value : (unsigned int)value;
+    char digits[33];
+    int count = 0;
+    do
+    {
+        const unsigned int digit = magnitude % (unsigned int)radix;
+        digits[count++] = (char)(digit < 10 ? '0' + digit : 'a' + digit - 10);
+        magnitude /= (unsigned int)radix;
+    } while (magnitude);
+    char *out = buffer;
+    if (negative)
+        *out++ = '-';
+    while (count)
+        *out++ = digits[--count];
+    *out = '\0';
+    return buffer;
+}
+
+// MSVC: char *_ctime64(const __time64_t *): "Www Mmm dd hh:mm:ss yyyy\n" in
+// local time, in per-thread storage, or NULL. The day is space-padded, as
+// asctime's "%3d" is.
+static thread_local char kisak_ctime64_buf[32];
+static inline char *_ctime64(const long long *t)
+{
+    struct tm *const local = t ? _localtime64(t) : NULL;
+    if (local == NULL || strftime(kisak_ctime64_buf, sizeof(kisak_ctime64_buf), "%a %b %e %H:%M:%S %Y\n", local) == 0)
+        return NULL;
+    return kisak_ctime64_buf;
+}
+
 #endif // !defined(_WIN32)
 
 #endif // !defined(_MSC_VER)
