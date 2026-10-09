@@ -7,6 +7,12 @@
 #include <qcommon/sys_sync.h>
 #include <universal/phys_obj_id.h>
 
+// Every sscanf_s here reads only %f conversions, which take no buffer-size
+// arguments, so sscanf has the same contract.
+#if !defined(_MSC_VER)
+#define sscanf_s sscanf
+#endif
+
 const char *dynEntClassNames[2] =
 {
     "dyn_brushmodel",

@@ -40,6 +40,7 @@
 #include <intrin.h>
 #endif // _MSC_VER
 
+#include <cerrno>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -208,6 +209,60 @@ int main()
     std::snprintf(basename, sizeof(basename), "%s", "mp_shipment");
     Expect(std::strcmp(basename, "mp_shipment") == 0,
         "the engine's basename buffer keeps its name");
+
+    // sprintf_s: bg_misc.cpp's sized form and win_main.cpp's array form.
+    char shock[16];
+    Expect(sprintf_s(shock, sizeof(shock), "vol_%s", "music") == 9 && std::strcmp(shock, "vol_music") == 0,
+        "sprintf_s formats and returns the length");
+    char small[4];
+    Expect(sprintf_s(small, "%d", 42) == 2 && std::strcmp(small, "42") == 0,
+        "sprintf_s's array form takes the extent from the array");
+
+    // fopen_s: 0 and a stream, or an error code and a null stream.
+    FILE *missing = stdout;
+    Expect(fopen_s(&missing, "kisak_no_such_dir/never/here.txt", "rb") != 0 && missing == nullptr,
+        "fopen_s reports a failed open and nulls the stream");
+#if !defined(_MSC_VER)
+    // MSVC's CRT routes a null argument to its invalid-parameter handler (which
+    // aborts by default); the shim returns the EINVAL the handler would report.
+    missing = stdout;
+    Expect(fopen_s(&missing, nullptr, "rb") == EINVAL && missing == nullptr, "fopen_s rejects a null name");
+    Expect(fopen_s(&missing, "x", nullptr) == EINVAL, "fopen_s rejects a null mode");
+#endif
+
+    // _putenv: cl_main_mp's setenv command passes "NAME=value" from a stack
+    // buffer, so the value must survive the buffer; an empty value removes.
+    {
+        char assignment[64];
+        std::snprintf(assignment, sizeof(assignment), "%s", "KISAK_CRT_COMPAT_TEST=on");
+        Expect(_putenv(assignment) == 0, "_putenv sets a variable");
+        std::memset(assignment, 'x', sizeof(assignment) - 1);
+        const char *const value = std::getenv("KISAK_CRT_COMPAT_TEST");
+        Expect(value && std::strcmp(value, "on") == 0, "_putenv copies the value");
+        Expect(_putenv("KISAK_CRT_COMPAT_TEST=") == 0 && std::getenv("KISAK_CRT_COMPAT_TEST") == nullptr,
+            "_putenv with an empty value removes the variable");
+        Expect(_putenv("no equals sign") == -1, "_putenv rejects a string without '='");
+    }
+
+    // _itoa: rb_stats.cpp prints counters in radix 10.
+    char number[40];
+    Expect(std::strcmp(_itoa(0, number, 10), "0") == 0, "_itoa prints zero");
+    Expect(std::strcmp(_itoa(65535, number, 10), "65535") == 0, "_itoa prints radix 10");
+    Expect(std::strcmp(_itoa(-120, number, 10), "-120") == 0, "_itoa signs radix 10");
+    Expect(std::strcmp(_itoa(255, number, 16), "ff") == 0, "_itoa prints lower-case hex");
+    Expect(std::strcmp(_itoa(-1, number, 16), "ffffffff") == 0, "_itoa prints other radixes unsigned");
+
+    // _ctime64: ui_shared_obj.cpp slices the month/day at +4 and the year at
+    // +20 of the asctime layout.
+    const long long y2k = 946728000LL; // 2000-01-01 12:00:00 UTC
+    const char *const when = _ctime64(&y2k);
+    Expect(when && strnlen(when, 32) == 25 && when[24] == '\n', "_ctime64 uses the 25-character asctime layout");
+    if (when)
+        Expect(std::strncmp(when + 20, "2000", 4) == 0 || std::strncmp(when + 20, "1999", 4) == 0,
+            "_ctime64 puts the year at offset 20");
+    if (when)
+        Expect(std::strncmp(when + 4, "Jan", 3) == 0 || std::strncmp(when + 4, "Dec", 3) == 0,
+            "_ctime64 puts the English month at offset 4");
 
     if (Failures != 0)
         fprintf(stderr, "%d failure(s)\n", Failures);
