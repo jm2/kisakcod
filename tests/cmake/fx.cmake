@@ -971,4 +971,27 @@ if (NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_target_properties(kisakcod-fx-convert-tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME fx-convert-contracts COMMAND kisakcod-fx-convert-tests)
+
+    # The production per-element update helpers (EffectsCore/fx_update_util.cpp):
+    # spawn origins, orientations, velocity, culling and the vis-blocker buffers.
+    add_executable(kisakcod-fx-update-util-tests
+        fx_update_util_tests.cpp
+        com_math_test_stubs.cpp
+        ${SRC_DIR}/EffectsCore/fx_update_util.cpp
+        ${SRC_DIR}/EffectsCore/fx_random.cpp
+        ${SRC_DIR}/universal/com_math.cpp
+    )
+    target_include_directories(kisakcod-fx-update-util-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+        target_include_directories(kisakcod-fx-update-util-tests SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+    endif()
+    target_compile_features(kisakcod-fx-update-util-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fx-update-util-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-fx-update-util-tests PRIVATE -fms-extensions)
+    set_source_files_properties(fx_update_util_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+    set_target_properties(kisakcod-fx-update-util-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME fx-update-util-contracts COMMAND kisakcod-fx-update-util-tests)
 endif()
