@@ -6,14 +6,14 @@ const dvar_s *r_warningRepeatDelay;
 uint32_t s_warnCount[41];
 
 
-void R_WarnOncePerFrame(int warnType, ...) // a GfxWarningType: va_start takes a non-enum
+void R_WarnOncePerFrame(GfxWarningType warnType, ...)
 {
     char message[1028]; // [esp+0h] [ebp-410h] BYREF
     float frameRate; // [esp+408h] [ebp-8h]
     char *vargs; // [esp+40Ch] [ebp-4h]
     va_list va; // [esp+41Ch] [ebp+Ch] BYREF
 
-    va_start(va, warnType);
+    KISAK_VA_START_ENUM(va, warnType); // GfxWarningType is `: __int32`: no default promotion
     iassert( r_warningRepeatDelay );
     frameRate = R_UpdateFrameRate();
     if (s_warnCount[warnType] < rg.frontEndFrameCount)
