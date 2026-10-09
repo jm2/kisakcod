@@ -685,3 +685,24 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME posix-voice-contracts COMMAND kisakcod-posix-voice-tests)
     set_tests_properties(posix-voice-contracts PROPERTIES TIMEOUT 20)
 endif()
+
+# The persistent-stats file protection (win32/win_storage.cpp), which every
+# MP client builds: encrypt, then decrypt-and-check. Linux and clang only, as
+# the other engine-TU tests; --gc-sections drops what the path never reaches.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-live-storage-tests live_storage_tests.cpp
+        ${SRC_DIR}/win32/win_storage.cpp ${SRC_DIR}/qcommon/md4.cpp)
+    target_include_directories(kisakcod-live-storage-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-live-storage-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-live-storage-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-live-storage-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-live-storage-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-live-storage-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-live-storage-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-live-storage-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME live-storage-stats-file-contracts COMMAND kisakcod-live-storage-tests)
+    set_tests_properties(live-storage-stats-file-contracts PROPERTIES TIMEOUT 20)
+endif()

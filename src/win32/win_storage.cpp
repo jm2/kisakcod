@@ -1,8 +1,11 @@
 #include "win_storage.h"
 // timeGetTime (the stats-file nonce source) is a Win32 API; this TU used to
 // reach <Windows.h> transitively through xanim.h -> d3d9.h before the D3D
-// include cut (KPI K5).
+// include cut (KPI K5). A POSIX client builds this file too and takes the
+// nonce from Sys_Milliseconds.
+#if defined(_WIN32)
 #include <Windows.h>
+#endif
 #include <qcommon/qcommon.h>
 #include <stringed/stringed_hooks.h>
 #include <qcommon/com_playerprofile.h>
@@ -10,7 +13,11 @@
 #include <qcommon/cmd.h>
 #include <qcommon/md4.h>
 #include <qcommon/com_bsp.h>
+#if defined(_WIN32)
 #include "win_net_debug.h"
+#else
+#include <qcommon/sys_time.h>
+#endif
 
 #ifdef KISAK_MP
 #include <client_mp/client_mp.h>
@@ -602,7 +609,11 @@ void __cdecl LiveStorage_Encrypt(StatsFile *statsFile)
     uint32_t key[4]; // [esp+5Ch] [ebp-10h] BYREF
 
     *(uint32_t *)statsFile->magic = *(uint32_t *)"iwm0";
+#if defined(_WIN32)
     statsFile->nonce = timeGetTime();
+#else
+    statsFile->nonce = Sys_Milliseconds();
+#endif
     LiveStorage_GetCryptKey(statsFile->nonce, (unsigned __int8 *)key);
     Com_BlockChecksum128(
         (unsigned __int8 *)&statsFile->body.statsData,
