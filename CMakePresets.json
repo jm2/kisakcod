@@ -77,6 +77,46 @@
       }
     },
     {
+      "name": "linux-amd64-client",
+      "description": "The in-progress Linux MP client (SDL3 window and input, dxvk-native D3D9). Point PKG_CONFIG_PATH at a dxvk-native install built with its SDL3 WSI.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-linux-amd64-client",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "KISAK_PLATFORM": "linux",
+        "KISAK_BUILD_MP": "ON",
+        "KISAK_BUILD_DEDICATED": "OFF",
+        "KISAK_BUILD_SP": "OFF",
+        "KISAK_EXPERIMENTAL_POSIX_CLIENT": "ON",
+        "KISAK_CLIENT_SDL3": "ON",
+        "KISAK_ALLOW_UNSUPPORTED_64BIT": "ON",
+        "KISAK_ENABLE_STEAM": "OFF",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "linux-arm64-client",
+      "description": "The in-progress Linux MP client on arm64 (SDL3 window and input, dxvk-native D3D9). Point PKG_CONFIG_PATH at a dxvk-native install built with its SDL3 WSI.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-linux-arm64-client",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "KISAK_PLATFORM": "linux",
+        "KISAK_BUILD_MP": "ON",
+        "KISAK_BUILD_DEDICATED": "OFF",
+        "KISAK_BUILD_SP": "OFF",
+        "KISAK_EXPERIMENTAL_POSIX_CLIENT": "ON",
+        "KISAK_CLIENT_SDL3": "ON",
+        "KISAK_ALLOW_UNSUPPORTED_64BIT": "ON",
+        "KISAK_ENABLE_STEAM": "OFF",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
       "name": "macos-arm64-mp",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build-macos-arm64-mp",
