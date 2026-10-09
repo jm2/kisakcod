@@ -3,6 +3,7 @@
 #if KISAK_ARCH_64BIT
 
 #include <database/db_disk32_loaders.h> // generated from disk32/06-image.schema
+#include <database/db_disk32_renderer_hooks.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -12,12 +13,12 @@
 // point at images, and only client code reads their pixels. The header slot
 // and the inserted pointer step are generated from its schema entry; the
 // record body below is custom. It mirrors Load_GfxImage, Load_GfxTextureLoad
-// and Load_GfxImageLoadDef in db_load.cpp as the headless server runs them
-// (DB_FinalizeHeadlessTextureLoad): the 36-byte record streams into the temp
-// block, its name into block 4, and a load definition and its pixels into the
-// temp block after the record, which popping the temp block reclaims. No
-// 64-bit target makes a renderer texture from them, so the native texture is
-// always null and the pool's copy points into no temp bytes.
+// and Load_GfxImageLoadDef in db_load.cpp: the 36-byte record streams into
+// the temp block, its name into block 4, and a load definition and its pixels
+// into the temp block after the record, which popping the temp block reclaims.
+// A client makes the image's texture from them (Load_Texture); a headless
+// server finalizes them as DB_FinalizeHeadlessTextureLoad does and keeps the
+// texture null. Either way the pool's copy points into no temp bytes.
 // Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
@@ -61,13 +62,16 @@ bool FinalizeTexture(std::int32_t resourceSize, GfxImage *image)
 }
 
 // A texture offset token names an earlier texture whose image has the same
-// map type. Each texture alias is published null, so it resolves to none.
-bool ResolveTexture(disk32::PointerToken token, std::uint32_t mapType)
+// map type: a client's texture, which this image shares, or a server's null.
+bool ResolveTexture(disk32::PointerToken token, GfxImage *image, std::uint32_t mapType)
 {
     std::uintptr_t texture = 0;
     const db::relocation::Status status = DB_ResolveInsertedPointer(token, DBAliasKind::GfxTexture, mapType, &texture);
     if (status == db::relocation::Status::Ok)
+    {
+        ShareTexture(image, texture);
         return true;
+    }
     Com_Error(ERR_DROP, "Invalid fast-file alias offset: %s", db::relocation::StatusName(status));
     return false;
 }
@@ -81,7 +85,7 @@ bool LoadTexture(disk32::PointerToken token, GfxImage *image)
     if (token.isNull())
         return true;
     if (token.isOffset())
-        return ResolveTexture(token, mapType);
+        return ResolveTexture(token, image, mapType);
     DB_PushStreamPos(kTempBlock);
     std::uint8_t *const loadDef = DB_AllocStreamPos(3);
     if (!loadDef)
@@ -89,13 +93,16 @@ bool LoadTexture(disk32::PointerToken token, GfxImage *image)
     const DBAliasHandle inserted =
         token.isSharedInline() ? DB_InsertPointer(DBAliasKind::GfxTexture) : DBAliasHandle{};
     std::int32_t resourceSize = 0;
-    if ((token.isSharedInline() && !inserted) || !StreamLoadDef(loadDef, &resourceSize)
-        || !FinalizeTexture(resourceSize, image))
-    {
+    if ((token.isSharedInline() && !inserted) || !StreamLoadDef(loadDef, &resourceSize))
         return false;
-    }
+    // GfxImageLoadDef holds no pointers: its disk32 bytes are the native
+    // record, 4-aligned in the temp block.
+    if (kCreatesRendererObjects)
+        CreateTexture(image, reinterpret_cast<GfxImageLoadDef *>(loadDef));
+    else if (!FinalizeTexture(resourceSize, image))
+        return false;
     if (inserted)
-        DB_SetInsertedPointer(inserted, DBAliasKind::GfxTexture, nullptr, mapType);
+        DB_SetInsertedPointer(inserted, DBAliasKind::GfxTexture, image->texture.basemap, mapType);
     DB_PopStreamPos();
     return true;
 }

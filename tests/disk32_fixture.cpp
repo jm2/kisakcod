@@ -5,7 +5,10 @@
 #include "disk32_fixture.hpp"
 
 #include <database/db_load_legacy_bridge.h>
+#include <database/db_disk32_renderer_hooks.h>
+#include <gfx_d3d/r_image.h>
 #include <gfx_d3d/r_material.h>
+#include <gfx_d3d/r_water.h>
 
 #include <algorithm>
 #include <cstdarg>
@@ -67,9 +70,10 @@ std::uint8_t *__cdecl DB_AllocZoneNative(std::size_t size, std::size_t alignment
     return g_arena + start;
 }
 
-// A client's TechniqueSet converter builds declarations and creates shaders
-// through r_material.cpp. Families that only reach it through a material keep
-// the handles null; db_disk32_techniqueset_tests.cpp counts the calls.
+// The renderer's creation hooks a -client family's converters call
+// (db_disk32_renderer_hooks.h): each leaves the runtime handle null, as a
+// headless server does. The techniqueset, image and material tests replace
+// the ones they count.
 __attribute__((weak)) void __cdecl Load_BuildVertexDecl(MaterialVertexDeclaration **)
 {
 }
@@ -80,6 +84,21 @@ __attribute__((weak)) bool __cdecl Load_CreateMaterialVertexShader(GfxVertexShad
 }
 
 __attribute__((weak)) bool __cdecl Load_CreateMaterialPixelShader(GfxPixelShaderLoadDef *, MaterialPixelShader *)
+{
+    return true;
+}
+
+__attribute__((weak)) void __cdecl Load_Texture(GfxTexture *remoteLoadDef, GfxImage *)
+{
+    remoteLoadDef->basemap = nullptr;
+}
+
+__attribute__((weak)) void db::disk32_load::ShareTexture(GfxImage *image, std::uintptr_t)
+{
+    image->texture.basemap = nullptr;
+}
+
+__attribute__((weak)) bool __cdecl Load_PicmipWater(water_t **)
 {
     return true;
 }

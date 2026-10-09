@@ -1,12 +1,15 @@
 // db_disk32_material_tests.cpp: the 64-bit Material loader (NOW row 12) on
 // hand-built disk32 zone images (disk32_fixture.hpp), with TechniqueSet's real
 // and Image's steps for the references. Beyond the fixture's seams, only the
-// three asset pools and the external-data count are replaced.
+// three asset pools, the external-data count and the renderer's water hook
+// are replaced. It builds headless, which checks a water's image against its
+// source grids, and as a client (material-client), which picmips the water.
 
 #include "disk32_fixture.hpp"
 
 #include <database/db_disk32_load.h>
 #include <database/db_disk32_mirrors.h>
+#include <gfx_d3d/r_water.h>
 
 #include <cstring>
 #include <limits>
@@ -18,6 +21,13 @@ using namespace disk32_test;
 Material g_pool[4];
 MaterialTechniqueSet g_sets[2];
 GfxImage g_images[4];
+
+#ifdef KISAK_DEDI_HEADLESS
+constexpr bool kClient = false;
+#else
+constexpr bool kClient = true;
+#endif
+int g_picmips = 0; // Load_PicmipWater calls
 int g_imageCount = 0;
 int g_materials = 0;
 int g_setCount = 0;
@@ -183,6 +193,7 @@ void TestTextures()
 {
     Zone zone;
     Reset();
+    g_picmips = 0;
     // Block 4: "m" (0..2), "s" (2..4), the table (4..28), the first image's
     // name (28..32), the water (32..100), its amplitudes (100..228) and
     // frequencies (228..292), then its image's name. Records use the temp block.
@@ -195,6 +206,7 @@ void TestTextures()
         ExpectTextures(zone, material->textureTable);
     Expect(Load(kInline) == &g_pool[1] && g_pool[1].textureTable == material->textureTable && g_read == g_file.size(),
            "a texture-table offset resolves to the earlier native table");
+    Expect(g_picmips == (kClient ? 1 : 0), "a client picmips the water once, the shared table included; a server never");
 }
 
 void TestSharedAndOffsets()
@@ -321,6 +333,20 @@ void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *header)
     entry = *header->techniqueSet;
     entry.remappedTechniqueSet = &entry;
     header->techniqueSet = &entry;
+}
+
+// The renderer's water hook: it counts, and, like Load_PicmipWater at
+// r_picmip_water 0, checks the image against the source grid.
+bool __cdecl Load_PicmipWater(water_t **waterRef)
+{
+    ++g_picmips;
+    const water_t *const water = *waterRef;
+    if (!water->image || water->image->width != water->M || water->image->height != water->N)
+    {
+        Com_Error(ERR_DROP, "Invalid material water image contract");
+        return false;
+    }
+    return true;
 }
 
 int main()

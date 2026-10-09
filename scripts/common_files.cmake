@@ -182,6 +182,8 @@ set(DATABASE
     "${SRC_DIR}/database/db_disk32_menu.cpp"
     "${SRC_DIR}/database/db_disk32_menulist.cpp"
     "${SRC_DIR}/database/db_disk32_physpreset.cpp"
+    "${SRC_DIR}/database/db_disk32_renderer_hooks.cpp"
+    "${SRC_DIR}/database/db_disk32_renderer_hooks.h"
     "${SRC_DIR}/database/db_disk32_sound.cpp"
     "${SRC_DIR}/database/db_disk32_soundcurve.cpp"
     "${SRC_DIR}/database/db_disk32_stringtable.cpp"

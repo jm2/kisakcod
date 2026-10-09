@@ -1,13 +1,16 @@
 // db_disk32_image_tests.cpp: the 64-bit Image loader (NOW row 12) on
 // hand-built disk32 zone images (disk32_fixture.hpp). Beyond the fixture's
-// seams, only the asset pool (Load_GfxImageAsset) and the external-data
-// progress count (DB_LoadedExternalData) are replaced.
+// seams, only the asset pool (Load_GfxImageAsset), the external-data
+// progress count (DB_LoadedExternalData) and the renderer's texture hooks are
+// replaced. It builds headless, which finalizes the load definition itself,
+// and as a client (image-client), which hands it to Load_Texture.
 
 #include "disk32_fixture.hpp"
 
 #include <database/db_disk32_load.h>
 #include <database/db_disk32_loaders.h> // the pointer step a referring record calls
 #include <database/db_disk32_mirrors.h>
+#include <database/db_disk32_renderer_hooks.h>
 #include <gfx_d3d/r_image.h>
 
 #include <cstring>
@@ -21,6 +24,22 @@ const Zone *g_zone = nullptr; // the zone the pool stub checks names against
 GfxImage g_pool[4];           // what Load_GfxImageAsset published
 std::int64_t g_externalBytes = 0;
 int g_externalCalls = 0;
+
+#ifdef KISAK_DEDI_HEADLESS
+constexpr bool kClient = false;
+#else
+constexpr bool kClient = true;
+#endif
+
+// What the texture hooks saw: each Load_Texture hands out the next marker.
+int g_creates = 0;
+int g_shares = 0;
+const GfxImageLoadDef *g_lastLoadDef = nullptr;
+std::uintptr_t g_lastShared = 0;
+IDirect3DBaseTexture9 *Marker(int n)
+{
+    return reinterpret_cast<IDirect3DBaseTexture9 *>(std::uintptr_t{0x7E0000} + static_cast<std::uintptr_t>(n) * 0x100);
+}
 
 // The scalar fields of one record, as disk bytes. Every value differs from its
 // neighbours, so a field read at a wrong offset (its native one, say) differs.
@@ -79,6 +98,9 @@ struct Zone : disk32_test::Zone<128>
         g_zone = this;
         g_externalBytes = 0;
         g_externalCalls = 0;
+        g_creates = g_shares = 0;
+        g_lastLoadDef = nullptr;
+        g_lastShared = 0;
     }
     ~Zone() { g_zone = nullptr; }
     bool Is(const char *text, const char *expected) const { return Holds(text) && !std::strcmp(text, expected); }
@@ -105,12 +127,15 @@ bool Matches(const GfxImage &image, const Scalars &s)
 {
     return image.mapType == s.mapType && SamePicmip(image, s) && image.semantic == s.semantic
         && image.track == s.track && image.width == s.width && image.height == s.height && image.depth == s.depth
-        && image.category == s.category && !image.texture.basemap;
+        && image.category == s.category;
 }
 
 // What the texture step leaves of the delay flag and the external byte count.
+// A client leaves both to Load_Texture, so they keep their disk values there.
 bool Payload(const GfxImage &image, bool delayed, std::int32_t bytes, std::int32_t second)
 {
+    if (kClient)
+        return true;
     return Byte(image.delayLoadPixels) == delayed && image.cardMemory.platform[0] == bytes
         && image.cardMemory.platform[1] == second;
 }
@@ -127,6 +152,9 @@ void TestInlineImages()
         return;
     Expect(Matches(*color, kColor), "every scalar converts from its retail offset; byte 0x04 is true");
     Expect(Payload(*color, false, 0, 0) && !g_externalCalls, "embedded pixels clear the delay flag and byte count");
+    Expect(color->texture.basemap == (kClient ? Marker(1) : nullptr)
+               && (!kClient || g_lastLoadDef == reinterpret_cast<const GfxImageLoadDef *>(zone.temp + kRecordBytes)),
+           "a client creates the texture from the load definition in the temp block; a server keeps it null");
     Expect(zone.Is(color->name, "img/color") && color->name == zone.At(0), "the name points at its bytes in block 4");
     Expect(!std::memcmp(zone.temp, g_file.data(), kRecordBytes),
            "the disk32 record is streamed into the temp block at the retail offset");
@@ -138,6 +166,7 @@ void TestInlineImages()
     if (cube != &g_pool[1])
         return;
     Expect(Payload(*cube, true, 4096, 0), "a null texture keeps the delay flag and byte count");
+    Expect(!cube->texture.basemap && g_creates == (kClient ? 1 : 0), "a null texture creates nothing");
     Expect(!std::memcmp(zone.temp, g_file.data() + kRecordBytes + 10 + 24, kRecordBytes),
            "the temp block is reclaimed between images");
     Expect(zone.Is(cube->name, "img/cube") && DB_GetStreamPos() == zone.virt + 10 + 9 && g_read == g_file.size(),
@@ -159,7 +188,8 @@ void TestExternalWaterAndDelayed()
         return;
     Expect(Payload(*external, false, 0, 0) && Matches(*external, kExternal),
            "an external image that is not delayed has its byte count accounted and cleared");
-    Expect(g_externalCalls == 1 && g_externalBytes == 3000, "exactly its 3000 bytes are accounted");
+    Expect(kClient ? !g_externalCalls && g_creates == 3 : g_externalCalls == 1 && g_externalBytes == 3000,
+           "a server accounts exactly its 3000 bytes; a client hands all three to Load_Texture");
     Expect(Payload(*delayed, true, 4096, 0), "a delayed image keeps its flag and byte count");
     Expect(Payload(*water, false, 0, 0) && Matches(*water, kWater), "a water image owns no external payload");
 }
@@ -185,6 +215,10 @@ void TestSharedInlineAndOffsets()
     Expect(second->name == shared->name, "a name offset token resolves to the earlier string");
     Expect(Matches(*second, kColor) && Payload(*second, true, 0x1234, 0x5678),
            "a texture offset naming a same-map-type texture loads no pixels and keeps the byte count");
+    Expect(kClient ? g_creates == 1 && g_shares == 1 && g_lastShared == reinterpret_cast<std::uintptr_t>(Marker(1))
+                         && second->texture.basemap == Marker(1) && shared->texture.basemap == Marker(1)
+                   : !second->texture.basemap,
+           "a client's texture offset shares the earlier texture once; a server's resolves to none");
     Expect(DB_GetStreamPos() == zone.virt + 20, "block 4 holds the two alias slots and one name");
     Expect(!Load(0) && g_published == 2, "a null token loads nothing");
 }
@@ -259,6 +293,10 @@ void TestMalformedFailsClosed()
 {
     for (const Malformed &test : kMalformed)
     {
+        // The external byte count is the headless finalizer's to check; a
+        // client hands the load definition to Load_Texture.
+        if (kClient && !std::strcmp(test.error, "external image size"))
+            continue;
         Zone zone(test.tempBytes);
         test.build();
         if (test.prior)
@@ -284,6 +322,22 @@ void __cdecl DB_LoadedExternalData(std::int32_t size)
 {
     g_externalBytes += size;
     ++g_externalCalls;
+}
+
+// The renderer's texture hooks: Load_Texture hands out a marker for the load
+// definition it is given; ShareTexture takes the earlier texture as is.
+void __cdecl Load_Texture(GfxTexture *remoteLoadDef, GfxImage *image)
+{
+    Expect(remoteLoadDef == &image->texture, "Load_Texture receives the image's own texture union");
+    g_lastLoadDef = remoteLoadDef->loadDef;
+    remoteLoadDef->basemap = Marker(++g_creates);
+}
+
+void db::disk32_load::ShareTexture(GfxImage *image, std::uintptr_t texture)
+{
+    ++g_shares;
+    g_lastShared = texture;
+    image->texture.basemap = reinterpret_cast<IDirect3DBaseTexture9 *>(texture);
 }
 
 int main()

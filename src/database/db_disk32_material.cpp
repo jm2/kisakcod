@@ -3,6 +3,7 @@
 #if KISAK_ARCH_64BIT
 
 #include <database/db_disk32_loaders.h> // generated from disk32/18-material.schema
+#include <database/db_disk32_renderer_hooks.h>
 #include <database/db_material_validation.h>
 #include <database/db_validation.h>
 
@@ -127,15 +128,18 @@ bool LoadWaterSamples(water_t *water, std::int32_t sampleCount)
     return true;
 }
 
-// Load_water_t, as headless: the header rule (which tests only that the three
-// pointers are present), the samples, then the image and its contract.
+// Load_water_t: the header rule (which tests only that the three pointers are
+// present), the samples and the image. A client then compacts the grids to
+// r_picmip_water (Load_PicmipWater, which checks the image at that size); a
+// headless server keeps the source grids and checks the image against them.
+// A completed object, so an alias never compacts a water twice.
 bool ConvertWater(std::uint8_t *record, water_t **out)
 {
     disk32::water_tDisk32 disk{};
     if (!StreamBytes(record, static_cast<std::int32_t>(sizeof(disk))))
         return false;
     std::memcpy(&disk, record, sizeof(disk));
-    water_t *const water = AllocNative<water_t>(1);
+    water_t *water = AllocNative<water_t>(1);
     if (!water)
         return false;
     Copywater_tScalars(disk, water);
@@ -149,8 +153,15 @@ bool ConvertWater(std::uint8_t *record, water_t **out)
         return false;
     water->image = nullptr;
     LoadGfxImagePtr(disk.image.token, &water->image);
-    if (!WaterImageValid(*water))
+    if (kCreatesRendererObjects)
+    {
+        if (!PicmipWater(&water))
+            return false;
+    }
+    else if (!WaterImageValid(*water))
+    {
         return Drop("Invalid headless material water image contract");
+    }
     *out = water;
     return true;
 }

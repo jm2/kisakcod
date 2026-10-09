@@ -828,6 +828,12 @@ if ((KISAK_PLATFORM STREQUAL "linux" OR KISAK_PLATFORM STREQUAL "macos") AND CMA
         target_include_directories(${_target} SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
         target_compile_features(${_target} PRIVATE cxx_std_20)
         target_compile_definitions(${_target} PRIVATE KISAK_MP)
+        # The converters run as the headless server does, unless the family
+        # name ends in -client: then they call the renderer's creation hooks
+        # (db_disk32_renderer_hooks.h), which the test replaces.
+        if (NOT FAMILY MATCHES "-client$")
+            target_compile_definitions(${_target} PRIVATE KISAK_DEDI_HEADLESS)
+        endif()
         # No -Wpedantic: the engine headers spell MSVC extensions.
         target_compile_options(${_target} PRIVATE -fms-extensions -Wall -Wextra -Werror)
         set_target_properties(${_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
