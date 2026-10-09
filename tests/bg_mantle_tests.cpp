@@ -72,6 +72,7 @@ std::vector<Solid> g_world;
 constexpr int kUpMsec = 400;
 constexpr int kOverMsec = 300;
 alignas(8) uint8_t g_animStorage[8];
+char g_vaText[1] = {};
 
 bool InsideOpen(const Solid &solid, const float *const point)
 {
@@ -284,8 +285,7 @@ void MyAssertHandler(const char *file, int line, int, const char *fmt, ...)
 
 char *QDECL va(const char *, ...)
 {
-    static char text[] = "";
-    return text;
+    return g_vaText; // Mantle_DebugPrint's message; printed only with mantle_debug on
 }
 
 const dvar_s *__cdecl Dvar_RegisterFloat(const char *name, float value, DvarLimits, uint16_t, const char *)
@@ -311,7 +311,7 @@ int __cdecl XAnimGetLengthMsec(const XAnim_s *anims, uint32_t animIndex)
     return animIndex >= 8 ? kOverMsec : kUpMsec;
 }
 
-void __cdecl XAnimGetAbsDelta(const XAnim_s *anims, uint32_t animIndex, float *rot, float *trans, float time)
+void __cdecl XAnimGetAbsDelta(const XAnim_s *anims, uint32_t animIndex, float *rot, float *trans, float fraction)
 {
     if (anims != reinterpret_cast<const XAnim_s *>(g_animStorage))
         std::abort();
@@ -319,9 +319,9 @@ void __cdecl XAnimGetAbsDelta(const XAnim_s *anims, uint32_t animIndex, float *r
     rot[1] = 1.0f;
     trans[0] = trans[1] = trans[2] = 0.0f;
     if (animIndex >= 8)
-        trans[0] = 31.0f * time;
+        trans[0] = 31.0f * fraction;
     else
-        trans[2] = kUpHeight[animIndex - 1] * time;
+        trans[2] = kUpHeight[animIndex - 1] * fraction;
 }
 
 void __cdecl G_TraceCapsule(trace_t *results, const float *start, const float *mins, const float *maxs,
