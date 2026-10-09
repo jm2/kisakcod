@@ -69,8 +69,13 @@ endif()
 # services and the POSIX entry/console/localization files (NOW row 13,
 # docs/design/PLATFORM_POSIX.md). Every other engine target still requires the
 # Win32 backend until the client renderer and the remaining POSIX services land.
+# KISAK_EXPERIMENTAL_POSIX_CLIENT lets the MP client configure on Linux/macOS
+# for bring-up (SDL3 window/input, dxvk-native D3D9). It does not build yet;
+# it exists so the platform sessions can measure and fix the client sources.
+option(KISAK_EXPERIMENTAL_POSIX_CLIENT
+    "Configure the in-progress Linux/macOS MP client for bring-up (does not build yet)" OFF)
 if (NOT KISAK_PLATFORM STREQUAL "win32"
-    AND (KISAK_BUILD_MP OR KISAK_BUILD_SP
+    AND ((KISAK_BUILD_MP AND NOT KISAK_EXPERIMENTAL_POSIX_CLIENT) OR KISAK_BUILD_SP
          OR (KISAK_BUILD_DEDICATED AND NOT KISAK_DEDI_HEADLESS)))
     message(FATAL_ERROR
         "The ${KISAK_PLATFORM} backend is not buildable yet. The platform selection "
@@ -78,7 +83,8 @@ if (NOT KISAK_PLATFORM STREQUAL "win32"
         "widening, the remaining POSIX services, portable headless source composition, and "
         "the client Vulkan renderer must land before engine targets can compile. "
         "Configure -DKISAK_BUILD_DEDICATED=ON -DKISAK_DEDI_HEADLESS=ON for the "
-        "POSIX headless dedicated server.")
+        "POSIX headless dedicated server, or add -DKISAK_EXPERIMENTAL_POSIX_CLIENT=ON "
+        "to bring up the MP client.")
 endif()
 
 if (CMAKE_SIZEOF_VOID_P EQUAL 8
