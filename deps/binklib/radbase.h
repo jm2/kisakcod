@@ -136,7 +136,7 @@
       #error "PS3 32bit ABI support only"
       #endif
 
-    #elif (defined(__MWERKS__) && !defined(__INTEL__)) || defined(__MRC__) || defined(THINK_C) || defined(powerc) || defined(macintosh) || defined(__powerc) || defined(__APPLE__) || defined(__MACH__)
+    #elif ((defined(__MWERKS__) && !defined(__INTEL__)) || defined(__MRC__) || defined(THINK_C) || defined(powerc) || defined(macintosh) || defined(__powerc) || defined(__APPLE__) || defined(__MACH__)) && !(defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__)))
 
       #define __RADMAC__
 
@@ -192,7 +192,7 @@
         #endif
       #endif
 
-  #elif defined(linux) || defined(__linux__) || defined(__linux)
+  #elif defined(linux) || defined(__linux__) || defined(__linux) || (defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__)))
 
       // KisakCOD port: strict -std=c++XX does not define the GNU `linux`
       // macro (as in msslib/mss.h), and this branch assumed 32-bit x86.
