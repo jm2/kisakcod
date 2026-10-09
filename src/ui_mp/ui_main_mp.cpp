@@ -235,15 +235,7 @@ uiInfo_s uiInfoArray; // On PC this array is just [1].
 
 // The decompiler reached uiInfo_s members past uiDC as dc[1].<UiContext member>,
 // i.e. by x86 offsets that move once UiContext widens at 64-bit. They are named
-// members now; on x86 each lands on the same bytes as before.
-static_assert(sizeof(void *) != 4
-    || offsetof(uiInfo_s, playerIndex) == sizeof(UiContext) + offsetof(UiContext, realTime));
-static_assert(sizeof(void *) != 4
-    || offsetof(uiInfo_s, nextFindPlayerRefresh)
-        == sizeof(UiContext) + offsetof(UiContext, localVars) + 79 * sizeof(UILocalVar) + offsetof(UILocalVar, u));
-static_assert(sizeof(void *) != 4
-    || offsetof(uiInfo_s, playerProfileStatus) + offsetof(PlayerProfileStatus, sortDir)
-        == sizeof(UiContext) + offsetof(UiContext, Menus) + 56 * sizeof(menuDef_t *));
+// members now; ui_mp.h pins their x86 offsets (RUNTIME_OFFSET) to the old bytes.
 sharedUiInfo_t sharedUiInfo;
 
 const char *MonthAbbrev[12] =
