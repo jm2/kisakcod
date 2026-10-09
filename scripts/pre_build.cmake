@@ -165,8 +165,11 @@ else()
             "POSIX engine targets build with the cl_guid identity backend; "
             "the desktop Steam client API is not linked.")
     endif()
-    # The D3DX9 subset the renderer uses (gfx_d3d/r_d3dx9.h).
+    # The D3DX9 subset the renderer uses (gfx_d3d/r_d3dx9.h) and the Win32
+    # window and monitor calls it makes, answered over SDL3
+    # (_platform/posix/posix_win32_window.h).
     if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
-        target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/_platform/posix/d3dx9_native.cpp)
+        target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/_platform/posix/d3dx9_native.cpp
+            ${SRC_DIR}/_platform/posix/posix_win32_window.cpp)
     endif()
 endif()
