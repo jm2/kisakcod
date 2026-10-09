@@ -22,7 +22,10 @@ kisakcod_require_platform_source_sets()
 if (NOT KISAK_PLATFORM STREQUAL "win32")
     list(APPEND QCOMMON
         "${SRC_DIR}/qcommon/net_local.cpp"
-        "${SRC_DIR}/qcommon/net_debug_stub.cpp")
+        "${SRC_DIR}/qcommon/net_debug_stub.cpp"
+        # Persistent stats (LiveStorage_*): portable engine code on the FS_*
+        # API, kept beside its header in win32/ where the shared code includes it.
+        "${SRC_DIR}/win32/win_storage.cpp")
 endif()
 
 # Add the new executable
