@@ -47,6 +47,13 @@ struct uiInfo_s // sizeof=0x24B0
     int numFoundPlayerServers;
     int nextFindPlayerRefresh;
 };
+// The x86 n32 offsets are where the decompiled dc[1].<UiContext member> forms
+// landed (UiContext is 5752 bytes on x86): realTime +8, localVars.table[79].u
+// +2680+79*12+8, Menus[56] +48+56*4.
+RUNTIME_SIZE(uiInfo_s, 0x24B0, 15352);
+RUNTIME_OFFSET(uiInfo_s, playerIndex, 5760, 11464);
+RUNTIME_OFFSET(uiInfo_s, playerProfileStatus, 6024, 11984);
+RUNTIME_OFFSET(uiInfo_s, nextFindPlayerRefresh, 9388, 15348);
 struct gameTypeInfo // sizeof=0x8
 {                                       // ...
     const char *gameType;               // ...
