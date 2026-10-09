@@ -605,6 +605,27 @@ elseif (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(media-stubs-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# The D3DX9 subset a dxvk-native client links (_platform/posix/d3dx9_native.cpp).
+# It needs dxvk-native's <d3d9.h>, so it builds where pkg-config finds
+# dxvk-d3d9 (the POSIX client's dependency); elsewhere it is skipped.
+if (NOT KISAK_PLATFORM STREQUAL "win32")
+    find_package(PkgConfig QUIET)
+    if (PkgConfig_FOUND)
+        pkg_check_modules(KISAK_TEST_DXVK_D3D9 QUIET IMPORTED_TARGET dxvk-d3d9)
+    endif()
+    if (KISAK_TEST_DXVK_D3D9_FOUND)
+        add_executable(kisakcod-d3dx9-native-tests d3dx9_native_tests.cpp
+            ${SRC_DIR}/_platform/posix/d3dx9_native.cpp)
+        target_include_directories(kisakcod-d3dx9-native-tests PRIVATE ${SRC_DIR})
+        target_compile_features(kisakcod-d3dx9-native-tests PRIVATE cxx_std_20)
+        target_compile_definitions(kisakcod-d3dx9-native-tests PRIVATE KISAK_DXVK_NATIVE)
+        target_link_libraries(kisakcod-d3dx9-native-tests PRIVATE PkgConfig::KISAK_TEST_DXVK_D3D9)
+        set_target_properties(kisakcod-d3dx9-native-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        add_test(NAME d3dx9-native-subset-contracts COMMAND kisakcod-d3dx9-native-tests)
+        set_tests_properties(d3dx9-native-subset-contracts PROPERTIES TIMEOUT 20)
+    endif()
+endif()
+
 # The Win32 headless server's orderly quit on Ctrl+C, Ctrl+Break and console
 # close (qcommon/sys_quit.h): the real handler of _platform/win32/sys_console.cpp,
 # driven by real console control events in children on consoles of their own.
