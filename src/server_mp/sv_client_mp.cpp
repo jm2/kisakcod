@@ -6,6 +6,7 @@
 #include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 #include <qcommon/identity.h>
+#include <qcommon/wire_profile.h>
 #include <universal/com_files.h>
 #include <universal/q_parse.h>
 #include <game_mp/g_public_mp.h>
@@ -183,6 +184,10 @@ void __cdecl SV_GetChallenge(netadr_t from)
 
     if (!clientIdentity[0])
     {
+        // A stock client sends only the CD-key hash; its auth policy is the
+        // owner's open decision (NET_STEAM18 §8), so it is still refused.
+        if (Com_GetWireProfile() == WIRE_PROFILE_STEAM18)
+            Com_Printf(15, "getchallenge from %s has no client identity: stock Steam 1.8 auth is pending\n", NET_AdrToString(from));
         NET_OutOfBandPrint(NS_SERVER, from, "error\xA\x15" "A client identity is required");
         return;
     }
@@ -659,10 +664,10 @@ void __cdecl SV_DirectConnect(netadr_t from)
     Com_DPrintf(15, "SV_DirectConnect()\n");
     I_strncpyz(userinfo, SV_Cmd_Argv(1), 1024);
     version = atoi(Info_ValueForKey(userinfo, "protocol"));
-    if (version != 1)
+    if (version != Com_WireProtocol())
     {
-        NET_OutOfBandPrint(NS_SERVER, from, va("EXE_SERVER_IS_DIFFERENT_VER %s", "1.0"));
-        Com_DPrintf(15, "    rejected connect from protocol version %i (should be %i)\n", version, 1);
+        NET_OutOfBandPrint(NS_SERVER, from, va("EXE_SERVER_IS_DIFFERENT_VER %s", Com_WireShortVersion()));
+        Com_DPrintf(15, "    rejected connect from protocol version %i (should be %i)\n", version, Com_WireProtocol());
         return;
     }
     challenge = atoi(Info_ValueForKey(userinfo, "challenge"));

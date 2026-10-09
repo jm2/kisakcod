@@ -337,3 +337,34 @@ kisakcod_ilp32(kisakcod-net-chan-reassembly-tests
 
 kisakcod_ilp32(kisakcod-server-file-compare-tests
     qcommon-server-file-compare)
+
+# The dedicated server's wire identity (NET_STEAM18.md §7, gate G4a): the
+# production SV_Init, SVC_Info, SVC_Status and SV_DirectConnect under each
+# net_wireProfile. Linux and clang only, as the other engine-TU tests; the
+# defines are the Linux headless server's. --gc-sections drops the engine
+# code no check reaches, so only its boundary needs stubs.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-wire-identity-tests wire_identity_tests.cpp
+        ${SRC_DIR}/qcommon/wire_profile.cpp
+        ${SRC_DIR}/server_mp/sv_init_mp.cpp
+        ${SRC_DIR}/server_mp/sv_main_mp.cpp
+        ${SRC_DIR}/server_mp/sv_client_mp.cpp
+        ${SRC_DIR}/universal/dvar.cpp
+        ${SRC_DIR}/universal/q_shared.cpp)
+    target_include_directories(kisakcod-wire-identity-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-wire-identity-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-wire-identity-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-wire-identity-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-wire-identity-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        # Otherwise ASan's global registration keeps every global alive.
+        target_compile_options(kisakcod-wire-identity-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-wire-identity-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-wire-identity-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME wire-identity-steam18 COMMAND kisakcod-wire-identity-tests)
+    add_test(NAME wire-identity-fork COMMAND kisakcod-wire-identity-tests fork)
+    set_tests_properties(wire-identity-steam18 wire-identity-fork PROPERTIES TIMEOUT 20)
+endif()

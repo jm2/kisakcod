@@ -4,6 +4,7 @@
 
 #include "server_mp.h"
 #include <qcommon/qcommon.h>
+#include <qcommon/wire_profile.h>
 #include <server/sv_game.h>
 #include <database/database.h>
 #include <game_mp/g_public_mp.h>
@@ -697,7 +698,8 @@ void __cdecl SV_Init()
     SV_AddOperatorCommands();
     sv_gametype = Dvar_RegisterString("g_gametype", "war", DVAR_SERVERINFO | DVAR_LATCH, "Current game type");
     Dvar_RegisterString("sv_keywords", (char *)"", DVAR_SERVERINFO, "Server keywords");
-    Dvar_RegisterInt("protocol", 1, (DvarLimits)0x100000001LL, DVAR_SERVERINFO | DVAR_ROM, "Protocol version");
+    const int protocol = Com_WireProtocol();
+    Dvar_RegisterInt("protocol", protocol, DvarLimits(protocol, protocol), DVAR_SERVERINFO | DVAR_ROM, "Protocol version");
     sv_mapname = Dvar_RegisterString("mapname", (char *)"", DVAR_SERVERINFO | DVAR_ROM, "Current map name");
     sv_privateClients = Dvar_RegisterInt(
         "sv_privateClients",

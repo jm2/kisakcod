@@ -9,7 +9,7 @@ The only network reference is the original Steam release `1.8.13620`. The releas
 | Item | Fork today | Where |
 | --- | --- | --- |
 | Code base | CoD4 **v1.0** PC decompile. `version` is `CoD4 MP 1.0 build …`, `shortversion` is `1.0`; the original build 13620 is noted in `buildnumber.cpp` | `common.cpp`, `buildnumber.cpp` |
-| Protocol | `1`, inherited unchanged from upstream | `protocol` dvar (ROM) in `sv_init_mp.cpp`; `SV_DirectConnect` in `sv_client_mp.cpp` rejects any other value with `EXE_SERVER_IS_DIFFERENT_VER 1.0`; `CL_CheckForResend` in `cl_main_mp.cpp` writes it into `connect`; `SVC_Info` advertises it; `CL_ServerInfoPacket` filters the browser on `debug_protocol` |
+| Protocol | The `net_wireProfile` dvar picks it (§7): `7` under `steam18`, the default; `1` under `fork`. `gamename` and `shortversion` follow the profile too | `qcommon/wire_profile.cpp`; the `protocol` dvar, `SVC_Info`, `SV_DirectConnect`, `CL_CheckForResend` and `CL_ServerInfoPacket` read it |
 | Challenge request | `getchallenge 0 "<base64 Steam ticket>" "<SteamID64>"`, or without Steam `getchallenge 0 "" "<cl_guid>"` | `CL_CheckForResend` |
 | Challenge handling | `SV_GetChallenge` requires the third argument. A stock request carries only the CD-key MD5, so it is refused with "A client identity is required". It replies `challengeResponse <challenge>` at once | `sv_client_mp.cpp` |
 | Authorize / master | The `SV_AuthorizeRequest` call in the challenge path and `SV_MasterHeartbeat` are commented out. `masterServerName` still defaults to `cod4master.activision.com` | `sv_client_mp.cpp`, `sv_main_pc_mp.cpp`, `common.cpp` |

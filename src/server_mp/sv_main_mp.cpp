@@ -7,6 +7,7 @@
 #include <qcommon/qcommon.h>
 #include <qcommon/mem_track.h>
 #include <qcommon/cmd.h>
+#include <qcommon/wire_profile.h>
 #include <server/sv_game.h>
 #include <game_mp/g_main_mp.h>
 #include <qcommon/files.h>
@@ -533,7 +534,7 @@ void __cdecl SVC_Info(netadr_t from)
     infostring[0] = 0;
     v1 = SV_Cmd_Argv(1);
     Info_SetValueForKey(infostring, "challenge", v1);
-    v2 = va("%i", 1);
+    v2 = va("%i", Com_WireProtocol());
     Info_SetValueForKey(infostring, "protocol", v2);
     Info_SetValueForKey(infostring, "hostname", sv_hostname->current.string);
     Info_SetValueForKey(infostring, "mapname", sv_mapname->current.string);
