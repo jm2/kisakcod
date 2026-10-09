@@ -2547,11 +2547,11 @@ void DB_PostLoadXZone()
 
             {
                 DB_ArchiveAssets();
-                Sys_LockWrite(&db_hashCritSect);
+                DB_BeginRegistrySession(); // overrides mark user-4 names (Mark_ScriptStringCustom)
                 for (i = 0; i < g_copyInfoCount; ++i)
                     DB_LinkXAssetEntry((XAssetEntryPoolEntry *)g_copyInfo[i], 1);
                 g_copyInfoCount = 0;
-                Sys_UnlockWrite(&db_hashCritSect);
+                DB_EndRegistrySession();
                 DB_MediaDirtyTechniqueSetOverrides();
                 DB_MediaOverrideTechniqueSets();
                 DB_UnarchiveAssets();
@@ -2600,10 +2600,10 @@ void __cdecl DB_SyncXAssets()
     DB_PostLoadXZone();
 }
 
-// The unload sequences (DB_ShutdownXAssets, DB_LoadXAssets) hold db_hashCritSect
-// through a registry session, not Sys_LockWrite: their user-4/user-8 calls need
-// the registry window to own the hash (db_load_legacy_bridge.h).
-static void DB_BeginRegistrySession()
+// The unloads (DB_ShutdownXAssets, DB_LoadXAssets) and post-load override links
+// hold db_hashCritSect through a registry session, not Sys_LockWrite: their
+// user-4/user-8 calls need the registry window to own the hash (database.h).
+void DB_BeginRegistrySession()
 {
     iassert(!db::load_legacy_bridge::DbLoadLegacyBridge::InSession());
     db::load_legacy_bridge::DbLoadLegacyBridge::BeginSession();
@@ -2612,7 +2612,7 @@ static void DB_BeginRegistrySession()
 // Reports a failure only once db_hashCritSect is released. An error raised
 // under it never returns: Com_ErrorCleanup's localization lookup waits for the
 // hash this thread holds. The failure leaked names; nothing was freed early.
-static void DB_EndRegistrySession()
+void DB_EndRegistrySession()
 {
     const db::load_legacy_bridge::LegacyBridgeStatus status =
         db::load_legacy_bridge::DbLoadLegacyBridge::FinishSession();

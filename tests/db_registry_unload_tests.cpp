@@ -4,7 +4,8 @@
 // stub with the hash held (in production that error never returns). The
 // production TUs at 64-bit with the headless defines, as in
 // game_mp_hazard_tests.cpp: weak engine boundary, --gc-sections. Also the
-// menu asset's dynamic clone, which db_registry.cpp holds.
+// menu asset's dynamic clone, which db_registry.cpp holds, and a map zone's
+// post-load override link, whose marks need the same registry window.
 
 #include <database/database.h>
 #include <database/db_load_legacy_bridge.h>
@@ -27,6 +28,10 @@
 extern FastCriticalSection db_hashCritSect;
 extern int32_t g_zoneCount;
 extern uint8_t g_zoneHandles[];
+extern uint16_t db_hashTable[];
+extern XAssetEntryPoolEntry g_assetEntryPool[];
+extern uint32_t g_copyInfoCount;
+extern XZone g_zones[];
 
 namespace
 {
@@ -38,6 +43,9 @@ int g_failures = 0;
     ((expr) ? void() : (void)(std::fprintf(stderr, "line %d: CHECK(%s)\n", __LINE__, #expr), ++g_failures))
 
 int g_reports = 0;               // Com_PrintError calls
+bool g_databaseReady2 = true;    // Sys_IsDatabaseReady2
+uint16_t g_overrideMark = 0;     // the name Mark_XAsset marks, when set
+int g_marks = 0;                 // Mark_XAsset calls that marked it
 bool g_reportedUnderHash = false; // one of them while db_hashCritSect was held
 
 // A name a zone load interned for its assets: user 4 only.
@@ -73,6 +81,42 @@ void TestFailureInSessionKeepsNames()
     CHECK(DbLoadLegacyBridge::FinishSession() == LegacyBridgeStatus::OwnershipMismatch);
     CHECK(!Sys_IsWriteLocked(&db_hashCritSect));
     CHECK(SL_FindString("unload-kept-name") != 0);
+}
+
+// A map zone overrides a raw file a loaded zone holds and uses. Its post-load
+// link marks the held asset's names user 4 (Mark_XAsset), as a map's impact
+// table marks its effects' models' bone names. The link holds db_hashCritSect
+// through a registry session, so the mark reaches the registry instead of
+// failing on the hash its own thread holds.
+void TestPostLoadOverrideMarks()
+{
+    db::load_legacy_bridge::LegacyBridgeStringId id{};
+    CHECK(DbLoadLegacyBridge::TryInternUser4String("postload-bone", &id) == LegacyBridgeStatus::Success);
+    XAssetEntryPoolEntry &held = g_assetEntryPool[1];
+    XAssetEntryPoolEntry &overriding = g_assetEntryPool[2];
+    held.entry.asset.type = ASSET_TYPE_RAWFILE;
+    held.entry.zoneIndex = 1;
+    held.entry.inuse = 1;
+    overriding.entry.asset.type = ASSET_TYPE_RAWFILE;
+    overriding.entry.zoneIndex = 2;
+    g_zones[1].flags = 1;
+    g_zones[2].flags = 2; // the map zone overrides
+    uint16_t &bucket = db_hashTable[DB_HashForName("", ASSET_TYPE_RAWFILE)];
+    bucket = 1;
+    g_copyInfo[0] = &overriding.entry;
+    g_copyInfoCount = 1;
+    g_overrideMark = static_cast<uint16_t>(id.stringId);
+    g_databaseReady2 = false;
+    DB_PostLoadXZone();
+    g_databaseReady2 = true;
+    g_overrideMark = 0;
+    CHECK(g_marks == 1 && g_copyInfoCount == 0 && g_reports == 0);
+    CHECK(!Sys_IsWriteLocked(&db_hashCritSect));
+    CHECK(held.entry.nextOverride == 2);
+    bucket = 0;
+    held = {};
+    overriding = {};
+    g_zones[1].flags = g_zones[2].flags = 0;
 }
 
 // Two unloads with a poisoned registry boundary, so no registry window opens:
@@ -179,7 +223,7 @@ WEAK void Sys_EnterCriticalSection(int section) { g_criticalSections.at(static_c
 WEAK void Sys_LeaveCriticalSection(int section) { g_criticalSections.at(static_cast<size_t>(section)).unlock(); }
 WEAK void Sys_Sleep(uint32_t) {}
 WEAK bool Sys_IsMainThread() { return true; }
-WEAK bool Sys_IsDatabaseReady2() { return true; }
+WEAK bool Sys_IsDatabaseReady2() { return g_databaseReady2; }
 WEAK void Sys_DatabaseCompleted2() {}
 WEAK void Sys_SyncDatabase() {}
 WEAK void Com_Memset(void *dest, const int val, const size_t count) { std::memset(dest, val, count); }
@@ -194,7 +238,13 @@ WEAK XAsset *varXAsset;
 WEAK void CM_Unload() {}
 WEAK void Com_UnloadWorld() {}
 WEAK void BG_FillInAllWeaponItems() {}
-WEAK void Mark_XAsset() {}
+WEAK void Mark_XAsset()
+{
+    if (!g_overrideMark)
+        return;
+    Mark_ScriptStringCustom(&g_overrideMark);
+    ++g_marks;
+}
 WEAK void DB_SaveDObjs() {}
 WEAK void DB_LoadDObjs() {}
 WEAK void DB_ReleaseGeometryBuffers(XZoneMemory *)
@@ -220,6 +270,7 @@ int main(int argc, char **argv)
         return 1;
     }
     TestDynamicCloneMenu();
+    TestPostLoadOverrideMarks();
     TestQuitFreesZoneNames();
     TestFailureInSessionKeepsNames();
     TestUnloadReportsAfterRelease(); // last: the poison is process-wide
