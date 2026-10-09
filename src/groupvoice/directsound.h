@@ -30,6 +30,10 @@ struct dsound_sample_t // sizeof=0x48
 #if defined(_WIN32)
     IDirectSoundCaptureBuffer *DSCB;
     IDirectSoundBuffer *DSB;
+#else
+    // No DirectSound off Windows: the record keeps its layout.
+    void *DSCB;
+    void *DSB;
 #endif
     uint32_t dwBufferSize;
     uint32_t dwCaptureOffset;
