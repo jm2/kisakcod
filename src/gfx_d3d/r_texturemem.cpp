@@ -2,10 +2,14 @@
 #include <universal/assertive.h>
 #include "r_init.h"
 
+#if defined(_WIN32)
 #define INITGUID 
 #include <ddraw.h>
+#endif
 
 uint32_t s_maxReportedTexMem;
+
+#if defined(_WIN32)
 
 uint32_t __cdecl R_VideoMemoryForDevice(_GUID *lpGUID)
 {
@@ -138,6 +142,18 @@ uint32_t __cdecl R_VideoMemory()
         size >>= 1;
     return size;
 }
+
+#else
+
+// DirectDraw is Windows-only. Reporting no video memory sends
+// R_DetectCurrentTextureMemory down its existing path that trusts the D3D9
+// device's GetAvailableTextureMem (dxvk-native implements it).
+uint32_t __cdecl R_VideoMemory()
+{
+    return 0;
+}
+
+#endif
 
 uint32_t __cdecl R_AvailableTextureMemory()
 {
