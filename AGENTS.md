@@ -88,6 +88,12 @@ reads this first. The only way to close a bead is to move a KPI or pass a gate
 21. **Escalate instead of guessing** when an x86 code change isn't declared,
     a done-test is ambiguous, a fix touches security, or a bead hits rule 5.
     *Prevents: confident wrong merges.*
+22. **The coordinator is the first responsive session in host order:**
+    antec, antec-win, mbp16-m1max, macmini-m1, yoga-slim7x. It
+    merges per rule 16. If it doesn't answer for 30 minutes or leaves the
+    fleet list, the next responsive host tells the others it's taking over.
+    A higher host coming back takes the role back after a handoff message.
+    *Prevents: work stopping when a host reboots.*
 
 ## Build and test
 
