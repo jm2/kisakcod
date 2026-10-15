@@ -94,6 +94,10 @@ void TestPostLoadOverrideMarks()
     CHECK(DbLoadLegacyBridge::TryInternUser4String("postload-bone", &id) == LegacyBridgeStatus::Success);
     XAssetEntryPoolEntry &held = g_assetEntryPool[1];
     XAssetEntryPoolEntry &overriding = g_assetEntryPool[2];
+    RawFile heldFile{};
+    RawFile overridingFile{};
+    held.entry.asset.header.rawfile = &heldFile; // the link clones the headers
+    overriding.entry.asset.header.rawfile = &overridingFile;
     held.entry.asset.type = ASSET_TYPE_RAWFILE;
     held.entry.zoneIndex = 1;
     held.entry.inuse = 1;
