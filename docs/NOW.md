@@ -45,7 +45,7 @@ Other `burndown` issues are off these gates or wait on the owner. Future bead: a
 | An active desktop session on antec-win for the Win64 client run | 35, G4b |
 | Hash the Steam 1.8 `iw3mp.exe`; record the depot manifest | G0, G4a |
 | Steam 1.8 captures ([NET_STEAM18](design/NET_STEAM18.md)) to confirm the `steam18` values | 36, G4a |
-| Miles/Bink legal decision; release packaging (#263, #290) | WS-8, G6 |
+| Miles/Bink legal decision; release packaging, including the 64-bit client release recipe (#263, #290) | WS-8, G6, K6 |
 | CoD4x census ([ADR-0005](decisions/0005-cod4x-compatibility.md)); approve `CHARTER.md` and the ADRs | all |
 | Later: GPU runner; Apple Developer ID | G5; G6 |
 
