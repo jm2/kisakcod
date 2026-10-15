@@ -17,7 +17,7 @@ From the master census. Live values: the `Native64 census` summary of the latest
 | K3 | Upstream engine TUs in the Linux test build | 79/475 | rising | census |
 | K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 0/25 verified (with the `db_unverified64` opt-in, all families load and mp_crash runs on macOS arm64; no digest pipeline yet) | 25/25 (G2) | this file |
 | K5 | Headless TUs reaching `<d3d9.h>` on Linux | not re-measured this review | 0 (G1 Linux) | census |
-| K6 | Target x role cells at `links` or above | 7/10 (all headless; Windows amd64 and arm64 clients) | 10 at `packaged` (G6) | manifest |
+| K6 | Target x role cells at `links` or above | 5/10 (all headless; the Windows clients link in CI but have no release recipe yet) | 10 at `packaged` (G6) | manifest |
 
 ## Queue
 
