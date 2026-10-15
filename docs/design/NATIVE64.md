@@ -94,8 +94,8 @@ Two kinds of hazard, both fixed by beads 9–11 (WS-3, G2):
 | `__rdtsc` | `scr_vm.cpp`, `sv_main_mp.cpp` | Doesn't exist on arm64 | `Sys_CycleCounter` ([PLATFORM_POSIX.md](PLATFORM_POSIX.md)) | 13 | fixed |
 | Huffman tie-break uses the host `qsort` | `qcommon/huffman.cpp` | The code book differs per C library (glibc swaps 155/205, macOS 228/231) | Total-order `nodeCmp` reproducing the MSVC CRT order ([DETERMINISM.md](DETERMINISM.md)) | WS-3 | fixed |
 | Parser tables initialise `short` arrays with 32768 as YYPACT_NINF sentinel | `yypact`/`yypgoto` in `script/scr_yacc_structs.h`, `yypact` in `script/scr_yacc.cpp` | Ill-formed narrowing in C++11; 99 + 83 errors on GCC/clang. MSVC/clang-cl only warn, so Windows builds hide it. The census `-Wno-everything` also silenced the default-error diagnostic | Write sentinel as −32768; the census restores the DefaultError class (no blanket suppression) and keeps `-Werror=c++11-narrowing` for the `-fms-extensions` demotion, so default-error narrowing fails a TU | ki-pbb7c | open |
-| Byte counts frozen at their x86 size | `R_GetCommandBuffer` callers, `gfx_d3d/r_rendercmds.cpp` | Pointer-holding commands overran the next: garbled UI text | `sizeof`/`offsetof`, rounded to 4 (x86) or 8 | #598 | fixed |
-| `obj[1].member` reaching the struct after `obj` | `dc[1]…` in `ui_mp/ui_main_mp.cpp` | Lands on other fields | Map to the named member | #599 | fixed |
+| Byte counts frozen at their x86 size | `R_GetCommandBuffer` callers, `gfx_d3d/r_rendercmds.cpp` | Pointer-holding commands overran the next: garbled UI text | `sizeof`/`offsetof`, rounded to 4 (x86) or 8 | WS-3 | fixed |
+| `obj[1].member` reaching the struct after `obj` | `dc[1]…` in `ui_mp/ui_main_mp.cpp` | Lands on other fields | Map to the named member | WS-3 | fixed |
 
 A row reaches **fixed** only when the fix is merged *and* a test executes the fixed code at 64-bit. Pin an x86 identity with `RUNTIME_SIZE`/`RUNTIME_OFFSET` (n32 = old bytes); a formula `static_assert` fails the abi-sizeof tripwire.
 
