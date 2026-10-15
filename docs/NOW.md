@@ -8,7 +8,7 @@ The mayor is the only role that edits this file ([AGENTS.md](../AGENTS.md)).
 
 ## KPIs
 
-From the master census at 30bd69bc. Live values: the `Native64 census` summary of the latest [master CI run](https://github.com/jm2/kisakcod/actions/workflows/ci.yml?query=branch%3Amaster).
+From the master census. Live values: the `Native64 census` summary of the latest [master CI run](https://github.com/jm2/kisakcod/actions/workflows/ci.yml?query=branch%3Amaster).
 
 | KPI | Measures | Value | Target | Source |
 | --- | --- | --- | --- | --- |
@@ -17,7 +17,7 @@ From the master census at 30bd69bc. Live values: the `Native64 census` summary o
 | K3 | Upstream engine TUs in the Linux test build | 79/475 | rising | census |
 | K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 0/25 verified (with the `db_unverified64` opt-in, all families load and mp_crash runs on macOS arm64; no digest pipeline yet) | 25/25 (G2) | this file |
 | K5 | Headless TUs reaching `<d3d9.h>` on Linux | not re-measured this review | 0 (G1 Linux) | census |
-| K6 | Target x role cells at `links` or above | 7/10 (all headless; Windows amd64 and arm64 clients, CI 261d6d5a) | 10 at `packaged` (G6) | manifest |
+| K6 | Target x role cells at `links` or above | 7/10 (all headless; Windows amd64 and arm64 clients) | 10 at `packaged` (G6) | manifest |
 
 ## Queue
 
@@ -25,12 +25,12 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 30 | POSIX client SDL3 entry point (`main`, `Sys_GetEvent`, clipboard) | G5 | gate | the Linux client builds with `KISAK_EXPERIMENTAL_POSIX_CLIENT` and `KISAK_CLIENT_SDL3` and starts | S | done (#567, d0322d4c) |
+| 30 | POSIX client SDL3 entry point (`main`, `Sys_GetEvent`, clipboard) | G5 | gate | the Linux client builds with `KISAK_EXPERIMENTAL_POSIX_CLIENT` and `KISAK_CLIENT_SDL3` and starts | S | done (#567) |
 | 31 | POSIX client GPU detection; `r_init`/`r_screenshot` SDL paths | G5 | gate | every renderer TU compiles in the Linux client build; the client creates a dxvk-native device | M | in progress (linux-arm64): GPU detection #581; the arm64 client reaches the main menu (about 190 fps) and connects to mp_crash |
 | 32 | POSIX client line-neutral renderer/UI fixes; D3DX9 subset definitions | G5 | gate | the Linux client links | M | done (#565, #582) |
 | 33 | Linux amd64 client draws its main menu on Steam 1.8 data | G5 | gate | gdb reads `UI_GetActiveMenu(0)` = 1 and a TGA `screenshot` taken after the menu is up is mostly non-black ([CLIENT](design/CLIENT.md) bring-up) | M | in progress (antec): zones load, menu active at about 230 fps, but captures are black even with a magenta clear |
 | 38 | disk32 renderer hooks for client builds: the 64-bit converters don't call `Load_BuildVertexDecl`, the shader creates, `Load_Texture`, `Load_PicmipWater` or `Load_VertexBuffer`; add them | G5 | gate | the client loads the code_post_gfx and localized zones to the main menu on Steam 1.8 data | M | done (#586, #590, #596) |
-| 39 | `+devmap mp_crash` stops in `CG_Init` → `BG_LoadAnim` → `Scr_EndLoadAnimTrees` → `SL_ShutdownSystem(2)`: ERR_DROP "invalid script string user-reference removal" (scr_stringlist.cpp:837) | G5 | gate | `+devmap mp_crash` on Steam 1.8 data runs in-game frames with no ERR_DROP | M | queued: find which of the four checks fails (gdb) |
+| 39 | `+devmap mp_crash` stops in `CG_Init` → `BG_LoadAnim` → `Scr_EndLoadAnimTrees` → `SL_ShutdownSystem(2)`: ERR_DROP "invalid script string user-reference removal" | G5 | gate | `+devmap mp_crash` on Steam 1.8 data runs in-game frames with no ERR_DROP | M | queued: find which of the four checks fails (gdb) |
 | 34 | macOS client: jm2/dxvk MoltenVK fork (upstream doitsujin/dxvk#5962, #5963) | G5 | gate | the macOS client creates a device | L | in progress (mac) |
 | 35 | Win64 client main-menu run on Steam 1.8 data | G4b | gate | the owner's manual run reaches the main menu; evidence as text | M | blocked (needs an active console session on antec-win) |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects to the fork's x86 server under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | queued |
@@ -51,7 +51,7 @@ Other `burndown` issues are off these gates or wait on the owner. Future bead: a
 
 ## Decided by the owner since last review
 
-- `steam18` auth policy: option A, the CD-key hash accepted unchecked as the ban key ([NET_STEAM18](design/NET_STEAM18.md) §8), 2026-10-07. Landed in #532 (950f8f91).
+- `steam18` auth policy: option A, the CD-key hash accepted unchecked as the ban key ([NET_STEAM18](design/NET_STEAM18.md) §8), 2026-10-07. Landed in #532.
 - Retail data is on every agent host for local manual runs only; never in CI or the repo.
 - Coordination and merges: kisakcod-win, 2026-10-09.
 
