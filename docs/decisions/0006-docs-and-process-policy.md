@@ -33,7 +33,7 @@ source text.
   new file.
 - The mayor re-ranks `NOW.md` at least every 10 days; CI warns after that.
 
-## Amendment (2026-10-15, pending owner sign-off)
+## Amendment (2026-10-15, approved by the owner)
 
 `design/CLIENT.md` rises from 10 KB to 15 KB, as NATIVE64.md has. G5 made it
 the client runbook (per-platform bring-up, run and capture steps that other
