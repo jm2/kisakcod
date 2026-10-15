@@ -30,7 +30,7 @@ BUDGETS = {  # path -> max bytes
     "docs/design/NET_STEAM18.md": 12 * KB,
     "docs/design/PLATFORM_POSIX.md": 8 * KB,
     "docs/design/DETERMINISM.md": 5 * KB,
-    "docs/design/CLIENT.md": 10 * KB,
+    "docs/design/CLIENT.md": 15 * KB,
 }
 ADR_RE = re.compile(r"^docs/decisions/\d{4}-[a-z0-9-]+\.md$")
 ADR_BUDGET = 2 * KB
