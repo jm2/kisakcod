@@ -77,7 +77,10 @@ LD_LIBRARY_PATH=$P/lib64 bin/KisakCOD-mp +set fs_basepath <install> \
 ```
 
 `DXVK_HUD=fps` draws the frame rate on screen. A data-free run stops at
-`fileSysCheck.cfg` but still creates the device. Retail data rules are in
+`fileSysCheck.cfg` but still creates the device. The client reads and writes
+profiles under `fs_basepath/players`, so run it against a copy-on-write clone
+of the install (`cp -cR` on APFS, `cp --reflink` elsewhere) with a seeded
+profile, never the retail directory; symlinked installs don't list. Retail data rules are in
 [FASTFILE_LOADER.md](FASTFILE_LOADER.md).
 
 **State without a screen.** The Release build lacks types for globals, so
@@ -101,6 +104,6 @@ read them with casts in `gdb -p <pid>`:
 **Open (amd64, 2026-10-09):** the client loads all base zones and reports
 the main menu at about 200-240 fps, but every capture is black, including a
 backbuffer capture with `r_clear steady` and a magenta `r_clearColor`. The
-arm64 client reports its main menu too, and macOS renders the profile screen
-with #598. Next: capture after the menu is up; if still
+arm64 client reports its main menu too, and the macOS client draws the full
+main menu at a steady ~58 fps (probably a FIFO-only present on KosmicKrisp). Next: capture after the menu is up; if still
 black with the magenta clear, the frame isn't reaching the swapchain.
