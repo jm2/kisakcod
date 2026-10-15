@@ -44,7 +44,12 @@ def main():
     owner, name = args.repo.split("/")
 
     pr = json.loads(gh("pr", "view", str(args.number), "-R", args.repo, "--json",
-                       "state,mergeable,baseRefName,headRefOid,statusCheckRollup"))
+                       "state,mergeable,baseRefName,headRefOid,statusCheckRollup,files"))
+    # Only these inputs can change the Windows x86 objects.
+    builds_x86 = any(f["path"].startswith(("src/", "deps/", "scripts/", "cmake/"))
+                     or f["path"].endswith(("CMakeLists.txt", ".cmake", "CMakePresets.json"))
+                     for f in pr["files"]
+                     if not f["path"].startswith("scripts/ci/"))
     blockers, warnings, escalations = [], [], []
 
     if pr["state"] != "OPEN":
@@ -72,7 +77,7 @@ def main():
             blockers.append(f"CI failed: {label}")
         elif state not in ("SUCCESS", "success", "SKIPPED", "NEUTRAL"):
             blockers.append(f"CI not finished: {label} ({state})")
-    if not x86_seen:
+    if not x86_seen and builds_x86:
         escalations.append("no x86 identity result on this head (job missing or the PR predates it): "
                            "run scripts/ci/compare-x86-pr-objects.sh or rerun CI before merging")
 
