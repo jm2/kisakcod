@@ -37,7 +37,10 @@ REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 class Findings:
+    """Blocking, escalating and warning lines collected by the checks."""
+
     def __init__(self):
+        """Start with no findings."""
         self.blockers, self.escalations, self.warnings = [], [], []
 
 
@@ -45,9 +48,10 @@ def gh(*args):
     executable = shutil.which("gh")
     if executable is None:
         sys.exit("pr_gate: the gh CLI is not on PATH")
-    # nosec B603 - fixed executable; arguments are validated ints and repo names
-    return subprocess.run([executable, *args], check=True, capture_output=True,
-                          text=True, encoding="utf-8").stdout
+    # Argument list, no shell, executable resolved by shutil.which; the
+    # arguments are validated ints and an owner/name repo.
+    result = subprocess.run([executable, *args], check=True, capture_output=True, text=True, encoding="utf-8")  # nosec B603  # nosemgrep
+    return result.stdout
 
 
 def builds_x86(files):
@@ -70,6 +74,14 @@ def check_pr(pr, found):
         found.blockers.append(f"base is {pr['baseRefName']}: merge that first, then retarget (rule 16)")
 
 
+def check_x86(state, found):
+    if state in FAILED:
+        found.escalations.append("x86 identity job reports CODE/added/removed objects: "
+                                 "the PR body must declare the change (rule 16)")
+    elif state not in PASSED:
+        found.blockers.append(f"x86 identity job is {state}")
+
+
 def check_ci(pr, found):
     x86_seen = False
     for check in pr["statusCheckRollup"]:
@@ -77,11 +89,7 @@ def check_ci(pr, found):
         state = check.get("conclusion") or check.get("state") or check.get("status")
         if X86_JOB in label:
             x86_seen = True
-            if state in FAILED:
-                found.escalations.append("x86 identity job reports CODE/added/removed objects: "
-                                         "the PR body must declare the change (rule 16)")
-            elif state not in PASSED:
-                found.blockers.append(f"x86 identity job is {state}")
+            check_x86(state, found)
         elif any(label.startswith(prefix) for prefix in JUDGED_ELSEWHERE):
             continue
         elif state in FAILED:
@@ -97,8 +105,8 @@ def check_codacy(owner, name, number, found):
     url = CODACY.format(owner=owner, name=name, number=number)
     if not url.startswith("https://app.codacy.com/"):
         sys.exit("pr_gate: unexpected Codacy URL")
-    # nosec B310 - fixed https Codacy endpoint built from validated parts
-    with urllib.request.urlopen(url, timeout=30) as response:  # nosemgrep
+    # Fixed https Codacy endpoint built from validated parts.
+    with urllib.request.urlopen(url, timeout=30) as response:  # nosec B310  # nosemgrep
         issues = json.load(response).get("data", [])
     for issue in issues:
         info = issue["commitIssue"]
