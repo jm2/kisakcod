@@ -70,6 +70,7 @@ reads this first. The only way to close a bead is to move a KPI or pass a gate
     answered; x86 objects identical, or each change is metadata-only
     (identical `dumpbin /disasm`) or declared in the PR body. Stacked PRs
     merge base first; retarget, then close and reopen to start CI.
+    `scripts/ci/pr_gate.py <n>` checks all of this; merge only on READY.
     *Prevents: merges that break x86 or skip findings.*
 17. **Never force-push.** A conflicting PR is replaced by a `-v2` branch cut
     from master with cherry-picks; close the old PR.
