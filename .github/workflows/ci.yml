@@ -695,27 +695,47 @@ jobs:
           $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
           "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
 
-      - name: Check out the base
-        shell: pwsh
-        run: git worktree add base-tree "${{ github.event.pull_request.base.sha }}"
+      - name: Detect compiled inputs
+        id: changes
+        shell: bash
+        run: |
+          # Only these inputs can change x86 objects (same rule as pr_gate.py).
+          if git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD |
+             grep -v '^scripts/ci/' |
+             grep -Eq '^(src|deps|scripts|cmake)/|CMakeLists\.txt$|\.cmake$|CMakePresets\.json$'; then
+            echo "compiled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No compiled inputs changed; x86 objects can't differ." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-      - name: Build base and PR
+      - name: Build base, then PR, in the same tree
+        if: steps.changes.outputs.compiled == 'true'
         shell: pwsh
         run: |
-          foreach ($tree in @('base-tree', '.')) {
-            Push-Location $tree
+          # One source path for both builds: __FILE__ strings are absolute
+          # and /Brepro doesn't normalise them, so separate trees would
+          # differ everywhere.
+          $pr = git rev-parse HEAD
+          foreach ($rev in @('${{ github.event.pull_request.base.sha }}', $pr)) {
+            git checkout -q --detach $rev
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
             cmake --preset windows-x86-mp -DCICD=ON -DKISAK_REPRODUCIBLE_BUILD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE"
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
             cmake --build build-windows-x86-mp --config Release --target KisakCOD-mp KisakCOD-dedi --parallel
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            Pop-Location
+            if ($rev -ne $pr) {
+              robocopy build-windows-x86-mp\scripts base-objects\scripts *.obj /S /NFL /NDL /NJH /NJS /NP
+              if ($LASTEXITCODE -ge 8) { exit 1 }
+            }
           }
+          exit 0
 
       - name: Compare objects
+        if: steps.changes.outputs.compiled == 'true'
         shell: bash
         run: |
           set -o pipefail
-          scripts/ci/compare-x86-pr-objects.sh base-tree/build-windows-x86-mp build-windows-x86-mp | tee -a "$GITHUB_STEP_SUMMARY"
+          scripts/ci/compare-x86-pr-objects.sh base-objects build-windows-x86-mp | tee -a "$GITHUB_STEP_SUMMARY"
 
   windows-x86-sp:
     name: Windows x86 SP / ${{ matrix.config }}
