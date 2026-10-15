@@ -63,7 +63,8 @@ The framing has no codec-version field, so the claim that "a codec version is em
 
 ## Bring-up runs (Linux, dxvk-native)
 
-Build dxvk-native 3.1.1 with only its SDL3 WSI, then the client:
+Build dxvk-native 3.1.1 with only its SDL3 WSI, then the client. The
+client presets need `PKG_CONFIG_PATH` pointing at that install:
 
 ```sh
 meson setup --buildtype=release --prefix=$P -Dnative_sdl3=enabled \
