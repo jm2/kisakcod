@@ -94,6 +94,9 @@ reads this first. The only way to close a bead is to move a KPI or pass a gate
     fleet list, the next responsive host tells the others it's taking over.
     A higher host coming back takes the role back after a handoff message.
     *Prevents: work stopping when a host reboots.*
+23. **Subagents:** DeepSeek and Xiaomi sessions may run up to 4 at once;
+    other models use one agent plus at most one no-context review pass.
+    *Prevents: runaway fan-out and host load.*
 
 ## Build and test
 
