@@ -9,28 +9,30 @@ Retail `.ff` files are read unmodified ([CHARTER](../CHARTER.md)). The disk form
 reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined in
 [NATIVE64.md](NATIVE64.md). This doc covers the loader.
 
-## Problem
+## Status
 
-- **Pointer slots are 4 bytes on disk.** Each `Load_*Ptr` in `db_load.cpp` streams 4 bytes
-  into a native pointer field (`Load_Stream(..., 4)`), then tests the value: `-1` means inline
-  data follows, `-2` means shared-inline (an alias the loader must register), and anything else
-  is a block/offset token. Comparisons such as `== (SoundFile *)-1` bake in 32-bit pointers.
-- **Records are read in place.** `Load_Stream` copies disk bytes over the runtime struct. That
-  only works while `sizeof(runtime) == sizeof(disk)`.
-- **The offset converters narrow.** `DB_ConvertOffsetToPointer`, `DB_ConvertOffsetToAlias` and
-  `DB_ConvertOffsetToCString` in `db_stream_load.cpp` resolve a token and then write back 4
-  bytes. They raise `ERR_DROP` ("does not fit the 32-bit runtime") only when the target is above
-  4 GiB. A 64-bit load whose blocks land below 4 GiB passes that check and leaves the upper half
-  of every pointer holding stale stream bytes. **That is not failing closed.**
-- **Most records change layout.** 129 of the 202 record types `db_load.cpp` walks through `var*`
-  cursors change size between i686 and x86_64. 92 of those 129 have no size assert of any kind.
-  Examples: `WeaponDef` 2168→2832, `clipMap_t` 284→480, `GfxWorld` 732→1032, `XAnimParts` 88→136,
-  `MaterialTechniqueSet` 148→296.
-- **FX is not wired for headless.** FX has a hand-written mirror, converter and arena
-  (`fx_fastfile_disk32.h`) with no production caller, and headless excludes `EffectsCore`.
-- **Nothing can be skipped.** An `XAssetList` stream has no per-asset lengths. To reach byte
-  *n* the loader must walk every asset before it, so a zone loads only if every family in it
-  parses.
+All 25 server-closure families have generated disk32 loaders, and so does
+every family the client zones reach. The fail-closed guard (design step 6) is
+still on for each of them, because K4 needs `db::graph_hash` parity with
+x86 and that pipeline doesn't exist yet (NOW row 37). The developer dvar
+`db_unverified64 1` (#513) admits every family with a disk32 loader
+(`db::asset_layout::HasDisk32Loader`) and warns once. It doesn't count
+toward K4. SndDriverGlobals is listed in `code_post_gfx_mp` but has no
+loader, so the envelope skips it (#473).
+
+Retail data broke these synthetic-fixture assumptions; each now has a test:
+
+- **Block-4 pointer slots.** An offset token can name any block-4 slot where
+  a pointer was stored, not only a header slot: the IW linker reuses the
+  first place a pointer landed. Every pointer step records its slot (#497,
+  x86 #512).
+- **Stub assets.** A name starting with `,` is a stub: a SoundCurve with no
+  knots (`,helicopter1`) loads as-is on both paths (#498, x86 #518).
+- **Empty values.** A 0x0 StringTable may carry an inline values token
+  (#478); an FX lifespan may start at 0 (#479).
+- **Shader versions.** Renderer 0 ships vs_1_1 and ps_1_1-1_4. SM1 tokens
+  have no length field, so their bytecode is checked by its comment blocks
+  and END token (#475).
 
 ## Design
 
@@ -137,19 +139,6 @@ The MP build rejects the other eight families: ClipMap and GameWorldSp are SP-on
 SndDriverGlobals, AiType, MpType, Character and XModelAlias are unavailable. XModelPieces has no
 top-level dispatch; `Load_DynEntityDef` reaches it.
 
-## Order
-
-- **Wave 1:** RawFile, StringTable, PhysPreset: inline strings, a pointer array of strings,
-  invariant byte buffers and aliases.
-- **Wave 2:** flat records with a few pointers.
-- **Wave 3:** medium graphs: the sound chain, the material chain, FX, and Weapon (large but
-  flat, with many asset references).
-- **Wave 4:** deep graphs: XAnimParts, XModel, ClipMapPvs (collision, DynEnt, physics), GfxWorld
-  and Menu (expression trees).
-
-G2 needs all 25 families, because the boot map zone plus the four code and common zones touch
-most of them.
-
 ## Clone sizes
 
 `DB_GetXAssetSizeHandler` takes one `sizeof` per header type (row 21), so
@@ -178,12 +167,36 @@ A family counts toward K4 when all of these hold:
 | Zone | One synthetic `.ff` holding all 25 families, loaded through `DB_LoadXAssets` and the real dispatch, pools and unload, its cross-family references checked; each family's guard, left on, fails it closed (`db_disk32_zone_tests.cpp`) | Linux and macOS test builds, ASan/UBSan leg |
 | Real data | Load the four code and common zones plus the boot map at 64-bit under ASan/UBSan, and compare the graph digest against x86 | Manual owner runs only; retail data never enters CI |
 
-The real-data layer is the only one that moves K4. It runs only on the owner's machine, by hand, against owner-provided Steam 1.8 files
-(`blocked-owner` in [NOW.md](../NOW.md)). `tests/retail_fastfile_parity_harness.cpp` today
-hashes only the file envelope. Extending it to hash the loaded graph is part of bead 12.
-Platform file I/O for async reads belongs to [PLATFORM_POSIX.md](PLATFORM_POSIX.md).
+Only the real-data layer moves K4, and only once the graph digest exists (NOW row 37).
 
-## Open questions
+## Retail runs (manual)
 
-- Which families actually occur in the four zones and the boot map? Measure this on the first
-  owner data run. The answer can only reorder waves; N stays 25 while nothing can be skipped.
+Retail data stays on the agent hosts and never enters CI or the repo
+([AGENTS.md](../../AGENTS.md)); evidence is text. A 64-bit headless run:
+
+```sh
+cmake -S . -B build-headless -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+  -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF \
+  -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON
+build-headless/bin/KisakCOD-dedi +set fs_basepath <install> +set fs_homepath <scratch> \
+  +set db_unverified64 1 +map mp_crash
+```
+
+Use a scratch `fs_homepath`; afterwards nothing under `fs_basepath` may be
+newer than the run. Read the console for:
+
+- `db_unverified64: admitting …` once, then `Loaded zone '<zone>'` per zone;
+- `Waited N msec for asset '<name>'`: normal; names the asset in flight;
+- the first `Invalid fast-file …` or `KisakCOD fatal error` line: the stop.
+  `no 64-bit on-disk/runtime layout pair` means the guard (no opt-in);
+  `alias offset: unregistered slot` means an unrecorded pointer slot.
+
+On 2026-10-09 mp_crash and mp_shipment ran clean on macOS arm64. CI runs
+the x86 load path only on synthetic zones (`linux-x86-tests`, #522).
+
+**Registry sessions.** A sequence that holds `db_hashCritSect` while its
+assets intern or mark script strings (user 4 or 8) must hold it through
+`DB_BeginRegistrySession`/`DB_EndRegistrySession`, not `Sys_LockWrite`. The
+bridge can't take the hash its own thread holds, so the mark fails. This
+covers unloads, shutdown and the post-load override link (#600). Sessions
+don't nest, and an error is reported only after the hash is released.

@@ -15,15 +15,15 @@
   "cells": [
     {"target": "windows-x86", "role": "mp-client", "level": "links", "next": "G0", "evidence": "CI Windows x86 / Release links KisakCOD-mp; never started on Steam 1.8 data."},
     {"target": "windows-x86", "role": "headless-server", "level": "links", "next": "G0", "evidence": "CI Windows x86 (headless dedicated) links KisakCOD-dedi; never started on Steam 1.8 data."},
-    {"target": "windows-amd64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "No engine configure at 64-bit."},
+    {"target": "windows-amd64", "role": "mp-client", "level": "links", "next": "G4b", "evidence": "CI Windows client / amd64 (advisory) builds and links KisakCOD-mp for x64, with and without SDL3, and verifies the PE machine; green on master at 261d6d5a (run 37963363976)."},
     {"target": "windows-amd64", "role": "headless-server", "level": "links", "next": "G2", "evidence": "CI Windows headless server / amd64 builds and links KisakCOD-dedi with MSVC for x64 on windows-2025 and passes scripts/ci/headless_smoke.py; green at e6c565cb on PR #342 (run 36740984304)."},
-    {"target": "windows-arm64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "No engine configure at 64-bit."},
+    {"target": "windows-arm64", "role": "mp-client", "level": "links", "next": "G5", "evidence": "CI Windows client / arm64 (advisory) builds and links KisakCOD-mp natively for ARM64 and verifies the PE machine; green on master at 261d6d5a (run 37963363976)."},
     {"target": "windows-arm64", "role": "headless-server", "level": "links", "next": "G3", "evidence": "CI Windows headless server / arm64 builds and links KisakCOD-dedi with MSVC for ARM64 on windows-11-arm (PE machine ARM64) and passes scripts/ci/headless_smoke.py natively; green at 702ca0b4 on PR #360 (run 36777629902)."},
-    {"target": "linux-amd64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "Engine source set is empty."},
+    {"target": "linux-amd64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "Builds and links locally with linux-amd64-client and dxvk-native 3.1.1 (antec, master 47dd6ad9); no CI leg yet, so not raised."},
     {"target": "linux-amd64", "role": "headless-server", "level": "links", "next": "G2", "evidence": "CI Linux headless server / amd64 builds and links KisakCOD-dedi and passes scripts/ci/headless_smoke.py on every push; green on master at cd0122be (run 36689132952)."},
-    {"target": "linux-arm64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "Engine source set is empty."},
+    {"target": "linux-arm64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "Builds and links locally with linux-arm64-client and dxvk-native (linux-arm64 session); no CI leg yet, so not raised."},
     {"target": "linux-arm64", "role": "headless-server", "level": "links", "next": "G3", "evidence": "CI Linux headless server / arm64 builds and links KisakCOD-dedi on ubuntu-24.04-arm and passes scripts/ci/headless_smoke.py on every push; green on master at 8b897ce3 (run 36733167279)."},
-    {"target": "macos-arm64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "Engine source set is empty."},
+    {"target": "macos-arm64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "Builds locally on the jm2/dxvk MoltenVK fork (mac session, NOW row 34); no CI leg yet, so not raised."},
     {"target": "macos-arm64", "role": "headless-server", "level": "links", "next": "G3", "evidence": "CI macOS headless server / arm64 builds and links KisakCOD-dedi with Apple clang 21 on macos-26 and passes scripts/ci/headless_smoke.py; green on master at fcc6d843 (run 36799698478)."}
   ]
 }
