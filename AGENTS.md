@@ -67,10 +67,11 @@ reads this first. The only way to close a bead is to move a KPI or pass a gate
     *Prevents: agents burning context on archived plans.*
 16. **Merge only when all hold:** required CI green; every Codacy finding
     fixed or answered, Security ones always; every bot or human thread
-    answered; x86 objects identical, or each change is metadata-only
-    (identical `dumpbin /disasm`) or declared in the PR body. Stacked PRs
-    merge base first; retarget, then close and reopen to start CI.
-    `scripts/ci/pr_gate.py <n>` checks all of this; merge only on READY.
+    answered; x86 objects identical, or each change is metadata-only (the
+    x86 identity CI job) or declared in the PR body. Stacked PRs merge
+    base first; retarget, then close and reopen to start CI.
+    `scripts/ci/pr_gate.py <n>` checks this: merge only when it prints
+    READY and each WARN it lists is fixed or answered on the PR.
     *Prevents: merges that break x86 or skip findings.*
 17. **Never force-push.** A conflicting PR is replaced by a `-v2` branch cut
     from master with cherry-picks; close the old PR.
