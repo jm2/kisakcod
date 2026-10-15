@@ -97,6 +97,13 @@ Two kinds of hazard, both fixed by beads 9–11 (WS-3, G2):
 
 A row reaches **fixed** only when the fix is merged *and* a test executes the fixed code at 64-bit.
 
+Patterns the client bring-up hit, which are worth grepping for:
+- x86 byte literals for pointer-holding structs, such as `UI_Alloc(8u, 4)` for `stringDef_s`;
+- `_DWORD` arrays holding pointers (`CG_SetupWeaponDef`);
+- x86 strides in handle math (`/ 40` for `DevMenuItem`);
+- `uint32_t` free-list links;
+- a struct pointer stepped one byte at a time (UBSan misalignment).
+
 ## Script VM
 
 - `VariableUnion` is native-width in the production headers, and `scr_readwrite.cpp` (save/load) is SP-only.

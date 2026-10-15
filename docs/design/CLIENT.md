@@ -14,6 +14,50 @@ Interim vehicles are test milestones, not deliverables.
 
 Miles (`mss32.dll`) and Bink (`binkw32.dll`) are 32-bit only, so a 64-bit client can't load them from a retail install. Step 1 needs OpenAL Soft and FFmpeg, or silent stubs, from its first build.
 
+## POSIX bring-up runbook
+
+**Build.**
+- Install dxvk-native 3.1.1 built with its SDL3 WSI: `meson -Dnative_sdl3=enabled -Dnative_sdl2=disabled -Dnative_glfw=disabled`.
+- Configure `linux-amd64-client` or `linux-arm64-client` with `PKG_CONFIG_PATH` set to its `lib*/pkgconfig`.
+- POSIX links the system's shared SDL3, which dxvk-native also uses. A static SDL copy breaks dxvk's WSI.
+
+**Run.**
+- `posix_client_main.cpp` sets `DXVK_WSI_DRIVER=SDL3` unless it is already set.
+- A host without a desktop can use a headless Wayland compositor: `mutter --headless --wayland --no-x11 --virtual-monitor 1920x1080`, with `WAYLAND_DISPLAY` set to its socket and `SDL_VIDEO_DRIVER=wayland`. It has no input seat.
+- Flags:
+  - `+set db_unverified64 1` admits asset families K4 hasn't verified.
+  - `+set com_introPlayed 1` skips the intro chain (`COM_PlayIntroMovies`). Otherwise, on a fresh profile, `cinematic` sets `CA_CINEMATIC` during a `+devmap` handshake and the client ignores `connectResponse`. Retail does the same.
+  - `+devmap <map>` loads a map, but needs a profile: `fs_homepath/players/profiles/<name>/` plus `profiles/active.txt` naming it.
+- Retail data stays on the host. Only data-free evidence leaves it.
+
+**Data-free evidence, read with gdb attached to the running client.** The engine renames its main thread `Main`, so find the process with `pgrep -f` on the binary path.
+- `UI_GetActiveMenu(0)`: 1 is main.
+- `Menu_Count(&uiInfoArray)`, and the focused menu's name through `Menu_GetFocused`.
+- `clientUIActives[0]`: `keyCatchers`, `connectionState` (`connstate_t`).
+- `com_frameNumber`: twice, to measure frame rate.
+- To time a load, break on `Load_VertexBuffer` and on `R_AllocStatic{Vertex,Index}Buffer`.
+
+**Status (2026-10-15).** arm64 on Apple M1, dxvk 3.1.1:
+- Main menu at about 190 fps.
+- `mp_crash` loads, and the client reaches `CL_InitCGame`.
+- Current stop: `CG_Init` → `BG_LoadAnim` → `Scr_EndLoadAnimTrees` → `SL_ShutdownSystem(2)`, "invalid script string user-reference removal".
+
+### Loader hooks
+
+The 64-bit disk32 converters create renderer objects only on a client, through `database/db_disk32_renderer_hooks.h`. Its one `KISAK_DEDI_HEADLESS` switch keeps headless handles null.
+- **techniqueset:** `Load_BuildVertexDecl` and `Load_CreateMaterial{Vertex,Pixel}Shader`.
+- **image:** `Load_Texture`. An alias `AddRef`s the earlier texture through `ShareTexture`.
+- **material:** `Load_PicmipWater`, once per completed water.
+- **GfxWorld:** `Load_VertexBuffer`.
+
+Each hook sits inside the converter, so an alias reuses its object.
+
+XModel needs no hook. On a client, blocks 7 and 8 are static vertex and index buffers, and `DB_SetStreamIndex` copies what streams into them on pop.
+
+Family tests build headless unless the family name ends in `-client`.
+
+A sequence whose marks add user-4 or user-8 references holds `db_hashCritSect` through `DB_BeginRegistrySession`/`DB_EndRegistrySession`, never `Sys_LockWrite`. The bridge's registry window needs the hash (#600).
+
 ## Shaders
 
 - Retail `.ff` shaders are D3D9 SM2/SM3 bytecode; there's no source.

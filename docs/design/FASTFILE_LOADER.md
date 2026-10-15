@@ -187,3 +187,5 @@ Platform file I/O for async reads belongs to [PLATFORM_POSIX.md](PLATFORM_POSIX.
 
 - Which families actually occur in the four zones and the boot map? Measure this on the first
   owner data run. The answer can only reorder waves; N stays 25 while nothing can be skipped.
+
+Client renderer hooks and the registry-session rule: [CLIENT.md](CLIENT.md#loader-hooks).
