@@ -3230,7 +3230,7 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 				static_cast<uint8_t>(1u << (stringValue & 7u));
 			if ((sl_systemSweepStringIds[stringValue >> 3]
 					& visitedMask) == 0
-				&& SL_DebugRefCount(stringValue) != 0)
+				&& SL_DebugRefCount(stringValue) != 0 && !SL_IsLiveVectorNode(stringValue))
 			{
 				return false;
 			}
@@ -6242,4 +6242,24 @@ const char *SL_ConvertToStringSafe(uint32_t stringValue)
 		return "(NULL)";
 	}
 	return result;
+}
+
+// A script vector shares the memory tree and scrStringDebugGlob->refCount
+// with strings (Scr_AllocVector, AddRefToVector), so an id the string sweep
+// cannot reach may be a live vector, not a leaked string. It is exempt only
+// when its node is allocated as MT_TYPE_VECTOR and its debug count is its
+// own refCount plus the creating reference. A drifted count still fails.
+bool SL_IsLiveVectorNode(const uint32_t id) noexcept
+{
+	if (!scrStringDebugGlob || id == 0 || id >= SL_MAX_STRING_INDEX)
+		return false;
+	MT_AllocationInfo info{};
+	if (MT_TryGetAllocationInfoLegacy(id, &info) != MT_AllocationInfoStatus::Success
+		|| info.type != MT_TYPE_VECTOR)
+		return false;
+	const RefVector* const vector = reinterpret_cast<const RefVector*>(
+		scrMemTreePub.mt_buffer + static_cast<std::size_t>(id) * MT_NODE_SIZE);
+	return vector->byteLen == 0
+		&& Sys_AtomicLoad(&scrStringDebugGlob->refCount[id])
+			== static_cast<uint32_t>(vector->refCount) + 1u;
 }

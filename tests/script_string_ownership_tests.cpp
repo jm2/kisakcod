@@ -1051,6 +1051,62 @@ struct StateImage final
     return EndTest();
 }
 
+// A script vector shares the memory tree and the debug reference counts with
+// strings (Scr_AllocVector). The pre-sweep validator must not take a live
+// vector for a leaked string, but must still catch a real leak and a vector
+// whose debug count drifted from its own.
+[[nodiscard]] bool TestShutdownSweepExemptsLiveVectors() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    // A vector as Scr_AllocVector makes one: refCount 0, one debug reference.
+    auto* const vector =
+        static_cast<RefVector*>(MT_Alloc(sizeof(RefVector), MT_TYPE_VECTOR));
+    *vector = {};
+    const std::uint32_t vectorId = static_cast<std::uint32_t>(
+        (reinterpret_cast<char*>(vector) - scrMemTreePub.mt_buffer) / MT_NODE_SIZE);
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[vectorId]);
+    if (!Check(SL_IsLiveVectorNode(vectorId), "a fresh vector is not a live vector node"))
+        return false;
+
+    // (a) A sweep with the vector live releases the user's strings.
+    constexpr char first[] = "sweep-with-live-vector";
+    const std::uint32_t firstId = SL_GetStringOfSize(first, 4, sizeof(first), 15);
+    SL_ShutdownSystem(4);
+    if (!Check(g_comErrorCount == 0, "a live vector failed the string sweep")
+        || !CheckFreed(firstId))
+        return false;
+
+    // (c) A vector whose debug count drifted from its refCount still fails.
+    constexpr char second[] = "sweep-with-drifted-vector";
+    const std::uint32_t secondId = SL_GetStringOfSize(second, 4, sizeof(second), 15);
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[vectorId]);
+    if (!Check(!SL_IsLiveVectorNode(vectorId), "a drifted vector passed as live"))
+        return false;
+    SL_ShutdownSystem(4);
+    if (!Check(g_comErrorCount == 1, "a drifted vector count passed the string sweep"))
+        return false;
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[vectorId]);
+    g_comErrorCount = 0;
+
+    // (b) An unreachable id with a debug reference that is no vector fails.
+    const std::uint32_t leakedId = vectorId + 1;
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[leakedId]);
+    SL_ShutdownSystem(4);
+    if (!Check(g_comErrorCount == 1, "a leaked string reference passed the string sweep"))
+        return false;
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[leakedId]);
+    g_comErrorCount = 0;
+
+    SL_ShutdownSystem(4);
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[vectorId]);
+    MT_Free(reinterpret_cast<unsigned char*>(vector), sizeof(RefVector));
+    if (!Check(g_comErrorCount == 0, "the cleanup sweep failed") || !CheckFreed(secondId))
+        return false;
+    return EndTest();
+}
+
 [[nodiscard]] bool TestShutdownStaleIterationRollback() noexcept
 {
     if (!BeginTest())
@@ -5304,7 +5360,8 @@ int main()
         || !TestRegistryOwnershipBatchOperations()
         || !TestRegistryOwnershipBulkOperations()
         || !TestRegistryShutdownCapacityAtomicity()
-        || !TestLegacyCharacterFoldingUsesUnsignedInput())
+        || !TestLegacyCharacterFoldingUsesUnsignedInput()
+        || !TestShutdownSweepExemptsLiveVectors())
     {
         return 1;
     }
