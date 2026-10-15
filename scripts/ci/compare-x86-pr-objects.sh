@@ -76,7 +76,9 @@ for kind in code metadata added removed; do
     [ "${#items[@]}" -eq 0 ] && continue
     echo
     echo "### ${kind/metadata/metadata-only}"
-    printf -- '- `%s`\n' "${items[@]}"
+    for item in "${items[@]}"; do
+        echo "- \`$item\`"
+    done
 done
 
 if [ "${#code[@]}" -ne 0 ] || [ "${#added[@]}" -ne 0 ] || [ "${#removed[@]}" -ne 0 ]; then
