@@ -1,6 +1,6 @@
 # NOW
 
-Last reviewed: 2026-10-15 by kisakcod-linux (coordinator and mayor, AGENTS.md host order)
+Last reviewed: 2026-10-16 by the coordinator session on antec, acting as mayor (host order under Decided)
 Current gates: G5 (Linux and macOS client launch) and G4a (stock Steam 1.8 clients join); G1 and the G1 queue are done
 WIP limit: 6 (at least 4 on the current gates)
 
@@ -12,7 +12,7 @@ From the master census. Live values: the `Native64 census` summary of the latest
 
 | KPI | Measures | Value | Target | Source |
 | --- | --- | --- | --- | --- |
-| K1 | 64-bit headless TUs passing syntax-only | win64 273/273 · lin64 272/276 · a64 272/276 | all (G1) | census |
+| K1 | 64-bit headless TUs passing syntax-only | win64 273/273 · lin64 272/276 · a64 272/276 (the 4 are POSIX client files the headless census now picks up; row 42) | all (G1) | census |
 | K2 | 64-bit headless real link | Win64: linked, 0 TUs excluded, 0 undefined | Win64, Linux amd64 (G1) | census |
 | K3 | Upstream engine TUs in the Linux test build | 82/475 | rising | census |
 | K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 0/25 verified (with the `db_unverified64` opt-in, every client and server zone loads; no digest pipeline yet) | 25/25 (G2) | this file |
@@ -28,8 +28,8 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | 31 | Linux arm64 client in-game on Steam 1.8 data | G5 | gate | `+devmap mp_crash` on master runs in-game frames with no error | M | done (#621): in-game on mp_crash at about 225 main-loop frames/s; macOS verified too |
 | 33 | Linux amd64 client draws its main menu on Steam 1.8 data | G5 | gate | gdb reads `UI_GetActiveMenu(0)` = 1 and a TGA `screenshot` taken after the menu is up is mostly non-black ([CLIENT](design/CLIENT.md) bring-up) | M | in progress (antec): zones load and the main menu is active (main loop about 230 frames/s; menus redraw about 62/s by design), but captures are black even with a magenta clear |
 | 34 | macOS client in-game (jm2/dxvk on KosmicKrisp) | G5 | gate | `+devmap mp_shipment` on master runs in-game | L | done: in-game on master with no patches, about 120 fps, zones in under 1 s |
-| 40 | macOS main menu capped near 60 fps | G5 | gate | n/a | S | closed, by design: retail `SCR_ShouldSkipUpdateScreen` redraws menus at most every 16 ms until the client is active |
 | 41 | Native client cinematics: Bink is a silent stub on 64-bit; play `.bik` through FFmpeg ([CLIENT](design/CLIENT.md)) | G5 | gate | a retail intro cinematic plays on a 64-bit client | L | queued |
+| 42 | Census scope: the headless K1 set includes 4 POSIX client files (`d3dx9_native`, `posix_client_main`, `posix_videocard`, `posix_win32_window`) that need SDL3 and dxvk-native | G1 | K1 | K1 reads 100% on lin64 and a64 with those files excluded from the headless set and still built by the client presets | S | queued |
 | 35 | Win64 client main-menu run on Steam 1.8 data | G4b | gate | the owner's manual run reaches the main menu; evidence as text | M | blocked (needs an active console session on antec-win) |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects to the fork's x86 server under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | queued |
 | 37 | K4 digest pipeline: per-family `db::graph_hash` walkers on x86 and 64-bit | G2 | K4 | a family's 64-bit graph hash equals its x86 hash on the owner's data; its fail-closed guard is then removed | L | queued |
@@ -64,3 +64,4 @@ Merge SHAs are in `git log`.
 - G4a wire identity: #531, #532. 64-bit D3DX replacement: #520, #537, #539, #541.
 - G5 client launch: #543-#557, #559, #562, #567-#569, #571-#573, #576, #581, #586-#588, #590, #592, #593, #596, #598, #597, #610-#617, #621.
 - 2026-10-15 backlog: #591, #600, #601; docs #605, #607, #609, #618, #619.
+- Row 40 (macOS menu at ~60 fps): closed as retail behaviour; `SCR_ShouldSkipUpdateScreen` redraws menus at most every 16 ms until the client is active.
