@@ -115,11 +115,13 @@ The engine names its main thread `Main`, so find the process with `pgrep -f`
 on the binary path, not `pgrep -x`.
 
 **Without a desktop.**
+
 - A headless Wayland compositor gives a display with no input seat:
   `mutter --headless --wayland --no-x11 --wayland-display=<name> --virtual-monitor 1920x1080`.
 - Run the client with `WAYLAND_DISPLAY=<name> SDL_VIDEO_DRIVER=wayland`.
 
 **Maps.**
+
 - `+devmap <map>` needs a selected profile: `profiles/active.txt` naming a
   profile directory. Without one the map load stops at "You have not chosen a
   profile yet".
@@ -169,6 +171,7 @@ switch keeps a headless server's handles null.
 ### 64-bit patterns the client hit
 
 NATIVE64.md is at its cap, so the patterns are listed here. Grep for:
+
 - x86 byte sizes for pointer-holding structs, such as `UI_Alloc(8u, 4)` for a
   two-pointer node;
 - `_DWORD` arrays holding pointers;
