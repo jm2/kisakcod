@@ -2000,6 +2000,7 @@ void RB_CaptureSwapchainScreenshot()
     if (g_shotState.load(std::memory_order_acquire) != SHOT_REQUESTED)
         return;
     IDirect3DSurface9 *backBuffer = nullptr;
+    IDirect3DSurface9 *resolved = nullptr; // a multisampled backbuffer's single-sample copy
     IDirect3DSurface9 *copy = nullptr;
     D3DSURFACE_DESC desc{};
     D3DLOCKED_RECT locked{};
@@ -2010,10 +2011,17 @@ void RB_CaptureSwapchainScreenshot()
     else if ((g_shotHr = backBuffer->GetDesc(&desc)) < 0
              || (desc.Format != D3DFMT_A8R8G8B8 && desc.Format != D3DFMT_X8R8G8B8))
         g_shotError = "the backbuffer isn't 32-bit RGB";
+    // GetRenderTargetData reads only a single-sample surface (r_aaSamples > 1
+    // multisamples the backbuffer), so resolve one through StretchRect first.
+    else if (desc.MultiSampleType != D3DMULTISAMPLE_NONE
+             && ((g_shotHr = dx.device->CreateRenderTarget(desc.Width, desc.Height, desc.Format, D3DMULTISAMPLE_NONE, 0,
+                                                            FALSE, &resolved, nullptr)) < 0
+                 || (g_shotHr = dx.device->StretchRect(backBuffer, nullptr, resolved, nullptr, D3DTEXF_NONE)) < 0))
+        g_shotError = "couldn't resolve the multisampled backbuffer";
     else if ((g_shotHr = dx.device->CreateOffscreenPlainSurface(
                   desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, &copy, nullptr)) < 0)
         g_shotError = "couldn't create the copy surface";
-    else if ((g_shotHr = dx.device->GetRenderTargetData(backBuffer, copy)) < 0)
+    else if ((g_shotHr = dx.device->GetRenderTargetData(resolved ? resolved : backBuffer, copy)) < 0)
         g_shotError = "couldn't read the backbuffer";
     else if ((g_shotHr = copy->LockRect(&locked, nullptr, D3DLOCK_READONLY)) < 0)
         g_shotError = "couldn't lock the copy";
@@ -2035,6 +2043,8 @@ void RB_CaptureSwapchainScreenshot()
     }
     if (copy)
         copy->Release();
+    if (resolved)
+        resolved->Release();
     if (backBuffer)
         backBuffer->Release();
     g_shotState.store(g_shotError ? SHOT_FAILED : SHOT_CAPTURED, std::memory_order_release);
