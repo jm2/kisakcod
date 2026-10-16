@@ -1033,6 +1033,31 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(r-point-light-partition-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# R_SkinXSurfaceWeight (gfx_d3d/r_model_skin.cpp) only writes its output,
+# which can be a write-combined vertex buffer. The test traps reads with its
+# own SIGSEGV/SIGTRAP handlers, so it needs x86-64 and no sanitizer (ASan
+# owns SIGSEGV). Gated as above otherwise.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$"
+    AND NOT CMAKE_CXX_FLAGS MATCHES "-fsanitize"
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+    add_executable(kisakcod-r-skin-write-only-tests
+        r_skin_write_only_tests.cpp
+        ${SRC_DIR}/gfx_d3d/r_model_skin.cpp
+        ${SRC_DIR}/qcommon/com_pack.cpp
+        ${SRC_DIR}/universal/com_math.cpp
+    )
+    target_include_directories(kisakcod-r-skin-write-only-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-r-skin-write-only-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-r-skin-write-only-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE)
+    target_link_libraries(kisakcod-r-skin-write-only-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    target_compile_options(kisakcod-r-skin-write-only-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-r-skin-write-only-tests PRIVATE -Wl,--gc-sections)
+    set_target_properties(kisakcod-r-skin-write-only-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME r-skin-write-only-contracts COMMAND kisakcod-r-skin-write-only-tests)
+    set_tests_properties(r-skin-write-only-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # Com_SetRecommended as a client off Windows: a configure_mp.csv with no GPU
 # row for the card keeps the defaults (com_playerprofile.cpp). Linux and clang
 # only, as above; the client's defines (no KISAK_DEDI_HEADLESS).
