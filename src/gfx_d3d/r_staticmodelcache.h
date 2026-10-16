@@ -54,6 +54,14 @@ struct static_model_cache_t // sizeof=0x410E0
     static_model_node_list_t freelist[4][6]; // ...
     static_model_tree_list_t usedlist[4]; // ...
 };
+// The cache's arithmetic divides by these sizes, never by x86 byte counts:
+// the free-list links make a leaf 16 bytes and a tree 0x110 at 64-bit.
+RUNTIME_SIZE(static_model_leaf_t, 0x8, 0x10);
+RUNTIME_SIZE(static_model_tree_t, 0x108, 0x110);
+RUNTIME_SIZE(static_model_cache_t, 0x410E0, 0x621C0);
+RUNTIME_OFFSET(static_model_cache_t, leafs, 0x21000, 0x22000);
+RUNTIME_OFFSET(static_model_cache_t, freelist, 0x41000, 0x62000);
+RUNTIME_OFFSET(static_model_cache_t, usedlist, 0x410C0, 0x62180);
 
 struct GfxStaticModelId // sizeof=0x4
 {                                       // ...
