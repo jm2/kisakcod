@@ -115,9 +115,28 @@ def check_job(label, state, found):
         found.blockers.append(f"CI not finished: {label} ({state})")
 
 
-def check_ci(pr, paths, found):
+def ci_checks(owner, name, head):
+    # Every page: `gh pr view --json statusCheckRollup` reads only the first 100.
+    query = ("query($owner:String!,$name:String!,$oid:GitObjectID!,$after:String){repository(owner:$owner,"
+             "name:$name){object(oid:$oid){... on Commit{statusCheckRollup{contexts(first:100,after:$after)"
+             "{pageInfo{hasNextPage endCursor} nodes{... on CheckRun{name conclusion status} "
+             "... on StatusContext{context state}}}}}}}}")
+    after = []
+    while True:
+        result = json.loads(gh("api", "graphql", "-f", f"query={query}", "-F", f"owner={owner}",
+                               "-F", f"name={name}", "-F", f"oid={head}", *after))
+        rollup = result["data"]["repository"]["object"]["statusCheckRollup"]
+        if rollup is None:
+            return
+        yield from rollup["contexts"]["nodes"]
+        if not rollup["contexts"]["pageInfo"]["hasNextPage"]:
+            return
+        after = ["-f", f"after={rollup['contexts']['pageInfo']['endCursor']}"]
+
+
+def check_ci(checks, paths, found):
     x86_seen = False
-    for check in pr["statusCheckRollup"]:
+    for check in checks:
         label = check.get("name") or check.get("context") or "?"
         state = check.get("conclusion") or check.get("state") or check.get("status")
         if X86_JOB in label:
@@ -216,11 +235,10 @@ def main():
     owner, name = args.repo.split("/")
 
     pr = json.loads(gh("pr", "view", str(args.number), "-R", args.repo, "--json",
-                       "state,mergeable,mergeStateStatus,baseRefName,headRefOid,reviewDecision,reviews,"
-                       "statusCheckRollup"))
+                       "state,mergeable,mergeStateStatus,baseRefName,headRefOid,reviewDecision,reviews"))
     found = Findings()
     check_pr(pr, found)
-    check_ci(pr, changed_files(args.repo, args.number), found)
+    check_ci(ci_checks(owner, name, pr["headRefOid"]), changed_files(args.repo, args.number), found)
     check_codacy(owner, name, args.number, found)
     check_threads(pr, owner, name, args.number, found)
     # Every check above read one head; a push since then voids the verdict.
