@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Report whether a PR meets AGENTS.md rule 16, mechanically.
+"""Report whether a PR meets AGENTS.md rule 16, mechanically.
 
 Usage: scripts/ci/pr_gate.py <pr-number> [--repo jm2/kisakcod]
 
@@ -14,7 +13,8 @@ Checks:
   - no CI check failed or is still pending (Codacy and CodeRabbit are
     judged by the next two checks instead);
   - Codacy has no open Security finding; other categories warn;
-  - every review thread is resolved or has a reply;
+  - every review thread is resolved or has a reply, no review requests
+    changes, and review-body findings outside the diff warn;
   - the advisory x86 identity job: CODE escalates, and so does a missing
     result when the PR touches compiled inputs.
 """
@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess  # nosec B404 - runs only the resolved gh binary with fixed arguments
 import sys
+import urllib.parse
 import urllib.request
 
 CODACY = ("https://app.codacy.com/api/v3/analysis/organizations/gh/{owner}/"
@@ -35,6 +36,10 @@ PASSED = ("SUCCESS", "success", "SKIPPED", "NEUTRAL")
 FAILED = ("FAILURE", "failure", "ERROR", "error", "CANCELLED", "TIMED_OUT")
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 MERGEABLE_STATES = ("CLEAN", "UNSTABLE", "HAS_HOOKS")
+MISMATCH = ("FAILURE", "failure")
+GH_TIMEOUT = 120
+# CodeRabbit puts findings on lines outside the diff into the review body.
+OUTSIDE_DIFF = "Outside diff range"
 
 
 class Findings:
@@ -51,7 +56,10 @@ def gh(*args):
         sys.exit("pr_gate: the gh CLI is not on PATH")
     # Argument list, no shell, executable resolved by shutil.which; the
     # arguments are validated ints and an owner/name repo.
-    result = subprocess.run([executable, *args], check=True, capture_output=True, text=True, encoding="utf-8")  # nosec B603  # nosemgrep
+    try:
+        result = subprocess.run([executable, *args], check=True, capture_output=True, text=True, encoding="utf-8", timeout=GH_TIMEOUT)  # nosec B603  # nosemgrep
+    except subprocess.TimeoutExpired:
+        sys.exit(f"pr_gate: gh {args[0]} timed out after {GH_TIMEOUT}s: NOT READY, rerun")
     return result.stdout
 
 
@@ -77,14 +85,25 @@ def check_pr(pr, found):
         found.blockers.append(f"GitHub merge state is {pr['mergeStateStatus']}")
     if pr["baseRefName"] != "master":
         found.blockers.append(f"base is {pr['baseRefName']}: merge that first, then retarget (rule 16)")
+    if pr["reviewDecision"] == "CHANGES_REQUESTED":
+        found.blockers.append("a review requests changes")
 
 
 def check_x86(state, found):
-    if state in FAILED:
+    if state in MISMATCH:
         found.escalations.append("x86 identity job reports CODE/added/removed objects: "
                                  "the PR body must declare the change (rule 16)")
+    elif state in FAILED:
+        found.blockers.append(f"x86 identity job is {state}, so it proved nothing: rerun it")
     elif state not in PASSED:
         found.blockers.append(f"x86 identity job is {state}")
+
+
+def check_job(label, state, found):
+    if state in FAILED:
+        found.blockers.append(f"CI failed: {label}")
+    elif state not in PASSED:
+        found.blockers.append(f"CI not finished: {label} ({state})")
 
 
 def check_ci(pr, found):
@@ -95,24 +114,30 @@ def check_ci(pr, found):
         if X86_JOB in label:
             x86_seen = True
             check_x86(state, found)
-        elif any(label.startswith(prefix) for prefix in JUDGED_ELSEWHERE):
-            continue
-        elif state in FAILED:
-            found.blockers.append(f"CI failed: {label}")
-        elif state not in PASSED:
-            found.blockers.append(f"CI not finished: {label} ({state})")
+        elif not label.startswith(JUDGED_ELSEWHERE):
+            check_job(label, state, found)
     if not x86_seen and builds_x86(pr["files"]):
         found.escalations.append("no x86 identity result on this head (job missing or the PR predates "
                                  "it): run scripts/ci/compare-x86-pr-objects.sh or rerun CI")
 
 
 def check_codacy(owner, name, number, found):
-    url = CODACY.format(owner=owner, name=name, number=number)
-    if not url.startswith("https://app.codacy.com/"):
+    base = CODACY.format(owner=owner, name=name, number=number)
+    if not base.startswith("https://app.codacy.com/"):
         sys.exit("pr_gate: unexpected Codacy URL")
-    # Fixed https Codacy endpoint built from validated parts.
-    with urllib.request.urlopen(url, timeout=30) as response:  # nosec B310  # nosemgrep
-        issues = json.load(response).get("data", [])
+    issues, cursor = [], ""
+    while True:
+        url = base + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
+        # Fixed https Codacy endpoint built from validated parts.
+        with urllib.request.urlopen(url, timeout=30) as response:  # nosec B310  # nosemgrep
+            page = json.load(response)
+        if not page.get("analyzed"):
+            found.blockers.append("Codacy hasn't analyzed this head yet: rerun later")
+            return
+        issues += page.get("data", [])
+        cursor = (page.get("pagination") or {}).get("cursor")
+        if not cursor:
+            break
     for issue in issues:
         info = issue["commitIssue"]
         where = f"{info['filePath']}:{info['lineNumber']}"
@@ -123,13 +148,29 @@ def check_codacy(owner, name, number, found):
             found.warnings.append(f"Codacy {category} {where}: fix it or answer it on the PR")
 
 
-def check_threads(owner, name, number, found):
-    query = ("query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name)"
-             "{pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved "
-             "comments(first:100){totalCount nodes{author{login} path line}}}}}}}")
-    result = json.loads(gh("api", "graphql", "-f", f"query={query}", "-F", f"owner={owner}",
-                           "-F", f"name={name}", "-F", f"number={number}"))
-    for thread in result["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]:
+def review_threads(owner, name, number):
+    query = ("query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,"
+             "name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo"
+             "{hasNextPage endCursor} nodes{isResolved comments(first:1){totalCount "
+             "nodes{author{login} path line}}}}}}}")
+    after = []
+    while True:
+        result = json.loads(gh("api", "graphql", "-f", f"query={query}", "-F", f"owner={owner}",
+                               "-F", f"name={name}", "-F", f"number={number}", *after))
+        threads = result["data"]["repository"]["pullRequest"]["reviewThreads"]
+        yield from threads["nodes"]
+        if not threads["pageInfo"]["hasNextPage"]:
+            return
+        after = ["-f", f"after={threads['pageInfo']['endCursor']}"]
+
+
+def check_threads(pr, owner, name, number, found):
+    for review in pr["reviews"]:
+        if OUTSIDE_DIFF in (review.get("body") or ""):
+            author = (review.get("author") or {}).get("login", "?")
+            found.warnings.append(f"review by {author} has findings outside the diff in its body: "
+                                  "answer each on the PR")
+    for thread in review_threads(owner, name, number):
         comments = thread["comments"]
         if thread["isResolved"] or comments["totalCount"] > 1:
             continue
@@ -166,12 +207,13 @@ def main():
     owner, name = args.repo.split("/")
 
     pr = json.loads(gh("pr", "view", str(args.number), "-R", args.repo, "--json",
-                       "state,mergeable,mergeStateStatus,baseRefName,headRefOid,statusCheckRollup,files"))
+                       "state,mergeable,mergeStateStatus,baseRefName,headRefOid,reviewDecision,reviews,"
+                       "statusCheckRollup,files"))
     found = Findings()
     check_pr(pr, found)
     check_ci(pr, found)
     check_codacy(owner, name, args.number, found)
-    check_threads(owner, name, args.number, found)
+    check_threads(pr, owner, name, args.number, found)
     # Every check above read one head; a push since then voids the verdict.
     head_now = gh("pr", "view", str(args.number), "-R", args.repo, "--json", "headRefOid",
                   "--jq", ".headRefOid").strip()
