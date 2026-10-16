@@ -735,6 +735,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          # dumpbin separates layout-only objects from real code changes.
+          vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+          found="$("$vswhere" -latest -find 'VC/Tools/MSVC/**/bin/Hostx64/x86/dumpbin.exe' | head -1)"
+          if [ -n "$found" ]; then export DUMPBIN="$(cygpath -u "$found")"; fi
           scripts/ci/compare-x86-pr-objects.sh base-objects build-windows-x86-mp | tee -a "$GITHUB_STEP_SUMMARY"
 
   windows-x86-sp:
