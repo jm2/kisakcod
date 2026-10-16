@@ -175,12 +175,17 @@ void DetectCpuImpl()
 }
 
 // One write for the whole line: written in pieces, other threads' output
-// could land between the prefix and the message.
+// could land between the prefix and the message. Then the process ends the
+// way Windows' ExitProcess ends it (win32/win_main.cpp): no static destructors
+// or atexit handlers run while the worker threads are still live, since
+// they may still be using those objects. stdio buffers are flushed first, as
+// the CRT does when the process detaches.
 [[noreturn]] void TerminateOnFatalError(const char *message)
 {
     (void)Sys_ConsoleWriteFatalError(message);
     (void)Sys_ConsoleFlush(SysConsoleOutputStream::StandardError);
-    std::exit(EXIT_FAILURE);
+    std::fflush(nullptr);
+    std::_Exit(EXIT_FAILURE);
 }
 } // namespace
 
