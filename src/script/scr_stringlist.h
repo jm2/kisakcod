@@ -44,6 +44,9 @@ struct RefVector
     float vec[3];
 };
 RUNTIME_SIZE(RefVector, 0x10, 0x10);
+// Whether id's memory-tree node holds a live script vector whose debug
+// reference count matches it (the string sweep's validator exempts those).
+bool SL_IsLiveVectorNode(uint32_t id) noexcept;
 RUNTIME_OFFSET(RefVector, refCount, 0, 0);
 RUNTIME_OFFSET(RefVector, user, 2, 2);
 RUNTIME_OFFSET(RefVector, byteLen, 3, 3);
