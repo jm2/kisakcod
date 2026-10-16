@@ -939,6 +939,25 @@ if (WIN32 OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     kisakcod_ilp32(kisakcod-ui-localvars-tests ui-localvars)
 endif()
 
+# CG_RegisterWeapon (cgame/cg_weapons.cpp) at 64-bit: the weapon's cursor-hint
+# icon. Linux and clang only, as above; the client's defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cg-register-weapon-tests cg_register_weapon_tests.cpp ${SRC_DIR}/cgame/cg_weapons.cpp)
+    target_include_directories(kisakcod-cg-register-weapon-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-cg-register-weapon-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-cg-register-weapon-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-cg-register-weapon-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cg-register-weapon-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-cg-register-weapon-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-cg-register-weapon-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-cg-register-weapon-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cg-register-weapon-contracts COMMAND kisakcod-cg-register-weapon-tests)
+    set_tests_properties(cg-register-weapon-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # The developer GUI's menu table (devgui/devgui.cpp) at 64-bit: its free
 # chain and handle stride. Linux and clang only, as above; the client's defines.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
