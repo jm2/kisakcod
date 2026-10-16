@@ -547,6 +547,9 @@ void __cdecl R_SkinXSurfaceWeight1(
     int vertIndex; // [esp+30h] [ebp-4h]
 
     iassert( vertsOut );
+    // Skin into a local and store it once: vertsOut can be a locked,
+    // write-combined vertex buffer, where every read stalls.
+    GfxPackedVertex skinned;
     vertIndex = 0;
     while (vertIndex < vertCount)
     {
@@ -556,15 +559,16 @@ void __cdecl R_SkinXSurfaceWeight1(
             vertsIn->normal,
             vertsIn->tangent,
             (const DObjSkelMat *)((char *)boneMatrix + *vertexBlend),
-            vertsOut);
+            &skinned);
         matrix = (const DObjSkelMat *)((char *)boneMatrix + vertexBlend[1]);
         boneWeight = (double)vertexBlend[2] * 0.0000152587890625;
         R_TransformSkelMat(vertsIn->xyz, matrix, offset);
         Vec3Scale(offset, boneWeight, offset);
         boneWeight = 1.0 - boneWeight;
-        Vec3Mad(offset, boneWeight, vertsOut->xyz, vertsOut->xyz);
-        vertsOut->color.packed = vertsIn->color.packed;
-        vertsOut->texCoord.packed = vertsIn->texCoord.packed;
+        Vec3Mad(offset, boneWeight, skinned.xyz, skinned.xyz);
+        skinned.color.packed = vertsIn->color.packed;
+        skinned.texCoord.packed = vertsIn->texCoord.packed;
+        *vertsOut = skinned;
         ++vertIndex;
         ++vertsIn;
         vertexBlend += 3;
@@ -588,6 +592,9 @@ void __cdecl R_SkinXSurfaceWeight2(
     float totalBoneWeight; // [esp+44h] [ebp-4h]
 
     iassert( vertsOut );
+    // Skin into a local and store it once: vertsOut can be a locked,
+    // write-combined vertex buffer, where every read stalls.
+    GfxPackedVertex skinned;
     vertIndex = 0;
     while (vertIndex < vertCount)
     {
@@ -597,7 +604,7 @@ void __cdecl R_SkinXSurfaceWeight2(
             vertsIn->normal,
             vertsIn->tangent,
             (const DObjSkelMat *)((char *)boneMatrix + *vertexBlend),
-            vertsOut);
+            &skinned);
         matrix = (const DObjSkelMat *)((char *)boneMatrix + vertexBlend[1]);
         totalBoneWeight = (double)vertexBlend[2] * 0.0000152587890625;
         R_TransformSkelMat(vertsIn->xyz, matrix, totalOffset);
@@ -608,9 +615,10 @@ void __cdecl R_SkinXSurfaceWeight2(
         R_TransformSkelMat(vertsIn->xyz, matrixa, offset);
         Vec3Mad(totalOffset, boneWeight, offset, totalOffset);
         boneWeight = 1.0 - totalBoneWeight;
-        Vec3Mad(totalOffset, boneWeight, vertsOut->xyz, vertsOut->xyz);
-        vertsOut->color.packed = vertsIn->color.packed;
-        vertsOut->texCoord.packed = vertsIn->texCoord.packed;
+        Vec3Mad(totalOffset, boneWeight, skinned.xyz, skinned.xyz);
+        skinned.color.packed = vertsIn->color.packed;
+        skinned.texCoord.packed = vertsIn->texCoord.packed;
+        *vertsOut = skinned;
         ++vertIndex;
         ++vertsIn;
         vertexBlend += 5;
@@ -635,6 +643,9 @@ void __cdecl R_SkinXSurfaceWeight3(
     float totalBoneWeight; // [esp+48h] [ebp-4h]
 
     iassert( vertsOut );
+    // Skin into a local and store it once: vertsOut can be a locked,
+    // write-combined vertex buffer, where every read stalls.
+    GfxPackedVertex skinned;
     vertIndex = 0;
     while (vertIndex < vertCount)
     {
@@ -644,7 +655,7 @@ void __cdecl R_SkinXSurfaceWeight3(
             vertsIn->normal,
             vertsIn->tangent,
             (const DObjSkelMat *)((char *)boneMatrix + *vertexBlend),
-            vertsOut);
+            &skinned);
         matrix = (const DObjSkelMat *)((char *)boneMatrix + vertexBlend[1]);
         totalBoneWeight = (double)vertexBlend[2] * 0.0000152587890625;
         R_TransformSkelMat(vertsIn->xyz, matrix, totalOffset);
@@ -660,9 +671,10 @@ void __cdecl R_SkinXSurfaceWeight3(
         R_TransformSkelMat(vertsIn->xyz, matrixb, offset);
         Vec3Mad(totalOffset, boneWeight, offset, totalOffset);
         boneWeight = 1.0 - totalBoneWeight;
-        Vec3Mad(totalOffset, boneWeight, vertsOut->xyz, vertsOut->xyz);
-        vertsOut->color.packed = vertsIn->color.packed;
-        vertsOut->texCoord.packed = vertsIn->texCoord.packed;
+        Vec3Mad(totalOffset, boneWeight, skinned.xyz, skinned.xyz);
+        skinned.color.packed = vertsIn->color.packed;
+        skinned.texCoord.packed = vertsIn->texCoord.packed;
+        *vertsOut = skinned;
         ++vertIndex;
         ++vertsIn;
         vertexBlend += 7;
