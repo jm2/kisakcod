@@ -467,6 +467,9 @@ struct GfxLight // sizeof=0x40
     uint32_t spotShadowIndex;
     GfxLightDef* def;
 };
+// x86 copies of a GfxLight wrote 0x40 bytes; def is the pointer that grows it.
+RUNTIME_SIZE(GfxLight, 0x40, 0x48);
+RUNTIME_OFFSET(GfxLight, def, 0x3C, 0x40);
 
 struct GfxReflectionProbe // sizeof=0x10
 {
