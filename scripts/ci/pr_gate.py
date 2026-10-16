@@ -10,8 +10,8 @@ every WARN line to be fixed or answered on the PR first.
 
 Checks:
   - the PR is open, based on master and mergeable (no conflicts);
-  - no CI check failed or is still pending (Codacy and CodeRabbit are
-    judged by the next two checks instead);
+  - no CI check failed or is still pending (Codacy and CodeRabbit must
+    finish; their findings are judged by the next two checks);
   - Codacy has no open Security finding; other categories warn;
   - every review thread is resolved or has a reply, no review requests
     changes, and review-body findings outside the diff warn;
@@ -33,7 +33,7 @@ CODACY = ("https://app.codacy.com/api/v3/analysis/organizations/gh/{owner}/"
 JUDGED_ELSEWHERE = ("Codacy", "CodeRabbit")
 X86_JOB = "objects vs base"
 PASSED = ("SUCCESS", "success", "SKIPPED", "NEUTRAL")
-FAILED = ("FAILURE", "failure", "ERROR", "error", "CANCELLED", "TIMED_OUT")
+FAILED = ("FAILURE", "failure", "ERROR", "error", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED")
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 MERGEABLE_STATES = ("CLEAN", "UNSTABLE", "HAS_HOOKS")
 MISMATCH = ("FAILURE", "failure")
@@ -57,15 +57,21 @@ def gh(*args):
     # Argument list, no shell, executable resolved by shutil.which; the
     # arguments are validated ints and an owner/name repo.
     try:
-        result = subprocess.run([executable, *args], check=True, capture_output=True, text=True, encoding="utf-8", timeout=GH_TIMEOUT)  # nosec B603  # nosemgrep
+        command = [executable, *args]
+        result = subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8", timeout=GH_TIMEOUT)  # nosec B603  # nosemgrep
     except subprocess.TimeoutExpired:
         sys.exit(f"pr_gate: gh {args[0]} timed out after {GH_TIMEOUT}s: NOT READY, rerun")
     return result.stdout
 
 
-def builds_x86(files):
+def changed_files(repo, number):
+    # Every page: `gh pr view --json files` stops at 100 files.
+    return gh("api", "--paginate", f"repos/{repo}/pulls/{number}/files", "--jq", ".[].filename").splitlines()
+
+
+def builds_x86(paths):
     # Only these inputs can change the Windows x86 objects.
-    for path in (f["path"] for f in files):
+    for path in paths:
         if path.startswith("scripts/ci/"):
             continue
         if path.startswith(("src/", "deps/", "scripts/", "cmake/")) or path.endswith(
@@ -100,13 +106,16 @@ def check_x86(state, found):
 
 
 def check_job(label, state, found):
+    # Codacy and CodeRabbit fail on findings, which the later checks judge,
+    # but they must still finish: no review exists before CodeRabbit does.
     if state in FAILED:
-        found.blockers.append(f"CI failed: {label}")
+        if not label.startswith(JUDGED_ELSEWHERE):
+            found.blockers.append(f"CI failed: {label}")
     elif state not in PASSED:
         found.blockers.append(f"CI not finished: {label} ({state})")
 
 
-def check_ci(pr, found):
+def check_ci(pr, paths, found):
     x86_seen = False
     for check in pr["statusCheckRollup"]:
         label = check.get("name") or check.get("context") or "?"
@@ -114,9 +123,9 @@ def check_ci(pr, found):
         if X86_JOB in label:
             x86_seen = True
             check_x86(state, found)
-        elif not label.startswith(JUDGED_ELSEWHERE):
+        else:
             check_job(label, state, found)
-    if not x86_seen and builds_x86(pr["files"]):
+    if not x86_seen and builds_x86(paths):
         found.escalations.append("no x86 identity result on this head (job missing or the PR predates "
                                  "it): run scripts/ci/compare-x86-pr-objects.sh or rerun CI")
 
@@ -208,10 +217,10 @@ def main():
 
     pr = json.loads(gh("pr", "view", str(args.number), "-R", args.repo, "--json",
                        "state,mergeable,mergeStateStatus,baseRefName,headRefOid,reviewDecision,reviews,"
-                       "statusCheckRollup,files"))
+                       "statusCheckRollup"))
     found = Findings()
     check_pr(pr, found)
-    check_ci(pr, found)
+    check_ci(pr, changed_files(args.repo, args.number), found)
     check_codacy(owner, name, args.number, found)
     check_threads(pr, owner, name, args.number, found)
     # Every check above read one head; a push since then voids the verdict.
