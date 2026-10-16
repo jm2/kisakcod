@@ -25,7 +25,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 31 | Linux arm64 client in-game on Steam 1.8 data | G5 | gate | `+devmap mp_crash` on master runs in-game frames with no error | M | in progress (linux-arm64): on master the server marks the client active, then the first frames crash in `R_SetLightProperties` with a null light def (point-lit path) |
+| 31 | Linux arm64 client in-game on Steam 1.8 data | G5 | gate | `+devmap mp_crash` on master runs in-game frames with no error | M | done (#621): in-game on mp_crash at about 225 main-loop frames/s; macOS verified too |
 | 33 | Linux amd64 client draws its main menu on Steam 1.8 data | G5 | gate | gdb reads `UI_GetActiveMenu(0)` = 1 and a TGA `screenshot` taken after the menu is up is mostly non-black ([CLIENT](design/CLIENT.md) bring-up) | M | in progress (antec): zones load and the main menu is active (main loop about 230 frames/s; menus redraw about 62/s by design), but captures are black even with a magenta clear |
 | 34 | macOS client in-game (jm2/dxvk on KosmicKrisp) | G5 | gate | `+devmap mp_shipment` on master runs in-game | L | done: in-game on master with no patches, about 120 fps, zones in under 1 s |
 | 40 | macOS main menu capped near 60 fps | G5 | gate | n/a | S | closed, by design: retail `SCR_ShouldSkipUpdateScreen` redraws menus at most every 16 ms until the client is active |
@@ -62,5 +62,5 @@ Merge SHAs are in `git log`.
 - 2026-09-29 queue: rows 9-14, 17 and 20-29 (#313, #316, #318, #320, #321, #324, #328-#330, #333, #338, #340, #341, #344, #345, #372, #386).
 - Retail load stops: #475, #478, #479, #497, #498, #512, #513, #518. x86 load path in CI: #522.
 - G4a wire identity: #531, #532. 64-bit D3DX replacement: #520, #537, #539, #541.
-- G5 client launch: #543-#557, #559, #562, #567-#569, #571-#573, #576, #581, #586-#588, #590, #592, #593, #596, #598, #597, #610-#617.
+- G5 client launch: #543-#557, #559, #562, #567-#569, #571-#573, #576, #581, #586-#588, #590, #592, #593, #596, #598, #597, #610-#617, #621.
 - 2026-10-15 backlog: #591, #600, #601; docs #605, #607, #609, #618, #619.
