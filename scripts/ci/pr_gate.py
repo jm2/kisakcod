@@ -34,6 +34,7 @@ X86_JOB = "objects vs base"
 PASSED = ("SUCCESS", "success", "SKIPPED", "NEUTRAL")
 FAILED = ("FAILURE", "failure", "ERROR", "error", "CANCELLED", "TIMED_OUT")
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+MERGEABLE_STATES = ("CLEAN", "UNSTABLE", "HAS_HOOKS")
 
 
 class Findings:
@@ -70,6 +71,10 @@ def check_pr(pr, found):
         found.blockers.append(f"state is {pr['state']}")
     if pr["mergeable"] != "MERGEABLE":
         found.blockers.append(f"mergeable is {pr['mergeable']} (UNKNOWN: retry; CONFLICTING: rule 17)")
+    # GitHub's own verdict: BLOCKED means required checks or reviews are missing
+    # for this head; only CLEAN, UNSTABLE (non-required checks) and HAS_HOOKS merge.
+    if pr["mergeStateStatus"] not in MERGEABLE_STATES:
+        found.blockers.append(f"GitHub merge state is {pr['mergeStateStatus']}")
     if pr["baseRefName"] != "master":
         found.blockers.append(f"base is {pr['baseRefName']}: merge that first, then retarget (rule 16)")
 
@@ -161,12 +166,18 @@ def main():
     owner, name = args.repo.split("/")
 
     pr = json.loads(gh("pr", "view", str(args.number), "-R", args.repo, "--json",
-                       "state,mergeable,baseRefName,headRefOid,statusCheckRollup,files"))
+                       "state,mergeable,mergeStateStatus,baseRefName,headRefOid,statusCheckRollup,files"))
     found = Findings()
     check_pr(pr, found)
     check_ci(pr, found)
     check_codacy(owner, name, args.number, found)
     check_threads(owner, name, args.number, found)
+    # Every check above read one head; a push since then voids the verdict.
+    head_now = gh("pr", "view", str(args.number), "-R", args.repo, "--json", "headRefOid",
+                  "--jq", ".headRefOid").strip()
+    if head_now != pr["headRefOid"]:
+        found.blockers.append(f"head moved from {pr['headRefOid'][:8]} to {head_now[:8]} during the gate: rerun")
+    print(f"head   {pr['headRefOid'][:8]}")
     return verdict(args.number, found)
 
 
