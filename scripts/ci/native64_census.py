@@ -81,7 +81,12 @@ def tu_lists() -> dict[str, list[str]]:
     if res.returncode:
         sys.exit("tulist failed:\n" + res.stderr)
     win = [os.path.relpath(p, ROOT) for p in res.stderr.split() if p.endswith((".c", ".cpp"))]
-    posix = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "src/_platform/posix").glob("*.c*"))
+    # The POSIX files the Linux platform set builds. The SDL3 client's own
+    # files (posix_client_main.cpp etc.) are added by scripts/extern/sdl3.cmake
+    # and need SDL3 and dxvk-native, so they're outside the headless census.
+    listed = re.findall(r"_platform/posix/([\w.-]+\.c(?:pp)?)\"",
+                        (ROOT / "scripts/platform/linux/platform.cmake").read_text())
+    posix = sorted({"src/_platform/posix/" + name for name in listed})
     lin = [t for t in win if not t.startswith(("src/win32/", "src/_platform/win32/"))] + posix
     mac = lin + sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "src/_platform/macos").glob("*.c*"))
     return {"win32": win, "win64": win, "winarm64": win, "lin64": lin, "a64": lin, "mac64": mac}
