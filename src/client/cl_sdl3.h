@@ -17,7 +17,8 @@ void CL_SdlDestroyWindow(void *nativeWindow);
 // Drains SDL's queue into Sys_QueEvent, IN_MouseEvent and VID_AppActivate.
 // On Windows SDL also dispatches the thread's other windows (console, splash).
 // Returns false while there is no game window, when SDL pumps nothing and the
-// caller must run the platform's own message loop.
+// caller must run the platform's own message loop. Off the window's thread
+// (the render thread's loading keep-alive) it pumps nothing and returns true.
 bool CL_SdlPumpEvents();
 
 // Mouse state for cl_sdl3_input.cpp's IN_* layer.
