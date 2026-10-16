@@ -106,7 +106,9 @@ profile, never the retail directory; symlinked installs don't list. Retail data 
 **State without a screen.** The Release build lacks types for globals, so
 read them with casts in `gdb -p <pid>`:
 
-- `*(int*)&com_frameNumber`, twice, gives FPS;
+- `*(int*)&com_frameNumber`, twice, gives main-loop frames per second. Before
+  the client is active, `SCR_ShouldSkipUpdateScreen` redraws menus at most
+  every 16 ms (about 62/s) by design, so use `cg_drawfps` in-game for FPS;
 - `((int(*)(int))UI_GetActiveMenu)(0)` (1 = main);
 - `((int(*)(void*))Menu_Count)((void*)&uiInfoArray)`;
 - `*(char**)` of `Menu_GetFocused(&uiInfoArray)`: the focused menu name.
