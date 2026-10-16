@@ -5,6 +5,7 @@
 #include <qcommon/sys_sync.h>
 #include <qcommon/sys_time.h>
 
+#include <array>
 #include <cstring>
 
 extern FastCriticalSection db_hashCritSect;
@@ -82,6 +83,31 @@ enum class SessionState : std::uint8_t
 thread_local SessionState t_session = SessionState::None;
 thread_local std::uint32_t t_sessionDepth = 0;
 thread_local LegacyBridgeStatus t_sessionStatus = LegacyBridgeStatus::Success;
+// User-4 references queued during a Window session. Each registry operation
+// validates the whole script-string table at its batch's begin and finish, so
+// one operation per reference made an unload's marking pass quadratic. They go
+// to the registry in one bulk operation instead: before any other operation of
+// the session, and when the session finishes. Failures land in the session
+// status, which the session already reports at its end. A session holds
+// db_hashCritSect for writing, so one queue serves every session.
+std::array<std::uint32_t, script_string::kRegistryOwnershipBulkCapacity> s_pendingUser4;
+std::uint32_t s_pendingUser4Count = 0;
+
+void RecordSessionStatus(const LegacyBridgeStatus status) noexcept
+{
+    if (t_sessionStatus == LegacyBridgeStatus::Success)
+        t_sessionStatus = status;
+}
+
+void FlushPendingUser4() noexcept
+{
+    if (s_pendingUser4Count == 0)
+        return;
+    db::registry_ownership::RegistryOwnershipBulkResult result{};
+    RecordSessionStatus(MapRegistryStatus(ZoneRuntimeFacade::TryAddDatabaseUsers4(
+        s_pendingUser4.data(), s_pendingUser4Count, &result)));
+    s_pendingUser4Count = 0;
+}
 
 // Opens a standalone registry window: facade access, then registry ownership,
 // which takes db_hashCritSect. Busy means another holder; nothing is kept.
@@ -141,11 +167,12 @@ template <typename Operation>
 {
     if (t_sessionDepth != 0)
     {
+        if (t_session == SessionState::Window)
+            FlushPendingUser4();
         const LegacyBridgeStatus status = t_session == SessionState::Window
             ? MapRegistryStatus(operation())
             : t_sessionStatus;
-        if (t_sessionStatus == LegacyBridgeStatus::Success)
-            t_sessionStatus = status;
+        RecordSessionStatus(status);
         return status;
     }
     if (OpenWindowWaiting() != LegacyBridgeStatus::Success)
@@ -197,6 +224,13 @@ LegacyBridgeStatus DbLoadLegacyBridge::TryAddUser4(
 {
     if (stringId == 0u || stringId > 0xFFFFu)
         return LegacyBridgeStatus::InvalidArgument;
+    if (t_sessionDepth != 0 && t_session == SessionState::Window)
+    {
+        if (s_pendingUser4Count == s_pendingUser4.size())
+            FlushPendingUser4();
+        s_pendingUser4[s_pendingUser4Count++] = stringId;
+        return LegacyBridgeStatus::Success;
+    }
     return RunInWindow([stringId]() noexcept {
         return ZoneRuntimeFacade::TryAddDatabaseUser4(stringId);
     });
@@ -250,7 +284,13 @@ bool DbLoadLegacyBridge::InSession() noexcept
 
 LegacyBridgeStatus DbLoadLegacyBridge::SessionStatus() noexcept
 {
-    return t_sessionDepth != 0 ? t_sessionStatus : LegacyBridgeStatus::Success;
+    if (t_sessionDepth == 0)
+        return LegacyBridgeStatus::Success;
+    // Queued references count: a caller gating on the status (the user-8
+    // shutdown after an unload's marking pass) must see their failure.
+    if (t_session == SessionState::Window)
+        FlushPendingUser4();
+    return t_sessionStatus;
 }
 
 LegacyBridgeStatus DbLoadLegacyBridge::FinishSession() noexcept
@@ -259,6 +299,8 @@ LegacyBridgeStatus DbLoadLegacyBridge::FinishSession() noexcept
         return LegacyBridgeStatus::InvalidState;
     if (--t_sessionDepth != 0)
         return t_sessionStatus;
+    if (t_session == SessionState::Window)
+        FlushPendingUser4();
     LegacyBridgeStatus status = t_sessionStatus;
     if (t_session == SessionState::Window)
     {

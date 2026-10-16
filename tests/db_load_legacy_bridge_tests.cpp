@@ -267,6 +267,72 @@ int g_failures = 0;
     SL_Shutdown();
     return ok;
 }
+
+// An unload's marking pass adds a user-4 reference per script string inside one
+// registry session. Every registry operation runs a script-string ownership
+// batch, and each batch validates the whole string table at its begin and
+// finish; the session's references must share one batch, not take one each.
+[[nodiscard]] bool TestSessionUser4ReferencesShareOneBatch() noexcept
+{
+    SL_Init();
+    bool ok = true;
+    constexpr int kReferenceCount = 40;
+    std::array<std::uint32_t, kReferenceCount> ids{};
+    for (int i = 0; i < kReferenceCount && ok; ++i)
+    {
+        char name[64];
+        std::snprintf(name, sizeof(name), "legacy-bridge-session-%d", i);
+        LegacyBridgeStringId interned{};
+        ok = Check(
+            DbLoadLegacyBridge::TryInternUser4String(name, &interned)
+                == LegacyBridgeStatus::Success,
+            "bridge did not intern a session reference name")
+            && ok;
+        ids[static_cast<std::size_t>(i)] = interned.stringId;
+    }
+
+    DbLoadLegacyBridge::BeginSession();
+    const std::uint64_t batchesBefore = sl_nextOwnershipBatchSerial;
+    for (const std::uint32_t id : ids)
+    {
+        ok = Check(
+            DbLoadLegacyBridge::TryAddUser4(id) == LegacyBridgeStatus::Success,
+            "bridge refused a user-4 reference inside a session")
+            && ok;
+    }
+    ok = Check(
+        DbLoadLegacyBridge::FinishSession() == LegacyBridgeStatus::Success,
+        "a session of valid user-4 references did not finish cleanly")
+        && ok;
+    const std::uint64_t batches = sl_nextOwnershipBatchSerial - batchesBefore;
+    if (batches != 1)
+        std::fprintf(stderr, "session took %llu ownership batches\n", static_cast<unsigned long long>(batches));
+    ok = Check(batches == 1,
+        "a session's user-4 references did not share one ownership batch (one full validation)")
+        && ok;
+
+    // A reference to an unallocated string in the middle still fails the session.
+    DbLoadLegacyBridge::BeginSession();
+    ok = Check(DbLoadLegacyBridge::TryAddUser4(ids[0]) == LegacyBridgeStatus::Success,
+        "bridge refused the first queued reference") && ok;
+    (void)DbLoadLegacyBridge::TryAddUser4(0x7FFFu);
+    ok = Check(DbLoadLegacyBridge::TryAddUser4(ids[1]) == LegacyBridgeStatus::Success,
+        "bridge refused a queued reference after the bad one") && ok;
+    // The unload's user-8 shutdown gates on SessionStatus before the session
+    // finishes; it must already see the queued failure.
+    ok = Check(
+        DbLoadLegacyBridge::SessionStatus() != LegacyBridgeStatus::Success,
+        "SessionStatus hid a queued user-4 failure from the user-8 shutdown gate")
+        && ok;
+    ok = Check(
+        DbLoadLegacyBridge::FinishSession() != LegacyBridgeStatus::Success,
+        "a session with an unallocated user-4 reference finished cleanly")
+        && ok;
+
+    SL_ShutdownSystem(kDatabaseUserMask);
+    SL_Shutdown();
+    return ok;
+}
 } // namespace
 
 void KISAK_CDECL Sys_EnterCriticalSection(const int criticalSection)
@@ -367,6 +433,7 @@ int main()
     const bool ok = TestInternValidationGuards()
         && TestHappyPathRoundTrip()
         && TestBackToBackCyclesDoNotPoison()
+        && TestSessionUser4ReferencesShareOneBatch()
         // Last: it initializes the process-wide production table.
         && TestInternDuringLegacyZoneLoad();
     if (g_failures != 0)
