@@ -171,6 +171,11 @@ void __cdecl DB_DelayedCloneXAsset(XAssetEntry *newEntry);
 bool __cdecl DB_OverrideAsset(uint32_t newZoneIndex, uint32_t existingZoneIndex);
 void __cdecl DB_GetXAsset(XAssetType type, XAssetHeader header);
 void DB_PostLoadXZone();
+// db_hashCritSect held through a registry session (db_load_legacy_bridge.h), for
+// sequences whose user-4/user-8 calls need the registry window to own the hash.
+// The end reports a failure once the hash is released.
+void DB_BeginRegistrySession();
+void DB_EndRegistrySession();
 void __cdecl DB_UpdateDebugZone();
 void __cdecl DB_SyncXAssets();
 void __cdecl DB_LoadXAssets(XZoneInfo *zoneInfo, uint32_t zoneCount, int32_t sync);
