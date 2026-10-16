@@ -36,6 +36,7 @@ void __cdecl IN_ActivateMouse(int force);
 namespace
 {
 SDL_Window *s_window;
+SDL_ThreadID s_windowThread;
 bool s_minimized;
 SDL_MouseButtonFlags s_buttons;
 bool s_focused;
@@ -255,6 +256,7 @@ bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless)
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, wndParms->fullscreen);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_ALWAYS_ON_TOP_BOOLEAN, wndParms->fullscreen);
     s_window = SDL_CreateWindowWithProperties(props);
+    s_windowThread = SDL_GetCurrentThreadID();
     SDL_DestroyProperties(props);
     if (!s_window)
     {
@@ -306,6 +308,10 @@ bool CL_SdlPumpEvents()
 {
     if (!s_window)
         return false;
+    // SDL pumps events only on the thread that made the window; Cocoa throws
+    // otherwise. The render thread's loading keep-alive leaves them queued.
+    if (SDL_GetCurrentThreadID() != s_windowThread)
+        return true;
     SDL_Event ev;
     while (SDL_PollEvent(&ev))
         HandleEvent(ev);
