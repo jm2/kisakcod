@@ -729,6 +729,8 @@ jobs:
             if ($rev -ne $pr) {
               robocopy build-windows-x86-mp\scripts base-objects\scripts *.obj /S /NFL /NDL /NJH /NJS /NP
               if ($LASTEXITCODE -ge 8) { exit 1 }
+              # A clean PR build: stale base objects would hide removed ones.
+              Remove-Item -Recurse -Force build-windows-x86-mp
             }
           }
           exit 0

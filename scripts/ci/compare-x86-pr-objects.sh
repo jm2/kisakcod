@@ -8,9 +8,10 @@
 #   metadata-only  file differs, but object-section-digest.py finds the retail
 #                  sections (code, data, relocations) equal: only CodeView
 #                  debug metadata moved, e.g. a shifted __LINE__ or include
-#   layout-only    the digest differs, but `dumpbin /disasm` is identical: a
-#                  header edit renumbered sections or symbols in an includer,
-#                  which the digest's relocation resolution counts
+#   layout-only    the digest differs, but `dumpbin /disasm` is identical
+#                  and object-data-sections.py finds the data sections equal:
+#                  a header edit renumbered sections or symbols in an
+#                  includer, which the digest's relocation resolution counts
 #   CODE           the disassembly differs (or no dumpbin to check with)
 #   added/removed  the object exists in only one tree
 #
@@ -18,7 +19,8 @@
 # vswhere. Without it, every digest difference is reported as CODE.
 #
 # Writes a Markdown report to stdout (CI appends it to the job summary).
-# Exit 0 when nothing is CODE/added/removed; 1 otherwise. A PR whose body
+# Exit 0 when nothing is CODE/added/removed; 1 otherwise; 2 when a tree
+# has no objects. A PR whose body
 # declares its x86 change may still merge (rule 16); this job is advisory.
 #
 # Usage: scripts/ci/compare-x86-pr-objects.sh <base-build-dir> <pr-build-dir>
@@ -33,7 +35,9 @@ BASE="$1"
 PR="$2"
 # Section names can hold bytes a Windows console code page can't print.
 export PYTHONIOENCODING=utf-8
-DIGEST="$(cd "$(dirname "$0")" && pwd)/object-section-digest.py"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+DIGEST="$HERE/object-section-digest.py"
+DATA_SECTIONS="$HERE/object-data-sections.py"
 # The first interpreter that actually runs: on Windows, python3 can be the
 # Microsoft Store alias stub, which fails instead of running.
 PYTHON=""
@@ -62,13 +66,23 @@ disasm() {
 }
 
 # Fails safe: no dumpbin, a dumpbin error or an empty listing keeps CODE.
+# dumpbin shows only code, so the data sections are compared separately.
 same_disasm() {
     [ -n "${DUMPBIN:-}" ] || return 1
     local a b
     a="$(disasm "$1")" || return 1
     b="$(disasm "$2")" || return 1
-    [ -n "$a" ] && [ "$a" = "$b" ]
+    [ -n "$a" ] && [ "$a" = "$b" ] && "$PYTHON" "$DATA_SECTIONS" "$1" "$2"
 }
+
+# Listed up front so a find failure stops the script (set -e) instead of
+# vanishing inside a process substitution.
+base_objects="$(list_objects "$BASE")"
+pr_objects="$(list_objects "$PR")"
+if [ -z "$base_objects" ] || [ -z "$pr_objects" ]; then
+    echo "No Release objects under $BASE or $PR: nothing to compare" >&2
+    exit 2
+fi
 
 identical=0
 metadata=()
@@ -89,11 +103,11 @@ while IFS= read -r obj; do
     else
         code+=("$obj")
     fi
-done < <(list_objects "$BASE")
+done <<< "$base_objects"
 
 while IFS= read -r obj; do
     [ -f "$BASE/$obj" ] || added+=("$obj")
-done < <(list_objects "$PR")
+done <<< "$pr_objects"
 
 echo "## Windows x86 objects vs base"
 echo
