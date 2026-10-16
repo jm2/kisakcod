@@ -14,8 +14,8 @@ int32_t __cdecl CIN_PlayCinematic(int32_t localClientNum, char *arg)
 
     if (!arg)
         MyAssertHandler(".\\client\\cl_cin.cpp", 33, 0, "%s", "arg");
-    volume = SND_GetVolumeNormalized() * snd_cinematicVolumeScale->current.value;
-    R_Cinematic_StartPlayback(arg, 5u, volume);
+    if (cl_cinematic::SkipsForConnect(clientUIActives[localClientNum].connectionState, KISAK_CIN_FIRST_CONNECTING)) { Com_Printf(14, "Skipping cinematic '%s' while connecting or connected\n", arg); return 0; }
+    volume = SND_GetVolumeNormalized() * snd_cinematicVolumeScale->current.value; R_Cinematic_StartPlayback(arg, 5u, volume);
     if (cls.uiStarted)
         UI_SetActiveMenu(localClientNum, UIMENU_NONE);
     Con_Close(localClientNum);
