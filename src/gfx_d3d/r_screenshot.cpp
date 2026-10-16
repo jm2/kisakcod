@@ -11,6 +11,11 @@
 #include "r_reflection_probe.h"
 #include "r_screenshot_rect.h"
 
+#ifdef KISAK_DXVK_NATIVE
+#include <atomic>
+#include <cstdlib>
+#endif
+
 #define ratio 4
 
 struct $EF604BEDDA69129AF7FD28DC5064E1AD // sizeof=0x18
@@ -1954,6 +1959,121 @@ bool __cdecl R_TakeScreenshotTga(int x, int y, int width, int height, char *file
     return written;
 }
 
+#ifdef KISAK_DXVK_NATIVE
+// dxvk-native's GetFrontBufferData reads the backbuffer after Present, which a
+// discard swapchain no longer holds, so a TGA screenshot is taken from the
+// backbuffer just before Present (RB_CaptureSwapchainScreenshot, the backend)
+// and written on the main thread (R_FinishSwapchainScreenshot, R_EndFrame).
+namespace
+{
+enum SwapchainShotState : int
+{
+    SHOT_IDLE,
+    SHOT_REQUESTED, // the main thread named a file; the backend owns the request
+    SHOT_CAPTURED,  // the backend packed g_shotTga; the main thread owns it
+    SHOT_FAILED,    // the backend couldn't capture; g_shotError says why
+};
+std::atomic<int> g_shotState{ SHOT_IDLE };
+char g_shotFilename[256];
+bool g_shotSilent;
+std::uint8_t *g_shotTga;
+std::uint32_t g_shotTgaBytes;
+const char *g_shotError;
+HRESULT g_shotHr;
+} // namespace
+
+static bool R_QueueSwapchainScreenshot(const char *filename, bool silent)
+{
+    if (g_shotState.load(std::memory_order_acquire) != SHOT_IDLE)
+    {
+        Com_PrintError(8, "ERROR: cannot take screenshot: one is already pending\n");
+        return false;
+    }
+    Com_sprintf(g_shotFilename, sizeof(g_shotFilename), "%s", filename);
+    g_shotSilent = silent;
+    g_shotState.store(SHOT_REQUESTED, std::memory_order_release);
+    return true;
+}
+
+void RB_CaptureSwapchainScreenshot()
+{
+    if (g_shotState.load(std::memory_order_acquire) != SHOT_REQUESTED)
+        return;
+    IDirect3DSurface9 *backBuffer = nullptr;
+    IDirect3DSurface9 *resolved = nullptr; // a multisampled backbuffer's single-sample copy
+    IDirect3DSurface9 *copy = nullptr;
+    D3DSURFACE_DESC desc{};
+    D3DLOCKED_RECT locked{};
+    g_shotError = nullptr;
+    g_shotHr = dx.windows[dx.targetWindowIndex].swapChain->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &backBuffer);
+    if (g_shotHr < 0)
+        g_shotError = "couldn't get the backbuffer";
+    else if ((g_shotHr = backBuffer->GetDesc(&desc)) < 0
+             || (desc.Format != D3DFMT_A8R8G8B8 && desc.Format != D3DFMT_X8R8G8B8))
+        g_shotError = "the backbuffer isn't 32-bit RGB";
+    // GetRenderTargetData reads only a single-sample surface (r_aaSamples > 1
+    // multisamples the backbuffer), so resolve one through StretchRect first.
+    else if (desc.MultiSampleType != D3DMULTISAMPLE_NONE
+             && ((g_shotHr = dx.device->CreateRenderTarget(desc.Width, desc.Height, desc.Format, D3DMULTISAMPLE_NONE, 0,
+                                                            FALSE, &resolved, nullptr)) < 0
+                 || (g_shotHr = dx.device->StretchRect(backBuffer, nullptr, resolved, nullptr, D3DTEXF_NONE)) < 0))
+        g_shotError = "couldn't resolve the multisampled backbuffer";
+    else if ((g_shotHr = dx.device->CreateOffscreenPlainSurface(
+                  desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, &copy, nullptr)) < 0)
+        g_shotError = "couldn't create the copy surface";
+    else if ((g_shotHr = dx.device->GetRenderTargetData(resolved ? resolved : backBuffer, copy)) < 0)
+        g_shotError = "couldn't read the backbuffer";
+    else if ((g_shotHr = copy->LockRect(&locked, nullptr, D3DLOCK_READONLY)) < 0)
+        g_shotError = "couldn't lock the copy";
+    else
+    {
+        const std::uint64_t bytes = R_ScreenshotTgaBytes(static_cast<int>(desc.Width), static_cast<int>(desc.Height));
+        g_shotTga = bytes && bytes <= UINT32_MAX ? static_cast<std::uint8_t *>(std::malloc(static_cast<std::size_t>(bytes))) : nullptr;
+        if (!g_shotTga
+            || !R_PackScreenshotTga(static_cast<const std::uint8_t *>(locked.pBits), locked.Pitch,
+                                    static_cast<int>(desc.Width), static_cast<int>(desc.Height), g_shotTga,
+                                    static_cast<std::size_t>(bytes)))
+        {
+            std::free(g_shotTga);
+            g_shotTga = nullptr;
+            g_shotError = "couldn't pack the image";
+        }
+        g_shotTgaBytes = static_cast<std::uint32_t>(bytes);
+        copy->UnlockRect();
+    }
+    if (copy)
+        copy->Release();
+    if (resolved)
+        resolved->Release();
+    if (backBuffer)
+        backBuffer->Release();
+    g_shotState.store(g_shotError ? SHOT_FAILED : SHOT_CAPTURED, std::memory_order_release);
+}
+
+void R_FinishSwapchainScreenshot()
+{
+    const int state = g_shotState.load(std::memory_order_acquire);
+    if (state == SHOT_CAPTURED)
+    {
+        const bool written = FS_WriteFile(g_shotFilename, reinterpret_cast<char *>(g_shotTga), g_shotTgaBytes) != 0;
+        std::free(g_shotTga);
+        g_shotTga = nullptr;
+        if (written && !g_shotSilent)
+            Com_Printf(8, "Wrote %s\n", g_shotFilename);
+    }
+    else if (state == SHOT_FAILED)
+    {
+        Com_PrintError(8, "ERROR: cannot take screenshot: %s: %s (0x%08x)\n", g_shotError, R_ErrorDescription(g_shotHr),
+                       static_cast<unsigned int>(g_shotHr));
+    }
+    else
+    {
+        return;
+    }
+    g_shotState.store(SHOT_IDLE, std::memory_order_release);
+}
+#endif
+
 int lastNumber;
 void __cdecl R_ScreenshotCommand(GfxScreenshotType type)
 {
@@ -2010,6 +2130,13 @@ void __cdecl R_ScreenshotCommand(GfxScreenshotType type)
         v2 = Cmd_Argv(1);
         Com_sprintf(filename, 0x100u, "screenshots/%s.%s", v2, extension);
     }
+#ifdef KISAK_DXVK_NATIVE
+    if (type) // a TGA comes from the next frame's backbuffer; R_EndFrame reports it
+    {
+        R_QueueSwapchainScreenshot(filename, silent != 0);
+        return;
+    }
+#endif
     const bool written = type
         ? R_TakeScreenshotTga(0, 0, vidConfig.displayWidth, vidConfig.displayHeight, filename)
         : R_TakeScreenshotJpg(0, 0, vidConfig.displayWidth, vidConfig.displayHeight, filename);

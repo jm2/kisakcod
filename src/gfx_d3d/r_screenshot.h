@@ -54,5 +54,11 @@ void __cdecl R_CubemapShotExtractLinearLight(
     float (**linearColors)[3]);
 
 void __cdecl R_ScreenshotCommand(GfxScreenshotType type);
+#ifdef KISAK_DXVK_NATIVE
+// A queued TGA screenshot (r_screenshot.cpp): the backend captures the
+// backbuffer before Present; R_EndFrame writes it on the main thread.
+void RB_CaptureSwapchainScreenshot();
+void R_FinishSwapchainScreenshot();
+#endif
 
 void __cdecl R_CreateReflectionRawDataFromCubemapShot(struct DiskGfxReflectionProbe *probeRawData, int downSampleRes);

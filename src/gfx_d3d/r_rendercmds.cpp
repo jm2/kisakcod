@@ -56,6 +56,9 @@ int R_DrawText2DCmdSize(size_t charCount)
 #include "rb_state.h"
 #include <universal/profile.h>
 #include <universal/sys_atomic.h>
+#ifdef KISAK_DXVK_NATIVE
+#include "r_screenshot.h"
+#endif
 
 //  struct GfxBackEndData *frontEndDataOut 85827c80     gfx_d3d : r_rendercmds.obj
 GfxBackEndData *frontEndDataOut;
@@ -1499,6 +1502,9 @@ void R_EnvMapOverrideConstants()
 
 void __cdecl R_EndFrame()
 {
+#ifdef KISAK_DXVK_NATIVE
+    R_FinishSwapchainScreenshot();
+#endif
     if (rg.registered)
     {
         CL_UpdateDebugClientData();
