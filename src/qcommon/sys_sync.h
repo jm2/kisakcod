@@ -102,3 +102,8 @@ bool KISAK_CDECL Sys_IsWriteLocked(const FastCriticalSection *critSect);
 // caller that waits for a busy section checks this first: a thread holding
 // none cannot be waiting on itself.
 bool KISAK_CDECL Sys_HoldsFastCriticalSection();
+// Whether this thread holds critSect for write. Write holds are exclusive and
+// released on the thread that took them, so this thread's own record is exact.
+bool KISAK_CDECL Sys_HoldsWriteLock(const FastCriticalSection *critSect);
+// That record's bookkeeping, for Sys_TryLockWrite and Sys_UnlockWrite only.
+void KISAK_CDECL Sys_NoteWriteLock(const FastCriticalSection *critSect, bool held);

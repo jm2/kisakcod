@@ -19,6 +19,9 @@
 #include <ui/ui_shared.h>
 
 #include <array>
+#include <atomic>
+#include <csetjmp>
+#include <thread>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -46,6 +49,9 @@ int g_reports = 0;               // Com_PrintError calls
 bool g_databaseReady2 = true;    // Sys_IsDatabaseReady2
 uint16_t g_overrideMark = 0;     // the name Mark_XAsset marks, when set
 int g_marks = 0;                 // Mark_XAsset calls that marked it
+bool g_dropInMark = false;       // Mark_XAsset raises ERR_DROP
+std::jmp_buf g_dropJump;         // where Com_Error longjmps, when set
+bool g_dropArmed = false;
 bool g_reportedUnderHash = false; // one of them while db_hashCritSect was held
 
 // A name a zone load interned for its assets: user 4 only.
@@ -123,6 +129,77 @@ void TestPostLoadOverrideMarks()
     g_zones[1].flags = g_zones[2].flags = 0;
 }
 
+// Sets up TestPostLoadOverrideMarks's override and links it, then clears it.
+void LinkOverride()
+{
+    static RawFile heldFile;
+    static RawFile overridingFile;
+    XAssetEntryPoolEntry &held = g_assetEntryPool[1];
+    XAssetEntryPoolEntry &overriding = g_assetEntryPool[2];
+    held.entry.asset.header.rawfile = &heldFile; // the link clones the headers
+    overriding.entry.asset.header.rawfile = &overridingFile;
+    held.entry.asset.type = overriding.entry.asset.type = ASSET_TYPE_RAWFILE;
+    held.entry.zoneIndex = 1;
+    held.entry.inuse = 1;
+    overriding.entry.zoneIndex = 2;
+    g_zones[1].flags = 1;
+    g_zones[2].flags = 2;
+    uint16_t &bucket = db_hashTable[DB_HashForName("", ASSET_TYPE_RAWFILE)];
+    bucket = 1;
+    g_copyInfo[0] = &overriding.entry;
+    g_copyInfoCount = 1;
+    g_databaseReady2 = false;
+    DB_PostLoadXZone();
+}
+
+// A drop raised while the link holds the asset hash: ERR_DROP recovery
+// (Com_ErrorCleanup) releases the session and the hash before anything waits
+// on them. The drop longjmps out of the link, as in production.
+void TestDropReleasesHash()
+{
+    g_dropInMark = true;
+    g_dropArmed = true;
+    if (setjmp(g_dropJump) == 0)
+    {
+        LinkOverride();
+        CHECK(!"the drop returned");
+    }
+    g_dropArmed = false;
+    g_dropInMark = false;
+    g_databaseReady2 = true;
+    CHECK(DbLoadLegacyBridge::InSession() && Sys_HoldsWriteLock(&db_hashCritSect));
+    DB_ReleaseLocksAfterError();
+    CHECK(!DbLoadLegacyBridge::InSession());
+    CHECK(!Sys_IsWriteLocked(&db_hashCritSect) && !Sys_HoldsWriteLock(&db_hashCritSect));
+    db_hashTable[DB_HashForName("", ASSET_TYPE_RAWFILE)] = 0;
+    g_assetEntryPool[1] = {};
+    g_assetEntryPool[2] = {};
+    g_zones[1].flags = g_zones[2].flags = 0;
+    g_copyInfoCount = 0;
+
+    // A plain write hold this thread took is released too.
+    Sys_LockWrite(&db_hashCritSect);
+    DB_ReleaseLocksAfterError();
+    CHECK(!Sys_IsWriteLocked(&db_hashCritSect));
+
+    // Another thread's hold is not this thread's to release.
+    std::atomic<int> step{0};
+    std::thread other([&] {
+        Sys_LockWrite(&db_hashCritSect);
+        step = 1;
+        while (step != 2)
+            std::this_thread::yield();
+        Sys_UnlockWrite(&db_hashCritSect);
+    });
+    while (step != 1)
+        std::this_thread::yield();
+    DB_ReleaseLocksAfterError();
+    CHECK(Sys_IsWriteLocked(&db_hashCritSect) && !Sys_HoldsWriteLock(&db_hashCritSect));
+    step = 2;
+    other.join();
+    CHECK(!Sys_IsWriteLocked(&db_hashCritSect));
+}
+
 // Two unloads with a poisoned registry boundary, so no registry window opens:
 // each completes and reports the failure after releasing the hash.
 void TestUnloadReportsAfterRelease()
@@ -195,6 +272,8 @@ std::array<std::recursive_mutex, CRITSECT_COUNT> g_criticalSections;
 
 WEAK void Com_Error(errorParm_t, const char *fmt, ...)
 {
+    if (g_dropArmed)
+        std::longjmp(g_dropJump, 1);
     std::fprintf(stderr, "Com_Error%s: %s\n",
                  Sys_IsWriteLocked(&db_hashCritSect) ? " with db_hashCritSect held (hangs in production)" : "", fmt);
     std::exit(1);
@@ -244,6 +323,8 @@ WEAK void Com_UnloadWorld() {}
 WEAK void BG_FillInAllWeaponItems() {}
 WEAK void Mark_XAsset()
 {
+    if (g_dropInMark)
+        Com_Error(ERR_DROP, "a link-time drop");
     if (!g_overrideMark)
         return;
     Mark_ScriptStringCustom(&g_overrideMark);
@@ -275,6 +356,7 @@ int main(int argc, char **argv)
     }
     TestDynamicCloneMenu();
     TestPostLoadOverrideMarks();
+    TestDropReleasesHash();
     TestQuitFreesZoneNames();
     TestFailureInSessionKeepsNames();
     TestUnloadReportsAfterRelease(); // last: the poison is process-wide
