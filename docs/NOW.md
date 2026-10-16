@@ -25,7 +25,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 31 | Linux arm64 client in-game on Steam 1.8 data | G5 | gate | `+devmap mp_crash` on master runs in-game frames with no error | M | in progress (linux-arm64): GPU detection #581; renders mp_crash; its last crash is fixed by #616, so re-run on master |
+| 31 | Linux arm64 client in-game on Steam 1.8 data | G5 | gate | `+devmap mp_crash` on master runs in-game frames with no error | M | in progress (linux-arm64): on master the server marks the client active, then the first frames crash in `R_SetLightProperties` with a null light def (point-lit path) |
 | 33 | Linux amd64 client draws its main menu on Steam 1.8 data | G5 | gate | gdb reads `UI_GetActiveMenu(0)` = 1 and a TGA `screenshot` taken after the menu is up is mostly non-black ([CLIENT](design/CLIENT.md) bring-up) | M | in progress (antec): zones load, menu active at about 230 fps, but captures are black even with a magenta clear |
 | 34 | macOS client in-game (jm2/dxvk on KosmicKrisp) | G5 | gate | `+devmap mp_shipment` on master runs in-game | L | done: in-game on master with no patches, about 120 fps, zones in under 1 s |
 | 40 | macOS main menu capped near 60 fps (FIFO-only present on KosmicKrisp) | G5 | gate | the main menu exceeds 60 fps with `com_maxfps 0` | S | queued (mac) |
