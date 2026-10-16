@@ -1,6 +1,6 @@
 # Client
 
-WS-6 · Gate G5 (Vulkan: G6) · Cap 10 KB · Related: [CHARTER](../CHARTER.md), [ROADMAP](../ROADMAP.md), [ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)
+WS-6 · Gate G5 (Vulkan: G6) · Cap 15 KB · Related: [CHARTER](../CHARTER.md), [ROADMAP](../ROADMAP.md), [ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)
 
 ## Route
 
@@ -111,6 +111,21 @@ read them with casts in `gdb -p <pid>`:
 - `((int(*)(void*))Menu_Count)((void*)&uiInfoArray)`;
 - `*(char**)` of `Menu_GetFocused(&uiInfoArray)`: the focused menu name.
 
+The engine names its main thread `Main`, so find the process with `pgrep -f`
+on the binary path, not `pgrep -x`.
+
+**Without a desktop.**
+- A headless Wayland compositor gives a display with no input seat:
+  `mutter --headless --wayland --no-x11 --wayland-display=<name> --virtual-monitor 1920x1080`.
+- Run the client with `WAYLAND_DISPLAY=<name> SDL_VIDEO_DRIVER=wayland`.
+
+**Maps.**
+- `+devmap <map>` needs a selected profile: `profiles/active.txt` naming a
+  profile directory. Without one the map load stops at "You have not chosen a
+  profile yet".
+- Builds without Bink skip the intro cinematic while a connect is in flight
+  (#614), so `com_introPlayed` isn't needed.
+
 **Screenshots.**
 
 - `screenshotJPEG` has no encoder in any build and says so (#593); use
@@ -127,3 +142,39 @@ backbuffer capture with `r_clear steady` and a magenta `r_clearColor`. The
 arm64 client reports its main menu too, and the macOS client draws the full
 main menu at a steady ~58 fps (probably a FIFO-only present on KosmicKrisp). Next: capture after the menu is up; if still
 black with the magenta clear, the frame isn't reaching the swapchain.
+On arm64 (2026-10-15), `+devmap mp_crash` connects, and the server marks the
+client active. The static-model cache crash that followed is fixed in #612.
+
+### Loader hooks
+
+The 64-bit disk32 converters create renderer objects only on a client,
+through `database/db_disk32_renderer_hooks.h`. Its one `KISAK_DEDI_HEADLESS`
+switch keeps a headless server's handles null.
+
+| Family | Client hook |
+| --- | --- |
+| TechniqueSet | `Load_BuildVertexDecl`, `Load_CreateMaterial{Vertex,Pixel}Shader` |
+| Image | `Load_Texture`; a texture alias `AddRef`s the earlier texture (`ShareTexture`) |
+| Material | `Load_PicmipWater`, once per completed water |
+| GfxWorld | `Load_VertexBuffer` for the world and layer vertices |
+
+- **Aliases:** each hook sits inside its converter, so an alias reuses the
+  earlier object.
+- **XModel:** needs no hook. On a client, zone blocks 7 and 8 are static
+  vertex and index buffers, and `DB_SetStreamIndex` copies what streams into
+  them when the stream position pops.
+- **Tests:** disk32 family tests build headless unless the family name ends
+  in `-client`.
+
+### 64-bit patterns the client hit
+
+NATIVE64.md is at its cap, so the patterns are listed here. Grep for:
+- x86 byte sizes for pointer-holding structs, such as `UI_Alloc(8u, 4)` for a
+  two-pointer node;
+- `_DWORD` arrays holding pointers;
+- x86 strides in handle math, such as `/ 40` for a struct that is 48 bytes at
+  64-bit;
+- `uint32_t` free-list links;
+- a struct pointer stepped one byte at a time (UBSan misalignment);
+- an unsigned index minus a constant into the neighbouring member (#611). x86
+  wraps it mod 2^32, but 64-bit zero-extends it far out of bounds.

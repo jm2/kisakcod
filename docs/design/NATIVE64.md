@@ -99,6 +99,8 @@ Two kinds of hazard, both fixed by beads 9–11 (WS-3, G2):
 
 A row reaches **fixed** only when the fix is merged *and* a test executes the fixed code at 64-bit. Pin an x86 identity with `RUNTIME_SIZE`/`RUNTIME_OFFSET` (n32 = old bytes); a formula `static_assert` fails the abi-sizeof tripwire.
 
+More patterns from the client bring-up: [CLIENT.md](CLIENT.md#64-bit-patterns-the-client-hit).
+
 ## Script VM
 
 - `VariableUnion` is native-width in the production headers, and `scr_readwrite.cpp` (save/load) is SP-only.
