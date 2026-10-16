@@ -102,7 +102,7 @@ for kind in code layout metadata added removed; do
     declare -n items="$kind"
     [ "${#items[@]}" -eq 0 ] && continue
     echo
-    case "$kind" in metadata) heading=metadata-only ;; layout) heading=layout-only ;; *) heading="$kind" ;; esac
+    case "$kind" in metadata) heading="metadata-only" ;; layout) heading="layout-only" ;; *) heading="$kind" ;; esac
     echo "### $heading"
     for item in "${items[@]}"; do
         echo "- \`$item\`"
