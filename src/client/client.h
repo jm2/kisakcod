@@ -705,6 +705,8 @@ void __cdecl CL_ShutdownDebugData();
 
 // cl_cin
 int32_t __cdecl CIN_PlayCinematic(int32_t localClientNum, char *arg);
+// Whether a cinematic would take a connecting or connected client's state.
+bool __cdecl CL_CinematicWouldInterruptConnect(int32_t localClientNum, const char *name);
 void __cdecl CL_PlayCinematic_f();
 void __cdecl CL_PlayUnskippableCinematic_f();
 void __cdecl SCR_DrawCinematic(int32_t localClientNum);

@@ -14,8 +14,8 @@ int32_t __cdecl CIN_PlayCinematic(int32_t localClientNum, char *arg)
 
     if (!arg)
         MyAssertHandler(".\\client\\cl_cin.cpp", 33, 0, "%s", "arg");
-    volume = SND_GetVolumeNormalized() * snd_cinematicVolumeScale->current.value;
-    R_Cinematic_StartPlayback(arg, 5u, volume);
+    if (CL_CinematicWouldInterruptConnect(localClientNum, arg)) return 0; // keep the connect
+    volume = SND_GetVolumeNormalized() * snd_cinematicVolumeScale->current.value; R_Cinematic_StartPlayback(arg, 5u, volume);
     if (cls.uiStarted)
         UI_SetActiveMenu(localClientNum, UIMENU_NONE);
     Con_Close(localClientNum);
@@ -96,3 +96,24 @@ void __cdecl SCR_StopCinematic(int32_t localClientNum)
     }
 }
 
+
+// A cinematic owns the client's connection state (CA_CINEMATIC), so one
+// started while this client connects or plays would drop that connect: the
+// intro chain COM_PlayIntroMovies queues runs after a startup +devmap has
+// begun its loopback connect, and the client then ignores connectResponse.
+// Such a cinematic is skipped; the connect keeps its state.
+// Single player plays its cinematics while loading and in a level, so this
+// is a multiplayer rule.
+bool __cdecl CL_CinematicWouldInterruptConnect(int32_t localClientNum, const char *name)
+{
+#ifdef KISAK_MP
+    if (clientUIActives[localClientNum].connectionState < CA_CONNECTING)
+        return false;
+    Com_Printf(14, "Skipping cinematic '%s' while connecting or connected\n", name ? name : "");
+    return true;
+#else
+    (void)localClientNum;
+    (void)name;
+    return false;
+#endif
+}
