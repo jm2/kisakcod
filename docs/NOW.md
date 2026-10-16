@@ -31,7 +31,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | 41 | Native client cinematics: Bink is a silent stub on 64-bit; play `.bik` through FFmpeg ([CLIENT](design/CLIENT.md)) | G5 | gate | a retail intro cinematic plays on a 64-bit client | L | queued |
 | 42 | Census scope: the headless K1 set includes 4 POSIX client files that need SDL3 and dxvk-native | G1 | K1 | K1 reads 100% on lin64 and a64 | S | done (#623) |
 | 35 | Win64 client in-game on Steam 1.8 data | G4b | gate | `+devmap mp_shipment` runs in-game | M | done: in-game on mp_shipment on the antec-win console session (capture 99.7% non-black) |
-| 43 | Win64 in-game at ~40 fps: cgame ~25 ms/frame (macOS ~120 fps); check whether a profiling build or dvar is on | G5 | gate | Win64 in-game FPS within ~25% of macOS on the same map | S | queued (win) |
+| 43 | Win64 in-game at ~40 fps: skinning read back the write-combined dynamic vertex buffer | G5 | gate | Win64 in-game FPS on mp_shipment well above 40 | S | done (#626): about 188 fps; macOS's ~120 is its display refresh |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects to the fork's x86 server under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | queued |
 | 37 | K4 digest pipeline: per-family `db::graph_hash` walkers on x86 and 64-bit | G2 | K4 | a family's 64-bit graph hash equals its x86 hash on the owner's data; its fail-closed guard is then removed | L | queued |
 
@@ -62,6 +62,6 @@ Merge SHAs are in `git log`.
 - 2026-09-29 queue: rows 9-14, 17 and 20-29 (#313, #316, #318, #320, #321, #324, #328-#330, #333, #338, #340, #341, #344, #345, #372, #386).
 - Retail load stops: #475, #478, #479, #497, #498, #512, #513, #518. x86 load path in CI: #522.
 - G4a wire identity: #531, #532. 64-bit D3DX replacement: #520, #537, #539, #541.
-- G5 client launch: #543-#557, #559, #562, #567-#569, #571-#573, #576, #581, #586-#588, #590, #592, #593, #596, #598, #597, #610-#617, #621.
+- G5 client launch: #543-#557, #559, #562, #567-#569, #571-#573, #576, #581, #586-#588, #590, #592, #593, #596, #598, #597, #610-#617, #621, #624, #626.
 - 2026-10-15 backlog: #591, #600, #601; docs #605, #607, #609, #618, #619.
 - Row 40 (macOS menu at ~60 fps): closed as retail behaviour; `SCR_ShouldSkipUpdateScreen` redraws menus at most every 16 ms until the client is active.
