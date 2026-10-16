@@ -116,7 +116,7 @@ less. Nothing else lives in `docs/`.
 | `design/NET_STEAM18.md` | 12 KB | WS-5 | Steam 1.8 wire, captures |
 | `design/PLATFORM_POSIX.md` | 8 KB | WS-4 | POSIX headless platform, K5 |
 | `design/DETERMINISM.md` | 5 KB | WS-3 | RNG, floating point, comparisons |
-| `design/CLIENT.md` | 10 KB | WS-6 | Client route, shaders, audio, voice |
+| `design/CLIENT.md` | 15 KB | WS-6 | Client route, shaders, audio, voice |
 | `UPSTREAM.md` | 3 KB | operator | Upstream sync policy |
 | `ARCHIVE.md` | 1 KB | operator | Where the old docs went |
 | `capability/manifest.json` | 8 KB | operator | K6 cells |
