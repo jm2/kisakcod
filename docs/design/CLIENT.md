@@ -107,8 +107,9 @@ profile, never the retail directory; symlinked installs don't list. Retail data 
 read them with casts in `gdb -p <pid>`:
 
 - `*(int*)&com_frameNumber`, twice, gives main-loop frames per second. Before
-  the client is active, `SCR_ShouldSkipUpdateScreen` redraws menus at most
-  every 16 ms (about 62/s) by design, so use `cg_drawfps` in-game for FPS;
+  the client is active, `SCR_ShouldSkipUpdateScreen` redraws at most every
+  16 ms (about 62/s) before loading and every 33 ms (about 30/s) while
+  loading, by design, so use `cg_drawfps` in-game for FPS;
 - `((int(*)(int))UI_GetActiveMenu)(0)` (1 = main);
 - `((int(*)(void*))Menu_Count)((void*)&uiInfoArray)`;
 - `*(char**)` of `Menu_GetFocused(&uiInfoArray)`: the focused menu name.
@@ -144,8 +145,7 @@ on the binary path, not `pgrep -x`.
 arm64 (mp_crash), the client is in-game on master. On Linux amd64 it draws the
 main menu. Capture a frame by sending `screenshot` on stdin once the menu is
 up: `+wait` runs while zones are still loading, so a `+wait N +screenshot`
-capture shows a loading frame, which can be all black. Menus redraw at most
-about 62 times a second by design.
+capture shows a loading frame, which can be all black.
 
 ### Loader hooks
 
