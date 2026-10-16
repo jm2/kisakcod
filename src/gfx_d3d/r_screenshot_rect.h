@@ -75,11 +75,13 @@ inline bool R_PackScreenshotTga(
     for (int row = 0; row < height; ++row)
     {
         const std::uint8_t *src = bgra + static_cast<std::size_t>(row) * static_cast<std::size_t>(pitch);
-        for (int col = 0; col < width; ++col, src += 4, dst += 3)
+        for (int col = 0; col < width; ++col)
         {
             dst[0] = src[0];
             dst[1] = src[1];
             dst[2] = src[2];
+            src += 4;
+            dst += 3;
         }
     }
     return true;
