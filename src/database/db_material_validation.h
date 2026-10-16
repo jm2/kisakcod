@@ -14,6 +14,12 @@
 
 #include <cstdint>
 
+struct MaterialTechniqueSet;
+
+// db_registry.cpp: the loading zone's own technique set behind a registered
+// header, which differs only while a delayed clone waits for DB_PostLoadXZone.
+const MaterialTechniqueSet *DB_ZoneTechniqueSet(const MaterialTechniqueSet *linkedSet);
+
 namespace db::material_validation
 {
 inline constexpr db::relocation::BlockMask kDirectBlock4 = db::relocation::BlockBit(4);
@@ -229,8 +235,14 @@ inline bool DB_ValidateMaterialSemantics(const Material *material)
 
     if (!material->techniqueSet)
         return true; // a stub
-    const MaterialTechniqueSet *original = material->techniqueSet;
-    const MaterialTechniqueSet *candidate = original->remappedTechniqueSet;
+    // Check the material against its own zone's set: a reload of an unloaded
+    // zone (or an override) leaves the registered header holding the default
+    // or older set until DB_PostLoadXZone links this zone's. That set's remap
+    // is chosen and checked once it is linked (Material_RemapTechniqueSet).
+    const MaterialTechniqueSet *original = DB_ZoneTechniqueSet(material->techniqueSet);
+    const MaterialTechniqueSet *candidate = original == material->techniqueSet
+        ? original->remappedTechniqueSet
+        : original;
     if (candidate->worldVertFormat != original->worldVertFormat)
     {
         Com_Error(ERR_DROP, "Material technique remap changes vertex format");

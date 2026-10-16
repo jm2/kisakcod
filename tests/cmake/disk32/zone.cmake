@@ -76,3 +76,9 @@ set_tests_properties(database-disk32-zone-drop-sndinline PROPERTIES TIMEOUT 60)
 # A stub's default entry that finds its pool full drops with the hash free.
 add_test(NAME database-disk32-zone-drop-curvepool COMMAND kisakcod-db-disk32-zone-tests expect-drop curvepool)
 set_tests_properties(database-disk32-zone-drop-curvepool PROPERTIES TIMEOUT 60)
+# A reload of an unloaded zone: its own technique set waits behind a default
+# entry for DB_PostLoadXZone, and each material checks against the zone's set.
+add_test(NAME database-disk32-zone-reload-techset COMMAND kisakcod-db-disk32-zone-tests expect-drop reload)
+set_tests_properties(database-disk32-zone-reload-techset PROPERTIES TIMEOUT 60)
+add_test(NAME database-disk32-zone-drop-reload-mismatch COMMAND kisakcod-db-disk32-zone-tests expect-drop reload-mismatch)
+set_tests_properties(database-disk32-zone-drop-reload-mismatch PROPERTIES TIMEOUT 60)

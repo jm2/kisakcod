@@ -71,6 +71,13 @@ std::uint8_t *__cdecl DB_AllocZoneNative(std::size_t size, std::size_t alignment
     return g_arena + start;
 }
 
+// db_registry.cpp's delayed-clone lookup: a family test links no registry, so
+// every registered technique set is its zone's own.
+const MaterialTechniqueSet *DB_ZoneTechniqueSet(const MaterialTechniqueSet *linkedSet)
+{
+    return linkedSet;
+}
+
 // The renderer's creation hooks a -client family's converters call
 // (db_disk32_renderer_hooks.h): each leaves the runtime handle null, as a
 // headless server does. The techniqueset, image and material tests replace

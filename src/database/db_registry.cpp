@@ -463,6 +463,10 @@ XAssetEntryPoolEntry *g_freeAssetEntryHead;
 uint16_t db_hashTable[32768];
 XAssetEntry *g_copyInfo[0x800];
 uint32_t g_copyInfoCount;
+// The registered header each g_copyInfo entry replaces when DB_PostLoadXZone
+// links it. Until then that header still holds the default or overridden
+// asset, and the entry's own header holds this zone's.
+static XAssetHeader g_copyInfoLinked[0x800];
 
 template <std::size_t Size>
 constexpr int DB_CheckedTrackSize() noexcept
@@ -2376,7 +2380,7 @@ XAssetEntryPoolEntry *__cdecl DB_LinkXAssetEntry(XAssetEntryPoolEntry *newEntry,
         }
         else
         {
-            DB_DelayedCloneXAsset(&newEntry->entry);
+            DB_DelayedCloneXAsset(&newEntry->entry, existingEntry->entry.asset.header);
         }
         return existingEntry;
     }
@@ -2460,7 +2464,7 @@ void __cdecl DB_DynamicCloneXAsset(XAssetHeader from, XAssetHeader to, XAssetTyp
 }
 
 int32_t g_sync;
-void __cdecl DB_DelayedCloneXAsset(XAssetEntry *newEntry)
+void __cdecl DB_DelayedCloneXAsset(XAssetEntry *newEntry, XAssetHeader linkedHeader)
 {
     const char *XAssetTypeName; // eax
     const char *XAssetName; // [esp-4h] [ebp-8h]
@@ -2483,8 +2487,21 @@ void __cdecl DB_DelayedCloneXAsset(XAssetEntry *newEntry)
             }
             Sys_Error("g_copyInfo exceeded");
         }
+        g_copyInfoLinked[g_copyInfoCount] = linkedHeader;
         g_copyInfo[g_copyInfoCount++] = newEntry;
     }
+}
+
+const MaterialTechniqueSet *DB_ZoneTechniqueSet(const MaterialTechniqueSet *linkedSet)
+{
+    // A material in the loading zone links to the registered header, but a
+    // delayed clone has not copied the zone's own set into it yet.
+    for (uint32_t i = g_copyInfoCount; i-- > 0;)
+    {
+        if (g_copyInfo[i]->asset.type == ASSET_TYPE_TECHNIQUE_SET && g_copyInfoLinked[i].techniqueSet == linkedSet)
+            return g_copyInfo[i]->asset.header.techniqueSet;
+    }
+    return linkedSet;
 }
 
 bool __cdecl DB_OverrideAsset(uint32_t newZoneIndex, uint32_t existingZoneIndex)
