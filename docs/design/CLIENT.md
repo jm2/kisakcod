@@ -106,7 +106,10 @@ profile, never the retail directory; symlinked installs don't list. Retail data 
 **State without a screen.** The Release build lacks types for globals, so
 read them with casts in `gdb -p <pid>`:
 
-- `*(int*)&com_frameNumber`, twice, gives FPS;
+- `*(int*)&com_frameNumber`, twice, gives main-loop frames per second. Before
+  the client is active, `SCR_ShouldSkipUpdateScreen` redraws at most every
+  16 ms (about 62/s) before loading and every 33 ms (about 30/s) while
+  loading, by design, so use `cg_drawfps` in-game for FPS;
 - `((int(*)(int))UI_GetActiveMenu)(0)` (1 = main);
 - `((int(*)(void*))Menu_Count)((void*)&uiInfoArray)`;
 - `*(char**)` of `Menu_GetFocused(&uiInfoArray)`: the focused menu name.
@@ -138,14 +141,11 @@ on the binary path, not `pgrep -x`.
 - After `Present` a discard swapchain's backbuffer is undefined; capture
   before `Present` (branch `operator/screenshot-backbuffer`, unmerged).
 
-**Open (amd64, 2026-10-09):** the client loads all base zones and reports
-the main menu at about 200-240 fps, but every capture is black, including a
-backbuffer capture with `r_clear steady` and a magenta `r_clearColor`. The
-arm64 client reports its main menu too, and the macOS client draws the full
-main menu at a steady ~58 fps (probably a FIFO-only present on KosmicKrisp). Next: capture after the menu is up; if still
-black with the magenta clear, the frame isn't reaching the swapchain.
-On arm64 (2026-10-15), `+devmap mp_crash` connects, and the server marks the
-client active. The static-model cache crash that followed is fixed in #612.
+**Client status (2026-10-16).** On macOS (mp_shipment, mp_crash) and Linux
+arm64 (mp_crash), the client is in-game on master. On Linux amd64 it draws the
+main menu. Capture a frame by sending `screenshot` on stdin once the menu is
+up: `+wait` runs while zones are still loading, so a `+wait N +screenshot`
+capture shows a loading frame, which can be all black.
 
 ### Loader hooks
 
