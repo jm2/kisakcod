@@ -16,6 +16,7 @@
 #include <ui/ui_shared.h>
 #include <database/db_disk32_mirrors.h>
 
+#include <algorithm>
 #include <bit>
 #include <cfloat>
 #include <cstddef>
@@ -138,6 +139,51 @@ void WriteTechniqueSet(Image &z) // no techniques; the pool call sets its remap
     g_at.techniqueSet = z.VAlloc(4);
     z.Word(kInline).Word(0).Word(0xDEADBEEF).Fill(34 * 4).V("e2e/techset");
 }
+// A set whose technique 0 has one pass: a one-stream declaration, both
+// shaders and one code pixel constant (db_disk32_techniqueset_tests.cpp's
+// shapes). Each object streams into block 4 at its retail offset.
+void WriteTechniqueSetWithPass(Image &z, const char *name)
+{
+    z.Word(kInline).Word(0).Word(0xDEADBEEF).Word(kInline).Fill(33 * 4).V(name);
+    z.VAlloc(8 + 20); // the technique (its name after its passes, one pass), then its pass
+    z.Word(kInline).Word(1u << 16);
+    z.Word(kInline).Word(kInline).Word(kInline).Word(1u << 16 | 0x01000000u).Word(kInline);
+    z.VAlloc(100); // the declaration: stream 0 to destination 1, its handles junk
+    z.Word(0x00FFFF01u).Word(0x100).Fill(7 * 4);
+    for (std::uint32_t handle = 0; handle < 16; ++handle)
+        z.Word(0xBAD00000u + handle);
+    for (const std::uint32_t version : {0xFFFE0200u, 0xFFFF0200u}) // vs_2_0, ps_2_0: name, then a two-DWORD program
+    {
+        z.VAlloc(16);
+        z.Word(kInline).Word(0xBADC0DE5).Word(kInline).Word(2).V(version == 0xFFFE0200u ? "v" : "p");
+        z.VAlloc(8);
+        z.Word(version).Word(0x0000FFFF);
+    }
+    z.VAlloc(8); // one code pixel constant
+    z.Word(5).Word(1u << 24);
+    z.V("t");
+}
+// `reload` and `reload-mismatch`: the zone's stub of its own set links a
+// default entry first, as an unload with defaults leaves one for a reload,
+// so the set's load waits for DB_PostLoadXZone to copy it in.
+void WriteDefaultTechniqueSetWithPass(Image &z)
+{
+    WriteTechniqueSetWithPass(z, "default");
+}
+void WriteEmptyDefaultTechniqueSet(Image &z)
+{
+    z.Word(kInline).Word(0).Word(0xDEADBEEF).Fill(34 * 4).V("default");
+}
+void WriteStubTechniqueSet(Image &z)
+{
+    z.Record(148, {{0x00, kInline}}).V(",e2e/techset");
+}
+void WriteTechniqueSetWithPassShared(Image &z)
+{
+    g_at.techniqueSet = z.VAlloc(4);
+    WriteTechniqueSetWithPass(z, "e2e/techset");
+}
+
 // Two textures, ordered by name hash: the shared image by offset, then a
 // second image inline, which publishes as the material loads.
 void WriteMaterial(Image &z)
@@ -565,6 +611,21 @@ std::span<const Asset> zone_test::ZoneAssets()
         const bool inlineDriver = Variant() && !std::strcmp(Variant(), "sndinline");
         for (Asset &asset : assets)
             asset.token = inlineDriver && asset.type == ASSET_TYPE_SNDDRIVER_GLOBALS ? kInline : asset.token;
+        // reload: the default has technique 0, the zone's set none, as the
+        // material says. reload-mismatch: the reverse, so the material
+        // disagrees with its own zone's set while it agrees with the default.
+        const bool reload = Variant() && !std::strcmp(Variant(), "reload");
+        const bool mismatch = Variant() && !std::strcmp(Variant(), "reload-mismatch");
+        if (reload || mismatch)
+        {
+            const auto set = std::find_if(assets.begin(), assets.end(),
+                [](const Asset &asset) { return asset.type == ASSET_TYPE_TECHNIQUE_SET; });
+            if (mismatch)
+                set->write = WriteTechniqueSetWithPassShared;
+            assets.insert(set, {{ASSET_TYPE_TECHNIQUE_SET, kInline, "default",
+                                 reload ? WriteDefaultTechniqueSetWithPass : WriteEmptyDefaultTechniqueSet},
+                                {ASSET_TYPE_TECHNIQUE_SET, kInline, ",e2e/techset", WriteStubTechniqueSet}});
+        }
         if (Variant() && !std::strcmp(Variant(), "curvepool"))
         {
             assets.push_back({ASSET_TYPE_SOUND_CURVE, kInline, "default", WriteDefaultCurve});
@@ -583,6 +644,10 @@ const char *zone_test::VariantDrop()
         return "carries an inline record";
     if (Variant() && !std::strcmp(Variant(), "curvepool"))
         return "Exceeded limit of 64";
+    if (Variant() && !std::strcmp(Variant(), "reload"))
+        return "(none)"; // the load completes
+    if (Variant() && !std::strcmp(Variant(), "reload-mismatch"))
+        return "technique state mapping";
     return nullptr;
 }
 

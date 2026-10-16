@@ -167,7 +167,7 @@ void __cdecl DB_FreeXAssetEntry(XAssetEntryPoolEntry *assetEntry);
 void __cdecl DB_FreeXAssetHeader(XAssetType type, XAssetHeader header);
 void __cdecl DB_CloneXAssetEntry(const XAssetEntry *from, XAssetEntry *to);
 void __cdecl DB_DynamicCloneXAsset(XAssetHeader from, XAssetHeader to, XAssetType type, int32_t fromDefault);
-void __cdecl DB_DelayedCloneXAsset(XAssetEntry *newEntry);
+void __cdecl DB_DelayedCloneXAsset(XAssetEntry *newEntry, XAssetHeader linkedHeader);
 bool __cdecl DB_OverrideAsset(uint32_t newZoneIndex, uint32_t existingZoneIndex);
 void __cdecl DB_GetXAsset(XAssetType type, XAssetHeader header);
 void DB_PostLoadXZone();
