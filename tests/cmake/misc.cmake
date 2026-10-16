@@ -958,6 +958,16 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(devgui-menu-table-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# The decision a cinematic asks before taking a multiplayer client's
+# connection state (client/cl_cinematic_policy.h). D3D-free, so it builds on
+# every test platform.
+add_executable(kisakcod-cl-cinematic-policy-tests cl_cinematic_policy_tests.cpp)
+target_include_directories(kisakcod-cl-cinematic-policy-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-cl-cinematic-policy-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-cl-cinematic-policy-tests)
+set_target_properties(kisakcod-cl-cinematic-policy-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME cl-cinematic-policy-contracts COMMAND kisakcod-cl-cinematic-policy-tests)
+
 # The "cinematic" command (client/cl_cin.cpp) in a multiplayer client: a
 # cinematic leaves a connecting or connected client's state alone. Linux and
 # clang only, as above; the client's defines. r_cinematic.h needs dxvk-native's

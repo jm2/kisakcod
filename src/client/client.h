@@ -9,6 +9,7 @@
 #include <universal/memfile.h>
 #endif
 #include <gfx_d3d/r_debug.h>
+#include <client/cl_cinematic_policy.h>
 
 struct snd_alias_t;
 
@@ -705,8 +706,13 @@ void __cdecl CL_ShutdownDebugData();
 
 // cl_cin
 int32_t __cdecl CIN_PlayCinematic(int32_t localClientNum, char *arg);
-// Whether a cinematic would take a connecting or connected client's state.
-bool __cdecl CL_CinematicWouldInterruptConnect(int32_t localClientNum, const char *name);
+// The first connection state a cinematic leaves alone in a build without Bink
+// (client/cl_cinematic_policy.h). Single player has no connect states.
+#ifdef KISAK_MP
+#define KISAK_CIN_FIRST_CONNECTING CA_CONNECTING
+#else
+#define KISAK_CIN_FIRST_CONNECTING INT32_MAX
+#endif
 void __cdecl CL_PlayCinematic_f();
 void __cdecl CL_PlayUnskippableCinematic_f();
 void __cdecl SCR_DrawCinematic(int32_t localClientNum);

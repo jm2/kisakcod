@@ -2,8 +2,9 @@
 // multiplayer client. A cinematic takes the client's connection state
 // (CA_CINEMATIC). Com_Init queues the intro chain (COM_PlayIntroMovies) and
 // then runs a startup +devmap at once, so the intro used to start mid-connect
-// and the client ignored the server's connectResponse. A cinematic must now
-// leave a connecting or connected client alone, and still play otherwise.
+// and the client ignored the server's connectResponse. In a build without
+// Bink, which this 64-bit test is (cl_cinematic_policy.h), a cinematic must
+// now leave a connecting or connected client alone, and still play otherwise.
 //
 // The engine boundary is weak: --gc-sections drops what the checks never
 // reach.
