@@ -14,8 +14,10 @@ Learn about the Development of KisakCOD here: [https://lwss.github.io/Duty-Of-Ki
 
 The engine currently produces Windows x86 multiplayer client and dedicated
 server binaries. Native 64-bit builds for Windows amd64, Windows ARM64, Linux
-amd64/arm64 and macOS arm64 are the port's targets; none of them configures
-yet. The network target is the original **Steam release of Call of Duty 4,
+amd64/arm64 and macOS arm64 are the port's targets. The headless server
+builds and smoke-runs in CI on all five. The 64-bit clients are in development:
+Win64, macOS and Linux arm64 reach in-game on retail data, through an opt-in
+loader path ([NOW](docs/NOW.md)). The network target is the original **Steam release of Call of Duty 4,
 version 1.8** (`1.8.13620`): native clients must join unmodified Steam 1.8
 servers, and unmodified Steam 1.8 clients must join KisakCOD servers.
 
@@ -59,7 +61,9 @@ ctest --test-dir build-linux-amd64-mp --output-on-failure
 ```
 
 The checked-in `CMakePresets.json` also provides `windows-x86-mp`,
-`windows-x86-sp`, and `windows-x86-dedi` presets for hosted Win32 builds.
+`windows-x86-sp`, and `windows-x86-dedi` presets for hosted Win32 builds, and
+`linux-amd64-client`/`linux-arm64-client` for the experimental Linux clients
+(dxvk-native; see [CLIENT](docs/design/CLIENT.md)).
 
 
 ```

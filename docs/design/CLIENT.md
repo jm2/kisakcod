@@ -8,7 +8,7 @@ WS-6 · Gate G5 (Vulkan: G6) · Cap 15 KB · Related: [CHARTER](../CHARTER.md), 
 |---|---|---|---|
 | 1 | Existing D3D9 renderer, 64-bit | Windows amd64, arm64 | Interim vehicle |
 | 2 | D3D9 via dxvk-native | Linux amd64/arm64; macOS arm64 on KosmicKrisp (Homebrew mesa; client macOS 26+, server 13+), jm2/dxvk fork via `KISAK_DXVK_MACOS` | Interim vehicle |
-| 3 | Native Vulkan; MoltenVK on macOS | All five | Release (G6) |
+| 3 | Native Vulkan; MoltenVK on macOS (KosmicKrisp if the renderer needs more than the portability subset) | All five | Release (G6) |
 
 Interim vehicles are test milestones, not deliverables.
 
@@ -20,6 +20,7 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 - **Native D3DX9_43 rules the reflection matches:** ps_2_x reads `COLOR1` as COLOR0, as retail did (don't fix it); ps_1_x always outputs COLOR0; an SM1 CTAB sits only in the comments after the version token; pixel outputs are `oC#`/`oDepth`.
 - **Dependencies:** no `d3dx9.lib`, but the Microsoft.DXSDK.D3DX 9.29.952.8 NuGet supplies the headers.
 - **ARM64 build:** VS 2026 `-A ARM64` (CMake ≥ 4.2) with `-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DKISAK_ENABLE_STEAM=OFF -DCICD=ON -DDXSDK_DIR=…`; check with `scripts/ci/verify-artifact-arch.ps1 -Expected ARM64`. MSVC defines `_M_ARM64`, not `__aarch64__`; `Sys_CycleCounter` reads CNTVCT_EL0.
+- **Run (antec-win):** D3D9 needs the console session; after an RDP login, hand it over with `tscon (Get-Process -Id $PID).SessionId /dest:console` (PowerShell). While connected, console commands need a leading `/`, or they go out as chat. Windows Firewall prompts once per new exe; Deny is fine for a loopback `devmap`.
 - **Host quirk:** `platform-socket-stream-contracts` times out on a host that drops loopback RSTs; hosted CI is the reference.
 - **CI `windows-client-64`:** builds KisakCOD-mp on `amd64`, native `arm64` and `amd64-sdl3`, and checks the PE machine type; it doesn't run the client. It's advisory, so read each leg. A link error on arm64 alone usually means new x86- or D3DX-only code.
 
@@ -28,7 +29,8 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 - **Driver:** KosmicKrisp, Mesa's conformant Vulkan on Metal (`brew install mesa`, macOS 26+), picked at run time with `VK_DRIVER_FILES=$(brew --prefix mesa)/share/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json`. Mesa is never bundled.
 - **dxvk:** `KISAK_DXVK_MACOS` builds jm2/dxvk `kisakcod-macos`, pinned in `scripts/extern/dxvk_macos.cmake`, with `-Dnative_macos`. The fork's `KISAK_MACOS.md` lists each patch and how to rebase it.
 - **Not MoltenVK:** upstream dxvk won't support portability-subset drivers, and on MoltenVK every texture sampled black.
-- **Minimums:** the client targets macOS 26 (`scripts/mp`); the server keeps 13.0.
+- **Minimums:** the client targets macOS 26 (`scripts/mp`); the server keeps 13.0. The dxvk dylibs still take the build host's SDK target (27 on the agent host) until NOW row 48 lands.
+- **Frame rate:** KosmicKrisp presents FIFO even with `r_vsync 0`, so in-game FPS reads the display refresh (120 on the M1 Max). Compare CPU cost with `sample` instead.
 - **Run:** configure with `KISAK_EXPERIMENTAL_POSIX_CLIENT`, `KISAK_CLIENT_SDL3` and `KISAK_DXVK_MACOS`. Launch with `DXVK_WSI_DRIVER=SDL3`, local retail `fs_basepath` and `db_unverified64 1`. Capture frames with Mesa's `VK_LAYER_MESA_screenshot` (`VK_LAYER_MESA_SCREENSHOT_CONFIG=frames=…,output_dir=…`).
 - **Evidence:** zones loaded, the first error, and what each frame shows, described in text. Frames and data stay local.
 
@@ -138,14 +140,17 @@ on the binary path, not `pgrep -x`.
 - dxvk's `GetFrontBufferData` copies the swapchain backbuffer, not the
   desktop, to the destination's top-left, so the Win32 monitor offset doesn't
   apply under `KISAK_DXVK_NATIVE` (#593).
-- After `Present` a discard swapchain's backbuffer is undefined; capture
-  before `Present` (branch `operator/screenshot-backbuffer`, unmerged).
+- After `Present` a discard swapchain's backbuffer is undefined, so
+  `screenshot` reads the backbuffer before `Present`, resolving a
+  multisampled one with `StretchRect` before `GetRenderTargetData` (#624).
 
-**Client status (2026-10-16).** On macOS (mp_shipment, mp_crash) and Linux
-arm64 (mp_crash), the client is in-game on master. On Linux amd64 it draws the
-main menu. Capture a frame by sending `screenshot` on stdin once the menu is
-up: `+wait` runs while zones are still loading, so a `+wait N +screenshot`
-capture shows a loading frame, which can be all black.
+**Client status (2026-10-18).** In-game on master with `db_unverified64`:
+Win64 on mp_shipment (about 188 fps), macOS on mp_shipment and mp_crash
+(display-capped at 120), Linux arm64 on mp_crash. Linux amd64 draws the main
+menu; in-game is NOW row 44. Cinematics are silent stubs (row 41). Capture a
+frame by sending `screenshot` on stdin once the menu is up: `+wait` runs while
+zones are still loading, so a `+wait N +screenshot` capture shows a loading
+frame, which can be all black.
 
 ### Loader hooks
 

@@ -65,8 +65,7 @@ Retail data broke these synthetic-fixture assumptions; each now has a test:
    bytes), `struct of=` (a nested record inline), dotted fields naming members of nested native
    structs, and `copy=scalars`, which emits the record's scalar copies for the body to call.
 
-   **Asset references**, such as LightDef → Image (planned: Font → Material, ImpactFx → Fx,
-   Sound → LoadedSound/SoundCurve). A `pointer` field `asset=<Family>` holds a token to another
+   **Asset references**, such as LightDef → Image or Font → Material. A `pointer` field `asset=<Family>` holds a token to another
    family's header. The body calls that family's generated pointer step, `Load<Family>Ptr`, which
    pushes the temp block itself as its 32-bit `Load_<Family>Ptr` does, so the child streams
    where x86 streams it and the slot ends with the native pointer. While the child has no
@@ -191,7 +190,8 @@ newer than the run. Read the console for:
   `no 64-bit on-disk/runtime layout pair` means the guard (no opt-in);
   `alias offset: unregistered slot` means an unrecorded pointer slot.
 
-On 2026-10-09 mp_crash and mp_shipment ran clean on macOS arm64. CI runs
+mp_shipment and mp_crash load clean at 64-bit in the macOS, Linux arm64 and
+Win64 clients' runs (2026-10-16). CI runs
 the x86 load path only on synthetic zones (`linux-x86-tests`, #522).
 
 **Registry sessions.** A sequence that holds `db_hashCritSect` while its

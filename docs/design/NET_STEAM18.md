@@ -15,7 +15,7 @@ The only network reference is the original Steam release `1.8.13620`. The releas
 | Authorize / master | The `SV_AuthorizeRequest` call in the challenge path and `SV_MasterHeartbeat` are commented out. `masterServerName` still defaults to `cod4master.activision.com` | `sv_client_mp.cpp`, `sv_main_pc_mp.cpp`, `common.cpp` |
 | PunkBuster | Every `Pb*` hook is commented out and stays dead ([ADR-0002](../decisions/0002-punkbuster-out.md)). `getinfo` still sends a `pb` key from `sv_punkbuster` | `sv_main_mp.cpp` and others |
 
-**Result:** stock clients cannot join a fork server today, and a fork client cannot join a stock server.
+**Result:** under `steam18` the server and client speak the community-sourced 1.8 identity, but no stock 1.8 peer has joined yet. That's NOW row 36, which needs the owner's captures (§5).
 
 ## 2. Stock handshake (1.0 and 1.7)
 
@@ -65,7 +65,7 @@ These points are community-sourced; confirm each by capture:
 
 ## 5. Capture procedure (owner)
 
-1. Hash `iw3mp.exe` and record the Steam depot manifest.
+1. Hash `iw3mp.exe` and record the Steam depot manifest. Done for the reference build: app 7940 public build 2737681 (built 2018-05-01); `iw3mp.exe` 1.8, 3,297,280 bytes, SHA-256 b8e1a9731fd1213aaed0b5a779f12cfd867ee9cf567c957032afa99292e3aacf, no SteamStub; Windows depots 7941 (manifest 485990305878906444), 7942 (645298708590566320), 7967 (6005281766938853887); English depots 7944, 7945, 7946, 7962.
 2. On an isolated LAN, capture a 1.8 server with a 1.8 client:
    - `getinfo` / `getstatus`
    - `getchallenge` / `connect` and the gamestate
@@ -88,7 +88,7 @@ These points are community-sourced; confirm each by capture:
 - Decode with the fork's own MSG and netchan code, so a diff points at a real codec delta.
 - The harness is `tests/net_capture_certification.cpp` (ctest `net-capture-certification`). Fixtures live under `tests/fixtures/netcaptures/steam-1.8/` with a `MANIFEST.txt`. The only required profile is `steam-1.8`. The harness exits 77 while evidence is missing.
 - Current capture kinds: `scalar-sequence`, `huffman-block`, `usercmd-delta` (`kKindRules` in `tests/net_capture_fixtures.hpp`).
-- Bead 15 adds kinds for connectionless messages, gamestate, snapshot deltas, server commands, voice and download. It emits a field-by-field diff report per message class.
+- Still to add, with the captures: kinds for connectionless messages, gamestate, snapshot deltas, server commands, voice and download, and a field-by-field diff report per message class.
 
 ## 7. Profiles
 
@@ -135,6 +135,6 @@ Replay the captured usercmds through the fork's `Pmove` (`bg_pmove.cpp`), and co
 | G4a | An unmodified Steam 1.8 client discovers, connects, plays, changes map and reconnects on the fork's **x86** server |
 | G4b | The G4a matrix against every native server that passed G3 |
 
-- **Beads:** 15 (capture decoder and diff report) and 16 (`steam18` server profile on x86).
+- **Work:** the `steam18` profile is done (#531, #532). The capture decoder and diff report (§6) and the G4a run (NOW row 36) wait on the captures.
 - **Effort:** 6–12 weeks, or 12–20 if in-band formats changed. All of it can be built and tested on the x86 build, and it starts when the captures arrive.
 - **Evidence rules:** fork-peer evidence never counts for G4, and x86 evidence never counts for G4b ([CHARTER](../CHARTER.md), [ROADMAP](../ROADMAP.md)).

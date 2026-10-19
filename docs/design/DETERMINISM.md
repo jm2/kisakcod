@@ -6,16 +6,7 @@ Native builds must put the same bytes on the wire as Windows x86, and must simul
 
 ## RNG: engine-owned, MSVC-compatible
 
-The code assumes MSVC's `rand` (`RAND_MAX` 32767). glibc and macOS use 2^31−1.
-
-| Site | Today | Off Windows |
-|---|---|---|
-| `random`, `crandom` (`com_math.cpp`) | `rand() / 32768.0` | Range far above 0–1 |
-| `G_flrand`, `G_random` (`g_utils_mp.cpp`) | `G_rand()` / 32768 | Same |
-| `G_irand` (`g_utils_mp.cpp`) | `(max - min) * G_rand() / 0x8000` | Wrong range; the product overflows `int` |
-| Other `rand`/`srand` calls (client, server, cgame, bgame, FX, DynEntity, UI) | CRT | A different sequence on each platform |
-
-Rule (bead 9): one engine RNG sits behind every engine `rand` and `srand` call:
+Retail assumed MSVC's `rand` (`RAND_MAX` 32767); glibc and macOS reach 2^31−1. Every engine `rand`/`srand` call (client, server, cgame, bgame, FX, DynEntity, UI, and `random`, `crandom`, `G_flrand`, `G_random`, `G_irand`) now goes through one engine-owned RNG, `Kisak_rand`/`Kisak_srand` (`com_math.h`), which is MSVC's LCG:
 
 ```c
 holdrand = holdrand * 214013 + 2531011;   /* uint32_t */

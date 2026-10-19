@@ -10,7 +10,7 @@ The source is a decompile of a 32-bit (ILP32) binary, and it encodes that ABI:
 
 - Every reconstructed struct is pinned to its 4-byte-pointer size. A struct with a pointer member stops compiling as soon as pointers become 8 bytes.
 - Fast-file zones store 4-byte pointer slots. A 64-bit engine can only read retail data through a separate on-disk layout and a load-time widening pass (see [FASTFILE_LOADER.md](FASTFILE_LOADER.md)).
-- The script VM packs pointers and 32-bit handles into one `VariableUnion`. The production headers now make it native-width (`RUNTIME_SIZE(VariableUnion, 0x4, 0x8)`), but no engine target compiles the VM at 64-bit yet.
+- The script VM packs pointers and 32-bit handles into one `VariableUnion`. The production headers make it native-width (`RUNTIME_SIZE(VariableUnion, 0x4, 0x8)`), and every 64-bit server and client build runs it.
 - Memory management and asset walkers do address arithmetic through `int`.
 - `long` is 32 bits on Windows (LLP64) and 64 bits on Linux and macOS (LP64).
 
@@ -37,65 +37,33 @@ An asset type that is both loaded and used at runtime gets a pair: an `ONDISK_*`
 - Don't write new raw `static_assert(sizeof(T) == N)`; use the macros. The sizeof tripwire rejects new raw asserts.
 - A change must not alter the Windows x86 build's behaviour. `RUNTIME_SIZE`'s `n32` arm is the x86 contract.
 
-## The 64 failing size asserts
+## G1 closure (done)
 
-The same 64 `static_assert(sizeof(T) == N)` fail on win64, lin64 and a64. Bead numbers refer to the [NOW.md](../NOW.md) seed queue.
+G1 is done: the headless set compiles on every leg and Win64 links for real (K1, K2).
 
-| Header | Asserts | Class | Bead |
-| --- | --- | --- | --- |
-| `bgame/bg_local.h` | 17 | runtime (`bgs_t`, `clientInfo_t`, `animScriptData_t`, `pml_t`, …) | 5 |
-| `xanim/xanim.h` | 10 | asset (`XAsset`, `XAssetList`, `ScriptStringList`, `XSurface`, `XAnimParts`, `WeaponDef`, `RawFile`, …) | 7 |
-| `xanim/xmodel.h` | 5 | asset (`XModel`, `XModelPieces`, `XModelSurfs`, …) | 7 |
-| `game_mp/g_public_mp.h` | 5 | runtime (`scr_data_t`, `corpseInfo_t`, `BuiltinFunctionDef`, …) | 5 |
-| `sound/snd_public.h` | 4 | asset (`LoadedSound`, `SndCurve`, `snd_alias_t`, `snd_alias_list_t`) | 7 |
-| `DynEntity/DynEntity_client.h` | 4 | `DynEntityDef` asset; 3 runtime | 7 / 5 |
-| `gfx_d3d/r_gfx.h`, `gfx_d3d/r_material.h` | 3 each | asset (`GfxImage`, `GfxWorldDpvsStatic`, `Material`, `MaterialTechniqueSet`, …) | 7 |
-| `universal/q_parse.h`, `game/game_public.h` | 3 each | runtime | 5 |
-| `game_mp/g_main_mp.h` | 2 | runtime (`level_locals_t`, `entityHandler_t`) | 5 |
-| `gfx_d3d/r_bsp.h`, `gfx_d3d/r_font.h`, `game/pathnode.h` | 1 each | asset (`GfxWorld`, `Font_s`, `pathnode_tree_nodes_t`) | 7 |
-| `game/enthandle.h`, `aim_assist/aim_assist.h` | 1 each | runtime | 5 |
-
-That's about 30 asset types (bead 7: `ONDISK`/`RUNTIME` pairs, and the loader fails closed) and about 34 runtime-only types (bead 5: `RUNTIME_SIZE`).
-
-## Win64 source fixes (bead 6)
-
-With the asserts neutralised, win64 fails in only 4 TUs. The 7 real fixes are:
-
-| Fix | Where |
-| --- | --- |
-| `CPUSTRING` is defined only under `_M_IX86` (2 sites: release and debug) | `universal/q_shared.h` |
-| `longjmp((int*)value, -1)`: `jmp_buf` isn't `int*` at 64-bit | `qcommon/common.cpp` |
-| Missing `<cstring>` for `std::strlen` | `_platform/win32/sys_process.cpp` |
-| 3 variables typed as pointers to enums that are never defined (forward-referenced `enum`) | `database/db_load.cpp` |
-| `alignas` written after `const`, where clang rejects it | `script/scr_yacc_structs.h` |
-| Inline `__asm` in `DoStackTrace`; MSVC x64 has no inline asm | `universal/assertive.cpp` |
-
-The other `__asm` blocks in the headless set are dead code: `win_configure.cpp` is under `#if 0`, and `common.cpp` is under a `_M_X686` guard that no compiler defines.
+- **Size asserts:** the 64 `static_assert(sizeof(T) == N)` that failed on every 64-bit leg are gone. About 30 asset types became `ONDISK`/`RUNTIME` pairs with a fail-closed loader, and about 34 runtime-only types use `RUNTIME_SIZE`. The census reads 0 size-assert sites.
+- **Win64-only fixes:** `CPUSTRING` outside `_M_IX86`, `longjmp` on a real `jmp_buf`, forward-referenced enums in `db_load.cpp`, `alignas` placement for clang, and no inline `__asm` in `DoStackTrace`. The other `__asm` blocks in the headless set are dead code (`#if 0`, or the `_M_X686` guard nothing defines).
 
 ## Hazard catalogue
 
-Two kinds of hazard, both fixed by beads 9–11 (WS-3, G2):
+Two kinds: **silent** (compiles at 64-bit but misbehaves) and **LP64-only compile errors** (pass Win64, fail on Linux or macOS). Rows are 2026-09-29 queue rows; their PRs are in `git log`.
 
-- **Silent:** compiles at 64-bit but misbehaves.
-- **Compile error on LP64 only:** passes Win64 but fails on Linux or macOS.
-
-| Hazard | Where | At 64-bit | Fix | Bead | Status |
-| --- | --- | --- | --- | --- | --- |
-| Clone size table aliases, inherited from the original compiler folding identical size functions | `DB_GetXAssetSizeHandler` in `database/db_assetnames.cpp`, which feeds the `memcpy` in `DB_CloneXAssetInternal` | 5 entries go wrong. PhysPreset (56) and LoadedSound (64) use `sizeof(GameWorldSp)` (88), an over-read. ClipMap and ClipMap PVS (480) use `sizeof(menuDef_t)` (360), a truncated copy. LightDef (32) uses `sizeof(StringTable)` (24), also truncated | One real `sizeof` per asset type | 10 | open |
-| Hardcoded entity field offsets | `fields_1` in `game_mp/g_spawn_mp.cpp` | 8 of 10 move: classname, model, spawnflags, target, targetname, health, dmg, count. origin and angles stay | `offsetof(gentity_s, …)` | 10 | open |
-| `HIWORD`/`_WORD` taken of the *address* of a local `scr_entref_t` copy | `PlayerCmd_DeactivateReverb`, `PlayerCmd_DeactivateChannelVolumes` in `game_mp/g_client_script_cmd_mp.cpp` | Wrong on every width; reads different pointer bits at 64-bit | Use `entref.entnum` / `entref.classnum` | 10 | open |
-| `XAnimClone` allocates 88 bytes, then copies `sizeof(XAnimParts)` | `xanim/xanim.cpp` | Heap overflow: the copy is 136 bytes. The comment in the test-only `xanim_native.h` describes a fix that isn't in engine code | Allocate `sizeof(XAnimParts)` | 10 | open |
-| `va_list` passed as `char *` | 2 in `universal/q_parse.cpp`, 3 in `qcommon/com_playerprofile.cpp` | Compile error on SysV x86-64 and AArch64 | Pass `va_list` | 10 | open |
-| Pointers stored in dvar `int` fields | `universal/dvar.cpp`: 15 pointer→int stores (string values in `DvarValue.integer`, the enum string table at registration) and the matching int→pointer reads | Pointer truncation | Use the union's pointer members | 11 | open |
-| The enum-dvar domain overlays `enumeration.strings` on `integer.max` | `DvarLimits` in `universal/q_shared.h`, read both ways in `dvar.cpp` | The alias only holds at 32-bit, where the pointer sits at offset 4 | Separate fields; no punning | 11 | open |
-| `RAND_MAX` hardcoded as 32768 | `random` in `universal/com_math.cpp`; `G_random`, `G_flrand`, `G_irand` in `game_mp/g_utils_mp.cpp` | glibc and macOS `rand()` reach 2³¹−1, so results leave their range and `G_irand` overflows | Engine-owned MSVC LCG ([DETERMINISM.md](DETERMINISM.md)) | 9 | open |
-| 4-byte pointer slots and `(T*)-1` markers | `database/db_load.cpp`, `db_stream_load.cpp` | Loader writes half-pointers | Two-layout loader ([FASTFILE_LOADER.md](FASTFILE_LOADER.md)) | 7, 12 | fails closed after 7 |
-| Pointer↔int casts | 103 in 17 headless files (MSVC x64 and clang, 2026-09-30): `xanim_load_obj.cpp` 42 (raw-asset path), `db_load.cpp` 24 (32-bit loader), script 17 (row 20) | Truncation | Policy below | per file | open |
-| `__rdtsc` | `scr_vm.cpp`, `sv_main_mp.cpp` | Doesn't exist on arm64 | `Sys_CycleCounter` ([PLATFORM_POSIX.md](PLATFORM_POSIX.md)) | 13 | fixed |
-| Huffman tie-break uses the host `qsort` | `qcommon/huffman.cpp` | The code book differs per C library (glibc swaps 155/205, macOS 228/231) | Total-order `nodeCmp` reproducing the MSVC CRT order ([DETERMINISM.md](DETERMINISM.md)) | WS-3 | fixed |
-| Parser tables initialise `short` arrays with 32768 as YYPACT_NINF sentinel | `yypact`/`yypgoto` in `script/scr_yacc_structs.h`, `yypact` in `script/scr_yacc.cpp` | Ill-formed narrowing in C++11; 99 + 83 errors on GCC/clang. MSVC/clang-cl only warn, so Windows builds hide it. The census `-Wno-everything` also silenced the default-error diagnostic | Write sentinel as −32768; the census restores the DefaultError class (no blanket suppression) and keeps `-Werror=c++11-narrowing` for the `-fms-extensions` demotion, so default-error narrowing fails a TU | ki-pbb7c | open |
-| Byte counts frozen at their x86 size | `R_GetCommandBuffer` callers, `gfx_d3d/r_rendercmds.cpp` | Pointer-holding commands overran the next: garbled UI text | `sizeof`/`offsetof`, rounded to 4 (x86) or 8 | WS-3 | fixed |
-| `obj[1].member` reaching the struct after `obj` | `dc[1]…` in `ui_mp/ui_main_mp.cpp` | Lands on other fields | Map to the named member | WS-3 | fixed |
+| Hazard | Where | At 64-bit | Fix | Status |
+| --- | --- | --- | --- | --- |
+| Clone size table aliases from the original compiler folding identical size functions | `DB_GetXAssetSizeHandler` (`db_assetnames.cpp`), feeding `DB_CloneXAssetInternal` | Over-read or truncated copies for PhysPreset, LoadedSound, ClipMap, ClipMap PVS, LightDef | One real `sizeof` per type (row 21) | fixed |
+| Hardcoded entity field offsets | `fields_1` in `g_spawn_mp.cpp` | 8 of 10 move | `offsetof(gentity_s, …)` (row 10) | fixed |
+| `HIWORD`/`_WORD` of the *address* of a local `scr_entref_t` | `PlayerCmd_DeactivateReverb`, `…ChannelVolumes` | Wrong on every width | `entref.entnum` / `classnum` (rows 10, 20) | fixed |
+| `XAnimClone` allocates 88 bytes, copies `sizeof(XAnimParts)` | `xanim.cpp` | Heap overflow (136 bytes) | Allocate `sizeof(XAnimParts)` (row 21) | fixed |
+| `va_list` passed as `char *` | `q_parse.cpp`, `com_playerprofile.cpp` | Compile error on SysV x86-64 and AArch64 | Pass `va_list` (row 27) | fixed |
+| Pointers stored in dvar `int` fields; the enum domain punned onto `integer.max` | `dvar.cpp`, `DvarLimits` in `q_shared.h` | Pointer truncation | Pointer members, no punning (row 11) | fixed |
+| `RAND_MAX` hardcoded as 32768 | `com_math.cpp`, `g_utils_mp.cpp` | Out-of-range results off Windows | Engine-owned MSVC LCG `Kisak_rand` ([DETERMINISM.md](DETERMINISM.md), row 9) | fixed |
+| 4-byte pointer slots and `(T*)-1` markers | `db_load.cpp`, `db_stream_load.cpp` | Loader writes half-pointers | Two-layout loader ([FASTFILE_LOADER.md](FASTFILE_LOADER.md)) | fails closed; K4 |
+| Pointer↔int casts | 103 in 17 headless files (MSVC x64 and clang, 2026-09-30), mostly `xanim_load_obj.cpp` (raw-asset path) and `db_load.cpp` (32-bit loader) | Truncation | Policy below | open, per file |
+| `__rdtsc` | `scr_vm.cpp`, `sv_main_mp.cpp` | Doesn't exist on arm64 | `Sys_CycleCounter` ([PLATFORM_POSIX.md](PLATFORM_POSIX.md)) | fixed |
+| Huffman tie-break uses the host `qsort` | `huffman.cpp` | Code book differs per C library | Total-order `nodeCmp` ([DETERMINISM.md](DETERMINISM.md)) | fixed |
+| Parser tables write 32768 as the `short` YYPACT_NINF sentinel | `scr_yacc_structs.h`, `scr_yacc.cpp` | Ill-formed narrowing; MSVC only warns | Write −32768; the census keeps `-Werror=c++11-narrowing` | fixed |
+| Byte counts frozen at their x86 size | `R_GetCommandBuffer` callers | Commands overran the next | `sizeof`/`offsetof`, rounded to 4 or 8 | fixed |
+| `obj[1].member` reaching the struct after `obj` | `dc[1]…` in `ui_main_mp.cpp` | Lands on other fields | Map to the named member | fixed |
 
 A row reaches **fixed** only when the fix is merged *and* a test executes the fixed code at 64-bit. Pin an x86 identity with `RUNTIME_SIZE`/`RUNTIME_OFFSET` (n32 = old bytes); a formula `static_assert` fails the abi-sizeof tripwire.
 
@@ -104,9 +72,9 @@ More patterns from the client bring-up: [CLIENT.md](CLIENT.md#64-bit-patterns-th
 ## Script VM
 
 - `VariableUnion` is native-width in the production headers, and `scr_readwrite.cpp` (save/load) is SP-only.
-- The native-width VM runs only in portable tests, which exercise a small part of `scr_vm.cpp` (5,240 lines).
+- The native-width VM runs stock gametype scripts in the 64-bit clients' in-game runs (`db_unverified64`); portable tests exercise a small part of `scr_vm.cpp`.
 - `scr_compiler2`, `scr_evaluate`, `scr_parser`, `scr_main` and `scr_variable` hold 17 pointer↔int casts.
-- The VM reaches G2 only through a real map boot running stock scripts.
+- The VM's G2 evidence is the headless map boot and rotation (NOW row 45).
 
 ## Pointer-cast policy
 
@@ -121,27 +89,19 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 
 | Allowlist | ctest | Tracks |
 | --- | --- | --- |
-| `tests/abi_sizeof_debt.allow` (+ `abi_sizeof_formula_debt.allow`) | `abi-sizeof-debt-tripwire` | 183 raw sizeof asserts (+ 8 formula asserts) |
-| `tests/pointer_truncation.allow` | `pointer-truncation-tripwire` | 24 `(int)&` and page-mask sites. The regex misses most casts: MSVC and clang flag 103 |
+| `tests/abi_sizeof_debt.allow` (+ `abi_sizeof_formula_debt.allow`) | `abi-sizeof-debt-tripwire` | 91 raw sizeof asserts (+ 8 formula asserts) |
+| `tests/pointer_truncation.allow` | `pointer-truncation-tripwire` | 20 `(int)&` and page-mask sites. The regex misses most casts: MSVC and clang flag 103 |
 | `tests/headless_include_debt.allow` | `dedi-headless-client-media-include-debt` | 29 direct client/media includes. Transitive reach is K5 |
 
 ## KPIs
 
-| KPI | Definition | Source | Census baseline 2026-10-01 | Target |
+| KPI | Definition | Source | Census | Target |
 | --- | --- | --- | --- | --- |
-| **K1** 64-bit headless compile closure | Headless TUs that pass clang `-fsyntax-only` on each leg: win64, winarm64, lin64, a64, mac64. win32 is the control | `native64-census`; mac64 from `Native64 census / mac64` | win64 252/252; winarm64 252/252; lin64 249/249; a64 249/249; mac64 250/250 (`Native64 census / mac64`, xcode-27) (0 assert-only, 0 other on each) | all TUs on win64, lin64, a64 (G1); winarm64 and mac64 before G3 |
+| **K1** 64-bit headless compile closure | Headless TUs that pass clang `-fsyntax-only` on each leg: win64, winarm64, lin64, a64, mac64. win32 is the control | `native64-census`; mac64 from `Native64 census / mac64` | win64 273/273; winarm64 273/273; lin64 272/272; a64 272/272; mac64 273/273 (census 2026-10-16; 0 assert-only, 0 other on each) | all TUs on win64, lin64, a64 (G1); winarm64 and mac64 before G3 |
 | **K2** 64-bit headless link | Per target: the headless server links with 0 undefined symbols and no neutralised asserts (a *real link*). The census also reports a labelled *probe link*, with size asserts neutralised by a force-included header, and its undefined-symbol count. The probe never gates | `native64-census` | win64 real link: linked, 0 undefined symbols, 0 TUs excluded; the probe links too | Win64 and Linux amd64 real link (G1) |
-| **K3** engine code under 64-bit test | Upstream engine TUs that the Linux amd64 test build compiles, either as a TU in `compile_commands.json` or `#include`d as a `.cpp` by a test TU. Denominator: `.c`/`.cpp` under `src/` at the upstream merge-base, excluding `src/radiant/` and vendored ODE and Speex | `native64-census` | 47/475 | rises every G2 bead |
+| **K3** engine code under 64-bit test | Upstream engine TUs that the Linux amd64 test build compiles, either as a TU in `compile_commands.json` or `#include`d as a `.cpp` by a test TU. Denominator: `.c`/`.cpp` under `src/` at the upstream merge-base, excluding `src/radiant/` and vendored ODE and Speex | `native64-census` | 82/475 (2026-10-16) | rises every G2 bead |
 
-- **K1 control:** clang with mingw-w64 headers passes 249/252 on win32. The 3 failures are mingw calling-convention mismatches in `sys_sync`, `sys_thread` and `sys_console` (its console control handler); MSVC x86 builds all three.
-- **K1 ARM64 legs (owner 2026-09-29):** `win64` is Windows x64 only, so a clean win64 says nothing about Windows
-  ARM64 or macOS arm64. `winarm64` checks the Win64 set for `aarch64-w64-mingw32` with the runner's clang 18 and the
-  headers and libc++ of a sha256-pinned llvm-mingw (LLVM 18.1.8). `mac64` checks the POSIX set plus
-  `src/_platform/macos` with Apple clang 21 on the hosted `xcode-27` runner (macOS 27). Both measure and never gate. First run
-  (2026-09-30): winarm64 244/245, blocked only by x86 `__cpuidex`/`__rdtsc` in `win_configure.cpp` (Steam stays off: no
-  Windows ARM64 Steamworks); mac64 120/244 on `macos-15` with Apple clang 17, where the #265 headers stop the rest: Miles `mss.h`
-  (`#error`, no arm64 Mac case, 93 TUs) and ODE `<malloc.h>` (31). Since then `win_configure.cpp` reads
-  `Sys_CycleCounter` and probes CPUID only on x86/x64: winarm64 245/245. Off Windows, `sound/snd_msstypes.h` stands
-  in for `mss.h`, and ODE takes `alloca` from `<alloca.h>` on macOS: mac64 244/244.
+- **K1 control:** clang with mingw-w64 headers passes 270/273 on win32. The 3 failures are mingw calling-convention mismatches in `sys_sync`, `sys_thread` and `sys_console` (its console control handler); MSVC x86 builds all three.
+- **K1 ARM64 legs (owner 2026-09-29):** `win64` is Windows x64 only, so a clean win64 says nothing about Windows ARM64 or macOS arm64. `winarm64` checks the Win64 set for `aarch64-w64-mingw32` with clang 18 and a sha256-pinned llvm-mingw (LLVM 18.1.8). `mac64` checks the POSIX set plus `src/_platform/macos` with Apple clang 21 on the hosted `xcode-27` runner. Both measure and never gate. Off Windows, `sound/snd_msstypes.h` stands in for Miles `mss.h`, and ODE takes `alloca` from `<alloca.h>` on macOS.
 - **Census flags:** `-D_DEBUG` so asserts compile, no `-fdelayed-template-parsing` so two-phase lookup errors surface, and no `-Wno-everything` so DefaultError diagnostics fail a TU; `-Werror=c++11-narrowing` re-promotes the one group `-fms-extensions` demotes. `census.md` prints the flag set and the narrowing sites per header.
 - **K4–K6:** K4 (loader closure) is defined in [FASTFILE_LOADER.md](FASTFILE_LOADER.md), K5 (D3D reach) in [PLATFORM_POSIX.md](PLATFORM_POSIX.md), and K6 (delivery cells) in [CHARTER.md](../CHARTER.md).

@@ -8,7 +8,7 @@ Owner: operator.
 | --- | --- |
 | Upstream | `SwagSoftware/KisakCOD`, branch `master` (remote `upstream`) |
 | Last synced | `8aadf94c` (the merge-base; upstream has no newer commits) |
-| Fork position | about 890 commits ahead, 0 behind |
+| Fork position | about 1,750 commits ahead, 0 behind (2026-10-18) |
 
 ## Policy
 
@@ -33,7 +33,7 @@ monthly sync bead and is never refactor burndown (rule 11).
 | Branch | State |
 | --- | --- |
 | `integration/refactor-r2-image-contracts` | merged (PR #165) |
-| `integration/refactor-r3-shader-contracts` | PR #166, parked draft; drop its burndown-doc edits if revived |
+| `integration/refactor-r3-shader-contracts` | PR #166 closed unmerged; drop its burndown-doc edits if revived |
 | `integration/refactor-s1-script-value-names` | unpublished, parked |
 | `integration/refactor-g1-*` (7 branches) | unpublished, parked |
 
