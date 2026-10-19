@@ -32,6 +32,13 @@ build.
 Estimates are ranges for one strong engineer, with low confidence. They don't
 convert to swarm time.
 
+**Where things stand (2026-10-18).** G1 is done. G2's loader is complete
+behind the `db_unverified64` opt-in; its proof is the K4 digest pipeline and
+the boot-and-soak run (NOW rows 37, 45). G5 ran ahead of G2 on that opt-in:
+Win64, macOS and Linux arm64 clients are in-game on Steam 1.8 data, and Linux
+amd64 draws its menu. G4a's wire identity is built and waits on the owner's
+captures. G0 has no recorded run yet (row 46). G3, G4b and G6 haven't started.
+
 ```mermaid
 graph LR
   G0 --> G4a
@@ -72,8 +79,8 @@ Vehicles are test milestones, never deliverables
 | WS-8 repo/legal hygiene | enabler | - |
 
 The critical path is G1, then G2 (WS-1, WS-2, WS-3, WS-4). WS-5 runs in
-parallel on the x86 build once captures exist. WS-6 waits for G2 except for
-design spikes. WS-7 and WS-8 take a bead only when it unblocks a gate.
+parallel on the x86 build once captures exist. WS-6 runs on the
+`db_unverified64` opt-in until G2 proves the loader. WS-7 and WS-8 take a bead only when it unblocks a gate.
 
 ## Test maps (proposal; owner to confirm)
 
@@ -82,7 +89,7 @@ first five form the G2 rotation.
 
 | Map | Size | Role |
 | --- | --- | --- |
-| `mp_shipment` | tiny | Proposed G2 first boot map |
+| `mp_shipment` | tiny | Proposed G2 first boot map; first client map in-game |
 | `mp_vacant` | small | G2 rotation |
 | `mp_crash` | medium | G0 map, G2 rotation |
 | `mp_backlot` | medium | G0 map, G2 rotation |

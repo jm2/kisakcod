@@ -1,18 +1,18 @@
 # POSIX headless platform (WS-4)
 
-Gate: G1 (Linux compile and link), then G2. KPIs: K1 and K2 ([NATIVE64.md](NATIVE64.md)), and K5 below. Scope: the headless dedicated server on Linux amd64, Linux arm64 and macOS arm64. Client platform work is in [CLIENT.md](CLIENT.md).
+Gate: G1 (Linux compile and link), then G2. KPIs: K1 and K2 ([NATIVE64.md](NATIVE64.md)), and K5 below. Scope: the headless dedicated server on Linux amd64, Linux arm64 and macOS arm64. Client platform work (SDL3, dxvk-native, `posix_client_main.cpp`) is in [CLIENT.md](CLIENT.md).
 
 ## Source sets
 
 | Set | TUs | Notes |
 | --- | --- | --- |
-| Win32 headless (`kisakcod_get_dedi_sources`) | 252 (234 C++, 18 C) | Built by the Windows x86 headless CI job |
-| Linux headless | 249 | Win32 set − 6 `src/win32` − 10 `src/_platform/win32` + 13 `src/_platform/posix` |
+| Win32 headless (`kisakcod_get_dedi_sources`) | 273 | Built by the Windows x86 headless CI job |
+| Linux headless | 272 | The Win32 set without `src/win32` and `src/_platform/win32`, plus the POSIX headless files of `src/_platform/posix` (census 2026-10-16) |
 | Linux/macOS engine sets | headless | `PLATFORM_{LINUX,MACOS}_DEDI_HEADLESS` add the `posix_*` entry, console and localization; only `KISAK_DEDI_HEADLESS` configures off Win32. CI `linux-headless` builds and smoke-runs it on amd64 and arm64, `macos-headless` on macOS arm64 |
 
 ## Service map
 
-Engine callers are outside `src/_platform`. A service is done only when a real target calls it (AGENTS.md rule 2); no POSIX target exists yet.
+Engine callers are outside `src/_platform`. A service is done only when a real target calls it (AGENTS.md rule 2). The POSIX headless server builds and smoke-runs in CI on Linux amd64, Linux arm64 and macOS arm64.
 
 | Service | Win32 | POSIX | Engine callers | Status |
 | --- | --- | --- | --- | --- |
@@ -22,7 +22,8 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 | `sys_thread` | `CreateThread` | pthread | `threads.cpp` | called; `Sys_ThreadJoinTimeout` unused |
 | `sys_memory` | `VirtualAlloc` | `mmap` | `com_memory.cpp`, `physicalmemory.cpp` | called |
 | `sys_filesystem` | Win32 | `opendir`, `/proc/self/exe`, `_NSGetExecutablePath` | `com_files.cpp`, `win_common.cpp` | called; `Sys_FileSystemReadFile` unwired |
-| `Sys_Console*` | `win_syscon.cpp` | stdio service | `win_main.cpp`, `win_syscon.cpp` only | no POSIX caller |
+| `sys_file` async reads | overlapped I/O | `pread` | `db_file_load.cpp` | called |
+| `Sys_Console*` (`qcommon/sys_console.cpp`) | `_platform/win32` backend | `_platform/posix/sys_console.cpp` | `win_syscon.cpp` on Win32, `posix_syscon.cpp` on POSIX (the console front ends) | called |
 | Quit requests (`qcommon/sys_quit.h`) | `SetConsoleCtrlHandler` (`Sys_ConsoleInstallQuitHandler`) | SIGINT, SIGTERM (`posix_syscon.cpp`) | headless frame loop (`Cbuf_AddRequestedQuit`) | called |
 | Stream sockets, `Sys_SocketResolveHost` | Winsock | BSD | HTTP download (`dl_main*.cpp`), `net_chan_mp.cpp` | called |
 | UDP sockets (`Sys_SocketOpenUdp`, `SendTo`, `RecvFrom`, broadcast) | Winsock | BSD | `qcommon/net_local.cpp` (every headless build; the MP client keeps `win_net.cpp`) | called |
@@ -32,10 +33,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 
 ## What the headless server still needs
 
-| Item | Replaces | NOW bead |
-| --- | --- | --- |
-| Relaunch via `Sys_ProcessLaunch` | `Sys_QuitAndStartProcess`, `Sys_Spawn` | later |
-| Portable async fast-file reads | `db_file_load.cpp` | 14 |
+Relaunch through `Sys_ProcessLaunch` instead of `Sys_QuitAndStartProcess` and `Sys_Spawn`: not queued. Fast-file reads already go through the portable `sys_file` service.
 
 ## Header rules (headless set)
 
@@ -45,10 +43,6 @@ G1's compile blockers are fixed; these rules keep them fixed.
 - **Stand-ins off Windows:** `gfx_d3d/r_d3d9types.h` for `<d3d9.h>`, `sound/snd_msstypes.h` for `msslib/mss.h`, and `<alloca.h>` for `<malloc.h>` in `deps/ode` on macOS. `xanim.h` holds gfx types by pointer. `tests/headless_include_debt.allow` lists the direct client/media includes; K5 measures transitive reach.
 - **Compat:** MSVC CRT names come from `universal/msvc_crt_compat.h`, byte order from `KISAK_LITTLE_ENDIAN` (`universal/kisak_abi.h`), and the cycle counter from `Sys_CycleCounter` (`qcommon/sys_time.h`). Shared files call Win32 APIs only inside `#if defined(_WIN32)` arms with a portable arm, or through a platform service.
 - **Templates:** names a template uses must be declared before it, because real builds don't use `-fdelayed-template-parsing`.
-
-## Portable async fast-file reads
-
-`db_file_load.cpp` reads zones with `OVERLAPPED`, `ReadFileEx` and an alertable `SleepEx`. The plan is a small `sys_file` async-read service (open, read-at-offset, wait, close). Win32 keeps overlapped I/O; POSIX uses `pread` on the database thread (a helper thread only if profiling asks). Engine code stops seeing `HANDLE` and completion routines.
 
 ## Toolchain policy
 
@@ -60,7 +54,7 @@ G1's compile blockers are fixed; these rules keep them fixed.
 ## macOS notes
 
 - **Services:** the same POSIX files, plus the Mach crash-freeze backend (no engine caller).
-- **Scope before G5:** headless only (G3). The target is macOS 27 with Xcode 27 (Apple clang 21). CI builds and smoke-runs it on GA `macos-26`, and the census covers SDK 27 on `xcode-27`. CrossOver runs the x86 build for testing only ([ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)).
+- **Scope:** the headless server here (G3); the macOS client is in-game through dxvk on KosmicKrisp ([CLIENT.md](CLIENT.md)). The target is macOS 27 with Xcode 27 (Apple clang 21). CI builds and smoke-runs it on GA `macos-26`, and the census covers SDK 27 on `xcode-27`. CrossOver runs the x86 build for testing only ([ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)).
 - **Symlinks:** `FS_Startup` trusts the operator's roots (`Sys_FileSystemTrustRoot`): links above a root resolve once, with planted links in shared directories refused; below it every component opens with `O_NOFOLLOW`.
 - **Release:** `release.yml` ships a `.tar.xz` and a dSYM, ad-hoc signed, not notarized ([ADR-0007](../decisions/0007-macos-notarization-deferred.md)); deployment target 13.0.
 
@@ -75,8 +69,8 @@ G1's compile blockers are fixed; these rules keep them fixed.
 **K5** is the number of Linux headless TUs that need the census `d3d9.h` stand-in to compile, meaning they reach `<d3d9.h>`.
 
 - **Source:** the `native64-census` job.
-- **Baseline (census, 2026-10-01):** 0 of 249 (met).
+- **Value (census, 2026-10-16):** 0 of 272 on lin64 and a64 (met).
 - **Target:** 0, required for G1 on Linux.
-- **Moves it:** NOW bead 2.
+- **Kept at 0 by** `tests/headless_include_debt.allow` and the census.
 
 See also [../CHARTER.md](../CHARTER.md), [../ROADMAP.md](../ROADMAP.md), [FASTFILE_LOADER.md](FASTFILE_LOADER.md).
