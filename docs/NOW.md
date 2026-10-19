@@ -30,7 +30,6 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | 44 | Linux amd64 client in-game on Steam 1.8 data | G5 | gate | `+devmap mp_crash` on master runs in-game frames with no error | M | queued |
 | 41 | Native client cinematics: Bink is a silent stub on 64-bit; play `.bik` through FFmpeg ([CLIENT](design/CLIENT.md)) | G5 | gate | a retail intro cinematic plays on a 64-bit client | L | queued |
 | 46 | G0 evidence: x86 client and headless server on Steam 1.8 data, 3 maps, one fork round, the same binaries under Wine | G0 | gate | console text per map and at round end, on antec-win and under Wine on antec | M | queued |
-| 48 | macOS client: build dxvk-native for the macOS 26 target the client claims | G5 | gate | `vtool -show-build` reads minos 26.0 on KisakCOD-mp and the dxvk dylibs; no link warning | S | in progress (kisakcod-mac) |
 | 49 | Windows ARM64 client in-game on Steam 1.8 data (CI already links it) | G5 | gate | `+devmap mp_shipment` on master runs in-game frames with no error on yoga-slim7x | M | queued |
 | 47 | G3 first target: an x86 fork client plays a round, a map change and a reconnect on the Win64 headless server, with 8 test clients | G3 | K6 | the round's console text on both ends | L | after 45 |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | blocked-owner |
@@ -58,5 +57,5 @@ Other `burndown` issues are off these gates or wait on the owner.
 Merge SHAs are in `git log`.
 
 - G5 clients on Steam 1.8 data: Win64 in-game on mp_shipment at about 188 fps (rows 35, 43; #626); macOS in-game on mp_shipment and mp_crash (row 34); Linux arm64 in-game on mp_crash (row 31; #621); Linux amd64 draws its main menu (row 33). Under dxvk-native, screenshots read the backbuffer before `Present` and resolve MSAA (#624).
-- Census scope (row 42, #623); AGENTS.md rules 16-23 (#602); x86 identity CI job (#603); `scripts/ci/pr_gate.py` (#604).
+- macOS dxvk dylibs built for the macOS 26 target (row 48, #629). Census scope (row 42, #623); AGENTS.md rules 16-23 (#602); x86 identity CI job (#603); `scripts/ci/pr_gate.py` (#604).
 - Row 40 (macOS menu at ~60 fps) closed as retail behaviour (`SCR_ShouldSkipUpdateScreen`).
