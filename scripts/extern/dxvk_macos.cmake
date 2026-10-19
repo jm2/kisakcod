@@ -12,6 +12,10 @@ find_program(KISAK_MESON meson REQUIRED)
 find_program(KISAK_NINJA ninja REQUIRED)
 
 set(KISAK_DXVK_MACOS_PREFIX ${CMAKE_BINARY_DIR}/dxvk-macos)
+# Build for the client's minimum (scripts/mp), not the host's SDK version:
+# clang reads MACOSX_DEPLOYMENT_TARGET on every compile and link, including
+# meson's own reconfigure and dxvk's subprojects.
+set(KISAK_DXVK_MACOS_ENV ${CMAKE_COMMAND} -E env MACOSX_DEPLOYMENT_TARGET=26.0)
 ExternalProject_Add(kisak_dxvk_macos
     GIT_REPOSITORY https://github.com/jm2/dxvk.git
     # kisakcod-macos branch; bump deliberately.
@@ -19,13 +23,13 @@ ExternalProject_Add(kisak_dxvk_macos
     GIT_SUBMODULES_RECURSE ON
     # A pinned commit never needs updating; don't re-run git and meson on every build.
     UPDATE_COMMAND ""
-    CONFIGURE_COMMAND ${KISAK_MESON} setup <BINARY_DIR> <SOURCE_DIR>
+    CONFIGURE_COMMAND ${KISAK_DXVK_MACOS_ENV} ${KISAK_MESON} setup <BINARY_DIR> <SOURCE_DIR>
         --buildtype=release --prefix=${KISAK_DXVK_MACOS_PREFIX} --libdir=lib
         -Dnative_sdl3=enabled -Dnative_sdl2=disabled -Dnative_glfw=disabled
         -Denable_d3d8=false -Denable_d3d10=false -Denable_d3d11=false -Denable_dxgi=false
         -Dnative_macos=true
-    BUILD_COMMAND ${KISAK_NINJA} -C <BINARY_DIR>
-    INSTALL_COMMAND ${KISAK_NINJA} -C <BINARY_DIR> install
+    BUILD_COMMAND ${KISAK_DXVK_MACOS_ENV} ${KISAK_NINJA} -C <BINARY_DIR>
+    INSTALL_COMMAND ${KISAK_DXVK_MACOS_ENV} ${KISAK_NINJA} -C <BINARY_DIR> install
     BUILD_BYPRODUCTS ${KISAK_DXVK_MACOS_PREFIX}/lib/libdxvk_d3d9.dylib
 )
 
