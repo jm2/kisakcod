@@ -23,7 +23,7 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 | `sys_memory` | `VirtualAlloc` | `mmap` | `com_memory.cpp`, `physicalmemory.cpp` | called |
 | `sys_filesystem` | Win32 | `opendir`, `/proc/self/exe`, `_NSGetExecutablePath` | `com_files.cpp`, `win_common.cpp` | called; `Sys_FileSystemReadFile` unwired |
 | `sys_file` async reads | overlapped I/O | `pread` | `db_file_load.cpp` | called |
-| `Sys_Console*` | `win_syscon.cpp` | `posix_syscon.cpp` | `win_main.cpp`, `win_syscon.cpp`; on POSIX the entry points `posix_main.cpp` and `posix_client_main.cpp` | called |
+| `Sys_Console*` (`qcommon/sys_console.cpp`) | `_platform/win32` backend | `_platform/posix/sys_console.cpp` | `win_syscon.cpp` on Win32, `posix_syscon.cpp` on POSIX (the console front ends) | called |
 | Quit requests (`qcommon/sys_quit.h`) | `SetConsoleCtrlHandler` (`Sys_ConsoleInstallQuitHandler`) | SIGINT, SIGTERM (`posix_syscon.cpp`) | headless frame loop (`Cbuf_AddRequestedQuit`) | called |
 | Stream sockets, `Sys_SocketResolveHost` | Winsock | BSD | HTTP download (`dl_main*.cpp`), `net_chan_mp.cpp` | called |
 | UDP sockets (`Sys_SocketOpenUdp`, `SendTo`, `RecvFrom`, broadcast) | Winsock | BSD | `qcommon/net_local.cpp` (every headless build; the MP client keeps `win_net.cpp`) | called |

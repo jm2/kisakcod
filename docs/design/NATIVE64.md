@@ -10,7 +10,7 @@ The source is a decompile of a 32-bit (ILP32) binary, and it encodes that ABI:
 
 - Every reconstructed struct is pinned to its 4-byte-pointer size. A struct with a pointer member stops compiling as soon as pointers become 8 bytes.
 - Fast-file zones store 4-byte pointer slots. A 64-bit engine can only read retail data through a separate on-disk layout and a load-time widening pass (see [FASTFILE_LOADER.md](FASTFILE_LOADER.md)).
-- The script VM packs pointers and 32-bit handles into one `VariableUnion`. The production headers make it native-width (`RUNTIME_SIZE(VariableUnion, 0x4, 0x8)`), and every 64-bit server and client build runs it.
+- The script VM packs pointers and 32-bit handles into one `VariableUnion`. The production headers make it native-width (`RUNTIME_SIZE(VariableUnion, 0x4, 0x8)`), and the 64-bit clients run it in-game; the headless server runs no GSC until its map boot (NOW row 45).
 - Memory management and asset walkers do address arithmetic through `int`.
 - `long` is 32 bits on Windows (LLP64) and 64 bits on Linux and macOS (LP64).
 
@@ -55,7 +55,7 @@ Two kinds: **silent** (compiles at 64-bit but misbehaves) and **LP64-only compil
 | `HIWORD`/`_WORD` of the *address* of a local `scr_entref_t` | `PlayerCmd_DeactivateReverb`, `…ChannelVolumes` | Wrong on every width | `entref.entnum` / `classnum` (rows 10, 20) | fixed |
 | `XAnimClone` allocates 88 bytes, copies `sizeof(XAnimParts)` | `xanim.cpp` | Heap overflow (136 bytes) | Allocate `sizeof(XAnimParts)` (row 21) | fixed |
 | `va_list` passed as `char *` | `q_parse.cpp`, `com_playerprofile.cpp` | Compile error on SysV x86-64 and AArch64 | Pass `va_list` (row 27) | fixed |
-| Pointers stored in dvar `int` fields; the enum domain punned onto `integer.max` | `dvar.cpp`, `DvarLimits` in `q_shared.h` | Pointer truncation | Pointer members, no punning (row 11) | fixed |
+| Pointers stored in dvar `int` fields; the enum domain punned onto `integer.max` | `dvar.cpp`, `DvarLimits` in `q_shared.h` | Pointer truncation | Pointer members (row 11). Two assert-only reads (`Dvar_EnumToString`, `Dvar_IndexStringToEnumString`) still test `integer.max` for `enumeration.strings` | fixed; 2 assert puns left |
 | `RAND_MAX` hardcoded as 32768 | `com_math.cpp`, `g_utils_mp.cpp` | Out-of-range results off Windows | Engine-owned MSVC LCG `Kisak_rand` ([DETERMINISM.md](DETERMINISM.md), row 9) | fixed |
 | 4-byte pointer slots and `(T*)-1` markers | `db_load.cpp`, `db_stream_load.cpp` | Loader writes half-pointers | Two-layout loader ([FASTFILE_LOADER.md](FASTFILE_LOADER.md)) | fails closed; K4 |
 | Pointer↔int casts | 103 in 17 headless files (MSVC x64 and clang, 2026-09-30), mostly `xanim_load_obj.cpp` (raw-asset path) and `db_load.cpp` (32-bit loader) | Truncation | Policy below | open, per file |

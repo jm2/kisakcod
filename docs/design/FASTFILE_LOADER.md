@@ -190,8 +190,8 @@ newer than the run. Read the console for:
   `no 64-bit on-disk/runtime layout pair` means the guard (no opt-in);
   `alias offset: unregistered slot` means an unrecorded pointer slot.
 
-mp_shipment and mp_crash load clean at 64-bit in the macOS, Linux arm64 and
-Win64 clients' runs (2026-10-16). CI runs
+64-bit clients load clean: macOS mp_shipment and mp_crash, Linux arm64
+mp_crash, Win64 mp_shipment (2026-10-16). CI runs
 the x86 load path only on synthetic zones (`linux-x86-tests`, #522).
 
 **Registry sessions.** A sequence that holds `db_hashCritSect` while its

@@ -56,6 +56,6 @@ Other `burndown` issues are off these gates or wait on the owner.
 
 Merge SHAs are in `git log`.
 
-- G5 clients on Steam 1.8 data: Win64 in-game on mp_shipment at about 188 fps (rows 35, 43; #626); macOS in-game on mp_shipment and mp_crash (row 34); Linux arm64 in-game on mp_crash (row 31; #621); Linux amd64 draws its main menu (row 33). Screenshots read the backbuffer before `Present` and resolve MSAA (#624).
+- G5 clients on Steam 1.8 data: Win64 in-game on mp_shipment at about 188 fps (rows 35, 43; #626); macOS in-game on mp_shipment and mp_crash (row 34); Linux arm64 in-game on mp_crash (row 31; #621); Linux amd64 draws its main menu (row 33). Under dxvk-native, screenshots read the backbuffer before `Present` and resolve MSAA (#624).
 - Census scope (row 42, #623); AGENTS.md rules 16-23 (#602); x86 identity CI job (#603); `scripts/ci/pr_gate.py` (#604).
 - Row 40 (macOS menu at ~60 fps) closed as retail behaviour (`SCR_ShouldSkipUpdateScreen`).
