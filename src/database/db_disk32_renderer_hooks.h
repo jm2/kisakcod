@@ -1,8 +1,9 @@
 #pragma once
 
-// db_disk32_renderer_hooks.h: the renderer calls db_load.cpp's x86 steps make
-// under !KISAK_DEDI_HEADLESS, for the 64-bit disk32 converters. A client
-// creates the runtime object; a headless server keeps today's null handles.
+// db_disk32_renderer_hooks.h: the renderer and sound calls db_load.cpp's x86
+// steps make under !KISAK_DEDI_HEADLESS, for the 64-bit disk32 converters. A
+// client creates the runtime object; a headless server keeps today's null
+// handles.
 // The one client/headless switch the converters share lives here.
 
 #include <cstdint>
@@ -12,6 +13,7 @@
 #include <gfx_d3d/r_image.h>
 #include <gfx_d3d/r_material.h>
 #include <gfx_d3d/r_water.h>
+#include <sound/snd_public.h>
 #else
 // A headless server only names these; it keeps the gfx headers out
 // (tests/headless_include_debt.allow).
@@ -22,6 +24,7 @@ struct MaterialVertexDeclaration;
 struct MaterialVertexShader;
 struct MaterialPixelShader;
 struct water_t;
+struct MssSoundCOD4;
 #endif
 
 namespace db::disk32_load
@@ -107,6 +110,19 @@ inline void CreateVertexBuffer(IDirect3DVertexBuffer9 **vb, std::uint8_t *data, 
     (void)data;
     (void)bytes;
     *vb = nullptr;
+#endif
+}
+
+// Load_SetSoundData: a client copies the sound's bytes into its own playback
+// buffer (SND_SetData), which DB_RemoveLoadedSound frees. A headless server
+// keeps none. The sound's info must already hold its converted fields.
+inline void SetSoundData(MssSoundCOD4 *sound, std::uint8_t *data)
+{
+#ifndef KISAK_DEDI_HEADLESS
+    SND_SetData(sound, data);
+#else
+    (void)sound;
+    (void)data;
 #endif
 }
 } // namespace db::disk32_load

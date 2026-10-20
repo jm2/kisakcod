@@ -3,6 +3,7 @@
 #if KISAK_ARCH_64BIT
 
 #include <database/db_disk32_loaders.h> // generated from db_disk32.schema
+#include <database/db_disk32_renderer_hooks.h>
 
 #include <cstdint>
 #include <cstring>
@@ -15,12 +16,11 @@
 // block, its name into block 4, and its sound data into the temp block after
 // the record. The temp block is a stack, so the pops release both; only the
 // name stays.
-// The 64-bit targets are headless servers, and Miles ships only as a 32-bit
-// Windows DLL, so as the 32-bit headless load does, the native record keeps
-// the sound's format but owns no playback buffer: data, data_ptr and
-// initial_ptr stay null, nothing reaches SND_SetData, and DB_RemoveLoadedSound
-// frees nothing. Frames hold no destructors, since a production ERR_DROP
-// longjmps out.
+// As Load_MssSound does, a client hands the bytes to SND_SetData
+// (db_disk32_renderer_hooks.h), which copies them into the record's own
+// playback buffer for DB_RemoveLoadedSound to free. A headless server keeps
+// the sound's format but no buffer: data, data_ptr and initial_ptr stay null.
+// Frames hold no destructors, since a production ERR_DROP longjmps out.
 namespace db::disk32_load
 {
 namespace
@@ -28,8 +28,8 @@ namespace
 // The sound data, as Load_MssSound streams it in the temp block: inline bytes
 // of the declared length (-2 also registers them as a SoundData alias), or an
 // offset token naming an earlier sound's data of the same length. Either way
-// the headless record keeps no pointer to it.
-bool LoadSoundData(const disk32::LoadedSoundDisk32 &disk)
+// the bytes go to SetSoundData while they're still in place.
+bool LoadSoundData(const disk32::LoadedSoundDisk32 &disk, MssSoundCOD4 *sound)
 {
     const disk32::PointerToken token = disk.data.token;
     if (token.isNull())
@@ -45,6 +45,7 @@ bool LoadSoundData(const disk32::LoadedSoundDisk32 &disk)
             Com_Error(ERR_DROP, "Invalid fast-file alias offset: %s", db::relocation::StatusName(status));
             return false;
         }
+        SetSoundData(sound, reinterpret_cast<std::uint8_t *>(data));
     }
     else
     {
@@ -58,6 +59,7 @@ bool LoadSoundData(const disk32::LoadedSoundDisk32 &disk)
         {
             return false;
         }
+        SetSoundData(sound, bytes);
         if (inserted)
             DB_SetInsertedPointer(inserted, DBAliasKind::SoundData, bytes, disk.data_len);
     }
@@ -80,11 +82,11 @@ bool LoadLoadedSound(LoadedSound *out)
         return false;
     if (!out->name)
         return Drop("Fast-file loaded sound has no name"); // the asset pool hashes it
-    if (!LoadSoundData(disk))
-        return false;
-    DB_PopStreamPos();
     CopyLoadedSoundScalars(disk, out); // the sound info; data_ptr and initial_ptr null
     out->sound.data = nullptr;
+    if (!LoadSoundData(disk, &out->sound))
+        return false;
+    DB_PopStreamPos();
     return true;
 }
 } // namespace db::disk32_load
