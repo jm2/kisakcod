@@ -16,6 +16,7 @@ int g_failures = 0;
     ((expr) ? void() : (void)(std::fprintf(stderr, "line %d: CHECK(%s)\n", __LINE__, #expr), ++g_failures))
 
 bgs_t g_bgs{};
+char g_empty[1] = {}; // what the string stubs return
 } // namespace
 
 #define WEAK __attribute__((weak))
@@ -31,8 +32,8 @@ WEAK void Com_PrintWarning(int, const char *, ...) {}
 WEAK void Com_PrintError(int, const char *, ...) {}
 WEAK int32_t __cdecl G_IsServerGameSystem(int32_t) { return 0; }
 WEAK void __cdecl BG_CheckThread() {}
-WEAK char *__cdecl BG_GetPlayerAnimTypeName(int32_t) { static char empty[1]; return empty; }
-WEAK char *va(const char *, ...) { static char empty[1]; return empty; }
+WEAK char *__cdecl BG_GetPlayerAnimTypeName(int32_t) { return g_empty; }
+WEAK char *va(const char *, ...) { return g_empty; }
 
 int main()
 {
