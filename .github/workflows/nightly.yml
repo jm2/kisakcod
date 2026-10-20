@@ -85,7 +85,9 @@ jobs:
     # Compile-checks the KISAK_ENABLE_STEAM=OFF fallback path (cl_guid identity,
     # sv_requireSteam, empty win_steam.cpp TU). Windows x86 is the only target that can
     # build the engine today, so it stands in for the ARM/no-Steam configuration until
-    # the POSIX/Vulkan platform layers land. Compile only; no artifact.
+    # the POSIX/Vulkan platform layers land. Its KisakCOD-mp.exe is the x86 client
+    # for manual runs off loopback (NOW rows 46, 47): with Steam on, CL_CDKeyValidate
+    # rejects every non-loopback server when no Steam client is running.
     name: Windows x86 (no Steam)
     runs-on: windows-2025
     timeout-minutes: 120
@@ -127,3 +129,12 @@ jobs:
           --config Release
           --target KisakCOD-mp KisakCOD-dedi
           --parallel
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: KisakCOD-windows-x86-nosteam-Release
+          path: |
+            bin/Release/KisakCOD-mp.exe
+            bin/Release/KisakCOD-mp.pdb
+            bin/Release/KisakCOD-dedi.exe
+          if-no-files-found: error
