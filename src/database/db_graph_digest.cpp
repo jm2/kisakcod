@@ -62,6 +62,37 @@ void HashStringTable(GraphHashBuilder &builder, const XAssetHeader &header)
         builder.FieldString(kStringTableValue, table.values[i]);
 }
 
+enum PhysPresetField : std::uint32_t
+{
+    kPhysPresetName = 1,
+    kPhysPresetType,
+    kPhysPresetMass,
+    kPhysPresetBounce,
+    kPhysPresetFriction,
+    kPhysPresetBulletForceScale,
+    kPhysPresetExplosiveForceScale,
+    kPhysPresetSndAliasPrefix,
+    kPhysPresetPiecesSpreadFraction,
+    kPhysPresetPiecesUpwardVelocity,
+    kPhysPresetTempDefaultToCylinder,
+};
+
+void HashPhysPreset(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const PhysPreset &preset = *header.physPreset;
+    builder.FieldString(kPhysPresetName, preset.name);
+    builder.FieldI64(kPhysPresetType, preset.type);
+    builder.FieldF32(kPhysPresetMass, preset.mass);
+    builder.FieldF32(kPhysPresetBounce, preset.bounce);
+    builder.FieldF32(kPhysPresetFriction, preset.friction);
+    builder.FieldF32(kPhysPresetBulletForceScale, preset.bulletForceScale);
+    builder.FieldF32(kPhysPresetExplosiveForceScale, preset.explosiveForceScale);
+    builder.FieldString(kPhysPresetSndAliasPrefix, preset.sndAliasPrefix);
+    builder.FieldF32(kPhysPresetPiecesSpreadFraction, preset.piecesSpreadFraction);
+    builder.FieldF32(kPhysPresetPiecesUpwardVelocity, preset.piecesUpwardVelocity);
+    builder.FieldU64(kPhysPresetTempDefaultToCylinder, preset.tempDefaultToCylinder);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -72,6 +103,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashRawFile;
     case ASSET_TYPE_STRINGTABLE:
         return HashStringTable;
+    case ASSET_TYPE_PHYSPRESET:
+        return HashPhysPreset;
     default:
         return nullptr;
     }
