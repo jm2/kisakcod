@@ -5,6 +5,7 @@
 #include <universal/kisak_abi.h>
 #include <universal/com_math.h>
 #include <universal/gfx_image.h>
+#include <universal/gfx_material.h>
 #include <universal/gfx_lightdef.h>
 #include <qcommon/com_pack.h>
 #include <cstdint>
@@ -256,28 +257,6 @@ struct GfxStaticModelDrawInst // sizeof=0x4C
     // padding byte
     // padding byte
     // padding byte
-};
-
-struct GfxDrawSurfFields // sizeof=0x8
-{                                       // ...
-    /* 0*/ unsigned __int64 objectId : 16;
-    /*16*/ unsigned __int64 reflectionProbeIndex : 8;
-    /*24*/ unsigned __int64 customIndex : 5;         
-    /*29*/ unsigned __int64 materialSortedIndex : 11;
-    /*40*/ unsigned __int64 prepass : 2;             
-    /*42*/ unsigned __int64 primaryLightIndex : 8;   
-    /*50*/ unsigned __int64 surfType : 4;            
-    /*54*/ unsigned __int64 primarySortKey : 6;      
-    /*60*/ unsigned __int64 unused : 4;              
-};
-
-constexpr unsigned __int64 DRAWSURF_KEY_MASK = 0xFFFFFFFFE0000000;
-
-union GfxDrawSurf // sizeof=0x8
-{                                       // ...
-    GfxDrawSurfFields fields;
-    unsigned __int64 packed;
-    unsigned __int32 packed_low;// KISAKTODO dumb hack
 };
 
 struct GfxDrawSurfList // sizeof=0x8
@@ -592,11 +571,6 @@ struct DiskBrushModel // sizeof=0x30
     int numBrushes;
 };
 
-struct GfxStateBits // sizeof=0x8
-{
-    uint32_t loadBits[2];
-};
-
 struct GfxFog // sizeof=0x14
 {                                       // ...
     int startTime;                      // ...
@@ -613,21 +587,6 @@ struct GfxVertex // sizeof=0x20
     float texCoord[2];                  // ...
     PackedUnitVec normal;               // ...
 };
-
-struct GfxVertexShaderLoadDef // sizeof=0x8
-{                                       // ...
-    void* program;
-    uint16_t programSize;
-    uint16_t loadForRenderer;
-};
-
-struct GfxPixelShaderLoadDef // sizeof=0x8
-{                                       // ...
-    void* program;
-    uint16_t programSize;
-    uint16_t loadForRenderer;
-};
-RUNTIME_SIZE(GfxPixelShaderLoadDef, 0x8, 0x10);
 
 struct GfxDepthOfField // sizeof=0x20
 {                                       // ...

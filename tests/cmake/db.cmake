@@ -617,6 +617,21 @@ add_test(NAME database-asset-layout-fail-closed COMMAND kisakcod-db-asset-layout
 # The gate is width-parameterised, so both the 32-bit pass-through and the
 # 64-bit ERR_DROP refusal are asserted on every host including Win32.
 kisakcod_ilp32(kisakcod-db-asset-layout-tests database-asset-layout-fail-closed)
+# The same checks as the headless server compiles db_asset_layout.h: with
+# KISAK_DEDI_HEADLESS, which admits the renderer families K4 verified on
+# servers only, where a client build keeps them guarded.
+add_executable(kisakcod-db-asset-layout-headless-tests
+    db_asset_layout_tests.cpp
+    ${SRC_DIR}/database/db_asset_layout.cpp
+)
+target_include_directories(kisakcod-db-asset-layout-headless-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-db-asset-layout-headless-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-db-asset-layout-headless-tests PRIVATE KISAK_DEDI_HEADLESS)
+kisakcod_test_warnings(kisakcod-db-asset-layout-headless-tests)
+set_target_properties(kisakcod-db-asset-layout-headless-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME database-asset-layout-fail-closed-headless COMMAND kisakcod-db-asset-layout-headless-tests)
 
 add_executable(kisakcod-db-referenced-fastfile-tests db_referenced_fastfile_tests.cpp)
 target_include_directories(kisakcod-db-referenced-fastfile-tests PRIVATE ${SRC_DIR})

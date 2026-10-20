@@ -156,6 +156,13 @@ void TestFailClosedPolicy()
            "64-bit targets must load sound alias lists, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kXAnimParts, true, false),
            "64-bit targets must load animations, which K4 counts");
+#if defined(KISAK_DEDI_HEADLESS)
+    Expect(IsLoadPermitted(db::asset_layout::kImage, true, false),
+           "a 64-bit headless server must load images, which K4 counts");
+#else
+    Expect(!IsLoadPermitted(db::asset_layout::kImage, true, false),
+           "a 64-bit client keeps images guarded: no client leg has compared them");
+#endif
 
     // FX and Impact FX hold a pair, but only the FX zone adapter can apply it.
     Expect(
