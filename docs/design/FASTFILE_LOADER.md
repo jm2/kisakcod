@@ -156,8 +156,8 @@ A family counts toward K4 when all of these hold:
 
 K4 is a server gate. A client builds renderer objects from Image, Material,
 TechniqueSet and GfxWorld (`kCreatesRendererObjects`), which no client leg has
-compared with x86, so `IsK4Verified` lifts each of the four only under
-`KISAK_DEDI_HEADLESS`, as it joins (Image so far).
+compared with x86, so `IsK4Verified` lifts each only under
+`KISAK_DEDI_HEADLESS`, as it joins (Image, Material so far).
 
 ## Test plan
 

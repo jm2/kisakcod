@@ -159,9 +159,13 @@ void TestFailClosedPolicy()
 #if defined(KISAK_DEDI_HEADLESS)
     Expect(IsLoadPermitted(db::asset_layout::kImage, true, false),
            "a 64-bit headless server must load images, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kMaterial, true, false),
+           "a 64-bit headless server must load materials, which K4 counts");
 #else
     Expect(!IsLoadPermitted(db::asset_layout::kImage, true, false),
            "a 64-bit client keeps images guarded: no client leg has compared them");
+    Expect(!IsLoadPermitted(db::asset_layout::kMaterial, true, false),
+           "a 64-bit client keeps materials guarded: no client leg has compared them");
 #endif
 
     // FX and Impact FX hold a pair, but only the FX zone adapter can apply it.
