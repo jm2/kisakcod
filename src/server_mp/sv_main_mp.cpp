@@ -334,8 +334,8 @@ void __cdecl SVC_Status(netadr_t from)
     int v21; // [esp+4450h] [ebp-414h]
     int v22; // [esp+4454h] [ebp-410h]
     playerState_s *v23; // [esp+4458h] [ebp-40Ch]
-    char v24; // [esp+445Ch] [ebp-408h] BYREF
-    _BYTE v25[3]; // [esp+445Dh] [ebp-407h] BYREF
+    char v24[1024]; // [esp+445Ch] [ebp-408h] BYREF (KISAK: one line buffer; the decompile split it into v24/v25)
+    // v25 was the tail of v24
     int v26; // [esp+485Ch] [ebp-8h]
 
     v22 = 0;
@@ -365,16 +365,16 @@ void __cdecl SVC_Status(netadr_t from)
             if (gameInitialized)
             {
                 ClientScore = G_GetClientScore(v13 - svs.clients);
-                Com_sprintf(&v24, 0x400u, "%i %i \"%s\"\n", ClientScore, v13->ping, v13->name);
+                Com_sprintf(v24, sizeof(v24), "%i %i \"%s\"\n", ClientScore, v13->ping, v13->name);
             }
             else
             {
-                Com_sprintf(&v24, 0x400u, "%i %i \"%s\"\n", 0, v13->ping, v13->name);
+                Com_sprintf(v24, sizeof(v24), "%i %i \"%s\"\n", 0, v13->ping, v13->name);
             }
-            v14 = &v25[strlen(&v24)] - v25;
+            v14 = strlen(v24);
             if (v14 + v21 >= 0x20000)
                 break;
-            v7 = &v24;
+            v7 = v24;
             v6 = &tempServerMsgBuf[v21];
             do
             {
