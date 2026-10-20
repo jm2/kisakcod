@@ -4,6 +4,7 @@
 
 #include <universal/kisak_abi.h>
 #include <universal/com_math.h>
+#include <universal/gfx_image.h>
 #include <universal/gfx_lightdef.h>
 #include <qcommon/com_pack.h>
 #include <cstdint>
@@ -160,37 +161,6 @@ enum GfxDepthRangeType : __int32
     GFX_DEPTH_RANGE_FULL = -0x1,
 };
 
-enum MapType : __int32
-{                                       // ...
-    MAPTYPE_NONE = 0x0,
-    MAPTYPE_INVALID1 = 0x1,
-    MAPTYPE_INVALID2 = 0x2,
-    MAPTYPE_2D = 0x3,
-    MAPTYPE_3D = 0x4,
-    MAPTYPE_CUBE = 0x5,
-    MAPTYPE_COUNT = 0x6,
-};
-
-struct Picmip // sizeof=0x2
-{                                       // ...
-    Picmip()
-    {
-        platform[0] = 0;
-        platform[1] = 0;
-    }
-    Picmip(int i)
-    {
-        platform[0] = i;
-        platform[1] = i;
-    }
-    uint8_t platform[2];        // ...
-};
-
-struct CardMemory // sizeof=0x8
-{                                       // ...
-    int platform[2];                    // ...
-};
-
 #define OFFSET_TO_GfxImageLoadDef_DATA sizeof(uint8_t) + sizeof(uint8_t) + sizeof(__int16) + sizeof(__int16) + sizeof(__int16) + sizeof(_D3DFORMAT) + sizeof(int)
 struct GfxImageLoadDef // sizeof=0x14
 {
@@ -201,36 +171,6 @@ struct GfxImageLoadDef // sizeof=0x14
     int resourceSize;
     uint8_t data[4]; // data extends beyond 4... '4' is to force alignment
 };
-
-union GfxTexture // sizeof=0x4
-{                                       // ...
-    IDirect3DBaseTexture9* basemap;
-    IDirect3DTexture9* map;
-    IDirect3DVolumeTexture9* volmap;
-    IDirect3DCubeTexture9* cubemap;
-    GfxImageLoadDef* loadDef;
-};
-
-struct GfxImage // sizeof=0x24
-{                                       // ...
-    MapType mapType;                    // ...
-    GfxTexture texture;
-    Picmip picmip;
-    bool noPicmip;
-    uint8_t semantic;
-    uint8_t track;
-    // padding byte
-    // padding byte
-    // padding byte
-    CardMemory cardMemory;
-    uint16_t width;
-    uint16_t height;
-    uint16_t depth;
-    uint8_t category;
-    bool delayLoadPixels;
-    const char* name;
-};
-RUNTIME_SIZE(GfxImage, 0x24, 0x30);
 
 struct GfxCodeMatrices // sizeof=0x800
 {                                       // ...
