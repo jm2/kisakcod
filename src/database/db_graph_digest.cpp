@@ -308,6 +308,80 @@ void HashLoadedSound(GraphHashBuilder &builder, const XAssetHeader &header)
     builder.FieldBytes(kLoadedSoundData, sound.sound.data, sound.sound.data ? info.data_len : 0);
 }
 
+// A sound file is its type plus its loaded sound's name, or its streamed
+// file's directory and name (SAT_LOADED 1, SAT_STREAMED 2).
+void HashSoundFile(GraphHashBuilder &builder, const SoundFile *file)
+{
+    builder.FieldU64(5, file != nullptr);
+    if (!file)
+        return;
+    builder.FieldU64(6, file->type);
+    builder.FieldU64(7, file->exists);
+    if (file->type == 1)
+        FieldAsset(builder, 8, ASSET_TYPE_LOADED_SOUND, file->u.loadSnd);
+    else
+    {
+        builder.FieldString(9, file->u.streamSnd.filename.info.raw.dir);
+        builder.FieldString(10, file->u.streamSnd.filename.info.raw.name);
+    }
+}
+
+// The speaker map is inline in the alias, not an asset: every field of it.
+void HashSpeakerMap(GraphHashBuilder &builder, const SpeakerMap *map)
+{
+    builder.FieldU64(26, map != nullptr);
+    if (!map)
+        return;
+    builder.FieldU64(27, map->isDefault);
+    builder.FieldString(28, map->name);
+    for (const MSSChannelMap(&row)[2] : map->channelMaps)
+    {
+        for (const MSSChannelMap &channels : row)
+        {
+            builder.FieldI64(29, channels.speakerCount);
+            for (const MSSSpeakerLevels &speaker : channels.speakers)
+            {
+                builder.FieldI64(30, speaker.speaker);
+                builder.FieldI64(31, speaker.numLevels);
+                builder.FieldF32(32, speaker.levels[0]);
+                builder.FieldF32(33, speaker.levels[1]);
+            }
+        }
+    }
+}
+
+// Each alias in order, as a record: its names, its sound file, its scalars,
+// its falloff curve by name, and its speaker map.
+void HashSound(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const snd_alias_list_t &list = *header.sound;
+    builder.FieldString(1, list.aliasName);
+    builder.FieldI64(2, list.count);
+    const int aliases = list.head && list.count > 0 ? list.count : 0;
+    for (int i = 0; i < aliases; ++i)
+    {
+        const snd_alias_t &alias = list.head[i];
+        builder.BeginRecord(3);
+        builder.FieldString(1, alias.aliasName);
+        builder.FieldString(2, alias.subtitle);
+        builder.FieldString(3, alias.secondaryAliasName);
+        builder.FieldString(4, alias.chainAliasName);
+        HashSoundFile(builder, alias.soundFile);
+        builder.FieldI64(11, alias.sequence);
+        for (const float value : {alias.volMin, alias.volMax, alias.pitchMin, alias.pitchMax, alias.distMin, alias.distMax})
+            builder.FieldF32(12, value);
+        builder.FieldI64(13, alias.flags);
+        for (const float value : {alias.slavePercentage, alias.probability, alias.lfePercentage, alias.centerPercentage})
+            builder.FieldF32(14, value);
+        builder.FieldI64(15, alias.startDelay);
+        FieldAsset(builder, 16, ASSET_TYPE_SOUND_CURVE, alias.volumeFalloffCurve);
+        for (const float value : {alias.envelopMin, alias.envelopMax, alias.envelopPercentage})
+            builder.FieldF32(17, value);
+        HashSpeakerMap(builder, alias.speakerMap);
+        builder.EndRecord();
+    }
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -338,6 +412,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashComWorld;
     case ASSET_TYPE_LOADED_SOUND:
         return HashLoadedSound;
+    case ASSET_TYPE_SOUND:
+        return HashSound;
     default:
         return nullptr;
     }
