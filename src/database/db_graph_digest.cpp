@@ -5,6 +5,7 @@
 #include <game/g_bsp.h>
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
+#include <universal/gfx_image.h>
 #include <universal/gfx_lightdef.h>
 #include <universal/q_shared.h>
 
@@ -509,6 +510,28 @@ void HashXAnimParts(GraphHashBuilder &builder, const XAssetHeader &header)
     }
 }
 
+// The record as a load keeps it. A headless server consumes the pixels and
+// keeps no texture (DB_FinalizeHeadlessTextureLoad at x86, FinalizeTexture at
+// 64-bit), so only the texture's presence is hashed, never a pointer.
+void HashImage(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const GfxImage &image = *header.image;
+    builder.FieldString(1, image.name);
+    builder.FieldI64(2, image.mapType);
+    builder.FieldU64(3, image.texture.basemap != nullptr);
+    builder.FieldBytes(4, image.picmip.platform, sizeof(image.picmip.platform));
+    FieldBool(builder, 5, image.noPicmip);
+    builder.FieldU64(6, image.semantic);
+    builder.FieldU64(7, image.track);
+    builder.FieldI64(8, image.cardMemory.platform[0]);
+    builder.FieldI64(9, image.cardMemory.platform[1]);
+    builder.FieldU64(10, image.width);
+    builder.FieldU64(11, image.height);
+    builder.FieldU64(12, image.depth);
+    builder.FieldU64(13, image.category);
+    FieldBool(builder, 14, image.delayLoadPixels);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -543,6 +566,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashSound;
     case ASSET_TYPE_XANIMPARTS:
         return HashXAnimParts;
+    case ASSET_TYPE_IMAGE:
+        return HashImage;
     default:
         return nullptr;
     }
