@@ -438,7 +438,7 @@ void Sys_SpawnQuitProcess()
 	if (sys_exitCmdLine[0])
 	{
 		memset((unsigned __int8*)&dst, 0, sizeof(dst));
-		dst.cb = 68;
+		dst.cb = sizeof(dst);
 		if (!CreateProcessA(0, sys_exitCmdLine, 0, 0, 0, 0, 0, 0, &dst, &pi))
 		{
 			error = GetLastError();
@@ -789,7 +789,7 @@ int __cdecl Sys_SystemMemoryMB()
 	}
 	else
 	{
-		status.dwLength = 32;
+		status.dwLength = sizeof(status);
 		GlobalMemoryStatus(&status);
 		if (status.dwAvailVirtual < 0x8000000)
 		{
