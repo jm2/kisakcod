@@ -9,9 +9,10 @@
 #                  sections (code, data, relocations) equal: only CodeView
 #                  debug metadata moved, e.g. a shifted __LINE__ or include
 #   layout-only    the digest differs, but `dumpbin /disasm` is identical
-#                  and object-data-sections.py finds the data sections equal:
-#                  a header edit renumbered sections or symbols in an
-#                  includer, which the digest's relocation resolution counts
+#                  and object-data-sections.py finds the data equal symbol by
+#                  symbol: a header edit renumbered sections or symbols in an
+#                  includer, or reordered variables inside a section, which
+#                  the digest's relocation resolution counts
 #   CODE           the disassembly differs (or no dumpbin to check with)
 #   added/removed  the object exists in only one tree
 #
