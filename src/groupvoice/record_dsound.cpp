@@ -170,7 +170,7 @@ HRESULT __cdecl DSOUNDRecord_Start(dsound_sample_t *pRecSample)
     wfx.nAvgBytesPerSec = 2 * g_sound_channels * g_sound_recordFrequency;
     wfx.nBlockAlign = 2 * g_sound_channels;
     wfx.cbSize = 0;
-    dscbd.dwSize = 28;
+    dscbd.dwSize = sizeof(dscbd);
     dscbd.dwFlags = 0;
     dscbd.dwBufferBytes = g_sound_recordBufferSize;
     dscbd.dwReserved = 0;
