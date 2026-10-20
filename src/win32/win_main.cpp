@@ -255,7 +255,7 @@ int __cdecl Sys_IsGameProcess(DWORD id)
 	if (snapshot == (void*)-1)
 		return 0;
 	isGame = 0;
-	me.dwSize = 548;
+	me.dwSize = sizeof(me);
 	if (Module32First(snapshot, &me))
 	{
 		GetModuleFileNameA(0, modulePath, 0x104u);
