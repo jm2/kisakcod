@@ -5,10 +5,11 @@
 // keeps its own policy above this layer: channel choice, volumes, the 2D
 // speaker map and the listener-relative 3D positions.
 // - Each sample handle is one OpenAL source and one buffer. Loaded sounds
-//   are PCM, or IMA ADPCM decoded through libavcodec.
-// - 2D samples pan from the left/right speaker levels the engine sets; 3D
-//   samples take the listener-relative position, with no distance model,
-//   because the engine already scales volume with distance (rolloff 0).
+//   upload as 8- or 16-bit PCM; other formats (IMA ADPCM) don't play yet.
+// - 2D samples pan from the left/right speaker levels the engine sets. 3D
+//   samples play at the engine's volume, unpositioned for now; distance is
+//   already in that volume (the engine sets rolloff 0), so OpenAL's
+//   distance model is off.
 // - Reverb, the EQ filter and the room type are not applied.
 // - Streams (music and streamed sounds) don't open yet.
 
@@ -21,21 +22,15 @@
 #include <AL/al.h>
 #include <AL/alc.h>
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-}
-
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <new>
-#include <vector>
 
 namespace
 {
 constexpr S32 kFormatPcm = 1;
-constexpr S32 kFormatImaAdpcm = 0x11;
 constexpr U32 kMaxRate = 192000;
 constexpr int kMaxSamples = 128;
 
@@ -51,8 +46,6 @@ struct Sample
     bool ended = false;   // AIL_end_sample ran, or the sample never started
     F32 volume = 1.0f;
     F32 levels[2] = {1.0f, 1.0f};
-    bool is3d = false;
-    F32 position[3] = {};
 };
 
 struct Driver
@@ -75,13 +68,6 @@ void ApplyGainAndPan(Sample *s)
 {
     if (!s->source)
         return;
-    if (s->is3d)
-    {
-        // Miles is left-handed (+z ahead); OpenAL looks down -z.
-        alSource3f(s->source, AL_POSITION, s->position[0], s->position[1], -s->position[2]);
-        alSourcef(s->source, AL_GAIN, s->volume);
-        return;
-    }
     // A mono 2D sample sits on the unit circle at the angle its left/right
     // levels give, at the louder level; stereo samples play unpanned.
     const F32 left = std::max(s->levels[0], 0.0f);
@@ -92,82 +78,26 @@ void ApplyGainAndPan(Sample *s)
     alSourcef(s->source, AL_GAIN, s->volume * level);
 }
 
-// Decodes IMA ADPCM blocks to interleaved 16-bit PCM; false on any decode error.
-bool DecodeImaAdpcm(const AILSOUNDINFO &info, std::vector<int16_t> &out)
-{
-    const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_ADPCM_IMA_WAV);
-    AVCodecContext *ctx = codec ? avcodec_alloc_context3(codec) : nullptr;
-    AVPacket *packet = av_packet_alloc();
-    AVFrame *frame = av_frame_alloc();
-    bool ok = ctx && packet && frame;
-    if (ok)
-    {
-        ctx->sample_rate = static_cast<int>(info.rate);
-        ctx->block_align = static_cast<int>(info.block_size);
-        ctx->bits_per_coded_sample = 4;
-        av_channel_layout_default(&ctx->ch_layout, info.channels);
-        ok = avcodec_open2(ctx, codec, nullptr) >= 0;
-    }
-    const uint8_t *data = static_cast<const uint8_t *>(info.data_ptr);
-    for (U32 offset = 0; ok && offset + info.block_size <= info.data_len; offset += info.block_size)
-    {
-        packet->data = const_cast<uint8_t *>(data + offset);
-        packet->size = static_cast<int>(info.block_size);
-        ok = avcodec_send_packet(ctx, packet) >= 0;
-        while (ok && avcodec_receive_frame(ctx, frame) == 0)
-        {
-            ok = frame->format == AV_SAMPLE_FMT_S16P && frame->ch_layout.nb_channels == info.channels;
-            for (int i = 0; ok && i < frame->nb_samples; ++i)
-                for (int c = 0; c < info.channels; ++c)
-                    out.push_back(reinterpret_cast<const int16_t *>(frame->extended_data[c])[i]);
-        }
-    }
-    av_frame_free(&frame);
-    av_packet_free(&packet);
-    avcodec_free_context(&ctx);
-    return ok && !out.empty();
-}
-
 // Uploads the loaded sound to the sample's buffer. Fails closed on any header
 // value that doesn't describe whole frames inside data_len.
 bool Upload(Sample *s, const AILSOUNDINFO &info)
 {
-    if (!info.data_ptr || !info.data_len || info.channels < 1 || info.channels > 2 || !info.rate
-        || info.rate > kMaxRate)
+    if (!info.data_ptr || info.format != kFormatPcm || (info.bits != 8 && info.bits != 16) || info.channels < 1
+        || info.channels > 2 || !info.rate || info.rate > kMaxRate)
         return false;
     const bool stereo = info.channels == 2;
-    std::vector<int16_t> decoded;
-    const void *pcm = info.data_ptr;
-    ALsizei bytes = 0;
-    ALenum format = 0;
-    if (info.format == kFormatPcm && (info.bits == 8 || info.bits == 16))
-    {
-        const U32 frameBytes = static_cast<U32>(info.channels) * (info.bits / 8);
-        bytes = static_cast<ALsizei>(std::min<U32>(info.data_len / frameBytes * frameBytes, INT32_MAX));
-        format = info.bits == 8 ? (stereo ? AL_FORMAT_STEREO8 : AL_FORMAT_MONO8)
-                                : (stereo ? AL_FORMAT_STEREO16 : AL_FORMAT_MONO16);
-    }
-    else if (info.format == kFormatImaAdpcm && info.block_size >= 4u * info.channels
-             && info.block_size <= info.data_len && info.block_size <= 0x10000)
-    {
-        if (!DecodeImaAdpcm(info, decoded))
-            return false;
-        pcm = decoded.data();
-        bytes = static_cast<ALsizei>(std::min<size_t>(decoded.size() * sizeof(int16_t), INT32_MAX));
-        format = stereo ? AL_FORMAT_STEREO16 : AL_FORMAT_MONO16;
-    }
-    else
-    {
+    const U32 frameBytes = static_cast<U32>(info.channels) * static_cast<U32>(info.bits / 8);
+    const U32 frames = std::min<U32>(info.data_len / frameBytes, INT32_MAX / frameBytes);
+    if (!frames)
         return false;
-    }
-    if (!bytes)
-        return false;
+    const ALenum format = info.bits == 8 ? (stereo ? AL_FORMAT_STEREO8 : AL_FORMAT_MONO8)
+                                         : (stereo ? AL_FORMAT_STEREO16 : AL_FORMAT_MONO16);
     alSourcei(s->source, AL_BUFFER, 0);
-    alBufferData(s->buffer, format, pcm, bytes, static_cast<ALsizei>(info.rate));
+    alBufferData(s->buffer, format, info.data_ptr, static_cast<ALsizei>(frames * frameBytes),
+                 static_cast<ALsizei>(info.rate));
     if (alGetError() != AL_NO_ERROR)
         return false;
     alSourcei(s->source, AL_BUFFER, static_cast<ALint>(s->buffer));
-    const U32 frames = static_cast<U32>(bytes / (format == AL_FORMAT_MONO8 ? 1 : format == AL_FORMAT_STEREO16 ? 4 : 2));
     s->lengthMs = static_cast<U32>(static_cast<uint64_t>(frames) * 1000 / info.rate);
     s->channels = info.channels;
     return true;
@@ -307,7 +237,6 @@ S32 AILCALL AIL_set_sample_info(HSAMPLE handle, AILSOUNDINFO const *info)
     s->rate = static_cast<S32>(s->baseRate);
     s->volume = 1.0f;
     s->levels[0] = s->levels[1] = 1.0f;
-    s->is3d = false;
     alSourcef(s->source, AL_PITCH, 1.0f);
     alSourcei(s->source, AL_LOOPING, AL_FALSE);
     ApplyGainAndPan(s);
@@ -433,34 +362,19 @@ void AILCALL AIL_set_sample_ms_position(HSAMPLE handle, S32 ms)
         alSourcef(s->source, AL_SEC_OFFSET, static_cast<ALfloat>(std::min<U32>(ms, s->lengthMs)) / 1000.0f);
 }
 
-S32 AILCALL AIL_sample_3D_position(HSAMPLE handle, F32 *x, F32 *y, F32 *z)
+// 3D samples are not positioned yet; see the file comment.
+S32 AILCALL AIL_sample_3D_position(HSAMPLE, F32 *x, F32 *y, F32 *z)
 {
-    const Sample *s = ToSample(handle);
     if (x)
-        *x = s->position[0];
+        *x = 0.0f;
     if (y)
-        *y = s->position[1];
+        *y = 0.0f;
     if (z)
-        *z = s->position[2];
-    return s->is3d;
+        *z = 0.0f;
+    return 0;
 }
-
-void AILCALL AIL_set_sample_3D_position(HSAMPLE handle, F32 x, F32 y, F32 z)
-{
-    Sample *s = ToSample(handle);
-    s->is3d = true;
-    s->position[0] = x;
-    s->position[1] = y;
-    s->position[2] = z;
-    ApplyGainAndPan(s);
-}
-
-void AILCALL AIL_set_sample_3D_distances(HSAMPLE handle, F32, F32, S32)
-{
-    Sample *s = ToSample(handle);
-    s->is3d = true;
-    ApplyGainAndPan(s);
-}
+void AILCALL AIL_set_sample_3D_position(HSAMPLE, F32, F32, F32) { }
+void AILCALL AIL_set_sample_3D_distances(HSAMPLE, F32, F32, S32) { }
 
 // Streams.
 HSTREAM AILCALL AIL_open_stream(HDIGDRIVER, char const *, S32)
