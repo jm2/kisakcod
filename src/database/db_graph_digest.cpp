@@ -4,8 +4,6 @@
 
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
-#include <sound/snd_public.h>
-#include <ui/ui_shared.h>
 #include <universal/q_shared.h>
 
 #include <algorithm>

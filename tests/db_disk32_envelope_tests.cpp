@@ -183,7 +183,7 @@ const Malformed kMalformed[] = {
     {"an unported family after a raw file",
      []
      {
-         File().Root(0, 0, 2, kInline).Word(kRawFile).Word(kInline).Word(ASSET_TYPE_LOCALIZE_ENTRY).Word(kInline)
+         File().Root(0, 0, 2, kInline).Word(kRawFile).Word(kInline).Word(ASSET_TYPE_XANIMPARTS).Word(kInline)
              .Word(kInline).Word(0).Word(0).Text("c.cfg");
      },
      "no 64-bit on-disk/runtime layout pair", 2},
