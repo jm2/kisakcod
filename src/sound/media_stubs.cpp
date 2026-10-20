@@ -5,7 +5,8 @@
 // process can link or load them. Until the OpenAL Soft and FFmpeg backends
 // land, those builds link these definitions: every call the engine makes succeeds
 // as a no-op or reports failure, so sound and cinematics stay off. Builds with
-// KISAK_FFMPEG_CINEMATICS keep only the Miles half.
+// KISAK_FFMPEG_CINEMATICS keep only the Miles half, and builds with
+// KISAK_OPENAL_AUDIO only the Bink half.
 // - AIL_startup() fails, so MSS_Startup() takes its existing "Miles
 //   initialization failed" path.
 // - BinkOpen() fails, so R_Cinematic_StartPlayback falls back and gives up;
@@ -21,7 +22,9 @@
 #include <binklib/bink.h>
 
 
-// Miles: no driver, no streams, no samples.
+// Miles: no driver, no streams, no samples. KISAK_OPENAL_AUDIO builds define
+// these in sound/snd_openal.cpp instead.
+#if !defined(KISAK_OPENAL_AUDIO)
 S32 AILCALL AIL_startup(void) { return 0; }
 void AILCALL AIL_shutdown(void) { }
 // The headers return char *; callers only print the text.
@@ -82,6 +85,8 @@ void AILCALL AIL_stream_info(HSTREAM, S32 *, S32 *, S32 *, S32 *) { }
 void AILCALL AIL_set_stream_loop_count(HSTREAM, S32) { }
 void AILCALL AIL_stream_ms_position(HSTREAM, S32 *, S32 *) { }
 void AILCALL AIL_set_stream_ms_position(HSTREAM, S32) { }
+
+#endif
 
 // Bink: no movie ever opens. KISAK_FFMPEG_CINEMATICS builds define these in
 // gfx_d3d/r_bink_ffmpeg.cpp instead.

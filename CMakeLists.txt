@@ -52,6 +52,16 @@ option(KISAK_FFMPEG_CINEMATICS "Play Bink cinematics through FFmpeg on POSIX cli
 if (KISAK_FFMPEG_CINEMATICS AND WIN32)
     message(FATAL_ERROR "KISAK_FFMPEG_CINEMATICS is wired for POSIX clients only so far.")
 endif()
+# Sound through OpenAL Soft instead of mss32 (POSIX clients; docs/design/CLIENT.md).
+# Needs openal from pkg-config (Homebrew: openal-soft) and FFmpeg, which decodes
+# ADPCM sounds.
+option(KISAK_OPENAL_AUDIO "Play sound through OpenAL Soft on POSIX clients" OFF)
+if (KISAK_OPENAL_AUDIO AND WIN32)
+    message(FATAL_ERROR "KISAK_OPENAL_AUDIO is wired for POSIX clients only so far.")
+endif()
+if (KISAK_OPENAL_AUDIO AND NOT KISAK_FFMPEG_CINEMATICS)
+    message(FATAL_ERROR "KISAK_OPENAL_AUDIO decodes ADPCM through FFmpeg; enable KISAK_FFMPEG_CINEMATICS too.")
+endif()
 include(CTest)
 
 if (WIN32)

@@ -189,6 +189,25 @@ else()
             target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_FFMPEG_CINEMATICS)
             target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/gfx_d3d/r_bink_ffmpeg.cpp)
         endif()
+        if (KISAK_OPENAL_AUDIO)
+            # Miles calls go to OpenAL Soft instead of the silent stubs.
+            # Homebrew's openal-soft is keg-only, so add its pkg-config dir.
+            foreach(_kisak_openal_prefix /opt/homebrew/opt/openal-soft /usr/local/opt/openal-soft)
+                if (APPLE AND EXISTS ${_kisak_openal_prefix}/lib/pkgconfig)
+                    set(ENV{PKG_CONFIG_PATH} "${_kisak_openal_prefix}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+                endif()
+            endforeach()
+            pkg_check_modules(KISAK_OPENAL IMPORTED_TARGET openal)
+            if (NOT KISAK_OPENAL_FOUND)
+                message(FATAL_ERROR
+                    "The POSIX client plays sound through OpenAL Soft (KISAK_OPENAL_AUDIO). "
+                    "Install it (macOS: brew install openal-soft; Debian/Ubuntu: libopenal-dev; "
+                    "Fedora: openal-soft-devel), or configure with -DKISAK_OPENAL_AUDIO=OFF for silent stubs.")
+            endif()
+            target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::KISAK_OPENAL)
+            target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_OPENAL_AUDIO)
+            target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/sound/snd_openal.cpp)
+        endif()
     endif()
     if (KISAK_TARGET_ENABLE_STEAM)
         message(FATAL_ERROR
