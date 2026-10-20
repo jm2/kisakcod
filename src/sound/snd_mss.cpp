@@ -318,7 +318,7 @@ int __cdecl MSS_DigitalFormatType(int waveFormat, int bits, int channels)
 uint8_t *__cdecl MSS_Alloc(uint32_t bytes, uint32_t rate)
 {
   if ( IsFastFileLoad() )
-    return (uint8_t *)((int (__cdecl *)(uint32_t, uint32_t))MSS_Alloc_FastFile)(bytes, rate);
+    return (uint8_t *)MSS_Alloc_FastFile(bytes); // a pointer-width return: an int cast truncates it on 64-bit
   else
     return MSS_Alloc_LoadObj(bytes, rate);
 }
