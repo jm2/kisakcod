@@ -236,8 +236,8 @@ void __cdecl Load_RawFileAsset(XAssetHeader *header)
 }
 
 // db_load.cpp's Load_XAsset and Load_XAssetHeader switch. RawFile goes to its
-// 64-bit loader, as the switch will once the K4 PR lifts its guard; every
-// other family meets the production guard, which refuses it at 64-bit.
+// 64-bit loader, as K4 lets the switch send it; every other family meets the
+// production guard, which refuses it at 64-bit.
 void __cdecl Load_XAsset(bool atStreamStart)
 {
     g_entrySlots.push_back(reinterpret_cast<std::uintptr_t>(varXAsset->header.data));

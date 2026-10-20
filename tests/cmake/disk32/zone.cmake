@@ -7,7 +7,7 @@
 # stubbed, and section GC drops what the load never reaches. The admission
 # seam (db_asset_layout.h) is defined only here.
 file(GLOB _zone_db_sources CONFIGURE_DEPENDS "${SRC_DIR}/database/*.cpp")
-list(FILTER _zone_db_sources EXCLUDE REGEX "/(shader_cache|db_fx_zone_adapter_wiring|db_graph_hash)\\.cpp$")
+list(FILTER _zone_db_sources EXCLUDE REGEX "/(shader_cache|db_fx_zone_adapter_wiring)\\.cpp$")
 set(_zone_zlib adler32 compress crc32 deflate infblock infcodes inffast inflate inftrees infutil trees zutil)
 list(TRANSFORM _zone_zlib PREPEND "${DEPS_DIR}/zlib/")
 list(TRANSFORM _zone_zlib APPEND ".c")
@@ -59,7 +59,7 @@ set_tests_properties(database-disk32-zone-retail-shapes PROPERTIES TIMEOUT 60)
 # With one family's guard left on, the zone fails closed naming it. The
 # layout guards exist only at 64-bit.
 if (CMAKE_SIZEOF_VOID_P EQUAL 8)
-    foreach(_family IN ITEMS rawfile stringtable physpreset localize map_ents game_map_mp com_map
+    foreach(_family IN ITEMS stringtable physpreset localize map_ents game_map_mp com_map
             sndcurve loaded_sound sound image lightdef techset material font fx impactfx menu menufile
             xmodel xanim weapon col_map_mp gfx_map)
         add_test(NAME database-disk32-zone-guard-${_family} COMMAND kisakcod-db-disk32-zone-tests guard ${_family})
