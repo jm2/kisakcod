@@ -130,11 +130,11 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 
 ## G2 run
 
-`scripts/g2_run.py` drives row 45: an ASan+UBSan headless build
+`scripts/g2_run.py` drives row 45. Run it on an ASan+UBSan headless build
 (clang, RelWithDebInfo, `-fsanitize=address,undefined
 -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g` in C, C++ and
-link flags, otherwise the CI `linux-headless` options), `halt_on_error=1`
-for both sanitizers, so the first report ends the run. The server's configs
+link flags, otherwise the CI `linux-headless` options); it defaults
+`halt_on_error=1` for both sanitizers, so the first report ends the run. The server's configs
 overwrite a command-line `sv_mapRotation`, so the script sets the rotation
 on stdin after the first map, and waits for `Headless dedicated loading map
-'<name>'` then `Huffman Took` or `Hitch warning` before querying.
+'<name>'` then `Huffman Took` (first map only) or `Hitch warning` before querying.

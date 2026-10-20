@@ -15,7 +15,7 @@ From the master census. Live values: the `Native64 census` summary of the latest
 | K1 | 64-bit headless TUs passing syntax-only | win64 273/273 · winarm64 273/273 · lin64 272/272 · a64 272/272 · mac64 273/273 | all (G1) | census |
 | K2 | 64-bit headless real link | Win64: linked, 0 TUs excluded, 0 undefined | Win64, Linux amd64 (G1) | census |
 | K3 | Upstream engine TUs in the Linux test build | 82/475 | rising | census |
-| K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 16/25 (`db_graphhash`, 3 legs; list in FASTFILE_LOADER) | 25/25 (G2) | this file |
+| K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 16/25 (`db_graphhash`, 3 legs; list in `IsK4Verified`) | 25/25 (G2) | this file |
 | K5 | Headless TUs reaching `<d3d9.h>` on Linux | 0 on lin64 and a64 | 0 (G1 Linux) | census |
 | K6 | Target x role cells at `links` or above | 5/10 (all headless; the Windows clients link in CI but have no release recipe) | 10 at `packaged` (G6) | manifest |
 
@@ -28,7 +28,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | 37 | K4 digest pipeline: per-family `db::graph_hash` walkers on x86 and 64-bit | G2 | K4 | a family's 64-bit graph hash equals its x86 hash on the owner's data; its fail-closed guard is then removed | L | next: TechniqueSet, Weapon (staged on antec-win), XModel, Menu, ClipMapPvs, GfxWorld, Fx/ImpactFx |
 | 45 | G2 run: the 64-bit headless server under ASan/UBSan boots `mp_shipment` (`db_unverified64`), answers `getinfo`/`getstatus`, rotates the 5 G2 maps, runs 30 min | G2 | gate | console text and a `getstatus` reply recorded; no sanitizer report | M | lin64 passes with #639; arm64 rerun on master pending (`scripts/g2_run.py`) |
 | 46 | G0 evidence: x86 client and headless server on Steam 1.8 data, 3 maps, one fork round, the same binaries under Wine | G0 | gate | console text per map and at round end, on antec-win and under Wine on antec | M | blocked-owner (antec-win display; antec `wine-common`); x86 server runs under Wine (#635); no-Steam client artifact (#637) |
-| 51 | Native client audio: Miles is a silent stub on 64-bit; play sound aliases through OpenAL Soft ([CLIENT](design/CLIENT.md)) | G5 | gate | in-game weapon and ambient sounds play on a 64-bit client with no sound errors | L | #665 open (split, null-backend test, CI leg pending); then ADPCM/3D, streams, default on, TSan |
+| 51 | Native client audio: Miles is a silent stub on 64-bit; play sound aliases through OpenAL Soft ([CLIENT](design/CLIENT.md)) | G5 | gate | in-game weapon and ambient sounds play on a 64-bit client with no sound errors | L | #669 open (split, null-backend test, CI leg pending); then ADPCM/3D, streams, default on, TSan |
 | 50 | Screenshot regression set for the native clients (`scripts/screenshot_set.py`, after openETQW's): fixed views per map, master vs PR on one host, per-view diff numbers; images stay on the host | G5 | gate | main vs main on mp_crash and mp_shipment prints near-zero diffs on one native client; a deliberate render change shows up in the numbers | S | queued (`com_introPlayed 1`; A/B/A noise floor) |
 | 47 | G3 first target: an x86 fork client plays a round, a map change and a reconnect on the Win64 headless server, with 8 test clients | G3 | K6 | the round's console text on both ends | L | pre-check on macmini: bot fixes #641, #667; next a live 8-bot run, then the x86 client |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | blocked-owner |
@@ -57,6 +57,6 @@ Other `burndown` issues are off these gates or wait on the owner.
 
 Merge SHAs are in `git log`.
 
-- K4 16/25 (#633, #640, #642, #643, #646, #648, #650, #653, #657, #658, #664; headers #644, #656, #659; LoadedSound client data #666; per-symbol identity check #647). Row 41: FFmpeg cinematics, default on for POSIX (#654, #660).. G2 run on lin64 with #639; harness `scripts/g2_run.py` (#636). Windows ARM64 client in-game on mp_shipment, row 49 (#632, #634). Wine root fix (#635); no-Steam x86 nightly artifact (#637).
+- K4 16/25 (#633, #640, #642, #643, #646, #648, #650, #653, #657, #658, #664; headers #644, #656, #659; LoadedSound client data #666; per-symbol identity check #647). Row 41: FFmpeg cinematics, default on for POSIX (#654, #660). G2 run on lin64 with #639; harness `scripts/g2_run.py` (#636). Windows ARM64 client in-game on mp_shipment, row 49 (#632, #634). Wine root fix (#635); no-Steam x86 nightly artifact (#637).
 - G5 clients on Steam 1.8 data: Win64 in-game on mp_shipment at about 188 fps (rows 35, 43; #626); macOS in-game on mp_shipment and mp_crash (row 34); Linux arm64 in-game on mp_crash (row 31; #621); Linux amd64 in-game on mp_crash at about 250 fps with no code change (rows 33, 44).
 - macOS dxvk dylibs for macOS 26 (row 48, #629); census scope (row 42); rules 16-23, identity job, pr_gate (#602-#604).

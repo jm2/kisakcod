@@ -192,9 +192,9 @@ newer than the run. Read the console for:
   `no 64-bit on-disk/runtime layout pair` means the guard (no opt-in);
   `alias offset: unregistered slot` means an unrecorded pointer slot.
 
-**K4 legs** compare headless servers (clients load UI zones too), Windows
-legs from the PR's CI artifacts, with every verified family in the same
-command. `list` lines name retail assets: post only family lines. Walker rules
+**K4 legs** compare headless servers (clients also load UI); Windows
+legs run the PR's CI artifacts, one `+db_graphhash` per verified family on
+the same command line. `list` lines name retail assets: post only family lines. Walker rules
 head `db_graph_digest.cpp`.
 
 **Registry sessions.** A sequence that holds `db_hashCritSect` while its

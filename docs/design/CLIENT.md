@@ -139,13 +139,14 @@ on the binary path, not `pgrep -x`.
 
 - Drive the console on stdin (`screenshot`, `+attack`, `quit`), or by rcon,
   whose output goes into the UDP reply and drops bytes on long replies. `wait`
-  doesn't delay in exec'd configs, and there's no `echo`; an unknown command's
-  `Unknown command "X"` line works as a marker.
+  doesn't delay in exec'd configs, and there's no `echo`; before the client is active, an
+  unknown command's `Unknown command "X"` line works as a marker.
 - Spawn without input after about 30 s: `openScriptMenu team_marinesopfor
   autoassign`, then `openScriptMenu changeclass assault_mp,0`.
-- Markers: `byte snapshot for <name>` (client active); on headless `Huffman
-  Took` (map up). `MyAssertHandler` reports only under `KISAK_PURE`, so a
-  Release run passes a failed `iassert` silently.
+- Markers: `byte snapshot for <name>` is a server print, so a listen server
+  shows it once the client is active. On headless, `Huffman Took` marks only
+  the first map; later maps print `Hitch warning`. `iassert` compiles to
+  nothing in Release, so a clean Release run proves nothing about asserts.
 - Cinematics: `developer 1` prints `Bink via FFmpeg: opened …` and `closed at
   frame N of N after decoding N-1 frames in X s`; the intro chain takes about
   115 s. Audio: an `ALSOFT_CONF` with `drivers=wave` records the final mix to
@@ -178,7 +179,7 @@ on the binary path, not `pgrep -x`.
   multisampled one with `StretchRect` before `GetRenderTargetData` (#624).
 
 **Client status (2026-10-20).** In-game on master with `db_unverified64`:
-Win64 on mp_shipment (about 188 fps), macOS on mp_shipment and mp_crash
+Win64 on mp_shipment (about 188 fps), Windows ARM64 on mp_shipment, macOS on mp_shipment and mp_crash
 (display-capped at 120), Linux arm64 on mp_crash, Linux amd64 on mp_crash
 (about 250 fps, headless mutter). Cinematics play through FFmpeg on macOS and Linux (row 41). 64-bit clients keep loaded sound data (#666); OpenAL playback is NOW row 51. Capture a
 frame by sending `screenshot` on stdin once the menu is up: `+wait` runs while

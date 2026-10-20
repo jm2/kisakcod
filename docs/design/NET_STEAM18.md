@@ -93,7 +93,8 @@ These points are community-sourced; confirm each by capture:
 **Test clients.** `scr_testclients` (and `addtestclient()`) spawn nothing
 unless `developer 1` and `developer_script 1` are set. A connect rejected on
 protocol logs only through `Com_DPrintf`, so a missing bot is silent without
-`developer 1`; test clients use the server's wire protocol (#641). The first
+`developer 1`. Test clients send protocol 1, so a steam18 server rejects them
+until #641 (open) sends the server's wire protocol. The first
 int-stat `getstat` on a 64-bit server comes from a bot (#667).
 
 ## 7. Profiles
