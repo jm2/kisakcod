@@ -14,6 +14,7 @@
 #include <qcommon/com_fileaccess.h>
 #include <cgame/cg_local.h>
 #include <universal/profile.h>
+#include <universal/com_files.h>
 
 // #define CINEMA
 
@@ -753,8 +754,16 @@ bool __cdecl R_Cinematic_BinkOpen(
     }
     else
     {
+#if defined(_WIN32)
         _snprintf(filepath[0], 0x100u, "%s\\main\\video\\%s.%s", cwd, filename, "bik");
         _snprintf(filepath[1], 0x100u, "%s\\raw\\video\\%s.%s", cwd, filename, "bik");
+#else
+        // POSIX clients find the install through fs_basepath, not the working
+        // directory, and need '/' separators.
+        const char *base = fs_basepath && *fs_basepath->current.string ? fs_basepath->current.string : cwd;
+        _snprintf(filepath[0], 0x100u, "%s/main/video/%s.%s", base, filename, "bik");
+        _snprintf(filepath[1], 0x100u, "%s/raw/video/%s.%s", base, filename, "bik");
+#endif
     }
     if (R_Cinematic_BinkOpenPath(filepath[0], playbackFlags, errText, errTextSize))
         return 1;
