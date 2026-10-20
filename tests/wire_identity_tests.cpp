@@ -40,6 +40,8 @@
 #include <universal/com_files.h>
 #include <universal/com_math.h>
 #include <universal/com_memory.h>
+#include <universal/com_constantconfigstrings.h>
+#include <qcommon/msg_mp.h>
 
 #define WEAK __attribute__((weak))
 
@@ -154,8 +156,17 @@ WEAK void __cdecl SV_AddOperatorCommands() {}
 // itself; nothing is connected, so no slot or challenge holds its address.
 WEAK const char *NET_AdrToString(netadr_t) { return "203.0.113.9:28960"; }
 WEAK bool __cdecl NET_CompareAdr(netadr_t a, netadr_t b) { return a.type == b.type && std::memcmp(a.ip, b.ip, sizeof(a.ip)) == 0 && a.port == b.port; }
-WEAK bool __cdecl NET_CompareBaseAdr(netadr_t a, netadr_t b) { return a.type == b.type && std::memcmp(a.ip, b.ip, sizeof(a.ip)) == 0; }
-WEAK bool __cdecl NET_IsLocalAddress(netadr_t) { return false; }
+// As net_chan_mp.cpp: a bot or loopback address is told apart by its port.
+WEAK bool __cdecl NET_CompareBaseAdr(netadr_t a, netadr_t b)
+{
+    if (a.type != b.type)
+        return false;
+    if (a.type == NA_BOT || a.type == NA_LOOPBACK)
+        return a.port == b.port;
+    return std::memcmp(a.ip, b.ip, sizeof(a.ip)) == 0;
+}
+// As net_chan_mp.cpp: loopback and test-client (bot) addresses are local.
+WEAK bool __cdecl NET_IsLocalAddress(netadr_t adr) { return adr.type == NA_LOOPBACK || adr.type == NA_BOT; }
 WEAK bool Sys_IsLANAddress(netadr_t) { return false; }
 
 // Strings and memory keep the engine's semantics; the rest is inert.
@@ -172,6 +183,7 @@ WEAK bool __cdecl Vec4Compare(const float *a, const float *b) { return a[0] == b
 WEAK char info1[1024];
 WEAK uint8_t tempServerMsgBuf[131072];
 WEAK const dvar_t *com_dedicated;
+WEAK const dvar_t *com_sv_running;
 WEAK const dvar_t *nextmap;
 WEAK const dvar_s *fs_gameDirVar;
 WEAK int gameInitialized;
@@ -188,7 +200,18 @@ WEAK void *__cdecl Sys_GetValue(int valueIndex)
     static va_info_t vaInfo;
     return valueIndex == 1 ? &vaInfo : nullptr;
 }
-WEAK void __cdecl SV_Cmd_TokenizeString(char *) {}
+// The one line the checks tokenize themselves: a test client's connect, as
+// SV_AddTestClient builds it ('connect "<userinfo>"').
+WEAK void __cdecl SV_Cmd_TokenizeString(char *text)
+{
+    static std::string userinfo;
+    const char *const quote = text ? std::strchr(text, '"') : nullptr;
+    if (!quote)
+        return;
+    userinfo.assign(quote + 1);
+    userinfo.erase(userinfo.find_last_not_of('"') + 1);
+    Command("connect", userinfo.c_str());
+}
 WEAK void __cdecl SV_Cmd_EndTokenizedString() {}
 WEAK int __cdecl FS_iwIwd(char *, char *) { return 1; }
 WEAK void __cdecl FS_FCloseFile(int) {}
@@ -200,7 +223,12 @@ WEAK playerState_s *__cdecl SV_GameClientNum(int) { return nullptr; }
 WEAK gentity_s *__cdecl SV_GentityNum(int) { return nullptr; }
 WEAK void Scr_FreeValue(uint32_t) {}
 WEAK uint32_t Scr_AllocArray() { return 0; }
-WEAK void __cdecl Netchan_Setup(netsrc_t, netchan_t *, netadr_t, int, char *, int, char *, int) {}
+// As net_chan_mp.cpp: the channel keeps its peer's address and qport.
+WEAK void __cdecl Netchan_Setup(netsrc_t, netchan_t *chan, netadr_t adr, int qport, char *, int, char *, int)
+{
+    chan->remoteAddress = adr;
+    chan->qport = qport;
+}
 WEAK char *__cdecl ClientConnect(uint32_t, uint16_t) { return nullptr; }
 WEAK void __cdecl ClientDisconnect(int32_t) {}
 // The permanent ban list is a file; there is none, so only temporary bans apply.
@@ -209,6 +237,31 @@ WEAK void __cdecl FS_FreeFile(char *) {}
 WEAK parseInfo_t *__cdecl Com_Parse(const char **) { static parseInfo_t empty{}; return &empty; }
 WEAK void __cdecl Com_SkipRestOfLine(const char **) {}
 WEAK int __cdecl Kisak_rand() { return 4; }
+// A test client's gamestate and world entry write messages nobody reads.
+WEAK void __cdecl ClientBegin(int) {}
+WEAK constantConfigString constantConfigStrings[833];
+WEAK const char *SL_ConvertToString(uint32_t) { return ""; }
+WEAK void __cdecl SV_GetServerStaticHeader() {}
+WEAK void __cdecl MSG_Init(msg_t *buf, unsigned __int8 *data, int length)
+{
+    std::memset(buf, 0, sizeof(*buf));
+    buf->data = data;
+    buf->maxsize = length;
+}
+WEAK void __cdecl MSG_ClearLastReferencedEntity(msg_t *) {}
+WEAK void __cdecl MSG_WriteBigString(msg_t *, char *) {}
+WEAK void __cdecl MSG_WriteBit0(msg_t *) {}
+WEAK void __cdecl MSG_WriteBit1(msg_t *) {}
+WEAK void __cdecl MSG_WriteBits(msg_t *, int, unsigned int) {}
+WEAK void __cdecl MSG_WriteByte(msg_t *, unsigned __int8) {}
+WEAK void __cdecl MSG_WriteLong(msg_t *, int) {}
+WEAK void __cdecl MSG_WriteShort(msg_t *, __int16) {}
+WEAK void __cdecl MSG_WriteEntity(SnapshotInfo_s *, msg_t *, int, entityState_s *, const entityState_s *, int) {}
+WEAK bool __cdecl SV_Netchan_TransmitNextFragment(client_t *, netchan_t *) { return false; }
+WEAK void __cdecl SV_PacketDataIsHeader(int, const msg_t *) {}
+WEAK void __cdecl SV_SendMessageToClient(msg_t *, client_t *) {}
+WEAK void __cdecl SV_SetServerStaticHeader() {}
+WEAK void __cdecl SV_UpdateServerCommandsToClient(client_t *, msg_t *) {}
 
 int main(int argc, char **argv)
 {
@@ -244,6 +297,22 @@ int main(int argc, char **argv)
     CHECK(accepted == "error\nEXE_BAD_CHALLENGE");
     const std::string rejected = Connect(fork ? 7 : 1);
     CHECK(rejected == std::string("EXE_SERVER_IS_DIFFERENT_VER ") + (fork ? "1.0" : "1.8"));
+
+    // A test client (scr_testclients): SV_AddTestClient connects a bot with
+    // the profile's protocol, so the version check passes it on. The old code
+    // sent protocol 1 under every profile, so steam18 told the bot to update.
+    // Every slot is private here and the bot has no password, so a bot that
+    // passes the version check stops at the slot search: the server is full.
+    dvar_t running{};
+    running.current.enabled = true;
+    com_sv_running = &running;
+    svs.time = 10 * 60 * 1000; // a running server's clock, past any reconnect limit
+    Dvar_SetStringByName("sv_privatePassword", "private");
+    Dvar_SetIntByName("sv_privateClients", sv_maxclients->current.integer);
+    g_reply.clear();
+    CHECK(SV_AddTestClient() == nullptr);
+    CHECK(g_reply == "error\nEXE_SERVERISFULL");
+    com_sv_running = nullptr;
 
     // getchallenge from a stock client: its CD-key hash only.
     const char *const hash = "0123456789abcdef0123456789abcdef";

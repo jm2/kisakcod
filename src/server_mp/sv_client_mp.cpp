@@ -1808,7 +1808,7 @@ gentity_s *__cdecl SV_AddTestClient()
         "connect \"\\cg_predictItems\\1\\cl_punkbuster\\0\\cl_anonymous\\0\\color\\4\\head\\default\\model\\multi\\snaps\\20\\"
         "rate\\5000\\name\\bot%d\\protocol\\%d\\qport\\%d\"",
         botport,
-        1,
+        Com_WireProtocol(),
         botport + 1);
     SV_Cmd_TokenizeString(file);
     *(uint32_t *)a.ip = 0;
