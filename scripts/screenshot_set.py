@@ -237,8 +237,10 @@ def cmd_capture(a) -> int:
     meta["anchors"] = anchors
     (out / "screenshot_set.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     missing = sum(f is None for s in meta["shots"] for f in s["files"])
-    print(f"{2 * len(meta['shots']) - missing} shots written, {missing} missing, {len(meta['failed'])} map(s) failed")
-    return 1 if missing or meta["failed"] else 0
+    unplaced = sum(not s["placed"] for s in meta["shots"])
+    print(f"{2 * len(meta['shots']) - missing} shots written, {missing} missing, {unplaced} view(s) not placed, "
+          f"{len(meta['failed'])} map(s) failed")
+    return 1 if missing or unplaced or meta["failed"] else 0
 
 
 # --- images: uncompressed or RLE 24/32-bit TGA in, PNG out ---
@@ -319,7 +321,7 @@ def thumb(width: int, height: int, data: bytes, step: int) -> list[bytes]:
 def compare_view(key: tuple[str, str], bf: list[Path], hf: list[Path]) -> tuple[str, list[bytes]]:
     """One view's report row, and its contact sheet rows (none when it can't be compared)."""
     if not bf or not hf:
-        return f"| {key[0]} | {key[1]} | missing in {'base' if not bf else 'head'} | | | | | |", []
+        return f"| {key[0]} | {key[1]} | missing or not placed in {'base' if not bf else 'head'} | | | | | |", []
     w, h, img_a = read_tga(bf[0])
     hw, hh, img_h = read_tga(hf[0])
     if (w, h) != (hw, hh):
@@ -348,7 +350,9 @@ def cmd_compare(a) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     def load(d: Path) -> dict:
-        return {(s["map"], s["view"]): s["files"] for s in json.loads((d / "screenshot_set.json").read_text())["shots"]}
+        # a view whose eye didn't land where asked shows a different scene: compare it as missing
+        return {(s["map"], s["view"]): s["files"] if s["placed"] else []
+                for s in json.loads((d / "screenshot_set.json").read_text())["shots"]}
     bs, hs = load(base), load(head)
     report = ["| map | view | mean | max | >16 | >16 beyond A/A2 noise | noise (A vs A2) | warnings on head |",
               "|---|---|---|---|---|---|---|---|"]
