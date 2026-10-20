@@ -306,7 +306,7 @@ int main(int argc, char **argv)
     dvar_t running{};
     running.current.enabled = true;
     com_sv_running = &running;
-    svs.time = 10 * 60 * 1000; // a running server's clock, past any reconnect limit
+    Dvar_SetIntByName("sv_reconnectlimit", 0); // empty slots share the first bot's zeroed address
     Dvar_SetStringByName("sv_privatePassword", "private");
     Dvar_SetIntByName("sv_privateClients", sv_maxclients->current.integer);
     g_reply.clear();
