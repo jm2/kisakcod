@@ -800,6 +800,29 @@ if (NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME bg-misc-contracts COMMAND kisakcod-bg-misc-tests)
 
+    # BG_SetConditionValue (bgame/bg_animation_mp.cpp): the 64-bit condition
+    # store into a 4-byte-aligned uint32_t pair, under the sanitizer build.
+    add_executable(kisakcod-bg-condition-tests
+        bg_condition_tests.cpp
+        ${SRC_DIR}/bgame/bg_animation_mp.cpp
+    )
+    target_include_directories(kisakcod-bg-condition-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+        target_include_directories(kisakcod-bg-condition-tests SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+    endif()
+    target_compile_features(kisakcod-bg-condition-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-bg-condition-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-bg-condition-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    set_source_files_properties(bg_condition_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+    target_link_options(kisakcod-bg-condition-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    set_target_properties(kisakcod-bg-condition-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME bg-condition-store COMMAND kisakcod-bg-condition-tests)
+
     # Jump physics and the perk table (bgame/bg_jump.cpp, bg_perks_mp.cpp) over
     # the production dvar registration calls and com_math.
     add_executable(kisakcod-bg-jump-perks-tests

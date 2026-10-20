@@ -1044,7 +1044,7 @@ void __cdecl BG_SetConditionValue(uint32_t client, uint32_t condition, uint64_t 
     iassert(client < 0x40u);
 
     conditions = bgs->clientinfo[client].clientConditions[condition];
-    *(_QWORD *)conditions = value;
+    conditions[0] = (uint32_t)value; conditions[1] = HIDWORD(value); // KISAK: the pair is 4-byte aligned on 64-bit
     if ((*conditions != (uint32_t)value || conditions[1] != HIDWORD(value)) && G_IsServerGameSystem(client))
     {
         iassert(client < 0x40u);
