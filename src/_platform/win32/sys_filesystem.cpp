@@ -305,7 +305,13 @@ bool IsRealDirectoryHandle(const HANDLE handle)
         && (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
 }
 
-HANDLE OpenHeldDirectory(const std::wstring &path)
+// A volume root ("X:\\") is never a reparse point on Windows, but under Wine
+// every drive letter is a dosdevices symlink, which reports as one when opened
+// as itself. The root is therefore opened following the link; every
+// ancestor and leaf below it is still opened as itself.
+HANDLE OpenHeldDirectory(
+    const std::wstring &path,
+    const bool followVolumeRootLink = false)
 {
     const HANDLE handle = CreateFileW(
         path.c_str(),
@@ -313,7 +319,8 @@ HANDLE OpenHeldDirectory(const std::wstring &path)
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         nullptr,
         OPEN_EXISTING,
-        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS
+            | (followVolumeRootLink ? 0 : FILE_FLAG_OPEN_REPARSE_POINT),
         nullptr);
     if (handle == INVALID_HANDLE_VALUE)
         return INVALID_HANDLE_VALUE;
@@ -345,7 +352,8 @@ bool HoldRealAncestors(
     if (rootLength == 0)
         return false;
 
-    const HANDLE root = OpenHeldDirectory(extendedPath.substr(0, rootLength));
+    const HANDLE root =
+        OpenHeldDirectory(extendedPath.substr(0, rootLength), true);
     if (root == INVALID_HANDLE_VALUE)
         return false;
     handles->push_back(root);
@@ -1740,7 +1748,8 @@ bool OpenRemovalRoot(
         kKisakFileShareAll,
         nullptr,
         OPEN_EXISTING,
-        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        // Follow the volume root's link, as OpenHeldDirectory does.
+        FILE_FLAG_BACKUP_SEMANTICS,
         nullptr);
     if (*held == INVALID_HANDLE_VALUE)
     {
