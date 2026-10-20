@@ -4,6 +4,7 @@
 
 #include <universal/kisak_abi.h>
 #include <universal/com_math.h>
+#include <universal/gfx_lightdef.h>
 #include <qcommon/com_pack.h>
 #include <cstdint>
 
@@ -434,22 +435,6 @@ struct SunLightParseParams // sizeof=0x80
     // padding byte
     // padding byte
     float angles[3];
-};
-
-struct GfxLightImage // sizeof=0x8
-{                                       // ...
-    GfxImage* image;
-    uint8_t samplerState;
-    // padding byte
-    // padding byte
-    // padding byte
-};
-
-struct GfxLightDef // sizeof=0x10
-{                                       // ...
-    const char* name;
-    GfxLightImage attenuation;
-    int lmapLookupStart;
 };
 
 struct GfxLight // sizeof=0x40
