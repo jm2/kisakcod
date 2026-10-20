@@ -54,6 +54,7 @@ inline constexpr std::int32_t kLoadedSound = 0x09;
 inline constexpr std::int32_t kSound = 0x07;
 inline constexpr std::int32_t kXAnimParts = 0x02;
 inline constexpr std::int32_t kImage = 0x06;
+inline constexpr std::int32_t kMaterial = 0x04;
 inline constexpr std::int32_t kAssetTypeCount = 0x21;
 
 // The families K4 counts (docs/design/FASTFILE_LOADER.md): at 64-bit their
@@ -83,6 +84,7 @@ constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
     // x86 yet, so only the headless server's guard is lifted. KisakCOD-dedi
     // defines KISAK_DEDI_HEADLESS for all of its TUs.
     case kImage:
+    case kMaterial:
 #endif
         return true;
     default:

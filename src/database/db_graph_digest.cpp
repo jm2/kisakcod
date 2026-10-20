@@ -5,8 +5,10 @@
 #include <game/g_bsp.h>
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
+#include <universal/fft.h>
 #include <universal/gfx_image.h>
 #include <universal/gfx_lightdef.h>
+#include <universal/gfx_material.h>
 #include <universal/q_shared.h>
 
 #include <algorithm>
@@ -532,6 +534,80 @@ void HashImage(GraphHashBuilder &builder, const XAssetHeader &header)
     FieldBool(builder, 14, image.delayLoadPixels);
 }
 
+// TS_WATER_MAP (gfx_d3d/r_image.h): the texture is a water, not an image.
+constexpr std::uint8_t kWaterMapSemantic = 0xB;
+
+// A water as both headless loads keep it: the grid, its parameters, the
+// image by name, and M * N amplitudes and frequencies at source resolution
+// (only a client picmips them). writable.floatTime is the renderer's clock.
+void HashWater(GraphHashBuilder &builder, const water_t *water)
+{
+    builder.FieldU64(19, water != nullptr);
+    if (!water)
+        return;
+    builder.FieldI64(20, water->M);
+    builder.FieldI64(21, water->N);
+    builder.FieldF32(22, water->Lx);
+    builder.FieldF32(23, water->Lz);
+    builder.FieldF32(24, water->gravity);
+    builder.FieldF32(25, water->windvel);
+    builder.FieldF32(26, water->winddir[0]);
+    builder.FieldF32(26, water->winddir[1]);
+    builder.FieldF32(27, water->amplitude);
+    for (const float value : water->codeConstant)
+        builder.FieldF32(28, value);
+    FieldAsset(builder, 29, ASSET_TYPE_IMAGE, water->image);
+    const std::size_t samples = water->M > 0 && water->N > 0
+        ? static_cast<std::size_t>(water->M) * static_cast<std::size_t>(water->N)
+        : 0;
+    FieldArray(builder, 30, water->H0, samples);
+    FieldArray(builder, 31, water->wTerm, samples);
+}
+
+// A texture: its name hash and bounds, sampler state and semantic, then the
+// water or the image by name.
+void HashMaterialTexture(GraphHashBuilder &builder, const MaterialTextureDef &texture)
+{
+    builder.FieldU64(13, texture.nameHash);
+    builder.FieldU64(14, static_cast<unsigned char>(texture.nameStart));
+    builder.FieldU64(15, static_cast<unsigned char>(texture.nameEnd));
+    builder.FieldU64(16, texture.samplerState);
+    builder.FieldU64(17, texture.semantic);
+    if (texture.semantic == kWaterMapSemantic)
+        HashWater(builder, texture.u.water);
+    else
+        FieldAsset(builder, 18, ASSET_TYPE_IMAGE, texture.u.image);
+}
+
+// The info as loaded (no headless code sorts materials), the state-bit
+// entries and flags, the technique set by name, then each table. Constants
+// and state bits hold no pointers, so they hash as bytes.
+void HashMaterial(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const Material &material = *header.material;
+    const MaterialInfo &info = material.info;
+    builder.FieldString(1, info.name);
+    builder.FieldU64(2, info.gameFlags);
+    builder.FieldU64(3, info.sortKey);
+    builder.FieldU64(4, info.textureAtlasRowCount);
+    builder.FieldU64(4, info.textureAtlasColumnCount);
+    builder.FieldU64(5, info.drawSurf.packed);
+    builder.FieldU64(6, info.surfaceTypeBits);
+    builder.FieldU64(7, info.hashIndex);
+    builder.FieldBytes(8, material.stateBitsEntry, sizeof(material.stateBitsEntry));
+    builder.FieldU64(9, material.stateFlags);
+    builder.FieldU64(9, material.cameraRegion);
+    FieldAsset(builder, 10, ASSET_TYPE_TECHNIQUE_SET, material.techniqueSet);
+    builder.FieldU64(11, material.textureCount);
+    const std::size_t textures = material.textureTable ? material.textureCount : 0;
+    for (std::size_t i = 0; i < textures; ++i)
+        HashMaterialTexture(builder, material.textureTable[i]);
+    builder.FieldU64(32, material.constantCount);
+    FieldArray(builder, 33, material.constantTable, material.constantCount);
+    builder.FieldU64(34, material.stateBitsCount);
+    FieldArray(builder, 35, material.stateBitsTable, material.stateBitsCount);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -568,6 +644,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashXAnimParts;
     case ASSET_TYPE_IMAGE:
         return HashImage;
+    case ASSET_TYPE_MATERIAL:
+        return HashMaterial;
     default:
         return nullptr;
     }
