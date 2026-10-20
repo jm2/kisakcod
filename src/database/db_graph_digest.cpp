@@ -623,6 +623,90 @@ void HashMaterial(GraphHashBuilder &builder, const XAssetHeader &header)
     FieldArray(builder, 35, material.stateBitsTable, material.stateBitsCount);
 }
 
+// A vertex declaration's stream count and routing table, and whether a stream
+// is optional. Not the renderer's declaration handles, nor isLoaded, which
+// records whether they were built.
+void HashVertexDecl(GraphHashBuilder &builder, const MaterialVertexDeclaration *decl)
+{
+    builder.FieldU64(10, decl != nullptr);
+    if (!decl)
+        return;
+    builder.FieldU64(11, decl->streamCount);
+    FieldBool(builder, 12, decl->hasOptionalSource);
+    builder.FieldBytes(14, decl->routing.data, sizeof(decl->routing.data));
+}
+
+// A shader: its name, its load definition and programSize program DWORDs.
+// No headless load creates the renderer handle.
+template <typename Shader>
+void HashShader(GraphHashBuilder &builder, std::uint32_t tag, const Shader *shader)
+{
+    builder.FieldU64(tag, shader != nullptr);
+    if (!shader)
+        return;
+    const auto &loadDef = shader->prog.loadDef;
+    builder.FieldString(tag + 1, shader->name);
+    builder.FieldU64(tag + 2, loadDef.programSize);
+    builder.FieldU64(tag + 3, loadDef.loadForRenderer);
+    builder.FieldBytes(tag + 4, loadDef.program, loadDef.program ? loadDef.programSize * sizeof(std::uint32_t) : 0);
+}
+
+// An argument: a literal's four floats (types 1 and 7), else the code
+// constant, code sampler or name hash in the union's first four bytes.
+void HashShaderArgument(GraphHashBuilder &builder, const MaterialShaderArgument &argument)
+{
+    builder.FieldU64(25, argument.type);
+    builder.FieldU64(26, argument.dest);
+    if (argument.type == 1 || argument.type == 7)
+        FieldArray(builder, 27, argument.u.literalConst, 4);
+    else
+        builder.FieldU64(28, argument.u.nameHash);
+}
+
+// A pass: its declaration, shaders, counts and arguments. A 64-bit load
+// keeps an empty argument array where x86 keeps null, so only the counted
+// arguments are hashed.
+void HashMaterialPass(GraphHashBuilder &builder, const MaterialPass &pass)
+{
+    HashVertexDecl(builder, pass.vertexDecl);
+    HashShader(builder, 15, pass.vertexShader);
+    HashShader(builder, 20, pass.pixelShader);
+    builder.FieldU64(29, pass.perPrimArgCount);
+    builder.FieldU64(29, pass.perObjArgCount);
+    builder.FieldU64(29, pass.stableArgCount);
+    builder.FieldU64(30, pass.customSamplerFlags);
+    const std::size_t arguments =
+        pass.args ? static_cast<std::size_t>(pass.perPrimArgCount) + pass.perObjArgCount + pass.stableArgCount : 0;
+    for (std::size_t i = 0; i < arguments; ++i)
+        HashShaderArgument(builder, pass.args[i]);
+}
+
+void HashTechnique(GraphHashBuilder &builder, const MaterialTechnique *technique)
+{
+    builder.FieldU64(6, technique != nullptr);
+    if (!technique)
+        return;
+    builder.FieldString(7, technique->name);
+    builder.FieldU64(8, technique->flags);
+    builder.FieldU64(9, technique->passCount);
+    for (std::uint32_t i = 0; i < technique->passCount; ++i)
+        HashMaterialPass(builder, technique->passArray[i]);
+}
+
+// The set's name, world vertex format and spare byte, then its 34 techniques
+// in order. Renderer state is left out like the handles: hasBeenUploaded
+// (set once shaders upload) and remappedTechniqueSet (the renderer's variant;
+// a headless server maps each set to itself).
+void HashTechniqueSet(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const MaterialTechniqueSet &set = *header.techniqueSet;
+    builder.FieldString(1, set.name);
+    builder.FieldU64(2, set.worldVertFormat);
+    builder.FieldU64(4, set.unused[0]);
+    for (const MaterialTechnique *technique : set.techniques)
+        HashTechnique(builder, technique);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -661,6 +745,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashImage;
     case ASSET_TYPE_MATERIAL:
         return HashMaterial;
+    case ASSET_TYPE_TECHNIQUE_SET:
+        return HashTechniqueSet;
     default:
         return nullptr;
     }
