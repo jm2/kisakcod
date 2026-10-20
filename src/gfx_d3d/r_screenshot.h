@@ -54,7 +54,13 @@ void __cdecl R_CubemapShotExtractLinearLight(
     float (**linearColors)[3]);
 
 void __cdecl R_ScreenshotCommand(GfxScreenshotType type);
-#ifdef KISAK_DXVK_NATIVE
+// dxvk-native and the 64-bit Windows clients take a TGA screenshot from the
+// backbuffer; the x86 client keeps retail's front-buffer copy of the desktop,
+// which needs the window visible on screen.
+#if defined(KISAK_DXVK_NATIVE) || defined(_WIN64)
+#define KISAK_BACKBUFFER_SCREENSHOT
+#endif
+#ifdef KISAK_BACKBUFFER_SCREENSHOT
 // A queued TGA screenshot (r_screenshot.cpp): the backend captures the
 // backbuffer before Present; R_EndFrame writes it on the main thread.
 void RB_CaptureSwapchainScreenshot();

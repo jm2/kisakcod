@@ -11,7 +11,7 @@
 #include "r_reflection_probe.h"
 #include "r_screenshot_rect.h"
 
-#ifdef KISAK_DXVK_NATIVE
+#ifdef KISAK_BACKBUFFER_SCREENSHOT
 #include <atomic>
 #include <cstdlib>
 #endif
@@ -1959,9 +1959,10 @@ bool __cdecl R_TakeScreenshotTga(int x, int y, int width, int height, char *file
     return written;
 }
 
-#ifdef KISAK_DXVK_NATIVE
+#ifdef KISAK_BACKBUFFER_SCREENSHOT
 // dxvk-native's GetFrontBufferData reads the backbuffer after Present, which a
-// discard swapchain no longer holds, so a TGA screenshot is taken from the
+// discard swapchain no longer holds, and a native one copies the desktop, which
+// needs the window visible; so a TGA screenshot is taken from the
 // backbuffer just before Present (RB_CaptureSwapchainScreenshot, the backend)
 // and written on the main thread (R_FinishSwapchainScreenshot, R_EndFrame).
 namespace
@@ -2130,7 +2131,7 @@ void __cdecl R_ScreenshotCommand(GfxScreenshotType type)
         v2 = Cmd_Argv(1);
         Com_sprintf(filename, 0x100u, "screenshots/%s.%s", v2, extension);
     }
-#ifdef KISAK_DXVK_NATIVE
+#ifdef KISAK_BACKBUFFER_SCREENSHOT
     if (type) // a TGA comes from the next frame's backbuffer; R_EndFrame reports it
     {
         R_QueueSwapchainScreenshot(filename, silent != 0);

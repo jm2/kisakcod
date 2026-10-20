@@ -164,7 +164,7 @@ on the binary path, not `pgrep -x`.
 
 **Screenshots.**
 
-- Regression sets (row 50): frames aren't deterministic, so settle 1.5-2.5 s
+- Regression sets (`scripts/screenshot_set.py`; `r_gamma` is a display ramp, so shots miss it): frames aren't deterministic, so settle 1.5-2.5 s
   after `setviewpos`, pin `com_maxfps`, MSAA off and the window size, hide
   gun and HUD, and shoot A/B/A. Compare the share of pixels off by >16/255,
   not the max; calm-map noise is a mean under 0.2 and under 0.5% of pixels.
