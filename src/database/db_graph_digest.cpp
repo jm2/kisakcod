@@ -623,8 +623,9 @@ void HashMaterial(GraphHashBuilder &builder, const XAssetHeader &header)
     FieldArray(builder, 35, material.stateBitsTable, material.stateBitsCount);
 }
 
-// A vertex declaration as both headless loads keep it: the routing table and
-// its flags, never the renderer's declaration handles.
+// A vertex declaration's stream count and routing table, and whether a stream
+// is optional. Not the renderer's declaration handles, nor isLoaded, which
+// records whether they were built.
 void HashVertexDecl(GraphHashBuilder &builder, const MaterialVertexDeclaration *decl)
 {
     builder.FieldU64(10, decl != nullptr);
@@ -632,7 +633,6 @@ void HashVertexDecl(GraphHashBuilder &builder, const MaterialVertexDeclaration *
         return;
     builder.FieldU64(11, decl->streamCount);
     FieldBool(builder, 12, decl->hasOptionalSource);
-    FieldBool(builder, 13, decl->isLoaded);
     builder.FieldBytes(14, decl->routing.data, sizeof(decl->routing.data));
 }
 
@@ -693,16 +693,16 @@ void HashTechnique(GraphHashBuilder &builder, const MaterialTechnique *technique
         HashMaterialPass(builder, technique->passArray[i]);
 }
 
-// The set as loaded, its remap by name (a headless server maps each set to
-// itself), then its 34 techniques in order.
+// The set's name, world vertex format and spare byte, then its 34 techniques
+// in order. Renderer state is left out like the handles: hasBeenUploaded
+// (set once shaders upload) and remappedTechniqueSet (the renderer's variant;
+// a headless server maps each set to itself).
 void HashTechniqueSet(GraphHashBuilder &builder, const XAssetHeader &header)
 {
     const MaterialTechniqueSet &set = *header.techniqueSet;
     builder.FieldString(1, set.name);
     builder.FieldU64(2, set.worldVertFormat);
-    FieldBool(builder, 3, set.hasBeenUploaded);
     builder.FieldU64(4, set.unused[0]);
-    FieldAsset(builder, 5, ASSET_TYPE_TECHNIQUE_SET, set.remappedTechniqueSet);
     for (const MaterialTechnique *technique : set.techniques)
         HashTechnique(builder, technique);
 }

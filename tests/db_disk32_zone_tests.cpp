@@ -779,8 +779,8 @@ void zone_test::CheckZone()
            "a clip map's static model, dynamic entities and their shared pieces reach the shared assets");
     ExpectDigest(ASSET_TYPE_IMAGE, "e2e/img", "ac2f90eb0daee004326c342c984d7eb9fa1ed302930dc39d9d5b6560072c7741");
     ExpectDigest(ASSET_TYPE_MATERIAL, "e2e/material", "b08263332bc8c3bf3cb7765d20e0c30ddfc9bafc35ccd60359faaa8d6da37176");
-    ExpectDigest(ASSET_TYPE_TECHNIQUE_SET, "e2e/techset", "22428e560ab82341f0537fb38030c95f9fd42b57e327205211369b2ee13e3d2d");
-    ExpectDigest(ASSET_TYPE_TECHNIQUE_SET, "e2e/techpass", "58bee60b33e394f3726546099eb6886a18274c76c13bda544a17ccfb38919c3e");
+    ExpectDigest(ASSET_TYPE_TECHNIQUE_SET, "e2e/techset", "f840623e2879ef418cbbf49a8722a994c3313abf69eb3b41607706d4ccc72b71");
+    ExpectDigest(ASSET_TYPE_TECHNIQUE_SET, "e2e/techpass", "b3caa7b493d31bfc12d89fc2d505a6d4a219d39c11947ad802effc386d052555");
     const GfxWorld *gfx = Find(ASSET_TYPE_GFXWORLD, "w").gfxWorld;
     Expect(gfx && Is(gfx->skyImage, ASSET_TYPE_IMAGE, "e2e/img")
                && Is(gfx->sunLight->def, ASSET_TYPE_LIGHT_DEF, "e2e/lightdef")
