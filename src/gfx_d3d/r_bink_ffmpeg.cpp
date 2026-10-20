@@ -46,37 +46,6 @@ U32 ReadU32(const uint8_t *p)
     return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<U32>(p[3]) << 24);
 }
 
-struct MemoryReader
-{
-    const uint8_t *data;
-    int64_t size;
-    int64_t pos;
-};
-
-int MemoryRead(void *opaque, uint8_t *buf, int size)
-{
-    MemoryReader *reader = static_cast<MemoryReader *>(opaque);
-    const int64_t left = reader->size - reader->pos;
-    if (left <= 0)
-        return AVERROR_EOF;
-    const int n = static_cast<int>(size < left ? size : left);
-    memcpy(buf, reader->data + reader->pos, n);
-    reader->pos += n;
-    return n;
-}
-
-int64_t MemorySeek(void *opaque, int64_t offset, int whence)
-{
-    MemoryReader *reader = static_cast<MemoryReader *>(opaque);
-    if (whence == AVSEEK_SIZE)
-        return reader->size;
-    const int64_t base = whence == SEEK_CUR ? reader->pos : whence == SEEK_END ? reader->size : 0;
-    if (base + offset < 0 || base + offset > reader->size)
-        return AVERROR(EINVAL);
-    reader->pos = base + offset;
-    return reader->pos;
-}
-
 using Clock = std::chrono::steady_clock;
 
 // BINK comes first, so an HBINK is also a Movie.
@@ -84,8 +53,6 @@ struct Movie
 {
     BINK bink;
     AVFormatContext *format = nullptr;
-    AVIOContext *io = nullptr;
-    MemoryReader memory = {};
     AVCodecContext *codec = nullptr;
     AVPacket *packet = nullptr;
     AVFrame *frame = nullptr;
@@ -105,11 +72,6 @@ void CloseMovie(Movie *movie)
     av_packet_free(&movie->packet);
     avcodec_free_context(&movie->codec);
     avformat_close_input(&movie->format);
-    if (movie->io)
-    {
-        av_freep(&movie->io->buffer);
-        avio_context_free(&movie->io);
-    }
     delete movie;
 }
 
@@ -166,27 +128,25 @@ Clock::time_point FrameDue(const Movie *movie, U32 frameNum)
 
 Movie *OpenMovie(const char *name, U32 flags)
 {
-    uint8_t header[kHeaderSize];
-    const bool fromMemory = (flags & BINKFROMMEMORY) != 0;
-    if (fromMemory)
+    // Only file opens are supported; every engine caller opens a file.
+    if (flags & BINKFROMMEMORY)
     {
-        memcpy(header, name, kHeaderSize);
+        SetError("only file opens are supported");
+        return nullptr;
     }
-    else
+    uint8_t header[kHeaderSize];
+    FILE *file = fopen(name, "rb");
+    if (!file)
     {
-        FILE *file = fopen(name, "rb");
-        if (!file)
-        {
-            SetError("can't open the file");
-            return nullptr;
-        }
-        const size_t got = fread(header, 1, kHeaderSize, file);
-        fclose(file);
-        if (got != kHeaderSize)
-        {
-            SetError("file is shorter than a Bink header");
-            return nullptr;
-        }
+        SetError("can't open the file");
+        return nullptr;
+    }
+    const size_t got = fread(header, 1, kHeaderSize, file);
+    fclose(file);
+    if (got != kHeaderSize)
+    {
+        SetError("file is shorter than a Bink header");
+        return nullptr;
     }
     if (memcmp(header, "BIK", 3) != 0)
     {
@@ -217,27 +177,7 @@ Movie *OpenMovie(const char *name, U32 flags)
         return nullptr;
     }
 
-    const char *url = name;
-    if (fromMemory)
-    {
-        movie->memory = {reinterpret_cast<const uint8_t *>(name), movie->bink.Size, 0};
-        const int bufferSize = 64 * 1024;
-        uint8_t *buffer = static_cast<uint8_t *>(av_malloc(bufferSize));
-        movie->io = buffer ? avio_alloc_context(buffer, bufferSize, 0, &movie->memory, MemoryRead, nullptr, MemorySeek)
-                           : nullptr;
-        movie->format = movie->io ? avformat_alloc_context() : nullptr;
-        if (!movie->format)
-        {
-            if (!movie->io)
-                av_free(buffer);
-            SetError("out of memory");
-            CloseMovie(movie);
-            return nullptr;
-        }
-        movie->format->pb = movie->io;
-        url = nullptr;
-    }
-    if (avformat_open_input(&movie->format, url, av_find_input_format("bink"), nullptr) < 0)
+    if (avformat_open_input(&movie->format, name, av_find_input_format("bink"), nullptr) < 0)
     {
         SetError("FFmpeg can't open the movie");
         CloseMovie(movie);
@@ -267,7 +207,7 @@ Movie *OpenMovie(const char *name, U32 flags)
     }
     movie->start = movie->opened = Clock::now();
     Com_DPrintf(CON_CHANNEL_GFX, "Bink via FFmpeg: opened %s, %ux%u, %u frames at %u/%u fps%s\n",
-                fromMemory ? "a memory-resident movie" : name, movie->bink.Width, movie->bink.Height,
+                name, movie->bink.Width, movie->bink.Height,
                 movie->bink.Frames, movie->bink.FrameRate, movie->bink.FrameRateDiv,
                 (movie->bink.BinkType & kAlphaFlag) ? ", with alpha" : "");
     return movie;
