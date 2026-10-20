@@ -99,3 +99,38 @@ set_tests_properties(voice-codec-gate-contracts PROPERTIES TIMEOUT 120)
 
 kisakcod_ilp32(kisakcod-voice-gate-tests
     voice-codec-gate-contracts)
+
+# The OpenAL Soft Miles shim (sound/snd_openal.cpp) on OpenAL Soft's null
+# backend, which needs no audio device. It builds where pkg-config finds
+# openal; KISAK_TEST_OPENAL makes that required (the Linux amd64 CI leg).
+option(KISAK_TEST_OPENAL "Require OpenAL Soft for the sound shim test" OFF)
+find_package(PkgConfig QUIET)
+if (PkgConfig_FOUND)
+    # Homebrew's openal-soft is keg-only.
+    foreach(_kisak_openal_prefix /opt/homebrew/opt/openal-soft /usr/local/opt/openal-soft)
+        if (APPLE AND EXISTS ${_kisak_openal_prefix}/lib/pkgconfig)
+            set(ENV{PKG_CONFIG_PATH} "${_kisak_openal_prefix}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+        endif()
+    endforeach()
+    pkg_check_modules(KISAK_TEST_OPENAL_LIB QUIET IMPORTED_TARGET openal)
+endif()
+if (KISAK_TEST_OPENAL AND NOT KISAK_TEST_OPENAL_LIB_FOUND)
+    message(FATAL_ERROR "KISAK_TEST_OPENAL needs OpenAL Soft from pkg-config (libopenal-dev, brew openal-soft).")
+endif()
+if (KISAK_TEST_OPENAL_LIB_FOUND)
+    add_executable(kisakcod-snd-openal-tests snd_openal_tests.cpp ${SRC_DIR}/sound/snd_openal.cpp)
+    target_include_directories(kisakcod-snd-openal-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-snd-openal-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-snd-openal-tests PRIVATE KISAK_MP)
+    target_link_libraries(kisakcod-snd-openal-tests PRIVATE PkgConfig::KISAK_TEST_OPENAL_LIB)
+    # No -Wpedantic: the Miles headers spell MSVC extensions.
+    target_compile_options(kisakcod-snd-openal-tests PRIVATE -fms-extensions -Wall -Wextra -Werror)
+    if (APPLE)
+        # Homebrew's OpenAL is built for the host macOS; the client targets 26.0 too.
+        target_compile_options(kisakcod-snd-openal-tests PRIVATE -mmacosx-version-min=26.0)
+        target_link_options(kisakcod-snd-openal-tests PRIVATE -mmacosx-version-min=26.0)
+    endif()
+    set_target_properties(kisakcod-snd-openal-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME snd-openal-shim COMMAND kisakcod-snd-openal-tests)
+    set_tests_properties(snd-openal-shim PROPERTIES TIMEOUT 30)
+endif()

@@ -199,6 +199,7 @@ else()
         if (KISAK_OPENAL_AUDIO)
             # Miles calls go to OpenAL Soft instead of the silent stubs.
             # Homebrew's openal-soft is keg-only, so add its pkg-config dir.
+            find_package(PkgConfig REQUIRED)
             foreach(_kisak_openal_prefix /opt/homebrew/opt/openal-soft /usr/local/opt/openal-soft)
                 if (APPLE AND EXISTS ${_kisak_openal_prefix}/lib/pkgconfig)
                     set(ENV{PKG_CONFIG_PATH} "${_kisak_openal_prefix}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
