@@ -1,6 +1,6 @@
 # NOW
 
-Last reviewed: 2026-10-18 by the coordinator session on antec, acting as mayor (host order under Decided)
+Last reviewed: 2026-10-19 by the coordinator session on antec, acting as mayor (host order under Decided)
 Current gates: G2 (the formal proof) and G5 (native clients); G4a waits on the owner's captures; G1 is done
 WIP limit: 6 (at least 4 on the current gates)
 
@@ -27,7 +27,6 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | --- | --- | --- | --- | --- | --- | --- |
 | 37 | K4 digest pipeline: per-family `db::graph_hash` walkers on x86 and 64-bit | G2 | K4 | a family's 64-bit graph hash equals its x86 hash on the owner's data; its fail-closed guard is then removed | L | queued |
 | 45 | G2 run: the 64-bit headless server under ASan/UBSan boots `mp_shipment` (`db_unverified64`), answers `getinfo`/`getstatus`, rotates the 5 G2 maps, runs 30 min | G2 | gate | console text and a `getstatus` reply recorded; no sanitizer report | M | queued |
-| 44 | Linux amd64 client in-game on Steam 1.8 data | G5 | gate | `+devmap mp_crash` on master runs in-game frames with no error | M | queued |
 | 41 | Native client cinematics: Bink is a silent stub on 64-bit; play `.bik` through FFmpeg ([CLIENT](design/CLIENT.md)) | G5 | gate | a retail intro cinematic plays on a 64-bit client | L | queued |
 | 46 | G0 evidence: x86 client and headless server on Steam 1.8 data, 3 maps, one fork round, the same binaries under Wine | G0 | gate | console text per map and at round end, on antec-win and under Wine on antec | M | queued |
 | 49 | Windows ARM64 client in-game on Steam 1.8 data (CI already links it) | G5 | gate | `+devmap mp_shipment` on master runs in-game frames with no error on yoga-slim7x | M | queued |
@@ -56,6 +55,6 @@ Other `burndown` issues are off these gates or wait on the owner.
 
 Merge SHAs are in `git log`.
 
-- G5 clients on Steam 1.8 data: Win64 in-game on mp_shipment at about 188 fps (rows 35, 43; #626); macOS in-game on mp_shipment and mp_crash (row 34); Linux arm64 in-game on mp_crash (row 31; #621); Linux amd64 draws its main menu (row 33). Under dxvk-native, screenshots read the backbuffer before `Present` and resolve MSAA (#624).
+- G5 clients on Steam 1.8 data: Win64 in-game on mp_shipment at about 188 fps (rows 35, 43; #626); macOS in-game on mp_shipment and mp_crash (row 34); Linux arm64 in-game on mp_crash (row 31; #621); Linux amd64 in-game on mp_crash at about 250 fps with no code change (rows 33, 44). Under dxvk-native, screenshots read the backbuffer before `Present` and resolve MSAA (#624).
 - macOS dxvk dylibs built for the macOS 26 target (row 48, #629). Census scope (row 42, #623); AGENTS.md rules 16-23 (#602); x86 identity CI job (#603); `scripts/ci/pr_gate.py` (#604).
 - Row 40 (macOS menu at ~60 fps) closed as retail behaviour (`SCR_ShouldSkipUpdateScreen`).

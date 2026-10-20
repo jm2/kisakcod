@@ -144,10 +144,10 @@ on the binary path, not `pgrep -x`.
   `screenshot` reads the backbuffer before `Present`, resolving a
   multisampled one with `StretchRect` before `GetRenderTargetData` (#624).
 
-**Client status (2026-10-18).** In-game on master with `db_unverified64`:
+**Client status (2026-10-19).** In-game on master with `db_unverified64`:
 Win64 on mp_shipment (about 188 fps), macOS on mp_shipment and mp_crash
-(display-capped at 120), Linux arm64 on mp_crash. Linux amd64 draws the main
-menu; in-game is NOW row 44. Cinematics are silent stubs (row 41). Capture a
+(display-capped at 120), Linux arm64 on mp_crash, Linux amd64 on mp_crash
+(about 250 fps, headless mutter). Cinematics are silent stubs (row 41). Capture a
 frame by sending `screenshot` on stdin once the menu is up: `+wait` runs while
 zones are still loading, so a `+wait N +screenshot` capture shows a loading
 frame, which can be all black.
