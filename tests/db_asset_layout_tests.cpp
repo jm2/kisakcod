@@ -62,7 +62,7 @@ constexpr std::int32_t kStringTable = 0x20;
 
 // Families K4 does not count yet.
 constexpr std::int32_t kUnconverted[] = {
-    kXModelPieces, kXModel, kWeapon,
+    kXModelPieces, kXModel,
 };
 
 // --- The conversion table records which families own a layout pair. ---
@@ -94,7 +94,7 @@ void TestConversionTable()
     // runtime struct already carries a RUNTIME_SIZE half of the pair.
     Expect(IsFamilyConverted(kXAnimParts), "xanim parts counts toward K4, so its pair is complete");
     Expect(!IsFamilyConverted(kXModel), "xmodel has no disk32 mirror yet");
-    Expect(!IsFamilyConverted(kWeapon), "weapon has no disk32 mirror yet");
+    Expect(IsFamilyConverted(kWeapon), "weapon counts toward K4, so its pair is complete");
     Expect(IsFamilyConverted(kRawFile), "rawfile counts toward K4, so its pair is complete");
     Expect(IsFamilyConverted(kStringTable), "stringtable counts toward K4, so its pair is complete");
 }
@@ -154,6 +154,8 @@ void TestFailClosedPolicy()
            "64-bit targets must load sound alias lists, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kXAnimParts, true, false),
            "64-bit targets must load animations, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kWeapon, true, false),
+           "64-bit targets must load weapons, which K4 counts");
 #if defined(KISAK_DEDI_HEADLESS)
     Expect(IsLoadPermitted(db::asset_layout::kImage, true, false),
            "a 64-bit headless server must load images, which K4 counts");

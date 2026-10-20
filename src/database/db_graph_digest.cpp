@@ -27,7 +27,9 @@
 #include <universal/q_shared.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
+#include <iterator>
 #include <vector>
 
 namespace
@@ -707,6 +709,157 @@ void HashTechniqueSet(GraphHashBuilder &builder, const XAssetHeader &header)
         HashTechnique(builder, technique);
 }
 
+// count asset references of one type, each by name.
+template <typename T>
+void FieldAssets(GraphHashBuilder &builder, std::uint32_t tag, XAssetType type, T *const *slots, std::size_t count)
+{
+    for (std::size_t i = 0; i < count; ++i)
+        FieldAsset(builder, tag, type, slots[i]);
+}
+
+void FieldStrings(GraphHashBuilder &builder, std::uint32_t tag, const char *const *strings, std::size_t count)
+{
+    for (std::size_t i = 0; i < count; ++i)
+        builder.FieldString(tag, strings[i]);
+}
+
+void FieldScriptStrings(GraphHashBuilder &builder, std::uint32_t tag, const std::uint16_t *indices, std::size_t count)
+{
+    for (std::size_t i = 0; i < count; ++i)
+        FieldScriptString(builder, tag, indices[i]);
+}
+
+// words 4-byte scalars and enums from offset, as bytes: one of the runs the
+// 64-bit loader copies whole (disk32/21-weapon.schema), so they sit alike at
+// both widths. A run never reaches the padding before a 64-bit pointer.
+void FieldRun(GraphHashBuilder &builder, std::uint32_t tag, const WeaponDef &weapon, std::size_t offset,
+              std::size_t words)
+{
+    builder.FieldBytes(tag, reinterpret_cast<const unsigned char *>(&weapon) + offset, words * 4);
+}
+
+// pickupSound through putawaySoundPlayer: 45 sound references.
+constexpr std::size_t kWeaponSounds = 45;
+static_assert(offsetof(WeaponDef, bounceSound) - offsetof(WeaponDef, pickupSound) == kWeaponSounds * sizeof(void *));
+constexpr std::size_t kBounceSurfaces = 29; // one bounce sound per surface type
+
+// The names, models, animation names, script strings and the first run.
+void HashWeaponHead(GraphHashBuilder &builder, const WeaponDef &weapon)
+{
+    builder.FieldString(1, weapon.szInternalName);
+    builder.FieldString(1, weapon.szDisplayName);
+    builder.FieldString(1, weapon.szOverlayName);
+    FieldAssets(builder, 2, ASSET_TYPE_XMODEL, weapon.gunXModel, std::size(weapon.gunXModel));
+    FieldAsset(builder, 2, ASSET_TYPE_XMODEL, weapon.handXModel);
+    FieldStrings(builder, 3, weapon.szXAnims, std::size(weapon.szXAnims));
+    builder.FieldString(1, weapon.szModeName);
+    FieldScriptStrings(builder, 4, weapon.hideTags, std::size(weapon.hideTags));
+    FieldScriptStrings(builder, 4, weapon.notetrackSoundMapKeys, std::size(weapon.notetrackSoundMapKeys));
+    FieldScriptStrings(builder, 4, weapon.notetrackSoundMapValues, std::size(weapon.notetrackSoundMapValues));
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, playerAnimType), 9);
+}
+
+// The effects, sounds, bounce table and reticles.
+void HashWeaponEffects(GraphHashBuilder &builder, const WeaponDef &weapon)
+{
+    FieldAsset(builder, 6, ASSET_TYPE_FX, weapon.viewFlashEffect);
+    FieldAsset(builder, 6, ASSET_TYPE_FX, weapon.worldFlashEffect);
+    FieldAssets(builder, 7, ASSET_TYPE_SOUND, &weapon.pickupSound, kWeaponSounds);
+    builder.FieldU64(8, weapon.bounceSound != nullptr);
+    if (weapon.bounceSound)
+        FieldAssets(builder, 7, ASSET_TYPE_SOUND, weapon.bounceSound, kBounceSurfaces);
+    FieldAsset(builder, 6, ASSET_TYPE_FX, weapon.viewShellEjectEffect);
+    FieldAsset(builder, 6, ASSET_TYPE_FX, weapon.worldShellEjectEffect);
+    FieldAsset(builder, 6, ASSET_TYPE_FX, weapon.viewLastShotEjectEffect);
+    FieldAsset(builder, 6, ASSET_TYPE_FX, weapon.worldLastShotEjectEffect);
+    FieldAsset(builder, 9, ASSET_TYPE_MATERIAL, weapon.reticleCenter);
+    FieldAsset(builder, 9, ASSET_TYPE_MATERIAL, weapon.reticleSide);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, iReticleCenterSize), 38);
+}
+
+// The world models, icons, ammo and clip names, overlays and alt weapon.
+void HashWeaponModels(GraphHashBuilder &builder, const WeaponDef &weapon)
+{
+    FieldAssets(builder, 2, ASSET_TYPE_XMODEL, weapon.worldModel, std::size(weapon.worldModel));
+    FieldAsset(builder, 2, ASSET_TYPE_XMODEL, weapon.worldClipModel);
+    FieldAsset(builder, 2, ASSET_TYPE_XMODEL, weapon.rocketModel);
+    FieldAsset(builder, 2, ASSET_TYPE_XMODEL, weapon.knifeModel);
+    FieldAsset(builder, 2, ASSET_TYPE_XMODEL, weapon.worldKnifeModel);
+    FieldAsset(builder, 9, ASSET_TYPE_MATERIAL, weapon.hudIcon);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, hudIconRatio), 1);
+    FieldAsset(builder, 9, ASSET_TYPE_MATERIAL, weapon.ammoCounterIcon);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, ammoCounterIconRatio), 3);
+    builder.FieldString(1, weapon.szAmmoName);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, iAmmoIndex), 1);
+    builder.FieldString(1, weapon.szClipName);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, iClipIndex), 4);
+    builder.FieldString(1, weapon.szSharedAmmoCapName);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, iSharedAmmoCapIndex), 59);
+    FieldAsset(builder, 9, ASSET_TYPE_MATERIAL, weapon.overlayMaterial);
+    FieldAsset(builder, 9, ASSET_TYPE_MATERIAL, weapon.overlayMaterialLowRes);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, overlayReticle), 56);
+    FieldAsset(builder, 9, ASSET_TYPE_MATERIAL, weapon.killIcon);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, killIconRatio), 2);
+    FieldAsset(builder, 9, ASSET_TYPE_MATERIAL, weapon.dpadIcon);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, dpadIconRatio), 5);
+    builder.FieldString(1, weapon.szAltWeaponName);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, altWeaponIndex), 17);
+}
+
+// The projectile's model, effects and sounds.
+void HashWeaponProjectile(GraphHashBuilder &builder, const WeaponDef &weapon)
+{
+    FieldAsset(builder, 2, ASSET_TYPE_XMODEL, weapon.projectileModel);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, projExplosion), 1);
+    FieldAsset(builder, 6, ASSET_TYPE_FX, weapon.projExplosionEffect);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, projExplosionEffectForceNormalUp), 1);
+    FieldAsset(builder, 6, ASSET_TYPE_FX, weapon.projDudEffect);
+    FieldAsset(builder, 7, ASSET_TYPE_SOUND, weapon.projExplosionSound);
+    FieldAsset(builder, 7, ASSET_TYPE_SOUND, weapon.projDudSound);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, bProjImpactExplode), 66);
+    FieldAsset(builder, 6, ASSET_TYPE_FX, weapon.projTrailEffect);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, vProjectileColor), 6);
+    FieldAsset(builder, 6, ASSET_TYPE_FX, weapon.projIgnitionEffect);
+    FieldAsset(builder, 7, ASSET_TYPE_SOUND, weapon.projIgnitionSound);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, fAdsAimPitch), 40);
+}
+
+// The accuracy graphs (each name, then its knots and the original knots,
+// count pairs each), the hint and script strings, and the last runs.
+void HashWeaponTail(GraphHashBuilder &builder, const WeaponDef &weapon)
+{
+    FieldStrings(builder, 10, weapon.accuracyGraphName, std::size(weapon.accuracyGraphName));
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, accuracyGraphKnotCount), 22);
+    for (std::size_t graph = 0; graph < std::size(weapon.accuracyGraphKnots); ++graph)
+    {
+        const int knots = weapon.accuracyGraphKnotCount[graph];
+        const int original = weapon.originalAccuracyGraphKnotCount[graph];
+        FieldArray(builder, 11, weapon.accuracyGraphKnots[graph], knots > 0 ? static_cast<std::size_t>(knots) : 0);
+        FieldArray(builder, 12, weapon.originalAccuracyGraphKnots[graph],
+                   original > 0 ? static_cast<std::size_t>(original) : 0);
+    }
+    builder.FieldString(1, weapon.szUseHintString);
+    builder.FieldString(1, weapon.dropHintString);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, iUseHintStringIndex), 4);
+    builder.FieldString(1, weapon.szScript);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, fOOPosAnimLength), 28);
+    builder.FieldString(1, weapon.fireRumble);
+    builder.FieldString(1, weapon.meleeImpactRumble);
+    FieldRun(builder, 5, weapon, offsetof(WeaponDef, adsDofStart), 2);
+}
+
+// Every field in record order: references by name, strings and script
+// strings as text, and the scalar runs as bytes.
+void HashWeapon(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const WeaponDef &weapon = *header.weapon;
+    HashWeaponHead(builder, weapon);
+    HashWeaponEffects(builder, weapon);
+    HashWeaponModels(builder, weapon);
+    HashWeaponProjectile(builder, weapon);
+    HashWeaponTail(builder, weapon);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -747,6 +900,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashMaterial;
     case ASSET_TYPE_TECHNIQUE_SET:
         return HashTechniqueSet;
+    case ASSET_TYPE_WEAPON:
+        return HashWeapon;
     default:
         return nullptr;
     }
