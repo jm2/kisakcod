@@ -143,7 +143,7 @@ std::vector<uint8_t> AdpcmBlock(const std::vector<int16_t> &predictors, uint8_t 
     for (size_t c = 0; c < predictors.size(); ++c)
     {
         const uint16_t p = static_cast<uint16_t>(predictors[c]);
-        block[c * 4 + 0] = static_cast<uint8_t>(p & 0xFF);
+        block[c * 4] = static_cast<uint8_t>(p & 0xFF);
         block[c * 4 + 1] = static_cast<uint8_t>(p >> 8);
         block[c * 4 + 2] = 0;
         block[c * 4 + 3] = 0;
@@ -151,35 +151,68 @@ std::vector<uint8_t> AdpcmBlock(const std::vector<int16_t> &predictors, uint8_t 
     return block;
 }
 
-void TestAdpcmDecode()
+bool AllEqual(const std::vector<int16_t> &pcm, int16_t value)
 {
-    using snd_openal::DecodeImaAdpcm;
+    for (int16_t v : pcm)
+        if (v != value)
+            return false;
+    return !pcm.empty();
+}
+
+void TestAdpcmMono()
+{
     std::vector<int16_t> pcm;
     // Zero nibbles never move the predictor: 1 header sample + 64 nibbles.
     std::vector<uint8_t> mono = AdpcmBlock({1000}, 0x00, 36);
-    CHECK(DecodeImaAdpcm(mono.data(), 36, 36, 1, kRate, pcm) && pcm.size() == 65);
-    bool flat = !pcm.empty();
-    for (int16_t v : pcm)
-        flat = flat && v == 1000;
-    CHECK(flat);
+    CHECK(snd_openal::DecodeImaAdpcm(mono.data(), 36, 36, 1, kRate, pcm));
+    CHECK(pcm.size() == 65 && AllEqual(pcm, 1000));
     // A trailing partial block is ignored.
     mono.resize(46, 0);
-    CHECK(DecodeImaAdpcm(mono.data(), 46, 36, 1, kRate, pcm) && pcm.size() == 65);
+    CHECK(snd_openal::DecodeImaAdpcm(mono.data(), 46, 36, 1, kRate, pcm));
+    CHECK(pcm.size() == 65);
+}
+
+void TestAdpcmStereoAndDirection()
+{
+    std::vector<int16_t> pcm;
     // Stereo interleaves the channels.
     const std::vector<uint8_t> stereo = AdpcmBlock({1000, -1000}, 0x00, 72);
-    CHECK(DecodeImaAdpcm(stereo.data(), 72, 72, 2, kRate, pcm) && pcm.size() == 130);
+    CHECK(snd_openal::DecodeImaAdpcm(stereo.data(), 72, 72, 2, kRate, pcm));
     CHECK(pcm.size() == 130 && pcm[0] == 1000 && pcm[1] == -1000 && pcm[128] == 1000 && pcm[129] == -1000);
     // Nibble 7 steps up and nibble 15 down.
     const std::vector<uint8_t> up = AdpcmBlock({0}, 0x77, 36);
-    CHECK(DecodeImaAdpcm(up.data(), 36, 36, 1, kRate, pcm) && pcm.size() == 65 && pcm[1] > pcm[0] && pcm[64] > pcm[1]);
+    CHECK(snd_openal::DecodeImaAdpcm(up.data(), 36, 36, 1, kRate, pcm));
+    CHECK(pcm.size() == 65 && pcm[1] > pcm[0] && pcm[64] > pcm[1]);
     const std::vector<uint8_t> down = AdpcmBlock({0}, 0xFF, 36);
-    CHECK(DecodeImaAdpcm(down.data(), 36, 36, 1, kRate, pcm) && pcm.size() == 65 && pcm[1] < pcm[0] && pcm[64] < pcm[1]);
-    // Headers that can't describe whole blocks fail closed and leave nothing.
-    CHECK(!DecodeImaAdpcm(mono.data(), 30, 36, 1, kRate, pcm) && pcm.empty()); // block > data
-    CHECK(!DecodeImaAdpcm(mono.data(), 36, 6, 2, kRate, pcm) && pcm.empty());  // block < headers
-    CHECK(!DecodeImaAdpcm(mono.data(), 36, 36, 3, kRate, pcm) && pcm.empty());
-    CHECK(!DecodeImaAdpcm(nullptr, 36, 36, 1, kRate, pcm) && pcm.empty());
-    CHECK(!DecodeImaAdpcm(mono.data(), 36, 36, 1, 0, pcm) && pcm.empty());
+    CHECK(snd_openal::DecodeImaAdpcm(down.data(), 36, 36, 1, kRate, pcm));
+    CHECK(pcm.size() == 65 && pcm[1] < pcm[0] && pcm[64] < pcm[1]);
+}
+
+// Headers that can't describe whole blocks fail closed and leave nothing.
+void TestAdpcmFailsClosed()
+{
+    const std::vector<uint8_t> mono = AdpcmBlock({1000}, 0x00, 36);
+    struct Case
+    {
+        const void *data;
+        uint32_t dataLen;
+        uint32_t blockSize;
+        int channels;
+        uint32_t rate;
+    };
+    const Case cases[] = {
+        {mono.data(), 30, 36, 1, kRate}, // block past the data
+        {mono.data(), 36, 6, 2, kRate},  // block smaller than its headers
+        {mono.data(), 36, 36, 3, kRate},
+        {nullptr, 36, 36, 1, kRate},
+        {mono.data(), 36, 36, 1, 0},
+    };
+    for (const Case &c : cases)
+    {
+        std::vector<int16_t> pcm{1};
+        CHECK(!snd_openal::DecodeImaAdpcm(c.data, c.dataLen, c.blockSize, c.channels, c.rate, pcm));
+        CHECK(pcm.empty());
+    }
 }
 
 void TestAdpcmSample(HSAMPLE sample)
@@ -244,7 +277,9 @@ int main()
         return 1;
     }
     CHECK(g_printedDevice);
-    TestAdpcmDecode();
+    TestAdpcmMono();
+    TestAdpcmStereoAndDirection();
+    TestAdpcmFailsClosed();
     HSAMPLE sample = AIL_allocate_sample_handle(driver);
     CHECK(sample != nullptr);
     CHECK(AIL_sample_status(sample) == SMP_DONE); // allocated, nothing loaded
