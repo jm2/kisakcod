@@ -15,6 +15,7 @@
 #include <script/scr_stringlist.h>
 #include <ui/ui_shared.h>
 #include <database/db_disk32_mirrors.h>
+#include <database/db_graph_digest.h>
 
 #include <algorithm>
 #include <bit>
@@ -602,6 +603,15 @@ void WriteAbsentCurve(Image &z)
 {
     z.Record(72, {{0x00, kInline}}).V(",e2e/nocurve");
 }
+
+// K4's digest of an asset is the same at both widths: the i386 build checks
+// the same pins.
+void ExpectDigest(XAssetType type, const char *name, const char *pin)
+{
+    char hex[db::graph_hash::kHexDigestBytes];
+    db::graph_hash::FormatDigestHex(DB_GraphHashAsset(type, Find(type, name)), hex);
+    Expect(!std::strcmp(hex, pin), "an asset's digest is its pin:", hex);
+}
 } // namespace
 
 std::span<const Asset> zone_test::ZoneAssets()
@@ -676,6 +686,12 @@ void zone_test::CheckZone()
 
     const RawFile *raw = Find(ASSET_TYPE_RAWFILE, "e2e/a.gsc").rawfile;
     Expect(raw && raw->len == 2 && !std::strcmp(raw->buffer, "hi"), "the raw file's bytes load");
+    db::graph_hash::Digest rawFiles{};
+    const int rawFileCount = DB_GraphHashFamily(ASSET_TYPE_RAWFILE, rawFiles);
+    Expect(rawFileCount == 3, "the raw-file digest covers the zone's three raw files:",
+           std::to_string(rawFileCount).c_str());
+    ExpectDigest(ASSET_TYPE_RAWFILE, "e2e/a.gsc", "ea20b531af856cd903955150e062ad25b340bfab49e831051684bd88cd064df9");
+    ExpectDigest(ASSET_TYPE_RAWFILE, "e2e/b.cfg", "3fef21d7c987fd598912aba1e271f89db41ecd927902c115d7f0a3ba9d1d937f");
     const StringTable *table = Find(ASSET_TYPE_STRINGTABLE, "e2e/table").stringTable;
     Expect(table && table->columnCount == 2 && !std::strcmp(table->values[1], "b"), "the table's values load");
     const PhysPreset *phys = Find(ASSET_TYPE_PHYSPRESET, "e2e/phys").physPreset;

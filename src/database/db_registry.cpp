@@ -1,5 +1,6 @@
 #include "database.h"
 #include "db_load_atomic.h"
+#include "db_graph_digest.h"
 #include "db_load_legacy_bridge.h"
 #include "db_referenced_fastfile.h"
 #include "db_validation.h"
@@ -2647,6 +2648,7 @@ void DB_EndRegistrySession()
 }
 
 cmd_function_s DB_LoadZone_f_VAR;
+cmd_function_s DB_GraphHash_f_VAR;
 void __cdecl DB_LoadXAssets(XZoneInfo *zoneInfo, uint32_t zoneCount, int32_t sync)
 {
     uint32_t j; // [esp+4h] [ebp-14h]
@@ -2674,6 +2676,7 @@ void __cdecl DB_LoadXAssets(XZoneInfo *zoneInfo, uint32_t zoneCount, int32_t syn
         g_zoneInited = 1;
         DB_Init();
         Cmd_AddCommandInternal("loadzone", DB_LoadZone_f, &DB_LoadZone_f_VAR);
+        Cmd_AddCommandInternal("db_graphhash", DB_GraphHash_f, &DB_GraphHash_f_VAR);
     }
 
     unloadedZone = 0;

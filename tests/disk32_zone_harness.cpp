@@ -357,6 +357,7 @@ void Com_Memset(void *dest, const int val, const size_t count) { std::memset(des
 // The main thread's queue: the database thread runs in-line here.
 void Cmd_AddCommandInternal(const char *, void (*)(), cmd_function_s *) {}
 const char *Cmd_Argv(int) { return ""; }
+int Cmd_Argc() { return 0; }
 void Com_SyncThreads() {}
 void Sys_WakeDatabase() {}
 void Sys_WakeDatabase2() {}

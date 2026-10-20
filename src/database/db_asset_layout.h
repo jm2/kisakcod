@@ -39,7 +39,16 @@ enum class Conversion : std::uint8_t
 // xanim/xanim.h). Only the types this policy branches on are named here.
 inline constexpr std::int32_t kFx = 0x19;
 inline constexpr std::int32_t kImpactFx = 0x1A;
+inline constexpr std::int32_t kRawFile = 0x1F;
 inline constexpr std::int32_t kAssetTypeCount = 0x21;
+
+// The families K4 counts (docs/design/FASTFILE_LOADER.md): at 64-bit their
+// db_graphhash digest on Steam 1.8 data equals the Windows x86 load's. Each
+// joins in the PR that verifies it, which lifts its guard.
+constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
+{
+    return assetType == kRawFile;
+}
 
 constexpr Conversion ConversionForAssetType(const std::int32_t assetType) noexcept
 {
@@ -49,9 +58,9 @@ constexpr Conversion ConversionForAssetType(const std::int32_t assetType) noexce
     case kImpactFx:
         return Conversion::OndiskRuntimePair;
     default:
-        // Every other family still loads retail records with runtime sizeof;
-        // its mirror is not in the tree yet.
-        return Conversion::Unconverted;
+        // A verified family's generated disk32 loader is its mirror. Every
+        // other family stays refused at 64-bit until K4 counts it.
+        return IsK4Verified(assetType) ? Conversion::OndiskRuntimePair : Conversion::Unconverted;
     }
 }
 
