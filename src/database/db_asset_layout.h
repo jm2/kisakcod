@@ -74,15 +74,16 @@ constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
     case kFont:
     case kMenuList:
     case kComWorld:
-    case kLoadedSound:
     case kSound:
     case kXAnimParts:
 #if defined(KISAK_DEDI_HEADLESS)
-    // Renderer families: a 64-bit client builds renderer objects from these
-    // (db_disk32_renderer_hooks.h), which no client leg has compared with
-    // x86 yet, so only the headless server's guard is lifted. KisakCOD-dedi
-    // defines KISAK_DEDI_HEADLESS for all of its TUs.
+    // A 64-bit client builds renderer objects from these, or keeps payloads
+    // (LoadedSound samples), through db_disk32_renderer_hooks.h, which no
+    // client leg has compared with x86 yet, so only the headless server's
+    // guard is lifted. KisakCOD-dedi defines KISAK_DEDI_HEADLESS for all of
+    // its TUs.
     case kImage:
+    case kLoadedSound:
 #endif
         return true;
     default:

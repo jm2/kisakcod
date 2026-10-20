@@ -144,10 +144,10 @@ top-level dispatch; `Load_DynEntityDef` reaches it.
 
 **K4 = the number of server-closure families (out of N = 25) that load from unmodified Steam 1.8
 `.ff` at 64-bit under ASan and UBSan.** Baseline 0/25. Target 25/25 (G2). Until the loader tests
-report K4 themselves, the value is recorded by hand in [NOW.md](../NOW.md). K1–K3 are defined in
+report K4 themselves, [NOW.md](../NOW.md) records it by hand. K1–K3 are defined in
 [NATIVE64.md](NATIVE64.md).
 
-A family counts toward K4 when all of these hold:
+A family counts toward K4 when all hold:
 
 - every asset of that family in the test zones loads with no sanitizer report;
 - its digest (`db_graphhash <family>`, `db_graph_digest.cpp`) equals the Windows x86 load's
@@ -155,9 +155,9 @@ A family counts toward K4 when all of these hold:
 - the family's fail-closed guard is removed only in the PR that makes it count.
 
 K4 is a server gate. A client builds renderer objects from Image, Material,
-TechniqueSet and GfxWorld (`kCreatesRendererObjects`), which no client leg has
-compared with x86, so `IsK4Verified` lifts each of the four only under
-`KISAK_DEDI_HEADLESS`, as it joins (Image so far).
+TechniqueSet and GfxWorld (`kCreatesRendererObjects`) and keeps LoadedSound
+samples, which no client leg has compared with x86, so `IsK4Verified` lifts
+each only under `KISAK_DEDI_HEADLESS` (Image and LoadedSound so far).
 
 ## Test plan
 
