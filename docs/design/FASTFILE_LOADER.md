@@ -43,8 +43,7 @@ Retail data broke these synthetic-fixture assumptions; each now has a test:
    Windows x86 does not change; each converted `Load_<F>Ptr` calls its 64-bit loader under
    `#if KISAK_ARCH_64BIT`. The schema is `src/database/db_disk32.schema`, which documents the
    format and includes one file per family (`src/database/disk32/<NN>-<family>.schema`):
-   retail sizes, offsets and field kinds. Each loader test registers in its own
-   `tests/cmake/disk32/<family>.cmake`.
+   retail sizes, offsets and field kinds.
    `scripts/gen_disk32.py` checks it against the ILP32 rules, and CMake runs it at build time
    for 64-bit targets and the Linux loader tests only, so Windows x86 needs no Python. Generated
    code is not committed ([AGENTS.md](../../AGENTS.md) rule 8). It emits the mirrors with their
@@ -68,8 +67,7 @@ Retail data broke these synthetic-fixture assumptions; each now has a test:
    family's header. The body calls that family's generated pointer step, `Load<Family>Ptr`, which
    pushes the temp block itself as its 32-bit `Load_<Family>Ptr` does, so the child streams
    where x86 streams it and the slot ends with the native pointer. While the child has no
-   `asset` line, a non-null token raises `ERR_DROP` naming it. Forward declarations of every
-   referenced pointer step keep schema order free.
+   `asset` line, a non-null token raises `ERR_DROP` naming it.
 3. **Relocation map.** Every materialized record registers `(block, disk offset, disk stride) →
    (native base, native stride)`. Offset tokens resolve through this map, including interior
    pointers into arrays and to named fields, so no pointer points into raw stream bytes. A
@@ -156,6 +154,11 @@ A family counts toward K4 when all of these hold:
   on the same zones;
 - the family's fail-closed guard is removed only in the PR that makes it count.
 
+K4 is a server gate. A client builds renderer objects from Image, Material,
+TechniqueSet and GfxWorld (`kCreatesRendererObjects`), which no client leg has
+compared with x86, so `IsK4Verified` lifts those four only under
+`KISAK_DEDI_HEADLESS`.
+
 ## Test plan
 
 | Layer | What runs | Where |
@@ -191,9 +194,7 @@ newer than the run. Read the console for:
   `no 64-bit on-disk/runtime layout pair` means the guard (no opt-in);
   `alias offset: unregistered slot` means an unrecorded pointer slot.
 
-64-bit clients load clean: macOS mp_shipment and mp_crash, Linux arm64
-mp_crash, Win64 mp_shipment. CI runs
-the x86 load path only on synthetic zones (`linux-x86-tests`, #522).
+CI runs the x86 load path only on synthetic zones (`linux-x86-tests`, #522).
 
 **Registry sessions.** A sequence that holds `db_hashCritSect` while its
 assets intern or mark script strings (user 4 or 8) must hold it through
