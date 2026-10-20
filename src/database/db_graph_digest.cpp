@@ -182,6 +182,61 @@ void HashLightDef(GraphHashBuilder &builder, const XAssetHeader &header)
     builder.FieldI64(kLightDefLmapLookupStart, light.lmapLookupStart);
 }
 
+enum FontField : std::uint32_t
+{
+    kFontName = 1,
+    kFontPixelHeight,
+    kFontGlyphCount,
+    kFontMaterial,
+    kFontGlowMaterial,
+    kFontGlyph,
+};
+
+void HashFont(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const Font_s &font = *header.font;
+    builder.FieldString(kFontName, font.fontName);
+    builder.FieldI64(kFontPixelHeight, font.pixelHeight);
+    builder.FieldI64(kFontGlyphCount, font.glyphCount);
+    FieldAsset(builder, kFontMaterial, ASSET_TYPE_MATERIAL, font.material);
+    FieldAsset(builder, kFontGlowMaterial, ASSET_TYPE_MATERIAL, font.glowMaterial);
+    const int glyphs = font.glyphs && font.glyphCount > 0 ? font.glyphCount : 0;
+    for (int i = 0; i < glyphs; ++i)
+    {
+        const Glyph &glyph = font.glyphs[i];
+        builder.BeginRecord(kFontGlyph);
+        builder.FieldU64(1, glyph.letter);
+        builder.FieldI64(2, glyph.x0);
+        builder.FieldI64(3, glyph.y0);
+        builder.FieldU64(4, glyph.dx);
+        builder.FieldU64(5, glyph.pixelWidth);
+        builder.FieldU64(6, glyph.pixelHeight);
+        builder.FieldF32(7, glyph.s0);
+        builder.FieldF32(8, glyph.t0);
+        builder.FieldF32(9, glyph.s1);
+        builder.FieldF32(10, glyph.t1);
+        builder.EndRecord();
+    }
+}
+
+enum MenuListField : std::uint32_t
+{
+    kMenuListName = 1,
+    kMenuListCount,
+    kMenuListMenu,
+};
+
+// The menus are named references: each is its own Menu asset.
+void HashMenuList(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const MenuList &list = *header.menuList;
+    builder.FieldString(kMenuListName, list.name);
+    builder.FieldI64(kMenuListCount, list.menuCount);
+    const int menus = list.menus && list.menuCount > 0 ? list.menuCount : 0;
+    for (int i = 0; i < menus; ++i)
+        FieldAsset(builder, kMenuListMenu, ASSET_TYPE_MENU, list.menus[i]);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -204,6 +259,10 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashGameWorldMp;
     case ASSET_TYPE_LIGHT_DEF:
         return HashLightDef;
+    case ASSET_TYPE_FONT:
+        return HashFont;
+    case ASSET_TYPE_MENULIST:
+        return HashMenuList;
     default:
         return nullptr;
     }

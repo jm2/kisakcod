@@ -729,6 +729,7 @@ void zone_test::CheckZone()
     Expect(font && font->glyphCount == 96 && Is(font->material, ASSET_TYPE_MATERIAL, "e2e/material")
                && font->glowMaterial == font->material,
            "a font's materials are the shared material");
+    ExpectDigest(ASSET_TYPE_FONT, "e2e/font", "4fa8af1db5a118266910a3ccacaafee3dfdf92065275be8ba78dfd1efbbc0686");
     const FxEffectDef *fx = Find(ASSET_TYPE_FX, "e2e/fx").fx;
     Expect(fx && fx->elemDefs && Is(fx->elemDefs[0].visuals.instance.material, ASSET_TYPE_MATERIAL, "e2e/material"),
            "an effect's sprite draws the shared material");
@@ -742,6 +743,7 @@ void zone_test::CheckZone()
     const MenuList *menus = Find(ASSET_TYPE_MENULIST, "e2e/menus").menuList;
     Expect(menus && menus->menuCount == 1 && Is(menus->menus[0], ASSET_TYPE_MENU, "e2e/menu"),
            "a menu list names the shared menu");
+    ExpectDigest(ASSET_TYPE_MENULIST, "e2e/menus", "ffab98a262e71a8ddf4413d6d4626dacbd3dec520ee57e6cf1e0b508526b9dbb");
     const XModel *model = Find(ASSET_TYPE_XMODEL, "e2e/model").model;
     Expect(model && model->numBones == 2 && model->boneNames[1] == SL_FindString("bone_child")
                && Is(model->materialHandles[0], ASSET_TYPE_MATERIAL, "e2e/material"),
