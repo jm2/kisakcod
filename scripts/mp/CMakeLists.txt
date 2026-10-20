@@ -92,6 +92,15 @@ if (APPLE)
     target_compile_options(${PROJECT_NAME} PRIVATE -mmacosx-version-min=26.0)
     target_link_options(${PROJECT_NAME} PRIVATE -mmacosx-version-min=26.0)
 endif()
+# The engine bundles zlib and speex and has globals such as g_log. On ELF, a
+# definition in the executable that a linked shared library also references is
+# exported and interposes the system copy for every library in the process (a
+# distro FFmpeg pulls in zlib, and through it glib; libdecor-gtk's g_log() call
+# then jumps into the engine's g_log variable). Export nothing.
+if (UNIX AND NOT APPLE)
+    target_link_options(${PROJECT_NAME} PRIVATE
+        "-Wl,--version-script=${SCRIPTS_DIR}/platform/client_exports.map")
+endif()
 set(KISAK_TARGET_NEEDS_CLIENT_MEDIA ON)
 
 if (KISAK_CLIENT_SDL3)

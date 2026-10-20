@@ -1,0 +1,2 @@
+/* Exports nothing from the POSIX client executable; see scripts/mp/CMakeLists.txt. */
+{ local: *; };
