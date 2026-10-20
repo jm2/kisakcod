@@ -212,9 +212,14 @@ Movie *OpenMovie(const char *name, U32 flags)
 }
 } // namespace
 
+// Reading the error consumes it. R_Cinematic_StartPlayback_Now checks for an
+// error before it opens the next movie, so a failed open's text must not
+// outlive the BinkOpen error R_Cinematic_BinkOpenPath reports.
 char *RADEXPLINK BinkGetError(void)
 {
-    return const_cast<char *>(s_error);
+    const char *error = s_error;
+    s_error = "";
+    return const_cast<char *>(error);
 }
 
 HBINK RADEXPLINK BinkOpen(const char *name, U32 flags)
