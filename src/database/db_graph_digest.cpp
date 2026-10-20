@@ -2,8 +2,10 @@
 
 #include "database/database.h"
 
+#include <game/g_bsp.h>
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
+#include <universal/gfx_lightdef.h>
 #include <universal/q_shared.h>
 
 #include <algorithm>
@@ -31,6 +33,15 @@ enum RawFileField : std::uint32_t
     kRawFileHasBuffer,
     kRawFileBuffer,
 };
+
+// A reference to another asset is its name: the referenced asset has its own
+// family digest.
+void FieldAsset(GraphHashBuilder &builder, std::uint32_t tag, XAssetType type, const void *asset)
+{
+    XAssetHeader header;
+    header.data = const_cast<void *>(asset);
+    builder.FieldString(tag, asset ? DB_GetXAssetHeaderName(type, &header) : nullptr);
+}
 
 // The buffer holds len bytes and a terminator; the bytes are the content.
 void HashRawFile(GraphHashBuilder &builder, const XAssetHeader &header)
@@ -144,6 +155,33 @@ void HashSndCurve(GraphHashBuilder &builder, const XAssetHeader &header)
     }
 }
 
+enum GameWorldMpField : std::uint32_t
+{
+    kGameWorldMpName = 1,
+};
+
+void HashGameWorldMp(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    builder.FieldString(kGameWorldMpName, header.gameWorldMp->name);
+}
+
+enum LightDefField : std::uint32_t
+{
+    kLightDefName = 1,
+    kLightDefImage,
+    kLightDefSamplerState,
+    kLightDefLmapLookupStart,
+};
+
+void HashLightDef(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const GfxLightDef &light = *header.lightDef;
+    builder.FieldString(kLightDefName, light.name);
+    FieldAsset(builder, kLightDefImage, ASSET_TYPE_IMAGE, light.attenuation.image);
+    builder.FieldU64(kLightDefSamplerState, light.attenuation.samplerState);
+    builder.FieldI64(kLightDefLmapLookupStart, light.lmapLookupStart);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -162,6 +200,10 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashMapEnts;
     case ASSET_TYPE_SOUND_CURVE:
         return HashSndCurve;
+    case ASSET_TYPE_GAMEWORLD_MP:
+        return HashGameWorldMp;
+    case ASSET_TYPE_LIGHT_DEF:
+        return HashLightDef;
     default:
         return nullptr;
     }
