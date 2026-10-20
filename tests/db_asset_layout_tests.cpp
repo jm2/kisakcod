@@ -150,8 +150,6 @@ void TestFailClosedPolicy()
            "64-bit targets must load menu lists, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kComWorld, true, false),
            "64-bit targets must load com worlds, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kLoadedSound, true, false),
-           "64-bit targets must load loaded sounds, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kSound, true, false),
            "64-bit targets must load sound alias lists, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kXAnimParts, true, false),
@@ -161,11 +159,15 @@ void TestFailClosedPolicy()
            "a 64-bit headless server must load images, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kMaterial, true, false),
            "a 64-bit headless server must load materials, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kLoadedSound, true, false),
+           "a 64-bit headless server must load loaded sounds, which K4 counts");
 #else
     Expect(!IsLoadPermitted(db::asset_layout::kImage, true, false),
            "a 64-bit client keeps images guarded: no client leg has compared them");
     Expect(!IsLoadPermitted(db::asset_layout::kMaterial, true, false),
            "a 64-bit client keeps materials guarded: no client leg has compared them");
+    Expect(!IsLoadPermitted(db::asset_layout::kLoadedSound, true, false),
+           "a 64-bit client keeps loaded sounds guarded: it keeps samples no client leg has compared");
 #endif
 
     // FX and Impact FX hold a pair, but only the FX zone adapter can apply it.
