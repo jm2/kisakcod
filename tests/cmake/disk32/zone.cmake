@@ -59,7 +59,7 @@ set_tests_properties(database-disk32-zone-retail-shapes PROPERTIES TIMEOUT 60)
 # With one family's guard left on, the zone fails closed naming it. The
 # layout guards exist only at 64-bit.
 if (CMAKE_SIZEOF_VOID_P EQUAL 8)
-    foreach(_family IN ITEMS stringtable physpreset localize map_ents game_map_mp com_map
+    foreach(_family IN ITEMS physpreset localize map_ents game_map_mp com_map
             sndcurve loaded_sound sound image lightdef techset material font fx impactfx menu menufile
             xmodel xanim weapon col_map_mp gfx_map)
         add_test(NAME database-disk32-zone-guard-${_family} COMMAND kisakcod-db-disk32-zone-tests guard ${_family})

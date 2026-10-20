@@ -40,6 +40,7 @@ enum class Conversion : std::uint8_t
 inline constexpr std::int32_t kFx = 0x19;
 inline constexpr std::int32_t kImpactFx = 0x1A;
 inline constexpr std::int32_t kRawFile = 0x1F;
+inline constexpr std::int32_t kStringTable = 0x20;
 inline constexpr std::int32_t kAssetTypeCount = 0x21;
 
 // The families K4 counts (docs/design/FASTFILE_LOADER.md): at 64-bit their
@@ -47,7 +48,7 @@ inline constexpr std::int32_t kAssetTypeCount = 0x21;
 // joins in the PR that verifies it, which lifts its guard.
 constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
 {
-    return assetType == kRawFile;
+    return assetType == kRawFile || assetType == kStringTable;
 }
 
 constexpr Conversion ConversionForAssetType(const std::int32_t assetType) noexcept

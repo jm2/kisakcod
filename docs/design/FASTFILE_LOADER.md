@@ -13,11 +13,11 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
 
 All 25 server-closure families have generated disk32 loaders, and so does
 every family the client zones reach. The fail-closed guard (design step 6)
-stays on for each family until K4 counts it (`IsK4Verified`): so far,
-RawFile. The developer dvar `db_unverified64 1` (#513) admits every family
-with a disk32 loader (`db::asset_layout::HasDisk32Loader`) and warns once.
-It doesn't count toward K4. SndDriverGlobals is listed in
-`code_post_gfx_mp` but has no loader, so the envelope skips it (#473).
+stays on for each family until K4 counts it (`IsK4Verified`). The developer
+dvar `db_unverified64 1` (#513) admits every family with a disk32 loader
+(`db::asset_layout::HasDisk32Loader`) and warns once. It doesn't count toward
+K4. SndDriverGlobals is listed in `code_post_gfx_mp` but has no loader, so the
+envelope skips it (#473).
 
 Retail data broke these synthetic-fixture assumptions; each now has a test:
 

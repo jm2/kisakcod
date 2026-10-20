@@ -694,6 +694,7 @@ void zone_test::CheckZone()
     ExpectDigest(ASSET_TYPE_RAWFILE, "e2e/b.cfg", "3fef21d7c987fd598912aba1e271f89db41ecd927902c115d7f0a3ba9d1d937f");
     const StringTable *table = Find(ASSET_TYPE_STRINGTABLE, "e2e/table").stringTable;
     Expect(table && table->columnCount == 2 && !std::strcmp(table->values[1], "b"), "the table's values load");
+    ExpectDigest(ASSET_TYPE_STRINGTABLE, "e2e/table", "9e4b52694fc50b746cb1c34b9c29cebcd6d3adf0791469d39365e0b2e7776156");
     const PhysPreset *phys = Find(ASSET_TYPE_PHYSPRESET, "e2e/phys").physPreset;
     Expect(phys && phys->mass == 2.5f && phys->tempDefaultToCylinder && !std::strcmp(phys->sndAliasPrefix, "wood"),
            "the preset's fields load");
