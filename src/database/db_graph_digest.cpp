@@ -382,6 +382,133 @@ void HashSound(GraphHashBuilder &builder, const XAssetHeader &header)
     }
 }
 
+// A bool's stored byte, as 0 or 1: a retail byte other than 1 reads as true
+// on every target, but loading it as bool would be undefined.
+void FieldBool(GraphHashBuilder &builder, std::uint32_t tag, const bool &value)
+{
+    // A bool's object representation may be read through unsigned char.
+    const unsigned char raw = *reinterpret_cast<const unsigned char *>(&value);
+    builder.FieldU64(tag, raw != 0);
+}
+
+// A script string is its text: each load assigns its own indices.
+void FieldScriptString(GraphHashBuilder &builder, std::uint32_t tag, std::uint32_t index)
+{
+    builder.FieldString(tag, index ? SL_ConvertToString(index) : nullptr);
+}
+
+// Frame indices are 16-bit once an animation has 256 frames.
+std::size_t XAnimIndexWidth(const XAnimParts &parts)
+{
+    return parts.numframes >= 0x100 ? 2 : 1;
+}
+
+// A delta translation: frame0 when its size is 0, else its bounds, size + 1
+// indices and size + 1 vectors (8-bit when smallTrans).
+void HashXAnimTrans(GraphHashBuilder &builder, const XAnimPartTrans *trans, std::size_t indexWidth)
+{
+    builder.FieldU64(1, trans != nullptr);
+    if (!trans)
+        return;
+    builder.FieldU64(2, trans->size);
+    builder.FieldU64(3, trans->smallTrans);
+    if (!trans->size)
+    {
+        builder.FieldBytes(4, trans->u.frame0, sizeof(trans->u.frame0));
+        return;
+    }
+    const std::size_t frames = trans->size + 1u;
+    builder.FieldBytes(5, trans->u.frames.mins, sizeof(trans->u.frames.mins));
+    builder.FieldBytes(6, trans->u.frames.size, sizeof(trans->u.frames.size));
+    builder.FieldBytes(7, &trans->u.frames.indices, frames * indexWidth);
+    builder.FieldBytes(8, trans->u.frames.frames._1, trans->u.frames.frames._1 ? frames * 3 * (trans->smallTrans ? 1 : 2) : 0);
+}
+
+// A delta rotation: frame0 when its size is 0, else size + 1 indices and size + 1 pairs.
+void HashXAnimQuat(GraphHashBuilder &builder, const XAnimDeltaPartQuat *quat, std::size_t indexWidth)
+{
+    builder.FieldU64(9, quat != nullptr);
+    if (!quat)
+        return;
+    builder.FieldU64(10, quat->size);
+    if (!quat->size)
+    {
+        builder.FieldBytes(11, quat->u.frame0, sizeof(quat->u.frame0));
+        return;
+    }
+    const std::size_t frames = quat->size + 1u;
+    builder.FieldBytes(12, &quat->u.frames.indices, frames * indexWidth);
+    builder.FieldBytes(13, quat->u.frames.frames, quat->u.frames.frames ? frames * sizeof(*quat->u.frames.frames) : 0);
+}
+
+// count elements of a layout-invariant array as bytes; none when it is null.
+template <typename T>
+void FieldArray(GraphHashBuilder &builder, std::uint32_t tag, const T *data, std::size_t count)
+{
+    builder.FieldBytes(tag, data, data ? count * sizeof(T) : 0);
+}
+
+// The data and index arrays, each as the bytes its count covers.
+void HashXAnimArrays(GraphHashBuilder &builder, const XAnimParts &parts, std::size_t indexWidth)
+{
+    FieldArray(builder, 14, parts.dataByte, parts.dataByteCount);
+    FieldArray(builder, 15, parts.dataShort, parts.dataShortCount);
+    FieldArray(builder, 16, parts.dataInt, parts.dataIntCount);
+    FieldArray(builder, 17, parts.randomDataShort, parts.randomDataShortCount);
+    FieldArray(builder, 18, parts.randomDataByte, parts.randomDataByteCount);
+    FieldArray(builder, 19, parts.randomDataInt, parts.randomDataIntCount);
+    builder.FieldBytes(20, parts.indices.data, parts.indices.data ? parts.indexCount * indexWidth : 0);
+}
+
+// The notetracks: each name as text and its time.
+void HashXAnimNotify(GraphHashBuilder &builder, const XAnimParts &parts)
+{
+    const int notes = parts.notify ? parts.notifyCount : 0;
+    for (int i = 0; i < notes; ++i)
+    {
+        const auto &[noteName, noteTime] = parts.notify[i];
+        builder.BeginRecord(21);
+        FieldScriptString(builder, 1, noteName);
+        builder.FieldF32(2, noteTime);
+        builder.EndRecord();
+    }
+}
+
+// The header scalars, the bone and notetrack names as text, and every array
+// as the bytes its count covers (the counts the loader streams).
+void HashXAnimParts(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const XAnimParts &parts = *header.parts;
+    builder.FieldString(1, parts.name);
+    for (const unsigned count : {parts.dataByteCount, parts.dataShortCount, parts.dataIntCount,
+                                 parts.randomDataByteCount, parts.randomDataIntCount, parts.numframes})
+        builder.FieldU64(2, count);
+    FieldBool(builder, 3, parts.bLoop);
+    FieldBool(builder, 4, parts.bDelta);
+    builder.FieldBytes(5, parts.boneCount, sizeof(parts.boneCount));
+    builder.FieldU64(6, parts.notifyCount);
+    builder.FieldU64(7, parts.assetType);
+    FieldBool(builder, 8, parts.isDefault);
+    builder.FieldU64(9, parts.randomDataShortCount);
+    builder.FieldU64(10, parts.indexCount);
+    builder.FieldF32(11, parts.framerate);
+    builder.FieldF32(12, parts.frequency);
+    const int bones = parts.names ? parts.boneCount[9] : 0;
+    for (int i = 0; i < bones; ++i)
+        FieldScriptString(builder, 13, parts.names[i]);
+    const std::size_t indexWidth = XAnimIndexWidth(parts);
+    HashXAnimArrays(builder, parts, indexWidth);
+    HashXAnimNotify(builder, parts);
+    builder.FieldU64(22, parts.deltaPart != nullptr);
+    if (parts.deltaPart)
+    {
+        builder.BeginRecord(23);
+        HashXAnimTrans(builder, parts.deltaPart->trans, indexWidth);
+        HashXAnimQuat(builder, parts.deltaPart->quat, indexWidth);
+        builder.EndRecord();
+    }
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -414,6 +541,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashLoadedSound;
     case ASSET_TYPE_SOUND:
         return HashSound;
+    case ASSET_TYPE_XANIMPARTS:
+        return HashXAnimParts;
     default:
         return nullptr;
     }

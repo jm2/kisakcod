@@ -757,6 +757,7 @@ void zone_test::CheckZone()
     const XAnimParts *anim = Find(ASSET_TYPE_XANIMPARTS, "e2e/anim").parts;
     Expect(anim && anim->boneCount[9] == 1 && anim->names[0] == SL_FindString("bone_root"),
            "an animation's bone names a zone script string");
+    ExpectDigest(ASSET_TYPE_XANIMPARTS, "e2e/anim", "be074dd4f9e3c30cf2e496c861966ad6b850323bed8fe5537a134a9e563187e9");
     const WeaponDef *weapon = Find(ASSET_TYPE_WEAPON, "e2e/weapon").weapon;
     Expect(weapon && Is(weapon->gunXModel[0], ASSET_TYPE_XMODEL, "e2e/model")
                && Is(weapon->viewFlashEffect, ASSET_TYPE_FX, "e2e/fx")
