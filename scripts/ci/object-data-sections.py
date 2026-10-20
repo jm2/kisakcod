@@ -16,6 +16,10 @@ Compiler-numbered labels ($SG123 string literals and the like) are renumbered
 by unrelated edits, so a piece named only by them is keyed by its bytes, and a
 relocation to one names the bytes it points at.
 
+COFF symbols carry no size, so a piece runs to the next symbol and keeps the
+alignment padding after its variable. A reorder that moves padding between
+variables therefore still differs: the check errs toward reporting.
+
 Usage: object-data-sections.py <base.obj> <pr.obj>
 Exit status: 0 when the data matches, 1 when it differs, 2 on a malformed
 object.
@@ -24,6 +28,7 @@ object.
 import collections
 import hashlib
 import importlib.util
+import itertools
 import pathlib
 import re
 import sys
@@ -41,19 +46,15 @@ def _sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def data_pieces(path):
-    with open(path, "rb") as handle:
-        _machine, sections, records = digest_tool.parse_coff(handle.read(), path)
-
-    # Symbols defined in each section, by offset; the section's own symbol
-    # (named after it) is not a boundary.
+def data_runs(sections, records):
+    """Each data section's [start, end) runs between successive symbol offsets,
+    plus the bytes before the first symbol, with the names defined at start.
+    A section's own symbol (named after it) is not a boundary. A run ends at
+    the next symbol, so it keeps any alignment padding after its variable."""
     defined = collections.defaultdict(lambda: collections.defaultdict(list))
     for name, value, number, _storage, _type, _aux in records:
         if 1 <= number <= len(sections) and name != sections[number - 1].name:
             defined[number][value].append(name)
-
-    # Each section's pieces: [start, end) runs between successive symbol
-    # offsets, plus the bytes before the first symbol.
     runs = []
     for number, section in enumerate(sections, 1):
         if section.is_debug or section.characteristics & IMAGE_SCN_CNT_CODE:
@@ -61,15 +62,21 @@ def data_pieces(path):
         size = max(section.size, len(section.content))
         offsets = sorted(offset for offset in defined[number] if 0 <= offset <= size)
         bounds = ([0] if not offsets or offsets[0] != 0 else []) + offsets + [size]
-        for start, end in zip(bounds, bounds[1:]):
+        for start, end in itertools.pairwise(bounds):
             runs.append((section, start, end, sorted(defined[number].get(start, []))))
+    return runs
+
+
+def data_pieces(path):
+    with open(path, "rb") as handle:
+        _machine, sections, records = digest_tool.parse_coff(handle.read(), path)
+    runs = data_runs(sections, records)
 
     # A numbered label stands for the bytes it labels.
     label_bytes = {}
     for section, start, end, names in runs:
-        for name in names:
-            if NUMBERED_LABEL.match(name):
-                label_bytes[name] = "%s:%d" % (_sha(section.content[start:end]), end - start)
+        for name in filter(NUMBERED_LABEL.match, names):
+            label_bytes[name] = "%s:%d" % (_sha(section.content[start:end]), end - start)
 
     pieces = collections.Counter()
     for section, start, end, names in runs:
@@ -79,7 +86,10 @@ def data_pieces(path):
             (address - start, kind, label_bytes.get(target, target))
             for address, kind, target, _value, _target_section in section.relocations
             if start <= address < end))
-        key = (section.name, section.characteristics, stable or ("bytes", _sha(content)))
+        # The COMDAT selection is link-significant; its checksum and length
+        # restate the bytes compared below.
+        selection = section.comdat[0] if section.comdat else None
+        key = (section.name, section.characteristics, selection, stable or ("bytes", _sha(content)))
         pieces[(key, _sha(content), end - start, relocations)] += 1
     return pieces
 
