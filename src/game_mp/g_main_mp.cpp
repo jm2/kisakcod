@@ -261,8 +261,8 @@ void __cdecl G_InitGame(int32_t levelTime, int32_t randomSeed, int32_t restart, 
     if (!Dvar_GetBool("sv_cheats") && !restart)
         Dvar_SetCheatState();
     G_ProcessIPBans();
-    level_bgs.GetXModel = (XModel * (__cdecl *)(const char *))SV_XModelGet;
-    level_bgs.CreateDObj = (void(__cdecl *)(DObjModel_s *, uint16_t, XAnimTree_s *, int, int, clientInfo_t *))G_CreateDObj;
+    level_bgs.GetXModel = G_BgGetXModel; // KISAK: typed thunk; SV_XModelGet takes char *
+    level_bgs.CreateDObj = G_BgCreateDObj; // KISAK: typed thunk; G_CreateDObj takes no clientInfo_t
     level_bgs.AttachWeapon = 0;
     level_bgs.GetDObj = G_GetDObj;
     level_bgs.SafeDObjFree = G_SafeDObjFree;
@@ -1706,4 +1706,17 @@ bool __cdecl OnSameTeam(struct gentity_s *ent1, struct gentity_s *ent2)
     if (ent1->client->sess.cs.team)
         return ent1->client->sess.cs.team == ent2->client->sess.cs.team;
     return 0;
+}
+
+// KISAK: the bgame callbacks, with the exact signatures bgs_t declares, so
+// the calls through level_bgs match the callee's type.
+XModel *__cdecl G_BgGetXModel(const char *name)
+{
+    return SV_XModelGet(const_cast<char *>(name));
+}
+
+void __cdecl G_BgCreateDObj(DObjModel_s *dobjModels, uint16_t numModels, XAnimTree_s *tree, int32_t handle,
+    int32_t localClientNum, clientInfo_t *)
+{
+    G_CreateDObj(dobjModels, numModels, tree, static_cast<uint32_t>(handle), localClientNum);
 }
