@@ -41,6 +41,13 @@
 
 #include <setjmp.h>
 
+// The builtin profiling counters sum 32-bit cycle deltas that retail x86 lets
+// wrap; signed overflow is undefined in C++, so add them modulo 2^32.
+static int Scr_ProfileAdd(int total, int delta)
+{
+    return static_cast<int>(static_cast<unsigned int>(total) + static_cast<unsigned int>(delta));
+}
+
 
 void Log(char const *format, ...)
 {
@@ -2676,8 +2683,9 @@ CallBuiltIn:
             time = Sys_CycleCounter();
             reinterpret_cast<void (*)(void)>(scrCompilePub.func_table[builtinIndex])();
             timeSpent = Sys_CycleCounter() - time;
-            scrVmDebugPub.builtInTime = timeSpent + builtInTime;
-            scrVmDebugPub.func_table[builtinIndex].prof += timeSpent;
+            scrVmDebugPub.builtInTime = Scr_ProfileAdd(builtInTime, timeSpent);
+            scrVmDebugPub.func_table[builtinIndex].prof =
+                Scr_ProfileAdd(scrVmDebugPub.func_table[builtinIndex].prof, timeSpent);
             ++scrVmDebugPub.func_table[builtinIndex].usage;
             goto post_builtin;
 
@@ -2724,8 +2732,9 @@ CallBuiltinMethod:
                 time = Sys_CycleCounter();
                 reinterpret_cast<void (*)(scr_entref_t)>(scrCompilePub.func_table[builtinIndex])(entref);
                 timeSpent = Sys_CycleCounter() - time;
-                scrVmDebugPub.builtInTime = timeSpent + builtInTime;
-                scrVmDebugPub.func_table[builtinIndex].prof += timeSpent;
+                scrVmDebugPub.builtInTime = Scr_ProfileAdd(builtInTime, timeSpent);
+                scrVmDebugPub.func_table[builtinIndex].prof =
+                    Scr_ProfileAdd(scrVmDebugPub.func_table[builtinIndex].prof, timeSpent);
                 ++scrVmDebugPub.func_table[builtinIndex].usage;
 post_builtin:
                 fs.top = scrVmPub.top;
