@@ -426,9 +426,9 @@ void __cdecl SV_SetClientStat(int clientNum, int index, uint32_t value)
     {
         if (index < 3498)
         {
-            if (*(uint32_t *)&svs.clients[clientNum].voicePackets[17].data[4 * index + 75] == value) // KISAKTODO
+            if (*(uint32_t *)&svs.clients[clientNum].stats[4 * index - 5996] == value) // KISAK: int stats follow the byte stats, as on the client
                 return;
-            *(uint32_t *)&svs.clients[clientNum].voicePackets[17].data[4 * index + 75] = value;
+            *(uint32_t *)&svs.clients[clientNum].stats[4 * index - 5996] = value;
             goto LABEL_16;
         }
         if (!alwaysfails)
@@ -471,7 +471,7 @@ int __cdecl SV_GetClientStat(int clientNum, int index)
     if (index < 2000)
         return svs.clients[clientNum].stats[index + 4];
     if (index < 3498)
-        return *(uint32_t *)&svs.clients[clientNum].voicePackets[17].data[4 * index + 75]; // KISAKTODO
+        return *(uint32_t *)&svs.clients[clientNum].stats[4 * index - 5996]; // KISAK: int stats follow the byte stats, as on the client
     if (!alwaysfails)
     {
         v3 = va("Unhandled stat index %i", index);

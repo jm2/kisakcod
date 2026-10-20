@@ -194,6 +194,7 @@ WEAK int __cdecl FS_iwIwd(char *, char *) { return 1; }
 WEAK void __cdecl FS_FCloseFile(int) {}
 WEAK bool __cdecl Com_LogFileOpen() { return false; }
 WEAK void __cdecl Dvar_AddCommands() {}
+WEAK void __cdecl MSG_WriteReliableCommandToBuffer(const char *, char *, int) {}
 WEAK void __cdecl SV_Heartbeat_f() {}
 WEAK int32_t __cdecl G_GetClientScore(int32_t) { return 0; }
 WEAK playerState_s *__cdecl SV_GameClientNum(int) { return nullptr; }
@@ -268,6 +269,30 @@ int main(int argc, char **argv)
     // The identity the common and game code register as gamename and shortversion.
     CHECK(std::strcmp(Com_WireGameName(), fork ? "KisakCoD4" : "Call of Duty 4") == 0);
     CHECK(std::strcmp(Com_WireShortVersion(), fork ? "1.0" : "1.8") == 0);
+
+    // GSC getstat/setstat: the int stats (2000..3497) live in the stats blob
+    // the client sends, four bytes each after the byte stats, as
+    // LiveStorage_GetStat reads them on the client.
+    {
+        client_t &cl = svs.clients[0];
+        cl.header.state = CS_CONNECTED;
+        cl.statPacketsReceived = 127;
+        cl.stats[4 + 5] = 42;
+        CHECK(SV_GetClientStat(0, 5) == 42);
+        const uint32_t first = 0x11223344u;
+        const uint32_t last = 0x55667788u;
+        SV_SetClientStat(0, 2000, first);
+        SV_SetClientStat(0, 3497, last);
+        uint32_t stored = 0;
+        std::memcpy(&stored, &cl.stats[2004], sizeof(stored));
+        CHECK(stored == first);
+        std::memcpy(&stored, &cl.stats[7992], sizeof(stored));
+        CHECK(stored == last);
+        CHECK(SV_GetClientStat(0, 2000) == first);
+        CHECK(SV_GetClientStat(0, 3497) == last);
+        CHECK(cl.stats[4 + 5] == 42);
+        std::memset(&cl, 0, sizeof(cl));
+    }
 
     if (g_failures == 0)
         std::printf("wire identity (%s): all checks passed\n", fork ? "fork" : "steam18");
