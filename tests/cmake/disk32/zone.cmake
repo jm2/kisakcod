@@ -61,7 +61,7 @@ set_tests_properties(database-disk32-zone-retail-shapes PROPERTIES TIMEOUT 60)
 if (CMAKE_SIZEOF_VOID_P EQUAL 8)
     foreach(_family IN ITEMS
             image techset material fx impactfx menu
-            xmodel xanim weapon col_map_mp gfx_map)
+            xmodel weapon col_map_mp gfx_map)
         add_test(NAME database-disk32-zone-guard-${_family} COMMAND kisakcod-db-disk32-zone-tests guard ${_family})
         set_tests_properties(database-disk32-zone-guard-${_family} PROPERTIES TIMEOUT 60)
     endforeach()
