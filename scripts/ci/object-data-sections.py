@@ -14,7 +14,8 @@ changed byte or relocation target does not.
 
 Compiler-numbered labels ($SG123 string literals and the like) are renumbered
 by unrelated edits, so a piece named only by them is keyed by its bytes, and a
-relocation to one names the bytes it points at.
+relocation to one names the bytes it points at (or the label itself, when
+another numbered label holds the same bytes).
 
 COFF symbols carry no size, so a piece runs to the next symbol and keeps the
 alignment padding after its variable. A reorder that moves padding between
@@ -46,15 +47,26 @@ def _sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def data_runs(sections, records):
-    """Each data section's [start, end) runs between successive symbol offsets,
-    plus the bytes before the first symbol, with the names defined at start.
-    A section's own symbol (named after it) is not a boundary. A run ends at
-    the next symbol, so it keeps any alignment padding after its variable."""
+def defined_symbols(sections, records):
+    """Map each section number to {offset: [symbol names defined there]}.
+
+    A section's own symbol (named after it) is left out.
+    """
     defined = collections.defaultdict(lambda: collections.defaultdict(list))
     for name, value, number, _storage, _type, _aux in records:
         if 1 <= number <= len(sections) and name != sections[number - 1].name:
             defined[number][value].append(name)
+    return defined
+
+
+def data_runs(sections, records):
+    """List (section, start, end, names) for each run of every data section.
+
+    A run goes from one symbol offset to the next (the bytes before the first
+    symbol are a run too), so it keeps any alignment padding after its
+    variable. names are the symbols defined at start.
+    """
+    defined = defined_symbols(sections, records)
     runs = []
     for number, section in enumerate(sections, 1):
         if section.is_debug or section.characteristics & IMAGE_SCN_CNT_CODE:
@@ -62,21 +74,30 @@ def data_runs(sections, records):
         size = max(section.size, len(section.content))
         offsets = sorted(offset for offset in defined[number] if 0 <= offset <= size)
         bounds = ([0] if not offsets or offsets[0] != 0 else []) + offsets + [size]
-        for start, end in itertools.pairwise(bounds):
-            runs.append((section, start, end, sorted(defined[number].get(start, []))))
+        runs.extend((section, start, end, sorted(defined[number].get(start, [])))
+                    for start, end in itertools.pairwise(bounds))
     return runs
 
 
+def numbered_label_identities(runs):
+    """Map each numbered label to the bytes it labels, when those are unique.
+
+    Two numbered labels over identical bytes keep their names, so a pointer
+    moved from one to the other still differs.
+    """
+    labels = collections.defaultdict(list)
+    for section, start, end, names in runs:
+        for name in filter(NUMBERED_LABEL.match, names):
+            labels["%s:%d" % (_sha(section.content[start:end]), end - start)].append(name)
+    return {names[0]: identity for identity, names in labels.items() if len(names) == 1}
+
+
 def data_pieces(path):
+    """Return the multiset of an object's data pieces, as compared by main()."""
     with open(path, "rb") as handle:
         _machine, sections, records = digest_tool.parse_coff(handle.read(), path)
     runs = data_runs(sections, records)
-
-    # A numbered label stands for the bytes it labels.
-    label_bytes = {}
-    for section, start, end, names in runs:
-        for name in filter(NUMBERED_LABEL.match, names):
-            label_bytes[name] = "%s:%d" % (_sha(section.content[start:end]), end - start)
+    label_bytes = numbered_label_identities(runs)
 
     pieces = collections.Counter()
     for section, start, end, names in runs:
