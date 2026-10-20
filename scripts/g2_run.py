@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Run the G2 check (docs/NOW.md row 45) on the 64-bit headless server.
+"""Run the G2 check (docs/NOW.md row 45) on the 64-bit headless server.
 
 The server, built with ASan and UBSan, boots mp_shipment (db_unverified64),
 answers getinfo and getstatus, rotates the five G2 maps and runs for the given
