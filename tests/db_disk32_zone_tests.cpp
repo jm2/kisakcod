@@ -715,6 +715,7 @@ void zone_test::CheckZone()
     Expect(alias && Is(alias->soundFile->u.loadSnd, ASSET_TYPE_LOADED_SOUND, "e2e/loaded")
                && Is(alias->volumeFalloffCurve, ASSET_TYPE_SOUND_CURVE, "e2e/curve"),
            "a sound reaches its loaded sound and curve");
+    ExpectDigest(ASSET_TYPE_SOUND, "e2e/snd", "3a96a7e6d6b22a3e23ffe454999e5495c1cd26943c75cb3eb20c24e6c6072752");
     ExpectDigest(ASSET_TYPE_LOADED_SOUND, "e2e/loaded", "e773c0211ad78ffc15b625a7f49a3d3a4542fc85682ae04f03106a7b802824d9");
     ExpectDigest(ASSET_TYPE_SOUND_CURVE, "e2e/curve", "27430354045f87028c3f222c3afa904f1c6722e0fc958e228f3aa432fc48505b");
     const GfxLightDef *light = Find(ASSET_TYPE_LIGHT_DEF, "e2e/lightdef").lightDef;
