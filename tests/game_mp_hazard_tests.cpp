@@ -379,6 +379,42 @@ static void XAnimAllocatorHasItsCallersType()
     CHECK(alloc(48) == g_xanimBlock);
     CHECK(g_xanimRequested == 48u);
 }
+
+// g_main_mp.cpp G_BgGetXModel / G_BgCreateDObj: the model and DObj callbacks
+// G_InitGame hands to level_bgs have bgs_t's own types (called through them,
+// as the bgame code calls them) and forward to SV_XModelGet / G_CreateDObj.
+const char *g_precached = nullptr;
+uint8_t *__cdecl Hunk_Alloc(uint32_t, const char *, int) { return g_xanimBlock; } // SV_XModelGet's allocators
+XModel *const kModel = reinterpret_cast<XModel *>(g_xanimBlock);
+XModel *__cdecl XModelPrecache(char *name, void *(__cdecl *)(int), void *(__cdecl *)(int))
+{
+    g_precached = name;
+    return kModel;
+}
+DObjModel_s *g_dobjModels = nullptr;
+uint32_t g_dobjHandle = 0;
+int g_dobjNumModels = 0;
+DObj_s *__cdecl Com_ServerDObjCreate(DObjModel_s *dobjModels, uint16_t numModels, XAnimTree_s *, uint32_t handle)
+{
+    g_dobjModels = dobjModels;
+    g_dobjNumModels = numModels;
+    g_dobjHandle = handle;
+    return nullptr;
+}
+static void BgCallbacksHaveTheirCallersTypes()
+{
+    bgs_t bgs{};
+    bgs.GetXModel = G_BgGetXModel;
+    bgs.CreateDObj = G_BgCreateDObj;
+    const char name[] = "body_mp_fake";
+    CHECK(bgs.GetXModel(name) == kModel);
+    CHECK(g_precached == name);
+    DObjModel_s models[2]{};
+    bgs.CreateDObj(models, 2, nullptr, 17, -1, nullptr);
+    CHECK(g_dobjModels == models);
+    CHECK(g_dobjNumModels == 2);
+    CHECK(g_dobjHandle == 17u);
+}
 #endif
 
 int main()
@@ -395,6 +431,7 @@ int main()
 #elif GAME_MP_HAZARD_SUBJECT == 3
     GameDataStridesMatchTheStructs();
     XAnimAllocatorHasItsCallersType();
+    BgCallbacksHaveTheirCallersTypes();
 #endif
     std::printf("game_mp_hazard_tests: %d check(s) failed\n", g_failures);
     return g_failures ? 1 : 0;

@@ -131,6 +131,10 @@ void __cdecl G_CreateDObj(
     uint32_t handle,
     int32_t unusedLocalClientNum);
 DObj_s *__cdecl G_GetDObj(uint32_t handle, int32_t unusedLocalClientNum);
+// The bgame callbacks (level_bgs), typed as bgs_t declares them.
+XModel *__cdecl G_BgGetXModel(const char *name);
+void __cdecl G_BgCreateDObj(DObjModel_s *dobjModels, uint16_t numModels, XAnimTree_s *tree, int32_t handle,
+    int32_t localClientNum, clientInfo_t *ci);
 void G_LoadAnimTreeInstances();
 void G_PrintAllFastFileErrors();
 void __cdecl G_PrintFastFileErrors(const char *fastfile);
