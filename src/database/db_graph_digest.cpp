@@ -237,6 +237,77 @@ void HashMenuList(GraphHashBuilder &builder, const XAssetHeader &header)
         FieldAsset(builder, kMenuListMenu, ASSET_TYPE_MENU, list.menus[i]);
 }
 
+enum ComWorldField : std::uint32_t
+{
+    kComWorldName = 1,
+    kComWorldInUse,
+    kComWorldLightCount,
+    kComWorldLight,
+};
+
+void HashComWorld(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const ComWorld &world = *header.comWorld;
+    builder.FieldString(kComWorldName, world.name);
+    builder.FieldI64(kComWorldInUse, world.isInUse);
+    builder.FieldU64(kComWorldLightCount, world.primaryLightCount);
+    const std::uint32_t lights = world.primaryLights ? world.primaryLightCount : 0;
+    for (std::uint32_t i = 0; i < lights; ++i)
+    {
+        const ComPrimaryLight &light = world.primaryLights[i];
+        builder.BeginRecord(kComWorldLight);
+        builder.FieldU64(1, light.type);
+        builder.FieldU64(2, light.canUseShadowMap);
+        builder.FieldU64(3, light.exponent);
+        builder.FieldU64(4, light.unused);
+        for (const float value : light.color)
+            builder.FieldF32(5, value);
+        for (const float value : light.dir)
+            builder.FieldF32(6, value);
+        for (const float value : light.origin)
+            builder.FieldF32(7, value);
+        builder.FieldF32(8, light.radius);
+        builder.FieldF32(9, light.cosHalfFovOuter);
+        builder.FieldF32(10, light.cosHalfFovInner);
+        builder.FieldF32(11, light.cosHalfFovExpanded);
+        builder.FieldF32(12, light.rotationLimit);
+        builder.FieldF32(13, light.translationLimit);
+        builder.FieldString(14, light.defName);
+        builder.EndRecord();
+    }
+}
+
+enum LoadedSoundField : std::uint32_t
+{
+    kLoadedSoundName = 1,
+    kLoadedSoundFormat,
+    kLoadedSoundDataLen,
+    kLoadedSoundRate,
+    kLoadedSoundBits,
+    kLoadedSoundChannels,
+    kLoadedSoundSamples,
+    kLoadedSoundBlockSize,
+    kLoadedSoundHasData,
+    kLoadedSoundData,
+};
+
+// The info pointers are run-time addresses; data_len bytes of data are the content.
+void HashLoadedSound(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const LoadedSound &sound = *header.loadSnd;
+    const _AILSOUNDINFO_COD4 &info = sound.sound.info;
+    builder.FieldString(kLoadedSoundName, sound.name);
+    builder.FieldI64(kLoadedSoundFormat, info.format);
+    builder.FieldU64(kLoadedSoundDataLen, info.data_len);
+    builder.FieldU64(kLoadedSoundRate, info.rate);
+    builder.FieldI64(kLoadedSoundBits, info.bits);
+    builder.FieldI64(kLoadedSoundChannels, info.channels);
+    builder.FieldU64(kLoadedSoundSamples, info.samples);
+    builder.FieldU64(kLoadedSoundBlockSize, info.block_size);
+    builder.FieldU64(kLoadedSoundHasData, sound.sound.data != nullptr);
+    builder.FieldBytes(kLoadedSoundData, sound.sound.data, sound.sound.data ? info.data_len : 0);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -263,6 +334,10 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashFont;
     case ASSET_TYPE_MENULIST:
         return HashMenuList;
+    case ASSET_TYPE_COMWORLD:
+        return HashComWorld;
+    case ASSET_TYPE_LOADED_SOUND:
+        return HashLoadedSound;
     default:
         return nullptr;
     }
