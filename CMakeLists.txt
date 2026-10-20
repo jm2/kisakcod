@@ -45,6 +45,13 @@ option(KISAK_MEDIA_STUBS "Link silent Miles/Bink stubs instead of the 32-bit-onl
 if (KISAK_MEDIA_STUBS AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "KISAK_MEDIA_STUBS is for 64-bit targets; Win32 links the real Miles and Bink libraries.")
 endif()
+# Cinematics through FFmpeg's Bink decoder instead of binkw32 (POSIX clients;
+# docs/design/CLIENT.md). Needs libavformat, libavcodec and libavutil from
+# pkg-config, e.g. Homebrew's ffmpeg.
+option(KISAK_FFMPEG_CINEMATICS "Play Bink cinematics through FFmpeg on POSIX clients" OFF)
+if (KISAK_FFMPEG_CINEMATICS AND WIN32)
+    message(FATAL_ERROR "KISAK_FFMPEG_CINEMATICS is wired for POSIX clients only so far.")
+endif()
 include(CTest)
 
 if (WIN32)

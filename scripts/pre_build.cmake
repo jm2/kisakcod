@@ -181,6 +181,14 @@ else()
         # against msslib/binklib and links silent stubs (KISAK_MEDIA_STUBS).
         target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_POSIX_CLIENT_MEDIA)
         target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/sound/media_stubs.cpp)
+        if (KISAK_FFMPEG_CINEMATICS)
+            # Bink calls go to FFmpeg's decoder instead of the silent stubs.
+            find_package(PkgConfig REQUIRED)
+            pkg_check_modules(KISAK_FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil)
+            target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::KISAK_FFMPEG)
+            target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_FFMPEG_CINEMATICS)
+            target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/gfx_d3d/r_bink_ffmpeg.cpp)
+        endif()
     endif()
     if (KISAK_TARGET_ENABLE_STEAM)
         message(FATAL_ERROR
