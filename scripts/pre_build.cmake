@@ -184,7 +184,14 @@ else()
         if (KISAK_FFMPEG_CINEMATICS)
             # Bink calls go to FFmpeg's decoder instead of the silent stubs.
             find_package(PkgConfig REQUIRED)
-            pkg_check_modules(KISAK_FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil)
+            pkg_check_modules(KISAK_FFMPEG IMPORTED_TARGET libavformat libavcodec libavutil)
+            if (NOT KISAK_FFMPEG_FOUND)
+                message(FATAL_ERROR
+                    "The POSIX client plays cinematics through FFmpeg (KISAK_FFMPEG_CINEMATICS). "
+                    "Install its libavformat, libavcodec and libavutil development files "
+                    "(macOS: brew install ffmpeg; Debian/Ubuntu: libavformat-dev libavcodec-dev libavutil-dev), "
+                    "or configure with -DKISAK_FFMPEG_CINEMATICS=OFF for silent stubs.")
+            endif()
             target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::KISAK_FFMPEG)
             target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_FFMPEG_CINEMATICS)
             target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/gfx_d3d/r_bink_ffmpeg.cpp)
