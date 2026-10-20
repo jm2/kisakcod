@@ -101,8 +101,9 @@ kisakcod_ilp32(kisakcod-voice-gate-tests
     voice-codec-gate-contracts)
 
 # The OpenAL Soft Miles shim (sound/snd_openal.cpp) on OpenAL Soft's null
-# backend, which needs no audio device. It builds where pkg-config finds
-# openal; KISAK_TEST_OPENAL makes that required (the Linux amd64 CI leg).
+# backend, which needs no audio device, with its libavcodec ADPCM decoder. It
+# builds where pkg-config finds openal and libavcodec; KISAK_TEST_OPENAL makes
+# that required (the Linux amd64 CI leg).
 option(KISAK_TEST_OPENAL "Require OpenAL Soft for the sound shim test" OFF)
 # The shim and its test are POSIX only for now (GNU flags, setenv).
 if (KISAK_TEST_OPENAL AND WIN32)
@@ -116,13 +117,15 @@ if (PkgConfig_FOUND AND NOT WIN32)
             set(ENV{PKG_CONFIG_PATH} "${_kisak_openal_prefix}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
         endif()
     endforeach()
-    pkg_check_modules(KISAK_TEST_OPENAL_LIB QUIET IMPORTED_TARGET openal)
+    pkg_check_modules(KISAK_TEST_OPENAL_LIB QUIET IMPORTED_TARGET openal libavcodec libavutil)
 endif()
 if (KISAK_TEST_OPENAL AND NOT KISAK_TEST_OPENAL_LIB_FOUND)
-    message(FATAL_ERROR "KISAK_TEST_OPENAL needs OpenAL Soft from pkg-config (libopenal-dev, brew openal-soft).")
+    message(FATAL_ERROR "KISAK_TEST_OPENAL needs OpenAL Soft and libavcodec from pkg-config "
+        "(libopenal-dev libavcodec-dev; brew openal-soft ffmpeg).")
 endif()
 if (KISAK_TEST_OPENAL_LIB_FOUND AND NOT WIN32)
-    add_executable(kisakcod-snd-openal-tests snd_openal_tests.cpp ${SRC_DIR}/sound/snd_openal.cpp)
+    add_executable(kisakcod-snd-openal-tests snd_openal_tests.cpp ${SRC_DIR}/sound/snd_openal.cpp
+        ${SRC_DIR}/sound/snd_openal_adpcm.cpp)
     target_include_directories(kisakcod-snd-openal-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
     target_compile_features(kisakcod-snd-openal-tests PRIVATE cxx_std_20)
     target_compile_definitions(kisakcod-snd-openal-tests PRIVATE KISAK_MP)
