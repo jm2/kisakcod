@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Screenshot regression set for the native clients (NOW row 50, CLIENT.md "Screenshots").
+r"""
+Screenshot regression set for the native clients (NOW row 50, CLIENT.md "Screenshots").
 
   capture  runs the client on each map (+devmap, cheats on), joins a team, then for each
            fixed view moves the eye with setviewpos (noclip, god, gun and HUD hidden), settles
@@ -30,7 +31,7 @@ import secrets
 import shutil
 import socket
 import struct
-import subprocess
+import subprocess  # nosec B404 - runs only the client binary named on the command line, with a fixed argv
 import sys
 import tempfile
 import time
@@ -60,6 +61,7 @@ class Client:
     """The client as a listen server, driven over rcon, its console read from its log."""
 
     def __init__(self, exe: Path, data: Path, home: Path, map_name: str, extra: list[str], port: int):
+        """Start the client on map_name with the pinned dvars and a fresh rcon password."""
         self.password = secrets.token_hex(8)
         self.port = port
         self.log_path = home / "main" / "console_mp.log"
@@ -73,7 +75,7 @@ class Client:
         for i in range(0, len(extra), 2):
             args += ["+set", extra[i], extra[i + 1]]
         args += ["+devmap", map_name]
-        self.proc = subprocess.Popen(args, cwd=str(data), stdin=subprocess.DEVNULL,
+        self.proc = subprocess.Popen(args, cwd=str(data), stdin=subprocess.DEVNULL,  # nosec B603  # nosemgrep
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def send(self, command: str):
@@ -159,6 +161,31 @@ def seed_profile(data: Path):
         (profiles / "active.txt").write_text("shots", encoding="ascii")
 
 
+def capture_view(client: Client, home: Path, out: Path, map_name: str, anchor, view, settle: float) -> dict:
+    """Move the eye to one view, check it landed, and take its A and A2 shots."""
+    name, offset, yaw_delta, pitch = view
+    x, y, z, yaw, pitch = view_target(anchor, offset, yaw_delta, pitch)
+    client.send(f"setviewpos {x:.1f} {y:.1f} {z:.1f} {yaw:.1f} {pitch:.1f}")
+    time.sleep(settle)
+    m = client.ask("viewpos", VIEWPOS)
+    placed = bool(m) and abs(float(m.group(1)) - x) < 2 and abs(float(m.group(2)) - y) < 2
+    files = []
+    for rep in ("a", "a2"):
+        shot = f"{map_name}_{name}_{rep}"
+        err = client.ask(f"screenshot {shot}", re.compile(r"ERROR.*"), 1.0)
+        if err:
+            print(f"  {shot}: {err.group(0)}", flush=True)
+        src = wait_for_file(home, f"{shot}.tga", 30)
+        if src:
+            shutil.move(str(src), out / f"{shot}.tga")
+        files.append(f"{shot}.tga" if src else None)
+        time.sleep(settle)
+    print(f"  {map_name} {name}: {sum(1 for f in files if f)}/2 written"
+          f"{'' if placed else ', VIEW NOT PLACED'}", flush=True)
+    return {"map": map_name, "view": name, "files": files, "placed": placed,
+            "at": [round(x, 1), round(y, 1), round(z, 1), round(yaw, 1), pitch]}
+
+
 def capture_map(a, out: Path, map_name: str, anchors: dict) -> list[dict]:
     home = Path(tempfile.mkdtemp(prefix="kisak-shots-"))
     client = Client(Path(a.client), Path(a.data), home, map_name, a.set or [], a.port)
@@ -182,27 +209,8 @@ def capture_map(a, out: Path, map_name: str, anchors: dict) -> list[dict]:
             if not m:
                 raise RuntimeError(f"{map_name}: no viewpos answer")
             anchors[map_name] = tuple(float(m.group(i)) for i in range(1, 5))
-        for name, offset, yaw_delta, pitch in VIEWS:
-            x, y, z, yaw, pitch = view_target(anchors[map_name], offset, yaw_delta, pitch)
-            client.send(f"setviewpos {x:.1f} {y:.1f} {z:.1f} {yaw:.1f} {pitch:.1f}")
-            time.sleep(a.settle)
-            m = client.ask("viewpos", VIEWPOS)
-            placed = bool(m) and abs(float(m.group(1)) - x) < 2 and abs(float(m.group(2)) - y) < 2
-            files = []
-            for rep in ("a", "a2"):
-                shot = f"{map_name}_{name}_{rep}"
-                err = client.ask(f"screenshot {shot}", re.compile(r"ERROR.*"), 1.0)
-                if err:
-                    print(f"  {shot}: {err.group(0)}", flush=True)
-                src = wait_for_file(home, f"{shot}.tga", 30)
-                if src:
-                    shutil.move(str(src), out / f"{shot}.tga")
-                files.append(f"{shot}.tga" if src else None)
-                time.sleep(a.settle)
-            shots.append({"map": map_name, "view": name, "files": files, "placed": placed,
-                          "at": [round(x, 1), round(y, 1), round(z, 1), round(yaw, 1), pitch]})
-            print(f"  {map_name} {name}: {sum(1 for f in files if f)}/2 written"
-                  f"{'' if placed else ', VIEW NOT PLACED'}", flush=True)
+        for view in VIEWS:
+            shots.append(capture_view(client, home, out, map_name, anchors[map_name], view, a.settle))
     finally:
         client.close()
         shutil.rmtree(home, ignore_errors=True)
@@ -308,6 +316,31 @@ def thumb(width: int, height: int, data: bytes, step: int) -> list[bytes]:
     return rows
 
 
+def compare_view(key: tuple[str, str], bf: list[Path], hf: list[Path]) -> tuple[str, list[bytes]]:
+    """One view's report row, and its contact sheet rows (none when it can't be compared)."""
+    if not bf or not hf:
+        return f"| {key[0]} | {key[1]} | missing in {'base' if not bf else 'head'} | | | | | |", []
+    w, h, img_a = read_tga(bf[0])
+    hw, hh, img_h = read_tga(hf[0])
+    if (w, h) != (hw, hh):
+        return f"| {key[0]} | {key[1]} | size {w}x{h} vs {hw}x{hh} | | | | | |", []
+    d = pixel_diff(img_a, img_h)
+    n = len(d)
+    noise = excess = "n/a"
+    if len(bf) > 1:
+        img_a2 = read_tga(bf[1])[2]
+        d_aa, d_a2h = pixel_diff(img_a, img_a2), pixel_diff(img_a2, img_h)
+        noise = f"{100 * sum(v > 16 for v in d_aa) / n:.2f}%"
+        excess = f"{100 * sum(x > 16 and x > z and y > z for x, y, z in zip(d, d_a2h, d_aa)) / n:.2f}%"
+    warn = ", ".join(warnings(key[1], w, h, img_h)) or "-"
+    row = (f"| {key[0]} | {key[1]} | {sum(d) / n:.2f} | {max(d)} | {100 * sum(v > 16 for v in d) / n:.2f}% | "
+           f"{excess} | {noise} | {warn} |")
+    diff_img = bytes(min(255, 4 * v) for v in d for _ in range(3))
+    parts = [thumb(w, h, img_a, 4), thumb(w, h, img_h, 4), thumb(w, h, diff_img, 4)]
+    rows = [b"".join(p[r] for p in parts) for r in range(len(parts[0]))]
+    return row, rows + [b"\x40" * len(rows[0])] * 4
+
+
 def cmd_compare(a) -> int:
     base, head, out = Path(a.base), Path(a.head), Path(a.out).resolve()
     if out == REPO_ROOT or REPO_ROOT in out.parents:
@@ -321,34 +354,10 @@ def cmd_compare(a) -> int:
               "|---|---|---|---|---|---|---|---|"]
     sheet_rows, problems = [], 0
     for key in sorted(set(bs) | set(hs), key=lambda k: (k[0], [v[0] for v in VIEWS].index(k[1]))):
-        bf = [base / f for f in bs.get(key, []) if f]
-        hf = [head / f for f in hs.get(key, []) if f]
-        if not bf or not hf:
-            problems += 1
-            report.append(f"| {key[0]} | {key[1]} | missing in {'base' if not bf else 'head'} | | | | | |")
-            continue
-        w, h, img_a = read_tga(bf[0])
-        hw, hh, img_h = read_tga(hf[0])
-        if (w, h) != (hw, hh):
-            problems += 1
-            report.append(f"| {key[0]} | {key[1]} | size {w}x{h} vs {hw}x{hh} | | | | | |")
-            continue
-        d = pixel_diff(img_a, img_h)
-        n = len(d)
-        over = sum(v > 16 for v in d) / n
-        noise = excess = "n/a"
-        if len(bf) > 1:
-            d_aa = pixel_diff(img_a, read_tga(bf[1])[2])
-            d_a2h = pixel_diff(read_tga(bf[1])[2], img_h)
-            noise = f"{100 * sum(v > 16 for v in d_aa) / n:.2f}%"
-            excess = f"{100 * sum(x > 16 and x > z and y > z for x, y, z in zip(d, d_a2h, d_aa)) / n:.2f}%"
-        warn = warnings(key[1], w, h, img_h)
-        report.append(f"| {key[0]} | {key[1]} | {sum(d) / n:.2f} | {max(d)} | {100 * over:.2f}% | {excess} | "
-                      f"{noise} | {', '.join(warn) or '-'} |")
-        diff_img = bytes(min(255, 4 * v) for v in d for _ in range(3))
-        parts = [thumb(w, h, img_a, 4), thumb(w, h, img_h, 4), thumb(w, h, diff_img, 4)]
-        sheet_rows += [b"".join(p[r] for p in parts) for r in range(len(parts[0]))]
-        sheet_rows += [b"\x40" * len(sheet_rows[-1])] * 4
+        row, rows = compare_view(key, [base / f for f in bs.get(key, []) if f], [head / f for f in hs.get(key, []) if f])
+        report.append(row)
+        problems += not rows
+        sheet_rows += rows
     text = "\n".join(report)
     (out / "compare.md").write_text(text + "\n", encoding="utf-8")
     print(text)
