@@ -61,7 +61,7 @@ constexpr std::int32_t kStringTable = 0x20;
 
 // Families K4 does not count yet.
 constexpr std::int32_t kUnconverted[] = {
-    kXModelPieces, kXAnimParts, kXModel, kWeapon, kStringTable,
+    kXModelPieces, kXAnimParts, kXModel, kWeapon,
 };
 
 // --- The conversion table records which families own a layout pair. ---
@@ -95,9 +95,7 @@ void TestConversionTable()
     Expect(!IsFamilyConverted(kXModel), "xmodel has no disk32 mirror yet");
     Expect(!IsFamilyConverted(kWeapon), "weapon has no disk32 mirror yet");
     Expect(IsFamilyConverted(kRawFile), "rawfile counts toward K4, so its pair is complete");
-    Expect(
-        !IsFamilyConverted(kStringTable),
-        "stringtable has a RUNTIME_SIZE half but no ONDISK mirror, so it is not converted");
+    Expect(IsFamilyConverted(kStringTable), "stringtable counts toward K4, so its pair is complete");
 }
 
 // --- The fail-closed rule. ---
@@ -131,8 +129,9 @@ void TestFailClosedPolicy()
             "64-bit targets must refuse an unconverted family without an adapter");
     }
 
-    // K4 counts raw files: their 64-bit digest on retail data is the x86 one.
+    // K4 counts these: their 64-bit digest on retail data is the x86 one.
     Expect(IsLoadPermitted(kRawFile, true, false), "64-bit targets must load raw files, which K4 counts");
+    Expect(IsLoadPermitted(kStringTable, true, false), "64-bit targets must load string tables, which K4 counts");
 
     // FX and Impact FX hold a pair, but only the FX zone adapter can apply it.
     Expect(

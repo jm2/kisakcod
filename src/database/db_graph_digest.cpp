@@ -42,6 +42,26 @@ void HashRawFile(GraphHashBuilder &builder, const XAssetHeader &header)
     builder.FieldBytes(kRawFileBuffer, raw.buffer, raw.buffer && raw.len > 0 ? static_cast<std::size_t>(raw.len) : 0);
 }
 
+enum StringTableField : std::uint32_t
+{
+    kStringTableName = 1,
+    kStringTableColumns,
+    kStringTableRows,
+    kStringTableValue,
+};
+
+// Row-major values, as the table stores them.
+void HashStringTable(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const StringTable &table = *header.stringTable;
+    builder.FieldString(kStringTableName, table.name);
+    builder.FieldI64(kStringTableColumns, table.columnCount);
+    builder.FieldI64(kStringTableRows, table.rowCount);
+    const int values = table.values && table.columnCount > 0 && table.rowCount > 0 ? table.columnCount * table.rowCount : 0;
+    for (int i = 0; i < values; ++i)
+        builder.FieldString(kStringTableValue, table.values[i]);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -50,6 +70,8 @@ Walker WalkerFor(const std::int32_t assetType)
     {
     case ASSET_TYPE_RAWFILE:
         return HashRawFile;
+    case ASSET_TYPE_STRINGTABLE:
+        return HashStringTable;
     default:
         return nullptr;
     }
