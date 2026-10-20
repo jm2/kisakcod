@@ -98,6 +98,9 @@ void TestPlaysToDone(HSAMPLE sample)
     AIL_resume_sample(sample);
     CHECK(AIL_sample_status(sample) == SMP_PLAYING);
     CHECK(StatusAfter(sample, 400) == SMP_DONE);
+    // Reloading the played sample makes it loaded-but-not-started again.
+    CHECK(AIL_set_sample_info(sample, &info));
+    CHECK(AIL_sample_status(sample) == SMP_STOPPED);
 }
 
 void TestLoopKeepsPlaying(HSAMPLE sample)

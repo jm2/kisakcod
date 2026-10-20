@@ -241,7 +241,9 @@ S32 AILCALL AIL_init_sample(HSAMPLE, S32) { return 1; }
 S32 AILCALL AIL_set_sample_info(HSAMPLE handle, AILSOUNDINFO const *info)
 {
     Sample *s = ToSample(handle);
-    alSourceStop(s->source);
+    // Back to AL_INITIAL: a reused source left AL_STOPPED would read as
+    // SMP_DONE before the engine resumes the new sound.
+    alSourceRewind(s->source);
     s->loaded = info && Upload(s, *info);
     s->ended = !s->loaded;
     s->baseRate = s->loaded ? info->rate : 0;

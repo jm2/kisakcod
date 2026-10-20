@@ -104,8 +104,12 @@ kisakcod_ilp32(kisakcod-voice-gate-tests
 # backend, which needs no audio device. It builds where pkg-config finds
 # openal; KISAK_TEST_OPENAL makes that required (the Linux amd64 CI leg).
 option(KISAK_TEST_OPENAL "Require OpenAL Soft for the sound shim test" OFF)
+# The shim and its test are POSIX only for now (GNU flags, setenv).
+if (KISAK_TEST_OPENAL AND WIN32)
+    message(FATAL_ERROR "KISAK_TEST_OPENAL is POSIX only so far.")
+endif()
 find_package(PkgConfig QUIET)
-if (PkgConfig_FOUND)
+if (PkgConfig_FOUND AND NOT WIN32)
     # Homebrew's openal-soft is keg-only.
     foreach(_kisak_openal_prefix /opt/homebrew/opt/openal-soft /usr/local/opt/openal-soft)
         if (APPLE AND EXISTS ${_kisak_openal_prefix}/lib/pkgconfig)
@@ -117,7 +121,7 @@ endif()
 if (KISAK_TEST_OPENAL AND NOT KISAK_TEST_OPENAL_LIB_FOUND)
     message(FATAL_ERROR "KISAK_TEST_OPENAL needs OpenAL Soft from pkg-config (libopenal-dev, brew openal-soft).")
 endif()
-if (KISAK_TEST_OPENAL_LIB_FOUND)
+if (KISAK_TEST_OPENAL_LIB_FOUND AND NOT WIN32)
     add_executable(kisakcod-snd-openal-tests snd_openal_tests.cpp ${SRC_DIR}/sound/snd_openal.cpp)
     target_include_directories(kisakcod-snd-openal-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
     target_compile_features(kisakcod-snd-openal-tests PRIVATE cxx_std_20)
