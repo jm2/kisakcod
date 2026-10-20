@@ -49,6 +49,8 @@ inline constexpr std::int32_t kGameWorldMp = 0x0E;
 inline constexpr std::int32_t kLightDef = 0x11;
 inline constexpr std::int32_t kFont = 0x13;
 inline constexpr std::int32_t kMenuList = 0x14;
+inline constexpr std::int32_t kComWorld = 0x0C;
+inline constexpr std::int32_t kLoadedSound = 0x09;
 inline constexpr std::int32_t kAssetTypeCount = 0x21;
 
 // The families K4 counts (docs/design/FASTFILE_LOADER.md): at 64-bit their
@@ -68,6 +70,8 @@ constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
     case kLightDef:
     case kFont:
     case kMenuList:
+    case kComWorld:
+    case kLoadedSound:
         return true;
     default:
         return false;

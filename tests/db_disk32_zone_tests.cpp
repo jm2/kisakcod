@@ -709,11 +709,13 @@ void zone_test::CheckZone()
     const ComWorld *world = Find(ASSET_TYPE_COMWORLD, "e2e/comworld").comWorld;
     Expect(world && world->primaryLightCount == 1 && !std::strcmp(world->primaryLights[0].defName, "e2e/light0"),
            "the com world's light loads");
+    ExpectDigest(ASSET_TYPE_COMWORLD, "e2e/comworld", "53fa76678e8a6175bcfb2e6183030ab6d7d9e0e41619491c32b2ebcb419a33ca");
     const snd_alias_list_t *sound = Find(ASSET_TYPE_SOUND, "e2e/snd").sound;
     const snd_alias_t *alias = sound && sound->count == 1 ? sound->head : nullptr;
     Expect(alias && Is(alias->soundFile->u.loadSnd, ASSET_TYPE_LOADED_SOUND, "e2e/loaded")
                && Is(alias->volumeFalloffCurve, ASSET_TYPE_SOUND_CURVE, "e2e/curve"),
            "a sound reaches its loaded sound and curve");
+    ExpectDigest(ASSET_TYPE_LOADED_SOUND, "e2e/loaded", "e773c0211ad78ffc15b625a7f49a3d3a4542fc85682ae04f03106a7b802824d9");
     ExpectDigest(ASSET_TYPE_SOUND_CURVE, "e2e/curve", "27430354045f87028c3f222c3afa904f1c6722e0fc958e228f3aa432fc48505b");
     const GfxLightDef *light = Find(ASSET_TYPE_LIGHT_DEF, "e2e/lightdef").lightDef;
     Expect(light && Is(light->attenuation.image, ASSET_TYPE_IMAGE, "e2e/img") && light->lmapLookupStart == 7,
