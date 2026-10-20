@@ -90,6 +90,12 @@ These points are community-sourced; confirm each by capture:
 - Current capture kinds: `scalar-sequence`, `huffman-block`, `usercmd-delta` (`kKindRules` in `tests/net_capture_fixtures.hpp`).
 - Still to add, with the captures: kinds for connectionless messages, gamestate, snapshot deltas, server commands, voice and download, and a field-by-field diff report per message class.
 
+**Test clients.** `scr_testclients` (and `addtestclient()`) spawn nothing
+unless `developer 1` and `developer_script 1` are set. A connect rejected on
+protocol logs only through `Com_DPrintf`, so a missing bot is silent without
+`developer 1`; test clients use the server's wire protocol (#641). The first
+int-stat `getstat` on a 64-bit server comes from a bot (#667).
+
 ## 7. Profiles
 
 The protocol is a per-instance profile, chosen at startup by one latched dvar.

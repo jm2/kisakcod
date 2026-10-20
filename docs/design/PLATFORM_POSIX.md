@@ -74,3 +74,18 @@ G1's compile blockers are fixed; these rules keep them fixed.
 - **Kept at 0 by** `tests/headless_include_debt.allow` and the census.
 
 See also [../CHARTER.md](../CHARTER.md), [../ROADMAP.md](../ROADMAP.md), [FASTFILE_LOADER.md](FASTFILE_LOADER.md).
+
+## Host hygiene
+
+- `pkill -f`/`pgrep -f` with a pattern from your own command line kills
+  your shell, and an unanchored pattern hits other projects' processes on a
+  shared host. Match the full command (`--wayland-display=<yours>`) and kill
+  in a separate call. The engine names its main thread `Main`, so
+  `pgrep -x` misses it.
+- Homebrew keg-only packages (openal-soft) need their
+  `opt/<pkg>/lib/pkgconfig` on `PKG_CONFIG_PATH`; Homebrew dylibs carry the
+  host's minimum macOS, so test targets link with the same
+  `-mmacosx-version-min`.
+- On Linux the client links with a version script that exports nothing
+  (#655): an exported engine symbol (bundled zlib, `g_log`) interposes the
+  system library for every DSO.

@@ -20,9 +20,16 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 - **Native D3DX9_43 rules the reflection matches:** ps_2_x reads `COLOR1` as COLOR0, as retail did (don't fix it); ps_1_x always outputs COLOR0; an SM1 CTAB sits only in the comments after the version token; pixel outputs are `oC#`/`oDepth`.
 - **Dependencies:** no `d3dx9.lib`, but the Microsoft.DXSDK.D3DX 9.29.952.8 NuGet supplies the headers.
 - **ARM64 build:** VS 2026 `-A ARM64` (CMake ≥ 4.2) with `-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DKISAK_ENABLE_STEAM=OFF -DCICD=ON -DDXSDK_DIR=…`; check with `scripts/ci/verify-artifact-arch.ps1 -Expected ARM64`. MSVC defines `_M_ARM64`, not `__aarch64__`; `Sys_CycleCounter` reads CNTVCT_EL0.
-- **Run (antec-win):** D3D9 needs the console session; after an RDP login, hand it over with `tscon (Get-Process -Id $PID).SessionId /dest:console` (PowerShell). While connected, console commands need a leading `/`, or they go out as chat. Windows Firewall prompts once per new exe; Deny is fine for a loopback `devmap`.
+- **Run (antec-win):** D3D9 needs the console session: a disconnected session fails `GetDeviceCaps` with Invalid call, and an RDP session lists the GPU but returns `D3DERR_NOTAVAILABLE`. After an RDP login, hand the session over with `tscon (Get-Process -Id $PID).SessionId /dest:console` (PowerShell). A fatal D3D error leaves a modal dialog, so automation must time out and kill the process. While connected, console commands need a leading `/`, or they go out as chat. Windows Firewall prompts once per new exe; Deny is fine for a loopback `devmap`.
 - **Host quirk:** `platform-socket-stream-contracts` times out on a host that drops loopback RSTs; hosted CI is the reference.
 - **CI `windows-client-64`:** builds KisakCOD-mp on `amd64`, native `arm64` and `amd64-sdl3`, and checks the PE machine type; it doesn't run the client. It's advisory, so read each leg. A link error on arm64 alone usually means new x86- or D3DX-only code.
+
+### x86 baseline (G0)
+
+- The Steam client fails `CL_CDKeyValidate` off loopback (127.0.0.1 included) with no Steam running; use the nightly `KisakCOD-windows-x86-nosteam-Release` artifact. Bind `+set net_ip 127.0.0.1` on both ends.
+- Retail `mss32.dll` (Miles 7.0w) lacks five `AIL_*` exports the client imports, and the loader fails silently; put the repo's `deps/msslib/dlls/mss32.dll` (7.2e) and `miles/` beside the exe, plus an x86 `d3dx9_43.dll` (NuGet Microsoft.DXSDK.D3DX 9.29.952.8).
+- An empty dm server still rotates: a 1-minute round takes about 2 minutes of wall time with intermission and load.
+- **Wine (Fedora):** `wine32` with a `WINEARCH=win32` prefix; `wine-common` must be installed or `wineboot` loops on missing `winmd` files; disable `mscoree,mshtml`; Fedora ships the builtin d3d9 as `wine-d3d9.dll`, so copy it to `d3d9.dll` in the prefix, and set `HKCU\Software\Wine\Direct3D\renderer=vulkan`. The display driver is chosen when the prefix's desktop starts, so restart `wineserver` after changing it. Piped stdin doesn't reach the Win32 console. Open: with a working display driver (headless mutter or gamescope) the client stalls after `autoexec_dev_mp.cfg`, before `R_Init`.
 
 ### macOS (step 2)
 
@@ -128,6 +135,22 @@ on the binary path, not `pgrep -x`.
   `mutter --headless --wayland --no-x11 --wayland-display=<name> --virtual-monitor 1920x1080`.
 - Run the client with `WAYLAND_DISPLAY=<name> SDL_VIDEO_DRIVER=wayland`.
 
+**Scripted runs.**
+
+- Drive the console on stdin (`screenshot`, `+attack`, `quit`), or by rcon,
+  whose output goes into the UDP reply and drops bytes on long replies. `wait`
+  doesn't delay in exec'd configs, and there's no `echo`; an unknown command's
+  `Unknown command "X"` line works as a marker.
+- Spawn without input after about 30 s: `openScriptMenu team_marinesopfor
+  autoassign`, then `openScriptMenu changeclass assault_mp,0`.
+- Markers: `byte snapshot for <name>` (client active); on headless `Huffman
+  Took` (map up). `MyAssertHandler` reports only under `KISAK_PURE`, so a
+  Release run passes a failed `iassert` silently.
+- Cinematics: `developer 1` prints `Bink via FFmpeg: opened …` and `closed at
+  frame N of N after decoding N-1 frames in X s`; the intro chain takes about
+  115 s. Audio: an `ALSOFT_CONF` with `drivers=wave` records the final mix to
+  a local file for RMS/peak numbers; never link Apple's OpenAL.framework.
+
 **Maps.**
 
 - `+devmap <map>` needs a selected profile: `profiles/active.txt` naming a
@@ -139,6 +162,11 @@ on the binary path, not `pgrep -x`.
   builds skip the intro while connecting (#614).
 
 **Screenshots.**
+
+- Regression sets (row 50): frames aren't deterministic, so settle 1.5-2.5 s
+  after `setviewpos`, pin `com_maxfps`, MSAA off and the window size, hide
+  gun and HUD, and shoot A/B/A. Compare the share of pixels off by >16/255,
+  not the max; calm-map noise is a mean under 0.2 and under 0.5% of pixels.
 
 - `screenshotJPEG` has no encoder in any build and says so (#593); use
   `screenshot`, which writes TGA.

@@ -105,3 +105,36 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 - **K1 ARM64 legs (owner 2026-09-29):** `win64` is Windows x64 only, so a clean win64 says nothing about Windows ARM64 or macOS arm64. `winarm64` checks the Win64 set for `aarch64-w64-mingw32` with clang 18 and a sha256-pinned llvm-mingw (LLVM 18.1.8). `mac64` checks the POSIX set plus `src/_platform/macos` with Apple clang 21 on the hosted `xcode-27` runner. Both measure and never gate. Off Windows, `sound/snd_msstypes.h` stands in for Miles `mss.h`, and ODE takes `alloca` from `<alloca.h>` on macOS.
 - **Census flags:** `-D_DEBUG` so asserts compile, no `-fdelayed-template-parsing` so two-phase lookup errors surface, and no `-Wno-everything` so DefaultError diagnostics fail a TU; `-Werror=c++11-narrowing` re-promotes the one group `-fms-extensions` demotes. `census.md` prints the flag set and the narrowing sites per header.
 - **K4–K6:** K4 (loader closure) is defined in [FASTFILE_LOADER.md](FASTFILE_LOADER.md), K5 (D3D reach) in [PLATFORM_POSIX.md](PLATFORM_POSIX.md), and K6 (delivery cells) in [CHARTER.md](../CHARTER.md).
+
+## Lessons from the ports
+
+- **Hard-coded Win32 struct sizes** (`dwSize`, `cbSize`, `cb`) are 32-bit
+  values; use `sizeof` (#632, #634). Check a new one with a `sizeof` probe
+  for both arches; `mmsystem.h` packs to 1.
+- **Decompiler aliases** into a neighbouring array can be wrong at both
+  widths when the struct grew later (#667: 69 bytes off on x86). Rederive
+  the offset from the client-side twin, and check x86 offsets without
+  Windows: `clang++ --target=i686-linux-gnu -fsyntax-only` with
+  `template<int> struct Show;` on `offsetof`.
+- **Truncating casts** hide in decompiled calls through
+  `(int(__cdecl*)(…))` (MSS_Alloc, #666). A sanitizer run finds them.
+- **Headless includes.** Headless TUs may not include client, gfx_d3d,
+  sound or ui headers (include tripwire). Move a record definition-only into
+  `universal/` first (#644, #656, #659), spelling `__int64`/`__int32` as
+  standard types, and repoint the configure-time header slicers in
+  `tests/renderer_*_contracts.cmake`, which fail configure when a type moves.
+- **x86 identity.** Declare any CODE object in the PR body. A reviewer checks
+  a declared delta with a local MSVC x86 `/Brepro` compile of base and head;
+  an inlining change shows as CODE with the same callees and data. The job
+  compares data per symbol (#647).
+
+## G2 run
+
+`scripts/g2_run.py` drives row 45: an ASan+UBSan headless build
+(clang, RelWithDebInfo, `-fsanitize=address,undefined
+-fno-sanitize-recover=undefined -fno-omit-frame-pointer -g` in C, C++ and
+link flags, otherwise the CI `linux-headless` options), `halt_on_error=1`
+for both sanitizers, so the first report ends the run. The server's configs
+overwrite a command-line `sv_mapRotation`, so the script sets the rotation
+on stdin after the first map, and waits for `Headless dedicated loading map
+'<name>'` then `Huffman Took` or `Hitch warning` before querying.
