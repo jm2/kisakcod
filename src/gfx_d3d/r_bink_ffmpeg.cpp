@@ -104,12 +104,13 @@ void CopyPlane(const BINKPLANE &plane, const uint8_t *src, int srcPitch, U32 wid
     if (!plane.Buffer)
         return;
     uint8_t *dst = static_cast<uint8_t *>(plane.Buffer);
-    for (U32 row = 0; row < height; ++row, dst += plane.BufferPitch)
+    for (U32 row = 0; row < height; ++row)
     {
         if (src)
             std::copy_n(src + static_cast<ptrdiff_t>(row) * srcPitch, width, dst);
         else
             std::fill_n(dst, width, fill);
+        dst += plane.BufferPitch;
     }
 }
 
@@ -117,6 +118,16 @@ Clock::time_point FrameDue(const Movie *movie, U32 frameNum)
 {
     const int64_t usec = static_cast<int64_t>(frameNum - 1) * movie->bink.FrameRateDiv * 1000000 / movie->bink.FrameRate;
     return movie->start + std::chrono::microseconds(usec);
+}
+
+bool OpenCodec(Movie *movie, const AVCodec *decoder)
+{
+    movie->codec = avcodec_alloc_context3(decoder);
+    movie->packet = av_packet_alloc();
+    movie->frame = av_frame_alloc();
+    return movie->codec && movie->packet && movie->frame
+        && avcodec_parameters_to_context(movie->codec, movie->format->streams[movie->stream]->codecpar) >= 0
+        && avcodec_open2(movie->codec, decoder, nullptr) >= 0;
 }
 
 // Opens the file and its video decoder; false (with the error set) on failure.
@@ -136,12 +147,7 @@ bool OpenDecoder(Movie *movie, const char *name)
     }
     for (unsigned i = 0; i < movie->format->nb_streams; ++i)
         movie->format->streams[i]->discard = static_cast<int>(i) == movie->stream ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
-    movie->codec = avcodec_alloc_context3(decoder);
-    movie->packet = av_packet_alloc();
-    movie->frame = av_frame_alloc();
-    if (!movie->codec || !movie->packet || !movie->frame
-        || avcodec_parameters_to_context(movie->codec, movie->format->streams[movie->stream]->codecpar) < 0
-        || avcodec_open2(movie->codec, decoder, nullptr) < 0)
+    if (!OpenCodec(movie, decoder))
     {
         SetError("FFmpeg can't open the Bink video decoder");
         return false;
