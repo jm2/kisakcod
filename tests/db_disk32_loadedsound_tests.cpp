@@ -1,7 +1,9 @@
 // db_disk32_loadedsound_tests.cpp: the 64-bit LoadedSound loader (NOW row 12)
-// on hand-built disk32 zone images (disk32_fixture.hpp). Beyond the fixture's
-// seams, only the asset pool (Load_LoadedSoundAsset) is replaced. The sound
-// bytes are synthetic.
+// on hand-built disk32 zone images (disk32_fixture.hpp), as a headless server
+// (loadedsound) and as a client (loadedsound-client), which hands each sound's
+// bytes to SND_SetData. Beyond the fixture's seams, only the asset pool
+// (Load_LoadedSoundAsset) and SND_SetData are replaced. The sound bytes are
+// synthetic.
 
 #include "disk32_fixture.hpp"
 
@@ -17,6 +19,18 @@ namespace
 using namespace disk32_test;
 
 LoadedSound g_pool[4]; // what Load_LoadedSoundAsset published
+
+#ifdef KISAK_DEDI_HEADLESS
+constexpr bool kClient = false;
+#else
+constexpr bool kClient = true;
+#endif
+
+// What SND_SetData saw: the bytes, and the info as it stood at the call.
+int g_setDataCalls = 0;
+const void *g_setDataSource = nullptr;
+std::uint32_t g_setDataLength = 0;
+std::uint32_t g_setDataRate = 0;
 
 constexpr std::string_view kPcm{"\x10\x32\x54\x76\x98\xBA\xDC\xFE\x01\x23\x45\x67\x89\xAB\xCD\xEF", 16};
 constexpr std::uint32_t kRecordBytes = sizeof(disk32::LoadedSoundDisk32);
@@ -66,6 +80,16 @@ bool OwnsNoBuffer(const LoadedSound &sound)
     return !sound.sound.data && !sound.sound.info.data_ptr && !sound.sound.info.initial_ptr;
 }
 
+// A server keeps no buffer; a client's SND_SetData (the stub below) took
+// `bytes`, after the info was converted.
+bool HoldsData(const LoadedSound &sound, const void *bytes)
+{
+    if (!kClient)
+        return OwnsNoBuffer(sound);
+    return sound.sound.data == bytes && sound.sound.info.data_ptr == bytes && g_setDataSource == bytes
+        && g_setDataLength == sound.sound.info.data_len && g_setDataRate == sound.sound.info.rate;
+}
+
 bool InfoIs(const _AILSOUNDINFO_COD4 &info, std::uint32_t dataLen, std::uint32_t rate, std::uint32_t samples)
 {
     return info.format == 7 && info.data_len == dataLen && info.rate == rate && info.bits == 16
@@ -75,6 +99,7 @@ bool InfoIs(const _AILSOUNDINFO_COD4 &info, std::uint32_t dataLen, std::uint32_t
 void TestInlineLoadedSound()
 {
     Zone zone;
+    g_setDataCalls = 0;
     File().Record({.dataLen = 16, .data = kInline, .rate = 44100, .samples = 4}).Text("sound/ui/beep.wav").Bytes(kPcm);
     File().Record({.dataLen = 5}).Text("sound/ui/mute.wav"); // a null data token streams nothing
     const LoadedSound *const sound = Load(kInline);
@@ -83,7 +108,8 @@ void TestInlineLoadedSound()
         return;
     Expect(zone.Is(sound->name, "sound/ui/beep.wav") && sound->name == zone.At(0), "name points at its bytes in block 4");
     Expect(InfoIs(sound->sound.info, 16, 44100, 4), "the sound info converts from its retail offsets");
-    Expect(OwnsNoBuffer(*sound), "the headless record owns no playback buffer");
+    Expect(HoldsData(*sound, zone.temp + kRecordBytes) && g_setDataCalls == (kClient ? 1 : 0),
+           kClient ? "a client hands the streamed bytes to SND_SetData" : "the headless record owns no playback buffer");
     Expect(!std::memcmp(zone.temp, g_file.data(), kRecordBytes),
            "the disk32 record is streamed into the temp block at the retail offset");
     Expect(!std::memcmp(zone.temp + kRecordBytes, kPcm.data(), kPcm.size()),
@@ -92,8 +118,9 @@ void TestInlineLoadedSound()
 
     const LoadedSound *const mute = Load(kInline);
     Expect(mute == &g_pool[1] && zone.Is(mute->name, "sound/ui/mute.wav") && OwnsNoBuffer(*mute)
-               && InfoIs(mute->sound.info, 5, 22050, 8) && g_read == g_file.size(),
-           "a null data token streams nothing");
+               && InfoIs(mute->sound.info, 5, 22050, 8) && g_read == g_file.size()
+               && g_setDataCalls == (kClient ? 1 : 0),
+           "a null data token streams nothing and sets no data");
     Expect(!std::memcmp(zone.temp, g_file.data() + kRecordBytes + 18 + kPcm.size(), kRecordBytes),
            "the temp block is released, so the next record streams at its start");
 }
@@ -101,6 +128,7 @@ void TestInlineLoadedSound()
 void TestSharedInlineAndOffsets()
 {
     Zone zone;
+    g_setDataCalls = 0;
     // After the 4-byte LoadedSound alias slot: the name (4..14), then the
     // SoundData alias slot (16..19).
     File().Record({.dataLen = 8, .data = disk32::kSharedInline}).Text("snd_shared").Bytes(kPcm.substr(0, 8));
@@ -118,7 +146,10 @@ void TestSharedInlineAndOffsets()
            "a data offset token to an earlier sound's data of the same length loads");
     if (second != &g_pool[1])
         return;
-    Expect(second->name == shared->name && OwnsNoBuffer(*second), "a name offset token resolves to the earlier string");
+    Expect(second->name == shared->name, "a name offset token resolves to the earlier string");
+    Expect(HoldsData(*second, shared->sound.data ? shared->sound.data : nullptr)
+               && (!kClient || (shared->sound.data && g_setDataCalls == 2)),
+           kClient ? "a data offset hands the earlier sound's bytes to SND_SetData" : "neither record owns a buffer");
     Expect(!Load(0) && g_published == 2, "a null token loads nothing");
 }
 
@@ -225,6 +256,21 @@ void TestMalformedFailsClosed()
     }
 }
 } // namespace
+
+#ifndef KISAK_DEDI_HEADLESS
+// The engine copies the bytes into a playback buffer; the stub records the
+// call and points the record at the source, so tests can tell them apart.
+void __cdecl SND_SetData(MssSoundCOD4 *mssSound, void *srcData)
+{
+    ++g_setDataCalls;
+    g_setDataSource = srcData;
+    g_setDataLength = mssSound->info.data_len;
+    g_setDataRate = mssSound->info.rate;
+    mssSound->data = static_cast<std::uint8_t *>(srcData);
+    mssSound->info.data_ptr = srcData;
+    mssSound->info.initial_ptr = srcData;
+}
+#endif
 
 void __cdecl Load_LoadedSoundAsset(XAssetHeader *header)
 {
