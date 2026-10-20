@@ -134,6 +134,12 @@ void TestFailClosedPolicy()
     Expect(IsLoadPermitted(kRawFile, true, false), "64-bit targets must load raw files, which K4 counts");
     Expect(IsLoadPermitted(kStringTable, true, false), "64-bit targets must load string tables, which K4 counts");
     Expect(IsLoadPermitted(kPhysPreset, true, false), "64-bit targets must load physics presets, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kLocalizeEntry, true, false),
+           "64-bit targets must load localized strings, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kMapEnts, true, false),
+           "64-bit targets must load map entities, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kSoundCurve, true, false),
+           "64-bit targets must load sound curves, which K4 counts");
 
     // FX and Impact FX hold a pair, but only the FX zone adapter can apply it.
     Expect(

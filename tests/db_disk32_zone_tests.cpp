@@ -701,8 +701,10 @@ void zone_test::CheckZone()
     ExpectDigest(ASSET_TYPE_PHYSPRESET, "e2e/phys", "57561419d0a87f9f73b65cf9373f64420ebf9844511a43227f68e5ca70a5324b");
     const LocalizeEntry *text = Find(ASSET_TYPE_LOCALIZE_ENTRY, "E2E_HELLO").localize;
     Expect(text && !std::strcmp(text->value, "Hello"), "the localized string loads");
+    ExpectDigest(ASSET_TYPE_LOCALIZE_ENTRY, "E2E_HELLO", "b2fe4b24c0b4c05082de1b641f243aeb0e54f0820782208cbd9f21e2aa76fed0");
     const MapEnts *ents = Find(ASSET_TYPE_MAP_ENTS, "e2e/ents").mapEnts;
     Expect(ents && ents->numEntityChars == 3 && !std::strcmp(ents->entityString, "{}"), "the map entities load");
+    ExpectDigest(ASSET_TYPE_MAP_ENTS, "e2e/ents", "084e367684801f3eef8535928ddae0ccda22fd62aba5345909eb8f08dc381095");
     const ComWorld *world = Find(ASSET_TYPE_COMWORLD, "e2e/comworld").comWorld;
     Expect(world && world->primaryLightCount == 1 && !std::strcmp(world->primaryLights[0].defName, "e2e/light0"),
            "the com world's light loads");
@@ -711,6 +713,7 @@ void zone_test::CheckZone()
     Expect(alias && Is(alias->soundFile->u.loadSnd, ASSET_TYPE_LOADED_SOUND, "e2e/loaded")
                && Is(alias->volumeFalloffCurve, ASSET_TYPE_SOUND_CURVE, "e2e/curve"),
            "a sound reaches its loaded sound and curve");
+    ExpectDigest(ASSET_TYPE_SOUND_CURVE, "e2e/curve", "27430354045f87028c3f222c3afa904f1c6722e0fc958e228f3aa432fc48505b");
     const GfxLightDef *light = Find(ASSET_TYPE_LIGHT_DEF, "e2e/lightdef").lightDef;
     Expect(light && Is(light->attenuation.image, ASSET_TYPE_IMAGE, "e2e/img") && light->lmapLookupStart == 7,
            "a light def's attenuation is the shared image");

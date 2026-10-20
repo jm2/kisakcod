@@ -4,6 +4,8 @@
 
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
+#include <sound/snd_public.h>
+#include <ui/ui_shared.h>
 #include <universal/q_shared.h>
 
 #include <algorithm>
@@ -93,6 +95,57 @@ void HashPhysPreset(GraphHashBuilder &builder, const XAssetHeader &header)
     builder.FieldU64(kPhysPresetTempDefaultToCylinder, preset.tempDefaultToCylinder);
 }
 
+enum LocalizeEntryField : std::uint32_t
+{
+    kLocalizeEntryName = 1,
+    kLocalizeEntryValue,
+};
+
+void HashLocalizeEntry(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const LocalizeEntry &entry = *header.localize;
+    builder.FieldString(kLocalizeEntryName, entry.name);
+    builder.FieldString(kLocalizeEntryValue, entry.value);
+}
+
+enum MapEntsField : std::uint32_t
+{
+    kMapEntsName = 1,
+    kMapEntsChars,
+    kMapEntsString,
+};
+
+// numEntityChars counts the terminator; those bytes are the content.
+void HashMapEnts(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const MapEnts &ents = *header.mapEnts;
+    builder.FieldString(kMapEntsName, ents.name);
+    builder.FieldI64(kMapEntsChars, ents.numEntityChars);
+    builder.FieldBytes(kMapEntsString, ents.entityString,
+                       ents.entityString && ents.numEntityChars > 0 ? static_cast<std::size_t>(ents.numEntityChars) : 0);
+}
+
+enum SndCurveField : std::uint32_t
+{
+    kSndCurveName = 1,
+    kSndCurveKnotCount,
+    kSndCurveKnot,
+};
+
+// Only the first knotCount knots are the curve.
+void HashSndCurve(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const SndCurve &curve = *header.sndCurve;
+    builder.FieldString(kSndCurveName, curve.filename);
+    builder.FieldI64(kSndCurveKnotCount, curve.knotCount);
+    const int knots = curve.knotCount < 0 ? 0 : curve.knotCount > 8 ? 8 : curve.knotCount;
+    for (int i = 0; i < knots; ++i)
+    {
+        builder.FieldF32(kSndCurveKnot, curve.knots[i][0]);
+        builder.FieldF32(kSndCurveKnot, curve.knots[i][1]);
+    }
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -105,6 +158,12 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashStringTable;
     case ASSET_TYPE_PHYSPRESET:
         return HashPhysPreset;
+    case ASSET_TYPE_LOCALIZE_ENTRY:
+        return HashLocalizeEntry;
+    case ASSET_TYPE_MAP_ENTS:
+        return HashMapEnts;
+    case ASSET_TYPE_SOUND_CURVE:
+        return HashSndCurve;
     default:
         return nullptr;
     }
