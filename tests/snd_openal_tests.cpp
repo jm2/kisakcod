@@ -113,6 +113,21 @@ void TestLoopKeepsPlaying(HSAMPLE sample)
     CHECK(AIL_sample_status(sample) == SMP_DONE);
 }
 
+void TestSeekToEnd(HSAMPLE sample)
+{
+    // On a playing source an offset at the end is out of range for OpenAL.
+    // The shim clamps below it, and no error may linger to fail the next
+    // upload.
+    const AILSOUNDINFO info = Pcm16(g_pcm.data(), static_cast<U32>(g_pcm.size() * sizeof(int16_t)));
+    CHECK(AIL_set_sample_info(sample, &info));
+    AIL_set_sample_loop_count(sample, 0);
+    AIL_resume_sample(sample);
+    AIL_set_sample_ms_position(sample, 50);
+    AIL_set_sample_ms_position(sample, 5000);
+    CHECK(AIL_sample_status(sample) == SMP_PLAYING);
+    CHECK(AIL_set_sample_info(sample, &info));
+}
+
 void TestLevels(HSAMPLE sample)
 {
     AIL_set_sample_volume_levels(sample, 0.5f, 0.5f);
@@ -150,6 +165,7 @@ int main()
         TestHeadersFailClosed(sample);
         TestPlaysToDone(sample);
         TestLoopKeepsPlaying(sample);
+        TestSeekToEnd(sample);
         TestLevels(sample);
     }
     // Streams arrive later; until then they fail with a reason.

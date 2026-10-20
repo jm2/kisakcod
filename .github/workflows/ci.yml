@@ -48,6 +48,8 @@ jobs:
           - platform: Linux amd64
             runner: ubuntu-24.04
             file-arch: x86-64
+            # Builds and runs the OpenAL Soft sound shim test (null backend).
+            openal: true
           - platform: Linux arm64
             runner: ubuntu-24.04-arm
             file-arch: aarch64
@@ -68,6 +70,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install OpenAL Soft
+        if: matrix.openal
+        run: sudo apt-get update && sudo apt-get install -y libopenal-dev
+
       - name: Configure
         run: >
           cmake -S . -B build-tests
@@ -76,6 +82,7 @@ jobs:
           -DKISAK_BUILD_SP=OFF
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TESTING=ON
+          -DKISAK_TEST_OPENAL=${{ matrix.openal && 'ON' || 'OFF' }}
 
       - name: Build portable tests
         # A bare --parallel is an unbounded make -j with the Makefiles

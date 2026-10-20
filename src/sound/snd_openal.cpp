@@ -92,6 +92,7 @@ bool Upload(Sample *s, const AILSOUNDINFO &info)
         return false;
     const ALenum format = info.bits == 8 ? (stereo ? AL_FORMAT_STEREO8 : AL_FORMAT_MONO8)
                                          : (stereo ? AL_FORMAT_STEREO16 : AL_FORMAT_MONO16);
+    alGetError(); // only this upload's errors count
     alSourcei(s->source, AL_BUFFER, 0);
     alBufferData(s->buffer, format, info.data_ptr, static_cast<ALsizei>(frames * frameBytes),
                  static_cast<ALsizei>(info.rate));
@@ -212,6 +213,7 @@ HSAMPLE AILCALL AIL_allocate_sample_handle(HDIGDRIVER)
     Sample *s = new (std::nothrow) Sample();
     if (!s)
         return nullptr;
+    alGetError(); // only this allocation's errors count
     alGenSources(1, &s->source);
     alGenBuffers(1, &s->buffer);
     if (alGetError() != AL_NO_ERROR)
@@ -358,8 +360,9 @@ void AILCALL AIL_sample_ms_position(HSAMPLE handle, S32 *total, S32 *current)
 void AILCALL AIL_set_sample_ms_position(HSAMPLE handle, S32 ms)
 {
     const Sample *s = ToSample(handle);
-    if (s->loaded && ms > 0)
-        alSourcef(s->source, AL_SEC_OFFSET, static_cast<ALfloat>(std::min<U32>(ms, s->lengthMs)) / 1000.0f);
+    // An offset at or past the end is out of range for AL_SEC_OFFSET.
+    if (s->loaded && ms > 0 && s->lengthMs > 0)
+        alSourcef(s->source, AL_SEC_OFFSET, static_cast<ALfloat>(std::min<U32>(ms, s->lengthMs - 1)) / 1000.0f);
 }
 
 // 3D samples are not positioned yet; see the file comment.
