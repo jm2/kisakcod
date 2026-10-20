@@ -47,8 +47,13 @@ if (KISAK_MEDIA_STUBS AND CMAKE_SIZEOF_VOID_P EQUAL 4)
 endif()
 # Cinematics through FFmpeg's Bink decoder instead of binkw32 (POSIX clients;
 # docs/design/CLIENT.md). Needs libavformat, libavcodec and libavutil from
-# pkg-config, e.g. Homebrew's ffmpeg.
-option(KISAK_FFMPEG_CINEMATICS "Play Bink cinematics through FFmpeg on POSIX clients" OFF)
+# pkg-config, e.g. Homebrew's ffmpeg. Only POSIX client builds read it, so
+# headless servers don't need FFmpeg.
+set(_KISAK_DEFAULT_FFMPEG_CINEMATICS ON)
+if (WIN32)
+    set(_KISAK_DEFAULT_FFMPEG_CINEMATICS OFF)
+endif()
+option(KISAK_FFMPEG_CINEMATICS "Play Bink cinematics through FFmpeg on POSIX clients" ${_KISAK_DEFAULT_FFMPEG_CINEMATICS})
 if (KISAK_FFMPEG_CINEMATICS AND WIN32)
     message(FATAL_ERROR "KISAK_FFMPEG_CINEMATICS is wired for POSIX clients only so far.")
 endif()
