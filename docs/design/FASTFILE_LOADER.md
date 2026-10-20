@@ -29,9 +29,8 @@ Retail data broke these synthetic-fixture assumptions; each now has a test:
   knots (`,helicopter1`) loads as-is on both paths (#498, x86 #518).
 - **Empty values.** A 0x0 StringTable may carry an inline values token
   (#478); an FX lifespan may start at 0 (#479).
-- **Shader versions.** Renderer 0 ships vs_1_1 and ps_1_1-1_4. SM1 tokens
-  have no length field, so their bytecode is checked by its comment blocks
-  and END token (#475).
+- **Shader versions.** Renderer 0 ships SM1 tokens with no length field;
+  their bytecode is checked by comment blocks and END (#475).
 
 ## Design
 
@@ -59,9 +58,8 @@ Retail data broke these synthetic-fixture assumptions; each now has a test:
    32-bit loader's further rules as a hand-written `Check<Family>`, such as SoundCurve's knot
    checks. A `body=custom` family hand-writes only the body, such as StringTable's value
    array. Each family's TU forwards `DB_Load<Family>PtrDisk32` to the generated entry.
-   For custom bodies the schema also has `pointer` and `rawptr` (token and non-token pointer
-   bytes), `struct of=` (a nested record inline), dotted fields naming members of nested native
-   structs, and `copy=scalars`, which emits the record's scalar copies for the body to call.
+   Custom bodies also get `pointer`/`rawptr`, `struct of=`, dotted nested fields and
+   `copy=scalars` (the record's scalar copies).
 
    **Asset references**, such as LightDef → Image or Font → Material. A `pointer` field `asset=<Family>` holds a token to another
    family's header. The body calls that family's generated pointer step, `Load<Family>Ptr`, which
@@ -194,7 +192,10 @@ newer than the run. Read the console for:
   `no 64-bit on-disk/runtime layout pair` means the guard (no opt-in);
   `alias offset: unregistered slot` means an unrecorded pointer slot.
 
-CI runs the x86 load path only on synthetic zones (`linux-x86-tests`, #522).
+**K4 legs** compare headless servers (clients also load UI); Windows
+legs run the PR's CI artifacts, one `+db_graphhash` per verified family on
+the same command line. `list` lines name retail assets: post only family lines. Walker rules
+head `db_graph_digest.cpp`.
 
 **Registry sessions.** A sequence that holds `db_hashCritSect` while its
 assets intern or mark script strings (user 4 or 8) must hold it through

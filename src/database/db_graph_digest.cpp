@@ -1,3 +1,18 @@
+// K4 walkers (docs/design/FASTFILE_LOADER.md). Hash what both widths keep, in
+// a width-free form: a reference as the referenced asset's name (FieldAsset), a
+// bool through its stored byte, script strings as text, layout-invariant arrays
+// as bytes (FieldArray), and only counted elements, since 64-bit can keep an
+// empty array where x86 keeps null. Never hash pointers, renderer handles or
+// runtime clocks, and hash schema word runs as n*4 bytes from their first
+// member, never up to the next pointer (64-bit padding).
+//
+// Adding a family: pin its synthetic-zone digest with MSVC at x86 and x64 (the
+// two must agree; the i386 zone leg checks the same pins), lift its guard in
+// IsK4Verified (renderer families and LoadedSound inside the
+// KISAK_DEDI_HEADLESS block), and grep tests/ for the family: the layout
+// tests' unconverted list, the envelope test's guarded family and the zone
+// guard tests may still assume it is refused.
+
 #include "database/db_graph_digest.h"
 
 #include "database/database.h"

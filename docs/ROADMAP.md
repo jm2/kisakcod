@@ -32,12 +32,15 @@ build.
 Estimates are ranges for one strong engineer, with low confidence. They don't
 convert to swarm time.
 
-**Where things stand (2026-10-18).** G1 is done. G2's loader is complete
-behind the `db_unverified64` opt-in; its proof is the K4 digest pipeline and
-the boot-and-soak run (NOW rows 37, 45). G5 ran ahead of G2 on that opt-in:
-Win64, macOS and Linux arm64 clients are in-game on Steam 1.8 data, and Linux
-amd64 draws its menu. G4a's wire identity is built and waits on the owner's
-captures. G0 has no recorded run yet (row 46). G3, G4b and G6 haven't started.
+**Where things stand (2026-10-20).** G1 is done. G2's loader is complete
+behind the `db_unverified64` opt-in; its proof is the K4 digest pipeline
+(16/25 families) and the boot-and-soak run (NOW rows 37, 45). G5 ran ahead of
+G2 on that opt-in: Win64, Windows ARM64, macOS and both Linux clients are
+in-game on Steam 1.8 data, and POSIX clients play cinematics through FFmpeg;
+audio is next (row 51). G4a's wire identity is built and waits on the owner's
+captures. G0's x86 server runs natively and under Wine; its client run waits
+on the owner (row 46). G3's pre-check is in progress (row 47); G4b and G6
+haven't started.
 
 ```mermaid
 graph LR
