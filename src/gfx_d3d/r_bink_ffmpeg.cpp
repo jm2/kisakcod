@@ -2,8 +2,8 @@
 //
 // binkw32 is 32-bit Windows only, so 64-bit and POSIX clients define the Bink
 // calls r_cinematic.cpp makes here and decode with libavcodec's binkvideo:
-// - The header (frame count, size, rate, alpha) is read from the file itself,
-//   so BINK and BINKREALTIME report what binkw32 would.
+// - The header (frame count, size, rate, alpha) comes from FFmpeg's Bink
+//   demuxer, so BINK and BINKREALTIME report what binkw32 would.
 // - BinkDoFrame decodes the next frame into the planes the engine locked
 //   (bink_buffers.Frames[FrameNum], L8 textures); BinkNextFrame advances and
 //   flips the buffer, as binkw32 does with BINKNOFRAMEBUFFERS.
@@ -20,30 +20,23 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
-#include <libavutil/imgutils.h>
 }
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
-#include <cstdio>
-#include <cstring>
 #include <new>
 
 namespace
 {
-constexpr U32 kHeaderSize = 44;
 constexpr U32 kAlphaFlag = 0x00100000; // video flags: the file carries an alpha plane
 
-thread_local char s_error[256];
+// BinkGetError's text: always a literal, so no buffer to fill.
+thread_local const char *s_error = "";
 
 void SetError(const char *text)
 {
-    snprintf(s_error, sizeof(s_error), "%s", text);
-}
-
-U32 ReadU32(const uint8_t *p)
-{
-    return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<U32>(p[3]) << 24);
+    s_error = text;
 }
 
 using Clock = std::chrono::steady_clock;
@@ -114,9 +107,9 @@ void CopyPlane(const BINKPLANE &plane, const uint8_t *src, int srcPitch, U32 wid
     for (U32 row = 0; row < height; ++row, dst += plane.BufferPitch)
     {
         if (src)
-            memcpy(dst, src + static_cast<ptrdiff_t>(row) * srcPitch, width);
+            std::copy_n(src + static_cast<ptrdiff_t>(row) * srcPitch, width, dst);
         else
-            memset(dst, fill, width);
+            std::fill_n(dst, width, fill);
     }
 }
 
@@ -126,71 +119,20 @@ Clock::time_point FrameDue(const Movie *movie, U32 frameNum)
     return movie->start + std::chrono::microseconds(usec);
 }
 
-Movie *OpenMovie(const char *name, U32 flags)
+// Opens the file and its video decoder; false (with the error set) on failure.
+bool OpenDecoder(Movie *movie, const char *name)
 {
-    // Only file opens are supported; every engine caller opens a file.
-    if (flags & BINKFROMMEMORY)
-    {
-        SetError("only file opens are supported");
-        return nullptr;
-    }
-    uint8_t header[kHeaderSize];
-    FILE *file = fopen(name, "rb");
-    if (!file)
-    {
-        SetError("can't open the file");
-        return nullptr;
-    }
-    const size_t got = fread(header, 1, kHeaderSize, file);
-    fclose(file);
-    if (got != kHeaderSize)
-    {
-        SetError("file is shorter than a Bink header");
-        return nullptr;
-    }
-    if (memcmp(header, "BIK", 3) != 0)
-    {
-        SetError("not a Bink 1 file");
-        return nullptr;
-    }
-
-    Movie *movie = new (std::nothrow) Movie();
-    if (!movie)
-    {
-        SetError("out of memory");
-        return nullptr;
-    }
-    movie->bink.Size = ReadU32(header + 4) + 8;
-    movie->bink.Frames = ReadU32(header + 8);
-    movie->bink.Width = ReadU32(header + 20);
-    movie->bink.Height = ReadU32(header + 24);
-    movie->bink.FrameRate = ReadU32(header + 28);
-    movie->bink.FrameRateDiv = ReadU32(header + 32);
-    movie->bink.BinkType = ReadU32(header + 36);
-    movie->bink.OpenFlags = flags;
-    movie->bink.FrameNum = 1;
-    if (!movie->bink.Frames || !movie->bink.Width || !movie->bink.Height || !movie->bink.FrameRate
-        || !movie->bink.FrameRateDiv)
-    {
-        SetError("bad Bink header");
-        CloseMovie(movie);
-        return nullptr;
-    }
-
     if (avformat_open_input(&movie->format, name, av_find_input_format("bink"), nullptr) < 0)
     {
         SetError("FFmpeg can't open the movie");
-        CloseMovie(movie);
-        return nullptr;
+        return false;
     }
-
     const AVCodec *decoder = nullptr;
     movie->stream = av_find_best_stream(movie->format, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
     if (movie->stream < 0 || !decoder)
     {
         SetError("no decodable video stream");
-        CloseMovie(movie);
-        return nullptr;
+        return false;
     }
     for (unsigned i = 0; i < movie->format->nb_streams; ++i)
         movie->format->streams[i]->discard = static_cast<int>(i) == movie->stream ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
@@ -202,26 +144,76 @@ Movie *OpenMovie(const char *name, U32 flags)
         || avcodec_open2(movie->codec, decoder, nullptr) < 0)
     {
         SetError("FFmpeg can't open the Bink video decoder");
+        return false;
+    }
+    return true;
+}
+
+// FFmpeg's Bink demuxer carries the header: the video stream's duration is the
+// frame count, its time base the inverse frame rate, and its 4-byte extradata
+// the video flags.
+bool ReadHeader(Movie *movie)
+{
+    const AVStream *stream = movie->format->streams[movie->stream];
+    const AVCodecParameters *params = stream->codecpar;
+    BINK &bink = movie->bink;
+    if (stream->duration <= 0 || stream->duration > UINT32_MAX || params->width <= 0 || params->height <= 0
+        || stream->time_base.num <= 0 || stream->time_base.den <= 0)
+    {
+        SetError("bad Bink header");
+        return false;
+    }
+    bink.Frames = static_cast<U32>(stream->duration);
+    bink.Width = static_cast<U32>(params->width);
+    bink.Height = static_cast<U32>(params->height);
+    bink.FrameRate = static_cast<U32>(stream->time_base.den);
+    bink.FrameRateDiv = static_cast<U32>(stream->time_base.num);
+    const uint8_t *flags = params->extradata;
+    bink.BinkType = params->extradata_size >= 4
+                        ? flags[0] | (flags[1] << 8) | (flags[2] << 16) | (static_cast<U32>(flags[3]) << 24)
+                        : 0;
+    const int64_t size = avio_size(movie->format->pb);
+    bink.Size = size > 0 && size <= UINT32_MAX ? static_cast<U32>(size) : 0;
+    return true;
+}
+
+Movie *OpenMovie(const char *name, U32 flags)
+{
+    // Only file opens are supported; every engine caller opens a file.
+    if (flags & BINKFROMMEMORY)
+    {
+        SetError("only file opens are supported");
+        return nullptr;
+    }
+    Movie *movie = new (std::nothrow) Movie();
+    if (!movie)
+    {
+        SetError("out of memory");
+        return nullptr;
+    }
+    if (!OpenDecoder(movie, name) || !ReadHeader(movie))
+    {
         CloseMovie(movie);
         return nullptr;
     }
+    movie->bink.OpenFlags = flags;
+    movie->bink.FrameNum = 1;
     movie->start = movie->opened = Clock::now();
-    Com_DPrintf(CON_CHANNEL_GFX, "Bink via FFmpeg: opened %s, %ux%u, %u frames at %u/%u fps%s\n",
-                name, movie->bink.Width, movie->bink.Height,
-                movie->bink.Frames, movie->bink.FrameRate, movie->bink.FrameRateDiv,
-                (movie->bink.BinkType & kAlphaFlag) ? ", with alpha" : "");
+    Com_DPrintf(CON_CHANNEL_GFX, "Bink via FFmpeg: opened %s, %ux%u, %u frames at %u/%u fps%s\n", name,
+                movie->bink.Width, movie->bink.Height, movie->bink.Frames, movie->bink.FrameRate,
+                movie->bink.FrameRateDiv, (movie->bink.BinkType & kAlphaFlag) ? ", with alpha" : "");
     return movie;
 }
 } // namespace
 
 char *RADEXPLINK BinkGetError(void)
 {
-    return s_error;
+    return const_cast<char *>(s_error);
 }
 
 HBINK RADEXPLINK BinkOpen(const char *name, U32 flags)
 {
-    s_error[0] = 0;
+    s_error = "";
     Movie *movie = OpenMovie(name, flags);
     return movie ? &movie->bink : nullptr;
 }
@@ -241,7 +233,7 @@ void RADEXPLINK BinkGetFrameBuffersInfo(HBINK bink, BINKFRAMEBUFFERS *buffers)
 {
     const Movie *movie = reinterpret_cast<const Movie *>(bink);
     const bool alpha = (movie->bink.OpenFlags & BINKALPHA) && (movie->bink.BinkType & kAlphaFlag);
-    memset(buffers, 0, sizeof(*buffers));
+    *buffers = {};
     buffers->TotalFrames = BINKMAXFRAMEBUFFERS;
     buffers->YABufferWidth = movie->bink.Width;
     buffers->YABufferHeight = movie->bink.Height;
@@ -329,7 +321,7 @@ S32 RADEXPLINK BinkGetRects(HBINK bink, U32)
 
 void RADEXPLINK BinkGetRealtime(HBINK bink, BINKREALTIME *run, U32)
 {
-    memset(run, 0, sizeof(*run));
+    *run = {};
     run->FrameNum = bink->FrameNum;
     run->FrameRate = bink->FrameRate;
     run->FrameRateDiv = bink->FrameRateDiv;

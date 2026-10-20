@@ -761,8 +761,15 @@ bool __cdecl R_Cinematic_BinkOpen(
         // POSIX clients find the install through fs_basepath, not the working
         // directory, and need '/' separators.
         const char *base = fs_basepath && *fs_basepath->current.string ? fs_basepath->current.string : cwd;
-        _snprintf(filepath[0], 0x100u, "%s/main/video/%s.%s", base, filename, "bik");
-        _snprintf(filepath[1], 0x100u, "%s/raw/video/%s.%s", base, filename, "bik");
+        const int mainLength = Com_sprintf(filepath[0], sizeof(filepath[0]), "%s/main/video/%s.bik", base, filename);
+        const int rawLength = Com_sprintf(filepath[1], sizeof(filepath[1]), "%s/raw/video/%s.bik", base, filename);
+        if (mainLength < 0 || mainLength >= static_cast<int>(sizeof(filepath[0])) || rawLength < 0
+            || rawLength >= static_cast<int>(sizeof(filepath[1])))
+        {
+            if (errText)
+                Com_sprintf(errText, errTextSize, "Cinematic path too long");
+            return 0;
+        }
 #endif
     }
     if (R_Cinematic_BinkOpenPath(filepath[0], playbackFlags, errText, errTextSize))
