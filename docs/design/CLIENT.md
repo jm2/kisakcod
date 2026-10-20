@@ -31,7 +31,7 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 - **Not MoltenVK:** upstream dxvk won't support portability-subset drivers, and on MoltenVK every texture sampled black.
 - **Minimums:** the client targets macOS 26 (`scripts/mp`); the server keeps 13.0. `scripts/extern/dxvk_macos.cmake` builds the dxvk dylibs with `MACOSX_DEPLOYMENT_TARGET=26.0` to match.
 - **Frame rate:** KosmicKrisp presents FIFO even with `r_vsync 0`, so in-game FPS reads the display refresh (120 on the M1 Max). Compare CPU cost with `sample` instead.
-- **Run:** `brew install ffmpeg` for cinematics, then configure with `KISAK_EXPERIMENTAL_POSIX_CLIENT`, `KISAK_CLIENT_SDL3` and `KISAK_DXVK_MACOS`. Launch with `DXVK_WSI_DRIVER=SDL3`, local retail `fs_basepath` and `db_unverified64 1`. Capture frames with Mesa's `VK_LAYER_MESA_screenshot` (`VK_LAYER_MESA_SCREENSHOT_CONFIG=frames=…,output_dir=…`).
+- **Run:** `brew install ffmpeg pkgconf` for cinematics (CMake finds FFmpeg through pkg-config), then configure with `KISAK_EXPERIMENTAL_POSIX_CLIENT`, `KISAK_CLIENT_SDL3` and `KISAK_DXVK_MACOS`. Launch with `DXVK_WSI_DRIVER=SDL3`, local retail `fs_basepath` and `db_unverified64 1`. Capture frames with Mesa's `VK_LAYER_MESA_screenshot` (`VK_LAYER_MESA_SCREENSHOT_CONFIG=frames=…,output_dir=…`).
 - **Evidence:** zones loaded, the first error, and what each frame shows, described in text. Frames and data stay local.
 
 Miles (`mss32.dll`) and Bink (`binkw32.dll`) are 32-bit only, so a 64-bit client can't load them from a retail install. Win64 builds link silent stubs (`KISAK_MEDIA_STUBS`). POSIX clients play Bink through FFmpeg's decoder (`KISAK_FFMPEG_CINEMATICS`, on by default; `gfx_d3d/r_bink_ffmpeg.cpp`), found through pkg-config. Only file opens are supported, and the movies are silent until OpenAL replaces the Miles stubs. Configuring with the option `OFF` restores the silent Bink stubs.
@@ -85,7 +85,7 @@ The framing has no codec-version field, so the claim that "a codec version is em
 
 ## Bring-up runs (Linux, dxvk-native)
 
-Install FFmpeg's development files for cinematics (Debian/Ubuntu
+Install pkg-config and FFmpeg's development files for cinematics (Debian/Ubuntu
 `libavformat-dev libavcodec-dev libavutil-dev`; Fedora `libavformat-free-devel
 libavcodec-free-devel libavutil-free-devel`). Build dxvk-native 3.1.1 with only
 its SDL3 WSI, then the client. The client presets need `PKG_CONFIG_PATH`
