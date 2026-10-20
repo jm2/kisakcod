@@ -148,6 +148,10 @@ void TestFailClosedPolicy()
            "64-bit targets must load fonts, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kMenuList, true, false),
            "64-bit targets must load menu lists, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kComWorld, true, false),
+           "64-bit targets must load com worlds, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kLoadedSound, true, false),
+           "64-bit targets must load loaded sounds, which K4 counts");
 
     // FX and Impact FX hold a pair, but only the FX zone adapter can apply it.
     Expect(
