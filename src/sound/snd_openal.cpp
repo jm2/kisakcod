@@ -10,7 +10,11 @@
 //   samples take the listener-relative position, with no distance model,
 //   because the engine already scales volume with distance (rolloff 0).
 // - Reverb, the EQ filter and the room type are not applied.
-// - Streams (music and streamed sounds) don't open yet.
+// - Streams (music, voices, streamed ambience) open through the engine's file
+//   callbacks and decode with FFmpeg into a few queued buffers, which one
+//   thread refills. One mutex guards the stream list and each stream's
+//   decoder; the engine's sample setters touch only the source, as for
+//   loaded samples.
 
 // Declare the Miles functions without dllimport, as media_stubs.cpp does.
 #define MSS_SPU_PROCESS
@@ -23,10 +27,15 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 }
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <cstdint>
 #include <cstring>
 #include <new>
@@ -187,15 +196,35 @@ void FreeSample(Sample *s)
 }
 } // namespace
 
+namespace
+{
+// The engine's file callbacks (MSS_File*), which streams read through.
+struct FileCallbacks
+{
+    AIL_file_open_callback open = nullptr;
+    AIL_file_close_callback close = nullptr;
+    AIL_file_seek_callback seek = nullptr;
+    AIL_file_read_callback read = nullptr;
+};
+FileCallbacks s_files;
+
+void StartStreamThread();
+void StopStreams();
+} // namespace
+
 // Driver.
 S32 AILCALL AIL_startup(void) { return 1; }
 char *AILCALL AIL_last_error(void) { return const_cast<char *>(s_error); }
 char *AILCALL AIL_set_redist_directory(char const *) { return nullptr; }
 SINTa AILCALL AIL_set_preference(U32, SINTa) { return 0; }
-void AILCALL AIL_set_file_callbacks(AIL_file_open_callback, AIL_file_close_callback, AIL_file_seek_callback, AIL_file_read_callback) { }
+void AILCALL AIL_set_file_callbacks(AIL_file_open_callback open, AIL_file_close_callback close, AIL_file_seek_callback seek, AIL_file_read_callback read)
+{
+    s_files = {open, close, seek, read};
+}
 
 void AILCALL AIL_shutdown(void)
 {
+    StopStreams();
     for (int i = 0; i < s_driver.sampleCount; ++i)
         FreeSample(s_driver.samples[i]);
     s_driver.sampleCount = 0;
@@ -233,6 +262,7 @@ HDIGDRIVER AILCALL AIL_open_digital_driver(U32 frequency, S32, S32, U32)
     Com_Printf(CON_CHANNEL_SOUND, "OpenAL: device '%s', %d Hz, %s\n",
                alcGetString(s_driver.device, ALC_DEVICE_SPECIFIER), rate, alGetString(AL_VERSION));
     s_error = "";
+    StartStreamThread();
     return reinterpret_cast<HDIGDRIVER>(&s_driver);
 }
 
@@ -463,16 +493,392 @@ void AILCALL AIL_set_sample_3D_distances(HSAMPLE handle, F32, F32, S32)
 }
 
 // Streams.
-HSTREAM AILCALL AIL_open_stream(HDIGDRIVER, char const *, S32)
+namespace
 {
-    s_error = "streamed sounds are not supported yet";
-    return nullptr;
+constexpr int kStreamBuffers = 4;
+constexpr int kChunkFrames = 4096; // about 0.1 s per queued buffer at 44.1 kHz
+
+// Miles seek origins, as MSS_FileSeekCallback reads them.
+constexpr U32 kSeekBegin = 0;
+constexpr U32 kSeekCurrent = 1;
+constexpr U32 kSeekEnd = 2;
+
+struct Stream
+{
+    Sample sample; // what AIL_stream_sample_handle returns
+    UINTa file = 0;
+    bool fileOpen = false;
+    AVIOContext *io = nullptr;
+    AVFormatContext *format = nullptr;
+    AVCodecContext *codec = nullptr;
+    AVPacket *packet = nullptr;
+    AVFrame *frame = nullptr;
+    int stream = -1;
+    ALuint buffers[kStreamBuffers] = {};
+    std::vector<ALuint> freeBuffers;
+    std::vector<int> queuedFrames; // per queued buffer, oldest first
+    std::vector<int16_t> pcm;      // decoded, not yet queued
+    int64_t playedFrames = 0;      // frames in buffers already played
+    bool loop = false;
+    bool eof = false;
+    bool paused = true;
+};
+
+std::mutex s_streamMutex;
+std::condition_variable s_streamWake;
+std::vector<Stream *> s_streams;
+std::thread s_streamThread;
+bool s_streamStop = false;
+
+int StreamRead(void *opaque, uint8_t *buf, int size)
+{
+    const Stream *st = static_cast<const Stream *>(opaque);
+    const U32 got = s_files.read(st->file, buf, static_cast<U32>(size));
+    return got ? static_cast<int>(got) : AVERROR_EOF;
 }
-void AILCALL AIL_close_stream(HSTREAM) { }
-void AILCALL AIL_pause_stream(HSTREAM, S32) { }
-S32 AILCALL AIL_stream_status(HSTREAM) { return SMP_DONE; }
-HSAMPLE AILCALL AIL_stream_sample_handle(HSTREAM) { return nullptr; }
-void AILCALL AIL_stream_info(HSTREAM, S32 *, S32 *, S32 *, S32 *) { }
-void AILCALL AIL_set_stream_loop_count(HSTREAM, S32) { }
-void AILCALL AIL_stream_ms_position(HSTREAM, S32 *, S32 *) { }
-void AILCALL AIL_set_stream_ms_position(HSTREAM, S32) { }
+
+int64_t StreamSeek(void *opaque, int64_t offset, int whence)
+{
+    const Stream *st = static_cast<const Stream *>(opaque);
+    if (offset < INT32_MIN || offset > INT32_MAX)
+        return AVERROR(EINVAL);
+    if (whence == AVSEEK_SIZE)
+    {
+        const S32 here = s_files.seek(st->file, 0, kSeekCurrent);
+        const S32 end = s_files.seek(st->file, 0, kSeekEnd);
+        s_files.seek(st->file, here, kSeekBegin);
+        return end;
+    }
+    const U32 origin = whence == SEEK_CUR ? kSeekCurrent : whence == SEEK_END ? kSeekEnd : kSeekBegin;
+    return s_files.seek(st->file, static_cast<S32>(offset), origin);
+}
+
+void FreeStream(Stream *st)
+{
+    if (st->sample.source)
+    {
+        alSourceStop(st->sample.source);
+        alSourcei(st->sample.source, AL_BUFFER, 0);
+        alDeleteSources(1, &st->sample.source);
+    }
+    alDeleteBuffers(kStreamBuffers, st->buffers);
+    av_frame_free(&st->frame);
+    av_packet_free(&st->packet);
+    avcodec_free_context(&st->codec);
+    avformat_close_input(&st->format);
+    if (st->io)
+    {
+        av_freep(&st->io->buffer);
+        avio_context_free(&st->io);
+    }
+    if (st->fileOpen)
+        s_files.close(st->file);
+    delete st;
+}
+
+// Appends the frame as interleaved 16-bit PCM; false for a format it can't take.
+bool AppendFrame(Stream *st, const AVFrame *frame)
+{
+    const int channels = frame->ch_layout.nb_channels;
+    const AVSampleFormat fmt = static_cast<AVSampleFormat>(frame->format);
+    const bool planar = av_sample_fmt_is_planar(fmt);
+    const AVSampleFormat packed = av_get_packed_sample_fmt(fmt);
+    if (channels != st->sample.channels)
+        return false;
+    for (int i = 0; i < frame->nb_samples; ++i)
+    {
+        for (int c = 0; c < channels; ++c)
+        {
+            const int index = planar ? i : i * channels + c;
+            const uint8_t *plane = frame->extended_data[planar ? c : 0];
+            float value = 0.0f;
+            switch (packed)
+            {
+            case AV_SAMPLE_FMT_U8: value = (plane[index] - 128) / 128.0f; break;
+            case AV_SAMPLE_FMT_S16: value = reinterpret_cast<const int16_t *>(plane)[index] / 32768.0f; break;
+            case AV_SAMPLE_FMT_S32: value = reinterpret_cast<const int32_t *>(plane)[index] / 2147483648.0f; break;
+            case AV_SAMPLE_FMT_FLT: value = reinterpret_cast<const float *>(plane)[index]; break;
+            case AV_SAMPLE_FMT_DBL: value = static_cast<float>(reinterpret_cast<const double *>(plane)[index]); break;
+            default: return false;
+            }
+            st->pcm.push_back(static_cast<int16_t>(std::lround(std::clamp(value, -1.0f, 1.0f) * 32767.0f)));
+        }
+    }
+    return true;
+}
+
+// Decodes until a chunk is ready or the stream ends (rewinding if it loops).
+void DecodeChunk(Stream *st)
+{
+    const size_t want = static_cast<size_t>(kChunkFrames) * st->sample.channels;
+    while (st->pcm.size() < want && !st->eof)
+    {
+        const int got = avcodec_receive_frame(st->codec, st->frame);
+        if (got == 0)
+        {
+            st->eof = !AppendFrame(st, st->frame);
+            continue;
+        }
+        if (got == AVERROR_EOF && st->loop && av_seek_frame(st->format, st->stream, 0, AVSEEK_FLAG_BACKWARD) >= 0)
+        {
+            avcodec_flush_buffers(st->codec);
+            continue;
+        }
+        if (got != AVERROR(EAGAIN))
+        {
+            st->eof = true;
+            break;
+        }
+        if (av_read_frame(st->format, st->packet) < 0)
+        {
+            avcodec_send_packet(st->codec, nullptr); // drain
+            continue;
+        }
+        if (st->packet->stream_index == st->stream)
+            avcodec_send_packet(st->codec, st->packet);
+        av_packet_unref(st->packet);
+    }
+}
+
+// Recycles played buffers and queues decoded audio into free ones. Holds
+// s_streamMutex.
+void Refill(Stream *st)
+{
+    const ALuint source = st->sample.source;
+    ALint processed = 0;
+    alGetSourcei(source, AL_BUFFERS_PROCESSED, &processed);
+    for (; processed > 0 && !st->queuedFrames.empty(); --processed)
+    {
+        ALuint buffer = 0;
+        alSourceUnqueueBuffers(source, 1, &buffer);
+        st->playedFrames += st->queuedFrames.front();
+        st->queuedFrames.erase(st->queuedFrames.begin());
+        st->freeBuffers.push_back(buffer);
+    }
+    while (!st->freeBuffers.empty())
+    {
+        DecodeChunk(st);
+        if (st->pcm.empty())
+            break;
+        const size_t samples = std::min(st->pcm.size(), static_cast<size_t>(kChunkFrames) * st->sample.channels);
+        const ALuint buffer = st->freeBuffers.back();
+        alBufferData(buffer, st->sample.channels == 2 ? AL_FORMAT_STEREO16 : AL_FORMAT_MONO16, st->pcm.data(),
+                     static_cast<ALsizei>(samples * sizeof(int16_t)), static_cast<ALsizei>(st->sample.baseRate));
+        alSourceQueueBuffers(source, 1, &buffer);
+        st->freeBuffers.pop_back();
+        st->queuedFrames.push_back(static_cast<int>(samples / st->sample.channels));
+        st->pcm.erase(st->pcm.begin(), st->pcm.begin() + static_cast<ptrdiff_t>(samples));
+    }
+    ALint state = AL_STOPPED;
+    alGetSourcei(source, AL_SOURCE_STATE, &state);
+    if (!st->paused && state != AL_PLAYING && !st->queuedFrames.empty())
+        alSourcePlay(source); // first start, or recovery after an underrun
+}
+
+bool Finished(const Stream *st)
+{
+    return st->eof && st->pcm.empty() && st->queuedFrames.empty();
+}
+
+void StreamThread()
+{
+    std::unique_lock<std::mutex> lock(s_streamMutex);
+    while (!s_streamStop)
+    {
+        for (Stream *st : s_streams)
+            Refill(st);
+        s_streamWake.wait_for(lock, std::chrono::milliseconds(10));
+    }
+}
+
+void StartStreamThread()
+{
+    s_streamStop = false;
+    s_streamThread = std::thread(StreamThread);
+}
+
+void StopStreams()
+{
+    {
+        std::lock_guard<std::mutex> lock(s_streamMutex);
+        s_streamStop = true;
+    }
+    s_streamWake.notify_all();
+    if (s_streamThread.joinable())
+        s_streamThread.join();
+    for (Stream *st : s_streams)
+        FreeStream(st);
+    s_streams.clear();
+}
+
+// Opens the file through the engine's callbacks and its audio decoder;
+// false (with the error set) on failure.
+bool OpenStreamDecoder(Stream *st, const char *filename)
+{
+    st->fileOpen = s_files.open && s_files.open(filename, &st->file);
+    if (!st->fileOpen)
+    {
+        s_error = "can't open the stream's file";
+        return false;
+    }
+    const int bufferSize = 32 * 1024;
+    uint8_t *buffer = static_cast<uint8_t *>(av_malloc(bufferSize));
+    st->io = buffer ? avio_alloc_context(buffer, bufferSize, 0, st, StreamRead, nullptr, StreamSeek) : nullptr;
+    st->format = st->io ? avformat_alloc_context() : nullptr;
+    if (!st->format)
+    {
+        if (!st->io)
+            av_free(buffer);
+        s_error = "out of memory";
+        return false;
+    }
+    st->format->pb = st->io;
+    const AVCodec *decoder = nullptr;
+    if (avformat_open_input(&st->format, nullptr, nullptr, nullptr) < 0
+        || avformat_find_stream_info(st->format, nullptr) < 0
+        || (st->stream = av_find_best_stream(st->format, AVMEDIA_TYPE_AUDIO, -1, -1, &decoder, 0)) < 0 || !decoder)
+    {
+        s_error = "FFmpeg can't read the stream";
+        return false;
+    }
+    st->codec = avcodec_alloc_context3(decoder);
+    st->packet = av_packet_alloc();
+    st->frame = av_frame_alloc();
+    if (!st->codec || !st->packet || !st->frame
+        || avcodec_parameters_to_context(st->codec, st->format->streams[st->stream]->codecpar) < 0
+        || avcodec_open2(st->codec, decoder, nullptr) < 0)
+    {
+        s_error = "FFmpeg can't open the stream's decoder";
+        return false;
+    }
+    const int channels = st->codec->ch_layout.nb_channels;
+    if (channels < 1 || channels > 2 || st->codec->sample_rate <= 0 || static_cast<U32>(st->codec->sample_rate) > kMaxRate)
+    {
+        s_error = "unsupported stream format";
+        return false;
+    }
+    return true;
+}
+
+Stream *ToStream(HSTREAM handle)
+{
+    return reinterpret_cast<Stream *>(handle);
+}
+} // namespace
+
+HSTREAM AILCALL AIL_open_stream(HDIGDRIVER, char const *filename, S32)
+{
+    if (!s_driver.context || !filename)
+        return nullptr;
+    Stream *st = new (std::nothrow) Stream();
+    if (!st)
+        return nullptr;
+    alGenSources(1, &st->sample.source);
+    alGenBuffers(kStreamBuffers, st->buffers);
+    if (alGetError() != AL_NO_ERROR || !OpenStreamDecoder(st, filename))
+    {
+        if (!*s_error)
+            s_error = "OpenAL can't create the stream's source";
+        FreeStream(st);
+        return nullptr;
+    }
+    Sample &sample = st->sample;
+    sample.channels = st->codec->ch_layout.nb_channels;
+    sample.baseRate = static_cast<U32>(st->codec->sample_rate);
+    sample.rate = st->codec->sample_rate;
+    sample.loaded = true;
+    const int64_t duration = st->format->duration;
+    sample.lengthMs = duration > 0 ? static_cast<U32>(std::min<int64_t>(duration / 1000, INT32_MAX)) : 0;
+    alSourcei(sample.source, AL_SOURCE_RELATIVE, AL_TRUE);
+    ApplyGainAndPan(&sample);
+    st->freeBuffers.assign(st->buffers, st->buffers + kStreamBuffers);
+    std::lock_guard<std::mutex> lock(s_streamMutex);
+    Refill(st); // prime the queue; the stream starts paused
+    s_streams.push_back(st);
+    return reinterpret_cast<HSTREAM>(st);
+}
+
+void AILCALL AIL_close_stream(HSTREAM handle)
+{
+    Stream *st = ToStream(handle);
+    if (!st)
+        return;
+    std::lock_guard<std::mutex> lock(s_streamMutex);
+    s_streams.erase(std::remove(s_streams.begin(), s_streams.end(), st), s_streams.end());
+    FreeStream(st);
+}
+
+void AILCALL AIL_pause_stream(HSTREAM handle, S32 onoff)
+{
+    Stream *st = ToStream(handle);
+    std::lock_guard<std::mutex> lock(s_streamMutex);
+    st->paused = onoff != 0;
+    if (st->paused)
+        alSourcePause(st->sample.source);
+    else
+        Refill(st);
+}
+
+S32 AILCALL AIL_stream_status(HSTREAM handle)
+{
+    const Stream *st = ToStream(handle);
+    std::lock_guard<std::mutex> lock(s_streamMutex);
+    return Finished(st) ? SMP_DONE : st->paused ? SMP_STOPPED : SMP_PLAYING;
+}
+
+HSAMPLE AILCALL AIL_stream_sample_handle(HSTREAM handle)
+{
+    return reinterpret_cast<HSAMPLE>(&ToStream(handle)->sample);
+}
+
+void AILCALL AIL_stream_info(HSTREAM handle, S32 *datarate, S32 *sndtype, S32 *length, S32 *memory)
+{
+    const Sample &sample = ToStream(handle)->sample;
+    if (datarate)
+        *datarate = static_cast<S32>(sample.baseRate);
+    if (sndtype)
+        *sndtype = sample.channels == 2 ? DIG_F_STEREO_16 : DIG_F_MONO_16;
+    if (length)
+        *length = 0;
+    if (memory)
+        *memory = 0;
+}
+
+void AILCALL AIL_set_stream_loop_count(HSTREAM handle, S32 count)
+{
+    Stream *st = ToStream(handle);
+    std::lock_guard<std::mutex> lock(s_streamMutex);
+    st->loop = count == 0; // Miles: 0 loops forever
+}
+
+void AILCALL AIL_stream_ms_position(HSTREAM handle, S32 *total, S32 *current)
+{
+    const Stream *st = ToStream(handle);
+    std::lock_guard<std::mutex> lock(s_streamMutex);
+    if (total)
+        *total = static_cast<S32>(st->sample.lengthMs);
+    if (current)
+    {
+        ALint offset = 0;
+        alGetSourcei(st->sample.source, AL_SAMPLE_OFFSET, &offset);
+        *current = static_cast<S32>((st->playedFrames + offset) * 1000 / st->sample.baseRate);
+    }
+}
+
+void AILCALL AIL_set_stream_ms_position(HSTREAM handle, S32 ms)
+{
+    Stream *st = ToStream(handle);
+    std::lock_guard<std::mutex> lock(s_streamMutex);
+    const int64_t clamped = std::clamp<int64_t>(ms, 0, st->sample.lengthMs);
+    if (av_seek_frame(st->format, -1, clamped * (AV_TIME_BASE / 1000), AVSEEK_FLAG_BACKWARD) < 0)
+        return;
+    avcodec_flush_buffers(st->codec);
+    alSourceStop(st->sample.source);
+    alSourcei(st->sample.source, AL_BUFFER, 0); // unqueues everything
+    st->freeBuffers.assign(st->buffers, st->buffers + kStreamBuffers);
+    st->queuedFrames.clear();
+    st->pcm.clear();
+    st->eof = false;
+    st->playedFrames = clamped * st->sample.baseRate / 1000;
+    Refill(st);
+}
