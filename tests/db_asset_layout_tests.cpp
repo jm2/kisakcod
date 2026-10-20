@@ -161,6 +161,8 @@ void TestFailClosedPolicy()
            "a 64-bit headless server must load materials, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kLoadedSound, true, false),
            "a 64-bit headless server must load loaded sounds, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kTechniqueSet, true, false),
+           "a 64-bit headless server must load technique sets, which K4 counts");
 #else
     Expect(!IsLoadPermitted(db::asset_layout::kImage, true, false),
            "a 64-bit client keeps images guarded: no client leg has compared them");
@@ -168,6 +170,8 @@ void TestFailClosedPolicy()
            "a 64-bit client keeps materials guarded: no client leg has compared them");
     Expect(!IsLoadPermitted(db::asset_layout::kLoadedSound, true, false),
            "a 64-bit client keeps loaded sounds guarded: it keeps samples no client leg has compared");
+    Expect(!IsLoadPermitted(db::asset_layout::kTechniqueSet, true, false),
+           "a 64-bit client keeps technique sets guarded: no client leg has compared them");
 #endif
 
     // FX and Impact FX hold a pair, but only the FX zone adapter can apply it.
