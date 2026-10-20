@@ -53,6 +53,7 @@ int g_failures = 0;
 
 // The last connectionless reply the server sent, and the command it parsed.
 std::string g_reply;
+std::string g_tokenizedUserinfo; // keeps Command's argv alive past the tokenize call
 const char *g_argv[4] = {};
 int g_argc = 0;
 
@@ -204,13 +205,12 @@ WEAK void *__cdecl Sys_GetValue(int valueIndex)
 // SV_AddTestClient builds it ('connect "<userinfo>"').
 WEAK void __cdecl SV_Cmd_TokenizeString(char *text)
 {
-    static std::string userinfo;
     const char *const quote = text ? std::strchr(text, '"') : nullptr;
     if (!quote)
         return;
-    userinfo.assign(quote + 1);
-    userinfo.erase(userinfo.find_last_not_of('"') + 1);
-    Command("connect", userinfo.c_str());
+    g_tokenizedUserinfo.assign(quote + 1);
+    g_tokenizedUserinfo.erase(g_tokenizedUserinfo.find_last_not_of('"') + 1);
+    Command("connect", g_tokenizedUserinfo.c_str());
 }
 WEAK void __cdecl SV_Cmd_EndTokenizedString() {}
 WEAK int __cdecl FS_iwIwd(char *, char *) { return 1; }
