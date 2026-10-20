@@ -386,8 +386,8 @@ void HashSound(GraphHashBuilder &builder, const XAssetHeader &header)
 // on every target, but loading it as bool would be undefined.
 void FieldBool(GraphHashBuilder &builder, std::uint32_t tag, const bool &value)
 {
-    unsigned char raw = 0;
-    std::memcpy(&raw, &value, 1);
+    // A bool's object representation may be read through unsigned char.
+    const unsigned char raw = *reinterpret_cast<const unsigned char *>(&value);
     builder.FieldU64(tag, raw != 0);
 }
 
@@ -466,9 +466,10 @@ void HashXAnimNotify(GraphHashBuilder &builder, const XAnimParts &parts)
     const int notes = parts.notify ? parts.notifyCount : 0;
     for (int i = 0; i < notes; ++i)
     {
+        const auto &[noteName, noteTime] = parts.notify[i];
         builder.BeginRecord(21);
-        FieldScriptString(builder, 1, parts.notify[i].name);
-        builder.FieldF32(2, parts.notify[i].time);
+        FieldScriptString(builder, 1, noteName);
+        builder.FieldF32(2, noteTime);
         builder.EndRecord();
     }
 }
