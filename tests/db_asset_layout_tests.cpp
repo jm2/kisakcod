@@ -62,7 +62,7 @@ constexpr std::int32_t kStringTable = 0x20;
 
 // Families K4 does not count yet.
 constexpr std::int32_t kUnconverted[] = {
-    kXModelPieces, kXAnimParts, kXModel, kWeapon,
+    kXModelPieces, kXModel, kWeapon,
 };
 
 // --- The conversion table records which families own a layout pair. ---
@@ -92,7 +92,7 @@ void TestConversionTable()
 
     // Every family without a mirror is still unconverted, including ones whose
     // runtime struct already carries a RUNTIME_SIZE half of the pair.
-    Expect(!IsFamilyConverted(kXAnimParts), "xanim parts has no disk32 mirror yet");
+    Expect(IsFamilyConverted(kXAnimParts), "xanim parts counts toward K4, so its pair is complete");
     Expect(!IsFamilyConverted(kXModel), "xmodel has no disk32 mirror yet");
     Expect(!IsFamilyConverted(kWeapon), "weapon has no disk32 mirror yet");
     Expect(IsFamilyConverted(kRawFile), "rawfile counts toward K4, so its pair is complete");
@@ -178,12 +178,12 @@ void TestGateRefusals()
     // An unconverted family at 64-bit must raise exactly one ERR_DROP that
     // names the family and the layout-pair reason.
     ResetError();
-    const bool refused = DB_AdmitAssetFamilyLoad(kXAnimParts, "xanimparts", true, true);
+    const bool refused = DB_AdmitAssetFamilyLoad(kXModel, "xmodel", true, true);
     Expect(!refused, "an unconverted family at 64-bit must be refused");
     Expect(g_comErrorCalls == 1, "refusal must raise exactly one Com_Error");
     Expect(g_lastCode == ERR_DROP, "refusal must raise ERR_DROP, not another code");
     Expect(
-        NamedMentions("xanimparts"),
+        NamedMentions("xmodel"),
         "the refusal must name the family it refused");
     Expect(
         FormatMentions("layout"),
@@ -191,7 +191,7 @@ void TestGateRefusals()
 
     // An unconverted family that would load at 32-bit must not raise at 32-bit.
     ResetError();
-    const bool allowed32 = DB_AdmitAssetFamilyLoad(kXAnimParts, "xanimparts", false, false);
+    const bool allowed32 = DB_AdmitAssetFamilyLoad(kXModel, "xmodel", false, false);
     Expect(allowed32, "an unconverted family at 32-bit must still load");
     Expect(g_comErrorCalls == 0, "a 32-bit load must not raise");
 

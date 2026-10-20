@@ -441,6 +441,38 @@ void HashXAnimQuat(GraphHashBuilder &builder, const XAnimDeltaPartQuat *quat, st
     builder.FieldBytes(13, quat->u.frames.frames, quat->u.frames.frames ? frames * sizeof(*quat->u.frames.frames) : 0);
 }
 
+// count elements of a layout-invariant array as bytes; none when it is null.
+template <typename T>
+void FieldArray(GraphHashBuilder &builder, std::uint32_t tag, const T *data, std::size_t count)
+{
+    builder.FieldBytes(tag, data, data ? count * sizeof(T) : 0);
+}
+
+// The data and index arrays, each as the bytes its count covers.
+void HashXAnimArrays(GraphHashBuilder &builder, const XAnimParts &parts, std::size_t indexWidth)
+{
+    FieldArray(builder, 14, parts.dataByte, parts.dataByteCount);
+    FieldArray(builder, 15, parts.dataShort, parts.dataShortCount);
+    FieldArray(builder, 16, parts.dataInt, parts.dataIntCount);
+    FieldArray(builder, 17, parts.randomDataShort, parts.randomDataShortCount);
+    FieldArray(builder, 18, parts.randomDataByte, parts.randomDataByteCount);
+    FieldArray(builder, 19, parts.randomDataInt, parts.randomDataIntCount);
+    builder.FieldBytes(20, parts.indices.data, parts.indices.data ? parts.indexCount * indexWidth : 0);
+}
+
+// The notetracks: each name as text and its time.
+void HashXAnimNotify(GraphHashBuilder &builder, const XAnimParts &parts)
+{
+    const int notes = parts.notify ? parts.notifyCount : 0;
+    for (int i = 0; i < notes; ++i)
+    {
+        builder.BeginRecord(21);
+        FieldScriptString(builder, 1, parts.notify[i].name);
+        builder.FieldF32(2, parts.notify[i].time);
+        builder.EndRecord();
+    }
+}
+
 // The header scalars, the bone and notetrack names as text, and every array
 // as the bytes its count covers (the counts the loader streams).
 void HashXAnimParts(GraphHashBuilder &builder, const XAssetHeader &header)
@@ -463,24 +495,9 @@ void HashXAnimParts(GraphHashBuilder &builder, const XAssetHeader &header)
     const int bones = parts.names ? parts.boneCount[9] : 0;
     for (int i = 0; i < bones; ++i)
         FieldScriptString(builder, 13, parts.names[i]);
-    builder.FieldBytes(14, parts.dataByte, parts.dataByte ? parts.dataByteCount : 0);
-    builder.FieldBytes(15, parts.dataShort, parts.dataShort ? parts.dataShortCount * sizeof(*parts.dataShort) : 0);
-    builder.FieldBytes(16, parts.dataInt, parts.dataInt ? parts.dataIntCount * sizeof(*parts.dataInt) : 0);
-    builder.FieldBytes(17, parts.randomDataShort,
-                       parts.randomDataShort ? parts.randomDataShortCount * sizeof(*parts.randomDataShort) : 0);
-    builder.FieldBytes(18, parts.randomDataByte, parts.randomDataByte ? parts.randomDataByteCount : 0);
-    builder.FieldBytes(19, parts.randomDataInt,
-                       parts.randomDataInt ? parts.randomDataIntCount * sizeof(*parts.randomDataInt) : 0);
     const std::size_t indexWidth = XAnimIndexWidth(parts);
-    builder.FieldBytes(20, parts.indices.data, parts.indices.data ? parts.indexCount * indexWidth : 0);
-    const int notes = parts.notify ? parts.notifyCount : 0;
-    for (int i = 0; i < notes; ++i)
-    {
-        builder.BeginRecord(21);
-        FieldScriptString(builder, 1, parts.notify[i].name);
-        builder.FieldF32(2, parts.notify[i].time);
-        builder.EndRecord();
-    }
+    HashXAnimArrays(builder, parts, indexWidth);
+    HashXAnimNotify(builder, parts);
     builder.FieldU64(22, parts.deltaPart != nullptr);
     if (parts.deltaPart)
     {

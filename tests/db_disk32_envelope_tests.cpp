@@ -29,6 +29,22 @@ std::vector<std::uintptr_t> g_entrySlots; // each dispatched header slot on entr
 constexpr std::uint32_t kShared = disk32::kSharedInline;
 constexpr std::uint32_t kRawFile = ASSET_TYPE_RAWFILE;
 
+// A family whose 64-bit guard is still on: K4 lifts guards family by family
+// (db_asset_layout.h), so the "unported family" case asks for one. The search
+// starts past XModelPieces (0), which only Load_DynEntityDef reaches.
+constexpr std::int32_t FirstGuardedFamily()
+{
+    for (std::int32_t type = 1; type < db::asset_layout::kAssetTypeCount; ++type)
+    {
+        if (db::asset_layout::HasDisk32Loader(type) && !db::asset_layout::IsK4Verified(type)
+            && !db::asset_layout::IsFxConversionFamily(type))
+            return type;
+    }
+    return -1;
+}
+static_assert(FirstGuardedFamily() >= 0, "every family is K4-verified: drop the unported-family case");
+constexpr std::uint32_t kGuardedFamily = static_cast<std::uint32_t>(FirstGuardedFamily());
+
 struct File : FileBuilder<File>
 {
     // The 16-byte XAssetListDisk32: script strings, then assets.
@@ -183,7 +199,7 @@ const Malformed kMalformed[] = {
     {"an unported family after a raw file",
      []
      {
-         File().Root(0, 0, 2, kInline).Word(kRawFile).Word(kInline).Word(ASSET_TYPE_XANIMPARTS).Word(kInline)
+         File().Root(0, 0, 2, kInline).Word(kRawFile).Word(kInline).Word(kGuardedFamily).Word(kInline)
              .Word(kInline).Word(0).Word(0).Text("c.cfg");
      },
      "no 64-bit on-disk/runtime layout pair", 2},
