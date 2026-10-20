@@ -10,20 +10,22 @@
 #include <msslib/mss.h>
 
 #include <chrono>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 #include <vector>
 
-// The shim prints the device it opened.
+namespace
+{
+bool g_printedDevice = false; // the shim names the device it opened
+} // namespace
+
 void Com_Printf(int, const char *fmt, ...)
 {
-    va_list args;
-    va_start(args, fmt);
-    std::vprintf(fmt, args);
-    va_end(args);
+    if (std::strncmp(fmt, "OpenAL: device ", 15) == 0)
+        g_printedDevice = true;
 }
 
 namespace
@@ -157,6 +159,7 @@ int main()
         std::fprintf(stderr, "no OpenAL device: %s\n", AIL_last_error());
         return 1;
     }
+    CHECK(g_printedDevice);
     HSAMPLE sample = AIL_allocate_sample_handle(driver);
     CHECK(sample != nullptr);
     CHECK(AIL_sample_status(sample) == SMP_DONE); // allocated, nothing loaded

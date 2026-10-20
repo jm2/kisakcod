@@ -125,6 +125,11 @@ if (KISAK_TEST_OPENAL_LIB_FOUND)
     target_link_libraries(kisakcod-snd-openal-tests PRIVATE PkgConfig::KISAK_TEST_OPENAL_LIB)
     # No -Wpedantic: the Miles headers spell MSVC extensions.
     target_compile_options(kisakcod-snd-openal-tests PRIVATE -fms-extensions -Wall -Wextra -Werror)
+    if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # The Miles headers spell 64-bit fields __int64, which clang takes
+        # under -fms-extensions; GCC needs q_shared.h's spelling.
+        target_compile_definitions(kisakcod-snd-openal-tests PRIVATE "__int64=long long")
+    endif()
     if (APPLE)
         # Homebrew's OpenAL is built for the host macOS; the client targets 26.0 too.
         target_compile_options(kisakcod-snd-openal-tests PRIVATE -mmacosx-version-min=26.0)

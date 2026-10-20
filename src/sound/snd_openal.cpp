@@ -78,12 +78,21 @@ void ApplyGainAndPan(Sample *s)
     alSourcef(s->source, AL_GAIN, s->volume * level);
 }
 
+// Whether the header describes PCM this shim plays: 8- or 16-bit, mono or
+// stereo, at a rate OpenAL takes.
+bool IsPlayablePcm(const AILSOUNDINFO &info)
+{
+    const bool bitsOk = info.bits == 8 || info.bits == 16;
+    const bool channelsOk = info.channels == 1 || info.channels == 2;
+    const bool rateOk = info.rate > 0 && info.rate <= kMaxRate;
+    return info.data_ptr && info.format == kFormatPcm && bitsOk && channelsOk && rateOk;
+}
+
 // Uploads the loaded sound to the sample's buffer. Fails closed on any header
 // value that doesn't describe whole frames inside data_len.
 bool Upload(Sample *s, const AILSOUNDINFO &info)
 {
-    if (!info.data_ptr || info.format != kFormatPcm || (info.bits != 8 && info.bits != 16) || info.channels < 1
-        || info.channels > 2 || !info.rate || info.rate > kMaxRate)
+    if (!IsPlayablePcm(info))
         return false;
     const bool stereo = info.channels == 2;
     const U32 frameBytes = static_cast<U32>(info.channels) * static_cast<U32>(info.bits / 8);
