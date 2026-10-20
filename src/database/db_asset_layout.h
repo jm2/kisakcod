@@ -37,6 +37,7 @@ enum class Conversion : std::uint8_t
 
 // Asset-type values from the IW3 fast-file contract (XAssetType in
 // xanim/xanim.h). Only the types this policy branches on are named here.
+inline constexpr std::int32_t kPhysPreset = 0x01;
 inline constexpr std::int32_t kFx = 0x19;
 inline constexpr std::int32_t kImpactFx = 0x1A;
 inline constexpr std::int32_t kRawFile = 0x1F;
@@ -48,7 +49,7 @@ inline constexpr std::int32_t kAssetTypeCount = 0x21;
 // joins in the PR that verifies it, which lifts its guard.
 constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
 {
-    return assetType == kRawFile || assetType == kStringTable;
+    return assetType == kPhysPreset || assetType == kRawFile || assetType == kStringTable;
 }
 
 constexpr Conversion ConversionForAssetType(const std::int32_t assetType) noexcept

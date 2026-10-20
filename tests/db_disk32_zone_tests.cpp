@@ -698,6 +698,7 @@ void zone_test::CheckZone()
     const PhysPreset *phys = Find(ASSET_TYPE_PHYSPRESET, "e2e/phys").physPreset;
     Expect(phys && phys->mass == 2.5f && phys->tempDefaultToCylinder && !std::strcmp(phys->sndAliasPrefix, "wood"),
            "the preset's fields load");
+    ExpectDigest(ASSET_TYPE_PHYSPRESET, "e2e/phys", "57561419d0a87f9f73b65cf9373f64420ebf9844511a43227f68e5ca70a5324b");
     const LocalizeEntry *text = Find(ASSET_TYPE_LOCALIZE_ENTRY, "E2E_HELLO").localize;
     Expect(text && !std::strcmp(text->value, "Hello"), "the localized string loads");
     const MapEnts *ents = Find(ASSET_TYPE_MAP_ENTS, "e2e/ents").mapEnts;

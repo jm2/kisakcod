@@ -53,6 +53,7 @@ bool NamedMentions(const char *const needle)
 
 // XAssetType values (xanim/xanim.h) used as representative families.
 constexpr std::int32_t kXModelPieces = 0x0;
+constexpr std::int32_t kPhysPreset = 0x1;
 constexpr std::int32_t kXAnimParts = 0x2;
 constexpr std::int32_t kXModel = 0x3;
 constexpr std::int32_t kWeapon = 0x17;
@@ -132,6 +133,7 @@ void TestFailClosedPolicy()
     // K4 counts these: their 64-bit digest on retail data is the x86 one.
     Expect(IsLoadPermitted(kRawFile, true, false), "64-bit targets must load raw files, which K4 counts");
     Expect(IsLoadPermitted(kStringTable, true, false), "64-bit targets must load string tables, which K4 counts");
+    Expect(IsLoadPermitted(kPhysPreset, true, false), "64-bit targets must load physics presets, which K4 counts");
 
     // FX and Impact FX hold a pair, but only the FX zone adapter can apply it.
     Expect(
