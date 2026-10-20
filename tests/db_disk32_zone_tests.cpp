@@ -704,6 +704,7 @@ void zone_test::CheckZone()
     ExpectDigest(ASSET_TYPE_LOCALIZE_ENTRY, "E2E_HELLO", "b2fe4b24c0b4c05082de1b641f243aeb0e54f0820782208cbd9f21e2aa76fed0");
     const MapEnts *ents = Find(ASSET_TYPE_MAP_ENTS, "e2e/ents").mapEnts;
     Expect(ents && ents->numEntityChars == 3 && !std::strcmp(ents->entityString, "{}"), "the map entities load");
+    ExpectDigest(ASSET_TYPE_GAMEWORLD_MP, "e2e/gameworld", "ec615a91442ac30d00a8fffb2c79ea9f41f31f9bfd24dd358d95e158af9bc78a");
     ExpectDigest(ASSET_TYPE_MAP_ENTS, "e2e/ents", "084e367684801f3eef8535928ddae0ccda22fd62aba5345909eb8f08dc381095");
     const ComWorld *world = Find(ASSET_TYPE_COMWORLD, "e2e/comworld").comWorld;
     Expect(world && world->primaryLightCount == 1 && !std::strcmp(world->primaryLights[0].defName, "e2e/light0"),
@@ -717,6 +718,7 @@ void zone_test::CheckZone()
     const GfxLightDef *light = Find(ASSET_TYPE_LIGHT_DEF, "e2e/lightdef").lightDef;
     Expect(light && Is(light->attenuation.image, ASSET_TYPE_IMAGE, "e2e/img") && light->lmapLookupStart == 7,
            "a light def's attenuation is the shared image");
+    ExpectDigest(ASSET_TYPE_LIGHT_DEF, "e2e/lightdef", "d604504564be53cd71c39849b173b939d5d7e9845e23f6aabbd82acc0c40d34a");
     const Material *material = Find(ASSET_TYPE_MATERIAL, "e2e/material").material;
     Expect(material && Is(material->techniqueSet, ASSET_TYPE_TECHNIQUE_SET, "e2e/techset")
                && material->techniqueSet->remappedTechniqueSet == material->techniqueSet && material->textureCount == 2
