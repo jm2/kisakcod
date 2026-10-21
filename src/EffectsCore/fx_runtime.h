@@ -226,20 +226,6 @@ struct FxSystem
 };
 RUNTIME_SIZE(FxSystem, 0xA60, 0xA90);
 
-struct FxImpactEntry
-{
-    const FxEffectDef *nonflesh[29];
-    const FxEffectDef *flesh[4];
-};
-RUNTIME_SIZE(FxImpactEntry, 0x84, 0x108);
-
-struct FxImpactTable
-{
-    const char *name;
-    FxImpactEntry *table;
-};
-RUNTIME_SIZE(FxImpactTable, 0x8, 0x10);
-
 struct FxSystemBuffers
 {
     FxEffect effects[MAX_EFFECTS];

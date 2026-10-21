@@ -729,6 +729,7 @@ set(UNIVERSAL
     "${SRC_DIR}/universal/dvar.cpp"
     "${SRC_DIR}/universal/dvar_cmds.cpp"
     "${SRC_DIR}/universal/dyn_entity_def.h"
+    "${SRC_DIR}/universal/fx_effect_def.h"
     "${SRC_DIR}/universal/fft.cpp"
     "${SRC_DIR}/universal/fft.h"
     "${SRC_DIR}/universal/gfx_image.h"
