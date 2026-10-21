@@ -365,13 +365,12 @@ enum MenuTypeDataField : std::uint32_t
     kMenuItemTypeDataMultiEntry,
 };
 
-// mousePos through numColumns, four 4-byte scalars and two floats, then the
-// counted columns.
+// mousePos through numColumns (eight words, the two floats in their bit
+// patterns), then the counted columns.
 void HashMenuListBox(GraphHashBuilder &builder, const listBoxDef_s &box)
 {
     builder.BeginRecord(kMenuItemTypeDataListBox);
     builder.FieldBytes(1, &box.mousePos, 8 * sizeof(std::int32_t));
-    builder.FieldI64(2, box.numColumns);
     for (int i = 0; i < box.numColumns && i < 16; ++i)
     {
         builder.BeginRecord(kMenuItemTypeDataColumn);

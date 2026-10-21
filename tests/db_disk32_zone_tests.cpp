@@ -230,16 +230,155 @@ void WriteImpactFx(Image &z) // 12 surfaces; the first names the shared effect
     z.VAlloc(12 * 0x84);
     z.Word(Virt(g_at.fx)).Fill(12 * 0x84 - 4);
 }
-// The window draws the shared material; one item (type 1, no type data)
-// focuses with the shared sound.
+std::uint32_t Bits(float value) { return std::bit_cast<std::uint32_t>(value); }
+std::string Tag(const char *stem, int index) { return "e2e/" + std::string(stem) + std::to_string(index); }
+
+// One key-handler step: a 12-byte record at 4-alignment, then its action.
+void MenuHandler(Image &z, std::uint32_t key, const std::string &action, std::uint32_t next)
+{
+    z.VAlloc(12);
+    z.Record(12, {{0x00, key}, {0x04, kInline}, {0x08, next}}).V(action);
+}
+
+// One expression entry: type 0 is an operator; type 1 is an operand whose
+// value is the given string, or four bytes of int or float bits.
+void MenuEntry(Image &z, std::uint32_t type, std::uint32_t data, std::uint32_t bits, const std::string &text)
+{
+    z.VAlloc(12);
+    if (!type)
+    {
+        z.Record(12, {{0x00, 0}, {0x04, data}});
+        return;
+    }
+    z.Record(12, {{0x00, 1}, {0x04, data}, {0x08, text.empty() ? bits : kInline}});
+    if (!text.empty())
+        z.V(text);
+}
+
+// The streamed half of a statement: its entry tokens, in order.
+void MenuEntries(Image &z, std::uint32_t count)
+{
+    z.VAlloc(4 * count);
+    for (std::uint32_t entry = 0; entry < count; ++entry)
+        z.Word(kInline);
+}
+
+// One item (372 bytes) and what its loader reads after it: the window
+// strings, eleven scripts, a key handler, enableDvar, the focus sound (an
+// offset, so no bytes), the type data and two statements.
+void WriteMenuItem(Image &z, int index, std::uint32_t type, std::uint32_t typeData)
+{
+    static constexpr const char *const kScripts[] = {"text", "enterText", "exitText", "enter", "exit", "action",
+                                                     "accept", "focus", "leave", "dvar", "dvarTest"};
+    z.VAlloc(0x174);
+    z.Record(0x174, {{0x00, kInline}, {0x34, kInline}, {0x98, index == 0 ? Virt(g_at.material) : 0u},
+                     {0x9C, Bits(0.25f)}, {0xA0, Bits(0.5f)}, {0xA4, Bits(0.75f)}, {0xA8, Bits(1.0f)},
+                     {0xAC, 1}, {0xB0, 2},
+                     {0xB4, type}, {0xB8, 2}, {0xBC, 1}, {0xC0, 3}, {0xC4, 2},
+                     {0xC8, Bits(4.0f)}, {0xCC, Bits(5.0f)}, {0xD0, Bits(0.75f)},
+                     {0xD4, 6}, {0xD8, 7}, {0xDC, 8},
+                     {0xE0, kInline}, {0xE4, 0x11},
+                     {0xEC, kInline}, {0xF0, kInline}, {0xF4, kInline}, {0xF8, kInline}, {0xFC, kInline},
+                     {0x100, kInline}, {0x104, kInline}, {0x108, kInline}, {0x10C, kInline}, {0x110, kInline},
+                     {0x114, kInline}, {0x118, kInline}, {0x11C, 3}, {0x120, Virt(g_at.sound)},
+                     {0x124, Bits(-1.5f)}, {0x12C, typeData},
+                     {0x134, 1}, {0x138, kInline}, {0x13C, 0}, {0x140, kInline}, {0x144, 1}, {0x148, kInline}});
+    z.V(Tag("item", index));
+    z.V(Tag("group", index));
+    for (const char *script : kScripts)
+        z.V(Tag(script, index));
+    MenuHandler(z, 20 + static_cast<std::uint32_t>(index), Tag("key", index), 0);
+    z.V(Tag("enable", index));
+    switch (type)
+    {
+    case 6:
+        z.VAlloc(0x154);
+        z.Record(0x154, {{0x00, 0xFFFFFFFFu}, {0x0C, 2}, {0x10, Bits(2.5f)}, {0x14, Bits(3.5f)}, {0x18, 1},
+                         {0x1C, 2}, {0x20, 1}, {0x24, 100}, {0x28, 8}, {0x2C, 0},
+                         {0x30, 100}, {0x34, 100}, {0x38, 8}, {0x3C, 1},
+                         {0x120, kInline}, {0x150, Virt(g_at.material)}});
+        z.V(Tag("listbox", index));
+        break;
+    case 12: // the loader reads all 32 names, then all 32 strings
+        z.VAlloc(0x188);
+        z.Record(0x188, {{0x00, kInline}, {0x04, kInline}, {0x80, kInline}, {0x84, kInline},
+                         {0x100, Bits(1.5f)}, {0x104, Bits(2.5f)}, {0x180, 2}, {0x184, 1}});
+        z.V(Tag("dvarA", index));
+        z.V(Tag("dvarB", index));
+        z.V(Tag("strA", index));
+        z.V(Tag("strB", index));
+        break;
+    case 13: // the type-data token is the string itself
+        z.V(Tag("dvar", index));
+        break;
+    default:
+        if (typeData)
+        {
+            z.VAlloc(0x20);
+            z.Record(0x20, {{0x00, Bits(0.0f)}, {0x04, Bits(10.0f)}, {0x08, Bits(5.0f)}, {0x0C, Bits(10.0f)},
+                            {0x10, 8}, {0x14, 0}, {0x18, 8}, {0x1C, 0}});
+        }
+        break;
+    }
+    MenuEntries(z, 1);
+    MenuEntry(z, 1, 2, 0, Tag("vis", index));
+    MenuEntries(z, 0); // textExp: a token, no entries
+    MenuEntries(z, 1);
+    if (index == 2)
+        MenuEntry(z, 1, 0, 0x2A, ""); // an int operand
+    else
+        MenuEntry(z, 1, 1, Bits(2.0f + static_cast<float>(index)), "");
+}
+
+// A menu that reaches every branch of the walker: its window, scripts, a
+// two-step key chain, an operator and a string statement, and five items
+// covering no type data, a list box, a multi-value, an enum dvar and an edit
+// field.
 void WriteMenu(Image &z)
 {
     g_at.menu = z.VAlloc(4);
-    z.Record(0x11C, {{0x00, kInline}, {0x98, Virt(g_at.material)}, {0xA4, 1}, {0x118, kInline}}).V("e2e/menu");
-    z.VAlloc(4);
-    z.Word(kInline);
-    z.VAlloc(0x174);
-    z.Record(0x174, {{0xB4, 1}, {0x120, Virt(g_at.sound)}});
+    z.Record(0x11C, {{0x00, kInline}, {0x04, Bits(1.0f)}, {0x08, Bits(2.0f)}, {0x0C, Bits(3.0f)},
+                     {0x10, Bits(4.0f)}, {0x14, 1}, {0x18, 2},
+                     {0x1C, Bits(5.0f)}, {0x20, Bits(6.0f)}, {0x24, Bits(7.0f)}, {0x28, Bits(8.0f)},
+                     {0x2C, 3}, {0x30, 4},
+                     {0x34, kInline},
+                     {0x38, 1}, {0x3C, 2}, {0x40, 1}, {0x44, 0x80000000u}, {0x48, Bits(1.25f)}, {0x4C, 0x40},
+                     {0x58, Bits(1.0f)}, {0x5C, Bits(0.5f)}, {0x60, Bits(0.25f)}, {0x64, Bits(1.0f)},
+                     {0x68, Bits(0.0f)}, {0x6C, Bits(0.5f)}, {0x70, Bits(0.0f)}, {0x74, Bits(1.0f)},
+                     {0x78, Bits(0.25f)}, {0x7C, Bits(0.25f)}, {0x80, Bits(0.25f)}, {0x84, Bits(1.0f)},
+                     {0x88, Bits(0.75f)}, {0x8C, Bits(0.75f)}, {0x90, Bits(0.75f)}, {0x94, Bits(0.0f)},
+                     {0x98, Virt(g_at.material)},
+                     {0x9C, kInline}, {0xA0, 1}, {0xA4, 5}, {0xA8, 2}, {0xAC, 0}, {0xB0, 3},
+                     {0xB4, Bits(1.0f)}, {0xB8, Bits(1.5f)}, {0xBC, Bits(2.0f)}, {0xC0, Bits(2.5f)},
+                     {0xC4, kInline}, {0xC8, kInline}, {0xCC, kInline}, {0xD0, kInline},
+                     {0xD4, 1}, {0xD8, kInline},
+                     {0xDC, kInline}, {0xE0, kInline}, {0xE4, 0},
+                     {0xE8, Bits(1.0f)}, {0xEC, Bits(0.0f)}, {0xF0, Bits(0.0f)}, {0xF4, Bits(1.0f)},
+                     {0xF8, Bits(0.5f)}, {0xFC, Bits(0.5f)}, {0x100, Bits(0.5f)}, {0x104, Bits(1.0f)},
+                     {0x108, 1}, {0x10C, kInline}, {0x110, 0}, {0x114, kInline}, {0x118, kInline}});
+    z.V("e2e/menu");
+    z.V("e2e/menugroup");
+    z.V("e2e/font");
+    z.V("e2e/open");
+    z.V("e2e/close");
+    z.V("e2e/esc");
+    MenuHandler(z, 1, "e2e/key1", kInline);
+    MenuHandler(z, 2, "e2e/key2", 0);
+    MenuEntries(z, 1);
+    MenuEntry(z, 0, 0, 0, "");
+    z.V("e2e/bind");
+    z.V("e2e/sound");
+    MenuEntries(z, 1);
+    MenuEntry(z, 1, 2, 0, "e2e/rect");
+    MenuEntries(z, 0); // rectYExp: a token, no entries
+    z.VAlloc(4 * 5);
+    for (int item = 0; item < 5; ++item)
+        z.Word(kInline);
+    WriteMenuItem(z, 0, 1, 0);
+    WriteMenuItem(z, 1, 6, kInline);
+    WriteMenuItem(z, 2, 12, kInline);
+    WriteMenuItem(z, 3, 13, kInline);
+    WriteMenuItem(z, 4, 4, kInline);
 }
 void WriteMenuList(Image &z) // names the shared menu by offset
 {
@@ -745,14 +884,17 @@ void zone_test::CheckZone()
     Expect(impacts && Is(impacts->table[0].nonflesh[0], ASSET_TYPE_FX, "e2e/fx") && !impacts->table[11].flesh[3],
            "an impact table names the shared effect");
     const menuDef_t *menu = Find(ASSET_TYPE_MENU, "e2e/menu").menu;
-    Expect(menu && menu->itemCount == 1 && Is(menu->window.background, ASSET_TYPE_MATERIAL, "e2e/material")
-               && menu->items[0]->parent == menu && Is(menu->items[0]->focusSound, ASSET_TYPE_SOUND, "e2e/snd"),
+    bool parents = menu && menu->itemCount == 5;
+    for (int item = 0; parents && item < menu->itemCount; ++item)
+        parents = menu->items[item]->parent == menu;
+    Expect(parents && Is(menu->window.background, ASSET_TYPE_MATERIAL, "e2e/material")
+               && Is(menu->items[0]->focusSound, ASSET_TYPE_SOUND, "e2e/snd"),
            "a menu reaches its material and sound, and its item its pooled menu");
     const MenuList *menus = Find(ASSET_TYPE_MENULIST, "e2e/menus").menuList;
     Expect(menus && menus->menuCount == 1 && Is(menus->menus[0], ASSET_TYPE_MENU, "e2e/menu"),
            "a menu list names the shared menu");
     ExpectDigest(ASSET_TYPE_MENULIST, "e2e/menus", "ffab98a262e71a8ddf4413d6d4626dacbd3dec520ee57e6cf1e0b508526b9dbb");
-    ExpectDigest(ASSET_TYPE_MENU, "e2e/menu", "d1fa307f2fee5a5430e83cf64c11d53fc2b7d74096dd79523cb858755381e9f5");
+    ExpectDigest(ASSET_TYPE_MENU, "e2e/menu", "9529e9b54d37c14c262d2b8a756e97fc40ecf9b1deb6e9ee3062ad9863d6ad49");
     const XModel *model = Find(ASSET_TYPE_XMODEL, "e2e/model").model;
     Expect(model && model->numBones == 2 && model->boneNames[1] == SL_FindString("bone_child")
                && Is(model->materialHandles[0], ASSET_TYPE_MATERIAL, "e2e/material"),
