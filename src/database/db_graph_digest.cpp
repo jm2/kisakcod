@@ -21,10 +21,12 @@
 
 #include "database/database.h"
 
+#include <database/db_validation.h>
 #include <game/g_bsp.h>
 #include <physics/phys_local.h>
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
+#include <universal/dyn_entity_def.h>
 #include <universal/fft.h>
 #include <universal/gfx_image.h>
 #include <universal/gfx_lightdef.h>
@@ -301,6 +303,346 @@ void HashComWorld(GraphHashBuilder &builder, const XAssetHeader &header)
         builder.FieldString(14, light.defName);
         builder.EndRecord();
     }
+}
+
+// ---- ClipMapPvs ----
+
+// One record tag per nested record, so a field tag cannot collide with a
+// neighbouring record's.
+constexpr std::uint32_t kClipMapRecord = 1;
+constexpr std::uint32_t kClipMapStaticModelRecord = 2;
+constexpr std::uint32_t kClipMapBrushSideRecord = 3;
+constexpr std::uint32_t kClipMapNodeRecord = 4;
+constexpr std::uint32_t kClipMapLeafBrushNodeRecord = 5;
+constexpr std::uint32_t kClipMapPartitionRecord = 6;
+constexpr std::uint32_t kClipMapBrushRecord = 7;
+constexpr std::uint32_t kClipMapDynEntityRecord = 8;
+constexpr std::uint32_t kClipMapPiecesRecord = 9;
+constexpr std::uint32_t kClipMapPieceRecord = 10;
+
+enum ClipMapField : std::uint32_t
+{
+    kClipMapName = 1,
+    kClipMapChecksum,
+    kClipMapPlaneCount,
+    kClipMapPlanes,
+    kClipMapStaticModelCount,
+    kClipMapStaticModelXModel,
+    kClipMapStaticModelOrigin,
+    kClipMapStaticModelAxis,
+    kClipMapStaticModelAbsMin,
+    kClipMapStaticModelAbsMax,
+    kClipMapMaterialCount,
+    kClipMapMaterials,
+    kClipMapBrushSideCount,
+    kClipMapBrushSidePlane,
+    kClipMapBrushSideMaterial,
+    kClipMapBrushSideAdjacentOffset,
+    kClipMapBrushSideEdgeCount,
+    kClipMapBrushEdgeCount,
+    kClipMapBrushEdges,
+    kClipMapNodeCount,
+    kClipMapNodePlane,
+    kClipMapNodeChildren,
+    kClipMapLeafCount,
+    kClipMapLeafs,
+    kClipMapLeafBrushNodeCount,
+    kClipMapLeafBrushAxis,
+    kClipMapLeafBrushCount,
+    kClipMapLeafBrushContents,
+    kClipMapLeafBrushIndices,
+    kClipMapLeafBrushChildren,
+    kClipMapLeafBrushesCount,
+    kClipMapLeafBrushes,
+    kClipMapLeafSurfaceCount,
+    kClipMapLeafSurfaces,
+    kClipMapVertexCount,
+    kClipMapVerts,
+    kClipMapTriangleCount,
+    kClipMapTriIndices,
+    kClipMapWalkable,
+    kClipMapBorderCount,
+    kClipMapBorders,
+    kClipMapPartitionCount,
+    kClipMapPartitionTriCount,
+    kClipMapPartitionBorderCount,
+    kClipMapPartitionFirstTri,
+    kClipMapPartitionBorders,
+    kClipMapAabbTreeCount,
+    kClipMapAabbTrees,
+    kClipMapSubModelCount,
+    kClipMapCmodels,
+    kClipMapBrushCount,
+    kClipMapBrushMins,
+    kClipMapBrushContents,
+    kClipMapBrushMaxs,
+    kClipMapBrushSides,
+    kClipMapBrushAxialMaterials,
+    kClipMapBrushAdjacency,
+    kClipMapBrushAdjacentOffsets,
+    kClipMapBrushEdgeCounts,
+    kClipMapClusterCount,
+    kClipMapClusterBytes,
+    kClipMapVisibility,
+    kClipMapMapEnts,
+    kClipMapBoxBrush,
+    kClipMapBoxModel,
+    kClipMapDynEntCount,
+    kClipMapDynType,
+    kClipMapDynPose,
+    kClipMapDynModel,
+    kClipMapDynBrushModel,
+    kClipMapDynPhysicsBrushModel,
+    kClipMapDynDestroyFx,
+    kClipMapDynDestroyPieces,
+    kClipMapDynPhysPreset,
+    kClipMapDynHealth,
+    kClipMapDynMass,
+    kClipMapDynContents,
+    kClipMapPiecesName,
+    kClipMapPiecesCount,
+    kClipMapPieceModel,
+    kClipMapPieceOffset,
+};
+
+// A span whose records keep their layout at both widths: the struct's count,
+// then its elements as bytes. A null span keeps no bytes even when the count
+// is nonzero, exactly as the loader leaves it.
+void HashClipMapSpan(GraphHashBuilder &builder, std::uint32_t countTag, std::uint32_t bytesTag, const void *data,
+                     std::int64_t count, std::size_t elementBytes)
+{
+    builder.FieldI64(countTag, count);
+    builder.FieldBytes(bytesTag, data, data && count > 0 ? static_cast<std::size_t>(count) * elementBytes : 0);
+}
+
+// A static model: its model by name, then the placement fields. Not
+// writable.nextModelInWorldSector: the renderer links placed models into
+// world sectors at run time.
+void HashClipMapStaticModel(GraphHashBuilder &builder, const cStaticModel_s &model)
+{
+    builder.BeginRecord(kClipMapStaticModelRecord);
+    FieldAsset(builder, kClipMapStaticModelXModel, ASSET_TYPE_XMODEL, model.xmodel);
+    builder.FieldBytes(kClipMapStaticModelOrigin, model.origin, sizeof(model.origin));
+    builder.FieldBytes(kClipMapStaticModelAxis, model.invScaledAxis, sizeof(model.invScaledAxis));
+    builder.FieldBytes(kClipMapStaticModelAbsMin, model.absmin, sizeof(model.absmin));
+    builder.FieldBytes(kClipMapStaticModelAbsMax, model.absmax, sizeof(model.absmax));
+    builder.EndRecord();
+}
+
+// A brush side: the plane it names by value, since the loader resolves the
+// offset into block 4 and the plane array is hashed on its own too.
+void HashClipMapBrushSide(GraphHashBuilder &builder, const cbrushside_t &side)
+{
+    builder.BeginRecord(kClipMapBrushSideRecord);
+    builder.FieldBytes(kClipMapBrushSidePlane, side.plane, side.plane ? sizeof(cplane_s) : 0);
+    builder.FieldU64(kClipMapBrushSideMaterial, side.materialNum);
+    builder.FieldI64(kClipMapBrushSideAdjacentOffset, side.firstAdjacentSideOffset);
+    builder.FieldU64(kClipMapBrushSideEdgeCount, side.edgeCount);
+    builder.EndRecord();
+}
+
+void HashClipMapNode(GraphHashBuilder &builder, const cNode_t &node)
+{
+    builder.BeginRecord(kClipMapNodeRecord);
+    builder.FieldBytes(kClipMapNodePlane, node.plane, node.plane ? sizeof(cplane_s) : 0);
+    for (const std::int16_t child : node.children)
+        builder.FieldI64(kClipMapNodeChildren, child);
+    builder.EndRecord();
+}
+
+// A leaf-brush node: with brushes it names brush indices, without them it
+// holds the split children the loader copies whole.
+void HashClipMapLeafBrushNode(GraphHashBuilder &builder, const cLeafBrushNode_s &node)
+{
+    builder.BeginRecord(kClipMapLeafBrushNodeRecord);
+    builder.FieldU64(kClipMapLeafBrushAxis, node.axis);
+    builder.FieldI64(kClipMapLeafBrushCount, node.leafBrushCount);
+    builder.FieldI64(kClipMapLeafBrushContents, node.contents);
+    if (node.leafBrushCount > 0)
+    {
+        builder.FieldBytes(kClipMapLeafBrushIndices, node.data.leaf.brushes,
+                           node.data.leaf.brushes ? static_cast<std::size_t>(node.leafBrushCount) * sizeof(uint16_t) : 0);
+    }
+    else
+    {
+        builder.FieldBytes(kClipMapLeafBrushChildren, &node.data.children, sizeof(node.data.children));
+    }
+    builder.EndRecord();
+}
+
+void HashClipMapPartition(GraphHashBuilder &builder, const CollisionPartition &partition)
+{
+    builder.BeginRecord(kClipMapPartitionRecord);
+    builder.FieldU64(kClipMapPartitionTriCount, partition.triCount);
+    builder.FieldU64(kClipMapPartitionBorderCount, partition.borderCount);
+    builder.FieldI64(kClipMapPartitionFirstTri, partition.firstTri);
+    builder.FieldBytes(kClipMapPartitionBorders, partition.borders,
+                       partition.borders && partition.borderCount > 0
+                           ? static_cast<std::size_t>(partition.borderCount) * sizeof(CollisionBorder)
+                           : 0);
+    builder.EndRecord();
+}
+
+// A brush: its sides as the records they name, then the adjacency extent the
+// loader derives from the side offsets, which is how many edge bytes the
+// brush owns.
+void HashClipMapBrush(GraphHashBuilder &builder, const cbrush_t &brush)
+{
+    builder.BeginRecord(kClipMapBrushRecord);
+    builder.FieldBytes(kClipMapBrushMins, brush.mins, sizeof(brush.mins));
+    builder.FieldI64(kClipMapBrushContents, brush.contents);
+    builder.FieldBytes(kClipMapBrushMaxs, brush.maxs, sizeof(brush.maxs));
+    builder.FieldU64(kClipMapBrushSides, brush.numsides);
+    for (std::uint32_t i = 0; brush.sides && i < brush.numsides; ++i)
+        HashClipMapBrushSide(builder, brush.sides[i]);
+    builder.FieldBytes(kClipMapBrushAxialMaterials, brush.axialMaterialNum, sizeof(brush.axialMaterialNum));
+    std::uint32_t adjacency = 0;
+    if (!db::validation::ClipMapBrushAdjacencyPrefixExtent(brush, &adjacency) || !brush.baseAdjacentSide)
+        adjacency = 0;
+    builder.FieldBytes(kClipMapBrushAdjacency, adjacency ? brush.baseAdjacentSide : nullptr, adjacency);
+    builder.FieldBytes(kClipMapBrushAdjacentOffsets, brush.firstAdjacentSideOffsets, sizeof(brush.firstAdjacentSideOffsets));
+    builder.FieldBytes(kClipMapBrushEdgeCounts, brush.edgeCount, sizeof(brush.edgeCount));
+    builder.EndRecord();
+}
+
+// Model pieces: a completed object the def names, hashed by content so a
+// shared object and a duplicated one agree. Counted pieces only; the loader
+// loads all 32 strings of a multi def but pieces are exactly numpieces.
+void HashClipMapPieces(GraphHashBuilder &builder, const XModelPieces &pieces)
+{
+    builder.BeginRecord(kClipMapPiecesRecord);
+    builder.FieldString(kClipMapPiecesName, pieces.name);
+    const std::int64_t count = pieces.numpieces > 0 ? pieces.numpieces : 0;
+    builder.FieldI64(kClipMapPiecesCount, count);
+    for (std::int64_t i = 0; pieces.pieces && i < count; ++i)
+    {
+        builder.BeginRecord(kClipMapPieceRecord);
+        FieldAsset(builder, kClipMapPieceModel, ASSET_TYPE_XMODEL, pieces.pieces[i].model);
+        builder.FieldBytes(kClipMapPieceOffset, pieces.pieces[i].offset, sizeof(pieces.pieces[i].offset));
+        builder.EndRecord();
+    }
+    builder.EndRecord();
+}
+
+// A dynamic entity's def: its model, effect, pieces and preset by name, its
+// pose, mass and contents by value. Not the pose/client/collision arrays the
+// loader keeps in block 1: those are per-round run-time state.
+void HashClipMapDynEntity(GraphHashBuilder &builder, const DynEntityDef &def)
+{
+    builder.BeginRecord(kClipMapDynEntityRecord);
+    builder.FieldI64(kClipMapDynType, static_cast<std::int64_t>(def.type));
+    builder.FieldBytes(kClipMapDynPose, &def.pose, sizeof(def.pose));
+    FieldAsset(builder, kClipMapDynModel, ASSET_TYPE_XMODEL, def.xModel);
+    builder.FieldU64(kClipMapDynBrushModel, def.brushModel);
+    builder.FieldU64(kClipMapDynPhysicsBrushModel, def.physicsBrushModel);
+    FieldAsset(builder, kClipMapDynDestroyFx, ASSET_TYPE_FX, def.destroyFx);
+    builder.FieldU64(kClipMapDynDestroyPieces, def.destroyPieces != nullptr);
+    if (def.destroyPieces)
+        HashClipMapPieces(builder, *def.destroyPieces);
+    FieldAsset(builder, kClipMapDynPhysPreset, ASSET_TYPE_PHYSPRESET, def.physPreset);
+    builder.FieldI64(kClipMapDynHealth, def.health);
+    for (const float value : def.mass.centerOfMass)
+        builder.FieldF32(kClipMapDynMass, value);
+    for (const float value : def.mass.momentsOfInertia)
+        builder.FieldF32(kClipMapDynMass, value);
+    for (const float value : def.mass.productsOfInertia)
+        builder.FieldF32(kClipMapDynMass, value);
+    builder.FieldI64(kClipMapDynContents, def.contents);
+    builder.EndRecord();
+}
+
+// ClipMap and ClipMapPvs: the collision world, its brushes and the dynamic
+// entities. Not isInUse or vised (run-time flags), nor the dynamic entities'
+// block-1 pose/client/collision arrays.
+void HashClipMapPvs(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const clipMap_t &map = *header.clipMap;
+    builder.BeginRecord(kClipMapRecord);
+    builder.FieldString(kClipMapName, map.name);
+    builder.FieldU64(kClipMapChecksum, map.checksum);
+
+    HashClipMapSpan(builder, kClipMapPlaneCount, kClipMapPlanes, map.planes, map.planeCount, sizeof(cplane_s));
+
+    const std::int64_t staticModels = map.numStaticModels;
+    builder.FieldI64(kClipMapStaticModelCount, staticModels);
+    for (std::int64_t i = 0; map.staticModelList && i < staticModels; ++i)
+        HashClipMapStaticModel(builder, map.staticModelList[i]);
+
+    HashClipMapSpan(builder, kClipMapMaterialCount, kClipMapMaterials, map.materials, map.numMaterials,
+                    sizeof(dmaterial_t));
+
+    const std::int64_t sides = map.numBrushSides;
+    builder.FieldI64(kClipMapBrushSideCount, sides);
+    for (std::int64_t i = 0; map.brushsides && i < sides; ++i)
+        HashClipMapBrushSide(builder, map.brushsides[i]);
+
+    HashClipMapSpan(builder, kClipMapBrushEdgeCount, kClipMapBrushEdges, map.brushEdges, map.numBrushEdges, 1);
+
+    const std::int64_t nodes = map.numNodes;
+    builder.FieldI64(kClipMapNodeCount, nodes);
+    for (std::int64_t i = 0; map.nodes && i < nodes; ++i)
+        HashClipMapNode(builder, map.nodes[i]);
+
+    HashClipMapSpan(builder, kClipMapLeafCount, kClipMapLeafs, map.leafs, map.numLeafs, sizeof(cLeaf_t));
+
+    const std::int64_t leafBrushNodes = map.leafbrushNodesCount;
+    builder.FieldI64(kClipMapLeafBrushNodeCount, leafBrushNodes);
+    for (std::int64_t i = 0; map.leafbrushNodes && i < leafBrushNodes; ++i)
+        HashClipMapLeafBrushNode(builder, map.leafbrushNodes[i]);
+
+    HashClipMapSpan(builder, kClipMapLeafBrushesCount, kClipMapLeafBrushes, map.leafbrushes, map.numLeafBrushes,
+                    sizeof(std::uint16_t));
+    HashClipMapSpan(builder, kClipMapLeafSurfaceCount, kClipMapLeafSurfaces, map.leafsurfaces, map.numLeafSurfaces,
+                    sizeof(std::uint32_t));
+    HashClipMapSpan(builder, kClipMapVertexCount, kClipMapVerts, map.verts, map.vertCount, 3 * sizeof(float));
+
+    const std::int64_t triangleCount = map.triCount > 0 ? map.triCount : 0;
+    builder.FieldI64(kClipMapTriangleCount, triangleCount);
+    builder.FieldBytes(kClipMapTriIndices, map.triIndices,
+                       map.triIndices && triangleCount ? static_cast<std::size_t>(triangleCount) * 3 * sizeof(std::uint16_t)
+                                                       : 0);
+    const std::int64_t walkableBytes = 4 * ((3 * triangleCount + 31) / 32);
+    builder.FieldBytes(kClipMapWalkable, map.triEdgeIsWalkable,
+                       map.triEdgeIsWalkable ? static_cast<std::size_t>(walkableBytes) : 0);
+
+    HashClipMapSpan(builder, kClipMapBorderCount, kClipMapBorders, map.borders, map.borderCount,
+                    sizeof(CollisionBorder));
+
+    const std::int64_t partitions = map.partitionCount;
+    builder.FieldI64(kClipMapPartitionCount, partitions);
+    for (std::int64_t i = 0; map.partitions && i < partitions; ++i)
+        HashClipMapPartition(builder, map.partitions[i]);
+
+    HashClipMapSpan(builder, kClipMapAabbTreeCount, kClipMapAabbTrees, map.aabbTrees, map.aabbTreeCount,
+                    sizeof(CollisionAabbTree));
+    HashClipMapSpan(builder, kClipMapSubModelCount, kClipMapCmodels, map.cmodels, map.numSubModels, sizeof(cmodel_t));
+
+    const std::int64_t brushes = map.numBrushes;
+    builder.FieldI64(kClipMapBrushCount, brushes);
+    for (std::int64_t i = 0; map.brushes && i < brushes; ++i)
+        HashClipMapBrush(builder, map.brushes[i]);
+
+    builder.FieldI64(kClipMapClusterCount, map.numClusters);
+    builder.FieldI64(kClipMapClusterBytes, map.clusterBytes);
+    const std::int64_t visibilityBytes =
+        map.numClusters > 0 && map.clusterBytes > 0 ? static_cast<std::int64_t>(map.numClusters) * map.clusterBytes : 0;
+    builder.FieldBytes(kClipMapVisibility, map.visibility,
+                       map.visibility ? static_cast<std::size_t>(visibilityBytes) : 0);
+
+    FieldAsset(builder, kClipMapMapEnts, ASSET_TYPE_MAP_ENTS, map.mapEnts);
+    builder.FieldU64(kClipMapBoxBrush, map.box_brush != nullptr);
+    if (map.box_brush)
+        HashClipMapBrush(builder, *map.box_brush);
+    builder.FieldBytes(kClipMapBoxModel, &map.box_model, sizeof(map.box_model));
+
+    for (int list = 0; list < 2; ++list)
+    {
+        const std::int64_t defs = map.dynEntCount[list];
+        builder.FieldI64(kClipMapDynEntCount, defs);
+        for (std::int64_t i = 0; map.dynEntDefList[list] && i < defs; ++i)
+            HashClipMapDynEntity(builder, map.dynEntDefList[list][i]);
+    }
+    builder.EndRecord();
 }
 
 enum LoadedSoundField : std::uint32_t
@@ -1085,6 +1427,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashMenuList;
     case ASSET_TYPE_COMWORLD:
         return HashComWorld;
+    case ASSET_TYPE_CLIPMAP_PVS:
+        return HashClipMapPvs;
     case ASSET_TYPE_LOADED_SOUND:
         return HashLoadedSound;
     case ASSET_TYPE_SOUND:

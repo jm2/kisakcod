@@ -150,6 +150,8 @@ void TestFailClosedPolicy()
            "64-bit targets must load menu lists, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kComWorld, true, false),
            "64-bit targets must load com worlds, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kClipMapPvs, true, false),
+           "64-bit targets must load PVS clip maps, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kSound, true, false),
            "64-bit targets must load sound alias lists, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kXAnimParts, true, false),
