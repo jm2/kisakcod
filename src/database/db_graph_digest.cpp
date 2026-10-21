@@ -884,14 +884,14 @@ void HashCollisionTree(GraphHashBuilder &builder, const XSurfaceCollisionTree *t
 
 // A surface: its counts and indices, its skinning (vertex counts by
 // influence, then 1, 3, 5 or 7 blend values per vertex), its vertices and its
-// rigid vertex lists.
+// rigid vertex lists. Not zoneHandle: a load replaces it with the slot of the
+// zone being loaded (Load_GetCurrentZoneHandle), which load order decides.
 void HashXSurface(GraphHashBuilder &builder, const XSurface &surface)
 {
     builder.FieldU64(20, surface.tileMode);
     FieldBool(builder, 21, surface.deformed);
     builder.FieldU64(22, surface.vertCount);
     builder.FieldU64(22, surface.triCount);
-    builder.FieldU64(23, surface.zoneHandle);
     builder.FieldU64(24, surface.baseTriIndex);
     builder.FieldU64(24, surface.baseVertIndex);
     FieldArray(builder, 25, surface.triIndices, surface.triCount * std::size_t{3});
