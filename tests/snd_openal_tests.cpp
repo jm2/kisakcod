@@ -1,7 +1,8 @@
 // snd_openal_tests.cpp: the Miles calls the OpenAL Soft shim
 // (sound/snd_openal.cpp) answers, on OpenAL Soft's null backend, which mixes
 // in real time with no output device, and its IMA ADPCM decoder
-// (sound/snd_openal_adpcm.cpp). Sample headers that don't describe
+// (sound/snd_openal_adpcm.cpp). Streams read a synthetic WAV through
+// test file callbacks, as the engine's MSS_File* callbacks read iwd members. Sample headers that don't describe
 // whole frames fail closed; a PCM sample plays to SMP_DONE; a looping one
 // keeps playing until ended.
 
@@ -11,6 +12,7 @@
 #include <msslib/mss.h>
 #include <sound/snd_openal_adpcm.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -247,6 +249,83 @@ void Test3dPosition(HSAMPLE sample)
     CHECK(!AIL_sample_3D_position(sample, &x, &y, &z)); // reloading clears it
 }
 
+// A 0.3 s stereo 16-bit WAV, served by the file callbacks below.
+std::vector<uint8_t> MakeWav()
+{
+    const uint32_t frames = kRate * 3 / 10;
+    const uint32_t dataBytes = frames * 4;
+    std::vector<uint8_t> wav;
+    auto put32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) wav.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+    auto put16 = [&](uint16_t v) { wav.push_back(static_cast<uint8_t>(v)); wav.push_back(static_cast<uint8_t>(v >> 8)); };
+    auto tag = [&](const char *t) { wav.insert(wav.end(), t, t + 4); };
+    tag("RIFF"); put32(36 + dataBytes); tag("WAVE");
+    tag("fmt "); put32(16); put16(1); put16(2); put32(kRate); put32(kRate * 4); put16(4); put16(16);
+    tag("data"); put32(dataBytes);
+    for (uint32_t i = 0; i < frames * 2; ++i)
+        put16(static_cast<uint16_t>(i % 2 ? -500 : 500));
+    return wav;
+}
+
+const std::vector<uint8_t> g_wav = MakeWav();
+size_t g_wavPos = 0;
+int g_opens = 0;
+
+U32 AILCALLBACK WavOpen(MSS_FILE const *name, UINTa *handle)
+{
+    if (std::strcmp(name, "sound/test.wav") != 0)
+        return 0;
+    ++g_opens;
+    g_wavPos = 0;
+    *handle = 1;
+    return 1;
+}
+void AILCALLBACK WavClose(UINTa) { --g_opens; }
+S32 AILCALLBACK WavSeek(UINTa, S32 offset, U32 type)
+{
+    // Miles origins: 0 begin, 1 current, 2 end.
+    const int64_t base = type == 1 ? static_cast<int64_t>(g_wavPos) : type == 2 ? static_cast<int64_t>(g_wav.size()) : 0;
+    g_wavPos = static_cast<size_t>(std::clamp<int64_t>(base + offset, 0, static_cast<int64_t>(g_wav.size())));
+    return static_cast<S32>(g_wavPos);
+}
+U32 AILCALLBACK WavRead(UINTa, void *buffer, U32 bytes)
+{
+    const size_t n = std::min<size_t>(bytes, g_wav.size() - g_wavPos);
+    std::copy_n(g_wav.data() + g_wavPos, n, static_cast<uint8_t *>(buffer));
+    g_wavPos += n;
+    return static_cast<U32>(n);
+}
+
+void TestStream(HDIGDRIVER driver)
+{
+    CHECK(!AIL_open_stream(driver, "sound/missing.wav", 0) && AIL_last_error()[0] != '\0');
+    HSTREAM stream = AIL_open_stream(driver, "sound/test.wav", 0);
+    CHECK(stream != nullptr);
+    if (!stream)
+        return;
+    S32 rate = 0;
+    S32 type = 0;
+    AIL_stream_info(stream, &rate, &type, nullptr, nullptr);
+    CHECK(rate == static_cast<S32>(kRate) && (type & DIG_F_STEREO_MASK));
+    S32 total = 0;
+    AIL_stream_ms_position(stream, &total, nullptr);
+    CHECK(total >= 290 && total <= 310);
+    CHECK(AIL_stream_status(stream) == SMP_STOPPED); // opens paused
+    AIL_set_sample_volume_levels(AIL_stream_sample_handle(stream), 0.5f, 0.5f);
+    AIL_set_stream_loop_count(stream, 1);
+    AIL_pause_stream(stream, 0);
+    CHECK(AIL_stream_status(stream) == SMP_PLAYING);
+    std::this_thread::sleep_for(std::chrono::milliseconds(900));
+    CHECK(AIL_stream_status(stream) == SMP_DONE);
+    // Looping restarts at the end instead of finishing.
+    AIL_set_stream_loop_count(stream, 0);
+    AIL_set_stream_ms_position(stream, 0);
+    AIL_pause_stream(stream, 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(900));
+    CHECK(AIL_stream_status(stream) == SMP_PLAYING);
+    AIL_close_stream(stream);
+    CHECK(g_opens == 0); // the file is closed with the stream
+}
+
 void TestLevels(HSAMPLE sample)
 {
     AIL_set_sample_volume_levels(sample, 0.5f, 0.5f);
@@ -268,6 +347,7 @@ int main()
 {
     // OpenAL Soft's null backend: a mixer with no device, so CI needs no audio.
     setenv("ALSOFT_DRIVERS", "null", 1);
+    AIL_set_file_callbacks(WavOpen, WavClose, WavSeek, WavRead);
     CHECK(AIL_startup());
     HDIGDRIVER driver = AIL_open_digital_driver(44100, 16, 2, 0);
     CHECK(driver != nullptr);
@@ -293,8 +373,7 @@ int main()
         Test3dPosition(sample);
         TestLevels(sample);
     }
-    // Streams arrive later; until then they fail with a reason.
-    CHECK(!AIL_open_stream(driver, "sound/music/x.mp3", 0) && AIL_last_error()[0] != '\0');
+    TestStream(driver);
     AIL_shutdown();
     if (g_failures)
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

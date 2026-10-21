@@ -117,11 +117,11 @@ if (PkgConfig_FOUND AND NOT WIN32)
             set(ENV{PKG_CONFIG_PATH} "${_kisak_openal_prefix}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
         endif()
     endforeach()
-    pkg_check_modules(KISAK_TEST_OPENAL_LIB QUIET IMPORTED_TARGET openal libavcodec libavutil)
+    pkg_check_modules(KISAK_TEST_OPENAL_LIB QUIET IMPORTED_TARGET openal libavformat libavcodec libavutil)
 endif()
 if (KISAK_TEST_OPENAL AND NOT KISAK_TEST_OPENAL_LIB_FOUND)
     message(FATAL_ERROR "KISAK_TEST_OPENAL needs OpenAL Soft and libavcodec from pkg-config "
-        "(libopenal-dev libavcodec-dev; brew openal-soft ffmpeg).")
+        "(libopenal-dev libavformat-dev libavcodec-dev; brew openal-soft ffmpeg).")
 endif()
 if (KISAK_TEST_OPENAL_LIB_FOUND AND NOT WIN32)
     add_executable(kisakcod-snd-openal-tests snd_openal_tests.cpp ${SRC_DIR}/sound/snd_openal.cpp
