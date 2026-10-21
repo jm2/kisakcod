@@ -880,9 +880,58 @@ void zone_test::CheckZone()
     const FxEffectDef *fx = Find(ASSET_TYPE_FX, "e2e/fx").fx;
     Expect(fx && fx->elemDefs && Is(fx->elemDefs[0].visuals.instance.material, ASSET_TYPE_MATERIAL, "e2e/material"),
            "an effect's sprite draws the shared material");
+    ExpectDigest(ASSET_TYPE_FX, "e2e/fx", "85b844d1a8cc810e24ce8fbb15510b15454b05e5f289cb1759ac659e28f551e3");
+    FxEffectDef *const fxMutable = const_cast<FxEffectDef *>(fx);
+    FxElemDef *const fxElems = const_cast<FxElemDef *>(fxMutable->elemDefs);
+    const db::graph_hash::Digest fxPin = DB_GraphHashAsset(ASSET_TYPE_FX, Find(ASSET_TYPE_FX, "e2e/fx"));
+    const float savedGravity = fxElems[0].gravity.base;
+    fxElems[0].gravity.base = savedGravity + 1.0f;
+    const db::graph_hash::Digest movedGravity = DB_GraphHashAsset(ASSET_TYPE_FX, Find(ASSET_TYPE_FX, "e2e/fx"));
+    fxElems[0].gravity.base = savedGravity;
+    Expect(std::memcmp(fxPin.data(), movedGravity.data(), fxPin.size()) != 0,
+           "a changed gravity range changes the effect digest");
+    // Effect references load as handles; the walk hashes the target's name, so
+    // equal targets at different addresses share a digest.
+    const auto hashEffectRef = [](const FxEffectDef *impact, const FxEffectDef *runner) {
+        FxElemDef elem{};
+        elem.elemType = runner ? 10 : 0;
+        elem.visualCount = runner ? 1 : 0;
+        elem.effectOnImpact.handle = impact;
+        elem.visuals.instance.effectDef.handle = runner;
+        FxEffectDef effect{};
+        effect.name = "e2e/ref-probe";
+        effect.elemDefCountOneShot = 1;
+        effect.elemDefs = &elem;
+        XAssetHeader header{};
+        header.fx = &effect;
+        return DB_GraphHashAsset(ASSET_TYPE_FX, header);
+    };
+    char targetNameA[] = "e2e/ref-target";
+    char targetNameB[] = "e2e/ref-target";
+    FxEffectDef targetA{};
+    targetA.name = targetNameA;
+    FxEffectDef targetB{};
+    targetB.name = targetNameB;
+    Expect(hashEffectRef(&targetA, nullptr) != hashEffectRef(nullptr, nullptr),
+           "an effect-on-impact reference enters the digest");
+    Expect(hashEffectRef(&targetA, nullptr) == hashEffectRef(&targetB, nullptr),
+           "an effect-on-impact reference hashes its target by name");
+    Expect(hashEffectRef(nullptr, &targetA) != hashEffectRef(nullptr, nullptr),
+           "a runner reference enters the digest");
+    Expect(hashEffectRef(nullptr, &targetA) == hashEffectRef(nullptr, &targetB),
+           "a runner reference hashes its target by name");
     const FxImpactTable *impacts = Find(ASSET_TYPE_IMPACT_FX, "e2e/impacts").impactFx;
     Expect(impacts && Is(impacts->table[0].nonflesh[0], ASSET_TYPE_FX, "e2e/fx") && !impacts->table[11].flesh[3],
            "an impact table names the shared effect");
+    ExpectDigest(ASSET_TYPE_IMPACT_FX, "e2e/impacts", "1ace57dceaa171bb4337d279a4fd4a6dcbaa54acb961904b22ef9638fe2060c1");
+    FxImpactTable *const impactsMutable = const_cast<FxImpactTable *>(impacts);
+    const db::graph_hash::Digest impactsPin = DB_GraphHashAsset(ASSET_TYPE_IMPACT_FX, Find(ASSET_TYPE_IMPACT_FX, "e2e/impacts"));
+    const FxEffectDef *const savedImpact = impactsMutable->table[0].nonflesh[0];
+    impactsMutable->table[0].nonflesh[0] = nullptr;
+    const db::graph_hash::Digest clearedImpact = DB_GraphHashAsset(ASSET_TYPE_IMPACT_FX, Find(ASSET_TYPE_IMPACT_FX, "e2e/impacts"));
+    impactsMutable->table[0].nonflesh[0] = savedImpact;
+    Expect(std::memcmp(impactsPin.data(), clearedImpact.data(), impactsPin.size()) != 0,
+           "a cleared impact effect changes the impact-table digest");
     const menuDef_t *menu = Find(ASSET_TYPE_MENU, "e2e/menu").menu;
     bool parents = menu && menu->itemCount == 5;
     for (int item = 0; parents && item < menu->itemCount; ++item)
@@ -902,6 +951,7 @@ void zone_test::CheckZone()
     const FxEffectDef *fxModel = Find(ASSET_TYPE_FX, "e2e/fxmodel").fx;
     Expect(fxModel && Is(fxModel->elemDefs[0].visuals.instance.model, ASSET_TYPE_XMODEL, "e2e/model"),
            "an effect's model element shows the shared model");
+    ExpectDigest(ASSET_TYPE_FX, "e2e/fxmodel", "bd28260690811173cf530d534b135fe0e9885a329f0e1840392b6f0f552af4e0");
     const XAnimParts *anim = Find(ASSET_TYPE_XANIMPARTS, "e2e/anim").parts;
     Expect(anim && anim->boneCount[9] == 1 && anim->names[0] == SL_FindString("bone_root"),
            "an animation's bone names a zone script string");

@@ -29,6 +29,7 @@
 #include <qcommon/qcommon.h>
 #include <universal/dyn_entity_def.h>
 #include <universal/fft.h>
+#include <universal/fx_effect_def.h>
 #include <universal/gfx_image.h>
 #include <universal/gfx_lightdef.h>
 #include <universal/gfx_material.h>
@@ -1683,6 +1684,185 @@ void HashXModel(GraphHashBuilder &builder, const XAssetHeader &header)
     HashPhysGeoms(builder, model.physGeoms);
 }
 
+// FX element types, in the order the loader's fast-file schema names them.
+constexpr std::uint8_t kFxElemModel = 5;
+constexpr std::uint8_t kFxElemOmniLight = 6;
+constexpr std::uint8_t kFxElemSpotLight = 7;
+constexpr std::uint8_t kFxElemSound = 8;
+constexpr std::uint8_t kFxElemDecal = 9;
+constexpr std::uint8_t kFxElemRunner = 10;
+
+void HashFxFloatRange(GraphHashBuilder &builder, std::uint32_t tag, const FxFloatRange &range)
+{
+    builder.FieldF32(tag, range.base);
+    builder.FieldF32(tag, range.amplitude);
+}
+
+void HashFxIntRange(GraphHashBuilder &builder, std::uint32_t tag, const FxIntRange &range)
+{
+    builder.FieldI64(tag, range.base);
+    builder.FieldI64(tag, range.amplitude);
+}
+
+// A visual's value depends on the element type that selects the union member.
+void HashFxVisual(GraphHashBuilder &builder, std::uint32_t tag, std::uint8_t type, const FxElemVisuals &visual)
+{
+    switch (type)
+    {
+    case kFxElemModel:
+        FieldAsset(builder, tag, ASSET_TYPE_XMODEL, visual.model);
+        break;
+    case kFxElemRunner:
+        FieldAsset(builder, tag, ASSET_TYPE_FX, visual.effectDef.handle);
+        break;
+    case kFxElemSound:
+        builder.FieldString(tag, visual.soundName);
+        break;
+    default:
+        FieldAsset(builder, tag, ASSET_TYPE_MATERIAL, visual.material);
+        break;
+    }
+}
+
+// A light has no stored visual; a decal has two materials per mark; otherwise
+// one visual sits in the record and a larger set is an array.
+void HashFxVisuals(GraphHashBuilder &builder, const FxElemDef &elem)
+{
+    if (elem.elemType == kFxElemOmniLight || elem.elemType == kFxElemSpotLight || !elem.visualCount)
+        return;
+    if (elem.elemType == kFxElemDecal)
+    {
+        const std::uint8_t count = elem.visuals.markArray ? elem.visualCount : 0;
+        for (std::uint8_t mark = 0; mark < count; ++mark)
+        {
+            FieldAsset(builder, 27, ASSET_TYPE_MATERIAL, elem.visuals.markArray[mark].materials[0]);
+            FieldAsset(builder, 27, ASSET_TYPE_MATERIAL, elem.visuals.markArray[mark].materials[1]);
+        }
+        return;
+    }
+    if (elem.visualCount == 1)
+    {
+        HashFxVisual(builder, 27, elem.elemType, elem.visuals.instance);
+        return;
+    }
+    const std::uint8_t count = elem.visuals.array ? elem.visualCount : 0;
+    for (std::uint8_t visual = 0; visual < count; ++visual)
+        HashFxVisual(builder, 27, elem.elemType, elem.visuals.array[visual]);
+}
+
+void HashFxTrail(GraphHashBuilder &builder, const FxTrailDef *trail)
+{
+    builder.FieldU64(35, trail != nullptr);
+    if (!trail)
+        return;
+    builder.FieldI64(36, trail->scrollTimeMsec);
+    builder.FieldI64(37, trail->repeatDist);
+    builder.FieldI64(38, trail->splitDist);
+    builder.FieldI64(39, trail->vertCount);
+    builder.FieldBytes(40, trail->verts,
+        trail->verts && trail->vertCount > 0 ? static_cast<std::size_t>(trail->vertCount) * sizeof(FxTrailVertex) : 0);
+    builder.FieldI64(41, trail->indCount);
+    builder.FieldBytes(42, trail->inds,
+        trail->inds && trail->indCount > 0 ? static_cast<std::size_t>(trail->indCount) * sizeof(std::uint16_t) : 0);
+}
+
+// One element: the scalar ranges, the sample arrays, the type-selected
+// visuals, the effects it names, and its trail. Samples and trail bytes have
+// the same layout at both widths.
+void HashFxElement(GraphHashBuilder &builder, const FxElemDef &elem)
+{
+    builder.FieldI64(1, elem.flags);
+    builder.FieldI64(2, elem.spawn.looping.intervalMsec);
+    builder.FieldI64(3, elem.spawn.looping.count);
+    HashFxFloatRange(builder, 4, elem.spawnRange);
+    HashFxFloatRange(builder, 5, elem.fadeInRange);
+    HashFxFloatRange(builder, 6, elem.fadeOutRange);
+    builder.FieldF32(7, elem.spawnFrustumCullRadius);
+    HashFxIntRange(builder, 8, elem.spawnDelayMsec);
+    HashFxIntRange(builder, 9, elem.lifeSpanMsec);
+    for (const FxFloatRange &range : elem.spawnOrigin)
+        HashFxFloatRange(builder, 10, range);
+    HashFxFloatRange(builder, 11, elem.spawnOffsetRadius);
+    HashFxFloatRange(builder, 12, elem.spawnOffsetHeight);
+    for (const FxFloatRange &range : elem.spawnAngles)
+        HashFxFloatRange(builder, 13, range);
+    for (const FxFloatRange &range : elem.angularVelocity)
+        HashFxFloatRange(builder, 14, range);
+    HashFxFloatRange(builder, 15, elem.initialRotation);
+    HashFxFloatRange(builder, 16, elem.gravity);
+    HashFxFloatRange(builder, 17, elem.reflectionFactor);
+    builder.FieldU64(18, elem.atlas.behavior);
+    builder.FieldU64(18, elem.atlas.index);
+    builder.FieldU64(18, elem.atlas.fps);
+    builder.FieldU64(18, elem.atlas.loopCount);
+    builder.FieldU64(18, elem.atlas.colIndexBits);
+    builder.FieldU64(18, elem.atlas.rowIndexBits);
+    builder.FieldI64(18, elem.atlas.entryCount);
+    builder.FieldU64(19, elem.elemType);
+    builder.FieldU64(20, elem.visualCount);
+    builder.FieldU64(21, elem.velIntervalCount);
+    builder.FieldU64(22, elem.visStateIntervalCount);
+    const int velCount = elem.velSamples ? elem.velIntervalCount + 1 : 0;
+    builder.FieldI64(23, velCount);
+    builder.FieldBytes(24, elem.velSamples, static_cast<std::size_t>(velCount) * sizeof(FxElemVelStateSample));
+    const int visCount = elem.visSamples ? elem.visStateIntervalCount + 1 : 0;
+    builder.FieldI64(25, visCount);
+    builder.FieldBytes(26, elem.visSamples, static_cast<std::size_t>(visCount) * sizeof(FxElemVisStateSample));
+    HashFxVisuals(builder, elem);
+    builder.FieldBytes(28, elem.collMins, sizeof(elem.collMins));
+    builder.FieldBytes(29, elem.collMaxs, sizeof(elem.collMaxs));
+    FieldAsset(builder, 30, ASSET_TYPE_FX, elem.effectOnImpact.handle);
+    FieldAsset(builder, 31, ASSET_TYPE_FX, elem.effectOnDeath.handle);
+    FieldAsset(builder, 32, ASSET_TYPE_FX, elem.effectEmitted.handle);
+    HashFxFloatRange(builder, 33, elem.emitDist);
+    HashFxFloatRange(builder, 34, elem.emitDistVariance);
+    HashFxTrail(builder, elem.trailDef);
+    builder.FieldU64(43, elem.sortOrder);
+    builder.FieldU64(44, elem.lightingFrac);
+    builder.FieldU64(45, elem.useItemClip);
+}
+
+void HashFxEffectDef(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const FxEffectDef &effect = *header.fx;
+    builder.FieldString(1, effect.name);
+    builder.FieldI64(2, effect.flags);
+    builder.FieldI64(3, effect.totalSize);
+    builder.FieldI64(4, effect.msecLoopingLife);
+    builder.FieldI64(5, effect.elemDefCountLooping);
+    builder.FieldI64(6, effect.elemDefCountOneShot);
+    builder.FieldI64(7, effect.elemDefCountEmission);
+    builder.FieldU64(8, effect.elemDefs != nullptr);
+    const int count = effect.elemDefs ? effect.elemDefCountLooping + effect.elemDefCountOneShot + effect.elemDefCountEmission : 0;
+    builder.FieldI64(9, count);
+    for (int index = 0; index < count; ++index)
+    {
+        builder.BeginRecord(10);
+        HashFxElement(builder, effect.elemDefs[index]);
+        builder.EndRecord();
+    }
+}
+
+// ImpactFx has no per-entry scalar: its twelve surface entries are arrays of
+// effect references, hashed by the referenced effect's name.
+void HashFxImpactTable(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const FxImpactTable &table = *header.impactFx;
+    builder.FieldString(1, table.name);
+    builder.FieldU64(2, table.table != nullptr);
+    const std::uint32_t count = table.table ? 12u : 0u;
+    builder.FieldU64(3, count);
+    for (std::uint32_t surface = 0; surface < count; ++surface)
+    {
+        builder.BeginRecord(4);
+        for (const FxEffectDef *effect : table.table[surface].nonflesh)
+            FieldAsset(builder, 1, ASSET_TYPE_FX, effect);
+        for (const FxEffectDef *effect : table.table[surface].flesh)
+            FieldAsset(builder, 2, ASSET_TYPE_FX, effect);
+        builder.EndRecord();
+    }
+}
+
 // ---- XModelPieces ----
 
 // XModelPieces is a completed object the loader publishes through the block-4
@@ -2541,6 +2721,10 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashWeapon;
     case ASSET_TYPE_XMODEL:
         return HashXModel;
+    case ASSET_TYPE_FX:
+        return HashFxEffectDef;
+    case ASSET_TYPE_IMPACT_FX:
+        return HashFxImpactTable;
     default:
         return nullptr;
     }
