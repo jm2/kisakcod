@@ -266,6 +266,285 @@ void HashMenuList(GraphHashBuilder &builder, const XAssetHeader &header)
         FieldAsset(builder, kMenuListMenu, ASSET_TYPE_MENU, list.menus[i]);
 }
 
+// A menu's window, items and type data, in loader order. A pointer is the
+// referenced asset's name; a string is its text. Layout-invariant word runs
+// hash as bytes from their first member, never up to the next pointer.
+enum MenuWindowField : std::uint32_t
+{
+    kMenuWindowName = 1,
+    kMenuWindowRects,      // rect and rectClient, 48 bytes
+    kMenuWindowGroup,
+    kMenuWindowScalars,    // style through staticFlags, 24 bytes
+    kMenuWindowColors,     // the four 4-float colors
+    kMenuWindowBackground,
+};
+
+// dynamicFlags and nextTime are animation state the client advances, so they
+// stay out of the walk; they sit between the scalar run and the colors.
+void HashMenuWindow(GraphHashBuilder &builder, std::uint32_t tag, const windowDef_t &window)
+{
+    builder.BeginRecord(tag);
+    builder.FieldString(kMenuWindowName, window.name);
+    builder.FieldBytes(kMenuWindowRects, &window.rect, sizeof(window.rect) * 2);
+    builder.FieldString(kMenuWindowGroup, window.group);
+    builder.FieldBytes(kMenuWindowScalars, &window.style, 6 * sizeof(std::int32_t));
+    builder.FieldBytes(kMenuWindowColors, window.foreColor, 16 * sizeof(float));
+    FieldAsset(builder, kMenuWindowBackground, ASSET_TYPE_MATERIAL, window.background);
+    builder.EndRecord();
+}
+
+enum MenuKeyHandlerField : std::uint32_t
+{
+    kMenuKeyHandler = 1,
+    kMenuKeyHandlerKey,
+    kMenuKeyHandlerAction,
+};
+
+// Each handler's key and script; next only leads to the following handler.
+void HashMenuKeyHandlers(GraphHashBuilder &builder, std::uint32_t tag, const ItemKeyHandler *handler)
+{
+    builder.BeginRecord(tag);
+    for (; handler; handler = handler->next)
+    {
+        builder.BeginRecord(kMenuKeyHandler);
+        builder.FieldI64(kMenuKeyHandlerKey, handler->key);
+        builder.FieldString(kMenuKeyHandlerAction, handler->action);
+        builder.EndRecord();
+    }
+    builder.EndRecord();
+}
+
+enum MenuExpressionField : std::uint32_t
+{
+    kMenuStatementEntry = 1,
+    kMenuExpressionType,
+    kMenuExpressionOperator,
+    kMenuExpressionDataType,
+    kMenuExpressionValue,
+};
+
+// A statement: its entry count, then each entry's operator or operand. A
+// string operand is its text; an int or float one is its bits.
+void HashMenuStatement(GraphHashBuilder &builder, std::uint32_t tag, const statement_s &statement)
+{
+    builder.BeginRecord(tag);
+    builder.FieldI64(1, statement.numEntries);
+    const int entries = statement.entries && statement.numEntries > 0 ? statement.numEntries : 0;
+    for (int i = 0; i < entries; ++i)
+    {
+        const expressionEntry &entry = *statement.entries[i];
+        builder.BeginRecord(kMenuStatementEntry);
+        builder.FieldI64(kMenuExpressionType, entry.type);
+        if (entry.type)
+        {
+            const Operand &operand = entry.data.operand;
+            builder.FieldI64(kMenuExpressionDataType, operand.dataType);
+            if (operand.dataType == VAL_STRING)
+                builder.FieldString(kMenuExpressionValue, operand.internals.string);
+            else if (operand.dataType == VAL_FLOAT)
+                builder.FieldF32(kMenuExpressionValue, operand.internals.floatVal);
+            else
+                builder.FieldI64(kMenuExpressionValue, operand.internals.intVal);
+        }
+        else
+        {
+            builder.FieldI64(kMenuExpressionOperator, entry.data.op);
+        }
+        builder.EndRecord();
+    }
+    builder.EndRecord();
+}
+
+enum MenuTypeDataField : std::uint32_t
+{
+    kMenuItemTypeDataListBox = 1,
+    kMenuItemTypeDataEditField,
+    kMenuItemTypeDataMulti,
+    kMenuItemTypeDataEnumDvar,
+    kMenuItemTypeDataColumn,
+    kMenuItemTypeDataMultiEntry,
+};
+
+// mousePos through numColumns, four 4-byte scalars and two floats, then the
+// counted columns.
+void HashMenuListBox(GraphHashBuilder &builder, const listBoxDef_s &box)
+{
+    builder.BeginRecord(kMenuItemTypeDataListBox);
+    builder.FieldBytes(1, &box.mousePos, 8 * sizeof(std::int32_t));
+    builder.FieldI64(2, box.numColumns);
+    for (int i = 0; i < box.numColumns && i < 16; ++i)
+    {
+        builder.BeginRecord(kMenuItemTypeDataColumn);
+        builder.FieldBytes(1, &box.columnInfo[i], sizeof(columnInfo_s));
+        builder.EndRecord();
+    }
+    builder.FieldString(3, box.doubleClick);
+    builder.FieldBytes(4, &box.notselectable, 3 * sizeof(std::int32_t));
+    builder.FieldBytes(5, box.selectBorder, sizeof(box.selectBorder));
+    builder.FieldBytes(6, box.disableColor, sizeof(box.disableColor));
+    FieldAsset(builder, 7, ASSET_TYPE_MATERIAL, box.selectIcon);
+    builder.EndRecord();
+}
+
+// Every member is a scalar; the struct has no pointer.
+void HashMenuEditField(GraphHashBuilder &builder, const editFieldDef_s &field)
+{
+    builder.BeginRecord(kMenuItemTypeDataEditField);
+    builder.FieldBytes(1, &field.minVal, sizeof(field));
+    builder.EndRecord();
+}
+
+// The counted entries: each dvar name, its string and its value.
+void HashMenuMulti(GraphHashBuilder &builder, const multiDef_s &multi)
+{
+    builder.BeginRecord(kMenuItemTypeDataMulti);
+    builder.FieldI64(1, multi.count);
+    for (int i = 0; i < multi.count && i < 32; ++i)
+    {
+        builder.BeginRecord(kMenuItemTypeDataMultiEntry);
+        builder.FieldString(1, multi.dvarList[i]);
+        builder.FieldString(2, multi.dvarStr[i]);
+        builder.FieldF32(3, multi.dvarValue[i]);
+        builder.EndRecord();
+    }
+    builder.FieldI64(2, multi.strDef);
+    builder.EndRecord();
+}
+
+// itemDefData_t holds a list box (6), an edit field (0, 4, 9, 10, 11, 14, 16,
+// 17, 18), a multi-value (12) or an enum dvar's name (13), as the loader
+// builds it.
+void HashMenuItemTypeData(GraphHashBuilder &builder, const itemDef_s &item)
+{
+    if (!item.typeData.data)
+        return;
+    switch (item.type)
+    {
+    case 6:
+        HashMenuListBox(builder, *item.typeData.listBox);
+        break;
+    case 12:
+        HashMenuMulti(builder, *item.typeData.multi);
+        break;
+    case 13:
+        builder.BeginRecord(kMenuItemTypeDataEnumDvar);
+        builder.FieldString(1, item.typeData.enumDvarName);
+        builder.EndRecord();
+        break;
+    default:
+        HashMenuEditField(builder, *item.typeData.editField);
+        break;
+    }
+}
+
+enum MenuItemField : std::uint32_t
+{
+    kMenuItemRecord = 1,
+    kMenuItemWindow,
+    kMenuItemTextRect,
+    kMenuItemScalars,      // type through gameMsgWindowMode, 44 bytes
+    kMenuItemText,
+    kMenuItemFlags,
+    kMenuItemScripts,      // the ten scripts after parent
+    kMenuItemOnKey,
+    kMenuItemEnableDvar,
+    kMenuItemDvarFlags,
+    kMenuItemFocusSound,
+    kMenuItemSpecial,
+    kMenuItemCursorPos,
+    kMenuItemTypeData,
+    kMenuItemImageTrack,
+    kMenuItemVisibleExp,
+    kMenuItemTextExp,
+    kMenuItemMaterialExp,
+    kMenuItemRectXExp,
+    kMenuItemRectYExp,
+    kMenuItemRectWExp,
+    kMenuItemRectHExp,
+    kMenuItemForecolorAExp,
+};
+
+// An item: its window, scalars, scripts, key handlers, focus sound, type data
+// and statements. parent is the menu the publisher attaches, not file data.
+void HashMenuItem(GraphHashBuilder &builder, const itemDef_s &item)
+{
+    builder.BeginRecord(kMenuItemRecord);
+    HashMenuWindow(builder, kMenuItemWindow, item.window);
+    builder.FieldBytes(kMenuItemTextRect, item.textRect, sizeof(item.textRect));
+    builder.FieldBytes(kMenuItemScalars, &item.type, 11 * sizeof(std::int32_t));
+    builder.FieldString(kMenuItemText, item.text);
+    builder.FieldI64(kMenuItemFlags, item.itemFlags);
+    const char *const scripts[] = {item.mouseEnterText, item.mouseExitText, item.mouseEnter, item.mouseExit,
+                                   item.action,        item.onAccept,     item.onFocus,   item.leaveFocus,
+                                   item.dvar,          item.dvarTest};
+    for (const char *script : scripts)
+        builder.FieldString(kMenuItemScripts, script);
+    HashMenuKeyHandlers(builder, kMenuItemOnKey, item.onKey);
+    builder.FieldString(kMenuItemEnableDvar, item.enableDvar);
+    builder.FieldI64(kMenuItemDvarFlags, item.dvarFlags);
+    FieldAsset(builder, kMenuItemFocusSound, ASSET_TYPE_SOUND, item.focusSound);
+    builder.FieldF32(kMenuItemSpecial, item.special);
+    HashMenuItemTypeData(builder, item);
+    HashMenuStatement(builder, kMenuItemVisibleExp, item.visibleExp);
+    HashMenuStatement(builder, kMenuItemTextExp, item.textExp);
+    HashMenuStatement(builder, kMenuItemMaterialExp, item.materialExp);
+    HashMenuStatement(builder, kMenuItemRectXExp, item.rectXExp);
+    HashMenuStatement(builder, kMenuItemRectYExp, item.rectYExp);
+    HashMenuStatement(builder, kMenuItemRectWExp, item.rectWExp);
+    HashMenuStatement(builder, kMenuItemRectHExp, item.rectHExp);
+    HashMenuStatement(builder, kMenuItemForecolorAExp, item.forecolorAExp);
+    builder.EndRecord();
+}
+
+enum MenuDefField : std::uint32_t
+{
+    kMenuDefWindow = 1,
+    kMenuDefFont,
+    kMenuDefScalars,       // fullScreen, itemCount, fontIndex
+    kMenuDefFadeCycle,
+    kMenuDefFade,          // fadeClamp through blurRadius, 16 bytes
+    kMenuDefOnOpen,
+    kMenuDefOnClose,
+    kMenuDefOnEsc,
+    kMenuDefOnKey,
+    kMenuDefVisibleExp,
+    kMenuDefAllowedBinding,
+    kMenuDefSoundName,
+    kMenuDefImageTrack,
+    kMenuDefColors,
+    kMenuDefRectXExp,
+    kMenuDefRectYExp,
+    kMenuDefItem,
+};
+
+// The menu: its window, scalars, scripts, key handlers, statements, then each
+// counted item. cursorItem is navigation state the client advances (Menu_Init
+// and Menu_SetCursorItem write it), so it stays out of the walk. fadeCycle is
+// loader-copied - schema 24-menu.schema carries it in the fontIndex..blurRadius
+// run - and no code advances it, so it is hashed like every other disk field.
+void HashMenu(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const menuDef_t &menu = *header.menu;
+    HashMenuWindow(builder, kMenuDefWindow, menu.window);
+    builder.FieldString(kMenuDefFont, menu.font);
+    builder.FieldBytes(kMenuDefScalars, &menu.fullScreen, 3 * sizeof(std::int32_t));
+    builder.FieldI64(kMenuDefFadeCycle, menu.fadeCycle);
+    builder.FieldBytes(kMenuDefFade, &menu.fadeClamp, 4 * sizeof(float));
+    builder.FieldString(kMenuDefOnOpen, menu.onOpen);
+    builder.FieldString(kMenuDefOnClose, menu.onClose);
+    builder.FieldString(kMenuDefOnEsc, menu.onESC);
+    HashMenuKeyHandlers(builder, kMenuDefOnKey, menu.onKey);
+    HashMenuStatement(builder, kMenuDefVisibleExp, menu.visibleExp);
+    builder.FieldString(kMenuDefAllowedBinding, menu.allowedBinding);
+    builder.FieldString(kMenuDefSoundName, menu.soundName);
+    builder.FieldBytes(kMenuDefColors, menu.focusColor, 8 * sizeof(float));
+    HashMenuStatement(builder, kMenuDefRectXExp, menu.rectXExp);
+    HashMenuStatement(builder, kMenuDefRectYExp, menu.rectYExp);
+    const int items = menu.items && menu.itemCount > 0 ? menu.itemCount : 0;
+    for (int i = 0; i < items; ++i)
+        HashMenuItem(builder, *menu.items[i]);
+}
+
 enum ComWorldField : std::uint32_t
 {
     kComWorldName = 1,
@@ -1471,6 +1750,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashFont;
     case ASSET_TYPE_MENULIST:
         return HashMenuList;
+    case ASSET_TYPE_MENU:
+        return HashMenu;
     case ASSET_TYPE_COMWORLD:
         return HashComWorld;
     case ASSET_TYPE_CLIPMAP_PVS:

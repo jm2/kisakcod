@@ -49,6 +49,7 @@ inline constexpr std::int32_t kGameWorldMp = 0x0E;
 inline constexpr std::int32_t kLightDef = 0x11;
 inline constexpr std::int32_t kFont = 0x13;
 inline constexpr std::int32_t kMenuList = 0x14;
+inline constexpr std::int32_t kMenu = 0x15;
 inline constexpr std::int32_t kComWorld = 0x0C;
 inline constexpr std::int32_t kClipMapPvs = 0x0B;
 inline constexpr std::int32_t kLoadedSound = 0x09;
@@ -78,6 +79,7 @@ constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
     case kLightDef:
     case kFont:
     case kMenuList:
+    case kMenu:
     case kComWorld:
     case kClipMapPvs:
     case kSound:

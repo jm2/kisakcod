@@ -752,6 +752,7 @@ void zone_test::CheckZone()
     Expect(menus && menus->menuCount == 1 && Is(menus->menus[0], ASSET_TYPE_MENU, "e2e/menu"),
            "a menu list names the shared menu");
     ExpectDigest(ASSET_TYPE_MENULIST, "e2e/menus", "ffab98a262e71a8ddf4413d6d4626dacbd3dec520ee57e6cf1e0b508526b9dbb");
+    ExpectDigest(ASSET_TYPE_MENU, "e2e/menu", "d1fa307f2fee5a5430e83cf64c11d53fc2b7d74096dd79523cb858755381e9f5");
     const XModel *model = Find(ASSET_TYPE_XMODEL, "e2e/model").model;
     Expect(model && model->numBones == 2 && model->boneNames[1] == SL_FindString("bone_child")
                && Is(model->materialHandles[0], ASSET_TYPE_MATERIAL, "e2e/material"),
