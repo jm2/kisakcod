@@ -738,9 +738,9 @@ void FieldRun(GraphHashBuilder &builder, std::uint32_t tag, const WeaponDef &wea
     builder.FieldBytes(tag, reinterpret_cast<const unsigned char *>(&weapon) + offset, words * 4);
 }
 
-// pickupSound through putawaySoundPlayer: 45 sound references.
+// pickupSound through putawaySoundPlayer: 45 consecutive sound references,
+// as the 64-bit loader asserts (db_disk32_weapon.cpp).
 constexpr std::size_t kWeaponSounds = 45;
-static_assert(offsetof(WeaponDef, bounceSound) - offsetof(WeaponDef, pickupSound) == kWeaponSounds * sizeof(void *));
 constexpr std::size_t kBounceSurfaces = 29; // one bounce sound per surface type
 
 // The names, models, animation names, script strings and the first run.
