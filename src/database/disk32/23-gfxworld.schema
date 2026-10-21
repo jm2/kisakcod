@@ -6,21 +6,21 @@
 # its members; the server loads the world only to parse past it.
 
 # The sun light, a completed object: its def loads through LightDef's step.
-record GfxLight 0x40 runtime=GfxLight header=gfx_d3d/r_gfx.h copy=scalars
+record GfxLight 0x40 runtime=GfxLight header=universal/gfx_world.h copy=scalars
     0x00 type                     u8
     0x01 canUseShadowMap          u8
     0x02 unused                   u8[2]
     0x04 color                    run[14]   to=spotShadowIndex
     0x3C def                      pointer   asset=GfxLightDef
 
-record GfxReflectionProbe 0x10 runtime=GfxReflectionProbe header=gfx_d3d/r_gfx.h copy=scalars
+record GfxReflectionProbe 0x10 runtime=GfxReflectionProbe header=universal/gfx_world.h copy=scalars
     0x00 origin                   f32[3]
     0x0C reflectionImage          pointer   asset=GfxImage
 
 # A cell's AABB tree node: its children follow it childrenOffset bytes on,
 # which converts to the native stride; its static-model indices keep their
 # layout.
-record GfxAabbTree 0x2C runtime=GfxAabbTree header=gfx_d3d/r_gfx.h copy=scalars
+record GfxAabbTree 0x2C runtime=GfxAabbTree header=universal/gfx_world.h copy=scalars
     0x00 mins                     f32[3]
     0x0C maxs                     f32[3]
     0x18 childCount               u16
@@ -34,7 +34,7 @@ record GfxAabbTree 0x2C runtime=GfxAabbTree header=gfx_d3d/r_gfx.h copy=scalars
 
 # A portal: its writable state is the renderer's; its cell is an offset to
 # one of the world's cells.
-record GfxPortal 0x44 runtime=GfxPortal header=gfx_d3d/r_gfx.h copy=scalars
+record GfxPortal 0x44 runtime=GfxPortal header=universal/gfx_world.h copy=scalars
     0x00 writableFlags            pad[4]
     0x04 writable.hullPoints      rawptr
     0x08 writable.queuedParent    rawptr
@@ -47,7 +47,7 @@ record GfxPortal 0x44 runtime=GfxPortal header=gfx_d3d/r_gfx.h copy=scalars
     0x29 vertexCountPad           pad[3]
     0x2C hullAxis                 f32[2][3]
 
-record GfxCell 0x38 runtime=GfxCell header=gfx_d3d/r_gfx.h copy=scalars
+record GfxCell 0x38 runtime=GfxCell header=universal/gfx_world.h copy=scalars
     0x00 mins                     f32[3]
     0x0C maxs                     f32[3]
     0x18 aabbTreeCount            i32
@@ -60,29 +60,29 @@ record GfxCell 0x38 runtime=GfxCell header=gfx_d3d/r_gfx.h copy=scalars
     0x31 reflectionProbeCountPad  pad[3]
     0x34 reflectionProbes         pointer   # 8-bit probe indices
 
-record GfxLightmapArray 0x08 runtime=GfxLightmapArray header=gfx_d3d/r_gfx.h
+record GfxLightmapArray 0x08 runtime=GfxLightmapArray header=universal/gfx_world.h
     0x00 primary                  pointer   asset=GfxImage
     0x04 secondary                pointer   asset=GfxImage
 
-record MaterialMemory 0x08 runtime=MaterialMemory header=gfx_d3d/r_material.h copy=scalars
+record MaterialMemory 0x08 runtime=MaterialMemory header=universal/gfx_world.h copy=scalars
     0x00 material                 pointer   asset=Material
     0x04 memory                   i32
 
-record GfxWorldVertexData 0x08 runtime=GfxWorldVertexData header=gfx_d3d/r_gfx.h copy=scalars
+record GfxWorldVertexData 0x08 runtime=GfxWorldVertexData header=universal/gfx_world.h copy=scalars
     0x00 vertices                 pointer   # vertexCount 44-byte vertices
     0x04 worldVb                  rawptr    # a D3D buffer the renderer creates
 
-record GfxWorldVertexLayerData 0x08 runtime=GfxWorldVertexLayerData header=gfx_d3d/r_gfx.h copy=scalars
+record GfxWorldVertexLayerData 0x08 runtime=GfxWorldVertexLayerData header=universal/gfx_world.h copy=scalars
     0x00 data                     pointer   # vertexLayerDataSize bytes
     0x04 layerVb                  rawptr    # a D3D buffer the renderer creates
 
-record GfxWorldDpvsPlanes 0x10 runtime=GfxWorldDpvsPlanes header=gfx_d3d/r_gfx.h copy=scalars
+record GfxWorldDpvsPlanes 0x10 runtime=GfxWorldDpvsPlanes header=universal/gfx_world.h copy=scalars
     0x00 cellCount                i32
     0x04 planes                   pointer   # planeCount 20-byte planes
     0x08 nodes                    pointer   # nodeCount 16-bit nodes
     0x0C sceneEntCellBits         pointer   # cellCount x 256 words, block 1
 
-record GfxLightGrid 0x38 runtime=GfxLightGrid header=gfx_d3d/r_gfx.h copy=scalars
+record GfxLightGrid 0x38 runtime=GfxLightGrid header=universal/gfx_world.h copy=scalars
     0x00 hasLightRegions          bool
     0x01 hasLightRegionsPad       pad[3]
     0x04 sunPrimaryLightIndex     u32
@@ -98,7 +98,7 @@ record GfxLightGrid 0x38 runtime=GfxLightGrid header=gfx_d3d/r_gfx.h copy=scalar
     0x30 colorCount               u32
     0x34 colors                   pointer   # 168-byte colors
 
-record sunflare_t 0x60 runtime=sunflare_t header=gfx_d3d/r_sky.h copy=scalars
+record sunflare_t 0x60 runtime=sunflare_t header=universal/gfx_world.h copy=scalars
     0x00 hasValidData             bool
     0x01 hasValidDataPad          pad[3]
     0x04 spriteMaterial           pointer   asset=Material
@@ -107,31 +107,31 @@ record sunflare_t 0x60 runtime=sunflare_t header=gfx_d3d/r_sky.h copy=scalars
 
 # A primary light's shadow casters: sorted static-surface and static-model
 # indices, each keeping its layout in block 4.
-record GfxShadowGeometry 0x0C runtime=GfxShadowGeometry header=gfx_d3d/r_primarylights.h copy=scalars
+record GfxShadowGeometry 0x0C runtime=GfxShadowGeometry header=universal/gfx_world.h copy=scalars
     0x00 surfaceCount             u16
     0x02 smodelCount              u16
     0x04 sortedSurfIndex          pointer   # 16-bit sorted-surface indices
     0x08 smodelIndex              pointer   # 16-bit static-model indices
 
 # A light region's hull: its axes hold no pointer and keep their layout.
-record GfxLightRegionHull 0x50 runtime=GfxLightRegionHull header=gfx_d3d/r_primarylights.h copy=scalars
+record GfxLightRegionHull 0x50 runtime=GfxLightRegionHull header=universal/gfx_world.h copy=scalars
     0x00 kdopMidPoint             run[18]   to=kdopHalfSize
     0x48 axisCount                u32
     0x4C axis                     pointer   # 20-byte axes
 
-record GfxLightRegion 0x08 runtime=GfxLightRegion header=gfx_d3d/r_primarylights.h copy=scalars
+record GfxLightRegion 0x08 runtime=GfxLightRegion header=universal/gfx_world.h copy=scalars
     0x00 hullCount                u32
     0x04 hulls                    pointer
 
 # A static surface: its triangles and bounds hold no pointer; its material
 # loads through Material's step.
-record GfxSurface 0x30 runtime=GfxSurface header=gfx_d3d/r_gfx.h copy=scalars
+record GfxSurface 0x30 runtime=GfxSurface header=universal/gfx_world.h copy=scalars
     0x00 tris                     run[4]    to=tris
     0x10 material                 pointer   asset=Material
     0x14 lightmapIndex            run[7]    to=bounds
 
 # A static model's draw instance: its model loads through XModel's step.
-record GfxStaticModelDrawInst 0x4C runtime=GfxStaticModelDrawInst header=gfx_d3d/r_gfx.h copy=scalars
+record GfxStaticModelDrawInst 0x4C runtime=GfxStaticModelDrawInst header=universal/gfx_world.h copy=scalars
     0x00 cullDist                 run[14]   to=placement
     0x38 model                    pointer   asset=XModel
     0x3C smodelCacheIndex         u16[4]
@@ -141,7 +141,7 @@ record GfxStaticModelDrawInst 0x4C runtime=GfxStaticModelDrawInst header=gfx_d3d
     0x48 flags                    u8
     0x49 flagsPad                 pad[3]
 
-record GfxWorldDpvsStatic 0x68 runtime=GfxWorldDpvsStatic header=gfx_d3d/r_gfx.h copy=scalars
+record GfxWorldDpvsStatic 0x68 runtime=GfxWorldDpvsStatic header=universal/gfx_world.h copy=scalars
     0x00 smodelCount              u32
     0x04 staticSurfaceCount       u32
     0x08 staticSurfaceCountNoDecal u32
@@ -160,13 +160,13 @@ record GfxWorldDpvsStatic 0x68 runtime=GfxWorldDpvsStatic header=gfx_d3d/r_gfx.h
     0x60 surfaceCastsSunShadow    pointer   # words, block 1
     0x64 usageCount               i32
 
-record GfxWorldDpvsDynamic 0x30 runtime=GfxWorldDpvsDynamic header=gfx_d3d/r_gfx.h copy=scalars
+record GfxWorldDpvsDynamic 0x30 runtime=GfxWorldDpvsDynamic header=universal/gfx_world.h copy=scalars
     0x00 dynEntClientWordCount    u32[2]
     0x08 dynEntClientCount        u32[2]
     0x10 dynEntCellBits           pointer[2]  # cellCount x word count words, block 1
     0x18 dynEntVisData            pointer[2][3]  # 32 x word count bytes, block 1
 
-record GfxWorld 0x2DC runtime=GfxWorld header=gfx_d3d/r_bsp.h copy=scalars
+record GfxWorld 0x2DC runtime=GfxWorld header=universal/gfx_world.h copy=scalars
     asset member=gfxWorld pool=Load_GfxWorldAsset kind=GfxWorld alias=inserted body=custom label=world
     0x000 name                    xstring
     0x004 baseName                xstring

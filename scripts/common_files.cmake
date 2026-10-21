@@ -735,6 +735,7 @@ set(UNIVERSAL
     "${SRC_DIR}/universal/gfx_lightdef.h"
     "${SRC_DIR}/universal/gfx_material.h"
     "${SRC_DIR}/universal/gfx_placement.h"
+    "${SRC_DIR}/universal/gfx_world.h"
     "${SRC_DIR}/universal/info_string.h"
     "${SRC_DIR}/universal/memfile.cpp"
     "${SRC_DIR}/universal/memfile.h"

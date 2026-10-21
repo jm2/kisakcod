@@ -1,18 +1,7 @@
 #pragma once
-#include "r_rendercmds.h"
+#include <universal/gfx_world.h>
 
-enum GfxLightType : __int32
-{
-    GFX_LIGHT_TYPE_NONE = 0x0,
-    GFX_LIGHT_TYPE_DIR = 0x1,
-    GFX_LIGHT_TYPE_SPOT = 0x2,
-    GFX_LIGHT_TYPE_OMNI = 0x3,
-    GFX_LIGHT_TYPE_COUNT = 0x4,
-    GFX_LIGHT_TYPE_DIR_SHADOWMAP = 0x4,
-    GFX_LIGHT_TYPE_SPOT_SHADOWMAP = 0x5,
-    GFX_LIGHT_TYPE_OMNI_SHADOWMAP = 0x6,
-    GFX_LIGHT_TYPE_COUNT_WITH_SHADOWMAP_VERSIONS = 0x7,
-};
+#include "r_rendercmds.h"
 
 struct GfxCandidateShadowedLight // sizeof=0x8
 {                                       // ...
@@ -36,31 +25,6 @@ struct GfxShadowedLightHistory // sizeof=0x48
     uint32_t lastUpdateTime;
 };
 
-struct GfxShadowGeometry // sizeof=0xC
-{
-    uint16_t surfaceCount;
-    uint16_t smodelCount;
-    uint16_t *sortedSurfIndex;
-    uint16_t *smodelIndex;
-};
-struct GfxLightRegionAxis // sizeof=0x14
-{
-    float dir[3];
-    float midPoint;
-    float halfSize;
-};
-struct GfxLightRegionHull // sizeof=0x50
-{
-    float kdopMidPoint[9];
-    float kdopHalfSize[9];
-    uint32_t axisCount;
-    GfxLightRegionAxis *axis;
-};
-struct GfxLightRegion // sizeof=0x8
-{
-    uint32_t hullCount;
-    GfxLightRegionHull *hulls;
-};
 
 void __cdecl R_ClearShadowedPrimaryLightHistory(int localClientNum);
 void __cdecl R_AddDynamicShadowableLight(GfxViewInfo *viewInfo, const GfxLight *visibleLight);

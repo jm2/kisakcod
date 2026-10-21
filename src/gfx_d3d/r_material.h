@@ -3,6 +3,7 @@
 #include "r_d3d9types.h"
 
 #include "r_gfx.h"
+#include <universal/gfx_world.h>
 #include <universal/fft.h>
 #include <universal/gfx_material.h>
 
@@ -271,11 +272,6 @@ struct GfxAssembledShaderText // sizeof=0x8418
     GfxAssembledShaderTextFile files[128];
 };
 
-struct MaterialMemory // sizeof=0x8
-{                                       // ...
-    Material* material;
-    int memory;
-};
 
 struct stream_source_info_t // sizeof=0x3
 {                                       // ...
