@@ -1,0 +1,4 @@
+# OpenAL Soft's null backend races on its own context allocation while it
+# starts the mixer thread. The library is not instrumented; reports rooted in
+# the shim or its test remain visible.
+race:libopenal.so.1
