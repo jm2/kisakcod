@@ -138,3 +138,6 @@ link flags, otherwise the CI `linux-headless` options); it defaults
 overwrite a command-line `sv_mapRotation`, so the script sets the rotation
 on stdin after the first map, and waits for `Headless dedicated loading map
 '<name>'` then `Huffman Took` (first map only) or `Hitch warning` before querying.
+`-fsanitize=function` (in `undefined`) flags the decompile's mismatched
+function-pointer casts (about 118). Fix only those a run hits, with a typed
+thunk (#674), rather than as a burndown.
