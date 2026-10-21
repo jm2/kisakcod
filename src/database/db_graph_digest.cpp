@@ -7,7 +7,11 @@
 // member, never up to the next pointer (64-bit padding).
 //
 // Adding a family: pin its synthetic-zone digest with MSVC at x86 and x64 (the
-// two must agree; the i386 zone leg checks the same pins), lift its guard in
+// two must agree; the zone-load test runs only on the Linux i386, ASan+UBSan
+// amd64 and macOS arm64 legs). A pin models load-time rewrites, not just the
+// record bytes: script-string slots become interned ids (zone index 0 is the
+// zone's first string), and runtime state such as XSurface.zoneHandle, which
+// the loader overwrites with the zone's slot, stays out of the walk. Lift its guard in
 // IsK4Verified (renderer families and LoadedSound inside the
 // KISAK_DEDI_HEADLESS block), and grep tests/ for the family: the layout
 // tests' unconverted list, the envelope test's guarded family and the zone
