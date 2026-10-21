@@ -290,7 +290,7 @@ S32 AILCALLBACK WavSeek(UINTa, S32 offset, U32 type)
 U32 AILCALLBACK WavRead(UINTa, void *buffer, U32 bytes)
 {
     const size_t n = std::min<size_t>(bytes, g_wav.size() - g_wavPos);
-    std::memcpy(buffer, g_wav.data() + g_wavPos, n);
+    std::copy_n(g_wav.data() + g_wavPos, n, static_cast<uint8_t *>(buffer));
     g_wavPos += n;
     return static_cast<U32>(n);
 }

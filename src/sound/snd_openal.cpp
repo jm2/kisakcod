@@ -33,6 +33,8 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -550,6 +552,28 @@ void FreeStream(Stream *st)
     delete st;
 }
 
+// Reads sample `index` of a plane as T, without aliasing the bytes.
+template <typename T> T LoadSample(const uint8_t *plane, int index)
+{
+    std::array<uint8_t, sizeof(T)> bytes;
+    std::copy_n(plane + static_cast<size_t>(index) * sizeof(T), sizeof(T), bytes.begin());
+    return std::bit_cast<T>(bytes);
+}
+
+// One sample in [-1, 1]; false for a sample format the shim doesn't take.
+bool SampleValue(AVSampleFormat packed, const uint8_t *plane, int index, float &value)
+{
+    switch (packed)
+    {
+    case AV_SAMPLE_FMT_U8: value = (plane[index] - 128) / 128.0f; return true;
+    case AV_SAMPLE_FMT_S16: value = LoadSample<int16_t>(plane, index) / 32768.0f; return true;
+    case AV_SAMPLE_FMT_S32: value = LoadSample<int32_t>(plane, index) / 2147483648.0f; return true;
+    case AV_SAMPLE_FMT_FLT: value = LoadSample<float>(plane, index); return true;
+    case AV_SAMPLE_FMT_DBL: value = static_cast<float>(LoadSample<double>(plane, index)); return true;
+    default: return false;
+    }
+}
+
 // Appends the frame as interleaved 16-bit PCM; false for a format it can't take.
 bool AppendFrame(Stream *st, const AVFrame *frame)
 {
@@ -563,18 +587,9 @@ bool AppendFrame(Stream *st, const AVFrame *frame)
     {
         for (int c = 0; c < channels; ++c)
         {
-            const int index = planar ? i : i * channels + c;
-            const uint8_t *plane = frame->extended_data[planar ? c : 0];
             float value = 0.0f;
-            switch (packed)
-            {
-            case AV_SAMPLE_FMT_U8: value = (plane[index] - 128) / 128.0f; break;
-            case AV_SAMPLE_FMT_S16: value = reinterpret_cast<const int16_t *>(plane)[index] / 32768.0f; break;
-            case AV_SAMPLE_FMT_S32: value = reinterpret_cast<const int32_t *>(plane)[index] / 2147483648.0f; break;
-            case AV_SAMPLE_FMT_FLT: value = reinterpret_cast<const float *>(plane)[index]; break;
-            case AV_SAMPLE_FMT_DBL: value = static_cast<float>(reinterpret_cast<const double *>(plane)[index]); break;
-            default: return false;
-            }
+            if (!SampleValue(packed, frame->extended_data[planar ? c : 0], planar ? i : i * channels + c, value))
+                return false;
             st->pcm.push_back(static_cast<int16_t>(std::lround(std::clamp(value, -1.0f, 1.0f) * 32767.0f)));
         }
     }
@@ -687,7 +702,8 @@ void StopStreams()
 
 // Opens the file through the engine's callbacks and its audio decoder;
 // false (with the error set) on failure.
-bool OpenStreamDecoder(Stream *st, const char *filename)
+// Opens the file through the engine's callbacks behind a libavformat AVIO.
+bool OpenStreamIo(Stream *st, const char *filename)
 {
     st->fileOpen = s_files.open && s_files.open(filename, &st->file);
     if (!st->fileOpen)
@@ -707,26 +723,49 @@ bool OpenStreamDecoder(Stream *st, const char *filename)
         return false;
     }
     st->format->pb = st->io;
-    const AVCodec *decoder = nullptr;
+    return true;
+}
+
+// Probes the container and picks its audio stream and decoder.
+const AVCodec *FindAudioStream(Stream *st)
+{
     if (avformat_open_input(&st->format, nullptr, nullptr, nullptr) < 0
-        || avformat_find_stream_info(st->format, nullptr) < 0
-        || (st->stream = av_find_best_stream(st->format, AVMEDIA_TYPE_AUDIO, -1, -1, &decoder, 0)) < 0 || !decoder)
+        || avformat_find_stream_info(st->format, nullptr) < 0)
+        return nullptr;
+    const AVCodec *decoder = nullptr;
+    st->stream = av_find_best_stream(st->format, AVMEDIA_TYPE_AUDIO, -1, -1, &decoder, 0);
+    return st->stream >= 0 ? decoder : nullptr;
+}
+
+bool OpenStreamCodec(Stream *st, const AVCodec *decoder)
+{
+    st->codec = avcodec_alloc_context3(decoder);
+    st->packet = av_packet_alloc();
+    st->frame = av_frame_alloc();
+    return st->codec && st->packet && st->frame
+        && avcodec_parameters_to_context(st->codec, st->format->streams[st->stream]->codecpar) >= 0
+        && avcodec_open2(st->codec, decoder, nullptr) >= 0;
+}
+
+// Opens the stream's file and audio decoder; false (with the error set) on failure.
+bool OpenStreamDecoder(Stream *st, const char *filename)
+{
+    if (!OpenStreamIo(st, filename))
+        return false;
+    const AVCodec *decoder = FindAudioStream(st);
+    if (!decoder)
     {
         s_error = "FFmpeg can't read the stream";
         return false;
     }
-    st->codec = avcodec_alloc_context3(decoder);
-    st->packet = av_packet_alloc();
-    st->frame = av_frame_alloc();
-    if (!st->codec || !st->packet || !st->frame
-        || avcodec_parameters_to_context(st->codec, st->format->streams[st->stream]->codecpar) < 0
-        || avcodec_open2(st->codec, decoder, nullptr) < 0)
+    if (!OpenStreamCodec(st, decoder))
     {
         s_error = "FFmpeg can't open the stream's decoder";
         return false;
     }
     const int channels = st->codec->ch_layout.nb_channels;
-    if (channels < 1 || channels > 2 || st->codec->sample_rate <= 0 || static_cast<U32>(st->codec->sample_rate) > kMaxRate)
+    const int rate = st->codec->sample_rate;
+    if (channels < 1 || channels > 2 || rate <= 0 || static_cast<U32>(rate) > kMaxRate)
     {
         s_error = "unsupported stream format";
         return false;
