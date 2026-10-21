@@ -38,10 +38,10 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 - **Not MoltenVK:** upstream dxvk won't support portability-subset drivers, and on MoltenVK every texture sampled black.
 - **Minimums:** the client targets macOS 26 (`scripts/mp`); the server keeps 13.0. `scripts/extern/dxvk_macos.cmake` builds the dxvk dylibs with `MACOSX_DEPLOYMENT_TARGET=26.0` to match.
 - **Frame rate:** KosmicKrisp presents FIFO even with `r_vsync 0`, so in-game FPS reads the display refresh (120 on the M1 Max). Compare CPU cost with `sample` instead.
-- **Run:** `brew install ffmpeg pkgconf` for cinematics (CMake finds FFmpeg through pkg-config), then configure with `KISAK_EXPERIMENTAL_POSIX_CLIENT`, `KISAK_CLIENT_SDL3` and `KISAK_DXVK_MACOS`. Launch with `DXVK_WSI_DRIVER=SDL3`, local retail `fs_basepath` and `db_unverified64 1`. Capture frames with Mesa's `VK_LAYER_MESA_screenshot` (`VK_LAYER_MESA_SCREENSHOT_CONFIG=frames=…,output_dir=…`).
+- **Run:** `brew install ffmpeg openal-soft pkgconf` (CMake finds both through pkg-config), then configure with `KISAK_EXPERIMENTAL_POSIX_CLIENT`, `KISAK_CLIENT_SDL3` and `KISAK_DXVK_MACOS`. Launch with `DXVK_WSI_DRIVER=SDL3`, local retail `fs_basepath` and `db_unverified64 1`. Capture frames with Mesa's `VK_LAYER_MESA_screenshot` (`VK_LAYER_MESA_SCREENSHOT_CONFIG=frames=…,output_dir=…`).
 - **Evidence:** zones loaded, the first error, and what each frame shows, described in text. Frames and data stay local.
 
-Miles (`mss32.dll`) and Bink (`binkw32.dll`) are 32-bit only, so a 64-bit client can't load them from a retail install. Win64 builds link silent stubs (`KISAK_MEDIA_STUBS`). POSIX clients play Bink through FFmpeg's decoder (`KISAK_FFMPEG_CINEMATICS`, on by default; `gfx_d3d/r_bink_ffmpeg.cpp`), found through pkg-config. Only file opens are supported, and the movies are silent until OpenAL replaces the Miles stubs. Configuring with the option `OFF` restores the silent Bink stubs.
+Miles (`mss32.dll`) and Bink (`binkw32.dll`) are 32-bit only, so a 64-bit client can't load them from a retail install. Win64 builds link silent stubs (`KISAK_MEDIA_STUBS`). POSIX clients play Bink through FFmpeg (`KISAK_FFMPEG_CINEMATICS`; `gfx_d3d/r_bink_ffmpeg.cpp`, file opens only) and Miles through OpenAL Soft (`KISAK_OPENAL_AUDIO`; `sound/snd_openal.cpp`: PCM/ADPCM samples, 2D pan, 3D position, FFmpeg streams; no reverb or EQ). Both default on; either `OFF` restores its silent stubs.
 
 ## Shaders
 
@@ -92,9 +92,9 @@ The framing has no codec-version field, so the claim that "a codec version is em
 
 ## Bring-up runs (Linux, dxvk-native)
 
-Install pkg-config and FFmpeg's development files for cinematics (Debian/Ubuntu
-`libavformat-dev libavcodec-dev libavutil-dev`; Fedora `libavformat-free-devel
-libavcodec-free-devel libavutil-free-devel`). Build dxvk-native 3.1.1 with only
+Install pkg-config, OpenAL Soft and FFmpeg development files (Debian/Ubuntu
+`libopenal-dev libavformat-dev libavcodec-dev libavutil-dev`; Fedora `openal-soft-devel
+libavformat-free-devel libavcodec-free-devel libavutil-free-devel`). Build dxvk-native 3.1.1 with only
 its SDL3 WSI, then the client. The client presets need `PKG_CONFIG_PATH`
 pointing at that install:
 
@@ -149,8 +149,10 @@ on the binary path, not `pgrep -x`.
   nothing in Release, so a clean Release run proves nothing about asserts.
 - Cinematics: `developer 1` prints `Bink via FFmpeg: opened …` and `closed at
   frame N of N after decoding N-1 frames in X s`; the intro chain takes about
-  115 s. Audio: an `ALSOFT_CONF` with `drivers=wave` records the final mix to
-  a local file for RMS/peak numbers; never link Apple's OpenAL.framework.
+  115 s. Audio: `ALSOFT_CONF=al.conf`, with `al.conf` holding
+  `[general]` `drivers=wave` `sample-type=int16` and `[wave]` `file=mix.wav`
+  (one per line), records the final mix for RMS/peak numbers. Never link
+  Apple's OpenAL.framework.
 
 **Maps.**
 
@@ -181,7 +183,7 @@ on the binary path, not `pgrep -x`.
 **Client status (2026-10-20).** In-game on master with `db_unverified64`:
 Win64 on mp_shipment (about 188 fps), Windows ARM64 on mp_shipment, macOS on mp_shipment and mp_crash
 (display-capped at 120), Linux arm64 on mp_crash, Linux amd64 on mp_crash
-(about 250 fps, headless mutter). Cinematics play through FFmpeg on macOS and Linux (row 41). 64-bit clients keep loaded sound data (#666); OpenAL playback is NOW row 51. Capture a
+(about 250 fps, headless mutter). Cinematics play through FFmpeg on macOS and Linux (row 41). Sound plays through OpenAL (row 51). Capture a
 frame by sending `screenshot` on stdin once the menu is up: `+wait` runs while
 zones are still loading, so a `+wait N +screenshot` capture shows a loading
 frame, which can be all black.
