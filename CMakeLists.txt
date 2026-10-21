@@ -59,8 +59,10 @@ if (KISAK_FFMPEG_CINEMATICS AND WIN32)
 endif()
 # Sound through OpenAL Soft instead of mss32 (POSIX clients; docs/design/CLIENT.md).
 # Needs openal from pkg-config (Homebrew: openal-soft) and FFmpeg, which decodes
-# IMA ADPCM sounds.
-option(KISAK_OPENAL_AUDIO "Play sound through OpenAL Soft on POSIX clients" OFF)
+# IMA ADPCM sounds and streams, so it defaults to KISAK_FFMPEG_CINEMATICS (on
+# off Windows). Only POSIX client builds read it.
+set(_KISAK_DEFAULT_OPENAL_AUDIO ${KISAK_FFMPEG_CINEMATICS})
+option(KISAK_OPENAL_AUDIO "Play sound through OpenAL Soft on POSIX clients" ${_KISAK_DEFAULT_OPENAL_AUDIO})
 if (KISAK_OPENAL_AUDIO AND WIN32)
     message(FATAL_ERROR "KISAK_OPENAL_AUDIO is wired for POSIX clients only so far.")
 endif()
