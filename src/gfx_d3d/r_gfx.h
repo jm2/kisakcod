@@ -5,6 +5,7 @@
 #include <universal/kisak_abi.h>
 #include <universal/com_math.h>
 #include <universal/gfx_image.h>
+#include <universal/gfx_placement.h>
 #include <universal/gfx_material.h>
 #include <universal/gfx_lightdef.h>
 #include <qcommon/com_pack.h>
@@ -91,12 +92,6 @@ struct GfxMeshData // sizeof=0x20
 struct GfxMatrix // sizeof=0x40
 {                                       // ...
     float m[4][4];                      // ...
-};
-
-struct GfxPlacement // sizeof=0x1C
-{                                       // ...
-    float quat[4];                      // ...
-    float origin[3];                    // ...
 };
 
 struct GfxScaledPlacement // sizeof=0x20

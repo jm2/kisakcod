@@ -8,6 +8,7 @@
 #include <ode/collision_trimesh.h>
 
 #include <universal/memfile.h>
+#include <universal/phys_mass.h>
 #include <universal/pool_allocator.h>
 
 #include <physics/phys_body_state.h>
@@ -168,13 +169,6 @@ struct BrushWrapper // sizeof=0x50
     // padding byte
     int totalEdgeCount;
     cplane_s *planes;
-};
-
-struct PhysMass // sizeof=0x24
-{                                       // ...
-    float centerOfMass[3];
-    float momentsOfInertia[3];
-    float productsOfInertia[3];
 };
 
 struct PhysGeomInfo // sizeof=0x44

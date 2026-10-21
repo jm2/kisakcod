@@ -2,14 +2,13 @@
 #include <cstdint>
 
 #include <universal/kisak_abi.h>
+#include <universal/dyn_entity_def.h>
 #include <qcommon/qcommon.h>
 
 #include <physics/phys_local.h>
 
-// GfxPlacement (the by-value pose members below) is defined in r_gfx.h;
-// xanim.h holds renderer types by pointer only since the D3D include cut
-// (KPI K5).
-#include <gfx_d3d/r_gfx.h>
+// GfxPlacement (the by-value pose members below) is universal; xanim.h holds
+// renderer types by pointer only since the D3D include cut (KPI K5).
 #include <xanim/xanim.h>
 #include <xanim/dobj.h>
 
@@ -18,14 +17,6 @@ const float traceOffsets[5][2] = { { 0.0, 0.0 }, { 1.0, 1.0 }, { -1.0, 1.0 }, { 
 #define DYNENT_CL_ACTIVE 1
 
 
-enum DynEntityType : int32_t
-{                                       // ...
-    DYNENT_TYPE_INVALID = 0x0,
-    DYNENT_TYPE_CLUTTER = 0x1,
-    DYNENT_TYPE_DESTRUCT = 0x2,
-    DYNENT_TYPE_COUNT = 0x3,
-};
-
 enum DynEntityCollType : int32_t
 {                                       // ...
     DYNENT_COLL_CLIENT_FIRST = 0x0,
@@ -33,22 +24,6 @@ enum DynEntityCollType : int32_t
     DYNENT_COLL_CLIENT_BRUSH = 0x1,
     DYNENT_COLL_COUNT = 0x2,
 };
-
-struct DynEntityDef // sizeof=0x60
-{
-    DynEntityType type;
-    GfxPlacement pose;
-    XModel *xModel;
-    uint16_t brushModel;
-    uint16_t physicsBrushModel;
-    const FxEffectDef *destroyFx;
-    XModelPieces *destroyPieces;
-    PhysPreset *physPreset;
-    int32_t health;
-    PhysMass mass;
-    int32_t contents;
-};
-RUNTIME_SIZE(DynEntityDef, 0x60, 0x78);
 
 struct DynEntityPose // sizeof=0x20
 {
