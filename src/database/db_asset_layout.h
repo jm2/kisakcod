@@ -57,6 +57,7 @@ inline constexpr std::int32_t kImage = 0x06;
 inline constexpr std::int32_t kMaterial = 0x04;
 inline constexpr std::int32_t kTechniqueSet = 0x05;
 inline constexpr std::int32_t kWeapon = 0x17;
+inline constexpr std::int32_t kXModel = 0x03;
 inline constexpr std::int32_t kAssetTypeCount = 0x21;
 
 // The families K4 counts (docs/design/FASTFILE_LOADER.md): at 64-bit their
@@ -91,6 +92,7 @@ constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
     case kTechniqueSet:
 #endif
     case kWeapon:
+    case kXModel:
         return true;
     default:
         return false;

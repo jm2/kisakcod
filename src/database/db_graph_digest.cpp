@@ -18,6 +18,7 @@
 #include "database/database.h"
 
 #include <game/g_bsp.h>
+#include <physics/phys_local.h>
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
 #include <universal/fft.h>
@@ -25,6 +26,7 @@
 #include <universal/gfx_lightdef.h>
 #include <universal/gfx_material.h>
 #include <universal/q_shared.h>
+#include <xanim/dobj.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -860,6 +862,197 @@ void HashWeapon(GraphHashBuilder &builder, const XAssetHeader &header)
     HashWeaponTail(builder, weapon);
 }
 
+// GfxPackedVertex (gfx_d3d/) is 32 bytes at both widths and holds no
+// pointer: position, binormal sign, color, texture coordinates, normal and
+// tangent.
+constexpr std::size_t kPackedVertexBytes = 32;
+
+// A rigid vertex list's collision tree: its transform, then its nodes and
+// leaves, which hold no pointer.
+void HashCollisionTree(GraphHashBuilder &builder, const XSurfaceCollisionTree *tree)
+{
+    builder.FieldU64(30, tree != nullptr);
+    if (!tree)
+        return;
+    builder.FieldBytes(31, tree->trans, sizeof(tree->trans));
+    builder.FieldBytes(31, tree->scale, sizeof(tree->scale));
+    builder.FieldU64(32, tree->nodeCount);
+    FieldArray(builder, 33, tree->nodes, tree->nodeCount);
+    builder.FieldU64(32, tree->leafCount);
+    FieldArray(builder, 34, tree->leafs, tree->leafCount);
+}
+
+// A surface: its counts and indices, its skinning (vertex counts by
+// influence, then 1, 3, 5 or 7 blend values per vertex), its vertices and its
+// rigid vertex lists.
+void HashXSurface(GraphHashBuilder &builder, const XSurface &surface)
+{
+    builder.FieldU64(20, surface.tileMode);
+    FieldBool(builder, 21, surface.deformed);
+    builder.FieldU64(22, surface.vertCount);
+    builder.FieldU64(22, surface.triCount);
+    builder.FieldU64(23, surface.zoneHandle);
+    builder.FieldU64(24, surface.baseTriIndex);
+    builder.FieldU64(24, surface.baseVertIndex);
+    FieldArray(builder, 25, surface.triIndices, surface.triCount * std::size_t{3});
+    std::size_t blendValues = 0;
+    for (std::size_t bucket = 0; bucket < std::size(surface.vertInfo.vertCount); ++bucket)
+    {
+        const int count = surface.vertInfo.vertCount[bucket];
+        builder.FieldI64(26, count);
+        blendValues += count > 0 ? (2 * bucket + 1) * static_cast<std::size_t>(count) : 0;
+    }
+    FieldArray(builder, 27, surface.vertInfo.vertsBlend, blendValues);
+    builder.FieldBytes(28, surface.verts0, surface.verts0 ? surface.vertCount * kPackedVertexBytes : 0);
+    builder.FieldU64(29, surface.vertListCount);
+    const std::size_t lists = surface.vertList ? surface.vertListCount : 0;
+    for (std::size_t i = 0; i < lists; ++i)
+    {
+        const XRigidVertList &list = surface.vertList[i];
+        builder.FieldU64(35, list.boneOffset);
+        builder.FieldU64(35, list.vertCount);
+        builder.FieldU64(35, list.triOffset);
+        builder.FieldU64(35, list.triCount);
+        HashCollisionTree(builder, list.collisionTree);
+    }
+    builder.FieldBytes(36, surface.partBits, sizeof(surface.partBits));
+}
+
+// The bones: names as text, then each array as the bytes its count covers.
+// Parents, rotations and translations exist for non-root bones only.
+void HashXModelBones(GraphHashBuilder &builder, const XModel &model)
+{
+    const std::size_t bones = model.numBones;
+    const std::size_t nonRoot = model.numBones >= model.numRootBones ? model.numBones - model.numRootBones : 0;
+    builder.FieldU64(2, model.numBones);
+    builder.FieldU64(2, model.numRootBones);
+    FieldScriptStrings(builder, 3, model.boneNames, model.boneNames ? bones : 0);
+    FieldArray(builder, 4, model.parentList, nonRoot);
+    FieldArray(builder, 5, model.quats, nonRoot * 4);
+    FieldArray(builder, 6, model.trans, nonRoot * 4);
+    FieldArray(builder, 7, model.partClassification, bones);
+    FieldArray(builder, 8, model.baseMat, bones);
+    FieldArray(builder, 9, model.boneInfo, bones);
+}
+
+// Each LOD's distance, surface range, part bits and index. Not
+// smcIndexPlusOne or smcAllocBits: the renderer's static model cache sets
+// them.
+void HashXModelLods(GraphHashBuilder &builder, const XModel &model)
+{
+    for (const XModelLodInfo &lod : model.lodInfo)
+    {
+        builder.FieldF32(10, lod.dist);
+        builder.FieldU64(11, lod.numsurfs);
+        builder.FieldU64(11, lod.surfIndex);
+        builder.FieldBytes(12, lod.partBits, sizeof(lod.partBits));
+        builder.FieldU64(13, lod.lod);
+        builder.FieldU64(13, lod.unused);
+    }
+}
+
+// A physics brush: its bounds and sides (each side's plane as its 20 bytes),
+// then its axial materials, adjacency, edge counts and planes.
+void HashBrush(GraphHashBuilder &builder, const BrushWrapper *brush)
+{
+    builder.FieldU64(40, brush != nullptr);
+    if (!brush)
+        return;
+    builder.FieldBytes(41, brush->mins, sizeof(brush->mins));
+    builder.FieldI64(42, brush->contents);
+    builder.FieldBytes(41, brush->maxs, sizeof(brush->maxs));
+    builder.FieldU64(43, brush->numsides);
+    const std::size_t sides = brush->sides ? brush->numsides : 0;
+    for (std::size_t i = 0; i < sides; ++i)
+    {
+        const cbrushside_t &side = brush->sides[i];
+        builder.FieldU64(44, side.plane != nullptr);
+        FieldArray(builder, 45, side.plane, side.plane ? 1 : 0);
+        builder.FieldU64(46, side.materialNum);
+        builder.FieldI64(46, side.firstAdjacentSideOffset);
+        builder.FieldU64(46, side.edgeCount);
+    }
+    builder.FieldBytes(47, brush->axialMaterialNum, sizeof(brush->axialMaterialNum));
+    builder.FieldI64(48, brush->totalEdgeCount);
+    FieldArray(builder, 49, brush->baseAdjacentSide,
+               brush->totalEdgeCount > 0 ? static_cast<std::size_t>(brush->totalEdgeCount) : 0);
+    builder.FieldBytes(50, brush->firstAdjacentSideOffsets, sizeof(brush->firstAdjacentSideOffsets));
+    builder.FieldBytes(50, brush->edgeCount, sizeof(brush->edgeCount));
+    FieldArray(builder, 51, brush->planes, brush->numsides);
+}
+
+// The physics geometry: each geom's type, orientation, offset, half lengths
+// and brush, then the mass.
+void HashPhysGeoms(GraphHashBuilder &builder, const PhysGeomList *list)
+{
+    builder.FieldU64(52, list != nullptr);
+    if (!list)
+        return;
+    builder.FieldU64(53, list->count);
+    const std::size_t geoms = list->geoms ? list->count : 0;
+    for (std::size_t i = 0; i < geoms; ++i)
+    {
+        const PhysGeomInfo &geom = list->geoms[i];
+        builder.FieldI64(54, geom.type);
+        builder.FieldBytes(55, geom.orientation, sizeof(geom.orientation));
+        builder.FieldBytes(55, geom.offset, sizeof(geom.offset));
+        builder.FieldBytes(55, geom.halfLengths, sizeof(geom.halfLengths));
+        HashBrush(builder, geom.brush);
+    }
+    builder.FieldBytes(56, list->mass.centerOfMass, sizeof(list->mass.centerOfMass));
+    builder.FieldBytes(56, list->mass.momentsOfInertia, sizeof(list->mass.momentsOfInertia));
+    builder.FieldBytes(56, list->mass.productsOfInertia, sizeof(list->mass.productsOfInertia));
+}
+
+// The collision surfaces: each surface's triangles (48 bytes each, no
+// pointer), bounds, bone, contents and flags.
+void HashCollSurfs(GraphHashBuilder &builder, const XModel &model)
+{
+    builder.FieldI64(14, model.numCollSurfs);
+    const int surfaces = model.collSurfs ? model.numCollSurfs : 0;
+    for (int i = 0; i < surfaces; ++i)
+    {
+        const XModelCollSurf_s &surface = model.collSurfs[i];
+        builder.FieldI64(15, surface.numCollTris);
+        FieldArray(builder, 16, surface.collTris,
+                   surface.numCollTris > 0 ? static_cast<std::size_t>(surface.numCollTris) : 0);
+        builder.FieldBytes(17, surface.mins, sizeof(surface.mins));
+        builder.FieldBytes(17, surface.maxs, sizeof(surface.maxs));
+        builder.FieldI64(18, surface.boneIdx);
+        builder.FieldI64(18, surface.contents);
+        builder.FieldI64(18, surface.surfFlags);
+    }
+}
+
+// The model in record order: its scalars, bones, surfaces with their
+// materials by name, LODs, collision surfaces, the preset by name and the
+// physics geometry.
+void HashXModel(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const XModel &model = *header.model;
+    builder.FieldString(1, model.name);
+    HashXModelBones(builder, model);
+    builder.FieldU64(19, model.numsurfs);
+    builder.FieldU64(19, model.lodRampType);
+    const std::size_t surfaces = model.surfs ? model.numsurfs : 0;
+    for (std::size_t i = 0; i < surfaces; ++i)
+        HashXSurface(builder, model.surfs[i]);
+    FieldAssets(builder, 37, ASSET_TYPE_MATERIAL, model.materialHandles, model.materialHandles ? model.numsurfs : 0);
+    HashXModelLods(builder, model);
+    HashCollSurfs(builder, model);
+    builder.FieldI64(38, model.contents);
+    builder.FieldF32(38, model.radius);
+    builder.FieldBytes(39, model.mins, sizeof(model.mins));
+    builder.FieldBytes(39, model.maxs, sizeof(model.maxs));
+    builder.FieldI64(57, model.numLods);
+    builder.FieldI64(57, model.collLod);
+    builder.FieldI64(57, model.memUsage);
+    builder.FieldU64(57, model.flags);
+    FieldBool(builder, 58, model.bad);
+    FieldAsset(builder, 59, ASSET_TYPE_PHYSPRESET, model.physPreset);
+    HashPhysGeoms(builder, model.physGeoms);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -902,6 +1095,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashTechniqueSet;
     case ASSET_TYPE_WEAPON:
         return HashWeapon;
+    case ASSET_TYPE_XMODEL:
+        return HashXModel;
     default:
         return nullptr;
     }
