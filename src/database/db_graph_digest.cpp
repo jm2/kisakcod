@@ -21,6 +21,7 @@
 
 #include "database/database.h"
 
+#include <database/db_stream.h>
 #include <database/db_validation.h>
 #include <game/g_bsp.h>
 #include <physics/phys_local.h>
@@ -1399,6 +1400,51 @@ void HashXModel(GraphHashBuilder &builder, const XAssetHeader &header)
     HashPhysGeoms(builder, model.physGeoms);
 }
 
+// ---- XModelPieces ----
+
+// XModelPieces is a completed object the loader publishes through the block-4
+// relocation registry, never through the asset pool: only DynEntityDef's
+// destroyPieces names one (db_load.cpp Load_XModelPiecesPtr). The family
+// source below therefore enumerates the registry's published objects rather
+// than DB_EnumXAssets, which is structurally empty for this type. The fields
+// are the same ones the ClipMap dyn-entity walk hashes inline; a shared object
+// and a duplicated one agree because the hash is by content, not identity.
+constexpr std::uint32_t kPiecesPresent = 1;
+constexpr std::uint32_t kPiecesName = 2;
+constexpr std::uint32_t kPiecesCount = 3;
+constexpr std::uint32_t kPiecesEntryRecord = 1;
+constexpr std::uint32_t kPiecesEntryModel = 1;
+constexpr std::uint32_t kPiecesEntryOffset = 2;
+
+void HashXModelPiecesContent(GraphHashBuilder &builder, const XModelPieces &pieces)
+{
+    builder.FieldString(kPiecesName, pieces.name);
+    const std::int64_t count = pieces.numpieces > 0 ? pieces.numpieces : 0;
+    builder.FieldI64(kPiecesCount, count);
+    for (std::int64_t i = 0; pieces.pieces && i < count; ++i)
+    {
+        builder.BeginRecord(kPiecesEntryRecord);
+        FieldAsset(builder, kPiecesEntryModel, ASSET_TYPE_XMODEL, pieces.pieces[i].model);
+        builder.FieldBytes(kPiecesEntryOffset, pieces.pieces[i].offset, sizeof(pieces.pieces[i].offset));
+        builder.EndRecord();
+    }
+}
+
+void HashXModelPieces(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    builder.FieldU64(kPiecesPresent, header.xmodelPieces != nullptr);
+    if (header.xmodelPieces)
+        HashXModelPiecesContent(builder, *header.xmodelPieces);
+}
+
+void CollectPublishedPieces(void *context, std::uintptr_t native)
+{
+    auto *assets = static_cast<std::vector<XAssetHeader> *>(context);
+    XAssetHeader header;
+    header.xmodelPieces = reinterpret_cast<XModelPieces *>(native);
+    assets->push_back(header);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -1429,6 +1475,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashComWorld;
     case ASSET_TYPE_CLIPMAP_PVS:
         return HashClipMapPvs;
+    case ASSET_TYPE_XMODELPIECES:
+        return HashXModelPieces;
     case ASSET_TYPE_LOADED_SOUND:
         return HashLoadedSound;
     case ASSET_TYPE_SOUND:
@@ -1484,8 +1532,16 @@ int DB_GraphHashFamily(
     // Pool order follows the name hash and the load order; name order is the
     // same on every target.
     std::vector<XAssetHeader> assets;
-    DB_EnumXAssets(static_cast<XAssetType>(assetType), CollectAsset, &assets, false);
-    std::sort(assets.begin(), assets.end(), [assetType](const XAssetHeader &a, const XAssetHeader &b) {
+    if (assetType == ASSET_TYPE_XMODELPIECES)
+        DB_VisitPublishedObjects(DBAliasKind::XModelPieces, CollectPublishedPieces, &assets);
+    else
+        DB_EnumXAssets(static_cast<XAssetType>(assetType), CollectAsset, &assets, false);
+    // Stable so two assets with the same name keep the order the source
+    // produced (pool order, or registry registration order for
+    // XModelPieces): name order alone must not depend on the sort's
+    // implementation, or a duplicate name could digest differently under a
+    // different standard library.
+    std::stable_sort(assets.begin(), assets.end(), [assetType](const XAssetHeader &a, const XAssetHeader &b) {
         return std::strcmp(DB_GetXAssetHeaderName(assetType, &a), DB_GetXAssetHeaderName(assetType, &b)) < 0;
     });
 

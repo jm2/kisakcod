@@ -640,6 +640,18 @@ bool __cdecl DB_CompleteStringHolder(DBAliasHandle handle, const void *holder, c
     return true;
 }
 
+std::size_t __cdecl DB_VisitPublishedObjects(
+    DBAliasKind kind,
+    void (*visit)(void *context, std::uintptr_t native),
+    void *context)
+{
+    if (!visit)
+        return 0;
+    return DB_AliasRegistry().VisitPublishedObjects(
+        kind,
+        [visit, context](std::uintptr_t object) { visit(context, object); });
+}
+
 db::relocation::Status __cdecl DB_ResolveInsertedPointer(
     disk32::PointerToken token,
     DBAliasKind expectedKind,

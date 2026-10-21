@@ -62,6 +62,14 @@ db::relocation::Status __cdecl DB_ResolveCompletedObjectNative(
     DBAliasKind expectedKind,
     std::uint32_t expectedMetadata,
     std::uintptr_t *native);
+// Visits the native objects of one kind the current load published, in
+// block-4 registration order (AliasRegistry::VisitPublished). Returns how many
+// were visited. Used by the graph-hash family source for asset kinds the
+// loader completes but never adds to the pool, such as XModelPieces.
+std::size_t __cdecl DB_VisitPublishedObjects(
+    DBAliasKind kind,
+    void (*visit)(void *context, std::uintptr_t native),
+    void *context);
 db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
     const void *pointer,
     std::uint32_t size);

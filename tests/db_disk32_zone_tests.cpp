@@ -779,6 +779,30 @@ void zone_test::CheckZone()
            "a clip map's static model, dynamic entities and their shared pieces reach the shared assets");
     ExpectDigest(ASSET_TYPE_CLIPMAP_PVS, "e2e/clipmap",
                  "ae0c1b4908686240cd2018adbd84f4f744768e6e30a88db02274463e59f3c342");
+    // Model pieces never enter the asset pool: the loader publishes them
+    // through the block-4 relocation registry, so the family source has to be
+    // the registry and not DB_EnumXAssets. Both dyn entities share one pieces
+    // object, so the family counts it once.
+    Expect(defs && defs[0].destroyPieces == defs[1].destroyPieces,
+           "the two dynamic entities share one pieces object");
+    db::graph_hash::Digest piecesFamily{};
+    const int piecesCount = DB_GraphHashFamily(ASSET_TYPE_XMODELPIECES, piecesFamily);
+    Expect(piecesCount == 1, "the model-pieces family covers the one published object:",
+           std::to_string(piecesCount).c_str());
+    char piecesHex[db::graph_hash::kHexDigestBytes];
+    db::graph_hash::FormatDigestHex(piecesFamily, piecesHex);
+    Expect(!std::strcmp(piecesHex, "4adb26c42638dea73b98f662bfe58f7c79352891e5211dcaf6cf7765e00768a3"), "the model-pieces family digest is its pin:", piecesHex);
+    if (defs && defs[0].destroyPieces && defs[0].destroyPieces->pieces && defs[0].destroyPieces->numpieces > 0)
+    {
+        XModelPieces *pieces = defs[0].destroyPieces;
+        const float savedOffset = pieces->pieces[0].offset[0];
+        pieces->pieces[0].offset[0] = savedOffset + 1.0f;
+        db::graph_hash::Digest moved{};
+        DB_GraphHashFamily(ASSET_TYPE_XMODELPIECES, moved);
+        pieces->pieces[0].offset[0] = savedOffset;
+        Expect(std::memcmp(moved.data(), piecesFamily.data(), piecesFamily.size()) != 0,
+               "a moved piece changes the model-pieces family digest");
+    }
     ExpectDigest(ASSET_TYPE_IMAGE, "e2e/img", "ac2f90eb0daee004326c342c984d7eb9fa1ed302930dc39d9d5b6560072c7741");
     ExpectDigest(ASSET_TYPE_MATERIAL, "e2e/material", "b08263332bc8c3bf3cb7765d20e0c30ddfc9bafc35ccd60359faaa8d6da37176");
     ExpectDigest(ASSET_TYPE_TECHNIQUE_SET, "e2e/techset", "f840623e2879ef418cbbf49a8722a994c3313abf69eb3b41607706d4ccc72b71");

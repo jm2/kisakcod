@@ -56,6 +56,7 @@ constexpr std::int32_t kXModelPieces = 0x0;
 constexpr std::int32_t kPhysPreset = 0x1;
 constexpr std::int32_t kXAnimParts = 0x2;
 constexpr std::int32_t kXModel = 0x3;
+constexpr std::int32_t kGfxWorld = 0x10;
 constexpr std::int32_t kWeapon = 0x17;
 constexpr std::int32_t kRawFile = 0x1F;
 constexpr std::int32_t kStringTable = 0x20;
@@ -63,6 +64,7 @@ constexpr std::int32_t kStringTable = 0x20;
 // Families K4 does not count yet.
 constexpr std::int32_t kUnconverted[] = {
     kXModelPieces,
+    kGfxWorld,
 };
 
 // --- The conversion table records which families own a layout pair. ---
@@ -201,12 +203,12 @@ void TestGateRefusals()
     // An unconverted family at 64-bit must raise exactly one ERR_DROP that
     // names the family and the layout-pair reason.
     ResetError();
-    const bool refused = DB_AdmitAssetFamilyLoad(kXModelPieces, "xmodelpieces", true, true);
+    const bool refused = DB_AdmitAssetFamilyLoad(kGfxWorld, "gfx_map", true, true);
     Expect(!refused, "an unconverted family at 64-bit must be refused");
     Expect(g_comErrorCalls == 1, "refusal must raise exactly one Com_Error");
     Expect(g_lastCode == ERR_DROP, "refusal must raise ERR_DROP, not another code");
     Expect(
-        NamedMentions("xmodelpieces"),
+        NamedMentions("gfx_map"),
         "the refusal must name the family it refused");
     Expect(
         FormatMentions("layout"),
@@ -214,7 +216,7 @@ void TestGateRefusals()
 
     // An unconverted family that would load at 32-bit must not raise at 32-bit.
     ResetError();
-    const bool allowed32 = DB_AdmitAssetFamilyLoad(kXModelPieces, "xmodelpieces", false, false);
+    const bool allowed32 = DB_AdmitAssetFamilyLoad(kGfxWorld, "gfx_map", false, false);
     Expect(allowed32, "an unconverted family at 32-bit must still load");
     Expect(g_comErrorCalls == 0, "a 32-bit load must not raise");
 

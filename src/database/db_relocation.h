@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -388,6 +389,34 @@ public:
         AliasKind expectedKind,
         std::uint32_t expectedMetadata,
         std::uintptr_t *nativeAddress) const;
+
+    // Visits one published object per completed record of a kind, in block-4
+    // registration order. The address is the object the loader produced: the
+    // converted native object when it converted one, else the block-4 record
+    // itself, which is the object at ILP32 where disk32 layouts coincide. Only
+    // completed-object kinds qualify; a string holder or a raw pointer slot
+    // would name its slot here, not a loaded object.
+    template <typename Visit>
+    std::size_t VisitPublishedObjects(AliasKind kind, Visit &&visit) const
+    {
+        std::vector<std::uintptr_t> seen;
+        for (const Record &record : records_)
+        {
+            if (!record.published || record.kind != kind)
+                continue;
+            const std::uintptr_t object = record.nativeAddress != 0
+                ? static_cast<std::uintptr_t>(record.nativeAddress)
+                : static_cast<std::uintptr_t>(record.resolvedAddress);
+            if (object == 0
+                || std::find(seen.begin(), seen.end(), object) != seen.end())
+            {
+                continue;
+            }
+            seen.push_back(object);
+            visit(object);
+        }
+        return seen.size();
+    }
 
     std::size_t recordCount() const noexcept { return records_.size(); }
     std::uint64_t generation() const noexcept { return generation_; }
