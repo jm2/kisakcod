@@ -123,6 +123,11 @@ has_component() {
 }
 
 repo_root=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+# Paths given on the command line are relative to the caller, not the checkout.
+case "$dxvk_prefix" in
+    ''|/*) ;;
+    *) dxvk_prefix="$PWD/$dxvk_prefix" ;;
+esac
 cd "$repo_root"
 [ -f CMakeLists.txt ] && [ -f CMakePresets.json ] || fail "Run build.sh from a KisakCOD checkout ($repo_root)."
 
@@ -166,15 +171,15 @@ linux_packages() {
     case "$manager" in
         apt)
             printf '%s ' cmake make clang lld pkg-config git
-            is "$want_client" && printf '%s ' meson ninja-build glslang-tools libsdl3-dev \
-                libopenal-dev libavformat-dev libavcodec-dev libavutil-dev ;;
+            if is "$want_client"; then printf '%s ' meson ninja-build glslang-tools libsdl3-dev \
+                libopenal-dev libavformat-dev libavcodec-dev libavutil-dev; fi ;;
         dnf)
             printf '%s ' cmake make clang lld pkgconf-pkg-config git
-            is "$want_client" && printf '%s ' meson ninja-build glslang SDL3-devel \
-                openal-soft-devel libavformat-free-devel libavcodec-free-devel libavutil-free-devel ;;
+            if is "$want_client"; then printf '%s ' meson ninja-build glslang SDL3-devel \
+                openal-soft-devel libavformat-free-devel libavcodec-free-devel libavutil-free-devel; fi ;;
         pacman)
             printf '%s ' cmake make clang lld pkgconf git
-            is "$want_client" && printf '%s ' meson ninja glslang sdl3 openal ffmpeg ;;
+            if is "$want_client"; then printf '%s ' meson ninja glslang sdl3 openal ffmpeg; fi ;;
     esac
 }
 linux_install_hint() {
@@ -184,13 +189,15 @@ linux_install_hint() {
         apt) echo "sudo apt-get install $pkgs" ;;
         dnf) echo "sudo dnf install $pkgs" ;;
         pacman) echo "sudo pacman -S --needed $pkgs" ;;
-        *) echo "install CMake, clang, pkg-config$(is "$want_client" && echo ', meson, ninja, glslang, SDL3, OpenAL Soft and FFmpeg development files')" ;;
+        *) local extra=''
+           if is "$want_client"; then extra=', meson, ninja, glslang, SDL3, OpenAL Soft and FFmpeg development files'; fi
+           echo "install CMake, clang, pkg-config$extra" ;;
     esac
 }
 
 brew_formulas() {
     printf '%s ' cmake pkgconf
-    is "$1" && printf '%s ' meson ninja ffmpeg openal-soft mesa
+    if is "$1"; then printf '%s ' meson ninja ffmpeg openal-soft mesa; fi
 }
 
 install_dependencies() {
