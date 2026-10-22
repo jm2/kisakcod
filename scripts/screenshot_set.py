@@ -52,7 +52,7 @@ VIEWS = [
     ("sky", (0, 0, 0), 90, -45),
 ]
 PINNED = [("r_fullscreen", "0"), ("r_mode", "800x600"), ("r_aaSamples", "1"), ("r_vsync", "0"),
-          ("com_maxfps", "60"), ("com_introPlayed", "1"), ("db_unverified64", "1"), ("logfile", "2")]
+          ("com_maxfps", "60"), ("com_introPlayed", "1"), ("logfile", "2")]
 ACTIVE = re.compile(r"byte snapshot for ")
 VIEWPOS = re.compile(r"^\((-?\d+) (-?\d+) (-?\d+)\) : (-?\d+) (-?\d+)")
 

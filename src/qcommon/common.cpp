@@ -1853,6 +1853,14 @@ void Com_InitDvars()
         DVAR_NOFLAG,
         "Write to log file - 0 = disabled, 1 = async file write, 2 = Sync every write");
     com_statmon = Dvar_RegisterBool("com_statmon", 0, 0, "Draw stats monitor");
+#if KISAK_ARCH_64BIT
+    // On by default: a 64-bit build loads every family that has a disk32
+    // loader, verified or not (db_asset_layout.h). +set db_unverified64 0
+    // restores the K4 guard for validation runs.
+    Dvar_RegisterBool(
+        "db_unverified64", true, DVAR_NOFLAG,
+        "Load 64-bit asset families K4 has not verified yet (0 restores the guard)");
+#endif
     com_timescale = Dvar_RegisterFloat("com_timescale", 1.0, 0.001f, 1000.0f, DVAR_SYSTEMINFO | DVAR_ROM | DVAR_CHEAT | DVAR_TEMP | DVAR_SAVED, "Scale time of each frame");
     dev_timescale = Dvar_RegisterFloat("timescale", 1.0, 0.001f, 1000.0f, DVAR_CHEAT | DVAR_SYSTEMINFO, "Scale time of each frame");
     com_fixedtime = Dvar_RegisterInt("fixedtime", 0, 0, 1000, 0x80u, "Use a fixed time rate for each frame");

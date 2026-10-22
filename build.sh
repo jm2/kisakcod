@@ -357,8 +357,6 @@ if is "$want_client"; then
         export LD_LIBRARY_PATH
     fi
     export DXVK_WSI_DRIVER="${DXVK_WSI_DRIVER:-SDL3}"
-    # The 64-bit loader still needs its opt-in until every asset type is verified (NOW K4).
-    game_args=(+set db_unverified64 1 ${game_args[@]+"${game_args[@]}"})
 elif has_component server; then
     exe="$repo_root/bin/KisakCOD-dedi"
 else

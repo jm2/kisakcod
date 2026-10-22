@@ -69,8 +69,7 @@ on Windows and `bin/` on Linux and macOS.
 
 `Get-Help .\build-win.ps1 -Detailed` has the full reference. The script runs
 under PowerShell 5.1 or 7 and in ConstrainedLanguage mode, and copies the Miles,
-Steam and D3DX runtime DLLs beside the binaries. 64-bit builds link no Steam and
-need `+set db_unverified64 1` at run time, which `-Run` adds.
+Steam and D3DX runtime DLLs beside the binaries. 64-bit builds link no Steam.
 
 ### Linux and macOS (`build.sh`)
 
@@ -89,7 +88,7 @@ need `+set db_unverified64 1` at run time, which `-Run` adds.
 | `--clean`, `--configure-only`, `--no-configure`, `--jobs N` | Fresh configure; configure only; build only; parallelism |
 | `--install-deps` | Install packages (Homebrew, apt, dnf or pacman) and, on Linux, build dxvk-native into `.deps/` |
 | `--dxvk-prefix DIR` | Linux: use an existing dxvk-native install |
-| `--run [-- args]` | Launch the client (or the server, if it's the only component) with its runtime environment and `+set db_unverified64 1` |
+| `--run [-- args]` | Launch the client (or the server, if it's the only component) with its runtime environment |
 | `--dry-run` | Print the commands without running them |
 
 `./build.sh --help` has the full reference. The script picks the

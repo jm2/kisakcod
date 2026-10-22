@@ -10429,7 +10429,7 @@ bool DB_UnverifiedFamiliesAdmitted()
     if (!warned)
     {
         warned = true;
-        Com_PrintWarning(10, "db_unverified64: admitting 64-bit asset families K4 has not verified yet\n");
+        Com_Printf(10, "db_unverified64: loading 64-bit asset families K4 has not verified yet\n");
     }
     return true;
 }
@@ -10460,8 +10460,8 @@ void __cdecl Load_XAssetHeader(bool atStreamStart)
     // need the FX zone adapter bound: without it both loaders fall through to
     // their legacy retail-record walk, which is the same drift hazard.
     bool guardTarget64 = KISAK_ARCH_64BIT != 0;
-    // Developer opt-in only (db_asset_layout.h): admits families that have a
-    // 64-bit loader before K4 counts them. Off by default.
+    // db_unverified64 (db_asset_layout.h), on by default: admits families that
+    // have a 64-bit loader before K4 counts them.
     guardTarget64 = guardTarget64
         && !(db::asset_layout::HasDisk32Loader(varXAsset->type) && DB_UnverifiedFamiliesAdmitted());
 #if defined(KISAK_DB_ASSET_FAMILY_ADMISSION_TESTING)

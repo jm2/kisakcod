@@ -72,7 +72,7 @@ More patterns from the client bring-up: [CLIENT.md](CLIENT.md#64-bit-patterns-th
 ## Script VM
 
 - `VariableUnion` is native-width in the production headers, and `scr_readwrite.cpp` (save/load) is SP-only.
-- The native-width VM runs stock gametype scripts in the 64-bit clients' in-game runs (`db_unverified64`); portable tests exercise a small part of `scr_vm.cpp`.
+- The native-width VM runs stock gametype scripts in the 64-bit clients' in-game runs; portable tests exercise a small part of `scr_vm.cpp`.
 - `scr_compiler2`, `scr_evaluate`, `scr_parser`, `scr_main` and `scr_variable` hold 17 pointer↔int casts.
 - The VM's G2 evidence is the headless map boot and rotation (NOW row 45).
 

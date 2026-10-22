@@ -13,10 +13,10 @@ reads. Layout classes and conventions (`ONDISK_*`, `RUNTIME_SIZE`) are defined i
 
 All 25 server-closure families have generated disk32 loaders, and so does
 every family the client zones reach. The fail-closed guard (design step 6)
-stays on for each family until K4 counts it (`IsK4Verified`). The developer
-dvar `db_unverified64 1` (#513) admits every family with a disk32 loader
-(`db::asset_layout::HasDisk32Loader`) and warns once. It doesn't count toward
-K4. SndDriverGlobals is listed in `code_post_gfx_mp` but has no loader, so the
+is off by default: `db_unverified64` (#513) defaults to 1 at 64-bit and admits
+every family with a disk32 loader (`HasDisk32Loader`). K4 validates after the
+fact; `+set db_unverified64 0` restores the guard for unverified families.
+SndDriverGlobals is listed in `code_post_gfx_mp` but has no loader, so the
 envelope skips it (#473).
 
 Retail data broke these synthetic-fixture assumptions; each now has a test:
@@ -178,13 +178,13 @@ cmake -S . -B build-headless -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang
   -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF \
   -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON
 build-headless/bin/KisakCOD-dedi +set fs_basepath <install> +set fs_homepath <scratch> \
-  +set db_unverified64 1 +map mp_crash +db_graphhash rawfile
+  +map mp_crash +db_graphhash rawfile
 ```
 
 Use a scratch `fs_homepath`; afterwards nothing under `fs_basepath` may be
 newer than the run. Read the console for:
 
-- `db_unverified64: admitting …` once, then `Loaded zone '<zone>'` per zone;
+- `db_unverified64: loading …` once, then `Loaded zone '<zone>'` per zone;
 - `Waited N msec for asset '<name>'`: normal; names the asset in flight;
 - `db_graphhash <family>: N assets, sha256 …`: must equal the x86 run's;
   `list` adds per-asset digests;

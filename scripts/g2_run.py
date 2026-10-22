@@ -2,7 +2,7 @@
 """
 Run the G2 check (docs/NOW.md row 45) on the 64-bit headless server.
 
-The server, built with ASan and UBSan, boots mp_shipment (db_unverified64),
+The server, built with ASan and UBSan, boots mp_shipment,
 answers getinfo and getstatus, rotates the five G2 maps and runs for the given
 time.
 
@@ -52,7 +52,7 @@ class Server:
         home = os.path.join(args.work, "home")
         os.makedirs(home, exist_ok=True)
         command = [args.server, "+set", "fs_basepath", args.basepath, "+set", "fs_homepath", home,
-                   "+set", "db_unverified64", "1", "+set", "sv_maxclients", "8",
+                   "+set", "sv_maxclients", "8",
                    "+set", "net_port", str(args.port), "+map", ROTATION[0]]
         self.log_path = os.path.join(args.work, "server.log")
         self.lines = []
