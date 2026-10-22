@@ -1055,6 +1055,8 @@ void zone_test::CheckZone()
         Expect(std::memcmp(worldPin.data(), movedBranchOffset.data(), worldPin.size()) != 0,
                "an interior tree's children offset changes the world digest");
     }
+    Expect(gfxWorld->dpvs.smodelDrawInsts && gfxWorld->dpvs.smodelCount > 0,
+           "the fixture world has a static-model draw instance");
     if (gfxWorld->dpvs.smodelDrawInsts && gfxWorld->dpvs.smodelCount > 0)
     {
         const std::uint16_t savedCacheIndex = gfxWorld->dpvs.smodelDrawInsts[0].smodelCacheIndex[0];
