@@ -52,6 +52,7 @@ inline constexpr std::int32_t kMenuList = 0x14;
 inline constexpr std::int32_t kMenu = 0x15;
 inline constexpr std::int32_t kComWorld = 0x0C;
 inline constexpr std::int32_t kClipMapPvs = 0x0B;
+inline constexpr std::int32_t kGfxWorld = 0x10;
 inline constexpr std::int32_t kLoadedSound = 0x09;
 inline constexpr std::int32_t kSound = 0x07;
 inline constexpr std::int32_t kXAnimParts = 0x02;

@@ -958,4 +958,19 @@ void zone_test::CheckZone()
                && Is(gfx->materialMemory[0].material, ASSET_TYPE_MATERIAL, "e2e/material")
                && Is(gfx->dpvs.surfaces[0].material, ASSET_TYPE_MATERIAL, "e2e/material"),
            "a world reaches its sky image, sun light def and materials");
+    ExpectDigest(ASSET_TYPE_GFXWORLD, "w", "e5788a8807c064e577fffdf3bca45fef12bcd5099f3dad37de62b034527059ac");
+    GfxWorld *const gfxWorld = const_cast<GfxWorld *>(gfx);
+    const db::graph_hash::Digest worldPin = DB_GraphHashAsset(ASSET_TYPE_GFXWORLD, Find(ASSET_TYPE_GFXWORLD, "w"));
+    const float savedVertex = gfxWorld->cells[0].portals[0].vertices[0][0];
+    gfxWorld->cells[0].portals[0].vertices[0][0] = savedVertex + 1.0f;
+    const db::graph_hash::Digest movedPortal = DB_GraphHashAsset(ASSET_TYPE_GFXWORLD, Find(ASSET_TYPE_GFXWORLD, "w"));
+    gfxWorld->cells[0].portals[0].vertices[0][0] = savedVertex;
+    Expect(std::memcmp(worldPin.data(), movedPortal.data(), worldPin.size()) != 0,
+           "a moved portal vertex changes the world digest");
+    const std::uint32_t savedClients = gfxWorld->dpvsDyn.dynEntClientCount[1];
+    gfxWorld->dpvsDyn.dynEntClientCount[1] = savedClients + 1;
+    const db::graph_hash::Digest movedDynamic = DB_GraphHashAsset(ASSET_TYPE_GFXWORLD, Find(ASSET_TYPE_GFXWORLD, "w"));
+    gfxWorld->dpvsDyn.dynEntClientCount[1] = savedClients;
+    Expect(std::memcmp(worldPin.data(), movedDynamic.data(), worldPin.size()) != 0,
+           "a changed dynamic count changes the world digest");
 }
