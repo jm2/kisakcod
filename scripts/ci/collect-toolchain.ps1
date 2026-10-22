@@ -113,11 +113,11 @@ $linkerPath = Read-CmakeSetVar $cxxFile 'CMAKE_CXX_COMPILER_LINKER'
 if (-not $linkerPath -and $cxxCompiler -and $cxxCompiler['path']) {
     $clPath = [string]$cxxCompiler['path']
     if ($clPath -match '[\\/](cl|clang-cl|icc)\.exe$') {
-        # .NET path APIs, not Join-Path/Split-Path: those resolve drive
-        # letters and fail on non-Windows hosts parsing a Windows path
-        # (CMake always writes forward slashes, even in VS layouts).
-        $parent = [System.IO.Path]::GetDirectoryName($clPath)
-        $sibling = [System.IO.Path]::Combine($parent, 'link.exe')
+        # String edits, not Join-Path/Split-Path: those resolve drive letters
+        # and fail on non-Windows hosts parsing a Windows path (CMake always
+        # writes forward slashes, even in VS layouts). .NET path APIs would
+        # work but are blocked in ConstrainedLanguage mode.
+        $sibling = ($clPath -replace '[^\\/]+$', '') + 'link.exe'
         if (Test-Path -LiteralPath $sibling) {
             $linkerPath = $sibling
             if (-not $linkerId) { $linkerId = 'MSVC' }
