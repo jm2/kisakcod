@@ -33,6 +33,7 @@
 #include <universal/physicalmemory.h>
 #include <win32/win_storage.h>
 #include <buildnumber.h>
+#include <universal/kisak_version.h>
 #include <qcommon/net_local.h>
 #include <xanim/dobj.h>
 #ifndef KISAK_DEDI_HEADLESS
@@ -1548,7 +1549,7 @@ void __cdecl Com_Init_Try_Block_Function(char* commandLine)
     char* s; // [esp+14h] [ebp-8h]
     uint32_t initStartTime; // [esp+18h] [ebp-4h]
 
-    Com_Printf(16, "%s %s build %s %s\n", "KisakCoD4", "1.0", CPUSTRING, __DATE__);
+    Com_Printf(16, "%s %s build %s %s\n", "KisakCOD", KISAK_VERSION, CPUSTRING, __DATE__);
     Com_ParseCommandLine(commandLine);
     SL_Init();
     Swap_Init();
@@ -1615,16 +1616,16 @@ void __cdecl Com_Init_Try_Block_Function(char* commandLine)
     Cmd_AddCommandInternal("writeconfig", Com_WriteConfig_f, &Com_WriteConfig_f_VAR);
     Cmd_AddCommandInternal("writedefaults", Com_WriteDefaults_f, &Com_WriteDefaults_f_VAR);
 #ifdef KISAK_MP
-    s = va("%s %s build %s %s", "CoD4 MP", "1.0", getBuildNumber(), CPUSTRING);
+    s = va("%s %s build %s %s", "KisakCOD MP", KISAK_VERSION, getBuildNumber(), CPUSTRING);
 #elif KISAK_SP
-    s = va("%s %s build %s %s", "CoD4", "1.0", getBuildNumber(), CPUSTRING);
+    s = va("%s %s build %s %s", "KisakCOD SP", KISAK_VERSION, getBuildNumber(), CPUSTRING);
 #endif
     version = Dvar_RegisterString("version", "", DVAR_ROM, "Game version");
     Dvar_SetString(version, s);
 #ifdef KISAK_MP
     shortversion = Dvar_RegisterString("shortversion", Com_WireShortVersion(), DVAR_ROM | DVAR_SERVERINFO, "Short game version");
 #else
-    // The wire profile is multiplayer's; single-player stays 1.0, as its version string says.
+    // The wire profile is multiplayer's; single-player keeps the decompile's 1.0.
     shortversion = Dvar_RegisterString("shortversion", "1.0", DVAR_ROM | DVAR_SERVERINFO, "Short game version");
 #endif
     Sys_Init();

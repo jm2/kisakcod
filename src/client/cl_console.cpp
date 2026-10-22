@@ -14,6 +14,7 @@
 #include <qcommon/threads.h>
 #include <universal/com_files.h>
 #include <buildnumber.h>
+#include <universal/kisak_version.h>
 
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>
@@ -2411,9 +2412,9 @@ void __cdecl Con_DrawInput(int32_t localClientNum)
     if (Key_IsCatcherActive(localClientNum, 1) && Sys_IsMainThread())
     {
 #ifdef KISAK_MP
-        promptString = va("%s: %s> ", "CoD4 MP", "1.0");
+        promptString = va("%s: %s> ", "KisakCOD MP", KISAK_VERSION);
 #elif KISAK_SP
-        promptString = va("%s: %s> ", "CoD4", "1.0");
+        promptString = va("%s: %s> ", "KisakCOD SP", KISAK_VERSION);
 #endif
         conDrawInputGlob.fontHeight = (float)R_TextHeight(cls.consoleFont);
         conDrawInputGlob.x = con.screenMin[0] + 6.0;

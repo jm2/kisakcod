@@ -11,6 +11,8 @@
 #include <universal/q_parse.h>
 #include <client/client.h>
 #include <buildnumber.h>
+#include <universal/kisak_version.h>
+#include <qcommon/wire_profile.h>
 #include <stringed/stringed_hooks.h>
 #include <database/database.h>
 #include <universal/com_files.h>
@@ -777,7 +779,7 @@ void __cdecl UI_DrawBuildNumber(int localClientNum)
     x = ui_buildLocation->current.value;
     scale = UI_GetFontHandle(&scrPlaceView[localClientNum], 0, value);
     BuildNumberAsInt = getBuildNumberAsInt();
-    v2 = va("%s.%i", "1.0", BuildNumberAsInt);
+    v2 = va("KisakCOD %s build %i (net %s)", KISAK_VERSION, BuildNumberAsInt, Com_WireShortVersion());
     UI_DrawText(&scrPlaceView[localClientNum], v2, 64, scale, x, y, 3, 0, value, colorMdGrey, 0);
 }
 
@@ -3628,7 +3630,7 @@ void __cdecl UI_BuildServerDisplayList(uiInfo_s *uiInfo, int force)
         if (!len)
         {
             v3 = UI_SafeTranslateString("EXE_COD_MULTIPLAYER");
-            v20 = va("%s - %s", v3, "1.0");
+            v20 = va("%s - %s", v3, KISAK_VERSION);
             v19 = &sharedUiInfo.gap8EB4[72944];
             do
             {
