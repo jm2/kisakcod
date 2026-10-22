@@ -30,7 +30,9 @@
     CMake generator. Defaults to "Visual Studio 18 2026".
 
 .PARAMETER BuildDir
-    Out-of-source build directory. Defaults to ".\build".
+    Out-of-source build directory. Defaults to ".\build" for Win32 and
+    ".\build-x64" or ".\build-ARM64" otherwise, since CMake can't change the
+    platform of an existing build directory.
 
 .PARAMETER Clean
     Delete the build directory before configuring (fresh configure).
@@ -57,7 +59,9 @@
     Installs what a build needs and the machine lacks: CMake through winget, and
     the DirectX SDK headers and libraries from the pinned Microsoft.DXSDK.D3DX
     NuGet package (the one CI uses), unpacked into .deps\. Visual Studio 2026
-    with the C++ workload must be installed by hand.
+    with the C++ workload must be installed by hand. Once .deps\ holds the
+    package, later builds use it whenever DXSDK_DIR is unset, with or without
+    -InstallDeps.
 
 .PARAMETER Run
     After building, launches the first built game executable (KisakCOD-mp,
@@ -99,7 +103,7 @@ param(
 
     [string]$Generator = 'Visual Studio 18 2026',
 
-    [string]$BuildDir = 'build',
+    [string]$BuildDir = '',
 
     [switch]$Clean,
 
@@ -164,16 +168,19 @@ if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
     if ($InstallDeps -and (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-Step 'Installing CMake through winget'
         Invoke-Checked -File 'winget' -Arguments @('install', '--id', 'Kitware.CMake', '-e', '--accept-source-agreements', '--accept-package-agreements')
-        # winget updates the machine PATH; pick it up without a new shell.
-        $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+        # winget updates the stored PATH; pick it up without a new shell. Read it
+        # from the registry: ConstrainedLanguage mode blocks [Environment] methods.
+        $machinePath = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name Path -ErrorAction SilentlyContinue).Path
+        $userPath = (Get-ItemProperty -LiteralPath 'HKCU:\Environment' -Name Path -ErrorAction SilentlyContinue).Path
+        $env:Path = (@($machinePath, $userPath, $env:Path) | Where-Object { $_ }) -join ';'
     }
     if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
         throw "cmake was not found on PATH. Run with -InstallDeps, or install CMake (winget install Kitware.CMake) and reopen your shell."
     }
 }
 
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-if ($Generator -like 'Visual Studio 18*' -and (Test-Path -LiteralPath $vswhere)) {
+$vswhere = if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe' } else { '' }
+if ($Generator -like 'Visual Studio 18*' -and $vswhere -and (Test-Path -LiteralPath $vswhere)) {
     $vs = & $vswhere -version '[18.0,19.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
     if ([string]::IsNullOrEmpty($vs)) {
         Write-Warning 'Visual Studio 2026 with the "Desktop development with C++" workload was not found; the configure will fail without it.'
@@ -198,7 +205,16 @@ if ($needsClientMedia -and [string]::IsNullOrEmpty($env:DXSDK_DIR) -and $Install
         Remove-Item -LiteralPath $nupkg -Force
         throw "$DxsdkPackage $DxsdkVersion has SHA-256 $actual, expected $DxsdkSha256."
     }
-    Expand-Archive -LiteralPath $nupkg -DestinationPath (Join-Path $depsDir "$DxsdkPackage.$DxsdkVersion") -Force
+    $unpackDir = Join-Path $depsDir "$DxsdkPackage.$DxsdkVersion"
+    New-Item -ItemType Directory -Force -Path $unpackDir | Out-Null
+    if (Get-Command tar -ErrorAction SilentlyContinue) {
+        # Windows' tar.exe (bsdtar) reads the zip. Expand-Archive calls .NET
+        # methods that ConstrainedLanguage mode blocks.
+        Invoke-Checked -File 'tar' -Arguments @('-xf', $nupkg, '-C', $unpackDir)
+    }
+    else {
+        Expand-Archive -LiteralPath $nupkg -DestinationPath $unpackDir -Force
+    }
     Remove-Item -LiteralPath $nupkg -Force
 }
 $UseNugetDxsdk = $needsClientMedia -and [string]::IsNullOrEmpty($env:DXSDK_DIR) -and (Test-Path -LiteralPath $NugetDxsdk)
@@ -222,6 +238,9 @@ if ($RunArgs.Count -gt 0 -and -not $Run) {
     throw '-RunArgs is for the game; add -Run.'
 }
 
+if ([string]::IsNullOrEmpty($BuildDir)) {
+    $BuildDir = if ($Arch -eq 'Win32') { 'build' } else { "build-$Arch" }
+}
 $BuildPath = Join-Path $RepoRoot $BuildDir
 
 # --- Clean ---------------------------------------------------------------------
@@ -247,10 +266,12 @@ if (-not $NoConfigure) {
         "-DKISAK_BUILD_MP=$([int]($Targets -contains 'KisakCOD-mp'))",
         "-DKISAK_BUILD_DEDICATED=$([int]($Targets -contains 'KisakCOD-dedi'))",
         "-DKISAK_BUILD_SP=$([int]($Targets -contains 'KisakCOD-sp'))",
-        "-DKISAK_DEDI_HEADLESS=$([int]$HeadlessDedi)"
+        "-DKISAK_DEDI_HEADLESS=$([int][bool]$HeadlessDedi)"
     )
     if ($Experimental64Bit) {
-        $configureArguments += '-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON'
+        # As CI's Win64 and ARM64 legs: the 64-bit targets link no Steamworks
+        # and no x86 MMX skinning.
+        $configureArguments += @('-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON', '-DKISAK_ENABLE_STEAM=OFF', '-DKISAK_ENABLE_X86_MMX_SKINNING=OFF')
     }
     if ($UseNugetDxsdk) {
         # CICD selects the NuGet package layout (build\native\release\lib).
@@ -292,7 +313,7 @@ if ($UseNugetDxsdk -and $Arch -eq 'Win32' -and (Test-Path -LiteralPath $OutputDi
 }
 
 Write-Step "Build complete: $($Targets -join ', ') [$Config/$Arch]"
-Write-Host "Output: $OutputDir"
+Write-Host "Output: $(Join-Path $RepoRoot (Join-Path 'bin' $Config))"
 Write-Host $RepoRoot
 
 if ($Run) {

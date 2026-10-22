@@ -27,52 +27,88 @@ servers, and unmodified Steam 1.8 clients must join KisakCOD servers.
 - [Now](docs/NOW.md): the KPIs and the ranked work queue.
 
 ## Current Requirements
-- Windows: Visual Studio 2026 with the C++ workload, CMake >= 4.2 and the
-  DirectX SDK (`.\build-win.ps1 -InstallDeps` fetches CMake and the SDK's
-  NuGet package; the [June 2010 SDK](https://www.microsoft.com/en-us/download/details.aspx?id=6812) also works)
-- Linux (amd64, arm64) or macOS (Apple silicon, macOS 26+ for the client):
-  `./build.sh --install-deps` installs the rest through apt, dnf, pacman or
-  Homebrew
-- Steam with a copy of [Call of Duty 4](https://store.steampowered.com/app/7940/Call_of_Duty_4_Modern_Warfare_2007/)
 
+| Platform | You install | The build script installs (`-InstallDeps` / `--install-deps`) |
+|---|---|---|
+| Windows 10/11 (x86, x64, ARM64) | Visual Studio 2026 with "Desktop development with C++" | CMake (winget) and the DirectX SDK headers and libraries (the pinned `Microsoft.DXSDK.D3DX` NuGet package, into `.deps\`) |
+| Linux amd64/arm64 (apt, dnf or pacman) | `sudo` access | CMake, clang, pkg-config, FFmpeg, OpenAL Soft, SDL3, meson, ninja, glslang, and the pinned dxvk-native (built into `.deps/`) |
+| macOS 26+ on Apple silicon | [Homebrew](https://brew.sh), Xcode Command Line Tools | CMake, pkgconf, meson, ninja, FFmpeg, openal-soft, mesa (KosmicKrisp Vulkan) |
+
+All platforms also need a licensed copy of
+[Call of Duty 4](https://store.steampowered.com/app/7940/Call_of_Duty_4_Modern_Warfare_2007/)
+to play. The [June 2010 DirectX SDK](https://www.microsoft.com/en-us/download/details.aspx?id=6812)
+still works on Windows: set `DXSDK_DIR` and the script uses it instead of the
+NuGet package.
 
 ## How to build
 
-### Windows
+Run the build script from the repository root. The first run with the install
+flag fetches what's missing; later runs just build. Binaries land in `bin\<Config>`
+on Windows and `bin/` on Linux and macOS.
 
-1. Install the requirements and clone the repository.
-2. From PowerShell in the repository root, run `.\build-win.ps1`
-   (`-InstallDeps` the first time).
-3. Copy the complete licensed COD4 data installation beside the binaries in
-   `bin\Debug` or set up the equivalent game base path. Do not omit support
-   files such as `localization.txt`.
-4. Run `KisakCOD-mp.exe` or `KisakCOD-dedi.exe`, or add `-Run` to the build.
+### Windows (`build-win.ps1`)
 
-The build copies the required Miles and Steam runtime DLLs automatically.
-Use `Get-Help .\build-win.ps1 -Detailed` for configuration, target, and clean
-build options. Single-player is excluded by default because it is incomplete.
-The dedicated server still defaults to the legacy client-backed source profile;
-`.\build-win.ps1 -Targets KisakCOD-dedi -HeadlessDedi` opts into the
-dependency-free headless profile used for the native port. That profile now
-compiles and links in CI without DirectX, Miles, Bink, or Steam; licensed map
-startup and network-response validation remain a protected manual workflow.
-
-### Linux and macOS
-
-```sh
-./build.sh --install-deps            # first time: packages (and dxvk-native on Linux)
-./build.sh                           # the 64-bit client and headless server, into bin/
-./build.sh tests                     # the portable tests, then ctest
-./build.sh client --run -- +set fs_basepath <copy of your install> +devmap mp_crash
+```powershell
+.\build-win.ps1 -InstallDeps          # first time: CMake and the DirectX SDK
+.\build-win.ps1                       # Win32 Debug client and server (as build-win.bat)
+.\build-win.ps1 -Config Release -Clean
+.\build-win.ps1 -Arch x64 -Experimental64Bit -Targets KisakCOD-mp   # 64-bit client (or -Arch ARM64)
+.\build-win.ps1 -Targets KisakCOD-dedi -HeadlessDedi                # headless server
+.\build-win.ps1 -Run -RunArgs '+set','fs_basepath','D:\cod4-copy'   # build, then launch
 ```
 
-`./build.sh --help` lists the options. The script picks the
+| Option | Effect |
+|---|---|
+| `-Config Debug\|Release` | Build configuration (default Debug) |
+| `-Arch Win32\|x64\|ARM64` | Target platform (default Win32); x64 and ARM64 need `-Experimental64Bit` and build in `build-<Arch>\` |
+| `-Targets ...` | `KisakCOD-mp`, `KisakCOD-dedi`, `KisakCOD-sp` (default mp and dedi; sp is incomplete) |
+| `-HeadlessDedi` | The dependency-free dedicated server profile used by the native port |
+| `-Clean`, `-ConfigureOnly`, `-NoConfigure`, `-Jobs N` | Fresh configure; configure only (like `scripts\mksln.bat`); build only; parallelism |
+| `-InstallDeps` | Install CMake and fetch the DirectX SDK NuGet package |
+| `-Run`, `-RunArgs ...` | Launch the first built game with these arguments |
+
+`Get-Help .\build-win.ps1 -Detailed` has the full reference. The script runs
+under PowerShell 5.1 or 7 and in ConstrainedLanguage mode, and copies the Miles,
+Steam and D3DX runtime DLLs beside the binaries. 64-bit builds link no Steam and
+need `+set db_unverified64 1` at run time, which `-Run` adds.
+
+### Linux and macOS (`build.sh`)
+
+```sh
+./build.sh --install-deps            # first time: packages, plus dxvk-native on Linux
+./build.sh                           # 64-bit client and headless server
+./build.sh server                    # just the headless server
+./build.sh tests                     # portable tests, then ctest
+./build.sh client --run -- +set fs_basepath ~/cod4-copy +devmap mp_crash
+```
+
+| Option | Effect |
+|---|---|
+| `client`, `server`, `tests` | What to build (default `client server`) |
+| `--config Debug\|Release\|RelWithDebInfo` | Build configuration (default Release) |
+| `--clean`, `--configure-only`, `--no-configure`, `--jobs N` | Fresh configure; configure only; build only; parallelism |
+| `--install-deps` | Install packages (Homebrew, apt, dnf or pacman) and, on Linux, build dxvk-native into `.deps/` |
+| `--dxvk-prefix DIR` | Linux: use an existing dxvk-native install |
+| `--run [-- args]` | Launch the client (or the server, if it's the only component) with its runtime environment and `+set db_unverified64 1` |
+| `--dry-run` | Print the commands without running them |
+
+`./build.sh --help` has the full reference. The script picks the
 `CMakePresets.json` preset for the host (`linux-<arch>-client`,
-`linux-<arch>-dedi`, `macos-arm64-client`, `macos-arm64-dedi`, and the
-test presets `linux-<arch>-mp`/`macos-arm64-mp`), so `cmake --preset` gives the
-same build. The clients are experimental; run them against a copy-on-write
-clone of your install, never the original ([CLIENT](docs/design/CLIENT.md)).
-The `windows-x86-*` presets cover hosted Win32 builds.
+`linux-<arch>-dedi`, `macos-arm64-client`, `macos-arm64-dedi`, and the test
+presets `linux-<arch>-mp` and `macos-arm64-mp`), so a manual
+`cmake --preset <name>` gives the same build. The `windows-x86-*` presets cover
+hosted Win32 builds.
+
+### Game data
+
+Point the game at your install with `+set fs_basepath <dir>`, or copy the
+complete install (including support files such as `localization.txt`) beside
+the binaries. The 64-bit clients are experimental and write profiles under
+`fs_basepath`, so run them against a copy-on-write clone of the install
+(`cp -cR` on APFS, `cp --reflink` elsewhere), never the original
+([CLIENT](docs/design/CLIENT.md)). The headless server compiles and links in CI
+without DirectX, Miles, Bink or Steam; licensed map startup and network checks
+remain a manual workflow.
 
 
 ```
