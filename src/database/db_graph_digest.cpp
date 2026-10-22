@@ -2284,6 +2284,8 @@ void HashGfxTree(GraphHashBuilder &builder, const GfxAabbTree &tree)
 void HashGfxPortal(GraphHashBuilder &builder, const GfxWorld &world, const GfxPortal &portal)
 {
     builder.BeginRecord(kGfxWorldPortalRecord);
+    // The span includes DpvsPlane's trailing pad byte: the loader copies the
+    // 20-byte disk record whole, pad included, so both widths hash it.
     builder.FieldBytes(kPortalPlane, &portal.plane, sizeof(portal.plane));
     std::int64_t cell = -1;
     if (portal.cell && world.cells)

@@ -1023,6 +1023,38 @@ void zone_test::CheckZone()
     gfxWorld->dpvsDyn.dynEntClientCount[1] = savedClients;
     Expect(std::memcmp(worldPin.data(), movedDynamic.data(), worldPin.size()) != 0,
            "a changed dynamic count changes the world digest");
+    GfxAabbTree *leafTree = nullptr;
+    GfxAabbTree *branchTree = nullptr;
+    for (int cell = 0; cell < gfxWorld->dpvsPlanes.cellCount; ++cell)
+    {
+        for (int i = 0; i < gfxWorld->cells[cell].aabbTreeCount; ++i)
+        {
+            GfxAabbTree &tree = gfxWorld->cells[cell].aabbTree[i];
+            if (!tree.childCount && !leafTree)
+                leafTree = &tree;
+            if (tree.childCount && !branchTree)
+                branchTree = &tree;
+        }
+    }
+    Expect(leafTree && branchTree, "the world fixture has a leaf and an interior AABB tree");
+    if (leafTree)
+    {
+        const int savedLeafOffset = leafTree->childrenOffset;
+        leafTree->childrenOffset = static_cast<int>(sizeof(GfxAabbTree));
+        const db::graph_hash::Digest movedLeafOffset = DB_GraphHashAsset(ASSET_TYPE_GFXWORLD, Find(ASSET_TYPE_GFXWORLD, "w"));
+        leafTree->childrenOffset = savedLeafOffset;
+        Expect(std::memcmp(worldPin.data(), movedLeafOffset.data(), worldPin.size()) == 0,
+               "a leaf's children offset does not change the world digest");
+    }
+    if (branchTree)
+    {
+        const int savedBranchOffset = branchTree->childrenOffset;
+        branchTree->childrenOffset = savedBranchOffset + static_cast<int>(sizeof(GfxAabbTree));
+        const db::graph_hash::Digest movedBranchOffset = DB_GraphHashAsset(ASSET_TYPE_GFXWORLD, Find(ASSET_TYPE_GFXWORLD, "w"));
+        branchTree->childrenOffset = savedBranchOffset;
+        Expect(std::memcmp(worldPin.data(), movedBranchOffset.data(), worldPin.size()) != 0,
+               "an interior tree's children offset changes the world digest");
+    }
     if (gfxWorld->dpvs.smodelDrawInsts && gfxWorld->dpvs.smodelCount > 0)
     {
         const std::uint16_t savedCacheIndex = gfxWorld->dpvs.smodelDrawInsts[0].smodelCacheIndex[0];
