@@ -47,6 +47,8 @@ fi
 info() { printf "${c_ok}[kisakcod]${c_off} %s\n" "$*"; }
 warn() { printf "${c_warn}[kisakcod]${c_off} warning: %s\n" "$*" >&2; }
 fail() { printf "${c_err}[kisakcod]${c_off} %s\n" "$*" >&2; exit 1; }
+# Flags hold true or false.
+is() { [ "$1" = true ]; }
 usage_error() { printf '[kisakcod] %s\n\n' "$*" >&2; usage >&2; exit 2; }
 
 # Pinned dxvk-native for the Linux client (docs/design/CLIENT.md): the v3.1.1
@@ -102,13 +104,16 @@ esac
 if [ -n "$jobs" ] && ! [[ "$jobs" =~ ^[1-9][0-9]{0,3}$ ]]; then
     usage_error "--jobs must be a positive number, not '$jobs'."
 fi
-if ! $build && ! $configure; then
+if ! is "$build" && ! is "$configure"; then
     usage_error '--configure-only and --no-configure cannot be used together.'
 fi
-if $run && ! $build; then
+if is "$clean" && ! is "$configure"; then
+    usage_error '--clean deletes the build directory, so it needs a configure; drop --no-configure.'
+fi
+if is "$run" && ! is "$build"; then
     usage_error '--run needs a build; drop --configure-only.'
 fi
-if [ ${#game_args[@]} -gt 0 ] && ! $run; then
+if [ ${#game_args[@]} -gt 0 ] && ! is "$run"; then
     usage_error 'Arguments after -- are for the game; add --run.'
 fi
 has_component() {
@@ -143,7 +148,7 @@ fi
 # Print a command, then run it unless this is a dry run.
 run_cmd() {
     printf '    %s\n' "$*"
-    $dry_run || "$@"
+    is "$dry_run" || "$@"
 }
 
 # ---- Dependencies -----------------------------------------------------------
@@ -161,15 +166,15 @@ linux_packages() {
     case "$manager" in
         apt)
             printf '%s ' cmake make clang lld pkg-config git
-            $want_client && printf '%s ' meson ninja-build glslang-tools libsdl3-dev \
+            is "$want_client" && printf '%s ' meson ninja-build glslang-tools libsdl3-dev \
                 libopenal-dev libavformat-dev libavcodec-dev libavutil-dev ;;
         dnf)
             printf '%s ' cmake make clang lld pkgconf-pkg-config git
-            $want_client && printf '%s ' meson ninja-build glslang SDL3-devel \
+            is "$want_client" && printf '%s ' meson ninja-build glslang SDL3-devel \
                 openal-soft-devel libavformat-free-devel libavcodec-free-devel libavutil-free-devel ;;
         pacman)
             printf '%s ' cmake make clang lld pkgconf git
-            $want_client && printf '%s ' meson ninja glslang sdl3 openal ffmpeg ;;
+            is "$want_client" && printf '%s ' meson ninja glslang sdl3 openal ffmpeg ;;
     esac
 }
 linux_install_hint() {
@@ -179,13 +184,13 @@ linux_install_hint() {
         apt) echo "sudo apt-get install $pkgs" ;;
         dnf) echo "sudo dnf install $pkgs" ;;
         pacman) echo "sudo pacman -S --needed $pkgs" ;;
-        *) echo "install CMake, clang, pkg-config$($want_client && echo ', meson, ninja, glslang, SDL3, OpenAL Soft and FFmpeg development files')" ;;
+        *) echo "install CMake, clang, pkg-config$(is "$want_client" && echo ', meson, ninja, glslang, SDL3, OpenAL Soft and FFmpeg development files')" ;;
     esac
 }
 
 brew_formulas() {
     printf '%s ' cmake pkgconf
-    $1 && printf '%s ' meson ninja ffmpeg openal-soft mesa
+    is "$1" && printf '%s ' meson ninja ffmpeg openal-soft mesa
 }
 
 install_dependencies() {
@@ -244,7 +249,7 @@ check_dependencies() {
     else
         hint="Run ./build.sh --install-deps, or: $(linux_install_hint "$(linux_pkg_manager)" "$want_client")"
         # The client and server presets pick clang; the tests take the default compiler.
-        if $want_client || has_component server; then require clang "$hint"; fi
+        if is "$want_client" || has_component server; then require clang "$hint"; fi
     fi
     require cmake "$hint"
     local cmake_version
@@ -252,7 +257,7 @@ check_dependencies() {
     if [ "${cmake_version%%.*}" -lt 3 ] || { [ "${cmake_version%%.*}" -eq 3 ] && [ "${cmake_version#*.}" -lt 25 ]; }; then
         fail "CMake $cmake_version is too old for CMakePresets.json (3.25 or newer). $hint"
     fi
-    $want_client || return 0
+    is "$want_client" || return 0
 
     require pkg-config "$hint"
     pkg-config --exists libavformat libavcodec libavutil || fail "FFmpeg development files were not found through pkg-config. $hint"
@@ -276,13 +281,13 @@ check_dependencies() {
 want_client=false
 has_component client && want_client=true
 
-if [ "$platform" = linux ] && $want_client; then
+if [ "$platform" = linux ] && is "$want_client"; then
     [ -n "$dxvk_prefix" ] || dxvk_prefix="$repo_root/.deps/dxvk-native-$arch"
 fi
 
-if $install_deps; then
+if is "$install_deps"; then
     install_dependencies "$want_client"
-    if [ "$platform" = linux ] && $want_client && [ ! -f "$dxvk_prefix/lib/pkgconfig/dxvk-d3d9.pc" ]; then
+    if [ "$platform" = linux ] && is "$want_client" && [ ! -f "$dxvk_prefix/lib/pkgconfig/dxvk-d3d9.pc" ]; then
         build_dxvk_native "$dxvk_prefix"
     fi
 fi
@@ -295,7 +300,7 @@ if [ -n "$dxvk_prefix" ]; then
     export PKG_CONFIG_PATH
 fi
 
-$dry_run || ! $configure || check_dependencies "$want_client"
+is "$dry_run" || ! is "$configure" || check_dependencies "$want_client"
 
 preset_for() {
     case "$1" in
@@ -316,30 +321,30 @@ for component in "${components[@]}"; do
     preset=$(preset_for "$component")
     build_dir="$repo_root/build-$preset"
     info "$component: preset $preset ($config)"
-    if $clean && [ -d "$build_dir" ]; then
+    if is "$clean" && [ -d "$build_dir" ]; then
         run_cmd rm -rf "$build_dir"
     fi
-    if $configure; then
+    if is "$configure"; then
         run_cmd cmake --preset "$preset" "-DCMAKE_BUILD_TYPE=$config"
-    elif [ ! -f "$build_dir/CMakeCache.txt" ] && ! $dry_run; then
+    elif [ ! -f "$build_dir/CMakeCache.txt" ] && ! is "$dry_run"; then
         fail "--no-configure: $build_dir is not configured yet."
     fi
-    $build || continue
+    is "$build" || continue
     run_cmd cmake --build "$build_dir" --target "$(target_for "$component")" --parallel "$jobs"
     if [ "$component" = tests ]; then
         run_cmd ctest --test-dir "$build_dir" --output-on-failure --parallel "$jobs"
     fi
 done
 
-if ! $build; then
+if ! is "$build"; then
     info 'Configure complete.'
     exit 0
 fi
 info "Build complete: ${components[*]} [$config] in $repo_root/bin"
 
-$run || exit 0
+is "$run" || exit 0
 
-if $want_client; then
+if is "$want_client"; then
     exe="$repo_root/bin/KisakCOD-mp"
     if [ "$platform" = macos ]; then
         export VK_DRIVER_FILES="${VK_DRIVER_FILES:-$(brew --prefix mesa 2>/dev/null)/share/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json}"
@@ -360,7 +365,7 @@ else
     usage_error '--run needs the client or server component.'
 fi
 info "Launching $(basename "$exe")"
-if $dry_run; then
+if is "$dry_run"; then
     printf '    %s\n' "$exe ${game_args[*]-}"
     exit 0
 fi

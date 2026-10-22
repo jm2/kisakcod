@@ -35,6 +35,7 @@ check windows 1 'build-win.ps1' 'MINGW64_NT-10.0 x86_64' client
 check bad-config 2 '--config must be' 'Linux x86_64' --config Fast
 check bad-jobs 2 '--jobs must be' 'Linux x86_64' --jobs 0
 check args-need-run 2 'add --run' 'Linux x86_64' -- +devmap mp_crash
+check clean-needs-configure 2 'needs a configure' 'Linux x86_64' --clean --no-configure
 check unknown 2 'Unknown argument' 'Linux x86_64' --frobnicate
 
 # Every preset build.sh can pick is defined.
