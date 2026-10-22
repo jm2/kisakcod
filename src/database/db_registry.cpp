@@ -2880,6 +2880,15 @@ void __cdecl  DB_Thread(uint32_t threadContext)
     if (setjmp(*Value))
     {
         Profile_Recover(1);
+#if KISAK_ARCH_64BIT && !defined(KISAK_DEDI_HEADLESS)
+        // Com_ErrorAbort reports the error only after the trap below, and a
+        // trap with no debugger attached ends the process first (SIGTRAP), so
+        // a 64-bit client logs the error before trapping. x86 is unchanged.
+        {
+            extern char com_errorMessage[4096];
+            Com_Printf(CON_CHANNEL_ERROR, "Database thread error: %s\n", com_errorMessage);
+        }
+#endif
         // A headless server reports the error and goes on like retail; the
         // debugger trap is a development aid that kills a server running
         // without a debugger (SIGTRAP), so it is left out of headless builds.
