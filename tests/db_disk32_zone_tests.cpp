@@ -958,7 +958,7 @@ void zone_test::CheckZone()
                && Is(gfx->materialMemory[0].material, ASSET_TYPE_MATERIAL, "e2e/material")
                && Is(gfx->dpvs.surfaces[0].material, ASSET_TYPE_MATERIAL, "e2e/material"),
            "a world reaches its sky image, sun light def and materials");
-    ExpectDigest(ASSET_TYPE_GFXWORLD, "w", "e5788a8807c064e577fffdf3bca45fef12bcd5099f3dad37de62b034527059ac");
+    ExpectDigest(ASSET_TYPE_GFXWORLD, "w", "a8a5c405a7e38869941813a181c34d0b10ffd05a4b65cabcb83cd1bf2ec98a06");
     GfxWorld *const gfxWorld = const_cast<GfxWorld *>(gfx);
     const db::graph_hash::Digest worldPin = DB_GraphHashAsset(ASSET_TYPE_GFXWORLD, Find(ASSET_TYPE_GFXWORLD, "w"));
     const float savedVertex = gfxWorld->cells[0].portals[0].vertices[0][0];
@@ -973,4 +973,13 @@ void zone_test::CheckZone()
     gfxWorld->dpvsDyn.dynEntClientCount[1] = savedClients;
     Expect(std::memcmp(worldPin.data(), movedDynamic.data(), worldPin.size()) != 0,
            "a changed dynamic count changes the world digest");
+    if (gfxWorld->dpvs.smodelDrawInsts && gfxWorld->dpvs.smodelCount > 0)
+    {
+        const std::uint16_t savedCacheIndex = gfxWorld->dpvs.smodelDrawInsts[0].smodelCacheIndex[0];
+        gfxWorld->dpvs.smodelDrawInsts[0].smodelCacheIndex[0] = savedCacheIndex + 1;
+        const db::graph_hash::Digest movedCacheIndex = DB_GraphHashAsset(ASSET_TYPE_GFXWORLD, Find(ASSET_TYPE_GFXWORLD, "w"));
+        gfxWorld->dpvs.smodelDrawInsts[0].smodelCacheIndex[0] = savedCacheIndex;
+        Expect(std::memcmp(worldPin.data(), movedCacheIndex.data(), worldPin.size()) != 0,
+               "a changed static-model cache index changes the world digest");
+    }
 }

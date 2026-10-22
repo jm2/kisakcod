@@ -1732,21 +1732,35 @@ using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 // GfxWorld: the renderer's world as the disk32 loader leaves it at 64-bit.
 // Records the loader converts into native storage are walked by content, never
-// by native bytes: a portal's cell is a pointer and an AABB tree's
-// childrenOffset is rewritten to the native stride, so it hashes as the child
-// index it names. Block-1 buffers the renderer fills and runtime values
-// (usageCount, the portal writable state) stay out. Every field the loader
-// copies from disk is hashed, except a leaf's unused offset.
+// by native bytes: a surface and a draw instance widen, a portal's cell is a
+// pointer, and an AABB tree's childrenOffset is rewritten to the native
+// stride, so it hashes as the child index it names. Block-1 buffers the
+// renderer fills (visibility bytes, LOD and draw keys, cell bits, textures,
+// D3D vertex buffers) and runtime values (usageCount, the portal writable
+// state) stay out. Every field the loader copies from disk is hashed,
+// including the static-model cache indices, except a leaf's unused offset.
 constexpr std::uint32_t kGfxWorldRecord = 1;
 constexpr std::uint32_t kGfxWorldSunParseRecord = 2;
 constexpr std::uint32_t kGfxWorldDpvsPlanesRecord = 3;
 constexpr std::uint32_t kGfxWorldDpvsStaticRecord = 4;
 constexpr std::uint32_t kGfxWorldDpvsDynamicRecord = 5;
+constexpr std::uint32_t kGfxWorldLightGridRecord = 6;
 constexpr std::uint32_t kGfxWorldCellRecord = 7;
 constexpr std::uint32_t kGfxWorldTreeRecord = 8;
 constexpr std::uint32_t kGfxWorldPortalRecord = 9;
-constexpr std::uint32_t kGfxWorldLightRecord = 22;
+constexpr std::uint32_t kGfxWorldSurfaceRecord = 10;
+constexpr std::uint32_t kGfxWorldSModelInstRecord = 11;
+constexpr std::uint32_t kGfxWorldSModelDrawRecord = 12;
+constexpr std::uint32_t kGfxWorldCullGroupRecord = 13;
 constexpr std::uint32_t kGfxWorldProbeRecord = 14;
+constexpr std::uint32_t kGfxWorldLightmapRecord = 15;
+constexpr std::uint32_t kGfxWorldBrushModelRecord = 16;
+constexpr std::uint32_t kGfxWorldMaterialMemoryRecord = 17;
+constexpr std::uint32_t kGfxWorldSunFlareRecord = 18;
+constexpr std::uint32_t kGfxWorldShadowGeomRecord = 19;
+constexpr std::uint32_t kGfxWorldLightRegionRecord = 20;
+constexpr std::uint32_t kGfxWorldLightRegionHullRecord = 21;
+constexpr std::uint32_t kGfxWorldLightRecord = 22;
 
 enum GfxWorldField : std::uint32_t
 {
@@ -1866,6 +1880,127 @@ enum GfxPortalField : std::uint32_t
     kPortalVertexCount,
     kPortalVertex,
     kPortalHullAxis,
+};
+
+enum GfxSurfaceField : std::uint32_t
+{
+    kSurfaceVertexLayerData = 1,
+    kSurfaceFirstVertex,
+    kSurfaceVertexCount,
+    kSurfaceTriCount,
+    kSurfaceBaseIndex,
+    kSurfaceMaterial,
+    kSurfaceLightmap,
+    kSurfaceProbe,
+    kSurfacePrimaryLight,
+    kSurfaceFlags,
+    kSurfaceBounds,
+};
+
+enum GfxSModelInstField : std::uint32_t
+{
+    kSModelInstMins = 1,
+    kSModelInstMaxs,
+    kSModelInstGroundLighting,
+};
+
+enum GfxSModelDrawField : std::uint32_t
+{
+    kSModelDrawCullDist = 1,
+    kSModelDrawOrigin,
+    kSModelDrawAxis,
+    kSModelDrawScale,
+    kSModelDrawModel,
+    kSModelDrawProbe,
+    kSModelDrawPrimaryLight,
+    kSModelDrawLightingHandle,
+    kSModelDrawFlags,
+    kSModelDrawCacheIndex,
+};
+
+enum GfxCullGroupField : std::uint32_t
+{
+    kCullGroupMins = 1,
+    kCullGroupMaxs,
+    kCullGroupSurfaceCount,
+    kCullGroupStartSurf,
+};
+
+enum GfxLightmapField : std::uint32_t
+{
+    kLightmapPrimary = 1,
+    kLightmapSecondary,
+};
+
+enum GfxLightGridField : std::uint32_t
+{
+    kLightGridHasRegions = 1,
+    kLightGridSunPrimary,
+    kLightGridMins,
+    kLightGridMaxs,
+    kLightGridRowAxis,
+    kLightGridColAxis,
+    kLightGridRowCount,
+    kLightGridRow,
+    kLightGridRawSize,
+    kLightGridRaw,
+    kLightGridEntryCount,
+    kLightGridEntry,
+    kLightGridColorCount,
+    kLightGridColor,
+};
+
+enum GfxBrushModelField : std::uint32_t
+{
+    kBrushMins = 1,
+    kBrushMaxs,
+    kBrushBounds,
+    kBrushSurfaceCount,
+    kBrushStartSurf,
+    kBrushSurfaceCountNoDecal,
+};
+
+enum GfxMaterialMemoryField : std::uint32_t
+{
+    kMaterialMemoryMaterial = 1,
+    kMaterialMemoryBytes,
+};
+
+enum GfxSunFlareField : std::uint32_t
+{
+    kSunFlareValid = 1,
+    kSunFlareSprite,
+    kSunFlareFlare,
+    kSunFlareValue,
+};
+
+enum GfxShadowGeomField : std::uint32_t
+{
+    kShadowGeomSurfaceCount = 1,
+    kShadowGeomSurface,
+    kShadowGeomSmodelCount,
+    kShadowGeomSmodel,
+};
+
+enum GfxLightRegionField : std::uint32_t
+{
+    kLightRegionHullCount = 1,
+    kLightRegionHull,
+};
+
+enum GfxLightRegionHullField : std::uint32_t
+{
+    kHullMidPoint = 1,
+    kHullHalfSize,
+    kHullAxisCount,
+    kHullAxis,
+};
+
+enum GfxLightRegionAxisField : std::uint32_t
+{
+    kAxisDir = 1,
+    kAxisMidPoint,
+    kAxisHalfSize,
 };
 
 enum GfxDpvsPlanesField : std::uint32_t
@@ -2009,9 +2144,204 @@ void HashGfxCell(GraphHashBuilder &builder, const GfxWorld &world, const GfxCell
     builder.FieldBytes(kCellProbe, cell.reflectionProbes, cell.reflectionProbes ? cell.reflectionProbeCount : 0);
     builder.EndRecord();
 }
+
+void HashGfxSurface(GraphHashBuilder &builder, const GfxSurface &surface)
+{
+    builder.BeginRecord(kGfxWorldSurfaceRecord);
+    builder.FieldI64(kSurfaceVertexLayerData, surface.tris.vertexLayerData);
+    builder.FieldI64(kSurfaceFirstVertex, surface.tris.firstVertex);
+    builder.FieldU64(kSurfaceVertexCount, surface.tris.vertexCount);
+    builder.FieldU64(kSurfaceTriCount, surface.tris.triCount);
+    builder.FieldI64(kSurfaceBaseIndex, surface.tris.baseIndex);
+    FieldAsset(builder, kSurfaceMaterial, ASSET_TYPE_MATERIAL, surface.material);
+    builder.FieldU64(kSurfaceLightmap, surface.lightmapIndex);
+    builder.FieldU64(kSurfaceProbe, surface.reflectionProbeIndex);
+    builder.FieldU64(kSurfacePrimaryLight, surface.primaryLightIndex);
+    builder.FieldU64(kSurfaceFlags, surface.flags);
+    for (const auto &bound : surface.bounds)
+        for (const float value : bound)
+            builder.FieldF32(kSurfaceBounds, value);
+    builder.EndRecord();
+}
+
+void HashGfxSModelInst(GraphHashBuilder &builder, const GfxStaticModelInst &inst)
+{
+    builder.BeginRecord(kGfxWorldSModelInstRecord);
+    for (const float value : inst.mins)
+        builder.FieldF32(kSModelInstMins, value);
+    for (const float value : inst.maxs)
+        builder.FieldF32(kSModelInstMaxs, value);
+    builder.FieldU64(kSModelInstGroundLighting, inst.groundLighting.packed);
+    builder.EndRecord();
+}
+
 // smodelCacheIndex is copied from disk by both loaders; the renderer rewrites
 // it only after load, so the loader's value is part of the digest.
+void HashGfxSModelDraw(GraphHashBuilder &builder, const GfxStaticModelDrawInst &inst)
+{
+    builder.BeginRecord(kGfxWorldSModelDrawRecord);
+    builder.FieldF32(kSModelDrawCullDist, inst.cullDist);
+    for (const float value : inst.placement.origin)
+        builder.FieldF32(kSModelDrawOrigin, value);
+    for (const auto &axis : inst.placement.axis)
+        for (const float value : axis)
+            builder.FieldF32(kSModelDrawAxis, value);
+    builder.FieldF32(kSModelDrawScale, inst.placement.scale);
+    FieldAsset(builder, kSModelDrawModel, ASSET_TYPE_XMODEL, inst.model);
+    builder.FieldU64(kSModelDrawProbe, inst.reflectionProbeIndex);
+    builder.FieldU64(kSModelDrawPrimaryLight, inst.primaryLightIndex);
+    builder.FieldU64(kSModelDrawLightingHandle, inst.lightingHandle);
+    builder.FieldU64(kSModelDrawFlags, inst.flags);
+    for (const std::uint16_t cacheIndex : inst.smodelCacheIndex)
+        builder.FieldU64(kSModelDrawCacheIndex, cacheIndex);
+    builder.EndRecord();
+}
+
+void HashGfxCullGroup(GraphHashBuilder &builder, const GfxCullGroup &group)
+{
+    builder.BeginRecord(kGfxWorldCullGroupRecord);
+    for (const float value : group.mins)
+        builder.FieldF32(kCullGroupMins, value);
+    for (const float value : group.maxs)
+        builder.FieldF32(kCullGroupMaxs, value);
+    builder.FieldI64(kCullGroupSurfaceCount, group.surfaceCount);
+    builder.FieldI64(kCullGroupStartSurf, group.startSurfIndex);
+    builder.EndRecord();
+}
+
+void HashGfxLightmap(GraphHashBuilder &builder, const GfxLightmapArray &lightmap)
+{
+    builder.BeginRecord(kGfxWorldLightmapRecord);
+    FieldAsset(builder, kLightmapPrimary, ASSET_TYPE_IMAGE, lightmap.primary);
+    FieldAsset(builder, kLightmapSecondary, ASSET_TYPE_IMAGE, lightmap.secondary);
+    builder.EndRecord();
+}
+
+void HashGfxBrushModel(GraphHashBuilder &builder, const GfxBrushModel &model)
+{
+    builder.BeginRecord(kGfxWorldBrushModelRecord);
+    for (const float value : model.writable.mins)
+        builder.FieldF32(kBrushMins, value);
+    for (const float value : model.writable.maxs)
+        builder.FieldF32(kBrushMaxs, value);
+    for (const auto &bound : model.bounds)
+        for (const float value : bound)
+            builder.FieldF32(kBrushBounds, value);
+    builder.FieldU64(kBrushSurfaceCount, model.surfaceCount);
+    builder.FieldU64(kBrushStartSurf, model.startSurfIndex);
+    builder.FieldU64(kBrushSurfaceCountNoDecal, model.surfaceCountNoDecal);
+    builder.EndRecord();
+}
+
+void HashGfxMaterialMemory(GraphHashBuilder &builder, const MaterialMemory &memory)
+{
+    builder.BeginRecord(kGfxWorldMaterialMemoryRecord);
+    FieldAsset(builder, kMaterialMemoryMaterial, ASSET_TYPE_MATERIAL, memory.material);
+    builder.FieldI64(kMaterialMemoryBytes, memory.memory);
+    builder.EndRecord();
+}
+
 // The flare's 21-word run holds floats and times in schema order.
+void HashGfxSunFlare(GraphHashBuilder &builder, const sunflare_t &sun)
+{
+    builder.BeginRecord(kGfxWorldSunFlareRecord);
+    builder.FieldU64(kSunFlareValid, sun.hasValidData);
+    FieldAsset(builder, kSunFlareSprite, ASSET_TYPE_MATERIAL, sun.spriteMaterial);
+    FieldAsset(builder, kSunFlareFlare, ASSET_TYPE_MATERIAL, sun.flareMaterial);
+    builder.FieldF32(kSunFlareValue, sun.spriteSize);
+    builder.FieldF32(kSunFlareValue, sun.flareMinSize);
+    builder.FieldF32(kSunFlareValue, sun.flareMinDot);
+    builder.FieldF32(kSunFlareValue, sun.flareMaxSize);
+    builder.FieldF32(kSunFlareValue, sun.flareMaxDot);
+    builder.FieldF32(kSunFlareValue, sun.flareMaxAlpha);
+    builder.FieldI64(kSunFlareValue, sun.flareFadeInTime);
+    builder.FieldI64(kSunFlareValue, sun.flareFadeOutTime);
+    builder.FieldF32(kSunFlareValue, sun.blindMinDot);
+    builder.FieldF32(kSunFlareValue, sun.blindMaxDot);
+    builder.FieldF32(kSunFlareValue, sun.blindMaxDarken);
+    builder.FieldI64(kSunFlareValue, sun.blindFadeInTime);
+    builder.FieldI64(kSunFlareValue, sun.blindFadeOutTime);
+    builder.FieldF32(kSunFlareValue, sun.glareMinDot);
+    builder.FieldF32(kSunFlareValue, sun.glareMaxDot);
+    builder.FieldF32(kSunFlareValue, sun.glareMaxLighten);
+    builder.FieldI64(kSunFlareValue, sun.glareFadeInTime);
+    builder.FieldI64(kSunFlareValue, sun.glareFadeOutTime);
+    for (const float value : sun.sunFxPosition)
+        builder.FieldF32(kSunFlareValue, value);
+    builder.EndRecord();
+}
+
+void HashGfxShadowGeometry(GraphHashBuilder &builder, const GfxShadowGeometry &geometry)
+{
+    builder.BeginRecord(kGfxWorldShadowGeomRecord);
+    builder.FieldU64(kShadowGeomSurfaceCount, geometry.surfaceCount);
+    for (std::int64_t i = 0; geometry.sortedSurfIndex && i < geometry.surfaceCount; ++i)
+        builder.FieldU64(kShadowGeomSurface, geometry.sortedSurfIndex[i]);
+    builder.FieldU64(kShadowGeomSmodelCount, geometry.smodelCount);
+    for (std::int64_t i = 0; geometry.smodelIndex && i < geometry.smodelCount; ++i)
+        builder.FieldU64(kShadowGeomSmodel, geometry.smodelIndex[i]);
+    builder.EndRecord();
+}
+
+void HashGfxLightRegionHull(GraphHashBuilder &builder, const GfxLightRegionHull &hull)
+{
+    builder.BeginRecord(kGfxWorldLightRegionHullRecord);
+    for (const float value : hull.kdopMidPoint)
+        builder.FieldF32(kHullMidPoint, value);
+    for (const float value : hull.kdopHalfSize)
+        builder.FieldF32(kHullHalfSize, value);
+    builder.FieldU64(kHullAxisCount, hull.axisCount);
+    for (std::int64_t i = 0; hull.axis && i < hull.axisCount; ++i)
+    {
+        const GfxLightRegionAxis &axis = hull.axis[i];
+        for (const float value : axis.dir)
+            builder.FieldF32(kAxisDir, value);
+        builder.FieldF32(kAxisMidPoint, axis.midPoint);
+        builder.FieldF32(kAxisHalfSize, axis.halfSize);
+    }
+    builder.EndRecord();
+}
+
+void HashGfxLightRegion(GraphHashBuilder &builder, const GfxLightRegion &region)
+{
+    builder.BeginRecord(kGfxWorldLightRegionRecord);
+    builder.FieldU64(kLightRegionHullCount, region.hullCount);
+    for (std::int64_t i = 0; region.hulls && i < region.hullCount; ++i)
+        HashGfxLightRegionHull(builder, region.hulls[i]);
+    builder.EndRecord();
+}
+
+void HashGfxLightGrid(GraphHashBuilder &builder, const GfxWorld &world)
+{
+    const GfxLightGrid &grid = world.lightGrid;
+    builder.BeginRecord(kGfxWorldLightGridRecord);
+    builder.FieldU64(kLightGridHasRegions, grid.hasLightRegions);
+    builder.FieldU64(kLightGridSunPrimary, grid.sunPrimaryLightIndex);
+    for (const std::uint16_t value : grid.mins)
+        builder.FieldU64(kLightGridMins, value);
+    for (const std::uint16_t value : grid.maxs)
+        builder.FieldU64(kLightGridMaxs, value);
+    builder.FieldU64(kLightGridRowAxis, grid.rowAxis);
+    builder.FieldU64(kLightGridColAxis, grid.colAxis);
+    std::int64_t rows = 0;
+    if (grid.rowDataStart && grid.rowAxis < 3)
+        rows = static_cast<std::int64_t>(grid.maxs[grid.rowAxis]) - grid.mins[grid.rowAxis] + 1;
+    builder.FieldI64(kLightGridRowCount, rows);
+    for (std::int64_t i = 0; i < rows; ++i)
+        builder.FieldU64(kLightGridRow, grid.rowDataStart[i]);
+    builder.FieldU64(kLightGridRawSize, grid.rawRowDataSize);
+    builder.FieldBytes(kLightGridRaw, grid.rawRowData, grid.rawRowData && grid.rawRowDataSize ? grid.rawRowDataSize : 0);
+    builder.FieldU64(kLightGridEntryCount, grid.entryCount);
+    builder.FieldBytes(kLightGridEntry, grid.entries,
+                       grid.entries && grid.entryCount ? static_cast<std::size_t>(grid.entryCount) * sizeof(GfxLightGridEntry)
+                                                       : 0);
+    builder.FieldU64(kLightGridColorCount, grid.colorCount);
+    builder.FieldBytes(kLightGridColor, grid.colors,
+                       grid.colors && grid.colorCount ? static_cast<std::size_t>(grid.colorCount) * sizeof(GfxLightGridColors)
+                                                       : 0);
+    builder.EndRecord();
+}
+
 void HashGfxSunParse(GraphHashBuilder &builder, const SunLightParseParams &params)
 {
     builder.BeginRecord(kGfxWorldSunParseRecord);
@@ -2043,6 +2373,38 @@ void HashGfxDpvsPlanes(GraphHashBuilder &builder, const GfxWorld &world)
                        nodes > 0 ? static_cast<std::size_t>(nodes) * sizeof(std::uint16_t) : 0);
     builder.EndRecord();
 }
+
+void HashGfxDpvsStatic(GraphHashBuilder &builder, const GfxWorld &world)
+{
+    const GfxWorldDpvsStatic &dpvs = world.dpvs;
+    builder.BeginRecord(kGfxWorldDpvsStaticRecord);
+    builder.FieldU64(kDpvsSmodelCount, dpvs.smodelCount);
+    builder.FieldU64(kDpvsStaticSurfaceCount, dpvs.staticSurfaceCount);
+    builder.FieldU64(kDpvsStaticSurfaceCountNoDecal, dpvs.staticSurfaceCountNoDecal);
+    builder.FieldU64(kDpvsLitBegin, dpvs.litSurfsBegin);
+    builder.FieldU64(kDpvsLitEnd, dpvs.litSurfsEnd);
+    builder.FieldU64(kDpvsDecalBegin, dpvs.decalSurfsBegin);
+    builder.FieldU64(kDpvsDecalEnd, dpvs.decalSurfsEnd);
+    builder.FieldU64(kDpvsEmissiveBegin, dpvs.emissiveSurfsBegin);
+    builder.FieldU64(kDpvsEmissiveEnd, dpvs.emissiveSurfsEnd);
+    builder.FieldU64(kDpvsSmodelVisCount, dpvs.smodelVisDataCount);
+    builder.FieldU64(kDpvsSurfaceVisCount, dpvs.surfaceVisDataCount);
+    const std::int64_t sorted = dpvs.sortedSurfIndex
+        ? static_cast<std::int64_t>(dpvs.staticSurfaceCountNoDecal) + dpvs.staticSurfaceCount
+        : 0;
+    for (std::int64_t i = 0; i < sorted; ++i)
+        builder.FieldU64(kDpvsSortedSurface, dpvs.sortedSurfIndex[i]);
+    for (std::int64_t i = 0; dpvs.smodelInsts && i < dpvs.smodelCount; ++i)
+        HashGfxSModelInst(builder, dpvs.smodelInsts[i]);
+    for (std::int64_t i = 0; dpvs.surfaces && i < world.surfaceCount; ++i)
+        HashGfxSurface(builder, dpvs.surfaces[i]);
+    for (std::int64_t i = 0; dpvs.cullGroups && i < world.cullGroupCount; ++i)
+        HashGfxCullGroup(builder, dpvs.cullGroups[i]);
+    for (std::int64_t i = 0; dpvs.smodelDrawInsts && i < dpvs.smodelCount; ++i)
+        HashGfxSModelDraw(builder, dpvs.smodelDrawInsts[i]);
+    builder.EndRecord();
+}
+
 void HashGfxDpvsDynamic(GraphHashBuilder &builder, const GfxWorld &world)
 {
     builder.BeginRecord(kGfxWorldDpvsDynamicRecord);
@@ -2100,11 +2462,31 @@ void HashGfxWorld(GraphHashBuilder &builder, const XAssetHeader &header)
     builder.FieldI64(kGfxWorldCellBitsCount, world.cellBitsCount);
     for (std::int64_t i = 0; world.cells && i < world.dpvsPlanes.cellCount; ++i)
         HashGfxCell(builder, world, world.cells[i]);
+    builder.FieldI64(kGfxWorldLightmapCount, world.lightmapCount);
+    for (std::int64_t i = 0; world.lightmaps && i < world.lightmapCount; ++i)
+        HashGfxLightmap(builder, world.lightmaps[i]);
+    HashGfxLightGrid(builder, world);
+    builder.FieldI64(kGfxWorldModelCount, world.modelCount);
+    for (std::int64_t i = 0; world.models && i < world.modelCount; ++i)
+        HashGfxBrushModel(builder, world.models[i]);
     for (const float value : world.mins)
         builder.FieldF32(kGfxWorldMins, value);
     for (const float value : world.maxs)
         builder.FieldF32(kGfxWorldMaxs, value);
     builder.FieldU64(kGfxWorldChecksum, world.checksum);
+    builder.FieldI64(kGfxWorldMaterialMemoryCount, world.materialMemoryCount);
+    for (std::int64_t i = 0; world.materialMemory && i < world.materialMemoryCount; ++i)
+        HashGfxMaterialMemory(builder, world.materialMemory[i]);
+    HashGfxSunFlare(builder, world.sun);
+    for (const auto &row : world.outdoorLookupMatrix)
+        for (const float value : row)
+            builder.FieldF32(kGfxWorldOutdoorLookup, value);
+    FieldAsset(builder, kGfxWorldOutdoorImage, ASSET_TYPE_IMAGE, world.outdoorImage);
+    for (std::int64_t i = 0; world.shadowGeom && i < world.primaryLightCount; ++i)
+        HashGfxShadowGeometry(builder, world.shadowGeom[i]);
+    for (std::int64_t i = 0; world.lightRegion && i < world.primaryLightCount; ++i)
+        HashGfxLightRegion(builder, world.lightRegion[i]);
+    HashGfxDpvsStatic(builder, world);
     HashGfxDpvsDynamic(builder, world);
     builder.EndRecord();
 }
