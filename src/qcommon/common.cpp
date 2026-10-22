@@ -125,6 +125,7 @@ const dvar_t *com_sv_running;
 const dvar_t *com_useConfig;
 const dvar_t *com_maxFrameTime;
 const dvar_t *com_statmon;
+const dvar_t *com_devAutoexec;
 const dvar_t *com_filter_output;
 const dvar_t *com_developer;
 
@@ -1291,6 +1292,11 @@ void __cdecl Com_SetScriptSettings()
 
 void __cdecl Com_RunAutoExec(int localClientNum, int controllerIndex)
 {
+    // Retail Steam 1.8 never runs the developer autoexec: its iw3mp.exe has no
+    // reference to it. The copy in iw_00.iwd turns on developer, logfile and
+    // the stats monitor, so it runs only on request (+set com_devAutoexec 1).
+    if (!com_devAutoexec->current.enabled)
+        return;
     Dvar_SetInAutoExec(1);
 #ifdef KISAK_MP
     Cmd_ExecuteSingleCommand(localClientNum, controllerIndex, (char*)"exec autoexec_dev_mp.cfg");
@@ -1861,6 +1867,8 @@ void Com_InitDvars()
         "db_unverified64", true, DVAR_NOFLAG,
         "Load 64-bit asset families K4 has not verified yet (0 restores the guard)");
 #endif
+    com_devAutoexec = Dvar_RegisterBool(
+        "com_devAutoexec", 0, 0, "Run the developer autoexec config at startup (retail never does)");
     com_timescale = Dvar_RegisterFloat("com_timescale", 1.0, 0.001f, 1000.0f, DVAR_SYSTEMINFO | DVAR_ROM | DVAR_CHEAT | DVAR_TEMP | DVAR_SAVED, "Scale time of each frame");
     dev_timescale = Dvar_RegisterFloat("timescale", 1.0, 0.001f, 1000.0f, DVAR_CHEAT | DVAR_SYSTEMINFO, "Scale time of each frame");
     com_fixedtime = Dvar_RegisterInt("fixedtime", 0, 0, 1000, 0x80u, "Use a fixed time rate for each frame");
