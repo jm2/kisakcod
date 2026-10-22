@@ -27,21 +27,26 @@ servers, and unmodified Steam 1.8 clients must join KisakCOD servers.
 - [Now](docs/NOW.md): the KPIs and the ranked work queue.
 
 ## Current Requirements
-- Windows OS
-- Visual Studio 2026
-- CMake >= 4.2
-- [DirectX SDK 2010](https://www.microsoft.com/en-us/download/details.aspx?id=6812)
+- Windows: Visual Studio 2026 with the C++ workload, CMake >= 4.2 and the
+  DirectX SDK (`.\build-win.ps1 -InstallDeps` fetches CMake and the SDK's
+  NuGet package; the [June 2010 SDK](https://www.microsoft.com/en-us/download/details.aspx?id=6812) also works)
+- Linux (amd64, arm64) or macOS (Apple silicon, macOS 26+ for the client):
+  `./build.sh --install-deps` installs the rest through apt, dnf, pacman or
+  Homebrew
 - Steam with a copy of [Call of Duty 4](https://store.steampowered.com/app/7940/Call_of_Duty_4_Modern_Warfare_2007/)
 
 
 ## How to build
 
+### Windows
+
 1. Install the requirements and clone the repository.
-2. From PowerShell in the repository root, run `.\build-win.ps1`.
+2. From PowerShell in the repository root, run `.\build-win.ps1`
+   (`-InstallDeps` the first time).
 3. Copy the complete licensed COD4 data installation beside the binaries in
    `bin\Debug` or set up the equivalent game base path. Do not omit support
    files such as `localization.txt`.
-4. Run `KisakCOD-mp.exe` or `KisakCOD-dedi.exe`.
+4. Run `KisakCOD-mp.exe` or `KisakCOD-dedi.exe`, or add `-Run` to the build.
 
 The build copies the required Miles and Steam runtime DLLs automatically.
 Use `Get-Help .\build-win.ps1 -Detailed` for configuration, target, and clean
@@ -52,18 +57,22 @@ dependency-free headless profile used for the native port. That profile now
 compiles and links in CI without DirectX, Miles, Bink, or Steam; licensed map
 startup and network-response validation remain a protected manual workflow.
 
-Portable utility tests can be built on Linux without licensed game data:
+### Linux and macOS
 
 ```sh
-cmake --preset linux-amd64-mp
-cmake --build build-linux-amd64-mp
-ctest --test-dir build-linux-amd64-mp --output-on-failure
+./build.sh --install-deps            # first time: packages (and dxvk-native on Linux)
+./build.sh                           # the 64-bit client and headless server, into bin/
+./build.sh tests                     # the portable tests, then ctest
+./build.sh client --run -- +set fs_basepath <copy of your install> +devmap mp_crash
 ```
 
-The checked-in `CMakePresets.json` also provides `windows-x86-mp`,
-`windows-x86-sp`, and `windows-x86-dedi` presets for hosted Win32 builds, and
-`linux-amd64-client`/`linux-arm64-client` for the experimental Linux clients
-(dxvk-native; see [CLIENT](docs/design/CLIENT.md)).
+`./build.sh --help` lists the options. The script picks the
+`CMakePresets.json` preset for the host (`linux-<arch>-client`,
+`linux-<arch>-dedi`, `macos-arm64-client`, `macos-arm64-dedi`, and the
+test presets `linux-<arch>-mp`/`macos-arm64-mp`), so `cmake --preset` gives the
+same build. The clients are experimental; run them against a copy-on-write
+clone of your install, never the original ([CLIENT](docs/design/CLIENT.md)).
+The `windows-x86-*` presets cover hosted Win32 builds.
 
 
 ```

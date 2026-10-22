@@ -31,6 +31,8 @@ build-mp/
 build-sp/
 /build-*/
 /dist/
+# Dependencies build.sh and build-win.ps1 fetch with --install-deps / -InstallDeps
+/.deps/
 [Oo]bj/
 [Oo]ut/
 [Ll]og/
