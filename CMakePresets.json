@@ -131,6 +131,84 @@
       }
     },
     {
+      "name": "macos-arm64-client",
+      "description": "The in-progress macOS MP client (SDL3 window and input, the pinned jm2/dxvk fork on KosmicKrisp). Needs Homebrew meson, ninja, pkgconf, ffmpeg and openal-soft; running it needs mesa.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-macos-arm64-client",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "KISAK_PLATFORM": "macos",
+        "KISAK_BUILD_MP": "ON",
+        "KISAK_BUILD_DEDICATED": "OFF",
+        "KISAK_BUILD_SP": "OFF",
+        "KISAK_EXPERIMENTAL_POSIX_CLIENT": "ON",
+        "KISAK_CLIENT_SDL3": "ON",
+        "KISAK_DXVK_MACOS": "ON",
+        "KISAK_ALLOW_UNSUPPORTED_64BIT": "ON",
+        "KISAK_ENABLE_STEAM": "OFF",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "linux-amd64-dedi",
+      "description": "The headless dedicated server on Linux amd64, configured as the Linux headless CI leg does.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-linux-amd64-dedi",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "KISAK_PLATFORM": "linux",
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "ON",
+        "KISAK_BUILD_SP": "OFF",
+        "KISAK_DEDI_HEADLESS": "ON",
+        "KISAK_ENABLE_STEAM": "OFF",
+        "KISAK_ALLOW_UNSUPPORTED_64BIT": "ON",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "linux-arm64-dedi",
+      "description": "The headless dedicated server on Linux arm64, configured as the Linux headless CI leg does.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-linux-arm64-dedi",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "KISAK_PLATFORM": "linux",
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "ON",
+        "KISAK_BUILD_SP": "OFF",
+        "KISAK_DEDI_HEADLESS": "ON",
+        "KISAK_ENABLE_STEAM": "OFF",
+        "KISAK_ALLOW_UNSUPPORTED_64BIT": "ON",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "macos-arm64-dedi",
+      "description": "The headless dedicated server on macOS arm64, configured as the macOS headless CI leg does.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-macos-arm64-dedi",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "KISAK_PLATFORM": "macos",
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "ON",
+        "KISAK_BUILD_SP": "OFF",
+        "KISAK_DEDI_HEADLESS": "ON",
+        "KISAK_ENABLE_STEAM": "OFF",
+        "KISAK_ALLOW_UNSUPPORTED_64BIT": "ON",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
       "name": "linux-x86-tests",
       "description": "i386 build of the disk32 zone tests (database-disk32-zone-*), which run the x86 load path. -malign-double and -mlong-double-64 give MSVC's x86 struct layout.",
       "generator": "Unix Makefiles",

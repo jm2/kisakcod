@@ -727,3 +727,15 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME live-storage-stats-file-contracts COMMAND kisakcod-live-storage-tests)
     set_tests_properties(live-storage-stats-file-contracts PROPERTIES TIMEOUT 20)
 endif()
+
+# build.sh picks a CMakePresets.json preset per host (dry runs only).
+if (NOT WIN32)
+    find_program(KISAK_TEST_BASH bash)
+    if (KISAK_TEST_BASH)
+        add_test(
+            NAME build-sh-routing
+            COMMAND "${KISAK_TEST_BASH}" "${CMAKE_SOURCE_DIR}/tests/build_sh_routing_test.sh"
+        )
+        set_tests_properties(build-sh-routing PROPERTIES TIMEOUT 60)
+    endif()
+endif()
