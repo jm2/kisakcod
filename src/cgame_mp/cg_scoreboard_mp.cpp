@@ -101,8 +101,8 @@ const score_t *__cdecl UI_GetScoreAtRank(int32_t localClientNum, int32_t rank)
     if (rank < 1 || rank > cgameGlob->numScores)
         return 0;
 
-    if (cgameGlob->bgs.clientinfo[cgameGlob->teamScores[10 * rank + 2]].infoValid)
-        return (const score_t *)&cgameGlob->teamScores[10 * rank + 2];
+    if (cgameGlob->bgs.clientinfo[cgameGlob->scores[rank - 1].client].infoValid)
+        return &cgameGlob->scores[rank - 1];
 
     return 0;
 }
