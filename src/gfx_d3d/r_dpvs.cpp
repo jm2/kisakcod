@@ -2624,7 +2624,7 @@ void __cdecl R_InitSceneBuffers()
             4 * (gfxCfg.entCount >> 5),
             "R_InitSceneBuffers");
         scene.dpvs.entInfo[localClientNum] = (GfxEntCellRefInfo *)R_AllocGlobalVariable(
-            4 * gfxCfg.entCount,
+            sizeof(GfxEntCellRefInfo) * gfxCfg.entCount,
             "R_InitSceneBuffers");
     }
 }
