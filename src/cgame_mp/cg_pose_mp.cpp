@@ -236,7 +236,7 @@ void __cdecl CG_DoControllers(const cpose_t *pose, const DObj_s *obj, int32_t *p
 
 void __cdecl CG_Player_DoControllers(const cpose_t *pose, const DObj_s *obj, int32_t *partBits)
 {
-    if (pose->fx.triggerTime)
+    if (pose->player.control)
         BG_Player_DoControllers(&pose->player, obj, partBits);
 }
 
