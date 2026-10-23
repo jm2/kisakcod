@@ -29,7 +29,7 @@ check linux-arm64-server 0 'cmake --preset linux-arm64-dedi ' 'Linux aarch64' se
 check linux-tests 0 'cmake --preset linux-amd64-mp ' 'Linux x86_64' tests
 check default-components 0 'KisakCOD-dedi' 'Linux x86_64'
 check config 0 'CMAKE_BUILD_TYPE=Debug' 'Linux x86_64' server --config Debug
-check run-opt-in 0 'KisakCOD-mp \+set db_unverified64 1 \+devmap mp_crash' 'Darwin arm64' client --run -- +devmap mp_crash
+check run-args 0 'KisakCOD-mp \+devmap mp_crash' 'Darwin arm64' client --run -- +devmap mp_crash
 check mac-intel 1 'Apple silicon' 'Darwin x86_64' client
 check windows 1 'build-win.ps1' 'MINGW64_NT-10.0 x86_64' client
 check bad-config 2 '--config must be' 'Linux x86_64' --config Fast

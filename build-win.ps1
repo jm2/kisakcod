@@ -65,8 +65,7 @@
 
 .PARAMETER Run
     After building, launches the first built game executable (KisakCOD-mp,
-    KisakCOD-dedi or KisakCOD-sp) from bin\<Config>. 64-bit builds add
-    +set db_unverified64 1, the loader opt-in the 64-bit port still needs.
+    KisakCOD-dedi or KisakCOD-sp) from bin\<Config>.
 
 .PARAMETER RunArgs
     Arguments passed to the game with -Run, e.g. '+set','fs_basepath','D:\cod4copy'.
@@ -326,12 +325,7 @@ if ($Run) {
     if (-not (Test-Path -LiteralPath $exe)) {
         throw "$exe was not built."
     }
-    $gameArgs = @()
-    if ($Arch -ne 'Win32') {
-        # The 64-bit loader still needs its opt-in until every asset type is verified (NOW K4).
-        $gameArgs += @('+set', 'db_unverified64', '1')
-    }
-    $gameArgs += $RunArgs
+    $gameArgs = @($RunArgs)
     Write-Step "Launching $game $($gameArgs -join ' ')"
     Push-Location -LiteralPath $OutputDir
     try {

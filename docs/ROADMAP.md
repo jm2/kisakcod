@@ -33,9 +33,9 @@ Estimates are ranges for one strong engineer, with low confidence. They don't
 convert to swarm time.
 
 **Where things stand (2026-10-21).** G1 is done. G2's loader is complete
-behind the `db_unverified64` opt-in; K4 is 19/25 and the 30-minute ASan/UBSan
+and loads every family by default (`db_unverified64`, validated after the fact); K4 is 19/25 and the 30-minute ASan/UBSan
 soak passes on lin64 and arm64 (NOW rows 37, 45). G5 ran ahead of G2 on that
-opt-in: all five 64-bit clients are in-game on Steam 1.8 data, and POSIX
+default: all five 64-bit clients are in-game on Steam 1.8 data, and POSIX
 clients play cinematics and audio through FFmpeg and OpenAL Soft. G4a's wire
 identity is built and waits on the owner's captures. G0's x86 server runs
 natively and under Wine; the client run waits on antec-win's console (row 46).
@@ -81,8 +81,8 @@ Vehicles are test milestones, never deliverables
 | WS-8 repo/legal hygiene | enabler | - |
 
 The critical path is G1, then G2 (WS-1, WS-2, WS-3, WS-4). WS-5 runs in
-parallel on the x86 build once captures exist. WS-6 runs on the
-`db_unverified64` opt-in until G2 proves the loader. WS-7 and WS-8 take a bead only when it unblocks a gate.
+parallel on the x86 build once captures exist. WS-6 loads every family
+by default (`db_unverified64`) while G2 proves the loader. WS-7 and WS-8 take a bead only when it unblocks a gate.
 
 ## Test maps (proposal; owner to confirm)
 

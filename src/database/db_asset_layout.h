@@ -185,9 +185,10 @@ constexpr bool IsLoadPermitted(
     bool targetIs64Bit,
     bool fxAdapterAvailable);
 
-// Developer opt-in (`+set db_unverified64 1` at startup): a 64-bit build then
+// db_unverified64, on by default (registered in Com_InitDvars): a 64-bit build
 // admits every family with a disk32 loader (HasDisk32Loader) before K4 counts
-// it, logging one warning. Off by default, so shipped builds keep every guard.
+// it, logging one line. `+set db_unverified64 0` restores each family's guard
+// for validation runs.
 [[nodiscard]] bool DB_UnverifiedFamiliesAdmitted();
 
 #if defined(KISAK_DB_ASSET_FAMILY_ADMISSION_TESTING)
