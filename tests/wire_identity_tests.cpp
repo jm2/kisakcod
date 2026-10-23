@@ -284,6 +284,19 @@ int main(int argc, char **argv)
     CHECK(Value(Body(g_reply), "protocol") == protocol);
     CHECK(Value(Body(g_reply), "challenge") == "xyz");
 
+    // A 1.8 server also advertises hardcore and oldschool once the game
+    // scripts set them, the keys a 1.8 browser's filters read.
+    CHECK(Value(Body(g_reply), "hc").empty());
+    CHECK(Value(Body(g_reply), "od").empty());
+    Dvar_SetFromStringByName("scr_hardcore", "1");
+    Dvar_SetFromStringByName("scr_oldschool", "1");
+    g_reply.clear();
+    SVC_Info(Remote());
+    CHECK(Value(Body(g_reply), "hc") == "1");
+    CHECK(Value(Body(g_reply), "od") == "1");
+    Dvar_SetFromStringByName("scr_hardcore", "0");
+    Dvar_SetFromStringByName("scr_oldschool", "0");
+
     // getstatus: the serverinfo dvars, among them the protocol SV_Init registered.
     Command("getstatus", "abc");
     g_reply.clear();

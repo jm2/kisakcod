@@ -868,6 +868,7 @@ client_t *__cdecl SV_FindClientByAddress(netadr_t from, int qport);
 void __cdecl SVC_Status(netadr_t from);
 void __cdecl SVC_GameCompleteStatus(netadr_t from);
 void __cdecl SVC_Info(netadr_t from);
+void __cdecl SV_AddGameModeInfo(char *infostring);
 void __cdecl SV_ConnectionlessPacket(netadr_t from, msg_t *msg);
 void __cdecl SV_PacketEvent(netadr_t from, msg_t *msg);
 void __cdecl SV_CalcPings();

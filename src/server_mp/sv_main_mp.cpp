@@ -589,7 +589,7 @@ void __cdecl SVC_Info(netadr_t from)
     {
         v10 = va("%i", killcam);
         Info_SetValueForKey(infostring, "kc", v10);
-    }
+    } SV_AddGameModeInfo(infostring); // KISAK: 1.8 also advertises hc and od (same line keeps __LINE__)
     if (com_dedicated && com_dedicated->current.integer)
     {
         v12 = va("%i", 2);
@@ -1488,4 +1488,17 @@ char __cdecl SV_CheckOverflow()
         Cbuf_AddText(0, v0);
         return 1;
     }
+}
+
+// KISAK: the 1.8 executable's getinfo reply carries the hardcore and oldschool
+// modes after "kc", from the game scripts' scr_hardcore and scr_oldschool; a
+// 1.8 server browser filters on them (ui_browserHardcore, ui_browserOldSchool).
+void __cdecl SV_AddGameModeInfo(char *infostring)
+{
+    const int32_t hardcore = Dvar_GetInt("scr_hardcore");
+    if (hardcore)
+        Info_SetValueForKey(infostring, "hc", va("%i", hardcore));
+    const int32_t oldschool = Dvar_GetInt("scr_oldschool");
+    if (oldschool)
+        Info_SetValueForKey(infostring, "od", va("%i", oldschool));
 }
