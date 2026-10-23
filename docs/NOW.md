@@ -30,7 +30,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | 46 | G0 evidence: x86 client and headless server on Steam 1.8 data, 3 maps, one fork round, the same binaries under Wine | G0 | gate | console text per map and at round end, on antec-win and under Wine on antec | M | blocked-owner: client needs antec-win's physical console (RDP has no D3D9 HAL); server half passes; Wine client stalls before `R_Init` |
 | 51 | Native client audio: every client, x86 included, plays sound aliases through OpenAL Soft ([CLIENT](design/CLIENT.md)) | G5 | gate | in-game weapon and ambient sounds play on a 64-bit client with no sound errors | L | done on macOS (#669, #671, #677, #679); left: a Linux TSan leg, the 3D start offset in shared code |
 | 47 | G3 first target: an x86 fork client plays a round, a map change and a reconnect on the Win64 headless server, with 8 test clients | G3 | K6 | the round's console text on both ends | L | server pre-check passes on arm64, 8 bots (#641, #667, #672, #674); next the x86 client (antec-win console) |
-| 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | blocked-owner |
+| 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | Linux amd64 passes all 4 retail pairings (dedi and listen, both ways; reconnect, map change); left: the windows-x86 leg |
 
 Other `burndown` issues are off these gates or wait on the owner.
 
