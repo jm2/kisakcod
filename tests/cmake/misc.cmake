@@ -1162,6 +1162,7 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_target_properties(kisakcod-cg-scoreboard-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME cg-scoreboard-rank-contracts COMMAND kisakcod-cg-scoreboard-tests)
     set_tests_properties(cg-scoreboard-rank-contracts PROPERTIES TIMEOUT 20)
+endif()
 
 # FS_PureServerSetLoadedIwds (qcommon/files.cpp) at 64-bit: a pure server's
 # iwd names survive to the next gamestate. Linux and clang only, as above; the
