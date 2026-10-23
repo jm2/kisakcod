@@ -5,8 +5,8 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <map>
 #include <string>
+#include <vector>
 
 #include <game/game_public.h>
 #include <game_mp/g_main_mp.h>
@@ -22,13 +22,29 @@ int g_failures = 0;
 #define CHECK(expr) \
     ((expr) ? void() : (void)(std::fprintf(stderr, "line %d: CHECK(%s)\n", __LINE__, #expr), ++g_failures))
 
-std::map<std::string, uint16_t> g_flags; // by dvar name, as registered
+// Each registration's name and flags, in order.
+struct Registration
+{
+    std::string name;
+    uint16_t flags;
+};
+std::vector<Registration> g_registered;
 dvar_s g_dvar{};
 
 const dvar_s *Record(const char *name, uint16_t flags)
 {
-    g_flags[name] = flags;
+    g_registered.push_back({name, flags});
     return &g_dvar;
+}
+
+const Registration *Registered(const char *name)
+{
+    for (const Registration &registration : g_registered)
+    {
+        if (registration.name == name)
+            return &registration;
+    }
+    return nullptr;
 }
 } // namespace
 
@@ -56,8 +72,9 @@ int main()
 
     // 1.8 makes antilag read-only: the server can't turn it off, and it no
     // longer appears in serverinfo.
-    CHECK(g_flags.count("g_antilag") == 1);
-    CHECK(g_flags["g_antilag"] == DVAR_ROM);
+    const Registration *const antilag = Registered("g_antilag");
+    CHECK(antilag != nullptr);
+    CHECK(antilag && antilag->flags == DVAR_ROM);
 
     if (g_failures == 0)
         std::printf("game_mp dvars: all checks passed\n");
