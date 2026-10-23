@@ -2769,7 +2769,7 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
     // One 32-byte buffer on x86 (addr + v38); separate locals overflow on 64-bit.
     char addrBuf[32];
     char &addr = addrBuf[0];
-    _BYTE *v38 = (_BYTE *)&addrBuf[1];
+    _BYTE *v38 = reinterpret_cast<_BYTE *>(&addrBuf[1]);
     char v39[1024]; // [esp+8A4h] [ebp-2188h] BYREF
     char pszAddress[32]; // [esp+CA4h] [ebp-1D88h] BYREF
     char pszName[32]; // [esp+CC4h] [ebp-1D68h] BYREF
@@ -2784,7 +2784,7 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
     // One buffer on x86 (buf + v51), left empty now that CLUI_GetCDKey is gone.
     char bufBuf[4] = {};
     char &buf = bufBuf[0];
-    _BYTE *v51 = (_BYTE *)&bufBuf[1];
+    _BYTE *v51 = reinterpret_cast<_BYTE *>(&bufBuf[1]);
     char src[4]; // [esp+1E18h] [ebp-C14h] BYREF
     char v53[4]; // [esp+1E1Ch] [ebp-C10h] BYREF
     char v54[1012]; // [esp+1E20h] [ebp-C0Ch] BYREF

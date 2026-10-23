@@ -1041,7 +1041,7 @@ void __cdecl Com_ProcessSoundAliasFileLocalization(char *sourceFile, char *loads
     char *v17 = fieldText[SA_NAME];
     char *v18 = fieldText[SA_SEQUENCE];
     char &pszReference = fieldText[SA_SUBTITLE][0];
-    _BYTE *v20 = (_BYTE *)&fieldText[SA_SUBTITLE][1];
+    _BYTE *v20 = reinterpret_cast<_BYTE *>(&fieldText[SA_SUBTITLE][1]);
     const char *filename; // [esp+746Ch] [ebp-E00h]
     int len; // [esp+7470h] [ebp-DFCh]
     char dest[256]; // [esp+7474h] [ebp-DF8h] BYREF
