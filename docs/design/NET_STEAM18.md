@@ -133,7 +133,7 @@ Replay the captured usercmds through the fork's `Pmove` (`bg_pmove.cpp`), and co
 - **Beads.** One bead per RE task, naming the capture and the bytes it cannot explain.
 - **Output.** A spec note plus a fixture, never transliterated code.
 
-**Out of scope:** PunkBuster; 1.1–1.7 gameplay or balance changes that are invisible on the wire and in §9; CoD4x protocol 21; anti-cheat; UI and menus; single-player.
+**Out of scope:** PunkBuster; CoD4x protocol 21; anti-cheat. Per the owner (#692), any 1.1–1.8 executable-side change the 1.8 exe shows unambiguously is imported, on the wire or not (§12).
 
 ## 11. Exit and effort
 
@@ -145,3 +145,30 @@ Replay the captured usercmds through the fork's `Pmove` (`bg_pmove.cpp`), and co
 - **Work:** the `steam18` profile is done (#531, #532). The capture decoder and diff report (§6) and the G4a run (NOW row 36) wait on the captures.
 - **Effort:** 6–12 weeks, or 12–20 if in-band formats changed. All of it can be built and tested on the x86 build, and it starts when the captures arrive.
 - **Evidence rules:** fork-peer evidence never counts for G4, and x86 evidence never counts for G4b ([CHARTER](../CHARTER.md), [ROADMAP](../ROADMAP.md)).
+
+## 12. 1.8 executable changes (#692)
+
+Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP keeps 1.0.
+
+| Change | Status |
+| --- | --- |
+| getinfo `hc`/`od` (`scr_hardcore`, `scr_oldschool`) | #698 |
+| `player_lean_*` defaults (7 of 8, MP) | #701 |
+| `g_antilag` is ROM | #702 |
+| `sv_floodprotect`: int, 4, burst per 800 ms | #705 |
+| `sv_pure` default 1 | after #704 and a LAN pure check |
+| Browser `hc`/`od` filters: `ui_browserHardcore`, `ui_browserOldSchool` | to do |
+| `cl_maxppf` (5, [1,10]): pings per frame; `CL_UpdateVisiblePings` rewritten | to do |
+| `fs_usedevdir` (bool, INIT) | to do |
+| `serverInfo_t` 0x9c, not 0x94 | kept at 0x94; `servercache.dat` stays 1.0 |
+| Debug defaults: `sv_cheats`, `logfile`, `loc_warnings*`, `monkeytoy`, `r_showMissingLightGrid` are 0; `developer_script`, `com_timescale`, `g_fog*ReadOnly` flags | one "retail defaults" PR before 0.1.0 |
+| `com_maxfps` 250, `r_fullscreen` 0 | intentional, kept |
+| Lagometer layout constants | client HUD, not imported |
+
+**Dvars:** 1,165 named registrations; 4 missing (above); 22 defaults or flags differ, all listed above.
+
+**Shared code, static:** 29 bgame functions (pmove, weapons, jump, mantle), paired by the dvars they read, load no float constant ours lacks. The read misses functions with fewer than two dvars, integer logic and control flow.
+
+**Shared code, per frame (§9):** _pending, filled in by the antec run._
+
+**Patch notes:** the public 1.1–1.7 notes are still to be classified as data-side or exe-side.
