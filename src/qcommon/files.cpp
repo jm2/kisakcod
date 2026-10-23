@@ -496,8 +496,8 @@ void __cdecl FS_PureServerSetLoadedIwds(char *iwdSums, char *iwdNames)
     if (v7)
     {
         Com_DPrintf(10, "Connected to a pure server.\n");
-        Com_Memcpy(fs_serverIwds, src, 4 * fs_numServerIwds);
-        Com_Memcpy(fs_serverIwdNames, s0, 4 * fs_numServerIwds);
+        Com_Memcpy(fs_serverIwds, src, sizeof(fs_serverIwds[0]) * fs_numServerIwds);
+        Com_Memcpy(fs_serverIwdNames, s0, sizeof(fs_serverIwdNames[0]) * fs_numServerIwds); // KISAK: pointers are 8 bytes at 64-bit
         fs_fakeChkSum = 0;
     }
 }
