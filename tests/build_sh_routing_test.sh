@@ -38,12 +38,16 @@ check args-need-run 2 'add --run' 'Linux x86_64' -- +devmap mp_crash
 check clean-needs-configure 2 'needs a configure' 'Linux x86_64' --clean --no-configure
 check unknown 2 'Unknown argument' 'Linux x86_64' --frobnicate
 
-# Every preset build.sh can pick is defined.
+# Every preset build.sh can pick is one CMake accepts.
+presets=$(cd "$repo_root" && cmake --list-presets=configure 2>&1) || {
+    printf 'FAIL cmake --list-presets:\n%s\n' "$presets" >&2
+    exit 1
+}
 for preset in macos-arm64-client macos-arm64-dedi macos-arm64-mp \
     linux-amd64-client linux-amd64-dedi linux-amd64-mp \
     linux-arm64-client linux-arm64-dedi linux-arm64-mp; do
-    if ! grep -q "\"name\": \"$preset\"" "$repo_root/CMakePresets.json"; then
-        printf 'FAIL preset %s is missing from CMakePresets.json\n' "$preset" >&2
+    if ! grep -q "^ *\"$preset\"" <<<"$presets"; then
+        printf 'FAIL preset %s is not in cmake --list-presets\n' "$preset" >&2
         failures=$((failures + 1))
     fi
 done

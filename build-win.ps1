@@ -197,7 +197,8 @@ $NugetDxsdk = Join-Path $RepoRoot ".deps\$DxsdkPackage.$DxsdkVersion\build\nativ
 if ($needsClientMedia -and [string]::IsNullOrEmpty($env:DXSDK_DIR) -and $InstallDeps -and -not (Test-Path -LiteralPath $NugetDxsdk)) {
     Write-Step "Fetching $DxsdkPackage $DxsdkVersion into .deps"
     $depsDir = Join-Path $RepoRoot '.deps'
-    $nupkg = Join-Path $depsDir "$DxsdkPackage.$DxsdkVersion.nupkg"
+    # A .nupkg is a zip; the .zip name lets the Expand-Archive fallback accept it.
+    $nupkg = Join-Path $depsDir "$DxsdkPackage.$DxsdkVersion.zip"
     New-Item -ItemType Directory -Force -Path $depsDir | Out-Null
     Invoke-WebRequest -UseBasicParsing -Uri "https://www.nuget.org/api/v2/package/$DxsdkPackage/$DxsdkVersion" -OutFile $nupkg
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $nupkg).Hash.ToLowerInvariant()
@@ -335,6 +336,9 @@ if ($Run) {
     Push-Location -LiteralPath $OutputDir
     try {
         & $exe @gameArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "$game exited with code $LASTEXITCODE."
+        }
     }
     finally {
         Pop-Location
