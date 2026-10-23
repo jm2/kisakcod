@@ -27,7 +27,7 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 ### x86 baseline (G0)
 
 - The Steam client fails `CL_CDKeyValidate` off loopback (127.0.0.1 included) with no Steam running; use the nightly `KisakCOD-windows-x86-nosteam-Release` artifact. Bind `+set net_ip 127.0.0.1` on both ends.
-- Retail `mss32.dll` (Miles 7.0w) lacks five `AIL_*` exports the client imports, and the loader fails silently; put the repo's `deps/msslib/dlls/mss32.dll` (7.2e) and `miles/` beside the exe, plus an x86 `d3dx9_43.dll` (NuGet Microsoft.DXSDK.D3DX 9.29.952.8).
+- Put an x86 `d3dx9_43.dll` (NuGet Microsoft.DXSDK.D3DX 9.29.952.8) beside the exe; the build copies the OpenAL Soft and FFmpeg DLLs there itself.
 - An empty dm server still rotates: a 1-minute round takes about 2 minutes of wall time with intermission and load.
 - **Wine (Fedora):** `wine32` with a `WINEARCH=win32` prefix; `wine-common` must be installed or `wineboot` loops on missing `winmd` files; disable `mscoree,mshtml`; Fedora ships the builtin d3d9 as `wine-d3d9.dll`, so copy it to `d3d9.dll` in the prefix, and set `HKCU\Software\Wine\Direct3D\renderer=vulkan`. The display driver is chosen when the prefix's desktop starts, so restart `wineserver` after changing it. Piped stdin doesn't reach the Win32 console. Open: with a working display driver (headless mutter or gamescope) the client stalls after `autoexec_dev_mp.cfg`, before `R_Init`.
 
@@ -41,7 +41,7 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 - **Run:** `./build.sh --install-deps client` (Homebrew; preset `macos-arm64-client`), or `--run` to launch too. Launch with `DXVK_WSI_DRIVER=SDL3`, local retail `fs_basepath` and `db_unverified64 1`. Capture frames with Mesa's `VK_LAYER_MESA_screenshot` (`VK_LAYER_MESA_SCREENSHOT_CONFIG=frames=…,output_dir=…`).
 - **Evidence:** zones loaded, the first error, and what each frame shows, described in text. Frames and data stay local.
 
-Miles (`mss32.dll`) and Bink (`binkw32.dll`) are 32-bit only, so a 64-bit client can't load them from a retail install. Win64 builds link silent stubs (`KISAK_MEDIA_STUBS`). POSIX clients play Bink through FFmpeg (`KISAK_FFMPEG_CINEMATICS`; `gfx_d3d/r_bink_ffmpeg.cpp`, file opens only) and Miles through OpenAL Soft (`KISAK_OPENAL_AUDIO`; `sound/snd_openal.cpp`: PCM/ADPCM samples, 2D pan, 3D position, FFmpeg streams; no reverb or EQ). Both default on; either `OFF` restores its silent stubs.
+Every client, x86 included, answers the engine's Miles and Bink calls with OpenAL Soft (`sound/snd_openal.cpp`: PCM/ADPCM samples, 2D pan, 3D position, FFmpeg streams; no reverb or EQ) and FFmpeg's Bink decoder (`gfx_d3d/r_bink_ffmpeg.cpp`, file opens only; movie audio is silent), owner 2026-10-22. No build links `mss32` or `binkw32`. Windows takes both from vcpkg (`vcpkg.json`, pinned by its baseline; `build-win.ps1 -InstallDeps` fetches vcpkg), Linux and macOS from pkg-config (`scripts/client_media.cmake`).
 
 ## Shaders
 

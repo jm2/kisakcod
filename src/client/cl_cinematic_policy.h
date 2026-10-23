@@ -4,25 +4,17 @@
 // connection state. CIN_PlayCinematic sets CA_CINEMATIC, which drops a connect
 // in flight: Com_Init queues the intro chain (COM_PlayIntroMovies) and then
 // runs a startup +devmap at once. With real Bink the intro plays and ends
-// back in the menu, as retail does. A build without Bink (no 64-bit Bink
-// exists; 64-bit clients link silent stubs) fails the open at once, so the
-// intro only strands the connect. Those builds skip a cinematic while the
-// client connects or plays. D3D-free, so the portable tests reach it.
-
-#include <universal/kisak_abi.h>
+// back in the menu, as retail does. A build without Bink would fail the open
+// at once, so the intro would only strand the connect; such a build skips a
+// cinematic while the client connects or plays. D3D-free, so the portable
+// tests reach it.
 
 namespace cl_cinematic
 {
-// Whether this build plays cinematics: Win32 links the real Bink library, and
-// KISAK_FFMPEG_CINEMATICS clients decode Bink through FFmpeg. Every other
-// 64-bit client links the silent media stubs, whose open fails. The width
-// stands in for "links the stubs" because no compile definition marks the
-// Win64 stub build.
-#if defined(KISAK_FFMPEG_CINEMATICS)
+// Whether this build plays cinematics: every client decodes Bink through
+// FFmpeg (gfx_d3d/r_bink_ffmpeg.cpp), so a shipped build never skips. The
+// tests still check the rule for a build without Bink.
 inline constexpr bool kBuildPlaysBink = true;
-#else
-inline constexpr bool kBuildPlaysBink = !KISAK_ARCH_64BIT;
-#endif
 
 // connectionState is the client's connstate_t; firstConnectingState is the
 // multiplayer CA_CONNECTING. Single player has no connect states and passes

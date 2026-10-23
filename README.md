@@ -64,12 +64,12 @@ on Windows and `bin/` on Linux and macOS.
 | `-Targets ...` | `KisakCOD-mp`, `KisakCOD-dedi`, `KisakCOD-sp` (default mp and dedi; sp is incomplete) |
 | `-HeadlessDedi` | The dependency-free dedicated server profile used by the native port |
 | `-Clean`, `-ConfigureOnly`, `-NoConfigure`, `-Jobs N` | Fresh configure; configure only (like `scripts\mksln.bat`); build only; parallelism |
-| `-InstallDeps` | Install CMake and fetch the DirectX SDK NuGet package |
+| `-InstallDeps` | Install CMake, fetch the DirectX SDK NuGet package, and fetch vcpkg for OpenAL Soft and FFmpeg |
 | `-Run`, `-RunArgs ...` | Launch the first built game with these arguments |
 
 `Get-Help .\build-win.ps1 -Detailed` has the full reference. The script runs
-under PowerShell 5.1 or 7 and in ConstrainedLanguage mode, and copies the Miles,
-Steam and D3DX runtime DLLs beside the binaries. 64-bit builds link no Steam and
+under PowerShell 5.1 or 7 and in ConstrainedLanguage mode, and copies the OpenAL
+Soft, FFmpeg, Steam and D3DX runtime DLLs beside the binaries. 64-bit builds link no Steam and
 need `+set db_unverified64 1` at run time, which `-Run` adds.
 
 ### Linux and macOS (`build.sh`)
@@ -141,7 +141,8 @@ with [AGENTS.md](AGENTS.md).
 - https://github.com/PJayB/jk3src (Jedi Academy fork with .sln)
 - https://github.com/voron00/CoD2rev_Server - Useful yacc code for the gsc scripting here
 - https://github.com/shiversoftdev/BO3Enhanced - Viewed as reference code for some of the Steam API Auth
-- [RAD Game Tools](https://www.radgametools.com/) for their Bink and Miles Sound System libraries.
+- [RAD Game Tools](https://www.radgametools.com/) for the Bink and Miles Sound System APIs the game was written against.
+- [OpenAL Soft](https://openal-soft.org/) and [FFmpeg](https://ffmpeg.org/), which now play its sound and Bink cinematics.
 - [ODE Physics](https://www.ode.org/) COD4 uses a modified version of this physics engine.
 
 

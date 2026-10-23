@@ -2,9 +2,9 @@
 // multiplayer client. A cinematic takes the client's connection state
 // (CA_CINEMATIC). Com_Init queues the intro chain (COM_PlayIntroMovies) and
 // then runs a startup +devmap at once, so the intro used to start mid-connect
-// and the client ignored the server's connectResponse. In a build without
-// Bink, which this 64-bit test is (cl_cinematic_policy.h), a cinematic must
-// now leave a connecting or connected client alone, and still play otherwise.
+// and the client ignored the server's connectResponse. Every build plays Bink
+// through FFmpeg (cl_cinematic_policy.h), so a cinematic plays in every state,
+// as retail does, and the intro ends back in the menu.
 //
 // The engine boundary is weak: --gc-sections drops what the checks never
 // reach.
@@ -62,10 +62,9 @@ int main()
     CHECK(Play(CA_DISCONNECTED) == 1 && clientUIActives[0].connectionState == CA_CINEMATIC);
     CHECK(Play(CA_LOGO) == 1 && clientUIActives[0].connectionState == CA_CINEMATIC);
 
-    // Mid-connect or connected: the cinematic is skipped and the state kept,
-    // so the loopback connectResponse still finds the client challenging.
+    // Mid-connect or connected: retail order, the cinematic plays too.
     for (connstate_t state : {CA_CONNECTING, CA_CHALLENGING, CA_CONNECTED, CA_LOADING, CA_ACTIVE})
-        CHECK(Play(state) == 0 && clientUIActives[0].connectionState == state);
+        CHECK(Play(state) == 1 && clientUIActives[0].connectionState == CA_CINEMATIC);
 
     if (g_failures == 0)
         std::printf("cl cinematic: all checks passed\n");

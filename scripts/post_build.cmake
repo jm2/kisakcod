@@ -10,19 +10,18 @@ else()
     set(_kisak_runtime_dir "${BIN_DIR}")
 endif()
 
+# The client's OpenAL Soft and FFmpeg DLLs, from vcpkg (scripts/client_media.cmake).
+# vcpkg's own per-executable copy is off (CMakeLists.txt) for the same race.
 if (WIN32 AND KISAK_TARGET_NEEDS_CLIENT_MEDIA)
-    if (NOT TARGET kisakcod-copy-miles)
-        add_custom_target(kisakcod-copy-miles
-            # Keep the CMake 3.16-compatible copy primitive. Upstream's
-            # copy_directory_if_different requires a newer CMake than this
-            # project declares.
+    if (NOT TARGET kisakcod-copy-media)
+        add_custom_target(kisakcod-copy-media
             COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${DEPS_DIR}/msslib/dlls"
+                "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/$<$<CONFIG:Debug>:debug/>bin"
                 "${_kisak_runtime_dir}"
-            COMMENT "Copying Miles dependencies"
+            COMMENT "Copying OpenAL Soft and FFmpeg"
         )
     endif()
-    add_dependencies(${PROJECT_NAME} kisakcod-copy-miles)
+    add_dependencies(${PROJECT_NAME} kisakcod-copy-media)
 endif()
 
 if (WIN32 AND KISAK_TARGET_ENABLE_STEAM)

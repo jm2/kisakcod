@@ -1,0 +1,22 @@
+{
+  "$comment": "Windows client sound and cinematics: OpenAL Soft and FFmpeg's Bink and IMA ADPCM decoders (docs/design/CLIENT.md). The builtin-baseline pins both ports. Linux and macOS take the same libraries from the system package manager.",
+  "name": "kisakcod",
+  "builtin-baseline": "a073c28e52d920cb2465a17512324b3b6684d03a",
+  "dependencies": [],
+  "features": {
+    "client": {
+      "description": "Client sound (OpenAL Soft) and cinematics (FFmpeg)",
+      "dependencies": [
+        "openal-soft",
+        {
+          "name": "ffmpeg",
+          "default-features": false,
+          "features": [
+            "avcodec",
+            "avformat"
+          ]
+        }
+      ]
+    }
+  }
+}

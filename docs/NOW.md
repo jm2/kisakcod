@@ -27,7 +27,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | --- | --- | --- | --- | --- | --- | --- |
 | 37 | K4 digest pipeline: per-family `db::graph_hash` walkers on x86 and 64-bit | G2 | K4 | a family's 64-bit graph hash equals its x86 hash on the owner's data; its fail-closed guard is then removed | L | next: Menu, ClipMapPvs (+XModelPieces), GfxWorld (header move first), Fx/ImpactFx (loader write-up first) |
 | 46 | G0 evidence: x86 client and headless server on Steam 1.8 data, 3 maps, one fork round, the same binaries under Wine | G0 | gate | console text per map and at round end, on antec-win and under Wine on antec | M | blocked-owner: client needs antec-win's physical console (RDP has no D3D9 HAL); server half passes; Wine client stalls before `R_Init` |
-| 51 | Native client audio: Miles is a silent stub on 64-bit; play sound aliases through OpenAL Soft ([CLIENT](design/CLIENT.md)) | G5 | gate | in-game weapon and ambient sounds play on a 64-bit client with no sound errors | L | done on macOS (#669, #671, #677, #679); left: a Linux TSan leg, the 3D start offset in shared code |
+| 51 | Native client audio: every client, x86 included, plays sound aliases through OpenAL Soft ([CLIENT](design/CLIENT.md)) | G5 | gate | in-game weapon and ambient sounds play on a 64-bit client with no sound errors | L | done on macOS (#669, #671, #677, #679); left: a Linux TSan leg, the 3D start offset in shared code |
 | 47 | G3 first target: an x86 fork client plays a round, a map change and a reconnect on the Win64 headless server, with 8 test clients | G3 | K6 | the round's console text on both ends | L | server pre-check passes on arm64, 8 bots (#641, #667, #672, #674); next the x86 client (antec-win console) |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | blocked-owner |
 
@@ -38,7 +38,7 @@ Other `burndown` issues are off these gates or wait on the owner.
 | Action | Unblocks |
 | --- | --- |
 | Steam 1.8 captures ([NET_STEAM18](design/NET_STEAM18.md)) to confirm the `steam18` values | 36, G4a |
-| Miles/Bink legal decision; release packaging, including the 64-bit client release recipe (#263, #290) | WS-8, G6, K6 |
+| Steamworks legal decision; release packaging, including the 64-bit client release recipe (#263, #290) | WS-8, G6, K6 |
 | CoD4x census ([ADR-0005](decisions/0005-cod4x-compatibility.md)); approve `CHARTER.md` and the ADRs | all |
 | The physical console on antec-win for the x86 client (`tscon` or sit at it) | 46, 47, renderer client legs |
 | Later: GPU runner; Apple Developer ID | G5; G6 |
@@ -49,6 +49,7 @@ Other `burndown` issues are off these gates or wait on the owner.
 - Retail data is on every agent host, for local manual runs only; never in CI or the repo. The Steam 1.8 reference build is in [NET_STEAM18](design/NET_STEAM18.md) §5.
 - Coordination and merges: the first responsive host in order antec, antec-win, mbp16-m1max, macmini-m1, yoga-slim7x; subagent limits are AGENTS.md rule 23 (2026-10-15).
 - `design/CLIENT.md` budget 15 KB (ADR-0006 amendment, #609).
+- Miles and Bink are dropped on every target, x86 included: OpenAL Soft and FFmpeg everywhere, Windows through vcpkg, 2026-10-22.
 
 ## Done since last review
 
