@@ -1009,7 +1009,7 @@ target_compile_features(kisakcod-cl-cinematic-policy-tests PRIVATE cxx_std_20)
 kisakcod_test_warnings(kisakcod-cl-cinematic-policy-tests)
 set_target_properties(kisakcod-cl-cinematic-policy-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME cl-cinematic-policy-contracts COMMAND kisakcod-cl-cinematic-policy-tests)
-# Win32 is the build with Bink (kBuildPlaysBink true): its CI leg runs the ilp32 label.
+# The Win32 CI leg runs the ilp32 label.
 kisakcod_ilp32(kisakcod-cl-cinematic-policy-tests cl-cinematic-policy-contracts)
 
 # The "cinematic" command (client/cl_cin.cpp) in a multiplayer client: a

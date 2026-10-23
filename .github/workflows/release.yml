@@ -6,7 +6,7 @@
 #              one leg per required target x role cell at `links` or above,
 #              labelled preview, beta or first-class by the cell's level
 #   source     the release commit's source archive, without the vendor
-#              runtime binaries (Miles, Bink, Steamworks)
+#              runtime binaries (Steamworks)
 #   build      per leg: build, split and check the debug symbols, package
 #              (tar.xz on Linux and macOS, zip on Windows), then smoke-run
 #              the binary unpacked from the package
@@ -131,8 +131,8 @@ jobs:
       - name: Archive the source without vendor runtime binaries
         run: |
           test "$(git rev-parse HEAD)" = "$COMMIT"
-          # The Miles, Bink and Steamworks binaries are not ours to
-          # redistribute; no release leg needs them.
+          # The Steamworks binaries are not ours to redistribute; no release
+          # leg needs them.
           excludes=()
           for ext in dll lib exp obj flt asi so dylib orig; do excludes+=(":(exclude,glob)**/*.${ext}"); done
           mkdir -p dist

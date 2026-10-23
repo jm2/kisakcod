@@ -567,44 +567,6 @@ if (KISAK_PLATFORM STREQUAL "win32")
     kisakcod_ilp32(kisakcod-win-benchmark-tests win-benchmark-ghz-contracts)
 endif()
 
-# The silent Miles/Bink stubs that 64-bit Windows clients (KISAK_MEDIA_STUBS)
-# and every POSIX client link in place of the 32-bit-only mss32/binkw32,
-# called through the engine's own Miles and Bink declarations as KisakCOD-mp
-# calls them.
-if (KISAK_PLATFORM STREQUAL "win32")
-    add_executable(kisakcod-win-media-stubs-tests
-        media_stubs_tests.cpp
-        ${SRC_DIR}/sound/media_stubs.cpp
-    )
-    target_include_directories(kisakcod-win-media-stubs-tests SYSTEM PRIVATE ${DEPS_DIR})
-    target_compile_features(kisakcod-win-media-stubs-tests PRIVATE cxx_std_20)
-    kisakcod_test_warnings(kisakcod-win-media-stubs-tests)
-    # The test calls the stubs through dllimport declarations, as the engine
-    # does; the linker binds those to the local definitions (LNK4217).
-    target_link_options(kisakcod-win-media-stubs-tests PRIVATE /IGNORE:4217,4286)
-    set_target_properties(kisakcod-win-media-stubs-tests PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    add_test(NAME win-media-stubs-contracts COMMAND kisakcod-win-media-stubs-tests)
-    set_tests_properties(win-media-stubs-contracts PROPERTIES TIMEOUT 60)
-    kisakcod_ilp32(kisakcod-win-media-stubs-tests win-media-stubs-contracts)
-elseif (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
-    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    # Off Windows the RAD headers spell LP64 types with __int64.
-    add_executable(kisakcod-media-stubs-tests
-        media_stubs_tests.cpp
-        ${SRC_DIR}/sound/media_stubs.cpp
-    )
-    target_include_directories(kisakcod-media-stubs-tests SYSTEM PRIVATE ${DEPS_DIR})
-    target_compile_features(kisakcod-media-stubs-tests PRIVATE cxx_std_20)
-    target_compile_options(kisakcod-media-stubs-tests PRIVATE -fms-extensions)
-    set_target_properties(kisakcod-media-stubs-tests PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    add_test(NAME media-stubs-contracts COMMAND kisakcod-media-stubs-tests)
-    set_tests_properties(media-stubs-contracts PROPERTIES TIMEOUT 20)
-endif()
-
 # The D3DX9 subset a dxvk-native client links (_platform/posix/d3dx9_native.cpp).
 # It needs dxvk-native's <d3d9.h>, so it builds where pkg-config finds
 # dxvk-d3d9 (the POSIX client's dependency); elsewhere it is skipped.

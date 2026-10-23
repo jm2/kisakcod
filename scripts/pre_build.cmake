@@ -87,12 +87,6 @@ if (WIN32)
             "${DEPS_DIR}/steamsdk"
         )
     endif()
-    if (KISAK_TARGET_NEEDS_CLIENT_MEDIA AND NOT KISAK_MEDIA_STUBS)
-        target_link_directories(${PROJECT_NAME} PUBLIC
-            "${DEPS_DIR}/msslib"
-            "${DEPS_DIR}/binklib"
-        )
-    endif()
 
     target_link_options(${PROJECT_NAME} PRIVATE
         "$<$<CONFIG:Release>:/DEBUG>"
@@ -121,32 +115,19 @@ if (WIN32)
         target_link_libraries(${PROJECT_NAME} PUBLIC steam_api.lib)
     endif()
     if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
-        if (KISAK_MEDIA_STUBS)
-            # 32-bit-only Miles/Bink: link the silent stubs instead.
-            target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/sound/media_stubs.cpp)
-            # Engine code calls Miles/Bink through their dllimport declarations;
-            # the linker binds those calls to the stub definitions (LNK4217/4286).
-            target_link_options(${PROJECT_NAME} PRIVATE /IGNORE:4217,4286)
-            set(_kisak_miles_lib "")
-            set(_kisak_bink_lib "")
-        else()
-            set(_kisak_miles_lib mss32.lib)
-            set(_kisak_bink_lib binkw32.lib)
-        endif()
         target_link_libraries(${PROJECT_NAME} PUBLIC
-            ${_kisak_miles_lib}
             dsound.lib
             ${D3DX_LIB}
             d3dcompiler.lib
             d3d9.lib
             ddraw.lib
-            ${_kisak_bink_lib}
             dxguid.lib
         )
+        include(${SCRIPTS_DIR}/client_media.cmake)
     endif()
 else()
     # POSIX (linux/macos) target dependencies. The engine links the system
-    # POSIX layers directly; there is no DirectX/Miles/Bink/Steam dependency
+    # POSIX layers directly; there is no DirectX/media/Steam dependency
     # because the headless source profile excludes client/media sources.
     find_package(Threads REQUIRED)
     target_compile_definitions(${PROJECT_NAME} PUBLIC
@@ -177,46 +158,10 @@ else()
             target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::KISAK_DXVK_D3D9)
         endif()
         target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_DXVK_NATIVE)
-        # Miles and Bink exist here only as headers: the client compiles
-        # against msslib/binklib and links silent stubs (KISAK_MEDIA_STUBS).
+        # The client compiles against the Miles and Bink headers
+        # (sound/snd_msstypes.h); client_media.cmake links what answers them.
         target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_POSIX_CLIENT_MEDIA)
-        target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/sound/media_stubs.cpp)
-        if (KISAK_FFMPEG_CINEMATICS)
-            # Bink calls go to FFmpeg's decoder instead of the silent stubs.
-            find_package(PkgConfig REQUIRED)
-            pkg_check_modules(KISAK_FFMPEG IMPORTED_TARGET libavformat libavcodec libavutil)
-            if (NOT KISAK_FFMPEG_FOUND)
-                message(FATAL_ERROR
-                    "The POSIX client plays cinematics through FFmpeg (KISAK_FFMPEG_CINEMATICS). "
-                    "Install its libavformat, libavcodec and libavutil development files "
-                    "(macOS: brew install ffmpeg; Debian/Ubuntu: libavformat-dev libavcodec-dev libavutil-dev), "
-                    "or configure with -DKISAK_FFMPEG_CINEMATICS=OFF for silent stubs.")
-            endif()
-            target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::KISAK_FFMPEG)
-            target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_FFMPEG_CINEMATICS)
-            target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/gfx_d3d/r_bink_ffmpeg.cpp)
-        endif()
-        if (KISAK_OPENAL_AUDIO)
-            # Miles calls go to OpenAL Soft instead of the silent stubs.
-            # Homebrew's openal-soft is keg-only, so add its pkg-config dir.
-            find_package(PkgConfig REQUIRED)
-            foreach(_kisak_openal_prefix /opt/homebrew/opt/openal-soft /usr/local/opt/openal-soft)
-                if (APPLE AND EXISTS ${_kisak_openal_prefix}/lib/pkgconfig)
-                    set(ENV{PKG_CONFIG_PATH} "${_kisak_openal_prefix}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
-                endif()
-            endforeach()
-            pkg_check_modules(KISAK_OPENAL IMPORTED_TARGET openal)
-            if (NOT KISAK_OPENAL_FOUND)
-                message(FATAL_ERROR
-                    "The POSIX client plays sound through OpenAL Soft (KISAK_OPENAL_AUDIO). "
-                    "Install it (macOS: brew install openal-soft; Debian/Ubuntu: libopenal-dev; "
-                    "Fedora: openal-soft-devel), or configure with -DKISAK_OPENAL_AUDIO=OFF for silent stubs.")
-            endif()
-            target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::KISAK_OPENAL)
-            target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_OPENAL_AUDIO)
-            target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/sound/snd_openal.cpp
-                ${SRC_DIR}/sound/snd_openal_adpcm.cpp)
-        endif()
+        include(${SCRIPTS_DIR}/client_media.cmake)
     endif()
     if (KISAK_TARGET_ENABLE_STEAM)
         message(FATAL_ERROR

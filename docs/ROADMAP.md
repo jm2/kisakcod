@@ -25,9 +25,8 @@ only: G3 prep adds Windows ARM64 and macOS arm64 census legs first ([NATIVE64](d
 Retail Steam 1.8 data is used only in manual owner runs, never in CI. Evidence for G0, the real-data half of
 G2 (K4) and G4 comes from those runs; CI and beads prove everything else with synthetic fixtures.
 
-A Win64 process can't load the 32-bit Miles or Bink DLLs. The G5 interim
-client therefore needs OpenAL Soft and FFmpeg, or silent stubs, from its first
-build.
+Every client, x86 included, plays sound through OpenAL Soft and Bink through
+FFmpeg (owner, 2026-10-22); no build links Miles or Bink.
 
 Estimates are ranges for one strong engineer, with low confidence. They don't
 convert to swarm time.

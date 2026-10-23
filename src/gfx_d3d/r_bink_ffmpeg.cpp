@@ -1,15 +1,14 @@
-// Bink playback through FFmpeg for clients without binkw32 (KISAK_FFMPEG_CINEMATICS).
+// Bink playback through FFmpeg, on every client (scripts/client_media.cmake).
 //
-// binkw32 is 32-bit Windows only, so 64-bit and POSIX clients define the Bink
-// calls r_cinematic.cpp makes here and decode with libavcodec's binkvideo:
+// No build links binkw32: every client defines the Bink calls r_cinematic.cpp
+// makes here, decoding with libavcodec's binkvideo:
 // - The header (frame count, size, rate, alpha) comes from FFmpeg's Bink
 //   demuxer, so BINK and BINKREALTIME report what binkw32 would.
 // - BinkDoFrame decodes the next frame into the planes the engine locked
 //   (bink_buffers.Frames[FrameNum], L8 textures); BinkNextFrame advances and
 //   flips the buffer, as binkw32 does with BINKNOFRAMEBUFFERS.
 // - BinkWait paces frames on the wall clock. Nothing plays the audio track:
-//   Miles is stubbed on these clients, so cinematics are silent until the
-//   OpenAL backend lands.
+//   cinematics are silent until the movie's audio is routed to OpenAL.
 // - Reads are synchronous, so the read buffer always reports full and the
 //   engine never seizes file IO for the movie.
 

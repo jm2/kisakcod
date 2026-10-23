@@ -9,7 +9,8 @@
 
 #if defined(_WIN32) || defined(KISAK_POSIX_CLIENT_MEDIA)
 
-// A POSIX client compiles against the Miles headers and links silent stubs.
+// A POSIX client compiles against the Miles headers; sound/snd_openal.cpp
+// answers them.
 #include <msslib/mss.h>
 
 #else
