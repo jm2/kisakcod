@@ -1143,3 +1143,23 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME cg-weapon-files-contracts COMMAND kisakcod-cg-weapon-files-tests)
     set_tests_properties(cg-weapon-files-contracts PROPERTIES TIMEOUT 20)
 endif()
+
+# UI_GetScoreAtRank (cgame_mp/cg_scoreboard_mp.cpp) at 64-bit: the score entry
+# a HUD menu expression reads by rank. Linux and clang only, as above; the
+# client's defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cg-scoreboard-tests cg_scoreboard_tests.cpp ${SRC_DIR}/cgame_mp/cg_scoreboard_mp.cpp)
+    target_include_directories(kisakcod-cg-scoreboard-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-cg-scoreboard-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-cg-scoreboard-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-cg-scoreboard-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cg-scoreboard-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-cg-scoreboard-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-cg-scoreboard-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-cg-scoreboard-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cg-scoreboard-rank-contracts COMMAND kisakcod-cg-scoreboard-tests)
+    set_tests_properties(cg-scoreboard-rank-contracts PROPERTIES TIMEOUT 20)
+endif()
