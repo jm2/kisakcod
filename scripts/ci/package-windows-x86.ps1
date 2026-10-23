@@ -30,4 +30,4 @@ Set-Content -LiteralPath (Join-Path $BinDir 'README.txt') -Encoding utf8 -Value 
 )
 $items = Get-ChildItem -LiteralPath $BinDir
 Compress-Archive -LiteralPath $items.FullName -DestinationPath $Zip
-Write-Host "Packaged $($items.Count) entries into $Zip"
+Write-Output "Packaged $($items.Count) entries into $Zip"
