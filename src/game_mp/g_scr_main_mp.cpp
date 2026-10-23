@@ -712,18 +712,26 @@ void __cdecl Scr_VerifyWeaponIndex(int32_t weaponIndex, const char *weaponName)
 
 void iprintln()
 {
-    const char *v0; // eax
+    // Own buffer, as the per-player form uses. va() rotates two buffers, and a
+    // message with a player argument calls it twice more (the name, then the
+    // command line), so a va() command here would be overwritten.
+    char svcmd[32];
 
-    v0 = va("%c", 102);
-    Scr_MakeGameMessage(-1, v0);
+    _snprintf(svcmd, 0x20u, "%c", 102);
+    svcmd[31] = 0;
+    Scr_MakeGameMessage(-1, svcmd);
 }
 
 void iprintlnbold()
 {
-    const char *v0; // eax
+    // Own buffer, as the per-player form uses. va() rotates two buffers, and a
+    // message with a player argument calls it twice more (the name, then the
+    // command line), so a va() command here would be overwritten.
+    char svcmd[32];
 
-    v0 = va("%c", 103);
-    Scr_MakeGameMessage(-1, v0);
+    _snprintf(svcmd, 0x20u, "%c", 103);
+    svcmd[31] = 0;
+    Scr_MakeGameMessage(-1, svcmd);
 }
 
 void GScr_print3d()
