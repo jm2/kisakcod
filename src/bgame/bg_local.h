@@ -2240,3 +2240,12 @@ const float playerMaxs[] = { 15.0, 15.0, 70.0 };
 
 const int serverOnlyEvents[4] = { 31, 20, 19, -1 }; // idb
 const int singleClientEvents[13] = { 6, 7, 8, 34, 13, 14, 32, 33, 34, 37, 42, 43, -1 }; // idb
+
+// KISAK: the Steam 1.8 MP executable registers new defaults for seven of the
+// player_lean_* dvars; SP keeps the 1.0 values (its 1.8 executable is
+// DRM-wrapped and unread).
+#ifdef KISAK_MP
+#define BG_LEAN_DEFAULT(mp18, sp) (mp18)
+#else
+#define BG_LEAN_DEFAULT(mp18, sp) (sp)
+#endif
