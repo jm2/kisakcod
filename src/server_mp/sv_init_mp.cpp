@@ -327,7 +327,7 @@ void __cdecl SV_ChangeMaxClients()
     SV_BoundMaxClients(counta);
     if (sv_maxclients->current.integer != oldMaxClients)
     {
-        oldClients = (client_t *)Hunk_AllocateTempMemory(sizeof(client_t) * counta, "SV_ChangeMaxClients");
+        oldClients = (client_t *)Hunk_AllocateTempMemory((int)sizeof(client_t) * counta, "SV_ChangeMaxClients");
         for (ia = 0; ia < counta; ++ia)
         {
             if (svs.clients[ia].header.state < 2)
@@ -335,7 +335,7 @@ void __cdecl SV_ChangeMaxClients()
             else
                 memcpy(&oldClients[ia], &svs.clients[ia], sizeof(client_t));
         }
-        Com_Memset(svs.clients, 0, sizeof(client_t) * sv_maxclients->current.integer);
+        Com_Memset(svs.clients, 0, (int)sizeof(client_t) * sv_maxclients->current.integer);
         for (ib = 0; ib < counta; ++ib)
         {
             if (oldClients[ib].header.state >= 2)
