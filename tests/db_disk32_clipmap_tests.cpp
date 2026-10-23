@@ -206,12 +206,12 @@ struct File : FileBuilder<File>
     }
     // A dynamic-entity def naming the aliases (or another model slot) and
     // pieces.
-    File &Def(std::uint32_t pieces, std::uint32_t model = VirtualOffset(0))
+    File &Def(std::uint32_t piecesToken, std::uint32_t model = VirtualOffset(0))
     {
         Word(1);
         for (int value = 0; value < 7; ++value)
             Float(static_cast<float>(value));
-        Word(model).Short(2).Short(3).Word(VirtualOffset(4)).Word(pieces).Word(VirtualOffset(8)).Word(100);
+        Word(model).Short(2).Short(3).Word(VirtualOffset(4)).Word(piecesToken).Word(VirtualOffset(8)).Word(100);
         for (int value = 0; value < 9; ++value)
             Float(static_cast<float>(value) + 0.25f);
         return Word(5);
