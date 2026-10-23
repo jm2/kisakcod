@@ -79,6 +79,23 @@ std::string Value(const std::string &info, const char *key)
     return Info_ValueForKey(info.c_str(), key);
 }
 
+// Runs one reliable command through SV_ClientCommand; whether the game ran it.
+int g_gameCommands = 0;
+std::string g_readString;
+int g_readLong = 0;
+bool ClientCommandRuns(client_t &cl, int seq, const char *text)
+{
+    g_readLong = seq;
+    g_readString = text;
+    const std::string word(text, std::strcspn(text, " "));
+    g_tokenizedUserinfo = word;
+    Command(g_tokenizedUserinfo.c_str(), "");
+    const int before = g_gameCommands;
+    msg_t msg{};
+    SV_ClientCommand(&cl, &msg, 0);
+    return g_gameCommands > before;
+}
+
 netadr_t Remote()
 {
     netadr_t from{};
@@ -262,6 +279,23 @@ WEAK bool __cdecl SV_Netchan_TransmitNextFragment(client_t *, netchan_t *) { ret
 WEAK void __cdecl SV_PacketDataIsHeader(int, const msg_t *) {}
 WEAK void __cdecl SV_SendMessageToClient(msg_t *, client_t *) {}
 WEAK void __cdecl SV_SetServerStaticHeader() {}
+// A reliable command's sequence and text, and the game running it.
+WEAK int __cdecl MSG_ReadLong(msg_t *) { return g_readLong; }
+WEAK char *__cdecl MSG_ReadString(msg_t *) { return g_readString.data(); }
+WEAK void __cdecl ClientCommand(int32_t) { ++g_gameCommands; }
+// The ucmds table the command lookup walks; none of its commands is sent.
+WEAK void __cdecl SV_BeginDownload_f(client_t *) { std::abort(); }
+WEAK void __cdecl SV_DoneDownload_f(client_t *) { std::abort(); }
+WEAK void __cdecl SV_MutePlayer_f(client_t *) { std::abort(); }
+WEAK void __cdecl SV_NextDownload_f(client_t *) { std::abort(); }
+WEAK void __cdecl SV_ResetPureClient_f(client_t *) { std::abort(); }
+WEAK void __cdecl SV_RetransmitDownload_f(client_t *) { std::abort(); }
+WEAK void __cdecl SV_StopDownload_f(client_t *) { std::abort(); }
+WEAK void __cdecl SV_UnmutePlayer_f(client_t *) { std::abort(); }
+WEAK void __cdecl SV_VerifyIwds_f(client_t *) { std::abort(); }
+WEAK void __cdecl SV_WWWDownload_f(client_t *) { std::abort(); }
+WEAK void __cdecl ClientUserinfoChanged(uint32_t) { std::abort(); }
+WEAK const char *__cdecl SEH_StringEd_GetString(const char *) { std::abort(); }
 WEAK void __cdecl SV_UpdateServerCommandsToClient(client_t *, msg_t *) {}
 
 int main(int argc, char **argv)
@@ -360,6 +394,33 @@ int main(int argc, char **argv)
         CHECK(SV_GetClientStat(0, 2000) == first);
         CHECK(SV_GetClientStat(0, 3497) == last);
         CHECK(cl.stats[4 + 5] == 42);
+        std::memset(&cl, 0, sizeof(cl));
+    }
+
+    // sv_floodprotect, as 1.8 has it: the number of client commands an active
+    // remote client gets through per 800 ms window; the rest are ignored
+    // until the client goes quiet for a window.
+    {
+        client_t &cl = svs.clients[0];
+        cl.header.state = CS_ACTIVE;
+        cl.header.netchan.remoteAddress = Remote();
+        svs.time = 100000;
+        sv.state = SS_GAME; // commands reach the game only once it has loaded
+        CHECK(Dvar_GetInt("sv_floodprotect") == 4);
+        int executed = 0;
+        for (int seq = 1; seq <= 6; ++seq)
+            executed += ClientCommandRuns(cl, seq, "say hi");
+        CHECK(executed == 4); // the burst, then two ignored
+        CHECK(ClientCommandRuns(cl, 7, "team axis")); // exempt
+        svs.time += 800;
+        CHECK(ClientCommandRuns(cl, 8, "say hi")); // a quiet window refills the burst
+        Dvar_SetIntByName("sv_floodprotect", 0);
+        executed = 0;
+        for (int seq = 9; seq <= 18; ++seq)
+            executed += ClientCommandRuns(cl, seq, "say hi");
+        CHECK(executed == 10); // 0 turns flood protection off
+        Dvar_SetIntByName("sv_floodprotect", 4);
+        sv.state = SS_DEAD;
         std::memset(&cl, 0, sizeof(cl));
     }
 

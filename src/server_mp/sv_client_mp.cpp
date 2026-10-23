@@ -1739,18 +1739,18 @@ int __cdecl SV_ClientCommand(client_t *cl, msg_t *msg, int fromOldServer)
         Com_Printf(15, "clientCommand: %i : %s\n", seq, s);
     if (seq <= cl->lastClientCommand + 1)
     {
-        if (!I_strncmp("team ", s, 5) || !I_strncmp("score ", s, 6) || !I_strncmp("mr ", s, 3))
+        if (!I_strncmp("team ", s, 5) || !I_strncmp("score", s, 5) || !I_strncmp("mr ", s, 3)) // KISAK: 1.8 exempts "score"
             floodprotect = 0;
-        if (fromOldServer
-            || cl->header.state >= 4
-            && cl->header.netchan.remoteAddress.type != NA_LOOPBACK
-            && sv_floodProtect->current.enabled
-            && svs.time < cl->nextReliableTime
-            && floodprotect)
+        else if (!sv_floodProtect->current.integer || cl->header.state < 4 // KISAK: 1.8 counts only active
+            || cl->header.netchan.remoteAddress.type == NA_LOOPBACK)        // remote clients' commands
+            floodprotect = 0;
+        if (fromOldServer || floodprotect && !cl->floodProtectCount && svs.time < cl->nextReliableTime)
         {
             clientOk = 0;
             Com_DPrintf(15, "client text ignored for %s: %s\n", cl->name, s);
         }
+        if (floodprotect) // KISAK: 1.8 lets sv_floodprotect commands through per 800 ms
+            cl->floodProtectCount = svs.time < cl->nextReliableTime ? (cl->floodProtectCount > 1 ? cl->floodProtectCount - 1 : 0) : sv_floodProtect->current.integer - 1;
         if (floodprotect)
             cl->nextReliableTime = svs.time + 800;
         SV_ExecuteClientCommand(cl, s, clientOk, fromOldServer);

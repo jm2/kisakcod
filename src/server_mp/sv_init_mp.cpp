@@ -742,11 +742,11 @@ void __cdecl SV_Init()
     sv_maxRate = Dvar_RegisterInt("sv_maxRate", 5000, (DvarLimits)0x61A800000000LL, 5u, "Maximum bit rate");
     sv_minPing = Dvar_RegisterInt("sv_minPing", 0, (DvarLimits)0x3E700000000LL, 5u, "Minimum ping allowed on the server");
     sv_maxPing = Dvar_RegisterInt("sv_maxPing", 0, (DvarLimits)0x3E700000000LL, 5u, "Maximum ping allowed on the server");
-    sv_floodProtect = Dvar_RegisterBool(
-        "sv_floodProtect",
-        1,
+    sv_floodProtect = Dvar_RegisterInt( // KISAK: a command count in 1.8, not a bool
+        "sv_floodprotect",
+        4, (DvarLimits)0x7FFFFFFF00000000LL,
         DVAR_SERVERINFO | DVAR_ARCHIVE,
-        "Prevent malicious lagging by flooding the server with commands");
+        "Prevent malicious lagging by flooding the server with commands.  Is the number of client commands the server will process per 800ms.  0 means no flood protection.");
     sv_showCommands = Dvar_RegisterBool("sv_showCommands", 0, 0, "Print client commands in the log file");
     sv_allowAnonymous = Dvar_RegisterBool("sv_allowAnonymous", 0, 4u, "Allow anonymous access");
     sv_disableClientConsole = Dvar_RegisterBool(

@@ -676,6 +676,7 @@ struct client_t // sizeof=0xA5638
     int clientDownloadingWWW;
     int wwwFallback;
     int nextReliableTime;
+    int floodProtectCount; // KISAK: 1.8, the commands left in this 800 ms window
     int lastPacketTime;
     int lastConnectTime;
     int nextSnapshotTime;
