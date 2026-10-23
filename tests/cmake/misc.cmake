@@ -1163,3 +1163,23 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME cg-scoreboard-rank-contracts COMMAND kisakcod-cg-scoreboard-tests)
     set_tests_properties(cg-scoreboard-rank-contracts PROPERTIES TIMEOUT 20)
 endif()
+
+# FS_PureServerSetLoadedIwds (qcommon/files.cpp) at 64-bit: a pure server's
+# iwd names survive to the next gamestate. Linux and clang only, as above; the
+# client's defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-fs-pure-iwds-tests fs_pure_iwds_tests.cpp ${SRC_DIR}/qcommon/files.cpp ${SRC_DIR}/universal/q_shared.cpp)
+    target_include_directories(kisakcod-fs-pure-iwds-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-fs-pure-iwds-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fs-pure-iwds-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-fs-pure-iwds-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-fs-pure-iwds-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-fs-pure-iwds-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-fs-pure-iwds-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-fs-pure-iwds-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME fs-pure-iwd-names COMMAND kisakcod-fs-pure-iwds-tests)
+    set_tests_properties(fs-pure-iwd-names PROPERTIES TIMEOUT 20)
+endif()
