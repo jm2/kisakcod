@@ -9,7 +9,6 @@
 # counts them, so their tokens remain until their own burndown fixes them.
 cgame/cg_newdraw.cpp|1
 cgame/cg_newdraw.cpp|2
-cgame_mp/cg_ents_mp.cpp|1
 cgame_mp/cg_main_mp.cpp|1
 cgame_mp/cg_pose_mp.cpp|1
 cgame_mp/cg_pose_mp.cpp|2
