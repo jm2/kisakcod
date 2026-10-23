@@ -1,3 +1,4 @@
+#include <type_traits>
 #include <database/db_disk32_load.h>
 
 #if KISAK_ARCH_64BIT
@@ -121,7 +122,8 @@ bool LoadOrResolve(disk32::PointerToken token, std::uint32_t bytes, std::uint32_
 
 // An array of records that hold pointers: any non-null token means count
 // records follow 4-aligned; each converts into native storage, then loads
-// what it names, in order.
+// what it names, in order. A converter that takes the record's streamed bytes
+// records its pointer slots there, since a later offset token may name one.
 template <typename Disk32, typename Native, typename Convert>
 bool LoadRecords(disk32::PointerToken token, std::int64_t count, Native **out, Convert convert,
                  std::uint8_t **diskRecords = nullptr, std::uint32_t alignment = 4)
@@ -142,17 +144,23 @@ bool LoadRecords(disk32::PointerToken token, std::int64_t count, Native **out, C
         Disk32 disk{};
         std::memcpy(&disk, records + index * sizeof(disk), sizeof(disk));
         std::memset(&native[index], 0, sizeof(Native)); // padding too: native storage starts as junk
-        if (!convert(disk, &native[index]))
+        const std::uint8_t *const record = records + index * sizeof(disk);
+        bool converted = false;
+        if constexpr (std::is_invocable_v<Convert, const Disk32 &, Native *, const std::uint8_t *>)
+            converted = convert(disk, &native[index], record);
+        else
+            converted = convert(disk, &native[index]);
+        if (!converted)
             return false;
     }
     *out = native;
     return true;
 }
 
-bool ConvertStaticModel(const disk32::cStaticModel_sDisk32 &disk, cStaticModel_s *out)
+bool ConvertStaticModel(const disk32::cStaticModel_sDisk32 &disk, cStaticModel_s *out, const std::uint8_t *record)
 {
     CopycStaticModel_sScalars(disk, out);
-    LoadXModelPtr(disk.xmodel.token, &out->xmodel);
+    LoadXModelPtr(disk.xmodel.token, &out->xmodel, SlotOf(record, disk, disk.xmodel));
     return true;
 }
 
@@ -353,10 +361,10 @@ bool LoadCheckedBoxBrush(const Disk &disk, const Sides &sides, clipMap_t *out)
                                  out->box_brush));
 }
 
-bool ConvertPiece(const disk32::XModelPieceDisk32 &disk, XModelPiece *out)
+bool ConvertPiece(const disk32::XModelPieceDisk32 &disk, XModelPiece *out, const std::uint8_t *record)
 {
     CopyXModelPieceScalars(disk, out);
-    LoadXModelPtr(disk.model.token, &out->model);
+    LoadXModelPtr(disk.model.token, &out->model, SlotOf(record, disk, disk.model));
     return true;
 }
 
@@ -434,14 +442,14 @@ bool LoadPieces(disk32::PointerToken token, XModelPieces **out)
 
 // Load_DynEntityDef: its model, destroy effect, destroy pieces and physics
 // preset, in that order.
-bool ConvertDynEntity(const disk32::DynEntityDefDisk32 &disk, DynEntityDef *out)
+bool ConvertDynEntity(const disk32::DynEntityDefDisk32 &disk, DynEntityDef *out, const std::uint8_t *record)
 {
     CopyDynEntityDefScalars(disk, out);
-    LoadXModelPtr(disk.xModel.token, &out->xModel);
-    LoadFxEffectDefPtr(disk.destroyFx.token, &out->destroyFx);
+    LoadXModelPtr(disk.xModel.token, &out->xModel, SlotOf(record, disk, disk.xModel));
+    LoadFxEffectDefPtr(disk.destroyFx.token, &out->destroyFx, SlotOf(record, disk, disk.destroyFx));
     if (!LoadPieces(disk.destroyPieces.token, &out->destroyPieces))
         return false;
-    LoadPhysPresetPtr(disk.physPreset.token, &out->physPreset);
+    LoadPhysPresetPtr(disk.physPreset.token, &out->physPreset, SlotOf(record, disk, disk.physPreset));
     return true;
 }
 

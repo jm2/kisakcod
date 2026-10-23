@@ -100,6 +100,7 @@ struct Options
     const char *piecesText = "pc";
     std::uint32_t pieceCount = 1;
     std::uint32_t pieceModel = VirtualOffset(0);
+    bool defModelNamesStaticModel = false; // the first def's model: the static model's slot, not the alias
 };
 
 struct File : FileBuilder<File>
@@ -203,13 +204,14 @@ struct File : FileBuilder<File>
         box = placer.Place(16, 80);
         return Brush(true, 0, 0, 0, o.boxContents).WriteDynEntities(o);
     }
-    // A dynamic-entity def naming the aliases and pieces.
-    File &Def(std::uint32_t pieces)
+    // A dynamic-entity def naming the aliases (or another model slot) and
+    // pieces.
+    File &Def(std::uint32_t pieces, std::uint32_t model = VirtualOffset(0))
     {
         Word(1);
         for (int value = 0; value < 7; ++value)
             Float(static_cast<float>(value));
-        Word(VirtualOffset(0)).Short(2).Short(3).Word(VirtualOffset(4)).Word(pieces).Word(VirtualOffset(8)).Word(100);
+        Word(model).Short(2).Short(3).Word(VirtualOffset(4)).Word(pieces).Word(VirtualOffset(8)).Word(100);
         for (int value = 0; value < 9; ++value)
             Float(static_cast<float>(value) + 0.25f);
         return Word(5);
@@ -219,7 +221,8 @@ struct File : FileBuilder<File>
     File &WriteDynEntities(const Options &o)
     {
         defs = placer.Place(4, 192);
-        Def(kInline).Def(VirtualOffset(defs + 192));
+        Def(kInline, o.defModelNamesStaticModel ? VirtualOffset(staticModel + 4) : VirtualOffset(0))
+            .Def(VirtualOffset(defs + 192));
         pieces = placer.Place(4, 12);
         Word(o.piecesName).Word(o.pieceCount).Word(kInline);
         if (o.piecesName == kInline)
@@ -400,6 +403,20 @@ void TestOffsetsAndAliases()
            "planes named past what block 4 holds fail closed", drop.message);
 }
 
+// Retail zones name a model by the block-4 slot of an earlier record's model
+// pointer, here the static model's (mp_citystreets does).
+void TestModelNamedByRecordSlot()
+{
+    Zone zone;
+    Options options;
+    options.defModelNamesStaticModel = true;
+    File().Write(WholeRecord(), options);
+    const clipMap_t *map = nullptr;
+    const Drop drop = Catch([&map] { map = Load(kInline); });
+    Expect(!std::strcmp(drop.message, "(none)") && map && InArena(map->dynEntDefList[0]) && map->dynEntDefList[0][0].xModel == &g_model,
+           "a dynamic-entity def's model names the static model's model slot", drop.message);
+}
+
 struct Malformed
 {
     const char *what;
@@ -536,5 +553,5 @@ void __cdecl Load_MapEntsAsset(XAssetHeader *header)
 
 int main()
 {
-    return Run({TestWholeMap, TestOffsetsAndAliases, TestMalformedFailsClosed});
+    return Run({TestWholeMap, TestOffsetsAndAliases, TestModelNamedByRecordSlot, TestMalformedFailsClosed});
 }
