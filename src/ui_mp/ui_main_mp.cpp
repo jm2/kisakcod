@@ -2766,8 +2766,10 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
     char name[1024]; // [esp+444h] [ebp-25E8h] BYREF
     char v35[32]; // [esp+844h] [ebp-21E8h] BYREF
     char v36[32]; // [esp+864h] [ebp-21C8h] BYREF
-    char addr; // [esp+884h] [ebp-21A8h] BYREF
-    _BYTE v38[3]; // [esp+885h] [ebp-21A7h] BYREF
+    // One 32-byte buffer on x86 (addr + v38); separate locals overflow on 64-bit.
+    char addrBuf[32];
+    char &addr = addrBuf[0];
+    _BYTE *v38 = (_BYTE *)&addrBuf[1];
     char v39[1024]; // [esp+8A4h] [ebp-2188h] BYREF
     char pszAddress[32]; // [esp+CA4h] [ebp-1D88h] BYREF
     char pszName[32]; // [esp+CC4h] [ebp-1D68h] BYREF
@@ -2779,8 +2781,10 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
     char key[1024]; // [esp+15FCh] [ebp-1430h] BYREF
     char checksum[1028]; // [esp+19FCh] [ebp-1030h] BYREF
     char dest[20]; // [esp+1E00h] [ebp-C2Ch] BYREF
-    char buf; // [esp+1E14h] [ebp-C18h] BYREF
-    _BYTE v51[3]; // [esp+1E15h] [ebp-C17h] BYREF
+    // One buffer on x86 (buf + v51), left empty now that CLUI_GetCDKey is gone.
+    char bufBuf[4] = {};
+    char &buf = bufBuf[0];
+    _BYTE *v51 = (_BYTE *)&bufBuf[1];
     char src[4]; // [esp+1E18h] [ebp-C14h] BYREF
     char v53[4]; // [esp+1E1Ch] [ebp-C10h] BYREF
     char v54[1012]; // [esp+1E20h] [ebp-C0Ch] BYREF

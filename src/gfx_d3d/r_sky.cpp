@@ -316,8 +316,10 @@ void __cdecl R_Cmd_SaveSun()
 void __cdecl R_SaveSunFromDvars(const char *sunName)
 {
     char *v1; // eax
-    char buffer; // [esp+10h] [ebp-2008h] BYREF
-    _BYTE v3[3]; // [esp+11h] [ebp-2007h] BYREF
+    // One 0x2000-byte buffer on x86 (buffer + v3); separate locals overflow on 64-bit.
+    char bufferBuf[0x2000];
+    char &buffer = bufferBuf[0];
+    _BYTE *v3 = (_BYTE *)&bufferBuf[1];
 
     if (Com_SaveDvarsToBuffer(sunDvarNames, 0x15u, &buffer, 0x2000u))
     {

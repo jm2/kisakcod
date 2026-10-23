@@ -1034,11 +1034,14 @@ void __cdecl Com_ProcessSoundAliasFileLocalization(char *sourceFile, char *loads
     int v13; // [esp+60h] [ebp-820Ch]
     int v14; // [esp+64h] [ebp-8208h]
     int h; // [esp+68h] [ebp-8204h]
-    char v16[1024]; // [esp+6Ch] [ebp-8200h] BYREF
-    char v17[1024]; // [esp+46Ch] [ebp-7E00h] BYREF
-    char v18[2048]; // [esp+86Ch] [ebp-7A00h] BYREF
-    char pszReference; // [esp+106Ch] [ebp-7200h] BYREF
-    _BYTE v20[3]; // [esp+106Dh] [ebp-71FFh] BYREF
+    // One 1024-byte slot per alias field, indexed as v16[1024 * field]; on x86
+    // v16..v20 were that one block, and separate locals overflow on 64-bit.
+    char fieldText[SA_NUMFIELDS][1024];
+    char *v16 = fieldText[SA_INVALID];
+    char *v17 = fieldText[SA_NAME];
+    char *v18 = fieldText[SA_SEQUENCE];
+    char &pszReference = fieldText[SA_SUBTITLE][0];
+    _BYTE *v20 = (_BYTE *)&fieldText[SA_SUBTITLE][1];
     const char *filename; // [esp+746Ch] [ebp-E00h]
     int len; // [esp+7470h] [ebp-DFCh]
     char dest[256]; // [esp+7474h] [ebp-DF8h] BYREF
