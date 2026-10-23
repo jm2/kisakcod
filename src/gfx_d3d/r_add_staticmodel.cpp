@@ -530,8 +530,10 @@ float radius2pixels;
 void __cdecl R_StaticModelWriteInfo(int fileHandle, const GfxStaticModelDrawInst *smodelDrawInst, const float dist)
 {
     float v3; // [esp+5Ch] [ebp-101Ch]
-    char dest; // [esp+60h] [ebp-1018h] BYREF
-    _BYTE v5[4103]; // [esp+61h] [ebp-1017h] BYREF
+    // One buffer on x86 (dest + v5); separate locals overflow on 64-bit.
+    char destBuf[4104];
+    char &dest = destBuf[0];
+    _BYTE *v5 = reinterpret_cast<_BYTE *>(&destBuf[1]);
     float v6; // [esp+1068h] [ebp-10h]
     XModel *xmodel; // [esp+106Ch] [ebp-Ch]
     float v8; // [esp+1070h] [ebp-8h]
