@@ -56,12 +56,14 @@
     burn-down target and is not the default dedicated server build yet.
 
 .PARAMETER InstallDeps
-    Installs what a build needs and the machine lacks: CMake through winget, and
+    Installs what a build needs and the machine lacks: CMake through winget,
     the DirectX SDK headers and libraries from the pinned Microsoft.DXSDK.D3DX
-    NuGet package (the one CI uses), unpacked into .deps\. Visual Studio 2026
-    with the C++ workload must be installed by hand. Once .deps\ holds the
-    package, later builds use it whenever DXSDK_DIR is unset, with or without
-    -InstallDeps.
+    NuGet package (the one CI uses), unpacked into .deps\, and vcpkg at the
+    commit vcpkg.json pins, cloned into .deps\vcpkg. The configure then builds
+    OpenAL Soft and FFmpeg through vcpkg for client builds (the first time
+    takes a while). Visual Studio 2026 with the C++ workload, and Git, must be
+    installed by hand. Once .deps\ holds them, later builds use them whenever
+    DXSDK_DIR and VCPKG_ROOT are unset, with or without -InstallDeps.
 
 .PARAMETER Run
     After building, launches the first built game executable (KisakCOD-mp,
@@ -128,6 +130,8 @@ param(
 $DxsdkPackage = 'Microsoft.DXSDK.D3DX'
 $DxsdkVersion = '9.29.952.8'
 $DxsdkSha256 = 'ead0906ae8a26c18a7525da7490127a2110f7c58f18293738283e30e97c6ea4b'
+# vcpkg for OpenAL Soft and FFmpeg: vcpkg.json's builtin-baseline.
+$VcpkgCommit = 'a073c28e52d920cb2465a17512324b3b6684d03a'
 
 # Stop on the first uncaught error; treat native-command failures explicitly via $LASTEXITCODE.
 $ErrorActionPreference = 'Stop'
@@ -220,6 +224,29 @@ if ($needsClientMedia -and [string]::IsNullOrEmpty($env:DXSDK_DIR) -and $Install
 $UseNugetDxsdk = $needsClientMedia -and [string]::IsNullOrEmpty($env:DXSDK_DIR) -and (Test-Path -LiteralPath $NugetDxsdk)
 if ($needsClientMedia -and [string]::IsNullOrEmpty($env:DXSDK_DIR) -and -not $UseNugetDxsdk) {
     Write-Warning "DXSDK_DIR is not set. Run with -InstallDeps to fetch the DirectX SDK NuGet package, or install the June 2010 DirectX SDK; the CMake configure will fail without one."
+}
+
+# OpenAL Soft and FFmpeg come from vcpkg; CMakeLists.txt finds VCPKG_ROOT,
+# .deps\vcpkg or the runner's VCPKG_INSTALLATION_ROOT on its own.
+$LocalVcpkg = Join-Path $RepoRoot '.deps\vcpkg'
+$haveVcpkg = (-not [string]::IsNullOrEmpty($env:VCPKG_ROOT)) -or
+    (-not [string]::IsNullOrEmpty($env:VCPKG_INSTALLATION_ROOT)) -or
+    (Test-Path -LiteralPath (Join-Path $LocalVcpkg 'vcpkg.exe'))
+if ($needsClientMedia -and -not $haveVcpkg -and $InstallDeps) {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw 'Fetching vcpkg needs Git (winget install Git.Git).'
+    }
+    Write-Step "Fetching vcpkg $VcpkgCommit into .deps\vcpkg"
+    if (-not (Test-Path -LiteralPath (Join-Path $LocalVcpkg '.git'))) {
+        Invoke-Checked -File 'git' -Arguments @('clone', '--filter=blob:none', 'https://github.com/microsoft/vcpkg.git', $LocalVcpkg)
+    }
+    Invoke-Checked -File 'git' -Arguments @('-C', $LocalVcpkg, 'fetch', 'origin', $VcpkgCommit)
+    Invoke-Checked -File 'git' -Arguments @('-C', $LocalVcpkg, 'checkout', '--detach', $VcpkgCommit)
+    Invoke-Checked -File (Join-Path $LocalVcpkg 'bootstrap-vcpkg.bat') -Arguments @('-disableMetrics')
+    $haveVcpkg = $true
+}
+if ($needsClientMedia -and -not $haveVcpkg) {
+    Write-Warning 'vcpkg was not found. Run with -InstallDeps to fetch it, or set VCPKG_ROOT; client builds need it for OpenAL Soft and FFmpeg.'
 }
 
 if ($Arch -ne 'Win32' -and -not $Experimental64Bit) {

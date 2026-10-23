@@ -535,9 +535,10 @@ jobs:
   windows-client-64:
     # The 64-bit Windows MP client (G4b/G5): KisakCOD-mp compiled and linked
     # for x64 and natively for ARM64. No D3DX library (D3DX9 has none for
-    # ARM64; gfx_d3d/r_shader_compile and r_shader_reflect stand in), silent
-    # Miles/Bink stubs, no Steam. The DirectX SDK package still supplies the
-    # D3DX headers for the D3DXSHADER_CONSTANTTABLE and D3DXSEMANTIC layouts.
+    # ARM64; gfx_d3d/r_shader_compile and r_shader_reflect stand in), no
+    # Steam. The DirectX SDK package still supplies the D3DX headers for the
+    # D3DXSHADER_CONSTANTTABLE and D3DXSEMANTIC layouts. Sound and cinematics
+    # go through OpenAL Soft and FFmpeg from vcpkg.
     # Advisory while the 64-bit client settles: a failing leg shows on the run
     # but does not fail it, and the job is not in scaffolding-complete.
     name: Windows client / ${{ matrix.arch }}
@@ -552,16 +553,19 @@ jobs:
             runner: windows-2025
             platform: x64
             pe-arch: x64
+            triplet: x64-windows
           - arch: arm64
             runner: windows-11-arm
             platform: ARM64
             pe-arch: ARM64
+            triplet: arm64-windows
           # The SDL3 window/input path (fetches pinned SDL 3.4.18): the only
           # CI that compiles the shared SDL client code on Windows.
           - arch: amd64-sdl3
             runner: windows-2025
             platform: x64
             pe-arch: x64
+            triplet: x64-windows
             extra-cmake: -DKISAK_CLIENT_SDL3=ON
     env:
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
@@ -574,6 +578,10 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 8.x
+
+      - uses: ./.github/actions/setup-vcpkg
+        with:
+          triplet: ${{ matrix.triplet }}
 
       - name: Restore DirectX SDK headers
         shell: pwsh
@@ -619,6 +627,10 @@ jobs:
         with:
           dotnet-version: 8.x
 
+      - uses: ./.github/actions/setup-vcpkg
+        with:
+          triplet: x86-windows
+
       - name: Restore DirectX SDK
         shell: pwsh
         run: |
@@ -663,11 +675,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: KisakCOD-windows-x86-${{ matrix.config }}
-          # Miles comes from the user's own retail install; never ship it.
-          path: |
-            bin/${{ matrix.config }}/
-            !bin/${{ matrix.config }}/mss32.dll
-            !bin/${{ matrix.config }}/miles/
+          path: bin/${{ matrix.config }}/
           if-no-files-found: error
           retention-days: 14
 
@@ -693,6 +701,10 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 8.x
+
+      - uses: ./.github/actions/setup-vcpkg
+        with:
+          triplet: x86-windows
 
       - name: Restore DirectX SDK
         shell: pwsh
@@ -772,6 +784,10 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 8.x
+
+      - uses: ./.github/actions/setup-vcpkg
+        with:
+          triplet: x86-windows
 
       - name: Restore DirectX SDK
         shell: pwsh

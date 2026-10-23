@@ -1,8 +1,8 @@
 // cl_cinematic_policy_tests.cpp: the decision CIN_PlayCinematic asks before a
 // cinematic takes a multiplayer client's connection state
 // (client/cl_cinematic_policy.h). A build without Bink skips a cinematic from
-// the first connecting state on; a build with Bink never does. This build's
-// answer follows its width: no 64-bit Bink exists.
+// the first connecting state on; a build with Bink never does. Every build
+// has Bink, through FFmpeg.
 
 #include <client/cl_cinematic_policy.h>
 
@@ -44,8 +44,8 @@ int main()
     // Single player passes no reachable connecting state.
     CHECK(!SkipsForConnect(kActive, INT32_MAX, false));
 
-    // This build: only 32-bit clients play Bink.
-    CHECK(cl_cinematic::kBuildPlaysBink == (sizeof(void *) == 4));
+    // Every client plays Bink, through FFmpeg.
+    CHECK(cl_cinematic::kBuildPlaysBink);
 
     if (g_failures == 0)
         std::printf("cl cinematic policy: all checks passed\n");

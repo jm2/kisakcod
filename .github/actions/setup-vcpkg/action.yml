@@ -1,0 +1,33 @@
+name: Set up vcpkg
+description: >
+  vcpkg at vcpkg.json's builtin-baseline, with a binary cache, for the Windows
+  client's OpenAL Soft and FFmpeg. Exports VCPKG_ROOT, which CMakeLists.txt
+  picks up as the toolchain.
+inputs:
+  triplet:
+    description: vcpkg triplet the job builds (x86-windows, x64-windows, arm64-windows)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Clone and bootstrap vcpkg
+      shell: pwsh
+      run: |
+        $commit = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+        $root = Join-Path $env:RUNNER_TEMP 'vcpkg'
+        $archives = Join-Path $env:RUNNER_TEMP 'vcpkg-archives'
+        git clone -q https://github.com/microsoft/vcpkg.git $root
+        if ($LASTEXITCODE) { exit $LASTEXITCODE }
+        git -C $root checkout -q --detach $commit
+        if ($LASTEXITCODE) { exit $LASTEXITCODE }
+        & (Join-Path $root 'bootstrap-vcpkg.bat') -disableMetrics
+        if ($LASTEXITCODE) { exit $LASTEXITCODE }
+        New-Item -ItemType Directory -Force -Path $archives | Out-Null
+        "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+        "VCPKG_BINARY_SOURCES=clear;files,$archives,readwrite" >> $env:GITHUB_ENV
+
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ runner.temp }}/vcpkg-archives
+        key: vcpkg-${{ inputs.triplet }}-${{ hashFiles('vcpkg.json') }}
+        restore-keys: vcpkg-${{ inputs.triplet }}-

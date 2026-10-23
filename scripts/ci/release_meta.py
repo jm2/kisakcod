@@ -200,7 +200,7 @@ def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, lim
     out += ["", "Each package has a `-debugsymbols` companion in the same format (extract it into the same "
             + "directory) and a "
             + f"`-provenance.json`. `kisakcod-{version}-source.tar.gz` is the commit's source without the vendor "
-            + "runtime binaries (Miles, Bink, Steamworks). `SHA256SUMS.txt` covers every file.", "", "## Status", ""]
+            + "runtime binaries (Steamworks). `SHA256SUMS.txt` covers every file.", "", "## Status", ""]
     out += [f"- **{leg['label']}**: at capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}" for leg in legs]
     out += ["", "## No game data", "", "These packages contain no Call of Duty 4 content. Retail data is the "
             + "user's own.", ""]

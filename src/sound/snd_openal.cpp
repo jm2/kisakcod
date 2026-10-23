@@ -1,7 +1,7 @@
-// Miles playback through OpenAL Soft for clients without mss32 (KISAK_OPENAL_AUDIO).
+// Miles playback through OpenAL Soft, on every client (scripts/client_media.cmake).
 //
-// mss32 is 32-bit Windows only, so 64-bit and POSIX clients define the Miles
-// calls the sound driver (snd_driver.cpp, snd_mss.cpp) makes here. The engine
+// No build links mss32: every client defines the Miles calls the sound driver
+// (snd_driver.cpp, snd_mss.cpp) makes here. The engine
 // keeps its own policy above this layer: channel choice, volumes, the 2D
 // speaker map and the listener-relative 3D positions.
 // - Each sample handle is one OpenAL source and one buffer. Loaded sounds
@@ -17,7 +17,7 @@
 //   decoder; the engine's sample setters touch only the source, as for
 //   loaded samples.
 
-// Declare the Miles functions without dllimport, as media_stubs.cpp does.
+// Declare the Miles functions without dllimport, so this file can define them.
 #define MSS_SPU_PROCESS
 #define __RADINEXE__
 #include <msslib/mss.h>

@@ -5,6 +5,26 @@ cmake_minimum_required(VERSION 3.16)
 # newer than this fails there rather than on a user's older Mac.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS version")
 
+# Windows clients take OpenAL Soft and FFmpeg from vcpkg (vcpkg.json,
+# docs/design/CLIENT.md). A configure that builds a client and names no
+# toolchain uses the first vcpkg found: VCPKG_ROOT, the checkout
+# build-win.ps1 -InstallDeps makes under .deps/vcpkg, or the GitHub runner's
+# VCPKG_INSTALLATION_ROOT. Headless servers need neither. MP and the full
+# dedicated server, both on by default below, build the client sources.
+if (CMAKE_HOST_WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE
+    AND ((NOT DEFINED KISAK_BUILD_MP OR KISAK_BUILD_MP) OR KISAK_BUILD_SP
+         OR ((NOT DEFINED KISAK_BUILD_DEDICATED OR KISAK_BUILD_DEDICATED) AND NOT KISAK_DEDI_HEADLESS)))
+    foreach(_kisak_vcpkg_root "$ENV{VCPKG_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}/.deps/vcpkg" "$ENV{VCPKG_INSTALLATION_ROOT}")
+        if (_kisak_vcpkg_root AND EXISTS "${_kisak_vcpkg_root}/scripts/buildsystems/vcpkg.cmake")
+            set(CMAKE_TOOLCHAIN_FILE "${_kisak_vcpkg_root}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain")
+            break()
+        endif()
+    endforeach()
+    set(VCPKG_MANIFEST_FEATURES client CACHE STRING "vcpkg.json features")
+    # scripts/post_build.cmake copies the DLLs once for every executable.
+    set(VCPKG_APPLOCAL_DEPS OFF CACHE BOOL "Copy vcpkg DLLs per executable")
+endif()
+
 project(KisakCOD LANGUAGES C CXX)
 
 # Set the default C++ standard
@@ -34,41 +54,6 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|arm|aarch|AARCH)")
     set(_KISAK_DEFAULT_STEAM OFF)
 endif()
 option(KISAK_ENABLE_STEAM "Link the Steamworks SDK for client<->server identity/auth" ${_KISAK_DEFAULT_STEAM})
-# Miles (mss32) and Bink (binkw32) ship 32-bit libraries only. 64-bit Windows
-# client targets link silent stubs instead (no sound, no cinematics) until the
-# OpenAL Soft / FFmpeg backends land; Win32 always links the real libraries.
-set(_KISAK_DEFAULT_MEDIA_STUBS OFF)
-if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set(_KISAK_DEFAULT_MEDIA_STUBS ON)
-endif()
-option(KISAK_MEDIA_STUBS "Link silent Miles/Bink stubs instead of the 32-bit-only libraries" ${_KISAK_DEFAULT_MEDIA_STUBS})
-if (KISAK_MEDIA_STUBS AND CMAKE_SIZEOF_VOID_P EQUAL 4)
-    message(FATAL_ERROR "KISAK_MEDIA_STUBS is for 64-bit targets; Win32 links the real Miles and Bink libraries.")
-endif()
-# Cinematics through FFmpeg's Bink decoder instead of binkw32 (POSIX clients;
-# docs/design/CLIENT.md). Needs libavformat, libavcodec and libavutil from
-# pkg-config, e.g. Homebrew's ffmpeg. Only POSIX client builds read it, so
-# headless servers don't need FFmpeg.
-set(_KISAK_DEFAULT_FFMPEG_CINEMATICS ON)
-if (WIN32)
-    set(_KISAK_DEFAULT_FFMPEG_CINEMATICS OFF)
-endif()
-option(KISAK_FFMPEG_CINEMATICS "Play Bink cinematics through FFmpeg on POSIX clients" ${_KISAK_DEFAULT_FFMPEG_CINEMATICS})
-if (KISAK_FFMPEG_CINEMATICS AND WIN32)
-    message(FATAL_ERROR "KISAK_FFMPEG_CINEMATICS is wired for POSIX clients only so far.")
-endif()
-# Sound through OpenAL Soft instead of mss32 (POSIX clients; docs/design/CLIENT.md).
-# Needs openal from pkg-config (Homebrew: openal-soft) and FFmpeg, which decodes
-# IMA ADPCM sounds and streams, so it defaults to KISAK_FFMPEG_CINEMATICS (on
-# off Windows). Only POSIX client builds read it.
-set(_KISAK_DEFAULT_OPENAL_AUDIO ${KISAK_FFMPEG_CINEMATICS})
-option(KISAK_OPENAL_AUDIO "Play sound through OpenAL Soft on POSIX clients" ${_KISAK_DEFAULT_OPENAL_AUDIO})
-if (KISAK_OPENAL_AUDIO AND WIN32)
-    message(FATAL_ERROR "KISAK_OPENAL_AUDIO is wired for POSIX clients only so far.")
-endif()
-if (KISAK_OPENAL_AUDIO AND NOT KISAK_FFMPEG_CINEMATICS)
-    message(FATAL_ERROR "KISAK_OPENAL_AUDIO decodes IMA ADPCM through FFmpeg; enable KISAK_FFMPEG_CINEMATICS too.")
-endif()
 include(CTest)
 
 if (WIN32)
