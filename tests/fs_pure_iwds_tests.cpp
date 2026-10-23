@@ -8,6 +8,7 @@
 //
 // The engine boundary is weak; --gc-sections drops the rest of files.cpp.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -48,7 +49,10 @@ WEAK void Com_Error(errorParm_t, const char *fmt, ...)
     std::abort();
 }
 WEAK void Com_DPrintf(int, const char *, ...) {}
-WEAK void Com_Memcpy(void *dest, const void *src, const size_t count) { std::memcpy(dest, src, count); }
+WEAK void Com_Memcpy(void *dest, const void *src, const size_t count)
+{
+    std::copy_n(static_cast<const unsigned char *>(src), count, static_cast<unsigned char *>(dest));
+}
 WEAK const char *CopyString(const char *in) { return strdup(in); }
 WEAK void __cdecl FreeString(const char *str) { std::free(const_cast<char *>(str)); }
 WEAK void Cmd_TokenizeString(char *text)
