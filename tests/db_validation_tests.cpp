@@ -3734,6 +3734,25 @@ int main()
     Expect(
         !db::validation::ClipMapBrushGraphValid(clipMap.map),
         "leftover global clipmap brush edge rejected");
+    // Retail zones (mp_countdown, mp_crossfire) leave an earlier offset in
+    // the edge pointer of a brush without adjacency; the engine never reads it.
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.sides[2].edgeCount = 0;
+    clipMap.map.numBrushEdges = 2;
+    clipMap.brushes[1].baseAdjacentSide = &clipMap.edges[0];
+    Expect(
+        db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "clipmap brush without adjacency keeps an earlier edge pointer");
+    clipMap.brushes[1].baseAdjacentSide = nullptr;
+    Expect(
+        db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "clipmap brush without adjacency may have no edge pointer");
+    clipMap.sides[2].edgeCount = 1;
+    clipMap.map.numBrushEdges = 3;
+    clipMap.brushes[1].baseAdjacentSide = &clipMap.edges[0];
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "clipmap brush with adjacency must start at the edge cursor");
     PopulateValidClipMapFixture(&clipMap);
     clipMap.brushes[0].axialMaterialNum[0][0] = 2;
     Expect(
