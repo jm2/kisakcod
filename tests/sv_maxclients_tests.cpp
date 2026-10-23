@@ -62,10 +62,10 @@ WEAK void KISAK_CDECL Sys_LockRead(FastCriticalSection *) {}
 WEAK void KISAK_CDECL Sys_UnlockRead(FastCriticalSection *) {}
 WEAK void KISAK_CDECL Sys_LockWrite(FastCriticalSection *) {}
 WEAK void KISAK_CDECL Sys_UnlockWrite(FastCriticalSection *) {}
+va_info_t g_vaInfo; // value 1: the one thread's va() buffers
 WEAK void *__cdecl Sys_GetValue(int valueIndex)
 {
-    static va_info_t vaInfo; // value 1: the thread's va() buffers
-    return valueIndex == 1 ? &vaInfo : nullptr;
+    return valueIndex == 1 ? &g_vaInfo : nullptr;
 }
 // A heap block of exactly the requested size, so ASan sees a copy past it.
 WEAK uint32_t *Hunk_AllocateTempMemory(int size, const char *) { return static_cast<uint32_t *>(std::malloc(size)); }
