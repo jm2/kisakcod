@@ -39,7 +39,7 @@ using pmem_runtime::InitializationStatus;
 using pmem_runtime::ProcessInitAllocationStatus;
 using pmem_runtime::StorageIsolationStatus;
 
-constexpr std::uint32_t kRuntimeSize = UINT32_C(0x08000000);
+constexpr std::uint32_t kRuntimeSize = PHYSICAL_MEMORY_POOL_BYTES;
 constexpr std::uint8_t kProcessInitDormant = 0;
 constexpr std::uint8_t kProcessInitBegun = 1;
 constexpr std::uint8_t kProcessInitEnded = 2;
@@ -1135,6 +1135,19 @@ void TestContention()
             - kThreadCount * kAllocationsPerThread * 8u);
     CHECK(g_reentryViolations.load() == 0);
     CHECK(g_enterCalls.load() == g_leaveCalls.load());
+}
+
+// A 64-bit zone's native structs outgrow retail's 128 MB pool: mp_carentan's
+// world needs more, so the 64-bit pool holds an allocation retail's cannot.
+void TestPoolHoldsMoreThanRetailOn64Bit()
+{
+    if constexpr (KISAK_ARCH_64BIT)
+    {
+        static char lowName[] = "large-zone";
+        InitializeReady();
+        PMem_BeginAlloc(lowName, 0);
+        CHECK(PMem_TryAlloc(UINT32_C(0x0C000000), 16, 0, 0) != nullptr);
+    }
 }
 
 void TestLegacyShortfallTlsAndReports()
@@ -2982,6 +2995,7 @@ int main()
     TestAbsoluteAlignmentAndExactHighShortfall();
     TestContention();
     TestLegacyShortfallTlsAndReports();
+    TestPoolHoldsMoreThanRetailOn64Bit();
     TestLifecycleSerializationAndReportOrdering();
     TestDiagnosticStatusAndStableNames();
     TestDiagnosticAccountingAndDumpOrder();

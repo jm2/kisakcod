@@ -18,7 +18,7 @@
 
 namespace
 {
-constexpr std::uint32_t kPhysicalMemorySize = UINT32_C(0x08000000);
+constexpr std::uint32_t kPhysicalMemorySize = PHYSICAL_MEMORY_POOL_BYTES;
 static_assert(kPhysicalMemorySize <= static_cast<std::uint32_t>(INT_MAX));
 constexpr std::uint32_t kInitializingWitness = UINT32_C(0x494E4954);
 constexpr std::uint32_t kReadyWitness = UINT32_C(0x52454144);

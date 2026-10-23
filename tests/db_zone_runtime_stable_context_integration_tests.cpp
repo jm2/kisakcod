@@ -4,6 +4,7 @@
 #include <database/db_zone_memory.h>
 #include <database/db_zone_runtime_facade.h>
 #include <database/db_zone_runtime_storage.h>
+#include <universal/physicalmemory.h>
 #include <qcommon/com_error.h>
 #include <qcommon/sys_memory.h>
 #include <qcommon/sys_sync.h>
@@ -45,7 +46,7 @@ constexpr std::uint32_t kAliasProbeSlot = 5;
 constexpr std::uint32_t kNoRegistryCallbackSlot = 6;
 constexpr std::uint32_t kStorageCapacity = 1;
 constexpr std::uint32_t kStreamBlockBytes = 64;
-constexpr std::uint32_t kPhysicalMemoryBytes = UINT32_C(0x08000000);
+constexpr std::uint32_t kPhysicalMemoryBytes = PHYSICAL_MEMORY_POOL_BYTES;
 
 alignas(64) std::array<
     std::uint8_t,

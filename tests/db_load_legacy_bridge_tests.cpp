@@ -4,6 +4,7 @@
 #include <database/db_zone_memory.h>
 #include <database/db_zone_runtime_facade.h>
 #include <database/db_zone_runtime_table.h>
+#include <universal/physicalmemory.h>
 #include <qcommon/com_error.h>
 #include <qcommon/sys_memory.h>
 #include <qcommon/sys_sync.h>
@@ -362,8 +363,8 @@ std::size_t KISAK_CDECL Sys_VirtualMemoryPageSize()
 
 void *KISAK_CDECL Sys_VirtualMemoryReserve(const std::size_t size)
 {
-    static std::array<std::uint8_t, 0x08000000> g_pmemBacking{};
-    return size == 0x08000000u
+    static std::array<std::uint8_t, PHYSICAL_MEMORY_POOL_BYTES> g_pmemBacking{};
+    return size == PHYSICAL_MEMORY_POOL_BYTES
         ? static_cast<void *>(g_pmemBacking.data())
         : nullptr;
 }
@@ -371,9 +372,9 @@ void *KISAK_CDECL Sys_VirtualMemoryReserve(const std::size_t size)
 bool KISAK_CDECL Sys_VirtualMemoryCommit(
     void *const address, const std::size_t size)
 {
-    static std::array<std::uint8_t, 0x08000000> g_pmemBacking{};
+    static std::array<std::uint8_t, PHYSICAL_MEMORY_POOL_BYTES> g_pmemBacking{};
     return address == g_pmemBacking.data()
-        && size == 0x08000000u;
+        && size == PHYSICAL_MEMORY_POOL_BYTES;
 }
 
 bool KISAK_CDECL Sys_VirtualMemoryDecommit(
@@ -384,7 +385,7 @@ bool KISAK_CDECL Sys_VirtualMemoryDecommit(
 
 bool KISAK_CDECL Sys_VirtualMemoryRelease(void *const address)
 {
-    static std::array<std::uint8_t, 0x08000000> g_pmemBacking{};
+    static std::array<std::uint8_t, PHYSICAL_MEMORY_POOL_BYTES> g_pmemBacking{};
     return address == g_pmemBacking.data();
 }
 
