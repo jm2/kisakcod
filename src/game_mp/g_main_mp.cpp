@@ -621,7 +621,7 @@ const dvar_s *G_RegisterDvars()
         "Spectator team color");
     g_TeamColor_Free = Dvar_RegisterColor("g_TeamColor_Free", 0.75f, 0.25f, 0.25f, 1.0f, DVAR_TEMP, "Free Team color");
     g_smoothClients = Dvar_RegisterBool("g_smoothClients", true, DVAR_NOFLAG, "Enable extrapolation between client states");
-    g_antilag = Dvar_RegisterBool("g_antilag", true, DVAR_ARCHIVE | DVAR_SERVERINFO, "Turn on antilag checks for weapon hits");
+    g_antilag = Dvar_RegisterBool("g_antilag", true, DVAR_ROM, "Turn on antilag checks for weapon hits"); // KISAK: read-only in 1.8
     g_oldVoting = Dvar_RegisterBool("g_oldVoting", true, DVAR_ARCHIVE, "Use old voting method");
     minh.value.max = 1.0f;
     minh.value.min = 0.0f;
