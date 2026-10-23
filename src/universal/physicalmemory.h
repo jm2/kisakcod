@@ -13,6 +13,11 @@ struct PhysicalMemoryAllocation // x86 sizeof=0x8, native64 sizeof=0x10
 
 inline constexpr std::uint32_t MAX_PHYSICAL_ALLOCATIONS = 32u;
 
+// The physical-memory pool: retail's 128 MB, doubled on 64-bit, where zones'
+// native structs outgrow their 32-bit layout (mp_carentan needs more).
+inline constexpr std::uint32_t PHYSICAL_MEMORY_POOL_BYTES =
+    KISAK_ARCH_64BIT ? UINT32_C(0x10000000) : UINT32_C(0x08000000);
+
 struct PhysicalMemoryPrim // x86 sizeof=0x10C, native64 sizeof=0x210
 {                                       // ...
     const char *allocName;
