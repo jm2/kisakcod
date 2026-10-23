@@ -16,7 +16,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -216,23 +215,45 @@ void TestHeadlessShockVolumeLines()
         "other lines and line breaks kept");
 }
 
-// The float defaults BG_RegisterDvars registers, by name.
-std::map<std::string, float> g_floatDefaults;
+// The float defaults BG_RegisterDvars registers.
+struct FloatDefault
+{
+    std::string name;
+    float value;
+};
+std::vector<FloatDefault> g_floatDefaults;
 dvar_s g_dvar{};
+
+const FloatDefault *Registered(const char *name)
+{
+    for (const FloatDefault &recorded : g_floatDefaults)
+    {
+        if (recorded.name == name)
+            return &recorded;
+    }
+    return nullptr;
+}
 
 // The Steam 1.8 MP executable's player_lean_* defaults; the 1.0 code had
 // 2.5, 12.5, 13, 1.25, 1.25, 1.25 and 1 for all but shift_left.
 void TestLeanDefaults()
 {
     BG_RegisterDvars();
-    const std::pair<const char *, float> expected[] = {
-        {"player_lean_shift_left", 5.0f},          {"player_lean_shift_right", 9.0f},
-        {"player_lean_shift_crouch_left", 4.0f},   {"player_lean_shift_crouch_right", 15.0f},
-        {"player_lean_rotate_left", 0.8f},         {"player_lean_rotate_right", 0.4f},
-        {"player_lean_rotate_crouch_left", 0.8f},  {"player_lean_rotate_crouch_right", 0.3f},
+    const FloatDefault expected[] = {
+        {"player_lean_shift_left", 5.0f},
+        {"player_lean_shift_right", 9.0f},
+        {"player_lean_shift_crouch_left", 4.0f},
+        {"player_lean_shift_crouch_right", 15.0f},
+        {"player_lean_rotate_left", 0.8f},
+        {"player_lean_rotate_right", 0.4f},
+        {"player_lean_rotate_crouch_left", 0.8f},
+        {"player_lean_rotate_crouch_right", 0.3f},
     };
-    for (const auto &[name, value] : expected)
-        Check(g_floatDefaults.count(name) && g_floatDefaults[name] == value, name);
+    for (const FloatDefault &lean : expected)
+    {
+        const FloatDefault *const registered = Registered(lean.name.c_str());
+        Check(registered && Near(registered->value, lean.value), lean.name.c_str());
+    }
 }
 } // namespace
 
@@ -291,7 +312,7 @@ bool __cdecl Dvar_GetBool(const char *)
 
 const dvar_s *__cdecl Dvar_RegisterFloat(const char *name, float value, DvarLimits, uint16_t, const char *)
 {
-    g_floatDefaults[name] = value;
+    g_floatDefaults.push_back({name, value});
     return &g_dvar;
 }
 
