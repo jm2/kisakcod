@@ -404,7 +404,6 @@ int main(int argc, char **argv)
         client_t &cl = svs.clients[0];
         cl.header.state = CS_ACTIVE;
         cl.header.netchan.remoteAddress = Remote();
-        svs.time = 100000;
         sv.state = SS_GAME; // commands reach the game only once it has loaded
         CHECK(Dvar_GetInt("sv_floodprotect") == 4);
         int executed = 0;
@@ -412,8 +411,8 @@ int main(int argc, char **argv)
             executed += ClientCommandRuns(cl, seq, "say hi");
         CHECK(executed == 4); // the burst, then two ignored
         CHECK(ClientCommandRuns(cl, 7, "team axis")); // exempt
-        svs.time += 800;
-        CHECK(ClientCommandRuns(cl, 8, "say hi")); // a quiet window refills the burst
+        cl.nextReliableTime -= 800; // the client goes quiet for a window
+        CHECK(ClientCommandRuns(cl, 8, "say hi")); // which refills the burst
         Dvar_SetIntByName("sv_floodprotect", 0);
         executed = 0;
         for (int seq = 9; seq <= 18; ++seq)
