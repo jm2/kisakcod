@@ -24,6 +24,7 @@
 
 #include "db_fx_zone_adapter_wiring.h"
 #include "db_disk32_load.h"
+#include "db_graph_digest.h"
 #include "db_material_validation.h"
 #include "db_xmodel_validation.h"
 #include "db_gfxworld_validation.h"
@@ -6308,6 +6309,13 @@ void __cdecl Load_DynEntityDef(bool atStreamStart)
         return;
     varPhysPresetPtr = &varDynEntityDef->physPreset;
     Load_PhysPresetPtr(0);
+}
+
+DynEntityDefView DB_DynEntityDefView(const DynEntityDef *defs, int32_t index)
+{
+    const DynEntityDef &def = defs[index];
+    return {def.type, def.pose.quat, def.pose.origin, def.xModel, def.brushModel, def.physicsBrushModel,
+            def.destroyFx, def.destroyPieces, def.physPreset, def.health, def.mass.centerOfMass, def.contents};
 }
 
 void __cdecl Load_DynEntityDefArray(bool atStreamStart, int32_t count)
