@@ -19,6 +19,7 @@ struct GfxPortal;
 struct GfxSceneDynBrush;
 struct GfxSceneDynModel;
 struct IDirect3DIndexBuffer9;
+struct IDirect3DQuery9;
 struct IDirect3DVertexBuffer9;
 struct XModel;
 
