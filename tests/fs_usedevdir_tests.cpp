@@ -148,13 +148,14 @@ WEAK int unzGetCurrentFileInfo(unzFile, unz_file_info *, char *, unsigned long, 
 
 int main()
 {
+    char gameName[] = "main";
     Dvar_Init();
     useFastFile = Dvar_RegisterBool("useFastFile", true, DVAR_INIT, "Enables loading data from fast files");
     Dvar_SetFromStringByName("fs_basepath", "/kisak-test/base"); // what "+set" does before init
     Dvar_SetFromStringByName("fs_homepath", "/kisak-test/home");
 
     // 1.8's default: no development directories under any root.
-    FS_Startup((char *)"main");
+    FS_Startup(gameName);
     std::vector<std::string> dirs = SearchedDirs();
     for (const char *dev : {"raw", "raw_shared", "devraw", "devraw_shared"})
         CHECK(!Has(dirs, dev));
@@ -165,7 +166,7 @@ int main()
 
     // With fs_usedevdir set at startup, they are searched again.
     Dvar_SetFromStringByName("fs_usedevdir", "1");
-    FS_Startup((char *)"main");
+    FS_Startup(gameName);
     dirs = SearchedDirs();
     for (const char *dev : {"raw", "raw_shared", "devraw", "devraw_shared"})
         CHECK(Has(dirs, dev));
