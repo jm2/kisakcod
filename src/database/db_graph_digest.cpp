@@ -1490,7 +1490,7 @@ void HashGfxAabbTree(GraphHashBuilder &builder, const GfxAabbTree &tree)
     constexpr std::int32_t stride = sizeof(GfxAabbTree);
     std::int64_t children = tree.childrenOffset;
     if (children > 0)
-        children = children % stride ? -1 : children / stride;
+        children = children % stride != 0 ? -1 : children / stride;
     builder.FieldI64(63, children);
 }
 
@@ -1673,21 +1673,10 @@ void HashGfxWorldHead(GraphHashBuilder &builder, const GfxWorld &world)
     }
 }
 
-// The world in record order. Left out: renderer objects (vertex buffers and
-// the probe and lightmap textures), the scene, shadow-visibility and caster
-// arrays the loader allocates for the renderer, and each brush model's and
-// portal's writable state, which the game rewrites.
-void HashGfxWorld(GraphHashBuilder &builder, const XAssetHeader &header)
+// Lightmaps by name, the light grid and the brush models without their
+// writable bounds.
+void HashGfxWorldTables(GraphHashBuilder &builder, const GfxWorld &world)
 {
-    const GfxWorld &world = *header.gfxWorld;
-    HashGfxWorldHead(builder, world);
-    builder.FieldI64(14, world.dpvsPlanes.cellCount);
-    FieldArray(builder, 14, world.dpvsPlanes.planes, Count(world.planeCount));
-    FieldArray(builder, 14, world.dpvsPlanes.nodes, Count(world.nodeCount));
-    builder.FieldI64(15, world.cellBitsCount);
-    const std::size_t cells = world.cells ? Count(world.dpvsPlanes.cellCount) : 0;
-    for (std::size_t i = 0; i < cells; ++i)
-        HashGfxCell(builder, world, world.cells[i]);
     builder.FieldI64(16, world.lightmapCount);
     const std::size_t lightmaps = world.lightmaps ? Count(world.lightmapCount) : 0;
     for (std::size_t i = 0; i < lightmaps; ++i)
@@ -1706,6 +1695,24 @@ void HashGfxWorld(GraphHashBuilder &builder, const XAssetHeader &header)
         builder.FieldU64(19, model.startSurfIndex);
         builder.FieldU64(19, model.surfaceCountNoDecal);
     }
+}
+
+// The world in record order. Left out: renderer objects (vertex buffers and
+// the probe and lightmap textures), the scene, shadow-visibility and caster
+// arrays the loader allocates for the renderer, and each brush model's and
+// portal's writable state, which the game rewrites.
+void HashGfxWorld(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const GfxWorld &world = *header.gfxWorld;
+    HashGfxWorldHead(builder, world);
+    builder.FieldI64(14, world.dpvsPlanes.cellCount);
+    FieldArray(builder, 14, world.dpvsPlanes.planes, Count(world.planeCount));
+    FieldArray(builder, 14, world.dpvsPlanes.nodes, Count(world.nodeCount));
+    builder.FieldI64(15, world.cellBitsCount);
+    const std::size_t cells = world.cells ? Count(world.dpvsPlanes.cellCount) : 0;
+    for (std::size_t i = 0; i < cells; ++i)
+        HashGfxCell(builder, world, world.cells[i]);
+    HashGfxWorldTables(builder, world);
     builder.FieldBytes(20, world.mins, sizeof(world.mins));
     builder.FieldBytes(20, world.maxs, sizeof(world.maxs));
     builder.FieldU64(20, world.checksum);
