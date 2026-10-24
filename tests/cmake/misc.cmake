@@ -1105,8 +1105,6 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     target_compile_features(kisakcod-r-point-light-partition-tests PRIVATE cxx_std_20)
     target_compile_definitions(kisakcod-r-point-light-partition-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE)
     target_link_libraries(kisakcod-r-point-light-partition-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
-    # Decompiled visLight[i] is visLightShadow[i - 4], inside GfxScene (#728).
-    target_compile_options(kisakcod-r-point-light-partition-tests PRIVATE -fno-sanitize=array-bounds)
     target_compile_options(kisakcod-r-point-light-partition-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
     target_link_options(kisakcod-r-point-light-partition-tests PRIVATE -Wl,--gc-sections)
     if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
