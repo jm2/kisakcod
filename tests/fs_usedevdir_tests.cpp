@@ -79,15 +79,17 @@ WEAK void Com_Error(errorParm_t, const char *fmt, ...)
 }
 WEAK void Com_Printf(int, const char *, ...) {}
 WEAK void Com_DPrintf(int, const char *, ...) {}
-std::vector<std::string> g_warnings;
+// The IWDs FS_SkipUnofficialIwd warned about, by its own format.
+const char kInvalidIwd[] = "WARNING: Invalid IWD %s in \\main.\n";
+std::vector<std::string> g_invalidIwds;
 WEAK void Com_PrintWarning(int, const char *fmt, ...)
 {
-    char text[512];
+    if (std::strcmp(fmt, kInvalidIwd) != 0)
+        return;
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(text, sizeof(text), fmt, args);
+    g_invalidIwds.emplace_back(va_arg(args, const char *));
     va_end(args);
-    g_warnings.emplace_back(text);
 }
 WEAK void Com_PrintError(int, const char *, ...) {}
 WEAK void *Z_Malloc(int size, const char *, int) { return std::calloc(1, size); }
@@ -117,10 +119,12 @@ WEAK bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *) { return true; }
 // and a custom one; otherwise no directory holds an IWD.
 bool g_listIwds = false;
 std::vector<std::string> g_opened; // the IWDs FS_LoadZipFile tried to open
+char g_iwdNames[3][32];
+char *g_iwdList[4];
 WEAK char **__cdecl Sys_ListFiles(const char *directory, const char *, const char *, int *numfiles, int)
 {
-    static char names[3][32];
-    static char *list[4];
+    char (&names)[3][32] = g_iwdNames;
+    char *(&list)[4] = g_iwdList;
     const std::string dir = directory;
     if (!g_listIwds || dir.size() < 5 || dir.compare(dir.size() - 5, 5, "/main") != 0)
     {
@@ -223,10 +227,7 @@ int main()
     CHECK(opened("/kisak-test/base/main/localized_english_iw00.iwd"));
     CHECK(!opened("/kisak-test/base/main/zz_custom.iwd"));
     CHECK(opened("/kisak-test/home/main/zz_custom.iwd"));
-    bool warned = false;
-    for (const std::string &w : g_warnings)
-        warned = warned || w == "WARNING: Invalid IWD zz_custom.iwd in \\main.\n";
-    CHECK(warned);
+    CHECK(g_invalidIwds.size() == 1 && g_invalidIwds[0] == "zz_custom.iwd");
     ClearSearchPaths();
 
     if (g_failures == 0)
