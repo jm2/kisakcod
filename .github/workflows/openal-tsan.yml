@@ -1,0 +1,58 @@
+# Row 51: the OpenAL shim's stream decoder runs on its own thread. TSan checks
+# the shim mutex against that thread on the null audio backend.
+name: OpenAL TSan
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  thread-sanitizers:
+    name: OpenAL / ThreadSanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install OpenAL Soft and FFmpeg
+        run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libopenal-dev libavformat-dev libavcodec-dev
+
+      - name: Relax ASLR for TSan
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Configure OpenAL TSan contracts
+        run: >
+          cmake -S . -B build-tsan-openal
+          -DKISAK_PLATFORM=linux
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF
+          -DBUILD_TESTING=ON -DKISAK_TEST_OPENAL=ON -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1 -g"
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1 -g"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+
+      - name: Build OpenAL TSan contracts
+        run: >
+          cmake --build build-tsan-openal --parallel 4
+          --target kisakcod-snd-openal-tests
+
+      - name: Run OpenAL TSan contracts
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/tests/tsan_openal.supp
+        run: >
+          ctest --test-dir build-tsan-openal --output-on-failure
+          --no-tests=error -R '^snd-openal-shim$'
