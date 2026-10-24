@@ -1057,6 +1057,219 @@ void HashXModel(GraphHashBuilder &builder, const XAssetHeader &header)
     HashPhysGeoms(builder, model.physGeoms);
 }
 
+// A pointer into one of the clip map's arrays as its element index: -1 when
+// null, -2 when it points outside the array.
+template <typename T>
+void FieldIndex(GraphHashBuilder &builder, std::uint32_t tag, const T *element, const T *base, std::size_t count)
+{
+    std::int64_t index = -1;
+    if (element)
+        index = base && element >= base && element < base + count ? element - base : -2;
+    builder.FieldI64(tag, index);
+}
+
+// The pieces in record order: the name, then each piece's model by name and
+// its offset.
+void HashXModelPiecesBody(GraphHashBuilder &builder, const XModelPieces *pieces)
+{
+    builder.FieldU64(1, pieces != nullptr);
+    if (!pieces)
+        return;
+    builder.FieldString(2, pieces->name);
+    builder.FieldI64(3, pieces->numpieces);
+    const int count = pieces->pieces ? pieces->numpieces : 0;
+    for (int i = 0; i < count; ++i)
+    {
+        FieldAsset(builder, 4, ASSET_TYPE_XMODEL, pieces->pieces[i].model);
+        builder.FieldBytes(5, pieces->pieces[i].offset, sizeof(pieces->pieces[i].offset));
+    }
+}
+
+void HashXModelPieces(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    HashXModelPiecesBody(builder, header.xmodelPieces);
+}
+
+// A leaf without its trailing padding.
+void HashClipLeaf(GraphHashBuilder &builder, const cLeaf_t &leaf)
+{
+    builder.FieldU64(20, leaf.firstCollAabbIndex);
+    builder.FieldU64(20, leaf.collAabbCount);
+    builder.FieldI64(20, leaf.brushContents);
+    builder.FieldI64(20, leaf.terrainContents);
+    builder.FieldBytes(21, leaf.mins, sizeof(leaf.mins));
+    builder.FieldBytes(21, leaf.maxs, sizeof(leaf.maxs));
+    builder.FieldI64(22, leaf.leafBrushNode);
+    builder.FieldI64(22, leaf.cluster);
+}
+
+void HashClipModel(GraphHashBuilder &builder, const cmodel_t &model)
+{
+    builder.FieldBytes(23, model.mins, sizeof(model.mins));
+    builder.FieldBytes(23, model.maxs, sizeof(model.maxs));
+    builder.FieldF32(23, model.radius);
+    HashClipLeaf(builder, model.leaf);
+}
+
+// A clip-map brush: its sides and adjacent-side bytes as indices into the
+// map's arrays.
+void HashClipBrush(GraphHashBuilder &builder, const clipMap_t &map, const cbrush_t *brush)
+{
+    builder.FieldU64(24, brush != nullptr);
+    if (!brush)
+        return;
+    builder.FieldBytes(25, brush->mins, sizeof(brush->mins));
+    builder.FieldI64(25, brush->contents);
+    builder.FieldBytes(25, brush->maxs, sizeof(brush->maxs));
+    builder.FieldU64(26, brush->numsides);
+    FieldIndex(builder, 26, brush->sides, map.brushsides, map.numBrushSides);
+    builder.FieldBytes(27, brush->axialMaterialNum, sizeof(brush->axialMaterialNum));
+    FieldIndex(builder, 28, brush->baseAdjacentSide, map.brushEdges, map.numBrushEdges);
+    builder.FieldBytes(29, brush->firstAdjacentSideOffsets, sizeof(brush->firstAdjacentSideOffsets));
+    builder.FieldBytes(29, brush->edgeCount, sizeof(brush->edgeCount));
+}
+
+// A leaf-brush node holds brush indices when its count is positive, else the
+// split that leads to its children.
+void HashLeafBrushNode(GraphHashBuilder &builder, const cLeafBrushNode_s &node)
+{
+    builder.FieldU64(30, node.axis);
+    builder.FieldI64(30, node.leafBrushCount);
+    builder.FieldI64(30, node.contents);
+    if (node.leafBrushCount > 0)
+    {
+        FieldArray(builder, 31, node.data.leaf.brushes, static_cast<std::size_t>(node.leafBrushCount));
+        return;
+    }
+    builder.FieldF32(32, node.data.children.dist);
+    builder.FieldF32(32, node.data.children.range);
+    builder.FieldBytes(32, node.data.children.childOffset, sizeof(node.data.children.childOffset));
+}
+
+// A dynamic entity's definition, its pieces in full: a clip map's pieces live
+// in its own record, not in the pool.
+void HashDynEntityDef(GraphHashBuilder &builder, const DynEntityDefView &def)
+{
+    builder.FieldI64(33, def.type);
+    builder.FieldBytes(34, def.quat, 4 * sizeof(float));
+    builder.FieldBytes(34, def.origin, 3 * sizeof(float));
+    FieldAsset(builder, 35, ASSET_TYPE_XMODEL, def.xModel);
+    builder.FieldU64(36, def.brushModel);
+    builder.FieldU64(36, def.physicsBrushModel);
+    FieldAsset(builder, 37, ASSET_TYPE_FX, def.destroyFx);
+    HashXModelPiecesBody(builder, def.destroyPieces);
+    FieldAsset(builder, 38, ASSET_TYPE_PHYSPRESET, def.physPreset);
+    builder.FieldI64(39, def.health);
+    builder.FieldBytes(40, def.mass, 9 * sizeof(float));
+    builder.FieldI64(41, def.contents);
+}
+
+// The clip map in record order. Planes are 20 bytes with no pointer, so a
+// side's or node's plane is its index. Left out: each static model's
+// world-sector link and the dynamic entities' pose, client and collision
+// lists, which the game writes at run time.
+void HashClipMap(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const clipMap_t &map = *header.clipMap;
+    const std::size_t planes = map.planeCount > 0 ? static_cast<std::size_t>(map.planeCount) : 0;
+    builder.FieldString(1, map.name);
+    builder.FieldI64(2, map.isInUse);
+    builder.FieldI64(3, map.planeCount);
+    FieldArray(builder, 4, map.planes, planes);
+    builder.FieldU64(5, map.numStaticModels);
+    const std::size_t staticModels = map.staticModelList ? map.numStaticModels : 0;
+    for (std::size_t i = 0; i < staticModels; ++i)
+    {
+        const cStaticModel_s &model = map.staticModelList[i];
+        FieldAsset(builder, 6, ASSET_TYPE_XMODEL, model.xmodel);
+        builder.FieldBytes(7, model.origin, sizeof(model.origin));
+        builder.FieldBytes(7, model.invScaledAxis, sizeof(model.invScaledAxis));
+        builder.FieldBytes(7, model.absmin, sizeof(model.absmin));
+        builder.FieldBytes(7, model.absmax, sizeof(model.absmax));
+    }
+    builder.FieldU64(8, map.numMaterials);
+    FieldArray(builder, 8, map.materials, map.numMaterials);
+    builder.FieldU64(9, map.numBrushSides);
+    const std::size_t sides = map.brushsides ? map.numBrushSides : 0;
+    for (std::size_t i = 0; i < sides; ++i)
+    {
+        const cbrushside_t &side = map.brushsides[i];
+        FieldIndex(builder, 10, side.plane, map.planes, planes);
+        builder.FieldU64(10, side.materialNum);
+        builder.FieldI64(10, side.firstAdjacentSideOffset);
+        builder.FieldU64(10, side.edgeCount);
+    }
+    builder.FieldU64(11, map.numBrushEdges);
+    FieldArray(builder, 11, map.brushEdges, map.numBrushEdges);
+    builder.FieldU64(12, map.numNodes);
+    const std::size_t nodes = map.nodes ? map.numNodes : 0;
+    for (std::size_t i = 0; i < nodes; ++i)
+    {
+        FieldIndex(builder, 13, map.nodes[i].plane, map.planes, planes);
+        builder.FieldBytes(13, map.nodes[i].children, sizeof(map.nodes[i].children));
+    }
+    builder.FieldU64(14, map.numLeafs);
+    const std::size_t leafs = map.leafs ? map.numLeafs : 0;
+    for (std::size_t i = 0; i < leafs; ++i)
+        HashClipLeaf(builder, map.leafs[i]);
+    builder.FieldU64(15, map.leafbrushNodesCount);
+    const std::size_t leafBrushNodes = map.leafbrushNodes ? map.leafbrushNodesCount : 0;
+    for (std::size_t i = 0; i < leafBrushNodes; ++i)
+        HashLeafBrushNode(builder, map.leafbrushNodes[i]);
+    builder.FieldU64(16, map.numLeafBrushes);
+    FieldArray(builder, 16, map.leafbrushes, map.numLeafBrushes);
+    builder.FieldU64(17, map.numLeafSurfaces);
+    FieldArray(builder, 17, map.leafsurfaces, map.numLeafSurfaces);
+    builder.FieldU64(18, map.vertCount);
+    FieldArray(builder, 18, map.verts, map.vertCount);
+    builder.FieldI64(19, map.triCount);
+    const std::size_t triIndices = map.triCount > 0 ? 3 * static_cast<std::size_t>(map.triCount) : 0;
+    FieldArray(builder, 19, map.triIndices, triIndices);
+    // One bit per triangle edge, in whole 32-bit words.
+    FieldArray(builder, 19, map.triEdgeIsWalkable, (triIndices + 31) / 32 * 4);
+    const std::size_t borders = map.borderCount > 0 ? static_cast<std::size_t>(map.borderCount) : 0;
+    builder.FieldI64(42, map.borderCount);
+    FieldArray(builder, 42, map.borders, borders);
+    builder.FieldI64(43, map.partitionCount);
+    const int partitions = map.partitions ? map.partitionCount : 0;
+    for (int i = 0; i < partitions; ++i)
+    {
+        const CollisionPartition &partition = map.partitions[i];
+        builder.FieldU64(44, partition.triCount);
+        builder.FieldU64(44, partition.borderCount);
+        builder.FieldI64(44, partition.firstTri);
+        FieldIndex(builder, 44, partition.borders, map.borders, borders);
+    }
+    builder.FieldI64(45, map.aabbTreeCount);
+    FieldArray(builder, 45, map.aabbTrees, map.aabbTreeCount > 0 ? static_cast<std::size_t>(map.aabbTreeCount) : 0);
+    builder.FieldU64(46, map.numSubModels);
+    const std::size_t subModels = map.cmodels ? map.numSubModels : 0;
+    for (std::size_t i = 0; i < subModels; ++i)
+        HashClipModel(builder, map.cmodels[i]);
+    builder.FieldU64(47, map.numBrushes);
+    const std::size_t brushes = map.brushes ? map.numBrushes : 0;
+    for (std::size_t i = 0; i < brushes; ++i)
+        HashClipBrush(builder, map, &map.brushes[i]);
+    builder.FieldI64(48, map.numClusters);
+    builder.FieldI64(48, map.clusterBytes);
+    const std::size_t visibility = map.numClusters > 0 && map.clusterBytes > 0
+                                       ? static_cast<std::size_t>(map.numClusters) * map.clusterBytes
+                                       : 0;
+    FieldArray(builder, 49, map.visibility, visibility);
+    builder.FieldI64(50, map.vised);
+    FieldAsset(builder, 51, ASSET_TYPE_MAP_ENTS, map.mapEnts);
+    HashClipBrush(builder, map, map.box_brush);
+    HashClipModel(builder, map.box_model);
+    for (int list = 0; list < 2; ++list)
+    {
+        builder.FieldU64(52, map.dynEntCount[list]);
+        const std::size_t defs = map.dynEntDefList[list] ? map.dynEntCount[list] : 0;
+        for (std::size_t i = 0; i < defs; ++i)
+            HashDynEntityDef(builder, DB_DynEntityDefView(map.dynEntDefList[list], static_cast<int32_t>(i)));
+    }
+    builder.FieldU64(53, map.checksum);
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -1101,6 +1314,10 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashWeapon;
     case ASSET_TYPE_XMODEL:
         return HashXModel;
+    case ASSET_TYPE_XMODELPIECES:
+        return HashXModelPieces;
+    case ASSET_TYPE_CLIPMAP_PVS:
+        return HashClipMap;
     default:
         return nullptr;
     }

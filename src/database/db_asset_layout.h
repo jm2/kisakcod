@@ -37,6 +37,7 @@ enum class Conversion : std::uint8_t
 
 // Asset-type values from the IW3 fast-file contract (XAssetType in
 // xanim/xanim.h). Only the types this policy branches on are named here.
+inline constexpr std::int32_t kXModelPieces = 0x00;
 inline constexpr std::int32_t kPhysPreset = 0x01;
 inline constexpr std::int32_t kFx = 0x19;
 inline constexpr std::int32_t kImpactFx = 0x1A;
@@ -58,6 +59,7 @@ inline constexpr std::int32_t kMaterial = 0x04;
 inline constexpr std::int32_t kTechniqueSet = 0x05;
 inline constexpr std::int32_t kWeapon = 0x17;
 inline constexpr std::int32_t kXModel = 0x03;
+inline constexpr std::int32_t kClipMapPvs = 0x0B;
 inline constexpr std::int32_t kAssetTypeCount = 0x21;
 
 // The families K4 counts (docs/design/FASTFILE_LOADER.md): at 64-bit their
@@ -93,6 +95,8 @@ constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
 #endif
     case kWeapon:
     case kXModel:
+    case kXModelPieces:
+    case kClipMapPvs:
         return true;
     default:
         return false;

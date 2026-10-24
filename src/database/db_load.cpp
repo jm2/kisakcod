@@ -6310,6 +6310,13 @@ void __cdecl Load_DynEntityDef(bool atStreamStart)
     Load_PhysPresetPtr(0);
 }
 
+DynEntityDefView DB_DynEntityDefView(const DynEntityDef *defs, int32_t index)
+{
+    const DynEntityDef &def = defs[index];
+    return {def.type, def.pose.quat, def.pose.origin, def.xModel, def.brushModel, def.physicsBrushModel,
+            def.destroyFx, def.destroyPieces, def.physPreset, def.health, def.mass.centerOfMass, def.contents};
+}
+
 void __cdecl Load_DynEntityDefArray(bool atStreamStart, int32_t count)
 {
     DynEntityDef *var; // [esp+0h] [ebp-8h]
