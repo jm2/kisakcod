@@ -26,7 +26,6 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | 37 | K4 digest pipeline: per-family `db::graph_hash` walkers on x86 and 64-bit | G2 | K4 | a family's 64-bit graph hash equals its x86 hash on the owner's data; its fail-closed guard is then removed | L | next: Menu, ClipMapPvs (+XModelPieces), GfxWorld (header move first), Fx/ImpactFx (loader write-up first) |
-| 52 | Map sweep: every stock MP map loads on the 64-bit dedicated server (`+map`, Steam 1.8 data, ASan) | G2 | K4 | all 21 stock MP maps load and run a round; a rotation through them keeps the server up | M | next: 17/21 load; loader fatals on mp_carentan (native storage exhausted), mp_citystreets (alias offset: unregistered slot), mp_countdown and mp_crossfire (clipmap brush graph); a live rotation dies on these |
 | 46 | G0 evidence: x86 client and headless server on Steam 1.8 data, 3 maps, one fork round, the same binaries under Wine | G0 | gate | console text per map and at round end, on antec-win and under Wine on antec | M | blocked-owner: client needs antec-win's physical console (RDP has no D3D9 HAL); server half passes; Wine client stalls before `R_Init` |
 | 51 | Native client audio: every client, x86 included, plays sound aliases through OpenAL Soft ([CLIENT](design/CLIENT.md)) | G5 | gate | in-game weapon and ambient sounds play on a 64-bit client with no sound errors | L | done on macOS (#669, #671, #677, #679); left: a Linux TSan leg, the 3D start offset in shared code |
 | 47 | G3 first target: an x86 fork client plays a round, a map change and a reconnect on the Win64 headless server, with 8 test clients | G3 | K6 | the round's console text on both ends | L | server pre-check passes on arm64, 8 bots (#641, #667, #672, #674); next the x86 client (antec-win console) |
@@ -57,6 +56,7 @@ Other `burndown` issues are off these gates or wait on the owner.
 
 Merge SHAs are in `git log`.
 
+- Row 52, the map sweep: all 21 stock MP maps load and rotate in one 64-bit ASan dedicated server (#709-#712). LAN join, reconnect and map_restart pass on all five 64-bit platforms (#695-#697, #707).
 - K4 19/25: RawFile through XModel (#633-#678; headers #644, #656, #659; renderer families and LoadedSound headless-only). Per-symbol x86 identity check (#647).
 - G2 soak (row 45) passes on lin64 and arm64 (`scripts/g2_run.py`, #636; #639). Row 47's server pre-check runs 8 bots clean.
 - G5: all five 64-bit clients in-game (rows 44, 49); cinematics through FFmpeg (row 41, #654, #660); audio through OpenAL Soft, default on for POSIX (row 51); screenshot regression set (row 50, #673); Linux client exports no symbols (#655).
