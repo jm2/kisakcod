@@ -161,7 +161,7 @@ Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP
 | `cl_maxppf` (5, [1,10]): pings per frame; `CL_UpdateVisiblePings` rewritten | to do |
 | `fs_usedevdir` (bool, INIT) | to do |
 | `serverInfo_t` 0x9c, not 0x94 | kept at 0x94; `servercache.dat` stays 1.0 |
-| Debug defaults: `sv_cheats`, `logfile`, `loc_warnings*`, `monkeytoy`, `r_showMissingLightGrid` are 0; `developer_script`, `com_timescale`, `g_fog*ReadOnly` flags | one "retail defaults" PR before 0.1.0 |
+| Debug defaults: `sv_cheats`, `logfile`, `loc_warnings*`, `monkeytoy`, `r_showMissingLightGrid` are 0; `developer_script`, `com_timescale`, `g_fog*ReadOnly` flags | #730 |
 | `com_maxfps` 250, `r_fullscreen` 0 | intentional, kept |
 | Lagometer layout constants | client HUD, not imported |
 
