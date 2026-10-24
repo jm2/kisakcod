@@ -1285,6 +1285,8 @@ void HashClipMap(GraphHashBuilder &builder, const XAssetHeader &header)
             HashDynEntityDef(builder, DB_DynEntityDefView(map.dynEntDefList[list], static_cast<int32_t>(i)));
     }
     builder.FieldU64(53, map.checksum);
+}
+
 // words 4-byte scalars from offset in record, as bytes: one of the runs the
 // 64-bit loader copies whole (disk32/24-menu.schema), so they sit alike at
 // both widths.
