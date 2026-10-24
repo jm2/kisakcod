@@ -2,7 +2,8 @@
 // at native width, compiled as the headless server compiles them: trajectory
 // evaluation for every trType, the playerState event ring, the
 // playerState-to-entityState conversion the server snapshots (including the
-// event routing through pmoveHandlers), and HUD colour fades. The engine
+// event routing through pmoveHandlers), HUD colour fades, and the 1.8 MP
+// player_lean_* defaults BG_RegisterDvars registers. The engine
 // boundary is stubbed; section GC drops the paths the checks never reach, and
 // the stubs that should stay unreached abort, as does any engine assert.
 
@@ -213,6 +214,47 @@ void TestHeadlessShockVolumeLines()
             && std::count(g_parsedShock.begin(), g_parsedShock.end(), '\n') == 4,
         "other lines and line breaks kept");
 }
+
+// The float defaults BG_RegisterDvars registers.
+struct FloatDefault
+{
+    std::string name;
+    float value;
+};
+std::vector<FloatDefault> g_floatDefaults;
+dvar_s g_dvar{};
+
+const FloatDefault *Registered(const char *name)
+{
+    for (const FloatDefault &recorded : g_floatDefaults)
+    {
+        if (recorded.name == name)
+            return &recorded;
+    }
+    return nullptr;
+}
+
+// The Steam 1.8 MP executable's player_lean_* defaults; the 1.0 code had
+// 2.5, 12.5, 13, 1.25, 1.25, 1.25 and 1 for all but shift_left.
+void TestLeanDefaults()
+{
+    BG_RegisterDvars();
+    const FloatDefault expected[] = {
+        {"player_lean_shift_left", 5.0f},
+        {"player_lean_shift_right", 9.0f},
+        {"player_lean_shift_crouch_left", 4.0f},
+        {"player_lean_shift_crouch_right", 15.0f},
+        {"player_lean_rotate_left", 0.8f},
+        {"player_lean_rotate_right", 0.4f},
+        {"player_lean_rotate_crouch_left", 0.8f},
+        {"player_lean_rotate_crouch_right", 0.3f},
+    };
+    for (const FloatDefault &lean : expected)
+    {
+        const FloatDefault *const registered = Registered(lean.name.c_str());
+        Check(registered && Near(registered->value, lean.value), lean.name.c_str());
+    }
+}
 } // namespace
 
 // The engine boundary bg_misc.cpp's tested paths reach. MyAssertHandler comes
@@ -268,6 +310,50 @@ bool __cdecl Dvar_GetBool(const char *)
     return false; // showevents
 }
 
+const dvar_s *__cdecl Dvar_RegisterFloat(const char *name, float value, DvarLimits, uint16_t, const char *)
+{
+    g_floatDefaults.push_back({name, value});
+    return &g_dvar;
+}
+
+const dvar_s *__cdecl Dvar_RegisterBool(const char *, bool, uint16_t, const char *)
+{
+    return &g_dvar;
+}
+
+const dvar_s *__cdecl Dvar_RegisterInt(const char *, int, DvarLimits, uint16_t, const char *)
+{
+    return &g_dvar;
+}
+
+const dvar_s *__cdecl Dvar_RegisterVec2(const char *, float, float, DvarLimits, uint16_t, const char *)
+{
+    return &g_dvar;
+}
+
+const dvar_s *__cdecl Dvar_RegisterString(const char *, const char *, uint16_t, const char *)
+{
+    return &g_dvar;
+}
+
+const dvar_s *__cdecl Dvar_RegisterEnum(const char *, const char **, int, uint16_t, const char *)
+{
+    return &g_dvar;
+}
+
+// The movement and perk dvars live in their own files.
+void __cdecl Jump_RegisterDvars()
+{
+}
+
+void __cdecl Mantle_RegisterDvars()
+{
+}
+
+void __cdecl Perks_RegisterDvars()
+{
+}
+
 int __cdecl PM_GetEffectiveStance(const playerState_s *)
 {
     return g_effectiveStance;
@@ -294,6 +380,7 @@ int main()
     TestPlayerStateToEntityState();
     TestHudColors();
     TestHeadlessShockVolumeLines();
+    TestLeanDefaults();
     if (g_failures == 0)
         std::puts("bg_misc contracts passed");
     return g_failures == 0 ? 0 : 1;

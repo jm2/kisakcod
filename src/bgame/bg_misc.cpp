@@ -367,7 +367,7 @@ void __cdecl BG_RegisterDvars()
     ming.value.min = 0.0f;
     player_lean_shift_right = Dvar_RegisterFloat(
         "player_lean_shift_right",
-        2.5f,
+        BG_LEAN_DEFAULT(9.0f, 2.5f), // KISAK: the 1.8 MP default
         ming,
         DVAR_CHEAT | DVAR_TEMP,
         "Amount to shift the player 3rd person model when leaning right");
@@ -375,7 +375,7 @@ void __cdecl BG_RegisterDvars()
     minh.value.min = 0.0f;
     player_lean_shift_crouch_left = Dvar_RegisterFloat(
         "player_lean_shift_crouch_left",
-        12.5f,
+        BG_LEAN_DEFAULT(4.0f, 12.5f), // KISAK: the 1.8 MP default
         minh,
         DVAR_CHEAT | DVAR_TEMP,
         "Amount to shift the player 3rd person model when crouch leaning left");
@@ -383,7 +383,7 @@ void __cdecl BG_RegisterDvars()
     mini.value.min = 0.0f;
     player_lean_shift_crouch_right = Dvar_RegisterFloat(
         "player_lean_shift_crouch_right",
-        13.0f,
+        BG_LEAN_DEFAULT(15.0f, 13.0f), // KISAK: the 1.8 MP default
         mini,
         DVAR_CHEAT | DVAR_TEMP,
         "Amount to shift the player 3rd person model when crouch leaning right");
@@ -391,7 +391,7 @@ void __cdecl BG_RegisterDvars()
     minj.value.min = 0.0f;
     player_lean_rotate_left = Dvar_RegisterFloat(
         "player_lean_rotate_left",
-        1.25f,
+        BG_LEAN_DEFAULT(0.8f, 1.25f), // KISAK: the 1.8 MP default
         minj,
         DVAR_CHEAT | DVAR_TEMP,
         "Amount to rotate the player 3rd person model when leaning left");
@@ -399,7 +399,7 @@ void __cdecl BG_RegisterDvars()
     mink.value.min = 0.0f;
     player_lean_rotate_right = Dvar_RegisterFloat(
         "player_lean_rotate_right",
-        1.25f,
+        BG_LEAN_DEFAULT(0.4f, 1.25f), // KISAK: the 1.8 MP default
         mink,
         DVAR_CHEAT | DVAR_TEMP,
         "Amount to rotate the player 3rd person model when leaning right");
@@ -407,7 +407,7 @@ void __cdecl BG_RegisterDvars()
     minl.value.min = 0.0f;
     player_lean_rotate_crouch_left = Dvar_RegisterFloat(
         "player_lean_rotate_crouch_left",
-        1.25f,
+        BG_LEAN_DEFAULT(0.8f, 1.25f), // KISAK: the 1.8 MP default
         minl,
         DVAR_CHEAT | DVAR_TEMP,
         "Amount to rotate the player 3rd person model when crouch leaning left");
@@ -415,7 +415,7 @@ void __cdecl BG_RegisterDvars()
     minm.value.min = 0.0f;
     player_lean_rotate_crouch_right = Dvar_RegisterFloat(
         "player_lean_rotate_crouch_right",
-        1.0f,
+        BG_LEAN_DEFAULT(0.3f, 1.0f), // KISAK: the 1.8 MP default
         minm,
         DVAR_CHEAT | DVAR_TEMP,
         "Amount to rotate the player 3rd person model when crouch leaning right");
