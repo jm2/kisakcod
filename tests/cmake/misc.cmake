@@ -719,6 +719,26 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         ${SRC_DIR}/server/sv_game.cpp)
 endif()
 
+# The game module's dvars (game_mp/g_main_mp.cpp G_RegisterDvars) carry the
+# Steam 1.8 executable's flags. Linux, clang and 64-bit only, as above.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-game-mp-dvars-tests game_mp_dvars_tests.cpp ${SRC_DIR}/game_mp/g_main_mp.cpp)
+    target_include_directories(kisakcod-game-mp-dvars-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-game-mp-dvars-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-game-mp-dvars-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS)
+    target_compile_options(kisakcod-game-mp-dvars-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-game-mp-dvars-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-game-mp-dvars-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-game-mp-dvars-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-game-mp-dvars-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME game-mp-dvars-1-8-flags COMMAND kisakcod-game-mp-dvars-tests)
+    set_tests_properties(game-mp-dvars-1-8-flags PROPERTIES TIMEOUT 20)
+endif()
+
 # 64-bit pointer truncations on headless server paths (WS-3 silent hazards):
 # the production TUs at 64-bit, one executable per subject (see the test's
 # header). Linux, clang and 64-bit only, for the reasons the dvar test gives;
