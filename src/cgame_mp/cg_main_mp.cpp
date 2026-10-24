@@ -1712,7 +1712,7 @@ void __cdecl CG_Init(int32_t localClientNum, int32_t serverMessageNum, int32_t s
     cgameGlob->bgs.animScriptData.soundAlias = Com_FindSoundAlias;
     cgameGlob->bgs.animScriptData.playSoundAlias = CG_PlayAnimScriptSoundAlias;
     cgameGlob->bgs.GetXModel = FX_RegisterModel;
-    cgameGlob->bgs.CreateDObj = (void(__cdecl *)(DObjModel_s *, uint16_t, XAnimTree_s *, int, int, clientInfo_t *))CG_CreateDObj;
+    cgameGlob->bgs.CreateDObj = CG_BgCreateDObj; // KISAK: typed thunk; CG_CreateDObj takes a uint32_t handle
     cgameGlob->bgs.AttachWeapon = CG_AttachWeapon;
     cgameGlob->bgs.GetDObj = CG_GetDObj;
     cgameGlob->bgs.SafeDObjFree = Com_SafeClientDObjFree;
@@ -2227,3 +2227,8 @@ uint8_t __cdecl CG_ShouldPlaySoundOnLocalClient()
     return 1;
 }
 
+void __cdecl CG_BgCreateDObj(DObjModel_s *dobjModels, uint16_t numModels, XAnimTree_s *tree, int32_t handle,
+    int32_t localClientNum, clientInfo_t *ci)
+{
+    CG_CreateDObj(dobjModels, numModels, tree, static_cast<uint32_t>(handle), localClientNum, ci);
+}
