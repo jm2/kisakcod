@@ -318,6 +318,15 @@ int main(int argc, char **argv)
     CHECK(Value(Body(g_reply), "protocol") == protocol);
     CHECK(Value(Body(g_reply), "challenge") == "xyz");
 
+    // A 1.8 server is pure unless the operator turns it off.
+    CHECK(Dvar_GetBool("sv_pure"));
+    CHECK(Value(Body(g_reply), "pure") == "1");
+    Dvar_SetBoolByName("sv_pure", false);
+    g_reply.clear();
+    SVC_Info(Remote());
+    CHECK(Value(Body(g_reply), "pure").empty());
+    Dvar_SetBoolByName("sv_pure", true);
+
     // A 1.8 server also advertises hardcore and oldschool once the game
     // scripts set them, the keys a 1.8 browser's filters read.
     CHECK(Value(Body(g_reply), "hc").empty());
