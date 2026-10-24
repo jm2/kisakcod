@@ -2789,7 +2789,7 @@ void __cdecl Dvar_SetCheatState()
 void __cdecl Dvar_Init()
 {
     isDvarSystemActive = 1;
-    dvar_cheats = Dvar_RegisterBool("sv_cheats", 1, DVAR_SYSTEMINFO | DVAR_INIT, "External Dvar");
+    dvar_cheats = Dvar_RegisterBool("sv_cheats", KISAK_MP18(0, 1), DVAR_SYSTEMINFO | DVAR_INIT, "External Dvar"); // KISAK: 1.8
     Dvar_AddCommands();
 }
 

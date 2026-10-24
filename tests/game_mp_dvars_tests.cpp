@@ -27,13 +27,14 @@ struct Registration
 {
     std::string name;
     uint16_t flags;
+    int value; // a bool's or int's default
 };
 std::vector<Registration> g_registered;
 dvar_s g_dvar{};
 
-const dvar_s *Record(const char *name, uint16_t flags)
+const dvar_s *Record(const char *name, uint16_t flags, int value = 0)
 {
-    g_registered.push_back({name, flags});
+    g_registered.push_back({name, flags, value});
     return &g_dvar;
 }
 
@@ -53,7 +54,7 @@ WEAK void MyAssertHandler(const char *filename, int line, int, const char *, ...
     std::fprintf(stderr, "assert %s:%d\n", filename, line);
     std::abort();
 }
-WEAK const dvar_s *Dvar_RegisterBool(const char *name, bool, uint16_t flags, const char *) { return Record(name, flags); }
+WEAK const dvar_s *Dvar_RegisterBool(const char *name, bool value, uint16_t flags, const char *) { return Record(name, flags, value); }
 WEAK const dvar_s *Dvar_RegisterInt(const char *name, int, DvarLimits, uint16_t flags, const char *) { return Record(name, flags); }
 WEAK const dvar_s *Dvar_RegisterFloat(const char *name, float, DvarLimits, uint16_t flags, const char *) { return Record(name, flags); }
 WEAK const dvar_s *Dvar_RegisterString(const char *name, const char *, uint16_t flags, const char *) { return Record(name, flags); }
@@ -75,6 +76,15 @@ int main()
     const Registration *const antilag = Registered("g_antilag");
     CHECK(antilag != nullptr);
     CHECK(antilag && antilag->flags == DVAR_ROM);
+
+    // 1.8 retail defaults: cheats off, and the setexpfog mirrors are not DVAR_TEMP.
+    const Registration *const cheats = Registered("sv_cheats");
+    CHECK(cheats && cheats->value == 0 && cheats->flags == DVAR_NOFLAG);
+    for (const char *fog : {"g_fogColorReadOnly", "g_fogStartDistReadOnly", "g_fogHalfDistReadOnly"})
+    {
+        const Registration *const registration = Registered(fog);
+        CHECK(registration && registration->flags == (DVAR_ROM | DVAR_CHEAT | DVAR_SAVED));
+    }
 
     if (g_failures == 0)
         std::printf("game_mp dvars: all checks passed\n");

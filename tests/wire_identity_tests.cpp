@@ -326,6 +326,7 @@ int main(int argc, char **argv)
     SVC_Info(Remote());
     CHECK(Value(Body(g_reply), "pure").empty());
     Dvar_SetBoolByName("sv_pure", true);
+    CHECK(!Dvar_GetBool("sv_cheats")); // and starts with cheats off
 
     // A 1.8 server also advertises hardcore and oldschool once the game
     // scripts set them, the keys a 1.8 browser's filters read.

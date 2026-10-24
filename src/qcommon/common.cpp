@@ -1849,11 +1849,11 @@ void Com_InitDvars()
     com_authPort = Dvar_RegisterInt("authPort", 20800, 0, 0xFFFF, DVAR_CHEAT, "Auth server port");
 #endif
     com_developer = Dvar_RegisterInt("developer", 0, 0, 2, DVAR_NOFLAG, "Enable development options");
-    com_developer_script = Dvar_RegisterBool("developer_script", 0, DVAR_NOFLAG, "Enable developer script comments");
+    com_developer_script = Dvar_RegisterBool("developer_script", 0, KISAK_MP18(DVAR_INIT, DVAR_NOFLAG), "Enable developer script comments"); // KISAK: 1.8
     com_developer_script_abort_on_error = Dvar_RegisterBool("developer_script_abort_on_error", 0, DVAR_NOFLAG, "Halt Execution when an error is found in the scripts (Retail does not do this)"); // LWSS ADD
     com_logfile = Dvar_RegisterInt(
         "logfile",
-        1,
+        KISAK_MP18(0, 1), // KISAK: 1.8
         0,
         2,
         DVAR_NOFLAG,
@@ -1869,7 +1869,7 @@ void Com_InitDvars()
 #endif
     com_devAutoexec = Dvar_RegisterBool(
         "com_devAutoexec", 0, 0, "Run the developer autoexec config at startup (retail never does)");
-    com_timescale = Dvar_RegisterFloat("com_timescale", 1.0, 0.001f, 1000.0f, DVAR_SYSTEMINFO | DVAR_ROM | DVAR_CHEAT | DVAR_TEMP | DVAR_SAVED, "Scale time of each frame");
+    com_timescale = Dvar_RegisterFloat("com_timescale", 1.0, 0.001f, 1000.0f, DVAR_SYSTEMINFO | DVAR_ROM | DVAR_CHEAT | KISAK_MP18(0, DVAR_TEMP) | DVAR_SAVED, "Scale time of each frame"); // KISAK: 1.8
     dev_timescale = Dvar_RegisterFloat("timescale", 1.0, 0.001f, 1000.0f, DVAR_CHEAT | DVAR_SYSTEMINFO, "Scale time of each frame");
     com_fixedtime = Dvar_RegisterInt("fixedtime", 0, 0, 1000, 0x80u, "Use a fixed time rate for each frame");
     com_maxFrameTime = Dvar_RegisterInt(
