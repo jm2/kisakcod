@@ -1210,6 +1210,45 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(fs-pure-iwd-names PROPERTIES TIMEOUT 20)
 endif()
 
+# The 1.8 browser hc/od keys (client_mp/cl_main_pc_mp.cpp, cl_ui_mp.cpp) and
+# filters (ui_mp/ui_main_mp.cpp). Linux and clang only, as above; the client's
+# defines. ui_main_mp.cpp needs dxvk-native's Win32 types, so the filter half
+# builds where pkg-config finds dxvk-d3d9, as the cinematic test does.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(KISAK_BROWSER_TESTS kisakcod-browser-hc-od-tests)
+    add_executable(kisakcod-browser-hc-od-tests browser_hc_od_tests.cpp ${SRC_DIR}/client_mp/cl_main_pc_mp.cpp
+        ${SRC_DIR}/client_mp/cl_ui_mp.cpp ${SRC_DIR}/universal/q_shared.cpp)
+    target_compile_definitions(kisakcod-browser-hc-od-tests PRIVATE KISAK_MP UNIX)
+    add_test(NAME browser-hc-od-1-8 COMMAND kisakcod-browser-hc-od-tests)
+    if (KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+        list(APPEND KISAK_BROWSER_TESTS kisakcod-browser-hc-od-filter-tests)
+        add_executable(kisakcod-browser-hc-od-filter-tests browser_hc_od_tests.cpp
+            ${SRC_DIR}/client_mp/cl_main_pc_mp.cpp ${SRC_DIR}/client_mp/cl_ui_mp.cpp ${SRC_DIR}/ui_mp/ui_main_mp.cpp
+            ${SRC_DIR}/universal/dvar.cpp ${SRC_DIR}/universal/q_shared.cpp)
+        target_compile_definitions(kisakcod-browser-hc-od-filter-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE
+            KISAK_TEST_BROWSER_FILTER)
+        target_link_libraries(kisakcod-browser-hc-od-filter-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+        # Decompiled displayServers is gap8EB4[4n - 7100], inside sharedUiInfo (#727).
+        target_compile_options(kisakcod-browser-hc-od-filter-tests PRIVATE -fno-sanitize=array-bounds)
+        add_dependencies(kisakcod-browser-hc-od-filter-tests update_build_number) # ui_main_mp.cpp: buildnumber.h
+        add_test(NAME browser-hc-od-filter-1-8 COMMAND kisakcod-browser-hc-od-filter-tests)
+        set_tests_properties(browser-hc-od-filter-1-8 PROPERTIES TIMEOUT 20)
+    endif()
+    foreach (t IN LISTS KISAK_BROWSER_TESTS)
+        target_include_directories(${t} SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+        target_compile_features(${t} PRIVATE cxx_std_20)
+        target_compile_options(${t} PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+        target_link_options(${t} PRIVATE -Wl,--gc-sections)
+        if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+            target_compile_options(${t} PRIVATE -fsanitize-address-globals-dead-stripping)
+            target_link_options(${t} PRIVATE -Wl,-z,start-stop-gc)
+        endif()
+        set_target_properties(${t} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    endforeach()
+    set_tests_properties(browser-hc-od-1-8 PROPERTIES TIMEOUT 20)
+endif()
+
 # FS_ReferencedIwdPureChecksums (universal/com_files.cpp): each call sends only
 # the current list. Linux and clang only, as above; the client's defines.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
