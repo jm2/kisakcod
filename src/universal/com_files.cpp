@@ -1806,7 +1806,7 @@ void __cdecl FS_AddIwdFilesForGameDirectory(char *path, char *pszGameFolder)
     {
         if (list)
             FS_FreeFileList((const char **)list);
-        return;
+        return FS_RequireMainIwds(path, pszGameFolder); // KISAK: 1.8
     }
     if (numfiles > static_cast<int32_t>(ARRAY_COUNT(s0)))
     {
@@ -3388,5 +3388,13 @@ bool FS_SkipUnofficialIwd(const char *path, const char *pszGameFolder, const cha
     return true;
 #else
     return false;
+#endif
+}
+
+void FS_RequireMainIwds(const char *path, const char *pszGameFolder)
+{
+#ifdef KISAK_MP
+    if (!I_stricmp(pszGameFolder, "main") && !I_stricmp(path, fs_basepath->current.string))
+        Com_Error(ERR_FATAL, "No IWD files found in /main");
 #endif
 }
