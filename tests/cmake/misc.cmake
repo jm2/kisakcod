@@ -1224,6 +1224,26 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(cg-scoreboard-rank-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# CG_BgCreateDObj (cgame_mp/cg_main_mp.cpp): the bgame DObj callback has
+# bgs_t's type and forwards to CG_CreateDObj (#676). Linux and clang only, as
+# above; the client's defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cg-bg-callbacks-tests cg_bg_callbacks_tests.cpp ${SRC_DIR}/cgame_mp/cg_main_mp.cpp)
+    target_include_directories(kisakcod-cg-bg-callbacks-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-cg-bg-callbacks-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-cg-bg-callbacks-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-cg-bg-callbacks-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cg-bg-callbacks-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-cg-bg-callbacks-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-cg-bg-callbacks-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-cg-bg-callbacks-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cg-bg-callbacks-contracts COMMAND kisakcod-cg-bg-callbacks-tests)
+    set_tests_properties(cg-bg-callbacks-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # FS_PureServerSetLoadedIwds (qcommon/files.cpp) at 64-bit: a pure server's
 # iwd names survive to the next gamestate. Linux and clang only, as above; the
 # client's defines.

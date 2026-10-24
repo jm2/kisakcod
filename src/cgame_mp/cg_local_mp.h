@@ -528,6 +528,9 @@ void __cdecl CG_CreateDObj(
     int32_t localClientNum,
     clientInfo_t *ci);
 DObj_s *__cdecl CG_GetDObj(uint32_t handle, int32_t localClientNum);
+// The bgame DObj callback (cgameGlob->bgs), typed as bgs_t declares it.
+void __cdecl CG_BgCreateDObj(DObjModel_s *dobjModels, uint16_t numModels, XAnimTree_s *tree, int32_t handle,
+    int32_t localClientNum, clientInfo_t *ci);
 void __cdecl CG_LoadAnimTreeInstances(int32_t localClientNum);
 void __cdecl CG_InitEntities(int32_t localClientNum);
 void __cdecl CG_InitViewDimensions(int32_t localClientNum);
