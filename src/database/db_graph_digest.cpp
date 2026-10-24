@@ -29,6 +29,7 @@
 #include <universal/gfx_image.h>
 #include <universal/gfx_lightdef.h>
 #include <universal/gfx_material.h>
+#include <universal/gfx_world.h>
 #include <universal/q_shared.h>
 #include <xanim/dobj.h>
 
@@ -1287,6 +1288,263 @@ void HashClipMap(GraphHashBuilder &builder, const XAssetHeader &header)
     builder.FieldU64(53, map.checksum);
 }
 
+// A world AABB node: its bounds and counts, its children as a node count from
+// this node (the loader rescales the byte offset to the native stride), and
+// its static-model indices.
+void HashGfxAabbTree(GraphHashBuilder &builder, const GfxAabbTree &tree)
+{
+    builder.FieldBytes(60, tree.mins, sizeof(tree.mins));
+    builder.FieldBytes(60, tree.maxs, sizeof(tree.maxs));
+    builder.FieldU64(61, tree.childCount);
+    builder.FieldU64(61, tree.surfaceCount);
+    builder.FieldU64(61, tree.startSurfIndex);
+    builder.FieldU64(61, tree.surfaceCountNoDecal);
+    builder.FieldU64(61, tree.startSurfIndexNoDecal);
+    builder.FieldU64(61, tree.smodelIndexCount);
+    FieldArray(builder, 62, tree.smodelIndexes, tree.smodelIndexCount);
+    constexpr std::int32_t stride = sizeof(GfxAabbTree);
+    std::int64_t children = tree.childrenOffset;
+    if (children > 0)
+        children = children % stride ? -1 : children / stride;
+    builder.FieldI64(63, children);
+}
+
+// A portal without its writable culling state: its plane, its cell as an
+// index into the world's cells, its vertices and hull axes.
+void HashGfxPortal(GraphHashBuilder &builder, const GfxWorld &world, const GfxPortal &portal)
+{
+    builder.FieldBytes(64, portal.plane.coeffs, sizeof(portal.plane.coeffs));
+    builder.FieldBytes(64, portal.plane.side, sizeof(portal.plane.side));
+    FieldIndex(builder, 65, portal.cell, world.cells, Count(world.dpvsPlanes.cellCount));
+    builder.FieldU64(66, portal.vertexCount);
+    FieldArray(builder, 66, portal.vertices, portal.vertexCount);
+    builder.FieldBytes(67, portal.hullAxis, sizeof(portal.hullAxis));
+}
+
+void HashGfxCell(GraphHashBuilder &builder, const GfxWorld &world, const GfxCell &cell)
+{
+    builder.FieldBytes(68, cell.mins, sizeof(cell.mins));
+    builder.FieldBytes(68, cell.maxs, sizeof(cell.maxs));
+    builder.FieldI64(69, cell.aabbTreeCount);
+    const int trees = cell.aabbTree ? cell.aabbTreeCount : 0;
+    for (int i = 0; i < trees; ++i)
+        HashGfxAabbTree(builder, cell.aabbTree[i]);
+    builder.FieldI64(70, cell.portalCount);
+    const int portals = cell.portals ? cell.portalCount : 0;
+    for (int i = 0; i < portals; ++i)
+        HashGfxPortal(builder, world, cell.portals[i]);
+    builder.FieldI64(71, cell.cullGroupCount);
+    FieldArray(builder, 71, cell.cullGroups, Count(cell.cullGroupCount));
+    builder.FieldU64(72, cell.reflectionProbeCount);
+    FieldArray(builder, 72, cell.reflectionProbes, cell.reflectionProbeCount);
+}
+
+void HashGfxLight(GraphHashBuilder &builder, const GfxLight *light)
+{
+    builder.FieldU64(73, light != nullptr);
+    if (!light)
+        return;
+    builder.FieldU64(74, light->type);
+    builder.FieldU64(74, light->canUseShadowMap);
+    builder.FieldBytes(74, light->unused, sizeof(light->unused));
+    builder.FieldBytes(75, light->color, sizeof(light->color));
+    builder.FieldBytes(75, light->dir, sizeof(light->dir));
+    builder.FieldBytes(75, light->origin, sizeof(light->origin));
+    builder.FieldF32(75, light->radius);
+    builder.FieldF32(75, light->cosHalfFovOuter);
+    builder.FieldF32(75, light->cosHalfFovInner);
+    builder.FieldI64(76, light->exponent);
+    builder.FieldU64(76, light->spotShadowIndex);
+    FieldAsset(builder, 77, ASSET_TYPE_LIGHT_DEF, light->def);
+}
+
+// The light grid's records and arrays, each as the bytes its count covers;
+// the row starts span the grid's rows on its row axis.
+void HashGfxLightGrid(GraphHashBuilder &builder, const GfxLightGrid &grid)
+{
+    FieldBool(builder, 78, grid.hasLightRegions);
+    builder.FieldU64(79, grid.sunPrimaryLightIndex);
+    builder.FieldBytes(79, grid.mins, sizeof(grid.mins));
+    builder.FieldBytes(79, grid.maxs, sizeof(grid.maxs));
+    builder.FieldU64(79, grid.rowAxis);
+    builder.FieldU64(79, grid.colAxis);
+    std::size_t rows = 0;
+    if (grid.rowAxis < 3 && grid.maxs[grid.rowAxis] >= grid.mins[grid.rowAxis])
+        rows = grid.maxs[grid.rowAxis] - grid.mins[grid.rowAxis] + 1u;
+    FieldArray(builder, 80, grid.rowDataStart, rows);
+    builder.FieldU64(81, grid.rawRowDataSize);
+    FieldArray(builder, 81, grid.rawRowData, grid.rawRowDataSize);
+    builder.FieldU64(82, grid.entryCount);
+    FieldArray(builder, 82, grid.entries, grid.entryCount);
+    builder.FieldU64(83, grid.colorCount);
+    FieldArray(builder, 83, grid.colors, grid.colorCount);
+}
+
+// Each primary light's shadow geometry and light-region hulls.
+void HashGfxPrimaryLights(GraphHashBuilder &builder, const GfxWorld &world)
+{
+    const std::size_t lights = world.shadowGeom ? world.primaryLightCount : 0;
+    for (std::size_t i = 0; i < lights; ++i)
+    {
+        const GfxShadowGeometry &shadow = world.shadowGeom[i];
+        builder.FieldU64(84, shadow.surfaceCount);
+        FieldArray(builder, 84, shadow.sortedSurfIndex, shadow.surfaceCount);
+        builder.FieldU64(85, shadow.smodelCount);
+        FieldArray(builder, 85, shadow.smodelIndex, shadow.smodelCount);
+    }
+    const std::size_t regions = world.lightRegion ? world.primaryLightCount : 0;
+    for (std::size_t i = 0; i < regions; ++i)
+    {
+        const GfxLightRegion &region = world.lightRegion[i];
+        builder.FieldU64(86, region.hullCount);
+        const std::size_t hulls = region.hulls ? region.hullCount : 0;
+        for (std::size_t h = 0; h < hulls; ++h)
+        {
+            const GfxLightRegionHull &hull = region.hulls[h];
+            builder.FieldBytes(87, hull.kdopMidPoint, sizeof(hull.kdopMidPoint));
+            builder.FieldBytes(87, hull.kdopHalfSize, sizeof(hull.kdopHalfSize));
+            builder.FieldU64(88, hull.axisCount);
+            FieldArray(builder, 88, hull.axis, hull.axisCount);
+        }
+    }
+}
+
+// The static DPVS tables the zone holds: counts and ranges, sorted surfaces,
+// static-model instances, surfaces with their materials by name, cull groups
+// and draw instances. Left out: the visibility, LOD, draw-key and sun-shadow
+// arrays the loader allocates for the renderer, the usage count, and each
+// draw instance's static-model cache slots and lighting handle, which the
+// renderer assigns.
+void HashGfxDpvsStatic(GraphHashBuilder &builder, const GfxWorld &world)
+{
+    const GfxWorldDpvsStatic &dpvs = world.dpvs;
+    // smodelCount through surfaceVisDataCount: eleven uint32 counts and ranges.
+    builder.FieldBytes(89, &dpvs.smodelCount, 11 * sizeof(std::uint32_t));
+    FieldArray(builder, 90, dpvs.sortedSurfIndex,
+               static_cast<std::size_t>(dpvs.staticSurfaceCount) + dpvs.staticSurfaceCountNoDecal);
+    FieldArray(builder, 91, dpvs.smodelInsts, dpvs.smodelCount);
+    const std::size_t surfaces = dpvs.surfaces ? Count(world.surfaceCount) : 0;
+    for (std::size_t i = 0; i < surfaces; ++i)
+    {
+        const GfxSurface &surface = dpvs.surfaces[i];
+        builder.FieldBytes(92, &surface.tris, sizeof(surface.tris));
+        FieldAsset(builder, 93, ASSET_TYPE_MATERIAL, surface.material);
+        builder.FieldU64(94, surface.lightmapIndex);
+        builder.FieldU64(94, surface.reflectionProbeIndex);
+        builder.FieldU64(94, surface.primaryLightIndex);
+        builder.FieldU64(94, surface.flags);
+        builder.FieldBytes(94, surface.bounds, sizeof(surface.bounds));
+    }
+    FieldArray(builder, 95, dpvs.cullGroups, Count(world.cullGroupCount));
+    const std::size_t smodels = dpvs.smodelDrawInsts ? dpvs.smodelCount : 0;
+    for (std::size_t i = 0; i < smodels; ++i)
+    {
+        const GfxStaticModelDrawInst &inst = dpvs.smodelDrawInsts[i];
+        builder.FieldF32(96, inst.cullDist);
+        builder.FieldBytes(96, &inst.placement, sizeof(inst.placement));
+        FieldAsset(builder, 97, ASSET_TYPE_XMODEL, inst.model);
+        builder.FieldU64(98, inst.reflectionProbeIndex);
+        builder.FieldU64(98, inst.primaryLightIndex);
+        builder.FieldU64(98, inst.flags);
+    }
+}
+
+// The head of the record: names, indices, the sky, vertices and vertex
+// layers, the sun parse parameters and light, and the reflection probes.
+void HashGfxWorldHead(GraphHashBuilder &builder, const GfxWorld &world)
+{
+    builder.FieldString(1, world.name);
+    builder.FieldString(2, world.baseName);
+    builder.FieldI64(3, world.planeCount);
+    builder.FieldI64(3, world.nodeCount);
+    builder.FieldI64(4, world.indexCount);
+    FieldArray(builder, 4, world.indices, Count(world.indexCount));
+    builder.FieldI64(5, world.surfaceCount);
+    builder.FieldI64(6, world.skySurfCount);
+    FieldArray(builder, 6, world.skyStartSurfs, Count(world.skySurfCount));
+    FieldAsset(builder, 7, ASSET_TYPE_IMAGE, world.skyImage);
+    builder.FieldU64(7, world.skySamplerState);
+    builder.FieldU64(8, world.vertexCount);
+    FieldArray(builder, 8, world.vd.vertices, world.vertexCount);
+    builder.FieldU64(9, world.vertexLayerDataSize);
+    FieldArray(builder, 9, world.vld.data, world.vertexLayerDataSize);
+    const SunLightParseParams &sun = world.sunParse;
+    builder.FieldBytes(10, sun.name, sizeof(sun.name));
+    // ambientScale through diffuseColor: twelve floats.
+    builder.FieldBytes(10, &sun.ambientScale, 12 * sizeof(float));
+    FieldBool(builder, 10, sun.diffuseColorHasBeenSet);
+    builder.FieldBytes(10, sun.angles, sizeof(sun.angles));
+    HashGfxLight(builder, world.sunLight);
+    builder.FieldBytes(11, world.sunColorFromBsp, sizeof(world.sunColorFromBsp));
+    builder.FieldU64(11, world.sunPrimaryLightIndex);
+    builder.FieldU64(11, world.primaryLightCount);
+    builder.FieldI64(11, world.cullGroupCount);
+    builder.FieldU64(12, world.reflectionProbeCount);
+    const std::size_t probes = world.reflectionProbes ? world.reflectionProbeCount : 0;
+    for (std::size_t i = 0; i < probes; ++i)
+    {
+        builder.FieldBytes(13, world.reflectionProbes[i].origin, sizeof(world.reflectionProbes[i].origin));
+        FieldAsset(builder, 13, ASSET_TYPE_IMAGE, world.reflectionProbes[i].reflectionImage);
+    }
+}
+
+// The world in record order. Left out: renderer objects (vertex buffers and
+// the probe and lightmap textures), the scene, shadow-visibility and caster
+// arrays the loader allocates for the renderer, and each brush model's and
+// portal's writable state, which the game rewrites.
+void HashGfxWorld(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const GfxWorld &world = *header.gfxWorld;
+    HashGfxWorldHead(builder, world);
+    builder.FieldI64(14, world.dpvsPlanes.cellCount);
+    FieldArray(builder, 14, world.dpvsPlanes.planes, Count(world.planeCount));
+    FieldArray(builder, 14, world.dpvsPlanes.nodes, Count(world.nodeCount));
+    builder.FieldI64(15, world.cellBitsCount);
+    const std::size_t cells = world.cells ? Count(world.dpvsPlanes.cellCount) : 0;
+    for (std::size_t i = 0; i < cells; ++i)
+        HashGfxCell(builder, world, world.cells[i]);
+    builder.FieldI64(16, world.lightmapCount);
+    const std::size_t lightmaps = world.lightmaps ? Count(world.lightmapCount) : 0;
+    for (std::size_t i = 0; i < lightmaps; ++i)
+    {
+        FieldAsset(builder, 17, ASSET_TYPE_IMAGE, world.lightmaps[i].primary);
+        FieldAsset(builder, 17, ASSET_TYPE_IMAGE, world.lightmaps[i].secondary);
+    }
+    HashGfxLightGrid(builder, world.lightGrid);
+    builder.FieldI64(18, world.modelCount);
+    const std::size_t models = world.models ? Count(world.modelCount) : 0;
+    for (std::size_t i = 0; i < models; ++i)
+    {
+        const GfxBrushModel &model = world.models[i];
+        builder.FieldBytes(19, model.bounds, sizeof(model.bounds));
+        builder.FieldU64(19, model.surfaceCount);
+        builder.FieldU64(19, model.startSurfIndex);
+        builder.FieldU64(19, model.surfaceCountNoDecal);
+    }
+    builder.FieldBytes(20, world.mins, sizeof(world.mins));
+    builder.FieldBytes(20, world.maxs, sizeof(world.maxs));
+    builder.FieldU64(20, world.checksum);
+    builder.FieldI64(21, world.materialMemoryCount);
+    const std::size_t memory = world.materialMemory ? Count(world.materialMemoryCount) : 0;
+    for (std::size_t i = 0; i < memory; ++i)
+    {
+        FieldAsset(builder, 22, ASSET_TYPE_MATERIAL, world.materialMemory[i].material);
+        builder.FieldI64(22, world.materialMemory[i].memory);
+    }
+    const sunflare_t &flare = world.sun;
+    FieldBool(builder, 23, flare.hasValidData);
+    FieldAsset(builder, 24, ASSET_TYPE_MATERIAL, flare.spriteMaterial);
+    FieldAsset(builder, 24, ASSET_TYPE_MATERIAL, flare.flareMaterial);
+    // spriteSize through sunFxPosition: twenty-one 4-byte floats and ints.
+    builder.FieldBytes(25, &flare.spriteSize, 21 * 4);
+    builder.FieldBytes(26, world.outdoorLookupMatrix, sizeof(world.outdoorLookupMatrix));
+    FieldAsset(builder, 26, ASSET_TYPE_IMAGE, world.outdoorImage);
+    HashGfxPrimaryLights(builder, world);
+    HashGfxDpvsStatic(builder, world);
+    builder.FieldBytes(27, world.dpvsDyn.dynEntClientWordCount, sizeof(world.dpvsDyn.dynEntClientWordCount));
+    builder.FieldBytes(27, world.dpvsDyn.dynEntClientCount, sizeof(world.dpvsDyn.dynEntClientCount));
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -1335,6 +1593,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashXModelPieces;
     case ASSET_TYPE_CLIPMAP_PVS:
         return HashClipMap;
+    case ASSET_TYPE_GFXWORLD:
+        return HashGfxWorld;
     default:
         return nullptr;
     }
