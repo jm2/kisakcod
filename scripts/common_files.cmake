@@ -61,7 +61,7 @@ set(EFFECTSCORE
     "${SRC_DIR}/database/db_fx_zone_adapter_wiring.cpp"
     "${SRC_DIR}/database/db_fx_zone_adapter_wiring.h"
     "${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp"
-    "${SRC_DIR}/EffectsCore/fx_effect_def.h"
+    "${SRC_DIR}/universal/fx_effect_def.h"
     "${SRC_DIR}/EffectsCore/fx_beam.cpp"
     "${SRC_DIR}/EffectsCore/fx_convert.cpp"
     "${SRC_DIR}/EffectsCore/fx_draw.cpp"

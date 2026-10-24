@@ -1,6 +1,6 @@
 #include <EffectsCore/fx_fastfile_zone_adapter_disk32.h>
 
-#include <EffectsCore/fx_effect_def.h>
+#include <universal/fx_effect_def.h>
 #include <EffectsCore/fx_runtime.h>
 
 #include <cstring>

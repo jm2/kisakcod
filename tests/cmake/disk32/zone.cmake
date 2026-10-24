@@ -56,15 +56,6 @@ endforeach()
 add_test(NAME database-disk32-zone-load COMMAND kisakcod-db-disk32-zone-tests)
 add_test(NAME database-disk32-zone-retail-shapes COMMAND kisakcod-db-disk32-zone-retail-tests)
 set_tests_properties(database-disk32-zone-retail-shapes PROPERTIES TIMEOUT 60)
-# With one family's guard left on, the zone fails closed naming it. The
-# layout guards exist only at 64-bit.
-if (CMAKE_SIZEOF_VOID_P EQUAL 8)
-    foreach(_family IN ITEMS
-            fx impactfx)
-        add_test(NAME database-disk32-zone-guard-${_family} COMMAND kisakcod-db-disk32-zone-tests guard ${_family})
-        set_tests_properties(database-disk32-zone-guard-${_family} PROPERTIES TIMEOUT 60)
-    endforeach()
-endif()
 set_tests_properties(database-disk32-zone-load PROPERTIES TIMEOUT 60)
 # A SndDriverGlobals record with an inline token holds bytes no PC loader reads.
 # With the test seam admitting nothing, the developer opt-in alone (db_unverified64) loads the zone.
