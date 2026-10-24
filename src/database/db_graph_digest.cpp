@@ -25,7 +25,6 @@
 #include <physics/phys_local.h>
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
-#include <ui/ui_shared.h>
 #include <universal/fft.h>
 #include <universal/gfx_image.h>
 #include <universal/gfx_lightdef.h>
