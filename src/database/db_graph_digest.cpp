@@ -1287,6 +1287,191 @@ void HashClipMap(GraphHashBuilder &builder, const XAssetHeader &header)
     builder.FieldU64(53, map.checksum);
 }
 
+// words 4-byte scalars from offset in record, as bytes: one of the runs the
+// 64-bit loader copies whole (disk32/24-menu.schema), so they sit alike at
+// both widths.
+template <typename Record>
+void FieldWords(GraphHashBuilder &builder, std::uint32_t tag, const Record &record, std::size_t offset,
+                std::size_t words)
+{
+    builder.FieldBytes(tag, reinterpret_cast<const unsigned char *>(&record) + offset, words * 4);
+}
+
+// A window: its name, rectangles, group, style through static flags, colors
+// and background by name. Not dynamicFlags or nextTime: the UI writes them as
+// it draws.
+void HashWindow(GraphHashBuilder &builder, const windowDef_t &window)
+{
+    static_assert(offsetof(windowDef_t, rectClient) - offsetof(windowDef_t, rect) == 6 * 4);
+    static_assert(offsetof(windowDef_t, staticFlags) - offsetof(windowDef_t, style) == 5 * 4);
+    static_assert(offsetof(windowDef_t, outlineColor) - offsetof(windowDef_t, foreColor) == 12 * 4);
+    builder.FieldString(1, window.name);
+    FieldWords(builder, 2, window, offsetof(windowDef_t, rect), 12);
+    builder.FieldString(3, window.group);
+    FieldWords(builder, 4, window, offsetof(windowDef_t, style), 6);
+    FieldWords(builder, 5, window, offsetof(windowDef_t, foreColor), 16);
+    FieldAsset(builder, 6, ASSET_TYPE_MATERIAL, window.background);
+}
+
+// A key-handler chain: each handler's key and action, in order.
+void HashKeyHandlers(GraphHashBuilder &builder, const ItemKeyHandler *handler)
+{
+    for (; handler; handler = handler->next)
+    {
+        builder.FieldI64(7, handler->key);
+        builder.FieldString(8, handler->action);
+    }
+    builder.FieldU64(9, 0);
+}
+
+// A statement's entries: an operator's number, or an operand's type and its
+// string or its 4-byte int or float bits.
+void HashStatement(GraphHashBuilder &builder, const statement_s &statement)
+{
+    builder.FieldI64(10, statement.numEntries);
+    const int entries = statement.entries && statement.numEntries > 0 ? statement.numEntries : 0;
+    for (int i = 0; i < entries; ++i)
+    {
+        const expressionEntry *entry = statement.entries[i];
+        builder.FieldU64(11, entry != nullptr);
+        if (!entry)
+            continue;
+        builder.FieldI64(12, entry->type);
+        if (!entry->type)
+        {
+            builder.FieldI64(13, entry->data.op);
+            continue;
+        }
+        const Operand &operand = entry->data.operand;
+        builder.FieldI64(14, operand.dataType);
+        if (operand.dataType == VAL_STRING)
+            builder.FieldString(15, operand.internals.string);
+        else
+            builder.FieldI64(16, operand.internals.intVal);
+    }
+}
+
+// Load_itemDefData_t's types that hold data: a list box (6), an edit field
+// (0, 4, 9, 10, 11, 14, 16, 17 and 18), a multi-value (12) or an enum dvar
+// (13). Any other type's slot is not data.
+constexpr int kItemTypeListBox = 6;
+constexpr int kItemTypeMulti = 12;
+constexpr int kItemTypeEnumDvar = 13;
+
+bool ItemTypeHasData(int type)
+{
+    constexpr std::uint32_t kTypesWithData = 1u << 0 | 1u << 4 | 1u << 6 | 1u << 9 | 1u << 10 | 1u << 11 | 1u << 12
+        | 1u << 13 | 1u << 14 | 1u << 16 | 1u << 17 | 1u << 18;
+    return type >= 0 && type < 32 && (kTypesWithData >> type & 1u);
+}
+
+// A list box: its padding, element sizes and style, columns, double-click
+// script, flags, colors and select icon by name. Not mousePos, startPos or
+// endPos: the UI writes them as it scrolls.
+void HashListBox(GraphHashBuilder &builder, const listBoxDef_s &listBox)
+{
+    static_assert(offsetof(listBoxDef_s, numColumns) - offsetof(listBoxDef_s, drawPadding) == 4 * 4);
+    static_assert(offsetof(listBoxDef_s, disableColor) - offsetof(listBoxDef_s, notselectable) == 7 * 4);
+    FieldWords(builder, 20, listBox, offsetof(listBoxDef_s, drawPadding), 5);
+    FieldArray(builder, 21, listBox.columnInfo, std::size(listBox.columnInfo));
+    builder.FieldString(22, listBox.doubleClick);
+    FieldWords(builder, 23, listBox, offsetof(listBoxDef_s, notselectable), 11);
+    FieldAsset(builder, 24, ASSET_TYPE_MATERIAL, listBox.selectIcon);
+}
+
+// An item's type data, by its type.
+void HashItemTypeData(GraphHashBuilder &builder, const itemDef_s &item)
+{
+    const bool hasData = ItemTypeHasData(item.type) && item.typeData.data;
+    builder.FieldU64(25, hasData);
+    if (!hasData)
+        return;
+    switch (item.type)
+    {
+    case kItemTypeListBox:
+        HashListBox(builder, *item.typeData.listBox);
+        return;
+    case kItemTypeMulti:
+    {
+        const multiDef_s &multi = *item.typeData.multi;
+        FieldStrings(builder, 26, multi.dvarList, std::size(multi.dvarList));
+        FieldStrings(builder, 26, multi.dvarStr, std::size(multi.dvarStr));
+        FieldArray(builder, 27, multi.dvarValue, std::size(multi.dvarValue));
+        builder.FieldI64(28, multi.count);
+        builder.FieldI64(28, multi.strDef);
+        return;
+    }
+    case kItemTypeEnumDvar:
+        builder.FieldString(29, item.typeData.enumDvarName);
+        return;
+    default:
+        FieldArray(builder, 30, item.typeData.editField, 1);
+        return;
+    }
+}
+
+// An item in record order: its window and text rectangle, type and text
+// layout, scripts, key handlers, dvar fields, focus sound by name, type data
+// and statements. Not parent, which the menu sets when it publishes, or
+// cursorPos, which the UI writes.
+void HashItem(GraphHashBuilder &builder, const itemDef_s &item)
+{
+    static_assert(offsetof(itemDef_s, gameMsgWindowMode) - offsetof(itemDef_s, dataType) == 9 * 4);
+    HashWindow(builder, item.window);
+    FieldWords(builder, 31, item, offsetof(itemDef_s, textRect), 6);
+    builder.FieldI64(32, item.type);
+    FieldWords(builder, 33, item, offsetof(itemDef_s, dataType), 10);
+    builder.FieldString(34, item.text);
+    builder.FieldI64(35, item.itemFlags);
+    const char *const strings[] = {item.mouseEnterText, item.mouseExitText, item.mouseEnter, item.mouseExit,
+                                   item.action,         item.onAccept,      item.onFocus,    item.leaveFocus,
+                                   item.dvar,           item.dvarTest};
+    FieldStrings(builder, 36, strings, std::size(strings));
+    HashKeyHandlers(builder, item.onKey);
+    builder.FieldString(37, item.enableDvar);
+    builder.FieldI64(38, item.dvarFlags);
+    FieldAsset(builder, 39, ASSET_TYPE_SOUND, item.focusSound);
+    builder.FieldF32(40, item.special);
+    HashItemTypeData(builder, item);
+    builder.FieldI64(41, item.imageTrack);
+    for (const statement_s *statement : {&item.visibleExp, &item.textExp, &item.materialExp, &item.rectXExp,
+                                         &item.rectYExp, &item.rectWExp, &item.rectHExp, &item.forecolorAExp})
+        HashStatement(builder, *statement);
+}
+
+// The menu in record order: its window, font, counts, fade and blur, scripts,
+// key handlers, statements, binding and sound names, colors and items. Not
+// cursorItem, which the UI writes.
+void HashMenu(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const menuDef_t &menu = *header.menu;
+    static_assert(offsetof(menuDef_t, blurRadius) - offsetof(menuDef_t, fadeCycle) == 4 * 4);
+    static_assert(offsetof(menuDef_t, disableColor) - offsetof(menuDef_t, imageTrack) == 5 * 4);
+    HashWindow(builder, menu.window);
+    builder.FieldString(42, menu.font);
+    builder.FieldI64(43, menu.fullScreen);
+    builder.FieldI64(43, menu.itemCount);
+    builder.FieldI64(43, menu.fontIndex);
+    FieldWords(builder, 44, menu, offsetof(menuDef_t, fadeCycle), 5);
+    builder.FieldString(45, menu.onOpen);
+    builder.FieldString(45, menu.onClose);
+    builder.FieldString(45, menu.onESC);
+    HashKeyHandlers(builder, menu.onKey);
+    HashStatement(builder, menu.visibleExp);
+    builder.FieldString(46, menu.allowedBinding);
+    builder.FieldString(46, menu.soundName);
+    FieldWords(builder, 47, menu, offsetof(menuDef_t, imageTrack), 9);
+    HashStatement(builder, menu.rectXExp);
+    HashStatement(builder, menu.rectYExp);
+    const int items = menu.items && menu.itemCount > 0 ? menu.itemCount : 0;
+    for (int i = 0; i < items; ++i)
+    {
+        builder.FieldU64(48, menu.items[i] != nullptr);
+        if (menu.items[i])
+            HashItem(builder, *menu.items[i]);
+    }
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -1335,6 +1520,8 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashXModelPieces;
     case ASSET_TYPE_CLIPMAP_PVS:
         return HashClipMap;
+    case ASSET_TYPE_MENU:
+        return HashMenu;
     default:
         return nullptr;
     }
