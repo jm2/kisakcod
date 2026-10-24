@@ -175,6 +175,6 @@ Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP
 - the retail client on our x86 (Wine) and 64-bit servers: 0 misses in 7 runs;
 - the first run after a connect bursts on our client on either server (#721), so it is client-side.
 
-No pmove divergence was seen. A server-only control isn't possible: cheat dvars reach clients live. The capture replay above still applies.
+Outside that burst, no miss above 0.1 units was seen; pmove equivalence still rests on §9. A server-only control isn't possible: cheat dvars reach clients live.
 
 **Patch notes:** the public 1.1–1.7 notes are still to be classified as data-side or exe-side.
