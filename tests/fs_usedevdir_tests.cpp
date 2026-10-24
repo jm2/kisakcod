@@ -3,7 +3,8 @@
 // raw_shared, devraw and devraw_shared under each root only with
 // fs_usedevdir set (bool, default 0, INIT); players and the game directories
 // are searched either way. Since 1.4 it also loads only official iw_* IWDs
-// (and the localized_* packs) from fs_basepath/main.
+// (and the localized_* packs) from fs_basepath/main, and stops if that
+// directory holds no IWD.
 //
 // The engine boundary is weak; --gc-sections drops the rest of com_files.cpp.
 #include <cstdarg>
@@ -72,8 +73,15 @@ WEAK void MyAssertHandler(const char *filename, int line, int, const char *, ...
     std::fprintf(stderr, "assert %s:%d\n", filename, line);
     std::abort();
 }
-WEAK void Com_Error(errorParm_t, const char *fmt, ...)
+// A fatal error unwinds to main, which checks it; any other error aborts.
+struct FatalError
 {
+    std::string message;
+};
+WEAK void Com_Error(errorParm_t code, const char *fmt, ...)
+{
+    if (code == ERR_FATAL && !std::strchr(fmt, '%'))
+        throw FatalError{fmt};
     std::fprintf(stderr, "Com_Error: %s\n", fmt);
     std::abort();
 }
@@ -115,9 +123,16 @@ WEAK void *__cdecl Sys_GetValue(int valueIndex) { return valueIndex == 1 ? &g_va
 WEAK char *__cdecl Sys_Cwd() { return const_cast<char *>("/kisak-test/cwd"); }
 WEAK const char *__cdecl Sys_DefaultCDPath() { return ""; }
 WEAK bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *) { return true; }
-// With g_listIwds set, every root's main holds a stock IWD, a localized pack
-// and a custom one; otherwise no directory holds an IWD.
-bool g_listIwds = false;
+// What the roots' main directories hold: by default fs_basepath/main holds
+// a stock IWD; Mixed adds a localized pack and a custom one to every root's
+// main; None leaves every directory without an IWD.
+enum class Iwds
+{
+    Stock,
+    Mixed,
+    None,
+};
+Iwds g_iwds = Iwds::Stock;
 std::vector<std::string> g_opened; // the IWDs FS_LoadZipFile tried to open
 char g_iwdNames[3][32];
 char *g_iwdList[4];
@@ -126,7 +141,9 @@ WEAK char **__cdecl Sys_ListFiles(const char *directory, const char *, const cha
     char (&names)[3][32] = g_iwdNames;
     char *(&list)[4] = g_iwdList;
     const std::string dir = directory;
-    if (!g_listIwds || dir.size() < 5 || dir.compare(dir.size() - 5, 5, "/main") != 0)
+    const bool baseMain = dir == "/kisak-test/base/main";
+    if (g_iwds == Iwds::None || dir.size() < 5 || dir.compare(dir.size() - 5, 5, "/main") != 0
+        || (g_iwds == Iwds::Stock && !baseMain))
     {
         *numfiles = 0;
         return nullptr;
@@ -135,9 +152,9 @@ WEAK char **__cdecl Sys_ListFiles(const char *directory, const char *, const cha
     std::snprintf(names[1], sizeof(names[1]), "localized_english_iw00.iwd");
     std::snprintf(names[2], sizeof(names[2]), "zz_custom.iwd");
     list[0] = nullptr; // the hunk FS_FreeFileList releases
-    for (int i = 0; i < 3; ++i)
+    *numfiles = g_iwds == Iwds::Stock ? 1 : 3;
+    for (int i = 0; i < *numfiles; ++i)
         list[i + 1] = names[i];
-    *numfiles = 3;
     return &list[1];
 }
 WEAK SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(const char *, std::size_t,
@@ -213,7 +230,7 @@ int main()
 
     // Only official IWDs load from fs_basepath/main; a custom one is skipped
     // with 1.8's warning. Other roots' main directories are not filtered.
-    g_listIwds = true;
+    g_iwds = Iwds::Mixed;
     FS_Startup(gameName);
     const auto opened = [](const char *path) {
         for (const std::string &p : g_opened)
@@ -228,6 +245,20 @@ int main()
     CHECK(!opened("/kisak-test/base/main/zz_custom.iwd"));
     CHECK(opened("/kisak-test/home/main/zz_custom.iwd"));
     CHECK(g_invalidIwds.size() == 1 && g_invalidIwds[0] == "zz_custom.iwd");
+    ClearSearchPaths();
+
+    // With no IWD in fs_basepath/main, 1.8 stops with a fatal error.
+    g_iwds = Iwds::None;
+    std::string fatal;
+    try
+    {
+        FS_Startup(gameName);
+    }
+    catch (const FatalError &error)
+    {
+        fatal = error.message;
+    }
+    CHECK(fatal == "No IWD files found in /main");
     ClearSearchPaths();
 
     if (g_failures == 0)

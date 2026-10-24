@@ -237,3 +237,5 @@ bool FS_UseDevDirs();
 // localized_* packs) from fs_basepath/main; custom IWDs belong in a mod
 // directory. SP keeps 1.0.
 bool FS_SkipUnofficialIwd(const char *path, const char *pszGameFolder, const char *iwdName);
+// MP: with no IWD in fs_basepath/main, 1.8 stops with a fatal error.
+void FS_RequireMainIwds(const char *path, const char *pszGameFolder);
