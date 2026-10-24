@@ -785,6 +785,7 @@ void zone_test::CheckZone()
     ExpectDigest(ASSET_TYPE_TECHNIQUE_SET, "e2e/techpass", "b3caa7b493d31bfc12d89fc2d505a6d4a219d39c11947ad802effc386d052555");
     ExpectDigest(ASSET_TYPE_WEAPON, "e2e/weapon", "6d793281760eb79c7830118a79cb2a3926b102593c36c05d66625132ab1d3961");
     ExpectDigest(ASSET_TYPE_XMODEL, "e2e/model", "5036c3477e292d03cded43e066829961334ccec7f5eaa65361e7c5cde84cecc2");
+    ExpectDigest(ASSET_TYPE_GFXWORLD, "w", "0000000000000000000000000000000000000000000000000000000000000000");
     const GfxWorld *gfx = Find(ASSET_TYPE_GFXWORLD, "w").gfxWorld;
     Expect(gfx && Is(gfx->skyImage, ASSET_TYPE_IMAGE, "e2e/img")
                && Is(gfx->sunLight->def, ASSET_TYPE_LIGHT_DEF, "e2e/lightdef")
