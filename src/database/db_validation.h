@@ -2384,11 +2384,15 @@ inline bool ClipMapBrushGraphValid(const ClipMap &map)
                 brush,
                 &derivedEdgeCount)
             || derivedEdgeCount > brushEdgeCount - consumedEdges
-            || !ExactArrayBoundaryPosition(
-                map.brushEdges,
-                brushEdgeCount,
-                brush.baseAdjacentSide,
-                consumedEdges))
+            // A brush without adjacency never reads its edge pointer, and
+            // retail zones leave an earlier offset there; only a brush with
+            // edges must start at the edge cursor.
+            || (derivedEdgeCount != 0
+                && !ExactArrayBoundaryPosition(
+                    map.brushEdges,
+                    brushEdgeCount,
+                    brush.baseAdjacentSide,
+                    consumedEdges)))
         {
             return false;
         }
