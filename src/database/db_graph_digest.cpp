@@ -1164,16 +1164,17 @@ void HashDynEntityDef(GraphHashBuilder &builder, const DynEntityDefView &def)
     builder.FieldI64(41, def.contents);
 }
 
-// The clip map in record order. Planes are 20 bytes with no pointer, so a
-// side's or node's plane is its index. Left out: each static model's
-// world-sector link and the dynamic entities' pose, client and collision
-// lists, which the game writes at run time.
-void HashClipMap(GraphHashBuilder &builder, const XAssetHeader &header)
+// A signed count, or 0 when it is negative.
+std::size_t Count(const int count)
 {
-    const clipMap_t &map = *header.clipMap;
-    const std::size_t planes = map.planeCount > 0 ? static_cast<std::size_t>(map.planeCount) : 0;
-    builder.FieldString(1, map.name);
-    builder.FieldI64(2, map.isInUse);
+    return count > 0 ? static_cast<std::size_t>(count) : 0;
+}
+
+// The tree: planes, static models, materials, sides, edges, nodes, leaves and
+// their brushes and surfaces.
+void HashClipTree(GraphHashBuilder &builder, const clipMap_t &map)
+{
+    const std::size_t planes = Count(map.planeCount);
     builder.FieldI64(3, map.planeCount);
     FieldArray(builder, 4, map.planes, planes);
     builder.FieldU64(5, map.numStaticModels);
@@ -1220,14 +1221,20 @@ void HashClipMap(GraphHashBuilder &builder, const XAssetHeader &header)
     FieldArray(builder, 16, map.leafbrushes, map.numLeafBrushes);
     builder.FieldU64(17, map.numLeafSurfaces);
     FieldArray(builder, 17, map.leafsurfaces, map.numLeafSurfaces);
+}
+
+// The collision geometry: vertices, triangles, borders, partitions and AABB
+// trees.
+void HashClipCollision(GraphHashBuilder &builder, const clipMap_t &map)
+{
     builder.FieldU64(18, map.vertCount);
     FieldArray(builder, 18, map.verts, map.vertCount);
     builder.FieldI64(19, map.triCount);
-    const std::size_t triIndices = map.triCount > 0 ? 3 * static_cast<std::size_t>(map.triCount) : 0;
+    const std::size_t triIndices = 3 * Count(map.triCount);
     FieldArray(builder, 19, map.triIndices, triIndices);
     // One bit per triangle edge, in whole 32-bit words.
     FieldArray(builder, 19, map.triEdgeIsWalkable, (triIndices + 31) / 32 * 4);
-    const std::size_t borders = map.borderCount > 0 ? static_cast<std::size_t>(map.borderCount) : 0;
+    const std::size_t borders = Count(map.borderCount);
     builder.FieldI64(42, map.borderCount);
     FieldArray(builder, 42, map.borders, borders);
     builder.FieldI64(43, map.partitionCount);
@@ -1241,7 +1248,20 @@ void HashClipMap(GraphHashBuilder &builder, const XAssetHeader &header)
         FieldIndex(builder, 44, partition.borders, map.borders, borders);
     }
     builder.FieldI64(45, map.aabbTreeCount);
-    FieldArray(builder, 45, map.aabbTrees, map.aabbTreeCount > 0 ? static_cast<std::size_t>(map.aabbTreeCount) : 0);
+    FieldArray(builder, 45, map.aabbTrees, Count(map.aabbTreeCount));
+}
+
+// The clip map in record order. Planes are 20 bytes with no pointer, so a
+// side's or node's plane is its index. Left out: each static model's
+// world-sector link and the dynamic entities' pose, client and collision
+// lists, which the game writes at run time.
+void HashClipMap(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const clipMap_t &map = *header.clipMap;
+    builder.FieldString(1, map.name);
+    builder.FieldI64(2, map.isInUse);
+    HashClipTree(builder, map);
+    HashClipCollision(builder, map);
     builder.FieldU64(46, map.numSubModels);
     const std::size_t subModels = map.cmodels ? map.numSubModels : 0;
     for (std::size_t i = 0; i < subModels; ++i)
@@ -1252,10 +1272,7 @@ void HashClipMap(GraphHashBuilder &builder, const XAssetHeader &header)
         HashClipBrush(builder, map, &map.brushes[i]);
     builder.FieldI64(48, map.numClusters);
     builder.FieldI64(48, map.clusterBytes);
-    const std::size_t visibility = map.numClusters > 0 && map.clusterBytes > 0
-                                       ? static_cast<std::size_t>(map.numClusters) * map.clusterBytes
-                                       : 0;
-    FieldArray(builder, 49, map.visibility, visibility);
+    FieldArray(builder, 49, map.visibility, Count(map.numClusters) * Count(map.clusterBytes));
     builder.FieldI64(50, map.vised);
     FieldAsset(builder, 51, ASSET_TYPE_MAP_ENTS, map.mapEnts);
     HashClipBrush(builder, map, map.box_brush);
