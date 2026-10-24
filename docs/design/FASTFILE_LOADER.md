@@ -27,10 +27,10 @@ Retail data broke these synthetic-fixture assumptions; each now has a test:
   x86 #512).
 - **Stub assets.** A name starting with `,` is a stub: a SoundCurve with no
   knots (`,helicopter1`) loads as-is on both paths (#498, x86 #518).
-- **Empty values.** A 0x0 StringTable may carry an inline values token
-  (#478); an FX lifespan may start at 0 (#479).
-- **Shader versions.** Renderer 0 ships SM1 tokens with no length field;
-  their bytecode is checked by comment blocks and END (#475).
+- **Empty values.** A 0x0 StringTable may hold an inline values token (#478);
+  an FX lifespan may start at 0 (#479).
+- **Shader versions.** Renderer 0's SM1 tokens have no length field; comment
+  blocks and END check them (#475).
 
 ## Design
 
@@ -61,7 +61,7 @@ Retail data broke these synthetic-fixture assumptions; each now has a test:
    Custom bodies also get `pointer`/`rawptr`, `struct of=`, dotted nested fields and
    `copy=scalars` (the record's scalar copies).
 
-   **Asset references**, such as LightDef → Image or Font → Material. A `pointer` field `asset=<Family>` holds a token to another
+   **Asset references** (LightDef → Image). A `pointer` field `asset=<Family>` holds a token to another
    family's header. The body calls that family's generated pointer step, `Load<Family>Ptr`, which
    pushes the temp block itself as its 32-bit `Load_<Family>Ptr` does, so the child streams
    where x86 streams it and the slot ends with the native pointer. While the child has no
@@ -87,8 +87,10 @@ Retail data broke these synthetic-fixture assumptions; each now has a test:
 6. **Fail closed per family.** At 64-bit, the `Load_XAssetHeader` dispatch refuses any family
    whose generated loader is not yet enabled. It raises `ERR_DROP` naming the family before it
    reads any of the family's bytes. The whole zone fails, since the stream cannot be skipped.
-7. **FX.** The hand-written FX converter becomes the oracle for the generated FX loader. Diff
-   the two on the same bytes, then keep one.
+7. **FX.** At 64-bit, Fx and ImpactFx load only through `db_disk32_fx.cpp` and
+   `db_disk32_impactfx.cpp`, with the FX converter's rules. The zone adapter only gates
+   admission, and headless never binds it, so headless loads FX only under `db_unverified64`.
+   Plan: Fx and ImpactFx join K4 without the adapter condition; a later PR retires the adapter.
 
 ## Server-closure families
 
@@ -141,9 +143,8 @@ top-level dispatch; `Load_DynEntityDef` reaches it.
 ## K4: loader closure
 
 **K4 = the number of server-closure families (out of N = 25) that load from unmodified Steam 1.8
-`.ff` at 64-bit under ASan and UBSan.** Baseline 0/25. Target 25/25 (G2). Until the loader tests
-report K4 themselves, [NOW.md](../NOW.md) records it by hand. K1–K3 are defined in
-[NATIVE64.md](NATIVE64.md).
+`.ff` at 64-bit under ASan and UBSan.** Baseline 0/25. Target 25/25 (G2). [NOW.md](../NOW.md)
+records it by hand; K1–K3 are in [NATIVE64.md](NATIVE64.md).
 
 A family counts toward K4 when all hold:
 
@@ -185,7 +186,7 @@ Use a scratch `fs_homepath`; afterwards nothing under `fs_basepath` may be
 newer than the run. Read the console for:
 
 - `db_unverified64: loading …` once, then `Loaded zone '<zone>'` per zone;
-- `Waited N msec for asset '<name>'`: normal; names the asset in flight;
+- `Waited N msec for asset '<name>'`: normal;
 - `db_graphhash <family>: N assets, sha256 …`: must equal the x86 run's;
   `list` adds per-asset digests;
 - the first `Invalid fast-file …` or `KisakCOD fatal error` line: the stop.
@@ -194,8 +195,7 @@ newer than the run. Read the console for:
 
 **K4 legs** compare headless servers (clients also load UI); Windows
 legs run the PR's CI artifacts, one `+db_graphhash` per verified family on
-the same command line. `list` lines name retail assets: post only family lines. Walker rules
-head `db_graph_digest.cpp`.
+the same command line. `list` lines name retail assets: post only family lines.
 
 **Registry sessions.** A sequence that holds `db_hashCritSect` while its
 assets intern or mark script strings (user 4 or 8) must hold it through
