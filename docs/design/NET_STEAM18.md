@@ -150,20 +150,14 @@ Replay the captured usercmds through the fork's `Pmove` (`bg_pmove.cpp`), and co
 
 Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP keeps 1.0.
 
-| Change | Status |
+**Imported:** getinfo `hc`/`od` (#698); lean defaults (#701); `g_antilag` ROM (#702); `sv_floodprotect` (#705); `sv_pure` 1 (#717); `fs_usedevdir` (#725); browser `hc`/`od` filters (#726); debug defaults and flags (#730); only `iw_` IWDs from `fs_basepath/main` (#735).
+
+| Not imported | Why |
 | --- | --- |
-| getinfo `hc`/`od` (`scr_hardcore`, `scr_oldschool`) | #698 |
-| `player_lean_*` defaults (7 of 8, MP) | #701 |
-| `g_antilag` is ROM | #702 |
-| `sv_floodprotect`: int, 4, burst per 800 ms | #705 |
-| `sv_pure` default 1 | #717 |
-| Browser `hc`/`od` filters: `ui_browserHardcore`, `ui_browserOldSchool` | #726 |
-| `cl_maxppf` (5, [1,10]): pings per frame | deferred: `CL_UpdateDirtyPings` rewrite; reply path untraced |
-| `fs_usedevdir` (bool, INIT) | #725 |
+| `cl_maxppf`: pings per frame | deferred: `CL_UpdateDirtyPings` rewrite |
 | `serverInfo_t` 0x9c, not 0x94 | kept at 0x94; `servercache.dat` stays 1.0 |
-| Debug defaults: `sv_cheats`, `logfile`, `loc_warnings*`, `monkeytoy`, `r_showMissingLightGrid` are 0; `developer_script`, `com_timescale`, `g_fog*ReadOnly` flags | #730 |
 | `com_maxfps` 250, `r_fullscreen` 0 | intentional, kept |
-| Lagometer layout constants | client HUD, not imported |
+| Lagometer layout constants | client HUD |
 
 **Dvars:** 1,165 named registrations; 4 missing (above); 22 defaults or flags differ, all listed above.
 
@@ -173,8 +167,8 @@ Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP
 
 - our 64-bit client on the retail dedicated server: 0 misses after the first run;
 - the retail client on our x86 (Wine) and 64-bit servers: 0 misses in 7 runs;
-- the first run after a connect bursts on our client on either server (#721), so it is client-side.
+- first-minute misses after a connect also occur in retail (#721).
 
-Outside that burst, no miss above 0.1 units was seen; pmove equivalence still rests on §9. A server-only control isn't possible: cheat dvars reach clients live.
+Otherwise no miss above 0.1 units was seen; pmove equivalence still rests on §9. A server-only control isn't possible: cheat dvars reach clients live.
 
-**Patch notes:** the public 1.1–1.7 notes are still to be classified as data-side or exe-side.
+**Patch notes (1.1–1.7):** maps, usermap rotation, minimaps, icon language, mod tools and the sniper hint are data-side. Exe-side items found in 1.8 are above; the rest are not confirmed in the 1.8 exe and stay 1.0: stats reset (1.1); chat cut-off (1.3); hit accuracy (1.3, 1.4), covered by the static read and §9; browser fixes (1.4, 1.5); mod, HTTP redirect, `fs_game` case and ban-list items (1.4); basepath IWD and `setstat` items (1.5). 1.3/1.6/1.7 security fixes: reviewed separately.
