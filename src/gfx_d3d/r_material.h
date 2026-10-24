@@ -271,12 +271,6 @@ struct GfxAssembledShaderText // sizeof=0x8418
     GfxAssembledShaderTextFile files[128];
 };
 
-struct MaterialMemory // sizeof=0x8
-{                                       // ...
-    Material* material;
-    int memory;
-};
-
 struct stream_source_info_t // sizeof=0x3
 {                                       // ...
     uint8_t Stream;

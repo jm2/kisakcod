@@ -36,32 +36,6 @@ struct GfxShadowedLightHistory // sizeof=0x48
     uint32_t lastUpdateTime;
 };
 
-struct GfxShadowGeometry // sizeof=0xC
-{
-    uint16_t surfaceCount;
-    uint16_t smodelCount;
-    uint16_t *sortedSurfIndex;
-    uint16_t *smodelIndex;
-};
-struct GfxLightRegionAxis // sizeof=0x14
-{
-    float dir[3];
-    float midPoint;
-    float halfSize;
-};
-struct GfxLightRegionHull // sizeof=0x50
-{
-    float kdopMidPoint[9];
-    float kdopHalfSize[9];
-    uint32_t axisCount;
-    GfxLightRegionAxis *axis;
-};
-struct GfxLightRegion // sizeof=0x8
-{
-    uint32_t hullCount;
-    GfxLightRegionHull *hulls;
-};
-
 void __cdecl R_ClearShadowedPrimaryLightHistory(int localClientNum);
 void __cdecl R_AddDynamicShadowableLight(GfxViewInfo *viewInfo, const GfxLight *visibleLight);
 bool __cdecl R_IsDynamicShadowedLight(uint32_t shadowableLightIndex);

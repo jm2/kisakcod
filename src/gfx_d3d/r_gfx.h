@@ -7,6 +7,7 @@
 #include <universal/gfx_image.h>
 #include <universal/gfx_material.h>
 #include <universal/gfx_lightdef.h>
+#include <universal/gfx_world.h>
 #include <qcommon/com_pack.h>
 #include <cstdint>
 
@@ -14,37 +15,6 @@ struct Material;
 struct XModel;
 
 #define NULL_VERTEX_BUFFER 0
-
-struct srfTriangles_t // sizeof=0x10
-{                                       // ...
-    int vertexLayerData;
-    int firstVertex;
-    uint16_t vertexCount;
-    uint16_t triCount;
-    int baseIndex;
-};
-
-union GfxColor // sizeof=0x4
-{                                       // ...
-    operator uint32_t()
-    {
-        return packed;
-    }
-    GfxColor()
-    {
-        packed = 0;
-    }
-    GfxColor(int i)
-    {
-        packed = i;
-    }
-    GfxColor(uint32_t i)
-    {
-        packed = i;
-    }
-    uint32_t packed;
-    uint8_t array[4];
-};
 
 struct GfxPackedVertex // sizeof=0x20
 {                                       // ...
@@ -91,12 +61,6 @@ struct GfxMeshData // sizeof=0x20
 struct GfxMatrix // sizeof=0x40
 {                                       // ...
     float m[4][4];                      // ...
-};
-
-struct GfxPlacement // sizeof=0x1C
-{                                       // ...
-    float quat[4];                      // ...
-    float origin[3];                    // ...
 };
 
 struct GfxScaledPlacement // sizeof=0x20
@@ -211,54 +175,6 @@ struct GfxPointVertex // sizeof=0x10
 };
 
 
-struct GfxStaticModelInst // sizeof=0x1C
-{                                       // ...
-    float mins[3];
-    float maxs[3];
-    GfxColor groundLighting;
-};
-
-struct GfxSurface // sizeof=0x30
-{                                       // ...
-    srfTriangles_t tris;
-    Material* material;
-    uint8_t lightmapIndex;
-    uint8_t reflectionProbeIndex;
-    uint8_t primaryLightIndex;
-    uint8_t flags;
-    float bounds[2][3];
-};
-
-struct GfxCullGroup // sizeof=0x20
-{
-    float mins[3];
-    float maxs[3];
-    int surfaceCount;
-    int startSurfIndex;
-};
-
-struct GfxPackedPlacement // sizeof=0x34
-{                                       // ...
-    float origin[3];
-    float axis[3][3];
-    float scale;
-};
-
-struct GfxStaticModelDrawInst // sizeof=0x4C
-{                                       // ...
-    float cullDist;
-    GfxPackedPlacement placement;
-    XModel* model;
-    uint16_t smodelCacheIndex[4];
-    uint8_t reflectionProbeIndex;
-    uint8_t primaryLightIndex;
-    uint16_t lightingHandle;
-    uint8_t flags;
-    // padding byte
-    // padding byte
-    // padding byte
-};
-
 struct GfxDrawSurfList // sizeof=0x8
 {                                       // ...
     GfxDrawSurf *current;               // ...
@@ -276,132 +192,9 @@ struct GfxBspDrawSurfData // sizeof=0x18
     GfxDrawSurfList drawSurfList;       // ...
 };
 
-struct GfxWorldDpvsStatic // sizeof=0x68
-{                                       // ...
-    uint32_t smodelCount;           // ...
-    uint32_t staticSurfaceCount;    // ...
-    uint32_t staticSurfaceCountNoDecal; // ...
-    uint32_t litSurfsBegin;         // ...
-    uint32_t litSurfsEnd;           // ...
-    uint32_t decalSurfsBegin;       // ...
-    uint32_t decalSurfsEnd;         // ...
-    uint32_t emissiveSurfsBegin;    // ...
-    uint32_t emissiveSurfsEnd;      // ...
-    uint32_t smodelVisDataCount;    // ...
-    uint32_t surfaceVisDataCount;   // ...
-    uint8_t* smodelVisData[3];  // ...
-    uint8_t* surfaceVisData[3]; // ... [1] = CSM Parition Near, [2] = CSM Parition Far
-    uint32_t* lodData;              // ...
-    uint16_t* sortedSurfIndex;  // ...
-    GfxStaticModelInst* smodelInsts;    // ...
-    GfxSurface* surfaces;               // ...
-    GfxCullGroup* cullGroups;           // ...
-    GfxStaticModelDrawInst* smodelDrawInsts; // ...
-    GfxDrawSurf* surfaceMaterials;      // ...
-    uint32_t* surfaceCastsSunShadow; // ...
-    volatile int usageCount;
-};
-RUNTIME_SIZE(GfxWorldDpvsStatic, 0x68, 0xA8);
-
-using EntVisData = byte *[3];
-
-struct GfxWorldDpvsDynamic // sizeof=0x30
-{                                       // ...
-    uint32_t dynEntClientWordCount[2]; // ...
-    uint32_t dynEntClientCount[2];  // ...
-    uint32_t* dynEntCellBits[2];    // ...
-    EntVisData dynEntVisData[2]; // ...
-};
-
-struct GfxWorldStreamInfo // sizeof=0x0
-{                                       // ...
-};
-
-struct GfxWorldVertex // sizeof=0x2C
-{                                       // ...
-    float xyz[3];
-    float binormalSign;
-    GfxColor color;
-    float texCoord[2];
-    float lmapCoord[2];
-    PackedUnitVec normal;
-    PackedUnitVec tangent;
-};
-
-struct GfxWorldVertexData // sizeof=0x8
-{                                       // ...
-    GfxWorldVertex* vertices;           // ...
-    IDirect3DVertexBuffer9* worldVb;    // ...
-};
-
-struct GfxWorldVertexLayerData // sizeof=0x8
-{                                       // ...
-    uint8_t* data;              // ...
-    IDirect3DVertexBuffer9* layerVb;    // ...
-};
-
-struct SunLightParseParams // sizeof=0x80
-{                                       // ...
-    char name[64];
-    float ambientScale;
-    float ambientColor[3];
-    float diffuseFraction;
-    float sunLight;
-    float sunColor[3];
-    float diffuseColor[3];
-    bool diffuseColorHasBeenSet;
-    // padding byte
-    // padding byte
-    // padding byte
-    float angles[3];
-};
-
-struct GfxLight // sizeof=0x40
-{                                       // ...
-    uint8_t type;
-    uint8_t canUseShadowMap;
-    uint8_t unused[2];
-    float color[3];
-    float dir[3];
-    float origin[3];
-    float radius;
-    float cosHalfFovOuter;
-    float cosHalfFovInner;
-    int exponent;
-    uint32_t spotShadowIndex;
-    GfxLightDef* def;
-};
 // x86 copies of a GfxLight wrote 0x40 bytes; def is the pointer that grows it.
 RUNTIME_SIZE(GfxLight, 0x40, 0x48);
 RUNTIME_OFFSET(GfxLight, def, 0x3C, 0x40);
-
-struct GfxReflectionProbe // sizeof=0x10
-{
-    float origin[3];
-    GfxImage* reflectionImage;
-};
-
-struct GfxWorldDpvsPlanes // sizeof=0x10
-{                                       // ...
-    int cellCount;                      // ...
-    cplane_s* planes;                   // ...
-    uint16_t* nodes;            // ...
-    uint32_t* sceneEntCellBits;     // ...
-};
-
-struct GfxAabbTree // sizeof=0x2C
-{
-    float mins[3];
-    float maxs[3];
-    uint16_t childCount;
-    uint16_t surfaceCount;
-    uint16_t startSurfIndex;
-    uint16_t surfaceCountNoDecal;
-    uint16_t startSurfIndexNoDecal;
-    uint16_t smodelIndexCount;
-    uint16_t* smodelIndexes;
-    int childrenOffset;
-};
 
 inline GfxAabbTree *GfxAabbTree_GetChildren(GfxAabbTree *tree)
 {
@@ -446,67 +239,7 @@ inline bool GfxAabbTree_SetChildren(
 
 struct GfxPortal;
 
-struct GfxPortalWritable // sizeof=0xC
-{
-    bool isQueued;
-    bool isAncestor;
-    uint8_t recursionDepth;
-    uint8_t hullPointCount;
-    float (*hullPoints)[2];
-    GfxPortal* queuedParent;
-};
-
-struct DpvsPlane // sizeof=0x14
-{                                       // ...
-    float coeffs[4];                    // ...
-    uint8_t side[3];            // ...
-    uint8_t pad;
-};
-
 struct GfxCell;
-
-struct GfxPortal // sizeof=0x44
-{
-    GfxPortalWritable writable;
-    DpvsPlane plane;
-    GfxCell* cell;
-    float (*vertices)[3];
-    uint8_t vertexCount;
-    // padding byte
-    // padding byte
-    // padding byte
-    float hullAxis[2][3];
-};
-
-struct GfxCell // sizeof=0x38
-{
-    float mins[3];
-    float maxs[3];
-    int aabbTreeCount;
-    GfxAabbTree* aabbTree;
-    int portalCount;
-    GfxPortal* portals;
-    int cullGroupCount;
-    int* cullGroups;
-    uint8_t reflectionProbeCount;
-    // padding byte
-    // padding byte
-    // padding byte
-    uint8_t* reflectionProbes;
-};
-
-struct GfxLightmapArray // sizeof=0x8
-{
-    GfxImage* primary;
-    GfxImage* secondary;
-};
-
-struct GfxLightGridEntry // sizeof=0x4
-{                                       // ...
-    uint16_t colorsIndex;
-    uint8_t primaryLightIndex;  // ...
-    uint8_t needsTrace;
-};
 
 struct GfxLightGridRow // sizeof=0xC
 {                                       // ...
@@ -515,48 +248,6 @@ struct GfxLightGridRow // sizeof=0xC
     uint16_t zStart;            // ...
     uint16_t zCount;            // ...
     uint32_t firstEntry;            // ...
-};
-
-struct GfxLightGridColors // sizeof=0xA8
-{                                       // ...
-    uint8_t rgb[56][3];
-};
-
-struct GfxLightGrid // sizeof=0x38
-{                                       // ...
-    bool hasLightRegions;               // ...
-    // padding byte
-    // padding byte
-    // padding byte
-    uint32_t sunPrimaryLightIndex;  // ...
-    uint16_t mins[3];           // ...
-    uint16_t maxs[3];           // ...
-    uint32_t rowAxis;               // ...
-    uint32_t colAxis;               // ...
-    uint16_t* rowDataStart;     // ...
-    uint32_t rawRowDataSize;        // ...
-    uint8_t* rawRowData;        // ...
-    uint32_t entryCount;            // ...
-    GfxLightGridEntry* entries;         // ...
-    uint32_t colorCount;            // ...
-    GfxLightGridColors* colors;         // ...
-};
-
-struct GfxBrushModelWritable // sizeof=0x18
-{                                       // ...
-    float mins[3];
-    float maxs[3];
-};
-
-struct GfxBrushModel // sizeof=0x38
-{
-    GfxBrushModelWritable writable;
-    float bounds[2][3];
-    uint16_t surfaceCount;
-    uint16_t startSurfIndex;
-    uint16_t surfaceCountNoDecal;
-    // padding byte
-    // padding byte
 };
 
 struct DiskBrushModel // sizeof=0x30
