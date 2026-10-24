@@ -1223,8 +1223,7 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         target_compile_definitions(kisakcod-browser-hc-od-filter-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE
             KISAK_TEST_BROWSER_FILTER)
         target_link_libraries(kisakcod-browser-hc-od-filter-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
-        # The decompiled display list reaches displayServers through sharedUiInfo.gap8EB4
-        # at a negative index (inside sharedUiInfo; ASan still checks the address).
+        # Decompiled displayServers is gap8EB4[4n - 7100], inside sharedUiInfo (#727).
         target_compile_options(kisakcod-browser-hc-od-filter-tests PRIVATE -fno-sanitize=array-bounds)
         add_dependencies(kisakcod-browser-hc-od-filter-tests update_build_number) # ui_main_mp.cpp: buildnumber.h
         add_test(NAME browser-hc-od-filter-1-8 COMMAND kisakcod-browser-hc-od-filter-tests)
