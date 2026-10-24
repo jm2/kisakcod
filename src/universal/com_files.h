@@ -232,3 +232,8 @@ extern char fs_gamedir[256];
 // 1.0, which always searches them.
 void FS_RegisterDevDirDvar();
 bool FS_UseDevDirs();
+
+// KISAK: since 1.4 the MP executable loads only official iw_* IWDs (and the
+// localized_* packs) from fs_basepath/main; custom IWDs belong in a mod
+// directory. SP keeps 1.0.
+bool FS_SkipUnofficialIwd(const char *path, const char *pszGameFolder, const char *iwdName);

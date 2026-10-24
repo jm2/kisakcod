@@ -1834,7 +1834,7 @@ void __cdecl FS_AddIwdFilesForGameDirectory(char *path, char *pszGameFolder)
         if (I_strncmp(s0[i], "          ", 10))
         {
             v10 = 0;
-            piLanguageIndex = 0;
+            piLanguageIndex = 0; if (FS_SkipUnofficialIwd(path, pszGameFolder, s0[i])) continue; // KISAK: 1.8
         }
         else
         {
@@ -3376,5 +3376,17 @@ bool FS_UseDevDirs()
     return fs_usedevdir->current.enabled;
 #else
     return true;
+#endif
+}
+
+bool FS_SkipUnofficialIwd(const char *path, const char *pszGameFolder, const char *iwdName)
+{
+#ifdef KISAK_MP
+    if (I_stricmp(pszGameFolder, "main") || I_stricmp(path, fs_basepath->current.string) || !I_strnicmp(iwdName, "iw_", 3))
+        return false;
+    Com_PrintWarning(10, "WARNING: Invalid IWD %s in \\main.\n", iwdName);
+    return true;
+#else
+    return false;
 #endif
 }
