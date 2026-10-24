@@ -1203,3 +1203,22 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME fs-pure-iwd-names COMMAND kisakcod-fs-pure-iwds-tests)
     set_tests_properties(fs-pure-iwd-names PROPERTIES TIMEOUT 20)
 endif()
+
+# FS_ReferencedIwdPureChecksums (universal/com_files.cpp): each call sends only
+# the current list. Linux and clang only, as above; the client's defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-fs-pure-checksums-tests fs_pure_checksums_tests.cpp ${SRC_DIR}/universal/com_files.cpp ${SRC_DIR}/universal/q_shared.cpp)
+    target_include_directories(kisakcod-fs-pure-checksums-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-fs-pure-checksums-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fs-pure-checksums-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-fs-pure-checksums-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-fs-pure-checksums-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-fs-pure-checksums-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-fs-pure-checksums-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-fs-pure-checksums-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME fs-pure-checksums-fresh COMMAND kisakcod-fs-pure-checksums-tests)
+    set_tests_properties(fs-pure-checksums-fresh PROPERTIES TIMEOUT 20)
+endif()

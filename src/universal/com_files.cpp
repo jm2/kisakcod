@@ -108,8 +108,8 @@ char *__cdecl FS_ReferencedIwdPureChecksums()
     numIwds = 0;
     info6[8191] = 0;
     info6[8190] = 0;
-    info6[strlen(info6)] = '@';
-    info6[strlen(info6)] = ' ';
+    info6[0] = '@'; // KISAK: the decompiled strlen writes kept the previous call's list after "@"
+    info6[1] = ' '; info6[2] = '\0';
     for (search = fs_searchpaths; search; search = search->next)
     {
         if (search->iwd && !search->bLocalized)
