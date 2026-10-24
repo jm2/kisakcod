@@ -717,7 +717,7 @@ int __cdecl SND_StartAlias3DSample(SndStartAliasInfo *startAliasInfo, int *pChan
     }
     if (start_msec)
         startAliasInfo->startDelay = 0;
-    AIL_set_sample_ms_position(handle, SnapFloatToInt((float)start_msec / (float)total_msec * (float)sound->info.data_len));
+    AIL_set_sample_ms_position(handle, start_msec);
     if (!startAliasInfo->startDelay
         && (!g_snd.paused || !g_snd.pauseSettings[(startAliasInfo->alias0->flags & 0x3F00) >> 8]))
     {
