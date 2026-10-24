@@ -993,7 +993,7 @@ uiInfo_s *UI_BuildFindPlayerList()
                                 {
                                     if (uiInfo->numFoundPlayerServers >= 15)
                                     {
-                                        sharedUiInfo.pendingServerStatus.num = *(_DWORD *)&sharedUiInfo.gap8EB4[72900];
+                                        sharedUiInfo.pendingServerStatus.num = sharedUiInfo.serverStatus.numDisplayServers;
                                     }
                                     else
                                     {
@@ -1028,17 +1028,17 @@ uiInfo_s *UI_BuildFindPlayerList()
                     UI_GetServerStatusInfo(sharedUiInfo.pendingServerStatus.server[i].adrstr, 0);
                     sharedUiInfo.pendingServerStatus.server[i].valid = 0;
                     UI_UpdateDisplayServers(uiInfo);
-                    if (sharedUiInfo.pendingServerStatus.num < *(int *)&sharedUiInfo.gap8EB4[72900])
+                    if (sharedUiInfo.pendingServerStatus.num < sharedUiInfo.serverStatus.numDisplayServers)
                     {
                         sharedUiInfo.pendingServerStatus.server[i].startTime = uiInfo->uiDC.realTime;
                         LAN_GetServerAddressString(
                             ui_netSource->current.integer,
-                            *(_DWORD *)&sharedUiInfo.gap8EB4[4 * sharedUiInfo.pendingServerStatus.num - 7100],
+                            sharedUiInfo.serverStatus.displayServers[sharedUiInfo.pendingServerStatus.num],
                             sharedUiInfo.pendingServerStatus.server[i].adrstr,
                             64);
                         LAN_GetServerInfo(
                             ui_netSource->current.integer,
-                            *(_DWORD *)&sharedUiInfo.gap8EB4[4 * sharedUiInfo.pendingServerStatus.num - 7100],
+                            sharedUiInfo.serverStatus.displayServers[sharedUiInfo.pendingServerStatus.num],
                             buf,
                             1024);
                         v1 = Info_ValueForKey(buf, "hostname");
@@ -1836,7 +1836,7 @@ void __cdecl UI_DrawServerRefreshDate(
     const char *string; // [esp+94h] [ebp-8h]
     int serverCount; // [esp+98h] [ebp-4h]
 
-    if (*(_DWORD *)&sharedUiInfo.serverStatus.string[1124])
+    if (sharedUiInfo.serverStatus.refreshActive)
     {
         lowLight[0] = *color * 0.800000011920929f;
         lowLight[1] = color[1] * 0.800000011920929f;
@@ -3026,13 +3026,13 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                                                                                                                 }
                                                                                                                                             }
                                                                                                                                             else if (ui_netSource->current.integer == 2
-                                                                                                                                                && *(int *)&sharedUiInfo.serverStatus.string[1128] >= 0
-                                                                                                                                                && *(int *)&sharedUiInfo.serverStatus.string[1128] < *(int *)&sharedUiInfo.gap8EB4[72900])
+                                                                                                                                                && sharedUiInfo.serverStatus.currentServer >= 0
+                                                                                                                                                && sharedUiInfo.serverStatus.currentServer < sharedUiInfo.serverStatus.numDisplayServers)
                                                                                                                                             {
                                                                                                                                                 UI_UpdateDisplayServers((uiInfo_s *)dc);
                                                                                                                                                 LAN_GetServerInfo(
                                                                                                                                                     ui_netSource->current.integer,
-                                                                                                                                                    *(_DWORD *)&sharedUiInfo.gap8EB4[4 * *(_DWORD *)&sharedUiInfo.serverStatus.string[1128] - 7100],
+                                                                                                                                                    sharedUiInfo.serverStatus.displayServers[sharedUiInfo.serverStatus.currentServer],
                                                                                                                                                     v39,
                                                                                                                                                     1024);
                                                                                                                                                 addr = 0;
@@ -3047,12 +3047,12 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                                                                                                             pszAddress[0] = 0;
                                                                                                                                             pszName[0] = 0;
                                                                                                                                             UI_UpdateDisplayServers((uiInfo_s *)dc);
-                                                                                                                                            if (*(int *)&sharedUiInfo.serverStatus.string[1128] >= 0
-                                                                                                                                                && *(int *)&sharedUiInfo.serverStatus.string[1128] < *(int *)&sharedUiInfo.gap8EB4[72900])
+                                                                                                                                            if (sharedUiInfo.serverStatus.currentServer >= 0
+                                                                                                                                                && sharedUiInfo.serverStatus.currentServer < sharedUiInfo.serverStatus.numDisplayServers)
                                                                                                                                             {
                                                                                                                                                 LAN_GetServerInfo(
                                                                                                                                                     ui_netSource->current.integer,
-                                                                                                                                                    *(_DWORD *)&sharedUiInfo.gap8EB4[4 * *(_DWORD *)&sharedUiInfo.serverStatus.string[1128] - 7100],
+                                                                                                                                                    sharedUiInfo.serverStatus.displayServers[sharedUiInfo.serverStatus.currentServer],
                                                                                                                                                     s,
                                                                                                                                                     1024);
                                                                                                                                                 v20 = Info_ValueForKey(s, "hostname");
@@ -3091,8 +3091,8 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                                                                                         }
                                                                                                                         else if (Int_Parse((const char **)args, &i))
                                                                                                                         {
-                                                                                                                            if (i == *(_DWORD *)&sharedUiInfo.serverStatus.string[1112])
-                                                                                                                                *(_DWORD *)&sharedUiInfo.serverStatus.string[1116] = *(_DWORD *)&sharedUiInfo.serverStatus.string[1116] == 0;
+                                                                                                                            if (i == sharedUiInfo.serverStatus.sortKey)
+                                                                                                                                sharedUiInfo.serverStatus.sortDir = sharedUiInfo.serverStatus.sortDir == 0;
                                                                                                                             UI_ServersSort(i, 1);
                                                                                                                         }
                                                                                                                     }
@@ -3125,17 +3125,17 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                                                                             // LWSS: Remove punkbuster crap
                                                                                                             //ServerPunkBuster = LAN_GetServerPunkBuster(
                                                                                                             //    ui_netSource->current.integer,
-                                                                                                            //    *(_DWORD *)&sharedUiInfo.gap8EB4[4 * *(_DWORD *)&sharedUiInfo.serverStatus.string[1128] - 7100]);
+                                                                                                            //    sharedUiInfo.serverStatus.displayServers[sharedUiInfo.serverStatus.currentServer]);
                                                                                                             //if (ServerPunkBuster != 1 || Dvar_GetBool("cl_punkbuster"))
                                                                                                             //{
-                                                                                                                if (*(int *)&sharedUiInfo.serverStatus.string[1128] >= 0
-                                                                                                                    && *(int *)&sharedUiInfo.serverStatus.string[1128] < *(int *)&sharedUiInfo.gap8EB4[72900])
+                                                                                                                if (sharedUiInfo.serverStatus.currentServer >= 0
+                                                                                                                    && sharedUiInfo.serverStatus.currentServer < sharedUiInfo.serverStatus.numDisplayServers)
                                                                                                                 {
                                                                                                                     LAN_GetServerAddressString(
                                                                                                                         ui_netSource->current.integer,
-                                                                                                                        *(_DWORD *)&sharedUiInfo.gap8EB4[4
-                                                                                                                        * *(_DWORD *)&sharedUiInfo.serverStatus.string[1128]
-                                                                                                                        - 7100],
+                                                                                                                        sharedUiInfo.serverStatus.displayServers[
+                                                                                                                        sharedUiInfo.serverStatus.currentServer
+                                                                                                                        ],
                                                                                                                         v44,
                                                                                                                         1024);
                                                                                                                     v16 = va("connect %s\n", v44);
@@ -3159,14 +3159,14 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                                                                 else
                                                                                                 {
                                                                                                     UI_UpdateDisplayServers(&uiInfoArray);
-                                                                                                    if (*(int *)&sharedUiInfo.serverStatus.string[1128] >= 0
-                                                                                                        && *(int *)&sharedUiInfo.serverStatus.string[1128] < *(int *)&sharedUiInfo.gap8EB4[72900])
+                                                                                                    if (sharedUiInfo.serverStatus.currentServer >= 0
+                                                                                                        && sharedUiInfo.serverStatus.currentServer < sharedUiInfo.serverStatus.numDisplayServers)
                                                                                                     {
                                                                                                         LAN_GetServerAddressString(
                                                                                                             ui_netSource->current.integer,
-                                                                                                            *(_DWORD *)&sharedUiInfo.gap8EB4[4
-                                                                                                            * *(_DWORD *)&sharedUiInfo.serverStatus.string[1128]
-                                                                                                            - 7100],
+                                                                                                            sharedUiInfo.serverStatus.displayServers[
+                                                                                                            sharedUiInfo.serverStatus.currentServer
+                                                                                                            ],
                                                                                                             sharedUiInfo.serverStatusAddress,
                                                                                                             64);
                                                                                                         UI_BuildServerStatus(&uiInfoArray, 1);
@@ -3176,15 +3176,15 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
                                                                                             else
                                                                                             {
                                                                                                 UI_StopServerRefresh();
-                                                                                                *(_DWORD *)&sharedUiInfo.gap8EB4[72912] = 0;
+                                                                                                sharedUiInfo.serverStatus.nextDisplayRefresh = 0;
                                                                                                 sharedUiInfo.nextServerStatusRefresh = 0;
                                                                                                 uiInfoArray.nextFindPlayerRefresh = 0;
                                                                                             }
                                                                                         }
-                                                                                        else if (*(_DWORD *)&sharedUiInfo.serverStatus.string[1124])
+                                                                                        else if (sharedUiInfo.serverStatus.refreshActive)
                                                                                         {
                                                                                             UI_StopServerRefresh();
-                                                                                            *(_DWORD *)&sharedUiInfo.gap8EB4[72912] = 0;
+                                                                                            sharedUiInfo.serverStatus.nextDisplayRefresh = 0;
                                                                                             sharedUiInfo.nextServerStatusRefresh = 0;
                                                                                             uiInfoArray.nextFindPlayerRefresh = 0;
                                                                                             UI_BuildServerDisplayList((uiInfo_s *)dc, 1);
@@ -3410,12 +3410,12 @@ void __cdecl UI_RunMenuScript(int localClientNum, const char **args, const char 
 
 void __cdecl UI_ServersSort(int column, int force)
 {
-    if (force || *(uint32_t *)&sharedUiInfo.serverStatus.string[1112] != column)
+    if (force || sharedUiInfo.serverStatus.sortKey != column)
     {
-        *(uint32_t *)&sharedUiInfo.serverStatus.string[1112] = column;
+        sharedUiInfo.serverStatus.sortKey = column;
         qsort(
-            &sharedUiInfo.serverStatus.string[1132],
-            *(uint32_t *)&sharedUiInfo.gap8EB4[72900],
+            sharedUiInfo.serverStatus.displayServers,
+            sharedUiInfo.serverStatus.numDisplayServers,
             4u,
             (int(__cdecl *)(const void *, const void *))UI_ServersQsortCompare);
     }
@@ -3425,8 +3425,8 @@ int __cdecl UI_ServersQsortCompare(uint32_t *arg1, uint32_t *arg2)
 {
     return LAN_CompareServers(
         ui_netSource->current.integer,
-        *(int *)&sharedUiInfo.serverStatus.string[1112],
-        *(int *)&sharedUiInfo.serverStatus.string[1116],
+        sharedUiInfo.serverStatus.sortKey,
+        sharedUiInfo.serverStatus.sortDir,
         *arg1,
         *arg2);
 }
@@ -3453,12 +3453,12 @@ void __cdecl UI_UpdateDisplayServers(uiInfo_s *uiInfo)
     int serverCount; // [esp+0h] [ebp-4h]
 
     serverCount = LAN_GetServerCount(ui_netSource->current.integer);
-    if (*(uint32_t *)&sharedUiInfo.gap8EB4[72904] != serverCount)
+    if (sharedUiInfo.serverStatus.lastServerCount != serverCount)
     {
-        *(uint32_t *)&sharedUiInfo.gap8EB4[72904] = serverCount;
-        if (*(uint32_t *)&sharedUiInfo.gap8EB4[72900])
+        sharedUiInfo.serverStatus.lastServerCount = serverCount;
+        if (sharedUiInfo.serverStatus.numDisplayServers)
         {
-            *(uint32_t *)&sharedUiInfo.serverStatus.string[1128] = -1;
+            sharedUiInfo.serverStatus.currentServer = -1;
             UI_BuildServerDisplayList(uiInfo, 1);
         }
     }
@@ -3580,13 +3580,13 @@ void __cdecl UI_RemoveServerFromDisplayList(int num)
     int j; // [esp+0h] [ebp-8h]
     int i; // [esp+4h] [ebp-4h]
 
-    for (i = 0; i < *(int *)&sharedUiInfo.gap8EB4[72900]; ++i)
+    for (i = 0; i < sharedUiInfo.serverStatus.numDisplayServers; ++i)
     {
-        if (*(_DWORD *)&sharedUiInfo.gap8EB4[4 * i - 7100] == num)
+        if (sharedUiInfo.serverStatus.displayServers[i] == num)
         {
-            --*(_DWORD *)&sharedUiInfo.gap8EB4[72900];
-            for (j = i; j < *(int *)&sharedUiInfo.gap8EB4[72900]; ++j)
-                *(_DWORD *)&sharedUiInfo.gap8EB4[4 * j - 7100] = *(_DWORD *)&sharedUiInfo.gap8EB4[4 * j - 7096];
+            --sharedUiInfo.serverStatus.numDisplayServers;
+            for (j = i; j < sharedUiInfo.serverStatus.numDisplayServers; ++j)
+                sharedUiInfo.serverStatus.displayServers[j] = sharedUiInfo.serverStatus.displayServers[j + 1];
             return;
         }
     }
@@ -3624,42 +3624,42 @@ void __cdecl UI_BuildServerDisplayList(uiInfo_s *uiInfo, int force)
     int clients; // [esp+44Ch] [ebp-8h]
     int count; // [esp+450h] [ebp-4h]
 
-    if (force || uiInfo->uiDC.realTime > *(int *)&sharedUiInfo.gap8EB4[72912])
+    if (force || uiInfo->uiDC.realTime > sharedUiInfo.serverStatus.nextDisplayRefresh)
     {
         if (force == 2)
             force = 0;
         String = (char *)Dvar_GetString("cl_motdString");
-        I_strncpyz((char*)&sharedUiInfo.gap8EB4[72944], String, 1024);
-        len = strlen((char*)&sharedUiInfo.gap8EB4[72944]);
+        I_strncpyz(sharedUiInfo.serverStatus.motd, String, 1024);
+        len = strlen(sharedUiInfo.serverStatus.motd);
         if (!len)
         {
             v3 = UI_SafeTranslateString("EXE_COD_MULTIPLAYER");
             v20 = va("%s - %s", v3, KISAK_VERSION);
-            v19 = &sharedUiInfo.gap8EB4[72944];
+            v19 = (_BYTE *)sharedUiInfo.serverStatus.motd;
             do
             {
                 v18 = *v20;
                 *v19++ = *v20++;
             } while (v18);
-            len = strlen((char *)&sharedUiInfo.gap8EB4[72944]);
+            len = strlen(sharedUiInfo.serverStatus.motd);
         }
-        if (len != *(uint32_t *)&sharedUiInfo.gap8EB4[72920])
+        if (len != sharedUiInfo.serverStatus.motdLen)
         {
-            *(uint32_t *)&sharedUiInfo.gap8EB4[72920] = len;
-            *(uint32_t *)&sharedUiInfo.gap8EB4[72924] = -1;
+            sharedUiInfo.serverStatus.motdLen = len;
+            sharedUiInfo.serverStatus.motdWidth = -1;
         }
         if (force)
         {
             numclean = 0;
             UI_ClearDisplayedServers();
-            if (*(int *)&sharedUiInfo.serverStatus.string[1128] >= 0)
+            if (sharedUiInfo.serverStatus.currentServer >= 0)
                 Menu_SetFeederSelection(&uiInfo->uiDC, 0, 2, 0, 0);
             LAN_MarkServerDirty(ui_netSource->current.integer, 0xFFFFFFFF, 1u);
         }
         count = LAN_GetServerCount(ui_netSource->current.integer);
         if (!LAN_WaitServerResponse(ui_netSource->current.integer) && (ui_netSource->current.integer || count))
         {
-            UI_ServersSort(*(int *)&sharedUiInfo.serverStatus.string[1112], 1);
+            UI_ServersSort(sharedUiInfo.serverStatus.sortKey, 1);
             dirty = 0;
             for (i = 0; i < count; ++i)
             {
@@ -3672,7 +3672,7 @@ void __cdecl UI_BuildServerDisplayList(uiInfo_s *uiInfo, int force)
                         LAN_GetServerInfo(ui_netSource->current.integer, i, info, 1024);
                         v4 = Info_ValueForKey(info, "clients");
                         clients = atoi(v4);
-                        *(uint32_t *)&sharedUiInfo.gap8EB4[72908] += clients;
+                        sharedUiInfo.serverStatus.numPlayersOnServers += clients;
                         v5 = Info_ValueForKey(info, "addr");
                         if (!I_strnicmp(v5, "000.000.000.000", 15) || !ui_browserShowEmpty->current.enabled && !clients)
                             goto LABEL_55;
@@ -3740,12 +3740,12 @@ void __cdecl UI_BuildServerDisplayList(uiInfo_s *uiInfo, int force)
                     }
                 }
             }
-            *(uint32_t *)&sharedUiInfo.serverStatus.string[1104] = uiInfo->uiDC.realTime;
+            sharedUiInfo.serverStatus.refreshtime = uiInfo->uiDC.realTime;
         }
         else
         {
             UI_ClearDisplayedServers();
-            *(uint32_t *)&sharedUiInfo.gap8EB4[72912] = uiInfo->uiDC.realTime + 500;
+            sharedUiInfo.serverStatus.nextDisplayRefresh = uiInfo->uiDC.realTime + 500;
         }
     }
 }
@@ -3757,8 +3757,8 @@ void __cdecl UI_BinaryServerInsertion(uint32_t num)
     int res; // [esp+8h] [ebp-8h]
     int mid; // [esp+Ch] [ebp-4h]
 
-    len = *(uint32_t *)&sharedUiInfo.gap8EB4[72900];
-    mid = *(uint32_t *)&sharedUiInfo.gap8EB4[72900];
+    len = sharedUiInfo.serverStatus.numDisplayServers;
+    mid = sharedUiInfo.serverStatus.numDisplayServers;
     offset = 0;
     res = 0;
     while (mid > 0)
@@ -3766,15 +3766,15 @@ void __cdecl UI_BinaryServerInsertion(uint32_t num)
         mid = len >> 1;
         res = LAN_CompareServers(
             ui_netSource->current.integer,
-            *(int *)&sharedUiInfo.serverStatus.string[1112],
-            *(int *)&sharedUiInfo.serverStatus.string[1116],
+            sharedUiInfo.serverStatus.sortKey,
+            sharedUiInfo.serverStatus.sortDir,
             num,
-            *(uint32_t *)&sharedUiInfo.gap8EB4[4 * (len >> 1) - 7100 + 4 * offset]);
+            sharedUiInfo.serverStatus.displayServers[(len >> 1) + offset]);
         if (res != -LAN_CompareServers(
             ui_netSource->current.integer,
-            *(int *)&sharedUiInfo.serverStatus.string[1112],
-            *(int *)&sharedUiInfo.serverStatus.string[1116],
-            *(uint32_t *)&sharedUiInfo.gap8EB4[4 * (len >> 1) - 7100 + 4 * offset],
+            sharedUiInfo.serverStatus.sortKey,
+            sharedUiInfo.serverStatus.sortDir,
+            sharedUiInfo.serverStatus.displayServers[(len >> 1) + offset],
             num))
             MyAssertHandler(
                 ".\\ui_mp\\ui_main_mp.cpp",
@@ -3805,19 +3805,19 @@ void __cdecl UI_InsertServerIntoDisplayList(uint32_t num, int position)
 
     if (position < 0)
         MyAssertHandler(".\\ui_mp\\ui_main_mp.cpp", 3238, 0, "%s", "position >= 0");
-    if (position < *(int *)&sharedUiInfo.gap8EB4[72900])
+    if (position < sharedUiInfo.serverStatus.numDisplayServers)
     {
         res = LAN_CompareServers(
             ui_netSource->current.integer,
-            *(int *)&sharedUiInfo.serverStatus.string[1112],
-            *(int *)&sharedUiInfo.serverStatus.string[1116],
+            sharedUiInfo.serverStatus.sortKey,
+            sharedUiInfo.serverStatus.sortDir,
             num,
-            *(uint32_t *)&sharedUiInfo.gap8EB4[4 * position - 7100]);
+            sharedUiInfo.serverStatus.displayServers[position]);
         if (res != -LAN_CompareServers(
             ui_netSource->current.integer,
-            *(int *)&sharedUiInfo.serverStatus.string[1112],
-            *(int *)&sharedUiInfo.serverStatus.string[1116],
-            *(uint32_t *)&sharedUiInfo.gap8EB4[4 * position - 7100],
+            sharedUiInfo.serverStatus.sortKey,
+            sharedUiInfo.serverStatus.sortDir,
+            sharedUiInfo.serverStatus.displayServers[position],
             num))
             MyAssertHandler(
                 ".\\ui_mp\\ui_main_mp.cpp",
@@ -3833,15 +3833,15 @@ void __cdecl UI_InsertServerIntoDisplayList(uint32_t num, int position)
     {
         resa = LAN_CompareServers(
             ui_netSource->current.integer,
-            *(int *)&sharedUiInfo.serverStatus.string[1112],
-            *(int *)&sharedUiInfo.serverStatus.string[1116],
+            sharedUiInfo.serverStatus.sortKey,
+            sharedUiInfo.serverStatus.sortDir,
             num,
-            *(uint32_t *)&sharedUiInfo.gap8EB4[4 * position - 7104]);
+            sharedUiInfo.serverStatus.displayServers[position - 1]);
         if (resa != -LAN_CompareServers(
             ui_netSource->current.integer,
-            *(int *)&sharedUiInfo.serverStatus.string[1112],
-            *(int *)&sharedUiInfo.serverStatus.string[1116],
-            *(uint32_t *)&sharedUiInfo.gap8EB4[4 * position - 7104],
+            sharedUiInfo.serverStatus.sortKey,
+            sharedUiInfo.serverStatus.sortDir,
+            sharedUiInfo.serverStatus.displayServers[position - 1],
             num))
             MyAssertHandler(
                 ".\\ui_mp\\ui_main_mp.cpp",
@@ -3853,13 +3853,13 @@ void __cdecl UI_InsertServerIntoDisplayList(uint32_t num, int position)
         if (resa < 0)
             MyAssertHandler(".\\ui_mp\\ui_main_mp.cpp", 3250, 0, "%s", "res >= 0");
     }
-    if (position >= 0 && position <= *(int *)&sharedUiInfo.gap8EB4[72900])
+    if (position >= 0 && position <= sharedUiInfo.serverStatus.numDisplayServers)
     {
-        if (position <= *(int *)&sharedUiInfo.serverStatus.string[1128] && *(uint32_t *)&sharedUiInfo.gap8EB4[72900])
-            ++*(uint32_t *)&sharedUiInfo.serverStatus.string[1128];
-        for (i = ++ * (uint32_t *)&sharedUiInfo.gap8EB4[72900]; i > position; --i)
-            *(uint32_t *)&sharedUiInfo.gap8EB4[4 * i - 7100] = *(uint32_t *)&sharedUiInfo.gap8EB4[4 * i - 7104];
-        *(uint32_t *)&sharedUiInfo.gap8EB4[4 * position - 7100] = num;
+        if (position <= sharedUiInfo.serverStatus.currentServer && sharedUiInfo.serverStatus.numDisplayServers)
+            ++sharedUiInfo.serverStatus.currentServer;
+        for (i = ++sharedUiInfo.serverStatus.numDisplayServers; i > position; --i)
+            sharedUiInfo.serverStatus.displayServers[i] = sharedUiInfo.serverStatus.displayServers[i - 1];
+        sharedUiInfo.serverStatus.displayServers[position] = num;
     }
 }
 
@@ -3867,10 +3867,10 @@ int UI_ClearDisplayedServers()
 {
     int result; // eax
 
-    *(uint32_t *)&sharedUiInfo.gap8EB4[72900] = 0;
-    *(uint32_t *)&sharedUiInfo.gap8EB4[72908] = 0;
+    sharedUiInfo.serverStatus.numDisplayServers = 0;
+    sharedUiInfo.serverStatus.numPlayersOnServers = 0;
     result = LAN_GetServerCount(ui_netSource->current.integer);
-    *(uint32_t *)&sharedUiInfo.gap8EB4[72904] = result;
+    sharedUiInfo.serverStatus.lastServerCount = result;
     return result;
 }
 
@@ -3889,9 +3889,9 @@ void __cdecl UI_BuildServerStatus(uiInfo_s *uiInfo, int force)
             return;
         }
         UI_UpdateDisplayServers(uiInfo);
-        if (*(int *)&sharedUiInfo.serverStatus.string[1128] >= 0
-            && *(int *)&sharedUiInfo.serverStatus.string[1128] <= *(int *)&sharedUiInfo.gap8EB4[72900]
-            && *(uint32_t *)&sharedUiInfo.gap8EB4[72900])
+        if (sharedUiInfo.serverStatus.currentServer >= 0
+            && sharedUiInfo.serverStatus.currentServer <= sharedUiInfo.serverStatus.numDisplayServers
+            && sharedUiInfo.serverStatus.numDisplayServers)
         {
             if (UI_GetServerStatusInfo(sharedUiInfo.serverStatusAddress, &sharedUiInfo.serverStatusInfo))
             {
@@ -3946,7 +3946,7 @@ int __cdecl UI_FeederCount(int localClientNum, float feederID)
                 "(localClientNum == 0)",
                 localClientNum);
         UI_UpdateDisplayServers(&uiInfoArray);
-        return *(_DWORD *)&sharedUiInfo.gap8EB4[72900];
+        return sharedUiInfo.serverStatus.numDisplayServers;
     }
     else if (feederID == 13.0)
     {
@@ -4137,7 +4137,7 @@ const char *__cdecl UI_FeederItemText(
             localClientNum);
     uiInfo = (uiInfo_s *)&uiInfoArray;
     UI_UpdateDisplayServers((uiInfo_s *)&uiInfoArray);
-    if (index < 0 || index >= *(int *)&sharedUiInfo.gap8EB4[72900])
+    if (index < 0 || index >= sharedUiInfo.serverStatus.numDisplayServers)
     {
     LABEL_73:
         if (feederID != 24.0)
@@ -4158,7 +4158,7 @@ const char *__cdecl UI_FeederItemText(
     }
     if (lastColumn != column || lastTime > uiInfo->uiDC.realTime + 5000)
     {
-        LAN_GetServerInfo(ui_netSource->current.integer, *(uint32_t *)&sharedUiInfo.gap8EB4[4 * index - 7100], info, 1024);
+        LAN_GetServerInfo(ui_netSource->current.integer, sharedUiInfo.serverStatus.displayServers[index], info, 1024);
         lastColumn = column;
         lastTime = uiInfo->uiDC.realTime;
     }
@@ -4346,11 +4346,11 @@ void __cdecl UI_OverrideCursorPos(int localClientNum, itemDef_s *item)
         listPtr = item->typeData.listBox;
         if (listPtr->endPos[localClientNum])
         {
-            if (*(int *)&sharedUiInfo.serverStatus.string[1128] >= 0
+            if (sharedUiInfo.serverStatus.currentServer >= 0
                 && item->cursorPos[localClientNum] >= listPtr->startPos[localClientNum]
                 && item->cursorPos[localClientNum] <= listPtr->endPos[localClientNum])
             {
-                delta = *(uint32_t *)&sharedUiInfo.serverStatus.string[1128] - item->cursorPos[localClientNum];
+                delta = sharedUiInfo.serverStatus.currentServer - item->cursorPos[localClientNum];
                 max = Item_ListBox_MaxScroll(localClientNum, item);
                 if (delta + listPtr->startPos[localClientNum] < max)
                     v3 = delta + listPtr->startPos[localClientNum];
@@ -4362,7 +4362,7 @@ void __cdecl UI_OverrideCursorPos(int localClientNum, itemDef_s *item)
                     v2 = 0;
                 listPtr->startPos[localClientNum] = v2;
                 listPtr->endPos[localClientNum] += delta;
-                item->cursorPos[localClientNum] = *(uint32_t *)&sharedUiInfo.serverStatus.string[1128];
+                item->cursorPos[localClientNum] = sharedUiInfo.serverStatus.currentServer;
             }
         }
         else
@@ -4419,9 +4419,9 @@ void __cdecl UI_FeederSelection(int localClientNum, float feederID, int index)
     }
     else if (feederID == 2.0)
     {
-        if (*(int *)&sharedUiInfo.gap8EB4[72900] > 0)
-            *(uint32_t *)&sharedUiInfo.serverStatus.string[1128] = index;
-        LAN_GetServerInfo(ui_netSource->current.integer, *(uint32_t *)&sharedUiInfo.gap8EB4[4 * index - 7100], info_0, 1024);
+        if (sharedUiInfo.serverStatus.numDisplayServers > 0)
+            sharedUiInfo.serverStatus.currentServer = index;
+        LAN_GetServerInfo(ui_netSource->current.integer, sharedUiInfo.serverStatus.displayServers[index], info_0, 1024);
     }
     else if (feederID == 7.0)
     {
@@ -5669,20 +5669,20 @@ void UI_StopServerRefresh()
 {
     int count; // [esp+0h] [ebp-4h]
 
-    if (*(uint32_t *)&sharedUiInfo.serverStatus.string[1124])
+    if (sharedUiInfo.serverStatus.refreshActive)
     {
-        *(uint32_t *)&sharedUiInfo.serverStatus.string[1124] = 0;
+        sharedUiInfo.serverStatus.refreshActive = 0;
         Com_Printf(
             13,
             "%d servers listed in browser with %d players.\n",
-            *(uint32_t *)&sharedUiInfo.gap8EB4[72900],
-            *(uint32_t *)&sharedUiInfo.gap8EB4[72908]);
+            sharedUiInfo.serverStatus.numDisplayServers,
+            sharedUiInfo.serverStatus.numPlayersOnServers);
         count = LAN_GetServerCount(ui_netSource->current.integer);
-        if (count - *(uint32_t *)&sharedUiInfo.gap8EB4[72900] > 0)
+        if (count - (uint32_t)sharedUiInfo.serverStatus.numDisplayServers > 0)
             Com_Printf(
                 13,
                 "%d servers not listed (filtered out by game browser settings)\n",
-                count - *(uint32_t *)&sharedUiInfo.gap8EB4[72900]);
+                count - sharedUiInfo.serverStatus.numDisplayServers);
     }
 }
 
@@ -5691,7 +5691,7 @@ void __cdecl UI_DoServerRefresh(uiInfo_s *uiInfo)
     bool wait; // [esp+0h] [ebp-4h]
 
     wait = 0;
-    if (*(uint32_t *)&sharedUiInfo.serverStatus.string[1124])
+    if (sharedUiInfo.serverStatus.refreshActive)
     {
         if (ui_netSource->current.integer != 2)
         {
@@ -5700,12 +5700,12 @@ void __cdecl UI_DoServerRefresh(uiInfo_s *uiInfo)
             else
                 wait = LAN_GetServerCount(ui_netSource->current.integer) == 0;
         }
-        if (uiInfo->uiDC.realTime >= *(int *)&sharedUiInfo.serverStatus.string[1104] || !wait)
+        if (uiInfo->uiDC.realTime >= sharedUiInfo.serverStatus.refreshtime || !wait)
         {
             UI_UpdateDisplayServers(uiInfo);
             if (LAN_UpdateDirtyPings((netsrc_t)uiInfo->uiDC.localClientNum, ui_netSource->current.unsignedInt))
             {
-                *(uint32_t *)&sharedUiInfo.serverStatus.string[1104] = uiInfo->uiDC.realTime + 1000;
+                sharedUiInfo.serverStatus.refreshtime = uiInfo->uiDC.realTime + 1000;
             }
             else if (!wait)
             {
@@ -5752,14 +5752,14 @@ void __cdecl UI_StartServerRefresh(int localClientNum, int full)
     Dvar_SetStringByName(dvarName, v3);
     if (full)
     {
-        *(_DWORD *)&sharedUiInfo.serverStatus.string[1124] = 1;
-        *(_DWORD *)&sharedUiInfo.gap8EB4[72912] = uiInfoArray.uiDC.realTime + 1000;
+        sharedUiInfo.serverStatus.refreshActive = 1;
+        sharedUiInfo.serverStatus.nextDisplayRefresh = uiInfoArray.uiDC.realTime + 1000;
         UI_ClearDisplayedServers();
         LAN_MarkServerDirty(ui_netSource->current.integer, 0xFFFFFFFF, 1u);
         LAN_ResetPings(ui_netSource->current.integer);
         if (ui_netSource->current.integer)
         {
-            *(_DWORD *)&sharedUiInfo.serverStatus.string[1104] = uiInfoArray.uiDC.realTime + 5000;
+            sharedUiInfo.serverStatus.refreshtime = uiInfoArray.uiDC.realTime + 5000;
             if (ui_netSource->current.integer == 1)
             {
                 i = 0;
@@ -5776,7 +5776,7 @@ void __cdecl UI_StartServerRefresh(int localClientNum, int full)
         {
             v4 = CL_ControllerIndexFromClientNum(localClientNum);
             Cmd_ExecuteSingleCommand(localClientNum, v4, (char*)"localservers\n");
-            *(_DWORD *)&sharedUiInfo.serverStatus.string[1104] = uiInfoArray.uiDC.realTime + 1000;
+            sharedUiInfo.serverStatus.refreshtime = uiInfoArray.uiDC.realTime + 1000;
         }
     }
     else
@@ -5788,8 +5788,8 @@ void __cdecl UI_StartServerRefresh(int localClientNum, int full)
 void __cdecl UI_UpdatePendingPings(uiInfo_s *uiInfo)
 {
     LAN_ResetPings(ui_netSource->current.integer);
-    *(uint32_t *)&sharedUiInfo.serverStatus.string[1124] = 1;
-    *(uint32_t *)&sharedUiInfo.serverStatus.string[1104] = uiInfo->uiDC.realTime + 1000;
+    sharedUiInfo.serverStatus.refreshActive = 1;
+    sharedUiInfo.serverStatus.refreshtime = uiInfo->uiDC.realTime + 1000;
 }
 
 char errorString[1024];

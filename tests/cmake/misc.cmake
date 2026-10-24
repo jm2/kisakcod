@@ -1263,8 +1263,6 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         target_compile_definitions(kisakcod-browser-hc-od-filter-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE
             KISAK_TEST_BROWSER_FILTER)
         target_link_libraries(kisakcod-browser-hc-od-filter-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
-        # Decompiled displayServers is gap8EB4[4n - 7100], inside sharedUiInfo (#727).
-        target_compile_options(kisakcod-browser-hc-od-filter-tests PRIVATE -fno-sanitize=array-bounds)
         add_dependencies(kisakcod-browser-hc-od-filter-tests update_build_number) # ui_main_mp.cpp: buildnumber.h
         add_test(NAME browser-hc-od-filter-1-8 COMMAND kisakcod-browser-hc-od-filter-tests)
         set_tests_properties(browser-hc-od-filter-1-8 PROPERTIES TIMEOUT 20)
