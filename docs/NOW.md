@@ -15,7 +15,7 @@ From the master census. Live values: the `Native64 census` summary of the latest
 | K1 | 64-bit headless TUs passing syntax-only | win64 273/273 · winarm64 273/273 · lin64 272/272 · a64 272/272 · mac64 273/273 | all (G1) | census |
 | K2 | 64-bit headless real link | Win64: linked, 0 TUs excluded, 0 undefined | Win64, Linux amd64 (G1) | census |
 | K3 | Upstream engine TUs in the Linux test build | 82/475 | rising | census |
-| K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 22/25 (`db_graphhash`, 3 legs; list in `IsK4Verified`) | 25/25 (G2) | this file |
+| K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 23/25 (`db_graphhash`, 3 legs; list in `IsK4Verified`) | 25/25 (G2) | this file |
 | K5 | Headless TUs reaching `<d3d9.h>` on Linux | 0 on lin64 and a64 | 0 (G1 Linux) | census |
 | K6 | Target x role cells at `links` or above | 5/10 (all headless; the Windows clients link in CI but have no release recipe) | 10 at `packaged` (G6) | manifest |
 
@@ -25,7 +25,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 37 | K4 digest pipeline: per-family `db::graph_hash` walkers on x86 and 64-bit | G2 | K4 | a family's 64-bit graph hash equals its x86 hash on the owner's data; its fail-closed guard is then removed | L | GfxWorld in review (#732, #733; win-arm64); next Fx/ImpactFx (loader write-up first) |
+| 37 | K4 digest pipeline: per-family `db::graph_hash` walkers on x86 and 64-bit | G2 | K4 | a family's 64-bit graph hash equals its x86 hash on the owner's data; its fail-closed guard is then removed | L | 23/25 with GfxWorld (#736); left: Fx/ImpactFx (loader write-up first; win-arm64) |
 | 46 | G0 evidence: x86 client and headless server on Steam 1.8 data, 3 maps, one fork round, the same binaries under Wine | G0 | gate | console text per map and at round end, on antec-win and under Wine on antec | M | blocked-owner: client needs antec-win's physical console (RDP has no D3D9 HAL); server half passes; Wine client stalls before `R_Init` (kisakcod-win) |
 | 47 | G3 first target: an x86 fork client plays a round, a map change and a reconnect on the Win64 headless server, with 8 test clients | G3 | K6 | the round's console text on both ends | L | server pre-check passes on arm64, 8 bots (#641, #667, #672, #674); next the x86 client (antec-win console; kisakcod-win) |
 | 53 | 1.8 gameplay parity: executable-side 1.1-1.8 changes inventoried; pmove and weapon state match the 1.8 reference server (#692) | G4a | gate | #692's done-test | L | started: imports (linux-arm64), per-frame parity (linux); scope questions in #692 |
@@ -59,7 +59,7 @@ Merge SHAs are in `git log`.
 
 - Row 51: OpenAL Soft audio on every client (#669-#679); 3D start offset in ms (#682); Linux TSan leg (#681). Fixes #714 (pure checksums), #715 (advisory published).
 - Row 52, the map sweep: all 21 stock MP maps load and rotate in one 64-bit ASan dedicated server (#709-#712). LAN join, reconnect and map_restart pass on all five 64-bit platforms (#695-#697, #707).
-- K4 22/25: RawFile through Menu (#633-#731; headers #644, #656, #659; renderer families and LoadedSound headless-only). Per-symbol x86 identity check (#647).
+- K4 23/25: RawFile through GfxWorld (#633-#736; headers #644, #656, #659; renderer families and LoadedSound headless-only). Per-symbol x86 identity check (#647).
 - G2 soak (row 45) passes on lin64 and arm64 (`scripts/g2_run.py`, #636; #639). Row 47's server pre-check runs 8 bots clean.
 - G5: all five 64-bit clients in-game (rows 44, 49); cinematics through FFmpeg (row 41, #654, #660); screenshot regression set (row 50, #673); Linux client exports no symbols (#655).
 - G0: the x86 server runs on antec-win and under Wine (#635); no-Steam x86 nightly (#637).
