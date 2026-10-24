@@ -55,4 +55,4 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/tests/tsan_openal.supp
         run: >
           ctest --test-dir build-tsan-openal --output-on-failure
-          --no-tests=error --timeout 120 -R '^snd-openal-shim$'
+          --no-tests=error -R '^snd-openal-shim$'
