@@ -1222,3 +1222,23 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME fs-pure-checksums-fresh COMMAND kisakcod-fs-pure-checksums-tests)
     set_tests_properties(fs-pure-checksums-fresh PROPERTIES TIMEOUT 20)
 endif()
+
+# FS_Startup (universal/com_files.cpp): the 1.8 MP fs_usedevdir gates the
+# development directories. Linux and clang only, as above; the client's defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-fs-usedevdir-tests fs_usedevdir_tests.cpp ${SRC_DIR}/universal/com_files.cpp
+        ${SRC_DIR}/universal/dvar.cpp ${SRC_DIR}/universal/q_shared.cpp)
+    target_include_directories(kisakcod-fs-usedevdir-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-fs-usedevdir-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fs-usedevdir-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-fs-usedevdir-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-fs-usedevdir-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-fs-usedevdir-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-fs-usedevdir-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-fs-usedevdir-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME fs-usedevdir-1-8 COMMAND kisakcod-fs-usedevdir-tests)
+    set_tests_properties(fs-usedevdir-1-8 PROPERTIES TIMEOUT 20)
+endif()

@@ -1512,7 +1512,7 @@ void FS_RegisterDvars()
     if (!homePath || !*homePath)
         homePath = (char *)fs_basepath->reset.string;
     fs_homepath = Dvar_RegisterString("fs_homepath", homePath, DVAR_INIT | DVAR_AUTOEXEC, "Game home path");
-    fs_restrict = Dvar_RegisterBool("fs_restrict", 0, DVAR_INIT, "Restrict file access for demos etc.");
+    fs_restrict = Dvar_RegisterBool("fs_restrict", 0, DVAR_INIT, "Restrict file access for demos etc."); FS_RegisterDevDirDvar(); // KISAK: 1.8
 }
 
 void __cdecl FS_AddSearchPath(searchpath_s *search)
@@ -2287,25 +2287,25 @@ void __cdecl FS_Startup(char *gameName)
 #endif
     if (*(const unsigned char *)fs_basepath->current.string)
     {
-        FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"devraw_shared");
+        if (FS_UseDevDirs()) { FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"devraw_shared"); // KISAK: 1.8
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"devraw");
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"raw_shared");
-        FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"raw");
+        FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"raw"); }
         FS_AddLocalizedGameDirectory((char *)fs_basepath->current.string, (char*)"players");
     }
     if (*(const unsigned char *)fs_homepath->current.string && I_stricmp(fs_basepath->current.string, fs_homepath->current.string))
     {
-        FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"devraw_shared");
+        if (FS_UseDevDirs()) { FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"devraw_shared"); // KISAK: 1.8
         FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"devraw");
         FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"raw_shared");
-        FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"raw");
+        FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"raw"); }
     }
     if (*(const unsigned char *)fs_cdpath->current.string && I_stricmp(fs_basepath->current.string, fs_cdpath->current.string))
     {
-        FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char*)"devraw_shared");
+        if (FS_UseDevDirs()) { FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char*)"devraw_shared"); // KISAK: 1.8
         FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char*)"devraw");
         FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char*)"raw_shared");
-        FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char*)"raw");
+        FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, (char*)"raw"); }
         FS_AddLocalizedGameDirectory((char *)fs_cdpath->current.string, gameName);
     }
     if (*(const unsigned char *)fs_basepath->current.string)
@@ -3357,4 +3357,24 @@ void __cdecl FS_Rename(char *from, char *fromDir, char *to, char *toDir)
             FS_Remove(from_ospath);
         }
     }
+}
+
+#ifdef KISAK_MP
+static const dvar_s *fs_usedevdir;
+#endif
+
+void FS_RegisterDevDirDvar()
+{
+#ifdef KISAK_MP
+    fs_usedevdir = Dvar_RegisterBool("fs_usedevdir", 0, DVAR_INIT, "Use development directories.");
+#endif
+}
+
+bool FS_UseDevDirs()
+{
+#ifdef KISAK_MP
+    return fs_usedevdir->current.enabled;
+#else
+    return true;
+#endif
 }
