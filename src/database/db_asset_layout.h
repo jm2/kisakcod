@@ -100,6 +100,8 @@ constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
     case kXModel:
     case kXModelPieces:
     case kClipMapPvs:
+    case kFx:
+    case kImpactFx:
     case kMenu:
         return true;
     default:
@@ -174,7 +176,9 @@ constexpr bool IsLoadPermitted(
     {
         return false;
     }
-    return fxAdapterAvailable || !IsFxConversionFamily(assetType);
+    // A K4-verified FX family loads through its disk32 loader, which never
+    // uses the FX zone adapter (docs/design/FASTFILE_LOADER.md, step 7).
+    return fxAdapterAvailable || !IsFxConversionFamily(assetType) || IsK4Verified(assetType);
 }
 } // namespace db::asset_layout
 

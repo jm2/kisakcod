@@ -744,6 +744,8 @@ void zone_test::CheckZone()
     const FxImpactTable *impacts = Find(ASSET_TYPE_IMPACT_FX, "e2e/impacts").impactFx;
     Expect(impacts && Is(impacts->table[0].nonflesh[0], ASSET_TYPE_FX, "e2e/fx") && !impacts->table[11].flesh[3],
            "an impact table names the shared effect");
+    ExpectDigest(ASSET_TYPE_FX, "e2e/fx", "0000000000000000000000000000000000000000000000000000000000000000");
+    ExpectDigest(ASSET_TYPE_IMPACT_FX, "e2e/impacts", "0000000000000000000000000000000000000000000000000000000000000000");
     const menuDef_t *menu = Find(ASSET_TYPE_MENU, "e2e/menu").menu;
     Expect(menu && menu->itemCount == 1 && Is(menu->window.background, ASSET_TYPE_MATERIAL, "e2e/material")
                && menu->items[0]->parent == menu && Is(menu->items[0]->focusSound, ASSET_TYPE_SOUND, "e2e/snd"),
@@ -760,6 +762,7 @@ void zone_test::CheckZone()
     const FxEffectDef *fxModel = Find(ASSET_TYPE_FX, "e2e/fxmodel").fx;
     Expect(fxModel && Is(fxModel->elemDefs[0].visuals.instance.model, ASSET_TYPE_XMODEL, "e2e/model"),
            "an effect's model element shows the shared model");
+    ExpectDigest(ASSET_TYPE_FX, "e2e/fxmodel", "0000000000000000000000000000000000000000000000000000000000000000");
     const XAnimParts *anim = Find(ASSET_TYPE_XANIMPARTS, "e2e/anim").parts;
     Expect(anim && anim->boneCount[9] == 1 && anim->names[0] == SL_FindString("bone_root"),
            "an animation's bone names a zone script string");

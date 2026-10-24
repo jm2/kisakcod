@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <EffectsCore/fx_effect_def.h>
+#include <universal/fx_effect_def.h>
 #include <universal/kisak_abi.h>
 
 constexpr std::size_t MAX_EFFECTS = 1024;
@@ -225,20 +225,6 @@ struct FxSystem
     std::uint32_t restartList[32];
 };
 RUNTIME_SIZE(FxSystem, 0xA60, 0xA90);
-
-struct FxImpactEntry
-{
-    const FxEffectDef *nonflesh[29];
-    const FxEffectDef *flesh[4];
-};
-RUNTIME_SIZE(FxImpactEntry, 0x84, 0x108);
-
-struct FxImpactTable
-{
-    const char *name;
-    FxImpactEntry *table;
-};
-RUNTIME_SIZE(FxImpactTable, 0x8, 0x10);
 
 struct FxSystemBuffers
 {

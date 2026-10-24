@@ -13,7 +13,8 @@ struct FxElemDef;
 
 // Canonical native-width runtime effect definition.  These records are shared
 // by portable fast-file conversion and renderer-facing FX code; serialized
-// Disk32 mirrors remain separate in fx_fastfile_disk32.h.
+// Disk32 mirrors remain separate in fx_fastfile_disk32.h. They live outside
+// EffectsCore/ so headless code can name their fields without a client include.
 constexpr std::size_t FX_ELEM_DEF_RUNTIME_SIZE =
     KISAK_ARCH_64BIT ? 0x120u : 0xFCu;
 constexpr std::size_t FX_ELEM_DEF_RUNTIME_ALIGNMENT =
@@ -229,6 +230,22 @@ RUNTIME_OFFSET(FxElemDef, effectOnImpact, 0xD8, 0xE8);
 RUNTIME_OFFSET(FxElemDef, effectOnDeath, 0xDC, 0xF0);
 RUNTIME_OFFSET(FxElemDef, effectEmitted, 0xE0, 0xF8);
 RUNTIME_OFFSET(FxElemDef, trailDef, 0xF4, 0x110);
+
+// The impact-effect asset record (ASSET_TYPE_IMPACT_FX): per surface type,
+// the effects for non-flesh and flesh hits.
+struct FxImpactEntry
+{
+    const FxEffectDef *nonflesh[29];
+    const FxEffectDef *flesh[4];
+};
+RUNTIME_SIZE(FxImpactEntry, 0x84, 0x108);
+
+struct FxImpactTable
+{
+    const char *name;
+    FxImpactEntry *table;
+};
+RUNTIME_SIZE(FxImpactTable, 0x8, 0x10);
 
 static_assert(alignof(FxEffectDef) == (KISAK_ARCH_64BIT ? 8u : 4u));
 static_assert(alignof(FxElemDef) == FX_ELEM_DEF_RUNTIME_ALIGNMENT);
