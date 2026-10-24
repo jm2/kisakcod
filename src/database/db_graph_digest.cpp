@@ -26,6 +26,7 @@
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
 #include <universal/fft.h>
+#include <universal/fx_effect_def.h>
 #include <universal/gfx_image.h>
 #include <universal/gfx_lightdef.h>
 #include <universal/gfx_material.h>
@@ -1737,6 +1738,128 @@ void HashGfxWorld(GraphHashBuilder &builder, const XAssetHeader &header)
     builder.FieldBytes(27, world.dpvsDyn.dynEntClientCount, sizeof(world.dpvsDyn.dynEntClientCount));
 }
 
+// FxElemDef::elemType values that change how its visuals read (a fast-file
+// fact; FxElemType lives with the client effects code).
+enum FxElemTypeField : std::uint8_t
+{
+    kFxModel = 5,
+    kFxOmniLight = 6,
+    kFxSpotLight = 7,
+    kFxSound = 8,
+    kFxDecal = 9,
+    kFxRunner = 10,
+};
+
+// An element's visuals as its type names them: none for lights, a decal's
+// material pairs, else one visual or an array of them, each a model, an
+// effect, a sound name or a material.
+void HashFxVisual(GraphHashBuilder &builder, std::uint8_t elemType, const FxElemVisuals &visual)
+{
+    if (elemType == kFxModel)
+        FieldAsset(builder, 110, ASSET_TYPE_XMODEL, visual.model);
+    else if (elemType == kFxRunner)
+        FieldAsset(builder, 111, ASSET_TYPE_FX, visual.effectDef.handle);
+    else if (elemType == kFxSound)
+        builder.FieldString(112, visual.soundName);
+    else
+        FieldAsset(builder, 113, ASSET_TYPE_MATERIAL, visual.material);
+}
+
+void HashFxVisuals(GraphHashBuilder &builder, const FxElemDef &elem)
+{
+    if (elem.elemType == kFxOmniLight || elem.elemType == kFxSpotLight || !elem.visualCount)
+        return;
+    if (elem.elemType == kFxDecal)
+    {
+        const std::size_t marks = elem.visuals.markArray ? elem.visualCount : 0;
+        for (std::size_t i = 0; i < marks; ++i)
+            FieldAssets(builder, 114, ASSET_TYPE_MATERIAL, elem.visuals.markArray[i].materials, 2);
+        return;
+    }
+    if (elem.visualCount == 1)
+    {
+        HashFxVisual(builder, elem.elemType, elem.visuals.instance);
+        return;
+    }
+    const std::size_t visuals = elem.visuals.array ? elem.visualCount : 0;
+    for (std::size_t i = 0; i < visuals; ++i)
+        HashFxVisual(builder, elem.elemType, elem.visuals.array[i]);
+}
+
+void HashFxTrail(GraphHashBuilder &builder, const FxTrailDef *trail)
+{
+    builder.FieldU64(115, trail != nullptr);
+    if (!trail)
+        return;
+    builder.FieldI64(116, trail->scrollTimeMsec);
+    builder.FieldI64(116, trail->repeatDist);
+    builder.FieldI64(116, trail->splitDist);
+    builder.FieldI64(117, trail->vertCount);
+    FieldArray(builder, 117, trail->verts, Count(trail->vertCount));
+    builder.FieldI64(118, trail->indCount);
+    FieldArray(builder, 118, trail->inds, Count(trail->indCount));
+}
+
+// An element in record order: flags through the interval counts (the
+// scalars before its first pointer, alike at both widths), its velocity and
+// visual-state samples, visuals, collision bounds, the effects it names,
+// emission ranges, trail and sort bytes.
+void HashFxElem(GraphHashBuilder &builder, const FxElemDef &elem)
+{
+    constexpr std::size_t scalars = offsetof(FxElemDef, visStateIntervalCount) + 1;
+    static_assert(scalars == 0xB4);
+    builder.FieldBytes(100, &elem, scalars);
+    FieldArray(builder, 101, elem.velSamples, elem.velIntervalCount + 1u);
+    FieldArray(builder, 102, elem.visSamples, elem.visStateIntervalCount + 1u);
+    HashFxVisuals(builder, elem);
+    builder.FieldBytes(103, elem.collMins, sizeof(elem.collMins));
+    builder.FieldBytes(103, elem.collMaxs, sizeof(elem.collMaxs));
+    FieldAsset(builder, 104, ASSET_TYPE_FX, elem.effectOnImpact.handle);
+    FieldAsset(builder, 104, ASSET_TYPE_FX, elem.effectOnDeath.handle);
+    FieldAsset(builder, 104, ASSET_TYPE_FX, elem.effectEmitted.handle);
+    builder.FieldBytes(105, &elem.emitDist, sizeof(elem.emitDist));
+    builder.FieldBytes(105, &elem.emitDistVariance, sizeof(elem.emitDistVariance));
+    HashFxTrail(builder, elem.trailDef);
+    builder.FieldU64(106, elem.sortOrder);
+    builder.FieldU64(106, elem.lightingFrac);
+    builder.FieldU64(106, elem.useItemClip);
+    builder.FieldBytes(106, elem.unused, sizeof(elem.unused));
+}
+
+// The effect: name, flags and sizes, the element counts, then each looping,
+// one-shot and emitted element.
+void HashFx(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    const FxEffectDef &effect = *header.fx;
+    builder.FieldString(1, effect.name);
+    builder.FieldI64(2, effect.flags);
+    builder.FieldI64(2, effect.totalSize);
+    builder.FieldI64(2, effect.msecLoopingLife);
+    builder.FieldI64(3, effect.elemDefCountLooping);
+    builder.FieldI64(3, effect.elemDefCountOneShot);
+    builder.FieldI64(3, effect.elemDefCountEmission);
+    const std::size_t elems = effect.elemDefs ? Count(effect.elemDefCountLooping) + Count(effect.elemDefCountOneShot)
+                                                    + Count(effect.elemDefCountEmission)
+                                              : 0;
+    for (std::size_t i = 0; i < elems; ++i)
+        HashFxElem(builder, effect.elemDefs[i]);
+}
+
+// The impact table: per surface type, its non-flesh and flesh effects by name.
+void HashImpactFx(GraphHashBuilder &builder, const XAssetHeader &header)
+{
+    constexpr std::size_t surfaces = 12; // Load_FxImpactTable's fixed count
+    const FxImpactTable &impacts = *header.impactFx;
+    builder.FieldString(1, impacts.name);
+    builder.FieldU64(2, impacts.table != nullptr);
+    const std::size_t entries = impacts.table ? surfaces : 0;
+    for (std::size_t i = 0; i < entries; ++i)
+    {
+        FieldAssets(builder, 3, ASSET_TYPE_FX, impacts.table[i].nonflesh, std::size(impacts.table[i].nonflesh));
+        FieldAssets(builder, 4, ASSET_TYPE_FX, impacts.table[i].flesh, std::size(impacts.table[i].flesh));
+    }
+}
+
 using Walker = void (*)(GraphHashBuilder &, const XAssetHeader &);
 
 Walker WalkerFor(const std::int32_t assetType)
@@ -1789,6 +1912,10 @@ Walker WalkerFor(const std::int32_t assetType)
         return HashMenu;
     case ASSET_TYPE_GFXWORLD:
         return HashGfxWorld;
+    case ASSET_TYPE_FX:
+        return HashFx;
+    case ASSET_TYPE_IMPACT_FX:
+        return HashImpactFx;
     default:
         return nullptr;
     }
