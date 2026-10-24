@@ -1,6 +1,6 @@
 // db_disk32_envelope_tests.cpp: the 64-bit XAssetList/XAsset envelope (NOW
 // row 12) on hand-built disk32 zone images (disk32_fixture.hpp). The envelope,
-// the 64-bit RawFile loader, Load_ScriptStringCustom, the family guard and the
+// the 64-bit RawFile loader, Load_ScriptStringCustom and the
 // production stream code run against a synthetic zone. Beyond the fixture's
 // seams, only the asset pool (Load_RawFileAsset) and Load_XAsset's family
 // switch (db_load.cpp) are replaced.
@@ -28,22 +28,6 @@ std::vector<std::uintptr_t> g_entrySlots; // each dispatched header slot on entr
 
 constexpr std::uint32_t kShared = disk32::kSharedInline;
 constexpr std::uint32_t kRawFile = ASSET_TYPE_RAWFILE;
-
-// A family whose 64-bit guard is still on: K4 lifts guards family by family
-// (db_asset_layout.h), so the "unported family" case asks for one. The search
-// starts past XModelPieces (0), which only Load_DynEntityDef reaches.
-constexpr std::int32_t FirstGuardedFamily()
-{
-    for (std::int32_t type = 1; type < db::asset_layout::kAssetTypeCount; ++type)
-    {
-        if (db::asset_layout::HasDisk32Loader(type) && !db::asset_layout::IsK4Verified(type)
-            && !db::asset_layout::IsFxConversionFamily(type))
-            return type;
-    }
-    return -1;
-}
-static_assert(FirstGuardedFamily() >= 0, "every family is K4-verified: drop the unported-family case");
-constexpr std::uint32_t kGuardedFamily = static_cast<std::uint32_t>(FirstGuardedFamily());
 
 struct File : FileBuilder<File>
 {
@@ -196,13 +180,6 @@ const Malformed kMalformed[] = {
     {"truncated asset array", [] { File().Root(0, 0, 3, kInline).Word(kRawFile).Word(kInline).Word(kRawFile); },
      "ended unexpectedly"},
     {"asset array past its block", [] { File().Root(0, 0, 17, kInline); }, "exceeds stream block"},
-    {"an unported family after a raw file",
-     []
-     {
-         File().Root(0, 0, 2, kInline).Word(kRawFile).Word(kInline).Word(kGuardedFamily).Word(kInline)
-             .Word(kInline).Word(0).Word(0).Text("c.cfg");
-     },
-     "no 64-bit on-disk/runtime layout pair", 2},
     {"script strings exhaust native storage", [] { File().Root(2, kInline, 0, 0).Word(0).Word(0); },
      "exhausted", 0, 8},
     {"assets exhaust native storage", [] { File().Root(0, 0, 1, kInline).Word(kRawFile).Word(kInline); },
@@ -252,8 +229,10 @@ void __cdecl Load_RawFileAsset(XAssetHeader *header)
 }
 
 // db_load.cpp's Load_XAsset and Load_XAssetHeader switch. RawFile goes to its
-// 64-bit loader, as K4 lets the switch send it; every other family meets the
-// production guard, which refuses it at 64-bit.
+// 64-bit loader, as K4 lets the switch send it; the zones here hold no other
+// family. (Every family with a 64-bit loader is K4-verified in this headless
+// build; database-asset-layout-fail-closed and the zone guard tests cover the
+// guard's refusals.)
 void __cdecl Load_XAsset(bool atStreamStart)
 {
     g_entrySlots.push_back(reinterpret_cast<std::uintptr_t>(varXAsset->header.data));
@@ -262,7 +241,7 @@ void __cdecl Load_XAsset(bool atStreamStart)
         DB_LoadRawFilePtrDisk32(atStreamStart, &varXAsset->header.rawfile);
     else if (db::asset_mode::IsSkippedByLoader(varXAsset->type)) // as Load_XAssetHeader skips it
         varXAsset->header.data = nullptr;
-    else if (DB_AdmitAssetFamilyLoad(varXAsset->type, "unported", true, false))
+    else
         Com_Error(ERR_DROP, "the test routes no other family");
 }
 
