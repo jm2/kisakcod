@@ -158,6 +158,8 @@ void TestFailClosedPolicy()
            "64-bit targets must load weapons, which K4 counts");
     Expect(IsLoadPermitted(db::asset_layout::kXModel, true, false),
            "64-bit targets must load models, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kMenu, true, false),
+           "64-bit targets must load menus, which K4 counts");
 #if defined(KISAK_DEDI_HEADLESS)
     Expect(IsLoadPermitted(db::asset_layout::kImage, true, false),
            "a 64-bit headless server must load images, which K4 counts");
