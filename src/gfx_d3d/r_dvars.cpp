@@ -764,8 +764,8 @@
      r_showLightGrid = Dvar_RegisterBool("r_showLightGrid", 0, DVAR_CHEAT, "Show light grid debugging information");
      r_showMissingLightGrid = Dvar_RegisterBool(
          "r_showMissingLightGrid",
-         true,
-         DVAR_NOFLAG,
+         KISAK_MP18(false, true), // KISAK: 1.8
+         KISAK_MP18(DVAR_CHEAT, DVAR_NOFLAG),
          "Use rainbow colors for entities that are outside the light grid");
      r_cacheSModelLighting = Dvar_RegisterBool(
          "r_cacheSModelLighting",
@@ -1431,7 +1431,7 @@
          DVAR_CHEAT,
          "Set sun flare values from dvars rather than the level");
      developer = Dvar_RegisterInt("developer", 0, (DvarLimits)0x200000000LL, DVAR_NOFLAG, "Enable development options");
-     sv_cheats = Dvar_RegisterBool("sv_cheats", 1, DVAR_SYSTEMINFO | DVAR_ROM, "Allow server side cheats");
+     sv_cheats = Dvar_RegisterBool("sv_cheats", KISAK_MP18(0, 1), DVAR_SYSTEMINFO | DVAR_ROM, "Allow server side cheats"); // KISAK: 1.8
      com_statmon = Dvar_RegisterBool("com_statmon", false, DVAR_NOFLAG, "Draw stats monitor");
      r_sse_skinning = Dvar_RegisterBool("r_sse_skinning", true, DVAR_NOFLAG, "Use Streaming SIMD Extensions for skinning");
      r_monitor = Dvar_RegisterInt(

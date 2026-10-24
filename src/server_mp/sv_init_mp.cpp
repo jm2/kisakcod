@@ -786,7 +786,7 @@ void __cdecl SV_Init()
         "Names of all referenced Fast Files");
     sv_voice = Dvar_RegisterBool("sv_voice", 0, DVAR_ARCHIVE | DVAR_SERVERINFO | DVAR_SYSTEMINFO, "Use server side voice communications");
     sv_voiceQuality = Dvar_RegisterInt("sv_voiceQuality", 3, (DvarLimits)0x900000000LL, DVAR_SYSTEMINFO, "Voice quality");
-    sv_cheats = Dvar_RegisterBool("sv_cheats", 1, DVAR_SYSTEMINFO | DVAR_INIT, "Enable cheats on the server");
+    sv_cheats = Dvar_RegisterBool("sv_cheats", 0, DVAR_SYSTEMINFO | DVAR_INIT, "Enable cheats on the server"); // KISAK: 1.8
     sv_serverid = Dvar_RegisterInt("sv_serverid", 0, (DvarLimits)0x7FFFFFFF80000000LL, DVAR_SYSTEMINFO | DVAR_ROM, "Server identification");
     sv_pure = Dvar_RegisterBool("sv_pure", 1, DVAR_SERVERINFO | DVAR_SYSTEMINFO, "Cannot use modified IWD files"); // KISAK: 1.8 defaults to pure
     rcon_password = Dvar_RegisterString("rcon_password", (char *)"", DVAR_NOFLAG, "Password for the rcon command");

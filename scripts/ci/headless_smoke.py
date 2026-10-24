@@ -205,7 +205,7 @@ def main():
         try:
             homepath = Path(base) / 'home dir' / 'nested'   # does not exist yet
             run = subprocess.run([str(server), '+set', 'fs_basepath', base, '+set', 'fs_homepath', str(homepath),
-                                  '+set', 'dedicated', '1'],
+                                  '+set', 'dedicated', '1', '+set', 'logfile', '1'],  # 1.8 logs only on request
                                  stdin=subprocess.DEVNULL, capture_output=True, text=True, errors='replace',
                                  timeout=120, cwd=base)
         except subprocess.TimeoutExpired as exc:

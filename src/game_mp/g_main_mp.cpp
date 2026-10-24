@@ -388,7 +388,7 @@ const dvar_s *G_RegisterDvars()
     DvarLimits mino; // [esp+8h] [ebp-14h]
     DvarLimits minp; // [esp+8h] [ebp-14h]
 
-    g_cheats = Dvar_RegisterBool("sv_cheats", true, DVAR_NOFLAG, "Enable cheats");
+    g_cheats = Dvar_RegisterBool("sv_cheats", false, DVAR_NOFLAG, "Enable cheats"); // KISAK: 1.8
     Dvar_RegisterString("gamename", Com_WireGameName(), DVAR_SERVERINFO | DVAR_ROM, "The name of the game");
     Dvar_RegisterString("gamedate", __DATE__, DVAR_ROM, "The date compiled");
     Dvar_RegisterString("sv_mapname", (char *)"", DVAR_SERVERINFO | DVAR_ROM, "The current map name");
@@ -738,7 +738,7 @@ const dvar_s *G_RegisterDvars()
         0.0f,
         0.0f,
         1.0f,
-        DVAR_ROM | DVAR_CHEAT | DVAR_TEMP | DVAR_SAVED,
+        DVAR_ROM | DVAR_CHEAT | DVAR_SAVED, // KISAK: 1.8 drops DVAR_TEMP
         "Fog color that was set in the most recent call to \"setexpfog\"");
     mino.value.max = FLT_MAX;
     mino.value.min = 0.0f;
@@ -746,7 +746,7 @@ const dvar_s *G_RegisterDvars()
         "g_fogStartDistReadOnly",
         0.0f,
         mino,
-        DVAR_ROM | DVAR_CHEAT | DVAR_TEMP | DVAR_SAVED,
+        DVAR_ROM | DVAR_CHEAT | DVAR_SAVED, // KISAK: 1.8 drops DVAR_TEMP
         "Fog start distance that was set in the most recent call to \"setexpfog\"");
     minp.value.max = FLT_MAX;
     minp.value.min = 0.0f;
@@ -754,7 +754,7 @@ const dvar_s *G_RegisterDvars()
         "g_fogHalfDistReadOnly",
         0.1f,
         minp,
-        DVAR_ROM | DVAR_CHEAT | DVAR_TEMP | DVAR_SAVED,
+        DVAR_ROM | DVAR_CHEAT | DVAR_SAVED, // KISAK: 1.8 drops DVAR_TEMP
         "Fog start distance that was set in the most recent call to \"setexpfog\"");
     g_fogHalfDistReadOnly = result;
     return result;

@@ -739,6 +739,42 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(game-mp-dvars-1-8-flags PROPERTIES TIMEOUT 20)
 endif()
 
+# The Steam 1.8 MP defaults and flags of shared dvars (Com_InitDvars, Con_Init,
+# R_RegisterDvars). Linux, clang and 64-bit only, as above; the MP client's
+# defines. r_dvars.cpp needs dxvk-native's <d3d9.h>, so the renderer half builds
+# where pkg-config finds dxvk-d3d9, as the cinematic test does.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(KISAK_RETAIL_TESTS kisakcod-retail-defaults-tests)
+    add_executable(kisakcod-retail-defaults-tests retail_defaults_tests.cpp ${SRC_DIR}/qcommon/common.cpp
+        ${SRC_DIR}/client/cl_console.cpp)
+    target_compile_definitions(kisakcod-retail-defaults-tests PRIVATE KISAK_MP UNIX)
+    add_test(NAME retail-defaults-1-8 COMMAND kisakcod-retail-defaults-tests)
+    set_tests_properties(retail-defaults-1-8 PROPERTIES TIMEOUT 20)
+    if (KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+        list(APPEND KISAK_RETAIL_TESTS kisakcod-retail-defaults-renderer-tests)
+        add_executable(kisakcod-retail-defaults-renderer-tests retail_defaults_tests.cpp
+            ${SRC_DIR}/qcommon/common.cpp ${SRC_DIR}/client/cl_console.cpp ${SRC_DIR}/gfx_d3d/r_dvars.cpp)
+        target_compile_definitions(kisakcod-retail-defaults-renderer-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE
+            KISAK_TEST_RETAIL_RENDERER)
+        target_link_libraries(kisakcod-retail-defaults-renderer-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+        add_test(NAME retail-defaults-renderer-1-8 COMMAND kisakcod-retail-defaults-renderer-tests)
+        set_tests_properties(retail-defaults-renderer-1-8 PROPERTIES TIMEOUT 20)
+    endif()
+    foreach (t IN LISTS KISAK_RETAIL_TESTS)
+        target_include_directories(${t} SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+        add_dependencies(${t} update_build_number) # common.cpp and cl_console.cpp include buildnumber.h
+        target_compile_features(${t} PRIVATE cxx_std_20)
+        target_compile_options(${t} PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+        target_link_options(${t} PRIVATE -Wl,--gc-sections)
+        if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+            target_compile_options(${t} PRIVATE -fsanitize-address-globals-dead-stripping)
+            target_link_options(${t} PRIVATE -Wl,-z,start-stop-gc)
+        endif()
+        set_target_properties(${t} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    endforeach()
+endif()
+
 # 64-bit pointer truncations on headless server paths (WS-3 silent hazards):
 # the production TUs at 64-bit, one executable per subject (see the test's
 # header). Linux, clang and 64-bit only, for the reasons the dvar test gives;

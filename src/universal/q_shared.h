@@ -1031,3 +1031,11 @@ inline constexpr T truncate_cast(U value)
 }
 
 extern unsigned __int64(__cdecl *LittleLong64)(unsigned __int64);
+
+// KISAK: a Steam 1.8 MP default in shared code. SP keeps 1.0, because its 1.8
+// executable is DRM-wrapped and unread.
+#ifdef KISAK_MP
+#define KISAK_MP18(mp18, v10) (mp18)
+#else
+#define KISAK_MP18(mp18, v10) (v10)
+#endif
