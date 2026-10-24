@@ -186,7 +186,7 @@ void __cdecl LAN_GetServerInfo(int source, uint32_t n, char *buf, int buflen)
         v15 = va("%i", server->friendlyfire);
         Info_SetValueForKey(info, "ff", v15);
         v16 = va("%i", server->killcam);
-        Info_SetValueForKey(info, "kc", v16);
+        Info_SetValueForKey(info, "kc", v16); Info_SetValueForKey(info, "hc", va("%i", server->hardcore)); Info_SetValueForKey(info, "od", va("%i", server->oldschool)); // KISAK: 1.8
         v17 = va("%i", server->hardware);
         Info_SetValueForKey(info, "hw", v17);
         v18 = va("%i", server->mod);

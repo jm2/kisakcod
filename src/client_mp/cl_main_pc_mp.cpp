@@ -181,7 +181,7 @@ void __cdecl CL_SetServerInfo(serverInfo_t *server, char *info, __int16 ping)
             v16 = Info_ValueForKey(info, "ff");
             server->friendlyfire = atoi(v16);
             v17 = Info_ValueForKey(info, "kc");
-            server->killcam = atoi(v17);
+            server->killcam = atoi(v17); server->hardcore = atoi(Info_ValueForKey(info, "hc")); server->oldschool = atoi(Info_ValueForKey(info, "od")); // KISAK: 1.8
             v18 = Info_ValueForKey(info, "hw");
             server->hardware = atoi(v18);
             v19 = Info_ValueForKey(info, "mod");

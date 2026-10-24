@@ -156,10 +156,10 @@ Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP
 | `player_lean_*` defaults (7 of 8, MP) | #701 |
 | `g_antilag` is ROM | #702 |
 | `sv_floodprotect`: int, 4, burst per 800 ms | #705 |
-| `sv_pure` default 1 | after #704 and a LAN pure check |
+| `sv_pure` default 1 | #717 |
 | Browser `hc`/`od` filters: `ui_browserHardcore`, `ui_browserOldSchool` | to do |
-| `cl_maxppf` (5, [1,10]): pings per frame; `CL_UpdateVisiblePings` rewritten | to do |
-| `fs_usedevdir` (bool, INIT) | to do |
+| `cl_maxppf` (5, [1,10]): pings per frame | deferred: `CL_UpdateDirtyPings` rewrite; reply path untraced |
+| `fs_usedevdir` (bool, INIT) | #725 |
 | `serverInfo_t` 0x9c, not 0x94 | kept at 0x94; `servercache.dat` stays 1.0 |
 | Debug defaults: `sv_cheats`, `logfile`, `loc_warnings*`, `monkeytoy`, `r_showMissingLightGrid` are 0; `developer_script`, `com_timescale`, `g_fog*ReadOnly` flags | one "retail defaults" PR before 0.1.0 |
 | `com_maxfps` 250, `r_fullscreen` 0 | intentional, kept |

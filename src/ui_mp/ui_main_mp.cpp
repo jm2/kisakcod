@@ -216,7 +216,7 @@ const dvar_t *ui_browserShowPure;
 const dvar_t *ui_browserMod;
 const dvar_t *ui_browserShowDedicated;
 const dvar_t *ui_browserFriendlyfire;
-
+const dvar_t *ui_browserHardcore, *ui_browserOldSchool; // KISAK: 1.8
 const dvar_t *ui_browserKillcam;
 const dvar_t *ui_browserShowPunkBuster;
 const dvar_t *ui_playerProfileCount;
@@ -3711,7 +3711,7 @@ void __cdecl UI_BuildServerDisplayList(uiInfo_s *uiInfo, int force)
                         if ((ui_browserFriendlyfire->current.integer < 0
                             || (v11 = Info_ValueForKey(info, "ff"), atoi(v11) == ui_browserFriendlyfire->current.integer))
                             && (ui_browserKillcam->current.integer < 0
-                                || (v12 = Info_ValueForKey(info, "kc"), atoi(v12) == ui_browserKillcam->current.integer))
+                                || (v12 = Info_ValueForKey(info, "kc"), atoi(v12) == ui_browserKillcam->current.integer)) && (ui_browserHardcore->current.integer < 0 || atoi(Info_ValueForKey(info, "hc")) == ui_browserHardcore->current.integer) && (ui_browserOldSchool->current.integer < 0 || atoi(Info_ValueForKey(info, "od")) == ui_browserOldSchool->current.integer) // KISAK: 1.8
                             && (ui_browserShowPunkBuster->current.integer < 0
                                 || (v13 = Info_ValueForKey(info, "pb"), atoi(v13) == ui_browserShowPunkBuster->current.integer))
                             && (!*sharedUiInfo.joinGameTypes[ui_joinGameType->current.integer].gameTypeName
@@ -4846,7 +4846,7 @@ void UI_RegisterDvars()
         -1,
         (DvarLimits)0x7FFFFFFF80000000LL,
         DVAR_ARCHIVE,
-        "Kill cam is active");
+        "Kill cam is active"); ui_browserHardcore = Dvar_RegisterInt("ui_browserHardcore", -1, (DvarLimits)0x7FFFFFFF80000000LL, DVAR_ARCHIVE, "Hardcore mode"); ui_browserOldSchool = Dvar_RegisterInt("ui_browserOldSchool", -1, (DvarLimits)0x7FFFFFFF80000000LL, DVAR_ARCHIVE, "Oldschool mode"); // KISAK: 1.8
     ui_serverStatusTimeOut = Dvar_RegisterInt(
         "ui_serverStatusTimeOut",
         7000,
