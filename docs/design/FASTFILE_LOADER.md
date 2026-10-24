@@ -155,7 +155,7 @@ A family counts toward K4 when all hold:
 K4 is a server gate. A client builds renderer objects from Image, Material,
 TechniqueSet and GfxWorld (`kCreatesRendererObjects`) and keeps LoadedSound
 samples, which no client leg has compared with x86, so `IsK4Verified` lifts
-each only under `KISAK_DEDI_HEADLESS` (all but GfxWorld so far).
+each only under `KISAK_DEDI_HEADLESS`.
 
 ## Test plan
 

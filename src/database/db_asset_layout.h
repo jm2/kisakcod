@@ -61,6 +61,7 @@ inline constexpr std::int32_t kWeapon = 0x17;
 inline constexpr std::int32_t kXModel = 0x03;
 inline constexpr std::int32_t kClipMapPvs = 0x0B;
 inline constexpr std::int32_t kMenu = 0x15;
+inline constexpr std::int32_t kGfxWorld = 0x10;
 inline constexpr std::int32_t kAssetTypeCount = 0x21;
 
 // The families K4 counts (docs/design/FASTFILE_LOADER.md): at 64-bit their
@@ -93,6 +94,7 @@ constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
     case kMaterial:
     case kLoadedSound:
     case kTechniqueSet:
+    case kGfxWorld:
 #endif
     case kWeapon:
     case kXModel:
