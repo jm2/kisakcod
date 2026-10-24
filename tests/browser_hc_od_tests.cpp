@@ -74,7 +74,7 @@ WEAK void Com_Error(errorParm_t, const char *fmt, ...)
 }
 WEAK const char *NET_AdrToString(netadr_t a)
 {
-    static char buf[32];
+    thread_local char buf[32]; // one per thread, as NET_AdrToString hands it back
     std::snprintf(buf, sizeof(buf), "%i.%i.%i.%i:%i", a.ip[0], a.ip[1], a.ip[2], a.ip[3], a.port);
     return buf;
 }
