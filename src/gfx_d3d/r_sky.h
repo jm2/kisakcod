@@ -3,35 +3,6 @@
 #include <qcommon/qcommon.h>
 #include "r_material.h"
 
-struct sunflare_t // sizeof=0x60
-{                                       // ...
-    bool hasValidData;
-    // padding byte
-    // padding byte
-    // padding byte
-    Material *spriteMaterial;
-    Material *flareMaterial;
-    float spriteSize;
-    float flareMinSize;
-    float flareMinDot;
-    float flareMaxSize;
-    float flareMaxDot;
-    float flareMaxAlpha;
-    int flareFadeInTime;
-    int flareFadeOutTime;
-    float blindMinDot;
-    float blindMaxDot;
-    float blindMaxDarken;
-    int blindFadeInTime;
-    int blindFadeOutTime;
-    float glareMinDot;
-    float glareMaxDot;
-    float glareMaxLighten;
-    int glareFadeInTime;
-    int glareFadeOutTime;
-    float sunFxPosition[3];
-};
-
 static const char* sunDvarNames[] =
 {
     "r_sunsprite_shader",
@@ -55,21 +26,6 @@ static const char* sunDvarNames[] =
     "r_sunglare_fadein",
     "r_sunglare_fadeout",
     "r_sun_fx_position",
-};
-
-struct SunFlareDynamic // sizeof=0x28
-{                                       // ...
-    float flareIntensity;
-    float currentBlind;
-    float currentGlare;
-    int lastTime;
-    float lastVisibility;
-    float lastDot;
-    bool error;
-    bool sunQueryIssued[2];             // ...
-    // padding byte
-    IDirect3DQuery9 *sunQuery[2];       // ...
-    int hitNum;
 };
 
 uint32_t __cdecl R_GetSunDvarCount();
