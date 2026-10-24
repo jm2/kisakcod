@@ -2,9 +2,11 @@
 // with the MP client's defines. The Steam 1.8 executable searches raw,
 // raw_shared, devraw and devraw_shared under each root only with
 // fs_usedevdir set (bool, default 0, INIT); players and the game directories
-// are searched either way.
+// are searched either way. Since 1.4 it also loads only official iw_* IWDs
+// (and the localized_* packs) from fs_basepath/main.
 //
 // The engine boundary is weak; --gc-sections drops the rest of com_files.cpp.
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -77,7 +79,16 @@ WEAK void Com_Error(errorParm_t, const char *fmt, ...)
 }
 WEAK void Com_Printf(int, const char *, ...) {}
 WEAK void Com_DPrintf(int, const char *, ...) {}
-WEAK void Com_PrintWarning(int, const char *, ...) {}
+std::vector<std::string> g_warnings;
+WEAK void Com_PrintWarning(int, const char *fmt, ...)
+{
+    char text[512];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(text, sizeof(text), fmt, args);
+    va_end(args);
+    g_warnings.emplace_back(text);
+}
 WEAK void Com_PrintError(int, const char *, ...) {}
 WEAK void *Z_Malloc(int size, const char *, int) { return std::calloc(1, size); }
 WEAK void Z_Free(void *ptr, int) { std::free(ptr); }
@@ -102,10 +113,28 @@ WEAK void *__cdecl Sys_GetValue(int valueIndex) { return valueIndex == 1 ? &g_va
 WEAK char *__cdecl Sys_Cwd() { return const_cast<char *>("/kisak-test/cwd"); }
 WEAK const char *__cdecl Sys_DefaultCDPath() { return ""; }
 WEAK bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *) { return true; }
-WEAK char **__cdecl Sys_ListFiles(const char *, const char *, const char *, int *numfiles, int)
+// With g_listIwds set, every root's main holds a stock IWD, a localized pack
+// and a custom one; otherwise no directory holds an IWD.
+bool g_listIwds = false;
+std::vector<std::string> g_opened; // the IWDs FS_LoadZipFile tried to open
+WEAK char **__cdecl Sys_ListFiles(const char *directory, const char *, const char *, int *numfiles, int)
 {
-    *numfiles = 0;
-    return nullptr; // no iwd files in any directory
+    static char names[3][32];
+    static char *list[4];
+    const std::string dir = directory;
+    if (!g_listIwds || dir.size() < 5 || dir.compare(dir.size() - 5, 5, "/main") != 0)
+    {
+        *numfiles = 0;
+        return nullptr;
+    }
+    std::snprintf(names[0], sizeof(names[0]), "iw_00.iwd");
+    std::snprintf(names[1], sizeof(names[1]), "localized_english_iw00.iwd");
+    std::snprintf(names[2], sizeof(names[2]), "zz_custom.iwd");
+    list[0] = nullptr; // the hunk FS_FreeFileList releases
+    for (int i = 0; i < 3; ++i)
+        list[i + 1] = names[i];
+    *numfiles = 3;
+    return &list[1];
 }
 WEAK SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(const char *, std::size_t,
                                                                     std::vector<SysFileSystemDirectoryEntry> *)
@@ -133,8 +162,12 @@ WEAK uint32_t __cdecl FS_FileWrite(const void *, uint32_t, FILE *) { UNREACHED; 
 WEAK char *__cdecl Hunk_CopyString(HunkUser *, const char *) { UNREACHED; }
 WEAK void *Hunk_UserAlloc(HunkUser *, uint32_t, int) { UNREACHED; }
 WEAK HunkUser *__cdecl Hunk_UserCreate(int, const char *, bool, bool, int) { UNREACHED; }
-WEAK void __cdecl Hunk_UserDestroy(HunkUser *) { UNREACHED; }
-WEAK unzFile unzOpen(const char *) { UNREACHED; }
+WEAK void __cdecl Hunk_UserDestroy(HunkUser *) {} // the file lists are static
+WEAK unzFile unzOpen(const char *path)
+{
+    g_opened.emplace_back(path);
+    return nullptr; // nothing loads; the attempt is the evidence
+}
 WEAK int unzClose(unzFile) { UNREACHED; }
 WEAK int unzCloseCurrentFile(unzFile) { UNREACHED; }
 WEAK int unzOpenCurrentFile(unzFile) { UNREACHED; }
@@ -172,6 +205,28 @@ int main()
         CHECK(Has(dirs, dev));
     CHECK(Has(dirs, "players"));
     CHECK(Has(dirs, "main"));
+    ClearSearchPaths();
+
+    // Only official IWDs load from fs_basepath/main; a custom one is skipped
+    // with 1.8's warning. Other roots' main directories are not filtered.
+    g_listIwds = true;
+    FS_Startup(gameName);
+    const auto opened = [](const char *path) {
+        for (const std::string &p : g_opened)
+        {
+            if (p == path)
+                return true;
+        }
+        return false;
+    };
+    CHECK(opened("/kisak-test/base/main/iw_00.iwd"));
+    CHECK(opened("/kisak-test/base/main/localized_english_iw00.iwd"));
+    CHECK(!opened("/kisak-test/base/main/zz_custom.iwd"));
+    CHECK(opened("/kisak-test/home/main/zz_custom.iwd"));
+    bool warned = false;
+    for (const std::string &w : g_warnings)
+        warned = warned || w == "WARNING: Invalid IWD zz_custom.iwd in \\main.\n";
+    CHECK(warned);
     ClearSearchPaths();
 
     if (g_failures == 0)
