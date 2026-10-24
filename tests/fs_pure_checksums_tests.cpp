@@ -72,10 +72,10 @@ int main()
     CHECK(second == expected);
 
     // A longer list, then a shorter one: nothing of the longer one is left.
-    iwds[1].referenced = 1;
+    paths[1].iwd->referenced = 1; // through the search path, as the engine reads it
     const std::string both = FS_ReferencedIwdPureChecksums();
     CHECK(both == "@ 101 202 " + std::to_string(2 ^ 7 ^ 101 ^ 202) + " ");
-    iwds[1].referenced = 0;
+    paths[1].iwd->referenced = 0;
     CHECK(std::string(FS_ReferencedIwdPureChecksums()) == expected);
 
     if (g_failures == 0)
