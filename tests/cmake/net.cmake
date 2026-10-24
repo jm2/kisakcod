@@ -368,3 +368,28 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME wire-identity-fork COMMAND kisakcod-wire-identity-tests fork)
     set_tests_properties(wire-identity-steam18 wire-identity-fork PROPERTIES TIMEOUT 20)
 endif()
+
+# SV_ChangeMaxClients (server_mp/sv_init_mp.cpp) at 64-bit: lowering
+# sv_maxclients keeps the connected clients whole. Linux and clang only, as
+# above; the defines are the Linux headless server's.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-sv-maxclients-tests sv_maxclients_tests.cpp
+        ${SRC_DIR}/server_mp/sv_init_mp.cpp
+        ${SRC_DIR}/server_mp/sv_main_mp.cpp
+        ${SRC_DIR}/universal/dvar.cpp
+        ${SRC_DIR}/universal/q_shared.cpp)
+    target_include_directories(kisakcod-sv-maxclients-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-sv-maxclients-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-sv-maxclients-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-sv-maxclients-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-sv-maxclients-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-sv-maxclients-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-sv-maxclients-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-sv-maxclients-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME sv-change-maxclients COMMAND kisakcod-sv-maxclients-tests)
+    set_tests_properties(sv-change-maxclients PROPERTIES TIMEOUT 20)
+endif()
