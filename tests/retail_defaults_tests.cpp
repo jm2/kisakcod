@@ -58,7 +58,11 @@ void __cdecl Con_Init();
 #ifdef KISAK_TEST_RETAIL_RENDERER
 void __cdecl R_RegisterDvars();
 // Defined in the renderer TUs the test doesn't link.
-const dvar_t *r_fullscreen, *r_warningRepeatDelay, *vid_xpos, *vid_ypos, *sv_cheats;
+const dvar_t *r_fullscreen;
+const dvar_t *r_warningRepeatDelay;
+const dvar_t *vid_xpos;
+const dvar_t *vid_ypos;
+const dvar_t *sv_cheats;
 WEAK void __cdecl R_RegisterSunDvars() {}
 WEAK void __cdecl Material_PreventOverrideTechniqueGeneration() {}
 #endif
