@@ -107,6 +107,35 @@ struct pendingServerStatus_t // sizeof=0x8C4
     int num;                            // ...
     pendingServer_t server[16];         // ...
 };
+// The server browser's state (Quake 3's serverStatus_t). The decompile typed
+// it as serverStatus_s plus a byte gap; the fields named here are the ones the
+// browser code and its asserts identify, the rest keep their offsets.
+struct uiServerStatus_t // sizeof=0x14118
+{
+    char pingState[1104];               // the pending pings and their counters, untyped
+    int refreshtime;
+    char gap1108[4];
+    int sortKey;
+    int sortDir;
+    char gap1120[4];
+    int refreshActive;
+    int currentServer;
+    int displayServers[20000];
+    int numDisplayServers;
+    int lastServerCount;                // LAN_GetServerCount at the last display rebuild
+    int numPlayersOnServers;
+    int nextDisplayRefresh;
+    char gap81148[4];
+    int motdLen;
+    int motdWidth;
+    char gap81160[16];                  // motd paint state
+    char motd[1024];
+};
+RUNTIME_SIZE(uiServerStatus_t, 0x14118, 0x14118); // the decompiled serverStatus_s (0x2028) plus gap8EB4
+RUNTIME_OFFSET(uiServerStatus_t, displayServers, 1132, 1132);
+RUNTIME_OFFSET(uiServerStatus_t, numDisplayServers, 0x2028 + 72900, 0x2028 + 72900);
+RUNTIME_OFFSET(uiServerStatus_t, motd, 0x2028 + 72944, 0x2028 + 72944);
+
 struct sharedUiInfo_t // sizeof=0x1C5B0
 {                                       // ...
     CachedAssets_t assets;              // ...
@@ -127,8 +156,7 @@ struct sharedUiInfo_t // sizeof=0x1C5B0
     modInfo_t modList[64];              // ...
     int modCount;                       // ...
     int modIndex;                       // ...
-    serverStatus_s serverStatus;        // ...
-    _BYTE gap8EB4[73968];               // ... // KISAKTODO: clean this thing up
+    uiServerStatus_t serverStatus;      // ...
     char serverStatusAddress[64];       // ...
     serverStatusInfo_t serverStatusInfo; // ...
     int nextServerStatusRefresh;        // ...
