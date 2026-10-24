@@ -226,3 +226,9 @@ extern const char *fs_serverIwdNames[1024];
 extern int fs_checksumFeed;
 
 extern char fs_gamedir[256];
+
+// KISAK: the Steam 1.8 MP executable searches raw, raw_shared, devraw and
+// devraw_shared only with fs_usedevdir set (bool, default 0, INIT). SP keeps
+// 1.0, which always searches them.
+void FS_RegisterDevDirDvar();
+bool FS_UseDevDirs();
