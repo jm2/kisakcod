@@ -24,6 +24,7 @@
 
 #include "db_fx_zone_adapter_wiring.h"
 #include "db_disk32_load.h"
+#include "db_graph_digest.h"
 #include "db_material_validation.h"
 #include "db_xmodel_validation.h"
 #include "db_gfxworld_validation.h"

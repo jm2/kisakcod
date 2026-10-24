@@ -12,6 +12,25 @@
 
 union XAssetHeader;
 
+// One dynamic entity definition's fields, for code that must not include the
+// client DynEntity header (the K4 walker in the headless server); db_load.cpp defines it.
+struct DynEntityDefView
+{
+    std::int32_t type;
+    const float *quat;   // 4 floats
+    const float *origin; // 3 floats
+    const struct XModel *xModel;
+    std::uint16_t brushModel;
+    std::uint16_t physicsBrushModel;
+    const struct FxEffectDef *destroyFx;
+    const struct XModelPieces *destroyPieces;
+    const struct PhysPreset *physPreset;
+    std::int32_t health;
+    const float *mass; // centerOfMass, momentsOfInertia, productsOfInertia: 9 floats
+    std::int32_t contents;
+};
+DynEntityDefView DB_DynEntityDefView(const struct DynEntityDef *defs, std::int32_t index);
+
 // One asset's digest; a family with no walker hashes only its type.
 db::graph_hash::Digest DB_GraphHashAsset(std::int32_t assetType, const XAssetHeader &header);
 
