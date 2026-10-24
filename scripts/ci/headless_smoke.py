@@ -17,7 +17,10 @@ host (com_recommendedSet 1, sys_configureGHz 999): a headless server must give
 the non-interactive answer and keep starting, not wait on a question nobody can
 see.
 A non-empty main/english folder makes the filesystem probe it
-(Sys_DirectoryHasContents) and add it as the localized folder.
+(Sys_DirectoryHasContents) and add it as the localized folder. A synthetic
+main/iw_00.iwd, a zip of one text file, stands in for the official IWDs: as
+in Steam 1.8, an fs_basepath/main with no IWD is a fatal error, and the IWD
+loader rejects a zip with no entries.
 Exit status 0 means every expectation held; otherwise each broken one is
 printed together with the server's output.
 
@@ -38,6 +41,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import zipfile
 from pathlib import Path
 
 from synthetic_zones import write_init_zones
@@ -202,6 +206,8 @@ def main():
         (main_dir / 'configure_mp.csv').write_text(CONFIGURE_CSV)
         (main_dir / 'english').mkdir()
         (main_dir / 'english' / 'localized_stand_in.txt').write_text('synthetic\n')
+        with zipfile.ZipFile(main_dir / 'iw_00.iwd', 'w') as iwd:
+            iwd.writestr('kisak_stand_in.txt', 'synthetic\n')
         try:
             homepath = Path(base) / 'home dir' / 'nested'   # does not exist yet
             run = subprocess.run([str(server), '+set', 'fs_basepath', base, '+set', 'fs_homepath', str(homepath),
@@ -217,6 +223,8 @@ def main():
             (re.search(BANNER, log), 'prints the build banner for this OS'),
             (log.count('begin $init') == 1, 'prints each line once'),
             (base + '/main' in log, 'roots the filesystem at the (spaced) fs_basepath'),
+            (re.search(r'iw_00\.iwd \(1 files\)', log) and 'Invalid IWD' not in log,
+             'loads the synthetic main/iw_00.iwd as an IWD'),
             (base + '/main/english' in log and 'localized assets game folder for english' in log,
              'adds the non-empty main/english folder as the localized folder'),
             ('configure_mp.csv: using CPU configuration 1 GHz 256 MB' in log, 'picks the CPU row that fits the host'),
