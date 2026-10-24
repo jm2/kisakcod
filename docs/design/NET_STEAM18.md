@@ -170,6 +170,7 @@ Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP
 **Shared code, static:** 29 bgame functions (pmove, weapons, jump, mantle), paired by the dvars they read, load no float constant ours lacks. The read misses functions with fewer than two dvars, integer logic and control flow.
 
 **Shared code, per frame (§9):** a live check on antec (2026-10-24), not a replay. Scripted movesets (walk, strafe, sprint, jump, crouch, prone, lean, ADS, fire) with `cg_showmiss 1`, which prints a miss above 0.1 units, on mp_overgrown, mp_pipeline and mp_backlot:
+
 - our 64-bit client on the retail dedicated server: 0 misses after the first run;
 - the retail client on our x86 (Wine) and 64-bit servers: 0 misses in 7 runs;
 - the first run after a connect bursts on our client on either server (#721), so it is client-side.
