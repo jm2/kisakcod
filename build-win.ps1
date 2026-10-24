@@ -238,7 +238,8 @@ if ($needsClientMedia -and -not $haveVcpkg -and $InstallDeps) {
     }
     Write-Step "Fetching vcpkg $VcpkgCommit into .deps\vcpkg"
     if (-not (Test-Path -LiteralPath (Join-Path $LocalVcpkg '.git'))) {
-        Invoke-Checked -File 'git' -Arguments @('clone', '--filter=blob:none', 'https://github.com/microsoft/vcpkg.git', $LocalVcpkg)
+        # A full clone: vcpkg.json's overrides check out older port versions from history.
+        Invoke-Checked -File 'git' -Arguments @('clone', 'https://github.com/microsoft/vcpkg.git', $LocalVcpkg)
     }
     Invoke-Checked -File 'git' -Arguments @('-C', $LocalVcpkg, 'fetch', 'origin', $VcpkgCommit)
     Invoke-Checked -File 'git' -Arguments @('-C', $LocalVcpkg, 'checkout', '--detach', $VcpkgCommit)
