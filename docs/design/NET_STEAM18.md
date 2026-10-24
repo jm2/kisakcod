@@ -157,7 +157,7 @@ Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP
 | `g_antilag` is ROM | #702 |
 | `sv_floodprotect`: int, 4, burst per 800 ms | #705 |
 | `sv_pure` default 1 | #717 |
-| Browser `hc`/`od` filters: `ui_browserHardcore`, `ui_browserOldSchool` | to do |
+| Browser `hc`/`od` filters: `ui_browserHardcore`, `ui_browserOldSchool` | #726 |
 | `cl_maxppf` (5, [1,10]): pings per frame | deferred: `CL_UpdateDirtyPings` rewrite; reply path untraced |
 | `fs_usedevdir` (bool, INIT) | #725 |
 | `serverInfo_t` 0x9c, not 0x94 | kept at 0x94; `servercache.dat` stays 1.0 |
