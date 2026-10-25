@@ -226,6 +226,11 @@ keyname_t keynames_localized[96] =
 //struct keyname_t *keynames 827b29b0     cl_keys.obj
 //struct keyname_t *keynames_localized 827b2d50     cl_keys.obj
 //char **frenchNumberKeysMap 827b30f0     cl_keys.obj
+
+// AZERTY names of the digit keys 0-9, as in retail 1.8 (the table that
+// follows keynames_localized there).
+static const char *const frenchNumberKeysMap[10] =
+    { "\xe0", "&", "\xe9", "\"", "'", "(", "-", "\xe8", "_", "\xe7" };
 //int32_t historyLine          82874d18     cl_keys.obj
 //int32_t nextHistoryLine      82875128     cl_keys.obj
 //int32_t marker_cl_keys       8287512c     cl_keys.obj
@@ -1120,7 +1125,7 @@ const char *__cdecl Key_KeynumToString(int32_t keynum, int32_t translate)
     if (keynum >= 0x100)
         return "<OUT OF RANGE>";
     if (translate && SEH_GetCurrentLanguage() == 1 && keynum >= 48 && keynum <= 57)
-        return *(&keynames_localized[72].name + keynum);
+        return frenchNumberKeysMap[keynum - '0'];
     if (keynum > ' ' && keynum < 127 && keynum != '"')
     {
         tinystr[0] = toupper(keynum);
@@ -1258,7 +1263,7 @@ int32_t __cdecl Key_StringToKeynum(const char *str)
 
     if (!str || !*str)
         return -1;
-    if (!str[1])
+    if (!str[1] && !(*str & 0x80))
         return *str;
     if (*str == 48 && str[1] == 120 && strlen(str) == 4)
     {
@@ -1414,11 +1419,13 @@ int32_t __cdecl Key_WriteBindingsToBuffer(int32_t localClientNum, char *buffer, 
         if (keys[keyIndex].binding && *keys[keyIndex].binding)
         {
             v3 = Key_KeynumToString(keyIndex, 0);
+            if (bytesUsed >= bufferSizea)
+                break;
             len = Com_sprintf(&buffer[bytesUsed], bufferSizea - bytesUsed, "bind %s \"", v3);
             if (len < 0)
                 return bytesUsed;
             bytesUseda = len + bytesUsed;
-            for (bind = keys[keyIndex].binding; *bind && bytesUseda < bufferSizea; ++bind)
+            for (bind = keys[keyIndex].binding; *bind && bytesUseda + 2 <= bufferSizea; ++bind)
             {
                 if (*bind == 34)
                     buffer[bytesUseda++] = 92;

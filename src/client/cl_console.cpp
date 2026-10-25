@@ -139,42 +139,28 @@ void __cdecl Con_CloseConsole(int32_t localClientNum)
 
 void __cdecl Con_GetTextCopy(char *text, int32_t maxSize)
 {
-    uint32_t end; // [esp+0h] [ebp-Ch]
     int32_t begin; // [esp+4h] [ebp-8h]
     int32_t totalSize; // [esp+8h] [ebp-4h]
 
     if (con.consoleWindow.activeLineCount)
     {
         begin = con.consoleWindow.lines[con.consoleWindow.firstLineIndex].textBufPos;
-        end = con.consoleWindow.textBufPos;
         totalSize = con.consoleWindow.textBufPos - begin;
         if (con.consoleWindow.textBufPos - begin < 0)
             totalSize += con.consoleWindow.textBufSize;
         if (totalSize > maxSize - 1)
         {
             begin += totalSize - (maxSize - 1);
-            if (begin > con.consoleWindow.textBufSize)
+            if (begin >= con.consoleWindow.textBufSize)
                 begin -= con.consoleWindow.textBufSize;
             totalSize = maxSize - 1;
         }
-        if (begin >= con.consoleWindow.textBufPos)
-        {
-            memcpy(
-                (uint8_t *)text,
-                (uint8_t *)&con.consoleWindow.circularTextBuffer[begin],
-                con.consoleWindow.textBufSize - begin);
-            memcpy(
-                (uint8_t *)&text[con.consoleWindow.textBufSize - begin],
-                (uint8_t *)con.consoleWindow.circularTextBuffer,
-                end);
-        }
-        else
-        {
-            memcpy(
-                (uint8_t *)text,
-                (uint8_t *)&con.consoleWindow.circularTextBuffer[begin],
-                con.consoleWindow.textBufPos - begin);
-        }
+        // Copy exactly totalSize bytes, wrapping once at the end of the ring.
+        const int32_t first = (totalSize < con.consoleWindow.textBufSize - begin)
+            ? totalSize
+            : con.consoleWindow.textBufSize - begin;
+        memcpy(text, &con.consoleWindow.circularTextBuffer[begin], first);
+        memcpy(&text[first], con.consoleWindow.circularTextBuffer, totalSize - first);
         text[totalSize] = 0;
     }
     else
