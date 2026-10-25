@@ -143,6 +143,7 @@ WEAK void SV_GameSendServerCommand(int clientNum, svscmd_type, const char *text)
     std::snprintf(seen.command, sizeof(seen.command), "%s", text);
 }
 WEAK void G_FreeEntity(gentity_s *ed) { seen.freed = ed; }
+WEAK void TeleportPlayer(gentity_s *, float *, float *) {}
 // G_Find's contract (g_utils_mp.cpp): the first in-use entity whose uint16_t
 // at fieldofs is match.
 WEAK gentity_s *G_Find(gentity_s *from, int fieldofs, uint16_t match)
@@ -334,6 +335,29 @@ static void GroundTraceKeepsTheWholeTrace()
     CHECK(!s_phys_0.groundTrace.allsolid && s_phys_0.groundTrace.surfaceFlags == 0x77 && s_phys_0.onGround);
 }
 
+// g_vehicles_mp.cpp G_VehUnlinkPlayer: a player script-linked to a vehicle
+// without a seat is left alone (it was an ERR_DROP), and a seated player whose
+// vehicle was freed is released without touching the missing vehicle.
+static void VehicleUnlinkHandlesUnseatedAndFreed()
+{
+    gentity_s *const vehicle = Ent(21);
+    vehicle->scr_vehicle = nullptr;
+    gentity_s *const player = Ent(6);
+    player->client = &g_client;
+
+    g_client.ps.pm_flags = 0;
+    g_client.ps.viewlocked_entNum = 21;
+    G_VehUnlinkPlayer(vehicle, player);
+    CHECK(g_client.ps.pm_flags == 0 && g_client.ps.viewlocked_entNum == 21);
+
+    g_client.ps.pm_flags = PMF_VEHICLE_ATTACHED;
+    G_VehUnlinkPlayer(vehicle, player);
+    CHECK((g_client.ps.pm_flags & PMF_VEHICLE_ATTACHED) == 0);
+    CHECK(g_client.ps.viewlocked_entNum == ENTITYNUM_NONE);
+    g_client.ps.pm_flags = 0;
+    g_client.ps.viewlocked_entNum = 0;
+}
+
 #elif GAME_MP_HAZARD_SUBJECT == 2
 // g_active_mp.cpp G_TouchTriggers: the touched trigger's own handler runs.
 static void TriggersDispatchTheirOwnHandler()
@@ -426,6 +450,7 @@ int main()
     DamageNotifyNamesTheHitAttachment();
     CorpseReuseFindsThePlayer();
     GroundTraceKeepsTheWholeTrace();
+    VehicleUnlinkHandlesUnseatedAndFreed();
 #elif GAME_MP_HAZARD_SUBJECT == 2
     TriggersDispatchTheirOwnHandler();
 #elif GAME_MP_HAZARD_SUBJECT == 3
