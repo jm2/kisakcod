@@ -10,6 +10,9 @@
 //                   and an overlong one is a compile error, not exit(2).
 //   error-recovery  malformed watch expressions (evaluate mode) recover
 //                   inside the parser tables and the live state stack.
+//   blank-line      a compile error reported on an empty source line (the
+//                   end of a file that stops inside a function) formats the
+//                   line without reading before its buffer.
 
 #include <cstdio>
 #include <cstring>
@@ -96,6 +99,16 @@ void ErrorRecovery()
     GSC_CHECK(gsc::CompileWatchExpression("1 + 2"));
     gsc::Unload();
 }
+
+void BlankLineError()
+{
+    // The file ends inside main(): the error lands on the empty line after
+    // the last newline, where Scr_CopyFormattedLine read line[-1].
+    gsc::SetSource("blank", "main()\n{\n\treport(1);\n\n");
+    std::string error;
+    GSC_CHECK(!gsc::Load("blank", &error));
+    GSC_CHECK(!error.empty());
+}
 }  // namespace
 
 int main(int argc, char **argv)
@@ -107,9 +120,11 @@ int main(int argc, char **argv)
         LongLexeme();
     else if (!std::strcmp(which, "error-recovery"))
         ErrorRecovery();
+    else if (!std::strcmp(which, "blank-line"))
+        BlankLineError();
     else
     {
-        std::fprintf(stderr, "usage: %s stack-growth|long-lexeme|error-recovery\n", argv[0]);
+        std::fprintf(stderr, "usage: %s stack-growth|long-lexeme|error-recovery|blank-line\n", argv[0]);
         return 2;
     }
     std::printf("%s: %d failure(s)\n", which, gsc_failures);

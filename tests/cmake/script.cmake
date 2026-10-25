@@ -257,7 +257,7 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         set_target_properties(${_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     endforeach()
     # One process per case: each leaves the script system as a drop does.
-    foreach(_case stack-growth long-lexeme error-recovery)
+    foreach(_case stack-growth long-lexeme error-recovery blank-line)
         add_test(NAME script-parser-${_case}-contracts
             COMMAND kisakcod-script-parser-stack-growth-tests ${_case})
         set_tests_properties(script-parser-${_case}-contracts PROPERTIES TIMEOUT 120)
