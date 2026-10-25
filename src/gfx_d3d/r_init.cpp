@@ -3269,7 +3269,9 @@ int __cdecl R_CheckDxCaps(const _D3DCAPS9 *caps)
     allowedPaths = 3;
     for (checkIndex = 0; checkIndex < 0x21; ++checkIndex)
     {
-        bits = *(_D3DDEVTYPE *)((char *)&caps->DeviceType + s_capsCheckBits[checkIndex].offset);
+        // The tables index D3DCAPS9 fields (bitmasks and limits) by byte offset from
+        // its first member; each field is a DWORD-sized value, never a D3DDEVTYPE.
+        bits = *(const uint32_t *)((const char *)&caps->DeviceType + s_capsCheckBits[checkIndex].offset);
         if ((!s_capsCheckBits[checkIndex].clearBits || (s_capsCheckBits[checkIndex].clearBits & ~bits) != 0)
             && (!s_capsCheckBits[checkIndex].setBits || (s_capsCheckBits[checkIndex].setBits & bits) != 0))
         {
@@ -3278,7 +3280,7 @@ int __cdecl R_CheckDxCaps(const _D3DCAPS9 *caps)
     }
     for (checkIndexa = 0; checkIndexa < 0xA; ++checkIndexa)
     {
-        integer = *(_D3DDEVTYPE *)((char *)&caps->DeviceType + s_capsCheckInt[checkIndexa].offset);
+        integer = *(const uint32_t *)((const char *)&caps->DeviceType + s_capsCheckInt[checkIndexa].offset);
         if (integer < s_capsCheckInt[checkIndexa].min || integer > s_capsCheckInt[checkIndexa].max)
             R_RespondToMissingCaps(s_capsCheckInt[checkIndexa].response, s_capsCheckInt[checkIndexa].msg, &allowedPaths);
     }
