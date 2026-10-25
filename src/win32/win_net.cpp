@@ -787,7 +787,7 @@ int NET_GetLocalAddress()
 			localIP[numIP][1] = p[1];
 			localIP[numIP][2] = p[2];
 			localIP[numIP][3] = p[3];
-			Com_Printf(16, "IP: %i.%i.%i.%i\n", HIBYTE(v1), BYTE2(v1), BYTE1(v1), (unsigned __int8)v1);
+			Com_Printf(16, "IP: %i.%i.%i.%i\n", (int)(v1 >> 24), (int)((v1 >> 16) & 0xFF), (int)((v1 >> 8) & 0xFF), (int)(v1 & 0xFF));
 		}
 	}
 	return result;
