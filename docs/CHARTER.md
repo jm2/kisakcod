@@ -87,6 +87,22 @@ comes from `capability/manifest.json`, which changes only with gate evidence.
 
 The CI `native64-census` and `KPI summary` jobs render the current values.
 
+## Standing owner rules
+
+- x86 output: a declared x86 change that makes x86 match the other builds
+  (shared code) is pre-approved past rule 16's ESCALATE. An x86-only
+  divergence, a Windows-only refactor (rule 10) or anything security-related
+  still goes to the owner (2026-10-24).
+- Sanitizers: a server leg has 0 ASan and 0 UBSan reports. A client leg has
+  0 ASan reports and every UBSan report triaged (2026-10-24).
+- A new vulnerability goes to a private draft advisory and the owner only,
+  never into public PR, issue or commit text. The owner may choose a quiet
+  fix with neutral wording.
+- Retail Steam 1.8 data never enters CI, the repo, PRs or issues. Evidence is
+  text only, and runs use a copy-on-write clone, never the original install.
+- Shared hosts: ask openETQW-linux or -win before heavy builds or GPU runs on
+  antec or antec-win, and tell openETQW-mac before game windows on mbp16.
+
 ## Decisions
 
 | ADR | Decision | Status |
@@ -98,10 +114,12 @@ The CI `native64-census` and `KPI summary` jobs render the current values.
 | [0005](decisions/0005-cod4x-compatibility.md) | CoD4x compatibility | proposed |
 | [0006](decisions/0006-docs-and-process-policy.md) | Doc set, budgets and agent rules | accepted |
 | [0007](decisions/0007-macos-notarization-deferred.md) | macOS releases ad-hoc signed; notarization deferred | accepted |
+| [0008](decisions/0008-engine-tu-tests-and-ci-hygiene.md) | Engine-TU tests and CI hygiene | accepted |
+| [0009](decisions/0009-retail-1-8-behaviour-reference.md) | Retail Steam 1.8 is the behaviour reference | accepted |
 
 ## Doc map
 
-`scripts/ci/docs_budget.py` enforces the budgets; `docs/` totals 100 KB or
+`scripts/ci/docs_budget.py` enforces the budgets; `docs/` totals 112 KB or
 less. Nothing else lives in `docs/`.
 
 | Doc | Budget | Owner | Purpose |
@@ -113,10 +131,10 @@ less. Nothing else lives in `docs/`.
 | `decisions/NNNN-*.md` | 2 KB each | operator | ADRs |
 | `design/NATIVE64.md` | 15 KB | WS-1/WS-3 | Layouts, hazards, K1-K3 |
 | `design/FASTFILE_LOADER.md` | 12 KB | WS-2 | Two-layout loader, K4 |
-| `design/NET_STEAM18.md` | 12 KB | WS-5 | Steam 1.8 wire, captures |
+| `design/NET_STEAM18.md` | 13 KB | WS-5 | Steam 1.8 wire, captures |
 | `design/PLATFORM_POSIX.md` | 8 KB | WS-4 | POSIX headless platform, K5 |
 | `design/DETERMINISM.md` | 5 KB | WS-3 | RNG, floating point, comparisons |
-| `design/CLIENT.md` | 15 KB | WS-6 | Client route, shaders, audio, voice |
+| `design/CLIENT.md` | 18 KB | WS-6 | Client route, shaders, audio, voice |
 | `UPSTREAM.md` | 3 KB | operator | Upstream sync policy |
 | `ARCHIVE.md` | 1 KB | operator | Where the old docs went |
 | `capability/manifest.json` | 8 KB | operator | K6 cells |

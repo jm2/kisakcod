@@ -74,6 +74,14 @@ These points are community-sourced; confirm each by capture:
    - a download
    - rcon
 
+3. The retail server as a reference peer: from a temp copy (`iw3mp.exe`,
+   `mss32`, `binkw32`, `d3dx9_34`, `miles\`), run `iw3mp.exe +set dedicated 1`
+   with `fs_basepath` at the data and a fresh `fs_homepath` each run (a killed
+   run leaves "Run In Safe Mode?"). It reads `zone\` beside the exe, so add a
+   directory junction to the data's `zone`. It needs no Steam client, reports
+   `CoD4 MP 1.8 build 13620` and protocol 7, and LAN mode logs an empty GUID
+   in J;/Q; lines. Under Wine on antec it serves our clients over the LAN.
+
 **Privacy.**
 
 - Raw pcaps stay private. The CD key goes in plaintext to the authorize port, and `getchallenge` carries its MD5.
@@ -148,7 +156,7 @@ Replay the captured usercmds through the fork's `Pmove` (`bg_pmove.cpp`), and co
 
 ## 12. 1.8 executable changes (#692)
 
-Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP keeps 1.0.
+Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP keeps 1.0. The MP exe also has a French digit-key table after `keynames_localized` (#795).
 
 **Imported:** getinfo `hc`/`od` (#698); lean defaults (#701); `g_antilag` ROM (#702); `sv_floodprotect` (#705); `sv_pure` 1 (#717); `fs_usedevdir` (#725); browser `hc`/`od` filters (#726); debug defaults and flags (#730); only `iw_` IWDs from `fs_basepath/main` (#735).
 

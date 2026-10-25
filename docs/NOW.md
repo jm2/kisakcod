@@ -17,7 +17,7 @@ From the master census. Live values: the `Native64 census` summary of the latest
 | K3 | Upstream engine TUs in the Linux test build | 82/475 | rising | census |
 | K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 25/25 (`db_graphhash`, 3 legs; list in `IsK4Verified`) | 25/25 (G2) | this file |
 | K5 | Headless TUs reaching `<d3d9.h>` on Linux | 0 on lin64 and a64 | 0 (G1 Linux) | census |
-| K6 | Target x role cells at `links` or above | 5/10 (all headless; the Windows clients link in CI but have no release recipe) | 10 at `packaged` (G6) | manifest |
+| K6 | Target x role cells at `links` or above | 5/10, all headless: Win64 at `fork_peer`, Linux amd64 at `boots_map` (the clients play but have no CI leg or release recipe) | 10 at `packaged` (G6) | manifest |
 
 ## Queue
 
@@ -51,11 +51,9 @@ Other `burndown` issues are off these gates or wait on the owner.
 - `steam18` auth: option A, the CD-key hash accepted unchecked as the ban key ([NET_STEAM18](design/NET_STEAM18.md) §8), 2026-10-07.
 - Retail data is on every agent host, for local manual runs only; never in CI or the repo. The Steam 1.8 reference build is in [NET_STEAM18](design/NET_STEAM18.md) §5.
 - Coordination and merges: the first responsive host in order antec, antec-win, mbp16-m1max, macmini-m1, yoga-slim7x; subagent limits are AGENTS.md rule 23 (2026-10-15).
-- `design/CLIENT.md` budget 15 KB (ADR-0006 amendment, #609).
 - Miles and Bink are dropped on every target, x86 included: OpenAL Soft and FFmpeg everywhere, Windows through vcpkg, 2026-10-22.
 - Version 0.1.0 is the first display version (#688); 64-bit builds load unverified asset families by default, `+set db_unverified64 0` restores the guard (#689); the developer autoexec runs only with `+set com_devAutoexec 1` (#693), 2026-10-22.
-- A declared x86 change that matches the other builds is pre-approved (rule 16 ESCALATE); x86-only divergence, Windows-only refactors (rule 10) and security fixes still go to the owner, 2026-10-24.
-- G5 client legs pass with 0 ASan reports and every UBSan report triaged on #184; row 58 makes the client UBSan-clean, 2026-10-24.
+- Standing rules (x86 pre-approval, sanitizer bar, vulnerabilities, retail data, shared hosts) are in [CHARTER](CHARTER.md#standing-owner-rules).
 
 ## Done since last review
 

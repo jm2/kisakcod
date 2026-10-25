@@ -14,7 +14,7 @@ source text.
 ## Decision
 
 - The doc set is the list in [CHARTER.md](../CHARTER.md), with hard budgets
-  and a 100 KB total for `docs/`. `scripts/ci/docs_budget.py` enforces them.
+  and a total for `docs/` (112 KB). `scripts/ci/docs_budget.py` enforces them.
 - Live docs carry no history, evidence logs, `file:line` citations or commit
   SHAs (except the archive tag in `ARCHIVE.md` and the last-synced SHA in
   `UPSTREAM.md`).
@@ -33,9 +33,10 @@ source text.
   new file.
 - The mayor re-ranks `NOW.md` at least every 10 days; CI warns after that.
 
-## Amendment (2026-10-15, approved by the owner)
+## Amendments (approved by the owner)
 
-`design/CLIENT.md` rises from 10 KB to 15 KB, as NATIVE64.md has. G5 made it
-the client runbook (per-platform bring-up, run and capture steps that other
-models need), and the platform sections already exceed 10 KB together. The
-100 KB `docs/` total is unchanged.
+- 2026-10-15: `design/CLIENT.md` rises from 10 KB to 15 KB, as NATIVE64.md
+  has: G5 made it the client runbook.
+- 2026-10-25: after the issue sweep, the sessions' recipes go in: `docs/`
+  rises to 112 KB, `design/CLIENT.md` to 18 KB and `design/NET_STEAM18.md`
+  to 13 KB.

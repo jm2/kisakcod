@@ -15,6 +15,8 @@ return (holdrand >> 16) & 0x7FFF;
 
 - Seeding is the same as `srand`. MSVC keeps the state per thread; the engine RNG uses `thread_local` to match.
 - Vendored Speex keeps its own `rand`.
+- Any other MSVC-style LCG on an `int` seed steps in `uint32_t` and casts back, bit-identical to x86 (#762).
+- Float-to-int of NaN or infinity: x86 `cvttsd2si` gives `INT_MIN`, so produce `INT_MIN` explicitly instead of casting (#787).
 - `flrand`/`Rand_Init` in `com_math.cpp` already run a separate portable LCG (`>> 17`). It is deterministic, but it isn't MSVC `rand`; leave it alone.
 
 ## Floating point

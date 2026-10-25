@@ -19,17 +19,22 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 - **Replacements:** 6 sites (`r_material_load_obj.cpp` ×4, `binktextures.cpp` ×2) use `gfx_d3d/r_shader_reflect` (CTAB constant table, semantics) and `gfx_d3d/r_shader_compile` (`ShaderBuffer`, D3DCompile).
 - **Native D3DX9_43 rules the reflection matches:** ps_2_x reads `COLOR1` as COLOR0, as retail did (don't fix it); ps_1_x always outputs COLOR0; an SM1 CTAB sits only in the comments after the version token; pixel outputs are `oC#`/`oDepth`.
 - **Dependencies:** no `d3dx9.lib`, but the Microsoft.DXSDK.D3DX 9.29.952.8 NuGet supplies the headers.
-- **ARM64 build:** VS 2026 `-A ARM64` (CMake ≥ 4.2) with `-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DKISAK_ENABLE_STEAM=OFF -DCICD=ON -DDXSDK_DIR=…`; check with `scripts/ci/verify-artifact-arch.ps1 -Expected ARM64`. MSVC defines `_M_ARM64`, not `__aarch64__`; `Sys_CycleCounter` reads CNTVCT_EL0.
-- **Run (antec-win):** D3D9 needs the console session: a disconnected session fails `GetDeviceCaps` with Invalid call, and an RDP session lists the GPU but returns `D3DERR_NOTAVAILABLE`. After an RDP login, hand the session over with `tscon (Get-Process -Id $PID).SessionId /dest:console` (PowerShell). A fatal D3D error leaves a modal dialog, so automation must time out and kill the process. While connected, console commands need a leading `/`, or they go out as chat. Windows Firewall prompts once per new exe; Deny is fine for a loopback `devmap`.
+- **ARM64 build:** VS 2026 `-A ARM64` (CMake ≥ 4.2) with `-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DKISAK_ENABLE_STEAM=OFF -DCICD=ON -DDXSDK_DIR=…`; check with `scripts/ci/verify-artifact-arch.ps1 -Expected ARM64`. MSVC defines `_M_ARM64`, not `__aarch64__`; `Sys_CycleCounter` reads CNTVCT_EL0. OpenAL Soft 1.25.x Release arm64 hangs in `alcDestroyContext` at shutdown, so vcpkg pins 1.24.3 until an arm64 Release re-test (overrides need a full vcpkg clone). An arm64 host also builds and runs the Win32 x86 targets under emulation, so one machine compares x86, Win64 and arm64 on the same data.
+- **Run (antec-win):** D3D9 needs the console session: a disconnected session fails `GetDeviceCaps` with Invalid call, and an RDP session lists the GPU but returns `D3DERR_NOTAVAILABLE`. After an RDP login, hand the session over with `tscon (Get-Process -Id $PID).SessionId /dest:console` (PowerShell); from SSH, as admin, `schtasks /create /tn tscon1 /sc once /st 00:00 /ru SYSTEM /f /tr "tscon 1 /dest:console"` then `schtasks /run /tn tscon1`. Any RDP login takes the console back. Don't set the Terminal Services GPU policies (`bEnumerateHWBeforeSW`, `AVC444ModePreferred`, `AVCHardwareEncodePreferred`) on Windows 11 26H2: RdpIdd and TermService then crash-loop every 12 s. A fatal D3D error leaves a modal dialog, so automation must time out and kill the process. While connected, console commands need a leading `/`, or they go out as chat. Windows Firewall prompts once per new exe; Deny is fine for a loopback `devmap`.
 - **Host quirk:** `platform-socket-stream-contracts` times out on a host that drops loopback RSTs; hosted CI is the reference.
 - **CI `windows-client-64`:** builds KisakCOD-mp on `amd64`, native `arm64` and `amd64-sdl3`, and checks the PE machine type; it doesn't run the client. It's advisory, so read each leg. A link error on arm64 alone usually means new x86- or D3DX-only code.
+- **vcpkg:** the x86 and Win64 clients take OpenAL Soft and FFmpeg from vcpkg; use a full git clone at the manifest baseline (a blobless clone fails port lookups). The nightly no-Steam job needs `setup-vcpkg`. A renamed exe that dies before writing a log: check the name length (30+ characters overran `Sys_GetSemaphoreFileName`, #777).
+- **ASan (MSVC):** `CFLAGS`/`CXXFLAGS=/fsanitize=address`, `-DCMAKE_TRY_COMPILE_CONFIGURATION=Release` (ASan rejects the Debug CRT in try-compile), and `clang_rt.asan_dynamic-x86_64.dll` from `VC\Tools\MSVC\<ver>\bin\Hostx64\x64` beside the exe. MSVC has no UBSan.
+- **ASan+UBSan (clang-cl):** winget LLVM (`C:\Program Files\LLVM\bin`, not on PATH) with Ninja: `-fsanitize=address,undefined -fno-sanitize=vptr /EHsc /GR -Wno-c++11-narrowing` (setting the flags drops CMake's defaults). Link with MSVC `link.exe`, `/LIBPATH` to LLVM's `lib\clang\<N>\lib\windows`, plus `clang_rt.asan_dynamic-x86_64.lib` and `clang_rt.asan_dynamic_runtime_thunk-x86_64.lib`, and ship LLVM's ASan DLL. Never `lld-link`: it merges `"*"`/`L"*"` and `""` literals (false ODR and `I_strnicmp` overflow reports) and fills the dllimport `__imp_AIL_*` pointers wrongly, so `SND_InitDriver` jumps to the image base.
+- **Sanitizer logs:** quote `log_path` with forward slashes (`log_path='C:/dir/client'`); options split on `:`, so a bare drive letter aborts. UBSan: `print_stacktrace=1:halt_on_error=0`.
 
 ### x86 baseline (G0)
 
 - The Steam client fails `CL_CDKeyValidate` off loopback (127.0.0.1 included) with no Steam running; use the nightly `KisakCOD-windows-x86-nosteam-Release` artifact. Bind `+set net_ip 127.0.0.1` on both ends.
 - Put an x86 `d3dx9_43.dll` (NuGet Microsoft.DXSDK.D3DX 9.29.952.8) beside the exe; the build copies the OpenAL Soft and FFmpeg DLLs there itself.
 - An empty dm server still rotates: a 1-minute round takes about 2 minutes of wall time with intermission and load.
-- **Wine (Fedora):** `wine32` with a `WINEARCH=win32` prefix; `wine-common` must be installed or `wineboot` loops on missing `winmd` files; disable `mscoree,mshtml`; Fedora ships the builtin d3d9 as `wine-d3d9.dll`, so copy it to `d3d9.dll` in the prefix, and set `HKCU\Software\Wine\Direct3D\renderer=vulkan`. The display driver is chosen when the prefix's desktop starts, so restart `wineserver` after changing it. Piped stdin doesn't reach the Win32 console. Open: with a working display driver (headless mutter or gamescope) the client stalls after `autoexec_dev_mp.cfg`, before `R_Init`.
+- **Wine (Fedora):** `wine32` with a `WINEARCH=win32` prefix; `wine-common` must be installed or `wineboot` loops on missing `winmd` files; disable `mscoree,mshtml`; Fedora ships the builtin d3d9 as `wine-d3d9.dll`, so copy it to `d3d9.dll` in the prefix, and set `HKCU\Software\Wine\Direct3D\renderer=vulkan`. The display driver is chosen when the prefix's desktop starts, so restart `wineserver` after changing it. Piped stdin doesn't reach the Win32 console. A fresh profile shows a modal "Set Optimal Settings?" box before `R_Init`; under headless mutter answer it over XTest. The non-headless dedi reads `localization.txt` from its working directory, so run it from the install dir (else zones become `zone\(null)\`). A DB-thread `Com_Error` in a non-headless build hits a deliberate `__debugbreak`: `winedbg --file`, `cont`, then `x /s <com_errorMessage>`.
+- **Stock 1.8 client (row 36):** it reads the CD key from `HKLM\SOFTWARE\Activision\Call of Duty 4`, value `codkey`, in the 32-bit view (`reg add … /reg:32`). Writing it needs a person to approve UAC on that host; the key never goes into files, logs or messages.
 
 ### macOS (step 2)
 
@@ -118,10 +123,8 @@ profile, never the retail directory; symlinked installs don't list. Retail data 
 **State without a screen.** The Release build lacks types for globals, so
 read them with casts in `gdb -p <pid>`:
 
-- `*(int*)&com_frameNumber`, twice, gives main-loop frames per second. Before
-  the client is active, `SCR_ShouldSkipUpdateScreen` redraws at most every
-  16 ms (about 62/s) before loading and every 33 ms (about 30/s) while
-  loading, by design, so use `cg_drawfps` in-game for FPS;
+- `*(int*)&com_frameNumber`, twice, gives main-loop frames per second
+  (capped at about 62/s, or 30/s while loading, until the client is active);
 - `((int(*)(int))UI_GetActiveMenu)(0)` (1 = main);
 - `((int(*)(void*))Menu_Count)((void*)&uiInfoArray)`;
 - `*(char**)` of `Menu_GetFocused(&uiInfoArray)`: the focused menu name.
@@ -171,6 +174,8 @@ on the binary path, not `pgrep -x`.
   gun and HUD, and shoot A/B/A. Compare the share of pixels off by >16/255,
   not the max; calm-map noise is a mean under 0.2 and under 0.5% of pixels.
 
+- Send `screenshot` on stdin once the menu is up: a `+wait N +screenshot`
+  capture fires while zones load and can be all black.
 - `screenshotJPEG` has no encoder in any build and says so (#593); use
   `screenshot`, which writes TGA.
 - dxvk's `GetFrontBufferData` copies the swapchain backbuffer, not the
@@ -180,13 +185,24 @@ on the binary path, not `pgrep -x`.
   `screenshot` reads the backbuffer before `Present`, resolving a
   multisampled one with `StretchRect` before `GetRenderTargetData` (#624).
 
-**Client status (2026-10-20).** In-game on master (every family loads by default):
-Win64 on mp_shipment (about 188 fps), Windows ARM64 on mp_shipment, macOS on mp_shipment and mp_crash
-(display-capped at 120), Linux arm64 on mp_crash, Linux amd64 on mp_crash
-(about 250 fps, headless mutter). Cinematics play through FFmpeg on macOS and Linux (row 41). Sound plays through OpenAL (row 51). Capture a
-frame by sending `screenshot` on stdin once the menu is up: `+wait` runs while
-zones are still loading, so a `+wait N +screenshot` capture shows a loading
-frame, which can be all black.
+**Sanitizer evidence runs (G5 rows 55-60).**
+
+- Build client and server with clang `-fsanitize=address,undefined`; POSIX
+  clients need `-shared-libsan` (#759), or ASan reports a bad free in
+  `FS_Startup`. Give each process `ASAN_OPTIONS`/`UBSAN_OPTIONS` with
+  `log_path=…` (and UBSan `halt_on_error=0`), so 0 reports means no files.
+- Server: `+set g_log games_mp.log +set g_logsync 1`. Its J;/Q;/InitGame/
+  ExitLevel lines are the timeline; CS_ACTIVE prints need `developer 1`.
+  Start the rotation on another map, since its first entry reloads the
+  current one, and set `scr_dm_timelimit` only after spawning.
+- Triage: about 120 client UBSan reports in five classes (flattened rows,
+  misaligned packed loads, function-type casts, LCG overflow, null
+  zero-length `mem*`). Group them by `file:line` and check that each
+  out-of-bounds index stays inside its parent object.
+- macOS: LAN UDP from tmux fails with EHOSTUNREACH and never prompts for
+  Local Network access; launch through Terminal (`open -a Terminal x.command`).
+  On Linux, find your own mutter by its `--wayland-display` and stop it by
+  PID, since peers share the host.
 
 ### Loader hooks
 

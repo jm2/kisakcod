@@ -127,6 +127,22 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
   a declared delta with a local MSVC x86 `/Brepro` compile of base and head;
   an inlining change shows as CODE with the same callees and data. The job
   compares data per symbol (#647).
+- **Flattened rows.** A `T (*p)[N]` reached as `(*p)[N*i + k]`, `&(*p)[N*i]`
+  or `(*p)[K]` becomes `p[i][k]`, `p[i]` or `p[K/N][K%N]`: the same address,
+  so x86 is identical. Don't widen the pointer, and keep a regex rewrite off
+  the declaration (`(*p)[3]` would become `p[1][0]`).
+- **Contexts at ILP32 offsets.** A `void *` context read as
+  `*(T*)((uintptr_t)ctx + 12)` breaks at 64-bit: use
+  `static_cast<Ctx*>(ctx)->field`, and value-initialise `Ctx c{}` when a path
+  leaves fields unset (#783).
+- **Function-type casts.** A callback stored through a mismatched type (bool
+  vs int return, `T*` vs `void*`) is UB that Linux clang
+  `-fsanitize=function` catches and Apple clang doesn't. Add a typed thunk at
+  the end of the file, declared in the header, and change the table entry on
+  its own line (#747, #798).
+- **zlib** is stock 1.3.1. IW's 1.1.4 dropped inflate output when `next_out`
+  was NULL, and `FS_Seek` skips IWD data that way, so `unzip.cpp` skips
+  through a scratch buffer (`unzip-skip-contracts`); keep that in any swap.
 
 ## G2 run
 
