@@ -88,9 +88,9 @@ Retail data broke these synthetic-fixture assumptions; each now has a test:
    whose generated loader is not yet enabled. It raises `ERR_DROP` naming the family before it
    reads any of the family's bytes. The whole zone fails, since the stream cannot be skipped.
 7. **FX.** At 64-bit, Fx and ImpactFx load only through `db_disk32_fx.cpp` and
-   `db_disk32_impactfx.cpp`, with the FX converter's rules. The zone adapter only gates
-   admission, and headless never binds it, so headless loads FX only under `db_unverified64`.
-   Plan: Fx and ImpactFx join K4 without the adapter condition; a later PR retires the adapter.
+   `db_disk32_impactfx.cpp`, with the FX converter's rules, and count toward K4 (#752).
+   Admission no longer consults the FX zone adapter; only the x86 client still wires it, and
+   a real x86 load never binds it.
 
 ## Server-closure families
 

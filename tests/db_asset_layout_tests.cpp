@@ -82,15 +82,6 @@ void TestConversionTable()
         "the impact-FX family has an ONDISK mirror plus a RUNTIME_SIZE runtime struct");
     Expect(IsFamilyConverted(db::asset_layout::kFx), "FX must report converted");
     Expect(IsFamilyConverted(db::asset_layout::kImpactFx), "impact FX must report converted");
-    Expect(
-        db::asset_layout::IsFxConversionFamily(db::asset_layout::kFx),
-        "FX is applied through the FX zone adapter");
-    Expect(
-        db::asset_layout::IsFxConversionFamily(db::asset_layout::kImpactFx),
-        "impact FX is applied through the FX zone adapter");
-    Expect(
-        !db::asset_layout::IsFxConversionFamily(kXAnimParts),
-        "xanim parts is not an FX-zone-adapter family");
 
     // Every family without a mirror is still unconverted, including ones whose
     // runtime struct already carries a RUNTIME_SIZE half of the pair.
@@ -113,86 +104,71 @@ void TestFailClosedPolicy()
     for (const std::int32_t type : kUnconverted)
     {
         Expect(
-            IsLoadPermitted(type, false, false),
+            IsLoadPermitted(type, false),
             "32-bit targets must keep loading unconverted families");
     }
-    Expect(
-        IsLoadPermitted(db::asset_layout::kFx, false, false),
-        "32-bit targets must keep loading FX with no adapter (legacy walk is sound)");
-    Expect(
-        IsLoadPermitted(db::asset_layout::kImpactFx, false, false),
-        "32-bit targets must keep loading impact FX with no adapter");
+    Expect(IsLoadPermitted(db::asset_layout::kFx, false), "32-bit targets must keep loading FX");
+    Expect(IsLoadPermitted(db::asset_layout::kImpactFx, false), "32-bit targets must keep loading impact FX");
 
     // 64-bit targets refuse anything without a complete pair.
     for (const std::int32_t type : kUnconverted)
     {
-        Expect(
-            !IsLoadPermitted(type, true, true),
-            "64-bit targets must refuse an unconverted family even with an adapter");
-        Expect(
-            !IsLoadPermitted(type, true, false),
-            "64-bit targets must refuse an unconverted family without an adapter");
+        Expect(!IsLoadPermitted(type, true), "64-bit targets must refuse an unconverted family");
     }
 
     // K4 counts these: their 64-bit digest on retail data is the x86 one.
-    Expect(IsLoadPermitted(kRawFile, true, false), "64-bit targets must load raw files, which K4 counts");
-    Expect(IsLoadPermitted(kStringTable, true, false), "64-bit targets must load string tables, which K4 counts");
-    Expect(IsLoadPermitted(kPhysPreset, true, false), "64-bit targets must load physics presets, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kLocalizeEntry, true, false),
+    Expect(IsLoadPermitted(kRawFile, true), "64-bit targets must load raw files, which K4 counts");
+    Expect(IsLoadPermitted(kStringTable, true), "64-bit targets must load string tables, which K4 counts");
+    Expect(IsLoadPermitted(kPhysPreset, true), "64-bit targets must load physics presets, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kLocalizeEntry, true),
            "64-bit targets must load localized strings, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kMapEnts, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kMapEnts, true),
            "64-bit targets must load map entities, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kSoundCurve, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kSoundCurve, true),
            "64-bit targets must load sound curves, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kGameWorldMp, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kGameWorldMp, true),
            "64-bit targets must load MP game worlds, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kLightDef, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kLightDef, true),
            "64-bit targets must load light defs, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kFont, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kFont, true),
            "64-bit targets must load fonts, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kMenuList, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kMenuList, true),
            "64-bit targets must load menu lists, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kComWorld, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kComWorld, true),
            "64-bit targets must load com worlds, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kSound, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kSound, true),
            "64-bit targets must load sound alias lists, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kXAnimParts, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kXAnimParts, true),
            "64-bit targets must load animations, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kWeapon, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kWeapon, true),
            "64-bit targets must load weapons, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kXModel, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kXModel, true),
            "64-bit targets must load models, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kMenu, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kMenu, true),
            "64-bit targets must load menus, which K4 counts");
 #if defined(KISAK_DEDI_HEADLESS)
-    Expect(IsLoadPermitted(db::asset_layout::kImage, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kImage, true),
            "a 64-bit headless server must load images, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kMaterial, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kMaterial, true),
            "a 64-bit headless server must load materials, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kLoadedSound, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kLoadedSound, true),
            "a 64-bit headless server must load loaded sounds, which K4 counts");
-    Expect(IsLoadPermitted(db::asset_layout::kTechniqueSet, true, false),
+    Expect(IsLoadPermitted(db::asset_layout::kTechniqueSet, true),
            "a 64-bit headless server must load technique sets, which K4 counts");
 #else
-    Expect(!IsLoadPermitted(db::asset_layout::kImage, true, false),
+    Expect(!IsLoadPermitted(db::asset_layout::kImage, true),
            "a 64-bit client keeps images guarded: no client leg has compared them");
-    Expect(!IsLoadPermitted(db::asset_layout::kMaterial, true, false),
+    Expect(!IsLoadPermitted(db::asset_layout::kMaterial, true),
            "a 64-bit client keeps materials guarded: no client leg has compared them");
-    Expect(!IsLoadPermitted(db::asset_layout::kLoadedSound, true, false),
+    Expect(!IsLoadPermitted(db::asset_layout::kLoadedSound, true),
            "a 64-bit client keeps loaded sounds guarded: it keeps samples no client leg has compared");
-    Expect(!IsLoadPermitted(db::asset_layout::kTechniqueSet, true, false),
+    Expect(!IsLoadPermitted(db::asset_layout::kTechniqueSet, true),
            "a 64-bit client keeps technique sets guarded: no client leg has compared them");
 #endif
 
-    // K4 counts FX and Impact FX, whose disk32 loaders never use the FX zone
-    // adapter, so they load at 64-bit whether or not one is bound.
-    Expect(IsLoadPermitted(db::asset_layout::kFx, true, true), "64-bit targets must load FX with an adapter");
-    Expect(IsLoadPermitted(db::asset_layout::kImpactFx, true, true),
-           "64-bit targets must load impact FX with an adapter");
-    Expect(IsLoadPermitted(db::asset_layout::kFx, true, false),
-           "64-bit targets must load FX with no adapter: K4 counts it");
-    Expect(IsLoadPermitted(db::asset_layout::kImpactFx, true, false),
-           "64-bit targets must load impact FX with no adapter: K4 counts it");
+    // K4 counts FX and Impact FX: their disk32 loaders need no FX zone adapter.
+    Expect(IsLoadPermitted(db::asset_layout::kFx, true), "64-bit targets must load FX, which K4 counts");
+    Expect(IsLoadPermitted(db::asset_layout::kImpactFx, true), "64-bit targets must load impact FX, which K4 counts");
 }
 
 // --- The gate itself raises ERR_DROP whenever the load is not permitted. ---
@@ -201,7 +177,7 @@ void TestGateRefusals()
     // An unconverted family at 64-bit must raise exactly one ERR_DROP that
     // names the family and the layout-pair reason.
     ResetError();
-    const bool refused = DB_AdmitAssetFamilyLoad(kUiMap, "uimap", true, true);
+    const bool refused = DB_AdmitAssetFamilyLoad(kUiMap, "uimap", true);
     Expect(!refused, "an unconverted family at 64-bit must be refused");
     Expect(g_comErrorCalls == 1, "refusal must raise exactly one Com_Error");
     Expect(g_lastCode == ERR_DROP, "refusal must raise ERR_DROP, not another code");
@@ -214,37 +190,21 @@ void TestGateRefusals()
 
     // An unconverted family that would load at 32-bit must not raise at 32-bit.
     ResetError();
-    const bool allowed32 = DB_AdmitAssetFamilyLoad(kUiMap, "uimap", false, false);
+    const bool allowed32 = DB_AdmitAssetFamilyLoad(kUiMap, "uimap", false);
     Expect(allowed32, "an unconverted family at 32-bit must still load");
     Expect(g_comErrorCalls == 0, "a 32-bit load must not raise");
 
-    // A converted family with a bound adapter loads at 64-bit and must not raise.
+    // The K4-verified FX families load at 64-bit and raise nothing.
     ResetError();
-    const bool allowedFx =
-        DB_AdmitAssetFamilyLoad(db::asset_layout::kFx, "fx", true, true);
-    Expect(allowedFx, "FX at 64-bit must load while the adapter is bound");
+    const bool allowedFx = DB_AdmitAssetFamilyLoad(db::asset_layout::kFx, "fx", true);
+    const bool allowedImpact = DB_AdmitAssetFamilyLoad(db::asset_layout::kImpactFx, "impactfx", true);
+    Expect(allowedFx && allowedImpact, "FX and impact FX at 64-bit must load");
     Expect(g_comErrorCalls == 0, "a permitted 64-bit load must not raise");
-
-    // With no adapter, as a headless build runs, the K4-verified FX families
-    // still load at 64-bit and raise nothing.
-    ResetError();
-    const bool headlessFx = DB_AdmitAssetFamilyLoad(db::asset_layout::kFx, "fx", true, false);
-    const bool headlessImpact = DB_AdmitAssetFamilyLoad(db::asset_layout::kImpactFx, "impactfx", true, false);
-    Expect(headlessFx && headlessImpact, "FX and impact FX at 64-bit must load with no adapter");
-    Expect(g_comErrorCalls == 0, "an adapter-less FX load must not raise");
-
-    // With no adapter at 32-bit the legacy walk is still sound, so the gate
-    // keeps admitting the FX families exactly as the x86 baseline did.
-    ResetError();
-    const bool allowedFx32 =
-        DB_AdmitAssetFamilyLoad(db::asset_layout::kFx, "fx", false, false);
-    Expect(allowedFx32, "FX at 32-bit must still load with no adapter");
-    Expect(g_comErrorCalls == 0, "a 32-bit FX load must not raise");
 
     // Out-of-range types fail closed too: they cannot claim a pair they lack.
     ResetError();
     Expect(
-        !DB_AdmitAssetFamilyLoad(-1, nullptr, true, true),
+        !DB_AdmitAssetFamilyLoad(-1, nullptr, true),
         "an out-of-range type at 64-bit must be refused");
     Expect(g_comErrorCalls == 1, "an out-of-range refusal must raise");
     Expect(g_lastCode == ERR_DROP, "an out-of-range refusal must raise ERR_DROP");

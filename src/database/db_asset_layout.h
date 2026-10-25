@@ -111,16 +111,9 @@ constexpr bool IsK4Verified(const std::int32_t assetType) noexcept
 
 constexpr Conversion ConversionForAssetType(const std::int32_t assetType) noexcept
 {
-    switch (assetType)
-    {
-    case kFx:
-    case kImpactFx:
-        return Conversion::OndiskRuntimePair;
-    default:
-        // A verified family's generated disk32 loader is its mirror. Every
-        // other family stays refused at 64-bit until K4 counts it.
-        return IsK4Verified(assetType) ? Conversion::OndiskRuntimePair : Conversion::Unconverted;
-    }
+    // A verified family's disk32 loader is its mirror. Every other family
+    // stays refused at 64-bit until K4 counts it.
+    return IsK4Verified(assetType) ? Conversion::OndiskRuntimePair : Conversion::Unconverted;
 }
 
 constexpr bool IsFamilyConverted(const std::int32_t assetType) noexcept
@@ -146,56 +139,26 @@ constexpr bool HasDisk32Loader(const std::int32_t assetType) noexcept
     }
 }
 
-// The only families whose pair is materialised through the FX zone adapter
-// rather than a loader-side RUNTIME_SIZE walk.
-constexpr bool IsFxConversionFamily(const std::int32_t assetType) noexcept
-{
-    return assetType == kFx || assetType == kImpactFx;
-}
-
 // The fail-closed rule. Drift is only possible when the host pointer is wider
 // than the retail 32-bit slot, so the 32-bit targets keep loading every family
 // exactly as before (the MSVC x86 behaviour invariant).
-//
-// fxAdapterAvailable is the FX zone-adapter binding state at load time. The FX
-// and Impact FX pairs are applied only through that adapter; when it is
-// unavailable (headless builds stub the wiring out, and a load outside a bound
-// zone has no workspace) both FX loaders fall through to their legacy
-// retail-record walk, which copies a 32-bit record into the widened runtime
-// struct. Refuse those families here, before either fallback can run.
-constexpr bool IsLoadPermitted(
-    const std::int32_t assetType,
-    const bool targetIs64Bit,
-    const bool fxAdapterAvailable) noexcept
+constexpr bool IsLoadPermitted(const std::int32_t assetType, const bool targetIs64Bit) noexcept
 {
-    if (!targetIs64Bit)
-    {
-        return true;
-    }
-    if (!IsFamilyConverted(assetType))
-    {
-        return false;
-    }
-    // A K4-verified FX family loads through its disk32 loader, which never
-    // uses the FX zone adapter (docs/design/FASTFILE_LOADER.md, step 7).
-    return fxAdapterAvailable || !IsFxConversionFamily(assetType) || IsK4Verified(assetType);
+    return !targetIs64Bit || IsFamilyConverted(assetType);
 }
 } // namespace db::asset_layout
 
 // Gate one asset-family load against the layout conversion state.
 //
 // targetIs64Bit is the *target* pointer width, not a runtime probe: callers
-// pass `KISAK_ARCH_64BIT != 0` from kisak_abi.h. fxAdapterAvailable is the
-// FX zone-adapter binding state; callers pass
-// `db::fx_zone_adapter_wiring::IsFxZoneAdapterBindingActive()`. Returns true
+// pass `KISAK_ARCH_64BIT != 0` from kisak_abi.h. Returns true
 // when the load may proceed. Returns false after raising `Com_Error(ERR_DROP,
 // ...)`, naming familyName, so a 64-bit fast-file cannot load a family whose
 // record layout would drift under the runtime sizeof.
 [[nodiscard]] bool DB_AdmitAssetFamilyLoad(
     std::int32_t assetType,
     const char *familyName,
-    bool targetIs64Bit,
-    bool fxAdapterAvailable);
+    bool targetIs64Bit);
 
 // db_unverified64, on by default (registered in Com_InitDvars): a 64-bit build
 // admits every family with a disk32 loader (HasDisk32Loader) before K4 counts

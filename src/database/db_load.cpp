@@ -6135,8 +6135,7 @@ void __cdecl Load_FxEffectDef(bool atStreamStart)
     if (!DB_AdmitAssetFamilyLoad(
             ASSET_TYPE_FX,
             DB_GetXAssetTypeName(ASSET_TYPE_FX),
-            KISAK_ARCH_64BIT != 0,
-            /*fxAdapterAvailable=*/false))
+            KISAK_ARCH_64BIT != 0))
     {
         return;
     }
@@ -7992,8 +7991,7 @@ void __cdecl Load_FxImpactTable(bool atStreamStart)
     if (!DB_AdmitAssetFamilyLoad(
             ASSET_TYPE_IMPACT_FX,
             DB_GetXAssetTypeName(ASSET_TYPE_IMPACT_FX),
-            KISAK_ARCH_64BIT != 0,
-            /*fxAdapterAvailable=*/false))
+            KISAK_ARCH_64BIT != 0))
     {
         return;
     }
@@ -10480,8 +10478,7 @@ void __cdecl Load_XAssetHeader(bool atStreamStart)
     if (!DB_AdmitAssetFamilyLoad(
             varXAsset->type,
             DB_GetXAssetTypeName(varXAsset->type),
-            guardTarget64,
-            db::fx_zone_adapter_wiring::IsFxZoneAdapterBindingActive()))
+            guardTarget64))
     {
         return;
     }
