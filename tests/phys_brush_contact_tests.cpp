@@ -1,5 +1,6 @@
 // phys_brush_contact_tests.cpp: physics bodies touching world geometry at
-// 64-bit (NOW row 22, #242 items 1 and 2).
+// 64-bit (NOW row 22, #242 items 1 and 2), and the entity contacts'
+// capacity (#243 item 2).
 //
 // The brush callbacks decoded their contexts (InputOutput, BrushBrushData,
 // BrushTrimeshData) as ILP32 words and byte offsets, and the post-step
@@ -10,7 +11,9 @@
 // do not link phys_ode.cpp:
 //   1: phys_world_collision and the brush colliders: CM_TestGeomInLeaf with
 //      a box, a brush and a brushmodel resting 0.5 units deep in a world
-//      brush, and a brushmodel resting on a terrain triangle.
+//      brush, and a brushmodel resting on a terrain triangle; and
+//      Phys_TestAgainstEntities stopping at the caller's contact capacity
+//      (#243 item 2).
 //   2: phys_ode: dxPostProcessIslands resets each world's jitter regions.
 // The engine boundary is weak: the engine TUs replace the stubs they define.
 
@@ -225,8 +228,46 @@ void CheckContacts(const char *what, PhysicsGeomType type, bool terrain, int fla
 }
 }  // namespace
 
+// Phys_TestAgainstEntities' boundary: three entities in the area, and a
+// capsule-box test that always touches, as dCollideSpheres writes one
+// contact whatever room is left.
+WEAK gentity_s g_entities[MAX_GENTITIES];
+WEAK int CM_AreaEntities(const float *, const float *, int *entityList, int maxcount, int)
+{
+    for (int i = 0; i < 3 && i < maxcount; ++i)
+        entityList[i] = i;
+    return 3;
+}
+namespace
+{
+int g_capsuleCalls = 0;
+}  // namespace
+WEAK int ODE_CollideCapsuleBox(const float *, const float *, float *, const float *, const float *, float, float,
+    int maxc, dContactGeom *contact, int)
+{
+    ++g_capsuleCalls;
+    CHECK(maxc > 0);
+    contact->depth = 1.0f;
+    return 1;
+}
+
+// Two contacts of room and three touching entities: two contacts, each with
+// no surface flags, and nothing written past them.
+void CheckEntityCapacity()
+{
+    objInfo input{};
+    std::memset(g_contacts, 0x77, sizeof(g_contacts));
+    Results results{g_contacts, 0, 2, static_cast<int>(sizeof(dContactGeomExt))};
+    Phys_TestAgainstEntities(&input, &results);
+    CHECK(results.contactCount == 2);
+    CHECK(g_capsuleCalls == 2);
+    CHECK(g_contacts[0].surfFlags == 0 && g_contacts[1].surfFlags == 0);
+    CHECK(g_contacts[2].surfFlags == 0x77777777);
+}
+
 int main()
 {
+    CheckEntityCapacity();
     BuildWorld();
     CheckContacts("box on brush", PHYS_GEOM_BOX, false, kFloorFlags);
     CheckContacts("brush on brush", PHYS_GEOM_BRUSH, false, kFloorFlags);
