@@ -3551,13 +3551,16 @@ forwardDone:
         }
     }
 
+#ifdef KISAK_SP
     if (fireTagName)
     {
         iassert(ent->s.weapon < 0xFFFF);
         G_AddEvent(ent, event, ((unsigned int)ent->s.weapon << 16) | (unsigned __int16)fireTagName);
     }
     else
+#endif
     {
+        // MP event parms are 8 bits on the wire and retail sends 0 here.
         G_AddEvent(ent, event, 0);
     }
     Scr_Notify(ent, scr_const.weapon_fired, 0);
@@ -3851,6 +3854,11 @@ int __fastcall G_LoadVehicle(const char *name)
         MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\game\\g_scr_vehicle.cpp", 489, 0, "%s", "name");
     snprintf(v14, ARRAYSIZE(v14), "vehicles/%s", name);
     InfoString = Com_LoadInfoString(v14, "vehicle file", "VEHICLEFILE", v15);
+    if (s_numVehicleInfos >= static_cast<int>(ARRAY_COUNT(s_vehicleInfos)))
+    {
+        Com_Error(ERR_DROP, "Too many vehicle types (%i) loading '%s'", s_numVehicleInfos, name);
+        return 0;
+    }
     v3 = s_numVehicleInfos;
     v4 = &s_vehicleInfos[s_numVehicleInfos];
     memset(v4, 0, sizeof(vehicle_info_t));

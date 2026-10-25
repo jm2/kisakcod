@@ -654,6 +654,11 @@ int32_t __cdecl G_LoadVehicle(const char *name)
         MyAssertHandler(".\\game_mp\\g_vehicles_mp.cpp", 434, 0, "%s", "name");
     snprintf(string, ARRAYSIZE(string), "vehicles/%s", name);
     pszBuffer = Com_LoadInfoString(string, "vehicle file", "VEHICLEFILE", loadBuffer);
+    if (s_numVehicleInfos >= static_cast<int32_t>(ARRAY_COUNT(s_vehicleInfos)))
+    {
+        Com_Error(ERR_DROP, "Too many vehicle types (%i) loading '%s'", s_numVehicleInfos, name);
+        return 0;
+    }
     v11 = s_numVehicleInfos;
     dst = (uint8_t *)&s_vehicleInfos[s_numVehicleInfos];
     memset(dst, 0, 0x270u);
