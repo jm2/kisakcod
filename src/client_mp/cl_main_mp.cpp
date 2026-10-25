@@ -784,6 +784,23 @@ void __cdecl CL_SendPureChecksums(int32_t localClientNum)
     CL_AddReliableCommand(localClientNum, cMsg);
 }
 
+// KISAK: an ERR_DROP while CL_Vid_Restart_f archives or restores the client
+// state longjmps past its Z_VirtualFree, leaking the 10 MiB staging buffer
+// (#277). The buffers live here so the next restart frees what the last one
+// left behind.
+static uint8_t *s_vidRestartStaging;
+static uint8_t *s_vidRestartState;
+
+static void CL_FreeVidRestartBuffers()
+{
+    if (s_vidRestartStaging)
+        Z_VirtualFree(s_vidRestartStaging);
+    if (s_vidRestartState)
+        Z_VirtualFree(s_vidRestartState);
+    s_vidRestartStaging = nullptr;
+    s_vidRestartState = nullptr;
+}
+
 void __cdecl CL_Vid_Restart_f()
 {
     uint8_t *v0; // eax
@@ -816,16 +833,20 @@ void __cdecl CL_Vid_Restart_f()
         connstate = clientUIActives[0].connectionState;
         clientStateBuf = 0;
         clientStateBytes = 0;
+        CL_FreeVidRestartBuffers();
         if (clientUIActives[0].cgameInitialized)
         {
             v0 = (uint8_t *)Z_VirtualAlloc(0xA00000, "demo", 0);
+            s_vidRestartStaging = v0;
             MemFile_InitForWriting(&memFile, 0xA00000, v0, 1, 0);
             CL_ArchiveClientState(localClientNum, &memFile);
             MemFile_StartSegment(&memFile, -1);
             clientStateBytes = memFile.bytesUsed;
             clientStateBuf = (uint8_t *)Z_VirtualAlloc(memFile.bytesUsed, "CL_Vid_Restart_f", 10);
+            s_vidRestartState = clientStateBuf;
             memcpy(clientStateBuf, memFile.buffer, clientStateBytes);
             Z_VirtualFree(memFile.buffer);
+            s_vidRestartStaging = nullptr;
         }
         com_expectedHunkUsage = 0;
         g_waitingForServer = 0;
@@ -872,6 +893,7 @@ void __cdecl CL_Vid_Restart_f()
                 MemFile_MoveToSegment(&memFile, -1);
             }
             Z_VirtualFree(clientStateBuf);
+            s_vidRestartState = nullptr;
         }
     }
 }
