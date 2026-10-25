@@ -2,20 +2,18 @@
 # Included from tests/CMakeLists.txt.
 
 # Exercise the production MemoryFile reader instead of an extracted model.
-# The inherited zlib 1.1.4 and memfile translation units predate the warning
+# The vendored zlib and the inherited memfile translation units predate the warning
 # policy used by the portable tests, so isolate those legacy diagnostics while
 # keeping the test harness itself warning-clean.
 set(_kisakcod_memfile_zlib_sources
     ${DEPS_DIR}/zlib/adler32.c
+    ${DEPS_DIR}/zlib/crc32.c
     ${DEPS_DIR}/zlib/deflate.c
     ${DEPS_DIR}/zlib/trees.c
     ${DEPS_DIR}/zlib/zutil.c
     ${DEPS_DIR}/zlib/inflate.c
-    ${DEPS_DIR}/zlib/infblock.c
-    ${DEPS_DIR}/zlib/infcodes.c
     ${DEPS_DIR}/zlib/inffast.c
     ${DEPS_DIR}/zlib/inftrees.c
-    ${DEPS_DIR}/zlib/infutil.c
 )
 add_library(kisakcod-memfile-test-subject STATIC
     ${SRC_DIR}/universal/memfile.cpp

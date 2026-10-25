@@ -8,7 +8,7 @@
 # seam (db_asset_layout.h) is defined only here.
 file(GLOB _zone_db_sources CONFIGURE_DEPENDS "${SRC_DIR}/database/*.cpp")
 list(FILTER _zone_db_sources EXCLUDE REGEX "/(shader_cache|db_fx_zone_adapter_wiring)\\.cpp$")
-set(_zone_zlib adler32 compress crc32 deflate infblock infcodes inffast inflate inftrees infutil trees zutil)
+set(_zone_zlib adler32 crc32 deflate inffast inflate inftrees trees zutil)
 list(TRANSFORM _zone_zlib PREPEND "${DEPS_DIR}/zlib/")
 list(TRANSFORM _zone_zlib APPEND ".c")
 add_library(kisakcod-db-disk32-zone-engine OBJECT
