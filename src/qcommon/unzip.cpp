@@ -1064,7 +1064,7 @@ extern int unzOpenCurrentFile (unzFile file)
 	  // LWSS END
 	  
 	  //err=inflateInit(&pfile_in_zip_read_info->stream, Z_SYNC_FLUSH, 1);
-	  err = inflateInit2_(&pfile_in_zip_read_info->stream, -15, "1.1.4", sizeof(z_stream_s));
+	  err = inflateInit2_(&pfile_in_zip_read_info->stream, -15, ZLIB_VERSION, sizeof(z_stream_s));
 	  if (err != Z_OK)
 	  {
 	    unzlocal_FreeCurrentFile(pfile_in_zip_read_info);
@@ -1121,6 +1121,27 @@ extern int unzReadCurrentFile  (unzFile file, void *buf, unsigned len)
 
 	if (len==0)
 		return 0;
+
+	// A NULL buf skips len bytes (FS_Seek relies on it). IW's zlib 1.1.4
+	// discarded inflate output when next_out was NULL; current zlib needs
+	// a real buffer, so read the skipped bytes into a scratch one.
+	if (buf == NULL)
+	{
+		unsigned char scratch[4096];
+		int skipped = 0;
+		while (len > 0)
+		{
+			const unsigned chunk = len < sizeof(scratch) ? len : (unsigned)sizeof(scratch);
+			const int got = unzReadCurrentFile(file, scratch, chunk);
+			if (got < 0)
+				return got;
+			skipped += got;
+			len -= (unsigned)got;
+			if ((unsigned)got < chunk)
+				break;
+		}
+		return skipped;
+	}
 
 	pfile_in_zip_read_info->stream.next_out = (Byte*)buf;
 
