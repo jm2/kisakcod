@@ -1239,7 +1239,7 @@ double __cdecl OffsetHudElemY(const hudelem_s *elem, const cg_hudelem_t *cghe, f
         return AlignHudElemY(elem->alignOrg, cghe->y, offsetY);
     from = AlignHudElemY(elem->fromAlignOrg, cghe->y, offsetY);
     to = AlignHudElemY(elem->alignOrg, cghe->y, offsetY);
-    return (float)((from - to) * lerp + from);
+    return (float)((to - from) * lerp + from);
 }
 
 void __cdecl DrawHudElemClock(int32_t localClientNum, const hudelem_s *elem, const cg_hudelem_t *cghe)
