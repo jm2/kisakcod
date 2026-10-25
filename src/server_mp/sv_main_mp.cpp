@@ -694,7 +694,7 @@ bool __cdecl SV_QueryRateLimited(netadr_t from, int now)
     for (const uint8_t byte : from.ip)
         hash = hash * 31u + byte;
     QueryBucket &bucket = s_queryBuckets[hash % kQueryBuckets];
-    const bool sameSource = bucket.type == from.type && std::equal(std::begin(from.ip), std::end(from.ip), bucket.ip);
+    const bool sameSource = bucket.type == from.type && std::equal(std::begin(from.ip), std::end(from.ip), std::begin(bucket.ip), std::end(bucket.ip));
     // A slot whose source has gone quiet passes to the new one; two busy
     // sources that hash alike share it.
     if (!sameSource && (!bucket.burst || now - bucket.lastTime > kAddressBurst * kAddressPeriodMs))
