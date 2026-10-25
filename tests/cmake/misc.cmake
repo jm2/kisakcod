@@ -811,6 +811,7 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_target_properties(kisakcod-vid-restart-buffer-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME vid-restart-buffers COMMAND kisakcod-vid-restart-buffer-tests)
     set_tests_properties(vid-restart-buffers PROPERTIES TIMEOUT 20)
+endif()
 
 # Console, key-binding and server-browser buffer bounds (#197): the production
 # client TUs at native width, with the rest of the engine weak.

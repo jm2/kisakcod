@@ -141,6 +141,8 @@ void TestGlobalServersBounded()
     CL_GlobalServers_f();
     CHECK(g_sent.rfind("getservers 7 ", 0) == 0);
     CHECK(g_sent.size() < 1028);
+    // fs_restrict (the stub reads true) still gets its suffix after a full list.
+    CHECK(g_sent.size() >= 5 && g_sent.compare(g_sent.size() - 5, 5, " demo") == 0);
 }
 } // namespace
 
