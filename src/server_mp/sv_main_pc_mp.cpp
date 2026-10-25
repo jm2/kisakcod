@@ -250,14 +250,15 @@ void __cdecl SVC_RemoteCommand(netadr_t from)
     int valid; // [esp+C08h] [ebp-18h]
     int len; // [esp+C0Ch] [ebp-14h]
     const char *password; // [esp+C10h] [ebp-10h]
-    int time; // [esp+C14h] [ebp-Ch]
+    int nowMsec; // [esp+C14h] [ebp-Ch]
     int i; // [esp+C18h] [ebp-8h]
 
-    time = Sys_Milliseconds();
+    nowMsec = Sys_Milliseconds();
     sv_rcon::Source source;
     source.type = static_cast<uint32_t>(from.type);
-    memcpy(source.ip, from.ip, sizeof(source.ip));
-    if (s_rconGate.Allow(source, time))
+    for (size_t octet = 0; octet < sizeof(source.ip); ++octet)
+        source.ip[octet] = from.ip[octet];
+    if (s_rconGate.Allow(source, nowMsec))
     {
         password = SV_Cmd_Argv(1);
         if (*rcon_password->current.string && sv_rcon::PasswordMatches(password, rcon_password->current.string))

@@ -10,6 +10,10 @@
 
 namespace sv_rcon
 {
+// The engine's longest string (MAX_STRING_CHARS); a password scan never reads
+// further than this.
+inline constexpr size_t kMaxPasswordChars = 1024;
+
 // The identity a throttle slot is keyed on: the address type and IPv4 bytes.
 // The port is left out, so one host cannot get fresh slots by changing ports.
 struct Source
@@ -23,14 +27,23 @@ struct Source
     }
 };
 
+// The length of s, scanning at most kMaxPasswordChars bytes.
+inline size_t BoundedLength(const char *s)
+{
+    size_t len = 0;
+    while (len < kMaxPasswordChars && s[len])
+        ++len;
+    return len;
+}
+
 // Compares in time that depends only on the longer of the two lengths, never
 // on where the first mismatch is.
 inline bool PasswordMatches(const char *given, const char *expected)
 {
     if (!given || !expected)
         return false;
-    const size_t givenLen = std::strlen(given);
-    const size_t expectedLen = std::strlen(expected);
+    const size_t givenLen = BoundedLength(given);
+    const size_t expectedLen = BoundedLength(expected);
     const size_t len = givenLen > expectedLen ? givenLen : expectedLen;
     uint32_t diff = givenLen != expectedLen ? 1u : 0u;
     for (size_t i = 0; i < len; ++i)
@@ -58,28 +71,9 @@ public:
     bool Allow(const Source &source, int32_t nowMsec)
     {
         const uint32_t now = static_cast<uint32_t>(nowMsec);
-        if (!windowStarted_ || now - windowStart_ >= kGlobalWindowMsec)
-        {
-            windowStarted_ = true;
-            windowStart_ = now;
-            windowAttempts_ = 0;
-        }
+        OpenWindowIfElapsed(now);
 
-        Slot *slot = nullptr;
-        Slot *oldest = nullptr;
-        for (Slot &candidate : slots_)
-        {
-            if (candidate.used && candidate.source == source)
-            {
-                slot = &candidate;
-                break;
-            }
-            if (!oldest || !candidate.used
-                || (oldest->used && now - candidate.last > now - oldest->last))
-            {
-                oldest = &candidate;
-            }
-        }
+        Slot *slot = Find(source);
         if (slot && now - slot->last < kSourceIntervalMsec)
             return false;
         if (windowAttempts_ >= kGlobalAttempts)
@@ -87,7 +81,7 @@ public:
 
         if (!slot)
         {
-            slot = oldest;
+            slot = Stalest(now);
             slot->used = true;
             slot->source = source;
         }
@@ -103,6 +97,39 @@ private:
         uint32_t last = 0;
         bool used = false;
     };
+
+    void OpenWindowIfElapsed(uint32_t now)
+    {
+        if (windowStarted_ && now - windowStart_ < kGlobalWindowMsec)
+            return;
+        windowStarted_ = true;
+        windowStart_ = now;
+        windowAttempts_ = 0;
+    }
+
+    Slot *Find(const Source &source)
+    {
+        for (Slot &candidate : slots_)
+        {
+            if (candidate.used && candidate.source == source)
+                return &candidate;
+        }
+        return nullptr;
+    }
+
+    // An unused slot if there is one, otherwise the one used longest ago.
+    Slot *Stalest(uint32_t now)
+    {
+        Slot *stalest = &slots_[0];
+        for (Slot &candidate : slots_)
+        {
+            if (!candidate.used)
+                return &candidate;
+            if (now - candidate.last > now - stalest->last)
+                stalest = &candidate;
+        }
+        return stalest;
+    }
 
     Slot slots_[kTrackedSources];
     uint32_t windowStart_ = 0;
