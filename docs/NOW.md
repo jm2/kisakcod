@@ -1,7 +1,7 @@
 # NOW
 
 Last reviewed: 2026-10-24 by kisakcod-mac (mbp16-m1max), acting as mayor at the owner's request
-Current gates: G2 (the formal proof) and G5 (native clients); G4a waits on the owner's captures; G0 and G1 are done
+Current gate: G5 (native clients); G4a waits on the owner's captures; G0, G1 and G2 are done
 WIP limit: 6 (at least 4 on the current gates)
 
 The mayor is the only role that edits this file ([AGENTS.md](../AGENTS.md)).
@@ -25,11 +25,10 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 54 | G2 formal proof: guard on (`db_unverified64 0`), ASan+UBSan, `mp_shipment` from 1.8 `.ff`, `getinfo`/`getstatus`, 5-map rotation, 30 min without faults | G2 | gate | both legs on #180 (Win64, Linux amd64) | S | running: Linux amd64 (linux), Win64 (win) |
 | 55 | G5 Win64: the native D3D9 client plays a round and a map change on the Win64 headless server, then on a Steam 1.8 server (#184) | G5 | gate | console text on both ends, Steam 1.8 data, antec-win console | M | next (win) |
-| 56 | G5 Linux: the amd64 and arm64 dxvk-native clients play a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; no sanitizer reports | M | next (linux) |
-| 57 | G5 macOS: the arm64 dxvk-native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | as row 56 | M | next (mac) |
-| 53 | 1.8 gameplay parity: executable-side 1.1-1.8 changes inventoried; pmove and weapon state match the 1.8 reference server (#692) | G4a | gate | #692's done-test | L | started: imports (linux-arm64), per-frame parity (linux); scope questions in #692 |
+| 59 | G5: the Linux and macOS dxvk-native clients play a round and a map change on a Steam 1.8 server (#184) | G5 | gate | console text on both ends; ASan clean | M | next (mac, linux) |
+| 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | as row 59 | M | next (win-arm64) |
+| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | started: shared-code sites (linux-arm64) |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | Linux amd64 passes all 4 retail pairings (dedi and listen, both ways; reconnect, map change); left: the windows-x86 leg (win-arm64, yoga) |
 
 Other `burndown` issues are off these gates or wait on the owner.
@@ -52,15 +51,18 @@ Other `burndown` issues are off these gates or wait on the owner.
 - Miles and Bink are dropped on every target, x86 included: OpenAL Soft and FFmpeg everywhere, Windows through vcpkg, 2026-10-22.
 - Version 0.1.0 is the first display version (#688); 64-bit builds load unverified asset families by default, `+set db_unverified64 0` restores the guard (#689); the developer autoexec runs only with `+set com_devAutoexec 1` (#693), 2026-10-22.
 - A declared x86 change that matches the other builds is pre-approved (rule 16 ESCALATE); x86-only divergence, Windows-only refactors (rule 10) and security fixes still go to the owner, 2026-10-24.
+- G5 client legs pass with 0 ASan reports and every UBSan report triaged on #184; row 58 makes the client UBSan-clean, 2026-10-24.
 
 ## Done since last review
 
 Merge SHAs are in `git log`.
 
-- Row 47 (G3 first target): an x86 client played a round, two map changes and a reconnect on the Win64 headless server with 8 test clients, on antec-win.
+- G2 passed (row 54, #180): guard on, mp_shipment, 5-map rotation, queries, 30 min; Linux amd64 ASan+UBSan, Win64 ASan.
+- Rows 56 and 57 (G5 Linux amd64/arm64, macOS): round, map change and reconnect, ASan clean (#184, #759). Row 53: #692's inventory, dvars and per-frame parity match 1.8.
+- Row 47 (G3 first target): an x86 client played a round, two map changes and a reconnect on the Win64 server with 8 bots.
 - 1.8 parity: official IWDs only, and 1.8's fatal error with none (#735, #742). 64-bit fixes #738, #743, #744, #747, #749. openal-soft pinned to 1.24.3 for a Windows arm64 hang (#746, #745).
 - Row 51: OpenAL Soft audio on every client (#669-#679); 3D start offset in ms (#682); Linux TSan leg (#681). Fixes #714 (pure checksums), #715 (advisory published).
-- Row 52, the map sweep: all 21 stock MP maps load and rotate in one 64-bit ASan dedicated server (#709-#712). LAN join, reconnect and map_restart pass on all five 64-bit platforms (#695-#697, #707).
-- K4 25/25 (row 37): RawFile through Fx/ImpactFx (#633-#752; headers #644, #656, #659; renderer families and LoadedSound headless-only). Per-symbol x86 identity check (#647).
+- Row 52, the map sweep: all 21 stock MP maps load and rotate in one 64-bit ASan dedicated server (#709-#712). LAN play passes on all five 64-bit platforms (#695-#707).
+- K4 25/25 (row 37): RawFile through Fx/ImpactFx (#633-#752; headers #644, #656, #659; renderer families and LoadedSound headless-only).
 - G5: all five 64-bit clients in-game (rows 44, 49); cinematics through FFmpeg (row 41, #654, #660); screenshot regression set (row 50, #673); Linux client exports no symbols (#655).
 - G0 passed (row 46, #178): the x86 client and headless server played 3 maps of rounds on antec-win, then the same binaries ran under Wine on antec (#635, #637).
