@@ -38,7 +38,7 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 
 ### macOS (step 2)
 
-- **Driver:** KosmicKrisp, Mesa's conformant Vulkan on Metal (`brew install mesa`, macOS 26+), picked at run time with `VK_DRIVER_FILES=$(brew --prefix mesa)/share/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json`. Mesa is never bundled.
+- **Driver:** KosmicKrisp, Mesa's conformant Vulkan on Metal (`brew install mesa`, macOS 26+), picked at run time with `VK_DRIVER_FILES=$(brew --prefix mesa)/share/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json`, bundled in the `.app` (ADR-0011).
 - **dxvk:** `KISAK_DXVK_MACOS` builds jm2/dxvk `kisakcod-macos`, pinned in `scripts/extern/dxvk_macos.cmake`, with `-Dnative_macos`. The fork's `KISAK_MACOS.md` lists each patch and how to rebase it.
 - **Not MoltenVK:** upstream dxvk won't support portability-subset drivers, and on MoltenVK every texture sampled black.
 - **Minimums:** the client targets macOS 26 (`scripts/mp`); the server keeps 13.0. `scripts/extern/dxvk_macos.cmake` builds the dxvk dylibs with `MACOSX_DEPLOYMENT_TARGET=26.0` to match.
@@ -174,8 +174,8 @@ on the binary path, not `pgrep -x`.
   gun and HUD, and shoot A/B/A. Compare the share of pixels off by >16/255,
   not the max; calm-map noise is a mean under 0.2 and under 0.5% of pixels.
 
-- Send `screenshot` on stdin once the menu is up: a `+wait N +screenshot`
-  capture fires while zones load and can be all black.
+- Send `screenshot` on stdin once the menu is up; `+wait N +screenshot`
+  fires during loading.
 - `screenshotJPEG` has no encoder in any build and says so (#593); use
   `screenshot`, which writes TGA.
 - dxvk's `GetFrontBufferData` copies the swapchain backbuffer, not the
