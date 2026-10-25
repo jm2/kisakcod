@@ -45,7 +45,8 @@ server, and an unmodified Steam 1.8 client joins a KisakCOD server. Retail
 
 - Native 64-bit on all five targets above.
 - Roles: MP client plus headless dedicated server.
-- Release renderer: Vulkan, with MoltenVK on macOS.
+- 0.1.0 renderer: D3D9 on Windows, D3D9 through dxvk-native on Linux and
+  macOS; native Vulkan comes after 0.1.0 ([ADR-0010](decisions/0010-interim-renderers-ship-in-0-1-0.md)).
 - Native clients use OpenAL Soft and FFmpeg instead of Miles and Bink.
 - Speex stays, gated on decoder interop with Steam 1.8 peers rather than
   encoder byte equality.
@@ -69,8 +70,8 @@ A gate passes only on evidence a reviewer can re-run or inspect.
 - Fork-peer evidence (a KisakCOD client with a KisakCOD server) counts for G3,
   never for G4.
 - Windows x86 evidence counts for G4a, never for G4b.
-- Evidence from a vehicle (Wine, emulation, the Win64 D3D9 client) counts as a
-  test milestone, never as delivery.
+- Evidence from a vehicle (Wine, emulation) counts as a test milestone, never
+  as delivery. The D3D9 and dxvk-native clients ship in 0.1.0 (ADR-0010).
 - "Blocked", "pending" or "not run" is never a pass.
 - Licensed evidence records the exe hash and the depot manifest, never the
   data itself.
@@ -116,6 +117,7 @@ The CI `native64-census` and `KPI summary` jobs render the current values.
 | [0007](decisions/0007-macos-notarization-deferred.md) | macOS releases ad-hoc signed; notarization deferred | accepted |
 | [0008](decisions/0008-engine-tu-tests-and-ci-hygiene.md) | Engine-TU tests and CI hygiene | accepted |
 | [0009](decisions/0009-retail-1-8-behaviour-reference.md) | Retail Steam 1.8 is the behaviour reference | accepted |
+| [0010](decisions/0010-interim-renderers-ship-in-0-1-0.md) | 0.1.0 ships the interim renderers; Vulkan after | accepted |
 
 ## Doc map
 

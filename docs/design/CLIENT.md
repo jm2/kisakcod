@@ -1,16 +1,16 @@
 # Client
 
-WS-6 · Gate G5 (Vulkan: G6) · Cap 15 KB · Related: [CHARTER](../CHARTER.md), [ROADMAP](../ROADMAP.md), [ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)
+WS-6 · Gate G5 · Cap 18 KB · Related: [CHARTER](../CHARTER.md), [ROADMAP](../ROADMAP.md), [ADR-0003](../decisions/0003-testing-gates-and-vehicles.md)
 
 ## Route
 
 | Step | Renderer | Targets | Status |
 |---|---|---|---|
-| 1 | Existing D3D9 renderer, 64-bit | Windows amd64, arm64 | Interim vehicle |
-| 2 | D3D9 via dxvk-native | Linux amd64/arm64; macOS arm64 on KosmicKrisp (Homebrew mesa; client macOS 26+, server 13+), jm2/dxvk fork via `KISAK_DXVK_MACOS` | Interim vehicle |
-| 3 | Native Vulkan; MoltenVK on macOS (KosmicKrisp if the renderer needs more than the portability subset) | All five | Release (G6) |
+| 1 | Existing D3D9 renderer, 64-bit | Windows amd64, arm64 | Ships in 0.1.0 |
+| 2 | D3D9 via dxvk-native | Linux amd64/arm64; macOS arm64 on KosmicKrisp (Homebrew mesa; client macOS 26+, server 13+), jm2/dxvk fork via `KISAK_DXVK_MACOS` | Ships in 0.1.0 |
+| 3 | Native Vulkan; MoltenVK on macOS (KosmicKrisp if the renderer needs more than the portability subset) | All five | After 0.1.0 ([ADR-0010](../decisions/0010-interim-renderers-ship-in-0-1-0.md)) |
 
-Interim vehicles are test milestones, not deliverables.
+Steps 1 and 2 are the 0.1.0 clients; step 3 is post-0.1.0 work (#713).
 
 ### Windows 64-bit (step 1)
 

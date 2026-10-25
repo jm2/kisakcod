@@ -1,7 +1,7 @@
 # NOW
 
 Last reviewed: 2026-10-25 by kisakcod-mac (mbp16-m1max), acting as mayor, after the owner's issue sweep; sessions parked
-Current gates: G3 (the remaining targets) and G5 (Windows ARM64, Vulkan); G4a waits on the owner; G0 and G2 are done, G1 waits on the owner to close
+Current gates: G3 (the remaining targets) and G5 (Windows ARM64, UBSan); G4a waits on the owner; G0, G1 and G2 are done
 WIP limit: 6 (at least 4 on the current gates)
 
 The mayor is the only role that edits this file ([AGENTS.md](../AGENTS.md)).
@@ -26,7 +26,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | 61 | G3: the x86 fork client plays a round, a map change and a reconnect with 8 bots on the Windows ARM64, Linux amd64/arm64 and macOS arm64 headless servers | G3 | K6 | the round's console text on both ends, per target | M | next |
-| 62 | G5 Vulkan: a plan for the renderer that replaces D3D9 and dxvk (#713) | G5 | gate | the plan in [CLIENT](design/CLIENT.md), owner-approved | M | later |
+| 62 | Native Vulkan renderer (#713), after 0.1.0 ([ADR-0010](decisions/0010-interim-renderers-ship-in-0-1-0.md)) | post-0.1.0 | none | a plan in [CLIENT](design/CLIENT.md), owner-approved | L | after 0.1.0 |
 | 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | next (win-arm64) |
 | 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | started: shared-code sites (linux-arm64) |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | blocked-owner: the yoga leg needs UAC to write the CD key under HKLM; Linux amd64 passes all 4 retail pairings |
@@ -40,7 +40,6 @@ Other `burndown` issues are off these gates or wait on the owner.
 | Steam 1.8 captures ([NET_STEAM18](design/NET_STEAM18.md)) to confirm the `steam18` values | 36, G4a |
 | Steamworks legal decision; release packaging, including the 64-bit client release recipe (#263, #290) | WS-8, G6, K6 |
 | CoD4x census ([ADR-0005](decisions/0005-cod4x-compatibility.md)); approve `CHARTER.md` and the ADRs | all |
-| Close G1 (#179): its exit evidence holds | G1 |
 | Turn on private vulnerability reporting (#293) | SECURITY.md |
 | Retail-fidelity call on #208 (should Z_Malloc out-of-memory be fatal again); #189's question | the sweep |
 | UAC on yoga for the CD key | 36 |
@@ -53,13 +52,14 @@ Other `burndown` issues are off these gates or wait on the owner.
 - Coordination and merges: the first responsive host in order antec, antec-win, mbp16-m1max, macmini-m1, yoga-slim7x; subagent limits are AGENTS.md rule 23 (2026-10-15).
 - Miles and Bink are dropped on every target, x86 included: OpenAL Soft and FFmpeg everywhere, Windows through vcpkg, 2026-10-22.
 - Version 0.1.0 is the first display version (#688); 64-bit builds load unverified asset families by default, `+set db_unverified64 0` restores the guard (#689); the developer autoexec runs only with `+set com_devAutoexec 1` (#693), 2026-10-22.
+- 0.1.0 ships the D3D9 and dxvk-native clients; native Vulkan comes after 0.1.0 ([ADR-0010](decisions/0010-interim-renderers-ship-in-0-1-0.md)), 2026-10-25.
 - Standing rules (x86 pre-approval, sanitizer bar, vulnerabilities, retail data, shared hosts) are in [CHARTER](CHARTER.md#standing-owner-rules).
 
 ## Done since last review
 
 Merge SHAs are in `git log`.
 
-- Gates: G0 passed (row 46, #178). G2 passed (row 54, #180): K4 25/25 (row 37), guard on, 30 min under ASan/UBSan on Linux amd64 and ASan on Win64.
+- Gates: G0 passed (row 46, #178). G1 closed (#179). G2 passed (row 54, #180): K4 25/25 (row 37), guard on, 30 min under ASan/UBSan on Linux amd64 and ASan on Win64.
 - G3's first target (row 47): an x86 client played a round, map changes and a reconnect on the Win64 server with 8 bots.
 - G5's interim clients: Win64 D3D9 (row 55) and the Linux and macOS dxvk-native clients (rows 56, 57) play on a fork server and on a Steam 1.8 server (row 59), ASan clean (#184). Audio and cinematics go through OpenAL Soft and FFmpeg (rows 41, 51).
 - 1.8 parity (row 53, #692): imports done, no dvar missing, per-frame play matches retail. All 21 maps rotate under ASan, and LAN play passes on five platforms (row 52).
