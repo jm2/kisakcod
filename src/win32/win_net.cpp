@@ -269,7 +269,8 @@ int __cdecl Sys_GetPacket(netadr_t *net_from, msg_t *net_message)
 			net_socket = ipx_socket;
 		else
 			net_socket = ip_socket;
-		if (net_socket)
+		// Closed sockets are 0, but they start as INVALID_SOCKET until opened.
+		if (net_socket && net_socket != INVALID_SOCKET)
 		{
 			fromlen = 16;
 			ret = recvfrom(net_socket, (char*)net_message->data, net_message->maxsize, 0, &from, &fromlen);
@@ -418,7 +419,7 @@ char __cdecl Sys_SendPacket(int length, unsigned __int8 *data, netadr_t to)
 		Com_Error(ERR_FATAL, "Sys_SendPacket: bad address type");
 		break;
 	}
-	if (!net_socket)
+	if (!net_socket || net_socket == INVALID_SOCKET)
 		return 1;
 	NetadrToSockadr(&to, &addr);
 	if (usingSocks && to.type == NA_IP)
@@ -550,12 +551,14 @@ SOCKET __cdecl NET_IPSocket(const char *net_interface, int port)
 	{
 		v4 = NET_ErrorString();
 		Com_PrintWarning(16, "WARNING: UDP_OpenSocket: ioctl FIONBIO: %s\n", v4);
+		closesocket(newsocket);
 		return 0;
 	}
 	else if (setsockopt(newsocket, 0xFFFF, 32, (const char*)&i, 4) == -1)
 	{
 		v5 = NET_ErrorString();
 		Com_PrintWarning(16, "WARNING: UDP_OpenSocket: setsockopt SO_BROADCAST: %s\n", v5);
+		closesocket(newsocket);
 		return 0;
 	}
 	else
@@ -629,7 +632,7 @@ void __cdecl NET_OpenSocks(u_short port)
 		return;
 	}
 	address.sa_family = 2;
-	*(_DWORD*)address.sa_data[2] = **(_DWORD**)h->h_addr_list;
+	*(_DWORD*)&address.sa_data[2] = **(_DWORD**)h->h_addr_list;
 	*(_WORD*)address.sa_data = htons(net_socksPort->current.unsignedInt);
 	if (connect(socks_socket, &address, 16) == SOCKET_ERROR)
 	{
@@ -669,6 +672,12 @@ void __cdecl NET_OpenSocks(u_short port)
 	{
 		v8 = strlen(net_socksUsername->current.string);
 		v7 = strlen(net_socksPassword->current.string);
+		// RFC 1929: one length byte each, and the request must fit buf.
+		if (v8 > 255 || v7 > 255 || v8 + v7 + 3 > sizeof(buf))
+		{
+			Com_PrintError(16, "NET_OpenSocks: username and password are too long\n");
+			return;
+		}
 		buf[0] = 1;
 		buf[1] = v8;
 		if (v8)
@@ -1174,6 +1183,7 @@ SOCKET __cdecl NET_TCPIPSocket(const char* net_interface, int port, int type)
 		{
 			v5 = NET_ErrorString();
 			Com_PrintWarning(16, "WARNING: NET_TCPIPSocket: ioctl FIONBIO: %s\n", v5);
+			closesocket(newsocket);
 			return 0;
 		}
 		if (net_interface && *net_interface && I_stricmp(net_interface, "localhost"))
