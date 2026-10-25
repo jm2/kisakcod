@@ -1,4 +1,5 @@
 #include "game_public.h"
+#include "g_ipfilter.h"
 #include <qcommon/cmd.h>
 #include <server/sv_game.h>
 
@@ -59,39 +60,11 @@ void __cdecl AddIP(char *str)
 
 int __cdecl StringToFilter(char *s, ipFilter_s *f)
 {
-    uint8_t v3; // al
-    int j; // [esp+0h] [ebp-94h]
-    uint8_t m[4]; // [esp+4h] [ebp-90h]
-    uint8_t b[4]; // [esp+8h] [ebp-8Ch]
-    char num[128]; // [esp+Ch] [ebp-88h] BYREF
-    int i; // [esp+90h] [ebp-4h]
-
-    for (i = 0; i < 4; ++i)
+    if (!g_ipfilter::Parse(s, &f->mask, &f->compare))
     {
-        b[i] = 0;
-        m[i] = 0;
+        Com_Printf(15, "Bad filter address: %s\n", s);
+        return 0;
     }
-    for (i = 0; i < 4; ++i)
-    {
-        if (*s < 48 || *s > 57)
-        {
-            Com_Printf(15, "Bad filter address: %s\n", s);
-            return 0;
-        }
-        j = 0;
-        while (*s >= 48 && *s <= 57)
-            num[j++] = *s++;
-        num[j] = 0;
-        v3 = atoi(num);
-        b[i] = v3;
-        if (b[i])
-            m[i] = -1;
-        if (!*s)
-            break;
-        ++s;
-    }
-    f->mask = *(uint32_t *)m;
-    f->compare = *(uint32_t *)b;
     return 1;
 }
 
@@ -121,13 +94,28 @@ void UpdateIPBans()
     Dvar_SetString((dvar_s *)g_banIPs, iplist);
 }
 
+// True when an IPv4 address matches a filter from addip or g_banIPs.
+bool __cdecl G_IsAddressBanned(const uint8_t *ip)
+{
+    for (int i = 0; i < numIPFilters; ++i)
+    {
+        if (ipFilters[i].compare != (uint32_t)-1
+            && g_ipfilter::Matches(ipFilters[i].mask, ipFilters[i].compare, ip))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void __cdecl Svcmd_AddIP_f()
 {
     char str[1028]; // [esp+0h] [ebp-408h] BYREF
 
-    if (SV_Cmd_Argc() >= 2)
+    // A console command: its arguments are in the main tokenizer.
+    if (Cmd_Argc() >= 2)
     {
-        SV_Cmd_ArgvBuffer(1, str, 1024);
+        I_strncpyz(str, Cmd_Argv(1), 1024);
         AddIP(str);
     }
     else
@@ -142,9 +130,9 @@ void __cdecl Svcmd_RemoveIP_f()
     ipFilter_s f; // [esp+404h] [ebp-Ch] BYREF
     int i; // [esp+40Ch] [ebp-4h]
 
-    if (SV_Cmd_Argc() >= 2)
+    if (Cmd_Argc() >= 2)
     {
-        SV_Cmd_ArgvBuffer(1, str, 1024);
+        I_strncpyz(str, Cmd_Argv(1), 1024);
         if (StringToFilter(str, &f))
         {
             for (i = 0; i < numIPFilters; ++i)
