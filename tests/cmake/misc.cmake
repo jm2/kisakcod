@@ -1342,6 +1342,20 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(browser-hc-od-1-8 PROPERTIES TIMEOUT 20)
 endif()
 
+# CL_UpdateDebugServerData (client/cl_debugdata.cpp): no memcpy from the
+# still-null arrays of an empty server debug list. Linux and clang only, as above.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cl-debugdata-tests cl_debugdata_tests.cpp ${SRC_DIR}/client/cl_debugdata.cpp)
+    target_include_directories(kisakcod-cl-debugdata-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-cl-debugdata-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-cl-debugdata-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-cl-debugdata-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cl-debugdata-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    set_target_properties(kisakcod-cl-debugdata-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cl-debugdata-contracts COMMAND kisakcod-cl-debugdata-tests)
+endif()
+
 # FS_ReferencedIwdPureChecksums (universal/com_files.cpp): each call sends only
 # the current list. Linux and clang only, as above; the client's defines.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8

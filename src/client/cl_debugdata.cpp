@@ -325,10 +325,10 @@ void __cdecl CL_UpdateDebugServerData()
     {
         copySize = svStr->num << 7;
         svStrBuff->num = svStr->num;
-        memcpy((uint8_t *)svStrBuff->strings, (uint8_t *)svStr->strings, copySize);
+        if (copySize) memcpy((uint8_t *)svStrBuff->strings, (uint8_t *)svStr->strings, copySize); // KISAK: no copy from an empty (null) list
         copySizea = 44 * svLine->num;
         svLineBuff->num = svLine->num;
-        memcpy((uint8_t *)svLineBuff->lines, (uint8_t *)svLine->lines, copySizea);
+        if (copySizea) memcpy((uint8_t *)svLineBuff->lines, (uint8_t *)svLine->lines, copySizea); // KISAK: no copy from an empty (null) list
     }
 }
 
