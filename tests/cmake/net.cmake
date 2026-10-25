@@ -369,6 +369,36 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(wire-identity-steam18 wire-identity-fork PROPERTIES TIMEOUT 20)
 endif()
 
+# A hudelem alignment from the wire (#187): the production playerstate writer
+# and reader at 64-bit; an alignment of 3 overflows the message in Release.
+# Linux and clang only, as above; the defines are the Linux headless server's.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-hudelem-wire-check-tests hudelem_wire_check_tests.cpp
+        ${SRC_DIR}/qcommon/msg_mp.cpp
+        ${SRC_DIR}/qcommon/sv_msg_write_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_write_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_read_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_usercmd_mp.cpp
+        ${SRC_DIR}/qcommon/huffman.cpp
+        ${SRC_DIR}/server_mp/sv_snapshot_profile_mp.cpp
+        ${SRC_DIR}/universal/q_shared.cpp)
+    target_include_directories(kisakcod-hudelem-wire-check-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-hudelem-wire-check-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-hudelem-wire-check-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-hudelem-wire-check-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-hudelem-wire-check-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-hudelem-wire-check-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-hudelem-wire-check-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-hudelem-wire-check-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME hudelem-wire-alignment COMMAND kisakcod-hudelem-wire-check-tests)
+    set_tests_properties(hudelem-wire-alignment PROPERTIES TIMEOUT 20)
+endif()
+
 # SV_ChangeMaxClients (server_mp/sv_init_mp.cpp) at 64-bit: lowering
 # sv_maxclients keeps the connected clients whole. Linux and clang only, as
 # above; the defines are the Linux headless server's.

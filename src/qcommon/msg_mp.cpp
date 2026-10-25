@@ -799,20 +799,12 @@ static void __cdecl MSG_ReadDeltaHudElems(msg_t *msg, int time, const hudelem_s 
         //    ++j;
         //}
 
-        iassert(!(from[i].alignOrg & ~15));
-        iassert(!(to[i].alignOrg & ~15));
-
+        // KISAK: the alignment indexes a three-entry scale table
+        // (AlignHudElemX/Y); a server that sends 3 is rejected, in Release too.
+        if ((to[i].alignOrg & ~15) || ((to[i].alignOrg >> 2) & 3) == 3 || (to[i].alignOrg & 3) == 3)
         {
-            int alignX = ((from[i].alignOrg >> 2) & 3);
-            int alignY = (from[i].alignOrg & 3);
-            iassert(alignX == 0 || alignX == 1 || alignX == 2);
-            iassert(alignY == 0 || alignY == 1 || alignY == 2);
-        }
-        {
-            int alignX = ((to[i].alignOrg >> 2) & 3);
-            int alignY = (to[i].alignOrg & 3);
-            iassert(alignX == 0 || alignX == 1 || alignX == 2);
-            iassert(alignY == 0 || alignY == 1 || alignY == 2);
+            msg->overflowed = 1;
+            return;
         }
     }
 
