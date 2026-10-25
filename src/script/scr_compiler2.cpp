@@ -500,6 +500,8 @@ void Scr_AppendChildBlocks(scr_block_s **childBlocks, int childCount, scr_block_
 			}
 		}
 
+		if (block->localVarsCount >= LOCAL_VAR_STACK_SIZE)
+			Com_Error(ERR_DROP, "LOCAL_VAR_STACK_SIZE exceeded");
 		block->localVars[block->localVarsCount].name = name;
 		block->localVarsCount++;
 	out:

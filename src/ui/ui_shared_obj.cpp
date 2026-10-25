@@ -984,12 +984,13 @@ int __cdecl PC_StringizeTokens(token_s *tokens, token_s *token)
     token->endwhitespace_p = 0;
     token->string[0] = 0;
     strcat(token->string, "\"");
+    // strncat appends a NUL after the n bytes it copies; leave room for it.
     while (tokens)
     {
-        strncat(token->string, tokens->string, 1024 - strlen(token->string));
+        strncat(token->string, tokens->string, sizeof(token->string) - 1 - strlen(token->string));
         tokens = tokens->next;
     }
-    strncat(token->string, "\"", 1024 - strlen(token->string));
+    strncat(token->string, "\"", sizeof(token->string) - 1 - strlen(token->string));
     return 1;
 }
 

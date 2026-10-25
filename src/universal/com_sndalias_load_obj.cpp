@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "com_sndalias.h"
 #include "q_parse.h"
 #include "com_files.h"
@@ -169,7 +171,8 @@ int __cdecl Com_IsValidName(
         MyAssertHandler(".\\universal\\com_sndalias_load_obj.cpp", 675, 0, "%s", "alias");
     if (!sourceFile)
         MyAssertHandler(".\\universal\\com_sndalias_load_obj.cpp", 676, 0, "%s", "sourceFile");
-    if (strlen(token) <= maxLength)
+    // maxLength is the field size, so the name and its NUL must fit in it.
+    if (strnlen(token, maxLength) < maxLength)
     {
         if (validityFunction)
             alias->error = validityFunction(token) == 0;

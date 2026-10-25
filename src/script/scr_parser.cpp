@@ -796,7 +796,8 @@ void __cdecl Scr_CopyFormattedLine(char *line, const char *rawLine)
             v2 = rawLine[i];
         line[i] = v2;
     }
-    if (line[len - 1] == 13)
+    // An empty source line (len 0) has no trailing carriage return to strip.
+    if (len > 0 && line[len - 1] == 13)
         line[len - 1] = 0;
     line[len] = 0;
 }

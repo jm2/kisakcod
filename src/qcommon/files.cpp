@@ -37,8 +37,12 @@ char *__cdecl FS_GetMapBaseName(char *mapname)
         mapname += 8;
     v2 = strlen(mapname);
     len = v2;
-    if (!I_stricmp(&mapname[v2 - 3], "bsp"))
+    // Strip a ".d3dbsp" suffix only when the name is long enough to have one,
+    // and keep the result inside basename.
+    if (v2 >= 7 && !I_stricmp(&mapname[v2 - 3], "bsp"))
         len = v2 - 7;
+    if (len > static_cast<int>(sizeof(basename)) - 1)
+        len = static_cast<int>(sizeof(basename)) - 1;
     memcpy((uint8_t *)basename, (uint8_t *)mapname, len);
     basename[len] = 0;
     for (c = 0; c < len; ++c)

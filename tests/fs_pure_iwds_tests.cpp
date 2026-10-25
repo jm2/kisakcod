@@ -106,6 +106,16 @@ int main()
     CHECK(fs_numServerIwds == 1);
     CHECK(fs_serverIwdNames[0] && std::strcmp(fs_serverIwdNames[0], "main/iw_03") == 0);
 
+    // FS_GetMapBaseName (files.cpp): the base name stays inside its 64-byte
+    // buffer, and a name too short for a ".d3dbsp" suffix is copied whole.
+    std::string longName = "maps/mp/" + std::string(200, 'm') + ".d3dbsp";
+    const char *base = FS_GetMapBaseName(longName.data());
+    CHECK(strnlen(base, 64) == 63 && base[0] == 'm' && base[62] == 'm');
+    char shortName[] = "xbsp";
+    CHECK(std::strcmp(FS_GetMapBaseName(shortName), "xbsp") == 0);
+    char stockName[] = "maps/mp/mp_crash.d3dbsp";
+    CHECK(std::strcmp(FS_GetMapBaseName(stockName), "mp_crash") == 0);
+
     if (g_failures == 0)
         std::printf("fs pure iwds: all checks passed\n");
     return g_failures == 0 ? 0 : 1;
