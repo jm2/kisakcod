@@ -439,7 +439,7 @@ snd_alias_t *__cdecl Com_PickSoundAliasFromList(snd_alias_list_t *aliasList)
         {
             ++alias;
             cumulativeProbability = cumulativeProbability + alias->probability;
-            g_sa.randSeed = 214013 * g_sa.randSeed + 2531011;
+            g_sa.randSeed = static_cast<int>(214013u * static_cast<uint32_t>(g_sa.randSeed) + 2531011u); // KISAK: wrap unsigned, as x86 does
             if (alias->probability * 32768.0 > (double)((g_sa.randSeed >> 16) & 0x7FFF) * cumulativeProbability)
                 bestAlias = alias;
             if (maxSequence < alias->sequence)
@@ -454,7 +454,7 @@ snd_alias_t *__cdecl Com_PickSoundAliasFromList(snd_alias_list_t *aliasList)
                 if (maxSequence != aliasa->sequence)
                 {
                     cumulativeProbabilitya = cumulativeProbabilitya + aliasa->probability;
-                    g_sa.randSeed = 214013 * g_sa.randSeed + 2531011;
+                    g_sa.randSeed = static_cast<int>(214013u * static_cast<uint32_t>(g_sa.randSeed) + 2531011u); // KISAK: wrap unsigned, as x86 does
                     if (aliasa->probability * 32768.0 > (double)((g_sa.randSeed >> 16) & 0x7FFF) * cumulativeProbabilitya)
                         bestAlias = aliasa;
                 }

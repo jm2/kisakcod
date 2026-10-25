@@ -1,9 +1,11 @@
 // com_math_quat_mat_tests.cpp: ConvertQuatToMat and ConvertQuatToInverseMat
 // (production universal/com_math.cpp) on a known rotation. Each writes its
 // axis rows; the decompiled code reached rows 1-3 as (*axis)[3..11], past
-// row 0's three floats.
+// row 0's three floats. RandWithSeed's LCG step must wrap as unsigned (as
+// x86 does) rather than overflow a signed int.
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 
 #include <universal/com_math.h>
@@ -59,5 +61,12 @@ int main()
 
     if (!g_failures)
         std::printf("quat to mat: all checks passed\n");
+    // A seed whose step overflows int: the x86 wrap, then the signed /0x10000.
+    int seed = 76668;
+    const uint32_t wrapped = static_cast<uint32_t>(1103515245ull * 76668u + 12345u);
+    const uint32_t r = RandWithSeed(&seed);
+    Check(seed == static_cast<int>(wrapped), "RandWithSeed wraps the seed");
+    Check(r == static_cast<uint32_t>(static_cast<int>(wrapped) / 0x10000) % 0x8000u, "RandWithSeed result");
+
     return g_failures ? 1 : 0;
 }

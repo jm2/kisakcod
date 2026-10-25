@@ -4170,7 +4170,7 @@ bool __cdecl FX_CullElemForSpawn(const FxCamera *camera, const FxElemDef *elemDe
 void __cdecl FX_SetEffectRandomSeed(FxEffect *effect, const FxEffectDef *remoteDef)
 {
     if (FX_EffectAffectsGameplay(remoteDef))
-        effect->randomSeed = (479 * ((uint32_t)(214013 * effect->msecBegin + 2531011) >> 17)) >> 15; // has to be unsigned
+        effect->randomSeed = (479 * ((uint32_t)(214013u * (uint32_t)effect->msecBegin + 2531011u) >> 17)) >> 15; // has to be unsigned
     else
         effect->randomSeed = 479 * Kisak_rand() / 0x8000;
 
