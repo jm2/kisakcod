@@ -120,7 +120,7 @@ void TestConsoleCopyBounded()
             std::memset(text, 0x5a, sizeof(text));
             Con_GetTextCopy(text, kMax);
             const int expected = (pos - start + kRing) % kRing;
-            const int length = static_cast<int>(std::strlen(text));
+            const int length = static_cast<int>(strnlen(text, sizeof(text)));
             CHECK(length == (expected < kMax ? expected : kMax - 1));
             for (int i = kMax; i < static_cast<int>(sizeof(text)); ++i)
                 CHECK(text[i] == 0x5a);

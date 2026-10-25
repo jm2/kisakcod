@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "client.h"
 #include <qcommon/mem_track.h>
 
@@ -159,8 +160,9 @@ void __cdecl Con_GetTextCopy(char *text, int32_t maxSize)
         const int32_t first = (totalSize < con.consoleWindow.textBufSize - begin)
             ? totalSize
             : con.consoleWindow.textBufSize - begin;
-        memcpy(text, &con.consoleWindow.circularTextBuffer[begin], first);
-        memcpy(&text[first], con.consoleWindow.circularTextBuffer, totalSize - first);
+        const char *const ring = con.consoleWindow.circularTextBuffer;
+        std::copy_n(&ring[begin], first, text);
+        std::copy_n(ring, totalSize - first, &text[first]);
         text[totalSize] = 0;
     }
     else
