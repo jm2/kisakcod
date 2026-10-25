@@ -7,6 +7,7 @@
 #include <EffectsCore/fx_system.h>
 #include <gfx_d3d/r_drawsurf.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -39,15 +40,13 @@ int main()
     g_mark.radius = 1.0f;
     g_mark.texCoordAxis[0] = 1.0f;
     const uint8_t colour[4] = {0x11, 0x22, 0x33, 0x44};
-    std::memcpy(g_mark.nativeColor, colour, sizeof(colour));
+    std::copy_n(colour, 4, g_mark.nativeColor);
     g_mark.points = 0;
     g_mark.pointCount = 1;
     const float identity[4][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0, 0, 0}};
     FX_ExpandMarkVerts_Transform_GfxWorldVertex_(&g_marks, &g_mark, 0, identity);
 
-    uint8_t got[4];
-    std::memcpy(got, &g_verts[0].color.packed, sizeof(got));
-    const bool colourOk = std::memcmp(got, colour, sizeof(colour)) == 0;
+    const bool colourOk = std::equal(colour, colour + 4, g_verts[0].color.array);
     const bool lmapOk = g_verts[0].lmapCoord[0] == 0.25f && g_verts[0].lmapCoord[1] == 0.75f;
     if (!colourOk || !lmapOk)
     {
