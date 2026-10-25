@@ -1668,7 +1668,7 @@ void __cdecl FX_ExpandMarkVerts_Transform_GfxWorldVertex_(
             Vec3Cross(transformedTexCoordAxis, transformedNormal, binormal);
             MatrixTransformVector43(markPoint->xyz, *(mat4x3 *)matrixTransform, castOutVert->xyz);
             castOutVert->binormalSign = -1.0;
-            castOutVert->color.packed = *mark->nativeColor;
+            std::copy_n(mark->nativeColor, 4, castOutVert->color.array); // KISAK: all 4 bytes, as the non-transform expanders
             v4 = Vec3Dot(transformedDelta, transformedTexCoordAxis);
             //*&texCoord = v4 * texCoordScale + 0.5;
             texCoord[0] = v4 * texCoordScale + 0.5f;
@@ -1679,7 +1679,7 @@ void __cdecl FX_ExpandMarkVerts_Transform_GfxWorldVertex_(
             //*castOutVert->texCoord = texCoord;
             castOutVert->texCoord[0] = texCoord[0];
             castOutVert->texCoord[1] = texCoord[1];
-            *castOutVert->lmapCoord = *lmapCoord;
+            castOutVert->lmapCoord[0] = lmapCoord[0]; castOutVert->lmapCoord[1] = lmapCoord[1]; // KISAK: both, as the non-transform expanders
             v8.array[0] = (transformedNormal[0] * 127.0 + 127.5);
             v8.array[1] = (transformedNormal[1] * 127.0 + 127.5);
             v8.array[2] = (transformedNormal[2] * 127.0 + 127.5);
@@ -1777,7 +1777,7 @@ void __cdecl FX_ExpandMarkVerts_Transform_GfxPackedVertex_(
             Vec3Cross(transformedTexCoordAxis, transformedNormal, binormal);
             MatrixTransformVector43(markPoint->xyz, *(const mat4x3*)matrixTransform, castOutVert->xyz);
             castOutVert->binormalSign = -1.0;
-            castOutVert->color.packed = *mark->nativeColor;
+            std::copy_n(mark->nativeColor, 4, castOutVert->color.array); // KISAK: all 4 bytes, as the non-transform expanders
             v4 = Vec3Dot(transformedDelta, transformedTexCoordAxis);
             texCoord[0] = v4 * texCoordScale + 0.5;
             v5 = Vec3Dot(transformedDelta, binormal);
