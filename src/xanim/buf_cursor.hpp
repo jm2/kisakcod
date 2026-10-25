@@ -288,6 +288,12 @@ void AnchorPos(unsigned char **pos);
 // Active cursor accessor for callers that want to introspect begin /
 // current / end. Returns nullptr if no cursor is active.
 const BufCursor *Current();
+
+// Drop this thread's cursor state: the active cursor, its anchor and every
+// saved parent scope. Com_Error longjmps out of a load without the matching
+// Deactivate calls; without this the next Activate would push the dead
+// scope as a parent and later write through its dangling anchor.
+void ResetAll();
 }  // namespace buf_cursor
 
 // Buf_Read<T> overloaded — when a buf_cursor::BufCursor is active, the

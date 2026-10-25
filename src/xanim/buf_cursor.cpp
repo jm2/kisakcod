@@ -484,4 +484,15 @@ const BufCursor *Current()
     }
     return &g_active;
 }
+
+void ResetAll()
+{
+    g_active = BufCursor{};
+    g_activeValid = false;
+    g_anchoredPos = nullptr;
+    for (SavedCursorScope &scope : g_scopeStack)
+        scope = SavedCursorScope{};
+    g_scopeDepth = 0;
+    g_deepOverflow = 0;
+}
 }  // namespace buf_cursor
