@@ -113,6 +113,31 @@ add_test(
     NAME xmodel-cursor-overflow-fail-closed
     COMMAND kisakcod-xmodel-cursor-overflow-tests)
 
+# ReadNoteTracks (xanim/xanim_load_obj.cpp): a raw xanim's u8 notetrack count
+# plus the end marker must fit the u8 notifyCount. The loader's headers need
+# d3d9.h: Linux clang builds where pkg-config finds dxvk-d3d9.
+find_package(PkgConfig QUIET)
+if (PkgConfig_FOUND)
+    pkg_check_modules(KISAK_CIN_TEST_DXVK_D3D9 QUIET IMPORTED_TARGET dxvk-d3d9)
+endif()
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+    add_executable(kisakcod-xanim-notetrack-tests xanim_notetrack_tests.cpp ${SRC_DIR}/xanim/xanim_load_obj.cpp
+        ${SRC_DIR}/xanim/buf_cursor.cpp ${SRC_DIR}/universal/com_math.cpp com_math_test_stubs.cpp)
+    target_include_directories(kisakcod-xanim-notetrack-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-xanim-notetrack-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-xanim-notetrack-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE)
+    target_compile_options(kisakcod-xanim-notetrack-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_libraries(kisakcod-xanim-notetrack-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    target_link_options(kisakcod-xanim-notetrack-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-xanim-notetrack-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-xanim-notetrack-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-xanim-notetrack-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME xanim-notetrack-contracts COMMAND kisakcod-xanim-notetrack-tests)
+endif()
+
 # xmodel_loader_entry_test: production-loader entry-point contracts
 # (ki-okmr / #124; XAnim entries enrolled in ki-458h stage 2). Links
 # and executes the REAL production entry points from
