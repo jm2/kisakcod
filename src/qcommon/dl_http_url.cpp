@@ -343,9 +343,9 @@ DlUrlStatus KISAK_CDECL Dl_ParseRedirectUrl(
 {
     if (!out)
         return DlUrlStatus::InvalidArgument;
-    // Fail closed: clear the output so no stale caller state can be
-    // mistaken for a parse result on any failure path.
-    *out = DlRedirectUrl{};
+    // Fail closed: parse into a local and publish it only on Ok, so a
+    // failure never leaves a partially populated URL in `out`.
+    DlRedirectUrl parsed{};
 
     const char *authority = nullptr;
     std::uint32_t authorityLength = 0;
@@ -366,15 +366,16 @@ DlUrlStatus KISAK_CDECL Dl_ParseRedirectUrl(
         return DlUrlStatus::InvalidArgument;
 
     std::uint32_t storedLength = 0;
-    if (!CopyRaw(pieces.hostBegin, pieces.hostLength, out->host,
-            sizeof(out->host), &storedLength))
+    if (!CopyRaw(pieces.hostBegin, pieces.hostLength, parsed.host,
+            sizeof(parsed.host), &storedLength))
         return DlUrlStatus::TooLong;
-    out->hostLength = static_cast<std::uint16_t>(storedLength);
+    parsed.hostLength = static_cast<std::uint16_t>(storedLength);
 
-    if (!StoreCredentials(pieces, out) || !StorePath(authority,
-            authorityLength, out))
+    if (!StoreCredentials(pieces, &parsed) || !StorePath(authority,
+            authorityLength, &parsed))
         return DlUrlStatus::TooLong;
 
-    out->port = port;
+    parsed.port = port;
+    *out = parsed;
     return DlUrlStatus::Ok;
 }
