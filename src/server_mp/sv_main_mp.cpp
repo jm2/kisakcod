@@ -2,6 +2,9 @@
 #error This File is MultiPlayer Only
 #endif
 
+#include <algorithm>
+#include <iterator>
+
 #include "server_mp.h"
 
 #include <qcommon/qcommon.h>
@@ -691,14 +694,14 @@ bool __cdecl SV_QueryRateLimited(netadr_t from, int now)
     for (const uint8_t byte : from.ip)
         hash = hash * 31u + byte;
     QueryBucket &bucket = s_queryBuckets[hash % kQueryBuckets];
-    const bool sameSource = bucket.type == from.type && !memcmp(bucket.ip, from.ip, sizeof(bucket.ip));
+    const bool sameSource = bucket.type == from.type && std::equal(std::begin(from.ip), std::end(from.ip), bucket.ip);
     // A slot whose source has gone quiet passes to the new one; two busy
     // sources that hash alike share it.
     if (!sameSource && (!bucket.burst || now - bucket.lastTime > kAddressBurst * kAddressPeriodMs))
     {
         bucket = {};
         bucket.type = from.type;
-        memcpy(bucket.ip, from.ip, sizeof(bucket.ip));
+        std::copy(std::begin(from.ip), std::end(from.ip), bucket.ip);
         bucket.lastTime = now;
     }
     if (SV_QueryBucketLimited(bucket, kAddressBurst, kAddressPeriodMs, now))
