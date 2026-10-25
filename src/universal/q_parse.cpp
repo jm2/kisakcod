@@ -559,20 +559,21 @@ parseInfo_t *__cdecl Com_ParseCSV(const char **data_p, int allowLineBreaks)
         }
         else if (*data == 34)
         {
+            // An unterminated quoted field ends with the text, at its NUL.
             for (dataa = data + 1; ; dataa += 2)
             {
-                while (*dataa != 34)
+                while (*dataa && *dataa != 34)
                 {
                     if (len < 0x3FF)
                         pi->token[len++] = *dataa;
                     ++dataa;
                 }
-                if (dataa[1] != 34)
+                if (!*dataa || dataa[1] != 34)
                     break;
                 if (len < 0x3FF)
                     pi->token[len++] = 34;
             }
-            data = dataa + 1;
+            data = *dataa ? dataa + 1 : dataa;
         }
         else
         {

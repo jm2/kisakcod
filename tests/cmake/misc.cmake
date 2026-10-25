@@ -1363,3 +1363,22 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME fs-usedevdir-1-8 COMMAND kisakcod-fs-usedevdir-tests)
     set_tests_properties(fs-usedevdir-1-8 PROPERTIES TIMEOUT 20)
 endif()
+
+# Com_ParseCSV (universal/q_parse.cpp) on quoted fields: an unterminated
+# quote ends at the text's NUL. Linux and clang only, as above.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-q-parse-csv-tests q_parse_csv_tests.cpp ${SRC_DIR}/universal/q_parse.cpp)
+    target_include_directories(kisakcod-q-parse-csv-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-q-parse-csv-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-q-parse-csv-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-q-parse-csv-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-q-parse-csv-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-q-parse-csv-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-q-parse-csv-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-q-parse-csv-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME q-parse-csv-quotes COMMAND kisakcod-q-parse-csv-tests)
+    set_tests_properties(q-parse-csv-quotes PROPERTIES TIMEOUT 20)
+endif()
